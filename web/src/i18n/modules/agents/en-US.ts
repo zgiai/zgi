@@ -996,7 +996,7 @@ const messages = {
       appCenterDialogTitle: 'Select App Center audience',
       builtinDialogTitle: 'Select built-in app audience',
       rangeDialogDescription:
-        'Select workspaces, departments, and members. The owning workspace is included by default and is not shown again.',
+        'The owning workspace is included by default. Select any additional workspaces, departments, and members below.',
       departmentsTab: 'Departments',
       workspacesTab: 'Workspaces',
       membersTab: 'Members',
@@ -1004,6 +1004,9 @@ const messages = {
       noDepartments: 'No departments found',
       loadingWorkspaces: 'Loading workspaces...',
       noWorkspaces: 'No workspaces found',
+      noAdditionalWorkspaces: 'No additional workspaces available',
+      owningWorkspaceIncluded: 'Included by default',
+      memberCount: '{count} members',
       searchMembersPlaceholder: 'Search members',
       loadingMembers: 'Loading members...',
       noMembers: 'No members found',
@@ -1625,6 +1628,7 @@ const messages = {
       systemPromptTooLongBeforePublish:
         'Shorten the system prompt to {limit} characters or less before publishing.',
       abnormalBindingsRemoved: 'All abnormal bindings were removed from the draft. Save to apply.',
+      abnormalSkillsRemoved: 'Unavailable Skills were removed from the draft. Save to apply.',
       publishBindingsInvalid:
         'Publishing is blocked by invalid bindings. Review the highlighted binding issues.',
     },
@@ -1835,6 +1839,8 @@ const messages = {
         '{suspended} suspended and {unavailable} unavailable binding(s). Existing IDs are preserved until you remove them.',
       removeAll: 'Remove all abnormal bindings',
       removeAllPending: 'Cleanup pending save',
+      removeUnavailableSkills: 'Remove unavailable Skills',
+      removeUnavailableSkillsPending: 'Pending save',
       suggestion: 'Suggestion: {suggestion}',
       resourceId: 'Resource ID: {id}',
       cancel: 'Cancel',
@@ -1848,6 +1854,9 @@ const messages = {
       cleanupConfirmTitle: 'Remove all abnormal bindings?',
       cleanupConfirmDescription:
         'All unavailable and suspended bindings will be removed from the draft. Other settings remain unchanged.',
+      cleanupSkillsConfirmTitle: 'Remove unavailable Skills?',
+      cleanupSkillsConfirmDescription:
+        'All suspended and unavailable Skills will be removed from the draft. Knowledge bases, databases, workflows, and other settings remain unchanged.',
       status: {
         active: 'Active',
         suspended: 'Suspended',

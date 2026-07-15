@@ -18,10 +18,12 @@ interface AgentRuntimeSkillSectionProps {
   isSkillsLoading: boolean;
   isSkillConfigLoading: boolean;
   bindingHealth?: AgentBindingHealth;
+  cleanupPending?: boolean;
   readOnly?: boolean;
   onToggleSection: (section: AgentConfigSection) => void;
   onOpenSkillDialog: () => void;
   onToggleSkill: (skillId: string, checked: boolean) => void;
+  onRemoveAbnormalSkills: () => void;
 }
 
 export function AgentRuntimeSkillSection({
@@ -32,12 +34,22 @@ export function AgentRuntimeSkillSection({
   isSkillsLoading,
   isSkillConfigLoading,
   bindingHealth,
+  cleanupPending = false,
   readOnly = false,
   onToggleSection,
   onOpenSkillDialog,
   onToggleSkill,
+  onRemoveAbnormalSkills,
 }: AgentRuntimeSkillSectionProps) {
   const t = useT('agents.agentRuntime');
+  const abnormalSkillIds = new Set(
+    bindingHealth?.items
+      .filter(item => item.binding_type === 'skill' && item.status !== 'active')
+      .map(item => item.resource_id.trim()) ?? []
+  );
+  const abnormalSkillCount = normalizedSelectedSkillIds.filter(id =>
+    abnormalSkillIds.has(id.trim())
+  ).length;
 
   return (
     <RuntimeSection
@@ -47,6 +59,21 @@ export function AgentRuntimeSkillSection({
       onToggle={onToggleSection}
       action={
         <div className="flex items-center gap-2">
+          {abnormalSkillCount > 0 ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-8 px-2 text-xs text-muted-foreground hover:text-destructive"
+              onClick={onRemoveAbnormalSkills}
+              disabled={readOnly || cleanupPending}
+            >
+              <Trash2 className="mr-1.5 size-3.5" />
+              {cleanupPending
+                ? t('bindingHealth.removeUnavailableSkillsPending')
+                : t('bindingHealth.removeUnavailableSkills')}
+            </Button>
+          ) : null}
           <Badge variant="subtle">
             {t('selectedCount', { count: normalizedSelectedSkillIds.length })}
           </Badge>

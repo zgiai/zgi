@@ -24,8 +24,8 @@ export function AgentRuntimeDialogs({ model }: AgentRuntimeDialogsProps) {
       <AgentSuspendedBindingsDialog {...model.dialogs.suspendedBindings} />
       <ConfirmDialog
         variant="danger"
-        {...model.dialogs.cleanupBindings}
-        confirmText={model.t('bindingHealth.removeAll')}
+        {...model.dialogs.cleanupSkills}
+        confirmText={model.t('bindingHealth.removeUnavailableSkills')}
         cancelText={model.t('bindingHealth.cancel')}
       />
     </>

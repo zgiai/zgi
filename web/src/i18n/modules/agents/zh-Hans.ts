@@ -957,8 +957,7 @@ const messages: AgentsMessages = {
       webappDialogTitle: '选择 WebApp 开放对象',
       appCenterDialogTitle: '选择应用中心开放对象',
       builtinDialogTitle: '选择内置应用开放对象',
-      rangeDialogDescription:
-        '可同时勾选工作空间、部门和成员。所属工作空间默认可见，不在列表中重复展示。',
+      rangeDialogDescription: '所属工作空间已默认开放；下方可额外选择工作空间、部门和成员。',
       departmentsTab: '部门',
       workspacesTab: '工作空间',
       membersTab: '成员',
@@ -966,6 +965,9 @@ const messages: AgentsMessages = {
       noDepartments: '暂无部门',
       loadingWorkspaces: '加载工作空间中...',
       noWorkspaces: '暂无工作空间',
+      noAdditionalWorkspaces: '暂无其他可选工作空间',
+      owningWorkspaceIncluded: '已默认开放',
+      memberCount: '{count} 位成员',
       searchMembersPlaceholder: '搜索成员',
       loadingMembers: '加载成员中...',
       noMembers: '未找到成员',
@@ -1522,6 +1524,7 @@ const messages: AgentsMessages = {
       systemPromptTooLongBeforeSave: '请先将系统提示词缩短到 {limit} 字以内再保存。',
       systemPromptTooLongBeforePublish: '请先将系统提示词缩短到 {limit} 字以内再发布。',
       abnormalBindingsRemoved: '已从草稿移除全部异常绑定，请保存后生效。',
+      abnormalSkillsRemoved: '已从草稿移除不可用 Skill，请保存后生效。',
       publishBindingsInvalid: '存在无效绑定，暂时无法发布。请检查已定位的绑定异常。',
     },
     leaveGuard: {
@@ -1699,7 +1702,7 @@ const messages: AgentsMessages = {
       add: '添加 Skill',
       enablePrompt: '暂无可用于智能体的 Skill。',
       enableAction: '启用 Skill',
-      emptySelected: '还没有为这个 Agent 添加 Skill。',
+      emptySelected: '还没有为这个智能体添加 Skill。',
       remove: '移除 {name}',
       dialogTitle: '添加 Skill',
       dialogDescription: '为这个 Agent 选择当前组织已启用的 Skill。',
@@ -1723,6 +1726,8 @@ const messages: AgentsMessages = {
       summary: '有 {suspended} 个已暂停、{unavailable} 个不可用绑定；在主动移除前会保留原始 ID。',
       removeAll: '清理全部异常绑定',
       removeAllPending: '等待保存清理结果',
+      removeUnavailableSkills: '清理不可用 Skill',
+      removeUnavailableSkillsPending: '等待保存',
       suggestion: '建议：{suggestion}',
       resourceId: '资源 ID：{id}',
       cancel: '取消',
@@ -1736,6 +1741,9 @@ const messages: AgentsMessages = {
       cleanupConfirmTitle: '清理全部异常绑定？',
       cleanupConfirmDescription:
         '将从草稿中移除全部不可用和已暂停绑定。其他配置不会改变，保存后无法自动恢复。',
+      cleanupSkillsConfirmTitle: '清理不可用 Skill？',
+      cleanupSkillsConfirmDescription:
+        '将从草稿中移除全部已暂停和不可用 Skill。知识库、数据库、工作流和其他配置不会改变。',
       status: {
         active: '正常',
         suspended: '已暂停',

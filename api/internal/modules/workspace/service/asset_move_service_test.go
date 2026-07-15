@@ -493,14 +493,17 @@ func TestWorkspaceAssetMovePreviewBlocksSameWorkspaceForDatabase(t *testing.T) {
 
 func TestWorkspaceAssetMoveAgentMoveUpdatesRelatedTablesAndAudit(t *testing.T) {
 	db, mock := newAssetMoveMockDB(t)
+	agentID := uuid.NewString()
+	sourceWorkspaceID := uuid.NewString()
+	targetWorkspaceID := uuid.NewString()
 	mock.ExpectBegin()
-	expectAssetMoveLock(mock, AssetMoveTypeAgent, "agent-1")
-	expectWorkspaceLookup(mock, "ws-2", "org-1", "normal")
-	expectAgentPreview(mock, "agent-1", "ws-1", "AGENT")
-	expectWorkspaceLookup(mock, "ws-1", "org-1", "normal")
-	expectWorkspaceLookup(mock, "ws-1", "org-1", "normal")
+	expectAssetMoveLock(mock, AssetMoveTypeAgent, agentID)
+	expectWorkspaceLookup(mock, targetWorkspaceID, "org-1", "normal")
+	expectAgentPreview(mock, agentID, sourceWorkspaceID, "AGENT")
+	expectWorkspaceLookup(mock, sourceWorkspaceID, "org-1", "normal")
+	expectWorkspaceLookup(mock, sourceWorkspaceID, "org-1", "normal")
 	mock.ExpectQuery(regexp.QuoteMeta(`SELECT id, graph FROM "workflows" WHERE agent_id = $1 OR app_id = $2`)).
-		WithArgs("agent-1", "agent-1").
+		WithArgs(agentID, agentID).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "graph"}).AddRow("workflow-1", "{}"))
 	mock.ExpectExec(`UPDATE "agents" SET .* WHERE id = .* AND deleted_at IS NULL`).
 		WillReturnResult(sqlmock.NewResult(0, 1))
@@ -508,14 +511,19 @@ func TestWorkspaceAssetMoveAgentMoveUpdatesRelatedTablesAndAudit(t *testing.T) {
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(`UPDATE "installed_agents" SET .* WHERE agent_id = .*`).
 		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery(`SELECT \* FROM "published_runtime_surfaces" WHERE resource_type = \$1 AND resource_id = \$2 AND deleted_at IS NULL ORDER BY id ASC FOR UPDATE`).
+		WithArgs("agent", uuid.MustParse(agentID)).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "resource_type", "resource_id", "organization_id", "workspace_id", "surface", "enabled", "compatibility_source", "created_at", "updated_at", "deleted_at",
+		}))
 	mock.ExpectExec(`INSERT INTO "workspace_asset_move_events"`).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 
 	svc := NewWorkspaceAssetMoveService(db, &stubAssetMoveOrgService{allowed: true}, nil)
 	result, err := svc.Move(context.Background(), "org-1", "acct-1", dto.WorkspaceAssetMoveRequest{
-		TargetWorkspaceID: "ws-2",
-		Items:             []dto.WorkspaceAssetMoveItem{{Type: AssetMoveTypeAgent, ID: "agent-1"}},
+		TargetWorkspaceID: targetWorkspaceID,
+		Items:             []dto.WorkspaceAssetMoveItem{{Type: AssetMoveTypeAgent, ID: agentID}},
 	})
 
 	require.NoError(t, err)

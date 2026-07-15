@@ -25,7 +25,6 @@ import { AgentRuntimeSkillSection } from './sections/skill-section';
 import { AgentRuntimeWorkflowSection } from './sections/workflow-section';
 import type { AgentConfigSection, AgentRuntimeSelectedSkillItem } from './types';
 import type { AgentMemorySlotValidationError } from './utils';
-import { AgentBindingHealthPanel } from './binding-health';
 
 interface AgentRuntimeOrchestrationPanelProps {
   agentId: string;
@@ -63,8 +62,8 @@ interface AgentRuntimeOrchestrationPanelProps {
   scrollViewportClassName?: string;
   readOnly?: boolean;
   bindingHealth?: AgentBindingHealth;
-  isCleanupPending: boolean;
-  onRemoveAllAbnormalBindings: () => void;
+  isSkillCleanupPending: boolean;
+  onRemoveAbnormalSkills: () => void;
   onToggleSection: (section: AgentConfigSection) => void;
   onChangeModelValue: (value: ModelSelectorParameterValue) => void;
   onChangeHomeTitle: (value: string) => void;
@@ -122,8 +121,8 @@ export function AgentRuntimeOrchestrationPanel({
   scrollViewportClassName,
   readOnly = false,
   bindingHealth,
-  isCleanupPending,
-  onRemoveAllAbnormalBindings,
+  isSkillCleanupPending,
+  onRemoveAbnormalSkills,
   onToggleSection,
   onChangeModelValue,
   onChangeHomeTitle,
@@ -159,13 +158,6 @@ export function AgentRuntimeOrchestrationPanel({
         viewportProps={scrollViewportClassName ? { className: scrollViewportClassName } : undefined}
       >
         <div className="space-y-5 px-5 pb-6">
-          <AgentBindingHealthPanel
-            health={bindingHealth}
-            readOnly={readOnly}
-            cleanupPending={isCleanupPending}
-            onRemoveAllAbnormal={onRemoveAllAbnormalBindings}
-          />
-
           <AgentRuntimeModelSection
             open={openSections.model}
             modelValue={modelValue}
@@ -186,10 +178,12 @@ export function AgentRuntimeOrchestrationPanel({
             isSkillsLoading={isSkillsLoading}
             isSkillConfigLoading={isSkillConfigLoading}
             bindingHealth={bindingHealth}
+            cleanupPending={isSkillCleanupPending}
             readOnly={readOnly}
             onToggleSection={onToggleSection}
             onOpenSkillDialog={onOpenSkillDialog}
             onToggleSkill={onToggleSkill}
+            onRemoveAbnormalSkills={onRemoveAbnormalSkills}
           />
 
           <Separator className="h-px" />

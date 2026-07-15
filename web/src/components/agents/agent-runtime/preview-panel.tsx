@@ -1,9 +1,8 @@
 'use client';
 
 import { useId } from 'react';
-import { AlertTriangle, Eye, X } from 'lucide-react';
+import { Eye, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import Chat, { type AIChatController } from '@/components/chat';
 import {
   AIChatEmbeddedConversationControls,
@@ -16,7 +15,6 @@ import type {
 } from '@/components/common/model-selector';
 import { useT } from '@/i18n';
 import type { OpeningGuideBrand } from '@/components/chat/utils/opening-guide-brand';
-import type { AgentBindingHealth } from '@/services/types/agent';
 
 interface AgentRuntimePreviewPanelProps {
   controller: AIChatController;
@@ -29,7 +27,6 @@ interface AgentRuntimePreviewPanelProps {
   openingGuideBrand: OpeningGuideBrand;
   homeTitle: string;
   openingStatement: string;
-  bindingHealth?: AgentBindingHealth;
   surfaceMode?: 'inline' | 'sheet';
   onOpenMemoryValues: () => void;
   onModelChange: (value: ModelSelectorValue) => void;
@@ -48,7 +45,6 @@ export function AgentRuntimePreviewPanel({
   openingGuideBrand,
   homeTitle,
   openingStatement,
-  bindingHealth,
   surfaceMode = 'inline',
   onOpenMemoryValues,
   onModelChange,
@@ -57,7 +53,6 @@ export function AgentRuntimePreviewPanel({
 }: AgentRuntimePreviewPanelProps) {
   const t = useT('agents.agentRuntime');
   const controlsPortalId = useId();
-  const ignoredBindings = bindingHealth?.items.filter(item => item.status !== 'active') ?? [];
 
   return (
     <section className="flex h-full min-h-0 w-full min-w-0 flex-col overflow-hidden">
@@ -100,22 +95,6 @@ export function AgentRuntimePreviewPanel({
           </div>
         </div>
       </div>
-      {ignoredBindings.length > 0 ? (
-        <div className="shrink-0 px-4 pb-2">
-          <Alert className="py-2">
-            <AlertTriangle className="size-4" />
-            <AlertTitle>{t('bindingHealth.previewIgnoredTitle')}</AlertTitle>
-            <AlertDescription className="line-clamp-2 text-xs">
-              {t('bindingHealth.previewIgnoredDescription', {
-                count: ignoredBindings.length,
-                resources: ignoredBindings
-                  .map(item => item.display_name || item.resource_id)
-                  .join(', '),
-              })}
-            </AlertDescription>
-          </Alert>
-        </div>
-      ) : null}
       <div className="min-h-0 flex-1">
         <Chat
           mode="aichat"
