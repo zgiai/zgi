@@ -596,6 +596,7 @@ const messages = {
     backToEdit: 'Back to Edit',
     restoreDraft: 'Restore Previous Draft',
     running: 'Running',
+    pending: 'Pending',
     succeeded: 'Succeeded',
     failed: 'Failed',
     stopped: 'Stopped',
@@ -614,7 +615,9 @@ const messages = {
     updating: 'Updating...',
     workflowUpdatedSuccessfully: 'Agent updated successfully',
     webapp: 'Web App',
-    webappLogs: 'Web App Logs',
+    agentLogs: 'Agent Logs',
+    workflowLogs: 'Workflow Logs',
+    webappLogs: 'Workflow Logs',
     webappStatus: {
       label: 'Web App Status',
       online: 'Online',
@@ -1824,6 +1827,7 @@ const messages = {
       done: 'Save',
       cancel: 'Cancel',
       idLabel: 'ID: {id}',
+      noDescription: 'No description',
       requiresKnowledge: 'Configure knowledge bases first',
       unavailableName: 'Unavailable Skill',
       unavailableDescription:
@@ -2041,31 +2045,36 @@ const messages = {
     },
     files: {
       title: 'Allow file upload',
-      description: 'When enabled, debugging and WebApp chat can upload documents or images.',
+      description: 'When enabled, users can upload documents or images for the Agent to analyze.',
     },
     memory: {
       agentTitle: 'Memory',
       agentDescription:
-        'Define memory types the Agent can read and update for each user. The model manages content within these stable keys.',
+        'Define what the Agent should remember for each user. Each memory item has a stable ID and an optional display name.',
       emptySlots: 'No memory items configured yet.',
       addSlot: 'Add memory item',
       addCustomSlot: 'Custom item',
       applyTemplate: 'Apply template',
       addDialogTitle: 'Add memory item',
-      addDialogDescription: 'Create a stable key the model can use to manage one type of memory.',
+      addDialogDescription:
+        'Set an optional display name, a stable ID, and instructions for this memory item.',
       addDialogConfirm: 'Add item',
       addDialogCancel: 'Cancel',
       maxItemsReached: 'Up to 5 memory items',
       removeSlot: 'Remove memory item',
       viewValues: 'View memory',
-      keyLabel: 'Key',
-      keyHelp: 'Stable identifier used by the model. It is locked after the item is saved.',
+      nameLabel: 'Memory name (optional)',
+      nameHelp: 'Helps people identify this item. The memory ID is shown when left blank. Up to 80 characters.',
+      keyLabel: 'Memory ID',
+      keyHelp: 'Stable identifier used by the Agent. It is locked after the item is saved.',
       keyLockedHelp:
-        'This key has been saved and cannot be changed. Delete it and create a new item to use another key.',
+        'This memory ID has been saved and cannot be changed. Delete it and create a new item to use another ID.',
+      idValue: 'ID: {id}',
       descriptionLabel: 'Description',
       descriptionHelp:
         'Tell the model what this memory type should store and when to update it. Up to 200 characters.',
       slotKeyPlaceholder: 'memory_key',
+      slotNamePlaceholder: 'For example: Answer preferences',
       slotDescriptionPlaceholder: 'Describe what this memory item stores',
       maxChars: 'Maximum characters',
       maxCharsHelp: 'Limit the content length for this memory item.',
@@ -2104,22 +2113,46 @@ const messages = {
         },
       },
       templateSlots: {
-        profile:
-          'Store stable facts about the user only: user name, how the user wants to be addressed, job role, team role. Do not store agent name, assistant persona, roleplay style, what the user calls the agent, contact details, accounts, IDs, passwords, or temporary states.',
-        preferences:
-          'Store durable answer preferences: language, example stack, length, layout, explanation depth, tone, and style. Do not store one-off formatting requests, temporary moods, current task content, or a durable identity the agent should play.',
-        standing_instructions:
-          'Store long-term interaction rules, collaboration workflows, task procedures, how to address the user, what the user calls the agent, or agent persona instructions, such as conclusion first, risk review, or roleplay as a specific assistant. Do not store project facts or one-off task steps.',
-        project_context:
-          'Store ongoing project, goals, key background, workflow, and durable constraints. Update only when the user describes project or goal changes; do not infer from role changes.',
-        delivery_preferences:
-          'Store durable delivery preferences: output structure, review depth, file format, acceptance criteria. Do not store one-off formatting requests for a single task.',
-        customer_profile:
-          'Store stable customer identity, account background, product usage, contract or relationship status. Never store passwords, payment data, IDs, or one-off ticket details.',
-        communication_preferences:
-          'Store durable customer communication preferences: tone, channel, escalation wording, response cadence. Do not store temporary emotions or one-off service handling.',
-        business_context:
-          'Store long-term business process background, support scope, policy rules, and operational constraints tied to this customer/user. Do not store general product knowledge or temporary conclusions.',
+        profile: {
+          name: 'User profile',
+          description:
+            'Store stable facts about the user only: user name, how the user wants to be addressed, job role, team role. Do not store agent name, assistant persona, roleplay style, what the user calls the agent, contact details, accounts, IDs, passwords, or temporary states.',
+        },
+        preferences: {
+          name: 'Answer preferences',
+          description:
+            'Store durable answer preferences: language, example stack, length, layout, explanation depth, tone, and style. Do not store one-off formatting requests, temporary moods, current task content, or a durable identity the agent should play.',
+        },
+        standing_instructions: {
+          name: 'Standing instructions',
+          description:
+            'Store long-term interaction rules, collaboration workflows, task procedures, how to address the user, what the user calls the agent, or agent persona instructions, such as conclusion first, risk review, or roleplay as a specific assistant. Do not store project facts or one-off task steps.',
+        },
+        project_context: {
+          name: 'Project context',
+          description:
+            'Store ongoing project, goals, key background, workflow, and durable constraints. Update only when the user describes project or goal changes; do not infer from role changes.',
+        },
+        delivery_preferences: {
+          name: 'Delivery preferences',
+          description:
+            'Store durable delivery preferences: output structure, review depth, file format, acceptance criteria. Do not store one-off formatting requests for a single task.',
+        },
+        customer_profile: {
+          name: 'Customer profile',
+          description:
+            'Store stable customer identity, account background, product usage, contract or relationship status. Never store passwords, payment data, IDs, or one-off ticket details.',
+        },
+        communication_preferences: {
+          name: 'Communication preferences',
+          description:
+            'Store durable customer communication preferences: tone, channel, escalation wording, response cadence. Do not store temporary emotions or one-off service handling.',
+        },
+        business_context: {
+          name: 'Business context',
+          description:
+            'Store long-term business process background, support scope, policy rules, and operational constraints tied to this customer/user. Do not store general product knowledge or temporary conclusions.',
+        },
       },
       deleteConfirmTitle: 'Delete memory item?',
       deleteConfirmDescription:
@@ -2127,17 +2160,17 @@ const messages = {
       deleteConfirmAction: 'Delete item',
       deleteConfirmCancel: 'Cancel',
       validation: {
-        required: 'Key is required.',
+        required: 'Memory ID is required.',
         pattern:
-          'Use lowercase letters, numbers, and underscores. The first character must be a letter.',
-        duplicate: 'This key is already used.',
+          'Use lowercase letters, numbers, and underscores. The memory ID must start with a letter.',
+        duplicate: 'This memory ID is already used.',
         too_many: 'An Agent can have up to 5 memory items.',
       },
     },
     memoryValues: {
       title: 'Agent memory',
       description:
-        'View and edit your own memory values for draft debugging. Only configured memory keys can be changed.',
+        'View and edit your own memory values for draft debugging. Only configured memory items can be changed.',
       scopeAccount: 'Account user',
       scopeEndUser: 'End user',
       userIdPlaceholder: 'User ID',
@@ -2171,6 +2204,28 @@ const messages = {
       newConversation: 'New conversation',
       close: 'Close preview',
     },
+    publishVersion: {
+      publishTitle: 'Publish Agent',
+      updateTitle: 'Publish an update',
+      publishDescription:
+        'Add optional release details. Your current configuration will be saved before the first version is published.',
+      updateDescription:
+        'Add optional release details. Your current configuration will be saved before a new version is published.',
+      nameLabel: 'Version name',
+      optional: 'Optional',
+      namePlaceholder: 'For example: Improved knowledge answers',
+      nameHelp: 'Use a short name that makes this release easy to find and restore later.',
+      fallbackPreview: 'If left blank, it will appear as “{name}”.',
+      descriptionLabel: 'Version description',
+      descriptionPlaceholder: 'Summarize the main changes in this release',
+      descriptionHelp: 'You can note important experience, capability, or configuration changes.',
+      fallbackName: 'Version {time}',
+      cancel: 'Cancel',
+      publish: 'Publish',
+      update: 'Publish update',
+      publishing: 'Publishing...',
+      updating: 'Updating...',
+    },
     publishedVersions: {
       title: 'Published versions',
       description: 'Preview previous snapshots and restore one to the current draft.',
@@ -2179,6 +2234,10 @@ const messages = {
       close: 'Close',
       current: 'Current',
       previewing: 'Preview',
+      fallbackName: 'Version {time}',
+      publishedAt: 'Published {time}',
+      descriptionTitle: 'Version description',
+      noDescription: 'No version description was added for this release.',
       preview: 'Version preview',
       rollback: 'Restore to draft',
       cancelPreview: 'Cancel preview',

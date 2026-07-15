@@ -744,8 +744,9 @@ func (h *AgentsHandler) PublishAgent(c *gin.Context) {
 		return
 	}
 	var req dto.PublishAgentRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		req = dto.PublishAgentRequest{}
+	if err := c.ShouldBindJSON(&req); err != nil && !errors.Is(err, io.EOF) {
+		response.Fail(c, response.ErrInvalidParam)
+		return
 	}
 	result, err := h.appService.PublishAgent(ctx, c.Param("agent_id"), accountID, req)
 	if err != nil {

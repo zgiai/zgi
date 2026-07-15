@@ -20,7 +20,7 @@ import { useT } from '@/i18n/translations';
 import type { WorkflowChatMessageItem } from '@/services/types/workflow';
 import { formatDate, formatWorkflowElapsedMs } from '@/utils/format';
 import { ConversationContext } from './conversation-context';
-import { LogStatusBadge } from './log-status-badge';
+import { RunStatusBadge } from '@/components/workflow/ui/run-status-badge';
 
 export type HistoryTab = 'details' | 'execution' | 'results' | 'inputs';
 
@@ -84,7 +84,7 @@ export function LogDetailDrawer({
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
               <SheetTitle className="text-base">{t('appLogs.dialogTitle')}</SheetTitle>
-              {summary?.status ? <LogStatusBadge status={summary.status} /> : null}
+              {summary?.status ? <RunStatusBadge status={summary.status} /> : null}
               <SheetClose asChild>
                 <Button
                   type="button"

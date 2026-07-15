@@ -34,7 +34,7 @@ import type {
 import { cn } from '@/lib/utils';
 import { formatDate, formatWorkflowElapsedMs } from '@/utils/format';
 import { getAgentRuntimeStepDisplay } from './agent-runtime-step-display';
-import { LogStatusBadge } from './log-status-badge';
+import { RunStatusBadge } from '@/components/workflow/ui/run-status-badge';
 import WorkflowRunNodesList, {
   type NodeRunStatus,
   type WorkflowRunNodeListItem,
@@ -469,7 +469,7 @@ function WorkflowApprovalCards({
                     '-'}
                 </div>
               </div>
-              <LogStatusBadge status={status} />
+              <RunStatusBadge status={status} />
             </div>
 
             {!isEmptyValue(form.content) ? (
@@ -640,7 +640,7 @@ export function AgentRuntimeLogDetailDrawer({
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
                 <SheetTitle className="text-base">{t('appLogs.runtimeDialogTitle')}</SheetTitle>
-                {status ? <LogStatusBadge status={status} /> : null}
+                {status ? <RunStatusBadge status={status} /> : null}
               </div>
               <SheetDescription className="mt-1 truncate" title={runId ?? ''}>
                 {runId
@@ -730,7 +730,7 @@ export function AgentRuntimeLogDetailDrawer({
                               : ''}
                           </span>
                         </span>
-                        <LogStatusBadge status={step.status} />
+                        <RunStatusBadge status={step.status} />
                       </button>
                     );
                   })}
