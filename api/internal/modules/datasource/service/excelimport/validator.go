@@ -195,9 +195,9 @@ func convertValue(raw, typ string, required bool) (interface{}, error) {
 }
 
 func normalizeLocalTimestamp(raw string) (string, bool) {
-	for _, format := range []string{"2006-01-02 15:04:05", "2006-01-02T15:04:05", "2006-01-02"} {
+	for _, format := range []string{"2006-01-02 15:04:05", "2006-01-02T15:04:05", "2006-01-02", "01-02-06"} {
 		if parsed, err := time.ParseInLocation(format, raw, time.Local); err == nil {
-			if format == "2006-01-02" {
+			if format == "2006-01-02" || format == "01-02-06" {
 				return parsed.Format("2006-01-02 00:00:00"), true
 			}
 			return parsed.Format("2006-01-02 15:04:05"), true
