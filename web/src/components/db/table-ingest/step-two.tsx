@@ -11,6 +11,8 @@ import {
   AlertCircle,
   Check,
   CheckCircle,
+  ChevronLeft,
+  ChevronRight,
   FileSearch,
   LoaderCircle,
   RefreshCcw,
@@ -103,8 +105,6 @@ interface FileRecognitionState {
   };
   recognition: {
     status: RecognitionStatus;
-    records: DbTableRecord[];
-    values: DbTableRecord;
     fieldExtraction?: FileIngestFieldExtraction;
     error?: string;
     warning?: string;
@@ -114,7 +114,6 @@ interface FileRecognitionState {
   };
   content: string;
   records: DbTableRecord[];
-  values: DbTableRecord;
   error?: string;
   warning?: string;
   extraction?: FileIngestExtractionInfo;
@@ -288,12 +287,9 @@ function createInitialFileState(file: FileItem): FileRecognitionState {
     },
     recognition: {
       status: 'idle',
-      records: [],
-      values: {} as DbTableRecord,
     },
     content: '',
     records: [],
-    values: {} as DbTableRecord,
     dirty: false,
   };
 }
@@ -312,6 +308,7 @@ const StepTwo: React.FC<IngestStepTwoProps> = ({
   const [activeFileId, setActiveFileId] = useState<string | undefined>(selectedFiles[0]?.id);
   const [columns, setColumns] = useState<DbTableColumn[]>([]);
   const [fileStates, setFileStates] = useState<Record<string, FileRecognitionState>>({});
+  const [activeRecordIndexes, setActiveRecordIndexes] = useState<Record<string, number>>({});
   const [tsDrafts, setTsDrafts] = useState<Record<string, string>>({});
   const [filter, setFilter] = useState<FileFilter>('all');
   const [contentTab, setContentTab] = useState<ContentTab>('text');
@@ -513,7 +510,12 @@ const StepTwo: React.FC<IngestStepTwoProps> = ({
         return state.status;
       }
       if (columns.length === 0) return state.status;
-      if (!requiredFieldsComplete(state.values) || hasInvalidTimestampValue(state.values)) {
+      if (
+        state.records.length === 0 ||
+        state.records.some(
+          record => !requiredFieldsComplete(record) || hasInvalidTimestampValue(record)
+        )
+      ) {
         return 'warning';
       }
       return 'success';
@@ -571,15 +573,12 @@ const StepTwo: React.FC<IngestStepTwoProps> = ({
             requestedMode: 'auto',
             activeStage: 'recognition',
             records: reset ? [] : current.records,
-            values: reset ? ({} as DbTableRecord) : current.values,
             error: undefined,
             warning: undefined,
             dirty: reset ? false : current.dirty,
             recognition: {
               ...current.recognition,
               status: 'recognizing',
-              records: reset ? [] : current.recognition.records,
-              values: reset ? ({} as DbTableRecord) : current.recognition.values,
               error: undefined,
               warning: undefined,
               requestId,
@@ -607,7 +606,6 @@ const StepTwo: React.FC<IngestStepTwoProps> = ({
         const records = (result.records || []).map(record =>
           normalizeRecognizedRecord(record as DbTableRecord, recognitionColumns)
         );
-        const firstRecord = (records[0] || {}) as DbTableRecord;
         const error = result.error;
         const warning =
           !error && records.length === 0
@@ -648,7 +646,6 @@ const StepTwo: React.FC<IngestStepTwoProps> = ({
               activeAttemptId: requestId,
               attempts: [...current.attempts, attempt],
               records,
-              values: firstRecord,
               error,
               warning,
               fieldExtraction: result.field_extraction,
@@ -656,8 +653,6 @@ const StepTwo: React.FC<IngestStepTwoProps> = ({
               recognition: {
                 ...current.recognition,
                 status,
-                records,
-                values: firstRecord,
                 fieldExtraction: result.field_extraction,
                 error,
                 warning,
@@ -732,7 +727,6 @@ const StepTwo: React.FC<IngestStepTwoProps> = ({
             activeStage: 'parse',
             content: reset ? '' : current.content,
             records: reset ? [] : current.records,
-            values: reset ? ({} as DbTableRecord) : current.values,
             error: undefined,
             warning: undefined,
             extraction: reset ? undefined : current.extraction,
@@ -750,8 +744,6 @@ const StepTwo: React.FC<IngestStepTwoProps> = ({
             recognition: {
               ...current.recognition,
               status: reset ? 'idle' : current.recognition.status,
-              records: reset ? [] : current.recognition.records,
-              values: reset ? ({} as DbTableRecord) : current.recognition.values,
               error: reset ? undefined : current.recognition.error,
               warning: reset ? undefined : current.recognition.warning,
               fieldExtraction: reset ? undefined : current.recognition.fieldExtraction,
@@ -946,15 +938,16 @@ const StepTwo: React.FC<IngestStepTwoProps> = ({
     setFileStates(prev => {
       const current = prev[activeFileId];
       if (!current) return prev;
+      const recordIndex = activeRecordIndexes[activeFileId] || 0;
+      if (!current.records[recordIndex]) return prev;
+      const records = current.records.map((record, index) =>
+        index === recordIndex ? { ...record, [col.name]: v } : record
+      );
       return {
         ...prev,
         [activeFileId]: {
           ...current,
-          values: { ...current.values, [col.name]: v },
-          recognition: {
-            ...current.recognition,
-            values: { ...current.recognition.values, [col.name]: v },
-          },
+          records,
           dirty: true,
         },
       };
@@ -1060,9 +1053,13 @@ const StepTwo: React.FC<IngestStepTwoProps> = ({
     onRemoveFile(activeFileId);
   }, [activeFileId, onRemoveFile]);
 
+  const activeRecords = useMemo(() => activeState?.records || [], [activeState?.records]);
+  const activeRecordIndex = activeFileId
+    ? Math.min(activeRecordIndexes[activeFileId] || 0, Math.max(activeRecords.length - 1, 0))
+    : 0;
   const activeValues = useMemo(
-    () => activeState?.recognition.values || activeState?.values || ({} as DbTableRecord),
-    [activeState?.recognition.values, activeState?.values]
+    () => activeRecords[activeRecordIndex] || ({} as DbTableRecord),
+    [activeRecordIndex, activeRecords]
   );
   const activeContent = activeState?.parse.content || activeState?.content || '';
   const activeParseError = activeState?.parse.error || '';
@@ -1142,18 +1139,22 @@ const StepTwo: React.FC<IngestStepTwoProps> = ({
   const getPendingFieldCount = useCallback(
     (state?: FileRecognitionState): number => {
       if (!state) return 0;
-      const values = state.recognition.values || state.values || ({} as DbTableRecord);
-      return columns.reduce((count, col) => {
-        const value = values[col.name] as DbTableRecord[keyof DbTableRecord];
-        const hasValue = hasRequiredValue(value, col.type);
-        const invalidTimestamp =
-          col.type === Type.Timestamp &&
-          value !== null &&
-          typeof value !== 'undefined' &&
-          String(value).trim().length > 0 &&
-          !isValidTimestampRecordValue(value);
-        return count + (col.is_required && !hasValue ? 1 : 0) + (invalidTimestamp ? 1 : 0);
-      }, 0);
+      return state.records.reduce(
+        (total, values) =>
+          total +
+          columns.reduce((count, col) => {
+            const value = values[col.name] as DbTableRecord[keyof DbTableRecord];
+            const hasValue = hasRequiredValue(value, col.type);
+            const invalidTimestamp =
+              col.type === Type.Timestamp &&
+              value !== null &&
+              typeof value !== 'undefined' &&
+              String(value).trim().length > 0 &&
+              !isValidTimestampRecordValue(value);
+            return count + (col.is_required && !hasValue ? 1 : 0) + (invalidTimestamp ? 1 : 0);
+          }, 0),
+        0
+      );
     },
     [columns, hasRequiredValue]
   );
@@ -1271,7 +1272,7 @@ const StepTwo: React.FC<IngestStepTwoProps> = ({
   };
 
   const fieldMatchForColumn = (col: DbTableColumn): FileIngestFieldMatch | undefined => {
-    const fields = activeState?.fieldExtraction?.records?.[0]?.fields || [];
+    const fields = activeState?.fieldExtraction?.records?.[activeRecordIndex]?.fields || [];
     return fields.find(
       field =>
         field.column_id === col.id || field.column_id === col.name || field.column_name === col.name
@@ -1478,8 +1479,8 @@ const StepTwo: React.FC<IngestStepTwoProps> = ({
       return rest as Omit<DbTableRecord, 'id'>;
     };
 
-    const payloads = validFiles.map(file =>
-      buildPayloadForValues(fileStates[file.id]?.values || ({} as DbTableRecord))
+    const payloads = validFiles.flatMap(file =>
+      (fileStates[file.id]?.records || []).map(buildPayloadForValues)
     );
 
     try {
@@ -1768,6 +1769,50 @@ const StepTwo: React.FC<IngestStepTwoProps> = ({
                 </Badge>
               </div>
               <div className="flex shrink-0 items-center gap-1">
+                {activeRecords.length > 0 ? (
+                  <div className="mr-1 flex items-center gap-1 text-xs text-muted-foreground">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      isIcon
+                      aria-label={t('tableIngest.stepTwo.previousRecord')}
+                      disabled={!activeFileId || activeRecordIndex === 0}
+                      onClick={() => {
+                        if (!activeFileId) return;
+                        setActiveRecordIndexes(prev => ({
+                          ...prev,
+                          [activeFileId]: Math.max(activeRecordIndex - 1, 0),
+                        }));
+                      }}
+                    >
+                      <ChevronLeft className="h-4 w-4" />
+                    </Button>
+                    <span className="min-w-12 text-center tabular-nums">
+                      {t('tableIngest.stepTwo.recordPosition', {
+                        current: activeRecordIndex + 1,
+                        total: activeRecords.length,
+                      })}
+                    </span>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      isIcon
+                      aria-label={t('tableIngest.stepTwo.nextRecord')}
+                      disabled={!activeFileId || activeRecordIndex >= activeRecords.length - 1}
+                      onClick={() => {
+                        if (!activeFileId) return;
+                        setActiveRecordIndexes(prev => ({
+                          ...prev,
+                          [activeFileId]: Math.min(activeRecordIndex + 1, activeRecords.length - 1),
+                        }));
+                      }}
+                    >
+                      <ChevronRight className="h-4 w-4" />
+                    </Button>
+                  </div>
+                ) : null}
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <Button
@@ -1898,7 +1943,7 @@ const StepTwo: React.FC<IngestStepTwoProps> = ({
                     fieldStatus.status === 'recognized' || fieldStatus.status === 'normalized';
                   const val = (activeValues?.[col.name] ??
                     '') as DbTableRecord[keyof DbTableRecord];
-                  const cellKey = `${String(activeFileId || '')}:${col.name}`;
+                  const cellKey = `${String(activeFileId || '')}:${activeRecordIndex}:${col.name}`;
                   const rawValue = fieldStatus.match?.raw_value ?? fieldStatus.match?.value;
                   const normalizedValue =
                     fieldStatus.match?.normalized_value ?? fieldStatus.match?.value;
