@@ -285,8 +285,8 @@ export default function ExcelImportShell({ dbId }: ExcelImportShellProps) {
     setStep('result');
   };
 
-  const handleSmartRecognize = async () => {
-    if (!analysis || !selectedModel || recognizeMutation.isPending) return;
+  const recognizeCurrentColumns = async (): Promise<RecognizeExcelImportData | null> => {
+    if (!analysis || !selectedModel || recognizeMutation.isPending) return null;
     const res = await recognizeMutation.mutateAsync({
       table: {
         name: tableName.trim(),
@@ -300,7 +300,29 @@ export default function ExcelImportShell({ dbId }: ExcelImportShellProps) {
       model: { provider: selectedModel.provider, name: selectedModel.model },
       operator_language: locale,
     });
-    setRecognitionDraft(res.data);
+    return res.data;
+  };
+
+  const handleEnterSchema = async () => {
+    if (!isPreviewSheetReady || !selectedModel?.model || recognizeMutation.isPending) return;
+    try {
+      const recognized = await recognizeCurrentColumns();
+      if (!recognized) return;
+      setTableName(recognized.table.name);
+      setTableDescription(recognized.table.description);
+      setColumns(prev => applyRecognizedColumns(prev, recognized.columns));
+      setRecognitionDraft(null);
+      setRecognitionDialogOpen(false);
+      setStep('schema');
+    } catch {
+      // The mutation displays the backend error and keeps the user on the preview step.
+    }
+  };
+
+  const handleSmartRecognize = async () => {
+    const recognized = await recognizeCurrentColumns();
+    if (!recognized) return;
+    setRecognitionDraft(recognized);
     setRecognitionDialogOpen(true);
   };
 
@@ -447,19 +469,41 @@ export default function ExcelImportShell({ dbId }: ExcelImportShellProps) {
           </div>
 
           <div className="rounded-md border overflow-hidden flex flex-col">
-            <div className="px-3 py-2 border-b flex items-center justify-between">
+            <div className="px-3 py-2 border-b flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-center gap-2 text-sm font-medium">
                 <span>{t('excelImport.preview.rows')}</span>
               </div>
-              <Button
-                onClick={() => {
-                  if (isPreviewSheetReady) setStep('schema');
-                }}
-                disabled={!isPreviewSheetReady || isAnalyzingWorkbook}
-              >
-                {isAnalyzingWorkbook && <Loader2 className="h-4 w-4 animate-spin" />}
-                {t('excelImport.actions.next')}
-              </Button>
+              <div className="flex items-center gap-2">
+                <ModelSelector
+                  modelType="text-chat"
+                  value={selectedModel ?? undefined}
+                  onChange={value => {
+                    setSelectedModel(value);
+                    if (user?.id) {
+                      saveLastSelectedAiModel(user.id, 'excelImport', {
+                        provider: value.provider,
+                        model: value.model,
+                      });
+                    }
+                  }}
+                  placeholder={t('modelSelector.placeholder')}
+                  className="min-w-[220px]"
+                />
+                <Button
+                  onClick={handleEnterSchema}
+                  disabled={
+                    !isPreviewSheetReady ||
+                    isAnalyzingWorkbook ||
+                    !selectedModel?.model ||
+                    recognizeMutation.isPending
+                  }
+                >
+                  {(isAnalyzingWorkbook || recognizeMutation.isPending) && (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  )}
+                  {t('excelImport.actions.next')}
+                </Button>
+              </div>
             </div>
             <div className="overflow-auto">
               {!isPreviewSheetReady && (
