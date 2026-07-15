@@ -182,10 +182,7 @@ const Controls: FC<TableDataControlsProps> = ({
                   <SelectContent>
                     {columns.map(col => (
                       <SelectItem key={col.id} value={col.name} title={col.name}>
-                        {col.source_column_name?.trim() ||
-                          col.display_name?.trim() ||
-                          systemFieldLabels[col.name] ||
-                          col.name}
+                        {col.source_column_name?.trim() || systemFieldLabels[col.name] || col.name}
                       </SelectItem>
                     ))}
                   </SelectContent>

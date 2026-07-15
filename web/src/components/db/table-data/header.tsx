@@ -58,9 +58,6 @@ const Header: FC<TableDataHeaderProps> = ({
               <TooltipContent side="top" className="max-w-[320px] break-words">
                 <div className="space-y-1 text-xs">
                   <div>{displayName}</div>
-                  {col.display_name?.trim() && col.display_name.trim() !== displayName && (
-                    <div>{col.display_name.trim()}</div>
-                  )}
                   {col.name !== displayName && <div>{col.name}</div>}
                   {col.description && <div>{col.description}</div>}
                 </div>
