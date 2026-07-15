@@ -94,9 +94,9 @@ func (s *modelAvailabilityService) BatchCheckAvailability(ctx context.Context, o
 		return nil, fmt.Errorf("failed to get tenant routes: %w", err)
 	}
 
-	// Get all global models to map names to providers.
-	// Using a large limit to get all relevant models
-	allModels, _, err := s.modelRepo.List(ctx, nil, "", "", "", nil, 0, 1000)
+	// Query every catalog candidate for the requested names so provider
+	// ambiguity cannot be hidden by pagination.
+	allModels, err := s.modelRepo.ListByNames(ctx, modelNames)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list models: %w", err)
 	}

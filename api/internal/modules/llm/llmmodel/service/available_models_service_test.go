@@ -24,6 +24,10 @@ import (
 
 type availableModelRepoFake struct {
 	models                []*llmmodel.LLMModel
+	listByNames           int
+	lastNames             []string
+	list                  int
+	listErr               error
 	listAvailableByNames  int
 	listAvailableFiltered int
 	lastUseCase           string
@@ -46,8 +50,24 @@ func (f *availableModelRepoFake) GetByID(_ context.Context, id uuid.UUID) (*llmm
 func (f *availableModelRepoFake) GetByName(context.Context, string) (*llmmodel.LLMModel, error) {
 	return nil, errors.New("not implemented")
 }
-func (f *availableModelRepoFake) ListByNames(context.Context, []string) ([]*llmmodel.LLMModel, error) {
-	return nil, errors.New("not implemented")
+func (f *availableModelRepoFake) ListByNames(_ context.Context, names []string) ([]*llmmodel.LLMModel, error) {
+	f.listByNames++
+	f.lastNames = append([]string(nil), names...)
+	wanted := make(map[string]struct{}, len(names))
+	for _, name := range names {
+		wanted[name] = struct{}{}
+	}
+
+	models := make([]*llmmodel.LLMModel, 0)
+	for _, candidate := range f.models {
+		if candidate == nil {
+			continue
+		}
+		if _, ok := wanted[candidate.Model]; ok {
+			models = append(models, candidate)
+		}
+	}
+	return models, nil
 }
 func (f *availableModelRepoFake) ListAvailableByNames(_ context.Context, _ []string, _, useCase string) ([]*llmmodel.LLMModel, error) {
 	f.listAvailableByNames++
@@ -63,6 +83,10 @@ func (f *availableModelRepoFake) GetByProviderAndName(context.Context, string, s
 	return nil, errors.New("not implemented")
 }
 func (f *availableModelRepoFake) List(context.Context, *uuid.UUID, string, string, string, *bool, int, int) ([]*llmmodel.LLMModel, int64, error) {
+	f.list++
+	if f.listErr != nil {
+		return nil, 0, f.listErr
+	}
 	return f.models, int64(len(f.models)), nil
 }
 func (f *availableModelRepoFake) Update(context.Context, *llmmodel.LLMModel) error {
@@ -1167,6 +1191,62 @@ func TestModelAvailabilityBatchRejectsAmbiguousCatalogProviders(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BatchCheckAvailability returned error: %v", err)
 	}
+	got := batch.Items[modelName]
+	if got == nil {
+		t.Fatalf("batch availability missing item %q", modelName)
+	}
+	if got.Available || got.ChannelCount != 0 {
+		t.Fatalf("batch availability = %#v, want unavailable for ambiguous catalog providers", got)
+	}
+	wantMessage := `Model "same-name" is ambiguous across multiple catalog providers`
+	if got.Message != wantMessage {
+		t.Fatalf("batch message = %q, want %q", got.Message, wantMessage)
+	}
+}
+
+func TestModelAvailabilityBatchQueriesRequestedNamesBeyondFirstCatalogPage(t *testing.T) {
+	organizationID := uuid.New()
+	modelName := "same-name"
+	models := make([]*llmmodel.LLMModel, 0, 1002)
+	for range 1000 {
+		models = append(models, &llmmodel.LLMModel{
+			ID:       uuid.New(),
+			Provider: "unrelated",
+			Model:    "unrelated-model",
+			IsActive: true,
+			Status:   llmmodel.ModelStatusActive,
+		})
+	}
+	models = append(models,
+		&llmmodel.LLMModel{ID: uuid.New(), Provider: "openai", Model: modelName, IsActive: true, Status: llmmodel.ModelStatusActive},
+		&llmmodel.LLMModel{ID: uuid.New(), Provider: "anthropic", Model: modelName, IsActive: true, Status: llmmodel.ModelStatusActive},
+	)
+	modelRepo := &availableModelRepoFake{
+		models:  models,
+		listErr: errors.New("List must not be used by batch availability"),
+	}
+	routeRepo := &availableRouteRepoFake{routes: []*channelmodel.LLMRoute{{
+		Type:                   shared.RouteTypeZGICloud,
+		IsOfficial:             true,
+		Models:                 []string{modelName},
+		OfficialProviderModels: []channelmodel.ProviderModel{{Provider: "openai", Model: modelName}},
+	}}}
+	svc := NewModelAvailabilityService(modelRepo, &availableConfigRepoFake{}, routeRepo)
+
+	batch, err := svc.BatchCheckAvailability(context.Background(), organizationID, []string{modelName})
+	if err != nil {
+		t.Fatalf("BatchCheckAvailability returned error: %v", err)
+	}
+	if modelRepo.list != 0 {
+		t.Fatalf("List called %d time(s), want 0", modelRepo.list)
+	}
+	if modelRepo.listByNames != 1 {
+		t.Fatalf("ListByNames called %d time(s), want 1", modelRepo.listByNames)
+	}
+	if !reflect.DeepEqual(modelRepo.lastNames, []string{modelName}) {
+		t.Fatalf("ListByNames names = %#v, want %#v", modelRepo.lastNames, []string{modelName})
+	}
+
 	got := batch.Items[modelName]
 	if got == nil {
 		t.Fatalf("batch availability missing item %q", modelName)
