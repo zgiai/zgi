@@ -69,6 +69,10 @@ export function LoginForm({ className }: LoginFormProps) {
   const forgotPasswordHref = forgotPasswordEmail
     ? `/forgot-password?email=${encodeURIComponent(forgotPasswordEmail)}`
     : '/forgot-password';
+  const redirect = searchParams.get('redirect');
+  const registerHref = redirect
+    ? `/register?redirect=${encodeURIComponent(redirect)}`
+    : '/register';
 
   useEffect(() => {
     setMounted(true);
@@ -250,7 +254,7 @@ export function LoginForm({ className }: LoginFormProps) {
             <div className="text-center text-sm pt-2 animate-in fade-in duration-700 delay-500">
               <span className="text-muted-foreground">{t('dontHaveAccount')}</span>{' '}
               <Link
-                href="/register"
+                href={registerHref}
                 className="font-bold text-primary hover:text-primary-hover transition-colors"
               >
                 {t('createAccount')}

@@ -10,6 +10,7 @@ import * as z from 'zod';
 import { validatePassword, mapPasswordErrorsToI18nKeys } from '@/utils/validation';
 
 import { cn } from '@/lib/utils';
+import { withBasePathIfInternal } from '@/lib/config';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input, PasswordInput } from '@/components/ui/input';
@@ -29,7 +30,6 @@ export function CompleteRegistrationForm({ className }: CompleteRegistrationForm
   const email = searchParams.get('email');
   const token = searchParams.get('token');
   const tAuth = useT().auth;
-  const t = useT();
 
   const [isSuccess, setIsSuccess] = useState(false);
 
@@ -115,12 +115,8 @@ export function CompleteRegistrationForm({ className }: CompleteRegistrationForm
       if (result) {
         setIsSuccess(true);
         setTimeout(() => {
-          const redirect = searchParams.get('redirect');
-          if (redirect) {
-            router.push(redirect);
-          } else {
-            router.push('/console');
-          }
+          const redirectUrl = withBasePathIfInternal(searchParams.get('redirect') || '/console');
+          window.location.href = redirectUrl;
         }, 2000);
       }
     } catch (err) {

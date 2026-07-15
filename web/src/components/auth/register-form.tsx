@@ -27,6 +27,7 @@ export function RegisterForm({ className }: RegisterFormProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const redirect = searchParams.get('redirect');
+  const loginHref = redirect ? `/login?redirect=${encodeURIComponent(redirect)}` : '/login';
   const [registerStep, setRegisterStep] = useState<'email' | 'verifying'>('email');
   const t = useT().auth;
   const tCommon = useT('common');
@@ -180,7 +181,7 @@ export function RegisterForm({ className }: RegisterFormProps) {
             <p className="text-sm text-muted-foreground">
               {t('alreadyHaveAccount')}{' '}
               <Link
-                href="/login"
+                href={loginHref}
                 className="font-bold text-primary hover:text-primary-hover transition-colors"
               >
                 {t('signInLink')}
