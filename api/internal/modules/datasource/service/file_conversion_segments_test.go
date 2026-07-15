@@ -1,10 +1,25 @@
 package service
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/zgiai/zgi/api/internal/dto"
+	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
+	llmadapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 )
+
+type countingFileConversionLLMClient struct {
+	llmclient.LLMClient
+	chatCalls int
+}
+
+func (c *countingFileConversionLLMClient) Chat(context.Context, string, *llmadapter.ChatRequest) (*llmadapter.ChatResponse, error) {
+	c.chatCalls++
+	return nil, fmt.Errorf("unexpected llm call")
+}
 
 func TestSplitFileConversionContentBatchesMarkdownTableRows(t *testing.T) {
 	var content strings.Builder
@@ -191,6 +206,27 @@ func TestSplitFileConversionContentRejects401TableRowsForAllFormats(t *testing.T
 				t.Fatalf("len(segments) = %d, want 0", len(segments))
 			}
 		})
+	}
+}
+
+func TestConvertFileContentToRecordsRejectsTooManyTableSegmentsBeforeLLMCall(t *testing.T) {
+	client := &countingFileConversionLLMClient{}
+	service := &dataSourceService{llmClient: client}
+
+	_, _, err := service.convertFileContentToRecords(
+		t.Context(),
+		"organization-id",
+		"account-id",
+		markdownTableContent(401),
+		dto.GetTableColumnsResponse{},
+		nil,
+		nil,
+	)
+	if err == nil || !strings.Contains(err.Error(), "table segment limit") {
+		t.Fatalf("convertFileContentToRecords() error = %v, want table segment limit error", err)
+	}
+	if client.chatCalls != 0 {
+		t.Fatalf("LLM Chat calls = %d, want 0", client.chatCalls)
 	}
 }
 
