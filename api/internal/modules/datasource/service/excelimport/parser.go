@@ -116,12 +116,70 @@ func isExcelDateStyle(style *excelize.Style) bool {
 	if style.CustomNumFmt == nil {
 		return false
 	}
-	format := strings.ToLower(*style.CustomNumFmt)
-	return strings.ContainsAny(format, "yd") ||
-		strings.Contains(format, "h:") ||
-		strings.Contains(format, "ss") ||
-		strings.Contains(format, "[h]") ||
-		strings.Contains(format, "[s]")
+	return isExcelCustomDateFormat(*style.CustomNumFmt)
+}
+
+func isExcelCustomDateFormat(format string) bool {
+	hasDateToken := false
+	for i := 0; i < len(format); {
+		switch format[i] {
+		case '"':
+			next, ok := skipExcelFormatQuotedText(format, i+1)
+			if !ok {
+				return false
+			}
+			i = next
+		case '\\', '_', '*':
+			if i+1 >= len(format) {
+				return false
+			}
+			i += 2
+		case '[':
+			end := strings.IndexByte(format[i+1:], ']')
+			if end < 0 {
+				return false
+			}
+			end += i + 1
+			if isExcelElapsedTimeToken(format[i+1 : end]) {
+				hasDateToken = true
+			}
+			i = end + 1
+		default:
+			switch format[i] | 0x20 {
+			case 'y', 'm', 'd', 'h', 's':
+				hasDateToken = true
+			}
+			i++
+		}
+	}
+	return hasDateToken
+}
+
+func skipExcelFormatQuotedText(format string, start int) (int, bool) {
+	for i := start; i < len(format); i++ {
+		if format[i] != '"' {
+			continue
+		}
+		if i+1 < len(format) && format[i+1] == '"' {
+			i++
+			continue
+		}
+		return i + 1, true
+	}
+	return 0, false
+}
+
+func isExcelElapsedTimeToken(token string) bool {
+	token = strings.ToLower(strings.TrimSpace(token))
+	if token == "" || !strings.ContainsRune("hms", rune(token[0])) {
+		return false
+	}
+	for i := 1; i < len(token); i++ {
+		if token[i] != token[0] {
+			return false
+		}
+	}
+	return true
 }
 
 func isExcelBuiltInDateFormat(numFmt int) bool {

@@ -48,3 +48,70 @@ func TestParseXLSXNormalizesTypedDateBelowTitleRow(t *testing.T) {
 		t.Fatalf("date column type = %q, want timestamp", got)
 	}
 }
+
+func TestParseXLSXDoesNotNormalizeNumericCustomFormatsAsDates(t *testing.T) {
+	tests := []struct {
+		name   string
+		format string
+		want   string
+	}{
+		{name: "color", format: `[Red]#,##0`, want: "12,345"},
+		{name: "quoted currency", format: `"USD" 0.00`, want: "USD 12345.00"},
+		{name: "escaped date letter", format: `0.00\d`, want: "12345.00d"},
+		{name: "condition", format: `[>=100]0.00`, want: "12345.00"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := excelize.NewFile()
+			defer f.Close()
+			f.SetCellValue("Sheet1", "A1", "amount")
+			f.SetCellValue("Sheet1", "A2", 12345)
+			style, err := f.NewStyle(&excelize.Style{CustomNumFmt: &tt.format})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := f.SetCellStyle("Sheet1", "A2", "A2", style); err != nil {
+				t.Fatal(err)
+			}
+			content, err := f.WriteToBuffer()
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			workbook, err := ParseWorkbook("amounts.xlsx", content.Bytes())
+			if err != nil {
+				t.Fatalf("ParseWorkbook returned error: %v", err)
+			}
+			if got := workbook.Sheets[0].Rows[1][0]; got != tt.want {
+				t.Fatalf("parsed value = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestExcelCustomDateFormatScanner(t *testing.T) {
+	tests := []struct {
+		format string
+		want   bool
+	}{
+		{format: `yyyy-mm-dd`, want: true},
+		{format: `hh:mm:ss`, want: true},
+		{format: `[h]:mm`, want: true},
+		{format: `[m]`, want: true},
+		{format: `[s]`, want: true},
+		{format: `[Red]#,##0`, want: false},
+		{format: `"USD" 0.00`, want: false},
+		{format: `0.00\d`, want: false},
+		{format: `[>=100]0.00`, want: false},
+		{format: `[$-409]#,##0.00`, want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.format, func(t *testing.T) {
+			if got := isExcelCustomDateFormat(tt.format); got != tt.want {
+				t.Fatalf("isExcelCustomDateFormat(%q) = %v, want %v", tt.format, got, tt.want)
+			}
+		})
+	}
+}
