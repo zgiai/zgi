@@ -8,6 +8,7 @@ import (
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
+	"github.com/zgiai/zgi/api/config"
 	consoleintf "github.com/zgiai/zgi/api/internal/infra/platform/console"
 	llmcache "github.com/zgiai/zgi/api/internal/modules/llm/cache"
 	channelmodel "github.com/zgiai/zgi/api/internal/modules/llm/channel/model"
@@ -146,6 +147,41 @@ func TestSyncFromChannelsInvalidatesGlobalCacheOnlyWhenEffectiveProviderModelsCh
 	if got := llmcache.GlobalGeneration(ctx); got == initialGeneration {
 		t.Fatalf("global generation after provider mapping change = %q, want change from %q", got, initialGeneration)
 	}
+}
+
+func TestSyncFromChannelsRejectsMissingProviderWithModelsWhenStrictSyncDisabled(t *testing.T) {
+	previousConfig := config.GlobalConfig
+	config.GlobalConfig = &config.Config{
+		LLM: config.LLMConfig{OfficialModelStrictSync: false},
+	}
+	t.Cleanup(func() {
+		config.GlobalConfig = previousConfig
+	})
+
+	ctx := context.Background()
+	db := openOfficialSnapshotDB(t)
+	if _, err := SyncFromChannels(ctx, db, []UpstreamChannel{
+		{ID: "valid", Provider: "openai", Models: []string{"same-name"}},
+	}, SyncMeta{}); err != nil {
+		t.Fatalf("initial SyncFromChannels returned error: %v", err)
+	}
+
+	snapshot, err := SyncFromChannels(ctx, db, []UpstreamChannel{
+		{ID: "invalid", Provider: " ", Models: []string{"same-name"}},
+	}, SyncMeta{})
+	if err != nil {
+		t.Fatalf("invalid SyncFromChannels returned error: %v", err)
+	}
+	if snapshot.LastCheckStatus != CheckStatusRejected {
+		t.Fatalf("last check status = %q, want %q", snapshot.LastCheckStatus, CheckStatusRejected)
+	}
+	if snapshot.LastRejectReason != "invalid_provider" {
+		t.Fatalf("last reject reason = %q, want %q", snapshot.LastRejectReason, "invalid_provider")
+	}
+
+	assertEffectiveProviderModels(t, db, []providerModelJSON{
+		{Provider: "openai", Model: "same-name"},
+	})
 }
 
 func openOfficialSnapshotDB(t *testing.T) *gorm.DB {

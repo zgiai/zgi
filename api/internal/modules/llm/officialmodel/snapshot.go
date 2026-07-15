@@ -21,8 +21,9 @@ const (
 	CheckStatusAccepted = "accepted"
 	CheckStatusRejected = "rejected"
 
-	RejectReasonEmptyModels    = "empty_models"
-	RejectReasonAbnormalShrink = "abnormal_shrink"
+	RejectReasonEmptyModels     = "empty_models"
+	RejectReasonAbnormalShrink  = "abnormal_shrink"
+	RejectReasonInvalidProvider = "invalid_provider"
 
 	defaultMinAcceptRatio = 0.7
 )
@@ -117,7 +118,7 @@ func SyncFromChannels(ctx context.Context, db *gorm.DB, channels []UpstreamChann
 		snapshot.LatestEventVersion = meta.Version
 		snapshot.LatestSyncedAt = &now
 
-		if accepted, reason := shouldAccept(snapshot.EffectiveModels, aggregated); accepted {
+		if accepted, reason := shouldAccept(channels, snapshot.EffectiveModels, aggregated); accepted {
 			providerModelsChanged = !providerModelsEqual(snapshot.EffectiveProviderModels, aggregatedProviderModels)
 			snapshot.PreviousModels = cloneStrings(snapshot.EffectiveModels)
 			snapshot.EffectiveModels = cloneStrings(aggregated)
@@ -298,7 +299,18 @@ func aggregateProviderModels(channels []UpstreamChannel) []channelmodel.Provider
 	return aggregated
 }
 
-func shouldAccept(current, latest []string) (bool, string) {
+func shouldAccept(channels []UpstreamChannel, current, latest []string) (bool, string) {
+	for _, ch := range channels {
+		if strings.TrimSpace(ch.Provider) != "" {
+			continue
+		}
+		for _, modelName := range ch.Models {
+			if strings.TrimSpace(modelName) != "" {
+				return false, RejectReasonInvalidProvider
+			}
+		}
+	}
+
 	if !isOfficialModelStrictSyncEnabled() {
 		return true, ""
 	}
