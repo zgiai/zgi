@@ -26,6 +26,7 @@ Requirements:
 12. These are candidate fields for human review before persistence. If the source text clearly expresses a storable concept but some details are incomplete, include a conservative and meaningful candidate field. If evidence is weak or speculative, omit the field.
 13. Avoid noisy extraction. Do not include boilerplate legal wording, repeated rhetorical text, or generic filler as fields unless it represents a clearly storable business fact.
 14. Internally check whether the result covers the major explicit information categories present in the text, such as titles or identifiers, entities or parties, dates or periods, amounts or rates, locations or addresses, contact information, payment information, and terms or conditions. Do not output the checking process.
+15. Numeric-looking identifiers that are not used for arithmetic must use type text. This includes phone numbers, identity document numbers, bank card or account numbers, postal codes, tracking numbers, and similar codes. Preserve leading zeros, country codes, separators, and other formatting characters.
 
 Output format example:
 [{"Name":"user_name","Type":"text","IsRequired":true,"Description":"User name"}]

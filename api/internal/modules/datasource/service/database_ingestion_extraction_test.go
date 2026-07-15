@@ -60,3 +60,22 @@ func TestDatasourceFileConversionPromptConstrainsDatesMoneyAndPartialRecords(t *
 		}
 	}
 }
+
+func TestDatasourceTableAnalysisPromptKeepsNumericIdentifiersAsText(t *testing.T) {
+	tmpl, err := prompt.GetTemplate(prompt.DatasourceTableAnalysis)
+	if err != nil {
+		t.Fatalf("GetTemplate returned error: %v", err)
+	}
+
+	raw := tmpl.RawContent()
+	for _, want := range []string{
+		"Numeric-looking identifiers that are not used for arithmetic must use type text",
+		"phone numbers",
+		"identity document numbers",
+		"Preserve leading zeros",
+	} {
+		if !strings.Contains(raw, want) {
+			t.Fatalf("prompt template missing %q", want)
+		}
+	}
+}
