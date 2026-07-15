@@ -9,7 +9,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/dto"
 )
 
-func TestParentChildTransformMergesShortLineParentChunksBeforeSplittingChildren(t *testing.T) {
+func TestParentChildTransformMergesShortLinesIntoOneChildWindow(t *testing.T) {
 	processor := &ParentChildIndexProcessor{
 		BaseIndexProcessorImpl: NewBaseIndexProcessorImpl(nil, nil, nil, ""),
 	}
@@ -47,14 +47,51 @@ func TestParentChildTransformMergesShortLineParentChunksBeforeSplittingChildren(
 	if got[0].Content != "alpha\nbeta\ngamma" {
 		t.Fatalf("parent content = %q", got[0].Content)
 	}
-	if len(got[0].Children) != 3 {
-		t.Fatalf("child count = %d, want 3", len(got[0].Children))
+	if len(got[0].Children) != 1 {
+		t.Fatalf("child count = %d, want 1", len(got[0].Children))
 	}
-	if got[0].Children[0].Content != "alpha" || got[0].Children[1].Content != "beta" || got[0].Children[2].Content != "gamma" {
+	if got[0].Children[0].Content != "alpha\nbeta\ngamma" {
 		t.Fatalf("children = %#v", got[0].Children)
 	}
-	if got[0].Metadata["child_count"] != 3 {
-		t.Fatalf("metadata child_count = %v, want 3", got[0].Metadata["child_count"])
+	if got[0].Metadata["child_count"] != 1 {
+		t.Fatalf("metadata child_count = %v, want 1", got[0].Metadata["child_count"])
+	}
+}
+
+func TestParentChildTextModesUseConfiguredSlidingWindowOverlap(t *testing.T) {
+	for _, parentMode := range []string{"paragraph", "parent_child", "full-doc", "section"} {
+		t.Run(parentMode, func(t *testing.T) {
+			processor := &ParentChildIndexProcessor{
+				BaseIndexProcessorImpl: NewBaseIndexProcessorImpl(nil, nil, nil, ""),
+			}
+			output := &dto.ExtractOutput{Elements: []dto.ExtractElement{{Type: "text", Content: "abcdefghijklmnopqrstuvwxyz"}}}
+			options := &ProcessOptions{ProcessRule: map[string]interface{}{
+				"parent_mode": parentMode,
+				"subchunk_segmentation": map[string]interface{}{
+					"separator":     "\n",
+					"max_tokens":    10,
+					"chunk_overlap": 3,
+				},
+			}}
+
+			got, err := processor.Transform(context.Background(), output, options)
+			if err != nil {
+				t.Fatalf("Transform returned error: %v", err)
+			}
+			if len(got) != 1 || len(got[0].Children) < 2 {
+				t.Fatalf("got = %#v, want one parent with multiple children", got)
+			}
+			for i := 1; i < len(got[0].Children); i++ {
+				previous := []rune(got[0].Children[i-1].Content)
+				current := []rune(got[0].Children[i].Content)
+				if len(previous) < 3 || len(current) < 3 {
+					t.Fatalf("children %d/%d too short for overlap: %q / %q", i-1, i, string(previous), string(current))
+				}
+				if string(previous[len(previous)-3:]) != string(current[:3]) {
+					t.Fatalf("children %d/%d do not overlap by 3 runes: %q / %q", i-1, i, string(previous), string(current))
+				}
+			}
+		})
 	}
 }
 
@@ -664,13 +701,13 @@ func TestParentChunkMergeTarget(t *testing.T) {
 	}
 }
 
-func TestBuildSubchunkSeparatorsPreservesNewlineSeparator(t *testing.T) {
-	fixedSeparator, separators := buildSubchunkSeparators("\n")
+func TestSlidingWindowPrefersConfiguredSeparatorNearTarget(t *testing.T) {
+	got := splitSlidingWindowText("aaaa.bbbbb|ccccc.ddddd", 12, 6, 16, 0, "|")
 
-	if fixedSeparator != "\n" {
-		t.Fatalf("fixedSeparator = %q, want newline", fixedSeparator)
+	if len(got) < 2 {
+		t.Fatalf("chunks = %#v, want multiple chunks", got)
 	}
-	if len(separators) == 0 || separators[0] != "\n" {
-		t.Fatalf("first separator = %q, want newline", separators[0])
+	if got[0] != "aaaa.bbbbb|" {
+		t.Fatalf("first chunk = %q, want configured separator boundary", got[0])
 	}
 }

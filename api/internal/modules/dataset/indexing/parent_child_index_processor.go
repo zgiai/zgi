@@ -11,7 +11,6 @@ import (
 	"github.com/zgiai/zgi/api/internal/dto"
 	"github.com/zgiai/zgi/api/internal/modules/dataset/model"
 	dataset_repository "github.com/zgiai/zgi/api/internal/modules/dataset/repository"
-	"github.com/zgiai/zgi/api/internal/modules/dataset/splitter"
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
 	llmdefaultservice "github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/service"
 	"github.com/zgiai/zgi/api/pkg/embedding"
@@ -19,32 +18,6 @@ import (
 	"github.com/zgiai/zgi/api/pkg/storage"
 	"github.com/zgiai/zgi/api/pkg/vectordb"
 )
-
-var defaultSubchunkSeparators = []string{
-	"\n\n",
-	"\n",
-	"\u3002",
-	"\uff01",
-	"\uff1f",
-	"\uff1b",
-	"\uff1a",
-	". ",
-	"! ",
-	"? ",
-	"; ",
-	": ",
-	".",
-	"!",
-	"?",
-	";",
-	":",
-	"\uff0c",
-	", ",
-	",",
-	"\u3001",
-	" ",
-	"",
-}
 
 const defaultParentChunkMergeTarget = 500
 
@@ -962,7 +935,7 @@ func buildTextElementChildren(elements []dto.ExtractElement, params elementGroup
 	if content == "" {
 		return nil
 	}
-	parts := splitElementGroupText(content, params.ChildTargetChars, params.ChildMinChars, params.ChildMaxChars, params.ChildOverlapChars)
+	parts := splitSlidingWindowText(content, params.ChildTargetChars, params.ChildMinChars, params.ChildMaxChars, params.ChildOverlapChars, "")
 	children := make([]dto.TransformedChildChunk, 0, len(parts))
 	for _, part := range parts {
 		trimmed := strings.TrimSpace(part)
@@ -1045,7 +1018,7 @@ func buildLongTableRowChildren(element dto.ExtractElement, header []string, row 
 			budget = params.ChildMaxChars
 			prefix = column + ": "
 		}
-		parts := splitElementGroupText(cell, budget, 1, budget, 0)
+		parts := splitSlidingWindowText(cell, budget, 1, budget, 0, "")
 		for splitIndex, part := range parts {
 			trimmed := strings.TrimSpace(part)
 			if trimmed == "" {
@@ -1074,7 +1047,7 @@ func buildLongTableRowChildren(element dto.ExtractElement, header []string, row 
 }
 
 func buildFallbackTableChildren(element dto.ExtractElement, content string, params elementGroupParams) []dto.TransformedChildChunk {
-	parts := splitElementGroupText(content, params.ChildTargetChars, params.ChildMinChars, params.ChildMaxChars, params.ChildOverlapChars)
+	parts := splitSlidingWindowText(content, params.ChildTargetChars, params.ChildMinChars, params.ChildMaxChars, params.ChildOverlapChars, "")
 	children := make([]dto.TransformedChildChunk, 0, len(parts))
 	for i, part := range parts {
 		trimmed := strings.TrimSpace(part)
@@ -1205,7 +1178,7 @@ func sourceElementIDsFromExtract(elements []dto.ExtractElement) []any {
 	return ids
 }
 
-func splitElementGroupText(text string, target, minSize, maxSize, overlap int) []string {
+func splitSlidingWindowText(text string, target, minSize, maxSize, overlap int, preferredSeparator string) []string {
 	text = strings.TrimSpace(text)
 	if text == "" {
 		return nil
@@ -1235,7 +1208,7 @@ func splitElementGroupText(text string, target, minSize, maxSize, overlap int) [
 	}
 	chunks := make([]string, 0, (len(runes)+target-1)/target)
 	for start := 0; start < len(runes); {
-		end := chooseElementTextWindowEnd(runes, start, target, minSize, maxSize)
+		end := chooseSlidingWindowEnd(runes, start, target, minSize, maxSize, preferredSeparator)
 		if end <= start {
 			end = start + target
 			if end > len(runes) {
@@ -1257,7 +1230,7 @@ func splitElementGroupText(text string, target, minSize, maxSize, overlap int) [
 	return mergeSmallTrailingTextChunk(chunks, minSize)
 }
 
-func chooseElementTextWindowEnd(runes []rune, start, target, minSize, maxSize int) int {
+func chooseSlidingWindowEnd(runes []rune, start, target, minSize, maxSize int, preferredSeparator string) int {
 	remaining := len(runes) - start
 	if remaining <= maxSize {
 		return len(runes)
@@ -1274,20 +1247,54 @@ func chooseElementTextWindowEnd(runes []rune, start, target, minSize, maxSize in
 	if maxEnd > len(runes) {
 		maxEnd = len(runes)
 	}
+	if end := choosePreferredSeparatorEnd(runes, minEnd, idealEnd, maxEnd, preferredSeparator); end > 0 {
+		return end
+	}
 	for i := idealEnd; i >= minEnd; i-- {
-		if i > start && isElementTextBoundary(runes[i-1]) {
+		if i > start && isSlidingWindowBoundary(runes[i-1]) {
 			return i
 		}
 	}
 	for i := idealEnd; i < maxEnd; i++ {
-		if isElementTextBoundary(runes[i]) {
+		if isSlidingWindowBoundary(runes[i]) {
 			return i + 1
 		}
 	}
 	return maxEnd
 }
 
-func isElementTextBoundary(r rune) bool {
+func choosePreferredSeparatorEnd(runes []rune, minEnd, idealEnd, maxEnd int, preferredSeparator string) int {
+	separator := []rune(preferredSeparator)
+	if len(separator) == 0 {
+		return 0
+	}
+	for end := idealEnd; end >= minEnd; end-- {
+		if runeSliceEndsWith(runes, end, separator) {
+			return end
+		}
+	}
+	for end := idealEnd + 1; end <= maxEnd; end++ {
+		if runeSliceEndsWith(runes, end, separator) {
+			return end
+		}
+	}
+	return 0
+}
+
+func runeSliceEndsWith(runes []rune, end int, suffix []rune) bool {
+	start := end - len(suffix)
+	if start < 0 || end > len(runes) {
+		return false
+	}
+	for i := range suffix {
+		if runes[start+i] != suffix[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func isSlidingWindowBoundary(r rune) bool {
 	switch r {
 	case '\n', ' ', '\t', '.', '!', '?', ';', ':', ',', '|':
 		return true
@@ -1749,18 +1756,6 @@ func (p *ParentChildIndexProcessor) _splitChildNodes(ctx context.Context, rule *
 		return chunks, nil
 	}
 
-	fixedSeparator, separators := buildSubchunkSeparators(rule.SubchunkSegmentation.Separator)
-
-	subchunkSplitter := splitter.NewFixedRecursiveCharacterTextSplitter(
-		fixedSeparator,
-		separators,
-		rule.SubchunkSegmentation.MaxTokens,
-		rule.SubchunkSegmentation.ChunkOverlap,
-		nil,   // Use default length function
-		false, // Do not keep separator
-		false, // Do not add start index
-	)
-
 	transformedChunks := make([]dto.TransformedChunk, 0, len(chunks))
 
 	for _, chunk := range chunks {
@@ -1769,7 +1764,15 @@ func (p *ParentChildIndexProcessor) _splitChildNodes(ctx context.Context, rule *
 		}
 
 		strippedContent := strings.TrimSpace(chunk.Content)
-		contentChunks := subchunkSplitter.SplitText(strippedContent)
+		maxSize := rule.SubchunkSegmentation.MaxTokens
+		contentChunks := splitSlidingWindowText(
+			strippedContent,
+			maxSize,
+			maxSize/2,
+			maxSize,
+			rule.SubchunkSegmentation.ChunkOverlap,
+			rule.SubchunkSegmentation.Separator,
+		)
 
 		nonEmptyChunks := make([]string, 0, len(contentChunks))
 		for _, chunk := range contentChunks {
@@ -1831,28 +1834,4 @@ func cloneChunkMetadata(metadata map[string]any) map[string]any {
 		cloned[key] = value
 	}
 	return cloned
-}
-
-func buildSubchunkSeparators(preferredSeparator string) (string, []string) {
-	fixedSeparator := preferredSeparator
-	if fixedSeparator == "" {
-		fixedSeparator = "\n\n"
-	}
-
-	separators := make([]string, 0, len(defaultSubchunkSeparators)+1)
-	seen := make(map[string]struct{}, len(defaultSubchunkSeparators)+1)
-	addSeparator := func(separator string) {
-		if _, ok := seen[separator]; ok {
-			return
-		}
-		seen[separator] = struct{}{}
-		separators = append(separators, separator)
-	}
-
-	addSeparator(fixedSeparator)
-	for _, separator := range defaultSubchunkSeparators {
-		addSeparator(separator)
-	}
-
-	return fixedSeparator, separators
 }
