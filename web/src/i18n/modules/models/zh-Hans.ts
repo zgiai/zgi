@@ -114,7 +114,7 @@ const messages: ModelsMessages = {
       agent: '智能体模型',
     },
     tags: {
-      agent: '智能体',
+      agent: '推荐',
     },
     empty: {
       noModelsTitle: '需要先配置模型',

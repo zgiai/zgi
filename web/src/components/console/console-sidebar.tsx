@@ -247,7 +247,7 @@ export function ConsoleSidebar({
             permissions: AGENT_VISIBLE_PERMISSION_CODES,
           },
           {
-            title: t('workflows'),
+            title: t('workflowAgents'),
             href: '/console/workflows',
             icon: Workflow,
             permissions: WORKFLOW_VISIBLE_PERMISSION_CODES,
@@ -613,7 +613,7 @@ export function ConsoleMobileSidebar({
             permissions: AGENT_VISIBLE_PERMISSION_CODES,
           },
           {
-            title: t('workflows'),
+            title: t('workflowAgents'),
             href: '/console/workflows',
             icon: Workflow,
             permissions: WORKFLOW_VISIBLE_PERMISSION_CODES,

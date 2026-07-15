@@ -125,7 +125,7 @@ const messages = {
       agent: 'Agent Model',
     },
     tags: {
-      agent: 'Agent',
+      agent: 'Recommended',
     },
     empty: {
       noModelsTitle: 'Model setup required',
