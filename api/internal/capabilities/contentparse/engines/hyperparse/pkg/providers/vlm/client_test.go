@@ -2,6 +2,9 @@ package vlm
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -73,12 +76,12 @@ func TestImageFilenameAndMIME(t *testing.T) {
 	}
 }
 
-func TestParseBytesUsesImageUnderstandingPromptAndConsolidatesOutput(t *testing.T) {
+func TestParseBytesUsesImageUnderstandingPromptAndAcceptsMarkdown(t *testing.T) {
 	var captured ChatCompletionRequest
 	client := NewWithChatCompletion("vision-model", "", func(ctx context.Context, req ChatCompletionRequest) (*ChatCompletionResponse, error) {
 		captured = req
 		return &ChatCompletionResponse{
-			Content: `{"chunks":[{"type":"heading","page":0,"text":"医院楼层导览","markdown":"# 医院楼层导览"},{"type":"text","page":0,"text":"8F 儿科一病区","markdown":"## 8F\n\n- 儿科一病区"}]}`,
+			Content: "# 医院楼层导览\n\n## 8F\n\n- 儿科一病区",
 			Model:   "vision-model",
 		}, nil
 	})
@@ -90,8 +93,11 @@ func TestParseBytesUsesImageUnderstandingPromptAndConsolidatesOutput(t *testing.
 	if len(captured.UserContent) < 2 {
 		t.Fatalf("user content = %#v, want prompt and image", captured.UserContent)
 	}
+	if captured.ResponseFormat != "" {
+		t.Fatalf("response format = %q, want plain text", captured.ResponseFormat)
+	}
 	prompt, _ := captured.UserContent[0]["text"].(string)
-	for _, required := range []string{"ONE coherent", "Preserve the source language exactly", "Flowchart or process diagram", "exactly ONE chunk"} {
+	for _, required := range []string{"ONE coherent", "Preserve the source language exactly", "Flowchart or process diagram", "directly as Markdown"} {
 		if !strings.Contains(prompt, required) {
 			t.Fatalf("image prompt missing %q", required)
 		}
@@ -117,6 +123,51 @@ func TestParseBytesRejectsNonImageInput(t *testing.T) {
 	_, err := client.ParseBytes(context.Background(), "document.pdf", []byte("pdf"), extractcommon.ParseOptions{})
 	if err == nil || !strings.Contains(err.Error(), "unsupported non-image input") {
 		t.Fatalf("ParseBytes() error = %v, want non-image rejection", err)
+	}
+}
+
+func TestCallContentOnceRequestsJSONObject(t *testing.T) {
+	var captured ChatCompletionRequest
+	client := NewWithChatCompletion("vision-model", "", func(ctx context.Context, req ChatCompletionRequest) (*ChatCompletionResponse, error) {
+		captured = req
+		return &ChatCompletionResponse{
+			Content: `{"chunks":[{"type":"text","page":0,"text":"hello"}]}`,
+			Model:   "vision-model",
+		}, nil
+	})
+
+	_, err := client.callContentOnce(context.Background(), []map[string]any{{"type": "text", "text": "parse PDF"}}, "vision-model", "gemini")
+	if err != nil {
+		t.Fatalf("callContentOnce() error = %v", err)
+	}
+	if captured.ResponseFormat != "json_object" {
+		t.Fatalf("response format = %q, want json_object", captured.ResponseFormat)
+	}
+}
+
+func TestCompleteOmitsResponseFormatForPlainTextHTTPRequests(t *testing.T) {
+	var captured map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&captured); err != nil {
+			t.Errorf("decode request: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"finish_reason":"stop","message":{"content":"# Markdown"}}],"usage":{"prompt_tokens":2}}`))
+	}))
+	defer server.Close()
+
+	t.Setenv("VLM_API_KEY", "test-key")
+	t.Setenv("VLM_BASE_URL", server.URL)
+	client := New()
+	content, _, _, _, err := client.complete(context.Background(), []map[string]any{{"type": "text", "text": "describe image"}}, "vision-model", "")
+	if err != nil {
+		t.Fatalf("complete() error = %v", err)
+	}
+	if content != "# Markdown" {
+		t.Fatalf("content = %q, want Markdown", content)
+	}
+	if _, exists := captured["response_format"]; exists {
+		t.Fatalf("request unexpectedly contains response_format: %#v", captured)
 	}
 }
 

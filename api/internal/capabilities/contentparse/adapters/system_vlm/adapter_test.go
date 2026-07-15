@@ -34,7 +34,7 @@ func (f *fakeVisionChatClient) Chat(ctx context.Context, organizationID string, 
 		Choices: []llmadapter.Choice{
 			{
 				Message: llmadapter.Message{
-					Content: `{"chunks":[{"type":"text","page":0,"bbox":[0,0,100,100],"text":"invoice total","markdown":"invoice total"}]}`,
+					Content: "# Invoice\n\nTotal: $42",
 				},
 				FinishReason: "stop",
 			},
@@ -81,6 +81,9 @@ func TestSystemVLMAdapterUsesDefaultVisionModel(t *testing.T) {
 	if chatClient.request.Provider != "openai" || chatClient.request.Model != "gpt-vision" {
 		t.Fatalf("chat provider/model = %q/%q", chatClient.request.Provider, chatClient.request.Model)
 	}
+	if chatClient.request.ResponseFormat != nil {
+		t.Fatalf("response format = %#v, want plain text", chatClient.request.ResponseFormat)
+	}
 	content, ok := chatClient.request.Messages[0].Content.([]llmadapter.MessageContentPart)
 	if !ok {
 		t.Fatalf("message content type = %T, want []MessageContentPart", chatClient.request.Messages[0].Content)
@@ -92,7 +95,7 @@ func TestSystemVLMAdapterUsesDefaultVisionModel(t *testing.T) {
 		t.Fatalf("image content = %#v, want PNG data URI", content[1])
 	}
 	prompt := content[0].Text
-	if !strings.Contains(prompt, "exactly ONE chunk") || !strings.Contains(prompt, "Flowchart or process diagram") {
+	if !strings.Contains(prompt, "directly as Markdown") || !strings.Contains(prompt, "Flowchart or process diagram") {
 		t.Fatalf("unexpected image understanding prompt: %q", prompt)
 	}
 }

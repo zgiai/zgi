@@ -262,21 +262,7 @@ Markdown document requirements:
 - Avoid redundant repetition between transcription and interpretation unless repetition is needed for clarity.
 - Use headings, lists, and Markdown tables when they improve fidelity and retrieval.
 
-Return a strict JSON object only, with exactly ONE chunk:
-{
-  "chunks": [
-    {
-      "type": "text",
-      "subtype": "",
-      "page": 0,
-      "bbox": [0, 0, 1000, 1000],
-      "text": "",
-      "markdown": "<the complete Markdown knowledge document>"
-    }
-  ]
-}
-
-The markdown field must contain the complete result. Output only the JSON object, with no code fences and no commentary outside JSON.`
+Return the complete knowledge document directly as Markdown. Do not wrap it in JSON or a code fence, and do not add commentary outside the document.`
 
 type contentPart struct {
 	Type     string           `json:"type"`
@@ -408,51 +394,7 @@ func (c *Client) runImagePipeline(ctx context.Context, filename string, data []b
 	if err != nil {
 		return nil, err
 	}
-	br, err = consolidateImageBatchResult(br)
-	if err != nil {
-		return nil, err
-	}
 	return toDocumentResult(filename, 1, []*batchResult{br})
-}
-
-func consolidateImageBatchResult(result *batchResult) (*batchResult, error) {
-	if result == nil {
-		return nil, errors.New("vlm: image parser returned no result")
-	}
-
-	parts := make([]string, 0, len(result.Chunks))
-	seen := make(map[string]struct{}, len(result.Chunks))
-	for _, chunk := range result.Chunks {
-		content := strings.TrimSpace(chunk.Markdown)
-		if content == "" {
-			content = strings.TrimSpace(chunk.Text)
-		}
-		if content == "" {
-			continue
-		}
-		if _, exists := seen[content]; exists {
-			continue
-		}
-		seen[content] = struct{}{}
-		parts = append(parts, content)
-	}
-	if len(parts) == 0 {
-		return nil, errors.New("vlm: image parser returned no usable content")
-	}
-
-	markdown := strings.Join(parts, "\n\n")
-	return &batchResult{
-		Model: result.Model,
-		Chunks: []chunkItem{
-			{
-				Type:     "text",
-				Page:     0,
-				Bbox:     []float64{0, 0, bboxScale, bboxScale},
-				Text:     markdown,
-				Markdown: markdown,
-			},
-		},
-	}, nil
 }
 
 func (c *Client) callParse(ctx context.Context, filename string, pdfData []byte, batchIdx, batchTotal int, pageStart, pageEnd int) (*batchResult, error) {
@@ -571,22 +513,37 @@ func (c *Client) callImageOnce(ctx context.Context, filename string, imgData []b
 			},
 		},
 	}
-	return c.callContentOnce(ctx, userContent, useModel, "gemini: image")
-}
-
-func (c *Client) callContentOnce(ctx context.Context, userContent []map[string]any, useModel string, label string) (*batchResult, error) {
-	content, modelUsed, finishReason, promptTokens, err := c.complete(ctx, userContent, useModel)
+	content, modelUsed, finishReason, _, err := c.complete(ctx, userContent, useModel, "")
 	if err != nil {
 		return nil, err
 	}
-	if strings.EqualFold(finishReason, "length") {
-		return nil, fmt.Errorf("%s: finish_reason=length (max_tokens=%d exceeded)", label, maxTokens())
+	if err := validateCompletionContent("gemini: image", content, finishReason); err != nil {
+		return nil, err
 	}
-	if strings.EqualFold(finishReason, "content_filter") || strings.EqualFold(finishReason, "safety") {
-		return nil, fmt.Errorf("%s: finish_reason=%s (content blocked by safety filter)", label, finishReason)
+	if modelUsed == "" {
+		modelUsed = useModel
 	}
-	if content == "" {
-		return nil, &retryableErr{inner: fmt.Errorf("%s: empty message.content (finish_reason=%s)", label, finishReason)}
+	return &batchResult{
+		Model: modelUsed,
+		Chunks: []chunkItem{
+			{
+				Type:     "text",
+				Page:     0,
+				Bbox:     []float64{0, 0, bboxScale, bboxScale},
+				Text:     content,
+				Markdown: content,
+			},
+		},
+	}, nil
+}
+
+func (c *Client) callContentOnce(ctx context.Context, userContent []map[string]any, useModel string, label string) (*batchResult, error) {
+	content, modelUsed, finishReason, promptTokens, err := c.complete(ctx, userContent, useModel, "json_object")
+	if err != nil {
+		return nil, err
+	}
+	if err := validateCompletionContent(label, content, finishReason); err != nil {
+		return nil, err
 	}
 
 	chunks, cerr := parseChunks(content)
@@ -606,13 +563,26 @@ func (c *Client) callContentOnce(ctx context.Context, userContent []map[string]a
 	return &batchResult{Model: modelUsed, Chunks: chunks}, nil
 }
 
-func (c *Client) complete(ctx context.Context, userContent []map[string]any, useModel string) (content string, modelUsed string, finishReason string, promptTokens int, err error) {
+func validateCompletionContent(label, content, finishReason string) error {
+	if strings.EqualFold(finishReason, "length") {
+		return fmt.Errorf("%s: finish_reason=length (max_tokens=%d exceeded)", label, maxTokens())
+	}
+	if strings.EqualFold(finishReason, "content_filter") || strings.EqualFold(finishReason, "safety") {
+		return fmt.Errorf("%s: finish_reason=%s (content blocked by safety filter)", label, finishReason)
+	}
+	if content == "" {
+		return &retryableErr{inner: fmt.Errorf("%s: empty message.content (finish_reason=%s)", label, finishReason)}
+	}
+	return nil
+}
+
+func (c *Client) complete(ctx context.Context, userContent []map[string]any, useModel, responseFormat string) (content string, modelUsed string, finishReason string, promptTokens int, err error) {
 	if c != nil && c.chatCompletion != nil {
 		resp, err := c.chatCompletion(ctx, ChatCompletionRequest{
 			Model:          useModel,
 			UserContent:    userContent,
 			MaxTokens:      maxTokens(),
-			ResponseFormat: "json_object",
+			ResponseFormat: responseFormat,
 		})
 		if err != nil {
 			return "", useModel, "", 0, &retryableErr{inner: err}
@@ -639,8 +609,10 @@ func (c *Client) complete(ctx context.Context, userContent []map[string]any, use
 				"content": userContent,
 			},
 		},
-		"max_tokens":      maxTokens(),
-		"response_format": map[string]any{"type": "json_object"},
+		"max_tokens": maxTokens(),
+	}
+	if responseFormat != "" {
+		reqBody["response_format"] = map[string]any{"type": responseFormat}
 	}
 	payload, err := json.Marshal(reqBody)
 	if err != nil {
