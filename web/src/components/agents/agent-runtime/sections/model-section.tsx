@@ -39,6 +39,7 @@ export function AgentRuntimeModelSection({
     >
       <ModelSelectorParameter
         modelType="text-chat"
+        availabilityUseCase="agent-runtime"
         preferredUseCase="agent"
         capabilityFilter={{ features_tool_call: true }}
         value={modelValue}

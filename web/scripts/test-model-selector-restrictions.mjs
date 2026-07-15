@@ -204,6 +204,7 @@ const agentRuntimeModelSectionSource = fs.readFileSync(
   'utf8'
 );
 assert.match(agentRuntimeModelSectionSource, /modelType="text-chat"/);
+assert.match(agentRuntimeModelSectionSource, /availabilityUseCase="agent-runtime"/);
 assert.match(agentRuntimeModelSectionSource, /preferredUseCase="agent"/);
 assert.match(agentRuntimeModelSectionSource, /capabilityFilter=\{\{ features_tool_call: true \}\}/);
 assert.doesNotMatch(agentRuntimeModelSectionSource, /TabsTrigger/);

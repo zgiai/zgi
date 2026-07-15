@@ -14,6 +14,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/capabilities/agentbindings"
 	"github.com/zgiai/zgi/api/internal/dto"
 	"github.com/zgiai/zgi/api/internal/modules/agentmemory"
+	llmmodelservice "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/service"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	"github.com/zgiai/zgi/api/pkg/logger"
@@ -28,7 +29,7 @@ var (
 	errAgentPromptTooLong         = errors.New("agent system prompt is too long")
 )
 
-const agentModelSelectionUseCase = "text-chat"
+const agentModelSelectionUseCase = llmmodelservice.AgentRuntimeUseCase
 
 func (s *agentsService) GetAgentConfig(ctx context.Context, agentID, accountID string) (*dto.AgentConfigResponse, error) {
 	ag, cfg, err := s.loadAuthorizedAgentRuntimeDraft(ctx, agentID, accountID, true, agentRuntimeConfigReadPermissionCodes("AGENT")...)

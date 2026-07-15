@@ -44,16 +44,16 @@ func TestValidateAgentModelEligibilityAcceptsFunctionCallingTextChatModels(t *te
 	if err := service.validateAgentModelEligibility(context.Background(), uuid.New(), "deepseek", "legacy-model"); err != nil {
 		t.Fatalf("validateAgentModelEligibility(legacy-model) error = %v", err)
 	}
-	if !reflect.DeepEqual(useCases, []string{"text-chat"}) {
-		t.Fatalf("legacy model use cases = %#v, want text-chat compatibility lookup", useCases)
+	if !reflect.DeepEqual(useCases, []string{llmmodelservice.AgentRuntimeUseCase}) {
+		t.Fatalf("legacy model use cases = %#v, want Agent runtime compatibility lookup", useCases)
 	}
 
 	useCases = nil
 	if err := service.validateAgentModelEligibility(context.Background(), uuid.New(), "deepseek", "agent-model"); err != nil {
 		t.Fatalf("validateAgentModelEligibility(agent-model) error = %v", err)
 	}
-	if !reflect.DeepEqual(useCases, []string{"text-chat"}) {
-		t.Fatalf("recommended model use cases = %#v, want text-chat lookup", useCases)
+	if !reflect.DeepEqual(useCases, []string{llmmodelservice.AgentRuntimeUseCase}) {
+		t.Fatalf("recommended model use cases = %#v, want Agent runtime compatibility lookup", useCases)
 	}
 
 	if err := service.validateAgentModelEligibility(context.Background(), uuid.New(), "openai", "legacy-model"); err == nil {

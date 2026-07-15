@@ -5,7 +5,7 @@ import { Select, SelectContent, SelectTrigger, SelectValue } from '@/components/
 
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
-import type { ModelUseCase, ModelItem } from '@/services/types/model';
+import type { AvailableModelUseCase, ModelUseCase, ModelItem } from '@/services/types/model';
 import { ModelIcon } from 'modelicons';
 import { useAvailableModels } from '@/hooks/model/use-model';
 import { ModelFeatureIcon } from '@/components/model/model-feature-icon';
@@ -34,6 +34,8 @@ import {
 export interface ModelSelectorProps {
   /** The model use case to query, e.g. 'text-chat', 'embedding', 'rerank'. */
   modelType: ModelUseCase;
+  /** Optional availability query that is distinct from the model's declared use-case label. */
+  availabilityUseCase?: AvailableModelUseCase;
   /** Current selected value as an object with provider and model. */
   value?: ModelSelectorValue;
   /** Callback triggered when selection changes. */
@@ -97,6 +99,7 @@ function getModelPropsSignature(props: ModelSelectorModelProps | null): string {
  */
 export function ModelSelector({
   modelType,
+  availabilityUseCase,
   value,
   onChange,
   placeholder,
@@ -182,7 +185,7 @@ export function ModelSelector({
 
   // Fetch available models with use_case filter (non-paginated, non-expiring)
   const { models, isLoading, isFetching, refetch } = useAvailableModels({
-    use_case: modelType as ModelUseCase,
+    use_case: availabilityUseCase ?? modelType,
   });
 
   // Apply capability filtering

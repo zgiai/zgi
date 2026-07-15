@@ -29,7 +29,11 @@ import {
 import { Skeleton } from '@/components/ui/skeleton';
 import { ModelSelector, type ModelSelectorValue } from '@/components/common/model-selector';
 import { useModelParameterRules } from '@/hooks/model/use-model-parameter-rules';
-import type { ModelUseCase, ParameterRuleItem } from '@/services/types/model';
+import type {
+  AvailableModelUseCase,
+  ModelUseCase,
+  ParameterRuleItem,
+} from '@/services/types/model';
 import { computeInitialNumber } from '@/utils/number';
 import { useT } from '@/i18n';
 import {
@@ -74,6 +78,7 @@ export interface ModelSelectorParameterValue {
 
 export interface ModelSelectorParameterProps {
   modelType: ModelUseCase;
+  availabilityUseCase?: AvailableModelUseCase;
   value: ModelSelectorParameterValue;
   onChange: (v: ModelSelectorParameterValue) => void;
   className?: string;
@@ -102,6 +107,7 @@ export interface ModelSelectorParameterProps {
 
 export default function ModelSelectorParameter({
   modelType,
+  availabilityUseCase,
   value,
   onChange,
   className,
@@ -440,6 +446,7 @@ export default function ModelSelectorParameter({
         <div className="flex-1">
           <ModelSelector
             modelType={modelType}
+            availabilityUseCase={availabilityUseCase}
             value={
               value?.provider && value?.model
                 ? { provider: value.provider, model: value.model }

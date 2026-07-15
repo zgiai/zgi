@@ -961,7 +961,7 @@ func (t *updateAgentConfigTool) validateRequestedModelPair(ctx context.Context, 
 	if err != nil {
 		return fmt.Errorf("invalid organization_id: %w", err)
 	}
-	models, err := t.availableModels.ListAvailable(ctx, organizationID, provider, string(llmmodelmodel.UseCaseTextChat))
+	models, err := t.availableModels.ListAvailable(ctx, organizationID, provider, llmmodelservice.AgentRuntimeUseCase)
 	if err != nil {
 		return fmt.Errorf("list available models for agent model validation: %w", err)
 	}
