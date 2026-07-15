@@ -157,14 +157,17 @@ tool_governance:
     audit_required: true
     idempotency_required: true
 display:
-  icon: database
-  category: database
+  icon: table-properties
+  category: data_analysis
+  scenarios:
+    - data_insights
+    - technical_development
   label:
     en_US: Agent Database
     zh_Hans: 智能体数据库
   description:
-    en_US: Uses only database tables bound to the current Agent configuration.
-    zh_Hans: 仅使用当前智能体配置中绑定的数据库表。
+    en_US: Designed for Agent tasks that need business data; searches, analyzes, and updates records only in tables bound to the current Agent.
+    zh_Hans: 适用于智能体查询或维护业务数据，可在当前智能体绑定的数据库表中检索、分析和更新记录。
   when_to_use:
     en_US: Use for Agent answers or actions that need configured database records.
     zh_Hans: 当智能体回答或操作需要使用已配置的数据库记录时使用。

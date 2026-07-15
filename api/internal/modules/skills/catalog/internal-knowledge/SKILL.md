@@ -53,13 +53,16 @@ tool_governance:
     idempotency_required: false
 display:
   icon: library
-  category: knowledge
+  category: knowledge_retrieval
+  scenarios:
+    - knowledge_research
+    - office_collaboration
   label:
     en_US: Internal Knowledge
     zh_Hans: 内部知识库
   description:
-    en_US: Finds knowledge bases accessible to the current user and retrieves relevant context.
-    zh_Hans: 查找当前用户可访问的知识库，并检索相关上下文。
+    en_US: Designed for answering from company policies, product material, or workspace documents; finds accessible knowledge bases and retrieves relevant facts with source context.
+    zh_Hans: 适用于根据公司制度、产品资料或工作区文档回答问题，可查找有权限访问的知识库并检索相关事实和来源上下文。
   when_to_use:
     en_US: Use when an assistant answer needs facts or source context from accessible knowledge bases.
     zh_Hans: 当助手回复需要引用可访问知识库中的事实或来源上下文时使用。

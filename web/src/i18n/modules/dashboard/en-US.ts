@@ -713,39 +713,48 @@ const messages = {
       },
     },
     aichatSkills: {
-      pageTitle: 'Organization Skills',
+      pageTitle: 'Skill Management',
       pageSubtitle:
-        'Skills are AI capability packages an organization can enable. The model can read instructions, references, or call tools when needed.',
-      title: 'Organization Skills',
-      description: 'Choose which Skills are available to AIChat across the current organization.',
+        'Manage the Skills available to conversations, the platform assistant, and agents for office collaboration, document processing, content creation, data analysis, knowledge retrieval, and task automation.',
+      title: 'Skill Management',
+      description:
+        'Manage the Skills available to conversations, the platform assistant, and agents for office collaboration, document processing, content creation, data analysis, knowledge retrieval, and task automation.',
       enabledCount: '{count} Skills enabled',
       sectionCount: '{count} Skills',
       empty: 'No Skills are available.',
-      loadFailed: 'Failed to load AIChat Skills.',
+      loadFailed: 'Failed to load Skills.',
       toggleAria: 'Toggle {skill}',
       tabs: {
         system: 'System Skills',
         custom: 'Custom Skills',
       },
       filters: {
+        scenarioLabel: 'Use case',
+        allScenarios: 'All',
+        capabilityLabel: 'Capability',
+        allCapabilities: 'All capabilities',
         searchPlaceholder: 'Search name, ID, description, or tags',
         searchAria: 'Search Skills',
+        sourceAria: 'Filter by source',
+        allSources: 'All sources',
         runtimeAria: 'Filter by Skill type',
         statusAria: 'Filter by enabled status',
         allRuntime: 'All types',
         allStatus: 'All statuses',
+        visibleCount: '{count} Skills shown',
         empty: 'No Skills match the current filters.',
       },
       sections: {
         system: {
           title: 'System Skills',
-          description: 'Provided and maintained by the platform, ready to enable for AIChat.',
+          description:
+            'Provided and maintained by the platform, ready to enable for conversations, the platform assistant, and agents.',
           empty: 'No built-in Skills are available.',
         },
         custom: {
           title: 'Custom Skills',
           description:
-            'Upload organization-owned Skill packages, then review and enable them for AIChat.',
+            'Upload organization-owned Skill packages, then review and enable them for conversations, the platform assistant, and agents.',
           emptyTitle: 'No custom Skills yet',
           emptyDescription:
             'Upload a zip Skill package here. Imported Skills stay disabled until you enable them.',
@@ -807,8 +816,8 @@ const messages = {
           'This Skill name is reserved by a built-in system Skill. Rename the custom Skill and try again.',
       },
       messages: {
-        saved: 'AIChat Skill settings saved',
-        saveFailed: 'Failed to save AIChat Skill settings',
+        saved: 'Skill settings saved',
+        saveFailed: 'Failed to save Skill settings',
         reset: 'Changes reset',
         imported: '{skill} imported. It is disabled by default.',
         previewFailed: 'Failed to validate Skill package',

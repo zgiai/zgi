@@ -10,6 +10,7 @@ import {
   Minimize2,
   Paperclip,
   Send,
+  Settings2,
   Shield,
   ShieldAlert,
   ShieldCheck,
@@ -74,12 +75,15 @@ interface AIChatInputToolbarProps {
   toolGovernancePermissionTier?: AIChatToolGovernancePermissionTier;
   enableUpload?: boolean;
   showFileLibraryPicker?: boolean;
+  showSkillManagement?: boolean;
+  skillManagementLabel?: string;
   surface?: AIChatComposerSurface;
   onModelChange: (value: ModelSelectorValue) => void;
   onModelPropsChange: (model: ModelSelectorModelProps | null) => void;
   onUploadDocument: () => void;
   onUploadImage: () => void;
   onSelectFromFiles: () => void;
+  onOpenSkillManagement?: () => void;
   onMemoryEnabledChange: (enabled: boolean) => void;
   onToggleComposerExpanded?: () => void;
   onToolGovernancePermissionTierChange?: (tier: AIChatToolGovernancePermissionTier) => void;
@@ -169,12 +173,15 @@ export function AIChatInputToolbar({
   toolGovernancePermissionTier = 'basic',
   enableUpload = true,
   showFileLibraryPicker = true,
+  showSkillManagement = false,
+  skillManagementLabel,
   surface = 'aichat',
   onModelChange,
   onModelPropsChange,
   onUploadDocument,
   onUploadImage,
   onSelectFromFiles,
+  onOpenSkillManagement,
   onMemoryEnabledChange,
   onToggleComposerExpanded,
   onToolGovernancePermissionTierChange,
@@ -368,6 +375,23 @@ export function AIChatInputToolbar({
               ) : null}
             </DropdownMenuContent>
           </DropdownMenu>
+        ) : null}
+        {showSkillManagement && onOpenSkillManagement && skillManagementLabel ? (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                type="button"
+                isIcon
+                variant="ghost"
+                className="size-8 rounded-full"
+                onClick={onOpenSkillManagement}
+                aria-label={skillManagementLabel}
+              >
+                <Settings2 className="size-4" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="top">{skillManagementLabel}</TooltipContent>
+          </Tooltip>
         ) : null}
         {showComposerExpandButton && onToggleComposerExpanded ? (
           <Button
