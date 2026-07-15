@@ -21,14 +21,15 @@ var markdownTableSeparatorPattern = regexp.MustCompile(`^\s*\|?\s*:?-{3,}:?\s*(?
 type fileConversionSegment struct {
 	Content          string
 	SourceRowIndexes []int
+	Tabular          bool
 }
 
 func splitFileConversionContent(content string) ([]fileConversionSegment, bool) {
-	if rows, header := markdownTableRows(content); len(rows) > 0 {
-		return tableRowSegments(header, rows), true
+	if segments, ok := markdownContentSegments(content); ok {
+		return segments, true
 	}
-	if rows, header := htmlTableRows(content); len(rows) > 0 {
-		return tableRowSegments(header, rows), true
+	if segments, ok := htmlContentSegments(content); ok {
+		return segments, true
 	}
 	if rows, header := csvTableRows(content); len(rows) > 0 {
 		return tableRowSegments(header, rows), true
@@ -36,38 +37,97 @@ func splitFileConversionContent(content string) ([]fileConversionSegment, bool) 
 	return textSegments(content), false
 }
 
-func markdownTableRows(content string) ([]string, string) {
+func markdownContentSegments(content string) ([]fileConversionSegment, bool) {
 	lines := strings.Split(strings.ReplaceAll(content, "\r\n", "\n"), "\n")
-	for i := 0; i+2 < len(lines); i++ {
+	segments := make([]fileConversionSegment, 0)
+	textStart := 0
+	foundTable := false
+	for i := 0; i+2 < len(lines); {
 		if !strings.Contains(lines[i], "|") || !markdownTableSeparatorPattern.MatchString(lines[i+1]) {
+			i++
 			continue
 		}
 		rows := make([]string, 0)
-		for j := i + 2; j < len(lines); j++ {
+		j := i + 2
+		for ; j < len(lines); j++ {
 			line := strings.TrimSpace(lines[j])
 			if line == "" || !strings.Contains(line, "|") {
 				break
 			}
 			rows = append(rows, line)
 		}
-		if len(rows) > 0 {
-			return rows, strings.TrimSpace(lines[i])
+		if len(rows) == 0 {
+			i++
+			continue
 		}
+		segments = appendTextConversionSegments(segments, strings.Join(lines[textStart:i], "\n"))
+		segments = append(segments, tableRowSegments(strings.TrimSpace(lines[i]), rows)...)
+		foundTable = true
+		i = j
+		textStart = j
 	}
-	return nil, ""
+	if !foundTable {
+		return nil, false
+	}
+	segments = appendTextConversionSegments(segments, strings.Join(lines[textStart:], "\n"))
+	return segments, true
 }
 
-func htmlTableRows(content string) ([]string, string) {
+func htmlContentSegments(content string) ([]fileConversionSegment, bool) {
 	if !strings.Contains(strings.ToLower(content), "<table") {
-		return nil, ""
+		return nil, false
 	}
 	doc, err := goquery.NewDocumentFromReader(strings.NewReader(content))
 	if err != nil {
-		return nil, ""
+		return nil, false
 	}
+	segments := make([]fileConversionSegment, 0)
+	var text strings.Builder
+	foundTable := false
+	flushText := func() {
+		segments = appendTextConversionSegments(segments, text.String())
+		text.Reset()
+	}
+	var walk func(*goquery.Selection)
+	walk = func(selection *goquery.Selection) {
+		selection.Contents().Each(func(_ int, child *goquery.Selection) {
+			name := goquery.NodeName(child)
+			if name == "script" || name == "style" {
+				return
+			}
+			if name == "table" {
+				if rows, header := htmlTableRows(child); len(rows) > 0 {
+					flushText()
+					segments = append(segments, tableRowSegments(header, rows)...)
+					foundTable = true
+					return
+				}
+			}
+			if name == "#text" {
+				text.WriteString(child.Text())
+				return
+			}
+			if isHTMLBlockElement(name) {
+				text.WriteString("\n\n")
+			}
+			walk(child)
+			if isHTMLBlockElement(name) {
+				text.WriteString("\n\n")
+			}
+		})
+	}
+	walk(doc.Selection)
+	if !foundTable {
+		return nil, false
+	}
+	flushText()
+	return segments, true
+}
+
+func htmlTableRows(table *goquery.Selection) ([]string, string) {
 	var header string
 	rows := make([]string, 0)
-	doc.Find("table").First().Find("tr").Each(func(_ int, row *goquery.Selection) {
+	table.Find("tr").Each(func(_ int, row *goquery.Selection) {
 		cells := make([]string, 0)
 		row.Find("th,td").Each(func(_ int, cell *goquery.Selection) {
 			cells = append(cells, strings.TrimSpace(cell.Text()))
@@ -86,6 +146,22 @@ func htmlTableRows(content string) ([]string, string) {
 		return nil, ""
 	}
 	return rows, header
+}
+
+func isHTMLBlockElement(name string) bool {
+	switch name {
+	case "address", "article", "aside", "blockquote", "br", "div", "footer", "h1", "h2", "h3", "h4", "h5", "h6", "header", "hr", "li", "main", "nav", "ol", "p", "pre", "section", "ul":
+		return true
+	default:
+		return false
+	}
+}
+
+func appendTextConversionSegments(segments []fileConversionSegment, content string) []fileConversionSegment {
+	if strings.TrimSpace(content) == "" {
+		return segments
+	}
+	return append(segments, textSegments(content)...)
 }
 
 func csvTableRows(content string) ([]string, string) {
@@ -127,7 +203,7 @@ func tableRowSegments(header string, rows []string) []fileConversionSegment {
 			indexes = append(indexes, rowIndex)
 			fmt.Fprintf(&builder, "SOURCE_ROW_%d: %s\n", rowIndex, rows[i])
 		}
-		segments = append(segments, fileConversionSegment{Content: builder.String(), SourceRowIndexes: indexes})
+		segments = append(segments, fileConversionSegment{Content: builder.String(), SourceRowIndexes: indexes, Tabular: true})
 	}
 	return segments
 }

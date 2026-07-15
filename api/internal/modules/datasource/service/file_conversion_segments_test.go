@@ -41,6 +41,70 @@ func TestSplitFileConversionContentRecognizesCSVRows(t *testing.T) {
 	}
 }
 
+func TestSplitFileConversionContentPreservesMarkdownTextAndAllTables(t *testing.T) {
+	content := `Introduction
+
+| name | amount |
+| --- | --- |
+| Alice | 10 |
+
+Between tables
+
+| sku | quantity |
+| --- | --- |
+| A-1 | 2 |
+
+Conclusion`
+
+	segments, _ := splitFileConversionContent(content)
+	if got, want := len(segments), 5; got != want {
+		t.Fatalf("len(segments) = %d, want %d", got, want)
+	}
+	wants := []struct {
+		content string
+		tabular bool
+	}{
+		{content: "Introduction", tabular: false},
+		{content: "Source table header: | name | amount |", tabular: true},
+		{content: "Between tables", tabular: false},
+		{content: "Source table header: | sku | quantity |", tabular: true},
+		{content: "Conclusion", tabular: false},
+	}
+	for i, want := range wants {
+		if segments[i].Tabular != want.tabular || !strings.Contains(segments[i].Content, want.content) {
+			t.Fatalf("segment %d = %#v, want tabular=%v containing %q", i, segments[i], want.tabular, want.content)
+		}
+	}
+}
+
+func TestSplitFileConversionContentPreservesHTMLTextAndAllTables(t *testing.T) {
+	content := `<p>Introduction</p>
+<table><tr><th>name</th><th>amount</th></tr><tr><td>Alice</td><td>10</td></tr></table>
+<p>Between tables</p>
+<table><tr><th>sku</th><th>quantity</th></tr><tr><td>A-1</td><td>2</td></tr></table>
+<p>Conclusion</p>`
+
+	segments, _ := splitFileConversionContent(content)
+	if got, want := len(segments), 5; got != want {
+		t.Fatalf("len(segments) = %d, want %d", got, want)
+	}
+	wants := []struct {
+		content string
+		tabular bool
+	}{
+		{content: "Introduction", tabular: false},
+		{content: "Source table header: name | amount", tabular: true},
+		{content: "Between tables", tabular: false},
+		{content: "Source table header: sku | quantity", tabular: true},
+		{content: "Conclusion", tabular: false},
+	}
+	for i, want := range wants {
+		if segments[i].Tabular != want.tabular || !strings.Contains(segments[i].Content, want.content) {
+			t.Fatalf("segment %d = %#v, want tabular=%v containing %q", i, segments[i], want.tabular, want.content)
+		}
+	}
+}
+
 func TestSplitFileConversionContentSplitsLongPlainText(t *testing.T) {
 	content := strings.Repeat("a", fileConversionMaxTextRunes+1)
 	segments, tabular := splitFileConversionContent(content)

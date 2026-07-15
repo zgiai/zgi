@@ -2615,7 +2615,7 @@ func (s *dataSourceService) extractJSONContent(content string) (string, error) {
 
 // convertFileContentToRecords converts file content to table records using LLM
 func (s *dataSourceService) convertFileContentToRecords(ctx context.Context, tenantID, accountID, content string, columns dto.GetTableColumnsResponse, userPrompt *string, modelSpec *dto.ModelSpec) ([]map[string]interface{}, *dto.FileIngestFieldExtraction, error) {
-	segments, tabular := splitFileConversionContent(content)
+	segments, _ := splitFileConversionContent(content)
 	records := make([]map[string]interface{}, 0)
 	extraction := &dto.FileIngestFieldExtraction{Records: make([]dto.FileIngestRecordExtraction, 0)}
 	seen := make(map[string]struct{})
@@ -2625,7 +2625,7 @@ func (s *dataSourceService) convertFileContentToRecords(ctx context.Context, ten
 			return nil, nil, err
 		}
 		for i, record := range segmentRecords {
-			if !tabular {
+			if !segment.Tabular {
 				encoded, err := json.Marshal(record)
 				if err != nil {
 					return nil, nil, fmt.Errorf("failed to encode extracted record for deduplication: %w", err)
