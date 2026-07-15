@@ -24,5 +24,9 @@ assert.ok(
   source.includes('onClick={handleEnterSchema}'),
   'the preview next button must use the recognition handler'
 );
+assert.ok(
+  source.includes('type: suggestion.type || col.type'),
+  'recognized field types must replace preview-inferred types'
+);
 
 console.log('Excel import auto-recognition regression check passed.');

@@ -107,6 +107,7 @@ function applyRecognizedColumns(
       name: suggestion.name || col.name,
       display_name: suggestion.display_name || col.display_name,
       description: suggestion.description || col.description,
+      type: suggestion.type || col.type,
     };
   });
 }
