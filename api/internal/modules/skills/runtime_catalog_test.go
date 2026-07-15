@@ -957,7 +957,7 @@ func TestArchitectureDiagramSystemSkillMetadata(t *testing.T) {
 	if got := doc.Metadata.Display.Label["zh_Hans"]; got != "架构图生成器" {
 		t.Fatalf("zh label = %q", got)
 	}
-	if got := doc.Metadata.Display.Description["zh_Hans"]; got != "根据自然语言或结构化数据生成 SVG 和 HTML 技术架构图。" {
+	if got := doc.Metadata.Display.Description["zh_Hans"]; got != "适用于设计系统架构、业务流程或数据关系，可将自然语言或结构化数据生成 SVG 和 HTML 架构图、流程图、时序图、状态图或 ER 图。" {
 		t.Fatalf("zh description = %q", got)
 	}
 	if got := doc.Metadata.Display.WhenToUse["zh_Hans"]; got != "当回答需要生成技术架构图文件时使用。" {

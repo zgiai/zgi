@@ -14,6 +14,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/repository"
 	officialmodel "github.com/zgiai/zgi/api/internal/modules/llm/officialmodel"
 	providerrepo "github.com/zgiai/zgi/api/internal/modules/llm/provider/repository"
+	"github.com/zgiai/zgi/api/internal/modules/llm/shared"
 	"gorm.io/gorm"
 )
 
@@ -681,9 +682,9 @@ func (s *modelService) ListTenantModels(ctx context.Context, organizationID uuid
 		cachedInputPrice, _ := m.CachedInputPrice.Float64()
 
 		// Check if model is available (has enabled channels for this tenant)
-		isAvailable := availableModels[m.Model] || availableModels["*"]
+		isAvailable := availableModels.Supports(m.Provider, m.Model)
 		// Check if model is available system-wide (in any active system channel)
-		isSystemAvailable := systemAvailableModels[m.Model] || systemAvailableModels["*"]
+		isSystemAvailable := systemAvailableModels.Supports(m.Provider, m.Model)
 
 		view := &model.ModelView{
 			// Basic info
@@ -829,7 +830,7 @@ func (s *modelService) ListTenantModels(ctx context.Context, organizationID uuid
 		customOutputPrice, _ := m.OutputPrice.Float64()
 
 		// Custom models are available if they have routes configured
-		customIsAvailable := availableModels[m.Name] || availableModels["*"]
+		customIsAvailable := availableModels.Supports(m.Provider, m.Name)
 
 		view := &model.ModelView{
 			// Basic info
@@ -1030,14 +1031,16 @@ func (s *modelService) ListOfficialModels(ctx context.Context) ([]*model.LLMMode
 		return nil, fmt.Errorf("failed to hydrate official route models: %w", err)
 	}
 
-	// Collect all unique model names
+	// Collect exact provider-model pairs while retaining names for the compatibility query.
 	modelNameSet := make(map[string]bool)
+	providerModelSet := make(map[channelmodel.ProviderModel]struct{})
 	for _, route := range routes {
-		for _, modelName := range route.GetEffectiveModels() {
-			if modelName == "*" {
+		for _, pair := range route.OfficialProviderModels {
+			if pair.Provider == "" || pair.Model == "" {
 				continue
 			}
-			modelNameSet[modelName] = true
+			providerModelSet[pair] = struct{}{}
+			modelNameSet[pair.Model] = true
 		}
 	}
 
@@ -1062,7 +1065,13 @@ func (s *modelService) ListOfficialModels(ctx context.Context) ([]*model.LLMMode
 		return nil, fmt.Errorf("failed to get model details: %w", err)
 	}
 
-	return models, nil
+	filtered := make([]*model.LLMModel, 0, len(models))
+	for _, candidate := range models {
+		if _, ok := providerModelSet[channelmodel.ProviderModel{Provider: candidate.Provider, Model: candidate.Model}]; ok {
+			filtered = append(filtered, candidate)
+		}
+	}
+	return filtered, nil
 }
 
 // CheckAvailability implements the explicit model availability check for a tenant
@@ -1085,10 +1094,30 @@ func boolPtr(b bool) *bool {
 	return &b
 }
 
-// getAvailableModelsFromRoutes returns a set of model names that have available channels for the tenant
+type routeModelAvailability struct {
+	privateModels          map[string]bool
+	officialProviderModels map[channelmodel.ProviderModel]struct{}
+}
+
+func newRouteModelAvailability() routeModelAvailability {
+	return routeModelAvailability{
+		privateModels:          make(map[string]bool),
+		officialProviderModels: make(map[channelmodel.ProviderModel]struct{}),
+	}
+}
+
+func (a routeModelAvailability) Supports(provider, modelName string) bool {
+	if a.privateModels[modelName] || a.privateModels["*"] {
+		return true
+	}
+	_, ok := a.officialProviderModels[channelmodel.ProviderModel{Provider: provider, Model: modelName}]
+	return ok
+}
+
+// getAvailableModelsFromRoutes returns private model names and exact official pairs available to the tenant.
 // Checks both system channels and user-owned routes
-func (s *modelService) getAvailableModelsFromRoutes(ctx context.Context, organizationID uuid.UUID) map[string]bool {
-	availableModels := make(map[string]bool)
+func (s *modelService) getAvailableModelsFromRoutes(ctx context.Context, organizationID uuid.UUID) routeModelAvailability {
+	availableModels := newRouteModelAvailability()
 
 	// Get all enabled routes for this tenant (both system and user-owned)
 	var routes []channelmodel.LLMRoute
@@ -1102,22 +1131,26 @@ func (s *modelService) getAvailableModelsFromRoutes(ctx context.Context, organiz
 	_ = officialmodel.HydrateRouteValues(ctx, s.db, routes)
 
 	for _, route := range routes {
-		for _, modelName := range route.GetEffectiveModels() {
-			if modelName == "*" {
-				availableModels["*"] = true
-			} else {
-				availableModels[modelName] = true
+		if route.IsOfficial || route.Type == shared.RouteTypeZGICloud {
+			for _, pair := range route.OfficialProviderModels {
+				if pair.Provider != "" && pair.Model != "" {
+					availableModels.officialProviderModels[pair] = struct{}{}
+				}
 			}
+			continue
+		}
+		for _, modelName := range route.GetEffectiveModels() {
+			availableModels.privateModels[modelName] = true
 		}
 	}
 
 	return availableModels
 }
 
-// getSystemAvailableModels returns a set of model names available in official (ZGI Cloud) routes
+// getSystemAvailableModels returns exact provider-model pairs available in official routes.
 // This is independent of tenant configuration - shows what's available system-wide via official channels
-func (s *modelService) getSystemAvailableModels(ctx context.Context) map[string]bool {
-	systemModels := make(map[string]bool)
+func (s *modelService) getSystemAvailableModels(ctx context.Context) routeModelAvailability {
+	systemModels := newRouteModelAvailability()
 
 	// Get all enabled official routes (formerly system channels, now in llm_routes)
 	var routes []channelmodel.LLMRoute
@@ -1131,11 +1164,9 @@ func (s *modelService) getSystemAvailableModels(ctx context.Context) map[string]
 	_ = officialmodel.HydrateRouteValues(ctx, s.db, routes)
 
 	for _, route := range routes {
-		for _, modelName := range route.GetEffectiveModels() {
-			if modelName == "*" {
-				systemModels["*"] = true
-			} else {
-				systemModels[modelName] = true
+		for _, pair := range route.OfficialProviderModels {
+			if pair.Provider != "" && pair.Model != "" {
+				systemModels.officialProviderModels[pair] = struct{}{}
 			}
 		}
 	}

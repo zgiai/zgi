@@ -6,14 +6,17 @@ runtime_type: prompt
 max_calls_per_turn: 5
 timeout_seconds: 5
 display:
-  icon: user-check
-  category: productivity
+  icon: user-search
+  category: document_processing
+  scenarios:
+    - hr_recruiting
+    - document_handling
   label:
     en_US: Resume Screening
     zh_Hans: 简历初筛
   description:
-    en_US: Extracts resume facts and gives preliminary JD-based screening when criteria are provided.
-    zh_Hans: 提取简历关键信息，并在提供岗位要求时进行初步匹配判断。
+    en_US: Designed for recruiting and candidate review; extracts experience, skills, education, and achievements, then compares them with a supplied job description and suggests interview questions.
+    zh_Hans: 适用于招聘和候选人评估，可提取简历中的经历、技能、学历和成果，并结合岗位要求进行初步匹配和生成面试问题。
   when_to_use:
     en_US: Use when existing resume content needs structured extraction, JD matching, or interview question suggestions.
     zh_Hans: 当已有简历内容需要结构化提取、岗位匹配或面试问题建议时使用。

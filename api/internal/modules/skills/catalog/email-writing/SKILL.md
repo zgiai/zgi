@@ -6,14 +6,18 @@ runtime_type: prompt
 max_calls_per_turn: 5
 timeout_seconds: 5
 display:
-  icon: mail-pen
-  category: productivity
+  icon: send
+  category: office_productivity
+  scenarios:
+    - office_collaboration
+    - customer_service
+    - hr_recruiting
   label:
     en_US: Email Writing
     zh_Hans: 邮件撰写
   description:
-    en_US: Drafts and polishes business emails with clear subject lines, tone, audience, and follow-up wording.
-    zh_Hans: 生成或润色商务邮件，覆盖主题、正文、语气、对象和后续跟进话术。
+    en_US: Designed for business communication, customer follow-up, invitations, reminders, apologies, and announcements; drafts or polishes subject lines, body copy, tone, and follow-up wording.
+    zh_Hans: 适用于商务沟通、客户跟进、会议邀约、催办、道歉或通知，可生成和润色邮件主题、正文、语气及后续跟进话术。
   when_to_use:
     en_US: Use when the user needs a business email, follow-up email, meeting invitation, reminder, apology, announcement, report delivery note, or email polishing.
     zh_Hans: 当用户需要商务沟通、客户跟进、会议邀约、催办、道歉解释、通知公告、报告发送或邮件润色时使用。

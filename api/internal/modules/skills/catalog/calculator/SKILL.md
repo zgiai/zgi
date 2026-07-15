@@ -17,13 +17,17 @@ max_calls_per_turn: 50
 timeout_seconds: 5
 display:
   icon: calculator
-  category: productivity
+  category: general_tools
+  scenarios:
+    - general
+    - data_insights
+    - office_collaboration
   label:
     en_US: Calculator
     zh_Hans: 计算器
   description:
-    en_US: Handles exact arithmetic, percentages, discounts, and numeric comparisons.
-    zh_Hans: 用于精确计算、百分比、折扣、变化率和数值比较。
+    en_US: Designed for amounts, percentages, discounts, rates of change, and other exact calculations; performs arithmetic and numeric comparisons without relying on mental math.
+    zh_Hans: 适用于金额、百分比、折扣、变化率等精确计算，可完成算术运算和数值比较，避免依赖模型心算。
   when_to_use:
     en_US: Use when answers require exact calculation instead of mental math.
     zh_Hans: 当问题需要精确计算，而不是让模型心算时启用。

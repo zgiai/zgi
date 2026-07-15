@@ -223,6 +223,9 @@ interface AIChatInputAreaProps {
   uploadScope?: AIChatUploadScope;
   showFileLibraryPicker?: boolean;
   allowWorkspaceSwitch?: boolean;
+  showSkillManagement?: boolean;
+  skillManagementLabel?: string;
+  onOpenSkillManagement?: () => void;
   inputPlaceholder?: string;
   surface?: AIChatComposerSurface;
   topAccessory?: ReactNode;
@@ -301,6 +304,9 @@ export function AIChatInputArea({
   uploadScope = { type: 'console' },
   showFileLibraryPicker = true,
   allowWorkspaceSwitch = false,
+  showSkillManagement = false,
+  skillManagementLabel,
+  onOpenSkillManagement,
   inputPlaceholder,
   surface = 'aichat',
   topAccessory,
@@ -1425,12 +1431,15 @@ export function AIChatInputArea({
                 onToolGovernancePermissionTierChange={onToolGovernancePermissionTierChange}
                 enableUpload={!hasActiveUserInputRequest && enableUpload}
                 showFileLibraryPicker={showFileLibraryPicker}
+                showSkillManagement={showSkillManagement}
+                skillManagementLabel={skillManagementLabel}
                 surface={surface}
                 onModelChange={onModelChange}
                 onModelPropsChange={setSelectedModelProps}
                 onUploadDocument={() => fileInputRef.current?.click()}
                 onUploadImage={handleImageUpload}
                 onSelectFromFiles={() => setIsFileSelectorOpen(true)}
+                onOpenSkillManagement={onOpenSkillManagement}
                 onMemoryEnabledChange={setUseMemory}
                 onToggleComposerExpanded={() => setIsComposerExpanded(current => !current)}
                 onSend={handleSend}

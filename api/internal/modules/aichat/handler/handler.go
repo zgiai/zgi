@@ -939,6 +939,7 @@ func skillResponse(metadata skills.SkillDiscoveryMetadata) runtimedto.SkillRespo
 		Display: runtimedto.SkillDisplayResponse{
 			Icon:        metadata.Display.Icon,
 			Category:    metadata.Display.Category,
+			Scenarios:   metadata.Display.Scenarios,
 			Label:       metadata.Display.Label,
 			Description: metadata.Display.Description,
 			WhenToUse:   metadata.Display.WhenToUse,

@@ -158,13 +158,16 @@ tool_governance:
     idempotency_required: true
 display:
   icon: database
-  category: database
+  category: data_analysis
+  scenarios:
+    - data_insights
+    - business_operations
   label:
     en_US: Internal Database
     zh_Hans: 内部数据库
   description:
-    en_US: Finds accessible databases, inspects tables, and performs structured record operations.
-    zh_Hans: 查找可访问的数据库、查看表结构，并执行结构化记录操作。
+    en_US: Designed for workspace questions or actions that depend on structured business data; finds accessible databases, inspects tables, and queries or updates records.
+    zh_Hans: 适用于需要使用结构化业务数据的问答或操作，可查找有权限访问的数据库、查看表结构并查询或更新记录。
   when_to_use:
     en_US: Use when the assistant needs facts or changes from workspace database tables.
     zh_Hans: 当助手需要从工作区数据库表读取事实或写入变更时使用。

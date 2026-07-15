@@ -1,5 +1,12 @@
 import type { Locale } from '@/i18n/config';
 import type { AIChatSkillInvocation, AIChatSkillMetadata } from '@/services/types/aichat';
+import {
+  getSkillCapabilityLabel,
+  normalizeSkillCapabilityCategory,
+  resolveSkillScenarios,
+  type SkillCapabilityCategory,
+  type SkillScenario,
+} from './skill-taxonomy';
 
 export interface AIChatSkillDisplayInfo {
   skillId: string;
@@ -7,7 +14,9 @@ export interface AIChatSkillDisplayInfo {
   description: string;
   whenToUse: string;
   tags: string[];
-  category: string;
+  category: SkillCapabilityCategory;
+  categoryLabel: string;
+  scenarios: SkillScenario[];
   icon: string;
 }
 
@@ -64,14 +73,17 @@ export function isSkillSelectableForCaller(
 type LocalizedText = Record<string, string>;
 type LocalizedTags = Record<string, string[]>;
 
-const SYSTEM_SKILL_DISPLAY: Record<string, {
-  label: LocalizedText;
-  description: LocalizedText;
-  whenToUse: LocalizedText;
-  tags: LocalizedTags;
-  category: string;
-  icon: string;
-}> = {
+const SYSTEM_SKILL_DISPLAY: Record<
+  string,
+  {
+    label: LocalizedText;
+    description: LocalizedText;
+    whenToUse: LocalizedText;
+    tags: LocalizedTags;
+    category: string;
+    icon: string;
+  }
+> = {
   time: {
     label: {
       en_US: 'Time',
@@ -123,8 +135,7 @@ const SYSTEM_SKILL_DISPLAY: Record<string, {
       zh_Hans: '列出当前可见文件，读取用户可访问的上传文件或控制台文件文本，不变更文件资产。',
     },
     whenToUse: {
-      en_US:
-        'Use when an answer needs content from a specific file available to the current user.',
+      en_US: 'Use when an answer needs content from a specific file available to the current user.',
       zh_Hans: '当回答需要读取用户可访问的特定文件内容时使用。',
     },
     tags: {
@@ -161,7 +172,8 @@ const SYSTEM_SKILL_DISPLAY: Record<string, {
       zh_Hans: '文件生成器',
     },
     description: {
-      en_US: 'Creates downloadable TXT, Markdown, HTML, JSON, CSV, SVG, DOCX, XLSX, PDF, and PPTX files.',
+      en_US:
+        'Creates downloadable TXT, Markdown, HTML, JSON, CSV, SVG, DOCX, XLSX, PDF, and PPTX files.',
       zh_Hans: '创建可下载的 TXT、Markdown、HTML、JSON、CSV、SVG、DOCX、XLSX、PDF 和 PPTX 文件。',
     },
     whenToUse: {
@@ -222,11 +234,13 @@ const SYSTEM_SKILL_DISPLAY: Record<string, {
       zh_Hans: '周报月报生成',
     },
     description: {
-      en_US: 'Turns work notes, progress, metrics, risks, and plans into structured weekly or monthly reports.',
+      en_US:
+        'Turns work notes, progress, metrics, risks, and plans into structured weekly or monthly reports.',
       zh_Hans: '将工作记录、项目进展、关键数据、风险问题和计划整理成结构化周报或月报。',
     },
     whenToUse: {
-      en_US: 'Use when the user needs a weekly report, monthly report, work summary, project update, or management report.',
+      en_US:
+        'Use when the user needs a weekly report, monthly report, work summary, project update, or management report.',
       zh_Hans: '当用户需要生成周报、月报、工作总结、项目进展汇报或管理汇报时使用。',
     },
     tags: {
@@ -242,11 +256,13 @@ const SYSTEM_SKILL_DISPLAY: Record<string, {
       zh_Hans: '日程规划',
     },
     description: {
-      en_US: 'Turns goals, tasks, deadlines, and availability into practical schedules and agendas.',
+      en_US:
+        'Turns goals, tasks, deadlines, and availability into practical schedules and agendas.',
       zh_Hans: '将目标、任务、截止时间和可用时间整理成可执行的日程计划。',
     },
     whenToUse: {
-      en_US: 'Use for planning days, weeks, task schedules, meeting agendas, study plans, or workload arrangements.',
+      en_US:
+        'Use for planning days, weeks, task schedules, meeting agendas, study plans, or workload arrangements.',
       zh_Hans: '用于规划每日安排、每周计划、任务排期、会议议程、学习计划或工作负载。',
     },
     tags: {
@@ -282,11 +298,13 @@ const SYSTEM_SKILL_DISPLAY: Record<string, {
       zh_Hans: '内部知识库',
     },
     description: {
-      en_US: 'Finds knowledge bases accessible to the current AIChat user and retrieves relevant context.',
+      en_US:
+        'Finds knowledge bases accessible to the current AIChat user and retrieves relevant context.',
       zh_Hans: '查找当前 AIChat 用户可访问的知识库，并检索相关上下文。',
     },
     whenToUse: {
-      en_US: 'Use when an AIChat answer needs facts or source context from accessible knowledge bases.',
+      en_US:
+        'Use when an AIChat answer needs facts or source context from accessible knowledge bases.',
       zh_Hans: '当 AIChat 回复需要引用可访问知识库中的事实或来源上下文时使用。',
     },
     tags: {
@@ -322,7 +340,8 @@ const SYSTEM_SKILL_DISPLAY: Record<string, {
       zh_Hans: '内部数据库',
     },
     description: {
-      en_US: 'Finds accessible databases, inspects tables, and performs structured record operations.',
+      en_US:
+        'Finds accessible databases, inspects tables, and performs structured record operations.',
       zh_Hans: '查找可访问的数据库、查看表结构，并执行结构化记录操作。',
     },
     whenToUse: {
@@ -722,7 +741,6 @@ const USER_MEMORY_TOOL_RESULT_TEXT: Record<string, Record<string, string>> = {
   },
 };
 
-
 function toDisplayLocale(locale: Locale | string): string {
   if (locale === 'en-US') return 'en_US';
   return 'zh_Hans';
@@ -750,18 +768,38 @@ export function getAIChatSkillDisplayInfo(
   locale: Locale | string
 ): AIChatSkillDisplayInfo {
   const systemDisplay = SYSTEM_SKILL_DISPLAY[normalizeSkillId(skill.skill_id)];
-  if (systemDisplay) {
-    return getSystemAIChatSkillDisplayInfo(skill.skill_id, locale);
-  }
+  const fallback = systemDisplay
+    ? getSystemAIChatSkillDisplayInfo(skill.skill_id, locale)
+    : undefined;
+  const rawCategory = skill.display?.category ?? fallback?.category;
+  const category = normalizeSkillCapabilityCategory(rawCategory);
+  const tags = pickLocalizedTags(skill.display?.tags, locale);
 
   return {
     skillId: skill.skill_id,
-    label: pickLocalizedText(skill.display?.label, locale, skill.name || skill.skill_id),
-    description: pickLocalizedText(skill.display?.description, locale, skill.description),
-    whenToUse: pickLocalizedText(skill.display?.when_to_use, locale, skill.when_to_use),
-    tags: pickLocalizedTags(skill.display?.tags, locale),
-    category: skill.display?.category ?? 'general',
-    icon: skill.display?.icon ?? 'sparkles',
+    label: pickLocalizedText(
+      skill.display?.label,
+      locale,
+      fallback?.label || skill.name || skill.skill_id
+    ),
+    description: pickLocalizedText(
+      skill.display?.description,
+      locale,
+      fallback?.description || skill.description
+    ),
+    whenToUse: pickLocalizedText(
+      skill.display?.when_to_use,
+      locale,
+      fallback?.whenToUse || skill.when_to_use
+    ),
+    tags: tags.length > 0 ? tags : (fallback?.tags ?? []),
+    category,
+    categoryLabel: getSkillCapabilityLabel(category, locale),
+    scenarios: resolveSkillScenarios({
+      category: rawCategory,
+      scenarios: skill.display?.scenarios,
+    }),
+    icon: skill.display?.icon ?? fallback?.icon ?? 'sparkles',
   };
 }
 
@@ -772,16 +810,21 @@ function getSystemAIChatSkillDisplayInfo(
   const normalizedSkillId = normalizeSkillId(skillId);
   const display = SYSTEM_SKILL_DISPLAY[normalizedSkillId];
   if (!display) {
+    const category = normalizeSkillCapabilityCategory(undefined);
     return {
       skillId,
       label: skillId,
       description: '',
       whenToUse: '',
       tags: [],
-      category: 'general',
+      category,
+      categoryLabel: getSkillCapabilityLabel(category, locale),
+      scenarios: resolveSkillScenarios({ category }),
       icon: 'sparkles',
     };
   }
+
+  const category = normalizeSkillCapabilityCategory(display.category);
 
   return {
     skillId: normalizedSkillId,
@@ -789,7 +832,9 @@ function getSystemAIChatSkillDisplayInfo(
     description: pickLocalizedText(display.description, locale, ''),
     whenToUse: pickLocalizedText(display.whenToUse, locale, ''),
     tags: pickLocalizedTags(display.tags, locale),
-    category: display.category,
+    category,
+    categoryLabel: getSkillCapabilityLabel(category, locale),
+    scenarios: resolveSkillScenarios({ category: display.category }),
     icon: display.icon,
   };
 }
@@ -803,7 +848,9 @@ export function buildAIChatSkillDisplayMap(
     return acc;
   }, {});
   for (const skillId of Object.keys(SYSTEM_SKILL_DISPLAY)) {
-    map[skillId] = getSystemAIChatSkillDisplayInfo(skillId, locale);
+    if (!map[skillId]) {
+      map[skillId] = getSystemAIChatSkillDisplayInfo(skillId, locale);
+    }
   }
   return map;
 }

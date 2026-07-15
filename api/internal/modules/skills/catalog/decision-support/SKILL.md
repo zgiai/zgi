@@ -7,13 +7,17 @@ max_calls_per_turn: 5
 timeout_seconds: 5
 display:
   icon: scale
-  category: productivity
+  category: planning_decision
+  scenarios:
+    - planning_decision
+    - business_operations
+    - technical_development
   label:
     en_US: Decision Support
     zh_Hans: 决策辅助
   description:
-    en_US: Compares options, tradeoffs, risks, benefits, priorities, and decision assumptions.
-    zh_Hans: 对多个方案进行权衡分析，输出风险收益、优先级、推荐方案和待确认事项。
+    en_US: Designed for product, technical, project, or management choices; compares options, benefits, costs, risks, priorities, assumptions, and unresolved questions before recommending a direction.
+    zh_Hans: 适用于产品、技术、项目或管理决策，可比较多个方案的收益、成本、风险、优先级和前提，并给出推荐方向与待确认事项。
   when_to_use:
     en_US: Use for product, technical, project, presales, customer solution, and management decisions.
     zh_Hans: 用于产品、技术、项目、售前、客户方案和管理类决策。
