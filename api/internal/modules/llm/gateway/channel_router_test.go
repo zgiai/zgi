@@ -865,7 +865,7 @@ func TestFilterRoutesForModelScene_AgentUsesCatalogTagForOfficialAndPrivateRoute
 		UseCases: llmmodel.StringArray{"text-chat", "function-calling", "agent"},
 	}
 
-	got := filterRoutesForModelScene([]*channelmodel.LLMRoute{official, private}, "gpt-agent", modelRecord, string(llmmodel.UseCaseAgent))
+	got := filterRoutesForModelScene([]*channelmodel.LLMRoute{official, private}, "gpt-agent", modelRecord, string(llmmodel.UseCaseAgent), false)
 	if len(got) != 2 {
 		t.Fatalf("agent routes = %#v, want official and private", got)
 	}
@@ -883,7 +883,7 @@ func TestFilterRoutesForModelScene_AgentRejectsUntaggedOfficialModel(t *testing.
 		UseCases: llmmodel.StringArray{"text-chat"},
 	}
 
-	got := filterRoutesForModelScene([]*channelmodel.LLMRoute{official}, "gpt-workflow", modelRecord, string(llmmodel.UseCaseAgent))
+	got := filterRoutesForModelScene([]*channelmodel.LLMRoute{official}, "gpt-workflow", modelRecord, string(llmmodel.UseCaseAgent), false)
 	if len(got) != 0 {
 		t.Fatalf("agent routes = %#v, want none", got)
 	}
@@ -901,9 +901,27 @@ func TestFilterRoutesForModelScene_AgentRejectsUnsupportedAdapter(t *testing.T) 
 		UseCases: llmmodel.StringArray{"text-chat", "function-calling", "agent"},
 	}
 
-	got := filterRoutesForModelScene([]*channelmodel.LLMRoute{google}, "gemini-agent", modelRecord, string(llmmodel.UseCaseAgent))
+	got := filterRoutesForModelScene([]*channelmodel.LLMRoute{google}, "gemini-agent", modelRecord, string(llmmodel.UseCaseAgent), false)
 	if len(got) != 0 {
 		t.Fatalf("agent routes = %#v, want none for unsupported adapter", got)
+	}
+}
+
+func TestFilterRoutesForModelScene_CustomAgentAllowsPrivateUnlistedAdapter(t *testing.T) {
+	google := &channelmodel.LLMRoute{
+		ID:              uuid.New(),
+		Type:            shared.RouteTypePrivate,
+		ChannelProvider: "google",
+		Models:          []string{"custom-agent"},
+	}
+	modelRecord := &llmmodel.LLMModel{
+		Model:    "custom-agent",
+		UseCases: llmmodel.StringArray{"agent"},
+	}
+
+	got := filterRoutesForModelScene([]*channelmodel.LLMRoute{google}, "custom-agent", modelRecord, string(llmmodel.UseCaseAgent), true)
+	if len(got) != 1 || got[0].ID != google.ID {
+		t.Fatalf("custom agent routes = %#v, want private google route", got)
 	}
 }
 

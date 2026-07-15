@@ -355,20 +355,46 @@ func TestAvailableModels_AgentExcludesUntaggedPrivateModel(t *testing.T) {
 	}
 }
 
-func TestAvailableModels_AgentIncludesTaggedPrivateModelWithoutRouteVerification(t *testing.T) {
+func TestAvailableModels_AgentCustomModelRequiresTagEnabledRouteButNotAdapterWhitelist(t *testing.T) {
 	organizationID := uuid.New()
-	customRepo := &availableCustomRepoFake{models: []*llmmodel.CustomModel{{
-		ID:          uuid.New(),
-		Provider:    "custom-openai",
-		Name:        "private-model",
-		DisplayName: "Private Model",
-		IsActive:    true,
-		UseCases:    types.StringArray{"text-chat", "function-calling", "agent"},
-	}}}
+	customRepo := &availableCustomRepoFake{models: []*llmmodel.CustomModel{
+		{
+			ID:          uuid.New(),
+			Provider:    "custom-google",
+			Name:        "custom-agent",
+			DisplayName: "Custom Agent",
+			IsActive:    true,
+			UseCases:    types.StringArray{"agent"},
+		},
+		{
+			ID:          uuid.New(),
+			Provider:    "custom-google",
+			Name:        "custom-untagged",
+			DisplayName: "Custom Untagged",
+			IsActive:    true,
+			UseCases:    types.StringArray{"text-chat"},
+		},
+		{
+			ID:          uuid.New(),
+			Provider:    "custom-google",
+			Name:        "custom-inactive",
+			DisplayName: "Custom Inactive",
+			IsActive:    false,
+			UseCases:    types.StringArray{"agent"},
+		},
+		{
+			ID:          uuid.New(),
+			Provider:    "custom-google",
+			Name:        "custom-without-route",
+			DisplayName: "Custom Without Route",
+			IsActive:    true,
+			UseCases:    types.StringArray{"agent"},
+		},
+	}}
 	route := &channelmodel.LLMRoute{
 		Type:            shared.RouteTypePrivate,
-		ChannelProvider: "openai-compatible",
-		Models:          []string{"private-model"},
+		ChannelProvider: "google",
+		Models:          []string{"custom-agent", "custom-untagged", "custom-inactive"},
 	}
 	svc := NewAvailableModelsService(
 		&availableModelRepoFake{},
@@ -381,8 +407,27 @@ func TestAvailableModels_AgentIncludesTaggedPrivateModelWithoutRouteVerification
 	if err != nil {
 		t.Fatalf("ListAvailable returned error: %v", err)
 	}
-	if len(models) != 1 || models[0].Name != "private-model" {
-		t.Fatalf("agent models = %#v, want private-model", models)
+	if len(models) != 1 || models[0].Name != "custom-agent" {
+		t.Fatalf("agent models = %#v, want only custom-agent", models)
+	}
+}
+
+func TestRouteBacksModelForUseCase_GlobalAgentKeepsAdapterWhitelist(t *testing.T) {
+	routes := []*channelmodel.LLMRoute{{
+		Type:            shared.RouteTypePrivate,
+		ChannelProvider: "google",
+		Models:          []string{"global-agent"},
+	}}
+
+	if routeBacksModelForUseCase(
+		routes,
+		"google",
+		"global-agent",
+		string(llmmodel.UseCaseAgent),
+		types.StringArray{"agent"},
+		false,
+	) {
+		t.Fatal("global agent model should remain unavailable on an unsupported adapter")
 	}
 }
 
@@ -699,25 +744,7 @@ func TestCreateCustomInvalidatesAvailableModelsCache(t *testing.T) {
 	}
 }
 
-func TestCreateCustomAgentRejectsIncompleteCapabilities(t *testing.T) {
-	providerID := uuid.New()
-	svc := &modelService{customRepo: &availableCustomRepoFake{}}
-
-	_, err := svc.CreateCustom(context.Background(), uuid.New(), &llmmodeldto.CreateCustomModelRequest{
-		Provider:    "custom-openai",
-		ProviderID:  &providerID,
-		Name:        "custom-agent",
-		DisplayName: "Custom Agent",
-		UseCases:    []string{"text-chat", "function-calling", "agent"},
-		Endpoints:   &llmmodel.ModelEndpoints{ChatCompletions: true},
-		Features:    &llmmodel.ModelFeatures{Streaming: true, SystemPrompt: true},
-	})
-	if err == nil || !strings.Contains(err.Error(), "agent") {
-		t.Fatalf("CreateCustom error = %v, want agent capability error", err)
-	}
-}
-
-func TestCreateCustomAgentAcceptsCompleteCapabilities(t *testing.T) {
+func TestCreateCustomAgentAcceptsUserDeclaredTagWithoutCapabilityRequirements(t *testing.T) {
 	providerID := uuid.New()
 	svc := &modelService{customRepo: &availableCustomRepoFake{}}
 
@@ -726,15 +753,41 @@ func TestCreateCustomAgentAcceptsCompleteCapabilities(t *testing.T) {
 		ProviderID:  &providerID,
 		Name:        "custom-agent",
 		DisplayName: "Custom Agent",
-		UseCases:    []string{"text-chat", "function-calling", "agent"},
-		Endpoints:   &llmmodel.ModelEndpoints{ChatCompletions: true},
-		Features:    &llmmodel.ModelFeatures{Streaming: true, FunctionCalling: true, SystemPrompt: true},
+		UseCases:    []string{"agent"},
+		Endpoints:   &llmmodel.ModelEndpoints{},
+		Features:    &llmmodel.ModelFeatures{},
 	})
 	if err != nil {
 		t.Fatalf("CreateCustom returned error: %v", err)
 	}
 	if !containsUseCase(types.StringArray(created.UseCases), "agent") {
 		t.Fatalf("created use_cases = %v, want agent", created.UseCases)
+	}
+}
+
+func TestUpdateCustomAgentAcceptsUserDeclaredTagWithoutCapabilityRequirements(t *testing.T) {
+	organizationID := uuid.New()
+	modelID := uuid.New()
+	svc := &modelService{customRepo: &availableCustomRepoFake{model: &llmmodel.CustomModel{
+		ID:             modelID,
+		OrganizationID: organizationID,
+		Name:           "custom-agent",
+		DisplayName:    "Custom Agent",
+		IsActive:       true,
+		Endpoints:      &llmmodel.ModelEndpoints{},
+		Features:       &llmmodel.ModelFeatures{},
+	}}}
+
+	updated, err := svc.UpdateCustom(context.Background(), organizationID, modelID, &llmmodeldto.UpdateCustomModelRequest{
+		UseCases:  []string{"agent"},
+		Endpoints: &llmmodel.ModelEndpoints{},
+		Features:  &llmmodel.ModelFeatures{},
+	})
+	if err != nil {
+		t.Fatalf("UpdateCustom returned error: %v", err)
+	}
+	if !containsUseCase(types.StringArray(updated.UseCases), "agent") {
+		t.Fatalf("updated use_cases = %v, want agent", updated.UseCases)
 	}
 }
 

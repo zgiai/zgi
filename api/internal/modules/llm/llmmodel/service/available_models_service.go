@@ -741,6 +741,9 @@ func routeBacksModelForUseCase(routes []*channelmodel.LLMRoute, modelProvider, m
 		if !containsUseCase(useCases, string(model.UseCaseAgent)) {
 			continue
 		}
+		if customModel {
+			return true
+		}
 		channelProvider := route.ChannelProvider
 		if official {
 			channelProvider = "zgi-cloud"
