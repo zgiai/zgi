@@ -1148,7 +1148,7 @@ func TestModelAvailabilitySingleAndBatchRejectWrongOfficialProvider(t *testing.T
 	}
 }
 
-func TestModelAvailabilityBatchAcceptsSameNameOnlyForExactOfficialPair(t *testing.T) {
+func TestModelAvailabilityBatchRejectsAmbiguousCatalogProviders(t *testing.T) {
 	organizationID := uuid.New()
 	modelName := "same-name"
 	modelRepo := &availableModelRepoFake{models: []*llmmodel.LLMModel{
@@ -1162,6 +1162,46 @@ func TestModelAvailabilityBatchAcceptsSameNameOnlyForExactOfficialPair(t *testin
 		OfficialProviderModels: []channelmodel.ProviderModel{{Provider: "openai", Model: modelName}},
 	}}}
 	svc := NewModelAvailabilityService(modelRepo, &availableConfigRepoFake{}, routeRepo)
+
+	batch, err := svc.BatchCheckAvailability(context.Background(), organizationID, []string{modelName})
+	if err != nil {
+		t.Fatalf("BatchCheckAvailability returned error: %v", err)
+	}
+	got := batch.Items[modelName]
+	if got == nil {
+		t.Fatalf("batch availability missing item %q", modelName)
+	}
+	if got.Available || got.ChannelCount != 0 {
+		t.Fatalf("batch availability = %#v, want unavailable for ambiguous catalog providers", got)
+	}
+	wantMessage := `Model "same-name" is ambiguous across multiple catalog providers`
+	if got.Message != wantMessage {
+		t.Fatalf("batch message = %q, want %q", got.Message, wantMessage)
+	}
+}
+
+func TestModelAvailabilitySingleAndBatchKeepSingleProviderAvailable(t *testing.T) {
+	organizationID := uuid.New()
+	modelID := uuid.New()
+	modelName := "same-name"
+	modelRepo := &availableModelRepoFake{models: []*llmmodel.LLMModel{{
+		ID: modelID, Provider: "openai", Model: modelName, IsActive: true, Status: llmmodel.ModelStatusActive,
+	}}}
+	routeRepo := &availableRouteRepoFake{routes: []*channelmodel.LLMRoute{{
+		Type:                   shared.RouteTypeZGICloud,
+		IsOfficial:             true,
+		Models:                 []string{modelName},
+		OfficialProviderModels: []channelmodel.ProviderModel{{Provider: "openai", Model: modelName}},
+	}}}
+	svc := NewModelAvailabilityService(modelRepo, &availableConfigRepoFake{}, routeRepo)
+
+	single, err := svc.CheckModelAvailable(context.Background(), organizationID, modelID)
+	if err != nil {
+		t.Fatalf("CheckModelAvailable returned error: %v", err)
+	}
+	if !single.Available || single.ChannelCount != 1 {
+		t.Fatalf("single availability = %#v, want available through exact openai pair", single)
+	}
 
 	batch, err := svc.BatchCheckAvailability(context.Background(), organizationID, []string{modelName})
 	if err != nil {

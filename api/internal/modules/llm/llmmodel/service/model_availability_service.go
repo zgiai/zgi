@@ -131,6 +131,18 @@ func (s *modelAvailabilityService) BatchCheckAvailability(ctx context.Context, o
 			continue
 		}
 
+		providers := make(map[string]struct{}, len(candidates))
+		for _, candidate := range candidates {
+			providers[candidate.Provider] = struct{}{}
+		}
+		if len(providers) > 1 {
+			result.Items[name] = &dto.ModelAvailabilityResponse{
+				Available: false,
+				Message:   fmt.Sprintf("Model %q is ambiguous across multiple catalog providers", name),
+			}
+			continue
+		}
+
 		var availability *dto.ModelAvailabilityResponse
 		for _, candidate := range candidates {
 			candidateAvailability, err := s.availabilityForModel(ctx, organizationID, candidate, routes, visibility)
