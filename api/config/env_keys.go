@@ -396,6 +396,10 @@ const (
 // Observability and dependency service keys.
 const (
 	// Observability providers.
+	// envZGIReporters selects comma-separated ZGI Reporter adapters.
+	// Supported built-ins: sentry, otel. Empty auto-detects configured providers;
+	// "none" disables all reporters.
+	envZGIReporters = "ZGI_REPORTERS"
 	// envOTELEnabled controls whether OpenTelemetry tracing is enabled. Default: false.
 	envOTELEnabled = "OTEL_ENABLED"
 	// envOTELServiceName sets the OpenTelemetry service name. Default: zgi-api.

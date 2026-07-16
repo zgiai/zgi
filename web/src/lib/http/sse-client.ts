@@ -1,7 +1,7 @@
 // Server-Sent Events (SSE) client implementation
 
 import { ErrorNotificationService } from '@/utils/error-notifications';
-import { captureException } from '@/lib/sentry/client';
+import { captureError } from '@/lib/observability';
 import { getEndpointConfig, type ApiEndpoint } from './config';
 import type { SseOptions, SseMessage, SsePostOptions, SseEventCallbacks } from './types';
 import { parseSseRawEvent, SseParser, type SseRawEvent } from './sse-parser';
@@ -234,9 +234,9 @@ export class SseClient {
     if (!options.skipErrorHandling) {
       ErrorNotificationService.showNetworkError();
     }
-    captureException(err, scope => {
-      scope.setContext('http', { url: urlObj.toString(), method });
-      scope.setTag('endpoint', endpointCfg.name);
+    captureError(err, 'sse.connection.failed', {
+      tags: { endpoint: endpointCfg.name },
+      attributes: { http: { path: urlObj.pathname, method } },
     });
     options.onError?.(err);
     return { close: () => controller.abort() };
@@ -254,14 +254,11 @@ export class SseClient {
       error instanceof Error ? error : new Error('Authentication session is not available');
     err.code = err.code || 'ERR_AUTH_SESSION_MISSING';
     err.status = err.status || 401;
-    captureException(err, scope => {
-      scope.setContext('http', {
-        url: urlObj.toString(),
-        method,
-        status: err.status,
-        code: err.code,
-      });
-      scope.setTag('endpoint', endpointCfg.name);
+    captureError(err, 'sse.authentication.failed', {
+      tags: { endpoint: endpointCfg.name },
+      attributes: {
+        http: { path: urlObj.pathname, method, status: err.status, code: err.code },
+      },
     });
     options.onError?.(err);
     return { close: () => controller.abort() };
@@ -301,15 +298,20 @@ export class SseClient {
     err.status = response.status;
     err.code = code;
     err.details = responseText || undefined;
-    captureException(err, scope => {
-      scope.setContext('http', {
-        url: urlObj.toString(),
-        method,
-        status: response.status,
-        code,
-        responseText,
-      });
-      scope.setTag('endpoint', endpointCfg.name);
+    const reportingError = new Error(
+      `SSE request failed with status ${response.status}${code ? ` (${code})` : ''}`
+    );
+    captureError(reportingError, 'sse.response.failed', {
+      tags: { endpoint: endpointCfg.name },
+      attributes: {
+        http: {
+          path: urlObj.pathname,
+          method,
+          status: response.status,
+          code,
+          response_size: responseText.length,
+        },
+      },
     });
     options.onError?.(err);
     return { close: () => controller.abort() };
@@ -332,9 +334,11 @@ export class SseClient {
       'Invalid SSE response: missing text/event-stream content-type'
     );
     err.status = response.status;
-    captureException(err, scope => {
-      scope.setContext('http', { url: urlObj.toString(), method, status: response.status });
-      scope.setTag('endpoint', endpointCfg.name);
+    captureError(err, 'sse.content_type.invalid', {
+      tags: { endpoint: endpointCfg.name },
+      attributes: {
+        http: { path: urlObj.pathname, method, status: response.status },
+      },
     });
     options.onError?.(err);
     return { close: () => controller.abort() };
@@ -487,14 +491,16 @@ export class SseClient {
     if (!options.skipErrorHandling) {
       ErrorNotificationService.showNetworkError();
     }
-    captureException(err, scope => {
-      scope.setContext('http', {
-        url: urlObj.toString(),
-        method,
-        incompleteLastEvent: meta.incompleteLastEvent,
-        terminalReceived: meta.terminalReceived,
-      });
-      scope.setTag('endpoint', endpointCfg.name);
+    captureError(err, 'sse.stream.interrupted', {
+      tags: { endpoint: endpointCfg.name },
+      attributes: {
+        http: {
+          path: urlObj.pathname,
+          method,
+          incomplete_last_event: meta.incompleteLastEvent,
+          terminal_received: meta.terminalReceived,
+        },
+      },
     });
     options.onTransportError?.(err, meta);
     options.onError?.(err);

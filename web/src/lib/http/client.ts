@@ -5,7 +5,7 @@ import { AxiosError } from 'axios';
 import axios from 'axios';
 import { ErrorNotificationService } from '@/utils/error-notifications';
 import { isAuthRedirectInProgress, isLogoutInProgress } from '@/lib/auth/logout-state';
-import { captureException } from '@/lib/sentry/client';
+import { captureError } from '@/lib/observability';
 import {
   getEndpointConfig,
   getHttpConfig,
@@ -158,7 +158,7 @@ export class HttpClient {
             ErrorNotificationService.showNetworkError();
           }
           if (!shouldSilence) {
-            this.logErrorToSentry(error, config, 'network_error');
+            this.reportRequestError(error, config, 'network_error');
           }
           return Promise.reject(error);
         }
@@ -201,7 +201,7 @@ export class HttpClient {
             return await this.handleTokenRefresh(config);
           } catch (refreshError) {
             if (!isStaleTokenRefreshError(refreshError)) {
-              this.logErrorToSentry(refreshError, config, 'token_refresh_failed');
+              this.reportRequestError(refreshError, config, 'token_refresh_failed');
             }
             return Promise.reject(refreshError);
           }
@@ -217,7 +217,7 @@ export class HttpClient {
           error.response?.status === 401 ||
           (error.response?.status === 400 && backendCode === '212012');
         if (!isAuthError) {
-          this.logErrorToSentry(error, config, 'api_error');
+          this.reportRequestError(error, config, 'api_error');
         } else if (!config?.skipAuth && !this.tokenManager.getRefreshToken()) {
           this.tokenManager.clearAuthData();
           this.tokenManager.redirectToLogin();
@@ -233,25 +233,28 @@ export class HttpClient {
     return !method || method === 'GET' || method === 'HEAD' || method === 'OPTIONS';
   }
 
-  private logErrorToSentry(
+  private reportRequestError(
     error: unknown,
     config: ExtendedRequestConfig | undefined,
     reason: string
   ): void {
-    captureException(error, scope => {
-      scope.setContext('http', {
-        url: config?.url || '',
-        baseURL: config?.baseURL || '',
-        method: config?.method || '',
-        status: error instanceof AxiosError ? error.response?.status || 0 : 0,
-      });
-      scope.setContext('auth', { reason });
-      scope.setTag('endpoint', this.endpoint.name);
-      const errorData =
-        error instanceof AxiosError
-          ? (error.response?.data as { code?: string } | undefined)
-          : undefined;
-      if (errorData?.code) scope.setTag('business_code', errorData.code);
+    const errorData =
+      error instanceof AxiosError
+        ? (error.response?.data as { code?: string } | undefined)
+        : undefined;
+    captureError(error, 'http.request.failed', {
+      tags: {
+        endpoint: this.endpoint.name,
+        ...(errorData?.code ? { business_code: errorData.code } : {}),
+      },
+      attributes: {
+        http: {
+          path: config?.url?.split('?')[0] || '',
+          method: config?.method || '',
+          status: error instanceof AxiosError ? error.response?.status || 0 : 0,
+        },
+        auth: { reason },
+      },
     });
   }
 

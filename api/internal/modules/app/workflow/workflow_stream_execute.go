@@ -7,13 +7,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/getsentry/sentry-go"
 	"github.com/gin-gonic/gin"
 	"github.com/zgiai/zgi/api/internal/dto"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/diagnosis"
 	workflowpause "github.com/zgiai/zgi/api/internal/modules/app/workflow/pause"
 	workflow_shared "github.com/zgiai/zgi/api/internal/modules/app/workflow/shared"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/streamscheduler"
+	"github.com/zgiai/zgi/api/internal/observability"
 	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
@@ -494,15 +494,15 @@ func (h *WorkflowHandler) executeWorkflowStream(c *gin.Context, ctx context.Cont
 			failedNodes[currentNodeID] = failedErrMsg
 			logger.CriticalContext(ctx, "node execution failed", "node_id", currentNodeID, "node_type", nodeType, err)
 
-			// Report error to Sentry
-			sentry.WithScope(func(scope *sentry.Scope) {
-				scope.SetTag("node_id", currentNodeID)
-				scope.SetTag("node_type", nodeType)
-				scope.SetTag("workflow_id", workflowID)
-				scope.SetExtra("node_inputs", nodeInputs)
-				scope.SetExtra("workflow_run_id", workflowRunID)
-				sentry.CaptureException(err)
-			})
+			observability.CaptureError(ctx, "workflow.node.failed", err,
+				observability.Tag("workflow.node_type", nodeType),
+				observability.Attributes(map[string]any{
+					"workflow_id":       workflowID,
+					"workflow_run_id":   workflowRunID,
+					"workflow_node_id":  currentNodeID,
+					"input_field_count": len(nodeInputs),
+				}),
+			)
 
 			elapsedTime := ElapsedMillisecondsSince(nodeStartTime)
 			finishedAt := time.Now()
