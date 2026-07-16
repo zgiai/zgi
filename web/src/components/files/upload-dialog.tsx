@@ -1,8 +1,10 @@
 'use client';
 
 import { useState, useCallback, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import { useT } from '@/i18n';
-import { FolderOpen } from 'lucide-react';
+import { AlertCircle, FolderOpen, Info } from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import {
@@ -25,6 +27,8 @@ import {
 } from '@/components/common/workspace-selector';
 import { useCurrentWorkspace, useIsOrganizationMode } from '@/store';
 import type { FileParseProviderKey, FileUploadProcessingMode } from '@/services/types/file';
+import { contentParseService } from '@/services/content-parse.service';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import {
   MAX_FILE_FOLDER_TREE_LEVEL,
   getFileFolderAncestorIds,
@@ -64,12 +68,20 @@ export function UploadDialog({
   initialFolderId = '',
 }: UploadDialogProps) {
   const t = useT();
+  const router = useRouter();
   const currentWorkspace = useCurrentWorkspace();
   const isOrganizationMode = useIsOrganizationMode();
   const [selectedWorkspace, setSelectedWorkspace] = useState<WorkspaceSelectorValue | undefined>();
   const effectiveWorkspaceId = isOrganizationMode ? selectedWorkspace?.id : currentWorkspace?.id;
   const { folders, isLoading: isFoldersLoading } = useFileFolders(effectiveWorkspaceId, {
     enabled: !isOrganizationMode || !!effectiveWorkspaceId,
+  });
+  const { data: parserSettingsData, isSuccess: isParserSettingsSuccess } = useQuery({
+    queryKey: ['content-parse', 'parser-settings'],
+    queryFn: () => contentParseService.listParserSettings(),
+    enabled: open,
+    staleTime: 60_000,
+    retry: false,
   });
 
   // Local state
@@ -78,6 +90,13 @@ export function UploadDialog({
     useState<FileUploadProcessingMode>('process_now');
   const [selectedFolderId, setSelectedFolderId] = useState<string>('');
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
+  const hasAvailableThirdPartyParser = (parserSettingsData?.data.items ?? []).some(
+    item =>
+      (item.provider_key === 'reducto' || item.provider_key === 'mineru') &&
+      item.enabled &&
+      item.configured &&
+      item.status === 'available'
+  );
 
   useEffect(() => {
     if (!open) return;
@@ -207,7 +226,17 @@ export function UploadDialog({
 
           {addMode === 'file' ? (
             <div className="space-y-3">
-              <Label className="text-sm font-semibold">{t('files.upload.processingMode')}</Label>
+              <div className="flex items-center gap-1.5">
+                <Label className="text-sm font-semibold">{t('files.upload.processingMode')}</Label>
+                <Tooltip delayDuration={150}>
+                  <TooltipTrigger asChild>
+                    <Info className="size-4 cursor-help text-muted-foreground" />
+                  </TooltipTrigger>
+                  <TooltipContent side="top" align="start" className="max-w-80 text-xs leading-5">
+                    {t('files.upload.processingModeHelp')}
+                  </TooltipContent>
+                </Tooltip>
+              </div>
               <RadioCardGroup
                 value={processingMode}
                 onValueChange={value => setProcessingMode(value as FileUploadProcessingMode)}
@@ -234,6 +263,28 @@ export function UploadDialog({
                   {t('files.upload.processingHintDescription')}
                 </AlertDescription>
               </Alert>
+              {processingMode === 'process_now' &&
+              isParserSettingsSuccess &&
+              !hasAvailableThirdPartyParser ? (
+                <Alert className="border-warning/40 bg-warning/10">
+                  <AlertCircle className="h-4 w-4 text-warning" />
+                  <AlertTitle className="text-sm font-semibold">
+                    {t('files.upload.parserFallbackWarningTitle')}
+                  </AlertTitle>
+                  <AlertDescription className="flex flex-col gap-3 text-sm leading-5 text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+                    <span>{t('files.upload.parserFallbackWarningDescription')}</span>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="shrink-0"
+                      onClick={() => router.push('/dashboard/settings/parsers')}
+                    >
+                      {t('files.upload.configureParserService')}
+                    </Button>
+                  </AlertDescription>
+                </Alert>
+              ) : null}
             </div>
           ) : null}
 

@@ -30,7 +30,7 @@ type ModelService interface {
 	DeleteCustom(ctx context.Context, organizationID, id uuid.UUID) error
 
 	// Aggregated operations
-	ListTenantModels(ctx context.Context, organizationID uuid.UUID, useCase string, provider string) ([]*model.ModelView, error)
+	ListTenantModels(ctx context.Context, organizationID uuid.UUID, useCase string, provider string, status string) ([]*model.ModelView, error)
 	GetModelParameters(ctx context.Context, organizationID uuid.UUID, provider, modelName string) (model.ConfigParameters, error)
 
 	// Batch operations (Legacy support)

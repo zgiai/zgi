@@ -22,17 +22,24 @@ import { pickLocale, mapParametersToFormFields, createInitialBindings } from '@/
 import { useLocale } from '@/hooks/use-locale';
 import { PLACE_GAP_X, PLACE_GAP_Y } from '../constants/place';
 import { PAD_X, PAD_Y } from '../constants/iteration-layout';
+import type { ToolNodeData } from '../../../nodes/tool/config';
+
+const isWorkflowCreationReadOnly = () => {
+  const { mode, canEdit } = useWorkflowStore.getState();
+  return mode === 'history' || !canEdit;
+};
 
 interface CreationActionsParams {
   position: { x: number; y: number } | null;
   originatingHandle: OriginHandleProp | null;
   originatingEdge: OriginatingEdgeInfo | null;
   onClose: () => void;
+  isReadOnly: boolean;
   createNodeByType: (
     type: string,
     pos: { x: number; y: number },
     parentId?: string,
-    initialData?: any
+    initialData?: Partial<ToolNodeData>
   ) => string | null;
 }
 
@@ -41,6 +48,7 @@ export const useCreationActions = ({
   originatingHandle,
   originatingEdge,
   onClose,
+  isReadOnly,
   createNodeByType,
 }: CreationActionsParams) => {
   const rf = useReactFlow();
@@ -49,26 +57,27 @@ export const useCreationActions = ({
 
   const setEdges = useWorkflowStore.use.setEdges();
   const edges = useWorkflowStore.use.edges();
-  const viewport = useWorkflowStore.use.viewport();
-  const creationOffsetIndex = useWorkflowStore.use.creationOffsetIndex();
   const incrementCreationOffsetIndex = useWorkflowStore.use.incrementCreationOffsetIndex();
   const { clearOriginatingHandle, clearOriginatingEdge } = useCreateNodeModal();
   const setIsCreatingNode = useWorkflowStore.use.setIsCreatingNode();
 
-  const getNodeBox = (id: string) =>
-    getNodeBoxFromGraph(
-      rf as unknown as {
-        getNode: (id: string) =>
-          | {
-              width?: number;
-              height?: number;
-              position?: { x: number; y: number };
-              data?: { type?: string };
-            }
-          | undefined;
-      },
-      id
-    );
+  const getNodeBox = React.useCallback(
+    (id: string) =>
+      getNodeBoxFromGraph(
+        rf as unknown as {
+          getNode: (id: string) =>
+            | {
+                width?: number;
+                height?: number;
+                position?: { x: number; y: number };
+                data?: { type?: string };
+              }
+            | undefined;
+        },
+        id
+      ),
+    [rf]
+  );
 
   const containerContextId: string | undefined = React.useMemo(
     () =>
@@ -85,13 +94,16 @@ export const useCreationActions = ({
   );
 
   const createNodeByTypeWrapper = React.useCallback(
-    (type: string, pos: { x: number; y: number }, initialData?: any) => {
+    (type: string, pos: { x: number; y: number }, initialData?: Partial<ToolNodeData>) => {
+      if (isReadOnly || isWorkflowCreationReadOnly()) {
+        return null;
+      }
       if (containerContextId && !canPlaceNodeInContainer(type, containerContextType)) {
         return null;
       }
       return createNodeByType(type, pos, containerContextId, initialData);
     },
-    [containerContextId, containerContextType, createNodeByType]
+    [containerContextId, containerContextType, createNodeByType, isReadOnly]
   );
 
   const handleOpenChange = React.useCallback(
@@ -109,11 +121,21 @@ export const useCreationActions = ({
 
   const handleAddNode = React.useCallback(
     (type: string) => {
+      if (isReadOnly || isWorkflowCreationReadOnly()) {
+        onClose();
+        return;
+      }
       if (originatingEdge) {
         isSelectingRef.current = true;
         onClose();
         setIsCreatingNode(true);
         setTimeout(() => {
+          if (isWorkflowCreationReadOnly()) {
+            useWorkflowStore.getState().setDraggingNodeType(null);
+            isSelectingRef.current = false;
+            setIsCreatingNode(false);
+            return;
+          }
           useWorkflowStore.getState().beginHistoryBatch();
           try {
             const insertCenter = (originatingEdge.midPoint ?? position) as { x: number; y: number };
@@ -302,6 +324,12 @@ export const useCreationActions = ({
       onClose();
       setIsCreatingNode(true);
       setTimeout(() => {
+        if (isWorkflowCreationReadOnly()) {
+          useWorkflowStore.getState().setDraggingNodeType(null);
+          isSelectingRef.current = false;
+          setIsCreatingNode(false);
+          return;
+        }
         useWorkflowStore.getState().beginHistoryBatch();
         try {
           const initialPos = position ?? { x: 0, y: 0 };
@@ -466,11 +494,13 @@ export const useCreationActions = ({
     },
     [
       originatingEdge,
+      isReadOnly,
       onClose,
       setIsCreatingNode,
       position,
       createNodeByTypeWrapper,
       containerContextId,
+      getNodeBox,
       rf,
       edges,
       setEdges,
@@ -483,11 +513,21 @@ export const useCreationActions = ({
 
   const handleAddBuiltinTool = React.useCallback(
     (provider: BuiltinToolProvider, tool: BuiltinToolItem) => {
+      if (isReadOnly || isWorkflowCreationReadOnly()) {
+        onClose();
+        return;
+      }
       if (originatingEdge) {
         isSelectingRef.current = true;
         onClose();
         setIsCreatingNode(true);
         setTimeout(() => {
+          if (isWorkflowCreationReadOnly()) {
+            useWorkflowStore.getState().setDraggingNodeType(null);
+            isSelectingRef.current = false;
+            setIsCreatingNode(false);
+            return;
+          }
           useWorkflowStore.getState().beginHistoryBatch();
           try {
             const fields = mapParametersToFormFields(tool.parameters, locale);
@@ -688,6 +728,12 @@ export const useCreationActions = ({
       onClose();
       setIsCreatingNode(true);
       setTimeout(() => {
+        if (isWorkflowCreationReadOnly()) {
+          useWorkflowStore.getState().setDraggingNodeType(null);
+          isSelectingRef.current = false;
+          setIsCreatingNode(false);
+          return;
+        }
         useWorkflowStore.getState().beginHistoryBatch();
         try {
           const fields = mapParametersToFormFields(tool.parameters, locale);
@@ -800,7 +846,7 @@ export const useCreationActions = ({
             if (position) {
               pos = screenToFlowPositionManual(position, useWorkflowStore.getState().viewport);
             } else {
-              const anchorBox = getNodeBoxFromGraph(rf as any, originatingHandle.nodeId);
+              const anchorBox = getNodeBox(originatingHandle.nodeId);
               const isSource = originatingHandle.handleType === 'source';
               const sameHandleEdges = edges.filter(e =>
                 isSource
@@ -813,7 +859,7 @@ export const useCreationActions = ({
               if (connectedNodeIds.length === 0) {
                 pos = { x: anchorBox.x + anchorBox.w + PLACE_GAP_X, y: anchorBox.y };
               } else {
-                const boxes = connectedNodeIds.map(nid => getNodeBoxFromGraph(rf as any, nid));
+                const boxes = connectedNodeIds.map(nid => getNodeBox(nid));
                 const maxBox = boxes.reduce((acc, b) => (b.y + b.h > acc.y + acc.h ? b : acc));
                 pos = { x: maxBox.x, y: maxBox.y + maxBox.h + PLACE_GAP_Y };
               }
@@ -863,12 +909,14 @@ export const useCreationActions = ({
     },
     [
       originatingEdge,
+      isReadOnly,
       onClose,
       setIsCreatingNode,
       locale,
       position,
       createNodeByTypeWrapper,
       containerContextId,
+      getNodeBox,
       rf,
       edges,
       setEdges,

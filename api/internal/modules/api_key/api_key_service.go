@@ -62,9 +62,10 @@ func (s *APIKeyService) GenerateAPIKey(ctx context.Context, agentID, tenantID uu
 
 // ValidateAPIKey validates an API key and returns associated agent/tenant info
 func (s *APIKeyService) ValidateAPIKey(ctx context.Context, key string) (*APIKey, error) {
+	keyHash := s.HashAPIKey(key)
 	var apiKey APIKey
 	err := s.db.WithContext(ctx).
-		Where("key_hash = ? AND status = 'active'", key).
+		Where("key_hash = ? AND status = 'active'", keyHash).
 		Where("expires_at IS NULL OR expires_at > ?", time.Now()).
 		First(&apiKey).Error
 

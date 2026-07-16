@@ -122,12 +122,16 @@ const messages = {
       moderation: 'Moderation Model',
       reasoning: 'Reasoning Model',
       'function-calling': 'Function Calling Model',
+      agent: 'Agent Model',
+    },
+    tags: {
+      agent: 'Recommended',
     },
     empty: {
       noModelsTitle: 'Model setup required',
       noResults: 'No models found matching',
       noModels: 'No {type} available',
-      contactAdmin: 'Contact an admin to enable models for this workspace.',
+      contactAdmin: 'Contact an admin to enable organization model capabilities.',
       configureDescription: 'Configure at least one available {type} before using this workflow or agent.',
       configure: 'Configure',
       clearSearch: 'Clear search',
@@ -136,8 +140,10 @@ const messages = {
     tooltip: {
       modelId: 'Model ID:',
       context: 'Context',
+      deprecatedUnavailable: 'This model is deprecated and cannot be selected for new configurations.',
       useCases: 'Use Cases',
       features: 'Features',
+      replacementSuggestion: 'Suggested replacement:',
       description: 'Description:',
       unknown: 'unknown',
       // Note: Feature labels now use aiProviders.models.features translations

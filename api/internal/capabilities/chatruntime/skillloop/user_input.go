@@ -91,6 +91,30 @@ func normalizeUserInputOptions(value interface{}) ([]map[string]interface{}, err
 	return options, nil
 }
 
+func cloneQuestionMaps(input []map[string]interface{}) []map[string]interface{} {
+	out := make([]map[string]interface{}, 0, len(input))
+	for _, item := range input {
+		if item == nil {
+			out = append(out, map[string]interface{}{})
+			continue
+		}
+		cloned := make(map[string]interface{}, len(item))
+		for key, value := range item {
+			if options, ok := value.([]map[string]interface{}); ok {
+				copiedOptions := make([]map[string]interface{}, 0, len(options))
+				for _, option := range options {
+					copiedOptions = append(copiedOptions, copyStringAnyMap(option))
+				}
+				cloned[key] = copiedOptions
+				continue
+			}
+			cloned[key] = value
+		}
+		out = append(out, cloned)
+	}
+	return out
+}
+
 func stringFromInterface(value interface{}) string {
 	text, _ := value.(string)
 	return strings.TrimSpace(text)
@@ -131,11 +155,12 @@ func userInputQuestionSummaries(questions []map[string]interface{}) []interface{
 	return summaries
 }
 
-func userInputRequestPayload(prepared *PreparedChat, requestID string, questions []map[string]interface{}) map[string]interface{} {
+func userInputRequestPayload(prepared *PreparedChat, requestID string, message string, questions []map[string]interface{}) map[string]interface{} {
 	payload := map[string]interface{}{
 		"conversation_id": prepared.Conversation.ID.String(),
 		"message_id":      prepared.Message.ID.String(),
 		"request_id":      strings.TrimSpace(requestID),
+		"message":         strings.TrimSpace(message),
 		"questions":       questions,
 		"created_at":      time.Now().Unix(),
 	}

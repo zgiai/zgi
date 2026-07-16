@@ -8,8 +8,6 @@ import (
 
 	"github.com/hibiken/asynq"
 	"github.com/zgiai/zgi/api/config"
-	contentparsecap "github.com/zgiai/zgi/api/internal/capabilities/contentparse"
-	hyperparsesdk "github.com/zgiai/zgi/api/internal/capabilities/contentparse/adapters/hyperparse_sdk"
 	shortlinkcap "github.com/zgiai/zgi/api/internal/capabilities/shortlink"
 	"github.com/zgiai/zgi/api/internal/contracts"
 	"github.com/zgiai/zgi/api/internal/infra/platform"
@@ -49,8 +47,7 @@ import (
 	workspace_repo "github.com/zgiai/zgi/api/internal/modules/workspace/repository"
 	workspace_service "github.com/zgiai/zgi/api/internal/modules/workspace/service"
 
-	// Shared repositories and services
-	shared_repo "github.com/zgiai/zgi/api/internal/modules/shared/repository"
+	// Shared services
 	shared_service "github.com/zgiai/zgi/api/internal/modules/shared/service"
 
 	// Quota management
@@ -71,6 +68,8 @@ import (
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/internal/modules/memory"
 	database_tools "github.com/zgiai/zgi/api/internal/modules/tools/builtin/database"
+	filegenerator_tools "github.com/zgiai/zgi/api/internal/modules/tools/builtin/filegenerator"
+	files_tools "github.com/zgiai/zgi/api/internal/modules/tools/builtin/files"
 	imagegenerator_tools "github.com/zgiai/zgi/api/internal/modules/tools/builtin/imagegenerator"
 	knowledge_tools "github.com/zgiai/zgi/api/internal/modules/tools/builtin/knowledge"
 	workflow_tools "github.com/zgiai/zgi/api/internal/modules/tools/builtin/workflow"
@@ -161,8 +160,10 @@ type ServiceContainer struct {
 	billingService                interfaces.BillingService
 	registerService               interfaces.RegisterService
 	fileService                   interfaces.FileService
+	fileFolderService             file_service.FileFolderService
 	contentExtractor              workflow_file.ContentExtractor
 	contentParseService           contracts.ContentParseService
+	contentParseModule            *contentparsemodule.Module
 
 	// DataSource service
 	dataSourceService service.DataSourceService
@@ -179,7 +180,7 @@ type ServiceContainer struct {
 	departmentService workspace_service.DepartmentService
 
 	// Permission services
-	permissionRepo            shared_repo.PermissionRepository
+	authorizationService      interfaces.AuthorizationService
 	resourcePermissionService interfaces.ResourcePermissionService
 
 	// Task management
@@ -421,7 +422,11 @@ func (c *ServiceContainer) initializeWorkflowFileDependencies() {
 
 	storageClient := storage.GetStorage()
 	extractProcessor := extractor.NewExtractProcessor(storageClient)
-	workflow_file.InitGlobalContentExtractor(fileService, extractProcessor)
+	workflow_file.InitGlobalContentExtractor(
+		fileService,
+		extractProcessor,
+		workflow_file.WithContentParseService(c.GetContentParseService()),
+	)
 }
 
 func (c *ServiceContainer) GetRegisterService() interfaces.RegisterService {
@@ -591,15 +596,34 @@ func (c *ServiceContainer) GetFileService() interfaces.FileService {
 	return c.fileService
 }
 
+func (c *ServiceContainer) GetFileFolderService() file_service.FileFolderService {
+	if c.fileFolderService == nil {
+		fileFolderRepo := file_repo.NewFileFolderRepository(c.db)
+		fileRepo := file_repo.NewFileRepository(c.db)
+		documentRepo := dataset_repo.NewDocumentRepository(c.db)
+		datasetRepo := dataset_repo.NewDatasetRepository(c.db)
+		c.fileFolderService = file_service.NewFileResourceService(fileFolderRepo, fileRepo, documentRepo, datasetRepo, c.GetAccountService())
+	}
+	return c.fileFolderService
+}
+
 func (c *ServiceContainer) GetContentParseService() contracts.ContentParseService {
 	if c.contentParseService == nil {
-		c.contentParseService = contentparsecap.NewModule(
-			contentparsecap.WithFigureSummaryEnhancer(
-				hyperparsesdk.NewDefaultChatFigureSummaryLocalizer(c.GetLLMClient(), c.GetDefaultModelService()),
-			),
-		).Service
+		c.contentParseService = c.GetContentParseModule().ContentParseService
 	}
 	return c.contentParseService
+}
+
+func (c *ServiceContainer) GetContentParseModule() *contentparsemodule.Module {
+	if c.contentParseModule == nil {
+		c.contentParseModule = contentparsemodule.NewModule(
+			c.db,
+			contentparsemodule.WithAccountService(c.GetAccountService()),
+			contentparsemodule.WithOrganizationService(c.GetOrganizationService()),
+			contentparsemodule.WithSystemVisionModel(c.GetLLMClient(), c.GetDefaultModelService()),
+		)
+	}
+	return c.contentParseModule
 }
 
 func (c *ServiceContainer) GetContentExtractor() workflow_file.ContentExtractor {
@@ -617,7 +641,12 @@ func (c *ServiceContainer) GetContentExtractor() workflow_file.ContentExtractor 
 		config := workflow_file.GetContentExtractorConfig()
 
 		// Create ContentExtractor with FileService, ExtractProcessor, and Config
-		c.contentExtractor = workflow_file.NewContentExtractor(fileService, extractProcessor, config)
+		c.contentExtractor = workflow_file.NewContentExtractor(
+			fileService,
+			extractProcessor,
+			config,
+			workflow_file.WithContentParseService(c.GetContentParseService()),
+		)
 	}
 	return c.contentExtractor
 }
@@ -636,6 +665,7 @@ func (c *ServiceContainer) GetDataSourceService() service.DataSourceService {
 			c.GetAccountService(),
 			c.GetFileService(),
 			c.GetOrganizationService(),
+			c.GetAuthorizationService(),
 			c.GetResourcePermissionService(),
 			c.GetQuotaService(),
 			c.GetLLMClient(),
@@ -703,14 +733,10 @@ func (c *ServiceContainer) GetSQLBase() sql_base.SQLBase {
 
 func (c *ServiceContainer) GetDataLibraryModule() *datalibrarymodule.Module {
 	if c.dataLibraryModule == nil {
-		contentParseModule := contentparsemodule.NewModule(
-			c.db,
-			contentparsemodule.WithSystemVisionModel(c.GetLLMClient(), c.GetDefaultModelService()),
-		)
 		c.dataLibraryModule = datalibrarymodule.NewModuleWithContentParseModule(
 			c.db,
 			storage.GetStorage(),
-			contentParseModule,
+			c.GetContentParseModule(),
 			c.GetLLMClient(),
 			c.GetDefaultModelService(),
 		)
@@ -740,18 +766,16 @@ func (c *ServiceContainer) GetLLMAPIKeyRepository() apikeyrepo.APIKeyRepository 
 	return c.llmAPIKeyRepo
 }
 
-// Permission Repository and Service Getters
-
-func (c *ServiceContainer) GetPermissionRepository() shared_repo.PermissionRepository {
-	if c.permissionRepo == nil {
-		c.permissionRepo = shared_repo.NewPermissionRepository(c.db)
+func (c *ServiceContainer) GetAuthorizationService() interfaces.AuthorizationService {
+	if c.authorizationService == nil {
+		c.authorizationService = shared_service.NewAuthorizationService(c.GetOrganizationService())
 	}
-	return c.permissionRepo
+	return c.authorizationService
 }
 
 func (c *ServiceContainer) GetResourcePermissionService() interfaces.ResourcePermissionService {
 	if c.resourcePermissionService == nil {
-		c.resourcePermissionService = shared_service.NewResourcePermissionService(c.GetPermissionRepository())
+		c.resourcePermissionService = shared_service.NewResourcePermissionService(c.GetAuthorizationService())
 	}
 	return c.resourcePermissionService
 }
@@ -896,8 +920,10 @@ func (c *ServiceContainer) GetToolManager() *tools.ToolManager {
 
 		// Register builtin tool providers
 		c.toolManager.RegisterBuiltinProviders(getBuiltinToolProviders())
+		_ = c.toolManager.RegisterProvider(filegenerator_tools.NewProvider())
 		_ = c.toolManager.RegisterProvider(knowledge_tools.NewProvider(c.GetKnowledgeRetrievalService()))
 		_ = c.toolManager.RegisterProvider(database_tools.NewProvider(c.GetDataSourceService(), c.GetOrganizationService()))
+		_ = c.toolManager.RegisterProvider(files_tools.NewProvider(c.GetFileService(), c.GetContentExtractor(), c.GetOrganizationService(), files_tools.WithFileListService(c.GetFileFolderService())))
 		_ = c.toolManager.RegisterProvider(workflow_tools.NewProvider(c.GetAutomationWorkflowRunner))
 		_ = c.toolManager.RegisterProvider(imagegenerator_tools.NewProvider(c.GetFileService(), c.GetLLMClient(), c.GetDefaultModelService()))
 

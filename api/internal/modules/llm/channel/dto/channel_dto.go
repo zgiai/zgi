@@ -115,8 +115,47 @@ type ChannelView struct {
 	Tags             []string                          `json:"tags,omitempty"`
 	Description      string                            `json:"description,omitempty"`
 	APIKeyMasked     string                            `json:"api_key_masked,omitempty"`
+	UpstreamState    *UpstreamStateView                `json:"upstream_state,omitempty"`
 	CreatedAt        int64                             `json:"created_at"`
 	UpdatedAt        int64                             `json:"updated_at"`
+}
+
+type UpstreamBalanceAmountView struct {
+	Currency  string `json:"currency"`
+	Remaining string `json:"remaining,omitempty"`
+}
+
+type UpstreamWarningThresholdView struct {
+	Currency string `json:"currency" binding:"required"`
+	Amount   string `json:"amount" binding:"required"`
+}
+
+type UpstreamStateView struct {
+	BalanceCapability      string                         `json:"balance_capability"`
+	BalanceScope           string                         `json:"balance_scope,omitempty"`
+	Balances               []UpstreamBalanceAmountView    `json:"balances,omitempty"`
+	Spendable              *bool                          `json:"spendable,omitempty"`
+	IsUnlimited            bool                           `json:"is_unlimited"`
+	Availability           string                         `json:"availability"`
+	IsLow                  bool                           `json:"is_low"`
+	IsStale                bool                           `json:"is_stale"`
+	BalanceObservedAt      string                         `json:"balance_observed_at,omitempty"`
+	LastCheckAt            string                         `json:"last_check_at,omitempty"`
+	LastCheckStatus        string                         `json:"last_check_status"`
+	LastCheckErrorKind     string                         `json:"last_check_error_kind,omitempty"`
+	WarningThresholds      []UpstreamWarningThresholdView `json:"warning_thresholds"`
+	SharedChannelCount     int64                          `json:"shared_channel_count"`
+	BlockReason            string                         `json:"block_reason,omitempty"`
+	CooldownUntil          string                         `json:"cooldown_until,omitempty"`
+	AvailabilityObservedAt string                         `json:"availability_observed_at,omitempty"`
+	ManualRetryRequestedAt string                         `json:"manual_retry_requested_at,omitempty"`
+	ProviderErrorCode      string                         `json:"provider_error_code,omitempty"`
+	ProviderErrorStatus    int                            `json:"provider_error_status,omitempty"`
+	WouldGuard             bool                           `json:"would_guard"`
+}
+
+type UpdateUpstreamStateSettingsRequest struct {
+	WarningThresholds []UpstreamWarningThresholdView `json:"warning_thresholds" binding:"max=20"`
 }
 
 // PlatformChannelView represents a single ZGI Cloud official channel route.
@@ -183,6 +222,7 @@ type DraftTestChannelModelRequest struct {
 	APIBaseURL      string `json:"api_base_url"`
 	Model           string `json:"model" binding:"required"`
 	TestMethod      string `json:"test_method"`
+	Stream          bool   `json:"stream"`
 }
 
 type DiscoverDraftChannelModelsRequest struct {
@@ -226,12 +266,15 @@ type DiscoverOllamaModelsResponse struct {
 }
 
 type ChannelModelTestResult struct {
-	Success        bool   `json:"success"`
-	Message        string `json:"message"`
-	Model          string `json:"model"`
-	UseCase        string `json:"use_case,omitempty"`
-	TestMethod     string `json:"test_method,omitempty"`
-	ResponseTimeMs int64  `json:"response_time_ms"`
+	Success        bool                   `json:"success"`
+	Status         string                 `json:"status,omitempty"`
+	Message        string                 `json:"message"`
+	Model          string                 `json:"model"`
+	UseCase        string                 `json:"use_case,omitempty"`
+	TestMethod     string                 `json:"test_method,omitempty"`
+	ResponseTimeMs int64                  `json:"response_time_ms"`
+	Code           string                 `json:"code,omitempty"`
+	Params         map[string]interface{} `json:"params,omitempty"`
 }
 
 type UpdateChannelBalanceResponse struct {
@@ -262,19 +305,27 @@ type AdjustChannelWalletResponse struct {
 type TestChannelModelRequest struct {
 	Model      string `json:"model" binding:"required"`
 	TestMethod string `json:"test_method"` // chat, embedding, image-gen, rerank
+	Stream     bool   `json:"stream"`
 }
 
 type BatchTestChannelModelsRequest struct {
 	Models     []string `json:"models" binding:"required"`
 	TestMethod string   `json:"test_method"`
+	Stream     bool     `json:"stream"`
 }
 
 type BatchTestChannelModelsStreamResponse struct {
-	Model        string `json:"model"`
-	Success      bool   `json:"success"`
-	Message      string `json:"message"`
-	ResponseTime int64  `json:"response_time_ms"`
-	Completed    bool   `json:"completed"` // True if this is the final message closing the stream
+	Model        string                 `json:"model"`
+	Success      bool                   `json:"success"`
+	Status       string                 `json:"status,omitempty"`
+	Message      string                 `json:"message"`
+	ResponseTime int64                  `json:"response_time_ms"`
+	Completed    bool                   `json:"completed"` // True if this is the final message closing the stream
+	SuccessCount int                    `json:"success_count,omitempty"`
+	FailureCount int                    `json:"failure_count,omitempty"`
+	SkippedCount int                    `json:"skipped_count,omitempty"`
+	Code         string                 `json:"code,omitempty"`
+	Params       map[string]interface{} `json:"params,omitempty"`
 }
 
 // UpdateOfficialChannelSettingsRequest represents the request to update official channel group settings

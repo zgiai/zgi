@@ -5,6 +5,7 @@ import { toast } from 'sonner';
 import { useT } from '@/i18n';
 import { ORGANIZATION_KEYS } from '@/hooks/query-keys';
 import { organizationService } from '@/services/organization.service';
+import { invalidateOrganizationMemberGraph } from '@/hooks/organization/invalidate-organization-member-graph';
 import type {
   OrganizationMemberRole,
   OrganizationUpdateRequest,
@@ -58,11 +59,7 @@ export function useOrganizationActions() {
       return await organizationService.updateCurrentOrganizationMemberRole(memberId, { role });
     },
     onSuccess: (_, variables) => {
-      queryClient.invalidateQueries({ queryKey: ORGANIZATION_KEYS.currentMembers() });
-      queryClient.invalidateQueries({
-        queryKey: ORGANIZATION_KEYS.departmentMembers(currentOrganization?.id || ''),
-      });
-      queryClient.invalidateQueries({ queryKey: ORGANIZATION_KEYS.current() });
+      invalidateOrganizationMemberGraph(queryClient, currentOrganization?.id);
       toast.success(
         variables.role === 'admin'
           ? t('organization.settings.adminManagement.promoteSuccess')

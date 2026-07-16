@@ -1,5 +1,5 @@
 import { memo, useCallback } from 'react';
-import { Plus, RefreshCw, Search, ArrowLeft } from 'lucide-react';
+import { Plus, RefreshCw, FolderPlus, Search, ArrowLeft } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 
@@ -12,6 +12,8 @@ export interface HeaderToolbarProps {
   onSearchChange: (next: string) => void;
   // Use i18n-provided strings from parent to avoid i18n dependency inside this component
   searchPlaceholder: string;
+  createFolderText?: string;
+  onCreateFolder?: () => void;
   createText: string;
   onCreateDataset?: () => void;
   onBack?: () => void;
@@ -29,6 +31,8 @@ function HeaderToolbarBase({
   searchKeyword,
   onSearchChange,
   searchPlaceholder,
+  createFolderText,
+  onCreateFolder,
   createText,
   onCreateDataset,
   onBack,
@@ -39,7 +43,7 @@ function HeaderToolbarBase({
   );
 
   return (
-    <div className="flex items-center justify-between">
+    <div className="flex flex-col gap-4 @3xl/console:flex-row @3xl/console:items-center @3xl/console:justify-between">
       <div className="flex items-center gap-2">
         {!isRootView && onBack && (
           <Button
@@ -63,9 +67,9 @@ function HeaderToolbarBase({
         </Button>
       </div>
 
-      <div className="flex gap-3">
+      <div className="flex w-full flex-col gap-3 @3xl/console:w-auto @3xl/console:flex-row">
         {/* Search Bar */}
-        <div className="relative max-w-md">
+        <div className="relative w-full @3xl/console:max-w-md">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input
             placeholder={searchPlaceholder}
@@ -74,6 +78,12 @@ function HeaderToolbarBase({
             className="pl-9"
           />
         </div>
+        {isRootView && onCreateFolder && (
+          <Button variant="outline" onClick={onCreateFolder}>
+            <FolderPlus size={16} />
+            <span className="text-sm font-normal">{createFolderText}</span>
+          </Button>
+        )}
         {onCreateDataset && (
           <Button onClick={onCreateDataset}>
             <Plus size={16} />

@@ -14,9 +14,11 @@ const (
 	ParameterTypeString      ParameterType = "string"
 	ParameterTypeNumber      ParameterType = "number"
 	ParameterTypeBool        ParameterType = "bool"
+	ParameterTypeBoolean     ParameterType = "boolean"
 	ParameterTypeSelect      ParameterType = "select"
 	ParameterTypeArrayString ParameterType = "array[string]"
 	ParameterTypeArrayNumber ParameterType = "array[number]"
+	ParameterTypeArrayBool   ParameterType = "array[boolean]"
 	ParameterTypeArrayObject ParameterType = "array[object]"
 )
 
@@ -28,7 +30,7 @@ const (
 	ReasoningModePrompt ReasoningMode = "prompt"
 )
 
-const AppType = "agent"
+const AppType = "workflow"
 
 // PromptMessage represents a message in the conversation for Gateway
 type PromptMessage struct {
@@ -108,6 +110,7 @@ func parseParameterExtractorNodeDataFromConfig(config map[string]any) (NodeData,
 	if err := json.Unmarshal(jsonBytes, &nodeData); err != nil {
 		return NodeData{}, "", fmt.Errorf("failed to unmarshal node data: %w", err)
 	}
+	normalizeNodeDataParameterTypes(&nodeData)
 
 	// Validate configuration
 	if err := validateNodeData(&nodeData); err != nil {
@@ -115,6 +118,22 @@ func parseParameterExtractorNodeDataFromConfig(config map[string]any) (NodeData,
 	}
 
 	return nodeData, nodeIDStr, nil
+}
+
+func normalizeNodeDataParameterTypes(nd *NodeData) {
+	if nd == nil {
+		return
+	}
+	for i := range nd.Parameters {
+		nd.Parameters[i].Type = normalizeParameterType(nd.Parameters[i].Type)
+	}
+}
+
+func normalizeParameterType(paramType ParameterType) ParameterType {
+	if paramType == ParameterTypeBoolean {
+		return ParameterTypeBool
+	}
+	return paramType
 }
 
 // validateNodeData validates the node configuration
@@ -126,7 +145,10 @@ func validateNodeData(nd *NodeData) error {
 
 	// Validate parameter names are unique
 	paramNames := make(map[string]bool)
-	for i, param := range nd.Parameters {
+	for i := range nd.Parameters {
+		param := &nd.Parameters[i]
+		param.Type = normalizeParameterType(param.Type)
+
 		if param.Name == "" {
 			return fmt.Errorf("parameter %d: name is required", i)
 		}
@@ -145,6 +167,7 @@ func validateNodeData(nd *NodeData) error {
 		// Validate array types have valid element types
 		if param.Type == ParameterTypeArrayString ||
 			param.Type == ParameterTypeArrayNumber ||
+			param.Type == ParameterTypeArrayBool ||
 			param.Type == ParameterTypeArrayObject {
 			// Array types are valid, no additional validation needed
 		} else if param.Type != ParameterTypeString &&

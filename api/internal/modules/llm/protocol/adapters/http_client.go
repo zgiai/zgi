@@ -282,6 +282,9 @@ func (c *HTTPClient) DoRequestDetailed(ctx context.Context, method, url string, 
 		lastStatusCode = resp.StatusCode
 		lastBody = respBody
 		lastHeader = resp.Header.Clone()
+		if isTerminalPlatformChannelResponse(resp.StatusCode, respBody) {
+			return &HTTPResponse{Body: respBody, StatusCode: resp.StatusCode, Header: resp.Header.Clone()}, nil
+		}
 
 		// 5xx server errors, retry
 		if resp.StatusCode >= 500 {
@@ -313,6 +316,23 @@ func (c *HTTPClient) DoRequestDetailed(ctx context.Context, method, url string, 
 		return &HTTPResponse{Body: lastBody, StatusCode: lastStatusCode, Header: lastHeader}, fmt.Errorf("request failed after %d retries: %w", c.maxRetries, lastErr)
 	}
 	return &HTTPResponse{Body: lastBody, StatusCode: lastStatusCode, Header: lastHeader}, fmt.Errorf("request failed after %d retries", c.maxRetries)
+}
+
+func isTerminalPlatformChannelResponse(statusCode int, body []byte) bool {
+	if statusCode < http.StatusInternalServerError {
+		return false
+	}
+	var payload struct {
+		Error struct {
+			Code string `json:"code"`
+			Type string `json:"type"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return false
+	}
+	return payload.Error.Code == ErrorCodePlatformChannelUnavailable ||
+		payload.Error.Type == ErrorCodePlatformChannelUnavailable
 }
 
 // DoStreamRequest executes streaming HTTP request
@@ -360,7 +380,7 @@ func (c *HTTPClient) DoStreamRequest(ctx context.Context, method, url string, he
 	if resp.StatusCode != http.StatusOK {
 		defer resp.Body.Close()
 		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("stream request failed with status %d: %s", resp.StatusCode, string(body))
+		return nil, NewHTTPStatusError(resp.StatusCode, body)
 	}
 
 	return resp, nil
@@ -370,6 +390,7 @@ func (c *HTTPClient) DoStreamRequest(ctx context.Context, method, url string, he
 // It also handles non-SSE JSON error responses from upstream providers
 func ParseSSE(reader io.Reader, dataChan chan<- string, errChan chan<- error) {
 	scanner := bufio.NewScanner(reader)
+	scanner.Buffer(nil, bufio.MaxScanTokenSize<<9)
 	var dataBuffer strings.Builder
 
 	lineCount := 0
@@ -395,13 +416,8 @@ func ParseSSE(reader io.Reader, dataChan chan<- string, errChan chan<- error) {
 			continue
 		}
 
-		// Parse SSE format
-		name, data, ok := strings.Cut(line, ":")
-		if ok && name == "data" {
-			if strings.HasPrefix(data, " ") {
-				data = strings.TrimPrefix(data, " ")
-			}
-
+		// Parse SSE data lines. Both "data: value" and "data:value" are valid.
+		if data, ok := parseSSEDataLine(line); ok {
 			// [DONE] indicates stream end
 			if data == "[DONE]" {
 				close(dataChan)
@@ -428,6 +444,17 @@ func ParseSSE(reader io.Reader, dataChan chan<- string, errChan chan<- error) {
 	}
 
 	close(dataChan)
+}
+
+func parseSSEDataLine(line string) (string, bool) {
+	name, value, ok := strings.Cut(line, ":")
+	if !ok || name != "data" {
+		return "", false
+	}
+	if strings.HasPrefix(value, " ") {
+		value = strings.TrimPrefix(value, " ")
+	}
+	return value, true
 }
 
 // ParseSSEEvents parses Server-Sent Events while preserving event names and raw data.

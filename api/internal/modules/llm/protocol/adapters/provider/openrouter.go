@@ -364,18 +364,9 @@ func (a *OpenRouterAdapter) fetchModelsFromURL(ctx context.Context, url, apiKey 
 	return models, nil
 }
 
-// GetBalance gets balance information
-// OpenRouter API: https://openrouter.ai/api/v1/credits
-// Response format:
-//
-//	{
-//	  "data": {
-//	    "total_credits": 100.5,
-//	    "total_usage": 25.75
-//	  }
-//	}
+// GetBalance gets the current API key limit, not the account-level credit balance.
 func (a *OpenRouterAdapter) GetBalance(ctx context.Context, apiKey string) (*adapter.Balance, error) {
-	url := fmt.Sprintf("%s/credits", a.baseURL)
+	url := fmt.Sprintf("%s/key", a.baseURL)
 	headers := map[string]string{
 		"Authorization": fmt.Sprintf("Bearer %s", apiKey),
 	}
@@ -389,34 +380,75 @@ func (a *OpenRouterAdapter) GetBalance(ctx context.Context, apiKey string) (*ada
 		return nil, a.handleError(statusCode, respBody)
 	}
 
-	var creditsInfo struct {
-		Data struct {
-			TotalCredits float64 `json:"total_credits"` // Total credits (USD)
-			TotalUsage   float64 `json:"total_usage"`   // Used amount (USD)
+	var keyInfo struct {
+		Data *struct {
+			Limit          json.RawMessage `json:"limit"`
+			LimitRemaining json.RawMessage `json:"limit_remaining"`
+			Usage          json.Number     `json:"usage"`
 		} `json:"data"`
 	}
 
-	if err := json.Unmarshal(respBody, &creditsInfo); err != nil {
-		return nil, fmt.Errorf("failed to parse credits info: %w", err)
+	if err := json.Unmarshal(respBody, &keyInfo); err != nil {
+		return nil, fmt.Errorf("failed to parse key limit: %w", err)
+	}
+	if keyInfo.Data == nil {
+		return nil, fmt.Errorf("key limit response is missing data")
+	}
+	limit, limitUnlimited, err := parseOpenRouterOptionalAmount(keyInfo.Data.Limit, "limit")
+	if err != nil {
+		return nil, err
+	}
+	remaining, remainingUnlimited, err := parseOpenRouterOptionalAmount(keyInfo.Data.LimitRemaining, "limit_remaining")
+	if err != nil {
+		return nil, err
+	}
+	usage := decimal.Zero
+	if keyInfo.Data.Usage != "" {
+		usage, err = decimal.NewFromString(keyInfo.Data.Usage.String())
+		if err != nil {
+			return nil, fmt.Errorf("parse key usage: %w", err)
+		}
 	}
 
-	totalCredits := decimal.NewFromFloat(creditsInfo.Data.TotalCredits)
-	totalUsage := decimal.NewFromFloat(creditsInfo.Data.TotalUsage)
-	remaining := totalCredits.Sub(totalUsage)
+	if limitUnlimited && remainingUnlimited {
+		spendable := true
+		return &adapter.Balance{
+			Used:        usage,
+			Currency:    "USD",
+			IsUnlimited: true,
+			Scope:       adapter.BalanceScopeKeyLimit,
+			Spendable:   &spendable,
+		}, nil
+	}
+	if limitUnlimited || remainingUnlimited {
+		return nil, fmt.Errorf("key limit response contains inconsistent null values")
+	}
 
-	balance := &adapter.Balance{
-		Total:     totalCredits,
-		Used:      totalUsage,
+	spendable := remaining.IsPositive()
+
+	return &adapter.Balance{
+		Total:     limit,
+		Used:      usage,
 		Remaining: remaining,
 		Currency:  "USD",
-	}
+		Scope:     adapter.BalanceScopeKeyLimit,
+		Items:     []adapter.BalanceItem{{Currency: "USD", Remaining: remaining}},
+		Spendable: &spendable,
+	}, nil
+}
 
-	// If total credits is 0, it may be unlimited or not set
-	if totalCredits.IsZero() {
-		balance.IsUnlimited = true
+func parseOpenRouterOptionalAmount(raw json.RawMessage, field string) (decimal.Decimal, bool, error) {
+	if len(raw) == 0 {
+		return decimal.Zero, false, fmt.Errorf("key limit response is missing %s", field)
 	}
-
-	return balance, nil
+	if string(raw) == "null" {
+		return decimal.Zero, true, nil
+	}
+	amount, err := decimal.NewFromString(string(raw))
+	if err != nil {
+		return decimal.Zero, false, fmt.Errorf("parse key %s: %w", field, err)
+	}
+	return amount, false, nil
 }
 
 // ValidateConfig validates configuration
@@ -468,7 +500,7 @@ func (a *OpenRouterAdapter) handleError(statusCode int, body []byte) error {
 	var errResp struct {
 		Error struct {
 			Message string `json:"message"`
-			Code    string `json:"code"`
+			Code    any    `json:"code"`
 		} `json:"error"`
 	}
 
@@ -476,16 +508,20 @@ func (a *OpenRouterAdapter) handleError(statusCode int, body []byte) error {
 		return adapter.HandleNonJSONError(statusCode, body)
 	}
 
+	code := ""
+	if errResp.Error.Code != nil {
+		code = fmt.Sprint(errResp.Error.Code)
+	}
 	switch statusCode {
 	case 401:
-		return adapter.NewAdapterError(errResp.Error.Code, errResp.Error.Message, statusCode, adapter.ErrAuthFailed)
+		return adapter.NewAdapterError(code, errResp.Error.Message, statusCode, adapter.ErrAuthFailed)
 	case 429:
-		return adapter.NewAdapterError(errResp.Error.Code, errResp.Error.Message, statusCode, adapter.ErrRateLimited)
+		return adapter.NewAdapterError(code, errResp.Error.Message, statusCode, adapter.ErrRateLimited)
 	case 402:
-		return adapter.NewAdapterError(errResp.Error.Code, errResp.Error.Message, statusCode, adapter.ErrInsufficientBalance)
+		return adapter.NewAdapterError(code, errResp.Error.Message, statusCode, adapter.ErrInsufficientBalance)
 	case 404:
-		return adapter.NewAdapterError(errResp.Error.Code, errResp.Error.Message, statusCode, adapter.ErrModelNotFound)
+		return adapter.NewAdapterError(code, errResp.Error.Message, statusCode, adapter.ErrModelNotFound)
 	default:
-		return adapter.NewAdapterError(errResp.Error.Code, errResp.Error.Message, statusCode, adapter.ErrUpstreamError)
+		return adapter.NewAdapterError(code, errResp.Error.Message, statusCode, adapter.ErrUpstreamError)
 	}
 }

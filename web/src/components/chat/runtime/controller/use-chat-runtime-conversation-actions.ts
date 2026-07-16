@@ -114,7 +114,6 @@ export function useChatRuntimeConversationActions({
           error: null,
         };
       });
-
       try {
         const { conversation, messages, messagePagination } =
           await transportRef.current.getConversation(conversationId);
@@ -291,13 +290,37 @@ export function useChatRuntimeConversationActions({
       }
 
       initializedRef.current = true;
+      if (!conversationId) {
+        void refreshList();
+        return;
+      }
+
+      const selectionSeq = markSelectionTarget(conversationId);
+      setControllerState(current => ({
+        ...current,
+        activeConversationId: conversationId,
+        isLoadingMessages: (current.messagesByConversation[conversationId]?.length ?? 0) === 0,
+        isSending: shouldTreatConversationAsRunning(current, conversationId),
+        error: null,
+      }));
       void refreshList().then(() => {
-        if (conversationId) {
+        if (
+          isLatestSelection(selectionSeq, conversationId) &&
+          stateRef.current.activeConversationId === conversationId
+        ) {
           void select(conversationId);
         }
       });
     },
-    [initializedRef, refreshList, select, stateRef]
+    [
+      initializedRef,
+      isLatestSelection,
+      markSelectionTarget,
+      refreshList,
+      select,
+      setControllerState,
+      stateRef,
+    ]
   );
 
   const startNew = useCallback(() => {
@@ -409,6 +432,10 @@ export function useChatRuntimeConversationActions({
             ...current.recoveringByConversation,
             [conversationId]: false,
           },
+          connectionByConversation: {
+            ...current.connectionByConversation,
+            [conversationId]: 'idle',
+          },
           stoppingByConversation: {
             ...current.stoppingByConversation,
             [conversationId]: false,
@@ -460,9 +487,10 @@ export function useChatRuntimeConversationActions({
       markConversationStopped(activeConversationId, response.message_id);
       refreshConversationSilently(activeConversationId);
     } catch (error) {
+      console.warn('Failed to stop AIChat conversation', error);
       setControllerState(current => ({
         ...current,
-        error: getErrorMessage(error),
+        error: null,
         stoppingByConversation: {
           ...current.stoppingByConversation,
           [activeConversationId]: false,

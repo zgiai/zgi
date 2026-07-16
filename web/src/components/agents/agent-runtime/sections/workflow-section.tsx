@@ -3,7 +3,11 @@
 import { AlertCircle, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useT } from '@/i18n';
-import type { AgentWorkflowBinding, AgentWorkflowBindingCandidate } from '@/services/types/agent';
+import type {
+  AgentBindingHealth,
+  AgentWorkflowBinding,
+  AgentWorkflowBindingCandidate,
+} from '@/services/types/agent';
 import { AgentRuntimeResourceCard, AgentRuntimeResourceSection } from '../resource-section';
 import type { AgentConfigSection } from '../types';
 import { AgentWorkflowTypeBadge, AgentWorkflowTypeIcon } from '../workflow-type-display';
@@ -13,6 +17,8 @@ interface AgentRuntimeWorkflowSectionProps {
   bindings: AgentWorkflowBinding[];
   candidatesByBindingID: Map<string, AgentWorkflowBindingCandidate>;
   isLoading: boolean;
+  bindingHealth?: AgentBindingHealth;
+  readOnly?: boolean;
   onToggleSection: (section: AgentConfigSection) => void;
   onOpenWorkflowDialog: () => void;
   onChangeBindings: (value: AgentWorkflowBinding[]) => void;
@@ -23,6 +29,8 @@ export function AgentRuntimeWorkflowSection({
   bindings,
   candidatesByBindingID,
   isLoading,
+  bindingHealth,
+  readOnly = false,
   onToggleSection,
   onOpenWorkflowDialog,
   onChangeBindings,
@@ -30,6 +38,7 @@ export function AgentRuntimeWorkflowSection({
   const t = useT('agents.agentRuntime');
 
   const removeWorkflow = (bindingId: string) => {
+    if (readOnly) return;
     onChangeBindings(bindings.filter(binding => binding.binding_id !== bindingId));
   };
 
@@ -45,6 +54,7 @@ export function AgentRuntimeWorkflowSection({
       isLoading={isLoading}
       onToggleSection={onToggleSection}
       onAdd={onOpenWorkflowDialog}
+      readOnly={readOnly}
     >
       <div className="space-y-2">
         {bindings.map(binding => {
@@ -65,6 +75,9 @@ export function AgentRuntimeWorkflowSection({
                 )
               }
               title={label}
+              healthItem={bindingHealth?.items.find(
+                item => item.binding_type === 'workflow' && item.resource_id === binding.binding_id
+              )}
               description={
                 unavailable
                   ? t('workflow.unavailableDescription')
@@ -79,6 +92,7 @@ export function AgentRuntimeWorkflowSection({
                   isIcon
                   className="size-8 shrink-0 text-muted-foreground hover:text-destructive"
                   aria-label={t('workflow.remove', { name: label })}
+                  disabled={readOnly}
                   onClick={() => removeWorkflow(binding.binding_id)}
                 >
                   <Trash2 className="size-4" />

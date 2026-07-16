@@ -5,15 +5,18 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
+	"strings"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/zgiai/zgi/api/internal/capabilities/agentbindings"
 	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
 	"github.com/zgiai/zgi/api/internal/dto"
 	automationaction "github.com/zgiai/zgi/api/internal/modules/automation/service/action"
 	datasetservice "github.com/zgiai/zgi/api/internal/modules/dataset/service"
 	workspacemodel "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	"gorm.io/gorm"
-	"sort"
-	"strings"
-	"time"
 )
 
 func (s *agentsService) validateAgentBindingGrantChanges(ctx context.Context, ag *Agent, cfg *AgentsConfig, accountID string, req dto.AgentConfigRequest) error {
@@ -38,7 +41,7 @@ func (s *agentsService) validateAgentBindingGrantChanges(ctx context.Context, ag
 		}
 	}
 	if databaseBindingGrantNeedsRefresh(previous.DatabaseBindings, previous.DatabaseBoundByAccountID, previous.DatabaseBoundAtUnix, req.DatabaseBindings) {
-		if err := s.validateDatabaseBindingGrant(ctx, organizationID, accountID, req.DatabaseBindings); err != nil {
+		if err := s.validateDatabaseBindingGrant(ctx, organizationID, workspaceID, accountID, req.DatabaseBindings); err != nil {
 			return err
 		}
 	}
@@ -68,7 +71,7 @@ func (s *agentsService) validateKnowledgeBindingGrant(ctx context.Context, organ
 	return nil
 }
 
-func (s *agentsService) validateDatabaseBindingGrant(ctx context.Context, organizationID, accountID string, bindings []dto.AgentDatabaseBinding) error {
+func (s *agentsService) validateDatabaseBindingGrant(ctx context.Context, organizationID, workspaceID, accountID string, bindings []dto.AgentDatabaseBinding) error {
 	bindings = normalizeAgentDatabaseBindings(bindings)
 	if len(bindings) == 0 {
 		return nil
@@ -84,11 +87,11 @@ func (s *agentsService) validateDatabaseBindingGrant(ctx context.Context, organi
 		if dataSource == nil || strings.TrimSpace(dataSource.OrganizationID) != strings.TrimSpace(organizationID) {
 			return fmt.Errorf("database %s not found", binding.DataSourceID)
 		}
-		workspaceID := strings.TrimSpace(organizationID)
-		if dataSource.WorkspaceID != nil && strings.TrimSpace(*dataSource.WorkspaceID) != "" {
-			workspaceID = strings.TrimSpace(*dataSource.WorkspaceID)
+		sourceWorkspaceID := agentDataSourceWorkspaceID(organizationID, dataSource.WorkspaceID)
+		if sourceWorkspaceID != strings.TrimSpace(workspaceID) {
+			return fmt.Errorf("database %s not found in agent workspace", binding.DataSourceID)
 		}
-		if err := s.requireDatabaseReadBindingPermission(ctx, organizationID, workspaceID, accountID); err != nil {
+		if err := s.requireDatabaseReadBindingPermission(ctx, organizationID, sourceWorkspaceID, accountID); err != nil {
 			return fmt.Errorf("database %s read binding: %w", binding.DataSourceID, err)
 		}
 		for _, tableID := range binding.TableIDs {
@@ -101,7 +104,7 @@ func (s *agentsService) validateDatabaseBindingGrant(ctx context.Context, organi
 			}
 		}
 		if len(binding.WritableTableIDs) > 0 {
-			if err := s.requireDatabaseWriteBindingPermission(ctx, organizationID, workspaceID, accountID); err != nil {
+			if err := s.requireDatabaseWriteBindingPermission(ctx, organizationID, sourceWorkspaceID, accountID); err != nil {
 				return fmt.Errorf("database %s write binding: %w", binding.DataSourceID, err)
 			}
 		}
@@ -109,31 +112,46 @@ func (s *agentsService) validateDatabaseBindingGrant(ctx context.Context, organi
 	return nil
 }
 
+func agentDataSourceWorkspaceID(organizationID string, workspaceID *string) string {
+	if workspaceID != nil && strings.TrimSpace(*workspaceID) != "" {
+		return strings.TrimSpace(*workspaceID)
+	}
+	return strings.TrimSpace(organizationID)
+}
+
 func (s *agentsService) requireDatabaseReadBindingPermission(ctx context.Context, organizationID, workspaceID, accountID string) error {
-	hasAIQuery, err := s.enterpriseService.CheckWorkspacePermission(ctx, organizationID, workspaceID, accountID, workspacemodel.WorkspacePermissionDatabaseAIQuery)
+	hasAIQuery, err := s.enterpriseService.CheckWorkspacePermission(ctx, organizationID, workspaceID, accountID, workspacemodel.WorkspacePermissionDatabaseAIQueryRead)
 	if err != nil {
 		return err
 	}
 	if !hasAIQuery {
 		return fmt.Errorf("database ai query permission is required")
 	}
-	hasView, err := s.enterpriseService.CheckWorkspacePermission(ctx, organizationID, workspaceID, accountID, workspacemodel.WorkspacePermissionDatabaseView)
+	hasView, err := s.enterpriseService.CheckWorkspacePermission(ctx, organizationID, workspaceID, accountID, workspacemodel.WorkspacePermissionDatabaseRecordView)
 	if err != nil {
 		return err
 	}
 	if !hasView {
-		return fmt.Errorf("database view permission is required")
+		return fmt.Errorf("database record view permission is required")
 	}
 	return nil
 }
 
 func (s *agentsService) requireDatabaseWriteBindingPermission(ctx context.Context, organizationID, workspaceID, accountID string) error {
-	hasWrite, err := s.enterpriseService.CheckWorkspaceOrganizationAnyPermission(ctx, organizationID, workspaceID, accountID, workspacemodel.WorkspacePermissionDatabaseDataEdit, workspacemodel.WorkspacePermissionDatabaseManage)
+	hasWrite, err := s.enterpriseService.CheckWorkspaceOrganizationAnyPermission(
+		ctx,
+		organizationID,
+		workspaceID,
+		accountID,
+		workspacemodel.WorkspacePermissionDatabaseRecordCreate,
+		workspacemodel.WorkspacePermissionDatabaseRecordUpdate,
+		workspacemodel.WorkspacePermissionDatabaseRecordDelete,
+	)
 	if err != nil {
 		return err
 	}
 	if !hasWrite {
-		return fmt.Errorf("database data edit or manage permission is required")
+		return fmt.Errorf("database record mutation permission is required")
 	}
 	return nil
 }
@@ -257,16 +275,156 @@ type agentWorkflowCandidateRow struct {
 	UpdatedAt   time.Time
 }
 
-func (s *agentsService) ListAgentWorkflowBindingCandidates(ctx context.Context, agentID, accountID string) (*dto.AgentWorkflowBindingCandidatesResponse, error) {
-	ag, _, err := s.loadAuthorizedAgentRuntimeDraft(ctx, agentID, accountID, false)
+func (s *agentsService) ListAgentWorkflowBindingCandidates(ctx context.Context, agentID, accountID string, req dto.AgentWorkflowBindingCandidatesRequest) (*dto.AgentWorkflowBindingCandidatesResponse, error) {
+	ag, cfg, err := s.loadAuthorizedAgentRuntimeDraft(ctx, agentID, accountID, false)
 	if err != nil {
 		return nil, err
 	}
-	items, err := s.listAgentWorkflowBindingCandidatesForWorkspace(ctx, ag.TenantID.String())
+	items, total, err := s.listAgentWorkflowBindingCandidatesForWorkspacePage(
+		ctx,
+		ag.TenantID.String(),
+		agentRuntimeModeFromConfig(cfg),
+		req,
+	)
 	if err != nil {
 		return nil, err
 	}
-	return &dto.AgentWorkflowBindingCandidatesResponse{Data: items}, nil
+	page := normalizeAgentBindingCandidatePage(req.Page)
+	limit := normalizeAgentBindingCandidateLimit(req.Limit)
+	return &dto.AgentWorkflowBindingCandidatesResponse{
+		AgentID:            ag.ID.String(),
+		WorkspaceID:        ag.TenantID.String(),
+		Query:              strings.TrimSpace(req.Query),
+		AgentType:          strings.TrimSpace(req.AgentType),
+		Limit:              limit,
+		Page:               page,
+		Total:              total,
+		HasMore:            page < agentBindingCandidatePageCount(total, limit),
+		IncludeSelected:    req.IncludeSelected,
+		IncludeStartInputs: req.IncludeStartInputs,
+		Count:              len(items),
+		Data:               items,
+	}, nil
+}
+
+func (s *agentsService) listAgentWorkflowBindingCandidatesForWorkspacePage(
+	ctx context.Context,
+	workspaceID string,
+	mode dto.AgentRuntimeModeConfig,
+	req dto.AgentWorkflowBindingCandidatesRequest,
+) ([]dto.AgentWorkflowBindingCandidate, int, error) {
+	if s.db == nil {
+		return nil, 0, fmt.Errorf("database is required")
+	}
+	workspaceID = strings.TrimSpace(workspaceID)
+	if workspaceID == "" {
+		return []dto.AgentWorkflowBindingCandidate{}, 0, nil
+	}
+
+	const latestWorkflowCandidatesSQL = `
+		WITH ranked_workflows AS (
+			SELECT
+				workflows.agent_id AS agent_id,
+				workflows.id AS workflow_id,
+				agents.agent_type AS agent_type,
+				workflows.version_uuid AS version_uuid,
+				workflows.version AS version,
+				workflows.graph AS graph,
+				agents.name AS label,
+				agents.description AS description,
+				agents.icon AS icon,
+				agents.icon_type AS icon_type,
+				workflows.created_at AS updated_at,
+				ROW_NUMBER() OVER (
+					PARTITION BY workflows.agent_id
+					ORDER BY workflows.created_at DESC, workflows.id DESC
+				) AS row_number
+			FROM workflows
+			JOIN agents ON agents.id = workflows.agent_id
+			WHERE workflows.tenant_id = ?
+				AND workflows.version != ?
+				AND agents.deleted_at IS NULL
+				AND agents.web_app_status = ?
+				AND agents.agent_type IN (?, ?)
+		)
+	`
+
+	filters := " WHERE row_number = 1"
+	args := []interface{}{
+		workspaceID,
+		"draft",
+		AgentWebAppStatusActive,
+		"WORKFLOW",
+		"CONVERSATIONAL_WORKFLOW",
+	}
+	if query := strings.ToLower(strings.TrimSpace(req.Query)); query != "" {
+		pattern := "%" + query + "%"
+		filters += ` AND (
+			LOWER(COALESCE(label, '')) LIKE ? OR
+			LOWER(COALESCE(description, '')) LIKE ? OR
+			LOWER(COALESCE(agent_id::text, '')) LIKE ? OR
+			LOWER(COALESCE(workflow_id::text, '')) LIKE ?
+		)`
+		args = append(args, pattern, pattern, pattern, pattern)
+	}
+	if agentType := strings.TrimSpace(req.AgentType); agentType != "" {
+		filters += " AND agent_type = ?"
+		args = append(args, agentType)
+	}
+
+	selectedSet := selectedWorkflowBindingSet(mode.WorkflowBindings)
+	selectedIDs := make([]string, 0, len(selectedSet))
+	for bindingID := range selectedSet {
+		selectedIDs = append(selectedIDs, bindingID)
+	}
+	sort.Strings(selectedIDs)
+	if !req.IncludeSelected && len(selectedIDs) > 0 {
+		filters += " AND LOWER(agent_id::text) NOT IN ?"
+		args = append(args, selectedIDs)
+	}
+
+	var total int64
+	countSQL := latestWorkflowCandidatesSQL + " SELECT COUNT(*) FROM ranked_workflows" + filters
+	if err := s.db.WithContext(ctx).Raw(countSQL, args...).Scan(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	page := normalizeAgentBindingCandidatePage(req.Page)
+	limit := normalizeAgentBindingCandidateLimit(req.Limit)
+	pageCount := agentBindingCandidatePageCount(int(total), limit)
+	if total == 0 || page > pageCount {
+		return []dto.AgentWorkflowBindingCandidate{}, int(total), nil
+	}
+	offset := (page - 1) * limit
+	orderSQL := " ORDER BY LOWER(COALESCE(label, '')) ASC, agent_id ASC"
+	pageArgs := append([]interface{}{}, args...)
+	if req.IncludeSelected && len(selectedIDs) > 0 {
+		orderSQL = " ORDER BY CASE WHEN LOWER(agent_id::text) IN ? THEN 0 ELSE 1 END, LOWER(COALESCE(label, '')) ASC, agent_id ASC"
+		pageArgs = append(pageArgs, selectedIDs)
+	}
+	pageArgs = append(pageArgs, limit, offset)
+	listSQL := latestWorkflowCandidatesSQL + `
+		SELECT agent_id, workflow_id, agent_type, version_uuid, version, graph,
+			label, description, icon, icon_type, updated_at
+		FROM ranked_workflows` + filters + orderSQL + " LIMIT ? OFFSET ?"
+
+	var rows []agentWorkflowCandidateRow
+	if err := s.db.WithContext(ctx).Raw(listSQL, pageArgs...).Scan(&rows).Error; err != nil {
+		return nil, 0, err
+	}
+
+	items := make([]dto.AgentWorkflowBindingCandidate, 0, len(rows))
+	for _, row := range rows {
+		item := s.agentWorkflowBindingCandidateFromRow(ctx, row)
+		_, item.Selected = selectedSet[strings.ToLower(strings.TrimSpace(item.BindingID))]
+		if !req.IncludeStartInputs {
+			item.StartInputs = nil
+			item.RequiredInputs = nil
+			item.DefaultInputKey = ""
+		}
+		items = append(items, item)
+	}
+	return items, int(total), nil
 }
 
 func (s *agentsService) listAgentWorkflowBindingCandidatesForWorkspace(ctx context.Context, workspaceID string) ([]dto.AgentWorkflowBindingCandidate, error) {
@@ -679,6 +837,282 @@ func bindingGrantForWorkflowBindings(previous []dto.AgentWorkflowBinding, previo
 		nowUnix,
 	)
 	return grant.BoundByAccountID, grant.BoundAtUnix
+}
+
+func resolveAgentBindingAuthorizations(
+	previous dto.AgentRuntimeModeConfig,
+	current dto.AgentConfigRequest,
+	actorAccountID string,
+	nowUnix int64,
+) []dto.AgentBindingAuthorization {
+	desired := agentBindingAuthorizationDescriptors(
+		current.KnowledgeDatasetIDs,
+		current.DatabaseBindings,
+		current.WorkflowBindings,
+	)
+	previousByKey := agentBindingAuthorizationMap(bindingAuthorizationsForRuntimeMode(previous))
+	providedByKey := agentBindingAuthorizationMap(normalizeAgentBindingAuthorizations(current.BindingAuthorizations))
+	if len(providedByKey) == 0 {
+		providedByKey = agentBindingAuthorizationMap(legacyBindingAuthorizations(
+			desired,
+			current.KnowledgeBoundByAccountID,
+			current.KnowledgeBoundAtUnix,
+			current.DatabaseBoundByAccountID,
+			current.DatabaseBoundAtUnix,
+			current.WorkflowBoundByAccountID,
+			current.WorkflowBoundAtUnix,
+		))
+	}
+
+	actorAccountID = strings.TrimSpace(actorAccountID)
+	result := make([]dto.AgentBindingAuthorization, 0, len(desired))
+	for _, descriptor := range desired {
+		key := agentBindingAuthorizationKey(descriptor)
+		if provided, ok := providedByKey[key]; ok && validAgentBindingAuthorization(provided) {
+			result = append(result, provided)
+			continue
+		}
+		if existing, ok := previousByKey[key]; ok && validAgentBindingAuthorization(existing) {
+			result = append(result, existing)
+			continue
+		}
+		descriptor.BoundByAccountID = actorAccountID
+		descriptor.BoundAtUnix = nowUnix
+		result = append(result, descriptor)
+	}
+	return normalizeAgentBindingAuthorizations(result)
+}
+
+func bindingAuthorizationsForRuntimeMode(mode dto.AgentRuntimeModeConfig) []dto.AgentBindingAuthorization {
+	desired := agentBindingAuthorizationDescriptors(mode.KnowledgeDatasetIDs, mode.DatabaseBindings, mode.WorkflowBindings)
+	explicitByKey := agentBindingAuthorizationMap(normalizeAgentBindingAuthorizations(mode.BindingAuthorizations))
+	legacyByKey := agentBindingAuthorizationMap(legacyBindingAuthorizations(
+		desired,
+		mode.KnowledgeBoundByAccountID,
+		mode.KnowledgeBoundAtUnix,
+		mode.DatabaseBoundByAccountID,
+		mode.DatabaseBoundAtUnix,
+		mode.WorkflowBoundByAccountID,
+		mode.WorkflowBoundAtUnix,
+	))
+	result := make([]dto.AgentBindingAuthorization, 0, len(desired))
+	for _, descriptor := range desired {
+		key := agentBindingAuthorizationKey(descriptor)
+		if authorization, ok := explicitByKey[key]; ok && validAgentBindingAuthorization(authorization) {
+			result = append(result, authorization)
+			continue
+		}
+		if authorization, ok := legacyByKey[key]; ok && validAgentBindingAuthorization(authorization) {
+			result = append(result, authorization)
+		}
+	}
+	return normalizeAgentBindingAuthorizations(result)
+}
+
+func agentBindingAuthorizationDescriptors(
+	knowledgeDatasetIDs []string,
+	databaseBindings []dto.AgentDatabaseBinding,
+	workflowBindings []dto.AgentWorkflowBinding,
+) []dto.AgentBindingAuthorization {
+	descriptors := make([]dto.AgentBindingAuthorization, 0)
+	for _, datasetID := range normalizeStringIDs(knowledgeDatasetIDs) {
+		descriptors = append(descriptors, dto.AgentBindingAuthorization{
+			BindingType: string(agentbindings.BindingTypeKnowledgeDataset),
+			ResourceID:  datasetID,
+			AccessMode:  "read",
+		})
+	}
+	for _, database := range normalizeAgentDatabaseBindings(databaseBindings) {
+		descriptors = append(descriptors, dto.AgentBindingAuthorization{
+			BindingType: string(agentbindings.BindingTypeDatabase),
+			ResourceID:  database.DataSourceID,
+			AccessMode:  "read",
+		})
+		writable := stringSet(database.WritableTableIDs)
+		for _, tableID := range database.TableIDs {
+			accessMode := "read"
+			if _, ok := writable[tableID]; ok {
+				accessMode = "write"
+			}
+			descriptors = append(descriptors, dto.AgentBindingAuthorization{
+				BindingType:      string(agentbindings.BindingTypeDatabaseTable),
+				ResourceID:       tableID,
+				ParentResourceID: database.DataSourceID,
+				AccessMode:       accessMode,
+			})
+		}
+	}
+	for _, workflow := range normalizeAgentWorkflowBindings(workflowBindings) {
+		descriptors = append(descriptors, dto.AgentBindingAuthorization{
+			BindingType:      string(agentbindings.BindingTypeWorkflow),
+			ResourceID:       workflow.BindingID,
+			ParentResourceID: workflow.AgentID,
+			AccessMode:       "execute",
+		})
+	}
+	return normalizeAgentBindingAuthorizations(descriptors)
+}
+
+func legacyBindingAuthorizations(
+	descriptors []dto.AgentBindingAuthorization,
+	knowledgeActor string,
+	knowledgeAtUnix int64,
+	databaseActor string,
+	databaseAtUnix int64,
+	workflowActor string,
+	workflowAtUnix int64,
+) []dto.AgentBindingAuthorization {
+	result := make([]dto.AgentBindingAuthorization, 0, len(descriptors))
+	for _, descriptor := range descriptors {
+		switch agentbindings.BindingType(descriptor.BindingType) {
+		case agentbindings.BindingTypeKnowledgeDataset:
+			descriptor.BoundByAccountID = strings.TrimSpace(knowledgeActor)
+			descriptor.BoundAtUnix = knowledgeAtUnix
+		case agentbindings.BindingTypeDatabase, agentbindings.BindingTypeDatabaseTable:
+			descriptor.BoundByAccountID = strings.TrimSpace(databaseActor)
+			descriptor.BoundAtUnix = databaseAtUnix
+		case agentbindings.BindingTypeWorkflow:
+			descriptor.BoundByAccountID = strings.TrimSpace(workflowActor)
+			descriptor.BoundAtUnix = workflowAtUnix
+		default:
+			continue
+		}
+		if validAgentBindingAuthorization(descriptor) {
+			result = append(result, descriptor)
+		}
+	}
+	return result
+}
+
+func normalizeAgentBindingAuthorizations(input []dto.AgentBindingAuthorization) []dto.AgentBindingAuthorization {
+	byKey := make(map[string]dto.AgentBindingAuthorization, len(input))
+	for _, authorization := range input {
+		authorization.BindingType = strings.TrimSpace(authorization.BindingType)
+		authorization.ResourceID = strings.TrimSpace(authorization.ResourceID)
+		authorization.ParentResourceID = strings.TrimSpace(authorization.ParentResourceID)
+		authorization.AccessMode = strings.TrimSpace(authorization.AccessMode)
+		authorization.BoundByAccountID = strings.TrimSpace(authorization.BoundByAccountID)
+		if authorization.BindingType == "" || authorization.ResourceID == "" || authorization.AccessMode == "" {
+			continue
+		}
+		byKey[agentBindingAuthorizationKey(authorization)] = authorization
+	}
+	result := make([]dto.AgentBindingAuthorization, 0, len(byKey))
+	for _, authorization := range byKey {
+		result = append(result, authorization)
+	}
+	sort.Slice(result, func(i, j int) bool {
+		return agentBindingAuthorizationKey(result[i]) < agentBindingAuthorizationKey(result[j])
+	})
+	return result
+}
+
+func agentBindingAuthorizationMap(input []dto.AgentBindingAuthorization) map[string]dto.AgentBindingAuthorization {
+	result := make(map[string]dto.AgentBindingAuthorization, len(input))
+	for _, authorization := range input {
+		result[agentBindingAuthorizationKey(authorization)] = authorization
+	}
+	return result
+}
+
+func agentBindingAuthorizationKey(authorization dto.AgentBindingAuthorization) string {
+	return agentBindingItemKey(
+		strings.TrimSpace(authorization.BindingType),
+		strings.TrimSpace(authorization.ParentResourceID),
+		strings.TrimSpace(authorization.ResourceID),
+		strings.TrimSpace(authorization.AccessMode),
+	)
+}
+
+func validAgentBindingAuthorization(authorization dto.AgentBindingAuthorization) bool {
+	return strings.TrimSpace(authorization.BoundByAccountID) != "" && authorization.BoundAtUnix > 0
+}
+
+func agentBindingAuthorizationsFromRows(rows []agentbindings.Binding) []dto.AgentBindingAuthorization {
+	authorizations := make([]dto.AgentBindingAuthorization, 0, len(rows))
+	for _, row := range rows {
+		switch row.BindingType {
+		case agentbindings.BindingTypeKnowledgeDataset,
+			agentbindings.BindingTypeDatabase,
+			agentbindings.BindingTypeDatabaseTable,
+			agentbindings.BindingTypeWorkflow:
+		default:
+			continue
+		}
+		if row.AuthorizedBy == nil || row.AuthorizedAt == nil || *row.AuthorizedBy == uuid.Nil {
+			continue
+		}
+		authorizations = append(authorizations, dto.AgentBindingAuthorization{
+			BindingType:      string(row.BindingType),
+			ResourceID:       row.ResourceID,
+			ParentResourceID: row.ParentResourceID,
+			AccessMode:       row.AccessMode,
+			BoundByAccountID: row.AuthorizedBy.String(),
+			BoundAtUnix:      row.AuthorizedAt.Unix(),
+		})
+	}
+	return normalizeAgentBindingAuthorizations(authorizations)
+}
+
+func applyAgentBindingAuthorizationsFromRows(config *dto.AgentConfigResponse, rows []agentbindings.Binding) {
+	if config == nil {
+		return
+	}
+	config.BindingAuthorizations = agentBindingAuthorizationsFromRows(rows)
+	refreshAgentBindingCategoryGrants(config)
+}
+
+func refreshAgentBindingCategoryGrants(config *dto.AgentConfigResponse) {
+	if config == nil {
+		return
+	}
+	config.KnowledgeBoundByAccountID, config.KnowledgeBoundAtUnix = aggregateAgentBindingAuthorization(
+		config.BindingAuthorizations,
+		agentbindings.BindingTypeKnowledgeDataset,
+	)
+	config.DatabaseBoundByAccountID, config.DatabaseBoundAtUnix = aggregateAgentBindingAuthorization(
+		config.BindingAuthorizations,
+		agentbindings.BindingTypeDatabase,
+		agentbindings.BindingTypeDatabaseTable,
+	)
+	config.WorkflowBoundByAccountID, config.WorkflowBoundAtUnix = aggregateAgentBindingAuthorization(
+		config.BindingAuthorizations,
+		agentbindings.BindingTypeWorkflow,
+	)
+}
+
+func aggregateAgentBindingAuthorization(
+	authorizations []dto.AgentBindingAuthorization,
+	bindingTypes ...agentbindings.BindingType,
+) (string, int64) {
+	types := make(map[string]struct{}, len(bindingTypes))
+	for _, bindingType := range bindingTypes {
+		types[string(bindingType)] = struct{}{}
+	}
+	actor := ""
+	var atUnix int64
+	found := false
+	for _, authorization := range normalizeAgentBindingAuthorizations(authorizations) {
+		if _, ok := types[authorization.BindingType]; !ok {
+			continue
+		}
+		if !validAgentBindingAuthorization(authorization) {
+			return "", 0
+		}
+		if !found {
+			actor = authorization.BoundByAccountID
+			atUnix = authorization.BoundAtUnix
+			found = true
+			continue
+		}
+		if actor != authorization.BoundByAccountID || atUnix != authorization.BoundAtUnix {
+			return "", 0
+		}
+	}
+	if !found {
+		return "", 0
+	}
+	return actor, atUnix
 }
 
 func stringIDsEqual(left []string, right []string) bool {

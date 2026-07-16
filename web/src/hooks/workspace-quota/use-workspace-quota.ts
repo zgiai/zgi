@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { useT } from '@/i18n';
@@ -49,10 +50,11 @@ export function useWorkspaceQuotas(params?: GetWorkspaceQuotasParams): {
     retry: false,
   });
 
-  if (error) {
+  useEffect(() => {
+    if (!error) return;
     const message = (error as { message?: string }).message ?? t('quota.loadError');
     toast.error(message);
-  }
+  }, [error, t]);
 
   const list = data?.data;
 
@@ -101,10 +103,11 @@ export function useWorkspaceQuota(workspaceId?: string): {
     }
   );
 
-  if (error) {
+  useEffect(() => {
+    if (!error) return;
     const message = (error as { message?: string }).message ?? t('quota.loadError');
     toast.error(message);
-  }
+  }, [error, t]);
 
   return {
     quota: data?.data,

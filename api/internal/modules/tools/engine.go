@@ -110,6 +110,36 @@ func (e *ToolEngine) Invoke(ctx context.Context, req InvokeRequest) (*InvokeResu
 	}, nil
 }
 
+// EnrichGovernanceArguments gives a runtime tool a chance to add display-only
+// context, such as asset names, before the governance decision freezes a call.
+func (e *ToolEngine) EnrichGovernanceArguments(ctx context.Context, req InvokeRequest) (map[string]interface{}, error) {
+	if e == nil || e.toolManager == nil {
+		return req.Parameters, nil
+	}
+	tool, err := e.toolManager.GetToolRuntime(
+		ctx,
+		req.ProviderType,
+		req.ProviderID,
+		req.ToolName,
+		req.TenantID,
+		req.InvokeFrom,
+		req.CredentialID,
+		req.RuntimeParameters,
+	)
+	if err != nil {
+		return req.Parameters, err
+	}
+	enricher, ok := tool.(ToolGovernanceArgumentEnricher)
+	if !ok {
+		return req.Parameters, nil
+	}
+	enriched := enricher.EnrichGovernanceArguments(ctx, req.UserID, req.Parameters)
+	if enriched == nil {
+		return req.Parameters, nil
+	}
+	return enriched, nil
+}
+
 // InvokeWithCallback invokes a tool and calls the callback with each message
 func (e *ToolEngine) InvokeWithCallback(
 	ctx context.Context,

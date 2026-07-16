@@ -38,6 +38,8 @@ README.md
 CHANGELOG.md
 docs/
 *.md
+!internal/modules/skills/catalog/
+!internal/modules/skills/catalog/**
 
 # CI/CD
 .github/

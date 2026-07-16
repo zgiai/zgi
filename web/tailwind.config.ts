@@ -230,6 +230,7 @@ const config: Config = {
   },
   plugins: [
     require('tailwindcss-animate'),
+    require('@tailwindcss/container-queries'),
     // Custom plugin for theme utilities
     function ({ addUtilities }: { addUtilities: (utilities: Record<string, unknown>) => void }) {
       const newUtilities = {

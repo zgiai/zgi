@@ -60,8 +60,13 @@ func RegisterRoutes(r *gin.Engine, serviceContainer *container.ServiceContainer,
 		OrganizationService:   serviceContainer.GetOrganizationService(),
 		LLMClient:             serviceContainer.GetLLMClient(),
 		ToolEngine:            serviceContainer.GetToolEngine(),
+		ToolManager:           serviceContainer.GetToolManager(),
+		MemoryService:         serviceContainer.GetMemoryService(),
 		GraphFlowService:      serviceContainer.GetGraphFlowService(),
 		PromptResolver:        serviceContainer.GetPromptService(),
+		DataSourceService:     serviceContainer.GetDataSourceService(),
+		KnowledgeService:      serviceContainer.GetKnowledgeRetrievalService(),
+		ResourcePermission:    serviceContainer.GetResourcePermissionService(),
 		WorkflowEngineFactory: workflowEngineFactory,
 	})
 

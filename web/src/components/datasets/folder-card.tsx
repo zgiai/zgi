@@ -17,6 +17,7 @@ import { useDeleteDatasetFolder } from '@/hooks/dataset/use-dataset-folders';
 import { eventBus } from '@/lib/event-bus';
 import type { OpenFolderModalPayload } from '@/components/datasets/modal/folder-modal';
 import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
+import { KNOWLEDGE_BASE_PERMISSION_ACTIONS } from '@/constants/permissions';
 
 interface FolderCardProps {
   folder: DatasetFolder;
@@ -28,8 +29,8 @@ function FolderCard({ folder }: FolderCardProps) {
   const [confirmOpen, setConfirmOpen] = useState(false);
 
   // Permission checking - use new permission system
-  const { hasPermission } = useAccountPermissions();
-  const canManageFolders = hasPermission('knowledge_base.folder_manage');
+  const { hasAnyPermission } = useAccountPermissions();
+  const canManageFolders = hasAnyPermission(KNOWLEDGE_BASE_PERMISSION_ACTIONS.folderManage);
 
   return (
     <div className="relative h-36 sm:h-40">

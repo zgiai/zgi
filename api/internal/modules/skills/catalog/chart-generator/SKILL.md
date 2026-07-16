@@ -12,15 +12,40 @@ supported_callers:
   - agent
 max_calls_per_turn: 5
 timeout_seconds: 5
+tool_governance:
+  generate_chart:
+    tool_id: chart.generate
+    skill_id: chart-generator
+    domain: files
+    effect: create
+    asset_type: file
+    risk_level: medium
+    requires_asset_resolution: false
+    reversible: true
+    bulk_sensitive: false
+    external_side_effect: false
+    permission_scopes:
+      - file:create
+    default_approval_policy: never_ask
+    allowed_permission_tiers:
+      - basic
+      - advanced
+      - full
+    audit_required: true
+    idempotency_required: false
 display:
   icon: chart-no-axes-combined
-  category: visualization
+  category: data_analysis
+  scenarios:
+    - data_insights
+    - content_creation
+    - office_collaboration
   label:
     en_US: Chart Generator
     zh_Hans: 图表生成器
   description:
-    en_US: Generates SVG radar, bar, line, pie, doughnut, scatter, and score distribution charts from structured data.
-    zh_Hans: 根据结构化数据生成 SVG 图表，可生成例如雷达图、柱状图、折线图、饼状图、环形图、散点图、分数段分布图。
+    en_US: Designed for reports and data analysis that need visual evidence; turns structured data into SVG radar, bar, line, pie, doughnut, scatter, or distribution charts.
+    zh_Hans: 适用于汇报和数据分析中的可视化展示，可将结构化数据生成雷达图、柱状图、折线图、饼图、环形图、散点图或分布图。
   when_to_use:
     en_US: Use when the answer should include a generated chart artifact.
     zh_Hans: 当回答需要生成图表文件时使用。
@@ -58,7 +83,8 @@ Use this skill to generate downloadable SVG chart artifacts from structured data
 5. Convert the user's data into the JSON payload documented in the selected reference.
 6. Validate that all required data is present and internally consistent.
 7. Call `call_skill_tool` with `tool_name` set to `generate_chart`.
-8. In the final answer, briefly mention the generated chart filename and any assumptions. Do not paste SVG source unless the user explicitly asks for it.
+8. If the user explicitly asks to save, create, add, upload, or import the chart into File Management or the current Files page, first generate the temporary chart artifact here, then call `file-manager/save_file_to_management` with the returned `tool_file_id`/`file_id` and destination filename.
+9. In the final answer, briefly mention the generated chart filename and any assumptions. Do not paste SVG source unless the user explicitly asks for it.
 
 ## Clarification Workflow
 

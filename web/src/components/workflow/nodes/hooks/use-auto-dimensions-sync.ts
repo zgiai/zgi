@@ -12,7 +12,8 @@ export default function useAutoDimensionsSync(
 ): void {
   const updateNodeInternals = useUpdateNodeInternals();
   const mode = useWorkflowStore.use.mode();
-  const nodes = useWorkflowStore.use.nodes();
+  const canEdit = useWorkflowStore.use.canEdit();
+  const isReadOnly = mode === 'history' || !canEdit;
 
   const lastHeightRef = React.useRef<number | null>(null);
   const frameRef = React.useRef<number | null>(null);
@@ -21,11 +22,11 @@ export default function useAutoDimensionsSync(
 
   React.useEffect(() => {
     if (!nodeId || !element) return;
-    if (mode === 'history') return; // skip in read-only mode
+    if (isReadOnly) return;
 
     // Check if the node already has valid dimensions (from stored layout)
     // If so, skip the initial updateNodeInternals call to reduce mount-time overhead
-    const existingNode = nodes.find(n => n.id === nodeId);
+    const existingNode = useWorkflowStore.getState().nodes.find(n => n.id === nodeId);
     const hasValidDimensions =
       existingNode?.width != null &&
       existingNode?.height != null &&
@@ -94,5 +95,5 @@ export default function useAutoDimensionsSync(
       frameRef.current = null;
       pendingRef.current = false;
     };
-  }, [nodeId, element, mode, updateNodeInternals]);
+  }, [nodeId, element, isReadOnly, updateNodeInternals]);
 }

@@ -8,10 +8,10 @@ import (
 )
 
 type gatewayAppModelPrechecker interface {
-	PrecheckAppModels(ctx context.Context, organizationID string, appCtx *gateway.AppContext, models []string) (*gateway.AppModelRoutePrecheckResult, error)
+	PrecheckAppModels(ctx context.Context, organizationID string, appCtx *gateway.AppContext, models []gateway.AppModelRouteRef) (*gateway.AppModelRoutePrecheckResult, error)
 }
 
-func (c *llmClientImpl) PrecheckAppModels(ctx context.Context, appCtx *AppContext, models []string) (*AppModelPrecheckResult, error) {
+func (c *llmClientImpl) PrecheckAppModels(ctx context.Context, appCtx *AppContext, models []AppModelRef) (*AppModelPrecheckResult, error) {
 	if appCtx == nil {
 		return &AppModelPrecheckResult{Status: AppModelPrecheckStatusUnknown}, nil
 	}
@@ -33,7 +33,14 @@ func (c *llmClientImpl) PrecheckAppModels(ctx context.Context, appCtx *AppContex
 		return nil, fmt.Errorf("gateway does not support app model precheck")
 	}
 
-	result, err := prechecker.PrecheckAppModels(ctx, organizationID, gwAppCtx, models)
+	gatewayModels := make([]gateway.AppModelRouteRef, 0, len(models))
+	for _, model := range models {
+		gatewayModels = append(gatewayModels, gateway.AppModelRouteRef{
+			Provider: model.Provider,
+			Model:    model.Model,
+		})
+	}
+	result, err := prechecker.PrecheckAppModels(ctx, organizationID, gwAppCtx, gatewayModels)
 	if err != nil {
 		return nil, err
 	}
@@ -55,6 +62,10 @@ func convertGatewayPrecheckResult(result *gateway.AppModelRoutePrecheckResult) *
 			kind = AppModelPrecheckWarningWorkspaceQuotaLow
 		case gateway.AppModelRouteWarningKindPrivateChannelBalanceLow:
 			kind = AppModelPrecheckWarningPrivateChannelBalanceLow
+		case gateway.AppModelRouteWarningKindPrivateChannelUpstreamBalanceLow:
+			kind = AppModelPrecheckWarningPrivateChannelUpstreamBalanceLow
+		case gateway.AppModelRouteWarningKindPrivateChannelUpstreamUnavailable:
+			kind = AppModelPrecheckWarningPrivateChannelUpstreamUnavailable
 		default:
 			continue
 		}
@@ -62,6 +73,7 @@ func convertGatewayPrecheckResult(result *gateway.AppModelRoutePrecheckResult) *
 			Kind:         kind,
 			CurrentValue: warning.CurrentValue,
 			Threshold:    warning.Threshold,
+			Reason:       warning.Reason,
 		})
 	}
 

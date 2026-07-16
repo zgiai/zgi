@@ -4,11 +4,7 @@ import React, { useCallback, useMemo, useRef, useState } from 'react';
 import { Label } from '@/components/ui/label';
 
 import WorkflowValueInserter from '@/components/workflow/common/workflow-value-inserter';
-import type {
-  CallDatabaseNodeData,
-  CallDatabaseNodeInnerData,
-  DatabaseExecutionSettings,
-} from '../config';
+import type { CallDatabaseNodeInnerData, DatabaseExecutionSettings } from '../config';
 import { DEFAULT_DATABASE_EXECUTION, DEFAULT_DATABASE_SOURCE } from '../config';
 import PickerDialog from '../../../common/datasource-picker-dialog';
 import SqlMonacoEditor, { type SqlMonacoEditorHandle } from './sql-editor/sql-monaco-editor';
@@ -19,7 +15,11 @@ import ExpandedSqlEditorDialog from './sql-editor/expanded-dialog';
 import OutputVariablesView from '@/components/workflow/common/output-variables-view';
 import type { WorkflowVariable } from '../../../store/type';
 import { useT } from '@/i18n';
-import { useLocalNodeData, useNodeOutputVariables } from '../../../hooks';
+import {
+  useDatabaseNodePermissions,
+  useLocalNodeData,
+  useNodeOutputVariables,
+} from '../../../hooks';
 
 interface CallDatabaseManagerProps {
   id: string;
@@ -36,6 +36,8 @@ const CallDatabaseManager: React.FC<CallDatabaseManagerProps> = ({
   const editorRef = useRef<SqlMonacoEditorHandle | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [expandedOpen, setExpandedOpen] = useState(false);
+  const { canReadDatabaseBinding } = useDatabaseNodePermissions();
+  const canEditDatabaseSource = !readOnly && canReadDatabaseBinding;
 
   // Use store-aware useLocalNodeData for the 'data' field with debouncing
   const { localData: innerDataRaw, setLocalData: setInnerData } =
@@ -124,7 +126,7 @@ const CallDatabaseManager: React.FC<CallDatabaseManagerProps> = ({
           <div
             className="rounded-md border p-2 text-sm space-y-2 cursor-pointer hover:bg-muted/60"
             onClick={() => {
-              if (readOnly) return;
+              if (!canEditDatabaseSource) return;
               setPickerOpen(true);
             }}
           >
@@ -181,7 +183,7 @@ const CallDatabaseManager: React.FC<CallDatabaseManagerProps> = ({
               updateInnerData({ data_source: ds, table_selection: tables });
             }}
             initialSchema={defaultSchema}
-            readOnly={readOnly}
+            readOnly={!canEditDatabaseSource}
           />
         </section>
 
@@ -199,7 +201,7 @@ const CallDatabaseManager: React.FC<CallDatabaseManagerProps> = ({
               dbId={dataSource?.id}
               tables={innerData.table_selection}
               onInsert={insertSnippet}
-              disabled={readOnly}
+              disabled={readOnly || !canReadDatabaseBinding}
             />
             <Button
               variant="outline"

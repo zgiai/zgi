@@ -103,6 +103,25 @@ function Replace-EnvValueIfCurrent {
   }
 }
 
+function Remove-EnvKey {
+  param(
+    [string]$TargetPath,
+    [string]$Key
+  )
+
+  if (-not (Test-Path -LiteralPath $TargetPath)) {
+    return
+  }
+
+  $content = Get-Content -LiteralPath $TargetPath -Raw
+  $pattern = "(?m)^$([regex]::Escape($Key))=.*(?:\r?\n)?"
+  if ([regex]::IsMatch($content, $pattern)) {
+    $content = [regex]::Replace($content, $pattern, '', 1)
+    Set-Content -LiteralPath $TargetPath -Value $content -NoNewline
+    Write-Host "[bootstrap] removed $(Get-DisplayPath -TargetPath $TargetPath) $Key"
+  }
+}
+
 function Get-EnvValue {
   param(
     [string]$TargetPath,
@@ -137,7 +156,6 @@ $apiDockerEnv = Join-Path $Root 'api/.env.docker'
 $dockerEnv = Join-Path $Root 'docker/.env'
 $postgresPassword = New-Secret32
 $redisPassword = New-Secret32
-$neo4jPassword = New-Secret32
 $runnerApiKey = New-Secret32
 $sandboxPostgresPassword = New-Secret32
 Ensure-EnvValue -TargetPath $apiEnv -Key 'SECRET_KEY' -Value (New-Secret32)
@@ -145,11 +163,25 @@ Ensure-EnvValue -TargetPath $apiEnv -Key 'API_KEY_ENCRYPTION_KEY' -Value (New-Se
 Ensure-EnvValue -TargetPath $apiDockerEnv -Key 'SECRET_KEY' -Value (New-Secret32)
 Ensure-EnvValue -TargetPath $apiDockerEnv -Key 'API_KEY_ENCRYPTION_KEY' -Value (New-Secret32)
 Replace-EnvValueIfCurrent -TargetPath $apiDockerEnv -Key 'SQL_BASE_INTERNAL_DB' -OldValue 'zgi' -NewValue 'zgi_sql_base'
+Replace-EnvValueIfCurrent -TargetPath $apiEnv -Key 'NEO4J_URI' -OldValue 'bolt://localhost:7687' -NewValue ''
+Replace-EnvValueIfCurrent -TargetPath $apiDockerEnv -Key 'NEO4J_URI' -OldValue 'bolt://neo4j:7687' -NewValue ''
+Replace-EnvValueIfCurrent -TargetPath $dockerEnv -Key 'NEO4J_URI' -OldValue 'bolt://neo4j:7687' -NewValue ''
+Remove-EnvKey -TargetPath $apiEnv -Key 'NEO4J_URI'
+Remove-EnvKey -TargetPath $apiEnv -Key 'NEO4J_USERNAME'
+Remove-EnvKey -TargetPath $apiEnv -Key 'NEO4J_PASSWORD'
+Remove-EnvKey -TargetPath $apiEnv -Key 'NEO4J_DATABASE'
+Remove-EnvKey -TargetPath $apiDockerEnv -Key 'NEO4J_URI'
+Remove-EnvKey -TargetPath $apiDockerEnv -Key 'NEO4J_USERNAME'
+Remove-EnvKey -TargetPath $apiDockerEnv -Key 'NEO4J_PASSWORD'
+Remove-EnvKey -TargetPath $apiDockerEnv -Key 'NEO4J_DATABASE'
+Remove-EnvKey -TargetPath $dockerEnv -Key 'NEO4J_URI'
+Remove-EnvKey -TargetPath $dockerEnv -Key 'NEO4J_USERNAME'
+Remove-EnvKey -TargetPath $dockerEnv -Key 'NEO4J_PASSWORD'
+Remove-EnvKey -TargetPath $dockerEnv -Key 'NEO4J_DATABASE'
 Ensure-EnvValue -TargetPath $dockerEnv -Key 'PUBLIC_PORT' -Value '2679'
 Ensure-EnvValue -TargetPath $dockerEnv -Key 'PUBLIC_URL' -Value 'http://localhost:2679'
 Ensure-EnvValue -TargetPath $dockerEnv -Key 'POSTGRES_PASSWORD' -Value $postgresPassword
 Ensure-EnvValue -TargetPath $dockerEnv -Key 'REDIS_PASSWORD' -Value $redisPassword
-Ensure-EnvValue -TargetPath $dockerEnv -Key 'NEO4J_PASSWORD' -Value $neo4jPassword
 
 $currentPostgresPassword = Get-EnvValue -TargetPath $dockerEnv -Key 'POSTGRES_PASSWORD'
 if (-not [string]::IsNullOrWhiteSpace($currentPostgresPassword)) {
@@ -159,16 +191,10 @@ $currentRedisPassword = Get-EnvValue -TargetPath $dockerEnv -Key 'REDIS_PASSWORD
 if (-not [string]::IsNullOrWhiteSpace($currentRedisPassword)) {
   $redisPassword = $currentRedisPassword
 }
-$currentNeo4jPassword = Get-EnvValue -TargetPath $dockerEnv -Key 'NEO4J_PASSWORD'
-if (-not [string]::IsNullOrWhiteSpace($currentNeo4jPassword)) {
-  $neo4jPassword = $currentNeo4jPassword
-}
 Ensure-EnvValue -TargetPath $apiEnv -Key 'DB_PASSWORD' -Value $postgresPassword
 Ensure-EnvValue -TargetPath $apiEnv -Key 'REDIS_PASSWORD' -Value $redisPassword
-Ensure-EnvValue -TargetPath $apiEnv -Key 'NEO4J_PASSWORD' -Value $neo4jPassword
 Ensure-EnvValue -TargetPath $apiDockerEnv -Key 'DB_PASSWORD' -Value $postgresPassword
 Ensure-EnvValue -TargetPath $apiDockerEnv -Key 'REDIS_PASSWORD' -Value $redisPassword
-Ensure-EnvValue -TargetPath $apiDockerEnv -Key 'NEO4J_PASSWORD' -Value $neo4jPassword
 
 $runnerEnv = Join-Path $Root 'runner/.env'
 Ensure-EnvValue -TargetPath $runnerEnv -Key 'EXECUTOR_API_KEY' -Value $runnerApiKey

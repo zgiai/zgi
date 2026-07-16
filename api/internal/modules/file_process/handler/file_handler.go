@@ -140,6 +140,10 @@ type fileQARequest struct {
 	TopK                int    `json:"top_k"`
 	AnswerModelProvider string `json:"answer_model_provider"`
 	AnswerModel         string `json:"answer_model"`
+	History             []struct {
+		Question string `json:"question"`
+		Answer   string `json:"answer"`
+	} `json:"history"`
 }
 
 type queuedFileProcessingRequest struct {
@@ -414,47 +418,8 @@ func (h *FileHandler) UploadFile(c *gin.Context) {
 			return
 		}
 
-		hasAccess := false
-
-		if h.tenantService != nil {
-			role, err := h.tenantService.GetUserRole(c.Request.Context(), accountID, teamTenantIDStr)
-			if err != nil {
-				h.businessError(c, response.ErrSystemError)
-				return
-			}
-			if role != nil {
-				hasAccess = true
-			}
-		}
-
-		if !hasAccess {
-			groupRole, err := h.accountService.GetOrganizationRoleByWorkspaceID(c.Request.Context(), accountID, teamTenantIDStr)
-			if err == nil && (groupRole == "owner" || groupRole == "admin") {
-				hasAccess = true
-			}
-		}
-
-		if !hasAccess {
-			h.businessError(c, response.ErrPermissionDenied)
+		if !h.authorizeWorkspaceUpload(c, organizationID, teamTenantIDStr, accountID) {
 			return
-		}
-
-		if h.enterpriseService != nil {
-			hasPermission, err := h.enterpriseService.CheckWorkspacePermission(
-				c.Request.Context(),
-				organizationID,
-				teamTenantIDStr,
-				accountID,
-				workspace_model.WorkspacePermissionFileUploadCreate,
-			)
-			if err != nil {
-				h.businessError(c, response.ErrSystemError)
-				return
-			}
-			if !hasPermission {
-				h.businessError(c, response.ErrPermissionDenied)
-				return
-			}
 		}
 
 		teamTenantID = &teamTenantIDStr
@@ -589,6 +554,51 @@ func (h *FileHandler) UploadFile(c *gin.Context) {
 		}
 	}
 	response.Success(c, fileResponse)
+}
+
+func (h *FileHandler) authorizeWorkspaceUpload(c *gin.Context, organizationID, workspaceID, accountID string) bool {
+	return h.authorizeWorkspaceFileCreate(c, organizationID, workspaceID, accountID, workspace_model.WorkspacePermissionFileUpload)
+}
+
+func (h *FileHandler) authorizeWorkspaceTextCreate(c *gin.Context, organizationID, workspaceID, accountID string) bool {
+	return h.authorizeWorkspaceFileCreate(c, organizationID, workspaceID, accountID, workspace_model.WorkspacePermissionFileTextCreate)
+}
+
+func (h *FileHandler) authorizeWorkspaceFileCreate(c *gin.Context, organizationID, workspaceID, accountID string, permission workspace_model.WorkspacePermissionCode) bool {
+	if h.enterpriseService != nil {
+		hasPermission, err := h.enterpriseService.CheckWorkspacePermission(
+			c.Request.Context(),
+			organizationID,
+			workspaceID,
+			accountID,
+			permission,
+		)
+		if err != nil {
+			h.businessError(c, response.ErrSystemError)
+			return false
+		}
+		if !hasPermission {
+			h.businessError(c, response.ErrPermissionDenied)
+			return false
+		}
+		return true
+	}
+
+	if h.tenantService == nil {
+		h.businessError(c, response.ErrPermissionDenied)
+		return false
+	}
+
+	role, err := h.tenantService.GetUserRole(c.Request.Context(), accountID, workspaceID)
+	if err != nil {
+		h.businessError(c, response.ErrSystemError)
+		return false
+	}
+	if role == nil {
+		h.businessError(c, response.ErrPermissionDenied)
+		return false
+	}
+	return true
 }
 
 // ReplaceDocument replaces an existing document file in-place and optionally starts parsing.
@@ -797,7 +807,7 @@ func (h *FileHandler) CreateProcessingRequest(c *gin.Context) {
 // GetFileDetail returns file metadata with the current file asset processing state.
 // GET /files/:file_id/detail
 func (h *FileHandler) GetFileDetail(c *gin.Context) {
-	organizationID, uploadFile, ok := h.authorizeDocumentFile(c)
+	organizationID, uploadFile, ok := h.authorizeDocumentFileWith(c, h.getAuthorizedFileForView)
 	if !ok {
 		return
 	}
@@ -885,7 +895,7 @@ func (h *FileHandler) ListFileChunks(c *gin.Context) {
 		h.businessErrorWithMessage(c, response.ErrSystemError, "file asset chunk service is not available")
 		return
 	}
-	organizationID, uploadFile, ok := h.authorizeDocumentFile(c)
+	organizationID, uploadFile, ok := h.authorizePreviewDocumentFile(c)
 	if !ok {
 		return
 	}
@@ -958,7 +968,7 @@ func (h *FileHandler) PrepareFileQAIndex(c *gin.Context) {
 		h.businessErrorWithMessage(c, response.ErrSystemError, "file asset qa service is not available")
 		return
 	}
-	organizationID, uploadFile, ok := h.authorizeDocumentFile(c)
+	organizationID, uploadFile, ok := h.authorizePreviewDocumentFile(c)
 	if !ok {
 		return
 	}
@@ -980,7 +990,7 @@ func (h *FileHandler) AskFileQuestion(c *gin.Context) {
 		h.businessErrorWithMessage(c, response.ErrSystemError, "file asset qa service is not available")
 		return
 	}
-	organizationID, uploadFile, ok := h.authorizeDocumentFile(c)
+	organizationID, uploadFile, ok := h.authorizePreviewDocumentFile(c)
 	if !ok {
 		return
 	}
@@ -997,6 +1007,7 @@ func (h *FileHandler) AskFileQuestion(c *gin.Context) {
 		AccountID:           c.GetString("account_id"),
 		AnswerModelProvider: req.AnswerModelProvider,
 		AnswerModel:         req.AnswerModel,
+		History:             toFileQAHistory(req.History),
 	})
 	if err != nil {
 		h.handleFileAssetQAError(c, err)
@@ -1012,7 +1023,7 @@ func (h *FileHandler) StreamFileQuestion(c *gin.Context) {
 		h.businessErrorWithMessage(c, response.ErrSystemError, "file asset qa service is not available")
 		return
 	}
-	organizationID, uploadFile, ok := h.authorizeDocumentFile(c)
+	organizationID, uploadFile, ok := h.authorizePreviewDocumentFile(c)
 	if !ok {
 		return
 	}
@@ -1029,6 +1040,7 @@ func (h *FileHandler) StreamFileQuestion(c *gin.Context) {
 		AccountID:           c.GetString("account_id"),
 		AnswerModelProvider: req.AnswerModelProvider,
 		AnswerModel:         req.AnswerModel,
+		History:             toFileQAHistory(req.History),
 	})
 	if err != nil {
 		h.handleFileAssetQAError(c, err)
@@ -1055,6 +1067,23 @@ func (h *FileHandler) StreamFileQuestion(c *gin.Context) {
 			return
 		}
 	}
+}
+
+func toFileQAHistory(items []struct {
+	Question string `json:"question"`
+	Answer   string `json:"answer"`
+}) []datalibraryservice.FileAssetQAHistoryMessage {
+	if len(items) == 0 {
+		return nil
+	}
+	history := make([]datalibraryservice.FileAssetQAHistoryMessage, 0, len(items))
+	for _, item := range items {
+		history = append(history, datalibraryservice.FileAssetQAHistoryMessage{
+			Question: item.Question,
+			Answer:   item.Answer,
+		})
+	}
+	return history
 }
 
 func writeFileQASSEvent(w io.Writer, eventName string, payload datalibraryservice.FileAssetQAStreamEvent) error {
@@ -1178,6 +1207,40 @@ func (h *FileHandler) BatchUpdateFileChunks(c *gin.Context) {
 	response.Success(c, result)
 }
 
+// DeleteFileChunk deletes one current generation chunk. Parent chunks delete their child chunks too.
+// DELETE /files/:file_id/chunks/:chunk_id
+func (h *FileHandler) DeleteFileChunk(c *gin.Context) {
+	if h.fileAssetChunkEditService == nil {
+		h.businessErrorWithMessage(c, response.ErrSystemError, "file asset chunk edit service is not available")
+		return
+	}
+	accountID := c.GetString("account_id")
+	if accountID == "" {
+		h.businessError(c, response.ErrUnauthorized)
+		return
+	}
+	organizationID, uploadFile, ok := h.authorizeManageDocumentFile(c)
+	if !ok {
+		return
+	}
+	chunkID, err := uuid.Parse(c.Param("chunk_id"))
+	if err != nil || chunkID == uuid.Nil {
+		h.businessError(c, response.ErrInvalidParams)
+		return
+	}
+	result, err := h.fileAssetChunkEditService.DeleteCurrentFileChunk(c.Request.Context(), datalibraryservice.FileAssetChunkDeleteInput{
+		OrganizationID: organizationID,
+		SourceFileID:   uploadFile.ID,
+		ChunkID:        chunkID,
+		UpdatedBy:      accountID,
+	})
+	if err != nil {
+		h.handleFileAssetChunkEditError(c, err)
+		return
+	}
+	response.Success(c, result)
+}
+
 func (h *FileHandler) handleFileAssetChunkEditError(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, datalibraryservice.ErrDocumentAssetNotFound):
@@ -1228,7 +1291,7 @@ func (h *FileHandler) GetFileParsePreview(c *gin.Context) {
 		h.businessError(c, response.ErrFileIdRequired)
 		return
 	}
-	uploadFile, ok := h.getAuthorizedFileForDownload(c, fileID)
+	uploadFile, ok := h.getAuthorizedFileForPreview(c, fileID)
 	if !ok {
 		return
 	}
@@ -1269,7 +1332,7 @@ func (h *FileHandler) ListParseConfirmationItems(c *gin.Context) {
 		h.businessErrorWithMessage(c, response.ErrSystemError, "file parse confirmation service is not available")
 		return
 	}
-	organizationID, uploadFile, ok := h.authorizeDocumentFile(c)
+	organizationID, uploadFile, ok := h.authorizePreviewDocumentFile(c)
 	if !ok {
 		return
 	}
@@ -1451,6 +1514,10 @@ func (h *FileHandler) authorizeDocumentFile(c *gin.Context) (string, *dto.Upload
 	return h.authorizeDocumentFileWith(c, h.getAuthorizedFileForDownload)
 }
 
+func (h *FileHandler) authorizePreviewDocumentFile(c *gin.Context) (string, *dto.UploadFile, bool) {
+	return h.authorizeDocumentFileWith(c, h.getAuthorizedFileForPreview)
+}
+
 func (h *FileHandler) authorizeManageDocumentFile(c *gin.Context) (string, *dto.UploadFile, bool) {
 	return h.authorizeDocumentFileWith(c, h.getAuthorizedFileForManage)
 }
@@ -1539,7 +1606,7 @@ func (h *FileHandler) uploadFile(ctx context.Context, filename string, content [
 			isTemporary,
 			isIcon,
 			service.UploadFileOptions{
-				StartLegacyContentExtraction: !useAssetProcessing,
+				StartLegacyContentExtraction: !useAssetProcessing && !isTemporary,
 			},
 		)
 	}
@@ -1733,6 +1800,10 @@ func (h *FileHandler) GetFilePreview(c *gin.Context) {
 		return
 	}
 
+	if _, ok := authorizeFilePreviewAccess(c, h.fileService, h.enterpriseService, fileID); !ok {
+		return
+	}
+
 	// Check for ocr parameter
 	enableOCR := c.Query("ocr")
 	var content string
@@ -1787,7 +1858,7 @@ func (h *FileHandler) GetFileOriginalPreviewURL(c *gin.Context) {
 		return
 	}
 
-	uploadFile, ok := h.getAuthorizedFileForDownload(c, fileID)
+	uploadFile, ok := h.getAuthorizedFileForPreview(c, fileID)
 	if !ok {
 		return
 	}
@@ -1820,7 +1891,7 @@ func (h *FileHandler) GetFileSourcePreviewPages(c *gin.Context) {
 		return
 	}
 
-	uploadFile, ok := h.getAuthorizedFileForDownload(c, fileID)
+	uploadFile, ok := h.getAuthorizedFileForPreview(c, fileID)
 	if !ok {
 		return
 	}
@@ -2021,43 +2092,8 @@ func (h *FileHandler) CreateTextFile(c *gin.Context) {
 			h.businessError(c, response.ErrInvalidParam)
 			return
 		}
-		hasAccess := false
-		if h.tenantService != nil {
-			role, err := h.tenantService.GetUserRole(c.Request.Context(), accountID, *workspaceID)
-			if err != nil {
-				h.businessError(c, response.ErrSystemError)
-				return
-			}
-			if role != nil {
-				hasAccess = true
-			}
-		}
-		if !hasAccess {
-			groupRole, err := h.accountService.GetOrganizationRoleByWorkspaceID(c.Request.Context(), accountID, *workspaceID)
-			if err == nil && (groupRole == "owner" || groupRole == "admin") {
-				hasAccess = true
-			}
-		}
-		if !hasAccess {
-			h.businessError(c, response.ErrPermissionDenied)
+		if !h.authorizeWorkspaceTextCreate(c, organizationID, *workspaceID, accountID) {
 			return
-		}
-		if h.enterpriseService != nil {
-			hasPermission, err := h.enterpriseService.CheckWorkspacePermission(
-				c.Request.Context(),
-				organizationID,
-				*workspaceID,
-				accountID,
-				workspace_model.WorkspacePermissionFileUploadCreate,
-			)
-			if err != nil {
-				h.businessError(c, response.ErrSystemError)
-				return
-			}
-			if !hasPermission {
-				h.businessError(c, response.ErrPermissionDenied)
-				return
-			}
 		}
 		teamTenantID = workspaceID
 	}
@@ -2152,8 +2188,16 @@ func (h *FileHandler) getAuthorizedFileForDownload(c *gin.Context, fileID string
 	return authorizeFileDownloadAccess(c, h.fileService, h.enterpriseService, fileID)
 }
 
+func (h *FileHandler) getAuthorizedFileForPreview(c *gin.Context, fileID string) (*dto.UploadFile, bool) {
+	return authorizeFilePreviewAccess(c, h.fileService, h.enterpriseService, fileID)
+}
+
+func (h *FileHandler) getAuthorizedFileForView(c *gin.Context, fileID string) (*dto.UploadFile, bool) {
+	return authorizeFileViewAccess(c, h.fileService, h.enterpriseService, fileID)
+}
+
 func (h *FileHandler) getAuthorizedFileForManage(c *gin.Context, fileID string) (*dto.UploadFile, bool) {
-	return authorizeFileManageAccess(c, h.fileService, h.enterpriseService, fileID)
+	return authorizeFileUpdateAccess(c, h.fileService, h.enterpriseService, fileID)
 }
 
 func getUploadFileWorkspaceID(uploadFile *dto.UploadFile) string {
@@ -2316,9 +2360,7 @@ func (h *FileHandler) ListFiles(c *gin.Context) {
 		organizationID,
 		accountID,
 		req.WorkspaceID,
-		workspace_model.WorkspacePermissionFileView,
-		workspace_model.WorkspacePermissionFileManage,
-		workspace_model.WorkspacePermissionFileDownload,
+		fileBrowsePermissionCodes()...,
 	)
 	if err != nil {
 		h.businessError(c, response.ErrSystemError)
@@ -2380,9 +2422,7 @@ func (h *FileHandler) ListArchivedFiles(c *gin.Context) {
 		organizationID,
 		accountID,
 		req.WorkspaceID,
-		workspace_model.WorkspacePermissionFileView,
-		workspace_model.WorkspacePermissionFileManage,
-		workspace_model.WorkspacePermissionFileDownload,
+		fileBrowsePermissionCodes()...,
 	)
 	if err != nil {
 		h.businessError(c, response.ErrSystemError)
@@ -2474,6 +2514,12 @@ func (h *FileHandler) DeleteFiles(c *gin.Context) {
 	for _, fileID := range fileIDs {
 		if _, err := uuid.Parse(fileID); err != nil {
 			h.businessError(c, response.ErrInvalidParam)
+			return
+		}
+	}
+
+	for _, fileID := range fileIDs {
+		if _, ok := authorizeFileDeleteAccess(c, h.fileService, h.enterpriseService, fileID); !ok {
 			return
 		}
 	}

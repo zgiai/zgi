@@ -10,7 +10,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Input } from '@/components/ui/input';
-import { Search, Building2 } from 'lucide-react';
+import { Search, Users } from 'lucide-react';
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
 import { useWorkspaces } from '@/hooks/workspace/use-workspaces';
@@ -39,6 +39,10 @@ export interface WorkspaceSelectorProps {
   autoSelectFirst?: boolean;
   /** Workspace IDs to hide from the dropdown */
   excludedWorkspaceIds?: string[];
+  /** Optional externally authorized workspace options. */
+  workspaceOptions?: WorkspaceSelectorValue[];
+  /** Loading state for externally supplied workspace options. */
+  workspaceOptionsLoading?: boolean;
 }
 
 /**
@@ -54,6 +58,8 @@ export function WorkspaceSelector({
   searchable = true,
   autoSelectFirst = false,
   excludedWorkspaceIds = emptyExcludedWorkspaceIds,
+  workspaceOptions,
+  workspaceOptionsLoading = false,
 }: WorkspaceSelectorProps) {
   const t = useT('common');
   const [searchQuery, setSearchQuery] = useState('');
@@ -61,9 +67,12 @@ export function WorkspaceSelector({
 
   // Fetch workspaces in the current organization. Creation dialogs use this
   // selector to choose the owning workspace without changing the global context.
-  const workspaceQuery = useWorkspaces('', 1, 1000);
-  const workspaces = workspaceQuery.workspaces;
-  const isLoading = workspaceQuery.isLoading;
+  const hasExternalWorkspaceOptions = workspaceOptions !== undefined;
+  const workspaceQuery = useWorkspaces('', 1, 100, { enabled: !hasExternalWorkspaceOptions });
+  const workspaces = workspaceOptions ?? workspaceQuery.workspaces;
+  const isLoading = hasExternalWorkspaceOptions
+    ? workspaceOptionsLoading
+    : workspaceQuery.isLoading;
   const excludedWorkspaceIdSet = useMemo(
     () => new Set(excludedWorkspaceIds.filter(Boolean)),
     [excludedWorkspaceIds]
@@ -74,6 +83,15 @@ export function WorkspaceSelector({
         (workspace: WorkspaceSelectorValue) => !excludedWorkspaceIdSet.has(workspace.id)
       ),
     [excludedWorkspaceIdSet, workspaces]
+  );
+  const getWorkspaceDisplayName = useCallback(
+    (workspace?: Pick<WorkspaceSelectorValue, 'name'> | null) => {
+      if (!workspace?.name) return '';
+      return workspace.name === 'Default Workspace'
+        ? t('workspaceSelector.defaultWorkspace')
+        : workspace.name;
+    },
+    [t]
   );
 
   // Use translated placeholder if none provided
@@ -102,9 +120,9 @@ export function WorkspaceSelector({
     if (!selectableWorkspaces) return selectableWorkspaces;
     if (!searchQuery) return selectableWorkspaces;
     return selectableWorkspaces.filter((t: WorkspaceSelectorValue) =>
-      t.name.toLowerCase().includes(searchQuery.toLowerCase())
+      getWorkspaceDisplayName(t).toLowerCase().includes(searchQuery.toLowerCase())
     );
-  }, [searchQuery, selectableWorkspaces]);
+  }, [getWorkspaceDisplayName, searchQuery, selectableWorkspaces]);
 
   // Ensure the current selection remains visible even if it doesn't match the search
   const computedWorkspaces = useMemo(() => {
@@ -117,12 +135,6 @@ export function WorkspaceSelector({
       (selectableWorkspaces || []).find((w: WorkspaceSelectorValue) => w.id === selId) || value;
     return [selectedFromSource, ...base];
   }, [filteredWorkspaces, selectableWorkspaces, value]);
-
-  // Whether current value exists in options; used for fallback display
-  const valueInOptions = useMemo(() => {
-    if (!value?.id) return false;
-    return (selectableWorkspaces || []).some((w: WorkspaceSelectorValue) => w.id === value.id);
-  }, [selectableWorkspaces, value]);
 
   // Handle workspace selection
   const handleWorkspaceSelect = useCallback(
@@ -188,12 +200,10 @@ export function WorkspaceSelector({
         isLoading={isLoading}
       >
         <div className="flex items-center gap-2 overflow-hidden">
-          <Building2 className="h-4 w-4 shrink-0 opacity-70" />
-          {/* Fallback label when selected value is not present in options */}
-          {value && !isLoading && !valueInOptions ? (
-            <span className="truncate">{value.name || 'Unknown'}</span>
+          <Users className="h-4 w-4 shrink-0 opacity-70" />
+          {value && !isLoading ? (
+            <span className="truncate">{getWorkspaceDisplayName(value) || 'Unknown'}</span>
           ) : (
-            // Otherwise, let Radix render the current selected item's text
             <SelectValue placeholder={effectivePlaceholder} />
           )}
         </div>
@@ -233,7 +243,8 @@ export function WorkspaceSelector({
                     className="cursor-pointer mx-1 rounded-sm"
                   >
                     <div className="flex items-center gap-2">
-                      <span className="truncate">{workspace.name}</span>
+                      <Users className="h-4 w-4 shrink-0 text-muted-foreground" />
+                      <span className="truncate">{getWorkspaceDisplayName(workspace)}</span>
                     </div>
                   </SelectItem>
                 ))}

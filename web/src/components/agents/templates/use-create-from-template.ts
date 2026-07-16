@@ -9,7 +9,8 @@ import { useImportWorkflow } from '@/hooks/workflow/use-workflow-import-export';
 import { useT } from '@/i18n';
 import { withBasePath } from '@/lib/config';
 import type { WorkflowImportResult } from '@/services/types/workflow';
-import type { AgentTemplate, AgentTemplateLocale, AgentTemplatePromptBinding } from './types';
+import { getAgentDetailEditHref } from '@/utils/agent-detail-routes';
+import type { AgentTemplate, AgentTemplateLocale } from './types';
 
 function resolveTemplateLocale(locale: string): AgentTemplateLocale {
   return locale.startsWith('zh') ? 'zh-Hans' : 'en-US';
@@ -20,27 +21,7 @@ function resolveTemplateYamlPath(template: AgentTemplate, locale: string): strin
   return template.localizedYamlPaths?.[templateLocale] ?? template.yamlPath;
 }
 
-function resolvePromptIdForLocale(
-  binding: AgentTemplatePromptBinding,
-  locale: AgentTemplateLocale
-): string | null {
-  return (
-    binding.promptIdsByLocale[locale] ??
-    binding.promptIdsByLocale['en-US'] ??
-    binding.promptIdsByLocale['zh-Hans'] ??
-    null
-  );
-}
-
-function injectPromptBindingsIntoTemplateYaml(
-  yamlText: string,
-  template: AgentTemplate,
-  locale: AgentTemplateLocale
-): string {
-  if (!template.defaultPromptBindings?.length) {
-    return yamlText;
-  }
-
+function normalizeTemplatePromptYaml(yamlText: string): string {
   const parsed = parse(yamlText) as {
     workflow?: {
       graph?: {
@@ -57,29 +38,17 @@ function injectPromptBindingsIntoTemplateYaml(
     return yamlText;
   }
 
-  for (const binding of template.defaultPromptBindings) {
-    const promptId = resolvePromptIdForLocale(binding, locale);
-    if (!promptId) continue;
-
-    for (const node of nodes) {
-      if (!node?.id || !binding.nodeIds.includes(node.id)) continue;
-      if (!node.data || node.data.type !== 'llm') continue;
-
-      node.data = {
-        ...node.data,
-        prompt_source: 'managed',
-        prompt_reference: {
-          prompt_id: promptId,
-          prompt_name: binding.fallbackTitle,
-          label: 'production',
-          locale,
-          source: 'official',
-        },
-      };
-    }
+  for (const node of nodes) {
+    if (!node?.data || node.data.type !== 'llm') continue;
+    node.data.prompt_source = 'inline';
+    delete node.data.prompt_reference;
   }
 
   return stringify(parsed);
+}
+
+function resolveTemplateRouteKind(template: AgentTemplate): string {
+  return template.kind === 'agent' ? 'agent' : 'workflow';
 }
 
 export function useCreateAgentFromTemplate() {
@@ -91,7 +60,6 @@ export function useCreateAgentFromTemplate() {
   const createFromTemplate = useCallback(
     async (template: AgentTemplate, workspaceId: string): Promise<WorkflowImportResult> => {
       let fileContent: string;
-      const templateLocale = resolveTemplateLocale(locale);
 
       try {
         const yamlPath = resolveTemplateYamlPath(template, locale);
@@ -105,11 +73,18 @@ export function useCreateAgentFromTemplate() {
         throw error;
       }
 
-      const hydratedYaml = injectPromptBindingsIntoTemplateYaml(fileContent, template, templateLocale);
+      let hydratedYaml: string;
+      try {
+        hydratedYaml = normalizeTemplatePromptYaml(fileContent);
+      } catch (error) {
+        toast.error(t('agents.templates.templateUnavailable'));
+        throw error;
+      }
+
       const file = new File([hydratedYaml], `${template.id}.yml`, { type: 'application/x-yaml' });
       const response = await importWorkflow({ file, workspaceId });
       const agentId = response.data.agent_id;
-      router.push(`/console/agents/${agentId}/workflow`);
+      router.push(getAgentDetailEditHref(agentId, resolveTemplateRouteKind(template)));
       return response.data;
     },
     [importWorkflow, locale, router, t]

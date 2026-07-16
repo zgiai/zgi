@@ -17,6 +17,7 @@ func TestBuildSecureBwrapArgsEnforcesIsolationContract(t *testing.T) {
 
 	assertArgPair(t, args, "--ro-bind", "/runtime/rootfs")
 	assertArgPair(t, args, "--bind", "/workspace")
+	assertArgPair(t, args, "--dir", "/proc")
 	assertArgPair(t, args, "--chdir", secureWorkspacePath)
 	assertArgPair(t, args, "--uid", "65534")
 	assertArgPair(t, args, "--gid", "65534")
@@ -24,6 +25,9 @@ func TestBuildSecureBwrapArgsEnforcesIsolationContract(t *testing.T) {
 		if !hasArg(args, flag) {
 			t.Fatalf("expected %s in bwrap args: %#v", flag, args)
 		}
+	}
+	if hasArg(args, "--proc") {
+		t.Fatalf("expected parent procfs to stay hidden, got %#v", args)
 	}
 
 	aIndex := argPairIndex(args, "--setenv", "A_VAR")

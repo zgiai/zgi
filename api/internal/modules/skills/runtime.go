@@ -7,11 +7,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
+	goruntime "runtime"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/zgiai/zgi/api/internal/capabilities/toolgovernance"
 	llmadapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/internal/modules/tools"
 	"gopkg.in/yaml.v3"
@@ -28,7 +29,10 @@ const (
 	MetaToolReadSkillReference = "read_skill_reference"
 	MetaToolCallSkillTool      = "call_skill_tool"
 	MetaToolIntermediateAnswer = "submit_intermediate_answer"
+	MetaToolTurnState          = "submit_turn_state"
+	MetaToolUpdatePlan         = "update_plan"
 	MetaToolRequestUserInput   = "request_user_input"
+	MetaToolFinalAnswer        = "submit_final_answer"
 )
 
 var ErrSkillNotFound = errors.New("skill not found")
@@ -38,6 +42,7 @@ type Runtime struct {
 	manager      *tools.ToolManager
 	catalogDir   string
 	scriptRunner SkillScriptRunner
+	governance   ToolGovernanceGateway
 }
 
 type SkillScriptRunner interface {
@@ -46,9 +51,10 @@ type SkillScriptRunner interface {
 }
 
 type skillLocation struct {
-	ID     string
-	Root   string
-	Source string
+	ID       string
+	Root     string
+	Source   string
+	Embedded bool
 }
 
 type ExecutionContext struct {
@@ -82,6 +88,13 @@ func NewRuntimeWithCatalog(engine *tools.ToolEngine, manager *tools.ToolManager,
 func (r *Runtime) WithScriptRunner(scriptRunner SkillScriptRunner) *Runtime {
 	if r != nil && scriptRunner != nil && scriptRunner.Configured() {
 		r.scriptRunner = scriptRunner
+	}
+	return r
+}
+
+func (r *Runtime) WithToolGovernanceGateway(governance ToolGovernanceGateway) *Runtime {
+	if r != nil {
+		r.governance = governance
 	}
 	return r
 }
@@ -162,30 +175,18 @@ func (r *Runtime) ListSystemSkillsBestEffort(ctx context.Context) ([]SkillDiscov
 	if r == nil {
 		return nil, fmt.Errorf("skill runtime is not configured")
 	}
-	entries, err := os.ReadDir(r.catalogDir)
+	locations, errs, err := r.systemSkillLocationsBestEffort()
 	if err != nil {
-		return nil, fmt.Errorf("failed to read skill catalog: %w", err)
+		return nil, err
 	}
-	metadata := make([]SkillDiscoveryMetadata, 0, len(entries))
-	errs := make([]error, 0)
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		name := strings.TrimSpace(entry.Name())
-		if name == "" {
-			continue
-		}
-		if !isValidSkillName(name) {
-			errs = append(errs, fmt.Errorf("invalid skill directory %s: use lowercase letters, numbers, and hyphens only", entry.Name()))
-			continue
-		}
-		id := normalizeSkillID(name)
-		doc, err := r.loadSkillDocumentFromLocation(skillLocation{
-			ID:     id,
-			Root:   filepath.Join(r.catalogDir, name),
-			Source: SkillSourceSystem,
-		})
+	ids := make([]string, 0, len(locations))
+	for id := range locations {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	metadata := make([]SkillDiscoveryMetadata, 0, len(ids))
+	for _, id := range ids {
+		doc, err := r.loadSkillDocumentFromLocation(locations[id])
 		if err != nil {
 			errs = append(errs, err)
 			continue
@@ -254,8 +255,12 @@ func (r *Runtime) SystemSkillExists(skillID string) bool {
 	if id == "" || !isValidSkillName(id) {
 		return false
 	}
-	info, err := os.Stat(filepath.Join(r.catalogDir, id))
-	return err == nil && info.IsDir()
+	locations, err := r.systemSkillLocations()
+	if err != nil {
+		return false
+	}
+	_, ok := locations[id]
+	return ok
 }
 
 func (r *Runtime) GetSkillMetadata(ctx context.Context, skillID string) (*SkillDiscoveryMetadata, error) {
@@ -288,27 +293,17 @@ func (r *Runtime) ValidateCatalog(ctx context.Context) error {
 	if r == nil {
 		return fmt.Errorf("skill runtime is not configured")
 	}
-	entries, err := os.ReadDir(r.catalogDir)
+	locations, err := r.systemSkillLocations()
 	if err != nil {
-		return fmt.Errorf("failed to read skill catalog: %w", err)
+		return err
 	}
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		name := strings.TrimSpace(entry.Name())
-		if name == "" {
-			continue
-		}
-		if !isValidSkillName(name) {
-			return fmt.Errorf("invalid skill directory %s: use lowercase letters, numbers, and hyphens only", name)
-		}
-		id := normalizeSkillID(name)
-		doc, err := r.loadSkillDocumentFromLocation(skillLocation{
-			ID:     id,
-			Root:   filepath.Join(r.catalogDir, id),
-			Source: SkillSourceSystem,
-		})
+	ids := make([]string, 0, len(locations))
+	for id := range locations {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	for _, id := range ids {
+		doc, err := r.loadSkillDocumentFromLocation(locations[id])
 		if err != nil {
 			return err
 		}
@@ -332,7 +327,10 @@ func LoadCustomSkillDocument(root string) (SkillDocument, error) {
 		return SkillDocument{}, fmt.Errorf("failed to parse custom skill: %w", err)
 	}
 	id := normalizeSkillID(frontmatter.Name)
-	doc := buildSkillDocument(id, root, SkillSourceCustom, frontmatter, body)
+	doc, err := buildSkillDocument(id, root, SkillSourceCustom, frontmatter, body, listReferences(root, SkillSourceCustom), hasScripts(root))
+	if err != nil {
+		return SkillDocument{}, err
+	}
 	if err := validateCustomSkillDocument(doc); err != nil {
 		return SkillDocument{}, err
 	}
@@ -389,14 +387,14 @@ func (r *Runtime) ReadReference(ctx context.Context, resolved *ResolvedSkills, s
 		trace.DurationMS = time.Since(start).Milliseconds()
 		return "", trace, err
 	}
-	path, err := referenceFullPath(*doc, referencePath)
+	ref, err := skillReference(*doc, referencePath)
 	if err != nil {
 		trace.Status = "error"
 		trace.Error = err.Error()
 		trace.DurationMS = time.Since(start).Milliseconds()
 		return "", trace, err
 	}
-	content, err := os.ReadFile(path)
+	content, err := readSkillReference(ref)
 	if err != nil {
 		trace.Status = "error"
 		trace.Error = err.Error()
@@ -424,17 +422,60 @@ func (r *Runtime) CallSkillTool(
 		return nil, fmt.Errorf("skill %s is not enabled", normalizeSkillID(skillID))
 	}
 	if strings.TrimSpace(toolName) == SkillScriptToolRun {
+		toolDef, ok := findSkillTool(*doc, toolName)
+		if !ok {
+			return nil, fmt.Errorf("tool %s is not available in skill %s", strings.TrimSpace(toolName), doc.Metadata.ID)
+		}
+		executionArguments := copyStringAnyMap(arguments)
+		if executionArguments == nil {
+			executionArguments = map[string]interface{}{}
+		}
+		if _, _, preflight, err := r.preflightToolGovernance(ctx, *doc, toolDef, executionArguments, execCtx, callID); preflight != nil {
+			return preflight, err
+		} else if err != nil {
+			return nil, err
+		}
 		if !doc.Metadata.ScriptsSupported || r.scriptRunner == nil {
 			return nil, fmt.Errorf("skill %s scripts are not supported", doc.Metadata.ID)
 		}
-		return r.scriptRunner.RunSkillScript(ctx, *doc, arguments, execCtx, callID)
-	}
-	if r.engine == nil {
-		return nil, fmt.Errorf("tool engine is not configured")
+		return r.scriptRunner.RunSkillScript(ctx, *doc, executionArguments, execCtx, callID)
 	}
 	toolDef, ok := findSkillTool(*doc, toolName)
 	if !ok {
 		return nil, fmt.Errorf("tool %s is not available in skill %s", strings.TrimSpace(toolName), doc.Metadata.ID)
+	}
+
+	executionArguments := copyStringAnyMap(arguments)
+	if executionArguments == nil {
+		executionArguments = map[string]interface{}{}
+	}
+	var governanceArgumentRewrite map[string]interface{}
+	if rewritten, rewriteSummary, ok := rewriteReadToolArgumentsFromResolvedAsset(toolDef.Governance, executionArguments, execCtx); ok {
+		executionArguments = rewritten
+		governanceArgumentRewrite = rewriteSummary
+	}
+	executionArguments = r.enrichToolGovernanceArguments(ctx, toolDef, executionArguments, execCtx)
+	if err := validateSkillToolArgumentsAgainstContract(doc.Metadata.ID, toolDef.Name, executionArguments); err != nil {
+		trace := SkillTrace{
+			Kind:      "tool_call",
+			SkillID:   doc.Metadata.ID,
+			ToolName:  toolDef.Name,
+			Status:    "error",
+			Arguments: summarizeArguments(executionArguments),
+			Error:     err.Error(),
+		}
+		return &ToolInvocationResult{Trace: trace}, err
+	}
+
+	governanceDecision, governed, preflight, err := r.preflightToolGovernance(ctx, *doc, toolDef, executionArguments, execCtx, callID)
+	if preflight != nil {
+		return preflight, err
+	}
+	if err != nil {
+		return nil, err
+	}
+	if r.engine == nil {
+		return nil, fmt.Errorf("tool engine is not configured")
 	}
 
 	timeout := docTimeoutSeconds(*doc)
@@ -448,7 +489,7 @@ func (r *Runtime) CallSkillTool(
 		ToolName:          toolDef.Name,
 		TenantID:          execCtx.OrganizationID,
 		UserID:            execCtx.UserID,
-		Parameters:        arguments,
+		Parameters:        executionArguments,
 		ConversationID:    execCtx.ConversationID,
 		AppID:             execCtx.AppID,
 		MessageID:         execCtx.MessageID,
@@ -461,7 +502,13 @@ func (r *Runtime) CallSkillTool(
 		ToolName:   toolDef.Name,
 		Status:     "success",
 		DurationMS: time.Since(start).Milliseconds(),
-		Arguments:  summarizeArguments(arguments),
+		Arguments:  summarizeArguments(executionArguments),
+	}
+	if len(governanceArgumentRewrite) > 0 {
+		trace.Arguments["governance_argument_rewrite"] = governanceArgumentRewrite
+	}
+	if governed {
+		trace.Governance = &governanceDecision
 	}
 	if err != nil {
 		trace.Status = "error"
@@ -482,15 +529,204 @@ func (r *Runtime) CallSkillTool(
 	if callID == "" {
 		callID = "call_" + toolDef.Name
 	}
+	messages := appendGovernanceRewriteObservation(result.Messages, governanceDecision, governanceArgumentRewrite)
 	return &ToolInvocationResult{
-		Messages: result.Messages,
+		Messages: messages,
 		Trace:    trace,
 		ToolMessage: llmadapter.Message{
 			Role:       "tool",
 			ToolCallID: callID,
-			Content:    toolMessagesContent(result.Messages),
+			Content:    toolMessagesContent(messages),
 		},
 	}, nil
+}
+
+func (r *Runtime) enrichToolGovernanceArguments(ctx context.Context, toolDef SkillToolDefinition, arguments map[string]interface{}, execCtx ExecutionContext) map[string]interface{} {
+	if r == nil || r.engine == nil {
+		return arguments
+	}
+	enriched, err := r.engine.EnrichGovernanceArguments(ctx, tools.InvokeRequest{
+		ProviderType:      toolDef.ProviderType,
+		ProviderID:        toolDef.ProviderID,
+		ToolName:          toolDef.Name,
+		TenantID:          execCtx.OrganizationID,
+		UserID:            execCtx.UserID,
+		Parameters:        arguments,
+		ConversationID:    execCtx.ConversationID,
+		AppID:             execCtx.AppID,
+		MessageID:         execCtx.MessageID,
+		InvokeFrom:        normalizeToolInvokeFrom(execCtx.InvokeFrom),
+		RuntimeParameters: copyStringAnyMap(execCtx.RuntimeParameters),
+	})
+	if err != nil || enriched == nil {
+		return arguments
+	}
+	return enriched
+}
+
+func appendGovernanceRewriteObservation(messages []tools.ToolInvokeMessage, decision toolgovernance.Decision, rewrite map[string]interface{}) []tools.ToolInvokeMessage {
+	if len(rewrite) == 0 || decision.Status != toolgovernance.DecisionStatusAllowed {
+		return messages
+	}
+	assets := decision.ExpectedAssets
+	if len(assets) == 0 {
+		assets = decision.Assets
+	}
+	if len(assets) == 0 {
+		return messages
+	}
+	out := append([]tools.ToolInvokeMessage{}, messages...)
+	out = append(out, tools.ToolInvokeMessage{
+		Type: tools.ToolInvokeMessageTypeJSON,
+		Data: map[string]interface{}{
+			"status":                  "completed",
+			"kind":                    "resolved_target_observation",
+			"resolved_assets":         governanceAssetObservationPayload(assets),
+			"resolved_asset_count":    len(assets),
+			"resolved_asset_guidance": "The user's request target has been resolved to resolved_assets. Treat these assets as the only target for this turn. Answer with these asset names and the tool content only; do not mention internal resolution, governance, rewrites, redirects, mismatched IDs, or other visible files unless the user asks for debugging or comparison.",
+		},
+	})
+	return out
+}
+
+func governanceAssetObservationPayload(assets []toolgovernance.AssetRef) []map[string]interface{} {
+	out := make([]map[string]interface{}, 0, len(assets))
+	for _, asset := range assets {
+		item := map[string]interface{}{
+			"id":   strings.TrimSpace(asset.ID),
+			"type": strings.TrimSpace(asset.Type),
+			"name": strings.TrimSpace(asset.Name),
+		}
+		if workspaceID := strings.TrimSpace(asset.WorkspaceID); workspaceID != "" {
+			item["workspace_id"] = workspaceID
+		}
+		if source := strings.TrimSpace(asset.Source); source != "" {
+			item["source"] = source
+		}
+		if len(asset.Metadata) > 0 {
+			item["metadata"] = copyStringAnyMap(asset.Metadata)
+		}
+		out = append(out, item)
+	}
+	return out
+}
+
+func (r *Runtime) preflightToolGovernance(
+	ctx context.Context,
+	doc SkillDocument,
+	toolDef SkillToolDefinition,
+	arguments map[string]interface{},
+	execCtx ExecutionContext,
+	callID string,
+) (toolgovernance.Decision, bool, *ToolInvocationResult, error) {
+	if r == nil || r.governance == nil || toolDef.Governance == nil {
+		return toolgovernance.Decision{}, false, nil, nil
+	}
+	start := time.Now()
+	decision, err := r.governance.DecideSkillTool(ctx, ToolGovernanceRequest{
+		Manifest:         *toolDef.Governance,
+		SkillID:          doc.Metadata.ID,
+		ToolName:         toolDef.Name,
+		ProviderType:     toolDef.ProviderType,
+		ProviderID:       toolDef.ProviderID,
+		Arguments:        copyStringAnyMap(arguments),
+		ExecutionContext: execCtx,
+	})
+	trace := SkillTrace{
+		Kind:       "tool_governance",
+		SkillID:    doc.Metadata.ID,
+		ToolName:   toolDef.Name,
+		Status:     string(decision.Status),
+		DurationMS: time.Since(start).Milliseconds(),
+		Arguments:  summarizeArguments(arguments),
+		Governance: &decision,
+		Result:     governanceTraceResult(decision),
+	}
+	if err != nil {
+		trace.Status = "error"
+		trace.Error = err.Error()
+		return decision, true, &ToolInvocationResult{Trace: trace}, err
+	}
+	if decision.Status == toolgovernance.DecisionStatusNeedsApproval && decision.RequiresApproval {
+		frozen := toolgovernance.NewFrozenInvocation(toolgovernance.FrozenInvocationRequest{
+			CorrelationID:  decision.CorrelationID,
+			Manifest:       decision.Manifest,
+			SkillID:        doc.Metadata.ID,
+			ToolName:       toolDef.Name,
+			ProviderType:   string(toolDef.ProviderType),
+			ProviderID:     toolDef.ProviderID,
+			Arguments:      copyStringAnyMap(arguments),
+			Assets:         decision.Assets,
+			ExpectedAssets: decision.ExpectedAssets,
+			Now:            start,
+		})
+		decision.FrozenInvocation = &frozen
+		if decision.ApprovalEvent != nil {
+			decision.ApprovalEvent.FrozenInvocation = &frozen
+		}
+		trace.Governance = &decision
+		trace.Result = governanceTraceResult(decision)
+	}
+	if decision.Status == toolgovernance.DecisionStatusAllowed {
+		return decision, true, nil, nil
+	}
+	callID = strings.TrimSpace(callID)
+	if callID == "" {
+		callID = "call_" + toolDef.Name
+	}
+	return decision, true, &ToolInvocationResult{
+		Trace:       trace,
+		ToolMessage: ToolResultMessage(callID, governanceToolFeedback(decision)),
+	}, nil
+}
+
+func governanceTraceResult(decision toolgovernance.Decision) map[string]interface{} {
+	result := governanceToolFeedback(decision)
+	if decision.ApprovalEvent != nil {
+		result["approval_event"] = decision.ApprovalEvent
+	}
+	return result
+}
+
+func governanceToolFeedback(decision toolgovernance.Decision) map[string]interface{} {
+	feedback := copyStringAnyMap(decision.ModelFeedback)
+	if feedback == nil {
+		feedback = map[string]interface{}{}
+	}
+	feedback["status"] = string(decision.Status)
+	feedback["reason"] = strings.TrimSpace(decision.Reason)
+	feedback["correlation_id"] = strings.TrimSpace(decision.CorrelationID)
+	feedback["requires_approval"] = decision.RequiresApproval
+	feedback["instruction"] = governanceInstruction(decision)
+	return map[string]interface{}{
+		"governance": feedback,
+	}
+}
+
+func governanceInstruction(decision toolgovernance.Decision) string {
+	switch decision.Status {
+	case toolgovernance.DecisionStatusNeedsApproval:
+		return "The tool was not executed. Explain that user approval is required and wait for approval before retrying this action."
+	case toolgovernance.DecisionStatusNeedsResolution:
+		if len(decision.ExpectedAssets) > 0 {
+			return "The tool was not executed because the tool arguments did not match the resolved target asset. Retry the same tool with the exact ID from expected_assets; do not ask the user to clarify unless expected_assets is ambiguous or empty."
+		}
+		return "The tool was not executed. Ask the user to clarify the target asset or resolve the asset reference before retrying."
+	case toolgovernance.DecisionStatusDenied:
+		code, _ := decision.ModelFeedback["authorization_code"].(string)
+		code = strings.TrimSpace(code)
+		if code == agentToolNotPreauthorizedCode {
+			return "The tool was not executed because this action is not preauthorized in the non-interactive Agent runtime. Do not retry with unchanged arguments; choose an already authorized tool or explain that this action is unavailable."
+		}
+		if strings.HasPrefix(code, "agent_") {
+			return "The tool was not executed because the current Agent configuration does not authorize it. Do not retry with unchanged arguments; choose an authorized bound resource or explain which Agent binding must be updated."
+		}
+		return "The tool was not executed. Explain the denial and continue with a safe alternative."
+	case toolgovernance.DecisionStatusBlocked:
+		return "The tool was not executed. Explain why the action is blocked and continue without this tool."
+	default:
+		return "Continue with the tool result."
+	}
 }
 
 func MetaTools() []llmadapter.Tool {
@@ -501,12 +737,25 @@ func MetaToolsForSkills(resolved *ResolvedSkills) []llmadapter.Tool {
 	return metaTools(resolvedHasToolSkills(resolved))
 }
 
+type MetaToolOptions struct {
+	RequireFinalPlanSnapshot bool
+}
+
 func MetaToolsForSkillState(resolved *ResolvedSkills, loadedSkillIDs map[string]struct{}) []llmadapter.Tool {
+	return MetaToolsForSkillStateWithOptions(resolved, loadedSkillIDs, MetaToolOptions{})
+}
+
+func MetaToolsForSkillStateWithOptions(resolved *ResolvedSkills, loadedSkillIDs map[string]struct{}, options MetaToolOptions) []llmadapter.Tool {
 	loaded := normalizedLoadedSkillIDs(loadedSkillIDs)
 	tools := []llmadapter.Tool{
-		loadSkillMetaTool(resolvedSkillIDs(resolved)),
 		requestUserInputMetaTool(),
+		turnStateMetaTool(),
+		updatePlanMetaTool(),
 		intermediateAnswerMetaTool(),
+		finalAnswerMetaToolWithOptions(options),
+	}
+	if skillIDs := unloadedSkillIDs(resolved, loaded); len(skillIDs) > 0 {
+		tools = append([]llmadapter.Tool{loadSkillMetaTool(skillIDs)}, tools...)
 	}
 	if referenceSkillIDs, referencePaths := loadedReferenceOptions(resolved, loaded); len(referenceSkillIDs) > 0 && len(referencePaths) > 0 {
 		tools = append(tools, readReferenceMetaTool(referenceSkillIDs, referencePaths))
@@ -522,12 +771,64 @@ func metaTools(includeToolCaller bool) []llmadapter.Tool {
 		loadSkillMetaTool(nil),
 		readReferenceMetaTool(nil, nil),
 		requestUserInputMetaTool(),
+		turnStateMetaTool(),
+		updatePlanMetaTool(),
 		intermediateAnswerMetaTool(),
+		finalAnswerMetaTool(),
 	}
 	if includeToolCaller {
 		tools = append(tools, callSkillToolMetaTool(nil, nil, nil, nil, true))
 	}
 	return tools
+}
+
+func updatePlanMetaTool() llmadapter.Tool {
+	return llmadapter.Tool{
+		Type: "function",
+		Function: llmadapter.Function{
+			Name:        MetaToolUpdatePlan,
+			Description: "Replace the user-visible outcome contract only when the requested result structure changes, a failure invalidates the current route, or the user changes the goal. Ordinary tool success is reconciled automatically and must not trigger this tool. Prefer outcomes; plan is a compatibility projection.",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"explanation": map[string]interface{}{"type": "string"},
+					"plan": map[string]interface{}{
+						"type": "array",
+						"items": map[string]interface{}{
+							"type": "object",
+							"properties": map[string]interface{}{
+								"id":            map[string]interface{}{"type": "string"},
+								"step":          map[string]interface{}{"type": "string"},
+								"status":        map[string]interface{}{"type": "string", "enum": []string{"pending", "in_progress", "completed", "skipped"}},
+								"evidence_refs": map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
+								"note":          map[string]interface{}{"type": "string"},
+							},
+							"required": []string{"step", "status"},
+						},
+					},
+					"outcomes": map[string]interface{}{
+						"type": "array",
+						"items": map[string]interface{}{
+							"type": "object",
+							"properties": map[string]interface{}{
+								"id":                   map[string]interface{}{"type": "string"},
+								"goal":                 map[string]interface{}{"type": "string"},
+								"status":               map[string]interface{}{"type": "string", "enum": []string{"pending", "in_progress", "completed", "skipped"}},
+								"target_resource_type": map[string]interface{}{"type": "string"},
+								"target_resource_id":   map[string]interface{}{"type": "string"},
+								"depends_on":           map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
+								"capabilities":         map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
+								"constraints":          map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
+								"evidence_refs":        map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
+								"required":             map[string]interface{}{"type": "boolean"},
+							},
+							"required": []string{"goal"},
+						},
+					},
+				},
+			},
+		},
+	}
 }
 
 func loadSkillMetaTool(skillIDs []string) llmadapter.Tool {
@@ -628,6 +929,84 @@ func requestUserInputMetaTool() llmadapter.Tool {
 	}
 }
 
+func turnStateMetaTool() llmadapter.Tool {
+	return llmadapter.Tool{
+		Type: "function",
+		Function: llmadapter.Function{
+			Name:        MetaToolTurnState,
+			Description: "Record concise structured state for this same AIChat turn. Use this as a state handoff before approvals, page navigation, refresh, or another phase when implicit working memory may become unreliable. Tool-produced files and resource results are recorded automatically; reference their IDs, digest, and concise summary instead of copying full documents or configuration payloads. Use working_fact for model-only derived facts that later steps must reuse exactly. Use user_deliverable only when content should also be visible to the user; submit_intermediate_answer remains a compatibility shortcut for that case.",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"items": map[string]interface{}{
+						"type":        "array",
+						"description": "One to eight structured turn-state items.",
+						"minItems":    1,
+						"maxItems":    8,
+						"items": map[string]interface{}{
+							"type": "object",
+							"properties": map[string]interface{}{
+								"kind": map[string]interface{}{
+									"type":        "string",
+									"description": "The item kind.",
+									"enum":        []string{"working_fact", "user_deliverable", "decision", "assumption", "verification"},
+								},
+								"visibility": map[string]interface{}{
+									"type":        "string",
+									"description": "Use model_only for internal state; use user_visible only for user-facing deliverables.",
+									"enum":        []string{"model_only", "user_visible", "audit"},
+								},
+								"key": map[string]interface{}{
+									"type":        "string",
+									"description": "Stable short key for later reuse, for example agent_theme or selected_file_content.",
+									"maxLength":   120,
+								},
+								"value": map[string]interface{}{
+									"type":        "string",
+									"description": "The concise fact, decision, assumption, verification result, or structured reference serialized as short JSON. Keep exact short user-derived values exact; never copy full documents or complete configuration payloads.",
+									"maxLength":   1024,
+								},
+								"title": map[string]interface{}{
+									"type":        "string",
+									"description": "Short user-facing title when kind is user_deliverable.",
+									"maxLength":   120,
+								},
+								"content": map[string]interface{}{
+									"type":        "string",
+									"description": "Concise Markdown content when kind is user_deliverable. Save full documents as artifacts and reference them by file ID instead.",
+									"maxLength":   1024,
+								},
+								"source": map[string]interface{}{
+									"type":        "string",
+									"description": "Optional source, such as file-reader/read_file or page_context.",
+									"maxLength":   200,
+								},
+								"used_for": map[string]interface{}{
+									"type":        "array",
+									"description": "Optional later use labels, such as agent.name or agent.prompt.",
+									"maxItems":    8,
+									"items": map[string]interface{}{
+										"type":      "string",
+										"maxLength": 120,
+									},
+								},
+								"confidence": map[string]interface{}{
+									"type":        "number",
+									"description": "Optional confidence from 0 to 1.",
+									"minimum":     0,
+									"maximum":     1,
+								},
+							},
+							"required": []string{"kind"},
+						},
+					},
+				},
+				"required": []string{"items"},
+			},
+		},
+	}
+}
+
 func intermediateAnswerMetaTool() llmadapter.Tool {
 	return llmadapter.Tool{
 		Type: "function",
@@ -652,6 +1031,74 @@ func intermediateAnswerMetaTool() llmadapter.Tool {
 	}
 }
 
+func finalAnswerMetaTool() llmadapter.Tool {
+	return finalAnswerMetaToolWithOptions(MetaToolOptions{})
+}
+
+func finalAnswerMetaToolWithOptions(options MetaToolOptions) llmadapter.Tool {
+	description := "Submit the final user-facing answer and end the current skill loop when you judge the task complete or have honestly reached a terminal outcome. This call is terminal: do not combine it with business tools or request_user_input. Put the complete final response in answer; ordinary assistant content is progress, not the final answer. A plan snapshot is optional audit metadata and never determines whether the answer is accepted."
+	required := []string{"answer"}
+	if options.RequireFinalPlanSnapshot {
+		description = "Submit the final user-facing answer and the latest execution plan snapshot in the same call when you judge the task complete or have honestly reached a terminal outcome. This call is terminal: do not combine it with business tools or request_user_input. Put the complete final response in answer; ordinary assistant content is progress, not the final answer. The plan is required for synchronization but remains advisory and never determines whether the answer is accepted."
+		required = append(required, "plan")
+	}
+	return llmadapter.Tool{
+		Type: "function",
+		Function: llmadapter.Function{
+			Name:        MetaToolFinalAnswer,
+			Description: description,
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"answer": map[string]interface{}{
+						"type":        "string",
+						"description": "The complete final answer shown to the user, in the same language as the latest user request.",
+					},
+					"explanation": map[string]interface{}{
+						"type":        "string",
+						"description": "Optional concise explanation for the final plan update. This is audit metadata and is not shown as the answer.",
+						"maxLength":   500,
+					},
+					"plan": planSnapshotSchema(),
+				},
+				"required": required,
+			},
+		},
+	}
+}
+
+func planSnapshotSchema() map[string]interface{} {
+	return map[string]interface{}{
+		"type":        "array",
+		"description": "Optional execution plan snapshot for audit. It does not determine whether the final answer is accepted.",
+		"maxItems":    16,
+		"items": map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"id":            map[string]interface{}{"type": "string"},
+				"step":          map[string]interface{}{"type": "string"},
+				"status":        map[string]interface{}{"type": "string", "enum": []string{"pending", "in_progress", "completed", "skipped"}},
+				"evidence_refs": map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
+				"note":          map[string]interface{}{"type": "string"},
+				"expected_action": map[string]interface{}{
+					"type":        "object",
+					"description": "Optional structured action expected to complete this phase. Use exact loaded skill/tool IDs and stable target resource IDs when known.",
+					"properties": map[string]interface{}{
+						"skill_id":  map[string]interface{}{"type": "string"},
+						"tool_name": map[string]interface{}{"type": "string"},
+						"target": map[string]interface{}{
+							"type":                 "object",
+							"additionalProperties": map[string]interface{}{"type": "string"},
+						},
+					},
+					"required": []string{"skill_id", "tool_name"},
+				},
+			},
+			"required": []string{"step", "status"},
+		},
+	}
+}
+
 func callSkillToolMetaTool(skillIDs []string, toolNames []string, pairs []string, contracts []SkillToolArgumentContract, hasUntypedTools bool) llmadapter.Tool {
 	description := "Call a tool allowed by a loaded skill after reading its instructions."
 	if len(pairs) > 0 {
@@ -666,8 +1113,14 @@ func callSkillToolMetaTool(skillIDs []string, toolNames []string, pairs []string
 			Parameters: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
-					"skill_id":  stringSchema("The loaded skill ID that allows the tool.", skillIDs),
-					"tool_name": stringSchema("The allowed tool name to call.", toolNames),
+					"skill_id":      stringSchema("The loaded skill ID that allows the tool.", skillIDs),
+					"tool_name":     stringSchema("The allowed tool name to call.", toolNames),
+					"plan_phase_id": map[string]interface{}{"type": "string", "description": "Optional outcome-phase ID. Include it only when this tool's successful result is sufficient to complete that phase; omit it for prerequisite reads, inspections, and helper calls."},
+					"completion_intent": map[string]interface{}{
+						"type":        "string",
+						"enum":        []string{"continue", "finalize_if_success"},
+						"description": "Use finalize_if_success only when this exact tool call is the final remaining user-requested effect and all prerequisites are already complete. It never bypasses approval or proves success by itself.",
+					},
 					"arguments": argumentsSchema,
 				},
 				"required": []string{"skill_id", "tool_name", "arguments"},
@@ -750,6 +1203,21 @@ func normalizedLoadedSkillIDs(loadedSkillIDs map[string]struct{}) map[string]str
 		if id != "" {
 			out[id] = struct{}{}
 		}
+	}
+	return out
+}
+
+func unloadedSkillIDs(resolved *ResolvedSkills, loaded map[string]struct{}) []string {
+	ids := resolvedSkillIDs(resolved)
+	if len(ids) == 0 || len(loaded) == 0 {
+		return ids
+	}
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if _, ok := loaded[normalizeSkillID(id)]; ok {
+			continue
+		}
+		out = append(out, id)
 	}
 	return out
 }
@@ -899,32 +1367,96 @@ func skillToolArgumentContracts() map[string]SkillToolArgumentContract {
 			),
 			Example: map[string]interface{}{"operation": "percent_of", "value": 200, "percent": 15},
 		},
+		SkillConsoleNavigator + "/navigate": {
+			SkillID:     SkillConsoleNavigator,
+			ToolName:    "navigate",
+			Description: "Request navigation to a whitelisted internal ZGI console page. This only changes the visible page and does not mutate assets.",
+			Schema: objectSchema(
+				map[string]interface{}{
+					"href":   stringValueSchema("Required whitelisted internal /console route, such as /console/files, /console/agents, /console/workflows, /console/dataset, /console/db, /console/work/task, /console/prompts, /console/work/chat, /console/work/image, /console/work/app, /console/workspace, or /console/settings. Do not use external URLs."),
+					"reason": stringValueSchema("Optional short user-facing reason for why the route is relevant."),
+				},
+				[]string{"href"},
+			),
+			Example: map[string]interface{}{"href": "/console/files", "reason": "The user asked to open file management."},
+		},
 		SkillFileGenerator + "/generate_file": {
 			SkillID:     SkillFileGenerator,
 			ToolName:    "generate_file",
-			Description: "Generate a downloadable file artifact from provided content.",
+			Description: "Generate a downloadable temporary file artifact from provided content. This does not write to File Management; use file-manager/save_file_to_management after generation when the user explicitly asks to save into File Management.",
 			Schema: objectSchema(
 				map[string]interface{}{
-					"content":   stringValueSchema("Text content to write into the generated file. Use valid CSV content for xlsx and runnable HTML content for html."),
-					"format":    enumStringSchema("Output format.", []string{"txt", "md", "html", "json", "csv", "docx", "xlsx", "pdf"}),
+					"content":   stringValueSchema("Text content to write into the generated file. Use valid CSV content for xlsx, runnable HTML content for html, and a complete self-contained <svg> document for svg."),
+					"format":    enumStringSchema("Output format.", []string{"txt", "md", "html", "json", "csv", "svg", "docx", "xlsx", "pdf"}),
 					"filename":  stringValueSchema("Optional display filename. Do not include path separators or an extension."),
 					"title":     stringValueSchema("Optional document title used by generated HTML, XLSX, and PDF files. For XLSX, this becomes a merged title row above the table."),
-					"lifecycle": enumStringSchema("File lifecycle. Defaults to persistent.", []string{"persistent", "temporary"}),
+					"lifecycle": enumStringSchema("Temporary artifact lifecycle. Defaults to temporary.", []string{"persistent", "temporary"}),
 				},
 				[]string{"content", "format"},
 			),
 			Example: map[string]interface{}{"content": "# Report\n\nSummary...", "format": "md", "filename": "report"},
 		},
+		SkillFileReader + "/read_file": {
+			SkillID:     SkillFileReader,
+			ToolName:    "read_file",
+			Description: "Read extracted text content from one file available in the current AIChat context.",
+			Schema: objectSchema(
+				map[string]interface{}{
+					"file_id":   stringValueSchema("Required file ID from the current page context, attachment context, or governed asset resolution. Do not invent IDs."),
+					"max_chars": numberSchema("Optional maximum returned content characters. Defaults to 4000 and is capped at 12000."),
+				},
+				[]string{"file_id"},
+			),
+			Example: map[string]interface{}{"file_id": "file_123", "max_chars": 4000},
+		},
+		SkillFileReader + "/list_visible_files": {
+			SkillID:     SkillFileReader,
+			ToolName:    "list_visible_files",
+			Description: "List files visible in the current Console Files page context without reading file contents.",
+			Schema: objectSchema(
+				map[string]interface{}{},
+				nil,
+			),
+			Example: map[string]interface{}{},
+		},
+		SkillFileManager + "/delete_file": {
+			SkillID:     SkillFileManager,
+			ToolName:    "delete_file",
+			Description: "Delete one resolved File Management file after tool governance approval.",
+			Schema: objectSchema(
+				map[string]interface{}{
+					"file_id": stringValueSchema("Required file ID from the current Files page context or governed asset resolution. Do not invent IDs."),
+				},
+				[]string{"file_id"},
+			),
+			Example: map[string]interface{}{"file_id": "file_123"},
+		},
+		SkillFileManager + "/save_file_to_management": {
+			SkillID:     SkillFileManager,
+			ToolName:    "save_file_to_management",
+			Description: "Save a generated tool file or public external file URL into File Management after file.create governance allows it.",
+			Schema: objectSchema(
+				map[string]interface{}{
+					"source_type":  enumStringSchema("Required source type. Use tool_file for a file generated by another tool; use url for a public external file URL.", []string{"tool_file", "url"}),
+					"tool_file_id": stringValueSchema("Required when source_type is tool_file. Use the file_id/tool_file_id returned by the generation tool. Do not invent IDs."),
+					"url":          stringValueSchema("Required when source_type is url. Must be an absolute public http or https URL supplied by the user."),
+					"filename":     stringValueSchema("Required destination filename shown in File Management. Include a suitable extension and do not include path separators."),
+					"workspace_id": stringValueSchema("Optional target workspace ID. Usually omit so current AIChat workspace context is used. Do not invent IDs."),
+				},
+				[]string{"source_type", "filename"},
+			),
+			Example: map[string]interface{}{"source_type": "tool_file", "tool_file_id": "tool_file_123", "filename": "report.pdf"},
+		},
 		SkillFileGenerator + "/generate_docx": {
 			SkillID:     SkillFileGenerator,
 			ToolName:    "generate_docx",
-			Description: "Generate a styled DOCX file from a structured JSON document specification.",
+			Description: "Generate a styled DOCX temporary artifact from a structured JSON document specification. This does not write to File Management.",
 			Schema: objectSchema(
 				map[string]interface{}{
 					"document":  stringValueSchema("JSON string describing the DOCX document. Include blocks with type heading, paragraph, table, or page_break."),
 					"filename":  stringValueSchema("Optional display filename. Do not include path separators or an extension."),
 					"title":     stringValueSchema("Optional title hint; visible content must be included in document.blocks."),
-					"lifecycle": enumStringSchema("File lifecycle. Defaults to persistent.", []string{"persistent", "temporary"}),
+					"lifecycle": enumStringSchema("Temporary artifact lifecycle. Defaults to temporary.", []string{"persistent", "temporary"}),
 				},
 				[]string{"document"},
 			),
@@ -936,14 +1468,14 @@ func skillToolArgumentContracts() map[string]SkillToolArgumentContract {
 		SkillFileGenerator + "/generate_pdf": {
 			SkillID:     SkillFileGenerator,
 			ToolName:    "generate_pdf",
-			Description: "Generate a styled PDF file from self-contained HTML and inline CSS.",
+			Description: "Generate a styled PDF temporary artifact from self-contained HTML and inline CSS. This does not write to File Management.",
 			Schema: objectSchema(
 				map[string]interface{}{
 					"html":      stringValueSchema("Self-contained HTML body or full HTML document. Do not include external URLs, scripts, iframes, or remote assets."),
 					"css":       stringValueSchema("Optional inline CSS appended to the HTML document. Prefer @page for page size and margins."),
 					"filename":  stringValueSchema("Optional display filename. Do not include path separators or an extension."),
 					"title":     stringValueSchema("Optional title used when wrapping an HTML fragment. Visible content must be included in html."),
-					"lifecycle": enumStringSchema("File lifecycle. Defaults to persistent.", []string{"persistent", "temporary"}),
+					"lifecycle": enumStringSchema("Temporary artifact lifecycle. Defaults to temporary.", []string{"persistent", "temporary"}),
 				},
 				[]string{"html"},
 			),
@@ -956,13 +1488,13 @@ func skillToolArgumentContracts() map[string]SkillToolArgumentContract {
 		SkillFileGenerator + "/generate_pptx": {
 			SkillID:     SkillFileGenerator,
 			ToolName:    "generate_pptx",
-			Description: "Generate an editable static PPTX presentation from a structured JSON presentation specification.",
+			Description: "Generate an editable static PPTX temporary artifact from a structured JSON presentation specification. This does not write to File Management.",
 			Schema: objectSchema(
 				map[string]interface{}{
 					"presentation": stringValueSchema("JSON string describing the PPTX presentation. Include slides with elements of type title, text, table, or shape. Use non-overlapping boxes for readable content; omitted boxes use simple auto layout."),
 					"filename":     stringValueSchema("Optional display filename. Do not include path separators or an extension."),
 					"title":        stringValueSchema("Optional title hint; visible content must be included in presentation.slides."),
-					"lifecycle":    enumStringSchema("File lifecycle. Defaults to persistent.", []string{"persistent", "temporary"}),
+					"lifecycle":    enumStringSchema("Temporary artifact lifecycle. Defaults to temporary.", []string{"persistent", "temporary"}),
 				},
 				[]string{"presentation"},
 			),
@@ -1262,23 +1794,38 @@ func skillToolArgumentContracts() map[string]SkillToolArgumentContract {
 			),
 			Example: map[string]interface{}{"query": "Summarize the configured product FAQ."},
 		},
-		SkillInternalDatabase + "/list_accessible_databases": databaseListContract(SkillInternalDatabase),
-		SkillInternalDatabase + "/list_database_tables":      databaseTablesContract(SkillInternalDatabase),
-		SkillInternalDatabase + "/describe_database_table":   databaseDescribeTableContract(SkillInternalDatabase),
-		SkillInternalDatabase + "/query_table_records":       databaseQueryRecordsContract(SkillInternalDatabase),
-		SkillInternalDatabase + "/insert_table_records":      databaseMutateRecordsContract(SkillInternalDatabase, "insert_table_records", "Insert records into a database table."),
-		SkillInternalDatabase + "/update_table_records":      databaseMutateRecordsContract(SkillInternalDatabase, "update_table_records", "Update records in a database table. Each record must include id."),
-		SkillInternalDatabase + "/delete_table_records":      databaseMutateRecordsContract(SkillInternalDatabase, "delete_table_records", "Delete records from a database table. Each record must include id."),
-		SkillAgentDatabase + "/list_accessible_databases":    databaseListContract(SkillAgentDatabase),
-		SkillAgentDatabase + "/list_database_tables":         databaseTablesContract(SkillAgentDatabase),
-		SkillAgentDatabase + "/describe_database_table":      databaseDescribeTableContract(SkillAgentDatabase),
-		SkillAgentDatabase + "/query_table_records":          databaseQueryRecordsContract(SkillAgentDatabase),
-		SkillAgentDatabase + "/insert_table_records":         databaseMutateRecordsContract(SkillAgentDatabase, "insert_table_records", "Insert records into an Agent-bound database table."),
-		SkillAgentDatabase + "/update_table_records":         databaseMutateRecordsContract(SkillAgentDatabase, "update_table_records", "Update records in an Agent-bound database table. Each record must include id."),
-		SkillAgentDatabase + "/delete_table_records":         databaseMutateRecordsContract(SkillAgentDatabase, "delete_table_records", "Delete records from an Agent-bound database table. Each record must include id."),
-		SkillAgentWorkflow + "/list_agent_workflows":         workflowListContract(),
-		SkillAgentWorkflow + "/run_agent_workflow":           workflowRunContract(),
-		SkillAgentWorkflow + "/get_workflow_run_status":      workflowRunStatusContract(),
+		SkillInternalDatabase + "/list_accessible_databases":             databaseListContract(SkillInternalDatabase),
+		SkillInternalDatabase + "/list_database_tables":                  databaseTablesContract(SkillInternalDatabase),
+		SkillInternalDatabase + "/describe_database_table":               databaseDescribeTableContract(SkillInternalDatabase),
+		SkillInternalDatabase + "/query_table_records":                   databaseQueryRecordsContract(SkillInternalDatabase),
+		SkillInternalDatabase + "/insert_table_records":                  databaseMutateRecordsContract(SkillInternalDatabase, "insert_table_records", "Insert records into a database table."),
+		SkillInternalDatabase + "/update_table_records":                  databaseMutateRecordsContract(SkillInternalDatabase, "update_table_records", "Update records in a database table. Each record must include id."),
+		SkillInternalDatabase + "/delete_table_records":                  databaseMutateRecordsContract(SkillInternalDatabase, "delete_table_records", "Delete records from a database table. Each record must include id."),
+		SkillAgentDatabase + "/list_accessible_databases":                databaseListContract(SkillAgentDatabase),
+		SkillAgentDatabase + "/list_database_tables":                     databaseTablesContract(SkillAgentDatabase),
+		SkillAgentDatabase + "/describe_database_table":                  databaseDescribeTableContract(SkillAgentDatabase),
+		SkillAgentDatabase + "/query_table_records":                      databaseQueryRecordsContract(SkillAgentDatabase),
+		SkillAgentDatabase + "/insert_table_records":                     databaseMutateRecordsContract(SkillAgentDatabase, "insert_table_records", "Insert records into an Agent-bound database table."),
+		SkillAgentDatabase + "/update_table_records":                     databaseMutateRecordsContract(SkillAgentDatabase, "update_table_records", "Update records in an Agent-bound database table. Each record must include id."),
+		SkillAgentDatabase + "/delete_table_records":                     databaseMutateRecordsContract(SkillAgentDatabase, "delete_table_records", "Delete records from an Agent-bound database table. Each record must include id."),
+		SkillAgentWorkflow + "/list_agent_workflows":                     workflowListContract(),
+		SkillAgentWorkflow + "/run_agent_workflow":                       workflowRunContract(),
+		SkillAgentWorkflow + "/get_workflow_run_status":                  workflowRunStatusContract(),
+		SkillAgentManagement + "/list_agents":                            agentManagementListAgentsContract(),
+		SkillAgentManagement + "/get_agent":                              agentManagementAgentIDContract("get_agent", "Read basic details for one resolved Agent asset visible to the current AIChat user."),
+		SkillAgentManagement + "/create_agent":                           agentManagementCreateAgentContract(),
+		SkillAgentManagement + "/update_agent_identity":                  agentManagementUpdateIdentityContract(),
+		SkillAgentManagement + "/delete_agent":                           agentManagementAgentIDContract("delete_agent", "Delete one resolved Agent after explicit governance approval."),
+		SkillAgentManagement + "/delete_agents":                          agentManagementDeleteAgentsContract(),
+		SkillAgentManagement + "/get_agent_config":                       agentManagementAgentIDContract("get_agent_config", "Read the current draft runtime configuration for one resolved AGENT asset."),
+		SkillAgentManagement + "/update_agent_config":                    agentManagementUpdateConfigContract(),
+		SkillAgentManagement + "/replace_agent_memory_slots":             agentManagementReplaceMemorySlotsContract(),
+		SkillAgentManagement + "/list_agent_skill_candidates":            agentManagementBindingCandidateContract("list_agent_skill_candidates", "List user-selectable, Agent-bindable skills for one resolved AGENT asset."),
+		SkillAgentManagement + "/list_agent_knowledge_candidates":        agentManagementBindingCandidateContract("list_agent_knowledge_candidates", "List knowledge bases that can be bound to the resolved Agent."),
+		SkillAgentManagement + "/list_agent_database_candidates":         agentManagementBindingCandidateContract("list_agent_database_candidates", "List databases that can be bound to the resolved Agent."),
+		SkillAgentManagement + "/list_agent_database_tables":             agentManagementBindingCandidateContract("list_agent_database_tables", "List database tables that can be bound to the resolved Agent."),
+		SkillAgentManagement + "/list_agent_workflow_binding_candidates": agentManagementBindingCandidateContract("list_agent_workflow_binding_candidates", "List workflows that can be bound to the resolved Agent."),
+		SkillAgentManagement + "/list_available_models":                  agentManagementListAvailableModelsContract(),
 		SkillTime + "/current_time": {
 			SkillID:     SkillTime,
 			ToolName:    "current_time",
@@ -1312,6 +1859,206 @@ func skillToolArgumentContracts() map[string]SkillToolArgumentContract {
 	}
 }
 
+func agentManagementListAgentsContract() SkillToolArgumentContract {
+	return SkillToolArgumentContract{
+		SkillID:     SkillAgentManagement,
+		ToolName:    "list_agents",
+		Description: "List Agents visible to the current AIChat user in the current workspace.",
+		Schema: objectSchema(
+			map[string]interface{}{
+				"workspace_id": stringValueSchema("Optional workspace ID. Usually omit so current AIChat workspace context is used."),
+				"keyword":      stringValueSchema("Optional search keyword for Agent name or description."),
+				"limit":        numberSchema("Optional maximum result count."),
+			},
+			nil,
+		),
+		Example: map[string]interface{}{"limit": 20},
+	}
+}
+
+func agentManagementAgentIDContract(toolName string, description string) SkillToolArgumentContract {
+	return SkillToolArgumentContract{
+		SkillID:     SkillAgentManagement,
+		ToolName:    toolName,
+		Description: description,
+		Schema: objectSchema(
+			map[string]interface{}{
+				"agent_id": stringValueSchema("Required Agent ID from page context, list_agents, create_agent, get_agent_config, or governed asset resolution. Do not invent IDs."),
+			},
+			[]string{"agent_id"},
+		),
+		Example: map[string]interface{}{"agent_id": "agent-id"},
+	}
+}
+
+func agentManagementCreateAgentContract() SkillToolArgumentContract {
+	return SkillToolArgumentContract{
+		SkillID:     SkillAgentManagement,
+		ToolName:    "create_agent",
+		Description: "Create one draft AGENT asset in the current workspace. This does not publish the Agent or configure model, prompt, upload, memory, skills, knowledge, databases, or workflows.",
+		Schema: objectSchema(
+			map[string]interface{}{
+				"name":            stringValueSchema("Required Agent name shown in the Agent list."),
+				"description":     stringValueSchema("Optional Agent description."),
+				"icon_type":       enumStringSchema("Optional icon type.", []string{"text", "image"}),
+				"icon":            stringValueSchema("Optional icon value. For text icons pass visible text such as AI, BOT, or an emoji."),
+				"icon_background": stringValueSchema("Optional text icon background color such as #0f766e."),
+				"workspace_id":    stringValueSchema("Optional target workspace ID. Usually omit so current AIChat workspace context is used."),
+			},
+			[]string{"name"},
+		),
+		Example: map[string]interface{}{"name": "小说创作大师", "description": "帮助用户创作小说的草稿智能体"},
+	}
+}
+
+func agentManagementUpdateIdentityContract() SkillToolArgumentContract {
+	return SkillToolArgumentContract{
+		SkillID:     SkillAgentManagement,
+		ToolName:    "update_agent_identity",
+		Description: "Update one resolved Agent's name, description, or icon. This does not publish the Agent.",
+		Schema: objectSchema(
+			map[string]interface{}{
+				"agent_id":        stringValueSchema("Required Agent ID from page context, list_agents, create_agent, get_agent_config, or governed asset resolution. Do not invent IDs."),
+				"name":            stringValueSchema("Optional new Agent name."),
+				"description":     stringValueSchema("Optional new Agent description."),
+				"icon_type":       enumStringSchema("Optional icon type.", []string{"text", "image"}),
+				"icon":            stringValueSchema("Optional new icon value. For text icons pass visible text such as AI, BOT, or an emoji."),
+				"icon_background": stringValueSchema("Optional text icon background color such as #0f766e."),
+			},
+			[]string{"agent_id"},
+		),
+		Example: map[string]interface{}{"agent_id": "agent-id", "name": "客服智能体"},
+	}
+}
+
+func agentManagementDeleteAgentsContract() SkillToolArgumentContract {
+	agentItem := objectSchema(
+		map[string]interface{}{
+			"agent_id":     stringValueSchema("Resolved Agent ID."),
+			"id":           stringValueSchema("Optional resolved Agent ID alias."),
+			"name":         stringValueSchema("Visible Agent name."),
+			"agent_name":   stringValueSchema("Optional visible Agent name alias."),
+			"workspace_id": stringValueSchema("Optional workspace ID."),
+		},
+		[]string{"agent_id"},
+	)
+	return SkillToolArgumentContract{
+		SkillID:     SkillAgentManagement,
+		ToolName:    "delete_agents",
+		Description: "Delete multiple resolved Agent assets as one governed frozen batch.",
+		Schema: objectSchema(
+			map[string]interface{}{
+				"agents":    arraySchema("Required frozen target Agents. Each item should include agent_id and visible name.", agentItem),
+				"agent_ids": stringArrayOrCSVSchema("Optional fallback ID list when agents is unavailable. Prefer agents so approval cards show names."),
+			},
+			[]string{"agents"},
+		),
+		Example: map[string]interface{}{
+			"agents": []map[string]interface{}{
+				{"agent_id": "agent-1", "name": "Agent A"},
+				{"agent_id": "agent-2", "name": "Agent B"},
+			},
+		},
+	}
+}
+
+func agentManagementUpdateConfigContract() SkillToolArgumentContract {
+	return SkillToolArgumentContract{
+		SkillID:     SkillAgentManagement,
+		ToolName:    "update_agent_config",
+		Description: "Patch selected draft runtime configuration fields for one resolved AGENT asset. Omitted fields are preserved. One call may update model, prompt, file upload, suggested questions, and add/remove bindings. System-prompt changes must send the complete final prompt after preserving unrelated current content and applying the user's requested transformation.",
+		Schema: objectSchema(
+			map[string]interface{}{
+				"agent_id":                     stringValueSchema("Required Agent ID from page context, create_agent result, get_agent_config, or governed asset resolution. Do not invent IDs."),
+				"system_prompt":                stringValueSchema("Optional complete replacement system prompt. Read the current config first, preserve every unrelated part, apply only the requested change, and send the full final prompt. Treat source material as input rather than content to copy by default; match the user's requested scope and level of detail, and reproduce it verbatim only when explicitly requested."),
+				"model_provider":               stringValueSchema("Required whenever model is provided. Use the provider returned by list_available_models."),
+				"model":                        stringValueSchema("Optional replacement model ID. Provide model_provider from the same list_available_models item."),
+				"model_parameters":             objectSchema(map[string]interface{}{}, nil),
+				"enabled_skill_ids":            stringArrayOrCSVSchema("Optional full list of enabled user-selectable skill IDs. Use [] to clear all user-selectable skills."),
+				"add_enabled_skill_ids":        stringArrayOrCSVSchema("Optional skill IDs to add while preserving current enabled skills."),
+				"remove_enabled_skill_ids":     stringArrayOrCSVSchema("Optional skill IDs to remove while preserving other enabled skills."),
+				"agent_memory_enabled":         booleanSchema("Optional Agent memory switch."),
+				"file_upload_enabled":          booleanSchema("Optional file upload switch."),
+				"home_title":                   stringValueSchema("Optional Agent home title."),
+				"opening_statement":            stringValueSchema("Optional Markdown landing guide shown before the first message."),
+				"input_placeholder":            stringValueSchema("Optional chat input placeholder."),
+				"theme_color":                  enumStringSchema("Optional theme color.", []string{"default", "blue", "emerald", "violet", "rose", "amber", "slate"}),
+				"suggested_questions":          stringArrayOrCSVSchema("Optional full list of suggested questions."),
+				"knowledge_dataset_ids":        stringArrayOrCSVSchema("Optional full replacement list of knowledge dataset IDs. Use [] to clear knowledge bindings."),
+				"add_knowledge_dataset_ids":    stringArrayOrCSVSchema("Optional knowledge dataset IDs to add while preserving existing knowledge bindings."),
+				"remove_knowledge_dataset_ids": stringArrayOrCSVSchema("Optional knowledge dataset IDs to unbind while preserving other knowledge bindings."),
+				"knowledge_retrieval_config":   objectSchema(map[string]interface{}{}, nil),
+				"database_bindings":            stringValueSchema("Optional JSON array replacing database bindings. Use [] to clear."),
+				"add_database_bindings":        stringValueSchema("Optional JSON array of database table bindings to add."),
+				"remove_database_bindings":     stringValueSchema("Optional JSON array of database table bindings to remove."),
+				"workflow_bindings":            stringValueSchema("Optional JSON array replacing workflow bindings. Use [] to clear."),
+				"add_workflow_bindings":        stringValueSchema("Optional JSON array of workflow bindings to add."),
+				"remove_workflow_bindings":     stringValueSchema("Optional JSON array of workflow bindings to remove."),
+				"display_names":                objectSchema(map[string]interface{}{}, nil),
+			},
+			[]string{"agent_id"},
+		),
+		Example: map[string]interface{}{
+			"agent_id":              "agent-id",
+			"model_provider":        "deepseek",
+			"model":                 "deepseek-v4-flash",
+			"file_upload_enabled":   true,
+			"add_enabled_skill_ids": []string{"file-generator"},
+		},
+	}
+}
+
+func agentManagementReplaceMemorySlotsContract() SkillToolArgumentContract {
+	return SkillToolArgumentContract{
+		SkillID:     SkillAgentManagement,
+		ToolName:    "replace_agent_memory_slots",
+		Description: "Replace the complete draft Agent memory slot list for one resolved AGENT asset.",
+		Schema: objectSchema(
+			map[string]interface{}{
+				"agent_id":           stringValueSchema("Required Agent ID from page context, create_agent result, get_agent_config, or governed asset resolution. Do not invent IDs."),
+				"agent_memory_slots": stringValueSchema("Required JSON array replacing all memory slots. Use [] to clear slots."),
+			},
+			[]string{"agent_id", "agent_memory_slots"},
+		),
+		Example: map[string]interface{}{"agent_id": "agent-id", "agent_memory_slots": "[]"},
+	}
+}
+
+func agentManagementBindingCandidateContract(toolName string, description string) SkillToolArgumentContract {
+	return SkillToolArgumentContract{
+		SkillID:     SkillAgentManagement,
+		ToolName:    toolName,
+		Description: description,
+		Schema: objectSchema(
+			map[string]interface{}{
+				"agent_id":         stringValueSchema("Required Agent ID from page context, create_agent result, get_agent_config, or governed asset resolution. Do not invent IDs."),
+				"query":            stringValueSchema("Optional search query for narrowing candidates."),
+				"limit":            numberSchema("Optional maximum result count."),
+				"include_selected": booleanSchema("Optional. Defaults to true. Set false to exclude already selected resources."),
+			},
+			[]string{"agent_id"},
+		),
+		Example: map[string]interface{}{"agent_id": "agent-id", "query": "file generation"},
+	}
+}
+
+func agentManagementListAvailableModelsContract() SkillToolArgumentContract {
+	return SkillToolArgumentContract{
+		SkillID:     SkillAgentManagement,
+		ToolName:    "list_available_models",
+		Description: "List Agent runtime model candidates available to the current organization. Use this before changing an Agent model, then pass one returned item's provider and model together to update_agent_config.",
+		Schema: objectSchema(
+			map[string]interface{}{
+				"use_case": enumStringSchema("Optional model use case. Defaults to agent for normal Agent runtime replacement. Use all only when the user asks to inspect every model.", []string{"agent", "workflow", "text-chat", "reasoning", "vision", "function-calling", "all"}),
+				"provider": stringValueSchema("Optional provider slug filter, such as openai or deepseek."),
+				"limit":    numberSchema("Optional maximum number of model candidates. Defaults to 20 and is capped by the backend."),
+			},
+			nil,
+		),
+		Example: map[string]interface{}{"use_case": "agent", "limit": 20},
+	}
+}
+
 func ExpectedSkillToolArguments(skillID string, toolName string) map[string]interface{} {
 	contract, ok := SkillToolArgumentContractFor(skillID, toolName)
 	if !ok {
@@ -1323,6 +2070,77 @@ func ExpectedSkillToolArguments(skillID string, toolName string) map[string]inte
 		"description": contract.Description,
 		"schema":      contract.Schema,
 		"example":     contract.Example,
+	}
+}
+
+func validateSkillToolArgumentsAgainstContract(skillID string, toolName string, arguments map[string]interface{}) error {
+	contract, ok := SkillToolArgumentContractFor(skillID, toolName)
+	if !ok {
+		return nil
+	}
+	required := schemaRequiredFields(contract.Schema)
+	if len(required) == 0 {
+		return nil
+	}
+	missing := make([]string, 0, len(required))
+	for _, field := range required {
+		if !argumentValuePresent(arguments[field]) {
+			missing = append(missing, field)
+		}
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	return fmt.Errorf("skill tool %s/%s missing required argument(s): %s", normalizeSkillID(skillID), strings.TrimSpace(toolName), strings.Join(missing, ", "))
+}
+
+func schemaRequiredFields(schema map[string]interface{}) []string {
+	if len(schema) == 0 {
+		return nil
+	}
+	values, ok := schema["required"]
+	if !ok || values == nil {
+		return nil
+	}
+	switch typed := values.(type) {
+	case []string:
+		out := make([]string, 0, len(typed))
+		for _, value := range typed {
+			if text := strings.TrimSpace(value); text != "" {
+				out = append(out, text)
+			}
+		}
+		return out
+	case []interface{}:
+		out := make([]string, 0, len(typed))
+		for _, value := range typed {
+			if text := strings.TrimSpace(fmt.Sprint(value)); text != "" {
+				out = append(out, text)
+			}
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
+func argumentValuePresent(value interface{}) bool {
+	if value == nil {
+		return false
+	}
+	switch typed := value.(type) {
+	case string:
+		return strings.TrimSpace(typed) != ""
+	case []interface{}:
+		return len(typed) > 0
+	case []string:
+		return len(typed) > 0
+	case []map[string]interface{}:
+		return len(typed) > 0
+	case map[string]interface{}:
+		return len(typed) > 0
+	default:
+		return true
 	}
 }
 
@@ -1918,11 +2736,13 @@ func defaultSkillCatalogDir() string {
 	if _, err := os.Stat(defaultCatalogDir); err == nil {
 		return defaultCatalogDir
 	}
-	_, file, _, ok := runtime.Caller(0)
-	if !ok {
-		return defaultCatalogDir
+	if _, filename, _, ok := goruntime.Caller(0); ok {
+		candidate := filepath.Join(filepath.Dir(filename), "catalog")
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate
+		}
 	}
-	return filepath.Join(filepath.Dir(file), "catalog")
+	return defaultCatalogDir
 }
 
 func (r *Runtime) loadSkillDocument(skillID string) (SkillDocument, error) {
@@ -1936,11 +2756,15 @@ func (r *Runtime) loadSkillDocument(skillID string) (SkillDocument, error) {
 	if !isValidSkillName(id) {
 		return SkillDocument{}, fmt.Errorf("invalid skill id %s: use lowercase letters, numbers, and hyphens only", id)
 	}
-	return r.loadSkillDocumentFromLocation(skillLocation{
-		ID:     id,
-		Root:   filepath.Join(r.catalogDir, id),
-		Source: SkillSourceSystem,
-	})
+	locations, err := r.systemSkillLocations()
+	if err != nil {
+		return SkillDocument{}, err
+	}
+	location, ok := locations[id]
+	if !ok {
+		return SkillDocument{}, fmt.Errorf("skill %s not found: %w", id, ErrSkillNotFound)
+	}
+	return r.loadSkillDocumentFromLocation(location)
 }
 
 func (r *Runtime) loadSkillDocumentFromLocation(location skillLocation) (SkillDocument, error) {
@@ -1956,8 +2780,7 @@ func (r *Runtime) loadSkillDocumentFromLocation(location skillLocation) (SkillDo
 		return SkillDocument{}, fmt.Errorf("skill %s storage path is required", id)
 	}
 	source := normalizeSkillSource(location.Source)
-	path := filepath.Join(root, "SKILL.md")
-	raw, err := os.ReadFile(path)
+	raw, err := readSkillLocationFile(location, "SKILL.md")
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return SkillDocument{}, fmt.Errorf("skill %s not found: %w", id, ErrSkillNotFound)
@@ -1968,7 +2791,10 @@ func (r *Runtime) loadSkillDocumentFromLocation(location skillLocation) (SkillDo
 	if err != nil {
 		return SkillDocument{}, fmt.Errorf("failed to parse skill %s: %w", id, err)
 	}
-	doc := buildSkillDocument(id, root, source, frontmatter, body)
+	doc, err := buildSkillDocument(id, root, source, frontmatter, body, listLocationReferences(location), hasLocationScripts(location))
+	if err != nil {
+		return SkillDocument{}, err
+	}
 	r.applyScriptSupport(&doc)
 	if source == SkillSourceCustom {
 		if err := validateCustomSkillDocument(doc); err != nil {
@@ -1982,12 +2808,15 @@ func (r *Runtime) loadSkillDocumentFromLocation(location skillLocation) (SkillDo
 	return doc, nil
 }
 
-func buildSkillDocument(id string, root string, source string, frontmatter SkillFrontmatter, body string) SkillDocument {
+func buildSkillDocument(id string, root string, source string, frontmatter SkillFrontmatter, body string, references []SkillReference, scriptPresent bool) (SkillDocument, error) {
 	whenToUse := strings.TrimSpace(frontmatter.WhenToUse)
 	if normalizeSkillSource(source) == SkillSourceCustom && whenToUse == "" {
 		whenToUse = strings.TrimSpace(frontmatter.Description)
 	}
-	scriptPresent := hasScripts(root)
+	tools, err := buildSkillToolDefinitions(id, frontmatter)
+	if err != nil {
+		return SkillDocument{}, err
+	}
 	return SkillDocument{
 		Metadata: SkillMetadata{
 			ID:               normalizeSkillID(id),
@@ -2000,7 +2829,7 @@ func buildSkillDocument(id string, root string, source string, frontmatter Skill
 			RuntimeType:      normalizeSkillRuntimeType(frontmatter.RuntimeType, frontmatter.Tools),
 			MaxCallsPerTurn:  normalizePositive(frontmatter.MaxCallsPerTurn, defaultMaxCallsPerTurn),
 			TimeoutSeconds:   normalizeSkillTimeout(frontmatter.TimeoutSeconds, scriptPresent),
-			References:       listReferences(root, source),
+			References:       references,
 			HasScripts:       scriptPresent,
 			ScriptsSupported: false,
 			RootPath:         root,
@@ -2008,8 +2837,8 @@ func buildSkillDocument(id string, root string, source string, frontmatter Skill
 			RequiredConfig:   normalizeSkillRequiredConfig(id, frontmatter.RequiredConfig),
 		},
 		Instructions: strings.TrimSpace(body),
-		Tools:        buildSkillToolDefinitions(frontmatter),
-	}
+		Tools:        tools,
+	}, nil
 }
 
 func (r *Runtime) applyScriptSupport(doc *SkillDocument) {
@@ -2178,7 +3007,7 @@ func validateCustomSkillDocument(doc SkillDocument) error {
 	return nil
 }
 
-func buildSkillToolDefinitions(frontmatter SkillFrontmatter) []SkillToolDefinition {
+func buildSkillToolDefinitions(skillID string, frontmatter SkillFrontmatter) ([]SkillToolDefinition, error) {
 	providerType := frontmatter.ProviderType
 	if providerType == "" {
 		providerType = tools.ToolProviderTypeBuiltin
@@ -2189,21 +3018,57 @@ func buildSkillToolDefinitions(frontmatter SkillFrontmatter) []SkillToolDefiniti
 		if name == "" {
 			continue
 		}
-		defs = append(defs, SkillToolDefinition{
+		def := SkillToolDefinition{
 			Name:         name,
 			ProviderType: providerType,
 			ProviderID:   strings.TrimSpace(frontmatter.ProviderID),
-		})
+		}
+		manifest, ok, err := skillToolGovernanceManifest(skillID, name, frontmatter.ToolGovernance)
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			def.Governance = &manifest
+		}
+		defs = append(defs, def)
 	}
-	return defs
+	return defs, nil
+}
+
+func skillToolGovernanceManifest(skillID string, toolName string, manifests map[string]toolgovernance.Manifest) (toolgovernance.Manifest, bool, error) {
+	if len(manifests) == 0 {
+		return toolgovernance.Manifest{}, false, nil
+	}
+	manifest, ok := manifests[strings.TrimSpace(toolName)]
+	if !ok {
+		manifest, ok = manifests[strings.ToLower(strings.TrimSpace(toolName))]
+	}
+	if !ok {
+		return toolgovernance.Manifest{}, false, nil
+	}
+	normalized, err := toolgovernance.ValidateManifest(manifest)
+	if err != nil {
+		return toolgovernance.Manifest{}, false, fmt.Errorf("skill %s tool %s governance manifest is invalid: %w", normalizeSkillID(skillID), strings.TrimSpace(toolName), err)
+	}
+	return normalized, true, nil
 }
 
 func (r *Runtime) listReferences(skillID string) []SkillReference {
-	return listReferences(filepath.Join(r.catalogDir, skillID), SkillSourceSystem)
+	id := normalizeSkillID(skillID)
+	locations, err := r.systemSkillLocations()
+	if err != nil {
+		return nil
+	}
+	return listLocationReferences(locations[id])
 }
 
 func (r *Runtime) hasScripts(skillID string) bool {
-	return hasScripts(filepath.Join(r.catalogDir, skillID))
+	id := normalizeSkillID(skillID)
+	locations, err := r.systemSkillLocations()
+	if err != nil {
+		return false
+	}
+	return hasLocationScripts(locations[id])
 }
 
 func (r *Runtime) safeReferencePath(skillID string, referencePath string) (string, error) {

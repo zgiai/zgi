@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"gorm.io/datatypes"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -36,6 +37,9 @@ var usageBillUpsertColumns = []string{
 	"official_points",
 	"private_points",
 	"total_points",
+	"pricing_source",
+	"usage_source",
+	"pricing_snapshot",
 	"response_time_ms",
 	"error_code",
 	"error_message",
@@ -98,6 +102,10 @@ func (b *BillingService) buildUsageBill(
 
 	promptTokens, completionTokens, totalTokens := usageBillTokens(bc, status)
 	officialPoints, privatePoints := usageBillPoints(bc, status, billingLane)
+	pricingSnapshot := bc.PricingSnapshot
+	if len(pricingSnapshot) == 0 || string(pricingSnapshot) == "null" {
+		pricingSnapshot = datatypes.JSON([]byte("{}"))
+	}
 
 	if errorCode == nil {
 		errorCode = normalizedTextPtr("")
@@ -132,6 +140,9 @@ func (b *BillingService) buildUsageBill(
 		OfficialPoints:    officialPoints,
 		PrivatePoints:     privatePoints,
 		TotalPoints:       officialPoints + privatePoints,
+		PricingSource:     bc.PricingSource,
+		UsageSource:       bc.UsageSource,
+		PricingSnapshot:   pricingSnapshot,
 		ResponseTimeMS:    maxInt64(bc.ResponseTime, 0),
 		ErrorCode:         errorCode,
 		ErrorMessage:      errorMessage,
@@ -161,7 +172,7 @@ func normalizeUsageBillTimes(requestCreatedAt, settledAt time.Time) (time.Time, 
 }
 
 func usageBillTokens(bc *BillingContext, status string) (int64, int64, int64) {
-	if status != usageBillStatusSuccess {
+	if status != usageBillStatusSuccess && status != usageBillStatusPartial {
 		return 0, 0, 0
 	}
 
@@ -176,7 +187,7 @@ func usageBillTokens(bc *BillingContext, status string) (int64, int64, int64) {
 }
 
 func usageBillPoints(bc *BillingContext, status string, billingLane UsageBillingLane) (int64, int64) {
-	if status != usageBillStatusSuccess {
+	if status != usageBillStatusSuccess && status != usageBillStatusPartial {
 		return 0, 0
 	}
 

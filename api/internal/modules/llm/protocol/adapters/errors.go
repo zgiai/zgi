@@ -6,6 +6,8 @@ import (
 	"strings"
 )
 
+const ErrorCodePlatformChannelUnavailable = "platform_channel_unavailable"
+
 var (
 	// ErrInvalidConfig configuration error
 	ErrInvalidConfig = errors.New("invalid adapter configuration")
@@ -21,6 +23,15 @@ var (
 
 	// ErrInsufficientBalance insufficient balance
 	ErrInsufficientBalance = errors.New("insufficient balance")
+
+	// ErrQuotaExhausted indicates a provider quota that cannot currently be consumed.
+	ErrQuotaExhausted = errors.New("provider quota exhausted")
+
+	// ErrBillingUnavailable indicates that provider billing is not in a spendable state.
+	ErrBillingUnavailable = errors.New("provider billing unavailable")
+
+	// ErrPlatformChannelUnavailable indicates an official platform channel cannot currently serve requests.
+	ErrPlatformChannelUnavailable = errors.New("platform channel unavailable")
 
 	// ErrModelNotFound model not found
 	ErrModelNotFound = errors.New("model not found")
@@ -65,6 +76,22 @@ type AdapterError struct {
 	Message    string
 	StatusCode int
 	Err        error
+}
+
+// HTTPStatusError preserves a non-success streaming response for the provider
+// adapter that owns the error format. Its Error method intentionally omits the
+// response body so callers do not accidentally log provider payloads.
+type HTTPStatusError struct {
+	StatusCode int
+	Body       []byte
+}
+
+func (e *HTTPStatusError) Error() string {
+	return fmt.Sprintf("stream request failed with status %d", e.StatusCode)
+}
+
+func NewHTTPStatusError(statusCode int, body []byte) *HTTPStatusError {
+	return &HTTPStatusError{StatusCode: statusCode, Body: append([]byte(nil), body...)}
 }
 
 func (e *AdapterError) Error() string {

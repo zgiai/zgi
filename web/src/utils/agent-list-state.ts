@@ -8,6 +8,8 @@ const AGENT_LIST_DETAIL_ENTRY_KEY = 'zgi:console:agents:detail-entry';
 const AGENT_LIST_STATE_MAX_AGE_MS = 30 * 60 * 1000;
 const AGENT_LIST_MAX_SNAPSHOT_PAGES = 5;
 
+export type AgentListScope = 'agents' | 'workflows';
+
 export interface AgentListNavigationState {
   keyword: string;
   loadedPageCount: number;
@@ -23,6 +25,7 @@ interface AgentListRestoreIntent {
 
 interface AgentListDetailEntry {
   agentId: string;
+  scope?: AgentListScope;
   updatedAt: number;
 }
 
@@ -37,6 +40,10 @@ interface WriteAgentListNavigationStateOptions {
   includePages?: boolean;
 }
 
+function getScopedKey(key: string, scope: AgentListScope = 'agents') {
+  return scope === 'agents' ? key : `${key}:${scope}`;
+}
+
 function getSessionStorage(): Storage | null {
   if (typeof window === 'undefined') return null;
 
@@ -47,7 +54,10 @@ function getSessionStorage(): Storage | null {
   }
 }
 
-function normalizeState(value: unknown): AgentListNavigationState | null {
+function normalizeState(
+  value: unknown,
+  scope: AgentListScope = 'agents'
+): AgentListNavigationState | null {
   if (!value || typeof value !== 'object') return null;
 
   const candidate = value as Partial<AgentListNavigationState>;
@@ -64,48 +74,56 @@ function normalizeState(value: unknown): AgentListNavigationState | null {
     loadedPageCount,
     scrollTop,
     workspaceId: typeof candidate.workspaceId === 'string' ? candidate.workspaceId : undefined,
-    pages: readAgentListPagesSnapshot(candidate) ?? readLegacyPages(candidate),
+    pages: readAgentListPagesSnapshot(candidate, scope) ?? readLegacyPages(candidate),
     updatedAt,
   };
 }
 
-export function readAgentListNavigationState(): AgentListNavigationState | null {
+export function readAgentListNavigationState(
+  scope: AgentListScope = 'agents'
+): AgentListNavigationState | null {
   const storage = getSessionStorage();
   if (!storage) return null;
 
   try {
-    const raw = storage.getItem(AGENT_LIST_STATE_KEY);
+    const raw = storage.getItem(getScopedKey(AGENT_LIST_STATE_KEY, scope));
     if (!raw) return null;
-    return normalizeState(JSON.parse(raw));
+    return normalizeState(JSON.parse(raw), scope);
   } catch {
     return null;
   }
 }
 
-export function readAgentListInitialKeyword(): string {
-  if (!hasAgentListRestoreIntent()) return '';
-  return readAgentListNavigationState()?.keyword ?? '';
+export function readAgentListInitialKeyword(scope: AgentListScope = 'agents'): string {
+  if (!hasAgentListRestoreIntent(scope)) return '';
+  return readAgentListNavigationState(scope)?.keyword ?? '';
 }
 
-export function markAgentListRestoreIntent(): void {
+export function markAgentListRestoreIntent(scope: AgentListScope = 'agents'): void {
   const storage = getSessionStorage();
   if (!storage) return;
 
   try {
-    storage.setItem(AGENT_LIST_RESTORE_INTENT_KEY, JSON.stringify({ updatedAt: Date.now() }));
+    storage.setItem(
+      getScopedKey(AGENT_LIST_RESTORE_INTENT_KEY, scope),
+      JSON.stringify({ updatedAt: Date.now() })
+    );
   } catch {
     // Ignore storage errors. Restoration is best-effort.
   }
 }
 
-export function markAgentListDetailEntry(agentId: string): void {
+export function markAgentListDetailEntry(
+  agentId: string,
+  scope: AgentListScope = 'agents'
+): void {
   const storage = getSessionStorage();
   if (!storage || !agentId) return;
 
   try {
     storage.setItem(
       AGENT_LIST_DETAIL_ENTRY_KEY,
-      JSON.stringify({ agentId, updatedAt: Date.now() })
+      JSON.stringify({ agentId, scope, updatedAt: Date.now() })
     );
   } catch {
     // Ignore storage errors. Restoration is best-effort.
@@ -113,30 +131,32 @@ export function markAgentListDetailEntry(agentId: string): void {
 }
 
 export function markAgentListRestoreIntentFromDetail(agentId: string): void {
-  if (!getSessionStorage() || !hasMatchingAgentListDetailEntry(agentId)) return;
+  const detailEntry = readMatchingAgentListDetailEntry(agentId);
+  if (!detailEntry) return;
 
-  markAgentListRestoreIntent();
+  markAgentListRestoreIntent(detailEntry.scope ?? 'agents');
 }
 
-export function consumeAgentListRestoreIntent(): boolean {
+export function consumeAgentListRestoreIntent(scope: AgentListScope = 'agents'): boolean {
   const storage = getSessionStorage();
   if (!storage) return false;
 
   try {
-    const raw = storage.getItem(AGENT_LIST_RESTORE_INTENT_KEY);
-    storage.removeItem(AGENT_LIST_RESTORE_INTENT_KEY);
+    const key = getScopedKey(AGENT_LIST_RESTORE_INTENT_KEY, scope);
+    const raw = storage.getItem(key);
+    storage.removeItem(key);
     return isFreshRestoreIntent(raw);
   } catch {
     return false;
   }
 }
 
-function hasAgentListRestoreIntent(): boolean {
+function hasAgentListRestoreIntent(scope: AgentListScope = 'agents'): boolean {
   const storage = getSessionStorage();
   if (!storage) return false;
 
   try {
-    return isFreshRestoreIntent(storage.getItem(AGENT_LIST_RESTORE_INTENT_KEY));
+    return isFreshRestoreIntent(storage.getItem(getScopedKey(AGENT_LIST_RESTORE_INTENT_KEY, scope)));
   } catch {
     return false;
   }
@@ -154,24 +174,29 @@ function isFreshRestoreIntent(raw: string | null): boolean {
   }
 }
 
-function hasMatchingAgentListDetailEntry(agentId: string): boolean {
+function readMatchingAgentListDetailEntry(agentId: string): AgentListDetailEntry | null {
   const storage = getSessionStorage();
-  if (!agentId) return false;
-  if (!storage) return false;
+  if (!agentId) return null;
+  if (!storage) return null;
 
   try {
     const raw = storage.getItem(AGENT_LIST_DETAIL_ENTRY_KEY);
-    if (!raw) return false;
+    if (!raw) return null;
 
     const entry = JSON.parse(raw) as Partial<AgentListDetailEntry>;
     const updatedAt = Number(entry.updatedAt);
-    return (
+    const isMatching =
       entry.agentId === agentId &&
       Number.isFinite(updatedAt) &&
-      Date.now() - updatedAt <= AGENT_LIST_STATE_MAX_AGE_MS
-    );
+      Date.now() - updatedAt <= AGENT_LIST_STATE_MAX_AGE_MS;
+    if (!isMatching) return null;
+    return {
+      agentId,
+      scope: entry.scope === 'workflows' ? 'workflows' : 'agents',
+      updatedAt,
+    };
   } catch {
-    return false;
+    return null;
   }
 }
 
@@ -182,13 +207,14 @@ function readLegacyPages(
 }
 
 function readAgentListPagesSnapshot(
-  state: Partial<AgentListNavigationState>
+  state: Partial<AgentListNavigationState>,
+  scope: AgentListScope = 'agents'
 ): Array<ApiResponseData<AgentList>> | undefined {
   const storage = getSessionStorage();
   if (!storage) return undefined;
 
   try {
-    const raw = storage.getItem(AGENT_LIST_PAGES_KEY);
+    const raw = storage.getItem(getScopedKey(AGENT_LIST_PAGES_KEY, scope));
     if (!raw) return undefined;
 
     const snapshot = JSON.parse(raw) as Partial<AgentListPagesSnapshot>;
@@ -213,7 +239,8 @@ function readAgentListPagesSnapshot(
 
 export function writeAgentListNavigationState(
   state: AgentListNavigationState,
-  options: WriteAgentListNavigationStateOptions = {}
+  options: WriteAgentListNavigationStateOptions = {},
+  scope: AgentListScope = 'agents'
 ): void {
   const storage = getSessionStorage();
   if (!storage) return;
@@ -222,7 +249,7 @@ export function writeAgentListNavigationState(
 
   try {
     storage.setItem(
-      AGENT_LIST_STATE_KEY,
+      getScopedKey(AGENT_LIST_STATE_KEY, scope),
       JSON.stringify({
         keyword: state.keyword,
         loadedPageCount: Math.max(0, state.loadedPageCount),
@@ -234,7 +261,7 @@ export function writeAgentListNavigationState(
 
     if (options.includePages && state.pages) {
       storage.setItem(
-        AGENT_LIST_PAGES_KEY,
+        getScopedKey(AGENT_LIST_PAGES_KEY, scope),
         JSON.stringify({
           keyword: state.keyword,
           workspaceId: state.workspaceId,

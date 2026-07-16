@@ -2,7 +2,6 @@
 
 import { useState, type ReactNode } from 'react';
 import {
-  Bot,
   CheckCircle2,
   Cloud,
   CloudOff,
@@ -12,6 +11,7 @@ import {
   Loader2,
   Play,
   Save,
+  SlidersHorizontal,
   UploadCloud,
   X,
 } from 'lucide-react';
@@ -30,6 +30,8 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Label } from '@/components/ui/label';
@@ -40,7 +42,9 @@ import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
 import type { WebAppStatus } from '@/services/types/agent';
 import type { AgentRuntimeAgent, AgentRuntimeSaveState } from './types';
-import { pickAgentInitials } from './utils';
+import { PublishSettingsDialog } from './publish-settings-dialog';
+import { getAgentTextIconDisplay } from './utils';
+import { EditAgentDialog } from '@/components/agents/agent-dialog/edit-dialog';
 
 const WEB_APP_OFFLINE_REASON_MAX_LENGTH = 500;
 
@@ -51,7 +55,10 @@ interface AgentRuntimeHeaderProps {
   saveText: string;
   isDirty: boolean;
   isPublishing: boolean;
+  canEditBasicInfo?: boolean;
   disablePrimaryActions?: boolean;
+  disablePublishActions?: boolean;
+  disablePublishSettingsActions?: boolean;
   webAppUrl: string;
   versionControl?: ReactNode;
   showPreviewAction?: boolean;
@@ -70,7 +77,10 @@ export function AgentRuntimeHeader({
   saveText,
   isDirty,
   isPublishing,
+  canEditBasicInfo = true,
   disablePrimaryActions = false,
+  disablePublishActions = disablePrimaryActions,
+  disablePublishSettingsActions = disablePublishActions,
   webAppUrl,
   versionControl,
   showPreviewAction = false,
@@ -84,6 +94,8 @@ export function AgentRuntimeHeader({
   const t = useT('agents.agentRuntime');
   const webAppStatusMutation = useUpdateWebAppStatus();
   const [webAppStatusDialogOpen, setWebAppStatusDialogOpen] = useState(false);
+  const [publishSettingsOpen, setPublishSettingsOpen] = useState(false);
+  const [basicInfoOpen, setBasicInfoOpen] = useState(false);
   const [offlineReason, setOfflineReason] = useState('');
   const saveDotClassName =
     saveState === 'error'
@@ -104,6 +116,10 @@ export function AgentRuntimeHeader({
     : t('header.takeOffline');
   const offlineReasonLength = Array.from(offlineReason).length;
   const isOfflineReasonTooLong = offlineReasonLength > WEB_APP_OFFLINE_REASON_MAX_LENGTH;
+  const textIcon = getAgentTextIconDisplay(agent?.icon_type, agent?.icon, agent?.name);
+  const canPublish = !disablePublishActions;
+  const canManageRuntimeAccess = !disablePublishSettingsActions;
+  const canUsePublishDropdown = canPublish || canManageRuntimeAccess || Boolean(webAppUrl);
 
   const handleOpenWebApp = () => {
     if (!webAppUrl || isWebAppOffline) return;
@@ -118,7 +134,7 @@ export function AgentRuntimeHeader({
   };
 
   const handleWebAppStatusConfirm = () => {
-    if (disablePrimaryActions) {
+    if (!canManageRuntimeAccess) {
       return;
     }
     if (nextWebAppStatus === 'inactive' && isOfflineReasonTooLong) {
@@ -148,28 +164,48 @@ export function AgentRuntimeHeader({
   return (
     <>
       <header className="flex h-14 shrink-0 items-center justify-between gap-3 border-b bg-background px-4">
-        <div className="flex min-w-0 items-center gap-3">
-          <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-sm font-semibold text-primary">
+        <div
+          role={canEditBasicInfo ? 'button' : undefined}
+          tabIndex={canEditBasicInfo ? 0 : undefined}
+          className={cn(
+            '-m-1 flex min-w-0 items-center gap-3 rounded-lg p-1 text-left outline-none transition-colors',
+            canEditBasicInfo &&
+              'cursor-pointer hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2'
+          )}
+          onClick={canEditBasicInfo ? () => setBasicInfoOpen(true) : undefined}
+          onKeyDown={
+            canEditBasicInfo
+              ? event => {
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    setBasicInfoOpen(true);
+                  }
+                }
+              : undefined
+          }
+          aria-label={canEditBasicInfo ? t('header.editBasicInfo') : undefined}
+        >
+          <div
+            className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-sm font-semibold text-primary"
+            style={
+              agent?.icon_type === 'text' ? { backgroundColor: textIcon.background } : undefined
+            }
+          >
             {agent?.icon_type === 'image' && agent.icon_url ? (
               <img src={agent.icon_url} alt="" className="size-full rounded-lg object-cover" />
             ) : (
-              pickAgentInitials(agent?.name)
+              <span className={agent?.icon_type === 'text' ? 'text-white' : undefined}>
+                {textIcon.text}
+              </span>
             )}
           </div>
-          <div className="min-w-0">
-            <div className="flex min-w-0 items-center gap-2">
-              <h1 className="truncate text-sm font-semibold">{agent?.name || t('fallbackName')}</h1>
-              <Badge
-                variant="outline"
-                className="hidden h-6 gap-1 rounded-md px-2 text-[11px] sm:inline-flex"
-              >
-                <Bot className="size-3" />
-                {t('fallbackName')}
-              </Badge>
-            </div>
-            <div className="hidden truncate text-xs text-muted-foreground lg:block">
-              {agent?.description || t('defaultModeDescription')}
-            </div>
+          <div className="min-w-0 max-w-[320px]">
+            <h1 className="truncate text-sm font-semibold">{agent?.name || t('fallbackName')}</h1>
+            {agent?.description ? (
+              <div className="hidden truncate text-xs text-muted-foreground lg:block">
+                {agent.description}
+              </div>
+            ) : null}
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-1.5">
@@ -239,7 +275,7 @@ export function AgentRuntimeHeader({
               size="sm"
               aria-pressed={isPreviewOpen}
               className={cn(
-                'inline-flex items-center gap-1.5 rounded-md border px-2 text-white shadow-none transition-colors focus-visible:ring-emerald-500/30 focus-visible:ring-offset-1 active:border-emerald-700 active:bg-emerald-700 sm:px-3.5 2xl:hidden',
+                'inline-flex items-center gap-1.5 rounded-md border px-2 text-white shadow-none transition-colors focus-visible:ring-emerald-500/30 focus-visible:ring-offset-1 active:border-emerald-700 active:bg-emerald-700 sm:px-3.5',
                 isPreviewOpen
                   ? 'border-emerald-600 bg-emerald-600 ring-2 ring-emerald-400/25 hover:border-emerald-700 hover:bg-emerald-700'
                   : 'border-emerald-600/30 bg-emerald-600 hover:border-emerald-700 hover:bg-emerald-700'
@@ -264,7 +300,7 @@ export function AgentRuntimeHeader({
                 size="sm"
                 className="flex items-center gap-1.5 rounded-md border border-primary/25 bg-primary/10 px-3.5 text-primary shadow-none transition-colors hover:border-primary/35 hover:bg-primary/15"
                 aria-label={isPublishing ? publishingLabel : publishLabel}
-                disabled={disablePrimaryActions || isPublishing || saveState === 'saving'}
+                disabled={!canUsePublishDropdown}
               >
                 {isPublishing ? (
                   <Loader2 className="size-4 animate-spin" />
@@ -275,24 +311,24 @@ export function AgentRuntimeHeader({
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-56">
-              <div className="px-2 py-1">
-                <Button
-                  className="w-full rounded-md border border-primary/25 bg-primary/10 text-primary shadow-none hover:border-primary/35 hover:bg-primary/15"
-                  onClick={onPublish}
-                  disabled={disablePrimaryActions || isPublishing || saveState === 'saving'}
-                >
-                  {isPublishing ? (
-                    <Loader2 className="size-5 animate-spin" />
-                  ) : (
-                    <UploadCloud className="size-5" />
-                  )}
-                  {isPublishing ? publishingLabel : publishLabel}
-                </Button>
-              </div>
+              <DropdownMenuItem
+                disabled={!canPublish || isPublishing || saveState === 'saving'}
+                onSelect={event => {
+                  event.preventDefault();
+                  onPublish();
+                }}
+              >
+                {isPublishing ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : (
+                  <UploadCloud className="size-4" />
+                )}
+                {isPublishing ? publishingLabel : publishLabel}
+              </DropdownMenuItem>
               {isPublished ? (
                 <>
-                  <div className="my-1 h-px w-full bg-border" />
-                  <div className="flex items-center justify-between gap-3 px-2 py-1.5 text-xs text-muted-foreground">
+                  <DropdownMenuSeparator />
+                  <DropdownMenuLabel className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
                     <span>{t('header.webAppStatus')}</span>
                     <Badge
                       variant="outline"
@@ -304,12 +340,12 @@ export function AgentRuntimeHeader({
                     >
                       {isWebAppOnline ? t('header.online') : t('header.offline')}
                     </Badge>
-                  </div>
+                  </DropdownMenuLabel>
                 </>
               ) : null}
               {isPublished ? (
                 <DropdownMenuItem
-                  disabled={disablePrimaryActions}
+                  disabled={!canManageRuntimeAccess}
                   onSelect={() => {
                     setWebAppStatusDialogOpen(true);
                   }}
@@ -318,6 +354,13 @@ export function AgentRuntimeHeader({
                   {webAppStatusActionLabel}
                 </DropdownMenuItem>
               ) : null}
+              <DropdownMenuItem
+                disabled={disablePublishSettingsActions}
+                onSelect={() => setPublishSettingsOpen(true)}
+              >
+                <SlidersHorizontal className="size-4" />
+                {t('header.publishSettings')}
+              </DropdownMenuItem>
               <DropdownMenuItem
                 disabled={!webAppUrl || isWebAppOffline}
                 onSelect={event => {
@@ -388,7 +431,7 @@ export function AgentRuntimeHeader({
               variant={isWebAppOffline ? 'default' : 'destructive'}
               onClick={handleWebAppStatusConfirm}
               disabled={
-                disablePrimaryActions || webAppStatusMutation.isPending || isOfflineReasonTooLong
+                !canManageRuntimeAccess || webAppStatusMutation.isPending || isOfflineReasonTooLong
               }
             >
               {webAppStatusMutation.isPending ? (
@@ -403,6 +446,13 @@ export function AgentRuntimeHeader({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      <PublishSettingsDialog
+        agentId={agentId}
+        open={publishSettingsOpen}
+        canManage={!disablePublishSettingsActions}
+        onOpenChange={setPublishSettingsOpen}
+      />
+      <EditAgentDialog open={basicInfoOpen} onOpenChange={setBasicInfoOpen} agentId={agentId} />
     </>
   );
 }

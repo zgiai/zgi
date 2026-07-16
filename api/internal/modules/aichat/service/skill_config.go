@@ -1,3 +1,6 @@
+//go:build legacy_aichat_service
+// +build legacy_aichat_service
+
 package service
 
 import (
@@ -227,7 +230,7 @@ func defaultEnabledSkillIDs(catalog []skills.SkillDiscoveryMetadata) []string {
 func visibleSkillMetadata(metadata []skills.SkillDiscoveryMetadata) []skills.SkillDiscoveryMetadata {
 	out := make([]skills.SkillDiscoveryMetadata, 0, len(metadata))
 	for _, item := range metadata {
-		if skills.IsHiddenSystemSkill(item.ID) {
+		if skills.IsHiddenSystemSkill(item.ID) || !skills.SkillUserSelectable(item) {
 			continue
 		}
 		out = append(out, item)
@@ -275,6 +278,7 @@ func invalidCustomSkillMetadata(item *aichatmodel.CustomSkill, loadErr error) sk
 		TimeoutSeconds:   0,
 		Status:           skills.SkillStatusInvalid,
 		ValidationError:  validationError,
+		Exposure:         skills.SystemSkillExposureProfile(item.SkillID),
 	}
 }
 

@@ -8,6 +8,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/container"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine"
 	system_service "github.com/zgiai/zgi/api/internal/modules/system/service"
+	agentmanagement_tools "github.com/zgiai/zgi/api/internal/modules/tools/builtin/agentmanagement"
 	workspace_service "github.com/zgiai/zgi/api/internal/modules/workspace/service"
 	"github.com/zgiai/zgi/api/pkg/database"
 	"github.com/zgiai/zgi/api/pkg/storage"
@@ -52,6 +53,7 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 		DB:                               db,
 		AccountService:                   accountService,
 		OrganizationService:              serviceContainer.GetOrganizationService(),
+		AuthorizationService:             serviceContainer.GetAuthorizationService(),
 		WorkspacePermissionFilterService: serviceContainer.GetWorkspacePermissionFilterService(),
 		DepartmentService:                serviceContainer.GetDepartmentService(),
 		ConsoleWebURL:                    config.GlobalConfig.Email.ConsoleWebURL,
@@ -75,8 +77,8 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 	})
 
 	// ---------- API Key ----------
-	if tenantServiceImplConcrete, ok := tenantServiceImpl.(*workspace_service.WorkspaceManagementServiceImpl); ok {
-		RegisterAPIKeyRoutes(v1, db, accountService, tenantServiceImplConcrete)
+	if _, ok := tenantServiceImpl.(*workspace_service.WorkspaceManagementServiceImpl); ok {
+		RegisterAPIKeyRoutes(v1, db, accountService, serviceContainer.GetOrganizationService())
 	}
 
 	// ---------- File (common) ----------
@@ -116,6 +118,7 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 		GraphFlowService:           serviceContainer.GetGraphFlowService(),
 		TaskHandlerRegistry:        serviceContainer.GetTaskHandlerRegistry(),
 		ResourcePermissionService:  serviceContainer.GetResourcePermissionService(),
+		AuthorizationService:       serviceContainer.GetAuthorizationService(),
 	})
 
 	// ---------- RAG Evaluation ----------
@@ -131,8 +134,10 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 	RegisterContentParseRoutes(v1, ContentParseRouteDeps{
 		DB:                  db,
 		AccountService:      accountService,
+		OrganizationService: serviceContainer.GetOrganizationService(),
 		LLMClient:           serviceContainer.GetLLMClient(),
 		DefaultModelService: serviceContainer.GetDefaultModelService(),
+		Module:              serviceContainer.GetContentParseModule(),
 	})
 
 	// ---------- Data Library ----------
@@ -201,7 +206,7 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 
 	// ---------- Agent ----------
 	resourcePermissionService := serviceContainer.GetResourcePermissionService()
-	RegisterAgentsRoutes(v1, db, accountService, tenantService, resourcePermissionService, serviceContainer.GetOrganizationService(), serviceContainer.GetQuotaService(), serviceContainer.GetFileService(), serviceContainer.GetContentExtractor(), serviceContainer.GetLLMClient(), serviceContainer.GetToolEngine(), serviceContainer.GetToolManager(), serviceContainer.GetMemoryService(), serviceContainer.GetGraphFlowService(), serviceContainer.GetPromptService(), serviceContainer.GetDataSourceService(), serviceContainer.GetKnowledgeRetrievalService(), workflowEngineFactory, serviceContainer.GetTaskManager(), serviceContainer.GetTaskHandlerRegistry(), serviceContainer.GetWorkflowTestService(), config.Current().TaskQueue.WorkflowTestTaskBackend)
+	agentsService := RegisterAgentsRoutes(v1, db, accountService, tenantService, resourcePermissionService, serviceContainer.GetOrganizationService(), serviceContainer.GetQuotaService(), serviceContainer.GetFileService(), serviceContainer.GetContentExtractor(), serviceContainer.GetLLMClient(), serviceContainer.GetToolEngine(), serviceContainer.GetToolManager(), serviceContainer.GetMemoryService(), serviceContainer.GetGraphFlowService(), serviceContainer.GetPromptService(), serviceContainer.GetDataSourceService(), serviceContainer.GetKnowledgeRetrievalService(), workflowEngineFactory, serviceContainer.GetTaskManager(), serviceContainer.GetTaskHandlerRegistry(), serviceContainer.GetWorkflowTestService(), serviceContainer.GetScheduler(), config.Current().TaskQueue.WorkflowTestTaskBackend)
 
 	// ---------- Prompt Library ----------
 	RegisterPromptRoutes(v1, PromptRouteDeps{
@@ -219,7 +224,25 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 		WorkspaceManagementService: serviceContainer.GetTenantService(),
 		OrganizationService:        serviceContainer.GetOrganizationService(),
 		ConsoleProvider:            serviceContainer.GetConsoleProvider(),
+		Scheduler:                  serviceContainer.GetScheduler(),
 	})
+	if llmModule != nil && llmModule.LLMModelModule != nil {
+		if err := serviceContainer.GetToolManager().RegisterProvider(agentmanagement_tools.NewProvider(
+			agentsService,
+			serviceContainer.GetOrganizationService(),
+			llmModule.LLMModelModule.AvailableModelsSvc,
+			agentmanagement_tools.WithManagedFileService(serviceContainer.GetFileService()),
+		)); err != nil {
+			log.Printf("failed to register agent management tools: %v", err)
+		}
+	} else if err := serviceContainer.GetToolManager().RegisterProvider(agentmanagement_tools.NewProvider(
+		agentsService,
+		serviceContainer.GetOrganizationService(),
+		nil,
+		agentmanagement_tools.WithManagedFileService(serviceContainer.GetFileService()),
+	)); err != nil {
+		log.Printf("failed to register agent management tools: %v", err)
+	}
 
 	// ---------- AIChat ----------
 	RegisterAIChatRoutes(v1, AIChatRouteDeps{

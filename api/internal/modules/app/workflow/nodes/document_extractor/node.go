@@ -68,6 +68,8 @@ func New(
 			NodeType:   shared.DocumentExtractor,
 
 			TenantID:          graphInitParams.TenantID,
+			WorkspaceID:       graphInitParams.WorkspaceID,
+			OrganizationID:    graphInitParams.OrganizationID,
 			APPID:             graphInitParams.AppID,
 			WorkflowType:      string(graphInitParams.WorkflowType),
 			WorkflowID:        graphInitParams.WorkflowID,
@@ -269,7 +271,10 @@ func (n *Node) extractSingleFile(ctx context.Context, variable entities.Variable
 	)
 
 	// Extract content using ContentExtractor
-	fileContent, err := n.contentExtractor.ExtractFileContent(ctx, fileID, n.TenantID)
+	fileContent, err := n.contentExtractor.ExtractFileContent(ctx, fileID, file.ContentExtractionScope{
+		OrganizationID: n.OrganizationID,
+		WorkspaceID:    n.WorkspaceID,
+	})
 	if err != nil {
 		return "", nil, fmt.Errorf("failed to extract file content: %w", err)
 	}
@@ -328,7 +333,10 @@ func (n *Node) extractMultipleFiles(ctx context.Context, variable entities.Varia
 	}
 
 	// Extract content using ContentExtractor
-	fileContents, err := n.contentExtractor.ExtractMultipleFiles(ctx, fileIDs, n.TenantID)
+	fileContents, err := n.contentExtractor.ExtractMultipleFiles(ctx, fileIDs, file.ContentExtractionScope{
+		OrganizationID: n.OrganizationID,
+		WorkspaceID:    n.WorkspaceID,
+	})
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("failed to extract multiple files: %w", err)
 	}

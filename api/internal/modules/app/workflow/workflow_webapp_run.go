@@ -2,6 +2,7 @@ package workflow
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -161,7 +162,11 @@ func (h *WorkflowHandler) runWorkflowByVersionUUIDInternal(c *gin.Context, versi
 
 		runType := webAppWorkflowRunType(workflowType)
 		if runType == "CONVERSATION_WORKFLOW" {
-			h.prepareWebAppConversationRunInputs(c.Request.Context(), req.Inputs, "workflow version run")
+			if err := h.prepareWebAppConversationRunInputs(ctx, req.Inputs, "workflow version run", agentID, accountID); err != nil {
+				logger.WarnContext(ctx, "workflow version run conversation access denied", "conversation_id", req.Inputs["conversation_id"], "agent_id", agentID, err)
+				failWebAppConversationAccess(c, err)
+				return
+			}
 		}
 
 		// Run workflow with streaming (isDraft=false for published version)
@@ -217,7 +222,7 @@ func (h *WorkflowHandler) RunWorkflowByWebAppID(c *gin.Context) {
 		response.Fail(c, response.ErrSystemError)
 		return
 	}
-	if rejectInactiveWebApp(c, agent, webAppID) {
+	if rejectUnauthorizedWebAppRuntime(c, agent, webAppID) {
 		return
 	}
 
@@ -345,13 +350,33 @@ func (h *WorkflowHandler) runWorkflowByWebAppIDInternal(c *gin.Context, webAppID
 
 	runType := webAppWorkflowRunType(workflowType)
 	if runType == "CONVERSATION_WORKFLOW" {
-		h.prepareWebAppConversationRunInputs(c.Request.Context(), req.Inputs, "web app workflow run")
+		if err := h.prepareWebAppConversationRunInputs(ctx, req.Inputs, "web app workflow run", agentID, accountID); err != nil {
+			logger.WarnContext(ctx, "web app workflow run conversation access denied", "conversation_id", req.Inputs["conversation_id"], "agent_id", agentID, err)
+			failWebAppConversationAccess(c, err)
+			return
+		}
 	}
 
 	// Run workflow with streaming (isDraft=false for published version)
 	h.runWorkflowStream(c, tenantID, agentID, req, accountID, false, runType, "web-app")
 	return
 
+}
+
+func failWebAppConversationAccess(c *gin.Context, err error) {
+	switch {
+	case errors.Is(err, errWebAppConversationInvalidID),
+		errors.Is(err, errWebAppConversationInvalidAgent):
+		response.Fail(c, response.ErrInvalidParam)
+	case errors.Is(err, errWebAppConversationInvalidAccount):
+		response.Fail(c, response.ErrUnauthorized)
+	case errors.Is(err, errWebAppConversationNotFound):
+		response.Fail(c, response.ErrAppNotFound)
+	case errors.Is(err, errWebAppConversationAccessDenied):
+		response.Fail(c, response.ErrPermissionDenied)
+	default:
+		response.Fail(c, response.ErrSystemError)
+	}
 }
 
 func webAppWorkflowRunType(workflowType string) string {
@@ -361,9 +386,9 @@ func webAppWorkflowRunType(workflowType string) string {
 	return "WORKFLOW"
 }
 
-func (h *WorkflowHandler) prepareWebAppConversationRunInputs(ctx context.Context, inputs map[string]interface{}, logPrefix string) {
+func (h *WorkflowHandler) prepareWebAppConversationRunInputs(ctx context.Context, inputs map[string]interface{}, logPrefix, agentID, accountID string) error {
 	if inputs == nil {
-		return
+		return nil
 	}
 
 	inputs["sys.workflow_type"] = "chat"
@@ -372,16 +397,20 @@ func (h *WorkflowHandler) prepareWebAppConversationRunInputs(ctx context.Context
 	conversationID, _ := inputs["conversation_id"].(string)
 
 	if conversationID != "" {
+		if err := validateWebAppConversationAccess(ctx, h.advancedChatHandler, conversationID, agentID, accountID); err != nil {
+			return err
+		}
+
 		logger.DebugContext(ctx, logPrefix+" continuing conversation", zap.String("conversation_id", conversationID))
 
-		latestMessageID, err := h.getLatestMessageID(conversationID)
+		latestMessageID, err := h.getLatestMessageIDForCaller(ctx, conversationID, agentID, accountID)
 		if err == nil && latestMessageID != "" {
 			inputs["sys.parent_message_id"] = latestMessageID
 			logger.DebugContext(ctx, logPrefix+" parent message set", zap.Bool("has_parent_message_id", true))
 		}
 
 		inputs["sys.conversation_id"] = conversationID
-		inputs["sys.dialogue_count"] = h.getDialogueCount(conversationID)
+		inputs["sys.dialogue_count"] = h.getDialogueCountForCaller(ctx, conversationID, agentID, accountID)
 	} else {
 		inputs["sys.conversation_id"] = ""
 		inputs["sys.parent_message_id"] = ""
@@ -399,4 +428,5 @@ func (h *WorkflowHandler) prepareWebAppConversationRunInputs(ctx context.Context
 			"invoke_from": string(InvokeFromWebApp),
 		}
 	}
+	return nil
 }

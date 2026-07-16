@@ -54,6 +54,18 @@ func (a *Adapter) Parse(ctx context.Context, req contracts.ParseRequest) (*contr
 
 func parseOptionsForRequest(req contracts.ParseRequest) extractcommon.ParseOptions {
 	opts := extractcommon.ParseOptions{Mode: "relaxed"}
+	if runtime := req.ProviderRuntime; runtime != nil {
+		opts.ProviderRuntime = extractcommon.ProviderRuntimeConfig{
+			ProviderKey:         runtime.ProviderKey,
+			Enabled:             runtime.Enabled,
+			Mode:                runtime.Mode,
+			BaseURL:             runtime.BaseURL,
+			APIKey:              runtime.APIKey,
+			TimeoutSeconds:      runtime.TimeoutSeconds,
+			PollIntervalSeconds: runtime.PollIntervalSeconds,
+			ModelVersion:        runtime.ModelVersion,
+		}
+	}
 	switch req.Profile {
 	case contracts.ParseProfileHighQuality, contracts.ParseProfileLayoutFirst:
 		opts.Mode = "strict"
@@ -249,6 +261,9 @@ func mapDocumentResultWithOptions(req contracts.ParseRequest, engine extractcomm
 			),
 			Metadata: metadata,
 		})
+	}
+	if len(artifact.Elements) > 0 && (engine == extractcommon.EngineMineru || engine == extractcommon.EngineReducto) {
+		artifact.Metadata["structured_elements"] = true
 	}
 
 	if artifact.Status == contracts.ParseStatusSucceeded && strings.TrimSpace(artifact.Markdown) == "" && len(artifact.Elements) == 0 {

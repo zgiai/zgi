@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useT } from '@/i18n';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
@@ -25,6 +25,8 @@ import type {
   PlatformChannelsResponse,
   AdjustChannelWalletRequest,
   AdjustChannelWalletResponse,
+  UpstreamState,
+  UpdateUpstreamStateSettingsRequest,
 } from '@/services/types/channel';
 import { CHANNEL_KEYS, MODEL_KEYS } from '@/hooks/query-keys';
 import {
@@ -621,6 +623,7 @@ export interface UseBatchTestChannelModelsOptions {
 export interface UseBatchTestChannelModelsReturn {
   batchTest: (id: string, request: BatchTestChannelModelsRequest) => void;
   abort: () => void;
+  reset: () => void;
   isRunning: boolean;
   results: BatchTestModelResult[];
   completedResult: BatchTestCompletedResult | null;
@@ -633,18 +636,31 @@ export function useBatchTestChannelModels(
   const [isRunning, setIsRunning] = useState(false);
   const [results, setResults] = useState<BatchTestModelResult[]>([]);
   const [completedResult, setCompletedResult] = useState<BatchTestCompletedResult | null>(null);
-  const [abortController, setAbortController] = useState<AbortController | null>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const runIdRef = useRef(0);
 
   const abort = useCallback(() => {
-    abortController?.abort();
-    setAbortController(null);
+    runIdRef.current += 1;
+    abortControllerRef.current?.abort();
+    abortControllerRef.current = null;
     setIsRunning(false);
-  }, [abortController]);
+  }, []);
+
+  const reset = useCallback(() => {
+    runIdRef.current += 1;
+    abortControllerRef.current?.abort();
+    abortControllerRef.current = null;
+    setIsRunning(false);
+    setResults([]);
+    setCompletedResult(null);
+  }, []);
 
   const batchTest = useCallback(
     (id: string, request: BatchTestChannelModelsRequest) => {
       // Abort any existing test
-      abortController?.abort();
+      abortControllerRef.current?.abort();
+      const runId = runIdRef.current + 1;
+      runIdRef.current = runId;
 
       // Reset state
       setResults([]);
@@ -652,10 +668,11 @@ export function useBatchTestChannelModels(
       setIsRunning(true);
 
       const controller = new AbortController();
-      setAbortController(controller);
+      abortControllerRef.current = controller;
 
       channelService.batchTestChannelModels(id, request, {
         onMessage: (event: BatchTestChannelModelsEvent) => {
+          if (runId !== runIdRef.current) return;
           if ('completed' in event && event.completed) {
             setCompletedResult(event);
             setIsRunning(false);
@@ -667,6 +684,7 @@ export function useBatchTestChannelModels(
           }
         },
         onError: (error: Error) => {
+          if (runId !== runIdRef.current) return;
           setIsRunning(false);
           const title = t('connectivityTest.toast.error');
           toast.error(title, {
@@ -677,12 +695,13 @@ export function useBatchTestChannelModels(
         abortSignal: controller.signal,
       });
     },
-    [abortController, options, t]
+    [options, t]
   );
 
   return {
     batchTest,
     abort,
+    reset,
     isRunning,
     results,
     completedResult,
@@ -748,4 +767,109 @@ export function useAdjustChannelWallet(): {
   );
 
   return { adjustWallet, isAdjusting: isPending };
+}
+
+export function useCheckChannelUpstreamState(): {
+  checkUpstreamState: (channelId: string) => Promise<UpstreamState>;
+  checkingChannelId: string | null;
+} {
+  const t = useT('channels');
+  const queryClient = useQueryClient();
+  const { mutateAsync, isPending, variables } = useMutation({
+    mutationFn: async (channelId: string) => channelService.checkUpstreamState(channelId),
+    onSuccess: (_response, channelId) => {
+      toast.success(t('upstream.refreshSuccess'));
+      queryClient.invalidateQueries({ queryKey: CHANNEL_KEYS.all });
+      queryClient.invalidateQueries({ queryKey: CHANNEL_KEYS.detail(channelId) });
+    },
+    onError: (error: Error) => {
+      const title = t('upstream.refreshFailed');
+      toast.error(title, { description: normalizeToastDescription(title, error.message) });
+    },
+  });
+
+  const checkUpstreamState = useCallback(
+    async (channelId: string) => {
+      const response = await mutateAsync(channelId);
+      return response.data;
+    },
+    [mutateAsync]
+  );
+
+  return {
+    checkUpstreamState,
+    checkingChannelId: isPending ? (variables ?? null) : null,
+  };
+}
+
+export function useRetryChannelUpstreamState(): {
+  retryUpstreamState: (channelId: string) => Promise<UpstreamState>;
+  retryingChannelId: string | null;
+} {
+  const t = useT('channels');
+  const queryClient = useQueryClient();
+  const { mutateAsync, isPending, variables } = useMutation({
+    mutationFn: async (channelId: string) => channelService.retryUpstreamState(channelId),
+    onSuccess: (_response, channelId) => {
+      toast.success(t('upstream.retrySuccess'));
+      queryClient.invalidateQueries({ queryKey: CHANNEL_KEYS.all });
+      queryClient.invalidateQueries({ queryKey: CHANNEL_KEYS.detail(channelId) });
+    },
+    onError: (error: Error) => {
+      const title = t('upstream.retryFailed');
+      toast.error(title, { description: normalizeToastDescription(title, error.message) });
+    },
+  });
+
+  const retryUpstreamState = useCallback(
+    async (channelId: string) => {
+      const response = await mutateAsync(channelId);
+      return response.data;
+    },
+    [mutateAsync]
+  );
+
+  return {
+    retryUpstreamState,
+    retryingChannelId: isPending ? (variables ?? null) : null,
+  };
+}
+
+export function useUpdateChannelUpstreamSettings(): {
+  updateUpstreamSettings: (
+    channelId: string,
+    data: UpdateUpstreamStateSettingsRequest
+  ) => Promise<UpstreamState>;
+  isUpdating: boolean;
+} {
+  const t = useT('channels');
+  const queryClient = useQueryClient();
+  const { mutateAsync, isPending } = useMutation({
+    mutationFn: async ({
+      channelId,
+      data,
+    }: {
+      channelId: string;
+      data: UpdateUpstreamStateSettingsRequest;
+    }) => channelService.updateUpstreamStateSettings(channelId, data),
+    onSuccess: (_response, { channelId }) => {
+      toast.success(t('upstream.settingsSaved'));
+      queryClient.invalidateQueries({ queryKey: CHANNEL_KEYS.all });
+      queryClient.invalidateQueries({ queryKey: CHANNEL_KEYS.detail(channelId) });
+    },
+    onError: (error: Error) => {
+      const title = t('upstream.settingsFailed');
+      toast.error(title, { description: normalizeToastDescription(title, error.message) });
+    },
+  });
+
+  const updateUpstreamSettings = useCallback(
+    async (channelId: string, data: UpdateUpstreamStateSettingsRequest) => {
+      const response = await mutateAsync({ channelId, data });
+      return response.data;
+    },
+    [mutateAsync]
+  );
+
+  return { updateUpstreamSettings, isUpdating: isPending };
 }

@@ -89,22 +89,23 @@ type PromptPlaygroundMessage struct {
 }
 
 type PromptSummaryResponse struct {
-	ID               string    `json:"id"`
-	WorkspaceID      *string   `json:"workspace_id,omitempty"`
-	OwnerAccountID   *string   `json:"owner_account_id,omitempty"`
-	Source           string    `json:"source"`
-	Name             string    `json:"name"`
-	Slug             string    `json:"slug"`
-	Description      *string   `json:"description,omitempty"`
-	Locale           string    `json:"locale"`
-	Category         *string   `json:"category,omitempty"`
-	Tags             []string  `json:"tags"`
-	LatestVersion    int       `json:"latest_version"`
-	LatestLabels     []string  `json:"latest_labels"`
-	LatestPromptType string    `json:"latest_prompt_type"`
-	IsOwned          bool      `json:"is_owned"`
-	CreatedAt        time.Time `json:"created_at"`
-	UpdatedAt        time.Time `json:"updated_at"`
+	ID                string    `json:"id"`
+	WorkspaceID       *string   `json:"workspace_id,omitempty"`
+	OwnerAccountID    *string   `json:"owner_account_id,omitempty"`
+	Source            string    `json:"source"`
+	Name              string    `json:"name"`
+	Slug              string    `json:"slug"`
+	Description       *string   `json:"description,omitempty"`
+	Locale            string    `json:"locale"`
+	Category          *string   `json:"category,omitempty"`
+	Tags              []string  `json:"tags"`
+	LatestVersion     int       `json:"latest_version"`
+	LatestLabels      []string  `json:"latest_labels"`
+	LatestPromptType  string    `json:"latest_prompt_type"`
+	ProductionVersion *int      `json:"production_version,omitempty"`
+	IsOwned           bool      `json:"is_owned"`
+	CreatedAt         time.Time `json:"created_at"`
+	UpdatedAt         time.Time `json:"updated_at"`
 }
 
 type PromptVersionResponse struct {
@@ -227,7 +228,7 @@ type PromptUsageLabelMetric struct {
 	LastRunAt *time.Time `json:"last_run_at,omitempty"`
 }
 
-func BuildPromptSummary(prompt *promptmodel.Prompt, latest *promptmodel.PromptVersion, accountID string) PromptSummaryResponse {
+func BuildPromptSummary(prompt *promptmodel.Prompt, latest, production *promptmodel.PromptVersion, accountID string) PromptSummaryResponse {
 	resp := PromptSummaryResponse{
 		ID:             prompt.ID,
 		WorkspaceID:    prompt.WorkspaceID,
@@ -247,6 +248,9 @@ func BuildPromptSummary(prompt *promptmodel.Prompt, latest *promptmodel.PromptVe
 	if latest != nil {
 		resp.LatestLabels = append([]string{}, latest.Labels...)
 		resp.LatestPromptType = string(latest.PromptType)
+	}
+	if production != nil {
+		resp.ProductionVersion = &production.Version
 	}
 	return resp
 }

@@ -28,6 +28,6 @@ func NewModule(
 	return &Module{
 		PromptRepository: promptRepo,
 		PromptService:    promptService,
-		PromptHandler:    handler.NewPromptHandler(promptService, accountService),
+		PromptHandler:    handler.NewPromptHandler(promptService, accountService, organizationService),
 	}
 }

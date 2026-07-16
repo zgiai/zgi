@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { useT } from '@/i18n';
 import { useWorkflowStore } from '../store';
 import type { StoreValidationError } from '../store/type';
+import type { AllTranslationKeys } from '@/i18n';
 
 /**
  * Lightweight hook for accessing workflow validation results from store.
@@ -15,9 +16,11 @@ const useWorkflowValidation = () => {
   const mappedResults = useMemo(() => {
     const translate = (issue: StoreValidationError) => ({
       type: issue.type,
-      message: t(`nodes.${issue.code}` as any, issue.params),
+      code: issue.code,
+      message: t(`nodes.${issue.code}` as AllTranslationKeys, issue.params),
       nodeId: issue.nodeId,
       nodeTitle: issue.nodeTitle,
+      params: issue.params,
     });
 
     const errors = validationResults.errors.map(translate);
@@ -38,15 +41,19 @@ const useWorkflowValidation = () => {
       hasWarnings: nodeWarnings.length > 0,
       errors: nodeErrors.map(e => ({
         type: e.type,
-        message: t(`nodes.${e.code}` as any, e.params),
+        code: e.code,
+        message: t(`nodes.${e.code}` as AllTranslationKeys, e.params),
         nodeId: e.nodeId,
         nodeTitle: e.nodeTitle,
+        params: e.params,
       })),
       warnings: nodeWarnings.map(w => ({
         type: w.type,
-        message: t(`nodes.${w.code}` as any, w.params),
+        code: w.code,
+        message: t(`nodes.${w.code}` as AllTranslationKeys, w.params),
         nodeId: w.nodeId,
         nodeTitle: w.nodeTitle,
+        params: w.params,
       })),
     };
   };

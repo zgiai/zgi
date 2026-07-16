@@ -3,6 +3,8 @@ package service
 import (
 	"context"
 	"fmt"
+	"path/filepath"
+	"strings"
 
 	"github.com/zgiai/zgi/api/internal/contracts"
 	"github.com/zgiai/zgi/api/internal/dto"
@@ -101,26 +103,46 @@ func (s *parseArtifactChunkTransformService) TransformAuto(ctx context.Context, 
 		"fallback_reason": "default paragraph automatic chunking",
 	}
 
-	router := datasetindexing.NewRuntimeRouter(ctx, s.llmClient, s.defaultModelSvc, input.TenantID)
-	decision, err := router.Route(datasetindexing.RouterInput{
-		DataSourceType:  "upload_file",
-		DocExt:          fileName,
-		ExtractedOutput: extractOutput,
-	})
-	if err != nil {
-		routing["route_error"] = err.Error()
-	} else if decision != nil {
-		routing["matched"] = decision.Matched
-		routing["route_name"] = decision.RouteName
-		routing["reason"] = decision.Reason
-		for key, value := range decision.RouteMeta {
-			routing[key] = value
+	if isVisionImageArtifact(input.Artifact, fileName) {
+		indexType = datasetindexing.ParentChildIndex
+		options = &datasetindexing.ProcessOptions{
+			Mode: "hierarchical",
+			ProcessRule: map[string]interface{}{
+				"parent_mode": "full-doc",
+				"subchunk_segmentation": map[string]interface{}{
+					"separator":     "\n",
+					"max_tokens":    220,
+					"chunk_overlap": 30,
+				},
+			},
 		}
-		if decision.Matched {
-			indexType = datasetindexing.IndexType(decision.TargetDocForm)
-			options = &datasetindexing.ProcessOptions{
-				Mode:        decision.TargetMode,
-				ProcessRule: decision.TargetRules,
+		routing["matched"] = true
+		routing["route_name"] = "vision_image_full_doc"
+		routing["reason"] = "vision image understanding output preserves the full image as one parent chunk"
+		routing["matched_by"] = "parse_engine_and_file_type"
+		delete(routing, "fallback_reason")
+	} else {
+		router := datasetindexing.NewRuntimeRouter(ctx, s.llmClient, s.defaultModelSvc, input.TenantID)
+		decision, err := router.Route(datasetindexing.RouterInput{
+			DataSourceType:  "upload_file",
+			DocExt:          fileName,
+			ExtractedOutput: extractOutput,
+		})
+		if err != nil {
+			routing["route_error"] = err.Error()
+		} else if decision != nil {
+			routing["matched"] = decision.Matched
+			routing["route_name"] = decision.RouteName
+			routing["reason"] = decision.Reason
+			for key, value := range decision.RouteMeta {
+				routing[key] = value
+			}
+			if decision.Matched {
+				indexType = datasetindexing.IndexType(decision.TargetDocForm)
+				options = &datasetindexing.ProcessOptions{
+					Mode:        decision.TargetMode,
+					ProcessRule: decision.TargetRules,
+				}
 			}
 		}
 	}
@@ -140,6 +162,18 @@ func (s *parseArtifactChunkTransformService) TransformAuto(ctx context.Context, 
 		ProcessOptions: options,
 		Routing:        routing,
 	}, nil
+}
+
+func isVisionImageArtifact(artifact *contracts.ParseArtifact, fileName string) bool {
+	if artifact == nil || artifact.EngineUsed != contracts.ParseEngineVLM {
+		return false
+	}
+	switch strings.ToLower(filepath.Ext(strings.TrimSpace(fileName))) {
+	case ".png", ".jpg", ".jpeg", ".webp", ".tif", ".tiff":
+		return true
+	default:
+		return false
+	}
 }
 
 func parseArtifactToExtractOutput(artifact *contracts.ParseArtifact) *dto.ExtractOutput {

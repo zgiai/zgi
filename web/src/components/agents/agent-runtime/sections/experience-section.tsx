@@ -1,44 +1,72 @@
 'use client';
 
-import { Loader2, Plus, Sparkles, Trash2 } from 'lucide-react';
+import { useState } from 'react';
+import { Settings2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { ChatOpeningGuideView } from '@/components/chat/ui/chat-opening-guide-view';
+import type { OpeningGuideBrand } from '@/components/chat/utils/opening-guide-brand';
+import OpeningStatementDialog, {
+  type OpeningStatementDialogValue,
+} from '@/components/workflow/ui/features-panel/opening-statement-dialog';
+import { SUGGESTED_QUESTIONS_LIMIT } from '@/constants/suggested-questions';
 import { useT } from '@/i18n';
-import { AGENT_HOME_TITLE_MAX_LENGTH, AGENT_INPUT_PLACEHOLDER_MAX_LENGTH } from '../constants';
+import { AGENT_INPUT_PLACEHOLDER_MAX_LENGTH } from '../constants';
 import { RuntimeSection } from '../runtime-section';
 import type { AgentConfigSection } from '../types';
+
+interface GenerateSuggestedQuestionsResult {
+  questions: string[];
+  warnings?: string[];
+}
 
 interface AgentRuntimeExperienceSectionProps {
   open: boolean;
   homeTitle: string;
+  openingStatement: string;
   inputPlaceholder: string;
   suggestedQuestions: string[];
   isGeneratingSuggestions: boolean;
   defaultHomeTitle: string;
   defaultInputPlaceholder: string;
+  openingGuideBrand?: OpeningGuideBrand;
+  readOnly?: boolean;
   onToggleSection: (section: AgentConfigSection) => void;
   onChangeHomeTitle: (value: string) => void;
+  onChangeOpeningStatement: (value: string) => void;
   onChangeInputPlaceholder: (value: string) => void;
-  onGenerateSuggestedQuestions: () => void;
+  onGenerateSuggestedQuestions: (
+    value: OpeningStatementDialogValue
+  ) => Promise<GenerateSuggestedQuestionsResult | undefined>;
   onChangeSuggestedQuestions: (value: string[]) => void;
 }
 
 export function AgentRuntimeExperienceSection({
   open,
   homeTitle,
+  openingStatement,
   inputPlaceholder,
   suggestedQuestions,
   isGeneratingSuggestions,
   defaultHomeTitle,
   defaultInputPlaceholder,
+  openingGuideBrand,
+  readOnly = false,
   onToggleSection,
   onChangeHomeTitle,
+  onChangeOpeningStatement,
   onChangeInputPlaceholder,
   onGenerateSuggestedQuestions,
   onChangeSuggestedQuestions,
 }: AgentRuntimeExperienceSectionProps) {
   const t = useT('agents.agentRuntime');
-  const canGenerateSuggestions = !isGeneratingSuggestions;
+  const tAgents = useT('agents');
+  const [openingDialogOpen, setOpeningDialogOpen] = useState(false);
+  const normalizedSuggestedQuestions = suggestedQuestions
+    .map(question => question.trim())
+    .filter(Boolean)
+    .slice(0, SUGGESTED_QUESTIONS_LIMIT);
+  const resolvedHomeTitle = homeTitle.trim() || defaultHomeTitle;
 
   return (
     <RuntimeSection
@@ -48,23 +76,37 @@ export function AgentRuntimeExperienceSection({
       onToggle={onToggleSection}
     >
       <div className="space-y-3">
-        <div className="text-xs font-semibold text-muted-foreground">
-          {t('experience.homeGroup')}
-        </div>
-        <div className="space-y-1.5">
-          <div className="text-xs font-medium text-muted-foreground">
-            {t('appearance.homeTitle')}
+        <div className="flex items-start justify-between gap-3">
+          <div className="space-y-1">
+            <div className="text-xs font-semibold text-muted-foreground">
+              {tAgents('workflow.features.openingStatement.label')}
+            </div>
+            <p className="text-xs leading-5 text-muted-foreground">
+              {tAgents('workflow.features.openingStatement.desc')}
+            </p>
           </div>
-          <Input
-            value={homeTitle}
-            maxLength={AGENT_HOME_TITLE_MAX_LENGTH}
-            showCharacterCount
-            placeholder={defaultHomeTitle}
-            onChange={event =>
-              onChangeHomeTitle(
-                Array.from(event.target.value).slice(0, AGENT_HOME_TITLE_MAX_LENGTH).join('')
-              )
-            }
+          <Button
+            type="button"
+            variant="outline"
+            size="xs"
+            className="shrink-0 gap-1.5 bg-background"
+            disabled={readOnly}
+            onClick={() => setOpeningDialogOpen(true)}
+          >
+            <Settings2 className="size-3.5" />
+            {tAgents('workflow.features.openingStatement.dialogTitle')}
+          </Button>
+        </div>
+
+        <div className="max-h-80 overflow-y-auto rounded-lg border border-border/70 bg-muted/20 px-3 py-4">
+          <ChatOpeningGuideView
+            title={resolvedHomeTitle}
+            message={openingStatement}
+            iconType={openingGuideBrand?.iconType}
+            icon={openingGuideBrand?.icon}
+            iconBackground={openingGuideBrand?.iconBackground}
+            iconSrc={openingGuideBrand?.iconSrc}
+            suggestions={normalizedSuggestedQuestions}
           />
         </div>
       </div>
@@ -82,119 +124,33 @@ export function AgentRuntimeExperienceSection({
             maxLength={AGENT_INPUT_PLACEHOLDER_MAX_LENGTH}
             showCharacterCount
             placeholder={defaultInputPlaceholder}
+            disabled={readOnly}
             onChange={event =>
               onChangeInputPlaceholder(
-                Array.from(event.target.value)
-                  .slice(0, AGENT_INPUT_PLACEHOLDER_MAX_LENGTH)
-                  .join('')
+                Array.from(event.target.value).slice(0, AGENT_INPUT_PLACEHOLDER_MAX_LENGTH).join('')
               )
             }
           />
         </div>
       </div>
 
-      <div className="space-y-3 pt-2">
-        <div className="flex items-center justify-between gap-3">
-          <div>
-            <div className="text-xs font-semibold text-muted-foreground">
-              {t('experience.questionsGroup')}
-            </div>
-            <div className="mt-0.5 text-xs text-muted-foreground">{t('suggestions.help')}</div>
-          </div>
-          <div className="flex shrink-0 items-center gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-8 gap-1.5 px-2 text-xs"
-              onClick={onGenerateSuggestedQuestions}
-              disabled={!canGenerateSuggestions}
-            >
-              {isGeneratingSuggestions ? (
-                <Loader2 className="size-3.5 animate-spin" />
-              ) : (
-                <Sparkles className="size-3.5" />
-              )}
-              {t('suggestions.generate')}
-            </Button>
-            <Button
-              isIcon
-              variant="outline"
-              className="size-8"
-              onClick={() =>
-                onChangeSuggestedQuestions(
-                  suggestedQuestions.length >= 6 ? suggestedQuestions : [...suggestedQuestions, '']
-                )
-              }
-              disabled={suggestedQuestions.length >= 6}
-              aria-label={t('suggestions.add')}
-              title={t('suggestions.add')}
-            >
-              <Plus className="size-4" />
-            </Button>
-          </div>
-        </div>
-        {suggestedQuestions.length === 0 ? (
-          <div className="space-y-3 rounded-md border border-dashed p-4 text-sm text-muted-foreground">
-            <div>{t('suggestions.empty')}</div>
-            <div className="flex flex-wrap gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-8 gap-1.5 px-2 text-xs"
-                onClick={onGenerateSuggestedQuestions}
-                disabled={!canGenerateSuggestions}
-              >
-                {isGeneratingSuggestions ? (
-                  <Loader2 className="size-3.5 animate-spin" />
-                ) : (
-                  <Sparkles className="size-3.5" />
-                )}
-                {t('suggestions.generate')}
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-8 gap-1.5 px-2 text-xs"
-                onClick={() => onChangeSuggestedQuestions([''])}
-              >
-                <Plus className="size-3.5" />
-                {t('suggestions.manualAdd')}
-              </Button>
-            </div>
-          </div>
-        ) : (
-          suggestedQuestions.map((question, index) => (
-            <div key={index} className="flex items-center gap-2">
-              <Input
-                value={question}
-                maxLength={200}
-                placeholder={t('suggestions.placeholder')}
-                onChange={event =>
-                  onChangeSuggestedQuestions(
-                    suggestedQuestions.map((item, itemIndex) =>
-                      itemIndex === index ? event.target.value : item
-                    )
-                  )
-                }
-              />
-              <Button
-                isIcon
-                variant="ghost"
-                className="size-8 shrink-0 text-muted-foreground hover:text-destructive"
-                onClick={() =>
-                  onChangeSuggestedQuestions(
-                    suggestedQuestions.filter((_, itemIndex) => itemIndex !== index)
-                  )
-                }
-                aria-label={t('suggestions.delete')}
-                title={t('suggestions.delete')}
-              >
-                <Trash2 className="size-4" />
-              </Button>
-            </div>
-          ))
-        )}
-      </div>
+      <OpeningStatementDialog
+        open={openingDialogOpen}
+        onOpenChange={setOpeningDialogOpen}
+        value={{
+          title: homeTitle,
+          message: openingStatement,
+          suggestedQuestions: normalizedSuggestedQuestions,
+        }}
+        onSave={value => {
+          onChangeHomeTitle(value.title);
+          onChangeOpeningStatement(value.message);
+          onChangeSuggestedQuestions(value.suggestedQuestions);
+        }}
+        onGenerateSuggestedQuestions={onGenerateSuggestedQuestions}
+        generatingSuggestedQuestions={isGeneratingSuggestions}
+        previewBrand={openingGuideBrand}
+      />
     </RuntimeSection>
   );
 }

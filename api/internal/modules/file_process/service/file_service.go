@@ -113,7 +113,9 @@ func (s *fileService) GetUploadConfig() *interfaces.FileUploadConfigResponse {
 // UploadFile upload file
 func (s *fileService) UploadFile(ctx context.Context, filename string, content []byte, mimeType string, userID, organizationID string, userRole model.CreatedByRole, source *interfaces.FileSource, workspaceID *string, isTemporary bool, isIcon bool) (*dto.UploadFile, error) {
 	return s.UploadFileWithOptions(ctx, filename, content, mimeType, userID, organizationID, userRole, source, workspaceID, isTemporary, isIcon, UploadFileOptions{
-		StartLegacyContentExtraction: true,
+		// Temporary chat files are parsed on demand through the routed content
+		// parse service. Avoid racing that request with legacy background parsing.
+		StartLegacyContentExtraction: !isTemporary,
 	})
 }
 
@@ -827,11 +829,6 @@ func (s *fileService) ListFiles(ctx context.Context, tenantID, accountID string,
 	}
 
 	allowAllFolders := false
-	if s.enterpriseService != nil && accountID != "" {
-		if isAdmin, err := s.enterpriseService.IsOrganizationAdminOrOwner(ctx, tenantID, accountID); err == nil {
-			allowAllFolders = isAdmin
-		}
-	}
 
 	var total int64
 	var fileModels []*model.UploadFile
@@ -877,11 +874,6 @@ func (s *fileService) ListArchivedFiles(ctx context.Context, tenantID, accountID
 	}
 
 	allowAllFolders := false
-	if s.enterpriseService != nil && accountID != "" {
-		if isAdmin, err := s.enterpriseService.IsOrganizationAdminOrOwner(ctx, tenantID, accountID); err == nil {
-			allowAllFolders = isAdmin
-		}
-	}
 
 	var fileModels []*model.UploadFile
 	var total int64

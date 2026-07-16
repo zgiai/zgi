@@ -32,7 +32,7 @@ func (j *LLMJudge) JudgeCase(ctx context.Context, req JudgeRequest) (*JudgeResul
 		WorkspaceID:        j.WorkspaceID,
 		BillingSubjectType: llmclient.BillingSubjectTypeWorkspace,
 		AppID:              req.AgentID,
-		AppType:            "agent",
+		AppType:            "workflow",
 		AccountID:          j.AccountID,
 		SessionID:          req.BatchID,
 		WorkflowRunID:      req.RunResult.WorkflowRunID,

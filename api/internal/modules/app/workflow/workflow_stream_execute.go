@@ -74,7 +74,16 @@ func (h *WorkflowHandler) executeWorkflowStream(c *gin.Context, ctx context.Cont
 	executor := streamRuntime.Executor
 	hydrateWorkflowStreamInputs(ctx, executor, req)
 
-	sharedVariablePool := buildWorkflowStreamVariablePool(ctx, graphData, systemInputs, req.Inputs, startNodeID)
+	sharedVariablePool, err := buildWorkflowStreamVariablePool(ctx, graphData, systemInputs, req.Inputs, startNodeID, workflowStreamVariablePoolScope{
+		ConversationAccess: h.advancedChatHandler,
+		VariableLoader:     h.advancedChatHandler,
+		AgentID:            appID,
+		AccountID:          accountID,
+	})
+	if err != nil {
+		errorChan <- err
+		return
+	}
 	resumeState, hasResumeState := detachWorkflowResumeState(systemInputs)
 	if !hasResumeState {
 		h.executeWorkflowStreamGraphEngine(ctx, workspaceID, appID, req, accountID, workflowRunID, workflowID, systemInputs, sequenceNumber, resultChan, errorChan, doneChan, isDraft, runType, triggeredFrom, streamGraph, streamRuntime, workflowStartTime, answerCoordinator)

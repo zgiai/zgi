@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/contracts"
@@ -31,16 +32,26 @@ const (
 	DefaultMineruOfficialModelVersion = "vlm"
 	DefaultReductoProviderPriority    = 100
 	DefaultMineruProviderPriority     = 200
+
+	ParserValidationSuccess = "success"
+	ParserValidationFailed  = "failed"
+	ParserValidationUnknown = "unknown"
+
+	parserValidationStatusKey  = "validation_status"
+	parserValidationMessageKey = "validation_message"
+	parserValidatedAtKey       = "validated_at"
 )
 
 var (
 	ErrUnsupportedParserProvider = errors.New("unsupported parser provider")
 	ErrParserConfigInvalid       = errors.New("parser config invalid")
+	ErrParserValidationFailed    = errors.New("parser validation failed")
 )
 
 type ProviderSettingsService interface {
 	List(ctx context.Context, organizationID uuid.UUID) (*ParserSettingsList, error)
 	Upsert(ctx context.Context, organizationID uuid.UUID, actorID *uuid.UUID, providerKey string, input ParserSettingsInput) (*ParserProviderSettings, error)
+	Check(ctx context.Context, organizationID uuid.UUID, actorID *uuid.UUID, providerKey string) (*ParserProviderSettings, error)
 }
 
 type ParserSettingsList struct {
@@ -61,6 +72,9 @@ type ParserProviderSettings struct {
 	OfficialModelVersion        string `json:"official_model_version,omitempty"`
 	OfficialPollIntervalSeconds int    `json:"official_poll_interval_seconds,omitempty"`
 	RuntimeConfigSource         string `json:"runtime_config_source"`
+	ValidationStatus            string `json:"validation_status,omitempty"`
+	ValidatedAt                 string `json:"validated_at,omitempty"`
+	ValidationMessage           string `json:"validation_message,omitempty"`
 }
 
 type ParserSettingsInput struct {
@@ -75,12 +89,17 @@ type ParserSettingsInput struct {
 }
 
 type providerSettingsService struct {
-	repo   repository.ProviderConfigRepository
-	crypto llmcrypto.CryptoService
+	repo      repository.ProviderConfigRepository
+	crypto    llmcrypto.CryptoService
+	validator ParserProviderValidator
 }
 
-func NewProviderSettingsService(repo repository.ProviderConfigRepository, crypto llmcrypto.CryptoService) ProviderSettingsService {
-	return &providerSettingsService{repo: repo, crypto: crypto}
+func NewProviderSettingsService(repo repository.ProviderConfigRepository, crypto llmcrypto.CryptoService, validators ...ParserProviderValidator) ProviderSettingsService {
+	validator := ParserProviderValidator(defaultParserProviderValidator{})
+	if len(validators) > 0 && validators[0] != nil {
+		validator = validators[0]
+	}
+	return &providerSettingsService{repo: repo, crypto: crypto, validator: validator}
 }
 
 func (s *providerSettingsService) List(ctx context.Context, organizationID uuid.UUID) (*ParserSettingsList, error) {
@@ -115,6 +134,13 @@ func (s *providerSettingsService) Upsert(ctx context.Context, organizationID uui
 	if err != nil {
 		return nil, err
 	}
+	if item.Enabled {
+		if err := s.validateAndAnnotate(ctx, item); err != nil {
+			return nil, err
+		}
+	} else {
+		annotateParserValidation(item, ParserValidationUnknown, "", time.Time{})
+	}
 	if err := s.repo.UpsertByScopeAndKey(ctx, item); err != nil {
 		return nil, err
 	}
@@ -123,6 +149,89 @@ func (s *providerSettingsService) Upsert(ctx context.Context, organizationID uui
 		return nil, err
 	}
 	return s.toView(providerKey, saved), nil
+}
+
+func (s *providerSettingsService) Check(ctx context.Context, organizationID uuid.UUID, actorID *uuid.UUID, providerKey string) (*ParserProviderSettings, error) {
+	providerKey = strings.ToLower(strings.TrimSpace(providerKey))
+	if providerKey != ParserProviderReducto && providerKey != ParserProviderMineru {
+		return nil, ErrUnsupportedParserProvider
+	}
+	item, err := s.repo.GetByScopeAndKey(ctx, "organization", &organizationID, nil, providerKey)
+	if err != nil {
+		return nil, err
+	}
+	if item == nil {
+		return nil, fmt.Errorf("%w: parser provider is not configured", ErrParserConfigInvalid)
+	}
+	item.UpdatedBy = actorID
+	if err := s.validateAndAnnotate(ctx, item); err != nil {
+		_ = s.repo.Update(ctx, item)
+		return nil, err
+	}
+	if err := s.repo.Update(ctx, item); err != nil {
+		return nil, err
+	}
+	saved, err := s.repo.GetByScopeAndKey(ctx, "organization", &organizationID, nil, providerKey)
+	if err != nil {
+		return nil, err
+	}
+	return s.toView(providerKey, saved), nil
+}
+
+func (s *providerSettingsService) validateAndAnnotate(ctx context.Context, item *model.ProviderConfig) error {
+	if item == nil {
+		return fmt.Errorf("%w: parser provider is not configured", ErrParserConfigInvalid)
+	}
+	req, err := s.validationRequest(item)
+	if err != nil {
+		annotateParserValidation(item, ParserValidationFailed, err.Error(), time.Now().UTC())
+		return err
+	}
+	if err := s.validator.Validate(ctx, req); err != nil {
+		wrapped := fmt.Errorf("%w: %v", ErrParserValidationFailed, err)
+		annotateParserValidation(item, ParserValidationFailed, wrapped.Error(), time.Now().UTC())
+		return wrapped
+	}
+	annotateParserValidation(item, ParserValidationSuccess, "validation succeeded", time.Now().UTC())
+	return nil
+}
+
+func (s *providerSettingsService) validationRequest(item *model.ProviderConfig) (ParserProviderValidationRequest, error) {
+	providerKey := strings.ToLower(strings.TrimSpace(item.ProviderKey))
+	req := ParserProviderValidationRequest{
+		ProviderKey: providerKey,
+		BaseURL:     strings.TrimRight(strings.TrimSpace(item.BaseURL), "/"),
+		TimeoutSec:  item.TimeoutSec,
+	}
+	switch providerKey {
+	case ParserProviderReducto:
+		req.APIKey = decryptCredential(item.CredentialsCiphertext, "api_key", s.crypto)
+		if req.APIKey == "" {
+			return req, fmt.Errorf("%w: Reducto API key is required", ErrParserConfigInvalid)
+		}
+		if req.BaseURL == "" {
+			req.BaseURL = DefaultReductoBaseURL
+		}
+	case ParserProviderMineru:
+		req.Mode = strings.ToLower(strings.TrimSpace(metadataString(item.Metadata, "mode")))
+		if req.Mode == "" {
+			req.Mode = MineruModeSidecar
+		}
+		if req.Mode == MineruModeOfficial {
+			req.OfficialToken = decryptCredential(item.CredentialsCiphertext, "official_token", s.crypto)
+			if req.OfficialToken == "" {
+				return req, fmt.Errorf("%w: MinerU official token is required", ErrParserConfigInvalid)
+			}
+			if req.BaseURL == "" {
+				req.BaseURL = DefaultMineruOfficialBaseURL
+			}
+		} else if req.BaseURL == "" {
+			return req, fmt.Errorf("%w: MinerU API URL is required", ErrParserConfigInvalid)
+		}
+	default:
+		return req, ErrUnsupportedParserProvider
+	}
+	return req, nil
 }
 
 func (s *providerSettingsService) buildReductoConfig(organizationID uuid.UUID, actorID *uuid.UUID, existing *model.ProviderConfig, input ParserSettingsInput) (*model.ProviderConfig, error) {
@@ -260,6 +369,9 @@ func (s *providerSettingsService) toView(providerKey string, item *model.Provide
 	view.BaseURL = item.BaseURL
 	view.TimeoutSec = item.TimeoutSec
 	view.RuntimeConfigSource = "database"
+	view.ValidationStatus = metadataString(item.Metadata, parserValidationStatusKey)
+	view.ValidatedAt = metadataString(item.Metadata, parserValidatedAtKey)
+	view.ValidationMessage = metadataString(item.Metadata, parserValidationMessageKey)
 	switch providerKey {
 	case ParserProviderReducto:
 		view.APIKeyConfigured = metadataString(item.CredentialsCiphertext, "api_key") != ""
@@ -274,7 +386,7 @@ func (s *providerSettingsService) toView(providerKey string, item *model.Provide
 			view.Configured = view.OfficialTokenConfigured
 		}
 	}
-	view.Status = parserStatus(view.Enabled, view.Configured)
+	view.Status = parserStatus(view.Enabled, view.Configured, view.ValidationStatus)
 	return view
 }
 
@@ -290,6 +402,7 @@ func defaultParserSettings(providerKey string) *ParserProviderSettings {
 			BaseURL:             DefaultReductoBaseURL,
 			TimeoutSec:          DefaultReductoTimeout,
 			RuntimeConfigSource: "default",
+			ValidationStatus:    ParserValidationUnknown,
 		}
 	default:
 		return &ParserProviderSettings{
@@ -304,18 +417,42 @@ func defaultParserSettings(providerKey string) *ParserProviderSettings {
 			OfficialModelVersion:        DefaultMineruOfficialModelVersion,
 			OfficialPollIntervalSeconds: DefaultMineruOfficialPollInterval,
 			RuntimeConfigSource:         "default",
+			ValidationStatus:            ParserValidationUnknown,
 		}
 	}
 }
 
-func parserStatus(enabled, configured bool) string {
+func parserStatus(enabled, configured bool, validationStatus string) string {
 	if !configured {
 		return "not_configured"
 	}
 	if !enabled {
 		return "disabled"
 	}
-	return "available"
+	switch strings.ToLower(strings.TrimSpace(validationStatus)) {
+	case ParserValidationSuccess:
+		return "available"
+	case ParserValidationFailed:
+		return "failed"
+	default:
+		return "unknown"
+	}
+}
+
+func annotateParserValidation(item *model.ProviderConfig, status string, message string, checkedAt time.Time) {
+	if item == nil {
+		return
+	}
+	if item.Metadata == nil {
+		item.Metadata = map[string]any{}
+	}
+	item.Metadata[parserValidationStatusKey] = strings.TrimSpace(status)
+	item.Metadata[parserValidationMessageKey] = strings.TrimSpace(message)
+	if checkedAt.IsZero() {
+		delete(item.Metadata, parserValidatedAtKey)
+		return
+	}
+	item.Metadata[parserValidatedAtKey] = checkedAt.UTC().Format(time.RFC3339)
 }
 
 func (s *providerSettingsService) encryptSecret(value string) (string, error) {

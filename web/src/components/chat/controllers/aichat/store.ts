@@ -30,6 +30,7 @@ export const createAIChatInitialState = (): AIChatControllerState => ({
   streamingByMessageId: {},
   recoveringByConversation: {},
   stoppingByConversation: {},
+  connectionByConversation: {},
   isLoadingList: false,
   isLoadingMessages: false,
   isSending: false,
@@ -68,7 +69,8 @@ export function createAIChatControllerStore() {
       set(current => applyFileParseEndState(current, payload, eventId)),
     applyFileParseError: (payload, eventId) =>
       set(current => applyFileParseErrorState(current, payload, eventId)),
-    applyMessageEnd: payload => set(current => applyMessageEndState(current, payload)),
+    applyMessageEnd: (payload, eventId) =>
+      set(current => applyMessageEndState(current, payload, eventId)),
     applyStreamError: (payload, fallbackConversationId) =>
       set(current => applyStreamErrorState(current, payload, fallbackConversationId)),
     mergeMessages: (conversationId, messages) =>

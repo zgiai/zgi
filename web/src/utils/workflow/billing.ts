@@ -17,9 +17,10 @@ export interface WorkflowTranslator {
 }
 
 const PRECHECK_WARNING_PRIORITY: Record<string, number> = {
-  '207009': 0,
-  '207008': 1,
-  '207010': 2,
+  '207015': 0,
+  '207009': 1,
+  '207008': 2,
+  '207010': 3,
 };
 
 export function normalizeWorkflowBillingCode(code: unknown): string | undefined {
@@ -37,19 +38,30 @@ export function normalizeWorkflowBillingCode(code: unknown): string | undefined 
 
 export function isWorkflowBillingErrorCode(code: unknown): boolean {
   const normalized = normalizeWorkflowBillingCode(code);
-  return normalized === '207011' || normalized === '207012' || normalized === '207013';
+  return (
+    normalized === '207011' ||
+    normalized === '207012' ||
+    normalized === '207013' ||
+    normalized === '207014'
+  );
 }
 
 export function isWorkflowPrecheckWarningCode(code: unknown): boolean {
   const normalized = normalizeWorkflowBillingCode(code);
-  return normalized === '207008' || normalized === '207009' || normalized === '207010';
+  return (
+    normalized === '207008' ||
+    normalized === '207009' ||
+    normalized === '207010' ||
+    normalized === '207015'
+  );
 }
 
 export function sortWorkflowPrecheckWarnings(
   warnings: WorkflowPrecheckWarning[]
 ): WorkflowPrecheckWarning[] {
   return [...warnings].sort((left, right) => {
-    const leftPriority = PRECHECK_WARNING_PRIORITY[normalizeWorkflowBillingCode(left.code) ?? ''] ?? 999;
+    const leftPriority =
+      PRECHECK_WARNING_PRIORITY[normalizeWorkflowBillingCode(left.code) ?? ''] ?? 999;
     const rightPriority =
       PRECHECK_WARNING_PRIORITY[normalizeWorkflowBillingCode(right.code) ?? ''] ?? 999;
 
@@ -112,7 +124,9 @@ export function extractWorkflowRunError(error: unknown): WorkflowRunBillingError
         : undefined;
 
   return {
-    code: (record['code'] as string | number | undefined) ?? (nested?.['code'] as string | number | undefined),
+    code:
+      (record['code'] as string | number | undefined) ??
+      (nested?.['code'] as string | number | undefined),
     message:
       (typeof record['message'] === 'string' ? record['message'] : undefined) ??
       (typeof nested?.['message'] === 'string' ? nested['message'] : undefined),
@@ -130,8 +144,23 @@ export function inferWorkflowBillingCodeFromValue(value?: unknown): string | und
   if (!message) return undefined;
 
   const normalized = message.toLowerCase();
-  if (normalized === '207011' || normalized === '207012' || normalized === '207013') {
+  if (
+    normalized === '207011' ||
+    normalized === '207012' ||
+    normalized === '207013' ||
+    normalized === '207014'
+  ) {
     return normalized;
+  }
+
+  if (
+    normalized.includes('model_pricing_not_configured') ||
+    normalized.includes('model pricing is not configured') ||
+    normalized.includes('missing image pricing') ||
+    normalized.includes('missing token pricing') ||
+    normalized.includes('模型未配置价格')
+  ) {
+    return '207014';
   }
 
   if (
@@ -178,7 +207,9 @@ export function resolveWorkflowBillingErrorCode(
     return normalizedCode;
   }
 
-  return inferWorkflowBillingCodeFromValue(normalizedCode) ?? inferWorkflowBillingCodeFromValue(message);
+  return (
+    inferWorkflowBillingCodeFromValue(normalizedCode) ?? inferWorkflowBillingCodeFromValue(message)
+  );
 }
 
 function getPrecheckMetricValue(
@@ -204,15 +235,18 @@ export function getWorkflowPrecheckWarningMessage(
   warning: WorkflowPrecheckWarning
 ): { title: string; description: string; code?: string } {
   const code = normalizeWorkflowBillingCode(warning.code);
-  const prefix = scope === 'agents' ? 'agents.workflow.precheckWarnings' : 'webapp.billing.precheckWarnings';
-  const currentValue = normalizeAiCreditMetricValue(getPrecheckMetricValue(warning, 'current_value'));
+  const prefix =
+    scope === 'agents' ? 'agents.workflow.precheckWarnings' : 'webapp.billing.precheckWarnings';
+  const currentValue = normalizeAiCreditMetricValue(
+    getPrecheckMetricValue(warning, 'current_value')
+  );
   const threshold = normalizeAiCreditMetricValue(getPrecheckMetricValue(warning, 'threshold'));
   const values = {
     currentValue: currentValue ?? '-',
     threshold: threshold ?? '-',
   };
 
-  if (code === '207008' || code === '207009' || code === '207010') {
+  if (code === '207008' || code === '207009' || code === '207010' || code === '207015') {
     return {
       code,
       title: t(`${prefix}.${code}.title`),
@@ -231,7 +265,8 @@ export function getWorkflowPrecheckWarningMessage(
 
 export function getWorkflowBillingActionHref(
   code: unknown,
-  workspaceId?: string | null
+  workspaceId?: string | null,
+  error?: WorkflowRunBillingError | null
 ): string | null {
   const normalized = normalizeWorkflowBillingCode(code);
 
@@ -244,9 +279,38 @@ export function getWorkflowBillingActionHref(
         : '/dashboard/organization/workspaces';
     case '207013':
       return '/dashboard/channel';
+    case '207014':
+      return getWorkflowModelPricingActionHref(error);
     default:
       return null;
   }
+}
+
+function getWorkflowModelPricingActionHref(error?: WorkflowRunBillingError | null): string {
+  const pricingURL = getStringParam(error?.params, 'pricing_url');
+  if (pricingURL?.startsWith('/')) {
+    return pricingURL;
+  }
+
+  const provider = getStringParam(error?.params, 'provider');
+  const model = getStringParam(error?.params, 'model');
+  if (!provider || !model) {
+    return '/dashboard/settings/pricing';
+  }
+
+  const encodedProvider = encodeURIComponent(provider);
+  const encodedModel = encodeURIComponent(model);
+  return `/dashboard/provider/${encodedProvider}?pricing=1&model=${encodedModel}`;
+}
+
+function getStringParam(
+  params: Record<string, unknown> | undefined,
+  key: string
+): string | undefined {
+  const value = params?.[key];
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
 }
 
 export function getWorkflowBillingErrorMessage(
@@ -259,16 +323,16 @@ export function getWorkflowBillingErrorMessage(
 
   const code = resolveWorkflowBillingErrorCode(error.code, error.message);
   const prefix = scope === 'agents' ? 'agents.workflow.billingErrors' : 'webapp.billing.errors';
-  const href = getWorkflowBillingActionHref(code, options.workspaceId);
+  const href = getWorkflowBillingActionHref(code, options.workspaceId, error);
 
   if (code && isWorkflowBillingErrorCode(code)) {
+    const shouldShowBillingDescription = code === '207014' || options.isAdmin;
     return {
       title: t(`${prefix}.${code}.title`),
-      description: options.isAdmin
+      description: shouldShowBillingDescription
         ? t(`${prefix}.${code}.description`)
         : t(`${prefix}.contactAdmin`),
-      actionLabel:
-        options.isAdmin && href ? t(`${prefix}.${code}.action`) : undefined,
+      actionLabel: options.isAdmin && href ? t(`${prefix}.${code}.action`) : undefined,
       href,
     };
   }

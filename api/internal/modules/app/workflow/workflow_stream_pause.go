@@ -280,9 +280,6 @@ func workflowStreamPauseConversationID(params workflowStreamPauseParams) string 
 	if conversationID, ok := params.RequestInputs["sys.conversation_id"].(string); ok {
 		return strings.TrimSpace(conversationID)
 	}
-	if conversationID, ok := params.RequestInputs["conversation_id"].(string); ok {
-		return strings.TrimSpace(conversationID)
-	}
 	return ""
 }
 

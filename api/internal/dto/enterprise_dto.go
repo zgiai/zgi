@@ -23,12 +23,14 @@ type OrganizationMemberResponse struct {
 
 // OrganizationWithRoleResponse represents an enterprise group with user role
 type OrganizationWithRoleResponse struct {
-	ID               string                   `json:"id"`
-	Name             string                   `json:"name"`
-	ShortName        *string                  `json:"short_name"`
-	Status           model.OrganizationStatus `json:"status"`
-	CreatedAt        int64                    `json:"created_at"`
-	OrganizationRole model.OrganizationRole   `json:"organization_role"`
+	ID                     string                       `json:"id"`
+	Name                   string                       `json:"name"`
+	ShortName              *string                      `json:"short_name"`
+	Status                 model.OrganizationStatus     `json:"status"`
+	BillingDisplayCurrency model.BillingDisplayCurrency `json:"billing_display_currency"`
+	USDToCNYRate           float64                      `json:"usd_to_cny_rate"`
+	CreatedAt              int64                        `json:"created_at"`
+	OrganizationRole       model.OrganizationRole       `json:"organization_role"`
 }
 
 // OrganizationPaginationResponse represents a paginated list of enterprise groups
@@ -50,17 +52,19 @@ type WorkspacePaginationResponse struct {
 }
 
 type OrganizationWorkspaceResponse struct {
-	ID             string  `json:"id"`
-	Name           string  `json:"name"`
-	Status         string  `json:"status"`
-	CreatedAt      int64   `json:"created_at"`
-	LeaderID       *string `json:"leader_id,omitempty"`
-	LeaderName     *string `json:"leader_name,omitempty"`
-	DepartmentID   *string `json:"department_id,omitempty"`
-	DepartmentName *string `json:"department_name,omitempty"`
-	APIKeyID       *string `json:"api_key_id,omitempty"`
-	APIKeyName     *string `json:"api_key_name,omitempty"`
-	MemberCount    int64   `json:"member_count"`
+	ID              string  `json:"id"`
+	Name            string  `json:"name"`
+	Status          string  `json:"status"`
+	CreatedAt       int64   `json:"created_at"`
+	LeaderID        *string `json:"leader_id,omitempty"`
+	LeaderName      *string `json:"leader_name,omitempty"`
+	APIKeyID        *string `json:"api_key_id,omitempty"`
+	APIKeyName      *string `json:"api_key_name,omitempty"`
+	MemberCount     int64   `json:"member_count"`
+	QuotaConfigured bool    `json:"quota_configured"`
+	UsedQuota       int64   `json:"used_quota"`
+	RemainQuota     int64   `json:"remain_quota"`
+	QuotaLimit      *int64  `json:"quota_limit,omitempty"`
 }
 
 type OrganizationWorkspacePaginationResponse struct {
@@ -209,12 +213,14 @@ type WorkspaceRoleResponse struct {
 
 // CurrentOrganizationResponse represents current enterprise information
 type CurrentOrganizationResponse struct {
-	ID               string                   `json:"id"`
-	Name             string                   `json:"name"`
-	ShortName        *string                  `json:"short_name"`
-	Status           model.OrganizationStatus `json:"status"`
-	CreatedAt        int64                    `json:"created_at"`
-	OrganizationRole model.OrganizationRole   `json:"organization_role"`
+	ID                     string                       `json:"id"`
+	Name                   string                       `json:"name"`
+	ShortName              *string                      `json:"short_name"`
+	Status                 model.OrganizationStatus     `json:"status"`
+	BillingDisplayCurrency model.BillingDisplayCurrency `json:"billing_display_currency"`
+	USDToCNYRate           float64                      `json:"usd_to_cny_rate"`
+	CreatedAt              int64                        `json:"created_at"`
+	OrganizationRole       model.OrganizationRole       `json:"organization_role"`
 }
 
 // CurrentOrganizationDetailResponse represents detailed current enterprise information
@@ -278,15 +284,16 @@ type CreateOrganizationWithWorkspaceRequest struct {
 
 // UpdateOrganizationRequest represents the request to update an enterprise group
 type UpdateOrganizationRequest struct {
-	Name      string  `json:"name" binding:"required"`
-	ShortName *string `json:"short_name,omitempty"`
+	Name                   string                        `json:"name" binding:"required"`
+	ShortName              *string                       `json:"short_name,omitempty"`
+	BillingDisplayCurrency *model.BillingDisplayCurrency `json:"billing_display_currency,omitempty"`
+	USDToCNYRate           *float64                      `json:"usd_to_cny_rate,omitempty"`
 }
 
 // AddWorkspaceToOrganizationRequest represents the request to add a tenant to enterprise
 type AddWorkspaceToOrganizationRequest struct {
 	OrganizationID string  `json:"organization_id" binding:"required"`
 	WorkspaceID    string  `json:"workspace_id" binding:"required"`
-	DepartmentID   *string `json:"department_id,omitempty"`
 	APIKeyID       *string `json:"api_key_id,omitempty"`
 }
 
@@ -402,10 +409,17 @@ type GroupPermissionDefinitionResponse struct {
 type WorkspaceRoleSummary struct {
 	ID              string                          `json:"id"`
 	Name            string                          `json:"name"`
+	NameI18n        *LocalizedString                `json:"name_i18n,omitempty"`
 	Description     *string                         `json:"description,omitempty"`
 	DescriptionI18n *LocalizedString                `json:"description_i18n,omitempty"`
 	Builtin         bool                            `json:"builtin"`
 	Editable        bool                            `json:"editable"`
+	Deletable       bool                            `json:"deletable"`
+	Applicable      bool                            `json:"applicable"`
+	FixedGovernance bool                            `json:"fixed_governance"`
+	RoleKind        string                          `json:"role_kind"`
+	SystemKey       *string                         `json:"system_key,omitempty"`
+	TemplateOrigin  string                          `json:"template_origin,omitempty"`
 	Status          model.WorkspaceCustomRoleStatus `json:"status"`
 	Permissions     []string                        `json:"permissions"`
 	MemberCount     int64                           `json:"member_count"`
@@ -459,15 +473,61 @@ type UpdateWorkspaceRolePermissionsRequest struct {
 	OperatorID     string   `json:"-"`
 }
 
+type ApplyWorkspaceRoleTemplateTarget struct {
+	WorkspaceID string `json:"workspace_id" binding:"required"`
+	AccountID   string `json:"account_id" binding:"required"`
+}
+
+type ApplyWorkspaceRoleTemplateRequest struct {
+	OrganizationID string                             `json:"organization_id"`
+	RoleID         string                             `json:"role_id"`
+	OperatorID     string                             `json:"-"`
+	Members        []ApplyWorkspaceRoleTemplateTarget `json:"members" binding:"required"`
+}
+
+type ApplyWorkspaceRoleTemplateResult struct {
+	WorkspaceID string `json:"workspace_id"`
+	AccountID   string `json:"account_id"`
+	Status      string `json:"status"`
+	Message     string `json:"message,omitempty"`
+}
+
+type ApplyWorkspaceRoleTemplateResponse struct {
+	AppliedCount int                                `json:"applied_count"`
+	FailedCount  int                                `json:"failed_count"`
+	Results      []ApplyWorkspaceRoleTemplateResult `json:"results"`
+}
+
+type ReplaceWorkspaceRoleTemplateRequest struct {
+	OrganizationID    string `json:"organization_id"`
+	RoleID            string `json:"role_id"`
+	ReplacementRoleID string `json:"replacement_role_id" binding:"required"`
+	OperatorID        string `json:"-"`
+}
+
+type ReplaceWorkspaceRoleTemplateResponse struct {
+	ReplacedCount int                                `json:"replaced_count"`
+	FailedCount   int                                `json:"failed_count"`
+	Deleted       bool                               `json:"deleted"`
+	Results       []ApplyWorkspaceRoleTemplateResult `json:"results"`
+}
+
 // OrganizationRoleDetailResponse represents role detail
 type OrganizationRoleDetailResponse struct {
 	ID              string                          `json:"id"`
 	OrganizationID  string                          `json:"organization_id"`
 	Name            string                          `json:"name"`
+	NameI18n        *LocalizedString                `json:"name_i18n,omitempty"`
 	Description     *string                         `json:"description,omitempty"`
 	DescriptionI18n *LocalizedString                `json:"description_i18n,omitempty"`
 	Builtin         bool                            `json:"builtin"`
 	Editable        bool                            `json:"editable"`
+	Deletable       bool                            `json:"deletable"`
+	Applicable      bool                            `json:"applicable"`
+	FixedGovernance bool                            `json:"fixed_governance"`
+	RoleKind        string                          `json:"role_kind"`
+	SystemKey       *string                         `json:"system_key,omitempty"`
+	TemplateOrigin  string                          `json:"template_origin,omitempty"`
 	Status          model.WorkspaceCustomRoleStatus `json:"status"`
 	Permissions     []string                        `json:"permissions"`
 }
@@ -482,12 +542,14 @@ type GroupRoleMembersResponse = OrganizationRoleMembersResponse
 type GroupRoleDetailResponse = OrganizationRoleDetailResponse
 
 type MemberWorkspacePermission struct {
-	WorkspaceID   string   `json:"workspace_id"`
-	WorkspaceName string   `json:"workspace_name"`
-	Role          string   `json:"role"`
-	RoleID        *string  `json:"role_id,omitempty"`
-	RoleName      string   `json:"role_name"`
-	Permissions   []string `json:"permissions"`
+	WorkspaceID              string                                `json:"workspace_id"`
+	WorkspaceName            string                                `json:"workspace_name"`
+	Role                     string                                `json:"role"`
+	RoleID                   *string                               `json:"role_id,omitempty"`
+	RoleName                 string                                `json:"role_name"`
+	Permissions              []string                              `json:"permissions"`
+	PermissionSource         model.WorkspaceMemberPermissionSource `json:"permission_source"`
+	PermissionTemplateRoleID *string                               `json:"permission_template_role_id,omitempty"`
 }
 
 // MemberPermissionsResponse represents member effective permissions
@@ -499,15 +561,17 @@ type MemberPermissionsResponse struct {
 }
 
 type WorkspaceMemberPermissionsResponse struct {
-	OrganizationID    string   `json:"organization_id"`
-	WorkspaceID       string   `json:"workspace_id"`
-	WorkspaceName     string   `json:"workspace_name"`
-	AccountID         string   `json:"account_id"`
-	OrganizationRole  string   `json:"organization_role"`
-	WorkspaceRole     string   `json:"workspace_role"`
-	WorkspaceRoleID   *string  `json:"workspace_role_id"`
-	WorkspaceRoleName string   `json:"workspace_role_name"`
-	Permissions       []string `json:"permissions"`
+	OrganizationID           string                                `json:"organization_id"`
+	WorkspaceID              string                                `json:"workspace_id"`
+	WorkspaceName            string                                `json:"workspace_name"`
+	AccountID                string                                `json:"account_id"`
+	OrganizationRole         string                                `json:"organization_role"`
+	WorkspaceRole            string                                `json:"workspace_role"`
+	WorkspaceRoleID          *string                               `json:"workspace_role_id"`
+	WorkspaceRoleName        string                                `json:"workspace_role_name"`
+	Permissions              []string                              `json:"permissions"`
+	PermissionSource         model.WorkspaceMemberPermissionSource `json:"permission_source"`
+	PermissionTemplateRoleID *string                               `json:"permission_template_role_id,omitempty"`
 }
 
 // UpdateOrganizationMemberStatusRequest represents the request to update member status

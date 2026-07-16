@@ -2,9 +2,11 @@ package handler_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -37,16 +39,84 @@ func TestLLMAPIKeyAuthMiddlewareRejectsConflictingHeaders(t *testing.T) {
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want %d; body = %s", rec.Code, http.StatusUnauthorized, rec.Body.String())
 	}
+	var body struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body.Error.Code != "invalid_api_key" {
+		t.Fatalf("error.code = %q, want invalid_api_key; body = %s", body.Error.Code, rec.Body.String())
+	}
+}
+
+func TestLLMAPIKeyAuthMiddlewareDoesNotExposeRepositoryErrors(t *testing.T) {
+	router := gatewayAuthTestRouter("sk-test")
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	req.Header.Set("Authorization", "Bearer sk-invalid")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want %d; body = %s", rec.Code, http.StatusUnauthorized, rec.Body.String())
+	}
+	if got := rec.Body.String(); got == "" || containsAny(got, "invalid key", "record not found") {
+		t.Fatalf("body exposes repository error: %s", got)
+	}
+}
+
+func TestLLMAPIKeyAuthMiddlewareUsesAnthropicErrorShape(t *testing.T) {
+	router := gatewayAuthTestRouter("sk-test")
+
+	req := httptest.NewRequest(http.MethodPost, "/anthropic/v1/messages", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want %d; body = %s", rec.Code, http.StatusUnauthorized, rec.Body.String())
+	}
+	var body struct {
+		Type      string `json:"type"`
+		RequestID string `json:"request_id"`
+		Error     struct {
+			Type string `json:"type"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body.Type != "error" || body.Error.Type != "authentication_error" || body.RequestID != "req-test" {
+		t.Fatalf("unexpected Anthropic error body: %s", rec.Body.String())
+	}
 }
 
 func gatewayAuthTestRouter(apiKey string) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	router.Use(gatewayhandler.LLMAPIKeyAuthMiddleware(fakeAPIKeyRepo{apiKey: apiKey}))
-	router.GET("/protected", func(c *gin.Context) {
-		c.Status(http.StatusNoContent)
+	router.Use(func(c *gin.Context) {
+		c.Set("request_id", "req-test")
+		c.Header("X-Request-ID", "req-test")
+		c.Next()
 	})
+	router.Use(gatewayhandler.LLMAPIKeyAuthMiddleware(fakeAPIKeyRepo{apiKey: apiKey}))
+	for _, path := range []string{"/protected", "/v1/models", "/anthropic/v1/messages"} {
+		router.Any(path, func(c *gin.Context) {
+			c.Status(http.StatusNoContent)
+		})
+	}
 	return router
+}
+
+func containsAny(value string, candidates ...string) bool {
+	for _, candidate := range candidates {
+		if strings.Contains(value, candidate) {
+			return true
+		}
+	}
+	return false
 }
 
 type fakeAPIKeyRepo struct {

@@ -1,3 +1,6 @@
+//go:build legacy_aichat_service
+// +build legacy_aichat_service
+
 package service
 
 import (
@@ -20,6 +23,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"github.com/zgiai/zgi/api/internal/modules/tools"
 	"github.com/zgiai/zgi/api/internal/modules/tools/builtin/calculator"
+	filetools "github.com/zgiai/zgi/api/internal/modules/tools/builtin/files"
 	"github.com/zgiai/zgi/api/pkg/response"
 )
 
@@ -338,6 +342,150 @@ Write concise briefs.
 	}
 	if fakeLLM.appChatCalls != 2 {
 		t.Fatalf("AppChat calls = %d, want 2", fakeLLM.appChatCalls)
+	}
+}
+
+func TestRunPreparedSkillStreamGuardsConsoleFilesListUntilToolRuns(t *testing.T) {
+	catalogDir := t.TempDir()
+	writeTestSkill(t, catalogDir, skills.SkillFileReader, `---
+name: file-reader
+description: Read files visible on the current Files page.
+when_to_use: Use when listing or reading files from the current Files page.
+provider_type: builtin
+provider_id: files
+runtime_type: tool
+tools:
+  - list_visible_files
+---
+
+# File Reader
+
+Use list_visible_files before answering visible-file list questions.
+`)
+	fakeLLM := &fakeAgenticLLMClient{
+		appChatResponses: []*adapter.ChatResponse{
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{
+						Role:    "assistant",
+						Content: "You have notes.txt and budget.xlsx.",
+					},
+				}},
+			},
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{
+						Role: "assistant",
+						ToolCalls: []adapter.ToolCall{{
+							ID:   "call_load",
+							Type: "function",
+							Function: adapter.FunctionCall{
+								Name:      skills.MetaToolLoadSkill,
+								Arguments: `{"skill_id":"file-reader"}`,
+							},
+						}},
+					},
+				}},
+			},
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{
+						Role: "assistant",
+						ToolCalls: []adapter.ToolCall{
+							testSkillToolCall("call_list", skills.SkillFileReader, "list_visible_files", map[string]interface{}{}),
+						},
+					},
+				}},
+			},
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{
+						Role:    "assistant",
+						Content: "You have 2 visible files: notes.txt and budget.xlsx.",
+					},
+				}},
+			},
+		},
+	}
+	manager := tools.NewToolManager(nil)
+	if err := manager.RegisterProvider(filetools.NewProvider(nil, nil, nil)); err != nil {
+		t.Fatalf("register files provider: %v", err)
+	}
+	svc := &service{
+		repos: &repository.Repositories{
+			Message:     &recordingMessageRepository{},
+			CustomSkill: &fakeCustomSkillRepository{items: map[string]*aichatmodel.CustomSkill{}},
+		},
+		llmClient:    fakeLLM,
+		events:       newStreamEventStore(nil),
+		skillRuntime: skills.NewRuntimeWithCatalog(tools.NewToolEngine(manager), manager, catalogDir),
+	}
+	workspaceID := uuid.New()
+	operationContext := governanceTestOperationContext([]governanceTestFile{
+		{ID: "file-1", Name: "notes.txt", Extension: "txt"},
+		{ID: "file-2", Name: "budget.xlsx", Extension: "xlsx"},
+	}, workspaceID.String())
+	prepared := &PreparedChat{
+		Conversation: &aichatmodel.Conversation{
+			ID:             uuid.New(),
+			OrganizationID: uuid.New(),
+			AccountID:      uuid.New(),
+		},
+		Message: &aichatmodel.Message{
+			ID:       uuid.New(),
+			Metadata: map[string]interface{}{},
+		},
+		LLMRequest: &adapter.ChatRequest{
+			Messages: []adapter.Message{{Role: "user", Content: "what files are visible?"}},
+		},
+		Scope: Scope{
+			OrganizationID: uuid.New(),
+			AccountID:      uuid.New(),
+			WorkspaceID:    &workspaceID,
+		},
+		parts: &chatRequestParts{
+			Query:               "what files are visible?",
+			RuntimeContext:      "Page /console/files with console.files visible file context.",
+			RawOperationContext: operationContext,
+			OperationContext:    operationContext,
+			SkillMode:           skillModeAuto,
+			SkillIDs:            []string{skills.SkillFileReader},
+		},
+	}
+
+	answer, _, err := svc.runPreparedSkillStream(context.Background(), context.Background(), prepared, nil, nil)
+	if err != nil {
+		t.Fatalf("runPreparedSkillStream() error = %v", err)
+	}
+	if answer != "You have 2 visible files: notes.txt and budget.xlsx." {
+		t.Fatalf("answer = %q, want final answer after list_visible_files", answer)
+	}
+	if fakeLLM.appChatCalls != 4 {
+		t.Fatalf("AppChat calls = %d, want direct answer, guard replan, tool call, final answer", fakeLLM.appChatCalls)
+	}
+	if len(fakeLLM.appChatRequests) != 4 {
+		t.Fatalf("recorded AppChat requests = %d, want 4", len(fakeLLM.appChatRequests))
+	}
+	if !requestContainsText(fakeLLM.appChatRequests[1], "Runtime guardrail feedback") ||
+		!requestContainsText(fakeLLM.appChatRequests[1], "list_visible_files") {
+		t.Fatalf("second planning request missing guard feedback: %#v", fakeLLM.appChatRequests[1].Messages)
+	}
+	if !requestContainsText(fakeLLM.appChatRequests[3], `"count":2`) ||
+		!requestContainsText(fakeLLM.appChatRequests[3], "notes.txt") ||
+		!requestContainsText(fakeLLM.appChatRequests[3], "budget.xlsx") {
+		t.Fatalf("final planning request missing list_visible_files tool result: %#v", fakeLLM.appChatRequests[3].Messages)
+	}
+	if guardrails, ok := intValue(prepared.Message.Metadata["guardrail_count"]); !ok || guardrails != 1 {
+		t.Fatalf("guardrail_count = %#v, want 1", prepared.Message.Metadata["guardrail_count"])
+	}
+	if toolsUsed, ok := intValue(prepared.Message.Metadata["tool_call_count"]); !ok || toolsUsed != 1 {
+		t.Fatalf("tool_call_count = %#v, want 1", prepared.Message.Metadata["tool_call_count"])
+	}
+	if !metadataHasInvocation(prepared.Message.Metadata, "guardrail", skills.SkillFileReader, "list_visible_files") {
+		t.Fatalf("skill_invocations = %#v, want final-answer guardrail", prepared.Message.Metadata["skill_invocations"])
+	}
+	if !metadataHasInvocation(prepared.Message.Metadata, "tool_call", skills.SkillFileReader, "list_visible_files") {
+		t.Fatalf("skill_invocations = %#v, want list_visible_files tool call", prepared.Message.Metadata["skill_invocations"])
 	}
 }
 
@@ -2151,6 +2299,39 @@ func containsString(values []string, target string) bool {
 	return false
 }
 
+func requestContainsText(req *adapter.ChatRequest, needle string) bool {
+	if req == nil || strings.TrimSpace(needle) == "" {
+		return false
+	}
+	for _, message := range req.Messages {
+		if strings.Contains(fmt.Sprint(message.Content), needle) ||
+			strings.Contains(message.ReasoningContent, needle) ||
+			strings.Contains(message.ToolCallID, needle) {
+			return true
+		}
+		for _, call := range message.ToolCalls {
+			if strings.Contains(call.Function.Name, needle) ||
+				strings.Contains(call.Function.Arguments, needle) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func metadataHasInvocation(metadata map[string]interface{}, kind string, skillID string, toolName string) bool {
+	invocations, _ := metadata["skill_invocations"].([]interface{})
+	for _, item := range invocations {
+		invocation, _ := item.(map[string]interface{})
+		if invocation["kind"] == kind &&
+			invocation["skill_id"] == skillID &&
+			invocation["tool_name"] == toolName {
+			return true
+		}
+	}
+	return false
+}
+
 type fakeAgenticLLMClient struct {
 	appChatResponses       []*adapter.ChatResponse
 	appChatRequests        []*adapter.ChatRequest
@@ -2244,4 +2425,35 @@ func (f *fakeAgenticLLMClient) AppCreateImage(ctx context.Context, appCtx *llmcl
 
 func (f *fakeAgenticLLMClient) AppRerank(ctx context.Context, appCtx *llmclient.AppContext, req *adapter.RerankRequest) (*adapter.RerankResponse, error) {
 	return nil, errors.New("not implemented")
+}
+
+func TestCollectStreamAnswerPreservesReasoningContent(t *testing.T) {
+	svc := &service{streams: newStreamRegistry()}
+	prepared := &PreparedChat{
+		Conversation: &aichatmodel.Conversation{ID: uuid.New()},
+		Message:      &aichatmodel.Message{ID: uuid.New(), Metadata: map[string]interface{}{"existing": "keep"}},
+	}
+	stream := make(chan adapter.StreamResponse, 3)
+	stream <- adapter.StreamResponse{Choices: []adapter.StreamChoice{{Delta: adapter.Message{Role: "assistant", ReasoningContent: "think"}}}}
+	stream <- adapter.StreamResponse{Choices: []adapter.StreamChoice{{Delta: adapter.Message{Role: "assistant", Content: "answer"}}}}
+	stream <- adapter.StreamResponse{Done: true}
+	close(stream)
+
+	var chunks []string
+	answer, _, err := svc.collectStreamAnswer(context.Background(), prepared, stream, func(text string) error {
+		chunks = append(chunks, text)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("collectStreamAnswer() error = %v", err)
+	}
+	if answer != "answer" {
+		t.Fatalf("answer = %q, want answer", answer)
+	}
+	if got := prepared.Message.Metadata["reasoning_content"]; got != "think" {
+		t.Fatalf("reasoning_content metadata = %#v, want think", got)
+	}
+	if got := strings.Join(chunks, ""); got != "answer" {
+		t.Fatalf("streamed chunks = %q, want answer", got)
+	}
 }

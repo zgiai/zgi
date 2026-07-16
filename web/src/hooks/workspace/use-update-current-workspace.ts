@@ -4,7 +4,14 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { accountService } from '@/services/account.service';
 import { useWorkspaceStore, type Workspace } from '@/store/workspace-store';
 import { useAuthStore } from '@/store/auth-store';
-import { AGENT_KEYS, DATASET_KEYS, DB_KEYS, PROMPT_KEYS, WORKSPACE_KEYS } from '@/hooks/query-keys';
+import {
+  AGENT_KEYS,
+  DATASET_KEYS,
+  DB_KEYS,
+  PROFILE_KEYS,
+  PROMPT_KEYS,
+  WORKSPACE_KEYS,
+} from '@/hooks/query-keys';
 import { sessionManager } from '@/lib/auth/session-manager';
 import { clearProfileClientCache } from '@/utils/client-cache';
 
@@ -22,6 +29,7 @@ export function useUpdateCurrentWorkspace() {
   return useMutation({
     mutationFn: async (workspace: Workspace) => {
       return accountService.updateContext({
+        mode: 'workspace',
         current_workspace_id: workspace.id,
       });
     },
@@ -45,6 +53,7 @@ export function useUpdateCurrentWorkspace() {
       queryClient.removeQueries({ queryKey: PROMPT_KEYS.details() });
       // Refresh workspace-scoped resources so views don't keep showing data from the previous workspace.
       await Promise.all([
+        queryClient.invalidateQueries({ queryKey: PROFILE_KEYS.capabilities() }),
         queryClient.invalidateQueries({ queryKey: WORKSPACE_KEYS.all }),
         queryClient.invalidateQueries({ queryKey: AGENT_KEYS.all }),
         queryClient.invalidateQueries({ queryKey: DATASET_KEYS.all }),
@@ -53,6 +62,7 @@ export function useUpdateCurrentWorkspace() {
       ]);
       sessionManager.broadcastContextChanged({
         currentWorkspaceId: workspace.id,
+        mode: 'workspace',
       });
     },
     onError: (error, _workspace, context) => {

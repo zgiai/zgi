@@ -64,15 +64,5 @@ func (h *AgentsHandler) runPreparedAgentStream(c *gin.Context, prepared *runtime
 		})
 		return
 	}
-	if agentWorkflowContinuationWaiting(result.Metadata) {
-		return
-	}
-	_ = writeAgentSSE(c, "message_end", gin.H{
-		"conversation_id": prepared.Conversation.ID.String(),
-		"message_id":      prepared.Message.ID.String(),
-		"status":          runtimemodel.MessageStatusCompleted,
-		"metadata": gin.H{
-			"usage": result.Metadata["usage"],
-		},
-	})
+	writeAgentChatEnd(c, prepared, result)
 }

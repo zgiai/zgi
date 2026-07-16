@@ -8,7 +8,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/nodes/calldatabase"
 )
 
-const AppType = "agent"
+const AppType = "workflow"
 
 // ModelSection captures the model configuration selected by the user.
 type ModelSection struct {

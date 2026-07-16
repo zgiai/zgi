@@ -13,11 +13,26 @@ import { getCategoryColorMap } from '@/components/datasets/knowledge-graph/utils
 import type { GraphNode } from '@/services/types/dataset';
 import type { KnowledgeGraphHandle } from '@/components/datasets/knowledge-graph';
 import { cn } from '@/lib/utils';
+import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
+import {
+  PermissionDeniedState,
+  PermissionLoadingState,
+} from '@/components/common/permission-gate-state';
+import { KNOWLEDGE_BASE_PERMISSION_ACTIONS } from '@/constants/permissions';
 
 export default function DatasetGraphPage() {
   const { datasetId } = useParams<{ datasetId: string }>();
-  const { data: datasetData, isLoading: _isDatasetLoading } = useDataset(datasetId);
-  const { data: graphData, isLoading: isGraphLoading } = useDatasetGraph(datasetId);
+  const { hasAnyPermission, isLoading: isPermissionsLoading } = useAccountPermissions();
+  const canViewGraph = hasAnyPermission([
+    ...KNOWLEDGE_BASE_PERMISSION_ACTIONS.graphView,
+    ...KNOWLEDGE_BASE_PERMISSION_ACTIONS.graphManage,
+  ]);
+  const { data: datasetData, isLoading: _isDatasetLoading } = useDataset(datasetId, {
+    enabled: canViewGraph,
+  });
+  const { data: graphData, isLoading: isGraphLoading } = useDatasetGraph(datasetId, {
+    enabled: canViewGraph,
+  });
   const t = useT('datasets');
   const [selectedNode, setSelectedNode] = React.useState<GraphNode | null>(null);
   const [searchQuery, setSearchQuery] = React.useState('');
@@ -111,6 +126,14 @@ export default function DatasetGraphPage() {
   //     </div>
   //   );
   // }
+
+  if (isPermissionsLoading) {
+    return <PermissionLoadingState />;
+  }
+
+  if (!canViewGraph) {
+    return <PermissionDeniedState />;
+  }
 
   return (
     <div className="flex flex-col h-full p-6 gap-6">

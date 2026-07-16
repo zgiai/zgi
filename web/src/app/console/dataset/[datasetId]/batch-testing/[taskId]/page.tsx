@@ -13,19 +13,30 @@ import { useDataset } from '@/hooks/dataset/use-datasets';
 import { RetrievalDetailDialog } from '@/components/datasets/batch-testing/components/retrieval-detail-dialog';
 import type { ResultElement } from '@/components/datasets/batch-testing/type';
 import { withBasePath } from '@/lib/config';
+import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
+import {
+  PermissionDeniedState,
+  PermissionLoadingState,
+} from '@/components/common/permission-gate-state';
+import { KNOWLEDGE_BASE_PERMISSION_ACTIONS } from '@/constants/permissions';
 
 export default function BatchTestingReportPage() {
   const t = useT();
   const { datasetId, taskId } = useParams<{ datasetId: string; taskId: string }>();
+  const { hasAnyPermission, isLoading: isPermissionsLoading } = useAccountPermissions();
+  const canUseRetrievalTest = hasAnyPermission(KNOWLEDGE_BASE_PERMISSION_ACTIONS.retrievalTest);
   const [selectedResult, setSelectedResult] = useState<ResultElement | null>(null);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
 
-  const { data: report, isLoading: isReportLoading } = useBatchHitTestingReport(datasetId, taskId);
+  const { data: report, isLoading: isReportLoading } = useBatchHitTestingReport(datasetId, taskId, {
+    enabled: canUseRetrievalTest,
+  });
   const { data: statusData, isLoading: isStatusLoading } = useBatchHitTestingStatus(
     datasetId,
-    taskId
+    taskId,
+    { enabled: canUseRetrievalTest }
   );
-  const { data: datasetData } = useDataset(datasetId);
+  const { data: datasetData } = useDataset(datasetId, { enabled: canUseRetrievalTest });
   const dataset = datasetData?.data;
 
   const handleViewDetail = useCallback((result: ResultElement) => {
@@ -107,6 +118,14 @@ export default function BatchTestingReportPage() {
     const url = withBasePath(`/console/dataset/${datasetId}/batch-testing?taskId=${taskId}`);
     window.location.href = url;
   }, [datasetId, taskId]);
+
+  if (isPermissionsLoading) {
+    return <PermissionLoadingState />;
+  }
+
+  if (!canUseRetrievalTest) {
+    return <PermissionDeniedState />;
+  }
 
   return (
     <div className="p-6 space-y-6 bg-gray-50 h-full">

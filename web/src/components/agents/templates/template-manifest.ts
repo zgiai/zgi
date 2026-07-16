@@ -75,13 +75,6 @@ export const AGENT_TEMPLATES: AgentTemplate[] = [
         fallbackTitle: 'Enterprise Assistant Answer',
       },
     ],
-    defaultPromptBindings: [
-      {
-        nodeIds: ['llm_node'],
-        promptIdsByLocale: OFFICIAL_PROMPTS.enterpriseAssistant,
-        fallbackTitle: 'Enterprise Assistant Answer',
-      },
-    ],
   },
   {
     id: 'support-triage-chatflow',
@@ -103,13 +96,6 @@ export const AGENT_TEMPLATES: AgentTemplate[] = [
         fallbackTitle: 'Service Request Triage Classifier',
       },
     ],
-    defaultPromptBindings: [
-      {
-        nodeIds: ['route_llm'],
-        promptIdsByLocale: OFFICIAL_PROMPTS.supportTriage,
-        fallbackTitle: 'Service Request Triage Classifier',
-      },
-    ],
   },
   {
     id: 'meeting-summary-chatflow',
@@ -127,13 +113,6 @@ export const AGENT_TEMPLATES: AgentTemplate[] = [
     iconLabel: 'MS',
     recommendedPrompts: [
       {
-        promptIdsByLocale: OFFICIAL_PROMPTS.meetingSummary,
-        fallbackTitle: 'Meeting Summary Action Items',
-      },
-    ],
-    defaultPromptBindings: [
-      {
-        nodeIds: ['llm_node'],
         promptIdsByLocale: OFFICIAL_PROMPTS.meetingSummary,
         fallbackTitle: 'Meeting Summary Action Items',
       },
@@ -231,13 +210,6 @@ export const AGENT_TEMPLATES: AgentTemplate[] = [
     iconLabel: 'CS',
     recommendedPrompts: [
       {
-        promptIdsByLocale: OFFICIAL_PROMPTS.supportTriage,
-        fallbackTitle: 'Service Request Triage Classifier',
-      },
-    ],
-    defaultPromptBindings: [
-      {
-        nodeIds: ['triage_llm', 'classify_llm', 'route_llm'],
         promptIdsByLocale: OFFICIAL_PROMPTS.supportTriage,
         fallbackTitle: 'Service Request Triage Classifier',
       },

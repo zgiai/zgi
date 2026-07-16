@@ -4,9 +4,31 @@ import (
 	"context"
 	"testing"
 
+	workflowfile "github.com/zgiai/zgi/api/internal/modules/app/workflow/file"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine/entities"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/shared"
 )
+
+type recordingContentExtractor struct {
+	lastScope workflowfile.ContentExtractionScope
+}
+
+func (e *recordingContentExtractor) ExtractFileContent(context.Context, string, workflowfile.ContentExtractionScope) (*workflowfile.FileContent, error) {
+	return nil, nil
+}
+
+func (e *recordingContentExtractor) ExtractMultipleFiles(context.Context, []string, workflowfile.ContentExtractionScope) ([]*workflowfile.FileContent, error) {
+	return nil, nil
+}
+
+func (e *recordingContentExtractor) ProcessFileVariable(_ context.Context, variableName string, fileData map[string]interface{}, scope workflowfile.ContentExtractionScope) (map[string]interface{}, error) {
+	e.lastScope = scope
+	return map[string]interface{}{variableName: fileData, variableName + "_content": "content"}, nil
+}
+
+func (e *recordingContentExtractor) ProcessFileListVariable(context.Context, string, []interface{}, workflowfile.ContentExtractionScope) (map[string]interface{}, error) {
+	return nil, nil
+}
 
 func TestStartNode_New(t *testing.T) {
 	config := map[string]any{
@@ -34,7 +56,9 @@ func TestStartNode_New(t *testing.T) {
 	}
 
 	graphInitParams := entities.GraphInitParams{
-		OrganizationID: "test-tenant",
+		TenantID:       "workspace-1",
+		WorkspaceID:    "workspace-1",
+		OrganizationID: "organization-1",
 		AppID:          "test-app",
 		WorkflowType:   entities.WorkflowTypeWorkflow,
 		WorkflowID:     "test-workflow",
@@ -69,7 +93,8 @@ func TestStartNode_New(t *testing.T) {
 		VariablePool: variablePool,
 	}
 
-	node, err := New("instance-1", config, graphInitParams, graph, graphRuntimeState, nil)
+	extractor := &recordingContentExtractor{}
+	node, err := New("instance-1", config, graphInitParams, graph, graphRuntimeState, nil, extractor)
 	if err != nil {
 		t.Fatalf("Failed to create start node: %v", err)
 	}
@@ -83,6 +108,17 @@ func TestStartNode_New(t *testing.T) {
 
 	if startNode.NodeType != shared.Start {
 		t.Errorf("Expected node type Start, got %v", startNode.NodeType)
+	}
+	if startNode.OrganizationID != "organization-1" || startNode.WorkspaceID != "workspace-1" {
+		t.Errorf("Expected workflow scope organization-1/workspace-1, got %s/%s", startNode.OrganizationID, startNode.WorkspaceID)
+	}
+	if _, err := startNode.processFileWithContent(context.Background(), "file_input", map[string]interface{}{
+		"upload_file_id": "file-1",
+	}); err != nil {
+		t.Fatalf("processFileWithContent() error = %v", err)
+	}
+	if extractor.lastScope.OrganizationID != "organization-1" || extractor.lastScope.WorkspaceID != "workspace-1" {
+		t.Fatalf("content extraction scope = %#v, want workflow organization and workspace", extractor.lastScope)
 	}
 
 	// Verify variable parsing

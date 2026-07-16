@@ -616,8 +616,13 @@ const MarkdownViewer: React.FC<MarkdownViewerProps> = ({
           table({ children, ...rest }) {
             const cls = getClassName(rest);
             return (
-              <div className="my-3 max-w-full min-w-0 overflow-x-auto rounded-lg border border-border">
-                <Table className={cn('min-w-full text-sm', cls)}>{children}</Table>
+              <div className="md-table-wrapper">
+                <Table
+                  className={cn('min-w-full w-max text-sm', cls)}
+                  containerClassName="min-w-full w-max max-w-none overflow-visible"
+                >
+                  {children}
+                </Table>
               </div>
             );
           },

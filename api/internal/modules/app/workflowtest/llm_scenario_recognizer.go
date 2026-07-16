@@ -47,7 +47,7 @@ func (r *LLMScenarioRecognizer) RecognizeScenarios(ctx context.Context, req Scen
 		WorkspaceID:        r.WorkspaceID,
 		BillingSubjectType: llmclient.BillingSubjectTypeWorkspace,
 		AppID:              r.AgentID,
-		AppType:            "agent",
+		AppType:            "workflow",
 		AccountID:          r.AccountID,
 	}, chatReq)
 	if err != nil {

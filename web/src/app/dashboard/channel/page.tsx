@@ -15,6 +15,8 @@ import ChannelDialog from '@/components/channel/channel-dialog';
 import ChannelConnectivityDialog from '@/components/channel/channel-connectivity-dialog';
 import ModelsDialog from '@/components/channel/models-dialog';
 import ChannelWalletAdjustDialog from '@/components/channel/channel-wallet-adjust-dialog';
+import { ChannelUpstreamStatus } from '@/components/channel/channel-upstream-status';
+import { ChannelUpstreamSettingsDialog } from '@/components/channel/channel-upstream-settings-dialog';
 import OfficialChannelGroup from '@/components/channel/official-channel-group';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import {
@@ -36,12 +38,22 @@ import {
   Info,
   Wallet,
   Search,
+  RefreshCw,
+  BellRing,
 } from 'lucide-react';
-import { useChannels, useUpdateChannel, useDeleteChannel } from '@/hooks';
+import {
+  useChannels,
+  useUpdateChannel,
+  useDeleteChannel,
+  useCheckChannelUpstreamState,
+  useRetryChannelUpstreamState,
+} from '@/hooks';
 import type { ChannelDetail, ChannelItem } from '@/services/types/channel';
 import { IS_CLOUD } from '@/lib/config';
 import { formatChannelCreditPoints, formatChannelCreditUsd } from '@/utils/ai-credits';
 import { getChannelProviderOption } from '@/components/channel/channel-provider-selector';
+import { cn } from '@/lib/utils';
+import { useOrganizations } from '@/hooks/organization/use-organizations';
 
 function getChannelModelsCount(channel: ChannelItem): number {
   return Array.isArray(channel.models) ? channel.models.length : 0;
@@ -88,6 +100,8 @@ function ChannelPageContent(): JSX.Element {
   const [walletAdjustChannel, setWalletAdjustChannel] = useState<
     ChannelDetail | ChannelItem | null
   >(null);
+  const [upstreamSettingsOpen, setUpstreamSettingsOpen] = useState(false);
+  const [upstreamSettingsChannel, setUpstreamSettingsChannel] = useState<ChannelItem | null>(null);
 
   // Default page size is 20
   const pageSize = 20;
@@ -104,6 +118,12 @@ function ChannelPageContent(): JSX.Element {
 
   const { updateChannel } = useUpdateChannel();
   const { deleteChannel, isDeleting } = useDeleteChannel();
+  const { checkUpstreamState, checkingChannelId } = useCheckChannelUpstreamState();
+  const { retryUpstreamState, retryingChannelId } = useRetryChannelUpstreamState();
+  const { currentOrganization } = useOrganizations();
+  const canManageUpstream = ['owner', 'admin'].includes(
+    currentOrganization?.organization_role ?? ''
+  );
 
   const createQueryString = useCallback(
     (updates: Record<string, string | number | undefined>) => {
@@ -349,19 +369,10 @@ function ChannelPageContent(): JSX.Element {
                                   <Ellipsis className="h-4 w-4" />
                                 </Button>
                               </DropdownMenuTrigger>
-                              <DropdownMenuContent align="end" className="w-36">
+                              <DropdownMenuContent align="end" className="w-48">
                                 <DropdownMenuItem onClick={() => openEdit(ch as ChannelDetail)}>
                                   <Pencil className="h-4 w-4" />
                                   {t('actions.edit')}
-                                </DropdownMenuItem>
-                                <DropdownMenuItem
-                                  onClick={() => {
-                                    setConnectChannel(ch as ChannelDetail);
-                                    setConnectOpen(true);
-                                  }}
-                                >
-                                  <Activity className="h-4 w-4" />
-                                  {t('actions.testConnectivity')}
                                 </DropdownMenuItem>
                                 <DropdownMenuItem
                                   onClick={() => {
@@ -372,6 +383,53 @@ function ChannelPageContent(): JSX.Element {
                                   <Wallet className="h-4 w-4" />
                                   {t('walletAdjust.title')}
                                 </DropdownMenuItem>
+                                {canManageUpstream && (
+                                  <>
+                                    {(!ch.upstream_state ||
+                                      ch.upstream_state.balance_capability === 'unknown' ||
+                                      ch.upstream_state.balance_capability === 'supported') && (
+                                      <DropdownMenuItem
+                                        disabled={checkingChannelId === ch.id}
+                                        onClick={() => void checkUpstreamState(ch.id)}
+                                      >
+                                        <RefreshCw
+                                          className={cn(
+                                            'h-4 w-4',
+                                            checkingChannelId === ch.id && 'animate-spin'
+                                          )}
+                                        />
+                                        {t('upstream.refresh')}
+                                      </DropdownMenuItem>
+                                    )}
+                                    {ch.upstream_state?.balance_capability === 'unsupported' &&
+                                      ch.upstream_state.would_guard && (
+                                        <DropdownMenuItem
+                                          disabled={retryingChannelId === ch.id}
+                                          onClick={() => void retryUpstreamState(ch.id)}
+                                        >
+                                          <RefreshCw
+                                            className={cn(
+                                              'h-4 w-4',
+                                              retryingChannelId === ch.id && 'animate-spin'
+                                            )}
+                                          />
+                                          {t('upstream.retry')}
+                                        </DropdownMenuItem>
+                                      )}
+                                    {(ch.upstream_state?.balance_capability === 'supported' ||
+                                      (ch.upstream_state?.warning_thresholds?.length ?? 0) > 0) && (
+                                      <DropdownMenuItem
+                                        onClick={() => {
+                                          setUpstreamSettingsChannel(ch);
+                                          setUpstreamSettingsOpen(true);
+                                        }}
+                                      >
+                                        <BellRing className="h-4 w-4" />
+                                        {t('upstream.settingsAction')}
+                                      </DropdownMenuItem>
+                                    )}
+                                  </>
+                                )}
                                 <DropdownMenuItem
                                   variant="destructive"
                                   onClick={() => setConfirmId(ch.id)}
@@ -384,6 +442,11 @@ function ChannelPageContent(): JSX.Element {
                             </DropdownMenu>
                           </div>
                         </div>
+
+                        <ChannelUpstreamStatus
+                          state={ch.upstream_state}
+                          provider={getChannelProviderValue(ch)}
+                        />
 
                         <div className="grid grid-cols-2 gap-3 text-sm">
                           <div className="rounded-md border bg-muted/20 px-3 py-2">
@@ -538,6 +601,14 @@ function ChannelPageContent(): JSX.Element {
               }
             : null
         }
+      />
+      <ChannelUpstreamSettingsDialog
+        open={upstreamSettingsOpen}
+        onOpenChange={open => {
+          setUpstreamSettingsOpen(open);
+          if (!open) setUpstreamSettingsChannel(null);
+        }}
+        channel={upstreamSettingsChannel}
       />
     </div>
   );

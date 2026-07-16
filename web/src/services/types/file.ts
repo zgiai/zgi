@@ -55,7 +55,10 @@ export interface FileItem {
   extension: string;
   hash: string;
   id: string;
+  archived_at?: string | null;
+  archived_by?: string | null;
   is_favorite?: boolean;
+  is_archived?: boolean;
   key: string;
   mime_type: string;
   name: string;
@@ -89,6 +92,7 @@ export interface AllFilesResponse {
   limit: number;
   total: number;
   has_more: boolean;
+  processing_status_counts?: Partial<Record<FileAssetProductStatus | string, number>>;
 }
 
 export interface FileMetadataResponse {
@@ -176,6 +180,7 @@ export interface FileFolder {
   created_by: string;
   updated_at: string;
   updated_by: string | null;
+  file_count: number;
 }
 
 /**
@@ -183,6 +188,19 @@ export interface FileFolder {
  */
 export interface FileFoldersResponse {
   data: FileFolder[];
+}
+
+export interface DeleteFolderRequest {
+  confirm_folder_name?: string;
+}
+
+export interface DeleteFolderResponse {
+  result: 'success' | 'confirmation_required';
+  deleted?: boolean;
+  requires_confirmation?: boolean;
+  folder_name?: string;
+  file_count?: number;
+  folder_count?: number;
 }
 
 /**
@@ -269,12 +287,13 @@ export interface UpdateFolderResponse {
   updated_by: string;
 }
 
-/**
- * Move folder request
- */
-export interface MoveFolderRequest {
+export interface MoveFilesToFolderRequest {
+  file_ids: string[];
   folder_id: string;
-  target_id: string;
+}
+
+export interface MoveFilesToFolderResponse {
+  result: 'success';
 }
 
 /**
@@ -640,11 +659,23 @@ export interface BatchUpdateFileChunksResponse {
   embedding_ready: boolean;
 }
 
+export interface DeleteFileChunkResponse {
+  asset: FileDocumentAsset;
+  deleted_chunk_id: string;
+  deleted_count: number;
+}
+
 export interface AskFileQuestionRequest {
   question: string;
   top_k?: number;
   answer_model_provider?: string;
   answer_model?: string;
+  history?: FileQuestionHistoryMessage[];
+}
+
+export interface FileQuestionHistoryMessage {
+  question: string;
+  answer: string;
 }
 
 export interface PrepareFileQAIndexResponse {

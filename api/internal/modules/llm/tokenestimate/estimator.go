@@ -1,6 +1,7 @@
 package tokenestimate
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"sync"
@@ -23,6 +24,24 @@ type Estimator struct {
 type Result struct {
 	Tokens    int
 	Tokenizer string
+}
+
+// ComponentResult describes one prompt-bearing part of a chat request without
+// retaining the serialized value itself.
+type ComponentResult struct {
+	Tokens     int
+	Characters int
+}
+
+// ChatRequestResult estimates the complete prompt-bearing surface of a
+// ChatRequest. Characters is the size of the full serialized request, while
+// Components contains only counts for values that providers may incorporate
+// into the model prompt.
+type ChatRequestResult struct {
+	Tokens     int
+	Characters int
+	Tokenizer  string
+	Components map[string]ComponentResult
 }
 
 func NewEstimator() *Estimator {
@@ -50,6 +69,81 @@ func (e *Estimator) EstimateMessages(messages []adapter.Message, model string) R
 		}
 	}
 	return Result{Tokens: total, Tokenizer: tokenizerName}
+}
+
+// EstimateChatRequest estimates the final provider request, including tool and
+// response schemas that are not represented by EstimateMessages.
+func (e *Estimator) EstimateChatRequest(request *adapter.ChatRequest) ChatRequestResult {
+	if request == nil {
+		return ChatRequestResult{}
+	}
+
+	model := strings.TrimSpace(request.Model)
+	tokenizerName := e.tokenizerName(model)
+	result := ChatRequestResult{
+		Characters: serializedChatRequestCharacters(request),
+		Tokenizer:  tokenizerName,
+		Components: map[string]ComponentResult{},
+	}
+
+	messages := e.EstimateMessages(request.Messages, model)
+	result.addComponent("messages", messages.Tokens, serializedCharacters(request.Messages))
+	if len(request.Functions) > 0 {
+		result.addJSONComponent(e, "functions", request.Functions, model, tokenizerName)
+	}
+	if request.FunctionCall != nil {
+		result.addJSONComponent(e, "function_call", request.FunctionCall, model, tokenizerName)
+	}
+	if len(request.Tools) > 0 {
+		result.addJSONComponent(e, "tools", request.Tools, model, tokenizerName)
+	}
+	if request.ToolChoice != nil {
+		result.addJSONComponent(e, "tool_choice", request.ToolChoice, model, tokenizerName)
+	}
+	if request.ResponseFormat != nil {
+		result.addJSONComponent(e, "response_format", request.ResponseFormat, model, tokenizerName)
+	}
+	if len(request.AdditionalParameters) > 0 {
+		result.addJSONComponent(e, "additional_parameters", request.AdditionalParameters, model, tokenizerName)
+	}
+	return result
+}
+
+func (r *ChatRequestResult) addComponent(name string, tokens int, characters int) {
+	if r == nil || strings.TrimSpace(name) == "" || (tokens <= 0 && characters <= 0) {
+		return
+	}
+	component := ComponentResult{Tokens: tokens, Characters: characters}
+	r.Components[name] = component
+	r.Tokens += component.Tokens
+}
+
+func (r *ChatRequestResult) addJSONComponent(e *Estimator, name string, value interface{}, model string, tokenizerName string) {
+	serialized := serializeForEstimate(value)
+	r.addComponent(name, e.estimateText(serialized, model, tokenizerName), utf8.RuneCountInString(serialized))
+}
+
+func serializedChatRequestCharacters(request *adapter.ChatRequest) int {
+	if request == nil {
+		return 0
+	}
+	characters := serializedCharacters(request)
+	if len(request.AdditionalParameters) > 0 {
+		characters += serializedCharacters(request.AdditionalParameters)
+	}
+	return characters
+}
+
+func serializedCharacters(value interface{}) int {
+	return utf8.RuneCountInString(serializeForEstimate(value))
+}
+
+func serializeForEstimate(value interface{}) string {
+	encoded, err := json.Marshal(value)
+	if err == nil {
+		return string(encoded)
+	}
+	return fmt.Sprintf("%v", value)
 }
 
 func (e *Estimator) estimateContent(content interface{}, model string, tokenizerName string) int {

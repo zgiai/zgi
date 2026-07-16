@@ -109,11 +109,15 @@ var IdentityAccessSchema = File{
     group_id uuid NOT NULL,
     name character varying(255) NOT NULL,
     description text,
+    name_i18n jsonb DEFAULT '{}'::jsonb NOT NULL,
+    description_i18n jsonb DEFAULT '{}'::jsonb NOT NULL,
     status character varying(16) DEFAULT 'active'::character varying NOT NULL,
     created_by uuid NOT NULL,
     created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
     updated_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    permissions jsonb DEFAULT '[]'::jsonb
+    permissions jsonb DEFAULT '[]'::jsonb,
+    system_key character varying(64),
+    template_origin character varying(32) DEFAULT 'custom'::character varying NOT NULL
 );`,
 		`CREATE TABLE public.organizations (
     id uuid DEFAULT public.uuid_generate_v4() NOT NULL,

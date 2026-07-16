@@ -100,6 +100,41 @@ func TestRunAgentWorkflowReturnsSucceededOutputs(t *testing.T) {
 	}
 }
 
+func TestRunAgentWorkflowUsesTargetBindingAuthorizationActor(t *testing.T) {
+	runner := &fakeWorkflowRunner{}
+	provider := NewProvider(func() automationaction.AutomationWorkflowRunner { return runner })
+	tool, err := provider.GetTool(ToolRunAgentWorkflow)
+	if err != nil {
+		t.Fatalf("GetTool() error = %v", err)
+	}
+	runtimeTool := tool.ForkToolRuntime(&tools.ToolRuntime{
+		TenantID:   "workspace-1",
+		InvokeFrom: tools.ToolInvokeFromAgent,
+		RuntimeParameters: map[string]interface{}{
+			"organization_id":              "org-1",
+			"workspace_id":                 "workspace-1",
+			"workflow_bound_by_account_id": "category-editor",
+			"workflow_bindings": []map[string]interface{}{{
+				"binding_id": "approval-flow", "agent_id": "agent-1", "workflow_id": "workflow-1", "version_strategy": "latest_published",
+			}},
+			"agent_binding_authorizations": []map[string]interface{}{{
+				"binding_type": "workflow", "parent_resource_id": "agent-1", "resource_id": "approval-flow", "access_mode": "execute", "bound_by_account_id": "binding-owner", "bound_at_unix": int64(200),
+			}},
+		},
+	})
+
+	_, err = runtimeTool.Invoke(context.Background(), "caller-1", map[string]interface{}{
+		"binding_id": "approval-flow",
+		"inputs":     map[string]interface{}{"query": "approve"},
+	}, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Invoke() error = %v", err)
+	}
+	if runner.lastReq.AccountID != "binding-owner" {
+		t.Fatalf("runner account = %q, want binding-owner", runner.lastReq.AccountID)
+	}
+}
+
 func TestRunAgentWorkflowMapsQueryToTaskWorkflowStartInput(t *testing.T) {
 	runner := &fakeWorkflowRunner{
 		result: &automationaction.WorkflowRunResult{

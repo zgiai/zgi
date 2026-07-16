@@ -3,15 +3,16 @@ package handler
 import (
 	"context"
 	"errors"
-	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
 	"github.com/zgiai/zgi/api/internal/dto"
 	datalibraryservice "github.com/zgiai/zgi/api/internal/modules/datalibrary/service"
+	dataset_model "github.com/zgiai/zgi/api/internal/modules/dataset/model"
 	"github.com/zgiai/zgi/api/internal/modules/file_process/model"
 	"github.com/zgiai/zgi/api/internal/modules/file_process/service"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
@@ -22,13 +23,19 @@ import (
 	"go.uber.org/zap"
 )
 
-const folderDuplicateNameMessage = "同一级目录下已存在同名文件夹，请更换名称。"
+const (
+	folderDuplicateNameMessage = "同一级目录下已存在同名文件夹，请更换名称。"
+	folderNameLengthMessage    = "文件夹名称需为 1-40 个字符。"
+)
+
+type deleteFolderRequest struct {
+	ConfirmFolderName string `json:"confirm_folder_name"`
+}
 
 // FileResourceHandler handles file and file resource-related HTTP requests
 type FileResourceHandler struct {
 	fileFolderService   service.FileFolderService
 	fileService         interfaces.FileService
-	accountService      interfaces.AccountService
 	enterpriseService   interfaces.OrganizationService
 	fileFavoriteService service.FileFavoriteService
 	assetSummaryService datalibraryservice.FileAssetSummaryService
@@ -38,7 +45,6 @@ type FileResourceHandler struct {
 func NewFileResourceHandler(
 	fileFolderService service.FileFolderService,
 	fileService interfaces.FileService,
-	accountService interfaces.AccountService,
 	enterpriseService interfaces.OrganizationService,
 	fileFavoriteService service.FileFavoriteService,
 	assetSummaryServices ...datalibraryservice.FileAssetSummaryService,
@@ -50,7 +56,6 @@ func NewFileResourceHandler(
 	return &FileResourceHandler{
 		fileFolderService:   fileFolderService,
 		fileService:         fileService,
-		accountService:      accountService,
 		fileFavoriteService: fileFavoriteService,
 		enterpriseService:   enterpriseService,
 		assetSummaryService: assetSummaryService,
@@ -86,9 +91,7 @@ func (h *FileResourceHandler) GetFolders(c *gin.Context) {
 		organizationID,
 		accountID,
 		req.WorkspaceID,
-		workspace_model.WorkspacePermissionFileView,
-		workspace_model.WorkspacePermissionFileManage,
-		workspace_model.WorkspacePermissionFileDownload,
+		fileBrowsePermissionCodes()...,
 	)
 	if err != nil {
 		response.Fail(c, response.ErrSystemError)
@@ -156,7 +159,7 @@ func (h *FileResourceHandler) PostFolder(c *gin.Context) {
 
 	// Validate name
 	if err := h.validateFolderName(req.Name); err != nil {
-		response.Fail(c, response.ErrInvalidParam)
+		response.FailWithMessage(c, response.ErrInvalidParam, err.Error())
 		return
 	}
 
@@ -171,15 +174,7 @@ func (h *FileResourceHandler) PostFolder(c *gin.Context) {
 				return
 			}
 
-			// Check parent folder exists and belongs to the same tenant
-			parentFolder, err := h.fileFolderService.GetFolderByID(c.Request.Context(), *req.ParentID)
-			if err != nil {
-				response.Fail(c, response.ErrInvalidParam)
-				return
-			}
-
-			if parentFolder.OrganizationID != organizationID {
-				response.Fail(c, response.ErrInvalidParam)
+			if _, ok := authorizeFileFolderManageAccess(c, h.fileFolderService, h.enterpriseService, *req.ParentID); !ok {
 				return
 			}
 		}
@@ -196,13 +191,19 @@ func (h *FileResourceHandler) PostFolder(c *gin.Context) {
 			return
 		}
 
-		role, err := h.accountService.GetOrganizationRoleByWorkspaceID(c.Request.Context(), accountID, *workspaceID)
+		hasPermission, err := hasWorkspaceFilePermission(
+			c.Request.Context(),
+			h.enterpriseService,
+			organizationID,
+			accountID,
+			*workspaceID,
+			workspace_model.WorkspacePermissionFileFolderManage,
+		)
 		if err != nil {
 			response.Fail(c, response.ErrSystemError)
 			return
 		}
-
-		if role != "owner" && role != "admin" {
+		if !hasPermission {
 			response.Fail(c, response.ErrPermissionDenied)
 			return
 		}
@@ -267,37 +268,8 @@ func (h *FileResourceHandler) GetFolder(c *gin.Context) {
 		return
 	}
 
-	// Get account and tenant IDs from context
-	accountID := c.GetString("account_id")
-	organizationID := util.GetOrganizationID(c)
-
-	visibleWorkspaceIDs, err := resolveVisibleWorkspaceIDs(
-		c.Request.Context(),
-		h.enterpriseService,
-		organizationID,
-		accountID,
-		"",
-		workspace_model.WorkspacePermissionFileView,
-		workspace_model.WorkspacePermissionFileManage,
-		workspace_model.WorkspacePermissionFileDownload,
-	)
-	if err != nil {
-		response.Fail(c, response.ErrSystemError)
-		return
-	}
-
-	folder, err := h.fileFolderService.GetFolderWithViewPermissionCheck(c.Request.Context(), folderID, accountID, organizationID, visibleWorkspaceIDs)
-	if err != nil {
-		// Check if the error is because the folder was not found
-		if strings.Contains(err.Error(), "not found") {
-			response.Fail(c, response.ErrFileNotFound)
-			return
-		}
-		if strings.Contains(err.Error(), "permission") {
-			response.Fail(c, response.ErrPermissionDenied)
-			return
-		}
-		response.Fail(c, response.ErrSystemError)
+	folder, ok := authorizeFileFolderViewAccess(c, h.fileFolderService, h.enterpriseService, folderID)
+	if !ok {
 		return
 	}
 
@@ -318,8 +290,11 @@ func (h *FileResourceHandler) PatchFolder(c *gin.Context) {
 		return
 	}
 
+	if _, ok := authorizeFileFolderManageAccess(c, h.fileFolderService, h.enterpriseService, folderID); !ok {
+		return
+	}
+
 	accountID := c.GetString("account_id")
-	organizationID := util.GetOrganizationID(c)
 
 	var req dto.FileFolderUpdateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -330,7 +305,7 @@ func (h *FileResourceHandler) PatchFolder(c *gin.Context) {
 	// Validate name if provided
 	if req.Name != nil {
 		if err := h.validateFolderName(*req.Name); err != nil {
-			response.Fail(c, response.ErrInvalidParam)
+			response.FailWithMessage(c, response.ErrInvalidParam, err.Error())
 			return
 		}
 	}
@@ -346,34 +321,10 @@ func (h *FileResourceHandler) PatchFolder(c *gin.Context) {
 				return
 			}
 
-			// Check parent folder exists and belongs to the same tenant
-			parentFolder, err := h.fileFolderService.GetFolderByID(c.Request.Context(), *req.ParentID)
-			if err != nil {
-				response.Fail(c, response.ErrInvalidParam)
-				return
-			}
-
-			if parentFolder.OrganizationID != organizationID {
-				response.Fail(c, response.ErrInvalidParam)
+			if _, ok := authorizeFileFolderManageAccess(c, h.fileFolderService, h.enterpriseService, *req.ParentID); !ok {
 				return
 			}
 		}
-	}
-
-	// Check permission
-	hasPermission, err := h.fileFolderService.CheckFolderEditorPermission(c.Request.Context(), folderID, accountID, organizationID)
-	if err != nil {
-		if strings.Contains(err.Error(), "not found") {
-			response.Fail(c, response.ErrFileNotFound)
-			return
-		}
-		response.Fail(c, response.ErrSystemError)
-		return
-	}
-
-	if !hasPermission {
-		response.Fail(c, response.ErrPermissionDenied)
-		return
 	}
 
 	// Prepare update data
@@ -446,32 +397,65 @@ func (h *FileResourceHandler) DeleteFolder(c *gin.Context) {
 		return
 	}
 
-	accountID := c.GetString("account_id")
-	organizationID := util.GetOrganizationID(c)
+	folder, ok := authorizeFileFolderManageAccess(c, h.fileFolderService, h.enterpriseService, folderID)
+	if !ok {
+		return
+	}
 
-	// Check permission
-	hasPermission, err := h.fileFolderService.CheckFolderEditorPermission(c.Request.Context(), folderID, accountID, organizationID)
-	if err != nil {
-		if strings.Contains(err.Error(), "not found") {
-			response.Fail(c, response.ErrFileNotFound)
+	var req deleteFolderRequest
+	if c.Request.ContentLength > 0 {
+		if err := c.ShouldBindJSON(&req); err != nil {
+			response.Fail(c, response.ErrInvalidParam)
 			return
 		}
-		response.Fail(c, response.ErrSystemError)
-		return
 	}
 
-	if !hasPermission {
-		response.Fail(c, response.ErrPermissionDenied)
-		return
-	}
-
-	err = h.fileFolderService.DeleteFolder(c.Request.Context(), folderID)
+	summary, err := h.fileFolderService.GetFolderDeleteSummary(c.Request.Context(), folderID)
 	if err != nil {
-		response.Fail(c, response.ErrSystemError)
+		response.FailWithMessage(c, response.ErrSystemError, err.Error())
 		return
 	}
 
-	response.Success(c, gin.H{"result": "success"})
+	if len(summary.FileIDs) > 0 && strings.TrimSpace(req.ConfirmFolderName) != folder.Name {
+		response.Success(c, gin.H{
+			"result":                "confirmation_required",
+			"requires_confirmation": true,
+			"folder_name":           folder.Name,
+			"file_count":            len(summary.FileIDs),
+			"folder_count":          len(summary.FolderIDs),
+		})
+		return
+	}
+
+	if len(summary.FileIDs) > 0 {
+		for _, fileID := range summary.FileIDs {
+			relatedDatasetCount, err := h.fileFolderService.GetRelatedDatasetCount(c.Request.Context(), fileID)
+			if err != nil {
+				response.FailWithMessage(c, response.ErrSystemError, err.Error())
+				return
+			}
+			if relatedDatasetCount > 0 {
+				response.FailWithMessage(c, response.ErrFileInUse, "文件夹中存在已关联知识库的文件，请先解除关联后再删除。")
+				return
+			}
+		}
+		if err := h.fileService.DeleteFiles(c.Request.Context(), summary.FileIDs); err != nil {
+			response.FailWithMessage(c, response.ErrFileInUse, err.Error())
+			return
+		}
+	}
+
+	if err := h.fileFolderService.DeleteFolderTree(c.Request.Context(), folderID); err != nil {
+		response.FailWithMessage(c, response.ErrSystemError, err.Error())
+		return
+	}
+
+	response.Success(c, gin.H{
+		"result":       "success",
+		"deleted":      true,
+		"file_count":   len(summary.FileIDs),
+		"folder_count": len(summary.FolderIDs),
+	})
 }
 
 // GetFilesInFolder handles GET /file-folders/files
@@ -516,9 +500,7 @@ func (h *FileResourceHandler) GetFilesInFolder(c *gin.Context) {
 		organizationID,
 		accountID,
 		req.WorkspaceID,
-		workspace_model.WorkspacePermissionFileView,
-		workspace_model.WorkspacePermissionFileManage,
-		workspace_model.WorkspacePermissionFileDownload,
+		fileBrowsePermissionCodes()...,
 	)
 	if err != nil {
 		response.Fail(c, response.ErrSystemError)
@@ -660,9 +642,6 @@ func (h *FileResourceHandler) GetFilesInFolder(c *gin.Context) {
 
 // MoveFilesToFolder handles POST /file-folders/move-files
 func (h *FileResourceHandler) MoveFilesToFolder(c *gin.Context) {
-	accountID := c.GetString("account_id")
-	organizationID := util.GetOrganizationID(c)
-
 	var req dto.MoveFilesToFolderRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.Fail(c, response.ErrInvalidParam)
@@ -685,31 +664,20 @@ func (h *FileResourceHandler) MoveFilesToFolder(c *gin.Context) {
 		}
 
 		// Check if folder exists and user has permission to access it
-		_, err := h.fileFolderService.GetFolderWithPermissionCheck(c.Request.Context(), req.FolderID, accountID, organizationID)
-		if err != nil {
-			if strings.Contains(err.Error(), "not found") {
-				response.Fail(c, response.ErrFileNotFound)
-				return
-			}
-			response.Fail(c, response.ErrSystemError)
+		if _, ok := authorizeFileFolderManageAccess(c, h.fileFolderService, h.enterpriseService, req.FolderID); !ok {
 			return
 		}
 	}
 
 	// Check if all files exist
 	for _, fileID := range req.FileIDs {
-		_, err := h.fileService.GetFileByID(c.Request.Context(), fileID)
-		if err != nil {
-			if strings.Contains(err.Error(), "not found") {
-				response.Fail(c, response.ErrFileNotFound)
-				return
-			}
-			response.Fail(c, response.ErrSystemError)
+		if _, ok := authorizeFileMoveAccess(c, h.fileService, h.enterpriseService, fileID); !ok {
 			return
 		}
 	}
 
 	// Move files to folder (or to root if FolderID is empty)
+	accountID := c.GetString("account_id")
 	err := h.fileFolderService.MoveFilesToFolder(c.Request.Context(), req.FileIDs, req.FolderID, accountID)
 	if err != nil {
 		response.FailWithMessage(c, response.ErrSystemError, err.Error())
@@ -721,9 +689,6 @@ func (h *FileResourceHandler) MoveFilesToFolder(c *gin.Context) {
 
 // MoveFolderToFolder handles POST /file-folders/move-folder
 func (h *FileResourceHandler) MoveFolderToFolder(c *gin.Context) {
-	accountID := c.GetString("account_id")
-	organizationID := util.GetOrganizationID(c)
-
 	var req dto.MoveFolderToFolderRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.Fail(c, response.ErrInvalidParam)
@@ -745,31 +710,21 @@ func (h *FileResourceHandler) MoveFolderToFolder(c *gin.Context) {
 	}
 
 	// Check if folder exists and user has permission to access it
-	_, err := h.fileFolderService.GetFolderWithPermissionCheck(c.Request.Context(), req.FolderID, accountID, organizationID)
-	if err != nil {
-		if strings.Contains(err.Error(), "not found") {
-			response.Fail(c, response.ErrFileNotFound)
-			return
-		}
-		response.Fail(c, response.ErrSystemError)
+	if _, ok := authorizeFileFolderManageAccess(c, h.fileFolderService, h.enterpriseService, req.FolderID); !ok {
 		return
 	}
 
 	// Check if target folder exists and user has permission to access it (if not moving to root)
 	if req.TargetID != "" {
-		_, err := h.fileFolderService.GetFolderWithPermissionCheck(c.Request.Context(), req.TargetID, accountID, organizationID)
-		if err != nil {
-			if strings.Contains(err.Error(), "not found") {
-				response.Fail(c, response.ErrFileNotFound)
-				return
-			}
-			response.Fail(c, response.ErrSystemError)
+		if _, ok := authorizeFileFolderManageAccess(c, h.fileFolderService, h.enterpriseService, req.TargetID); !ok {
 			return
 		}
 	}
 
 	// Move folder to target folder
-	err = h.fileFolderService.MoveFolderToFolder(c.Request.Context(), req.FolderID, req.TargetID, accountID, organizationID)
+	accountID := c.GetString("account_id")
+	organizationID := util.GetOrganizationID(c)
+	err := h.fileFolderService.MoveFolderToFolder(c.Request.Context(), req.FolderID, req.TargetID, accountID, organizationID)
 	if err != nil {
 		if errors.Is(err, service.ErrFolderNameConflict) {
 			response.FailWithMessage(c, response.ErrFileFolderExists, folderDuplicateNameMessage)
@@ -809,12 +764,26 @@ func (h *FileResourceHandler) GetRelatedDocuments(c *gin.Context) {
 		return
 	}
 
+	if _, ok := authorizeFileRelatedAccess(c, h.fileService, h.enterpriseService, fileID); !ok {
+		return
+	}
+
 	// Get related documents
 	documents, err := h.fileFolderService.GetRelatedDocuments(c.Request.Context(), fileID)
 	if err != nil {
 		response.FailWithMessage(c, response.ErrSystemError, err.Error())
 		return
 	}
+	relatedDatasets, err := h.fileFolderService.GetRelatedDatasets(c.Request.Context(), fileID)
+	if err != nil {
+		response.FailWithMessage(c, response.ErrSystemError, err.Error())
+		return
+	}
+	_, visibleDatasetIDs, ok := h.filterRelatedDatasetsByPermission(c, relatedDatasets)
+	if !ok {
+		return
+	}
+	documents = filterRelatedDocumentsByDatasetIDs(documents, visibleDatasetIDs)
 
 	response.Success(c, gin.H{
 		"file_id": fileID,
@@ -836,10 +805,18 @@ func (h *FileResourceHandler) GetRelatedDatasets(c *gin.Context) {
 		return
 	}
 
+	if _, ok := authorizeFileRelatedAccess(c, h.fileService, h.enterpriseService, fileID); !ok {
+		return
+	}
+
 	// Get related datasets
 	datasets, err := h.fileFolderService.GetRelatedDatasets(c.Request.Context(), fileID)
 	if err != nil {
 		response.FailWithMessage(c, response.ErrSystemError, err.Error())
+		return
+	}
+	datasets, _, ok := h.filterRelatedDatasetsByPermission(c, datasets)
+	if !ok {
 		return
 	}
 
@@ -864,8 +841,12 @@ func (h *FileResourceHandler) GetRelatedResources(c *gin.Context) {
 		return
 	}
 
-	// Get related documents count
-	relatedDocumentCount, err := h.fileFolderService.GetRelatedDocumentCount(c.Request.Context(), fileID)
+	if _, ok := authorizeFileRelatedAccess(c, h.fileService, h.enterpriseService, fileID); !ok {
+		return
+	}
+
+	// Get related documents and datasets before filtering them by the target asset permissions.
+	relatedDocuments, err := h.fileFolderService.GetRelatedDocuments(c.Request.Context(), fileID)
 	if err != nil {
 		response.FailWithMessage(c, response.ErrSystemError, err.Error())
 		return
@@ -877,12 +858,17 @@ func (h *FileResourceHandler) GetRelatedResources(c *gin.Context) {
 		response.FailWithMessage(c, response.ErrSystemError, err.Error())
 		return
 	}
+	relatedDatasets, visibleDatasetIDs, ok := h.filterRelatedDatasetsByPermission(c, relatedDatasets)
+	if !ok {
+		return
+	}
+	relatedDocuments = filterRelatedDocumentsByDatasetIDs(relatedDocuments, visibleDatasetIDs)
 
 	response.Success(c, gin.H{
 		"file_id": fileID,
 		"data": map[string]interface{}{
 			"documents": gin.H{
-				"count": relatedDocumentCount,
+				"count": len(relatedDocuments),
 			},
 			"datasets": gin.H{
 				"count": len(relatedDatasets),
@@ -891,6 +877,97 @@ func (h *FileResourceHandler) GetRelatedResources(c *gin.Context) {
 			// Can be extended with other resource types
 		},
 	})
+}
+
+func (h *FileResourceHandler) filterRelatedDatasetsByPermission(c *gin.Context, datasets []*dataset_model.Dataset) ([]*dataset_model.Dataset, map[string]struct{}, bool) {
+	visibleDatasetIDs := make(map[string]struct{}, len(datasets))
+	if len(datasets) == 0 {
+		return datasets, visibleDatasetIDs, true
+	}
+
+	organizationID := util.GetOrganizationID(c)
+	if organizationID == "" {
+		response.Fail(c, response.ErrInvalidTenantId)
+		return nil, nil, false
+	}
+	accountID := c.GetString("account_id")
+	if accountID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return nil, nil, false
+	}
+	if h.enterpriseService == nil {
+		response.Fail(c, response.ErrSystemError)
+		return nil, nil, false
+	}
+
+	permissions := fileRelatedKnowledgeBasePermissionCodes()
+	visibleDatasets := make([]*dataset_model.Dataset, 0, len(datasets))
+	for _, dataset := range datasets {
+		if dataset == nil || strings.TrimSpace(dataset.WorkspaceID) == "" {
+			continue
+		}
+		if dataset.OrganizationID != "" && dataset.OrganizationID != organizationID {
+			continue
+		}
+
+		hasPermission, err := h.enterpriseService.CheckWorkspaceOrganizationAnyPermission(
+			c.Request.Context(),
+			organizationID,
+			dataset.WorkspaceID,
+			accountID,
+			permissions...,
+		)
+		if err != nil {
+			response.Fail(c, response.ErrSystemError)
+			return nil, nil, false
+		}
+		if !hasPermission {
+			continue
+		}
+
+		visibleDatasets = append(visibleDatasets, dataset)
+		visibleDatasetIDs[dataset.ID] = struct{}{}
+	}
+
+	return visibleDatasets, visibleDatasetIDs, true
+}
+
+func filterRelatedDocumentsByDatasetIDs(documents []*dataset_model.Document, visibleDatasetIDs map[string]struct{}) []*dataset_model.Document {
+	if len(documents) == 0 {
+		return documents
+	}
+	if len(visibleDatasetIDs) == 0 {
+		return []*dataset_model.Document{}
+	}
+
+	filtered := make([]*dataset_model.Document, 0, len(documents))
+	for _, document := range documents {
+		if document == nil {
+			continue
+		}
+		if _, ok := visibleDatasetIDs[document.DatasetID]; !ok {
+			continue
+		}
+		filtered = append(filtered, document)
+	}
+	return filtered
+}
+
+func fileRelatedKnowledgeBasePermissionCodes() []workspace_model.WorkspacePermissionCode {
+	return []workspace_model.WorkspacePermissionCode{
+		workspace_model.WorkspacePermissionKnowledgeBaseDocumentView,
+		workspace_model.WorkspacePermissionKnowledgeBaseGraphView,
+		workspace_model.WorkspacePermissionKnowledgeBaseUpdate,
+		workspace_model.WorkspacePermissionKnowledgeBaseDelete,
+		workspace_model.WorkspacePermissionKnowledgeBaseMove,
+		workspace_model.WorkspacePermissionKnowledgeBaseDocumentUpdate,
+		workspace_model.WorkspacePermissionKnowledgeBaseDocumentDelete,
+		workspace_model.WorkspacePermissionKnowledgeBaseSegmentUpdate,
+		workspace_model.WorkspacePermissionKnowledgeBaseSegmentDelete,
+		workspace_model.WorkspacePermissionKnowledgeBaseIndexManage,
+		workspace_model.WorkspacePermissionKnowledgeBaseGraphManage,
+		workspace_model.WorkspacePermissionKnowledgeBaseFolderManage,
+	}
 }
 
 // ListAllFiles handles GET /file-folders/all-files
@@ -923,9 +1000,7 @@ func (h *FileResourceHandler) ListAllFiles(c *gin.Context) {
 		organizationID,
 		accountID,
 		req.WorkspaceID,
-		workspace_model.WorkspacePermissionFileView,
-		workspace_model.WorkspacePermissionFileManage,
-		workspace_model.WorkspacePermissionFileDownload,
+		fileBrowsePermissionCodes()...,
 	)
 	if err != nil {
 		response.Fail(c, response.ErrSystemError)
@@ -952,6 +1027,26 @@ func (h *FileResourceHandler) ListAllFiles(c *gin.Context) {
 		visibleWorkspaceIDs,
 	)
 	if err != nil {
+		response.Fail(c, response.ErrSystemError)
+		return
+	}
+
+	processingStatusCounts, err := h.fileFolderService.CountAllFilesByCurrentAssetProductStatus(
+		c.Request.Context(),
+		req.Keyword,
+		req.Extension,
+		&req.StartTime,
+		&req.EndTime,
+		organizationID,
+		accountID,
+		visibleWorkspaceIDs,
+	)
+	if err != nil {
+		logger.ErrorContext(c.Request.Context(), "failed to count files by processing status",
+			err,
+			zap.String("account_id", accountID),
+			zap.String("tenant_id", organizationID),
+		)
 		response.Fail(c, response.ErrSystemError)
 		return
 	}
@@ -1053,11 +1148,12 @@ func (h *FileResourceHandler) ListAllFiles(c *gin.Context) {
 	hasMore := int64(req.Page*req.Limit) < total
 
 	response.Success(c, &dto.FileListResponse{
-		Data:    fileResponses,
-		HasMore: hasMore,
-		Limit:   req.Limit,
-		Total:   total,
-		Page:    req.Page,
+		Data:                   fileResponses,
+		HasMore:                hasMore,
+		Limit:                  req.Limit,
+		Total:                  total,
+		Page:                   req.Page,
+		ProcessingStatusCounts: processingStatusCounts,
 	})
 }
 
@@ -1120,9 +1216,7 @@ func (h *FileResourceHandler) ListRecentFiles(c *gin.Context) {
 		organizationID,
 		accountID,
 		req.WorkspaceID,
-		workspace_model.WorkspacePermissionFileView,
-		workspace_model.WorkspacePermissionFileManage,
-		workspace_model.WorkspacePermissionFileDownload,
+		fileBrowsePermissionCodes()...,
 	)
 	if err != nil {
 		response.Fail(c, response.ErrSystemError)
@@ -1286,9 +1380,7 @@ func (h *FileResourceHandler) ListFavoriteFiles(c *gin.Context) {
 		organizationID,
 		accountID,
 		req.WorkspaceID,
-		workspace_model.WorkspacePermissionFileView,
-		workspace_model.WorkspacePermissionFileManage,
-		workspace_model.WorkspacePermissionFileDownload,
+		fileBrowsePermissionCodes()...,
 	)
 	if err != nil {
 		response.Fail(c, response.ErrSystemError)
@@ -1430,6 +1522,12 @@ func (h *FileResourceHandler) ArchiveFiles(c *gin.Context) {
 		}
 	}
 
+	for _, fileID := range req.FileIDs {
+		if _, ok := authorizeFileArchiveAccess(c, h.fileService, h.enterpriseService, fileID); !ok {
+			return
+		}
+	}
+
 	// Archive the files
 	err := h.fileFolderService.ArchiveFiles(c.Request.Context(), req.FileIDs, accountID)
 	if err != nil {
@@ -1463,6 +1561,12 @@ func (h *FileResourceHandler) UnarchiveFiles(c *gin.Context) {
 		}
 	}
 
+	for _, fileID := range req.FileIDs {
+		if _, ok := authorizeFileArchiveAccess(c, h.fileService, h.enterpriseService, fileID); !ok {
+			return
+		}
+	}
+
 	// Unarchive the files
 	err := h.fileFolderService.UnarchiveFiles(c.Request.Context(), req.FileIDs, accountID)
 	if err != nil {
@@ -1475,8 +1579,9 @@ func (h *FileResourceHandler) UnarchiveFiles(c *gin.Context) {
 
 // Helper methods
 func (h *FileResourceHandler) validateFolderName(name string) error {
-	if len(name) < 1 || len(name) > 40 {
-		return fmt.Errorf("name must be between 1 to 40 characters")
+	nameLength := utf8.RuneCountInString(strings.TrimSpace(name))
+	if nameLength < 1 || nameLength > 40 {
+		return errors.New(folderNameLengthMessage)
 	}
 	return nil
 }
@@ -1520,49 +1625,35 @@ func (h *FileResourceHandler) GetFileStatistics(c *gin.Context) {
 	accountID := c.GetString("account_id")
 	organizationID := util.GetOrganizationID(c)
 
-	// Get total file count
-	totalCount, err := h.fileFolderService.GetTotalFileCount(c.Request.Context(), organizationID)
+	visibleWorkspaceIDs, err := resolveVisibleWorkspaceIDs(
+		c.Request.Context(),
+		h.enterpriseService,
+		organizationID,
+		accountID,
+		"",
+		fileBrowsePermissionCodes()...,
+	)
+	if err != nil {
+		response.Fail(c, response.ErrSystemError)
+		return
+	}
+	if len(visibleWorkspaceIDs) == 0 {
+		response.Success(c, &dto.FileStatisticsResponse{})
+		return
+	}
+
+	statistics, err := h.fileFolderService.GetFileStatistics(
+		c.Request.Context(),
+		organizationID,
+		accountID,
+		visibleWorkspaceIDs,
+	)
 	if err != nil {
 		response.FailWithMessage(c, response.ErrSystemError, err.Error())
 		return
 	}
 
-	// Get recent file count (within last 3 months) with limit
-	recentCount, err := h.fileFolderService.GetRecentFileCountWithLimit(c.Request.Context(), organizationID)
-	if err != nil {
-		response.FailWithMessage(c, response.ErrSystemError, err.Error())
-		return
-	}
-
-	// Get favorite file count
-	favoriteCount, err := h.fileFolderService.GetFavoriteFileCount(c.Request.Context(), accountID, organizationID)
-	if err != nil {
-		response.FailWithMessage(c, response.ErrSystemError, err.Error())
-		return
-	}
-
-	// Get root folder file count
-	rootFolderCount, err := h.fileFolderService.GetRootFolderFileCount(c.Request.Context(), organizationID)
-	if err != nil {
-		response.FailWithMessage(c, response.ErrSystemError, err.Error())
-		return
-	}
-
-	// Get archived file count
-	archivedCount, err := h.fileFolderService.GetArchivedFileCount(c.Request.Context(), organizationID)
-	if err != nil {
-		response.FailWithMessage(c, response.ErrSystemError, err.Error())
-		return
-	}
-
-	// Build response
-	response.Success(c, &dto.FileStatisticsResponse{
-		TotalCount:      totalCount,
-		RecentCount:     recentCount,
-		FavoriteCount:   favoriteCount,
-		RootFolderCount: rootFolderCount,
-		ArchivedCount:   archivedCount,
-	})
+	response.Success(c, statistics)
 }
 
 // GetFolderPermissionTenants handles GET /file-folders/:folder_id/permission-tenants
@@ -1577,6 +1668,10 @@ func (h *FileResourceHandler) GetFolderPermissionTenants(c *gin.Context) {
 	// Validate UUID format
 	if _, err := uuid.Parse(folderID); err != nil {
 		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+
+	if _, ok := authorizeFileFolderManageAccess(c, h.fileFolderService, h.enterpriseService, folderID); !ok {
 		return
 	}
 
@@ -1604,6 +1699,10 @@ func (h *FileResourceHandler) GetFolderPermissionTenantDetails(c *gin.Context) {
 	// Validate UUID format
 	if _, err := uuid.Parse(folderID); err != nil {
 		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+
+	if _, ok := authorizeFileFolderManageAccess(c, h.fileFolderService, h.enterpriseService, folderID); !ok {
 		return
 	}
 

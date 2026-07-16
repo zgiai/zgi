@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useMemo, useState, useCallback } from 'react';
-import { BookOpen, ChevronLeft, Pencil } from 'lucide-react';
+import { BookOpen, ChevronRight, Pencil } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -15,7 +15,6 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { Switch } from '@/components/ui/switch';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import { IconInput } from '@/components/common/icon-input';
@@ -34,11 +33,11 @@ import { useCurrentWorkspace } from '@/store/workspace-store';
 import { ICON_BG, ICON_TEXT } from '@/lib/config';
 import {
   EmbeddingSettings,
-  GraphModelSettings,
   RetrievalSettings as RetrievalConfigCard,
   type RetrievalConfig,
 } from '@/components/datasets/indexing-config';
 import { normalizeDatasetSearchMethod } from '@/utils/dataset/retrieval-config';
+import { DATASET_NAME_VALIDATION_OPTIONS } from '@/constants/dataset';
 
 interface CreateDatasetDialogProps {
   open: boolean;
@@ -118,19 +117,15 @@ function CreateDatasetDialog({ open, onOpenChange, currentFolderId }: CreateData
     DEFAULT_CREATE_RETRIEVAL_CONFIG
   );
 
-  const [hasManuallySetSearchMethod, setHasManuallySetSearchMethod] = useState(false);
   // Track if form has been submitted to show validation errors only after submit
   const [hasSubmitted, setHasSubmitted] = useState(false);
-  const graphFlowEnabled = isEditMode
-    ? Boolean(dataset?.enable_graph_flow)
-    : formData.enable_graph_flow;
+  const graphFlowEnabled = false;
 
   // Reset icon and form when dataset changes or dialog opens
   useEffect(() => {
     if (!open) return;
     // Reset submitted state when dialog opens
     setHasSubmitted(false);
-    setHasManuallySetSearchMethod(false);
     if (isEditMode && dataset) {
       setFormData({
         name: dataset.name || '',
@@ -183,23 +178,6 @@ function CreateDatasetDialog({ open, onOpenChange, currentFolderId }: CreateData
     },
   });
 
-  // Default graph model when graph flow is enabled
-  useInitializeDefaultModelByUseCase({
-    useCase: 'text-chat',
-    currentModel: {
-      provider: formData.entity_model_provider,
-      model: formData.entity_model,
-    },
-    enabled: open && graphFlowEnabled,
-    onInitialize: v => {
-      setFormData(prev => ({
-        ...prev,
-        entity_model_provider: v.provider,
-        entity_model: v.model,
-      }));
-    },
-  });
-
   // Default rerank model for create mode. Reranking is mandatory; only the model is configurable.
   useInitializeDefaultModelByUseCase({
     useCase: 'rerank',
@@ -228,49 +206,20 @@ function CreateDatasetDialog({ open, onOpenChange, currentFolderId }: CreateData
     setFormData(prev => ({ ...prev, [field]: value }));
   }
 
-  const handleGraphFlowChange = useCallback(
-    (checked: boolean) => {
-      setFormData(prev => ({
-        ...prev,
-        enable_graph_flow: checked,
-      }));
-
-      if (!checked) {
-        setRetrievalConfig(prev => ({
-          ...prev,
-          search_method: 'hybrid_search',
-        }));
-        return;
-      }
-
-      if (!isEditMode && !hasManuallySetSearchMethod) {
-        setRetrievalConfig(prev => ({
-          ...prev,
-          search_method: 'graph_search',
-        }));
-      }
-    },
-    [hasManuallySetSearchMethod, isEditMode]
-  );
-
-  // Validate name: 2-32 Unicode chars; letters, numbers, underscore, hyphen, optional spaces
+  // Keep the client-side limit aligned with the dataset API's Unicode character count.
   const isNameValid = useMemo(
-    () => isValidNameInput(formData.name, { allowSpace: true }),
+    () => isValidNameInput(formData.name, DATASET_NAME_VALIDATION_OPTIONS),
     [formData.name]
   );
   const nameErrors = useMemo(
-    () => getNameValidationErrors(formData.name, { allowSpace: true }),
+    () => getNameValidationErrors(formData.name, DATASET_NAME_VALIDATION_OPTIONS),
     [formData.name]
   );
+  const showNameError = (hasSubmitted || nameErrors.includes('tooLong')) && !isNameValid;
   const isEmbeddingModelValid = useMemo(
     () => isEditMode || Boolean(formData.embedding_model_provider && formData.embedding_model),
     [isEditMode, formData.embedding_model_provider, formData.embedding_model]
   );
-  const isGraphModelValid = useMemo(
-    () => !graphFlowEnabled || Boolean(formData.entity_model_provider && formData.entity_model),
-    [graphFlowEnabled, formData.entity_model_provider, formData.entity_model]
-  );
-
   // Validate form and show toast for errors
   const validateForm = useCallback((): boolean => {
     const workspaceId =
@@ -279,18 +228,13 @@ function CreateDatasetDialog({ open, onOpenChange, currentFolderId }: CreateData
     // Check name validation
     if (!isNameValid) {
       const errorKey = nameErrors[0] || 'required';
-      toast.error(t(`datasets.validation.name.${errorKey}`));
+      toast.error(t(`datasets.validation.datasetName.${errorKey}`));
       return false;
     }
 
     // Check embedding model (create mode only)
     if (!isEmbeddingModelValid) {
       toast.error(t('datasets.validation.embeddingModel.required'));
-      return false;
-    }
-
-    if (!isGraphModelValid) {
-      toast.error(t('datasets.validation.graphModel.required'));
       return false;
     }
 
@@ -305,7 +249,6 @@ function CreateDatasetDialog({ open, onOpenChange, currentFolderId }: CreateData
     isNameValid,
     nameErrors,
     isEmbeddingModelValid,
-    isGraphModelValid,
     currentWorkspace?.id,
     dataset?.workspace_id,
     dataset?.workspace?.id,
@@ -317,6 +260,9 @@ function CreateDatasetDialog({ open, onOpenChange, currentFolderId }: CreateData
 
     // Mark form as submitted to show validation errors
     setHasSubmitted(true);
+    if (!isEmbeddingModelValid) {
+      setShowAdvancedSettings(true);
+    }
 
     // Validate form and show toast for errors
     if (!validateForm()) {
@@ -435,14 +381,12 @@ function CreateDatasetDialog({ open, onOpenChange, currentFolderId }: CreateData
                   required
                   className={cn(
                     'h-11',
-                    hasSubmitted &&
-                      !isNameValid &&
-                      'border-destructive focus-visible:ring-destructive'
+                    showNameError && 'border-destructive focus-visible:ring-destructive'
                   )}
                 />
-                {hasSubmitted && !isNameValid && (
+                {showNameError && (
                   <p className="text-xs text-destructive font-medium animate-in fade-in slide-in-from-top-1">
-                    {t(`datasets.validation.name.${nameErrors[0] || 'required'}`)}
+                    {t(`datasets.validation.datasetName.${nameErrors[0] || 'required'}`)}
                   </p>
                 )}
               </div>
@@ -461,27 +405,6 @@ function CreateDatasetDialog({ open, onOpenChange, currentFolderId }: CreateData
                 />
               </div>
 
-              {!isEditMode ? (
-                <div className="flex items-center justify-between rounded-xl border border-border/50 bg-muted/20 p-4 transition-colors hover:bg-muted/30">
-                  <div className="space-y-0.5">
-                    <Label
-                      className="cursor-pointer text-sm font-semibold"
-                      htmlFor="enable-graph-flow"
-                    >
-                      {t('datasets.createModal.enableGraphFlowLabel')}
-                    </Label>
-                    <p className="max-w-[320px] text-xs text-muted-foreground">
-                      {t('datasets.createModal.enableGraphFlowDescription')}
-                    </p>
-                  </div>
-                  <Switch
-                    id="enable-graph-flow"
-                    checked={formData.enable_graph_flow}
-                    onCheckedChange={handleGraphFlowChange}
-                  />
-                </div>
-              ) : null}
-
               {isEditMode && graphFlowEnabled ? (
                 <div className="rounded-xl border border-border/50 bg-muted/20 p-4">
                   <div className="flex items-center gap-2">
@@ -498,84 +421,6 @@ function CreateDatasetDialog({ open, onOpenChange, currentFolderId }: CreateData
                 </div>
               ) : null}
 
-              {graphFlowEnabled ? (
-                <GraphModelSettings
-                  graphModel={{
-                    provider: formData.entity_model_provider || '',
-                    model: formData.entity_model || '',
-                  }}
-                  onChange={graphModel => {
-                    setFormData(prev => ({
-                      ...prev,
-                      entity_model_provider: graphModel.provider,
-                      entity_model: graphModel.model,
-                    }));
-                  }}
-                  required
-                  title={t('datasets.createModal.graphModelLabel')}
-                  description={t('datasets.createModal.graphModelDescription')}
-                  placeholder={t('datasets.createModal.graphModelPlaceholder')}
-                  hasError={hasSubmitted && !isGraphModelValid}
-                  errorMessage={
-                    hasSubmitted && !isGraphModelValid
-                      ? t('datasets.validation.graphModel.required')
-                      : undefined
-                  }
-                />
-              ) : null}
-
-              {/* Embedding Model Selector */}
-              {!isEditMode && (
-                <EmbeddingSettings
-                  embeddingModel={{
-                    provider: formData.embedding_model_provider || '',
-                    model: formData.embedding_model || '',
-                  }}
-                  onChange={embeddingModel => {
-                    setFormData(prev => ({
-                      ...prev,
-                      embedding_model_provider: embeddingModel.provider,
-                      embedding_model: embeddingModel.model,
-                    }));
-                  }}
-                  required
-                  title={t('datasets.createModal.embeddingModelLabel')}
-                  placeholder={t('datasets.createModal.embeddingModelPlaceholder')}
-                  hasError={hasSubmitted && !isEmbeddingModelValid}
-                  errorMessage={
-                    hasSubmitted && !isEmbeddingModelValid
-                      ? t('datasets.validation.embeddingModel.required')
-                      : undefined
-                  }
-                />
-              )}
-
-              {/* Rerank model selector - create mode only */}
-              {!isEditMode && (
-                <div className="space-y-2.5">
-                  <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                    {t('datasets.createWizard.processConfig.rerankModel')}
-                  </Label>
-                  <ModelSelector
-                    modelType="rerank"
-                    value={{
-                      provider: retrievalConfig.reranking_model?.reranking_provider_name || '',
-                      model: retrievalConfig.reranking_model?.reranking_model_name || '',
-                    }}
-                    onChange={({ provider, model }) =>
-                      setRetrievalConfig(prev => ({
-                        ...prev,
-                        reranking_enable: true,
-                        reranking_model: {
-                          reranking_provider_name: provider,
-                          reranking_model_name: model,
-                        },
-                      }))
-                    }
-                  />
-                </div>
-              )}
-
               {/* Advanced Settings */}
               <div className="space-y-3">
                 <button
@@ -583,10 +428,10 @@ function CreateDatasetDialog({ open, onOpenChange, currentFolderId }: CreateData
                   onClick={() => setShowAdvancedSettings(!showAdvancedSettings)}
                   className="flex items-center gap-2 text-sm font-semibold hover:text-primary transition-colors focus:outline-none"
                 >
-                  <ChevronLeft
+                  <ChevronRight
                     className={cn(
                       'size-4 transition-transform duration-300',
-                      showAdvancedSettings ? '-rotate-90' : ''
+                      showAdvancedSettings ? 'rotate-90' : ''
                     )}
                   />
                   {t('datasets.createModal.advancedSettingsLabel')}
@@ -599,6 +444,59 @@ function CreateDatasetDialog({ open, onOpenChange, currentFolderId }: CreateData
                   )}
                 >
                   <div className="space-y-4">
+                    {/* Embedding Model Selector */}
+                    {!isEditMode && (
+                      <EmbeddingSettings
+                        embeddingModel={{
+                          provider: formData.embedding_model_provider || '',
+                          model: formData.embedding_model || '',
+                        }}
+                        onChange={embeddingModel => {
+                          setFormData(prev => ({
+                            ...prev,
+                            embedding_model_provider: embeddingModel.provider,
+                            embedding_model: embeddingModel.model,
+                          }));
+                        }}
+                        required
+                        title={t('datasets.createModal.embeddingModelLabel')}
+                        placeholder={t('datasets.createModal.embeddingModelPlaceholder')}
+                        hasError={hasSubmitted && !isEmbeddingModelValid}
+                        errorMessage={
+                          hasSubmitted && !isEmbeddingModelValid
+                            ? t('datasets.validation.embeddingModel.required')
+                            : undefined
+                        }
+                      />
+                    )}
+
+                    {/* Rerank model selector - create mode only */}
+                    {!isEditMode && (
+                      <div className="space-y-2.5">
+                        <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                          {t('datasets.createWizard.processConfig.rerankModel')}
+                        </Label>
+                        <ModelSelector
+                          modelType="rerank"
+                          value={{
+                            provider:
+                              retrievalConfig.reranking_model?.reranking_provider_name || '',
+                            model: retrievalConfig.reranking_model?.reranking_model_name || '',
+                          }}
+                          onChange={({ provider, model }) =>
+                            setRetrievalConfig(prev => ({
+                              ...prev,
+                              reranking_enable: true,
+                              reranking_model: {
+                                reranking_provider_name: provider,
+                                reranking_model_name: model,
+                              },
+                            }))
+                          }
+                        />
+                      </div>
+                    )}
+
                     <div className="space-y-2.5">
                       <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
                         {t('datasets.createModal.iconLabel')}
@@ -624,9 +522,6 @@ function CreateDatasetDialog({ open, onOpenChange, currentFolderId }: CreateData
                           isGraphEnabled={graphFlowEnabled}
                           showRerankingModel={false}
                           onChange={(config: RetrievalConfig) => {
-                            if (config.search_method !== retrievalConfig.search_method) {
-                              setHasManuallySetSearchMethod(true);
-                            }
                             setRetrievalConfig(config);
                           }}
                         />

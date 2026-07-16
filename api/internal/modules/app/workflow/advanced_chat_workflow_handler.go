@@ -172,6 +172,10 @@ func (h *AdvancedChatWorkflowHandler) UpdateConversationWebAppID(conversationID,
 	return nil
 }
 
+func (h *AdvancedChatWorkflowHandler) GetConversationByIDAndAgent(ctx context.Context, conversationID, agentID uuid.UUID) (*conversation.AgentConversation, error) {
+	return h.conversationService.GetConversationByIDAndAgent(ctx, conversationID, agentID)
+}
+
 // CreateWorkflowMessage creates a message for workflow execution
 func (h *AdvancedChatWorkflowHandler) CreateWorkflowMessage(agentID, conversationID, workflowRunID uuid.UUID, query, answer, fromSource, invokeFrom string, fromUserID uuid.UUID, createdBy *uuid.UUID, webAppID *string) (*conversation.AgentMessage, error) {
 	req := &conversation.CreateWorkflowMessageRequest{

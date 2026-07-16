@@ -1,10 +1,21 @@
 'use client';
 
 import { useState, useMemo, useEffect } from 'react';
-import Link from 'next/link';
 import { useT } from '@/i18n';
-import { Switch } from '@/components/ui/switch';
-import { Search, Plus, Users, Pencil, Trash2, KeyRound, UserPlus } from 'lucide-react';
+import {
+  Search,
+  Plus,
+  Users,
+  Pencil,
+  Trash2,
+  KeyRound,
+  UserPlus,
+  MoreHorizontal,
+  Power,
+  ChevronDown,
+  Building2,
+  Network,
+} from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useDepartments } from '@/hooks/organization/use-departments';
 import { useDepartmentMembers } from '@/hooks/organization/use-department-members';
@@ -14,6 +25,7 @@ import { EditMemberDialog } from '@/components/dashboard/organization/edit-membe
 import { ResetMemberPasswordDialog } from '@/components/dashboard/organization/reset-member-password-dialog';
 import { CreateDepartmentDialog } from '@/components/dashboard/organization/create-department-dialog';
 import { EditDepartmentDialog } from '@/components/dashboard/organization/edit-department-dialog';
+import { AssignWorkspaceDialog } from '@/components/dashboard/organization/assign-workspace-dialog';
 import { IS_CLOUD } from '@/lib/config';
 import { StickyDataTable } from '@/components/common/sticky-data-table';
 import { useDebouncedValue } from '@/hooks/use-debounced-value';
@@ -25,14 +37,33 @@ import type { Department, DepartmentMember, JoinedWorkspace } from '@/services/t
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Switch } from '@/components/ui/switch';
+import { Label } from '@/components/ui/label';
 import { Pagination } from '@/components/ui/pagination';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Input } from '@/components/ui/input';
+import { useAuthStore } from '@/store/auth-store';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { normalizeOrganizationRole } from '@/utils/role-labels';
+import { getOrganizationDisplayName } from '@/utils/organization-display';
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from '@/components/ui/sheet';
 
 export default function ContactsPage() {
   const t = useT('dashboard.organization.contacts');
   const tRoot = useT();
+  const currentUser = useAuthStore.use.user();
   const [searchKeyword, setSearchKeyword] = useState('');
   const [memberSearchKeyword, setMemberSearchKeyword] = useState('');
   const [selectedDeptId, setSelectedDeptId] = useState<string | null>(null);
@@ -56,6 +87,12 @@ export default function ContactsPage() {
   const [memberToToggle, setMemberToToggle] = useState<DepartmentMember | null>(null);
   const [resetPasswordDialogOpen, setResetPasswordDialogOpen] = useState(false);
   const [memberToResetPassword, setMemberToResetPassword] = useState<DepartmentMember | null>(null);
+  const [assignWorkspaceDialogOpen, setAssignWorkspaceDialogOpen] = useState(false);
+  const [memberToAssignWorkspace, setMemberToAssignWorkspace] = useState<DepartmentMember | null>(
+    null
+  );
+  const [departmentSheetOpen, setDepartmentSheetOpen] = useState(false);
+  const [includeSubDepartments, setIncludeSubDepartments] = useState(true);
 
   // Member actions hook
   const {
@@ -127,9 +164,15 @@ export default function ContactsPage() {
 
   // Get current organization
   const { currentOrganization } = useOrganizations();
+  const currentOrganizationRole =
+    currentOrganization?.organization_role ?? currentUser?.organization_role ?? null;
 
   // Fetch departments
   const { departments, isLoading: loadingDepartments } = useDepartments();
+  const currentOrganizationDisplayName = useMemo(
+    () => getOrganizationDisplayName(currentOrganization),
+    [currentOrganization]
+  );
 
   // Determine if organization root is selected
   const isOrgRootSelected = selectedDeptId === 'ORG_ROOT';
@@ -145,6 +188,7 @@ export default function ContactsPage() {
     keyword: debouncedMemberSearchKeyword,
     page: currentPage,
     limit: pageSize,
+    includeSubDepts: includeSubDepartments,
     enabled: !!selectedDeptId,
   });
 
@@ -186,13 +230,13 @@ export default function ContactsPage() {
       id: 'ORG_ROOT',
       organization_id: currentOrganization.id,
       parent_id: null,
-      name: currentOrganization.name,
+      name: currentOrganizationDisplayName,
       sort_order: 0,
       status: 'active' as const,
       member_count: departments.reduce((sum, dept) => sum + dept.member_count, 0),
       children: departments,
     };
-  }, [currentOrganization, departments]);
+  }, [currentOrganization, currentOrganizationDisplayName, departments]);
 
   // Filter departments based on search
   const filteredDepartments = useMemo(() => {
@@ -240,7 +284,7 @@ export default function ContactsPage() {
 
     // Check if organization root is selected
     if (selectedDeptId === 'ORG_ROOT' && currentOrganization) {
-      return currentOrganization.name;
+      return currentOrganizationDisplayName;
     }
 
     const findDept = (depts: Department[]): string | null => {
@@ -255,26 +299,34 @@ export default function ContactsPage() {
     };
 
     return findDept(departments);
-  }, [selectedDeptId, departments, currentOrganization]);
+  }, [selectedDeptId, departments, currentOrganization, currentOrganizationDisplayName]);
 
-  const selectedScopeDescription = selectedDeptId
-    ? isOrgRootSelected
-      ? t('allMembersDescription')
-      : t('departmentMembersDescription')
-    : t('selectDepartment');
-  const selectedScopeLabel = selectedDeptId
-    ? isOrgRootSelected
-      ? t('scopeOrganization')
-      : t('scopeDepartment')
-    : null;
-  const selectedScopeHint = selectedDeptId
-    ? isOrgRootSelected
-      ? t('scopeOrganizationHint')
-      : t('scopeDepartmentHint')
-    : null;
   const hasMemberSearch = debouncedMemberSearchKeyword.trim().length > 0;
-  const getAssignWorkspaceHref = (member: DepartmentMember) =>
-    `/dashboard/organization/workspaces?assignMember=${encodeURIComponent(member.account_email)}`;
+
+  const getOrganizationRoleLabel = (role?: DepartmentMember['organization_role']) => {
+    const normalizedRole = normalizeOrganizationRole(role);
+    if (!normalizedRole) return '-';
+    return t(
+      `organizationRoles.${normalizedRole}` as
+        'organizationRoles.owner' | 'organizationRoles.admin' | 'organizationRoles.normal'
+    );
+  };
+
+  const canResetMemberPassword = (member: DepartmentMember) => {
+    if (IS_CLOUD || !currentUser?.id || !member.organization_role) {
+      return false;
+    }
+    if (member.account_id === currentUser.id) {
+      return false;
+    }
+    if (currentOrganizationRole === 'owner') {
+      return member.organization_role !== 'owner';
+    }
+    if (currentOrganizationRole === 'admin') {
+      return member.organization_role === 'normal';
+    }
+    return false;
+  };
 
   // Handle toggle member status
   const handleToggleStatus = (member: DepartmentMember) => {
@@ -330,6 +382,11 @@ export default function ContactsPage() {
     setResetPasswordDialogOpen(true);
   };
 
+  const handleAssignWorkspaceClick = (member: DepartmentMember) => {
+    setMemberToAssignWorkspace(member);
+    setAssignWorkspaceDialogOpen(true);
+  };
+
   const handleResetPassword = async (email: string, password?: string) => {
     await resetMemberPassword({
       email,
@@ -372,10 +429,79 @@ export default function ContactsPage() {
     }
   };
 
+  const renderDepartmentPanel = (closeAfterSelect: boolean) => (
+    <>
+      <div
+        className={cn(
+          'border-b border-border/60 bg-background px-4 py-3',
+          closeAfterSelect && 'pr-12'
+        )}
+      >
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <h2 className="min-w-0 truncate text-sm font-semibold text-foreground">
+            {t('departmentPanelTitle')}
+          </h2>
+          <Button
+            variant="outline"
+            onClick={() => setCreateDepartmentDialogOpen(true)}
+            className="h-8 shrink-0 gap-1.5 rounded-md bg-background px-2.5 text-xs font-medium shadow-none"
+          >
+            <Plus className="h-3.5 w-3.5" />
+            {t('createDepartment.title')}
+          </Button>
+        </div>
+        <div className="relative">
+          <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            placeholder={t('searchDepartment')}
+            value={searchKeyword}
+            onChange={e => setSearchKeyword(e.target.value)}
+            className="h-9 rounded-md bg-bg-canvas/50 pl-8 text-xs shadow-none transition-all focus:border-primary/40 focus:ring-0"
+          />
+        </div>
+      </div>
+
+      <div className="scrollbar-thin scrollbar-thumb-border/50 min-h-0 flex-1 overflow-y-auto p-2">
+        {loadingDepartments ? (
+          <div className="space-y-1.5 p-1.5">
+            {[...Array(5)].map((_, i) => (
+              <Skeleton key={i} className="h-8 w-full rounded-xl opacity-40" />
+            ))}
+          </div>
+        ) : filteredDepartments.length === 0 ? (
+          <div className="px-4 py-10 text-center">
+            <p className="text-sm font-medium text-muted-foreground">{t('noDepartments')}</p>
+            <p className="mt-1 text-xs text-muted-foreground/70">{t('noDepartmentsDescription')}</p>
+          </div>
+        ) : (
+          <div className="space-y-1">
+            {filteredDepartments.map(dept => (
+              <DepartmentTreeItem
+                key={dept.id}
+                department={dept}
+                selectedId={selectedDeptId}
+                onSelect={departmentId => {
+                  setSelectedDeptId(departmentId);
+                  if (closeAfterSelect) {
+                    setDepartmentSheetOpen(false);
+                  }
+                }}
+                searchKeyword={searchKeyword}
+                onAddSubDepartment={handleAddSubDepartment}
+                onEditDepartment={handleEditDepartment}
+                onDeleteDepartment={handleDeleteDepartment}
+              />
+            ))}
+          </div>
+        )}
+      </div>
+    </>
+  );
+
   // Show initial loading state for both sides
   if (isInitialLoad) {
     return (
-      <div className="flex h-full flex-col space-y-5 overflow-hidden bg-bg-canvas/50 p-4 lg:p-6">
+      <div className="flex h-full flex-col space-y-5 overflow-hidden bg-bg-canvas/50 p-3 sm:p-4 lg:p-6">
         <div className="flex shrink-0 flex-col gap-1">
           <div>
             <h1 className="text-2xl font-semibold tracking-tight text-text-primary">
@@ -384,9 +510,9 @@ export default function ContactsPage() {
             <p className="text-sm text-text-secondary mt-1">{t('subtitle')}</p>
           </div>
         </div>
-        <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 md:grid-cols-[280px_minmax(0,1fr)]">
+        <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 2xl:grid-cols-[280px_minmax(0,1fr)]">
           {/* Left sidebar loading */}
-          <div className="flex min-h-[220px] flex-col overflow-hidden rounded-xl border border-border/80 bg-background shadow-sm md:min-h-0">
+          <div className="hidden min-h-0 flex-col overflow-hidden rounded-xl border border-border/80 bg-background shadow-sm 2xl:flex">
             <div className="border-b p-4">
               <Skeleton className="mb-3 h-4 w-24 rounded" />
               <Skeleton className="h-8 w-full rounded-md" />
@@ -424,7 +550,7 @@ export default function ContactsPage() {
   }
 
   return (
-    <div className="flex h-full flex-col space-y-5 overflow-hidden bg-bg-canvas/50 p-4 lg:p-6">
+    <div className="flex h-full flex-col space-y-5 overflow-hidden bg-bg-canvas/50 p-3 sm:p-4 lg:p-6">
       <div className="shrink-0">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight text-text-primary">{t('title')}</h1>
@@ -432,101 +558,66 @@ export default function ContactsPage() {
         </div>
       </div>
 
-      <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 md:grid-cols-[280px_minmax(0,1fr)]">
+      <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 2xl:grid-cols-[280px_minmax(0,1fr)]">
         {/* Left sidebar - Department tree */}
-        <div className="flex min-h-[220px] flex-col overflow-hidden rounded-xl border border-border/80 bg-background shadow-sm md:min-h-0">
-          <div className="border-b border-border/60 bg-background px-4 py-3">
-            <div className="mb-3 flex items-start justify-between gap-3">
-              <div>
-                <h2 className="text-sm font-semibold text-foreground">
-                  {t('departmentPanelTitle')}
-                </h2>
-                <p className="mt-0.5 text-xs text-muted-foreground">
-                  {t('departmentPanelDescription')}
-                </p>
-              </div>
-              <Button
-                variant="outline"
-                isIcon
-                onClick={() => setCreateDepartmentDialogOpen(true)}
-                className="h-8 w-8 shrink-0 rounded-md bg-background shadow-none"
-                aria-label={t('createDepartment.title')}
-              >
-                <Plus className="h-4 w-4" />
-              </Button>
-            </div>
-            <div className="flex gap-2">
-              <div className="relative flex-1">
-                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
-                <Input
-                  placeholder={t('searchDepartment')}
-                  value={searchKeyword}
-                  onChange={e => setSearchKeyword(e.target.value)}
-                  className="h-9 rounded-md bg-bg-canvas/50 pl-8 text-xs shadow-none transition-all focus:border-primary/40 focus:ring-0"
-                />
-              </div>
-            </div>
-          </div>
-
-          <div className="scrollbar-thin scrollbar-thumb-border/50 flex-1 overflow-y-auto p-2">
-            {loadingDepartments ? (
-              <div className="space-y-1.5 p-1.5">
-                {[...Array(5)].map((_, i) => (
-                  <Skeleton key={i} className="h-8 w-full rounded-xl opacity-40" />
-                ))}
-              </div>
-            ) : filteredDepartments.length === 0 ? (
-              <div className="px-4 py-10 text-center">
-                <p className="text-sm font-medium text-muted-foreground">{t('noDepartments')}</p>
-                <p className="mt-1 text-xs text-muted-foreground/70">
-                  {t('noDepartmentsDescription')}
-                </p>
-              </div>
-            ) : (
-              <div className="space-y-1">
-                {filteredDepartments.map(dept => (
-                  <DepartmentTreeItem
-                    key={dept.id}
-                    department={dept}
-                    selectedId={selectedDeptId}
-                    onSelect={setSelectedDeptId}
-                    searchKeyword={searchKeyword}
-                    onAddSubDepartment={handleAddSubDepartment}
-                    onEditDepartment={handleEditDepartment}
-                    onDeleteDepartment={handleDeleteDepartment}
-                  />
-                ))}
-              </div>
-            )}
-          </div>
+        <div className="hidden min-h-0 flex-col overflow-hidden rounded-xl border border-border/80 bg-background shadow-sm 2xl:flex">
+          {renderDepartmentPanel(false)}
         </div>
 
         {/* Right content - Members list */}
-        <div className="flex min-h-0 flex-col overflow-hidden rounded-xl border border-border/80 bg-background shadow-sm">
-          <div className="flex flex-col gap-4 border-b border-border/60 bg-background px-5 py-4 lg:flex-row lg:items-end lg:justify-between">
-            <div className="min-w-0">
-              <div className="flex flex-wrap items-center gap-2">
-                <h2 className="flex items-center gap-2 text-xl font-semibold tracking-tight text-text-primary">
-                  <span className="truncate">{selectedDeptName || t('allMembers')}</span>
-                  {!loadingMembers && selectedDeptName && (
-                    <span className="shrink-0 rounded-full bg-bg-subtle px-2.5 py-1 text-xs font-medium text-muted-foreground">
-                      {t('memberCount', { count: total })}
-                    </span>
+        <div className="flex min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border border-border/80 bg-background shadow-sm">
+          <div className="flex flex-col gap-3 border-b border-border/60 bg-background px-4 py-4 sm:px-5 lg:flex-row lg:items-center">
+            <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2">
+              <div className="flex min-w-0 flex-1 items-center gap-3 sm:flex-none">
+                <button
+                  type="button"
+                  onClick={() => setDepartmentSheetOpen(true)}
+                  aria-label={`${t('memberScope')}: ${selectedDeptName || t('allMembers')}`}
+                  aria-haspopup="dialog"
+                  aria-expanded={departmentSheetOpen}
+                  className="group flex h-10 min-w-0 flex-1 items-center gap-2 rounded-md border border-border bg-background px-3 text-left shadow-xs transition-colors hover:border-border-strong hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:w-[280px] sm:flex-none 2xl:hidden"
+                >
+                  {isOrgRootSelected ? (
+                    <Building2 className="h-4 w-4 shrink-0 text-primary" />
+                  ) : (
+                    <Network className="h-4 w-4 shrink-0 text-primary" />
                   )}
+                  <span className="shrink-0 text-xs text-muted-foreground">{t('memberScope')}</span>
+                  <span className="min-w-0 flex-1 truncate text-sm font-semibold text-foreground">
+                    {selectedDeptName || t('allMembers')}
+                  </span>
+                  <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground transition-transform group-hover:text-foreground" />
+                </button>
+                <h2 className="hidden truncate text-xl font-semibold tracking-tight text-text-primary 2xl:block">
+                  {selectedDeptName || t('allMembers')}
                 </h2>
-                {selectedScopeLabel ? (
-                  <Badge variant={isOrgRootSelected ? 'warning' : 'info'} className="font-medium">
-                    {selectedScopeLabel}
-                  </Badge>
-                ) : null}
               </div>
-              <p className="mt-1 text-sm text-muted-foreground">{selectedScopeDescription}</p>
-              {selectedScopeHint ? (
-                <p className="mt-1 text-xs text-muted-foreground/80">{selectedScopeHint}</p>
+              {!loadingMembers && selectedDeptName ? (
+                <span className="shrink-0 text-sm text-muted-foreground">
+                  {t('memberCountCompact', { count: total })}
+                </span>
+              ) : null}
+              {selectedDeptId && !isOrgRootSelected ? (
+                <div className="flex h-8 w-full shrink-0 items-center gap-2 sm:h-10 sm:w-auto">
+                  <Switch
+                    id="include-sub-departments"
+                    checked={includeSubDepartments}
+                    onCheckedChange={checked => {
+                      setIncludeSubDepartments(checked);
+                      setCurrentPage(1);
+                    }}
+                  />
+                  <Label
+                    htmlFor="include-sub-departments"
+                    className="cursor-pointer whitespace-nowrap text-xs font-normal text-muted-foreground"
+                  >
+                    {t('includeSubDepartments')}
+                  </Label>
+                </div>
               ) : null}
             </div>
-            <div className="flex w-full flex-col gap-2 sm:flex-row lg:w-auto">
-              <div className="relative w-full sm:w-72">
+            <div className="flex w-full flex-col gap-2 sm:flex-row sm:items-center lg:ml-auto lg:w-auto">
+              <div className="relative w-full sm:w-[320px] sm:flex-none xl:w-[360px]">
                 <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
                 <Input
                   placeholder={t('searchMembers')}
@@ -537,7 +628,7 @@ export default function ContactsPage() {
               </div>
               <Button
                 onClick={() => setAddMemberDialogOpen(true)}
-                className="h-10 shrink-0 rounded-md bg-primary px-4 font-medium text-primary-foreground shadow-sm transition-colors hover:bg-primary-hover hover:text-primary-foreground"
+                className="h-10 w-full shrink-0 rounded-md bg-primary px-4 font-medium text-primary-foreground shadow-sm transition-colors hover:bg-primary-hover hover:text-primary-foreground sm:w-auto"
               >
                 <Plus className="h-4 w-4" />
                 {selectedDeptId
@@ -551,14 +642,45 @@ export default function ContactsPage() {
 
           <StickyDataTable
             columns={[
-              { key: 'name', header: t('name'), className: 'pl-6' },
-              { key: 'email', header: t('email') },
-              { key: 'department', header: t('editDialog.department') },
-              { key: 'workspaces', header: t('workspaces') },
-              { key: 'status', header: t('status') },
-              { key: 'enabled', header: tRoot('common.enabled') },
-              { key: 'actions', header: t('actions'), className: 'w-[80px]' },
+              {
+                key: 'name',
+                header: t('name'),
+                className:
+                  'w-[48%] pl-4 sm:w-[40%] sm:pl-6 lg:w-[30%] 2xl:w-[28%] min-[1800px]:w-auto',
+              },
+              {
+                key: 'email',
+                header: t('email'),
+                className: 'hidden min-[1800px]:table-cell',
+              },
+              {
+                key: 'organizationRole',
+                header: t('organizationRole'),
+                className: 'w-[34%] lg:w-[16%] 2xl:w-[17%] min-[1800px]:w-auto',
+              },
+              {
+                key: 'department',
+                header: t('editDialog.department'),
+                className: 'hidden lg:table-cell lg:w-[16%] min-[1800px]:w-auto',
+              },
+              {
+                key: 'workspaces',
+                header: t('workspaces'),
+                className: 'hidden lg:table-cell lg:w-[24%] 2xl:w-[25%] min-[1800px]:w-auto',
+              },
+              {
+                key: 'status',
+                header: t('status'),
+                className: 'hidden w-[86px] 2xl:table-cell',
+              },
+              {
+                key: 'actions',
+                header: t('actions'),
+                align: 'right',
+                className: 'w-[72px] pr-4 sm:w-[88px] sm:pr-6 min-[1800px]:w-[104px]',
+              },
             ]}
+            tableClassName="table-fixed min-[1800px]:table-auto"
             data={members}
             getRowKey={member => member.account_id}
             isLoading={loadingMembers}
@@ -615,37 +737,64 @@ export default function ContactsPage() {
             }
             renderRow={(member: DepartmentMember) => (
               <>
-                <td className="py-4 pl-6">
-                  <div className="flex items-center gap-3">
-                    <div className="w-9 h-9 rounded-lg bg-primary text-primary-foreground flex items-center justify-center font-bold text-xs shadow-sm">
+                <td className="py-3 pl-4 sm:py-4 sm:pl-6">
+                  <div className="flex min-w-0 items-center gap-2 sm:gap-3">
+                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary text-xs font-bold text-primary-foreground shadow-sm">
                       {member.account_name.charAt(0).toUpperCase()}
                     </div>
-                    <span className="font-semibold text-text-primary text-[13px] group-hover:text-primary transition-colors truncate max-w-[150px]">
-                      {member.member_name || member.account_name}
-                    </span>
+                    <div className="min-w-0">
+                      <span className="block truncate text-[13px] font-semibold text-text-primary transition-colors group-hover:text-primary">
+                        {member.member_name || member.account_name}
+                      </span>
+                      <span className="mt-0.5 block truncate text-[11px] font-medium text-text-secondary min-[1800px]:hidden">
+                        {member.account_email}
+                      </span>
+                      <span className="mt-1 inline-flex items-center gap-1 text-[10px] font-medium text-muted-foreground 2xl:hidden">
+                        <span
+                          className={cn(
+                            'h-1.5 w-1.5 rounded-full',
+                            member.group_status === 'active' ? 'bg-green-500' : 'bg-border-strong'
+                          )}
+                        />
+                        {member.group_status === 'active' ? t('active') : t('disabled')}
+                      </span>
+                    </div>
                   </div>
                 </td>
-                <td className="py-4 text-[13px] text-text-secondary font-medium">
+                <td className="hidden py-4 text-[13px] font-medium text-text-secondary min-[1800px]:table-cell">
                   {member.account_email}
                 </td>
                 <td className="py-4">
-                  <div className="flex">
-                    {member.department_name ? (
-                      <Badge variant="info" className="font-medium text-[10px] py-px">
-                        {member.department_name}
-                      </Badge>
-                    ) : (
-                      <Badge
-                        variant="outline"
-                        className="text-[10px] py-px font-medium border-dashed"
-                      >
-                        {t('noDepartments')}
-                      </Badge>
-                    )}
+                  <div className="flex min-w-0 flex-col items-start gap-1">
+                    <Badge
+                      variant={
+                        member.organization_role === 'owner'
+                          ? 'warning'
+                          : member.organization_role === 'admin'
+                            ? 'info'
+                            : 'subtle'
+                      }
+                      className="max-w-full truncate rounded-md px-2 py-px text-[10px] font-medium"
+                    >
+                      {getOrganizationRoleLabel(member.organization_role)}
+                    </Badge>
                   </div>
                 </td>
-                <td className="py-4">
-                  <div className="flex flex-wrap gap-1.5 max-w-[320px] max-h-[50px] overflow-auto">
+                <td className="hidden py-4 lg:table-cell">
+                  <div className="flex">
+                    <Badge
+                      variant={member.department_name ? 'info' : 'outline'}
+                      className={cn(
+                        'text-[10px] py-px font-medium',
+                        !member.department_name && 'border-dashed'
+                      )}
+                    >
+                      {member.department_name || currentOrganizationDisplayName}
+                    </Badge>
+                  </div>
+                </td>
+                <td className="hidden py-4 lg:table-cell">
+                  <div className="flex max-h-[50px] max-w-[320px] flex-wrap gap-1.5 overflow-auto">
                     {member.joined_workspaces?.length ? (
                       <>
                         {member.joined_workspaces?.slice(0, 2).map((workspace: JoinedWorkspace) => (
@@ -701,15 +850,13 @@ export default function ContactsPage() {
                         <Tooltip>
                           <TooltipTrigger asChild>
                             <Button
-                              asChild
                               variant="ghost"
                               size="xs"
                               isIcon
+                              onClick={() => handleAssignWorkspaceClick(member)}
                               className="h-6 w-6 rounded-md text-primary"
                             >
-                              <Link href={getAssignWorkspaceHref(member)}>
-                                <UserPlus className="h-3.5 w-3.5" />
-                              </Link>
+                              <UserPlus className="h-3.5 w-3.5" />
                             </Button>
                           </TooltipTrigger>
                           <TooltipContent className="text-xs">
@@ -720,7 +867,7 @@ export default function ContactsPage() {
                     )}
                   </div>
                 </td>
-                <td className="py-4">
+                <td className="hidden py-4 2xl:table-cell">
                   <div className="flex">
                     <Badge
                       variant="secondary"
@@ -741,15 +888,8 @@ export default function ContactsPage() {
                     </Badge>
                   </div>
                 </td>
-                <td className="py-4">
-                  <Switch
-                    checked={member.group_status === 'active'}
-                    disabled={isUpdatingStatus}
-                    onCheckedChange={() => handleToggleStatus(member)}
-                  />
-                </td>
-                <td className="py-4">
-                  <div className="flex items-center gap-2 transition-opacity">
+                <td className="py-3 pr-4 sm:py-4 sm:pr-6">
+                  <div className="flex items-center justify-end gap-1 transition-opacity sm:gap-2">
                     {member.group_status === 'active' && (
                       <Tooltip>
                         <TooltipTrigger asChild>
@@ -767,43 +907,43 @@ export default function ContactsPage() {
                       </Tooltip>
                     )}
 
-                    {!IS_CLOUD && (
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Button
-                            variant="ghost"
-                            size="xs"
-                            isIcon
-                            onClick={() => handleResetPasswordClick(member)}
-                            className="rounded-md"
-                          >
-                            <KeyRound className="h-4 w-4" />
-                          </Button>
-                        </TooltipTrigger>
-                        <TooltipContent className="text-xs">
-                          {t('resetPassword.action')}
-                        </TooltipContent>
-                      </Tooltip>
-                    )}
-
-                    <Tooltip>
-                      <TooltipTrigger asChild>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
                         <Button
                           variant="ghost"
                           size="xs"
                           isIcon
-                          className="rounded-md text-text-placeholder shadow-none transition-colors hover:bg-destructive hover:text-destructive-foreground"
-                          onClick={() => handleRemoveClick(member)}
+                          className="rounded-md text-text-placeholder shadow-none"
+                        >
+                          <MoreHorizontal className="h-4 w-4" />
+                          <span className="sr-only">{t('actions')}</span>
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end" className="w-44">
+                        <DropdownMenuItem
+                          disabled={isUpdatingStatus}
+                          onSelect={() => handleToggleStatus(member)}
+                        >
+                          <Power className="h-4 w-4" />
+                          {member.group_status === 'active' ? t('disable') : t('enable')}
+                        </DropdownMenuItem>
+                        {canResetMemberPassword(member) ? (
+                          <DropdownMenuItem onSelect={() => handleResetPasswordClick(member)}>
+                            <KeyRound className="h-4 w-4" />
+                            {t('resetPassword.action')}
+                          </DropdownMenuItem>
+                        ) : null}
+                        <DropdownMenuItem
+                          variant="destructive"
+                          onSelect={() => handleRemoveClick(member)}
                         >
                           <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent className="text-xs">
-                        {isOrgRootSelected
-                          ? t('removeFromOrganization')
-                          : t('removeFromDepartment')}
-                      </TooltipContent>
-                    </Tooltip>
+                          {isOrgRootSelected
+                            ? t('removeFromOrganization')
+                            : t('removeFromDepartment')}
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
                   </div>
                 </td>
               </>
@@ -811,6 +951,19 @@ export default function ContactsPage() {
           />
         </div>
       </div>
+
+      <Sheet open={departmentSheetOpen} onOpenChange={setDepartmentSheetOpen}>
+        <SheetContent
+          side="left"
+          className="flex w-[88vw] max-w-[360px] flex-col gap-0 p-0 sm:max-w-[360px]"
+        >
+          <SheetHeader className="sr-only">
+            <SheetTitle>{t('departmentPanelTitle')}</SheetTitle>
+            <SheetDescription>{t('departmentPanelDescription')}</SheetDescription>
+          </SheetHeader>
+          {renderDepartmentPanel(true)}
+        </SheetContent>
+      </Sheet>
 
       {/* Add Member Dialog */}
       <AddMemberDialog
@@ -875,6 +1028,22 @@ export default function ContactsPage() {
         />
       )}
 
+      {memberToAssignWorkspace ? (
+        <AssignWorkspaceDialog
+          open={assignWorkspaceDialogOpen}
+          member={memberToAssignWorkspace}
+          onOpenChange={open => {
+            setAssignWorkspaceDialogOpen(open);
+            if (!open) {
+              setMemberToAssignWorkspace(null);
+            }
+          }}
+          onAssigned={() => {
+            refetchMembers();
+          }}
+        />
+      ) : null}
+
       {/* Create Department Dialog */}
       <CreateDepartmentDialog
         open={createDepartmentDialogOpen}
@@ -919,7 +1088,7 @@ export default function ContactsPage() {
       <ConfirmDialog
         open={statusConfirmOpen}
         onOpenChange={setStatusConfirmOpen}
-        title={memberToToggle?.group_status === 'active' ? t('disable') : t('enable')}
+        title={t('toggleStatusConfirm.title')}
         description={
           memberToToggle?.group_status === 'active'
             ? t('toggleStatusConfirm.disableDescription', {
@@ -929,7 +1098,11 @@ export default function ContactsPage() {
                 memberName: memberToToggle?.account_name || '',
               })
         }
-        confirmText={tRoot('common.confirm')}
+        confirmText={
+          memberToToggle?.group_status === 'active'
+            ? t('toggleStatusConfirm.disableConfirm')
+            : t('toggleStatusConfirm.enableConfirm')
+        }
         cancelText={tRoot('common.cancel')}
         loading={isUpdatingStatus}
         onConfirm={handleConfirmToggleStatus}

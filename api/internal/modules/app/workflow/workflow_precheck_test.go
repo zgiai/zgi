@@ -12,12 +12,12 @@ type mockWorkflowAppModelPrechecker struct {
 	result         *llmclient.AppModelPrecheckResult
 	err            error
 	called         bool
-	receivedModels []string
+	receivedModels []llmclient.AppModelRef
 }
 
-func (m *mockWorkflowAppModelPrechecker) PrecheckAppModels(ctx context.Context, appCtx *llmclient.AppContext, models []string) (*llmclient.AppModelPrecheckResult, error) {
+func (m *mockWorkflowAppModelPrechecker) PrecheckAppModels(ctx context.Context, appCtx *llmclient.AppContext, models []llmclient.AppModelRef) (*llmclient.AppModelPrecheckResult, error) {
 	m.called = true
-	m.receivedModels = append([]string(nil), models...)
+	m.receivedModels = append([]llmclient.AppModelRef(nil), models...)
 	if m.err != nil {
 		return nil, m.err
 	}
@@ -43,7 +43,7 @@ func TestWorkflowServicePrecheckWorkflowRun_UsesRuntimeModelOverride(t *testing.
 	result, err := svc.PrecheckWorkflowRun(
 		context.Background(),
 		workflowMap,
-		&llmclient.AppContext{OrganizationID: "org-1", WorkspaceID: "ws-1", BillingSubjectType: llmclient.BillingSubjectTypeWorkspace, AppID: "app-1", AppType: "agent", AccountID: "account-1"},
+		&llmclient.AppContext{OrganizationID: "org-1", WorkspaceID: "ws-1", BillingSubjectType: llmclient.BillingSubjectTypeWorkspace, AppID: "app-1", AppType: "workflow", AccountID: "account-1"},
 		map[string]any{"model_config": map[string]any{"provider": "openai", "model": "gpt-override"}},
 	)
 	if err != nil {
@@ -58,8 +58,9 @@ func TestWorkflowServicePrecheckWorkflowRun_UsesRuntimeModelOverride(t *testing.
 	if !prechecker.called {
 		t.Fatalf("prechecker was not called")
 	}
-	if !reflect.DeepEqual(prechecker.receivedModels, []string{"gpt-override"}) {
-		t.Fatalf("receivedModels = %#v, want %#v", prechecker.receivedModels, []string{"gpt-override"})
+	wantModels := []llmclient.AppModelRef{{Provider: "openai", Model: "gpt-override"}}
+	if !reflect.DeepEqual(prechecker.receivedModels, wantModels) {
+		t.Fatalf("receivedModels = %#v, want %#v", prechecker.receivedModels, wantModels)
 	}
 }
 
@@ -71,6 +72,7 @@ func TestWorkflowServicePrecheckWorkflowRun_MapsWarningCodes(t *testing.T) {
 			Warnings: []llmclient.AppModelPrecheckWarning{
 				{Kind: llmclient.AppModelPrecheckWarningOrganizationBalanceLow, CurrentValue: 300, Threshold: 500},
 				{Kind: llmclient.AppModelPrecheckWarningPrivateChannelBalanceLow, CurrentValue: 220, Threshold: 500},
+				{Kind: llmclient.AppModelPrecheckWarningPrivateChannelUpstreamUnavailable, Reason: "credential_unavailable"},
 			},
 		},
 	}
@@ -79,7 +81,7 @@ func TestWorkflowServicePrecheckWorkflowRun_MapsWarningCodes(t *testing.T) {
 	result, err := svc.PrecheckWorkflowRun(
 		context.Background(),
 		map[string]any{"graph": map[string]any{"nodes": []any{map[string]any{"id": "llm-1", "data": map[string]any{"type": "llm", "model": map[string]any{"provider": "openai", "name": "gpt-4o"}}}}}},
-		&llmclient.AppContext{OrganizationID: "org-1", WorkspaceID: "ws-1", AppID: "app-1", AppType: "agent", AccountID: "account-1"},
+		&llmclient.AppContext{OrganizationID: "org-1", WorkspaceID: "ws-1", AppID: "app-1", AppType: "workflow", AccountID: "account-1"},
 		nil,
 	)
 	if err != nil {
@@ -88,8 +90,8 @@ func TestWorkflowServicePrecheckWorkflowRun_MapsWarningCodes(t *testing.T) {
 	if result.Status != WorkflowRunPrecheckStatusWarning {
 		t.Fatalf("Status = %q, want %q", result.Status, WorkflowRunPrecheckStatusWarning)
 	}
-	if len(result.Warnings) != 2 {
-		t.Fatalf("len(Warnings) = %d, want 2", len(result.Warnings))
+	if len(result.Warnings) != 3 {
+		t.Fatalf("len(Warnings) = %d, want 3", len(result.Warnings))
 	}
 	if result.Warnings[0].Code != 207008 {
 		t.Fatalf("Warnings[0].Code = %d, want 207008", result.Warnings[0].Code)
@@ -99,6 +101,9 @@ func TestWorkflowServicePrecheckWorkflowRun_MapsWarningCodes(t *testing.T) {
 	}
 	if result.Warnings[1].Code != 207010 {
 		t.Fatalf("Warnings[1].Code = %d, want 207010", result.Warnings[1].Code)
+	}
+	if result.Warnings[2].Code != 207015 || result.Warnings[2].Params["reason"] != "credential_unavailable" {
+		t.Fatalf("Warnings[2] = %#v, want upstream unavailable", result.Warnings[2])
 	}
 }
 
@@ -110,7 +115,7 @@ func TestWorkflowServicePrecheckWorkflowRun_ReturnsUnknownWhenModelCannotBeResol
 	result, err := svc.PrecheckWorkflowRun(
 		context.Background(),
 		map[string]any{"graph": map[string]any{"nodes": []any{map[string]any{"id": "image-1", "data": map[string]any{"type": "image-gen", "model": map[string]any{}}}}}},
-		&llmclient.AppContext{OrganizationID: "org-1", WorkspaceID: "ws-1", AppID: "app-1", AppType: "agent", AccountID: "account-1"},
+		&llmclient.AppContext{OrganizationID: "org-1", WorkspaceID: "ws-1", AppID: "app-1", AppType: "workflow", AccountID: "account-1"},
 		nil,
 	)
 	if err != nil {
@@ -156,7 +161,7 @@ func TestWorkflowServicePrecheckWorkflowRun_CollectsKnowledgeRetrievalModels(t *
 	result, err := svc.PrecheckWorkflowRun(
 		context.Background(),
 		workflowMap,
-		&llmclient.AppContext{OrganizationID: "org-1", WorkspaceID: "ws-1", AppID: "app-1", AppType: "agent", AccountID: "account-1"},
+		&llmclient.AppContext{OrganizationID: "org-1", WorkspaceID: "ws-1", AppID: "app-1", AppType: "workflow", AccountID: "account-1"},
 		nil,
 	)
 	if err != nil {
@@ -165,9 +170,38 @@ func TestWorkflowServicePrecheckWorkflowRun_CollectsKnowledgeRetrievalModels(t *
 	if result.Status != WorkflowRunPrecheckStatusOK {
 		t.Fatalf("Status = %q, want %q", result.Status, WorkflowRunPrecheckStatusOK)
 	}
-	wantModels := []string{"gpt-4.1-mini", "gpt-4o-mini", "rerank-2", "text-embedding-3-large"}
+	wantModels := []llmclient.AppModelRef{
+		{Provider: "openai", Model: "gpt-4.1-mini"},
+		{Provider: "openai", Model: "gpt-4o-mini"},
+		{Provider: "openai", Model: "text-embedding-3-large"},
+		{Provider: "voyage", Model: "rerank-2"},
+	}
 	if !reflect.DeepEqual(prechecker.receivedModels, wantModels) {
 		t.Fatalf("receivedModels = %#v, want %#v", prechecker.receivedModels, wantModels)
+	}
+}
+
+func TestCollectWorkflowAICreditModelsKeepsProviderForDuplicateNames(t *testing.T) {
+	graph := map[string]any{
+		"nodes": []any{
+			map[string]any{"data": map[string]any{"type": "llm", "model": map[string]any{"provider": "openai", "name": "shared-model"}}},
+			map[string]any{"data": map[string]any{"type": "sql-generator", "model": map[string]any{"provider": "qwen", "name": "shared-model"}}},
+		},
+	}
+
+	models, containsAICreditNodes, err := collectWorkflowAICreditModels(graph, nil)
+	if err != nil {
+		t.Fatalf("collectWorkflowAICreditModels() error = %v", err)
+	}
+	if !containsAICreditNodes {
+		t.Fatal("containsAICreditNodes = false, want true")
+	}
+	want := []llmclient.AppModelRef{
+		{Provider: "openai", Model: "shared-model"},
+		{Provider: "qwen", Model: "shared-model"},
+	}
+	if !reflect.DeepEqual(models, want) {
+		t.Fatalf("models = %#v, want %#v", models, want)
 	}
 }
 

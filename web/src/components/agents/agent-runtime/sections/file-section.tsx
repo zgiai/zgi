@@ -8,6 +8,7 @@ import type { AgentConfigSection } from '../types';
 interface AgentRuntimeFileSectionProps {
   open: boolean;
   fileUploadEnabled: boolean;
+  readOnly?: boolean;
   onToggleSection: (section: AgentConfigSection) => void;
   onChangeFileUploadEnabled: (value: boolean) => void;
 }
@@ -15,6 +16,7 @@ interface AgentRuntimeFileSectionProps {
 export function AgentRuntimeFileSection({
   open,
   fileUploadEnabled,
+  readOnly = false,
   onToggleSection,
   onChangeFileUploadEnabled,
 }: AgentRuntimeFileSectionProps) {
@@ -32,7 +34,11 @@ export function AgentRuntimeFileSection({
           <div className="text-sm font-medium">{t('files.title')}</div>
           <div className="text-xs text-muted-foreground">{t('files.description')}</div>
         </div>
-        <Switch checked={fileUploadEnabled} onCheckedChange={onChangeFileUploadEnabled} />
+        <Switch
+          checked={fileUploadEnabled}
+          disabled={readOnly}
+          onCheckedChange={onChangeFileUploadEnabled}
+        />
       </div>
     </RuntimeSection>
   );

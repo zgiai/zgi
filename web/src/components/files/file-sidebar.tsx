@@ -24,10 +24,10 @@ export interface FileSidebarProps {
   activeItemId?: string;
   onItemClick?: (itemId: string) => void;
   onNewFolder?: () => void;
+  onCreateTextFile?: () => void;
   onUpload?: () => void;
   onFolderCreateChild?: (folder: FileFolder) => void;
   onFolderRename?: (folder: FileFolder) => void;
-  onFolderMove?: (folder: FileFolder) => void;
   onFolderDelete?: (folder: FileFolder) => void;
   workspaceId?: string;
   topContent?: React.ReactNode;
@@ -58,7 +58,6 @@ function FileSidebarBase({
   onUpload,
   onFolderCreateChild,
   onFolderRename,
-  onFolderMove,
   onFolderDelete,
   workspaceId,
   topContent,
@@ -141,7 +140,7 @@ function FileSidebarBase({
         <div className="flex items-center justify-between mb-1.5">
           <h3 className="text-sm font-semibold text-foreground">{t('files.sidebar.storage')}</h3>
           <span className="text-sm font-medium text-muted-foreground">
-            {isLoadingStorage ? '...' : `${storageUsed.toFixed(1)}GB / ${storageTotal}GB`}
+            {isLoadingStorage ? '...' : `${storageUsed.toFixed(2)}GB / ${storageTotal}GB`}
           </span>
         </div>
         <Progress value={isLoadingStorage ? 0 : storagePercentage} className="h-1.5" />
@@ -149,16 +148,6 @@ function FileSidebarBase({
 
       {(onNewFolder || onUpload) && (
         <div className="space-y-2 px-4 pb-5">
-          {onNewFolder && (
-            <Button
-              className="h-10 w-full justify-center gap-2 rounded-lg text-sm font-semibold shadow-sm"
-              variant="outline"
-              onClick={onNewFolder}
-            >
-              <FolderPlus className="h-4 w-4" />
-              {t('files.sidebar.newFolder')}
-            </Button>
-          )}
           {onUpload && (
             <Button
               className="h-10 w-full justify-center gap-2 rounded-lg text-sm font-semibold shadow-sm shadow-primary/20"
@@ -167,6 +156,16 @@ function FileSidebarBase({
             >
               <Upload className="h-4 w-4" />
               {t('files.sidebar.uploadFile')}
+            </Button>
+          )}
+          {onNewFolder && (
+            <Button
+              className="h-10 w-full justify-center gap-2 rounded-lg text-sm font-semibold shadow-sm"
+              variant="outline"
+              onClick={onNewFolder}
+            >
+              <FolderPlus className="h-4 w-4" />
+              {t('files.sidebar.newFolder')}
             </Button>
           )}
         </div>
@@ -266,7 +265,6 @@ function FileSidebarBase({
                   variant="sidebar"
                   onCreateChild={onFolderCreateChild}
                   onRename={onFolderRename}
-                  onMove={onFolderMove}
                   onDelete={onFolderDelete}
                   workspaceId={workspaceId}
                 />

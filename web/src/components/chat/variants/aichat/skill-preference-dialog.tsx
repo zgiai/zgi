@@ -1,7 +1,6 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { Wrench } from 'lucide-react';
 import { getAIChatSkillDisplayInfo } from '@/components/chat/variants/aichat/skill-display';
 import { AIChatSkillIcon } from '@/components/chat/variants/aichat/skill-icon';
 import { Badge } from '@/components/ui/badge';
@@ -24,6 +23,7 @@ import type { AIChatSkillMetadata } from '@/services/types/aichat';
 
 interface AIChatSkillPreferenceDialogProps {
   open: boolean;
+  context: 'conversation' | 'platform-assistant';
   locale: string;
   skills: AIChatSkillMetadata[];
   selectedSkillIds: string[];
@@ -37,6 +37,7 @@ interface AIChatSkillPreferenceDialogProps {
 
 export function AIChatSkillPreferenceDialog({
   open,
+  context,
   locale,
   skills,
   selectedSkillIds,
@@ -50,6 +51,7 @@ export function AIChatSkillPreferenceDialog({
   const t = useT('webapp');
   const [closeConfirmOpen, setCloseConfirmOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const hasSearchQuery = searchQuery.trim().length > 0;
   const selectedSet = useMemo(() => new Set(selectedSkillIds), [selectedSkillIds]);
   const visibleSkills = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
@@ -64,6 +66,8 @@ export function AIChatSkillPreferenceDialog({
         display.label,
         display.description,
         display.whenToUse,
+        display.categoryLabel,
+        ...display.scenarios,
         ...display.tags,
       ]
         .filter(Boolean)
@@ -117,131 +121,148 @@ export function AIChatSkillPreferenceDialog({
     <>
       <Dialog open={open} onOpenChange={handleOpenChange}>
         <DialogContent size="xl">
-        <DialogHeader>
-          <DialogTitle>{t('consoleChat.skillPreferences.title')}</DialogTitle>
-          <DialogDescription>{t('consoleChat.skillPreferences.description')}</DialogDescription>
-        </DialogHeader>
-        <DialogBody className="max-h-[min(680px,calc(100vh-13rem))] space-y-4">
-          <div className="flex flex-col gap-3 rounded-md border bg-muted/20 p-3 sm:flex-row sm:items-center sm:justify-between">
-            <SearchInput
-              value={searchQuery}
-              onChange={event => setSearchQuery(event.target.value)}
-              placeholder={t('consoleChat.skillPreferences.searchPlaceholder')}
-              className="h-9 rounded-md bg-background sm:max-w-sm"
-              disabled={isSaving}
-            />
-            <div className="flex flex-wrap items-center gap-2">
-              <Badge variant="secondary" className="h-8 rounded-md">
-                <Wrench className="size-4" />
-                {t('consoleChat.skillPreferences.selectedCount', {
-                  count: selectedSkillIds.length,
-                })}
-              </Badge>
-              <Badge variant="outline" className="h-8 rounded-md font-normal">
-                {t('consoleChat.skillPreferences.visibleCount', {
-                  count: visibleSkills.length,
-                  total: skills.length,
-                })}
-              </Badge>
+          <DialogHeader>
+            <DialogTitle>{t('consoleChat.skillPreferences.title')}</DialogTitle>
+            <DialogDescription>
+              {context === 'platform-assistant'
+                ? t('consoleChat.skillPreferences.platformAssistantDescription')
+                : t('consoleChat.skillPreferences.conversationDescription')}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogBody className="max-h-[min(680px,calc(100vh-13rem))] space-y-4">
+            <div className="flex flex-col gap-3 rounded-md border bg-muted/20 p-3 sm:flex-row sm:items-center sm:justify-between">
+              <SearchInput
+                value={searchQuery}
+                onChange={event => setSearchQuery(event.target.value)}
+                placeholder={t('consoleChat.skillPreferences.searchPlaceholder')}
+                className="h-9 rounded-md bg-background sm:max-w-sm"
+                disabled={isSaving}
+              />
+              {hasSearchQuery ? (
+                <Badge variant="outline" className="h-8 rounded-md font-normal">
+                  {t('consoleChat.skillPreferences.matchingCount', {
+                    count: visibleSkills.length,
+                  })}
+                </Badge>
+              ) : null}
             </div>
-          </div>
-          {isLoading ? (
-            <div className="space-y-3">
-              <Skeleton className="h-10 w-full" />
-              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-                {Array.from({ length: 6 }).map((_, index) => (
-                  <Skeleton key={index} className="h-36 rounded-md" />
-                ))}
+            {isLoading ? (
+              <div className="space-y-3">
+                <Skeleton className="h-10 w-full" />
+                <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                  {Array.from({ length: 6 }).map((_, index) => (
+                    <Skeleton key={index} className="h-36 rounded-md" />
+                  ))}
+                </div>
               </div>
-            </div>
-          ) : skills.length === 0 ? (
-            <div className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
-              {t('consoleChat.skillPreferences.empty')}
-            </div>
-          ) : visibleSkills.length === 0 ? (
-            <div className="rounded-md border border-dashed p-6 text-sm text-muted-foreground">
-              {t('consoleChat.skillPreferences.noResults')}
-            </div>
-          ) : (
-            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-              {visibleSkills.map(skill => {
-                const display = getAIChatSkillDisplayInfo(skill, locale);
-                const checked = selectedSet.has(skill.skill_id);
-                return (
-                  <article
-                    key={skill.skill_id}
-                    className={cn(
-                      'flex min-h-36 flex-col rounded-md border bg-card p-3.5 text-left shadow-sm transition-colors hover:border-primary/30 hover:bg-muted/20',
-                      checked ? 'border-primary bg-primary/5 shadow-primary/10' : 'border-border',
-                      isSaving ? 'cursor-not-allowed opacity-70' : ''
-                    )}
-                  >
-                    <div className="flex items-start gap-3">
-                      <span className="flex size-8 shrink-0 items-center justify-center rounded-md border bg-background text-muted-foreground">
-                        <AIChatSkillIcon icon={display.icon} className="size-4" />
-                      </span>
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="min-w-0">
-                            <h3 className="truncate text-sm font-semibold text-foreground">
-                              {display.label}
-                            </h3>
-                            <p className="mt-0.5 line-clamp-1 text-xs text-muted-foreground">
-                              {display.category || skill.source || 'Skill'}
-                            </p>
+            ) : skills.length === 0 ? (
+              <div className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
+                {t('consoleChat.skillPreferences.empty')}
+              </div>
+            ) : visibleSkills.length === 0 ? (
+              <div className="rounded-md border border-dashed p-6 text-sm text-muted-foreground">
+                {t('consoleChat.skillPreferences.noResults')}
+              </div>
+            ) : (
+              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                {visibleSkills.map(skill => {
+                  const display = getAIChatSkillDisplayInfo(skill, locale);
+                  const checked = selectedSet.has(skill.skill_id);
+                  return (
+                    <div
+                      key={skill.skill_id}
+                      role="switch"
+                      aria-checked={checked}
+                      aria-label={display.label}
+                      aria-disabled={isSaving}
+                      tabIndex={isSaving ? -1 : 0}
+                      onClick={() => {
+                        if (!isSaving) onToggleSkill(skill.skill_id, !checked);
+                      }}
+                      onKeyDown={event => {
+                        if (isSaving || (event.key !== 'Enter' && event.key !== ' ')) return;
+                        event.preventDefault();
+                        onToggleSkill(skill.skill_id, !checked);
+                      }}
+                      className={cn(
+                        'flex min-h-36 cursor-pointer flex-col rounded-md border p-3.5 text-left shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30',
+                        checked
+                          ? cn(
+                              'border-primary bg-primary/5 shadow-primary/10',
+                              !isSaving && 'hover:border-primary hover:bg-primary/10'
+                            )
+                          : cn(
+                              'border-border bg-card',
+                              !isSaving && 'hover:border-primary/30 hover:bg-muted/20'
+                            ),
+                        isSaving ? 'cursor-not-allowed opacity-70' : ''
+                      )}
+                    >
+                      <div className="flex items-start gap-3">
+                        <span className="flex size-8 shrink-0 items-center justify-center rounded-md border bg-background text-muted-foreground">
+                          <AIChatSkillIcon icon={display.icon} className="size-4" />
+                        </span>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <h3 className="truncate text-sm font-semibold text-foreground">
+                                {display.label}
+                              </h3>
+                              <p className="mt-0.5 line-clamp-1 text-xs text-muted-foreground">
+                                {display.categoryLabel}
+                              </p>
+                            </div>
+                            <Switch
+                              checked={checked}
+                              disabled
+                              aria-hidden="true"
+                              tabIndex={-1}
+                              className="pointer-events-none disabled:cursor-default disabled:opacity-100"
+                            />
                           </div>
-                          <Switch
-                            checked={checked}
-                            disabled={isSaving}
-                            aria-label={display.label}
-                            onCheckedChange={nextChecked =>
-                              onToggleSkill(skill.skill_id, nextChecked)
-                            }
-                          />
                         </div>
                       </div>
-                    </div>
 
-                    <div className="mt-3 flex flex-wrap gap-1.5">
-                      <Badge
-                        variant={checked ? 'success' : 'subtle'}
-                        className="rounded-md font-normal"
-                      >
-                        {checked
-                          ? t('consoleChat.skillPreferences.enabled')
-                          : t('consoleChat.skillPreferences.disabled')}
-                      </Badge>
-                      {display.tags.slice(0, 2).map(tag => (
-                        <Badge key={tag} variant="outline" className="rounded-md font-normal">
-                          {tag}
+                      <div className="mt-3 flex flex-wrap gap-1.5">
+                        <Badge
+                          variant={checked ? 'success' : 'subtle'}
+                          className="rounded-md font-normal"
+                        >
+                          {checked
+                            ? t('consoleChat.skillPreferences.enabled')
+                            : t('consoleChat.skillPreferences.disabled')}
                         </Badge>
-                      ))}
-                    </div>
+                        {display.tags.slice(0, 2).map(tag => (
+                          <Badge key={tag} variant="outline" className="rounded-md font-normal">
+                            {tag}
+                          </Badge>
+                        ))}
+                      </div>
 
-                    <p className="mt-2.5 line-clamp-3 text-sm leading-5 text-muted-foreground">
-                      {display.description || skill.description}
-                    </p>
-                  </article>
-                );
+                      <p className="mt-2.5 line-clamp-3 text-sm leading-5 text-muted-foreground">
+                        {display.description || skill.description}
+                      </p>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </DialogBody>
+          <DialogFooter className="items-center justify-between gap-3">
+            <div className="mr-auto text-xs text-muted-foreground">
+              {t('consoleChat.skillPreferences.selectedCount', {
+                count: selectedSkillIds.length,
               })}
             </div>
-          )}
-        </DialogBody>
-        <DialogFooter className="items-center justify-between gap-3">
-          <div className="mr-auto text-xs text-muted-foreground">
-            {t('consoleChat.skillPreferences.selectedCount', {
-              count: selectedSkillIds.length,
-            })}
-          </div>
-          <Button variant="outline" onClick={closeWithoutConfirm} disabled={isSaving}>
-            {t('consoleChat.skillPreferences.cancel')}
-          </Button>
-          <Button onClick={onSave} disabled={isSaving || !hasChanges}>
-            {isSaving
-              ? t('consoleChat.skillPreferences.saving')
-              : t('consoleChat.skillPreferences.save')}
-          </Button>
-        </DialogFooter>
+            <Button variant="outline" onClick={closeWithoutConfirm} disabled={isSaving}>
+              {t('consoleChat.skillPreferences.cancel')}
+            </Button>
+            <Button onClick={onSave} disabled={isSaving || !hasChanges}>
+              {isSaving
+                ? t('consoleChat.skillPreferences.saving')
+                : t('consoleChat.skillPreferences.save')}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
       <Dialog open={closeConfirmOpen} onOpenChange={setCloseConfirmOpen}>

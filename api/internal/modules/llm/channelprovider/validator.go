@@ -41,9 +41,16 @@ const (
 	keyModelListingVerified = "model_listing_verified"
 )
 
+const (
+	TestStatusSuccess = "success"
+	TestStatusFailed  = "failed"
+	TestStatusSkipped = "skipped"
+)
+
 // TestResult is the normalized validation result used by channels and credentials.
 type TestResult struct {
 	Success        bool
+	Status         string
 	Message        string
 	ResponseTimeMs int64
 	Model          string
@@ -76,6 +83,7 @@ func TestModel(ctx context.Context, channelProvider, baseURL, apiKey, modelName 
 	if err != nil {
 		return &TestResult{
 			Success:        false,
+			Status:         TestStatusFailed,
 			Message:        fmt.Sprintf("failed to create adapter: %v", err),
 			ResponseTimeMs: time.Since(startTime).Milliseconds(),
 			Model:          modelName,
@@ -103,6 +111,7 @@ func TestModel(ctx context.Context, channelProvider, baseURL, apiKey, modelName 
 		errorMsg := normalizeValidationError(err)
 		return &TestResult{
 			Success:        false,
+			Status:         TestStatusFailed,
 			Message:        errorMsg,
 			ResponseTimeMs: responseTime,
 			Model:          modelName,
@@ -119,6 +128,7 @@ func TestModel(ctx context.Context, channelProvider, baseURL, apiKey, modelName 
 
 	return &TestResult{
 		Success:        true,
+		Status:         TestStatusSuccess,
 		Message:        "ok",
 		ResponseTimeMs: responseTime,
 		Model:          modelName,

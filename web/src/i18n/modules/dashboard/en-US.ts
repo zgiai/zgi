@@ -18,11 +18,12 @@ const messages = {
     usageDetails: 'Usage Details',
     llmProviders: 'Model Management',
     channel: 'Channel Management',
+    pricingPolicy: 'Billing Policy',
     apiKeys: 'API Keys',
     organization: 'Organization & Members',
     workspaces: 'Workspace Management',
-    contacts: 'Contacts',
-    permissions: 'Permissions',
+    contacts: 'Members & Departments',
+    permissions: 'Roles & Permissions',
     organizationSettings: 'Organization Settings',
     aichatSkills: 'Skill Management',
     modelSettings: 'Default Model Management',
@@ -186,22 +187,54 @@ const messages = {
     parserSettings: {
       title: 'Parser Settings',
       description:
-        'Configure Reducto and MinerU for document reparsing. Optional fields are prefilled with defaults and can be changed when your deployment needs different endpoints or timeouts.',
+        'Configure Reducto and MinerU for document reparsing. Optional fields are prefilled with defaults and can be changed for your deployment. Configure either Reducto or MinerU successfully to get better PDF, Office, table, and scanned document parsing.',
+      guide: {
+        title: 'Not sure which parser to choose?',
+        description:
+          'Configure either Reducto or MinerU successfully to get better PDF, Office, table, and scanned document parsing.',
+        reductoRecommendation: 'Reducto is recommended for overseas or English-heavy use cases.',
+        mineruRecommendation:
+          'MinerU official service is recommended for Mainland China or Chinese-heavy use cases.',
+        openReducto: 'Get Reducto API key',
+        openMineru: 'Get MinerU token',
+      },
       actions: {
         returnToReparse: 'Back to reparse',
         save: 'Save',
+        check: 'Check availability',
       },
       messages: {
         saved: 'Parser settings saved',
+        savedAndValidated: 'Parser settings saved and validated',
         saveFailed: 'Failed to save parser settings',
+        checked: 'Parser availability check passed',
+        checkFailed: 'Parser availability check failed',
       },
       reducto: {
         description:
-          'Official Reducto parsing service. Requires an API key before it can be enabled.',
+          'Official Reducto parsing service, recommended first for overseas or English-heavy use cases. Requires an API key before it can be enabled.',
+        help: {
+          title: 'How to get a Reducto API key',
+          action: 'Open Reducto Studio',
+          steps: {
+            signIn: 'Open Reducto Studio, then sign up or sign in.',
+            createKey: 'Go to API Keys in the sidebar, then click Create new API key.',
+            pasteKey: 'Copy the generated API key, paste it here, then save.',
+          },
+        },
       },
       mineru: {
         description:
-          'MinerU parsing service. Choose local sidecar mode or official service mode, then configure the fields for that mode.',
+          'MinerU parsing service, with the official service recommended first for Mainland China or Chinese-heavy use cases. Choose local sidecar mode or official service mode, then configure the fields for that mode.',
+        help: {
+          title: 'How to get a MinerU official token',
+          action: 'Open MinerU Token Management',
+          steps: {
+            signIn: 'Open the MinerU API management page, then sign up or sign in.',
+            createToken: 'Go to Token or API management, then create an official token.',
+            pasteToken: 'Copy the generated token, paste it here, then save.',
+          },
+        },
         modes: {
           sidecar: 'Local sidecar',
           official: 'Official service',
@@ -221,6 +254,9 @@ const messages = {
       placeholders: {
         secretConfigured: 'Configured. Leave blank to keep unchanged.',
         secretRequired: 'Required before enabling',
+      },
+      hints: {
+        baseUrl: 'Enter the service root URL. The system automatically appends the endpoint path.',
       },
       status: {
         not_configured: 'Not configured',
@@ -392,14 +428,24 @@ const messages = {
     console: 'Console',
     refresh: 'Refresh Data',
     consoleHome: {
-      title: 'Workspace Overview',
+      title: 'Overview Panel',
       workspace: 'Default Workspace',
-      intro: 'System readiness, operational resources, and the next action for this workspace.',
+      intro:
+        'Review product entry points, visible assets, runnable apps, and model readiness across your organization permissions.',
       refresh: 'Refresh',
       systemReadiness: 'System readiness',
       requiredSetup: 'Required setup',
       nextAction: 'Next action',
       continue: 'Continue',
+      personalWorkbench: 'Personal workbench',
+      noWorkspaceName: 'No workspace selected',
+      workspaceContext: 'Workspace context',
+      permissionScope: 'My visible scope',
+      visibleWorkspaceCount: '{count} workspaces',
+      workspaceContextDescription:
+        'The selected workspace is used when opening concrete asset pages. The overview still aggregates everything visible to you.',
+      personalWorkbenchDescription:
+        'You are in the personal workbench. Organization product entry points and app center remain available; asset links switch to their workspace before opening.',
       readyTitle: 'Ready for core workflows',
       incompleteTitle: 'Required setup incomplete',
       readyDescription: 'Chat and knowledge workflows have the required model capabilities.',
@@ -420,34 +466,95 @@ const messages = {
       recommended: 'Recommended',
       resources: 'Resources',
       needsAttention: 'Needs attention',
+      available: 'Available',
+      unavailable: 'Unavailable',
+      modelAvailability: 'Model availability',
+      runnableApps: 'Runnable apps',
+      runnableAppsTitle: 'Available app shortcuts',
+      runnableAppsDescription:
+        'Apps published to the app center are loaded through organization scope and do not require the current workspace.',
+      runnableAppsUnavailableTitle: 'App list is not available',
+      runnableAppsUnavailableDescription:
+        'Your account does not currently have access to the app center list.',
+      runnableAppFallbackDescription: 'Open this app from the app center.',
+      noRunnableAppsTitle: 'No runnable apps yet',
+      noRunnableAppsDescription: 'Published apps that are available to you will appear here.',
+      noWorkspaceHint:
+        'Recent work switches to the owning workspace before opening a concrete asset.',
+      workspaceOverview: {
+        eyebrow: 'My visible assets',
+        title: 'Workspace assets aggregated by permission',
+        noWorkspaceTitle: 'No workspace selected',
+        description:
+          'Only workspaces, agents, knowledge bases, databases, and files you can view are counted.',
+        noWorkspaceDescription:
+          'Select a workspace to show workspace assets and recent work on this panel.',
+        accessDeniedTitle: 'Current workspace is not visible',
+        accessDeniedDescription:
+          'Switch to a workspace where you have view access to see assets and recent work.',
+        recentEyebrow: 'Return to work quickly',
+        recentTitle: 'Recent work',
+        recentDescription:
+          'Latest conversations, agents, knowledge bases, and databases visible to you. Opening one switches to its workspace first.',
+        recentCount: '{count} items',
+        emptyRecentTitle: 'No recent work yet',
+        emptyRecentDescription:
+          'Recent conversations, agents, knowledge bases, and databases will appear after activity in your visible workspaces.',
+        unknownWorkspace: 'Unknown workspace',
+        openRecentFailed: 'Failed to open recent work',
+        stats: {
+          workspaces: 'Visible workspaces',
+          agents: 'Agents',
+          datasets: 'Knowledge bases',
+          dataSources: 'Databases',
+          files: 'Files',
+          members: 'Members',
+          admins: 'Admins',
+        },
+      },
       recentWork: 'Recent work',
       noRecentTitle: 'No recent records returned',
       noRecentDescription:
-        'This section only shows records returned by the current workspace APIs. No recent chats, agents, knowledge bases, or databases were returned.',
+        'No recent conversations, agents, knowledge bases, or databases were returned from your visible scope.',
       updatedAt: 'Updated {time}',
       recentTypes: {
         conversation: 'Conversation',
         agent: 'Agent',
+        workflow: 'Workflow',
         dataset: 'Knowledge',
         database: 'Database',
       },
       recentFallback: {
         conversation: 'Untitled conversation',
         agent: 'Untitled agent',
+        workflow: 'Untitled workflow',
         dataset: 'Untitled knowledge base',
         database: 'Untitled database',
       },
       noCriticalIssues: 'No critical setup issues are blocking core workflows.',
       missingItem: '{label} is missing',
+      modelConfigManagedByAdmin: 'Model capabilities are managed by organization admins.',
+      parserServiceMissing:
+        'No available third-party parser is configured. Upload-and-parse will use local parsing, which may perform worse on complex layouts, tables, and scanned files.',
       actions: {
         configureModels: 'Configure models',
+        configureParserService: 'Configure parser service',
         contactAdmin: 'Contact admin',
         createKnowledge: 'Create knowledge base',
         createAgent: 'Create agent',
         openChat: 'Open chat',
+        openAppCenter: 'Open app center',
+        openWorkspaceOverview: 'Open workspace overview',
+        manageWorkspace: 'Manage workspace',
         create: 'Create',
         add: 'Add',
         open: 'Open',
+      },
+      productEntries: {
+        chatDescription: 'Use the organization model stack for direct conversations.',
+        imageDescription: 'Generate and iterate on images from the console image workspace.',
+        appCenterTitle: 'App center',
+        appCenterDescription: 'Browse apps that are published for your account.',
       },
       nextActions: {
         configureRoutingTitle: 'Configure model routing',
@@ -460,7 +567,8 @@ const messages = {
         createAgentDescription:
           'Package model access, knowledge, and workflow behavior into one entry point.',
         startChatTitle: 'Start a new conversation',
-        startChatDescription: 'Use the configured model stack from the console chat workspace.',
+        startChatDescription:
+          'Use the configured organization model capabilities to start a console conversation.',
       },
       capabilities: {
         textChatDescription: 'Required before conversations and agents can run.',
@@ -591,6 +699,9 @@ const messages = {
         searchPlaceholder: 'Search active members by name or email',
         promote: 'Set as admin',
         emptyCandidates: 'No active standard members match this search.',
+        pageSummary: 'Page {page} / {total}',
+        previousPage: 'Previous page',
+        nextPage: 'Next page',
         promoteSuccess: 'Administrator added',
         demoteSuccess: 'Administrator removed',
         updateRoleError: 'Failed to update administrator role',
@@ -602,39 +713,48 @@ const messages = {
       },
     },
     aichatSkills: {
-      pageTitle: 'Organization Skills',
+      pageTitle: 'Skill Management',
       pageSubtitle:
-        'Skills are AI capability packages an organization can enable. The model can read instructions, references, or call tools when needed.',
-      title: 'Organization Skills',
-      description: 'Choose which Skills are available to AIChat across the current organization.',
+        'Manage the Skills available to conversations, the platform assistant, and agents for office collaboration, document processing, content creation, data analysis, knowledge retrieval, and task automation.',
+      title: 'Skill Management',
+      description:
+        'Manage the Skills available to conversations, the platform assistant, and agents for office collaboration, document processing, content creation, data analysis, knowledge retrieval, and task automation.',
       enabledCount: '{count} Skills enabled',
       sectionCount: '{count} Skills',
       empty: 'No Skills are available.',
-      loadFailed: 'Failed to load AIChat Skills.',
+      loadFailed: 'Failed to load Skills.',
       toggleAria: 'Toggle {skill}',
       tabs: {
         system: 'System Skills',
         custom: 'Custom Skills',
       },
       filters: {
+        scenarioLabel: 'Use case',
+        allScenarios: 'All',
+        capabilityLabel: 'Capability',
+        allCapabilities: 'All capabilities',
         searchPlaceholder: 'Search name, ID, description, or tags',
         searchAria: 'Search Skills',
+        sourceAria: 'Filter by source',
+        allSources: 'All sources',
         runtimeAria: 'Filter by Skill type',
         statusAria: 'Filter by enabled status',
         allRuntime: 'All types',
         allStatus: 'All statuses',
+        visibleCount: '{count} Skills shown',
         empty: 'No Skills match the current filters.',
       },
       sections: {
         system: {
           title: 'System Skills',
-          description: 'Provided and maintained by the platform, ready to enable for AIChat.',
+          description:
+            'Provided and maintained by the platform, ready to enable for conversations, the platform assistant, and agents.',
           empty: 'No built-in Skills are available.',
         },
         custom: {
           title: 'Custom Skills',
           description:
-            'Upload organization-owned Skill packages, then review and enable them for AIChat.',
+            'Upload organization-owned Skill packages, then review and enable them for conversations, the platform assistant, and agents.',
           emptyTitle: 'No custom Skills yet',
           emptyDescription:
             'Upload a zip Skill package here. Imported Skills stay disabled until you enable them.',
@@ -696,8 +816,8 @@ const messages = {
           'This Skill name is reserved by a built-in system Skill. Rename the custom Skill and try again.',
       },
       messages: {
-        saved: 'AIChat Skill settings saved',
-        saveFailed: 'Failed to save AIChat Skill settings',
+        saved: 'Skill settings saved',
+        saveFailed: 'Failed to save Skill settings',
         reset: 'Changes reset',
         imported: '{skill} imported. It is disabled by default.',
         previewFailed: 'Failed to validate Skill package',
@@ -716,20 +836,28 @@ const messages = {
       descriptionTooLong: 'Description cannot exceed {max} characters',
     },
     permissions: {
-      title: 'Roles and Permissions Scheme',
+      title: 'Permission Templates',
       subtitle:
-        'Manage role templates within the system. Click "Configure Permissions" to enter the detailed design mode.',
+        'Manage reusable workspace permission templates. Applying a template copies its current permissions to selected members.',
       loadError: 'Failed to load roles data',
+      sections: {
+        governanceTitle: 'Fixed governance identities',
+        governanceSubtitle:
+          'Workspace owners and admins are fixed identities for governance and cannot be edited as permission templates.',
+        templateTitle: 'Member permission templates',
+        templateSubtitle:
+          'Reusable permission plans for regular workspace members. Applying a template copies its current permissions to members.',
+      },
       roles: {
         workspaceOwner: {
-          name: 'Workspace Owner',
+          name: 'Workspace Lead',
           description:
             'Possesses the highest permissions within the workspace, responsible for resource allocation and member management, usually assigned to project leaders or department heads.',
         },
         workspaceAdmin: {
           name: 'Workspace Admin',
           description:
-            'Assists owners with daily operations, no right to delete workspaces, applicable to Scrum Masters.',
+            'Helps the workspace lead manage workspace members, with all basic permissions and team management permissions.',
         },
         member: {
           name: 'Member',
@@ -743,32 +871,119 @@ const messages = {
         },
       },
       actions: {
-        viewMembers: 'View Member List',
-        configurePermissions: 'Configure Detailed Permissions',
+        viewMembers: 'View Applied Members',
+        configurePermissions: 'Configure Template',
       },
       memberCount: {
-        people: '{count} people',
-        noMembers: 'No other members yet',
+        people: '{count} applied',
+        noMembers: 'No applied members',
       },
       newRoleScheme: {
-        title: 'New Role Scheme',
-        subtitle: 'Custom permission combination',
+        title: 'New Permission Template',
+        subtitle: 'Reusable permission set',
+      },
+      builtInRuntime: {
+        title: 'Built-in App Access',
+        subtitle:
+          'Manage built-in workflow visibility separately from workspace assets. Internal invocation stays available after publishing.',
+        loadError: 'Failed to load built-in app access settings',
+        saveSuccess: 'Built-in app access updated',
+        saveError: 'Failed to update built-in app access',
+        scenarios: {
+          globalChat: 'Chat',
+          biChat: 'App',
+          imageGenChat: 'Image',
+          unknown: '{scenario}',
+        },
+        surfaces: {
+          builtinApp: 'Built-in app',
+          builtinAppHint: 'Controls whether organization users can see and open this entry.',
+          internal: 'Internal invocation',
+          internalHint: 'Used by agents and scheduled tasks; kept enabled for compatibility.',
+        },
+        status: {
+          enabled: 'Enabled',
+          disabled: 'Disabled',
+        },
+        grants: {
+          title: 'Audience',
+          subtitle: 'Grant access to the whole organization, a department, or a specific account.',
+          empty: 'No audience grants',
+          subjectIdPlaceholder: 'Account or department ID',
+          organizationWide: 'Whole organization',
+          departmentPlaceholder: 'Select department',
+          accountPlaceholder: 'Select account',
+          searchMembersPlaceholder: 'Search members',
+          noMembers: 'No members found',
+          loadingMembers: 'Loading members...',
+          resolvingAccount: 'Resolving account...',
+          selectionRequired: 'Select an account or department before saving',
+          accountLookupFailed: 'Could not verify account',
+          departmentLookupFailed: 'Could not verify department',
+          unresolvedAccount: 'Unavailable account',
+          unresolvedDepartment: 'Unavailable department',
+        },
+        grantSubjects: {
+          organization: 'Organization',
+          department: 'Department',
+          account: 'Account',
+        },
+        actions: {
+          addGrant: 'Add',
+          removeGrant: 'Remove',
+          save: 'Save',
+        },
+        validation: {
+          subjectIdRequired: 'Account and department grants need an ID',
+          duplicateGrant: 'Duplicate audience grant',
+          grantRequired: 'Add at least one audience grant',
+        },
       },
       deleteConfirm: {
         title: 'Confirm Delete',
         description:
-          'Are you sure you want to delete role "{roleName}"? This action cannot be undone.',
+          'Are you sure you want to delete template "{roleName}"? This action cannot be undone.',
         cancel: 'Cancel',
         confirm: 'Confirm Delete',
         deleting: 'Deleting...',
+        keepOneToast:
+          'At least one permission template must remain. This template cannot be deleted.',
+        migrationTitle: 'Move members before deleting',
+        migrationDescription:
+          '"{roleName}" is still applied to {count} workspace members. Choose a replacement template and the system will switch those members before deleting this template.',
+        migrationWarning:
+          'Switching templates replaces each member permission snapshot in the related workspace. Make sure the replacement template is correct.',
+        replacementLabel: 'Switch to',
+        replacementPlaceholder: 'Select a replacement template',
+        replacementRequired: 'Select a replacement template',
+        noOrganization: 'No current organization found. Refresh and try again.',
+        migrateAndDelete: 'Switch and Delete',
+        migrating: 'Processing...',
+        migrationPartial:
+          'Switched {applied}; {failed} failed. Resolve the failed items before deleting.',
+        migrationError: 'Failed to delete template',
       },
-      deleteSuccess: 'Role deleted successfully',
+      deleteSuccess: 'Template deleted successfully',
       deleteError: 'Delete failed',
-      associatedMembers: 'Associated Members',
-      searchMembersPlaceholder: 'Search members in this role...',
+      associatedMembers: 'Applied Members',
+      searchMembersPlaceholder: 'Search members using this template...',
       noMembersFound: 'No members found',
+      selectedTargets: '{count} workspace members selected',
+      applyCurrentTemplate: 'Apply Template',
+      applyingTemplate: 'Applying...',
+      applyTemplateSuccess: 'Template applied successfully',
+      applyTemplatePartial: 'Applied {applied}, failed {failed}',
+      applyTemplateError: 'Failed to apply template',
+      applyTemplateConfirmTitle: 'Apply template to selected members?',
+      applyTemplateConfirmDescription:
+        'This will replace the selected {count} workspace member permission snapshots with the current template.',
+      applyTemplateConfirm: 'Apply Template',
+      applyTemplateCancel: 'Cancel',
+      noAppliedWorkspaces: 'No matched workspace records',
       membersListInfo:
-        'This list is for audit reference only. To adjust member role assignments, please go to ',
+        'Select workspace members here to reapply the current template. To edit a member directly, go to ',
+      fixedMembersListInfo:
+        'This identity is for viewing workspace governance members and cannot be changed in bulk here. To adjust governance identities, go to ',
       workspaceManagement: 'Workspace Management',
       or: ' or ',
       addressBook: 'Address Book',
@@ -776,29 +991,31 @@ const messages = {
       loadingMore: 'Loading more...',
       allMembersLoaded: 'All {total} members loaded',
       config: {
-        newRole: 'New Role',
-        createTitle: 'Create New Role',
+        newRole: 'New Template',
+        createTitle: 'Create Permission Template',
         basicInfo: 'Workspace Management',
-        roleName: 'Role Name',
-        roleNamePlaceholder: 'Enter role name',
-        roleDescription: 'Role Description',
+        roleName: 'Template Name',
+        roleNamePlaceholder: 'Enter template name',
+        roleDescription: 'Template Description',
         roleDescriptionPlaceholder:
-          'Briefly describe the responsibilities and applicable scenarios for this role',
+          'Briefly describe the responsibilities and applicable scenarios for this template',
         permissionsTitle: 'Resources & Allocation',
         selectedCount: '{count} permissions selected',
-        saveConfig: 'Save Configuration',
-        nameRequired: 'Role name is required',
-        createSuccess: 'Role created successfully',
-        updateSuccess: 'Permissions updated successfully',
+        saveConfig: 'Save Template',
+        nameRequired: 'Template name is required',
+        createSuccess: 'Template created successfully',
+        updateSuccess: 'Template updated successfully',
         enableAll: 'Enable All',
         allPermissionsEnabled: 'All permissions enabled',
         allPermissionsDisabled: 'Click to enable all permissions',
-        deleteSuccess: 'Role deleted successfully',
+        deleteSuccess: 'Template deleted successfully',
         saveError: 'Save failed',
         deleteError: 'Delete failed',
-        loadError: 'Failed to load role information',
-        editRoleInfo: 'Edit Role Information',
+        loadError: 'Failed to load template information',
+        editRoleInfo: 'Edit Template Information',
         unsavedChanges: 'Unsaved',
+        templateSnapshotNotice:
+          'Saving this template only affects future applications. Members who already use it keep their current permission snapshot until you apply the template again.',
         cancel: 'Cancel',
         save: 'Save',
         leaveConfirm: {
@@ -808,24 +1025,33 @@ const messages = {
           confirm: 'Discard changes',
           cancel: 'Keep editing',
         },
+        dependencyConfirm: {
+          title: 'Enable required permissions too?',
+          description:
+            'Enabling "{permission}" also requires "{dependencies}". Confirm to enable them together.',
+          confirm: 'Enable together',
+          cancel: 'Cancel',
+        },
         permissions: {
           modules: {
             workspace: 'Workspace Management Permissions',
             agent: 'Agent Module',
+            workflow: 'Workflow Module',
             knowledge: 'Knowledge Base Module',
             database: 'Database Module',
             file: 'File Management Module',
+            dashboard: 'Overview Panel',
           },
           workspace: {
             view: {
               name: 'View Workspace',
               description:
-                'Allows access to workspace, view application list, member list, basic overview, and available models.',
+                'Allows entering the workspace and viewing the application list, member list, and basic overview. Organization model capabilities are determined by organization-level configuration.',
             },
             manage: {
               name: 'Manage Workspace',
               description:
-                'Allows inviting/adding new members, removing existing members, and adjusting member roles (e.g., setting as admin). Allows modifying workspace name, description, and avatar. Allows viewing Token consumption quota and configuring available models (e.g., enabling GPT-4/disabling Claude).',
+                'Allows inviting/adding new members, removing existing members, and adjusting member roles (e.g., setting as admin). Allows modifying workspace name, description, and avatar. Allows viewing Token consumption quota; organization model capabilities are managed through organization model configuration permissions.',
             },
             billing_audit: {
               name: 'Finance & Audit',
@@ -933,12 +1159,15 @@ const messages = {
       },
     },
     contacts: {
-      title: 'Contacts',
-      subtitle: 'Manage organization members and department structure',
-      departmentPanelTitle: 'Organization structure',
-      departmentPanelDescription: 'Select the organization or a department to view members',
-      allMembers: 'All Members',
-      allMembersDescription: 'All members in the current organization',
+      title: 'Members & Departments',
+      subtitle:
+        'Manage organization members, department assignments, and organization-level roles.',
+      departmentPanelTitle: 'Organization & Departments',
+      departmentPanelDescription:
+        'Select the organization or a department to view members, or create and manage departments.',
+      allMembers: 'Organization Members',
+      allMembersDescription:
+        'View and manage organization members, including status, organization role, and department assignment.',
       departmentMembersDescription: 'Members in the selected department',
       scopeOrganization: 'Organization scope',
       scopeDepartment: 'Department scope',
@@ -947,6 +1176,9 @@ const messages = {
       scopeDepartmentHint:
         'Removing a member here only removes them from the selected department. The member remains in the organization root.',
       memberCount: '({count} total)',
+      memberScope: 'Member scope',
+      memberCountCompact: '{count} members',
+      includeSubDepartments: 'Include sub-department members',
       searchDepartment: 'Search department',
       searchMembers: 'Search members',
       selectDepartment: 'Please select a department to view members',
@@ -955,14 +1187,42 @@ const messages = {
       noMembers: 'No members in this department',
       noMemberSearchResults: 'No members found',
       noMemberSearchResultsDescription: 'Try another keyword or switch departments',
-      name: 'Name',
+      name: 'Member',
       email: 'Email',
+      organizationRole: 'Organization Role',
+      organizationRoles: {
+        owner: 'Organization Owner',
+        admin: 'Organization Admin',
+        normal: 'Member',
+      },
       workspaces: 'Joined Workspaces',
       allWorkspaces: 'All Workspaces',
       unassignedWorkspace: 'No workspace assigned',
       unassignedWorkspaceHint:
         'This member is in the organization but has not joined any workspace, so they cannot use the workbench yet.',
       assignWorkspace: 'Assign workspace',
+      assignWorkspaceDialog: {
+        title: 'Assign workspace',
+        description: 'Choose a workspace and permission template for {member}.',
+        descriptionFallback: 'Choose a workspace and permission template.',
+        searchPlaceholder: 'Search workspaces',
+        rolePlaceholder: 'Select permission template',
+        adminSwitchLabel: 'Set as workspace admin',
+        adminSwitchDescription:
+          'Workspace admins can manage members, settings, and permissions in this workspace.',
+        adminRoleMissing:
+          'The workspace admin role is unavailable, so this member cannot be set as an admin.',
+        assignAsAdmin: 'Set as workspace admin',
+        noLeader: 'No owner',
+        memberCount: '{count} people',
+        emptyTitle: 'No assignable workspaces',
+        emptyDescription:
+          'This member may already be in the visible workspaces, or you do not have manageable workspaces.',
+        resultSuccess: 'Added {member} to {workspace}',
+        resultWarning: 'Assignment result: {added} added, {skipped} skipped, {failed} failed',
+        cancel: 'Cancel',
+        confirm: 'Assign',
+      },
       status: 'Status',
       actions: 'Actions',
       active: 'Active',
@@ -995,8 +1255,13 @@ const messages = {
         removing: 'Removing...',
       },
       toggleStatusConfirm: {
-        enableDescription: 'Are you sure you want to enable member "{memberName}"?',
-        disableDescription: 'Are you sure you want to disable member "{memberName}"?',
+        title: 'Change member status',
+        enableDescription:
+          'Enable "{memberName}"? The member will be able to sign in and use authorized workspaces and apps again.',
+        disableDescription:
+          'Disable "{memberName}"? The member will no longer be able to use organization resources. Departments, workspaces, and permission settings will be kept and can be restored later.',
+        enableConfirm: 'Enable Member',
+        disableConfirm: 'Disable Member',
       },
       updateDepartmentSuccess: 'Department updated successfully',
       updateDepartmentError: 'Failed to update department',
@@ -1035,9 +1300,15 @@ const messages = {
         memberEmailPlaceholder: 'Enter member email',
         memberPassword: 'Password (optional)',
         memberPasswordPlaceholder: 'Leave blank to use the system default password',
-        defaultPasswordHint: 'If left blank, the system default password will be used.',
+        defaultPasswordHint:
+          'If left blank, the system default password ZGI@Welcome1 will be used.',
         memberDepartment: 'Department',
         memberDepartmentOptional: 'Department (optional)',
+        memberWorkspaceOptional: 'Workspace (optional)',
+        workspaceOptionalPlaceholder: 'Select a workspace or leave unassigned',
+        workspaceOptionalHint:
+          'If left unassigned, the member will only join the organization. You can assign a workspace later from Contacts.',
+        clearWorkspace: 'Leave workspace unassigned',
         selectDepartment: 'Select department',
         sendNotification: 'Send email notification immediately after adding',
         cancel: 'Cancel',
@@ -1073,7 +1344,7 @@ const messages = {
         password: 'New password (optional)',
         passwordPlaceholder: 'Leave blank to use the system default password',
         defaultPasswordHint:
-          'If left blank, the system default password will be used. The frontend will not show or cache it.',
+          'If left blank, the system default password ZGI@Welcome1 will be used.',
         cancel: 'Cancel',
         confirm: 'Reset Password',
         resetting: 'Resetting...',
@@ -1137,7 +1408,14 @@ const messages = {
       newWorkspace: 'New Workspace',
       searchPlaceholder: 'Search workspace name',
       workspaceName: 'Workspace Name',
-      manager: 'Manager',
+      manager: 'Workspace Lead',
+      quotaStatus: 'Quota Status',
+      quotaUnlimited: 'Unlimited',
+      quotaCustom: 'Custom',
+      quotaUsed: 'Used {used}',
+      quotaRemain: 'Remaining {remain} / {limit}',
+      quotaRemaining: 'Remaining {remain} credits',
+      quotaFiatApprox: '≈ {amount}',
       department: 'Department',
       resourceConfig: 'Resource Config (API Token)',
       memberCount: 'Members',
@@ -1146,6 +1424,8 @@ const messages = {
       disband: 'Disband',
       people: ' people',
       noWorkspaces: 'No workspaces',
+      noSearchResults: 'No matching workspace found. Try another keyword.',
+      clearSearch: 'Clear search',
       assignMemberBannerTitle: 'Assign a workspace for {member}',
       assignMemberBannerDescription:
         'Choose a target workspace. The detail page will open the add-member dialog and search by this member email.',
@@ -1174,9 +1454,11 @@ const messages = {
         department: 'Department',
         departmentPlaceholder: 'e.g., Backend Team',
         departmentHint: 'Select the department this workspace belongs to',
-        leader: 'Assign Responsible Person',
+        leader: 'Workspace Lead',
         leaderPlaceholder: 'Search name or email...',
         leaderSearchPlaceholder: 'Search name or email...',
+        leaderTransferHint:
+          'Changing the lead while editing transfers workspace leadership. The previous lead becomes a workspace admin.',
         resourceConfig: 'Resource/Budget Plan Configuration',
         resourceConfigPlaceholder: 'Search Token ID or name...',
         resourceConfigSearchPlaceholder: 'Search Token ID or name...',
@@ -1193,15 +1475,17 @@ const messages = {
       detail: {
         backToList: 'Back to List',
         basicInfo: 'Basic Info',
-        manager: 'Manager',
+        manager: 'Workspace Lead',
         department: 'Department',
+        memberDepartment: 'Member Department',
+        quotaStatus: 'Quota Status',
         resourceOverview: 'Resource Overview',
         apiToken: 'API Token',
         packageInfo: 'Package Info',
         availableModels: 'Available Model Permissions',
         members: 'Members',
         addMember: 'Add Member',
-        workspaceRole: 'Workspace Role',
+        workspaceRole: 'Workspace role / Template',
         operations: 'Operations',
         remove: 'Remove',
         removeConfirm: {
@@ -1212,8 +1496,8 @@ const messages = {
           confirm: 'Confirm Remove',
           removing: 'Removing...',
         },
-        roleUpdateSuccess: 'Role updated successfully',
-        roleUpdateError: 'Failed to update role',
+        roleUpdateSuccess: 'Template applied successfully',
+        roleUpdateError: 'Failed to apply template',
         membersAddedSuccess: 'Members added successfully',
         membersAddError: 'Failed to add members',
         edit: 'Edit',
@@ -1223,12 +1507,90 @@ const messages = {
         workspaceNotFound: 'Workspace not found',
         nameAndEmail: 'Name / Email',
         searchMembers: 'Search members',
-        roleOwner: 'Workspace Owner',
-        roleAdmin: 'Admin',
+        roleOwner: 'Workspace Lead',
+        roleAdmin: 'Workspace Admin',
         roleMember: 'Member',
+        organizationOwner: 'Organization Owner',
+        organizationAdmin: 'Organization Admin',
+        memberPermissions: {
+          title: 'Member Permissions',
+          description:
+            'Edit direct workspace permissions for {name}, or apply a template snapshot. Saving direct permissions detaches the member from template updates.',
+          emptyDescription: 'Select a member to edit permissions.',
+          edit: 'Edit permissions',
+          selectedCount: '{count} permissions selected',
+          ownerHint: 'Workspace leads always have all workspace permissions.',
+          governanceHint: 'Workspace leads and admins are fixed governance identities.',
+          moduleCount: '{count} permissions',
+          moduleAll: 'All',
+          selectAll: 'Select all',
+          reset: 'Reset',
+          cancel: 'Cancel',
+          save: 'Save permissions',
+          saving: 'Saving...',
+          source: {
+            owner: 'Workspace Lead',
+            admin: 'Workspace Admin',
+            direct: 'Direct permissions',
+            template: 'From template',
+            legacy: 'Migrated template',
+          },
+          adminToggle: {
+            title: 'Workspace admin',
+            description:
+              'Workspace admins can manage members, settings, and permissions in this workspace.',
+            missing:
+              'The built-in workspace admin role is unavailable. Check the workspace role initialization.',
+            currentAdminTitle: 'This member is a workspace admin',
+            currentAdminDescription:
+              'Admin permissions come from the fixed workspace admin identity and cannot be edited directly.',
+            demote: 'Change to member template',
+          },
+          adminPermissionPlaceholder: {
+            title: 'Admin permissions are managed by identity',
+            description:
+              'Workspace admins automatically receive the governance permissions needed for this workspace. To narrow access, change this member to an ordinary permission template first.',
+          },
+          template: {
+            title: 'Permission template',
+            description:
+              'Apply an ordinary permission template to this member. The template becomes a permission snapshot and can be customized afterwards.',
+            currentLabel: 'Current template',
+            placeholder: 'No template selected',
+            change: 'Change',
+            chooseTitle: 'Choose permission template',
+            chooseDescription:
+              'Click a card to apply it to this member. Applying an ordinary template does not create a live link.',
+            searchPlaceholder: 'Search template name or description',
+            empty: 'No matching permission templates',
+            current: 'Current',
+            deprecatedTooltip:
+              'This template has been deprecated or deleted. We recommend choosing another one.',
+            currentMissingDescription:
+              'The template currently linked to this member is no longer selectable. Choose a new permission template.',
+            apply: 'Apply',
+            applying: 'Applying...',
+            hint: 'Workspace admin is a fixed governance role. Ordinary templates do not create a live link; later template edits will not change this member automatically.',
+          },
+          dependencyConfirm: {
+            title: 'Enable required permissions too?',
+            description:
+              'Enabling "{permission}" also requires "{dependencies}". Confirm to enable them together.',
+            confirm: 'Enable together',
+            cancel: 'Cancel',
+          },
+          closeGuard: {
+            title: 'Save permission changes?',
+            description:
+              'This member has unsaved permission changes. Save them before closing, close without saving, or keep editing.',
+            saveAndClose: 'Save and close',
+            discard: 'Close without saving',
+            cancel: 'Keep editing',
+          },
+        },
         assignMemberBannerTitle: 'Adding {member} to this workspace',
         assignMemberBannerDescription:
-          'The add-member dialog is prefilled with this email. Select the member and workspace role to finish assignment.',
+          'The add-member dialog is prefilled with this email. Select the member and permission template to finish assignment.',
         addMemberModal: {
           title: 'Add Member',
           titleWithWorkspace: 'Add Member to {workspaceName}',
@@ -1236,8 +1598,14 @@ const messages = {
           allDepartments: 'All Departments',
           selectAll: 'Select All ({count} people)',
           noAvailableMembers: 'No available members',
-          assignRole: 'Assign role to selected members',
-          selectRole: 'Select Role',
+          assignRole: 'Choose permission template',
+          selectRole: 'Select permission template',
+          adminSwitchLabel: 'Set as workspace admin',
+          adminSwitchDescription:
+            'Admins can manage workspace members, settings, and permission templates.',
+          adminRoleMissing: 'Workspace admin role is unavailable.',
+          assignAsAdmin: 'Selected members will become workspace admins',
+          permissionTemplateLabel: 'Permission template',
           cancel: 'Cancel',
           add: 'Add ({count})',
           addSummary: 'Added {added}, skipped {skipped}, failed {failed}',

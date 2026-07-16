@@ -847,13 +847,17 @@ const messages: NodesMessages = {
       insertExtraContext: '插入额外上下文',
       changePromptOrder: '上下文编排',
       applyPromptTemplate: '应用并继续编辑',
+      applyPromptAsset: '应用并继续编辑',
       collapseBlock: '收起这一段',
-      changePromptReference: '重新选择',
+      openPromptAsset: '打开提示词资产',
+      changePromptReference: '选择提示词模板',
       expandBlock: '展开',
       more: '更多',
       modelParameters: '模型参数',
       expandEditor: '展开编辑器',
       selectPromptTemplate: '选择提示词模板',
+      selectQuickPromptTemplate: '快捷模板',
+      selectFromPromptLibrary: '从提示词库选择',
       saveAsPrompt: '保存为提示词',
       showExplanation: '查看说明',
       hideExplanation: '收起说明',
@@ -873,6 +877,8 @@ const messages: NodesMessages = {
       modelRequired: '未配置模型',
       promptRequired: '未配置系统提示词',
       visionVariableRequired: '开启图片输入后，图片输入变量必填',
+      latestPromptReference:
+        '当前节点跟随提示词库“最新版本”。发布到线上前建议改为跟随“线上稳定版”，避免草稿版本自动进入生产。',
     },
     tips: {
       cannotRemoveFirstSystem: '首个系统提示不可删除',
@@ -1000,34 +1006,37 @@ const messages: NodesMessages = {
     promptSource: {
       managed: '来自提示词库',
       inline: '当前节点副本',
-      currentUsing: '当前正在使用：{name}',
+      currentUsing: '已从提示词库加载：{name}',
+      loadedFromAsset: '已从提示词库加载：{name}',
       managedDescription:
-        '当前节点正在使用提示词库里的共享提示词。这里仅展示内容预览；如果只想改这个节点，请先改成当前节点可编辑。',
-      managedPreview: '只读预览',
+        '当前内容来自提示词库，但已经是这个节点里的可编辑副本；继续编辑不会修改原始提示词。',
+      managedPreview: '当前节点内容',
       emptyContent: '暂无内容',
       inlineDescription: '当前节点正在使用自己的提示词副本，你可以直接编辑，也可以保存回提示词库。',
       inlineShortDescription: '当前节点提示词可直接编辑。',
-      followingRelease: '当前跟随 {target}，后续发布会自动更新到这里',
-      fixedVersion: '当前固定在 {version}，不会自动变化',
+      loadedAssetEditableDescription: '这里是当前节点的一份可编辑内容。选择其他模板会替换当前内容，不会修改提示词库。',
+      legacyManagedDescription:
+        '这是旧版受管引用。为了避免提示词库后续版本变化影响线上运行，建议转为节点副本后再发布。',
+      followingRelease: '来源版本：{target}',
+      fixedVersion: '来源版本：{version}',
+      referenceAppliedToast: '已应用到当前节点。请点击顶部保存，刷新或发布时才会生效。',
+      copyAppliedToast: '已复制到当前节点。请点击顶部保存，刷新或发布时才会生效。',
+      migratedToInlineToast: '已转为节点副本。请点击顶部保存，刷新或发布时才会生效。',
+      unsavedWorkflowHint: '工作流有未保存更改。点击顶部保存后，当前引用设置才会持久化。',
       releaseLabels: {
-        production: '正式版',
+        production: '线上稳定版',
+        latest: '最新版本',
         staging: '预发版',
         grayA: '灰度 A',
         grayB: '灰度 B',
       },
     },
     promptTemplates: {
-      title: '提示词模板',
-      footerTip: '点击任意模板可立即应用到系统提示词中',
-      confirm: {
-        title: '应用提示词模板',
-        description: '确认要应用此提示词模板吗？这将覆盖当前的系统提示词。',
-        confirm: '确认应用',
-        cancel: '取消',
-      },
+      title: '快捷模板',
+      footerTip: '选择模板后先预览，确认后会替换当前系统提示词。',
       preview: {
-        title: '应用提示词模板',
-        description: '此操作将替换当前系统提示词，请预览以下模板内容：',
+        title: '应用快捷模板',
+        description: '此操作会替换当前系统提示词，请先预览模板内容：',
         previewLabel: '提示词预览',
         warning: '应用将覆盖现有系统提示词',
         apply: '应用模板',
@@ -1037,35 +1046,51 @@ const messages: NodesMessages = {
         customerService: {
           title: '客服助手',
           description: '专业的客户服务助手模板',
+          text:
+            '你是一名专业的客服助手。用户请求：{{#sys.query#}}。请先用一句话复述用户需求以确认理解；若信息不足，提出一个关键的澄清问题；随后给出步骤化解决方案，并提供简洁的最终答复。语气保持友好、简洁。',
         },
         contentCreator: {
           title: '内容创作助手',
           description: '专业的内容创作和写作助手',
+          text:
+            '你是一名资深内容创作者。主题：{{#sys.query#}}。请按引言 / 主体 / 结论输出内容，必要时使用要点或小标题，保持自然易读，避免冗长。',
         },
         dataAnalyst: {
           title: '数据分析师',
           description: '专业的数据分析和解读助手',
+          text:
+            '你是一名数据分析师。分析问题：{{#sys.query#}}。请基于数据提供洞察，解释可能的原因与影响，并给出可操作的建议；对不确定性要明确标注，并说明进一步验证的方法。',
         },
         productConsultant: {
           title: '产品顾问',
           description: '专业的产品咨询和推荐助手',
+          text:
+            '你是一名产品顾问。用户需求：{{#sys.query#}}。请推荐合适的产品，并说明选择依据、优缺点与适用场景；信息不全时先询问关键需求。',
         },
         // Templates for task workflows
         translation: {
           title: '内容翻译',
           description: '在保持风格一致的前提下进行多语言翻译',
+          text:
+            '你是一名专业本地化专家。进行忠实、流畅的翻译，保持领域术语、语气、意图与格式（Markdown、列表、表格）一致。内联代码、占位符与变量保持不变。数字、单位与标点遵循目标语言规范。不添加解释或注释，仅输出译文。保持句子连贯与段落分隔。若源文包含代码或命令，除非明确需要本地化，否则保持不变。在可推断的情况下贴合品牌风格。',
         },
         copywriting: {
           title: '文案生成',
           description: '生成营销文案、标题与标语',
+          text:
+            '你是一名资深文案。按照现代营销最佳实践生成高转化文案。输出 3 个风格不同的版本：信息型、说服型、活泼型。每个版本包含：标题（不超过 12 个词）、1-2 句正文，以及清晰的 CTA。利益点具体，避免陈词滥调，尽量贴合可推断的品牌调性与目标受众，禁止虚构事实。语言简洁有力。各版本之间请空一行分隔。',
         },
         story: {
           title: '故事创作',
           description: '根据主题或大纲创作短篇故事',
+          text:
+            '你是一名专业故事作者。创作一篇原创短篇（约 400-600 字），具备完整叙事弧（铺垫、发展、高潮、收束）。使用生动意象、统一视角与自然对话；避免陈词滥调与说教，以“展现”代替“告知”。确保主题连贯、人物动机可信。首行输出标题，其后为正文。仅输出故事内容。',
         },
         codeGeneration: {
           title: '代码生成',
           description: '根据需求生成可复用的代码片段或函数',
+          text:
+            '你是一名资深工程师。编写可用于生产的代码以解决指定任务。默认使用 TypeScript（除非明确要求其他语言）。要求：强类型（禁止 any）、清晰函数签名、小而纯的函数、基础输入校验与错误处理、少量必要行内注释，并在文件开头用简短注释标注时间/空间复杂度。在主函数后提供最小使用示例或类单测片段。仅输出代码。',
         },
       },
     },

@@ -1,15 +1,21 @@
 package skills
 
 import (
+	"context"
 	"strings"
 
+	"github.com/zgiai/zgi/api/internal/capabilities/toolgovernance"
 	"github.com/zgiai/zgi/api/internal/modules/tools"
 )
 
 const (
 	SkillTime                   = "time"
 	SkillCalculator             = "calculator"
+	SkillConsoleNavigator       = "console-navigator"
+	SkillAgentManagement        = "agent-management"
 	SkillFileGenerator          = "file-generator"
+	SkillFileManager            = "file-manager"
+	SkillFileReader             = "file-reader"
 	SkillPPTSlidePlanner        = "ppt-slide-planner"
 	SkillWorkReport             = "work-report-generator"
 	SkillSchedulePlanner        = "schedule-planner"
@@ -57,13 +63,153 @@ const (
 	SkillRequiredConfigAgentWorkflow  = "agent_workflow"
 )
 
+const (
+	SkillExposureGeneral         = "general"
+	SkillExposureSidebarManaged  = "sidebar_managed"
+	SkillExposureSystemAsset     = "system_asset"
+	SkillExposureAgentBound      = "agent_bound"
+	SkillExposureWorkflowRuntime = "workflow_runtime"
+	SkillExposureHiddenRuntime   = "hidden_runtime"
+	SkillGovernanceRiskNone      = "none"
+	SkillGovernanceRiskLow       = "low"
+	SkillGovernanceRiskMedium    = "medium"
+	SkillGovernanceRiskHigh      = "high"
+	SkillGovernanceRiskMixed     = "mixed"
+)
+
+type SkillExposureProfile struct {
+	Category            string `json:"category"`
+	UserSelectable      bool   `json:"user_selectable"`
+	RuntimeManaged      bool   `json:"runtime_managed"`
+	SystemAsset         bool   `json:"system_asset"`
+	PageContextRequired bool   `json:"page_context_required"`
+	GovernanceRisk      string `json:"governance_risk"`
+}
+
 func IsHiddenSystemSkill(skillID string) bool {
 	switch normalizeSkillID(skillID) {
-	case SkillAgentKnowledge, SkillAgentDatabase, SkillAgentWorkflow, SkillAgentMemory, SkillUserMemory:
+	case SkillAgentManagement, SkillFileManager, SkillIntentRouter, SkillAgentKnowledge, SkillAgentDatabase, SkillAgentWorkflow, SkillAgentMemory, SkillUserMemory:
 		return true
 	default:
 		return false
 	}
+}
+
+func SystemSkillExposureProfile(skillID string) SkillExposureProfile {
+	switch normalizeSkillID(skillID) {
+	case SkillConsoleNavigator:
+		return SkillExposureProfile{
+			Category:            SkillExposureSidebarManaged,
+			UserSelectable:      false,
+			RuntimeManaged:      true,
+			SystemAsset:         false,
+			PageContextRequired: true,
+			GovernanceRisk:      SkillGovernanceRiskLow,
+		}
+	case SkillFileManager:
+		return SkillExposureProfile{
+			Category:            SkillExposureSidebarManaged,
+			UserSelectable:      false,
+			RuntimeManaged:      true,
+			SystemAsset:         true,
+			PageContextRequired: true,
+			GovernanceRisk:      SkillGovernanceRiskHigh,
+		}
+	case SkillAgentManagement:
+		return SkillExposureProfile{
+			Category:            SkillExposureSidebarManaged,
+			UserSelectable:      false,
+			RuntimeManaged:      true,
+			SystemAsset:         true,
+			PageContextRequired: true,
+			GovernanceRisk:      SkillGovernanceRiskHigh,
+		}
+	case SkillIntentRouter:
+		return SkillExposureProfile{
+			Category:            SkillExposureHiddenRuntime,
+			UserSelectable:      false,
+			RuntimeManaged:      true,
+			SystemAsset:         false,
+			PageContextRequired: true,
+			GovernanceRisk:      SkillGovernanceRiskLow,
+		}
+	case SkillInternalKnowledge:
+		return SkillExposureProfile{
+			Category:            SkillExposureSystemAsset,
+			UserSelectable:      false,
+			RuntimeManaged:      false,
+			SystemAsset:         true,
+			PageContextRequired: false,
+			GovernanceRisk:      SkillGovernanceRiskLow,
+		}
+	case SkillInternalDatabase:
+		return SkillExposureProfile{
+			Category:            SkillExposureSystemAsset,
+			UserSelectable:      false,
+			RuntimeManaged:      false,
+			SystemAsset:         true,
+			PageContextRequired: false,
+			GovernanceRisk:      SkillGovernanceRiskMixed,
+		}
+	case SkillAgentKnowledge, SkillAgentDatabase, SkillAgentWorkflow:
+		return SkillExposureProfile{
+			Category:            SkillExposureAgentBound,
+			UserSelectable:      false,
+			RuntimeManaged:      true,
+			SystemAsset:         true,
+			PageContextRequired: false,
+			GovernanceRisk:      SkillGovernanceRiskMixed,
+		}
+	case SkillAgentMemory, SkillUserMemory:
+		return SkillExposureProfile{
+			Category:            SkillExposureHiddenRuntime,
+			UserSelectable:      false,
+			RuntimeManaged:      true,
+			SystemAsset:         false,
+			PageContextRequired: false,
+			GovernanceRisk:      SkillGovernanceRiskLow,
+		}
+	default:
+		return SkillExposureProfile{
+			Category:            SkillExposureGeneral,
+			UserSelectable:      true,
+			RuntimeManaged:      false,
+			SystemAsset:         false,
+			PageContextRequired: false,
+			GovernanceRisk:      SkillGovernanceRiskMixed,
+		}
+	}
+}
+
+func IsUserSelectableSystemSkill(skillID string) bool {
+	return SystemSkillExposureProfile(skillID).UserSelectable
+}
+
+func SkillExposureForMetadata(metadata SkillDiscoveryMetadata) SkillExposureProfile {
+	if strings.TrimSpace(metadata.Exposure.Category) != "" {
+		return metadata.Exposure
+	}
+	return SystemSkillExposureProfile(metadata.ID)
+}
+
+func SkillUserSelectable(metadata SkillDiscoveryMetadata) bool {
+	return SkillExposureForMetadata(metadata).UserSelectable
+}
+
+func SkillBindableToAgent(metadata SkillDiscoveryMetadata) bool {
+	profile := SkillExposureForMetadata(metadata)
+	return profile.UserSelectable &&
+		!profile.RuntimeManaged &&
+		!profile.SystemAsset &&
+		SkillSupportsCaller(metadata.SupportedCallers, SkillCallerAgent)
+}
+
+func IsSystemAssetSkill(skillID string) bool {
+	return SystemSkillExposureProfile(skillID).SystemAsset
+}
+
+func IsRuntimeManagedSystemSkill(skillID string) bool {
+	return SystemSkillExposureProfile(skillID).RuntimeManaged
 }
 
 func SkillSupportsCaller(supportedCallers []string, caller string) bool {
@@ -80,29 +226,32 @@ func SkillSupportsCaller(supportedCallers []string, caller string) bool {
 }
 
 type SkillToolDefinition struct {
-	Name         string                 `json:"name" yaml:"name"`
-	ProviderType tools.ToolProviderType `json:"provider_type" yaml:"provider_type"`
-	ProviderID   string                 `json:"provider_id" yaml:"provider_id"`
+	Name         string                   `json:"name" yaml:"name"`
+	ProviderType tools.ToolProviderType   `json:"provider_type" yaml:"provider_type"`
+	ProviderID   string                   `json:"provider_id" yaml:"provider_id"`
+	Governance   *toolgovernance.Manifest `json:"governance,omitempty" yaml:"governance"`
 }
 
 type SkillFrontmatter struct {
-	Name             string                 `yaml:"name"`
-	Description      string                 `yaml:"description"`
-	WhenToUse        string                 `yaml:"when_to_use"`
-	ProviderType     tools.ToolProviderType `yaml:"provider_type"`
-	ProviderID       string                 `yaml:"provider_id"`
-	Tools            []string               `yaml:"tools"`
-	RuntimeType      string                 `yaml:"runtime_type"`
-	MaxCallsPerTurn  int                    `yaml:"max_calls_per_turn"`
-	TimeoutSeconds   int                    `yaml:"timeout_seconds"`
-	Display          SkillDisplayMetadata   `yaml:"display"`
-	SupportedCallers []string               `yaml:"supported_callers"`
-	RequiredConfig   []string               `yaml:"required_config"`
+	Name             string                             `yaml:"name"`
+	Description      string                             `yaml:"description"`
+	WhenToUse        string                             `yaml:"when_to_use"`
+	ProviderType     tools.ToolProviderType             `yaml:"provider_type"`
+	ProviderID       string                             `yaml:"provider_id"`
+	Tools            []string                           `yaml:"tools"`
+	ToolGovernance   map[string]toolgovernance.Manifest `yaml:"tool_governance"`
+	RuntimeType      string                             `yaml:"runtime_type"`
+	MaxCallsPerTurn  int                                `yaml:"max_calls_per_turn"`
+	TimeoutSeconds   int                                `yaml:"timeout_seconds"`
+	Display          SkillDisplayMetadata               `yaml:"display"`
+	SupportedCallers []string                           `yaml:"supported_callers"`
+	RequiredConfig   []string                           `yaml:"required_config"`
 }
 
 type SkillDisplayMetadata struct {
 	Icon        string              `json:"icon" yaml:"icon"`
 	Category    string              `json:"category" yaml:"category"`
+	Scenarios   []string            `json:"scenarios,omitempty" yaml:"scenarios"`
 	Label       map[string]string   `json:"label" yaml:"label"`
 	Description map[string]string   `json:"description" yaml:"description"`
 	WhenToUse   map[string]string   `json:"when_to_use" yaml:"when_to_use"`
@@ -129,18 +278,20 @@ type SkillMetadata struct {
 }
 
 type SkillPromptMetadata struct {
-	ID               string `json:"skill_id"`
-	Source           string `json:"source"`
-	Name             string `json:"name"`
-	Description      string `json:"description"`
-	WhenToUse        string `json:"when_to_use"`
-	HasTools         bool   `json:"has_tools"`
-	RuntimeType      string `json:"runtime_type"`
-	HasReferences    bool   `json:"has_references"`
-	HasScripts       bool   `json:"has_scripts"`
-	ScriptsSupported bool   `json:"scripts_supported"`
-	MaxCallsPerTurn  int    `json:"max_calls_per_turn"`
-	TimeoutSeconds   int    `json:"timeout_seconds"`
+	ID               string               `json:"skill_id"`
+	Source           string               `json:"source"`
+	Name             string               `json:"name"`
+	Description      string               `json:"description"`
+	WhenToUse        string               `json:"when_to_use"`
+	HasTools         bool                 `json:"has_tools"`
+	RuntimeType      string               `json:"runtime_type"`
+	HasReferences    bool                 `json:"has_references"`
+	HasScripts       bool                 `json:"has_scripts"`
+	ScriptsSupported bool                 `json:"scripts_supported"`
+	MaxCallsPerTurn  int                  `json:"max_calls_per_turn"`
+	TimeoutSeconds   int                  `json:"timeout_seconds"`
+	SupportedCallers []string             `json:"supported_callers,omitempty"`
+	Exposure         SkillExposureProfile `json:"exposure"`
 }
 
 type SkillMetadataPromptStats struct {
@@ -169,6 +320,7 @@ type SkillDiscoveryMetadata struct {
 	ValidationError  string               `json:"validation_error,omitempty"`
 	SupportedCallers []string             `json:"supported_callers,omitempty"`
 	RequiredConfig   []string             `json:"required_config,omitempty"`
+	Exposure         SkillExposureProfile `json:"exposure"`
 }
 
 type SkillDocument struct {
@@ -181,19 +333,35 @@ type SkillReference struct {
 	Path     string `json:"path"`
 	Name     string `json:"name"`
 	FullPath string `json:"-"`
+	Embedded bool   `json:"-"`
 }
 
 type SkillTrace struct {
-	Kind       string                 `json:"kind"`
-	SkillID    string                 `json:"skill_id,omitempty"`
-	ToolName   string                 `json:"tool_name,omitempty"`
-	Title      string                 `json:"title,omitempty"`
-	Message    string                 `json:"message,omitempty"`
-	Status     string                 `json:"status"`
-	DurationMS int64                  `json:"duration_ms,omitempty"`
-	Arguments  map[string]interface{} `json:"arguments,omitempty"`
-	Result     map[string]interface{} `json:"result,omitempty"`
-	Error      string                 `json:"error,omitempty"`
+	Kind       string                   `json:"kind"`
+	SkillID    string                   `json:"skill_id,omitempty"`
+	ToolName   string                   `json:"tool_name,omitempty"`
+	Title      string                   `json:"title,omitempty"`
+	Message    string                   `json:"message,omitempty"`
+	Status     string                   `json:"status"`
+	DurationMS int64                    `json:"duration_ms,omitempty"`
+	Arguments  map[string]interface{}   `json:"arguments,omitempty"`
+	Result     map[string]interface{}   `json:"result,omitempty"`
+	Governance *toolgovernance.Decision `json:"governance,omitempty"`
+	Error      string                   `json:"error,omitempty"`
+}
+
+type ToolGovernanceRequest struct {
+	Manifest         toolgovernance.Manifest
+	SkillID          string
+	ToolName         string
+	ProviderType     tools.ToolProviderType
+	ProviderID       string
+	Arguments        map[string]interface{}
+	ExecutionContext ExecutionContext
+}
+
+type ToolGovernanceGateway interface {
+	DecideSkillTool(ctx context.Context, req ToolGovernanceRequest) (toolgovernance.Decision, error)
 }
 
 type SkillToolArgumentContract struct {
@@ -278,6 +446,8 @@ func skillPromptMetadata(skill SkillDocument) SkillPromptMetadata {
 		ScriptsSupported: metadata.ScriptsSupported,
 		MaxCallsPerTurn:  metadata.MaxCallsPerTurn,
 		TimeoutSeconds:   metadata.TimeoutSeconds,
+		SupportedCallers: copyStringSlice(metadata.SupportedCallers),
+		Exposure:         SystemSkillExposureProfile(metadata.ID),
 	}
 }
 
@@ -318,5 +488,6 @@ func skillDiscoveryMetadata(skill SkillDocument) SkillDiscoveryMetadata {
 		Status:           SkillStatusActive,
 		SupportedCallers: copyStringSlice(metadata.SupportedCallers),
 		RequiredConfig:   copyStringSlice(metadata.RequiredConfig),
+		Exposure:         SystemSkillExposureProfile(metadata.ID),
 	}
 }

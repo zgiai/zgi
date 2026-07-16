@@ -3,6 +3,7 @@
 type SearchParamsLike = Pick<URLSearchParams, 'has' | 'toString'>;
 
 const RESOURCE_DETAIL_ROUTES: Array<{ pattern: RegExp; target: string }> = [
+  { pattern: /^\/console\/workflows\/[^/]+(?:\/.*)?$/, target: '/console/workflows' },
   { pattern: /^\/console\/agents\/[^/]+(?:\/.*)?$/, target: '/console/agents' },
   { pattern: /^\/console\/dataset\/[^/]+(?:\/.*)?$/, target: '/console/dataset' },
   { pattern: /^\/console\/db\/[^/]+(?:\/.*)?$/, target: '/console/db' },

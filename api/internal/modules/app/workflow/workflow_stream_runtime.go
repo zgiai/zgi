@@ -18,6 +18,17 @@ type workflowStreamRuntime struct {
 	Executor        *WorkflowExecutor
 }
 
+type workflowStreamVariablePoolScope struct {
+	ConversationAccess webAppConversationAccessService
+	VariableLoader     workflowStreamConversationVariableLoader
+	AgentID            string
+	AccountID          string
+}
+
+type workflowStreamConversationVariableLoader interface {
+	LoadConversationVariables(conversationID uuid.UUID) (map[string]interface{}, error)
+}
+
 func (h *WorkflowHandler) loadWorkflowStreamData(ctx context.Context, workspaceID, appID, runType string, isDraft bool) (map[string]any, error) {
 	logger.DebugContext(ctx, "workflow configuration load started",
 		zap.String("run_type", runType),
@@ -249,7 +260,7 @@ func addVariablesToPool(pool *graph_entities.VariablePool, graphData map[string]
 	}
 }
 
-func buildWorkflowStreamVariablePool(ctx context.Context, graphData map[string]any, systemInputs map[string]interface{}, reqInputs map[string]interface{}, startNodeID string) *graph_entities.VariablePool {
+func buildWorkflowStreamVariablePool(ctx context.Context, graphData map[string]any, systemInputs map[string]interface{}, reqInputs map[string]interface{}, startNodeID string, scope workflowStreamVariablePoolScope) (*graph_entities.VariablePool, error) {
 	sharedVariablePool := &graph_entities.VariablePool{
 		VariableDictionary:    make(map[string]map[string]graph_entities.Variable),
 		UserInputs:            make(map[string]interface{}),
@@ -261,23 +272,12 @@ func buildWorkflowStreamVariablePool(ctx context.Context, graphData map[string]a
 	addVariablesToPool(sharedVariablePool, graphData, "environment_variables", graph_entities.EnvironmentVariableNodeId, nil)
 
 	var persistedConversationVars map[string]interface{}
-	if conversationID, ok := systemInputs["sys.conversation_id"].(string); ok && conversationID != "" {
-		convUUID, err := uuid.Parse(conversationID)
-		if err == nil {
-			handler := NewAdvancedChatWorkflowHandler()
-			persistedConversationVars, err = handler.LoadConversationVariables(convUUID)
-			if err != nil {
-				logger.WarnContext(ctx, "failed to load persisted conversation variables",
-					zap.String("conversation_id", conversationID),
-					zap.Error(err),
-				)
-				persistedConversationVars = nil
-			} else {
-				logger.DebugContext(ctx, "persisted conversation variables loaded",
-					zap.String("conversation_id", conversationID),
-					zap.Int("conversation_variable_count", len(persistedConversationVars)),
-				)
-			}
+	conversationVariableConfigs := extractVariableConfigList(graphData["conversation_variables"])
+	if conversationID, ok := systemInputs["sys.conversation_id"].(string); ok && conversationID != "" && len(conversationVariableConfigs) > 0 {
+		var err error
+		persistedConversationVars, err = loadWorkflowStreamConversationVariables(ctx, conversationID, scope)
+		if err != nil {
+			return nil, err
 		}
 	}
 
@@ -285,7 +285,37 @@ func buildWorkflowStreamVariablePool(ctx context.Context, graphData map[string]a
 	addWorkflowStreamSystemVariables(ctx, sharedVariablePool, systemInputs)
 	addWorkflowStreamUserInputs(ctx, sharedVariablePool, reqInputs, startNodeID)
 
-	return sharedVariablePool
+	return sharedVariablePool, nil
+}
+
+func loadWorkflowStreamConversationVariables(ctx context.Context, conversationID string, scope workflowStreamVariablePoolScope) (map[string]interface{}, error) {
+	conversationID = strings.TrimSpace(conversationID)
+	if conversationID == "" {
+		return nil, nil
+	}
+	if scope.ConversationAccess == nil || scope.VariableLoader == nil || strings.TrimSpace(scope.AgentID) == "" || strings.TrimSpace(scope.AccountID) == "" {
+		return nil, fmt.Errorf("workflow stream conversation variable scope missing")
+	}
+	if err := validateWebAppConversationAccess(ctx, scope.ConversationAccess, conversationID, scope.AgentID, scope.AccountID); err != nil {
+		return nil, fmt.Errorf("workflow stream conversation variable access denied: %w", err)
+	}
+	convUUID, err := uuid.Parse(conversationID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid workflow stream conversation id: %w", err)
+	}
+	persistedConversationVars, err := scope.VariableLoader.LoadConversationVariables(convUUID)
+	if err != nil {
+		logger.WarnContext(ctx, "failed to load persisted conversation variables",
+			zap.String("conversation_id", conversationID),
+			zap.Error(err),
+		)
+		return nil, nil
+	}
+	logger.DebugContext(ctx, "persisted conversation variables loaded",
+		zap.String("conversation_id", conversationID),
+		zap.Int("conversation_variable_count", len(persistedConversationVars)),
+	)
+	return persistedConversationVars, nil
 }
 
 func addWorkflowStreamSystemVariables(ctx context.Context, sharedVariablePool *graph_entities.VariablePool, systemInputs map[string]interface{}) {

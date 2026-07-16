@@ -165,6 +165,7 @@ export function EditDepartmentDialog({
               }}
               placeholder={t('organization.contacts.editDepartment.departmentNamePlaceholder')}
               maxLength={50}
+              showCharacterCount
               errorText={nameError}
               className="h-12 rounded-xl border focus:border-brand-main focus:ring-brand-main/10 transition-all"
             />

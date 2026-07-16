@@ -126,24 +126,29 @@ func (s *llmGatewayServiceImpl) createBillingContext(
 	}
 
 	billingCtx := &BillingContext{
-		APIKeyID:          apiKey.ID,
-		OrganizationID:    shadowOrganizationID.String(),
-		QuotaSubjectType:  quotaSubjectTypeAPIKey,
-		QuotaSubjectID:    apiKey.ID,
-		ModelID:           providerSelection.Model.ID,
-		ModelSource:       providerSelection.ModelSource,
-		ModelName:         providerSelection.Model.Model,
-		ProviderID:        providerSelection.Provider.ID,
-		ProviderName:      providerSelection.Provider.Provider,
-		RouteID:           routeID,
-		ChannelID:         channelID,
-		EstimatedCredits:  estimatedCredits,
-		BillingLane:       billingLane,
-		UseSystemProvider: usageBillingLaneUsesSystemProvider(billingLane),
-		IsStreaming:       isStreaming,
-		RequestID:         requestID,
-		RequestCreatedAt:  requestCreatedAt,
-		AttemptID:         attemptID,
+		APIKeyID:             apiKey.ID,
+		OrganizationID:       shadowOrganizationID.String(),
+		QuotaSubjectType:     quotaSubjectTypeAPIKey,
+		QuotaSubjectID:       apiKey.ID,
+		ModelID:              providerSelection.Model.ID,
+		ModelSource:          providerSelection.ModelSource,
+		ModelName:            providerSelection.Model.Model,
+		ProviderID:           providerSelection.Provider.ID,
+		ProviderName:         providerSelection.Provider.Provider,
+		RouteID:              routeID,
+		ChannelID:            channelID,
+		CredentialID:         providerSelection.CredentialID,
+		CredentialGeneration: providerSelection.CredentialGeneration,
+		ChannelProvider:      providerSelection.ChannelProvider,
+		UpstreamWouldGuard:   providerSelection.UpstreamWouldGuard,
+		UpstreamHalfOpen:     providerSelection.UpstreamHalfOpen,
+		EstimatedCredits:     estimatedCredits,
+		BillingLane:          billingLane,
+		UseSystemProvider:    usageBillingLaneUsesSystemProvider(billingLane),
+		IsStreaming:          isStreaming,
+		RequestID:            requestID,
+		RequestCreatedAt:     requestCreatedAt,
+		AttemptID:            attemptID,
 	}
 
 	if appCtx != nil {
@@ -412,6 +417,7 @@ func (s *llmGatewayServiceImpl) handleProviderError(
 	attemptIdx int,
 	err error,
 ) error {
+	s.recordUpstreamProviderError(ctx, providerSelection, billingCtx, err)
 	billingCtx.Status = "error"
 	billingCtx.ErrorMessage = err.Error()
 	billingCtx.ResponseTime = responseTime
@@ -477,6 +483,7 @@ func (s *llmGatewayServiceImpl) settleChatSuccess(
 	settlement *adapter.SettlementResult,
 	responseTime int64,
 ) error {
+	s.recordUpstreamProviderSuccess(ctx, providerSelection, billingCtx)
 	decision, laneErr := s.resolveBillingDecision(providerSelection, billingCtx)
 	if laneErr != nil {
 		wrappedLaneErr := wrapBillingLaneMismatchError(laneErr)
@@ -493,10 +500,12 @@ func (s *llmGatewayServiceImpl) settleChatSuccess(
 	}
 
 	if decision.UseSystemProvider {
-		if usage != nil {
+		if hasBillableTokenUsage(usage) {
 			billingCtx.PromptTokens = usage.PromptTokens
 			billingCtx.CompletionTokens = usage.CompletionTokens
 			billingCtx.TotalTokens = usage.TotalTokens
+		} else {
+			clearBillingContextTokenUsage(billingCtx)
 		}
 		billingCtx.Status = "success"
 		billingCtx.ResponseTime = responseTime
@@ -525,7 +534,7 @@ func (s *llmGatewayServiceImpl) settleChatSuccess(
 	actualPromptTokens := usage.PromptTokens
 	actualCompletionTokens := usage.CompletionTokens
 
-	quote, err := s.quoteTokenPricing(ctx, pricingModelRefFromSelection(providerSelection), actualPromptTokens, actualCompletionTokens)
+	quote, err := s.quoteTokenPricingForSettlement(ctx, billingCtx, pricingModelRefFromSelection(providerSelection), actualPromptTokens, actualCompletionTokens)
 	if err != nil {
 		return fmt.Errorf("failed to calculate credits: %w", err)
 	}
@@ -576,6 +585,15 @@ func (s *llmGatewayServiceImpl) settleChatSuccess(
 	return nil
 }
 
+func clearBillingContextTokenUsage(billingCtx *BillingContext) {
+	if billingCtx == nil {
+		return
+	}
+	billingCtx.PromptTokens = 0
+	billingCtx.CompletionTokens = 0
+	billingCtx.TotalTokens = 0
+}
+
 // settleEmbeddingsSuccess settles billing for a successful embeddings/rerank completion
 func (s *llmGatewayServiceImpl) settleEmbeddingsSuccess(
 	ctx context.Context,
@@ -586,6 +604,7 @@ func (s *llmGatewayServiceImpl) settleEmbeddingsSuccess(
 	settlement *adapter.SettlementResult,
 	responseTime int64,
 ) error {
+	s.recordUpstreamProviderSuccess(ctx, providerSelection, billingCtx)
 	decision, laneErr := s.resolveBillingDecision(providerSelection, billingCtx)
 	if laneErr != nil {
 		wrappedLaneErr := wrapBillingLaneMismatchError(laneErr)
@@ -619,7 +638,21 @@ func (s *llmGatewayServiceImpl) settleEmbeddingsSuccess(
 		return nil
 	}
 
-	quote, err := s.quoteTokenPricing(ctx, pricingModelRefFromSelection(providerSelection), actualTokens, 0)
+	if actualTokens <= 0 {
+		providerName := ""
+		modelName := ""
+		if providerSelection != nil {
+			providerName = providerSelection.Provider.Provider
+			modelName = providerSelection.Model.Model
+		}
+		err := missingTokenUsageError(providerName, modelName)
+		if settleErr := s.handleProviderError(ctx, billingCtx, providerSelection, channelID, responseTime, 0, err); settleErr != nil {
+			return settleErr
+		}
+		return err
+	}
+
+	quote, err := s.quoteTokenPricingForSettlement(ctx, billingCtx, pricingModelRefFromBillingContext(billingCtx), actualTokens, 0)
 	if err != nil {
 		return fmt.Errorf("failed to calculate credits: %w", err)
 	}

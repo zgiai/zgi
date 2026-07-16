@@ -29,29 +29,7 @@ func (h *OrganizationHandler) GetOrganizationWorkspaceAvailableMembers(c *gin.Co
 		return
 	}
 
-	organization, err := h.organizationService.GetOrganizationByWorkspaceID(c.Request.Context(), workspaceID)
-	if err != nil {
-		response.Fail(c, response.ErrSystemError)
-		return
-	}
-	if organization == nil || organization.ID != organizationID {
-		response.Fail(c, response.ErrWorkspaceNotInOrganization)
-		return
-	}
-
-	hasPermission, err := h.organizationService.CheckWorkspacePermission(
-		c.Request.Context(),
-		organizationID,
-		workspaceID,
-		accountID,
-		model.WorkspacePermissionWorkspaceManage,
-	)
-	if err != nil {
-		response.Fail(c, response.ErrSystemError)
-		return
-	}
-	if !hasPermission {
-		response.Fail(c, response.ErrPermissionDenied)
+	if !h.requireOrganizationWorkspacePermission(c, organizationID, workspaceID, accountID, model.WorkspacePermissionWorkspaceMemberManage) {
 		return
 	}
 

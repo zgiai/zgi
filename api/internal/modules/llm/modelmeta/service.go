@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"reflect"
 	"strings"
 	"time"
 
@@ -20,8 +22,9 @@ import (
 )
 
 const (
-	modelMetaAPIVersion = "v1"
-	priceScale          = 4
+	modelMetaAPIVersion     = "v1"
+	defaultModelMetaAPIBase = "https://models.zgi.ai"
+	priceScale              = 6
 )
 
 var errModelMetaAPIURLNotConfigured = errors.New("MODELMETA_API_URL is not configured")
@@ -32,9 +35,7 @@ const (
 	SyncResultStatusFailed  = "failed"
 )
 
-var syncProviders = []string{"openai", "anthropic", "cohere", "google", "qwen", "deepseek", "glm", "moonshot"}
-
-// Service handles model metadata synchronization from modelmeta.dev
+// Service handles model metadata synchronization from a ModelMeta-compatible source.
 type Service struct {
 	db         *gorm.DB
 	httpClient *http.Client
@@ -55,7 +56,7 @@ func NewService(db *gorm.DB) *Service {
 func resolveModelMetaAPIBase() string {
 	cfg := appconfig.GlobalConfig
 	if cfg == nil || strings.TrimSpace(cfg.ModelMeta.APIURL) == "" {
-		return ""
+		return normalizeModelMetaAPIBase(defaultModelMetaAPIBase)
 	}
 	return normalizeModelMetaAPIBase(cfg.ModelMeta.APIURL)
 }
@@ -75,7 +76,7 @@ func (s *Service) HasConfiguredAPIBaseURL() bool {
 	return s != nil && strings.TrimSpace(s.apiBaseURL) != ""
 }
 
-// ModelMetaResponse represents the response from modelmeta.dev API
+// ModelMetaResponse represents the response from a ModelMeta-compatible API.
 type ModelMetaResponse struct {
 	Data       []ModelMetaData `json:"data"`
 	Object     string          `json:"object"`
@@ -85,7 +86,7 @@ type ModelMetaResponse struct {
 	TotalPages int             `json:"total_pages"`
 }
 
-// ModelMetaProvider represents a provider from modelmeta.dev API
+// ModelMetaProvider represents a provider from a ModelMeta-compatible API.
 type ModelMetaProvider struct {
 	ID          string                 `json:"id"`
 	Object      string                 `json:"object"`
@@ -105,7 +106,7 @@ type ModelMetaProvider struct {
 	UpdatedAt   int64                  `json:"updated_at"`
 }
 
-// ModelMetaProviderResponse represents the provider list response from modelmeta.dev
+// ModelMetaProviderResponse represents the provider list response from a ModelMeta-compatible API.
 type ModelMetaProviderResponse struct {
 	Data       []ModelMetaProvider `json:"data"`
 	Total      int                 `json:"total"`
@@ -114,7 +115,7 @@ type ModelMetaProviderResponse struct {
 	TotalPages int                 `json:"total_pages"`
 }
 
-// ModelMetaData represents a model from modelmeta.dev
+// ModelMetaData represents a model from a ModelMeta-compatible API.
 type ModelMetaData struct {
 	ID               string                 `json:"id"`
 	Object           string                 `json:"object"`
@@ -132,9 +133,10 @@ type ModelMetaData struct {
 	ContextWindow    int                    `json:"context_window"`
 	MaxOutputTokens  int                    `json:"max_output_tokens"`
 	Currency         string                 `json:"currency"`
-	InputPrice       float64                `json:"input_price"`
-	OutputPrice      float64                `json:"output_price"`
+	InputPrice       *float64               `json:"input_price"`
+	OutputPrice      *float64               `json:"output_price"`
 	CachedInputPrice float64                `json:"cached_input_price"`
+	Pricing          json.RawMessage        `json:"pricing"`
 	IsFlagship       bool                   `json:"is_flagship"`
 	IsRecommended    bool                   `json:"is_recommended"`
 	IsFeatured       bool                   `json:"is_featured"`
@@ -157,16 +159,17 @@ type ModelMetaData struct {
 
 // SyncResult represents the result of a sync operation
 type SyncResult struct {
-	Provider      string   `json:"provider"`
-	Status        string   `json:"status"`
-	TotalModels   int      `json:"total_models"`
-	SuccessModels int      `json:"success_models"`
-	FailedModels  int      `json:"failed_models"`
-	NewModels     int      `json:"new_models"`
-	UpdatedModels int      `json:"updated_models"`
-	SkippedModels int      `json:"skipped_models"`
-	Errors        []string `json:"errors,omitempty"`
-	DurationMs    int64    `json:"duration_ms"`
+	Provider         string   `json:"provider"`
+	Status           string   `json:"status"`
+	TotalModels      int      `json:"total_models"`
+	SuccessModels    int      `json:"success_models"`
+	FailedModels     int      `json:"failed_models"`
+	NewModels        int      `json:"new_models"`
+	UpdatedModels    int      `json:"updated_models"`
+	DeprecatedModels int      `json:"deprecated_models"`
+	SkippedModels    int      `json:"skipped_models"`
+	Errors           []string `json:"errors,omitempty"`
+	DurationMs       int64    `json:"duration_ms"`
 }
 
 // DiffResult represents the comparison result between local and remote models
@@ -179,16 +182,18 @@ type DiffResult struct {
 }
 
 type DiffSummary struct {
-	TotalRemote     int `json:"total_remote"`
-	TotalLocal      int `json:"total_local"`
-	NewModels       int `json:"new_models"`
-	UpdatedModels   int `json:"updated_models"`
-	UnchangedModels int `json:"unchanged_models"`
+	TotalRemote      int `json:"total_remote"`
+	TotalLocal       int `json:"total_local"`
+	NewModels        int `json:"new_models"`
+	UpdatedModels    int `json:"updated_models"`
+	DeprecatedModels int `json:"deprecated_models"`
+	UnchangedModels  int `json:"unchanged_models"`
 }
 
 type DiffChanges struct {
-	New     []ModelChange `json:"new"`
-	Updated []ModelChange `json:"updated"`
+	New        []ModelChange `json:"new"`
+	Updated    []ModelChange `json:"updated"`
+	Deprecated []ModelChange `json:"deprecated"`
 }
 
 // DeprecatedResult represents local models not found in upstream (potentially deprecated)
@@ -202,7 +207,7 @@ type DeprecatedResult struct {
 type ModelChange struct {
 	Model             string         `json:"model"`
 	ModelName         string         `json:"model_name"`
-	ChangeType        string         `json:"change_type"` // new, updated, deleted
+	ChangeType        string         `json:"change_type"` // new, updated, deprecated
 	RemoteData        *ModelMetaData `json:"remote_data,omitempty"`
 	LocalData         interface{}    `json:"local_data,omitempty"`
 	DiffFields        []DiffField    `json:"diff_fields,omitempty"`
@@ -215,7 +220,7 @@ type DiffField struct {
 	NewValue interface{} `json:"new_value"`
 }
 
-// SyncProviderModels syncs models for a specific provider from modelmeta.dev
+// SyncProviderModels syncs models for a specific provider from the configured ModelMeta-compatible source.
 // If modelNames is provided and not empty, only sync those specific models.
 // If modelNames is nil or empty, sync all models (backward compatible).
 func (s *Service) SyncProviderModels(ctx context.Context, provider string, modelNames []string) (*SyncResult, error) {
@@ -225,8 +230,8 @@ func (s *Service) SyncProviderModels(ctx context.Context, provider string, model
 		Status:   SyncResultStatusSuccess,
 		Errors:   []string{},
 	}
+	fullSync := len(modelNames) == 0
 
-	// Fetch all models from modelmeta.dev
 	allModels, err := s.fetchProviderModels(provider)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch models: %w", err)
@@ -277,9 +282,28 @@ func (s *Service) SyncProviderModels(ctx context.Context, provider string, model
 		result.SuccessModels++
 	}
 
+	if fullSync && len(allModels) > 0 && result.FailedModels == 0 {
+		deprecatedCount, err := s.markMissingModelsDeprecated(ctx, catalogModelKeysFromMeta(allModels))
+		if err != nil {
+			return nil, fmt.Errorf("failed to mark missing models deprecated: %w", err)
+		}
+		result.DeprecatedModels = int(deprecatedCount)
+	}
+
 	result.Status = resolveSyncResultStatus(result.SuccessModels, result.FailedModels)
 	result.DurationMs = time.Since(startTime).Milliseconds()
+	if invalidator := currentModelCacheInvalidator(); invalidator != nil {
+		invalidator.InvalidateModelCache(ctx)
+	}
 	return result, nil
+}
+
+func catalogModelKeysFromMeta(models []ModelMetaData) []catalogModelKey {
+	keys := make([]catalogModelKey, 0, len(models))
+	for _, model := range models {
+		keys = append(keys, catalogModelKey{Provider: model.Provider, Model: model.Model})
+	}
+	return keys
 }
 
 func resolveSyncResultStatus(successModels, failedModels int) string {
@@ -295,19 +319,29 @@ func resolveSyncResultStatus(successModels, failedModels int) string {
 
 // SyncAllProviders syncs models for all providers
 func (s *Service) SyncAllProviders(ctx context.Context) (map[string]*SyncResult, error) {
+	providers, err := s.fetchProviders()
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch providers: %w", err)
+	}
+
 	results := make(map[string]*SyncResult)
 
-	for _, provider := range syncProviders {
-		result, err := s.SyncProviderModels(ctx, provider, nil) // nil = sync all models
+	for _, provider := range providers {
+		providerName := strings.TrimSpace(provider.Provider)
+		if providerName == "" {
+			continue
+		}
+
+		result, err := s.SyncProviderModels(ctx, providerName, nil) // nil = sync all models
 		if err != nil {
-			results[provider] = &SyncResult{
-				Provider: provider,
+			results[providerName] = &SyncResult{
+				Provider: providerName,
 				Status:   SyncResultStatusFailed,
 				Errors:   []string{err.Error()},
 			}
 			continue
 		}
-		results[provider] = result
+		results[providerName] = result
 	}
 
 	return results, nil
@@ -320,8 +354,9 @@ func (s *Service) ComputeDiff(ctx context.Context, provider string) (*DiffResult
 		Provider:  provider,
 		CheckedAt: time.Now(),
 		Changes: DiffChanges{
-			New:     []ModelChange{},
-			Updated: []ModelChange{},
+			New:        []ModelChange{},
+			Updated:    []ModelChange{},
+			Deprecated: []ModelChange{},
 		},
 	}
 
@@ -368,7 +403,13 @@ func (s *Service) ComputeDiff(ctx context.Context, provider string) (*DiffResult
 		return nil, fmt.Errorf("failed to fetch local models: %w", err)
 	}
 
-	result.Summary.TotalLocal = len(localModels)
+	activeLocalModels := 0
+	for i := range localModels {
+		if localModels[i].Status != llmmodel.ModelStatusDeprecated {
+			activeLocalModels++
+		}
+	}
+	result.Summary.TotalLocal = activeLocalModels
 
 	// Create maps for comparison
 	remoteMap := make(map[string]*ModelMetaData)
@@ -411,6 +452,24 @@ func (s *Service) ComputeDiff(ctx context.Context, provider string) (*DiffResult
 		}
 	}
 
+	for i := range localModels {
+		localModel := &localModels[i]
+		if localModel.Status == llmmodel.ModelStatusDeprecated {
+			continue
+		}
+		if _, exists := remoteMap[localModel.Model]; exists {
+			continue
+		}
+		result.Changes.Deprecated = append(result.Changes.Deprecated, ModelChange{
+			Model:             localModel.Model,
+			ModelName:         localModel.ModelName,
+			ChangeType:        "deprecated",
+			LocalData:         localModel,
+			RecommendedAction: "sync",
+		})
+		result.Summary.DeprecatedModels++
+	}
+
 	return result, nil
 }
 
@@ -437,7 +496,7 @@ func (s *Service) ComputeDeprecated(ctx context.Context, provider string) (*Depr
 	// Fetch local models
 	var localModels []llmmodel.LLMModel
 	if err := s.db.WithContext(ctx).
-		Where("provider = ? AND deleted_at IS NULL", provider).
+		Where("provider = ? AND status = ? AND deleted_at IS NULL", provider, llmmodel.ModelStatusActive).
 		Find(&localModels).Error; err != nil {
 		return nil, fmt.Errorf("failed to fetch local models: %w", err)
 	}
@@ -459,7 +518,7 @@ func (s *Service) ComputeDeprecated(ctx context.Context, provider string) (*Depr
 	return result, nil
 }
 
-// GetModelInfo retrieves model information from modelmeta.dev
+// GetModelInfo retrieves model information from the configured ModelMeta-compatible source.
 func (s *Service) GetModelInfo(provider, modelName string) (*ModelMetaData, error) {
 	models, err := s.fetchProviderModels(provider)
 	if err != nil {
@@ -475,7 +534,7 @@ func (s *Service) GetModelInfo(provider, modelName string) (*ModelMetaData, erro
 	return nil, fmt.Errorf("model %s not found for provider %s", modelName, provider)
 }
 
-// fetchProviderModels fetches ALL models for a provider from modelmeta.dev
+// fetchProviderModels fetches ALL models for a provider from the configured ModelMeta-compatible source.
 // It paginates through all pages (page_size=100) to avoid the default 20-model limit.
 func (s *Service) fetchProviderModels(provider string) ([]ModelMetaData, error) {
 	if !s.HasConfiguredAPIBaseURL() {
@@ -487,9 +546,15 @@ func (s *Service) fetchProviderModels(provider string) ([]ModelMetaData, error) 
 	const pageSize = 100
 
 	for {
-		url := fmt.Sprintf("%s/providers/%s/models?page=%d&page_size=%d", s.apiBaseURL, provider, page, pageSize)
+		requestURL := fmt.Sprintf(
+			"%s/models?provider=%s&page=%d&page_size=%d",
+			s.apiBaseURL,
+			url.QueryEscape(provider),
+			page,
+			pageSize,
+		)
 
-		req, err := http.NewRequest("GET", url, nil)
+		req, err := http.NewRequest("GET", requestURL, nil)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create request: %w", err)
 		}
@@ -526,7 +591,7 @@ func (s *Service) fetchProviderModels(provider string) ([]ModelMetaData, error) 
 	}
 
 	// Deduplicate by model name: last occurrence wins (most up-to-date data).
-	// modelmeta.dev may return multiple entries for the same model identifier
+	// ModelMeta-compatible sources may return multiple entries for the same model identifier
 	// (e.g. gpt-3.5-turbo appears twice with different context_window values).
 	seen := make(map[string]int, len(allModels))
 	var deduped []ModelMetaData
@@ -664,8 +729,23 @@ func normalizedRemotePriceValue(value float64) float64 {
 	return normalized
 }
 
+func remotePriceValue(value *float64) float64 {
+	if value == nil {
+		return 0
+	}
+	return *value
+}
+
+func normalizedOptionalRemotePriceValue(value *float64) float64 {
+	return normalizedRemotePriceValue(remotePriceValue(value))
+}
+
 func pricesDiffer(local decimal.Decimal, remote float64) bool {
 	return !normalizeLocalPrice(local).Equal(normalizeRemotePrice(remote))
+}
+
+func optionalPricesDiffer(local decimal.Decimal, remote *float64) bool {
+	return pricesDiffer(local, remotePriceValue(remote))
 }
 
 func equalStringSlices(left, right []string) bool {
@@ -684,6 +764,22 @@ func useCasesDiffer(local llmmodel.StringArray, remote []string) bool {
 	return !equalStringSlices(llmmodel.NormalizeUseCases([]string(local)), llmmodel.NormalizeUseCases(remote))
 }
 
+func structuredPricingDiffer(local datatypes.JSON, remote json.RawMessage) bool {
+	return !reflect.DeepEqual(normalizedStructuredPricing(local), normalizedStructuredPricing(remote))
+}
+
+func normalizedStructuredPricing(raw []byte) interface{} {
+	trimmed := strings.TrimSpace(string(raw))
+	if trimmed == "" || trimmed == "null" {
+		return map[string]interface{}{}
+	}
+	var value interface{}
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return trimmed
+	}
+	return value
+}
+
 // hasChanges checks if a model has changes compared to remote data
 func (s *Service) hasChanges(local *llmmodel.LLMModel, remote *ModelMetaData) bool {
 	if local.ModelName != remote.ModelName {
@@ -695,13 +791,22 @@ func (s *Service) hasChanges(local *llmmodel.LLMModel, remote *ModelMetaData) bo
 	if remote.MaxOutputTokens > 0 && local.MaxOutputTokens != remote.MaxOutputTokens {
 		return true
 	}
-	if pricesDiffer(local.InputPrice, remote.InputPrice) {
+	if optionalPricesDiffer(local.InputPrice, remote.InputPrice) {
 		return true
 	}
-	if pricesDiffer(local.OutputPrice, remote.OutputPrice) {
+	if local.InputPriceConfigured != (remote.InputPrice != nil) {
+		return true
+	}
+	if optionalPricesDiffer(local.OutputPrice, remote.OutputPrice) {
+		return true
+	}
+	if local.OutputPriceConfigured != (remote.OutputPrice != nil) {
 		return true
 	}
 	if pricesDiffer(local.CachedInputPrice, remote.CachedInputPrice) {
+		return true
+	}
+	if structuredPricingDiffer(local.Pricing, remote.Pricing) {
 		return true
 	}
 	if local.Status != remote.Status {
@@ -769,18 +874,32 @@ func (s *Service) computeDiffFields(local *llmmodel.LLMModel, remote *ModelMetaD
 	if remote.MaxOutputTokens > 0 && local.MaxOutputTokens != remote.MaxOutputTokens {
 		diffs = append(diffs, DiffField{Field: "max_output_tokens", OldValue: local.MaxOutputTokens, NewValue: remote.MaxOutputTokens})
 	}
-	if pricesDiffer(local.InputPrice, remote.InputPrice) {
+	if optionalPricesDiffer(local.InputPrice, remote.InputPrice) {
 		diffs = append(diffs, DiffField{
 			Field:    "input_price",
 			OldValue: normalizedPriceValue(local.InputPrice),
-			NewValue: normalizedRemotePriceValue(remote.InputPrice),
+			NewValue: normalizedOptionalRemotePriceValue(remote.InputPrice),
 		})
 	}
-	if pricesDiffer(local.OutputPrice, remote.OutputPrice) {
+	if local.InputPriceConfigured != (remote.InputPrice != nil) {
+		diffs = append(diffs, DiffField{
+			Field:    "input_price_configured",
+			OldValue: local.InputPriceConfigured,
+			NewValue: remote.InputPrice != nil,
+		})
+	}
+	if optionalPricesDiffer(local.OutputPrice, remote.OutputPrice) {
 		diffs = append(diffs, DiffField{
 			Field:    "output_price",
 			OldValue: normalizedPriceValue(local.OutputPrice),
-			NewValue: normalizedRemotePriceValue(remote.OutputPrice),
+			NewValue: normalizedOptionalRemotePriceValue(remote.OutputPrice),
+		})
+	}
+	if local.OutputPriceConfigured != (remote.OutputPrice != nil) {
+		diffs = append(diffs, DiffField{
+			Field:    "output_price_configured",
+			OldValue: local.OutputPriceConfigured,
+			NewValue: remote.OutputPrice != nil,
 		})
 	}
 	if pricesDiffer(local.CachedInputPrice, remote.CachedInputPrice) {
@@ -788,6 +907,13 @@ func (s *Service) computeDiffFields(local *llmmodel.LLMModel, remote *ModelMetaD
 			Field:    "cached_input_price",
 			OldValue: normalizedPriceValue(local.CachedInputPrice),
 			NewValue: normalizedRemotePriceValue(remote.CachedInputPrice),
+		})
+	}
+	if structuredPricingDiffer(local.Pricing, remote.Pricing) {
+		diffs = append(diffs, DiffField{
+			Field:    "pricing",
+			OldValue: normalizedStructuredPricing(local.Pricing),
+			NewValue: normalizedStructuredPricing(remote.Pricing),
 		})
 	}
 	if local.Status != remote.Status {
@@ -863,6 +989,7 @@ func publishedModelFromMeta(meta *ModelMetaData) PublishedModel {
 	tools := parsePublishedModelTools(meta.Tools)
 	parameters := parsePublishedModelParameters(meta.Parameters)
 	description := normalizeOptionalString(meta.Description)
+	isActive := meta.Status == llmmodel.ModelStatusActive
 
 	return PublishedModel{
 		Provider:               meta.Provider,
@@ -882,13 +1009,18 @@ func publishedModelFromMeta(meta *ModelMetaData) PublishedModel {
 		Currency:               meta.Currency,
 		ContextWindow:          meta.ContextWindow,
 		MaxOutputTokens:        meta.MaxOutputTokens,
-		InputPrice:             meta.InputPrice,
-		OutputPrice:            meta.OutputPrice,
+		InputPrice:             remotePriceValue(meta.InputPrice),
+		OutputPrice:            remotePriceValue(meta.OutputPrice),
 		CachedInputPrice:       meta.CachedInputPrice,
+		Pricing:                meta.Pricing,
+		InputPriceConfigured:   meta.InputPrice != nil,
+		OutputPriceConfigured:  meta.OutputPrice != nil,
 		UseCases:               llmmodel.EnsureUseCases(meta.UseCases, endpoints),
 		InputModalities:        normalizeStringValues(meta.InputModalities),
 		OutputModalities:       normalizeStringValues(meta.OutputModalities),
 		KnowledgeCutoff:        strings.TrimSpace(meta.KnowledgeCutoff),
+		IsActive:               isActive,
+		IsSystemEnabled:        isActive,
 		SupportedParameters:    marshalJSONRaw(meta.Parameters),
 		ConfigParameters:       meta.ConfigParameters,
 		Endpoints:              endpoints,
@@ -1153,34 +1285,57 @@ func (s *Service) fetchProviders() ([]ModelMetaProvider, error) {
 		return nil, errModelMetaAPIURLNotConfigured
 	}
 
-	url := fmt.Sprintf("%s/providers?limit=500", s.apiBaseURL)
+	var allProviders []ModelMetaProvider
+	page := 1
+	const pageSize = 100
 
-	req, err := http.NewRequest("GET", url, nil)
-	if err != nil {
-		return nil, err
+	for {
+		requestURL := fmt.Sprintf("%s/providers?page=%d&page_size=%d", s.apiBaseURL, page, pageSize)
+
+		req, err := http.NewRequest("GET", requestURL, nil)
+		if err != nil {
+			return nil, err
+		}
+
+		resp, err := s.httpClient.Do(req)
+		if err != nil {
+			return nil, err
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			resp.Body.Close()
+			return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+		}
+
+		body, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			return nil, err
+		}
+
+		var response ModelMetaProviderResponse
+		if err := json.Unmarshal(body, &response); err != nil {
+			return nil, err
+		}
+
+		allProviders = append(allProviders, response.Data...)
+		if response.TotalPages <= 0 || page >= response.TotalPages || len(response.Data) == 0 {
+			break
+		}
+		page++
 	}
 
-	resp, err := s.httpClient.Do(req)
-	if err != nil {
-		return nil, err
+	seen := make(map[string]int, len(allProviders))
+	deduped := make([]ModelMetaProvider, 0, len(allProviders))
+	for _, provider := range allProviders {
+		if idx, ok := seen[provider.Provider]; ok {
+			deduped[idx] = provider
+			continue
+		}
+		seen[provider.Provider] = len(deduped)
+		deduped = append(deduped, provider)
 	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
-	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-
-	var response ModelMetaProviderResponse
-	if err := json.Unmarshal(body, &response); err != nil {
-		return nil, err
-	}
-
-	return response.Data, nil
+	return deduped, nil
 }
 
 // syncProvider syncs a single provider to the database

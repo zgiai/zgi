@@ -40,12 +40,18 @@ RUN if [ -n "$APT_MIRROR" ]; then \
         sed -i "s|http://deb.debian.org/debian-security|http://$APT_SECURITY_MIRROR/debian-security|g" /etc/apt/sources.list.d/*.sources; \
     fi && \
     apt-get -o Acquire::Retries=5 update && \
+    apt-get -o Acquire::Retries=5 install -y --fix-missing --no-install-recommends bubblewrap util-linux && \
     sed 's/\r$//' profiles/skill-office/apt-packages.txt | grep -v '^[[:space:]]*$' | xargs -r apt-get -o Acquire::Retries=5 install -y --fix-missing --no-install-recommends && \
     rm -rf /var/lib/apt/lists/*
 
 ENV PATH=/usr/bin:/bin:/usr/local/bin:/usr/sbin:/sbin
 
-RUN python3 -c "import ssl; print(ssl.OPENSSL_VERSION)" && \
+ARG NPM_CONFIG_REGISTRY=
+ARG PIP_INDEX_URL=
+
+RUN if [ -n "$NPM_CONFIG_REGISTRY" ]; then npm config set registry "$NPM_CONFIG_REGISTRY"; fi && \
+    if [ -n "$PIP_INDEX_URL" ]; then export PIP_INDEX_URL; fi && \
+    python3 -c "import ssl; print(ssl.OPENSSL_VERSION)" && \
     npm install -g pnpm@9.15.9 && \
     zgi-sandbox-profilebuilder --profile skill-office --source-dir profiles --output-dir /tmp/profile-build --force && \
     mkdir -p /out/skill-office && \

@@ -102,6 +102,10 @@ type listTasksQuery struct {
 	Limit       int    `form:"limit" binding:"omitempty,min=1,max=100"`
 }
 
+type taskCountsQuery struct {
+	WorkspaceID string `form:"workspace_id"`
+}
+
 type listRunsQuery struct {
 	WorkspaceID string `form:"workspace_id"`
 	Page        int    `form:"page" binding:"omitempty,min=1"`
@@ -143,6 +147,14 @@ type taskRunsResponse struct {
 type runTaskNowResponse struct {
 	TaskID string                             `json:"task_id"`
 	Run    *automationmodel.AutomationTaskRun `json:"run"`
+}
+
+type taskCountsResponse struct {
+	All       int64 `json:"all"`
+	Active    int64 `json:"active"`
+	Paused    int64 `json:"paused"`
+	Completed int64 `json:"completed"`
+	Archived  int64 `json:"archived"`
 }
 
 // GenerateTaskDraft handles POST /automations/tasks/draft/generate.
@@ -389,6 +401,34 @@ func (h *TaskHandler) ListTasks(c *gin.Context) {
 	})
 }
 
+// GetTaskCounts handles GET /automations/tasks/counts.
+func (h *TaskHandler) GetTaskCounts(c *gin.Context) {
+	var query taskCountsQuery
+	if err := c.ShouldBindQuery(&query); err != nil {
+		response.FailWithMessage(c, response.ErrInvalidParam, "invalid query parameters: "+err.Error())
+		return
+	}
+
+	scope, _, ok := h.resolveScope(c, query.WorkspaceID, workspacemodel.WorkspacePermissionWorkspaceView)
+	if !ok {
+		return
+	}
+
+	counts, err := h.service.CountTasksByStatus(c.Request.Context(), scope)
+	if err != nil {
+		response.Fail(c, response.ErrSystemError)
+		return
+	}
+
+	response.Success(c, taskCountsResponse{
+		All:       sumTaskCounts(counts),
+		Active:    counts[automationmodel.AutomationTaskStatusActive],
+		Paused:    counts[automationmodel.AutomationTaskStatusPaused],
+		Completed: counts[automationmodel.AutomationTaskStatusCompleted],
+		Archived:  counts[automationmodel.AutomationTaskStatusArchived],
+	})
+}
+
 // ListTaskRuns handles GET /automations/tasks/:id/runs.
 func (h *TaskHandler) ListTaskRuns(c *gin.Context) {
 	taskID := strings.TrimSpace(c.Param("id"))
@@ -539,6 +579,7 @@ func (h *TaskHandler) RegisterRoutes(router *gin.RouterGroup) {
 
 	authWithTenant.POST("/automations/tasks", h.CreateTask)
 	authWithTenant.GET("/automations/tasks", h.ListTasks)
+	authWithTenant.GET("/automations/tasks/counts", h.GetTaskCounts)
 	authWithTenant.POST("/automations/tasks/draft/generate", h.GenerateTaskDraft)
 	authWithTenant.PATCH("/automations/tasks/:id", h.UpdateTask)
 	authWithTenant.GET("/automations/tasks/:id", h.GetTask)
@@ -548,6 +589,14 @@ func (h *TaskHandler) RegisterRoutes(router *gin.RouterGroup) {
 	authWithTenant.POST("/automations/tasks/:id/resume", h.ResumeTask)
 	authWithTenant.POST("/automations/tasks/:id/archive", h.ArchiveTask)
 	authWithTenant.DELETE("/automations/tasks/:id", h.DeleteTask)
+}
+
+func sumTaskCounts(counts map[automationmodel.AutomationTaskStatus]int64) int64 {
+	var total int64
+	for _, count := range counts {
+		total += count
+	}
+	return total
 }
 
 func (h *TaskHandler) resolveScope(

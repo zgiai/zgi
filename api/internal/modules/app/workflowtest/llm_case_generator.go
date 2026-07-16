@@ -50,7 +50,7 @@ func (g *LLMCaseGenerator) GenerateCases(ctx context.Context, req GenerateCasesR
 		WorkspaceID:        g.WorkspaceID,
 		BillingSubjectType: llmclient.BillingSubjectTypeWorkspace,
 		AppID:              g.AgentID,
-		AppType:            "agent",
+		AppType:            "workflow",
 		AccountID:          g.AccountID,
 	}, chatReq)
 	if err != nil {

@@ -22,6 +22,26 @@ import { Extension, type Editor as TiptapEditor } from '@tiptap/core';
 import { Plugin, PluginKey, TextSelection } from '@tiptap/pm/state';
 import { Decoration, DecorationSet } from '@tiptap/pm/view';
 
+type ActiveSuggestController = {
+  id: string;
+  dismiss: () => void;
+};
+
+let activeSuggestController: ActiveSuggestController | null = null;
+
+function claimActiveSuggest(controller: ActiveSuggestController) {
+  if (activeSuggestController?.id !== controller.id) {
+    activeSuggestController?.dismiss();
+  }
+  activeSuggestController = controller;
+}
+
+function releaseActiveSuggest(id: string) {
+  if (activeSuggestController?.id === id) {
+    activeSuggestController = null;
+  }
+}
+
 // Custom extension to fix backspace behavior near atom nodes
 // When cursor is right after an atom node, default backspace may fail to delete previous character
 const FixAtomBackspace = Extension.create({
@@ -264,7 +284,7 @@ const WorkflowValueEditor = forwardRef<WorkflowValueEditorHandle, WorkflowValueE
     const t = useT();
     const shouldShowCharacterCount = showCharacterCount && typeof maxLength === 'number';
     const characterCount = shouldShowCharacterCount
-      ? characterCountOverride ?? Array.from(value || '').length
+      ? (characterCountOverride ?? Array.from(value || '').length)
       : 0;
     const isCharacterCountExceeded =
       shouldShowCharacterCount && characterCount > (maxLength as number);
@@ -350,18 +370,22 @@ const WorkflowValueEditor = forwardRef<WorkflowValueEditorHandle, WorkflowValueE
       showType?: boolean;
     }
 
-    const [suggestState, setSuggestState] = useState<{
+    const suggestInstanceId = React.useId();
+    const dismissedSlashKeyRef = useRef<string | null>(null);
+    type SuggestState = {
       open: boolean;
       x: number;
       y: number;
       query: string;
       trigger: 'slash' | 'manual';
+      slashKey?: string;
       editor: TiptapEditor;
       command: (item: SuggestItem) => void;
       path: string[];
       activeGroupIndex: number;
       activeItemIndex: number;
-    } | null>(null);
+    };
+    const [suggestState, setSuggestState] = useState<SuggestState | null>(null);
 
     // Refs need to be declared before callbacks that use them
     const suggestStateRef = useRef(suggestState);
@@ -370,9 +394,28 @@ const WorkflowValueEditor = forwardRef<WorkflowValueEditorHandle, WorkflowValueE
     }, [suggestState]);
 
     const closeSuggest = useCallback(() => {
+      suggestStateRef.current = null;
       setSuggestState(null);
       suggestSessionPathRef.current = [];
-    }, []);
+      releaseActiveSuggest(suggestInstanceId);
+    }, [suggestInstanceId]);
+
+    const dismissSuggest = useCallback(() => {
+      const current = suggestStateRef.current;
+      if (current?.trigger === 'slash' && current.slashKey) {
+        dismissedSlashKeyRef.current = current.slashKey;
+      }
+      closeSuggest();
+    }, [closeSuggest]);
+
+    const openSuggest = useCallback(
+      (nextState: SuggestState) => {
+        claimActiveSuggest({ id: suggestInstanceId, dismiss: dismissSuggest });
+        suggestStateRef.current = nextState;
+        setSuggestState(nextState);
+      },
+      [dismissSuggest, suggestInstanceId]
+    );
 
     const suggestionEnabled = suggestEnabled && !readOnly;
 
@@ -622,14 +665,39 @@ const WorkflowValueEditor = forwardRef<WorkflowValueEditorHandle, WorkflowValueE
     }, [t]);
 
     const wrapperRef = useRef<HTMLDivElement>(null);
-    const closeSuggestRef = useRef<(() => void) | null>(null);
     const lastEmittedValueRef = useRef<string>(value);
     const lastEmitTimeRef = useRef<number>(0);
     const lastSeenPropRef = useRef<string>(value);
 
     useEffect(() => {
-      closeSuggestRef.current = closeSuggest;
-    }, [closeSuggest]);
+      const isWithinCurrentSuggest = (target: EventTarget | null) => {
+        if (!(target instanceof Element)) return false;
+        const panel = target.closest('[data-wf-suggest="open"]');
+        return panel?.getAttribute('data-wf-suggest-owner') === suggestInstanceId;
+      };
+      const handlePointerDown = (event: PointerEvent) => {
+        if (!suggestStateRef.current?.open) return;
+        const target = event.target;
+        if (!(target instanceof Node)) return;
+        if (isWithinCurrentSuggest(target)) return;
+        dismissSuggest();
+      };
+      const handleFocusIn = (event: FocusEvent) => {
+        if (!suggestStateRef.current?.open) return;
+        const target = event.target;
+        if (!(target instanceof Node)) return;
+        if (wrapperRef.current?.contains(target) || isWithinCurrentSuggest(target)) return;
+        dismissSuggest();
+      };
+
+      document.addEventListener('pointerdown', handlePointerDown, true);
+      document.addEventListener('focusin', handleFocusIn, true);
+      return () => {
+        document.removeEventListener('pointerdown', handlePointerDown, true);
+        document.removeEventListener('focusin', handleFocusIn, true);
+        releaseActiveSuggest(suggestInstanceId);
+      };
+    }, [dismissSuggest, suggestInstanceId]);
 
     // If suggestions are being disabled dynamically, ensure any open dropdown is closed
     useEffect(() => {
@@ -699,11 +767,11 @@ const WorkflowValueEditor = forwardRef<WorkflowValueEditorHandle, WorkflowValueE
     const insertVariableToken = useCallback(
       (
         item: {
-        sourceId: string;
-        key: string;
-        insertKey?: string;
-        label?: string;
-        displayKey?: string;
+          sourceId: string;
+          key: string;
+          insertKey?: string;
+          label?: string;
+          displayKey?: string;
         },
         replaceRange?: { from: number; to: number }
       ) => {
@@ -749,7 +817,10 @@ const WorkflowValueEditor = forwardRef<WorkflowValueEditorHandle, WorkflowValueE
 
         tr = tr.insert(insertPos, tokenNode);
         tr = tr.setSelection(
-          TextSelection.create(tr.doc, Math.min(insertPos + tokenNode.nodeSize, tr.doc.content.size))
+          TextSelection.create(
+            tr.doc,
+            Math.min(insertPos + tokenNode.nodeSize, tr.doc.content.size)
+          )
         );
         tr = tr.setStoredMarks([]);
         view.dispatch(tr.scrollIntoView());
@@ -758,15 +829,19 @@ const WorkflowValueEditor = forwardRef<WorkflowValueEditorHandle, WorkflowValueE
       [buildVariableTokenAttrs]
     );
 
-    const buildSuggestCommand = useCallback((replaceRange?: { from: number; to: number }) => {
-      return (item: SuggestItem) => {
-        insertVariableToken(item, replaceRange);
-      };
-    }, [insertVariableToken]);
+    const buildSuggestCommand = useCallback(
+      (replaceRange?: { from: number; to: number }) => {
+        return (item: SuggestItem) => {
+          insertVariableToken(item, replaceRange);
+        };
+      },
+      [insertVariableToken]
+    );
 
     const openManualSuggest = useCallback(() => {
       if (!suggestEnabled || !editorRef.current) return;
 
+      dismissedSlashKeyRef.current = null;
       const currentEditor = editorRef.current;
       currentEditor.chain().focus().run();
 
@@ -776,7 +851,7 @@ const WorkflowValueEditor = forwardRef<WorkflowValueEditorHandle, WorkflowValueE
         portalRoot instanceof HTMLElement ? portalRoot.getBoundingClientRect() : null;
       suggestSessionPathRef.current = [];
 
-      setSuggestState({
+      openSuggest({
         open: true,
         x: rootRect ? coords.left - rootRect.left : coords.left,
         y: rootRect ? coords.bottom - rootRect.top + 4 : coords.bottom + 4,
@@ -788,7 +863,7 @@ const WorkflowValueEditor = forwardRef<WorkflowValueEditorHandle, WorkflowValueE
         activeGroupIndex: 0,
         activeItemIndex: 0,
       });
-    }, [buildSuggestCommand, portalRoot, suggestEnabled]);
+    }, [buildSuggestCommand, openSuggest, portalRoot, suggestEnabled]);
 
     const extensions = useMemo(() => {
       return [
@@ -810,6 +885,13 @@ const WorkflowValueEditor = forwardRef<WorkflowValueEditorHandle, WorkflowValueE
                       const { state } = view;
                       const { selection, doc } = state;
                       const { $from, empty } = selection;
+
+                      if (!view.hasFocus()) {
+                        if (suggestStateRef.current?.trigger === 'slash') {
+                          handlersRef.current?.closeSuggest();
+                        }
+                        return;
+                      }
 
                       if (!empty || !suggestionEnabled) {
                         if (suggestStateRef.current?.open) handlersRef.current?.closeSuggest();
@@ -837,6 +919,15 @@ const WorkflowValueEditor = forwardRef<WorkflowValueEditorHandle, WorkflowValueE
                         const query = match[2] ?? '';
                         const start = $from.pos - query.length - 1;
                         const end = $from.pos;
+                        const slashKey = `${start}:${end}:${query}`;
+
+                        if (dismissedSlashKeyRef.current === slashKey) {
+                          if (suggestStateRef.current?.trigger === 'slash') {
+                            handlersRef.current?.closeSuggest();
+                          }
+                          return;
+                        }
+                        dismissedSlashKeyRef.current = null;
 
                         const charAtStart = doc.textBetween(start, start + 1);
                         if (charAtStart !== '/' || (prefix && !/\s/.test(prefix))) {
@@ -857,6 +948,7 @@ const WorkflowValueEditor = forwardRef<WorkflowValueEditorHandle, WorkflowValueE
                           y: rootRect ? coords.bottom - rootRect.top + 4 : coords.bottom + 4,
                           query,
                           trigger: 'slash' as const,
+                          slashKey,
                           editor: currentEditor,
                           command: buildSuggestCommand({ from: start, to: end }),
                           path: suggestSessionPathRef.current,
@@ -877,9 +969,10 @@ const WorkflowValueEditor = forwardRef<WorkflowValueEditorHandle, WorkflowValueE
                           Math.abs(prev.x - nextState.x) > 1 ||
                           Math.abs(prev.y - nextState.y) > 1
                         ) {
-                          setSuggestState(nextState);
+                          openSuggest(nextState);
                         }
                       } else {
+                        dismissedSlashKeyRef.current = null;
                         if (suggestStateRef.current?.trigger === 'slash') {
                           handlersRef.current?.closeSuggest();
                         }
@@ -949,7 +1042,7 @@ const WorkflowValueEditor = forwardRef<WorkflowValueEditorHandle, WorkflowValueE
                 const item =
                   enrichedGroupsRef.current[s.activeGroupIndex]?.items?.[s.activeItemIndex];
                 if (item && item.key) {
-                  s.command(item);
+                  handlersRef.current.handleSuggestSelect(item);
                   return true;
                 }
                 return true; // prevent newline even if no selection
@@ -960,14 +1053,14 @@ const WorkflowValueEditor = forwardRef<WorkflowValueEditorHandle, WorkflowValueE
                 const item =
                   enrichedGroupsRef.current[s.activeGroupIndex]?.items?.[s.activeItemIndex];
                 if (item && item.key) {
-                  s.command(item);
+                  handlersRef.current.handleSuggestSelect(item);
                   return true;
                 }
                 return false;
               },
               Escape: () => {
                 if (!suggestStateRef.current?.open) return false;
-                handlersRef.current?.closeSuggest();
+                dismissSuggest();
                 return true;
               },
               Backspace: () => {
@@ -992,7 +1085,9 @@ const WorkflowValueEditor = forwardRef<WorkflowValueEditorHandle, WorkflowValueE
       ];
     }, [
       buildSuggestCommand,
+      dismissSuggest,
       emptyBlockPlaceholder,
+      openSuggest,
       placeholder,
       portalRoot,
       slashTriggerEnabled,
@@ -1088,18 +1183,16 @@ const WorkflowValueEditor = forwardRef<WorkflowValueEditorHandle, WorkflowValueE
             const isExtraSource = Boolean(
               (Array.isArray(extraSuggestItems) &&
                 extraSuggestItems.some(item => item.sourceId === sid)) ||
-                (Array.isArray(extraSuggestGroups) &&
-                  extraSuggestGroups.some(group =>
-                    group.items.some(item => item.sourceId === sid)
-                  ))
+              (Array.isArray(extraSuggestGroups) &&
+                extraSuggestGroups.some(group => group.items.some(item => item.sourceId === sid)))
             );
             const shouldMarkInvalid = Boolean(
               sid &&
-                (isExtraSource
-                  ? !extraLabel || extraLabel.invalid
-                  : !allowedSpecial.has(sid) && upstreamSet
-                    ? !upstreamSet.has(sid)
-                    : false)
+              (isExtraSource
+                ? !extraLabel || extraLabel.invalid
+                : !allowedSpecial.has(sid) && upstreamSet
+                  ? !upstreamSet.has(sid)
+                  : false)
             );
             if (desiredTitle && desiredTitle !== currentTitle) {
               updates.push({
@@ -1278,10 +1371,12 @@ const WorkflowValueEditor = forwardRef<WorkflowValueEditorHandle, WorkflowValueE
               const root = wrapperRef.current;
               setTimeout(() => {
                 const next = document.activeElement as HTMLElement | null;
-                const suggest = document.querySelector('div[data-wf-suggest="open"]');
-                const inSuggest = !!(suggest && next && suggest.contains(next));
+                const suggest = document.querySelector(
+                  `div[data-wf-suggest="open"][data-wf-suggest-owner="${suggestInstanceId}"]`
+                );
+                const inSuggest = Boolean(suggest && next && suggest.contains(next));
                 if (!inSuggest && root && (!next || !root.contains(next))) {
-                  closeSuggest();
+                  dismissSuggest();
                 }
               }, 100);
             }}
@@ -1313,13 +1408,14 @@ const WorkflowValueEditor = forwardRef<WorkflowValueEditorHandle, WorkflowValueE
             activeGroupIndex={suggestState.activeGroupIndex}
             activeItemIndex={suggestState.activeItemIndex}
             suggestPath={suggestPath}
+            ownerId={suggestInstanceId}
             onHover={handleSuggestHover}
             onSelect={handleSuggestSelect}
             onExpand={handleSuggestExpand}
             onBack={handleSuggestBack}
             portalRoot={portalRoot}
             labels={suggestLabelsRef.current}
-            onOpenChange={open => !open && closeSuggest()}
+            onOpenChange={open => !open && dismissSuggest()}
           />
         )}
       </div>

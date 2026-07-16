@@ -56,3 +56,54 @@ func TestRestoreQuestionAnswerPausedOutputsDoesNotOverwriteExistingVariables(t *
 		t.Fatalf("question = %#v, want existing question", question)
 	}
 }
+
+func TestQuestionAnswerStateConversationIDIgnoresBusinessConversationID(t *testing.T) {
+	state := workflowpause.State{
+		Request: workflowpause.RequestState{
+			Inputs: map[string]interface{}{
+				"conversation_id": "business-conversation-value",
+			},
+		},
+	}
+
+	got := questionAnswerStateConversationID(state)
+	if got != "" {
+		t.Fatalf("question answer state conversation id = %q, want empty for business input", got)
+	}
+}
+
+func TestQuestionAnswerStateConversationIDUsesSystemConversationID(t *testing.T) {
+	state := workflowpause.State{
+		Request: workflowpause.RequestState{
+			Inputs: map[string]interface{}{
+				"conversation_id":     "business-conversation-value",
+				"sys.conversation_id": "system-conversation-id",
+			},
+		},
+	}
+
+	got := questionAnswerStateConversationID(state)
+	if got != "system-conversation-id" {
+		t.Fatalf("question answer state conversation id = %q, want %q", got, "system-conversation-id")
+	}
+}
+
+func TestQuestionAnswerStateConversationIDPrefersVariablePoolSystemConversationID(t *testing.T) {
+	state := workflowpause.State{
+		VariablePool: workflowpause.VariablePoolSnapshot{
+			SystemVariables: &graphentities.SystemVariable{
+				ConversationID: "pool-conversation-id",
+			},
+		},
+		Request: workflowpause.RequestState{
+			Inputs: map[string]interface{}{
+				"sys.conversation_id": "request-system-conversation-id",
+			},
+		},
+	}
+
+	got := questionAnswerStateConversationID(state)
+	if got != "pool-conversation-id" {
+		t.Fatalf("question answer state conversation id = %q, want %q", got, "pool-conversation-id")
+	}
+}

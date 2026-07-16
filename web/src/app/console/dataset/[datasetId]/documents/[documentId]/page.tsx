@@ -7,6 +7,12 @@ import { useT } from '@/i18n';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useDocumentDetail } from '@/hooks/dataset/use-document-detail';
+import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
+import {
+  PermissionDeniedState,
+  PermissionLoadingState,
+} from '@/components/common/permission-gate-state';
+import { KNOWLEDGE_BASE_PERMISSION_ACTIONS } from '@/constants/permissions';
 
 export default function DocumentDetailRedirectPage() {
   const params = useParams();
@@ -14,18 +20,25 @@ export default function DocumentDetailRedirectPage() {
   const t = useT();
   const datasetId = params.datasetId as string;
   const documentId = params.documentId as string;
+  const { hasAnyPermission, isLoading: isPermissionsLoading } = useAccountPermissions();
+  const canViewDocuments = hasAnyPermission([
+    ...KNOWLEDGE_BASE_PERMISSION_ACTIONS.documentView,
+    ...KNOWLEDGE_BASE_PERMISSION_ACTIONS.documentCreate,
+    ...KNOWLEDGE_BASE_PERMISSION_ACTIONS.documentUpdate,
+    ...KNOWLEDGE_BASE_PERMISSION_ACTIONS.documentDelete,
+    ...KNOWLEDGE_BASE_PERMISSION_ACTIONS.indexManage,
+  ]);
 
   const { document, metadata, isLoading, documentError } = useDocumentDetail({
     datasetId,
     documentId,
-    enabled: Boolean(datasetId && documentId),
+    enabled: Boolean(datasetId && documentId && canViewDocuments),
   });
 
   const sourceFileId =
     (typeof metadata?.doc_metadata?.source_file_id === 'string'
       ? metadata.doc_metadata.source_file_id
-      : undefined) ||
-    document?.data_source_info?.upload_file?.id;
+      : undefined) || document?.data_source_info?.upload_file?.id;
 
   useEffect(() => {
     if (sourceFileId) {
@@ -33,6 +46,14 @@ export default function DocumentDetailRedirectPage() {
       router.replace(`/console/files/${sourceFileId}?returnTo=${encodeURIComponent(returnTo)}`);
     }
   }, [datasetId, router, sourceFileId]);
+
+  if (isPermissionsLoading) {
+    return <PermissionLoadingState />;
+  }
+
+  if (!canViewDocuments) {
+    return <PermissionDeniedState />;
+  }
 
   if (isLoading && !documentError) {
     return (
@@ -55,7 +76,10 @@ export default function DocumentDetailRedirectPage() {
             {t('datasets.documents.fileRefs.redirectDescription')}
           </p>
         </div>
-        <Button variant="outline" onClick={() => router.push(`/console/dataset/${datasetId}/documents`)}>
+        <Button
+          variant="outline"
+          onClick={() => router.push(`/console/dataset/${datasetId}/documents`)}
+        >
           <ArrowLeft className="h-4 w-4" />
           {t('datasets.backToDocuments')}
         </Button>

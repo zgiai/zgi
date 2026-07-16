@@ -165,8 +165,10 @@ type CustomModel struct {
 	DefaultParameters   JSONObject           `gorm:"column:default_parameters;type:jsonb" json:"default_parameters,omitempty"`
 
 	// Pricing (per million tokens, aligned with LLMModel)
-	InputPrice  decimal.Decimal `gorm:"column:input_price;type:decimal(10,4)" json:"input_price"`
-	OutputPrice decimal.Decimal `gorm:"column:output_price;type:decimal(10,4)" json:"output_price"`
+	InputPrice            decimal.Decimal `gorm:"column:input_price;type:decimal(10,4)" json:"input_price"`
+	OutputPrice           decimal.Decimal `gorm:"column:output_price;type:decimal(10,4)" json:"output_price"`
+	InputPriceConfigured  bool            `gorm:"column:input_price_configured;default:false" json:"input_price_configured"`
+	OutputPriceConfigured bool            `gorm:"column:output_price_configured;default:false" json:"output_price_configured"`
 
 	// Status and ordering
 	IsActive  bool                   `gorm:"default:true;index" json:"is_active"`
@@ -306,16 +308,19 @@ func (m *CustomModel) BeforeSave(tx *gorm.DB) error {
 // Aligned with ModelHub API structure
 type ModelView struct {
 	// Basic info
-	ID            uuid.UUID  `json:"id"`
-	Provider      string     `json:"provider"`
-	Model         string     `json:"model"`
-	ModelName     string     `json:"model_name"`
-	Family        string     `json:"family"`                // Model family (e.g., GPT-4, Claude)
-	FamilyName    string     `json:"family_name,omitempty"` // Model family display name
-	ParentID      *uuid.UUID `json:"-"`                     // Internal use only
-	FamilyDefault bool       `json:"-"`                     // Internal use only
-	Status        string     `json:"status"`  // active, deprecated
-	Tagline       string     `json:"tagline"` // Short description
+	ID                  uuid.UUID  `json:"id"`
+	Provider            string     `json:"provider"`
+	Model               string     `json:"model"`
+	ModelName           string     `json:"model_name"`
+	Family              string     `json:"family"`                // Model family (e.g., GPT-4, Claude)
+	FamilyName          string     `json:"family_name,omitempty"` // Model family display name
+	ParentID            *uuid.UUID `json:"-"`                     // Internal use only
+	FamilyDefault       bool       `json:"-"`                     // Internal use only
+	Status              string     `json:"status"`                // active, deprecated
+	ReplacementProvider string     `json:"replacement_provider,omitempty"`
+	ReplacementModel    string     `json:"replacement_model,omitempty"`
+	DeprecationReason   string     `json:"deprecation_reason,omitempty"`
+	Tagline             string     `json:"tagline"` // Short description
 
 	// Flags
 	IsFlagship    bool   `json:"is_flagship"`
@@ -326,10 +331,12 @@ type ModelView struct {
 	OpenWeights   bool   `json:"-"`           // Internal use only
 
 	// Pricing (per million tokens)
-	Currency         string  `json:"currency"`
-	InputPrice       float64 `json:"input_price"`  // Price per million input tokens
-	OutputPrice      float64 `json:"output_price"` // Price per million output tokens
-	CachedInputPrice float64 `json:"cached_input_price"`
+	Currency              string  `json:"currency"`
+	InputPrice            float64 `json:"input_price"`  // Price per million input tokens
+	OutputPrice           float64 `json:"output_price"` // Price per million output tokens
+	InputPriceConfigured  bool    `json:"input_price_configured"`
+	OutputPriceConfigured bool    `json:"output_price_configured"`
+	CachedInputPrice      float64 `json:"cached_input_price"`
 
 	// Context
 	ContextWindow   int `json:"context_window"`

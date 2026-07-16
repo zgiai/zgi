@@ -15,11 +15,12 @@ type BoundResourceGrant struct {
 
 // RuntimeCapabilityConfig groups runtime-managed capabilities derived from RunConfig.
 type RuntimeCapabilityConfig struct {
-	AgentID   string
-	Knowledge RuntimeKnowledgeCapability
-	Database  RuntimeDatabaseCapability
-	Workflow  RuntimeWorkflowCapability
-	Memory    RuntimeMemoryCapability
+	AgentID               string
+	BindingAuthorizations []ResourceBindingAuthorization
+	Knowledge             RuntimeKnowledgeCapability
+	Database              RuntimeDatabaseCapability
+	Workflow              RuntimeWorkflowCapability
+	Memory                RuntimeMemoryCapability
 }
 
 type RuntimeKnowledgeCapability struct {
@@ -46,7 +47,8 @@ type RuntimeMemoryCapability struct {
 
 func runtimeCapabilityConfigFromRunConfig(config RunConfig) RuntimeCapabilityConfig {
 	return RuntimeCapabilityConfig{
-		AgentID: strings.TrimSpace(config.BillingAppID),
+		AgentID:               strings.TrimSpace(config.BillingAppID),
+		BindingAuthorizations: copyResourceBindingAuthorizations(config.BindingAuthorizations),
 		Knowledge: RuntimeKnowledgeCapability{
 			DatasetIDs:      append([]string(nil), config.KnowledgeDatasetIDs...),
 			Grant:           NewBoundResourceGrant(config.KnowledgeBoundByAccountID, config.KnowledgeBoundAtUnix),
@@ -72,6 +74,19 @@ func (c RuntimeCapabilityConfig) RuntimeParameters(scope Scope, billingAppType s
 	params := map[string]interface{}{
 		"organization_id": scope.OrganizationID.String(),
 	}
+	if len(c.BindingAuthorizations) > 0 {
+		params["agent_binding_authorizations"] = copyResourceBindingAuthorizations(c.BindingAuthorizations)
+		for _, authorization := range c.BindingAuthorizations {
+			switch strings.TrimSpace(authorization.BindingType) {
+			case "knowledge_dataset":
+				params["knowledge_binding_grant"] = true
+			case "database", "database_table":
+				params["database_binding_grant"] = true
+			case "workflow":
+				params["workflow_binding_grant"] = true
+			}
+		}
+	}
 	if scope.WorkspaceID != nil {
 		params["workspace_id"] = scope.WorkspaceID.String()
 	}
@@ -83,6 +98,22 @@ func (c RuntimeCapabilityConfig) RuntimeParameters(scope Scope, billingAppType s
 		params["agent_id"] = strings.TrimSpace(c.AgentID)
 	}
 	return params
+}
+
+func copyResourceBindingAuthorizations(input []ResourceBindingAuthorization) []ResourceBindingAuthorization {
+	result := make([]ResourceBindingAuthorization, 0, len(input))
+	for _, authorization := range input {
+		authorization.BindingType = strings.TrimSpace(authorization.BindingType)
+		authorization.ResourceID = strings.TrimSpace(authorization.ResourceID)
+		authorization.ParentResourceID = strings.TrimSpace(authorization.ParentResourceID)
+		authorization.AccessMode = strings.TrimSpace(authorization.AccessMode)
+		authorization.BoundByAccountID = strings.TrimSpace(authorization.BoundByAccountID)
+		if authorization.BindingType == "" || authorization.ResourceID == "" || authorization.AccessMode == "" || authorization.BoundByAccountID == "" || authorization.BoundAtUnix <= 0 {
+			continue
+		}
+		result = append(result, authorization)
+	}
+	return result
 }
 
 func (c RuntimeKnowledgeCapability) applyRuntimeParameters(params map[string]interface{}) {

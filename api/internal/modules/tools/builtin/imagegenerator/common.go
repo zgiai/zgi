@@ -312,6 +312,10 @@ func saveGeneratedImage(ctx context.Context, tenantID string, userID string, con
 	fileMeta["mime_type"] = mimeType
 	fileMeta["url"] = url
 	fileMeta["download_url"] = downloadURL
+	fileMeta["lifecycle"] = toolFile.Lifecycle
+	if toolFile.ExpiresAt != nil {
+		fileMeta["expires_at"] = toolFile.ExpiresAt.Unix()
+	}
 	return fileMeta, nil
 }
 

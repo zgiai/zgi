@@ -1,6 +1,7 @@
 'use client';
 
 import {
+  ChevronDown,
   FileText,
   FolderOpen,
   ImageIcon,
@@ -9,6 +10,10 @@ import {
   Minimize2,
   Paperclip,
   Send,
+  Settings2,
+  Shield,
+  ShieldAlert,
+  ShieldCheck,
   Square,
 } from 'lucide-react';
 import {
@@ -21,14 +26,20 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { useT } from '@/i18n/translations';
+import { useT, type ScopedTranslations } from '@/i18n/translations';
 import { cn } from '@/lib/utils';
 import { formatExtensionsForDisplay } from '@/utils/file-helpers';
 import { AIChatMemoryModule } from '@/components/chat/variants/aichat/memory-module';
 import type { AIChatModelValue } from '@/components/chat/variants/aichat/types';
+import type { AIChatToolGovernancePermissionTier } from '@/components/aichat/contextual/types';
+import type { ModelUseCase } from '@/services/types/model';
 import {
   imageAttachmentHintTranslationKey,
   type ScopedTranslatorWithHas,
@@ -55,21 +66,74 @@ interface AIChatInputToolbarProps {
   allowedExtensions: string[];
   imageExtensions: string[];
   showModelSelector?: boolean;
+  modelUseCase?: ModelUseCase;
+  preferredModelUseCase?: ModelUseCase;
   showMemoryToggle?: boolean;
   showComposerExpandButton?: boolean;
   isComposerExpanded?: boolean;
+  showToolGovernancePermissionControl?: boolean;
+  toolGovernancePermissionTier?: AIChatToolGovernancePermissionTier;
   enableUpload?: boolean;
   showFileLibraryPicker?: boolean;
+  showSkillManagement?: boolean;
+  skillManagementLabel?: string;
   surface?: AIChatComposerSurface;
   onModelChange: (value: ModelSelectorValue) => void;
   onModelPropsChange: (model: ModelSelectorModelProps | null) => void;
   onUploadDocument: () => void;
   onUploadImage: () => void;
   onSelectFromFiles: () => void;
+  onOpenSkillManagement?: () => void;
   onMemoryEnabledChange: (enabled: boolean) => void;
   onToggleComposerExpanded?: () => void;
+  onToolGovernancePermissionTierChange?: (tier: AIChatToolGovernancePermissionTier) => void;
   onSend: () => void | Promise<void>;
   onStop: () => void;
+}
+
+const TOOL_GOVERNANCE_PERMISSION_TIERS: AIChatToolGovernancePermissionTier[] = [
+  'basic',
+  'advanced',
+  'full',
+];
+
+function isToolGovernancePermissionTier(
+  value: string
+): value is AIChatToolGovernancePermissionTier {
+  return value === 'basic' || value === 'advanced' || value === 'full';
+}
+
+function getToolGovernanceTierDisplay(
+  tier: AIChatToolGovernancePermissionTier,
+  t: ScopedTranslations<'webapp'>
+) {
+  if (tier === 'full') {
+    return {
+      Icon: ShieldAlert,
+      label: t('consoleChat.governance.permissionTiers.full'),
+      description: t('consoleChat.governance.permissionTiers.fullDescription'),
+      warning: t('consoleChat.governance.permissionTiers.fullWarning'),
+      iconClassName: 'text-destructive',
+    };
+  }
+
+  if (tier === 'advanced') {
+    return {
+      Icon: ShieldCheck,
+      label: t('consoleChat.governance.permissionTiers.advanced'),
+      description: t('consoleChat.governance.permissionTiers.advancedDescription'),
+      warning: '',
+      iconClassName: 'text-primary',
+    };
+  }
+
+  return {
+    Icon: Shield,
+    label: t('consoleChat.governance.permissionTiers.basic'),
+    description: t('consoleChat.governance.permissionTiers.basicDescription'),
+    warning: '',
+    iconClassName: 'text-muted-foreground',
+  };
 }
 
 /**
@@ -100,24 +164,34 @@ export function AIChatInputToolbar({
   allowedExtensions,
   imageExtensions,
   showModelSelector = true,
+  modelUseCase = 'agent',
+  preferredModelUseCase,
   showMemoryToggle = true,
   showComposerExpandButton = false,
   isComposerExpanded = false,
+  showToolGovernancePermissionControl = false,
+  toolGovernancePermissionTier = 'basic',
   enableUpload = true,
   showFileLibraryPicker = true,
+  showSkillManagement = false,
+  skillManagementLabel,
   surface = 'aichat',
   onModelChange,
   onModelPropsChange,
   onUploadDocument,
   onUploadImage,
   onSelectFromFiles,
+  onOpenSkillManagement,
   onMemoryEnabledChange,
   onToggleComposerExpanded,
+  onToolGovernancePermissionTierChange,
   onSend,
   onStop,
 }: AIChatInputToolbarProps) {
   const t = useT('webapp');
   const showStopButton = canStop ?? isSending;
+  const activeGovernanceTier = getToolGovernanceTierDisplay(toolGovernancePermissionTier, t);
+  const ActiveGovernanceIcon = activeGovernanceTier.Icon;
 
   return (
     <div className="flex items-center justify-between gap-2 px-1">
@@ -128,7 +202,8 @@ export function AIChatInputToolbar({
               <div className="h-8 rounded-full border border-border/70 bg-muted/50" />
             ) : (
               <ModelSelector
-                modelType="text-chat"
+                modelType={modelUseCase}
+                preferredUseCase={preferredModelUseCase}
                 value={modelSelectorValue}
                 onChange={onModelChange}
                 onModelPropsChange={onModelPropsChange}
@@ -141,6 +216,76 @@ export function AIChatInputToolbar({
               />
             )}
           </div>
+        ) : null}
+        {showToolGovernancePermissionControl && onToolGovernancePermissionTierChange ? (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                className={cn(
+                  'h-8 shrink-0 gap-1 rounded-full border border-border/70 bg-background px-2 text-xs font-medium text-muted-foreground hover:bg-muted/60 hover:text-foreground',
+                  toolGovernancePermissionTier === 'full' &&
+                    'border-destructive/30 bg-destructive/5 text-destructive hover:bg-destructive/10 hover:text-destructive'
+                )}
+                title={
+                  toolGovernancePermissionTier === 'full'
+                    ? activeGovernanceTier.warning
+                    : activeGovernanceTier.description
+                }
+                aria-label={`${t('consoleChat.governance.permissionTiers.label')}: ${activeGovernanceTier.label}`}
+              >
+                <ActiveGovernanceIcon
+                  className={cn('size-3.5', activeGovernanceTier.iconClassName)}
+                />
+                <span>{activeGovernanceTier.label}</span>
+                <ChevronDown className="size-3 text-muted-foreground" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="w-72">
+              <DropdownMenuLabel className="flex items-center gap-1.5 text-muted-foreground">
+                <Shield className="size-3.5" />
+                {t('consoleChat.governance.permissionTiers.label')}
+              </DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              <DropdownMenuRadioGroup
+                value={toolGovernancePermissionTier}
+                onValueChange={value => {
+                  if (isToolGovernancePermissionTier(value)) {
+                    onToolGovernancePermissionTierChange(value);
+                  }
+                }}
+              >
+                {TOOL_GOVERNANCE_PERMISSION_TIERS.map(tier => {
+                  const display = getToolGovernanceTierDisplay(tier, t);
+                  const TierIcon = display.Icon;
+                  return (
+                    <DropdownMenuRadioItem
+                      key={tier}
+                      value={tier}
+                      className={cn(
+                        'items-start gap-2 py-2',
+                        tier === 'full' && 'text-destructive focus:text-destructive'
+                      )}
+                    >
+                      <TierIcon className={cn('mt-0.5 size-4', display.iconClassName)} />
+                      <span className="min-w-0">
+                        <span className="block text-sm font-medium">{display.label}</span>
+                        <span
+                          className={cn(
+                            'mt-0.5 block text-xs font-normal leading-4 text-muted-foreground',
+                            tier === 'full' && 'text-destructive/80'
+                          )}
+                        >
+                          {tier === 'full' ? display.warning : display.description}
+                        </span>
+                      </span>
+                    </DropdownMenuRadioItem>
+                  );
+                })}
+              </DropdownMenuRadioGroup>
+            </DropdownMenuContent>
+          </DropdownMenu>
         ) : null}
         {hasImageAttachment ? (
           <Tooltip>
@@ -230,6 +375,23 @@ export function AIChatInputToolbar({
               ) : null}
             </DropdownMenuContent>
           </DropdownMenu>
+        ) : null}
+        {showSkillManagement && onOpenSkillManagement && skillManagementLabel ? (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                type="button"
+                isIcon
+                variant="ghost"
+                className="size-8 rounded-full"
+                onClick={onOpenSkillManagement}
+                aria-label={skillManagementLabel}
+              >
+                <Settings2 className="size-4" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="top">{skillManagementLabel}</TooltipContent>
+          </Tooltip>
         ) : null}
         {showComposerExpandButton && onToggleComposerExpanded ? (
           <Button

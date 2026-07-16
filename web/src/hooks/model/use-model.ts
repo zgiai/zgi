@@ -13,10 +13,12 @@ import type {
   ModelItem,
   ToggleModelRequest,
   ToggleModelResponse,
+  ConfigureModelRequest,
   BatchToggleModelsRequest,
   BatchToggleModelsResponse,
   ToggleProviderModelsRequest,
   ModelUseCase,
+  AvailableModelUseCase,
   CreateCustomModelRequest,
   UpdateCustomModelRequest,
 } from '@/services/types/model';
@@ -267,17 +269,14 @@ export function useAllModels(options?: {
   };
 }
 
-/**
- * Available models (enabled only) via new API, non-expiring cache + idle preloading
- */
-export function useAvailableModels(options?: { use_case?: ModelUseCase }): {
+/** Available models (enabled only) via new API. */
+export function useAvailableModels(options?: { use_case?: AvailableModelUseCase }): {
   models: ModelItem[];
   isLoading: boolean;
   isFetching: boolean;
   error: string | null;
   refetch: () => Promise<void>;
 } {
-  const queryClient = useQueryClient();
   const t = useT('models');
   const use_case = options?.use_case || 'text-chat';
 
@@ -303,27 +302,6 @@ export function useAvailableModels(options?: { use_case?: ModelUseCase }): {
       toast.success(t('selector.refreshSuccess'));
     }
   }, [refetch, t]);
-
-  // Preload when browser is idle after first paint
-  useEffect(() => {
-    const hasData = queryClient.getQueryData(key) as ApiResponseData<ModelList> | undefined;
-    if (hasData?.data?.items?.length) return;
-    const cb = () => {
-      queryClient.prefetchQuery({
-        queryKey: key,
-        queryFn: async () => modelService.getAvailableModels({ use_case }),
-        staleTime: Number.POSITIVE_INFINITY,
-        gcTime: Number.POSITIVE_INFINITY,
-      });
-    };
-    const rIC = (window as unknown as { requestIdleCallback?: Function }).requestIdleCallback;
-    if (typeof rIC === 'function') {
-      rIC(cb, { timeout: 2000 });
-    } else {
-      setTimeout(cb, 1000);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [queryClient, key]);
 
   useEffect(() => {
     if (error) {
@@ -485,6 +463,37 @@ export function useToggleModel(): {
   );
 
   return { toggleModel, isToggling: isPending };
+}
+
+export function useConfigureModel(): {
+  configureModel: (data: ConfigureModelRequest) => Promise<void>;
+  isConfiguring: boolean;
+} {
+  const t = useT('models');
+  const queryClient = useQueryClient();
+  const { mutateAsync, isPending } = useMutation<
+    ApiResponseData<unknown>,
+    unknown,
+    ConfigureModelRequest
+  >({
+    mutationFn: async data => modelService.configureModel(data),
+    onSuccess: () => {
+      toast.success(t('messages.updateSuccess'));
+      queryClient.invalidateQueries({ queryKey: MODEL_KEYS.allRoot });
+    },
+    onError: error => {
+      showErrorToast(t('messages.updateFailed'), error);
+    },
+  });
+
+  const configureModel = useCallback(
+    async (data: ConfigureModelRequest) => {
+      await mutateAsync(data);
+    },
+    [mutateAsync]
+  );
+
+  return { configureModel, isConfiguring: isPending };
 }
 
 export function useProviderModelsInfinite(

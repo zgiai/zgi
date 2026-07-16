@@ -38,7 +38,7 @@ func TestListAccessibleDatabasesRequiresReadPermissions(t *testing.T) {
 		t.Fatalf("databases payload type = %T", payload["databases"])
 	}
 	if len(databases) != 0 {
-		t.Fatalf("databases = %#v, want no rows without database.view", databases)
+		t.Fatalf("databases = %#v, want no rows without database.record.view", databases)
 	}
 }
 
@@ -110,9 +110,50 @@ func TestAgentDatabaseUsesBindingActorAccount(t *testing.T) {
 	}
 }
 
-func TestAgentDatabaseGrantSkipsRuntimePermissionsAndUsesWritableTables(t *testing.T) {
+func TestAgentDatabaseUsesTargetTableAuthorizationActor(t *testing.T) {
 	dataSources := newDatabaseFakeDataSourceService()
-	provider := NewProvider(dataSources, &databaseFakeOrganizationService{})
+	organization := &databaseFakeOrganizationService{aiQuery: true, view: true}
+	provider := NewProvider(dataSources, organization)
+	tool, err := provider.GetTool(ToolQueryTableRecords)
+	if err != nil {
+		t.Fatalf("GetTool() error = %v", err)
+	}
+	runtimeTool := tool.ForkToolRuntime(&tools.ToolRuntime{
+		TenantID:   "org-1",
+		InvokeFrom: tools.ToolInvokeFromAgent,
+		RuntimeParameters: map[string]interface{}{
+			"organization_id":              "org-1",
+			"database_binding_grant":       true,
+			"database_bound_by_account_id": "category-editor",
+			"database_bindings": []map[string]interface{}{
+				{"data_source_id": "db-1", "table_ids": []string{"table-1", "table-2"}},
+			},
+			"agent_binding_authorizations": []map[string]interface{}{
+				{"binding_type": "database_table", "parent_resource_id": "db-1", "resource_id": "table-1", "access_mode": "read", "bound_by_account_id": "binder-old", "bound_at_unix": int64(100)},
+				{"binding_type": "database_table", "parent_resource_id": "db-1", "resource_id": "table-2", "access_mode": "read", "bound_by_account_id": "binder-new", "bound_at_unix": int64(200)},
+			},
+		},
+	})
+
+	_, err = runtimeTool.Invoke(context.Background(), "caller-1", map[string]interface{}{
+		"data_source_id": "db-1",
+		"table_id":       "table-2",
+	}, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Invoke() error = %v", err)
+	}
+	if dataSources.lastQueryAccountID != "binder-new" || organization.lastAccountID != "binder-new" {
+		t.Fatalf("runtime actors = query:%q permission:%q, want binder-new", dataSources.lastQueryAccountID, organization.lastAccountID)
+	}
+}
+
+func TestAgentDatabaseGrantRevalidatesBindingActorPermissionsAndUsesWritableTables(t *testing.T) {
+	dataSources := newDatabaseFakeDataSourceService()
+	organization := &databaseFakeOrganizationService{
+		aiQuery:  true,
+		dataEdit: true,
+	}
+	provider := NewProvider(dataSources, organization)
 	tool, err := provider.GetTool(ToolInsertTableRecords)
 	if err != nil {
 		t.Fatalf("GetTool() error = %v", err)
@@ -150,6 +191,83 @@ func TestAgentDatabaseGrantSkipsRuntimePermissionsAndUsesWritableTables(t *testi
 	if dataSources.addedRecords != 1 {
 		t.Fatalf("addedRecords = %d, want 1", dataSources.addedRecords)
 	}
+	if organization.lastAccountID != "binder-1" {
+		t.Fatalf("permission check account = %q, want binder-1", organization.lastAccountID)
+	}
+}
+
+func TestAgentDatabaseGrantDeniesTableListAfterBindingActorPermissionRevoked(t *testing.T) {
+	dataSources := newDatabaseFakeDataSourceService()
+	organization := &databaseFakeOrganizationService{}
+	provider := NewProvider(dataSources, organization)
+	tool, err := provider.GetTool(ToolListDatabaseTables)
+	if err != nil {
+		t.Fatalf("GetTool() error = %v", err)
+	}
+	runtimeTool := tool.ForkToolRuntime(&tools.ToolRuntime{
+		TenantID:   "org-1",
+		InvokeFrom: tools.ToolInvokeFromAgent,
+		RuntimeParameters: map[string]interface{}{
+			"organization_id":              "org-1",
+			"database_binding_grant":       true,
+			"database_bound_by_account_id": "binder-1",
+			"database_bindings": []map[string]interface{}{
+				{"data_source_id": "db-1", "table_ids": []string{"table-1"}},
+			},
+		},
+	})
+
+	_, err = runtimeTool.Invoke(context.Background(), "caller-1", map[string]interface{}{
+		"data_source_id": "db-1",
+	}, nil, nil, nil)
+	if err == nil || !strings.Contains(err.Error(), "database ai query permission is required") {
+		t.Fatalf("Invoke() error = %v, want revoked binding actor permission rejection", err)
+	}
+	if organization.lastAccountID != "binder-1" {
+		t.Fatalf("permission check account = %q, want binder-1", organization.lastAccountID)
+	}
+	if dataSources.listTablesCalls != 0 {
+		t.Fatalf("ListTables calls = %d, want 0 after permission rejection", dataSources.listTablesCalls)
+	}
+}
+
+func TestAgentDatabaseGrantDeniesTableDescriptionAfterBindingActorPermissionRevoked(t *testing.T) {
+	dataSources := newDatabaseFakeDataSourceService()
+	organization := &databaseFakeOrganizationService{aiQuery: true}
+	provider := NewProvider(dataSources, organization)
+	tool, err := provider.GetTool(ToolDescribeDatabaseTable)
+	if err != nil {
+		t.Fatalf("GetTool() error = %v", err)
+	}
+	runtimeTool := tool.ForkToolRuntime(&tools.ToolRuntime{
+		TenantID:   "org-1",
+		InvokeFrom: tools.ToolInvokeFromAgent,
+		RuntimeParameters: map[string]interface{}{
+			"organization_id":              "org-1",
+			"database_binding_grant":       true,
+			"database_bound_by_account_id": "binder-1",
+			"database_bindings": []map[string]interface{}{
+				{"data_source_id": "db-1", "table_ids": []string{"table-1"}},
+			},
+		},
+	})
+
+	_, err = runtimeTool.Invoke(context.Background(), "caller-1", map[string]interface{}{
+		"data_source_id": "db-1",
+		"table_id":       "table-1",
+	}, nil, nil, nil)
+	if err == nil || !strings.Contains(err.Error(), "database record view permission is required") {
+		t.Fatalf("Invoke() error = %v, want revoked binding actor permission rejection", err)
+	}
+	if organization.lastAccountID != "binder-1" {
+		t.Fatalf("permission check account = %q, want binder-1", organization.lastAccountID)
+	}
+	if dataSources.getTableCalls != 0 {
+		t.Fatalf("GetTable calls = %d, want 0 after permission rejection", dataSources.getTableCalls)
+	}
+	if dataSources.getTableColumnsCalls != 0 {
+		t.Fatalf("GetTableColumns calls = %d, want 0 after permission rejection", dataSources.getTableColumnsCalls)
+	}
 }
 
 func TestInsertTableRecordsRequiresWritePermission(t *testing.T) {
@@ -174,8 +292,81 @@ func TestInsertTableRecordsRequiresWritePermission(t *testing.T) {
 		"table_id":       "table-1",
 		"records":        []map[string]interface{}{{"name": "Ada"}},
 	}, nil, nil, nil)
-	if err == nil || !strings.Contains(err.Error(), "data edit or manage") {
+	if err == nil || !strings.Contains(err.Error(), "database.record.create") {
 		t.Fatalf("Invoke() error = %v, want write permission rejection", err)
+	}
+}
+
+func TestDatabaseMutationToolsRequireExactRecordPermission(t *testing.T) {
+	tests := []struct {
+		name       string
+		toolID     string
+		grant      workspacemodel.WorkspacePermissionCode
+		wantDenied string
+	}{
+		{
+			name:   "insert accepts create permission",
+			toolID: ToolInsertTableRecords,
+			grant:  workspacemodel.WorkspacePermissionDatabaseRecordCreate,
+		},
+		{
+			name:       "update rejects create-only permission",
+			toolID:     ToolUpdateTableRecords,
+			grant:      workspacemodel.WorkspacePermissionDatabaseRecordCreate,
+			wantDenied: string(workspacemodel.WorkspacePermissionDatabaseRecordUpdate),
+		},
+		{
+			name:   "update accepts update permission",
+			toolID: ToolUpdateTableRecords,
+			grant:  workspacemodel.WorkspacePermissionDatabaseRecordUpdate,
+		},
+		{
+			name:       "delete rejects create-only permission",
+			toolID:     ToolDeleteTableRecords,
+			grant:      workspacemodel.WorkspacePermissionDatabaseRecordCreate,
+			wantDenied: string(workspacemodel.WorkspacePermissionDatabaseRecordDelete),
+		},
+		{
+			name:   "delete accepts delete permission",
+			toolID: ToolDeleteTableRecords,
+			grant:  workspacemodel.WorkspacePermissionDatabaseRecordDelete,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			provider := NewProvider(newDatabaseFakeDataSourceService(), &databaseFakeOrganizationService{
+				aiQuery:          true,
+				view:             true,
+				recordPermission: tt.grant,
+			})
+			tool, err := provider.GetTool(tt.toolID)
+			if err != nil {
+				t.Fatalf("GetTool() error = %v", err)
+			}
+			runtimeTool := tool.ForkToolRuntime(&tools.ToolRuntime{
+				TenantID:   "org-1",
+				InvokeFrom: tools.ToolInvokeFromAIChat,
+				RuntimeParameters: map[string]interface{}{
+					"organization_id": "org-1",
+				},
+			})
+
+			_, err = runtimeTool.Invoke(context.Background(), "acct-1", map[string]interface{}{
+				"data_source_id": "db-1",
+				"table_id":       "table-1",
+				"records":        []map[string]interface{}{{"id": 1, "name": "Ada"}},
+			}, nil, nil, nil)
+			if tt.wantDenied != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantDenied) {
+					t.Fatalf("Invoke() error = %v, want missing %s", err, tt.wantDenied)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Invoke() error = %v", err)
+			}
+		})
 	}
 }
 
@@ -215,10 +406,13 @@ func TestInsertTableRecordsAcceptsStructuredRecordsString(t *testing.T) {
 }
 
 type databaseFakeDataSourceService struct {
-	dataSources        []*dto.DataSourceResponse
-	tables             []*datasourcemodel.Table
-	addedRecords       int
-	lastQueryAccountID string
+	dataSources          []*dto.DataSourceResponse
+	tables               []*datasourcemodel.Table
+	addedRecords         int
+	listTablesCalls      int
+	getTableCalls        int
+	getTableColumnsCalls int
+	lastQueryAccountID   string
 }
 
 func newDatabaseFakeDataSourceService() *databaseFakeDataSourceService {
@@ -254,10 +448,12 @@ func (s *databaseFakeDataSourceService) GetDataSourceByID(_ context.Context, _ s
 }
 
 func (s *databaseFakeDataSourceService) ListTables(context.Context, string, string, string) ([]*datasourcemodel.Table, error) {
+	s.listTablesCalls++
 	return s.tables, nil
 }
 
 func (s *databaseFakeDataSourceService) GetTable(_ context.Context, _ string, dataSourceID, tableID string, _ string) (*datasourcemodel.Table, error) {
+	s.getTableCalls++
 	for _, table := range s.tables {
 		if table.DataSourceID == dataSourceID && table.ID == tableID {
 			return table, nil
@@ -267,6 +463,7 @@ func (s *databaseFakeDataSourceService) GetTable(_ context.Context, _ string, da
 }
 
 func (s *databaseFakeDataSourceService) GetTableColumns(context.Context, string, string, string, bool) (dto.GetTableColumnsResponse, error) {
+	s.getTableColumnsCalls++
 	return dto.GetTableColumnsResponse{Columns: []dto.TableColumn{{Name: "name", Type: "varchar"}}}, nil
 }
 
@@ -289,20 +486,24 @@ func (s *databaseFakeDataSourceService) DeleteTableRecords(context.Context, stri
 }
 
 type databaseFakeOrganizationService struct {
-	aiQuery       bool
-	view          bool
-	dataEdit      bool
-	manage        bool
-	lastAccountID string
+	aiQuery          bool
+	view             bool
+	dataEdit         bool
+	recordPermission workspacemodel.WorkspacePermissionCode
+	lastAccountID    string
 }
 
 func (s *databaseFakeOrganizationService) CheckWorkspacePermission(_ context.Context, _, _, accountID string, permission workspacemodel.WorkspacePermissionCode) (bool, error) {
 	s.lastAccountID = accountID
 	switch permission {
-	case workspacemodel.WorkspacePermissionDatabaseAIQuery:
+	case workspacemodel.WorkspacePermissionDatabaseAIQueryRead:
 		return s.aiQuery, nil
-	case workspacemodel.WorkspacePermissionDatabaseView:
+	case workspacemodel.WorkspacePermissionDatabaseRecordView:
 		return s.view, nil
+	case workspacemodel.WorkspacePermissionDatabaseRecordCreate,
+		workspacemodel.WorkspacePermissionDatabaseRecordUpdate,
+		workspacemodel.WorkspacePermissionDatabaseRecordDelete:
+		return s.dataEdit || s.recordPermission == permission, nil
 	default:
 		return false, nil
 	}
@@ -312,12 +513,10 @@ func (s *databaseFakeOrganizationService) CheckWorkspaceOrganizationAnyPermissio
 	s.lastAccountID = accountID
 	for _, permission := range permissions {
 		switch permission {
-		case workspacemodel.WorkspacePermissionDatabaseDataEdit:
+		case workspacemodel.WorkspacePermissionDatabaseRecordCreate,
+			workspacemodel.WorkspacePermissionDatabaseRecordUpdate,
+			workspacemodel.WorkspacePermissionDatabaseRecordDelete:
 			if s.dataEdit {
-				return true, nil
-			}
-		case workspacemodel.WorkspacePermissionDatabaseManage:
-			if s.manage {
 				return true, nil
 			}
 		}

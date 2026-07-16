@@ -187,18 +187,12 @@ func (h *WorkspaceHandler) UpdateWorkspace(c *gin.Context) {
 		response.Fail(c, response.ErrSystemError)
 		return
 	}
-	isOrganizationAdmin, err := h.accountService.IsOrganizationAdminOrOwner(c.Request.Context(), organizationID, accountID)
-	if err != nil {
-		response.Fail(c, response.ErrSystemError)
-		return
-	}
-	if !hasPermission && !isOrganizationAdmin {
+	if !hasPermission {
 		response.Fail(c, response.ErrPermissionDenied)
 		return
 	}
 
-	isAdmin := hasPermission || isOrganizationAdmin
-	result, err := h.workspaceService.UpdateWorkspace(c.Request.Context(), workspaceID, name, req.Status, accountID, isAdmin)
+	result, err := h.workspaceService.UpdateWorkspace(c.Request.Context(), workspaceID, name, req.Status, accountID, hasPermission)
 	if err != nil {
 		if err.Error() == "workspace not found" {
 			response.Fail(c, response.ErrNotFound)

@@ -58,6 +58,9 @@ func mapResultToExtractOutput(result *extractcommon.DocumentResult, filePath, ba
 			Metadata:  buildElementMetadata(output.Metadata, chunk, page, elementType),
 		})
 	}
+	if len(output.Elements) > 0 && (strings.EqualFold(backend, "mineru") || strings.EqualFold(backend, "reducto")) {
+		output.Metadata["structured_elements"] = true
+	}
 
 	if len(output.Elements) == 0 && output.Markdown != "" {
 		output.Elements = append(output.Elements, dto.ExtractElement{

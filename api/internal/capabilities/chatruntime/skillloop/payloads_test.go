@@ -3,8 +3,339 @@ package skillloop
 import (
 	"testing"
 
+	"github.com/zgiai/zgi/api/internal/capabilities/toolgovernance"
+	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"github.com/zgiai/zgi/api/internal/modules/tools"
 )
+
+func TestBlockedSkillPlanningFeedbackTraceIsNotGuardrail(t *testing.T) {
+	trace := blockedSkillGuardrailTrace(skills.SkillFileReader, "read_file", "skill must be loaded before calling its tools")
+	if trace.Kind != "planner_feedback" {
+		t.Fatalf("Kind = %q, want planner_feedback", trace.Kind)
+	}
+	if trace.Status != "advisory" {
+		t.Fatalf("Status = %q, want advisory", trace.Status)
+	}
+	if trace.Arguments["next_step"] != "load_skill" {
+		t.Fatalf("next_step = %#v, want load_skill", trace.Arguments["next_step"])
+	}
+}
+
+func TestClientActionRequiredPayloadEmitsObservationForPublishEffect(t *testing.T) {
+	prepared := NewPreparedChat("conv-1", "msg-1", "", "auto", nil)
+	trace := skills.SkillTrace{
+		SkillID:  "agent-manager",
+		ToolName: "publish_agent",
+		Status:   "success",
+		Governance: &toolgovernance.Decision{
+			Manifest: toolgovernance.Manifest{
+				ToolID:    "agent.publish",
+				Effect:    toolgovernance.EffectPublish,
+				AssetType: "agent",
+			},
+			AssetOperationAudit: map[string]interface{}{
+				"tool_id":    "agent.publish",
+				"effect":     "publish",
+				"asset_type": "agent",
+				"assets": []interface{}{
+					map[string]interface{}{
+						"id":   "agent-1",
+						"type": "agent",
+						"name": "Support Agent",
+					},
+				},
+			},
+		},
+	}
+
+	payload := clientActionRequiredPayload(prepared, trace, "call-publish")
+	if payload == nil {
+		t.Fatal("clientActionRequiredPayload() = nil, want asset observation payload")
+	}
+	if payload["action_type"] != "asset_observation" ||
+		payload["effect"] != "publish" ||
+		payload["asset_type"] != "agent" {
+		t.Fatalf("payload = %#v, want publish agent asset observation", payload)
+	}
+	if payload["continuation_policy"] != clientActionContinuationPolicyRecordOnly ||
+		payload["status"] != "succeeded" ||
+		payload["refresh_before_resume"] != false ||
+		payload["observation_requested"] != true {
+		t.Fatalf("payload = %#v, want record-only observation flags", payload)
+	}
+	if payload["tool_id"] != "agent.publish" {
+		t.Fatalf("tool_id = %#v, want agent.publish", payload["tool_id"])
+	}
+}
+
+func TestClientActionRequiredPayloadSkipsPlainAgentCreateNavigation(t *testing.T) {
+	prepared := NewPreparedChat("conv-1", "msg-1", "", "auto", nil)
+	trace := skills.SkillTrace{
+		SkillID:  skills.SkillAgentManagement,
+		ToolName: "create_agent",
+		Status:   "success",
+		Result: map[string]interface{}{
+			"status":   "completed",
+			"effect":   "created",
+			"agent_id": "agent-1",
+		},
+	}
+
+	if payload := clientActionRequiredPayload(prepared, trace, "call-create"); payload != nil {
+		t.Fatalf("clientActionRequiredPayload() = %#v, want nil for plain Agent create", payload)
+	}
+}
+
+func TestClientActionRequiredPayloadDoesNotInferAgentCreateNavigationFromQuery(t *testing.T) {
+	prepared := NewPreparedChat("conv-1", "msg-1", "", "auto", nil)
+	prepared.Query = "\u521b\u5efa\u4e00\u4e2a\u667a\u80fd\u4f53\u5e76\u6253\u5f00\u8be6\u60c5\u9875"
+	trace := skills.SkillTrace{
+		SkillID:  skills.SkillAgentManagement,
+		ToolName: "create_agent",
+		Status:   "success",
+		Result: map[string]interface{}{
+			"status":   "completed",
+			"effect":   "created",
+			"agent_id": "agent-1",
+		},
+	}
+
+	if payload := clientActionRequiredPayload(prepared, trace, "call-create"); payload != nil {
+		t.Fatalf("clientActionRequiredPayload() = %#v, want model to call navigation explicitly", payload)
+	}
+}
+
+func TestClientActionRequiredPayloadEmitsAgentDeleteNavigationFromDetailPage(t *testing.T) {
+	prepared := NewPreparedChat("conv-1", "msg-1", "", "auto", nil)
+	prepared.CurrentRoute = "/console/agents/agent-1/agent"
+	trace := skills.SkillTrace{
+		SkillID:  skills.SkillAgentManagement,
+		ToolName: "delete_agent",
+		Status:   "success",
+		Result: map[string]interface{}{
+			"status":   "completed",
+			"effect":   "deleted",
+			"agent_id": "agent-1",
+		},
+	}
+
+	payload := clientActionRequiredPayload(prepared, trace, "call-delete")
+	if payload == nil {
+		t.Fatal("clientActionRequiredPayload() = nil, want route navigation payload")
+	}
+	if payload["action_type"] != "route_navigation" ||
+		payload["href"] != "/console/agents" ||
+		payload["reason"] != "leave_deleted_agent_detail" {
+		t.Fatalf("payload = %#v, want Agent list navigation after current detail delete", payload)
+	}
+}
+
+func TestClientActionRequiredPayloadSkipsAgentDeleteNavigationFromListPage(t *testing.T) {
+	prepared := NewPreparedChat("conv-1", "msg-1", "", "auto", nil)
+	prepared.CurrentRoute = "/console/agents"
+	trace := skills.SkillTrace{
+		SkillID:  skills.SkillAgentManagement,
+		ToolName: "delete_agent",
+		Status:   "success",
+		Result: map[string]interface{}{
+			"status":     "completed",
+			"effect":     "deleted",
+			"agent_id":   "agent-1",
+			"agent_name": "Old Agent",
+		},
+		Governance: &toolgovernance.Decision{
+			Manifest: toolgovernance.Manifest{
+				ToolID:    "agent.delete",
+				Effect:    toolgovernance.EffectDelete,
+				AssetType: "agent",
+			},
+			AssetOperationAudit: map[string]interface{}{
+				"tool_id":    "agent.delete",
+				"effect":     "delete",
+				"asset_type": "agent",
+				"assets": []interface{}{
+					map[string]interface{}{"id": "agent-1", "type": "agent", "name": "Old Agent"},
+				},
+			},
+		},
+	}
+
+	payload := clientActionRequiredPayload(prepared, trace, "call-delete")
+	if payload["action_type"] != "asset_observation" || payload["continuation_policy"] != clientActionContinuationPolicyRecordOnly {
+		t.Fatalf("clientActionRequiredPayload() = %#v, want non-blocking asset observation", payload)
+	}
+}
+
+func TestClientActionRequiredPayloadRecordsAgentBatchDeleteObservation(t *testing.T) {
+	prepared := NewPreparedChat("conv-1", "msg-1", "", "auto", nil)
+	prepared.CurrentRoute = "/console/agents"
+	trace := skills.SkillTrace{
+		SkillID:  skills.SkillAgentManagement,
+		ToolName: "delete_agents",
+		Status:   "success",
+		Result: map[string]interface{}{
+			"status":         "completed",
+			"operation_type": "agent.delete.batch",
+			"target_count":   2,
+			"deleted_count":  2,
+			"operation_group": map[string]interface{}{
+				"operation":     "agent.delete.batch",
+				"success_count": 2,
+				"item_results": []interface{}{
+					map[string]interface{}{"status": "succeeded", "agent_name": "Agent A"},
+					map[string]interface{}{"status": "succeeded", "agent_name": "Agent B"},
+				},
+			},
+		},
+		Governance: &toolgovernance.Decision{
+			Manifest: toolgovernance.Manifest{
+				ToolID:    "agent.delete.batch",
+				Effect:    toolgovernance.EffectDelete,
+				AssetType: "agent",
+			},
+			AssetOperationAudit: map[string]interface{}{
+				"tool_id":    "agent.delete.batch",
+				"effect":     "delete",
+				"asset_type": "agent",
+				"assets": []interface{}{
+					map[string]interface{}{"id": "agent-1", "type": "agent", "name": "Agent A"},
+					map[string]interface{}{"id": "agent-2", "type": "agent", "name": "Agent B"},
+				},
+			},
+		},
+	}
+
+	payload := clientActionRequiredPayload(prepared, trace, "call-delete-agents")
+	if payload["action_type"] != "asset_observation" || payload["continuation_policy"] != clientActionContinuationPolicyRecordOnly {
+		t.Fatalf("clientActionRequiredPayload() = %#v, want non-blocking batch asset observation", payload)
+	}
+}
+
+func TestClientActionRequiredPayloadSkipsAgentMemorySlotClientAction(t *testing.T) {
+	prepared := NewPreparedChat("conv-1", "msg-1", "", "auto", nil)
+	trace := skills.SkillTrace{
+		SkillID:  skills.SkillAgentManagement,
+		ToolName: "replace_agent_memory_slots",
+		Status:   "success",
+		Result: map[string]interface{}{
+			"agent": map[string]interface{}{
+				"id": "agent-1",
+			},
+		},
+	}
+
+	if payload := clientActionRequiredPayload(prepared, trace, "call-memory"); payload != nil {
+		t.Fatalf("clientActionRequiredPayload() = %#v, want nil for non-blocking Agent memory update", payload)
+	}
+}
+
+func TestClientActionRequiredPayloadSkipsAgentBindingObservation(t *testing.T) {
+	prepared := NewPreparedChat("conv-1", "msg-1", "", "auto", nil)
+	trace := skills.SkillTrace{
+		SkillID:  skills.SkillAgentManagement,
+		ToolName: "replace_agent_knowledge_bindings",
+		Status:   "success",
+		Governance: &toolgovernance.Decision{
+			Manifest: toolgovernance.Manifest{
+				ToolID:    "agent.replace_knowledge_bindings",
+				Effect:    toolgovernance.EffectUpdate,
+				AssetType: "knowledge_base",
+			},
+			AssetOperationAudit: map[string]interface{}{
+				"tool_id":    "agent.replace_knowledge_bindings",
+				"effect":     "update",
+				"asset_type": "knowledge_base",
+				"assets": []interface{}{
+					map[string]interface{}{
+						"id":   "agent-1",
+						"type": "agent",
+						"name": "Support Agent",
+					},
+					map[string]interface{}{
+						"id":   "dataset-1",
+						"type": "knowledge_base",
+						"name": "Policies",
+					},
+				},
+			},
+		},
+	}
+
+	if payload := clientActionRequiredPayload(prepared, trace, "call-bind"); payload != nil {
+		t.Fatalf("clientActionRequiredPayload() = %#v, want nil for non-blocking Agent binding update", payload)
+	}
+}
+
+func TestClientActionRequiredPayloadSkipsTemporaryFileGeneration(t *testing.T) {
+	prepared := NewPreparedChat("conv-1", "msg-1", "", "auto", nil)
+	trace := skills.SkillTrace{
+		SkillID:  skills.SkillFileGenerator,
+		ToolName: "generate_file",
+		Status:   "success",
+		Governance: &toolgovernance.Decision{
+			Manifest: toolgovernance.Manifest{
+				ToolID:    "file.generate",
+				Effect:    toolgovernance.EffectCreate,
+				AssetType: "file",
+			},
+			AssetOperationAudit: map[string]interface{}{
+				"tool_id":    "file.generate",
+				"effect":     "create",
+				"asset_type": "file",
+				"assets": []interface{}{
+					map[string]interface{}{
+						"id":   "tool-file-1",
+						"type": "file",
+						"name": "temporary.md",
+					},
+				},
+			},
+		},
+	}
+
+	if payload := clientActionRequiredPayload(prepared, trace, "call-generate"); payload != nil {
+		t.Fatalf("clientActionRequiredPayload() = %#v, want nil for temporary file generation", payload)
+	}
+}
+
+func TestClientActionRequiredPayloadSkipsGenericTemporaryArtifactGeneration(t *testing.T) {
+	prepared := NewPreparedChat("conv-1", "msg-1", "", "auto", nil)
+	trace := skills.SkillTrace{
+		SkillID:  skills.SkillChartGenerator,
+		ToolName: "generate_chart",
+		Status:   "success",
+		Result: map[string]interface{}{
+			"artifact_type":   "file",
+			"target":          "temporary_artifact",
+			"transfer_method": "tool_file",
+			"tool_file_id":    "tool-file-1",
+			"filename":        "agents-distribution-pie.svg",
+		},
+		Governance: &toolgovernance.Decision{
+			Manifest: toolgovernance.Manifest{
+				ToolID:    "chart.generate",
+				Effect:    toolgovernance.EffectCreate,
+				AssetType: "file",
+			},
+			AssetOperationAudit: map[string]interface{}{
+				"tool_id":    "chart.generate",
+				"effect":     "create",
+				"asset_type": "file",
+				"assets": []interface{}{
+					map[string]interface{}{
+						"id":   "tool-file-1",
+						"type": "file",
+						"name": "agents-distribution-pie.svg",
+					},
+				},
+			},
+		},
+	}
+
+	if payload := clientActionRequiredPayload(prepared, trace, "call-chart"); payload != nil {
+		t.Fatalf("clientActionRequiredPayload() = %#v, want nil for generic temporary artifact generation", payload)
+	}
+}
 
 func TestSummarizeSkillToolResultCompactsAgentKnowledgePayload(t *testing.T) {
 	result := summarizeSkillToolResult("agent-knowledge", "retrieve_agent_knowledge", []tools.ToolInvokeMessage{{

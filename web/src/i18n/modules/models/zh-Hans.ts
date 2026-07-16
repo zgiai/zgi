@@ -111,12 +111,16 @@ const messages: ModelsMessages = {
       moderation: '内容审核',
       reasoning: '深度推理',
       'function-calling': '函数调用',
+      agent: '智能体模型',
+    },
+    tags: {
+      agent: '推荐',
     },
     empty: {
       noModelsTitle: '需要先配置模型',
       noResults: '没有符合搜索条件的模型',
       noModels: '暂无可用的{type}',
-      contactAdmin: '请联系管理员为当前工作空间启用模型。',
+      contactAdmin: '请联系管理员启用当前组织模型能力。',
       configureDescription: '请先配置至少一个可用的{type}，然后再继续使用当前工作流或智能体。',
       configure: '去配置',
       clearSearch: '清空搜索',
@@ -131,8 +135,10 @@ const messages: ModelsMessages = {
     tooltip: {
       modelId: '模型ID：',
       context: '上下文',
+      deprecatedUnavailable: '该模型已废弃，不支持新建选择。',
       useCases: '使用场景',
       features: '功能',
+      replacementSuggestion: '建议使用',
       description: '描述：',
       unknown: '未知',
     },

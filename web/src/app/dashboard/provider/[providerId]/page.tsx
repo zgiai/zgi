@@ -1,11 +1,12 @@
 'use client';
 
 import React, { useState, useCallback, useEffect } from 'react';
-import { useParams, useRouter } from 'next/navigation';
+import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Button } from '@/components/ui/button';
 import {
   useBatchToggleModels,
+  useConfigureModel,
   useCreateCustomModel,
   useDeleteCustomModel,
   useProviderModelsAll,
@@ -32,18 +33,23 @@ import ModelsGroupTable from '@/components/providers/models-group-table';
 import ProviderPageHeader from '@/components/providers/provider-page-header';
 import { CustomProviderDialog } from '@/components/providers/custom-provider-dialog';
 import { CustomModelDialog } from '@/components/providers/custom-model-dialog';
+import { ModelPriceDialog } from '@/components/providers/model-price-dialog';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { useT } from '@/i18n';
 import { useProviderDisplay } from '@/hooks/provider/use-provider-display';
 import { IS_CLOUD } from '@/lib/config';
 import { ModelUpdatesButton } from '@/components/providers/model-updates-button';
 import { useProviderI18n } from '@/hooks/provider/use-provider-i18n';
+import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
+import { useOrganizationStore } from '@/store/organization-store';
+import { toast } from 'sonner';
 
 // Removed local badge color mapping; row badges use mapping inside ModelsGroupTable
 
 export default function ModelPage() {
   const params = useParams<{ providerId: string }>();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const providerId = Array.isArray(params?.providerId) ? params?.providerId[0] : params?.providerId;
   const provider = decodeURIComponent(providerId || '');
   const t = useT();
@@ -65,6 +71,7 @@ export default function ModelPage() {
 
   // Custom Model State
   const { createCustomModel, isCreating: isCreatingModel } = useCreateCustomModel();
+  const { configureModel, isConfiguring } = useConfigureModel();
   const { updateCustomModel: updateModelAction, isUpdating: isUpdatingModel } =
     useUpdateCustomModel();
   const { deleteCustomModel: deleteModelAction, isDeleting: isDeletingModel } =
@@ -74,6 +81,9 @@ export default function ModelPage() {
   const [editingModel, setEditingModel] = useState<ModelItem | null>(null);
   const [isModelDeleteConfirmOpen, setIsModelDeleteConfirmOpen] = useState(false);
   const [deletingModel, setDeletingModel] = useState<ModelItem | null>(null);
+  const [isPriceDialogOpen, setIsPriceDialogOpen] = useState(false);
+  const [pricingModel, setPricingModel] = useState<ModelItem | null>(null);
+  const openedPricingQueryRef = React.useRef<string | null>(null);
 
   // Frontend filtering by search query (name, display_name)
   const models = React.useMemo(() => {
@@ -167,6 +177,13 @@ export default function ModelPage() {
   const { toggleBatchModels, isBatchToggling } = useBatchToggleModels();
   const isCustom = detail?.provider_type === 'custom';
   const { name, description } = useProviderDisplay(detail);
+  const accountPermissions = useAccountPermissions();
+  const currentOrganization = useOrganizationStore.use.currentOrganization();
+  const organizationRole =
+    accountPermissions.organizationRole ?? currentOrganization?.organization_role ?? null;
+  const canManageModels = organizationRole === 'owner' || organizationRole === 'admin';
+  const isModelPermissionLoading =
+    !organizationRole && (accountPermissions.isLoading || accountPermissions.isFetching);
 
   // Track which item is being toggled (only disable that specific switch)
   const [togglingModel, setTogglingModel] = useState<string | null>(null);
@@ -176,6 +193,7 @@ export default function ModelPage() {
 
   const onToggleModel = useCallback(
     async (m: ModelItem, next: boolean) => {
+      if (!canManageModels) return;
       setTogglingModel(m.model);
       try {
         await toggleModel(provider, m.model, next);
@@ -183,7 +201,7 @@ export default function ModelPage() {
         setTogglingModel(null);
       }
     },
-    [provider, toggleModel]
+    [canManageModels, provider, toggleModel]
   );
 
   const onToggleProvider = useCallback(
@@ -211,19 +229,19 @@ export default function ModelPage() {
 
   const onBatchEnableDisable = useCallback(
     async (next: boolean) => {
-      if (!provider || selected.size === 0) return;
+      if (!canManageModels || !provider || selected.size === 0) return;
       try {
         await toggleBatchModels(provider, Array.from(selected), next);
       } finally {
         clearSelection();
       }
     },
-    [provider, selected, toggleBatchModels, clearSelection]
+    [canManageModels, provider, selected, toggleBatchModels, clearSelection]
   );
 
   const onToggleVisibleModels = useCallback(
     async (next: boolean) => {
-      if (!provider || toggleableVisibleModels.length === 0) return;
+      if (!canManageModels || !provider || toggleableVisibleModels.length === 0) return;
 
       await toggleBatchModels(
         provider,
@@ -233,10 +251,11 @@ export default function ModelPage() {
 
       clearSelection();
     },
-    [clearSelection, provider, toggleableVisibleModels, toggleBatchModels]
+    [canManageModels, clearSelection, provider, toggleableVisibleModels, toggleBatchModels]
   );
 
   const handleAdd = useCallback(() => {
+    if (!canManageModels) return;
     if (isCustom) {
       setEditingModel(null);
       setIsModelDialogOpen(true);
@@ -244,7 +263,7 @@ export default function ModelPage() {
     }
 
     router.push(`/dashboard/channel?create=1&provider=${encodeURIComponent(provider)}`);
-  }, [isCustom, provider, router]);
+  }, [canManageModels, isCustom, provider, router]);
 
   const handleUpdate = async (data: UpdateCustomProviderRequest) => {
     if (detail) {
@@ -262,6 +281,7 @@ export default function ModelPage() {
   };
 
   const handleModelSubmit = async (data: CreateCustomModelRequest | UpdateCustomModelRequest) => {
+    if (!canManageModels) return;
     if (editingModel) {
       // For updates, the model name (slug) often remains the same, but we need the model ID if it was changed
       // Documentation says /llm/models/custom/{id}
@@ -273,8 +293,72 @@ export default function ModelPage() {
     setEditingModel(null);
   };
 
+  const openPriceDialog = useCallback(
+    (model: ModelItem) => {
+      if (!canManageModels) {
+        toast.warning(t('aiProviders.models.priceDialog.adminRequired'));
+        return;
+      }
+      setPricingModel(model);
+      setIsPriceDialogOpen(true);
+    },
+    [canManageModels, t]
+  );
+
+  useEffect(() => {
+    const shouldOpen =
+      searchParams.get('pricing') === '1' || searchParams.get('open') === 'pricing';
+    const targetModel = searchParams.get('model');
+    if (!shouldOpen || !targetModel || allModels.length === 0) return;
+
+    const match = allModels.find(model => model.id === targetModel || model.model === targetModel);
+    if (!match) return;
+    if (!organizationRole || (!canManageModels && isModelPermissionLoading)) return;
+
+    const openKey = `${match.id}:${targetModel}`;
+    if (openedPricingQueryRef.current === openKey) return;
+    openedPricingQueryRef.current = openKey;
+    if (!canManageModels) {
+      toast.warning(t('aiProviders.models.priceDialog.adminRequired'));
+      return;
+    }
+    openPriceDialog(match);
+  }, [
+    allModels,
+    canManageModels,
+    isModelPermissionLoading,
+    openPriceDialog,
+    organizationRole,
+    searchParams,
+    t,
+  ]);
+
+  const handlePriceSubmit = useCallback(
+    async (values: { inputPrice: string; outputPrice: string }) => {
+      if (!pricingModel || !canManageModels) return;
+
+      if (isCustom) {
+        await updateModelAction(pricingModel.id, {
+          input_price: values.inputPrice,
+          output_price: values.outputPrice,
+        });
+      } else {
+        await configureModel({
+          model_id: pricingModel.id,
+          is_enabled: pricingModel.is_enabled,
+          input_price_override: values.inputPrice,
+          output_price_override: values.outputPrice,
+        });
+      }
+
+      setIsPriceDialogOpen(false);
+      setPricingModel(null);
+    },
+    [canManageModels, configureModel, isCustom, pricingModel, updateModelAction]
+  );
+
   const handleDeleteModel = async () => {
-    if (deletingModel) {
+    if (deletingModel && canManageModels) {
       await deleteModelAction(deletingModel.id);
       setIsModelDeleteConfirmOpen(false);
       setDeletingModel(null);
@@ -338,15 +422,17 @@ export default function ModelPage() {
           onEnableVisible={() => onToggleVisibleModels(true)}
           onDisableVisible={() => onToggleVisibleModels(false)}
           extraActions={
-            !IS_CLOUD && !isCustom ? <ModelUpdatesButton providerId={provider} /> : undefined
+            canManageModels && !IS_CLOUD && !isCustom ? (
+              <ModelUpdatesButton providerId={provider} />
+            ) : undefined
           }
-          onAdd={handleAdd}
+          onAdd={canManageModels ? handleAdd : undefined}
           addLabel={
             isCustom
               ? (t('aiProviders.models.actions.add') as string)
               : (t('aiProviders.models.actions.addChannel') as string)
           }
-          disabled={isBatchToggling}
+          disabled={!canManageModels || isBatchToggling}
           hasActiveFilters={hasActiveFilters}
         />
         <ModelTypeChips
@@ -385,6 +471,7 @@ export default function ModelPage() {
         isBatchToggling={isBatchToggling}
         togglingModel={togglingModel}
         onToggleModel={onToggleModel}
+        onEditPrice={canManageModels ? openPriceDialog : undefined}
         searchQuery={query}
         hasTypeFilter={selectedUseCase !== null}
         onClearFilters={() => {
@@ -392,7 +479,7 @@ export default function ModelPage() {
           setQuery('');
         }}
         onEditModel={
-          isCustom
+          isCustom && canManageModels
             ? m => {
                 setEditingModel(m);
                 setIsModelDialogOpen(true);
@@ -400,13 +487,14 @@ export default function ModelPage() {
             : undefined
         }
         onDeleteModel={
-          isCustom
+          isCustom && canManageModels
             ? m => {
                 setDeletingModel(m);
                 setIsModelDeleteConfirmOpen(true);
               }
             : undefined
         }
+        readOnly={!canManageModels}
         isCustom
       />
 
@@ -439,6 +527,7 @@ export default function ModelPage() {
         isBatchToggling={isBatchToggling}
         togglingModel={togglingModel}
         onToggleModel={onToggleModel}
+        onEditPrice={canManageModels ? openPriceDialog : undefined}
         searchQuery={query}
         hasTypeFilter={selectedUseCase !== null}
         readOnly
@@ -447,7 +536,7 @@ export default function ModelPage() {
           setQuery('');
         }}
         onEditModel={
-          isCustom
+          isCustom && canManageModels
             ? m => {
                 setEditingModel(m);
                 setIsModelDialogOpen(true);
@@ -455,7 +544,7 @@ export default function ModelPage() {
             : undefined
         }
         onDeleteModel={
-          isCustom
+          isCustom && canManageModels
             ? m => {
                 setDeletingModel(m);
                 setIsModelDeleteConfirmOpen(true);
@@ -463,7 +552,7 @@ export default function ModelPage() {
             : undefined
         }
         onCreateModel={
-          isCustom
+          isCustom && canManageModels
             ? () => {
                 setEditingModel(null);
                 setIsModelDialogOpen(true);
@@ -473,7 +562,7 @@ export default function ModelPage() {
       />
 
       {/* Floating action bar for batch operations */}
-      {selectedCount > 0 && (
+      {canManageModels && selectedCount > 0 && (
         <div className="fixed bottom-6 left-6 right-6 z-40">
           <div className="mx-auto max-w-5xl rounded-xl border bg-background/95 backdrop-blur-sm p-4 shadow-xl flex items-center justify-between">
             <div className="text-sm font-medium">
@@ -543,6 +632,17 @@ export default function ModelPage() {
         initialData={editingModel || undefined}
         onSubmit={handleModelSubmit}
         isSubmitting={isCreatingModel || isUpdatingModel}
+      />
+
+      <ModelPriceDialog
+        open={isPriceDialogOpen}
+        onOpenChange={open => {
+          setIsPriceDialogOpen(open);
+          if (!open) setPricingModel(null);
+        }}
+        model={pricingModel}
+        onSubmit={handlePriceSubmit}
+        isSubmitting={isConfiguring || isUpdatingModel}
       />
 
       <ConfirmDialog

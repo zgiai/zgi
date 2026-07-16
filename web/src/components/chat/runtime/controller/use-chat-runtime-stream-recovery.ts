@@ -21,6 +21,7 @@ import {
   AICHAT_STREAM_EVENTS_EXPIRED,
   clearStreamingRuntimeMessageMetadata,
   isAbortError,
+  isRecoverableStreamTransportError,
 } from '@/components/chat/runtime/controller/chat-runtime-controller-utils';
 import type { ChatRuntimeEventAppliers } from '@/components/chat/runtime/controller/use-chat-runtime-event-appliers';
 
@@ -34,6 +35,7 @@ interface UseChatRuntimeStreamRecoveryArgs {
   clearRecoveryRetry: (conversationId: string) => void;
   closeRecoveryConnection: (conversationId: string) => void;
   setControllerState: AIChatSetControllerState;
+  refreshMessagesSilently: (conversationId: string) => void;
   refreshAccountMemoryAfterMemoryMutation: (payload: AIChatMemoryMutationEventData) => void;
   eventAppliers: ChatRuntimeEventAppliers;
 }
@@ -48,6 +50,7 @@ export function useChatRuntimeStreamRecovery({
   clearRecoveryRetry,
   closeRecoveryConnection,
   setControllerState,
+  refreshMessagesSilently,
   refreshAccountMemoryAfterMemoryMutation,
   eventAppliers,
 }: UseChatRuntimeStreamRecoveryArgs) {
@@ -70,13 +73,29 @@ export function useChatRuntimeStreamRecovery({
             : 'background';
         };
         const conversation =
-          options.conversation ??
+          (attempt === 0 ? options.conversation : undefined) ??
           currentState.conversations.find(item => item.id === conversationId);
         const messageId = conversation?.active_message_id;
         if (conversation?.runtime_status !== 'streaming' || !messageId) {
           closeRecoveryConnection(conversationId);
+          setControllerState(current => ({
+            ...current,
+            isSending: getNextActiveSendingState(current, conversationId, false),
+            connectionByConversation: {
+              ...current.connectionByConversation,
+              [conversationId]: 'idle',
+            },
+          }));
           return;
         }
+
+        setControllerState(current => ({
+          ...current,
+          connectionByConversation: {
+            ...current.connectionByConversation,
+            [conversationId]: 'reconnecting',
+          },
+        }));
 
         const existingRecovery = recoveryAbortByConversationRef.current[conversationId];
         if (existingRecovery && !existingRecovery.signal.aborted) {
@@ -160,7 +179,7 @@ export function useChatRuntimeStreamRecovery({
                 message_id: messageId,
                 answer: nextMessage.answer,
                 status: 'streaming',
-                timeline: replayingFromStart ? [] : (previousStreaming?.timeline ?? []),
+                timeline: previousStreaming?.timeline ?? [],
                 last_event_id: afterId,
                 replay_base_answer: shouldDedupeReplay
                   ? preservedAnswer
@@ -174,21 +193,52 @@ export function useChatRuntimeStreamRecovery({
 
         let reachedTerminalEvent = false;
         let reconnectScheduled = false;
-        const scheduleReconnect = () => {
+        const scheduleReconnect = (finalize = false) => {
           if (reconnectScheduled || reachedTerminalEvent || abortController.signal.aborted) return;
-          if (attempt >= AICHAT_RECOVERY_RETRY_DELAYS.length) {
-            setControllerState(current => ({
-              ...current,
-              error:
-                current.activeConversationId === conversationId
-                  ? 'AIChat stream recovery failed'
-                  : current.error,
-              isSending: getNextActiveSendingState(current, conversationId, false),
-              recoveringByConversation: {
-                ...current.recoveringByConversation,
-                [conversationId]: false,
-              },
-            }));
+          if (finalize || attempt >= AICHAT_RECOVERY_RETRY_DELAYS.length) {
+            reconnectScheduled = true;
+            abortController.abort();
+            if (recoveryAbortByConversationRef.current[conversationId] === abortController) {
+              delete recoveryAbortByConversationRef.current[conversationId];
+            }
+            void transportRef.current
+              .refreshConversation(conversationId)
+              .then(authoritativeConversation => {
+                const stillRunning =
+                  authoritativeConversation.runtime_status === 'streaming' &&
+                  Boolean(authoritativeConversation.active_message_id);
+                setControllerState(current => ({
+                  ...current,
+                  conversations: current.conversations.map(item =>
+                    item.id === conversationId ? authoritativeConversation : item
+                  ),
+                  isSending: getNextActiveSendingState(current, conversationId, stillRunning),
+                  recoveringByConversation: {
+                    ...current.recoveringByConversation,
+                    [conversationId]: false,
+                  },
+                  connectionByConversation: {
+                    ...current.connectionByConversation,
+                    [conversationId]: stillRunning ? 'disconnected' : 'idle',
+                  },
+                }));
+                if (!stillRunning) {
+                  refreshMessagesSilently(conversationId);
+                }
+              })
+              .catch(() => {
+                setControllerState(current => ({
+                  ...current,
+                  recoveringByConversation: {
+                    ...current.recoveringByConversation,
+                    [conversationId]: false,
+                  },
+                  connectionByConversation: {
+                    ...current.connectionByConversation,
+                    [conversationId]: 'disconnected',
+                  },
+                }));
+              });
             return;
           }
 
@@ -206,6 +256,16 @@ export function useChatRuntimeStreamRecovery({
             conversationId,
             { messageId, afterId },
             {
+              onOpen: () => {
+                if (abortController.signal.aborted) return;
+                setControllerState(current => ({
+                  ...current,
+                  connectionByConversation: {
+                    ...current.connectionByConversation,
+                    [conversationId]: 'connected',
+                  },
+                }));
+              },
               onMessageStart: (payload, eventId) => {
                 if (abortController.signal.aborted) return;
                 eventAppliers.applyMessageStart(
@@ -266,6 +326,18 @@ export function useChatRuntimeStreamRecovery({
                 if (abortController.signal.aborted) return;
                 eventAppliers.applySkillArtifactCreated(payload, eventId);
               },
+              onToolGovernanceDecision: (payload, eventId) => {
+                if (abortController.signal.aborted) return;
+                eventAppliers.applyToolGovernanceDecision(payload, eventId);
+              },
+              onClientActionRequired: (payload, eventId) => {
+                if (abortController.signal.aborted) return;
+                eventAppliers.applyClientActionRequired(payload, eventId);
+              },
+              onClientActionResult: (payload, eventId) => {
+                if (abortController.signal.aborted) return;
+                eventAppliers.applyClientActionResult(payload, eventId);
+              },
               onMemoryMutation: (payload, eventId) => {
                 if (abortController.signal.aborted) return;
                 eventAppliers.applyMemoryMutation(payload, eventId);
@@ -311,18 +383,32 @@ export function useChatRuntimeStreamRecovery({
                 if (abortController.signal.aborted) return;
                 reachedTerminalEvent = true;
                 eventAppliers.applyMessageEnd(payload, eventId);
+                setControllerState(current => ({
+                  ...current,
+                  connectionByConversation: {
+                    ...current.connectionByConversation,
+                    [conversationId]: 'idle',
+                  },
+                }));
               },
               onErrorEvent: (payload, eventId) => {
                 if (abortController.signal.aborted) return;
                 reachedTerminalEvent = true;
                 eventAppliers.applyStreamError(payload, eventId, conversationId);
+                setControllerState(current => ({
+                  ...current,
+                  connectionByConversation: {
+                    ...current.connectionByConversation,
+                    [conversationId]: 'idle',
+                  },
+                }));
                 if (payload.message?.toLowerCase().includes(AICHAT_STREAM_EVENTS_EXPIRED)) {
                   closeRecoveryConnection(conversationId);
                 }
               },
               onRequestError: error => {
                 if (isAbortError(error)) return;
-                scheduleReconnect();
+                scheduleReconnect(!isRecoverableStreamTransportError(error));
               },
               onClose: () => {
                 if (recoveryAbortByConversationRef.current[conversationId] === abortController) {
@@ -332,6 +418,7 @@ export function useChatRuntimeStreamRecovery({
                   scheduleReconnect();
                   return;
                 }
+                if (reconnectScheduled && !reachedTerminalEvent) return;
                 setControllerState(current => ({
                   ...current,
                   isSending: getNextActiveSendingState(current, conversationId, false),
@@ -360,6 +447,7 @@ export function useChatRuntimeStreamRecovery({
       recoveryModeByConversationRef,
       recoveryRetryTimeoutsRef,
       refreshAccountMemoryAfterMemoryMutation,
+      refreshMessagesSilently,
       setControllerState,
       setRecoveryMode,
       stateRef,

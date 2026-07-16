@@ -52,7 +52,7 @@ var (
 
 var (
 	ErrDatasetName            = ErrorCode{102001, "Dataset name cannot be empty", true}
-	ErrDatasetNameLong        = ErrorCode{102002, "Dataset name cannot exceed 50 characters", true}
+	ErrDatasetNameLong        = ErrorCode{102002, "Dataset name cannot exceed 40 characters", true}
 	ErrDatasetDescriptionLong = ErrorCode{102003, "Dataset description cannot exceed 400 characters", true}
 	ErrDatasetIdRequired      = ErrorCode{102004, "Dataset ID cannot be empty", true}
 )
@@ -226,6 +226,9 @@ var (
 	ErrWorkflowOrganizationBalanceInsufficient   = ErrorCode{207011, "Workflow organization balance is insufficient", true}
 	ErrWorkflowWorkspaceQuotaInsufficient        = ErrorCode{207012, "Workflow workspace quota is insufficient", true}
 	ErrWorkflowPrivateChannelBalanceInsufficient = ErrorCode{207013, "Workflow private channel balance is insufficient", true}
+	ErrWorkflowModelPricingNotConfigured         = ErrorCode{207014, "模型未配置价格，请先在模型管理或计费策略中配置价格。", true}
+	ErrWorkflowPrivateChannelUpstreamUnavailable = ErrorCode{207015, "Private channel upstream credential is unavailable", true}
+	ErrWorkflowPlatformChannelUnavailable        = ErrorCode{207016, "当前模型服务暂时不可用，请稍后重试或选择其他模型。", true}
 )
 
 var (

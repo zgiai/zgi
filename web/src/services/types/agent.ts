@@ -7,6 +7,8 @@ export enum AgentType {
   CONVERSATIONAL_AGENT = 'CONVERSATIONAL_WORKFLOW',
 }
 
+export type AgentAssetKind = 'agent' | 'workflow';
+
 // Agent icon type (aligned with shared UI icon type)
 export type AgentIconType = IconType | undefined;
 
@@ -50,6 +52,8 @@ export interface Agent {
 // Agent detail interface (for detail response)
 export interface AgentDetail {
   id: string;
+  tenant_id?: string;
+  workspace_id?: string;
   web_app_id?: string;
   name: string;
   description: string;
@@ -61,7 +65,11 @@ export interface AgentDetail {
   is_editor: boolean;
   agent_config: AgentModelConfig;
   owner_account: OwnerAccount;
-  workspace: {
+  workspace?: {
+    id: string;
+    name: string;
+  };
+  tenant?: {
     id: string;
     name: string;
   };
@@ -131,12 +139,18 @@ export interface AgentListParams {
   keyword?: string;
   workspace_id?: string;
   agent_type?: AgentType;
+  asset_kind?: AgentAssetKind;
   sort?: string;
   order?: 'asc' | 'desc';
 }
 
 export interface RunnableWebAppsParams {
   workspace_id?: string;
+  web_app_id?: string;
+  web_app_ids?: string;
+  keyword?: string;
+  page?: number;
+  page_size?: number;
 }
 
 export interface RunnableWebAppItem {
@@ -148,9 +162,9 @@ export interface RunnableWebAppItem {
 }
 
 export interface RunnableWebAppMetaData {
-  title: string;
-  icon: string;
-  icon_type?: string;
+  name: string;
+  icon: string | null;
+  icon_type?: string | null;
   icon_url?: string;
   desc: string | null;
   agent_type: AgentType | string;
@@ -158,6 +172,10 @@ export interface RunnableWebAppMetaData {
 
 export interface RunnableWebAppsData {
   items: RunnableWebAppItem[];
+  page?: number;
+  page_size?: number;
+  total?: number;
+  has_more?: boolean;
 }
 
 export interface UpdateWebAppStatusRequest {
@@ -184,6 +202,7 @@ export interface AgentRuntimeConfig {
   agent_memory_slots?: AgentMemorySlotConfig[];
   file_upload_enabled: boolean;
   home_title: string;
+  opening_statement: string;
   input_placeholder: string;
   theme_color: string;
   suggested_questions: string[];
@@ -191,7 +210,37 @@ export interface AgentRuntimeConfig {
   knowledge_retrieval_config?: Record<string, unknown>;
   database_bindings?: AgentDatabaseBinding[];
   workflow_bindings?: AgentWorkflowBinding[];
+  binding_revision?: string;
+  binding_health?: AgentBindingHealth;
   updated_at: number;
+}
+
+export type AgentBindingType =
+  | 'skill'
+  | 'knowledge_dataset'
+  | 'database'
+  | 'database_table'
+  | 'workflow';
+
+export type AgentBindingStatus = 'active' | 'suspended' | 'unavailable';
+
+export interface AgentBindingHealthItem {
+  binding_type: AgentBindingType;
+  resource_id: string;
+  parent_resource_id?: string;
+  display_name?: string;
+  status: AgentBindingStatus;
+  reason: string;
+  access_mode?: 'read' | 'write' | 'execute';
+  suggestion?: string;
+}
+
+export interface AgentBindingHealth {
+  status: 'healthy' | 'warning' | 'blocked';
+  items: AgentBindingHealthItem[];
+  active_count: number;
+  suspended_count: number;
+  unavailable_count: number;
 }
 
 export interface AgentDatabaseBinding {
@@ -220,15 +269,112 @@ export interface AgentWorkflowBindingCandidate extends AgentWorkflowBinding {
   icon_type?: AgentIconType | string;
   icon_url?: string;
   updated_at?: number;
+  selected?: boolean;
 }
 
 export interface AgentWorkflowBindingCandidatesResponse {
   data: AgentWorkflowBindingCandidate[];
+  page: number;
+  limit: number;
+  total: number;
+  has_more: boolean;
+}
+
+export interface AgentSkillBindingCandidate {
+  skill_id: string;
+  name: string;
+  description?: string;
+  when_to_use?: string;
+  source?: 'system' | 'custom' | string;
+  runtime_type?: string;
+  has_tools: boolean;
+  has_references: boolean;
+  has_scripts: boolean;
+  scripts_supported: boolean;
+  required_config?: string[];
+  display?: {
+    icon?: string;
+    category?: string;
+    label?: Record<string, string>;
+    description?: Record<string, string>;
+    when_to_use?: Record<string, string>;
+    tags?: Record<string, string[]>;
+  };
+  selected?: boolean;
+}
+
+export interface AgentCandidatePage<T> {
+  agent_id?: string;
+  workspace_id?: string;
+  query?: string;
+  page: number;
+  limit: number;
+  total: number;
+  has_more: boolean;
+  count?: number;
+  data: T[];
+}
+
+export interface AgentSkillBindingCandidatesResponse
+  extends AgentCandidatePage<AgentSkillBindingCandidate> {
+  source?: string;
+}
+
+export interface AgentKnowledgeBindingCandidate {
+  dataset_id: string;
+  name: string;
+  description?: string;
+  provider?: string;
+  enable_graph_flow: boolean;
+  selected?: boolean;
+}
+
+export type AgentKnowledgeBindingCandidatesResponse =
+  AgentCandidatePage<AgentKnowledgeBindingCandidate>;
+
+export interface AgentDatabaseBindingCandidate {
+  data_source_id: string;
+  name: string;
+  description?: string;
+  status?: string;
+  workspace_id?: string;
+  can_write?: boolean;
+  icon?: string;
+  icon_type?: AgentIconType | string;
+  icon_background?: string;
+  updated_at?: number;
+  table_count: number;
+  selected?: boolean;
+}
+
+export interface AgentDatabaseBindingCandidatesResponse
+  extends AgentCandidatePage<AgentDatabaseBindingCandidate> {
+  available_only: boolean;
+  require_write?: boolean;
+}
+
+export interface AgentDatabaseTableBindingCandidate {
+  table_id: string;
+  data_source_id: string;
+  name: string;
+  description?: string;
+  physical_table_name?: string;
+  updated_at?: number;
+  selected?: boolean;
+  writable?: boolean;
+  columns?: unknown[];
+}
+
+export interface AgentDatabaseTableBindingCandidatesResponse
+  extends AgentCandidatePage<AgentDatabaseTableBindingCandidate> {
+  data_source_id: string;
+  include_columns?: boolean;
 }
 
 export interface AgentMemorySlotConfig {
   id?: string;
   key: string;
+  name?: string;
   description: string;
   max_chars: number;
   enabled: boolean;
@@ -269,6 +415,7 @@ export interface UpdateAgentRuntimeConfigRequest {
   agent_memory_slots?: AgentMemorySlotConfig[];
   file_upload_enabled: boolean;
   home_title: string;
+  opening_statement: string;
   input_placeholder: string;
   theme_color: string;
   suggested_questions: string[];
@@ -276,6 +423,7 @@ export interface UpdateAgentRuntimeConfigRequest {
   knowledge_retrieval_config?: Record<string, unknown>;
   database_bindings?: AgentDatabaseBinding[];
   workflow_bindings?: AgentWorkflowBinding[];
+  binding_revision?: string;
 }
 
 export interface AgentSuggestedQuestionSkillContext {
@@ -291,6 +439,7 @@ export interface GenerateAgentSuggestedQuestionsRequest {
   model?: string;
   system_prompt?: string;
   home_title?: string;
+  opening_statement?: string;
   existing_questions?: string[];
   skills?: AgentSuggestedQuestionSkillContext[];
   knowledge_refs?: string[];
@@ -345,8 +494,17 @@ export interface PublishAgentResponse {
   agent_id: string;
   version_uuid: string;
   version: string;
+  name: string;
+  description: string;
   web_app_id: string;
   published_at: number;
+}
+
+export interface PublishAgentRequest {
+  name?: string;
+  description?: string;
+  binding_revision?: string;
+  acknowledge_suspended_bindings?: boolean;
 }
 
 export interface AgentPublishedVersion {
@@ -354,6 +512,7 @@ export interface AgentPublishedVersion {
   agent_id: string;
   version_uuid: string;
   version: string;
+  name: string;
   description: string;
   config_snapshot: AgentRuntimeConfig;
   is_current: boolean;
@@ -370,13 +529,32 @@ export interface AgentPublishedVersionsResponse {
 
 export interface RollbackAgentPublishedVersionRequest {
   version_id: string;
+  impact_token: string;
+  binding_action: 'remove_all_abnormal';
+}
+
+export interface AgentRollbackRemovedBinding {
+  binding_type: AgentBindingType;
+  resource_id: string;
+  parent_resource_id?: string;
+  display_name?: string;
+  status?: AgentBindingStatus;
+  reason?: string;
+}
+
+export interface AgentPublishedVersionRollbackPreview {
+  version_id: string;
+  config_snapshot: AgentRuntimeConfig;
+  binding_health: AgentBindingHealth;
+  removed_bindings: AgentRollbackRemovedBinding[];
+  impact_token: string;
 }
 export interface AgentApiKeyCreateResponse {
   id: string;
   agent_id: string;
   key_prefix: string;
   name: string;
-  status: 'active' | 'revoked';
+  status: 'active' | 'inactive' | 'revoked';
   expires_at: string | null;
   created_at: string;
   updated_at: string;
@@ -388,7 +566,7 @@ export interface AgentApiKey {
   agent_id: string;
   key_prefix: string;
   name: string;
-  status: 'active' | 'revoked';
+  status: 'active' | 'inactive' | 'revoked';
   expires_at: string | null;
   created_at: string;
   updated_at: string;
@@ -399,6 +577,59 @@ export interface AgentApiKeyList {
   total: number;
 }
 
+export type AgentRuntimeSurface =
+  | 'webapp'
+  | 'api'
+  | 'app_center'
+  | 'builtin_app'
+  | 'internal'
+  | string;
+
+export type AgentRuntimeGrantSubject =
+  | 'public'
+  | 'organization'
+  | 'department'
+  | 'workspace'
+  | 'account'
+  | 'internal'
+  | string;
+
+export interface AgentRuntimeSurfaceGrant {
+  subject_type: AgentRuntimeGrantSubject;
+  subject_id: string | null;
+  enabled: boolean;
+}
+
+export interface AgentRuntimeSurfaceAuthorization {
+  surface: AgentRuntimeSurface;
+  enabled: boolean;
+  compatibility_source: string;
+  grants: AgentRuntimeSurfaceGrant[];
+}
+
+export interface AgentRuntimeSurfaceAuthorizationResponse {
+  agent_id: string;
+  workspace_id: string;
+  organization_id: string;
+  surfaces: AgentRuntimeSurfaceAuthorization[];
+}
+
+export interface UpdateAgentRuntimeSurfaceGrant {
+  subject_type: AgentRuntimeGrantSubject;
+  subject_id?: string | null;
+  enabled?: boolean;
+}
+
+export interface UpdateAgentRuntimeSurfaceAuthorization {
+  surface: AgentRuntimeSurface;
+  enabled: boolean;
+  grants?: UpdateAgentRuntimeSurfaceGrant[];
+}
+
+export interface UpdateAgentRuntimeSurfacesRequest {
+  surfaces: UpdateAgentRuntimeSurfaceAuthorization[];
+}
+
 export interface CreateAgentApiKeyRequest {
   name: string;
   expires_at?: string | null; // ISO timestamp
@@ -406,6 +637,6 @@ export interface CreateAgentApiKeyRequest {
 
 export interface UpdateAgentApiKeyRequest {
   name?: string;
-  status?: 'active' | 'revoked';
+  status?: 'active' | 'inactive';
   expires_at?: string | null; // ISO timestamp
 }

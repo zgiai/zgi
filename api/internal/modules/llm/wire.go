@@ -21,6 +21,7 @@ import (
 	credentialhandler "github.com/zgiai/zgi/api/internal/modules/llm/credential/handler"
 	credentialrepo "github.com/zgiai/zgi/api/internal/modules/llm/credential/repository"
 	credentialsvc "github.com/zgiai/zgi/api/internal/modules/llm/credential/service"
+	"github.com/zgiai/zgi/api/internal/modules/llm/credential/upstreamstate"
 	"github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel"
 	defaultmodelhandler "github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/handler"
 	defaultmodelsvc "github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/service"
@@ -61,7 +62,7 @@ type LLMModule struct {
 	// Database
 	DB *gorm.DB
 
-	// IsCloudMode indicates whether the system is running in Cloud mode (ZGI_EDITION=CLOUD)
+	// IsCloudMode indicates whether the system is running in Cloud mode (ZGI_RUN_MODE=cloud)
 	IsCloudMode bool
 
 	// Repositories
@@ -83,6 +84,7 @@ type LLMModule struct {
 	DefaultModelSvc     defaultmodelsvc.DefaultModelService
 	ChannelSvc          channelsvc.ChannelService
 	APIKeySvc           apikeysvc.APIKeyService
+	UpstreamStateSvc    *upstreamstate.Service
 
 	// Handlers
 	TenantCredentialHandler *credentialhandler.TenantCredentialHandler
@@ -93,7 +95,8 @@ type LLMModule struct {
 	APIKeyHandler           *apikeyhandler.APIKeyHandler
 
 	// Gateway
-	GatewayRouter *gateway.ChannelRouter
+	GatewayRouter          *gateway.ChannelRouter
+	PricingFallbackHandler *gateway.PricingFallbackHandler
 
 	// Modules (for convenience)
 	ProviderModule       *provider.Module
@@ -161,7 +164,7 @@ func NewLLMModule(db *gorm.DB, crypto shared.CryptoService, tenantService interf
 	m.TenantRouteRepo = channelModule.TenantRouteRepo
 	m.ChannelSvc = channelModule.Service
 	m.ChannelHandler = channelModule.Handler
-	m.LLMModelModule.AvailableModelsSvc.SetOfficialRouteBootstrapper(channelModule.Service)
+	m.UpstreamStateSvc = channelModule.UpstreamState
 
 	// Initialize APIKey Module (requires TenantService, AccountService and EnterpriseService)
 	if tenantService != nil && accountService != nil && enterpriseService != nil {
@@ -176,11 +179,11 @@ func NewLLMModule(db *gorm.DB, crypto shared.CryptoService, tenantService interf
 	m.StatisticsHandler = m.StatisticsModule.Handler
 
 	// Initialize Workspace Quota Module
-	m.WorkspaceQuotaModule = workspacequota.NewModule(db)
+	m.WorkspaceQuotaModule = workspacequota.NewModule(db, enterpriseService)
 	m.WorkspaceQuotaHandler = m.WorkspaceQuotaModule.Handler
 
 	// Initialize Availability Module
-	m.AvailabilityModule = availability.NewModule(m.ModelRepo, m.TenantRouteRepo, m.ProviderModule.GlobalRepo, m.ProviderModule.ConfigRepo)
+	m.AvailabilityModule = availability.NewModule(m.ModelRepo, m.ModelCfgRepo, m.TenantRouteRepo, m.ProviderModule.GlobalRepo, m.ProviderModule.ConfigRepo)
 	m.AvailabilityHandler = m.AvailabilityModule.Handler
 
 	// Initialize ModelMeta Module (for syncing model metadata from modelmeta.dev)
@@ -189,6 +192,7 @@ func NewLLMModule(db *gorm.DB, crypto shared.CryptoService, tenantService interf
 
 	// Initialize Gateway
 	m.GatewayRouter = gateway.NewChannelRouter(db, crypto, m.LLMModelModule.PrivateModelLookupSvc)
+	m.PricingFallbackHandler = gateway.NewPricingFallbackHandler(db)
 
 	// Inject PlatformContainer for official channels (Cloud mode)
 	platformContainer, err := platform.NewContainer(db)

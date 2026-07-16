@@ -2,12 +2,13 @@ const messages = {
   title: 'File Management',
   eyebrow: 'Asset Library',
   description:
-    'Upload and manage source files. Generated chunks can be used for follow-up Q&A and knowledge base references.',
+    'Upload and parse source files, then use generated chunks for knowledge base references to improve AI chat accuracy.',
 
   // Sidebar
   sidebar: {
     storage: 'Storage',
     newFolder: 'New Folder',
+    newTextFile: 'New Text File',
     uploadFile: 'Upload File',
     viewsTitle: 'Views',
     fileSpaceTitle: 'File Space',
@@ -25,6 +26,8 @@ const messages = {
     fileType: 'File Type',
     fileSize: 'File Size',
     processingStatus: 'File Status',
+    processingStatusHelp:
+      'After upload, files go through parsing, chunking, and indexing. When complete, they become Ready and can be imported into knowledge bases.',
     relatedStatus: 'Knowledge Base',
     uploadDate: 'Upload Time',
     lastModified: 'Last Modified',
@@ -35,7 +38,7 @@ const messages = {
     relatedCount: 'Related {count} items',
     notRelated: 'Not Related',
     folderNotice:
-      'You are currently in the "{name}" folder. To view all files, return to Default Folder.',
+      'You are currently in the "{name}" folder. To view all files, return to the All Files view.',
     pendingCount: '{count} issue(s)',
     chunkCount: '{count} chunks',
     embeddingCount: '{count} vectors',
@@ -93,6 +96,8 @@ const messages = {
     batchMove: 'Batch Move',
     batchUnavailable:
       'This batch capability requires backend API support and is not available yet.',
+    moveTo: 'Move to',
+    moving: 'Moving...',
     deleting: 'Deleting...',
     confirmParse: 'View Issues',
     startParse: 'Parse',
@@ -105,11 +110,12 @@ const messages = {
     description:
       'Replace "{name}" with a new file. Existing knowledge base references will stay linked and resync after processing.',
     newFile: 'New document',
+    chooseFile: 'Choose File',
     selectedFile: 'Selected: {name}',
     fileTooLarge: 'File size cannot exceed {max}MB',
     processingHint: 'The document will be parsed and indexed immediately after replacement.',
     storeOnlyHint:
-      'The old content will be invalidated. Parse this document later before using it.',
+      'The old content will become invalid in related knowledge bases immediately. Manually parse this document later before using it.',
     confirm: 'Update',
     toasts: {
       started: 'Document update submitted',
@@ -160,13 +166,29 @@ const messages = {
     unlinkFirst:
       'Please remove all associations first, making the file status "unlinked", then proceed with deletion.',
     understood: 'I Understand',
-    viewRelated: 'View Related Items',
+    viewRelated: 'View Related Knowledge Bases',
     folderConfirmTitle: 'Delete Folder "{name}"?',
     folderConfirmDescription:
-      'This action will permanently delete the folder and cannot be undone.',
+      'If this folder or any subfolder contains files, you will be asked to confirm again before deletion continues.',
+    folderWithFilesConfirmDescription:
+      'This folder still contains {count} file(s). After deleting the folder, these files will no longer be in this folder. Continue?',
+    folderForceConfirmTitle: 'Permanently delete "{name}"?',
+    folderForceConfirmDescription:
+      'This folder tree contains {folderCount} folder(s) and {fileCount} file(s). Continuing will permanently delete all of them.',
+    folderForceConfirmWarning: 'This action cannot be undone. Deleted files cannot be recovered.',
+    folderForceConfirmInputLabel: 'Type the folder name "{name}" to confirm deletion',
+    folderForceConfirmButton: 'Permanently delete',
+    folderForceConfirmDeleting: 'Deleting...',
     bulkConfirmTitle: 'Delete {count} files?',
     bulkConfirmDescription:
       'This action will permanently delete the selected files and cannot be undone.',
+  },
+
+  relatedResources: {
+    title: 'Related Knowledge Bases',
+    empty: 'No related knowledge bases',
+    retry: 'Retry',
+    open: 'Open',
   },
 
   // Search and filter
@@ -229,7 +251,7 @@ const messages = {
         'The system selected the best parser automatically based on file type and available services. You can choose another parser and reparse if the result is not satisfactory.',
       manualDescription:
         'This file used a parser selected by the user. You can switch parsers and reparse if the result is not satisfactory.',
-      actualProvider: 'Actual: {provider}',
+      actualProvider: 'Using: {provider}',
       engine: 'Engine: {engine}',
       adapter: 'Adapter: {adapter}',
     },
@@ -255,13 +277,12 @@ const messages = {
     },
     workbench: {
       title: 'Processing progress',
-      description:
-        '{pending} optimization issue(s), {chunks} chunks, and {embeddings} vectors generated.',
+      description: '{chunks} chunks and {embeddings} vectors generated.',
       pendingHint: '{count} issue(s)',
       banners: {
         confirming: {
-          title: 'Quality check found marked content',
-          description: 'Quality check found {pending} item(s) to optimize in chunks.',
+          title: 'Parse result needs confirmation',
+          description: 'Confirm the parse result to continue generating chunks and indexes.',
         },
         failed: {
           title: 'Processing failed',
@@ -285,7 +306,6 @@ const messages = {
       steps: {
         uploaded: 'Uploaded',
         parsed: 'Parse document',
-        quality: 'Quality check',
         chunks: 'Generate chunks',
         index: 'Build Q&A index',
         ready: 'Ready',
@@ -380,6 +400,8 @@ const messages = {
       generationNo: 'Generation {value}',
       emptyTitle: 'No chunks',
       emptyDescription: 'No chunk result is available for this file.',
+      filteredEmptyTitle: 'No matching chunks',
+      filteredEmptyDescription: 'Adjust the search or filter and try again.',
       chunkTitle: 'Chunk {position}',
       primary: 'Primary Chunk',
       secondary: 'Secondary Chunk',
@@ -417,6 +439,8 @@ const messages = {
       collapseSecondary: 'Collapse secondary chunks',
       viewOriginal: 'View source',
       edit: 'Edit',
+      tableEdit: 'Table Edit',
+      sourceEdit: 'Source Edit',
       editPrimaryTitle: 'Edit Primary Chunk',
       editPrimaryDescription:
         'This primary chunk has {count} characters. Saving will regenerate its secondary chunks and vectors.',
@@ -424,6 +448,9 @@ const messages = {
       editSecondaryDescription:
         'This secondary chunk has {count} characters. Saving will rebuild its vector.',
       delete: 'Delete',
+      deleteConfirmTitle: 'Delete this chunk?',
+      deleteConfirmDescription:
+        'This cannot be undone. If this is a primary chunk, its secondary chunks and vectors will also be deleted.',
       characters: '{count} characters',
       enabled: 'Enabled',
       disabled: 'Disabled',
@@ -432,7 +459,9 @@ const messages = {
       toasts: {
         updated: 'Chunk updated',
         batchUpdated: '{count} chunks updated',
+        deleted: 'Chunk deleted',
         updateFailed: 'Failed to update chunk',
+        deleteFailed: 'Failed to delete chunk',
       },
     },
     index: {
@@ -458,11 +487,12 @@ const messages = {
       emptyTitle: 'Ask this document',
       emptyDescription:
         'After you ask, the system retrieves related secondary chunks and uses their primary chunks as context.',
-      question: 'Question',
+      question: 'Prompt',
       answer: 'Answer',
       answerModel: 'Answer model',
       defaultAnswerModel: 'Default model',
       noAvailableAnswerModels: 'No available chat models',
+      clearConversation: 'Clear chat',
       placeholder: 'Ask a question about this document...',
       send: 'Send',
       generating: 'Generating...',
@@ -476,12 +506,12 @@ const messages = {
     reparse: {
       action: 'Reparse',
       reparsing: 'Submitting...',
-      confirmTitle: 'Reparse this file?',
+      confirmTitle: 'Reparse',
       confirmDescription:
-        'The current searchable asset will be unavailable while the file is parsing, chunking, and indexing again.',
+        'The file cannot be used by knowledge bases while it is being reparsed.',
       providerLabel: 'Parser',
       providerDescription:
-        'Parsers nearer the top are usually stronger. Disabled items are not configured or failed health checks. If the result is poor, configure MinerU or Reducto and try a stronger parser.',
+        'Choose the parser for this reparse. Parsers that are not configured or fail health checks are disabled; after configuration, you can select MinerU, Reducto, or another parser here.',
       providerReady: 'Available now',
       providerUnavailable: 'Unavailable now',
       configureProvider: 'Click here to configure and enable',
@@ -544,7 +574,7 @@ const messages = {
     deleteConfirmDesc: 'This action cannot be undone.',
     noFiles: 'No files',
     noFilesDescWithUpload:
-      'Upload documents for knowledge bases, spreadsheets for database imports, or files for chat workflows.',
+      'Uploaded files can be imported into knowledge bases or databases, and can also be used by agents and workflows.',
     noFilesDescWithUploadInSelector:
       'No files are available yet. Use the upload entry in the left sidebar to add files.',
     noFilesDescWithoutUploadPermission:
@@ -572,8 +602,8 @@ const messages = {
     createFolderError: 'Failed to create folder',
     updateFolderSuccess: 'Folder updated successfully',
     updateFolderError: 'Failed to update folder',
-    moveFolderSuccess: 'Folder moved successfully',
-    moveFolderError: 'Failed to move folder',
+    moveFilesSuccess: 'Files moved successfully',
+    moveFilesError: 'Failed to move files',
     deleteFolderSuccess: 'Folder deleted successfully',
     deleteFolderError: 'Failed to delete folder',
     createTextFileSuccess: 'Text file created successfully',
@@ -601,9 +631,12 @@ const messages = {
   mobileSelector: {
     browse: 'Browse folders',
     browseAndUpload: 'Folders & Upload',
+    browseAndCreateText: 'Folders & Text',
     switchSpace: 'Switch space',
     emptyDescriptionWithUpload:
       'No files are available yet. Tap "Folders & Upload" above, then use the upload entry inside to add files.',
+    emptyDescriptionWithTextCreate:
+      'No files are available yet. Tap "Folders & Text" above, then use the new text file entry inside to add a file.',
     emptyDescriptionWithoutUpload:
       'No files are available in the current workspace, and you do not have upload permission here. Contact an administrator for access, or switch to another workspace.',
   },
@@ -611,7 +644,7 @@ const messages = {
     badge: 'Empty State',
     title: 'No files are currently available',
     description:
-      'There are no selectable files in Organization View right now. To upload files, choose an owning workspace first.',
+      'There are no selectable files in the personal workbench right now. To upload files, choose an owning workspace first.',
     noticeTitle: 'Upload requires a workspace',
     noticeDescription:
       'System file uploads are stored under a workspace. Choose a workspace before uploading.',
@@ -640,6 +673,8 @@ const messages = {
     uploadFolderRootHelp: 'Files are stored in Default Folder when no specific folder is selected.',
     sourceType: 'Source Type',
     processingMode: 'Processing Mode',
+    processingModeHelp:
+      'Parsing extracts file text and structure; chunking splits content into searchable segments; indexing prepares retrieval data for knowledge base search and references.',
     processingModes: {
       processNow: {
         title: 'Upload and parse',
@@ -652,13 +687,13 @@ const messages = {
     },
     parseProvider: 'Parse Engine',
     parseProviderDescription:
-      'Used for automatic parsing after upload. Auto follows the current provider routing strategy.',
+      'Used for automatic parsing after upload. Smart recommendation follows the current parser routing strategy.',
     parseProviderStoreOnlyDescription:
       'Store-only mode does not start parsing. The engine selection applies when uploading and parsing.',
     parseProviderUnavailable: 'Unavailable',
     parseProviderLoading: 'Checking available engines...',
     parseProviders: {
-      auto: 'Auto (routing strategy)',
+      auto: 'Smart recommendation',
       mineru: 'MinerU',
       local: 'Local',
       reducto: 'Reducto',
@@ -668,6 +703,10 @@ const messages = {
     processingHintTitle: 'Document files become searchable after parsing',
     processingHintDescription:
       'Images, icons, temporary files, and unsupported formats are stored without document processing.',
+    parserFallbackWarningTitle: 'No available third-party parser',
+    parserFallbackWarningDescription:
+      'No available third-party parser is configured. Upload-and-parse will use local parsing, which may perform worse on complex layouts, tables, and scanned files.',
+    configureParserService: 'Configure parser service',
     uploadFiles: 'Upload Files',
     selectedFilesTitle: '{count} file(s) selected',
     selectedFilesPendingSummary: '{count} file(s) selected, waiting to upload.',
@@ -698,6 +737,7 @@ const messages = {
     workspacePlaceholder: 'Select an owning workspace',
     workspaceRequired: 'Please select an owning workspace',
     duplicateName: 'A folder with this name already exists in the same directory. Use a different name.',
+    nameTooLong: 'Folder name cannot exceed {max} characters. Shorten it before creating.',
     parentFolder: 'Parent Folder',
     selectParentFolder: 'Select parent folder',
     levelHint:
@@ -706,15 +746,19 @@ const messages = {
     rootFolder: 'Root Folder',
     renameTitle: 'Rename Folder',
     renameDescription: 'The folder name in File Space will update after saving.',
-    moveTitle: 'Move Folder',
-    moveDescription: 'Choose where to move "{name}".',
-    targetFolder: 'Target Folder',
     actions: {
       createChild: 'New Subfolder',
       rename: 'Rename',
-      moveTo: 'Move to',
       delete: 'Delete Folder',
     },
+  },
+
+  moveFiles: {
+    title: 'Move Files',
+    description: 'Choose the destination folder for {count} selected file(s).',
+    targetFolder: 'Target Folder',
+    confirm: 'Move here',
+    moving: 'Moving...',
   },
 
   // Text file creation

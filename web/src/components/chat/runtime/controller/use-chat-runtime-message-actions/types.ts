@@ -1,6 +1,7 @@
 import type { MutableRefObject } from 'react';
 
 import type {
+  AIChatController,
   AIChatControllerStore,
   AIChatSetControllerState,
 } from '@/components/chat/controllers/aichat';
@@ -15,9 +16,12 @@ export interface UseChatRuntimeMessageActionsArgs {
   streamingMessageRef: MutableRefObject<{ conversationId: string; messageId: string } | null>;
   setControllerState: AIChatSetControllerState;
   markSelectionTarget: (conversationId: string | null) => number;
+  isLatestSelection: (seq: number, conversationId: string | null) => boolean;
+  refreshConversationSilently: (conversationId: string) => void;
+  refreshMessagesSilently: (conversationId: string) => void;
   refreshAccountMemoryAfterMemoryMutation: (
     payload: Parameters<ChatRuntimeEventAppliers['applyMemoryMutation']>[0]
   ) => void;
+  recoverStreamingConversation: AIChatController['recoverStreamingConversation'];
   eventAppliers: ChatRuntimeEventAppliers;
 }
-

@@ -14,7 +14,9 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/llm/channel/dto"
 	"github.com/zgiai/zgi/api/internal/modules/llm/channel/service"
 	"github.com/zgiai/zgi/api/internal/modules/llm/channelprovider"
+	"github.com/zgiai/zgi/api/internal/modules/llm/credential/upstreamstate"
 	"github.com/zgiai/zgi/api/internal/modules/llm/shared"
+	"github.com/zgiai/zgi/api/middleware"
 	"github.com/zgiai/zgi/api/pkg/response"
 )
 
@@ -72,6 +74,7 @@ func (h *ChannelHandler) CreateRoute(c *gin.Context) {
 		return
 	}
 
+	redactUpstreamStateForCaller(c, route)
 	h.Success(c, route)
 }
 
@@ -200,6 +203,7 @@ func (h *ChannelHandler) ListRoutes(c *gin.Context) {
 		h.Error(c, err)
 		return
 	}
+	redactUpstreamStatesForCaller(c, routes)
 	h.SuccessList(c, routes, total, req.Page, req.PageSize)
 }
 
@@ -227,7 +231,116 @@ func (h *ChannelHandler) ListRoutesAggregated(c *gin.Context) {
 		h.Error(c, err)
 		return
 	}
+	redactUpstreamStatesForCaller(c, result.Channels)
 	h.Success(c, result)
+}
+
+func (h *ChannelHandler) CheckUpstreamState(c *gin.Context) {
+	organizationID, id, ok := parseOrganizationAndChannelID(c)
+	if !ok {
+		return
+	}
+	state, err := h.service.CheckUpstreamState(c.Request.Context(), organizationID, id)
+	if err != nil {
+		handleUpstreamStateError(c, h, err)
+		return
+	}
+	h.Success(c, state)
+}
+
+func (h *ChannelHandler) RetryUpstreamState(c *gin.Context) {
+	organizationID, id, ok := parseOrganizationAndChannelID(c)
+	if !ok {
+		return
+	}
+	state, err := h.service.RetryUpstreamState(c.Request.Context(), organizationID, id)
+	if err != nil {
+		handleUpstreamStateError(c, h, err)
+		return
+	}
+	h.Success(c, state)
+}
+
+func (h *ChannelHandler) UpdateUpstreamStateSettings(c *gin.Context) {
+	organizationID, id, ok := parseOrganizationAndChannelID(c)
+	if !ok {
+		return
+	}
+	var req dto.UpdateUpstreamStateSettingsRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.FailWithMessage(c, response.ErrInvalidParam, err.Error())
+		return
+	}
+	state, err := h.service.UpdateUpstreamStateSettings(c.Request.Context(), organizationID, id, &req)
+	if err != nil {
+		handleUpstreamStateError(c, h, err)
+		return
+	}
+	h.Success(c, state)
+}
+
+func parseOrganizationAndChannelID(c *gin.Context) (uuid.UUID, uuid.UUID, bool) {
+	organizationID, err := getOrganizationID(c)
+	if err != nil {
+		response.FailWithMessage(c, response.ErrInvalidParam, "invalid organization id")
+		return uuid.Nil, uuid.Nil, false
+	}
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		response.FailWithMessage(c, response.ErrInvalidParam, "invalid channel id")
+		return uuid.Nil, uuid.Nil, false
+	}
+	return organizationID, id, true
+}
+
+func handleUpstreamStateError(c *gin.Context, h *ChannelHandler, err error) {
+	switch {
+	case errors.Is(err, service.ErrRouteNotFound):
+		h.NotFound(c, err)
+	case errors.Is(err, service.ErrInvalidRouteType), errors.Is(err, upstreamstate.ErrInvalidThresholds), errors.Is(err, upstreamstate.ErrRetryNotRequired), errors.Is(err, upstreamstate.ErrRetryInProgress):
+		response.FailWithMessage(c, response.ErrInvalidParam, err.Error())
+	default:
+		h.Error(c, err)
+	}
+}
+
+func redactUpstreamStatesForCaller(c *gin.Context, channels []*dto.ChannelView) {
+	if middleware.IsOrganizationAdminOrOwner(c) {
+		return
+	}
+	for _, channel := range channels {
+		redactUpstreamState(channel)
+	}
+}
+
+func redactUpstreamStateForCaller(c *gin.Context, channel *dto.ChannelView) {
+	if middleware.IsOrganizationAdminOrOwner(c) {
+		return
+	}
+	redactUpstreamState(channel)
+}
+
+func redactUpstreamState(channel *dto.ChannelView) {
+	if channel == nil || channel.UpstreamState == nil {
+		return
+	}
+	state := channel.UpstreamState
+	state.BalanceScope = ""
+	state.Balances = nil
+	state.Spendable = nil
+	state.IsUnlimited = false
+	state.BalanceObservedAt = ""
+	state.LastCheckAt = ""
+	state.LastCheckErrorKind = ""
+	state.WarningThresholds = nil
+	state.SharedChannelCount = 0
+	state.BlockReason = ""
+	state.CooldownUntil = ""
+	state.AvailabilityObservedAt = ""
+	state.ManualRetryRequestedAt = ""
+	state.ProviderErrorCode = ""
+	state.ProviderErrorStatus = 0
+	state.WouldGuard = false
 }
 
 func (h *ChannelHandler) UpdateRoute(c *gin.Context) {
@@ -251,6 +364,7 @@ func (h *ChannelHandler) UpdateRoute(c *gin.Context) {
 		handleChannelMutationError(c, err)
 		return
 	}
+	redactUpstreamStateForCaller(c, route)
 	h.Success(c, route)
 }
 
@@ -345,6 +459,7 @@ func (h *ChannelHandler) ToggleRoute(c *gin.Context) {
 		h.Error(c, err)
 		return
 	}
+	redactUpstreamStateForCaller(c, route)
 	h.Success(c, route)
 }
 
@@ -578,7 +693,7 @@ func (h *ChannelHandler) TestChannelModel(c *gin.Context) {
 	if !h.BindJSON(c, &req) {
 		return
 	}
-	result, err := h.service.TestChannelModel(c.Request.Context(), channelID, organizationID, req.Model, req.TestMethod)
+	result, err := h.service.TestChannelModel(c.Request.Context(), channelID, organizationID, req.Model, req.TestMethod, req.Stream)
 	if err != nil {
 		h.Error(c, err)
 		return
@@ -680,7 +795,7 @@ func (h *ChannelHandler) BatchTestChannelModels(c *gin.Context) {
 
 	resultChan := make(chan *dto.BatchTestChannelModelsStreamResponse, len(req.Models)+1)
 
-	go h.service.BatchTestChannelModels(c.Request.Context(), channelID, organizationID, req.Models, req.TestMethod, resultChan)
+	go h.service.BatchTestChannelModels(c.Request.Context(), channelID, organizationID, req.Models, req.TestMethod, req.Stream, resultChan)
 
 	c.Header("Content-Type", "text/event-stream")
 	c.Header("Cache-Control", "no-cache")

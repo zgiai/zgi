@@ -1,13 +1,19 @@
 import { useCallback } from 'react';
-import type { AIChatMessage, AIChatMessageFile } from '@/services/types/aichat';
+import type {
+  AIChatMessage,
+  AIChatMessageFile,
+  AIChatRuntimeSurface,
+} from '@/services/types/aichat';
 import type { AIChatModelSelection } from '@/components/chat/controllers/aichat';
 import {
   canReplaceRootMessage,
   getNextActiveSendingState,
 } from '@/components/chat/controllers/aichat/selectors';
+import { mergeAIChatMessages } from '@/components/chat/controllers/aichat/state-reducers';
 import {
   createDraftAIChatConversation,
   createStreamingAIChatMessage,
+  isDraftAIChatConversationId,
   replaceAIChatConversation,
   upsertAIChatMessage,
 } from '@/components/chat/utils/aichat-message';
@@ -18,6 +24,7 @@ import {
   createClientDraftId,
   getErrorMessage,
   isAbortError,
+  isRecoverableStreamTransportError,
 } from '@/components/chat/runtime/controller/chat-runtime-controller-utils';
 import { useWorkflowContinuationActions } from './use-chat-runtime-message-actions/continuation';
 import type { UseChatRuntimeMessageActionsArgs } from './use-chat-runtime-message-actions/types';
@@ -31,7 +38,11 @@ export function useChatRuntimeMessageActions({
   streamingMessageRef,
   setControllerState,
   markSelectionTarget,
+  isLatestSelection,
+  refreshConversationSilently,
+  refreshMessagesSilently,
   refreshAccountMemoryAfterMemoryMutation,
+  recoverStreamingConversation,
   eventAppliers,
 }: UseChatRuntimeMessageActionsArgs) {
   const {
@@ -49,6 +60,9 @@ export function useChatRuntimeMessageActions({
     applySkillCallError,
     applySkillArtifactCreated,
     applyMemoryMutation,
+    applyToolGovernanceDecision,
+    applyClientActionRequired,
+    applyClientActionResult,
     applyAgentProgress,
     applyIntermediateAnswer,
     applyUserInputRequested,
@@ -62,12 +76,18 @@ export function useChatRuntimeMessageActions({
       files = [],
       parentId: parentIdOverride,
       useMemory = false,
+      forceAdvanceLeaf = false,
+      runtimeSurface,
+      operationContext,
     }: {
       query: string;
       model: AIChatModelSelection;
       files?: AIChatMessageFile[];
       parentId?: string | null;
       useMemory?: boolean;
+      forceAdvanceLeaf?: boolean;
+      runtimeSurface?: AIChatRuntimeSurface;
+      operationContext?: unknown;
     }) => {
       const trimmedQuery = query.trim();
       const currentState = stateRef.current;
@@ -94,6 +114,76 @@ export function useChatRuntimeMessageActions({
 
       const abortController = new AbortController();
       let streamConversationId = activeConversationId;
+      let reachedTerminalEvent = false;
+      let recoveryRequested = false;
+      const requestStreamRecovery = () => {
+        if (recoveryRequested) return true;
+        if (reachedTerminalEvent || abortController.signal.aborted || !streamConversationId) {
+          return false;
+        }
+        recoveryRequested = true;
+        const conversationId = streamConversationId;
+        setControllerState(current => ({
+          ...current,
+          error: null,
+          isSending: getNextActiveSendingState(current, conversationId, true),
+          connectionByConversation: {
+            ...current.connectionByConversation,
+            [conversationId]: 'reconnecting',
+          },
+        }));
+        void recoverStreamingConversation(conversationId, { mode: 'active' });
+        return true;
+      };
+      let forceAdvanceLeafConversationId: string | null = null;
+      let forceAdvanceLeafMessageId: string | null = null;
+      let forceAdvanceLeafPersisted = false;
+      const persistForcedLeaf = (conversationId?: string, messageId?: string) => {
+        if (!forceAdvanceLeaf || forceAdvanceLeafPersisted || !conversationId || !messageId) {
+          return;
+        }
+        forceAdvanceLeafPersisted = true;
+        void transportRef.current
+          .updateConversation(conversationId, {
+            current_leaf_message_id: messageId,
+          })
+          .then(conversation => {
+            setControllerState(current => {
+              const currentConversation = current.conversations.find(
+                item => item.id === conversationId
+              );
+              if (!currentConversation) return current;
+
+              const safeConversation =
+                currentConversation.current_leaf_message_id === messageId
+                  ? {
+                      ...conversation,
+                      runtime_status: currentConversation.runtime_status,
+                      active_message_id: currentConversation.active_message_id,
+                    }
+                  : {
+                      ...conversation,
+                      current_leaf_message_id: currentConversation.current_leaf_message_id,
+                      runtime_status: currentConversation.runtime_status,
+                      active_message_id: currentConversation.active_message_id,
+                    };
+
+              return {
+                ...current,
+                conversations: replaceAIChatConversation(current.conversations, safeConversation, {
+                  moveToTop: false,
+                }),
+              };
+            });
+          })
+          .catch(error => {
+            console.warn('Failed to persist forced AIChat leaf', {
+              conversationId,
+              messageId,
+              error: getErrorMessage(error),
+            });
+          });
+      };
       if (activeConversationId) {
         streamAbortByConversationRef.current[activeConversationId]?.abort();
         streamAbortByConversationRef.current[activeConversationId] = abortController;
@@ -117,7 +207,87 @@ export function useChatRuntimeMessageActions({
       if (draftConversationId) {
         streamConversationId = draftConversationId;
       }
-      markSelectionTarget(draftConversationId ?? activeConversationId);
+      const selectionSeq = markSelectionTarget(draftConversationId ?? activeConversationId);
+
+      const recoverDetachedDraftConversation = async (conversationId?: string | null) => {
+        if (!draftConversationId || !conversationId) return;
+        if (!isLatestSelection(selectionSeq, conversationId)) return;
+
+        const currentState = stateRef.current;
+        const activeId = currentState.activeConversationId;
+        const hasVisibleConversation =
+          activeId === conversationId &&
+          (currentState.messagesByConversation[conversationId]?.length ?? 0) > 0;
+        if (hasVisibleConversation) return;
+        if (activeId && activeId !== conversationId && !isDraftAIChatConversationId(activeId)) {
+          return;
+        }
+
+        try {
+          const { conversation, messages, messagePagination } =
+            await transportRef.current.getConversation(conversationId);
+          if (!isLatestSelection(selectionSeq, conversationId)) return;
+
+          setControllerState(current => {
+            const currentActiveId = current.activeConversationId;
+            if (
+              currentActiveId &&
+              currentActiveId !== conversationId &&
+              !isDraftAIChatConversationId(currentActiveId)
+            ) {
+              return current;
+            }
+
+            const nextMessagesByConversation = { ...current.messagesByConversation };
+            delete nextMessagesByConversation[draftConversationId];
+            nextMessagesByConversation[conversationId] = mergeAIChatMessages(
+              current.messagesByConversation[conversationId] ?? [],
+              messages
+            );
+
+            const nextMessagePaginationByConversation = {
+              ...current.messagePaginationByConversation,
+              [conversationId]: messagePagination,
+            };
+            delete nextMessagePaginationByConversation[draftConversationId];
+
+            const nextLoadingOlderByConversation = { ...current.loadingOlderByConversation };
+            delete nextLoadingOlderByConversation[draftConversationId];
+            const nextRecoveringByConversation = { ...current.recoveringByConversation };
+            delete nextRecoveringByConversation[draftConversationId];
+            const nextStoppingByConversation = { ...current.stoppingByConversation };
+            delete nextStoppingByConversation[draftConversationId];
+
+            return {
+              ...current,
+              activeConversationId: conversationId,
+              conversations: replaceAIChatConversation(
+                current.conversations.filter(item => item.id !== draftConversationId),
+                conversation
+              ),
+              messagesByConversation: nextMessagesByConversation,
+              messagePaginationByConversation: nextMessagePaginationByConversation,
+              loadingOlderByConversation: nextLoadingOlderByConversation,
+              recoveringByConversation: {
+                ...nextRecoveringByConversation,
+                [conversationId]: false,
+              },
+              stoppingByConversation: {
+                ...nextStoppingByConversation,
+                [conversationId]: false,
+              },
+              isLoadingMessages: false,
+              isSending: false,
+              error: null,
+            };
+          });
+        } catch (error) {
+          console.warn('Failed to recover detached AIChat conversation after send', {
+            conversationId,
+            error: getErrorMessage(error),
+          });
+        }
+      };
 
       setControllerState(current => {
         if (!draftConversationId || !draftMessageId) {
@@ -168,21 +338,33 @@ export function useChatRuntimeMessageActions({
           error: null,
         };
       });
-
       try {
         await transportRef.current.streamChat(
           {
             conversation_id: activeConversationId ?? undefined,
             parent_id: parentId,
             query: trimmedQuery,
+            surface: runtimeSurface,
             model: model.model,
             provider: model.provider,
             ...(files.length > 0 ? { file_ids: files.map(file => file.id) } : {}),
             response_mode: 'streaming',
             parameters: toAIChatParameters(model.parameters),
+            operation_context: operationContext,
             ...(useMemory ? { use_memory: true } : {}),
           },
           {
+            onOpen: () => {
+              if (abortController.signal.aborted || !streamConversationId) return;
+              const conversationId = streamConversationId;
+              setControllerState(current => ({
+                ...current,
+                connectionByConversation: {
+                  ...current.connectionByConversation,
+                  [conversationId]: 'connected',
+                },
+              }));
+            },
             onMessageStart: (payload, eventId) => {
               if (abortController.signal.aborted) return;
               if (payload.conversation_id) {
@@ -191,6 +373,17 @@ export function useChatRuntimeMessageActions({
                 if (pendingStreamAbortRef.current === abortController) {
                   pendingStreamAbortRef.current = null;
                 }
+                setControllerState(current => ({
+                  ...current,
+                  connectionByConversation: {
+                    ...current.connectionByConversation,
+                    [payload.conversation_id]: 'connected',
+                  },
+                }));
+              }
+              if (forceAdvanceLeaf && payload.conversation_id && payload.message_id) {
+                forceAdvanceLeafConversationId = payload.conversation_id;
+                forceAdvanceLeafMessageId = payload.message_id;
               }
               applyMessageStart(
                 payload,
@@ -199,6 +392,7 @@ export function useChatRuntimeMessageActions({
                   model,
                   files,
                   previousConversationId: draftConversationId ?? activeConversationId,
+                  forceAdvanceLeaf,
                   mode: 'active',
                 },
                 eventId
@@ -256,6 +450,18 @@ export function useChatRuntimeMessageActions({
               if (abortController.signal.aborted) return;
               applySkillArtifactCreated(payload, eventId);
             },
+            onToolGovernanceDecision: (payload, eventId) => {
+              if (abortController.signal.aborted) return;
+              applyToolGovernanceDecision(payload, eventId);
+            },
+            onClientActionRequired: (payload, eventId) => {
+              if (abortController.signal.aborted) return;
+              applyClientActionRequired(payload, eventId);
+            },
+            onClientActionResult: (payload, eventId) => {
+              if (abortController.signal.aborted) return;
+              applyClientActionResult(payload, eventId);
+            },
             onMemoryMutation: (payload, eventId) => {
               if (abortController.signal.aborted) return;
               applyMemoryMutation(payload, eventId);
@@ -299,14 +505,48 @@ export function useChatRuntimeMessageActions({
             },
             onMessageEnd: (payload, eventId) => {
               if (abortController.signal.aborted) return;
+              reachedTerminalEvent = true;
               applyMessageEnd(payload, eventId);
+              persistForcedLeaf(
+                payload.conversation_id || forceAdvanceLeafConversationId || undefined,
+                payload.message_id || forceAdvanceLeafMessageId || undefined
+              );
+              void recoverDetachedDraftConversation(
+                payload.conversation_id || forceAdvanceLeafConversationId || streamConversationId
+              );
+              const conversationId = payload.conversation_id || streamConversationId;
+              if (conversationId) {
+                setControllerState(current => ({
+                  ...current,
+                  connectionByConversation: {
+                    ...current.connectionByConversation,
+                    [conversationId]: 'idle',
+                  },
+                }));
+              }
             },
             onErrorEvent: (payload, eventId) => {
               if (abortController.signal.aborted) return;
-              applyStreamError(payload, eventId, streamConversationId);
+              reachedTerminalEvent = true;
+              const errorConversationId =
+                payload.conversation_id || forceAdvanceLeafConversationId || streamConversationId;
+              const errorMessageId = payload.message_id || forceAdvanceLeafMessageId;
+              applyStreamError(payload, eventId, errorConversationId);
+              persistForcedLeaf(errorConversationId || undefined, errorMessageId || undefined);
+              void recoverDetachedDraftConversation(errorConversationId);
+              if (errorConversationId) {
+                setControllerState(current => ({
+                  ...current,
+                  connectionByConversation: {
+                    ...current.connectionByConversation,
+                    [errorConversationId]: 'idle',
+                  },
+                }));
+              }
             },
             onRequestError: error => {
               if (isAbortError(error)) return;
+              if (isRecoverableStreamTransportError(error) && requestStreamRecovery()) return;
               setControllerState(current => {
                 const isActiveStream =
                   streamConversationId === null
@@ -338,6 +578,7 @@ export function useChatRuntimeMessageActions({
               if (streamingMessageRef.current && !abortController.signal.aborted) {
                 streamingMessageRef.current = null;
               }
+              if (!reachedTerminalEvent && requestStreamRecovery()) return;
               if (stateRef.current.isSending && !abortController.signal.aborted) {
                 setControllerState(current => ({
                   ...current,
@@ -355,6 +596,7 @@ export function useChatRuntimeMessageActions({
         );
       } catch (error) {
         if (!isAbortError(error)) {
+          if (isRecoverableStreamTransportError(error) && requestStreamRecovery()) return;
           setControllerState(current => {
             const isActiveStream =
               streamConversationId === null
@@ -390,15 +632,20 @@ export function useChatRuntimeMessageActions({
       applySkillCallError,
       applySkillCallStart,
       applySkillArtifactCreated,
+      applyToolGovernanceDecision,
+      applyClientActionRequired,
+      applyClientActionResult,
       applySkillLoadEnd,
       applySkillLoadStart,
       applySkillReferenceRead,
       applyStreamError,
       eventAppliers,
+      isLatestSelection,
       markSelectionTarget,
       pendingStreamAbortRef,
       requireModel,
       refreshAccountMemoryAfterMemoryMutation,
+      recoverStreamingConversation,
       setControllerState,
       stateRef,
       streamAbortByConversationRef,
@@ -412,10 +659,12 @@ export function useChatRuntimeMessageActions({
       messageId,
       query,
       model,
+      operationContext,
     }: {
       messageId: string;
       query?: string;
       model?: AIChatModelSelection;
+      operationContext?: unknown;
     }) => {
       const trimmedQuery = query?.trim();
       const currentState = stateRef.current;
@@ -445,6 +694,26 @@ export function useChatRuntimeMessageActions({
       markSelectionTarget(activeConversationId);
 
       let streamStarted = false;
+      let reachedTerminalEvent = false;
+      let recoveryRequested = false;
+      const requestStreamRecovery = () => {
+        if (recoveryRequested) return true;
+        if (reachedTerminalEvent || abortController.signal.aborted) {
+          return false;
+        }
+        recoveryRequested = true;
+        setControllerState(current => ({
+          ...current,
+          error: null,
+          isSending: getNextActiveSendingState(current, activeConversationId, true),
+          connectionByConversation: {
+            ...current.connectionByConversation,
+            [activeConversationId]: 'reconnecting',
+          },
+        }));
+        void recoverStreamingConversation(activeConversationId, { mode: 'active' });
+        return true;
+      };
       const restoreOriginalMessage = (errorMessage?: string) => {
         setControllerState(current => {
           const nextStreamingByMessageId = { ...current.streamingByMessageId };
@@ -477,11 +746,18 @@ export function useChatRuntimeMessageActions({
       setControllerState(current => {
         const now = Math.floor(Date.now() / 1000);
         const cleanedSourceMessage = clearStreamingRuntimeMessageMetadata(sourceMessage);
+        const replacementMetadata = cleanedSourceMessage.metadata
+          ? { ...cleanedSourceMessage.metadata }
+          : undefined;
+        if (replacementMetadata) {
+          delete replacementMetadata.user_input_responses;
+        }
         const nextMessage: AIChatMessage = {
           ...cleanedSourceMessage,
           answer: '',
           status: 'streaming',
           error: undefined,
+          metadata: replacementMetadata,
           updated_at: now,
         };
 
@@ -526,11 +802,22 @@ export function useChatRuntimeMessageActions({
           messageId,
           {
             query: trimmedQuery || undefined,
+            operation_context: operationContext,
             model: model?.model,
             provider: model?.provider,
             parameters: toAIChatParameters(model?.parameters),
           },
           {
+            onOpen: () => {
+              if (abortController.signal.aborted) return;
+              setControllerState(current => ({
+                ...current,
+                connectionByConversation: {
+                  ...current.connectionByConversation,
+                  [activeConversationId]: 'connected',
+                },
+              }));
+            },
             onMessageStart: (payload, eventId) => {
               if (abortController.signal.aborted) return;
               streamStarted = true;
@@ -600,6 +887,18 @@ export function useChatRuntimeMessageActions({
               if (abortController.signal.aborted) return;
               applySkillArtifactCreated(payload, eventId);
             },
+            onToolGovernanceDecision: (payload, eventId) => {
+              if (abortController.signal.aborted) return;
+              applyToolGovernanceDecision(payload, eventId);
+            },
+            onClientActionRequired: (payload, eventId) => {
+              if (abortController.signal.aborted) return;
+              applyClientActionRequired(payload, eventId);
+            },
+            onClientActionResult: (payload, eventId) => {
+              if (abortController.signal.aborted) return;
+              applyClientActionResult(payload, eventId);
+            },
             onMemoryMutation: (payload, eventId) => {
               if (abortController.signal.aborted) return;
               applyMemoryMutation(payload, eventId);
@@ -643,14 +942,31 @@ export function useChatRuntimeMessageActions({
             },
             onMessageEnd: (payload, eventId) => {
               if (abortController.signal.aborted) return;
+              reachedTerminalEvent = true;
               applyMessageEnd(payload, eventId);
+              setControllerState(current => ({
+                ...current,
+                connectionByConversation: {
+                  ...current.connectionByConversation,
+                  [activeConversationId]: 'idle',
+                },
+              }));
             },
             onErrorEvent: (payload, eventId) => {
               if (abortController.signal.aborted) return;
+              reachedTerminalEvent = true;
               applyStreamError(payload, eventId, activeConversationId);
+              setControllerState(current => ({
+                ...current,
+                connectionByConversation: {
+                  ...current.connectionByConversation,
+                  [activeConversationId]: 'idle',
+                },
+              }));
             },
             onRequestError: error => {
               if (isAbortError(error)) return;
+              if (isRecoverableStreamTransportError(error) && requestStreamRecovery()) return;
               if (!streamStarted) {
                 restoreOriginalMessage(error.message);
                 return;
@@ -672,6 +988,7 @@ export function useChatRuntimeMessageActions({
                 streamingMessageRef.current = null;
               }
               if (!abortController.signal.aborted) {
+                if (!reachedTerminalEvent && requestStreamRecovery()) return;
                 setControllerState(current => ({
                   ...current,
                   isSending: getNextActiveSendingState(current, activeConversationId, false),
@@ -683,6 +1000,7 @@ export function useChatRuntimeMessageActions({
         );
       } catch (error) {
         if (!isAbortError(error)) {
+          if (isRecoverableStreamTransportError(error) && requestStreamRecovery()) return;
           if (!streamStarted) {
             restoreOriginalMessage(getErrorMessage(error));
             return;
@@ -713,6 +1031,9 @@ export function useChatRuntimeMessageActions({
       applySkillCallError,
       applySkillCallStart,
       applySkillArtifactCreated,
+      applyToolGovernanceDecision,
+      applyClientActionRequired,
+      applyClientActionResult,
       applyMemoryMutation,
       applySkillLoadEnd,
       applySkillLoadStart,
@@ -721,6 +1042,7 @@ export function useChatRuntimeMessageActions({
       eventAppliers,
       markSelectionTarget,
       refreshAccountMemoryAfterMemoryMutation,
+      recoverStreamingConversation,
       setControllerState,
       stateRef,
       streamAbortByConversationRef,
@@ -729,7 +1051,13 @@ export function useChatRuntimeMessageActions({
     ]
   );
 
-  const { continueWorkflowApproval, continueWorkflowQuestion } = useWorkflowContinuationActions({
+  const {
+    continueWorkflowApproval,
+    continueWorkflowQuestion,
+    continueToolGovernanceDecision,
+    continueClientAction,
+    continueUserInput,
+  } = useWorkflowContinuationActions({
     stateRef,
     transportRef,
     requireModel,
@@ -738,11 +1066,19 @@ export function useChatRuntimeMessageActions({
     streamingMessageRef,
     setControllerState,
     markSelectionTarget,
+    isLatestSelection,
+    refreshConversationSilently,
+    refreshMessagesSilently,
     refreshAccountMemoryAfterMemoryMutation,
+    recoverStreamingConversation,
     eventAppliers,
   });
   const regenerate = useCallback(
-    async (messageId: string, model: AIChatModelSelection) => {
+    async (
+      messageId: string,
+      model: AIChatModelSelection,
+      options?: { operationContext?: unknown; runtimeSurface?: AIChatRuntimeSurface }
+    ) => {
       const activeConversationId = stateRef.current.activeConversationId;
       if (!activeConversationId) return;
 
@@ -752,7 +1088,11 @@ export function useChatRuntimeMessageActions({
       const source = messages.find(message => message.id === messageId);
       if (!source || !source.query.trim()) return;
       if (canReplaceRootMessage(activeConversation, source, messages)) {
-        await replaceRootMessage({ messageId, model });
+        await replaceRootMessage({
+          messageId,
+          model,
+          operationContext: options?.operationContext,
+        });
         return;
       }
       if (!source.parent_id) return;
@@ -762,6 +1102,9 @@ export function useChatRuntimeMessageActions({
         model,
         parentId: source.parent_id,
         useMemory: Boolean(source.metadata?.use_memory),
+        forceAdvanceLeaf: source.status === 'error' || source.status === 'stopped',
+        runtimeSurface: options?.runtimeSurface,
+        operationContext: options?.operationContext,
       });
     },
     [replaceRootMessage, send, stateRef]
@@ -773,5 +1116,8 @@ export function useChatRuntimeMessageActions({
     replaceRootMessage,
     continueWorkflowApproval,
     continueWorkflowQuestion,
+    continueToolGovernanceDecision,
+    continueClientAction,
+    continueUserInput,
   };
 }

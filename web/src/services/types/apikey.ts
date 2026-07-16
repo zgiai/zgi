@@ -112,7 +112,7 @@ export interface UpdateApiKeyRequest {
   /** API key status */
   status?: ApiKeyStatus;
   /** Quota upper limit */
-  quota_limit?: number;
+  quota_limit?: number | null;
   /** Remaining quota */
   remain_quota?: number;
   /** Whether to enable model limits */
@@ -122,7 +122,7 @@ export interface UpdateApiKeyRequest {
   /** IP whitelist (CIDR format) */
   allow_ips?: string;
   /** Expiration time in ISO 8601 format */
-  expires_at?: string;
+  expires_at?: string | null;
 }
 
 /**

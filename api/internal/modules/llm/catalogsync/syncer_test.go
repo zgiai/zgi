@@ -131,3 +131,52 @@ func TestPublishedModelCapabilityMapping(t *testing.T) {
 		}))
 	})
 }
+
+func TestPublishedModelLifecycleFieldsMapping(t *testing.T) {
+	resp := &pb.GetPublishedCatalogResponse{
+		Version:     12,
+		PublishedAt: 1700000000000,
+		Models: []*pb.CatalogModel{
+			{
+				Provider:            "deepseek",
+				Model:               "deepseek-chat",
+				ModelName:           "DeepSeek Chat",
+				Status:              "deprecated",
+				ReplacementProvider: "deepseek",
+				ReplacementModel:    "deepseek-v4-flash",
+				DeprecationReason:   "Compatibility model is deprecated.",
+			},
+			{
+				Provider:  "deepseek",
+				Model:     "deepseek-old",
+				ModelName: "DeepSeek Old",
+				Status:    "deprecated",
+			},
+		},
+	}
+
+	catalog := catalogFromResponse(resp)
+	require.Len(t, catalog.Models, 2)
+	require.Equal(t, "deepseek", catalog.Models[0].ReplacementProvider)
+	require.Equal(t, "deepseek-v4-flash", catalog.Models[0].ReplacementModel)
+	require.Equal(t, "Compatibility model is deprecated.", catalog.Models[0].DeprecationReason)
+	require.Empty(t, catalog.Models[1].ReplacementProvider)
+	require.Empty(t, catalog.Models[1].ReplacementModel)
+	require.Empty(t, catalog.Models[1].DeprecationReason)
+}
+
+func TestPublishedModelPricingMapping(t *testing.T) {
+	resp := &pb.GetPublishedCatalogResponse{
+		Version:     13,
+		PublishedAt: 1700000000000,
+		Models: []*pb.CatalogModel{{
+			Provider:    "openai",
+			Model:       "gpt-5.5",
+			PricingJson: `{"deployment_scope":"global","token_tiers":[{"min_input_tokens":0,"max_input_tokens":272000,"input_price_per_million":5,"output_price_per_million":30}]}`,
+		}},
+	}
+
+	catalog := catalogFromResponse(resp)
+	require.Len(t, catalog.Models, 1)
+	require.JSONEq(t, resp.Models[0].GetPricingJson(), string(catalog.Models[0].Pricing))
+}

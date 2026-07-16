@@ -88,7 +88,12 @@ func (h *KnowledgeBaseFileRefHandler) ListFileCandidates(c *gin.Context) {
 		response.Fail(c, response.ErrUnauthorized)
 		return
 	}
-	if !h.requireKnowledgeBaseManage(c, organizationID, c.Param("dataset_id")) {
+	if !h.requireKnowledgeBasePermission(
+		c,
+		organizationID,
+		c.Param("dataset_id"),
+		workspaceModel.WorkspacePermissionKnowledgeBaseDocumentCreate,
+	) {
 		return
 	}
 	limit, offset := parseLimitOffset(c, 20, 100)
@@ -114,7 +119,12 @@ func (h *KnowledgeBaseFileRefHandler) GenerateFileCandidateEmbeddings(c *gin.Con
 		response.Fail(c, response.ErrUnauthorized)
 		return
 	}
-	if !h.requireKnowledgeBaseManage(c, organizationID, c.Param("dataset_id")) {
+	if !h.requireKnowledgeBasePermission(
+		c,
+		organizationID,
+		c.Param("dataset_id"),
+		workspaceModel.WorkspacePermissionKnowledgeBaseIndexManage,
+	) {
 		return
 	}
 	assetID, err := uuid.Parse(c.Param("asset_id"))
@@ -184,6 +194,14 @@ func (h *KnowledgeBaseFileRefHandler) GetFileCandidateEmbeddingTask(c *gin.Conte
 		response.FailWithMessage(c, response.ErrSystemError, "data library processing request service is not configured")
 		return
 	}
+	if !h.requireKnowledgeBasePermission(
+		c,
+		organizationID,
+		c.Param("dataset_id"),
+		workspaceModel.WorkspacePermissionKnowledgeBaseIndexManage,
+	) {
+		return
+	}
 	assetID, err := uuid.Parse(c.Param("asset_id"))
 	if err != nil || assetID == uuid.Nil {
 		response.Fail(c, response.ErrInvalidParams)
@@ -216,7 +234,12 @@ func (h *KnowledgeBaseFileRefHandler) ListFileRefs(c *gin.Context) {
 		response.Fail(c, response.ErrUnauthorized)
 		return
 	}
-	if !h.requireKnowledgeBaseManage(c, organizationID, c.Param("dataset_id")) {
+	if !h.requireKnowledgeBasePermission(
+		c,
+		organizationID,
+		c.Param("dataset_id"),
+		workspaceModel.WorkspacePermissionKnowledgeBaseDocumentView,
+	) {
 		return
 	}
 	limit, offset := parseLimitOffset(c, 20, 100)
@@ -246,7 +269,12 @@ func (h *KnowledgeBaseFileRefHandler) CreateFileRefs(c *gin.Context) {
 		response.Fail(c, response.ErrUnauthorized)
 		return
 	}
-	if !h.requireKnowledgeBaseManage(c, organizationID, c.Param("dataset_id")) {
+	if !h.requireKnowledgeBasePermission(
+		c,
+		organizationID,
+		c.Param("dataset_id"),
+		workspaceModel.WorkspacePermissionKnowledgeBaseDocumentCreate,
+	) {
 		return
 	}
 	var req createFileRefsRequest
@@ -288,7 +316,12 @@ func (h *KnowledgeBaseFileRefHandler) RetryFileRef(c *gin.Context) {
 		response.Fail(c, response.ErrUnauthorized)
 		return
 	}
-	if !h.requireKnowledgeBaseManage(c, organizationID, c.Param("dataset_id")) {
+	if !h.requireKnowledgeBasePermission(
+		c,
+		organizationID,
+		c.Param("dataset_id"),
+		workspaceModel.WorkspacePermissionKnowledgeBaseIndexManage,
+	) {
 		return
 	}
 	refID, err := uuid.Parse(c.Param("ref_id"))
@@ -321,7 +354,12 @@ func (h *KnowledgeBaseFileRefHandler) RemoveFileRef(c *gin.Context) {
 		response.Fail(c, response.ErrUnauthorized)
 		return
 	}
-	if !h.requireKnowledgeBaseManage(c, organizationID, c.Param("dataset_id")) {
+	if !h.requireKnowledgeBasePermission(
+		c,
+		organizationID,
+		c.Param("dataset_id"),
+		workspaceModel.WorkspacePermissionKnowledgeBaseDocumentDelete,
+	) {
 		return
 	}
 	refID, err := uuid.Parse(c.Param("ref_id"))
@@ -354,7 +392,7 @@ func (h *KnowledgeBaseFileRefHandler) RemoveFileRef(c *gin.Context) {
 	response.Success(c, removed)
 }
 
-func (h *KnowledgeBaseFileRefHandler) requireKnowledgeBaseManage(c *gin.Context, organizationID string, datasetID string) bool {
+func (h *KnowledgeBaseFileRefHandler) requireKnowledgeBasePermission(c *gin.Context, organizationID string, datasetID string, permissionCodes ...workspaceModel.WorkspacePermissionCode) bool {
 	accountID := util.GetAccountID(c)
 	if accountID == "" {
 		response.Fail(c, response.ErrUnauthorized)
@@ -369,22 +407,24 @@ func (h *KnowledgeBaseFileRefHandler) requireKnowledgeBaseManage(c *gin.Context,
 		response.Fail(c, response.ErrDatasetNotFound)
 		return false
 	}
-	hasPermission, err := h.organization.CheckWorkspacePermission(
-		c.Request.Context(),
-		organizationID,
-		dataset.WorkspaceID,
-		accountID,
-		workspaceModel.WorkspacePermissionKnowledgeBaseManage,
-	)
-	if err != nil {
-		response.Fail(c, response.ErrSystemError)
-		return false
+	for _, permissionCode := range permissionCodes {
+		hasPermission, err := h.organization.CheckWorkspacePermission(
+			c.Request.Context(),
+			organizationID,
+			dataset.WorkspaceID,
+			accountID,
+			permissionCode,
+		)
+		if err != nil {
+			response.Fail(c, response.ErrSystemError)
+			return false
+		}
+		if hasPermission {
+			return true
+		}
 	}
-	if !hasPermission {
-		response.Fail(c, response.ErrPermissionDenied)
-		return false
-	}
-	return true
+	response.Fail(c, response.ErrPermissionDenied)
+	return false
 }
 
 func (h *KnowledgeBaseFileRefHandler) enqueueDatasetRefSync(ctx context.Context, organizationID string, workspaceID *string, refID uuid.UUID, assetID uuid.UUID, datasetID string, generationNo int64, syncRunID uuid.UUID) error {

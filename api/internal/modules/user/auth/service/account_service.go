@@ -8,6 +8,7 @@ import (
 	"math/rand"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/zgiai/zgi/api/pkg/jwt"
 	"github.com/zgiai/zgi/api/pkg/logger"
+	"golang.org/x/sync/singleflight"
 
 	"github.com/redis/go-redis/v9"
 	"github.com/zgiai/zgi/api/internal/dto"
@@ -28,6 +30,8 @@ import (
 	system_service "github.com/zgiai/zgi/api/internal/modules/system/service"
 	auth_model "github.com/zgiai/zgi/api/internal/modules/user/auth/model"
 	auth_repo "github.com/zgiai/zgi/api/internal/modules/user/auth/repository"
+	"github.com/zgiai/zgi/api/internal/modules/user/auth/statuscache"
+	workspacecache "github.com/zgiai/zgi/api/internal/modules/workspace/cache"
 	workspace_model "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	helper "github.com/zgiai/zgi/api/internal/util"
 	"github.com/zgiai/zgi/api/pkg/email"
@@ -42,6 +46,14 @@ const (
 )
 
 var ErrCurrentPasswordMismatch = errors.New("current password is incorrect")
+
+const (
+	accountCapabilityModeNone         = "none"
+	accountCapabilityModeOrganization = "organization"
+	accountCapabilityModeWorkspace    = "workspace"
+
+	accountRuntimeResourceListModeCandidateFilter = "runtimeauth_candidate_filter"
+)
 
 func normalizedRateLimitEmail(email string) string {
 	return strings.ToLower(strings.TrimSpace(email))
@@ -101,6 +113,24 @@ type AccountService struct {
 	systemConfigService           system_service.SystemConfigService
 	eventBus                      interfaces.EventBus
 	officialSignupRegistration    *officialSignupRegistrationService
+	profileCacheMu                sync.RWMutex
+	profileCache                  map[string]*accountProfileCacheEntry
+	profileCacheGeneration        map[string]uint64
+	profileCacheGroup             singleflight.Group
+	accountContextGroup           singleflight.Group
+}
+
+const (
+	accountProfileCacheTTL         = 2 * time.Minute
+	accountProfileCacheMaxEntries  = 10000
+	accountProfileColdDBBuildLimit = 16
+)
+
+var accountProfileColdDBBuildTokens = make(chan struct{}, accountProfileColdDBBuildLimit)
+
+type accountProfileCacheEntry struct {
+	profile   *dto.AccountProfileResponse
+	updatedAt time.Time
 }
 
 type currentWorkspaceLookup interface {
@@ -134,6 +164,8 @@ func NewAccountService(
 		systemConfigService:           systemConfigService,
 		eventBus:                      eventBus,
 		officialSignupRegistration:    newOfficialSignupRegistrationService(enterpriseService, consoleProvider),
+		profileCache:                  make(map[string]*accountProfileCacheEntry),
+		profileCacheGeneration:        make(map[string]uint64),
 	}
 }
 
@@ -360,6 +392,39 @@ func (s *AccountService) RefreshToken(ctx context.Context, refreshToken string) 
 }
 
 func (s *AccountService) GetAccountProfile(ctx context.Context, accountID string) (*dto.AccountProfileResponse, error) {
+	if profile, ok := s.getCachedAccountProfile(accountID); ok {
+		return profile, nil
+	}
+
+	result, err, _ := s.profileCacheGroup.Do(accountID, func() (interface{}, error) {
+		if profile, ok := s.getCachedAccountProfile(accountID); ok {
+			return profile, nil
+		}
+
+		generation := s.accountProfileCacheGeneration(accountID)
+		profile, err := s.getAccountProfileUncached(ctx, accountID)
+		if err != nil {
+			return nil, err
+		}
+		s.setCachedAccountProfileIfCurrent(accountID, profile, generation)
+		return profile, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	profile, ok := result.(*dto.AccountProfileResponse)
+	if !ok {
+		return nil, fmt.Errorf("unexpected account profile cache result type %T", result)
+	}
+	return cloneAccountProfileResponse(profile), nil
+}
+
+func (s *AccountService) getAccountProfileUncached(ctx context.Context, accountID string) (*dto.AccountProfileResponse, error) {
+	if err := acquireAccountProfileColdDBBuildSlot(ctx); err != nil {
+		return nil, err
+	}
+	defer releaseAccountProfileColdDBBuildSlot()
+
 	account, err := s.accountRepo.GetAccount(ctx, accountID)
 	if err != nil {
 		return nil, fmt.Errorf("account not found: %w", err)
@@ -402,6 +467,125 @@ func (s *AccountService) GetAccountProfile(ctx context.Context, accountID string
 	}, nil
 }
 
+func (s *AccountService) getCachedAccountProfile(accountID string) (*dto.AccountProfileResponse, bool) {
+	s.profileCacheMu.RLock()
+	entry, ok := s.profileCache[accountID]
+	if ok && time.Since(entry.updatedAt) < accountProfileCacheTTL {
+		profile := cloneAccountProfileResponse(entry.profile)
+		s.profileCacheMu.RUnlock()
+		return profile, true
+	}
+	s.profileCacheMu.RUnlock()
+	return nil, false
+}
+
+func (s *AccountService) setCachedAccountProfileIfCurrent(accountID string, profile *dto.AccountProfileResponse, generation uint64) {
+	s.profileCacheMu.Lock()
+	if s.profileCache == nil {
+		s.profileCache = make(map[string]*accountProfileCacheEntry)
+	}
+	if s.profileCacheGeneration == nil {
+		s.profileCacheGeneration = make(map[string]uint64)
+	}
+	if s.profileCacheGeneration[accountID] != generation {
+		s.profileCacheMu.Unlock()
+		return
+	}
+	now := time.Now()
+	if _, exists := s.profileCache[accountID]; !exists && len(s.profileCache) >= accountProfileCacheMaxEntries {
+		s.pruneAccountProfileCacheLocked(now)
+	}
+	s.profileCache[accountID] = &accountProfileCacheEntry{
+		profile:   cloneAccountProfileResponse(profile),
+		updatedAt: now,
+	}
+	s.profileCacheMu.Unlock()
+}
+
+func (s *AccountService) pruneAccountProfileCacheLocked(now time.Time) {
+	for accountID, entry := range s.profileCache {
+		if now.Sub(entry.updatedAt) >= accountProfileCacheTTL {
+			delete(s.profileCache, accountID)
+		}
+	}
+	if len(s.profileCache) < accountProfileCacheMaxEntries {
+		return
+	}
+
+	var oldestAccountID string
+	var oldestUpdatedAt time.Time
+	for accountID, entry := range s.profileCache {
+		if oldestAccountID == "" || entry.updatedAt.Before(oldestUpdatedAt) {
+			oldestAccountID = accountID
+			oldestUpdatedAt = entry.updatedAt
+		}
+	}
+	if oldestAccountID != "" {
+		delete(s.profileCache, oldestAccountID)
+	}
+}
+
+func (s *AccountService) accountProfileCacheGeneration(accountID string) uint64 {
+	s.profileCacheMu.RLock()
+	generation := s.profileCacheGeneration[accountID]
+	s.profileCacheMu.RUnlock()
+	return generation
+}
+
+func (s *AccountService) InvalidateAccountProfileCache(accountID string) {
+	s.profileCacheMu.Lock()
+	if s.profileCacheGeneration == nil {
+		s.profileCacheGeneration = make(map[string]uint64)
+	}
+	s.profileCacheGeneration[accountID]++
+	delete(s.profileCache, accountID)
+	s.profileCacheMu.Unlock()
+	statuscache.InvalidateAccountStatus(context.Background(), accountID)
+}
+
+func (s *AccountService) invalidateAccountProfileCache(accountID string) {
+	s.InvalidateAccountProfileCache(accountID)
+}
+
+func acquireAccountProfileColdDBBuildSlot(ctx context.Context) error {
+	select {
+	case accountProfileColdDBBuildTokens <- struct{}{}:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func releaseAccountProfileColdDBBuildSlot() {
+	<-accountProfileColdDBBuildTokens
+}
+
+func cloneAccountProfileResponse(src *dto.AccountProfileResponse) *dto.AccountProfileResponse {
+	if src == nil {
+		return nil
+	}
+	clone := *src
+	if src.IsSuperAdmin != nil {
+		value := *src.IsSuperAdmin
+		clone.IsSuperAdmin = &value
+	}
+	if src.CurrentOrganizationID != nil {
+		value := *src.CurrentOrganizationID
+		clone.CurrentOrganizationID = &value
+	}
+	if src.CurrentWorkspaceID != nil {
+		value := *src.CurrentWorkspaceID
+		clone.CurrentWorkspaceID = &value
+	}
+	if src.Extension != nil {
+		clone.Extension = make(auth_model.JSONMap, len(src.Extension))
+		for key, value := range src.Extension {
+			clone.Extension[key] = value
+		}
+	}
+	return &clone
+}
+
 func (s *AccountService) UpdateAccountProfile(ctx context.Context, accountID string, req *dto.UpdateProfileRequest) error {
 	account, err := s.accountRepo.GetAccount(ctx, accountID)
 	if err != nil {
@@ -437,6 +621,7 @@ func (s *AccountService) UpdateAccountProfile(ctx context.Context, accountID str
 		return fmt.Errorf("failed to update account: %w", err)
 	}
 
+	s.invalidateAccountProfileCache(accountID)
 	return nil
 }
 
@@ -879,7 +1064,10 @@ func (s *AccountService) RegisterEx(
 			return fmt.Errorf("failed to create account: %w", err)
 		}
 
-		groupName := fmt.Sprintf("%s's group %s", account.Name, uuid.New().String()[:8])
+		groupName, err := uniqueOwnedOrganizationName(ctx, groupService, account.Name, account.InterfaceLanguage)
+		if err != nil {
+			return fmt.Errorf("failed to prepare group name: %w", err)
+		}
 		group, err := groupService.CreateOrganization(ctx, groupName)
 		if err != nil {
 			return fmt.Errorf("failed to create group: %w", err)
@@ -951,7 +1139,10 @@ func (s *AccountService) createWorkspaceForExistingAccount(ctx context.Context, 
 		tenantService := s.workspaceManagementService.WithTx(tx)
 
 		// 1. Create an enterprise group
-		groupName := fmt.Sprintf("%s's group %s", account.Name, uuid.New().String()[:8])
+		groupName, err := uniqueOwnedOrganizationName(ctx, groupService, account.Name, account.InterfaceLanguage)
+		if err != nil {
+			return fmt.Errorf("failed to prepare group name: %w", err)
+		}
 		group, err := groupService.CreateOrganization(ctx, groupName)
 		if err != nil {
 			return fmt.Errorf("failed to create group: %w", err)
@@ -1109,7 +1300,11 @@ func (s *AccountService) UpdateAccount(ctx context.Context, id string, req *dto.
 	if req.Status != "" {
 		account.Status = req.Status
 	}
-	return s.accountRepo.UpdateAccount(ctx, account)
+	if err := s.accountRepo.UpdateAccount(ctx, account); err != nil {
+		return err
+	}
+	s.invalidateAccountProfileCache(id)
+	return nil
 }
 
 func (s *AccountService) DeleteAccount(ctx context.Context, id string) error {
@@ -1733,11 +1928,15 @@ func (s *AccountService) CheckTenantAdmin(ctx context.Context, accountID string,
 // CloseAccount implements the CloseAccount method
 func (s *AccountService) CloseAccount(ctx context.Context, account *auth_model.Account) error {
 	account.Status = auth_model.AccountStatusClosed
-	return s.accountRepo.UpdateAccount(ctx, account)
+	if err := s.accountRepo.UpdateAccount(ctx, account); err != nil {
+		return err
+	}
+	s.invalidateAccountProfileCache(account.ID)
+	return nil
 }
 
 func (s *AccountService) softDeleteAccount(ctx context.Context, account *auth_model.Account) error {
-	return s.accountRepo.ExecuteInTransaction(ctx, func(tx *gorm.DB) error {
+	if err := s.accountRepo.ExecuteInTransaction(ctx, func(tx *gorm.DB) error {
 		txRepo := s.accountRepo.WithTx(tx)
 
 		account.Status = auth_model.AccountStatusClosed
@@ -1750,7 +1949,11 @@ func (s *AccountService) softDeleteAccount(ctx context.Context, account *auth_mo
 		}
 
 		return nil
-	})
+	}); err != nil {
+		return err
+	}
+	s.invalidateAccountProfileCache(account.ID)
+	return nil
 }
 
 func (s *AccountService) revokeAccountSessionsBestEffort(_ context.Context, accountID string) {
@@ -1834,6 +2037,30 @@ func (s *AccountService) EnsureCurrentOrganizationID(ctx context.Context, accoun
 }
 
 func (s *AccountService) GetAccountContext(ctx context.Context, accountID string) (*auth_model.AccountContext, error) {
+	cacheToken := workspacecache.NewAccountScopedToken(ctx, accountID)
+	if cached, ok := workspacecache.GetAccountContext(ctx, cacheToken); ok {
+		return cached, nil
+	}
+
+	result, err, _ := s.accountContextGroup.Do(cacheToken.SingleflightKey(), func() (interface{}, error) {
+		cacheToken := workspacecache.NewAccountScopedToken(ctx, accountID)
+		if cached, ok := workspacecache.GetAccountContext(ctx, cacheToken); ok {
+			return cached, nil
+		}
+		return s.loadAccountContextUncached(ctx, accountID, cacheToken)
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	ctxModel, ok := result.(*auth_model.AccountContext)
+	if !ok {
+		return nil, fmt.Errorf("unexpected account context cache value %T", result)
+	}
+	return ctxModel, nil
+}
+
+func (s *AccountService) loadAccountContextUncached(ctx context.Context, accountID string, cacheToken workspacecache.AccountScopedToken) (*auth_model.AccountContext, error) {
 	ctxModel, err := s.accountRepo.GetAccountContextByAccountID(ctx, accountID)
 	if err != nil {
 		return nil, err
@@ -1862,13 +2089,154 @@ func (s *AccountService) GetAccountContext(ctx context.Context, accountID string
 		if err := s.accountRepo.CreateAccountContext(ctx, ctxModel); err != nil {
 			return nil, err
 		}
+		workspacecache.SetAccountContext(ctx, cacheToken, ctxModel)
 	} else if changed {
 		if err := s.accountRepo.UpdateAccountContext(ctx, ctxModel); err != nil {
 			logger.Warn("Failed to update account context with resolved workspace: %v", err)
+		} else {
+			s.invalidateAccountProfileCache(accountID)
+			workspacecache.InvalidateAccount(ctx, accountID)
+			workspacecache.SetAccountContext(ctx, workspacecache.NewAccountScopedToken(ctx, accountID), ctxModel)
 		}
+	} else {
+		workspacecache.SetAccountContext(ctx, cacheToken, ctxModel)
 	}
 
 	return ctxModel, nil
+}
+
+func (s *AccountService) GetAccountCapabilities(ctx context.Context, accountID string) (*dto.AccountCapabilitiesResponse, error) {
+	accountID = strings.TrimSpace(accountID)
+	if accountID == "" {
+		return nil, fmt.Errorf("account id is required")
+	}
+
+	ctxModel, err := s.GetAccountContext(ctx, accountID)
+	if err != nil {
+		return nil, err
+	}
+
+	mode := accountCapabilitiesContextMode(ctxModel)
+	response := &dto.AccountCapabilitiesResponse{
+		AccountID: accountID,
+		Context: dto.AccountCapabilityContext{
+			Mode:                  mode,
+			CurrentOrganizationID: ctxModel.CurrentOrganizationID,
+			CurrentWorkspaceID:    ctxModel.CurrentWorkspaceID,
+		},
+		Workspace: dto.AccountWorkspaceCapabilities{
+			ID:                ctxModel.CurrentWorkspaceID,
+			RequiresWorkspace: mode != accountCapabilityModeWorkspace,
+			Permissions:       []string{},
+		},
+		RuntimeAudience: dto.AccountRuntimeAudienceCapability{
+			AccountID:    accountID,
+			SubjectTypes: []string{},
+		},
+		RuntimeSurfaces:      accountRuntimeSurfaceCapabilities(false),
+		RuntimeResourceLists: accountRuntimeResourceListCapabilities(false),
+	}
+
+	organizationID := ptrStringValue(ctxModel.CurrentOrganizationID)
+	if organizationID == "" {
+		response.Routes.WorkspaceRequired = true
+		return response, nil
+	}
+	if s.organizationService == nil {
+		return nil, fmt.Errorf("organization service is not initialized")
+	}
+
+	isMember, err := s.organizationService.IsOrganizationMember(ctx, organizationID, accountID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to check organization membership: %w", err)
+	}
+	if !isMember {
+		response.Routes.WorkspaceRequired = true
+		return response, nil
+	}
+
+	role, err := s.organizationService.GetUserOrganizationRole(ctx, organizationID, accountID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get organization role: %w", err)
+	}
+	isAdmin := role == workspace_model.OrganizationRoleOwner || role == workspace_model.OrganizationRoleAdmin
+	response.Organization = dto.AccountOrganizationCapabilities{
+		ID:                   ctxModel.CurrentOrganizationID,
+		Role:                 string(role),
+		IsMember:             true,
+		IsAdmin:              isAdmin,
+		CanAccessDashboard:   isAdmin,
+		CanManageModelConfig: isAdmin,
+		ProductSurfaces: dto.AccountProductSurfaceCapabilities{
+			Chat:     true,
+			Image:    true,
+			App:      true,
+			Settings: true,
+		},
+	}
+	response.Routes.OrganizationScopeAllowed = true
+	response.RuntimeSurfaces = accountRuntimeSurfaceCapabilities(true)
+	response.RuntimeResourceLists = accountRuntimeResourceListCapabilities(true)
+	runtimeAudience, err := s.accountRuntimeAudienceCapabilities(ctx, organizationID, accountID)
+	if err != nil {
+		return nil, err
+	}
+	response.RuntimeAudience = runtimeAudience
+
+	workspaceID := ptrStringValue(ctxModel.CurrentWorkspaceID)
+	if workspaceID == "" {
+		response.Workspace.RequiresWorkspace = true
+		response.Routes.WorkspaceRequired = true
+		return response, nil
+	}
+	if s.workspaceManagementService == nil {
+		return nil, fmt.Errorf("workspace management service is not initialized")
+	}
+
+	accessible, err := s.isWorkspaceAccessibleInOrganization(ctx, accountID, workspaceID, organizationID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to check workspace access: %w", err)
+	}
+	if !accessible {
+		response.Workspace.RequiresWorkspace = true
+		response.Routes.WorkspaceRequired = true
+		return response, nil
+	}
+
+	workspacePermissions, err := s.organizationService.GetWorkspaceMemberPermissions(ctx, organizationID, workspaceID, accountID, accountID)
+	if err != nil {
+		if !isAdmin {
+			return nil, fmt.Errorf("failed to get workspace permissions: %w", err)
+		}
+		workspacePermissions = nil
+	}
+	if workspacePermissions == nil {
+		if !isAdmin {
+			response.Workspace.RequiresWorkspace = true
+			response.Routes.WorkspaceRequired = true
+			return response, nil
+		}
+		workspacePermissions = accountOrganizationAdminWorkspacePermissions(organizationID, workspaceID, accountID, role)
+	}
+
+	permissions := append([]string(nil), workspacePermissions.Permissions...)
+	if isAdmin {
+		permissions = workspace_model.WorkspacePermissionStringsFromCodes(workspace_model.AllWorkspacePermissionCodes())
+	}
+	canViewWorkspace := true
+	response.Workspace = dto.AccountWorkspaceCapabilities{
+		ID:                &workspaceID,
+		Available:         true,
+		RequiresWorkspace: false,
+		CanView:           canViewWorkspace,
+		Role:              workspacePermissions.WorkspaceRole,
+		RoleName:          workspacePermissions.WorkspaceRoleName,
+		Permissions:       permissions,
+	}
+	response.Routes.WorkspaceScopeAllowed = canViewWorkspace
+	response.Routes.WorkspaceRequired = false
+
+	return response, nil
 }
 
 func (s *AccountService) EnsureAccountContextForWorkspace(ctx context.Context, accountID, organizationID, workspaceID string) (*auth_model.AccountContext, bool, error) {
@@ -1907,7 +2275,7 @@ func (s *AccountService) EnsureAccountContextForWorkspace(ctx context.Context, a
 		return nil, false, fmt.Errorf("account %s is not a member of organization %s", accountID, organizationID)
 	}
 
-	canAccessTarget, err := s.canAccountAccessWorkspace(ctx, accountID, organizationID, workspaceID)
+	canAccessTarget, err := s.canAccountAccessWorkspace(ctx, accountID, workspaceID)
 	if err != nil {
 		return nil, false, fmt.Errorf("failed to check workspace access: %w", err)
 	}
@@ -1970,6 +2338,10 @@ func (s *AccountService) EnsureAccountContextForWorkspace(ctx context.Context, a
 }
 
 func (s *AccountService) populateDefaultOrganization(ctx context.Context, ctxModel *auth_model.AccountContext) bool {
+	if s == nil || s.organizationService == nil || ctxModel == nil {
+		return false
+	}
+
 	// 1. First owned
 	group, err := s.organizationService.GetFirstOwnedOrganization(ctx, ctxModel.AccountID)
 	if err == nil && group != nil {
@@ -2035,27 +2407,18 @@ func (s *AccountService) repairAccountContextWorkspace(ctx context.Context, ctxM
 	}
 
 	if currentOrganizationID != "" {
-		workspace, err := s.resolveWorkspaceForOrganizationContext(ctx, accountID, ctxModel, currentOrganizationID)
-		if err != nil {
-			return false, err
-		}
-		if workspace != nil {
-			changed = setStringPtrIfChanged(&ctxModel.CurrentWorkspaceID, workspace.ID) || changed
-			currentWorkspaceID = workspace.ID
-		} else {
-			changed = clearStringPtrIfChanged(&ctxModel.CurrentWorkspaceID) || changed
-			currentWorkspaceID = ""
-		}
-	}
-
-	if currentWorkspaceID == "" {
-		workspace, err := s.resolveAnyAccessibleWorkspace(ctx, accountID)
-		if err != nil {
-			return false, err
-		}
-		if workspace != nil && workspace.OrganizationID != nil && *workspace.OrganizationID != "" {
-			changed = setStringPtrIfChanged(&ctxModel.CurrentOrganizationID, *workspace.OrganizationID) || changed
-			changed = setStringPtrIfChanged(&ctxModel.CurrentWorkspaceID, workspace.ID) || changed
+		if currentWorkspaceID != "" {
+			workspace, err := s.resolveWorkspaceForOrganizationContext(ctx, accountID, ctxModel, currentOrganizationID)
+			if err != nil {
+				return false, err
+			}
+			if workspace != nil {
+				changed = setStringPtrIfChanged(&ctxModel.CurrentWorkspaceID, workspace.ID) || changed
+				currentWorkspaceID = workspace.ID
+			} else {
+				changed = clearStringPtrIfChanged(&ctxModel.CurrentWorkspaceID) || changed
+				currentWorkspaceID = ""
+			}
 		}
 	}
 
@@ -2134,7 +2497,7 @@ func (s *AccountService) UpdateAccountContext(ctx context.Context, accountID str
 			return nil, fmt.Errorf("account %s is not a member of organization %s", accountID, *targetOrganizationID)
 		}
 
-		canAccess, err := s.canAccountAccessWorkspace(ctx, accountID, *targetOrganizationID, workspace.ID)
+		canAccess, err := s.canAccountAccessWorkspace(ctx, accountID, workspace.ID)
 		if err != nil {
 			return nil, fmt.Errorf("failed to check workspace access: %w", err)
 		}
@@ -2142,28 +2505,6 @@ func (s *AccountService) UpdateAccountContext(ctx context.Context, accountID str
 			return nil, fmt.Errorf("account %s cannot access workspace %s", accountID, workspace.ID)
 		}
 		resolvedWorkspaceID = workspaceID
-	}
-
-	if organizationID != nil && *organizationID != "" && (workspaceID == nil || *workspaceID == "") {
-		workspace, err := s.resolveWorkspaceForOrganizationContext(ctx, accountID, ctxModel, *organizationID)
-		if err != nil {
-			return nil, err
-		}
-		if workspace != nil {
-			workspaceIDValue := workspace.ID
-			resolvedWorkspaceID = &workspaceIDValue
-		}
-	}
-
-	if organizationID == nil && workspaceID != nil && *workspaceID == "" && ctxModel.CurrentOrganizationID != nil && *ctxModel.CurrentOrganizationID != "" {
-		workspace, err := s.resolveDefaultWorkspaceForOrganization(ctx, accountID, *ctxModel.CurrentOrganizationID)
-		if err != nil {
-			return nil, err
-		}
-		if workspace != nil {
-			workspaceIDValue := workspace.ID
-			resolvedWorkspaceID = &workspaceIDValue
-		}
 	}
 
 	if organizationID != nil {
@@ -2207,7 +2548,35 @@ func (s *AccountService) UpdateAccountContext(ctx context.Context, accountID str
 		}
 	}
 
+	if organizationID != nil || workspaceID != nil {
+		currentWorkspaceID := ptrStringValue(ctxModel.CurrentWorkspaceID)
+		if currentWorkspaceID == "" {
+			if err := s.clearCurrentWorkspaceMember(ctx, accountID); err != nil {
+				return nil, err
+			}
+		} else if err := s.syncCurrentWorkspaceMember(ctx, accountID, currentWorkspaceID); err != nil {
+			return nil, err
+		}
+	}
+
+	s.invalidateAccountProfileCache(accountID)
+	workspacecache.InvalidateAccount(ctx, accountID)
+	workspacecache.SetAccountContext(ctx, workspacecache.NewAccountScopedToken(ctx, accountID), ctxModel)
 	return ctxModel, nil
+}
+
+func (s *AccountService) clearCurrentWorkspaceMember(ctx context.Context, accountID string) error {
+	accountID = strings.TrimSpace(accountID)
+	if s.db == nil || accountID == "" {
+		return nil
+	}
+
+	if err := s.db.WithContext(ctx).Model(&workspace_model.WorkspaceMember{}).
+		Where("account_id = ?", accountID).
+		Update("current", false).Error; err != nil {
+		return fmt.Errorf("failed to clear current workspace: %w", err)
+	}
+	return nil
 }
 
 func (s *AccountService) syncCurrentWorkspaceMember(ctx context.Context, accountID, workspaceID string) error {
@@ -2252,7 +2621,7 @@ func (s *AccountService) resolveWorkspaceOrganizationContext(ctx context.Context
 		return nil, nil
 	}
 
-	canAccess, err := s.canAccountAccessWorkspace(ctx, accountID, *workspace.OrganizationID, workspace.ID)
+	canAccess, err := s.canAccountAccessWorkspace(ctx, accountID, workspace.ID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to check workspace access: %w", err)
 	}
@@ -2264,81 +2633,23 @@ func (s *AccountService) resolveWorkspaceOrganizationContext(ctx context.Context
 }
 
 func (s *AccountService) resolveWorkspaceForOrganizationContext(ctx context.Context, accountID string, ctxModel *auth_model.AccountContext, organizationID string) (*workspace_model.Workspace, error) {
-	if ctxModel.CurrentWorkspaceID != nil && *ctxModel.CurrentWorkspaceID != "" {
-		isValid, err := s.isWorkspaceAccessibleInOrganization(ctx, accountID, *ctxModel.CurrentWorkspaceID, organizationID)
-		if err != nil {
-			return nil, fmt.Errorf("failed to check workspace organization: %w", err)
-		}
-		if isValid {
-			workspace, err := s.workspaceManagementService.GetWorkspaceByID(ctx, *ctxModel.CurrentWorkspaceID)
-			if err != nil {
-				return nil, err
-			}
-			return workspace, nil
-		}
-	}
-
-	return s.resolveDefaultWorkspaceForOrganization(ctx, accountID, organizationID)
-}
-
-func (s *AccountService) resolveDefaultWorkspaceForOrganization(ctx context.Context, accountID, organizationID string) (*workspace_model.Workspace, error) {
-	if s.db == nil {
+	if ctxModel.CurrentWorkspaceID == nil || *ctxModel.CurrentWorkspaceID == "" {
 		return nil, nil
 	}
 
-	isAdmin, err := s.isOrganizationAdminOrOwner(ctx, organizationID, accountID)
+	isValid, err := s.isWorkspaceAccessibleInOrganization(ctx, accountID, *ctxModel.CurrentWorkspaceID, organizationID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to check organization role: %w", err)
+		return nil, fmt.Errorf("failed to check workspace organization: %w", err)
 	}
-
-	query := s.db.WithContext(ctx).
-		Table("workspaces").
-		Select("workspaces.*").
-		Where("workspaces.organization_id = ? AND workspaces.status = ?", organizationID, workspace_model.WorkspaceStatusNormal).
-		Order("workspaces.created_at DESC")
-
-	if !isAdmin {
-		query = query.Joins("JOIN workspace_members ON workspaces.id = workspace_members.workspace_id").
-			Where("workspace_members.account_id = ?", accountID)
-	}
-
-	var workspace workspace_model.Workspace
-	if err := query.Limit(1).Scan(&workspace).Error; err != nil {
-		return nil, fmt.Errorf("failed to resolve current workspace: %w", err)
-	}
-	if workspace.ID == "" {
+	if !isValid {
 		return nil, nil
 	}
 
-	return &workspace, nil
-}
-
-func (s *AccountService) resolveAnyAccessibleWorkspace(ctx context.Context, accountID string) (*workspace_model.Workspace, error) {
-	if s.db == nil {
-		return nil, nil
-	}
-
-	var workspace workspace_model.Workspace
-	err := s.db.WithContext(ctx).
-		Table("workspaces").
-		Select("workspaces.*").
-		Joins("JOIN members AS organization_members ON organization_members.organization_id = workspaces.organization_id").
-		Joins("LEFT JOIN workspace_members ON workspaces.id = workspace_members.workspace_id AND workspace_members.account_id = organization_members.account_id").
-		Where("organization_members.account_id = ?", accountID).
-		Where("workspaces.status = ?", workspace_model.WorkspaceStatusNormal).
-		Where("workspaces.organization_id IS NOT NULL").
-		Where("(organization_members.role IN ? OR workspace_members.account_id IS NOT NULL)", []workspace_model.OrganizationRole{workspace_model.OrganizationRoleOwner, workspace_model.OrganizationRoleAdmin}).
-		Order("COALESCE(workspace_members.current, false) DESC, workspaces.created_at DESC").
-		Limit(1).
-		Scan(&workspace).Error
+	workspace, err := s.workspaceManagementService.GetWorkspaceByID(ctx, *ctxModel.CurrentWorkspaceID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to resolve accessible workspace: %w", err)
+		return nil, err
 	}
-	if workspace.ID == "" {
-		return nil, nil
-	}
-
-	return &workspace, nil
+	return workspace, nil
 }
 
 func (s *AccountService) isWorkspaceAccessibleInOrganization(ctx context.Context, accountID, workspaceID, organizationID string) (bool, error) {
@@ -2353,27 +2664,30 @@ func (s *AccountService) isWorkspaceAccessibleInOrganization(ctx context.Context
 		return false, nil
 	}
 
-	return s.canAccountAccessWorkspace(ctx, accountID, organizationID, workspaceID)
+	return s.canAccountAccessWorkspace(ctx, accountID, workspaceID)
 }
 
-func (s *AccountService) canAccountAccessWorkspace(ctx context.Context, accountID, organizationID, workspaceID string) (bool, error) {
-	isAdmin, err := s.isOrganizationAdminOrOwner(ctx, organizationID, accountID)
-	if err != nil {
-		return false, err
-	}
-	if isAdmin {
+func (s *AccountService) canAccountAccessWorkspace(ctx context.Context, accountID, workspaceID string) (bool, error) {
+	join, err := s.workspaceManagementService.GetByWorkspaceAndMember(ctx, workspaceID, accountID)
+	if err == nil && join != nil {
 		return true, nil
 	}
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return false, err
+	}
 
-	join, err := s.workspaceManagementService.GetByWorkspaceAndMember(ctx, workspaceID, accountID)
+	workspace, err := s.workspaceManagementService.GetWorkspaceByID(ctx, workspaceID)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return false, nil
 		}
 		return false, err
 	}
+	if workspace == nil || workspace.OrganizationID == nil || strings.TrimSpace(*workspace.OrganizationID) == "" {
+		return false, nil
+	}
 
-	return join != nil, nil
+	return s.isOrganizationAdminOrOwner(ctx, strings.TrimSpace(*workspace.OrganizationID), accountID)
 }
 
 func (s *AccountService) isOrganizationAdminOrOwner(ctx context.Context, organizationID, accountID string) (bool, error) {
@@ -2381,6 +2695,156 @@ func (s *AccountService) isOrganizationAdminOrOwner(ctx context.Context, organiz
 		return false, nil
 	}
 	return s.organizationService.IsOrganizationAdminOrOwner(ctx, organizationID, accountID)
+}
+
+func accountOrganizationAdminWorkspacePermissions(organizationID, workspaceID, accountID string, organizationRole workspace_model.OrganizationRole) *dto.WorkspaceMemberPermissionsResponse {
+	workspaceRole := workspace_model.WorkspaceRoleAdmin
+	workspaceRoleID := workspace_model.WorkspaceBuiltinRoleAdminID
+	roleName := "Admin"
+	permissionSource := workspace_model.WorkspaceMemberPermissionSourceRoleTemplate
+	if organizationRole == workspace_model.OrganizationRoleOwner {
+		workspaceRole = workspace_model.WorkspaceRoleOwner
+		workspaceRoleID = workspace_model.WorkspaceBuiltinRoleOwnerID
+		roleName = "Owner"
+		permissionSource = workspace_model.WorkspaceMemberPermissionSourceOwner
+	}
+
+	return &dto.WorkspaceMemberPermissionsResponse{
+		OrganizationID:           organizationID,
+		WorkspaceID:              workspaceID,
+		AccountID:                accountID,
+		OrganizationRole:         string(organizationRole),
+		WorkspaceRole:            string(workspaceRole),
+		WorkspaceRoleID:          &workspaceRoleID,
+		WorkspaceRoleName:        roleName,
+		Permissions:              workspace_model.WorkspacePermissionStringsFromCodes(workspace_model.AllWorkspacePermissionCodes()),
+		PermissionSource:         permissionSource,
+		PermissionTemplateRoleID: &workspaceRoleID,
+	}
+}
+
+func accountCapabilitiesContextMode(ctxModel *auth_model.AccountContext) string {
+	if ctxModel == nil {
+		return accountCapabilityModeNone
+	}
+	if ptrStringValue(ctxModel.CurrentWorkspaceID) != "" {
+		return accountCapabilityModeWorkspace
+	}
+	if ptrStringValue(ctxModel.CurrentOrganizationID) != "" {
+		return accountCapabilityModeOrganization
+	}
+	return accountCapabilityModeNone
+}
+
+func accountRuntimeSurfaceCapabilities(enabled bool) map[string]dto.AccountRuntimeSurfaceCapability {
+	return map[string]dto.AccountRuntimeSurfaceCapability{
+		"webapp": {
+			Enabled:           enabled,
+			Mode:              "published_resource",
+			GrantSubjectTypes: []string{"public", "organization", "department", "workspace", "account"},
+		},
+		"api": {
+			Enabled:           enabled,
+			Mode:              "api_key",
+			GrantSubjectTypes: []string{"public"},
+		},
+		"app_center": {
+			Enabled:           enabled,
+			Mode:              "runtime_grant",
+			GrantSubjectTypes: []string{"organization", "department", "workspace", "account"},
+		},
+		"builtin_app": {
+			Enabled:           enabled,
+			Mode:              "runtime_grant",
+			GrantSubjectTypes: []string{"organization", "department", "workspace", "account"},
+		},
+		"internal": {
+			Enabled:           enabled,
+			Mode:              "internal_runtime",
+			GrantSubjectTypes: []string{"internal"},
+		},
+	}
+}
+
+func accountRuntimeResourceListCapabilities(enabled bool) map[string]dto.AccountRuntimeResourceListCapability {
+	return map[string]dto.AccountRuntimeResourceListCapability{
+		"app_center": {
+			Enabled:      enabled,
+			ResourceType: "agent",
+			Surface:      "app_center",
+			Mode:         accountRuntimeResourceListModeCandidateFilter,
+			Endpoint:     "/console/api/agents/runnable-webapps",
+		},
+		"built_in_workflows": {
+			Enabled:      enabled,
+			ResourceType: "builtin_workflow",
+			Surface:      "builtin_app",
+			Mode:         accountRuntimeResourceListModeCandidateFilter,
+			Endpoint:     "/console/api/built-in-workflows",
+		},
+	}
+}
+
+func (s *AccountService) accountRuntimeAudienceCapabilities(ctx context.Context, organizationID, accountID string) (dto.AccountRuntimeAudienceCapability, error) {
+	audience := dto.AccountRuntimeAudienceCapability{
+		AccountID:      accountID,
+		OrganizationID: &organizationID,
+		SubjectTypes:   []string{"organization", "account"},
+		DepartmentIDs:  []string{},
+		WorkspaceIDs:   []string{},
+	}
+
+	departmentIDs, err := s.accountRuntimeAudienceDepartmentIDs(ctx, organizationID, accountID)
+	if err != nil {
+		return dto.AccountRuntimeAudienceCapability{}, err
+	}
+	if len(departmentIDs) > 0 {
+		audience.SubjectTypes = append(audience.SubjectTypes, "department")
+		audience.DepartmentIDs = departmentIDs
+	}
+	workspaceIDs, err := s.accountRuntimeAudienceWorkspaceIDs(ctx, organizationID, accountID)
+	if err != nil {
+		return dto.AccountRuntimeAudienceCapability{}, err
+	}
+	if len(workspaceIDs) > 0 {
+		audience.SubjectTypes = append(audience.SubjectTypes, "workspace")
+		audience.WorkspaceIDs = workspaceIDs
+	}
+	return audience, nil
+}
+
+func (s *AccountService) accountRuntimeAudienceDepartmentIDs(ctx context.Context, organizationID, accountID string) ([]string, error) {
+	if s == nil || s.db == nil || organizationID == "" || accountID == "" {
+		return nil, nil
+	}
+
+	var departmentIDs []string
+	if err := s.db.WithContext(ctx).
+		Table("department_members").
+		Select("department_members.department_id").
+		Joins("JOIN departments ON departments.id = department_members.department_id").
+		Where("department_members.account_id = ? AND departments.group_id = ? AND departments.status = ?", accountID, organizationID, workspace_model.DepartmentStatusActive).
+		Scan(&departmentIDs).Error; err != nil {
+		return nil, fmt.Errorf("failed to load account runtime audience departments: %w", err)
+	}
+	return departmentIDs, nil
+}
+
+func (s *AccountService) accountRuntimeAudienceWorkspaceIDs(ctx context.Context, organizationID, accountID string) ([]string, error) {
+	if s == nil || s.db == nil || organizationID == "" || accountID == "" {
+		return nil, nil
+	}
+
+	var workspaceIDs []string
+	if err := s.db.WithContext(ctx).
+		Table("workspace_members").
+		Select("workspace_members.workspace_id").
+		Joins("JOIN workspaces ON workspaces.id = workspace_members.workspace_id").
+		Where("workspace_members.account_id = ? AND workspaces.organization_id = ? AND workspaces.status = ?", accountID, organizationID, workspace_model.WorkspaceStatusNormal).
+		Scan(&workspaceIDs).Error; err != nil {
+		return nil, fmt.Errorf("failed to load account runtime audience workspaces: %w", err)
+	}
+	return workspaceIDs, nil
 }
 
 func ptrStringValue(value *string) string {
@@ -2736,14 +3200,22 @@ func (s *AccountService) UpdateAccountBasicInfo(ctx context.Context, account *au
 	if status != nil {
 		account.Status = auth_model.AccountStatus(*status)
 	}
-	return s.accountRepo.UpdateAccount(ctx, account)
+	if err := s.accountRepo.UpdateAccount(ctx, account); err != nil {
+		return err
+	}
+	s.invalidateAccountProfileCache(account.ID)
+	return nil
 }
 
 // UpdateAccountExtension implements the UpdateAccountExtension method
 func (s *AccountService) UpdateAccountExtension(ctx context.Context, account *auth_model.Account, mobile, gender *string) error {
 	setAccountMobile(account, mobile)
 	updateAccountExtensions(account, mobile, nil, nil, gender)
-	return s.accountRepo.UpdateAccount(ctx, account)
+	if err := s.accountRepo.UpdateAccount(ctx, account); err != nil {
+		return err
+	}
+	s.invalidateAccountProfileCache(account.ID)
+	return nil
 }
 
 // UpdateAccountEx implements the UpdateAccountEx method
@@ -2767,7 +3239,11 @@ func (s *AccountService) UpdateAccountEx(ctx context.Context, account *auth_mode
 
 	setAccountMobile(account, mobile)
 	updateAccountExtensions(account, mobile, wechat, address, genderStr)
-	return s.accountRepo.UpdateAccount(ctx, account)
+	if err := s.accountRepo.UpdateAccount(ctx, account); err != nil {
+		return err
+	}
+	s.invalidateAccountProfileCache(account.ID)
+	return nil
 }
 
 func setAccountMobile(account *auth_model.Account, mobile *string) {

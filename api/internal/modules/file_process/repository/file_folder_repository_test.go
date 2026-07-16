@@ -64,6 +64,53 @@ func TestListAllFilesWithFiltersAndTenantFiltersByCurrentAssetProductStatus(t *t
 	}
 }
 
+func TestCountAllFilesByCurrentAssetProductStatusUsesLatestAsset(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	createFileFolderRepositoryTables(t, db)
+
+	insertUploadFile(t, db, "file-failed", "Failed", "2026-06-18 10:00:00")
+	insertUploadFile(t, db, "file-ready", "Ready", "2026-06-18 09:00:00")
+	insertUploadFile(t, db, "file-old-failed-now-ready", "Old failed now ready", "2026-06-18 08:00:00")
+	insertUploadFile(t, db, "file-no-asset", "No asset", "2026-06-18 07:00:00")
+
+	insertDocumentAsset(t, db, "asset-failed", "file-failed", "parse_failed", "2026-06-18 10:10:00")
+	insertDocumentAsset(t, db, "asset-ready", "file-ready", "ready", "2026-06-18 09:10:00")
+	insertDocumentAsset(t, db, "asset-old-failed", "file-old-failed-now-ready", "parse_failed", "2026-06-18 08:10:00")
+	insertDocumentAsset(t, db, "asset-new-ready", "file-old-failed-now-ready", "ready", "2026-06-18 08:20:00")
+
+	repo := NewFileFolderRepository(db)
+	counts, err := repo.CountAllFilesByCurrentAssetProductStatus(
+		context.Background(),
+		"",
+		"",
+		nil,
+		nil,
+		"org-1",
+		"account-1",
+		true,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("count files by status: %v", err)
+	}
+
+	if got, want := counts["all"], int64(4); got != want {
+		t.Fatalf("all count = %d, want %d", got, want)
+	}
+	if got, want := counts["parse_failed"], int64(1); got != want {
+		t.Fatalf("parse_failed count = %d, want %d", got, want)
+	}
+	if got, want := counts["ready"], int64(2); got != want {
+		t.Fatalf("ready count = %d, want %d", got, want)
+	}
+	if got := counts["stored_only"]; got != 0 {
+		t.Fatalf("stored_only count = %d, want 0", got)
+	}
+}
+
 func TestListFilesInFolderWithFiltersAndTenantFiltersByCurrentAssetProductStatus(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	if err != nil {
@@ -198,6 +245,39 @@ func TestFileFolderRepositoryFolderNameExistsScopesToSiblingDirectory(t *testing
 	if exists {
 		t.Fatalf("did not expect self to count as duplicate")
 	}
+}
+
+func TestFileFolderRepositoryListsRecursiveFolderDeleteScope(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	createFileFolderRepositoryTables(t, db)
+
+	insertFileFolder(t, db, "root", "org-1", "workspace-1", "", "Root")
+	insertFileFolder(t, db, "child", "org-1", "workspace-1", "root", "Child")
+	insertFileFolder(t, db, "grandchild", "org-1", "workspace-1", "child", "Grandchild")
+	insertFileFolder(t, db, "other-workspace-child", "org-1", "workspace-2", "root", "Other Workspace Child")
+	insertFileFolder(t, db, "other-org-child", "org-2", "workspace-1", "root", "Other Org Child")
+
+	insertFileFolderJoin(t, db, "file-root", "root")
+	insertFileFolderJoin(t, db, "file-child", "child")
+	insertFileFolderJoin(t, db, "file-grandchild", "grandchild")
+	insertFileFolderJoin(t, db, "file-other-workspace", "other-workspace-child")
+	insertFileFolderJoin(t, db, "file-other-org", "other-org-child")
+
+	repo := NewFileFolderRepository(db)
+	folderIDs, err := repo.ListDescendantFolderIDs(context.Background(), "root")
+	if err != nil {
+		t.Fatalf("list descendant folder ids: %v", err)
+	}
+	assertStringSet(t, folderIDs, []string{"root", "child", "grandchild"})
+
+	fileIDs, err := repo.ListFileIDsInFolders(context.Background(), folderIDs)
+	if err != nil {
+		t.Fatalf("list file ids in folders: %v", err)
+	}
+	assertStringSet(t, fileIDs, []string{"file-root", "file-child", "file-grandchild"})
 }
 
 func openFileFolderPostgresMockDB(t *testing.T) *gorm.DB {
@@ -372,5 +452,23 @@ func execFileFolderRepositorySQL(t *testing.T, db *gorm.DB, sql string, args ...
 	t.Helper()
 	if err := db.Exec(sql, args...).Error; err != nil {
 		t.Fatalf("exec sql failed: %v\nsql: %s", err, sql)
+	}
+}
+
+func assertStringSet(t *testing.T, got []string, want []string) {
+	t.Helper()
+
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+
+	seen := make(map[string]struct{}, len(got))
+	for _, value := range got {
+		seen[value] = struct{}{}
+	}
+	for _, value := range want {
+		if _, ok := seen[value]; !ok {
+			t.Fatalf("got %v, want %v", got, want)
+		}
 	}
 }

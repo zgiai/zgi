@@ -36,6 +36,16 @@ func TestResolve_DoubaoUsesDedicatedAdapter(t *testing.T) {
 	}
 }
 
+func TestResolve_SiliconFlowUsesItsOwnCatalogProvider(t *testing.T) {
+	spec, err := Resolve("siliconflow")
+	if err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+	if spec.LookupProvider != "siliconflow" {
+		t.Fatalf("spec.LookupProvider = %q, want %q", spec.LookupProvider, "siliconflow")
+	}
+}
+
 func TestResolve_OpenAICompatibleUsesOpenAIAdapter(t *testing.T) {
 	spec, err := Resolve("openai-compatible")
 	if err != nil {
@@ -260,6 +270,35 @@ func TestNativeCapabilities(t *testing.T) {
 			}
 			if got := SupportsAnthropicMessages(tt.provider); got != tt.wantAnthropicMessages {
 				t.Fatalf("SupportsAnthropicMessages(%q) = %v, want %v", tt.provider, got, tt.wantAnthropicMessages)
+			}
+		})
+	}
+}
+
+func TestAgentProtocolCapabilities(t *testing.T) {
+	tests := []struct {
+		provider string
+		want     bool
+	}{
+		{provider: "zgi-cloud", want: true},
+		{provider: "openai", want: true},
+		{provider: "openai-compatible", want: true},
+		{provider: "deepseek", want: true},
+		{provider: "qwen", want: true},
+		{provider: "dashscope", want: true},
+		{provider: "siliconflow", want: true},
+		{provider: "glm", want: true},
+		{provider: "zhipu", want: true},
+		{provider: "moonshot", want: true},
+		{provider: "kimi", want: true},
+		{provider: "google", want: false},
+		{provider: "ollama", want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.provider, func(t *testing.T) {
+			if got := SupportsAgentProtocol(tt.provider); got != tt.want {
+				t.Fatalf("SupportsAgentProtocol(%q) = %t, want %t", tt.provider, got, tt.want)
 			}
 		})
 	}

@@ -5,10 +5,12 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
-import type { AIChatSkillMetadata } from '@/services/types/aichat';
+import type { OpeningGuideBrand } from '@/components/chat/utils/opening-guide-brand';
+import type { OpeningStatementDialogValue } from '@/components/workflow/ui/features-panel/opening-statement-dialog';
 import type {
   AgentDatabaseBinding,
   AgentMemorySlotConfig,
+  AgentBindingHealth,
   AgentWorkflowBinding,
   AgentWorkflowBindingCandidate,
 } from '@/services/types/agent';
@@ -21,21 +23,25 @@ import { AgentRuntimeMemorySection } from './sections/memory-section';
 import { AgentRuntimeModelSection } from './sections/model-section';
 import { AgentRuntimeSkillSection } from './sections/skill-section';
 import { AgentRuntimeWorkflowSection } from './sections/workflow-section';
-import type { AgentConfigSection } from './types';
+import type { AgentConfigSection, AgentRuntimeSelectedSkillItem } from './types';
 import type { AgentMemorySlotValidationError } from './utils';
 
 interface AgentRuntimeOrchestrationPanelProps {
-  locale: string;
+  agentId: string;
   openSections: Record<AgentConfigSection, boolean>;
   modelValue: ModelSelectorParameterValue;
+  isAgentModelUnavailable: boolean;
+  isAgentModelRecommended: boolean;
   homeTitle: string;
+  openingStatement: string;
   inputPlaceholder: string;
-  selectedSkills: AIChatSkillMetadata[];
+  selectedSkillItems: AgentRuntimeSelectedSkillItem[];
   normalizedSelectedSkillIds: string[];
   selectableSkillsCount: number;
   isSkillsLoading: boolean;
   isSkillConfigLoading: boolean;
   isDatasetsLoading: boolean;
+  canBindKnowledge: boolean;
   selectedKnowledgeDatasets: Dataset[];
   selectedKnowledgeDatasetIds: string[];
   databaseBindings: AgentDatabaseBinding[];
@@ -50,12 +56,18 @@ interface AgentRuntimeOrchestrationPanelProps {
   agentMemorySlotValidationErrors: AgentMemorySlotValidationError[];
   defaultHomeTitle: string;
   defaultInputPlaceholder: string;
+  openingGuideBrand?: OpeningGuideBrand;
   className?: string;
   scrollAreaClassName?: string;
   scrollViewportClassName?: string;
+  readOnly?: boolean;
+  bindingHealth?: AgentBindingHealth;
+  isSkillCleanupPending: boolean;
+  onRemoveAbnormalSkills: () => void;
   onToggleSection: (section: AgentConfigSection) => void;
   onChangeModelValue: (value: ModelSelectorParameterValue) => void;
   onChangeHomeTitle: (value: string) => void;
+  onChangeOpeningStatement: (value: string) => void;
   onChangeInputPlaceholder: (value: string) => void;
   onOpenSkillDialog: () => void;
   onOpenKnowledgeDialog: () => void;
@@ -64,7 +76,9 @@ interface AgentRuntimeOrchestrationPanelProps {
   onToggleKnowledgeDataset: (datasetId: string, checked: boolean) => void;
   onChangeDatabaseBindings: (value: AgentDatabaseBinding[]) => void;
   onChangeWorkflowBindings: (value: AgentWorkflowBinding[]) => void;
-  onGenerateSuggestedQuestions: () => void;
+  onGenerateSuggestedQuestions: (
+    value: OpeningStatementDialogValue
+  ) => Promise<{ questions: string[]; warnings?: string[] } | undefined>;
   onChangeSuggestedQuestions: (value: string[]) => void;
   onChangeFileUploadEnabled: (value: boolean) => void;
   onChangeAgentMemoryEnabled: (value: boolean) => void;
@@ -72,17 +86,21 @@ interface AgentRuntimeOrchestrationPanelProps {
 }
 
 export function AgentRuntimeOrchestrationPanel({
-  locale,
+  agentId,
   openSections,
   modelValue,
+  isAgentModelUnavailable,
+  isAgentModelRecommended,
   homeTitle,
+  openingStatement,
   inputPlaceholder,
-  selectedSkills,
+  selectedSkillItems,
   normalizedSelectedSkillIds,
   selectableSkillsCount,
   isSkillsLoading,
   isSkillConfigLoading,
   isDatasetsLoading,
+  canBindKnowledge,
   selectedKnowledgeDatasets,
   selectedKnowledgeDatasetIds,
   databaseBindings,
@@ -97,12 +115,18 @@ export function AgentRuntimeOrchestrationPanel({
   agentMemorySlotValidationErrors,
   defaultHomeTitle,
   defaultInputPlaceholder,
+  openingGuideBrand,
   className,
   scrollAreaClassName,
   scrollViewportClassName,
+  readOnly = false,
+  bindingHealth,
+  isSkillCleanupPending,
+  onRemoveAbnormalSkills,
   onToggleSection,
   onChangeModelValue,
   onChangeHomeTitle,
+  onChangeOpeningStatement,
   onChangeInputPlaceholder,
   onOpenSkillDialog,
   onOpenKnowledgeDialog,
@@ -137,6 +161,9 @@ export function AgentRuntimeOrchestrationPanel({
           <AgentRuntimeModelSection
             open={openSections.model}
             modelValue={modelValue}
+            unavailable={isAgentModelUnavailable}
+            recommended={isAgentModelRecommended}
+            readOnly={readOnly}
             onToggleSection={onToggleSection}
             onChangeModelValue={onChangeModelValue}
           />
@@ -144,16 +171,19 @@ export function AgentRuntimeOrchestrationPanel({
           <Separator className="h-px" />
 
           <AgentRuntimeSkillSection
-            locale={locale}
             open={openSections.skills}
-            selectedSkills={selectedSkills}
+            selectedSkillItems={selectedSkillItems}
             normalizedSelectedSkillIds={normalizedSelectedSkillIds}
             selectableSkillsCount={selectableSkillsCount}
             isSkillsLoading={isSkillsLoading}
             isSkillConfigLoading={isSkillConfigLoading}
+            bindingHealth={bindingHealth}
+            cleanupPending={isSkillCleanupPending}
+            readOnly={readOnly}
             onToggleSection={onToggleSection}
             onOpenSkillDialog={onOpenSkillDialog}
             onToggleSkill={onToggleSkill}
+            onRemoveAbnormalSkills={onRemoveAbnormalSkills}
           />
 
           <Separator className="h-px" />
@@ -161,8 +191,11 @@ export function AgentRuntimeOrchestrationPanel({
           <AgentRuntimeKnowledgeSection
             open={openSections.knowledge}
             isDatasetsLoading={isDatasetsLoading}
+            canBindKnowledge={canBindKnowledge}
             selectedKnowledgeDatasets={selectedKnowledgeDatasets}
             selectedKnowledgeDatasetIds={selectedKnowledgeDatasetIds}
+            bindingHealth={bindingHealth}
+            readOnly={readOnly}
             onToggleSection={onToggleSection}
             onOpenKnowledgeDialog={onOpenKnowledgeDialog}
             onToggleKnowledgeDataset={onToggleKnowledgeDataset}
@@ -171,8 +204,11 @@ export function AgentRuntimeOrchestrationPanel({
           <Separator className="h-px" />
 
           <AgentRuntimeDatabaseSection
+            agentId={agentId}
             open={openSections.databases}
             bindings={databaseBindings}
+            bindingHealth={bindingHealth}
+            readOnly={readOnly}
             onToggleSection={onToggleSection}
             onChangeBindings={onChangeDatabaseBindings}
           />
@@ -184,6 +220,8 @@ export function AgentRuntimeOrchestrationPanel({
             bindings={workflowBindings}
             candidatesByBindingID={workflowCandidatesByBindingID}
             isLoading={isWorkflowCandidatesLoading}
+            bindingHealth={bindingHealth}
+            readOnly={readOnly}
             onToggleSection={onToggleSection}
             onOpenWorkflowDialog={onOpenWorkflowDialog}
             onChangeBindings={onChangeWorkflowBindings}
@@ -194,6 +232,7 @@ export function AgentRuntimeOrchestrationPanel({
           <AgentRuntimeFileSection
             open={openSections.files}
             fileUploadEnabled={fileUploadEnabled}
+            readOnly={readOnly}
             onToggleSection={onToggleSection}
             onChangeFileUploadEnabled={onChangeFileUploadEnabled}
           />
@@ -205,6 +244,7 @@ export function AgentRuntimeOrchestrationPanel({
             agentMemoryEnabled={agentMemoryEnabled}
             agentMemorySlots={agentMemorySlots}
             agentMemorySlotValidationErrors={agentMemorySlotValidationErrors}
+            readOnly={readOnly}
             onToggleSection={onToggleSection}
             onChangeAgentMemoryEnabled={onChangeAgentMemoryEnabled}
             onChangeAgentMemorySlots={onChangeAgentMemorySlots}
@@ -215,13 +255,17 @@ export function AgentRuntimeOrchestrationPanel({
           <AgentRuntimeExperienceSection
             open={openSections.experience}
             homeTitle={homeTitle}
+            openingStatement={openingStatement}
             inputPlaceholder={inputPlaceholder}
             suggestedQuestions={suggestedQuestions}
             isGeneratingSuggestions={isGeneratingSuggestions}
             defaultHomeTitle={defaultHomeTitle}
             defaultInputPlaceholder={defaultInputPlaceholder}
+            openingGuideBrand={openingGuideBrand}
+            readOnly={readOnly}
             onToggleSection={onToggleSection}
             onChangeHomeTitle={onChangeHomeTitle}
+            onChangeOpeningStatement={onChangeOpeningStatement}
             onChangeInputPlaceholder={onChangeInputPlaceholder}
             onGenerateSuggestedQuestions={onGenerateSuggestedQuestions}
             onChangeSuggestedQuestions={onChangeSuggestedQuestions}

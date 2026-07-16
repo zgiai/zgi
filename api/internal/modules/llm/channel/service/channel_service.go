@@ -20,6 +20,8 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/llm/channelprovider"
 	credentialdto "github.com/zgiai/zgi/api/internal/modules/llm/credential/dto"
 	credentialsvc "github.com/zgiai/zgi/api/internal/modules/llm/credential/service"
+	"github.com/zgiai/zgi/api/internal/modules/llm/credential/upstreamstate"
+	"github.com/zgiai/zgi/api/internal/modules/llm/gateway"
 	llmmodelmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
 	llmmodelrepo "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/repository"
 	llmmodelsvc "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/service"
@@ -39,6 +41,12 @@ var (
 	ErrNoAvailableOfficialChannel = errors.New("no available official channels for this organization")
 )
 
+const (
+	channelModelPricingNotConfiguredMessage = "模型未配置价格，请先在模型管理或计费策略中配置价格。"
+	channelModelPricingNotConfiguredCode    = string(gateway.BillingUserErrorKindModelPricingNotConfigured)
+	openAICompatibleProviderName            = "openai-compatible"
+)
+
 // ============================================================================
 // Channel Service - manages system channels and tenant routes
 // ============================================================================
@@ -54,6 +62,9 @@ type ChannelService interface {
 	UpdateRoute(ctx context.Context, organizationID, id uuid.UUID, req *dto.UpdateRouteRequest) (*dto.ChannelView, error)
 	DeleteRoute(ctx context.Context, organizationID, id uuid.UUID) error
 	TestRoute(ctx context.Context, organizationID, id uuid.UUID, model string) (*dto.TestChannelResult, error)
+	CheckUpstreamState(ctx context.Context, organizationID, id uuid.UUID) (*dto.UpstreamStateView, error)
+	RetryUpstreamState(ctx context.Context, organizationID, id uuid.UUID) (*dto.UpstreamStateView, error)
+	UpdateUpstreamStateSettings(ctx context.Context, organizationID, id uuid.UUID, req *dto.UpdateUpstreamStateSettingsRequest) (*dto.UpstreamStateView, error)
 
 	// Route selection for API calls
 	SelectRoute(ctx context.Context, organizationID uuid.UUID, modelName string) (*model.RouteQueryResult, error)
@@ -78,8 +89,8 @@ type ChannelService interface {
 	DiscoverDraftChannelModels(ctx context.Context, req *dto.DiscoverDraftChannelModelsRequest) (*dto.DiscoverDraftChannelModelsResponse, error)
 	DiscoverOllamaModels(ctx context.Context, req *dto.DiscoverOllamaModelsRequest) (*dto.DiscoverOllamaModelsResponse, error)
 	TestDraftChannelModel(ctx context.Context, organizationID uuid.UUID, req *dto.DraftTestChannelModelRequest) (*dto.ChannelModelTestResult, error)
-	TestChannelModel(ctx context.Context, channelID uuid.UUID, organizationID uuid.UUID, model string, testMethod string) (*dto.ChannelModelTestResult, error)
-	BatchTestChannelModels(ctx context.Context, channelID uuid.UUID, organizationID uuid.UUID, models []string, testMethod string, resultChan chan<- *dto.BatchTestChannelModelsStreamResponse)
+	TestChannelModel(ctx context.Context, channelID uuid.UUID, organizationID uuid.UUID, model string, testMethod string, stream bool) (*dto.ChannelModelTestResult, error)
+	BatchTestChannelModels(ctx context.Context, channelID uuid.UUID, organizationID uuid.UUID, models []string, testMethod string, stream bool, resultChan chan<- *dto.BatchTestChannelModelsStreamResponse)
 
 	// Batch operations
 	BatchToggleRoutes(ctx context.Context, organizationID uuid.UUID, req *dto.BatchToggleRoutesRequest) (*dto.BatchOperationResult, error)
@@ -92,7 +103,7 @@ type ChannelService interface {
 type ChannelValidator interface {
 	ValidateModelsForCreation(ctx context.Context, organizationID uuid.UUID, channelProvider, apiKey, apiBaseURL string, models []string) (*channelprovider.ValidationResult, error)
 	ValidateModels(ctx context.Context, organizationID uuid.UUID, channelProvider, apiKey, apiBaseURL string, models []string) (*channelprovider.ValidationResult, error)
-	TestModel(ctx context.Context, organizationID uuid.UUID, channelProvider, apiKey, apiBaseURL, modelName, testMethod string) (*channelprovider.TestResult, error)
+	TestModel(ctx context.Context, organizationID uuid.UUID, channelProvider, apiKey, apiBaseURL, modelName, testMethod string, stream bool) (*channelprovider.TestResult, error)
 }
 
 type channelService struct {
@@ -109,6 +120,13 @@ type channelService struct {
 	crypto             shared.CryptoService
 	consoleProvider    consoleintf.ConsoleProvider // Cloud mode: calls console-api HTTP for platform channels
 	ollamaModelLister  func(ctx context.Context, apiBaseURL, apiKey string) ([]adapter.Model, error)
+	upstreamState      *upstreamstate.Service
+}
+
+func (s *channelService) invalidateAvailableModelsCache(organizationID uuid.UUID) {
+	if s.availableModels != nil {
+		s.availableModels.InvalidateTenantCache(organizationID)
+	}
 }
 
 // NewChannelService creates a new channel service
@@ -125,9 +143,16 @@ func NewChannelService(
 	db *gorm.DB,
 	crypto shared.CryptoService,
 	cp consoleintf.ConsoleProvider, // nil in self-hosted mode
+	upstreamServices ...*upstreamstate.Service,
 ) ChannelService {
 	if validator == nil {
 		validator = channelprovider.NewValidator(modelRepo, privateModels)
+	}
+	var upstreamService *upstreamstate.Service
+	if len(upstreamServices) > 0 {
+		upstreamService = upstreamServices[0]
+	} else if db != nil && crypto != nil {
+		upstreamService = upstreamstate.NewService(db, crypto)
 	}
 	return &channelService{
 		tenantRouteRepo:    tenantRouteRepo,
@@ -143,6 +168,7 @@ func NewChannelService(
 		crypto:             crypto,
 		consoleProvider:    cp,
 		ollamaModelLister:  listOllamaModels,
+		upstreamState:      upstreamService,
 	}
 }
 
@@ -180,6 +206,9 @@ func (s *channelService) CreateRoute(ctx context.Context, organizationID uuid.UU
 		return nil, err
 	}
 
+	if err := validateRouteNativeProtocols(channelProvider, req.NativeProtocols); err != nil {
+		return nil, err
+	}
 	if err := s.ensureOllamaCustomModels(ctx, organizationID, channelProvider, req.APIBaseURL, req.APIKey, req.Models); err != nil {
 		return nil, err
 	}
@@ -234,6 +263,14 @@ func (s *channelService) CreateRoute(ctx context.Context, organizationID uuid.UU
 	if route.Weight == 0 {
 		route.Weight = 100
 	}
+	if s.upstreamState != nil {
+		if err := s.upstreamState.ScheduleCheck(ctx, organizationID, cred.ID); err != nil {
+			if createdCredential {
+				_ = s.tenantCredService.Delete(context.Background(), organizationID, cred.ID)
+			}
+			return nil, fmt.Errorf("schedule upstream state check: %w", err)
+		}
+	}
 
 	if err := s.createRouteWithInitialFunds(ctx, route, req.InitialFunds); err != nil {
 		if createdCredential {
@@ -241,8 +278,12 @@ func (s *channelService) CreateRoute(ctx context.Context, organizationID uuid.UU
 		}
 		return nil, fmt.Errorf("failed to create route: %w", err)
 	}
-	if err := s.autoEnableModelsForRoute(ctx, organizationID, normalizedModels); err != nil {
+	cacheInvalidated, err := s.autoEnableModelsForRoute(ctx, organizationID, normalizedModels)
+	if err != nil {
 		return nil, fmt.Errorf("auto-enable route models: %w", err)
+	}
+	if !cacheInvalidated {
+		s.invalidateAvailableModelsCache(organizationID)
 	}
 
 	// Reload with credential for building the view
@@ -305,6 +346,78 @@ func (s *channelService) GetRoute(ctx context.Context, organizationID, id uuid.U
 	return route, nil
 }
 
+func (s *channelService) CheckUpstreamState(ctx context.Context, organizationID, id uuid.UUID) (*dto.UpstreamStateView, error) {
+	credentialID, err := s.privateRouteCredentialID(ctx, organizationID, id)
+	if err != nil {
+		return nil, err
+	}
+	state, err := s.upstreamState.Check(ctx, organizationID, credentialID)
+	if err != nil {
+		return nil, err
+	}
+	sharedCount, err := s.tenantRouteRepo.CountByCredentialID(ctx, organizationID, credentialID)
+	if err != nil {
+		return nil, fmt.Errorf("count channels sharing credential: %w", err)
+	}
+	return buildUpstreamStateView(state, sharedCount, time.Now()), nil
+}
+
+func (s *channelService) RetryUpstreamState(ctx context.Context, organizationID, id uuid.UUID) (*dto.UpstreamStateView, error) {
+	credentialID, err := s.privateRouteCredentialID(ctx, organizationID, id)
+	if err != nil {
+		return nil, err
+	}
+	state, err := s.upstreamState.RequestRetry(ctx, organizationID, credentialID)
+	if err != nil {
+		return nil, err
+	}
+	sharedCount, err := s.tenantRouteRepo.CountByCredentialID(ctx, organizationID, credentialID)
+	if err != nil {
+		return nil, fmt.Errorf("count channels sharing credential: %w", err)
+	}
+	return buildUpstreamStateView(state, sharedCount, time.Now()), nil
+}
+
+func (s *channelService) UpdateUpstreamStateSettings(ctx context.Context, organizationID, id uuid.UUID, req *dto.UpdateUpstreamStateSettingsRequest) (*dto.UpstreamStateView, error) {
+	if req == nil {
+		return nil, upstreamstate.ErrInvalidThresholds
+	}
+	credentialID, err := s.privateRouteCredentialID(ctx, organizationID, id)
+	if err != nil {
+		return nil, err
+	}
+	thresholds := make([]upstreamstate.WarningThreshold, 0, len(req.WarningThresholds))
+	for _, threshold := range req.WarningThresholds {
+		thresholds = append(thresholds, upstreamstate.WarningThreshold{
+			Currency: threshold.Currency,
+			Amount:   threshold.Amount,
+		})
+	}
+	state, err := s.upstreamState.UpdateSettings(ctx, organizationID, credentialID, thresholds)
+	if err != nil {
+		return nil, err
+	}
+	sharedCount, err := s.tenantRouteRepo.CountByCredentialID(ctx, organizationID, credentialID)
+	if err != nil {
+		return nil, fmt.Errorf("count channels sharing credential: %w", err)
+	}
+	return buildUpstreamStateView(state, sharedCount, time.Now()), nil
+}
+
+func (s *channelService) privateRouteCredentialID(ctx context.Context, organizationID, id uuid.UUID) (uuid.UUID, error) {
+	route, err := s.tenantRouteRepo.GetByID(ctx, organizationID, id)
+	if err != nil {
+		return uuid.Nil, ErrRouteNotFound
+	}
+	if route.IsOfficial || route.Type != shared.RouteTypePrivate || route.CredentialID == nil {
+		return uuid.Nil, ErrInvalidRouteType
+	}
+	if s.upstreamState == nil {
+		return uuid.Nil, fmt.Errorf("upstream state service is unavailable")
+	}
+	return *route.CredentialID, nil
+}
+
 func (s *channelService) ListRoutes(ctx context.Context, organizationID uuid.UUID, req *dto.ListRouteRequest) ([]*dto.ChannelView, int64, error) {
 	offset := (req.Page - 1) * req.PageSize
 	routes, total, err := s.tenantRouteRepo.List(ctx, organizationID, req.IsEnabled, offset, req.PageSize)
@@ -315,10 +428,15 @@ func (s *channelService) ListRoutes(ctx context.Context, organizationID uuid.UUI
 	if err != nil {
 		return nil, 0, fmt.Errorf("load channel wallet balances: %w", err)
 	}
+	upstreamStates, sharedCounts, err := s.loadUpstreamStateData(ctx, organizationID, routes)
+	if err != nil {
+		return nil, 0, fmt.Errorf("load channel upstream states: %w", err)
+	}
 
 	views := make([]*dto.ChannelView, 0, len(routes))
 	for _, route := range routes {
 		view := s.buildChannelView(route, walletBalances)
+		s.attachUpstreamState(view, route, upstreamStates, sharedCounts)
 		views = append(views, view)
 	}
 	return views, total, nil
@@ -372,7 +490,13 @@ func (s *channelService) buildChannelViewWithWalletBalance(
 	if err != nil {
 		return nil, err
 	}
-	return s.buildChannelView(route, walletBalances), nil
+	upstreamStates, sharedCounts, err := s.loadUpstreamStateData(ctx, organizationID, []*model.LLMRoute{route})
+	if err != nil {
+		return nil, err
+	}
+	view := s.buildChannelView(route, walletBalances)
+	s.attachUpstreamState(view, route, upstreamStates, sharedCounts)
+	return view, nil
 }
 
 // ListRoutesAggregated returns a paginated list of private channels (excludes ZGI_CLOUD).
@@ -386,6 +510,10 @@ func (s *channelService) ListRoutesAggregated(ctx context.Context, organizationI
 	if err != nil {
 		return nil, fmt.Errorf("failed to load channel wallet balances: %w", err)
 	}
+	upstreamStates, sharedCounts, err := s.loadUpstreamStateData(ctx, organizationID, routes)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load channel upstream states: %w", err)
+	}
 
 	// Build views, skip official channels
 	allChannels := make([]*dto.ChannelView, 0, len(routes))
@@ -397,6 +525,7 @@ func (s *channelService) ListRoutesAggregated(ctx context.Context, organizationI
 		}
 
 		view := s.buildChannelView(route, walletBalances)
+		s.attachUpstreamState(view, route, upstreamStates, sharedCounts)
 
 		// Apply filters
 		if req.ChannelProvider != "" && !strings.EqualFold(view.ChannelProvider, req.ChannelProvider) {
@@ -477,6 +606,125 @@ func (s *channelService) loadChannelWalletBalances(
 	return walletBalances, nil
 }
 
+func (s *channelService) loadUpstreamStateData(
+	ctx context.Context,
+	organizationID uuid.UUID,
+	routes []*model.LLMRoute,
+) (map[uuid.UUID]*upstreamstate.State, map[uuid.UUID]int64, error) {
+	states := make(map[uuid.UUID]*upstreamstate.State)
+	sharedCounts := make(map[uuid.UUID]int64)
+	if s.upstreamState == nil || s.db == nil {
+		return states, sharedCounts, nil
+	}
+
+	credentialIDs := make([]uuid.UUID, 0, len(routes))
+	seen := make(map[uuid.UUID]struct{}, len(routes))
+	for _, route := range routes {
+		if route == nil || route.IsOfficial || route.Type != shared.RouteTypePrivate || route.CredentialID == nil {
+			continue
+		}
+		if _, exists := seen[*route.CredentialID]; exists {
+			continue
+		}
+		seen[*route.CredentialID] = struct{}{}
+		credentialIDs = append(credentialIDs, *route.CredentialID)
+	}
+	if len(credentialIDs) == 0 {
+		return states, sharedCounts, nil
+	}
+
+	var err error
+	states, err = s.upstreamState.GetMany(ctx, organizationID, credentialIDs)
+	if err != nil {
+		return nil, nil, err
+	}
+	type sharedCountRow struct {
+		CredentialID uuid.UUID `gorm:"column:user_credential_id"`
+		Count        int64     `gorm:"column:shared_channel_count"`
+	}
+	var rows []sharedCountRow
+	if err := s.db.WithContext(ctx).Model(&model.LLMRoute{}).
+		Select("user_credential_id, COUNT(*) AS shared_channel_count").
+		Where("organization_id = ? AND user_credential_id IN ?", organizationID, credentialIDs).
+		Group("user_credential_id").
+		Scan(&rows).Error; err != nil {
+		return nil, nil, err
+	}
+	for _, row := range rows {
+		sharedCounts[row.CredentialID] = row.Count
+	}
+	return states, sharedCounts, nil
+}
+
+func (s *channelService) attachUpstreamState(
+	view *dto.ChannelView,
+	route *model.LLMRoute,
+	states map[uuid.UUID]*upstreamstate.State,
+	sharedCounts map[uuid.UUID]int64,
+) {
+	if view == nil || route == nil || route.IsOfficial || route.Type != shared.RouteTypePrivate || route.CredentialID == nil {
+		return
+	}
+	view.UpstreamState = buildUpstreamStateView(states[*route.CredentialID], sharedCounts[*route.CredentialID], time.Now())
+}
+
+func buildUpstreamStateView(state *upstreamstate.State, sharedCount int64, now time.Time) *dto.UpstreamStateView {
+	view := &dto.UpstreamStateView{
+		BalanceCapability:  string(upstreamstate.BalanceCapabilityUnknown),
+		Availability:       string(upstreamstate.AvailabilityUnknown),
+		LastCheckStatus:    string(upstreamstate.CheckStatusUnknown),
+		WarningThresholds:  []dto.UpstreamWarningThresholdView{},
+		SharedChannelCount: sharedCount,
+	}
+	if state == nil {
+		return view
+	}
+	view.BalanceCapability = string(state.BalanceCapability)
+	view.Availability = string(state.Availability)
+	view.LastCheckStatus = string(state.LastCheckStatus)
+	view.LastCheckErrorKind = state.LastCheckErrorKind
+	view.IsLow = upstreamstate.IsLow(state)
+	view.IsStale = upstreamstate.IsStale(state, now)
+	view.BlockReason = string(state.BlockReason)
+	view.WouldGuard = state.BlockReason != ""
+	if state.BalanceObservedAt != nil {
+		view.BalanceObservedAt = state.BalanceObservedAt.UTC().Format(time.RFC3339)
+	}
+	if state.LastCheckAt != nil {
+		view.LastCheckAt = state.LastCheckAt.UTC().Format(time.RFC3339)
+	}
+	if state.CooldownUntil != nil {
+		view.CooldownUntil = state.CooldownUntil.UTC().Format(time.RFC3339)
+	}
+	if state.AvailabilityObservedAt != nil {
+		view.AvailabilityObservedAt = state.AvailabilityObservedAt.UTC().Format(time.RFC3339)
+	}
+	if state.ManualRetryRequestedAt != nil {
+		view.ManualRetryRequestedAt = state.ManualRetryRequestedAt.UTC().Format(time.RFC3339)
+	}
+	view.ProviderErrorCode = state.ProviderErrorCode
+	view.ProviderErrorStatus = state.ProviderErrorStatus
+	for _, threshold := range state.WarningThresholds {
+		view.WarningThresholds = append(view.WarningThresholds, dto.UpstreamWarningThresholdView{
+			Currency: threshold.Currency,
+			Amount:   threshold.Amount,
+		})
+	}
+	if state.BalanceSnapshot == nil {
+		return view
+	}
+	view.BalanceScope = state.BalanceSnapshot.Scope
+	view.Spendable = state.BalanceSnapshot.Spendable
+	view.IsUnlimited = state.BalanceSnapshot.IsUnlimited
+	for _, amount := range state.BalanceSnapshot.Items {
+		view.Balances = append(view.Balances, dto.UpstreamBalanceAmountView{
+			Currency:  amount.Currency,
+			Remaining: amount.Remaining,
+		})
+	}
+	return view
+}
+
 func (s *channelService) UpdateRoute(ctx context.Context, organizationID, id uuid.UUID, req *dto.UpdateRouteRequest) (*dto.ChannelView, error) {
 	route, err := s.tenantRouteRepo.GetByID(ctx, organizationID, id)
 	if err != nil {
@@ -523,6 +771,14 @@ func (s *channelService) UpdateRoute(ctx context.Context, organizationID, id uui
 		if err := channelprovider.ValidateAPIKey(spec, ""); err != nil {
 			return nil, err
 		}
+	}
+
+	newNativeProtocols := route.NativeProtocols
+	if req.NativeProtocols != nil {
+		newNativeProtocols = *req.NativeProtocols
+	}
+	if err := validateRouteNativeProtocols(newChannelProvider, newNativeProtocols); err != nil {
+		return nil, err
 	}
 
 	coreChanged := req.ChannelProvider != nil || req.Models != nil || req.APIBaseURL != nil || req.APIKey != nil
@@ -612,9 +868,15 @@ func (s *channelService) UpdateRoute(ctx context.Context, organizationID, id uui
 		return nil, fmt.Errorf("failed to update route: %w", err)
 	}
 	if req.Models != nil {
-		if err := s.autoEnableModelsForRoute(ctx, organizationID, route.Models); err != nil {
+		cacheInvalidated, err := s.autoEnableModelsForRoute(ctx, organizationID, route.Models)
+		if err != nil {
 			return nil, fmt.Errorf("auto-enable route models: %w", err)
 		}
+		if !cacheInvalidated {
+			s.invalidateAvailableModelsCache(organizationID)
+		}
+	} else {
+		s.invalidateAvailableModelsCache(organizationID)
 	}
 
 	view, err := s.buildChannelViewWithWalletBalance(ctx, organizationID, route)
@@ -650,13 +912,29 @@ func (s *channelService) validateRouteModelNames(ctx context.Context, organizati
 	return nil
 }
 
+func validateRouteNativeProtocols(channelProvider string, protocols model.NativeProtocolConfig) error {
+	if protocols.OpenAIResponses.Enabled {
+		capability := channelprovider.OpenAIResponsesCapability(channelProvider)
+		if !capability.Supported {
+			return fmt.Errorf("native_protocols.openai_responses is not supported by channel_provider %q", channelProvider)
+		}
+	}
+	if protocols.AnthropicMessages.Enabled {
+		capability := channelprovider.AnthropicMessagesCapability(channelProvider)
+		if !capability.Supported {
+			return fmt.Errorf("native_protocols.anthropic_messages is not supported by channel_provider %q", channelProvider)
+		}
+	}
+	return nil
+}
+
 func (s *channelService) loadActiveModelNameIndexes(ctx context.Context, organizationID uuid.UUID) ([]string, map[string]string, error) {
 	exactNames := make([]string, 0)
 	legacyShortNames := make(map[string]string)
 
 	if s != nil && s.modelRepo != nil {
 		activeOnly := true
-		models, _, err := s.modelRepo.List(ctx, nil, "", "", &activeOnly, 0, 10000)
+		models, _, err := s.modelRepo.List(ctx, nil, "", "", "active", &activeOnly, 0, 10000)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -730,6 +1008,7 @@ func (s *channelService) DeleteRoute(ctx context.Context, organizationID, id uui
 	if credentialID != nil {
 		go s.cleanupUnusedCredential(context.Background(), organizationID, *credentialID)
 	}
+	s.invalidateAvailableModelsCache(organizationID)
 
 	return nil
 }
@@ -785,6 +1064,7 @@ func (s *channelService) UpdateOfficialChannelSettings(ctx context.Context, orga
 		}
 		updated++
 	}
+	s.invalidateAvailableModelsCache(organizationID)
 
 	return updated, nil
 }
@@ -871,13 +1151,17 @@ func (s *channelService) GetRoutesForModel(ctx context.Context, organizationID u
 	if err != nil {
 		return nil, fmt.Errorf("failed to get enabled routes: %w", err)
 	}
+	officialProvider, officialProviderErr := uniqueOfficialProviderForModel(routes, modelName)
 
 	// No auto-initialization - tenant must create routes manually
 
 	var result []*model.RouteQueryResult
 	for _, r := range routes {
+		if (r.IsOfficial || r.Type == shared.RouteTypeZGICloud) && officialProviderErr != nil {
+			continue
+		}
 		// Check if route supports the model
-		if !s.routeSupportsModel(r, modelName) {
+		if !s.routeSupportsModel(r, officialProvider, modelName) {
 			continue
 		}
 
@@ -910,11 +1194,41 @@ func (s *channelService) GetRoutesForModel(ctx context.Context, organizationID u
 
 		result = append(result, qr)
 	}
+	if len(result) == 0 && officialProviderErr != nil {
+		return nil, officialProviderErr
+	}
 
 	return result, nil
 }
 
-func (s *channelService) routeSupportsModel(route *model.LLMRoute, modelName string) bool {
+func uniqueOfficialProviderForModel(routes []*model.LLMRoute, modelName string) (string, error) {
+	targetModel := strings.TrimSpace(modelName)
+	provider := ""
+	for _, route := range routes {
+		if route == nil || (!route.IsOfficial && route.Type != shared.RouteTypeZGICloud) {
+			continue
+		}
+		for _, pair := range route.OfficialProviderModels {
+			if strings.TrimSpace(pair.Model) != targetModel {
+				continue
+			}
+			candidate := strings.TrimSpace(pair.Provider)
+			if candidate == "" || candidate == provider {
+				continue
+			}
+			if provider != "" {
+				return "", fmt.Errorf("ambiguous official model %q across providers; provider is required", targetModel)
+			}
+			provider = candidate
+		}
+	}
+	return provider, nil
+}
+
+func (s *channelService) routeSupportsModel(route *model.LLMRoute, officialProvider, modelName string) bool {
+	if route.IsOfficial || route.Type == shared.RouteTypeZGICloud {
+		return route.SupportsModelForProvider(officialProvider, modelName)
+	}
 	return route.SupportsModel(modelName)
 }
 
@@ -966,7 +1280,7 @@ func (s *channelService) TestRoute(ctx context.Context, organizationID, id uuid.
 				Message: fmt.Sprintf("failed to load credential api key: %v", err),
 			}, nil
 		}
-		result, err := s.validator.TestModel(ctx, organizationID, route.ChannelProvider, apiKey, route.APIBaseURL, testModel, "")
+		result, err := s.validator.TestModel(ctx, organizationID, route.ChannelProvider, apiKey, route.APIBaseURL, testModel, "", false)
 		if err != nil {
 			return &dto.TestChannelResult{
 				Success: false,
@@ -1064,7 +1378,11 @@ func (s *channelService) UpdatePlatformChannelSettings(ctx context.Context, orga
 		route.IsEnabled = *req.IsEnabled
 	}
 
-	return s.tenantRouteRepo.Update(ctx, route)
+	if err := s.tenantRouteRepo.Update(ctx, route); err != nil {
+		return err
+	}
+	s.invalidateAvailableModelsCache(organizationID)
+	return nil
 }
 
 // InitOfficialChannel ensures the tenant has an official route in cloud mode.
@@ -1085,7 +1403,11 @@ func (s *channelService) InitOfficialChannel(ctx context.Context, organizationID
 		existing.APIBaseURL = ""
 		now := time.Now().UTC()
 		existing.LastSyncedAt = &now
-		return s.tenantRouteRepo.Update(ctx, existing)
+		if err := s.tenantRouteRepo.Update(ctx, existing); err != nil {
+			return err
+		}
+		s.invalidateAvailableModelsCache(organizationID)
+		return nil
 	}
 
 	// Create new official route
@@ -1106,12 +1428,14 @@ func (s *channelService) InitOfficialChannel(ctx context.Context, organizationID
 		if isUniqueConstraintViolation(err) {
 			existing, findErr := s.findOfficialRoute(ctx, organizationID)
 			if findErr == nil && existing != nil {
+				s.invalidateAvailableModelsCache(organizationID)
 				return nil
 			}
 		}
 		return err
 	}
 
+	s.invalidateAvailableModelsCache(organizationID)
 	return nil
 }
 
@@ -1175,6 +1499,7 @@ func (s *channelService) TestDraftChannelModel(ctx context.Context, organization
 	if err != nil {
 		return &dto.ChannelModelTestResult{
 			Success: false,
+			Status:  channelprovider.TestStatusFailed,
 			Message: err.Error(),
 			Model:   strings.TrimSpace(req.Model),
 		}, nil
@@ -1182,6 +1507,7 @@ func (s *channelService) TestDraftChannelModel(ctx context.Context, organization
 	if err := channelprovider.ValidateAPIKey(spec, req.APIKey); err != nil {
 		return &dto.ChannelModelTestResult{
 			Success: false,
+			Status:  channelprovider.TestStatusFailed,
 			Message: err.Error(),
 			Model:   strings.TrimSpace(req.Model),
 		}, nil
@@ -1189,21 +1515,252 @@ func (s *channelService) TestDraftChannelModel(ctx context.Context, organization
 	if err := s.ensureOllamaCustomModels(ctx, organizationID, spec.Name, req.APIBaseURL, req.APIKey, []string{req.Model}); err != nil {
 		return &dto.ChannelModelTestResult{
 			Success: false,
+			Status:  channelprovider.TestStatusFailed,
 			Message: err.Error(),
 			Model:   strings.TrimSpace(req.Model),
 		}, nil
 	}
+	if pricingResult, err := s.precheckChannelModelPricing(ctx, organizationID, spec.Name, req.Model, req.TestMethod); pricingResult != nil || err != nil {
+		return pricingResult, err
+	}
 
-	result, err := s.validator.TestModel(ctx, organizationID, spec.Name, req.APIKey, req.APIBaseURL, req.Model, req.TestMethod)
+	result, err := s.validator.TestModel(ctx, organizationID, spec.Name, req.APIKey, req.APIBaseURL, req.Model, req.TestMethod, req.Stream)
 	if err != nil {
 		return &dto.ChannelModelTestResult{
 			Success: false,
+			Status:  channelprovider.TestStatusFailed,
 			Message: err.Error(),
 			Model:   strings.TrimSpace(req.Model),
 		}, nil
 	}
 
 	return buildChannelModelTestResult(result), nil
+}
+
+type channelModelPricingTarget struct {
+	ref       gateway.PricingModelRef
+	operation gateway.PricingOperation
+	image     bool
+}
+
+func (s *channelService) precheckChannelModelPricing(ctx context.Context, organizationID uuid.UUID, channelProvider, modelName, testMethod string) (*dto.ChannelModelTestResult, error) {
+	modelName = strings.TrimSpace(modelName)
+	if modelName == "" || s == nil || s.db == nil {
+		return nil, nil
+	}
+
+	target, ok, err := s.resolveChannelModelPricingTarget(ctx, organizationID, channelProvider, modelName, testMethod)
+	if err != nil {
+		return &dto.ChannelModelTestResult{
+			Success: false,
+			Status:  channelprovider.TestStatusFailed,
+			Message: fmt.Sprintf("failed to verify model pricing: %v", err),
+			Model:   modelName,
+		}, nil
+	}
+	if !ok {
+		return nil, nil
+	}
+
+	engine := gateway.NewPricingEngine(s.db)
+	target.ref.Operation = target.operation
+	target.ref.OrganizationID = organizationID
+	if target.image {
+		n := 1
+		_, err = engine.QuoteImage(ctx, target.ref, &adapter.ImageRequest{
+			Model:  modelName,
+			Prompt: "test",
+			N:      &n,
+			Size:   "1024x1024",
+		})
+	} else {
+		completionTokens := 1
+		if target.operation == gateway.PricingOperationEmbedding || target.operation == gateway.PricingOperationRerank {
+			completionTokens = 0
+		}
+		_, err = engine.QuoteTokens(ctx, target.ref, 1, completionTokens)
+	}
+	if err == nil {
+		return nil, nil
+	}
+	if errors.Is(err, gateway.ErrPricingNotConfigured) {
+		return &dto.ChannelModelTestResult{
+			Success:    false,
+			Status:     channelprovider.TestStatusSkipped,
+			Message:    channelModelPricingNotConfiguredMessage,
+			Model:      modelName,
+			UseCase:    string(target.operation),
+			TestMethod: channelTestMethodFromPricingTarget(target),
+			Code:       channelModelPricingNotConfiguredCode,
+			Params:     channelModelPricingParams(target, channelProvider, modelName),
+		}, nil
+	}
+	return &dto.ChannelModelTestResult{
+		Success: false,
+		Status:  channelprovider.TestStatusFailed,
+		Message: fmt.Sprintf("failed to verify model pricing: %v", err),
+		Model:   modelName,
+	}, nil
+}
+
+func (s *channelService) resolveChannelModelPricingTarget(ctx context.Context, organizationID uuid.UUID, channelProvider, modelName, testMethod string) (channelModelPricingTarget, bool, error) {
+	spec, err := channelprovider.Resolve(channelProvider)
+	if err != nil {
+		return channelModelPricingTarget{}, false, nil
+	}
+
+	if s.privateModels != nil && organizationID != uuid.Nil {
+		privateModel, err := s.resolvePrivateChannelPricingModel(ctx, organizationID, spec.Name, modelName)
+		if err != nil {
+			return channelModelPricingTarget{}, false, err
+		}
+		if privateModel != nil {
+			target, ok := channelModelPricingTargetForCustomModel(privateModel, testMethod)
+			return target, ok, nil
+		}
+	}
+
+	allowCrossProvider := strings.TrimSpace(spec.Name) == openAICompatibleProviderName
+	globalModel, err := s.resolveGlobalChannelPricingModel(ctx, spec.LookupProvider, modelName, allowCrossProvider)
+	if err != nil {
+		return channelModelPricingTarget{}, false, err
+	}
+	if globalModel == nil {
+		return channelModelPricingTarget{}, false, nil
+	}
+	target, ok := channelModelPricingTargetForGlobalModel(globalModel, testMethod)
+	return target, ok, nil
+}
+
+func (s *channelService) resolvePrivateChannelPricingModel(ctx context.Context, organizationID uuid.UUID, provider, modelName string) (*llmmodelmodel.CustomModel, error) {
+	if strings.TrimSpace(provider) == openAICompatibleProviderName {
+		return s.privateModels.ResolveActiveModel(ctx, organizationID, modelName)
+	}
+	return s.privateModels.ResolveActiveModelForProvider(ctx, organizationID, provider, modelName)
+}
+
+func (s *channelService) resolveGlobalChannelPricingModel(ctx context.Context, provider, modelName string, allowCrossProvider bool) (*llmmodelmodel.LLMModel, error) {
+	if s.modelRepo == nil {
+		return nil, nil
+	}
+	if strings.TrimSpace(provider) != "" {
+		modelRecord, err := s.modelRepo.GetByProviderAndName(ctx, provider, modelName)
+		if err == nil && modelRecord != nil {
+			return modelRecord, nil
+		}
+		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, err
+		}
+	}
+	if !allowCrossProvider {
+		return nil, nil
+	}
+
+	modelRecord, err := s.modelRepo.GetByName(ctx, modelName)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return modelRecord, nil
+}
+
+func channelModelPricingTargetForGlobalModel(record *llmmodelmodel.LLMModel, testMethod string) (channelModelPricingTarget, bool) {
+	if record == nil {
+		return channelModelPricingTarget{}, false
+	}
+	useCase, err := channelprovider.InferValidationUseCase(record)
+	if err != nil {
+		return channelModelPricingTarget{}, false
+	}
+	operation, image, ok := channelTestPricingOperationForUseCase(useCase, testMethod)
+	if !ok {
+		return channelModelPricingTarget{}, false
+	}
+	return channelModelPricingTarget{
+		ref: gateway.PricingModelRef{
+			ModelID:  record.ID,
+			Source:   gateway.PricingModelSourceGlobal,
+			Provider: record.Provider,
+			Model:    record.Model,
+		},
+		operation: operation,
+		image:     image,
+	}, true
+}
+
+func channelModelPricingTargetForCustomModel(record *llmmodelmodel.CustomModel, testMethod string) (channelModelPricingTarget, bool) {
+	if record == nil {
+		return channelModelPricingTarget{}, false
+	}
+	useCase, err := channelprovider.InferValidationUseCaseFromCustomModel(record)
+	if err != nil {
+		return channelModelPricingTarget{}, false
+	}
+	operation, image, ok := channelTestPricingOperationForUseCase(useCase, testMethod)
+	if !ok {
+		return channelModelPricingTarget{}, false
+	}
+	return channelModelPricingTarget{
+		ref: gateway.PricingModelRef{
+			ModelID:  record.ID,
+			Source:   gateway.PricingModelSourceCustom,
+			Provider: record.Provider,
+			Model:    record.Name,
+		},
+		operation: operation,
+		image:     image,
+	}, true
+}
+
+func channelTestPricingOperationForUseCase(useCase, testMethod string) (gateway.PricingOperation, bool, bool) {
+	normalizedUseCase := strings.TrimSpace(useCase)
+	normalizedMethod := strings.TrimSpace(testMethod)
+	if normalizedMethod != "" {
+		method, err := channelprovider.NormalizeTestMethod(normalizedMethod)
+		if err != nil || method != normalizedUseCase {
+			return "", false, false
+		}
+	}
+	switch normalizedUseCase {
+	case "embedding":
+		return gateway.PricingOperationEmbedding, false, true
+	case "rerank":
+		return gateway.PricingOperationRerank, false, true
+	case "image-gen":
+		return gateway.PricingOperationImage, true, true
+	case "chat":
+		return gateway.PricingOperationChat, false, true
+	default:
+		return "", false, false
+	}
+}
+
+func channelModelPricingParams(target channelModelPricingTarget, channelProvider, modelName string) map[string]interface{} {
+	ref := gateway.PricingModelRef{
+		ModelID:        target.ref.ModelID,
+		OrganizationID: target.ref.OrganizationID,
+		Source:         target.ref.Source,
+		Operation:      target.operation,
+		Provider:       target.ref.Provider,
+		Model:          target.ref.Model,
+	}
+	params := gateway.PricingErrorParamsFromModelRef(ref)
+	if params["provider"] == nil && strings.TrimSpace(channelProvider) != "" {
+		params["provider"] = strings.TrimSpace(channelProvider)
+	}
+	if params["model"] == nil && strings.TrimSpace(modelName) != "" {
+		params["model"] = strings.TrimSpace(modelName)
+	}
+	return params
+}
+
+func channelTestMethodFromPricingTarget(target channelModelPricingTarget) string {
+	if target.image {
+		return "image-gen"
+	}
+	return string(target.operation)
 }
 
 func (s *channelService) DiscoverDraftChannelModels(ctx context.Context, req *dto.DiscoverDraftChannelModelsRequest) (*dto.DiscoverDraftChannelModelsResponse, error) {
@@ -1279,12 +1836,13 @@ func (s *channelService) DiscoverDraftChannelModels(ctx context.Context, req *dt
 	}, nil
 }
 
-func (s *channelService) TestChannelModel(ctx context.Context, channelID uuid.UUID, organizationID uuid.UUID, modelName string, testMethod string) (*dto.ChannelModelTestResult, error) {
+func (s *channelService) TestChannelModel(ctx context.Context, channelID uuid.UUID, organizationID uuid.UUID, modelName string, testMethod string, stream bool) (*dto.ChannelModelTestResult, error) {
 	// Get the route
 	route, err := s.tenantRouteRepo.GetByID(ctx, organizationID, channelID)
 	if err != nil {
 		return &dto.ChannelModelTestResult{
 			Success: false,
+			Status:  channelprovider.TestStatusFailed,
 			Message: fmt.Sprintf("route not found: %v", err),
 			Model:   strings.TrimSpace(modelName),
 		}, nil
@@ -1294,6 +1852,7 @@ func (s *channelService) TestChannelModel(ctx context.Context, channelID uuid.UU
 	if route.CredentialID == nil {
 		return &dto.ChannelModelTestResult{
 			Success: false,
+			Status:  channelprovider.TestStatusFailed,
 			Message: "route has no associated credential",
 			Model:   strings.TrimSpace(modelName),
 		}, nil
@@ -1303,14 +1862,19 @@ func (s *channelService) TestChannelModel(ctx context.Context, channelID uuid.UU
 	if err != nil {
 		return &dto.ChannelModelTestResult{
 			Success: false,
+			Status:  channelprovider.TestStatusFailed,
 			Message: fmt.Sprintf("failed to load credential api key: %v", err),
 			Model:   strings.TrimSpace(modelName),
 		}, nil
 	}
-	result, err := s.validator.TestModel(ctx, organizationID, route.ChannelProvider, apiKey, route.APIBaseURL, modelName, testMethod)
+	if pricingResult, err := s.precheckChannelModelPricing(ctx, organizationID, route.ChannelProvider, modelName, testMethod); pricingResult != nil || err != nil {
+		return pricingResult, err
+	}
+	result, err := s.validator.TestModel(ctx, organizationID, route.ChannelProvider, apiKey, route.APIBaseURL, modelName, testMethod, stream)
 	if err != nil {
 		return &dto.ChannelModelTestResult{
 			Success: false,
+			Status:  channelprovider.TestStatusFailed,
 			Message: fmt.Sprintf("failed to test credential: %v", err),
 			Model:   strings.TrimSpace(modelName),
 		}, nil
@@ -1320,11 +1884,14 @@ func (s *channelService) TestChannelModel(ctx context.Context, channelID uuid.UU
 }
 
 // BatchTestChannelModels tests multiple models on a channel and streams results
-func (s *channelService) BatchTestChannelModels(ctx context.Context, channelID uuid.UUID, organizationID uuid.UUID, models []string, testMethod string, resultChan chan<- *dto.BatchTestChannelModelsStreamResponse) {
+func (s *channelService) BatchTestChannelModels(ctx context.Context, channelID uuid.UUID, organizationID uuid.UUID, models []string, testMethod string, stream bool, resultChan chan<- *dto.BatchTestChannelModelsStreamResponse) {
 	defer close(resultChan)
 
+	successCount := 0
+	failureCount := 0
+	skippedCount := 0
 	for _, modelName := range models {
-		result, err := s.TestChannelModel(ctx, channelID, organizationID, modelName, testMethod)
+		result, err := s.TestChannelModel(ctx, channelID, organizationID, modelName, testMethod, stream)
 
 		response := &dto.BatchTestChannelModelsStreamResponse{
 			Model:     modelName,
@@ -1333,11 +1900,23 @@ func (s *channelService) BatchTestChannelModels(ctx context.Context, channelID u
 
 		if err != nil {
 			response.Success = false
+			response.Status = channelprovider.TestStatusFailed
 			response.Message = err.Error()
 		} else {
 			response.Success = result.Success
+			response.Status = normalizeChannelModelTestStatus(result.Status, result.Success)
 			response.Message = result.Message
 			response.ResponseTime = result.ResponseTimeMs
+			response.Code = result.Code
+			response.Params = result.Params
+		}
+		switch response.Status {
+		case channelprovider.TestStatusSuccess:
+			successCount++
+		case channelprovider.TestStatusSkipped:
+			skippedCount++
+		default:
+			failureCount++
 		}
 
 		resultChan <- response
@@ -1345,7 +1924,10 @@ func (s *channelService) BatchTestChannelModels(ctx context.Context, channelID u
 
 	// Send completion message
 	resultChan <- &dto.BatchTestChannelModelsStreamResponse{
-		Completed: true,
+		Completed:    true,
+		SuccessCount: successCount,
+		FailureCount: failureCount,
+		SkippedCount: skippedCount,
 	}
 }
 
@@ -1353,6 +1935,7 @@ func buildChannelModelTestResult(result *channelprovider.TestResult) *dto.Channe
 	if result == nil {
 		return &dto.ChannelModelTestResult{
 			Success: false,
+			Status:  channelprovider.TestStatusFailed,
 			Message: "empty validation result",
 		}
 	}
@@ -1364,11 +1947,24 @@ func buildChannelModelTestResult(result *channelprovider.TestResult) *dto.Channe
 
 	return &dto.ChannelModelTestResult{
 		Success:        result.Success,
+		Status:         normalizeChannelModelTestStatus(result.Status, result.Success),
 		Message:        result.Message,
 		Model:          result.Model,
 		UseCase:        result.UseCase,
 		TestMethod:     testMethod,
 		ResponseTimeMs: result.ResponseTimeMs,
+	}
+}
+
+func normalizeChannelModelTestStatus(status string, success bool) string {
+	switch strings.TrimSpace(status) {
+	case channelprovider.TestStatusSuccess, channelprovider.TestStatusFailed, channelprovider.TestStatusSkipped:
+		return strings.TrimSpace(status)
+	default:
+		if success {
+			return channelprovider.TestStatusSuccess
+		}
+		return channelprovider.TestStatusFailed
 	}
 }
 
@@ -1399,6 +1995,9 @@ func (s *channelService) BatchToggleRoutes(ctx context.Context, organizationID u
 
 		result.SuccessCount++
 	}
+	if result.SuccessCount > 0 {
+		s.invalidateAvailableModelsCache(organizationID)
+	}
 
 	return result, nil
 }
@@ -1422,6 +2021,9 @@ func (s *channelService) BatchDeleteRoutes(ctx context.Context, organizationID u
 		}
 
 		result.SuccessCount++
+	}
+	if result.SuccessCount > 0 {
+		s.invalidateAvailableModelsCache(organizationID)
 	}
 
 	return result, nil

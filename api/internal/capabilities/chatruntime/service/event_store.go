@@ -21,10 +21,12 @@ const (
 )
 
 type StreamEvent struct {
-	ID        string
-	EventType string
-	Payload   map[string]interface{}
-	CreatedAt int64
+	ID          string
+	EventType   string
+	Payload     map[string]interface{}
+	CreatedAt   int64
+	CreatedAtMS int64
+	Sequence    int64
 }
 
 type streamEventStore struct {
@@ -47,7 +49,9 @@ func (s *streamEventStore) append(ctx context.Context, messageID uuid.UUID, conv
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal aichat stream event payload: %w", err)
 	}
-	createdAt := time.Now().Unix()
+	now := time.Now()
+	createdAt := now.Unix()
+	createdAtMS := now.UnixMilli()
 	key := streamEventsKey(messageID)
 	id, err := s.client.XAdd(ctx, &redis.XAddArgs{
 		Stream: key,
@@ -57,15 +61,17 @@ func (s *streamEventStore) append(ctx context.Context, messageID uuid.UUID, conv
 			"event_type":      eventType,
 			"payload":         string(payloadBytes),
 			"created_at":      strconv.FormatInt(createdAt, 10),
+			"created_at_ms":   strconv.FormatInt(createdAtMS, 10),
 		},
 	}).Result()
 	if err != nil {
 		return nil, fmt.Errorf("failed to append aichat stream event: %w", err)
 	}
+	event := newStreamEvent(id, eventType, payload, createdAt, createdAtMS)
 	if err := s.client.Expire(ctx, key, streamEventTTL).Err(); err != nil {
-		return nil, fmt.Errorf("failed to refresh aichat stream event ttl: %w", err)
+		return event, fmt.Errorf("failed to refresh aichat stream event ttl: %w", err)
 	}
-	return &StreamEvent{ID: id, EventType: eventType, Payload: payload, CreatedAt: createdAt}, nil
+	return event, nil
 }
 
 func (s *streamEventStore) exists(ctx context.Context, messageID uuid.UUID) (bool, error) {
@@ -131,12 +137,90 @@ func decodeStreamEvent(message redis.XMessage) (StreamEvent, error) {
 		payload = map[string]interface{}{}
 	}
 	createdAt, _ := strconv.ParseInt(stringField(message.Values, "created_at"), 10, 64)
-	return StreamEvent{
-		ID:        message.ID,
-		EventType: eventType,
-		Payload:   payload,
-		CreatedAt: createdAt,
-	}, nil
+	createdAtMS, _ := strconv.ParseInt(stringField(message.Values, "created_at_ms"), 10, 64)
+	return *newStreamEvent(message.ID, eventType, payload, createdAt, createdAtMS), nil
+}
+
+func newStreamEvent(id string, eventType string, payload map[string]interface{}, createdAt int64, createdAtMS int64) *StreamEvent {
+	eventCreatedAtMS, sequence := streamEventIDParts(id)
+	if eventCreatedAtMS > 0 {
+		createdAtMS = eventCreatedAtMS
+		if createdAt <= 0 {
+			createdAt = eventCreatedAtMS / 1000
+		}
+	}
+	if createdAtMS <= 0 && createdAt > 0 {
+		createdAtMS = createdAt * 1000
+	}
+	if createdAt <= 0 && createdAtMS > 0 {
+		createdAt = createdAtMS / 1000
+	}
+	event := &StreamEvent{
+		ID:          id,
+		EventType:   eventType,
+		Payload:     cloneStreamEventPayload(payload),
+		CreatedAt:   createdAt,
+		CreatedAtMS: createdAtMS,
+		Sequence:    sequence,
+	}
+	event.hydratePayloadEnvelope()
+	return event
+}
+
+func (e *StreamEvent) hydratePayloadEnvelope() {
+	if e == nil {
+		return
+	}
+	if e.Payload == nil {
+		e.Payload = map[string]interface{}{}
+	}
+	if strings.TrimSpace(e.ID) != "" {
+		e.Payload["event_id"] = e.ID
+	}
+	if e.CreatedAt > 0 {
+		e.Payload["created_at"] = e.CreatedAt
+	}
+	if e.CreatedAtMS > 0 {
+		e.Payload["created_at_ms"] = e.CreatedAtMS
+	}
+	if strings.TrimSpace(e.ID) != "" {
+		e.Payload["sequence"] = e.Sequence
+	}
+}
+
+func cloneStreamEventPayload(payload map[string]interface{}) map[string]interface{} {
+	if payload == nil {
+		return map[string]interface{}{}
+	}
+	cloned := make(map[string]interface{}, len(payload)+4)
+	for key, value := range payload {
+		cloned[key] = value
+	}
+	return cloned
+}
+
+func streamEventIDParts(id string) (int64, int64) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return 0, 0
+	}
+	parts := strings.SplitN(id, "-", 2)
+	if len(parts) != 2 {
+		return 0, 0
+	}
+	createdAtMS, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil || createdAtMS <= 0 {
+		return 0, 0
+	}
+	sequenceRaw := parts[1]
+	if index := strings.Index(sequenceRaw, ":"); index >= 0 {
+		sequenceRaw = sequenceRaw[:index]
+	}
+	sequence, err := strconv.ParseInt(sequenceRaw, 10, 64)
+	if err != nil || sequence < 0 {
+		sequence = 0
+	}
+	return createdAtMS, sequence
 }
 
 func streamEventsKey(messageID uuid.UUID) string {
@@ -194,6 +278,15 @@ func (b *streamMessageEventBuffer) add(ctx context.Context, chunk string) (*Stre
 	return b.flush(ctx)
 }
 
+func fallbackStreamMessageEvent(conversationID, messageID uuid.UUID, chunk string) *StreamEvent {
+	now := time.Now()
+	return newStreamEvent("", streamEventMessage, map[string]interface{}{
+		"conversation_id": conversationID.String(),
+		"message_id":      messageID.String(),
+		"answer":          chunk,
+	}, now.Unix(), now.UnixMilli())
+}
+
 func (b *streamMessageEventBuffer) flush(ctx context.Context) (*StreamEvent, error) {
 	if b == nil || b.builder.Len() == 0 {
 		return nil, nil
@@ -202,20 +295,16 @@ func (b *streamMessageEventBuffer) flush(ctx context.Context) (*StreamEvent, err
 	b.builder.Reset()
 	b.lastFlush = time.Now()
 	if !b.store.available() {
-		return &StreamEvent{
-			EventType: streamEventMessage,
-			Payload: map[string]interface{}{
-				"conversation_id": b.conversationID.String(),
-				"message_id":      b.messageID.String(),
-				"answer":          chunk,
-			},
-			CreatedAt: time.Now().Unix(),
-		}, nil
+		return fallbackStreamMessageEvent(b.conversationID, b.messageID, chunk), nil
 	}
-	event, err := b.store.append(ctx, b.messageID, b.conversationID, streamEventMessage, map[string]interface{}{
+	payload := map[string]interface{}{
 		"conversation_id": b.conversationID.String(),
 		"message_id":      b.messageID.String(),
 		"answer":          chunk,
-	})
+	}
+	event, err := b.store.append(ctx, b.messageID, b.conversationID, streamEventMessage, payload)
+	if err != nil && event == nil {
+		return fallbackStreamMessageEvent(b.conversationID, b.messageID, chunk), err
+	}
 	return event, err
 }

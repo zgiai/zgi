@@ -6,17 +6,16 @@ import (
 
 	APIKey "github.com/zgiai/zgi/api/internal/modules/api_key"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
-	workspace_service "github.com/zgiai/zgi/api/internal/modules/workspace/service"
 	"github.com/zgiai/zgi/api/middleware"
 )
 
 // RegisterAPIKeyRoutes registers API Key management routes
-func RegisterAPIKeyRoutes(v1 *gin.RouterGroup, db *gorm.DB, accountService interfaces.AccountService, tenantService *workspace_service.WorkspaceManagementServiceImpl) {
+func RegisterAPIKeyRoutes(v1 *gin.RouterGroup, db *gorm.DB, accountService interfaces.AccountService, organizationService interfaces.OrganizationService) {
 	// Initialize repository, service and handler
 	repo := APIKey.NewAPIKeyRepository(db)
 	usageLogRepo := APIKey.NewAPIKeyUsageLogRepository(db)
 	service := APIKey.NewAPIKeyService(db)
-	handler := APIKey.NewAPIKeyHandler(service, repo, usageLogRepo)
+	handler := APIKey.NewAPIKeyHandler(service, repo, usageLogRepo, organizationService, db)
 
 	// API Key routes - register under agents
 	agentsGroup := v1.Group("/agents")

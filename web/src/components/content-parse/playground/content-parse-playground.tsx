@@ -31,6 +31,12 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useT } from '@/i18n';
+import {
+  PermissionDeniedState,
+  PermissionLoadingState,
+} from '@/components/common/permission-gate-state';
+import { WorkspaceRequiredState } from '@/components/common/workspace-required-state';
+import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
 import type { ScopedTranslations } from '@/i18n/translations';
 import { cn } from '@/lib/utils';
 import { contentParseService } from '@/services/content-parse.service';
@@ -45,6 +51,7 @@ import type {
   ParseProfile,
   ParseProviderKey,
 } from '@/services/types/content-parse';
+import { useCurrentWorkspace } from '@/store/workspace-store';
 import { DocumentPagePreview, type DocumentPreviewPage } from './document-page-preview';
 
 let pdfjsModulePromise: ReturnType<typeof createPDFJSModulePromise> | null = null;
@@ -70,6 +77,10 @@ interface OCREngineOptionView {
 
 export function ContentParsePlayground() {
   const t = useT('contentParse');
+  const currentWorkspace = useCurrentWorkspace();
+  const { hasWorkspaceAccess, isLoading: isPermissionsLoading } = useAccountPermissions();
+  const hasWorkspaceContext = Boolean(currentWorkspace?.id);
+  const canUseWorkspaceTool = hasWorkspaceContext && hasWorkspaceAccess();
   const [file, setFile] = React.useState<File | null>(null);
   const [provider, setProvider] = React.useState<ParseProviderKey>('auto');
   const [profile, setProfile] = React.useState<ParseProfile>('auto');
@@ -570,6 +581,18 @@ export function ContentParsePlayground() {
     void navigator.clipboard.writeText(url);
     toast.success(t('toast.shareCopied'));
   }, [savedRun?.share_token, t]);
+
+  if (!hasWorkspaceContext) {
+    return <WorkspaceRequiredState />;
+  }
+
+  if (isPermissionsLoading) {
+    return <PermissionLoadingState />;
+  }
+
+  if (!canUseWorkspaceTool) {
+    return <PermissionDeniedState />;
+  }
 
   const selectedProvider = providerOptions.find(item => item.value === provider);
   const isBusy = isParsing || isPending || isSaving;

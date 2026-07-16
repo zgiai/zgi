@@ -1,5 +1,6 @@
 import type { AIChatMessage } from '@/services/types/aichat';
 import type { WorkflowRunBillingError } from '@/services/types/workflow';
+import { isContinuationLikelyStartedError } from '@/components/chat/runtime/controller/chat-runtime-controller-utils';
 import {
   getWorkflowBillingErrorMessage,
   isWorkflowBillingErrorCode,
@@ -69,4 +70,8 @@ export function getAIChatMessageErrorInput(message: AIChatMessage): AIChatErrorD
     message: message.error,
     params: message.metadata?.error_params as Record<string, unknown> | undefined,
   };
+}
+
+export function isAIChatContinuationLikelyStarted(error: unknown): boolean {
+  return isContinuationLikelyStartedError(error);
 }

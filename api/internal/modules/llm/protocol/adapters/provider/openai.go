@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -152,6 +153,10 @@ func (a *OpenAIAdapter) ChatCompletionStream(ctx context.Context, request *adapt
 
 	resp, err := a.httpClient.DoStreamRequest(ctx, "POST", url, headers, a.buildChatPayload(request))
 	if err != nil {
+		var statusErr *adapter.HTTPStatusError
+		if errors.As(err, &statusErr) {
+			return nil, a.handleError(statusErr.StatusCode, statusErr.Body)
+		}
 		return nil, fmt.Errorf("stream request failed: %w", err)
 	}
 
@@ -612,38 +617,7 @@ func shouldTreatOpenAIListModelsAsCapabilityUnsupported(statusCode int, body []b
 
 // GetBalance gets balance information
 func (a *OpenAIAdapter) GetBalance(ctx context.Context, apiKey string) (*adapter.Balance, error) {
-	if a.exactURL {
-		return nil, a.unsupportedExactMetadata("balance lookup")
-	}
-
-	// OpenAI needs to call two interfaces: subscription and usage
-	subscription, err := a.getSubscription(ctx, apiKey)
-	if err != nil {
-		return nil, err
-	}
-
-	usage, err := a.getUsage(ctx, apiKey)
-	if err != nil {
-		return nil, err
-	}
-
-	total := decimal.NewFromFloat(subscription.HardLimitUSD)
-	used := decimal.NewFromFloat(usage.TotalUsage / 100.0) // cents to dollars
-	remaining := total.Sub(used)
-
-	balance := &adapter.Balance{
-		Total:     total,
-		Used:      used,
-		Remaining: remaining,
-		Currency:  "USD",
-	}
-
-	if subscription.AccessUntil > 0 {
-		expires := time.Unix(subscription.AccessUntil, 0)
-		balance.ExpiresAt = &expires
-	}
-
-	return balance, nil
+	return nil, fmt.Errorf("%w: OpenAI inference keys do not expose account balance", adapter.ErrCapabilityUnsupported)
 }
 
 type openAISubscription struct {
@@ -778,6 +752,13 @@ func handleOpenAICompatibleError(statusCode int, body []byte) error {
 
 	if err := json.Unmarshal(body, &errResp); err != nil {
 		return adapter.HandleNonJSONError(statusCode, body)
+	}
+	platformErrorCode := errResp.Error.Code
+	if platformErrorCode == "" && errResp.Error.Type == adapter.ErrorCodePlatformChannelUnavailable {
+		platformErrorCode = errResp.Error.Type
+	}
+	if platformErrorCode == adapter.ErrorCodePlatformChannelUnavailable {
+		return adapter.NewAdapterError(platformErrorCode, errResp.Error.Message, statusCode, adapter.ErrPlatformChannelUnavailable)
 	}
 
 	switch statusCode {

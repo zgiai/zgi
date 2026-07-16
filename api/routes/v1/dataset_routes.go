@@ -69,6 +69,7 @@ type DatasetRouteDeps struct {
 	GraphFlowService           *graphflow.Service
 	TaskHandlerRegistry        datasetTaskHandlerRegistry
 	ResourcePermissionService  interfaces.ResourcePermissionService
+	AuthorizationService       interfaces.AuthorizationService
 }
 
 func RegisterDatasetRoutes(router *gin.RouterGroup, deps DatasetRouteDeps) {
@@ -115,7 +116,7 @@ func RegisterDatasetRoutes(router *gin.RouterGroup, deps DatasetRouteDeps) {
 	graphFlowTaskRepoObj := graphflow_repo.NewGraphFlowTaskRepository(deps.DB)
 
 	datasetServiceObj := datasetService.NewDatasetService(datasetRepoObj, documentRepoObj, chunkRepoObj, deps.WorkspaceManagementService, fileServiceObj, embeddingService, vectorClient, deps.DefaultModelService, storageInstance, deps.DB, deps.QuotaService, deps.OrganizationService, deps.LLMClient, taskManager)
-	documentServiceObj := datasetService.NewDocumentService(documentRepoObj, datasetRepoObj, deps.WorkspaceManagementService, indexingServiceObj, fileServiceObj, vectorClient, taskManager, graphFlowTaskRepoObj)
+	documentServiceObj := datasetService.NewDocumentService(documentRepoObj, datasetRepoObj, deps.OrganizationService, indexingServiceObj, fileServiceObj, vectorClient, taskManager, graphFlowTaskRepoObj)
 
 	datasetQueryServiceObj := datasetService.NewDatasetQueryService(datasetQueryRepoObj, datasetServiceObj)
 
@@ -123,7 +124,7 @@ func RegisterDatasetRoutes(router *gin.RouterGroup, deps DatasetRouteDeps) {
 	chunkServiceObj := datasetService.NewChunkService(chunkRepoObj, documentRepoObj, deps.DB)
 	segmentServiceObj := datasetService.NewSegmentService(chunkServiceObj, datasetRepoObj, documentRepoObj, deps.DefaultModelService, deps.DB, vectorClient, deps.LLMClient, graphFlowTaskRepoObj, taskManager)
 	folderRepo := datasetRepo.NewDatasetFolderRepository(deps.DB)
-	folderService := datasetService.NewDatasetFolderService(folderRepo, deps.AccountService, deps.WorkspaceManagementService)
+	folderService := datasetService.NewDatasetFolderService(folderRepo, deps.AccountService, deps.WorkspaceManagementService, deps.OrganizationService)
 	dataLibraryAssetRepo := datalibRepo.NewDocumentAssetRepository(deps.DB)
 	dataLibraryChunkRepo := datalibRepo.NewDocumentChunkRepository(deps.DB)
 	dataLibraryEmbeddingRepo := datalibRepo.NewDocumentChunkEmbeddingRepository(deps.DB)
@@ -186,6 +187,7 @@ func RegisterDatasetRoutes(router *gin.RouterGroup, deps DatasetRouteDeps) {
 		datasetServiceObj,
 		deps.AccountService,
 		deps.OrganizationService,
+		deps.AuthorizationService,
 	)
 	segmentHandlerObj := datasetHandler.NewSegmentHandler(
 		segmentServiceObj,
@@ -193,9 +195,10 @@ func RegisterDatasetRoutes(router *gin.RouterGroup, deps DatasetRouteDeps) {
 		documentServiceObj,
 		deps.AccountService,
 		deps.OrganizationService,
+		deps.AuthorizationService,
 	)
 
-	folderHandler := datasetHandler.NewDatasetFolderHandler(datasetServiceObj, folderService, deps.WorkspaceManagementService, deps.AccountService, deps.OrganizationService, deps.ResourcePermissionService)
+	folderHandler := datasetHandler.NewDatasetFolderHandler(datasetServiceObj, folderService, deps.WorkspaceManagementService, deps.AccountService, deps.OrganizationService, deps.ResourcePermissionService, deps.AuthorizationService)
 
 	datasetHandlerObj.RegisterRoutes(router)
 	documentHandlerObj.RegisterRoutes(router)
@@ -277,6 +280,9 @@ func validateDatasetRouteDeps(deps DatasetRouteDeps) {
 	}
 	if deps.ResourcePermissionService == nil {
 		panic("dataset routes require resource permission service")
+	}
+	if deps.AuthorizationService == nil {
+		panic("dataset routes require authorization service")
 	}
 }
 

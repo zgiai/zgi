@@ -1,0 +1,237 @@
+# Workflow 工作流应用 API
+
+使用该接口从外部系统调用当前任务工作流应用的最新发布版本。
+任务工作流不保留对话上下文，适合翻译、写作、总结、结构化处理等一次性任务。
+
+<div>
+  ### Base URL
+
+<CodeGroup title="代码">
+
+```text
+{apibase}
+```
+
+</CodeGroup>
+
+### 鉴权
+
+请求必须携带 Agent API Key。推荐使用 `Authorization: Bearer`；为了兼容已有系统，也支持 `X-API-Key`。
+
+<CodeGroup title="Headers" targetCode={`Authorization: Bearer {api_key}\nX-API-Key: {api_key}`}>
+
+```text
+Authorization: Bearer {API_KEY}
+X-API-Key: {API_KEY}
+```
+
+</CodeGroup>
+
+请只在服务端保存和使用 API Key，不要暴露在浏览器代码或公开客户端中。
+
+</div>
+
+---
+
+<Heading url="/api/v1/workflows/run" method="POST" title="执行工作流" name="#Execute-Workflow" />
+
+<Row>
+  <Col>
+    执行当前 API Key 绑定应用的最新发布工作流。
+
+    ### 请求体
+
+    <Properties>
+      <Property name='inputs' type='object' propKey='inputs'>
+        必填。传入工作流开始节点定义的变量值。对象的 key 为变量名。
+      </Property>
+    </Properties>
+
+    任务工作流外部调用只公开开始节点定义的业务变量。`model`、`provider`、`files`、`user`、`response_mode` 都不是任务工作流的公开入参。运行配置由发布版本决定，响应为 streaming。
+
+    ### 流式格式
+
+    响应 `Content-Type` 为 `text/event-stream`。工作流流式事件使用 JSON data envelope：
+
+    <CodeGroup title="SSE 格式">
+    ```text {{ title: 'SSE' }}
+    data: {"event":"workflow_started","data":{"id":"run_123","workflow_id":"workflow_123","created_at":1715750400}}
+
+    data: {"event":"text_chunk","data":{"text":"你好","from_variable_selector":["answer","text"]}}
+    ```
+    </CodeGroup>
+
+    事件名在 JSON 的 `event` 字段中。该接口的业务事件通常不使用原生 `event: message`。客户端应逐行读取 `data:`，解析 JSON 后按 `event` 分发。
+
+    实时流中可能出现 `: ping` 注释保活帧；恢复流中可能出现原生 `event: ping`。这些帧只用于保持连接，业务逻辑应忽略。
+
+    ### 通用字段
+
+    <Properties>
+      <Property name='event' type='string' propKey='event'>
+        事件类型，例如 `workflow_started`、`node_started`、`text_chunk`。
+      </Property>
+      <Property name='data' type='object' propKey='data'>
+        事件载荷。不同事件和节点类型的字段不同。
+      </Property>
+      <Property name='sequence' type='number' propKey='sequence'>
+        持久化事件序号。客户端应保存最新值，并在恢复流中作为 `after` 使用。
+      </Property>
+    </Properties>
+
+    `workflow_run_id` 是排查单次运行的核心 id。实时流中通常是 `workflow_started.data.id`；后续事件可能通过 `data.id`、`data.workflow_run_id` 或运行上下文关联。
+
+    ### 事件
+
+    - `workflow_started`：工作流开始。`data.id` 即 `workflow_run_id`。
+    - `node_started`：节点开始。常见字段包括 `id`、`node_id`、`node_type`、`title`、`index`、`predecessor_node_id`、`inputs`、`created_at`、`created_at_ms`。
+    - `node_finished`：节点结束。`data.status` 可能为 `succeeded`、`failed`、`stopped`、`skipped`；常见字段包括 `outputs`、`process_data`、`execution_metadata`、`error`、`elapsed_time`、`created_at`、`finished_at`、`files`。
+    - `text_chunk`：被监听变量的增量文本输出。追加 `data.text`；`data.from_variable_selector` 标识来源变量路径。
+    - `workflow_paused`：工作流因为审批或问答输入暂停。除非恢复流开启 `continue_on_pause=true`，否则流会在该事件后结束。
+    - `approval_requested`、`approval_result_filled`、`approval_expired`：审批生命周期事件。
+    - `question_answer_requested`、`question_answer_submitted`：问答生命周期事件。
+    - `workflow_finished`：运行终态。`data.status` 可能为 `succeeded`、`failed`、`stopped`。
+    - `workflow_failed` / `workflow_stopped`：兼容终态事件。部分链路会用 `workflow_finished` 加对应 `status` 表达。
+    - `error`：流式或运行时错误。
+
+    ### 循环和迭代事件
+
+    Iteration 和 Loop 节点都是容器节点，会输出容器生命周期事件和子节点事件。
+
+    - 迭代事件：`iteration_started`、`iteration_next`、`iteration_completed`，以及兼容事件名 `iteration_succeeded`、`iteration_failed`。
+    - 循环事件：`loop_started`、`loop_next`、`loop_completed`，以及兼容事件名 `loop_succeeded`、`loop_failed`。
+    - `iteration_started` / `loop_started` 用 `data.id` 或 `data.node_id` 标识容器节点。
+    - `iteration_next` / `loop_next` 表示进入新一轮。优先使用 `data.iteration_index` 或 `data.loop_index`；没有这些字段时再使用 `data.index`。历史 loop 事件中，如果只有 `index` 且需要和子节点的零基下标对齐，可以参考前端逻辑：`index > 0` 时使用 `index - 1` 作为 round key。
+    - 子节点的 `node_started` / `node_finished` 可能在顶层或 `execution_metadata` 中携带 `iteration_id`、`iteration_index`、`loop_id`、`loop_index`。
+    - 完成事件可能包含每轮耗时，例如 `execution_metadata.iteration_duration_map`、`execution_metadata.iteration_duration_list`、`execution_metadata.loop_duration_map`。
+
+    做 UI 渲染时，可以按容器节点 id 维护 rounds map，再用 `iteration_id` / `loop_id` 和 index 将子节点挂到对应轮次，最后按 `created_at_ms` 或接收顺序排序。
+
+    ### 错误
+
+    - `400`：请求体或变量参数错误
+    - `401`：API Key 缺失、错误、已停用、已过期或已撤销
+    - `404`：应用或已发布工作流不存在
+    - `500`：服务内部错误，或工作流执行异常
+
+  </Col>
+
+  <Col sticky>
+    <CodeGroup title="请求" tag="POST" label="/api/v1/workflows/run" targetCode={`curl --location --no-buffer '{apibase}/workflows/run' \\\n--header 'Content-Type: application/json' \\\n--header 'Authorization: Bearer {api_key}' \\\n--data '{\n  "inputs": {\n    "query": "讲个笑话"\n  }\n}'`}>
+
+    ```bash {{ title: 'cURL' }}
+    curl --location --no-buffer '{apibase}/workflows/run' \
+    --header 'Content-Type: application/json' \
+    --header 'Authorization: Bearer {api_key}' \
+    --data '{
+      "inputs": {
+        "query": "讲个笑话"
+      }
+    }'
+    ```
+
+    </CodeGroup>
+
+    ### 响应示例
+
+    <CodeGroup title="响应">
+    ```text {{ title: 'SSE' }}
+    data: {"event":"workflow_started","data":{"id":"3b8f7c8e-0c1a-4c67-8a62-111111111111","workflow_id":"9f7e6d5c-2222-4333-8444-555555555555","sequence_number":1,"inputs":{"query":"讲个笑话"},"created_at":1715750400},"sequence":1}
+
+    data: {"event":"text_chunk","data":{"text":"好的，","from_variable_selector":["answer","text"]},"sequence":4}
+
+    data: {"event":"workflow_finished","data":{"id":"3b8f7c8e-0c1a-4c67-8a62-111111111111","workflow_id":"9f7e6d5c-2222-4333-8444-555555555555","status":"succeeded","outputs":{"answer":"好的，给你讲一个笑话。"},"error":null,"elapsed_time":1580.2,"total_tokens":128,"total_steps":3,"created_at":1715750400,"finished_at":1715750402},"sequence":8}
+    ```
+    </CodeGroup>
+
+  </Col>
+</Row>
+
+---
+
+<Heading
+  url="/api/v1/workflows/runs/{workflow_run_id}/events"
+  method="GET"
+  title="恢复工作流事件"
+  name="#Recover-Workflow-Events"
+/>
+
+<Row>
+  <Col>
+    断线后使用该接口回放已持久化的工作流事件，或继续监听仍在运行的工作流。
+
+    ### Query 参数
+
+    <Properties>
+      <Property name='after' type='number' propKey='after'>
+        可选。客户端最后收到的持久化 `sequence`。服务端返回序号更大的事件。
+      </Property>
+      <Property name='include_snapshot' type='boolean' propKey='include_snapshot'>
+        可选。当没有保存 `after`，但需要回放历史事件时传 `true`。如果不传 `after` 且不传 `include_snapshot=true`，服务端会从最新序号开始，只监听新事件。
+      </Property>
+      <Property name='continue_on_pause' type='boolean' propKey='continue_on_pause'>
+        可选，默认 `false`。为 `false` 时，收到 `workflow_paused` 后流结束；为 `true` 时，会继续监听后续恢复事件。
+      </Property>
+      <Property name='include_message_events' type='boolean' propKey='include_message_events'>
+        可选，默认 `false`。回放对话工作流的 `message` 片段时传 `true`；任务工作流通常不需要。
+      </Property>
+    </Properties>
+
+    ### 恢复流程
+
+    - 保存 `workflow_started.data.id` 作为 `workflow_run_id`。
+    - 保存每个持久化事件顶层的最新 `sequence`。
+    - 断线后用 `after={last_sequence}` 续拉。
+    - 如果客户端丢失了游标，使用 `include_snapshot=true` 获取历史快照。
+    - 收到 `workflow_finished` 后结束；如果未开启 `continue_on_pause`，收到 `workflow_paused` 后也结束。
+
+  </Col>
+
+  <Col sticky>
+    <CodeGroup title="恢复" tag="GET" label="/api/v1/workflows/runs/{workflow_run_id}/events" targetCode={`curl --location --no-buffer '{apibase}/workflows/runs/{workflow_run_id}/events?after={last_sequence}&include_snapshot=true&continue_on_pause=true' \\\n--header 'Authorization: Bearer {api_key}'`}>
+
+    ```bash {{ title: 'cURL' }}
+    curl --location --no-buffer '{apibase}/workflows/runs/{workflow_run_id}/events?after={last_sequence}&include_snapshot=true&continue_on_pause=true' \
+    --header 'Authorization: Bearer {api_key}'
+    ```
+
+    </CodeGroup>
+
+  </Col>
+</Row>
+
+---
+
+<Heading
+  url="/api/v1/workflows/tasks/{workflow_run_id}/stop"
+  method="POST"
+  title="停止工作流"
+  name="#Stop-Workflow"
+/>
+
+<Row>
+  <Col>
+    停止一个运行中的工作流。路径里的值使用 `workflow_started.data.id`。服务端路由内部把这个路径值命名为 `task_id`，但运行时实际期望的是 `workflow_run_id`。
+
+    该接口不需要请求体，只能停止属于当前 API Key 绑定 Agent 的工作流运行。
+
+  </Col>
+
+  <Col sticky>
+    <CodeGroup title="停止" tag="POST" label="/api/v1/workflows/tasks/{workflow_run_id}/stop" targetCode={`curl --location --request POST '{apibase}/workflows/tasks/{workflow_run_id}/stop' \\\n--header 'Authorization: Bearer {api_key}'`}>
+
+    ```bash {{ title: 'cURL' }}
+    curl --location --request POST '{apibase}/workflows/tasks/{workflow_run_id}/stop' \
+    --header 'Authorization: Bearer {api_key}'
+    ```
+
+    </CodeGroup>
+
+  </Col>
+</Row>
+
+## 注意事项
+
+- 该接口运行 API Key 绑定应用的最新发布工作流，不能调用草稿版本。
+- 请将 `workflow_run_id` 作为服务端日志、客户端日志、事件恢复和问题排查的关联 ID。
+- SSE 载荷会随节点类型、发布配置和暂停/恢复流程变化，客户端应容忍新增字段和缺失的可选字段。

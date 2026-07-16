@@ -8,6 +8,7 @@ import type {
   WebAppConversationDetail,
   WebAppConversationSearchResponse,
   WebAppPrecheckResult,
+  WebAppRuntimeCapability,
 } from './types/webapp';
 import { sanitizeModelOutputValue, wrapModelOutputSseCallbacks } from '@/utils/model-output-filter';
 import {
@@ -95,6 +96,14 @@ export class WebAppService {
     });
   }
 
+  static async getCapability(
+    webAppId: string
+  ): Promise<WebAppApiResponseData<WebAppRuntimeCapability>> {
+    return webappHttp.get<WebAppApiResponseData<WebAppRuntimeCapability>>(
+      `/console/api/webapps/${webAppId}/capability`
+    );
+  }
+
   static async precheck(
     versionUuid: string,
     payload: WebAppRunRequest
@@ -180,21 +189,26 @@ export class WebAppService {
 
   /**
    * Migrate anonymous webapp conversations into the logged-in account.
-   * POST /console/api/workflows/migrate-user
+   * POST /console/api/workflows/{web_app_id}/migrate-user
    * Body: empty. Headers:
    * - Authorization: Bearer <auth_token> (attached by default http client)
    * - X-User-Account-Id: <local webapp token>
    */
   static async migrateUser(
-    localWebAppToken: string
+    localWebAppToken: string,
+    webAppId?: string
   ): Promise<WebAppApiResponseData<{ result: 'success' | string }>> {
     const headers: Record<string, string> = {
       'X-User-Account-Id': localWebAppToken,
       'Content-Type': 'application/json',
     };
+    const normalizedWebAppId = webAppId?.trim();
+    const endpoint = normalizedWebAppId
+      ? `/console/api/workflows/${encodeURIComponent(normalizedWebAppId)}/migrate-user`
+      : `/console/api/workflows/migrate-user`;
     // Use main-site http client so it carries Authorization and refresh logic
     return http.post<WebAppApiResponseData<{ result: 'success' | string }>>(
-      `/console/api/workflows/migrate-user`,
+      endpoint,
       undefined,
       { headers }
     );

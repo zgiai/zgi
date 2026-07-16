@@ -10,6 +10,10 @@ const (
 	MaxChunkSize     = 1000
 	TempFileTenantID = "00000000-0000-0000-0000-000000000000"
 
+	// DefaultOrgInviteDefaultPassword is the self-hosted fallback password used
+	// when ZGI_ORG_INVITE_DEFAULT_PASSWORD is not configured.
+	DefaultOrgInviteDefaultPassword = "ZGI@Welcome1"
+
 	defaultServerPort = 2670
 	defaultGRPCPort   = 50051
 )
@@ -50,8 +54,13 @@ type Config struct {
 	LLMPolicyPrompt        LLMPolicyPromptConfig
 	Automation             AutomationConfig
 	Tooling                ToolingConfig
+	ChatRuntime            ChatRuntimeConfig
 
 	source *envSource
+}
+
+type ChatRuntimeConfig struct {
+	ModelIdleTimeoutSeconds int `json:"model_idle_timeout_seconds"`
 }
 
 type ServerConfig struct {
@@ -394,6 +403,9 @@ type LLMConfig struct {
 	GuardOutboundURL        bool   `json:"guard_outbound_url"`
 	GuardOutboundDNS        bool   `json:"guard_outbound_dns"`
 	AllowPrivateBaseURL     bool   `json:"allow_private_base_url"`
+	UpstreamBalancePolling  bool   `json:"upstream_balance_polling"`
+	UpstreamGuardMode       string `json:"upstream_guard_mode"`
+	UpstreamGuardPercentage int    `json:"upstream_guard_percentage"`
 
 	guardOutboundURLSet bool
 }

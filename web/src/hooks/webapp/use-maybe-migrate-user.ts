@@ -16,7 +16,7 @@ export const WEBAPP_USER_MIGRATED_EVENT = 'zgi:webapp-user-migrated';
  * - Sends X-User-Account-Id header with the local webapp token
  * - On success, removes local webapp token to prevent re-migration
  */
-export function useMaybeMigrateUser(): void {
+export function useMaybeMigrateUser(webAppId?: string): void {
   const hasRunRef = useRef<boolean>(false);
   const t = useT('agents');
   const isAuthenticated = useAuthStore.use.isAuthenticated();
@@ -25,7 +25,7 @@ export function useMaybeMigrateUser(): void {
 
   const migrateMutation = useMutation({
     mutationFn: async (localToken: string) => {
-      return WebAppService.migrateUser(localToken);
+      return WebAppService.migrateUser(localToken, webAppId);
     },
     onSuccess: () => {
       try {

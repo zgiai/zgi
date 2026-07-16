@@ -3,19 +3,26 @@
 import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
-import { Plus, RefreshCw, ShieldAlert, WandSparkles } from 'lucide-react';
+import { FlaskConical, Plus, RefreshCw, ShieldAlert, WandSparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { useT } from '@/i18n';
 import { useLocale } from '@/hooks/use-locale';
 import { usePrompts, useCreatePrompt } from '@/hooks/prompt/use-prompts';
 import { PromptFormDialog } from '@/components/prompts/prompt-form-dialog';
 import { PromptOptimizerDialog } from '@/components/prompts/prompt-optimizer-dialog';
 import { PromptPlaygroundPanel } from '@/components/prompts/prompt-playground-panel';
+import { PromptPickerDialog } from '@/components/prompts/prompt-picker-dialog';
+import {
+  promptLocaleLabelKey,
+  promptTypeLabelKey,
+} from '@/components/prompts/prompt-display-labels';
 import { useCurrentWorkspace } from '@/store/workspace-store';
 import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
+import type { PromptPickerSelection } from '@/services/types/prompt';
 
 function matchesLocale(currentLocale: string, promptLocale: string): boolean {
   const normalizedCurrent = currentLocale.trim().toLowerCase();
@@ -37,12 +44,17 @@ export default function PromptsPage() {
   const { locale } = useLocale();
   const searchParams = useSearchParams();
   const currentWorkspace = useCurrentWorkspace();
-  const { hasPermission, isLoading: isPermissionsLoading } = useAccountPermissions();
-  const canView = hasPermission('agent.view');
-  const canManage = hasPermission('agent.manage');
+  const { hasWorkspaceAccess, isLoading: isPermissionsLoading } = useAccountPermissions();
+  const canUseWorkspaceTools = Boolean(currentWorkspace?.id) && hasWorkspaceAccess();
+  const canView = canUseWorkspaceTools;
+  const canManage = canUseWorkspaceTools;
   const [keyword, setKeyword] = useState('');
   const [dialogOpen, setDialogOpen] = useState(false);
   const [optimizerOpen, setOptimizerOpen] = useState(false);
+  const [promptPickerOpen, setPromptPickerOpen] = useState(false);
+  const [playgroundSelection, setPlaygroundSelection] = useState<PromptPickerSelection | null>(
+    null
+  );
   const [activeTab, setActiveTab] = useState<'library' | 'playground'>(
     searchParams.get('tab') === 'playground' ? 'playground' : 'library'
   );
@@ -56,7 +68,11 @@ export default function PromptsPage() {
     setActiveTab('library');
   }, [searchParams]);
 
-  const { prompts, isLoading, isFetching, refetch } = usePrompts(
+  useEffect(() => {
+    setPlaygroundSelection(null);
+  }, [prefillPromptId]);
+
+  const { prompts, isLoading, isFetching, error, refetch } = usePrompts(
     {
       keyword: keyword || undefined,
       workspace_id: currentWorkspace?.id,
@@ -91,11 +107,28 @@ export default function PromptsPage() {
     );
   }
 
-  const empty = prompts.length === 0 && !isLoading;
+  const hasSearchKeyword = keyword.trim().length > 0;
+  const empty = prompts.length === 0 && !isLoading && !error;
+  const playgroundSelectionLabel = playgroundSelection
+    ? [
+        playgroundSelection.prompt.name,
+        t('library.currentVersion', {
+          version: playgroundSelection.version.version,
+        }),
+      ].join(' · ')
+    : undefined;
+  const playgroundSelectionText =
+    playgroundSelection && typeof playgroundSelection.version.content === 'string'
+      ? playgroundSelection.version.content
+      : undefined;
+  const playgroundSelectionMessages =
+    playgroundSelection && typeof playgroundSelection.version.content !== 'string'
+      ? playgroundSelection.version.content
+      : undefined;
 
   return (
     <>
-      <div className="p-4 sm:p-6 lg:p-8 space-y-6 flex flex-col h-full overflow-y-auto">
+      <div className="flex h-full flex-col space-y-6 overflow-y-auto bg-background p-4 sm:p-6 lg:p-8">
         <Tabs
           value={activeTab}
           onValueChange={value => setActiveTab(value as 'library' | 'playground')}
@@ -155,9 +188,59 @@ export default function PromptsPage() {
               <h2 className="text-lg font-semibold">{t('tabs.library')}</h2>
               <p className="text-sm text-muted-foreground">{t('tabs.libraryDescription')}</p>
             </section>
-            {empty ? (
-              <div className="rounded-xl border border-dashed p-8 text-center text-muted-foreground">
-                {t('states.empty')}
+            {error ? (
+              <Alert variant="destructive">
+                <AlertTitle>{t('states.loadFailedTitle')}</AlertTitle>
+                <AlertDescription className="space-y-3">
+                  <p>{t('states.loadFailedDescription')}</p>
+                  <p className="text-xs">{error}</p>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="w-fit"
+                    onClick={() => void refetch()}
+                    disabled={isFetching}
+                  >
+                    <RefreshCw className={`h-4 w-4 ${isFetching ? 'animate-spin' : ''}`} />
+                    {t('actions.retry')}
+                  </Button>
+                </AlertDescription>
+              </Alert>
+            ) : empty ? (
+              <div className="rounded-xl border border-dashed p-8 text-center">
+                <div className="mx-auto max-w-xl space-y-4">
+                  <div className="space-y-2">
+                    <h3 className="text-base font-semibold text-foreground">
+                      {hasSearchKeyword ? t('states.emptySearchTitle') : t('states.emptyTitle')}
+                    </h3>
+                    <p className="text-sm text-muted-foreground">
+                      {hasSearchKeyword
+                        ? t('states.emptySearchDescription')
+                        : t('states.emptyDescription')}
+                    </p>
+                  </div>
+                  <div className="flex flex-col items-center justify-center gap-2 sm:flex-row">
+                    {hasSearchKeyword ? (
+                      <Button variant="outline" onClick={() => setKeyword('')}>
+                        {t('actions.clearSearch')}
+                      </Button>
+                    ) : null}
+                    <Button variant="outline" onClick={() => setOptimizerOpen(true)}>
+                      <WandSparkles className="h-4 w-4" />
+                      {t('actions.optimizePrompt')}
+                    </Button>
+                    <Button variant="outline" onClick={() => setActiveTab('playground')}>
+                      <FlaskConical className="h-4 w-4" />
+                      {t('actions.testInPlayground')}
+                    </Button>
+                    {canManage ? (
+                      <Button onClick={() => setDialogOpen(true)}>
+                        <Plus className="h-4 w-4" />
+                        {t('actions.newPrompt')}
+                      </Button>
+                    ) : null}
+                  </div>
+                </div>
               </div>
             ) : (
               <div className="space-y-8">
@@ -169,33 +252,101 @@ export default function PromptsPage() {
                         <Badge variant="outline">{grouped[source].length}</Badge>
                       </div>
                       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-                        {grouped[source].map(prompt => (
-                          <Link
-                            key={prompt.id}
-                            href={`/console/prompts/${prompt.id}`}
-                            className="rounded-xl border p-4 hover:border-primary/40 hover:bg-muted/20 transition-colors"
-                          >
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <div className="font-medium">{prompt.name}</div>
-                              <Badge variant="outline">{prompt.locale}</Badge>
-                              <Badge variant="secondary">{prompt.latest_prompt_type}</Badge>
-                            </div>
-                            <div className="text-sm text-muted-foreground mt-2 line-clamp-2">
-                              {prompt.description || t('states.noDescription')}
-                            </div>
-                            <div className="flex items-center gap-2 flex-wrap mt-3">
-                              <Badge variant="outline">v{prompt.latest_version}</Badge>
-                              {prompt.latest_labels.map(label => (
-                                <Badge
-                                  key={label}
-                                  variant={label === 'production' ? 'default' : 'secondary'}
+                        {grouped[source].map(prompt => {
+                          const hasSingleVersion = prompt.latest_version <= 1;
+
+                          return (
+                            <div
+                              key={prompt.id}
+                              className="rounded-xl border bg-background p-4 transition-colors hover:border-primary/40 hover:bg-muted/20"
+                            >
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <Link
+                                  href={`/console/prompts/${prompt.id}`}
+                                  className="font-medium hover:underline"
                                 >
-                                  {label}
+                                  {prompt.name}
+                                </Link>
+                                <Badge variant="outline">
+                                  {t(promptLocaleLabelKey(prompt.locale))}
                                 </Badge>
-                              ))}
+                                <Badge variant="secondary">
+                                  {t(promptTypeLabelKey(prompt.latest_prompt_type))}
+                                </Badge>
+                              </div>
+                              <div className="text-sm text-muted-foreground mt-2 line-clamp-2">
+                                {prompt.description || t('states.noDescription')}
+                              </div>
+                              {hasSingleVersion ? (
+                                <div className="mt-3 rounded-md border bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
+                                  <div>{t('library.singleVersionLabel')}</div>
+                                  <div className="mt-1 font-medium text-foreground">
+                                    v{prompt.latest_version}
+                                  </div>
+                                  <div className="mt-1 leading-5">
+                                    {t('library.singleVersionDescription')}
+                                  </div>
+                                </div>
+                              ) : (
+                                <div className="mt-3 grid grid-cols-1 gap-2 text-xs text-muted-foreground sm:grid-cols-2">
+                                  <div className="rounded-md border bg-muted/20 px-3 py-2">
+                                    <div>{t('library.latestVersionLabel')}</div>
+                                    <div className="mt-1 font-medium text-foreground">
+                                      v{prompt.latest_version}
+                                    </div>
+                                  </div>
+                                  <div className="rounded-md border bg-muted/20 px-3 py-2">
+                                    <div>{t('library.onlineVersionLabel')}</div>
+                                    <div className="mt-1 font-medium text-foreground">
+                                      {prompt.production_version
+                                        ? `v${prompt.production_version}`
+                                        : t('library.onlineVersionUnset')}
+                                    </div>
+                                  </div>
+                                </div>
+                              )}
+                              <div className="flex items-center gap-2 flex-wrap mt-3">
+                                {prompt.production_version ? (
+                                  !hasSingleVersion ? (
+                                    <Badge
+                                      variant={
+                                        prompt.production_version === prompt.latest_version
+                                          ? 'secondary'
+                                          : 'outline'
+                                      }
+                                    >
+                                      {prompt.production_version === prompt.latest_version
+                                        ? t('library.onlineSameAsLatest')
+                                        : t('library.latestNotOnline')}
+                                    </Badge>
+                                  ) : null
+                                ) : (
+                                  <Badge variant="outline">{t('library.notPublished')}</Badge>
+                                )}
+                                <Badge variant="outline">
+                                  {prompt.source === 'official'
+                                    ? t('library.officialHint')
+                                    : t('library.reusableHint')}
+                                </Badge>
+                              </div>
+                              <div className="mt-4 flex flex-wrap items-center gap-2">
+                                <Button asChild size="sm" variant="outline">
+                                  <Link href={`/console/prompts/${prompt.id}`}>
+                                    {t('actions.openPrompt')}
+                                  </Link>
+                                </Button>
+                                <Button asChild size="sm" variant="ghost">
+                                  <Link
+                                    href={`/console/prompts?tab=playground&promptId=${prompt.id}`}
+                                  >
+                                    <FlaskConical className="h-4 w-4" />
+                                    {t('actions.testInPlayground')}
+                                  </Link>
+                                </Button>
+                              </div>
                             </div>
-                          </Link>
-                        ))}
+                          );
+                        })}
                       </div>
                     </section>
                   ) : null
@@ -205,11 +356,13 @@ export default function PromptsPage() {
           </TabsContent>
 
           <TabsContent value="playground" className="space-y-6">
-            <section className="space-y-1">
-              <h2 className="text-lg font-semibold">{t('tabs.playground')}</h2>
-              <p className="text-sm text-muted-foreground">{t('tabs.playgroundDescription')}</p>
-            </section>
-            <PromptPlaygroundPanel prefillPromptId={prefillPromptId || undefined} />
+            <PromptPlaygroundPanel
+              prefillPromptId={playgroundSelection?.prompt.id || prefillPromptId || undefined}
+              prefillPromptText={playgroundSelectionText}
+              prefillPromptMessages={playgroundSelectionMessages}
+              prefillPromptLabel={playgroundSelectionLabel}
+              onChoosePrompt={() => setPromptPickerOpen(true)}
+            />
           </TabsContent>
         </Tabs>
       </div>
@@ -218,11 +371,21 @@ export default function PromptsPage() {
         open={dialogOpen}
         onOpenChange={setDialogOpen}
         onSubmit={async payload => {
-          await createPrompt.mutateAsync(payload);
+          await createPrompt.mutateAsync({ data: payload });
         }}
       />
 
       <PromptOptimizerDialog open={optimizerOpen} onOpenChange={setOptimizerOpen} />
+
+      <PromptPickerDialog
+        open={promptPickerOpen}
+        onOpenChange={setPromptPickerOpen}
+        applyLabel={t('playground.useSelectedPrompt')}
+        onApply={selection => {
+          setPlaygroundSelection(selection);
+          setActiveTab('playground');
+        }}
+      />
     </>
   );
 }

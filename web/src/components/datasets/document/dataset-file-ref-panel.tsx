@@ -2,10 +2,11 @@
 
 import Link from 'next/link';
 import { usePathname, useSearchParams } from 'next/navigation';
-import { CheckCircle2, ExternalLink, HelpCircle, RefreshCcw, Trash2 } from 'lucide-react';
+import { ExternalLink, HelpCircle, RefreshCcw, Trash2 } from 'lucide-react';
 import { useT } from '@/i18n';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import { FileTypeIcon } from '@/components/files/file-type-icon';
 import { Switch } from '@/components/ui/switch';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -19,16 +20,24 @@ import {
 } from '@/components/ui/table';
 import type { DatasetFileRef } from '@/services/types/dataset';
 import { formatDate } from '@/utils/format';
+import { cn } from '@/lib/utils';
 
 interface DatasetFileRefPanelProps {
   refs: DatasetFileRef[];
   canEdit?: boolean;
+  canOpenSourceFile?: boolean;
+  canToggleEnabled?: boolean;
+  canRetry?: boolean;
+  canRemove?: boolean;
   retryingRefId?: string;
   removingRefId?: string;
   togglingRefId?: string;
+  selectedRefIds?: string[];
   onRetry?: (ref: DatasetFileRef) => void;
   onRemove?: (ref: DatasetFileRef) => void;
   onToggleEnabled?: (ref: DatasetFileRef, enabled: boolean) => void;
+  onSelectionChange?: (refIds: string[]) => void;
+  onBatchRemove?: () => void;
 }
 
 function fileExtension(name: string) {
@@ -62,17 +71,17 @@ function syncStatusLabel(t: ReturnType<typeof useT<'datasets'>>, status: string)
   }
 }
 
-function processingStatusBadgeVariant(status: string) {
+function processingStatusBadgeClassName(status: string) {
   switch (status) {
     case 'ready':
-      return 'success';
+      return 'border-success/25 bg-success/10 text-success';
     case 'parse_failed':
-      return 'destructive';
+      return 'border-destructive/25 bg-destructive/10 text-destructive';
     case 'parsing':
     case 'generating':
-      return 'info';
+      return 'border-info/25 bg-info/10 text-info';
     default:
-      return 'warning';
+      return 'border-warning/25 bg-warning/10 text-warning';
   }
 }
 
@@ -120,23 +129,77 @@ function TableHeadWithHelp({ label, tooltip }: { label: string; tooltip: string 
 export function DatasetFileRefPanel({
   refs,
   canEdit = true,
+  canOpenSourceFile = true,
+  canToggleEnabled,
+  canRetry,
+  canRemove,
   retryingRefId,
   removingRefId,
   togglingRefId,
+  selectedRefIds = [],
   onRetry,
   onRemove,
   onToggleEnabled,
+  onSelectionChange,
+  onBatchRemove,
 }: DatasetFileRefPanelProps) {
   const t = useT('datasets');
   const pathname = usePathname();
+  const canToggleEnabledAction = canToggleEnabled ?? canEdit;
+  const canRetryAction = canRetry ?? canEdit;
+  const canRemoveAction = canRemove ?? canEdit;
+  const canSelectRefs = canRemoveAction && Boolean(onSelectionChange);
   const searchParams = useSearchParams();
   const currentSearch = searchParams.toString();
   const returnTo = `${pathname}${currentSearch ? `?${currentSearch}` : ''}`;
+  const visibleRefIds = refs.map(ref => ref.id);
+  const selectedVisibleRefIds = visibleRefIds.filter(refId => selectedRefIds.includes(refId));
+  const allVisibleSelected = refs.length > 0 && selectedVisibleRefIds.length === refs.length;
+  const someVisibleSelected = selectedVisibleRefIds.length > 0 && !allVisibleSelected;
+
+  const handleSelectAll = (checked: boolean) => {
+    if (!onSelectionChange) return;
+
+    if (checked) {
+      onSelectionChange(Array.from(new Set([...selectedRefIds, ...visibleRefIds])));
+      return;
+    }
+
+    onSelectionChange(selectedRefIds.filter(refId => !visibleRefIds.includes(refId)));
+  };
+
+  const handleSelectRef = (refId: string, checked: boolean) => {
+    if (!onSelectionChange) return;
+
+    if (checked) {
+      onSelectionChange(Array.from(new Set([...selectedRefIds, refId])));
+      return;
+    }
+
+    onSelectionChange(selectedRefIds.filter(selectedRefId => selectedRefId !== refId));
+  };
 
   return (
     <div className="overflow-hidden rounded-xl border bg-background">
+      {canSelectRefs && selectedRefIds.length > 0 ? (
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b bg-muted/30 px-4 py-3">
+          <span className="text-sm text-muted-foreground">
+            {t('documents.fileRefs.selectedCount', { count: selectedRefIds.length })}
+          </span>
+          <div className="flex items-center gap-2">
+            <Button variant="ghost" size="sm" onClick={() => onSelectionChange?.([])}>
+              {t('documents.fileRefs.clearSelection')}
+            </Button>
+            <Button variant="destructive" size="sm" onClick={onBatchRemove}>
+              <Trash2 className="h-4 w-4" />
+              {t('documents.fileRefs.batchRemove')}
+            </Button>
+          </div>
+        </div>
+      ) : null}
       <Table className="min-w-[960px] table-fixed">
         <colgroup>
+          {canSelectRefs ? <col className="w-[48px]" /> : null}
           <col />
           <col className="w-[132px]" />
           <col className="w-[116px]" />
@@ -146,6 +209,16 @@ export function DatasetFileRefPanel({
         </colgroup>
         <TableHeader className="bg-muted/40">
           <TableRow className="hover:bg-muted/40">
+            {canSelectRefs ? (
+              <TableHead className="px-4">
+                <Checkbox
+                  checked={allVisibleSelected ? true : someVisibleSelected ? 'indeterminate' : false}
+                  onCheckedChange={checked => handleSelectAll(checked === true)}
+                  disabled={refs.length === 0}
+                  aria-label={t('documents.fileRefs.selectAll')}
+                />
+              </TableHead>
+            ) : null}
             <TableHead className="text-sm">{t('documents.fileRefs.fileName')}</TableHead>
             <TableHead className="text-sm">{t('documents.fileRefs.fileStatus')}</TableHead>
             <TableHead className="text-sm">
@@ -167,7 +240,10 @@ export function DatasetFileRefPanel({
         <TableBody>
           {refs.length === 0 ? (
             <TableRow>
-              <TableCell colSpan={6} className="h-40 text-center text-sm text-muted-foreground">
+              <TableCell
+                colSpan={canSelectRefs ? 7 : 6}
+                className="h-40 text-center text-sm text-muted-foreground"
+              >
                 {t('documents.fileRefs.empty')}
               </TableCell>
             </TableRow>
@@ -176,11 +252,21 @@ export function DatasetFileRefPanel({
             const isSynced = ref.sync_status === 'synced';
             const isFailed = ref.sync_status === 'failed';
             const enabled = Boolean(ref.dataset_document_enabled && isSynced);
-            const canToggle = canEdit && isSynced && Boolean(ref.dataset_document_id);
+            const canToggle =
+              canToggleEnabledAction && isSynced && Boolean(ref.dataset_document_id);
             const ext = fileExtension(ref.file_name);
 
             return (
               <TableRow key={ref.id} className="h-16 hover:bg-muted/30">
+                {canSelectRefs ? (
+                  <TableCell className="px-4">
+                    <Checkbox
+                      checked={selectedRefIds.includes(ref.id)}
+                      onCheckedChange={checked => handleSelectRef(ref.id, checked === true)}
+                      aria-label={t('documents.fileRefs.selectFile', { name: ref.file_name })}
+                    />
+                  </TableCell>
+                ) : null}
                 <TableCell className="max-w-0">
                   <div className="flex min-w-0 items-center gap-3">
                     <FileTypeIcon extension={ext} className="h-5 w-5 shrink-0" />
@@ -198,12 +284,14 @@ export function DatasetFileRefPanel({
                   </div>
                 </TableCell>
                 <TableCell>
-                  <Badge variant={processingStatusBadgeVariant(ref.processing_status)}>
-                    {ref.processing_status === 'ready' ? (
-                      <CheckCircle2 className="h-3 w-3" />
-                    ) : null}
+                  <span
+                    className={cn(
+                      'inline-flex h-5 shrink-0 items-center justify-center rounded-full border px-2 text-[12px] font-medium leading-none',
+                      processingStatusBadgeClassName(ref.processing_status)
+                    )}
+                  >
                     {processingStatusLabel(t, ref.processing_status)}
-                  </Badge>
+                  </span>
                 </TableCell>
                 <TableCell>
                   <Switch
@@ -226,15 +314,17 @@ export function DatasetFileRefPanel({
                 </TableCell>
                 <TableCell>
                   <div className="flex justify-end gap-1">
-                    <Button asChild variant="ghost" size="sm" className="h-8 px-2 text-xs">
-                      <Link
-                        href={`/console/files/${ref.file_id}?returnTo=${encodeURIComponent(returnTo)}`}
-                      >
-                        <ExternalLink className="h-3.5 w-3.5" />
-                        {t('documents.fileRefs.openFile')}
-                      </Link>
-                    </Button>
-                    {canEdit && isFailed ? (
+                    {canOpenSourceFile && ref.source_file_available ? (
+                      <Button asChild variant="ghost" size="sm" className="h-8 px-2 text-xs">
+                        <Link
+                          href={`/console/files/${ref.file_id}?returnTo=${encodeURIComponent(returnTo)}`}
+                        >
+                          <ExternalLink className="h-3.5 w-3.5" />
+                          {t('documents.fileRefs.openFile')}
+                        </Link>
+                      </Button>
+                    ) : null}
+                    {canRetryAction && isFailed ? (
                       <Button
                         variant="ghost"
                         size="sm"
@@ -246,7 +336,7 @@ export function DatasetFileRefPanel({
                         {t('documents.fileRefs.retry')}
                       </Button>
                     ) : null}
-                    {canEdit ? (
+                    {canRemoveAction ? (
                       <Button
                         variant="ghost"
                         size="sm"

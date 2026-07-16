@@ -3,12 +3,17 @@ import type { ApiResponseData } from './types/common';
 import type {
   Organization,
   OrganizationList,
+  Member,
   MemberList,
   Role,
   RoleMemberList,
   CreateRoleRequest,
   UpdateRolePermissionsRequest,
   UpdateRoleInfoRequest,
+  ApplyRoleTemplateRequest,
+  ApplyRoleTemplateResponse,
+  ReplaceAndDeleteRoleRequest,
+  ReplaceAndDeleteRoleResponse,
   DepartmentList,
   AllDepartmentMemberList,
   DirectAddMemberRequest,
@@ -17,10 +22,15 @@ import type {
   JoinRequestList,
   ResetCurrentOrgMemberPasswordRequest,
   ResetCurrentOrgMemberPasswordResponse,
+  Department,
   CreateDepartmentRequest,
   UpdateDepartmentRequest,
   CheckMemberNameResponse,
   WorkspaceAssetMovePreviewResponse,
+  WorkspaceAssetMoveEligibleTargetsRequest,
+  WorkspaceAssetMoveEligibleTargetsResponse,
+  WorkspaceAssetMoveDependencyPreviewRequest,
+  WorkspaceAssetMoveDependencyPreviewResponse,
   WorkspaceAssetMoveRequest,
   WorkspaceAssetMoveResponse,
   OrganizationUpdateRequest,
@@ -71,6 +81,14 @@ class OrganizationService extends BaseService {
       '/organizations/current/members',
       undefined,
       { params }
+    );
+    return response.data;
+  }
+
+  async getCurrentOrganizationMember(memberId: string) {
+    const response = await this.request<ApiResponseData<Member>>(
+      'get',
+      `/organizations/current/members/${memberId}`
     );
     return response.data;
   }
@@ -128,6 +146,22 @@ class OrganizationService extends BaseService {
     return response.data;
   }
 
+  async getWorkspaceAssetMoveEligibleTargets(data: WorkspaceAssetMoveEligibleTargetsRequest) {
+    const response = await this.request<ApiResponseData<WorkspaceAssetMoveEligibleTargetsResponse>>(
+      'post',
+      '/organizations/current/assets/move/eligible-targets',
+      data
+    );
+    return response.data;
+  }
+
+  async previewWorkspaceAssetMoveDependencies(data: WorkspaceAssetMoveDependencyPreviewRequest) {
+    const response = await this.request<
+      ApiResponseData<WorkspaceAssetMoveDependencyPreviewResponse>
+    >('post', '/organizations/current/assets/move/dependencies', data);
+    return response.data;
+  }
+
   async moveWorkspaceAssets(data: WorkspaceAssetMoveRequest) {
     const response = await this.request<ApiResponseData<WorkspaceAssetMoveResponse>>(
       'post',
@@ -161,10 +195,12 @@ class OrganizationService extends BaseService {
   // --- Role Management ---
 
   // Get roles for organization
-  async getRoles(organizationId: string) {
+  async getRoles(organizationId: string, params?: { includeOwner?: boolean }) {
     const response = await this.request<ApiResponseData<{ roles: Role[] }>>(
       'get',
-      `/organizations/${organizationId}/roles`
+      `/organizations/${organizationId}/roles`,
+      undefined,
+      params?.includeOwner ? { params: { include_owner: true } } : undefined
     );
     return response.data;
   }
@@ -173,7 +209,7 @@ class OrganizationService extends BaseService {
   async getRoleMembers(
     organizationId: string,
     roleId: string,
-    params?: { page?: number; limit?: number }
+    params?: { page?: number; limit?: number; keyword?: string }
   ) {
     const response = await this.request<ApiResponseData<RoleMemberList>>(
       'get',
@@ -186,7 +222,7 @@ class OrganizationService extends BaseService {
 
   // Create a new role
   async createRole(organizationId: string, data: CreateRoleRequest) {
-    const response = await this.request<ApiResponseData<{ role: Role }>>(
+    const response = await this.request<ApiResponseData<Role>>(
       'post',
       `/organizations/${organizationId}/roles`,
       data
@@ -203,6 +239,29 @@ class OrganizationService extends BaseService {
     const response = await this.request<ApiResponseData<void>>(
       'put',
       `/organizations/${organizationId}/roles/${roleId}/permissions`,
+      data
+    );
+    return response.data;
+  }
+
+  // Apply a role template snapshot to explicit workspace-member targets
+  async applyRoleTemplate(organizationId: string, roleId: string, data: ApplyRoleTemplateRequest) {
+    const response = await this.request<ApiResponseData<ApplyRoleTemplateResponse>>(
+      'post',
+      `/organizations/${organizationId}/roles/${roleId}/apply-template`,
+      data
+    );
+    return response.data;
+  }
+
+  async replaceAndDeleteRole(
+    organizationId: string,
+    roleId: string,
+    data: ReplaceAndDeleteRoleRequest
+  ) {
+    const response = await this.request<ApiResponseData<ReplaceAndDeleteRoleResponse>>(
+      'post',
+      `/organizations/${organizationId}/roles/${roleId}/replace-and-delete`,
       data
     );
     return response.data;
@@ -294,6 +353,17 @@ class OrganizationService extends BaseService {
       { params }
     );
     return response.data;
+  }
+
+  // Get the department for a member in an organization
+  async getMemberDepartment(organizationId: string, accountId: string) {
+    const response = await this.request<ApiResponseData<Department | null>>(
+      'get',
+      `/organizations/${organizationId}/departments/member/${accountId}`,
+      undefined,
+      { skipErrorHandling: true }
+    );
+    return response.data ?? null;
   }
 
   // Direct add member

@@ -640,11 +640,7 @@ func (a *CohereAdapter) ListModels(ctx context.Context, apiKey string) ([]adapte
 
 // GetBalance gets balance information (Cohere doesn't have a balance API)
 func (a *CohereAdapter) GetBalance(ctx context.Context, apiKey string) (*adapter.Balance, error) {
-	// Cohere doesn't provide a balance API
-	return &adapter.Balance{
-		IsUnlimited: true,
-		Currency:    "USD",
-	}, nil
+	return nil, fmt.Errorf("%w: Cohere does not expose a balance API", adapter.ErrCapabilityUnsupported)
 }
 
 // ValidateConfig validates configuration

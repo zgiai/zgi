@@ -1,8 +1,8 @@
 'use client';
 
 import { useState } from 'react';
-import { Database, Bot, Workflow, FileText } from 'lucide-react';
-// import { useT } from '@/i18n';
+import { BookOpen, Bot, Workflow, FileText } from 'lucide-react';
+import { useT } from '@/i18n';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -27,7 +27,7 @@ interface RelatedResourcesPopoverProps {
 function getResourceTypeIcon(type: RelatedResourceItem['type']) {
   switch (type) {
     case 'dataset':
-      return Database;
+      return BookOpen;
     case 'agent':
       return Bot;
     case 'workflow':
@@ -62,7 +62,7 @@ export function RelatedResourcesPopover({
   const [resources, setResources] = useState<RelatedResource | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // const t = useTranslations('files');
+  const t = useT('files');
   const router = useRouter();
 
   const fetchRelatedResources = async () => {
@@ -105,7 +105,7 @@ export function RelatedResourcesPopover({
         <DropdownMenuContent className="w-80 p-0" align="start">
           <div className="p-4">
             <div className="flex items-center gap-2 mb-3">
-              <h4 className="font-medium">关联项目</h4>
+              <h4 className="font-medium">{t('relatedResources.title')}</h4>
             </div>
 
             <div className="max-h-64 overflow-y-auto">
@@ -125,12 +125,12 @@ export function RelatedResourcesPopover({
                 <div className="text-center py-4">
                   <p className="text-sm text-destructive mb-2">{error}</p>
                   <Button variant="outline" size="sm" onClick={fetchRelatedResources}>
-                    重试
+                    {t('relatedResources.retry')}
                   </Button>
                 </div>
               ) : allItems.length === 0 ? (
                 <div className="text-center py-4">
-                  <p className="text-sm text-muted-foreground">暂无关联资源</p>
+                  <p className="text-sm text-muted-foreground">{t('relatedResources.empty')}</p>
                 </div>
               ) : (
                 <div className="space-y-2">
@@ -155,10 +155,10 @@ export function RelatedResourcesPopover({
                           className="text-sm text-blue-500"
                           onClick={e => {
                             e.stopPropagation();
-                            router.push(`/console/dataset/${resource.id}/documents`);
+                            router.push(`/console/dataset/${resource.id}`);
                           }}
                         >
-                          跳转
+                          {t('relatedResources.open')}
                         </Button>
                       </div>
                     );

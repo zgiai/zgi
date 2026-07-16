@@ -72,17 +72,17 @@ func NewWithChatCompletion(primaryModel, fallbackModel string, completion ChatCo
 	}
 }
 
-// ParseBytes supports PDFs and common image formats.
+// ParseBytes parses common image formats into one coherent knowledge document.
 func (c *Client) ParseBytes(ctx context.Context, filename string, data []byte, opts extractcommon.ParseOptions) (*extractcommon.DocumentResult, error) {
 	_ = opts
-	if isImageFilename(filename) {
-		doc, err := c.runImagePipeline(ctx, filename, data)
-		if err != nil {
-			return nil, err
-		}
-		return extractcommon.EnrichStructuredOutput(doc), nil
+	if !isImageFilename(filename) {
+		return nil, fmt.Errorf("vlm: unsupported non-image input %q", filename)
 	}
-	return c.ParsePDFBytes(ctx, filename, data, opts)
+	doc, err := c.runImagePipeline(ctx, filename, data)
+	if err != nil {
+		return nil, err
+	}
+	return extractcommon.EnrichStructuredOutput(doc), nil
 }
 
 func (c *Client) ParsePDFBytes(ctx context.Context, filename string, data []byte, opts extractcommon.ParseOptions) (*extractcommon.DocumentResult, error) {
@@ -200,7 +200,7 @@ func getSemaphore() chan struct{} {
 	return concurrencySem
 }
 
-const systemPrompt = `You are a PDF layout parser. Analyze this PDF and output all semantic blocks in reading order.
+const pdfLayoutPrompt = `You are a PDF layout parser. Analyze this PDF and output all semantic blocks in reading order.
 Preserve the source document language in extracted text.
 
 Return a strict JSON object only, with this shape:
@@ -227,6 +227,52 @@ Rules:
 7. Headings should set subtype by level, such as h1/h2/h3.
 8. Do not merge blocks of different types and do not drop visible content.
 9. Output only the JSON object: no code fences and no explanation.`
+
+const imageUnderstandingPrompt = `You are a high-accuracy image understanding, OCR, and knowledge-document reconstruction system.
+
+Analyze the attached IMAGE as a whole. Convert all useful visible information into ONE coherent, faithful Markdown knowledge document for search and retrieval. Do not treat the image as a PDF page and do not emit dozens of isolated layout fragments.
+
+Primary objectives, in priority order:
+1. Faithfulness: never invent text, values, relationships, arrows, labels, or conclusions that are not visible.
+2. Completeness: capture all legible text and all meaningful non-text information.
+3. Structure: preserve layout relationships such as columns, rows, sections, labels, hierarchy, adjacency, arrows, and reading order.
+4. Interpretation: explain the overall meaning and important relationships, while clearly separating interpretation from literal transcription.
+5. Retrieval quality: produce natural, self-contained text with enough context for each fact to be found later.
+
+Language and OCR rules:
+- Preserve the source language exactly. Do not translate Chinese into English or English into Chinese.
+- Preserve names, numbers, units, dates, floor numbers, codes, punctuation, and capitalization.
+- When the image is multilingual, retain every visible language without replacing one with another.
+- Mark genuinely unreadable text as [无法辨认] for primarily Chinese images or [unreadable] otherwise. Do not guess.
+- Do not output image URLs, base64 data, image Markdown placeholders, or decorative glyphs that carry no meaning.
+
+First identify the image type, then reconstruct it appropriately:
+- Flowchart or process diagram: transcribe every visible node; identify start/end, arrows, branches, decision conditions, loops, and outcomes; then explain the complete flow step by step. Never infer an edge that is not visible.
+- Table, directory, timetable, menu, or signboard: use Markdown tables or grouped lists. Keep each row/column association intact. For multi-column layouts, process each column independently before combining; never pair entries across unrelated rows or columns.
+- Chart or dashboard: capture title, axes, units, legend, series, visible values, comparisons, and trends. Distinguish directly visible values from qualitative interpretation.
+- UI screenshot or form: describe page purpose, sections, fields, controls, current values, statuses, warnings, and the visible interaction sequence.
+- Architecture, network, map, or labeled diagram: list components, labels, containment, direction, and connections, followed by an overall explanation.
+- General photograph or illustration: describe the scene, subjects, actions, spatial relationships, visible text, and the image's likely communicative purpose without speculating beyond evidence.
+
+Markdown document requirements:
+- Begin with a concise overall description of what the image is and communicates.
+- Organize the detailed transcription according to the image's real structure, not arbitrary OCR boxes.
+- Include a dedicated explanation for flows, relationships, or conclusions when the image contains them.
+- Avoid tiny standalone fragments. A floor number, label, or value must remain attached to the item it describes.
+- Avoid redundant repetition between transcription and interpretation unless repetition is needed for clarity.
+- Use headings, lists, and Markdown tables when they improve fidelity and retrieval.
+
+Return the complete knowledge document directly as Markdown. Do not wrap it in JSON or a code fence, and do not add commentary outside the document.`
+
+func buildImageUnderstandingPrompt(filename string) string {
+	filename = strings.TrimSpace(filename)
+	if filename == "" {
+		return imageUnderstandingPrompt
+	}
+	return imageUnderstandingPrompt + "\n\nSource image filename: " + filename + `.
+
+Use the filename as auxiliary document context when it contains meaningful labels, identifiers, locations, dates, departments, building names, or other metadata. If the filename provides context that is not visible in the image, include it clearly as filename-derived context. Do not let the filename override visible image content. If filename context conflicts with the image, mention the conflict instead of silently resolving it.`
+}
 
 type contentPart struct {
 	Type     string           `json:"type"`
@@ -443,7 +489,7 @@ func (c *Client) callOnce(ctx context.Context, filename string, pageDataURLs []s
 }
 
 func buildPDFPageImageContent(filename string, pageDataURLs []string) []map[string]any {
-	prompt := systemPrompt
+	prompt := pdfLayoutPrompt
 	if strings.TrimSpace(filename) != "" {
 		prompt += "\n\nThe attached images are rendered pages from PDF file: " + strings.TrimSpace(filename) + "."
 	}
@@ -469,7 +515,7 @@ func (c *Client) callImageOnce(ctx context.Context, filename string, imgData []b
 	dataURI := "data:" + mime + ";base64," + b64
 
 	userContent := []map[string]any{
-		{"type": "text", "text": systemPrompt},
+		{"type": "text", "text": buildImageUnderstandingPrompt(filename)},
 		{
 			"type": "image_url",
 			"image_url": map[string]any{
@@ -477,22 +523,37 @@ func (c *Client) callImageOnce(ctx context.Context, filename string, imgData []b
 			},
 		},
 	}
-	return c.callContentOnce(ctx, userContent, useModel, "gemini: image")
-}
-
-func (c *Client) callContentOnce(ctx context.Context, userContent []map[string]any, useModel string, label string) (*batchResult, error) {
-	content, modelUsed, finishReason, promptTokens, err := c.complete(ctx, userContent, useModel)
+	content, modelUsed, finishReason, _, err := c.complete(ctx, userContent, useModel, "")
 	if err != nil {
 		return nil, err
 	}
-	if strings.EqualFold(finishReason, "length") {
-		return nil, fmt.Errorf("%s: finish_reason=length (max_tokens=%d exceeded)", label, maxTokens())
+	if err := validateCompletionContent("gemini: image", content, finishReason); err != nil {
+		return nil, err
 	}
-	if strings.EqualFold(finishReason, "content_filter") || strings.EqualFold(finishReason, "safety") {
-		return nil, fmt.Errorf("%s: finish_reason=%s (content blocked by safety filter)", label, finishReason)
+	if modelUsed == "" {
+		modelUsed = useModel
 	}
-	if content == "" {
-		return nil, &retryableErr{inner: fmt.Errorf("%s: empty message.content (finish_reason=%s)", label, finishReason)}
+	return &batchResult{
+		Model: modelUsed,
+		Chunks: []chunkItem{
+			{
+				Type:     "text",
+				Page:     0,
+				Bbox:     []float64{0, 0, bboxScale, bboxScale},
+				Text:     content,
+				Markdown: content,
+			},
+		},
+	}, nil
+}
+
+func (c *Client) callContentOnce(ctx context.Context, userContent []map[string]any, useModel string, label string) (*batchResult, error) {
+	content, modelUsed, finishReason, promptTokens, err := c.complete(ctx, userContent, useModel, "json_object")
+	if err != nil {
+		return nil, err
+	}
+	if err := validateCompletionContent(label, content, finishReason); err != nil {
+		return nil, err
 	}
 
 	chunks, cerr := parseChunks(content)
@@ -512,13 +573,26 @@ func (c *Client) callContentOnce(ctx context.Context, userContent []map[string]a
 	return &batchResult{Model: modelUsed, Chunks: chunks}, nil
 }
 
-func (c *Client) complete(ctx context.Context, userContent []map[string]any, useModel string) (content string, modelUsed string, finishReason string, promptTokens int, err error) {
+func validateCompletionContent(label, content, finishReason string) error {
+	if strings.EqualFold(finishReason, "length") {
+		return fmt.Errorf("%s: finish_reason=length (max_tokens=%d exceeded)", label, maxTokens())
+	}
+	if strings.EqualFold(finishReason, "content_filter") || strings.EqualFold(finishReason, "safety") {
+		return fmt.Errorf("%s: finish_reason=%s (content blocked by safety filter)", label, finishReason)
+	}
+	if content == "" {
+		return &retryableErr{inner: fmt.Errorf("%s: empty message.content (finish_reason=%s)", label, finishReason)}
+	}
+	return nil
+}
+
+func (c *Client) complete(ctx context.Context, userContent []map[string]any, useModel, responseFormat string) (content string, modelUsed string, finishReason string, promptTokens int, err error) {
 	if c != nil && c.chatCompletion != nil {
 		resp, err := c.chatCompletion(ctx, ChatCompletionRequest{
 			Model:          useModel,
 			UserContent:    userContent,
 			MaxTokens:      maxTokens(),
-			ResponseFormat: "json_object",
+			ResponseFormat: responseFormat,
 		})
 		if err != nil {
 			return "", useModel, "", 0, &retryableErr{inner: err}
@@ -545,8 +619,10 @@ func (c *Client) complete(ctx context.Context, userContent []map[string]any, use
 				"content": userContent,
 			},
 		},
-		"max_tokens":      maxTokens(),
-		"response_format": map[string]any{"type": "json_object"},
+		"max_tokens": maxTokens(),
+	}
+	if responseFormat != "" {
+		reqBody["response_format"] = map[string]any{"type": responseFormat}
 	}
 	payload, err := json.Marshal(reqBody)
 	if err != nil {

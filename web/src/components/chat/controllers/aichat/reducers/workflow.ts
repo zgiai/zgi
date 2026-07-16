@@ -22,7 +22,7 @@ import {
   sortWorkflowRunItems,
   sortWorkflowRunRounds
 } from '@/utils/workflow/run-events';
-import { removeTransientProgressItems } from './shared';
+import { isStaleAIChatStreamEvent, removeTransientProgressItems } from './shared';
 
 function workflowString(value: unknown): string | undefined {
   if (typeof value === 'string' && value.trim()) return value.trim();
@@ -524,6 +524,9 @@ function applyWorkflowTimelineState(
   }
   const previousStreaming = current.streamingByMessageId[payload.message_id];
   if (!previousStreaming) {
+    return current;
+  }
+  if (isStaleAIChatStreamEvent(eventId, previousStreaming.last_event_id)) {
     return current;
   }
   return {

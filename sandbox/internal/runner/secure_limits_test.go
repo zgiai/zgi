@@ -7,7 +7,7 @@ import (
 	"github.com/zgiai/zgi-sandbox/internal/config"
 )
 
-func TestSecureRuntimeLimitsBuildBubblewrapArgs(t *testing.T) {
+func TestSecureRuntimeLimitsBuildPrlimitArgs(t *testing.T) {
 	limits := secureRuntimeLimits{
 		CPUSeconds:    3,
 		MemoryBytes:   134217728,
@@ -15,12 +15,12 @@ func TestSecureRuntimeLimitsBuildBubblewrapArgs(t *testing.T) {
 		OpenFileLimit: 32,
 	}
 
-	got := limits.bwrapArgs()
+	got := limits.prlimitArgs()
 	want := []string{
-		"--rlimit", "cpu", "3",
-		"--rlimit", "as", "134217728",
-		"--rlimit", "nproc", "16",
-		"--rlimit", "nofile", "32",
+		"--cpu=3",
+		"--as=134217728",
+		"--nproc=16",
+		"--nofile=32",
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected rlimit args:\n got: %#v\nwant: %#v", got, want)
@@ -33,10 +33,10 @@ func TestSecureRuntimeLimitsSkipDisabledValues(t *testing.T) {
 		OpenFileLimit: 8,
 	}
 
-	got := limits.bwrapArgs()
+	got := limits.prlimitArgs()
 	want := []string{
-		"--rlimit", "as", "64",
-		"--rlimit", "nofile", "8",
+		"--as=64",
+		"--nofile=8",
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected rlimit args:\n got: %#v\nwant: %#v", got, want)

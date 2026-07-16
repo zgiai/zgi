@@ -2,7 +2,7 @@ export interface AgentRuntimeRunsQuery {
   page?: number;
   limit?: number;
   triggered_from?: 'web-app' | string;
-  source?: 'webapp' | 'console' | string;
+  source?: 'webapp' | 'console' | 'external-api' | string;
   q?: string;
   conversation_id?: string;
 }
@@ -43,6 +43,7 @@ export interface AgentRuntimeRunDetail {
   model_provider?: string | null;
   model_parameters?: Record<string, unknown>;
   usage?: unknown;
+  control_metrics?: Record<string, number>;
   elapsed_time?: number;
   total_tokens?: number;
   total_steps?: number;
@@ -61,6 +62,7 @@ export type AgentRuntimeStepType =
   | 'skill_load'
   | 'reference_read'
   | 'intermediate_answer'
+  | 'final_answer'
   | 'user_input_request'
   | 'guardrail'
   | 'workflow_run'
@@ -82,6 +84,8 @@ export interface AgentRuntimeStep {
   process?: Record<string, unknown> | null;
   elapsed_time?: number;
   created_at?: number | null;
+  created_at_ms?: number | null;
   finished_at?: number | null;
+  sequence?: number | null;
   error?: string;
 }

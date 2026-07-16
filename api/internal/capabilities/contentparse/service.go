@@ -9,10 +9,24 @@ import (
 	"github.com/zgiai/zgi/api/internal/contracts"
 )
 
+type ProviderCatalogResolver func(ctx context.Context, req contracts.ParseRequest) (*contracts.ParseProviderCatalog, string, error)
+
 type Service struct {
-	orchestrator *Orchestrator
-	planner      routing.Planner
-	catalog      *contracts.ParseProviderCatalog
+	orchestrator    *Orchestrator
+	planner         routing.Planner
+	catalog         *contracts.ParseProviderCatalog
+	catalogResolver ProviderCatalogResolver
+}
+
+// SetProviderCatalogResolver configures request-scoped provider resolution for
+// consumers that need the same organization/workspace routing behavior as the
+// content-parse playground. It must be called during application wiring, before
+// the service begins handling requests.
+func (s *Service) SetProviderCatalogResolver(resolver ProviderCatalogResolver) {
+	if s == nil {
+		return
+	}
+	s.catalogResolver = resolver
 }
 
 func NewService(orchestrator *Orchestrator, planner routing.Planner, catalog *contracts.ParseProviderCatalog) contracts.ContentParseService {
@@ -39,11 +53,26 @@ func (s *Service) ParseWithRouting(ctx context.Context, req contracts.ParseReque
 		return s.Parse(ctx, req)
 	}
 
+	catalog := s.catalog
+	if s.catalogResolver != nil {
+		resolved, source, err := s.catalogResolver(ctx, req)
+		if err != nil {
+			return nil, fmt.Errorf("content parse provider catalog resolve failed: %w", err)
+		}
+		if resolved != nil {
+			catalog = resolved
+		}
+		if strings.TrimSpace(source) != "" {
+			req.Metadata = cloneParseMetadata(req.Metadata)
+			req.Metadata["provider_catalog_source"] = source
+		}
+	}
+
 	health, err := s.orchestrator.Health(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("content parse health check failed: %w", err)
 	}
-	plan, err := s.planner.Plan(req, s.catalog, health)
+	plan, err := s.planner.Plan(req, catalog, health)
 	if err != nil {
 		return nil, fmt.Errorf("content parse route plan failed: %w", err)
 	}
@@ -70,6 +99,7 @@ func (s *Service) ParseWithRouting(ctx context.Context, req contracts.ParseReque
 		if candidate.EngineName != "" {
 			attemptReq.EngineHint = candidate.EngineName
 		}
+		attemptReq.ProviderRuntime = RuntimeConfigForCandidate(catalog, candidate)
 		artifact, err := s.orchestrator.ParseWithAdapter(ctx, adapterName, attemptReq)
 		if err != nil {
 			lastErr = err
@@ -82,6 +112,14 @@ func (s *Service) ParseWithRouting(ctx context.Context, req contracts.ParseReque
 		return nil, fmt.Errorf("content parse route failed: %w", lastErr)
 	}
 	return nil, fmt.Errorf("content parse route plan has no executable provider")
+}
+
+func cloneParseMetadata(metadata map[string]any) map[string]any {
+	cloned := make(map[string]any, len(metadata)+1)
+	for key, value := range metadata {
+		cloned[key] = value
+	}
+	return cloned
 }
 
 func contentParseRouteCandidates(plan *routing.RoutePlan) []routing.RouteCandidate {

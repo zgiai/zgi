@@ -1,8 +1,12 @@
+import type { AgentResourceBoundImpact, AgentResourceImpactAgent } from './common';
+
 export interface Organization {
   id: string;
   name: string;
   short_name: string | null;
   status: 'active' | 'inactive';
+  billing_display_currency?: 'USD' | 'CNY';
+  usd_to_cny_rate?: number | string | null;
   created_at: number;
   organization_role?: 'owner' | 'admin' | 'normal';
 }
@@ -13,9 +17,11 @@ export interface OrganizationCreateRequest {
 }
 
 export interface OrganizationUpdateRequest {
-  name?: string;
+  name: string;
   short_name?: string;
   status?: 'active' | 'inactive';
+  billing_display_currency?: 'USD' | 'CNY';
+  usd_to_cny_rate?: number;
 }
 
 export type OrganizationMemberRole = 'owner' | 'admin' | 'normal';
@@ -45,7 +51,7 @@ export interface Member {
   last_login_at: number | null;
   last_login_ip: string | null;
   created_at: number;
-  status: 'active' | 'pending' | 'banned';
+  status: 'active' | 'inactive' | 'pending' | 'banned';
   organization_role?: OrganizationMemberRole;
   account_role: {
     role_type: 'system_admin' | 'normal';
@@ -74,6 +80,10 @@ export interface MemberListResponse {
 export interface Role {
   id: string;
   name: string;
+  name_i18n?: {
+    en_US?: string;
+    zh_Hans?: string;
+  };
   description?: string;
   description_i18n?: {
     en_US?: string;
@@ -81,9 +91,15 @@ export interface Role {
   };
   builtin: boolean;
   editable: boolean;
+  deletable?: boolean;
+  applicable?: boolean;
+  fixed_governance?: boolean;
+  role_kind?: 'governance' | 'permission_template' | 'legacy_builtin' | string;
+  system_key?: string;
+  template_origin?: 'custom' | 'system_default' | string;
   status: 'active' | 'inactive';
   permissions: string[];
-  member_count: number;
+  member_count?: number;
 }
 
 export interface RoleMember {
@@ -93,6 +109,7 @@ export interface RoleMember {
   avatar: string;
   avatar_url: string;
   member_name?: string;
+  workspaces?: MemberWorkspacePermission[];
 }
 
 export interface RoleMemberList {
@@ -119,20 +136,63 @@ export interface UpdateRoleInfoRequest {
   description?: string;
 }
 
+export interface MemberWorkspacePermission {
+  workspace_id: string;
+  workspace_name: string;
+  role: string;
+  role_id?: string;
+  role_name: string;
+  permissions?: string[];
+  permission_source?: string;
+  permission_template_role_id?: string;
+}
+
+export interface ApplyRoleTemplateTarget {
+  workspace_id: string;
+  account_id: string;
+}
+
+export interface ApplyRoleTemplateRequest {
+  members: ApplyRoleTemplateTarget[];
+}
+
+export interface ApplyRoleTemplateResult {
+  workspace_id: string;
+  account_id: string;
+  status: 'applied' | 'failed';
+  message?: string;
+}
+
+export interface ApplyRoleTemplateResponse {
+  applied_count: number;
+  failed_count: number;
+  results: ApplyRoleTemplateResult[];
+}
+
+export interface ReplaceAndDeleteRoleRequest {
+  replacement_role_id: string;
+}
+
+export interface ReplaceAndDeleteRoleResponse {
+  replaced_count: number;
+  failed_count: number;
+  deleted: boolean;
+  results: ApplyRoleTemplateResult[];
+}
+
 // Direct add member request
 export interface DirectAddMemberRequest {
   name: string;
   email: string;
-  workspace_id: string;
+  workspace_id?: string;
   department_id: string;
   send_email: boolean;
-  member_name?: string;
 }
 
 export interface AdminRegisterMemberRequest {
   name: string;
   email: string;
-  workspace_id: string;
+  workspace_id?: string;
   password?: string;
   department_id?: string;
 }
@@ -173,8 +233,8 @@ export interface JoinRequest {
   account_id: string;
   account_name: string;
   account_email: string;
-  department_id: string;
-  department_name: string;
+  department_id?: string;
+  department_name?: string;
   status: 'pending' | 'approved' | 'rejected' | 'expired';
   created_at: string;
 }
@@ -218,6 +278,7 @@ export interface DepartmentMember {
   account_email: string;
   avatar: string | null;
   organization_status: 'active' | 'inactive';
+  organization_role?: OrganizationMemberRole;
   joined_workspaces: JoinedWorkspace[] | null;
   group_status?: 'active' | 'inactive';
   created_at: string;
@@ -259,6 +320,8 @@ export interface AccountPermissions {
   workspace_role_name: string;
   /** List of permission strings */
   permissions: string[];
+  permission_source?: 'owner' | 'role_template' | 'direct' | 'legacy_role';
+  permission_template_role_id?: string;
 }
 
 export interface WorkspaceStatistics {
@@ -281,6 +344,9 @@ export interface WorkspaceMemberAccount {
   role: string;
   role_id: string;
   role_name: string;
+  permissions?: string[];
+  permission_source?: 'owner' | 'role_template' | 'direct' | 'legacy_role';
+  permission_template_role_id?: string;
   status: string;
   department_id: string;
   department_name: string;
@@ -293,6 +359,8 @@ export interface WorkspaceMemberRole {
   workspace_id: string;
   position?: string;
   permissions: string[];
+  permission_source?: 'owner' | 'role_template' | 'direct' | 'legacy_role';
+  permission_template_role_id?: string;
 }
 
 export interface UpdateAccountRequest {
@@ -302,14 +370,12 @@ export interface UpdateAccountRequest {
 
 export interface UpdateWorkspaceRequest {
   name?: string;
-  department_id?: string;
   leader_id?: string;
   api_key_id?: string;
 }
 
 export interface CreateWorkspaceRequest {
   name: string;
-  department_id?: string;
   leader_id?: string;
   api_key_id?: string;
 }
@@ -355,11 +421,43 @@ export interface WorkspaceAssetMoveRequest {
   target_workspace_id: string;
   target_folder_id?: string;
   items: WorkspaceAssetMoveItem[];
+  agent_binding_action?: 'unbind';
+  impact_token?: string;
+}
+
+export interface WorkspaceAssetMoveEligibleTargetsRequest {
+  items: WorkspaceAssetMoveItem[];
+  keyword?: string;
+  page?: number;
+  limit?: number;
+}
+
+export interface WorkspaceAssetMoveDependencyPreviewRequest {
+  items: WorkspaceAssetMoveItem[];
+}
+
+export interface WorkspaceAssetMoveDependencyPreviewResponse {
+  agent_binding_impact?: {
+    agents: AgentResourceImpactAgent[];
+  };
 }
 
 export interface WorkspaceAssetMoveWorkspace {
   id: string;
   name?: string;
+}
+
+export interface WorkspaceAssetMoveEligibleTarget {
+  id: string;
+  name: string;
+}
+
+export interface WorkspaceAssetMoveEligibleTargetsResponse {
+  data: WorkspaceAssetMoveEligibleTarget[];
+  page: number;
+  limit: number;
+  total: number;
+  has_more: boolean;
 }
 
 export interface WorkspaceAssetMovePreviewItem {
@@ -375,6 +473,7 @@ export interface WorkspaceAssetMovePreviewItem {
 export interface WorkspaceAssetMovePreviewResponse {
   movable: boolean;
   items: WorkspaceAssetMovePreviewItem[];
+  agent_binding_impact?: AgentResourceBoundImpact;
 }
 
 export interface WorkspaceAssetMoveResponse {

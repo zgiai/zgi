@@ -49,6 +49,73 @@ func TestUpdateOrganizationTrimsNameAndUpdatesEditableFields(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestUpdateOrganizationUpdatesBillingDisplaySettings(t *testing.T) {
+	t.Parallel()
+
+	db, mock := newOrganizationUpdateMockDB(t)
+	expectOrganizationRoleLookup(mock, "org-1", "acc-1", string(model.OrganizationRoleAdmin))
+	currency := model.BillingDisplayCurrencyCNY
+	rate := 7.2
+	repo := &stubOrganizationUpdateRepo{
+		db: db,
+		organization: &model.Organization{
+			ID:     "org-1",
+			Name:   "Old Name",
+			Status: model.OrganizationStatusActive,
+		},
+	}
+	svc := &organizationService{organizationRepo: repo}
+
+	updated, err := svc.UpdateOrganization(context.Background(), "org-1", "acc-1", &shared_dto.UpdateOrganizationRequest{
+		Name:                   "Old Name",
+		BillingDisplayCurrency: &currency,
+		USDToCNYRate:           &rate,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, model.BillingDisplayCurrencyCNY, updated.BillingDisplayCurrency)
+	updatedRate, _ := updated.USDToCNYRate.Float64()
+	require.InDelta(t, 7.2, updatedRate, 0.000001)
+	require.True(t, repo.updated)
+	require.False(t, repo.checkedName)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestUpdateOrganizationRejectsInvalidBillingDisplaySettings(t *testing.T) {
+	t.Parallel()
+
+	repo := &stubOrganizationUpdateRepo{}
+	svc := &organizationService{organizationRepo: repo}
+
+	invalidCurrency := model.BillingDisplayCurrency("EUR")
+	_, err := svc.UpdateOrganization(context.Background(), "org-1", "acc-1", &shared_dto.UpdateOrganizationRequest{
+		Name:                   "Org",
+		BillingDisplayCurrency: &invalidCurrency,
+	})
+	require.ErrorIs(t, err, ErrInvalidOrganizationBillingDisplayConfig)
+
+	invalidRate := 0.0
+	_, err = svc.UpdateOrganization(context.Background(), "org-1", "acc-1", &shared_dto.UpdateOrganizationRequest{
+		Name:         "Org",
+		USDToCNYRate: &invalidRate,
+	})
+	require.ErrorIs(t, err, ErrInvalidOrganizationBillingDisplayConfig)
+	require.False(t, repo.updated)
+}
+
+func TestCurrentOrganizationResponseUsesBillingDisplayDefaults(t *testing.T) {
+	t.Parallel()
+
+	response := currentOrganizationResponse(&model.Organization{
+		ID:     "org-1",
+		Name:   "Org",
+		Status: model.OrganizationStatusActive,
+	}, model.OrganizationRoleAdmin)
+
+	require.Equal(t, model.BillingDisplayCurrencyUSD, response.BillingDisplayCurrency)
+	require.Equal(t, float64(model.DefaultUSDToCNYRate), response.USDToCNYRate)
+}
+
 func TestUpdateOrganizationRejectsDuplicateName(t *testing.T) {
 	t.Parallel()
 
@@ -125,9 +192,10 @@ func TestUpdateCurrentOrganizationMemberRolePromotesNormalMember(t *testing.T) {
 			"member-1": {OrganizationID: "org-1", AccountID: "member-1", Role: model.OrganizationRoleNormal, Status: model.OrganizationMemberStatusActive},
 		},
 	}
+	accountService := &stubCurrentOrganizationAccountService{organizationID: "org-1"}
 	svc := &organizationService{
 		organizationRepo: repo,
-		accountService:   stubCurrentOrganizationAccountService{organizationID: "org-1"},
+		accountService:   accountService,
 	}
 
 	err := svc.UpdateCurrentOrganizationMemberRole(context.Background(), "owner-1", "member-1", model.OrganizationRoleAdmin)
@@ -135,6 +203,7 @@ func TestUpdateCurrentOrganizationMemberRolePromotesNormalMember(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, model.OrganizationRoleAdmin, repo.joins["member-1"].Role)
 	require.Equal(t, "member-1", repo.updatedJoinAccountID)
+	require.Equal(t, "member-1", accountService.invalidatedAccountID)
 }
 
 func TestUpdateCurrentOrganizationMemberRoleDemotesAdminMember(t *testing.T) {
@@ -149,7 +218,7 @@ func TestUpdateCurrentOrganizationMemberRoleDemotesAdminMember(t *testing.T) {
 	}
 	svc := &organizationService{
 		organizationRepo: repo,
-		accountService:   stubCurrentOrganizationAccountService{organizationID: "org-1"},
+		accountService:   &stubCurrentOrganizationAccountService{organizationID: "org-1"},
 	}
 
 	err := svc.UpdateCurrentOrganizationMemberRole(context.Background(), "owner-1", "admin-1", model.OrganizationRoleNormal)
@@ -171,7 +240,7 @@ func TestUpdateCurrentOrganizationMemberRoleIsIdempotent(t *testing.T) {
 	}
 	svc := &organizationService{
 		organizationRepo: repo,
-		accountService:   stubCurrentOrganizationAccountService{organizationID: "org-1"},
+		accountService:   &stubCurrentOrganizationAccountService{organizationID: "org-1"},
 	}
 
 	err := svc.UpdateCurrentOrganizationMemberRole(context.Background(), "owner-1", "admin-1", model.OrganizationRoleAdmin)
@@ -269,7 +338,7 @@ func TestUpdateCurrentOrganizationMemberRoleRejectsInvalidOperatorsAndTargets(t 
 			}
 			svc := &organizationService{
 				organizationRepo: repo,
-				accountService:   stubCurrentOrganizationAccountService{organizationID: "org-1"},
+				accountService:   &stubCurrentOrganizationAccountService{organizationID: "org-1"},
 			}
 
 			err := svc.UpdateCurrentOrganizationMemberRole(context.Background(), tt.operatorID, tt.memberID, tt.role)
@@ -352,15 +421,20 @@ func (r *stubOrganizationUpdateRepo) GetDB() *gorm.DB {
 
 type stubCurrentOrganizationAccountService struct {
 	interfaces.AccountService
-	organizationID string
-	err            error
+	organizationID       string
+	err                  error
+	invalidatedAccountID string
 }
 
-func (s stubCurrentOrganizationAccountService) EnsureCurrentOrganizationID(ctx context.Context, accountID string) (string, error) {
+func (s *stubCurrentOrganizationAccountService) EnsureCurrentOrganizationID(ctx context.Context, accountID string) (string, error) {
 	if s.err != nil {
 		return "", s.err
 	}
 	return s.organizationID, nil
+}
+
+func (s *stubCurrentOrganizationAccountService) InvalidateAccountProfileCache(accountID string) {
+	s.invalidatedAccountID = accountID
 }
 
 func newOrganizationUpdateMockDB(t *testing.T) (*gorm.DB, sqlmock.Sqlmock) {

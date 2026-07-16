@@ -16,13 +16,17 @@ max_calls_per_turn: 20
 timeout_seconds: 5
 display:
   icon: clock
-  category: productivity
+  category: general_tools
+  scenarios:
+    - general
+    - office_collaboration
+    - planning_decision
   label:
     en_US: Time
     zh_Hans: 时间
   description:
-    en_US: Looks up current time and performs timezone-aware date calculations.
-    zh_Hans: 查询当前时间，并进行带时区的日期计算。
+    en_US: Designed for current-time questions, cross-timezone coordination, deadlines, durations, and date differences; looks up reliable time data and performs timezone-aware date calculations.
+    zh_Hans: 适用于当前时间查询、跨时区协作、截止日期、时长和日期差计算，可获取可靠时间并进行带时区的日期运算。
   when_to_use:
     en_US: Use when answers depend on current time, dates, deadlines, or date differences.
     zh_Hans: 当问题依赖当前时间、日期、截止日期或日期差时启用。

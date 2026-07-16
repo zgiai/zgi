@@ -23,6 +23,7 @@ type WorkspaceManagementService interface {
 	UpdateMemberRoleWithPermissionCheck(ctx context.Context, tenant *model.Workspace, member *auth_model.Account, newRole string, operator *auth_model.Account) error
 	UpdateMemberRoleAndRoleIDWithPermissionCheck(ctx context.Context, tenant *model.Workspace, member *auth_model.Account, newRole string, roleID *string, operator *auth_model.Account) error
 	UpdateMemberCustomRoleWithPermissionCheck(ctx context.Context, tenant *model.Workspace, member *auth_model.Account, roleID string, operator *auth_model.Account) error
+	UpdateMemberDirectPermissions(ctx context.Context, workspaceID, accountID string, permissions []string) error
 	GetWorkspaceMembers(ctx context.Context, workspaceID string) ([]*AccountWithRole, error)
 	GetWorkspaceMembersPaginated(ctx context.Context, workspaceID string, page, limit int, keyword, roleFilter string) ([]*AccountWithRole, int64, error)
 	GetWorkspaceMembersWithExtensions(ctx context.Context, workspaceID string) ([]*WorkspaceMemberWithExtensionResponse, error)
@@ -71,6 +72,7 @@ type AddMemberRequest struct {
 	AccountID   string                    `json:"account_id" binding:"required"`
 	Role        model.WorkspaceMemberRole `json:"role" binding:"required"`
 	RoleID      *string                   `json:"role_id,omitempty"`
+	Permissions *[]string                 `json:"permissions,omitempty"`
 }
 
 type UpdateMemberRoleRequest struct {
@@ -80,31 +82,40 @@ type UpdateMemberRoleRequest struct {
 }
 
 type AccountWithRole struct {
-	ID           string  `json:"id"`
-	Name         string  `json:"name"`         // Display name (member_name || account_name)
-	AccountName  string  `json:"account_name"` // Original account name
-	MemberName   *string `json:"member_name"`  // Member nickname in organization
-	Avatar       string  `json:"avatar"`
-	AvatarURL    string  `json:"avatar_url"`
-	Email        string  `json:"email"`
-	LastLoginAt  *int64  `json:"last_login_at"`
-	LastActiveAt *int64  `json:"last_active_at"`
-	CreatedAt    int64   `json:"created_at"`
-	Role         string  `json:"role"`
-	RoleID       *string `json:"role_id,omitempty"`
-	Status       string  `json:"status"`
-	HasMobile    bool    `json:"has_mobile"`
+	ID                       string                                `json:"id"`
+	Name                     string                                `json:"name"`         // Display name (member_name || account_name)
+	AccountName              string                                `json:"account_name"` // Original account name
+	MemberName               *string                               `json:"member_name"`  // Member nickname in organization
+	Avatar                   string                                `json:"avatar"`
+	AvatarURL                string                                `json:"avatar_url"`
+	Email                    string                                `json:"email"`
+	LastLoginAt              *int64                                `json:"last_login_at"`
+	LastActiveAt             *int64                                `json:"last_active_at"`
+	CreatedAt                int64                                 `json:"created_at"`
+	Role                     string                                `json:"role"`
+	RoleID                   *string                               `json:"role_id,omitempty"`
+	Permissions              []string                              `json:"permissions"`
+	PermissionSource         model.WorkspaceMemberPermissionSource `json:"permission_source"`
+	PermissionTemplateRoleID *string                               `json:"permission_template_role_id,omitempty"`
+	Status                   string                                `json:"status"`
+	HasMobile                bool                                  `json:"has_mobile"`
+	DepartmentID             *string                               `json:"department_id,omitempty"`
+	DepartmentName           *string                               `json:"department_name,omitempty"`
+	OrganizationRole         string                                `json:"organization_role,omitempty"`
 }
 
 type WorkspaceMemberWithExtensionResponse struct {
-	Account          *auth_model.Account       `json:"account"`
-	Role             model.WorkspaceMemberRole `json:"role"`
-	JoinedAt         time.Time                 `json:"joined_at"`
-	Position         string                    `json:"position"`
-	Permissions      []string                  `json:"permissions"`
-	Extension        map[string]interface{}    `json:"extension"`
-	Mobile           string                    `json:"mobile"`
-	OrganizationRole string                    `json:"organization_role"`
+	Account                  *auth_model.Account                   `json:"account"`
+	Role                     model.WorkspaceMemberRole             `json:"role"`
+	RoleID                   *string                               `json:"role_id,omitempty"`
+	JoinedAt                 time.Time                             `json:"joined_at"`
+	Position                 string                                `json:"position"`
+	Permissions              []string                              `json:"permissions"`
+	PermissionSource         model.WorkspaceMemberPermissionSource `json:"permission_source"`
+	PermissionTemplateRoleID *string                               `json:"permission_template_role_id,omitempty"`
+	Extension                map[string]interface{}                `json:"extension"`
+	Mobile                   string                                `json:"mobile"`
+	OrganizationRole         string                                `json:"organization_role"`
 }
 
 type CreateMemberExtensionRequest struct {

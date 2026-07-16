@@ -79,8 +79,8 @@ func registerFileRoutesLegacy(v1 *gin.RouterGroup, deps FileRouteDeps) {
 			TaskEnqueuer:                     taskDispatcher,
 		},
 	)
-	fileResourceHandler := fileProcessHandler.NewFileResourceHandler(fileFolderService, fileService, deps.AccountService, deps.OrganizationService, fileFavoriteService, deps.DataLibraryModule.FileAssetSummaryService)
-	fileFavoriteHandler := fileProcessHandler.NewFileFavoriteHandler(fileFavoriteService, fileService, deps.AccountService)
+	fileResourceHandler := fileProcessHandler.NewFileResourceHandler(fileFolderService, fileService, deps.OrganizationService, fileFavoriteService, deps.DataLibraryModule.FileAssetSummaryService)
+	fileFavoriteHandler := fileProcessHandler.NewFileFavoriteHandler(fileFavoriteService, fileService, deps.AccountService, deps.OrganizationService)
 
 	// Create image preview handler
 	imagePreviewHandler := fileProcessHandler.NewImagePreviewHandler(fileService, deps.AccountService, deps.OrganizationService, deps.Storage)
@@ -107,6 +107,7 @@ func registerFileRoutesLegacy(v1 *gin.RouterGroup, deps FileRouteDeps) {
 		files.GET("/:file_id/chunks", fileHandler.ListFileChunks)
 		files.PATCH("/:file_id/chunks/batch", fileHandler.BatchUpdateFileChunks)
 		files.PATCH("/:file_id/chunks/:chunk_id", fileHandler.UpdateFileChunk)
+		files.DELETE("/:file_id/chunks/:chunk_id", fileHandler.DeleteFileChunk)
 		files.POST("/:file_id/qa/index", fileHandler.PrepareFileQAIndex)
 		files.POST("/:file_id/qa", fileHandler.AskFileQuestion)
 		files.POST("/:file_id/qa/stream", fileHandler.StreamFileQuestion)

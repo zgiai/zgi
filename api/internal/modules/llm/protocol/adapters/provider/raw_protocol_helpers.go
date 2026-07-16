@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -242,6 +243,7 @@ func rawOpenAIResponseStream(
 	baseURL string,
 	headers map[string]string,
 	request *adapter.RawResponseRequest,
+	handleError ...func(int, []byte) error,
 ) (<-chan adapter.RawStreamEvent, error) {
 	body, err := rawRequestBody(request.Body)
 	if err != nil {
@@ -251,6 +253,9 @@ func rawOpenAIResponseStream(
 	url := strings.TrimRight(baseURL, "/") + "/responses"
 	resp, err := httpClient.DoStreamRequest(ctx, http.MethodPost, url, headers, body)
 	if err != nil {
+		if parsed := parseRawStreamHTTPError(err, handleError); parsed != nil {
+			return nil, parsed
+		}
 		return nil, fmt.Errorf("stream request failed: %w", err)
 	}
 
@@ -293,6 +298,7 @@ func rawAnthropicMessageStream(
 	baseURL string,
 	headers map[string]string,
 	request *adapter.AnthropicMessageRequest,
+	handleError ...func(int, []byte) error,
 ) (<-chan adapter.RawStreamEvent, error) {
 	body, err := rawRequestBody(request.Body)
 	if err != nil {
@@ -302,10 +308,24 @@ func rawAnthropicMessageStream(
 	url := rawAnthropicMessagesURL(baseURL)
 	resp, err := httpClient.DoStreamRequest(ctx, http.MethodPost, url, headers, body)
 	if err != nil {
+		if parsed := parseRawStreamHTTPError(err, handleError); parsed != nil {
+			return nil, parsed
+		}
 		return nil, fmt.Errorf("stream request failed: %w", err)
 	}
 
 	return streamRawHTTPEvents(ctx, resp.Body, anthropicUsageFromRaw), nil
+}
+
+func parseRawStreamHTTPError(err error, handlers []func(int, []byte) error) error {
+	if len(handlers) == 0 || handlers[0] == nil {
+		return nil
+	}
+	var statusErr *adapter.HTTPStatusError
+	if !errors.As(err, &statusErr) {
+		return nil
+	}
+	return handlers[0](statusErr.StatusCode, statusErr.Body)
 }
 
 func rawAnthropicMessagesURL(baseURL string) string {

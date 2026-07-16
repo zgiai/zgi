@@ -18,16 +18,16 @@ type secureBwrapSpec struct {
 	ProfileEnv          map[string]string
 	ProfileHostDir      string
 	ProfileContainerDir string
-	Limits              secureRuntimeLimits
 }
 
 func buildSecureBwrapArgs(spec secureBwrapSpec) []string {
+	// Keep procfs empty so nested container runtimes cannot expose parent process metadata.
 	args := []string{
 		"--die-with-parent",
 		"--new-session",
 		"--clearenv",
 		"--ro-bind", spec.RootFS, "/",
-		"--proc", "/proc",
+		"--dir", "/proc",
 		"--dev", "/dev",
 		"--tmpfs", "/tmp",
 		"--dir", secureWorkspacePath,
@@ -43,7 +43,6 @@ func buildSecureBwrapArgs(spec secureBwrapSpec) []string {
 		"--unshare-uts",
 		"--unshare-cgroup",
 	}
-	args = append(args, spec.Limits.bwrapArgs()...)
 	for _, key := range sortedEnvKeys(spec.Env) {
 		args = append(args, "--setenv", key, spec.Env[key])
 	}

@@ -16,6 +16,7 @@ import (
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	paymentModel "github.com/zgiai/zgi/api/internal/modules/payment/model"
 	paymentRepo "github.com/zgiai/zgi/api/internal/modules/payment/repository"
+	"gorm.io/datatypes"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -42,53 +43,63 @@ type BillingService struct {
 
 // BillingContext contains billing-related information for a request
 type BillingContext struct {
-	APIKeyID          string
-	OrganizationID    string
-	DeductionID       string
-	AttemptID         string
-	QuotaSubjectType  string
-	QuotaSubjectID    string
-	AccountID         *uuid.UUID // Internal user ID when using models
-	GroupID           *uuid.UUID // Organization ID (formerly Shadow Tenant ID)
-	WorkspaceID       string
-	AppID             *uuid.UUID // App ID (agent or dataset)
-	AppType           *string    // App type: 'agent' or 'dataset'
-	SessionID         string
-	ConversationID    string
-	WorkflowID        string
-	WorkflowRunID     string
-	NodeID            string
-	NodeType          string
-	ModelID           uuid.UUID
-	ModelSource       PricingModelSource
-	ModelName         string // Model name for logging
-	ProviderID        uuid.UUID
-	ProviderName      string     // Provider name for logging
-	RouteID           *uuid.UUID // Selected route ID when the request is routed
-	ChannelID         *uuid.UUID // Tenant channel ID, nil if using system provider
-	AccountProviderID *uint      // Deprecated, kept for compatibility
-	EstimatedCredits  int64      // Estimated credits to deduct
-	ActualCredits     int64      // Actual credits used
-	PromptTokens      int
-	CompletionTokens  int
-	TotalTokens       int
-	InputCost         decimal.Decimal // Legacy: input credits consumed for logging/RPC compatibility
-	OutputCost        decimal.Decimal // Legacy: output credits consumed for logging/RPC compatibility
-	TotalCost         decimal.Decimal // Legacy: total credits consumed for logging/RPC compatibility
-	InputUSD          decimal.Decimal
-	OutputUSD         decimal.Decimal
-	TotalUSD          decimal.Decimal
-	BillingLane       UsageBillingLane
-	UseSystemProvider bool
-	IsStreaming       bool
-	RequestID         string
-	RequestCreatedAt  time.Time
-	SettledAt         time.Time
-	ResponseTime      int64 // milliseconds
-	Status            string
-	ErrorMessage      string
-	IPAddress         string
-	UserAgent         string
+	APIKeyID             string
+	OrganizationID       string
+	DeductionID          string
+	AttemptID            string
+	QuotaSubjectType     string
+	QuotaSubjectID       string
+	AccountID            *uuid.UUID // Internal user ID when using models
+	GroupID              *uuid.UUID // Organization ID (formerly Shadow Tenant ID)
+	WorkspaceID          string
+	AppID                *uuid.UUID // App ID (agent or dataset)
+	AppType              *string    // App type: 'agent' or 'dataset'
+	SessionID            string
+	ConversationID       string
+	WorkflowID           string
+	WorkflowRunID        string
+	NodeID               string
+	NodeType             string
+	ModelID              uuid.UUID
+	ModelSource          PricingModelSource
+	PricingOperation     PricingOperation
+	ModelName            string // Model name for logging
+	ProviderID           uuid.UUID
+	ProviderName         string     // Provider name for logging
+	RouteID              *uuid.UUID // Selected route ID when the request is routed
+	ChannelID            *uuid.UUID // Tenant channel ID, nil if using system provider
+	CredentialID         uuid.UUID
+	CredentialGeneration int64
+	ChannelProvider      string
+	UpstreamWouldGuard   bool
+	UpstreamHalfOpen     bool
+	AccountProviderID    *uint // Deprecated, kept for compatibility
+	EstimatedCredits     int64 // Estimated credits to deduct
+	ActualCredits        int64 // Actual credits used
+	PromptTokens         int
+	CompletionTokens     int
+	TotalTokens          int
+	InputCost            decimal.Decimal // Legacy: input credits consumed for logging/RPC compatibility
+	OutputCost           decimal.Decimal // Legacy: output credits consumed for logging/RPC compatibility
+	TotalCost            decimal.Decimal // Legacy: total credits consumed for logging/RPC compatibility
+	InputUSD             decimal.Decimal
+	OutputUSD            decimal.Decimal
+	TotalUSD             decimal.Decimal
+	PricingSource        PricingSource
+	UsageSource          UsageSource
+	PricingSnapshot      datatypes.JSON
+	LockedTokenQuote     *PricingQuote
+	BillingLane          UsageBillingLane
+	UseSystemProvider    bool
+	IsStreaming          bool
+	RequestID            string
+	RequestCreatedAt     time.Time
+	SettledAt            time.Time
+	ResponseTime         int64 // milliseconds
+	Status               string
+	ErrorMessage         string
+	IPAddress            string
+	UserAgent            string
 }
 
 // NewBillingService creates a new billing service
@@ -576,9 +587,9 @@ func (b *BillingService) deductTenantCredits(ctx context.Context, tx *gorm.DB, b
 	}
 
 	creditsToDeduct := bc.ActualCredits
-	if creditsToDeduct == 0 && (bc.PromptTokens > 0 || bc.CompletionTokens > 0) {
+	if billingContextNeedsTokenReprice(bc) {
 		quote, quoteErr := NewPricingEngine(b.db).QuoteTokens(ctx, pricingModelRefFromBillingContext(bc), bc.PromptTokens, bc.CompletionTokens)
-		err = quoteErr
+		err = wrapPricingNotConfiguredError(quoteErr)
 		if err != nil {
 			return fmt.Errorf("failed to calculate credits: %w", err)
 		}
@@ -631,6 +642,16 @@ func (b *BillingService) deductTenantCredits(ctx context.Context, tx *gorm.DB, b
 	return b.creditTxRepo.CreateBatch(ctx, transactions)
 }
 
+func billingContextNeedsTokenReprice(bc *BillingContext) bool {
+	if bc == nil || bc.ActualCredits != 0 {
+		return false
+	}
+	if bc.PromptTokens <= 0 && bc.CompletionTokens <= 0 {
+		return false
+	}
+	return bc.PricingSource == ""
+}
+
 // CalculateCost calculates the cost based on token usage and model pricing.
 func (b *BillingService) CalculateCost(
 	promptTokens, completionTokens int,
@@ -673,7 +694,7 @@ func (b *BillingService) CalculateCreditsFromTokens(
 		Source:  PricingModelSourceGlobal,
 	}, promptTokens, completionTokens)
 	if err != nil {
-		return 0, 0, 0, err
+		return 0, 0, 0, wrapPricingNotConfiguredError(err)
 	}
 	return quote.InputCredits, quote.OutputCredits, quote.TotalCredits, nil
 }
@@ -685,7 +706,7 @@ func (b *BillingService) CalculateImageCredits(req *adapter.ImageRequest, modelI
 		Source:  PricingModelSourceGlobal,
 	}, req)
 	if err != nil {
-		return 0, err
+		return 0, wrapPricingNotConfiguredError(err)
 	}
 	return quote.TotalCredits, nil
 }

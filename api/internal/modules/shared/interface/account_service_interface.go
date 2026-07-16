@@ -25,6 +25,7 @@ type AccountService interface {
 	Logout(ctx context.Context, accessToken, refreshToken string) error
 	RefreshToken(ctx context.Context, refreshToken string) (*dto.TokenResponse, error)
 	GetAccountProfile(ctx context.Context, accountID string) (*dto.AccountProfileResponse, error)
+	InvalidateAccountProfileCache(accountID string)
 	UpdateAccountProfile(ctx context.Context, accountID string, req *dto.UpdateProfileRequest) error
 	ActivateCheck(ctx context.Context, workspaceID, email, token string) (map[string]interface{}, bool)
 	Activate(ctx context.Context, workspaceID, email, token, name, password, lang, timezone string) (interface{}, error)
@@ -97,6 +98,7 @@ type AccountService interface {
 	IsEditor(ctx context.Context, accountID string) (bool, error)
 
 	GetAccountContext(ctx context.Context, accountID string) (*auth_model.AccountContext, error)
+	GetAccountCapabilities(ctx context.Context, accountID string) (*dto.AccountCapabilitiesResponse, error)
 	UpdateAccountContext(ctx context.Context, accountID string, organizationID, workspaceID *string) (*auth_model.AccountContext, error)
 	EnsureAccountContextForWorkspace(ctx context.Context, accountID, organizationID, workspaceID string) (*auth_model.AccountContext, bool, error)
 

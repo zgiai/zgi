@@ -21,6 +21,12 @@ import { useCurrentUser } from '@/store/auth-store';
 import { getLastSelectedAiModel, saveLastSelectedAiModel } from '@/utils/ui-local';
 import { TABLE_INGEST_ALL_EXTENSIONS } from '@/components/db/table-ingest/file-support';
 import { useTableIngestLeaveGuard } from '@/components/db/table-ingest/use-table-ingest-leave-guard';
+import {
+  PermissionDeniedState,
+  PermissionLoadingState,
+} from '@/components/common/permission-gate-state';
+import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
+import { DATABASE_PERMISSION_ACTIONS } from '@/constants/permissions';
 
 interface PageProps {
   params: Promise<{ dbId: string; tableId: string }>;
@@ -32,6 +38,15 @@ export default function DbTableDataIngestPage({ params }: PageProps) {
   const { dbId, tableId } = use(params);
   const t = useT();
   const router = useRouter();
+  const { hasAnyPermission, isLoading: isPermissionsLoading } = useAccountPermissions();
+  const canAnalyzeImport = hasAnyPermission(DATABASE_PERMISSION_ACTIONS.importAnalyze);
+  const canCreateRecord = hasAnyPermission(DATABASE_PERMISSION_ACTIONS.recordCreate);
+  const canUseSmartIngest = canAnalyzeImport && canCreateRecord;
+  const canViewTablePrompt = hasAnyPermission([
+    ...DATABASE_PERMISSION_ACTIONS.tablePromptView,
+    ...DATABASE_PERMISSION_ACTIONS.tablePromptManage,
+  ]);
+  const canManageTablePrompt = hasAnyPermission(DATABASE_PERMISSION_ACTIONS.tablePromptManage);
 
   const [step, setStep] = useState<Step>(1);
   const [selectedFiles, setSelectedFiles] = useState<FileItem[]>([]);
@@ -104,6 +119,14 @@ export default function DbTableDataIngestPage({ params }: PageProps) {
     [user?.id]
   );
 
+  if (isPermissionsLoading) {
+    return <PermissionLoadingState />;
+  }
+
+  if (!canUseSmartIngest) {
+    return <PermissionDeniedState />;
+  }
+
   return (
     <div className="p-4 h-full flex flex-col w-full overflow-hidden">
       {/* Header with back button */}
@@ -143,13 +166,15 @@ export default function DbTableDataIngestPage({ params }: PageProps) {
               </div>
             </div>
           )}
-          <Button
-            className="bg-highlight hover:bg-highlight/90"
-            onClick={() => setPromptOpen(true)}
-          >
-            <Sparkles className="h-4 w-4" />
-            {t('dbs.promptDialog.title')}
-          </Button>
+          {canViewTablePrompt && (
+            <Button
+              className="bg-highlight hover:bg-highlight/90"
+              onClick={() => setPromptOpen(true)}
+            >
+              <Sparkles className="h-4 w-4" />
+              {t('dbs.promptDialog.title')}
+            </Button>
+          )}
         </div>
       </div>
 
@@ -185,6 +210,7 @@ export default function DbTableDataIngestPage({ params }: PageProps) {
         onOpenChange={setPromptOpen}
         dbId={dbId}
         tableId={tableId}
+        readOnly={!canManageTablePrompt}
       />
       {leaveGuardDialog}
     </div>

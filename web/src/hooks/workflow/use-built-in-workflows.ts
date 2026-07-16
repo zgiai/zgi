@@ -17,6 +17,7 @@ import {
   findBuiltInWorkflowByScenario,
 } from '@/utils/workflow/built-in-workflows';
 import { WORKFLOW_KEYS } from '@/hooks/query-keys';
+import { useAccountCapabilities } from '@/hooks/use-account-capabilities';
 
 /* -------------------------------------------------------------------------- */
 /* Query-key helpers                                                          */
@@ -62,6 +63,12 @@ export function useBuiltInWorkflows({
   gcTime = 7 * 24 * 60 * 60 * 1000, // 1 week
   refetchOnWindowFocus = false,
 }: UseBuiltInWorkflowsOptions = {}): UseBuiltInWorkflowsReturn {
+  const {
+    canUseRuntimeResourceList,
+    isLoading: isCapabilitiesLoading,
+    isFetching: isCapabilitiesFetching,
+  } = useAccountCapabilities();
+  const resourceListEnabled = canUseRuntimeResourceList('built_in_workflows');
   // Check if cache exists
   const cachedData = useMemo(() => getCachedBuiltInWorkflows(), []);
   // Validate cache: must not be empty and must contain workflows required by console entrypoints.
@@ -72,6 +79,7 @@ export function useBuiltInWorkflows({
       cachedData.some(w => w.scenario === scenario)
     );
   }, [cachedData]);
+  const canUseCachedData = enabled && resourceListEnabled && hasCachedData;
 
   const { data, isLoading, isFetching, error, refetch } = useQuery<
     ApiResponseData<BuiltInWorkflowList>,
@@ -79,14 +87,14 @@ export function useBuiltInWorkflows({
   >({
     queryKey: getBuiltInWorkflowsKey(),
     queryFn: () => workflowService.getBuiltInWorkflows(),
-    enabled: enabled && !hasCachedData,
+    enabled: enabled && resourceListEnabled && !hasCachedData,
     staleTime,
     gcTime,
     refetchOnWindowFocus,
     retry: false,
     // Initialize with cached data ONLY if valid
     initialData:
-      hasCachedData && cachedData
+      canUseCachedData && cachedData
         ? ({
             code: '0',
             message: 'success',
@@ -98,21 +106,30 @@ export function useBuiltInWorkflows({
   // Cache successful API response
   useEffect(() => {
     const workflows = data?.data;
-    if (workflows && Array.isArray(workflows) && workflows.length > 0 && !hasCachedData) {
+    if (
+      resourceListEnabled &&
+      workflows &&
+      Array.isArray(workflows) &&
+      workflows.length > 0 &&
+      !hasCachedData
+    ) {
       saveBuiltInWorkflows(workflows);
     }
-  }, [data, hasCachedData]);
+  }, [data, hasCachedData, resourceListEnabled]);
 
   // Side-effect error toast
   useEffect(() => {
-    if (!error) return;
+    if (!resourceListEnabled || !error) return;
     const message = getErrorMessage(error);
     toast.error(message || 'loadFailed');
-  }, [error]);
+  }, [error, resourceListEnabled]);
 
   const workflows: BuiltInWorkflowList = useMemo(
-    () => data?.data ?? cachedData ?? [],
-    [data, cachedData]
+    () => {
+      if (!resourceListEnabled) return [];
+      return data?.data ?? cachedData ?? [];
+    },
+    [data, cachedData, resourceListEnabled]
   );
 
   const getByScenario = useMemo(
@@ -126,9 +143,10 @@ export function useBuiltInWorkflows({
 
   return {
     workflows,
-    isLoading: isLoading && !hasCachedData,
-    isFetching,
-    error: error ? ((error as { message?: string }).message ?? 'error') : null,
+    isLoading: enabled && isCapabilitiesLoading ? true : isLoading && !hasCachedData,
+    isFetching: (enabled && isCapabilitiesFetching) || isFetching,
+    error:
+      resourceListEnabled && error ? ((error as { message?: string }).message ?? 'error') : null,
     refetch,
     getByScenario,
     biChatWorkflow,

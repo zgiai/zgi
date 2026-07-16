@@ -180,9 +180,13 @@ func providerRuntimeReady(item *model.ProviderConfig, provider contracts.ParsePr
 		return true
 	}
 	if provider.Name == "reducto" || provider.Engine == contracts.ParseEngineReducto {
-		return strings.TrimSpace(envOverrides["REDUCTO_API_KEY"]) != ""
+		return strings.TrimSpace(envOverrides["REDUCTO_API_KEY"]) != "" &&
+			strings.EqualFold(metadataString(item.Metadata, parserValidationStatusKey), ParserValidationSuccess)
 	}
 	if provider.Name == "mineru" || provider.Engine == contracts.ParseEngineMineru {
+		if !strings.EqualFold(metadataString(item.Metadata, parserValidationStatusKey), ParserValidationSuccess) {
+			return false
+		}
 		mode := strings.ToLower(strings.TrimSpace(metadataString(item.Metadata, "mode")))
 		if mode == "official" {
 			return strings.TrimSpace(envOverrides["MINERU_OFFICIAL_TOKEN"]) != ""

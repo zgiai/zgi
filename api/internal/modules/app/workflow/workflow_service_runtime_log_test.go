@@ -26,6 +26,7 @@ type mockWorkflowNodeRuntimeLogRepo struct {
 	updateProcessDataValue *string
 	updateMetadataValue    *string
 	updateElapsedTime      float64
+	logsByID               map[string]*WorkflowNodeRuntimeLog
 	logsByWorkflowRunID    []WorkflowNodeRuntimeLog
 	logByNodeExecutionID   *WorkflowNodeRuntimeLog
 	createdLogs            []WorkflowNodeRuntimeLog
@@ -40,6 +41,12 @@ func (m *mockWorkflowNodeRuntimeLogRepo) Create(ctx context.Context, log *Workfl
 }
 
 func (m *mockWorkflowNodeRuntimeLogRepo) GetByID(ctx context.Context, id string) (*WorkflowNodeRuntimeLog, error) {
+	if m.logsByID != nil {
+		if log, ok := m.logsByID[id]; ok {
+			return log, nil
+		}
+		return nil, errors.New("workflow node runtime log not found")
+	}
 	return &WorkflowNodeRuntimeLog{ID: id}, nil
 }
 
@@ -178,6 +185,8 @@ func (m *mockWorkflowRepository) GetPublishedVersions(ctx context.Context, agent
 
 type mockWorkflowRunLogRepo struct {
 	createErr         error
+	runsByID          map[string]*WorkflowRunLog
+	getByIDCalls      int
 	createdLogs       []WorkflowRunLog
 	statusID          string
 	statusValue       string
@@ -185,6 +194,10 @@ type mockWorkflowRunLogRepo struct {
 	outputsValue      string
 	outputsElapsed    float64
 	outputsTotalToken int64
+	runtimeLogsCalled int
+	lastRuntimeFilter WorkflowRunLogFilter
+	lastRuntimePage   int
+	lastRuntimeLimit  int
 }
 
 func (m *mockWorkflowRunLogRepo) Create(ctx context.Context, log *WorkflowRunLog) error {
@@ -199,6 +212,13 @@ func (m *mockWorkflowRunLogRepo) Create(ctx context.Context, log *WorkflowRunLog
 }
 
 func (m *mockWorkflowRunLogRepo) GetByID(ctx context.Context, id string) (*WorkflowRunLog, error) {
+	m.getByIDCalls++
+	if m.runsByID != nil {
+		if run, ok := m.runsByID[id]; ok {
+			return run, nil
+		}
+		return nil, errors.New("workflow run log not found")
+	}
 	for _, log := range m.createdLogs {
 		if log.ID == id {
 			return &log, nil
@@ -250,6 +270,10 @@ func (m *mockWorkflowRunLogRepo) GetByAgentAndWorkflowID(ctx context.Context, ag
 }
 
 func (m *mockWorkflowRunLogRepo) GetRuntimeLogs(ctx context.Context, filter WorkflowRunLogFilter, page, limit int) ([]WorkflowRunLog, int64, error) {
+	m.runtimeLogsCalled++
+	m.lastRuntimeFilter = filter
+	m.lastRuntimePage = page
+	m.lastRuntimeLimit = limit
 	return m.createdLogs, int64(len(m.createdLogs)), nil
 }
 
@@ -430,6 +454,54 @@ func TestGetNodeConfigFromDatabase_UsesDataTypeForCustomNode(t *testing.T) {
 	}
 	if nodeType != shared.LLM {
 		t.Fatalf("node type = %q, want %q", nodeType, shared.LLM)
+	}
+}
+
+func TestWorkflowRunSystemInputConversationIDIgnoresBusinessConversationID(t *testing.T) {
+	inputs := `{"conversation_id":"business-conversation-value"}`
+	run := WorkflowRunLog{Inputs: &inputs}
+
+	got := workflowRunSystemInputConversationID(run)
+	if got != "" {
+		t.Fatalf("system conversation id = %q, want empty for business input", got)
+	}
+}
+
+func TestWorkflowRunSystemInputConversationIDUsesSystemConversationID(t *testing.T) {
+	inputs := `{"conversation_id":"business-conversation-value","sys.conversation_id":"system-conversation-id"}`
+	run := WorkflowRunLog{Inputs: &inputs}
+
+	got := workflowRunSystemInputConversationID(run)
+	if got != "system-conversation-id" {
+		t.Fatalf("system conversation id = %q, want %q", got, "system-conversation-id")
+	}
+}
+
+func TestWorkflowRunInputConversationIDKeepsLegacyTopLevelFallback(t *testing.T) {
+	inputs := `{"conversation_id":"legacy-conversation-id"}`
+	run := WorkflowRunLog{Inputs: &inputs}
+
+	got := workflowRunInputConversationID(run)
+	if got != "legacy-conversation-id" {
+		t.Fatalf("legacy conversation id = %q, want %q", got, "legacy-conversation-id")
+	}
+}
+
+func TestWorkflowRunNodeSystemInputConversationIDSkipsBusinessConversationID(t *testing.T) {
+	businessInputs := `{"conversation_id":"business-conversation-value"}`
+	systemInputs := `{"sys.conversation_id":"system-conversation-id"}`
+	service := &WorkflowService{
+		workflowNodeRuntimeLogRepo: &mockWorkflowNodeRuntimeLogRepo{
+			logsByWorkflowRunID: []WorkflowNodeRuntimeLog{
+				{ID: "node-1", Inputs: &businessInputs},
+				{ID: "node-2", Inputs: &systemInputs},
+			},
+		},
+	}
+
+	got := service.workflowRunNodeSystemInputConversationID(context.Background(), "run-1")
+	if got != "system-conversation-id" {
+		t.Fatalf("node system conversation id = %q, want %q", got, "system-conversation-id")
 	}
 }
 
@@ -1052,5 +1124,207 @@ func TestUpdateWorkflowNodeRuntimeLog_PersistsProcessDataAndExecutionMetadata(t 
 	}
 	if got := gotMetadata["total_tokens"]; got != float64(42) {
 		t.Fatalf("expected total_tokens=42, got %v", got)
+	}
+}
+
+func TestValidateWorkflowRunNodeScope_AllowsMatchingRunAndNodeLog(t *testing.T) {
+	runID := "run-1"
+	service := &WorkflowService{
+		workflowRunLogRepo: &mockWorkflowRunLogRepo{
+			runsByID: map[string]*WorkflowRunLog{
+				runID: {ID: runID, AgentID: "agent-1", WorkflowID: "workflow-1"},
+			},
+		},
+		workflowNodeRuntimeLogRepo: &mockWorkflowNodeRuntimeLogRepo{
+			logsByID: map[string]*WorkflowNodeRuntimeLog{
+				"node-log-1": {ID: "node-log-1", AgentID: "agent-1", WorkflowID: "workflow-1", WorkflowRunID: &runID},
+			},
+		},
+	}
+
+	if err := service.ValidateWorkflowRunNodeScope(context.Background(), "agent-1", runID, "node-log-1"); err != nil {
+		t.Fatalf("ValidateWorkflowRunNodeScope returned error: %v", err)
+	}
+}
+
+func TestValidateWorkflowRunNodeScope_RejectsNodeLogFromAnotherAgent(t *testing.T) {
+	runID := "run-1"
+	service := &WorkflowService{
+		workflowRunLogRepo: &mockWorkflowRunLogRepo{
+			runsByID: map[string]*WorkflowRunLog{
+				runID: {ID: runID, AgentID: "agent-1", WorkflowID: "workflow-1"},
+			},
+		},
+		workflowNodeRuntimeLogRepo: &mockWorkflowNodeRuntimeLogRepo{
+			logsByID: map[string]*WorkflowNodeRuntimeLog{
+				"node-log-1": {ID: "node-log-1", AgentID: "other-agent", WorkflowID: "workflow-1", WorkflowRunID: &runID},
+			},
+		},
+	}
+
+	if err := service.ValidateWorkflowRunNodeScope(context.Background(), "agent-1", runID, "node-log-1"); err == nil {
+		t.Fatalf("ValidateWorkflowRunNodeScope should reject node log from another agent")
+	}
+}
+
+func TestValidateWorkflowRunNodeScope_RejectsNodeLogFromAnotherRun(t *testing.T) {
+	runID := "run-1"
+	otherRunID := "run-2"
+	service := &WorkflowService{
+		workflowRunLogRepo: &mockWorkflowRunLogRepo{
+			runsByID: map[string]*WorkflowRunLog{
+				runID: {ID: runID, AgentID: "agent-1", WorkflowID: "workflow-1"},
+			},
+		},
+		workflowNodeRuntimeLogRepo: &mockWorkflowNodeRuntimeLogRepo{
+			logsByID: map[string]*WorkflowNodeRuntimeLog{
+				"node-log-1": {ID: "node-log-1", AgentID: "agent-1", WorkflowID: "workflow-1", WorkflowRunID: &otherRunID},
+			},
+		},
+	}
+
+	if err := service.ValidateWorkflowRunNodeScope(context.Background(), "agent-1", runID, "node-log-1"); err == nil {
+		t.Fatalf("ValidateWorkflowRunNodeScope should reject node log from another run")
+	}
+}
+
+func TestValidateWorkflowRunAccess_AllowsMatchingWorkspaceRun(t *testing.T) {
+	service := &WorkflowService{
+		workflowRunLogRepo: &mockWorkflowRunLogRepo{
+			runsByID: map[string]*WorkflowRunLog{
+				"run-1": {ID: "run-1", AgentID: "agent-1", CreatedBy: "other-account"},
+			},
+		},
+	}
+
+	err := service.ValidateWorkflowRunAccess(context.Background(), "workspace-1", "agent-1", "run-1", "account-1")
+
+	if err != nil {
+		t.Fatalf("ValidateWorkflowRunAccess returned error: %v", err)
+	}
+}
+
+func TestValidateWorkflowRunAccess_RejectsRunFromAnotherAgent(t *testing.T) {
+	service := &WorkflowService{
+		workflowRunLogRepo: &mockWorkflowRunLogRepo{
+			runsByID: map[string]*WorkflowRunLog{
+				"run-1": {ID: "run-1", AgentID: "other-agent", CreatedBy: "account-1"},
+			},
+		},
+	}
+
+	err := service.ValidateWorkflowRunAccess(context.Background(), "workspace-1", "agent-1", "run-1", "account-1")
+
+	if !errors.Is(err, errWorkflowRunNotFoundOrDenied) {
+		t.Fatalf("error = %v, want errWorkflowRunNotFoundOrDenied", err)
+	}
+}
+
+func TestValidateWorkflowRunAccess_RejectsSystemRunFromAnotherAccount(t *testing.T) {
+	service := &WorkflowService{
+		workflowRunLogRepo: &mockWorkflowRunLogRepo{
+			runsByID: map[string]*WorkflowRunLog{
+				"run-1": {ID: "run-1", AgentID: "agent-1", CreatedBy: "other-account"},
+			},
+		},
+	}
+
+	err := service.ValidateWorkflowRunAccess(context.Background(), builtInWorkflowTenantID, "agent-1", "run-1", "account-1")
+
+	if !errors.Is(err, errWorkflowRunAccessDenied) {
+		t.Fatalf("error = %v, want errWorkflowRunAccessDenied", err)
+	}
+}
+
+func TestValidateExternalWorkflowRunAccessAllowsMatchingAPIKeyRun(t *testing.T) {
+	service := &WorkflowService{
+		workflowRunLogRepo: &mockWorkflowRunLogRepo{
+			runsByID: map[string]*WorkflowRunLog{
+				"run-1": {ID: "run-1", TenantID: "workspace-1", AgentID: "agent-1", CreatedBy: "api-key-1"},
+			},
+		},
+	}
+
+	err := service.ValidateExternalWorkflowRunAccess(context.Background(), "workspace-1", "agent-1", "run-1", "api-key-1")
+	if err != nil {
+		t.Fatalf("ValidateExternalWorkflowRunAccess returned error: %v", err)
+	}
+}
+
+func TestValidateExternalWorkflowRunAccessRejectsRunFromAnotherAPIKey(t *testing.T) {
+	service := &WorkflowService{
+		workflowRunLogRepo: &mockWorkflowRunLogRepo{
+			runsByID: map[string]*WorkflowRunLog{
+				"run-1": {ID: "run-1", TenantID: "workspace-1", AgentID: "agent-1", CreatedBy: "api-key-2"},
+			},
+		},
+	}
+
+	err := service.ValidateExternalWorkflowRunAccess(context.Background(), "workspace-1", "agent-1", "run-1", "api-key-1")
+	if !errors.Is(err, errWorkflowRunNotFoundOrDenied) {
+		t.Fatalf("error = %v, want errWorkflowRunNotFoundOrDenied", err)
+	}
+}
+
+func TestValidateExternalWorkflowRunAccessRejectsRunFromAnotherWorkspace(t *testing.T) {
+	service := &WorkflowService{
+		workflowRunLogRepo: &mockWorkflowRunLogRepo{
+			runsByID: map[string]*WorkflowRunLog{
+				"run-1": {ID: "run-1", TenantID: "other-workspace", AgentID: "agent-1", CreatedBy: "api-key-1"},
+			},
+		},
+	}
+
+	err := service.ValidateExternalWorkflowRunAccess(context.Background(), "workspace-1", "agent-1", "run-1", "api-key-1")
+	if !errors.Is(err, errWorkflowRunNotFoundOrDenied) {
+		t.Fatalf("error = %v, want errWorkflowRunNotFoundOrDenied", err)
+	}
+}
+
+func TestStopWorkflowTaskRejectsRunFromAnotherAgentBeforeCancel(t *testing.T) {
+	service := &WorkflowService{
+		workflowRunLogRepo: &mockWorkflowRunLogRepo{
+			runsByID: map[string]*WorkflowRunLog{
+				"run-1": {ID: "run-1", TenantID: "workspace-1", AgentID: "other-agent"},
+			},
+		},
+		workflowNodeRuntimeLogRepo: &mockWorkflowNodeRuntimeLogRepo{},
+	}
+	cancelled := false
+	service.RegisterRunningWorkflow("run-1", func() {
+		cancelled = true
+	})
+
+	err := service.StopWorkflowTask(context.Background(), "workspace-1", "agent-1", "run-1", "account-1")
+
+	if err == nil {
+		t.Fatalf("StopWorkflowTask should reject run from another agent")
+	}
+	if cancelled {
+		t.Fatalf("StopWorkflowTask cancelled a run before validating agent scope")
+	}
+}
+
+func TestStopWorkflowTaskRejectsRunFromAnotherWorkspaceBeforeCancel(t *testing.T) {
+	service := &WorkflowService{
+		workflowRunLogRepo: &mockWorkflowRunLogRepo{
+			runsByID: map[string]*WorkflowRunLog{
+				"run-1": {ID: "run-1", TenantID: "other-workspace", AgentID: "agent-1"},
+			},
+		},
+		workflowNodeRuntimeLogRepo: &mockWorkflowNodeRuntimeLogRepo{},
+	}
+	cancelled := false
+	service.RegisterRunningWorkflow("run-1", func() {
+		cancelled = true
+	})
+
+	err := service.StopWorkflowTask(context.Background(), "workspace-1", "agent-1", "run-1", "account-1")
+
+	if err == nil {
+		t.Fatalf("StopWorkflowTask should reject run from another workspace")
+	}
+	if cancelled {
+		t.Fatalf("StopWorkflowTask cancelled a run before validating workspace scope")
 	}
 }

@@ -11,6 +11,7 @@ import { useAccountPermissions } from '@/hooks/organization/use-account-permissi
 import { useT } from '@/i18n';
 import { canShowAgentBatchTest, supportsWorkflowDetailPages } from '@/utils/agent-detail-routes';
 import { getErrorMessage } from '@/utils/error-notifications';
+import { WORKFLOW_PERMISSION_ACTIONS } from '@/constants/permissions';
 
 interface BatchResultPageProps {
   params: Promise<{
@@ -24,15 +25,33 @@ export default function BatchResultPage({ params }: BatchResultPageProps) {
   const tWebapp = useT('webapp');
   const tRoot = useT();
   const { agentId, batchId } = use(params);
-  const { agent, isLoading, error, refetch } = useAgent(agentId);
-  const { hasPermission, isLoading: isPermissionsLoading } = useAccountPermissions();
-  const canManage = hasPermission('agent.manage');
+  const { hasAnyPermission, isLoading: isPermissionsLoading } = useAccountPermissions();
+  const canRunBatchTest = hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.runDraft);
+  const canViewBatchTestLogs = hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.logsView);
+  const canOpenBatchResult = canViewBatchTestLogs;
+  const { agent, isLoading, error, refetch } = useAgent(agentId, canOpenBatchResult);
 
-  if (isLoading || isPermissionsLoading) {
+  if (isPermissionsLoading || (canOpenBatchResult && isLoading)) {
     return (
       <div className="space-y-6 bg-slate-50 p-8">
         <Skeleton className="h-56 rounded-2xl" />
         <Skeleton className="h-96 rounded-2xl" />
+      </div>
+    );
+  }
+
+  if (!canOpenBatchResult) {
+    return (
+      <div className="flex h-full w-full items-center justify-center p-6">
+        <div className="max-w-xl rounded-2xl border border-dashed bg-background p-8 text-center">
+          <div className="mx-auto mb-4 flex size-12 items-center justify-center rounded-full bg-muted">
+            <AlertCircle className="size-5 text-muted-foreground" />
+          </div>
+          <div className="text-lg font-semibold">{tRoot('common.accessDenied')}</div>
+          <div className="mt-2 text-sm text-muted-foreground">
+            {tRoot('common.unauthorizedDescription')}
+          </div>
+        </div>
       </div>
     );
   }
@@ -57,37 +76,38 @@ export default function BatchResultPage({ params }: BatchResultPageProps) {
     );
   }
 
-  if (!supportsWorkflowDetailPages(agent.data.agent_type)) {
+  const supportsBatchTest = supportsWorkflowDetailPages(agent.data.agent_type);
+  const canShowBatchTest = canShowAgentBatchTest(agent.data.agent_type, {
+      canView: true,
+      canViewBatchTest: canViewBatchTestLogs,
+      canRunBatchTest,
+  });
+  if (!supportsBatchTest || !canShowBatchTest) {
     return (
       <div className="flex h-full w-full items-center justify-center p-6">
         <div className="max-w-xl rounded-2xl border border-dashed bg-background p-8 text-center">
           <div className="mx-auto mb-4 flex size-12 items-center justify-center rounded-full bg-muted">
             <AlertCircle className="size-5 text-muted-foreground" />
           </div>
-          <div className="text-lg font-semibold">{tWebapp('appCenter.appUnavailableTitle')}</div>
+          <div className="text-lg font-semibold">
+            {supportsBatchTest ? tRoot('common.accessDenied') : tWebapp('appCenter.appUnavailableTitle')}
+          </div>
           <div className="mt-2 text-sm text-muted-foreground">
-            {tWebapp('appCenter.appUnavailableDescription')}
+            {supportsBatchTest
+              ? tRoot('common.unauthorizedDescription')
+              : tWebapp('appCenter.appUnavailableDescription')}
           </div>
         </div>
       </div>
     );
   }
 
-  if (!canShowAgentBatchTest(agent.data.agent_type, { canView: true, canManage })) {
-    return (
-      <div className="flex h-full w-full items-center justify-center p-6">
-        <div className="max-w-xl rounded-2xl border border-dashed bg-background p-8 text-center">
-          <div className="mx-auto mb-4 flex size-12 items-center justify-center rounded-full bg-muted">
-            <AlertCircle className="size-5 text-muted-foreground" />
-          </div>
-          <div className="text-lg font-semibold">{tRoot('common.accessDenied')}</div>
-          <div className="mt-2 text-sm text-muted-foreground">
-            {tRoot('common.unauthorizedDescription')}
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  return <BatchResultDetail agentId={agentId} batchId={batchId} agentName={agent.data.name} />;
+  return (
+    <BatchResultDetail
+      agentId={agentId}
+      batchId={batchId}
+      agentName={agent.data.name}
+      canRetest={canRunBatchTest}
+    />
+  );
 }

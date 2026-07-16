@@ -158,7 +158,7 @@ func (s *llmGatewayServiceImpl) createImageInternal(
 	pricingReq := buildImagePricingRequest(effectiveReq)
 
 	// 4. Calculate estimated credits
-	estimatedQuote, err := s.quoteImagePricing(ctx, pricingModelRefFromSelection(selection), pricingReq)
+	estimatedQuote, err := s.quoteImagePricingForSelection(ctx, selection, pricingModelRefFromSelection(selection), pricingReq)
 	if err != nil {
 		return nil, fmt.Errorf("failed to calculate image credits: %w", err)
 	}
@@ -198,11 +198,15 @@ func (s *llmGatewayServiceImpl) createImageInternal(
 
 	// 10. Call adapter
 	providerReq := buildProviderImageRequest(effectiveReq)
+	if err := s.activateUpstreamProbeForAttempt(ctx, selection, billingCtx); err != nil {
+		return nil, err
+	}
 	resp, err := providerAdapter.CreateImage(ctx, &providerReq)
 	responseTime := time.Since(startTime).Milliseconds()
 	if err != nil {
 		// Log provider error
 		s.logProviderError(ctx, 0, selection, err, "image_generation")
+		s.recordUpstreamProviderError(ctx, selection, billingCtx, err)
 
 		// Record failure for health tracking
 		if selection.HasRoute() {
@@ -220,18 +224,16 @@ func (s *llmGatewayServiceImpl) createImageInternal(
 	if selection.HasRoute() {
 		s.healthTracker.RecordSuccess(selection.RouteID)
 	}
+	s.recordUpstreamProviderSuccess(ctx, selection, billingCtx)
 
 	// 11. Settle billing
-	actualQuote := PricingQuote{}
+	actualQuote := estimatedQuote
 	decision, laneErr := s.resolveBillingDecision(selection, billingCtx)
 	if laneErr != nil {
 		return nil, wrapBillingLaneMismatchError(laneErr)
 	}
-	if !decision.UseSystemProvider {
-		actualQuote, err = s.quoteImagePricing(ctx, pricingModelRefFromSelection(selection), pricingReq)
-		if err != nil {
-			actualQuote = estimatedQuote
-		}
+	if decision.UseSystemProvider {
+		actualQuote = PricingQuote{}
 	}
 
 	if err := s.settleImageSuccess(ctx, billingCtx, selection, actualQuote, resp.Settlement, responseTime); err != nil {
@@ -241,4 +243,16 @@ func (s *llmGatewayServiceImpl) createImageInternal(
 
 	s.traceImageGeneration(ctx, req, resp, startTime, time.Now(), billingCtx, nil)
 	return resp, nil
+}
+
+func (s *llmGatewayServiceImpl) quoteImagePricingForSettlement(
+	ctx context.Context,
+	model PricingModelRef,
+	req *adapter.ImageRequest,
+	estimatedQuote PricingQuote,
+) (PricingQuote, error) {
+	if estimatedQuote.TotalCredits > 0 || !estimatedQuote.TotalUSD.IsZero() {
+		return estimatedQuote, nil
+	}
+	return s.quoteImagePricing(ctx, model, req)
 }

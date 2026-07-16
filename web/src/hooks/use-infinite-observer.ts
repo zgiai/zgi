@@ -4,6 +4,7 @@ interface UseInfiniteObserverParams {
   hasNextPage: boolean;
   isFetchingNextPage: boolean;
   fetchNextPage: () => Promise<unknown>;
+  enabled?: boolean;
   rootMargin?: string;
   // Optional root element for IntersectionObserver; defaults to viewport
   rootRef?: RefObject<HTMLElement | null>;
@@ -17,12 +18,14 @@ export function useInfiniteObserver({
   hasNextPage,
   isFetchingNextPage,
   fetchNextPage,
+  enabled = true,
   rootMargin = '200px',
   rootRef,
 }: UseInfiniteObserverParams) {
-  const sentinelRef = useRef<HTMLDivElement | null>(null);
+  const sentinelRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
+    if (!enabled) return;
     const el = sentinelRef.current;
     if (!el) return;
 
@@ -37,7 +40,7 @@ export function useInfiniteObserver({
 
     observer.observe(el);
     return () => observer.disconnect();
-  }, [hasNextPage, isFetchingNextPage, fetchNextPage, rootMargin, rootRef]);
+  }, [enabled, hasNextPage, isFetchingNextPage, fetchNextPage, rootMargin, rootRef]);
 
   return sentinelRef;
 }

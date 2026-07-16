@@ -76,6 +76,9 @@ func (e *LandingAIPDFExtractor) toExtractOutput(response *LandingAIResponse) *dt
 				Metadata: metadata,
 			})
 		}
+		if len(output.Elements) > 0 {
+			output.Metadata["structured_elements"] = true
+		}
 		return output
 	}
 
@@ -95,6 +98,9 @@ func (e *LandingAIPDFExtractor) toExtractOutput(response *LandingAIResponse) *dt
 			Ordinal:  i,
 			Metadata: metadata,
 		})
+	}
+	if len(output.Elements) > 0 {
+		output.Metadata["structured_elements"] = true
 	}
 
 	if len(output.Elements) == 0 && output.Markdown != "" {

@@ -18,19 +18,29 @@ import {
   AppWindow,
   Clock3,
   ChevronDown,
+  Workflow,
 } from 'lucide-react';
 import { usePathname, useSearchParams } from 'next/navigation';
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { WorkspaceSwitcher } from './team-switcher';
 import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
 import { useWorkspaceStore } from '@/store/workspace-store';
-import type { PermissionCode } from '@/constants/permissions';
+import {
+  AGENT_VISIBLE_PERMISSION_CODES,
+  DATABASE_VISIBLE_PERMISSION_CODES,
+  FILE_VISIBLE_PERMISSION_CODES,
+  KNOWLEDGE_BASE_VISIBLE_PERMISSION_CODES,
+  WORKFLOW_VISIBLE_PERMISSION_CODES,
+  type PermissionCode,
+} from '@/constants/permissions';
 import { ENABLE_THEME_SWITCH, withBasePathIfInternal } from '@/lib/config';
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
 import { useWorkflowDebugFocusMode } from '@/components/workflow/hooks/use-debug-focus-mode';
 import { usePersistentSidebarCollapse } from '@/hooks/use-persistent-sidebar-collapse';
+import { getConsoleRouteAccess } from '@/routes/access';
 
 interface NavItem {
   title: string;
@@ -38,6 +48,8 @@ interface NavItem {
   icon: React.ElementType;
   /** Required permission to show this nav item (when workspace selected) */
   permission?: PermissionCode;
+  /** Any required permission to show this nav item (when workspace selected) */
+  permissions?: readonly PermissionCode[];
 }
 
 interface NavGroup {
@@ -56,6 +68,17 @@ interface RootRouteItem {
 }
 
 const STORAGE_KEY = 'zgi:console:sidebar:groups';
+
+function CollapsedNavTooltip({ label, children }: { label: string; children: React.ReactElement }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>{children}</TooltipTrigger>
+      <TooltipContent side="right" sideOffset={8} className="px-2.5 py-1.5 text-xs">
+        {label}
+      </TooltipContent>
+    </Tooltip>
+  );
+}
 
 function getDatasetReturnTo(value: string | null): string | null {
   if (!value) return null;
@@ -77,7 +100,66 @@ function isRootRouteItemActive(pathname: string, item: RootRouteItem): boolean {
   });
 }
 
-export function ConsoleSidebar({ hidden }: { hidden?: boolean }) {
+type HasPermission = (permission: PermissionCode) => boolean;
+type HasAnyPermission = (permissions: readonly PermissionCode[]) => boolean;
+
+function shouldShowConsoleNavItem(
+  item: NavItem,
+  isWorkspaceRequired: boolean,
+  hasPermission: HasPermission,
+  hasAnyPermission: HasAnyPermission
+) {
+  const routeAccess = getConsoleRouteAccess(item.href);
+
+  if (isWorkspaceRequired) {
+    return routeAccess.scope === 'organization';
+  }
+
+  if (routeAccess.scope === 'organization') {
+    return true;
+  }
+
+  if (item.permissions?.length) {
+    return hasAnyPermission(item.permissions);
+  }
+
+  if (!item.permission) {
+    return true;
+  }
+
+  return hasPermission(item.permission);
+}
+
+function filterConsoleNavGroups(
+  groups: NavGroup[],
+  isWorkspaceRequired: boolean,
+  hasPermission: HasPermission,
+  hasAnyPermission: HasAnyPermission
+) {
+  return groups
+    .map(group => {
+      let items = group.items;
+
+      if (!ENABLE_THEME_SWITCH) {
+        items = items.filter(item => item.href !== '/console/settings');
+      }
+
+      items = items.filter(item =>
+        shouldShowConsoleNavItem(item, isWorkspaceRequired, hasPermission, hasAnyPermission)
+      );
+
+      return { ...group, items };
+    })
+    .filter(group => group.items.length > 0);
+}
+
+export function ConsoleSidebar({
+  hidden,
+  temporarilyCollapsed = false,
+}: {
+  hidden?: boolean;
+  temporarilyCollapsed?: boolean;
+}) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const t = useT('navigation');
@@ -85,17 +167,19 @@ export function ConsoleSidebar({ hidden }: { hidden?: boolean }) {
   const activePathname = datasetReturnTo ? '/console/dataset' : pathname;
 
   // Permission checking
-  const { hasPermission } = useAccountPermissions();
+  const { hasPermission, hasAnyPermission } = useAccountPermissions();
   const contextStatus = useWorkspaceStore.use.contextStatus();
   const isWorkspaceRequired = contextStatus === 'workspace_required';
   const isDebugFocusMode = useWorkflowDebugFocusMode();
 
   // Collapsed state persisted via ui-local helpers
-  const [isCollapsed, setIsCollapsed] = usePersistentSidebarCollapse(
+  const [persistedIsCollapsed, setIsCollapsed] = usePersistentSidebarCollapse(
     'console',
     false,
-    isDebugFocusMode
+    isDebugFocusMode || temporarilyCollapsed
   );
+  const isTemporarilyCollapsed = isDebugFocusMode || temporarilyCollapsed;
+  const isCollapsed = isTemporarilyCollapsed || persistedIsCollapsed;
 
   const toggleCollapse = () => setIsCollapsed(prev => !prev);
 
@@ -134,25 +218,21 @@ export function ConsoleSidebar({ hidden }: { hidden?: boolean }) {
             title: t('chat'),
             href: '/console/work/chat',
             icon: MessageSquare,
-            permission: 'workspace.view',
           },
           {
             title: t('image'),
             href: '/console/work/image',
             icon: ImageIcon,
-            permission: 'workspace.view',
           },
           {
             title: t('app'),
             href: '/console/work/app',
             icon: AppWindow,
-            permission: 'workspace.view',
           },
           {
             title: t('task'),
             href: '/console/work/task',
             icon: Clock3,
-            permission: 'workspace.view',
           },
         ],
       },
@@ -160,15 +240,36 @@ export function ConsoleSidebar({ hidden }: { hidden?: boolean }) {
         key: 'resources',
         title: t('resources'),
         items: [
-          { title: t('agents'), href: '/console/agents', icon: Atom, permission: 'agent.view' },
+          {
+            title: t('agents'),
+            href: '/console/agents',
+            icon: Atom,
+            permissions: AGENT_VISIBLE_PERMISSION_CODES,
+          },
+          {
+            title: t('workflowAgents'),
+            href: '/console/workflows',
+            icon: Workflow,
+            permissions: WORKFLOW_VISIBLE_PERMISSION_CODES,
+          },
+          {
+            title: t('files'),
+            href: '/console/files',
+            icon: FileText,
+            permissions: FILE_VISIBLE_PERMISSION_CODES,
+          },
           {
             title: t('datasets'),
             href: '/console/dataset',
             icon: BookOpen,
-            permission: 'knowledge_base.view',
+            permissions: KNOWLEDGE_BASE_VISIBLE_PERMISSION_CODES,
           },
-          { title: t('files'), href: '/console/files', icon: FileText, permission: 'file.view' },
-          { title: t('dbs'), href: '/console/db', icon: Database, permission: 'database.view' },
+          {
+            title: t('dbs'),
+            href: '/console/db',
+            icon: Database,
+            permissions: DATABASE_VISIBLE_PERMISSION_CODES,
+          },
         ],
       },
       {
@@ -179,13 +280,11 @@ export function ConsoleSidebar({ hidden }: { hidden?: boolean }) {
             title: t('prompts'),
             href: '/console/prompts',
             icon: BookText,
-            permission: 'agent.view',
           },
           {
             title: t('fileRecognition'),
             href: '/console/developer/content-parse',
             icon: FileSearch,
-            permission: 'workspace.view',
           },
         ],
       },
@@ -197,7 +296,6 @@ export function ConsoleSidebar({ hidden }: { hidden?: boolean }) {
             title: t('workspaceManagement'),
             href: '/console/workspace',
             icon: Users,
-            permission: 'workspace.view',
           },
           { title: t('systemSettings'), href: '/console/settings', icon: Settings },
         ],
@@ -208,32 +306,13 @@ export function ConsoleSidebar({ hidden }: { hidden?: boolean }) {
 
   // Filter groups and items
   const navGroups = React.useMemo(() => {
-    return allNavGroups
-      .map(group => {
-        let filteredItems = group.items;
-
-        // Hide workspace management when the console has no usable workspace.
-        if (group.key === 'management' && isWorkspaceRequired) {
-          filteredItems = filteredItems.filter(item => item.href !== '/console/workspace');
-        }
-
-        // Hide settings if theme switch disabled
-        if (!ENABLE_THEME_SWITCH) {
-          filteredItems = filteredItems.filter(item => item.href !== '/console/settings');
-        }
-
-        // Filter by permissions outside organization view
-        if (!isWorkspaceRequired) {
-          filteredItems = filteredItems.filter(item => {
-            if (!item.permission) return true;
-            return hasPermission(item.permission);
-          });
-        }
-
-        return { ...group, items: filteredItems };
-      })
-      .filter(group => group.items.length > 0);
-  }, [isWorkspaceRequired, hasPermission, allNavGroups]);
+    return filterConsoleNavGroups(
+      allNavGroups,
+      isWorkspaceRequired,
+      hasPermission,
+      hasAnyPermission
+    );
+  }, [isWorkspaceRequired, hasPermission, hasAnyPermission, allNavGroups]);
 
   const rootRouteItems = React.useMemo(
     (): RootRouteItem[] => [
@@ -250,6 +329,31 @@ export function ConsoleSidebar({ hidden }: { hidden?: boolean }) {
     []
   );
 
+  const homeNavLink = (
+    <Link
+      href="/console"
+      className={cn(
+        'flex items-center gap-2 rounded-md py-1.5 text-[13px] transition-colors shrink-0 w-full',
+        isCollapsed ? 'justify-center px-0 w-8' : 'justify-start px-2',
+        'text-foreground/70 hover:bg-muted/70 hover:text-foreground',
+        pathname === '/console' && 'bg-muted/80 text-foreground'
+      )}
+    >
+      <Home
+        size={16}
+        className={cn('shrink-0 text-foreground/65', pathname === '/console' && 'text-foreground')}
+      />
+      <span
+        className={cn(
+          'truncate transition-all duration-300 opacity-100 font-normal',
+          isCollapsed && 'ml-0 opacity-0 w-0 hidden'
+        )}
+      >
+        {t('home')}
+      </span>
+    </Link>
+  );
+
   const sidebarContent = (
     <div className="flex flex-col flex-1 h-full overflow-hidden">
       {/* Workspace Switcher */}
@@ -263,32 +367,11 @@ export function ConsoleSidebar({ hidden }: { hidden?: boolean }) {
           isCollapsed ? 'items-center' : 'items-start'
         )}
       >
-        <Link
-          href="/console"
-          className={cn(
-            'flex items-center gap-2 rounded-md py-1.5 text-[13px] transition-colors shrink-0 w-full',
-            // Adjust padding based on collapse state
-            isCollapsed ? 'justify-center px-0 w-8' : 'justify-start px-2',
-            'text-foreground/70 hover:bg-muted/70 hover:text-foreground',
-            pathname === '/console' && 'bg-muted/80 text-foreground'
-          )}
-        >
-          <Home
-            size={16}
-            className={cn(
-              'shrink-0 text-foreground/65',
-              pathname === '/console' && 'text-foreground'
-            )}
-          />
-          <span
-            className={cn(
-              'truncate transition-all duration-300 opacity-100 font-normal',
-              isCollapsed && 'ml-0 opacity-0 w-0 hidden'
-            )}
-          >
-            {t('home')}
-          </span>
-        </Link>
+        {isCollapsed ? (
+          <CollapsedNavTooltip label={t('home')}>{homeNavLink}</CollapsedNavTooltip>
+        ) : (
+          homeNavLink
+        )}
 
         {navGroups.map(group => {
           // If collapsed, we flatten the structure visually (hide headers, show items)
@@ -297,21 +380,21 @@ export function ConsoleSidebar({ hidden }: { hidden?: boolean }) {
               const Icon = item.icon;
               const isActive = isItemActive(activePathname, item.href);
               return (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  className={cn(
-                    'flex w-8 items-center justify-center rounded-md py-1.5 text-[13px] font-medium transition-colors',
-                    'text-foreground/70 hover:bg-muted/70 hover:text-foreground',
-                    isActive && 'bg-muted/80 text-foreground'
-                  )}
-                  title={item.title}
-                >
-                  <Icon
-                    size={16}
-                    className={cn('shrink-0 text-foreground/65', isActive && 'text-foreground')}
-                  />
-                </Link>
+                <CollapsedNavTooltip key={item.href} label={item.title}>
+                  <Link
+                    href={item.href}
+                    className={cn(
+                      'flex w-8 items-center justify-center rounded-md py-1.5 text-[13px] font-medium transition-colors',
+                      'text-foreground/70 hover:bg-muted/70 hover:text-foreground',
+                      isActive && 'bg-muted/80 text-foreground'
+                    )}
+                  >
+                    <Icon
+                      size={16}
+                      className={cn('shrink-0 text-foreground/65', isActive && 'text-foreground')}
+                    />
+                  </Link>
+                </CollapsedNavTooltip>
               );
             });
           }
@@ -381,9 +464,8 @@ export function ConsoleSidebar({ hidden }: { hidden?: boolean }) {
               const Icon = item.icon;
               const isActive = isRootRouteItemActive(activePathname, item);
 
-              return (
+              const rootLink = (
                 <Link
-                  key={item.key}
                   href={item.href}
                   target={item.target}
                   rel={item.target === '_blank' ? 'noreferrer' : undefined}
@@ -393,7 +475,6 @@ export function ConsoleSidebar({ hidden }: { hidden?: boolean }) {
                     'text-foreground/70 hover:bg-muted/70 hover:text-foreground',
                     isActive && 'bg-muted/80 text-foreground'
                   )}
-                  title={item.title}
                 >
                   <Icon
                     size={16}
@@ -410,6 +491,14 @@ export function ConsoleSidebar({ hidden }: { hidden?: boolean }) {
                   </span>
                 </Link>
               );
+
+              return isCollapsed ? (
+                <CollapsedNavTooltip key={item.key} label={item.title}>
+                  {rootLink}
+                </CollapsedNavTooltip>
+              ) : (
+                <React.Fragment key={item.key}>{rootLink}</React.Fragment>
+              );
             })}
           </div>
         ) : null}
@@ -423,41 +512,42 @@ export function ConsoleSidebar({ hidden }: { hidden?: boolean }) {
   return (
     <aside
       className={cn(
-        'hidden md:flex md:flex-col shrink-0 border-r border-border/60 bg-background text-sidebar-foreground transition-all duration-300',
+        'hidden md:flex md:flex-col shrink-0 border-r border-border/60 bg-background text-sidebar-foreground transition-[width] duration-300 ease-in-out',
         isCollapsed ? 'w-12' : 'w-44'
       )}
     >
       {sidebarContent}
-      {/* Collapse toggle button */}
-      <div className={cn('shrink-0 flex p-2 pt-1', isCollapsed && 'justify-center')}>
-        <Button
-          onClick={toggleCollapse}
-          variant="ghost"
-          size="xs"
-          aria-label={isCollapsed ? t('expand') : t('collapse')}
-          className={cn(
-            'flex h-7 items-center rounded-md py-0 text-[13px] font-medium transition-colors gap-0',
-            isCollapsed ? 'justify-center w-8 px-0' : 'justify-start w-full px-2',
-            'text-foreground/70 hover:bg-muted/70 hover:text-foreground'
-          )}
-        >
-          <ArrowRightToLine
-            size={16}
+      {!isTemporarilyCollapsed ? (
+        <div className={cn('shrink-0 flex p-2 pt-1', isCollapsed && 'justify-center')}>
+          <Button
+            onClick={toggleCollapse}
+            variant="ghost"
+            size="xs"
+            aria-label={isCollapsed ? t('expand') : t('collapse')}
             className={cn(
-              'shrink-0 transition-transform duration-300',
-              !isCollapsed && 'rotate-180'
-            )}
-          />
-          <span
-            className={cn(
-              'truncate transition-all duration-300 ml-2 opacity-100 font-normal',
-              isCollapsed && 'ml-0 opacity-0 w-0 hidden'
+              'flex h-7 items-center rounded-md py-0 text-[13px] font-medium transition-colors gap-0',
+              isCollapsed ? 'justify-center w-8 px-0' : 'justify-start w-full px-2',
+              'text-foreground/70 hover:bg-muted/70 hover:text-foreground'
             )}
           >
-            {isCollapsed ? t('expand') : t('collapse')}
-          </span>
-        </Button>
-      </div>
+            <ArrowRightToLine
+              size={16}
+              className={cn(
+                'shrink-0 transition-transform duration-300',
+                !isCollapsed && 'rotate-180'
+              )}
+            />
+            <span
+              className={cn(
+                'truncate transition-all duration-300 ml-2 opacity-100 font-normal',
+                isCollapsed && 'ml-0 opacity-0 w-0 hidden'
+              )}
+            >
+              {isCollapsed ? t('expand') : t('collapse')}
+            </span>
+          </Button>
+        </div>
+      ) : null}
     </aside>
   );
 }
@@ -474,7 +564,7 @@ export function ConsoleMobileSidebar({
   const t = useT('navigation');
   const datasetReturnTo = getDatasetReturnTo(searchParams.get('returnTo'));
   const activePathname = datasetReturnTo ? '/console/dataset' : pathname;
-  const { hasPermission } = useAccountPermissions();
+  const { hasPermission, hasAnyPermission } = useAccountPermissions();
   const contextStatus = useWorkspaceStore.use.contextStatus();
   const isWorkspaceRequired = contextStatus === 'workspace_required';
   const [openGroups, setOpenGroups] = React.useState<Record<string, boolean>>({
@@ -494,25 +584,21 @@ export function ConsoleMobileSidebar({
             title: t('chat'),
             href: '/console/work/chat',
             icon: MessageSquare,
-            permission: 'workspace.view',
           },
           {
             title: t('image'),
             href: '/console/work/image',
             icon: ImageIcon,
-            permission: 'workspace.view',
           },
           {
             title: t('app'),
             href: '/console/work/app',
             icon: AppWindow,
-            permission: 'workspace.view',
           },
           {
             title: t('task'),
             href: '/console/work/task',
             icon: Clock3,
-            permission: 'workspace.view',
           },
         ],
       },
@@ -520,15 +606,36 @@ export function ConsoleMobileSidebar({
         key: 'resources',
         title: t('resources'),
         items: [
-          { title: t('agents'), href: '/console/agents', icon: Atom, permission: 'agent.view' },
+          {
+            title: t('agents'),
+            href: '/console/agents',
+            icon: Atom,
+            permissions: AGENT_VISIBLE_PERMISSION_CODES,
+          },
+          {
+            title: t('workflowAgents'),
+            href: '/console/workflows',
+            icon: Workflow,
+            permissions: WORKFLOW_VISIBLE_PERMISSION_CODES,
+          },
+          {
+            title: t('files'),
+            href: '/console/files',
+            icon: FileText,
+            permissions: FILE_VISIBLE_PERMISSION_CODES,
+          },
           {
             title: t('datasets'),
             href: '/console/dataset',
             icon: BookOpen,
-            permission: 'knowledge_base.view',
+            permissions: KNOWLEDGE_BASE_VISIBLE_PERMISSION_CODES,
           },
-          { title: t('files'), href: '/console/files', icon: FileText, permission: 'file.view' },
-          { title: t('dbs'), href: '/console/db', icon: Database, permission: 'database.view' },
+          {
+            title: t('dbs'),
+            href: '/console/db',
+            icon: Database,
+            permissions: DATABASE_VISIBLE_PERMISSION_CODES,
+          },
         ],
       },
       {
@@ -539,13 +646,11 @@ export function ConsoleMobileSidebar({
             title: t('prompts'),
             href: '/console/prompts',
             icon: BookText,
-            permission: 'agent.view',
           },
           {
             title: t('fileRecognition'),
             href: '/console/developer/content-parse',
             icon: FileSearch,
-            permission: 'workspace.view',
           },
         ],
       },
@@ -557,33 +662,14 @@ export function ConsoleMobileSidebar({
             title: t('workspaceManagement'),
             href: '/console/workspace',
             icon: Users,
-            permission: 'workspace.view',
           },
           { title: t('systemSettings'), href: '/console/settings', icon: Settings },
         ],
       },
     ];
 
-    return groups
-      .map(group => {
-        let items = group.items;
-
-        if (group.key === 'management' && isWorkspaceRequired) {
-          items = items.filter(item => item.href !== '/console/workspace');
-        }
-
-        if (!ENABLE_THEME_SWITCH) {
-          items = items.filter(item => item.href !== '/console/settings');
-        }
-
-        if (!isWorkspaceRequired) {
-          items = items.filter(item => !item.permission || hasPermission(item.permission));
-        }
-
-        return { ...group, items };
-      })
-      .filter(group => group.items.length > 0);
-  }, [hasPermission, isWorkspaceRequired, t]);
+    return filterConsoleNavGroups(groups, isWorkspaceRequired, hasPermission, hasAnyPermission);
+  }, [hasPermission, hasAnyPermission, isWorkspaceRequired, t]);
 
   const closeSidebar = () => onOpenChange(false);
   const toggleGroup = (key: string) => setOpenGroups(prev => ({ ...prev, [key]: !prev[key] }));

@@ -2,7 +2,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
-import { AlertCircle, FileText, Search } from 'lucide-react';
+import { AlertCircle, Search } from 'lucide-react';
 import { toast } from 'sonner';
 import { useT } from '@/i18n';
 import { Badge } from '@/components/ui/badge';
@@ -38,6 +38,7 @@ import type { DatasetFileCandidate } from '@/services/types/dataset';
 import type { FileProcessingRequestView } from '@/services/types/file';
 import { cn } from '@/lib/utils';
 import { formatDate, formatFileSize } from '@/utils/format';
+import { FileTypeIcon } from '@/components/files/file-type-icon';
 
 interface DatasetFileAssetDialogProps {
   datasetId: string;
@@ -153,6 +154,9 @@ export function DatasetFileAssetDialog({
   const [batchGeneratingAssetIds, setBatchGeneratingAssetIds] = useState<Set<string>>(
     () => new Set()
   );
+  const [autoSelectPendingAssetIds, setAutoSelectPendingAssetIds] = useState<Set<string>>(
+    () => new Set()
+  );
   const [autoAddPendingAssetIds, setAutoAddPendingAssetIds] = useState<Set<string>>(
     () => new Set()
   );
@@ -164,6 +168,7 @@ export function DatasetFileAssetDialog({
   const hasQueuedEmbeddingGeneration =
     queuedEmbeddingTasks.size > 0 ||
     batchGeneratingAssetIds.size > 0 ||
+    autoSelectPendingAssetIds.size > 0 ||
     autoAddPendingAssetIds.size > 0;
   const createRefsMutation = useCreateDatasetFileRefs(datasetId);
   const generateEmbeddingsMutation = useGenerateDatasetFileCandidateEmbeddings(datasetId);
@@ -204,6 +209,7 @@ export function DatasetFileAssetDialog({
       setKeyword('');
       setActiveFilter('addable');
       setBatchGeneratingAssetIds(new Set());
+      setAutoSelectPendingAssetIds(new Set());
       setQueuedEmbeddingTasks(new Map());
     }
   }, [open, setKeyword]);
@@ -241,6 +247,32 @@ export function DatasetFileAssetDialog({
       void refetch();
     }
   }, [embeddingTasksByAssetId, refetch]);
+
+  useEffect(() => {
+    if (!open || autoSelectPendingAssetIds.size === 0) return;
+
+    const pendingIds = new Set(autoSelectPendingAssetIds);
+    const addableAssetIds = candidates
+      .filter(candidate => pendingIds.has(candidate.asset_id) && candidate.addable)
+      .map(candidate => candidate.asset_id);
+    const failedAssetIds = Array.from(embeddingTasksByAssetId.entries())
+      .filter(([assetId, task]) => {
+        if (!pendingIds.has(assetId)) return false;
+        return task.status === 'failed' || task.status === 'cancelled';
+      })
+      .map(([assetId]) => assetId);
+
+    if (addableAssetIds.length === 0 && failedAssetIds.length === 0) return;
+
+    if (addableAssetIds.length > 0) {
+      setSelectedAssetIds(prev => Array.from(new Set([...prev, ...addableAssetIds])));
+    }
+
+    const completedIds = new Set([...addableAssetIds, ...failedAssetIds]);
+    setAutoSelectPendingAssetIds(
+      new Set(Array.from(pendingIds).filter(assetId => !completedIds.has(assetId)))
+    );
+  }, [autoSelectPendingAssetIds, candidates, embeddingTasksByAssetId, open]);
 
   useEffect(() => {
     if (!open || autoAddPendingAssetIds.size === 0 || autoAddInFlightRef.current) return;
@@ -533,8 +565,10 @@ export function DatasetFileAssetDialog({
 
     const assetIds = [...selectedEmbeddingGenerationAssetIds];
     setBatchGeneratingAssetIds(new Set(assetIds));
+    setAutoSelectPendingAssetIds(prev => new Set([...prev, ...assetIds]));
 
-    let successCount = 0;
+    const immediateAddableAssetIds: string[] = [];
+    const failedAssetIds: string[] = [];
     let failedCount = 0;
 
     try {
@@ -552,29 +586,38 @@ export function DatasetFileAssetDialog({
                 next.set(assetId, requestID);
                 return next;
               });
+            } else {
+              failedCount += 1;
+              failedAssetIds.push(assetId);
             }
-            successCount += 1;
-          } else if (response.data?.addable) {
-            successCount += 1;
-          } else {
+          } else if (!response.data?.addable) {
             failedCount += 1;
+            failedAssetIds.push(assetId);
+          } else {
+            immediateAddableAssetIds.push(assetId);
           }
         } catch {
           failedCount += 1;
+          failedAssetIds.push(assetId);
         }
       }
 
-      if (successCount > 0) {
-        toast.success(
-          t('messages.fileCandidateEmbeddingBatchGenerateSuccess', { count: successCount })
-        );
+      if (immediateAddableAssetIds.length > 0) {
+        setSelectedAssetIds(prev => Array.from(new Set([...prev, ...immediateAddableAssetIds])));
       }
+
       if (failedCount > 0) {
         toast.error(
           t('messages.fileCandidateEmbeddingBatchGeneratePartialFailed', { count: failedCount })
         );
       }
     } finally {
+      const completedIds = new Set([...immediateAddableAssetIds, ...failedAssetIds]);
+      if (completedIds.size > 0) {
+        setAutoSelectPendingAssetIds(
+          prev => new Set(Array.from(prev).filter(assetId => !completedIds.has(assetId)))
+        );
+      }
       setBatchGeneratingAssetIds(new Set());
     }
   }, [
@@ -596,7 +639,7 @@ export function DatasetFileAssetDialog({
         </DialogHeader>
 
         <DialogBody className="flex min-h-0 flex-col overflow-hidden px-0 py-0">
-          <div className="border-b px-5 py-4">
+          <div className="px-5 py-4">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
                 <div className="text-lg font-semibold">
@@ -647,7 +690,7 @@ export function DatasetFileAssetDialog({
                   type="button"
                   variant="outline"
                   size="sm"
-                  className="h-8 whitespace-nowrap border-amber-300 bg-amber-50 text-amber-700 hover:bg-amber-100 hover:text-amber-800"
+                  className="h-8 whitespace-nowrap border-primary/30 bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary"
                   loading={isBatchGenerating}
                   disabled={
                     isSelectionProcessing ||
@@ -762,11 +805,10 @@ export function DatasetFileAssetDialog({
                           </TableCell>
                           <TableCell className="max-w-0">
                             <div className="flex min-w-0 items-center gap-3">
-                              <FileText
-                                className={cn(
-                                  'h-5 w-5 shrink-0',
-                                  ext === 'docx' ? 'text-primary' : 'text-destructive'
-                                )}
+                              <FileTypeIcon
+                                extension={ext}
+                                filename={candidate.name}
+                                className="h-5 w-5 shrink-0"
                               />
                               <div className="min-w-0">
                                 <div

@@ -52,7 +52,9 @@ function createQuestionId(): string {
 }
 
 function normalizeQuestions(questions: string[] = []): string[] {
-  return questions.filter(question => typeof question === 'string').slice(0, SUGGESTED_QUESTIONS_LIMIT);
+  return questions
+    .filter(question => typeof question === 'string')
+    .slice(0, SUGGESTED_QUESTIONS_LIMIT);
 }
 
 function dedupeQuestions(questions: string[] = []): string[] {
@@ -202,6 +204,7 @@ const OpeningStatementDialog: React.FC<OpeningStatementDialogProps> = ({
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const previewScrollRef = useRef<HTMLDivElement | null>(null);
   const syncingSourceRef = useRef<'editor' | 'preview' | null>(null);
+  const wasOpenRef = useRef(false);
 
   const questionSensors = useSensors(
     useSensor(PointerSensor, {
@@ -244,15 +247,17 @@ const OpeningStatementDialog: React.FC<OpeningStatementDialogProps> = ({
   }, []);
 
   useEffect(() => {
-    if (open) {
-      const nextValue = {
-        ...value,
-        suggestedQuestions: normalizeQuestions(value.suggestedQuestions),
-      };
-      setDraft(nextValue);
-      setQuestionIds(nextValue.suggestedQuestions.map(() => createQuestionId()));
-      setGeneratedWarnings([]);
-    }
+    const isOpening = open && !wasOpenRef.current;
+    wasOpenRef.current = open;
+    if (!isOpening) return;
+
+    const nextValue = {
+      ...value,
+      suggestedQuestions: normalizeQuestions(value.suggestedQuestions),
+    };
+    setDraft(nextValue);
+    setQuestionIds(nextValue.suggestedQuestions.map(() => createQuestionId()));
+    setGeneratedWarnings([]);
   }, [open, value]);
 
   useEffect(() => {

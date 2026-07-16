@@ -62,11 +62,8 @@ func (s *llmGatewayServiceImpl) createResponseInternal(
 	}
 
 	// 3. Estimate tokens
-	promptTokens, completionTokens, _ := s.tokenEstimator.EstimateTotalTokens(
-		effectiveReq.Messages,
-		effectiveReq.MaxTokens,
-		effectiveReq.Model,
-	)
+	promptTokens := s.tokenEstimator.EstimateCreateResponsePromptTokens(effectiveReq)
+	completionTokens := s.tokenEstimator.EstimateCreateResponseCompletionTokens(effectiveReq)
 
 	// 4. Select providers
 	organizationID, err := uuid.Parse(apiKey.OrganizationID)
@@ -90,7 +87,7 @@ func (s *llmGatewayServiceImpl) createResponseInternal(
 	var lastErr error
 	for attemptIdx, providerSelection := range providerSelections {
 		requestID := uuid.New().String()
-		quote, err := s.quoteTokenPricing(ctx, pricingModelRefFromSelection(providerSelection), promptTokens, completionTokens)
+		quote, err := s.quoteTokenPricingForSelection(ctx, providerSelection, pricingModelRefFromSelection(providerSelection), promptTokens, completionTokens)
 		if err != nil {
 			lastErr = fmt.Errorf("failed to calculate credits: %w", err)
 			continue
@@ -117,6 +114,7 @@ func (s *llmGatewayServiceImpl) createResponseInternal(
 			lastErr = err
 			continue
 		}
+		lockTokenPricingQuote(billingCtx, quote)
 		ctx = withLLMLangfuseTraceContext(ctx, billingCtx, "llm.responses")
 		ctx = withPlatformProxyMetadata(ctx, billingCtx)
 
@@ -131,6 +129,10 @@ func (s *llmGatewayServiceImpl) createResponseInternal(
 			continue
 		}
 
+		if err := s.activateUpstreamProbeForAttempt(ctx, providerSelection, billingCtx); err != nil {
+			lastErr = err
+			continue
+		}
 		response, err := providerAdapter.CreateResponse(ctx, effectiveReq)
 		responseTime := time.Since(startTime).Milliseconds()
 
@@ -153,7 +155,21 @@ func (s *llmGatewayServiceImpl) createResponseInternal(
 			return nil, fmt.Errorf("all providers failed: %w", lastErr)
 		}
 
-		if err := s.settleChatSuccess(ctx, billingCtx, providerSelection, channelID, response.Usage, nil, responseTime); err != nil {
+		var responseUsage *adapter.Usage
+		if response != nil {
+			responseUsage = response.Usage
+		}
+		if response != nil && !providerSelection.UseSystemProvider {
+			if usage, estimated := s.completeCreateResponseUsageFromText(effectiveReq, response.Usage, createResponseText(response), promptTokens); hasBillableTokenUsage(usage) {
+				response.Usage = usage
+				responseUsage = usage
+				if estimated {
+					markEstimatedUsageSource(billingCtx, usage)
+				}
+			}
+		}
+
+		if err := s.settleChatSuccess(ctx, billingCtx, providerSelection, channelID, responseUsage, nil, responseTime); err != nil {
 			return nil, err
 		}
 
@@ -211,7 +227,9 @@ func (s *llmGatewayServiceImpl) createEmbeddingsInternal(
 	var lastErr error
 	for attemptIdx, providerSelection := range providerSelections {
 		requestID := uuid.New().String()
-		quote, err := s.quoteTokenPricing(ctx, pricingModelRefFromSelection(providerSelection), promptTokens, 0)
+		modelRef := pricingModelRefFromSelection(providerSelection)
+		modelRef.Operation = PricingOperationEmbedding
+		quote, err := s.quoteTokenPricingForSelection(ctx, providerSelection, modelRef, promptTokens, 0)
 		if err != nil {
 			lastErr = fmt.Errorf("failed to calculate credits: %w", err)
 			continue
@@ -238,6 +256,8 @@ func (s *llmGatewayServiceImpl) createEmbeddingsInternal(
 			lastErr = err
 			continue
 		}
+		billingCtx.PricingOperation = PricingOperationEmbedding
+		lockTokenPricingQuote(billingCtx, quote)
 		ctx = withLLMLangfuseTraceContext(ctx, billingCtx, "llm.embeddings")
 		ctx = withPlatformProxyMetadata(ctx, billingCtx)
 
@@ -252,6 +272,10 @@ func (s *llmGatewayServiceImpl) createEmbeddingsInternal(
 			continue
 		}
 
+		if err := s.activateUpstreamProbeForAttempt(ctx, providerSelection, billingCtx); err != nil {
+			lastErr = err
+			continue
+		}
 		response, err := providerAdapter.CreateEmbeddings(ctx, req)
 		responseTime := time.Since(startTime).Milliseconds()
 
@@ -268,14 +292,9 @@ func (s *llmGatewayServiceImpl) createEmbeddingsInternal(
 			return nil, lastErr
 		}
 
-		// Success
-		// For EmbeddingsResponse, Usage is a value type, not a pointer
-		// Check if it's zero-valued to prevent issues
-		actualTokens := 0
-		if response.Usage.TotalTokens > 0 {
-			actualTokens = response.Usage.TotalTokens
-		} else {
-			actualTokens = promptTokens
+		actualTokens, estimatedUsage := ensureEmbeddingUsageForSelection(providerSelection, response, promptTokens)
+		if estimatedUsage {
+			markEstimatedUsageSource(billingCtx, &response.Usage)
 		}
 
 		if err := s.settleEmbeddingsSuccess(ctx, billingCtx, providerSelection, channelID, actualTokens, response.Settlement, responseTime); err != nil {
@@ -336,7 +355,9 @@ func (s *llmGatewayServiceImpl) rerankInternal(
 	var lastErr error
 	for attemptIdx, providerSelection := range providerSelections {
 		requestID := uuid.New().String()
-		quote, err := s.quoteTokenPricing(ctx, pricingModelRefFromSelection(providerSelection), promptTokens, 0)
+		modelRef := pricingModelRefFromSelection(providerSelection)
+		modelRef.Operation = PricingOperationRerank
+		quote, err := s.quoteTokenPricingForSelection(ctx, providerSelection, modelRef, promptTokens, 0)
 		if err != nil {
 			lastErr = fmt.Errorf("failed to calculate credits: %w", err)
 			continue
@@ -363,6 +384,8 @@ func (s *llmGatewayServiceImpl) rerankInternal(
 			lastErr = err
 			continue
 		}
+		billingCtx.PricingOperation = PricingOperationRerank
+		lockTokenPricingQuote(billingCtx, quote)
 		ctx = withLLMLangfuseTraceContext(ctx, billingCtx, "llm.rerank")
 		ctx = withPlatformProxyMetadata(ctx, billingCtx)
 
@@ -377,6 +400,10 @@ func (s *llmGatewayServiceImpl) rerankInternal(
 			continue
 		}
 
+		if err := s.activateUpstreamProbeForAttempt(ctx, providerSelection, billingCtx); err != nil {
+			lastErr = err
+			continue
+		}
 		response, err := providerAdapter.Rerank(ctx, req)
 		responseTime := time.Since(startTime).Milliseconds()
 
@@ -393,13 +420,9 @@ func (s *llmGatewayServiceImpl) rerankInternal(
 			return nil, lastErr
 		}
 
-		// Success
-		// For rerank, usage might be in search units or tokens
-		actualTokens := 0
-		if response.Usage != nil && response.Usage.TotalTokens > 0 {
-			actualTokens = response.Usage.TotalTokens
-		} else {
-			actualTokens = promptTokens
+		actualTokens, estimatedUsage := ensureRerankUsageForSelection(providerSelection, response, promptTokens)
+		if estimatedUsage {
+			markEstimatedUsageSource(billingCtx, response.Usage)
 		}
 
 		if err := s.settleEmbeddingsSuccess(ctx, billingCtx, providerSelection, channelID, actualTokens, response.Settlement, responseTime); err != nil {

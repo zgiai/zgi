@@ -72,7 +72,16 @@ func loadCoreRuntimeConfig(cfg *Config, source *envSource) error {
 		optionalConfigLoader("console", loadConsoleConfig),
 		optionalConfigLoader("platform", loadPlatformConfig),
 		optionalConfigLoader("feature", loadFeatureConfig),
+		optionalConfigLoader("chat runtime", loadChatRuntimeConfig),
 	)
+}
+
+func loadChatRuntimeConfig(cfg *Config, source *envSource) {
+	timeout := mustInt(source.int(300, envChatRuntimeModelIdleTimeoutSeconds))
+	if timeout <= 0 {
+		timeout = 300
+	}
+	cfg.ChatRuntime = ChatRuntimeConfig{ModelIdleTimeoutSeconds: timeout}
 }
 
 func loadInfrastructureConfig(cfg *Config, source *envSource) error {
@@ -270,7 +279,7 @@ func loadJWTConfig(cfg *Config, source *envSource) error {
 		ExpireDays:     expireMinutes / (24 * 60),
 		ExpireDuration: time.Duration(expireMinutes) * time.Minute,
 		JWTExpire:      time.Duration(expireMinutes) * time.Minute,
-		Issuer:         source.string("SELF_HOSTED", envZGIEdition),
+		Issuer:         platformRunMode(source),
 	}
 	return nil
 }
@@ -370,15 +379,29 @@ func loadConsoleConfig(cfg *Config, source *envSource) {
 
 func loadPlatformConfig(cfg *Config, source *envSource) {
 	cfg.Platform = PlatformConfig{
-		Edition:                  source.string("SELF_HOSTED", envZGIEdition),
+		Edition:                  platformRunMode(source),
 		AdminPass:                source.string("", envZGIAdminPass),
-		OrgInviteDefaultPassword: source.string("", envZGIOrgInviteDefaultPassword),
+		OrgInviteDefaultPassword: source.string(DefaultOrgInviteDefaultPassword, envZGIOrgInviteDefaultPassword),
 		CloudBootstrap: CloudBootstrapConfig{
 			AdminEmail:    source.string("", envCloudBootstrapAdminEmail),
 			AdminName:     source.string("", envCloudBootstrapAdminName),
 			AdminPassword: source.string("", envCloudBootstrapAdminPassword),
 		},
 	}
+}
+
+func platformRunMode(source *envSource) string {
+	mode := source.string("SELF_HOSTED", envZGIRunMode)
+	return normalizePlatformRunMode(mode)
+}
+
+func normalizePlatformRunMode(mode string) string {
+	normalized := strings.ToUpper(strings.TrimSpace(mode))
+	normalized = strings.ReplaceAll(normalized, "-", "_")
+	if normalized == "" {
+		return "SELF_HOSTED"
+	}
+	return normalized
 }
 
 func loadFeatureConfig(cfg *Config, source *envSource) {
@@ -885,13 +908,13 @@ func shouldAutoEnableLangfuseDirectExport(endpoint string, tracesEndpoint string
 
 func loadModelMetaConfig(cfg *Config, source *envSource) {
 	cfg.ModelMeta = ModelMetaConfig{
-		APIURL: source.string("", envModelMetaAPIURL),
+		APIURL: source.string("https://models.zgi.ai", envModelMetaAPIURL),
 	}
 }
 
 func loadNeo4jConfig(cfg *Config, source *envSource) {
 	cfg.Neo4j = Neo4jConfig{
-		URI:      source.string("bolt://localhost:7687", envNeo4jURI),
+		URI:      source.string("", envNeo4jURI),
 		Username: source.string("neo4j", envNeo4jUsername),
 		Password: source.string("", envNeo4jPassword),
 		Database: source.string("neo4j", envNeo4jDatabase),
@@ -1018,12 +1041,17 @@ func loadLLMConfig(cfg *Config, source *envSource) {
 	_, guardOutboundURLSet := source.lookup(envLLMGuardOutboundURL)
 	guardOutboundDNS, _ := source.bool(false, envLLMGuardOutboundDNS)
 	allowPrivateBaseURL, _ := source.bool(false, envLLMAllowPrivateBaseURL)
+	upstreamBalancePolling, _ := source.bool(false, envLLMUpstreamBalancePollingEnabled)
+	upstreamGuardPercentage, _ := source.int(0, envLLMUpstreamGuardPercentage)
 	cfg.LLM = LLMConfig{
 		EncryptionKey:           source.string("", envLLMEncryptionKey),
 		OfficialModelStrictSync: officialModelStrictSync,
 		GuardOutboundURL:        guardOutboundURL,
 		GuardOutboundDNS:        guardOutboundDNS,
 		AllowPrivateBaseURL:     allowPrivateBaseURL,
+		UpstreamBalancePolling:  upstreamBalancePolling,
+		UpstreamGuardMode:       strings.ToLower(strings.TrimSpace(source.string("off", envLLMUpstreamGuardMode))),
+		UpstreamGuardPercentage: upstreamGuardPercentage,
 		guardOutboundURLSet:     guardOutboundURLSet,
 	}
 }

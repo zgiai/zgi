@@ -14,7 +14,12 @@ import type {
   AIChatMessageRetractEventData,
   AIChatMessageStartEventData,
   AIChatMemoryMutationEventData,
+  AIChatClientActionResultRequest,
   AIChatSkillInvocation,
+  AIChatRuntimeSurface,
+  AIChatToolGovernanceDecisionEventData,
+  AIChatToolGovernanceDecisionRequest,
+  AIChatUserInputContinuationRequest,
   AIChatWorkflowPausedEventData,
 } from '@/services/types/aichat';
 import type { ChatBranchNavigation } from '@/components/chat/utils/message-tree';
@@ -39,7 +44,14 @@ export interface AIChatStreamingMessageState {
   conversation_id: string;
   message_id: string;
   answer: string;
-  status: 'streaming' | 'completed' | 'waiting_approval' | 'waiting_question' | 'stopped' | 'error';
+  status:
+    | 'streaming'
+    | 'completed'
+    | 'waiting_approval'
+    | 'waiting_client_action'
+    | 'waiting_question'
+    | 'stopped'
+    | 'error';
   timeline?: AIChatAgenticTimelineItem[];
   last_event_id?: string;
   replay_base_answer?: string;
@@ -58,6 +70,17 @@ export type AIChatAgenticTimelineItem =
       meta_tool_name?: string;
       skill_id?: string;
       tool_name?: string;
+      action_id?: string;
+      action_type?: string;
+      continuation_policy?: string;
+      blocking?: boolean;
+      status?: string;
+      effect?: string;
+      asset_type?: string;
+      assets?: AIChatAgentProgressEventData['assets'];
+      correlation_id?: string;
+      asset_operation_audit?: AIChatAgentProgressEventData['asset_operation_audit'];
+      result?: AIChatAgentProgressEventData['result'];
       arguments_chars?: number;
       created_at?: number;
       event_id?: string | null;
@@ -81,8 +104,41 @@ export type AIChatAgenticTimelineItem =
     }
   | {
       id: string;
+      type: 'user_input_request';
+      request_id?: string;
+      message?: string;
+      questions: Array<{
+        question_id?: string;
+        question: string;
+        options: string[];
+      }>;
+      created_at?: number;
+      event_id?: string | null;
+    }
+  | {
+      id: string;
+      type: 'user_input_response';
+      request_id?: string;
+      message?: string;
+      answers: Array<{
+        question_id?: string;
+        question: string;
+        value: string;
+      }>;
+      created_at?: number;
+      event_id?: string | null;
+    }
+  | {
+      id: string;
       type: 'memory_event';
       event: AIChatMemoryMutationEventData;
+      created_at?: number;
+      event_id?: string | null;
+    }
+  | {
+      id: string;
+      type: 'tool_governance_decision';
+      event: AIChatToolGovernanceDecisionEventData;
       created_at?: number;
       event_id?: string | null;
     }
@@ -100,6 +156,7 @@ export type AIChatAgenticTimelineItem =
     };
 
 export type AIChatRecoveryMode = 'active' | 'background';
+export type AIChatConnectionState = 'connected' | 'reconnecting' | 'disconnected' | 'idle';
 
 export interface AIChatMessageStartContext {
   query?: string;
@@ -107,6 +164,7 @@ export interface AIChatMessageStartContext {
   files?: AIChatMessageFile[];
   previousConversationId?: string | null;
   resetAnswer?: boolean;
+  forceAdvanceLeaf?: boolean;
   mode?: AIChatRecoveryMode;
   moveToTop?: boolean;
 }
@@ -121,6 +179,7 @@ export interface AIChatControllerState {
   streamingByMessageId: Record<string, AIChatStreamingMessageState>;
   recoveringByConversation: Record<string, boolean>;
   stoppingByConversation: Record<string, boolean>;
+  connectionByConversation: Record<string, AIChatConnectionState>;
   isLoadingList: boolean;
   isLoadingMessages: boolean;
   isSending: boolean;
@@ -149,7 +208,7 @@ export interface AIChatControllerStore extends AIChatControllerState {
   applyFileParseStart: (payload: AIChatFileParseStartEventData, eventId?: string | null) => void;
   applyFileParseEnd: (payload: AIChatFileParseEndEventData, eventId?: string | null) => void;
   applyFileParseError: (payload: AIChatFileParseErrorEventData, eventId?: string | null) => void;
-  applyMessageEnd: (payload: AIChatMessageEndEventData) => void;
+  applyMessageEnd: (payload: AIChatMessageEndEventData, eventId?: string | null) => void;
   applyStreamError: (payload: AIChatErrorEventData, fallbackConversationId: string | null) => void;
   mergeMessages: (conversationId: string, messages: AIChatMessage[]) => void;
   setActiveConversationId: (conversationId: string | null) => void;
@@ -178,6 +237,7 @@ export interface AIChatController {
   isRecoveringMessages: boolean;
   isStopping: boolean;
   isSending: boolean;
+  connectionState: AIChatConnectionState;
   error: string | null;
   init: (conversationId?: string | null) => void;
   refreshList: (params?: { page?: number; append?: boolean }) => Promise<void>;
@@ -196,13 +256,21 @@ export interface AIChatController {
     files?: AIChatMessageFile[];
     parentId?: string | null;
     useMemory?: boolean;
+    forceAdvanceLeaf?: boolean;
+    runtimeSurface?: AIChatRuntimeSurface;
+    operationContext?: unknown;
   }) => Promise<void>;
   stop: () => Promise<void>;
-  regenerate: (messageId: string, model: AIChatModelSelection) => Promise<void>;
+  regenerate: (
+    messageId: string,
+    model: AIChatModelSelection,
+    options?: { operationContext?: unknown; runtimeSurface?: AIChatRuntimeSurface }
+  ) => Promise<void>;
   replaceRootMessage: (payload: {
     messageId: string;
     query?: string;
     model?: AIChatModelSelection;
+    operationContext?: unknown;
   }) => Promise<void>;
   continueWorkflowApproval?: (
     conversationId: string,
@@ -214,8 +282,30 @@ export interface AIChatController {
     messageId: string,
     inputs: { query: string; question_answer_option_id?: string }
   ) => Promise<void>;
+  continueToolGovernanceDecision?: (
+    conversationId: string,
+    messageId: string,
+    correlationId: string,
+    payload: AIChatToolGovernanceDecisionRequest
+  ) => Promise<void>;
+  continueClientAction?: (
+    conversationId: string,
+    messageId: string,
+    actionId: string,
+    payload: AIChatClientActionResultRequest
+  ) => Promise<boolean>;
+  continueUserInput?: (
+    conversationId: string,
+    messageId: string,
+    requestId: string,
+    payload: AIChatUserInputContinuationRequest
+  ) => Promise<void>;
   switchBranch: (messageId: string) => void;
-  search?: (query: string, limit: number) => Promise<ConversationSearchResult[]>;
+  search?: (
+    query: string,
+    limit: number,
+    options?: { surface?: AIChatRuntimeSurface }
+  ) => Promise<ConversationSearchResult[]>;
 }
 
 export type AIChatSetControllerState = (

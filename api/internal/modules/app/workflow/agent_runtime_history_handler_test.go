@@ -21,6 +21,30 @@ import (
 	"github.com/zgiai/zgi/api/internal/util"
 )
 
+func TestAgentRuntimeControlMetricsOmitsInternalDecisionIDs(t *testing.T) {
+	metrics := agentRuntimeControlMetrics(map[string]interface{}{
+		"skill_loop_control_diagnostics": map[string]interface{}{
+			"plan_update_count":                     2,
+			"tool_decision_without_execution_count": 1,
+			"suppressed_control_tool_count":         1,
+			"phase_mismatch_decision_ids":           []interface{}{"internal-call-id"},
+			"tool_decision_without_execution_ids":   []interface{}{"internal-call-id"},
+		},
+	})
+	if got := metrics["plan_update_count"]; got != 2 {
+		t.Fatalf("plan_update_count = %#v, want 2", got)
+	}
+	if got := metrics["suppressed_control_tool_count"]; got != 1 {
+		t.Fatalf("suppressed_control_tool_count = %#v, want 1", got)
+	}
+	if _, exists := metrics["phase_mismatch_decision_ids"]; exists {
+		t.Fatalf("control metrics exposed internal decision IDs: %#v", metrics)
+	}
+	if _, exists := metrics["tool_decision_without_execution_ids"]; exists {
+		t.Fatalf("control metrics exposed internal decision IDs: %#v", metrics)
+	}
+}
+
 func TestAgentRuntimeRunsReturnsOnlyNewWebAppMessages(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	handler, service, ids := setupRuntimeLogsHandler(t)
@@ -340,6 +364,133 @@ func TestAgentRuntimeRunsCanFilterConsoleAndKeyword(t *testing.T) {
 	}
 }
 
+func TestAgentRuntimeLogRoutesRequireAgentViewPermission(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	ids := runtimeHistoryIDs{
+		organizationID: uuid.New(),
+		workspaceID:    uuid.New(),
+		accountID:      uuid.New(),
+		agentID:        uuid.New(),
+	}
+	messageID := uuid.New()
+	service := newFakeRuntimeHistoryService()
+	permissionChecker := &fakeRuntimeLogWorkspacePermissionChecker{allowed: false}
+	handler := NewAgentRuntimeLogsHandler(
+		&fakeRuntimeAgentRepo{agent: &agentspkg.Agent{
+			ID:         ids.agentID,
+			TenantID:   ids.workspaceID,
+			Name:       "agent",
+			AgentsType: "AGENT",
+			WebAppID:   uuid.New(),
+		}},
+		service,
+		permissionChecker,
+	)
+
+	endpoints := []struct {
+		name   string
+		path   string
+		params gin.Params
+		call   func(*gin.Context)
+	}{
+		{
+			name:   "runtime runs",
+			path:   "/agents/" + ids.agentID.String() + "/runtime-runs",
+			params: gin.Params{{Key: "agent_id", Value: ids.agentID.String()}},
+			call:   handler.GetRuntimeRuns,
+		},
+		{
+			name: "runtime run detail",
+			path: "/agents/" + ids.agentID.String() + "/runtime-runs/" + messageID.String(),
+			params: gin.Params{
+				{Key: "agent_id", Value: ids.agentID.String()},
+				{Key: "message_id", Value: messageID.String()},
+			},
+			call: handler.GetRuntimeRunDetail,
+		},
+		{
+			name: "runtime run steps",
+			path: "/agents/" + ids.agentID.String() + "/runtime-runs/" + messageID.String() + "/steps",
+			params: gin.Params{
+				{Key: "agent_id", Value: ids.agentID.String()},
+				{Key: "message_id", Value: messageID.String()},
+			},
+			call: handler.GetRuntimeRunSteps,
+		},
+	}
+
+	for _, endpoint := range endpoints {
+		t.Run(endpoint.name, func(t *testing.T) {
+			permissionChecker.checked = false
+			service.listRuntimeLogFiltersCalled = false
+			service.getMessageRuntimeLogCalled = false
+
+			recorder := httptest.NewRecorder()
+			ctx, _ := gin.CreateTestContext(recorder)
+			ctx.Params = endpoint.params
+			ctx.Set("account_id", ids.accountID.String())
+			util.SetOrganizationID(ctx, ids.organizationID.String())
+			ctx.Request = httptest.NewRequest(http.MethodGet, endpoint.path, nil)
+
+			endpoint.call(ctx)
+
+			if recorder.Code != http.StatusForbidden {
+				t.Fatalf("status = %d, want %d; body=%s", recorder.Code, http.StatusForbidden, recorder.Body.String())
+			}
+			if !permissionChecker.checked {
+				t.Fatalf("expected workflow.logs.view permission check")
+			}
+			if service.listRuntimeLogFiltersCalled || service.getMessageRuntimeLogCalled {
+				t.Fatalf("runtime service should not be called after missing workflow.logs.view denial")
+			}
+		})
+	}
+}
+
+func TestAgentRuntimeRunsRequiresAgentViewBeforeBindingQuery(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	ids := runtimeHistoryIDs{
+		organizationID: uuid.New(),
+		workspaceID:    uuid.New(),
+		accountID:      uuid.New(),
+		agentID:        uuid.New(),
+	}
+	service := newFakeRuntimeHistoryService()
+	permissionChecker := &fakeRuntimeLogWorkspacePermissionChecker{allowed: false}
+	handler := NewAgentRuntimeLogsHandler(
+		&fakeRuntimeAgentRepo{agent: &agentspkg.Agent{
+			ID:         ids.agentID,
+			TenantID:   ids.workspaceID,
+			Name:       "agent",
+			AgentsType: "AGENT",
+			WebAppID:   uuid.New(),
+		}},
+		service,
+		permissionChecker,
+	)
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Params = gin.Params{{Key: "agent_id", Value: ids.agentID.String()}}
+	ctx.Set("account_id", ids.accountID.String())
+	util.SetOrganizationID(ctx, ids.organizationID.String())
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/agents/"+ids.agentID.String()+"/runtime-runs?limit=not-an-int", nil)
+
+	handler.GetRuntimeRuns(ctx)
+
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d; body=%s", recorder.Code, http.StatusForbidden, recorder.Body.String())
+	}
+	if !permissionChecker.checked {
+		t.Fatalf("expected workflow.logs.view permission check before query binding")
+	}
+	if service.listRuntimeLogFiltersCalled {
+		t.Fatalf("runtime service should not be called after missing workflow.logs.view denial")
+	}
+}
+
 func TestAgentRuntimeRunDetailRejectsOtherAgentMessage(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	handler, service, ids := setupRuntimeLogsHandler(t)
@@ -379,6 +530,51 @@ func TestAgentRuntimeRunDetailRejectsOtherAgentMessage(t *testing.T) {
 	ctx.Request = httptest.NewRequest(http.MethodGet, "/agents/"+ids.agentID.String()+"/runtime-runs/"+messageID.String(), nil)
 
 	handler.GetRuntimeRunDetail(ctx)
+
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want %d, body=%s", recorder.Code, http.StatusNotFound, recorder.Body.String())
+	}
+}
+
+func TestAgentRuntimeRunStepsRejectsOtherAgentMessage(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	handler, service, ids := setupRuntimeLogsHandler(t)
+
+	otherAgentID := uuid.New()
+	webAppID := uuid.New()
+	conversationID := uuid.New()
+	service.addConversation(&runtimemodel.Conversation{
+		ID:             conversationID,
+		OrganizationID: ids.organizationID,
+		WorkspaceID:    &ids.workspaceID,
+		AccountID:      ids.accountID,
+		CallerType:     runtimemodel.ConversationCallerAgent,
+		CallerID:       &otherAgentID,
+		Title:          "other",
+		Source:         runtimemodel.ConversationSourceWebApp,
+		SourceWebAppID: &webAppID,
+	})
+	messageID := uuid.New()
+	service.addMessage(&runtimemodel.Message{
+		ID:             messageID,
+		ConversationID: conversationID,
+		Query:          "secret",
+		Answer:         "hidden",
+		Status:         runtimemodel.MessageStatusCompleted,
+		ModelName:      "gpt-test",
+	})
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Params = gin.Params{
+		{Key: "agent_id", Value: ids.agentID.String()},
+		{Key: "message_id", Value: messageID.String()},
+	}
+	ctx.Set("account_id", ids.accountID.String())
+	util.SetOrganizationID(ctx, ids.organizationID.String())
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/agents/"+ids.agentID.String()+"/runtime-runs/"+messageID.String()+"/steps", nil)
+
+	handler.GetRuntimeRunSteps(ctx)
 
 	if recorder.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want %d, body=%s", recorder.Code, http.StatusNotFound, recorder.Body.String())
@@ -641,6 +837,148 @@ func TestAgentRuntimeStepsWithoutTraceKeepsFinalAnswer(t *testing.T) {
 	}
 }
 
+func TestAgentRuntimeEventsLegacyCompactToolNamesKeepUserInputsInOrder(t *testing.T) {
+	modelInvocation := func(runtimeID string, toolNames ...string) map[string]interface{} {
+		items := make([]interface{}, 0, len(toolNames))
+		for _, name := range toolNames {
+			items = append(items, name)
+		}
+		return map[string]interface{}{
+			"kind":       "model_call",
+			"runtime_id": runtimeID,
+			"response":   map[string]interface{}{"tool_call_names": items},
+		}
+	}
+	metadata := map[string]interface{}{
+		"model_invocations": []interface{}{
+			modelInvocation("m1", "request_user_input"),
+			modelInvocation("m2", "update_plan"),
+			modelInvocation("m3", "request_user_input"),
+			modelInvocation("m4", "update_plan"),
+			modelInvocation("m5"),
+		},
+		"skill_invocations": []interface{}{
+			map[string]interface{}{"kind": "user_input_request", "runtime_id": "u1"},
+			map[string]interface{}{"kind": "user_input_request", "runtime_id": "u2"},
+		},
+	}
+
+	events := agentRuntimeEvents(metadata)
+	want := []string{"m1", "u1", "m2", "m3", "u2", "m4", "m5"}
+	if len(events) != len(want) {
+		t.Fatalf("events len = %d, want %d: %#v", len(events), len(want), events)
+	}
+	for index, runtimeID := range want {
+		if got := runtimeString(events[index]["runtime_id"]); got != runtimeID {
+			t.Fatalf("events[%d].runtime_id = %q, want %q", index, got, runtimeID)
+		}
+	}
+}
+
+func TestAgentRuntimeEventsPreferPersistedTimeline(t *testing.T) {
+	metadata := map[string]interface{}{
+		"model_invocations": []interface{}{
+			map[string]interface{}{"kind": "model_call", "runtime_id": "m2", "created_at_ms": 1000.0},
+			map[string]interface{}{"kind": "model_call", "runtime_id": "m1", "created_at_ms": 1000.0},
+		},
+		"skill_invocations": []interface{}{
+			map[string]interface{}{"kind": "user_input_request", "runtime_id": "u1", "created_at_ms": 1000.0},
+		},
+		"runtime_timeline": []interface{}{
+			map[string]interface{}{"runtime_id": "m1", "source": "model_invocations", "sequence": 1.0, "created_at_ms": 1000.0},
+			map[string]interface{}{"runtime_id": "u1", "source": "skill_invocations", "sequence": 2.0, "created_at_ms": 1000.0},
+			map[string]interface{}{"runtime_id": "m2", "source": "model_invocations", "sequence": 3.0, "created_at_ms": 1000.0},
+		},
+	}
+
+	events := agentRuntimeEvents(metadata)
+	for index, runtimeID := range []string{"m1", "u1", "m2"} {
+		if got := runtimeString(events[index]["runtime_id"]); got != runtimeID {
+			t.Fatalf("events[%d].runtime_id = %q, want %q", index, got, runtimeID)
+		}
+		if got := int64(metadataNumber(events[index], "sequence")); got != int64(index+1) {
+			t.Fatalf("events[%d].sequence = %d, want %d", index, got, index+1)
+		}
+	}
+}
+
+func TestAgentRuntimeStepsDoNotInventMissingEventTimeAndUseAnswerCompletionTime(t *testing.T) {
+	createdAt := time.Unix(1700000000, 0)
+	updatedAt := createdAt.Add(9 * time.Second)
+	message := &runtimemodel.Message{
+		ID:             uuid.New(),
+		ConversationID: uuid.New(),
+		Status:         runtimemodel.MessageStatusCompleted,
+		Metadata: map[string]interface{}{
+			"skill_invocations": []interface{}{
+				map[string]interface{}{"kind": "user_input_request", "runtime_id": "legacy-input", "status": "success"},
+			},
+		},
+		CreatedAt: createdAt,
+		UpdatedAt: updatedAt,
+	}
+
+	steps := buildAgentRuntimeSteps(message)
+	if steps[0].CreatedAt != nil || steps[0].CreatedAtMS != nil || steps[0].FinishedAt != nil {
+		t.Fatalf("legacy event times = created:%v created_ms:%v finished:%v, want unknown", steps[0].CreatedAt, steps[0].CreatedAtMS, steps[0].FinishedAt)
+	}
+	if steps[1].CreatedAt == nil || *steps[1].CreatedAt != updatedAt.Unix() {
+		t.Fatalf("answer created_at = %v, want completion time %d", steps[1].CreatedAt, updatedAt.Unix())
+	}
+	if steps[1].CreatedAtMS == nil || *steps[1].CreatedAtMS != updatedAt.UnixMilli() {
+		t.Fatalf("answer created_at_ms = %v, want completion time %d", steps[1].CreatedAtMS, updatedAt.UnixMilli())
+	}
+}
+
+func TestAgentRuntimeStepsDoNotAppendAnswerWhileWaitingForContinuation(t *testing.T) {
+	message := &runtimemodel.Message{
+		ID:             uuid.New(),
+		ConversationID: uuid.New(),
+		Status:         runtimemodel.MessageStatusWaitingQuestion,
+		Metadata: map[string]interface{}{
+			"skill_invocations": []interface{}{
+				map[string]interface{}{"kind": "user_input_request", "runtime_id": "input-1"},
+			},
+		},
+	}
+
+	steps := buildAgentRuntimeSteps(message)
+	if len(steps) != 1 || steps[0].Type != "user_input_request" {
+		t.Fatalf("waiting steps = %#v, want only persisted runtime events", steps)
+	}
+	if got := agentRuntimeTotalSteps(message.Metadata, message.Status); got != 1 {
+		t.Fatalf("waiting total steps = %d, want 1", got)
+	}
+}
+
+func TestAgentRuntimeModelInputPrefersSanitizedLogContext(t *testing.T) {
+	event := map[string]interface{}{
+		"kind": "model_call",
+		"request": map[string]interface{}{
+			"messages": []interface{}{map[string]interface{}{"role": "user", "content": "old compact request"}},
+		},
+		"log_context": map[string]interface{}{
+			"messages": []interface{}{
+				map[string]interface{}{"role": "user", "content": "new snapshot"},
+				map[string]interface{}{"role": "tool", "content": `{"api_key":"secret","value":4}`},
+			},
+		},
+	}
+
+	input := agentRuntimeEventInput(event).(map[string]interface{})
+	data, err := json.Marshal(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	if !strings.Contains(text, "new snapshot") || strings.Contains(text, "old compact request") || strings.Contains(text, "secret") {
+		t.Fatalf("sanitized model input = %s", text)
+	}
+	if !strings.Contains(text, "[REDACTED]") {
+		t.Fatalf("sanitized model input missing redaction: %s", text)
+	}
+}
+
 func TestAgentRuntimeStepsIncludeWorkflowRunEvents(t *testing.T) {
 	message := &runtimemodel.Message{
 		ID:             uuid.New(),
@@ -750,6 +1088,99 @@ func TestAgentRuntimeWorkflowRunsNoLongerServeAgentMessages(t *testing.T) {
 	}
 }
 
+func TestAgentRuntimeWorkflowRunDetailNoLongerServesAgentMessages(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	handler, service, ids := setupRuntimeHistoryHandler(t)
+
+	conversationID := uuid.New()
+	webAppID := uuid.New()
+	service.addConversation(&runtimemodel.Conversation{
+		ID:             conversationID,
+		OrganizationID: ids.organizationID,
+		WorkspaceID:    &ids.workspaceID,
+		AccountID:      ids.accountID,
+		CallerType:     runtimemodel.ConversationCallerAgent,
+		CallerID:       &ids.agentID,
+		Source:         runtimemodel.ConversationSourceWebApp,
+		SourceWebAppID: &webAppID,
+	})
+	messageID := uuid.New()
+	service.addMessage(&runtimemodel.Message{
+		ID:             messageID,
+		ConversationID: conversationID,
+		Query:          "runtime question",
+		Answer:         "runtime answer",
+		Status:         runtimemodel.MessageStatusCompleted,
+	})
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Params = gin.Params{
+		{Key: "agent_id", Value: ids.agentID.String()},
+		{Key: "run_id", Value: messageID.String()},
+	}
+	ctx.Set("account_id", ids.accountID.String())
+	util.SetOrganizationID(ctx, ids.organizationID.String())
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/agents/"+ids.agentID.String()+"/workflow-runs/"+messageID.String(), nil)
+
+	handler.GetWorkflowRunDetail(ctx)
+
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want %d, body=%s", recorder.Code, http.StatusNotFound, recorder.Body.String())
+	}
+}
+
+func TestAgentRuntimeWorkflowRunNodeExecutionsNoLongerServeAgentMessages(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	handler, service, ids := setupRuntimeHistoryHandler(t)
+
+	conversationID := uuid.New()
+	webAppID := uuid.New()
+	service.addConversation(&runtimemodel.Conversation{
+		ID:             conversationID,
+		OrganizationID: ids.organizationID,
+		WorkspaceID:    &ids.workspaceID,
+		AccountID:      ids.accountID,
+		CallerType:     runtimemodel.ConversationCallerAgent,
+		CallerID:       &ids.agentID,
+		Source:         runtimemodel.ConversationSourceWebApp,
+		SourceWebAppID: &webAppID,
+	})
+	messageID := uuid.New()
+	service.addMessage(&runtimemodel.Message{
+		ID:             messageID,
+		ConversationID: conversationID,
+		Query:          "runtime question",
+		Answer:         "runtime answer",
+		Status:         runtimemodel.MessageStatusCompleted,
+		Metadata: map[string]interface{}{
+			"skill_invocations": []interface{}{
+				map[string]interface{}{
+					"kind":      "tool_call",
+					"skill_id":  "calculator",
+					"tool_name": "calculate",
+				},
+			},
+		},
+	})
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Params = gin.Params{
+		{Key: "agent_id", Value: ids.agentID.String()},
+		{Key: "run_id", Value: messageID.String()},
+	}
+	ctx.Set("account_id", ids.accountID.String())
+	util.SetOrganizationID(ctx, ids.organizationID.String())
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/agents/"+ids.agentID.String()+"/workflow-runs/"+messageID.String()+"/node-executions", nil)
+
+	handler.GetWorkflowRunNodeExecutions(ctx)
+
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want %d, body=%s", recorder.Code, http.StatusNotFound, recorder.Body.String())
+	}
+}
+
 type runtimeHistoryIDs struct {
 	organizationID uuid.UUID
 	workspaceID    uuid.UUID
@@ -774,7 +1205,9 @@ func setupRuntimeHistoryHandler(t *testing.T) (*AgentHistoryDispatchHandler, *fa
 			AgentsType: "AGENT",
 			WebAppID:   uuid.New(),
 		}},
-		nil,
+		&WorkflowHandler{
+			workspacePermissionChecker: &fakeRuntimeLogWorkspacePermissionChecker{allowed: true},
+		},
 		nil,
 		nil,
 		service,
@@ -800,6 +1233,7 @@ func setupRuntimeLogsHandler(t *testing.T) (*AgentRuntimeLogsHandler, *fakeRunti
 			WebAppID:   uuid.New(),
 		}},
 		service,
+		&fakeRuntimeLogWorkspacePermissionChecker{allowed: true},
 	)
 	return handler, service, ids
 }
@@ -842,8 +1276,10 @@ func (r *fakeRuntimeAgentRepo) GetByID(ctx context.Context, id string) (*agentsp
 
 type fakeRuntimeHistoryService struct {
 	runtimeservice.Service
-	conversations map[uuid.UUID]*runtimemodel.Conversation
-	messages      []*runtimemodel.Message
+	conversations               map[uuid.UUID]*runtimemodel.Conversation
+	messages                    []*runtimemodel.Message
+	listRuntimeLogFiltersCalled bool
+	getMessageRuntimeLogCalled  bool
 }
 
 func newFakeRuntimeHistoryService() *fakeRuntimeHistoryService {
@@ -932,6 +1368,7 @@ func (s *fakeRuntimeHistoryService) ListMessagesByCallerLogFilters(ctx context.C
 }
 
 func (s *fakeRuntimeHistoryService) ListMessagesByCallerRuntimeLogFilters(ctx context.Context, scope runtimeservice.Scope, caller runtimeservice.Caller, source string, conversationID *uuid.UUID, queryText string, page, limit int) ([]*runtimemodel.Message, int64, error) {
+	s.listRuntimeLogFiltersCalled = true
 	var filtered []*runtimemodel.Message
 	keyword := strings.ToLower(strings.TrimSpace(queryText))
 	for _, message := range s.messages {
@@ -965,6 +1402,7 @@ func (s *fakeRuntimeHistoryService) GetMessageByCaller(ctx context.Context, scop
 }
 
 func (s *fakeRuntimeHistoryService) GetMessageByCallerRuntimeLog(ctx context.Context, scope runtimeservice.Scope, caller runtimeservice.Caller, id uuid.UUID, source string) (*runtimemodel.Message, *runtimemodel.Conversation, error) {
+	s.getMessageRuntimeLogCalled = true
 	for _, message := range s.messages {
 		if message.ID != id {
 			continue
@@ -1042,6 +1480,34 @@ func (s *fakeRuntimeHistoryService) ListConversations(ctx context.Context, scope
 }
 
 func (s *fakeRuntimeHistoryService) ListConversationsByCaller(ctx context.Context, scope runtimeservice.Scope, caller runtimeservice.Caller, page, limit int) ([]*runtimemodel.Conversation, int64, error) {
+	var filtered []*runtimemodel.Conversation
+	for _, conversation := range s.conversations {
+		if fakeConversationMatches(scope, caller, conversation) {
+			filtered = append(filtered, conversation)
+		}
+	}
+	total := int64(len(filtered))
+	if page < 1 {
+		page = 1
+	}
+	if limit < 1 {
+		limit = len(filtered)
+		if limit < 1 {
+			limit = 1
+		}
+	}
+	start := (page - 1) * limit
+	if start >= len(filtered) {
+		return []*runtimemodel.Conversation{}, total, nil
+	}
+	end := start + limit
+	if end > len(filtered) {
+		end = len(filtered)
+	}
+	return filtered[start:end], total, nil
+}
+
+func (s *fakeRuntimeHistoryService) ListConversationsBySurface(ctx context.Context, scope runtimeservice.Scope, surface string, page, limit int) ([]*runtimemodel.Conversation, int64, error) {
 	return nil, 0, fmt.Errorf("not implemented")
 }
 
@@ -1049,19 +1515,11 @@ func (s *fakeRuntimeHistoryService) Search(ctx context.Context, scope runtimeser
 	return nil, fmt.Errorf("not implemented")
 }
 
+func (s *fakeRuntimeHistoryService) SearchBySurface(ctx context.Context, scope runtimeservice.Scope, surface string, query string, limit int) ([]*runtimeservice.SearchResult, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+
 func (s *fakeRuntimeHistoryService) SearchByCaller(ctx context.Context, scope runtimeservice.Scope, caller runtimeservice.Caller, query string, limit int) ([]*runtimeservice.SearchResult, error) {
-	return nil, fmt.Errorf("not implemented")
-}
-
-func (s *fakeRuntimeHistoryService) GetAgentSkillVariables(ctx context.Context, scope runtimeservice.Scope, agentID uuid.UUID, skillID string) (*runtimeservice.AgentSkillVariables, error) {
-	return nil, fmt.Errorf("not implemented")
-}
-
-func (s *fakeRuntimeHistoryService) UpsertAgentSkillVariable(ctx context.Context, scope runtimeservice.Scope, agentID uuid.UUID, skillID string, req runtimedto.UpsertAgentSkillVariableRequest) (*runtimeservice.AgentSkillVariables, error) {
-	return nil, fmt.Errorf("not implemented")
-}
-
-func (s *fakeRuntimeHistoryService) DeleteAgentSkillVariable(ctx context.Context, scope runtimeservice.Scope, agentID uuid.UUID, skillID string, key string) (*runtimeservice.AgentSkillVariables, error) {
 	return nil, fmt.Errorf("not implemented")
 }
 
@@ -1081,7 +1539,15 @@ func (s *fakeRuntimeHistoryService) UpdateConversation(ctx context.Context, scop
 	return nil, fmt.Errorf("not implemented")
 }
 
+func (s *fakeRuntimeHistoryService) UpdateConversationByCaller(ctx context.Context, scope runtimeservice.Scope, caller runtimeservice.Caller, id uuid.UUID, req runtimedto.UpdateConversationRequest) (*runtimemodel.Conversation, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+
 func (s *fakeRuntimeHistoryService) DeleteConversation(ctx context.Context, scope runtimeservice.Scope, id uuid.UUID) error {
+	return fmt.Errorf("not implemented")
+}
+
+func (s *fakeRuntimeHistoryService) DeleteConversationByCaller(ctx context.Context, scope runtimeservice.Scope, caller runtimeservice.Caller, id uuid.UUID) error {
 	return fmt.Errorf("not implemented")
 }
 
@@ -1098,6 +1564,13 @@ func (s *fakeRuntimeHistoryService) ListMessages(ctx context.Context, scope runt
 		filtered = append(filtered, message)
 	}
 	return paginateRuntimeMessages(filtered, page, limit)
+}
+
+func (s *fakeRuntimeHistoryService) ListConversationMessagesByCaller(ctx context.Context, scope runtimeservice.Scope, caller runtimeservice.Caller, conversationID uuid.UUID, page, limit int) ([]*runtimemodel.Message, int64, error) {
+	if _, err := s.GetConversationByCaller(ctx, scope, caller, conversationID); err != nil {
+		return nil, 0, err
+	}
+	return s.ListMessages(ctx, scope, conversationID, page, limit)
 }
 
 func (s *fakeRuntimeHistoryService) ListMessagesByCaller(ctx context.Context, scope runtimeservice.Scope, caller runtimeservice.Caller, page, limit int) ([]*runtimemodel.Message, int64, error) {
@@ -1135,6 +1608,10 @@ func (s *fakeRuntimeHistoryService) StopConversation(ctx context.Context, scope 
 	return nil, fmt.Errorf("not implemented")
 }
 
+func (s *fakeRuntimeHistoryService) StopConversationByCaller(ctx context.Context, scope runtimeservice.Scope, caller runtimeservice.Caller, id uuid.UUID) (*runtimeservice.StopConversationResult, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+
 func (s *fakeRuntimeHistoryService) PrepareChat(ctx context.Context, scope runtimeservice.Scope, req runtimedto.ChatRequest) (*runtimeservice.PreparedChat, error) {
 	return nil, fmt.Errorf("not implemented")
 }
@@ -1159,7 +1636,23 @@ func (s *fakeRuntimeHistoryService) StreamConversationEvents(ctx context.Context
 	return fmt.Errorf("not implemented")
 }
 
-func (s *fakeRuntimeHistoryService) BeginWorkflowApprovalContinuation(ctx context.Context, scope runtimeservice.Scope, caller runtimeservice.Caller, conversationID, messageID uuid.UUID) (*runtimeservice.WorkflowApprovalContinuation, error) {
+func (s *fakeRuntimeHistoryService) StreamConversationEventsForCaller(ctx context.Context, scope runtimeservice.Scope, caller runtimeservice.Caller, conversationID, messageID uuid.UUID, afterID string, onEvent func(runtimeservice.StreamEvent) error) error {
+	return fmt.Errorf("not implemented")
+}
+
+func (s *fakeRuntimeHistoryService) SubmitToolGovernanceDecision(ctx context.Context, scope runtimeservice.Scope, conversationID, messageID uuid.UUID, correlationID string, req runtimedto.ToolGovernanceDecisionRequest) (*runtimedto.ToolGovernanceDecisionResponse, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+
+func (s *fakeRuntimeHistoryService) RunToolGovernanceDecisionStream(ctx context.Context, scope runtimeservice.Scope, conversationID, messageID uuid.UUID, correlationID string, req runtimedto.ToolGovernanceDecisionRequest, onEvent func(runtimeservice.StreamEvent) error) (*runtimeservice.ChatResult, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+
+func (s *fakeRuntimeHistoryService) RunClientActionContinuationStream(ctx context.Context, scope runtimeservice.Scope, conversationID, messageID uuid.UUID, actionID string, req runtimedto.ClientActionResultRequest, onEvent func(runtimeservice.StreamEvent) error) (*runtimeservice.ChatResult, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+
+func (s *fakeRuntimeHistoryService) BeginWorkflowApprovalContinuation(ctx context.Context, scope runtimeservice.Scope, caller runtimeservice.Caller, config runtimeservice.RunConfig, conversationID, messageID uuid.UUID) (*runtimeservice.WorkflowApprovalContinuation, error) {
 	return nil, fmt.Errorf("not implemented")
 }
 
@@ -1227,7 +1720,7 @@ func (s *fakeRuntimeHistoryService) CancelCustomSkillImportPreview(ctx context.C
 	return fmt.Errorf("not implemented")
 }
 
-func (s *fakeRuntimeHistoryService) DeleteSkill(ctx context.Context, scope runtimeservice.Scope, skillID string) error {
+func (s *fakeRuntimeHistoryService) DeleteSkill(ctx context.Context, scope runtimeservice.Scope, skillID, agentBindingAction, impactToken string) error {
 	return fmt.Errorf("not implemented")
 }
 

@@ -71,7 +71,15 @@ export type WorkflowPrecheckStatus = 'ok' | 'warning' | 'unknown' | string;
 
 export type WorkflowPrecheckWarningCode = '207008' | '207009' | '207010' | 207008 | 207009 | 207010;
 
-export type WorkflowRunBillingErrorCode = '207011' | '207012' | '207013' | 207011 | 207012 | 207013;
+export type WorkflowRunBillingErrorCode =
+  | '207011'
+  | '207012'
+  | '207013'
+  | '207014'
+  | 207011
+  | 207012
+  | 207013
+  | 207014;
 
 export interface WorkflowRunBillingError {
   code?: string | number;
@@ -733,6 +741,59 @@ export interface BuiltInWorkflow {
 
 // Built-in workflows list
 export type BuiltInWorkflowList = BuiltInWorkflow[];
+
+export type PublishedRuntimeSurface =
+  | 'webapp'
+  | 'api'
+  | 'app_center'
+  | 'builtin_app'
+  | 'internal'
+  | string;
+
+export type PublishedRuntimeGrantSubject =
+  | 'public'
+  | 'organization'
+  | 'department'
+  | 'workspace'
+  | 'account'
+  | 'internal'
+  | string;
+
+export interface PublishedRuntimeSurfaceGrant {
+  subject_type: PublishedRuntimeGrantSubject;
+  subject_id: string | null;
+  enabled: boolean;
+}
+
+export interface PublishedRuntimeSurfaceAuthorization {
+  surface: PublishedRuntimeSurface;
+  enabled: boolean;
+  compatibility_source: string;
+  grants: PublishedRuntimeSurfaceGrant[];
+}
+
+export interface UpdatePublishedRuntimeSurfaceGrant {
+  subject_type: PublishedRuntimeGrantSubject;
+  subject_id?: string | null;
+  enabled?: boolean;
+}
+
+export interface UpdatePublishedRuntimeSurfaceAuthorization {
+  surface: PublishedRuntimeSurface;
+  enabled: boolean;
+  grants?: UpdatePublishedRuntimeSurfaceGrant[];
+}
+
+export interface UpdatePublishedRuntimeSurfacesRequest {
+  surfaces: UpdatePublishedRuntimeSurfaceAuthorization[];
+}
+
+export interface BuiltInWorkflowRuntimeSurfaceAuthorizationResponse {
+  scenario: BuiltInWorkflowScenario;
+  agent_id: string;
+  organization_id: string;
+  surfaces: PublishedRuntimeSurfaceAuthorization[];
+}
 
 // Stop workflow task response
 // POST /console/api/agents/{agent_id}/workflow-runs/tasks/{workflow_run_id}/stop

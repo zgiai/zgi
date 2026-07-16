@@ -23,10 +23,12 @@ import { Pencil, SearchX, ShieldCheck, Trash2 } from 'lucide-react';
 import { ModelFeatureIcon } from '@/components/model/model-feature-icon';
 import { useLocale } from '@/hooks/use-locale';
 import { formatTokens } from '@/utils/format';
+import { getBillingDisplaySettings } from '@/utils/billing-display';
 import { getModelPriceDisplay } from '@/utils/model-price';
 import { getModelDisplayName } from '@/utils/model-label';
 import { USE_CASE_BADGE_COLORS } from '@/config/model-colors';
 import { useT, type AiProvidersKey } from '@/i18n';
+import { useOrganizationStore } from '@/store/organization-store';
 
 interface ModelsGroupTableProps {
   title: string;
@@ -51,6 +53,7 @@ interface ModelsGroupTableProps {
   readOnly?: boolean;
   onEditModel?: (m: ModelItem) => void;
   onDeleteModel?: (m: ModelItem) => void;
+  onEditPrice?: (m: ModelItem) => void;
   onCreateModel?: () => void;
 }
 
@@ -76,6 +79,7 @@ export default function ModelsGroupTable({
   readOnly = false,
   onEditModel,
   onDeleteModel,
+  onEditPrice,
   onCreateModel,
 }: ModelsGroupTableProps): JSX.Element {
   const headerState = headerAllSelected
@@ -86,6 +90,8 @@ export default function ModelsGroupTable({
   const router = useRouter();
   const t = useT();
   const { locale } = useLocale();
+  const currentOrganization = useOrganizationStore.use.currentOrganization();
+  const billingDisplay = getBillingDisplaySettings(currentOrganization);
   const showSelectionColumn = !readOnly;
   const showEnabledColumn = !readOnly;
   const showActionsColumn = Boolean(onEditModel || onDeleteModel);
@@ -190,9 +196,7 @@ export default function ModelsGroupTable({
               <TableHead>{t('aiProviders.models.table.context')}</TableHead>
               <TableHead className="min-w-[12rem]">{t('aiProviders.models.table.price')}</TableHead>
               {showEnabledColumn && (
-                <TableHead className="text-right">
-                  {t('aiProviders.models.table.policy')}
-                </TableHead>
+                <TableHead className="text-right">{t('aiProviders.models.table.policy')}</TableHead>
               )}
               {showActionsColumn && (
                 <TableHead className="text-right w-24">
@@ -387,31 +391,64 @@ export default function ModelsGroupTable({
                         </span>
                       </TableCell>
                       <TableCell>
-                        <div className="space-y-1 text-sm">
-                          {getModelPriceDisplay({
-                            inputPrice: m.input_price,
-                            outputPrice: m.output_price,
-                            useCases: m.use_cases,
-                            locale,
-                          }).map(item => {
-                            const unitKey =
-                              `aiProviders.models.pricing.${item.unit}` as AiProvidersKey;
-                            const labelKey =
-                              `aiProviders.models.pricing.${item.label}` as AiProvidersKey;
-                            const displayText =
-                              item.formattedValue === '-'
-                                ? item.formattedValue
-                                : `${item.formattedValue}${t(unitKey)}`;
+                        <div className="flex items-start justify-between gap-2 text-sm">
+                          <div className="space-y-1">
+                            {getModelPriceDisplay({
+                              inputPrice: m.input_price,
+                              outputPrice: m.output_price,
+                              inputPriceConfigured: m.input_price_configured,
+                              outputPriceConfigured: m.output_price_configured,
+                              useCases: m.use_cases,
+                              billingDisplay,
+                            }).map(item => {
+                              const unitKey =
+                                `aiProviders.models.pricing.${item.unit}` as AiProvidersKey;
+                              const labelKey =
+                                `aiProviders.models.pricing.${item.label}` as AiProvidersKey;
+                              const displayText = !item.isConfigured
+                                ? t('aiProviders.models.pricing.unconfigured')
+                                : item.isFree
+                                  ? t('aiProviders.models.pricing.free')
+                                  : `${item.formattedValue}${t(unitKey)}`;
 
-                            return (
-                              <div key={item.label} className="flex items-center gap-1.5">
-                                <span className="text-xs text-muted-foreground">
-                                  {t(labelKey)}
-                                </span>
-                                <span className="font-medium text-xs">{displayText}</span>
-                              </div>
-                            );
-                          })}
+                              return (
+                                <div key={item.label} className="flex items-center gap-1.5">
+                                  <span className="text-xs text-muted-foreground">
+                                    {t(labelKey)}
+                                  </span>
+                                  <span
+                                    className={`font-medium text-xs ${
+                                      item.isConfigured
+                                        ? 'text-foreground'
+                                        : 'text-amber-600 dark:text-amber-400'
+                                    }`}
+                                  >
+                                    {displayText}
+                                  </span>
+                                </div>
+                              );
+                            })}
+                          </div>
+                          {onEditPrice && (
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button
+                                  variant="ghost"
+                                  isIcon
+                                  className="h-7 w-7 shrink-0"
+                                  onClick={() => onEditPrice(m)}
+                                >
+                                  <span className="sr-only">
+                                    {t('aiProviders.models.actions.setPrice')}
+                                  </span>
+                                  <Pencil className="w-3.5 h-3.5" />
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent>
+                                {t('aiProviders.models.actions.setPrice')}
+                              </TooltipContent>
+                            </Tooltip>
+                          )}
                         </div>
                       </TableCell>
                       {showEnabledColumn && (

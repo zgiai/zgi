@@ -150,6 +150,18 @@ func (s *Service) SetEnabled(ctx context.Context, accountID uuid.UUID, enabled b
 	return s.GetMe(ctx, accountID)
 }
 
+func (s *Service) EnsureRuntimeEnabled(ctx context.Context, accountID uuid.UUID) error {
+	enabled, err := s.IsEnabled(ctx, accountID)
+	if err != nil {
+		return err
+	}
+	if enabled {
+		return nil
+	}
+	_, err = s.SetEnabled(ctx, accountID, true)
+	return err
+}
+
 func (s *Service) CreateEntry(ctx context.Context, accountID uuid.UUID, req CreateEntryRequest) (*MemoryEntryResponse, error) {
 	return s.CreateEntryWithMetadata(ctx, accountID, req, defaultMutationMetadata())
 }

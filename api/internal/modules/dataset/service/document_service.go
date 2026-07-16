@@ -135,7 +135,7 @@ type DocumentService interface {
 type DocumentServiceImpl struct {
 	documentRepo      dataset_repo.DocumentRepository
 	datasetRepo       dataset_repo.DatasetRepository
-	tenantSvc         interfaces.WorkspaceManagementService
+	organizationSvc   interfaces.OrganizationService
 	indexingService   *DocumentIndexingService
 	fileService       interfaces.FileService
 	vectorCleaner     DocumentVectorCleaner
@@ -334,7 +334,7 @@ func (s *DocumentServiceImpl) createDocumentsFromDataSource(ctx context.Context,
 	docForm := req.DocForm
 	if docForm == "" && dataset.ProcessRule != nil {
 		if parentMode, ok := dataset.ProcessRule["parent_mode"].(string); ok {
-			if parentMode == "parent_child" || parentMode == "paragraph" {
+			if parentMode == "parent_child" || parentMode == "paragraph" || parentMode == "element_group" {
 				docForm = "hierarchical_model"
 			} else {
 				docForm = "text_model"
@@ -544,8 +544,20 @@ func (s *DocumentServiceImpl) CheckDatasetPermission(ctx context.Context, datase
 		return fmt.Errorf("dataset not found")
 	}
 
-	// Check if user has permission to access this tenant
-	hasPermission := s.tenantSvc.CheckPermission(ctx, dataset.WorkspaceID, userID)
+	if s.organizationSvc == nil {
+		return fmt.Errorf("workspace permission service unavailable")
+	}
+
+	hasPermission, err := s.organizationSvc.CheckWorkspaceOrganizationAnyPermission(
+		ctx,
+		dataset.OrganizationID,
+		dataset.WorkspaceID,
+		userID,
+		knowledgeBaseReadPermissionCodes()...,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to check workspace permission: %w", err)
+	}
 	if !hasPermission {
 		return fmt.Errorf("access denied")
 	}
@@ -565,8 +577,20 @@ func (s *DocumentServiceImpl) CheckEditPermission(ctx context.Context, datasetID
 		return fmt.Errorf("dataset not found")
 	}
 
-	// Check if user has permission to edit this tenant
-	hasPermission := s.tenantSvc.CheckPermission(ctx, dataset.WorkspaceID, userID)
+	if s.organizationSvc == nil {
+		return fmt.Errorf("workspace permission service unavailable")
+	}
+
+	hasPermission, err := s.organizationSvc.CheckWorkspaceOrganizationAnyPermission(
+		ctx,
+		dataset.OrganizationID,
+		dataset.WorkspaceID,
+		userID,
+		knowledgeBaseEditPermissionCodes()...,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to check workspace permission: %w", err)
+	}
 	if !hasPermission {
 		return fmt.Errorf("edit permission denied")
 	}
@@ -823,7 +847,15 @@ func (s *DocumentServiceImpl) GetDefaultRules() map[string]interface{} {
 				{"id": "formula_accuracy_enhance", "enabled": false},
 				{"id": "generate_recommend_questions", "enabled": false},
 			},
-			"parent_mode": "paragraph",
+			"parent_mode":           "element_group",
+			"parent_min_chars":      1000,
+			"parent_target_chars":   1200,
+			"parent_max_chars":      1500,
+			"child_min_chars":       120,
+			"child_target_chars":    220,
+			"child_max_chars":       256,
+			"child_overlap_chars":   30,
+			"table_child_max_chars": 256,
 			"segmentation": map[string]interface{}{
 				"separator":     "\n\n",
 				"max_tokens":    500,
@@ -831,8 +863,8 @@ func (s *DocumentServiceImpl) GetDefaultRules() map[string]interface{} {
 			},
 			"subchunk_segmentation": map[string]interface{}{
 				"separator":     "\n",
-				"max_tokens":    200,
-				"chunk_overlap": 0,
+				"max_tokens":    220,
+				"chunk_overlap": 30,
 			},
 		},
 		"limits": map[string]interface{}{
@@ -968,7 +1000,7 @@ func newDocumentProcessRuleSnapshot(datasetID, userID, extractionStrategy string
 func NewDocumentService(
 	documentRepo dataset_repo.DocumentRepository,
 	datasetRepo dataset_repo.DatasetRepository,
-	tenantSvc interfaces.WorkspaceManagementService,
+	organizationSvc interfaces.OrganizationService,
 	indexingService *DocumentIndexingService,
 	fileService interfaces.FileService,
 	vectorCleaner DocumentVectorCleaner,
@@ -978,7 +1010,7 @@ func NewDocumentService(
 	return &DocumentServiceImpl{
 		documentRepo:      documentRepo,
 		datasetRepo:       datasetRepo,
-		tenantSvc:         tenantSvc,
+		organizationSvc:   organizationSvc,
 		indexingService:   indexingService,
 		fileService:       fileService,
 		vectorCleaner:     vectorCleaner,

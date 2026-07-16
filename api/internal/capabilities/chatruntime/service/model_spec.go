@@ -16,6 +16,7 @@ type ModelSpec struct {
 	MaxInputTokens   int
 	MaxOutputTokens  int
 	UseCases         []string
+	Vision           bool
 	SupportsToolCall bool
 }
 
@@ -83,6 +84,7 @@ func (r *databaseModelSpecResolver) resolveCustom(ctx context.Context, organizat
 		MaxInputTokens:   custom.MaxInputTokens,
 		MaxOutputTokens:  custom.MaxOutputTokens,
 		UseCases:         []string(custom.UseCases),
+		Vision:           custom.SupportsVision,
 		SupportsToolCall: custom.SupportsToolCall,
 	}, true, nil
 }
@@ -106,11 +108,15 @@ func (r *databaseModelSpecResolver) resolveGlobal(ctx context.Context, provider 
 		MaxInputTokens:   global.MaxInputTokens,
 		MaxOutputTokens:  global.MaxOutputTokens,
 		UseCases:         []string(global.UseCases),
+		Vision:           global.SupportsVision,
 		SupportsToolCall: global.SupportsToolCall,
 	}, true, nil
 }
 
 func (s ModelSpec) SupportsVision() bool {
+	if s.Vision {
+		return true
+	}
 	for _, useCase := range s.UseCases {
 		if strings.TrimSpace(useCase) == string(llmmodel.UseCaseVision) {
 			return true
@@ -125,4 +131,13 @@ func (s ModelSpec) SupportsTools() bool {
 
 func (s ModelSpec) SupportsFunctionCalling() bool {
 	return s.SupportsToolCall
+}
+
+func (s ModelSpec) SupportsAgent() bool {
+	for _, useCase := range s.UseCases {
+		if strings.EqualFold(strings.TrimSpace(useCase), string(llmmodel.UseCaseAgent)) {
+			return true
+		}
+	}
+	return false
 }

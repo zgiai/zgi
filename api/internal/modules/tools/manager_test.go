@@ -147,9 +147,23 @@ type runtimeAwareTool struct {
 	entity   tools.ToolEntity
 	tenantID string
 	runtime  *tools.ToolRuntime
+	capture  *runtimeAwareCapture
 }
 
-func newRuntimeAwareTool() *runtimeAwareTool {
+type runtimeAwareCapture struct {
+	runtime        *tools.ToolRuntime
+	userID         string
+	parameters     map[string]interface{}
+	conversationID *string
+	appID          *string
+	messageID      *string
+}
+
+func newRuntimeAwareTool(captures ...*runtimeAwareCapture) *runtimeAwareTool {
+	capture := &runtimeAwareCapture{}
+	if len(captures) > 0 && captures[0] != nil {
+		capture = captures[0]
+	}
 	return &runtimeAwareTool{
 		entity: tools.ToolEntity{
 			Identity: tools.ToolIdentity{
@@ -160,6 +174,7 @@ func newRuntimeAwareTool() *runtimeAwareTool {
 				},
 			},
 		},
+		capture: capture,
 	}
 }
 
@@ -183,6 +198,14 @@ func (t *runtimeAwareTool) Invoke(
 	appID *string,
 	messageID *string,
 ) ([]tools.ToolInvokeMessage, error) {
+	if t.capture != nil {
+		t.capture.runtime = t.runtime
+		t.capture.userID = userID
+		t.capture.parameters = toolParameters
+		t.capture.conversationID = conversationID
+		t.capture.appID = appID
+		t.capture.messageID = messageID
+	}
 	return []tools.ToolInvokeMessage{}, nil
 }
 
@@ -200,6 +223,7 @@ func (t *runtimeAwareTool) ForkToolRuntime(runtime *tools.ToolRuntime) tools.Too
 		entity:   t.entity,
 		tenantID: runtime.TenantID,
 		runtime:  runtime,
+		capture:  t.capture,
 	}
 }
 
@@ -208,12 +232,15 @@ func (t *runtimeAwareTool) ValidateCredentials(ctx context.Context, credentials 
 }
 
 type runtimeAwareProvider struct {
-	tool tools.Tool
+	tool    tools.Tool
+	capture *runtimeAwareCapture
 }
 
 func newRuntimeAwareProvider() *runtimeAwareProvider {
+	capture := &runtimeAwareCapture{}
 	return &runtimeAwareProvider{
-		tool: newRuntimeAwareTool(),
+		tool:    newRuntimeAwareTool(capture),
+		capture: capture,
 	}
 }
 
@@ -275,4 +302,44 @@ func TestToolManager_GetToolRuntimeInjectsRuntime(t *testing.T) {
 	assert.Equal(t, "workspace-123", runtimeTool.tenantID)
 	assert.Equal(t, "workspace-123", runtimeTool.runtime.TenantID)
 	assert.Equal(t, tools.ToolInvokeFromWorkflow, runtimeTool.runtime.InvokeFrom)
+}
+
+func TestToolEngine_InvokeForWorkflowUsesWorkflowInvokePath(t *testing.T) {
+	manager := tools.NewToolManager(nil)
+	require.NotNil(t, manager)
+
+	provider := newRuntimeAwareProvider()
+	require.NoError(t, manager.RegisterProvider(provider))
+
+	engine := tools.NewToolEngine(manager)
+	result, err := engine.InvokeForWorkflow(context.Background(), tools.WorkflowToolInvokeRequest{
+		TenantID:     "workspace-123",
+		AppID:        "workflow-app",
+		UserID:       "workflow-user",
+		ProviderType: tools.ToolProviderTypeBuiltin,
+		ProviderID:   "test_runtime",
+		ToolName:     "runtime_aware",
+		ToolConfigurations: map[string]interface{}{
+			"value": "from-workflow",
+		},
+		ToolCredentials: map[string]interface{}{
+			"token": "workflow-credential",
+		},
+		ConversationID: "workflow-conversation",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.True(t, result.Success)
+
+	require.NotNil(t, provider.capture.runtime)
+	assert.Equal(t, tools.ToolInvokeFromWorkflow, provider.capture.runtime.InvokeFrom)
+	assert.Equal(t, "workspace-123", provider.capture.runtime.TenantID)
+	assert.Equal(t, "workflow-user", provider.capture.userID)
+	assert.Equal(t, "from-workflow", provider.capture.parameters["value"])
+	assert.Equal(t, map[string]interface{}{"token": "workflow-credential"}, provider.capture.parameters["__credentials"])
+	require.NotNil(t, provider.capture.conversationID)
+	assert.Equal(t, "workflow-conversation", *provider.capture.conversationID)
+	require.NotNil(t, provider.capture.appID)
+	assert.Equal(t, "workflow-app", *provider.capture.appID)
+	assert.Nil(t, provider.capture.messageID)
 }

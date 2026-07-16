@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -109,6 +110,7 @@ func (a *AliyunAdapter) compatibleRerankBaseURL() string {
 	}
 	return baseURL
 }
+
 func (a *AliyunAdapter) openAICompatibleAdapter() (*OpenAIAdapter, error) {
 	return newOpenAIAdapterWithOverrides(a.config, a.openAICompatibleBaseURL())
 }
@@ -140,6 +142,10 @@ func (a *AliyunAdapter) ChatCompletionStream(ctx context.Context, request *adapt
 
 	resp, err := a.httpClient.DoStreamRequest(ctx, "POST", endpoint, a.aliyunSSEHeaders(), payload)
 	if err != nil {
+		var statusErr *adapter.HTTPStatusError
+		if errors.As(err, &statusErr) {
+			return nil, a.handleError(statusErr.StatusCode, statusErr.Body)
+		}
 		return nil, fmt.Errorf("stream request failed: %w", err)
 	}
 	if aliyunStreamDebugEnabled() {
@@ -952,7 +958,7 @@ func (a *AliyunAdapter) CreateResponseRaw(ctx context.Context, request *adapter.
 	if err != nil {
 		return nil, err
 	}
-	return rawOpenAIResponseRequest(ctx, a.httpClient, a.openAICompatibleBaseURL(), openaiAdapter.buildHeaders(), request, openaiAdapter.handleError)
+	return rawOpenAIResponseRequest(ctx, a.httpClient, a.openAICompatibleBaseURL(), openaiAdapter.buildHeaders(), request, a.handleError)
 }
 
 func (a *AliyunAdapter) CreateResponseStream(ctx context.Context, request *adapter.RawResponseRequest) (<-chan adapter.RawStreamEvent, error) {
@@ -960,7 +966,7 @@ func (a *AliyunAdapter) CreateResponseStream(ctx context.Context, request *adapt
 	if err != nil {
 		return nil, err
 	}
-	return rawOpenAIResponseStream(ctx, a.httpClient, a.openAICompatibleBaseURL(), openaiAdapter.buildHeaders(), request)
+	return rawOpenAIResponseStream(ctx, a.httpClient, a.openAICompatibleBaseURL(), openaiAdapter.buildHeaders(), request, a.handleError)
 }
 
 func (a *AliyunAdapter) CreateAnthropicMessage(ctx context.Context, request *adapter.AnthropicMessageRequest) (*adapter.RawResponse, error) {
@@ -972,16 +978,30 @@ func (a *AliyunAdapter) CreateAnthropicMessage(ctx context.Context, request *ada
 }
 
 func (a *AliyunAdapter) CreateAnthropicMessageStream(ctx context.Context, request *adapter.AnthropicMessageRequest) (<-chan adapter.RawStreamEvent, error) {
-	return rawAnthropicMessageStream(ctx, a.httpClient, a.anthropicMessagesBaseURL(), buildAnthropicRawHeaders(a.config, request.Headers), request)
+	return rawAnthropicMessageStream(ctx, a.httpClient, a.anthropicMessagesBaseURL(), buildAnthropicRawHeaders(a.config, request.Headers), request, a.handleError)
 }
 
-// CreateEmbeddings executes embeddings creation request
+// CreateEmbeddings executes embeddings creation request.
 func (a *AliyunAdapter) CreateEmbeddings(ctx context.Context, request *adapter.EmbeddingsRequest) (*adapter.EmbeddingsResponse, error) {
-	openaiAdapter, err := a.openAICompatibleAdapter()
+	payload, err := buildAliyunEmbeddingsPayload(request)
 	if err != nil {
 		return nil, err
 	}
-	return openaiAdapter.CreateEmbeddings(ctx, request)
+
+	endpointPath := "/services/embeddings/text-embedding/text-embedding"
+	if isAliyunMultimodalEmbeddingModel(request.Model) {
+		endpointPath = "/services/embeddings/multimodal-embedding/multimodal-embedding"
+	}
+	url := fmt.Sprintf("%s%s", a.nativeBaseURL(), endpointPath)
+	respBody, statusCode, err := a.httpClient.DoRequest(ctx, "POST", url, a.aliyunJSONHeaders(), payload)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	if statusCode != 200 {
+		return nil, a.handleError(statusCode, respBody)
+	}
+
+	return parseAliyunEmbeddingsResponse(respBody, request.Model)
 }
 
 // CreateImage executes image generation request (Wanx)
@@ -1158,29 +1178,31 @@ func (a *AliyunAdapter) handleError(statusCode int, body []byte) error {
 
 	if err := json.Unmarshal(body, &errResp); err == nil {
 		code := errResp.Code
-		msg := errResp.Message
 		if code == "" && errResp.Error.Code != "" {
 			code = errResp.Error.Code
-			msg = errResp.Error.Message
 		} else if code == "" && errResp.Error.Message != "" {
 			// OpenAI compatible might have empty code but message
-			msg = errResp.Error.Message
 			code = "API_ERROR"
 		}
 
 		if code != "" {
-			// Map common errors to typed errors
-			if statusCode == 401 {
-				return adapter.NewAdapterError(code, msg, statusCode, adapter.ErrAuthFailed)
-			}
-			if statusCode == 429 {
-				return adapter.NewAdapterError(code, msg, statusCode, adapter.ErrRateLimited)
-			}
-			if strings.Contains(strings.ToLower(msg), "balance") || strings.Contains(strings.ToLower(code), "balance") {
-				return adapter.NewAdapterError(code, msg, statusCode, adapter.ErrInsufficientBalance)
+			normalizedCode := strings.ToLower(strings.TrimSpace(code))
+			switch normalizedCode {
+			case "arrearage", "prepaidbilloverdue", "postpaidbilloverdue":
+				return adapter.NewAdapterError(code, "provider billing is unavailable", statusCode, adapter.ErrBillingUnavailable)
+			case "allocationquota.freetieronly":
+				return adapter.NewAdapterError(code, "provider quota is exhausted", statusCode, adapter.ErrQuotaExhausted)
+			case "invalidparameter":
+				return adapter.NewAdapterError(code, "provider rejected the request", statusCode, adapter.ErrInvalidRequest)
 			}
 
-			return adapter.NewAdapterError(code, msg, statusCode, adapter.ErrUpstreamError)
+			if statusCode == 401 {
+				return adapter.NewAdapterError(code, "provider authentication failed", statusCode, adapter.ErrAuthFailed)
+			}
+			if statusCode == 429 {
+				return adapter.NewAdapterError(code, "provider rate limit exceeded", statusCode, adapter.ErrRateLimited)
+			}
+			return adapter.NewAdapterError(code, "provider request failed", statusCode, adapter.ErrUpstreamError)
 		}
 	}
 

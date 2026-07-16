@@ -33,22 +33,26 @@ import { useCurrentWorkspace } from '@/store/workspace-store';
 import { ICON_BG, ICON_TEXT } from '@/lib/config';
 import { normalizeDatasetSearchMethod } from '@/utils/dataset/retrieval-config';
 import { toast } from 'sonner';
+import { KNOWLEDGE_BASE_PERMISSION_ACTIONS } from '@/constants/permissions';
+import { DATASET_NAME_VALIDATION_OPTIONS } from '@/constants/dataset';
 
 export default function DatasetSettingsPage() {
   const { datasetId } = useParams<{ datasetId: string }>();
-  const { data, isLoading } = useDataset(datasetId);
   const t = useT();
   const updateDataset = useUpdateDataset(datasetId);
   const currentWorkspace = useCurrentWorkspace();
 
   // Permission checking
-  const { hasPermission, isLoading: isPermissionsLoading } = useAccountPermissions();
-  const canManage = hasPermission('knowledge_base.manage');
+  const { hasAnyPermission, isLoading: isPermissionsLoading } = useAccountPermissions();
+  const canUpdateDataset = hasAnyPermission(KNOWLEDGE_BASE_PERMISSION_ACTIONS.update);
+  const { data, isLoading } = useDataset(datasetId, { enabled: canUpdateDataset });
 
   // Form state
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [iconValue, setIconValue] = useState<IconValue>(createTextIconValue(ICON_TEXT, ICON_BG));
+  const [hasSubmitted, setHasSubmitted] = useState(false);
+  const [nameTouched, setNameTouched] = useState(false);
   // const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
 
   // Ref to get data from child component
@@ -88,6 +92,8 @@ export default function DatasetSettingsPage() {
     if (dataset) {
       setName(dataset.name || '');
       setDescription(dataset.description || '');
+      setHasSubmitted(false);
+      setNameTouched(false);
 
       // Initialize iconValue based on dataset icon data
       if (dataset.icon_type === 'image') {
@@ -159,10 +165,19 @@ export default function DatasetSettingsPage() {
   );
 
   // Inline validation for name field
-  const nameErrors = useMemo(() => getNameValidationErrors(name, { allowSpace: true }), [name]);
+  const nameErrors = useMemo(
+    () => getNameValidationErrors(name, DATASET_NAME_VALIDATION_OPTIONS),
+    [name]
+  );
   const isNameValid = nameErrors.length === 0;
+  const showNameError = (hasSubmitted || nameTouched) && !isNameValid;
 
   const handleSave = useCallback(async () => {
+    setHasSubmitted(true);
+    if (!canUpdateDataset) {
+      toast.error(t('common.unauthorizedDescription'));
+      return;
+    }
     if (updateDataset.isPending || !dataset) return;
 
     if (!isNameValid) {
@@ -230,9 +245,10 @@ export default function DatasetSettingsPage() {
     configData,
     isNameValid,
     t,
+    canUpdateDataset,
   ]);
 
-  if (isLoading) {
+  if (isPermissionsLoading || (canUpdateDataset && isLoading)) {
     return (
       <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
         {t('datasets.loading')}
@@ -240,12 +256,8 @@ export default function DatasetSettingsPage() {
     );
   }
 
-  if (!dataset) {
-    return <div>Dataset not found</div>;
-  }
-
   // Check manage permission - show empty state if no permission
-  if (!isPermissionsLoading && !canManage) {
+  if (!canUpdateDataset) {
     return (
       <div className="flex flex-col items-center justify-center h-full gap-4 text-center p-8">
         <div className="w-16 h-16 rounded-full bg-muted flex items-center justify-center">
@@ -259,6 +271,10 @@ export default function DatasetSettingsPage() {
         </div>
       </div>
     );
+  }
+
+  if (!dataset) {
+    return <div>Dataset not found</div>;
   }
 
   return (
@@ -276,7 +292,7 @@ export default function DatasetSettingsPage() {
           <Button
             className="h-9 gap-2"
             variant="default"
-            disabled={updateDataset.isPending}
+            disabled={updateDataset.isPending || !canUpdateDataset}
             onClick={handleSave}
           >
             <Save className="h-4 w-4" />
@@ -299,28 +315,31 @@ export default function DatasetSettingsPage() {
                 <Input
                   id="name"
                   value={name}
-                  onChange={e => setName(e.target.value)}
+                  onChange={e => {
+                    setName(e.target.value);
+                    setNameTouched(true);
+                  }}
                   placeholder={t('datasets.settings.namePlaceholder')}
                   disabled={!dataset?.embedding_available}
-                  aria-invalid={isNameValid ? 'false' : 'true'}
+                  aria-invalid={showNameError ? 'true' : 'false'}
                   className={cn(
                     'h-9',
-                    !isNameValid && 'border-destructive focus-visible:ring-destructive'
+                    showNameError && 'border-destructive focus-visible:ring-destructive'
                   )}
                 />
-                {!isNameValid && (
+                {showNameError && (
                   <div className="text-xs text-destructive">
                     {(() => {
                       const code = nameErrors[0];
                       return code === 'required'
-                        ? t('datasets.validation.name.required')
+                        ? t('datasets.validation.datasetName.required')
                         : code === 'tooShort'
-                          ? t('datasets.validation.name.tooShort')
+                          ? t('datasets.validation.datasetName.tooShort')
                           : code === 'tooLong'
-                            ? t('datasets.validation.name.tooLong')
+                            ? t('datasets.validation.datasetName.tooLong')
                             : code === 'invalidChars'
-                              ? t('datasets.validation.name.invalidChars')
-                              : t('datasets.validation.name.onlySpaces');
+                              ? t('datasets.validation.datasetName.invalidChars')
+                              : t('datasets.validation.datasetName.onlySpaces');
                     })()}
                   </div>
                 )}

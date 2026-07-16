@@ -1,7 +1,10 @@
 package contentparse
 
 import (
+	"context"
+
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	contentparsecap "github.com/zgiai/zgi/api/internal/capabilities/contentparse"
 	hyperparsesdk "github.com/zgiai/zgi/api/internal/capabilities/contentparse/adapters/hyperparse_sdk"
 	systemvlm "github.com/zgiai/zgi/api/internal/capabilities/contentparse/adapters/system_vlm"
@@ -13,6 +16,7 @@ import (
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
 	llmdefaultservice "github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/service"
 	llmcrypto "github.com/zgiai/zgi/api/internal/modules/llm/shared/crypto"
+	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	"gorm.io/gorm"
 )
 
@@ -57,6 +61,8 @@ type moduleOptions struct {
 	defaultModelSvc    llmdefaultservice.DefaultModelService
 	enableSystemVLM    bool
 	systemVLMAvailable bool
+	organization       interfaces.OrganizationService
+	account            interfaces.AccountService
 }
 
 func WithSystemVisionModel(llmClient llmclient.LLMClient, defaultModelSvc llmdefaultservice.DefaultModelService) ModuleOption {
@@ -65,6 +71,18 @@ func WithSystemVisionModel(llmClient llmclient.LLMClient, defaultModelSvc llmdef
 		opts.defaultModelSvc = defaultModelSvc
 		opts.enableSystemVLM = true
 		opts.systemVLMAvailable = llmClient != nil && defaultModelSvc != nil
+	}
+}
+
+func WithOrganizationService(service interfaces.OrganizationService) ModuleOption {
+	return func(opts *moduleOptions) {
+		opts.organization = service
+	}
+}
+
+func WithAccountService(service interfaces.AccountService) ModuleOption {
+	return func(opts *moduleOptions) {
+		opts.account = service
 	}
 }
 
@@ -105,10 +123,23 @@ func NewModule(db *gorm.DB, options ...ModuleOption) *Module {
 	capabilityModule := contentparsecap.NewModule(capabilityOptions...)
 	cryptoService, _ := llmcrypto.DefaultCryptoService()
 	providerCatalogs := service.NewProviderCatalogResolver(providerConfigRepo, capabilityModule.Catalog, cryptoService)
+	if capabilityModule.RoutedService != nil {
+		capabilityModule.RoutedService.SetProviderCatalogResolver(
+			func(ctx context.Context, req contracts.ParseRequest) (*contracts.ParseProviderCatalog, string, error) {
+				return providerCatalogs.Resolve(
+					ctx,
+					parseRequestMetadataUUID(req.Metadata, "organization_id", "tenant_id"),
+					parseRequestMetadataUUID(req.Metadata, "workspace_id", "team_tenant_id"),
+				)
+			},
+		)
+	}
 	providerSettings := service.NewProviderSettingsService(providerConfigRepo, cryptoService)
 	playgroundHandler := handler.NewPlaygroundHandler(capabilityModule, playgroundRunService)
 	if playgroundHandler != nil {
 		playgroundHandler.SetProviderCatalogResolver(providerCatalogs)
+		playgroundHandler.SetOrganizationService(opts.organization)
+		playgroundHandler.SetAccountService(opts.account)
 	}
 
 	return &Module{
@@ -144,6 +175,24 @@ func NewModule(db *gorm.DB, options ...ModuleOption) *Module {
 		PlaygroundHandler: playgroundHandler,
 		SettingsHandler:   handler.NewProviderSettingsHandler(providerSettings),
 	}
+}
+
+func parseRequestMetadataUUID(metadata map[string]any, keys ...string) *uuid.UUID {
+	for _, key := range keys {
+		value, ok := metadata[key]
+		if !ok || value == nil {
+			continue
+		}
+		text, ok := value.(string)
+		if !ok {
+			continue
+		}
+		parsed, err := uuid.Parse(text)
+		if err == nil && parsed != uuid.Nil {
+			return &parsed
+		}
+	}
+	return nil
 }
 
 func (m *Module) RegisterInternalRoutes(rg *gin.RouterGroup) {

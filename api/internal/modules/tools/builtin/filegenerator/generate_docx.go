@@ -32,7 +32,7 @@ func NewGenerateDocxTool(tenantID string) *GenerateDocxTool {
 				"en_US":   "Generate a styled DOCX file from a structured document specification.",
 				"zh_Hans": "根据结构化文档规格生成带样式的 DOCX 文件。",
 			},
-			LLM: "Generate a styled DOCX file from a JSON document specification. Use this instead of generate_file when the Word document needs headings, fonts, font sizes, bold or colored text, paragraph alignment, spacing, page margins, page breaks, or simple tables. Every runs item must include non-empty text; omit empty runs.",
+			LLM: "Generate a styled DOCX temporary artifact from a JSON document specification. This tool does not write to File Management. When the user asks to save the result into File Management, generate the artifact first and then use file-manager/save_file_to_management. Use this instead of generate_file when the Word document needs headings, fonts, font sizes, bold or colored text, paragraph alignment, spacing, page margins, page breaks, or simple tables. Every runs item must include non-empty text; omit empty runs.",
 		},
 		Parameters: []tools.ToolParameter{
 			{
@@ -72,11 +72,11 @@ func NewGenerateDocxTool(tenantID string) *GenerateDocxTool {
 				Name:             "lifecycle",
 				Label:            tools.I18nText{"en_US": "Lifecycle", "zh_Hans": "生命周期"},
 				HumanDescription: tools.I18nText{"en_US": "Whether the generated file is persistent or temporary.", "zh_Hans": "生成文件是持久保存还是临时保存。"},
-				LLMDescription:   "File lifecycle: persistent or temporary. Defaults to persistent.",
+				LLMDescription:   "Temporary artifact lifecycle: persistent or temporary. Defaults to temporary.",
 				Type:             tools.ToolParameterTypeSelect,
 				Form:             tools.ToolParameterFormLLM,
 				Required:         false,
-				Default:          "persistent",
+				Default:          "temporary",
 				SupportVariable:  true,
 				Options: []tools.ToolParameterOption{
 					{Value: "persistent", Label: tools.I18nText{"en_US": "Persistent", "zh_Hans": "持久保存"}},

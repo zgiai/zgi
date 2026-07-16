@@ -10,6 +10,7 @@ import {
   type ChangeEvent,
   type ClipboardEvent,
   type KeyboardEvent,
+  type ReactNode,
 } from 'react';
 import dynamic from 'next/dynamic';
 import { toast } from 'sonner';
@@ -25,21 +26,18 @@ import { useUploadConfig } from '@/hooks/use-upload';
 import { useT } from '@/i18n/translations';
 import { cn } from '@/lib/utils';
 import { uploadService } from '@/services/upload.service';
+import { useCurrentWorkspace } from '@/store/workspace-store';
 import type { FileItem } from '@/services/types/file';
 import type { AIChatMessageFile, AIChatUserInputRequest } from '@/services/types/aichat';
+import type { AIChatToolGovernancePermissionTier } from '@/components/aichat/contextual/types';
+import type { ModelUseCase } from '@/services/types/model';
 import {
   IMAGE_EXTENSIONS,
   buildFileInputAcceptAttribute,
   filterLowercaseExtensions,
   formatExtensionsForDisplay,
 } from '@/utils/file-helpers';
-import {
-  ChevronLeft,
-  ChevronRight,
-  ExternalLink,
-  HelpCircle,
-  Loader2,
-} from 'lucide-react';
+import { ChevronLeft, ChevronRight, ExternalLink, HelpCircle, Loader2 } from 'lucide-react';
 import {
   AIChatAttachmentStrip,
   AIChatDragUploadOverlay,
@@ -68,6 +66,13 @@ import type {
   AIChatWorkflowApprovalRequest,
   AIChatWorkflowApprovalSubmitPayload,
 } from '@/components/chat/variants/aichat/types';
+import {
+  isToolGovernancePendingApprovalDismissed,
+  ToolGovernanceApprovalPanel,
+  useActiveToolGovernancePendingApproval,
+  useToolGovernancePendingApprovalScope,
+  type ToolGovernancePendingApproval,
+} from '@/components/chat/variants/aichat/tool-governance-decision-card';
 
 export type AIChatUploadScope = { type: 'console' } | { type: 'webapp'; webAppId: string };
 
@@ -84,6 +89,8 @@ const COMPOSER_TEXTAREA_EXPANDED_MIN_HEIGHT = 360;
 const COMPOSER_TEXTAREA_EXPANDED_MAX_HEIGHT = 720;
 const COMPOSER_TEXTAREA_EXPANDED_VIEWPORT_RATIO = 0.72;
 const COMPOSER_EXPAND_VISIBLE_LINE_COUNT = 4;
+// Some IMEs emit a non-composing Enter immediately after compositionend.
+const COMPOSITION_END_ENTER_GRACE_MS = 100;
 
 function getComposerExpandedMaxHeight(): number {
   if (typeof window === 'undefined') return COMPOSER_TEXTAREA_EXPANDED_MAX_HEIGHT;
@@ -180,6 +187,7 @@ function resizeComposerTextarea(
 }
 
 interface AIChatInputAreaProps {
+  isEmbedded?: boolean;
   isHome: boolean;
   isLoadingMessages: boolean;
   input: string;
@@ -208,13 +216,53 @@ interface AIChatInputAreaProps {
   onModelChange: (value: ModelSelectorValue) => void;
   onHeightChange?: (height: number) => void;
   showModelSelector?: boolean;
+  modelUseCase?: ModelUseCase;
+  preferredModelUseCase?: ModelUseCase;
   showMemoryToggle?: boolean;
   enableUpload?: boolean;
   uploadScope?: AIChatUploadScope;
   showFileLibraryPicker?: boolean;
   allowWorkspaceSwitch?: boolean;
+  showSkillManagement?: boolean;
+  skillManagementLabel?: string;
+  onOpenSkillManagement?: () => void;
   inputPlaceholder?: string;
   surface?: AIChatComposerSurface;
+  topAccessory?: ReactNode;
+  showToolGovernancePermissionControl?: boolean;
+  toolGovernancePermissionTier?: AIChatToolGovernancePermissionTier;
+  onToolGovernancePermissionTierChange?: (tier: AIChatToolGovernancePermissionTier) => void;
+  enableToolGovernanceApprovals?: boolean;
+  activeConversationId?: string | null;
+  activeToolGovernanceMessageId?: string | null;
+  activeToolGovernanceApprovalFallback?: ToolGovernancePendingApproval | null;
+}
+
+function ToolGovernancePendingApprovalBridge({
+  enabled,
+  onApprovalChange,
+}: {
+  enabled: boolean;
+  onApprovalChange: (approval: ToolGovernancePendingApproval | null) => void;
+}) {
+  if (!enabled) return null;
+  return <ActiveToolGovernancePendingApprovalBridge onApprovalChange={onApprovalChange} />;
+}
+
+function ActiveToolGovernancePendingApprovalBridge({
+  onApprovalChange,
+}: {
+  onApprovalChange: (approval: ToolGovernancePendingApproval | null) => void;
+}) {
+  const approval = useActiveToolGovernancePendingApproval();
+
+  useEffect(() => {
+    onApprovalChange(approval);
+  }, [approval, onApprovalChange]);
+
+  useEffect(() => () => onApprovalChange(null), [onApprovalChange]);
+
+  return null;
 }
 
 /**
@@ -227,6 +275,7 @@ interface AIChatInputAreaProps {
  * <AIChatInputArea input={input} onSend={send} />
  */
 export function AIChatInputArea({
+  isEmbedded = false,
   isHome,
   isLoadingMessages,
   input,
@@ -248,13 +297,26 @@ export function AIChatInputArea({
   onModelChange,
   onHeightChange,
   showModelSelector = true,
+  modelUseCase = 'agent',
+  preferredModelUseCase,
   showMemoryToggle = true,
   enableUpload = true,
   uploadScope = { type: 'console' },
   showFileLibraryPicker = true,
   allowWorkspaceSwitch = false,
+  showSkillManagement = false,
+  skillManagementLabel,
+  onOpenSkillManagement,
   inputPlaceholder,
   surface = 'aichat',
+  topAccessory,
+  showToolGovernancePermissionControl = false,
+  toolGovernancePermissionTier = 'basic',
+  onToolGovernancePermissionTierChange,
+  enableToolGovernanceApprovals = false,
+  activeConversationId = null,
+  activeToolGovernanceMessageId = null,
+  activeToolGovernanceApprovalFallback = null,
 }: AIChatInputAreaProps) {
   const t = useT('webapp');
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -263,6 +325,8 @@ export function AIChatInputArea({
   const imageInputRef = useRef<HTMLInputElement | null>(null);
   const dragDepthRef = useRef(0);
   const isComposingRef = useRef(false);
+  const ignoreEnterAfterCompositionRef = useRef(false);
+  const compositionEndTimerRef = useRef<number | null>(null);
   const [attachments, setAttachments] = useState<AIChatInputAttachment[]>([]);
   const [isFileSelectorOpen, setIsFileSelectorOpen] = useState(false);
   const [isDraggingFiles, setIsDraggingFiles] = useState(false);
@@ -275,8 +339,10 @@ export function AIChatInputArea({
   const [isComposerOverflowing, setIsComposerOverflowing] = useState(false);
   const [questionAnswers, setQuestionAnswers] = useState<Record<string, string>>({});
   const [activeQuestionIndex, setActiveQuestionIndex] = useState(0);
-  const [ignoredUserInputRequestKey, setIgnoredUserInputRequestKey] = useState<string | null>(null);
   const [submittedApprovalAction, setSubmittedApprovalAction] = useState<string | null>(null);
+  const [activeToolGovernanceApproval, setActiveToolGovernanceApproval] =
+    useState<ToolGovernancePendingApproval | null>(null);
+  const toolGovernancePendingApprovalScopeId = useToolGovernancePendingApprovalScope();
   const activeApprovalForm = activeWorkflowApprovalRequest?.approvalForm ?? null;
   const approvalFormQuery = useApprovalForm(
     activeWorkflowApprovalRequest?.approvalToken,
@@ -286,10 +352,57 @@ export function AIChatInputArea({
   const approvalSubmitMutation = useSubmitApprovalForm(
     activeWorkflowApprovalRequest?.approvalToken
   );
+
+  const clearCompositionEndGuard = useCallback(() => {
+    if (compositionEndTimerRef.current !== null) {
+      window.clearTimeout(compositionEndTimerRef.current);
+      compositionEndTimerRef.current = null;
+    }
+    ignoreEnterAfterCompositionRef.current = false;
+  }, []);
+
+  const handleCompositionStart = useCallback(() => {
+    clearCompositionEndGuard();
+    isComposingRef.current = true;
+  }, [clearCompositionEndGuard]);
+
+  const handleCompositionEnd = useCallback(() => {
+    isComposingRef.current = false;
+    ignoreEnterAfterCompositionRef.current = true;
+    if (compositionEndTimerRef.current !== null) {
+      window.clearTimeout(compositionEndTimerRef.current);
+    }
+    compositionEndTimerRef.current = window.setTimeout(() => {
+      compositionEndTimerRef.current = null;
+      ignoreEnterAfterCompositionRef.current = false;
+    }, COMPOSITION_END_ENTER_GRACE_MS);
+  }, []);
+
+  const shouldIgnoreCompositionEnter = useCallback(
+    (event: KeyboardEvent<HTMLElement>) => {
+      if (isComposingRef.current || isComposingEnterEvent(event)) {
+        return true;
+      }
+      if (!ignoreEnterAfterCompositionRef.current) {
+        return false;
+      }
+
+      clearCompositionEndGuard();
+      event.preventDefault();
+      return true;
+    },
+    [clearCompositionEndGuard]
+  );
+
+  useEffect(() => {
+    return () => clearCompositionEndGuard();
+  }, [clearCompositionEndGuard]);
+
   const { data: uploadConfig } = useUploadConfig({
     enabled: enableUpload,
     scope: uploadScope.type === 'webapp' ? uploadScope : undefined,
   });
+  const currentWorkspace = useCurrentWorkspace();
   const allowedExtensions = useMemo(
     () => filterLowercaseExtensions([...AICHAT_DOCUMENT_EXTENSIONS]),
     []
@@ -330,10 +443,7 @@ export function AIChatInputArea({
     [allSelectableExtensions]
   );
   const uploadedFiles = useMemo(() => getUploadedAIChatFiles(attachments), [attachments]);
-  const composerLineCount = useMemo(
-    () => Math.max(1, input.split(/\r\n|\r|\n/).length),
-    [input]
-  );
+  const composerLineCount = useMemo(() => Math.max(1, input.split(/\r\n|\r|\n/).length), [input]);
   const showComposerExpandButton =
     isComposerExpanded ||
     isComposerOverflowing ||
@@ -355,9 +465,42 @@ export function AIChatInputArea({
       activeQuestions.map(question => question.id || question.question).join('|'),
     [activeQuestions, activeUserInputRequest?.request_id]
   );
-  const hasActiveUserInputRequest =
-    activeQuestions.length > 0 && ignoredUserInputRequestKey !== requestKey;
+  const hasActiveUserInputRequest = activeQuestions.length > 0;
   const hasActiveWorkflowApprovalRequest = Boolean(activeWorkflowApprovalRequest?.approvalToken);
+  const isCurrentToolGovernanceApproval = useCallback(
+    (approval: ToolGovernancePendingApproval | null) => {
+      if (!approval) return false;
+      if (!activeConversationId || !activeToolGovernanceMessageId) return true;
+      return (
+        approval.conversationId === activeConversationId &&
+        approval.messageId === activeToolGovernanceMessageId
+      );
+    },
+    [activeConversationId, activeToolGovernanceMessageId]
+  );
+  const visibleActiveToolGovernanceApproval =
+    activeToolGovernanceApproval &&
+    isCurrentToolGovernanceApproval(activeToolGovernanceApproval) &&
+    !isToolGovernancePendingApprovalDismissed(
+      activeToolGovernanceApproval.id,
+      toolGovernancePendingApprovalScopeId
+    )
+      ? activeToolGovernanceApproval
+      : null;
+  const visibleFallbackToolGovernanceApproval =
+    activeToolGovernanceApprovalFallback &&
+    isCurrentToolGovernanceApproval(activeToolGovernanceApprovalFallback) &&
+    !isToolGovernancePendingApprovalDismissed(
+      activeToolGovernanceApprovalFallback.id,
+      toolGovernancePendingApprovalScopeId
+    )
+      ? activeToolGovernanceApprovalFallback
+      : null;
+  const effectiveToolGovernanceApproval = enableToolGovernanceApprovals
+    ? (visibleFallbackToolGovernanceApproval ?? visibleActiveToolGovernanceApproval)
+    : null;
+  const hasActiveToolGovernanceApproval = Boolean(effectiveToolGovernanceApproval);
+  const hasBlockingApproval = hasActiveWorkflowApprovalRequest || hasActiveToolGovernanceApproval;
   const activeQuestion = hasActiveUserInputRequest
     ? activeQuestions[Math.min(activeQuestionIndex, activeQuestions.length - 1)]
     : undefined;
@@ -369,8 +512,6 @@ export function AIChatInputArea({
     Boolean(onUserInputRequestSubmit) &&
     Boolean(activeQuestion) &&
     Boolean(activeQuestionAnswer.trim()) &&
-    !modelMissing &&
-    !isModelInitializing &&
     !isUploading &&
     !hasUploadError &&
     !isSending;
@@ -378,12 +519,17 @@ export function AIChatInputArea({
   useEffect(() => {
     setQuestionAnswers({});
     setActiveQuestionIndex(0);
-    setIgnoredUserInputRequestKey(null);
   }, [requestKey]);
 
   useEffect(() => {
     setSubmittedApprovalAction(null);
   }, [activeWorkflowApprovalRequest?.approvalToken]);
+
+  useEffect(() => {
+    if (!enableToolGovernanceApprovals) {
+      setActiveToolGovernanceApproval(null);
+    }
+  }, [enableToolGovernanceApprovals]);
 
   const questionKeyForIndex = useCallback(
     (index: number) => activeQuestions[index]?.id || `q${index + 1}`,
@@ -486,11 +632,6 @@ export function AIChatInputArea({
     ]
   );
 
-  const handleIgnoreUserInputRequest = useCallback(() => {
-    setIgnoredUserInputRequestKey(requestKey);
-    setActiveQuestionIndex(0);
-  }, [requestKey]);
-
   const handlePreviousQuestion = useCallback(() => {
     setActiveQuestionIndex(index => Math.max(index - 1, 0));
   }, []);
@@ -538,6 +679,7 @@ export function AIChatInputArea({
             ? await uploadService.uploadWebAppSingle(uploadScope.webAppId, file, { onProgress })
             : await uploadService.uploadSingle(file, {
                 is_temporary: true,
+                workspace_id: currentWorkspace?.id,
                 onProgress,
               });
         const uploadedFile = toAIChatMessageFile(response, kind);
@@ -577,7 +719,7 @@ export function AIChatInputArea({
         );
       }
     },
-    [t, uploadScope]
+    [currentWorkspace?.id, t, uploadScope]
   );
 
   const enqueueFiles = useCallback(
@@ -847,6 +989,30 @@ export function AIChatInputArea({
     };
   }, [adjustComposerTextareaHeight]);
 
+  useLayoutEffect(() => {
+    const container = containerRef.current;
+    if (!container || typeof ResizeObserver === 'undefined') return;
+
+    let observedWidth = Math.ceil(container.getBoundingClientRect().width);
+    let frameId: number | null = null;
+    const resizeObserver = new ResizeObserver(entries => {
+      const nextWidth = Math.ceil(entries[0]?.contentRect.width ?? 0);
+      if (nextWidth === observedWidth) return;
+      observedWidth = nextWidth;
+      if (frameId !== null) window.cancelAnimationFrame(frameId);
+      frameId = window.requestAnimationFrame(() => {
+        frameId = null;
+        adjustComposerTextareaHeight();
+      });
+    });
+    resizeObserver.observe(container);
+
+    return () => {
+      resizeObserver.disconnect();
+      if (frameId !== null) window.cancelAnimationFrame(frameId);
+    };
+  }, [adjustComposerTextareaHeight]);
+
   useEffect(() => {
     if (!isComposerExpanded) return;
 
@@ -939,7 +1105,11 @@ export function AIChatInputArea({
 
   return (
     <>
-      {enableUpload && !hasActiveWorkflowApprovalRequest && isDraggingFiles ? (
+      <ToolGovernancePendingApprovalBridge
+        enabled={enableToolGovernanceApprovals}
+        onApprovalChange={setActiveToolGovernanceApproval}
+      />
+      {enableUpload && !hasBlockingApproval && isDraggingFiles ? (
         <AIChatDragUploadOverlay
           isSending={isSending}
           isUploading={isUploading}
@@ -951,30 +1121,44 @@ export function AIChatInputArea({
       <div
         ref={containerRef}
         className={cn(
-          'pointer-events-none absolute inset-x-0 z-20 px-4 transition-[top,transform,padding,background-color,box-shadow] duration-300 ease-in-out sm:px-6 lg:px-8',
-          isHome && !isLoadingMessages
-            ? surface === 'agent-draft'
-              ? 'top-[58%] -translate-y-1/2 pb-0 pt-0 sm:top-1/2'
-              : 'top-[58%] -translate-y-1/2 pb-0 pt-0 sm:top-1/2'
-            : 'top-full -translate-y-full bg-background pb-1 shadow-[0_-18px_36px_hsl(var(--background))]'
+          'pointer-events-none absolute inset-x-0 z-20 transition-[top,transform,padding,background-color,box-shadow] duration-300 ease-in-out',
+          isEmbedded ? 'px-4' : 'px-4 sm:px-6 lg:px-8',
+          isHome && !isLoadingMessages && surface === 'aichat'
+            ? 'top-[58%] -translate-y-1/2 pb-0 pt-0 sm:top-1/2'
+            : isEmbedded
+              ? cn(
+                  'top-full -translate-y-full pb-2 pt-2',
+                  surface === 'agent-draft' ? 'bg-background' : 'bg-bg-canvas'
+                )
+              : 'top-full -translate-y-full bg-background pb-1 shadow-[0_-18px_36px_hsl(var(--background))]'
         )}
       >
         <div
           className={cn(
             'pointer-events-none mx-auto w-full transition-[max-width] duration-300 ease-in-out',
-            surface === 'agent-draft'
-              ? 'max-w-[560px]'
-              : isHome && !isLoadingMessages
-                ? 'max-w-3xl'
-                : 'max-w-4xl'
+            isEmbedded
+              ? 'max-w-full'
+              : surface === 'agent-draft'
+                ? 'max-w-[560px]'
+                : isHome && !isLoadingMessages
+                  ? 'max-w-3xl'
+                  : 'max-w-4xl'
           )}
         >
-          {modelMissing && !hasActiveWorkflowApprovalRequest ? (
+          {modelMissing && !hasBlockingApproval && !hasActiveUserInputRequest ? (
             <div className="pointer-events-auto mb-2 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
               {t('consoleChat.modelRequired')}
             </div>
           ) : null}
-          <div className="pointer-events-auto rounded-2xl border bg-background p-2 shadow-sm focus-within:border-primary/40">
+          {!hasBlockingApproval && topAccessory ? (
+            <div className="pointer-events-auto mb-2">{topAccessory}</div>
+          ) : null}
+          <div
+            className={cn(
+              'pointer-events-auto border bg-background p-2 focus-within:border-primary/40',
+              isEmbedded ? 'rounded-lg' : 'rounded-2xl shadow-sm'
+            )}
+          >
             {hasActiveWorkflowApprovalRequest && activeWorkflowApprovalRequest ? (
               <div className="rounded-xl border bg-card p-3 shadow-sm">
                 <div className="mb-3 flex flex-wrap items-start justify-between gap-2 text-sm">
@@ -1020,6 +1204,8 @@ export function AIChatInputArea({
                   </div>
                 )}
               </div>
+            ) : hasActiveToolGovernanceApproval && effectiveToolGovernanceApproval ? (
+              <ToolGovernanceApprovalPanel approval={effectiveToolGovernanceApproval} />
             ) : hasActiveUserInputRequest && activeQuestion ? (
               <div className="mb-2 rounded-xl border bg-muted/30 px-3 py-3">
                 <div className="mb-3 flex items-start gap-2 text-sm">
@@ -1042,6 +1228,11 @@ export function AIChatInputArea({
                   </div>
                 </div>
                 <div className="space-y-3">
+                  {activeUserInputRequest?.message?.trim() ? (
+                    <div className="whitespace-pre-wrap break-words text-sm text-muted-foreground">
+                      {activeUserInputRequest.message.trim()}
+                    </div>
+                  ) : null}
                   <div className="text-sm font-medium text-foreground">
                     {activeQuestion.question}
                   </div>
@@ -1083,17 +1274,13 @@ export function AIChatInputArea({
                     }
                     onKeyDown={event => {
                       if (event.key === 'Enter') {
-                        if (isComposingRef.current || isComposingEnterEvent(event)) return;
+                        if (shouldIgnoreCompositionEnter(event)) return;
                         event.preventDefault();
                         handleSubmitCurrentQuestion();
                       }
                     }}
-                    onCompositionStart={() => {
-                      isComposingRef.current = true;
-                    }}
-                    onCompositionEnd={() => {
-                      isComposingRef.current = false;
-                    }}
+                    onCompositionStart={handleCompositionStart}
+                    onCompositionEnd={handleCompositionEnd}
                     placeholder={t('consoleChat.userInputRequest.freeAnswerPlaceholder')}
                     className="h-9 w-full rounded-md border bg-background px-2.5 text-sm outline-none transition-colors placeholder:text-muted-foreground focus:border-primary/50"
                     disabled={isSending}
@@ -1124,15 +1311,6 @@ export function AIChatInputArea({
                     >
                       <ChevronRight className="size-4" />
                     </Button>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      className="rounded-md text-muted-foreground"
-                      onClick={handleIgnoreUserInputRequest}
-                    >
-                      {t('consoleChat.userInputRequest.ignore')}
-                    </Button>
                   </div>
                   <Button
                     type="button"
@@ -1148,7 +1326,7 @@ export function AIChatInputArea({
                 </div>
               </div>
             ) : null}
-            {!hasActiveWorkflowApprovalRequest && !hasActiveUserInputRequest ? (
+            {!hasBlockingApproval && !hasActiveUserInputRequest ? (
               <>
                 <AIChatAttachmentStrip
                   attachments={attachments}
@@ -1167,15 +1345,11 @@ export function AIChatInputArea({
                     rows={1}
                     onChange={handleComposerInputChange}
                     onPaste={handlePaste}
-                    onCompositionStart={() => {
-                      isComposingRef.current = true;
-                    }}
-                    onCompositionEnd={() => {
-                      isComposingRef.current = false;
-                    }}
+                    onCompositionStart={handleCompositionStart}
+                    onCompositionEnd={handleCompositionEnd}
                     onKeyDown={event => {
                       if (event.key === 'Enter' && !event.shiftKey) {
-                        if (isComposingRef.current || isComposingEnterEvent(event)) return;
+                        if (shouldIgnoreCompositionEnter(event)) return;
                         if (
                           isSending ||
                           isPreparingSend ||
@@ -1227,7 +1401,7 @@ export function AIChatInputArea({
               accept={buildFileInputAcceptAttribute(imageExtensions)}
               onChange={event => handleFilesSelected(event, 'image')}
             />
-            {!hasActiveWorkflowApprovalRequest ? (
+            {!hasBlockingApproval ? (
               <AIChatInputToolbar
                 modelSelectorValue={modelSelectorValue}
                 isModelInitializing={isModelInitializing}
@@ -1247,19 +1421,25 @@ export function AIChatInputArea({
                 allowedExtensions={allowedExtensions}
                 imageExtensions={imageExtensions}
                 showModelSelector={showModelSelector}
+                modelUseCase={modelUseCase}
+                preferredModelUseCase={preferredModelUseCase}
                 showMemoryToggle={showMemoryToggle}
-                showComposerExpandButton={
-                  !hasActiveUserInputRequest && showComposerExpandButton
-                }
+                showComposerExpandButton={!hasActiveUserInputRequest && showComposerExpandButton}
                 isComposerExpanded={isComposerExpanded}
+                showToolGovernancePermissionControl={showToolGovernancePermissionControl}
+                toolGovernancePermissionTier={toolGovernancePermissionTier}
+                onToolGovernancePermissionTierChange={onToolGovernancePermissionTierChange}
                 enableUpload={!hasActiveUserInputRequest && enableUpload}
                 showFileLibraryPicker={showFileLibraryPicker}
+                showSkillManagement={showSkillManagement}
+                skillManagementLabel={skillManagementLabel}
                 surface={surface}
                 onModelChange={onModelChange}
                 onModelPropsChange={setSelectedModelProps}
                 onUploadDocument={() => fileInputRef.current?.click()}
                 onUploadImage={handleImageUpload}
                 onSelectFromFiles={() => setIsFileSelectorOpen(true)}
+                onOpenSkillManagement={onOpenSkillManagement}
                 onMemoryEnabledChange={setUseMemory}
                 onToggleComposerExpanded={() => setIsComposerExpanded(current => !current)}
                 onSend={handleSend}

@@ -75,14 +75,13 @@ func (k *TenantAPIKey) HasQuota() bool {
 	return k.RemainQuota > 0
 }
 
-// IsIPAllowed checks if the given IP is allowed
+// IsIPAllowed is currently a placeholder and does not enforce allow_ips.
 func (k *TenantAPIKey) IsIPAllowed(ip string) bool {
-	// If allow_ips is empty, all IPs are allowed
+	// No configured value means there is nothing to evaluate in this placeholder.
 	if k.AllowIPs == "" {
 		return true
 	}
 
-	// TODO: Implement IP whitelist checking logic
-	// This is a placeholder implementation
+	// TODO: Enforce allow_ips only after gateway IP trust is defined.
 	return true
 }

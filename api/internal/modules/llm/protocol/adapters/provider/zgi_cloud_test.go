@@ -7,10 +7,88 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 )
+
+func TestZGICloudAdapterMapsPlatformChannelUnavailableAcrossProtocols(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadGateway)
+		if strings.Contains(r.URL.Path, "/anthropic/") {
+			_, _ = fmt.Fprint(w, `{"type":"error","error":{"type":"platform_channel_unavailable","message":"Platform model service is temporarily unavailable"}}`)
+			return
+		}
+		_, _ = fmt.Fprint(w, `{"error":{"message":"Platform model service is temporarily unavailable","type":"server_error","code":"platform_channel_unavailable"}}`)
+	}))
+	defer server.Close()
+
+	a, err := NewZGICloudAdapter(&adapter.AdapterConfig{
+		BaseURL:  server.URL + "/v1/internal",
+		AuthHook: func(*http.Request) {},
+	})
+	if err != nil {
+		t.Fatalf("NewZGICloudAdapter() error = %v", err)
+	}
+
+	tests := []struct {
+		name string
+		call func() error
+	}{
+		{
+			name: "chat",
+			call: func() error {
+				_, err := a.ChatCompletion(context.Background(), &adapter.ChatRequest{Model: "gpt-5"})
+				return err
+			},
+		},
+		{
+			name: "chat stream",
+			call: func() error {
+				_, err := a.ChatCompletionStream(context.Background(), &adapter.ChatRequest{Model: "gpt-5"})
+				return err
+			},
+		},
+		{
+			name: "responses",
+			call: func() error {
+				_, err := a.CreateResponseRaw(context.Background(), &adapter.RawResponseRequest{Body: json.RawMessage(`{"model":"gpt-5"}`)})
+				return err
+			},
+		},
+		{
+			name: "responses stream",
+			call: func() error {
+				_, err := a.CreateResponseStream(context.Background(), &adapter.RawResponseRequest{Body: json.RawMessage(`{"model":"gpt-5","stream":true}`)})
+				return err
+			},
+		},
+		{
+			name: "anthropic",
+			call: func() error {
+				_, err := a.CreateAnthropicMessage(context.Background(), &adapter.AnthropicMessageRequest{Body: json.RawMessage(`{"model":"claude-sonnet-4-6"}`)})
+				return err
+			},
+		},
+		{
+			name: "anthropic stream",
+			call: func() error {
+				_, err := a.CreateAnthropicMessageStream(context.Background(), &adapter.AnthropicMessageRequest{Body: json.RawMessage(`{"model":"claude-sonnet-4-6","stream":true}`)})
+				return err
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if err := test.call(); !errors.Is(err, adapter.ErrPlatformChannelUnavailable) {
+				t.Fatalf("error = %v, want ErrPlatformChannelUnavailable", err)
+			}
+		})
+	}
+}
 
 func TestZGICloudAdapterChatCompletion_ForwardsToConsoleInternal(t *testing.T) {
 	t.Helper()

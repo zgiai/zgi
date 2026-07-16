@@ -9,15 +9,17 @@ import (
 	workspace_model "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 )
 
-func TestResolveVisibleWorkspaceIDs_ReturnsAllNormalWorkspacesForOrgAdmin(t *testing.T) {
+func TestResolveVisibleWorkspaceIDs_FiltersOrgAdminByWorkspacePermission(t *testing.T) {
 	ctx := t.Context()
 
 	orgService := &stubOrganizationService{
-		isAdmin: true,
 		workspaces: []*workspace_model.Workspace{
 			{ID: "ws-alpha", Status: workspace_model.WorkspaceStatusNormal},
 			{ID: "ws-beta", Status: workspace_model.WorkspaceStatusNormal},
 			{ID: "ws-archived", Status: workspace_model.WorkspaceStatusArchived},
+		},
+		permissionsByWorkspaceID: map[string]bool{
+			"ws-alpha": true,
 		},
 	}
 
@@ -30,15 +32,14 @@ func TestResolveVisibleWorkspaceIDs_ReturnsAllNormalWorkspacesForOrgAdmin(t *tes
 		workspace_model.WorkspacePermissionFileView,
 	)
 	require.NoError(t, err)
-	require.Equal(t, []string{"ws-alpha", "ws-beta"}, workspaceIDs)
-	require.False(t, orgService.checkWorkspaceAnyPermissionCalled)
+	require.Equal(t, []string{"ws-alpha"}, workspaceIDs)
+	require.True(t, orgService.checkWorkspaceAnyPermissionCalled)
 }
 
-func TestResolveVisibleWorkspaceIDs_ReturnsFilteredWorkspaceForOrgAdmin(t *testing.T) {
+func TestResolveVisibleWorkspaceIDs_RequiresPermissionForFilteredWorkspace(t *testing.T) {
 	ctx := t.Context()
 
 	orgService := &stubOrganizationService{
-		isAdmin: true,
 		workspaces: []*workspace_model.Workspace{
 			{ID: "ws-alpha", Status: workspace_model.WorkspaceStatusNormal},
 			{ID: "ws-beta", Status: workspace_model.WorkspaceStatusNormal},
@@ -54,8 +55,8 @@ func TestResolveVisibleWorkspaceIDs_ReturnsFilteredWorkspaceForOrgAdmin(t *testi
 		workspace_model.WorkspacePermissionFileView,
 	)
 	require.NoError(t, err)
-	require.Equal(t, []string{"ws-beta"}, workspaceIDs)
-	require.False(t, orgService.checkWorkspaceAnyPermissionCalled)
+	require.Empty(t, workspaceIDs)
+	require.True(t, orgService.checkWorkspaceAnyPermissionCalled)
 }
 
 func TestResolveVisibleWorkspaceIDs_FiltersByAnyPermissionForNormalMember(t *testing.T) {
@@ -110,15 +111,17 @@ func TestResolveVisibleWorkspaceIDs_ReturnsEmptyWhenFilteredWorkspaceOutsideOrga
 	require.False(t, orgService.checkWorkspaceAnyPermissionCalled)
 }
 
-func TestResolveVisibleWorkspaceScope_AdminAllowsOrganizationScopedResources(t *testing.T) {
+func TestResolveVisibleWorkspaceScope_UsesWorkspacePermissionOnly(t *testing.T) {
 	ctx := t.Context()
 
 	orgService := &stubOrganizationService{
-		isAdmin: true,
 		workspaces: []*workspace_model.Workspace{
 			{ID: "ws-alpha", Status: workspace_model.WorkspaceStatusNormal},
 			{ID: "ws-beta", Status: workspace_model.WorkspaceStatusNormal},
 			{ID: "ws-archived", Status: workspace_model.WorkspaceStatusArchived},
+		},
+		permissionsByWorkspaceID: map[string]bool{
+			"ws-beta": true,
 		},
 	}
 
@@ -132,15 +135,13 @@ func TestResolveVisibleWorkspaceScope_AdminAllowsOrganizationScopedResources(t *
 	)
 	require.NoError(t, err)
 	require.Equal(t, VisibleWorkspaceScope{
-		WorkspaceIDs:            []string{"ws-alpha", "ws-beta"},
-		AllowOrganizationScoped: true,
+		WorkspaceIDs: []string{"ws-beta"},
 	}, scope)
 }
 
 type stubOrganizationService struct {
 	interfaces.OrganizationService
 
-	isAdmin                           bool
 	workspaces                        []*workspace_model.Workspace
 	permissionsByWorkspaceID          map[string]bool
 	checkWorkspaceAnyPermissionCalled bool
@@ -148,10 +149,6 @@ type stubOrganizationService struct {
 
 func (s *stubOrganizationService) GetOrganizationWorkspacesList(_ context.Context, _ string) ([]*workspace_model.Workspace, error) {
 	return append([]*workspace_model.Workspace(nil), s.workspaces...), nil
-}
-
-func (s *stubOrganizationService) IsOrganizationAdminOrOwner(_ context.Context, _, _ string) (bool, error) {
-	return s.isAdmin, nil
 }
 
 func (s *stubOrganizationService) CheckWorkspaceOrganizationAnyPermission(_ context.Context, _, workspaceID, _ string, _ ...workspace_model.WorkspacePermissionCode) (bool, error) {

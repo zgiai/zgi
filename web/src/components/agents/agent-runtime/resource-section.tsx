@@ -6,8 +6,11 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { useT } from '@/i18n';
 import { RuntimeSection } from './runtime-section';
 import type { AgentConfigSection } from './types';
+import type { AgentBindingHealthItem } from '@/services/types/agent';
+import { AgentBindingHealthBadge } from './binding-health';
 
 interface AgentRuntimeResourceSectionProps {
   title: string;
@@ -21,6 +24,7 @@ interface AgentRuntimeResourceSectionProps {
   onToggleSection: (section: AgentConfigSection) => void;
   onAdd: () => void;
   addTooltip?: string;
+  readOnly?: boolean;
   children: ReactNode;
 }
 
@@ -31,6 +35,7 @@ interface AgentRuntimeResourceCardProps {
   action?: ReactNode;
   children?: ReactNode;
   error?: boolean;
+  healthItem?: AgentBindingHealthItem;
 }
 
 export function AgentRuntimeResourceSection({
@@ -45,12 +50,14 @@ export function AgentRuntimeResourceSection({
   onToggleSection,
   onAdd,
   addTooltip,
+  readOnly = false,
   children,
 }: AgentRuntimeResourceSectionProps) {
+  const t = useT('agents.agentRuntime');
   const action = (
     <div className="flex items-center gap-2">
-      <Badge variant="subtle">{count}</Badge>
-      <ResourceAddButton label={addLabel} tooltip={addTooltip} onAdd={onAdd} />
+      <Badge variant="subtle">{t('selectedCount', { count })}</Badge>
+      <ResourceAddButton label={addLabel} tooltip={addTooltip} onAdd={onAdd} disabled={readOnly} />
     </div>
   );
 
@@ -91,6 +98,7 @@ export function AgentRuntimeResourceCard({
   action,
   children,
   error,
+  healthItem,
 }: AgentRuntimeResourceCardProps) {
   return (
     <div className="rounded-md border bg-background p-3">
@@ -99,7 +107,10 @@ export function AgentRuntimeResourceCard({
           <span className={error ? 'text-destructive' : undefined}>{icon}</span>
         </div>
         <div className="min-w-0 flex-1">
-          <div className="truncate text-sm font-medium">{title}</div>
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="min-w-0 truncate text-sm font-medium">{title}</div>
+            <AgentBindingHealthBadge item={healthItem} />
+          </div>
           {description ? (
             <div className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">
               {description}
@@ -117,10 +128,12 @@ function ResourceAddButton({
   label,
   tooltip,
   onAdd,
+  disabled = false,
 }: {
   label: string;
   tooltip?: string;
   onAdd: () => void;
+  disabled?: boolean;
 }) {
   const button = (
     <Button
@@ -130,8 +143,10 @@ function ResourceAddButton({
       isIcon
       className="size-8"
       aria-label={label}
+      disabled={disabled}
       onClick={event => {
         event.stopPropagation();
+        if (disabled) return;
         onAdd();
       }}
     >

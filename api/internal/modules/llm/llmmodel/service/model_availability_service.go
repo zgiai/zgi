@@ -2,14 +2,17 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/google/uuid"
+	channelmodel "github.com/zgiai/zgi/api/internal/modules/llm/channel/model"
 	channelrepo "github.com/zgiai/zgi/api/internal/modules/llm/channel/repository"
 	"github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/dto"
 	"github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
 	"github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/repository"
 	providerrepo "github.com/zgiai/zgi/api/internal/modules/llm/provider/repository"
+	"gorm.io/gorm"
 )
 
 // ModelAvailabilityService provides methods to check if models are usable by a tenant
@@ -56,36 +59,11 @@ func NewModelAvailabilityServiceWithProviderRepos(
 
 // CheckModelAvailable checks if a single model is available for a tenant
 func (s *modelAvailabilityService) CheckModelAvailable(ctx context.Context, organizationID uuid.UUID, modelID uuid.UUID) (*dto.ModelAvailabilityResponse, error) {
-	// 1. Get model details
 	m, err := s.modelRepo.GetByID(ctx, modelID)
 	if err != nil {
 		return &dto.ModelAvailabilityResponse{
 			Available: false,
 			Message:   "Model not found in system repository",
-		}, nil
-	}
-
-	// 2. Check if model is active and system enabled
-	if !m.IsActive {
-		return &dto.ModelAvailabilityResponse{
-			Available: false,
-			Message:   "Model is currently inactive in the system",
-		}, nil
-	}
-
-	if !m.IsActive {
-		return &dto.ModelAvailabilityResponse{
-			Available: false,
-			Message:   "Model is disabled globally by system administrator",
-		}, nil
-	}
-
-	// 3. Check if model is enabled for this tenant
-	cfg, err := s.configRepo.GetByModelID(ctx, organizationID, modelID)
-	if err == nil && cfg != nil && !cfg.IsEnabled {
-		return &dto.ModelAvailabilityResponse{
-			Available: false,
-			Message:   "Model is explicitly disabled for your tenant",
 		}, nil
 	}
 
@@ -99,32 +77,13 @@ func (s *modelAvailabilityService) CheckModelAvailable(ctx context.Context, orga
 	if err != nil {
 		return nil, fmt.Errorf("failed to load provider visibility: %w", err)
 	}
-	if !visibility.Allows(m.Provider) {
-		return &dto.ModelAvailabilityResponse{
-			Available:    false,
-			ChannelCount: 0,
-			Message:      "Model provider is disabled for your tenant",
-		}, nil
-	}
 
-	// 4. Check available routes/channels
 	routes, err := s.routeRepo.GetEnabledRoutes(ctx, organizationID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get tenant routes: %w", err)
 	}
 
-	channelCount := 0
-	for _, route := range routes {
-		if route.SupportsModel(m.Model) {
-			channelCount++
-		}
-	}
-
-	return &dto.ModelAvailabilityResponse{
-		Available:    channelCount > 0,
-		ChannelCount: channelCount,
-		Message:      getAvailabilityMessage(channelCount),
-	}, nil
+	return s.availabilityForModel(ctx, organizationID, m, routes, visibility)
 }
 
 // BatchCheckAvailability checks availability for multiple models
@@ -135,16 +94,16 @@ func (s *modelAvailabilityService) BatchCheckAvailability(ctx context.Context, o
 		return nil, fmt.Errorf("failed to get tenant routes: %w", err)
 	}
 
-	// Get all global models to map names to providers.
-	// Using a large limit to get all relevant models
-	allModels, _, err := s.modelRepo.List(ctx, nil, "", "", nil, 0, 1000)
+	// Query every catalog candidate for the requested names so provider
+	// ambiguity cannot be hidden by pagination.
+	allModels, err := s.modelRepo.ListByNames(ctx, modelNames)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list models: %w", err)
 	}
 
-	modelMap := make(map[string]*model.LLMModel)
+	modelMap := make(map[string][]*model.LLMModel)
 	for _, m := range allModels {
-		modelMap[m.Model] = m
+		modelMap[m.Model] = append(modelMap[m.Model], m)
 	}
 
 	result := &dto.BatchModelAvailabilityResponse{
@@ -163,7 +122,7 @@ func (s *modelAvailabilityService) BatchCheckAvailability(ctx context.Context, o
 	}
 
 	for _, name := range modelNames {
-		m, exists := modelMap[name]
+		candidates, exists := modelMap[name]
 		if !exists {
 			result.Items[name] = &dto.ModelAvailabilityResponse{
 				Available: false,
@@ -172,31 +131,93 @@ func (s *modelAvailabilityService) BatchCheckAvailability(ctx context.Context, o
 			continue
 		}
 
-		if !visibility.Allows(m.Provider) {
+		providers := make(map[string]struct{}, len(candidates))
+		for _, candidate := range candidates {
+			providers[candidate.Provider] = struct{}{}
+		}
+		if len(providers) > 1 {
 			result.Items[name] = &dto.ModelAvailabilityResponse{
-				Available:    false,
-				ChannelCount: 0,
-				Message:      "Model provider is disabled for your tenant",
+				Available: false,
+				Message:   fmt.Sprintf("Model %q is ambiguous across multiple catalog providers", name),
 			}
 			continue
 		}
 
-		// Calculate availability based on routes
-		channelCount := 0
-		for _, route := range routes {
-			if route.SupportsModel(m.Model) {
-				channelCount++
+		var availability *dto.ModelAvailabilityResponse
+		for _, candidate := range candidates {
+			candidateAvailability, err := s.availabilityForModel(ctx, organizationID, candidate, routes, visibility)
+			if err != nil {
+				return nil, err
+			}
+			if availability == nil || candidateAvailability.Available {
+				availability = candidateAvailability
+			}
+			if candidateAvailability.Available {
+				break
 			}
 		}
-
-		result.Items[name] = &dto.ModelAvailabilityResponse{
-			Available:    channelCount > 0,
-			ChannelCount: channelCount,
-			Message:      getAvailabilityMessage(channelCount),
-		}
+		result.Items[name] = availability
 	}
 
 	return result, nil
+}
+
+func (s *modelAvailabilityService) availabilityForModel(
+	ctx context.Context,
+	organizationID uuid.UUID,
+	m *model.LLMModel,
+	routes []*channelmodel.LLMRoute,
+	visibility *providerVisibility,
+) (*dto.ModelAvailabilityResponse, error) {
+	if m == nil {
+		return &dto.ModelAvailabilityResponse{
+			Available: false,
+			Message:   "Model not found in system",
+		}, nil
+	}
+
+	if !m.IsActive || m.Status != model.ModelStatusActive {
+		return &dto.ModelAvailabilityResponse{
+			Available: false,
+			Message:   "Model is currently inactive in the system",
+		}, nil
+	}
+
+	cfg, err := s.configRepo.GetByModelID(ctx, organizationID, m.ID)
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, fmt.Errorf("failed to get tenant model config: %w", err)
+	}
+	if cfg != nil && !cfg.IsEnabled {
+		return &dto.ModelAvailabilityResponse{
+			Available: false,
+			Message:   "Model is explicitly disabled for your tenant",
+		}, nil
+	}
+
+	if !visibility.Allows(m.Provider) {
+		return &dto.ModelAvailabilityResponse{
+			Available:    false,
+			ChannelCount: 0,
+			Message:      "Model provider is disabled for your tenant",
+		}, nil
+	}
+
+	channelCount := countSupportingRoutes(routes, m.Provider, m.Model)
+	return &dto.ModelAvailabilityResponse{
+		Available:    channelCount > 0,
+		ChannelCount: channelCount,
+		Message:      getAvailabilityMessage(channelCount),
+	}, nil
+}
+
+func countSupportingRoutes(routes []*channelmodel.LLMRoute, provider, modelName string) int {
+	count := 0
+	for _, route := range routes {
+		if route.SupportsModelForProvider(provider, modelName) {
+			count++
+		}
+	}
+	return count
 }
 
 func getAvailabilityMessage(count int) string {
