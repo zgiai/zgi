@@ -49,6 +49,7 @@ type AgentRuntimeRunDetail struct {
 	ModelProvider   *string                `json:"model_provider,omitempty"`
 	ModelParameters map[string]interface{} `json:"model_parameters,omitempty"`
 	Usage           interface{}            `json:"usage,omitempty"`
+	ControlMetrics  map[string]interface{} `json:"control_metrics,omitempty"`
 	ElapsedTime     float64                `json:"elapsed_time"`
 	TotalTokens     int64                  `json:"total_tokens"`
 	TotalSteps      int                    `json:"total_steps"`
@@ -76,6 +77,8 @@ type AgentRuntimeStep struct {
 	Process     map[string]interface{} `json:"process,omitempty"`
 	ElapsedTime float64                `json:"elapsed_time"`
 	CreatedAt   *int64                 `json:"created_at,omitempty"`
+	CreatedAtMS *int64                 `json:"created_at_ms,omitempty"`
 	FinishedAt  *int64                 `json:"finished_at,omitempty"`
+	Sequence    *int64                 `json:"sequence,omitempty"`
 	Error       string                 `json:"error,omitempty"`
 }

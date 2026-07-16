@@ -22,6 +22,7 @@ import (
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	providermodel "github.com/zgiai/zgi/api/internal/modules/llm/provider/model"
 	providerrepo "github.com/zgiai/zgi/api/internal/modules/llm/provider/repository"
+	"github.com/zgiai/zgi/api/internal/modules/llm/shared"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -90,6 +91,7 @@ type fakeTenantRouteRepo struct {
 	created   *channelmodel.LLMRoute
 	updated   *channelmodel.LLMRoute
 	routeByID *channelmodel.LLMRoute
+	routes    []*channelmodel.LLMRoute
 	getErr    error
 }
 
@@ -116,6 +118,9 @@ func (f *fakeTenantRouteRepo) GetByID(_ context.Context, _, _ uuid.UUID) (*chann
 }
 
 func (f *fakeTenantRouteRepo) List(context.Context, uuid.UUID, *bool, int, int) ([]*channelmodel.LLMRoute, int64, error) {
+	if f.routes != nil {
+		return f.routes, int64(len(f.routes)), nil
+	}
 	return nil, 0, errors.New("not implemented")
 }
 
@@ -172,6 +177,32 @@ func routeClone(route *channelmodel.LLMRoute) *channelmodel.LLMRoute {
 		cloned.ValidationReport = mapsClone(route.ValidationReport)
 	}
 	return &cloned
+}
+
+func TestPrivateRouteCredentialIDRejectsCrossTenantAndOfficialRoutes(t *testing.T) {
+	organizationID := uuid.New()
+	channelID := uuid.New()
+
+	t.Run("cross tenant is not found", func(t *testing.T) {
+		svc := &channelService{tenantRouteRepo: &fakeTenantRouteRepo{getErr: gorm.ErrRecordNotFound}}
+		_, err := svc.privateRouteCredentialID(context.Background(), organizationID, channelID)
+		if !errors.Is(err, ErrRouteNotFound) {
+			t.Fatalf("privateRouteCredentialID() error = %v, want ErrRouteNotFound", err)
+		}
+	})
+
+	t.Run("official route is rejected", func(t *testing.T) {
+		svc := &channelService{tenantRouteRepo: &fakeTenantRouteRepo{routeByID: &channelmodel.LLMRoute{
+			ID:             channelID,
+			OrganizationID: organizationID,
+			Type:           shared.RouteTypeZGICloud,
+			IsOfficial:     true,
+		}}}
+		_, err := svc.privateRouteCredentialID(context.Background(), organizationID, channelID)
+		if !errors.Is(err, ErrInvalidRouteType) {
+			t.Fatalf("privateRouteCredentialID() error = %v, want ErrInvalidRouteType", err)
+		}
+	})
 }
 
 func mapsClone(src map[string]interface{}) map[string]interface{} {
@@ -897,6 +928,38 @@ func TestUpdateRoute_AutoEnablesNewModelsWithoutOverwritingExistingConfig(t *tes
 	require.Len(t, configRepo.upserts, 1)
 	require.Equal(t, modelID, configRepo.upserts[0].ModelID)
 	require.True(t, configRepo.upserts[0].IsEnabled)
+	require.Equal(t, []uuid.UUID{orgID}, availableSvc.invalidated)
+}
+
+func TestUpdateOfficialChannelSettingsInvalidatesAvailableModelsCache(t *testing.T) {
+	orgID := uuid.New()
+	routeID := uuid.New()
+	enabled := false
+	availableSvc := &fakeAvailableModelsService{}
+	repo := &fakeTenantRouteRepo{
+		routes: []*channelmodel.LLMRoute{
+			{
+				ID:              routeID,
+				OrganizationID:  orgID,
+				IsOfficial:      true,
+				ChannelProvider: "zgi-cloud",
+				IsEnabled:       true,
+			},
+		},
+	}
+	svc := &channelService{
+		tenantRouteRepo: repo,
+		availableModels: availableSvc,
+	}
+
+	updated, err := svc.UpdateOfficialChannelSettings(context.Background(), orgID, &channeldto.UpdateOfficialChannelSettingsRequest{
+		GroupID:   "zgi-cloud",
+		IsEnabled: &enabled,
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(1), updated)
+	require.NotNil(t, repo.updated)
+	require.False(t, repo.updated.IsEnabled)
 	require.Equal(t, []uuid.UUID{orgID}, availableSvc.invalidated)
 }
 

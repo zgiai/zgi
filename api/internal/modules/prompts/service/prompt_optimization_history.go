@@ -9,7 +9,6 @@ import (
 
 	promptdto "github.com/zgiai/zgi/api/internal/modules/prompts/dto"
 	promptmodel "github.com/zgiai/zgi/api/internal/modules/prompts/model"
-	workspace_model "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	"gorm.io/gorm"
 )
 
@@ -27,8 +26,7 @@ func (s *promptService) ListOptimizationRuns(
 		organizationID,
 		accountID,
 		promptID,
-		workspace_model.WorkspacePermissionAgentView,
-		workspace_model.WorkspacePermissionAgentManage,
+		promptOptimizePermissionCodes()...,
 	)
 	if err != nil {
 		return nil, err
@@ -65,7 +63,7 @@ func (s *promptService) AdoptOptimizationRun(
 	runID string,
 	req promptdto.PromptOptimizationAdoptRequest,
 ) (*promptdto.PromptDetailResponse, error) {
-	prompt, err := s.getAccessiblePrompt(ctx, organizationID, accountID, promptID, workspace_model.WorkspacePermissionAgentManage)
+	prompt, err := s.getAccessiblePrompt(ctx, organizationID, accountID, promptID, promptVersionManagePermissionCodes()...)
 	if err != nil {
 		return nil, err
 	}

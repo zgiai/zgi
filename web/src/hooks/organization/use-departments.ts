@@ -10,12 +10,17 @@ import { getErrorMessage } from '@/utils/error-notifications';
 import { useOrganizations } from '@/hooks/organization/use-organizations';
 import { ORGANIZATION_KEYS } from '@/hooks/query-keys';
 
+interface UseDepartmentsOptions {
+  enabled?: boolean;
+}
+
 /**
  * Hook for fetching department tree
  */
-export function useDepartments() {
+export function useDepartments(options: UseDepartmentsOptions = {}) {
   const t = useT('dashboard');
   const { currentOrganization } = useOrganizations();
+  const enabled = options.enabled ?? true;
 
   const {
     data: responseData,
@@ -31,7 +36,7 @@ export function useDepartments() {
       }
       return await organizationService.getDepartments(currentOrganization.id);
     },
-    enabled: !!currentOrganization?.id,
+    enabled: enabled && !!currentOrganization?.id,
     staleTime: 5 * 60 * 1000,
     gcTime: 10 * 60 * 1000,
     refetchOnWindowFocus: false,
@@ -42,7 +47,7 @@ export function useDepartments() {
   useEffect(() => {
     if (!error) return;
     toast.error(getErrorMessage(error) || t('organization.contacts.loadDepartmentsError'));
-  }, [error, toast, t]);
+  }, [error, t]);
 
   return {
     departments: responseData?.departments ?? [],

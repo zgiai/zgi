@@ -54,6 +54,13 @@ interface SingleChatControllerStore extends SingleChatControllerState {
   adoptServerConversationId: (clientId: string, serverConversationId: string) => void;
 }
 
+const FIRST_INPUT_TITLE_MAX_RUNES = 50;
+
+function conversationTitleFromFirstInput(query: string): string {
+  const normalized = query.trim().replace(/\s+/g, ' ');
+  return Array.from(normalized).slice(0, FIRST_INPUT_TITLE_MAX_RUNES).join('');
+}
+
 const createControllerStore = () =>
   createStore<SingleChatControllerStore>()(set => ({
     mode: 'singleChat',
@@ -451,7 +458,7 @@ export class SingleChatController implements ChatController {
     const draft: ConversationSummary = {
       id: `draft-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
       conversationId: '',
-      title: title ?? 'New Conversation',
+      title: title ?? '',
       dialogueCount: 0,
       updatedAt: Date.now(),
       status: 'draft',
@@ -513,6 +520,29 @@ export class SingleChatController implements ChatController {
     if (!conv) {
       console.warn('[SingleChatController] Active conversation not found in list');
       return;
+    }
+
+    if (!conv.conversationId?.trim()) {
+      const initialTitle = conversationTitleFromFirstInput(payload.query);
+      if (initialTitle) {
+        this.store
+          .getState()
+          .setConversations(
+            this.store
+              .getState()
+              .conversations.map(item =>
+                item.id === activeId ? { ...item, title: initialTitle } : item
+              )
+          );
+        const activeDetail = this.store.getState().activeDetail;
+        if (activeDetail?.summary.id === activeId) {
+          this.store.getState().setActiveDetail({
+            ...activeDetail,
+            summary: { ...activeDetail.summary, title: initialTitle },
+          });
+        }
+        useChatStore.getState().updateConversation(activeId, { title: initialTitle });
+      }
     }
 
     this.store.getState().setIsSending(true);

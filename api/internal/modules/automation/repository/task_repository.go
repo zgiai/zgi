@@ -22,6 +22,7 @@ type TaskRepository interface {
 	GetByIDAnyScope(ctx context.Context, db *gorm.DB, taskID string) (*automationmodel.AutomationTask, error)
 	List(ctx context.Context, db *gorm.DB, filter automationdto.TaskFilter) ([]*automationmodel.AutomationTask, error)
 	Count(ctx context.Context, db *gorm.DB, filter automationdto.TaskFilter) (int64, error)
+	CountByStatus(ctx context.Context, db *gorm.DB, scope automationdto.TaskScope) (map[automationmodel.AutomationTaskStatus]int64, error)
 	ListDueTasksForDispatch(ctx context.Context, tx *gorm.DB, now time.Time, limit int) ([]*automationmodel.AutomationTask, error)
 }
 
@@ -122,6 +123,31 @@ func (r *taskRepository) Count(ctx context.Context, db *gorm.DB, filter automati
 		return 0, fmt.Errorf("count automation tasks: %w", err)
 	}
 	return count, nil
+}
+
+func (r *taskRepository) CountByStatus(ctx context.Context, db *gorm.DB, scope automationdto.TaskScope) (map[automationmodel.AutomationTaskStatus]int64, error) {
+	type statusCount struct {
+		Status automationmodel.AutomationTaskStatus `gorm:"column:status"`
+		Count  int64                                `gorm:"column:count"`
+	}
+
+	var rows []statusCount
+	if err := r.session(db).
+		WithContext(ctx).
+		Model(&automationmodel.AutomationTask{}).
+		Select("status, COUNT(*) AS count").
+		Where("organization_id = ?", scope.OrganizationID).
+		Where("workspace_id = ?", scope.WorkspaceID).
+		Group("status").
+		Scan(&rows).Error; err != nil {
+		return nil, fmt.Errorf("count automation tasks by status: %w", err)
+	}
+
+	counts := make(map[automationmodel.AutomationTaskStatus]int64, len(rows))
+	for _, row := range rows {
+		counts[row.Status] = row.Count
+	}
+	return counts, nil
 }
 
 func (r *taskRepository) ListDueTasksForDispatch(ctx context.Context, tx *gorm.DB, now time.Time, limit int) ([]*automationmodel.AutomationTask, error) {

@@ -9,24 +9,30 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 
 	"github.com/zgiai/zgi/api/pkg/logger"
 	"github.com/zgiai/zgi/api/pkg/response"
+	"gorm.io/gorm"
 )
 
 // APIKeyHandler handles HTTP requests for API key operations
 type APIKeyHandler struct {
-	apiKeyService      *APIKeyService
-	apiKeyRepo         APIKeyRepository
-	apiKeyUsageLogRepo APIKeyUsageLogRepository
+	apiKeyService          *APIKeyService
+	apiKeyRepo             APIKeyRepository
+	apiKeyUsageLogRepo     APIKeyUsageLogRepository
+	organizationService    apiKeyWorkspacePermissionChecker
+	agentWorkspaceResolver apiKeyAgentWorkspaceResolver
 }
 
 // NewAPIKeyHandler creates a new API key handler
-func NewAPIKeyHandler(apiKeyService *APIKeyService, apiKeyRepo APIKeyRepository, apiKeyUsageLogRepo APIKeyUsageLogRepository) *APIKeyHandler {
+func NewAPIKeyHandler(apiKeyService *APIKeyService, apiKeyRepo APIKeyRepository, apiKeyUsageLogRepo APIKeyUsageLogRepository, organizationService interfaces.OrganizationService, db *gorm.DB) *APIKeyHandler {
 	return &APIKeyHandler{
-		apiKeyService:      apiKeyService,
-		apiKeyRepo:         apiKeyRepo,
-		apiKeyUsageLogRepo: apiKeyUsageLogRepo,
+		apiKeyService:          apiKeyService,
+		apiKeyRepo:             apiKeyRepo,
+		apiKeyUsageLogRepo:     apiKeyUsageLogRepo,
+		organizationService:    organizationService,
+		agentWorkspaceResolver: newDBAPIKeyAgentWorkspaceResolver(db),
 	}
 }
 
@@ -61,6 +67,11 @@ func (h *APIKeyHandler) CreateAPIKey(c *gin.Context) {
 	}
 	logger.DebugContext(c.Request.Context(), "create api key agent parsed", "agent_id", agentID.String())
 
+	tenantUUID, ok := h.requireAgentAPIKeyAccess(c, agentID)
+	if !ok {
+		return
+	}
+
 	// Parse request body without agent_id
 	var req CreateAPIKeyRequestWithoutAgentID
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -69,31 +80,6 @@ func (h *APIKeyHandler) CreateAPIKey(c *gin.Context) {
 		return
 	}
 	logger.DebugContext(c.Request.Context(), "create api key request parsed", "agent_id", agentID.String(), "name", req.Name)
-
-	// Get tenant ID from context (should be set by middleware)
-	tenantID, exists := c.Get("tenant_id")
-	if !exists {
-		logger.WarnContext(c.Request.Context(), "tenant id not found in create api key context", "agent_id", agentID.String())
-		response.Fail(c, response.ErrorCode{Code: 401001, Message: "Tenant ID not found", UserVisible: true})
-		return
-	}
-
-	tenantIDStr, ok := tenantID.(string)
-	if !ok {
-		logger.ErrorContext(c.Request.Context(), "invalid tenant id type in create api key context", "agent_id", agentID.String(), "tenant_id_type", fmt.Sprintf("%T", tenantID))
-		response.Fail(c, response.ErrorCode{Code: 500001, Message: "Invalid tenant ID format", UserVisible: false})
-		return
-	}
-
-	tenantUUID, err := uuid.Parse(tenantIDStr)
-	if err != nil {
-		logger.ErrorContext(c.Request.Context(), "failed to parse tenant id in create api key context", "agent_id", agentID.String(), "tenant_id", tenantIDStr, err)
-		response.Fail(c, response.ErrorCode{Code: 500001, Message: "Invalid tenant ID format", UserVisible: false})
-		return
-	}
-
-	// Check if agent exists and belongs to tenant (this should be done in a separate service)
-	// For now, we'll assume the agent ID is valid
 
 	// Check if API key name already exists for this agent
 	nameExists, err := h.apiKeyRepo.CheckNameExists(c.Request.Context(), req.Name, agentID, tenantUUID, nil)
@@ -136,22 +122,8 @@ func (h *APIKeyHandler) ListAPIKeys(c *gin.Context) {
 		return
 	}
 
-	// Get tenant ID from context
-	tenantID, exists := c.Get("tenant_id")
-	if !exists {
-		response.Fail(c, response.ErrorCode{Code: 401001, Message: "Tenant ID not found", UserVisible: true})
-		return
-	}
-
-	tenantIDStr, ok := tenantID.(string)
+	tenantUUID, ok := h.requireAgentAPIKeyAccess(c, agentID)
 	if !ok {
-		response.Fail(c, response.ErrorCode{Code: 500001, Message: "Invalid tenant ID format", UserVisible: false})
-		return
-	}
-
-	tenantUUID, err := uuid.Parse(tenantIDStr)
-	if err != nil {
-		response.Fail(c, response.ErrorCode{Code: 500001, Message: "Invalid tenant ID format", UserVisible: false})
 		return
 	}
 
@@ -161,15 +133,9 @@ func (h *APIKeyHandler) ListAPIKeys(c *gin.Context) {
 		return
 	}
 
-	// Filter out revoked (deleted) API keys
-	activeAPIKeys := make([]*APIKey, 0)
-	for _, apiKey := range apiKeys {
-		activeAPIKeys = append(activeAPIKeys, apiKey)
-	}
-
 	// Convert to response format
-	apiKeyResponses := make([]APIKeyResponse, len(activeAPIKeys))
-	for i, apiKey := range activeAPIKeys {
+	apiKeyResponses := make([]APIKeyResponse, len(apiKeys))
+	for i, apiKey := range apiKeys {
 		apiKeyResponses[i] = apiKey.ToResponse()
 	}
 
@@ -199,29 +165,15 @@ func (h *APIKeyHandler) GetAPIKey(c *gin.Context) {
 		return
 	}
 
+	tenantUUID, ok := h.requireAgentAPIKeyAccess(c, agentID)
+	if !ok {
+		return
+	}
+
 	keyIDStr := c.Param("api_key_id")
 	keyID, err := uuid.Parse(keyIDStr)
 	if err != nil {
 		response.Fail(c, response.ErrInvalidUuid)
-		return
-	}
-
-	// Get tenant ID from context
-	tenantID, exists := c.Get("tenant_id")
-	if !exists {
-		response.Fail(c, response.ErrorCode{Code: 401001, Message: "Tenant ID not found", UserVisible: true})
-		return
-	}
-
-	tenantIDStr, ok := tenantID.(string)
-	if !ok {
-		response.Fail(c, response.ErrorCode{Code: 500001, Message: "Invalid tenant ID format", UserVisible: false})
-		return
-	}
-
-	tenantUUID, err := uuid.Parse(tenantIDStr)
-	if err != nil {
-		response.Fail(c, response.ErrorCode{Code: 500001, Message: "Invalid tenant ID format", UserVisible: false})
 		return
 	}
 
@@ -256,6 +208,11 @@ func (h *APIKeyHandler) UpdateAPIKey(c *gin.Context) {
 		return
 	}
 
+	tenantUUID, ok := h.requireAgentAPIKeyAccess(c, agentID)
+	if !ok {
+		return
+	}
+
 	keyIDStr := c.Param("api_key_id")
 	keyID, err := uuid.Parse(keyIDStr)
 	if err != nil {
@@ -269,22 +226,13 @@ func (h *APIKeyHandler) UpdateAPIKey(c *gin.Context) {
 		return
 	}
 
-	// Get tenant ID from context
-	tenantID, exists := c.Get("tenant_id")
-	if !exists {
-		response.Fail(c, response.ErrorCode{Code: 401001, Message: "Tenant ID not found", UserVisible: true})
-		return
-	}
-
-	tenantIDStr, ok := tenantID.(string)
-	if !ok {
-		response.Fail(c, response.ErrorCode{Code: 500001, Message: "Invalid tenant ID format", UserVisible: false})
-		return
-	}
-
-	tenantUUID, err := uuid.Parse(tenantIDStr)
+	currentAPIKey, err := h.apiKeyRepo.GetByID(c.Request.Context(), keyID, agentID, tenantUUID)
 	if err != nil {
-		response.Fail(c, response.ErrorCode{Code: 500001, Message: "Invalid tenant ID format", UserVisible: false})
+		response.Fail(c, response.ErrorCode{Code: 404001, Message: "API key not found", UserVisible: true})
+		return
+	}
+	if currentAPIKey.Status == APIKeyStatusRevoked {
+		response.Fail(c, response.ErrorCode{Code: 400001, Message: "Revoked API key cannot be updated", UserVisible: true})
 		return
 	}
 
@@ -348,29 +296,15 @@ func (h *APIKeyHandler) DeleteAPIKey(c *gin.Context) {
 		return
 	}
 
+	tenantUUID, ok := h.requireAgentAPIKeyAccess(c, agentID)
+	if !ok {
+		return
+	}
+
 	keyIDStr := c.Param("api_key_id")
 	keyID, err := uuid.Parse(keyIDStr)
 	if err != nil {
 		response.Fail(c, response.ErrInvalidUuid)
-		return
-	}
-
-	// Get tenant ID from context
-	tenantID, exists := c.Get("tenant_id")
-	if !exists {
-		response.Fail(c, response.ErrorCode{Code: 401001, Message: "Tenant ID not found", UserVisible: true})
-		return
-	}
-
-	tenantIDStr, ok := tenantID.(string)
-	if !ok {
-		response.Fail(c, response.ErrorCode{Code: 500001, Message: "Invalid tenant ID format", UserVisible: false})
-		return
-	}
-
-	tenantUUID, err := uuid.Parse(tenantIDStr)
-	if err != nil {
-		response.Fail(c, response.ErrorCode{Code: 500001, Message: "Invalid tenant ID format", UserVisible: false})
 		return
 	}
 
@@ -405,29 +339,15 @@ func (h *APIKeyHandler) RevokeAPIKey(c *gin.Context) {
 		return
 	}
 
+	tenantUUID, ok := h.requireAgentAPIKeyAccess(c, agentID)
+	if !ok {
+		return
+	}
+
 	keyIDStr := c.Param("api_key_id")
 	keyID, err := uuid.Parse(keyIDStr)
 	if err != nil {
 		response.Fail(c, response.ErrInvalidUuid)
-		return
-	}
-
-	// Get tenant ID from context
-	tenantID, exists := c.Get("tenant_id")
-	if !exists {
-		response.Fail(c, response.ErrorCode{Code: 401001, Message: "Tenant ID not found", UserVisible: true})
-		return
-	}
-
-	tenantIDStr, ok := tenantID.(string)
-	if !ok {
-		response.Fail(c, response.ErrorCode{Code: 500001, Message: "Invalid tenant ID format", UserVisible: false})
-		return
-	}
-
-	tenantUUID, err := uuid.Parse(tenantIDStr)
-	if err != nil {
-		response.Fail(c, response.ErrorCode{Code: 500001, Message: "Invalid tenant ID format", UserVisible: false})
 		return
 	}
 
@@ -480,29 +400,15 @@ func (h *APIKeyHandler) GetAPIKeyUsageLogs(c *gin.Context) {
 		return
 	}
 
+	tenantUUID, ok := h.requireAgentAPIKeyAccess(c, agentID)
+	if !ok {
+		return
+	}
+
 	keyIDStr := c.Param("api_key_id")
 	keyID, err := uuid.Parse(keyIDStr)
 	if err != nil {
 		response.Fail(c, response.ErrInvalidUuid)
-		return
-	}
-
-	// Get tenant ID from context
-	tenantID, exists := c.Get("tenant_id")
-	if !exists {
-		response.Fail(c, response.ErrorCode{Code: 401001, Message: "Tenant ID not found", UserVisible: true})
-		return
-	}
-
-	tenantIDStr, ok := tenantID.(string)
-	if !ok {
-		response.Fail(c, response.ErrorCode{Code: 500001, Message: "Invalid tenant ID format", UserVisible: false})
-		return
-	}
-
-	tenantUUID, err := uuid.Parse(tenantIDStr)
-	if err != nil {
-		response.Fail(c, response.ErrorCode{Code: 500001, Message: "Invalid tenant ID format", UserVisible: false})
 		return
 	}
 
@@ -587,29 +493,15 @@ func (h *APIKeyHandler) GetAPIKeyUsageStats(c *gin.Context) {
 		return
 	}
 
+	tenantUUID, ok := h.requireAgentAPIKeyAccess(c, agentID)
+	if !ok {
+		return
+	}
+
 	keyIDStr := c.Param("api_key_id")
 	keyID, err := uuid.Parse(keyIDStr)
 	if err != nil {
 		response.Fail(c, response.ErrInvalidUuid)
-		return
-	}
-
-	// Get tenant ID from context
-	tenantID, exists := c.Get("tenant_id")
-	if !exists {
-		response.Fail(c, response.ErrorCode{Code: 401001, Message: "Tenant ID not found", UserVisible: true})
-		return
-	}
-
-	tenantIDStr, ok := tenantID.(string)
-	if !ok {
-		response.Fail(c, response.ErrorCode{Code: 500001, Message: "Invalid tenant ID format", UserVisible: false})
-		return
-	}
-
-	tenantUUID, err := uuid.Parse(tenantIDStr)
-	if err != nil {
-		response.Fail(c, response.ErrorCode{Code: 500001, Message: "Invalid tenant ID format", UserVisible: false})
 		return
 	}
 

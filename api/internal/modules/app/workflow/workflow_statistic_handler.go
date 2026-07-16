@@ -1,97 +1,90 @@
 package workflow
 
 import (
+	"context"
+	"strings"
 	"time"
 
 	"github.com/zgiai/zgi/api/internal/dto"
+	workspace_model "github.com/zgiai/zgi/api/internal/modules/workspace/model"
+	"github.com/zgiai/zgi/api/internal/util"
+	"github.com/zgiai/zgi/api/pkg/response"
 
 	"github.com/gin-gonic/gin"
 )
 
+type workflowStatisticService interface {
+	GetAgentWorkspaceID(ctx context.Context, agentID string) (string, error)
+	GetWorkflowDailyRuns(ctx context.Context, tenantID, agentID string) (interface{}, error)
+	GetWorkflowDailyTerminals(ctx context.Context, tenantID, agentID string) (interface{}, error)
+	GetWorkflowDailyTokenCost(ctx context.Context, tenantID, agentID string) (interface{}, error)
+	GetWorkflowAverageAppInteraction(ctx context.Context, tenantID, agentID string) (interface{}, error)
+}
+
+type WorkflowStatisticHandlerOption func(*WorkflowStatisticHandler)
+
 // WorkflowStatisticHandler handles workflow statistics requests
 type WorkflowStatisticHandler struct {
-	workflowService WorkflowService
+	workflowService            workflowStatisticService
+	workspacePermissionChecker workflowWorkspacePermissionChecker
 }
 
 // NewWorkflowStatisticHandler creates a new workflow statistic handler
-func NewWorkflowStatisticHandler(workflowService WorkflowService) *WorkflowStatisticHandler {
-	return &WorkflowStatisticHandler{
+func NewWorkflowStatisticHandler(workflowService workflowStatisticService, opts ...WorkflowStatisticHandlerOption) *WorkflowStatisticHandler {
+	handler := &WorkflowStatisticHandler{
 		workflowService: workflowService,
+	}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(handler)
+		}
+	}
+	return handler
+}
+
+func WithWorkflowStatisticAuthorization(permissionChecker workflowWorkspacePermissionChecker) WorkflowStatisticHandlerOption {
+	return func(handler *WorkflowStatisticHandler) {
+		handler.workspacePermissionChecker = permissionChecker
 	}
 }
 
 // GetWorkflowDailyRuns gets workflow daily runs statistics
 func (sh *WorkflowStatisticHandler) GetWorkflowDailyRuns(c *gin.Context) {
-	tenantID := c.GetString("tenant_id")
-	appID := c.Param("agent_id")
-
-	var req dto.WorkflowStatisticRequest
-	if err := c.ShouldBindQuery(&req); err != nil {
-		c.JSON(400, gin.H{"error": err.Error()})
-		return
-	}
-
-	// Get timezone from user account
-	timezone := "UTC" // Default timezone, should get from user account
-	if userTimezone := c.GetString("timezone"); userTimezone != "" {
-		timezone = userTimezone
-	}
-
-	// Convert timezone format if needed
-	if req.Start != nil {
-		req.Start = convertToUTCWithTimezone(*req.Start, timezone)
-	}
-	if req.End != nil {
-		req.End = convertToUTCWithTimezone(*req.End, timezone)
-	}
-
-	result, err := sh.workflowService.GetWorkflowDailyRuns(c.Request.Context(), tenantID, appID)
-	if err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
-		return
-	}
-
-	c.JSON(200, result)
+	sh.handleWorkflowStatistic(c, func(ctx context.Context, workspaceID, agentID string) (interface{}, error) {
+		return sh.workflowService.GetWorkflowDailyRuns(ctx, workspaceID, agentID)
+	})
 }
 
 // GetWorkflowDailyTerminals gets workflow daily terminals statistics
 func (sh *WorkflowStatisticHandler) GetWorkflowDailyTerminals(c *gin.Context) {
-	tenantID := c.GetString("tenant_id")
-	appID := c.Param("agent_id")
-
-	var req dto.WorkflowStatisticRequest
-	if err := c.ShouldBindQuery(&req); err != nil {
-		c.JSON(400, gin.H{"error": err.Error()})
-		return
-	}
-
-	// Get timezone from user account
-	timezone := "UTC" // Default timezone, should get from user account
-	if userTimezone := c.GetString("timezone"); userTimezone != "" {
-		timezone = userTimezone
-	}
-
-	// Convert timezone format if needed
-	if req.Start != nil {
-		req.Start = convertToUTCWithTimezone(*req.Start, timezone)
-	}
-	if req.End != nil {
-		req.End = convertToUTCWithTimezone(*req.End, timezone)
-	}
-
-	result, err := sh.workflowService.GetWorkflowDailyTerminals(c.Request.Context(), tenantID, appID)
-	if err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
-		return
-	}
-
-	c.JSON(200, result)
+	sh.handleWorkflowStatistic(c, func(ctx context.Context, workspaceID, agentID string) (interface{}, error) {
+		return sh.workflowService.GetWorkflowDailyTerminals(ctx, workspaceID, agentID)
+	})
 }
 
 // GetWorkflowDailyTokenCost gets workflow daily token cost statistics
 func (sh *WorkflowStatisticHandler) GetWorkflowDailyTokenCost(c *gin.Context) {
-	tenantID := c.GetString("tenant_id")
+	sh.handleWorkflowStatistic(c, func(ctx context.Context, workspaceID, agentID string) (interface{}, error) {
+		return sh.workflowService.GetWorkflowDailyTokenCost(ctx, workspaceID, agentID)
+	})
+}
+
+// GetWorkflowAverageAppInteraction gets workflow average app interaction statistics
+func (sh *WorkflowStatisticHandler) GetWorkflowAverageAppInteraction(c *gin.Context) {
+	sh.handleWorkflowStatistic(c, func(ctx context.Context, workspaceID, agentID string) (interface{}, error) {
+		return sh.workflowService.GetWorkflowAverageAppInteraction(ctx, workspaceID, agentID)
+	})
+}
+
+func (sh *WorkflowStatisticHandler) handleWorkflowStatistic(
+	c *gin.Context,
+	load func(context.Context, string, string) (interface{}, error),
+) {
 	appID := c.Param("agent_id")
+	workspaceID, ok := sh.requireAgentView(c, appID)
+	if !ok {
+		return
+	}
 
 	var req dto.WorkflowStatisticRequest
 	if err := c.ShouldBindQuery(&req); err != nil {
@@ -113,7 +106,7 @@ func (sh *WorkflowStatisticHandler) GetWorkflowDailyTokenCost(c *gin.Context) {
 		req.End = convertToUTCWithTimezone(*req.End, timezone)
 	}
 
-	result, err := sh.workflowService.GetWorkflowDailyTokenCost(c.Request.Context(), tenantID, appID)
+	result, err := load(c.Request.Context(), workspaceID, appID)
 	if err != nil {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
@@ -122,38 +115,51 @@ func (sh *WorkflowStatisticHandler) GetWorkflowDailyTokenCost(c *gin.Context) {
 	c.JSON(200, result)
 }
 
-// GetWorkflowAverageAppInteraction gets workflow average app interaction statistics
-func (sh *WorkflowStatisticHandler) GetWorkflowAverageAppInteraction(c *gin.Context) {
-	tenantID := c.GetString("tenant_id")
-	appID := c.Param("agent_id")
-
-	var req dto.WorkflowStatisticRequest
-	if err := c.ShouldBindQuery(&req); err != nil {
-		c.JSON(400, gin.H{"error": err.Error()})
-		return
+func (sh *WorkflowStatisticHandler) requireAgentView(c *gin.Context, agentID string) (string, bool) {
+	accountID := strings.TrimSpace(c.GetString("account_id"))
+	if accountID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return "", false
+	}
+	if strings.TrimSpace(agentID) == "" {
+		response.Fail(c, response.ErrInvalidParam)
+		return "", false
+	}
+	if sh == nil || sh.workflowService == nil || sh.workspacePermissionChecker == nil {
+		response.Fail(c, response.ErrSystemError)
+		return "", false
 	}
 
-	// Get timezone from user account
-	timezone := "UTC" // Default timezone, should get from user account
-	if userTimezone := c.GetString("timezone"); userTimezone != "" {
-		timezone = userTimezone
-	}
-
-	// Convert timezone format if needed
-	if req.Start != nil {
-		req.Start = convertToUTCWithTimezone(*req.Start, timezone)
-	}
-	if req.End != nil {
-		req.End = convertToUTCWithTimezone(*req.End, timezone)
-	}
-
-	result, err := sh.workflowService.GetWorkflowAverageAppInteraction(c.Request.Context(), tenantID, appID)
+	workspaceID, err := sh.workflowService.GetAgentWorkspaceID(c.Request.Context(), agentID)
 	if err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
-		return
+		if strings.Contains(err.Error(), "agent not found") {
+			response.Fail(c, response.ErrAppNotFound)
+		} else {
+			response.Fail(c, response.ErrSystemError)
+		}
+		return "", false
+	}
+	if strings.TrimSpace(workspaceID) == "" {
+		response.Fail(c, response.ErrWorkspaceNotFound)
+		return "", false
 	}
 
-	c.JSON(200, result)
+	hasPermission, err := sh.workspacePermissionChecker.CheckWorkspacePermission(
+		c.Request.Context(),
+		util.GetOrganizationID(c),
+		workspaceID,
+		accountID,
+		workspace_model.WorkspacePermissionWorkflowView,
+	)
+	if err != nil {
+		response.Fail(c, response.ErrSystemError)
+		return "", false
+	}
+	if !hasPermission {
+		response.Fail(c, response.ErrPermissionDenied)
+		return "", false
+	}
+	return workspaceID, true
 }
 
 // convertToUTCWithTimezone converts time with timezone consideration

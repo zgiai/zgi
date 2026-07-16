@@ -1,0 +1,201 @@
+# 对话工作流 API
+
+对话工作流用于需要多轮上下文的工作流应用。
+调用方发送用户问题，服务端通过 SSE 流式返回工作流进度、回答片段、暂停事件，以及最终的消息结束事件。
+
+<div>
+  ### Base URL
+
+<CodeGroup title="代码">
+
+```text
+{apibase}
+```
+
+</CodeGroup>
+
+### 鉴权
+
+使用应用 API Key 鉴权。推荐使用 `Authorization: Bearer`；为了兼容已有系统，也支持 `X-API-Key`。
+
+<CodeGroup title="Headers" targetCode={`Authorization: Bearer {api_key}\nX-API-Key: {api_key}`}>
+
+```text
+Authorization: Bearer {API_KEY}
+X-API-Key: {API_KEY}
+```
+
+</CodeGroup>
+
+API Key 只应保存在服务端，不要暴露在浏览器代码或公开客户端中。
+
+</div>
+
+---
+
+<Heading
+  url="/api/v1/chat-workflows/run"
+  method="POST"
+  title="运行对话工作流"
+  name="#Run-Chat-Workflow"
+/>
+
+<Row>
+  <Col>
+    创建或继续一轮对话工作流。
+
+    ### 请求体
+
+    <Properties>
+      <Property name='query' type='string' propKey='query'>
+        必填。本轮用户输入。服务端也会写入工作流输入 `query` 和系统变量 `sys.query`。
+      </Property>
+      <Property name='response_mode' type='string' propKey='response_mode'>
+        必填。当前外部 API 绑定要求传入该字段，且只支持 `streaming`；服务端会强制按 streaming 执行。
+      </Property>
+      <Property name='conversation_id' type='string' propKey='conversation_id'>
+        可选。首次对话不传；后续请求传入该值以继续同一段对话历史。
+      </Property>
+      <Property name='inputs' type='object' propKey='inputs'>
+        可选。传给工作流已配置变量的运行参数。用户问题不要放在这里，请使用顶层 `query`。
+      </Property>
+    </Properties>
+
+    `user`、`files`、`model`、`provider` 不作为该文档中的对话工作流公开入参。运行配置由发布版本决定。
+
+    ### 标识符语义
+
+    - `conversation_id` 用于串联多轮对话。请从 `message` 或 `message_end` 事件中保存，并在后续请求中传回。
+    - `workflow_run_id` 标识一次工作流执行。请保存 `workflow_started.data.id`，用于排查、事件恢复和停止。
+    - `message_id` 标识本轮助手消息。当前对话工作流中它通常和 `workflow_run_id` 一致，但客户端应按消息 id 语义使用。
+
+    ### 流式格式
+
+    响应 `Content-Type` 为 `text/event-stream`。对话工作流使用工作流 data envelope：
+
+    <CodeGroup title="SSE 格式">
+    ```text {{ title: 'SSE' }}
+    data: {"event":"message","data":{"conversation_id":"...","message_id":"...","answer":"你好"}}
+
+    data: {"event":"message_end","data":{"conversation_id":"...","message_id":"...","metadata":{"usage":{"total_tokens":123}}}}
+    ```
+    </CodeGroup>
+
+    按 JSON 的 `event` 字段分发。可见助手回答请拼接 `message.data.answer`；工作流事件用于进度展示。
+
+    ### 事件
+
+    - 主回答事件：`message`、`message_end`。`message_end` 表示本轮助手消息终态，可能包含 `metadata.usage`、引用资源、文件等信息。
+    - 工作流事件：`workflow_started`、`workflow_finished`、`workflow_paused`、`node_started`、`node_finished`、`text_chunk`、审批事件、问答事件。
+    - 迭代和循环事件：`iteration_started`、`iteration_next`、`iteration_completed`、`loop_started`、`loop_next`、`loop_completed`。字段处理方式和 Workflow API 一致。
+    - 问答暂停：通常会先收到 `data.message_kind: "question_answer_prompt"` 的 `message`，再收到 `question_answer_requested`，随后是 `workflow_paused`。这个 prompt 是面向用户展示的问题，不是最终回答片段。
+    - 保活事件：`ping` 或 `: ping`。业务逻辑可忽略。
+    - 错误事件：`error`。`data.message` 描述错误。
+
+    ### 问答恢复
+
+    当对话工作流因 question-answer 节点暂停时，继续调用 `POST /api/v1/chat-workflows/run`，并传入同一个 `conversation_id`。
+
+    - 将用户回答放在顶层 `query`。
+    - 如果用户选择了选项，将选项 id 放入 `inputs.question_answer_option_id`。
+    - 服务端会通过 `conversation_id` 找到当前活跃的 question-answer pause，并恢复同一个 workflow run。
+
+    ### 错误
+
+    - `400`：请求参数错误，例如缺少 `query` 或 `response_mode`
+    - `401`：API Key 缺失、无效、停用、过期或已撤销
+    - `404`：应用或已发布工作流不存在
+    - `500`：服务内部错误
+
+  </Col>
+
+  <Col sticky>
+    <CodeGroup title="新会话" tag="POST" label="/api/v1/chat-workflows/run" targetCode={`curl --location --no-buffer '{apibase}/chat-workflows/run' \\\n--header 'Content-Type: application/json' \\\n--header 'Authorization: Bearer {api_key}' \\\n--data '{\n  "query": "你好，请用一句话介绍这个产品。",\n  "response_mode": "streaming"\n}'`}>
+
+    ```bash {{ title: 'cURL - 新会话' }}
+    curl --location --no-buffer '{apibase}/chat-workflows/run' \
+    --header 'Content-Type: application/json' \
+    --header 'Authorization: Bearer {api_key}' \
+    --data '{
+      "query": "你好，请用一句话介绍这个产品。",
+      "response_mode": "streaming"
+    }'
+    ```
+
+    </CodeGroup>
+
+    <CodeGroup title="继续会话" tag="POST" label="/api/v1/chat-workflows/run" targetCode={`curl --location --no-buffer '{apibase}/chat-workflows/run' \\\n--header 'Content-Type: application/json' \\\n--header 'X-API-Key: {api_key}' \\\n--data '{\n  "query": "请继续上一个回答。",\n  "response_mode": "streaming",\n  "conversation_id": "1749ede3-ee92-471c-be92-9d17d58e193b"\n}'`}>
+
+    ```bash {{ title: 'cURL - 继续会话' }}
+    curl --location --no-buffer '{apibase}/chat-workflows/run' \
+    --header 'Content-Type: application/json' \
+    --header 'X-API-Key: {api_key}' \
+    --data '{
+      "query": "请继续上一个回答。",
+      "response_mode": "streaming",
+      "conversation_id": "1749ede3-ee92-471c-be92-9d17d58e193b"
+    }'
+    ```
+
+    </CodeGroup>
+
+    <CodeGroup title="恢复问答" tag="POST" label="/api/v1/chat-workflows/run" targetCode={`curl --location --no-buffer '{apibase}/chat-workflows/run' \\\n--header 'Content-Type: application/json' \\\n--header 'Authorization: Bearer {api_key}' \\\n--data '{\n  "query": "继续",\n  "response_mode": "streaming",\n  "conversation_id": "1749ede3-ee92-471c-be92-9d17d58e193b",\n  "inputs": {\n    "question_answer_option_id": "continue"\n  }\n}'`}>
+
+    ```bash {{ title: 'cURL - 恢复问答' }}
+    curl --location --no-buffer '{apibase}/chat-workflows/run' \
+    --header 'Content-Type: application/json' \
+    --header 'Authorization: Bearer {api_key}' \
+    --data '{
+      "query": "继续",
+      "response_mode": "streaming",
+      "conversation_id": "1749ede3-ee92-471c-be92-9d17d58e193b",
+      "inputs": {
+        "question_answer_option_id": "continue"
+      }
+    }'
+    ```
+
+    </CodeGroup>
+
+  </Col>
+</Row>
+
+---
+
+<Heading
+  url="/api/v1/workflows/runs/{workflow_run_id}/events"
+  method="GET"
+  title="恢复对话工作流事件"
+  name="#Recover-Chat-Workflow"
+/>
+
+<Row>
+  <Col>
+    对话工作流使用和任务工作流相同的 workflow event recovery 接口。
+
+    对话工作流断线重连时，如果需要回放已经发出的 `message` 片段，请传 `include_message_events=true`。客户端保存最新顶层 `sequence`，并用 `after={last_sequence}` 续拉。
+
+  </Col>
+
+  <Col sticky>
+    <CodeGroup title="恢复" tag="GET" label="/api/v1/workflows/runs/{workflow_run_id}/events" targetCode={`curl --location --no-buffer '{apibase}/workflows/runs/{workflow_run_id}/events?after={last_sequence}&include_snapshot=true&include_message_events=true&continue_on_pause=true' \\\n--header 'Authorization: Bearer {api_key}'`}>
+
+    ```bash {{ title: 'cURL' }}
+    curl --location --no-buffer '{apibase}/workflows/runs/{workflow_run_id}/events?after={last_sequence}&include_snapshot=true&include_message_events=true&continue_on_pause=true' \
+    --header 'Authorization: Bearer {api_key}'
+    ```
+
+    </CodeGroup>
+
+  </Col>
+</Row>
+
+## 常见问题
+
+### Q: 什么时候传 `conversation_id`？
+
+A: 首次对话不传。收到 `message` 或 `message_end` 事件里的 `conversation_id` 后保存；后续继续同一段对话时在下一次请求中传回。
+
+### Q: `workflow_run_id` 能用来继续会话吗？
+
+A: 不能。`workflow_run_id` 只标识一次执行，适合排查、事件恢复和停止；继续会话必须使用 `conversation_id`。

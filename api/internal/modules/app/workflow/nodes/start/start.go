@@ -48,6 +48,8 @@ func New(
 			NodeType:   shared.Start,
 
 			TenantID:          graphInitParams.TenantID,
+			WorkspaceID:       graphInitParams.WorkspaceID,
+			OrganizationID:    graphInitParams.OrganizationID,
 			APPID:             graphInitParams.AppID,
 			WorkflowType:      string(graphInitParams.WorkflowType),
 			WorkflowID:        graphInitParams.WorkflowID,
@@ -374,7 +376,10 @@ func (n *Node) processFileWithContent(ctx context.Context, key string, value any
 		logger.Info("Processing file list variable", logFields...)
 
 		// Process file list variable
-		processedVars, err := n.contentExtractor.ProcessFileListVariable(ctx, key, fileList, n.TenantID)
+		processedVars, err := n.contentExtractor.ProcessFileListVariable(ctx, key, fileList, file.ContentExtractionScope{
+			OrganizationID: n.OrganizationID,
+			WorkspaceID:    n.WorkspaceID,
+		})
 		if err != nil {
 			logFields := []interface{}{
 				"variable_name", key,
@@ -435,7 +440,10 @@ func (n *Node) processFileWithContent(ctx context.Context, key string, value any
 	logger.Info("Processing file variable", logFields...)
 
 	// Process file variable
-	processedVars, err := n.contentExtractor.ProcessFileVariable(ctx, key, fileData, n.TenantID)
+	processedVars, err := n.contentExtractor.ProcessFileVariable(ctx, key, fileData, file.ContentExtractionScope{
+		OrganizationID: n.OrganizationID,
+		WorkspaceID:    n.WorkspaceID,
+	})
 	if err != nil {
 		logFields := []interface{}{
 			"variable_name", key,

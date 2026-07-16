@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -89,6 +90,34 @@ func TestNativeRawProviders_ResponseEndpoints(t *testing.T) {
 				t.Fatalf("usage = %+v, want prompt=3 completion=2", resp.Usage)
 			}
 		})
+	}
+}
+
+func TestAliyunAdapterCreateResponseRaw_ParsesTopLevelError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		fmt.Fprint(w, `{"code":"InvalidParameter","message":"tool_choice is not supported"}`)
+	}))
+	defer server.Close()
+
+	providerAdapter, err := NewAliyunAdapter(&adapter.AdapterConfig{
+		APIKey:  "test-key",
+		BaseURL: server.URL + "/compatible-mode/v1",
+	})
+	if err != nil {
+		t.Fatalf("NewAliyunAdapter() error = %v", err)
+	}
+
+	_, err = providerAdapter.CreateResponseRaw(context.Background(), &adapter.RawResponseRequest{
+		Model: "qwen3.6-flash",
+		Body:  json.RawMessage(`{"model":"qwen3.6-flash","input":"hello"}`),
+	})
+	if !errors.Is(err, adapter.ErrInvalidRequest) {
+		t.Fatalf("error = %v, want ErrInvalidRequest", err)
+	}
+	if !strings.Contains(err.Error(), "provider rejected the request") {
+		t.Fatalf("error = %v, want sanitized provider message", err)
 	}
 }
 

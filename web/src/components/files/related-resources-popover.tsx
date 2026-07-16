@@ -155,7 +155,7 @@ export function RelatedResourcesPopover({
                           className="text-sm text-blue-500"
                           onClick={e => {
                             e.stopPropagation();
-                            router.push(`/console/dataset/${resource.id}/documents`);
+                            router.push(`/console/dataset/${resource.id}`);
                           }}
                         >
                           跳转

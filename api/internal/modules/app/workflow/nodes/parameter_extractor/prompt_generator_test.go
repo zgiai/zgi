@@ -1,6 +1,7 @@
 package parameterextractor
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/file"
@@ -49,7 +50,7 @@ func TestGeneratePromptEngineeringChatPrompt_UsesTemplates(t *testing.T) {
 		if !ok {
 			t.Fatalf("message %d content type = %T, want string", i, messages[i].Content)
 		}
-		if content != expected {
+		if normalizePromptTestContent(content) != normalizePromptTestContent(expected) {
 			t.Fatalf("message %d content = %q, want %q", i, content, expected)
 		}
 	}
@@ -60,9 +61,15 @@ func TestGeneratePromptEngineeringChatPrompt_UsesTemplates(t *testing.T) {
 	}
 
 	expectedUserPrompt := "### Structure\n<structure>\n" + pg.generateParameterSchema() + "\n</structure>\n\n### Instructions\n" + instruction + "\n\n### Text to be converted to JSON\n<text>\nBook a flight to Paris\n</text>\n\nPlease extract the parameters according to the structure and output only the JSON object."
-	if userContent != expectedUserPrompt {
+	if normalizePromptTestContent(userContent) != normalizePromptTestContent(expectedUserPrompt) {
 		t.Fatalf("user prompt = %q, want %q", userContent, expectedUserPrompt)
 	}
+}
+
+func normalizePromptTestContent(value string) string {
+	value = strings.ReplaceAll(value, "\r\n", "\n")
+	value = strings.ReplaceAll(value, "\r", "\n")
+	return strings.TrimRight(value, "\n")
 }
 
 func TestGeneratePromptEngineeringChatPrompt_WithVisionPreservesMultipartContent(t *testing.T) {

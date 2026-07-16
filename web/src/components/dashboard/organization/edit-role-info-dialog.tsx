@@ -57,8 +57,8 @@ export function EditRoleInfoDialog({
       return;
     }
 
-    if (trimmedName.length > 50) {
-      setNameError(t('organization.validation.nameTooLong', { max: 50 }));
+    if (trimmedName.length > 30) {
+      setNameError(t('organization.validation.nameTooLong', { max: 30 }));
       return;
     }
 
@@ -96,6 +96,7 @@ export function EditRoleInfoDialog({
               disabled={isLoading || saving}
               className="h-12 rounded-xl border focus:border-brand-main focus:ring-brand-main/10 transition-all font-medium"
             />
+            <p className="text-right text-xs text-muted-foreground">{name.length}/30</p>
           </div>
 
           <div className="space-y-2">
@@ -115,6 +116,9 @@ export function EditRoleInfoDialog({
               disabled={isLoading || saving}
               className="rounded-xl border focus:border-brand-main focus:ring-brand-main/10 transition-all resize-none font-medium p-4"
             />
+            <p className="text-right text-xs text-muted-foreground">
+              {description.length}/200
+            </p>
           </div>
         </DialogBody>
 

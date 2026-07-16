@@ -1,6 +1,5 @@
-import { useMutation } from '@tanstack/react-query';
+import { useMutation, useQuery, type UseQueryOptions } from '@tanstack/react-query';
 import { datasetService } from '@/services';
-import { useQuery } from '@tanstack/react-query';
 import type {
   BatchHitTestingStatusResponse,
   BatchHitTestingReportResponse,
@@ -23,27 +22,35 @@ export function useSaveBatchHitTestingRecord(datasetId: string, taskId: string) 
 // Hook to fetch batch hit testing report
 export function useBatchHitTestingReport(
   datasetId: string | undefined,
-  taskId: string | undefined
+  taskId: string | undefined,
+  options: Omit<
+    UseQueryOptions<BatchHitTestingReportResponse | undefined>,
+    'queryKey' | 'queryFn'
+  > = {}
 ) {
   return useQuery<BatchHitTestingReportResponse | undefined>({
     queryKey: ['batch-testing-report', datasetId, taskId],
-    enabled: !!datasetId && !!taskId,
     queryFn: async () => {
       if (!datasetId || !taskId) return undefined;
       const resp = await datasetService.getBatchHitTestingReport(datasetId, taskId);
       return resp.data;
     },
+    ...options,
+    enabled: !!datasetId && !!taskId && (options.enabled ?? true),
   });
 }
 
 // Hook to fetch batch hit testing status (for live updates)
 export function useBatchHitTestingStatus(
   datasetId: string | undefined,
-  taskId: string | undefined
+  taskId: string | undefined,
+  options: Omit<
+    UseQueryOptions<BatchHitTestingStatusResponse | undefined>,
+    'queryKey' | 'queryFn'
+  > = {}
 ) {
   return useQuery<BatchHitTestingStatusResponse | undefined>({
     queryKey: ['batch-testing-status', datasetId, taskId],
-    enabled: !!datasetId && !!taskId,
     // Poll while there are running items; stop when all reach a terminal state
     refetchInterval: query => {
       const data = query.state.data as BatchHitTestingStatusResponse | undefined;
@@ -58,5 +65,7 @@ export function useBatchHitTestingStatus(
       const resp = await datasetService.getBatchHitTestingStatus(datasetId, taskId);
       return resp.data;
     },
+    ...options,
+    enabled: !!datasetId && !!taskId && (options.enabled ?? true),
   });
 }

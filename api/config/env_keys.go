@@ -28,6 +28,10 @@ const (
 	// Browser access policy.
 	// envWebAPICORSAllowOrigins sets the allowed CORS origins for the web API. Default: empty list.
 	envWebAPICORSAllowOrigins = "WEB_API_CORS_ALLOW_ORIGINS"
+
+	// envChatRuntimeModelIdleTimeoutSeconds stops one model call after this many
+	// seconds without any upstream response. Default: 300.
+	envChatRuntimeModelIdleTimeoutSeconds = "CHAT_RUNTIME_MODEL_IDLE_TIMEOUT_SECONDS"
 )
 
 // Database and cache keys.
@@ -87,7 +91,7 @@ const (
 
 	// Platform run mode selects cloud or self-hosted platform behavior. Default: SELF_HOSTED.
 	envZGIRunMode = "ZGI_RUN_MODE"
-	// envZGIOrgInviteDefaultPassword sets the fallback password for self-hosted organization member invites. Default: empty.
+	// envZGIOrgInviteDefaultPassword sets the fallback password for self-hosted organization member invites. Default: ZGI@Welcome1.
 	envZGIOrgInviteDefaultPassword = "ZGI_ORG_INVITE_DEFAULT_PASSWORD"
 )
 
@@ -596,6 +600,12 @@ const (
 	envLLMGuardOutboundDNS = "LLM_GUARD_OUTBOUND_DNS"
 	// envLLMAllowPrivateBaseURL allows Ollama to target private or localhost base URLs. Default: false.
 	envLLMAllowPrivateBaseURL = "LLM_ALLOW_PRIVATE_BASE_URL"
+	// envLLMUpstreamBalancePollingEnabled controls private credential balance polling. Default: false.
+	envLLMUpstreamBalancePollingEnabled = "LLM_UPSTREAM_BALANCE_POLLING_ENABLED"
+	// envLLMUpstreamGuardMode controls private credential route protection. Default: off.
+	envLLMUpstreamGuardMode = "LLM_UPSTREAM_GUARD_MODE"
+	// envLLMUpstreamGuardPercentage controls deterministic organization rollout. Default: 0.
+	envLLMUpstreamGuardPercentage = "LLM_UPSTREAM_GUARD_PERCENTAGE"
 
 	// Automation dispatch behavior.
 	// envAutomationDispatchEnabled controls whether this API instance registers automation due-task dispatch. Default: true.

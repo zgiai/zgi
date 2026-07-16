@@ -18,6 +18,8 @@ import {
 import { Button } from '@/components/ui/button';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
+import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
+import { KNOWLEDGE_BASE_PERMISSION_ACTIONS } from '@/constants/permissions';
 
 const formatDebugNumber = (value?: number) =>
   typeof value === 'number' && Number.isFinite(value) ? value.toFixed(4) : '-';
@@ -28,6 +30,14 @@ const formatDebugRank = (value?: number) =>
 export function ResultItem({ result, index }: ResultItemProps) {
   const t = useT('datasets');
   const { datasetId } = useParams<{ datasetId: string }>();
+  const { hasAnyPermission } = useAccountPermissions();
+  const canViewDocumentDetails = hasAnyPermission([
+    ...KNOWLEDGE_BASE_PERMISSION_ACTIONS.documentView,
+    ...KNOWLEDGE_BASE_PERMISSION_ACTIONS.documentCreate,
+    ...KNOWLEDGE_BASE_PERMISSION_ACTIONS.documentUpdate,
+    ...KNOWLEDGE_BASE_PERMISSION_ACTIONS.documentDelete,
+    ...KNOWLEDGE_BASE_PERMISSION_ACTIONS.indexManage,
+  ]);
   const retrievalSource = result.retrieval_source;
   const sourceBadges = retrievalSource?.retrieval_sources ?? [];
   const matchedTerms = retrievalSource?.matched_terms ?? [];
@@ -351,15 +361,17 @@ export function ResultItem({ result, index }: ResultItemProps) {
                   )}
                 </div>
 
-                <Link
-                  href={`/console/dataset/${datasetId}/documents/${result.segment.document.id}`}
-                  className="inline-flex items-center gap-1.5 text-sm font-bold text-blue-600 hover:text-blue-700 transition-colors group"
-                >
-                  {t('hitTesting.viewDocumentDetails')}
-                  <span className="text-lg transition-transform group-hover:translate-x-0.5">
-                    →
-                  </span>
-                </Link>
+                {canViewDocumentDetails ? (
+                  <Link
+                    href={`/console/dataset/${datasetId}/documents/${result.segment.document.id}`}
+                    className="inline-flex items-center gap-1.5 text-sm font-bold text-blue-600 hover:text-blue-700 transition-colors group"
+                  >
+                    {t('hitTesting.viewDocumentDetails')}
+                    <span className="text-lg transition-transform group-hover:translate-x-0.5">
+                      →
+                    </span>
+                  </Link>
+                ) : null}
               </div>
             </CardContent>
           </Card>

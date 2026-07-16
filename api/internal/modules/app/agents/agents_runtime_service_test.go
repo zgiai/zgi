@@ -1,22 +1,75 @@
 package agents
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/dto"
+	llmmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
+	llmmodelservice "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/service"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 )
+
+type agentModelEligibilityFake struct {
+	models   []*llmmodelservice.AvailableModel
+	err      error
+	useCases *[]string
+}
+
+func (f agentModelEligibilityFake) ListAvailable(_ context.Context, _ uuid.UUID, _, useCase string) ([]*llmmodelservice.AvailableModel, error) {
+	if f.useCases != nil {
+		*f.useCases = append(*f.useCases, useCase)
+	}
+	return f.models, f.err
+}
+
+func TestValidateAgentModelEligibilityAcceptsFunctionCallingTextChatModels(t *testing.T) {
+	var useCases []string
+	service := &agentsService{agentModels: agentModelEligibilityFake{
+		models: []*llmmodelservice.AvailableModel{
+			{Provider: "deepseek", Name: "legacy-model", Features: llmmodel.ModelFeatures{FunctionCalling: true}},
+			{Provider: "deepseek", Name: "agent-model", Features: llmmodel.ModelFeatures{FunctionCalling: true}, UseCases: []string{"text-chat", "function-calling", "agent"}},
+			{Provider: "deepseek", Name: "plain-chat-model"},
+		},
+		useCases: &useCases,
+	}}
+
+	if err := service.validateAgentModelEligibility(context.Background(), uuid.New(), "deepseek", "legacy-model"); err != nil {
+		t.Fatalf("validateAgentModelEligibility(legacy-model) error = %v", err)
+	}
+	if !reflect.DeepEqual(useCases, []string{llmmodelservice.AgentRuntimeUseCase}) {
+		t.Fatalf("legacy model use cases = %#v, want Agent runtime compatibility lookup", useCases)
+	}
+
+	useCases = nil
+	if err := service.validateAgentModelEligibility(context.Background(), uuid.New(), "deepseek", "agent-model"); err != nil {
+		t.Fatalf("validateAgentModelEligibility(agent-model) error = %v", err)
+	}
+	if !reflect.DeepEqual(useCases, []string{llmmodelservice.AgentRuntimeUseCase}) {
+		t.Fatalf("recommended model use cases = %#v, want Agent runtime compatibility lookup", useCases)
+	}
+
+	if err := service.validateAgentModelEligibility(context.Background(), uuid.New(), "openai", "legacy-model"); err == nil {
+		t.Fatal("validateAgentModelEligibility() error = nil, want provider mismatch error")
+	}
+	if err := service.validateAgentModelEligibility(context.Background(), uuid.New(), "deepseek", "plain-chat-model"); err == nil || !strings.Contains(err.Error(), "does not support function calling") {
+		t.Fatalf("validateAgentModelEligibility(plain-chat-model) error = %v, want function calling error", err)
+	}
+}
 
 func TestNormalizeAgentEnabledSkillIDsRemovesRuntimeManagedSkills(t *testing.T) {
 	got := normalizeAgentEnabledSkillIDs([]string{
 		skills.SkillAgentKnowledge,
 		skills.SkillAgentWorkflow,
 		skills.SkillUserMemory,
+		skills.SkillIntentRouter,
 		skills.SkillCalculator,
 		skills.SkillCalculator,
 		"  time  ",
@@ -26,6 +79,104 @@ func TestNormalizeAgentEnabledSkillIDsRemovesRuntimeManagedSkills(t *testing.T) 
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("normalizeAgentEnabledSkillIDs() = %#v, want %#v", got, want)
 	}
+}
+
+func TestGetPublishedAgentRuntimeConfigByAgentID(t *testing.T) {
+	agentID := uuid.New()
+	workspaceID := uuid.New()
+	versionUUID := uuid.New()
+	repo := &publishedRuntimeRepo{
+		agent: &Agent{
+			ID:           agentID,
+			TenantID:     workspaceID,
+			Name:         "Published Agent",
+			AgentsType:   "AGENT",
+			WebAppID:     uuid.New(),
+			WebAppStatus: AgentWebAppStatusInactive,
+		},
+		version: &AgentPublishedVersion{
+			ID:          uuid.New(),
+			AgentID:     agentID,
+			WorkspaceID: workspaceID,
+			Version:     "v1",
+			VersionUUID: versionUUID,
+			ConfigSnapshot: map[string]interface{}{
+				"system_prompt":     "answer carefully",
+				"model_provider":    "openai",
+				"model":             "gpt-test",
+				"enabled_skill_ids": []string{"time"},
+			},
+			CreatedAt: time.Now(),
+		},
+	}
+	service := &agentsService{agentsRepo: repo}
+
+	got, err := service.GetPublishedAgentRuntimeConfig(context.Background(), agentID.String())
+	if err != nil {
+		t.Fatalf("GetPublishedAgentRuntimeConfig() error = %v", err)
+	}
+	if got.AgentID != agentID.String() || got.WorkspaceID != workspaceID.String() || got.OrganizationID != workspaceID.String() {
+		t.Fatalf("scope fields = agent:%q workspace:%q organization:%q", got.AgentID, got.WorkspaceID, got.OrganizationID)
+	}
+	if got.Version != "v1" || got.VersionUUID != versionUUID.String() {
+		t.Fatalf("version fields = %q/%q, want v1/%s", got.Version, got.VersionUUID, versionUUID)
+	}
+	if got.Config.Model != "gpt-test" || got.Config.SystemPrompt != "answer carefully" {
+		t.Fatalf("config = %#v", got.Config)
+	}
+}
+
+func TestGetPublishedAgentRuntimeConfigRejectsNonAgentRuntime(t *testing.T) {
+	agentID := uuid.New()
+	service := &agentsService{agentsRepo: &publishedRuntimeRepo{
+		agent: &Agent{
+			ID:         agentID,
+			TenantID:   uuid.New(),
+			Name:       "Workflow App",
+			AgentsType: "workflow",
+			WebAppID:   uuid.New(),
+		},
+	}}
+
+	_, err := service.GetPublishedAgentRuntimeConfig(context.Background(), agentID.String())
+	if err == nil || !strings.Contains(err.Error(), "not an AGENT runtime") {
+		t.Fatalf("error = %v, want non-agent runtime error", err)
+	}
+}
+
+func TestGetPublishedAgentRuntimeConfigRejectsUnpublishedAgent(t *testing.T) {
+	agentID := uuid.New()
+	service := &agentsService{agentsRepo: &publishedRuntimeRepo{
+		agent: &Agent{
+			ID:         agentID,
+			TenantID:   uuid.New(),
+			Name:       "Draft Only Agent",
+			AgentsType: "AGENT",
+			WebAppID:   uuid.New(),
+		},
+	}}
+
+	_, err := service.GetPublishedAgentRuntimeConfig(context.Background(), agentID.String())
+	if !errors.Is(err, errAgentWebAppNotPublished) {
+		t.Fatalf("error = %v, want errAgentWebAppNotPublished", err)
+	}
+}
+
+type publishedRuntimeRepo struct {
+	AgentsRepository
+	agent   *Agent
+	version *AgentPublishedVersion
+}
+
+func (r *publishedRuntimeRepo) GetByID(_ context.Context, id string) (*Agent, error) {
+	if r.agent == nil || r.agent.ID.String() != id {
+		return nil, errors.New("agent not found")
+	}
+	return r.agent, nil
+}
+
+func (r *publishedRuntimeRepo) GetLatestAgentPublishedVersion(context.Context, string) (*AgentPublishedVersion, error) {
+	return r.version, nil
 }
 
 func TestApplyAgentConfigRequestPersistsWorkflowBindings(t *testing.T) {
@@ -162,7 +313,7 @@ func TestAgentMemoryReplaceRequestPreservesInvalidRowsForValidation(t *testing.T
 
 func TestAgentMemoryReplaceRequestCanDropHistoricalIDsForRollback(t *testing.T) {
 	req := agentMemoryReplaceRequestFromConfig([]dto.AgentMemorySlotConfig{
-		{ID: "stale-slot-id", Key: "profile", Enabled: true},
+		{ID: "stale-slot-id", Key: "profile", Name: "用户资料", Enabled: true},
 	}, false)
 	if len(req.Slots) != 1 {
 		t.Fatalf("len(req.Slots) = %d, want 1", len(req.Slots))
@@ -173,6 +324,9 @@ func TestAgentMemoryReplaceRequestCanDropHistoricalIDsForRollback(t *testing.T) 
 	if req.Slots[0].Key != "profile" {
 		t.Fatalf("rollback request key = %q, want profile", req.Slots[0].Key)
 	}
+	if req.Slots[0].Name != "用户资料" {
+		t.Fatalf("rollback request name = %q, want 用户资料", req.Slots[0].Name)
+	}
 }
 
 func TestAgentMemorySnapshotSlotsDoNotPersistVolatileIDs(t *testing.T) {
@@ -180,6 +334,7 @@ func TestAgentMemorySnapshotSlotsDoNotPersistVolatileIDs(t *testing.T) {
 		{
 			ID:          "draft-slot-id",
 			Key:         "profile",
+			Name:        "用户资料",
 			Description: "User profile",
 			MaxChars:    4000,
 			Enabled:     true,
@@ -199,6 +354,9 @@ func TestAgentMemorySnapshotSlotsDoNotPersistVolatileIDs(t *testing.T) {
 	}
 	if slots[0].MaxChars != 2000 {
 		t.Fatalf("snapshot max chars = %d, want 2000", slots[0].MaxChars)
+	}
+	if slots[0].Name != "用户资料" {
+		t.Fatalf("snapshot name = %q, want 用户资料", slots[0].Name)
 	}
 }
 
@@ -342,11 +500,29 @@ func TestApplyAgentConfigRequestRecordsBindingActor(t *testing.T) {
 	if err != nil {
 		t.Fatalf("third applyAgentConfigRequestToDraft() error = %v", err)
 	}
+	mode = dto.AgentRuntimeModeConfig{}
 	if err := json.Unmarshal([]byte(*cfg.AgentMode), &mode); err != nil {
 		t.Fatalf("unmarshal changed AgentMode error = %v", err)
 	}
-	if mode.KnowledgeBoundByAccountID != "editor-2" || mode.DatabaseBoundByAccountID != "editor-2" {
-		t.Fatalf("binding actors after binding change: knowledge=%q database=%q, want editor-2", mode.KnowledgeBoundByAccountID, mode.DatabaseBoundByAccountID)
+	if mode.KnowledgeBoundByAccountID != "" || mode.DatabaseBoundByAccountID != "" {
+		t.Fatalf("mixed category actors should not expose a category grant: knowledge=%q database=%q", mode.KnowledgeBoundByAccountID, mode.DatabaseBoundByAccountID)
+	}
+	authorizations := agentBindingAuthorizationMap(mode.BindingAuthorizations)
+	assertBindingActor := func(bindingType, parentResourceID, resourceID, accessMode, want string) {
+		t.Helper()
+		got := authorizations[agentBindingItemKey(bindingType, parentResourceID, resourceID, accessMode)].BoundByAccountID
+		if got != want {
+			t.Fatalf("authorization %s/%s actor = %q, want %q; all=%#v", bindingType, resourceID, got, want, mode.BindingAuthorizations)
+		}
+	}
+	assertBindingActor("knowledge_dataset", "", "dataset-1", "read", "binder-1")
+	assertBindingActor("knowledge_dataset", "", "dataset-2", "read", "editor-2")
+	assertBindingActor("database", "", "db-1", "read", "binder-1")
+	assertBindingActor("database_table", "db-1", "table-1", "read", "binder-1")
+	assertBindingActor("database_table", "db-1", "table-2", "read", "editor-2")
+	mixedSnapshot := agentConfigResponseFromSnapshot("agent-1", agentConfigSnapshot("agent-1", cfg))
+	if !reflect.DeepEqual(mixedSnapshot.BindingAuthorizations, mode.BindingAuthorizations) {
+		t.Fatalf("snapshot authorizations = %#v, want %#v", mixedSnapshot.BindingAuthorizations, mode.BindingAuthorizations)
 	}
 }
 

@@ -30,6 +30,10 @@ interface UseWorkflowLifecycleParams {
   agentId: string;
   /** True when in history mode (viewing run snapshot) - skip loading draft */
   isHistoryMode: boolean;
+  /** True when current user may mutate the draft graph */
+  canEditDraft: boolean;
+  /** True while workspace permission data is still resolving */
+  isPermissionLoading?: boolean;
   /** Workflow data fetched from server */
   workflowData: unknown;
   /** Agent type for determining the initial graph template */
@@ -49,6 +53,8 @@ interface UseWorkflowLifecycleParams {
 export function useWorkflowLifecycle({
   agentId,
   isHistoryMode,
+  canEditDraft,
+  isPermissionLoading = false,
   workflowData,
   agentType,
   isLoading,
@@ -101,6 +107,12 @@ export function useWorkflowLifecycle({
     // If data is missing and we are still loading, wait
     if (!workflowData) {
       if (isLoading) return;
+      if (!canEditDraft) {
+        if (isPermissionLoading) return;
+        loadWorkflow(initialWorkflowData, agentId, false);
+        hasBootstrappedRef.current = true;
+        return;
+      }
       // If loading finished but data is still missing, we bootstrap an empty one
       bootstrapStandardWorkflow();
       hasBootstrappedRef.current = true;
@@ -142,6 +154,13 @@ export function useWorkflowLifecycle({
       return;
     }
 
+    if (!canEditDraft) {
+      if (isPermissionLoading) return;
+      loadWorkflow(initialWorkflowData, agentId, false);
+      hasBootstrappedRef.current = true;
+      return;
+    }
+
     // Bootstrap new workflow based on agent type
     try {
       if (agentType === AgentType.CONVERSATIONAL_AGENT) {
@@ -159,7 +178,15 @@ export function useWorkflowLifecycle({
       hasBootstrappedRef.current = true;
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isHistoryMode, workflowData, agentType, agentId, isLoading]);
+  }, [
+    canEditDraft,
+    isHistoryMode,
+    isLoading,
+    isPermissionLoading,
+    workflowData,
+    agentType,
+    agentId,
+  ]);
 
   // Helper: Create conversational agent workflow (Start -> LLM -> Answer)
   function bootstrapConversationalWorkflow() {
@@ -429,6 +456,7 @@ export function useWorkflowLifecycle({
   // Compatibility normalization: previously default workflow prompts were mounted as managed references.
   // They now behave as editable inline copies so users can apply and continue editing naturally.
   useEffect(() => {
+    if (!canEditDraft) return;
     if (hasNormalizedDefaultPromptsRef.current) return;
     if (nodes.length === 0) return;
 
@@ -455,12 +483,13 @@ export function useWorkflowLifecycle({
     }
 
     hasNormalizedDefaultPromptsRef.current = true;
-  }, [defaultWorkflowPromptIds, nodes, updateNodesData]);
+  }, [canEditDraft, defaultWorkflowPromptIds, nodes, updateNodesData]);
 
   // ─────────────────────────────────────────────────────────────────────────
   // Phase 2: Initialize - Fill default models on nodes that lack them
   // ─────────────────────────────────────────────────────────────────────────
   useEffect(() => {
+    if (!canEditDraft) return;
     // Only proceed if we have model data and haven't initialized yet
     if (!defaultLlm && availableLlmModels.length === 0) return;
     if (hasInitializedModelsRef.current) return;
@@ -525,5 +554,5 @@ export function useWorkflowLifecycle({
     }
     hasInitializedModelsRef.current = true;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [defaultLlm, availableLlmModels, nodes.length, updateNodesData]);
+  }, [canEditDraft, defaultLlm, availableLlmModels, nodes.length, updateNodesData]);
 }

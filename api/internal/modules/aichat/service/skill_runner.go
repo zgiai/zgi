@@ -1,3 +1,6 @@
+//go:build legacy_aichat_service
+// +build legacy_aichat_service
+
 package service
 
 import (
@@ -9,6 +12,7 @@ import (
 	"time"
 	"unicode/utf16"
 
+	"github.com/google/uuid"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"github.com/zgiai/zgi/api/internal/modules/tools"
@@ -108,10 +112,14 @@ func (s *service) runPreparedSkillStream(
 	recoverableFailureRoundCount := 0
 	consecutiveRecoverableFailureRounds := 0
 	recoverableFailureCallCount := 0
+	finalAnswerGuardBlockCount := 0
 	skillToolCallCounts := map[string]int{}
+	attemptedToolCalls := []skillToolCallRef{}
+	successfulToolCalls := []skillToolCallRef{}
 	skillUsed := false
 	loadedSkills := map[string]struct{}{}
 	maxSkillSteps := maxSkillStepsForTurn(resolved)
+	finalAnswerGuard := skillLoopFinalAnswerGuard(prepared)
 	var answerBuilder strings.Builder
 	var usage *adapter.Usage
 
@@ -132,6 +140,32 @@ func (s *service) runPreparedSkillStream(
 		text := assistantMessageText(planningMessage)
 		if text != "" && len(toolCalls) > 0 && !planningResult.progressStreamed {
 			s.emitAgentProgress(ctx, prepared, text, onEvent)
+		}
+		if len(toolCalls) == 0 {
+			if guardResult, blocked := runFinalAnswerGuard(finalAnswerGuard, finalAnswerGuardRequest{
+				Answer:              text,
+				Round:               round,
+				SkillUsed:           skillUsed,
+				ToolCallCount:       toolCallCount,
+				AttemptedToolCalls:  append([]skillToolCallRef{}, attemptedToolCalls...),
+				SuccessfulToolCalls: append([]skillToolCallRef{}, successfulToolCalls...),
+			}); blocked {
+				finalAnswerGuardBlockCount++
+				if planningResult.answerStreamed && text != "" {
+					s.emitAnswerRetract(ctx, prepared, text, onEvent)
+				}
+				trace := finalAnswerGuardrailTrace(guardResult)
+				traces = append(traces, trace)
+				s.persistSkillTracesBestEffort(persistCtx, prepared, traces)
+				s.logSkillTrace(ctx, prepared, trace)
+				if finalAnswerGuardBlockCount > defaultMaxConsecutiveRecoverableFailureRounds {
+					err := fmt.Errorf("%w: final answer guard blocked too many consecutive replies", ErrInvalidInput)
+					s.emitSkillError(ctx, prepared, failedSkillTrace("guardrail", guardResult.ToolName, err), onEvent)
+					return answerBuilder.String(), usage, err
+				}
+				messages = append(messages, finalAnswerGuardSystemMessage(guardResult, text))
+				continue
+			}
 		}
 		if len(toolCalls) == 0 && prepared.parts.SkillMode == skillModeRequired && !skillUsed {
 			return answerBuilder.String(), usage, fmt.Errorf("%w: required skill was not used", ErrInvalidInput)
@@ -198,9 +232,25 @@ func (s *service) runPreparedSkillStream(
 			if result.usedSkill {
 				skillUsed = true
 			}
+			if strings.EqualFold(strings.TrimSpace(result.trace.Kind), "tool_call") {
+				attemptedToolCalls = append(attemptedToolCalls, skillToolCallRef{
+					SkillID:   strings.TrimSpace(result.trace.SkillID),
+					ToolName:  strings.TrimSpace(result.trace.ToolName),
+					Arguments: copyStringAnyMap(result.trace.Arguments),
+				})
+			}
 			if result.usedTool {
 				toolCallCount++
 				incrementSkillToolCallCount(skillToolCallCounts, result.trace.SkillID)
+				if strings.EqualFold(strings.TrimSpace(result.trace.Kind), "tool_call") &&
+					strings.EqualFold(strings.TrimSpace(result.trace.Status), "success") {
+					successfulToolCalls = append(successfulToolCalls, skillToolCallRef{
+						SkillID:   strings.TrimSpace(result.trace.SkillID),
+						ToolName:  strings.TrimSpace(result.trace.ToolName),
+						Arguments: copyStringAnyMap(result.trace.Arguments),
+					})
+					finalAnswerGuardBlockCount = 0
+				}
 			}
 			if result.answer != "" {
 				appendAnswerText(&answerBuilder, result.answer)
@@ -971,6 +1021,9 @@ func (s *service) handleCallSkillTool(
 		return recoverableSkillStep(trace, skills.ToolResultMessage(callID, recoverableSkillToolErrorPayload(err, "fix the tool_name or arguments and retry", skillID, toolName)), true, false)
 	}
 	invocation.Trace.Arguments = argumentSummary
+	if invocation.Trace.Kind == "tool_governance" {
+		s.emitPreparedEvent(ctx, prepared, streamEventToolGovernanceDecision, toolGovernanceDecisionPayload(prepared, invocation.Trace), onEvent)
+	}
 	if err != nil {
 		return recoverableSkillStep(invocation.Trace, skills.ToolResultMessage(callID, recoverableSkillToolErrorPayload(err, "fix the tool arguments based on the error and retry", skillID, toolName)), true, false)
 	}
@@ -1031,8 +1084,15 @@ func (s *service) skillExecutionContext(prepared *PreparedChat) skills.Execution
 	runtimeParameters := map[string]interface{}{
 		"organization_id": prepared.Scope.OrganizationID.String(),
 	}
-	if prepared.Scope.WorkspaceID != nil {
-		runtimeParameters["workspace_id"] = prepared.Scope.WorkspaceID.String()
+	if workspaceID := preparedSkillWorkspaceID(prepared); workspaceID != "" {
+		runtimeParameters["workspace_id"] = workspaceID
+	}
+	runtimeParameters = applySkillToolGovernanceRuntimeParameters(runtimeParameters, prepared)
+	if prepared != nil && prepared.parts != nil && isConsoleFilesContext(prepared.parts) {
+		runtimeParameters["console_files_page"] = true
+	}
+	if visibleFiles := consoleFilesRuntimeVisibleFiles(prepared); len(visibleFiles) > 0 {
+		runtimeParameters["console_files_visible_files"] = visibleFiles
 	}
 	return skills.ExecutionContext{
 		OrganizationID:    prepared.Scope.OrganizationID.String(),
@@ -1043,6 +1103,19 @@ func (s *service) skillExecutionContext(prepared *PreparedChat) skills.Execution
 		InvokeFrom:        tools.ToolInvokeFromAIChat,
 		RuntimeParameters: runtimeParameters,
 	}
+}
+
+func preparedSkillWorkspaceID(prepared *PreparedChat) string {
+	if prepared == nil {
+		return ""
+	}
+	if prepared.Scope.WorkspaceID != nil && *prepared.Scope.WorkspaceID != uuid.Nil {
+		return prepared.Scope.WorkspaceID.String()
+	}
+	if prepared.Conversation != nil && prepared.Conversation.WorkspaceID != nil && *prepared.Conversation.WorkspaceID != uuid.Nil {
+		return prepared.Conversation.WorkspaceID.String()
+	}
+	return ""
 }
 
 func (s *service) emitAnswerChunk(ctx context.Context, prepared *PreparedChat, text string, onEvent func(StreamEvent) error) {
@@ -1286,7 +1359,7 @@ func mergeSkillTraceMetadata(source map[string]interface{}, traces []skills.Skil
 		if trace.Kind == "guardrail" {
 			guardrailCount++
 		}
-		invocations = append(invocations, map[string]interface{}{
+		invocation := map[string]interface{}{
 			"kind":        trace.Kind,
 			"skill_id":    trace.SkillID,
 			"tool_name":   trace.ToolName,
@@ -1297,7 +1370,11 @@ func mergeSkillTraceMetadata(source map[string]interface{}, traces []skills.Skil
 			"result":      trace.Result,
 			"message":     trace.Message,
 			"error":       trace.Error,
-		})
+		}
+		if trace.Governance != nil {
+			invocation["governance"] = trace.Governance
+		}
+		invocations = append(invocations, invocation)
 	}
 	metadata["has_trace"] = true
 	metadata["selected_skill_ids"] = selected
@@ -1317,7 +1394,7 @@ func countSkillActionTraces(traces []skills.SkillTrace) int {
 	count := 0
 	for _, trace := range traces {
 		switch trace.Kind {
-		case "skill_load", "reference_read", "tool_call", "guardrail", "intermediate_answer", "user_input_request":
+		case "skill_load", "reference_read", "tool_call", "tool_governance", "guardrail", "intermediate_answer", "user_input_request":
 			count++
 		}
 	}

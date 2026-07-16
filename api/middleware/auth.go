@@ -10,6 +10,7 @@ import (
 
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	auth_model "github.com/zgiai/zgi/api/internal/modules/user/auth/model"
+	"github.com/zgiai/zgi/api/internal/modules/user/auth/statuscache"
 	"github.com/zgiai/zgi/api/internal/util"
 	"github.com/zgiai/zgi/api/pkg/database"
 	jwtpkg "github.com/zgiai/zgi/api/pkg/jwt"
@@ -31,16 +32,20 @@ var (
 )
 
 func ensureAuthenticatedAccount(ctx context.Context, accountID string) error {
-	var account auth_model.Account
-	if err := database.GetDB().
-		WithContext(ctx).
-		Select("id", "status").
-		Where("id = ?", accountID).
-		Take(&account).Error; err != nil {
+	status, err := statuscache.GetAccountStatus(ctx, accountID)
+	if err != nil {
 		return err
 	}
 
-	switch account.Status {
+	if err := authenticatedAccountStatusError(status); err != nil {
+		return err
+	}
+	statuscache.TouchAccountLastActive(accountID)
+	return nil
+}
+
+func authenticatedAccountStatusError(status auth_model.AccountStatus) error {
+	switch status {
 	case auth_model.AccountStatusBanned:
 		return errAuthenticatedAccountBanned
 	case auth_model.AccountStatusFrozen:
@@ -385,18 +390,8 @@ func JWTWithOrganizationAndService(accountService interfaces.AccountService) gin
 			return
 		}
 
-		account, err := accountService.LoadUser(c.Request.Context(), user_id)
-		if err != nil || account == nil {
-			switch {
-			case err != nil && strings.Contains(err.Error(), "account is banned"):
-				failAccountAuthorization(c, user_id, errAuthenticatedAccountBanned)
-			case err != nil && strings.Contains(err.Error(), "account is frozen"):
-				failAccountAuthorization(c, user_id, errAuthenticatedAccountFrozen)
-			case err != nil && strings.Contains(err.Error(), "account is closed"):
-				failAccountAuthorization(c, user_id, errAuthenticatedAccountClosed)
-			default:
-				failAccountAuthorization(c, user_id, err)
-			}
+		if err := ensureAuthenticatedAccount(c.Request.Context(), user_id); err != nil {
+			failAccountAuthorization(c, user_id, err)
 			return
 		}
 
@@ -425,7 +420,7 @@ func JWTWithOrganizationAndService(accountService interfaces.AccountService) gin
 	})
 }
 
-// IsAdminOrOwner checks if the current user is an admin or owner
+// IsAdminOrOwner checks whether the current user has workspace management permission.
 func IsAdminOrOwner(c *gin.Context) bool {
 	// Get account ID from context
 	accountIDRaw, exists := c.Get("account_id")
@@ -459,82 +454,34 @@ func IsAdminOrOwner(c *gin.Context) bool {
 		return false
 	}
 
-	// Get user role in tenant
-	userRole, err := tenantService.GetUserRole(c.Request.Context(), accountID, workspaceID)
-	if err != nil {
-		logger.Error("Failed to get user role for IsAdminOrOwner check", err)
-		return false
-	}
-
-	// If user has no role in tenant, they are not admin or owner
-	if userRole == nil {
-		return false
-	}
-
-	// Check if role is privileged (admin or owner)
-	return userRole.IsPrivilegedRole()
+	return tenantService.CheckPermission(c.Request.Context(), workspaceID, accountID)
 }
 
-// CheckAdminOrOwnerRole is a helper function for checking admin or owner role
-// This provides a consistent way to check permissions across handlers
+// CheckAdminOrOwnerRole is kept for legacy callers. It now checks the
+// workspace management permission snapshot instead of role names.
 func CheckAdminOrOwnerRole(ctx context.Context, tenantService interfaces.WorkspaceManagementService, accountID, tenantID string) (bool, error) {
-	// First check direct tenant role
-	userRole, err := tenantService.GetUserRole(ctx, accountID, tenantID)
-	if err != nil {
-		return false, err
-	}
-
-	// If user has direct role in tenant and it's privileged, return true
-	if userRole != nil && userRole.IsPrivilegedRole() {
-		return true, nil
-	}
-
-	// No permissions found
-	return false, nil
+	return tenantService.CheckPermission(ctx, tenantID, accountID), nil
 }
 
-// CheckAdminOrOwnerRoleWithEnterpriseGroup is an enhanced version that also checks enterprise group permissions
+// CheckAdminOrOwnerRoleWithEnterpriseGroup is kept for legacy callers. It uses
+// the workspace management permission contract, including organization
+// owner/admin workspace authority when the underlying service supports it.
 func CheckAdminOrOwnerRoleWithEnterpriseGroup(ctx context.Context, tenantService interfaces.WorkspaceManagementService, accountService interfaces.AccountService, accountID, tenantID string) (bool, error) {
 	logger.Info("Checking permissions", map[string]interface{}{
 		"account_id": accountID,
 		"tenant_id":  tenantID,
 	})
 
-	// First check direct tenant role
-	userRole, err := tenantService.GetUserRole(ctx, accountID, tenantID)
-	logger.Info("Direct tenant role check", map[string]interface{}{
-		"role":  userRole,
-		"error": err,
+	hasPermission := tenantService.CheckPermission(ctx, tenantID, accountID)
+	logger.Info("Workspace management permission check", map[string]interface{}{
+		"allowed": hasPermission,
 	})
-	if err != nil {
-		return false, err
-	}
-
-	// If user has direct role in tenant and it's privileged, return true
-	if userRole != nil && userRole.IsPrivilegedRole() {
-		logger.Info("Permission granted via direct tenant role", nil)
+	if hasPermission {
+		logger.Info("Permission granted via workspace management permission contract", nil)
 		return true, nil
 	}
 
-	// If no direct role or not privileged, check enterprise group permissions
-	// Check if user is enterprise admin/owner and target tenant is in their enterprise group
-	isEnterpriseAdmin, err := accountService.CheckOrganizationpAdminByWorkspace(ctx, accountID, tenantID)
-	logger.Info("Enterprise group admin check", map[string]interface{}{
-		"is_group_admin": isEnterpriseAdmin,
-		"error":          err,
-	})
-	if err != nil {
-		logger.Error("Failed to check enterprise group admin status", err)
-		return false, nil // Don't fail the request, just deny permission
-	}
-
-	if isEnterpriseAdmin {
-		logger.Info("User granted access via enterprise group admin role", nil)
-		return true, nil
-	}
-
-	logger.Info("Permission denied - no valid role found", nil)
-	// No permissions found
+	logger.Info("Permission denied - no workspace management authority found", nil)
 	return false, nil
 }
 

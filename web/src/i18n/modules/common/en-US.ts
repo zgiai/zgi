@@ -122,21 +122,22 @@ const messages = {
     noWorkspaces: 'No workspaces available',
     noWorkspacesMember: 'You are not assigned to a workspace yet.',
     noWorkspacesAdmin: 'No workspaces are assigned or available yet.',
+    organizationMode: 'Personal workbench',
   },
 
   workspaceRequired: {
     title: 'Select a workspace to continue',
     description:
-      'The workbench runs inside a specific workspace. Select a workspace before starting chats, apps, image generation, or tasks.',
+      'Asset management and scheduled tasks run inside a specific workspace. Select a workspace to continue.',
     noWorkspacesTitle: 'No workspace is available',
     memberNoWorkspacesDescription:
       'You have joined the organization, but you have not been assigned to any workspace yet.',
     adminNoWorkspacesDescription:
-      'The workbench needs a concrete workspace before chats, apps, image generation, or tasks can be used.',
+      'Asset management and scheduled tasks need a concrete workspace. Create a workspace or assign members first.',
     memberNoWorkspacesHint:
-      'Ask an organization administrator to add you to a workspace before using the workbench.',
+      'Ask an organization administrator to add you to the right workspace before managing assets or scheduled tasks.',
     adminNoWorkspacesHint:
-      'Create a workspace or assign members in workspace management, then return to the workbench.',
+      'Create a workspace or assign members in workspace management, then return here.',
     loadingWorkspaces: 'Loading workspaces...',
     manageWorkspaces: 'Manage workspaces',
     refreshWorkspaces: 'Refresh workspaces',
@@ -144,18 +145,67 @@ const messages = {
 
   assetMove: {
     title: 'Move to Workspace',
-    description: 'Select a target workspace and review the move check before confirming.',
-    descriptionWithName: 'Move "{name}" to another workspace after reviewing the move check.',
+    description:
+      'Related asset dependencies have been checked. Select a target workspace and confirm to validate its status and access permissions. Members of the current workspace may lose access after the move.',
+    descriptionWithName:
+      'Related dependencies for "{name}" have been checked. Select a target workspace and confirm to validate its status and access permissions.',
+    locationTitle: 'Move location',
+    locationDescription:
+      'The asset will move from its current workspace to the selected workspace.',
+    currentWorkspace: 'Current workspace',
     targetWorkspace: 'Target workspace',
     targetWorkspacePlaceholder: 'Select target workspace',
-    previewing: 'Checking move...',
+    preflightChecking: 'Checking related asset dependencies...',
+    dependencyPreflightFailed: 'Could not check related asset dependencies. Please try again.',
+    continueToTargetSelection: 'Continue to workspace selection',
+    bindingPreflightWarningTitle: 'These bindings will be removed by the move',
+    bindingPreflightWarningDescription:
+      'Continue to select a target workspace. Agent bindings are removed only after the final move confirmation; this step does not change any configuration.',
+    targetLoadFailedTitle: 'Could not load available workspaces',
+    targetLoadFailedDescription:
+      'Refresh and try again. Your permissions will be checked again before the asset is moved.',
+    noTargetWorkspaceTitle: 'No other workspace is available',
+    noTargetWorkspaceAdminDescription:
+      'Create another workspace first, then return here to move this asset.',
+    noTargetWorkspaceMemberDescription:
+      'Ask an organization administrator or owner to grant move permission in another workspace.',
+    createWorkspace: 'Create workspace',
+    previewing: 'Checking the target workspace and access permissions...',
     unknownWorkspace: 'Unknown workspace',
-    blockersTitle: 'Move blocked',
-    warningsTitle: 'Review warnings',
-    confirm: 'Move',
-    previewFailed: 'Failed to check move',
+    readyTitle: 'Ready to move',
+    readyDescription:
+      'Asset dependencies and access permissions passed the check. Confirm to move it to the target workspace.',
+    bindingImpactTitle: 'Agent bindings must be removed',
+    bindingImpactDescription:
+      'This resource is used by {count} Agent(s). Confirming the move will first show which Agents will be unbound.',
+    blockersTitle: 'Cannot move yet',
+    warningsTitle: 'Review before moving',
+    confirm: 'Confirm move',
+    unbindAndMove: 'Unbind and move',
+    previewFailed: 'Could not check asset dependencies and access permissions',
     moveSuccess: 'Moved successfully',
     moveFailed: 'Failed to move',
+  },
+  agentResourceBound: {
+    title: 'This resource is used by Agents',
+    description: '{count} Agent(s) will be affected by this change.',
+    warningTitle: 'Agent bindings will change',
+    warningDescription:
+      'Continuing will unbind this resource from these Agents, and the related capability will no longer be available.',
+    draft: 'Draft',
+    published: 'Published',
+    bindingCount: '{count} binding(s)',
+    viewDetails: 'View details',
+    unavailableAgent: 'Unavailable Agent',
+    noDescription: 'No description',
+    previewFailed: 'Could not check Agent bindings. Please try again.',
+    confirm: 'Unbind and continue',
+    retainSuspendedDescription:
+      '{count} Agent(s) use the Skill you are disabling. Their bindings will be retained.',
+    retainSuspendedWarningTitle: 'Bindings will be suspended',
+    retainSuspendedWarningDescription:
+      'Affected Agents cannot call this Skill while it is disabled. Re-enabling the Skill automatically restores these bindings.',
+    retainSuspendedConfirm: 'Keep bindings and disable',
   },
   // Error Boundary
   errorBoundary: {
@@ -204,14 +254,14 @@ const messages = {
     scrollForMore: 'Scroll for more',
   },
 
-  // Organization View empty states
+  // Personal workbench empty states
   personalSpaceEmpty: {
     agents: 'No agents available',
     datasets: 'No datasets available',
     databases: 'No databases available',
     files: 'No files available',
     description:
-      'In Organization View, you can browse organization resources. Switch to a workspace for workspace-specific actions.',
+      'In the personal workbench, you can use organization-level product entry points. Switch to a workspace for workspace-specific actions.',
     startCreating: 'Start Creating',
     selectWorkspaceHint: 'Select a workspace to continue',
     overlayHint: 'Click the area to select a workspace, or click elsewhere to close',
@@ -225,7 +275,7 @@ const messages = {
     description:
       'This resource belongs to "{workspaceName}", but you are currently in "{currentWorkspaceName}".',
     descriptionInOrg:
-      'This resource belongs to "{workspaceName}", but you are currently in Organization View.',
+      'This resource belongs to "{workspaceName}", but you are currently in the personal workbench.',
     switchButton: 'Switch to this workspace',
     actionHint: 'Please switch your current workspace and try again.',
   },

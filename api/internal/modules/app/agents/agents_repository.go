@@ -3,8 +3,10 @@ package agents
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
+	"github.com/zgiai/zgi/api/internal/modules/app/runtimeauth"
 	"gorm.io/gorm"
 )
 
@@ -13,6 +15,7 @@ type AgentsFilter struct {
 	Name       string
 	Keyword    string
 	AgentsType string
+	AgentTypes []string
 	CreatedBy  string
 	Internal   *bool
 }
@@ -27,6 +30,24 @@ type runnableWebAppItem struct {
 	AgentIconType *string `gorm:"column:agent_icon_type"`
 	AgentDesc     string  `gorm:"column:agent_desc"`
 	AgentType     string  `gorm:"column:agent_type"`
+}
+
+type runnableWebAppFilter struct {
+	WorkspaceID   string
+	WebAppID      string
+	WebAppIDs     []string
+	Keyword       string
+	Pagination    runnableWebAppPagination
+	Authorization *runnableWebAppAuthorizationFilter
+}
+
+type runnableWebAppAuthorizationFilter struct {
+	Audience runtimeauth.RuntimeAudience
+}
+
+type runnableWebAppListResult struct {
+	Items      []runnableWebAppItem
+	Pagination runnableWebAppPagination
 }
 
 // AgentsRepository defines the interface for agent data access operations in agents module
@@ -59,7 +80,7 @@ type AgentsRepository interface {
 	UpdateWorkflowID(ctx context.Context, agentID, workflowID string) error
 	UpdateWorkflowConfig(ctx context.Context, agentID, workflowConfig string) error
 	HasPublishedWorkflow(ctx context.Context, agentID string) (bool, error)
-	ListRunnableWebApps(ctx context.Context, workspaceIDs []string, workspaceID string) ([]runnableWebAppItem, error)
+	ListRunnableWebApps(ctx context.Context, workspaceIDs []string, filter runnableWebAppFilter) (runnableWebAppListResult, error)
 }
 
 // agentsRepository implements AgentsRepository
@@ -155,15 +176,17 @@ func (r *agentsRepository) GetByTenantID(ctx context.Context, tenantID string) (
 	return list, nil
 }
 
-func (r *agentsRepository) ListRunnableWebApps(ctx context.Context, workspaceIDs []string, workspaceID string) ([]runnableWebAppItem, error) {
+func (r *agentsRepository) ListRunnableWebApps(ctx context.Context, workspaceIDs []string, filter runnableWebAppFilter) (runnableWebAppListResult, error) {
+	result := runnableWebAppListResult{
+		Items:      []runnableWebAppItem{},
+		Pagination: filter.Pagination,
+	}
 	if len(workspaceIDs) == 0 {
-		return []runnableWebAppItem{}, nil
+		return result, nil
 	}
 
-	var items []runnableWebAppItem
 	query := r.db.WithContext(ctx).
 		Table("agents").
-		Select("agents.id AS agent_id, agents.tenant_id AS workspace_id, agents.web_app_id AS web_app_id, agents.web_app_status AS web_app_status, agents.name AS agent_name, agents.icon AS agent_icon, agents.icon_type AS agent_icon_type, agents.description AS agent_desc, agents.agent_type AS agent_type").
 		Where("agents.deleted_at IS NULL").
 		Where("agents.web_app_status = ?", AgentWebAppStatusActive).
 		Where("agents.tenant_id IN ?", workspaceIDs).
@@ -188,18 +211,128 @@ func (r *agentsRepository) ListRunnableWebApps(ctx context.Context, workspaceIDs
 			)
 		`, "AGENT", "AGENT", "draft")
 
-	if workspaceID != "" {
-		query = query.Where("agents.tenant_id = ?", workspaceID)
+	if filter.WorkspaceID != "" {
+		query = query.Where("agents.tenant_id = ?", filter.WorkspaceID)
+	}
+	if webAppID := strings.TrimSpace(filter.WebAppID); webAppID != "" {
+		query = query.Where("agents.web_app_id = ?", webAppID)
+	} else if len(filter.WebAppIDs) > 0 {
+		query = query.Where("agents.web_app_id IN ?", filter.WebAppIDs)
+	}
+	if keyword := strings.TrimSpace(filter.Keyword); keyword != "" {
+		pattern := "%" + keyword + "%"
+		query = query.Where("(agents.name ILIKE ? OR agents.description ILIKE ?)", pattern, pattern)
+	}
+	if filter.Authorization != nil {
+		query = applyRunnableWebAppAuthorizationFilter(query, filter.Authorization.Audience)
 	}
 
+	offset := 0
+	if result.Pagination.enabled {
+		var total int64
+		if err := query.Session(&gorm.Session{}).Count(&total).Error; err != nil {
+			return runnableWebAppListResult{}, fmt.Errorf("failed to count runnable web apps: %w", err)
+		}
+		maxInt := int(^uint(0) >> 1)
+		if total > int64(maxInt) {
+			return runnableWebAppListResult{}, fmt.Errorf("runnable web app count exceeds platform limit")
+		}
+		result.Pagination.total = int(total)
+		if total == 0 {
+			return result, nil
+		}
+		maxPage := 1 + (result.Pagination.total-1)/result.Pagination.pageSize
+		if result.Pagination.page > maxPage {
+			return result, nil
+		}
+		offset = (result.Pagination.page - 1) * result.Pagination.pageSize
+		query = query.Offset(offset).Limit(result.Pagination.pageSize)
+	}
+
+	var items []runnableWebAppItem
 	if err := query.
+		Select("agents.id AS agent_id, agents.tenant_id AS workspace_id, agents.web_app_id AS web_app_id, agents.web_app_status AS web_app_status, agents.name AS agent_name, agents.icon AS agent_icon, agents.icon_type AS agent_icon_type, agents.description AS agent_desc, agents.agent_type AS agent_type").
 		Order("agents.tenant_id ASC").
 		Order("agents.created_at DESC").
+		Order("agents.id ASC").
 		Find(&items).Error; err != nil {
-		return nil, fmt.Errorf("failed to list runnable web apps: %w", err)
+		return runnableWebAppListResult{}, fmt.Errorf("failed to list runnable web apps: %w", err)
 	}
 
-	return items, nil
+	result.Items = items
+	if result.Pagination.enabled {
+		result.Pagination.hasMore = offset+len(items) < result.Pagination.total
+	}
+	return result, nil
+}
+
+func applyRunnableWebAppAuthorizationFilter(query *gorm.DB, audience runtimeauth.RuntimeAudience) *gorm.DB {
+	grantPredicates := []string{
+		"runtime_grants.subject_type = ?",
+		"(runtime_grants.subject_type = ? AND (runtime_grants.subject_id IS NULL OR runtime_grants.subject_id = ?))",
+		"(runtime_grants.subject_type = ? AND runtime_grants.subject_id = ?)",
+	}
+	grantArgs := []any{
+		string(runtimeauth.PublishedRuntimeSubjectPublic),
+		string(runtimeauth.PublishedRuntimeSubjectOrganization), audience.OrganizationID,
+		string(runtimeauth.PublishedRuntimeSubjectAccount), audience.AccountID,
+	}
+	if len(audience.DepartmentIDs) > 0 {
+		grantPredicates = append(grantPredicates, "(runtime_grants.subject_type = ? AND runtime_grants.subject_id IN ?)")
+		grantArgs = append(grantArgs, string(runtimeauth.PublishedRuntimeSubjectDepartment), audience.DepartmentIDs)
+	}
+	if len(audience.WorkspaceIDs) > 0 {
+		grantPredicates = append(grantPredicates, "(runtime_grants.subject_type = ? AND runtime_grants.subject_id IN ?)")
+		grantArgs = append(grantArgs, string(runtimeauth.PublishedRuntimeSubjectWorkspace), audience.WorkspaceIDs)
+	}
+
+	authorizedSurfaceArgs := append([]any{true}, grantArgs...)
+	authorizedSurfaceIDs := query.Session(&gorm.Session{NewDB: true}).
+		Table("published_runtime_surfaces AS runtime_surfaces").
+		Select("runtime_surfaces.resource_id").
+		Where("runtime_surfaces.resource_type = ?", string(runtimeauth.PublishedRuntimeResourceAgent)).
+		Where("runtime_surfaces.surface = ?", string(runtimeauth.PublishedRuntimeSurfaceAppCenter)).
+		Where("runtime_surfaces.organization_id = ?", audience.OrganizationID).
+		Where("runtime_surfaces.enabled = ?", true).
+		Where("runtime_surfaces.deleted_at IS NULL").
+		Where(`
+			NOT EXISTS (
+				SELECT 1
+				FROM published_runtime_surface_grants AS runtime_grants
+				WHERE runtime_grants.surface_id = runtime_surfaces.id
+				  AND runtime_grants.deleted_at IS NULL
+			)
+			OR EXISTS (
+				SELECT 1
+				FROM published_runtime_surface_grants AS runtime_grants
+				WHERE runtime_grants.surface_id = runtime_surfaces.id
+				  AND runtime_grants.deleted_at IS NULL
+				  AND runtime_grants.enabled = ?
+				  AND (`+strings.Join(grantPredicates, " OR ")+`)
+			)
+		`, authorizedSurfaceArgs...)
+
+	return query.Where(`
+		agents.id IN (?)
+		OR (
+			agents.tenant_id IN ?
+			AND NOT EXISTS (
+				SELECT 1
+				FROM published_runtime_surfaces AS persisted_surfaces
+				WHERE persisted_surfaces.resource_type = ?
+				  AND persisted_surfaces.surface = ?
+				  AND persisted_surfaces.organization_id = ?
+				  AND persisted_surfaces.resource_id = agents.id
+				  AND persisted_surfaces.deleted_at IS NULL
+			)
+		)
+	`,
+		authorizedSurfaceIDs,
+		audience.WorkspaceIDs,
+		string(runtimeauth.PublishedRuntimeResourceAgent),
+		string(runtimeauth.PublishedRuntimeSurfaceAppCenter),
+		audience.OrganizationID,
+	)
 }
 
 func (r *agentsRepository) GetPaginatedAgentsMultipleTenants(ctx context.Context, tenantIDs []string, filter AgentsFilter, page, limit int) ([]Agent, int64, error) {
@@ -242,6 +375,9 @@ func (r *agentsRepository) applyFiltersMultipleTenants(query *gorm.DB, filter Ag
 	}
 	if filter.AgentsType != "" {
 		query = query.Where("agent_type = ?", filter.AgentsType)
+	}
+	if len(filter.AgentTypes) > 0 {
+		query = query.Where("agent_type IN ?", filter.AgentTypes)
 	}
 	if filter.CreatedBy != "" {
 		query = query.Where("created_by = ?", filter.CreatedBy)
@@ -487,86 +623,7 @@ func (r *agentsRepository) GetPaginatedAgentsWithPermissions(
 	// Requirements: 8.5, 8.6
 	page, limit = r.normalizePaginationParams(page, limit)
 
-	// Determine which query path to use based on organization role
-	isOrgAdmin := permissionContext.OrganizationRole == "owner" || permissionContext.OrganizationRole == "admin"
-
-	if isOrgAdmin {
-		// Organization Admin/Owner: Simple query path
-		return r.getAgentsForOrgAdmin(ctx, permissionContext, filter, page, limit)
-	}
-
-	// Normal User: Complex permission logic
 	return r.getAgentsForNormalUser(ctx, accountID, permissionContext, filter, page, limit)
-}
-
-// getAgentsForOrgAdmin retrieves agents for organization admins/owners
-// Org admins can see all agents in all departments within their organization
-// Requirements: 2.1, 2.2, 2.3, 8.1, 8.2, 8.3, 8.4, 11.3, 11.5
-func (r *agentsRepository) getAgentsForOrgAdmin(
-	ctx context.Context,
-	permissionContext *PermissionContext,
-	filter AgentsFilter,
-	page, limit int,
-) ([]Agent, int64, error) {
-	var (
-		list  []Agent
-		total int64
-	)
-
-	// Build base query
-	query := r.db.WithContext(ctx).Model(&Agent{}).
-		Where("deleted_at IS NULL")
-
-	// Filter by organization department IDs
-	if filter.TenantID != "" {
-		query = query.Where("tenant_id = ?", filter.TenantID)
-	} else {
-		if len(permissionContext.OrganizationDeptIDs) > 0 {
-			query = query.Where("tenant_id IN ?", permissionContext.OrganizationDeptIDs)
-		} else {
-			// No departments in organization, return empty result
-			return []Agent{}, 0, nil
-		}
-	}
-
-	// Apply additional filters (name, keyword, agent_type, internal)
-	// Requirement 9.1, 9.2, 9.3
-	if filter.Name != "" {
-		query = query.Where("name ILIKE ?", "%"+filter.Name+"%")
-	}
-	if filter.Keyword != "" {
-		query = query.Where("(name ILIKE ? OR description ILIKE ?)", "%"+filter.Keyword+"%", "%"+filter.Keyword+"%")
-	}
-	if filter.AgentsType != "" {
-		query = query.Where("agent_type = ?", filter.AgentsType)
-	}
-	if filter.Internal != nil {
-		query = query.Where("internal = ?", *filter.Internal)
-	}
-
-	// Count total
-	// Requirement 8.4: WHEN counting total results, THE System SHALL count distinct agent IDs
-	// Requirement 11.3: Handle database errors (500) with logging
-	if err := query.Count(&total).Error; err != nil {
-		return nil, 0, fmt.Errorf("database error counting agents for org admin (org_id=%s, account_id=%s): %w",
-			permissionContext.OrganizationID, permissionContext.AccountID, err)
-	}
-
-	// Apply pagination and ordering
-	// Requirement 8.1: WHEN a page parameter is provided, THE System SHALL apply OFFSET based on (page - 1) * limit
-	// Requirement 8.2: WHEN a limit parameter is provided, THE System SHALL apply LIMIT to the query
-	// Requirement 8.3: WHEN pagination is applied, THE System SHALL apply it AFTER deduplication
-	// Requirement 11.3: Handle database errors (500) with logging
-	offset := (page - 1) * limit
-	if err := query.Order("created_at DESC").
-		Offset(offset).
-		Limit(limit).
-		Find(&list).Error; err != nil {
-		return nil, 0, fmt.Errorf("database error retrieving agents for org admin (org_id=%s, account_id=%s, page=%d, limit=%d): %w",
-			permissionContext.OrganizationID, permissionContext.AccountID, page, limit, err)
-	}
-
-	return list, total, nil
 }
 
 // getAgentsForNormalUser retrieves agents for normal users with complex permission logic
@@ -650,6 +707,9 @@ func (r *agentsRepository) buildPermissionSubquery(
 	}
 	if filter.AgentsType != "" {
 		baseQuery = baseQuery.Where("agents.agent_type = ?", filter.AgentsType)
+	}
+	if len(filter.AgentTypes) > 0 {
+		baseQuery = baseQuery.Where("agents.agent_type IN ?", filter.AgentTypes)
 	}
 	if filter.Internal != nil {
 		baseQuery = baseQuery.Where("agents.internal = ?", *filter.Internal)

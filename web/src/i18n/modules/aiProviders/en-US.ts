@@ -324,6 +324,7 @@ const messages = {
       moderation: 'Moderation',
       reasoning: 'Reasoning',
       'function-calling': 'Function Calling',
+      agent: 'Agent',
     },
     types: {
       llm: 'LLM',
@@ -440,6 +441,7 @@ const messages = {
       tagline: 'Tagline',
       inputPrice: 'Input Price',
       outputPrice: 'Output Price',
+      priceConfiguredHint: 'Leave blank for not configured. Enter 0 for free.',
       cachedPrice: 'Cached Input',
       contextWindow: 'Max Context Window',
       maxTokens: 'Max Output Tokens',

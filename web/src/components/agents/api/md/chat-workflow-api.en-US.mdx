@@ -1,0 +1,201 @@
+# Chat Workflow API
+
+Use this API for workflow apps that need multi-turn conversation context.
+The caller sends a user query, and the server streams workflow progress, answer chunks, pause events, and the final message-end event over SSE.
+
+<div>
+  ### Base URL
+
+<CodeGroup title="Code">
+
+```text
+{apibase}
+```
+
+</CodeGroup>
+
+### Authentication
+
+Authenticate with the app API Key. `Authorization: Bearer` is recommended; `X-API-Key` is also supported for compatibility.
+
+<CodeGroup title="Headers" targetCode={`Authorization: Bearer {api_key}\nX-API-Key: {api_key}`}>
+
+```text
+Authorization: Bearer {API_KEY}
+X-API-Key: {API_KEY}
+```
+
+</CodeGroup>
+
+Keep API Keys on your server side. Do not expose them in browser code or public clients.
+
+</div>
+
+---
+
+<Heading
+  url="/api/v1/chat-workflows/run"
+  method="POST"
+  title="Run Chat Workflow"
+  name="#Run-Chat-Workflow"
+/>
+
+<Row>
+  <Col>
+    Create or continue one chat workflow conversation turn.
+
+    ### Request Body
+
+    <Properties>
+      <Property name='query' type='string' propKey='query'>
+        Required. User input for this turn. The server also writes it to workflow input `query` and system variable `sys.query`.
+      </Property>
+      <Property name='response_mode' type='string' propKey='response_mode'>
+        Required. Current external API binding requires this field and only supports `streaming`; the server forces streaming execution.
+      </Property>
+      <Property name='conversation_id' type='string' propKey='conversation_id'>
+        Optional. Omit it for the first turn. Pass it on later turns to continue the same conversation history.
+      </Property>
+      <Property name='inputs' type='object' propKey='inputs'>
+        Optional. Runtime values for workflow variables. Do not put the user message here; use top-level `query`.
+      </Property>
+    </Properties>
+
+    `user`, `files`, `model`, and `provider` are not public chat workflow inputs in this API document. Runtime settings come from the published workflow version.
+
+    ### Identifier Semantics
+
+    - `conversation_id` connects multiple chat turns. Store it from `message` or `message_end` and pass it in the next request.
+    - `workflow_run_id` identifies one workflow execution. Store `workflow_started.data.id` for troubleshooting, event recovery, and stop.
+    - `message_id` identifies the assistant message for this turn. In current chat workflows it often matches `workflow_run_id`, but clients should treat it as a message id.
+
+    ### Streaming Format
+
+    The response `Content-Type` is `text/event-stream`. Chat workflow streams use the workflow data envelope:
+
+    <CodeGroup title="SSE Format">
+    ```text {{ title: 'SSE' }}
+    data: {"event":"message","data":{"conversation_id":"...","message_id":"...","answer":"Hello"}}
+
+    data: {"event":"message_end","data":{"conversation_id":"...","message_id":"...","metadata":{"usage":{"total_tokens":123}}}}
+    ```
+    </CodeGroup>
+
+    Dispatch by the JSON `event` field. For the visible assistant answer, concatenate `message.data.answer`; use workflow events for progress UI.
+
+    ### Events
+
+    - Main answer events: `message`, `message_end`. `message_end` marks the assistant message terminal state and may include `metadata.usage`, retriever resources, and files.
+    - Workflow events: `workflow_started`, `workflow_finished`, `workflow_paused`, `node_started`, `node_finished`, `text_chunk`, approval events, and question-answer events.
+    - Iteration and loop events: `iteration_started`, `iteration_next`, `iteration_completed`, `loop_started`, `loop_next`, `loop_completed`. Handle their fields the same way as the Workflow API.
+    - Question pause: `message` with `data.message_kind: "question_answer_prompt"`, `question_answer_requested`, then usually `workflow_paused`. The prompt message is a user-facing question, not a final answer chunk.
+    - Keepalive: `ping` or `: ping`. Ignore it in business logic.
+    - Error: `error`. `data.message` describes the error.
+
+    ### Question-Answer Resume
+
+    When a chat workflow pauses for a question-answer node, send another `POST /api/v1/chat-workflows/run` with the same `conversation_id`.
+
+    - Put the user's answer in top-level `query`.
+    - If the user selected an option, pass `inputs.question_answer_option_id`.
+    - The server finds the active question-answer pause by `conversation_id` and resumes the same workflow run.
+
+    ### Errors
+
+    - `400`: invalid request parameters, such as missing `query` or `response_mode`
+    - `401`: missing, invalid, inactive, expired, or revoked API Key
+    - `404`: app or published workflow cannot be found
+    - `500`: internal service error
+
+  </Col>
+
+  <Col sticky>
+    <CodeGroup title="New Conversation" tag="POST" label="/api/v1/chat-workflows/run" targetCode={`curl --location --no-buffer '{apibase}/chat-workflows/run' \\\n--header 'Content-Type: application/json' \\\n--header 'Authorization: Bearer {api_key}' \\\n--data '{\n  "query": "Hello, describe this product in one sentence.",\n  "response_mode": "streaming"\n}'`}>
+
+    ```bash {{ title: 'cURL - New Conversation' }}
+    curl --location --no-buffer '{apibase}/chat-workflows/run' \
+    --header 'Content-Type: application/json' \
+    --header 'Authorization: Bearer {api_key}' \
+    --data '{
+      "query": "Hello, describe this product in one sentence.",
+      "response_mode": "streaming"
+    }'
+    ```
+
+    </CodeGroup>
+
+    <CodeGroup title="Continue Conversation" tag="POST" label="/api/v1/chat-workflows/run" targetCode={`curl --location --no-buffer '{apibase}/chat-workflows/run' \\\n--header 'Content-Type: application/json' \\\n--header 'X-API-Key: {api_key}' \\\n--data '{\n  "query": "Continue your previous answer.",\n  "response_mode": "streaming",\n  "conversation_id": "1749ede3-ee92-471c-be92-9d17d58e193b"\n}'`}>
+
+    ```bash {{ title: 'cURL - Continue Conversation' }}
+    curl --location --no-buffer '{apibase}/chat-workflows/run' \
+    --header 'Content-Type: application/json' \
+    --header 'X-API-Key: {api_key}' \
+    --data '{
+      "query": "Continue your previous answer.",
+      "response_mode": "streaming",
+      "conversation_id": "1749ede3-ee92-471c-be92-9d17d58e193b"
+    }'
+    ```
+
+    </CodeGroup>
+
+    <CodeGroup title="Resume Question" tag="POST" label="/api/v1/chat-workflows/run" targetCode={`curl --location --no-buffer '{apibase}/chat-workflows/run' \\\n--header 'Content-Type: application/json' \\\n--header 'Authorization: Bearer {api_key}' \\\n--data '{\n  "query": "Continue",\n  "response_mode": "streaming",\n  "conversation_id": "1749ede3-ee92-471c-be92-9d17d58e193b",\n  "inputs": {\n    "question_answer_option_id": "continue"\n  }\n}'`}>
+
+    ```bash {{ title: 'cURL - Resume Question' }}
+    curl --location --no-buffer '{apibase}/chat-workflows/run' \
+    --header 'Content-Type: application/json' \
+    --header 'Authorization: Bearer {api_key}' \
+    --data '{
+      "query": "Continue",
+      "response_mode": "streaming",
+      "conversation_id": "1749ede3-ee92-471c-be92-9d17d58e193b",
+      "inputs": {
+        "question_answer_option_id": "continue"
+      }
+    }'
+    ```
+
+    </CodeGroup>
+
+  </Col>
+</Row>
+
+---
+
+<Heading
+  url="/api/v1/workflows/runs/{workflow_run_id}/events"
+  method="GET"
+  title="Recover Chat Workflow Events"
+  name="#Recover-Chat-Workflow"
+/>
+
+<Row>
+  <Col>
+    Chat workflows use the same workflow event recovery endpoint as task workflows.
+
+    For chat workflow reconnects, pass `include_message_events=true` if you need to replay already emitted `message` chunks. Save the latest top-level `sequence` and reconnect with `after={last_sequence}`.
+
+  </Col>
+
+  <Col sticky>
+    <CodeGroup title="Recover" tag="GET" label="/api/v1/workflows/runs/{workflow_run_id}/events" targetCode={`curl --location --no-buffer '{apibase}/workflows/runs/{workflow_run_id}/events?after={last_sequence}&include_snapshot=true&include_message_events=true&continue_on_pause=true' \\\n--header 'Authorization: Bearer {api_key}'`}>
+
+    ```bash {{ title: 'cURL' }}
+    curl --location --no-buffer '{apibase}/workflows/runs/{workflow_run_id}/events?after={last_sequence}&include_snapshot=true&include_message_events=true&continue_on_pause=true' \
+    --header 'Authorization: Bearer {api_key}'
+    ```
+
+    </CodeGroup>
+
+  </Col>
+</Row>
+
+## FAQ
+
+### Q: When should I send `conversation_id`?
+
+A: Omit it for the first turn. Save the `conversation_id` returned in `message` or `message_end` events, then pass it in later requests to continue the same conversation.
+
+### Q: Can I use `workflow_run_id` to continue a conversation?
+
+A: No. `workflow_run_id` identifies one execution and is useful for troubleshooting, event recovery, and stop. Use `conversation_id` to continue a conversation.

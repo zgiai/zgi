@@ -270,7 +270,8 @@ func (h *ConversationQueryHandler) GetConversationDetail(c *gin.Context) {
 
 	logger.Info("Getting conversation detail", "webAppID", webAppID, "conversationID", conversationID, "accountID", accountID)
 
-	if _, ok := h.requireActiveWebAppAgent(c, webAppID); !ok {
+	agent, ok := h.requireActiveWebAppAgent(c, webAppID)
+	if !ok {
 		return
 	}
 
@@ -290,16 +291,15 @@ func (h *ConversationQueryHandler) GetConversationDetail(c *gin.Context) {
 		return
 	}
 
-	// Get conversation
-	conv, err := h.conversationService.GetConversation(c.Request.Context(), conversationUUID)
+	// Get conversation under the current web app's agent. This preserves
+	// cross-version access within the same agent without allowing naked ID
+	// access to conversations from another published app.
+	conv, err := h.conversationService.GetConversationByIDAndAgent(c.Request.Context(), conversationUUID, agent.ID)
 	if err != nil {
 		logger.Error("Failed to get conversation", err)
 		response.Fail(c, response.ErrAppNotFound)
 		return
 	}
-
-	// Note: We don't verify web_app_id here to allow cross-version access
-	// Users can access any conversation under their account_id regardless of web_app_id
 
 	if !conversationBelongsToAccount(conv, accountUUID) {
 		logger.Error("Conversation does not belong to this user", fmt.Errorf("user mismatch"))
@@ -610,7 +610,8 @@ func (h *ConversationQueryHandler) DeleteConversation(c *gin.Context) {
 
 	logger.Info("Deleting conversation", "webAppID", webAppID, "conversationID", conversationID, "accountID", accountID)
 
-	if _, ok := h.requireActiveWebAppAgent(c, webAppID); !ok {
+	agent, ok := h.requireActiveWebAppAgent(c, webAppID)
+	if !ok {
 		return
 	}
 
@@ -630,16 +631,15 @@ func (h *ConversationQueryHandler) DeleteConversation(c *gin.Context) {
 		return
 	}
 
-	// Get conversation to verify ownership
-	conv, err := h.conversationService.GetConversation(c.Request.Context(), conversationUUID)
+	// Get conversation under the current web app's agent before checking
+	// ownership, so a valid account cannot delete another agent's conversation
+	// by guessing its ID.
+	conv, err := h.conversationService.GetConversationByIDAndAgent(c.Request.Context(), conversationUUID, agent.ID)
 	if err != nil {
 		logger.Error("Failed to get conversation", err)
 		response.Fail(c, response.ErrAppNotFound)
 		return
 	}
-
-	// Note: We don't verify web_app_id here to allow cross-version access
-	// Users can access any conversation under their account_id regardless of web_app_id
 
 	if !conversationBelongsToAccount(conv, accountUUID) {
 		logger.Error("Conversation does not belong to this user", fmt.Errorf("user mismatch"))

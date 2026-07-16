@@ -30,18 +30,13 @@ import { VirtualContentGrid } from '@/components/datasets/page/virtual-content-g
 import type { OpenDatasetDialogPayload } from '@/components/datasets/dialog/types';
 import type { OpenFolderModalPayload } from '@/components/datasets/modal/folder-modal';
 import { useInfiniteObserver } from '@/hooks/use-infinite-observer';
-import { useAvailableModels } from '@/hooks/model/use-model';
-import { useIsInitialized } from '@/store/auth-store';
 import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
 import { useCurrentWorkspace } from '@/store/workspace-store';
 import { cn } from '@/lib/utils';
-
-function DatasetModelsPreloader() {
-  useAvailableModels({ use_case: 'text-chat' });
-  useAvailableModels({ use_case: 'embedding' });
-  useAvailableModels({ use_case: 'rerank' });
-  return null;
-}
+import {
+  KNOWLEDGE_BASE_PERMISSION_ACTIONS,
+  KNOWLEDGE_BASE_VISIBLE_PERMISSION_CODES,
+} from '@/constants/permissions';
 
 function DatasetsPageContent() {
   const t = useT();
@@ -50,9 +45,9 @@ function DatasetsPageContent() {
   const queryClient = useQueryClient();
 
   // Permission checking
-  const { hasPermission, isLoading: isPermissionsLoading } = useAccountPermissions();
-  const canView = hasPermission('knowledge_base.view');
-  const canManage = hasPermission('knowledge_base.manage');
+  const { hasAnyPermission, isLoading: isPermissionsLoading } = useAccountPermissions();
+  const canView = hasAnyPermission(KNOWLEDGE_BASE_VISIBLE_PERMISSION_CODES);
+  const canManage = hasAnyPermission(KNOWLEDGE_BASE_PERMISSION_ACTIONS.create);
 
   // Replace local create-only dialog with centralized dialog state
   // const [open, setOpen] = useState(false);
@@ -204,8 +199,6 @@ function DatasetsPageContent() {
   // Virtualization decision is based on dataset entries only
   const enableVirtual = datasetEntries.length > 200;
   const rowHeight = 160; // Tailwind h-40
-  const isAuthReady = useIsInitialized();
-
   // Access denied state
   if (!isPermissionsLoading && !canView) {
     return (
@@ -225,8 +218,10 @@ function DatasetsPageContent() {
 
   return (
     <>
-      {isAuthReady && <DatasetModelsPreloader />}
-      <div ref={scrollRef} className="p-8 space-y-6 flex flex-col h-full overflow-y-auto">
+      <div
+        ref={scrollRef}
+        className="flex h-full flex-col space-y-6 overflow-y-auto p-4 @md/console:p-6 @5xl/console:p-8"
+      >
         {/* Header */}
         <HeaderToolbar
           titleText={t('datasets.title')}
@@ -261,7 +256,7 @@ function DatasetsPageContent() {
                 folderSkeletonCount={20}
               />
               {!showFolderSkeletons && (
-                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5 gap-3 sm:gap-4 md:gap-6 lg:gap-8 xl:gap-10 2xl:gap-12">
+                <div className="grid grid-cols-[repeat(auto-fill,minmax(15rem,1fr))] gap-4">
                   {rootFolders.map(folder => (
                     <FolderCard key={folder.id} folder={folder} />
                   ))}
@@ -318,7 +313,7 @@ function DatasetsPageContent() {
                         }}
                       />
                     ) : (
-                      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5 gap-3 sm:gap-4 md:gap-6 lg:gap-8 xl:gap-10 2xl:gap-12">
+                      <div className="grid grid-cols-[repeat(auto-fill,minmax(15rem,1fr))] gap-4">
                         {datasetEntries.map(({ ds, pIndex }) => (
                           <DatasetCard
                             key={ds.id}
@@ -422,11 +417,13 @@ function DatasetsPageContent() {
         folder={selectedFolder}
         parentFolderId={parentFolderId}
       />
-      <CreateDatasetDialog
-        open={datasetDialogOpen && datasetDialogMode === 'create'}
-        onOpenChange={setDatasetDialogOpen}
-        currentFolderId={datasetDialogFolderId}
-      />
+      {datasetDialogOpen && datasetDialogMode === 'create' && (
+        <CreateDatasetDialog
+          open
+          onOpenChange={setDatasetDialogOpen}
+          currentFolderId={datasetDialogFolderId}
+        />
+      )}
     </>
   );
 }

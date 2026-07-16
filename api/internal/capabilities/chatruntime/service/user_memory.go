@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/usermemoryruntime"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/internal/modules/memory"
@@ -54,6 +55,89 @@ func (s *service) runUserMemoryPreflight(
 		prepared.LLMRequest.Messages = result.Messages
 	}
 	return result.Usage, nil
+}
+
+type userMemoryPreparePreflightResult struct {
+	Usage          *adapter.Usage
+	Messages       []adapter.Message
+	ContextControl map[string]interface{}
+}
+
+func (s *service) shouldRunUserMemoryPreflightDuringPrepare(parts *chatRequestParts, llmRequest *adapter.ChatRequest) bool {
+	if s == nil || s.llmClient == nil || parts == nil || llmRequest == nil {
+		return false
+	}
+	if normalizeAIChatSurface(parts.Surface) != aiChatSurfaceContextualSidebar {
+		return false
+	}
+	if !parts.UseMemory {
+		return false
+	}
+	if _, ok := s.memoryService.(usermemoryruntime.MemoryService); !ok {
+		return false
+	}
+	return true
+}
+
+func (s *service) runUserMemoryPreflightDuringPrepare(
+	ctx context.Context,
+	scope Scope,
+	conversation *runtimemodel.Conversation,
+	config RunConfig,
+	parts *chatRequestParts,
+	llmRequest *adapter.ChatRequest,
+) (*userMemoryPreparePreflightResult, error) {
+	if !s.shouldRunUserMemoryPreflightDuringPrepare(parts, llmRequest) {
+		return nil, nil
+	}
+	preflightParts := cloneChatRequestPartsForUserMemoryPreflight(parts)
+	preflightRequest := cloneChatRequest(llmRequest)
+	prepared := &PreparedChat{
+		Conversation: conversation,
+		LLMRequest:   preflightRequest,
+		Scope:        scope,
+		RunConfig:    config,
+		parts:        preflightParts,
+	}
+	usage, err := s.runUserMemoryPreflight(ctx, ctx, prepared, nil)
+	if err != nil {
+		return nil, err
+	}
+	result := &userMemoryPreparePreflightResult{
+		Usage:          usage,
+		ContextControl: copyStringAnyMap(preflightParts.ContextControl),
+	}
+	if preflightRequest != nil {
+		result.Messages = append([]adapter.Message{}, preflightRequest.Messages...)
+	}
+	return result, nil
+}
+
+func cloneChatRequestPartsForUserMemoryPreflight(parts *chatRequestParts) *chatRequestParts {
+	if parts == nil {
+		return nil
+	}
+	clone := *parts
+	if parts.ProviderPtr != nil {
+		provider := *parts.ProviderPtr
+		clone.ProviderPtr = &provider
+	}
+	clone.Parameters = copyStringAnyMap(parts.Parameters)
+	clone.ContextControl = copyStringAnyMap(parts.ContextControl)
+	clone.RawOperationContext = copyStringAnyMap(parts.RawOperationContext)
+	clone.OperationContext = copyStringAnyMap(parts.OperationContext)
+	clone.OperationLedger = copyStringAnyMap(parts.OperationLedger)
+	clone.SkillIDs = append([]string{}, parts.SkillIDs...)
+	clone.ToolSkillIDs = append([]string{}, parts.ToolSkillIDs...)
+	clone.ConfiguredSkillIDs = append([]string{}, parts.ConfiguredSkillIDs...)
+	clone.KnowledgeDatasetIDs = append([]string{}, parts.KnowledgeDatasetIDs...)
+	clone.KnowledgeRetrievalConfig = copyStringAnyMap(parts.KnowledgeRetrievalConfig)
+	clone.AgentMemorySlots = append([]AgentMemorySlotConfig{}, parts.AgentMemorySlots...)
+	if parts.ModelTurnIntent != nil {
+		intent := *parts.ModelTurnIntent
+		clone.ModelTurnIntent = &intent
+	}
+	return &clone
 }
 
 func (s *service) userMemoryPreflightState(ctx context.Context, prepared *PreparedChat, llmConfigured bool) (*usermemoryruntime.State, usermemoryruntime.MemoryService, string) {
@@ -107,7 +191,7 @@ func userMemoryMutationMetadata(prepared *PreparedChat) memory.MutationMetadata 
 		id := prepared.Conversation.ID
 		meta.SourceConversationID = &id
 	}
-	if prepared != nil && prepared.Message != nil {
+	if prepared != nil && prepared.Message != nil && prepared.Message.ID != uuid.Nil {
 		id := prepared.Message.ID
 		meta.SourceMessageID = &id
 	}
@@ -115,10 +199,13 @@ func userMemoryMutationMetadata(prepared *PreparedChat) memory.MutationMetadata 
 }
 
 func (s *service) updateUserMemoryRuntimeMetadataBestEffort(ctx context.Context, prepared *PreparedChat, updates map[string]interface{}) {
-	if prepared == nil || prepared.Message == nil || len(updates) == 0 {
+	if prepared == nil || len(updates) == 0 {
 		return
 	}
-	metadata := copyStringAnyMap(prepared.Message.Metadata)
+	metadata := map[string]interface{}{}
+	if prepared.Message != nil {
+		metadata = copyStringAnyMap(prepared.Message.Metadata)
+	}
 	if metadata == nil {
 		metadata = map[string]interface{}{}
 	}
@@ -143,10 +230,13 @@ func (s *service) updateUserMemoryRuntimeMetadataBestEffort(ctx context.Context,
 	}
 	contextControl["user_memory"] = userMemory
 	metadata["context_control"] = contextControl
-	prepared.Message.Metadata = metadata
 	if prepared.parts != nil {
 		prepared.parts.ContextControl = contextControl
 	}
+	if prepared.Message == nil {
+		return
+	}
+	prepared.Message.Metadata = metadata
 	if s == nil || s.repos == nil || s.repos.Message == nil {
 		return
 	}
@@ -155,7 +245,7 @@ func (s *service) updateUserMemoryRuntimeMetadataBestEffort(ctx context.Context,
 
 func (s *service) emitUserMemoryMutationEvent(ctx context.Context, prepared *PreparedChat, trace skills.SkillTrace, result map[string]interface{}, onEvent func(StreamEvent) error) {
 	eventType := userMemoryMutationEventType(result)
-	if eventType == "" {
+	if eventType == "" || prepared == nil || prepared.Conversation == nil || prepared.Message == nil {
 		return
 	}
 	payload := map[string]interface{}{

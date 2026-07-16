@@ -1,6 +1,10 @@
 import { BaseService } from '@/lib/http/services';
 import type { ApiResponseData } from './types/common';
-import type { DashboardRecentWork, DashboardStats } from './types/dashboard';
+import type {
+  DashboardRecentWork,
+  DashboardRecentWorkParams,
+  DashboardStats,
+} from './types/dashboard';
 
 class DashboardService extends BaseService {
   constructor() {
@@ -24,8 +28,9 @@ class DashboardService extends BaseService {
    * Get recently updated console work items.
    * GET /console/api/dashboard/recent-work
    */
-  getRecentWork(): Promise<ApiResponseData<DashboardRecentWork>> {
+  getRecentWork(params?: DashboardRecentWorkParams): Promise<ApiResponseData<DashboardRecentWork>> {
     return this.request('get', '/dashboard/recent-work', undefined, {
+      params,
       headers: { 'Content-Type': 'application/json' },
     });
   }

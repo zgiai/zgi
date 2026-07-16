@@ -1,3 +1,6 @@
+//go:build legacy_aichat_service
+// +build legacy_aichat_service
+
 package service
 
 import (
@@ -17,6 +20,10 @@ func skillCallStartPayload(prepared *PreparedChat, skillID string, toolName stri
 
 func skillCallEndPayload(prepared *PreparedChat, trace skills.SkillTrace) map[string]interface{} {
 	return skilltrace.SkillCallEndPayload(skillTracePayloadIDs(prepared), trace, false)
+}
+
+func toolGovernanceDecisionPayload(prepared *PreparedChat, trace skills.SkillTrace) map[string]interface{} {
+	return skilltrace.ToolGovernanceDecisionPayload(skillTracePayloadIDs(prepared), trace)
 }
 
 func skillArtifactsFromToolMessages(prepared *PreparedChat, trace skills.SkillTrace, messages []tools.ToolInvokeMessage) []map[string]interface{} {

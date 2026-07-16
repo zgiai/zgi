@@ -177,7 +177,7 @@ func (s *llmGatewayServiceImpl) runNativeNonStream(
 	requestID := uuid.New().String()
 	var lastErr error
 	for attemptIdx, providerSelection := range providerSelections {
-		quote, err := s.quoteTokenPricing(ctx, pricingModelRefFromSelection(providerSelection), promptTokens, completionTokens)
+		quote, err := s.quoteTokenPricingForSelection(ctx, providerSelection, pricingModelRefFromSelection(providerSelection), promptTokens, completionTokens)
 		if err != nil {
 			lastErr = fmt.Errorf("failed to calculate credits: %w", err)
 			continue
@@ -217,6 +217,10 @@ func (s *llmGatewayServiceImpl) runNativeNonStream(
 			continue
 		}
 
+		if err := s.activateUpstreamProbeForAttempt(ctx, providerSelection, billingCtx); err != nil {
+			lastErr = err
+			continue
+		}
 		response, err := call(ctx, providerAdapter)
 		responseTime := time.Since(startTime).Milliseconds()
 		if err != nil {
@@ -318,7 +322,7 @@ func (s *llmGatewayServiceImpl) runNativeStream(
 	requestID := uuid.New().String()
 	var lastErr error
 	for attemptIdx, providerSelection := range providerSelections {
-		quote, err := s.quoteTokenPricing(ctx, pricingModelRefFromSelection(providerSelection), promptTokens, completionTokens)
+		quote, err := s.quoteTokenPricingForSelection(ctx, providerSelection, pricingModelRefFromSelection(providerSelection), promptTokens, completionTokens)
 		if err != nil {
 			lastErr = fmt.Errorf("failed to calculate credits: %w", err)
 			continue
@@ -358,11 +362,16 @@ func (s *llmGatewayServiceImpl) runNativeStream(
 			continue
 		}
 
+		if err := s.activateUpstreamProbeForAttempt(ctx, providerSelection, billingCtx); err != nil {
+			lastErr = err
+			continue
+		}
 		streamChan, err := call(ctx, providerAdapter)
 		if err != nil {
 			if rollbackErr := s.rollbackPreDeduction(ctx, billingCtx); rollbackErr != nil {
 				return nil, rollbackErr
 			}
+			s.recordUpstreamProviderError(ctx, providerSelection, billingCtx, err)
 			lastErr = err
 			if attemptIdx < len(providerSelections)-1 {
 				continue

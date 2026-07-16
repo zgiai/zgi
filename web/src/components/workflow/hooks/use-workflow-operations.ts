@@ -44,6 +44,11 @@ import { DEFAULT_CODE_NODE_DATA } from '../nodes/code/config';
 import { DEFAULT_ASSIGNER_NODE_DATA } from '../nodes/assigner/config';
 import { DEFAULT_DOCUMENT_EXTRACTOR_NODE_DATA } from '../nodes/document-extractor/config';
 
+const isWorkflowStoreReadOnly = () => {
+  const { mode, canEdit } = useWorkflowStore.getState();
+  return mode === 'history' || !canEdit;
+};
+
 /**
  * Hook for workflow operations like adding nodes, copying, etc.
  */
@@ -90,6 +95,7 @@ const useWorkflowOperations = () => {
       position: { x: number; y: number },
       parentId?: string
     ): string | null => {
+      if (isWorkflowStoreReadOnly()) return null;
       let finalData = { ...data };
       if (parentId) {
         const parentNode = useWorkflowStore.getState().nodes.find(n => n.id === parentId);
@@ -130,7 +136,7 @@ const useWorkflowOperations = () => {
       );
       return id;
     },
-    [addNode, canAddNode, t]
+    [addNodeWithContainerCheck, canAddNode, t]
   );
 
   const addKnowledgeRetrievalNode = useCallback(
@@ -161,7 +167,7 @@ const useWorkflowOperations = () => {
       );
       return id;
     },
-    [addNode, t]
+    [addNodeWithContainerCheck, t]
   );
 
   const addParameterExtractorNode = useCallback(
@@ -214,7 +220,7 @@ const useWorkflowOperations = () => {
       );
       return id;
     },
-    [addNode, t]
+    [addNodeWithContainerCheck, t]
   );
 
   const addImageGenNode = useCallback(
@@ -236,7 +242,7 @@ const useWorkflowOperations = () => {
       );
       return id;
     },
-    [addNode, t]
+    [addNodeWithContainerCheck, t]
   );
 
   const addApprovalNode = useCallback(
@@ -380,7 +386,7 @@ const useWorkflowOperations = () => {
       );
       return id;
     },
-    [addNode, t]
+    [addNodeWithContainerCheck, t]
   );
 
   const addSqlGeneratorNode = useCallback(
@@ -422,7 +428,7 @@ const useWorkflowOperations = () => {
       );
       return id;
     },
-    [addNode, defaultLlmName, defaultLlmProvider, t]
+    [addNodeWithContainerCheck, defaultLlmName, defaultLlmProvider, t]
   );
 
   const addLLMNode = useCallback(
@@ -548,7 +554,7 @@ const useWorkflowOperations = () => {
       );
       return id;
     },
-    [addNode, t]
+    [addNodeWithContainerCheck, t]
   );
 
   const addCallDatabaseNode = useCallback(
@@ -577,7 +583,7 @@ const useWorkflowOperations = () => {
       );
       return id;
     },
-    [addNode, t]
+    [addNodeWithContainerCheck, t]
   );
 
   const addToolNode = useCallback(
@@ -1007,6 +1013,7 @@ const useWorkflowOperations = () => {
   // Delete node with guard against deleting start node
   const deleteNodeSafe = useCallback(
     (nodeId: string): boolean => {
+      if (isWorkflowStoreReadOnly()) return false;
       const nodes = useWorkflowStore.getState().nodes;
       const node = nodes.find(n => n.id === nodeId);
       if (!node) return false;
@@ -1029,6 +1036,7 @@ const useWorkflowOperations = () => {
 
   // Delete all currently selected nodes (box/multi-select)
   const deleteSelectedNodes = useCallback(() => {
+    if (isWorkflowStoreReadOnly()) return;
     const { nodes } = useWorkflowStore.getState();
     const selectedIds = nodes.filter(n => n.selected).map(n => n.id);
     if (selectedIds.length === 0) return;
@@ -1126,6 +1134,7 @@ const useWorkflowOperations = () => {
 
   // Paste clipboard at current pointer position (flow coordinates)
   const pasteClipboardAtPointer = useCallback(() => {
+    if (isWorkflowStoreReadOnly()) return;
     const { clipboardNodeData, clipboardNodes, viewport, selectedNodeId } =
       useWorkflowStore.getState();
     const lastMouseClient = useWorkflowStore.getState().lastMouseClient;
@@ -1173,7 +1182,8 @@ const useWorkflowOperations = () => {
         clipboardNodes
           .filter(item => !!item.parentRef)
           .forEach(item => {
-            const refParentId = item.parentRef!;
+            const refParentId = item.parentRef;
+            if (!refParentId) return;
             const newParentId = newParentIdByRefId[refParentId];
             if (!newParentId) return;
             const childId = addNode(item.data, { x: position.x, y: position.y });
@@ -1335,6 +1345,7 @@ const useWorkflowOperations = () => {
   // Duplicate node with special handling for iteration parent and its children
   const duplicateNode = useCallback(
     (nodeId: string) => {
+      if (isWorkflowStoreReadOnly()) return;
       const nodes = useWorkflowStore.getState().nodes;
       const selectedNode = nodes.find(node => node.id === nodeId);
       if (!selectedNode) return;
@@ -1452,6 +1463,7 @@ const useWorkflowOperations = () => {
 
   // Reset workflow with confirmation via dedicated hook
   const handleResetWorkflow = useCallback(() => {
+    if (isWorkflowStoreReadOnly()) return;
     resetWithConfirm();
   }, [resetWithConfirm]);
 

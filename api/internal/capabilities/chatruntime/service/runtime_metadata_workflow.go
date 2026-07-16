@@ -3,6 +3,8 @@ package service
 import (
 	"context"
 	"fmt"
+
+	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/repository"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/pkg/logger"
 	"sort"
@@ -25,8 +27,13 @@ func (s *service) persistWorkflowRunEventBestEffort(ctx context.Context, prepare
 }
 
 func (s *service) persistWorkflowApprovalPending(ctx context.Context, prepared *PreparedChat, payload map[string]interface{}, usage *adapter.Usage) map[string]interface{} {
+	metadata, _ := s.persistWorkflowApprovalPendingResult(ctx, prepared, payload, usage)
+	return metadata
+}
+
+func (s *service) persistWorkflowApprovalPendingResult(ctx context.Context, prepared *PreparedChat, payload map[string]interface{}, usage *adapter.Usage) (map[string]interface{}, error) {
 	if prepared == nil || prepared.Message == nil || prepared.Conversation == nil {
-		return map[string]interface{}{}
+		return map[string]interface{}{}, nil
 	}
 	pendingPayload := copyStringAnyMap(payload)
 	if pendingPayload == nil {
@@ -35,7 +42,7 @@ func (s *service) persistWorkflowApprovalPending(ctx context.Context, prepared *
 	pendingPayload["conversation_id"] = prepared.Conversation.ID.String()
 	pendingPayload["message_id"] = prepared.Message.ID.String()
 	metadata := mergeWorkflowRunMetadata(prepared.Message.Metadata, "approval_requested", pendingPayload)
-	metadata = preparedResultMetadata(metadata, usage)
+	metadata = preparedResultMetadataForPrepared(prepared, metadata, usage)
 	metadata["agent_workflow_continuation"] = compactWorkflowRun(map[string]interface{}{
 		"status":          "waiting_approval",
 		"workflow_run_id": firstNonEmptyString(pendingPayload["workflow_run_id"]),
@@ -50,20 +57,30 @@ func (s *service) persistWorkflowApprovalPending(ctx context.Context, prepared *
 	})
 	prepared.Message.Metadata = metadata
 	if s == nil || s.repos == nil || s.repos.Message == nil || s.repos.Conversation == nil {
-		return metadata
+		return metadata, nil
 	}
-	if err := s.repos.Message.UpdateWaitingApproval(ctx, prepared.Message.ID, metadata); err != nil {
-		logger.WarnContext(ctx, "failed to mark aichat workflow approval pending", "message_id", prepared.Message.ID.String(), err)
-	}
-	if err := s.repos.Conversation.FinishWaitingApprovalMessage(ctx, prepared.Conversation.ID, prepared.Message.ID); err != nil {
-		logger.WarnContext(ctx, "failed to finish aichat workflow approval pending message", "conversation_id", prepared.Conversation.ID.String(), err)
-	}
-	return metadata
+	err := s.persistPendingMessageAndFinishConversationBestEffort(
+		ctx,
+		prepared,
+		"workflow approval",
+		func(repo repository.MessageRepository) error {
+			return repo.UpdateWaitingApproval(ctx, prepared.Message.ID, metadata)
+		},
+		func(repo repository.ConversationRepository) error {
+			return repo.FinishWaitingApprovalMessage(ctx, prepared.Conversation.ID, prepared.Message.ID)
+		},
+	)
+	return metadata, err
 }
 
 func (s *service) persistWorkflowQuestionPending(ctx context.Context, prepared *PreparedChat, payload map[string]interface{}, usage *adapter.Usage) map[string]interface{} {
+	metadata, _ := s.persistWorkflowQuestionPendingResult(ctx, prepared, payload, usage)
+	return metadata
+}
+
+func (s *service) persistWorkflowQuestionPendingResult(ctx context.Context, prepared *PreparedChat, payload map[string]interface{}, usage *adapter.Usage) (map[string]interface{}, error) {
 	if prepared == nil || prepared.Message == nil || prepared.Conversation == nil {
-		return map[string]interface{}{}
+		return map[string]interface{}{}, nil
 	}
 	pendingPayload := copyStringAnyMap(payload)
 	if pendingPayload == nil {
@@ -73,7 +90,7 @@ func (s *service) persistWorkflowQuestionPending(ctx context.Context, prepared *
 	pendingPayload["message_id"] = prepared.Message.ID.String()
 	metadata := mergeWorkflowRunMetadata(prepared.Message.Metadata, "workflow_paused", pendingPayload)
 	metadata = mergeWorkflowRunMetadata(metadata, "question_answer_requested", pendingPayload)
-	metadata = preparedResultMetadata(metadata, usage)
+	metadata = preparedResultMetadataForPrepared(prepared, metadata, usage)
 	metadata["agent_workflow_continuation"] = compactWorkflowRun(map[string]interface{}{
 		"status":          "waiting_question",
 		"workflow_run_id": firstNonEmptyString(pendingPayload["workflow_run_id"]),
@@ -89,15 +106,20 @@ func (s *service) persistWorkflowQuestionPending(ctx context.Context, prepared *
 	}
 	prepared.Message.Metadata = metadata
 	if s == nil || s.repos == nil || s.repos.Message == nil || s.repos.Conversation == nil {
-		return metadata
+		return metadata, nil
 	}
-	if err := s.repos.Message.UpdateWaitingQuestion(ctx, prepared.Message.ID, metadata); err != nil {
-		logger.WarnContext(ctx, "failed to mark aichat workflow question pending", "message_id", prepared.Message.ID.String(), err)
-	}
-	if err := s.repos.Conversation.FinishWaitingApprovalMessage(ctx, prepared.Conversation.ID, prepared.Message.ID); err != nil {
-		logger.WarnContext(ctx, "failed to finish aichat workflow question pending message", "conversation_id", prepared.Conversation.ID.String(), err)
-	}
-	return metadata
+	err := s.persistPendingMessageAndFinishConversationBestEffort(
+		ctx,
+		prepared,
+		"workflow question",
+		func(repo repository.MessageRepository) error {
+			return repo.UpdateWaitingQuestion(ctx, prepared.Message.ID, metadata)
+		},
+		func(repo repository.ConversationRepository) error {
+			return repo.FinishWaitingApprovalMessage(ctx, prepared.Conversation.ID, prepared.Message.ID)
+		},
+	)
+	return metadata, err
 }
 
 func mergeWorkflowRunMetadata(source map[string]interface{}, eventType string, payload map[string]interface{}) map[string]interface{} {
@@ -110,6 +132,7 @@ func mergeWorkflowRunMetadata(source map[string]interface{}, eventType string, p
 		return metadata
 	}
 	runs := workflowRunsFromMetadata(metadata["workflow_runs"])
+	upsertWorkflowRuntimeTimeline(metadata, run)
 	runs = upsertWorkflowRun(runs, run)
 	metadata["has_trace"] = true
 	metadata["workflow_runs"] = workflowRunsToInterfaceSlice(runs)

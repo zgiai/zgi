@@ -144,6 +144,24 @@ func (s *Service) SubmitByToken(ctx context.Context, token string, req SubmitReq
 	if err != nil {
 		return nil, err
 	}
+	return s.submitForm(ctx, form, recipient, req, submissionUserID, submissionEndUserID)
+}
+
+func (s *Service) SubmitByTokenForWorkflowRun(ctx context.Context, token, workflowRunID string, req SubmitRequest, submissionUserID, submissionEndUserID *string) (*Form, error) {
+	form, recipient, err := s.getFormAndRecipientByToken(ctx, token)
+	if err != nil {
+		return nil, err
+	}
+	if err := ensureFormWorkflowRun(form, workflowRunID); err != nil {
+		return nil, err
+	}
+	return s.submitForm(ctx, form, recipient, req, submissionUserID, submissionEndUserID)
+}
+
+func (s *Service) submitForm(ctx context.Context, form *Form, recipient *Recipient, req SubmitRequest, submissionUserID, submissionEndUserID *string) (*Form, error) {
+	if s == nil || s.db == nil {
+		return nil, fmt.Errorf("approval service is not initialized")
+	}
 	if err := ensureFormSubmittable(form); err != nil {
 		return nil, err
 	}
@@ -1147,6 +1165,16 @@ func ensureFormReadable(form *Form) error {
 
 func ensureFormSubmittable(form *Form) error {
 	return ensureFormReadable(form)
+}
+
+func ensureFormWorkflowRun(form *Form, workflowRunID string) error {
+	if form == nil {
+		return ErrFormNotFound
+	}
+	if strings.TrimSpace(form.WorkflowRunID) == "" || strings.TrimSpace(workflowRunID) == "" || strings.TrimSpace(form.WorkflowRunID) != strings.TrimSpace(workflowRunID) {
+		return ErrFormNotFound
+	}
+	return nil
 }
 
 func decodeDefinition(raw string) (FormDefinition, error) {

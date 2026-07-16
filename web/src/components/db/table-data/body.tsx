@@ -48,6 +48,9 @@ export interface TableDataBodyProps {
   smartIngestHref: string;
   canEditData?: boolean;
   canManage?: boolean;
+  canBatchImport?: boolean;
+  canSmartIngest?: boolean;
+  canDeleteData?: boolean;
   containerWidth: number;
   onOpenRow?: (row: DbTableRecord) => void;
   stickyColumnNames?: readonly string[];
@@ -93,6 +96,9 @@ const Body: FC<TableDataBodyProps> = ({
   smartIngestHref,
   canEditData,
   canManage,
+  canBatchImport,
+  canSmartIngest,
+  canDeleteData,
   containerWidth,
   onOpenRow,
   stickyColumnNames = [],
@@ -177,13 +183,13 @@ const Body: FC<TableDataBodyProps> = ({
                         onClick: onAddRow,
                         variant: 'outline' as const,
                       },
-                      canEditData && {
+                      canBatchImport && {
                         label: t('dbs.batchImport.title'),
                         icon: <FileUp className="h-4 w-4" />,
                         onClick: onBatchImport ?? (() => {}),
                         variant: 'outline' as const,
                       },
-                      canEditData && {
+                      canSmartIngest && {
                         label: t('dbs.actions.smartIngest'),
                         icon: <Sparkles className="h-4 w-4" />,
                         onClick: () => {
@@ -424,7 +430,7 @@ const Body: FC<TableDataBodyProps> = ({
                 </TableCell>
               ))}
 
-              {isEditing ? (
+              {isEditing && canDeleteData ? (
                 <TableCell className="border-r last:border-r-0">
                   <Button
                     variant="ghost"
@@ -436,7 +442,7 @@ const Body: FC<TableDataBodyProps> = ({
                     <TrashIcon className="h-4 w-4" />
                   </Button>
                 </TableCell>
-              ) : (
+              ) : !isEditing ? (
                 onOpenRow && (
                   <TableCell className="sticky right-0 z-10 border-r bg-background shadow-[-1px_0_0_hsl(var(--border))]">
                     <Button
@@ -451,6 +457,8 @@ const Body: FC<TableDataBodyProps> = ({
                     </Button>
                   </TableCell>
                 )
+              ) : (
+                <TableCell className="border-r last:border-r-0" />
               )}
             </TableRow>
           );

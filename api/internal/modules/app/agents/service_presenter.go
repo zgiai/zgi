@@ -25,11 +25,40 @@ func normalizeMode(agentType string) string {
 	}
 }
 
+func normalizeAgentTypeForResponse(agentType string) string {
+	m := strings.TrimSpace(agentType)
+	switch strings.ToUpper(strings.ReplaceAll(m, "-", "_")) {
+	case "AGENT":
+		return "AGENT"
+	case "WORKFLOW":
+		return "WORKFLOW"
+	case "CONVERSATIONAL_WORKFLOW":
+		return "CONVERSATIONAL_WORKFLOW"
+	case "CONVERSATIONAL_AGENT":
+		return "CONVERSATIONAL_AGENT"
+	case "CHAT_AGENT":
+		return "CHAT_AGENT"
+	case "GENERATION_AGENT":
+		return "GENERATION_AGENT"
+	default:
+		return m
+	}
+}
+
+func isWorkflowLikeAgentType(agentType string) bool {
+	switch normalizeAgentTypeForResponse(agentType) {
+	case "WORKFLOW", "CONVERSATIONAL_WORKFLOW", "CHAT_AGENT":
+		return true
+	default:
+		return false
+	}
+}
+
 func (s *agentsService) hasPublishedVersion(ctx context.Context, ag *Agent) (bool, error) {
 	if ag == nil {
 		return false, fmt.Errorf("agent is required")
 	}
-	if ag.AgentsType == "AGENT" {
+	if normalizeAgentTypeForResponse(ag.AgentsType) == "AGENT" {
 		return s.agentsRepo.HasPublishedAgentVersion(ctx, ag.ID.String())
 	}
 	return s.agentsRepo.HasPublishedWorkflow(ctx, ag.ID.String())

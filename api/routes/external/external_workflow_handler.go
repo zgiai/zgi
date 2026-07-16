@@ -41,9 +41,22 @@ type ChatWorkflowRunRequest struct {
 	Files             []interface{}          `json:"files,omitempty"`
 }
 
+type externalWorkflowService interface {
+	GetLatestPublishedWorkflow(ctx context.Context, requestedWorkspaceID, agentID string, hideSecrets ...bool) (interface{}, error)
+	RunPublishedWorkflow(ctx context.Context, workspaceID, agentID string, req interface{}, accountID string) (interface{}, error)
+	RunAdvancedChatWorkflow(ctx context.Context, workspaceID, agentID string, req interface{}, accountID string) (interface{}, error)
+	GetWorkflowByID(ctx context.Context, workspaceID, agentID, workflowID string) (interface{}, error)
+	GetWorkflowRunDetail(ctx context.Context, tenantID, agentID, runID string) (*dto.WorkflowRunDetailResponse, error)
+	ValidateExternalWorkflowRunAccess(ctx context.Context, workspaceID, agentID, runID, apiKeyID string) error
+	StopWorkflowTask(ctx context.Context, tenantID, agentID, taskID string, accountID string) error
+	GetExecutor() interface{}
+	CreateWorkflowRunLog(ctx context.Context, tenantID, agentID, workflowID string, triggeredFrom string, inputs map[string]interface{}, accountID string) (interface{}, error)
+	WorkflowRunElapsedMillisecondsForEvent(ctx context.Context, workflowRunID string, fallback float64) float64
+}
+
 // ExternalWorkflowHandler handles external workflow API requests with API key authentication
 type ExternalWorkflowHandler struct {
-	workflowService   *workflow.WorkflowService
+	workflowService   externalWorkflowService
 	fileService       interfaces.FileService
 	contentExtractor  workflow_file.ContentExtractor
 	enterpriseService interfaces.OrganizationService
@@ -127,7 +140,7 @@ func (h *ExternalWorkflowHandler) RunWorkflow(c *gin.Context) {
 	}
 
 	// Process file variables if present in inputs
-	if err := h.validateAndProcessFileVariables(c.Request.Context(), req.Inputs, tenantID); err != nil {
+	if err := h.validateAndProcessFileVariables(c.Request.Context(), req.Inputs, tenantID, keyInfo.ID.String()); err != nil {
 		logger.WarnContext(c.Request.Context(), "external api file variable validation failed",
 			"agent_id", agentID,
 			"tenant_id", tenantID,
@@ -209,7 +222,7 @@ func (h *ExternalWorkflowHandler) RunChatWorkflow(c *gin.Context) {
 
 	// Process file variables if present in inputs
 	if req.Inputs != nil {
-		if err := h.validateAndProcessFileVariables(c.Request.Context(), req.Inputs, tenantID); err != nil {
+		if err := h.validateAndProcessFileVariables(c.Request.Context(), req.Inputs, tenantID, keyInfo.ID.String()); err != nil {
 			logger.WarnContext(c.Request.Context(), "external api chat file variable validation failed",
 				"agent_id", agentID,
 				"tenant_id", tenantID,
@@ -255,7 +268,7 @@ func (h *ExternalWorkflowHandler) RunChatWorkflow(c *gin.Context) {
 						fileInfo.UploadFileID = idStr
 
 						// Validate file ID exists and is accessible
-						if err := h.validateFileAccess(c.Request.Context(), idStr, tenantID); err != nil {
+						if err := h.validateFileAccess(c.Request.Context(), idStr, tenantID, keyInfo.ID.String()); err != nil {
 							logger.WarnContext(c.Request.Context(), "external api file access validation failed",
 								"file_id", idStr,
 								"tenant_id", tenantID,
@@ -342,6 +355,17 @@ func (h *ExternalWorkflowHandler) RunSpecificWorkflow(c *gin.Context) {
 		return
 	}
 
+	if err := h.validateAndProcessFileVariables(c.Request.Context(), req.Inputs, tenantID, keyInfo.ID.String()); err != nil {
+		logger.WarnContext(c.Request.Context(), "external api specific workflow file variable validation failed",
+			"agent_id", agentID,
+			"tenant_id", tenantID,
+			"workflow_id", workflowID.String(),
+			err,
+		)
+		response.Fail(c, response.ErrorCode{Code: 400004, Message: fmt.Sprintf("file variable validation failed: %v", err), UserVisible: true})
+		return
+	}
+
 	// Check if streaming mode is requested
 	if req.StreamMode || req.ResponseMode == "streaming" {
 		h.runPublishedWorkflowStream(c, tenantID, agentID, &req, keyInfo.ID.String())
@@ -389,6 +413,12 @@ func (h *ExternalWorkflowHandler) GetWorkflowRunDetail(c *gin.Context) {
 	// Get agent and tenant IDs from API key
 	agentID := keyInfo.AgentID.String()
 	tenantID := keyInfo.TenantID.String()
+	apiKeyID := keyInfo.ID.String()
+
+	if err := h.workflowService.ValidateExternalWorkflowRunAccess(c.Request.Context(), tenantID, agentID, runID.String(), apiKeyID); err != nil {
+		response.Fail(c, response.ErrorCode{Code: 404005, Message: "Workflow run not found or not accessible", UserVisible: true})
+		return
+	}
 
 	// Get workflow run detail
 	runDetail, err := h.workflowService.GetWorkflowRunDetail(c.Request.Context(), tenantID, agentID, runID.String())
@@ -860,18 +890,55 @@ func (h *ExternalWorkflowHandler) sendChatSSEError(ctx context.Context, w gin.Re
 }
 
 func (h *ExternalWorkflowHandler) StopWorkflowTask(c *gin.Context) {
-	var req struct {
-		User string `json:"user" binding:"required"`
-	}
-
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(400, gin.H{"message": "user parameter is required"})
+	apiKeyInfo, exists := c.Get("api_key_info")
+	if !exists {
+		response.Fail(c, response.ErrorCode{Code: 401001, Message: "API key info not found", UserVisible: true})
 		return
 	}
 
-	c.JSON(http.StatusNotImplemented, gin.H{
-		"message": "workflow task stop is not implemented",
-	})
+	keyInfo, ok := apiKeyInfo.(*middleware.APIKeyInfo)
+	if !ok {
+		response.Fail(c, response.ErrorCode{Code: 500001, Message: "Invalid API key info format", UserVisible: false})
+		return
+	}
+
+	taskID := strings.TrimSpace(c.Param("task_id"))
+	if taskID == "" {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+	if h.workflowService == nil {
+		response.Fail(c, response.ErrSystemError)
+		return
+	}
+
+	tenantID := keyInfo.TenantID.String()
+	agentID := keyInfo.AgentID.String()
+	apiKeyID := keyInfo.ID.String()
+
+	if err := h.workflowService.ValidateExternalWorkflowRunAccess(c.Request.Context(), tenantID, agentID, taskID, apiKeyID); err != nil {
+		logger.WarnContext(c.Request.Context(), "external api workflow task stop denied",
+			"agent_id", agentID,
+			"tenant_id", tenantID,
+			"task_id", taskID,
+			err,
+		)
+		response.Fail(c, response.ErrorCode{Code: 404006, Message: "Workflow task not found or not accessible", UserVisible: true})
+		return
+	}
+
+	if err := h.workflowService.StopWorkflowTask(c.Request.Context(), tenantID, agentID, taskID, apiKeyID); err != nil {
+		logger.CriticalContext(c.Request.Context(), "external api workflow stop failed",
+			"agent_id", agentID,
+			"tenant_id", tenantID,
+			"task_id", taskID,
+			err,
+		)
+		response.Fail(c, response.ErrSystemError)
+		return
+	}
+
+	response.Success(c, nil)
 }
 
 func (h *ExternalWorkflowHandler) UploadFile(c *gin.Context) {
@@ -1056,15 +1123,23 @@ func (h *ExternalWorkflowHandler) GetAppParameters(c *gin.Context) {
 
 // validateAndProcessFileVariables validates file variables in workflow inputs
 // It checks if file IDs exist and are accessible, extracts file content, and adds _content variables
-func (h *ExternalWorkflowHandler) validateAndProcessFileVariables(ctx context.Context, inputs map[string]interface{}, tenantID string) error {
+func (h *ExternalWorkflowHandler) validateAndProcessFileVariables(ctx context.Context, inputs map[string]interface{}, workspaceID string, apiKeyID string) error {
 	if inputs == nil {
 		return nil
 	}
 
-	// Check if content extractor is available
-	if h.contentExtractor == nil {
-		logger.Warn("External API - Content extractor not available, skipping file content extraction")
-		return nil
+	var extractionScope *workflow_file.ContentExtractionScope
+	getExtractionScope := func() (workflow_file.ContentExtractionScope, error) {
+		if extractionScope != nil {
+			return *extractionScope, nil
+		}
+
+		scope, err := h.resolveContentExtractionScope(ctx, workspaceID)
+		if err != nil {
+			return workflow_file.ContentExtractionScope{}, err
+		}
+		extractionScope = &scope
+		return scope, nil
 	}
 
 	fileCount := 0
@@ -1076,34 +1151,45 @@ func (h *ExternalWorkflowHandler) validateAndProcessFileVariables(ctx context.Co
 					fileCount++
 
 					// Validate file exists and is accessible
-					if err := h.validateFileAccess(ctx, fileIDStr, tenantID); err != nil {
+					if err := h.validateFileAccess(ctx, fileIDStr, workspaceID, apiKeyID); err != nil {
 						return fmt.Errorf("file variable '%s' validation failed: %w", key, err)
 					}
 
 					logger.Info("External API - File variable validated",
 						"variable_name", key,
 						"file_id", fileIDStr,
-						"tenant_id", tenantID,
+						"workspace_id", workspaceID,
 					)
 
-					// Extract file content and add _content variable
-					processedVars, err := h.contentExtractor.ProcessFileVariable(ctx, key, fileData, tenantID)
-					if err != nil {
-						logger.Warn("External API - File content extraction failed",
+					if h.contentExtractor == nil {
+						logger.Warn("External API - Content extractor not available, skipping file content extraction",
 							"variable_name", key,
 							"file_id", fileIDStr,
-							"error", err.Error(),
 						)
-						// Continue with metadata only
 					} else {
-						// Add _content variable to inputs
-						for k, v := range processedVars {
-							if k != key { // Don't overwrite the original variable
-								inputs[k] = v
-								logger.Info("External API - Added file content variable",
-									"variable_name", k,
-									"tenant_id", tenantID,
-								)
+						scope, err := getExtractionScope()
+						if err != nil {
+							return fmt.Errorf("file variable '%s' content extraction scope resolution failed: %w", key, err)
+						}
+
+						processedVars, err := h.contentExtractor.ProcessFileVariable(ctx, key, fileData, scope)
+						if err != nil {
+							logger.Warn("External API - File content extraction failed",
+								"variable_name", key,
+								"file_id", fileIDStr,
+								"error", err.Error(),
+							)
+							// Continue with metadata only
+						} else {
+							// Add _content variable to inputs
+							for k, v := range processedVars {
+								if k != key { // Don't overwrite the original variable
+									inputs[k] = v
+									logger.Info("External API - Added file content variable",
+										"variable_name", k,
+										"workspace_id", workspaceID,
+									)
+								}
 							}
 						}
 					}
@@ -1122,7 +1208,7 @@ func (h *ExternalWorkflowHandler) validateAndProcessFileVariables(ctx context.Co
 							fileCount++
 
 							// Validate file exists and is accessible
-							if err := h.validateFileAccess(ctx, fileIDStr, tenantID); err != nil {
+							if err := h.validateFileAccess(ctx, fileIDStr, workspaceID, apiKeyID); err != nil {
 								return fmt.Errorf("file list variable '%s[%d]' validation failed: %w", key, i, err)
 							}
 
@@ -1130,7 +1216,7 @@ func (h *ExternalWorkflowHandler) validateAndProcessFileVariables(ctx context.Co
 								"variable_name", key,
 								"index", i,
 								"file_id", fileIDStr,
-								"tenant_id", tenantID,
+								"workspace_id", workspaceID,
 							)
 						}
 					}
@@ -1138,8 +1224,20 @@ func (h *ExternalWorkflowHandler) validateAndProcessFileVariables(ctx context.Co
 			}
 
 			// Extract content for file list
-			if hasFileObjects {
-				processedVars, err := h.contentExtractor.ProcessFileListVariable(ctx, key, fileList, tenantID)
+			if hasFileObjects && h.contentExtractor == nil {
+				logger.Warn("External API - Content extractor not available, skipping file list content extraction",
+					"variable_name", key,
+					"workspace_id", workspaceID,
+				)
+			}
+
+			if hasFileObjects && h.contentExtractor != nil {
+				scope, err := getExtractionScope()
+				if err != nil {
+					return fmt.Errorf("file list variable '%s' content extraction scope resolution failed: %w", key, err)
+				}
+
+				processedVars, err := h.contentExtractor.ProcessFileListVariable(ctx, key, fileList, scope)
 				if err != nil {
 					logger.Warn("External API - File list content extraction failed",
 						"variable_name", key,
@@ -1153,7 +1251,7 @@ func (h *ExternalWorkflowHandler) validateAndProcessFileVariables(ctx context.Co
 							inputs[k] = v
 							logger.Info("External API - Added file list content variable",
 								"variable_name", k,
-								"tenant_id", tenantID,
+								"workspace_id", workspaceID,
 							)
 						}
 					}
@@ -1165,23 +1263,57 @@ func (h *ExternalWorkflowHandler) validateAndProcessFileVariables(ctx context.Co
 	if fileCount > 0 {
 		logger.Info("External API - File variables processed",
 			"file_count", fileCount,
-			"tenant_id", tenantID,
+			"workspace_id", workspaceID,
 		)
 	}
 
 	return nil
 }
 
+func (h *ExternalWorkflowHandler) resolveContentExtractionScope(ctx context.Context, workspaceID string) (workflow_file.ContentExtractionScope, error) {
+	workspaceID = strings.TrimSpace(workspaceID)
+	if workspaceID == "" {
+		return workflow_file.ContentExtractionScope{}, errors.New("workspace ID is required")
+	}
+	if h.enterpriseService == nil {
+		return workflow_file.ContentExtractionScope{}, errors.New("organization service is unavailable")
+	}
+
+	organization, err := h.enterpriseService.GetOrganizationByWorkspaceID(ctx, workspaceID)
+	if err != nil {
+		return workflow_file.ContentExtractionScope{}, fmt.Errorf("resolve organization for workspace %q: %w", workspaceID, err)
+	}
+	if organization == nil || strings.TrimSpace(organization.ID) == "" {
+		return workflow_file.ContentExtractionScope{}, fmt.Errorf("organization for workspace %q was not found", workspaceID)
+	}
+
+	return workflow_file.ContentExtractionScope{
+		OrganizationID: organization.ID,
+		WorkspaceID:    workspaceID,
+	}, nil
+}
+
 // validateFileAccess validates that a file exists and is accessible by the tenant
-func (h *ExternalWorkflowHandler) validateFileAccess(ctx context.Context, fileID string, tenantID string) error {
+func (h *ExternalWorkflowHandler) validateFileAccess(ctx context.Context, fileID string, tenantID string, apiKeyID string) error {
 	// Get file by ID to verify it exists
 	uploadFile, err := h.fileService.GetFileByID(ctx, fileID)
 	if err != nil {
 		return fmt.Errorf("file not found: %w", err)
 	}
+	if uploadFile == nil {
+		return fmt.Errorf("file not found")
+	}
+
+	if uploadFile.CreatedBy != apiKeyID {
+		return fmt.Errorf("file is not accessible by this API key")
+	}
+
+	if uploadFile.IsTemporary {
+		return nil
+	}
 
 	// Verify file belongs to the tenant
-	if uploadFile.TenantID != tenantID {
+	if uploadFile.TenantID != tenantID && uploadFile.OrganizationID != tenantID {
 		return fmt.Errorf("file does not belong to tenant")
 	}
 

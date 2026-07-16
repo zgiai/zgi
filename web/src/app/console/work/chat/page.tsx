@@ -1,15 +1,23 @@
 'use client';
 
-import React, { Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import React, { Suspense, useCallback, useEffect, useRef } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Chat, { useAIChatController } from '@/components/chat';
-import type { AIChatModelValue } from '@/components/chat';
-import type { ModelSelectorValue } from '@/components/common/model-selector';
-import { useInitializeDefaultModelByUseCase } from '@/hooks/model/use-default-model-by-use-case';
+import { usePersistedAIChatModelSelection } from '@/hooks/model/use-persisted-ai-chat-model-selection';
 import { useT } from '@/i18n/translations';
 import { useCurrentUser } from '@/store/auth-store';
 import { isDraftAIChatConversationId } from '@/components/chat/utils/aichat-message';
-import { getLastSelectedAiModel, saveLastSelectedAiModel } from '@/utils/ui-local';
+import { isConversationRouteRestoring } from '@/components/chat/runtime/conversation-route-state';
+import { toast } from 'sonner';
+
+function ChatLoading() {
+  const t = useT('webapp');
+  return (
+    <div className="flex h-full w-full items-center justify-center text-sm text-muted-foreground">
+      {t('consoleChat.loading')}
+    </div>
+  );
+}
 
 function ChatPageContent() {
   const t = useT('webapp');
@@ -23,85 +31,24 @@ function ChatPageContent() {
   const startNewRef = useRef(startNew);
   const lastInitializedConversationIdRef = useRef<string | null | undefined>(undefined);
   const routeSelectionTargetRef = useRef<string | null | undefined>(undefined);
-
-  const [modelSelectorValue, setModelSelectorValue] = useState<AIChatModelValue>(() => {
-    if (!user?.id) return { provider: '', model: '', params: {} };
-    const saved = getLastSelectedAiModel(user.id, 'consoleChat');
-    return saved
-      ? { provider: saved.provider, model: saved.model, params: {} }
-      : { provider: '', model: '', params: {} };
-  });
-  const [isInitialModelResolved, setIsInitialModelResolved] = useState(() => {
-    if (!user?.id) return false;
-    return Boolean(getLastSelectedAiModel(user.id, 'consoleChat'));
-  });
-
-  const shouldInitializeDefaultModel = Boolean(
-    user?.id && !getLastSelectedAiModel(user.id, 'consoleChat')
+  const { modelSelectorValue, isModelInitializing, isSelectedModelUnavailable, handleModelChange } =
+    usePersistedAIChatModelSelection({
+      accountId: user?.id,
+      scope: 'workChat',
+      legacyScope: 'consoleChat',
+      useCase: 'text-chat',
+      preferredUseCase: 'agent',
+    });
+  const isRestoringConversationRoute = isConversationRouteRestoring(
+    conversationIdParam,
+    activeConversationId
   );
-  const defaultModelInitialization = useInitializeDefaultModelByUseCase({
-    useCase: 'text-chat',
-    currentModel: modelSelectorValue,
-    enabled: shouldInitializeDefaultModel,
-    onInitialize: value => {
-      setModelSelectorValue({
-        provider: value.provider,
-        model: value.model,
-        params: value.params,
-      });
-      setIsInitialModelResolved(true);
-    },
-  });
-  const isModelInitializing = !modelSelectorValue.model && !isInitialModelResolved;
 
-  useLayoutEffect(() => {
-    if (!user?.id) {
-      setIsInitialModelResolved(false);
-      return;
-    }
-    if (modelSelectorValue.model) {
-      setIsInitialModelResolved(true);
-      return;
-    }
-    const saved = getLastSelectedAiModel(user.id, 'consoleChat');
-    if (!saved) {
-      if (defaultModelInitialization.isResolved && !defaultModelInitialization.value) {
-        setIsInitialModelResolved(true);
-      }
-      return;
-    }
-
-    setModelSelectorValue(previous => ({
-      ...previous,
-      provider: saved.provider,
-      model: saved.model,
-    }));
-    setIsInitialModelResolved(true);
-  }, [
-    defaultModelInitialization.isResolved,
-    defaultModelInitialization.value,
-    modelSelectorValue.model,
-    user?.id,
-  ]);
-
-  const handleModelChange = useCallback(
-    (value: ModelSelectorValue) => {
-      setModelSelectorValue(previous => ({
-        ...previous,
-        provider: value.provider,
-        model: value.model,
-      }));
-
-      if (user?.id) {
-        saveLastSelectedAiModel(user.id, 'consoleChat', {
-          provider: value.provider,
-          model: value.model,
-        });
-      }
-      setIsInitialModelResolved(true);
-    },
-    [user?.id]
-  );
+  const handleBeforeSend = useCallback(() => {
+    if (!isSelectedModelUnavailable) return true;
+    toast.error(t('consoleChat.modelUnavailable'));
+    return false;
+  }, [isSelectedModelUnavailable, t]);
 
   const replaceConversationRoute = useCallback(
     (conversationId: string | null) => {
@@ -148,7 +95,11 @@ function ChatPageContent() {
     lastInitializedConversationIdRef.current = conversationIdParam;
     routeSelectionTargetRef.current = conversationIdParam;
     initRef.current(conversationIdParam);
-    if (!conversationIdParam && activeConversationId) {
+    if (
+      !conversationIdParam &&
+      activeConversationId &&
+      !isDraftAIChatConversationId(activeConversationId)
+    ) {
       startNewRef.current();
     }
   }, [activeConversationId, conversationIdParam]);
@@ -163,6 +114,14 @@ function ChatPageContent() {
     // previous active conversation rewrite the URL back to its old convId.
     if (routeSelectionTarget !== undefined) {
       if (active === routeSelectionTarget) {
+        routeSelectionTargetRef.current = undefined;
+      } else if (routeSelectionTarget === null && isDraftAIChatConversationId(active)) {
+        // A message was sent before the new-chat route transition settled. Keep the draft alive;
+        // its message_start event will migrate active to the persisted conversation id.
+        return;
+      } else if (routeSelectionTarget === null && active) {
+        // The draft has migrated to a persisted conversation. The previous null target no longer
+        // describes the intended route, so allow the new conversation id to update the URL.
         routeSelectionTargetRef.current = undefined;
       } else if (current === routeSelectionTarget) {
         return;
@@ -190,24 +149,40 @@ function ChatPageContent() {
   }, [activeConversationId, router, searchParams]);
 
   return (
-    <div className="h-full w-full">
-      <React.Suspense
-        fallback={
-          <div className="flex h-full w-full items-center justify-center text-sm text-muted-foreground">
-            {t('consoleChat.loading')}
-          </div>
-        }
-      >
-        <Chat
-          mode="aichat"
-          controller={controller}
-          modelSelectorValue={modelSelectorValue}
-          isModelInitializing={isModelInitializing}
-          onModelChange={handleModelChange}
-          onSelectConversation={handleSelectConversation}
-          onStartNewConversation={handleStartNewConversation}
-        />
-      </React.Suspense>
+    <div className="flex h-full w-full flex-col">
+      {isSelectedModelUnavailable ? (
+        <div
+          role="alert"
+          className="shrink-0 border-b border-destructive/20 bg-destructive/5 px-4 py-2 text-sm text-destructive"
+        >
+          {t('consoleChat.modelUnavailable')}
+        </div>
+      ) : null}
+      <div className="min-h-0 flex-1">
+        {isRestoringConversationRoute ? (
+          <ChatLoading />
+        ) : (
+          <React.Suspense fallback={<ChatLoading />}>
+            <Chat
+              mode="aichat"
+              controller={controller}
+              runtimeSurface="work_chat"
+              modelUseCase="text-chat"
+              preferredModelUseCase="agent"
+              modelSelectorValue={modelSelectorValue}
+              isModelInitializing={isModelInitializing}
+              onModelChange={handleModelChange}
+              beforeSend={handleBeforeSend}
+              showMemoryToggle={false}
+              homeTitle={t('consoleChat.homeTitle')}
+              homeDescription={t('consoleChat.homeDescription')}
+              inputPlaceholder={t('consoleChat.inputPlaceholder')}
+              onSelectConversation={handleSelectConversation}
+              onStartNewConversation={handleStartNewConversation}
+            />
+          </React.Suspense>
+        )}
+      </div>
     </div>
   );
 }

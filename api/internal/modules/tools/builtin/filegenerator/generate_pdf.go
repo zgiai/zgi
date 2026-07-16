@@ -43,7 +43,7 @@ func NewGeneratePDFTool(tenantID string) *GeneratePDFTool {
 				"en_US":   "Generate a styled PDF file from HTML and inline CSS.",
 				"zh_Hans": "根据 HTML 和内联 CSS 生成带排版的 PDF 文件。",
 			},
-			LLM: "Generate a styled PDF file from HTML and optional inline CSS. Use this instead of generate_file when the PDF needs layout, tables, colors, page styles, or richer visual formatting. Use self-contained HTML/CSS only; do not reference external URLs or scripts.",
+			LLM: "Generate a styled PDF temporary artifact from HTML and optional inline CSS. This tool does not write to File Management. When the user asks to save the result into File Management, generate the artifact first and then use file-manager/save_file_to_management. Use this instead of generate_file when the PDF needs layout, tables, colors, page styles, or richer visual formatting. Use self-contained HTML/CSS only; do not reference external URLs or scripts.",
 		},
 		Parameters: []tools.ToolParameter{
 			{
@@ -94,11 +94,11 @@ func NewGeneratePDFTool(tenantID string) *GeneratePDFTool {
 				Name:             "lifecycle",
 				Label:            tools.I18nText{"en_US": "Lifecycle", "zh_Hans": "生命周期"},
 				HumanDescription: tools.I18nText{"en_US": "Whether the generated file is persistent or temporary.", "zh_Hans": "生成文件是持久保存还是临时保存。"},
-				LLMDescription:   "File lifecycle: persistent or temporary. Defaults to persistent.",
+				LLMDescription:   "Temporary artifact lifecycle: persistent or temporary. Defaults to temporary.",
 				Type:             tools.ToolParameterTypeSelect,
 				Form:             tools.ToolParameterFormLLM,
 				Required:         false,
-				Default:          "persistent",
+				Default:          "temporary",
 				SupportVariable:  true,
 				Options: []tools.ToolParameterOption{
 					{Value: "persistent", Label: tools.I18nText{"en_US": "Persistent", "zh_Hans": "持久保存"}},

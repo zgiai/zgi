@@ -178,6 +178,12 @@ func TestDeepSeekAdapterGetBalance_UsesOfficialEndpoint(t *testing.T) {
 					"total_balance": "110.00",
 					"granted_balance": "10.00",
 					"topped_up_balance": "100.00"
+				},
+				{
+					"currency": "USD",
+					"total_balance": "5.50",
+					"granted_balance": "0.50",
+					"topped_up_balance": "5.00"
 				}
 			]
 		}`)
@@ -186,7 +192,7 @@ func TestDeepSeekAdapterGetBalance_UsesOfficialEndpoint(t *testing.T) {
 
 	a, err := NewDeepSeekAdapter(&adapter.AdapterConfig{
 		APIKey:  "config-key",
-		BaseURL: server.URL,
+		BaseURL: server.URL + "/v1",
 	})
 	if err != nil {
 		t.Fatalf("NewDeepSeekAdapter() error = %v", err)
@@ -214,6 +220,72 @@ func TestDeepSeekAdapterGetBalance_UsesOfficialEndpoint(t *testing.T) {
 	}
 	if got := balance.Remaining.String(); got != "110" {
 		t.Fatalf("Remaining = %q, want %q", got, "110")
+	}
+	if balance.Scope != adapter.BalanceScopeAccount {
+		t.Fatalf("Scope = %q, want %q", balance.Scope, adapter.BalanceScopeAccount)
+	}
+	if balance.Spendable == nil || !*balance.Spendable {
+		t.Fatalf("Spendable = %v, want true", balance.Spendable)
+	}
+	if len(balance.Items) != 2 {
+		t.Fatalf("len(Items) = %d, want 2", len(balance.Items))
+	}
+	if got := balance.Items[1].Currency; got != "USD" {
+		t.Fatalf("Items[1].Currency = %q, want %q", got, "USD")
+	}
+	if got := balance.Items[1].Remaining.String(); got != "5.5" {
+		t.Fatalf("Items[1].Remaining = %q, want %q", got, "5.5")
+	}
+}
+
+func TestDeepSeekAdapterGetBalance_EmptyBalanceIsInvalidSnapshot(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"is_available":true,"balance_infos":[]}`)
+	}))
+	defer server.Close()
+
+	a, err := NewDeepSeekAdapter(&adapter.AdapterConfig{APIKey: "test-key", BaseURL: server.URL})
+	if err != nil {
+		t.Fatalf("NewDeepSeekAdapter() error = %v", err)
+	}
+
+	if _, err := a.GetBalance(context.Background(), "runtime-key"); err == nil {
+		t.Fatal("GetBalance() error = nil, want invalid snapshot error")
+	}
+}
+
+func TestDeepSeekAdapterGetBalance_MissingAvailabilityIsInvalidSnapshot(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"balance_infos":[{"currency":"USD","total_balance":"1"}]}`)
+	}))
+	defer server.Close()
+
+	a, err := NewDeepSeekAdapter(&adapter.AdapterConfig{APIKey: "config-key", BaseURL: server.URL})
+	if err != nil {
+		t.Fatalf("NewDeepSeekAdapter() error = %v", err)
+	}
+	if _, err := a.GetBalance(context.Background(), "runtime-key"); err == nil {
+		t.Fatal("GetBalance() error = nil, want missing is_available error")
+	}
+}
+
+func TestDeepSeekAdapterGetBalance_PreservesProviderAvailability(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"is_available":false,"balance_infos":[{"currency":"CNY","total_balance":"2.00"}]}`)
+	}))
+	defer server.Close()
+
+	a, err := NewDeepSeekAdapter(&adapter.AdapterConfig{APIKey: "test-key", BaseURL: server.URL})
+	if err != nil {
+		t.Fatalf("NewDeepSeekAdapter() error = %v", err)
+	}
+
+	balance, err := a.GetBalance(context.Background(), "runtime-key")
+	if err != nil {
+		t.Fatalf("GetBalance() error = %v", err)
+	}
+	if balance.Spendable == nil || *balance.Spendable {
+		t.Fatalf("Spendable = %v, want false", balance.Spendable)
 	}
 }
 

@@ -53,6 +53,8 @@ export interface TableDataControlsProps {
   onBatchImport?: () => void;
   canEditData?: boolean;
   canManage?: boolean;
+  canBatchImport?: boolean;
+  canSmartIngest?: boolean;
   pageSearch: string;
   onPageSearchChange: (value: string) => void;
   visibleColumnNames: readonly string[];
@@ -81,6 +83,8 @@ const Controls: FC<TableDataControlsProps> = ({
   onRefresh,
   canEditData,
   canManage,
+  canBatchImport,
+  canSmartIngest,
   onBatchImport,
   pageSearch,
   onPageSearchChange,
@@ -288,7 +292,7 @@ const Controls: FC<TableDataControlsProps> = ({
 
             {hasDataFields ? (
               <>
-                {canEditData && (
+                {canSmartIngest && (
                   <Button asChild className="bg-highlight text-white hover:bg-highlight/90">
                     <Link
                       href={`/console/db/${dbId}/table/${tableId}/data`}
@@ -304,7 +308,7 @@ const Controls: FC<TableDataControlsProps> = ({
                     {t('dbs.tableData.edit')}
                   </Button>
                 )}
-                {canEditData && (
+                {canBatchImport && (
                   <Button
                     variant="outline"
                     onClick={onBatchImport}

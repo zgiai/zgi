@@ -16,8 +16,13 @@ import { IconPreview } from '@/components/common/icon-input/icon-preview';
 import { useDeleteDb } from '@/hooks/db/use-dbs';
 import { useT } from '@/i18n';
 import { ICON_BG } from '@/lib/config';
-import { useOrganizations } from '@/hooks/organization/use-organizations';
 import { WorkspaceAssetMoveDialog } from '@/components/common/workspace-asset-move-dialog';
+import { DATABASE_PERMISSION_ACTIONS } from '@/constants/permissions';
+import { AgentResourceBoundDialog } from '@/components/common/agent-resource-bound-dialog';
+import type { AgentResourceBoundImpact } from '@/services/types/common';
+import { getAgentResourceBoundImpact } from '@/utils/agent-resource-bound';
+import { dbService } from '@/services/db.service';
+import { toast } from 'sonner';
 
 interface DbCardProps {
   db: Db;
@@ -33,13 +38,53 @@ function DbCardBase({ db, onEdit, onDeleted, className }: DbCardProps) {
   const deleteMutation = useDeleteDb();
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [workspaceMoveOpen, setWorkspaceMoveOpen] = useState(false);
+  const [bindingImpact, setBindingImpact] = useState<AgentResourceBoundImpact | null>(null);
+  const [isCheckingDeleteImpact, setIsCheckingDeleteImpact] = useState(false);
   const router = useRouter();
-  const { currentOrganization } = useOrganizations();
 
   // Permissions
-  const { hasPermission } = useAccountPermissions();
-  const canManage = hasPermission('database.manage');
-  const canMoveAssets = ['owner', 'admin'].includes(currentOrganization?.organization_role ?? '');
+  const { hasAnyPermission } = useAccountPermissions();
+  const canUpdateDatabase = hasAnyPermission(DATABASE_PERMISSION_ACTIONS.update);
+  const canDeleteDatabase = hasAnyPermission(DATABASE_PERMISSION_ACTIONS.delete);
+  const canMoveDatabase = hasAnyPermission(DATABASE_PERMISSION_ACTIONS.move);
+  const canShowActions = canUpdateDatabase || canDeleteDatabase || canMoveDatabase;
+
+  const deleteDatabase = async (impact?: AgentResourceBoundImpact) => {
+    if (!canDeleteDatabase) return;
+    try {
+      await deleteMutation.mutateAsync({
+        dbId: db.id,
+        confirmation: impact
+          ? { agent_binding_action: 'unbind', impact_token: impact.impact_token }
+          : undefined,
+      });
+      setConfirmOpen(false);
+      setBindingImpact(null);
+      onDeleted?.(db.id);
+    } catch (error) {
+      const nextImpact = getAgentResourceBoundImpact(error);
+      if (!nextImpact) return;
+      setConfirmOpen(false);
+      setBindingImpact(nextImpact);
+    }
+  };
+
+  const requestDeleteDatabase = async () => {
+    if (!canDeleteDatabase || isCheckingDeleteImpact) return;
+    setIsCheckingDeleteImpact(true);
+    try {
+      const response = await dbService.previewDbDeleteImpact(db.id);
+      if (response.data) {
+        setBindingImpact(response.data);
+        return;
+      }
+      setConfirmOpen(true);
+    } catch {
+      toast.error(common('agentResourceBound.previewFailed'));
+    } finally {
+      setIsCheckingDeleteImpact(false);
+    }
+  };
 
   return (
     <div className="relative h-36 sm:h-40">
@@ -78,7 +123,7 @@ function DbCardBase({ db, onEdit, onDeleted, className }: DbCardProps) {
         </CardContent>
       </Card>
 
-      {(canManage || canMoveAssets) && (
+      {canShowActions && (
         <div className="absolute bottom-1.5 sm:bottom-2 right-1.5 sm:right-2 z-10">
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -91,18 +136,23 @@ function DbCardBase({ db, onEdit, onDeleted, className }: DbCardProps) {
               </button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
-              {canManage && (
+              {canUpdateDatabase && (
                 <DropdownMenuItem inset onSelect={() => onEdit?.(db)}>
                   <Pencil className="h-4 w-4" /> {common('edit')}
                 </DropdownMenuItem>
               )}
-              {canMoveAssets && (
+              {canMoveDatabase && (
                 <DropdownMenuItem inset onSelect={() => setWorkspaceMoveOpen(true)}>
                   <MoveRight className="h-4 w-4" /> {common('assetMove.title')}
                 </DropdownMenuItem>
               )}
-              {canManage && (
-                <DropdownMenuItem variant="destructive" inset onSelect={() => setConfirmOpen(true)}>
+              {canDeleteDatabase && (
+                <DropdownMenuItem
+                  variant="destructive"
+                  inset
+                  disabled={isCheckingDeleteImpact}
+                  onSelect={() => void requestDeleteDatabase()}
+                >
                   <Trash2 className="h-4 w-4" /> {common('delete')}
                 </DropdownMenuItem>
               )}
@@ -118,14 +168,19 @@ function DbCardBase({ db, onEdit, onDeleted, className }: DbCardProps) {
         title={t('deleteConfirmTitle', { name: db.name })}
         confirmText={common('confirm')}
         cancelText={common('close')}
-        onConfirm={() =>
-          deleteMutation.mutate(db.id, {
-            onSuccess: () => {
-              setConfirmOpen(false);
-              onDeleted?.(db.id);
-            },
-          })
-        }
+        onConfirm={() => void deleteDatabase()}
+        loading={deleteMutation.isPending}
+      />
+      <AgentResourceBoundDialog
+        open={Boolean(bindingImpact)}
+        impact={bindingImpact}
+        loading={deleteMutation.isPending}
+        onOpenChange={open => {
+          if (!open) setBindingImpact(null);
+        }}
+        onConfirm={() => {
+          if (bindingImpact) void deleteDatabase(bindingImpact);
+        }}
       />
       <WorkspaceAssetMoveDialog
         open={workspaceMoveOpen}

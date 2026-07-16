@@ -19,8 +19,8 @@ func TestFinishWaitingApprovalMessagePromotesLeaf(t *testing.T) {
 	messageID := uuid.New()
 
 	mock.ExpectBegin()
-	mock.ExpectExec(`(?s)UPDATE "chat_runtime_conversations" SET .*"current_leaf_message_id".*"dialogue_count"=dialogue_count \+ 1.* WHERE id = .* AND active_message_id = .* AND deleted_at IS NULL`).
-		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), conversationID, messageID).
+	mock.ExpectExec(`(?s)UPDATE "chat_runtime_conversations" SET .*"current_leaf_message_id".*"dialogue_count"=CASE WHEN current_leaf_message_id = .* THEN dialogue_count ELSE dialogue_count \+ 1 END.* WHERE id = .* AND active_message_id = .* AND deleted_at IS NULL`).
+		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), messageID, sqlmock.AnyArg(), sqlmock.AnyArg(), conversationID, messageID).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 
@@ -94,7 +94,7 @@ func TestSearchByCallerScopedMapsResults(t *testing.T) {
 		).
 		WillReturnRows(rows)
 
-	results, err := repo.SearchByCallerScoped(context.Background(), organizationID, accountID, runtimemodel.ConversationCallerAIChat, nil, "", nil, "release", 20)
+	results, err := repo.SearchByCallerScoped(context.Background(), organizationID, accountID, runtimemodel.ConversationCallerAIChat, nil, "", nil, "", "release", 20)
 	if err != nil {
 		t.Fatalf("SearchByCallerScoped: %v", err)
 	}
@@ -109,6 +109,231 @@ func TestSearchByCallerScopedMapsResults(t *testing.T) {
 	}
 	if results[0].MatchText != "Generate release notes" {
 		t.Fatalf("match text = %q", results[0].MatchText)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet expectations: %v", err)
+	}
+}
+
+func TestSearchByCallerScopedAppliesSurfaceFilter(t *testing.T) {
+	db, mock := newConversationRepositoryMockDB(t)
+	repo := NewConversationRepository(db)
+	organizationID := uuid.New()
+	accountID := uuid.New()
+
+	rows := sqlmock.NewRows([]string{
+		"type",
+		"conversation_id",
+		"conversation_title",
+		"message_id",
+		"match_text",
+		"updated_at",
+		"rank",
+	})
+	mock.ExpectQuery(`(?s).*c\.metadata->>'surface'.*m_surface\.metadata->>'surface'.*ORDER BY rank ASC, updated_at DESC.*LIMIT.*`).
+		WithArgs(
+			organizationID,
+			accountID,
+			runtimemodel.ConversationCallerAIChat,
+			"contextual_sidebar",
+			"contextual_sidebar",
+			"%asset%",
+			"%asset%",
+			organizationID,
+			accountID,
+			runtimemodel.ConversationCallerAIChat,
+			"contextual_sidebar",
+			"contextual_sidebar",
+			"%asset%",
+			"%asset%",
+			10,
+		).
+		WillReturnRows(rows)
+
+	results, err := repo.SearchByCallerScoped(context.Background(), organizationID, accountID, runtimemodel.ConversationCallerAIChat, nil, "", nil, "contextual_sidebar", "asset", 10)
+	if err != nil {
+		t.Fatalf("SearchByCallerScoped: %v", err)
+	}
+	if len(results) != 0 {
+		t.Fatalf("expected no results, got %d", len(results))
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet expectations: %v", err)
+	}
+}
+
+func TestListByCallerSurfaceScopedAppliesSidebarSurfaceFilter(t *testing.T) {
+	db, mock := newConversationRepositoryMockDB(t)
+	repo := NewConversationRepository(db)
+	organizationID := uuid.New()
+	accountID := uuid.New()
+
+	mock.ExpectQuery(`(?s).*FROM "chat_runtime_conversations".*metadata->>'surface'.*EXISTS.*m\.metadata->>'surface'.*`).
+		WithArgs(
+			organizationID,
+			accountID,
+			runtimemodel.ConversationCallerAIChat,
+			"contextual_sidebar",
+			"contextual_sidebar",
+		).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+	mock.ExpectQuery(`(?s).*FROM "chat_runtime_conversations".*metadata->>'surface'.*EXISTS.*m\.metadata->>'surface'.*ORDER BY updated_at DESC.*LIMIT.*`).
+		WithArgs(
+			organizationID,
+			accountID,
+			runtimemodel.ConversationCallerAIChat,
+			"contextual_sidebar",
+			"contextual_sidebar",
+			20,
+		).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}))
+
+	results, total, err := repo.ListByCallerSurfaceScoped(context.Background(), organizationID, accountID, runtimemodel.ConversationCallerAIChat, nil, "contextual_sidebar", 20, 0)
+	if err != nil {
+		t.Fatalf("ListByCallerSurfaceScoped: %v", err)
+	}
+	if total != 0 || len(results) != 0 {
+		t.Fatalf("results = %d total = %d, want empty", len(results), total)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet expectations: %v", err)
+	}
+}
+
+func TestListByCallerSurfaceScopedWorkChatKeepsLegacyOnlyWhenNoOtherSurface(t *testing.T) {
+	db, mock := newConversationRepositoryMockDB(t)
+	repo := NewConversationRepository(db)
+	organizationID := uuid.New()
+	accountID := uuid.New()
+
+	mock.ExpectQuery(`(?s).*FROM "chat_runtime_conversations".*NOT EXISTS.*m\.metadata->>'surface'.*<>.*`).
+		WithArgs(
+			organizationID,
+			accountID,
+			runtimemodel.ConversationCallerAIChat,
+			"work_chat",
+			"work_chat",
+		).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+	mock.ExpectQuery(`(?s).*FROM "chat_runtime_conversations".*NOT EXISTS.*m\.metadata->>'surface'.*<>.*ORDER BY updated_at DESC.*LIMIT.*`).
+		WithArgs(
+			organizationID,
+			accountID,
+			runtimemodel.ConversationCallerAIChat,
+			"work_chat",
+			"work_chat",
+			20,
+		).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}))
+
+	results, total, err := repo.ListByCallerSurfaceScoped(context.Background(), organizationID, accountID, runtimemodel.ConversationCallerAIChat, nil, "work_chat", 20, 0)
+	if err != nil {
+		t.Fatalf("ListByCallerSurfaceScoped: %v", err)
+	}
+	if total != 0 || len(results) != 0 {
+		t.Fatalf("results = %d total = %d, want empty", len(results), total)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet expectations: %v", err)
+	}
+}
+
+func TestListByCallerSourceScopedFiltersWebAppIdentity(t *testing.T) {
+	db, mock := newConversationRepositoryMockDB(t)
+	repo := NewConversationRepository(db)
+	organizationID := uuid.New()
+	accountID := uuid.New()
+	agentID := uuid.New()
+	webAppID := uuid.New()
+
+	mock.ExpectQuery(`(?s).*FROM "chat_runtime_conversations".*caller_type.*caller_id.*source.*source_web_app_id.*`).
+		WithArgs(
+			organizationID,
+			accountID,
+			runtimemodel.ConversationCallerAgent,
+			agentID,
+			runtimemodel.ConversationSourceWebApp,
+			webAppID,
+		).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+	mock.ExpectQuery(`(?s).*FROM "chat_runtime_conversations".*caller_type.*caller_id.*source.*source_web_app_id.*ORDER BY updated_at DESC.*LIMIT.*`).
+		WithArgs(
+			organizationID,
+			accountID,
+			runtimemodel.ConversationCallerAgent,
+			agentID,
+			runtimemodel.ConversationSourceWebApp,
+			webAppID,
+			20,
+		).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}))
+
+	results, total, err := repo.ListByCallerSourceScoped(
+		context.Background(),
+		organizationID,
+		accountID,
+		runtimemodel.ConversationCallerAgent,
+		&agentID,
+		runtimemodel.ConversationSourceWebApp,
+		&webAppID,
+		20,
+		0,
+	)
+	if err != nil {
+		t.Fatalf("ListByCallerSourceScoped: %v", err)
+	}
+	if total != 0 || len(results) != 0 {
+		t.Fatalf("results = %d total = %d, want empty", len(results), total)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet expectations: %v", err)
+	}
+}
+
+func TestUpdateAfterMessagePromotesLeafWhenCurrentLeafIsParent(t *testing.T) {
+	db, mock := newConversationRepositoryMockDB(t)
+	repo := NewConversationRepository(db)
+	conversationID := uuid.New()
+	messageID := uuid.New()
+	parentID := uuid.New()
+
+	messageRows := sqlmock.NewRows([]string{"id", "parent_id"}).AddRow(messageID, parentID)
+	mock.ExpectQuery(`(?s)SELECT .* FROM "chat_runtime_messages" .*id = .*deleted_at IS NULL.*LIMIT`).
+		WillReturnRows(messageRows)
+	mock.ExpectBegin()
+	mock.ExpectExec(`(?s)UPDATE "chat_runtime_conversations" SET .*"current_leaf_message_id".* WHERE .*id = .*deleted_at IS NULL.*current_leaf_message_id = .* OR current_leaf_message_id = .*`).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	if err := repo.UpdateAfterMessage(context.Background(), conversationID, messageID); err != nil {
+		t.Fatalf("UpdateAfterMessage: %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet expectations: %v", err)
+	}
+}
+
+func TestUpdateAfterMessageDoesNotPromoteLeafAfterBranchSwitch(t *testing.T) {
+	db, mock := newConversationRepositoryMockDB(t)
+	repo := NewConversationRepository(db)
+	conversationID := uuid.New()
+	messageID := uuid.New()
+	parentID := uuid.New()
+
+	messageRows := sqlmock.NewRows([]string{"id", "parent_id"}).AddRow(messageID, parentID)
+	mock.ExpectQuery(`(?s)SELECT .* FROM "chat_runtime_messages" .*id = .*deleted_at IS NULL.*LIMIT`).
+		WillReturnRows(messageRows)
+	mock.ExpectBegin()
+	mock.ExpectExec(`(?s)UPDATE "chat_runtime_conversations" SET .*"current_leaf_message_id".* WHERE .*id = .*deleted_at IS NULL.*current_leaf_message_id = .* OR current_leaf_message_id = .*`).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectCommit()
+	mock.ExpectBegin()
+	mock.ExpectExec(`(?s)UPDATE "chat_runtime_conversations" SET .*"active_message_id".* WHERE id = .* AND active_message_id = .* AND deleted_at IS NULL`).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	if err := repo.UpdateAfterMessage(context.Background(), conversationID, messageID); err != nil {
+		t.Fatalf("UpdateAfterMessage: %v", err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("unmet expectations: %v", err)

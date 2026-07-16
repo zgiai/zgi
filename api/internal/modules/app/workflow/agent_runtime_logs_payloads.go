@@ -12,7 +12,11 @@ const (
 func agentRuntimeEventInput(event map[string]interface{}) interface{} {
 	switch agentRuntimeEventType(event) {
 	case "model_call":
-		return sanitizeAgentRuntimeModelRequest(runtimeMap(event["request"]), runtimeString(event["user_system_prompt"]))
+		request := runtimeMap(event["log_context"])
+		if len(request) == 0 {
+			request = runtimeMap(event["request"])
+		}
+		return sanitizeAgentRuntimeModelRequest(request, runtimeString(event["user_system_prompt"]))
 	case "tool_call":
 		return sanitizeAgentRuntimeToolArguments(runtimeMap(event["arguments"]))
 	case "skill_load":
@@ -182,6 +186,9 @@ func sanitizeAgentRuntimeRawEvent(event map[string]interface{}) map[string]inter
 	raw := copyRuntimeMap(event)
 	if agentRuntimeEventType(event) == "model_call" {
 		raw["request"] = sanitizeAgentRuntimeModelRequest(runtimeMap(event["request"]), runtimeString(event["user_system_prompt"]))
+		if logContext := runtimeMap(event["log_context"]); len(logContext) > 0 {
+			raw["log_context"] = sanitizeAgentRuntimeModelRequest(logContext, runtimeString(event["user_system_prompt"]))
+		}
 	}
 	if arguments := runtimeMap(event["arguments"]); len(arguments) > 0 {
 		raw["arguments"] = sanitizeAgentRuntimeToolArguments(arguments)

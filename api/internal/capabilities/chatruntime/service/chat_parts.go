@@ -66,6 +66,28 @@ func applyRunConfigToParts(config RunConfig, parts *chatRequestParts) {
 	}
 }
 
+func applyCallerRuntimeSurfacePolicy(caller Caller, parts *chatRequestParts) {
+	if parts == nil {
+		return
+	}
+	parts.Surface = normalizeRuntimeSurfaceForCaller(caller, parts.Surface)
+}
+
+// applyPersistedConversationSurface keeps a conversation on the runtime surface
+// selected when it was created. Later requests may carry stale surface hints,
+// but they cannot change the conversation's runtime capabilities. Conversations
+// that predate surface metadata keep their legacy behavior and are not migrated.
+func applyPersistedConversationSurface(conversation *runtimemodel.Conversation, parts *chatRequestParts) {
+	if conversation == nil || parts == nil || conversation.Metadata == nil {
+		return
+	}
+	persisted := strings.TrimSpace(stringMetadataValue(conversation.Metadata["surface"]))
+	if persisted == "" {
+		return
+	}
+	parts.Surface = normalizeAIChatSurface(persisted)
+}
+
 func runConfigAllowsUserMemory(config RunConfig) bool {
 	return config.UseMemory && !strings.EqualFold(strings.TrimSpace(config.BillingAppType), runtimemodel.ConversationCallerAgent)
 }
@@ -134,6 +156,9 @@ func isUsableAssistantHistoryStatus(status string) bool {
 
 func normalizeChatRequest(req runtimedto.ChatRequest) (*chatRequestParts, error) {
 	query := strings.TrimSpace(req.Query)
+	surface := normalizeAIChatSurface(req.Surface)
+	runtimeContext := normalizeRuntimeContext(req.RuntimeContext)
+	operationContext, operationLedger := normalizeOperationContext(req.OperationContext)
 	modelName := strings.TrimSpace(req.Model)
 	if query == "" || modelName == "" {
 		return nil, fmt.Errorf("%w: query and model are required", ErrInvalidInput)
@@ -148,13 +173,30 @@ func normalizeChatRequest(req runtimedto.ChatRequest) (*chatRequestParts, error)
 		providerPtr = &provider
 	}
 	return &chatRequestParts{
-		Query:       query,
-		ModelName:   modelName,
-		Provider:    provider,
-		ProviderPtr: providerPtr,
-		Parameters:  params,
-		UseMemory:   req.UseMemory,
+		Query:               query,
+		Surface:             surface,
+		RuntimeContext:      runtimeContext,
+		RawOperationContext: copyStringAnyMap(req.OperationContext),
+		OperationContext:    operationContext,
+		OperationLedger:     operationLedger,
+		ModelName:           modelName,
+		Provider:            provider,
+		ProviderPtr:         providerPtr,
+		Parameters:          params,
+		UseMemory:           req.UseMemory,
 	}, nil
+}
+
+func normalizeRuntimeContext(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	runes := []rune(value)
+	if len(runes) <= runtimeContextMaxRunes {
+		return value
+	}
+	return strings.TrimSpace(string(runes[:runtimeContextMaxRunes]))
 }
 
 func normalizeRegenerateRequest(req runtimedto.RegenerateMessageRequest, message *runtimemodel.Message) (*chatRequestParts, error) {
@@ -198,20 +240,39 @@ func normalizeRegenerateRequest(req runtimedto.RegenerateMessageRequest, message
 	if req.UseMemory != nil {
 		useMemory = *req.UseMemory
 	}
+	runtimeContext := normalizeRuntimeContext(req.RuntimeContext)
+	surface := normalizeAIChatSurface(regenerateRequestSurface(req, message))
+	operationContext, operationLedger := normalizeOperationContext(req.OperationContext)
 
 	return &chatRequestParts{
-		Query:       query,
-		ModelName:   modelName,
-		Provider:    provider,
-		ProviderPtr: providerPtr,
-		Parameters:  params,
-		UseMemory:   useMemory,
+		Query:               query,
+		Surface:             surface,
+		RuntimeContext:      runtimeContext,
+		RawOperationContext: copyStringAnyMap(req.OperationContext),
+		OperationContext:    operationContext,
+		OperationLedger:     operationLedger,
+		ModelName:           modelName,
+		Provider:            provider,
+		ProviderPtr:         providerPtr,
+		Parameters:          params,
+		UseMemory:           useMemory,
 	}, nil
+}
+
+func regenerateRequestSurface(req runtimedto.RegenerateMessageRequest, message *runtimemodel.Message) string {
+	if strings.TrimSpace(req.Surface) != "" {
+		return req.Surface
+	}
+	if message == nil {
+		return ""
+	}
+	return stringMetadataValue(message.Metadata["surface"])
 }
 
 func replacementRootMessage(source *runtimemodel.Message, parts *chatRequestParts) *runtimemodel.Message {
 	message := newStreamingMessage(source.ConversationID, nil, parts)
 	message.ID = source.ID
+	message.Metadata = withOperationPlanTaskID(message.Metadata, source.ID.String())
 	message.CreatedAt = source.CreatedAt
 	message.UpdatedAt = time.Now()
 	return message
@@ -238,7 +299,9 @@ func newStreamingMessage(conversationID uuid.UUID, parentID *uuid.UUID, parts *c
 	if strings.TrimSpace(parts.BillingSource) != "" {
 		billingReasonSource = strings.TrimSpace(parts.BillingSource)
 	}
+	messageID := uuid.New()
 	return &runtimemodel.Message{
+		ID:                  messageID,
 		ConversationID:      conversationID,
 		ParentID:            parentID,
 		Query:               parts.Query,
@@ -247,37 +310,152 @@ func newStreamingMessage(conversationID uuid.UUID, parentID *uuid.UUID, parts *c
 		ModelName:           parts.ModelName,
 		BillingReasonSource: &billingReasonSource,
 		ModelParameters:     parts.Parameters,
-		Metadata:            streamingMessageMetadata(parts),
+		Metadata:            streamingMessageMetadataWithTaskID(parts, messageID.String()),
 	}
 }
 
 func streamingMessageMetadata(parts *chatRequestParts) map[string]interface{} {
+	return streamingMessageMetadataWithTaskID(parts, "")
+}
+
+func streamingMessageMetadataWithTaskID(parts *chatRequestParts, taskID string) map[string]interface{} {
 	version := systemPromptVersion
 	if strings.TrimSpace(parts.SystemPromptVersion) != "" {
 		version = strings.TrimSpace(parts.SystemPromptVersion)
 	}
 	metadata := map[string]interface{}{
 		"system_prompt_version": version,
+		"surface":               normalizeAIChatSurface(parts.Surface),
 	}
-	if parts.SkillMode != "" && parts.SkillMode != skillModeDisabled {
+	if mode := normalizeExecutionMode(parts.ExecutionMode); mode != "" {
+		metadata["execution_mode"] = mode
+		if mode == executionModeAgentLoop {
+			metadata["model_use_case"] = "agent"
+		} else {
+			metadata["model_use_case"] = "text-chat"
+		}
+	}
+	if parts.ProtocolToolsEnabled {
+		metadata["protocol_tools_enabled"] = true
+	}
+	if parts.ProtocolToolsEnabled || (parts.SkillMode != "" && parts.SkillMode != skillModeDisabled) {
 		metadata["has_trace"] = false
 		metadata["skill_call_count"] = 0
 		metadata["skill_names"] = []interface{}{}
 		metadata["tool_call_count"] = 0
 		metadata["tool_names"] = []interface{}{}
 		metadata["guardrail_count"] = 0
-		metadata["skill_mode"] = parts.SkillMode
-		metadata["configured_skill_ids"] = parts.SkillIDs
+		if parts.SkillMode != "" {
+			metadata["skill_mode"] = parts.SkillMode
+		}
+		metadata["configured_skill_ids"] = append([]string(nil), parts.SkillIDs...)
 	}
 	if parts.ContextControl != nil {
 		metadata["context_control"] = parts.ContextControl
 	}
+	if status := strings.TrimSpace(parts.ModelCapabilityStatus); status != "" || parts.FunctionCallingAssumed {
+		modelCapabilities := map[string]interface{}{
+			"function_calling_known":     parts.FunctionCallingKnown,
+			"function_calling_supported": parts.ModelSupportsFunctionCalling,
+			"function_calling_assumed":   parts.FunctionCallingAssumed,
+		}
+		if status != "" {
+			modelCapabilities["status"] = status
+		}
+		if errMessage := strings.TrimSpace(parts.ModelCapabilityError); errMessage != "" {
+			modelCapabilities["error"] = errMessage
+		}
+		metadata["model_capabilities"] = modelCapabilities
+	}
 	if parts.UseMemory {
 		metadata["use_memory"] = true
+	}
+	if parts.RuntimeContext != "" {
+		metadata["runtime_context"] = map[string]interface{}{
+			"included":   true,
+			"char_count": len([]rune(parts.RuntimeContext)),
+		}
+	}
+	if parts.OperationLedger != nil {
+		metadata["operation_ledger"] = copyStringAnyMap(parts.OperationLedger)
+	}
+	if snapshot := turnInitialContextSnapshot(parts); snapshot != nil {
+		metadata[turnInitialContextSnapshotKey] = snapshot
+		metadata[turnStartContextKey] = snapshot
+	}
+	if parts.ModelTurnIntent != nil {
+		metadata["model_turn_intent"] = parts.ModelTurnIntent
+		if contract := modelTurnIntentTaskContract(parts.ModelTurnIntent); len(contract) > 0 {
+			metadata["turn_task_contract"] = contract
+		}
+	} else if strings.TrimSpace(parts.ModelTurnIntentError) != "" {
+		metadata["model_turn_intent_error"] = strings.TrimSpace(parts.ModelTurnIntentError)
+	}
+	if strategy := contextualAIChatTurnStrategyFromParts(parts); strategy != nil {
+		metadata["turn_strategy"] = strategy
+		if plan := operationPlanFromTurnStrategy(taskID, parts, strategy); len(plan) > 0 {
+			metadata["operation_plan"] = plan
+		}
+	}
+	if snapshot := consoleFilesContextSnapshot(parts); snapshot != nil {
+		metadata[consoleFilesContextSnapshotKey] = snapshot
+	}
+	if snapshot := consoleAgentsContextSnapshot(parts); snapshot != nil {
+		metadata[consoleAgentsContextSnapshotKey] = snapshot
 	}
 	if parts.Attachments != nil && len(parts.Attachments.Files) > 0 {
 		metadata["files"] = parts.Attachments.metadataFiles()
 		metadata["file_count"] = len(parts.Attachments.Files)
 	}
 	return metadata
+}
+
+func normalizeExecutionMode(value string) string {
+	switch strings.TrimSpace(value) {
+	case executionModeAgentLoop:
+		return executionModeAgentLoop
+	case executionModeLegacyToolChat:
+		return executionModeLegacyToolChat
+	case executionModeDirectChat:
+		return executionModeDirectChat
+	default:
+		return ""
+	}
+}
+
+func restoreExecutionModeFromMetadata(parts *chatRequestParts, metadata map[string]interface{}) {
+	if parts == nil {
+		return
+	}
+	parts.ExecutionMode = normalizeExecutionMode(stringMetadataValue(metadata["execution_mode"]))
+	if parts.ExecutionMode == "" {
+		// Messages created before execution mode was persisted already entered the
+		// Agent loop. Keep their continuation semantics instead of switching the
+		// in-flight turn to a different runtime after an upgrade.
+		parts.ExecutionMode = executionModeAgentLoop
+	}
+}
+
+func normalizeAIChatSurface(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case aiChatSurfaceContextualSidebar, "contextual-sidebar", "sidebar", "contextual":
+		return aiChatSurfaceContextualSidebar
+	case aiChatSurfaceExternalPageChat, "external-page-chat", "external", "page-chat", "webapp", "agent-webapp":
+		return aiChatSurfaceExternalPageChat
+	case aiChatSurfaceWorkChat, "work-chat", "work", "aichat", "":
+		return aiChatSurfaceWorkChat
+	default:
+		return aiChatSurfaceWorkChat
+	}
+}
+
+func normalizeRuntimeSurfaceForCaller(caller Caller, surface string) string {
+	if normalizeCallerType(caller.Type) == runtimemodel.ConversationCallerAgent {
+		return aiChatSurfaceExternalPageChat
+	}
+	return normalizeAIChatSurface(surface)
+}
+
+func isContextualAIChatSurface(value string) bool {
+	return normalizeAIChatSurface(value) == aiChatSurfaceContextualSidebar
 }

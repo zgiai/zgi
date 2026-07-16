@@ -29,11 +29,15 @@ export function WorkflowContextMenu({
   const { openModal } = useCreateNodeModal();
   const setIsContextMenuOpen = useWorkflowStore.use.setIsContextMenuOpen();
   const addNode = useWorkflowStore.use.addNode();
+  const mode = useWorkflowStore.use.mode();
+  const canEdit = useWorkflowStore.use.canEdit();
+  const isReadOnly = mode === 'history' || !canEdit;
+  const effectiveDisabled = disabled || isReadOnly;
   const { screenToFlowPosition } = useReactFlow();
 
   const handleCanvasContextMenu = useCallback(
     (event: React.MouseEvent) => {
-      if (disabled) {
+      if (effectiveDisabled) {
         return;
       }
 
@@ -64,12 +68,12 @@ export function WorkflowContextMenu({
       setIsCanvasMenuOpen(true);
       setIsContextMenuOpen(true);
     },
-    [disabled, setIsContextMenuOpen, setLastMouseClient]
+    [effectiveDisabled, setIsContextMenuOpen, setLastMouseClient]
   );
 
   const handleNodeContextMenu = useCallback(
     (event: React.MouseEvent, nodeId: string) => {
-      if (disabled) {
+      if (effectiveDisabled) {
         return;
       }
 
@@ -98,7 +102,7 @@ export function WorkflowContextMenu({
         onNodeContextMenu(event, nodeId);
       }
     },
-    [disabled, onNodeContextMenu, setIsContextMenuOpen, setLastMouseClient]
+    [effectiveDisabled, onNodeContextMenu, setIsContextMenuOpen, setLastMouseClient]
   );
 
   // Expose the node context menu handler globally for programmatic triggering
@@ -106,7 +110,7 @@ export function WorkflowContextMenu({
     const windowWithContextMenu = window as Window & {
       __workflowNodeContextMenu?: (event: React.MouseEvent, nodeId: string) => void;
     };
-    if (disabled) {
+    if (effectiveDisabled) {
       delete windowWithContextMenu.__workflowNodeContextMenu;
       setIsCanvasMenuOpen(false);
       setContextNodeId(null);
@@ -120,9 +124,10 @@ export function WorkflowContextMenu({
         delete windowWithContextMenu.__workflowNodeContextMenu;
       }
     };
-  }, [disabled, handleNodeContextMenu, setIsContextMenuOpen]);
+  }, [effectiveDisabled, handleNodeContextMenu, setIsContextMenuOpen]);
 
   const handleAddNode = useCallback(() => {
+    if (effectiveDisabled) return;
     // Open CreateNodeModal at the last right-click position
     const position = { x: clickPosition.x, y: clickPosition.y };
     openModal(position, null, position);
@@ -130,21 +135,23 @@ export function WorkflowContextMenu({
     setIsCanvasMenuOpen(false);
     setContextNodeId(null);
     setIsContextMenuOpen(false);
-  }, [clickPosition, openModal, setIsContextMenuOpen]);
+  }, [clickPosition, effectiveDisabled, openModal, setIsContextMenuOpen]);
 
   const handleAddNote = useCallback(() => {
+    if (effectiveDisabled) return;
     const position = screenToFlowPosition({ x: clickPosition.x, y: clickPosition.y });
     addNode({ type: 'note', text: '' }, position);
     setIsCanvasMenuOpen(false);
     setContextNodeId(null);
-  }, [clickPosition, addNode, screenToFlowPosition]);
+  }, [clickPosition, addNode, effectiveDisabled, screenToFlowPosition]);
 
   const handlePasteAtPointer = useCallback(() => {
+    if (effectiveDisabled) return;
     // Paste using lastMouseClient recorded at context open
     pasteClipboardAtPointer();
     setIsCanvasMenuOpen(false);
     setContextNodeId(null);
-  }, [pasteClipboardAtPointer]);
+  }, [effectiveDisabled, pasteClipboardAtPointer]);
 
   // Close menu when clicking outside
   useEffect(() => {
@@ -163,20 +170,21 @@ export function WorkflowContextMenu({
   }, [isCanvasMenuOpen, contextNodeId, setIsContextMenuOpen]);
 
   const handleDeleteNode = useCallback(() => {
+    if (effectiveDisabled) return;
     if (contextNodeId) {
       deleteNode(contextNodeId);
       setContextNodeId(null); // Reset context node after deletion
     }
-  }, [contextNodeId, deleteNode]);
+  }, [contextNodeId, deleteNode, effectiveDisabled]);
 
   const handleCopyNode = useCallback(() => {
-    if (!contextNodeId) return;
+    if (!contextNodeId || effectiveDisabled) return;
     // Select the context node, then copy via operations hook (ignores Start internally)
     selectNode(contextNodeId);
     copySelectedNode();
     setIsCanvasMenuOpen(false);
     setContextNodeId(null);
-  }, [contextNodeId, selectNode, copySelectedNode]);
+  }, [contextNodeId, effectiveDisabled, selectNode, copySelectedNode]);
 
   return (
     <>
@@ -188,7 +196,7 @@ export function WorkflowContextMenu({
         {children}
       </div>
       {/* Custom Context Menu */}
-      {!disabled && (isCanvasMenuOpen || contextNodeId) && (
+      {!effectiveDisabled && (isCanvasMenuOpen || contextNodeId) && (
         <div
           className="fixed z-50 min-w-[8rem] overflow-hidden rounded-md border bg-popover p-1 text-popover-foreground shadow-md"
           style={{

@@ -11,6 +11,7 @@ import { API_URL, FILE_PREVIEW_ALLOWED_ORIGINS } from '@/lib/config';
 import { useT } from '@/i18n';
 import { useLocale } from '@/hooks/use-locale';
 import { formatFileSize } from '@/utils/format';
+import { cn } from '@/lib/utils';
 import { isSensitiveOutputBlockedValue } from '@/utils/model-output-filter';
 import {
   QuestionAnswerTranscript,
@@ -18,12 +19,16 @@ import {
 } from '@/components/workflow/question-answer/question-answer-transcript';
 import type { QuestionAnswerTranscriptItem } from '@/components/workflow/question-answer/runtime-events';
 
+const jsonViewLightTheme = lightTheme as React.CSSProperties;
+
 interface ResultsProps {
   mode: 'draft' | 'history';
   title?: string;
   streamedText?: string;
   historyResult?: HistoryResult | null;
   emptyText: string;
+  headerClassName?: string;
+  emptyStateClassName?: string;
   questionAnswerTranscript?: QuestionAnswerTranscriptItem[];
 }
 
@@ -273,6 +278,8 @@ const Results: React.FC<ResultsProps> = ({
   streamedText,
   historyResult,
   emptyText,
+  headerClassName,
+  emptyStateClassName,
   questionAnswerTranscript = [],
 }) => {
   const t = useT('common');
@@ -459,7 +466,7 @@ const Results: React.FC<ResultsProps> = ({
         {renderGeneratedFiles(generatedFiles)}
         <JsonView
           value={(value as unknown) ?? {}}
-          style={lightTheme}
+          style={jsonViewLightTheme}
           className="rounded-lg overflow-auto bg-muted/20 p-3 border border-border/40 font-mono text-sm leading-relaxed"
         />
       </>
@@ -468,7 +475,12 @@ const Results: React.FC<ResultsProps> = ({
 
   return (
     <div className="flex-1 flex flex-col min-h-0 bg-background/20 group relative">
-      <div className="px-3 py-1.5 border-b flex items-center justify-between bg-muted/30">
+      <div
+        className={cn(
+          'flex items-center justify-between border-b bg-muted/30 px-3 py-1.5',
+          headerClassName
+        )}
+      >
         <div className="flex items-center gap-1.5 h-6">
           <FileText className="w-5 h-5 text-violet-500" />
           <span className="text-sm font-semibold">{title || t('results')}</span>
@@ -488,7 +500,7 @@ const Results: React.FC<ResultsProps> = ({
         </div>
       </div>
 
-      <div ref={scrollRef} className="flex-1 overflow-auto p-3 scrollbar-thin">
+      <div ref={scrollRef} className="min-h-0 flex-1 overflow-auto p-3 scrollbar-thin">
         {mode === 'draft' ? (
           <>
             {hasTranscript ? (
@@ -500,7 +512,12 @@ const Results: React.FC<ResultsProps> = ({
               ) : historyResult.kind === 'json' ? (
                 renderJsonResult(historyResult.value)
               ) : (
-                <div className="h-full flex flex-col items-center justify-center gap-4 py-12 text-muted-foreground/50">
+                <div
+                  className={cn(
+                    'h-full flex flex-col items-center justify-center gap-4 py-12 text-muted-foreground/50',
+                    emptyStateClassName
+                  )}
+                >
                   <FileText className="w-12 h-12 stroke-[1.5] shrink-0" />
                   <span className="text-sm font-medium">{emptyText}</span>
                 </div>
@@ -508,7 +525,12 @@ const Results: React.FC<ResultsProps> = ({
             ) : streamedText && streamedText.length > 0 ? (
               <MarkdownViewer content={displayText(streamedText)} />
             ) : !hasTranscript ? (
-              <div className="h-full flex flex-col items-center justify-center gap-4 py-12 text-muted-foreground/40">
+              <div
+                className={cn(
+                  'h-full flex flex-col items-center justify-center gap-4 py-12 text-muted-foreground/40',
+                  emptyStateClassName
+                )}
+              >
                 <FileText className="w-12 h-12 stroke-[1.5] shrink-0" />
                 <span className="text-sm font-medium">{emptyText}</span>
               </div>
@@ -519,7 +541,12 @@ const Results: React.FC<ResultsProps> = ({
         ) : historyResult && historyResult.kind === 'json' ? (
           renderJsonResult(historyResult.value)
         ) : (
-          <div className="h-full flex flex-col items-center justify-center gap-4 py-12 text-muted-foreground/40">
+          <div
+            className={cn(
+              'h-full flex flex-col items-center justify-center gap-4 py-12 text-muted-foreground/40',
+              emptyStateClassName
+            )}
+          >
             <FileText className="w-12 h-12 stroke-[1.5] shrink-0" />
             <span className="text-sm font-medium">{emptyText}</span>
           </div>

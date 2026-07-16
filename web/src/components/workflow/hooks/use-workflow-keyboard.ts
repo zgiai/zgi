@@ -37,6 +37,9 @@ const useWorkflowKeyboard = (options?: { onSave?: () => void; disabled?: boolean
   const setInteractionMode = useWorkflowStore.use.setInteractionMode();
   const edges = useWorkflowStore.use.edges();
   const onEdgesChange = useWorkflowStore.use.onEdgesChange();
+  const mode = useWorkflowStore.use.mode();
+  const canEdit = useWorkflowStore.use.canEdit();
+  const isReadOnly = Boolean(disabled || mode === 'history' || !canEdit);
 
   const {
     deleteSelectedNode,
@@ -48,6 +51,8 @@ const useWorkflowKeyboard = (options?: { onSave?: () => void; disabled?: boolean
 
   const handleKeyDown = useCallback(
     (event: KeyboardEvent) => {
+      if (isReadOnly) return;
+
       const target = event.target as HTMLElement;
       const activeElement =
         document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -141,16 +146,17 @@ const useWorkflowKeyboard = (options?: { onSave?: () => void; disabled?: boolean
       setInteractionMode,
       edges,
       onEdgesChange,
+      isReadOnly,
     ]
   );
 
   useEffect(() => {
-    if (disabled) return;
+    if (isReadOnly) return;
     document.addEventListener('keydown', handleKeyDown);
     return () => {
       document.removeEventListener('keydown', handleKeyDown);
     };
-  }, [handleKeyDown, disabled]);
+  }, [handleKeyDown, isReadOnly]);
 
   return {
     shortcuts: {

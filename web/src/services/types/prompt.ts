@@ -69,6 +69,7 @@ export interface PromptSummary {
   latest_version: number;
   latest_labels: string[];
   latest_prompt_type: PromptType;
+  production_version?: number | null;
   is_owned: boolean;
   created_at: string;
   updated_at: string;
@@ -81,15 +82,6 @@ export interface PromptDetail extends PromptSummary {
 export interface PromptPickerSelection {
   prompt: PromptSummary;
   version: PromptVersion;
-  reference:
-    | {
-        mode: 'label';
-        label: string;
-      }
-    | {
-        mode: 'version';
-        version: number;
-      };
 }
 
 export interface PromptListParams {

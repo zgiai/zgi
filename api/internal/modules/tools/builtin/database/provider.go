@@ -135,6 +135,7 @@ func (t *databaseTool) Invoke(ctx context.Context, userID string, params map[str
 	if err != nil {
 		return nil, err
 	}
+	scope = t.scopeForOperation(scope, params)
 
 	switch t.kind {
 	case ToolListAccessibleDatabases:
@@ -154,6 +155,59 @@ func (t *databaseTool) Invoke(ctx context.Context, userID string, params map[str
 	default:
 		return nil, fmt.Errorf("unknown database tool %s", t.kind)
 	}
+}
+
+func (t *databaseTool) scopeForOperation(scope databaseScope, params map[string]interface{}) databaseScope {
+	if scope.InvokeFrom != tools.ToolInvokeFromAgent || t.Runtime() == nil {
+		return scope
+	}
+	dataSourceID := stringValue(params, "data_source_id")
+	tableID := stringValue(params, "table_id")
+	bindingType := "database"
+	parentResourceID := ""
+	resourceID := dataSourceID
+	accessMode := "read"
+	switch t.kind {
+	case ToolDescribeDatabaseTable, ToolQueryTableRecords:
+		bindingType = "database_table"
+		parentResourceID = dataSourceID
+		resourceID = tableID
+	case ToolInsertTableRecords, ToolUpdateTableRecords, ToolDeleteTableRecords:
+		bindingType = "database_table"
+		parentResourceID = dataSourceID
+		resourceID = tableID
+		accessMode = "write"
+	case ToolListAccessibleDatabases:
+		return scope
+	}
+	if authorization, ok := tools.AgentBindingAuthorizationFor(
+		t.Runtime().RuntimeParameters,
+		bindingType,
+		parentResourceID,
+		resourceID,
+		accessMode,
+	); ok {
+		scope.AccountID = authorization.BoundByAccountID
+		scope.BindingGrant = true
+	}
+	return scope
+}
+
+func (t *databaseTool) scopeForDataSource(scope databaseScope, dataSourceID string) databaseScope {
+	if scope.InvokeFrom != tools.ToolInvokeFromAgent || t.Runtime() == nil {
+		return scope
+	}
+	if authorization, ok := tools.AgentBindingAuthorizationFor(
+		t.Runtime().RuntimeParameters,
+		"database",
+		"",
+		strings.TrimSpace(dataSourceID),
+		"read",
+	); ok {
+		scope.AccountID = authorization.BoundByAccountID
+		scope.BindingGrant = true
+	}
+	return scope
 }
 
 func (t *databaseTool) ForkToolRuntime(runtime *tools.ToolRuntime) tools.Tool {
@@ -227,7 +281,8 @@ func (t *databaseTool) listAccessibleDatabases(ctx context.Context, scope databa
 	var err error
 	if scope.BindingGrant {
 		for _, dataSourceID := range bindings.dataSourceIDs() {
-			item, loadErr := t.dataSources.GetDataSourceByID(ctx, scope.OrganizationID, dataSourceID, scope.AccountID)
+			itemScope := t.scopeForDataSource(scope, dataSourceID)
+			item, loadErr := t.dataSources.GetDataSourceByID(ctx, itemScope.OrganizationID, dataSourceID, itemScope.AccountID)
 			if loadErr != nil || item == nil {
 				continue
 			}
@@ -250,10 +305,9 @@ func (t *databaseTool) listAccessibleDatabases(ctx context.Context, scope databa
 		if query != "" && !containsFold(item.Name, item.Description, query) {
 			continue
 		}
-		if !scope.BindingGrant {
-			if err := t.authorizeDataSource(ctx, scope, item, false); err != nil {
-				continue
-			}
+		itemScope := t.scopeForDataSource(scope, item.ID)
+		if err := t.authorizeDataSource(ctx, itemScope, item, false); err != nil {
+			continue
 		}
 		out = append(out, dataSourcePayload(item))
 		if len(out) >= limit {
@@ -331,7 +385,7 @@ func (t *databaseTool) queryTableRecords(ctx context.Context, scope databaseScop
 }
 
 func (t *databaseTool) insertTableRecords(ctx context.Context, scope databaseScope, params map[string]interface{}, bindings databaseBindings) ([]tools.ToolInvokeMessage, error) {
-	dataSource, table, records, err := t.authorizedMutationFromParams(ctx, scope, params, bindings)
+	dataSource, table, records, err := t.authorizedMutationFromParams(ctx, scope, params, bindings, workspacemodel.WorkspacePermissionDatabaseRecordCreate)
 	if err != nil {
 		return nil, err
 	}
@@ -343,7 +397,7 @@ func (t *databaseTool) insertTableRecords(ctx context.Context, scope databaseSco
 }
 
 func (t *databaseTool) updateTableRecords(ctx context.Context, scope databaseScope, params map[string]interface{}, bindings databaseBindings) ([]tools.ToolInvokeMessage, error) {
-	dataSource, table, records, err := t.authorizedMutationFromParams(ctx, scope, params, bindings)
+	dataSource, table, records, err := t.authorizedMutationFromParams(ctx, scope, params, bindings, workspacemodel.WorkspacePermissionDatabaseRecordUpdate)
 	if err != nil {
 		return nil, err
 	}
@@ -355,7 +409,7 @@ func (t *databaseTool) updateTableRecords(ctx context.Context, scope databaseSco
 }
 
 func (t *databaseTool) deleteTableRecords(ctx context.Context, scope databaseScope, params map[string]interface{}, bindings databaseBindings) ([]tools.ToolInvokeMessage, error) {
-	dataSource, table, records, err := t.authorizedMutationFromParams(ctx, scope, params, bindings)
+	dataSource, table, records, err := t.authorizedMutationFromParams(ctx, scope, params, bindings, workspacemodel.WorkspacePermissionDatabaseRecordDelete)
 	if err != nil {
 		return nil, err
 	}
@@ -366,8 +420,8 @@ func (t *databaseTool) deleteTableRecords(ctx context.Context, scope databaseSco
 	return jsonMessages(mutationPayload(dataSource, table, result.AffectedRows))
 }
 
-func (t *databaseTool) authorizedMutationFromParams(ctx context.Context, scope databaseScope, params map[string]interface{}, bindings databaseBindings) (*dto.DataSourceResponse, *datasourcemodel.Table, []map[string]interface{}, error) {
-	dataSource, table, err := t.authorizedTableFromParams(ctx, scope, params, bindings, true)
+func (t *databaseTool) authorizedMutationFromParams(ctx context.Context, scope databaseScope, params map[string]interface{}, bindings databaseBindings, permission workspacemodel.WorkspacePermissionCode) (*dto.DataSourceResponse, *datasourcemodel.Table, []map[string]interface{}, error) {
+	dataSource, table, err := t.authorizedTableFromParams(ctx, scope, params, bindings, true, permission)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -378,7 +432,7 @@ func (t *databaseTool) authorizedMutationFromParams(ctx context.Context, scope d
 	return dataSource, table, records, nil
 }
 
-func (t *databaseTool) authorizedDataSourceFromParams(ctx context.Context, scope databaseScope, params map[string]interface{}, write bool) (*dto.DataSourceResponse, error) {
+func (t *databaseTool) authorizedDataSourceFromParams(ctx context.Context, scope databaseScope, params map[string]interface{}, write bool, writePermissions ...workspacemodel.WorkspacePermissionCode) (*dto.DataSourceResponse, error) {
 	dataSourceID := stringValue(params, "data_source_id")
 	if dataSourceID == "" {
 		return nil, fmt.Errorf("data_source_id is required")
@@ -390,16 +444,14 @@ func (t *databaseTool) authorizedDataSourceFromParams(ctx context.Context, scope
 	if dataSource == nil || strings.TrimSpace(dataSource.OrganizationID) != strings.TrimSpace(scope.OrganizationID) {
 		return nil, fmt.Errorf("database %s not found", dataSourceID)
 	}
-	if !scope.BindingGrant {
-		if err := t.authorizeDataSource(ctx, scope, dataSource, write); err != nil {
-			return nil, err
-		}
+	if err := t.authorizeDataSource(ctx, scope, dataSource, write, writePermissions...); err != nil {
+		return nil, err
 	}
 	return dataSource, nil
 }
 
-func (t *databaseTool) authorizedTableFromParams(ctx context.Context, scope databaseScope, params map[string]interface{}, bindings databaseBindings, write bool) (*dto.DataSourceResponse, *datasourcemodel.Table, error) {
-	dataSource, err := t.authorizedDataSourceFromParams(ctx, scope, params, write)
+func (t *databaseTool) authorizedTableFromParams(ctx context.Context, scope databaseScope, params map[string]interface{}, bindings databaseBindings, write bool, writePermissions ...workspacemodel.WorkspacePermissionCode) (*dto.DataSourceResponse, *datasourcemodel.Table, error) {
+	dataSource, err := t.authorizedDataSourceFromParams(ctx, scope, params, write, writePermissions...)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -424,7 +476,7 @@ func (t *databaseTool) authorizedTableFromParams(ctx context.Context, scope data
 	return dataSource, table, nil
 }
 
-func (t *databaseTool) authorizeDataSource(ctx context.Context, scope databaseScope, dataSource *dto.DataSourceResponse, write bool) error {
+func (t *databaseTool) authorizeDataSource(ctx context.Context, scope databaseScope, dataSource *dto.DataSourceResponse, write bool, writePermissions ...workspacemodel.WorkspacePermissionCode) error {
 	if t.organization == nil {
 		return nil
 	}
@@ -435,7 +487,7 @@ func (t *databaseTool) authorizeDataSource(ctx context.Context, scope databaseSc
 	if workspaceID == "" {
 		workspaceID = scope.OrganizationID
 	}
-	hasAIQuery, err := t.organization.CheckWorkspacePermission(ctx, scope.OrganizationID, workspaceID, scope.AccountID, workspacemodel.WorkspacePermissionDatabaseAIQuery)
+	hasAIQuery, err := t.organization.CheckWorkspacePermission(ctx, scope.OrganizationID, workspaceID, scope.AccountID, workspacemodel.WorkspacePermissionDatabaseAIQueryRead)
 	if err != nil {
 		return err
 	}
@@ -443,23 +495,28 @@ func (t *databaseTool) authorizeDataSource(ctx context.Context, scope databaseSc
 		return fmt.Errorf("database ai query permission is required")
 	}
 	if !write {
-		hasView, err := t.organization.CheckWorkspacePermission(ctx, scope.OrganizationID, workspaceID, scope.AccountID, workspacemodel.WorkspacePermissionDatabaseView)
+		hasView, err := t.organization.CheckWorkspacePermission(ctx, scope.OrganizationID, workspaceID, scope.AccountID, workspacemodel.WorkspacePermissionDatabaseRecordView)
 		if err != nil {
 			return err
 		}
 		if !hasView {
-			return fmt.Errorf("database view permission is required")
+			return fmt.Errorf("database record view permission is required")
 		}
 		return nil
 	}
-	canWrite, err := t.organization.CheckWorkspaceOrganizationAnyPermission(ctx, scope.OrganizationID, workspaceID, scope.AccountID, workspacemodel.WorkspacePermissionDatabaseDataEdit, workspacemodel.WorkspacePermissionDatabaseManage)
-	if err != nil {
-		return err
+	if len(writePermissions) == 0 {
+		return fmt.Errorf("database record mutation permission is required")
 	}
-	if !canWrite {
-		return fmt.Errorf("database data edit or manage permission is required")
+	for _, permission := range writePermissions {
+		hasPermission, err := t.organization.CheckWorkspacePermission(ctx, scope.OrganizationID, workspaceID, scope.AccountID, permission)
+		if err != nil {
+			return err
+		}
+		if hasPermission {
+			return nil
+		}
 	}
-	return nil
+	return fmt.Errorf("database %s permission is required", string(writePermissions[0]))
 }
 
 func dataSourcePayload(item *dto.DataSourceResponse) map[string]interface{} {

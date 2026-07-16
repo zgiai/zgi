@@ -68,7 +68,8 @@ export function usePrompt(promptId?: string, enabled = true) {
   });
 
   const prompt = useMemo(
-    () => (query.data?.data ? localizePromptDetail(query.data.data as PromptDetail, locale) : undefined),
+    () =>
+      query.data?.data ? localizePromptDetail(query.data.data as PromptDetail, locale) : undefined,
     [locale, query.data]
   );
 
@@ -98,18 +99,30 @@ export function usePromptUsage(promptId?: string, enabled = true) {
   };
 }
 
+interface UpdatePromptMutationVariables {
+  data: UpdatePromptRequest;
+  successMessage?: string;
+  errorMessage?: string;
+}
+
+interface CreatePromptMutationVariables {
+  data: CreatePromptRequest;
+  successMessage?: string;
+  errorMessage?: string;
+}
+
 export function useCreatePrompt() {
   const queryClient = useQueryClient();
   const t = useT('prompts');
 
   return useMutation({
-    mutationFn: (data: CreatePromptRequest) => promptService.createPrompt(data),
-    onSuccess: () => {
+    mutationFn: ({ data }: CreatePromptMutationVariables) => promptService.createPrompt(data),
+    onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: PROMPT_KEYS.all });
-      toast.success(t('messages.createSuccess'));
+      toast.success(variables.successMessage || t('messages.createSuccess'));
     },
-    onError: err => {
-      toast.error(getErrorMessage(err) || t('messages.createFailed'));
+    onError: (err, variables) => {
+      toast.error(getErrorMessage(err) || variables.errorMessage || t('messages.createFailed'));
     },
   });
 }
@@ -119,14 +132,15 @@ export function useUpdatePrompt(promptId: string) {
   const t = useT('prompts');
 
   return useMutation({
-    mutationFn: (data: UpdatePromptRequest) => promptService.updatePrompt(promptId, data),
-    onSuccess: data => {
+    mutationFn: ({ data }: UpdatePromptMutationVariables) =>
+      promptService.updatePrompt(promptId, data),
+    onSuccess: (data, variables) => {
       queryClient.invalidateQueries({ queryKey: PROMPT_KEYS.all });
       queryClient.setQueryData<ApiResponseData<PromptDetail>>(PROMPT_KEYS.detail(promptId), data);
-      toast.success(t('messages.updateSuccess'));
+      toast.success(variables.successMessage || t('messages.updateSuccess'));
     },
-    onError: err => {
-      toast.error(getErrorMessage(err) || t('messages.updateFailed'));
+    onError: (err, variables) => {
+      toast.error(getErrorMessage(err) || variables.errorMessage || t('messages.updateFailed'));
     },
   });
 }
@@ -224,8 +238,13 @@ export function useAdoptPromptOptimizationRun(promptId: string) {
   const t = useT('prompts');
 
   return useMutation({
-    mutationFn: ({ runId, payload }: { runId: string; payload: AdoptPromptOptimizationRunRequest }) =>
-      promptService.adoptOptimizationRun(promptId, runId, payload),
+    mutationFn: ({
+      runId,
+      payload,
+    }: {
+      runId: string;
+      payload: AdoptPromptOptimizationRunRequest;
+    }) => promptService.adoptOptimizationRun(promptId, runId, payload),
     onSuccess: data => {
       queryClient.invalidateQueries({ queryKey: PROMPT_KEYS.optimizationRuns(promptId) });
       queryClient.setQueryData<ApiResponseData<PromptDetail>>(PROMPT_KEYS.detail(promptId), data);

@@ -5,6 +5,7 @@ import { useQuery, useMutation, useQueryClient, useInfiniteQuery } from '@tansta
 import { agentService } from '@/services';
 import { toast } from 'sonner';
 import type {
+  AgentAssetKind,
   AgentList,
   CreateAgentRequest,
   UpdateAgentRequest,
@@ -17,10 +18,11 @@ import type {
   UpdateAgentRuntimeConfigRequest,
   PublishAgentResponse,
 } from '@/services/types/agent';
-import type { ApiResponseData } from '@/services/types/common';
+import type { AgentBindingMutationConfirmation, ApiResponseData } from '@/services/types/common';
 import { getErrorMessage } from '@/utils/error-notifications';
 import { useT } from '@/i18n';
 import { useCurrentWorkspace } from '@/store/workspace-store';
+import { getAgentResourceBoundImpact } from '@/utils/agent-resource-bound';
 
 import { AGENT_KEYS } from '@/hooks/query-keys';
 import {
@@ -37,6 +39,7 @@ export interface UseAgentsParams {
   limit?: number;
   keyword?: string;
   workspace_id?: string;
+  asset_kind?: AgentAssetKind;
 }
 
 export interface UseAgentsOptions {
@@ -81,8 +84,9 @@ export function useAgents(
       limit: params.limit,
       keyword: params.keyword,
       workspace_id: params.workspace_id,
+      asset_kind: params.asset_kind,
     }),
-    [params.limit, params.keyword, params.workspace_id]
+    [params.limit, params.keyword, params.workspace_id, params.asset_kind]
   );
 
   const {
@@ -197,8 +201,14 @@ export function useDeleteAgent() {
   const currentWorkspaceId = useCurrentWorkspace()?.id;
 
   return useMutation({
-    mutationFn: (agentId: string) => agentService.deleteAgent(agentId),
-    onMutate: async agentId => {
+    mutationFn: ({
+      agentId,
+      confirmation,
+    }: {
+      agentId: string;
+      confirmation?: AgentBindingMutationConfirmation;
+    }) => agentService.deleteAgent(agentId, confirmation),
+    onMutate: async ({ agentId }) => {
       // Cancel any outgoing refetches
       await queryClient.cancelQueries({ queryKey: AGENT_KEYS.lists() });
 
@@ -225,19 +235,21 @@ export function useDeleteAgent() {
 
       return { previousQueries };
     },
-    onError: (err, agentId, context) => {
+    onError: (err, _input, context) => {
       // If the mutation fails, use the context returned from onMutate to roll back
       if (context?.previousQueries) {
         context.previousQueries.forEach(([queryKey, queryData]) => {
           queryClient.setQueryData(queryKey, queryData);
         });
       }
-      toast.error(getErrorMessage(err) || t('toasts.deleteFailed'));
+      if (!getAgentResourceBoundImpact(err)) {
+        toast.error(getErrorMessage(err) || t('toasts.deleteFailed'));
+      }
     },
     onSuccess: () => {
       toast.success(t('toasts.deleteSuccess'));
     },
-    onSettled: (_data, _error, agentId) => {
+    onSettled: (_data, _error, { agentId }) => {
       // Always refetch after error or success
       queryClient.invalidateQueries({
         queryKey: AGENT_KEYS.all,
@@ -405,6 +417,7 @@ export function useUpdateAgentConfig() {
     onSuccess: (_data, { agentId }) => {
       queryClient.invalidateQueries({ queryKey: AGENT_KEYS.config(agentId) });
       queryClient.invalidateQueries({ queryKey: AGENT_KEYS.detail(agentId) });
+      queryClient.invalidateQueries({ queryKey: AGENT_KEYS.candidates(agentId) });
       toast.success(t('toasts.saveSuccess'));
     },
     onError: (error: unknown) => {

@@ -10,16 +10,20 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/shared"
 )
 
-type stubContentExtractor struct{}
+type stubContentExtractor struct {
+	lastScope workflowfile.ContentExtractionScope
+}
 
-func (s *stubContentExtractor) ExtractFileContent(ctx context.Context, fileID string, tenantID string) (*workflowfile.FileContent, error) {
+func (s *stubContentExtractor) ExtractFileContent(ctx context.Context, fileID string, scope workflowfile.ContentExtractionScope) (*workflowfile.FileContent, error) {
+	s.lastScope = scope
 	return &workflowfile.FileContent{
 		FileID:  fileID,
 		Content: "nested text",
 	}, nil
 }
 
-func (s *stubContentExtractor) ExtractMultipleFiles(ctx context.Context, fileIDs []string, tenantID string) ([]*workflowfile.FileContent, error) {
+func (s *stubContentExtractor) ExtractMultipleFiles(ctx context.Context, fileIDs []string, scope workflowfile.ContentExtractionScope) ([]*workflowfile.FileContent, error) {
+	s.lastScope = scope
 	results := make([]*workflowfile.FileContent, 0, len(fileIDs))
 	for _, fileID := range fileIDs {
 		results = append(results, &workflowfile.FileContent{
@@ -30,11 +34,11 @@ func (s *stubContentExtractor) ExtractMultipleFiles(ctx context.Context, fileIDs
 	return results, nil
 }
 
-func (s *stubContentExtractor) ProcessFileVariable(ctx context.Context, variableName string, fileData map[string]interface{}, tenantID string) (map[string]interface{}, error) {
+func (s *stubContentExtractor) ProcessFileVariable(ctx context.Context, variableName string, fileData map[string]interface{}, scope workflowfile.ContentExtractionScope) (map[string]interface{}, error) {
 	return nil, nil
 }
 
-func (s *stubContentExtractor) ProcessFileListVariable(ctx context.Context, variableName string, fileList []interface{}, tenantID string) (map[string]interface{}, error) {
+func (s *stubContentExtractor) ProcessFileListVariable(ctx context.Context, variableName string, fileList []interface{}, scope workflowfile.ContentExtractionScope) (map[string]interface{}, error) {
 	return nil, nil
 }
 
@@ -53,10 +57,13 @@ func TestExecuteRun_UsesNestedFileSelector(t *testing.T) {
 		},
 	})
 
+	extractor := &stubContentExtractor{}
 	node := &Node{
 		NodeStruct: base.NodeStruct{
 			NodeID:            "doc-node",
 			TenantID:          "tenant-1",
+			WorkspaceID:       "workspace-1",
+			OrganizationID:    "organization-1",
 			GraphRuntimeState: entities.NewGraphRuntimeState(vp),
 			WorkflowType:      "workflow",
 			Graph:             &entities.Graph{},
@@ -73,7 +80,7 @@ func TestExecuteRun_UsesNestedFileSelector(t *testing.T) {
 		NodeData: NodeData{
 			VariableSelector: []string{"start", "payload", "attachment"},
 		},
-		contentExtractor: &stubContentExtractor{},
+		contentExtractor: extractor,
 	}
 
 	result, err := node.executeRun(context.Background(), make(chan *shared.NodeEventCh, 1))
@@ -90,5 +97,8 @@ func TestExecuteRun_UsesNestedFileSelector(t *testing.T) {
 	}
 	if len(texts) != 1 || texts[0] != "nested text" {
 		t.Fatalf("outputs[text] = %#v, want []string{\"nested text\"}", texts)
+	}
+	if extractor.lastScope.OrganizationID != "organization-1" || extractor.lastScope.WorkspaceID != "workspace-1" {
+		t.Fatalf("content extraction scope = %#v, want workflow organization and workspace", extractor.lastScope)
 	}
 }

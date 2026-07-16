@@ -69,7 +69,7 @@ func (h *AgentsHandler) continueRuntimeWorkflowApproval(c *gin.Context, runtimeC
 			return
 		}
 	}
-	continuation, err := h.chatRuntimeService.BeginWorkflowApprovalContinuation(c.Request.Context(), runtimeCtx.Scope, runtimeCtx.Caller, conversationID, messageID)
+	continuation, err := h.chatRuntimeService.BeginWorkflowApprovalContinuation(c.Request.Context(), runtimeCtx.Scope, runtimeCtx.Caller, runtimeCtx.RunConfig, conversationID, messageID)
 	if err != nil {
 		h.failRuntime(c, err)
 		return
@@ -173,10 +173,7 @@ func (h *AgentsHandler) resumeAgentWorkflowApproval(ctx context.Context, scope r
 	}
 	approvalService := approvalruntime.NewService(h.db)
 	accountID := scope.AccountID.String()
-	form, err := approvalService.SubmitByToken(ctx, strings.TrimSpace(req.ApprovalToken), approvalruntime.SubmitRequest{
-		Inputs: copyMapForAgentWorkflowContinuation(req.Inputs),
-		Action: strings.TrimSpace(req.Action),
-	}, &accountID, nil)
+	form, err := submitAgentWorkflowApprovalForm(ctx, approvalService, continuation, req, &accountID)
 	if err != nil {
 		return err
 	}
@@ -199,10 +196,7 @@ func (h *AgentsHandler) resumeAgentWorkflowApprovalStream(ctx context.Context, s
 	}
 	approvalService := approvalruntime.NewService(h.db)
 	accountID := scope.AccountID.String()
-	form, err := approvalService.SubmitByToken(ctx, strings.TrimSpace(req.ApprovalToken), approvalruntime.SubmitRequest{
-		Inputs: copyMapForAgentWorkflowContinuation(req.Inputs),
-		Action: strings.TrimSpace(req.Action),
-	}, &accountID, nil)
+	form, err := submitAgentWorkflowApprovalForm(ctx, approvalService, continuation, req, &accountID)
 	if err != nil {
 		return err
 	}
@@ -217,4 +211,41 @@ func (h *AgentsHandler) resumeAgentWorkflowApprovalStream(ctx context.Context, s
 		return fmt.Errorf("workflow run %s is waiting for additional approvals", continuation.WorkflowRunID)
 	}
 	return runner.ResumeApprovalWorkflowStream(ctx, form, onEvent)
+}
+
+func submitAgentWorkflowApprovalForm(ctx context.Context, approvalService *approvalruntime.Service, continuation *runtimeservice.WorkflowApprovalContinuation, req agentWorkflowContinuationRequest, accountID *string) (*approvalruntime.Form, error) {
+	workflowRunID := ""
+	if continuation != nil {
+		workflowRunID = continuation.WorkflowRunID
+	}
+	form, err := approvalService.SubmitByTokenForWorkflowRun(ctx, strings.TrimSpace(req.ApprovalToken), workflowRunID, approvalruntime.SubmitRequest{
+		Inputs: copyMapForAgentWorkflowContinuation(req.Inputs),
+		Action: strings.TrimSpace(req.Action),
+	}, accountID, nil)
+	if err != nil {
+		return nil, mapAgentWorkflowApprovalError(err)
+	}
+	if err := ensureAgentWorkflowContinuationApprovalForm(continuation, form); err != nil {
+		return nil, err
+	}
+	return form, nil
+}
+
+func mapAgentWorkflowApprovalError(err error) error {
+	if errors.Is(err, approvalruntime.ErrFormNotFound) {
+		return fmt.Errorf("%w: workflow continuation approval form not found", runtimeservice.ErrNotFound)
+	}
+	return err
+}
+
+func ensureAgentWorkflowContinuationApprovalForm(continuation *runtimeservice.WorkflowApprovalContinuation, form *approvalruntime.Form) error {
+	if continuation == nil || form == nil {
+		return fmt.Errorf("%w: workflow continuation approval form is required", runtimeservice.ErrInvalidInput)
+	}
+	continuationRunID := strings.TrimSpace(continuation.WorkflowRunID)
+	formRunID := strings.TrimSpace(form.WorkflowRunID)
+	if continuationRunID == "" || formRunID == "" || formRunID != continuationRunID {
+		return fmt.Errorf("%w: workflow continuation approval form not found", runtimeservice.ErrNotFound)
+	}
+	return nil
 }

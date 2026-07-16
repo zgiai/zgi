@@ -17,11 +17,11 @@ export function useWorkspaces(
   keyword: string = '',
   page: number = 1,
   limit: number = 20,
-  options: { keepPreviousData?: boolean } = {}
+  options: { keepPreviousData?: boolean; enabled?: boolean } = {}
 ) {
   const t = useT();
   const { currentOrganization } = useOrganizations();
-  const { keepPreviousData: keepData = false } = options;
+  const { keepPreviousData: keepData = false, enabled = true } = options;
 
   const {
     data: responseData,
@@ -42,7 +42,7 @@ export function useWorkspaces(
         limit,
       });
     },
-    enabled: !!currentOrganization?.id,
+    enabled: enabled && !!currentOrganization?.id,
     staleTime: 2 * 60 * 1000,
     gcTime: 5 * 60 * 1000,
     refetchOnWindowFocus: false,

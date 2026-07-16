@@ -7,6 +7,7 @@ import (
 	"time"
 
 	appconfig "github.com/zgiai/zgi/api/config"
+	"github.com/zgiai/zgi/api/internal/capabilities/toolgovernance"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"github.com/zgiai/zgi/api/internal/modules/tools"
@@ -14,7 +15,8 @@ import (
 )
 
 func newSkillRuntimeWithSandbox(toolEngine *tools.ToolEngine, toolManager *tools.ToolManager, fileService interfaces.FileService, organizationService interfaces.OrganizationService) *skills.Runtime {
-	runtime := skills.NewRuntime(toolEngine, toolManager)
+	runtime := skills.NewRuntime(toolEngine, toolManager).
+		WithToolGovernanceGateway(skills.NewPolicyToolGovernanceGateway(toolgovernance.DefaultPolicy()))
 	if appconfig.GlobalConfig == nil {
 		return runtime
 	}
@@ -86,7 +88,7 @@ func (p skillInputFileProvider) GetSkillScriptInputFile(ctx context.Context, fil
 		if accountID == "" {
 			return skills.SkillScriptInputFile{}, fmt.Errorf("user id is required to access workspace file")
 		}
-		allowed, err := p.organizationService.CheckWorkspacePermission(ctx, organizationID, nonZeroUUIDString(*file.WorkspaceID), accountID, workspacemodel.WorkspacePermissionFileDownload)
+		allowed, err := p.organizationService.CheckWorkspacePermission(ctx, organizationID, nonZeroUUIDString(*file.WorkspaceID), accountID, workspacemodel.WorkspacePermissionFilePreview)
 		if err != nil {
 			return skills.SkillScriptInputFile{}, fmt.Errorf("failed to check workspace file permission: %w", err)
 		}

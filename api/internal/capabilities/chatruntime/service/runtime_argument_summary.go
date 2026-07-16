@@ -16,13 +16,15 @@ func summarizeSkillToolArguments(skillID string, toolName string, args map[strin
 		return summarizeCalculatorArguments(toolName, args)
 	case skills.SkillAgentDatabase, skills.SkillInternalDatabase:
 		return summarizeDatabaseArguments(args)
+	case skills.SkillFileReader, skills.SkillFileManager:
+		return summarizeFileReaderArguments(args)
 	default:
 		return summarizeGenericArguments(args)
 	}
 }
 
 func summarizeFileGeneratorArguments(args map[string]interface{}) map[string]interface{} {
-	summary := summarizeAllowedArguments(args, []string{"format", "filename", "title", "lifecycle"})
+	summary := summarizeAllowedArguments(args, []string{"format", "filename", "title", "lifecycle", "target", "workspace_id", "folder_id"})
 	if content, ok := args["content"].(string); ok {
 		summary["content_length"] = len(content)
 	}
@@ -42,6 +44,14 @@ func summarizeCalculatorArguments(toolName string, args map[string]interface{}) 
 
 func summarizeDatabaseArguments(args map[string]interface{}) map[string]interface{} {
 	return summarizeAllowedArguments(args, []string{"query", "limit", "offset", "order"})
+}
+
+func summarizeFileReaderArguments(args map[string]interface{}) map[string]interface{} {
+	summary := summarizeAllowedArguments(args, []string{"file_id", "include_content", "max_chars"})
+	if fileIDs := sanitizedStringListArgumentValue(args["file_ids"]); len(fileIDs) > 0 {
+		summary["file_ids"] = fileIDs
+	}
+	return summary
 }
 
 func summarizeAllowedArguments(args map[string]interface{}, keys []string) map[string]interface{} {
@@ -77,6 +87,29 @@ func sanitizedArgumentValue(value interface{}) (interface{}, bool) {
 	default:
 		return nil, false
 	}
+}
+
+func sanitizedStringListArgumentValue(value interface{}) []string {
+	out := []string{}
+	add := func(item string) {
+		item = strings.TrimSpace(item)
+		if item != "" {
+			out = append(out, item)
+		}
+	}
+	switch typed := value.(type) {
+	case []string:
+		for _, item := range typed {
+			add(item)
+		}
+	case []interface{}:
+		for _, item := range typed {
+			if text, ok := item.(string); ok {
+				add(text)
+			}
+		}
+	}
+	return out
 }
 
 func summarizedGenericArgumentValue(value interface{}) (interface{}, bool) {

@@ -17,7 +17,7 @@ type PermissionContext struct {
 	OrganizationDeptIDs []string
 
 	// UserDepartments contains the user's department memberships with their roles
-	// Only populated for normal users (not org admins)
+	// Populated from workspace memberships for every organization role
 	UserDepartments []DepartmentMembership
 
 	// ValidDepartmentIDs contains the intersection of OrganizationDeptIDs and user's department memberships

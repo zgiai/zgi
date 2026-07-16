@@ -17,6 +17,8 @@ import type {
   PlatformChannelModelsResponse,
   AdjustChannelWalletRequest,
   AdjustChannelWalletResponse,
+  UpstreamState,
+  UpdateUpstreamStateSettingsRequest,
 } from './types/channel';
 
 // channel management temporary service
@@ -107,6 +109,14 @@ export class ChannelService extends BaseService {
         body: data,
         abortSignal: options.abortSignal,
         onError: options.onError,
+        isTerminalMessage: message => {
+          const payload = message.data;
+          return (
+            typeof payload === 'object' &&
+            payload !== null &&
+            (payload as { completed?: unknown }).completed === true
+          );
+        },
         callbacks: {
           onMessage: payload => {
             options.onMessage(payload as unknown as BatchTestChannelModelsEvent);
@@ -123,6 +133,24 @@ export class ChannelService extends BaseService {
   ): Promise<ApiResponseData<AdjustChannelWalletResponse>> {
     const encoded = encodeURIComponent(channelId);
     return this.request('post', `/llm/channels/${encoded}/wallet/adjust`, data);
+  }
+
+  checkUpstreamState(channelId: string): Promise<ApiResponseData<UpstreamState>> {
+    const encoded = encodeURIComponent(channelId);
+    return this.request('post', `/llm/channels/${encoded}/upstream-state/check`);
+  }
+
+  retryUpstreamState(channelId: string): Promise<ApiResponseData<UpstreamState>> {
+    const encoded = encodeURIComponent(channelId);
+    return this.request('post', `/llm/channels/${encoded}/upstream-state/retry`);
+  }
+
+  updateUpstreamStateSettings(
+    channelId: string,
+    data: UpdateUpstreamStateSettingsRequest
+  ): Promise<ApiResponseData<UpstreamState>> {
+    const encoded = encodeURIComponent(channelId);
+    return this.request('put', `/llm/channels/${encoded}/upstream-state/settings`, data);
   }
 }
 

@@ -19,6 +19,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/shared/workspacebootstrap"
 	auth_model "github.com/zgiai/zgi/api/internal/modules/user/auth/model"
 	auth_repo "github.com/zgiai/zgi/api/internal/modules/user/auth/repository"
+	workspacecache "github.com/zgiai/zgi/api/internal/modules/workspace/cache"
 	workspace_model "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	"github.com/zgiai/zgi/api/internal/util"
 )
@@ -179,7 +180,10 @@ func (s *RegisterServiceImpl) initializeUserOwnGroup(ctx context.Context, accoun
 		tenantService := s.tenantService.WithTx(tx)
 
 		// Create user's own group
-		groupName := fmt.Sprintf("%s's group %s", account.Name, uuid.New().String()[:8])
+		groupName, err := uniqueOwnedOrganizationName(ctx, groupService, account.Name, account.InterfaceLanguage)
+		if err != nil {
+			return fmt.Errorf("failed to prepare group name: %w", err)
+		}
 		group, err := groupService.CreateOrganization(ctx, groupName)
 		if err != nil {
 			return fmt.Errorf("failed to create group: %w", err)
@@ -262,6 +266,8 @@ func (s *RegisterServiceImpl) initializeAccountWorkspaceContext(ctx context.Cont
 		if err := s.accountRepo.CreateAccountContext(ctx, ctxModel); err != nil {
 			return fmt.Errorf("failed to create account context: %w", err)
 		}
+		workspacecache.InvalidateAccount(ctx, accountID)
+		workspacecache.SetAccountContext(ctx, workspacecache.NewAccountScopedToken(ctx, accountID), ctxModel)
 		return nil
 	}
 
@@ -273,6 +279,8 @@ func (s *RegisterServiceImpl) initializeAccountWorkspaceContext(ctx context.Cont
 		return fmt.Errorf("failed to update account context: %w", err)
 	}
 
+	workspacecache.InvalidateAccount(ctx, accountID)
+	workspacecache.SetAccountContext(ctx, workspacecache.NewAccountScopedToken(ctx, accountID), ctxModel)
 	return nil
 }
 

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"mime"
 	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,6 +15,7 @@ import (
 	defaultmodelservice "github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/service"
 	llmmodelmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
+	"github.com/zgiai/zgi/api/internal/util"
 	"github.com/zgiai/zgi/api/pkg/logger"
 	"github.com/zgiai/zgi/api/pkg/storage"
 )
@@ -204,8 +204,7 @@ func displayImageURL(imagePath string) string {
 }
 
 func buildMinerUImageURL(imagePath string) string {
-	pathParam := url.QueryEscape(strings.TrimSpace(imagePath))
-	return "/console/api/files/mineru-images?path=" + pathParam
+	return util.GetSignedParserImagePathURL(strings.TrimSpace(imagePath))
 }
 
 func extractMarkdownImagePath(content string) string {

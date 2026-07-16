@@ -27,6 +27,8 @@ import { getNodeAbsolutePosition } from './store/helpers/graph';
 import { useAuthStore } from '@/store/auth-store';
 import { useBuiltinTools } from '@/hooks/workflow/use-builtin-tools';
 import { useLocale } from '@/hooks/use-locale';
+import { WorkflowAIChatContextRegistration } from './aichat-context';
+import { WORKFLOW_PERMISSION_ACTIONS } from '@/constants/permissions';
 
 // Throttled global mouse tracker to isolate re-renders from WorkflowEditor
 // Uses both requestAnimationFrame and time-based throttling (50ms) to minimize store updates
@@ -127,6 +129,11 @@ const WorkflowEditor: React.FC<WorkflowEditorProps> = ({ agentDetail, focusNodeI
   const mode = useWorkflowStore.use.mode();
   const storeCanEdit = useWorkflowStore.use.canEdit();
   const setCanEdit = useWorkflowStore.use.setCanEdit();
+  const setCanRunDraft = useWorkflowStore.use.setCanRunDraft();
+  const setCanStopRun = useWorkflowStore.use.setCanStopRun();
+  const setCanDebug = useWorkflowStore.use.setCanDebug();
+  const setCanViewRuntimeLogs = useWorkflowStore.use.setCanViewRuntimeLogs();
+  const setCanViewRuntimeEvents = useWorkflowStore.use.setCanViewRuntimeEvents();
 
   const isHistoryMode = mode === 'history';
   const isPermissionReadOnly = !storeCanEdit;
@@ -202,8 +209,19 @@ const WorkflowEditor: React.FC<WorkflowEditorProps> = ({ agentDetail, focusNodeI
     return viewport;
   }, [isHistoryMode, selectedRunId, historySnapshots, viewport]);
 
-  const { hasPermission } = useAccountPermissions();
-  const canManage = hasPermission('agent.manage');
+  const {
+    hasAnyPermission,
+    isLoading: isPermissionLoading,
+    isFetching: isPermissionFetching,
+  } = useAccountPermissions();
+  const canEditWorkflow = hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.update);
+  const canRunWorkflowDraft = hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.runDraft);
+  const canPublishWorkflow = hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.publish);
+  const canManageWorkflowRuntimeAccess = hasAnyPermission(
+    WORKFLOW_PERMISSION_ACTIONS.runtimeAccessManage
+  );
+  const canViewWorkflowRuntimeLogs = hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.logsView);
+  const canPublishCurrentDraft = canEditWorkflow && canPublishWorkflow;
 
   // Ensure store holds current agent type for downstream filtering
   useEffect(() => {
@@ -212,8 +230,23 @@ const WorkflowEditor: React.FC<WorkflowEditorProps> = ({ agentDetail, focusNodeI
 
   // Sync canEdit permission from permission system to store
   useEffect(() => {
-    setCanEdit(canManage);
-  }, [canManage, setCanEdit]);
+    setCanEdit(canEditWorkflow);
+    setCanRunDraft(canRunWorkflowDraft);
+    setCanStopRun(canRunWorkflowDraft);
+    setCanDebug(canRunWorkflowDraft);
+    setCanViewRuntimeLogs(canViewWorkflowRuntimeLogs);
+    setCanViewRuntimeEvents(canRunWorkflowDraft);
+  }, [
+    canEditWorkflow,
+    canRunWorkflowDraft,
+    canViewWorkflowRuntimeLogs,
+    setCanDebug,
+    setCanEdit,
+    setCanRunDraft,
+    setCanStopRun,
+    setCanViewRuntimeEvents,
+    setCanViewRuntimeLogs,
+  ]);
 
   const resetWorkflowUiState = useCallback(() => {
     try {
@@ -239,9 +272,16 @@ const WorkflowEditor: React.FC<WorkflowEditorProps> = ({ agentDetail, focusNodeI
     };
   }, [agentId, resetWorkflowUiState]);
 
-  // Load workflow once on init; thereafter preserve local graph on server updates to avoid flicker
-  // Pass isHistoryMode instead of isReadOnly to allow draft loading in permission-based read-only
-  useWorkflowLifecycle({ agentId, isHistoryMode, workflowData, agentType, isLoading });
+  // Load existing drafts for read-only viewers; only editable users may bootstrap or normalize draft data.
+  useWorkflowLifecycle({
+    agentId,
+    isHistoryMode,
+    canEditDraft: canEditWorkflow,
+    isPermissionLoading: isPermissionLoading || isPermissionFetching,
+    workflowData,
+    agentType,
+    isLoading,
+  });
 
   // Periodic auto-save every 60 seconds: save when either semantic or layout-only changes are present
   useEffect(() => {
@@ -433,6 +473,20 @@ const WorkflowEditor: React.FC<WorkflowEditorProps> = ({ agentDetail, focusNodeI
   return (
     <ReactFlowProvider>
       <WorkflowEditorProvider value={{ agentId, agentType, workspaceId }}>
+        <WorkflowAIChatContextRegistration
+          agentDetail={agentDetail}
+          workflowDraft={workflowData}
+          viewNodes={viewNodes}
+          viewEdges={viewEdges}
+          isDirty={isDirty}
+          isSaving={isSaving}
+          isPublishing={isPublishing}
+          isReadOnly={isReadOnly}
+          isHistoryMode={isHistoryMode}
+          isPermissionReadOnly={isPermissionReadOnly}
+          canPublish={isValid}
+          selectedRunId={selectedRunId}
+        />
         {/* Bind keyboard shortcuts within provider to ensure context availability */}
         <WorkflowKeyboardBindings onSave={onSave} disabled={isReadOnly} />
         {leaveGuardDialog}
@@ -449,6 +503,11 @@ const WorkflowEditor: React.FC<WorkflowEditorProps> = ({ agentDetail, focusNodeI
             isSaving={isSaving}
             isPublishing={isPublishing}
             canPublish={isValid}
+            canSave={canEditWorkflow}
+            canRunDraft={canRunWorkflowDraft}
+            canPublishWorkflow={canPublishCurrentDraft}
+            canManageRuntimeAccess={canManageWorkflowRuntimeAccess}
+            canViewRuntimeLogs={canViewWorkflowRuntimeLogs}
             onSave={() => {
               handleCombinedSave({
                 silent: false,

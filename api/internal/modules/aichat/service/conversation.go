@@ -1,3 +1,6 @@
+//go:build legacy_aichat_service
+// +build legacy_aichat_service
+
 package service
 
 import (
@@ -183,7 +186,14 @@ func (s *service) validateCurrentLeafMessage(ctx context.Context, scope Scope, c
 		return fmt.Errorf("%w: current leaf message belongs to another conversation", ErrInvalidInput)
 	}
 	switch message.Status {
-	case aichatmodel.MessageStatusCompleted, aichatmodel.MessageStatusStopped, aichatmodel.MessageStatusError:
+	case aichatmodel.MessageStatusPending:
+		return nil
+	case aichatmodel.MessageStatusCompleted,
+		aichatmodel.MessageStatusStopped,
+		aichatmodel.MessageStatusError,
+		aichatmodel.MessageStatusWaitingApproval,
+		aichatmodel.MessageStatusWaitingQuestion,
+		aichatmodel.MessageStatusWaitingClientAction:
 		return nil
 	case aichatmodel.MessageStatusStreaming:
 		if conversation.RuntimeStatus == aichatmodel.ConversationRuntimeStatusStreaming &&
@@ -221,6 +231,9 @@ func (s *service) ListMessages(ctx context.Context, scope Scope, conversationID 
 func (s *service) DeleteMessage(ctx context.Context, scope Scope, id uuid.UUID) error {
 	if err := s.ensureMember(ctx, scope); err != nil {
 		return err
+	}
+	if _, err := s.repos.Message.GetScoped(ctx, id, scope.OrganizationID, scope.AccountID); err != nil {
+		return mapRepoError(err)
 	}
 	err := s.repos.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		txRepos := repository.NewRepositories(tx)

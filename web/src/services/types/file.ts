@@ -55,7 +55,10 @@ export interface FileItem {
   extension: string;
   hash: string;
   id: string;
+  archived_at?: string | null;
+  archived_by?: string | null;
   is_favorite?: boolean;
+  is_archived?: boolean;
   key: string;
   mime_type: string;
   name: string;
@@ -89,6 +92,7 @@ export interface AllFilesResponse {
   limit: number;
   total: number;
   has_more: boolean;
+  processing_status_counts?: Partial<Record<FileAssetProductStatus | string, number>>;
 }
 
 export interface FileMetadataResponse {

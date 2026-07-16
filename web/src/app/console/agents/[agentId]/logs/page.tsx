@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { use, useEffect, useMemo, useState } from 'react';
+import { use, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { AlertCircle, Copy, ExternalLink, Filter, History, Loader2, Search, X } from 'lucide-react';
 import { toast } from 'sonner';
@@ -41,18 +41,19 @@ import {
 } from '@/components/workflow/ui/workflow-run-panel/utils/history-view-data';
 import { cn } from '@/lib/utils';
 import { AgentRuntimeLogDetailDrawer } from './_components/agent-runtime-log-detail-drawer';
+import { AgentLogsAIChatContextRegistration } from './_components/agent-logs-aichat-context';
 import { LogDetailDrawer, type HistoryTab } from './_components/log-detail-drawer';
-import { LogStatusBadge } from './_components/log-status-badge';
+import { RunStatusBadge } from '@/components/workflow/ui/run-status-badge';
+import { AGENT_PERMISSION_ACTIONS, WORKFLOW_PERMISSION_ACTIONS } from '@/constants/permissions';
 
 interface AgentLogsPageProps {
   params: Promise<{ agentId: string }>;
 }
 
 type LogRunListItem = WorkflowRunItem | AgentRuntimeRunItem;
-type AgentRuntimeLogSource = 'webapp' | 'console';
+type AgentRuntimeLogSource = 'webapp' | 'console' | 'external-api';
 
-const UUID_PATTERN =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function normalizeTimestamp(value?: number | null): number {
   if (typeof value !== 'number' || Number.isNaN(value)) return 0;
@@ -123,6 +124,40 @@ function LogTableSkeleton() {
   );
 }
 
+function LogListState({
+  icon,
+  title,
+  description,
+  action,
+  tone = 'default',
+}: {
+  icon: ReactNode;
+  title: string;
+  description: string;
+  action?: ReactNode;
+  tone?: 'default' | 'error';
+}) {
+  return (
+    <div className="m-4 flex min-h-52 flex-col items-center justify-center rounded-2xl border border-dashed bg-muted/10 px-6 py-10 text-center">
+      <div
+        className={cn(
+          'mb-4 flex size-11 items-center justify-center rounded-xl border',
+          tone === 'error'
+            ? 'border-rose-200/80 bg-rose-50 text-rose-600 dark:border-rose-500/25 dark:bg-rose-500/10 dark:text-rose-300'
+            : 'border-border/70 bg-background text-muted-foreground shadow-sm'
+        )}
+      >
+        {icon}
+      </div>
+      <div className="text-sm font-semibold text-foreground">{title}</div>
+      <div className="mt-1.5 max-w-md text-sm leading-6 text-muted-foreground">
+        {description}
+      </div>
+      {action ? <div className="mt-4">{action}</div> : null}
+    </div>
+  );
+}
+
 /**
  * @component AgentLogsPage
  * @category Feature
@@ -139,6 +174,7 @@ export default function AgentLogsPage({ params }: AgentLogsPageProps) {
   const searchParams = useSearchParams();
   const focusRunId = searchParams.get('runId');
   const focusTab = searchParams.get('tab');
+  const focusConversationId = searchParams.get('conversation_id');
 
   const [selectedLogId, setSelectedLogId] = useState<string | null>(null);
   const [selectedMessageRunId, setSelectedMessageRunId] = useState<string | null>(null);
@@ -150,17 +186,24 @@ export default function AgentLogsPage({ params }: AgentLogsPageProps) {
   const [searchFilterInput, setSearchFilterInput] = useState('');
   const [searchFilter, setSearchFilter] = useState('');
 
-  const { agent, isLoading: isAgentLoading, error: agentError } = useAgent(agentId);
-  const { hasPermission, isLoading: isPermissionsLoading } = useAccountPermissions();
-  const canManage = hasPermission('agent.manage');
+  const { hasAnyPermission, isLoading: isPermissionsLoading } = useAccountPermissions();
+  const canViewAgentRuntimeLogs = hasAnyPermission(AGENT_PERMISSION_ACTIONS.logsView);
+  const canViewWorkflowRuntimeLogs = hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.logsView);
+  const canOpenRuntimeLogs = canViewAgentRuntimeLogs || canViewWorkflowRuntimeLogs;
+  const {
+    agent,
+    isLoading: isAgentLoading,
+    error: agentError,
+  } = useAgent(agentId, canOpenRuntimeLogs);
   const agentDetail = agent?.data ?? null;
   const isPublished = agentDetail?.is_published === true;
   const supportsRuntimeLogs = supportsAgentRuntimeLogs(agentDetail?.agent_type);
+  const isAgentRuntime = agentDetail?.agent_type === AgentType.AGENT;
+  const canViewRuntimeLogs = isAgentRuntime ? canViewAgentRuntimeLogs : canViewWorkflowRuntimeLogs;
   const canAccessRuntimeLogs = canShowAgentRuntimeLogs(agentDetail?.agent_type, {
     canView: true,
-    canManage,
+    canViewRuntimeLogs,
   });
-  const isAgentRuntime = agentDetail?.agent_type === AgentType.AGENT;
   const canQueryWorkflowLogs = canAccessRuntimeLogs && isPublished && !isAgentRuntime;
   const canQueryAgentRuntimeLogs = canAccessRuntimeLogs && isPublished && isAgentRuntime;
   const isConversationWorkflow = agentDetail?.agent_type === AgentType.CONVERSATIONAL_AGENT;
@@ -179,6 +222,15 @@ export default function AgentLogsPage({ params }: AgentLogsPageProps) {
   const { data: latest } = useLatestWorkflowVersion(
     canAccessRuntimeLogs && isPublished ? agentId : null
   );
+
+  useEffect(() => {
+    const nextConversationFilter = focusConversationId?.trim() ?? '';
+    if (!nextConversationFilter || !UUID_PATTERN.test(nextConversationFilter)) {
+      return;
+    }
+    setConversationFilterInput(nextConversationFilter);
+    setConversationFilter(nextConversationFilter);
+  }, [focusConversationId]);
 
   const {
     pages,
@@ -403,6 +455,36 @@ export default function AgentLogsPage({ params }: AgentLogsPageProps) {
   const hasPendingRuntimeFilterChanges =
     conversationFilterInput.trim() !== normalizedConversationFilter ||
     searchFilterInput.trim() !== normalizedSearchFilter;
+  const logPageTitle = isAgentRuntime
+    ? t('appLogs.agentTitle')
+    : t('appLogs.workflowTitle');
+  const logPageSubtitle = isAgentRuntime
+    ? t('appLogs.agentSubtitle', { name: agentDetail?.name ?? '' })
+    : t('appLogs.workflowSubtitle', { name: agentDetail?.name ?? '' });
+  const emptyLogCopy = hasActiveRuntimeFilters
+    ? {
+        title: t('appLogs.empty.filteredTitle'),
+        description: t('appLogs.empty.filteredDescription'),
+      }
+    : !isAgentRuntime
+      ? {
+          title: t('appLogs.empty.workflowTitle'),
+          description: t('appLogs.empty.workflowDescription'),
+        }
+      : runtimeLogSource === 'console'
+        ? {
+            title: t('appLogs.empty.consoleTitle'),
+            description: t('appLogs.empty.consoleDescription'),
+          }
+        : runtimeLogSource === 'external-api'
+          ? {
+              title: t('appLogs.empty.externalApiTitle'),
+              description: t('appLogs.empty.externalApiDescription'),
+            }
+          : {
+              title: t('appLogs.empty.agentTitle'),
+              description: t('appLogs.empty.agentDescription'),
+            };
   const logTableColumns = useMemo(() => {
     const columns = [
       { key: 'runId', header: t('appLogs.columns.runId'), className: 'pl-4' },
@@ -508,7 +590,8 @@ export default function AgentLogsPage({ params }: AgentLogsPageProps) {
   };
 
   const handleRuntimeSourceChange = (value: string) => {
-    const nextSource: AgentRuntimeLogSource = value === 'console' ? 'console' : 'webapp';
+    const nextSource: AgentRuntimeLogSource =
+      value === 'console' || value === 'external-api' ? value : 'webapp';
     setRuntimeLogSource(nextSource);
     resetRuntimeLogSelection();
   };
@@ -537,12 +620,28 @@ export default function AgentLogsPage({ params }: AgentLogsPageProps) {
     setActiveTab('execution');
   };
 
-  if (isAgentLoading || isPermissionsLoading) {
+  if (isPermissionsLoading || (canOpenRuntimeLogs && isAgentLoading)) {
     return (
       <div className="h-full w-full p-6">
         <div className="space-y-4">
           <Skeleton className="h-8 w-48" />
           <LogTableSkeleton />
+        </div>
+      </div>
+    );
+  }
+
+  if (!canOpenRuntimeLogs) {
+    return (
+      <div className="flex h-full w-full items-center justify-center p-6">
+        <div className="max-w-xl rounded-2xl border border-dashed bg-background p-8 text-center">
+          <div className="mx-auto mb-4 flex size-12 items-center justify-center rounded-full bg-muted">
+            <AlertCircle className="size-5 text-muted-foreground" />
+          </div>
+          <div className="text-lg font-semibold">{tRoot('common.accessDenied')}</div>
+          <div className="mt-2 text-sm text-muted-foreground">
+            {tRoot('common.unauthorizedDescription')}
+          </div>
         </div>
       </div>
     );
@@ -564,32 +663,20 @@ export default function AgentLogsPage({ params }: AgentLogsPageProps) {
     );
   }
 
-  if (!supportsRuntimeLogs) {
+  if (!supportsRuntimeLogs || !canAccessRuntimeLogs) {
     return (
       <div className="flex h-full w-full items-center justify-center p-6">
         <div className="max-w-xl rounded-2xl border border-dashed bg-background p-8 text-center">
           <div className="mx-auto mb-4 flex size-12 items-center justify-center rounded-full bg-muted">
             <AlertCircle className="size-5 text-muted-foreground" />
           </div>
-          <div className="text-lg font-semibold">{t('appCenter.appUnavailableTitle')}</div>
-          <div className="mt-2 text-sm text-muted-foreground">
-            {t('appCenter.appUnavailableDescription')}
+          <div className="text-lg font-semibold">
+            {supportsRuntimeLogs ? tRoot('common.accessDenied') : t('appCenter.appUnavailableTitle')}
           </div>
-        </div>
-      </div>
-    );
-  }
-
-  if (!canManage) {
-    return (
-      <div className="flex h-full w-full items-center justify-center p-6">
-        <div className="max-w-xl rounded-2xl border border-dashed bg-background p-8 text-center">
-          <div className="mx-auto mb-4 flex size-12 items-center justify-center rounded-full bg-muted">
-            <AlertCircle className="size-5 text-muted-foreground" />
-          </div>
-          <div className="text-lg font-semibold">{tRoot('common.accessDenied')}</div>
           <div className="mt-2 text-sm text-muted-foreground">
-            {tRoot('common.unauthorizedDescription')}
+            {supportsRuntimeLogs
+              ? tRoot('common.unauthorizedDescription')
+              : t('appCenter.appUnavailableDescription')}
           </div>
         </div>
       </div>
@@ -606,22 +693,38 @@ export default function AgentLogsPage({ params }: AgentLogsPageProps) {
 
   return (
     <div className="flex h-full w-full min-h-0 flex-col overflow-hidden bg-background">
+      <AgentLogsAIChatContextRegistration
+        agent={agentDetail}
+        isAgentRuntime={isAgentRuntime}
+        runtimeLogSource={runtimeLogSource}
+        searchFilter={normalizedSearchFilter}
+        conversationFilter={normalizedConversationFilter}
+        displayRunItems={displayRunItems}
+        effectiveRunId={effectiveRunId}
+        selectedWorkflowRun={selectedLog}
+        workflowDetail={detail}
+        workflowSummary={effectiveSummary}
+        workflowExecutionItems={executionItems}
+        selectedAgentRuntimeRun={selectedAgentRuntimeRun}
+        agentRuntimeDetail={agentRuntimeDetail}
+        agentRuntimeSteps={agentRuntimeSteps}
+        selectedMessageRunId={selectedMessageRunId}
+        publishedWorkflowId={latest?.data?.workflow_id}
+      />
       <div className="border-b px-6 py-4">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div className="min-w-0">
             <div className="flex items-center gap-2 text-lg font-semibold">
               <History className="size-5 text-primary" />
-              <span>{t('appLogs.title')}</span>
+              <span>{logPageTitle}</span>
             </div>
-            <div className="mt-1 text-sm text-muted-foreground">
-              {agentDetail.name} · {t('appLogs.subtitle')}
-            </div>
+            <div className="mt-1 text-sm text-muted-foreground">{logPageSubtitle}</div>
           </div>
           {webAppHref ? (
             <Button asChild variant="outline" size="sm" className="w-fit">
               <Link href={webAppHref} target="_blank" rel="noreferrer">
                 <ExternalLink className="size-4" />
-                {t('appLogs.openApp')}
+                {isAgentRuntime ? t('appLogs.openAgent') : t('appLogs.openWorkflowApp')}
               </Link>
             </Button>
           ) : null}
@@ -646,6 +749,9 @@ export default function AgentLogsPage({ params }: AgentLogsPageProps) {
                     </TabsTrigger>
                     <TabsTrigger value="console" className="h-6 text-xs">
                       {t('appLogs.filters.sources.console')}
+                    </TabsTrigger>
+                    <TabsTrigger value="external-api" className="h-6 text-xs">
+                      {t('appLogs.filters.sources.externalApi')}
                     </TabsTrigger>
                   </TabsList>
                 </Tabs>
@@ -706,7 +812,9 @@ export default function AgentLogsPage({ params }: AgentLogsPageProps) {
                   <div className="flex flex-wrap gap-2">
                     {normalizedSearchFilter ? (
                       <Badge variant="subtle" className="gap-1">
-                        <span>{t('appLogs.filters.searchChip', { keyword: normalizedSearchFilter })}</span>
+                        <span>
+                          {t('appLogs.filters.searchChip', { keyword: normalizedSearchFilter })}
+                        </span>
                         <button
                           type="button"
                           className="rounded-full p-0.5 hover:bg-background"
@@ -742,21 +850,38 @@ export default function AgentLogsPage({ params }: AgentLogsPageProps) {
 
           <div className="min-h-0 flex-1 overflow-hidden">
             {listError ? (
-              <div className="m-4 space-y-3 rounded-xl border border-dashed p-4 text-sm">
-                <div className="text-destructive">{listError}</div>
-                <Button size="sm" variant="outline" onClick={() => void reloadList()}>
-                  {tAgents('workflow.retry')}
-                </Button>
-              </div>
+              <LogListState
+                tone="error"
+                icon={<AlertCircle className="size-5" />}
+                title={t('appLogs.loadErrorTitle')}
+                description={t('appLogs.loadErrorDescription')}
+                action={
+                  <Button size="sm" variant="outline" onClick={() => void reloadList()}>
+                    {tAgents('workflow.retry')}
+                  </Button>
+                }
+              />
             ) : listLoading && displayRunItems.length === 0 ? (
               <LogTableSkeleton />
             ) : displayRunItems.length === 0 ? (
-              <div className="m-4 rounded-2xl border border-dashed px-4 py-10 text-center">
-                <div className="text-sm font-medium">{t('appLogs.noLogsTitle')}</div>
-                <div className="mt-2 text-sm text-muted-foreground">
-                  {t('appLogs.noLogsDescription')}
-                </div>
-              </div>
+              <LogListState
+                icon={
+                  hasActiveRuntimeFilters ? (
+                    <Search className="size-5" />
+                  ) : (
+                    <History className="size-5" />
+                  )
+                }
+                title={emptyLogCopy.title}
+                description={emptyLogCopy.description}
+                action={
+                  hasActiveRuntimeFilters ? (
+                    <Button size="sm" variant="outline" onClick={handleClearRuntimeFilters}>
+                      {t('appLogs.empty.clearFilters')}
+                    </Button>
+                  ) : undefined
+                }
+              />
             ) : (
               <StickyDataTable<LogRunListItem>
                 className="h-full"
@@ -833,7 +958,7 @@ export default function AgentLogsPage({ params }: AgentLogsPageProps) {
                         </>
                       ) : null}
                       <TableCell className="py-4">
-                        <LogStatusBadge status={item.status} />
+                        <RunStatusBadge status={item.status} />
                       </TableCell>
                       <TableCell className="py-4">
                         {typeof item.total_steps === 'number' ? item.total_steps : '-'}

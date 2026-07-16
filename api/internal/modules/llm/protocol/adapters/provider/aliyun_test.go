@@ -3,13 +3,120 @@ package provider
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 )
+
+func TestAliyunAdapterHandleErrorUsesExactBillingCodes(t *testing.T) {
+	a, err := NewAliyunAdapter(&adapter.AdapterConfig{APIKey: "test-key"})
+	if err != nil {
+		t.Fatalf("NewAliyunAdapter() error = %v", err)
+	}
+
+	tests := []struct {
+		name       string
+		statusCode int
+		body       string
+		want       error
+	}{
+		{name: "native arrearage", statusCode: http.StatusBadRequest, body: `{"code":"Arrearage","message":"account is overdue"}`, want: adapter.ErrBillingUnavailable},
+		{name: "free tier exhausted", statusCode: http.StatusForbidden, body: `{"code":"AllocationQuota.FreeTierOnly","message":"free tier exhausted"}`, want: adapter.ErrQuotaExhausted},
+		{name: "prepaid bill overdue", statusCode: http.StatusTooManyRequests, body: `{"code":"PrepaidBillOverdue","message":"prepaid bill overdue"}`, want: adapter.ErrBillingUnavailable},
+		{name: "openai postpaid bill overdue", statusCode: http.StatusTooManyRequests, body: `{"error":{"code":"PostpaidBillOverdue","message":"postpaid bill overdue"}}`, want: adapter.ErrBillingUnavailable},
+		{name: "allocation throttling", statusCode: http.StatusTooManyRequests, body: `{"code":"Throttling.AllocationQuota","message":"allocated quota exceeded"}`, want: adapter.ErrRateLimited},
+		{name: "openai insufficient quota is throttling", statusCode: http.StatusTooManyRequests, body: `{"error":{"code":"insufficient_quota","message":"rate quota exceeded"}}`, want: adapter.ErrRateLimited},
+		{name: "unknown balance wording", statusCode: http.StatusBadRequest, body: `{"code":"UnknownAccountState","message":"balance service unavailable"}`, want: adapter.ErrUpstreamError},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			err := a.handleError(testCase.statusCode, []byte(testCase.body))
+			if !errors.Is(err, testCase.want) {
+				t.Fatalf("handleError() error = %v, want %v", err, testCase.want)
+			}
+		})
+	}
+}
+
+func TestAliyunAdapterHandleErrorDoesNotExposeProviderBillingMessage(t *testing.T) {
+	a, err := NewAliyunAdapter(&adapter.AdapterConfig{APIKey: "test-key"})
+	if err != nil {
+		t.Fatalf("NewAliyunAdapter() error = %v", err)
+	}
+
+	err = a.handleError(
+		http.StatusTooManyRequests,
+		[]byte(`{"code":"PrepaidBillOverdue","message":"account sk-sensitive-value is overdue"}`),
+	)
+	if !errors.Is(err, adapter.ErrBillingUnavailable) {
+		t.Fatalf("handleError() error = %v, want billing unavailable", err)
+	}
+	if strings.Contains(err.Error(), "sk-sensitive-value") {
+		t.Fatalf("handleError() exposed provider message: %v", err)
+	}
+}
+
+func TestAliyunAdapterStreamingPreservesExactBillingCodes(t *testing.T) {
+	tests := []struct {
+		name       string
+		body       string
+		callStream func(*AliyunAdapter) error
+		wantCode   string
+	}{
+		{
+			name: "native chat",
+			body: `{"code":"PrepaidBillOverdue","message":"prepaid bill overdue"}`,
+			callStream: func(a *AliyunAdapter) error {
+				_, err := a.ChatCompletionStream(context.Background(), &adapter.ChatRequest{
+					Model: "qwen-plus", Messages: []adapter.Message{{Role: "user", Content: "hello"}},
+				})
+				return err
+			},
+			wantCode: "PrepaidBillOverdue",
+		},
+		{
+			name: "openai compatible responses",
+			body: `{"error":{"code":"PostpaidBillOverdue","message":"postpaid bill overdue"}}`,
+			callStream: func(a *AliyunAdapter) error {
+				_, err := a.CreateResponseStream(context.Background(), &adapter.RawResponseRequest{
+					Body: json.RawMessage(`{"model":"qwen-plus","input":"hello"}`),
+				})
+				return err
+			},
+			wantCode: "PostpaidBillOverdue",
+		},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusTooManyRequests)
+				fmt.Fprint(w, testCase.body)
+			}))
+			defer server.Close()
+
+			a, err := NewAliyunAdapter(&adapter.AdapterConfig{APIKey: "test-key", BaseURL: server.URL + "/api/v1"})
+			if err != nil {
+				t.Fatalf("NewAliyunAdapter() error = %v", err)
+			}
+			err = testCase.callStream(a)
+			if !errors.Is(err, adapter.ErrBillingUnavailable) {
+				t.Fatalf("stream error = %v, want billing unavailable", err)
+			}
+			var adapterErr *adapter.AdapterError
+			if !errors.As(err, &adapterErr) || adapterErr.Code != testCase.wantCode || adapterErr.StatusCode != http.StatusTooManyRequests {
+				t.Fatalf("stream adapter error = %#v, want code %q status 429", adapterErr, testCase.wantCode)
+			}
+		})
+	}
+}
 
 func TestAliyunAdapterChatCompletion_UsesNativeTextGeneration(t *testing.T) {
 	t.Helper()

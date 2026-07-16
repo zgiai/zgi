@@ -1,6 +1,8 @@
 package model
 
-import "testing"
+import (
+	"testing"
+)
 
 func TestLLMRouteGetEffectiveModels_NormalizesLegacyProviderWildcard(t *testing.T) {
 	route := &LLMRoute{
@@ -30,5 +32,37 @@ func TestLLMRouteSupportsModel_LegacyProviderWildcardBehavesAsGlobalWildcard(t *
 	}
 	if !route.SupportsModel("gpt-4o") {
 		t.Fatal("SupportsModel(gpt-4o) = false, want true")
+	}
+}
+
+func TestLLMRouteSupportsModelForProvider_OfficialRouteRequiresExactPair(t *testing.T) {
+	route := &LLMRoute{
+		IsOfficial: true,
+		Models:     []string{"same-name", "Pro/gpt-4.1"},
+		OfficialProviderModels: []ProviderModel{
+			{Provider: "openai", Model: "same-name"},
+			{Provider: "openai", Model: "Pro/gpt-4.1"},
+		},
+	}
+
+	if !route.SupportsModelForProvider("openai", "same-name") {
+		t.Fatal("official exact provider-model pair should be supported")
+	}
+	if route.SupportsModelForProvider("anthropic", "same-name") {
+		t.Fatal("official same-name model under the wrong provider should be rejected")
+	}
+	if route.SupportsModelForProvider("", "same-name") {
+		t.Fatal("official model with missing provider should be rejected")
+	}
+	if route.SupportsModelForProvider("openai", "gpt-4.1") {
+		t.Fatal("official model must not strip the Pro/ prefix")
+	}
+}
+
+func TestLLMRouteSupportsModelForProvider_PrivateRouteBehaviorIsUnchanged(t *testing.T) {
+	route := &LLMRoute{Models: []string{"same-name"}}
+
+	if !route.SupportsModelForProvider("different-provider", "same-name") {
+		t.Fatal("private route support should remain based on its existing model list")
 	}
 }

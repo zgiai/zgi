@@ -13,7 +13,6 @@ import (
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	promptdto "github.com/zgiai/zgi/api/internal/modules/prompts/dto"
 	promptmodel "github.com/zgiai/zgi/api/internal/modules/prompts/model"
-	workspace_model "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 )
 
 const (
@@ -33,13 +32,13 @@ const (
 )
 
 var promptOptimizerVariablePatterns = []*regexp.Regexp{
-	regexp.MustCompile(`(?s)<zgi:(knowledge|skill)\b[^>]*>.*?</zgi:(knowledge|skill)>`),
+	regexp.MustCompile(`(?s)<zgi:(knowledge|skill|database|table|workflow)\b[^>]*>.*?</zgi:(knowledge|skill|database|table|workflow)>`),
 	regexp.MustCompile(`\{\{#[^{}]+#\}\}`),
 	regexp.MustCompile(`\{\{[^{}]+\}\}`),
 	regexp.MustCompile(`\$\{[^{}]+\}`),
 }
 
-var promptOptimizerZGITemplateBlockPattern = regexp.MustCompile(`(?s)<zgi:(slot|knowledge|skill)\b([^>]*)>(.*?)</zgi:(slot|knowledge|skill)>`)
+var promptOptimizerZGITemplateBlockPattern = regexp.MustCompile(`(?s)<zgi:(slot|knowledge|skill|database|table|workflow)\b([^>]*)>(.*?)</zgi:(slot|knowledge|skill|database|table|workflow)>`)
 
 func (s *promptService) Optimize(
 	ctx context.Context,
@@ -56,8 +55,11 @@ func (s *promptService) Optimize(
 	if optimizerPrompt == "" {
 		return nil, fmt.Errorf("raw prompt cannot be empty")
 	}
-	if s == nil || s.llmClient == nil || s.defaultModelSvc == nil {
+	if s == nil {
 		return nil, fmt.Errorf("prompt optimizer is unavailable")
+	}
+	if err := s.requirePromptWorkspaceAccess(ctx, organizationID, accountID, workspaceID, promptOptimizePermissionCodes()...); err != nil {
+		return nil, err
 	}
 
 	goal := normalizePromptOptimizerGoal(req.Goal)
@@ -67,9 +69,12 @@ func (s *promptService) Optimize(
 	editInstruction := strings.TrimSpace(req.EditInstruction)
 	targetMaxChars := normalizePromptOptimizerTargetMaxChars(req.TargetMaxChars)
 
-	promptID, err := s.resolveOptimizerPromptID(ctx, organizationID, accountID, req.PromptID)
+	promptID, err := s.resolveOptimizerPromptID(ctx, organizationID, accountID, workspaceID, req.PromptID)
 	if err != nil {
 		return nil, err
+	}
+	if s.llmClient == nil || s.defaultModelSvc == nil {
+		return nil, fmt.Errorf("prompt optimizer is unavailable")
 	}
 
 	resolvedModel, err := s.defaultModelSvc.ResolveUseCase(
@@ -190,8 +195,11 @@ func (s *promptService) OptimizeStream(
 	if optimizerPrompt == "" {
 		return nil, fmt.Errorf("raw prompt cannot be empty")
 	}
-	if s == nil || s.llmClient == nil || s.defaultModelSvc == nil {
+	if s == nil {
 		return nil, fmt.Errorf("prompt optimizer is unavailable")
+	}
+	if err := s.requirePromptWorkspaceAccess(ctx, organizationID, accountID, workspaceID, promptOptimizePermissionCodes()...); err != nil {
+		return nil, err
 	}
 
 	goal := normalizePromptOptimizerGoal(req.Goal)
@@ -201,9 +209,12 @@ func (s *promptService) OptimizeStream(
 	editInstruction := strings.TrimSpace(req.EditInstruction)
 	targetMaxChars := normalizePromptOptimizerTargetMaxChars(req.TargetMaxChars)
 
-	promptID, err := s.resolveOptimizerPromptID(ctx, organizationID, accountID, req.PromptID)
+	promptID, err := s.resolveOptimizerPromptID(ctx, organizationID, accountID, workspaceID, req.PromptID)
 	if err != nil {
 		return nil, err
+	}
+	if s.llmClient == nil || s.defaultModelSvc == nil {
+		return nil, fmt.Errorf("prompt optimizer is unavailable")
 	}
 
 	if onEvent != nil {
@@ -562,6 +573,7 @@ func (s *promptService) resolveOptimizerPromptID(
 	ctx context.Context,
 	organizationID,
 	accountID,
+	workspaceID,
 	rawPromptID string,
 ) (*string, error) {
 	if strings.TrimSpace(rawPromptID) == "" {
@@ -572,11 +584,14 @@ func (s *promptService) resolveOptimizerPromptID(
 		organizationID,
 		accountID,
 		rawPromptID,
-		workspace_model.WorkspacePermissionAgentView,
-		workspace_model.WorkspacePermissionAgentManage,
+		promptOptimizePermissionCodes()...,
 	)
 	if err != nil {
 		return nil, err
+	}
+	if prompt.Source != promptmodel.PromptSourceOfficial &&
+		(prompt.WorkspaceID == nil || strings.TrimSpace(*prompt.WorkspaceID) != strings.TrimSpace(workspaceID)) {
+		return nil, fmt.Errorf("prompt not found")
 	}
 	return &prompt.ID, nil
 }

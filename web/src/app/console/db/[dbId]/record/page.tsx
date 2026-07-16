@@ -25,9 +25,15 @@ import {
 } from '@/components/ui/table';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useDbSqlOperationsPaged } from '@/hooks/db/use-db-sql-operations';
+import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
 import type { OperationType, SqlOperationStatus } from '@/services/types/db';
 import { toast } from 'sonner';
 import { formatDate } from '@/utils/format';
+import {
+  PermissionDeniedState,
+  PermissionLoadingState,
+} from '@/components/common/permission-gate-state';
+import { DATABASE_PERMISSION_ACTIONS } from '@/constants/permissions';
 import {
   Dialog,
   DialogContent,
@@ -40,6 +46,8 @@ export default function DbRecordPage() {
   const params = useParams();
   const dbId = (params?.dbId as string) ?? '';
   const t = useT();
+  const { hasAnyPermission, isLoading: isPermissionsLoading } = useAccountPermissions();
+  const canViewOperationLogs = hasAnyPermission(DATABASE_PERMISSION_ACTIONS.operationLogsView);
 
   const [operationType, setOperationType] = useState<OperationType | undefined>(undefined);
   const [status, setStatus] = useState<SqlOperationStatus | undefined>(undefined);
@@ -73,6 +81,7 @@ export default function DbRecordPage() {
     page,
     pageSize,
     {
+      enabled: canViewOperationLogs,
       refetchOnWindowFocus: false,
       staleTime: 30_000,
       gcTime: 600_000,
@@ -80,6 +89,14 @@ export default function DbRecordPage() {
   );
 
   const totalPages = useMemo(() => Math.max(1, Math.ceil(total / pageSize)), [total, pageSize]);
+
+  if (isPermissionsLoading) {
+    return <PermissionLoadingState />;
+  }
+
+  if (!canViewOperationLogs) {
+    return <PermissionDeniedState />;
+  }
 
   return (
     <div className="h-full overflow-auto p-6 flex flex-col gap-4">

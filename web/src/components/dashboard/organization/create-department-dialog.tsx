@@ -156,7 +156,7 @@ export function CreateDepartmentDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md p-0 overflow-visibleflex flex-col">
+      <DialogContent className="max-w-md p-0 overflow-visible flex flex-col">
         <DialogHeader>
           <DialogTitle className="text-xl font-bold tracking-tight">
             {t('organization.contacts.createDepartment.title')}
@@ -177,6 +177,7 @@ export function CreateDepartmentDialog({
                 if (nameError) setNameError('');
               }}
               maxLength={50}
+              showCharacterCount
               errorText={nameError}
               className="h-12 rounded-xl border focus:border-brand-main focus:ring-brand-main/10 transition-all"
             />
@@ -231,12 +232,7 @@ export function CreateDepartmentDialog({
         </DialogBody>
 
         <DialogFooter className="bg-muted/50 pt-4 pb-6 px-6 border-t gap-3">
-          <Button
-            variant="ghost"
-            size="xl"
-            onClick={handleCancel}
-            className="px-6 font-semibold"
-          >
+          <Button variant="ghost" size="xl" onClick={handleCancel} className="px-6 font-semibold">
             {t('organization.contacts.createDepartment.cancel')}
           </Button>
           <Button

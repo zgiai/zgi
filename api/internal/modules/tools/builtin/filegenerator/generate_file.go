@@ -26,6 +26,7 @@ const (
 	xlsxMimeType             = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 	pptxMimeType             = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
 	pdfMimeType              = "application/pdf"
+	svgMimeType              = "image/svg+xml"
 	xlsxTitleFontColor       = "111827"
 	xlsxHeaderFillColor      = "D9EAF7"
 	xlsxHeaderFontColor      = "1F2937"
@@ -35,6 +36,12 @@ const (
 )
 
 var filenameUnsafePattern = regexp.MustCompile(`[^a-zA-Z0-9._\-\p{Han}]`)
+
+type generatedFileTarget string
+
+const (
+	generatedFileTargetTemporaryArtifact generatedFileTarget = "temporary_artifact"
+)
 
 // GenerateFileTool creates text-based files in the workflow tool file store.
 type GenerateFileTool struct {
@@ -60,7 +67,7 @@ func NewGenerateFileTool(tenantID string) *GenerateFileTool {
 				"en_US":   "Generate a downloadable file from provided content.",
 				"zh_Hans": "根据提供的内容生成可下载文件。",
 			},
-			LLM: "Generate a file from provided content. Supported formats: txt, md, html, json, csv, docx, xlsx, and pdf. When the user asks to export or save existing conversation content, pass that existing content here directly; do not first repeat it with submit_intermediate_answer.",
+			LLM: "Generate a temporary downloadable file artifact from provided content. Supported formats: txt, md, html, json, csv, svg, docx, xlsx, and pdf. This tool does not write to File Management. When the user asks to save the result into File Management, generate the artifact first and then use file-manager/save_file_to_management. When the user asks to export or save existing conversation content, pass that existing content here directly; do not first repeat it with submit_intermediate_answer.",
 		},
 		Parameters: []tools.ToolParameter{
 			{
@@ -78,7 +85,7 @@ func NewGenerateFileTool(tenantID string) *GenerateFileTool {
 				Name:             "format",
 				Label:            tools.I18nText{"en_US": "Format", "zh_Hans": "格式"},
 				HumanDescription: tools.I18nText{"en_US": "Output file format.", "zh_Hans": "生成文件的输出格式。"},
-				LLMDescription:   "Output format: txt, md, html, json, csv, docx, xlsx, or pdf.",
+				LLMDescription:   "Output format: txt, md, html, json, csv, svg, docx, xlsx, or pdf.",
 				Type:             tools.ToolParameterTypeSelect,
 				Form:             tools.ToolParameterFormLLM,
 				Required:         true,
@@ -90,6 +97,7 @@ func NewGenerateFileTool(tenantID string) *GenerateFileTool {
 					{Value: "html", Label: tools.I18nText{"en_US": "HTML", "zh_Hans": "HTML 网页"}},
 					{Value: "json", Label: tools.I18nText{"en_US": "JSON", "zh_Hans": "JSON 文件"}},
 					{Value: "csv", Label: tools.I18nText{"en_US": "CSV", "zh_Hans": "CSV 表格"}},
+					{Value: "svg", Label: tools.I18nText{"en_US": "SVG", "zh_Hans": "SVG 图像"}},
 					{Value: "docx", Label: tools.I18nText{"en_US": "Word", "zh_Hans": "Word 文档"}},
 					{Value: "xlsx", Label: tools.I18nText{"en_US": "Excel", "zh_Hans": "Excel 表格"}},
 					{Value: "pdf", Label: tools.I18nText{"en_US": "PDF", "zh_Hans": "PDF 文档"}},
@@ -121,11 +129,11 @@ func NewGenerateFileTool(tenantID string) *GenerateFileTool {
 				Name:             "lifecycle",
 				Label:            tools.I18nText{"en_US": "Lifecycle", "zh_Hans": "生命周期"},
 				HumanDescription: tools.I18nText{"en_US": "Whether the generated file is persistent or temporary.", "zh_Hans": "生成文件是持久保存还是临时保存。"},
-				LLMDescription:   "File lifecycle: persistent or temporary. Defaults to persistent.",
+				LLMDescription:   "Temporary artifact lifecycle: persistent or temporary. Defaults to temporary.",
 				Type:             tools.ToolParameterTypeSelect,
 				Form:             tools.ToolParameterFormLLM,
 				Required:         false,
-				Default:          "persistent",
+				Default:          "temporary",
 				SupportVariable:  true,
 				Options: []tools.ToolParameterOption{
 					{Value: "persistent", Label: tools.I18nText{"en_US": "Persistent", "zh_Hans": "持久保存"}},
@@ -186,7 +194,6 @@ func (t *GenerateFileTool) Invoke(
 	if err != nil {
 		return nil, err
 	}
-
 	filename := buildFilename(rawStringParam(toolParameters, "filename"), spec.extension)
 	return createGeneratedFileForRuntime(ctx, t.GetTenantID(), t.runtime, generatedFileParams{
 		userID:         userID,
@@ -221,6 +228,10 @@ func createGeneratedFileForRuntime(ctx context.Context, tenantID string, runtime
 	if strings.TrimSpace(params.userID) == "" {
 		return nil, fmt.Errorf("user id is required")
 	}
+	lifecycle := params.lifecycle
+	if lifecycle == "" {
+		lifecycle = tool_file.ToolFileLifecycleTemporary
+	}
 
 	toolFile, err := tool_file.CreateFileByRawGlobal(ctx, tool_file.CreateFileByRawParams{
 		UserID:         params.userID,
@@ -229,7 +240,7 @@ func createGeneratedFileForRuntime(ctx context.Context, tenantID string, runtime
 		FileData:       params.data,
 		MimeType:       params.mimeType,
 		Filename:       &params.filename,
-		Lifecycle:      params.lifecycle,
+		Lifecycle:      lifecycle,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create generated file: %w", err)
@@ -256,6 +267,11 @@ func createGeneratedFileForRuntime(ctx context.Context, tenantID string, runtime
 	fileMeta := fileObj.ToDict()
 	fileMeta["url"] = url
 	fileMeta["download_url"] = downloadURL
+	fileMeta["target"] = string(generatedFileTargetTemporaryArtifact)
+	fileMeta["lifecycle"] = toolFile.Lifecycle
+	if toolFile.ExpiresAt != nil {
+		fileMeta["expires_at"] = toolFile.ExpiresAt.Unix()
+	}
 
 	return []tools.ToolInvokeMessage{
 		{
@@ -267,14 +283,25 @@ func createGeneratedFileForRuntime(ctx context.Context, tenantID string, runtime
 		},
 		builtin.CreateJSONMessage(map[string]interface{}{
 			"file_id":      toolFile.ID,
+			"tool_file_id": toolFile.ID,
 			"filename":     toolFile.Name,
 			"format":       params.format,
 			"mime_type":    params.mimeType,
 			"size":         toolFile.Size,
 			"url":          url,
 			"download_url": downloadURL,
+			"target":       string(generatedFileTargetTemporaryArtifact),
+			"lifecycle":    toolFile.Lifecycle,
+			"expires_at":   generatedToolFileExpiresAt(toolFile),
 		}),
 	}, nil
+}
+
+func generatedToolFileExpiresAt(toolFile *tool_file.ToolFile) interface{} {
+	if toolFile == nil || toolFile.ExpiresAt == nil {
+		return nil
+	}
+	return toolFile.ExpiresAt.Unix()
 }
 
 func (t *GenerateFileTool) enforceRuntimeFilePolicy(format string) error {
@@ -372,6 +399,8 @@ func resolveFormat(raw string) (string, formatSpec, error) {
 		return "json", formatSpec{extension: ".json", mimeType: "application/json"}, nil
 	case "csv":
 		return "csv", formatSpec{extension: ".csv", mimeType: "text/csv"}, nil
+	case "svg":
+		return "svg", formatSpec{extension: ".svg", mimeType: svgMimeType}, nil
 	case "docx", "word":
 		return "docx", formatSpec{extension: ".docx", mimeType: docxMimeType}, nil
 	case "xlsx", "excel":
@@ -818,10 +847,10 @@ func isFullHTMLDocument(content string) bool {
 
 func resolveToolFileLifecycle(raw string) (tool_file.ToolFileLifecycle, error) {
 	switch strings.ToLower(strings.TrimSpace(raw)) {
-	case "", "persistent":
-		return tool_file.ToolFileLifecyclePersistent, nil
-	case "temporary":
+	case "", "temporary":
 		return tool_file.ToolFileLifecycleTemporary, nil
+	case "persistent":
+		return tool_file.ToolFileLifecyclePersistent, nil
 	default:
 		return "", fmt.Errorf("unsupported lifecycle: %s", raw)
 	}
@@ -865,6 +894,55 @@ func rawStringParam(params map[string]interface{}, key string) string {
 		return ""
 	}
 	return strings.TrimSpace(text)
+}
+
+func runtimeStringParam(runtime *tools.ToolRuntime, key string) string {
+	if runtime == nil || len(runtime.RuntimeParameters) == 0 {
+		return ""
+	}
+	return strings.TrimSpace(stringFromRuntimeAny(runtime.RuntimeParameters[key]))
+}
+
+func runtimeBoolParam(runtime *tools.ToolRuntime, key string) bool {
+	if runtime == nil || len(runtime.RuntimeParameters) == 0 {
+		return false
+	}
+	switch typed := runtime.RuntimeParameters[key].(type) {
+	case bool:
+		return typed
+	case string:
+		switch strings.ToLower(strings.TrimSpace(typed)) {
+		case "true", "1", "yes", "y", "on":
+			return true
+		default:
+			return false
+		}
+	default:
+		return false
+	}
+}
+
+func stringFromRuntimeAny(value interface{}) string {
+	switch typed := value.(type) {
+	case string:
+		return typed
+	case fmt.Stringer:
+		return typed.String()
+	default:
+		if value == nil {
+			return ""
+		}
+		return fmt.Sprintf("%v", value)
+	}
+}
+
+func firstNonEmptyStringParam(values ...string) string {
+	for _, value := range values {
+		if value = strings.TrimSpace(value); value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func appendDownloadQuery(rawURL string) string {

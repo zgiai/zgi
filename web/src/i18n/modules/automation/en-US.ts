@@ -22,7 +22,7 @@
     description: 'Scheduled tasks always run inside a workspace. Select a workspace to continue.',
     switchWorkspace: 'Switch workspace',
     noWorkspaces: 'You have not joined any workspaces yet.',
-    personalSpace: 'Organization View',
+    personalSpace: 'Personal workbench',
   },
   aiDraft: {
     title: 'Generate a draft',

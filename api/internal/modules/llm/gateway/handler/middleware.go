@@ -3,14 +3,12 @@ package handler
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	apikeyrepo "github.com/zgiai/zgi/api/internal/modules/llm/apikey/repository"
-	"github.com/zgiai/zgi/api/internal/modules/llm/gateway/types"
-	"github.com/zgiai/zgi/api/pkg/response"
+	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
 // LLMAPIKeyAuthMiddleware validates LLM API keys
@@ -18,57 +16,33 @@ func LLMAPIKeyAuthMiddleware(apiKeyRepo apikeyrepo.APIKeyRepository) gin.Handler
 	return func(c *gin.Context) {
 		apiKey, errCode, ok := extractGatewayAPIKey(c)
 		if !ok {
-			response.Fail(c, response.ErrorCode{
-				Code:        types.ErrCodeInvalidAPIKey.Code,
-				Message:     errCode,
-				UserVisible: true,
-			})
-			c.Abort()
+			abortWithProtocolError(c, invalidAPIKeyProtocolError(errCode))
 			return
 		}
 
 		// 4. Validate API key
 		keyInfo, err := apiKeyRepo.GetByKey(c.Request.Context(), apiKey)
 		if err != nil {
-			response.Fail(c, response.ErrorCode{
-				Code:        types.ErrCodeInvalidAPIKey.Code,
-				Message:     fmt.Sprintf("Invalid API key: %v", err),
-				UserVisible: true,
-			})
-			c.Abort()
+			logger.WarnContext(c.Request.Context(), "API key authentication failed", err)
+			abortWithProtocolError(c, invalidAPIKeyProtocolError("Invalid API key"))
 			return
 		}
 
 		// Internal keys are for system use only and cannot be used via API
 		if keyInfo.IsInternal {
-			response.Fail(c, response.ErrorCode{
-				Code:        types.ErrCodeInvalidAPIKey.Code,
-				Message:     "Internal API keys cannot be used for external API calls",
-				UserVisible: true,
-			})
-			c.Abort()
+			abortWithProtocolError(c, invalidAPIKeyProtocolError("Invalid API key"))
 			return
 		}
 
 		// 5. Check if API key is active
 		if !keyInfo.IsActive() {
-			response.Fail(c, response.ErrorCode{
-				Code:        types.ErrCodeAPIKeyInactive.Code,
-				Message:     "API key is inactive or expired",
-				UserVisible: true,
-			})
-			c.Abort()
+			abortWithProtocolError(c, invalidAPIKeyProtocolError("API key is inactive or expired"))
 			return
 		}
 
 		// 6. Check if API key has quota
 		if !keyInfo.HasQuota() {
-			response.Fail(c, response.ErrorCode{
-				Code:        types.ErrCodeInsufficientQuota.Code,
-				Message:     "API key has insufficient quota",
-				UserVisible: true,
-			})
-			c.Abort()
+			abortWithProtocolError(c, quotaProtocolError())
 			return
 		}
 

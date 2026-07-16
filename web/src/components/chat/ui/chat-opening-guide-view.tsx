@@ -56,13 +56,13 @@ export function ChatOpeningGuideView({
             icon={icon || ICON_TEXT}
             iconBackground={iconBackground || ICON_BG}
             alt={normalizedTitle || icon || ICON_TEXT}
-            size="sm"
+            size="md"
             editable={false}
             className="rounded-2xl"
           />
         ) : (
-          <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-primary text-primary-foreground shadow-sm">
-            <Bot size={24} />
+          <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-primary text-primary-foreground shadow-sm">
+            <Bot size={32} />
           </div>
         )}
         {normalizedTitle ? (
@@ -73,7 +73,7 @@ export function ChatOpeningGuideView({
       </div>
 
       {normalizedMessage ? (
-        <div className="mt-4 w-full rounded-lg bg-muted/70 px-4 py-3 text-sm leading-6">
+        <div className="mt-4 w-full rounded-lg bg-muted/70 px-4 py-3 text-left text-sm leading-6">
           <MarkdownViewer
             className="md-viewer max-w-full break-words [&_p]:my-0 [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_table]:block [&_table]:max-w-full [&_table]:overflow-x-auto"
             content={normalizedMessage}

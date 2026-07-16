@@ -42,6 +42,7 @@ const WorkflowChatPanel: React.FC<WorkflowChatPanelProps> = props => {
         <PanelHeader
           agentId={state.agentId}
           query={state.debugRunsQuery}
+          canViewRuntimeLogs={state.canViewRuntimeLogs}
           onSelectDebugRun={state.handleSelectDebugRun}
           onReset={state.handleReset}
           onClose={state.onClose}
@@ -52,7 +53,10 @@ const WorkflowChatPanel: React.FC<WorkflowChatPanelProps> = props => {
               key={`${state.varsSig}-${state.convId}`}
               className="h-full"
               mode="singleTest"
-              conversation={{ id: state.convId, conversationId: state.chatConv?.conversationId ?? '' }}
+              conversation={{
+                id: state.convId,
+                conversationId: state.chatConv?.conversationId ?? '',
+              }}
               onSend={state.handleSend}
               onStop={state.handleStop}
               features={state.features}

@@ -72,7 +72,16 @@ func loadCoreRuntimeConfig(cfg *Config, source *envSource) error {
 		optionalConfigLoader("console", loadConsoleConfig),
 		optionalConfigLoader("platform", loadPlatformConfig),
 		optionalConfigLoader("feature", loadFeatureConfig),
+		optionalConfigLoader("chat runtime", loadChatRuntimeConfig),
 	)
+}
+
+func loadChatRuntimeConfig(cfg *Config, source *envSource) {
+	timeout := mustInt(source.int(300, envChatRuntimeModelIdleTimeoutSeconds))
+	if timeout <= 0 {
+		timeout = 300
+	}
+	cfg.ChatRuntime = ChatRuntimeConfig{ModelIdleTimeoutSeconds: timeout}
 }
 
 func loadInfrastructureConfig(cfg *Config, source *envSource) error {
@@ -372,7 +381,7 @@ func loadPlatformConfig(cfg *Config, source *envSource) {
 	cfg.Platform = PlatformConfig{
 		Edition:                  platformRunMode(source),
 		AdminPass:                source.string("", envZGIAdminPass),
-		OrgInviteDefaultPassword: source.string("", envZGIOrgInviteDefaultPassword),
+		OrgInviteDefaultPassword: source.string(DefaultOrgInviteDefaultPassword, envZGIOrgInviteDefaultPassword),
 		CloudBootstrap: CloudBootstrapConfig{
 			AdminEmail:    source.string("", envCloudBootstrapAdminEmail),
 			AdminName:     source.string("", envCloudBootstrapAdminName),
@@ -1032,12 +1041,17 @@ func loadLLMConfig(cfg *Config, source *envSource) {
 	_, guardOutboundURLSet := source.lookup(envLLMGuardOutboundURL)
 	guardOutboundDNS, _ := source.bool(false, envLLMGuardOutboundDNS)
 	allowPrivateBaseURL, _ := source.bool(false, envLLMAllowPrivateBaseURL)
+	upstreamBalancePolling, _ := source.bool(false, envLLMUpstreamBalancePollingEnabled)
+	upstreamGuardPercentage, _ := source.int(0, envLLMUpstreamGuardPercentage)
 	cfg.LLM = LLMConfig{
 		EncryptionKey:           source.string("", envLLMEncryptionKey),
 		OfficialModelStrictSync: officialModelStrictSync,
 		GuardOutboundURL:        guardOutboundURL,
 		GuardOutboundDNS:        guardOutboundDNS,
 		AllowPrivateBaseURL:     allowPrivateBaseURL,
+		UpstreamBalancePolling:  upstreamBalancePolling,
+		UpstreamGuardMode:       strings.ToLower(strings.TrimSpace(source.string("off", envLLMUpstreamGuardMode))),
+		UpstreamGuardPercentage: upstreamGuardPercentage,
 		guardOutboundURLSet:     guardOutboundURLSet,
 	}
 }

@@ -99,9 +99,27 @@ export interface WebAppWorkflowConfig {
     file_upload_enabled?: boolean;
     supports_vision?: boolean;
     home_title?: string;
+    opening_statement?: string;
     input_placeholder?: string;
     suggested_questions?: string[];
   };
+}
+
+export type WebAppRuntimeAuthMode = 'authenticated' | 'virtual' | 'migration' | 'unknown';
+
+export interface WebAppRuntimeCapability {
+  agent_id: string;
+  web_app_id: string;
+  workspace_id: string;
+  organization_id: string;
+  surface: 'webapp';
+  allowed: boolean;
+  reason: string;
+  auth_mode: WebAppRuntimeAuthMode;
+  public_only: boolean;
+  private_audience_enabled: boolean;
+  supported_subject_types: string[];
+  version_uuid?: string;
 }
 
 export interface WebAppRunRequest {

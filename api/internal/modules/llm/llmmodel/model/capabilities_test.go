@@ -8,6 +8,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestWorkflowUsesTextChatWithoutSeparateUseCase(t *testing.T) {
+	useCases := EnsureUseCases([]string{"chat"}, nil)
+
+	require.Equal(t, []string{"text-chat"}, useCases)
+	assert.NotContains(t, ValidUseCases(), UseCase("workflow"))
+}
+
 // TestParameterDefinition tests the ParameterDefinition struct
 func TestParameterDefinition(t *testing.T) {
 	t.Run("slider parameter", func(t *testing.T) {

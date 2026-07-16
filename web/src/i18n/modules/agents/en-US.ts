@@ -1,7 +1,9 @@
 const messages = {
   agent: 'Agent',
   title: 'Agent Management',
+  workflowListTitle: 'Workflow Management',
   create: 'Create Agent',
+  createWorkflow: 'Create Workflow',
   createFolder: 'Create Folder',
   agentCreated: 'Agent created successfully',
   empty: 'No agents',
@@ -37,6 +39,7 @@ const messages = {
   // Navigation
   backToList: 'Back to Agents',
   backToAgentList: 'Agent list',
+  backToWorkflowList: 'Workflow list',
   permission: 'Permission',
 
   // Tab management
@@ -44,17 +47,21 @@ const messages = {
   conversationsDescription: 'Manage conversations and chat history',
   settingsTitle: 'Settings',
   settingsDescription: 'Configure agent settings and parameters',
+  apiGroupTitle: 'API',
   apiTitle: 'API',
+  apiDocsNavTitle: 'API Docs',
   apiDescription: 'External API configuration and management',
 
   // Agent management
   editAgent: 'Edit Agent',
+  editBasicInfo: 'Edit basic information',
   deleteAgent: 'Delete Agent',
   duplicateAgent: 'Duplicate Agent',
   testAgent: 'Test Agent',
 
   // Search and filters
   searchPlaceholder: 'Search agents...',
+  workflowSearchPlaceholder: 'Search workflows...',
   filterAll: 'All',
   filterActive: 'Active',
   filterInactive: 'Inactive',
@@ -67,8 +74,14 @@ const messages = {
   noAgentsYet: 'No agents yet',
   noAgentsDescription:
     'Get started by creating your first agent to automate tasks and conversations.',
+  noWorkflowsYet: 'No workflows yet',
+  noWorkflowsDescription:
+    'Get started by creating your first workflow to orchestrate repeatable processes.',
+  workflowNoResultsDescription: 'No workflows match your search for "{keyword}".',
   createFirstAgent: 'Create Agent',
+  createFirstWorkflow: 'Create Workflow',
   importAgent: 'Import Agent',
+  importWorkflow: 'Import Workflow',
   importingAgent: 'Importing...',
   importSelectFile: 'Please select a YAML file',
   invalidImportFileType: 'Unsupported file format, expected .yml or .yaml',
@@ -583,6 +596,7 @@ const messages = {
     backToEdit: 'Back to Edit',
     restoreDraft: 'Restore Previous Draft',
     running: 'Running',
+    pending: 'Pending',
     succeeded: 'Succeeded',
     failed: 'Failed',
     stopped: 'Stopped',
@@ -601,7 +615,9 @@ const messages = {
     updating: 'Updating...',
     workflowUpdatedSuccessfully: 'Agent updated successfully',
     webapp: 'Web App',
-    webappLogs: 'Web App Logs',
+    agentLogs: 'Agent Logs',
+    workflowLogs: 'Workflow Logs',
+    webappLogs: 'Workflow Logs',
     webappStatus: {
       label: 'Web App Status',
       online: 'Online',
@@ -650,6 +666,16 @@ const messages = {
     autoSaveTips: 'Auto saved every {interval} seconds',
     panelAlreadyOpen: '{name} is already open',
     fixErrorsBeforePublishing: 'Please fix all errors before publishing',
+    promptPublishRisk: {
+      title: 'Confirm prompt risk before publishing',
+      description: '{count} node(s) still follow the prompt library Latest version.',
+      impact:
+        'After publishing, those nodes will automatically move when new prompt versions are created. Production flows should follow Online version so new versions are validated before rollout.',
+      unknownNode: 'Unnamed node',
+      more: '{count} more node(s) not shown.',
+      viewIssues: 'View issues',
+      confirm: 'Publish anyway',
+    },
     viewingRunHistory: 'Viewing Run History. Canvas is read-only.',
     viewingRunHistoryWithId: 'Viewing Run History (Run #{id}). Canvas is read-only.',
     returnToEdit: 'Back to Edit',
@@ -765,6 +791,11 @@ const messages = {
         title: 'Channel balance is running low',
         description: 'Current channel balance is {currentValue}. Warning threshold is {threshold}.',
       },
+      '207015': {
+        title: 'Private channel upstream unavailable',
+        description:
+          'Every candidate credential was explicitly rejected by its provider. Contact an organization administrator.',
+      },
       unknown: {
         title: 'Potential billing risk detected',
         description: 'Current value is {currentValue}. Warning threshold is {threshold}.',
@@ -788,7 +819,8 @@ const messages = {
       },
       '207014': {
         title: 'Model pricing is not configured',
-        description: 'Configure model pricing in Model Management or Billing Strategy, then run again.',
+        description:
+          'Configure model pricing in Model Management or Billing Strategy, then run again.',
         action: 'Configure pricing',
       },
       contactAdmin: 'Please contact an organization administrator to add balance or quota.',
@@ -809,8 +841,12 @@ const messages = {
   form: {
     name: 'Name',
     namePlaceholder: 'Please enter agent name',
+    workflowName: 'Workflow name',
+    workflowNamePlaceholder: 'Please enter workflow name',
     description: 'Description',
     descriptionPlaceholder: 'Please enter agent description',
+    workflowDescription: 'Workflow description',
+    workflowDescriptionPlaceholder: 'Please enter workflow description',
     department: 'Department',
     departmentPlaceholder: 'Please select department',
     permissions: 'Permissions',
@@ -850,6 +886,7 @@ const messages = {
       actions: 'Actions',
     },
     active: 'Active',
+    inactive: 'Inactive',
     revoked: 'Revoked',
     noExpiry: 'No expiry',
     editTitle: 'Edit API Key',
@@ -866,7 +903,7 @@ const messages = {
     creating: 'Creating…',
     deleteConfirm: {
       title: 'Confirm Delete',
-      description: 'This action cannot be undone. Delete this API Key?',
+      description: 'This API Key will be permanently disabled and hidden from the list. Delete it?',
     },
     validation: {
       missingName: 'Please enter a name',
@@ -883,6 +920,144 @@ const messages = {
       updateFailed: 'Failed to update API Key',
       deleteSuccess: 'API Key deleted successfully',
       deleteFailed: 'Failed to delete API Key',
+    },
+  },
+  runtimeAccess: {
+    navTitle: 'Publication Access',
+    title: 'Publication Access',
+    description:
+      'Control which published runtime surfaces are enabled for this agent. Internal invocation remains available for agent and scheduled-task calls.',
+    policyNote:
+      'WebApp can be public or scoped. App Center visibility is scoped to internal audiences. API service is controlled only by its enablement switch.',
+    dialogTitle: 'Publication settings',
+    dialogDescription:
+      'Configure which published runtime surfaces are enabled and who can use WebApp and App Center entries.',
+    loadError: 'Failed to load publication access',
+    saveSuccess: 'Publication access updated',
+    saveError: 'Failed to update publication access',
+    surfaces: {
+      webapp: 'WebApp',
+      webappDescription: 'Public web application entry for this agent.',
+      appCenter: 'App Center',
+      appCenterDescription: 'Organization app-center entry with scoped audience access.',
+      api: 'API service',
+      apiDescription: 'External calls through agent API keys.',
+      builtinApp: 'Built-in app',
+      builtinAppDescription: 'Organization app-center exposure with scoped audience grants.',
+      internal: 'Internal invocation',
+      internalDescription: 'Agent tools and scheduled tasks keep this surface available.',
+    },
+    status: {
+      enabled: 'Enabled',
+      disabled: 'Disabled',
+    },
+    sources: {
+      legacy_agent_fields: 'Legacy',
+      grant: 'Grant',
+      system_default: 'Default',
+    },
+    grants: {
+      webappTitle: 'WebApp audience',
+      webappDescription:
+        'Choose whether the published WebApp is public or limited to internal audiences. Members of the owning workspace can always access it.',
+      webappPublic: 'Public access',
+      webappPublicDescription: 'Anyone with the WebApp link can open it.',
+      webappScoped: 'Specific audiences',
+      webappScopedDescription:
+        'Only selected organization members, workspaces, or departments can use it.',
+      appCenterTitle: 'App Center audience',
+      appCenterDescription:
+        'Choose who can see this app in the organization app center. Members of the owning workspace can always access it.',
+      title: 'Built-in app audience',
+      description:
+        'Grant app-center access to the organization, a workspace, a department, or an account.',
+      subjectIdPlaceholder: 'Account or department ID',
+      organizationWide: 'Whole organization',
+      departmentPlaceholder: 'Select department',
+      workspacePlaceholder: 'Select workspace',
+      accountPlaceholder: 'Select account',
+      searchMembersPlaceholder: 'Search members',
+      noMembers: 'No members found',
+      loadingMembers: 'Loading members...',
+      resolvingAccount: 'Resolving account...',
+      selectionRequired: 'Select an account or department before saving',
+      accountLookupFailed: 'Could not verify account',
+      departmentLookupFailed: 'Could not verify department',
+      workspaceLookupFailed: 'Could not verify workspace',
+      unresolvedAccount: 'Unavailable account',
+      unresolvedDepartment: 'Unavailable department',
+      unresolvedWorkspace: 'Unavailable workspace',
+      wholeOrganizationSelectedTitle: 'Open to the whole organization',
+      wholeOrganizationSelectedDescription:
+        'Every member in the organization can see and use this entry. Switch to edit range to limit the audience.',
+      owningWorkspaceDefaultTitle: 'Owning workspace only',
+      owningWorkspaceDefaultDescription:
+        'No extra workspaces, departments, or members are selected. Members of the owning workspace can see and use this entry by default.',
+    },
+    picker: {
+      webappDialogTitle: 'Select WebApp audience',
+      appCenterDialogTitle: 'Select App Center audience',
+      builtinDialogTitle: 'Select built-in app audience',
+      rangeDialogDescription:
+        'The owning workspace is included by default. Select any additional workspaces, departments, and members below.',
+      departmentsTab: 'Departments',
+      workspacesTab: 'Workspaces',
+      membersTab: 'Members',
+      loadingDepartments: 'Loading departments...',
+      noDepartments: 'No departments found',
+      loadingWorkspaces: 'Loading workspaces...',
+      noWorkspaces: 'No workspaces found',
+      noAdditionalWorkspaces: 'No additional workspaces available',
+      owningWorkspaceIncluded: 'Included by default',
+      memberCount: '{count} members',
+      searchMembersPlaceholder: 'Search members',
+      loadingMembers: 'Loading members...',
+      noMembers: 'No members found',
+      selectedTitle: 'Selected audience',
+      selectedCount: '{departments} departments, {workspaces} workspaces, {accounts} members',
+      emptySelected: 'No workspaces, departments, or members selected',
+    },
+    grantSubjects: {
+      organization: 'Organization',
+      department: 'Department',
+      workspace: 'Workspace',
+      account: 'Account',
+    },
+    actions: {
+      addGrant: 'Add',
+      removeGrant: 'Remove',
+      save: 'Save',
+      saving: 'Saving...',
+      cancel: 'Cancel',
+      confirm: 'Confirm',
+      clear: 'Clear',
+      useWholeOrganization: 'Whole organization',
+      editRange: 'Edit range',
+    },
+    wholeOrganizationConfirm: {
+      title: 'Open to the whole organization?',
+      description:
+        'Switching to the whole organization clears the currently selected workspaces, departments, and members.',
+      confirm: 'Confirm switch',
+      cancel: 'Cancel',
+    },
+    closeGuard: {
+      title: 'Unsaved changes',
+      description:
+        'Publication settings have unsaved changes. Save and close, close without saving, or keep editing.',
+      saveAndClose: 'Save and close',
+      discard: 'Close without saving',
+      cancel: 'Cancel',
+    },
+    validation: {
+      subjectIdRequired: 'Account, department, and workspace grants need an ID',
+      duplicateGrant: 'Duplicate audience grant',
+      webappGrantRequired: 'Add at least one WebApp audience grant',
+      appCenterGrantRequired: 'Add at least one App Center audience grant',
+      grantRequired: 'Add at least one built-in app audience grant',
+      wholeOrganizationRequiresAdmin:
+        'Only organization owners and admins can open access to the whole organization',
+      manageRequired: 'Agent manage permission is required',
     },
   },
   workflowTest: {
@@ -1373,6 +1548,9 @@ const messages = {
       invalidChars: 'Only letters, numbers, underscores, hyphens and spaces are allowed',
       onlySpaces: 'Name must contain at least one non-space character',
     },
+    workflowName: {
+      required: 'Workflow name is required',
+    },
     workspace: {
       required: 'Please select an owning workspace',
     },
@@ -1393,10 +1571,29 @@ const messages = {
     publishFailed: 'Failed to publish agent',
   },
   agentRuntime: {
+    selectedCount: '{count} selected',
+    selectionDialog: {
+      loadingMore: 'Loading more...',
+      scrollForMore: 'Scroll to load more',
+      noMore: 'No more items',
+      clearSearch: 'Clear search',
+      closeGuard: {
+        title: 'Save this selection?',
+        description:
+          'Your changes in this dialog have not been applied to the current draft. Save and close, discard this selection, or keep editing.',
+        discard: 'Discard selection',
+        continueEditing: 'Keep editing',
+        save: 'Save and close',
+      },
+    },
     fallbackName: 'Agent',
     defaultModeDescription: 'Autonomous planning mode',
     defaultHomeTitle: 'Agent',
     defaultInputPlaceholder: 'Enter command...',
+    modelSelection: {
+      compatibilityWarning:
+        'This model is not a recommended Agent model. It remains available, but Agent quality may be lower. For better Agent results, consider switching to an Agent model.',
+    },
     saveState: {
       saving: 'Saving...',
       dirty: 'Unsaved changes',
@@ -1407,8 +1604,11 @@ const messages = {
     },
     toasts: {
       saveSuccess: 'Configuration saved',
+      saveSuccessWithBindingWarnings:
+        'Configuration saved with {count} binding issue(s). Review them before publishing.',
       saveFailed: 'Save failed',
       saveFailedDraftKept: 'Save failed. Your changes are kept.',
+      modelUnavailable: 'The current model is unavailable. Select another model.',
       noGeneratedSuggestions: 'No usable request examples were generated',
       suggestionsGenerated: 'Request examples generated',
       generateSuggestionsFailed: 'Failed to generate request examples',
@@ -1416,8 +1616,13 @@ const messages = {
       webAppLinkCopied: 'WebApp link copied',
       webAppLinkCopyFailed: 'Failed to copy WebApp link',
       loadPublishedVersionsFailed: 'Failed to load published versions',
+      loadRollbackPreviewFailed: 'Failed to load rollback impact',
       rollbackSuccess: 'Draft restored from the selected version',
       rollbackFailed: 'Failed to restore the selected version',
+      rollbackImpactChanged:
+        'Resource status changed. Review the latest rollback impact and retry.',
+      bindingRevisionRebased:
+        'Bindings changed elsewhere. Non-binding edits were kept and server bindings were applied: {resources}',
       finishVersionPreviewFirst: 'Confirm or cancel version preview first',
       fixMemorySlotsBeforeSave: 'Fix memory item keys before saving.',
       fixMemorySlotsBeforePublish: 'Fix memory item keys before publishing.',
@@ -1425,6 +1630,10 @@ const messages = {
         'Shorten the system prompt to {limit} characters or less before saving.',
       systemPromptTooLongBeforePublish:
         'Shorten the system prompt to {limit} characters or less before publishing.',
+      abnormalBindingsRemoved: 'All abnormal bindings were removed from the draft. Save to apply.',
+      abnormalSkillsRemoved: 'Unavailable Skills were removed from the draft. Save to apply.',
+      publishBindingsInvalid:
+        'Publishing is blocked by invalid bindings. Review the highlighted binding issues.',
     },
     leaveGuard: {
       title: 'Save changes before leaving?',
@@ -1435,12 +1644,14 @@ const messages = {
       continueEditing: 'Keep editing',
     },
     header: {
+      editBasicInfo: 'Edit name, description, and icon',
       save: 'Save',
       publish: 'Publish',
       publishing: 'Publishing',
       update: 'Update',
       updating: 'Updating',
       more: 'More',
+      publishSettings: 'Publication settings',
       openWebApp: 'Open WebApp',
       copyWebAppLink: 'Copy WebApp link',
       webAppStatus: 'WebApp status',
@@ -1610,13 +1821,74 @@ const messages = {
       dialogTitle: 'Add Skill',
       dialogDescription: 'Select enabled organization skills for this Agent.',
       searchPlaceholder: 'Search Skill',
-      selectedOnly: 'Selected only',
-      systemTab: 'System Skill ({count})',
-      customTab: 'Custom Skill ({count})',
+      all: 'All Skills',
+      system: 'System Skills',
+      custom: 'Custom Skills',
       noMatch: 'No matching Skill.',
-      done: 'Done',
+      loadFailedTitle: 'Failed to load Skills',
+      loadFailedDescription: 'Available Skills are temporarily unavailable. Try again.',
+      retryLoad: 'Reload',
+      done: 'Save',
+      cancel: 'Cancel',
       idLabel: 'ID: {id}',
+      noDescription: 'No description',
       requiresKnowledge: 'Configure knowledge bases first',
+      unavailableName: 'Unavailable Skill',
+      unavailableDescription:
+        'This Skill is no longer in the selectable list. Its original binding is preserved until you remove it.',
+    },
+    bindingHealth: {
+      title: 'Binding issues',
+      summary:
+        '{suspended} suspended and {unavailable} unavailable binding(s). Existing IDs are preserved until you remove them.',
+      removeAll: 'Remove all abnormal bindings',
+      removeAllPending: 'Cleanup pending save',
+      removeUnavailableSkills: 'Remove unavailable Skills',
+      removeUnavailableSkillsPending: 'Pending save',
+      suggestion: 'Suggestion: {suggestion}',
+      resourceId: 'Resource ID: {id}',
+      cancel: 'Cancel',
+      publishing: 'Publishing...',
+      publishAnyway: 'Publish with suspended bindings',
+      publishSuspendedTitle: 'Publish with suspended bindings?',
+      publishSuspendedDescription:
+        '{count} binding(s) are suspended and will remain unavailable at runtime. Confirm to continue publishing.',
+      previewIgnoredTitle: 'Abnormal assets are ignored in this preview',
+      previewIgnoredDescription: '{count} items: {resources}',
+      cleanupConfirmTitle: 'Remove all abnormal bindings?',
+      cleanupConfirmDescription:
+        'All unavailable and suspended bindings will be removed from the draft. Other settings remain unchanged.',
+      cleanupSkillsConfirmTitle: 'Remove unavailable Skills?',
+      cleanupSkillsConfirmDescription:
+        'All suspended and unavailable Skills will be removed from the draft. Knowledge bases, databases, workflows, and other settings remain unchanged.',
+      status: {
+        active: 'Active',
+        suspended: 'Suspended',
+        unavailable: 'Unavailable',
+      },
+      types: {
+        skill: 'Skill',
+        knowledge_dataset: 'Knowledge base',
+        database: 'Database',
+        database_table: 'Database table',
+        workflow: 'Workflow',
+      },
+      accessModes: {
+        read: 'Read',
+        write: 'Write',
+        execute: 'Execute',
+      },
+      reasons: {
+        organizationSkillSuspended: 'This Skill is disabled by the organization.',
+        resourceDeletedOrMissing: 'The resource was deleted or no longer exists.',
+        resourceMovedWorkspace: 'The resource was moved to another workspace.',
+        authorizationRevoked: 'The binding authorization or required access was revoked.',
+        resolutionFailed: 'The current resource status could not be resolved.',
+      },
+      suggestions: {
+        removeOrReplace: 'Remove this binding or replace it with an available resource.',
+        restoreOrRemove: 'Restore access or remove this binding.',
+      },
     },
     knowledge: {
       empty: 'No knowledge base is available in the current workspace.',
@@ -1626,16 +1898,28 @@ const messages = {
       dialogTitle: 'Add knowledge',
       dialogDescription: 'Search and select knowledge bases this Agent can retrieve from.',
       helpText:
-        'Bound knowledge bases automatically enable Agent Knowledge during chat. Your current access creates a persistent Agent grant.',
+        'Once added, the Agent searches these knowledge bases for relevant information before answering users.',
       searchPlaceholder: 'Search knowledge base',
-      selectedOnly: 'Selected only',
       noMatch: 'No matching knowledge base.',
-      done: 'Done',
+      emptyTitle: 'No knowledge bases available in this workspace',
+      emptyDescription: 'Create a knowledge base, then return here to link it to this Agent.',
+      emptyUnavailableDescription: 'This workspace has no knowledge bases available to select.',
+      createAction: 'Create knowledge base',
+      searchEmptyTitle: 'No matching knowledge bases',
+      searchEmptyDescription: 'No knowledge base matches “{query}”. Try another keyword.',
+      listLoadFailedTitle: 'Failed to load knowledge bases',
+      listLoadFailedDescription:
+        'Available knowledge bases are temporarily unavailable. Try again.',
+      retryLoad: 'Reload',
+      done: 'Save',
+      cancel: 'Cancel',
       idLabel: 'ID: {id}',
       noDescription: 'No description',
       loadFailedName: 'Unavailable knowledge',
       loadFailedDescription:
         'Failed to load this knowledge base. The link is kept, but please verify permissions or availability.',
+      bindingPermissionRequired:
+        'Knowledge base read or maintenance permission is required to bind knowledge bases to this Agent.',
     },
     database: {
       emptySelected: 'No database table has been bound to this Agent yet.',
@@ -1643,29 +1927,65 @@ const messages = {
       bindTable: 'Bind table',
       bindTableTooltip: 'Select database tables this Agent is allowed to use.',
       helpText:
-        'Bound tables automatically enable Agent Database during chat. Your current access creates a persistent Agent grant; selected tables are read-only unless write is explicitly enabled.',
+        'Choose the tables this Agent can query. Tables are read-only by default; the Agent can modify data only when write access is enabled for a table.',
       dialogTitle: 'Select database',
       dialogDescription:
-        'Select one or more databases. New selections will continue to table setup after confirmation.',
+        'Select one or more databases. After saving, new selections continue to table setup.',
+      tableBatchDialogTitle: 'Configure database tables',
       tableDialogDescription:
-        'Select tables and choose whether each selected table is read-only or writable for this Agent.',
+        'Configure tables for the selected databases. A database with no selected tables will not be linked to this Agent.',
+      selectedDatabases: 'Selected databases',
+      noTableBindingRule:
+        'Review each database and select its tables. All changes are applied together when you save.',
+      databaseProgress: 'Database {current}/{total}',
+      pendingTableSelection: 'Tables not selected',
+      loadingTablesShort: 'Loading',
+      loadTablesFailedShort: 'Load failed',
+      noTablesShort: 'No tables',
+      tableLoadFailedTitle: 'Failed to load tables',
+      retryLoadTables: 'Reload',
+      refreshTables: 'Refresh tables',
+      nextDatabase: 'Next database',
+      saveAll: 'Save all',
       selectedCount: '{count} selected',
       selectedDatabasesCount: '{count} selected',
-      selectedTablesCount: '{count} tables',
+      availableTablesCount: '{count} tables',
+      noAvailableTables: 'No tables',
+      selectedTablesCount: '{count} selected',
       searchDatabase: 'Search databases',
+      availableOnly: 'Available databases only',
+      availableFilterEmptyTitle: 'No available databases',
+      availableFilterEmptyDescription:
+        'The databases in these results do not have tables yet. Turn off the filter to view them and create tables.',
+      showAllDatabases: 'Show all databases',
       searchTable: 'Search tables',
       selectDatabaseForBinding: 'Select {name}',
       selectTableForBinding: 'Select {name}',
       noDatabases: 'No matching database.',
+      emptyTitle: 'No databases available in this workspace',
+      emptyDescription: 'Create a database, then return here to select the tables to bind.',
+      emptyUnavailableDescription: 'This workspace has no databases available to select.',
+      createAction: 'Create database',
+      searchEmptyTitle: 'No matching databases',
+      searchEmptyDescription: 'No database matches “{query}”. Try another keyword.',
+      loadFailedTitle: 'Failed to load databases',
+      loadFailedDescription: 'Databases and table counts are temporarily unavailable. Try again.',
+      retryLoad: 'Reload',
       noDescription: 'No description',
       noTables: 'No matching table.',
+      tableEmptyTitle: 'No tables available in this database',
+      tableEmptyDescription: 'Create a table, then return here to grant this Agent access.',
+      tableEmptyUnavailableDescription: 'This database has no tables available to select.',
+      createTableAction: 'Create table',
+      tableSearchEmptyTitle: 'No matching tables',
+      tableSearchEmptyDescription: 'No table matches “{query}”. Try another keyword.',
       selectDatabaseFirst: 'Select a database to view its tables.',
       databaseUnavailable: 'Database unavailable',
       unnamedDatabase: 'Unnamed database',
       unnamedTable: 'Unnamed table',
       cancel: 'Cancel',
       next: 'Next',
-      confirm: 'Confirm',
+      confirm: 'Save',
       loadTablesFailed: 'Failed to load table information. Verify permissions or availability.',
       tableUnavailable: 'Table unavailable or no longer accessible',
       tableIdLabel: 'Table ID: {id}',
@@ -1675,6 +1995,8 @@ const messages = {
       allowWriteAll: 'All writable',
       allowWriteAllForDatabase: 'Allow write for all selected tables in {name}',
       allowWriteForTable: 'Allow write for {name}',
+      bindingPermissionRequired:
+        'Database AI query read and record view permissions are both required to bind database tables to this Agent.',
       writePermissionRequired:
         'Write authorization can only be edited by users with database AI query and data edit permissions.',
       writeEnabled: 'Writable',
@@ -1692,23 +2014,32 @@ const messages = {
       add: 'Add workflow',
       remove: 'Remove {name}',
       helpText:
-        'Bound workflows are available to the Agent as process tools. Only active workflows with a published version in the current workspace can be selected.',
+        'Once added, the Agent can run these workflows when a task needs multiple steps. Only published and available workflows in the current workspace are shown.',
       dialogTitle: 'Add workflow',
       dialogDescription:
         'Select published workflows from the current workspace. Selected workflows run the latest published version by default.',
       selectedCount: '{count} selected',
       searchPlaceholder: 'Search workflows',
       noWorkflows: 'No published workflow is available.',
+      emptyTitle: 'No published workflows available in this workspace',
+      emptyDescription: 'Create and publish a workflow, then return here to link it to this Agent.',
+      emptyUnavailableDescription: 'This workspace has no published workflows available to select.',
+      createAction: 'Create workflow',
+      searchEmptyTitle: 'No matching workflows',
+      searchEmptyDescription: 'No workflow matches “{query}”. Try another keyword.',
+      loadFailedTitle: 'Failed to load workflows',
+      loadFailedDescription: 'Available workflows are temporarily unavailable. Try again.',
+      retryLoad: 'Reload',
       noDescription: 'No description',
       unnamedWorkflow: 'Unnamed workflow',
       unavailableWorkflow: 'Workflow unavailable',
       unavailableDescription:
-        'This workflow is no longer available. It will be removed after candidates refresh.',
+        'This workflow is no longer available. Its original binding is preserved until you remove it.',
       conversationalWorkflow: 'Chat workflow',
       taskWorkflow: 'Task workflow',
-      versionLabel: 'Version {version}',
+      updatedAt: 'Last published: {time}',
       cancel: 'Cancel',
-      confirm: 'Confirm',
+      confirm: 'Save',
     },
     suggestions: {
       generate: 'Generate',
@@ -1718,34 +2049,41 @@ const messages = {
       manualAdd: 'Add manually',
       placeholder: 'For example: summarize this document',
       delete: 'Delete request example',
+      drag: 'Drag to reorder request examples',
+      count: '{count}/{max}',
     },
     files: {
       title: 'Allow file upload',
-      description: 'When enabled, debugging and WebApp chat can upload documents or images.',
+      description: 'When enabled, users can upload documents or images for the Agent to analyze.',
     },
     memory: {
       agentTitle: 'Memory',
       agentDescription:
-        'Define memory types the Agent can read and update for each user. The model manages content within these stable keys.',
+        'Define what the Agent should remember for each user. Each memory item has a stable ID and an optional display name.',
       emptySlots: 'No memory items configured yet.',
       addSlot: 'Add memory item',
       addCustomSlot: 'Custom item',
       applyTemplate: 'Apply template',
       addDialogTitle: 'Add memory item',
-      addDialogDescription: 'Create a stable key the model can use to manage one type of memory.',
+      addDialogDescription:
+        'Set an optional display name, a stable ID, and instructions for this memory item.',
       addDialogConfirm: 'Add item',
       addDialogCancel: 'Cancel',
       maxItemsReached: 'Up to 5 memory items',
       removeSlot: 'Remove memory item',
       viewValues: 'View memory',
-      keyLabel: 'Key',
-      keyHelp: 'Stable identifier used by the model. It is locked after the item is saved.',
+      nameLabel: 'Memory name (optional)',
+      nameHelp: 'Helps people identify this item. The memory ID is shown when left blank. Up to 80 characters.',
+      keyLabel: 'Memory ID',
+      keyHelp: 'Stable identifier used by the Agent. It is locked after the item is saved.',
       keyLockedHelp:
-        'This key has been saved and cannot be changed. Delete it and create a new item to use another key.',
+        'This memory ID has been saved and cannot be changed. Delete it and create a new item to use another ID.',
+      idValue: 'ID: {id}',
       descriptionLabel: 'Description',
       descriptionHelp:
         'Tell the model what this memory type should store and when to update it. Up to 200 characters.',
       slotKeyPlaceholder: 'memory_key',
+      slotNamePlaceholder: 'For example: Answer preferences',
       slotDescriptionPlaceholder: 'Describe what this memory item stores',
       maxChars: 'Maximum characters',
       maxCharsHelp: 'Limit the content length for this memory item.',
@@ -1784,22 +2122,46 @@ const messages = {
         },
       },
       templateSlots: {
-        profile:
-          'Store stable facts about the user only: user name, how the user wants to be addressed, job role, team role. Do not store agent name, assistant persona, roleplay style, what the user calls the agent, contact details, accounts, IDs, passwords, or temporary states.',
-        preferences:
-          'Store durable answer preferences: language, example stack, length, layout, explanation depth, tone, and style. Do not store one-off formatting requests, temporary moods, current task content, or a durable identity the agent should play.',
-        standing_instructions:
-          'Store long-term interaction rules, collaboration workflows, task procedures, how to address the user, what the user calls the agent, or agent persona instructions, such as conclusion first, risk review, or roleplay as a specific assistant. Do not store project facts or one-off task steps.',
-        project_context:
-          'Store ongoing project, goals, key background, workflow, and durable constraints. Update only when the user describes project or goal changes; do not infer from role changes.',
-        delivery_preferences:
-          'Store durable delivery preferences: output structure, review depth, file format, acceptance criteria. Do not store one-off formatting requests for a single task.',
-        customer_profile:
-          'Store stable customer identity, account background, product usage, contract or relationship status. Never store passwords, payment data, IDs, or one-off ticket details.',
-        communication_preferences:
-          'Store durable customer communication preferences: tone, channel, escalation wording, response cadence. Do not store temporary emotions or one-off service handling.',
-        business_context:
-          'Store long-term business process background, support scope, policy rules, and operational constraints tied to this customer/user. Do not store general product knowledge or temporary conclusions.',
+        profile: {
+          name: 'User profile',
+          description:
+            'Store stable facts about the user only: user name, how the user wants to be addressed, job role, team role. Do not store agent name, assistant persona, roleplay style, what the user calls the agent, contact details, accounts, IDs, passwords, or temporary states.',
+        },
+        preferences: {
+          name: 'Answer preferences',
+          description:
+            'Store durable answer preferences: language, example stack, length, layout, explanation depth, tone, and style. Do not store one-off formatting requests, temporary moods, current task content, or a durable identity the agent should play.',
+        },
+        standing_instructions: {
+          name: 'Standing instructions',
+          description:
+            'Store long-term interaction rules, collaboration workflows, task procedures, how to address the user, what the user calls the agent, or agent persona instructions, such as conclusion first, risk review, or roleplay as a specific assistant. Do not store project facts or one-off task steps.',
+        },
+        project_context: {
+          name: 'Project context',
+          description:
+            'Store ongoing project, goals, key background, workflow, and durable constraints. Update only when the user describes project or goal changes; do not infer from role changes.',
+        },
+        delivery_preferences: {
+          name: 'Delivery preferences',
+          description:
+            'Store durable delivery preferences: output structure, review depth, file format, acceptance criteria. Do not store one-off formatting requests for a single task.',
+        },
+        customer_profile: {
+          name: 'Customer profile',
+          description:
+            'Store stable customer identity, account background, product usage, contract or relationship status. Never store passwords, payment data, IDs, or one-off ticket details.',
+        },
+        communication_preferences: {
+          name: 'Communication preferences',
+          description:
+            'Store durable customer communication preferences: tone, channel, escalation wording, response cadence. Do not store temporary emotions or one-off service handling.',
+        },
+        business_context: {
+          name: 'Business context',
+          description:
+            'Store long-term business process background, support scope, policy rules, and operational constraints tied to this customer/user. Do not store general product knowledge or temporary conclusions.',
+        },
       },
       deleteConfirmTitle: 'Delete memory item?',
       deleteConfirmDescription:
@@ -1807,17 +2169,17 @@ const messages = {
       deleteConfirmAction: 'Delete item',
       deleteConfirmCancel: 'Cancel',
       validation: {
-        required: 'Key is required.',
+        required: 'Memory ID is required.',
         pattern:
-          'Use lowercase letters, numbers, and underscores. The first character must be a letter.',
-        duplicate: 'This key is already used.',
+          'Use lowercase letters, numbers, and underscores. The memory ID must start with a letter.',
+        duplicate: 'This memory ID is already used.',
         too_many: 'An Agent can have up to 5 memory items.',
       },
     },
     memoryValues: {
       title: 'Agent memory',
       description:
-        'View and edit your own memory values for draft debugging. Only configured memory keys can be changed.',
+        'View and edit your own memory values for draft debugging. Only configured memory items can be changed.',
       scopeAccount: 'Account user',
       scopeEndUser: 'End user',
       userIdPlaceholder: 'User ID',
@@ -1851,6 +2213,28 @@ const messages = {
       newConversation: 'New conversation',
       close: 'Close preview',
     },
+    publishVersion: {
+      publishTitle: 'Publish Agent',
+      updateTitle: 'Publish an update',
+      publishDescription:
+        'Add optional release details. Your current configuration will be saved before the first version is published.',
+      updateDescription:
+        'Add optional release details. Your current configuration will be saved before a new version is published.',
+      nameLabel: 'Version name',
+      optional: 'Optional',
+      namePlaceholder: 'For example: Improved knowledge answers',
+      nameHelp: 'Use a short name that makes this release easy to find and restore later.',
+      fallbackPreview: 'If left blank, it will appear as “{name}”.',
+      descriptionLabel: 'Version description',
+      descriptionPlaceholder: 'Summarize the main changes in this release',
+      descriptionHelp: 'You can note important experience, capability, or configuration changes.',
+      fallbackName: 'Version {time}',
+      cancel: 'Cancel',
+      publish: 'Publish',
+      update: 'Publish update',
+      publishing: 'Publishing...',
+      updating: 'Updating...',
+    },
     publishedVersions: {
       title: 'Published versions',
       description: 'Preview previous snapshots and restore one to the current draft.',
@@ -1859,6 +2243,10 @@ const messages = {
       close: 'Close',
       current: 'Current',
       previewing: 'Preview',
+      fallbackName: 'Version {time}',
+      publishedAt: 'Published {time}',
+      descriptionTitle: 'Version description',
+      noDescription: 'No version description was added for this release.',
       preview: 'Version preview',
       rollback: 'Restore to draft',
       cancelPreview: 'Cancel preview',
@@ -1875,6 +2263,11 @@ const messages = {
       homeTitle: 'Home title',
       inputPlaceholder: 'Input placeholder',
       suggestedQuestions: 'Request examples',
+      loadingImpact: 'Loading rollback impact...',
+      impactTitle: 'Rollback impact',
+      impactSummary: '{count} abnormal binding(s) will be removed while restoring this version.',
+      confirmCleanup: 'I understand and confirm removing all abnormal bindings.',
+      noBindingsRemoved: 'No abnormal bindings need to be removed.',
     },
   },
 };

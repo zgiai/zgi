@@ -241,7 +241,9 @@ func (a *DeepSeekAdapter) ListModels(ctx context.Context, apiKey string) ([]adap
 
 // GetBalance gets balance information
 func (a *DeepSeekAdapter) GetBalance(ctx context.Context, apiKey string) (*adapter.Balance, error) {
-	url := fmt.Sprintf("%s/user/balance", a.baseURL)
+	balanceBaseURL := strings.TrimRight(a.baseURL, "/")
+	balanceBaseURL = strings.TrimSuffix(balanceBaseURL, "/v1")
+	url := fmt.Sprintf("%s/user/balance", balanceBaseURL)
 	headers := map[string]string{
 		"Accept":        "application/json",
 		"Authorization": fmt.Sprintf("Bearer %s", apiKey),
@@ -257,7 +259,7 @@ func (a *DeepSeekAdapter) GetBalance(ctx context.Context, apiKey string) (*adapt
 	}
 
 	var balanceResp struct {
-		IsAvailable  bool `json:"is_available"`
+		IsAvailable  *bool `json:"is_available"`
 		BalanceInfos []struct {
 			Currency        string `json:"currency"`
 			TotalBalance    string `json:"total_balance"`
@@ -269,27 +271,37 @@ func (a *DeepSeekAdapter) GetBalance(ctx context.Context, apiKey string) (*adapt
 	if err := json.Unmarshal(respBody, &balanceResp); err != nil {
 		return nil, fmt.Errorf("failed to parse balance: %w", err)
 	}
+	if balanceResp.IsAvailable == nil {
+		return nil, fmt.Errorf("balance response is missing is_available")
+	}
 
 	if len(balanceResp.BalanceInfos) == 0 {
-		return &adapter.Balance{
-			Total:     decimal.Zero,
-			Used:      decimal.Zero,
-			Remaining: decimal.Zero,
-			Currency:  "CNY",
-		}, nil
+		return nil, fmt.Errorf("balance response contains no balance items")
 	}
 
-	info := balanceResp.BalanceInfos[0]
-	total, err := decimal.NewFromString(info.TotalBalance)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse total balance: %w", err)
+	items := make([]adapter.BalanceItem, 0, len(balanceResp.BalanceInfos))
+	for _, info := range balanceResp.BalanceInfos {
+		currency := strings.TrimSpace(info.Currency)
+		if currency == "" {
+			return nil, fmt.Errorf("balance response contains an empty currency")
+		}
+		remaining, err := decimal.NewFromString(info.TotalBalance)
+		if err != nil {
+			return nil, fmt.Errorf("parse %s balance: %w", currency, err)
+		}
+		items = append(items, adapter.BalanceItem{Currency: currency, Remaining: remaining})
 	}
 
+	primary := items[0]
+	spendable := *balanceResp.IsAvailable
 	return &adapter.Balance{
-		Total:     total,
-		Used:      decimal.Zero, // DeepSeek API does not directly provide used amount
-		Remaining: total,
-		Currency:  info.Currency,
+		Total:     primary.Remaining,
+		Used:      decimal.Zero,
+		Remaining: primary.Remaining,
+		Currency:  primary.Currency,
+		Scope:     adapter.BalanceScopeAccount,
+		Items:     items,
+		Spendable: &spendable,
 	}, nil
 }
 
@@ -341,6 +353,8 @@ func (a *DeepSeekAdapter) handleError(statusCode int, body []byte) error {
 	switch statusCode {
 	case 401:
 		return adapter.NewAdapterError(errResp.Error.Code, errResp.Error.Message, statusCode, adapter.ErrAuthFailed)
+	case 402:
+		return adapter.NewAdapterError(errResp.Error.Code, errResp.Error.Message, statusCode, adapter.ErrInsufficientBalance)
 	case 429:
 		return adapter.NewAdapterError(errResp.Error.Code, errResp.Error.Message, statusCode, adapter.ErrRateLimited)
 	case 404:

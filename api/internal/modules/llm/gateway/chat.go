@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	apikeymodel "github.com/zgiai/zgi/api/internal/modules/llm/apikey/model"
+	llmmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/internal/modules/llm/shared"
 	"github.com/zgiai/zgi/api/pkg/logger"
@@ -91,6 +93,9 @@ func (s *llmGatewayServiceImpl) chatCompletionInternal(
 
 	// Tag the request category so the router can apply capability-aware matching.
 	ctx = context.WithValue(ctx, shared.ContextKeyModelCategory, "chat")
+	if useCase := modelUseCaseForAppContext(appCtx); useCase != "" {
+		ctx = context.WithValue(ctx, shared.ContextKeyModelUseCase, useCase)
+	}
 
 	providerSelections, err := s.selectProvidersWithChannelRouter(ctx, shadowOrganizationID, effectiveReq.Provider, effectiveReq.Model, 3)
 	if err != nil {
@@ -161,7 +166,7 @@ func (s *llmGatewayServiceImpl) tryChatCompletion(
 	tCalc := time.Now()
 	attemptID := buildAttemptID(requestID, attemptIdx)
 
-	quote, err := s.quoteTokenPricing(ctx, pricingModelRefFromSelection(providerSelection), promptTokens, completionTokens)
+	quote, err := s.quoteTokenPricingForSelection(ctx, providerSelection, pricingModelRefFromSelection(providerSelection), promptTokens, completionTokens)
 	if err != nil {
 		return nil, fmt.Errorf("failed to calculate credits: %w", err)
 	}
@@ -221,6 +226,9 @@ func (s *llmGatewayServiceImpl) tryChatCompletion(
 
 	normalizedReq := cloneChatRequestWithNormalizedModel(req)
 
+	if err := s.activateUpstreamProbeForAttempt(ctx, providerSelection, billingCtx); err != nil {
+		return nil, err
+	}
 	response, callErr = providerAdapter.ChatCompletion(ctx, normalizedReq)
 
 	responseTime := time.Since(startTime).Milliseconds()
@@ -323,6 +331,9 @@ func (s *llmGatewayServiceImpl) chatCompletionStreamInternal(
 
 	// Tag the request category so the router can apply capability-aware matching.
 	ctx = context.WithValue(ctx, shared.ContextKeyModelCategory, "chat")
+	if useCase := modelUseCaseForAppContext(appCtx); useCase != "" {
+		ctx = context.WithValue(ctx, shared.ContextKeyModelUseCase, useCase)
+	}
 
 	providerSelections, err := s.selectProvidersWithChannelRouter(ctx, shadowOrganizationID, effectiveReq.Provider, effectiveReq.Model, 3)
 	if err != nil {
@@ -370,6 +381,28 @@ func (s *llmGatewayServiceImpl) chatCompletionStreamInternal(
 	return nil, ErrNoProviderAvailable
 }
 
+func modelUseCaseForAppContext(appCtx *AppContext) string {
+	if appCtx == nil {
+		return ""
+	}
+	if appCtx.ModelUseCase != nil {
+		if useCase := strings.TrimSpace(*appCtx.ModelUseCase); useCase != "" {
+			return useCase
+		}
+	}
+	if appCtx.AppType == nil {
+		return ""
+	}
+	switch strings.ToLower(strings.TrimSpace(*appCtx.AppType)) {
+	case "agent", "aichat":
+		return string(llmmodel.UseCaseAgent)
+	case "workflow":
+		return string(llmmodel.UseCaseTextChat)
+	default:
+		return ""
+	}
+}
+
 // tryChatCompletionStream attempts a streaming chat completion with a single provider
 func (s *llmGatewayServiceImpl) tryChatCompletionStream(
 	ctx context.Context,
@@ -388,7 +421,7 @@ func (s *llmGatewayServiceImpl) tryChatCompletionStream(
 ) (<-chan adapter.StreamResponse, error) {
 	// Calculate estimated credits
 	attemptID := buildAttemptID(requestID, attemptIdx)
-	quote, err := s.quoteTokenPricing(ctx, pricingModelRefFromSelection(providerSelection), promptTokens, completionTokens)
+	quote, err := s.quoteTokenPricingForSelection(ctx, providerSelection, pricingModelRefFromSelection(providerSelection), promptTokens, completionTokens)
 	if err != nil {
 		return nil, fmt.Errorf("failed to calculate credits: %w", err)
 	}
@@ -440,12 +473,16 @@ func (s *llmGatewayServiceImpl) tryChatCompletionStream(
 		normalizedReq.StreamOptions.IncludeUsage = true
 	}
 
+	if err := s.activateUpstreamProbeForAttempt(ctx, providerSelection, billingCtx); err != nil {
+		return nil, err
+	}
 	streamChan, err := providerAdapter.ChatCompletionStream(ctx, normalizedReq)
 	if err != nil {
 		if rollbackErr := s.rollbackPreDeduction(ctx, billingCtx); rollbackErr != nil {
 			return nil, rollbackErr
 		}
 		s.logProviderError(ctx, attemptIdx, providerSelection, err, "stream_call_failed")
+		s.recordUpstreamProviderError(ctx, providerSelection, billingCtx, err)
 
 		sentryHelper.CaptureLLMError(err, providerSelection.Provider.Provider, providerSelection.Model.Model, organizationID.String(), map[string]interface{}{
 			"attempt_index":       attemptIdx,

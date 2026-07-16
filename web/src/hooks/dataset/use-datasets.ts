@@ -15,15 +15,16 @@ import {
 import { useT } from '@/i18n';
 import { datasetService } from '@/services';
 import type { Dataset, DatasetList, UpdateDatasetRequest } from '@/services/types/dataset';
-import type { ApiResponseData } from '@/services/types/common';
+import type { AgentBindingMutationConfirmation, ApiResponseData } from '@/services/types/common';
 import { toast } from 'sonner';
-import { DATASET_KEYS } from '@/hooks/query-keys';
+import { AGENT_KEYS, DATASET_KEYS } from '@/hooks/query-keys';
 import { useCurrentWorkspace } from '@/store/workspace-store';
 import {
   workspaceInvalidatePredicate,
   reloadInfiniteQuery,
   infiniteQueryUtils,
 } from '@/hooks/query-utils';
+import { getAgentResourceBoundImpact } from '@/utils/agent-resource-bound';
 
 /* -------------------------------------------------------------------------- */
 /* Types                                                                      */
@@ -207,9 +208,9 @@ export function useCreateDataset(targetFolderId?: string) {
         queryKey: [DATASET_FOLDERS_QUERY_KEY, 'folder-datasets-infinite', targetFolderId || 'root'],
       });
 
-      // Redirect to the new dataset's documents page
+      // Let the detail root choose the first child page this account can open.
       if (response?.data?.id) {
-        router.push(`/console/dataset/${response.data.id}/documents`);
+        router.push(`/console/dataset/${response.data.id}`);
       }
     },
     onError: (error: unknown) => {
@@ -275,9 +276,14 @@ export function useDeleteDataset() {
   const currentWorkspaceId = useCurrentWorkspace()?.id;
   const DATASET_FOLDERS_QUERY_KEY = 'dataset-folders';
 
-  return useMutation<ApiResponseData<Record<string, unknown>>, unknown, string>({
-    mutationFn: (datasetId: string) => datasetService.deleteDataset(datasetId),
-    onSuccess: (_result, datasetId) => {
+  return useMutation<
+    ApiResponseData<Record<string, unknown>>,
+    unknown,
+    { datasetId: string; confirmation?: AgentBindingMutationConfirmation }
+  >({
+    mutationFn: ({ datasetId, confirmation }) =>
+      datasetService.deleteDataset(datasetId, confirmation),
+    onSuccess: (_result, { datasetId }) => {
       toast.success(t('deleteSuccess'));
       // Remove the deleted dataset's detail cache
       if (datasetId) {
@@ -292,8 +298,10 @@ export function useDeleteDataset() {
       queryClient.invalidateQueries({
         queryKey: [DATASET_FOLDERS_QUERY_KEY, 'folder-datasets-infinite'],
       });
+      queryClient.invalidateQueries({ queryKey: AGENT_KEYS.all });
     },
     onError: (error: unknown) => {
+      if (getAgentResourceBoundImpact(error)) return;
       const message = (error as { message?: string }).message ?? t('deleteFailed');
       toast.error(message);
     },

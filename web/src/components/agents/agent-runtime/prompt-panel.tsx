@@ -57,6 +57,7 @@ import {
   AGENT_SYSTEM_PROMPT_RECOMMENDED_LENGTH,
   AGENT_SYSTEM_PROMPT_WARNING_LENGTH,
 } from './prompt-limits';
+import { tablesForDataSource } from './utils';
 
 type AgentKnowledgeDataset = Dataset & { load_error?: boolean };
 type PromptCapabilityItem = VarOption & {
@@ -67,11 +68,13 @@ type PromptCapabilityItem = VarOption & {
 interface AgentRuntimePromptPanelProps {
   systemPrompt: string;
   className?: string;
+  agentWorkspaceId?: string;
   selectedKnowledgeDatasets: AgentKnowledgeDataset[];
   selectedSkills: AIChatSkillMetadata[];
   databaseBindings: AgentDatabaseBinding[];
   workflowBindings: AgentWorkflowBinding[];
   workflowCandidatesByBindingID: Map<string, AgentWorkflowBindingCandidate>;
+  readOnly?: boolean;
   onChangeSystemPrompt: (value: string) => void;
   onOpenOptimizer: () => void;
 }
@@ -103,11 +106,13 @@ const PROMPT_TEMPLATE_CATEGORY_KEYS: Record<PromptTemplateKey, string> = {
 export function AgentRuntimePromptPanel({
   systemPrompt,
   className,
+  agentWorkspaceId,
   selectedKnowledgeDatasets,
   selectedSkills,
   databaseBindings,
   workflowBindings,
   workflowCandidatesByBindingID,
+  readOnly = false,
   onChangeSystemPrompt,
   onOpenOptimizer,
 }: AgentRuntimePromptPanelProps) {
@@ -129,21 +134,28 @@ export function AgentRuntimePromptPanel({
       ),
     [databaseBindings]
   );
-  const { dbs } = useDbsBasic({}, { enabled: boundDatabaseIDs.length > 0 });
+  const { dbs } = useDbsBasic(
+    { workspace_id: agentWorkspaceId },
+    { enabled: boundDatabaseIDs.length > 0 && Boolean(agentWorkspaceId) }
+  );
+  const scopedDatabaseIDs = useMemo(() => new Set(dbs.map(db => db.id)), [dbs]);
+  const dbsByID = useMemo(() => new Map(dbs.map(db => [db.id, db])), [dbs]);
   const databaseTableQueries = useQueries({
     queries: boundDatabaseIDs.map(databaseID => ({
       queryKey: DB_KEYS.tableList(databaseID, {}),
       queryFn: () => dbService.getDbTables(databaseID),
-      enabled: Boolean(databaseID),
+      enabled: Boolean(databaseID) && scopedDatabaseIDs.has(databaseID),
       staleTime: 3 * 60 * 1000,
       retry: false,
     })),
   });
-  const dbsByID = useMemo(() => new Map(dbs.map(db => [db.id, db])), [dbs]);
   const tablesByDatabaseID = useMemo(() => {
     const next = new Map<string, DbTable[]>();
     boundDatabaseIDs.forEach((databaseID, index) => {
-      next.set(databaseID, databaseTableQueries[index]?.data?.data ?? []);
+      next.set(
+        databaseID,
+        tablesForDataSource(databaseTableQueries[index]?.data?.data ?? [], databaseID)
+      );
     });
     return next;
   }, [boundDatabaseIDs, databaseTableQueries]);
@@ -377,10 +389,12 @@ export function AgentRuntimePromptPanel({
     promptTemplates.find(template => template.key === selectedTemplateKey) ?? promptTemplates[0];
 
   const insertToken = (sourceId: string, key: string, label: string) => {
+    if (readOnly) return;
     editorRef.current?.insertToken(sourceId, key, label);
   };
 
   const openTemplateDialog = (key?: PromptTemplateKey) => {
+    if (readOnly) return;
     if (key) {
       setSelectedTemplateKey(key);
     }
@@ -388,6 +402,7 @@ export function AgentRuntimePromptPanel({
   };
 
   const applyPromptTemplate = (template: string) => {
+    if (readOnly) return;
     if (editorRef.current) {
       editorRef.current.replaceValue(template);
     } else {
@@ -408,7 +423,12 @@ export function AgentRuntimePromptPanel({
         <div className="flex shrink-0 items-center gap-1">
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="sm" className="h-8 gap-1.5 px-2 text-xs">
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-8 gap-1.5 px-2 text-xs"
+                disabled={readOnly}
+              >
                 <Database className="size-3.5" />
                 {t('prompt.insertCapability')}
               </Button>
@@ -533,6 +553,7 @@ export function AgentRuntimePromptPanel({
             size="sm"
             className="h-8 gap-1.5 px-2 text-xs"
             onClick={() => openTemplateDialog()}
+            disabled={readOnly}
           >
             <WandSparkles className="size-3.5" />
             {t('prompt.usePromptTemplate')}
@@ -543,7 +564,7 @@ export function AgentRuntimePromptPanel({
             size="sm"
             className="h-8 gap-1.5 px-2 text-xs"
             onClick={onOpenOptimizer}
-            disabled={!systemPrompt.trim()}
+            disabled={readOnly || !systemPrompt.trim()}
           >
             <Sparkles className="size-3.5" />
             {t('prompt.optimize')}
@@ -556,6 +577,7 @@ export function AgentRuntimePromptPanel({
             ref={editorRef}
             value={systemPrompt}
             onChange={onChangeSystemPrompt}
+            readOnly={readOnly}
             placeholder={t('prompt.placeholder')}
             emptyBlockPlaceholder={t('prompt.emptyBlockPlaceholder')}
             extraSuggestGroups={capabilityGroups}
@@ -661,7 +683,7 @@ export function AgentRuntimePromptPanel({
             </Button>
             <Button
               onClick={() => selectedTemplate && applyPromptTemplate(selectedTemplate.prompt)}
-              disabled={!selectedTemplate}
+              disabled={readOnly || !selectedTemplate}
             >
               {t('prompt.templateDialog.apply')}
             </Button>

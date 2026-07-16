@@ -1,3 +1,6 @@
+//go:build legacy_aichat_service
+// +build legacy_aichat_service
+
 package service
 
 import (
@@ -53,6 +56,37 @@ func TestBuildRecentExecutionContextMessageLimitsToolAndIntermediateHistory(t *t
 	}
 	if stats.ToolHistoryTurns != 1 || stats.IntermediateAnswerTurns != 3 {
 		t.Fatalf("stats turns = (%d, %d), want (1, 3)", stats.ToolHistoryTurns, stats.IntermediateAnswerTurns)
+	}
+}
+
+func TestRuntimeContextIsTransientUserContent(t *testing.T) {
+	svc := &service{}
+	parts := &chatRequestParts{
+		Query:          "Summarize this page.",
+		RuntimeContext: "Page /console/agents with 2 context chips.",
+	}
+
+	content, ok := svc.currentUserContent(parts, parts.Query).(string)
+	if !ok {
+		t.Fatalf("content type = %T, want string", content)
+	}
+	for _, want := range []string{
+		"Transient ZGI page context",
+		"Page /console/agents with 2 context chips.",
+		"User request:",
+		"Summarize this page.",
+	} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("content missing %q:\n%s", want, content)
+		}
+	}
+
+	message := newStreamingMessage(aichatmodel.Message{}.ConversationID, nil, parts)
+	if message.Query != parts.Query {
+		t.Fatalf("message query = %q, want original query %q", message.Query, parts.Query)
+	}
+	if strings.Contains(message.Query, parts.RuntimeContext) {
+		t.Fatalf("message query contains runtime context: %q", message.Query)
 	}
 }
 

@@ -20,7 +20,10 @@ export type ModelUseCase =
   | 'video-gen'
   | 'moderation'
   | 'reasoning'
-  | 'function-calling';
+  | 'function-calling'
+  | 'agent';
+
+export type AvailableModelUseCase = ModelUseCase | 'agent-runtime';
 
 export type DefaultModelUseCase = ModelUseCase;
 export type DefaultModelSource = 'explicit' | 'auto' | 'none';
@@ -85,7 +88,7 @@ export interface GetModelsParams {
 // Available models fetch params (enabled models only)
 export interface GetAvailableModelsParams {
   // Filter by model use case
-  use_case?: ModelUseCase;
+  use_case?: AvailableModelUseCase;
   // Filter by provider
   provider?: string;
 }

@@ -68,6 +68,13 @@ func (tf *ToolFile) LifecycleValue() ToolFileLifecycle {
 	}
 }
 
+func (tf *ToolFile) IsExpired(now time.Time) bool {
+	return tf != nil &&
+		tf.LifecycleValue() == ToolFileLifecycleTemporary &&
+		tf.ExpiresAt != nil &&
+		!tf.ExpiresAt.After(now)
+}
+
 // GetFileExtension returns the file extension from the file key
 func (tf *ToolFile) GetFileExtension() string {
 	if len(tf.FileKey) == 0 {

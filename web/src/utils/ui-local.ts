@@ -68,6 +68,9 @@ export type AiModelScope =
   | 'excelImport'
   | 'ingest'
   | 'biSearch'
+  | 'workChat'
+  | 'contextualSidebar'
+  // Legacy shared scope. New chat surfaces must use a surface-specific scope.
   | 'consoleChat'
   | 'imageGenChat'
   | 'workflowTestScenario';

@@ -23,6 +23,7 @@ import { useWorkflowDraft } from '@/hooks/workflow/use-workflow';
 import { NODE_THEMES } from '@/components/workflow/nodes/custom/config';
 import { cn } from '@/lib/utils';
 import { formatQuestionTypeLabel } from './question-type';
+import { getAgentDetailBatchTestHref } from '@/utils/agent-detail-routes';
 
 interface BatchResultItemDetailPageProps {
   agentId: string;
@@ -442,6 +443,8 @@ export function BatchResultItemDetailPage({
   const t = useT('agents.workflowTest.detail');
   const commonT = useT('agents.workflowTest.common');
   const typeT = useT('agents.workflowTest.questionTypes');
+  const batchResultHref = `${getAgentDetailBatchTestHref(agentId, 'workflow')}/${batchId}`;
+  const getBatchItemHref = (nextItemId: string) => `${batchResultHref}/items/${nextItemId}`;
   const { data: workflowDraft } = useWorkflowDraft(agentId);
   const {
     data: batchesData,
@@ -579,7 +582,7 @@ export function BatchResultItemDetailPage({
           <CardContent className="p-6">
             <div className="mb-4 flex items-center justify-between gap-4">
               <Button variant="ghost" size="sm" asChild className="px-0 text-slate-600">
-                <Link href={`/console/agents/${agentId}/batch-test/${batchId}`}>
+                <Link href={batchResultHref}>
                   <ArrowLeft className="mr-2 size-4" />
                   {t('back')}
                 </Link>
@@ -589,7 +592,7 @@ export function BatchResultItemDetailPage({
                 <div className="flex items-center gap-2">
                   {previousItem ? (
                     <Button variant="outline" size="sm" asChild>
-                      <Link href={`/console/agents/${agentId}/batch-test/${batchId}/items/${previousItem.id}`}>
+                      <Link href={getBatchItemHref(previousItem.id)}>
                         <ChevronLeft className="mr-1 size-4" />
                         {t('previousItem')}
                       </Link>
@@ -602,7 +605,7 @@ export function BatchResultItemDetailPage({
                   )}
                   {nextItem ? (
                     <Button variant="outline" size="sm" asChild>
-                      <Link href={`/console/agents/${agentId}/batch-test/${batchId}/items/${nextItem.id}`}>
+                      <Link href={getBatchItemHref(nextItem.id)}>
                         {t('nextItem')}
                         <ChevronRight className="ml-1 size-4" />
                       </Link>

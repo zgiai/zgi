@@ -9,15 +9,39 @@ tools:
   - retrieve_agent_knowledge
 max_calls_per_turn: 20
 timeout_seconds: 30
+tool_governance:
+  retrieve_agent_knowledge:
+    tool_id: knowledge.retrieve_agent
+    skill_id: agent-knowledge
+    domain: knowledge
+    effect: read
+    asset_type: knowledge_base
+    risk_level: low
+    requires_asset_resolution: false
+    reversible: false
+    bulk_sensitive: false
+    external_side_effect: false
+    permission_scopes:
+      - knowledge:read
+    default_approval_policy: auto_by_permission_tier
+    allowed_permission_tiers:
+      - basic
+      - advanced
+      - full
+    audit_required: true
+    idempotency_required: false
 display:
-  icon: library
-  category: knowledge
+  icon: book-open-check
+  category: knowledge_retrieval
+  scenarios:
+    - knowledge_research
+    - technical_development
   label:
     en_US: Agent Knowledge
     zh_Hans: 智能体知识库
   description:
-    en_US: Retrieves only from knowledge bases bound to the current Agent configuration.
-    zh_Hans: 仅从当前智能体配置绑定的知识库中检索上下文。
+    en_US: Designed for Agent answers that need internal sources; retrieves relevant facts and context only from knowledge bases bound to the current Agent.
+    zh_Hans: 适用于智能体基于内部资料回答问题，可从当前智能体绑定的知识库中检索相关事实和来源上下文。
   when_to_use:
     en_US: Use for Agent answers that need configured knowledge base retrieval.
     zh_Hans: 当智能体回复需要检索已绑定知识库时使用。

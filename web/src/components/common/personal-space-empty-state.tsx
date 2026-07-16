@@ -30,7 +30,7 @@ interface PersonalSpaceEmptyStateProps {
 }
 
 /**
- * Empty state for Organization View mode.
+ * Empty state for personal workbench mode.
  * Provides an inline workspace switcher instead of a guided overlay.
  */
 export function PersonalSpaceEmptyState({

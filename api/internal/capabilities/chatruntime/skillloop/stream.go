@@ -18,6 +18,9 @@ func (r *Runner) runSkillPlanningStream(
 	planningReq *adapter.ChatRequest,
 	round int,
 	onEvent func(Event) error,
+	terminalProtocol bool,
+	terminalStreamingAllowed bool,
+	suppressNaturalProgress bool,
 ) (planningResult, bool, error) {
 	streamReq := cloneChatRequest(planningReq)
 	streamReq.Stream = true
@@ -52,22 +55,48 @@ func (r *Runner) runSkillPlanningStream(
 	naturalProgressStreamed := false
 	toolPlanningProgressStreamed := false
 	var speculativeAnswer strings.Builder
+	finishReason := ""
+	streamDoneReceived := false
+	terminatedBy := ""
 	fallbackTimer := time.NewTimer(r.fallbackDelay())
 	defer fallbackTimer.Stop()
+	idleTimer := time.NewTimer(r.modelIdleTimeout())
+	defer idleTimer.Stop()
 
 	for {
 		select {
+		case <-idleTimer.C:
+			err := ErrModelIdleTimeout
+			r.recordModelInvocation(ModelInvocationTrace{
+				Phase:      "skill_planning",
+				Round:      round,
+				Streaming:  true,
+				StartedAt:  startedAt,
+				DurationMS: time.Since(startedAt).Milliseconds(),
+				Request:    streamReq,
+				Usage:      usage,
+				Error:      err.Error(),
+			})
+			logger.WarnContext(ctx, "chat runtime model idle timeout",
+				"message_id", prepared.Message.ID.String(),
+				"provider", prepared.parts.Provider,
+				"model", streamReq.Model,
+				"phase", "skill_planning_stream",
+			)
+			return planningResult{usage: usage}, true, wrapStreamedFinalAnswerError(err, streamedFinalAnswerFromStates(toolCallsByIndex, toolCallOrder))
 		case <-fallbackTimer.C:
 			if !answerStreamed && !naturalProgressStreamed && !toolPlanningProgressStreamed && !fallbackProgressStreamed {
 				fallbackProgressStreamed = r.emitPlanningFallbackProgress(ctx, prepared, onEvent)
 			}
 			continue
 		case response, ok := <-stream:
+			resetPlanningIdleTimer(idleTimer, r.modelIdleTimeout())
 			if !ok {
+				terminatedBy = "channel_closed"
 				goto streamDone
 			}
 
-			usage = mergeUsage(usage, response.Usage)
+			usage = mergeStreamUsageSnapshot(usage, response.Usage)
 			if response.Error != nil {
 				r.recordModelInvocation(ModelInvocationTrace{
 					Phase:      "skill_planning",
@@ -79,25 +108,30 @@ func (r *Runner) runSkillPlanningStream(
 					Usage:      usage,
 					Error:      response.Error.Error(),
 				})
-				return planningResult{}, true, response.Error
-			}
-			if response.Done {
-				goto streamDone
+				return planningResult{usage: usage}, true, wrapStreamedFinalAnswerError(response.Error, streamedFinalAnswerFromStates(toolCallsByIndex, toolCallOrder))
 			}
 			if len(response.Choices) == 0 {
+				if response.Done {
+					streamDoneReceived = true
+					terminatedBy = "done"
+					goto streamDone
+				}
 				continue
 			}
 			sawChunk = true
 			for _, choice := range response.Choices {
+				if reason := strings.TrimSpace(choice.FinishReason); reason != "" {
+					finishReason = reason
+					if terminatedBy == "" {
+						terminatedBy = "finish_reason"
+					}
+				}
 				if reasoning := streamChoiceReasoningContent(choice); reasoning != "" {
 					reasoningBuilder.WriteString(reasoning)
 				}
 				if text := streamChoiceText(choice); text != "" {
 					contentBuilder.WriteString(text)
-					if sawToolCall {
-						r.emitAgentProgress(ctx, prepared, text, onEvent)
-						naturalProgressStreamed = true
-					} else {
+					if !terminalProtocol && !suppressNaturalProgress && !sawToolCall {
 						r.emitAnswerChunk(ctx, prepared, text, onEvent)
 						speculativeAnswer.WriteString(text)
 						answerStreamed = true
@@ -106,12 +140,12 @@ func (r *Runner) runSkillPlanningStream(
 				for _, delta := range choice.Delta.ToolCalls {
 					if !sawToolCall {
 						sawToolCall = true
-						if speculative := speculativeAnswer.String(); speculative != "" {
-							r.emitAnswerRetract(ctx, prepared, speculative, onEvent)
-						}
-						if progress := strings.TrimSpace(contentBuilder.String()); progress != "" {
-							r.emitAgentProgress(ctx, prepared, progress, onEvent)
-							naturalProgressStreamed = true
+						if !terminalProtocol {
+							if speculative := speculativeAnswer.String(); speculative != "" {
+								r.emitAnswerRetract(ctx, prepared, speculative, onEvent)
+								speculativeAnswer.Reset()
+								answerStreamed = false
+							}
 						}
 					}
 					state := mergeStreamingToolCall(toolCallsByIndex, &toolCallOrder, delta)
@@ -122,7 +156,15 @@ func (r *Runner) runSkillPlanningStream(
 						toolPlanningProgressStreamed = true
 					}
 					r.emitStreamingIntermediateAnswerDelta(ctx, prepared, round, state, onEvent)
+					if terminalProtocol && terminalStreamingAllowed && len(toolCallsByIndex) == 1 {
+						r.emitStreamingFinalAnswerDelta(ctx, prepared, state, onEvent)
+					}
 				}
+			}
+			if response.Done {
+				streamDoneReceived = true
+				terminatedBy = "done"
+				goto streamDone
 			}
 		}
 	}
@@ -131,8 +173,8 @@ streamDone:
 	if !sawChunk {
 		return planningResult{}, false, nil
 	}
-
 	toolCalls := make([]adapter.ToolCall, 0, len(toolCallOrder))
+	finalAnswerStreamDiverged := false
 	for _, index := range toolCallOrder {
 		state := toolCallsByIndex[index]
 		if state == nil {
@@ -142,7 +184,21 @@ streamDone:
 		if strings.EqualFold(strings.TrimSpace(call.Function.Name), skills.MetaToolIntermediateAnswer) && state.emittedContent != "" {
 			call.Function.Arguments = markIntermediateAnswerArgumentsStreamed(call.Function.Arguments, streamingIntermediateAnswerID(prepared, round, call))
 		}
+		if strings.EqualFold(strings.TrimSpace(call.Function.Name), skills.MetaToolFinalAnswer) && state.emittedFinalAnswer != "" {
+			answer, complete := partialJSONStringField(call.Function.Arguments, "answer")
+			if complete && answer == state.emittedFinalAnswer {
+				call.Function.Arguments = markFinalAnswerArgumentsStreamed(call.Function.Arguments)
+			} else if complete {
+				finalAnswerStreamDiverged = true
+			}
+			answerStreamed = true
+		}
 		toolCalls = append(toolCalls, call)
+	}
+	if !terminalProtocol && len(toolCalls) > 0 && !suppressNaturalProgress {
+		if progress := strings.TrimSpace(contentBuilder.String()); progress != "" {
+			naturalProgressStreamed = r.emitAgentProgress(ctx, prepared, progress, onEvent)
+		}
 	}
 	message := adapter.Message{
 		Role:             "assistant",
@@ -150,23 +206,90 @@ streamDone:
 		ToolCalls:        toolCalls,
 		ReasoningContent: reasoningBuilder.String(),
 	}
-	r.recordModelInvocation(ModelInvocationTrace{
-		Phase:      "skill_planning",
-		Round:      round,
-		Streaming:  true,
-		StartedAt:  startedAt,
-		DurationMS: time.Since(startedAt).Milliseconds(),
-		Request:    streamReq,
-		Response:   &message,
-		Usage:      usage,
-	})
+	terminationErr := skillPlanningStreamTerminationError(finishReason, streamDoneReceived, terminatedBy)
+	if terminationErr == nil && finalAnswerStreamDiverged {
+		terminationErr = fmt.Errorf("streamed final answer diverged from completed tool arguments")
+	}
+	trace := ModelInvocationTrace{
+		Phase:              "skill_planning",
+		Round:              round,
+		Streaming:          true,
+		StartedAt:          startedAt,
+		DurationMS:         time.Since(startedAt).Milliseconds(),
+		Request:            streamReq,
+		Response:           &message,
+		Usage:              usage,
+		FinishReason:       finishReason,
+		StreamDoneReceived: streamDoneReceived,
+		TerminatedBy:       terminatedBy,
+	}
+	if terminationErr != nil {
+		trace.Error = terminationErr.Error()
+	}
+	r.recordModelInvocation(trace)
+	if terminationErr != nil {
+		return planningResult{usage: usage}, true, wrapStreamedFinalAnswerError(terminationErr, streamedFinalAnswerFromStates(toolCallsByIndex, toolCallOrder))
+	}
 
 	return planningResult{
-		message:          message,
-		usage:            usage,
-		answerStreamed:   answerStreamed && len(toolCalls) == 0,
-		progressStreamed: naturalProgressStreamed || toolPlanningProgressStreamed || fallbackProgressStreamed,
+		message:                 message,
+		usage:                   usage,
+		answerStreamed:          answerStreamed && (terminalProtocol || len(toolCalls) == 0),
+		naturalProgressStreamed: naturalProgressStreamed,
 	}, true, nil
+}
+
+func resetPlanningIdleTimer(timer *time.Timer, duration time.Duration) {
+	if !timer.Stop() {
+		select {
+		case <-timer.C:
+		default:
+		}
+	}
+	timer.Reset(duration)
+}
+
+type streamedFinalAnswerError struct {
+	err    error
+	answer string
+}
+
+func (e *streamedFinalAnswerError) Error() string {
+	return e.err.Error()
+}
+
+func (e *streamedFinalAnswerError) Unwrap() error {
+	return e.err
+}
+
+func wrapStreamedFinalAnswerError(err error, answer string) error {
+	if err == nil || strings.TrimSpace(answer) == "" {
+		return err
+	}
+	return &streamedFinalAnswerError{err: err, answer: answer}
+}
+
+func streamedFinalAnswerFromStates(states map[int]*streamingToolCallState, order []int) string {
+	for _, index := range order {
+		state := states[index]
+		if state != nil && strings.EqualFold(strings.TrimSpace(state.call.Function.Name), skills.MetaToolFinalAnswer) {
+			return state.emittedFinalAnswer
+		}
+	}
+	return ""
+}
+
+func skillPlanningStreamTerminationError(finishReason string, streamDoneReceived bool, terminatedBy string) error {
+	switch strings.ToLower(strings.TrimSpace(finishReason)) {
+	case "length", "max_tokens":
+		return &PlanningTerminationError{Reason: strings.TrimSpace(finishReason), Recoverable: true, Streaming: true}
+	case "content_filter":
+		return &PlanningTerminationError{Reason: strings.TrimSpace(finishReason), Streaming: true}
+	}
+	if streamDoneReceived || strings.TrimSpace(finishReason) != "" {
+		return nil
+	}
+	return fmt.Errorf("skill planning stream ended without a terminal signal: terminated_by=%s", strings.TrimSpace(terminatedBy))
 }
 
 type skillPlanningStreamOpenResult struct {
@@ -181,26 +304,43 @@ func (r *Runner) openSkillPlanningStream(
 	onEvent func(Event) error,
 ) (<-chan adapter.StreamResponse, bool, error) {
 	resultCh := make(chan skillPlanningStreamOpenResult, 1)
+	callCtx, cancel := context.WithCancel(ctx)
 	go func() {
-		stream, err := r.LLMClient.AppChatStream(ctx, r.AppContext, streamReq)
+		stream, err := r.LLMClient.AppChatStream(callCtx, r.AppContext, streamReq)
 		resultCh <- skillPlanningStreamOpenResult{stream: stream, err: err}
 	}()
 
 	timer := time.NewTimer(r.fallbackDelay())
 	defer timer.Stop()
+	idleTimer := time.NewTimer(r.modelIdleTimeout())
+	defer idleTimer.Stop()
 
 	select {
 	case result := <-resultCh:
+		if result.err != nil {
+			cancel()
+		}
 		return result.stream, false, result.err
+	case <-idleTimer.C:
+		cancel()
+		return nil, false, ErrModelIdleTimeout
 	case <-timer.C:
 		fallbackProgressStreamed := r.emitPlanningFallbackProgress(ctx, prepared, onEvent)
 		select {
 		case result := <-resultCh:
+			if result.err != nil {
+				cancel()
+			}
 			return result.stream, fallbackProgressStreamed, result.err
+		case <-idleTimer.C:
+			cancel()
+			return nil, fallbackProgressStreamed, ErrModelIdleTimeout
 		case <-ctx.Done():
+			cancel()
 			return nil, fallbackProgressStreamed, ctx.Err()
 		}
 	case <-ctx.Done():
+		cancel()
 		return nil, false, ctx.Err()
 	}
 }
@@ -309,6 +449,24 @@ func (r *Runner) emitStreamingIntermediateAnswerDelta(
 	r.emitEvent(EventIntermediateAnswer, intermediateAnswerPayload(prepared, trace, answerID, delta, 0, false, "streaming"))
 }
 
+func (r *Runner) emitStreamingFinalAnswerDelta(
+	ctx context.Context,
+	prepared *PreparedChat,
+	state *streamingToolCallState,
+	onEvent func(Event) error,
+) {
+	if state == nil || !strings.EqualFold(strings.TrimSpace(state.call.Function.Name), skills.MetaToolFinalAnswer) {
+		return
+	}
+	answer, _ := partialJSONStringField(state.call.Function.Arguments, "answer")
+	if answer == "" || len(answer) <= len(state.emittedFinalAnswer) || !strings.HasPrefix(answer, state.emittedFinalAnswer) {
+		return
+	}
+	delta := answer[len(state.emittedFinalAnswer):]
+	state.emittedFinalAnswer = answer
+	r.emitAnswerChunk(ctx, prepared, delta, onEvent)
+}
+
 func (r *Runner) emitStreamingToolPlanningProgress(
 	ctx context.Context,
 	prepared *PreparedChat,
@@ -319,7 +477,7 @@ func (r *Runner) emitStreamingToolPlanningProgress(
 		return false
 	}
 	metaToolName := strings.TrimSpace(state.call.Function.Name)
-	if metaToolName == "" || strings.EqualFold(metaToolName, skills.MetaToolIntermediateAnswer) {
+	if metaToolName == "" || strings.EqualFold(metaToolName, skills.MetaToolIntermediateAnswer) || strings.EqualFold(metaToolName, skills.MetaToolFinalAnswer) {
 		return false
 	}
 
@@ -424,6 +582,19 @@ func markIntermediateAnswerArgumentsStreamed(arguments string, answerID string) 
 	}
 	parsed[streamedIntermediateAnswerArg] = true
 	parsed[streamedIntermediateAnswerArg+"_id"] = answerID
+	encoded, err := json.Marshal(parsed)
+	if err != nil {
+		return arguments
+	}
+	return string(encoded)
+}
+
+func markFinalAnswerArgumentsStreamed(arguments string) string {
+	var parsed map[string]interface{}
+	if err := json.Unmarshal([]byte(arguments), &parsed); err != nil {
+		return arguments
+	}
+	parsed[streamedFinalAnswerArg] = true
 	encoded, err := json.Marshal(parsed)
 	if err != nil {
 		return arguments

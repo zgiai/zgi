@@ -16,7 +16,7 @@ import { Input, PasswordInput } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Pagination } from '@/components/ui/pagination';
-import { Link2, Copy, Check, ChevronsUpDown } from 'lucide-react';
+import { Link2, Copy, Check, ChevronsUpDown, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { useInviteLink } from '@/hooks/organization/use-invite-link';
 import { useMemberActions } from '@/hooks/organization/use-member-actions';
@@ -224,12 +224,7 @@ export function AddMemberDialog({
       hasError = true;
     }
 
-    if (!workspaceId) {
-      toast.error(t('organization.contacts.unassignedWorkspace'));
-      hasError = true;
-    }
-
-    if (hasError || !workspaceId) return;
+    if (hasError) return;
 
     try {
       // If organization root is selected, pass empty string or handle as appropriate
@@ -238,9 +233,8 @@ export function AddMemberDialog({
       if (IS_CLOUD) {
         await directAddMember({
           name: trimmedName,
-          member_name: trimmedName,
           email: trimmedEmail,
-          workspace_id: workspaceId,
+          ...(workspaceId ? { workspace_id: workspaceId } : {}),
           department_id: deptId,
           send_email: sendNotification,
         });
@@ -249,7 +243,7 @@ export function AddMemberDialog({
         await adminRegisterMember({
           name: trimmedName,
           email: trimmedEmail,
-          workspace_id: workspaceId,
+          ...(workspaceId ? { workspace_id: workspaceId } : {}),
           ...(trimmedPassword ? { password: trimmedPassword } : {}),
           ...(deptId ? { department_id: deptId } : {}),
         });
@@ -559,15 +553,31 @@ export function AddMemberDialog({
 
                 <div className="space-y-2">
                   <Label className="text-sm font-bold text-foreground ml-1">
-                    {t('organization.contacts.workspaces')}
+                    {t('organization.contacts.addMember.memberWorkspaceOptional')}
                   </Label>
-                  <WorkspaceSelector
-                    value={selectedWorkspace}
-                    onChange={setSelectedWorkspace}
-                    placeholder={t('organization.contacts.assignWorkspace')}
-                    autoSelectFirst
-                    className="h-12 rounded-xl"
-                  />
+                  <div className="flex gap-2">
+                    <WorkspaceSelector
+                      value={selectedWorkspace}
+                      onChange={setSelectedWorkspace}
+                      placeholder={t('organization.contacts.addMember.workspaceOptionalPlaceholder')}
+                      className="h-12 rounded-xl"
+                    />
+                    {selectedWorkspace ? (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        isIcon
+                        onClick={() => setSelectedWorkspace(undefined)}
+                        className="h-12 w-12 shrink-0 rounded-xl"
+                        aria-label={t('organization.contacts.addMember.clearWorkspace')}
+                      >
+                        <X className="h-4 w-4" />
+                      </Button>
+                    ) : null}
+                  </div>
+                  <p className="ml-1 text-xs font-medium text-muted-foreground">
+                    {t('organization.contacts.addMember.workspaceOptionalHint')}
+                  </p>
                 </div>
 
                 <div className="space-y-2">
@@ -803,7 +813,6 @@ export function AddMemberDialog({
                   activeTab === 'direct-add' &&
                   (!memberName ||
                     !memberEmail ||
-                    !selectedWorkspace?.id ||
                     (IS_CLOUD && !selectedDepartment) ||
                     isAddingMember ||
                     isAdminRegisteringMember)

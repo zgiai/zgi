@@ -75,12 +75,46 @@ func TestAIChatSystemTemplateRender(t *testing.T) {
 		t.Fatalf("GetTemplate returned error: %v", err)
 	}
 
-	rendered, err := tmpl.Render(nil)
+	rendered, err := tmpl.Render(map[string]interface{}{"Surface": "work_chat"})
 	if err != nil {
 		t.Fatalf("Render returned error: %v", err)
 	}
-	if !strings.Contains(rendered, "helpful AI assistant") {
+	for _, expected := range []string{
+		"general-purpose workbench assistant",
+		"Do not claim to see or operate the current page",
+		"High-risk asset operations require",
+		"Account-level assistant memory and Agent memory are separate",
+		"adjustable execution guide, not a fixed script",
+		"Prefer current page evidence",
+		"if the result is missing, partial, or failed, say that plainly",
+		"Conversation history and user authorization alone are not execution evidence",
+		"operation was not executed or cannot be verified",
+	} {
+		if !strings.Contains(rendered, expected) {
+			t.Fatalf("rendered aichat system template does not contain %q: %s", expected, rendered)
+		}
+	}
+	if strings.Contains(rendered, "helpful AI assistant") {
 		t.Fatalf("unexpected rendered aichat system template: %s", rendered)
+	}
+
+	contextual, err := tmpl.Render(map[string]interface{}{"Surface": "contextual_sidebar"})
+	if err != nil {
+		t.Fatalf("Render returned error: %v", err)
+	}
+	for _, expected := range []string{
+		"contextual console operation assistant",
+		"navigating to relevant internal console modules",
+		"Use navigation only when the user goal needs another console page",
+	} {
+		if !strings.Contains(contextual, expected) {
+			t.Fatalf("rendered contextual aichat system template does not contain %q: %s", expected, contextual)
+		}
+	}
+	for _, branded := range []string{"ZGI", "You are AIChat"} {
+		if strings.Contains(rendered, branded) || strings.Contains(contextual, branded) {
+			t.Fatalf("rendered assistant system template contains branded text %q", branded)
+		}
 	}
 }
 

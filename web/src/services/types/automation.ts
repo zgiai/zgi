@@ -177,6 +177,14 @@ export interface AutomationTaskList {
   has_more: boolean;
 }
 
+export interface AutomationTaskCounts {
+  all: number;
+  active: number;
+  paused: number;
+  completed: number;
+  archived: number;
+}
+
 export interface AutomationTaskRunItem {
   run: AutomationTaskRun;
   action_runs: AutomationTaskActionRun[];
@@ -252,6 +260,10 @@ export interface GenerateAutomationTaskDraftResponse {
 export interface GetAutomationTasksParams extends PaginationParams {
   workspace_id?: string;
   statuses?: string;
+}
+
+export interface GetAutomationTaskCountsParams {
+  workspace_id?: string;
 }
 
 export interface GetAutomationTaskParams {

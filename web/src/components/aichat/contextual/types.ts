@@ -1,0 +1,170 @@
+'use client';
+
+export type AIChatContextItemType =
+  | 'agent'
+  | 'workflow'
+  | 'file'
+  | 'task'
+  | 'dataset'
+  | 'database'
+  | 'page'
+  | 'selection'
+  | 'log'
+  | 'custom';
+
+export type AIChatResourceType = AIChatContextItemType;
+export type AIChatCapabilityRisk = 'low' | 'medium' | 'high';
+export type AIChatContextRisk = AIChatCapabilityRisk;
+export type AIChatResourceStatus =
+  | 'available'
+  | 'draft'
+  | 'published'
+  | 'dirty'
+  | 'stale'
+  | 'readonly'
+  | 'disabled'
+  | 'error'
+  | (string & {});
+export type AIChatCapabilityStatus =
+  | 'available'
+  | 'unavailable'
+  | 'disabled'
+  | 'preview'
+  | (string & {});
+export type AIChatToolGovernancePermissionTier = 'basic' | 'advanced' | 'full';
+
+export type AIChatContextMetadataValue = string | number | boolean | null | undefined;
+export type AIChatContextMetadata = Record<string, AIChatContextMetadataValue>;
+export type AIChatOperationMetadataValue = string | number | boolean | null;
+export type AIChatOperationMetadata = Record<string, AIChatOperationMetadataValue>;
+
+export interface AIChatContextRelation {
+  type: string;
+  resourceType: AIChatResourceType;
+  resourceId: string;
+  title?: string;
+  metadata?: AIChatContextMetadata;
+}
+
+export interface AIChatCapabilityDescriptor {
+  id: string;
+  title?: string;
+  description?: string;
+  risk: AIChatCapabilityRisk;
+  requiresConfirmation?: boolean;
+  status?: AIChatCapabilityStatus;
+  permissions?: string[];
+  metadata?: AIChatContextMetadata;
+}
+
+export interface AIChatContextRefreshHint {
+  assetType: string;
+  effect?: 'create' | 'update' | 'delete' | 'publish' | 'invoke' | 'schedule' | 'external_send';
+  resourceId?: string;
+  queryKey?: readonly unknown[];
+}
+
+export interface AIChatContextPresentationHint {
+  homeTitle?: string;
+  homeDescription?: string;
+  inputPlaceholder?: string;
+  suggestions?: string[];
+}
+
+export interface AIChatContextToolGovernanceHint {
+  enabled?: boolean;
+}
+
+export interface AIChatContextAdapterHints {
+  handledAssetTypes?: string[];
+  refreshHints?: AIChatContextRefreshHint[];
+  presentation?: AIChatContextPresentationHint;
+  toolGovernance?: AIChatContextToolGovernanceHint;
+}
+
+export interface AIChatContextItem {
+  id: string;
+  type: AIChatContextItemType;
+  title: string;
+  subtitle?: string;
+  description?: string;
+  href?: string;
+  source?: string;
+  risk?: AIChatContextRisk;
+  permissions?: string[];
+  status?: AIChatResourceStatus;
+  relations?: AIChatContextRelation[];
+  capabilities?: AIChatCapabilityDescriptor[];
+  metadata?: AIChatContextMetadata;
+  hints?: AIChatContextAdapterHints;
+}
+
+export type AIChatContextRegistrationVisibility =
+  | 'visible'
+  | 'selected'
+  | 'current'
+  | 'background';
+
+export interface AIChatContextRegistrationOptions {
+  scopeId?: string;
+  replace?: boolean;
+  priority?: number;
+  visibility?: AIChatContextRegistrationVisibility;
+}
+
+export interface AIChatOperationRelation {
+  relation_type: string;
+  resource_type: AIChatResourceType;
+  resource_id: string;
+  title?: string;
+  metadata?: AIChatOperationMetadata;
+}
+
+export interface AIChatOperationResource {
+  resource_id: string;
+  resource_type: AIChatResourceType;
+  title: string;
+  subtitle?: string;
+  href?: string;
+  source?: string;
+  status?: AIChatResourceStatus;
+  risk?: AIChatCapabilityRisk;
+  permissions?: string[];
+  metadata?: AIChatOperationMetadata;
+  relations?: AIChatOperationRelation[];
+  capability_ids?: string[];
+}
+
+export interface AIChatOperationCapability {
+  id: string;
+  title?: string;
+  description?: string;
+  resource_id: string;
+  resource_type: AIChatResourceType;
+  risk: AIChatCapabilityRisk;
+  requires_confirmation?: boolean;
+  status?: AIChatCapabilityStatus;
+  permissions?: string[];
+  metadata?: AIChatOperationMetadata;
+}
+
+export interface AIChatOperationContext {
+  schema: 'zgi.aichat.operation_context.v1';
+  version: 1;
+  tool_governance?: {
+    permission_tier?: AIChatToolGovernancePermissionTier;
+  };
+  resources: AIChatOperationResource[];
+  capabilities: AIChatOperationCapability[];
+  risk_summary: {
+    level?: AIChatCapabilityRisk;
+    requires_confirmation: boolean;
+  };
+  summary: {
+    resource_count: number;
+    capability_count: number;
+    highest_risk?: AIChatCapabilityRisk;
+    omitted_resource_count: number;
+    omitted_capability_count: number;
+  };
+}

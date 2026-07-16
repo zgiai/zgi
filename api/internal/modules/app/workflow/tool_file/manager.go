@@ -17,7 +17,9 @@ import (
 	"gorm.io/gorm"
 )
 
-const DefaultTemporaryToolFileTTL = 24 * time.Hour
+const DefaultTemporaryToolFileTTL = 7 * 24 * time.Hour
+
+var ErrToolFileExpired = errors.New("tool file expired")
 
 // ToolFileManager manages tool files in the system
 type ToolFileManager struct {
@@ -190,6 +192,9 @@ func (tm *ToolFileManager) GetFileBinary(ctx context.Context, toolFileID string)
 		}
 		return nil, "", fmt.Errorf("failed to find tool file: %w", err)
 	}
+	if err := ensureToolFileAvailable(&toolFile, time.Now()); err != nil {
+		return nil, "", err
+	}
 
 	// Load file from storage
 	fileData, err := tm.storage.Load(toolFile.FileKey)
@@ -210,6 +215,9 @@ func (tm *ToolFileManager) GetFileStream(ctx context.Context, toolFileID string)
 		}
 		return nil, nil, fmt.Errorf("failed to find tool file: %w", err)
 	}
+	if err := ensureToolFileAvailable(&toolFile, time.Now()); err != nil {
+		return nil, nil, err
+	}
 
 	// Load file stream from storage
 	stream, err := tm.storage.LoadStream(toolFile.FileKey)
@@ -229,7 +237,34 @@ func (tm *ToolFileManager) GetToolFileByID(ctx context.Context, toolFileID strin
 		}
 		return nil, fmt.Errorf("failed to find tool file: %w", err)
 	}
+	if err := ensureToolFileAvailable(&toolFile, time.Now()); err != nil {
+		return nil, err
+	}
 	return &toolFile, nil
+}
+
+// GetToolFilesByIDs returns lifecycle metadata for history hydration. It
+// intentionally includes expired files until the cleanup job removes them.
+func (tm *ToolFileManager) GetToolFilesByIDs(ctx context.Context, toolFileIDs []string) (map[string]*ToolFile, error) {
+	result := make(map[string]*ToolFile)
+	if len(toolFileIDs) == 0 {
+		return result, nil
+	}
+	var toolFiles []ToolFile
+	if err := tm.db.WithContext(ctx).Where("id IN ?", toolFileIDs).Find(&toolFiles).Error; err != nil {
+		return nil, fmt.Errorf("failed to find tool files: %w", err)
+	}
+	for idx := range toolFiles {
+		result[toolFiles[idx].ID] = &toolFiles[idx]
+	}
+	return result, nil
+}
+
+func ensureToolFileAvailable(toolFile *ToolFile, now time.Time) error {
+	if toolFile != nil && toolFile.IsExpired(now) {
+		return fmt.Errorf("%w: %s", ErrToolFileExpired, toolFile.ID)
+	}
+	return nil
 }
 
 // DeleteToolFile deletes a tool file
@@ -394,6 +429,13 @@ func GetFileBinaryGlobal(ctx context.Context, toolFileID string) ([]byte, string
 		return nil, "", fmt.Errorf("tool file manager not initialized")
 	}
 	return GlobalToolFileManager.GetFileBinary(ctx, toolFileID)
+}
+
+func GetToolFilesByIDsGlobal(ctx context.Context, toolFileIDs []string) (map[string]*ToolFile, error) {
+	if GlobalToolFileManager == nil {
+		return nil, fmt.Errorf("tool file manager not initialized")
+	}
+	return GlobalToolFileManager.GetToolFilesByIDs(ctx, toolFileIDs)
 }
 
 func CleanupExpiredTemporaryFilesGlobal(ctx context.Context) (int, error) {

@@ -14,7 +14,7 @@ func (h *WorkflowHandler) GenerateDraftWorkflowSuggestedQuestions(c *gin.Context
 	agentID := c.Param("agent_id")
 	accountID := c.GetString("account_id")
 
-	workspaceID, ok := h.requireAgentWorkspacePermission(c, agentID, workspace_model.WorkspacePermissionAgentManage)
+	workspaceID, ok := h.requireAgentWorkspacePermission(c, agentID, workspace_model.WorkspacePermissionWorkflowRunDraft)
 	if !ok {
 		return
 	}

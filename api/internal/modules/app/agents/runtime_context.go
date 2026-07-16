@@ -22,6 +22,8 @@ type agentRuntimeContext struct {
 	RunConfig runtimeservice.RunConfig
 }
 
+const agentWorkflowBindingUnavailableCode = "agent_workflow_binding_unavailable"
+
 func (h *AgentsHandler) ListAgentRuntimeConversations(c *gin.Context) {
 	runtimeCtx, ok := h.agentRuntimeContext(c)
 	if !ok {
@@ -219,6 +221,9 @@ func (h *AgentsHandler) webAppAgentRuntimeContext(c *gin.Context) (agentRuntimeC
 		response.Fail(c, response.ErrSystemError)
 		return agentRuntimeContext{}, false
 	}
+	if !h.requireWebAppRuntimeAccess(c) {
+		return agentRuntimeContext{}, false
+	}
 	published, err := h.appService.GetPublishedAgentWebAppConfig(c.Request.Context(), c.Param("web_app_id"))
 	if err != nil {
 		h.failWebAppRuntime(c, err)
@@ -293,6 +298,7 @@ func agentRunConfig(agentID, systemPromptVersion string, cfg dto.AgentConfigResp
 		WorkflowBindings:          agentWorkflowRuntimeBindings(cfg.WorkflowBindings),
 		WorkflowBoundByAccountID:  cfg.WorkflowBoundByAccountID,
 		WorkflowBoundAtUnix:       cfg.WorkflowBoundAtUnix,
+		BindingAuthorizations:     agentRuntimeBindingAuthorizations(cfg.BindingAuthorizations),
 		UseMemory:                 false,
 		AgentMemoryEnabled:        cfg.AgentMemoryEnabled,
 		AgentMemorySlots:          agentMemoryRuntimeSlots(cfg.AgentMemorySlots),
@@ -300,6 +306,24 @@ func agentRunConfig(agentID, systemPromptVersion string, cfg dto.AgentConfigResp
 		BillingAppID:              agentID,
 		BillingAppType:            runtimemodel.ConversationCallerAgent,
 	}
+}
+
+func agentRuntimeBindingAuthorizations(authorizations []dto.AgentBindingAuthorization) []runtimeservice.ResourceBindingAuthorization {
+	result := make([]runtimeservice.ResourceBindingAuthorization, 0, len(authorizations))
+	for _, authorization := range normalizeAgentBindingAuthorizations(authorizations) {
+		if !validAgentBindingAuthorization(authorization) {
+			continue
+		}
+		result = append(result, runtimeservice.ResourceBindingAuthorization{
+			BindingType:      authorization.BindingType,
+			ResourceID:       authorization.ResourceID,
+			ParentResourceID: authorization.ParentResourceID,
+			AccessMode:       authorization.AccessMode,
+			BoundByAccountID: authorization.BoundByAccountID,
+			BoundAtUnix:      authorization.BoundAtUnix,
+		})
+	}
+	return result
 }
 
 func agentDatabaseRuntimeBindings(bindings []dto.AgentDatabaseBinding) []runtimeservice.AgentDatabaseBinding {
@@ -441,16 +465,16 @@ func (h *AgentsHandler) updateRuntimeConversation(c *gin.Context, runtimeCtx age
 	if !ok {
 		return
 	}
+	if _, err := h.chatRuntimeService.GetConversationByCaller(c.Request.Context(), runtimeCtx.Scope, runtimeCtx.Caller, conversationID); err != nil {
+		h.failRuntime(c, err)
+		return
+	}
 	var req runtimedto.UpdateConversationRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.Fail(c, response.ErrInvalidParam)
 		return
 	}
-	if _, err := h.chatRuntimeService.GetConversationByCaller(c.Request.Context(), runtimeCtx.Scope, runtimeCtx.Caller, conversationID); err != nil {
-		h.failRuntime(c, err)
-		return
-	}
-	conversation, err := h.chatRuntimeService.UpdateConversation(c.Request.Context(), runtimeCtx.Scope, conversationID, req)
+	conversation, err := h.chatRuntimeService.UpdateConversationByCaller(c.Request.Context(), runtimeCtx.Scope, runtimeCtx.Caller, conversationID, req)
 	if err != nil {
 		h.failRuntime(c, err)
 		return
@@ -463,11 +487,7 @@ func (h *AgentsHandler) deleteRuntimeConversation(c *gin.Context, runtimeCtx age
 	if !ok {
 		return
 	}
-	if _, err := h.chatRuntimeService.GetConversationByCaller(c.Request.Context(), runtimeCtx.Scope, runtimeCtx.Caller, conversationID); err != nil {
-		h.failRuntime(c, err)
-		return
-	}
-	if err := h.chatRuntimeService.DeleteConversation(c.Request.Context(), runtimeCtx.Scope, conversationID); err != nil {
+	if err := h.chatRuntimeService.DeleteConversationByCaller(c.Request.Context(), runtimeCtx.Scope, runtimeCtx.Caller, conversationID); err != nil {
 		h.failRuntime(c, err)
 		return
 	}
@@ -479,13 +499,9 @@ func (h *AgentsHandler) listRuntimeMessages(c *gin.Context, runtimeCtx agentRunt
 	if !ok {
 		return
 	}
-	if _, err := h.chatRuntimeService.GetConversationByCaller(c.Request.Context(), runtimeCtx.Scope, runtimeCtx.Caller, conversationID); err != nil {
-		h.failRuntime(c, err)
-		return
-	}
 	page := positiveQueryInt(c, "page", 1)
 	limit := positiveQueryInt(c, "limit", 100)
-	messages, total, err := h.chatRuntimeService.ListMessages(c.Request.Context(), runtimeCtx.Scope, conversationID, page, limit)
+	messages, total, err := h.chatRuntimeService.ListConversationMessagesByCaller(c.Request.Context(), runtimeCtx.Scope, runtimeCtx.Caller, conversationID, page, limit)
 	if err != nil {
 		h.failRuntime(c, err)
 		return
@@ -508,11 +524,7 @@ func (h *AgentsHandler) stopRuntimeConversation(c *gin.Context, runtimeCtx agent
 	if !ok {
 		return
 	}
-	if _, err := h.chatRuntimeService.GetConversationByCaller(c.Request.Context(), runtimeCtx.Scope, runtimeCtx.Caller, conversationID); err != nil {
-		h.failRuntime(c, err)
-		return
-	}
-	result, err := h.chatRuntimeService.StopConversation(c.Request.Context(), runtimeCtx.Scope, conversationID)
+	result, err := h.chatRuntimeService.StopConversationByCaller(c.Request.Context(), runtimeCtx.Scope, runtimeCtx.Caller, conversationID)
 	if err != nil {
 		h.failRuntime(c, err)
 		return
@@ -532,17 +544,17 @@ func (h *AgentsHandler) streamRuntimeEvents(c *gin.Context, runtimeCtx agentRunt
 	if !ok {
 		return
 	}
+	if _, err := h.chatRuntimeService.GetConversationByCaller(c.Request.Context(), runtimeCtx.Scope, runtimeCtx.Caller, conversationID); err != nil {
+		h.failRuntime(c, err)
+		return
+	}
 	messageID, err := uuid.Parse(strings.TrimSpace(c.Query("message_id")))
 	if err != nil {
 		response.Fail(c, response.ErrInvalidParam)
 		return
 	}
-	if _, err := h.chatRuntimeService.GetConversationByCaller(c.Request.Context(), runtimeCtx.Scope, runtimeCtx.Caller, conversationID); err != nil {
-		h.failRuntime(c, err)
-		return
-	}
 	setupAgentSSE(c)
-	err = h.chatRuntimeService.StreamConversationEvents(c.Request.Context(), runtimeCtx.Scope, conversationID, messageID, c.Query("after_id"), func(event runtimeservice.StreamEvent) error {
+	err = h.chatRuntimeService.StreamConversationEventsForCaller(c.Request.Context(), runtimeCtx.Scope, runtimeCtx.Caller, conversationID, messageID, c.Query("after_id"), func(event runtimeservice.StreamEvent) error {
 		return writeAgentSSEEvent(c, event.ID, event.EventType, event.Payload)
 	})
 	if err != nil {
@@ -556,12 +568,23 @@ func (h *AgentsHandler) streamRuntimeEvents(c *gin.Context, runtimeCtx agentRunt
 }
 
 func (h *AgentsHandler) failRuntime(c *gin.Context, err error) {
+	var bindingErr *agentBindingAPIError
+	if errors.As(err, &bindingErr) && bindingErr != nil {
+		response.SpecialFail(c, gin.H{
+			"code":    bindingErr.Code,
+			"message": bindingErr.Message,
+			"data":    bindingErr.Data,
+		})
+		return
+	}
 	switch {
 	case errors.Is(err, runtimeservice.ErrNotFound):
 		response.Fail(c, response.ErrNotFound)
 	case errors.Is(err, runtimeservice.ErrInvalidInput):
 		response.FailWithMessage(c, response.ErrInvalidParam, err.Error())
-	case errors.Is(err, runtimeservice.ErrConversationWaitingApproval):
+	case errors.Is(err, runtimeservice.ErrConversationWaitingApproval),
+		errors.Is(err, runtimeservice.ErrConversationWaitingQuestion),
+		errors.Is(err, runtimeservice.ErrConversationWaitingAction):
 		response.FailWithMessage(c, response.ErrInvalidParam, err.Error())
 	case errors.Is(err, agentmemory.ErrInvalidInput):
 		response.FailWithMessage(c, response.ErrInvalidParam, err.Error())
@@ -569,6 +592,15 @@ func (h *AgentsHandler) failRuntime(c *gin.Context, err error) {
 		response.Fail(c, response.ErrUnauthorized)
 	case errors.Is(err, runtimeservice.ErrPermissionDenied):
 		response.SpecialFail(c, gin.H{"code": "403001", "message": "Permission denied"})
+	case errors.Is(err, runtimeservice.ErrWorkflowBindingUnavailable):
+		response.SpecialFail(c, gin.H{
+			"code":    agentWorkflowBindingUnavailableCode,
+			"message": "workflow binding is no longer available",
+			"data": gin.H{
+				"status": "denied",
+				"reason": "unavailable",
+			},
+		})
 	case errors.Is(err, errAgentWebAppOffline):
 		response.Fail(c, response.ErrWebAppOffline)
 	case errors.Is(err, errAgentWebAppNotPublished):
@@ -587,6 +619,9 @@ func (h *AgentsHandler) failWebAppRuntime(c *gin.Context, err error) {
 		response.Fail(c, response.ErrWebAppOffline)
 	case errors.Is(err, errAgentWebAppNotPublished):
 		response.Fail(c, response.ErrWebAppNotPublished)
+	case errors.Is(err, errAgentWebAppNotAgentRuntime):
+		logger.DebugContext(c.Request.Context(), "agent webapp runtime request skipped for non-agent runtime", err)
+		response.SpecialFail(c, gin.H{"code": "399001", "message": err.Error()})
 	default:
 		logger.ErrorContext(c.Request.Context(), "agent webapp runtime request failed", err)
 		response.SpecialFail(c, gin.H{"code": "399001", "message": err.Error()})

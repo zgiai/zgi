@@ -1,0 +1,1722 @@
+'use client';
+
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
+} from 'react';
+import { usePathname, useRouter } from 'next/navigation';
+import { PanelRightClose } from 'lucide-react';
+import { useQueryClient, type QueryKey } from '@tanstack/react-query';
+import Chat, { useAIChatController, type AIChatModelValue } from '@/components/chat';
+import type { ModelSelectorValue } from '@/components/common/model-selector';
+import { Button } from '@/components/ui/button';
+import {
+  AGENT_KEYS,
+  AUTOMATION_KEYS,
+  DATASET_KEYS,
+  DB_KEYS,
+  PROMPT_KEYS,
+  WORKFLOW_KEYS,
+  WORKSPACE_KEYS,
+} from '@/hooks/query-keys';
+import { usePersistedAIChatModelSelection } from '@/hooks/model/use-persisted-ai-chat-model-selection';
+import { useT } from '@/i18n/translations';
+import { cn } from '@/lib/utils';
+import { useCurrentUser } from '@/store/auth-store';
+import { embeddedControlButtonClassName } from '@/components/chat/variants/aichat/embedded-conversation-controls';
+import { isDraftAIChatConversationId } from '@/components/chat/utils/aichat-message';
+import {
+  openClientActionCompletionGate,
+  takeClientActionCompletion,
+} from '@/components/chat/runtime/client-action-continuation';
+import {
+  createContextualAIChatTransport,
+  normalizeZGIConsoleNavigationHref,
+  type ContextualAIChatAssetOperation,
+  type ContextualAIChatClientActionRequest,
+} from './context-envelope';
+import { useContextualAIChat } from './contextual-ai-chat-context';
+import type {
+  AIChatClientActionRequiredEventData,
+  AIChatClientActionResultRequest,
+  AIChatMessage,
+} from '@/services/types/aichat';
+import type {
+  AIChatContextItem,
+  AIChatContextPresentationHint,
+  AIChatContextRefreshHint,
+} from './types';
+
+const DESKTOP_PANEL_MEDIA_QUERY = '(min-width: 1024px)';
+const DESKTOP_PANEL_WIDTH_STORAGE_KEY = 'consoleChat.aiChatDockWidth';
+const DEFAULT_DESKTOP_PANEL_WIDTH_RATIO = 0.28;
+const DESKTOP_PANEL_TRANSITION_MS = 300;
+const MIN_DESKTOP_PANEL_WIDTH = 440;
+const MAX_DESKTOP_PANEL_WIDTH_RATIO = 0.5;
+const MIN_DESKTOP_CONTENT_WIDTH = 360;
+const ASSET_OPERATION_REFRESH_DEDUPE_MS = 1800;
+const CLIENT_ACTION_ROUTE_TIMEOUT_MS = 10_000;
+const CLIENT_ACTION_ROUTE_CONTEXT_SETTLE_MS = 140;
+const CLIENT_ACTION_ROUTE_FALLBACK_SETTLE_MS = 460;
+const CLIENT_ACTION_ROUTE_CONTEXT_MAX_WAIT_MS = 2_500;
+const CLIENT_ACTION_ROUTE_CONTEXT_POLL_MS = 120;
+const CLIENT_ACTION_OBSERVATION_SETTLE_MS = 900;
+const CLIENT_ACTION_DEDUPE_TTL_MS = 60_000;
+const CLIENT_ACTION_FAILURE_DEDUPE_TTL_MS = 5_000;
+const ACTIVE_CONVERSATION_STORAGE_KEY = 'consoleChat.contextualActiveConversationId';
+
+interface PendingClientActionContinuation {
+  key: string;
+  conversationId: string;
+  messageId: string;
+  actionId: string;
+  actionType: string;
+  href?: string;
+  label?: string;
+  reason?: string;
+  effect?: string;
+  assetType?: string;
+  assets?: Array<Record<string, unknown>>;
+  requestedAt: number;
+  completed: boolean;
+  continuationReady: boolean;
+  deferredCompletion?: AIChatClientActionResultRequest;
+  timeoutId?: number;
+  settleTimeoutId?: number;
+  recoveryTimeoutId?: number;
+  resuming?: boolean;
+}
+
+function clientActionContinuationKey(conversationId: string, messageId: string, actionId: string) {
+  return `${conversationId}:${messageId}:${actionId}`;
+}
+
+function clientActionRequestKey(request: ContextualAIChatClientActionRequest) {
+  return clientActionContinuationKey(request.conversationId, request.messageId, request.actionId);
+}
+
+function routeClientActionRequestKey(request: ContextualAIChatClientActionRequest, href: string) {
+  return `${clientActionRequestKey(request)}:route_navigation:${href}`;
+}
+
+function pruneClientActionDedupe(cache: Map<string, number>, now: number) {
+  for (const [key, expiresAt] of cache.entries()) {
+    if (expiresAt <= now) {
+      cache.delete(key);
+    }
+  }
+}
+
+function markClientActionDedupe(
+  cache: Map<string, number>,
+  key: string,
+  ttlMs = CLIENT_ACTION_DEDUPE_TTL_MS
+) {
+  cache.set(key, Date.now() + ttlMs);
+}
+
+function hasClientActionDedupe(cache: Map<string, number>, key: string, now: number) {
+  const expiresAt = cache.get(key);
+  return Boolean(expiresAt && expiresAt > now);
+}
+
+function contextualStorageKey(baseKey: string, userId?: string | null) {
+  const normalizedUserId = userId?.trim();
+  return normalizedUserId ? `${baseKey}:${normalizedUserId}` : baseKey;
+}
+
+function readStoredActiveConversationId(userId?: string | null) {
+  if (typeof window === 'undefined') return null;
+  try {
+    const value = window.sessionStorage.getItem(
+      contextualStorageKey(ACTIVE_CONVERSATION_STORAGE_KEY, userId)
+    );
+    return value?.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+function storeActiveConversationId(conversationId: string, userId?: string | null) {
+  if (typeof window === 'undefined') return;
+  if (isDraftAIChatConversationId(conversationId)) return;
+  try {
+    window.sessionStorage.setItem(
+      contextualStorageKey(ACTIVE_CONVERSATION_STORAGE_KEY, userId),
+      conversationId
+    );
+  } catch {
+    // Session storage can be unavailable in restricted browser contexts.
+  }
+}
+
+function clearStoredActiveConversationId(userId?: string | null) {
+  if (typeof window === 'undefined') return;
+  try {
+    window.sessionStorage.removeItem(contextualStorageKey(ACTIVE_CONVERSATION_STORAGE_KEY, userId));
+  } catch {
+    // Session storage can be unavailable in restricted browser contexts.
+  }
+}
+
+function useIsDesktopPanelViewport() {
+  const [isDesktopPanelViewport, setIsDesktopPanelViewport] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const mediaQuery = window.matchMedia(DESKTOP_PANEL_MEDIA_QUERY);
+    const handleChange = () => setIsDesktopPanelViewport(mediaQuery.matches);
+
+    handleChange();
+    mediaQuery.addEventListener('change', handleChange);
+    return () => mediaQuery.removeEventListener('change', handleChange);
+  }, []);
+
+  return isDesktopPanelViewport;
+}
+
+function clampDesktopPanelWidth(width: number) {
+  if (typeof window === 'undefined') return Math.max(MIN_DESKTOP_PANEL_WIDTH, width);
+  const viewportWidth = window.innerWidth;
+  const viewportMax = Math.max(MIN_DESKTOP_PANEL_WIDTH, viewportWidth - MIN_DESKTOP_CONTENT_WIDTH);
+  const ratioMax = Math.max(
+    MIN_DESKTOP_PANEL_WIDTH,
+    Math.round(viewportWidth * MAX_DESKTOP_PANEL_WIDTH_RATIO)
+  );
+  const maxWidth = Math.min(viewportMax, ratioMax);
+  return Math.min(Math.max(Math.round(width), MIN_DESKTOP_PANEL_WIDTH), maxWidth);
+}
+
+function agentIdFromAgentDetailPath(pathname?: string | null) {
+  const href = normalizeZGIConsoleNavigationHref(pathname ?? undefined);
+  if (!href) return null;
+  const match = href.match(/^\/console\/agents\/([^/]+)\/agent(?:\/.*)?$/);
+  return match?.[1] ?? null;
+}
+
+function getDefaultDesktopPanelWidth() {
+  if (typeof window === 'undefined') return MIN_DESKTOP_PANEL_WIDTH;
+  return clampDesktopPanelWidth(window.innerWidth * DEFAULT_DESKTOP_PANEL_WIDTH_RATIO);
+}
+
+function getStoredDesktopPanelWidth() {
+  if (typeof window === 'undefined') return null;
+  const stored = window.localStorage.getItem(DESKTOP_PANEL_WIDTH_STORAGE_KEY);
+  if (!stored) return null;
+  const width = Number.parseInt(stored, 10);
+  return Number.isFinite(width) ? clampDesktopPanelWidth(width) : null;
+}
+
+function storeDesktopPanelWidth(width: number) {
+  if (typeof window === 'undefined') return;
+  window.localStorage.setItem(
+    DESKTOP_PANEL_WIDTH_STORAGE_KEY,
+    String(clampDesktopPanelWidth(width))
+  );
+}
+
+function getAssetOperationRefreshKey(operation: ContextualAIChatAssetOperation) {
+  return [
+    operation.assetType,
+    operation.effect,
+    operation.toolId ?? operation.toolName,
+    operation.assetId ?? operation.assetName ?? 'unknown',
+  ].join('|');
+}
+
+function pruneAssetOperationRefreshDedupe(cache: Map<string, number>, now: number) {
+  for (const [key, timestamp] of cache.entries()) {
+    if (now - timestamp > ASSET_OPERATION_REFRESH_DEDUPE_MS * 4) {
+      cache.delete(key);
+    }
+  }
+}
+
+type ContextualDockTranslator = ReturnType<typeof useT<'webapp'>>;
+
+function normalizeHintToken(value: string | undefined) {
+  return (
+    value
+      ?.trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '_')
+      .replace(/^_+|_+$/g, '') || ''
+  );
+}
+
+function getRefreshHintResolution(
+  items: AIChatContextItem[],
+  operation: ContextualAIChatAssetOperation
+): { handledByAdapter: boolean; refreshHints: AIChatContextRefreshHint[] } {
+  const assetType = normalizeHintToken(operation.assetType);
+  const effect = normalizeHintToken(operation.effect);
+  const assetId = operation.assetId?.trim();
+  const seen = new Set<string>();
+  const refreshHints: AIChatContextRefreshHint[] = [];
+  let handledByAdapter = false;
+
+  items.forEach(item => {
+    item.hints?.handledAssetTypes?.forEach(handledAssetType => {
+      if (normalizeHintToken(handledAssetType) === assetType) {
+        handledByAdapter = true;
+      }
+    });
+
+    item.hints?.refreshHints?.forEach(hint => {
+      if (normalizeHintToken(hint.assetType) !== assetType) return;
+      handledByAdapter = true;
+      if (hint.effect && normalizeHintToken(hint.effect) !== effect) return;
+      if (hint.resourceId && hint.resourceId !== assetId) return;
+      if (!hint.queryKey || hint.queryKey.length === 0) return;
+
+      const key = JSON.stringify(hint.queryKey);
+      if (seen.has(key)) return;
+      seen.add(key);
+      refreshHints.push(hint);
+    });
+  });
+
+  return { handledByAdapter, refreshHints };
+}
+
+function pickPresentationHint(
+  items: AIChatContextItem[]
+): AIChatContextPresentationHint | undefined {
+  return items.find(item => item.hints?.presentation)?.hints?.presentation;
+}
+
+function hasPageAdapterSignal(item: AIChatContextItem) {
+  if (item.type !== 'page') return false;
+  const metadataPage = metadataText(item, 'page');
+  return Boolean(
+    metadataPage ||
+      item.capabilities?.length ||
+      item.hints?.handledAssetTypes?.length ||
+      item.hints?.presentation ||
+      item.hints?.toolGovernance
+  );
+}
+
+function isGenericRoutePageItem(item: AIChatContextItem) {
+  if (item.type !== 'page') return false;
+  if (hasPageAdapterSignal(item)) return false;
+
+  const title = item.title.trim();
+  return Boolean(
+    title.startsWith('/') ||
+      normalizeZGIConsoleNavigationHref(item.id) ||
+      normalizeZGIConsoleNavigationHref(item.href) ||
+      normalizeZGIConsoleNavigationHref(metadataText(item, 'route')) ||
+      normalizeZGIConsoleNavigationHref(metadataText(item, 'pathname')) ||
+      normalizeZGIConsoleNavigationHref(metadataText(item, 'path'))
+  );
+}
+
+function buildSuggestions(
+  contextItems: ReturnType<typeof useContextualAIChat>['items'],
+  t: ContextualDockTranslator
+) {
+  const presentationSuggestions = contextItems.flatMap(
+    item => item.hints?.presentation?.suggestions ?? []
+  );
+  if (presentationSuggestions.length > 0) {
+    return Array.from(new Set(presentationSuggestions));
+  }
+
+  const firstAgent = contextItems.find(item => item.type === 'agent');
+  if (firstAgent) {
+    return [
+      t('consoleChat.contextual.suggestions.agentReview', { title: firstAgent.title }),
+      t('consoleChat.contextual.suggestions.agentTestQuestions', { title: firstAgent.title }),
+      t('consoleChat.contextual.suggestions.agentRisks', { title: firstAgent.title }),
+    ];
+  }
+
+  if (contextItems.length > 0) {
+    return [
+      t('consoleChat.contextual.suggestions.pageSummarize'),
+      t('consoleChat.contextual.suggestions.pageNextSteps'),
+      t('consoleChat.contextual.suggestions.pageExplainContext'),
+    ];
+  }
+
+  return [
+    t('consoleChat.contextual.suggestions.emptySummarize'),
+    t('consoleChat.contextual.suggestions.emptyNextSteps'),
+    t('consoleChat.contextual.suggestions.emptyReview'),
+  ];
+}
+
+function metadataText(item: AIChatContextItem, key: string) {
+  const value = item.metadata?.[key];
+  return typeof value === 'string' ? value : undefined;
+}
+
+function metadataBoolean(item: AIChatContextItem, key: string) {
+  const value = item.metadata?.[key];
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'number') return value !== 0;
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (['true', '1', 'yes', 'ready'].includes(normalized)) return true;
+    if (['false', '0', 'no', 'loading', 'pending'].includes(normalized)) return false;
+  }
+  return undefined;
+}
+
+function isRouteContextItemReady(item: AIChatContextItem) {
+  return metadataBoolean(item, 'context_ready') !== false;
+}
+
+function routeContextQueryReady(
+  item: AIChatContextItem,
+  statusKey: string,
+  settledKey: string,
+  countKeys: string[]
+) {
+  const queryStatus = metadataText(item, statusKey)?.trim().toLowerCase();
+  const querySettled = metadataBoolean(item, settledKey);
+  const permissionsSettled = metadataBoolean(item, 'permissions_settled');
+  if (queryStatus && ['error', 'unavailable', 'forbidden'].includes(queryStatus)) {
+    return querySettled === true || permissionsSettled === true;
+  }
+
+  if (!isRouteContextItemReady(item)) return false;
+
+  if (queryStatus && queryStatus !== 'ready') return false;
+
+  if (querySettled === false) return false;
+
+  if (queryStatus === 'ready' || querySettled === true) return true;
+
+  return countKeys.some(key => metadataText(item, key) !== undefined);
+}
+
+function filesRouteContextItemReady(item: AIChatContextItem) {
+  return routeContextQueryReady(item, 'files_query_status', 'files_query_settled', [
+    'total_file_count',
+    'visible_file_count',
+    'indexed_visible_files',
+  ]);
+}
+
+function agentsRouteContextItemReady(item: AIChatContextItem) {
+  return routeContextQueryReady(item, 'agents_query_status', 'agents_query_settled', [
+    'loaded_agent_count',
+    'visible_agent_count',
+    'visible_runtime_agent_count',
+  ]);
+}
+
+function routeHrefFromContextItem(item: AIChatContextItem) {
+  const candidates = [
+    item.href,
+    metadataText(item, 'href'),
+    metadataText(item, 'route'),
+    metadataText(item, 'pathname'),
+    metadataText(item, 'path'),
+    item.type === 'page' ? item.id : undefined,
+    item.type === 'page' ? item.title : undefined,
+  ];
+  for (const candidate of candidates) {
+    const href = normalizeZGIConsoleNavigationHref(candidate);
+    if (href) return href;
+  }
+  return '';
+}
+
+function routeSpecificReadyContextItem(items: AIChatContextItem[], href: string) {
+  if (href === '/console/files') {
+    return items.find(item => {
+      const metadataPage = metadataText(item, 'page');
+      const metadataRoute = normalizeZGIConsoleNavigationHref(metadataText(item, 'route'));
+      return (
+        item.type === 'page' &&
+        filesRouteContextItemReady(item) &&
+        (item.id === 'console.files' ||
+          metadataPage === 'console.files' ||
+          (metadataRoute === href &&
+            item.hints?.handledAssetTypes?.some(
+              assetType => normalizeHintToken(assetType) === 'file'
+            )))
+      );
+    });
+  }
+
+  if (href === '/console/agents') {
+    return items.find(item => {
+      const metadataPage = metadataText(item, 'page');
+      const metadataRoute = normalizeZGIConsoleNavigationHref(metadataText(item, 'route'));
+      return (
+        item.type === 'page' &&
+        agentsRouteContextItemReady(item) &&
+        (item.id === 'console.agents' ||
+          metadataPage === 'console.agents' ||
+          (metadataRoute === href &&
+            item.hints?.handledAssetTypes?.some(
+              assetType => normalizeHintToken(assetType) === 'agent'
+            )))
+      );
+    });
+  }
+
+  if (/^\/console\/agents\/[A-Za-z0-9_-]+\/agent$/.test(href)) {
+    return items.find(
+      item =>
+        item.type === 'agent' &&
+        isRouteContextItemReady(item) &&
+        routeHrefFromContextItem(item) === href &&
+        item.hints?.handledAssetTypes?.some(assetType => normalizeHintToken(assetType) === 'agent')
+    );
+  }
+
+  return items.find(
+    item =>
+      isRouteContextItemReady(item) &&
+      routeHrefFromContextItem(item) === href &&
+      !isGenericRoutePageItem(item)
+  );
+}
+
+function routeHasSpecificContextItem(items: AIChatContextItem[], href: string) {
+  return items.some(
+    item => routeHrefFromContextItem(item) === href && !isGenericRoutePageItem(item)
+  );
+}
+
+function routeShouldWaitForPageContext(items: AIChatContextItem[], href: string) {
+  return routeRequiresPageContextReady(href) || routeHasSpecificContextItem(items, href);
+}
+
+function routeObservationContextItem(item: AIChatContextItem) {
+  return {
+    id: item.id,
+    type: item.type,
+    title: item.title,
+    href: item.href,
+    context_ready: metadataBoolean(item, 'context_ready'),
+    files_query_status: metadataText(item, 'files_query_status'),
+    agents_query_status: metadataText(item, 'agents_query_status'),
+    agents_query_settled: metadataBoolean(item, 'agents_query_settled'),
+    permissions_settled: metadataBoolean(item, 'permissions_settled'),
+    permissions_query_status: metadataText(item, 'permissions_query_status'),
+    visible_file_count: metadataText(item, 'visible_file_count'),
+    total_file_count: metadataText(item, 'total_file_count'),
+    visible_agent_count: metadataText(item, 'visible_agent_count'),
+    loaded_agent_count: metadataText(item, 'loaded_agent_count'),
+  };
+}
+
+function metadataQueryValue(item: AIChatContextItem, key: string) {
+  const value = item.metadata?.[key];
+  return value === null || value === undefined || value === '' ? undefined : value;
+}
+
+function commaSeparatedMetadataValues(value: unknown) {
+  if (typeof value !== 'string') return undefined;
+  const values = value
+    .split(',')
+    .map(item => item.trim())
+    .filter(Boolean);
+  return values.length > 0 ? values : undefined;
+}
+
+function routeViewQuery(item: AIChatContextItem | undefined, href: string) {
+  if (!item) return undefined;
+  if (href === '/console/files') {
+    const category = metadataQueryValue(item, 'category');
+    const categoryText = typeof category === 'string' ? category : undefined;
+    const systemCategories = new Set(['all', 'needs_action', 'uploaded', 'default']);
+    return {
+      page: metadataQueryValue(item, 'current_page') ?? 1,
+      page_size: metadataQueryValue(item, 'page_size'),
+      keyword: metadataQueryValue(item, 'search'),
+      sort: metadataQueryValue(item, 'sort'),
+      extension: metadataQueryValue(item, 'extension_filter'),
+      category,
+      folder_id: categoryText && !systemCategories.has(categoryText) ? categoryText : undefined,
+      processing_status: metadataQueryValue(item, 'processing_status'),
+      workspace_id: metadataQueryValue(item, 'workspace_id'),
+      selected_ids: commaSeparatedMetadataValues(metadataQueryValue(item, 'selected_file_ids')),
+    };
+  }
+  if (href === '/console/agents') {
+    return {
+      page: metadataQueryValue(item, 'current_page') ?? 1,
+      page_size: metadataQueryValue(item, 'page_size'),
+      keyword: metadataQueryValue(item, 'search'),
+      workspace_id: metadataQueryValue(item, 'workspace_id'),
+      asset_kind: metadataQueryValue(item, 'asset_kind'),
+      loaded_count: metadataQueryValue(item, 'loaded_agent_count'),
+    };
+  }
+  return undefined;
+}
+
+function routeContextObservation(items: AIChatContextItem[], href: string) {
+  const matchedItem = items.find(item => routeHrefFromContextItem(item) === href);
+  const readyItem = routeSpecificReadyContextItem(items, href);
+  const pageItem = readyItem ?? matchedItem;
+  return {
+    page_context_ready: Boolean(readyItem),
+    matched_context_item_id: matchedItem ? `${matchedItem.type}:${matchedItem.id}` : undefined,
+    matched_context_title: matchedItem?.title,
+    matched_context_ready: matchedItem ? isRouteContextItemReady(matchedItem) : undefined,
+    matched_context_generic: matchedItem ? isGenericRoutePageItem(matchedItem) : undefined,
+    ready_context_item_id: readyItem ? `${readyItem.type}:${readyItem.id}` : undefined,
+    ready_context_title: readyItem?.title,
+    context_item_count: items.length,
+    view_query: routeViewQuery(pageItem, href),
+    context_items: pageItem ? [routeObservationContextItem(pageItem)] : [],
+  };
+}
+
+function routeLoadedEventType(
+  baseEventType: 'route_already_loaded' | 'route_loaded',
+  observation: ReturnType<typeof routeContextObservation>
+) {
+  if (observation.page_context_ready) return baseEventType;
+  return `${baseEventType}_context_pending`;
+}
+
+function routeRequiresPageContextReady(href: string) {
+  return (
+    href === '/console/files' ||
+    href === '/console/agents' ||
+    /^\/console\/agents\/[A-Za-z0-9_-]+\/agent$/.test(href)
+  );
+}
+
+function recordValue(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
+}
+
+function recordListValue(value: unknown): Array<Record<string, unknown>> {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap(item => {
+    const record = recordValue(item);
+    return record ? [record] : [];
+  });
+}
+
+function waitingClientActionStatus(value: unknown) {
+  if (typeof value !== 'string') return false;
+  const status = value.trim().toLowerCase();
+  return status === 'waiting_client_action' || status === 'waiting';
+}
+
+function clientActionContinuationPolicy(value: unknown) {
+  return typeof value === 'string' ? value.trim().toLowerCase() : '';
+}
+
+function clientActionIsBlocking(record: Record<string, unknown>) {
+  if (record.blocking === false) return false;
+  return clientActionContinuationPolicy(record.continuation_policy) !== 'record_only';
+}
+
+function pendingClientActionRecordFromMessage(
+  message: AIChatMessage | null | undefined
+): Record<string, unknown> | null {
+  if (!message || message.status !== 'waiting_client_action') return null;
+
+  const metadata = message.metadata;
+  const continuation = recordValue(metadata?.client_action_continuation);
+  const continuationActionId = textFromRecord(continuation, ['action_id']);
+  const records = recordListValue(metadata?.client_actions);
+  const invocations = recordListValue(metadata?.skill_invocations).filter(
+    invocation => textFromRecord(invocation, ['kind']) === 'client_action'
+  );
+
+  const matchActionId = (record: Record<string, unknown>) =>
+    continuationActionId && textFromRecord(record, ['action_id']) === continuationActionId;
+  const waitingRecord = (record: Record<string, unknown>) =>
+    waitingClientActionStatus(record.status) && clientActionIsBlocking(record);
+
+  const matchedEvent = records.find(record => matchActionId(record) && waitingRecord(record));
+  const matchedInvocation = invocations.find(
+    record => matchActionId(record) && waitingRecord(record)
+  );
+  if (continuation && waitingRecord(continuation)) {
+    return {
+      ...continuation,
+      ...(matchedInvocation ?? {}),
+      ...(matchedEvent ?? {}),
+    };
+  }
+
+  return records.find(waitingRecord) ?? invocations.find(waitingRecord) ?? null;
+}
+
+function clientActionRequestFromWaitingMessage(
+  message: AIChatMessage | null | undefined
+): ContextualAIChatClientActionRequest | null {
+  const record = pendingClientActionRecordFromMessage(message);
+  if (!message || !record) return null;
+
+  const actionId = textFromRecord(record, ['action_id']);
+  const actionType = textFromRecord(record, ['action_type']);
+  if (!actionId || !actionType) return null;
+
+  const href =
+    actionType === 'route_navigation'
+      ? normalizeZGIConsoleNavigationHref(textFromRecord(record, ['href']))
+      : textFromRecord(record, ['href']);
+
+  const payload: AIChatClientActionRequiredEventData = {
+    conversation_id: message.conversation_id,
+    message_id: message.id,
+    action_id: actionId,
+    action_type: actionType,
+    status: 'waiting_client_action',
+    skill_id: textFromRecord(record, ['skill_id']),
+    tool_name: textFromRecord(record, ['tool_name']),
+    href: href || undefined,
+    label: textFromRecord(record, ['label']) || undefined,
+    reason: textFromRecord(record, ['reason']) || undefined,
+    effect: textFromRecord(record, ['effect']) || undefined,
+    asset_type: textFromRecord(record, ['asset_type']) || undefined,
+    assets: recordListValue(record.assets) as AIChatClientActionRequiredEventData['assets'],
+  };
+
+  return {
+    actionId,
+    actionType,
+    conversationId: message.conversation_id,
+    messageId: message.id,
+    href: href || undefined,
+    label: payload.label,
+    reason: payload.reason,
+    payload,
+  };
+}
+
+function textFromRecord(record: Record<string, unknown> | null | undefined, keys: string[]) {
+  if (!record) return '';
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === 'string' && value.trim()) return value.trim();
+    if (typeof value === 'number' && Number.isFinite(value)) return String(value);
+  }
+  return '';
+}
+
+function textFromContextMetadata(item: AIChatContextItem, keys: string[]) {
+  for (const key of keys) {
+    const value = item.metadata?.[key];
+    if (typeof value === 'string' && value.trim()) return value.trim();
+    if (typeof value === 'number' && Number.isFinite(value)) return String(value);
+  }
+  return '';
+}
+
+function normalizeObservationToken(value: string | undefined) {
+  return (
+    value
+      ?.trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '_')
+      .replace(/^_+|_+$/g, '') || ''
+  );
+}
+
+function assetIdentityCandidates(asset: Record<string, unknown>) {
+  return [
+    textFromRecord(asset, ['id', 'file_id', 'asset_id', 'resource_id']),
+    textFromRecord(asset, ['name', 'filename', 'file_name', 'title', 'label']),
+  ].filter(Boolean);
+}
+
+function contextItemIdentityCandidates(item: AIChatContextItem) {
+  return [
+    item.id,
+    item.title,
+    textFromContextMetadata(item, ['id', 'file_id', 'asset_id', 'resource_id']),
+    textFromContextMetadata(item, ['name', 'filename', 'file_name', 'title', 'label']),
+  ].filter(Boolean);
+}
+
+function contextItemMatchesAsset(
+  item: AIChatContextItem,
+  asset: Record<string, unknown>,
+  assetType: string
+) {
+  const normalizedAssetType = normalizeObservationToken(assetType);
+  if (
+    normalizedAssetType &&
+    normalizeObservationToken(item.type) !== normalizedAssetType &&
+    normalizeObservationToken(textFromContextMetadata(item, ['resource_kind', 'kind', 'type'])) !==
+      normalizedAssetType
+  ) {
+    return false;
+  }
+
+  const assetCandidates = assetIdentityCandidates(asset);
+  if (assetCandidates.length === 0) return false;
+  const itemCandidates = contextItemIdentityCandidates(item);
+  return assetCandidates.some(assetCandidate =>
+    itemCandidates.some(itemCandidate => itemCandidate === assetCandidate)
+  );
+}
+
+function assetObservationFromContextItems(
+  items: AIChatContextItem[],
+  pending: PendingClientActionContinuation
+) {
+  const assetType = pending.assetType || 'asset';
+  const assets = pending.assets ?? [];
+  const observed = assets.map(asset => {
+    const match = items.find(item => contextItemMatchesAsset(item, asset, assetType));
+    return {
+      id: textFromRecord(asset, ['id', 'file_id', 'asset_id', 'resource_id']),
+      name: textFromRecord(asset, ['name', 'filename', 'file_name', 'title', 'label']),
+      type: textFromRecord(asset, ['type', 'asset_type']) || assetType,
+      visible: Boolean(match),
+      matched_context_item_id: match ? `${match.type}:${match.id}` : undefined,
+      matched_context_title: match?.title,
+    };
+  });
+  return {
+    event_type: 'asset_observed',
+    action_type: pending.actionType,
+    effect: pending.effect,
+    asset_type: assetType,
+    asset_count: assets.length,
+    visible_count: observed.filter(item => item.visible).length,
+    context_item_count: items.length,
+    observation_available: assets.length > 0,
+    observed_assets: observed,
+  };
+}
+
+function assetOperationFromClientAction(
+  request: ContextualAIChatClientActionRequest
+): ContextualAIChatAssetOperation | null {
+  const payload = request.payload;
+  const assetType = normalizeObservationToken(payload.asset_type);
+  const effect = normalizeObservationToken(
+    typeof payload.effect === 'string' ? payload.effect : undefined
+  ) as ContextualAIChatAssetOperation['effect'];
+  if (!assetType || !effect) return null;
+  const assets = recordListValue(payload.assets);
+  const firstAsset = assets[0];
+  return {
+    assetType,
+    effect,
+    source: 'skill_call',
+    skillId: typeof payload.skill_id === 'string' ? payload.skill_id : '',
+    toolName: typeof payload.tool_name === 'string' ? payload.tool_name : '',
+    toolId: typeof payload.tool_id === 'string' ? payload.tool_id : undefined,
+    assetId: textFromRecord(firstAsset, ['id', 'file_id', 'asset_id', 'resource_id']) || undefined,
+    assetName:
+      textFromRecord(firstAsset, ['name', 'filename', 'file_name', 'title', 'label']) || undefined,
+    payload: payload as ContextualAIChatAssetOperation['payload'],
+  };
+}
+
+interface ContextualAIChatPanelProps {
+  controller: ReturnType<typeof useAIChatController>;
+  isModelInitializing: boolean;
+  items: ReturnType<typeof useContextualAIChat>['items'];
+  modelSelectorValue: AIChatModelValue;
+  onClose: () => void;
+  onModelChange: (value: ModelSelectorValue) => void;
+  suggestions: string[];
+  t: ContextualDockTranslator;
+  enableToolGovernance: boolean;
+}
+
+function ContextualAIChatPanel({
+  controller,
+  enableToolGovernance,
+  isModelInitializing,
+  items,
+  modelSelectorValue,
+  onClose,
+  onModelChange,
+  suggestions,
+  t,
+}: ContextualAIChatPanelProps) {
+  const controlsPortalId = useId();
+  const hasContext = items.length > 0;
+  const presentation = pickPresentationHint(items);
+  const homeTitle =
+    presentation?.homeTitle ??
+    (hasContext
+      ? t('consoleChat.contextual.home.contextTitle')
+      : t('consoleChat.contextual.home.emptyTitle'));
+  const homeDescription =
+    presentation?.homeDescription ??
+    (hasContext
+      ? t('consoleChat.contextual.home.contextDescription')
+      : t('consoleChat.contextual.home.emptyDescription'));
+  const inputPlaceholder =
+    presentation?.inputPlaceholder ?? t('consoleChat.contextual.input.placeholder');
+
+  return (
+    <div className="relative flex min-h-0 min-w-0 max-w-full flex-1 flex-col overflow-hidden bg-bg-canvas isolate">
+      <div className="flex min-h-12 min-w-0 shrink-0 items-center justify-between gap-2 overflow-hidden bg-transparent px-3 py-2">
+        <Button
+          type="button"
+          variant="ghost"
+          isIcon
+          className={embeddedControlButtonClassName}
+          onClick={onClose}
+          title={t('consoleChat.contextual.close')}
+        >
+          <PanelRightClose className="size-3.5" />
+          <span className="sr-only">{t('consoleChat.contextual.close')}</span>
+        </Button>
+        <div className="ml-auto flex shrink-0 items-center gap-1">
+          <div id={controlsPortalId} className="flex shrink-0 items-center" />
+        </div>
+      </div>
+      <div className="min-h-0 flex-1">
+        <Chat
+          mode="aichat"
+          controller={controller}
+          modelSelectorValue={modelSelectorValue}
+          isModelInitializing={isModelInitializing}
+          onModelChange={onModelChange}
+          variant="embedded"
+          showMemoryToggle={false}
+          runtimeSurface="contextual_sidebar"
+          embeddedConversationMode="drawer"
+          embeddedConversationControlsMode="external"
+          embeddedConversationControlsPortalId={controlsPortalId}
+          allowWorkspaceSwitch
+          homeTitle={homeTitle}
+          homeDescription={homeDescription}
+          inputPlaceholder={inputPlaceholder}
+          suggestions={suggestions}
+          enableToolGovernance={enableToolGovernance}
+        />
+      </div>
+    </div>
+  );
+}
+
+export function ContextualAIChatDock() {
+  const t = useT('webapp');
+  const user = useCurrentUser();
+  const router = useRouter();
+  const pathname = usePathname();
+  const queryClient = useQueryClient();
+  const { isOpen, setOpen, items } = useContextualAIChat();
+  const isDesktopPanelViewport = useIsDesktopPanelViewport();
+  const [desktopPanelWidth, setDesktopPanelWidth] = useState<number | null>(null);
+  const [isPanelMounted, setIsPanelMounted] = useState(isOpen);
+  const [isResizing, setIsResizing] = useState(false);
+  const itemsRef = useRef(items);
+  const assetOperationRefreshRef = useRef<Map<string, number>>(new Map());
+  const pendingClientActionsRef = useRef<Map<string, PendingClientActionContinuation>>(new Map());
+  const processedClientActionsRef = useRef<Map<string, number>>(new Map());
+  const isRecoveringMessagesRef = useRef(false);
+  const clientActionContinuationRef = useRef<
+    ReturnType<typeof useAIChatController>['continueClientAction'] | null
+  >(null);
+  const [pendingClientActionVersion, setPendingClientActionVersion] = useState(0);
+
+  useEffect(() => {
+    itemsRef.current = items;
+  }, [items]);
+
+  useEffect(() => {
+    if (isOpen) {
+      setIsPanelMounted(true);
+      return;
+    }
+
+    const timeoutId = window.setTimeout(
+      () => setIsPanelMounted(false),
+      DESKTOP_PANEL_TRANSITION_MS
+    );
+    return () => window.clearTimeout(timeoutId);
+  }, [isOpen]);
+
+  const clearClientActionTimeout = useCallback((pending: PendingClientActionContinuation) => {
+    if (typeof window === 'undefined') return;
+    if (pending.timeoutId !== undefined) {
+      window.clearTimeout(pending.timeoutId);
+      pending.timeoutId = undefined;
+    }
+    if (pending.settleTimeoutId !== undefined) {
+      window.clearTimeout(pending.settleTimeoutId);
+      pending.settleTimeoutId = undefined;
+    }
+    if (pending.recoveryTimeoutId !== undefined) {
+      window.clearTimeout(pending.recoveryTimeoutId);
+      pending.recoveryTimeoutId = undefined;
+    }
+  }, []);
+
+  const clearAllClientActionTimeouts = useCallback(() => {
+    pendingClientActionsRef.current.forEach(pending => clearClientActionTimeout(pending));
+  }, [clearClientActionTimeout]);
+
+  const completePendingClientAction = useCallback(
+    (pending: PendingClientActionContinuation, payload: AIChatClientActionResultRequest) => {
+      const currentPending = pendingClientActionsRef.current.get(pending.key);
+      if (currentPending !== pending || pending.completed) {
+        return;
+      }
+
+      const completionPayload = takeClientActionCompletion(pending, payload);
+      if (!completionPayload) return;
+
+      if (isRecoveringMessagesRef.current && typeof window !== 'undefined') {
+        if (pending.recoveryTimeoutId === undefined) {
+          pending.recoveryTimeoutId = window.setTimeout(() => {
+            pending.recoveryTimeoutId = undefined;
+            completePendingClientAction(pending, completionPayload);
+          }, CLIENT_ACTION_ROUTE_CONTEXT_POLL_MS);
+        }
+        return;
+      }
+
+      if (pending.resuming) return;
+      pending.resuming = true;
+      setPendingClientActionVersion(version => version + 1);
+
+      const continueClientAction = clientActionContinuationRef.current;
+      if (!continueClientAction) {
+        pending.resuming = false;
+        pending.deferredCompletion = completionPayload;
+        setPendingClientActionVersion(version => version + 1);
+        return;
+      }
+
+      void continueClientAction(
+        pending.conversationId,
+        pending.messageId,
+        pending.actionId,
+        completionPayload
+      )
+        .then(started => {
+          if (pendingClientActionsRef.current.get(pending.key) !== pending) return;
+          if (!started) {
+            pending.resuming = false;
+            pending.deferredCompletion = completionPayload;
+            if (typeof window !== 'undefined' && pending.recoveryTimeoutId === undefined) {
+              pending.recoveryTimeoutId = window.setTimeout(() => {
+                pending.recoveryTimeoutId = undefined;
+                const deferred = pending.deferredCompletion;
+                if (deferred) completePendingClientAction(pending, deferred);
+              }, CLIENT_ACTION_ROUTE_CONTEXT_POLL_MS);
+            }
+            setPendingClientActionVersion(version => version + 1);
+            return;
+          }
+          markClientActionDedupe(processedClientActionsRef.current, pending.key);
+          pending.completed = true;
+          pendingClientActionsRef.current.delete(pending.key);
+          clearClientActionTimeout(pending);
+          setPendingClientActionVersion(version => version + 1);
+        })
+        .catch(error => {
+          markClientActionDedupe(
+            processedClientActionsRef.current,
+            pending.key,
+            CLIENT_ACTION_FAILURE_DEDUPE_TTL_MS
+          );
+          pending.completed = true;
+          pendingClientActionsRef.current.delete(pending.key);
+          clearClientActionTimeout(pending);
+          setPendingClientActionVersion(version => version + 1);
+          console.error('AIChat client action continuation failed', error);
+        });
+    },
+    [clearClientActionTimeout]
+  );
+
+  const markPendingClientActionContinuationReady = useCallback(
+    (request: ContextualAIChatClientActionRequest) => {
+      const keys = [clientActionRequestKey(request)];
+      if (request.actionType === 'route_navigation') {
+        const href = normalizeZGIConsoleNavigationHref(request.href);
+        if (href) keys.unshift(routeClientActionRequestKey(request, href));
+      }
+      const pending = keys
+        .map(key => pendingClientActionsRef.current.get(key))
+        .find((item): item is PendingClientActionContinuation => Boolean(item));
+      if (!pending || pending.completed) return false;
+
+      const deferred = openClientActionCompletionGate(pending);
+      setPendingClientActionVersion(version => version + 1);
+      if (deferred && !pending.resuming) {
+        completePendingClientAction(pending, deferred);
+      }
+      return true;
+    },
+    [completePendingClientAction]
+  );
+
+  const failUnsupportedClientAction = useCallback(
+    (
+      request: ContextualAIChatClientActionRequest,
+      options: {
+        key: string;
+        error: string;
+        result: Record<string, unknown>;
+      }
+    ) => {
+      const pending: PendingClientActionContinuation = {
+        key: options.key,
+        conversationId: request.conversationId,
+        messageId: request.messageId,
+        actionId: request.actionId,
+        actionType: request.actionType,
+        href: request.href,
+        label: request.label,
+        reason: request.reason,
+        requestedAt: Date.now(),
+        completed: false,
+        continuationReady: false,
+      };
+      pendingClientActionsRef.current.set(options.key, pending);
+      setPendingClientActionVersion(version => version + 1);
+
+      completePendingClientAction(pending, {
+        status: 'failed',
+        error: options.error,
+        result: {
+          action_type: request.actionType,
+          elapsed_ms: Date.now() - pending.requestedAt,
+          ...options.result,
+        },
+      });
+    },
+    [completePendingClientAction]
+  );
+
+  const invalidateQueries = useCallback(
+    (queryKey: QueryKey) => {
+      void queryClient.invalidateQueries({ queryKey });
+    },
+    [queryClient]
+  );
+
+  const handleAssetOperationSuccess = useCallback(
+    (operation: ContextualAIChatAssetOperation) => {
+      const now = Date.now();
+      const dedupeKey = getAssetOperationRefreshKey(operation);
+      const lastRefreshAt = assetOperationRefreshRef.current.get(dedupeKey);
+      if (lastRefreshAt && now - lastRefreshAt < ASSET_OPERATION_REFRESH_DEDUPE_MS) {
+        return;
+      }
+      pruneAssetOperationRefreshDedupe(assetOperationRefreshRef.current, now);
+      assetOperationRefreshRef.current.set(dedupeKey, now);
+
+      if (operation.assetType === 'agent' && operation.effect === 'delete') {
+        const deletedAgentId = operation.assetId?.trim();
+        if (deletedAgentId && agentIdFromAgentDetailPath(pathname) === deletedAgentId) {
+          router.replace('/console/agents');
+        }
+        if (deletedAgentId) {
+          void queryClient.cancelQueries({ queryKey: AGENT_KEYS.detail(deletedAgentId) });
+          queryClient.removeQueries({ queryKey: AGENT_KEYS.detail(deletedAgentId) });
+        }
+        invalidateQueries(AGENT_KEYS.lists());
+        invalidateQueries([...AGENT_KEYS.all, 'runnable-webapps']);
+        return;
+      }
+
+      const { handledByAdapter, refreshHints } = getRefreshHintResolution(
+        itemsRef.current,
+        operation
+      );
+      if (refreshHints.length > 0) {
+        refreshHints.forEach(hint => {
+          if (hint.queryKey) {
+            invalidateQueries(hint.queryKey);
+          }
+        });
+        return;
+      }
+      if (handledByAdapter) return;
+
+      switch (operation.assetType) {
+        case 'agent':
+          invalidateQueries(AGENT_KEYS.all);
+          break;
+        case 'workflow':
+        case 'workflow_run':
+          invalidateQueries(WORKFLOW_KEYS.all);
+          invalidateQueries(WORKFLOW_KEYS.runDetails());
+          break;
+        case 'automation':
+          invalidateQueries(AUTOMATION_KEYS.all);
+          break;
+        case 'knowledge':
+        case 'dataset':
+        case 'document':
+          invalidateQueries(DATASET_KEYS.all);
+          break;
+        case 'database':
+        case 'db':
+        case 'database_table':
+          invalidateQueries(DB_KEYS.all);
+          break;
+        case 'prompt':
+          invalidateQueries(PROMPT_KEYS.all);
+          break;
+        case 'workspace':
+          invalidateQueries(WORKSPACE_KEYS.all);
+          break;
+        default:
+          break;
+      }
+    },
+    [invalidateQueries, pathname, queryClient, router]
+  );
+
+  const handleClientActionRequired = useCallback(
+    (request: ContextualAIChatClientActionRequest) => {
+      if (isRecoveringMessagesRef.current) return;
+      const now = Date.now();
+      const key = clientActionRequestKey(request);
+      pruneClientActionDedupe(processedClientActionsRef.current, now);
+      if (pendingClientActionsRef.current.has(key)) return;
+      if (hasClientActionDedupe(processedClientActionsRef.current, key, now)) return;
+
+      if (request.actionType === 'asset_observation') {
+        const operation = assetOperationFromClientAction(request);
+        if (operation) {
+          handleAssetOperationSuccess(operation);
+        }
+
+        if (clientActionContinuationPolicy(request.continuationPolicy) === 'record_only') {
+          markClientActionDedupe(processedClientActionsRef.current, key);
+          return;
+        }
+
+        const pending: PendingClientActionContinuation = {
+          key,
+          conversationId: request.conversationId,
+          messageId: request.messageId,
+          actionId: request.actionId,
+          actionType: request.actionType,
+          effect: typeof request.payload.effect === 'string' ? request.payload.effect : undefined,
+          assetType:
+            typeof request.payload.asset_type === 'string' ? request.payload.asset_type : undefined,
+          assets: recordListValue(request.payload.assets),
+          requestedAt: Date.now(),
+          completed: false,
+          continuationReady: false,
+        };
+        pendingClientActionsRef.current.set(key, pending);
+        setPendingClientActionVersion(version => version + 1);
+
+        if (typeof window !== 'undefined') {
+          pending.timeoutId = window.setTimeout(() => {
+            completePendingClientAction(pending, {
+              status: 'succeeded',
+              result: {
+                refresh_requested: Boolean(operation),
+                elapsed_ms: Date.now() - pending.requestedAt,
+                ...assetObservationFromContextItems(itemsRef.current, pending),
+              },
+            });
+          }, CLIENT_ACTION_OBSERVATION_SETTLE_MS);
+        }
+        return;
+      }
+
+      if (request.actionType !== 'route_navigation') {
+        failUnsupportedClientAction(request, {
+          key,
+          error: `Unsupported client action: ${request.actionType || 'unknown'}.`,
+          result: {
+            event_type: 'client_action_unsupported',
+            supported_action_types: ['asset_observation', 'route_navigation'],
+          },
+        });
+        return;
+      }
+      const href = normalizeZGIConsoleNavigationHref(request.href);
+      if (!href) {
+        failUnsupportedClientAction(request, {
+          key,
+          error: 'Route navigation target is unsupported.',
+          result: {
+            event_type: 'route_navigation_invalid',
+            action_type: request.actionType,
+            requested_href: request.href ?? null,
+            label: request.label,
+            label_key: request.labelKey,
+            route_kind: request.routeKind,
+            reason: request.reason,
+            observed_path: normalizeZGIConsoleNavigationHref(pathname ?? undefined),
+            recoverable: true,
+            target_completed: false,
+            next_step_hint:
+              'Choose a supported ZGI console route and retry navigation if the task still needs a page change.',
+            supported_route_patterns: [
+              '/console/files',
+              '/console/agents',
+              '/console/agents/{agent_id}/agent',
+              '/console/workflows',
+              '/console/db',
+            ],
+          },
+        });
+        return;
+      }
+      const routeKey = routeClientActionRequestKey(request, href);
+      if (pendingClientActionsRef.current.has(routeKey)) return;
+      const currentHref = normalizeZGIConsoleNavigationHref(pathname ?? undefined);
+      if (
+        hasClientActionDedupe(processedClientActionsRef.current, routeKey, now) &&
+        currentHref === href
+      ) {
+        return;
+      }
+
+      const pending: PendingClientActionContinuation = {
+        key: routeKey,
+        conversationId: request.conversationId,
+        messageId: request.messageId,
+        actionId: request.actionId,
+        actionType: request.actionType,
+        href,
+        label: request.label,
+        reason: request.reason,
+        requestedAt: Date.now(),
+        completed: false,
+        continuationReady: false,
+      };
+      pendingClientActionsRef.current.set(routeKey, pending);
+      setPendingClientActionVersion(version => version + 1);
+
+      if (typeof window !== 'undefined') {
+        pending.timeoutId = window.setTimeout(() => {
+          completePendingClientAction(pending, {
+            status: 'failed',
+            error: `Route navigation to ${href} timed out.`,
+            result: {
+              event_type: 'route_load_timeout',
+              action_type: pending.actionType,
+              href,
+              observed_path: normalizeZGIConsoleNavigationHref(pathname ?? undefined),
+              elapsed_ms: Date.now() - pending.requestedAt,
+              ...routeContextObservation(itemsRef.current, href),
+            },
+          });
+        }, CLIENT_ACTION_ROUTE_TIMEOUT_MS);
+      }
+
+      if (currentHref === href) {
+        const observation = routeContextObservation(itemsRef.current, href);
+        if (
+          !routeShouldWaitForPageContext(itemsRef.current, href) ||
+          observation.page_context_ready
+        ) {
+          completePendingClientAction(pending, {
+            status: 'succeeded',
+            result: {
+              event_type: 'route_already_loaded',
+              action_type: pending.actionType,
+              href,
+              label: pending.label,
+              reason: pending.reason,
+              observed_path: currentHref,
+              elapsed_ms: Date.now() - pending.requestedAt,
+              ...observation,
+            },
+          });
+        } else if (typeof window !== 'undefined') {
+          pending.settleTimeoutId = window.setTimeout(() => {
+            const latestObservation = routeContextObservation(itemsRef.current, href);
+            const latestObservedPath =
+              normalizeZGIConsoleNavigationHref(window.location.pathname) || currentHref;
+            completePendingClientAction(pending, {
+              status: 'succeeded',
+              result: {
+                event_type: routeLoadedEventType('route_already_loaded', latestObservation),
+                action_type: pending.actionType,
+                href,
+                label: pending.label,
+                reason: pending.reason,
+                observed_path: latestObservedPath,
+                elapsed_ms: Date.now() - pending.requestedAt,
+                context_wait_exhausted: !latestObservation.page_context_ready,
+                ...latestObservation,
+              },
+            });
+          }, CLIENT_ACTION_ROUTE_CONTEXT_MAX_WAIT_MS);
+        }
+        return;
+      }
+
+      try {
+        router.push(href);
+      } catch (error) {
+        completePendingClientAction(pending, {
+          status: 'failed',
+          error: error instanceof Error ? error.message : `Route navigation to ${href} failed.`,
+          result: {
+            event_type: 'route_load_failed',
+            action_type: pending.actionType,
+            href,
+            observed_path: currentHref,
+          },
+        });
+      }
+    },
+    [
+      completePendingClientAction,
+      failUnsupportedClientAction,
+      handleAssetOperationSuccess,
+      pathname,
+      router,
+    ]
+  );
+
+  const transport = useMemo(
+    () =>
+      createContextualAIChatTransport(() => itemsRef.current, {
+        onAssetOperationSuccess: handleAssetOperationSuccess,
+        onClientActionRequired: handleClientActionRequired,
+      }),
+    [handleAssetOperationSuccess, handleClientActionRequired]
+  );
+  const controller = useAIChatController({ transport });
+  const { init: initController } = controller;
+
+  useEffect(() => {
+    isRecoveringMessagesRef.current = controller.isRecoveringMessages;
+  }, [controller.isRecoveringMessages]);
+
+  useEffect(() => {
+    initController(readStoredActiveConversationId(user?.id) ?? undefined);
+  }, [initController, user?.id]);
+
+  useEffect(() => {
+    const activeConversationId = controller.activeConversationId;
+    if (!activeConversationId) return;
+    storeActiveConversationId(activeConversationId, user?.id);
+  }, [controller.activeConversationId, user?.id]);
+
+  const contextualController = useMemo(
+    () => ({
+      ...controller,
+      select: async (conversationId: string) => {
+        storeActiveConversationId(conversationId, user?.id);
+        await controller.select(conversationId);
+      },
+      startNew: () => {
+        clearStoredActiveConversationId(user?.id);
+        controller.startNew();
+      },
+      remove: async (conversationId: string) => {
+        if (conversationId === controller.activeConversationId) {
+          clearStoredActiveConversationId(user?.id);
+        }
+        await controller.remove(conversationId);
+      },
+    }),
+    [controller, user?.id]
+  );
+
+  const waitingClientActionRequest = useMemo(() => {
+    if (controller.isRecoveringMessages || controller.isLoadingMessages) return null;
+    const activeConversation = controller.activeConversation;
+    if (!activeConversation) return null;
+
+    const leafMessageId =
+      activeConversation.current_leaf_message_id ?? activeConversation.active_message_id;
+    if (!leafMessageId) return null;
+
+    const leafMessage = controller.messages.find(message => message.id === leafMessageId);
+    return clientActionRequestFromWaitingMessage(leafMessage);
+  }, [
+    controller.activeConversation,
+    controller.isLoadingMessages,
+    controller.isRecoveringMessages,
+    controller.messages,
+  ]);
+
+  useEffect(() => {
+    if (!waitingClientActionRequest) return;
+    if (!markPendingClientActionContinuationReady(waitingClientActionRequest)) {
+      handleClientActionRequired(waitingClientActionRequest);
+      markPendingClientActionContinuationReady(waitingClientActionRequest);
+    }
+  }, [
+    handleClientActionRequired,
+    markPendingClientActionContinuationReady,
+    waitingClientActionRequest,
+  ]);
+
+  useEffect(() => {
+    clientActionContinuationRef.current = controller.continueClientAction ?? null;
+    const hasContinuablePending = Array.from(pendingClientActionsRef.current.values()).some(
+      pending => !pending.completed && !pending.resuming
+    );
+    if (hasContinuablePending && controller.continueClientAction) {
+      setPendingClientActionVersion(version => version + 1);
+    }
+  }, [controller.continueClientAction]);
+
+  useEffect(() => {
+    return () => clearAllClientActionTimeouts();
+  }, [clearAllClientActionTimeouts]);
+
+  useEffect(() => {
+    const currentHref = normalizeZGIConsoleNavigationHref(pathname ?? undefined);
+    const routePendings = Array.from(pendingClientActionsRef.current.values()).filter(
+      pending =>
+        !pending.completed &&
+        pending.actionType === 'route_navigation' &&
+        Boolean(pending.href) &&
+        pending.href === currentHref
+    );
+    if (routePendings.length === 0) return;
+
+    const pendingTimers: number[] = [];
+    let needsPoll = false;
+
+    routePendings.forEach(pending => {
+      const href = pending.href;
+      if (!href) return;
+
+      const observation = routeContextObservation(itemsRef.current, href);
+      if (
+        routeShouldWaitForPageContext(itemsRef.current, href) &&
+        !observation.page_context_ready
+      ) {
+        const elapsedMs = Date.now() - pending.requestedAt;
+        const remainingWaitMs = CLIENT_ACTION_ROUTE_CONTEXT_MAX_WAIT_MS - elapsedMs;
+        if (remainingWaitMs > 0) {
+          needsPoll = true;
+          return;
+        }
+
+        const latestObservation = routeContextObservation(itemsRef.current, href);
+        completePendingClientAction(pending, {
+          status: 'succeeded',
+          result: {
+            event_type: routeLoadedEventType('route_loaded', latestObservation),
+            action_type: pending.actionType,
+            href,
+            label: pending.label,
+            reason: pending.reason,
+            observed_path: currentHref,
+            elapsed_ms: Date.now() - pending.requestedAt,
+            context_wait_exhausted: !latestObservation.page_context_ready,
+            ...latestObservation,
+          },
+        });
+        return;
+      }
+
+      const delay = observation.page_context_ready
+        ? CLIENT_ACTION_ROUTE_CONTEXT_SETTLE_MS
+        : CLIENT_ACTION_ROUTE_FALLBACK_SETTLE_MS;
+
+      const timer = window.setTimeout(() => {
+        const latestObservation = routeContextObservation(itemsRef.current, href);
+        completePendingClientAction(pending, {
+          status: 'succeeded',
+          result: {
+            event_type: 'route_loaded',
+            action_type: pending.actionType,
+            href,
+            label: pending.label,
+            reason: pending.reason,
+            observed_path: currentHref,
+            elapsed_ms: Date.now() - pending.requestedAt,
+            ...latestObservation,
+          },
+        });
+      }, delay);
+      pendingTimers.push(timer);
+    });
+
+    if (needsPoll) {
+      const pollTimer = window.setTimeout(() => {
+        setPendingClientActionVersion(version => version + 1);
+      }, CLIENT_ACTION_ROUTE_CONTEXT_POLL_MS);
+      pendingTimers.push(pollTimer);
+    }
+
+    return () => pendingTimers.forEach(timer => window.clearTimeout(timer));
+  }, [completePendingClientAction, items, pathname, pendingClientActionVersion]);
+
+  const { modelSelectorValue, isModelInitializing, handleModelChange } =
+    usePersistedAIChatModelSelection({
+      accountId: user?.id,
+      scope: 'contextualSidebar',
+      legacyScope: 'consoleChat',
+      repairUnavailableSelection: true,
+      useCase: 'agent',
+    });
+
+  const enableToolGovernance = true;
+  const suggestions = useMemo(() => buildSuggestions(items, t), [items, t]);
+  useEffect(() => {
+    if (!isDesktopPanelViewport) return;
+    const resolveWidth = () => {
+      setDesktopPanelWidth(previous =>
+        clampDesktopPanelWidth(
+          previous ?? getStoredDesktopPanelWidth() ?? getDefaultDesktopPanelWidth()
+        )
+      );
+    };
+
+    resolveWidth();
+    window.addEventListener('resize', resolveWidth);
+    return () => window.removeEventListener('resize', resolveWidth);
+  }, [isDesktopPanelViewport]);
+
+  const handleResizePointerDown = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      if (!isDesktopPanelViewport) return;
+      event.preventDefault();
+      const startX = event.clientX;
+      const startWidth = desktopPanelWidth ?? getDefaultDesktopPanelWidth();
+      const previousCursor = document.body.style.cursor;
+      const previousUserSelect = document.body.style.userSelect;
+      let latestWidth = startWidth;
+      let animationFrameId: number | null = null;
+      setIsResizing(true);
+      document.body.style.cursor = 'col-resize';
+      document.body.style.userSelect = 'none';
+
+      const handlePointerMove = (moveEvent: PointerEvent) => {
+        latestWidth = clampDesktopPanelWidth(startWidth + startX - moveEvent.clientX);
+        if (animationFrameId !== null) return;
+
+        animationFrameId = window.requestAnimationFrame(() => {
+          animationFrameId = null;
+          setDesktopPanelWidth(latestWidth);
+        });
+      };
+
+      const handlePointerUp = () => {
+        if (animationFrameId !== null) {
+          window.cancelAnimationFrame(animationFrameId);
+          animationFrameId = null;
+          setDesktopPanelWidth(latestWidth);
+        }
+        storeDesktopPanelWidth(latestWidth);
+        setIsResizing(false);
+        document.body.style.cursor = previousCursor;
+        document.body.style.userSelect = previousUserSelect;
+        window.removeEventListener('pointermove', handlePointerMove);
+        window.removeEventListener('pointerup', handlePointerUp);
+        window.removeEventListener('pointercancel', handlePointerUp);
+        window.removeEventListener('blur', handlePointerUp);
+      };
+
+      window.addEventListener('pointermove', handlePointerMove);
+      window.addEventListener('pointerup', handlePointerUp);
+      window.addEventListener('pointercancel', handlePointerUp);
+      window.addEventListener('blur', handlePointerUp);
+    },
+    [desktopPanelWidth, isDesktopPanelViewport]
+  );
+
+  const handleResizeKeyDown = useCallback(
+    (event: ReactKeyboardEvent<HTMLDivElement>) => {
+      if (!isDesktopPanelViewport) return;
+      const currentWidth = desktopPanelWidth ?? getDefaultDesktopPanelWidth();
+      let nextWidth: number | null = null;
+      if (event.key === 'ArrowLeft') {
+        nextWidth = currentWidth + 32;
+      } else if (event.key === 'ArrowRight') {
+        nextWidth = currentWidth - 32;
+      } else if (event.key === 'Home') {
+        nextWidth = MIN_DESKTOP_PANEL_WIDTH;
+      } else if (event.key === 'End') {
+        nextWidth = Number.MAX_SAFE_INTEGER;
+      }
+      if (nextWidth === null) return;
+      event.preventDefault();
+      const clampedWidth = clampDesktopPanelWidth(nextWidth);
+      setDesktopPanelWidth(clampedWidth);
+      storeDesktopPanelWidth(clampedWidth);
+    },
+    [desktopPanelWidth, isDesktopPanelViewport]
+  );
+
+  const desktopPanelStyle = useMemo<CSSProperties>(
+    () => ({
+      width:
+        desktopPanelWidth ??
+        `max(${DEFAULT_DESKTOP_PANEL_WIDTH_RATIO * 100}vw, ${MIN_DESKTOP_PANEL_WIDTH}px)`,
+    }),
+    [desktopPanelWidth]
+  );
+
+  const panel = (
+    <ContextualAIChatPanel
+      controller={contextualController}
+      isModelInitializing={isModelInitializing}
+      items={items}
+      modelSelectorValue={modelSelectorValue}
+      onClose={() => setOpen(false)}
+      onModelChange={handleModelChange}
+      suggestions={suggestions}
+      t={t}
+      enableToolGovernance={enableToolGovernance}
+    />
+  );
+
+  if (isDesktopPanelViewport === null) {
+    return null;
+  }
+
+  if (isDesktopPanelViewport) {
+    return (
+      <aside
+        aria-label={t('consoleChat.contextual.assistantLabel')}
+        aria-hidden={!isOpen}
+        className={cn(
+          'relative hidden h-full min-h-0 shrink-0 overflow-hidden bg-transparent lg:flex',
+          isResizing
+            ? 'transition-none'
+            : 'transition-[width,min-width,opacity] duration-300 ease-in-out',
+          isOpen ? 'min-w-[440px] opacity-100' : 'pointer-events-none min-w-0 opacity-0'
+        )}
+        style={isOpen ? desktopPanelStyle : { width: 0 }}
+      >
+        <div
+          role="separator"
+          aria-orientation="vertical"
+          aria-label={t('consoleChat.contextual.resize')}
+          tabIndex={isOpen ? 0 : -1}
+          title={t('consoleChat.contextual.resizeHint')}
+          className="group absolute inset-y-0 left-0 z-50 flex w-2 cursor-col-resize items-center justify-start outline-none"
+          onPointerDown={handleResizePointerDown}
+          onKeyDown={handleResizeKeyDown}
+        >
+          <span
+            aria-hidden="true"
+            className={cn(
+              'pointer-events-none absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-border-strong transition-opacity duration-150 group-hover:opacity-80 group-focus-visible:opacity-100',
+              isResizing ? 'opacity-100' : 'opacity-0'
+            )}
+          />
+        </div>
+        {isOpen || isPanelMounted ? (
+          <div
+            className="absolute inset-y-0 right-0 flex min-h-0 overflow-hidden"
+            style={desktopPanelStyle}
+          >
+            {panel}
+          </div>
+        ) : null}
+      </aside>
+    );
+  }
+
+  return null;
+}

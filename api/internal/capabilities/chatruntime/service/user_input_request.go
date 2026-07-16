@@ -2,8 +2,17 @@ package service
 
 import (
 	"context"
+	"strings"
+	"time"
 
+	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/repository"
+	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/pkg/logger"
+)
+
+const (
+	userInputPendingActionAwait  = "await_user_input"
+	userInputPendingActionReplan = "replan_after_user_input"
 )
 
 func (s *service) persistUserInputRequestBestEffort(ctx context.Context, prepared *PreparedChat, payload map[string]interface{}) {
@@ -27,9 +36,79 @@ func mergeUserInputRequestMetadata(source map[string]interface{}, payload map[st
 	}
 	request := map[string]interface{}{
 		"request_id": payload["request_id"],
+		"message":    payload["message"],
 		"questions":  payload["questions"],
 		"created_at": payload["created_at"],
+		"status":     "waiting_question",
 	}
 	metadata["user_input_request"] = request
+	metadata = applyUserInputWaitingState(metadata)
 	return metadata
+}
+
+func applyUserInputWaitingState(metadata map[string]interface{}) map[string]interface{} {
+	if metadata == nil {
+		metadata = map[string]interface{}{}
+	}
+	plan := copyStringAnyMap(mapFromOperationContext(metadata["operation_plan"]))
+	if len(plan) > 0 {
+		if strings.TrimSpace(stringFromAny(plan["status"])) == "" || strings.EqualFold(strings.TrimSpace(stringFromAny(plan["status"])), operationPlanStatusCompleted) {
+			plan["status"] = operationPlanStatusRunning
+		}
+		plan["pending_next_action"] = userInputPendingActionAwait
+		metadata["operation_plan"] = plan
+	}
+	summary := copyStringAnyMap(mapFromOperationContext(metadata["operation_result_summary"]))
+	if summary == nil {
+		summary = map[string]interface{}{}
+	}
+	summary["status"] = "waiting_question"
+	summary["plan_status"] = operationPlanStatusRunning
+	summary["pending_next_action"] = userInputPendingActionAwait
+	summary["updated_at"] = time.Now().UTC().Format(time.RFC3339)
+	metadata["operation_result_summary"] = summary
+	return metadata
+}
+
+func (s *service) persistUserInputRequestPending(ctx context.Context, prepared *PreparedChat, payload map[string]interface{}, usage *adapter.Usage) map[string]interface{} {
+	metadata, _ := s.persistUserInputRequestPendingResult(ctx, prepared, payload, usage)
+	return metadata
+}
+
+func (s *service) persistUserInputRequestPendingResult(ctx context.Context, prepared *PreparedChat, payload map[string]interface{}, usage *adapter.Usage) (map[string]interface{}, error) {
+	if prepared == nil || prepared.Message == nil || prepared.Conversation == nil {
+		return map[string]interface{}{}, nil
+	}
+	pendingPayload := copyStringAnyMap(payload)
+	if pendingPayload == nil {
+		pendingPayload = map[string]interface{}{}
+	}
+	pendingPayload["conversation_id"] = prepared.Conversation.ID.String()
+	pendingPayload["message_id"] = prepared.Message.ID.String()
+
+	metadata := mergeUserInputRequestMetadata(prepared.Message.Metadata, pendingPayload)
+	metadata = preparedResultMetadataForPrepared(prepared, metadata, usage)
+	metadata["user_input_continuation"] = compactSkillInvocation(map[string]interface{}{
+		"status":         "waiting_question",
+		"request_id":     pendingPayload["request_id"],
+		"original_query": prepared.Message.Query,
+		"resume_policy":  "same_message",
+	})
+	prepared.Message.Metadata = metadata
+
+	if s == nil || s.repos == nil || s.repos.Message == nil || s.repos.Conversation == nil {
+		return metadata, nil
+	}
+	err := s.persistPendingMessageAndFinishConversationBestEffort(
+		ctx,
+		prepared,
+		"user input request",
+		func(repo repository.MessageRepository) error {
+			return repo.UpdateWaitingQuestion(ctx, prepared.Message.ID, metadata)
+		},
+		func(repo repository.ConversationRepository) error {
+			return repo.FinishWaitingApprovalMessage(ctx, prepared.Conversation.ID, prepared.Message.ID)
+		},
+	)
+	return metadata, err
 }

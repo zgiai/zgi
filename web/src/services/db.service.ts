@@ -1,5 +1,9 @@
 import { BaseService } from '@/lib/http/services';
-import type { ApiResponseData } from './types/common';
+import type {
+  AgentBindingMutationConfirmation,
+  AgentResourceBoundImpact,
+  ApiResponseData,
+} from './types/common';
 import type {
   CreateDbRequest,
   UpdateDbRequest,
@@ -90,8 +94,15 @@ class DbService extends BaseService {
   /**
    * Delete DB
    */
-  deleteDb(dbId: string): Promise<ApiResponseData<DeleteDbResponse>> {
-    return this.request('delete', `/data-dbs/${dbId}`);
+  deleteDb(
+    dbId: string,
+    confirmation?: AgentBindingMutationConfirmation
+  ): Promise<ApiResponseData<DeleteDbResponse>> {
+    return this.request('delete', `/data-dbs/${dbId}`, undefined, { params: confirmation });
+  }
+
+  previewDbDeleteImpact(dbId: string): Promise<ApiResponseData<AgentResourceBoundImpact | null>> {
+    return this.request('get', `/data-dbs/${dbId}/delete-impact`);
   }
 
   /* ------------------------------------------------------------------------ */
@@ -135,9 +146,19 @@ class DbService extends BaseService {
    */
   deleteDbTable(
     dbId: string,
-    id: string
+    id: string,
+    confirmation?: AgentBindingMutationConfirmation
   ): Promise<ApiResponseData<{ result: 'success' | 'fail' }>> {
-    return this.request('delete', `/data-dbs/${dbId}/tables/${id}`);
+    return this.request('delete', `/data-dbs/${dbId}/tables/${id}`, undefined, {
+      params: confirmation,
+    });
+  }
+
+  previewDbTableDeleteImpact(
+    dbId: string,
+    id: string
+  ): Promise<ApiResponseData<AgentResourceBoundImpact | null>> {
+    return this.request('get', `/data-dbs/${dbId}/tables/${id}/delete-impact`);
   }
 
   /* ------------------------------------------------------------------------ */

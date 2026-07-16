@@ -5,12 +5,13 @@ import { Select, SelectContent, SelectTrigger, SelectValue } from '@/components/
 
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
-import type { ModelUseCase, ModelItem } from '@/services/types/model';
+import type { AvailableModelUseCase, ModelUseCase, ModelItem } from '@/services/types/model';
 import { ModelIcon } from 'modelicons';
 import { useAvailableModels } from '@/hooks/model/use-model';
 import { ModelFeatureIcon } from '@/components/model/model-feature-icon';
 import { useProviderI18n } from '@/hooks/provider/use-provider-i18n';
 import { useLocale } from '@/hooks/use-locale';
+import { useAccountCapabilities } from '@/hooks/use-account-capabilities';
 import { getModelDisplayName } from '@/utils/model-label';
 
 import type {
@@ -20,7 +21,7 @@ import type {
   FlatRow,
   FeatureLabels,
 } from './types';
-import { serializeValue, deserializeValue } from './utils';
+import { deserializeValue, prioritizeModelsByUseCase, serializeValue } from './utils';
 import {
   LoadingSkeleton,
   EmptyState,
@@ -29,11 +30,12 @@ import {
   ProviderHeader,
   ModelRowItem,
 } from './components';
-import { usePermissions } from '@/store';
 
 export interface ModelSelectorProps {
   /** The model use case to query, e.g. 'text-chat', 'embedding', 'rerank'. */
   modelType: ModelUseCase;
+  /** Optional availability query that is distinct from the model's declared use-case label. */
+  availabilityUseCase?: AvailableModelUseCase;
   /** Current selected value as an object with provider and model. */
   value?: ModelSelectorValue;
   /** Callback triggered when selection changes. */
@@ -71,6 +73,8 @@ export interface ModelSelectorProps {
   hasError?: boolean;
   /** Whether to show capabilities icons in the trigger label. Default: true */
   showCapabilities?: boolean;
+  /** Within each provider, place models for this use case first and highlight them. */
+  preferredUseCase?: ModelUseCase;
 }
 
 // Virtualization constants
@@ -95,6 +99,7 @@ function getModelPropsSignature(props: ModelSelectorModelProps | null): string {
  */
 export function ModelSelector({
   modelType,
+  availabilityUseCase,
   value,
   onChange,
   placeholder,
@@ -108,6 +113,7 @@ export function ModelSelector({
   capabilityFilter,
   hasError = false,
   showCapabilities = true,
+  preferredUseCase,
 }: ModelSelectorProps) {
   const t = useT();
   const { locale } = useLocale();
@@ -129,9 +135,7 @@ export function ModelSelector({
   const [open, setOpen] = useState(false);
   const [internalSelected, setInternalSelected] = useState<ModelSelectorValue | null>(null);
 
-  // Get user role for conditional rendering in empty state
-  const { organizationRole } = usePermissions();
-  const isAdminOrOwner = ['owner', 'admin'].includes(organizationRole || '');
+  const { canManageModelConfig } = useAccountCapabilities();
 
   // Use translated placeholder if none provided
   const effectivePlaceholder = placeholder || t('models.selector.placeholder');
@@ -174,13 +178,14 @@ export function ModelSelector({
       moderation: t('models.selector.usecases.moderation'),
       reasoning: t('models.selector.usecases.reasoning'),
       'function-calling': t('models.selector.usecases.function-calling'),
+      agent: t('models.selector.usecases.agent'),
     }),
     [t]
   );
 
   // Fetch available models with use_case filter (non-paginated, non-expiring)
   const { models, isLoading, isFetching, refetch } = useAvailableModels({
-    use_case: modelType as ModelUseCase,
+    use_case: availabilityUseCase ?? modelType,
   });
 
   // Apply capability filtering
@@ -216,9 +221,9 @@ export function ModelSelector({
     });
     return Array.from(groupMap.entries()).map(([provider, items]) => ({
       provider,
-      models: items,
+      models: prioritizeModelsByUseCase(items, preferredUseCase),
     }));
-  }, [filteredModelsByCapability]);
+  }, [filteredModelsByCapability, preferredUseCase]);
 
   // Clear search when dropdown closes or component unmounts
   useEffect(() => {
@@ -679,6 +684,16 @@ export function ModelSelector({
                           featureLabels={featureLabels}
                           useCaseLabels={useCaseLabels}
                           locale={locale}
+                          highlighted={Boolean(
+                            preferredUseCase && row.model.use_cases?.includes(preferredUseCase)
+                          )}
+                          highlightedLabel={
+                            preferredUseCase === 'agent'
+                              ? t('models.selector.tags.agent')
+                              : preferredUseCase
+                                ? useCaseLabels[preferredUseCase]
+                                : undefined
+                          }
                         />
                       );
                     })}
@@ -693,7 +708,7 @@ export function ModelSelector({
                     noModelsText={t('models.selector.empty.noModels', {
                       type: t(`models.selector.usecases.${modelType}`),
                     })}
-                    isAdminOrOwner={isAdminOrOwner}
+                    isAdminOrOwner={canManageModelConfig}
                     contactAdminText={t('models.selector.empty.contactAdmin')}
                     configureText={t('models.selector.empty.configure')}
                     configureDescription={t('models.selector.empty.configureDescription', {

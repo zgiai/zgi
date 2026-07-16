@@ -44,7 +44,7 @@ type FileLookupService interface {
 }
 
 type ContentExtractionService interface {
-	ExtractMultipleFiles(ctx context.Context, fileIDs []string, tenantID string) ([]*workflowfile.FileContent, error)
+	ExtractMultipleFiles(ctx context.Context, fileIDs []string, scope workflowfile.ContentExtractionScope) ([]*workflowfile.FileContent, error)
 }
 
 type WorkspacePermissionService interface {
@@ -147,7 +147,14 @@ func (s *service) extractPreparedAttachments(ctx context.Context, prepared *Prep
 }
 
 func (s *service) extractSingleAttachment(ctx context.Context, scope Scope, fileID string) (*workflowfile.FileContent, error) {
-	contents, err := s.contentExtractor.ExtractMultipleFiles(ctx, []string{fileID}, scope.OrganizationID.String())
+	workspaceID := ""
+	if scope.WorkspaceID != nil {
+		workspaceID = scope.WorkspaceID.String()
+	}
+	contents, err := s.contentExtractor.ExtractMultipleFiles(ctx, []string{fileID}, workflowfile.ContentExtractionScope{
+		OrganizationID: scope.OrganizationID.String(),
+		WorkspaceID:    workspaceID,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("%w: failed to extract file content: %w", ErrInvalidInput, err)
 	}
@@ -218,7 +225,7 @@ func (s *service) ensureAttachmentReadable(ctx context.Context, scope Scope, fil
 	if s.workspacePerms == nil {
 		return fmt.Errorf("%w: workspace permission service is unavailable", ErrPermissionDenied)
 	}
-	allowed, err := s.workspacePerms.CheckWorkspacePermission(ctx, organizationID, workspaceID, accountID, workspacemodel.WorkspacePermissionFileDownload)
+	allowed, err := s.workspacePerms.CheckWorkspacePermission(ctx, organizationID, workspaceID, accountID, workspacemodel.WorkspacePermissionFilePreview)
 	if err != nil {
 		return fmt.Errorf("failed to check workspace file permission: %w", err)
 	}
@@ -477,10 +484,24 @@ func (s *service) historicalImageParts(ctx context.Context, bundle *attachmentBu
 }
 
 func (s *service) currentUserContent(parts *chatRequestParts, text string) interface{} {
+	text = userContentWithRuntimeContext(parts, text)
 	if parts == nil || parts.Attachments == nil {
 		return strings.TrimSpace(text)
 	}
 	return multimodal.BuildUserContent(text, parts.Attachments.imageParts())
+}
+
+func userContentWithRuntimeContext(parts *chatRequestParts, text string) string {
+	text = strings.TrimSpace(text)
+	if parts == nil || strings.TrimSpace(parts.RuntimeContext) == "" {
+		return text
+	}
+	var builder strings.Builder
+	builder.WriteString("Transient console page context. Use it only to answer this turn; do not store it as account-level assistant memory or Agent memory.\n")
+	builder.WriteString(strings.TrimSpace(parts.RuntimeContext))
+	builder.WriteString("\n\nUser request:\n")
+	builder.WriteString(text)
+	return builder.String()
 }
 
 func userContentWithAttachments(query string, attachmentSections string) string {

@@ -549,6 +549,68 @@ func TestBuildConversationAnswerMessageEvent_UsesAnswerNodeOutput(t *testing.T) 
 	}
 }
 
+func TestWorkflowStreamSystemConversationInputIgnoresBusinessConversationID(t *testing.T) {
+	got, ok := workflowStreamSystemConversationInput(map[string]interface{}{
+		"conversation_id": "business-conversation-value",
+	})
+
+	if ok || got != nil {
+		t.Fatalf("system conversation input = (%#v, %v), want (nil, false)", got, ok)
+	}
+}
+
+func TestWorkflowStreamSystemConversationInputUsesSystemConversationID(t *testing.T) {
+	got, ok := workflowStreamSystemConversationInput(map[string]interface{}{
+		"conversation_id":     "business-conversation-value",
+		"sys.conversation_id": "system-conversation-id",
+	})
+
+	if !ok || got != "system-conversation-id" {
+		t.Fatalf("system conversation input = (%#v, %v), want (%#v, true)", got, ok, "system-conversation-id")
+	}
+}
+
+func TestWorkflowStreamPauseConversationIDIgnoresBusinessConversationID(t *testing.T) {
+	got := workflowStreamPauseConversationID(workflowStreamPauseParams{
+		RequestInputs: map[string]interface{}{
+			"conversation_id": "business-conversation-value",
+		},
+	})
+
+	if got != "" {
+		t.Fatalf("pause conversation id = %q, want empty for business input", got)
+	}
+}
+
+func TestWorkflowStreamPauseConversationIDUsesSystemConversationID(t *testing.T) {
+	got := workflowStreamPauseConversationID(workflowStreamPauseParams{
+		RequestInputs: map[string]interface{}{
+			"conversation_id":     "business-conversation-value",
+			"sys.conversation_id": "system-conversation-id",
+		},
+	})
+
+	if got != "system-conversation-id" {
+		t.Fatalf("pause conversation id = %q, want %q", got, "system-conversation-id")
+	}
+}
+
+func TestWorkflowStreamPauseConversationIDPrefersVariablePoolSystemConversationID(t *testing.T) {
+	pool := graphentities.NewVariablePool()
+	pool.SystemVariables.ConversationID = "pool-conversation-id"
+
+	got := workflowStreamPauseConversationID(workflowStreamPauseParams{
+		SharedVariablePool: pool,
+		RequestInputs: map[string]interface{}{
+			"sys.conversation_id": "request-system-conversation-id",
+		},
+	})
+
+	if got != "pool-conversation-id" {
+		t.Fatalf("pause conversation id = %q, want %q", got, "pool-conversation-id")
+	}
+}
+
 func TestBuildConversationAnswerMessageEvent_SkipsAlreadyStreamedAnswerNode(t *testing.T) {
 	event := buildConversationAnswerMessageEvent(
 		"CONVERSATION_WORKFLOW",

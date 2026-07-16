@@ -23,6 +23,7 @@ const ORDER: ModelUseCase[] = [
   'moderation',
   'reasoning',
   'function-calling',
+  'agent',
 ];
 
 export default function ModelTypeTabs({

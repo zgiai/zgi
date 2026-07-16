@@ -1,8 +1,15 @@
 import { useCallback } from 'react';
 
-import type { AIChatConversation } from '@/services/types/aichat';
+import type {
+  AIChatClientActionResultRequest,
+  AIChatConversation,
+  AIChatMessage,
+  AIChatToolGovernanceDecisionRequest,
+  AIChatUserInputContinuationRequest,
+} from '@/services/types/aichat';
 import {
   getNextActiveSendingState,
+  mergeRuntimeTimelineWithMessageTimeline,
   timelineFromAIChatMessage,
 } from '@/components/chat/controllers/aichat/selectors';
 import type {
@@ -13,7 +20,14 @@ import { upsertAIChatMessage } from '@/components/chat/utils/aichat-message';
 import {
   getErrorMessage,
   isAbortError,
+  isContinuationLikelyStartedError,
+  isRecoverableStreamTransportError,
 } from '@/components/chat/runtime/controller/chat-runtime-controller-utils';
+import { canStartClientActionContinuation } from '@/components/chat/runtime/client-action-continuation';
+import {
+  buildOptimisticUserInputResponse,
+  upsertUserInputResponse,
+} from '@/components/chat/controllers/aichat/user-input-response';
 
 import type { UseChatRuntimeMessageActionsArgs } from './types';
 
@@ -24,7 +38,10 @@ export function useWorkflowContinuationActions({
   streamingMessageRef,
   setControllerState,
   markSelectionTarget,
+  refreshConversationSilently,
+  refreshMessagesSilently,
   refreshAccountMemoryAfterMemoryMutation,
+  recoverStreamingConversation,
   eventAppliers,
 }: UseChatRuntimeMessageActionsArgs) {
   const {
@@ -42,6 +59,9 @@ export function useWorkflowContinuationActions({
     applySkillCallError,
     applySkillArtifactCreated,
     applyMemoryMutation,
+    applyToolGovernanceDecision,
+    applyClientActionRequired,
+    applyClientActionResult,
     applyAgentProgress,
     applyIntermediateAnswer,
     applyUserInputRequested,
@@ -53,25 +73,113 @@ export function useWorkflowContinuationActions({
       conversationId: string,
       messageId: string,
       approvalPayload?: AIChatWorkflowApprovalContinuationPayload,
-      questionInputs?: { query: string; question_answer_option_id?: string }
+      questionInputs?: { query: string; question_answer_option_id?: string },
+      toolGovernanceDecision?: {
+        correlationId: string;
+        payload: AIChatToolGovernanceDecisionRequest;
+      },
+      clientActionResult?: {
+        actionId: string;
+        payload: AIChatClientActionResultRequest;
+      },
+      userInputContinuation?: {
+        requestId: string;
+        payload: AIChatUserInputContinuationRequest;
+      }
     ) => {
       const transport = transportRef.current;
-      if (questionInputs) {
+      if (userInputContinuation) {
+        if (!transport.continueUserInput) {
+          throw new Error('User input continuation is unavailable.');
+        }
+      } else if (clientActionResult) {
+        if (!transport.continueClientAction) {
+          throw new Error('Client action continuation is unavailable.');
+        }
+      } else if (toolGovernanceDecision) {
+        if (!transport.continueToolGovernanceDecision) {
+          throw new Error('Tool governance continuation is unavailable.');
+        }
+      } else if (questionInputs) {
         if (!transport.continueWorkflowQuestion) return;
       } else if (!transport.continueWorkflowApproval) {
         return;
       }
       const continueWorkflowQuestionStream = transport.continueWorkflowQuestion?.bind(transport);
       const continueWorkflowApprovalStream = transport.continueWorkflowApproval?.bind(transport);
+      const continueToolGovernanceDecisionStream =
+        transport.continueToolGovernanceDecision?.bind(transport);
+      const continueClientActionStream = transport.continueClientAction?.bind(transport);
+      const continueUserInputStream = transport.continueUserInput?.bind(transport);
       const currentState = stateRef.current;
-      if (currentState.isSending || currentState.recoveringByConversation[conversationId]) return;
       const conversation =
         currentState.conversations.find(item => item.id === conversationId) ?? null;
       const messages = currentState.messagesByConversation[conversationId] ?? [];
-      const sourceMessage = messages.find(message => message.id === messageId);
+      const persistedSourceMessage = messages.find(message => message.id === messageId);
+      const previousStreaming = currentState.streamingByMessageId[messageId];
+      const fallbackSourceMessage: AIChatMessage | null =
+        toolGovernanceDecision || clientActionResult || userInputContinuation
+          ? {
+              id: messageId,
+              conversation_id: conversationId,
+              query: '',
+              answer: previousStreaming?.answer ?? '',
+              status: clientActionResult
+                ? 'waiting_client_action'
+                : userInputContinuation
+                  ? 'waiting_question'
+                  : 'waiting_approval',
+              model_name: '',
+              created_at: Math.floor(Date.now() / 1000),
+              updated_at: Math.floor(Date.now() / 1000),
+            }
+          : null;
+      const sourceMessage = persistedSourceMessage ?? fallbackSourceMessage;
+      const sourceTimeline = persistedSourceMessage
+        ? mergeRuntimeTimelineWithMessageTimeline(
+            timelineFromAIChatMessage(persistedSourceMessage),
+            previousStreaming?.timeline
+          )
+        : (previousStreaming?.timeline ?? []);
+      const streamingStatus = previousStreaming?.status;
+      const waitingForContinuation =
+        Boolean(toolGovernanceDecision) ||
+        Boolean(clientActionResult) ||
+        Boolean(userInputContinuation) ||
+        sourceMessage?.status === 'waiting_approval' ||
+        sourceMessage?.status === 'waiting_client_action' ||
+        sourceMessage?.status === 'waiting_question' ||
+        streamingStatus === 'waiting_approval' ||
+        streamingStatus === 'waiting_client_action' ||
+        streamingStatus === 'waiting_question';
+      if (
+        (currentState.isSending && !waitingForContinuation) ||
+        (currentState.recoveringByConversation[conversationId] &&
+          !toolGovernanceDecision &&
+          !clientActionResult &&
+          !userInputContinuation)
+      ) {
+        return;
+      }
       if (!conversation || !sourceMessage) return;
+      const alreadyContinuingMessage =
+        (currentState.isSending || conversation.runtime_status === 'streaming') &&
+        (previousStreaming?.status === 'streaming' || conversation.active_message_id === messageId);
+      if (alreadyContinuingMessage) return;
       const sourceConversation: AIChatConversation = conversation;
       let streamStarted = false;
+      let streamEnded = false;
+      let recoveryRequested = false;
+      let startError: Error | null = null;
+      const shouldSyncContinuationOnClose =
+        Boolean(toolGovernanceDecision) ||
+        Boolean(clientActionResult) ||
+        Boolean(userInputContinuation);
+      const syncContinuationState = () => {
+        if (!shouldSyncContinuationOnClose) return;
+        refreshConversationSilently(conversationId);
+        refreshMessagesSilently(conversationId);
+      };
 
       const restoreWorkflowApprovalContinuation = (errorMessage?: string) => {
         setControllerState(current => {
@@ -101,9 +209,45 @@ export function useWorkflowContinuationActions({
       };
 
       const abortController = new AbortController();
+      const requestStreamRecovery = () => {
+        if (recoveryRequested) return true;
+        if (streamEnded || abortController.signal.aborted) {
+          return false;
+        }
+        recoveryRequested = true;
+        setControllerState(current => ({
+          ...current,
+          error: null,
+          isSending: getNextActiveSendingState(current, conversationId, true),
+          connectionByConversation: {
+            ...current.connectionByConversation,
+            [conversationId]: 'reconnecting',
+          },
+        }));
+        void recoverStreamingConversation(conversationId, { mode: 'active' });
+        return true;
+      };
       streamAbortByConversationRef.current[conversationId]?.abort();
       streamAbortByConversationRef.current[conversationId] = abortController;
       markSelectionTarget(conversationId);
+
+      const continuationMetadata = sourceMessage.metadata
+        ? { ...sourceMessage.metadata }
+        : undefined;
+      if (userInputContinuation && continuationMetadata) {
+        const response = buildOptimisticUserInputResponse(
+          continuationMetadata.user_input_request,
+          userInputContinuation.requestId,
+          userInputContinuation.payload.answers
+        );
+        if (response) {
+          continuationMetadata.user_input_responses = upsertUserInputResponse(
+            continuationMetadata.user_input_responses,
+            response
+          );
+        }
+        delete continuationMetadata.user_input_request;
+      }
 
       setControllerState(current => {
         const now = Math.floor(Date.now() / 1000);
@@ -129,6 +273,7 @@ export function useWorkflowContinuationActions({
                 ...sourceMessage,
                 status: 'streaming',
                 error: undefined,
+                metadata: continuationMetadata,
                 updated_at: now,
               }
             ),
@@ -140,7 +285,7 @@ export function useWorkflowContinuationActions({
               message_id: messageId,
               answer: sourceMessage.answer ?? '',
               status: 'streaming',
-              timeline: timelineFromAIChatMessage(sourceMessage),
+              timeline: sourceTimeline,
             },
           },
         };
@@ -148,6 +293,16 @@ export function useWorkflowContinuationActions({
 
       try {
         const callbacks: AIChatStreamCallbacks = {
+          onOpen: () => {
+            if (abortController.signal.aborted) return;
+            setControllerState(current => ({
+              ...current,
+              connectionByConversation: {
+                ...current.connectionByConversation,
+                [conversationId]: 'connected',
+              },
+            }));
+          },
           onMessageStart: (payload, eventId) => {
             if (abortController.signal.aborted) return;
             streamStarted = true;
@@ -162,109 +317,182 @@ export function useWorkflowContinuationActions({
           },
           onAgentProgress: (payload, eventId) => {
             if (abortController.signal.aborted) return;
+            streamStarted = true;
             applyAgentProgress(payload, eventId);
           },
           onIntermediateAnswer: (payload, eventId) => {
             if (abortController.signal.aborted) return;
+            streamStarted = true;
             applyIntermediateAnswer(payload, eventId);
           },
           onUserInputRequested: (payload, eventId) => {
             if (abortController.signal.aborted) return;
+            streamStarted = true;
             applyUserInputRequested(payload, eventId);
           },
           onFileParseStart: (payload, eventId) => {
             if (abortController.signal.aborted) return;
+            streamStarted = true;
             applyFileParseStart(payload, eventId);
           },
           onFileParseEnd: (payload, eventId) => {
             if (abortController.signal.aborted) return;
+            streamStarted = true;
             applyFileParseEnd(payload, eventId);
           },
           onFileParseError: (payload, eventId) => {
             if (abortController.signal.aborted) return;
+            streamStarted = true;
             applyFileParseError(payload, eventId);
           },
           onSkillLoadStart: (payload, eventId) => {
             if (abortController.signal.aborted) return;
+            streamStarted = true;
             applySkillLoadStart(payload, eventId);
           },
           onSkillLoadEnd: (payload, eventId) => {
             if (abortController.signal.aborted) return;
+            streamStarted = true;
             applySkillLoadEnd(payload, eventId);
           },
           onSkillReferenceRead: (payload, eventId) => {
             if (abortController.signal.aborted) return;
+            streamStarted = true;
             applySkillReferenceRead(payload, eventId);
           },
           onSkillCallStart: (payload, eventId) => {
             if (abortController.signal.aborted) return;
+            streamStarted = true;
             applySkillCallStart(payload, eventId);
           },
           onSkillCallEnd: (payload, eventId) => {
             if (abortController.signal.aborted) return;
+            streamStarted = true;
             applySkillCallEnd(payload, eventId);
           },
           onSkillCallError: (payload, eventId) => {
             if (abortController.signal.aborted) return;
+            streamStarted = true;
             applySkillCallError(payload, eventId);
           },
           onSkillArtifactCreated: (payload, eventId) => {
             if (abortController.signal.aborted) return;
+            streamStarted = true;
             applySkillArtifactCreated(payload, eventId);
+          },
+          onToolGovernanceDecision: (payload, eventId) => {
+            if (abortController.signal.aborted) return;
+            streamStarted = true;
+            applyToolGovernanceDecision(payload, eventId);
+          },
+          onClientActionRequired: (payload, eventId) => {
+            if (abortController.signal.aborted) return;
+            streamStarted = true;
+            applyClientActionRequired(payload, eventId);
+          },
+          onClientActionResult: (payload, eventId) => {
+            if (abortController.signal.aborted) return;
+            streamStarted = true;
+            applyClientActionResult(payload, eventId);
           },
           onMemoryMutation: (payload, eventId) => {
             if (abortController.signal.aborted) return;
+            streamStarted = true;
             applyMemoryMutation(payload, eventId);
             refreshAccountMemoryAfterMemoryMutation(payload);
           },
           onWorkflowStarted: (payload, eventId) => {
             if (abortController.signal.aborted) return;
+            streamStarted = true;
             eventAppliers.applyWorkflowStarted(payload, eventId);
           },
           onWorkflowNodeStarted: (payload, eventId) => {
             if (abortController.signal.aborted) return;
+            streamStarted = true;
             eventAppliers.applyWorkflowNodeStarted(payload, eventId);
           },
           onWorkflowNodeFinished: (payload, eventId) => {
             if (abortController.signal.aborted) return;
+            streamStarted = true;
             eventAppliers.applyWorkflowNodeFinished(payload, eventId);
           },
           onWorkflowPaused: (payload, eventId) => {
             if (abortController.signal.aborted) return;
+            streamStarted = true;
             eventAppliers.applyWorkflowPaused(payload, eventId);
           },
           onWorkflowApprovalRequested: (payload, eventId) => {
             if (abortController.signal.aborted) return;
+            streamStarted = true;
             eventAppliers.applyWorkflowApprovalRequested(payload, eventId);
           },
           onWorkflowFinished: (payload, eventId) => {
             if (abortController.signal.aborted) return;
+            streamStarted = true;
             eventAppliers.applyWorkflowFinished(payload, eventId);
           },
           onWorkflowFailed: (payload, eventId) => {
             if (abortController.signal.aborted) return;
+            streamStarted = true;
             eventAppliers.applyWorkflowFailed(payload, eventId);
           },
           onMessageChunk: (payload, eventId) => {
             if (abortController.signal.aborted) return;
+            streamStarted = true;
             applyMessageChunk(payload, eventId);
           },
           onMessageRetract: (payload, eventId) => {
             if (abortController.signal.aborted) return;
+            streamStarted = true;
             applyMessageRetract(payload, eventId);
           },
           onMessageEnd: (payload, eventId) => {
             if (abortController.signal.aborted) return;
+            streamStarted = true;
+            streamEnded = true;
             applyMessageEnd(payload, eventId);
+            setControllerState(current => ({
+              ...current,
+              connectionByConversation: {
+                ...current.connectionByConversation,
+                [conversationId]: 'idle',
+              },
+            }));
           },
           onErrorEvent: (payload, eventId) => {
             if (abortController.signal.aborted) return;
+            streamStarted = true;
+            streamEnded = true;
             applyStreamError(payload, eventId, conversationId);
+            setControllerState(current => ({
+              ...current,
+              connectionByConversation: {
+                ...current.connectionByConversation,
+                [conversationId]: 'idle',
+              },
+            }));
           },
           onRequestError: error => {
             if (isAbortError(error)) return;
+            if (isRecoverableStreamTransportError(error) && requestStreamRecovery()) return;
             if (!streamStarted) {
-              restoreWorkflowApprovalContinuation(error.message);
+              const suppressError =
+                (toolGovernanceDecision || clientActionResult || userInputContinuation) &&
+                isContinuationLikelyStartedError(error);
+              if (!suppressError) {
+                startError = error;
+              }
+              restoreWorkflowApprovalContinuation(suppressError ? undefined : error.message);
+              if (suppressError) {
+                syncContinuationState();
+              }
+              return;
+            }
+            const suppressError =
+              (toolGovernanceDecision || clientActionResult || userInputContinuation) &&
+              isContinuationLikelyStartedError(error);
+            if (suppressError) {
+              syncContinuationState();
               return;
             }
             setControllerState(current => ({
@@ -282,18 +510,56 @@ export function useWorkflowContinuationActions({
               streamingMessageRef.current = null;
             }
             if (!abortController.signal.aborted) {
+              if (!streamEnded && requestStreamRecovery()) return;
               if (!streamStarted) {
                 restoreWorkflowApprovalContinuation();
+                syncContinuationState();
                 return;
               }
               setControllerState(current => ({
                 ...current,
                 isSending: getNextActiveSendingState(current, conversationId, false),
               }));
+              if (!streamEnded) {
+                syncContinuationState();
+              }
             }
           },
         };
-        if (questionInputs) {
+        if (userInputContinuation) {
+          if (!continueUserInputStream) return;
+          await continueUserInputStream(
+            conversationId,
+            messageId,
+            userInputContinuation.requestId,
+            userInputContinuation.payload,
+            callbacks,
+            abortController.signal
+          );
+          if (startError) throw startError;
+        } else if (clientActionResult) {
+          if (!continueClientActionStream) return;
+          await continueClientActionStream(
+            conversationId,
+            messageId,
+            clientActionResult.actionId,
+            clientActionResult.payload,
+            callbacks,
+            abortController.signal
+          );
+          if (startError) throw startError;
+        } else if (toolGovernanceDecision) {
+          if (!continueToolGovernanceDecisionStream) return;
+          await continueToolGovernanceDecisionStream(
+            conversationId,
+            messageId,
+            toolGovernanceDecision.correlationId,
+            toolGovernanceDecision.payload,
+            callbacks,
+            abortController.signal
+          );
+          if (startError) throw startError;
+        } else if (questionInputs) {
           if (!continueWorkflowQuestionStream) return;
           await continueWorkflowQuestionStream(
             conversationId,
@@ -314,8 +580,27 @@ export function useWorkflowContinuationActions({
         }
       } catch (error) {
         if (!isAbortError(error)) {
+          if (isRecoverableStreamTransportError(error) && requestStreamRecovery()) return;
           if (!streamStarted) {
-            restoreWorkflowApprovalContinuation(getErrorMessage(error));
+            const errorMessage = getErrorMessage(error);
+            const suppressError =
+              (toolGovernanceDecision || clientActionResult || userInputContinuation) &&
+              isContinuationLikelyStartedError(error);
+            restoreWorkflowApprovalContinuation(suppressError ? undefined : errorMessage);
+            if (suppressError) {
+              syncContinuationState();
+              return;
+            }
+            if (clientActionResult || toolGovernanceDecision || userInputContinuation) {
+              throw error instanceof Error ? error : new Error(errorMessage);
+            }
+            return;
+          }
+          if (
+            (toolGovernanceDecision || clientActionResult || userInputContinuation) &&
+            isContinuationLikelyStartedError(error)
+          ) {
+            syncContinuationState();
             return;
           }
           setControllerState(current => ({
@@ -347,11 +632,17 @@ export function useWorkflowContinuationActions({
       applySkillLoadEnd,
       applySkillLoadStart,
       applySkillReferenceRead,
+      applyToolGovernanceDecision,
+      applyClientActionRequired,
+      applyClientActionResult,
       applyStreamError,
       applyUserInputRequested,
       eventAppliers,
       markSelectionTarget,
       refreshAccountMemoryAfterMemoryMutation,
+      recoverStreamingConversation,
+      refreshConversationSilently,
+      refreshMessagesSilently,
       setControllerState,
       stateRef,
       streamAbortByConversationRef,
@@ -371,6 +662,82 @@ export function useWorkflowContinuationActions({
     [continueWorkflowApproval]
   );
 
+  const continueToolGovernanceDecision = useCallback(
+    async (
+      conversationId: string,
+      messageId: string,
+      correlationId: string,
+      payload: AIChatToolGovernanceDecisionRequest
+    ) => {
+      await continueWorkflowApproval(conversationId, messageId, undefined, undefined, {
+        correlationId,
+        payload,
+      });
+    },
+    [continueWorkflowApproval]
+  );
 
-  return { continueWorkflowApproval, continueWorkflowQuestion };
+  const continueClientAction = useCallback(
+    async (
+      conversationId: string,
+      messageId: string,
+      actionId: string,
+      payload: AIChatClientActionResultRequest
+    ) => {
+      const currentState = stateRef.current;
+      const conversation = currentState.conversations.find(item => item.id === conversationId);
+      const sourceMessage = currentState.messagesByConversation[conversationId]?.find(
+        message => message.id === messageId
+      );
+      const streamingMessage = currentState.streamingByMessageId[messageId];
+      if (
+        !conversation ||
+        !sourceMessage ||
+        !canStartClientActionContinuation({
+          messageStatus: sourceMessage.status,
+          streamingStatus: streamingMessage?.status,
+          isSending: currentState.isSending,
+          conversationRuntimeStatus: conversation.runtime_status,
+          activeMessageMatches: conversation.active_message_id === messageId,
+        })
+      ) {
+        return false;
+      }
+
+      await continueWorkflowApproval(conversationId, messageId, undefined, undefined, undefined, {
+        actionId,
+        payload,
+      });
+      return true;
+    },
+    [continueWorkflowApproval, stateRef]
+  );
+
+  const continueUserInput = useCallback(
+    async (
+      conversationId: string,
+      messageId: string,
+      requestId: string,
+      payload: AIChatUserInputContinuationRequest
+    ) => {
+      await continueWorkflowApproval(
+        conversationId,
+        messageId,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        { requestId, payload }
+      );
+    },
+    [continueWorkflowApproval]
+  );
+
+  return {
+    continueWorkflowApproval,
+    continueWorkflowQuestion,
+    continueToolGovernanceDecision,
+    continueClientAction,
+    continueUserInput,
+  };
 }

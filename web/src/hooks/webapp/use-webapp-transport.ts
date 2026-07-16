@@ -655,7 +655,7 @@ export function useWebappConversationTransport(
         const draft: ConversationSummary = {
           id: `draft-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
           conversationId: '',
-          title: payload?.title ?? `New conversation ${new Date().toLocaleString()}`,
+          title: payload?.title ?? '',
           dialogueCount: 0,
           updatedAt: Date.now(),
           status: 'draft',

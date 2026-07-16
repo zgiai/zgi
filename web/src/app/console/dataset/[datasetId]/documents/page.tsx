@@ -8,6 +8,7 @@ import { useT } from '@/i18n';
 import { Button } from '@/components/ui/button';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { Input } from '@/components/ui/input';
+import { Pagination } from '@/components/ui/pagination';
 import { DatasetFileAssetDialog } from '@/components/datasets/document/dataset-file-asset-dialog';
 import { DatasetFileRefPanel } from '@/components/datasets/document/dataset-file-ref-panel';
 import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
@@ -19,38 +20,76 @@ import {
   useRetryDatasetFileRefSync,
 } from '@/hooks/dataset/use-dataset-file-refs';
 import type { DatasetFileRef } from '@/services/types/dataset';
+import { KNOWLEDGE_BASE_PERMISSION_ACTIONS } from '@/constants/permissions';
+import {
+  PermissionDeniedState,
+  PermissionLoadingState,
+} from '@/components/common/permission-gate-state';
+
+const FILE_REF_PAGE_SIZE = 100;
 
 export default function DatasetDocumentsPage() {
   const t = useT();
   const params = useParams();
   const datasetId = params.datasetId as string;
-  const { data: datasetData } = useDataset(datasetId);
+
+  // Permission checking - use new permission system
+  const {
+    hasAnyPermission,
+    hasWorkspaceAccess,
+    isLoading: isPermissionsLoading,
+  } = useAccountPermissions();
+  const canViewDocuments = hasAnyPermission([
+    ...KNOWLEDGE_BASE_PERMISSION_ACTIONS.documentView,
+    ...KNOWLEDGE_BASE_PERMISSION_ACTIONS.documentCreate,
+    ...KNOWLEDGE_BASE_PERMISSION_ACTIONS.documentUpdate,
+    ...KNOWLEDGE_BASE_PERMISSION_ACTIONS.documentDelete,
+    ...KNOWLEDGE_BASE_PERMISSION_ACTIONS.indexManage,
+  ]);
+  const { data: datasetData } = useDataset(datasetId, { enabled: canViewDocuments });
   const isExternalDataSource = !!datasetData?.data?.external_knowledge_info?.external_knowledge_id;
-  const { hasPermission } = useAccountPermissions();
-  const canEdit = hasPermission('knowledge_base.manage');
+  const canCreateDocument = hasAnyPermission(KNOWLEDGE_BASE_PERMISSION_ACTIONS.documentCreate);
+  const canUpdateDocument = hasAnyPermission(KNOWLEDGE_BASE_PERMISSION_ACTIONS.documentUpdate);
+  const canDeleteDocument = hasAnyPermission(KNOWLEDGE_BASE_PERMISSION_ACTIONS.documentDelete);
+  const canManageIndex = hasAnyPermission(KNOWLEDGE_BASE_PERMISSION_ACTIONS.indexManage);
+  const canOpenSourceFile = hasWorkspaceAccess();
+  const canEdit = canCreateDocument || canUpdateDocument || canDeleteDocument || canManageIndex;
 
   const [fileSelectorOpen, setFileSelectorOpen] = useState(false);
   const [fileRefPollingEnabled, setFileRefPollingEnabled] = useState(false);
   const [keyword, setKeyword] = useState('');
+  const [currentPage, setCurrentPage] = useState(1);
   const [refToRemove, setRefToRemove] = useState<DatasetFileRef | null>(null);
   const [togglingRefId, setTogglingRefId] = useState<string>();
 
   const {
     refs: fileRefs,
+    total: fileRefTotal,
     refetch: refetchFileRefs,
     isFetching: isFetchingFileRefs,
   } = useDatasetFileRefs(
     datasetId,
-    { limit: 100 },
+    { page: currentPage, limit: FILE_REF_PAGE_SIZE },
     {
       refetchInterval: fileRefPollingEnabled ? 5000 : false,
-      enabled: true,
+      enabled: canViewDocuments,
     }
   );
   const retryFileRefMutation = useRetryDatasetFileRefSync(datasetId);
   const deleteFileRefMutation = useDeleteDatasetFileRef(datasetId);
   const bulkEnableMutation = useBulkEnableDocuments(datasetId);
   const bulkDisableMutation = useBulkDisableDocuments(datasetId);
+  const totalPages = Math.max(1, Math.ceil(fileRefTotal / FILE_REF_PAGE_SIZE));
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [datasetId]);
+
+  useEffect(() => {
+    if (currentPage > totalPages) {
+      setCurrentPage(totalPages);
+    }
+  }, [currentPage, totalPages]);
 
   useEffect(() => {
     const hasSyncInProgress = (fileRefs ?? []).some(ref =>
@@ -68,11 +107,11 @@ export default function DatasetDocumentsPage() {
   const stats = useMemo(() => {
     const synced = fileRefs.filter(ref => ref.sync_status === 'synced');
     return {
-      total: fileRefs.length,
+      total: fileRefTotal,
       enabled: synced.filter(ref => ref.dataset_document_enabled).length,
       ready: fileRefs.filter(ref => ref.processing_status === 'ready').length,
     };
-  }, [fileRefs]);
+  }, [fileRefs, fileRefTotal]);
 
   const handleRefresh = useCallback(async () => {
     await refetchFileRefs();
@@ -80,14 +119,16 @@ export default function DatasetDocumentsPage() {
 
   const handleRetryFileRef = useCallback(
     async (ref: DatasetFileRef) => {
+      if (!canManageIndex) return;
       await retryFileRefMutation.mutateAsync(ref.id);
       await refetchFileRefs();
     },
-    [retryFileRefMutation, refetchFileRefs]
+    [canManageIndex, retryFileRefMutation, refetchFileRefs]
   );
 
   const handleToggleEnabled = useCallback(
     async (ref: DatasetFileRef, enabled: boolean) => {
+      if (!canUpdateDocument) return;
       if (!ref.dataset_document_id) return;
       try {
         setTogglingRefId(ref.id);
@@ -104,15 +145,24 @@ export default function DatasetDocumentsPage() {
         setTogglingRefId(undefined);
       }
     },
-    [bulkDisableMutation, bulkEnableMutation, refetchFileRefs, t]
+    [bulkDisableMutation, bulkEnableMutation, canUpdateDocument, refetchFileRefs, t]
   );
 
   const confirmRemoveFileRef = useCallback(async () => {
+    if (!canDeleteDocument) return;
     if (!refToRemove) return;
     await deleteFileRefMutation.mutateAsync(refToRemove.id);
     setRefToRemove(null);
     await refetchFileRefs();
-  }, [deleteFileRefMutation, refToRemove, refetchFileRefs]);
+  }, [canDeleteDocument, deleteFileRefMutation, refToRemove, refetchFileRefs]);
+
+  if (isPermissionsLoading) {
+    return <PermissionLoadingState />;
+  }
+
+  if (!canViewDocuments) {
+    return <PermissionDeniedState />;
+  }
 
   return (
     <div className="min-h-full bg-background">
@@ -150,7 +200,7 @@ export default function DatasetDocumentsPage() {
               className="h-10 rounded-lg pl-10"
             />
           </div>
-          {!isExternalDataSource && canEdit ? (
+          {!isExternalDataSource && canCreateDocument ? (
             <Button className="h-10 rounded-lg px-4" onClick={() => setFileSelectorOpen(true)}>
               <Plus className="h-4 w-4" />
               {t('datasets.documents.fileRefs.addFile')}
@@ -163,12 +213,28 @@ export default function DatasetDocumentsPage() {
         <DatasetFileRefPanel
           refs={filteredRefs}
           canEdit={canEdit}
-          retryingRefId={retryFileRefMutation.isPending ? retryFileRefMutation.variables : undefined}
-          removingRefId={deleteFileRefMutation.isPending ? deleteFileRefMutation.variables : undefined}
+          canOpenSourceFile={canOpenSourceFile}
+          canToggleEnabled={canUpdateDocument}
+          canRetry={canManageIndex}
+          canRemove={canDeleteDocument}
+          retryingRefId={
+            retryFileRefMutation.isPending ? retryFileRefMutation.variables : undefined
+          }
+          removingRefId={
+            deleteFileRefMutation.isPending ? deleteFileRefMutation.variables : undefined
+          }
           togglingRefId={togglingRefId}
           onRetry={handleRetryFileRef}
           onRemove={setRefToRemove}
           onToggleEnabled={handleToggleEnabled}
+        />
+        <Pagination
+          currentPage={currentPage}
+          totalPages={totalPages}
+          total={fileRefTotal}
+          pageSize={FILE_REF_PAGE_SIZE}
+          onPageChange={setCurrentPage}
+          className="mt-6"
         />
       </div>
 

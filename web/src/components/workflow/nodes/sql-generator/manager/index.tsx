@@ -9,7 +9,6 @@ import WorkflowValueInserter from '@/components/workflow/common/workflow-value-i
 import WorkflowValueEditor from '@/components/workflow/common/workflow-value-editor';
 import type { WorkflowValueEditorHandle } from '@/components/workflow/common/workflow-value-editor';
 import type {
-  SqlGeneratorNodeData,
   SqlGeneratorInnerData,
   SqlGeneratorDataSource,
   SqlGeneratorSourceRef,
@@ -31,7 +30,11 @@ import { useInitializeDefaultModelByUseCase } from '@/hooks/model/use-default-mo
 import { useDbTables } from '@/hooks/db/use-db-tables';
 import OutputVariablesView from '../../../common/output-variables-view';
 import type { WorkflowVariable } from '../../../store/type';
-import { useLocalNodeData, useNodeOutputVariables } from '../../../hooks';
+import {
+  useDatabaseNodePermissions,
+  useLocalNodeData,
+  useNodeOutputVariables,
+} from '../../../hooks';
 
 interface SqlGeneratorManagerProps {
   id: string;
@@ -55,6 +58,8 @@ const SqlGeneratorManager: React.FC<SqlGeneratorManagerProps> = ({
     ds: DatabaseSourceRef;
     tables: TableRef[];
   } | null>(null);
+  const { canReadDatabaseBinding } = useDatabaseNodePermissions();
+  const canEditDatabaseSource = !readOnly && canReadDatabaseBinding;
 
   // Use store-aware useLocalNodeData for the 'data' field with debouncing
   const { localData: innerDataRaw, setLocalData: setInnerData } =
@@ -150,7 +155,7 @@ const SqlGeneratorManager: React.FC<SqlGeneratorManagerProps> = ({
     (pickerOpen && cachedPickerValue?.dataSource?.id) ||
     dataSource.source.id;
   const { tables: dbTables } = useDbTables(currentDbId || '', {
-    enabled: Boolean((pendingSelection || pickerOpen) && currentDbId),
+    enabled: Boolean(canReadDatabaseBinding && (pendingSelection || pickerOpen) && currentDbId),
     refetchOnWindowFocus: false,
   });
 
@@ -235,7 +240,7 @@ const SqlGeneratorManager: React.FC<SqlGeneratorManagerProps> = ({
           <div
             className="rounded-md border p-2 text-sm space-y-2 cursor-pointer hover:bg-muted/60"
             onClick={() => {
-              if (readOnly) return;
+              if (!canEditDatabaseSource) return;
               setCachedPickerValue(pickerValue);
               setPickerOpen(true);
             }}
@@ -319,7 +324,7 @@ const SqlGeneratorManager: React.FC<SqlGeneratorManagerProps> = ({
               setPendingSelection({ ds, tables });
             }}
             initialSchema={defaultSchema}
-            readOnly={readOnly}
+            readOnly={!canEditDatabaseSource}
           />
         </section>
 

@@ -8,6 +8,7 @@ import { Layers, Ban } from 'lucide-react';
 import { useWorkflowOperations } from './hooks';
 import { createNodeByTypeFactory } from './ui/create-node-modal/services/create-node';
 import { NODE_THEMES as THEME_CONFIGS } from './nodes/custom/config';
+import type { ToolNodeData } from './nodes/tool/config';
 import {
   ITER_CANVAS_OFFSET_X,
   ITER_CANVAS_OFFSET_Y,
@@ -16,29 +17,59 @@ import { useBuiltinTools } from '@/hooks/workflow/use-builtin-tools';
 import { useLocale } from '@/hooks/use-locale';
 import { pickLocale, mapParametersToFormFields, createInitialBindings } from '@/utils/tool-helpers';
 import { useT, type Locale } from '@/lib/i18n';
+import type { BuiltinToolProvider } from '@/services/types/tool';
 
 const CONTAINER_PAD = 24;
 
+type CreateNodeByType = ReturnType<typeof createNodeByTypeFactory>;
+
+interface ToolDragInfo {
+  provider_id: string;
+  tool_name: string;
+  title?: string;
+  iconUrl?: string;
+}
+
+interface OverlayItem {
+  id: string;
+  node: WorkflowNode;
+  style: React.CSSProperties;
+}
+
+const parseToolDragInfo = (rawToolInfo: string): ToolDragInfo | null => {
+  try {
+    const parsed = JSON.parse(rawToolInfo) as Partial<ToolDragInfo>;
+    if (typeof parsed.provider_id !== 'string' || typeof parsed.tool_name !== 'string') {
+      return null;
+    }
+    return {
+      provider_id: parsed.provider_id,
+      tool_name: parsed.tool_name,
+      title: typeof parsed.title === 'string' ? parsed.title : undefined,
+      iconUrl: typeof parsed.iconUrl === 'string' ? parsed.iconUrl : undefined,
+    };
+  } catch (_e) {
+    return null;
+  }
+};
+
 interface ContainerOverlayItemProps {
   containerNode: WorkflowNode;
+  isReadOnly: boolean;
   isHovered: boolean;
   isNestingBlocked: boolean;
   draggingNodeType: string;
   viewport: { zoom: number };
   onHover: (id: string | null) => void;
-  createNodeByType: (
-    type: string,
-    position: { x: number; y: number },
-    parentId?: string,
-    initialData?: any
-  ) => string | null;
-  tools: any;
+  createNodeByType: CreateNodeByType;
+  tools: BuiltinToolProvider[] | undefined;
   locale: Locale;
   overlayStyle?: React.CSSProperties;
 }
 
 const ContainerOverlayItem: React.FC<ContainerOverlayItemProps> = ({
   containerNode,
+  isReadOnly,
   isHovered,
   isNestingBlocked,
   draggingNodeType,
@@ -55,7 +86,7 @@ const ContainerOverlayItem: React.FC<ContainerOverlayItemProps> = ({
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    e.dataTransfer.dropEffect = isNestingBlocked ? 'none' : 'copy';
+    e.dataTransfer.dropEffect = isReadOnly || isNestingBlocked ? 'none' : 'copy';
     onHover(containerNode.id);
   };
 
@@ -84,7 +115,7 @@ const ContainerOverlayItem: React.FC<ContainerOverlayItemProps> = ({
     e.preventDefault();
     e.stopPropagation();
 
-    if (isNestingBlocked) {
+    if (isReadOnly || isNestingBlocked) {
       onHover(null);
       return;
     }
@@ -98,23 +129,11 @@ const ContainerOverlayItem: React.FC<ContainerOverlayItemProps> = ({
     const nodeType = draggingNodeType;
 
     // Get expected node size from theme
-    const theme = (THEME_CONFIGS as any)[nodeType] || THEME_CONFIGS.default;
+    const theme = THEME_CONFIGS[nodeType as keyof typeof THEME_CONFIGS] || THEME_CONFIGS.default;
     const nodeWidth = theme.width ?? 280;
     const nodeHeight = theme.height ?? 120;
     const rawToolInfo = e.dataTransfer?.getData('application/x-workflow-tool-info');
-    let toolDragInfo: {
-      provider_id: string;
-      tool_name: string;
-      title?: string;
-      iconUrl?: string;
-    } | null = null;
-    if (nodeType === 'tool' && rawToolInfo) {
-      try {
-        toolDragInfo = JSON.parse(rawToolInfo);
-      } catch (_e) {
-        toolDragInfo = null;
-      }
-    }
+    const toolDragInfo = nodeType === 'tool' && rawToolInfo ? parseToolDragInfo(rawToolInfo) : null;
 
     // Check expansion
     const parentWidth = containerNode.width ?? 600;
@@ -123,25 +142,24 @@ const ContainerOverlayItem: React.FC<ContainerOverlayItemProps> = ({
     const requiredHeight = relativeY + nodeHeight + CONTAINER_PAD;
     const needsExpand = requiredWidth > parentWidth || requiredHeight > parentHeight;
 
-    let initialData: any = undefined;
+    let initialData: Partial<ToolNodeData> | undefined = undefined;
     if (nodeType === 'tool' && toolDragInfo) {
       // Pre-calculate tool metadata to avoid title pop
       try {
         const providers = Array.isArray(tools) ? tools : [];
-        const provider = providers.find(
-          (p: any) => p.id === toolDragInfo!.provider_id || p.name === toolDragInfo!.provider_id
-        );
-        const toolItem = provider?.tools?.find((t: any) => t.name === toolDragInfo!.tool_name);
+        const { provider_id, tool_name, title } = toolDragInfo;
+        const provider = providers.find(p => p.id === provider_id || p.name === provider_id);
+        const toolItem = provider?.tools?.find(tool => tool.name === tool_name);
         const fields = toolItem ? mapParametersToFormFields(toolItem.parameters, locale) : [];
         const bindings = createInitialBindings(fields);
         const nodeTitle = toolItem
           ? pickLocale(toolItem.label, locale, toolItem.name)
-          : toolDragInfo!.title || toolDragInfo!.tool_name;
+          : title || tool_name;
 
         initialData = {
           provider_type: provider?.type || 'builtin',
-          provider_id: toolDragInfo!.provider_id,
-          tool_name: toolDragInfo!.tool_name,
+          provider_id,
+          tool_name,
           tool_parameters: bindings,
           title: nodeTitle,
         };
@@ -218,7 +236,11 @@ const ContainerOverlayItem: React.FC<ContainerOverlayItemProps> = ({
   );
 };
 
-const GlobalContainerOverlay: React.FC = () => {
+interface GlobalContainerOverlayProps {
+  isReadOnly: boolean;
+}
+
+const GlobalContainerOverlay: React.FC<GlobalContainerOverlayProps> = ({ isReadOnly }) => {
   const containerRef = React.useRef<HTMLDivElement>(null);
 
   const draggingNodeType = useWorkflowStore.use.draggingNodeType();
@@ -249,11 +271,11 @@ const GlobalContainerOverlay: React.FC = () => {
   // Calculate relative positions for overlay items
   // We use a separate state or just re-calculate on each render when dragging
   // for absolute positioning relative to the overlay root.
-  const [overlayItems, setOverlayItems] = React.useState<any[]>([]);
+  const [overlayItems, setOverlayItems] = React.useState<OverlayItem[]>([]);
 
   React.useEffect(() => {
-    if (!draggingNodeType || containerNodes.length === 0 || !containerRef.current) {
-      if (overlayItems.length > 0) setOverlayItems([]);
+    if (isReadOnly || !draggingNodeType || containerNodes.length === 0 || !containerRef.current) {
+      setOverlayItems(prev => (prev.length > 0 ? [] : prev));
       return;
     }
 
@@ -263,7 +285,7 @@ const GlobalContainerOverlay: React.FC = () => {
       const rootRect = rootEl.getBoundingClientRect();
 
       const items = containerNodes
-        .map(containerNode => {
+        .map<OverlayItem | null>(containerNode => {
           const canvasEl = document.querySelector(
             `[data-role="container-canvas"][data-node-id="${containerNode.id}"]`
           ) as HTMLElement | null;
@@ -283,7 +305,7 @@ const GlobalContainerOverlay: React.FC = () => {
             },
           };
         })
-        .filter(Boolean);
+        .filter((item): item is OverlayItem => item !== null);
 
       setOverlayItems(items);
     };
@@ -291,10 +313,10 @@ const GlobalContainerOverlay: React.FC = () => {
     updatePositions();
     const intervalId = setInterval(updatePositions, 50);
     return () => clearInterval(intervalId);
-  }, [draggingNodeType, containerNodes]);
+  }, [containerNodes, draggingNodeType, isReadOnly]);
 
   // Don't render if not dragging
-  if (!draggingNodeType) return null;
+  if (isReadOnly || !draggingNodeType) return null;
 
   // Don't render if no container nodes exist
   if (containerNodes.length === 0) return null;
@@ -309,6 +331,7 @@ const GlobalContainerOverlay: React.FC = () => {
         <ContainerOverlayItem
           key={item.id}
           containerNode={item.node}
+          isReadOnly={isReadOnly}
           isHovered={dragOverContainerId === item.id}
           isNestingBlocked={
             !canPlaceNodeInContainer(draggingNodeType, item.node.data?.type as string)

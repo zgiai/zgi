@@ -40,3 +40,26 @@ export interface BusinessError {
     message: string;
   };
 }
+
+export interface AgentResourceImpactAgent {
+  agent_id: string;
+  name?: string;
+  description?: string;
+  icon_type?: 'text' | 'image' | string;
+  icon?: string;
+}
+
+export interface AgentResourceBoundImpact {
+  code: 'agent_resource_bound';
+  operation: string;
+  binding_type?: string;
+  resource_id: string;
+  agents: AgentResourceImpactAgent[];
+  impact_token: string;
+  expires_at: number;
+}
+
+export interface AgentBindingMutationConfirmation {
+  agent_binding_action: 'unbind';
+  impact_token: string;
+}

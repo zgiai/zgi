@@ -206,6 +206,16 @@
 }
 
 /* Table enhancements */
+.md-table-wrapper {
+  @apply my-3 w-full max-w-full min-w-0 overflow-x-auto overflow-y-hidden rounded-lg border border-border;
+  min-inline-size: 0;
+  max-inline-size: 100%;
+  contain: inline-size;
+}
+.md-table-wrapper [data-slot='table-container'] {
+  min-inline-size: 100%;
+  max-inline-size: none;
+}
 .md-viewer table {
   @apply min-w-full;
   width: max-content;

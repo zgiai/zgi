@@ -27,7 +27,6 @@ export function ProtectedRoute({ children, requireAdmin = false, fallback }: Pro
   const isLoading = useAuthStore.use.isLoading();
   const user = useAuthStore.use.user();
   const isSystemReady = useAuthStore.use.isSystemReady();
-
   // Check admin requirements
   const isAdmin = useMemo(() => {
     if (!user) return false;

@@ -1,8 +1,8 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useDb } from '@/hooks';
-import { useParams, useRouter } from 'next/navigation';
+import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { useT } from '@/i18n';
 import { useDbTables } from '@/hooks/db/use-db-tables';
 import { DbTableFormDialog } from '@/components/db/table-form-dialog';
@@ -12,37 +12,66 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Plus, Table2, Search, ArrowRight, ScrollText, FileSpreadsheet } from 'lucide-react';
 
 import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
+import {
+  DATABASE_PERMISSION_ACTIONS,
+  DATABASE_TABLE_METADATA_PERMISSION_CODES,
+} from '@/constants/permissions';
 
 export default function DbOverviewPage() {
   const { dbId } = useParams();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const t = useT();
 
   // Permissions
-  const { hasPermission } = useAccountPermissions();
-  const canManage = hasPermission('database.manage');
-  const canAiQuery = hasPermission('database.ai_query');
+  const { hasAnyPermission, isLoading: isPermissionsLoading } = useAccountPermissions();
+  const canManageSchema = hasAnyPermission(DATABASE_PERMISSION_ACTIONS.schemaManage);
+  const canImportExcel = hasAnyPermission([
+    ...DATABASE_PERMISSION_ACTIONS.importAnalyze,
+    ...DATABASE_PERMISSION_ACTIONS.importExecute,
+  ]);
+  const canAiQuery = hasAnyPermission(DATABASE_PERMISSION_ACTIONS.aiQueryRead);
+  const canViewOperationLogs = hasAnyPermission(DATABASE_PERMISSION_ACTIONS.operationLogsView);
+  const canViewTableMetadata = hasAnyPermission(DATABASE_TABLE_METADATA_PERMISSION_CODES);
 
   const { data: dbDetail, isLoading: isDbLoading } = useDb(dbId as string);
-  const { tables, isLoading: isTablesLoading } = useDbTables(dbId as string);
+  const { tables, isLoading: isTablesLoading } = useDbTables(dbId as string, {
+    enabled: canViewTableMetadata,
+  });
 
   // Create table dialog state
   const [createOpen, setCreateOpen] = useState(false);
 
-  const isLoading = isDbLoading || isTablesLoading;
+  useEffect(() => {
+    if (searchParams.get('createTable') !== '1' || isPermissionsLoading) return;
+
+    if (canManageSchema) {
+      setCreateOpen(true);
+    }
+
+    const nextSearchParams = new URLSearchParams(searchParams.toString());
+    nextSearchParams.delete('createTable');
+    const query = nextSearchParams.toString();
+    router.replace(`/console/db/${dbId}${query ? `?${query}` : ''}`, { scroll: false });
+  }, [canManageSchema, dbId, isPermissionsLoading, router, searchParams]);
+
+  const isLoading = isDbLoading || (canViewTableMetadata && isTablesLoading);
   const hasTables = tables.length > 0;
+  const showNoTablesState = canViewTableMetadata && !hasTables;
+  const showQuickActions = hasTables || canViewOperationLogs;
 
   const handleOpenCreate = () => {
-    if (!canManage) return;
+    if (!canManageSchema) return;
     setCreateOpen(true);
   };
 
   const handleImportExcel = () => {
-    if (!canManage) return;
+    if (!canImportExcel) return;
     router.push(`/console/db/${dbId}/import-excel`);
   };
 
   const handleViewLogs = () => {
+    if (!canViewOperationLogs) return;
     router.push(`/console/db/${dbId}/record`);
   };
 
@@ -85,7 +114,7 @@ export default function DbOverviewPage() {
       </div>
 
       {/* Empty State - No Tables */}
-      {!hasTables && (
+      {showNoTablesState && (
         <Card className="border-dashed">
           <div className="flex flex-col items-center justify-center py-12 px-6 text-center">
             <div className="rounded-full bg-muted p-4 mb-4">
@@ -93,16 +122,20 @@ export default function DbOverviewPage() {
             </div>
             <h3 className="text-lg font-semibold mb-2">{t('dbs.overview.noTables')}</h3>
             <p className="text-muted-foreground mb-6 max-w-md">{t('dbs.overview.noTablesDesc')}</p>
-            {canManage && (
+            {(canManageSchema || canImportExcel) && (
               <div className="flex flex-wrap justify-center gap-2">
-                <Button onClick={handleOpenCreate} size="lg">
-                  <Plus className="h-4 w-4 mr-2" />
-                  {t('dbs.overview.createFirstTable')}
-                </Button>
-                <Button onClick={handleImportExcel} size="lg" variant="outline">
-                  <FileSpreadsheet className="h-4 w-4 mr-2" />
-                  {t('dbs.excelImport.entry')}
-                </Button>
+                {canManageSchema && (
+                  <Button onClick={handleOpenCreate} size="lg">
+                    <Plus className="h-4 w-4 mr-2" />
+                    {t('dbs.overview.createFirstTable')}
+                  </Button>
+                )}
+                {canImportExcel && (
+                  <Button onClick={handleImportExcel} size="lg" variant="outline">
+                    <FileSpreadsheet className="h-4 w-4 mr-2" />
+                    {t('dbs.excelImport.entry')}
+                  </Button>
+                )}
               </div>
             )}
           </div>
@@ -110,7 +143,7 @@ export default function DbOverviewPage() {
       )}
 
       {/* Quick Actions - Has Tables */}
-      {hasTables && (
+      {showQuickActions && (
         <div className="space-y-4">
           <h2 className="text-lg font-semibold">{t('dbs.overview.quickActions')}</h2>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -134,24 +167,26 @@ export default function DbOverviewPage() {
             )}
 
             {/* View Logs Card */}
-            <Card
-              className="cursor-pointer hover:bg-accent/50 transition-colors group"
-              onClick={handleViewLogs}
-            >
-              <CardHeader>
-                <div className="flex items-start justify-between">
-                  <div className="rounded-lg bg-amber-500/10 p-2.5 mb-2">
-                    <ScrollText className="h-5 w-5 text-amber-500" />
+            {canViewOperationLogs && (
+              <Card
+                className="cursor-pointer hover:bg-accent/50 transition-colors group"
+                onClick={handleViewLogs}
+              >
+                <CardHeader>
+                  <div className="flex items-start justify-between">
+                    <div className="rounded-lg bg-amber-500/10 p-2.5 mb-2">
+                      <ScrollText className="h-5 w-5 text-amber-500" />
+                    </div>
+                    <ArrowRight className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
                   </div>
-                  <ArrowRight className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
-                </div>
-                <CardTitle className="text-base">{t('dbs.features.logs')}</CardTitle>
-                <CardDescription>{t('dbs.overview.viewLogsDesc')}</CardDescription>
-              </CardHeader>
-            </Card>
+                  <CardTitle className="text-base">{t('dbs.features.logs')}</CardTitle>
+                  <CardDescription>{t('dbs.overview.viewLogsDesc')}</CardDescription>
+                </CardHeader>
+              </Card>
+            )}
 
             {/* Create Table Card */}
-            {canManage && (
+            {canImportExcel && (
               <Card
                 className="cursor-pointer hover:bg-accent/50 transition-colors group"
                 onClick={handleImportExcel}
@@ -169,7 +204,7 @@ export default function DbOverviewPage() {
               </Card>
             )}
 
-            {canManage && (
+            {canManageSchema && (
               <Card
                 className="cursor-pointer hover:bg-accent/50 transition-colors group"
                 onClick={handleOpenCreate}

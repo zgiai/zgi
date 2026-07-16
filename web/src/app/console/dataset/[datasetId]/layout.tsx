@@ -6,8 +6,6 @@ import { useDataset } from '@/hooks/dataset/use-datasets';
 import { useT } from '@/i18n';
 import { FileText, Search, Cog, ShieldAlert, Network } from 'lucide-react';
 import { getSidebarCollapsed, saveSidebarCollapsed } from '@/utils/ui-local';
-import { useAvailableModels } from '@/hooks/model/use-model';
-import { useIsInitialized } from '@/store/auth-store';
 import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
 import { WorkspaceMismatchGuard } from '@/components/common/workspace-mismatch-guard';
 import { ICON_BG } from '@/lib/config';
@@ -17,28 +15,41 @@ import {
   type ResourceSidebarNavItem,
 } from '@/components/common/resource-sidebar';
 import { IconPreview } from '@/components/common/icon-input/icon-preview';
+import {
+  KNOWLEDGE_BASE_PERMISSION_ACTIONS,
+  KNOWLEDGE_BASE_VISIBLE_PERMISSION_CODES,
+} from '@/constants/permissions';
+import { useContextualAIChat } from '@/components/aichat/contextual';
 
 export default function DatasetDetailLayout({ children }: { children: React.ReactNode }) {
-  function DatasetModelsPreloader() {
-    useAvailableModels({ use_case: 'text-chat' });
-    useAvailableModels({ use_case: 'embedding' });
-    useAvailableModels({ use_case: 'rerank' });
-    return null;
-  }
-  const isAuthReady = useIsInitialized();
   const { datasetId } = useParams<{ datasetId: string }>();
   const pathname = usePathname();
+  const t = useT();
+  const { isOpen: isContextualAIChatOpen } = useContextualAIChat();
+
+  // Permission checking
+  const { hasAnyPermission, isLoading: isPermissionsLoading } = useAccountPermissions();
+  const canView = hasAnyPermission(KNOWLEDGE_BASE_VISIBLE_PERMISSION_CODES);
+  const canViewDocuments = hasAnyPermission([
+    ...KNOWLEDGE_BASE_PERMISSION_ACTIONS.documentView,
+    ...KNOWLEDGE_BASE_PERMISSION_ACTIONS.documentCreate,
+    ...KNOWLEDGE_BASE_PERMISSION_ACTIONS.documentUpdate,
+    ...KNOWLEDGE_BASE_PERMISSION_ACTIONS.documentDelete,
+    ...KNOWLEDGE_BASE_PERMISSION_ACTIONS.indexManage,
+  ]);
+  const canUseRetrievalTest = hasAnyPermission(KNOWLEDGE_BASE_PERMISSION_ACTIONS.retrievalTest);
+  const canViewGraph = hasAnyPermission([
+    ...KNOWLEDGE_BASE_PERMISSION_ACTIONS.graphView,
+    ...KNOWLEDGE_BASE_PERMISSION_ACTIONS.graphManage,
+  ]);
+
   const { data, isLoading } = useDataset(datasetId, {
+    enabled: canView,
     // Refetch periodically to update available_document_count when documents finish indexing
     refetchInterval: 10000,
     refetchIntervalInBackground: false,
   });
-  const t = useT();
-
-  // Permission checking
-  const { hasPermission, isLoading: isPermissionsLoading } = useAccountPermissions();
-  const canView = hasPermission('knowledge_base.view');
-  const canManage = hasPermission('knowledge_base.manage');
+  const canOpenSettings = hasAnyPermission([...KNOWLEDGE_BASE_PERMISSION_ACTIONS.update]);
 
   // Get dataset details for conditional rendering
   const dataset = data?.data;
@@ -61,21 +72,26 @@ export default function DatasetDetailLayout({ children }: { children: React.Reac
 
   // Dynamic nav items based on permissions and feature flags
   const navItems: ResourceSidebarNavItem[] = React.useMemo(() => {
-    const items: ResourceSidebarNavItem[] = [
-      {
+    const items: ResourceSidebarNavItem[] = [];
+
+    if (canViewDocuments) {
+      items.push({
         title: t('datasets.documentsTitle'),
         href: `/console/dataset/${datasetId}/documents`,
         icon: FileText,
-      },
-      {
+      });
+    }
+
+    if (canUseRetrievalTest) {
+      items.push({
         title: t('datasets.hitTestingTitle'),
         href: `/console/dataset/${datasetId}/hit-testing`,
         icon: Search,
-      },
-    ];
+      });
+    }
 
     // Only show Knowledge Graph when graph flow is enabled
-    if (isGraphEnabled) {
+    if (isGraphEnabled && canViewGraph) {
       items.push({
         title: t('datasets.knowledgeGraphTitle'),
         href: `/console/dataset/${datasetId}/graph`,
@@ -83,8 +99,8 @@ export default function DatasetDetailLayout({ children }: { children: React.Reac
       });
     }
 
-    // Only show settings when user has manage permission
-    if (canManage) {
+    // Only show settings when user can change dataset-level configuration.
+    if (canOpenSettings) {
       items.push({
         title: t('datasets.settingsTitle'),
         href: `/console/dataset/${datasetId}/settings`,
@@ -93,7 +109,15 @@ export default function DatasetDetailLayout({ children }: { children: React.Reac
     }
 
     return items;
-  }, [datasetId, canManage, isGraphEnabled, t]);
+  }, [
+    canOpenSettings,
+    canUseRetrievalTest,
+    canViewDocuments,
+    canViewGraph,
+    datasetId,
+    isGraphEnabled,
+    t,
+  ]);
 
   // Access denied state
   if (!isPermissionsLoading && !canView) {
@@ -126,6 +150,7 @@ export default function DatasetDetailLayout({ children }: { children: React.Reac
       <div className="flex h-full bg-background min-w-0">
         <ResourceSidebar
           isCollapsed={isCollapsed}
+          temporarilyCollapsed={isContextualAIChatOpen}
           onToggleCollapse={toggleCollapse}
           expandLabel={t('navigation.expand')}
           collapseLabel={t('navigation.collapse')}
@@ -175,7 +200,6 @@ export default function DatasetDetailLayout({ children }: { children: React.Reac
           </div>
           <div className="flex-1 overflow-hidden">
             <div className="h-full overflow-y-auto" id="dataset-content-area">
-              {isAuthReady && <DatasetModelsPreloader />}
               <div className="h-full">{children}</div>
             </div>
           </div>

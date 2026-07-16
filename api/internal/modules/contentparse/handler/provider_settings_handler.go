@@ -6,6 +6,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/modules/contentparse/service"
+	"github.com/zgiai/zgi/api/middleware"
 	"github.com/zgiai/zgi/api/pkg/response"
 )
 
@@ -19,8 +20,11 @@ func NewProviderSettingsHandler(service service.ProviderSettingsService) *Provid
 
 func (h *ProviderSettingsHandler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.GET("/provider-settings", h.List)
-	rg.PUT("/provider-settings/:provider_key", h.Upsert)
-	rg.POST("/provider-settings/:provider_key/check", h.Check)
+
+	admin := rg.Group("/provider-settings")
+	admin.Use(middleware.EnterpriseAdminOrOwnerRequired())
+	admin.PUT("/:provider_key", h.Upsert)
+	admin.POST("/:provider_key/check", h.Check)
 }
 
 func (h *ProviderSettingsHandler) List(c *gin.Context) {

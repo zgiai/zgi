@@ -1,28 +1,33 @@
 # Content Parse Capability
 
-This package is the non-invasive foundation for a platform parsing capability.
+This package is the platform parsing capability shared by interactive parsing,
+data ingestion, and runtime file-content consumers.
 
 Goals:
 
 1. Give `dataset`, `chat`, and `file_process` a stable contract boundary.
 2. Hide concrete parsing engines such as Hyperparse SDK or remote parsing APIs.
-3. Introduce a reusable capability layer without changing any current business flow.
+3. Keep provider selection, health checks, request-scoped configuration, and
+   fallback execution consistent across business flows.
 
-Non-goals in this first step:
-
-1. No route registration.
-2. No persistence changes.
-3. No existing dataset indexing path rewired to this capability yet.
-
-Current rollout shape:
+Runtime shape:
 
 ```text
-modules/* -> internal/contracts.ContentParseService -> capabilities/contentparse -> adapters/*
+playground / data library / datasource / chat / agent file tools
+  -> internal/contracts.RoutedContentParseService
+  -> request-scoped provider catalog
+  -> routing planner
+  -> provider adapters with fallback
 ```
 
-The first adapter is `hyperparse_sdk`, which keeps all direct Hyperparse SDK
-knowledge inside the capability layer. Existing modules can adopt this later
-without importing engine-specific packages.
+`hyperparse_sdk` keeps direct parser-engine knowledge inside the capability
+layer. Runtime consumers should call `ParseWithRouting` when the routed
+interface is available. `Parse` remains as a compatibility boundary for
+callers that intentionally select an engine directly.
+
+The workflow `ContentExtractor` preserves upload-text caching, size limits, and
+media handling around this capability. Its legacy `ExtractProcessor` path is a
+last-resort compatibility fallback, not the primary routing mechanism.
 
 Chunking architecture foundation:
 
@@ -40,15 +45,12 @@ processors yet. It exists so downstream modules can adopt one canonical
 intermediate representation instead of depending directly on parser-specific
 fields or ad-hoc metadata maps.
 
-Provider-policy routing foundation:
+Provider-policy routing:
 
 ```text
 ParseRequest
   -> routing.DefaultPlanner
-  -> RoutePlan (shadow-first)
-  -> future provider-policy execution
+  -> request-scoped provider catalog
+  -> RoutePlan
+  -> provider-policy execution with fallback
 ```
-
-The planner is intentionally introduced ahead of any traffic cutover so route
-plans can be generated, inspected, and compared without changing current parse
-execution behavior.

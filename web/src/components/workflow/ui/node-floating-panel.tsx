@@ -72,7 +72,9 @@ export function NodeFloatingPanel({ temporarilyHidden = false }: NodeFloatingPan
   // Derive read-only status from workflow mode and permission to gate all edits
   const mode = useWorkflowStore.use.mode();
   const canEdit = useWorkflowStore.use.canEdit();
+  const canDebug = useWorkflowStore.use.canDebug();
   const isReadOnly = mode === 'history' || !canEdit;
+  const isNodeDebugReadOnly = mode === 'history' || !canDebug;
 
   // Sticky selection: keep showing last selected node while performing non-explicit deselection
   const [activeNodeId, setActiveNodeId] = useState<string | null>(null);
@@ -454,7 +456,7 @@ export function NodeFloatingPanel({ temporarilyHidden = false }: NodeFloatingPan
               node={selectedNode}
               nodes={nodes}
               edges={edges}
-              readOnly={isReadOnly}
+              readOnly={isNodeDebugReadOnly}
             />
             {/* Type-specific settings */}
             <div

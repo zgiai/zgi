@@ -41,6 +41,7 @@ func (s *agentsService) GenerateAgentSuggestedQuestions(ctx context.Context, age
 		systemPrompt = cfgResp.SystemPrompt
 	}
 	homeTitle := normalizeAgentHomeTitle(firstNonEmpty(req.HomeTitle, cfgResp.HomeTitle))
+	openingStatement := normalizeAgentOpeningStatement(firstNonEmpty(req.OpeningStatement, cfgResp.OpeningStatement, homeTitle))
 
 	capabilities := make([]suggestedquestions.CapabilitySummary, 0, len(req.Skills)+len(req.KnowledgeRefs))
 	for _, skill := range req.Skills {
@@ -75,7 +76,7 @@ func (s *agentsService) GenerateAgentSuggestedQuestions(ctx context.Context, age
 			AgentName:         ag.Name,
 			AgentDescription:  cleanAgentContextText(ag.Description, 300),
 			WorkflowType:      "AGENT",
-			OpeningStatement:  homeTitle,
+			OpeningStatement:  cleanAgentContextText(openingStatement, 1200),
 			ExistingQuestions: normalizeSuggestedQuestions(req.ExistingQuestions),
 			LLMPrompts: []suggestedquestions.PromptSummary{{
 				NodeTitle: "System prompt",

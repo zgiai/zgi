@@ -119,6 +119,7 @@ export interface DatasetFileRef {
   asset_id: string;
   file_id: string;
   file_name: string;
+  source_file_available: boolean;
   processing_status: string;
   generation_no: number;
   dataset_document_id?: string;

@@ -21,6 +21,8 @@ import { AIChatShell, type AIChatModelValue } from '@/components/chat/variants/a
 import type { AIChatUploadScope } from '@/components/chat/variants/aichat/input-area';
 import type { AIChatController } from '@/components/chat/controllers/aichat-controller';
 import type { OpeningGuideBrand } from '@/components/chat/utils/opening-guide-brand';
+import type { AIChatRuntimeSurface } from '@/services/types/aichat';
+import type { ModelUseCase } from '@/services/types/model';
 
 interface SingleTestVariantProps {
   mode: 'singleTest';
@@ -125,6 +127,8 @@ interface AIChatVariantProps {
   beforeSend?: () => boolean | Promise<boolean>;
   variant?: 'full' | 'embedded';
   showModelSelector?: boolean;
+  modelUseCase?: ModelUseCase;
+  preferredModelUseCase?: ModelUseCase;
   requireModel?: boolean;
   showMemoryToggle?: boolean;
   forcedUseMemory?: boolean;
@@ -133,6 +137,7 @@ interface AIChatVariantProps {
   showFileLibraryPicker?: boolean;
   allowWorkspaceSwitch?: boolean;
   homeBrand?: React.ReactNode;
+  openingGuideBrand?: OpeningGuideBrand;
   homeTitle?: string;
   homeDescription?: string;
   suggestions?: string[];
@@ -150,7 +155,9 @@ interface AIChatVariantProps {
   onStartNewConversation?: () => void;
   showAssistantModelMeta?: boolean;
   surface?: 'aichat' | 'agent-draft' | 'agent-webapp';
+  runtimeSurface?: AIChatRuntimeSurface;
   themeColor?: string;
+  enableToolGovernance?: boolean;
 }
 
 type ChatProps =

@@ -226,14 +226,14 @@ export function MarkdownImage({
 
         <DialogContent
           showCloseButton={false}
-          className="max-w-screen-lg w-auto h-auto p-0 border-none bg-transparent shadow-none"
+          className="w-fit min-w-64 max-w-[90vw] overflow-visible border-none bg-transparent p-0 shadow-none"
         >
           <DialogTitle className="sr-only">{t('chat.markdownImage.previewTitle')}</DialogTitle>
-          <div className="relative flex items-center justify-center">
+          <div className="relative flex min-w-64 items-center justify-center">
             <img
               src={blobUrl || src}
               alt={alt}
-              className="max-w-[90vw] max-h-[85vh] object-contain rounded-lg shadow-2xl"
+              className="max-h-[85vh] min-w-64 max-w-[90vw] rounded-lg object-contain shadow-2xl"
             />
             <div className="absolute -top-12 right-0 flex gap-2">
               <Button

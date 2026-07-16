@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/tool_file"
+
 	"github.com/stretchr/testify/require"
 )
 
@@ -289,4 +291,10 @@ func TestBuildChartFilenameAddsSVGExtension(t *testing.T) {
 	require.Equal(t, "score-radar.svg", buildChartFilename("score-radar", ".svg"))
 	require.Equal(t, "score-radar.svg", buildChartFilename("score-radar.pdf", ".svg"))
 	require.Equal(t, "chart.svg", buildChartFilename("../", ".svg"))
+}
+
+func TestResolveChartFileLifecycleDefaultsToTemporary(t *testing.T) {
+	lifecycle, err := resolveChartFileLifecycle("")
+	require.NoError(t, err)
+	require.Equal(t, tool_file.ToolFileLifecycleTemporary, lifecycle)
 }

@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	extractcommon "github.com/zgiai/zgi/api/internal/capabilities/contentparse/engines/hyperparse/pkg/providers/common"
+	"github.com/zgiai/zgi/api/internal/capabilities/contentparse/envconfig"
 )
 
 func TestMineruToDocumentResult_Shape(t *testing.T) {
@@ -327,5 +328,34 @@ func TestSyntheticContentListFromMarkdown(t *testing.T) {
 	}
 	if doc.Chunks[1].Text != "Body text" {
 		t.Fatalf("body mismatch: %+v", doc.Chunks[1])
+	}
+}
+
+func TestRuntimeConfigForOptionsKeepsRequestCredentialsIsolated(t *testing.T) {
+	t.Setenv("MINERU_OFFICIAL_TOKEN", "global-token")
+	config := runtimeConfigForOptions(extractcommon.ParseOptions{
+		ProviderRuntime: extractcommon.ProviderRuntimeConfig{
+			ProviderKey: "mineru",
+			Mode:        "official",
+			BaseURL:     "https://tenant.example/",
+			APIKey:      "tenant-token",
+		},
+	})
+	if config.apiKey != "tenant-token" || config.baseURL != "https://tenant.example" {
+		t.Fatalf("runtime config = %#v", config)
+	}
+}
+
+func TestRuntimeConfigForOptionsUsesStaticEnvironmentWithoutRequestConfig(t *testing.T) {
+	var config runtimeConfig
+	envconfig.WithOverrides(map[string]string{
+		"MINERU_MODE":              "official",
+		"MINERU_OFFICIAL_BASE_URL": "https://static-mineru.example/",
+		"MINERU_OFFICIAL_TOKEN":    "static-token",
+	}, func() {
+		config = runtimeConfigForOptions(extractcommon.ParseOptions{})
+	})
+	if config.mode != "official" || config.apiKey != "static-token" || config.baseURL != "https://static-mineru.example" {
+		t.Fatalf("runtime config = %#v", config)
 	}
 }

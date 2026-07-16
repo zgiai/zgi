@@ -126,24 +126,29 @@ func (s *llmGatewayServiceImpl) createBillingContext(
 	}
 
 	billingCtx := &BillingContext{
-		APIKeyID:          apiKey.ID,
-		OrganizationID:    shadowOrganizationID.String(),
-		QuotaSubjectType:  quotaSubjectTypeAPIKey,
-		QuotaSubjectID:    apiKey.ID,
-		ModelID:           providerSelection.Model.ID,
-		ModelSource:       providerSelection.ModelSource,
-		ModelName:         providerSelection.Model.Model,
-		ProviderID:        providerSelection.Provider.ID,
-		ProviderName:      providerSelection.Provider.Provider,
-		RouteID:           routeID,
-		ChannelID:         channelID,
-		EstimatedCredits:  estimatedCredits,
-		BillingLane:       billingLane,
-		UseSystemProvider: usageBillingLaneUsesSystemProvider(billingLane),
-		IsStreaming:       isStreaming,
-		RequestID:         requestID,
-		RequestCreatedAt:  requestCreatedAt,
-		AttemptID:         attemptID,
+		APIKeyID:             apiKey.ID,
+		OrganizationID:       shadowOrganizationID.String(),
+		QuotaSubjectType:     quotaSubjectTypeAPIKey,
+		QuotaSubjectID:       apiKey.ID,
+		ModelID:              providerSelection.Model.ID,
+		ModelSource:          providerSelection.ModelSource,
+		ModelName:            providerSelection.Model.Model,
+		ProviderID:           providerSelection.Provider.ID,
+		ProviderName:         providerSelection.Provider.Provider,
+		RouteID:              routeID,
+		ChannelID:            channelID,
+		CredentialID:         providerSelection.CredentialID,
+		CredentialGeneration: providerSelection.CredentialGeneration,
+		ChannelProvider:      providerSelection.ChannelProvider,
+		UpstreamWouldGuard:   providerSelection.UpstreamWouldGuard,
+		UpstreamHalfOpen:     providerSelection.UpstreamHalfOpen,
+		EstimatedCredits:     estimatedCredits,
+		BillingLane:          billingLane,
+		UseSystemProvider:    usageBillingLaneUsesSystemProvider(billingLane),
+		IsStreaming:          isStreaming,
+		RequestID:            requestID,
+		RequestCreatedAt:     requestCreatedAt,
+		AttemptID:            attemptID,
 	}
 
 	if appCtx != nil {
@@ -412,6 +417,7 @@ func (s *llmGatewayServiceImpl) handleProviderError(
 	attemptIdx int,
 	err error,
 ) error {
+	s.recordUpstreamProviderError(ctx, providerSelection, billingCtx, err)
 	billingCtx.Status = "error"
 	billingCtx.ErrorMessage = err.Error()
 	billingCtx.ResponseTime = responseTime
@@ -477,6 +483,7 @@ func (s *llmGatewayServiceImpl) settleChatSuccess(
 	settlement *adapter.SettlementResult,
 	responseTime int64,
 ) error {
+	s.recordUpstreamProviderSuccess(ctx, providerSelection, billingCtx)
 	decision, laneErr := s.resolveBillingDecision(providerSelection, billingCtx)
 	if laneErr != nil {
 		wrappedLaneErr := wrapBillingLaneMismatchError(laneErr)
@@ -597,6 +604,7 @@ func (s *llmGatewayServiceImpl) settleEmbeddingsSuccess(
 	settlement *adapter.SettlementResult,
 	responseTime int64,
 ) error {
+	s.recordUpstreamProviderSuccess(ctx, providerSelection, billingCtx)
 	decision, laneErr := s.resolveBillingDecision(providerSelection, billingCtx)
 	if laneErr != nil {
 		wrappedLaneErr := wrapBillingLaneMismatchError(laneErr)

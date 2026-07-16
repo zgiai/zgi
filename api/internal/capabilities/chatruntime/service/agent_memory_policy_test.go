@@ -91,6 +91,9 @@ func TestBuildUpstreamMessagesInjectsSavedAgentMemory(t *testing.T) {
 	if fakeMemory.calls != 1 {
 		t.Fatalf("agent memory calls = %d, want 1", fakeMemory.calls)
 	}
+	if fakeMemory.lastReadUser != accountID {
+		t.Fatalf("agent memory read user = %s, want scope account %s", fakeMemory.lastReadUser, accountID)
+	}
 	if len(fakeMemory.slots) != 2 || fakeMemory.slots[0].Key != "profile" || fakeMemory.slots[1].Key != "standing_instructions" {
 		t.Fatalf("agent memory slots = %#v, want enabled profile and standing_instructions", fakeMemory.slots)
 	}
@@ -100,6 +103,36 @@ func TestBuildUpstreamMessagesInjectsSavedAgentMemory(t *testing.T) {
 	}
 	if metadata["available"] != true || metadata["injected"] != true || metadata["value_count"] != 2 {
 		t.Fatalf("agent_memory metadata = %#v, want available/injected with two values", metadata)
+	}
+}
+
+func TestBuildUpstreamMessagesUsesDedicatedAgentMemoryUserID(t *testing.T) {
+	workspaceID := uuid.New()
+	agentID := uuid.New()
+	accountID := uuid.New()
+	memoryUserID := uuid.New()
+	fakeMemory := &fakeAgentMemoryContextService{}
+	parts := &chatRequestParts{
+		Query:                "hello",
+		SystemPrompt:         "You are a test agent.",
+		AgentMemoryEnabled:   true,
+		AgentMemoryAgentID:   agentID.String(),
+		AgentMemoryUserScope: agentmemory.UserScopeEndUser,
+		AgentMemorySlots: []AgentMemorySlotConfig{
+			{Key: "profile", Description: "User profile facts", MaxChars: 800, Enabled: true},
+		},
+	}
+
+	_, err := (&service{agentMemoryService: fakeMemory}).buildUpstreamMessages(context.Background(), Scope{
+		WorkspaceID:       &workspaceID,
+		AccountID:         accountID,
+		AgentMemoryUserID: &memoryUserID,
+	}, nil, parts)
+	if err != nil {
+		t.Fatalf("buildUpstreamMessages() error = %v", err)
+	}
+	if fakeMemory.lastReadUser != memoryUserID {
+		t.Fatalf("agent memory read user = %s, want dedicated memory user %s", fakeMemory.lastReadUser, memoryUserID)
 	}
 }
 
@@ -272,6 +305,9 @@ func TestRunNativeAgentMemoryPreflightUpdateAddsSuccessNote(t *testing.T) {
 	if fakeMemory.updateCalls != 1 {
 		t.Fatalf("update calls = %d, want 1", fakeMemory.updateCalls)
 	}
+	if fakeMemory.lastUpdateUser != prepared.Scope.AccountID {
+		t.Fatalf("agent memory update user = %s, want scope account %s", fakeMemory.lastUpdateUser, prepared.Scope.AccountID)
+	}
 	if fakeMemory.lastUpdateReq.Key != "preferences" || !strings.Contains(fakeMemory.lastUpdateReq.Content, "Mermaid") {
 		t.Fatalf("last update request = %#v, want preferences Mermaid content", fakeMemory.lastUpdateReq)
 	}
@@ -300,6 +336,25 @@ func TestRunNativeAgentMemoryPreflightUpdateAddsSuccessNote(t *testing.T) {
 	}
 	if fakeLLM.requests[0].ResponseFormat != nil {
 		t.Fatalf("planner response_format = %#v, want nil without explicit JSON-mode capability", fakeLLM.requests[0].ResponseFormat)
+	}
+}
+
+func TestRunNativeAgentMemoryPreflightUsesDedicatedAgentMemoryUserID(t *testing.T) {
+	prepared := preparedAgentMemoryPlannerChat("Please remember this chart preference.")
+	memoryUserID := uuid.New()
+	prepared.Scope.AgentMemoryUserID = &memoryUserID
+	fakeMemory := &fakeAgentMemoryContextService{}
+	fakeLLM := &fakeAgentMemoryPlannerLLM{
+		response: agentMemoryPlannerResponse(`{"action":"update","key":"preferences","content":"Use Mermaid syntax directly for future chart requests.","confidence":0.91,"reason":"durable output preference"}`),
+	}
+	svc := &service{agentMemoryService: fakeMemory, llmClient: fakeLLM}
+
+	_, err := svc.runNativeAgentMemoryPreflight(context.Background(), context.Background(), prepared, nil)
+	if err != nil {
+		t.Fatalf("runNativeAgentMemoryPreflight() error = %v", err)
+	}
+	if fakeMemory.lastUpdateUser != memoryUserID {
+		t.Fatalf("agent memory update user = %s, want dedicated memory user %s", fakeMemory.lastUpdateUser, memoryUserID)
 	}
 }
 
@@ -419,7 +474,7 @@ func TestAgenticSkillLoopSystemMessageKeepsVisibleSkillFlow(t *testing.T) {
 		t.Fatalf("agentic skill loop content type = %T, want string", msg.Content)
 	}
 	assertContains(t, content, "When using skills or tools")
-	assertContains(t, content, "summarize what happened")
+	assertContains(t, content, "Summarize only user-relevant outcomes")
 	assertNotContains(t, content, "agent-memory")
 }
 
@@ -430,7 +485,7 @@ func TestEffectiveAgentSkillIDsDoesNotAutoAddAgentMemory(t *testing.T) {
 			Status:           skills.SkillStatusActive,
 			SupportedCallers: []string{runtimemodel.ConversationCallerAgent},
 		},
-	}, &RunConfig{
+	}, nil, &RunConfig{
 		AgentMemoryEnabled: true,
 		AgentMemorySlots: []AgentMemorySlotConfig{
 			{Key: "profile", Enabled: true},
@@ -456,23 +511,27 @@ func TestNativeAgentMemoryToolsDoNotExposeRead(t *testing.T) {
 }
 
 type fakeAgentMemoryContextService struct {
-	calls         int
-	slots         []agentmemory.RuntimeSlot
-	values        []agentmemory.SlotValueResponse
-	updateCalls   int
-	clearCalls    int
-	lastUpdateReq agentmemory.UpdateValueRequest
+	calls          int
+	slots          []agentmemory.RuntimeSlot
+	values         []agentmemory.SlotValueResponse
+	updateCalls    int
+	clearCalls     int
+	lastUpdateReq  agentmemory.UpdateValueRequest
+	lastReadUser   uuid.UUID
+	lastUpdateUser uuid.UUID
 }
 
-func (f *fakeAgentMemoryContextService) ReadUserMemory(_ context.Context, _, _ uuid.UUID, slots []agentmemory.RuntimeSlot, _ string, _ uuid.UUID) ([]agentmemory.SlotValueResponse, error) {
+func (f *fakeAgentMemoryContextService) ReadUserMemory(_ context.Context, _, _ uuid.UUID, slots []agentmemory.RuntimeSlot, _ string, userID uuid.UUID) ([]agentmemory.SlotValueResponse, error) {
 	f.calls++
 	f.slots = append([]agentmemory.RuntimeSlot(nil), slots...)
+	f.lastReadUser = userID
 	return f.values, nil
 }
 
-func (f *fakeAgentMemoryContextService) UpdateValue(_ context.Context, _, _ uuid.UUID, _ []agentmemory.RuntimeSlot, _ string, _ uuid.UUID, req agentmemory.UpdateValueRequest, _ agentmemory.MutationMetadata) (*agentmemory.SlotValueResponse, error) {
+func (f *fakeAgentMemoryContextService) UpdateValue(_ context.Context, _, _ uuid.UUID, _ []agentmemory.RuntimeSlot, _ string, userID uuid.UUID, req agentmemory.UpdateValueRequest, _ agentmemory.MutationMetadata) (*agentmemory.SlotValueResponse, error) {
 	f.updateCalls++
 	f.lastUpdateReq = req
+	f.lastUpdateUser = userID
 	return &agentmemory.SlotValueResponse{SlotResponse: agentmemory.SlotResponse{Key: req.Key}, Content: req.Content}, nil
 }
 

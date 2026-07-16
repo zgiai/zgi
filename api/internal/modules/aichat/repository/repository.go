@@ -295,8 +295,27 @@ func (r *conversationRepository) CompleteRootReplacement(ctx context.Context, id
 }
 
 func (r *conversationRepository) UpdateAfterMessage(ctx context.Context, id uuid.UUID, leafMessageID uuid.UUID) error {
-	result := r.db.WithContext(ctx).Model(&aichatmodel.Conversation{}).
-		Where("id = ? AND deleted_at IS NULL", id).
+	var message aichatmodel.Message
+	if err := r.db.WithContext(ctx).
+		Select("id", "parent_id").
+		Where("id = ? AND deleted_at IS NULL", leafMessageID).
+		Take(&message).Error; err != nil {
+		return fmt.Errorf("failed to get aichat message parent before conversation update: %w", err)
+	}
+
+	query := r.db.WithContext(ctx).Model(&aichatmodel.Conversation{}).
+		Where("id = ? AND deleted_at IS NULL", id)
+	if message.ParentID != nil {
+		query = query.Where(
+			"(current_leaf_message_id = ? OR current_leaf_message_id = ?)",
+			leafMessageID,
+			*message.ParentID,
+		)
+	} else {
+		query = query.Where("(current_leaf_message_id = ? OR current_leaf_message_id IS NULL)", leafMessageID)
+	}
+
+	result := query.
 		UpdateColumns(map[string]interface{}{
 			"current_leaf_message_id": leafMessageID,
 			"runtime_status":          aichatmodel.ConversationRuntimeStatusIdle,
@@ -307,7 +326,19 @@ func (r *conversationRepository) UpdateAfterMessage(ctx context.Context, id uuid
 		return fmt.Errorf("failed to update aichat conversation after message: %w", result.Error)
 	}
 	if result.RowsAffected == 0 {
-		return gorm.ErrRecordNotFound
+		fallback := r.db.WithContext(ctx).Model(&aichatmodel.Conversation{}).
+			Where("id = ? AND active_message_id = ? AND deleted_at IS NULL", id, leafMessageID).
+			UpdateColumns(map[string]interface{}{
+				"runtime_status":    aichatmodel.ConversationRuntimeStatusIdle,
+				"active_message_id": nil,
+				"dialogue_count":    gorm.Expr("dialogue_count + 1"),
+			})
+		if fallback.Error != nil {
+			return fmt.Errorf("failed to clear stale aichat conversation stream after message: %w", fallback.Error)
+		}
+		if fallback.RowsAffected == 0 {
+			return gorm.ErrRecordNotFound
+		}
 	}
 	return nil
 }

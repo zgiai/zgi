@@ -11,13 +11,17 @@ max_calls_per_turn: 5
 timeout_seconds: 10
 display:
   icon: file-search
-  category: productivity
+  category: document_processing
+  scenarios:
+    - document_handling
+    - legal_compliance
+    - business_operations
   label:
     en_US: Contract Field Extractor
     zh_Hans: 合同字段抽取
   description:
-    en_US: Extracts configured contract fields into structured results with evidence and confidence.
-    zh_Hans: 按字段清单抽取合同关键信息，并返回证据、状态和置信度。
+    en_US: Designed for contract review and ledger preparation; extracts parties, amounts, dates, obligations, and configured fields with source evidence and confidence.
+    zh_Hans: 适用于合同审阅和台账整理，可抽取主体、金额、日期、义务等指定字段，并返回原文证据和置信度。
   when_to_use:
     en_US: Use when parsed contract text needs structured field extraction or ledger-ready output.
     zh_Hans: 当已解析合同文本需要结构化抽取或生成合同台账数据时使用。

@@ -5,6 +5,8 @@ import type {
   WorkspaceManagementList,
   WorkspaceStatistics,
   WorkspaceMemberAccount,
+  WorkspaceMemberOption,
+  WorkspaceMemberOptionList,
   WorkspaceMemberRole,
   BatchAddMemberRequest,
   BatchAddMembersResponse,
@@ -39,6 +41,24 @@ class WorkspaceService extends BaseService {
     const response = await this.request<ApiResponseData<WorkspaceManagementList>>(
       'get',
       `/organizations/${organizationId}/workspaces`,
+      undefined,
+      { params }
+    );
+    return response.data;
+  }
+
+  // Get workspaces joined by a specific organization member
+  async getJoinedWorkspaces(
+    organizationId: string,
+    accountId: string,
+    params?: {
+      page?: number;
+      limit?: number;
+    }
+  ): Promise<WorkspaceManagementList> {
+    const response = await this.request<ApiResponseData<WorkspaceManagementList>>(
+      'get',
+      `/organizations/${organizationId}/joined-workspaces/${accountId}`,
       undefined,
       { params }
     );
@@ -148,6 +168,34 @@ class WorkspaceService extends BaseService {
     return response.data;
   }
 
+  // Get workspace member options for business pickers without role/permission management fields
+  async getWorkspaceMemberOptions(
+    organizationId: string,
+    workspaceId: string,
+    params?: { page?: number; limit?: number; keyword?: string }
+  ): Promise<WorkspaceMemberOptionList> {
+    const response = await this.request<ApiResponseData<WorkspaceMemberOptionList>>(
+      'get',
+      `/organizations/${organizationId}/workspaces/${workspaceId}/member-options`,
+      undefined,
+      { params }
+    );
+    return response.data;
+  }
+
+  // Get a single workspace member option for business picker display hydration
+  async getWorkspaceMemberOption(
+    organizationId: string,
+    workspaceId: string,
+    memberId: string
+  ): Promise<WorkspaceMemberOption> {
+    const response = await this.request<ApiResponseData<WorkspaceMemberOption>>(
+      'get',
+      `/organizations/${organizationId}/workspaces/${workspaceId}/member-options/${memberId}`
+    );
+    return response.data;
+  }
+
   // Get workspace member detail
   async getWorkspaceMember(
     organizationId: string,
@@ -219,6 +267,21 @@ class WorkspaceService extends BaseService {
       'put',
       `/organizations/${organizationId}/workspaces/${workspaceId}/members/${memberId}/update-role`,
       { role_id }
+    );
+    return response.data;
+  }
+
+  // Update workspace member direct permissions
+  async updateWorkspaceMemberPermissions(
+    organizationId: string,
+    workspaceId: string,
+    memberId: string,
+    permissions: string[]
+  ) {
+    const response = await this.request<ApiResponseData<{ result: 'success' }>>(
+      'put',
+      `/organizations/${organizationId}/workspaces/${workspaceId}/members/${memberId}/permissions`,
+      { permissions }
     );
     return response.data;
   }

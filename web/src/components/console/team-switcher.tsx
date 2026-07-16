@@ -3,7 +3,7 @@
 import * as React from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
-import { ChevronsUpDown, Check, Loader2, Settings, Users } from 'lucide-react';
+import { Building2, ChevronsUpDown, Check, Loader2, Settings, Users } from 'lucide-react';
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
 import {
@@ -15,11 +15,13 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { useJoinedWorkspaces } from '@/hooks/workspace/use-joined-workspaces';
+import { useEnterOrganizationMode } from '@/hooks/workspace/use-enter-organization-mode';
 import { useUpdateCurrentWorkspace } from '@/hooks/workspace/use-update-current-workspace';
 import { useCurrentUser } from '@/store/auth-store';
 import { useWorkspaceStore } from '@/store';
 import { canManageOrganizationWorkspaces } from '@/utils/workspace-access';
 import { getWorkspaceSwitchRedirect } from '@/utils/workspace-route-reset';
+import { getConsoleRouteAccess } from '@/routes/access';
 import type { Workspace } from '@/store';
 
 interface WorkspaceSwitcherProps {
@@ -41,6 +43,8 @@ export function WorkspaceSwitcher({ isCollapsed }: WorkspaceSwitcherProps) {
   const currentWorkspace = useWorkspaceStore.use.currentWorkspace();
   const contextStatus = useWorkspaceStore.use.contextStatus();
   const { mutate: updateWorkspace } = useUpdateCurrentWorkspace();
+  const { mutate: enterOrganizationMode, isPending: isEnteringOrganizationMode } =
+    useEnterOrganizationMode();
 
   // Fetch joined workspaces from API and sync to store
   const { isLoading, isFetching } = useJoinedWorkspaces({ syncToStore: true });
@@ -52,8 +56,28 @@ export function WorkspaceSwitcher({ isCollapsed }: WorkspaceSwitcherProps) {
     return workspace.name === 'Default Workspace' ? t('defaultWorkspace') : workspace.name;
   };
 
-  const displayName = getWorkspaceDisplayName(currentWorkspace) || t('switchWorkspace');
   const hasReadyWorkspace = contextStatus === 'ready' && !!currentWorkspace;
+  const isOrganizationMode = contextStatus === 'workspace_required' && !currentWorkspace;
+  const displayName = hasReadyWorkspace
+    ? getWorkspaceDisplayName(currentWorkspace)
+    : isOrganizationMode
+      ? tCommon('workspaceSelector.organizationMode')
+      : t('switchWorkspace');
+
+  const handleEnterOrganizationMode = () => {
+    if (isOrganizationMode || isEnteringOrganizationMode) {
+      return;
+    }
+
+    const shouldRedirect = getConsoleRouteAccess(pathname).requiresWorkspace;
+    enterOrganizationMode(undefined, {
+      onSuccess: () => {
+        if (shouldRedirect) {
+          router.replace('/console/work/app');
+        }
+      },
+    });
+  };
 
   const handleSelectWorkspace = (workspace: Workspace) => {
     if (hasReadyWorkspace && currentWorkspace?.id === workspace.id) {
@@ -91,7 +115,7 @@ export function WorkspaceSwitcher({ isCollapsed }: WorkspaceSwitcherProps) {
               </div>
             ) : (
               <div className="flex h-8 w-8 items-center justify-center rounded-md bg-background text-muted-foreground shrink-0">
-                <Users size={16} />
+                {isOrganizationMode ? <Building2 size={16} /> : <Users size={16} />}
               </div>
             )}
             {!isCollapsed && (
@@ -115,6 +139,27 @@ export function WorkspaceSwitcher({ isCollapsed }: WorkspaceSwitcherProps) {
         }}
       >
         <DropdownMenuLabel className="text-xs">{t('switchWorkspace')}</DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem
+          onClick={handleEnterOrganizationMode}
+          disabled={isEnteringOrganizationMode}
+          className="flex items-center justify-between cursor-pointer text-xs"
+          title={tCommon('workspaceSelector.organizationMode')}
+        >
+          <div className="flex items-center gap-1.5 w-0 grow">
+            <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-muted">
+              {isEnteringOrganizationMode ? (
+                <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
+              ) : (
+                <Building2 className="h-3 w-3 text-muted-foreground" />
+              )}
+            </div>
+            <span className="truncate text-[11px] break-all text-ellipsis">
+              {tCommon('workspaceSelector.organizationMode')}
+            </span>
+          </div>
+          {isOrganizationMode && <Check size={14} className="text-primary" />}
+        </DropdownMenuItem>
         <DropdownMenuSeparator />
         <div
           className="overflow-y-auto pr-1"

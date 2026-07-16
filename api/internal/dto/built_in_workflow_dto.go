@@ -16,3 +16,10 @@ type BuiltInWorkflowDTO struct {
 	Icon        *string   `json:"icon"`        // Icon configuration (JSON string)
 	IconType    *string   `json:"icon_type"`   // Icon type (e.g., "text", "image")
 }
+
+type BuiltInWorkflowRuntimeSurfaceAuthorizationResponse struct {
+	Scenario       string                             `json:"scenario"`
+	AgentID        string                             `json:"agent_id"`
+	OrganizationID string                             `json:"organization_id"`
+	Surfaces       []AgentRuntimeSurfaceAuthorization `json:"surfaces"`
+}

@@ -7,13 +7,14 @@ import (
 )
 
 const (
-	MessageStatusPending         = "pending"
-	MessageStatusStreaming       = "streaming"
-	MessageStatusWaitingApproval = "waiting_approval"
-	MessageStatusWaitingQuestion = "waiting_question"
-	MessageStatusCompleted       = "completed"
-	MessageStatusError           = "error"
-	MessageStatusStopped         = "stopped"
+	MessageStatusPending             = "pending"
+	MessageStatusStreaming           = "streaming"
+	MessageStatusWaitingApproval     = "waiting_approval"
+	MessageStatusWaitingQuestion     = "waiting_question"
+	MessageStatusWaitingClientAction = "waiting_client_action"
+	MessageStatusCompleted           = "completed"
+	MessageStatusError               = "error"
+	MessageStatusStopped             = "stopped"
 
 	MessageBillingReasonSourceAIChat = "aichat"
 )
@@ -33,6 +34,8 @@ type Message struct {
 	ModelParameters     map[string]interface{} `gorm:"type:jsonb;serializer:json;not null;default:'{}'" json:"model_parameters,omitempty"`
 	Metadata            map[string]interface{} `gorm:"type:jsonb;serializer:json;not null;default:'{}'" json:"metadata,omitempty"`
 	SourceMessageID     *uuid.UUID             `gorm:"type:uuid;uniqueIndex:idx_chat_runtime_messages_source_message" json:"source_message_id,omitempty"`
+	RuntimeRunID        *uuid.UUID             `gorm:"type:uuid" json:"-"`
+	RuntimeHeartbeatAt  *time.Time             `json:"-"`
 	CreatedAt           time.Time              `gorm:"not null;default:CURRENT_TIMESTAMP;index:idx_chat_runtime_messages_conversation_created,priority:2" json:"created_at"`
 	UpdatedAt           time.Time              `gorm:"not null;default:CURRENT_TIMESTAMP" json:"updated_at"`
 	DeletedAt           *time.Time             `gorm:"index" json:"deleted_at,omitempty"`

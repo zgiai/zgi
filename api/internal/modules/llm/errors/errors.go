@@ -112,7 +112,8 @@ const (
 
 	// ErrCodeNoProviderAvailable No provider available for this model
 	// HTTP 503
-	ErrCodeNoProviderAvailable = 40506
+	ErrCodeNoProviderAvailable               = 40506
+	ErrCodePrivateChannelUpstreamUnavailable = 40507
 
 	// ============================================
 	// System Errors (406xx)
@@ -270,6 +271,12 @@ var (
 	ErrNoProviderAvailable = response.ErrorCode{
 		Code:        ErrCodeNoProviderAvailable,
 		Message:     "No provider available for this model",
+		UserVisible: true,
+	}
+
+	ErrPrivateChannelUpstreamUnavailable = response.ErrorCode{
+		Code:        ErrCodePrivateChannelUpstreamUnavailable,
+		Message:     "private_channel_upstream_unavailable",
 		UserVisible: true,
 	}
 

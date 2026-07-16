@@ -72,12 +72,15 @@ func TestPlaygroundParseSessionCacheEvictsLeastRecentlyUsed(t *testing.T) {
 	firstID := cache.Store(service.PlaygroundRunListFilter{}, &playgroundExecution{
 		Response: playgroundParseResponse{File: playgroundFileSummary{SHA256: "first"}},
 	})
+	time.Sleep(time.Millisecond)
 	secondID := cache.Store(service.PlaygroundRunListFilter{}, &playgroundExecution{
 		Response: playgroundParseResponse{File: playgroundFileSummary{SHA256: "second"}},
 	})
+	time.Sleep(time.Millisecond)
 	if _, ok := cache.Get(firstID, service.PlaygroundRunListFilter{}); !ok {
 		t.Fatal("expected first session to be accessible before eviction")
 	}
+	time.Sleep(time.Millisecond)
 	thirdID := cache.Store(service.PlaygroundRunListFilter{}, &playgroundExecution{
 		Response: playgroundParseResponse{File: playgroundFileSummary{SHA256: "third"}},
 	})

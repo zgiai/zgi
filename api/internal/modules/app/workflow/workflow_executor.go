@@ -37,6 +37,7 @@ type WorkflowExecutor struct {
 	contentExtractor            file.ContentExtractor
 	fileService                 interfaces.FileService
 	variableService             conversation.WorkflowConversationVariableService
+	conversationAccessService   webAppConversationAccessService
 	llmClient                   interface{} // LLM client for LLM nodes
 	toolEngine                  interface{} // Tool engine for tools nodes
 	graphFlowService            *graphflow.Service
@@ -74,6 +75,9 @@ func NewWorkflowExecutorWithRuntimeDeps(deps WorkflowExecutorDeps) *WorkflowExec
 	db := database.GetDB()
 	variableRepo := conversation.NewWorkflowConversationVariableRepository(db)
 	variableService := conversation.NewWorkflowConversationVariableService(variableRepo)
+	conversationRepo := conversation.NewAgentConversationRepository(db)
+	messageRepo := conversation.NewAgentMessageRepository(db)
+	conversationAccessService := conversation.NewAgentConversationService(conversationRepo, messageRepo)
 
 	executor := &WorkflowExecutor{
 		maxConcurrency:              graph_engine.DefaultMaxConcurrency,
@@ -82,6 +86,7 @@ func NewWorkflowExecutorWithRuntimeDeps(deps WorkflowExecutorDeps) *WorkflowExec
 		contentExtractor:            deps.ContentExtractor,
 		fileService:                 deps.FileService,
 		variableService:             variableService,
+		conversationAccessService:   conversationAccessService,
 		llmClient:                   deps.LLMClient,
 		toolEngine:                  deps.ToolEngine,
 		graphFlowService:            deps.GraphFlowService,
@@ -313,7 +318,10 @@ func (e *WorkflowExecutor) ExecuteSimpleWorkflowWithRunIDAndCallbacks(ctx contex
 	}
 
 	// 3. Create variable pool with environment and conversation variables
-	variablePool := e.createVariablePoolWithVars(inputs, environmentVarsConfig, conversationVarsConfig)
+	variablePool, err := e.createVariablePoolWithVarsForRun(ctx, inputs, environmentVarsConfig, conversationVarsConfig)
+	if err != nil {
+		return nil, err
+	}
 
 	// 4. Create runtime state
 	runtimeState := &entities.GraphRuntimeState{
@@ -459,7 +467,7 @@ func resolveVariableType(varConfig map[string]any) string {
 // Loads persisted values from database and merges with configuration defaults (database values take precedence)
 // Supports all value_type: string, number, object, boolean, array_string, array_number, array_object, array_boolean
 // Requirements: 5.2, 5.3, 5.4, 5.5
-func (e *WorkflowExecutor) buildConversationVariables(configVars []map[string]any, conversationID, appID string) []entities.Variable {
+func (e *WorkflowExecutor) buildConversationVariables(ctx context.Context, configVars []map[string]any, conversationID, appID, accountID string, enforceConversationAccess bool) ([]entities.Variable, error) {
 	logger.Debug("Building conversation variables", map[string]any{
 		"config_vars_count": len(configVars),
 		"conversation_id":   conversationID,
@@ -470,28 +478,11 @@ func (e *WorkflowExecutor) buildConversationVariables(configVars []map[string]an
 	// Requirement 5.2: Database load failures are logged but don't fail workflow
 	var persistedVars map[string]any
 	if conversationID != "" {
-		convUUID, err := uuid.Parse(conversationID)
+		loadedVars, err := e.loadWorkflowExecutorConversationVariables(ctx, conversationID, appID, accountID, enforceConversationAccess)
 		if err != nil {
-			logger.Warn("Invalid conversation ID format, using config defaults only", map[string]any{
-				"conversation_id": conversationID,
-				"error":           err.Error(),
-			})
-		} else {
-			ctx := context.Background()
-			loadedVars, err := e.variableService.LoadConversationVariables(ctx, convUUID)
-			if err != nil {
-				// Requirement 5.2: Log warning and continue with config defaults
-				logger.Warn("Failed to load persisted conversation variables, using config defaults", map[string]any{
-					"conversation_id": conversationID,
-					"error":           err.Error(),
-				})
-			} else {
-				persistedVars = loadedVars
-				logger.Debug("Loaded persisted conversation variables from database", map[string]any{
-					"count": len(persistedVars),
-				})
-			}
+			return nil, err
 		}
+		persistedVars = loadedVars
 	}
 
 	conversationVars := make([]entities.Variable, 0, len(configVars))
@@ -531,7 +522,55 @@ func (e *WorkflowExecutor) buildConversationVariables(configVars []map[string]an
 		"total_created": len(conversationVars),
 		"total_config":  len(configVars),
 	})
-	return conversationVars
+	return conversationVars, nil
+}
+
+func (e *WorkflowExecutor) loadWorkflowExecutorConversationVariables(ctx context.Context, conversationID, appID, accountID string, enforceConversationAccess bool) (map[string]any, error) {
+	conversationID = strings.TrimSpace(conversationID)
+	if conversationID == "" {
+		return nil, nil
+	}
+	convUUID, err := uuid.Parse(conversationID)
+	if err != nil {
+		if enforceConversationAccess {
+			return nil, fmt.Errorf("invalid workflow executor conversation id: %w", err)
+		}
+		logger.Warn("Invalid conversation ID format, using config defaults only", map[string]any{
+			"conversation_id": conversationID,
+			"error":           err.Error(),
+		})
+		return nil, nil
+	}
+	if enforceConversationAccess {
+		if e.conversationAccessService == nil {
+			return nil, fmt.Errorf("workflow executor conversation access service missing")
+		}
+		if err := validateWebAppConversationAccess(ctx, e.conversationAccessService, conversationID, appID, accountID); err != nil {
+			return nil, fmt.Errorf("workflow executor conversation variable access denied: %w", err)
+		}
+	}
+	if e.variableService == nil {
+		if enforceConversationAccess {
+			return nil, fmt.Errorf("workflow executor conversation variable service missing")
+		}
+		logger.Warn("Conversation variable service missing, using config defaults only", map[string]any{
+			"conversation_id": conversationID,
+		})
+		return nil, nil
+	}
+	loadedVars, err := e.variableService.LoadConversationVariables(ctx, convUUID)
+	if err != nil {
+		// Requirement 5.2: Log warning and continue with config defaults.
+		logger.Warn("Failed to load persisted conversation variables, using config defaults", map[string]any{
+			"conversation_id": conversationID,
+			"error":           err.Error(),
+		})
+		return nil, nil
+	}
+	logger.Debug("Loaded persisted conversation variables from database", map[string]any{
+		"count": len(loadedVars),
+	})
+	return loadedVars, nil
 }
 
 // saveConversationVariables saves updated conversation variables to the database
@@ -724,6 +763,19 @@ func (e *WorkflowExecutor) createVariablePool(inputs map[string]any) *entities.V
 
 // createVariablePoolWithVars creates variable pool with environment and conversation variables
 func (e *WorkflowExecutor) createVariablePoolWithVars(inputs map[string]any, envVarsConfig []map[string]any, conversationVarsConfig []map[string]any) *entities.VariablePool {
+	variablePool, err := e.createVariablePoolWithVarsScoped(context.Background(), inputs, envVarsConfig, conversationVarsConfig, false)
+	if err != nil {
+		logger.Warn("workflow variable pool creation fell back to empty conversation variables", "error", err)
+		variablePool, _ = e.createVariablePoolWithVarsScoped(context.Background(), inputs, envVarsConfig, nil, false)
+	}
+	return variablePool
+}
+
+func (e *WorkflowExecutor) createVariablePoolWithVarsForRun(ctx context.Context, inputs map[string]any, envVarsConfig []map[string]any, conversationVarsConfig []map[string]any) (*entities.VariablePool, error) {
+	return e.createVariablePoolWithVarsScoped(ctx, inputs, envVarsConfig, conversationVarsConfig, true)
+}
+
+func (e *WorkflowExecutor) createVariablePoolWithVarsScoped(ctx context.Context, inputs map[string]any, envVarsConfig []map[string]any, conversationVarsConfig []map[string]any, enforceConversationAccess bool) (*entities.VariablePool, error) {
 	logger.Debug("workflow variable pool creation started",
 		zap.Int("input_count", len(inputs)),
 		zap.Int("environment_variables_count", len(envVarsConfig)),
@@ -813,8 +865,12 @@ func (e *WorkflowExecutor) createVariablePoolWithVars(inputs map[string]any, env
 		// Extract conversationID and appID from system variables
 		conversationID := systemVariables.ConversationID
 		appID := systemVariables.AppID
+		accountID := systemVariables.UserID
 
-		conversationVars := e.buildConversationVariables(conversationVarsConfig, conversationID, appID)
+		conversationVars, err := e.buildConversationVariables(ctx, conversationVarsConfig, conversationID, appID, accountID, enforceConversationAccess)
+		if err != nil {
+			return nil, err
+		}
 		variablePool.ConversationVariables = conversationVars
 	}
 
@@ -823,7 +879,7 @@ func (e *WorkflowExecutor) createVariablePoolWithVars(inputs map[string]any, env
 	variablePool.VariableDictionary = make(map[string]map[string]entities.Variable)
 	variablePool.Initialize()
 
-	return variablePool
+	return variablePool, nil
 }
 
 // getWorkflowStatus gets workflow status

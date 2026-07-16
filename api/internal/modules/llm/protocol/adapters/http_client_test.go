@@ -4,9 +4,11 @@ import (
 	"context"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/zgiai/zgi/api/internal/modules/llm/internal/urlguard"
 )
@@ -34,6 +36,29 @@ func TestHTTPClientRejectsDomainResolvingToPrivateIP(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "blocked unsafe target") {
 		t.Fatalf("DoRequest error = %q, want unsafe target rejection", err.Error())
+	}
+}
+
+func TestHTTPClientDoesNotRetryTerminalPlatformChannelError(t *testing.T) {
+	requestCount := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requestCount++
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = w.Write([]byte(`{"error":{"message":"Platform model service is temporarily unavailable","type":"server_error","code":"platform_channel_unavailable"}}`))
+	}))
+	defer server.Close()
+
+	client := NewHTTPClientWithOptions(time.Second, 3, HTTPClientOptions{})
+	response, err := client.DoRequestDetailed(context.Background(), http.MethodPost, server.URL, nil, map[string]interface{}{})
+	if err != nil {
+		t.Fatalf("DoRequestDetailed() error = %v, want structured response", err)
+	}
+	if response.StatusCode != http.StatusBadGateway {
+		t.Fatalf("status = %d, want %d", response.StatusCode, http.StatusBadGateway)
+	}
+	if requestCount != 1 {
+		t.Fatalf("request count = %d, want 1 terminal attempt", requestCount)
 	}
 }
 

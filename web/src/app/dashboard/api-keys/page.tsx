@@ -39,18 +39,30 @@ import type { ApiKeyItem } from '@/services/types/apikey';
 import { Pagination } from '@/components/ui/pagination';
 import { formatDate } from '@/utils/format';
 
-/**
- * Get status badge variant
- */
-function getStatusVariant(status?: string): 'default' | 'secondary' | 'destructive' | 'outline' {
-  switch (status) {
-    case 'active':
-      return 'default';
-    case 'inactive':
-      return 'secondary';
-    default:
-      return 'outline';
+const TABLE_COLUMN_COUNT = 10;
+
+type ApiKeyListStatus = ApiKeyStatus | 'expired' | 'exhausted';
+
+function getStatusMeta(key: ApiKeyItem): {
+  label: ApiKeyListStatus;
+  variant: 'default' | 'secondary' | 'destructive' | 'outline';
+} {
+  if (key.status !== ApiKeyStatus.Active) {
+    return {
+      label: key.status,
+      variant: key.status === ApiKeyStatus.Inactive ? 'secondary' : 'outline',
+    };
   }
+
+  if (key.expires_at && Date.parse(key.expires_at) <= Date.now()) {
+    return { label: 'expired', variant: 'destructive' };
+  }
+
+  if (key.quota_limit != null && key.remain_quota <= 0) {
+    return { label: 'exhausted', variant: 'destructive' };
+  }
+
+  return { label: key.status, variant: 'default' };
 }
 
 export default function ApiKeysPage(): JSX.Element {
@@ -202,15 +214,16 @@ export default function ApiKeysPage(): JSX.Element {
 
       <div className="border rounded-lg overflow-hidden">
         {isLoading && filtered.length === 0 ? (
-          <Table>
+          <Table className="min-w-[1180px]">
             <TableHeader>
               <TableRow>
-                <TableHead className="w-[240px]">{t('table.name')}</TableHead>
-                <TableHead className="w-[220px]">{t('table.key')}</TableHead>
+                <TableHead className="w-[180px]">{t('table.name')}</TableHead>
                 <TableHead className="w-[100px]">{t('table.status')}</TableHead>
-                <TableHead className="w-[100px]">{t('table.usedQuota')}</TableHead>
-                <TableHead className="w-[100px]">{t('table.remainQuota')}</TableHead>
+                <TableHead className="w-[220px]">{t('table.key')}</TableHead>
+                <TableHead className="w-[150px]">{t('table.quotaUsage')}</TableHead>
+                <TableHead className="w-[150px]">{t('table.modelLimits')}</TableHead>
                 <TableHead className="w-[160px]">{t('table.createdAt')}</TableHead>
+                <TableHead className="w-[160px]">{t('table.accessedAt')}</TableHead>
                 <TableHead className="w-[160px]">{t('table.expiresAt')}</TableHead>
                 <TableHead className="w-[80px] text-right">{t('table.enabled')}</TableHead>
                 <TableHead className="w-[60px] text-right">{t('table.actions')}</TableHead>
@@ -223,19 +236,22 @@ export default function ApiKeysPage(): JSX.Element {
                     <Skeleton className="h-4 w-32" />
                   </TableCell>
                   <TableCell>
+                    <Skeleton className="h-5 w-14 rounded-full" />
+                  </TableCell>
+                  <TableCell>
                     <div className="flex items-center gap-2">
                       <Skeleton className="h-6 w-36 rounded" />
                       <Skeleton className="h-6 w-6 rounded" />
                     </div>
                   </TableCell>
                   <TableCell>
-                    <Skeleton className="h-5 w-14 rounded-full" />
+                    <Skeleton className="h-4 w-24" />
                   </TableCell>
                   <TableCell>
-                    <Skeleton className="h-4 w-8" />
+                    <Skeleton className="h-5 w-28" />
                   </TableCell>
                   <TableCell>
-                    <Skeleton className="h-4 w-8" />
+                    <Skeleton className="h-4 w-28" />
                   </TableCell>
                   <TableCell>
                     <Skeleton className="h-4 w-28" />
@@ -254,101 +270,151 @@ export default function ApiKeysPage(): JSX.Element {
             </TableBody>
           </Table>
         ) : (
-          <Table>
+          <Table className="min-w-[1180px]">
             <TableHeader>
               <TableRow>
-                <TableHead className="w-[240px]">{t('table.name')}</TableHead>
-                <TableHead className="w-[220px]">{t('table.key')}</TableHead>
+                <TableHead className="w-[180px]">{t('table.name')}</TableHead>
                 <TableHead className="w-[100px]">{t('table.status')}</TableHead>
-                <TableHead className="w-[100px]">{t('table.usedQuota')}</TableHead>
-                <TableHead className="w-[100px]">{t('table.remainQuota')}</TableHead>
+                <TableHead className="w-[220px]">{t('table.key')}</TableHead>
+                <TableHead className="w-[150px]">{t('table.quotaUsage')}</TableHead>
+                <TableHead className="w-[150px]">{t('table.modelLimits')}</TableHead>
                 <TableHead className="w-[160px]">{t('table.createdAt')}</TableHead>
+                <TableHead className="w-[160px]">{t('table.accessedAt')}</TableHead>
                 <TableHead className="w-[160px]">{t('table.expiresAt')}</TableHead>
                 <TableHead className="w-[80px] text-right">{t('table.enabled')}</TableHead>
                 <TableHead className="w-[60px] text-right">{t('table.actions')}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {filtered.map(key => (
-                <TableRow key={key.id} data-loading={isLoading || isFetching}>
-                  <TableCell>
-                    <div className="font-medium text-sm truncate">{key.name}</div>
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex items-center gap-2">
-                      <code className="text-xs bg-muted px-2 py-1 rounded font-mono">
-                        {key.key_masked}
-                      </code>
-                      {key.key ? (
-                        <Button
-                          variant="ghost"
-                          isIcon
-                          className="h-6 w-6"
-                          aria-label={t('actions.copy')}
-                          onClick={() => onCopyKey(key)}
-                        >
-                          {copiedId === key.id ? (
-                            <Check className="h-3 w-3 text-green-500" />
-                          ) : (
-                            <Copy className="h-3 w-3" />
-                          )}
-                        </Button>
-                      ) : null}
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <Badge variant={getStatusVariant(key.status)} className="text-xs">
-                      {t(`status.${key.status}`)}
-                    </Badge>
-                  </TableCell>
-                  <TableCell>{key.used_quota}</TableCell>
-                  <TableCell>{key.quota_limit === null ? '∞' : key.remain_quota}</TableCell>
-                  <TableCell>{formatDate(key.created_at)}</TableCell>
-                  <TableCell>
-                    {key.expires_at ? (
-                      formatDate(key.expires_at)
-                    ) : (
-                      <span className="text-muted-foreground">{t('table.noExpiration')}</span>
-                    )}
-                  </TableCell>
-                  <TableCell className="text-right">
-                    <Switch
-                      checked={key.status === 'active'}
-                      onCheckedChange={checked => onToggle(key, checked)}
-                      disabled={togglingKey === key.id}
-                      className="data-[state=checked]:bg-green-600"
-                    />
-                  </TableCell>
-                  <TableCell className="text-right">
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <Button variant="ghost" isIcon>
-                          <Ellipsis className="h-4 w-4" />
-                        </Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end" className="w-36">
+              {filtered.map(key => {
+                const statusMeta = getStatusMeta(key);
+                const modelLimits =
+                  key.model_limits_enabled && key.model_limits ? key.model_limits : [];
+
+                return (
+                  <TableRow key={key.id} data-loading={isLoading || isFetching}>
+                    <TableCell>
+                      <div className="max-w-[160px] truncate text-sm font-medium">{key.name}</div>
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant={statusMeta.variant} className="text-xs">
+                        {t(`status.${statusMeta.label}`)}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex items-center gap-2">
+                        <code className="block max-w-[180px] truncate rounded bg-muted px-2 py-1 font-mono text-xs">
+                          {key.key_masked}
+                        </code>
                         {key.key ? (
-                          <DropdownMenuItem onClick={() => onCopyKey(key)}>
-                            <Copy className="h-4 w-4 mr-2" /> {t('actions.copy')}
-                          </DropdownMenuItem>
+                          <Button
+                            variant="ghost"
+                            isIcon
+                            className="h-6 w-6"
+                            aria-label={t('actions.copy')}
+                            onClick={() => onCopyKey(key)}
+                          >
+                            {copiedId === key.id ? (
+                              <Check className="h-3 w-3 text-green-500" />
+                            ) : (
+                              <Copy className="h-3 w-3" />
+                            )}
+                          </Button>
                         ) : null}
-                        <DropdownMenuItem onClick={() => openEdit(key)}>
-                          <Pencil className="h-4 w-4 mr-2" /> {t('actions.edit')}
-                        </DropdownMenuItem>
-                        <DropdownMenuItem
-                          onClick={() => setConfirmId(key.id)}
-                          className="text-destructive"
-                        >
-                          <Trash2 className="h-4 w-4 mr-2" /> {t('actions.delete')}
-                        </DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  </TableCell>
-                </TableRow>
-              ))}
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <div className="space-y-0.5">
+                        <div className="font-medium">
+                          {key.quota_limit == null
+                            ? t('table.unlimitedQuota')
+                            : `${key.remain_quota.toLocaleString()} / ${key.quota_limit.toLocaleString()}`}
+                        </div>
+                        <div className="text-xs text-muted-foreground">
+                          {t('table.usedQuota')} {key.used_quota.toLocaleString()}
+                        </div>
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      {modelLimits.length > 0 ? (
+                        <div className="flex max-w-[140px] flex-wrap gap-1">
+                          {modelLimits.slice(0, 2).map(model => (
+                            <Badge
+                              key={model}
+                              variant="outline"
+                              title={model}
+                              className="max-w-[110px] truncate text-xs"
+                            >
+                              {model}
+                            </Badge>
+                          ))}
+                          {modelLimits.length > 2 ? (
+                            <Badge variant="outline" className="text-xs">
+                              +{modelLimits.length - 2}
+                            </Badge>
+                          ) : null}
+                        </div>
+                      ) : (
+                        <span className="text-muted-foreground">{t('table.noLimit')}</span>
+                      )}
+                    </TableCell>
+                    <TableCell>{formatDate(key.created_at)}</TableCell>
+                    <TableCell>
+                      {key.accessed_at ? (
+                        formatDate(key.accessed_at)
+                      ) : (
+                        <span className="text-muted-foreground">{t('table.neverAccessed')}</span>
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      {key.expires_at ? (
+                        formatDate(key.expires_at)
+                      ) : (
+                        <span className="text-muted-foreground">{t('table.noExpiration')}</span>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <Switch
+                        checked={key.status === 'active'}
+                        onCheckedChange={checked => onToggle(key, checked)}
+                        disabled={togglingKey === key.id}
+                        className="data-[state=checked]:bg-green-600"
+                      />
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="ghost" isIcon>
+                            <Ellipsis className="h-4 w-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" className="w-36">
+                          {key.key ? (
+                            <DropdownMenuItem onClick={() => onCopyKey(key)}>
+                              <Copy className="h-4 w-4 mr-2" /> {t('actions.copy')}
+                            </DropdownMenuItem>
+                          ) : null}
+                          <DropdownMenuItem onClick={() => openEdit(key)}>
+                            <Pencil className="h-4 w-4 mr-2" /> {t('actions.edit')}
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            onClick={() => setConfirmId(key.id)}
+                            className="text-destructive"
+                          >
+                            <Trash2 className="h-4 w-4 mr-2" /> {t('actions.delete')}
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
               {!isLoading && filtered.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={9} className="text-center text-muted-foreground py-10">
+                  <TableCell
+                    colSpan={TABLE_COLUMN_COUNT}
+                    className="text-center text-muted-foreground py-10"
+                  >
                     {t('empty')}
                   </TableCell>
                 </TableRow>

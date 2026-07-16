@@ -4,22 +4,30 @@ import (
 	"context"
 
 	"github.com/gin-gonic/gin"
+	runtimerepo "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/repository"
+	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
+	"github.com/zgiai/zgi/api/internal/modules/agentmemory"
 	"github.com/zgiai/zgi/api/internal/modules/app/agents"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/diagnosis"
 	workflow_file "github.com/zgiai/zgi/api/internal/modules/app/workflow/file"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine"
 	"github.com/zgiai/zgi/api/internal/modules/dataset/graphflow"
+	datasetservice "github.com/zgiai/zgi/api/internal/modules/dataset/service"
+	datasourceservice "github.com/zgiai/zgi/api/internal/modules/datasource/service"
 	"github.com/zgiai/zgi/api/internal/modules/llm/client"
+	llmdefaultservice "github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/service"
+	"github.com/zgiai/zgi/api/internal/modules/memory"
 	promptservice "github.com/zgiai/zgi/api/internal/modules/prompts/service"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
+	"github.com/zgiai/zgi/api/internal/modules/tools"
 	"github.com/zgiai/zgi/api/internal/util"
 	"github.com/zgiai/zgi/api/middleware"
 	"gorm.io/gorm"
 )
 
 // RegisterAPIKeyRoutes registers external API routes with API key authentication
-func RegisterAPIKeyRoutes(r *gin.RouterGroup, db *gorm.DB, accountService interfaces.AccountService, fileService interfaces.FileService, contentExtractor workflow_file.ContentExtractor, quotaService interfaces.QuotaService, enterpriseService interfaces.OrganizationService, llmClient interface{}, toolEngine interface{}, graphFlowService *graphflow.Service, promptResolver promptservice.PromptService, engineFactory *graph_engine.EngineFactory) {
+func RegisterAPIKeyRoutes(r *gin.RouterGroup, db *gorm.DB, accountService interfaces.AccountService, fileService interfaces.FileService, contentExtractor workflow_file.ContentExtractor, quotaService interfaces.QuotaService, enterpriseService interfaces.OrganizationService, llmClient client.LLMClient, toolEngine *tools.ToolEngine, toolManager *tools.ToolManager, memoryService *memory.Service, graphFlowService *graphflow.Service, promptResolver promptservice.PromptService, dataSourceService datasourceservice.DataSourceService, knowledgeRetrievalService *datasetservice.KnowledgeRetrievalService, resourcePermissionService interfaces.ResourcePermissionService, engineFactory *graph_engine.EngineFactory) {
 	// Create repositories
 	workflowRepo := workflow.NewWorkflowRepository(db)
 	workflowRunLogRepo := workflow.NewWorkflowRunLogRepository(db)
@@ -57,6 +65,28 @@ func RegisterAPIKeyRoutes(r *gin.RouterGroup, db *gorm.DB, accountService interf
 	// Create external workflow handler (kept for other endpoints)
 	externalWorkflowHandler := NewExternalWorkflowHandler(workflowService, fileService, contentExtractor, enterpriseService, quotaService, db)
 
+	agentMemoryService := agentmemory.NewService(db)
+	chatRuntimeService := runtimeservice.NewServiceWithSkillRuntime(
+		runtimerepo.NewRepositories(db),
+		llmClient,
+		nil,
+		runtimeservice.NewDatabaseModelSpecResolver(db),
+		fileService,
+		contentExtractor,
+		enterpriseService,
+		newExternalSkillRuntimeWithSandbox(toolEngine, toolManager, fileService, enterpriseService),
+		memoryService,
+		agentMemoryService,
+	)
+	var defaultModelResolver llmdefaultservice.DefaultModelResolver
+	if graphFlowService != nil {
+		defaultModelResolver = graphFlowService.DefaultModelSvc
+	}
+	agentService := agents.NewAgentsService(agentsRepo, accountService, nil, workflowService, chatRuntimeService, agentMemoryService, dataSourceService, knowledgeRetrievalService, resourcePermissionService, enterpriseService, quotaService, fileService, llmClient, defaultModelResolver, db)
+	agentHandler := agents.NewAgentsHandler(agentService, nil, accountService, enterpriseService, db, chatRuntimeService)
+	agentHandler.SetFileService(fileService)
+	agentHandler.SetWorkflowContinuationRunner(internalWorkflowHandler)
+
 	externalGroup := r.Group("/v1")
 	externalGroup.Use(middleware.APIKeyAuthMiddleware(db))
 	externalGroup.Use(middleware.APIKeyUsageLoggingMiddleware(db)) // Log API key usage
@@ -84,6 +114,16 @@ func RegisterAPIKeyRoutes(r *gin.RouterGroup, db *gorm.DB, accountService interf
 
 		// Workflow run status endpoints
 		externalGroup.GET("/workflows/runs/:run_id", externalWorkflowHandler.GetWorkflowRunDetail)
+		externalGroup.GET("/workflows/runs/:run_id/events", func(c *gin.Context) {
+			if v, exists := c.Get("api_key_info"); exists {
+				if keyInfo, ok := v.(*middleware.APIKeyInfo); ok {
+					util.SetWorkspaceScopeCompat(c, keyInfo.TenantID.String())
+					c.Set("account_id", keyInfo.ID.String())
+					c.Params = append(c.Params, gin.Param{Key: "workflow_run_id", Value: c.Param("run_id")})
+				}
+			}
+			internalWorkflowHandler.GetWorkflowRunEvents(c)
+		})
 
 		externalGroup.POST("/workflows/tasks/:task_id/stop", externalWorkflowHandler.StopWorkflowTask)
 
@@ -104,6 +144,64 @@ func RegisterAPIKeyRoutes(r *gin.RouterGroup, db *gorm.DB, accountService interf
 				}
 			}
 			internalWorkflowHandler.RunAdvancedChatWorkflow(c)
+		})
+
+		externalGroup.POST("/agents/chat", func(c *gin.Context) {
+			if v, exists := c.Get("api_key_info"); exists {
+				if keyInfo, ok := v.(*middleware.APIKeyInfo); ok {
+					util.SetWorkspaceScopeCompat(c, keyInfo.TenantID.String())
+					if enterpriseService != nil {
+						if org, err := enterpriseService.GetOrganizationByWorkspaceID(c.Request.Context(), keyInfo.TenantID.String()); err == nil && org != nil && org.ID != "" {
+							util.SetOrganizationID(c, org.ID)
+						} else {
+							util.SetOrganizationID(c, keyInfo.TenantID.String())
+						}
+					} else {
+						util.SetOrganizationID(c, keyInfo.TenantID.String())
+					}
+					c.Set("account_id", keyInfo.ID.String())
+					c.Set("agent_id", keyInfo.AgentID.String())
+				}
+			}
+			agentHandler.ChatAPIKeyAgent(c)
+		})
+		externalGroup.GET("/agents/conversations/:conversation_id/events", func(c *gin.Context) {
+			if v, exists := c.Get("api_key_info"); exists {
+				if keyInfo, ok := v.(*middleware.APIKeyInfo); ok {
+					util.SetWorkspaceScopeCompat(c, keyInfo.TenantID.String())
+					if enterpriseService != nil {
+						if org, err := enterpriseService.GetOrganizationByWorkspaceID(c.Request.Context(), keyInfo.TenantID.String()); err == nil && org != nil && org.ID != "" {
+							util.SetOrganizationID(c, org.ID)
+						} else {
+							util.SetOrganizationID(c, keyInfo.TenantID.String())
+						}
+					} else {
+						util.SetOrganizationID(c, keyInfo.TenantID.String())
+					}
+					c.Set("account_id", keyInfo.ID.String())
+					c.Set("agent_id", keyInfo.AgentID.String())
+				}
+			}
+			agentHandler.StreamAPIKeyAgentRuntimeEvents(c)
+		})
+		externalGroup.POST("/agents/conversations/:conversation_id/messages/:message_id/workflow-continuation", func(c *gin.Context) {
+			if v, exists := c.Get("api_key_info"); exists {
+				if keyInfo, ok := v.(*middleware.APIKeyInfo); ok {
+					util.SetWorkspaceScopeCompat(c, keyInfo.TenantID.String())
+					if enterpriseService != nil {
+						if org, err := enterpriseService.GetOrganizationByWorkspaceID(c.Request.Context(), keyInfo.TenantID.String()); err == nil && org != nil && org.ID != "" {
+							util.SetOrganizationID(c, org.ID)
+						} else {
+							util.SetOrganizationID(c, keyInfo.TenantID.String())
+						}
+					} else {
+						util.SetOrganizationID(c, keyInfo.TenantID.String())
+					}
+					c.Set("account_id", keyInfo.ID.String())
+					c.Set("agent_id", keyInfo.AgentID.String())
+				}
+			}
+			agentHandler.ContinueAPIKeyAgentRuntimeWorkflowContinuation(c)
 		})
 	}
 }

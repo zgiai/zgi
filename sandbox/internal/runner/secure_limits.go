@@ -22,19 +22,19 @@ func secureRuntimeLimitsFromConfig(cfg config.Config) secureRuntimeLimits {
 	}
 }
 
-func (l secureRuntimeLimits) bwrapArgs() []string {
+func (l secureRuntimeLimits) prlimitArgs() []string {
 	args := []string{}
 	if l.CPUSeconds > 0 {
-		args = append(args, "--rlimit", "cpu", strconv.Itoa(l.CPUSeconds))
+		args = append(args, "--cpu="+strconv.Itoa(l.CPUSeconds))
 	}
 	if l.MemoryBytes > 0 {
-		args = append(args, "--rlimit", "as", strconv.FormatInt(l.MemoryBytes, 10))
+		args = append(args, "--as="+strconv.FormatInt(l.MemoryBytes, 10))
 	}
 	if l.ProcessLimit > 0 {
-		args = append(args, "--rlimit", "nproc", strconv.Itoa(l.ProcessLimit))
+		args = append(args, "--nproc="+strconv.Itoa(l.ProcessLimit))
 	}
 	if l.OpenFileLimit > 0 {
-		args = append(args, "--rlimit", "nofile", strconv.Itoa(l.OpenFileLimit))
+		args = append(args, "--nofile="+strconv.Itoa(l.OpenFileLimit))
 	}
 	return args
 }

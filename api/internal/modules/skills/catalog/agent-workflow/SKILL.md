@@ -15,15 +15,79 @@ tools:
   - list_agent_workflows
   - run_agent_workflow
   - get_workflow_run_status
+tool_governance:
+  list_agent_workflows:
+    tool_id: workflow.list_agent_workflows
+    skill_id: agent-workflow
+    domain: workflow
+    effect: read
+    asset_type: workflow
+    risk_level: low
+    requires_asset_resolution: false
+    reversible: false
+    bulk_sensitive: false
+    external_side_effect: false
+    permission_scopes:
+      - workflow:read
+    default_approval_policy: auto_by_permission_tier
+    allowed_permission_tiers:
+      - basic
+      - advanced
+      - full
+    audit_required: true
+    idempotency_required: false
+  run_agent_workflow:
+    tool_id: workflow.run_agent_workflow
+    skill_id: agent-workflow
+    domain: workflow
+    effect: invoke
+    asset_type: workflow
+    risk_level: high
+    requires_asset_resolution: true
+    reversible: false
+    bulk_sensitive: false
+    external_side_effect: true
+    permission_scopes:
+      - workflow:invoke
+    default_approval_policy: always_ask
+    allowed_permission_tiers:
+      - basic
+      - advanced
+      - full
+    audit_required: true
+    idempotency_required: true
+  get_workflow_run_status:
+    tool_id: workflow.get_run_status
+    skill_id: agent-workflow
+    domain: workflow
+    effect: read
+    asset_type: workflow_run
+    risk_level: low
+    requires_asset_resolution: true
+    reversible: false
+    bulk_sensitive: false
+    external_side_effect: false
+    permission_scopes:
+      - workflow:read
+    default_approval_policy: auto_by_permission_tier
+    allowed_permission_tiers:
+      - basic
+      - advanced
+      - full
+    audit_required: true
+    idempotency_required: false
 display:
   icon: workflow
-  category: system
+  category: workflow_automation
+  scenarios:
+    - business_operations
+    - technical_development
   label:
     en_US: Agent Workflow
     zh_Hans: Agent 工作流
   description:
-    en_US: Call workflows bound to this Agent.
-    zh_Hans: 调用绑定到当前 Agent 的工作流。
+    en_US: Designed for running configured approvals or business processes; invokes workflows bound to the current Agent and returns their results.
+    zh_Hans: 适用于执行已配置的审批或业务流程，可调用当前智能体绑定的工作流并返回运行结果。
   when_to_use:
     en_US: Use for configured approval or process workflows.
     zh_Hans: 用于已配置的审批或流程工作流。

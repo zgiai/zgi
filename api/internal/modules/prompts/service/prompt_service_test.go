@@ -1,10 +1,13 @@
 package service
 
 import (
+	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 
 	llmdefaultservice "github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/service"
+	promptdto "github.com/zgiai/zgi/api/internal/modules/prompts/dto"
 	promptmodel "github.com/zgiai/zgi/api/internal/modules/prompts/model"
 )
 
@@ -18,6 +21,105 @@ func TestRuntimeReferenceLabelUsesExplicitTrimmedLabel(t *testing.T) {
 	label := " production "
 	if got := runtimeReferenceLabel(RuntimePromptReference{Label: &label}); got != "production" {
 		t.Fatalf("expected explicit runtime label %q, got %q", "production", got)
+	}
+}
+
+func TestVersionsByLabelKeepsHighestMatchingVersionPerPrompt(t *testing.T) {
+	versions := []*promptmodel.PromptVersion{
+		{PromptID: "prompt-a", Version: 1, Labels: []string{productionLabel}},
+		{PromptID: "prompt-a", Version: 3, Labels: []string{productionLabel}},
+		{PromptID: "prompt-b", Version: 2, Labels: []string{latestLabel}},
+	}
+
+	got := versionsByLabel(versions, productionLabel)
+
+	if got["prompt-a"] == nil || got["prompt-a"].Version != 3 {
+		t.Fatalf("expected prompt-a production version 3, got %#v", got["prompt-a"])
+	}
+	if got["prompt-b"] != nil {
+		t.Fatalf("expected prompt-b to have no production version, got %#v", got["prompt-b"])
+	}
+}
+
+func TestFirstVersionWithLabelReturnsFirstMatchingVersion(t *testing.T) {
+	versions := []*promptmodel.PromptVersion{
+		{Version: 4, Labels: []string{latestLabel}},
+		{Version: 2, Labels: []string{productionLabel}},
+	}
+
+	got := firstVersionWithLabel(versions, productionLabel)
+	if got == nil || got.Version != 2 {
+		t.Fatalf("expected production version 2, got %#v", got)
+	}
+}
+
+func TestUniqueLabelsKeepsLatestSeparateFromProduction(t *testing.T) {
+	gotLatest := uniqueLabels([]string{productionLabel, latestLabel, " production ", ""}, true)
+	if want := []string{productionLabel, latestLabel}; !reflect.DeepEqual(gotLatest, want) {
+		t.Fatalf("unique labels with latest = %#v, want %#v", gotLatest, want)
+	}
+
+	gotHistorical := uniqueLabels([]string{productionLabel, latestLabel}, false)
+	if want := []string{productionLabel}; !reflect.DeepEqual(gotHistorical, want) {
+		t.Fatalf("unique labels without latest = %#v, want %#v", gotHistorical, want)
+	}
+}
+
+func TestReassignedVersionLabelsPublishingHistoricalVersionPreservesLatest(t *testing.T) {
+	targetSet := map[string]struct{}{productionLabel: {}}
+	latestVersion := &promptmodel.PromptVersion{
+		Version: 4,
+		Labels:  []string{latestLabel},
+	}
+	historicalVersion := &promptmodel.PromptVersion{
+		Version: 2,
+		Labels:  []string{},
+	}
+
+	gotLatest := reassignedVersionLabels(latestVersion, 2, []string{productionLabel}, targetSet)
+	if want := []string{latestLabel}; !reflect.DeepEqual(gotLatest, want) {
+		t.Fatalf("latest version labels = %#v, want %#v", gotLatest, want)
+	}
+
+	gotHistorical := reassignedVersionLabels(historicalVersion, 2, []string{productionLabel}, targetSet)
+	if want := []string{productionLabel}; !reflect.DeepEqual(gotHistorical, want) {
+		t.Fatalf("historical version labels = %#v, want %#v", gotHistorical, want)
+	}
+}
+
+func TestReassignedVersionLabelsPublishingLatestVersionKeepsLatestAndProduction(t *testing.T) {
+	targetLabels := []string{productionLabel, latestLabel}
+	targetSet := map[string]struct{}{productionLabel: {}, latestLabel: {}}
+	latestVersion := &promptmodel.PromptVersion{
+		Version: 4,
+		Labels:  []string{latestLabel},
+	}
+	previousProductionVersion := &promptmodel.PromptVersion{
+		Version: 2,
+		Labels:  []string{productionLabel},
+	}
+
+	gotLatest := reassignedVersionLabels(latestVersion, 4, targetLabels, targetSet)
+	if want := []string{productionLabel, latestLabel}; !reflect.DeepEqual(gotLatest, want) {
+		t.Fatalf("latest production labels = %#v, want %#v", gotLatest, want)
+	}
+
+	gotPrevious := reassignedVersionLabels(previousProductionVersion, 4, targetLabels, targetSet)
+	if want := []string{}; !reflect.DeepEqual(gotPrevious, want) {
+		t.Fatalf("previous production labels = %#v, want %#v", gotPrevious, want)
+	}
+}
+
+func TestReassignedVersionLabelsCreatingNewVersionMovesLatest(t *testing.T) {
+	targetSet := map[string]struct{}{latestLabel: {}}
+	previousLatest := &promptmodel.PromptVersion{
+		Version: 3,
+		Labels:  []string{productionLabel, latestLabel},
+	}
+
+	got := reassignedVersionLabels(previousLatest, 4, []string{latestLabel}, targetSet)
+	if want := []string{productionLabel}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("previous latest labels = %#v, want %#v", got, want)
 	}
 }
 
@@ -153,14 +255,73 @@ func TestNormalizePromptOptimizerInputRemovesZGISlotWrappers(t *testing.T) {
 }
 
 func TestDetectPromptOptimizerVariablesIncludesZGICapabilityBlocks(t *testing.T) {
-	raw := `当问题相关时使用<zgi:knowledge id="ds-1">产品知识库</zgi:knowledge>，计算时使用<zgi:skill id="calculator">计算器</zgi:skill>。`
+	raw := `当问题相关时使用<zgi:knowledge id="ds-1">产品知识库</zgi:knowledge>，计算时使用<zgi:skill id="calculator">计算器</zgi:skill>。
+读取<zgi:database id="db-1">客户库</zgi:database>和<zgi:table id="table-1">订单表</zgi:table>，必要时调用<zgi:workflow id="wf-1">售后流程</zgi:workflow>。`
 	variables := detectPromptOptimizerVariables(raw)
 	joined := strings.Join(variables, "\n")
 
-	if !strings.Contains(joined, `<zgi:knowledge id="ds-1">产品知识库</zgi:knowledge>`) {
-		t.Fatalf("expected knowledge variable to be detected, got %#v", variables)
+	for _, want := range []string{
+		`<zgi:knowledge id="ds-1">产品知识库</zgi:knowledge>`,
+		`<zgi:skill id="calculator">计算器</zgi:skill>`,
+		`<zgi:database id="db-1">客户库</zgi:database>`,
+		`<zgi:table id="table-1">订单表</zgi:table>`,
+		`<zgi:workflow id="wf-1">售后流程</zgi:workflow>`,
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("expected variable %q to be detected, got %#v", want, variables)
+		}
 	}
-	if !strings.Contains(joined, `<zgi:skill id="calculator">计算器</zgi:skill>`) {
-		t.Fatalf("expected skill variable to be detected, got %#v", variables)
+}
+
+func TestNormalizeVersionInputRejectsInvalidChatMessages(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		want    string
+	}{
+		{
+			name:    "invalid role",
+			content: `[{"role":"tool","content":"Call calculator"}]`,
+			want:    "must use role system, user, or assistant",
+		},
+		{
+			name:    "empty content",
+			content: `[{"role":"user","content":"  "}]`,
+			want:    "content cannot be empty",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, _, _, _, err := normalizeVersionInput(promptdto.PromptVersionInput{
+				PromptType: string(promptmodel.PromptTypeChat),
+				Content:    json.RawMessage(tt.content),
+			}, true)
+			if err == nil {
+				t.Fatalf("expected validation error")
+			}
+			if !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("expected error containing %q, got %v", tt.want, err)
+			}
+		})
+	}
+}
+
+func TestRenderPromptPlaygroundPromptReplacesDollarInputAndPreservesZGIBlocks(t *testing.T) {
+	raw := `Review ${input} and keep <zgi:workflow id="wf-1">Workflow</zgi:workflow>.`
+	rendered, detected := renderPromptPlaygroundPrompt(raw, "customer complaint", nil)
+
+	if !strings.Contains(rendered, "Review customer complaint") {
+		t.Fatalf("expected ${input} to be replaced, got %q", rendered)
+	}
+	if !strings.Contains(rendered, `<zgi:workflow id="wf-1">Workflow</zgi:workflow>`) {
+		t.Fatalf("expected ZGI workflow block to be preserved, got %q", rendered)
+	}
+	joined := strings.Join(detected, "\n")
+	if !strings.Contains(joined, "${input}") {
+		t.Fatalf("expected ${input} to be detected, got %#v", detected)
+	}
+	if !strings.Contains(joined, `<zgi:workflow id="wf-1">Workflow</zgi:workflow>`) {
+		t.Fatalf("expected ZGI workflow block to be detected, got %#v", detected)
 	}
 }

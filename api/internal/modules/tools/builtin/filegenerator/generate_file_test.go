@@ -12,6 +12,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/pdfcpu/pdfcpu/pkg/api"
@@ -62,6 +63,12 @@ func TestResolveFormatSupportsOfficeAndPDF(t *testing.T) {
 			wantExt:  ".pdf",
 			wantMIME: "application/pdf",
 		},
+		{
+			raw:      "svg",
+			wantFmt:  "svg",
+			wantExt:  ".svg",
+			wantMIME: "image/svg+xml",
+		},
 	}
 
 	for _, tt := range tests {
@@ -73,6 +80,71 @@ func TestResolveFormatSupportsOfficeAndPDF(t *testing.T) {
 			require.Equal(t, tt.wantMIME, gotSpec.mimeType)
 		})
 	}
+}
+
+func TestResolveToolFileLifecycleDefaultsToTemporary(t *testing.T) {
+	lifecycle, err := resolveToolFileLifecycle("")
+	require.NoError(t, err)
+	require.Equal(t, workflowtoolfile.ToolFileLifecycleTemporary, lifecycle)
+}
+
+func TestCreateGeneratedFileForRuntimeKeepsTemporaryDefaultOnConsoleFilesPage(t *testing.T) {
+	db, mock, cleanup := openFileGeneratorMockDB(t)
+	defer cleanup()
+	mock.ExpectBegin()
+	mock.ExpectExec(`INSERT INTO "tool_files"`).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	oldManager := workflowtoolfile.GlobalToolFileManager
+	oldSignature := workflowtoolfile.GlobalFileSignature
+	t.Cleanup(func() {
+		workflowtoolfile.GlobalToolFileManager = oldManager
+		workflowtoolfile.GlobalFileSignature = oldSignature
+	})
+
+	fileStorage := newMemoryStorage()
+	workflowtoolfile.GlobalToolFileManager = workflowtoolfile.NewToolFileManager(db, fileStorage)
+	workflowtoolfile.GlobalFileSignature = workflowtoolfile.NewFileSignature(&config.Config{
+		App: config.AppConfig{
+			SecretKey:          "test-secret-key",
+			FilesURL:           "http://files.example.test",
+			FilesAccessTimeout: 3600,
+		},
+	})
+
+	beforeExpiry := time.Now().Add(workflowtoolfile.DefaultTemporaryToolFileTTL)
+	messages, err := createGeneratedFileForRuntime(context.Background(), "org-1", &tools.ToolRuntime{
+		TenantID: "org-1",
+		RuntimeParameters: map[string]interface{}{
+			"organization_id":       "org-1",
+			"workspace_id":          "workspace-1",
+			"console_files_page":    true,
+			"consoleFilesPage":      true,
+			"console_files_context": "/console/files",
+		},
+	}, generatedFileParams{
+		userID:    "account-1",
+		data:      []byte("hello"),
+		mimeType:  "text/plain",
+		extension: ".txt",
+		filename:  "hello.txt",
+		format:    "txt",
+	})
+	require.NoError(t, err)
+	require.Len(t, messages, 2)
+	require.Equal(t, string(generatedFileTargetTemporaryArtifact), messages[1].Data["target"])
+	require.Empty(t, messages[1].Data["upload_file_id"])
+	require.NotEmpty(t, messages[1].Data["file_id"])
+	require.Equal(t, messages[1].Data["file_id"], messages[1].Data["tool_file_id"])
+	require.Equal(t, string(workflowtoolfile.ToolFileLifecycleTemporary), messages[1].Data["lifecycle"])
+	expiresAt, ok := messages[1].Data["expires_at"].(int64)
+	require.True(t, ok)
+	require.WithinDuration(t, beforeExpiry, time.Unix(expiresAt, 0), 2*time.Second)
+	fileMeta := messages[0].Meta["file"].(map[string]interface{})
+	require.Equal(t, expiresAt, fileMeta["expires_at"])
+	require.NotEmpty(t, fileStorage.onlyFileData(t))
+	require.NoError(t, mock.ExpectationsWereMet())
 }
 
 func TestRenderContentGeneratesValidOfficeAndPDF(t *testing.T) {

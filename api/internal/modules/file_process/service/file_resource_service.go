@@ -45,6 +45,7 @@ type FileFolderService interface {
 	ListFilesInFolder(ctx context.Context, folderID string, page, limit int) ([]*file_model.UploadFile, int64, error)
 	ListFilesInFolderWithFilters(ctx context.Context, folderID string, page, limit int, keyword, sort, extension, processingStatus string, startTime, endTime *time.Time, tenantID string, visibleWorkspaceIDs []string) ([]*file_model.UploadFile, int64, error)
 	ListAllFilesWithFilters(ctx context.Context, page, limit int, keyword, sort, extension, processingStatus string, startTime, endTime *time.Time, tenantID, accountID string, visibleWorkspaceIDs []string) ([]*file_model.UploadFile, int64, error)
+	CountAllFilesByCurrentAssetProductStatus(ctx context.Context, keyword, extension string, startTime, endTime *time.Time, tenantID, accountID string, visibleWorkspaceIDs []string) (dto.FileProcessingStatusCounts, error)
 	ListFavoriteFiles(ctx context.Context, accountID string, page, limit int, keyword, sort, extension string, startTime, endTime *time.Time, tenantID string, visibleWorkspaceIDs []string) ([]*file_model.UploadFile, int64, error)
 	MoveFileToFolder(ctx context.Context, fileID, fromFolderID, toFolderID, accountID string) error
 	MoveFilesToFolder(ctx context.Context, fileIDs []string, toFolderID, accountID string) error
@@ -69,6 +70,7 @@ type FileFolderService interface {
 	BatchGetRelatedDatasetCount(ctx context.Context, fileIDs []string) (map[string]int, error)
 
 	// File statistics operations
+	GetFileStatistics(ctx context.Context, tenantID, accountID string, visibleWorkspaceIDs []string) (*dto.FileStatisticsResponse, error)
 	GetTotalFileCount(ctx context.Context, tenantID string) (int64, error)
 	// GetRecentFileCount gets the count of recent files (within last 3 months) for a tenant
 	// Note: This method counts all recent files without applying the RecentFilesLimit.
@@ -231,17 +233,6 @@ func (s *fileResourceService) CheckFolderViewPermission(ctx context.Context, fol
 		return true, nil
 	}
 
-	isAdmin := false
-	if s.accountService != nil {
-		isAdmin, err = s.accountService.CheckOrganizationpAdminByWorkspace(ctx, accountID, tenantID)
-		if err != nil {
-			return false, fmt.Errorf("failed to check group admin permission: %w", err)
-		}
-	}
-	if isAdmin {
-		return true, nil
-	}
-
 	if len(visibleWorkspaceIDs) == 0 {
 		return false, nil
 	}
@@ -376,22 +367,9 @@ func (s *fileResourceService) ListFoldersWithPermissionFilter(ctx context.Contex
 		return []*file_model.FileFolder{}, 0, nil
 	}
 
-	isAdmin := false
-	if s.accountService != nil {
-		var err error
-		isAdmin, err = s.accountService.CheckOrganizationpAdminByWorkspace(ctx, accountID, tenantID)
-		if err != nil {
-			return nil, 0, fmt.Errorf("failed to check admin permission: %w", err)
-		}
-	}
-
 	var parentIDPtr *string
 	if parentID != "" {
 		parentIDPtr = &parentID
-	}
-
-	if isAdmin {
-		return s.ListFolders(ctx, tenantID, page, limit, keyword, sort, parentID, visibleWorkspaceIDs)
 	}
 
 	folders, total, err := s.fileFolderRepo.ListFoldersWithPermissionFilter(ctx, tenantID, accountID, parentIDPtr, page, limit, keyword, sort, workspaceID, visibleWorkspaceIDs)
@@ -460,13 +438,6 @@ func (s *fileResourceService) ListAllFilesWithFilters(ctx context.Context, page,
 	}
 
 	allowAllFolders := false
-	if s.accountService != nil && accountID != "" {
-		isAdmin, err := s.accountService.CheckOrganizationpAdminByWorkspace(ctx, accountID, tenantID)
-		if err != nil {
-			return nil, 0, fmt.Errorf("failed to check group admin permission: %w", err)
-		}
-		allowAllFolders = isAdmin
-	}
 
 	files, total, err := s.fileFolderRepo.ListAllFilesWithFiltersAndTenant(ctx, page, limit, keyword, sort, extension, processingStatus, startTime, endTime, tenantID, accountID, allowAllFolders, visibleWorkspaceIDs)
 	if err != nil {
@@ -481,6 +452,27 @@ func (s *fileResourceService) ListAllFilesWithFilters(ctx context.Context, page,
 	return files, total, nil
 }
 
+func (s *fileResourceService) CountAllFilesByCurrentAssetProductStatus(ctx context.Context, keyword, extension string, startTime, endTime *time.Time, tenantID, accountID string, visibleWorkspaceIDs []string) (dto.FileProcessingStatusCounts, error) {
+	if len(visibleWorkspaceIDs) == 0 {
+		return dto.FileProcessingStatusCounts{}, nil
+	}
+
+	allowAllFolders := false
+	if s.accountService != nil && accountID != "" {
+		isAdmin, err := s.accountService.CheckOrganizationpAdminByWorkspace(ctx, accountID, tenantID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to check group admin permission: %w", err)
+		}
+		allowAllFolders = isAdmin
+	}
+
+	counts, err := s.fileFolderRepo.CountAllFilesByCurrentAssetProductStatus(ctx, keyword, extension, startTime, endTime, tenantID, accountID, allowAllFolders, visibleWorkspaceIDs)
+	if err != nil {
+		return nil, fmt.Errorf("failed to count files by processing status: %w", err)
+	}
+	return dto.FileProcessingStatusCounts(counts), nil
+}
+
 // ListFavoriteFiles lists favorite files for an account with full file details
 // Optimized to use a single JOIN query instead of two separate queries
 func (s *fileResourceService) ListFavoriteFiles(ctx context.Context, accountID string, page, limit int, keyword, sort, extension string, startTime, endTime *time.Time, tenantID string, visibleWorkspaceIDs []string) ([]*file_model.UploadFile, int64, error) {
@@ -490,13 +482,6 @@ func (s *fileResourceService) ListFavoriteFiles(ctx context.Context, accountID s
 	}
 
 	allowAllFolders := false
-	if s.accountService != nil && accountID != "" {
-		isAdmin, err := s.accountService.CheckOrganizationpAdminByWorkspace(ctx, accountID, tenantID)
-		if err != nil {
-			return nil, 0, fmt.Errorf("failed to check group admin permission: %w", err)
-		}
-		allowAllFolders = isAdmin
-	}
 
 	files, total, err := s.fileFolderRepo.ListFavoriteFilesWithFilters(ctx, accountID, page, limit, keyword, sort, extension, startTime, endTime, tenantID, allowAllFolders, visibleWorkspaceIDs)
 	if err != nil {
@@ -696,13 +681,7 @@ func (s *fileResourceService) CheckFolderEditorPermission(ctx context.Context, f
 		return true, nil
 	}
 
-	// Check if user is a group admin
-	isGroupAdmin, err := s.accountService.CheckOrganizationpAdminByWorkspace(ctx, accountID, tenantID)
-	if err != nil {
-		return false, fmt.Errorf("failed to check group admin permission: %w", err)
-	}
-
-	return isGroupAdmin, nil
+	return false, nil
 }
 
 // GetFolderPermissionTenants gets the list of tenant IDs that have permission to access a folder
@@ -873,6 +852,50 @@ func (s *fileResourceService) GetFileFolderID(ctx context.Context, fileID string
 // GetTotalFileCount gets the total count of files for a tenant
 func (s *fileResourceService) GetTotalFileCount(ctx context.Context, tenantID string) (int64, error) {
 	return s.fileFolderRepo.GetTotalFileCount(ctx, tenantID)
+}
+
+func (s *fileResourceService) GetFileStatistics(ctx context.Context, tenantID, accountID string, visibleWorkspaceIDs []string) (*dto.FileStatisticsResponse, error) {
+	if len(visibleWorkspaceIDs) == 0 {
+		return &dto.FileStatisticsResponse{}, nil
+	}
+
+	allowAllFolders := false
+
+	totalCount, err := s.fileFolderRepo.GetTotalFileCountWithVisibility(ctx, tenantID, accountID, allowAllFolders, visibleWorkspaceIDs)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get total file count: %w", err)
+	}
+
+	recentCount, err := s.fileFolderRepo.GetRecentFileCountWithVisibility(ctx, tenantID, accountID, allowAllFolders, visibleWorkspaceIDs)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get recent file count: %w", err)
+	}
+	if recentCount > RecentFilesLimit {
+		recentCount = RecentFilesLimit
+	}
+
+	favoriteCount, err := s.fileFolderRepo.GetFavoriteFileCountWithVisibility(ctx, accountID, tenantID, allowAllFolders, visibleWorkspaceIDs)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get favorite file count: %w", err)
+	}
+
+	rootFolderCount, err := s.fileFolderRepo.GetRootFolderFileCountWithVisibility(ctx, tenantID, accountID, allowAllFolders, visibleWorkspaceIDs)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get root folder file count: %w", err)
+	}
+
+	archivedCount, err := s.fileFolderRepo.GetArchivedFileCountWithVisibility(ctx, tenantID, accountID, allowAllFolders, visibleWorkspaceIDs)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get archived file count: %w", err)
+	}
+
+	return &dto.FileStatisticsResponse{
+		TotalCount:      totalCount,
+		RecentCount:     recentCount,
+		FavoriteCount:   favoriteCount,
+		RootFolderCount: rootFolderCount,
+		ArchivedCount:   archivedCount,
+	}, nil
 }
 
 // GetRecentFileCount gets the count of recent files (within last 3 months) for a tenant

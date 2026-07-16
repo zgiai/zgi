@@ -1,5 +1,5 @@
 import { memo, useState, useCallback, useEffect } from 'react';
-import { Clock3, FolderPlus, Upload, Files, FolderOpen, HardDrive } from 'lucide-react';
+import { Clock3, FileText, FolderPlus, Upload, Files, FolderOpen, HardDrive } from 'lucide-react';
 import { useT, type FilesSuffix } from '@/i18n';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
@@ -24,6 +24,7 @@ export interface FileSidebarProps {
   activeItemId?: string;
   onItemClick?: (itemId: string) => void;
   onNewFolder?: () => void;
+  onCreateTextFile?: () => void;
   onUpload?: () => void;
   onFolderCreateChild?: (folder: FileFolder) => void;
   onFolderRename?: (folder: FileFolder) => void;
@@ -55,6 +56,7 @@ function FileSidebarBase({
   activeItemId,
   onItemClick,
   onNewFolder,
+  onCreateTextFile,
   onUpload,
   onFolderCreateChild,
   onFolderRename,
@@ -147,7 +149,7 @@ function FileSidebarBase({
         <Progress value={isLoadingStorage ? 0 : storagePercentage} className="h-1.5" />
       </div>
 
-      {(onNewFolder || onUpload) && (
+      {(onNewFolder || onCreateTextFile || onUpload) && (
         <div className="space-y-2 px-4 pb-5">
           {onNewFolder && (
             <Button
@@ -157,6 +159,16 @@ function FileSidebarBase({
             >
               <FolderPlus className="h-4 w-4" />
               {t('files.sidebar.newFolder')}
+            </Button>
+          )}
+          {onCreateTextFile && (
+            <Button
+              className="h-10 w-full justify-center gap-2 rounded-lg text-sm font-semibold shadow-sm"
+              variant="outline"
+              onClick={onCreateTextFile}
+            >
+              <FileText className="h-4 w-4" />
+              {t('files.sidebar.newTextFile')}
             </Button>
           )}
           {onUpload && (
