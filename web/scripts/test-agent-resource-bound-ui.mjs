@@ -88,18 +88,23 @@ assert.doesNotMatch(skillSettings, /useAIChatSkillConfigAutosave/);
 const skillConfigPersistenceStart = skillSettings.indexOf(
   'function useAIChatSkillConfigPersistence'
 );
-const skillCardToolbarStart = skillSettings.indexOf(
-  'interface SkillFilterToolbarProps',
+const nextSkillSettingsSectionStart = skillSettings.indexOf(
+  'interface SkillImportPreviewDialogProps',
   skillConfigPersistenceStart
 );
 const skillConfigPersistenceBlock = skillSettings.slice(
   skillConfigPersistenceStart,
-  skillCardToolbarStart
+  nextSkillSettingsSectionStart
 );
-assert.ok(skillConfigPersistenceStart !== -1 && skillCardToolbarStart > skillConfigPersistenceStart);
+assert.ok(
+  skillConfigPersistenceStart !== -1 && nextSkillSettingsSectionStart > skillConfigPersistenceStart
+);
 assert.match(skillConfigPersistenceBlock, /await save\(requestedSkillIds, impact\)/);
 assert.match(skillConfigPersistenceBlock, /if \(!result\.applied\)/);
-assert.match(skillConfigPersistenceBlock, /onConfirmationRequired\(result\.impact, requestedSkillIds\)/);
+assert.match(
+  skillConfigPersistenceBlock,
+  /onConfirmationRequired\(result\.impact, requestedSkillIds\)/
+);
 assert.match(skillConfigPersistenceBlock, /setEnabledSkillIds\(savedSkillIds\)/);
 assert.ok(
   skillConfigPersistenceBlock.indexOf('await save(requestedSkillIds, impact)') <
