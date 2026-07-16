@@ -1966,20 +1966,11 @@ func agentManagementUpdateConfigContract() SkillToolArgumentContract {
 	return SkillToolArgumentContract{
 		SkillID:     SkillAgentManagement,
 		ToolName:    "update_agent_config",
-		Description: "Patch selected draft runtime configuration fields for one resolved AGENT asset. Omitted fields are preserved. One call may update model, prompt, file upload, suggested questions, and add/remove bindings.",
+		Description: "Patch selected draft runtime configuration fields for one resolved AGENT asset. Omitted fields are preserved. One call may update model, prompt, file upload, suggested questions, and add/remove bindings. System-prompt changes must send the complete final prompt after preserving unrelated current content and applying the user's requested transformation.",
 		Schema: objectSchema(
 			map[string]interface{}{
-				"agent_id":      stringValueSchema("Required Agent ID from page context, create_agent result, get_agent_config, or governed asset resolution. Do not invent IDs."),
-				"system_prompt": stringValueSchema("Optional replacement system prompt."),
-				"system_prompt_source": objectSchema(
-					map[string]interface{}{
-						"type":                enumStringSchema("Managed source type.", []string{"managed_file"}),
-						"file_id":             stringValueSchema("Saved TXT or Markdown file ID from file management."),
-						"expected_sha256":     stringValueSchema("Internal approval-time concurrency guard. Callers should omit this field."),
-						"expected_characters": numberSchema("Internal approval-time concurrency guard. Callers should omit this field."),
-					},
-					[]string{"type", "file_id"},
-				),
+				"agent_id":                     stringValueSchema("Required Agent ID from page context, create_agent result, get_agent_config, or governed asset resolution. Do not invent IDs."),
+				"system_prompt":                stringValueSchema("Optional complete replacement system prompt. Read the current config first, preserve every unrelated part, apply only the requested change, and send the full final prompt. Treat source material as input rather than content to copy by default; match the user's requested scope and level of detail, and reproduce it verbatim only when explicitly requested."),
 				"model_provider":               stringValueSchema("Required whenever model is provided. Use the provider returned by list_available_models."),
 				"model":                        stringValueSchema("Optional replacement model ID. Provide model_provider from the same list_available_models item."),
 				"model_parameters":             objectSchema(map[string]interface{}{}, nil),

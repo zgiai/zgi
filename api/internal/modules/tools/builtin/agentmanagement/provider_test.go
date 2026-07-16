@@ -112,6 +112,30 @@ func TestAgentScopeFromRuntimeAcceptsAIChatCaller(t *testing.T) {
 	}
 }
 
+func TestUpdateAgentConfigToolOnlyExposesFullSystemPromptMutation(t *testing.T) {
+	entity := newUpdateAgentConfigToolWithManagedFiles(nil, nil, nil, nil).GetEntity()
+	parameters := make(map[string]tools.ToolParameter, len(entity.Parameters))
+	for _, parameter := range entity.Parameters {
+		parameters[parameter.Name] = parameter
+	}
+
+	if _, ok := parameters["system_prompt_source"]; ok {
+		t.Fatal("system_prompt_source is exposed to new model calls")
+	}
+	if _, ok := parameters["system_prompt_patch"]; ok {
+		t.Fatal("system_prompt_patch is exposed to new model calls")
+	}
+	prompt, ok := parameters["system_prompt"]
+	if !ok {
+		t.Fatal("system_prompt parameter is missing")
+	}
+	for _, required := range []string{"complete replacement", "preserve every unrelated part", "input rather than content to copy by default", "scope and level of detail"} {
+		if !strings.Contains(prompt.LLMDescription, required) {
+			t.Fatalf("system_prompt description missing %q: %q", required, prompt.LLMDescription)
+		}
+	}
+}
+
 func TestCreateAgentAppliesDefaultTextIconAndPayloadEvidence(t *testing.T) {
 	service := &fakeAgentManagementService{}
 	perms := &fakeWorkspacePermissionService{allowed: true}

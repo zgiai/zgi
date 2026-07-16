@@ -1512,6 +1512,59 @@ func TestAgentManagementSkillConstrainsMissingTargetSearch(t *testing.T) {
 	}
 }
 
+func TestAgentManagementSystemPromptUpdatesUseFullReplacementOnly(t *testing.T) {
+	expected := ExpectedSkillToolArguments(SkillAgentManagement, "update_agent_config")
+	if expected == nil {
+		t.Fatal("ExpectedSkillToolArguments() = nil")
+	}
+	schema, ok := expected["schema"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("schema type = %T, want map[string]interface{}", expected["schema"])
+	}
+	properties, ok := schema["properties"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("schema.properties missing from %#v", schema)
+	}
+	if _, ok := properties["system_prompt_source"]; ok {
+		t.Fatal("system_prompt_source is exposed in the Skill Loop contract")
+	}
+	if _, ok := properties["system_prompt_patch"]; ok {
+		t.Fatal("system_prompt_patch is exposed in the Skill Loop contract")
+	}
+	prompt, ok := properties["system_prompt"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("system_prompt schema missing from %#v", properties)
+	}
+	description, _ := prompt["description"].(string)
+	for _, required := range []string{"complete replacement", "preserve every unrelated part", "input rather than content to copy by default", "scope and level of detail"} {
+		if !strings.Contains(description, required) {
+			t.Fatalf("system_prompt description missing %q: %q", required, description)
+		}
+	}
+
+	raw, err := os.ReadFile(filepath.Join(defaultSkillCatalogDir(), SkillAgentManagement, "SKILL.md"))
+	if err != nil {
+		t.Fatalf("read agent-management SKILL.md: %v", err)
+	}
+	content := string(raw)
+	for _, hidden := range []string{"system_prompt_source", "system_prompt_patch"} {
+		if strings.Contains(content, hidden) {
+			t.Fatalf("agent-management SKILL.md still exposes deferred parameter %q", hidden)
+		}
+	}
+	for _, required := range []string{
+		"first obtain the complete current `system_prompt`",
+		"preserve the transformation requested by the user",
+		"Treat the source as input, not as content to copy by default",
+		"does not imply permission to copy the source in full",
+		"matches the user's requested transformation, scope, and level of detail",
+	} {
+		if !strings.Contains(content, required) {
+			t.Fatalf("agent-management SKILL.md missing system-prompt safeguard %q", required)
+		}
+	}
+}
+
 func TestChartGeneratorContractSupportsBarAndLinePayloads(t *testing.T) {
 	expected := ExpectedSkillToolArguments(SkillChartGenerator, "generate_chart")
 	if expected == nil {
