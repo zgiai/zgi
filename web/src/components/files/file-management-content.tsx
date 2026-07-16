@@ -1242,7 +1242,7 @@ const FileManagementContent = ({
     ) {
       setActiveCategory('all');
       setActiveFolderDepth(0);
-      setActiveFolderNoticeName('');
+      setActiveFolderName('');
       setProcessingStatusFilter('all');
       setSelectedFiles([]);
       goToPage(1);
