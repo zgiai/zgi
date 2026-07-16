@@ -523,6 +523,19 @@ type AgentConfigRequest struct {
 	BindingAuthorizations     []AgentBindingAuthorization `json:"-"`
 }
 
+// AgentSystemPromptPatchRequest applies an incremental system-prompt mutation
+// against a frozen prompt baseline while preserving unrelated draft fields.
+type AgentSystemPromptPatchRequest struct {
+	Operation          string             `json:"-"`
+	AppendContent      string             `json:"-"`
+	Separator          string             `json:"-"`
+	SectionID          string             `json:"-"`
+	SectionTitle       string             `json:"-"`
+	ExpectedBaseSHA256 string             `json:"-"`
+	RequestedFields    []string           `json:"-"`
+	Config             AgentConfigRequest `json:"-"`
+}
+
 type AgentConfigResponse struct {
 	AgentID                   string                      `json:"agent_id"`
 	BindingRevision           string                      `json:"binding_revision"`

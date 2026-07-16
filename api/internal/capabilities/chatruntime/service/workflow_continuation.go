@@ -258,6 +258,8 @@ func (s *service) SummarizeWorkflowApprovalContinuation(ctx context.Context, sco
 		Message:      message,
 		Scope:        scope,
 		LLMRequest:   workflowSummaryLLMRequest(message, continuation, req),
+
+		usageContinuation: true,
 	}
 	execution, err := s.beginRuntimeExecution(ctx, message.ID)
 	if err != nil {
@@ -292,7 +294,7 @@ func (s *service) SummarizeWorkflowApprovalContinuation(ctx context.Context, sco
 		_ = s.persistStoppedAnswer(persistCtx, prepared, answer, usage)
 		return nil, ErrMessageStopped
 	}
-	metadata = preparedResultMetadata(continuation.Metadata, usage)
+	metadata = preparedResultMetadataForPrepared(prepared, continuation.Metadata, usage)
 	continuation.Metadata = metadata
 	metadata, err = s.CompleteWorkflowApprovalContinuation(persistCtx, continuation, answer, workflowContinuationStatusCompleted)
 	if err != nil {

@@ -56,6 +56,13 @@ func (e *agentBindingAPIError) Error() string {
 	return e.Message
 }
 
+func (e *agentBindingAPIError) ErrorCode() string {
+	if e == nil {
+		return ""
+	}
+	return strings.TrimSpace(e.Code)
+}
+
 func (s *agentsService) draftBindingState(ctx context.Context, ag *Agent, cfg *AgentsConfig, accountID string) ([]agentbindings.Binding, string, dto.AgentBindingHealth, error) {
 	config := agentConfigResponse(ag.ID.String(), cfg)
 	rows, err := s.bindingRowsForConfig(ctx, ag, config, agentbindings.ScopeDraft, nil, accountID, time.Now())

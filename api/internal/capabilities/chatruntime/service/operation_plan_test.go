@@ -60,7 +60,7 @@ func assertAgentManagementModelDecidesOperationPlanForTest(t *testing.T, plan ma
 	}
 }
 
-func TestInvocationEvidenceMarksPlanStaleWithoutUpdatingLegacyStepsOrPhases(t *testing.T) {
+func TestInvocationEvidenceKeepsOutcomePlanCurrentWithoutUpdatingLegacyStepsOrPhases(t *testing.T) {
 	phases := []interface{}{map[string]interface{}{
 		"id": "phase-1", "step": "Update the Agent", "status": "in_progress",
 	}}
@@ -97,11 +97,11 @@ func TestInvocationEvidenceMarksPlanStaleWithoutUpdatingLegacyStepsOrPhases(t *t
 	if got := stringFromAny(plan["status"]); got != operationPlanStatusRunning {
 		t.Fatalf("plan status = %q, want running until final answer", got)
 	}
-	if got := stringFromAny(plan["plan_sync_status"]); got != "stale" {
-		t.Fatalf("plan_sync_status = %q, want stale", got)
+	if got := stringFromAny(plan["plan_sync_status"]); got != "current" {
+		t.Fatalf("plan_sync_status = %q, want current", got)
 	}
-	if got := intValueFromAny(plan["evidence_after_last_plan_update"]); got != 1 {
-		t.Fatalf("evidence_after_last_plan_update = %d, want 1", got)
+	if got := intValueFromAny(plan["evidence_after_last_plan_update"]); got != 0 {
+		t.Fatalf("evidence_after_last_plan_update = %d, want 0", got)
 	}
 	if got := stringFromAny(mapSliceFromAny(plan["phases"])[0]["status"]); got != "in_progress" {
 		t.Fatalf("phase status = %q, want unchanged in_progress", got)
@@ -112,6 +112,262 @@ func TestInvocationEvidenceMarksPlanStaleWithoutUpdatingLegacyStepsOrPhases(t *t
 	ledger := mapSliceFromAny(plan[operationPlanEvidenceLedgerKey])
 	if len(ledger) != 1 || stringFromAny(ledger[0]["tool_name"]) != "update_agent_config" {
 		t.Fatalf("evidence ledger = %#v, want one successful update", ledger)
+	}
+}
+
+func TestInvocationEvidenceDeterministicallyCompletesBoundPlanPhase(t *testing.T) {
+	metadata := map[string]interface{}{
+		"operation_plan": map[string]interface{}{
+			"status":                           operationPlanStatusRunning,
+			"plan_sync_status":                 "current",
+			"evidence_revision_at_plan_update": 0,
+			"phases": []interface{}{
+				map[string]interface{}{
+					"id": "phase-generate", "status": "in_progress",
+					"expected_action": map[string]interface{}{"skill_id": skills.SkillFileGenerator, "tool_name": "generate_file"},
+				},
+				map[string]interface{}{
+					"id": "phase-save", "status": "pending",
+					"expected_action": map[string]interface{}{"skill_id": skills.SkillFileManager, "tool_name": "save_file_to_management"},
+				},
+			},
+		},
+	}
+	applyOperationPlanInvocationState(metadata, []map[string]interface{}{map[string]interface{}{
+		"kind":       "tool_call",
+		"status":     "success",
+		"runtime_id": "runtime:generate#1",
+		"skill_id":   skills.SkillFileGenerator,
+		"tool_name":  "generate_file",
+		"arguments":  map[string]interface{}{"plan_phase_id": "phase-generate", "filename": "chapter.md"},
+		"result":     map[string]interface{}{"status": "completed", "file_id": "artifact-1"},
+	}})
+
+	plan := mapFromOperationContext(metadata["operation_plan"])
+	phases := mapSliceFromAny(plan["phases"])
+	if got := stringFromAny(phases[0]["status"]); got != operationPlanStepStatusCompleted {
+		t.Fatalf("phase-generate status = %q, want completed", got)
+	}
+	if got := stringFromAny(phases[1]["status"]); got != "in_progress" {
+		t.Fatalf("phase-save status = %q, want in_progress", got)
+	}
+	if got := stringFromAny(plan["plan_sync_status"]); got != "current" {
+		t.Fatalf("plan_sync_status = %q, want current", got)
+	}
+	if got := intValueFromAny(plan["evidence_after_last_plan_update"]); got != 0 {
+		t.Fatalf("evidence_after_last_plan_update = %d, want 0", got)
+	}
+	refs := stringSliceFromAny(phases[0]["evidence_refs"])
+	if !containsString(refs, "tool:file-generator/generate_file") || !containsString(refs, "runtime_id:runtime:generate#1") {
+		t.Fatalf("evidence_refs = %#v, want tool and runtime refs", refs)
+	}
+}
+
+func TestInvocationEvidenceDoesNotCompleteUnstructuredPhaseFromToolCall(t *testing.T) {
+	metadata := map[string]interface{}{
+		"operation_plan": map[string]interface{}{
+			"status": operationPlanStatusRunning,
+			"phases": []interface{}{
+				map[string]interface{}{"id": "phase-read", "status": "in_progress"},
+				map[string]interface{}{"id": "phase-next", "status": "pending"},
+			},
+		},
+	}
+	applyOperationPlanInvocationState(metadata, []map[string]interface{}{map[string]interface{}{
+		"kind":       "tool_call",
+		"status":     "success",
+		"runtime_id": "runtime:read#1",
+		"skill_id":   skills.SkillFileReader,
+		"tool_name":  "read_file",
+		"arguments":  map[string]interface{}{"plan_phase_id": "phase-read", "file_id": "file-1"},
+		"result":     map[string]interface{}{"status": "completed", "content_status": "extracted", "content": "hello", "content_chars": 5, "file_id": "file-1"},
+	}})
+
+	phases := mapSliceFromAny(mapFromOperationContext(metadata["operation_plan"])["phases"])
+	completion := mapFromOperationContext(phases[0]["completion_action"])
+	if got := stringFromAny(phases[0]["status"]); got != "in_progress" {
+		t.Fatalf("phase status = %q, want in_progress without exact acceptance evidence", got)
+	}
+	if len(completion) != 0 {
+		t.Fatalf("completion_action = %#v, want none for unstructured phase", completion)
+	}
+}
+
+func TestOutcomePlanReconcilesFileAndAgentEffectsWithoutToolBoundPhases(t *testing.T) {
+	strategy := &AIChatTurnStrategy{
+		Intent:              "manage_agent_asset",
+		CompatibilityIntent: "manage_agent_asset",
+		ToolChoiceMode:      aiChatTurnToolChoiceModelDecides,
+		Outcomes: []AIChatTurnOutcome{
+			{ID: "outcome-file", Goal: "Generate and save the chapter", Capabilities: []string{"file_artifact", "managed_file"}},
+			{ID: "outcome-agent", Goal: "Append the chapter to the Agent instructions", DependsOn: []string{"outcome-file"}, Capabilities: []string{agentCapabilitySystemPrompt}},
+		},
+	}
+	plan := operationPlanFromTurnStrategy("task-outcomes", &chatRequestParts{Query: "Generate, save, and append the chapter."}, strategy)
+	metadata := map[string]interface{}{"operation_plan": plan}
+
+	applyOperationPlanInvocationState(metadata, []map[string]interface{}{
+		{
+			"kind": "tool_call", "status": "success", "runtime_id": "generate-1",
+			"skill_id": skills.SkillFileGenerator, "tool_name": "generate_file",
+			"arguments": map[string]interface{}{"filename": "chapter.md"},
+			"result":    map[string]interface{}{"status": "completed", "file_id": "artifact-1", "filename": "chapter.md"},
+		},
+	})
+	plan = mapFromOperationContext(metadata["operation_plan"])
+	outcomes := mapSliceFromAny(plan[operationPlanOutcomesKey])
+	if got := stringFromAny(outcomes[0]["status"]); got != operationPlanStepStatusPending {
+		t.Fatalf("file outcome after generation = %q, want pending until persistence", got)
+	}
+	if got := stringFromAny(outcomes[1]["status"]); got != operationPlanStepStatusPending {
+		t.Fatalf("agent outcome before dependency = %q, want pending", got)
+	}
+
+	applyOperationPlanInvocationState(metadata, append(skillInvocationsFromMetadata(nil), map[string]interface{}{
+		"kind": "tool_call", "status": "success", "runtime_id": "save-1",
+		"skill_id": skills.SkillFileManager, "tool_name": "save_file_to_management",
+		"arguments": map[string]interface{}{"source_file_id": "artifact-1", "filename": "chapter.md"},
+		"result":    map[string]interface{}{"status": "completed", "managed_file_id": "managed-1", "managed_filename": "chapter.md"},
+	}))
+	plan = mapFromOperationContext(metadata["operation_plan"])
+	outcomes = mapSliceFromAny(plan[operationPlanOutcomesKey])
+	if got := stringFromAny(outcomes[0]["status"]); got != operationPlanStepStatusCompleted {
+		t.Fatalf("file outcome after save = %q, want completed", got)
+	}
+	if got := stringFromAny(plan["status"]); got != operationPlanStatusRunning {
+		t.Fatalf("plan status after file outcome = %q, want running", got)
+	}
+
+	applyOperationPlanInvocationState(metadata, []map[string]interface{}{
+		{
+			"kind": "tool_call", "status": "success", "runtime_id": "update-1",
+			"skill_id": skills.SkillAgentManagement, "tool_name": "update_agent_config",
+			"arguments": map[string]interface{}{"agent_id": "agent-1", "system_prompt_patch": map[string]interface{}{"operation": "append"}},
+			"result":    map[string]interface{}{"status": "completed", "agent_id": "agent-1", "updated_fields": []interface{}{"system_prompt"}},
+		},
+	})
+	plan = mapFromOperationContext(metadata["operation_plan"])
+	outcomes = mapSliceFromAny(plan[operationPlanOutcomesKey])
+	if got := stringFromAny(outcomes[1]["status"]); got != operationPlanStepStatusCompleted {
+		t.Fatalf("agent outcome = %q, want completed", got)
+	}
+	if got := stringFromAny(plan["status"]); got != operationPlanStatusCompleted {
+		t.Fatalf("plan status = %q, want completed", got)
+	}
+	if attempts := mapSliceFromAny(plan[operationPlanActionAttemptsKey]); len(attempts) != 3 {
+		t.Fatalf("action attempts = %#v, want 3", attempts)
+	}
+	if effects := mapSliceFromAny(plan[operationPlanEffectLedgerKey]); len(effects) != 3 {
+		t.Fatalf("effect ledger = %#v, want generated, persisted, and agent update", effects)
+	}
+}
+
+func TestOutcomePlanDoesNotTreatNavigationRequestAsObservedPageOrAgentUpdate(t *testing.T) {
+	strategy := &AIChatTurnStrategy{
+		Intent:         "manage_agent_asset",
+		ToolChoiceMode: aiChatTurnToolChoiceModelDecides,
+		Outcomes: []AIChatTurnOutcome{
+			{ID: "outcome-page", Goal: "Open the Agent detail page", Capabilities: []string{"page_navigation"}},
+			{ID: "outcome-agent", Goal: "Update the Agent prompt", Capabilities: []string{agentCapabilitySystemPrompt}},
+		},
+	}
+	metadata := map[string]interface{}{
+		"operation_plan": operationPlanFromTurnStrategy("task-navigation", &chatRequestParts{Query: "Open and update the Agent."}, strategy),
+	}
+	applyOperationPlanInvocationState(metadata, []map[string]interface{}{{
+		"kind": "tool_call", "status": "success", "runtime_id": "navigate-request-1",
+		"skill_id": skills.SkillConsoleNavigator, "tool_name": "navigate",
+		"arguments": map[string]interface{}{"href": "/console/agents/agent-1"},
+		"result":    map[string]interface{}{"status": "completed", "href": "/console/agents/agent-1"},
+	}})
+	plan := mapFromOperationContext(metadata["operation_plan"])
+	outcomes := mapSliceFromAny(plan[operationPlanOutcomesKey])
+	if stringFromAny(outcomes[0]["status"]) != operationPlanStepStatusPending || stringFromAny(outcomes[1]["status"]) != operationPlanStepStatusPending {
+		t.Fatalf("outcomes = %#v, navigation request must not complete observed page or Agent update", outcomes)
+	}
+
+	applyOperationPlanInvocationState(metadata, []map[string]interface{}{{
+		"kind": "client_action", "status": "success", "runtime_id": "navigate-observed-1",
+		"skill_id": skills.SkillConsoleNavigator, "tool_name": "navigate",
+		"result": map[string]interface{}{"observed_path": "/console/agents/agent-1"},
+	}})
+	plan = mapFromOperationContext(metadata["operation_plan"])
+	outcomes = mapSliceFromAny(plan[operationPlanOutcomesKey])
+	if got := stringFromAny(outcomes[0]["status"]); got != operationPlanStepStatusCompleted {
+		t.Fatalf("page outcome = %q, want completed after observed client action", got)
+	}
+	if got := stringFromAny(outcomes[1]["status"]); got != operationPlanStepStatusPending {
+		t.Fatalf("agent outcome = %q, want pending", got)
+	}
+}
+
+func TestInvocationEvidenceUsesExactRawTargetInsteadOfArgumentSummary(t *testing.T) {
+	metadata := map[string]interface{}{
+		"operation_plan": map[string]interface{}{
+			"status": operationPlanStatusRunning,
+			"phases": []interface{}{map[string]interface{}{
+				"id": "phase-update", "status": "in_progress",
+				"expected_action": map[string]interface{}{
+					"skill_id":  skills.SkillAgentManagement,
+					"tool_name": "update_agent_config",
+					"target":    map[string]interface{}{"agent_id": "agent-exact-1"},
+				},
+			}},
+		},
+	}
+	applyOperationPlanInvocationState(metadata, []map[string]interface{}{map[string]interface{}{
+		"kind":      "tool_call",
+		"status":    "success",
+		"skill_id":  skills.SkillAgentManagement,
+		"tool_name": "update_agent_config",
+		"arguments": map[string]interface{}{
+			// UUID-like arguments are summarized for logs and must not replace the
+			// exact target captured before projection.
+			"agent_id":              map[string]interface{}{"type": "string", "length": 36},
+			"operation_plan_target": map[string]interface{}{"agent_id": "agent-exact-1"},
+		},
+		"result": map[string]interface{}{
+			"status":         "completed",
+			"agent_id":       "agent-exact-1",
+			"updated_fields": []interface{}{"system_prompt"},
+		},
+	}})
+
+	phase := mapSliceFromAny(mapFromOperationContext(metadata["operation_plan"])["phases"])[0]
+	if got := stringFromAny(phase["status"]); got != operationPlanStepStatusCompleted {
+		t.Fatalf("phase status = %q, want completed from exact raw target", got)
+	}
+}
+
+func TestFailedInvocationIsRecordedWithoutPermanentlyInvalidatingOutcomePlan(t *testing.T) {
+	metadata := map[string]interface{}{
+		"operation_plan": map[string]interface{}{
+			"status":           operationPlanStatusRunning,
+			"plan_sync_status": "current",
+			"phases": []interface{}{map[string]interface{}{
+				"id": "phase-update", "status": "in_progress",
+			}},
+		},
+	}
+	applyOperationPlanInvocationState(metadata, []map[string]interface{}{map[string]interface{}{
+		"kind":       "tool_call",
+		"status":     "failed",
+		"runtime_id": "runtime:update#1",
+		"skill_id":   skills.SkillAgentManagement,
+		"tool_name":  "update_agent_config",
+		"error":      "temporary failure",
+	}})
+
+	plan := mapFromOperationContext(metadata["operation_plan"])
+	if got := stringFromAny(plan["plan_sync_status"]); got != "current" {
+		t.Fatalf("plan_sync_status = %q, want current after persisting failure evidence", got)
+	}
+	if _, exists := plan["plan_revision_reason"]; exists {
+		t.Fatalf("plan_revision_reason = %#v, want historical failure not to persist a revision requirement", plan["plan_revision_reason"])
+	}
+	phase := mapSliceFromAny(plan["phases"])[0]
+	if got := stringFromAny(phase["status"]); got != "in_progress" {
+		t.Fatalf("phase status = %q, want failure to leave outcome open", got)
 	}
 }
 
@@ -141,11 +397,11 @@ func TestInvocationEvidenceUsesGlobalRevisionAcrossLocalToolSequences(t *testing
 	if got := intValueFromAny(plan["evidence_revision"]); got != 2 {
 		t.Fatalf("evidence_revision = %d, want 2", got)
 	}
-	if got := intValueFromAny(plan["evidence_after_last_plan_update"]); got != 1 {
-		t.Fatalf("evidence_after_last_plan_update = %d, want 1", got)
+	if got := intValueFromAny(plan["evidence_after_last_plan_update"]); got != 0 {
+		t.Fatalf("evidence_after_last_plan_update = %d, want 0", got)
 	}
-	if got := stringFromAny(plan["plan_sync_status"]); got != "stale" {
-		t.Fatalf("plan_sync_status = %q, want stale", got)
+	if got := stringFromAny(plan["plan_sync_status"]); got != "current" {
+		t.Fatalf("plan_sync_status = %q, want current", got)
 	}
 	ledger := mapSliceFromAny(plan[operationPlanEvidenceLedgerKey])
 	if len(ledger) != 2 || intValueFromAny(ledger[1]["ledger_revision"]) != 2 {
@@ -187,15 +443,15 @@ func TestApplyOperationPlanCompletionVerificationMirrorsTopLevelMetadata(t *test
 	applyOperationPlanTerminalCompletionResult(metadata, "pass", "tool evidence is complete", nil, nil, "")
 
 	verification := mapFromOperationContext(metadata["completion_verification"])
-	if got := stringFromAny(verification["status"]); got != "pass" {
-		t.Fatalf("completion_verification.status = %q, want pass; metadata=%#v", got, metadata)
+	if got := stringFromAny(verification["status"]); got != "incomplete" {
+		t.Fatalf("completion_verification.status = %q, want incomplete; metadata=%#v", got, metadata)
 	}
-	ledger := mapSliceFromAny(metadata["evidence_ledger"])
-	if len(ledger) != 1 {
-		t.Fatalf("evidence_ledger = %#v, want mirrored ledger entry", metadata["evidence_ledger"])
+	if _, exists := metadata["evidence_ledger"]; exists {
+		t.Fatalf("top-level evidence_ledger = %#v, want canonical plan ledger only", metadata["evidence_ledger"])
 	}
-	if got := stringFromAny(ledger[0]["tool_name"]); got != "update_agent_config" {
-		t.Fatalf("evidence_ledger[0].tool_name = %q, want update_agent_config", got)
+	ledgerRef := mapFromOperationContext(metadata["evidence_ledger_ref"])
+	if got := stringFromAny(ledgerRef["source"]); got != "operation_plan.evidence_ledger" {
+		t.Fatalf("evidence_ledger_ref = %#v, want canonical plan reference", ledgerRef)
 	}
 	plan := mapFromOperationContext(metadata["operation_plan"])
 	if got := stringFromAny(mapSliceFromAny(plan["phases"])[0]["status"]); got != "in_progress" {
@@ -203,6 +459,106 @@ func TestApplyOperationPlanCompletionVerificationMirrorsTopLevelMetadata(t *test
 	}
 	if got := stringFromAny(plan["plan_sync_status"]); got != "stale" {
 		t.Fatalf("plan_sync_status = %q, want finalizer to preserve stale", got)
+	}
+	if got := stringFromAny(plan["status"]); got == operationPlanStatusCompleted {
+		t.Fatalf("plan status = %q, must not complete while phase remains in_progress", got)
+	}
+}
+
+func TestApplyOperationPlanCompletionVerificationPassesWhenAllPhasesTerminal(t *testing.T) {
+	metadata := map[string]interface{}{
+		"operation_plan": map[string]interface{}{
+			"status": operationPlanStatusRunning,
+			"phases": []interface{}{
+				map[string]interface{}{"id": "phase-1", "status": operationPlanStepStatusCompleted},
+				map[string]interface{}{"id": "phase-2", "status": "skipped"},
+			},
+		},
+	}
+
+	applyOperationPlanTerminalCompletionResult(metadata, "pass", "all phases are terminal", nil, nil, "")
+	plan := mapFromOperationContext(metadata["operation_plan"])
+	if got := stringFromAny(plan["status"]); got != operationPlanStatusCompleted {
+		t.Fatalf("plan status = %q, want completed", got)
+	}
+	if got := stringFromAny(mapFromOperationContext(plan["completion_verification"])["status"]); got != "pass" {
+		t.Fatalf("verification status = %q, want pass", got)
+	}
+}
+
+func TestFinalizeOperationPlanDoesNotCompleteWithPendingPhase(t *testing.T) {
+	metadata := map[string]interface{}{
+		"operation_plan": map[string]interface{}{
+			"status": operationPlanStatusRunning,
+			"phases": []interface{}{
+				map[string]interface{}{"id": "phase-1", "status": operationPlanStepStatusCompleted},
+				map[string]interface{}{"id": "phase-2", "status": operationPlanStepStatusPending},
+			},
+		},
+	}
+
+	finalizeOperationPlanForCompletedResult(metadata)
+	plan := mapFromOperationContext(metadata["operation_plan"])
+	if got := stringFromAny(plan["status"]); got != operationPlanStatusRunning {
+		t.Fatalf("plan status = %q, want running", got)
+	}
+	if got := stringFromAny(mapFromOperationContext(plan["completion_verification"])["status"]); got != "incomplete" {
+		t.Fatalf("verification status = %q, want incomplete", got)
+	}
+}
+
+func TestMainModelFinalCompletesModelReconciliationPhase(t *testing.T) {
+	metadata := map[string]interface{}{
+		"operation_plan": map[string]interface{}{
+			"status": operationPlanStatusRunning,
+			"phases": []interface{}{map[string]interface{}{
+				"id": "phase-1", "status": operationPlanStepStatusPending,
+				"verification_mode": "model_reconciliation",
+			}},
+		},
+	}
+
+	applyOperationPlanTerminalCompletionResultWithSource(
+		metadata, "pass", "main_model_final", "no active runtime protocol blocker", nil, nil, "",
+	)
+
+	plan := mapFromOperationContext(metadata["operation_plan"])
+	if got := stringFromAny(plan["status"]); got != operationPlanStatusCompleted {
+		t.Fatalf("plan status = %q, want completed", got)
+	}
+	phase := mapSliceFromAny(plan["phases"])[0]
+	if got := stringFromAny(phase["status"]); got != operationPlanStepStatusCompleted {
+		t.Fatalf("phase status = %q, want completed", got)
+	}
+	if got := stringFromAny(phase["completion_source"]); got != "main_model_final" {
+		t.Fatalf("phase completion_source = %q, want main_model_final", got)
+	}
+	if got := stringFromAny(mapFromOperationContext(metadata["operation_result_summary"])["status"]); got != operationPlanStatusCompleted {
+		t.Fatalf("operation_result_summary.status = %q, want completed", got)
+	}
+}
+
+func TestMainModelFinalDoesNotCompleteRuntimeVerifiedPhase(t *testing.T) {
+	metadata := map[string]interface{}{
+		"operation_plan": map[string]interface{}{
+			"status": operationPlanStatusRunning,
+			"phases": []interface{}{map[string]interface{}{
+				"id": "phase-1", "status": operationPlanStepStatusPending,
+				"verification_mode": "runtime_effects",
+			}},
+		},
+	}
+
+	applyOperationPlanTerminalCompletionResultWithSource(
+		metadata, "pass", "main_model_final", "no active runtime protocol blocker", nil, nil, "",
+	)
+
+	plan := mapFromOperationContext(metadata["operation_plan"])
+	if got := stringFromAny(plan["status"]); got != operationPlanStatusRunning {
+		t.Fatalf("plan status = %q, want running", got)
+	}
+	if got := stringFromAny(mapSliceFromAny(plan["phases"])[0]["status"]); got != operationPlanStepStatusPending {
+		t.Fatalf("phase status = %q, want pending", got)
 	}
 }
 

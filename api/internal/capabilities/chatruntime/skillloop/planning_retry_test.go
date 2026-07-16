@@ -54,9 +54,16 @@ func TestRunnerRetriesLengthTruncatedPlanningOnce(t *testing.T) {
 	if retryRequest.MaxTokens == nil || *retryRequest.MaxTokens != 8192 {
 		t.Fatalf("retry max tokens = %#v, want 8192", retryRequest.MaxTokens)
 	}
-	lastMessage := retryRequest.Messages[len(retryRequest.Messages)-1]
-	if lastMessage.Role != "system" || !strings.Contains(messageContent(lastMessage.Content), "truncated") {
-		t.Fatalf("retry feedback = %#v, want truncation guidance", lastMessage)
+	if len(retryRequest.Messages) == 0 || retryRequest.Messages[0].Role != "system" {
+		t.Fatalf("retry messages = %#v, want a leading system message", retryRequest.Messages)
+	}
+	if !strings.Contains(messageContent(retryRequest.Messages[0].Content), "truncated") {
+		t.Fatalf("retry system message = %#v, want truncation guidance", retryRequest.Messages[0])
+	}
+	for index, message := range retryRequest.Messages[1:] {
+		if strings.EqualFold(strings.TrimSpace(message.Role), "system") {
+			t.Fatalf("retry message %d = %#v, want all system guidance merged at the beginning", index+1, message)
+		}
 	}
 }
 

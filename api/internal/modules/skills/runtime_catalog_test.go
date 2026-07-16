@@ -1197,6 +1197,9 @@ func TestCalculatorMetaToolArgumentsExposeRequiredExpressionSchema(t *testing.T)
 	if !ok {
 		t.Fatalf("parameters.properties missing")
 	}
+	if _, ok := properties["plan_phase_id"].(map[string]interface{}); !ok {
+		t.Fatalf("plan_phase_id schema missing from call_skill_tool: %#v", properties)
+	}
 	arguments, ok := properties["arguments"].(map[string]interface{})
 	if !ok {
 		t.Fatalf("arguments schema missing")

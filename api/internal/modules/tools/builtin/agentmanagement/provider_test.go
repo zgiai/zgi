@@ -334,6 +334,431 @@ func TestUpdateAgentConfigRequiresProviderWhenChangingModel(t *testing.T) {
 	}
 }
 
+func TestUpdateAgentConfigUsesManagedFileSystemPromptSource(t *testing.T) {
+	workspaceID := "agent-workspace"
+	service := &fakeAgentManagementService{draftConfig: &dto.AgentDraftRuntimeConfigResponse{
+		AgentID:     "agent-1",
+		WorkspaceID: workspaceID,
+		Config:      dto.AgentConfigResponse{AgentID: "agent-1", SystemPrompt: "old prompt"},
+	}}
+	files := &fakeAgentManagementManagedFileService{
+		file: &dto.UploadFile{
+			ID:             "file-1",
+			OrganizationID: "org-1",
+			WorkspaceID:    &workspaceID,
+			Name:           "prompt.md",
+			Extension:      "md",
+			MimeType:       "text/markdown",
+			Size:           18,
+		},
+		content: "managed prompt text",
+	}
+	permissions := &fakeWorkspacePermissionService{allowed: true}
+	tool := newUpdateAgentConfigToolWithManagedFiles(service, nil, files, permissions).ForkToolRuntime(&tools.ToolRuntime{
+		TenantID:   "org-1",
+		InvokeFrom: tools.ToolInvokeFromAIChat,
+		RuntimeParameters: map[string]interface{}{
+			"organization_id": "org-1",
+			"workspace_id":    workspaceID,
+		},
+	})
+
+	messages, err := tool.Invoke(context.Background(), "account-1", map[string]interface{}{
+		"agent_id": "agent-1",
+		"system_prompt_source": map[string]interface{}{
+			"type":    "managed_file",
+			"file_id": "file-1",
+		},
+	}, nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if service.lastConfigRequest.SystemPrompt != files.content {
+		t.Fatalf("SystemPrompt = %q, want managed file content", service.lastConfigRequest.SystemPrompt)
+	}
+	if permissions.permissionCode != workspacemodel.WorkspacePermissionFilePreview {
+		t.Fatalf("permission = %q, want file.preview", permissions.permissionCode)
+	}
+	if len(messages) != 1 {
+		t.Fatalf("messages = %d, want 1", len(messages))
+	}
+	payload := messages[0].Data
+	if source := mapFromAny(payload["system_prompt_source"]); source["file_id"] != "file-1" || source["sha256"] == "" {
+		t.Fatalf("system_prompt_source = %#v, want file reference and digest", source)
+	}
+	if config := mapFromAny(payload["config"]); config["system_prompt"] != nil {
+		t.Fatalf("config leaked system_prompt: %#v", config)
+	}
+}
+
+func TestUpdateAgentConfigAppendsSystemPromptPatch(t *testing.T) {
+	workspaceID := "agent-workspace"
+	tests := []struct {
+		name        string
+		source      map[string]interface{}
+		files       *fakeAgentManagementManagedFileService
+		permissions *fakeWorkspacePermissionService
+		wantPrompt  string
+		wantType    string
+	}{
+		{
+			name:       "text",
+			source:     map[string]interface{}{"type": "text", "text": "new instructions"},
+			wantPrompt: "existing instructions\n\nnew instructions",
+			wantType:   "text",
+		},
+		{
+			name:   "managed file",
+			source: map[string]interface{}{"type": "managed_file", "file_id": "file-1"},
+			files: &fakeAgentManagementManagedFileService{
+				file: &dto.UploadFile{
+					ID:             "file-1",
+					OrganizationID: "org-1",
+					WorkspaceID:    &workspaceID,
+					Name:           "chapter.md",
+					Extension:      "md",
+				},
+				content: "chapter instructions",
+			},
+			permissions: &fakeWorkspacePermissionService{allowed: true},
+			wantPrompt:  "existing instructions\n\nchapter instructions",
+			wantType:    "managed_file",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			service := &fakeAgentManagementService{draftConfig: &dto.AgentDraftRuntimeConfigResponse{
+				AgentID:     "agent-1",
+				WorkspaceID: workspaceID,
+				Config:      dto.AgentConfigResponse{AgentID: "agent-1", SystemPrompt: "existing instructions"},
+			}}
+			tool := newUpdateAgentConfigToolWithManagedFiles(service, nil, tt.files, tt.permissions).ForkToolRuntime(&tools.ToolRuntime{
+				TenantID:   "org-1",
+				InvokeFrom: tools.ToolInvokeFromAIChat,
+				RuntimeParameters: map[string]interface{}{
+					"organization_id": "org-1",
+					"workspace_id":    workspaceID,
+				},
+			})
+
+			messages, err := tool.Invoke(context.Background(), "account-1", map[string]interface{}{
+				"agent_id": "agent-1",
+				"system_prompt_patch": map[string]interface{}{
+					"operation": "append",
+					"source":    tt.source,
+				},
+			}, nil, nil, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := service.lastConfigRequest.SystemPrompt; got != tt.wantPrompt {
+				t.Fatalf("SystemPrompt = %q, want %q", got, tt.wantPrompt)
+			}
+			if got := service.lastSystemPromptPatchRequest.Separator; got != defaultSystemPromptPatchSeparator {
+				t.Fatalf("Separator = %q, want default %q", got, defaultSystemPromptPatchSeparator)
+			}
+			if got := service.lastSystemPromptPatchRequest.ExpectedBaseSHA256; got != systemPromptDigest("existing instructions") {
+				t.Fatalf("ExpectedBaseSHA256 = %q, want frozen current prompt digest", got)
+			}
+			if len(messages) != 1 {
+				t.Fatalf("messages = %d, want 1", len(messages))
+			}
+			payload := messages[0].Data
+			patch := mapFromAny(payload["system_prompt_patch"])
+			if got := stringValue(patch, "operation"); got != "append" {
+				t.Fatalf("system_prompt_patch.operation = %q, want append", got)
+			}
+			source := mapFromAny(patch["source"])
+			if got := stringValue(source, "type"); got != tt.wantType {
+				t.Fatalf("system_prompt_patch.source.type = %q, want %q", got, tt.wantType)
+			}
+			if _, leaked := source["text"]; leaked {
+				t.Fatalf("system_prompt_patch source leaked text: %#v", source)
+			}
+			if got := payload["system_prompt_chars"]; got != len([]rune(tt.wantPrompt)) {
+				t.Fatalf("system_prompt_chars = %#v, want %d", got, len([]rune(tt.wantPrompt)))
+			}
+			if digest := stringValue(payload, "system_prompt_digest"); !strings.HasPrefix(digest, "sha256:") {
+				t.Fatalf("system_prompt_digest = %q, want sha256 digest", digest)
+			}
+			if config := mapFromAny(payload["config"]); config["system_prompt"] != nil {
+				t.Fatalf("config leaked system_prompt: %#v", config)
+			}
+		})
+	}
+}
+
+func TestResolveSystemPromptPatchRejectsInvalidInput(t *testing.T) {
+	tests := []struct {
+		name   string
+		params map[string]interface{}
+		base   string
+		want   string
+	}{
+		{
+			name: "mutually exclusive with direct prompt",
+			params: map[string]interface{}{
+				"system_prompt":       "replacement",
+				"system_prompt_patch": map[string]interface{}{"operation": "append", "source": map[string]interface{}{"type": "text", "text": "addition"}},
+			},
+			want: "mutually exclusive",
+		},
+		{
+			name: "mutually exclusive with source",
+			params: map[string]interface{}{
+				"system_prompt_source": map[string]interface{}{"type": "managed_file", "file_id": "file-1"},
+				"system_prompt_patch":  map[string]interface{}{"operation": "append", "source": map[string]interface{}{"type": "text", "text": "addition"}},
+			},
+			want: "mutually exclusive",
+		},
+		{name: "unsupported operation", params: map[string]interface{}{"system_prompt_patch": map[string]interface{}{"operation": "replace", "source": map[string]interface{}{"type": "text", "text": "addition"}}}, want: "operation must be append or upsert_section"},
+		{name: "missing source", params: map[string]interface{}{"system_prompt_patch": map[string]interface{}{"operation": "append"}}, want: "source is required"},
+		{name: "unsupported source", params: map[string]interface{}{"system_prompt_patch": map[string]interface{}{"operation": "append", "source": map[string]interface{}{"type": "inline", "text": "addition"}}}, want: "managed_file or text"},
+		{name: "missing text", params: map[string]interface{}{"system_prompt_patch": map[string]interface{}{"operation": "append", "source": map[string]interface{}{"type": "text"}}}, want: "text is required"},
+		{name: "empty text", params: map[string]interface{}{"system_prompt_patch": map[string]interface{}{"operation": "append", "source": map[string]interface{}{"type": "text", "text": "   "}}}, want: "text is required"},
+		{name: "separator too long", params: map[string]interface{}{"system_prompt_patch": map[string]interface{}{"operation": "append", "separator": strings.Repeat("-", maxSystemPromptPatchSeparatorChars+1), "source": map[string]interface{}{"type": "text", "text": "addition"}}}, want: "separator exceeds"},
+		{name: "result too long", base: strings.Repeat("a", maxManagedFileSystemPromptChars), params: map[string]interface{}{"system_prompt_patch": map[string]interface{}{"operation": "append", "source": map[string]interface{}{"type": "text", "text": "b"}}}, want: "appended system prompt exceeds"},
+	}
+	tool := &updateAgentConfigTool{}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, _, err := tool.resolveSystemPromptMutation(context.Background(), agentScope{}, "workspace", tt.base, tt.params)
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("error = %v, want containing %q", err, tt.want)
+			}
+			if !strings.HasPrefix(err.Error(), agentSystemPromptPatchInvalidCode+":") {
+				t.Fatalf("error = %v, want stable %s code", err, agentSystemPromptPatchInvalidCode)
+			}
+		})
+	}
+}
+
+func TestAppendSystemPromptPreservesExactContentAndSeparator(t *testing.T) {
+	current := "  existing prompt\n"
+	addition := "\n  managed file body  \n"
+	separator := "\n---\n"
+	result, err := appendSystemPrompt(current, addition, separator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := current + separator + addition
+	if result != want {
+		t.Fatalf("appendSystemPrompt() = %q, want exact %q", result, want)
+	}
+}
+
+func TestUpsertSystemPromptSectionPreservesUnrelatedPrompt(t *testing.T) {
+	current := "base instructions"
+	inserted, err := upsertSystemPromptSection(current, "chapter one", "\n\n", "novel.context", "Story context")
+	if err != nil {
+		t.Fatal(err)
+	}
+	start, end := systemPromptSectionMarkers("novel.context")
+	for _, want := range []string{current, start, "## Story context", "chapter one", end} {
+		if !strings.Contains(inserted, want) {
+			t.Fatalf("inserted prompt missing %q: %s", want, inserted)
+		}
+	}
+	replaced, err := upsertSystemPromptSection(inserted, "chapter two", "\n\n", "novel.context", "Story context")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(replaced, "chapter one") || strings.Count(replaced, start) != 1 || strings.Count(replaced, end) != 1 {
+		t.Fatalf("replaced prompt duplicated or retained stale section: %s", replaced)
+	}
+	if !strings.Contains(replaced, current) || !strings.Contains(replaced, "chapter two") {
+		t.Fatalf("replaced prompt lost unrelated content or new section: %s", replaced)
+	}
+}
+
+func TestUpdateAgentConfigUpsertsSystemPromptSection(t *testing.T) {
+	workspaceID := "agent-workspace"
+	service := &fakeAgentManagementService{draftConfig: &dto.AgentDraftRuntimeConfigResponse{
+		AgentID:     "agent-1",
+		WorkspaceID: workspaceID,
+		Config:      dto.AgentConfigResponse{AgentID: "agent-1", SystemPrompt: "existing instructions"},
+	}}
+	tool := newUpdateAgentConfigToolWithManagedFiles(service, nil, nil, nil).ForkToolRuntime(&tools.ToolRuntime{
+		TenantID:   "org-1",
+		InvokeFrom: tools.ToolInvokeFromAIChat,
+		RuntimeParameters: map[string]interface{}{
+			"organization_id": "org-1",
+			"workspace_id":    workspaceID,
+		},
+	})
+
+	_, err := tool.Invoke(context.Background(), "account-1", map[string]interface{}{
+		"agent_id": "agent-1",
+		"system_prompt_patch": map[string]interface{}{
+			"operation":     "upsert_section",
+			"section_id":    "novel.context",
+			"section_title": "Story context",
+			"source":        map[string]interface{}{"type": "text", "text": "new chapter summary"},
+		},
+	}, nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := service.lastSystemPromptPatchRequest.Operation; got != systemPromptPatchOperationUpsertSection {
+		t.Fatalf("patch operation = %q, want upsert_section", got)
+	}
+	if got := service.lastSystemPromptPatchRequest.SectionID; got != "novel.context" {
+		t.Fatalf("section id = %q, want novel.context", got)
+	}
+	if prompt := service.lastConfigRequest.SystemPrompt; !strings.Contains(prompt, "existing instructions") || !strings.Contains(prompt, "new chapter summary") {
+		t.Fatalf("system prompt = %q, want preserved base and managed section", prompt)
+	}
+}
+
+func TestUpdateAgentConfigFreezesManagedFileSystemPromptPatch(t *testing.T) {
+	workspaceID := "agent-workspace"
+	service := &fakeAgentManagementService{draftConfig: &dto.AgentDraftRuntimeConfigResponse{
+		AgentID:     "agent-1",
+		WorkspaceID: workspaceID,
+		Config:      dto.AgentConfigResponse{AgentID: "agent-1", SystemPrompt: "existing"},
+	}}
+	files := &fakeAgentManagementManagedFileService{file: &dto.UploadFile{
+		ID:             "file-1",
+		OrganizationID: "org-1",
+		WorkspaceID:    &workspaceID,
+		Name:           "chapter.md",
+		Extension:      "md",
+	}, content: "approved addition"}
+	tool := newUpdateAgentConfigToolWithManagedFiles(service, nil, files, &fakeWorkspacePermissionService{allowed: true}).ForkToolRuntime(&tools.ToolRuntime{
+		TenantID:   "org-1",
+		InvokeFrom: tools.ToolInvokeFromAIChat,
+		RuntimeParameters: map[string]interface{}{
+			"organization_id": "org-1",
+			"workspace_id":    workspaceID,
+		},
+	})
+	enricher := tool.(tools.ToolGovernanceArgumentEnricher)
+	frozenArgs := enricher.EnrichGovernanceArguments(context.Background(), "account-1", map[string]interface{}{
+		"agent_id": "agent-1",
+		"system_prompt_patch": map[string]interface{}{
+			"operation": "append",
+			"source":    map[string]interface{}{"type": "managed_file", "file_id": "file-1"},
+		},
+	})
+	preview, _ := stringSliceParam(frozenArgs, "changed_fields_preview")
+	assertStringSliceContains(t, preview, "system_prompt")
+	patch := mapFromAny(frozenArgs["system_prompt_patch"])
+	if got := stringValue(patch, "expected_base_sha256"); got != systemPromptDigest("existing") {
+		t.Fatalf("expected_base_sha256 = %q, want frozen prompt digest", got)
+	}
+	if got := stringValue(patch, "separator_sha256"); !strings.HasPrefix(got, "sha256:") {
+		t.Fatalf("separator_sha256 = %q, want digest", got)
+	}
+	source := mapFromAny(patch["source"])
+	if digest := stringValue(source, "expected_sha256"); !strings.HasPrefix(digest, "sha256:") {
+		t.Fatalf("expected_sha256 = %q, want frozen digest", digest)
+	}
+	files.content = "changed after approval"
+	frozenArgs = enricher.EnrichGovernanceArguments(context.Background(), "account-1", frozenArgs)
+
+	_, err := tool.Invoke(context.Background(), "account-1", frozenArgs, nil, nil, nil)
+	if err == nil || !strings.Contains(err.Error(), "changed after approval") || !strings.HasPrefix(err.Error(), agentSystemPromptSourceChangedCode+":") {
+		t.Fatalf("error = %v, want changed-after-approval rejection", err)
+	}
+	if service.updateConfigCalls != 0 {
+		t.Fatalf("UpdateAgentConfig calls = %d, want 0", service.updateConfigCalls)
+	}
+}
+
+func TestResolveManagedFileSystemPromptSourceRejectsInvalidSources(t *testing.T) {
+	workspaceID := "agent-workspace"
+	baseFile := dto.UploadFile{
+		ID:             "file-1",
+		OrganizationID: "org-1",
+		WorkspaceID:    &workspaceID,
+		Name:           "prompt.md",
+		Extension:      "md",
+		MimeType:       "text/markdown",
+	}
+	tests := []struct {
+		name       string
+		mutateFile func(*dto.UploadFile)
+		content    string
+		params     map[string]interface{}
+		allowed    bool
+		fileErr    error
+		contentErr error
+		want       string
+	}{
+		{name: "mutually exclusive", content: "prompt", allowed: true, params: map[string]interface{}{"system_prompt": "inline"}, want: "mutually exclusive"},
+		{name: "temporary", content: "prompt", allowed: true, mutateFile: func(file *dto.UploadFile) { file.IsTemporary = true }, want: "saved to file management"},
+		{name: "other workspace", content: "prompt", allowed: true, mutateFile: func(file *dto.UploadFile) { other := "other"; file.WorkspaceID = &other }, want: "Agent workspace"},
+		{name: "permission denied", content: "prompt", allowed: false, want: "not accessible"},
+		{name: "binary", content: "prompt", allowed: true, mutateFile: func(file *dto.UploadFile) { file.Extension = "pdf"; file.MimeType = "application/pdf" }, want: "TXT or Markdown"},
+		{name: "not ready", allowed: true, contentErr: errors.New("missing storage object"), want: "not ready"},
+		{name: "invalid utf8", content: string([]byte{0xff}), allowed: true, want: "valid UTF-8"},
+		{name: "too long", content: strings.Repeat("x", maxManagedFileSystemPromptChars+1), allowed: true, want: "exceeds"},
+		{name: "deleted", allowed: true, fileErr: errors.New("not found"), want: "not available"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			file := baseFile
+			if tt.mutateFile != nil {
+				tt.mutateFile(&file)
+			}
+			files := &fakeAgentManagementManagedFileService{file: &file, content: tt.content, fileErr: tt.fileErr, contentErr: tt.contentErr}
+			tool := &updateAgentConfigTool{agentToolBase: newAgentToolBase(agentToolEntity("test", "test", "test", "", nil), nil, &fakeWorkspacePermissionService{allowed: tt.allowed}, nil), managedFiles: files}
+			params := map[string]interface{}{"system_prompt_source": map[string]interface{}{"type": "managed_file", "file_id": "file-1"}}
+			for key, value := range tt.params {
+				params[key] = value
+			}
+			_, _, err := tool.resolveSystemPromptMutation(context.Background(), agentScope{OrganizationID: "org-1", AccountID: "account-1"}, workspaceID, "existing prompt", params)
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("error = %v, want containing %q", err, tt.want)
+			}
+		})
+	}
+}
+
+func TestUpdateAgentConfigRevalidatesManagedFileAfterApproval(t *testing.T) {
+	workspaceID := "agent-workspace"
+	service := &fakeAgentManagementService{draftConfig: &dto.AgentDraftRuntimeConfigResponse{
+		AgentID:     "agent-1",
+		WorkspaceID: workspaceID,
+		Config:      dto.AgentConfigResponse{AgentID: "agent-1"},
+	}}
+	files := &fakeAgentManagementManagedFileService{file: &dto.UploadFile{
+		ID:             "file-1",
+		OrganizationID: "org-1",
+		WorkspaceID:    &workspaceID,
+		Name:           "prompt.md",
+		Extension:      "md",
+	}, content: "approved content"}
+	tool := newUpdateAgentConfigToolWithManagedFiles(service, nil, files, &fakeWorkspacePermissionService{allowed: true}).ForkToolRuntime(&tools.ToolRuntime{
+		TenantID:   "org-1",
+		InvokeFrom: tools.ToolInvokeFromAIChat,
+		RuntimeParameters: map[string]interface{}{
+			"organization_id": "org-1",
+			"workspace_id":    workspaceID,
+		},
+	})
+	enricher := tool.(tools.ToolGovernanceArgumentEnricher)
+	frozenArgs := enricher.EnrichGovernanceArguments(context.Background(), "account-1", map[string]interface{}{
+		"agent_id": "agent-1",
+		"system_prompt_source": map[string]interface{}{
+			"type":    "managed_file",
+			"file_id": "file-1",
+		},
+	})
+	files.content = "replacement content"
+	// Runtime governance enrichment runs again before executing an approved
+	// frozen invocation. It must not replace the approval-time digest.
+	frozenArgs = enricher.EnrichGovernanceArguments(context.Background(), "account-1", frozenArgs)
+
+	_, err := tool.Invoke(context.Background(), "account-1", frozenArgs, nil, nil, nil)
+	if err == nil || !strings.Contains(err.Error(), "changed after approval") {
+		t.Fatalf("error = %v, want changed-after-approval rejection", err)
+	}
+	if service.updateConfigCalls != 0 {
+		t.Fatalf("UpdateAgentConfig calls = %d, want 0", service.updateConfigCalls)
+	}
+}
+
 func TestUpdateAgentConfigRequiresModelWhenChangingProvider(t *testing.T) {
 	agentID := "agent-1"
 	service := &fakeAgentManagementService{
@@ -3153,6 +3578,21 @@ type fakeWorkspacePermissionService struct {
 	permissionCode workspacemodel.WorkspacePermissionCode
 }
 
+type fakeAgentManagementManagedFileService struct {
+	file       *dto.UploadFile
+	content    string
+	fileErr    error
+	contentErr error
+}
+
+func (s *fakeAgentManagementManagedFileService) GetFileByID(context.Context, string) (*dto.UploadFile, error) {
+	return s.file, s.fileErr
+}
+
+func (s *fakeAgentManagementManagedFileService) GetFile(context.Context, string) (string, error) {
+	return s.content, s.contentErr
+}
+
 func (s *fakeWorkspacePermissionService) CheckWorkspacePermission(_ context.Context, organizationID, workspaceID, accountID string, permissionCode workspacemodel.WorkspacePermissionCode) (bool, error) {
 	s.organizationID = organizationID
 	s.workspaceID = workspaceID
@@ -3181,6 +3621,7 @@ type fakeAgentManagementService struct {
 	updateAgentCalls               int
 	updateConfigResponse           *dto.AgentConfigResponse
 	lastConfigRequest              dto.AgentConfigRequest
+	lastSystemPromptPatchRequest   dto.AgentSystemPromptPatchRequest
 	lastDraftConfigAgentID         string
 	getDraftConfigCalls            int
 	updateConfigCalls              int
@@ -3314,18 +3755,6 @@ func (s *fakeAgentManagementService) GetAgentDraftRuntimeConfig(_ context.Contex
 	return s.draftConfig, nil
 }
 
-func (s *fakeAgentManagementService) RequireAgentManageAccess(context.Context, string, string) error {
-	return nil
-}
-
-func (s *fakeAgentManagementService) GetAgentRuntimeSurfaces(context.Context, string, string) (*dto.AgentRuntimeSurfaceAuthorizationResponse, error) {
-	return nil, nil
-}
-
-func (s *fakeAgentManagementService) UpdateAgentRuntimeSurfaces(context.Context, string, string, dto.UpdateAgentRuntimeSurfacesRequest) (*dto.AgentRuntimeSurfaceAuthorizationResponse, error) {
-	return nil, nil
-}
-
 func (s *fakeAgentManagementService) UpdateAgentConfig(_ context.Context, _ string, _ string, req dto.AgentConfigRequest) (*dto.AgentConfigResponse, error) {
 	s.updateConfigCalls++
 	s.lastConfigRequest = req
@@ -3354,6 +3783,22 @@ func (s *fakeAgentManagementService) UpdateAgentConfig(_ context.Context, _ stri
 	resp.WorkflowBindings = append([]dto.AgentWorkflowBinding(nil), req.WorkflowBindings...)
 	resp.EnabledSkillIDs = append([]string(nil), req.EnabledSkillIDs...)
 	return &resp, nil
+}
+
+func (s *fakeAgentManagementService) UpdateAgentConfigWithSystemPromptPatch(ctx context.Context, agentID, accountID string, req dto.AgentSystemPromptPatchRequest) (*dto.AgentConfigResponse, error) {
+	s.lastSystemPromptPatchRequest = req
+	if s.draftConfig == nil {
+		return nil, errors.New("draft config not found")
+	}
+	if req.ExpectedBaseSHA256 != systemPromptDigest(s.draftConfig.Config.SystemPrompt) {
+		return nil, errors.New("agent system prompt has changed")
+	}
+	result, err := applySystemPromptPatch(s.draftConfig.Config.SystemPrompt, req.Operation, req.AppendContent, req.Separator, req.SectionID, req.SectionTitle)
+	if err != nil {
+		return nil, err
+	}
+	req.Config.SystemPrompt = result
+	return s.UpdateAgentConfig(ctx, agentID, accountID, req.Config)
 }
 
 func (s *fakeAgentManagementService) ListAgentSkillCandidates(_ context.Context, _ string, _ string, req dto.AgentSkillCandidatesRequest) (*dto.AgentSkillCandidatesResponse, error) {
@@ -3429,15 +3874,11 @@ func (s *fakeAgentManagementService) RollbackAgentPublishedVersion(context.Conte
 	return nil, nil
 }
 
+func (s *fakeAgentManagementService) PreviewAgentPublishedVersionRollback(context.Context, string, string, string) (*dto.AgentRollbackPreviewResponse, error) {
+	return nil, nil
+}
+
 func (s *fakeAgentManagementService) GetPublishedAgentWebAppConfig(context.Context, string) (*dto.AgentWebAppRuntimeConfigResponse, error) {
-	return nil, nil
-}
-
-func (s *fakeAgentManagementService) GetPublishedAgentRuntimeConfig(context.Context, string) (*dto.AgentWebAppRuntimeConfigResponse, error) {
-	return nil, nil
-}
-
-func (s *fakeAgentManagementService) GetWebAppRuntimeCapability(context.Context, string, string, bool) (*dto.AgentWebAppRuntimeCapabilityResponse, error) {
 	return nil, nil
 }
 

@@ -2,12 +2,15 @@ package agentmanagement
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"reflect"
 	"strconv"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/dto"
@@ -47,6 +50,17 @@ const (
 	defaultAgentModelListPageSize            = 20
 	maxAgentModelListPageSize                = 100
 	defaultAgentTextIconBackground           = "#0847f7"
+	maxManagedFileSystemPromptChars          = 16000
+	maxSystemPromptPatchSeparatorChars       = 64
+	systemPromptPatchOperationAppend         = "append"
+	systemPromptPatchOperationUpsertSection  = "upsert_section"
+	defaultSystemPromptPatchSeparator        = "\n\n"
+	maxSystemPromptPatchSectionIDChars       = 64
+	maxSystemPromptPatchSectionTitleChars    = 128
+	systemPromptSourceTypeManagedFile        = "managed_file"
+	systemPromptSourceTypeText               = "text"
+	agentSystemPromptSourceChangedCode       = "agent_system_prompt_source_changed"
+	agentSystemPromptPatchInvalidCode        = "agent_system_prompt_patch_invalid"
 )
 
 var allowedAgentThemeColors = []string{"default", "blue", "emerald", "violet", "rose", "amber", "slate"}
@@ -57,6 +71,19 @@ type WorkspacePermissionService interface {
 
 type AvailableModelsService interface {
 	ListAvailable(ctx context.Context, organizationID uuid.UUID, provider string, useCase string) ([]*llmmodelservice.AvailableModel, error)
+}
+
+type ManagedFileService interface {
+	GetFileByID(ctx context.Context, fileID string) (*dto.UploadFile, error)
+	GetFile(ctx context.Context, fileID string) (string, error)
+}
+
+type AgentSystemPromptPatchService interface {
+	UpdateAgentConfigWithSystemPromptPatch(ctx context.Context, agentID, accountID string, req dto.AgentSystemPromptPatchRequest) (*dto.AgentConfigResponse, error)
+}
+
+type stableCodeError interface {
+	ErrorCode() string
 }
 
 type agentConfigDisplayNames struct {
@@ -71,9 +98,18 @@ type Provider struct {
 	agentsService   interfaces.AgentsService
 	workspacePerms  WorkspacePermissionService
 	availableModels AvailableModelsService
+	managedFiles    ManagedFileService
 }
 
-func NewProvider(agentsService interfaces.AgentsService, workspacePerms WorkspacePermissionService, availableModels AvailableModelsService) *Provider {
+type ProviderOption func(*Provider)
+
+func WithManagedFileService(service ManagedFileService) ProviderOption {
+	return func(provider *Provider) {
+		provider.managedFiles = service
+	}
+}
+
+func NewProvider(agentsService interfaces.AgentsService, workspacePerms WorkspacePermissionService, availableModels AvailableModelsService, options ...ProviderOption) *Provider {
 	identity := tools.ToolProviderIdentity{
 		Name:   ProviderID,
 		Author: "System",
@@ -94,6 +130,11 @@ func NewProvider(agentsService interfaces.AgentsService, workspacePerms Workspac
 		workspacePerms:  workspacePerms,
 		availableModels: availableModels,
 	}
+	for _, option := range options {
+		if option != nil {
+			option(provider)
+		}
+	}
 	provider.RegisterTool(newListAgentsTool(agentsService))
 	provider.RegisterTool(newGetAgentTool(agentsService))
 	provider.RegisterTool(newCreateAgentTool(agentsService, workspacePerms))
@@ -101,7 +142,7 @@ func NewProvider(agentsService interfaces.AgentsService, workspacePerms Workspac
 	provider.RegisterTool(newDeleteAgentTool(agentsService))
 	provider.RegisterTool(newDeleteAgentsTool(agentsService))
 	provider.RegisterTool(newGetAgentConfigTool(agentsService))
-	provider.RegisterTool(newUpdateAgentConfigTool(agentsService, availableModels))
+	provider.RegisterTool(newUpdateAgentConfigToolWithManagedFiles(agentsService, availableModels, provider.managedFiles, workspacePerms))
 	provider.RegisterTool(newReplaceAgentMemorySlotsTool(agentsService))
 	provider.RegisterTool(newListAgentSkillCandidatesTool(agentsService))
 	provider.RegisterTool(newListAgentKnowledgeCandidatesTool(agentsService))
@@ -134,7 +175,18 @@ type updateAgentIdentityTool struct{ agentToolBase }
 type deleteAgentTool struct{ agentToolBase }
 type deleteAgentsTool struct{ agentToolBase }
 type getAgentConfigTool struct{ agentToolBase }
-type updateAgentConfigTool struct{ agentToolBase }
+type updateAgentConfigTool struct {
+	agentToolBase
+	managedFiles ManagedFileService
+}
+
+type resolvedSystemPromptMutation struct {
+	Source     map[string]interface{}
+	Patch      map[string]interface{}
+	Digest     string
+	Characters int
+	Request    *dto.AgentSystemPromptPatchRequest
+}
 type replaceAgentMemorySlotsTool struct{ agentToolBase }
 type listAgentSkillCandidatesTool struct{ agentToolBase }
 type listAgentKnowledgeCandidatesTool struct{ agentToolBase }
@@ -257,6 +309,10 @@ func newUpdateAgentConfigTool(agentsService interfaces.AgentsService, availableM
 	if len(availableModels) > 0 {
 		models = availableModels[0]
 	}
+	return newUpdateAgentConfigToolWithManagedFiles(agentsService, models, nil, nil)
+}
+
+func newUpdateAgentConfigToolWithManagedFiles(agentsService interfaces.AgentsService, availableModels AvailableModelsService, managedFiles ManagedFileService, workspacePerms WorkspacePermissionService) tools.Tool {
 	return &updateAgentConfigTool{agentToolBase: newAgentToolBase(agentToolEntity(
 		ToolUpdateAgentConfig,
 		"Update Agent Config",
@@ -265,6 +321,8 @@ func newUpdateAgentConfigTool(agentsService interfaces.AgentsService, availableM
 		[]tools.ToolParameter{
 			stringParameter("agent_id", "Agent ID", "Required Agent ID from page context, list_agents, or governed asset resolution. Do not invent IDs.", true),
 			stringParameter("system_prompt", "System prompt", "Optional replacement system prompt.", false),
+			objectParameter("system_prompt_source", "System prompt source", "Optional managed file source object: {\"type\":\"managed_file\",\"file_id\":\"...\"}. Use instead of system_prompt when the full prompt is already saved as a TXT or Markdown file.", false),
+			objectParameter("system_prompt_patch", "System prompt patch", "Optional incremental patch. Use operation=append for exact append, or operation=upsert_section with section_id and optional section_title to insert or replace one managed section without reading and retransmitting the full prompt. source accepts managed_file or text; separator is used when appending a new block and defaults to a blank line. Mutually exclusive with system_prompt and system_prompt_source.", false),
 			stringParameter("model_provider", "Model provider", "Required whenever model is provided. When changing this field, also provide model from the same list_available_models item.", false),
 			stringParameter("model", "Model", "Optional replacement model ID. When changing this field, also provide model_provider from the same list_available_models item.", false),
 			objectParameter("model_parameters", "Model parameters", "Optional replacement model parameter object.", false),
@@ -290,7 +348,7 @@ func newUpdateAgentConfigTool(agentsService interfaces.AgentsService, availableM
 			stringParameter("remove_workflow_bindings", "Remove workflow bindings", "Optional JSON array of workflow bindings to remove from the current bindings.", false),
 			objectParameter("display_names", "Display names", "Optional evidence-only display names for governance cards and event summaries. Supports skills, knowledge_bases, database_tables, and workflows.", false),
 		},
-	), agentsService, nil, models)}
+	), agentsService, workspacePerms, availableModels), managedFiles: managedFiles}
 }
 
 func newReplaceAgentMemorySlotsTool(agentsService interfaces.AgentsService) tools.Tool {
@@ -897,6 +955,10 @@ func (t *updateAgentConfigTool) Invoke(ctx context.Context, userID string, param
 	if err != nil {
 		return nil, err
 	}
+	params, promptMutation, err := t.resolveSystemPromptMutation(ctx, scope, current.WorkspaceID, current.Config.SystemPrompt, params)
+	if err != nil {
+		return nil, err
+	}
 	_, hasModel := optionalStringParam(params, "model")
 	requestedProvider, hasProvider := optionalStringParam(params, "model_provider")
 	if hasModel {
@@ -928,8 +990,27 @@ func (t *updateAgentConfigTool) Invoke(ctx context.Context, userID string, param
 		return nil, fmt.Errorf("at least one config field is required")
 	}
 	changedFields := actualAgentConfigChangedFields(current.Config, req, requestedFields)
-	updated, err := t.agentsService.UpdateAgentConfig(t.scopedContext(ctx, scope), agentID, scope.AccountID, req)
+	var updated *dto.AgentConfigResponse
+	if promptMutation != nil && promptMutation.Request != nil {
+		patchService, ok := t.agentsService.(AgentSystemPromptPatchService)
+		if !ok {
+			return nil, fmt.Errorf("agent system prompt patch service is not configured")
+		}
+		req.BindingRevision = current.Config.BindingRevision
+		patchRequest := *promptMutation.Request
+		patchRequest.Config = req
+		patchRequest.RequestedFields = append([]string(nil), requestedFields...)
+		updated, err = patchService.UpdateAgentConfigWithSystemPromptPatch(t.scopedContext(ctx, scope), agentID, scope.AccountID, patchRequest)
+	} else {
+		updated, err = t.agentsService.UpdateAgentConfig(t.scopedContext(ctx, scope), agentID, scope.AccountID, req)
+	}
 	if err != nil {
+		if promptMutation != nil && promptMutation.Request != nil {
+			var coded stableCodeError
+			if errors.As(err, &coded) && strings.TrimSpace(coded.ErrorCode()) != "" {
+				return nil, fmt.Errorf("%s: %w", coded.ErrorCode(), err)
+			}
+		}
 		return nil, err
 	}
 	agent := agentPayloadWithParamFallback(t.agentPayloadForResult(ctx, scope, agentID), params)
@@ -941,8 +1022,485 @@ func (t *updateAgentConfigTool) Invoke(ctx context.Context, userID string, param
 	}
 	payload["requested_fields"] = append([]string(nil), requestedFields...)
 	payload["updated_fields"] = append([]string(nil), changedFields...)
+	if promptMutation != nil {
+		if len(promptMutation.Source) > 0 {
+			payload["system_prompt_source"] = promptMutation.Source
+		}
+		if len(promptMutation.Patch) > 0 {
+			payload["system_prompt_patch"] = promptMutation.Patch
+		}
+		payload["system_prompt_digest"] = promptMutation.Digest
+		payload["system_prompt_chars"] = promptMutation.Characters
+		payload["config"] = agentConfigResponseWithoutSystemPrompt(updated)
+	}
 	mergeAgentConfigBindingFinalStates(payload, requestedFields, updated, displayNames)
 	return []tools.ToolInvokeMessage{builtin.CreateJSONMessage(payload)}, nil
+}
+
+func (t *updateAgentConfigTool) EnrichGovernanceArguments(ctx context.Context, userID string, params map[string]interface{}) map[string]interface{} {
+	enriched := t.agentToolBase.EnrichGovernanceArguments(ctx, userID, params)
+	source, hasSource, sourceErr := optionalMapParam(enriched, "system_prompt_source")
+	patch, hasPatch, patchErr := optionalMapParam(enriched, "system_prompt_patch")
+	if (sourceErr == nil && hasSource) || (patchErr == nil && hasPatch) {
+		preview, _ := stringSliceParam(enriched, "changed_fields_preview")
+		enriched["changed_fields_preview"] = appendUniqueStrings(preview, "system_prompt")
+	}
+	if sourceErr == nil && hasSource && strings.EqualFold(strings.TrimSpace(stringValue(source, "type")), systemPromptSourceTypeManagedFile) {
+		enriched["system_prompt_source"] = t.enrichManagedSystemPromptSourceDigest(ctx, source)
+	}
+	if patchErr != nil || !hasPatch {
+		return enriched
+	}
+	patchSource, hasPatchSource, err := optionalMapParam(patch, "source")
+	if err != nil || !hasPatchSource {
+		return enriched
+	}
+	separator, err := systemPromptPatchSeparator(patch)
+	if err != nil {
+		return enriched
+	}
+	patch["separator"] = separator
+	patch["separator_characters"] = utf8.RuneCountInString(separator)
+	patch["separator_sha256"] = systemPromptDigest(separator)
+	switch strings.ToLower(strings.TrimSpace(stringValue(patchSource, "type"))) {
+	case systemPromptSourceTypeManagedFile:
+		patchSource = t.enrichManagedSystemPromptSourceDigest(ctx, patchSource)
+	case systemPromptSourceTypeText:
+		text, ok := rawStringParam(patchSource, "text")
+		if !ok || !utf8.ValidString(text) {
+			return enriched
+		}
+		digest := sha256.Sum256([]byte(text))
+		patchSource["characters"] = utf8.RuneCountInString(text)
+		patchSource["sha256"] = fmt.Sprintf("sha256:%x", digest[:])
+	default:
+		return enriched
+	}
+	patch["source"] = patchSource
+	t.enrichSystemPromptPatchBaseline(ctx, userID, enriched, patch)
+	enriched["system_prompt_patch"] = patch
+	return enriched
+}
+
+func (t *updateAgentConfigTool) enrichSystemPromptPatchBaseline(ctx context.Context, userID string, params map[string]interface{}, patch map[string]interface{}) {
+	if strings.TrimSpace(stringValue(patch, "expected_base_sha256")) != "" || t.agentsService == nil {
+		return
+	}
+	scope, err := t.scope(userID)
+	if err != nil {
+		return
+	}
+	agentID := requiredAgentID(params)
+	if agentID == "" {
+		return
+	}
+	current, err := t.agentsService.GetAgentDraftRuntimeConfig(t.scopedContext(ctx, scope), agentID, scope.AccountID)
+	if err != nil || current == nil {
+		return
+	}
+	patch["expected_base_sha256"] = systemPromptDigest(current.Config.SystemPrompt)
+	patch["expected_base_characters"] = utf8.RuneCountInString(current.Config.SystemPrompt)
+}
+
+func (t *updateAgentConfigTool) enrichManagedSystemPromptSourceDigest(ctx context.Context, source map[string]interface{}) map[string]interface{} {
+	source = copyStringAnyMap(source)
+	// A frozen invocation may pass through enrichment again during approval
+	// continuation. Preserve the original snapshot so the execution-time check
+	// can detect a file that changed while approval was pending.
+	if expected := strings.TrimSpace(stringValue(source, "expected_sha256")); expected != "" || t.managedFiles == nil {
+		return source
+	}
+	fileID := strings.TrimSpace(stringValue(source, "file_id"))
+	if fileID == "" {
+		return source
+	}
+	content, err := t.managedFiles.GetFile(ctx, fileID)
+	if err != nil || !utf8.ValidString(content) {
+		return source
+	}
+	digest := sha256.Sum256([]byte(content))
+	source["expected_sha256"] = fmt.Sprintf("sha256:%x", digest[:])
+	source["expected_characters"] = utf8.RuneCountInString(content)
+	return source
+}
+
+func (t *updateAgentConfigTool) resolveSystemPromptMutation(ctx context.Context, scope agentScope, agentWorkspaceID string, currentPrompt string, params map[string]interface{}) (map[string]interface{}, *resolvedSystemPromptMutation, error) {
+	source, hasSource, err := optionalMapParam(params, "system_prompt_source")
+	if err != nil {
+		return nil, nil, fmt.Errorf("invalid system_prompt_source: %w", err)
+	}
+	patch, hasPatch, err := optionalMapParam(params, "system_prompt_patch")
+	if err != nil {
+		return nil, nil, systemPromptPatchInvalidError("invalid system_prompt_patch: %v", err)
+	}
+	_, hasPrompt := optionalStringParam(params, "system_prompt")
+	mutationCount := 0
+	for _, present := range []bool{hasPrompt, hasSource, hasPatch} {
+		if present {
+			mutationCount++
+		}
+	}
+	if mutationCount > 1 {
+		if hasPatch {
+			return nil, nil, systemPromptPatchInvalidError("system_prompt, system_prompt_source, and system_prompt_patch are mutually exclusive")
+		}
+		return nil, nil, fmt.Errorf("system_prompt and system_prompt_source are mutually exclusive")
+	}
+	if !hasSource && !hasPatch {
+		return params, nil, nil
+	}
+	if hasSource {
+		content, sourceEvidence, err := t.resolveManagedSystemPromptContent(ctx, scope, agentWorkspaceID, source, "system_prompt_source")
+		if err != nil {
+			return nil, nil, err
+		}
+		content = strings.TrimSpace(content)
+		normalized := copyStringAnyMap(params)
+		normalized["system_prompt"] = content
+		return normalized, &resolvedSystemPromptMutation{
+			Source:     sourceEvidence,
+			Digest:     systemPromptDigest(content),
+			Characters: utf8.RuneCountInString(content),
+		}, nil
+	}
+	operation := strings.ToLower(strings.TrimSpace(stringValue(patch, "operation")))
+	if operation != systemPromptPatchOperationAppend && operation != systemPromptPatchOperationUpsertSection {
+		return nil, nil, systemPromptPatchInvalidError("system_prompt_patch.operation must be append or upsert_section")
+	}
+	patchSource, hasPatchSource, err := optionalMapParam(patch, "source")
+	if err != nil {
+		return nil, nil, systemPromptPatchInvalidError("invalid system_prompt_patch.source: %v", err)
+	}
+	if !hasPatchSource {
+		return nil, nil, systemPromptPatchInvalidError("system_prompt_patch.source is required")
+	}
+	separator, err := systemPromptPatchSeparator(patch)
+	if err != nil {
+		return nil, nil, err
+	}
+	var addition string
+	var sourceEvidence map[string]interface{}
+	switch strings.ToLower(strings.TrimSpace(stringValue(patchSource, "type"))) {
+	case systemPromptSourceTypeManagedFile:
+		addition, sourceEvidence, err = t.resolveManagedSystemPromptContent(ctx, scope, agentWorkspaceID, patchSource, "system_prompt_patch.source")
+	case systemPromptSourceTypeText:
+		addition, sourceEvidence, err = resolveTextSystemPromptPatchSource(patchSource)
+	default:
+		err = systemPromptPatchInvalidError("system_prompt_patch.source.type must be managed_file or text")
+	}
+	if err != nil {
+		if strings.HasPrefix(err.Error(), agentSystemPromptSourceChangedCode+":") || strings.HasPrefix(err.Error(), agentSystemPromptPatchInvalidCode+":") {
+			return nil, nil, err
+		}
+		return nil, nil, systemPromptPatchInvalidError("%v", err)
+	}
+	sectionID := ""
+	sectionTitle := ""
+	if operation == systemPromptPatchOperationUpsertSection {
+		sectionID, sectionTitle, err = systemPromptPatchSection(patch)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+	result, err := applySystemPromptPatch(currentPrompt, operation, addition, separator, sectionID, sectionTitle)
+	if err != nil {
+		return nil, nil, err
+	}
+	expectedBaseDigest := strings.TrimSpace(stringValue(patch, "expected_base_sha256"))
+	if expectedBaseDigest == "" {
+		expectedBaseDigest = systemPromptDigest(currentPrompt)
+	}
+	normalized := copyStringAnyMap(params)
+	normalized["system_prompt"] = result
+	patchEvidence := map[string]interface{}{
+		"operation":            operation,
+		"source":               sourceEvidence,
+		"base_sha256":          expectedBaseDigest,
+		"content_characters":   utf8.RuneCountInString(addition),
+		"resulting_characters": utf8.RuneCountInString(result),
+		"separator_characters": utf8.RuneCountInString(separator),
+		"separator_sha256":     systemPromptDigest(separator),
+	}
+	if operation == systemPromptPatchOperationAppend {
+		patchEvidence["appended_characters"] = utf8.RuneCountInString(addition)
+	} else {
+		patchEvidence["section_characters"] = utf8.RuneCountInString(addition)
+	}
+	if sectionID != "" {
+		patchEvidence["section_id"] = sectionID
+	}
+	if sectionTitle != "" {
+		patchEvidence["section_title"] = sectionTitle
+	}
+	return normalized, &resolvedSystemPromptMutation{
+		Patch:      patchEvidence,
+		Digest:     systemPromptDigest(result),
+		Characters: utf8.RuneCountInString(result),
+		Request: &dto.AgentSystemPromptPatchRequest{
+			Operation:          operation,
+			AppendContent:      addition,
+			Separator:          separator,
+			SectionID:          sectionID,
+			SectionTitle:       sectionTitle,
+			ExpectedBaseSHA256: expectedBaseDigest,
+		},
+	}, nil
+}
+
+func (t *updateAgentConfigTool) resolveManagedSystemPromptContent(ctx context.Context, scope agentScope, agentWorkspaceID string, source map[string]interface{}, fieldName string) (string, map[string]interface{}, error) {
+	if !strings.EqualFold(strings.TrimSpace(stringValue(source, "type")), systemPromptSourceTypeManagedFile) {
+		return "", nil, fmt.Errorf("%s.type must be managed_file", fieldName)
+	}
+	fileID := strings.TrimSpace(stringValue(source, "file_id"))
+	if fileID == "" {
+		return "", nil, fmt.Errorf("%s.file_id is required", fieldName)
+	}
+	if t.managedFiles == nil {
+		return "", nil, fmt.Errorf("managed file service is not configured")
+	}
+	file, err := t.managedFiles.GetFileByID(ctx, fileID)
+	if err != nil || file == nil {
+		return "", nil, fmt.Errorf("managed system prompt file is not available")
+	}
+	if file.IsTemporary {
+		return "", nil, fmt.Errorf("managed system prompt file must be saved to file management first")
+	}
+	organizationID := strings.TrimSpace(file.OrganizationID)
+	if organizationID == "" {
+		organizationID = strings.TrimSpace(file.TenantID)
+	}
+	if organizationID == "" || organizationID != scope.OrganizationID {
+		return "", nil, fmt.Errorf("managed system prompt file is not accessible")
+	}
+	fileWorkspaceID := ""
+	if file.WorkspaceID != nil {
+		fileWorkspaceID = strings.TrimSpace(*file.WorkspaceID)
+	}
+	if fileWorkspaceID == "" || fileWorkspaceID != strings.TrimSpace(agentWorkspaceID) {
+		return "", nil, fmt.Errorf("managed system prompt file must belong to the Agent workspace")
+	}
+	if t.workspacePerms == nil {
+		return "", nil, fmt.Errorf("workspace permission service is not configured")
+	}
+	allowed, err := t.workspacePerms.CheckWorkspacePermission(ctx, organizationID, fileWorkspaceID, scope.AccountID, workspacemodel.WorkspacePermissionFilePreview)
+	if err != nil {
+		return "", nil, fmt.Errorf("check managed system prompt file permission: %w", err)
+	}
+	if !allowed {
+		return "", nil, fmt.Errorf("managed system prompt file is not accessible")
+	}
+	if !managedSystemPromptTextFile(file) {
+		return "", nil, fmt.Errorf("managed system prompt file must be a TXT or Markdown file")
+	}
+	content, err := t.managedFiles.GetFile(ctx, fileID)
+	if err != nil {
+		return "", nil, fmt.Errorf("managed system prompt file is not ready")
+	}
+	if !utf8.ValidString(content) {
+		return "", nil, fmt.Errorf("managed system prompt file must contain valid UTF-8 text")
+	}
+	characters := utf8.RuneCountInString(content)
+	if characters > maxManagedFileSystemPromptChars {
+		return "", nil, fmt.Errorf("managed system prompt file exceeds %d characters", maxManagedFileSystemPromptChars)
+	}
+	digest := sha256.Sum256([]byte(content))
+	actualDigest := fmt.Sprintf("sha256:%x", digest[:])
+	if expected := strings.TrimSpace(stringValue(source, "expected_sha256")); expected != "" && expected != actualDigest {
+		return "", nil, fmt.Errorf("%s: managed system prompt file changed after approval was requested", agentSystemPromptSourceChangedCode)
+	}
+	return content, map[string]interface{}{
+		"type":       "managed_file",
+		"file_id":    file.ID,
+		"name":       file.Name,
+		"size":       file.Size,
+		"characters": characters,
+		"sha256":     actualDigest,
+	}, nil
+}
+
+func resolveTextSystemPromptPatchSource(source map[string]interface{}) (string, map[string]interface{}, error) {
+	text, ok := rawStringParam(source, "text")
+	if !ok || strings.TrimSpace(text) == "" {
+		return "", nil, systemPromptPatchInvalidError("system_prompt_patch.source.text is required")
+	}
+	if !utf8.ValidString(text) {
+		return "", nil, systemPromptPatchInvalidError("system_prompt_patch.source.text must contain valid UTF-8 text")
+	}
+	characters := utf8.RuneCountInString(text)
+	if characters > maxManagedFileSystemPromptChars {
+		return "", nil, systemPromptPatchInvalidError("system_prompt_patch.source.text exceeds %d characters", maxManagedFileSystemPromptChars)
+	}
+	return text, map[string]interface{}{
+		"type":       systemPromptSourceTypeText,
+		"characters": characters,
+		"sha256":     systemPromptDigest(text),
+	}, nil
+}
+
+func appendSystemPrompt(current string, addition string, separator string) (string, error) {
+	if strings.TrimSpace(addition) == "" {
+		return "", systemPromptPatchInvalidError("system_prompt_patch append content must not be empty")
+	}
+	result := addition
+	if current != "" {
+		result = current + separator + addition
+	}
+	if characters := utf8.RuneCountInString(result); characters > maxManagedFileSystemPromptChars {
+		return "", systemPromptPatchInvalidError("appended system prompt exceeds %d characters", maxManagedFileSystemPromptChars)
+	}
+	return result, nil
+}
+
+func applySystemPromptPatch(current string, operation string, content string, separator string, sectionID string, sectionTitle string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(operation)) {
+	case systemPromptPatchOperationAppend:
+		return appendSystemPrompt(current, content, separator)
+	case systemPromptPatchOperationUpsertSection:
+		return upsertSystemPromptSection(current, content, separator, sectionID, sectionTitle)
+	default:
+		return "", systemPromptPatchInvalidError("system_prompt_patch.operation must be append or upsert_section")
+	}
+}
+
+func systemPromptPatchSection(patch map[string]interface{}) (string, string, error) {
+	sectionID := strings.TrimSpace(stringValue(patch, "section_id"))
+	if sectionID == "" {
+		return "", "", systemPromptPatchInvalidError("system_prompt_patch.section_id is required for upsert_section")
+	}
+	if utf8.RuneCountInString(sectionID) > maxSystemPromptPatchSectionIDChars || !validSystemPromptPatchSectionID(sectionID) {
+		return "", "", systemPromptPatchInvalidError("system_prompt_patch.section_id must use 1-%d ASCII letters, digits, dots, underscores, or hyphens", maxSystemPromptPatchSectionIDChars)
+	}
+	sectionTitle, hasTitle := rawStringParam(patch, "section_title")
+	if !hasTitle {
+		return sectionID, "", nil
+	}
+	sectionTitle = strings.TrimSpace(sectionTitle)
+	if !utf8.ValidString(sectionTitle) || utf8.RuneCountInString(sectionTitle) > maxSystemPromptPatchSectionTitleChars || strings.ContainsAny(sectionTitle, "\r\n") {
+		return "", "", systemPromptPatchInvalidError("system_prompt_patch.section_title must be a single valid UTF-8 line no longer than %d characters", maxSystemPromptPatchSectionTitleChars)
+	}
+	return sectionID, sectionTitle, nil
+}
+
+func validSystemPromptPatchSectionID(value string) bool {
+	for index := 0; index < len(value); index++ {
+		char := value[index]
+		if (char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') || (char >= '0' && char <= '9') || char == '.' || char == '_' || char == '-' {
+			continue
+		}
+		return false
+	}
+	return value != ""
+}
+
+func upsertSystemPromptSection(current string, content string, separator string, sectionID string, sectionTitle string) (string, error) {
+	if strings.TrimSpace(content) == "" {
+		return "", systemPromptPatchInvalidError("system_prompt_patch section content must not be empty")
+	}
+	startMarker, endMarker := systemPromptSectionMarkers(sectionID)
+	if strings.Contains(content, startMarker) || strings.Contains(content, endMarker) {
+		return "", systemPromptPatchInvalidError("system_prompt_patch section content contains reserved section markers")
+	}
+	body := content
+	if sectionTitle != "" {
+		body = "## " + sectionTitle + "\n\n" + content
+	}
+	block := startMarker + "\n" + body + "\n" + endMarker
+	startCount := strings.Count(current, startMarker)
+	endCount := strings.Count(current, endMarker)
+	var result string
+	switch {
+	case startCount == 0 && endCount == 0:
+		result = block
+		if current != "" {
+			result = current + separator + block
+		}
+	case startCount == 1 && endCount == 1:
+		start := strings.Index(current, startMarker)
+		endRelative := strings.Index(current[start+len(startMarker):], endMarker)
+		if endRelative < 0 {
+			return "", systemPromptPatchInvalidError("system_prompt_patch section markers are malformed")
+		}
+		end := start + len(startMarker) + endRelative + len(endMarker)
+		result = current[:start] + block + current[end:]
+	default:
+		return "", systemPromptPatchInvalidError("system_prompt_patch section markers are duplicated or malformed")
+	}
+	if characters := utf8.RuneCountInString(result); characters > maxManagedFileSystemPromptChars {
+		return "", systemPromptPatchInvalidError("updated system prompt exceeds %d characters", maxManagedFileSystemPromptChars)
+	}
+	return result, nil
+}
+
+func systemPromptSectionMarkers(sectionID string) (string, string) {
+	prefix := "<!-- zgi:system-prompt-section:" + sectionID
+	return prefix + ":start -->", prefix + ":end -->"
+}
+
+func systemPromptPatchSeparator(patch map[string]interface{}) (string, error) {
+	value, exists := patch["separator"]
+	if !exists {
+		return defaultSystemPromptPatchSeparator, nil
+	}
+	separator, ok := value.(string)
+	if !ok {
+		return "", systemPromptPatchInvalidError("system_prompt_patch.separator must be a string")
+	}
+	if !utf8.ValidString(separator) {
+		return "", systemPromptPatchInvalidError("system_prompt_patch.separator must contain valid UTF-8 text")
+	}
+	if characters := utf8.RuneCountInString(separator); characters > maxSystemPromptPatchSeparatorChars {
+		return "", systemPromptPatchInvalidError("system_prompt_patch.separator exceeds %d characters", maxSystemPromptPatchSeparatorChars)
+	}
+	return separator, nil
+}
+
+func rawStringParam(params map[string]interface{}, key string) (string, bool) {
+	if params == nil {
+		return "", false
+	}
+	value, ok := params[key]
+	if !ok || value == nil {
+		return "", false
+	}
+	text, ok := value.(string)
+	return text, ok
+}
+
+func systemPromptPatchInvalidError(format string, args ...interface{}) error {
+	return fmt.Errorf("%s: %s", agentSystemPromptPatchInvalidCode, fmt.Sprintf(format, args...))
+}
+
+func systemPromptDigest(content string) string {
+	digest := sha256.Sum256([]byte(content))
+	return fmt.Sprintf("sha256:%x", digest[:])
+}
+
+func managedSystemPromptTextFile(file *dto.UploadFile) bool {
+	if file == nil {
+		return false
+	}
+	extension := strings.ToLower(strings.TrimPrefix(strings.TrimSpace(file.Extension), "."))
+	if extension == "txt" || extension == "md" || extension == "markdown" {
+		return true
+	}
+	mimeType := strings.ToLower(strings.TrimSpace(strings.Split(file.MimeType, ";")[0]))
+	return mimeType == "text/plain" || mimeType == "text/markdown"
+}
+
+func agentConfigResponseWithoutSystemPrompt(config *dto.AgentConfigResponse) interface{} {
+	if config == nil {
+		return nil
+	}
+	raw, err := json.Marshal(config)
+	if err != nil {
+		return map[string]interface{}{}
+	}
+	out := map[string]interface{}{}
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return map[string]interface{}{}
+	}
+	delete(out, "system_prompt")
+	return out
 }
 
 func (t *updateAgentConfigTool) validateRequestedModelPair(ctx context.Context, scope agentScope, params map[string]interface{}) error {
@@ -2419,7 +2977,7 @@ func (t *getAgentConfigTool) ForkToolRuntime(runtime *tools.ToolRuntime) tools.T
 }
 
 func (t *updateAgentConfigTool) ForkToolRuntime(runtime *tools.ToolRuntime) tools.Tool {
-	return &updateAgentConfigTool{agentToolBase: t.forkAgentToolBase(runtime)}
+	return &updateAgentConfigTool{agentToolBase: t.forkAgentToolBase(runtime), managedFiles: t.managedFiles}
 }
 
 func (t *replaceAgentMemorySlotsTool) ForkToolRuntime(runtime *tools.ToolRuntime) tools.Tool {
@@ -3280,6 +3838,8 @@ func agentConfigWrapperKeys() []string {
 		"id",
 		"asset_id",
 		"system_prompt",
+		"system_prompt_source",
+		"system_prompt_patch",
 		"model_provider",
 		"model",
 		"model_parameters",

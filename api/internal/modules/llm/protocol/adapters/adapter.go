@@ -371,7 +371,7 @@ type StreamResponse struct {
 	Created    int64             `json:"created"`
 	Model      string            `json:"model"`
 	Choices    []StreamChoice    `json:"choices"`
-	Usage      *Usage            `json:"usage,omitempty"` // Token usage info (usually in last chunk)
+	Usage      *Usage            `json:"usage,omitempty"` // Cumulative usage snapshot; providers may repeat it across chunks.
 	Settlement *SettlementResult `json:"-"`
 	Error      error             `json:"-"`
 	Done       bool              `json:"-"`

@@ -1,6 +1,8 @@
 package skillloop
 
 import (
+	"crypto/sha256"
+	"fmt"
 	"strings"
 
 	"github.com/zgiai/zgi/api/internal/modules/skills"
@@ -22,6 +24,8 @@ func summarizeSkillToolArguments(skillID string, toolName string, args map[strin
 		return summarizeFileReaderArguments(args)
 	case skills.SkillConsoleNavigator:
 		return summarizeConsoleNavigatorArguments(args)
+	case skills.SkillAgentManagement:
+		return summarizeAgentManagementArguments(toolName, args)
 	default:
 		return summarizeGenericArguments(args)
 	}
@@ -35,7 +39,11 @@ func summarizeFileGeneratorArguments(args map[string]interface{}) map[string]int
 		}
 	}
 	if content, ok := args["content"].(string); ok {
-		summary["content_length"] = len(content)
+		digest := sha256.Sum256([]byte(content))
+		summary["content_length"] = len([]rune(content))
+		summary["content_chars"] = len([]rune(content))
+		summary["content_sha256"] = fmt.Sprintf("sha256:%x", digest[:])
+		summary["content_summary"] = materializedContentSummary(content)
 	}
 	return summary
 }
@@ -116,6 +124,46 @@ func summarizeFileReaderArguments(args map[string]interface{}) map[string]interf
 
 func summarizeConsoleNavigatorArguments(args map[string]interface{}) map[string]interface{} {
 	return summarizeAllowedArguments(args, []string{"href", "reason"})
+}
+
+func summarizeAgentManagementArguments(toolName string, args map[string]interface{}) map[string]interface{} {
+	if !strings.EqualFold(strings.TrimSpace(toolName), "update_agent_config") {
+		return summarizeGenericArguments(args)
+	}
+	summary := summarizeAllowedArguments(args, []string{"agent_id"})
+	patch, ok := args["system_prompt_patch"].(map[string]interface{})
+	if !ok {
+		return summary
+	}
+	patchSummary := summarizeAllowedArguments(patch, []string{
+		"operation",
+		"expected_base_sha256",
+		"expected_base_characters",
+		"separator_sha256",
+		"separator_characters",
+	})
+	source, ok := patch["source"].(map[string]interface{})
+	if ok {
+		sourceSummary := summarizeAllowedArguments(source, []string{
+			"type",
+			"file_id",
+			"name",
+			"size",
+			"sha256",
+			"characters",
+			"expected_sha256",
+			"expected_characters",
+		})
+		if text, ok := source["text"].(string); ok && strings.TrimSpace(text) != "" {
+			digest := sha256.Sum256([]byte(text))
+			sourceSummary["sha256"] = fmt.Sprintf("sha256:%x", digest[:])
+			sourceSummary["characters"] = len([]rune(text))
+			sourceSummary["summary"] = fmt.Sprintf("text patch (%d characters)", len([]rune(text)))
+		}
+		patchSummary["source"] = sourceSummary
+	}
+	summary["system_prompt_patch"] = patchSummary
+	return summary
 }
 
 func summarizeAllowedArguments(args map[string]interface{}, keys []string) map[string]interface{} {

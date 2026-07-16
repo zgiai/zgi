@@ -17,6 +17,7 @@ func currentTurnAuthoritativeStateMessage(message *runtimemodel.Message) *adapte
 		"Continue only unfinished work from this state. Do not restart the whole task, repeat completed side-effecting operations, or navigate back only to re-derive a fact that is already recorded here.",
 		"Use turn_state exact values for later tool arguments, summaries, names, prompts, and final answers. If later tool/page evidence contradicts a value, update turn_state before continuing.",
 		"Treat current_turn_execution_state completed_operations, completed_client_actions, and operation_result_summary as completed in this same user request, not as previous conversation history.",
+		"A generated_artifacts entry with lifecycle=managed is a durable managed-file reference. When a downstream tool accepts that reference, pass its managed_file_id, upload_file_id, or file_id directly; do not navigate back or call read_file only to copy the saved body into another tool.",
 		"Current assistant turn authoritative state JSON:\n" + compactJSONForPrompt(state, 7000),
 	}
 	result := adapter.Message{Role: "system", Content: strings.Join(sections, "\n")}
@@ -119,12 +120,17 @@ func compactGeneratedArtifactForPrompt(item map[string]interface{}) map[string]i
 			compact[key] = truncateRunes(value, 160)
 		}
 	}
-	for _, key := range []string{"tool_file_id", "file_id", "source_tool_file_id", "upload_file_id"} {
+	for _, key := range []string{"tool_file_id", "file_id", "managed_file_id", "source_tool_file_id", "upload_file_id"} {
 		if value := strings.TrimSpace(stringFromAny(item[key])); value != "" {
 			compact[key] = value
 		}
 	}
 	for _, key := range []string{"size", "created_at"} {
+		if value, ok := item[key]; ok && value != nil {
+			compact[key] = value
+		}
+	}
+	for _, key := range []string{"content_sha256", "sha256", "digest", "content_summary", "content_chars"} {
 		if value, ok := item[key]; ok && value != nil {
 			compact[key] = value
 		}

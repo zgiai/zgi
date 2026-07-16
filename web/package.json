@@ -34,6 +34,7 @@
     "test:dataset-file-asset-selection": "node scripts/test-dataset-file-asset-selection.mjs",
     "test:route-access": "node scripts/test-route-access.mjs",
     "test:work-layout-request-lifecycle": "node scripts/test-work-layout-request-lifecycle.mjs",
+    "test:skill-load-timeline-filter": "node scripts/test-skill-load-timeline-filter.mjs",
     "type-check": "node scripts/customer/prepare.mjs && node scripts/generate-sensitive-word-filter.mjs && node scripts/check-i18n-route-modules.mjs && tsc --noEmit",
     "check:i18n-routes": "node scripts/check-i18n-route-modules.mjs",
     "validate:agent-templates": "node scripts/validate-agent-templates.mjs",

@@ -929,6 +929,11 @@ const messages = {
     runtimeName: 'Name',
     runtimeModelRequestParams: 'Request Parameters',
     runtimeModelMessages: 'Message Context',
+    runtimeModelContextTruncated:
+      'This sanitized context was truncated to keep the runtime log bounded; {count} earlier messages were omitted.',
+    runtimeModelContextContentTruncated:
+      'Some oversized content in this sanitized context was summarized or truncated.',
+    runtimeTimeUnknown: 'Time unknown',
     runtimeModelMessageRole: '{role} message',
     runtimeToolResultMessage: 'Tool result',
     runtimeToolResultMeta: 'tool message',

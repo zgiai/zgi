@@ -787,7 +787,7 @@ func updatePlanMetaTool() llmadapter.Tool {
 		Type: "function",
 		Function: llmadapter.Function{
 			Name:        MetaToolUpdatePlan,
-			Description: "Replace the current execution plan snapshot after progress changes. Keep stable phase IDs and allow at most one in_progress phase. Evidence refs are optional audit links: include exact refs when available, but do not delay work or revise a plan only to clear an unresolved ref. You may call update_plan together with the next business tool in the same response.",
+			Description: "Replace the user-visible outcome contract only when the requested result structure changes, a failure invalidates the current route, or the user changes the goal. Ordinary tool success is reconciled automatically and must not trigger this tool. Prefer outcomes; plan is a compatibility projection.",
 			Parameters: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -806,8 +806,26 @@ func updatePlanMetaTool() llmadapter.Tool {
 							"required": []string{"step", "status"},
 						},
 					},
+					"outcomes": map[string]interface{}{
+						"type": "array",
+						"items": map[string]interface{}{
+							"type": "object",
+							"properties": map[string]interface{}{
+								"id":                   map[string]interface{}{"type": "string"},
+								"goal":                 map[string]interface{}{"type": "string"},
+								"status":               map[string]interface{}{"type": "string", "enum": []string{"pending", "in_progress", "completed", "skipped"}},
+								"target_resource_type": map[string]interface{}{"type": "string"},
+								"target_resource_id":   map[string]interface{}{"type": "string"},
+								"depends_on":           map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
+								"capabilities":         map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
+								"constraints":          map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
+								"evidence_refs":        map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
+								"required":             map[string]interface{}{"type": "boolean"},
+							},
+							"required": []string{"goal"},
+						},
+					},
 				},
-				"required": []string{"plan"},
 			},
 		},
 	}
@@ -916,7 +934,7 @@ func turnStateMetaTool() llmadapter.Tool {
 		Type: "function",
 		Function: llmadapter.Function{
 			Name:        MetaToolTurnState,
-			Description: "Record structured state for this same AIChat turn. Use this as a state handoff before approvals, page navigation, refresh, or another phase when implicit working memory may become unreliable. Use working_fact for model-only derived facts that later steps must reuse exactly, such as a file theme, target agent name, chosen model, selected asset, decision, assumption, or verification result. Use user_deliverable only when content should also be visible to the user; submit_intermediate_answer remains a compatibility shortcut for that case.",
+			Description: "Record concise structured state for this same AIChat turn. Use this as a state handoff before approvals, page navigation, refresh, or another phase when implicit working memory may become unreliable. Tool-produced files and resource results are recorded automatically; reference their IDs, digest, and concise summary instead of copying full documents or configuration payloads. Use working_fact for model-only derived facts that later steps must reuse exactly. Use user_deliverable only when content should also be visible to the user; submit_intermediate_answer remains a compatibility shortcut for that case.",
 			Parameters: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -945,8 +963,8 @@ func turnStateMetaTool() llmadapter.Tool {
 								},
 								"value": map[string]interface{}{
 									"type":        "string",
-									"description": "The concise fact, decision, assumption, or verification result. Keep exact user-derived values exact.",
-									"maxLength":   4000,
+									"description": "The concise fact, decision, assumption, verification result, or structured reference serialized as short JSON. Keep exact short user-derived values exact; never copy full documents or complete configuration payloads.",
+									"maxLength":   1024,
 								},
 								"title": map[string]interface{}{
 									"type":        "string",
@@ -955,8 +973,8 @@ func turnStateMetaTool() llmadapter.Tool {
 								},
 								"content": map[string]interface{}{
 									"type":        "string",
-									"description": "Markdown content when kind is user_deliverable.",
-									"maxLength":   16000,
+									"description": "Concise Markdown content when kind is user_deliverable. Save full documents as artifacts and reference them by file ID instead.",
+									"maxLength":   1024,
 								},
 								"source": map[string]interface{}{
 									"type":        "string",
@@ -1062,6 +1080,19 @@ func planSnapshotSchema() map[string]interface{} {
 				"status":        map[string]interface{}{"type": "string", "enum": []string{"pending", "in_progress", "completed", "skipped"}},
 				"evidence_refs": map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
 				"note":          map[string]interface{}{"type": "string"},
+				"expected_action": map[string]interface{}{
+					"type":        "object",
+					"description": "Optional structured action expected to complete this phase. Use exact loaded skill/tool IDs and stable target resource IDs when known.",
+					"properties": map[string]interface{}{
+						"skill_id":  map[string]interface{}{"type": "string"},
+						"tool_name": map[string]interface{}{"type": "string"},
+						"target": map[string]interface{}{
+							"type":                 "object",
+							"additionalProperties": map[string]interface{}{"type": "string"},
+						},
+					},
+					"required": []string{"skill_id", "tool_name"},
+				},
 			},
 			"required": []string{"step", "status"},
 		},
@@ -1082,8 +1113,14 @@ func callSkillToolMetaTool(skillIDs []string, toolNames []string, pairs []string
 			Parameters: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
-					"skill_id":  stringSchema("The loaded skill ID that allows the tool.", skillIDs),
-					"tool_name": stringSchema("The allowed tool name to call.", toolNames),
+					"skill_id":      stringSchema("The loaded skill ID that allows the tool.", skillIDs),
+					"tool_name":     stringSchema("The allowed tool name to call.", toolNames),
+					"plan_phase_id": map[string]interface{}{"type": "string", "description": "Optional outcome-phase ID. Include it only when this tool's successful result is sufficient to complete that phase; omit it for prerequisite reads, inspections, and helper calls."},
+					"completion_intent": map[string]interface{}{
+						"type":        "string",
+						"enum":        []string{"continue", "finalize_if_success"},
+						"description": "Use finalize_if_success only when this exact tool call is the final remaining user-requested effect and all prerequisites are already complete. It never bypasses approval or proves success by itself.",
+					},
 					"arguments": argumentsSchema,
 				},
 				"required": []string{"skill_id", "tool_name", "arguments"},
@@ -1932,8 +1969,17 @@ func agentManagementUpdateConfigContract() SkillToolArgumentContract {
 		Description: "Patch selected draft runtime configuration fields for one resolved AGENT asset. Omitted fields are preserved. One call may update model, prompt, file upload, suggested questions, and add/remove bindings.",
 		Schema: objectSchema(
 			map[string]interface{}{
-				"agent_id":                     stringValueSchema("Required Agent ID from page context, create_agent result, get_agent_config, or governed asset resolution. Do not invent IDs."),
-				"system_prompt":                stringValueSchema("Optional replacement system prompt."),
+				"agent_id":      stringValueSchema("Required Agent ID from page context, create_agent result, get_agent_config, or governed asset resolution. Do not invent IDs."),
+				"system_prompt": stringValueSchema("Optional replacement system prompt."),
+				"system_prompt_source": objectSchema(
+					map[string]interface{}{
+						"type":                enumStringSchema("Managed source type.", []string{"managed_file"}),
+						"file_id":             stringValueSchema("Saved TXT or Markdown file ID from file management."),
+						"expected_sha256":     stringValueSchema("Internal approval-time concurrency guard. Callers should omit this field."),
+						"expected_characters": numberSchema("Internal approval-time concurrency guard. Callers should omit this field."),
+					},
+					[]string{"type", "file_id"},
+				),
 				"model_provider":               stringValueSchema("Required whenever model is provided. Use the provider returned by list_available_models."),
 				"model":                        stringValueSchema("Optional replacement model ID. Provide model_provider from the same list_available_models item."),
 				"model_parameters":             objectSchema(map[string]interface{}{}, nil),

@@ -147,8 +147,9 @@ This skill creates new workflow files; it does not edit an existing uploaded fil
 10. Before calling `generate_pptx`, self-check that each slide's readable content fits within the slide bounds, does not overlap, uses explicit `x`, `y`, `w`, and `h` when the layout matters, and avoids long unbroken lines.
 11. Always create a temporary downloadable artifact. This skill does not write generated output into File Management.
 12. If the user explicitly asks to save, create, upload, add, or import the generated result into File Management or the current Files page, first generate the artifact here, then use `file-manager/save_file_to_management` with the returned `tool_file_id`/`file_id` and destination filename.
-13. In the final answer, briefly mention the generated filename and format.
-14. Do not invent, rewrite, shorten, or manually format download links. The system UI displays generated file download controls from structured artifact events.
+13. For file-first requests, put the complete body directly in the generation tool call. Do not first emit the same complete body through `submit_intermediate_answer`. Only show the complete body in chat as well when the user explicitly asks to see both the chat text and the file.
+14. In the final answer, briefly mention the generated filename and format.
+15. Do not invent, rewrite, shorten, or manually format download links. The system UI displays generated file download controls from structured artifact events.
 
 ## References
 

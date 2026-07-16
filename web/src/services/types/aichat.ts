@@ -34,11 +34,16 @@ export type AIChatSkillActivityStatus =
   | 'denied'
   | 'success'
   | 'advisory'
+  | 'already_loaded'
+  | 'auto_restored'
   | 'blocked'
-  | 'error';
+  | 'error'
+  | 'reload_required'
+  | 'skipped';
 export type AIChatSkillInvocationKind =
   | 'metadata_exposed'
   | 'skill_load'
+  | 'skill_load_attempt'
   | 'reference_read'
   | 'tool_call'
   | 'tool_governance'

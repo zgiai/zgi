@@ -293,7 +293,7 @@ export interface AIChatController {
     messageId: string,
     actionId: string,
     payload: AIChatClientActionResultRequest
-  ) => Promise<void>;
+  ) => Promise<boolean>;
   continueUserInput?: (
     conversationId: string,
     messageId: string,

@@ -1,6 +1,7 @@
 package skillloop
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/zgiai/zgi/api/internal/capabilities/toolgovernance"
@@ -70,6 +71,48 @@ func TestSummarizeSkillToolArgumentsKeepsConsoleNavigationHref(t *testing.T) {
 	}
 }
 
+func TestSummarizeAgentSystemPromptPatchOmitsBody(t *testing.T) {
+	text := "exact prompt body that must not be persisted in compact arguments"
+	result := summarizeSkillToolArguments(skills.SkillAgentManagement, "update_agent_config", map[string]interface{}{
+		"agent_id": "agent-1",
+		"system_prompt_patch": map[string]interface{}{
+			"operation":                "append",
+			"expected_base_sha256":     "sha256:base",
+			"expected_base_characters": 10,
+			"separator":                "\n\n",
+			"separator_sha256":         "sha256:separator",
+			"separator_characters":     2,
+			"source": map[string]interface{}{
+				"type": "text",
+				"text": text,
+			},
+		},
+	})
+	patch, ok := result["system_prompt_patch"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("system_prompt_patch = %#v, want summary object", result["system_prompt_patch"])
+	}
+	if _, leaked := patch["separator"]; leaked {
+		t.Fatalf("separator body leaked into summary: %#v", patch)
+	}
+	if patch["separator_sha256"] != "sha256:separator" || patch["separator_characters"] != 2 {
+		t.Fatalf("separator evidence = %#v, want digest and character count", patch)
+	}
+	source, ok := patch["source"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("source = %#v, want summary object", patch["source"])
+	}
+	if _, leaked := source["text"]; leaked {
+		t.Fatalf("prompt body leaked into summary: %#v", source)
+	}
+	if source["characters"] != len([]rune(text)) || !strings.HasPrefix(stringFromInterface(source["sha256"]), "sha256:") {
+		t.Fatalf("source evidence = %#v, want digest and character count", source)
+	}
+	if strings.Contains(stringFromInterface(source["summary"]), text) {
+		t.Fatalf("summary retained the complete prompt body: %#v", source["summary"])
+	}
+}
+
 func TestSummarizeSkillToolArgumentsAddsFileGeneratorExtension(t *testing.T) {
 	result := summarizeSkillToolArguments(skills.SkillFileGenerator, "generate_file", map[string]interface{}{
 		"format":   "svg",
@@ -85,6 +128,22 @@ func TestSummarizeSkillToolArgumentsAddsFileGeneratorExtension(t *testing.T) {
 	}
 	if result["content_length"] != len("<svg></svg>") {
 		t.Fatalf("content_length = %#v, want %d", result["content_length"], len("<svg></svg>"))
+	}
+}
+
+func TestSummarizeSkillToolArgumentsAddsReusableContentEvidence(t *testing.T) {
+	result := summarizeSkillToolArguments(skills.SkillFileGenerator, "generate_file", map[string]interface{}{
+		"format":  "md",
+		"content": "第一章\nA reusable summary.",
+	})
+	if result["content_chars"] != len([]rune("第一章\nA reusable summary.")) {
+		t.Fatalf("content_chars = %#v", result["content_chars"])
+	}
+	if !strings.HasPrefix(stringFromInterface(result["content_sha256"]), "sha256:") {
+		t.Fatalf("content_sha256 = %#v", result["content_sha256"])
+	}
+	if stringFromInterface(result["content_summary"]) == "" {
+		t.Fatalf("content_summary = %#v", result["content_summary"])
 	}
 }
 

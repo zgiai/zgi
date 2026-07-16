@@ -2,6 +2,7 @@ package agents
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/capabilities/agentbindings"
@@ -30,6 +32,14 @@ var (
 )
 
 const agentModelSelectionUseCase = llmmodelservice.AgentRuntimeUseCase
+
+const (
+	agentSystemPromptPatchOperationAppend        = "append"
+	agentSystemPromptPatchOperationUpsertSection = "upsert_section"
+	agentSystemPromptBaseChangedCode             = "agent_system_prompt_base_changed"
+	agentSystemPromptPatchInvalidCode            = "agent_system_prompt_patch_invalid"
+	maxAgentSystemPromptSeparatorChars           = 64
+)
 
 func (s *agentsService) GetAgentConfig(ctx context.Context, agentID, accountID string) (*dto.AgentConfigResponse, error) {
 	ag, cfg, err := s.loadAuthorizedAgentRuntimeDraft(ctx, agentID, accountID, true, agentRuntimeConfigReadPermissionCodes("AGENT")...)
@@ -69,6 +79,56 @@ func (s *agentsService) GetAgentDraftRuntimeConfig(ctx context.Context, agentID,
 		WorkspaceID: ag.TenantID.String(),
 		Config:      *resp,
 	}, nil
+}
+
+// UpdateAgentConfigWithSystemPromptPatch applies an incremental prompt mutation
+// against a frozen baseline. The baseline check and draft mutation happen while
+// the current config row is locked, so an approval continuation cannot overwrite
+// a prompt that changed while it was waiting.
+func (s *agentsService) UpdateAgentConfigWithSystemPromptPatch(ctx context.Context, agentID, accountID string, req dto.AgentSystemPromptPatchRequest) (*dto.AgentConfigResponse, error) {
+	operation := strings.ToLower(strings.TrimSpace(req.Operation))
+	if operation != agentSystemPromptPatchOperationAppend && operation != agentSystemPromptPatchOperationUpsertSection {
+		return nil, agentSystemPromptPatchInvalidAPIError("system prompt patch operation must be append or upsert_section")
+	}
+	if strings.TrimSpace(req.AppendContent) == "" {
+		return nil, agentSystemPromptPatchInvalidAPIError("system prompt patch content is required")
+	}
+	if !utf8.ValidString(req.AppendContent) {
+		return nil, agentSystemPromptPatchInvalidAPIError("system prompt patch content must contain valid UTF-8 text")
+	}
+	if !utf8.ValidString(req.Separator) {
+		return nil, agentSystemPromptPatchInvalidAPIError("system prompt patch separator must contain valid UTF-8 text")
+	}
+	if characters := utf8.RuneCountInString(req.Separator); characters > maxAgentSystemPromptSeparatorChars {
+		return nil, agentSystemPromptPatchInvalidAPIError("system prompt patch separator exceeds %d characters", maxAgentSystemPromptSeparatorChars)
+	}
+	if strings.TrimSpace(req.ExpectedBaseSHA256) == "" {
+		return nil, agentSystemPromptPatchInvalidAPIError("system prompt patch baseline digest is required")
+	}
+	if operation == agentSystemPromptPatchOperationUpsertSection {
+		if err := validateAgentSystemPromptSection(req.SectionID, req.SectionTitle); err != nil {
+			return nil, err
+		}
+	}
+	req.Operation = operation
+	if s.db == nil || s.agentBindings == nil {
+		return nil, fmt.Errorf("database and agent binding repository are required for atomic system prompt patch")
+	}
+	ag, cfg, err := s.loadAuthorizedAgentRuntimeDraft(ctx, agentID, accountID, true)
+	if err != nil {
+		return nil, err
+	}
+	runtimeReq := normalizeAgentConfigRequest(req.Config)
+	organizationID, err := s.organizationUUIDForAgentWorkspace(ctx, ag.TenantID.String())
+	if err != nil {
+		return nil, err
+	}
+	if err := s.validateAgentModelEligibility(ctx, organizationID, runtimeReq.ModelProvider, runtimeReq.Model); err != nil {
+		return nil, err
+	}
+	runtimeReq.WorkflowBindings = s.hydrateAgentWorkflowBindingTypes(ctx, ag.TenantID.String(), runtimeReq.WorkflowBindings)
+	req.Config = runtimeReq
+	return s.updateAgentConfigWithSystemPromptPatchCAS(ctx, ag, cfg, accountID, req)
 }
 
 func (s *agentsService) UpdateAgentConfig(ctx context.Context, agentID, accountID string, req dto.AgentConfigRequest) (*dto.AgentConfigResponse, error) {
@@ -255,6 +315,284 @@ func (s *agentsService) updateAgentConfigCAS(ctx context.Context, ag *Agent, sta
 		return nil
 	})
 	return saved, savedRows, err
+}
+
+func (s *agentsService) updateAgentConfigWithSystemPromptPatchCAS(ctx context.Context, ag *Agent, stale *AgentsConfig, accountID string, patch dto.AgentSystemPromptPatchRequest) (*dto.AgentConfigResponse, error) {
+	if ag == nil || stale == nil {
+		return nil, fmt.Errorf("agent and draft config are required")
+	}
+	if s.db == nil || s.agentBindings == nil {
+		return nil, fmt.Errorf("database and agent binding repository are required for atomic system prompt patch")
+	}
+	staleConfig := agentConfigResponse(ag.ID.String(), stale)
+	candidateReq, err := mergeAgentConfigRequestedFields(agentConfigRequestFromResponse(*staleConfig), patch.Config, patch.RequestedFields)
+	if err != nil {
+		return nil, err
+	}
+	candidateReq.SystemPrompt, err = applyAgentSystemPromptPatch(staleConfig.SystemPrompt, patch)
+	if err != nil {
+		return nil, err
+	}
+	candidate := *stale
+	if _, err := applyAgentConfigRequestToDraft(&candidate, candidateReq, accountID); err != nil {
+		return nil, err
+	}
+	candidate.PrePrompt = stringPtr(candidateReq.SystemPrompt)
+	candidateRows, err := s.bindingRowsForConfig(ctx, ag, agentConfigResponse(ag.ID.String(), &candidate), agentbindings.ScopeDraft, nil, accountID, time.Now())
+	if err != nil {
+		return nil, err
+	}
+	var saved *AgentsConfig
+	var savedRows []agentbindings.Binding
+	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		bindingRepo := s.agentBindings.WithTx(tx)
+		if err := bindingRepo.LockResources(ctx, tx, agentBindingResourceRefs(candidateRows)); err != nil {
+			return err
+		}
+		if err := bindingRepo.LockAgents(ctx, tx, []uuid.UUID{ag.ID}); err != nil {
+			return err
+		}
+		if err := ensureAgentWorkspaceUnchanged(ctx, tx, ag); err != nil {
+			return err
+		}
+		var current AgentsConfig
+		query := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("deleted_at IS NULL")
+		if stale.ID != uuid.Nil {
+			query = query.Where("id = ?", stale.ID)
+		} else {
+			query = query.Where("agents_id = ?", ag.ID).Order("updated_at DESC, created_at DESC")
+		}
+		if err := query.First(&current).Error; err != nil {
+			return fmt.Errorf("lock agent draft config for system prompt patch: %w", err)
+		}
+		currentConfig := agentConfigResponse(ag.ID.String(), &current)
+		actualBaseDigest := agentSystemPromptSHA256(currentConfig.SystemPrompt)
+		if expected := strings.TrimSpace(patch.ExpectedBaseSHA256); expected != actualBaseDigest {
+			return &agentBindingAPIError{
+				Code:    agentSystemPromptBaseChangedCode,
+				Message: "agent system prompt has changed",
+				Data: map[string]interface{}{
+					"agent_id":                    ag.ID.String(),
+					"expected_base_sha256":        expected,
+					"current_base_sha256":         actualBaseDigest,
+					"current_system_prompt_chars": utf8.RuneCountInString(currentConfig.SystemPrompt),
+				},
+			}
+		}
+		currentRows, err := s.bindingRowsForConfig(ctx, ag, currentConfig, agentbindings.ScopeDraft, nil, accountID, time.Now())
+		if err != nil {
+			return err
+		}
+		existing, err := bindingRepo.ListScope(ctx, agentbindings.ScopeRef{AgentID: ag.ID, Scope: agentbindings.ScopeDraft})
+		if err != nil {
+			return err
+		}
+		currentRows = preserveAgentBindingEvidence(currentRows, existing)
+		applyAgentBindingAuthorizationsFromRows(currentConfig, currentRows)
+		currentRevision := agentBindingRevision(currentRows)
+		if expectedRevision := strings.TrimSpace(patch.Config.BindingRevision); expectedRevision != "" && expectedRevision != currentRevision {
+			currentHealth := s.resolveAgentBindingHealth(ctx, ag, accountID, currentConfig, currentRows)
+			currentConfig.BindingRevision = currentRevision
+			currentConfig.BindingHealth = currentHealth
+			return &agentBindingAPIError{Code: agentBindingRevisionConflictCode, Message: "agent binding revision has changed", Data: map[string]interface{}{
+				"current_config": currentConfig, "binding_revision": currentRevision, "binding_health": currentHealth,
+			}}
+		}
+		nextReq, err := mergeAgentConfigRequestedFields(agentConfigRequestFromResponse(*currentConfig), patch.Config, patch.RequestedFields)
+		if err != nil {
+			return err
+		}
+		nextReq.SystemPrompt, err = applyAgentSystemPromptPatch(currentConfig.SystemPrompt, patch)
+		if err != nil {
+			return err
+		}
+		txService := *s
+		txService.db = tx
+		txService.agentBindings = bindingRepo
+		if err := txService.validateIncrementalAgentBindingChanges(ctx, ag, accountID, currentConfig, nextReq); err != nil {
+			return err
+		}
+		if len(nextReq.BindingAuthorizations) == 0 {
+			nextReq.BindingAuthorizations = append([]dto.AgentBindingAuthorization(nil), currentConfig.BindingAuthorizations...)
+		}
+		if _, err := applyAgentConfigRequestToDraft(&current, nextReq, accountID); err != nil {
+			return err
+		}
+		current.PrePrompt = stringPtr(nextReq.SystemPrompt)
+		if actorID, parseErr := uuid.Parse(accountID); parseErr == nil {
+			current.UpdatedBy = &actorID
+		}
+		nextConfig := agentConfigResponse(ag.ID.String(), &current)
+		nextRows, err := txService.bindingRowsForConfig(ctx, ag, nextConfig, agentbindings.ScopeDraft, nil, accountID, time.Now())
+		if err != nil {
+			return err
+		}
+		nextRows = preserveAgentBindingEvidence(nextRows, existing)
+		if err := NewAgentsRepository(tx).UpdateAgentsConfig(ctx, &current); err != nil {
+			return err
+		}
+		if err := bindingRepo.ReplaceScope(ctx, tx, agentbindings.ScopeRef{AgentID: ag.ID, Scope: agentbindings.ScopeDraft}, nextRows); err != nil {
+			return err
+		}
+		saved = &current
+		savedRows = nextRows
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	resp := agentConfigResponse(ag.ID.String(), saved)
+	resp.BindingRevision = agentBindingRevision(savedRows)
+	resp.BindingHealth = s.resolveAgentBindingHealth(ctx, ag, accountID, resp, savedRows)
+	resp.AgentMemorySlots = s.agentMemorySlotsForDraft(ctx, ag.ID)
+	return resp, nil
+}
+
+func mergeAgentConfigRequestedFields(current dto.AgentConfigRequest, requested dto.AgentConfigRequest, fields []string) (dto.AgentConfigRequest, error) {
+	for _, field := range fields {
+		switch strings.TrimSpace(field) {
+		case "system_prompt":
+			// The locked current prompt is patched separately after the field merge.
+		case "model_provider":
+			current.ModelProvider = requested.ModelProvider
+		case "model":
+			current.Model = requested.Model
+		case "model_parameters":
+			current.ModelParameters = requested.ModelParameters
+		case "enabled_skill_ids":
+			current.EnabledSkillIDs = requested.EnabledSkillIDs
+		case "agent_memory_enabled":
+			current.AgentMemoryEnabled = requested.AgentMemoryEnabled
+		case "file_upload_enabled":
+			current.FileUpload = requested.FileUpload
+		case "home_title":
+			current.HomeTitle = requested.HomeTitle
+		case "opening_statement":
+			current.OpeningStatement = requested.OpeningStatement
+		case "input_placeholder":
+			current.InputPlaceholder = requested.InputPlaceholder
+		case "theme_color":
+			current.ThemeColor = requested.ThemeColor
+		case "suggested_questions":
+			current.SuggestedQuestions = requested.SuggestedQuestions
+		case "knowledge_dataset_ids":
+			current.KnowledgeDatasetIDs = requested.KnowledgeDatasetIDs
+		case "knowledge_retrieval_config":
+			current.KnowledgeRetrievalConfig = requested.KnowledgeRetrievalConfig
+		case "database_bindings":
+			current.DatabaseBindings = requested.DatabaseBindings
+		case "workflow_bindings":
+			current.WorkflowBindings = requested.WorkflowBindings
+		case "":
+			continue
+		default:
+			return dto.AgentConfigRequest{}, fmt.Errorf("unsupported agent config patch field %q", field)
+		}
+	}
+	current.BindingRevision = requested.BindingRevision
+	return current, nil
+}
+
+func appendAgentSystemPrompt(current string, addition string, separator string) (string, error) {
+	if strings.TrimSpace(addition) == "" {
+		return "", agentSystemPromptPatchInvalidAPIError("system prompt patch content is required")
+	}
+	result := addition
+	if current != "" {
+		result = current + separator + addition
+	}
+	if err := validateAgentSystemPromptSource(result); err != nil {
+		return "", agentSystemPromptPatchInvalidAPIError("%v", err)
+	}
+	return result, nil
+}
+
+func applyAgentSystemPromptPatch(current string, patch dto.AgentSystemPromptPatchRequest) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(patch.Operation)) {
+	case agentSystemPromptPatchOperationAppend:
+		return appendAgentSystemPrompt(current, patch.AppendContent, patch.Separator)
+	case agentSystemPromptPatchOperationUpsertSection:
+		return upsertAgentSystemPromptSection(current, patch.AppendContent, patch.Separator, patch.SectionID, patch.SectionTitle)
+	default:
+		return "", agentSystemPromptPatchInvalidAPIError("system prompt patch operation must be append or upsert_section")
+	}
+}
+
+func validateAgentSystemPromptSection(sectionID string, sectionTitle string) error {
+	sectionID = strings.TrimSpace(sectionID)
+	if sectionID == "" || len(sectionID) > 64 {
+		return agentSystemPromptPatchInvalidAPIError("system prompt section id is invalid")
+	}
+	for index := 0; index < len(sectionID); index++ {
+		char := sectionID[index]
+		if (char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') || (char >= '0' && char <= '9') || char == '.' || char == '_' || char == '-' {
+			continue
+		}
+		return agentSystemPromptPatchInvalidAPIError("system prompt section id is invalid")
+	}
+	if !utf8.ValidString(sectionTitle) || utf8.RuneCountInString(sectionTitle) > 128 || strings.ContainsAny(sectionTitle, "\r\n") {
+		return agentSystemPromptPatchInvalidAPIError("system prompt section title is invalid")
+	}
+	return nil
+}
+
+func upsertAgentSystemPromptSection(current string, content string, separator string, sectionID string, sectionTitle string) (string, error) {
+	if err := validateAgentSystemPromptSection(sectionID, sectionTitle); err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(content) == "" {
+		return "", agentSystemPromptPatchInvalidAPIError("system prompt patch content is required")
+	}
+	startMarker, endMarker := agentSystemPromptSectionMarkers(strings.TrimSpace(sectionID))
+	if strings.Contains(content, startMarker) || strings.Contains(content, endMarker) {
+		return "", agentSystemPromptPatchInvalidAPIError("system prompt section content contains reserved markers")
+	}
+	body := content
+	if title := strings.TrimSpace(sectionTitle); title != "" {
+		body = "## " + title + "\n\n" + content
+	}
+	block := startMarker + "\n" + body + "\n" + endMarker
+	startCount := strings.Count(current, startMarker)
+	endCount := strings.Count(current, endMarker)
+	var result string
+	switch {
+	case startCount == 0 && endCount == 0:
+		result = block
+		if current != "" {
+			result = current + separator + block
+		}
+	case startCount == 1 && endCount == 1:
+		start := strings.Index(current, startMarker)
+		endRelative := strings.Index(current[start+len(startMarker):], endMarker)
+		if endRelative < 0 {
+			return "", agentSystemPromptPatchInvalidAPIError("system prompt section markers are malformed")
+		}
+		end := start + len(startMarker) + endRelative + len(endMarker)
+		result = current[:start] + block + current[end:]
+	default:
+		return "", agentSystemPromptPatchInvalidAPIError("system prompt section markers are duplicated or malformed")
+	}
+	if err := validateAgentSystemPromptSource(result); err != nil {
+		return "", agentSystemPromptPatchInvalidAPIError("%v", err)
+	}
+	return result, nil
+}
+
+func agentSystemPromptSectionMarkers(sectionID string) (string, string) {
+	prefix := "<!-- zgi:system-prompt-section:" + sectionID
+	return prefix + ":start -->", prefix + ":end -->"
+}
+
+func agentSystemPromptPatchInvalidAPIError(format string, args ...interface{}) error {
+	return &agentBindingAPIError{
+		Code:    agentSystemPromptPatchInvalidCode,
+		Message: fmt.Sprintf(format, args...),
+	}
+}
+
+func agentSystemPromptSHA256(content string) string {
+	digest := sha256.Sum256([]byte(content))
+	return fmt.Sprintf("sha256:%x", digest[:])
 }
 
 func (s *agentsService) PublishAgent(ctx context.Context, agentID, accountID string, req dto.PublishAgentRequest) (*dto.PublishAgentResponse, error) {

@@ -23,6 +23,7 @@ const (
 
 	turnStateSurfaceContextualSidebar = "contextual_sidebar"
 	turnStateCheckpointMaxRunes       = 220
+	turnStateTextValueMaxRunes        = 1024
 )
 
 func (r *Runner) handleTurnStateCall(
@@ -75,21 +76,44 @@ func (r *Runner) handleTurnStateCall(
 		Status: "success",
 		Arguments: map[string]interface{}{
 			"item_count": len(items),
+			"call_id":    strings.TrimSpace(callID),
 		},
 		Result: map[string]interface{}{
 			"items": items,
 		},
 	}
 	return successfulSkillStep(trace, skills.ToolResultMessage(callID, map[string]interface{}{
-		"status": "recorded",
-		"items":  items,
+		"status":   "recorded",
+		"receipts": turnStateItemReceipts(items),
 		"instruction": strings.Join([]string{
 			"Turn state has been recorded for this same AIChat turn.",
 			"Use working_fact, decision, assumption, and verification items as authoritative context for later steps after approvals, navigation, or client actions.",
 			"If a later step needs a value that was not recorded and is not visible in current evidence, re-read or re-observe instead of guessing.",
+			"The tool result contains compact receipts rather than echoing recorded values; the authoritative values are restored by the runtime when needed.",
 			"Only user_deliverable items are directly visible to the user; the contextual sidebar may show a brief checkpoint for file-derived working facts so the user can verify the source conclusion.",
 		}, " "),
 	}), false, false)
+}
+
+func turnStateItemReceipts(items []map[string]interface{}) []map[string]interface{} {
+	receipts := make([]map[string]interface{}, 0, len(items))
+	for _, item := range items {
+		receipt := map[string]interface{}{
+			"kind":       stringFromInterface(item["kind"]),
+			"visibility": stringFromInterface(item["visibility"]),
+		}
+		for _, key := range []string{"key", "source", "title"} {
+			if value := strings.TrimSpace(stringFromInterface(item[key])); value != "" {
+				receipt[key] = value
+			}
+		}
+		value := strings.TrimSpace(firstNonEmptyString(item["value"], item["content"]))
+		if value != "" {
+			receipt["recorded_chars"] = len([]rune(value))
+		}
+		receipts = append(receipts, receipt)
+	}
+	return receipts
 }
 
 func contextualTurnStateCheckpoint(prepared *PreparedChat, item map[string]interface{}) (skills.SkillTrace, bool) {
@@ -179,6 +203,9 @@ func normalizeTurnStateItems(args map[string]interface{}) ([]map[string]interfac
 	}
 	out := make([]map[string]interface{}, 0, len(items))
 	for _, raw := range items {
+		if err := validateTurnStateTextBounds(raw); err != nil {
+			return nil, err
+		}
 		item := normalizeTurnStateItem(raw)
 		if len(item) == 0 {
 			continue
@@ -191,6 +218,22 @@ func normalizeTurnStateItems(args map[string]interface{}) ([]map[string]interfac
 	return out, nil
 }
 
+func validateTurnStateTextBounds(raw map[string]interface{}) error {
+	for _, field := range []string{"value", "content"} {
+		text, ok := raw[field].(string)
+		if !ok || len([]rune(text)) <= turnStateTextValueMaxRunes {
+			continue
+		}
+		return fmt.Errorf(
+			"%w: submit_turn_state %s exceeds %d Unicode characters; store the full content as an artifact and record only {ref, digest, summary}",
+			ErrInvalidInput,
+			field,
+			turnStateTextValueMaxRunes,
+		)
+	}
+	return nil
+}
+
 func normalizeTurnStateItem(raw map[string]interface{}) map[string]interface{} {
 	kind := normalizeTurnStateKind(stringFromInterface(raw["kind"]))
 	if kind == "" {
@@ -198,9 +241,9 @@ func normalizeTurnStateItem(raw map[string]interface{}) map[string]interface{} {
 	}
 	visibility := normalizeTurnStateVisibility(stringFromInterface(raw["visibility"]), kind)
 	value := turnStateStringValue(raw["value"])
-	content := trimRunes(stringFromInterface(raw["content"]), 16000)
+	content := trimRunes(stringFromInterface(raw["content"]), turnStateTextValueMaxRunes)
 	if kind == turnStateKindUserDeliverable && content == "" {
-		content = trimRunes(value, 16000)
+		content = trimRunes(value, turnStateTextValueMaxRunes)
 	}
 	if kind != turnStateKindUserDeliverable && value == "" {
 		value = content
@@ -216,7 +259,7 @@ func normalizeTurnStateItem(raw map[string]interface{}) map[string]interface{} {
 		item["key"] = key
 	}
 	if value != "" {
-		item["value"] = trimRunes(value, 4000)
+		item["value"] = trimRunes(value, turnStateTextValueMaxRunes)
 	}
 	if title := trimRunes(stringFromInterface(raw["title"]), 120); title != "" {
 		item["title"] = title
