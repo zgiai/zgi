@@ -374,6 +374,7 @@ export interface AgentDatabaseTableBindingCandidatesResponse
 export interface AgentMemorySlotConfig {
   id?: string;
   key: string;
+  name?: string;
   description: string;
   max_chars: number;
   enabled: boolean;
@@ -493,11 +494,15 @@ export interface PublishAgentResponse {
   agent_id: string;
   version_uuid: string;
   version: string;
+  name: string;
+  description: string;
   web_app_id: string;
   published_at: number;
 }
 
 export interface PublishAgentRequest {
+  name?: string;
+  description?: string;
   binding_revision?: string;
   acknowledge_suspended_bindings?: boolean;
 }
@@ -507,6 +512,7 @@ export interface AgentPublishedVersion {
   agent_id: string;
   version_uuid: string;
   version: string;
+  name: string;
   description: string;
   config_snapshot: AgentRuntimeConfig;
   is_current: boolean;

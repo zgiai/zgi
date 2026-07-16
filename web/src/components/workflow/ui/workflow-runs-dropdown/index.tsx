@@ -10,7 +10,6 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Badge } from '@/components/ui/badge';
 import { Clock, Loader2 } from 'lucide-react';
 import { formatDate, formatWorkflowElapsedMs } from '@/utils/format';
 import { useWorkflowRunsInfinite } from '@/hooks';
@@ -18,6 +17,7 @@ import type { WorkflowRunItem, WorkflowRunsQuery } from '@/services/types/workfl
 import { useWorkflowRunDetail } from '@/hooks/workflow/use-workflow-run-detail';
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
+import { RunStatusBadge } from '../run-status-badge';
 
 interface WorkflowRunsDropdownProps {
   agentId: string | null;
@@ -34,42 +34,6 @@ interface WorkflowRunsDropdownProps {
   query?: Omit<WorkflowRunsQuery, 'page' | 'limit'>;
   // Callback when a run is selected from the dropdown
   onSelect?: (runId: string) => void;
-}
-
-function StatusBadge({ status }: { status: string }) {
-  const t = useT('agents');
-  const s = status.toLowerCase();
-  let variant: 'default' | 'secondary' | 'destructive' | 'outline' = 'secondary';
-  let dot = 'bg-gray-400';
-  let label = status;
-  if (s === 'running' || s === 'in_progress') {
-    variant = 'default';
-    dot = 'bg-blue-500';
-    label = t('workflow.running');
-  } else if (
-    s === 'succeeded' ||
-    s === 'success' ||
-    s === 'completed' ||
-    s === 'partial-succeeded'
-  ) {
-    variant = 'secondary';
-    dot = 'bg-green-500';
-    label = t('workflow.succeeded');
-  } else if (s === 'failed' || s === 'error' || s === 'stopped') {
-    variant = 'destructive';
-    dot = 'bg-red-500';
-    label = t('workflow.failed');
-  } else if (s === 'paused') {
-    variant = 'outline';
-    dot = 'bg-warning';
-    label = t('workflow.paused');
-  }
-  return (
-    <Badge variant={variant} className="flex items-center gap-1">
-      <span className={`inline-block w-2 h-2 rounded-full ${dot}`} />
-      <span className="capitalize">{label}</span>
-    </Badge>
-  );
 }
 
 function RunItem({
@@ -98,7 +62,7 @@ function RunItem({
       tabIndex={0}
     >
       <div className="flex items-center justify-between gap-2">
-        <StatusBadge status={item.status} />
+        <RunStatusBadge status={item.status} />
         <div className="flex items-center gap-1 text-muted-foreground text-xs">
           <Clock className="w-3 h-3" />
           <span>{typeof item.created_at === 'number' ? formatDate(item.created_at) : '-'}</span>

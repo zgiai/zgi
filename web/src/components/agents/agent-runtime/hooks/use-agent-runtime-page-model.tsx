@@ -35,7 +35,6 @@ import type { OpeningStatementDialogValue } from '@/components/workflow/ui/featu
 import type {
   AgentDetail,
   AgentBindingHealth,
-  AgentBindingHealthItem,
   AgentDatabaseBinding,
   AgentMemorySlotConfig,
   AgentRuntimeConfig,
@@ -50,6 +49,7 @@ import type { Dataset } from '@/services/types/dataset';
 import { getErrorMessage } from '@/utils/error-notifications';
 import type {
   AgentConfigSection,
+  AgentPublishVersionDetails,
   AgentPublishedVersionListItem,
   AgentRuntimeSelectedSkillItem,
 } from '../types';
@@ -66,6 +66,11 @@ import {
 } from '../binding-rebase-merge';
 
 type AgentKnowledgeDataset = Dataset & { load_error?: boolean };
+
+const EMPTY_PUBLISH_VERSION_DETAILS: AgentPublishVersionDetails = {
+  name: '',
+  description: '',
+};
 
 function describeBindingChanges(
   local: UpdateAgentRuntimeConfigRequest,
@@ -308,7 +313,7 @@ export function useAgentRuntimePageModel(agentId: string) {
   const [workflowBindings, setWorkflowBindings] = useState<AgentWorkflowBinding[]>([]);
   const [bindingRevision, setBindingRevision] = useState('');
   const [bindingHealth, setBindingHealth] = useState<AgentBindingHealth>();
-  const [isAbnormalBindingCleanupPending, setIsAbnormalBindingCleanupPending] = useState(false);
+  const [isAbnormalSkillCleanupPending, setIsAbnormalSkillCleanupPending] = useState(false);
   const [skillDialogOpen, setSkillDialogOpen] = useState(false);
   const [knowledgeDialogOpen, setKnowledgeDialogOpen] = useState(false);
   const [workflowDialogOpen, setWorkflowDialogOpen] = useState(false);
@@ -325,8 +330,12 @@ export function useAgentRuntimePageModel(agentId: string) {
   const [selectedPublishedVersionId, setSelectedPublishedVersionId] = useState('');
   const [isVersionPreviewing, setIsVersionPreviewing] = useState(false);
   const [isPublishing, setIsPublishing] = useState(false);
+  const [publishVersionDialogOpen, setPublishVersionDialogOpen] = useState(false);
+  const [publishVersionDetails, setPublishVersionDetails] = useState<AgentPublishVersionDetails>(
+    EMPTY_PUBLISH_VERSION_DETAILS
+  );
   const [suspendedBindingsDialogOpen, setSuspendedBindingsDialogOpen] = useState(false);
-  const [cleanupBindingsDialogOpen, setCleanupBindingsDialogOpen] = useState(false);
+  const [cleanupSkillsDialogOpen, setCleanupSkillsDialogOpen] = useState(false);
   const [openSections, setOpenSections] = useState<Record<AgentConfigSection, boolean>>({
     experience: true,
     model: true,
@@ -445,7 +454,8 @@ export function useAgentRuntimePageModel(agentId: string) {
         return {
           skillId,
           label: display.label,
-          description: display.description || metadata.description || skillId,
+          description: display.description || metadata.description || t('skills.noDescription'),
+          icon: display.icon,
           metadata,
         };
       }),
@@ -713,7 +723,7 @@ export function useAgentRuntimePageModel(agentId: string) {
       } else {
         applySavedBindingMetadata(result.savedPayload, result.bindingHealth);
       }
-      setIsAbnormalBindingCleanupPending(false);
+      setIsAbnormalSkillCleanupPending(false);
       setAgentMemorySlots(result.savedPayload.agent_memory_slots ?? []);
     },
     onSaveSuperseded: (result, submittedPayload, latestPayload) => {
@@ -745,7 +755,7 @@ export function useAgentRuntimePageModel(agentId: string) {
 
     applyRuntimePayload(nextPayload);
     setBindingHealth(config.binding_health);
-    setIsAbnormalBindingCleanupPending(false);
+    setIsAbnormalSkillCleanupPending(false);
     hydratedAgentIdRef.current = agentId;
     hydratedConfigSignatureRef.current = nextSignature;
     markHydrated(nextPayload, config.updated_at ?? null);
@@ -795,52 +805,18 @@ export function useAgentRuntimePageModel(agentId: string) {
     setWorkflowBindings(normalizeAgentWorkflowBindings(bindings));
   }, []);
 
-  const handleRemoveAllAbnormalBindings = useCallback(() => {
-    const abnormalItems = bindingHealth?.items.filter(item => item.status !== 'active') ?? [];
-    if (abnormalItems.length === 0) return;
-    const hasAbnormal = (
-      type: AgentBindingHealthItem['binding_type'],
-      resourceId: string,
-      parentResourceId?: string
-    ) =>
-      abnormalItems.some(
-        item =>
-          item.binding_type === type &&
-          item.resource_id === resourceId &&
-          (!parentResourceId ||
-            !item.parent_resource_id ||
-            item.parent_resource_id === parentResourceId)
-      );
+  const handleRemoveAbnormalSkills = useCallback(() => {
+    const abnormalSkillIds = new Set(
+      bindingHealth?.items
+        .filter(item => item.binding_type === 'skill' && item.status !== 'active')
+        .map(item => item.resource_id.trim()) ?? []
+    );
+    if (abnormalSkillIds.size === 0) return;
 
-    setSelectedSkillIds(current => current.filter(id => !hasAbnormal('skill', id)));
-    setKnowledgeDatasetIds(current => current.filter(id => !hasAbnormal('knowledge_dataset', id)));
-    setWorkflowBindings(current =>
-      current.filter(
-        binding =>
-          !hasAbnormal('workflow', binding.binding_id) &&
-          !hasAbnormal('workflow', binding.workflow_id)
-      )
-    );
-    setDatabaseBindings(current =>
-      current
-        .filter(binding => !hasAbnormal('database', binding.data_source_id))
-        .map(binding => {
-          const tableIds = binding.table_ids.filter(
-            tableId => !hasAbnormal('database_table', tableId, binding.data_source_id)
-          );
-          return {
-            ...binding,
-            table_ids: tableIds,
-            writable_table_ids: (binding.writable_table_ids ?? []).filter(tableId =>
-              tableIds.includes(tableId)
-            ),
-          };
-        })
-        .filter(binding => binding.table_ids.length > 0)
-    );
-    setIsAbnormalBindingCleanupPending(true);
-    setCleanupBindingsDialogOpen(false);
-    toast.success(t('toasts.abnormalBindingsRemoved'));
+    setSelectedSkillIds(current => current.filter(id => !abnormalSkillIds.has(id.trim())));
+    setIsAbnormalSkillCleanupPending(true);
+    setCleanupSkillsDialogOpen(false);
+    toast.success(t('toasts.abnormalSkillsRemoved'));
   }, [bindingHealth, t]);
 
   const handleGenerateSuggestedQuestions = useCallback(
@@ -1033,7 +1009,7 @@ export function useAgentRuntimePageModel(agentId: string) {
       applyRuntimePayload(nextPayload);
       markServerSaved(nextPayload, response.data.updated_at ?? Math.floor(Date.now() / 1000));
       setBindingHealth(response.data.binding_health);
-      setIsAbnormalBindingCleanupPending(false);
+      setIsAbnormalSkillCleanupPending(false);
       queryClient.setQueryData(AGENT_KEYS.config(agentId), response);
       versionPreviewBackupRef.current = null;
       setIsVersionPreviewing(false);
@@ -1113,6 +1089,18 @@ export function useAgentRuntimePageModel(agentId: string) {
   ]);
 
   const focusInvalidBindings = useCallback((health?: AgentBindingHealth) => {
+    const firstAbnormalBinding = health?.items.find(item => item.status !== 'active');
+    let targetSection: AgentConfigSection | undefined;
+    if (firstAbnormalBinding?.binding_type === 'skill') targetSection = 'skills';
+    if (firstAbnormalBinding?.binding_type === 'knowledge_dataset') targetSection = 'knowledge';
+    if (
+      firstAbnormalBinding?.binding_type === 'database' ||
+      firstAbnormalBinding?.binding_type === 'database_table'
+    ) {
+      targetSection = 'databases';
+    }
+    if (firstAbnormalBinding?.binding_type === 'workflow') targetSection = 'workflows';
+
     if (health) {
       setOpenSections(current => {
         const next = { ...current };
@@ -1130,7 +1118,8 @@ export function useAgentRuntimePageModel(agentId: string) {
       });
     }
     window.setTimeout(() => {
-      document.getElementById('agent-binding-health')?.scrollIntoView({
+      if (!targetSection) return;
+      document.getElementById(`agent-config-section-${targetSection}`)?.scrollIntoView({
         behavior: 'smooth',
         block: 'start',
       });
@@ -1138,14 +1127,20 @@ export function useAgentRuntimePageModel(agentId: string) {
   }, []);
 
   const publishCurrentDraft = useCallback(
-    async (acknowledgeSuspendedBindings: boolean) => {
+    async (
+      acknowledgeSuspendedBindings: boolean,
+      versionDetails: AgentPublishVersionDetails
+    ) => {
       if (isPublishing) return;
       setIsPublishing(true);
       try {
         await agentService.publishAgent(agentId, {
+          name: versionDetails.name.trim() || undefined,
+          description: versionDetails.description.trim() || undefined,
           binding_revision: bindingRevisionRef.current || undefined,
           acknowledge_suspended_bindings: acknowledgeSuspendedBindings || undefined,
         });
+        setPublishVersionDialogOpen(false);
         setSuspendedBindingsDialogOpen(false);
         queryClient.invalidateQueries({ queryKey: AGENT_KEYS.detail(agentId) });
         queryClient.invalidateQueries({ queryKey: AGENT_KEYS.lists() });
@@ -1155,8 +1150,10 @@ export function useAgentRuntimePageModel(agentId: string) {
         const conflict = getAgentBindingConflict(error);
         if (conflict?.bindingHealth) setBindingHealth(conflict.bindingHealth);
         if (conflict?.code === 'agent_bindings_suspended' && !acknowledgeSuspendedBindings) {
+          setPublishVersionDialogOpen(false);
           setSuspendedBindingsDialogOpen(true);
         } else if (conflict?.code === 'agent_bindings_invalid') {
+          setPublishVersionDialogOpen(false);
           setSuspendedBindingsDialogOpen(false);
           focusInvalidBindings(conflict.bindingHealth);
           toast.error(t('toasts.publishBindingsInvalid'));
@@ -1189,22 +1186,24 @@ export function useAgentRuntimePageModel(agentId: string) {
       );
       return;
     }
-    const canPublishCurrentDraft =
-      !canConfigureAgentRuntime || (await saveNow({ silent: true, force: true }));
-    if (canPublishCurrentDraft) {
-      await publishCurrentDraft(false);
-    }
+    setPublishVersionDetails(EMPTY_PUBLISH_VERSION_DETAILS);
+    setPublishVersionDialogOpen(true);
   }, [
     canPublishAgent,
-    canConfigureAgentRuntime,
     hasAgentMemorySlotErrors,
     isAgentModelUnavailable,
     isSystemPromptTooLong,
-    publishCurrentDraft,
-    saveNow,
     t,
     tRoot,
   ]);
+
+  const handleConfirmPublishVersion = useCallback(async () => {
+    const canPublishCurrentDraft =
+      !canConfigureAgentRuntime || (await saveNow({ silent: true, force: true }));
+    if (canPublishCurrentDraft) {
+      await publishCurrentDraft(false, publishVersionDetails);
+    }
+  }, [canConfigureAgentRuntime, publishCurrentDraft, publishVersionDetails, saveNow]);
 
   const handleSaveBeforeLeave = useCallback(() => {
     if (!canConfigureAgentRuntime) {
@@ -1452,8 +1451,8 @@ export function useAgentRuntimePageModel(agentId: string) {
       defaultInputPlaceholder,
       openingGuideBrand: agentOpeningGuideBrand,
       bindingHealth,
-      isCleanupPending: isAbnormalBindingCleanupPending,
-      onRemoveAllAbnormalBindings: () => setCleanupBindingsDialogOpen(true),
+      isSkillCleanupPending: isAbnormalSkillCleanupPending,
+      onRemoveAbnormalSkills: () => setCleanupSkillsDialogOpen(true),
       onToggleSection: (section: AgentConfigSection) =>
         setOpenSections(current => ({ ...current, [section]: !current[section] })),
       onChangeModelValue: (value: ModelSelectorParameterValue) => {
@@ -1533,7 +1532,6 @@ export function useAgentRuntimePageModel(agentId: string) {
       openingGuideBrand: agentOpeningGuideBrand,
       homeTitle: currentPayload.home_title || defaultHomeTitle,
       openingStatement: currentPayload.opening_statement,
-      bindingHealth,
       beforeSend: handlePreviewBeforeSend,
       onOpenMemoryValues: () => setMemoryValuesOpen(true),
       onModelChange: handleModelChange,
@@ -1585,19 +1583,28 @@ export function useAgentRuntimePageModel(agentId: string) {
         defaultUserId: profile?.id,
         onOpenChange: setMemoryValuesOpen,
       },
+      publishVersion: {
+        open: publishVersionDialogOpen,
+        isUpdate: Boolean(agentDetail?.is_published),
+        isSubmitting: isPublishing || saveState === 'saving',
+        value: publishVersionDetails,
+        onOpenChange: setPublishVersionDialogOpen,
+        onChange: setPublishVersionDetails,
+        onConfirm: () => void handleConfirmPublishVersion(),
+      },
       suspendedBindings: {
         open: suspendedBindingsDialogOpen,
         health: bindingHealth,
         isPublishing,
         onOpenChange: setSuspendedBindingsDialogOpen,
-        onConfirm: () => void publishCurrentDraft(true),
+        onConfirm: () => void publishCurrentDraft(true, publishVersionDetails),
       },
-      cleanupBindings: {
-        open: cleanupBindingsDialogOpen,
-        onOpenChange: setCleanupBindingsDialogOpen,
-        title: t('bindingHealth.cleanupConfirmTitle'),
-        description: t('bindingHealth.cleanupConfirmDescription'),
-        onConfirm: handleRemoveAllAbnormalBindings,
+      cleanupSkills: {
+        open: cleanupSkillsDialogOpen,
+        onOpenChange: setCleanupSkillsDialogOpen,
+        title: t('bindingHealth.cleanupSkillsConfirmTitle'),
+        description: t('bindingHealth.cleanupSkillsConfirmDescription'),
+        onConfirm: handleRemoveAbnormalSkills,
       },
     },
   };

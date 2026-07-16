@@ -52,6 +52,7 @@ import { cn } from '@/lib/utils';
 import type {
   AIChatSkillMetadata,
   AIChatImportSkillPreview,
+  AIChatSkillConfigUpdateResult,
   AIChatSkillRuntimeType,
   AIChatSkillSource,
 } from '@/services/types/aichat';
@@ -59,7 +60,6 @@ import type { AgentResourceBoundImpact } from '@/services/types/common';
 import { getAgentResourceBoundImpact } from '@/utils/agent-resource-bound';
 import { aichatService } from '@/services/aichat.service';
 
-const AUTO_SAVE_DELAY_MS = 450;
 const SKILL_CARD_GRID_CLASS = 'grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4';
 const SYSTEM_SKILL_NAME_CONFLICT_ERROR =
   'This skill name is reserved by a built-in system skill. Please rename your custom skill and try again.';
@@ -397,38 +397,31 @@ function AutoSaveStatusIndicator({ status }: AutoSaveStatusIndicatorProps) {
   );
 }
 
-interface UseAIChatSkillConfigAutosaveOptions {
+interface UseAIChatSkillConfigPersistenceOptions {
   initialEnabledSkillIds: string[];
   isLoading: boolean;
-  save: (enabledSkillIds: string[]) => Promise<string[]>;
-  onError: (error: unknown) => void;
+  save: (
+    enabledSkillIds: string[],
+    impact?: AgentResourceBoundImpact
+  ) => Promise<AIChatSkillConfigUpdateResult>;
+  onConfirmationRequired: (
+    impact: AgentResourceBoundImpact,
+    requestedSkillIds: string[]
+  ) => void;
+  onError: (error: unknown, requestedSkillIds: string[]) => boolean;
 }
 
-function useAIChatSkillConfigAutosave({
+function useAIChatSkillConfigPersistence({
   initialEnabledSkillIds,
   isLoading,
   save,
+  onConfirmationRequired,
   onError,
-}: UseAIChatSkillConfigAutosaveOptions) {
+}: UseAIChatSkillConfigPersistenceOptions) {
   const [enabledSkillIds, setEnabledSkillIds] = useState<string[]>([]);
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle');
   const confirmedSkillIdsRef = useRef<string[]>([]);
   const hasHydratedRef = useRef(false);
-  const saveRef = useRef(save);
-  const onErrorRef = useRef(onError);
-  const draftKey = useMemo(() => getSkillIdsKey(enabledSkillIds), [enabledSkillIds]);
-  const confirmedKey = getSkillIdsKey(confirmedSkillIdsRef.current);
-  const latestDraftKeyRef = useRef(draftKey);
-
-  latestDraftKeyRef.current = draftKey;
-
-  useEffect(() => {
-    saveRef.current = save;
-  }, [save]);
-
-  useEffect(() => {
-    onErrorRef.current = onError;
-  }, [onError]);
 
   useEffect(() => {
     const normalizedInitialSkillIds = normalizeSkillIds(initialEnabledSkillIds);
@@ -443,51 +436,38 @@ function useAIChatSkillConfigAutosave({
     setSaveStatus('idle');
   }, [initialEnabledSkillIds]);
 
-  useEffect(() => {
-    if (isLoading || draftKey === confirmedKey) return;
-
-    setSaveStatus('saving');
-
-    const timeout = window.setTimeout(async () => {
-      const requestedSkillIds = normalizeSkillIds(enabledSkillIds);
+  const saveEnabledSkillIds = useCallback(
+    async (requested: string[], impact?: AgentResourceBoundImpact) => {
+      if (isLoading) return false;
+      const requestedSkillIds = normalizeSkillIds(requested);
       const requestedKey = getSkillIdsKey(requestedSkillIds);
+      if (!impact && requestedKey === getSkillIdsKey(confirmedSkillIdsRef.current)) return true;
 
+      setSaveStatus('saving');
       try {
-        const savedSkillIds = normalizeSkillIds(await saveRef.current(requestedSkillIds));
-        const savedKey = getSkillIdsKey(savedSkillIds);
-
-        if (latestDraftKeyRef.current !== requestedKey) return;
-
+        const result = await save(requestedSkillIds, impact);
+        if (!result.applied) {
+          onConfirmationRequired(result.impact, requestedSkillIds);
+          setSaveStatus('idle');
+          return false;
+        }
+        const savedSkillIds = normalizeSkillIds(result.enabled_skill_ids);
         confirmedSkillIdsRef.current = savedSkillIds;
-        setEnabledSkillIds(current =>
-          getSkillIdsKey(current) === requestedKey ? savedSkillIds : current
-        );
-        setSaveStatus(savedKey === requestedKey ? 'saved' : 'idle');
+        setEnabledSkillIds(savedSkillIds);
+        setSaveStatus(getSkillIdsKey(savedSkillIds) === requestedKey ? 'saved' : 'idle');
+        return true;
       } catch (error) {
-        if (latestDraftKeyRef.current !== requestedKey) return;
-
-        setEnabledSkillIds(confirmedSkillIdsRef.current);
-        setSaveStatus('error');
-        onErrorRef.current(error);
+        setSaveStatus(onError(error, requestedSkillIds) ? 'idle' : 'error');
+        return false;
       }
-    }, AUTO_SAVE_DELAY_MS);
-
-    return () => {
-      window.clearTimeout(timeout);
-    };
-  }, [confirmedKey, draftKey, enabledSkillIds, isLoading]);
+    },
+    [isLoading, onConfirmationRequired, onError, save]
+  );
 
   return {
     enabledSkillIds,
-    setEnabledSkillIds,
     saveStatus,
-    resetToServerValue: () => setEnabledSkillIds(confirmedSkillIdsRef.current),
-    commitServerValue: (value: string[]) => {
-      const normalized = normalizeSkillIds(value);
-      confirmedSkillIdsRef.current = normalized;
-      setEnabledSkillIds(normalized);
-      setSaveStatus('saved');
-    },
+    saveEnabledSkillIds,
   };
 }
 
@@ -702,48 +682,59 @@ export function AIChatSkillSettingsSection() {
 
   const isLoading = isLoadingSkills || isLoadingConfig;
   const isImporting = previewImportSkill.isPending || confirmImportSkill.isPending;
-  const isMutating =
-    updateConfig.isPending || isImporting || deleteSkill.isPending || isCheckingDeleteImpact;
   const saveSkillConfig = useCallback(
-    async (requestedSkillIds: string[]) => {
-      try {
-        const response = await updateSkillConfig({
-          payload: {
-            enabled_skill_ids: requestedSkillIds,
-          },
-          silent: true,
-        });
-        const savedSkillIds = normalizeSkillIds(
-          response.data?.enabled_skill_ids ?? requestedSkillIds
-        );
+    async (requestedSkillIds: string[], impact?: AgentResourceBoundImpact) => {
+      const response = await updateSkillConfig({
+        payload: {
+          enabled_skill_ids: requestedSkillIds,
+          agent_binding_action: impact ? 'retain_suspended' : undefined,
+          impact_token: impact?.impact_token,
+        },
+        silent: true,
+      });
+      if (response.data.applied) {
+        const savedSkillIds = normalizeSkillIds(response.data.enabled_skill_ids);
         queryClient.setQueryData(AICHAT_KEYS.skillConfig(), { enabled_skill_ids: savedSkillIds });
-        return savedSkillIds;
-      } catch (error) {
-        const impact = getAgentResourceBoundImpact(error);
-        if (impact) {
-          setSkillConfigBindingConflict({ impact, requestedSkillIds });
-        }
-        throw error;
+        return { ...response.data, enabled_skill_ids: savedSkillIds };
       }
+      return response.data;
     },
     [queryClient, updateSkillConfig]
   );
-  const handleAutosaveError = useCallback(
-    (error: unknown) => {
-      if (getAgentResourceBoundImpact(error)) return;
+  const handleSkillConfigError = useCallback(
+    (error: unknown, requestedSkillIds: string[]) => {
+      const impact = getAgentResourceBoundImpact(error);
+      if (impact) {
+        setSkillConfigBindingConflict({ impact, requestedSkillIds });
+        return true;
+      }
       toast.error(
         error instanceof Error ? error.message : t('organization.aichatSkills.messages.saveFailed')
       );
+      return false;
     },
     [t]
   );
-  const { enabledSkillIds, setEnabledSkillIds, saveStatus, commitServerValue } =
-    useAIChatSkillConfigAutosave({
+  const handleSkillConfigConfirmationRequired = useCallback(
+    (impact: AgentResourceBoundImpact, requestedSkillIds: string[]) => {
+      setSkillConfigBindingConflict({ impact, requestedSkillIds });
+    },
+    []
+  );
+  const { enabledSkillIds, saveStatus, saveEnabledSkillIds } =
+    useAIChatSkillConfigPersistence({
       initialEnabledSkillIds,
       isLoading,
       save: saveSkillConfig,
-      onError: handleAutosaveError,
+      onConfirmationRequired: handleSkillConfigConfirmationRequired,
+      onError: handleSkillConfigError,
     });
+  const isMutating =
+    saveStatus === 'saving' ||
+    updateConfig.isPending ||
+    isImporting ||
+    deleteSkill.isPending ||
+    isCheckingDeleteImpact;
   const enabledCount = enabledSkillIds.length;
   const availableScenarios = useMemo(
     () =>
@@ -805,46 +796,21 @@ export function AIChatSkillSettingsSection() {
   }, [availableCapabilities, capabilityFilter]);
 
   const handleToggle = (skillId: string, enabled: boolean) => {
-    setEnabledSkillIds(current => {
-      const next = new Set(current);
-      if (enabled) {
-        next.add(skillId);
-      } else {
-        next.delete(skillId);
-      }
-      return normalizeSkillIds(Array.from(next));
-    });
+    const next = new Set(enabledSkillIds);
+    if (enabled) {
+      next.add(skillId);
+    } else {
+      next.delete(skillId);
+    }
+    void saveEnabledSkillIds(Array.from(next));
   };
 
   const handleConfirmRetainSuspended = async () => {
     if (!skillConfigBindingConflict) return;
     const { impact, requestedSkillIds } = skillConfigBindingConflict;
-    try {
-      const response = await updateSkillConfig({
-        payload: {
-          enabled_skill_ids: requestedSkillIds,
-          agent_binding_action: 'retain_suspended',
-          impact_token: impact.impact_token,
-        },
-        silent: true,
-      });
-      const savedSkillIds = normalizeSkillIds(
-        response.data?.enabled_skill_ids ?? requestedSkillIds
-      );
-      queryClient.setQueryData(AICHAT_KEYS.skillConfig(), { enabled_skill_ids: savedSkillIds });
-      commitServerValue(savedSkillIds);
-      setSkillConfigBindingConflict(null);
-      toast.success(t('organization.aichatSkills.messages.saved'));
-    } catch (error) {
-      const nextImpact = getAgentResourceBoundImpact(error);
-      if (nextImpact) {
-        setSkillConfigBindingConflict({ impact: nextImpact, requestedSkillIds });
-        return;
-      }
-      toast.error(
-        error instanceof Error ? error.message : t('organization.aichatSkills.messages.saveFailed')
-      );
-    }
+    if (!(await saveEnabledSkillIds(requestedSkillIds, impact))) return;
+    setSkillConfigBindingConflict(null);
+    toast.success(t('organization.aichatSkills.messages.saved'));
   };
 
   const handleImportClick = () => {

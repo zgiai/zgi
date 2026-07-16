@@ -24,6 +24,7 @@ import { useHistoryView } from '../workflow-run-panel/hooks/use-history-view';
 import type { WorkflowFinishedData } from '../workflow-run-panel/types';
 import type { ConversationHistoryMessageItem, SelectedMessageRunState } from './types';
 import { getRightPanelMotionClassName, getRightPanelMotionStyle } from '../right-panel-motion';
+import { RunStatusBadge } from '../run-status-badge';
 
 interface ConversationHistoryPanelProps {
   open: boolean;
@@ -108,53 +109,6 @@ function createVirtualRunMessage(
     status: summary.status,
     error,
     isVirtual: true,
-  };
-}
-
-function getRunStatusMeta(status: string, t: ScopedTranslations<'agents'>) {
-  const normalized = status.toLowerCase();
-
-  if (normalized === 'running' || normalized === 'in_progress' || normalized === 'in-progress') {
-    return {
-      variant: 'default' as const,
-      dot: 'bg-blue-500',
-      label: t('workflow.running'),
-    };
-  }
-
-  if (
-    normalized === 'succeeded' ||
-    normalized === 'success' ||
-    normalized === 'completed' ||
-    normalized === 'partial-succeeded'
-  ) {
-    return {
-      variant: 'secondary' as const,
-      dot: 'bg-green-500',
-      label: t('workflow.succeeded'),
-    };
-  }
-
-  if (normalized === 'stopped') {
-    return {
-      variant: 'outline' as const,
-      dot: 'bg-gray-500',
-      label: t('workflow.stopped'),
-    };
-  }
-
-  if (normalized === 'paused') {
-    return {
-      variant: 'outline' as const,
-      dot: 'bg-warning',
-      label: t('workflow.paused'),
-    };
-  }
-
-  return {
-    variant: 'destructive' as const,
-    dot: 'bg-red-500',
-    label: t('workflow.failed'),
   };
 }
 
@@ -407,9 +361,7 @@ export function ConversationHistoryPanel({
                 </div>
               ) : inspectorSummary ? (
                 <div className="flex flex-wrap gap-2">
-                  <Badge variant={getRunStatusMeta(inspectorSummary.status, t).variant}>
-                    {getRunStatusMeta(inspectorSummary.status, t).label}
-                  </Badge>
+                  <RunStatusBadge status={inspectorSummary.status} />
                   <Badge variant="outline">
                     {t('workflow.workflowRunId')}: {selectedBaseRunId}
                   </Badge>

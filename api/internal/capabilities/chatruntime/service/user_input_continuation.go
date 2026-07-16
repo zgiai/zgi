@@ -105,7 +105,7 @@ func (s *service) RunConfiguredUserInputContinuationStream(
 		return nil, ErrMessageStopped
 	}
 
-	metadata := preparedResultMetadata(prepared.Message.Metadata, usage)
+	metadata := preparedResultMetadataForPrepared(prepared, prepared.Message.Metadata, usage)
 	prepared.Message.Metadata = metadata
 	if err := s.completePreparedChat(persistCtx, prepared, answer, metadata); err != nil {
 		return nil, finalizedRuntimePersistenceError(err)
@@ -430,15 +430,16 @@ func (s *service) prepareUserInputContinuationChat(
 	}
 	llmRequest.Messages = append(llmRequest.Messages, continuationMessageForExecutionMode(userInputContinuationMessage(message, continuation.Request, continuation.Response), parts.ExecutionMode))
 	return &PreparedChat{
-		Conversation: continuation.Conversation,
-		Message:      message,
-		LLMRequest:   llmRequest,
-		Scope:        scope,
-		Caller:       caller,
-		RunConfig:    config,
-		ParentID:     message.ParentID,
-		Continuation: true,
-		parts:        parts,
+		Conversation:     continuation.Conversation,
+		Message:          message,
+		LLMRequest:       llmRequest,
+		Scope:            scope,
+		Caller:           caller,
+		RunConfig:        config,
+		ParentID:         message.ParentID,
+		Continuation:     true,
+		ContinuationType: "user_input",
+		parts:            parts,
 	}, nil
 }
 

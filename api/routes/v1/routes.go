@@ -227,10 +227,20 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 		Scheduler:                  serviceContainer.GetScheduler(),
 	})
 	if llmModule != nil && llmModule.LLMModelModule != nil {
-		if err := serviceContainer.GetToolManager().RegisterProvider(agentmanagement_tools.NewProvider(agentsService, serviceContainer.GetOrganizationService(), llmModule.LLMModelModule.AvailableModelsSvc)); err != nil {
+		if err := serviceContainer.GetToolManager().RegisterProvider(agentmanagement_tools.NewProvider(
+			agentsService,
+			serviceContainer.GetOrganizationService(),
+			llmModule.LLMModelModule.AvailableModelsSvc,
+			agentmanagement_tools.WithManagedFileService(serviceContainer.GetFileService()),
+		)); err != nil {
 			log.Printf("failed to register agent management tools: %v", err)
 		}
-	} else if err := serviceContainer.GetToolManager().RegisterProvider(agentmanagement_tools.NewProvider(agentsService, serviceContainer.GetOrganizationService(), nil)); err != nil {
+	} else if err := serviceContainer.GetToolManager().RegisterProvider(agentmanagement_tools.NewProvider(
+		agentsService,
+		serviceContainer.GetOrganizationService(),
+		nil,
+		agentmanagement_tools.WithManagedFileService(serviceContainer.GetFileService()),
+	)); err != nil {
 		log.Printf("failed to register agent management tools: %v", err)
 	}
 

@@ -131,6 +131,53 @@ func TestAppendDirectAnswerGroundingMessageOnlyForDirectAnswers(t *testing.T) {
 	}
 }
 
+func TestOpenChatStreamMovesAndMergesSystemMessagesBeforeModelCall(t *testing.T) {
+	llm := &toolGovernanceStreamLLM{}
+	svc := &service{
+		llmClient:        llm,
+		modelIdleTimeout: time.Second,
+	}
+	prepared := &PreparedChat{
+		Conversation: &runtimemodel.Conversation{ID: uuid.New()},
+		Message: &runtimemodel.Message{
+			ID:        uuid.New(),
+			ModelName: "test-model",
+			Metadata:  map[string]interface{}{},
+		},
+		LLMRequest: &adapter.ChatRequest{
+			Model: "test-model",
+			Messages: []adapter.Message{
+				{Role: "system", Content: "base instructions"},
+				{Role: "user", Content: "question"},
+				{Role: "assistant", Content: "working"},
+				{Role: "system", Content: "continuation guidance"},
+			},
+		},
+		parts: &chatRequestParts{Provider: "test-provider"},
+	}
+
+	stream, err := svc.openChatStream(context.Background(), prepared)
+	if err != nil {
+		t.Fatalf("openChatStream() error = %v", err)
+	}
+	for range stream {
+	}
+	if len(llm.streamRequests) != 1 {
+		t.Fatalf("stream requests = %d, want 1", len(llm.streamRequests))
+	}
+
+	messages := llm.streamRequests[0].Messages
+	if len(messages) != 3 {
+		t.Fatalf("messages = %#v, want one system plus two conversation messages", messages)
+	}
+	if messages[0].Role != "system" || messages[0].Content != "base instructions\n\ncontinuation guidance" {
+		t.Fatalf("messages[0] = %#v, want merged leading system message", messages[0])
+	}
+	if messages[1].Role != "user" || messages[2].Role != "assistant" {
+		t.Fatalf("conversation order = %#v, want user then assistant", messages[1:])
+	}
+}
+
 func runtimeStreamTestPreparedChat() *PreparedChat {
 	return &PreparedChat{
 		Conversation: &runtimemodel.Conversation{ID: uuid.New()},

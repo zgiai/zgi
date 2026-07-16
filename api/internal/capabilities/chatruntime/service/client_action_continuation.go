@@ -13,6 +13,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/repository"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/skillloop"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
+	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"gorm.io/gorm"
 )
 
@@ -52,7 +53,7 @@ func (s *service) persistClientActionPendingResult(ctx context.Context, prepared
 	pendingPayload["status"] = clientActionStatusWaiting
 
 	metadata := mergeClientActionMetadata(prepared.Message.Metadata, pendingPayload)
-	metadata = preparedResultMetadata(metadata, usage)
+	metadata = preparedResultMetadataForPrepared(prepared, metadata, usage)
 	metadata["client_action_continuation"] = compactSkillInvocation(map[string]interface{}{
 		"status":              clientActionStatusWaiting,
 		"action_id":           clientActionID(pendingPayload),
@@ -210,7 +211,7 @@ func (s *service) RunClientActionContinuationStream(
 	}
 
 	metadata := resolveClientActionContinuationMetadata(prepared.Message.Metadata, actionID, req)
-	metadata = preparedResultMetadata(metadata, usage)
+	metadata = preparedResultMetadataForPrepared(prepared, metadata, usage)
 	prepared.Message.Metadata = metadata
 	if err := s.completePreparedChat(persistCtx, prepared, answer, metadata); err != nil {
 		return nil, finalizedRuntimePersistenceError(err)
@@ -364,9 +365,12 @@ func (s *service) prepareClientActionContinuationChat(ctx context.Context, scope
 	prepared := &PreparedChat{
 		Conversation: continuation.Conversation, Message: message, Scope: scope,
 		Caller: Caller{Type: runtimemodel.ConversationCallerAIChat}, ParentID: message.ParentID, parts: parts,
-		Continuation: true, SuppressInitialNaturalProgress: true,
+		Continuation:                   true,
+		ContinuationType:               "client_action",
+		SuppressInitialNaturalProgress: true,
 	}
 	s.refreshPageContextAfterClientAction(ctx, prepared, continuation.Event, req)
+	prepared.PreferredRestoredSkillID = preferredRestoredSkillAfterClientAction(parts, continuation.Event, req, message.Metadata)
 	contextResult, err := s.buildUpstreamMessages(ctx, scope, message.ParentID, parts)
 	if err != nil {
 		return nil, err
@@ -376,6 +380,104 @@ func (s *service) prepareClientActionContinuationChat(ctx context.Context, scope
 	llmRequest.Messages = append(llmRequest.Messages, continuationMessageForExecutionMode(clientActionContinuationMessage(message, continuation.Event, req), parts.ExecutionMode))
 	prepared.LLMRequest = llmRequest
 	return prepared, nil
+}
+
+func preferredRestoredSkillAfterClientAction(parts *chatRequestParts, event map[string]interface{}, req runtimedto.ClientActionResultRequest, metadata map[string]interface{}) string {
+	eventSkillID := strings.TrimSpace(stringFromAny(event["skill_id"]))
+	if !strings.EqualFold(strings.TrimSpace(req.Status), clientActionStatusSucceeded) ||
+		(!strings.EqualFold(strings.TrimSpace(stringFromAny(event["action_type"])), "route_navigation") &&
+			!isConsoleNavigatorNavigateTool(eventSkillID, stringFromAny(event["tool_name"]))) {
+		return eventSkillID
+	}
+
+	// A completed navigation is transport evidence, not the next business capability.
+	// Prefer the skill for the page that has just loaded so a large business skill can
+	// be restored across the continuation budget instead of restoring navigator again.
+	result := mapFromOperationContext(req.Result)
+	route := normalizeConsoleNavigationGuardHref(firstNonEmptyString(
+		result["observed_path"],
+		result["current_href"],
+		result["loaded_href"],
+		result["href"],
+		event["href"],
+	))
+	phaseText := firstOpenOperationPlanPhaseText(metadata)
+	for _, skillID := range preferredBusinessSkillsForRoute(route, phaseText) {
+		if skillIDEnabled(parts.SkillIDs, skillID) {
+			return skillID
+		}
+	}
+	if skillID := operationPlanPreferredBusinessSkillID(metadata); skillID != "" && skillIDEnabled(parts.SkillIDs, skillID) {
+		return skillID
+	}
+	return ""
+}
+
+func preferredBusinessSkillsForRoute(route string, phaseText string) []string {
+	route = strings.ToLower(strings.TrimSpace(route))
+	phaseText = strings.ToLower(strings.TrimSpace(phaseText))
+	switch {
+	case strings.HasPrefix(route, "/console/agents"):
+		return []string{skills.SkillAgentManagement}
+	case strings.HasPrefix(route, "/console/files"):
+		switch {
+		case containsAnyFold(phaseText, "续写", "生成", "创建", "撰写", "generate", "write", "create"):
+			return []string{skills.SkillFileGenerator, skills.SkillFileReader, skills.SkillFileManager}
+		case containsAnyFold(phaseText, "保存", "删除", "移动", "导入", "save", "delete", "move", "import"):
+			return []string{skills.SkillFileManager, skills.SkillFileReader, skills.SkillFileGenerator}
+		default:
+			return []string{skills.SkillFileReader, skills.SkillFileManager, skills.SkillFileGenerator}
+		}
+	default:
+		return nil
+	}
+}
+
+func firstOpenOperationPlanPhaseText(metadata map[string]interface{}) string {
+	plan := mapFromOperationContext(metadata["operation_plan"])
+	for _, phase := range mapSliceFromAny(plan["phases"]) {
+		switch strings.ToLower(strings.TrimSpace(stringFromAny(phase["status"]))) {
+		case operationPlanStepStatusCompleted, "skipped", operationPlanStepStatusFailed:
+			continue
+		}
+		return strings.TrimSpace(firstNonEmptyString(phase["step"], phase["title"], phase["note"]))
+	}
+	return ""
+}
+
+func operationPlanPreferredBusinessSkillID(metadata map[string]interface{}) string {
+	plan := mapFromOperationContext(metadata["operation_plan"])
+	for _, phase := range mapSliceFromAny(plan["phases"]) {
+		switch strings.ToLower(strings.TrimSpace(stringFromAny(phase["status"]))) {
+		case operationPlanStepStatusCompleted, "skipped", operationPlanStepStatusFailed:
+			continue
+		}
+		binding := mapFromOperationContext(phase[operationPlanRuntimeBindingKey])
+		if skillID := strings.TrimSpace(stringFromAny(binding["skill_id"])); skillID != "" && !strings.EqualFold(skillID, skills.SkillConsoleNavigator) {
+			return skillID
+		}
+		if expectedAction := mapFromOperationContext(phase["expected_action"]); len(expectedAction) > 0 {
+			if skillID := strings.TrimSpace(stringFromAny(expectedAction["skill_id"])); skillID != "" && !strings.EqualFold(skillID, skills.SkillConsoleNavigator) {
+				return skillID
+			}
+		}
+		for _, key := range []string{"skill_id", "recommended_skill_id", "target_skill_id"} {
+			if skillID := strings.TrimSpace(stringFromAny(phase[key])); skillID != "" && !strings.EqualFold(skillID, skills.SkillConsoleNavigator) {
+				return skillID
+			}
+		}
+	}
+	return ""
+}
+
+func containsAnyFold(value string, candidates ...string) bool {
+	value = strings.ToLower(value)
+	for _, candidate := range candidates {
+		if strings.Contains(value, strings.ToLower(strings.TrimSpace(candidate))) {
+			return true
+		}
+	}
+	return false
 }
 
 func injectClientActionContinuationContext(parts *chatRequestParts, event map[string]interface{}, req runtimedto.ClientActionResultRequest, metadata map[string]interface{}) {
@@ -891,12 +993,103 @@ func resolveClientActionContinuationMetadata(source map[string]interface{}, acti
 	}
 	resolved := clientActionObservationRecord(event, req)
 	metadata = mergeClientActionMetadata(metadata, resolved)
+	metadata = completeClientActionOperationPlanPhase(metadata, resolved, req)
 	continuation := governanceMapFromAny(metadata["client_action_continuation"])
 	if len(continuation) > 0 && clientActionID(continuation) == actionID {
 		continuation = mergeInvocation(continuation, resolved)
 		metadata["client_action_continuation"] = compactSkillInvocation(continuation)
 	}
 	return metadata
+}
+
+func completeClientActionOperationPlanPhase(metadata map[string]interface{}, event map[string]interface{}, req runtimedto.ClientActionResultRequest) map[string]interface{} {
+	if !strings.EqualFold(strings.TrimSpace(req.Status), clientActionStatusSucceeded) {
+		return metadata
+	}
+	phaseID := strings.TrimSpace(stringFromAny(event["plan_phase_id"]))
+	plan := copyStringAnyMap(mapFromOperationContext(metadata["operation_plan"]))
+	if len(plan) == 0 {
+		return metadata
+	}
+	if operationPlanHasStructuredOutcomes(plan) {
+		operationPlanReconcileOutcomes(plan)
+		next := copyStringAnyMap(metadata)
+		next["operation_plan"] = plan
+		return next
+	}
+	result := mapFromOperationContext(req.Result)
+	href := normalizeConsoleNavigationGuardHref(firstNonEmptyString(
+		result["observed_path"], result["current_href"], result["loaded_href"], result["href"], event["href"],
+	))
+	target := map[string]interface{}{}
+	if href != "" {
+		target["href"] = href
+		target["route"] = href
+	}
+	for _, key := range []string{"agent_id", "file_id", "asset_id", "resource_id"} {
+		if value := strings.TrimSpace(firstNonEmptyString(result[key], event[key])); value != "" {
+			target[key] = value
+		}
+	}
+	phases := mapSliceFromAny(plan["phases"])
+	match := -1
+	for index, phase := range phases {
+		if phaseID != "" && strings.TrimSpace(stringFromAny(phase["id"])) != phaseID {
+			continue
+		}
+		switch strings.ToLower(strings.TrimSpace(stringFromAny(phase["status"]))) {
+		case operationPlanStepStatusCompleted, "skipped", operationPlanStepStatusFailed:
+			if phaseID != "" {
+				return metadata
+			}
+			continue
+		}
+		expected := mapFromOperationContext(phase["expected_action"])
+		if len(expected) > 0 && !operationPlanExpectedActionMatches(
+			expected,
+			stringFromAny(event["skill_id"]),
+			stringFromAny(event["tool_name"]),
+			target,
+		) {
+			if phaseID != "" {
+				return metadata
+			}
+			continue
+		}
+		if len(expected) == 0 {
+			continue
+		}
+		if match >= 0 {
+			return metadata
+		}
+		match = index
+	}
+	if match < 0 {
+		return metadata
+	}
+	phases[match]["status"] = operationPlanStepStatusCompleted
+	phases[match]["completed_at"] = time.Now().UTC().Format(time.RFC3339)
+	refs := stringSliceFromAny(phases[match]["evidence_refs"])
+	if actionID := clientActionID(event); actionID != "" {
+		refs = appendUniqueStrings(refs, "action_id:"+actionID)
+	}
+	if href != "" {
+		refs = appendUniqueStrings(refs, operationPlanPageEvidenceKey(href))
+	}
+	phases[match]["evidence_refs"] = refs
+	operationPlanAdvanceNextPendingPhase(phases)
+	plan["phases"] = mapsToInterfaceSlice(phases)
+	operationPlanMarkEvidenceCurrent(plan)
+	if operationPlanPhasesTerminal(phases) {
+		plan["status"] = operationPlanStatusCompleted
+		plan["pending_next_action"] = "none"
+	} else {
+		plan["status"] = operationPlanStatusRunning
+	}
+	operationPlanSyncStrategyState(plan)
+	next := copyStringAnyMap(metadata)
+	next["operation_plan"] = plan
+	return next
 }
 
 func clientActionEventFromMetadata(metadata map[string]interface{}, actionID string) (map[string]interface{}, bool) {

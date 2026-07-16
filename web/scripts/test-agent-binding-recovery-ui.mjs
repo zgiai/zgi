@@ -11,6 +11,7 @@ const pageModel = read(
   'src/components/agents/agent-runtime/hooks/use-agent-runtime-page-model.tsx'
 );
 const bindingHealth = read('src/components/agents/agent-runtime/binding-health.tsx');
+const skillSection = read('src/components/agents/agent-runtime/sections/skill-section.tsx');
 const versionPopover = read('src/components/agents/agent-runtime/published-versions-dialog.tsx');
 const databaseDialog = read('src/components/agents/agent-runtime/database-dialog.tsx');
 const skillDialog = read('src/components/agents/agent-runtime/skill-dialog.tsx');
@@ -45,7 +46,7 @@ assert.match(
 );
 assert.doesNotMatch(pageModel, /selectedSkillIds\.filter\(id => selectableSkillIds\.has\(id\)\)/);
 assert.doesNotMatch(pageModel, /const pruned = current\.filter/);
-assert.match(pageModel, /handleRemoveAllAbnormalBindings/);
+assert.match(pageModel, /handleRemoveAbnormalSkills/);
 assert.match(pageModel, /acknowledge_suspended_bindings: acknowledgeSuspendedBindings/);
 assert.match(pageModel, /focusInvalidBindings\(conflict\.bindingHealth\)/);
 assert.match(pageModel, /impact_token: rollbackPreview\.impact_token/);
@@ -79,10 +80,10 @@ assert.match(bindingRebaseMerge, /mergeIDDelta\(/);
 assert.match(bindingRebaseMerge, /mergeDatabaseBindingDelta\(/);
 assert.match(bindingRebaseMerge, /mergeWorkflowBindingDelta\(/);
 assert.doesNotMatch(pageModel, /setBindingHealth\(\{\s*status: 'healthy'/);
-assert.match(pageModel, /setIsAbnormalBindingCleanupPending\(true\)/);
+assert.match(pageModel, /setIsAbnormalSkillCleanupPending\(true\)/);
 assert.match(pageModel, /getAgentRollbackImpactChanged\(error\)/);
 assert.match(pageModel, /describeBindingChanges\(payload, serverConfig\)/);
-assert.match(pageModel, /setCleanupBindingsDialogOpen\(true\)/);
+assert.match(pageModel, /setCleanupSkillsDialogOpen\(true\)/);
 
 assert.doesNotMatch(databaseDialog, /selectedDbIds\.filter\(dbId => scopedDbIds\.has\(dbId\)\)/);
 assert.match(databaseDialog, /onConfirmDatabases\(\s*selectedDbIds,/);
@@ -95,11 +96,19 @@ assert.match(knowledgeDialog, /setLocalSelectedDatasetIds\(selectedDatasetIds\)/
 assert.match(workflowDialog, /const existing = new Map\(bindings\.map/);
 assert.match(workflowDialog, /if \(current\) return \[current\]/);
 assert.match(orchestrationPanel, /bindingHealth=\{bindingHealth\}/);
-assert.match(dialogs, /cleanupBindings/);
-assert.match(previewPanel, /previewIgnoredDescription/);
+assert.doesNotMatch(orchestrationPanel, /AgentBindingHealthPanel/);
+assert.match(dialogs, /cleanupSkills/);
+assert.doesNotMatch(previewPanel, /previewIgnoredDescription|ignoredBindings|AlertTriangle/);
 
-assert.match(bindingHealth, /RemoveAllAbnormal|onRemoveAllAbnormal/);
+assert.doesNotMatch(bindingHealth, /AgentBindingHealthPanel/);
 assert.match(bindingHealth, /AgentSuspendedBindingsDialog/);
+assert.match(skillSection, /bindingHealth\.removeUnavailableSkills/);
+assert.match(skillSection, /onRemoveAbnormalSkills/);
+assert.match(
+  pageModel,
+  /filter\(item => item\.binding_type === 'skill' && item\.status !== 'active'\)/
+);
+assert.doesNotMatch(pageModel, /setKnowledgeDatasetIds\(current => current\.filter/);
 assert.match(versionPopover, /confirmCleanup/);
 assert.match(versionPopover, /rollbackPreview\?\.impact_token/);
 

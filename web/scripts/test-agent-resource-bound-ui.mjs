@@ -44,6 +44,7 @@ assert.match(datasetCard, /previewDatasetDeleteImpact/);
 
 assert.match(skillService, /deleteSkill\(id: string, confirmation\?/);
 assert.match(skillService, /previewSkillDeleteImpact/);
+assert.match(skillService, /AIChatSkillConfigUpdateResponse/);
 assert.match(skillSettings, /agent_binding_action: 'unbind'/);
 assert.match(skillSettings, /AgentResourceBoundDialog/);
 assert.match(skillSettings, /previewSkillDeleteImpact/);
@@ -78,9 +79,46 @@ assert.match(agentCard, /agent_binding_action: 'unbind'/);
 assert.match(agentCard, /AgentResourceBoundDialog/);
 assert.match(agentCard, /previewAgentDeleteImpact/);
 assert.match(aichatTypes, /agent_binding_action\?: 'retain_suspended'/);
-assert.match(skillSettings, /agent_binding_action: 'retain_suspended'/);
-assert.match(skillSettings, /impact_token: impact\.impact_token/);
-assert.match(skillSettings, /commitServerValue\(savedSkillIds\)/);
+assert.match(aichatTypes, /status: 'confirmation_required'/);
+assert.match(aichatTypes, /applied: false/);
+assert.match(skillSettings, /agent_binding_action: impact \? 'retain_suspended' : undefined/);
+assert.match(skillSettings, /impact_token: impact\?\.impact_token/);
+assert.doesNotMatch(skillSettings, /AUTO_SAVE_DELAY_MS/);
+assert.doesNotMatch(skillSettings, /useAIChatSkillConfigAutosave/);
+const skillConfigPersistenceStart = skillSettings.indexOf(
+  'function useAIChatSkillConfigPersistence'
+);
+const nextSkillSettingsSectionStart = skillSettings.indexOf(
+  'interface SkillImportPreviewDialogProps',
+  skillConfigPersistenceStart
+);
+const skillConfigPersistenceBlock = skillSettings.slice(
+  skillConfigPersistenceStart,
+  nextSkillSettingsSectionStart
+);
+assert.ok(
+  skillConfigPersistenceStart !== -1 && nextSkillSettingsSectionStart > skillConfigPersistenceStart
+);
+assert.match(skillConfigPersistenceBlock, /await save\(requestedSkillIds, impact\)/);
+assert.match(skillConfigPersistenceBlock, /if \(!result\.applied\)/);
+assert.match(
+  skillConfigPersistenceBlock,
+  /onConfirmationRequired\(result\.impact, requestedSkillIds\)/
+);
+assert.match(skillConfigPersistenceBlock, /setEnabledSkillIds\(savedSkillIds\)/);
+assert.ok(
+  skillConfigPersistenceBlock.indexOf('await save(requestedSkillIds, impact)') <
+    skillConfigPersistenceBlock.indexOf('setEnabledSkillIds(savedSkillIds)'),
+  'Skill switches must update only after the server accepts the policy change'
+);
+const skillToggleStart = skillSettings.indexOf('const handleToggle =');
+const skillToggleEnd = skillSettings.indexOf(
+  'const handleConfirmRetainSuspended',
+  skillToggleStart
+);
+const skillToggleBlock = skillSettings.slice(skillToggleStart, skillToggleEnd);
+assert.match(skillToggleBlock, /saveEnabledSkillIds\(Array\.from\(next\)\)/);
+assert.doesNotMatch(skillToggleBlock, /setEnabledSkillIds/);
 assert.match(skillSettings, /retainSuspendedWarningDescription/);
 assert.match(moveDialog, /setBindingImpact\(nextImpact\)/);
 assert.match(moveDialog, /agent_binding_action: impact \? 'unbind' : undefined/);

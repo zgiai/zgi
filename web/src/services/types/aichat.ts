@@ -1,4 +1,4 @@
-import type { ApiResponseData } from './common';
+import type { AgentResourceBoundImpact, ApiResponseData } from './common';
 
 export type AIChatConversationStatus = 'normal' | 'archived';
 export type AIChatConversationSource = 'console' | 'webapp' | 'migration';
@@ -34,11 +34,16 @@ export type AIChatSkillActivityStatus =
   | 'denied'
   | 'success'
   | 'advisory'
+  | 'already_loaded'
+  | 'auto_restored'
   | 'blocked'
-  | 'error';
+  | 'error'
+  | 'reload_required'
+  | 'skipped';
 export type AIChatSkillInvocationKind =
   | 'metadata_exposed'
   | 'skill_load'
+  | 'skill_load_attempt'
   | 'reference_read'
   | 'tool_call'
   | 'tool_governance'
@@ -107,6 +112,20 @@ export interface AIChatSkillOrganizationConfig {
 }
 
 export type AIChatSkillConfigResponse = ApiResponseData<AIChatSkillOrganizationConfig>;
+
+export type AIChatSkillConfigUpdateResult =
+  | {
+      status: 'applied';
+      applied: true;
+      enabled_skill_ids: string[];
+    }
+  | {
+      status: 'confirmation_required';
+      applied: false;
+      impact: AgentResourceBoundImpact;
+    };
+
+export type AIChatSkillConfigUpdateResponse = ApiResponseData<AIChatSkillConfigUpdateResult>;
 
 export interface AIChatSkillPreference {
   enabled_skill_ids: string[];

@@ -107,6 +107,10 @@ function buildWorkspaceMap(workspaces: WorkspaceManagement[]): Map<string, Works
   return new Map(workspaces.map(workspace => [workspace.id, workspace]));
 }
 
+function workspaceDisplayName(name: string, defaultWorkspaceLabel: string): string {
+  return name === 'Default Workspace' ? defaultWorkspaceLabel : name;
+}
+
 function grantKey(grant: RuntimeAudienceGrant): string {
   return `${grant.subject_type}:${grant.subject_id}`;
 }
@@ -133,6 +137,7 @@ export function RuntimeAudiencePickerDialog({
   onConfirm,
 }: RuntimeAudiencePickerDialogProps) {
   const t = useT('agents.runtimeAccess');
+  const tNavigation = useT('navigation');
   const [draft, setDraft] = useState<RuntimeAudienceGrant[]>([]);
   const [activeTab, setActiveTab] = useState('departments');
   const [memberKeyword, setMemberKeyword] = useState('');
@@ -172,6 +177,11 @@ export function RuntimeAudiencePickerDialog({
       return workspaces;
     }
     return workspaces.filter(workspace => workspace.id !== excludedWorkspaceId);
+  }, [excludeWorkspaceId, workspaces]);
+  const owningWorkspace = useMemo(() => {
+    const owningWorkspaceId = excludeWorkspaceId?.trim();
+    if (!owningWorkspaceId) return undefined;
+    return workspaces.find(workspace => workspace.id === owningWorkspaceId);
   }, [excludeWorkspaceId, workspaces]);
   const selectedKeys = useMemo(() => new Set(draft.map(grantKey)), [draft]);
   const selectedDepartments = draft.filter(grant => grant.subject_type === 'department').length;
@@ -267,7 +277,9 @@ export function RuntimeAudiencePickerDialog({
                                   {row.department.name}
                                 </span>
                                 <span className="shrink-0 text-xs text-muted-foreground">
-                                  {row.department.member_count}
+                                  {t('picker.memberCount', {
+                                    count: row.department.member_count,
+                                  })}
                                 </span>
                               </div>
                             );
@@ -285,12 +297,27 @@ export function RuntimeAudiencePickerDialog({
                         <div className="px-2 py-8 text-center text-sm text-muted-foreground">
                           {t('picker.loadingWorkspaces')}
                         </div>
-                      ) : visibleWorkspaces.length === 0 ? (
-                        <div className="px-2 py-8 text-center text-sm text-muted-foreground">
-                          {t('picker.noWorkspaces')}
-                        </div>
                       ) : (
                         <div className="space-y-1">
+                          {owningWorkspace ? (
+                            <div className="mb-2 flex min-h-10 items-center gap-2 rounded-md border border-border/70 bg-muted/30 px-2 py-2 text-sm">
+                              <Boxes className="h-4 w-4 shrink-0 text-muted-foreground" />
+                              <span className="min-w-0 flex-1 truncate">
+                                {workspaceDisplayName(
+                                  owningWorkspace.name,
+                                  tNavigation('defaultWorkspace')
+                                )}
+                              </span>
+                              <Badge variant="subtle" className="shrink-0">
+                                {t('picker.owningWorkspaceIncluded')}
+                              </Badge>
+                            </div>
+                          ) : null}
+                          {visibleWorkspaces.length === 0 ? (
+                            <div className="px-2 py-8 text-center text-sm text-muted-foreground">
+                              {t('picker.noAdditionalWorkspaces')}
+                            </div>
+                          ) : null}
                           {visibleWorkspaces.map(workspace => {
                             const grant: RuntimeAudienceGrant = {
                               subject_type: 'workspace',
@@ -323,10 +350,17 @@ export function RuntimeAudiencePickerDialog({
                                   }
                                 />
                                 <Boxes className="h-4 w-4 shrink-0 text-muted-foreground" />
-                                <span className="min-w-0 flex-1 truncate">{workspace.name}</span>
+                                <span className="min-w-0 flex-1 truncate">
+                                  {workspaceDisplayName(
+                                    workspace.name,
+                                    tNavigation('defaultWorkspace')
+                                  )}
+                                </span>
                                 {typeof workspace.member_count === 'number' ? (
                                   <span className="shrink-0 text-xs text-muted-foreground">
-                                    {workspace.member_count}
+                                    {t('picker.memberCount', {
+                                      count: workspace.member_count,
+                                    })}
                                   </span>
                                 ) : null}
                               </div>
@@ -555,6 +589,7 @@ function RuntimeAudienceChip({
   onRemove?: (grant: RuntimeAudienceGrant) => void;
 }) {
   const t = useT('agents.runtimeAccess');
+  const tNavigation = useT('navigation');
   const normalizedSubjectId = grant.subject_id.trim();
   const {
     member,
@@ -636,7 +671,9 @@ function RuntimeAudienceChip({
             ? `${t('grants.workspaceLookupFailed')}: ${normalizedSubjectId}`
             : workspaceUnresolved
               ? `${t('grants.unresolvedWorkspace')}: ${normalizedSubjectId}`
-              : workspace?.name || normalizedSubjectId || t('grants.workspacePlaceholder')
+              : workspace
+                ? workspaceDisplayName(workspace.name, tNavigation('defaultWorkspace'))
+                : normalizedSubjectId || t('grants.workspacePlaceholder')
           : accountLoading && !member
             ? t('grants.resolvingAccount')
             : accountLookupFailed

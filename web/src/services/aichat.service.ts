@@ -32,6 +32,7 @@ import type {
   AIChatUserInputContinuationRequest,
   AIChatSearchResponse,
   AIChatSkillConfigResponse,
+  AIChatSkillConfigUpdateResponse,
   AIChatSkillDetailResponse,
   AIChatSkillListResponse,
   AIChatSkillOrganizationConfig,
@@ -205,7 +206,7 @@ export const aichatService = {
   },
 
   updateSkillConfig(payload: AIChatSkillOrganizationConfig) {
-    return http.put<AIChatSkillConfigResponse>(`${AICHAT_BASE_PATH}/skills/config`, payload);
+    return http.put<AIChatSkillConfigUpdateResponse>(`${AICHAT_BASE_PATH}/skills/config`, payload);
   },
 
   getSkillPreference() {

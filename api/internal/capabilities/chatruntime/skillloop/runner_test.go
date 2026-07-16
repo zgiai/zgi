@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -109,6 +110,51 @@ func TestLegacyToolChatToolsAllowReloadOnlyWhenRestorationRequiresIt(t *testing.
 	}
 }
 
+func TestControlToolsForRoundHidesUnneededPlanAndFileIntermediateTools(t *testing.T) {
+	input := []adapter.Tool{
+		{Type: "function", Function: adapter.Function{Name: skills.MetaToolUpdatePlan}},
+		{Type: "function", Function: adapter.Function{Name: skills.MetaToolIntermediateAnswer}},
+		{Type: "function", Function: adapter.Function{Name: skills.MetaToolCallSkillTool}},
+	}
+	filtered := controlToolsForRound(input, false, false)
+	if len(filtered) != 1 || filtered[0].Function.Name != skills.MetaToolCallSkillTool {
+		t.Fatalf("filtered tools = %#v, want only call_skill_tool", filtered)
+	}
+}
+
+func TestOperationPlanModelRevisionRequiredOnlyForStalePlan(t *testing.T) {
+	req := RunRequest{CurrentMetadata: func() map[string]interface{} { return map[string]interface{}{} }}
+	if operationPlanModelRevisionRequired(req, map[string]interface{}{
+		"operation_plan": map[string]interface{}{"plan_sync_status": "current"},
+	}) {
+		t.Fatal("current plan unexpectedly requires model revision")
+	}
+	if !operationPlanModelRevisionRequired(req, map[string]interface{}{
+		"operation_plan": map[string]interface{}{"plan_sync_status": "stale"},
+	}) {
+		t.Fatal("stale plan should require model revision")
+	}
+}
+
+func TestFileDeliveryRequiresArtifactOnlyUnlessInlineCopyRequested(t *testing.T) {
+	state := map[string]interface{}{
+		"operation_plan": map[string]interface{}{
+			"phases": []interface{}{map[string]interface{}{
+				"id": "phase-file", "status": "in_progress",
+				"expected_action": map[string]interface{}{"skill_id": skills.SkillFileGenerator, "tool_name": "generate_file"},
+			}},
+		},
+	}
+	fileOnly := RunRequest{Prepared: &PreparedChat{Query: "生成 Markdown 文件并保存"}}
+	if !fileDeliveryRequiresArtifactOnly(fileOnly, state) {
+		t.Fatal("file delivery should hide full intermediate answer")
+	}
+	inline := RunRequest{Prepared: &PreparedChat{Query: "生成 Markdown 文件，同时在聊天中展示全文"}}
+	if fileDeliveryRequiresArtifactOnly(inline, state) {
+		t.Fatal("explicit inline copy should keep intermediate answer available")
+	}
+}
+
 func TestRunnerLegacyToolChatUsesSimpleToolContract(t *testing.T) {
 	fakeLLM := &runnerTestLLMClient{appChatResponses: []*adapter.ChatResponse{{
 		Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: "plain answer"}}},
@@ -157,6 +203,333 @@ func TestRunnerLegacyToolChatUsesSimpleToolContract(t *testing.T) {
 	}
 	if !foundLegacyPrompt {
 		t.Fatalf("messages = %#v, want legacy tool-chat system prompt", request.Messages)
+	}
+}
+
+func TestRunnerTerminalOnlyUsesOneFinalAnswerModelCall(t *testing.T) {
+	fakeLLM := &runnerTestLLMClient{appChatResponses: []*adapter.ChatResponse{{
+		Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: "The approved update was completed."}}},
+	}}}
+	runner := &Runner{
+		LLMClient:    fakeLLM,
+		SkillRuntime: skills.NewRuntime(nil, nil),
+		AppContext:   &llmclient.AppContext{},
+	}
+	resolved := &skills.ResolvedSkills{Skills: []skills.SkillDocument{{
+		Metadata:     skills.SkillMetadata{ID: skills.SkillAgentManagement},
+		Instructions: strings.Repeat("large instructions ", 2000),
+		Tools:        []skills.SkillToolDefinition{{Name: "update_agent_config"}},
+	}}}
+	prepared := NewPreparedChat("conv-terminal", "msg-terminal", "", "auto", &adapter.ChatRequest{
+		Messages: []adapter.Message{{Role: "user", Content: "update the Agent"}},
+	})
+
+	answer, _, err := runner.Run(context.Background(), RunRequest{
+		Prepared:     prepared,
+		Resolved:     resolved,
+		TerminalOnly: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if answer != "The approved update was completed." {
+		t.Fatalf("answer = %q", answer)
+	}
+	if fakeLLM.appChatCalls != 1 || len(fakeLLM.appChatRequests) != 1 {
+		t.Fatalf("model calls = %d, requests = %d; want 1", fakeLLM.appChatCalls, len(fakeLLM.appChatRequests))
+	}
+	request := fakeLLM.appChatRequests[0]
+	if len(request.Tools) != 0 || request.ToolChoice != nil {
+		t.Fatalf("tools = %#v, tool_choice = %#v; want a tool-free terminal request", request.Tools, request.ToolChoice)
+	}
+	for _, message := range request.Messages {
+		if strings.Contains(messageContent(message.Content), "large instructions") {
+			t.Fatal("terminal-only request included restored business skill instructions")
+		}
+	}
+}
+
+func TestRunnerTerminalOnlyFallsBackFromEmptyModelResponseWhenOperationCompleted(t *testing.T) {
+	fakeLLM := &runnerTestLLMClient{appChatResponses: []*adapter.ChatResponse{{
+		Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant"}}},
+	}}}
+	runner := &Runner{
+		LLMClient:    fakeLLM,
+		SkillRuntime: skills.NewRuntime(nil, nil),
+		AppContext:   &llmclient.AppContext{},
+	}
+	prepared := NewPreparedChat("conv-terminal-empty", "msg-terminal-empty", "", "auto", &adapter.ChatRequest{
+		Messages: []adapter.Message{{Role: "user", Content: "finish"}},
+	})
+
+	answer, _, err := runner.Run(context.Background(), RunRequest{
+		Prepared:          prepared,
+		Resolved:          &skills.ResolvedSkills{},
+		ProtocolToolsOnly: true,
+		TerminalOnly:      true,
+		RuntimeStateSnapshot: func() map[string]interface{} {
+			return map[string]interface{}{"operation_plan": map[string]interface{}{"status": "completed"}}
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if answer != "The operation was completed." {
+		t.Fatalf("answer = %q, want deterministic completed-operation fallback", answer)
+	}
+	if fakeLLM.appChatCalls != 1 {
+		t.Fatalf("model calls = %d, want 1", fakeLLM.appChatCalls)
+	}
+}
+
+func TestRunnerTerminalOnlyFallsBackFromInventedToolAfterCompletedOperation(t *testing.T) {
+	fakeLLM := &runnerTestLLMClient{appChatResponses: []*adapter.ChatResponse{{
+		Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", ToolCalls: []adapter.ToolCall{{
+			ID:   "invented-file-list",
+			Type: "function",
+			Function: adapter.FunctionCall{
+				Name:      "file_list",
+				Arguments: `{}`,
+			},
+		}}}}},
+	}}}
+	var traces []skills.SkillTrace
+	runner := &Runner{
+		LLMClient:    fakeLLM,
+		SkillRuntime: skills.NewRuntime(nil, nil),
+		AppContext:   &llmclient.AppContext{},
+		OnTrace: func(_ []skills.SkillTrace, trace skills.SkillTrace) {
+			traces = append(traces, trace)
+		},
+	}
+	prepared := NewPreparedChat("conv-terminal-tool", "msg-terminal-tool", "", "auto", &adapter.ChatRequest{
+		Messages: []adapter.Message{{Role: "user", Content: "生成第十一章文件并更新智能体提示词"}},
+	})
+	prepared.Query = "生成第十一章文件并更新智能体提示词"
+
+	answer, _, err := runner.Run(context.Background(), RunRequest{
+		Prepared:          prepared,
+		Resolved:          &skills.ResolvedSkills{},
+		ProtocolToolsOnly: true,
+		TerminalOnly:      true,
+		RuntimeStateSnapshot: func() map[string]interface{} {
+			return map[string]interface{}{
+				"operation_plan": map[string]interface{}{"status": "completed"},
+			}
+		},
+		CurrentMetadata: func() map[string]interface{} {
+			return map[string]interface{}{
+				"generated_files": []interface{}{map[string]interface{}{
+					"file_id": "file-11", "filename": "第十一章.md", "target": "managed_file",
+				}},
+				"skill_invocations": []interface{}{map[string]interface{}{
+					"kind": "tool_call", "skill_id": "agent-management", "tool_name": "update_agent_config", "status": "success",
+					"result": map[string]interface{}{
+						"status": "completed", "agent_name": "灵澜学院说书人", "updated_fields": []interface{}{"system_prompt"},
+					},
+				}},
+			}
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "文件「第十一章.md」已生成并保存；智能体「灵澜学院说书人」的系统提示词已更新。"
+	if answer != want {
+		t.Fatalf("answer = %q, want %q", answer, want)
+	}
+	if len(fakeLLM.appChatRequests) != 1 || len(fakeLLM.appChatRequests[0].Tools) != 0 {
+		t.Fatalf("requests = %#v, want one tool-free terminal request", fakeLLM.appChatRequests)
+	}
+	foundFallback := false
+	for _, trace := range traces {
+		if trace.Kind == "final_answer" && trace.Status == "success" && trace.Arguments["fallback"] == true {
+			foundFallback = true
+			if trace.Arguments["fallback_reason"] != "unexpected_tool_call" {
+				t.Fatalf("fallback trace = %#v, want unexpected_tool_call reason", trace)
+			}
+		}
+	}
+	if !foundFallback {
+		t.Fatalf("traces = %#v, want successful fallback final_answer trace", traces)
+	}
+}
+
+func TestRunnerTerminalOnlyDoesNotRetryTruncatedModelResponse(t *testing.T) {
+	fakeLLM := &runnerTestLLMClient{appChatResponses: []*adapter.ChatResponse{}}
+	fakeLLM.appChatResponses = append(fakeLLM.appChatResponses, &adapter.ChatResponse{
+		Choices: []adapter.Choice{{
+			FinishReason: "length",
+			Message:      adapter.Message{Role: "assistant", Content: "partial"},
+		}},
+	})
+	runner := &Runner{LLMClient: fakeLLM, SkillRuntime: skills.NewRuntime(nil, nil), AppContext: &llmclient.AppContext{}}
+	prepared := NewPreparedChat("conv-terminal-length", "msg-terminal-length", "", "auto", &adapter.ChatRequest{
+		Messages: []adapter.Message{{Role: "user", Content: "finish once"}},
+	})
+
+	_, _, err := runner.Run(context.Background(), RunRequest{
+		Prepared:     prepared,
+		Resolved:     &skills.ResolvedSkills{},
+		TerminalOnly: true,
+	})
+	if err == nil || !strings.Contains(err.Error(), "length") {
+		t.Fatalf("error = %v, want terminal length error", err)
+	}
+	if fakeLLM.appChatCalls != 1 {
+		t.Fatalf("model calls = %d, want exactly one terminal call", fakeLLM.appChatCalls)
+	}
+}
+
+func TestRunnerTerminalOnlyProjectsOnlyGoalAndLatestEvidence(t *testing.T) {
+	fakeLLM := &runnerTestLLMClient{appChatResponses: []*adapter.ChatResponse{{
+		Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: "done"}}},
+	}}}
+	runner := &Runner{LLMClient: fakeLLM, SkillRuntime: skills.NewRuntime(nil, nil), AppContext: &llmclient.AppContext{}}
+	prepared := NewPreparedChat("conv-terminal-projected", "msg-terminal-projected", "", "auto", &adapter.ChatRequest{
+		Messages: []adapter.Message{
+			{Role: "system", Content: "PAGE_INSTRUCTIONS FULL_PLAN_MARKER"},
+			{Role: "user", Content: "USER_GOAL_MARKER"},
+			{Role: "system", Content: "SKILL_INSTRUCTIONS_MARKER"},
+		},
+	})
+	prepared.Query = "USER_GOAL_MARKER"
+
+	_, _, err := runner.Run(context.Background(), RunRequest{
+		Prepared:     prepared,
+		Resolved:     &skills.ResolvedSkills{},
+		TerminalOnly: true,
+		AdditionalSystemMessages: []adapter.Message{{
+			Role: "system", Content: "SKILL_ADDITIONAL_MARKER",
+		}},
+		CurrentMetadata: func() map[string]interface{} {
+			return map[string]interface{}{
+				"operation_plan": map[string]interface{}{"full_plan": "FULL_PLAN_MARKER"},
+				"skill_invocations": []interface{}{map[string]interface{}{
+					"kind": "tool_call", "skill_id": "agent-management", "tool_name": "update_agent_config", "status": "success",
+					"result": map[string]interface{}{
+						"message":       "LATEST_EVIDENCE_MARKER",
+						"content":       "TOOL_RESULT_BODY_MUST_NOT_LEAK",
+						"system_prompt": "TOOL_RESULT_SYSTEM_PROMPT_MUST_NOT_LEAK",
+					},
+				}},
+				"tool_governance": map[string]interface{}{
+					"status": "approved", "decision": "allowed", "message": "GOVERNANCE_SUMMARY_MARKER",
+					"arguments":         map[string]interface{}{"content": "GOVERNANCE_ARGUMENT_BODY_MUST_NOT_LEAK"},
+					"frozen_invocation": map[string]interface{}{"system_prompt": "FROZEN_SYSTEM_PROMPT_MUST_NOT_LEAK"},
+					"system_prompt":     "GOVERNANCE_SYSTEM_PROMPT_MUST_NOT_LEAK",
+					"content":           "GOVERNANCE_CONTENT_MUST_NOT_LEAK",
+				},
+				"generated_files": []interface{}{map[string]interface{}{
+					"file_id": "file-1", "filename": "FILE_REF_MARKER.md", "content_sha256": "sha256:file",
+				}},
+			}
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(fakeLLM.appChatRequests) != 1 {
+		t.Fatalf("requests = %d, want 1", len(fakeLLM.appChatRequests))
+	}
+	request := fakeLLM.appChatRequests[0]
+	for _, forbidden := range []string{
+		"PAGE_INSTRUCTIONS", "SKILL_INSTRUCTIONS", "SKILL_ADDITIONAL", "FULL_PLAN_MARKER",
+		"TOOL_RESULT_BODY_MUST_NOT_LEAK", "TOOL_RESULT_SYSTEM_PROMPT_MUST_NOT_LEAK",
+		"GOVERNANCE_ARGUMENT_BODY_MUST_NOT_LEAK", "FROZEN_SYSTEM_PROMPT_MUST_NOT_LEAK",
+		"GOVERNANCE_SYSTEM_PROMPT_MUST_NOT_LEAK", "GOVERNANCE_CONTENT_MUST_NOT_LEAK",
+	} {
+		if runnerTestRequestContains(request, forbidden) {
+			t.Fatalf("terminal-only request leaked %q: %#v", forbidden, request.Messages)
+		}
+	}
+	for _, required := range []string{"USER_GOAL_MARKER", "LATEST_EVIDENCE_MARKER", "GOVERNANCE_SUMMARY_MARKER", "FILE_REF_MARKER.md"} {
+		if !runnerTestRequestContains(request, required) {
+			t.Fatalf("terminal-only request missing %q: %#v", required, request.Messages)
+		}
+	}
+}
+
+func TestTerminalProjectionCompactValuePrioritizesStableKeysDeterministically(t *testing.T) {
+	input := map[string]interface{}{
+		"status": "success", "code": "ok", "message": "done", "summary": "stable",
+		"agent_id": "agent-1", "file_id": "file-1", "system_prompt_digest": "sha256:prompt",
+		"updated_fields": []interface{}{"system_prompt", "description"},
+	}
+	for index := 0; index < 40; index++ {
+		input[fmt.Sprintf("extra_%02d", index)] = index
+	}
+	first := terminalProjectionCompactValue(input, 0)
+	for attempt := 0; attempt < 20; attempt++ {
+		if next := terminalProjectionCompactValue(input, 0); !reflect.DeepEqual(first, next) {
+			t.Fatalf("projection changed across attempts: first=%#v next=%#v", first, next)
+		}
+	}
+	projected := evidenceMapFromAny(first)
+	for _, key := range []string{"status", "code", "message", "summary", "agent_id", "file_id", "system_prompt_digest", "updated_fields"} {
+		if _, ok := projected[key]; !ok {
+			t.Fatalf("projection omitted priority key %q: %#v", key, projected)
+		}
+	}
+}
+
+func TestRunnerMovesAndMergesSystemMessagesBeforePlanning(t *testing.T) {
+	fakeLLM := &runnerTestLLMClient{appChatResponses: []*adapter.ChatResponse{{
+		Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: "done"}}},
+	}}}
+	runner := &Runner{
+		LLMClient:    fakeLLM,
+		SkillRuntime: skills.NewRuntime(nil, nil),
+		AppContext:   &llmclient.AppContext{},
+	}
+	prepared := NewPreparedChat("conv-system-order", "msg-system-order", "", "auto", &adapter.ChatRequest{
+		Messages: []adapter.Message{
+			{Role: "system", Content: "base system"},
+			{Role: "user", Content: "question"},
+			{Role: "assistant", Content: "earlier answer"},
+		},
+	})
+	resolved := &skills.ResolvedSkills{Skills: []skills.SkillDocument{{
+		Metadata: skills.SkillMetadata{ID: skills.SkillFileManager},
+		Tools:    []skills.SkillToolDefinition{{Name: "list_files"}},
+	}}}
+
+	_, _, err := runner.Run(context.Background(), RunRequest{
+		Prepared:       prepared,
+		Resolved:       resolved,
+		LegacyToolChat: true,
+		AdditionalSystemMessages: []adapter.Message{
+			{Role: "system", Content: "continuation guidance"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if len(fakeLLM.appChatRequests) != 1 {
+		t.Fatalf("AppChat requests = %d, want 1", len(fakeLLM.appChatRequests))
+	}
+
+	messages := fakeLLM.appChatRequests[0].Messages
+	if len(messages) < 3 || messages[0].Role != "system" {
+		t.Fatalf("planning messages = %#v, want one leading system message", messages)
+	}
+	systemContent := messageContent(messages[0].Content)
+	for _, want := range []string{
+		"base system",
+		"continuation guidance",
+		"Use the already available tools only when they are needed",
+	} {
+		if !strings.Contains(systemContent, want) {
+			t.Fatalf("system content missing %q:\n%s", want, systemContent)
+		}
+	}
+	for index, message := range messages[1:] {
+		if strings.EqualFold(strings.TrimSpace(message.Role), "system") {
+			t.Fatalf("planning message %d = %#v, want all system messages merged at the beginning", index+1, message)
+		}
+	}
+	if messages[1].Role != "user" || messages[2].Role != "assistant" {
+		t.Fatalf("conversation order = %#v, want user then assistant", messages[1:])
 	}
 }
 
@@ -288,6 +661,126 @@ func TestRestoredLoadedSkillInstructionStateReopensOversizedSkill(t *testing.T) 
 	}
 }
 
+func TestRestoredLoadedSkillInstructionStateRestoresPreferredOversizedSkill(t *testing.T) {
+	fullInstructions := "BEGIN\n" + strings.Repeat("authoritative continuation contract\n", 1400) + "END"
+	resolved := &skills.ResolvedSkills{Skills: []skills.SkillDocument{
+		{Metadata: skills.SkillMetadata{ID: skills.SkillFileGenerator}, Instructions: strings.Repeat("small\n", 100)},
+		{Metadata: skills.SkillMetadata{ID: skills.SkillAgentManagement}, Instructions: fullInstructions},
+	}}
+
+	state := restoredLoadedSkillInstructionStateForRun(resolved, map[string]struct{}{
+		skills.SkillFileGenerator:   {},
+		skills.SkillAgentManagement: {},
+	}, skills.SkillAgentManagement)
+
+	if _, ok := state.activeLoaded[skills.SkillAgentManagement]; !ok {
+		t.Fatalf("activeLoaded = %#v, want preferred oversized skill restored", state.activeLoaded)
+	}
+	if !strings.Contains(messageContent(state.message.Content), fullInstructions) {
+		t.Fatal("preferred oversized instructions were not restored completely")
+	}
+	if slices.Contains(state.reloadRequired, skills.SkillAgentManagement) {
+		t.Fatalf("reloadRequired = %#v, preferred skill must not require reload", state.reloadRequired)
+	}
+}
+
+func TestInitialLoadedSkillsRejectsChangedInstructionDigest(t *testing.T) {
+	resolved := &skills.ResolvedSkills{Skills: []skills.SkillDocument{{
+		Metadata:     skills.SkillMetadata{ID: skills.SkillAgentManagement},
+		Instructions: "new instructions",
+	}}}
+	req := RunRequest{CurrentMetadata: func() map[string]interface{} {
+		return map[string]interface{}{
+			"loaded_skill_ids": []interface{}{skills.SkillAgentManagement},
+			"loaded_skill_state": []interface{}{map[string]interface{}{
+				"skill_id":           skills.SkillAgentManagement,
+				"instruction_digest": skillInstructionDigest("old instructions"),
+			}},
+		}
+	}}
+
+	loaded := initialLoadedSkillsForRun(req, resolved)
+	if _, ok := loaded[skills.SkillAgentManagement]; ok {
+		t.Fatalf("loaded = %#v, changed instructions must require load_skill", loaded)
+	}
+}
+
+func TestValidatedHistoricalLoadedSkillsRecordsVersionAndPolicyFailures(t *testing.T) {
+	resolved := &skills.ResolvedSkills{Skills: []skills.SkillDocument{
+		{Metadata: skills.SkillMetadata{ID: skills.SkillAgentManagement}, Instructions: "new instructions"},
+		{Metadata: skills.SkillMetadata{ID: skills.SkillFileReader}, Instructions: "reader instructions"},
+	}}
+	req := RunRequest{
+		CurrentMetadata: func() map[string]interface{} {
+			return map[string]interface{}{
+				"loaded_skill_ids": []interface{}{skills.SkillAgentManagement, skills.SkillFileReader, "disabled-skill"},
+				"loaded_skill_state": []interface{}{
+					map[string]interface{}{"skill_id": skills.SkillAgentManagement, "effective_version": skillInstructionDigest("old instructions")},
+					map[string]interface{}{"skill_id": skills.SkillFileReader, "effective_version": skillInstructionDigest("reader instructions")},
+					map[string]interface{}{"skill_id": "disabled-skill", "effective_version": "sha256:old"},
+				},
+			}
+		},
+		AuthorizeSkillStep: func(_ context.Context, skillID string) (bool, error) {
+			return skillID != skills.SkillFileReader, nil
+		},
+	}
+
+	loaded, traces := validatedHistoricalLoadedSkillsForRun(context.Background(), req, resolved)
+	if len(loaded) != 0 {
+		t.Fatalf("loaded = %#v, want all invalidated", loaded)
+	}
+	outcomes := map[string]string{}
+	statuses := map[string]string{}
+	for _, trace := range traces {
+		outcomes[trace.SkillID] = evidenceStringFromAny(trace.Arguments["outcome"])
+		statuses[trace.SkillID] = trace.Status
+		if trace.Kind != "skill_load_attempt" {
+			t.Fatalf("trace = %#v, want diagnostic load attempt", trace)
+		}
+	}
+	if outcomes[skills.SkillAgentManagement] != "version_changed" || statuses[skills.SkillAgentManagement] != "reload_required" {
+		t.Fatalf("agent-management diagnostic = %q/%q, want version_changed/reload_required", outcomes[skills.SkillAgentManagement], statuses[skills.SkillAgentManagement])
+	}
+	if outcomes[skills.SkillFileReader] != "policy_denied" || statuses[skills.SkillFileReader] != "blocked" {
+		t.Fatalf("file-reader diagnostic = %q/%q, want policy_denied/blocked", outcomes[skills.SkillFileReader], statuses[skills.SkillFileReader])
+	}
+	if outcomes["disabled-skill"] != "not_exposed_current_surface" || statuses["disabled-skill"] != "skipped" {
+		t.Fatalf("disabled-skill diagnostic = %q/%q, want not_exposed_current_surface/skipped", outcomes["disabled-skill"], statuses["disabled-skill"])
+	}
+}
+
+func TestRestoredSkillLoadAttemptsHaveUniqueRuntimeIDs(t *testing.T) {
+	resolved := &skills.ResolvedSkills{Skills: []skills.SkillDocument{{
+		Metadata:     skills.SkillMetadata{ID: skills.SkillAgentManagement},
+		Instructions: "current instructions",
+	}}}
+	metadata := map[string]interface{}{
+		"loaded_skill_state": []interface{}{map[string]interface{}{
+			"skill_id": skills.SkillAgentManagement, "load_sequence": 7,
+		}},
+	}
+	state := restoredSkillInstructionState{restored: []string{skills.SkillAgentManagement}}
+	first := restoredSkillAttemptTraces(metadata, resolved, state)
+	second := restoredSkillAttemptTraces(metadata, resolved, state)
+	if len(first) != 1 || len(second) != 1 {
+		t.Fatalf("attempts = %#v / %#v, want one each", first, second)
+	}
+	firstID := evidenceStringFromAny(first[0].Arguments["runtime_id"])
+	secondID := evidenceStringFromAny(second[0].Arguments["runtime_id"])
+	if firstID == "" || secondID == "" || firstID == secondID {
+		t.Fatalf("runtime ids = %q / %q, want unique non-empty ids", firstID, secondID)
+	}
+	if first[0].Status != "auto_restored" || first[0].Arguments["load_sequence"] != 7 {
+		t.Fatalf("attempt = %#v, want auto_restored with prior load sequence", first[0])
+	}
+	deniedOne := restoredSkillValidationTrace(skills.SkillAgentManagement, "policy_denied", nil, "denied", "denied")
+	deniedTwo := restoredSkillValidationTrace(skills.SkillAgentManagement, "policy_denied", nil, "denied", "denied")
+	if evidenceStringFromAny(deniedOne.Arguments["runtime_id"]) == evidenceStringFromAny(deniedTwo.Arguments["runtime_id"]) {
+		t.Fatalf("policy denial attempts reused runtime id: %#v / %#v", deniedOne, deniedTwo)
+	}
+}
+
 func TestRestoredLoadedSkillInstructionStateReopensOnlySkillsBeyondTotalBudget(t *testing.T) {
 	resolved := &skills.ResolvedSkills{Skills: []skills.SkillDocument{
 		{Metadata: skills.SkillMetadata{ID: "skill-a"}, Instructions: strings.Repeat("a", 9000)},
@@ -317,7 +810,7 @@ func runnerTestHasTool(tools []adapter.Tool, name string) bool {
 	return false
 }
 
-func TestRunRequiresFinalPlanSnapshotOnlyForNonEmptyPhases(t *testing.T) {
+func TestRunNeverRequiresFinalPlanSnapshotForOutcomePlan(t *testing.T) {
 	req := RunRequest{CurrentMetadata: func() map[string]interface{} {
 		return map[string]interface{}{
 			"operation_plan": map[string]interface{}{
@@ -329,8 +822,8 @@ func TestRunRequiresFinalPlanSnapshotOnlyForNonEmptyPhases(t *testing.T) {
 			},
 		}
 	}}
-	if !runRequiresFinalPlanSnapshot(req) {
-		t.Fatal("runRequiresFinalPlanSnapshot() = false, want true")
+	if runRequiresFinalPlanSnapshot(req) {
+		t.Fatal("runRequiresFinalPlanSnapshot() = true, want optional audit snapshot")
 	}
 	req.CurrentMetadata = func() map[string]interface{} {
 		return map[string]interface{}{"operation_plan": map[string]interface{}{"phases": []interface{}{}}}
@@ -418,8 +911,8 @@ func TestHandleLoadSkillCallDoesNotEmitEventForAlreadyLoadedSkill(t *testing.T) 
 	if len(events) != 0 {
 		t.Fatalf("events = %#v, want no duplicated skill_load events", events)
 	}
-	if result.trace.Kind != "" {
-		t.Fatalf("trace = %#v, want no timeline trace for already loaded skill", result.trace)
+	if result.trace.Kind != "skill_load_attempt" || result.trace.Status != "already_loaded" {
+		t.Fatalf("trace = %#v, want diagnostic already-loaded attempt", result.trace)
 	}
 	if _, ok := loaded[skills.SkillAgentManagement]; !ok {
 		t.Fatalf("loaded skill was removed: %#v", loaded)
@@ -428,7 +921,14 @@ func TestHandleLoadSkillCallDoesNotEmitEventForAlreadyLoadedSkill(t *testing.T) 
 		t.Fatal("usedSkill = false, want true for already loaded skill")
 	}
 	if result.toolMessage.Role == "" || result.toolMessage.ToolCallID == "" || result.toolMessage.Content == nil {
-		t.Fatalf("toolMessage = %#v, want skill document tool message", result.toolMessage)
+		t.Fatalf("toolMessage = %#v, want already-loaded tool message", result.toolMessage)
+	}
+	payload := messageContent(result.toolMessage.Content)
+	if !strings.Contains(payload, "already_loaded") {
+		t.Fatalf("toolMessage content = %q, want compact already-loaded status", payload)
+	}
+	if strings.Contains(payload, "# Agent Management") || strings.Contains(payload, `"instructions"`) {
+		t.Fatalf("toolMessage content = %q, want no repeated skill instructions", payload)
 	}
 }
 
@@ -1123,7 +1623,7 @@ func TestRunnerRecordsTurnStateWhenModelWrapsMetaToolInSkillToolCall(t *testing.
 	}
 }
 
-func TestRunnerShowsContextualSidebarCheckpointForFileTurnState(t *testing.T) {
+func TestRunnerKeepsContextualSidebarModelOnlyTurnStateHidden(t *testing.T) {
 	ctx := context.Background()
 	fakeLLM := &runnerTestLLMClient{
 		appChatResponses: []*adapter.ChatResponse{
@@ -1176,21 +1676,10 @@ func TestRunnerShowsContextualSidebarCheckpointForFileTurnState(t *testing.T) {
 	if answer != "State recorded." {
 		t.Fatalf("answer = %q, want final answer", answer)
 	}
-	var checkpoints []Event
 	for _, event := range events {
 		if event.Type == EventIntermediateAnswer {
-			checkpoints = append(checkpoints, event)
+			t.Fatalf("event = %#v, want model_only turn state hidden on contextual sidebar", event)
 		}
-	}
-	if len(checkpoints) != 1 {
-		t.Fatalf("intermediate events = %#v, want exactly one file-derived checkpoint", checkpoints)
-	}
-	content := stringFromInterface(checkpoints[0].Payload["content"])
-	if !strings.Contains(content, "已记录文件小结") || !strings.Contains(content, "雪是主角的妹妹") {
-		t.Fatalf("checkpoint content = %q, want localized file summary", content)
-	}
-	if strings.Contains(content, "deepseek-v4-flash") {
-		t.Fatalf("checkpoint content = %q, want selected model state hidden", content)
 	}
 }
 
@@ -1334,7 +1823,7 @@ func TestRunnerTreatsUnavailableSkillLoadAsPlannerFeedbackWithoutLoadEvent(t *te
 	}
 	foundFeedback := false
 	for _, trace := range traces {
-		if trace.Kind == "planner_feedback" && trace.SkillID == skills.SkillConsoleNavigator {
+		if trace.Kind == "skill_load_attempt" && trace.SkillID == skills.SkillConsoleNavigator && trace.Status == "blocked" {
 			foundFeedback = true
 		}
 		if trace.Kind == "skill_load" && trace.SkillID == skills.SkillConsoleNavigator {
@@ -1342,7 +1831,7 @@ func TestRunnerTreatsUnavailableSkillLoadAsPlannerFeedbackWithoutLoadEvent(t *te
 		}
 	}
 	if !foundFeedback {
-		t.Fatalf("traces = %#v, want planner feedback for unavailable skill", traces)
+		t.Fatalf("traces = %#v, want diagnostic blocked load attempt", traces)
 	}
 	for _, event := range events {
 		if event.Type == EventSkillLoadStart || event.Type == EventSkillLoadEnd || event.Type == EventSkillCallError {

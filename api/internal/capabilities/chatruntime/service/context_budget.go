@@ -851,6 +851,9 @@ func compactOperationPlanForPrompt(plan map[string]interface{}) map[string]inter
 	if phases := operationPlanCompactPhasesForPrompt(plan["phases"], 8); len(phases) > 0 {
 		out["phases"] = phases
 	}
+	if outcomes := operationPlanCompactOutcomesForPrompt(plan[operationPlanOutcomesKey], 8); len(outcomes) > 0 {
+		out["outcomes"] = outcomes
+	}
 	for _, key := range []string{"last_plan_update_round", "evidence_revision", "evidence_revision_at_plan_update", "evidence_sequence_at_plan_update", "evidence_after_last_plan_update"} {
 		if value := intValueFromAny(plan[key]); value > 0 {
 			out[key] = value
@@ -894,6 +897,9 @@ func compactTaskContractForPrompt(contract map[string]interface{}) map[string]in
 	}
 	if phases := stringSliceFromAny(contract["phases"]); len(phases) > 0 {
 		out["phases"] = compactStringSliceForPrompt(phases, 8, 180)
+	}
+	if outcomes := operationPlanCompactOutcomesForPrompt(contract["outcomes"], 8); len(outcomes) > 0 {
+		out["outcomes"] = outcomes
 	}
 	if evidence := stringSliceFromAny(contract["evidence_required"]); len(evidence) > 0 {
 		out["evidence_required"] = compactStringSliceForPrompt(evidence, 10, 180)

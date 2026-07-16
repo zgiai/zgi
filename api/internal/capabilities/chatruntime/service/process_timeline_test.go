@@ -508,3 +508,70 @@ func TestProcessTimelineRecorderReusesMatchingGovernedToolCallRuntimeID(t *testi
 		t.Fatalf("other status = %q, want waiting_approval; invocations=%#v", got, invocations)
 	}
 }
+
+func TestProcessTimelineRecorderPersistsManagedFileLinkAfterApprovedInvocation(t *testing.T) {
+	messageRepo := &countingTimelineMessageRepo{}
+	message := &runtimemodel.Message{
+		ID: uuid.New(),
+		Metadata: mergeGeneratedArtifactMetadata(map[string]interface{}{}, map[string]interface{}{
+			"file_id":         "tool-file-1",
+			"tool_file_id":    "tool-file-1",
+			"filename":        "chapter.md",
+			"mime_type":       "text/markdown",
+			"target":          "temporary_artifact",
+			"content_chars":   4096,
+			"content_sha256":  "sha256:chapter",
+			"content_summary": "Chapter summary",
+		}),
+	}
+	prepared := &PreparedChat{
+		Conversation: &runtimemodel.Conversation{ID: uuid.New()},
+		Message:      message,
+	}
+	recorder := newProcessTimelineRecorder(
+		t.Context(),
+		t.Context(),
+		&service{repos: &repository.Repositories{Message: messageRepo}},
+		prepared,
+		nil,
+	)
+
+	recorder.RecordInvocationEnd(skills.SkillTrace{
+		Kind:     "tool_call",
+		SkillID:  skills.SkillFileManager,
+		ToolName: "save_file_to_management",
+		Status:   "success",
+		Arguments: map[string]interface{}{
+			"source_type":  "tool_file",
+			"tool_file_id": "tool-file-1",
+			"filename":     "chapter.md",
+		},
+		Result: map[string]interface{}{
+			"file_id":        "managed-file-1",
+			"upload_file_id": "managed-file-1",
+			"filename":       "chapter.md",
+			"target":         "managed_file",
+		},
+	})
+
+	artifacts := conversationArtifactsFromMetadata(messageRepo.metadata["conversation_artifacts"])
+	if len(artifacts) != 2 {
+		t.Fatalf("conversation_artifacts = %#v, want temporary and managed artifacts", artifacts)
+	}
+	managed := artifacts[1]
+	if got := stringFromAny(managed["artifact_id"]); got != "managed_file:managed-file-1" {
+		t.Fatalf("managed artifact_id = %q, want managed_file:managed-file-1", got)
+	}
+	if got := stringFromAny(managed["source_tool_file_id"]); got != "tool-file-1" {
+		t.Fatalf("managed source_tool_file_id = %q, want tool-file-1", got)
+	}
+	if got := stringFromAny(managed["content_sha256"]); got != "sha256:chapter" {
+		t.Fatalf("managed content_sha256 = %q, want inherited digest", got)
+	}
+	if got := stringFromAny(managed["content_summary"]); got != "Chapter summary" {
+		t.Fatalf("managed content_summary = %q, want inherited summary", got)
+	}
+	if got := intValueFromAny(managed["content_chars"]); got != 4096 {
+		t.Fatalf("managed content_chars = %d, want 4096", got)
+	}
+}

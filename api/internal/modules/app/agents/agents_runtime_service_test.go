@@ -313,7 +313,7 @@ func TestAgentMemoryReplaceRequestPreservesInvalidRowsForValidation(t *testing.T
 
 func TestAgentMemoryReplaceRequestCanDropHistoricalIDsForRollback(t *testing.T) {
 	req := agentMemoryReplaceRequestFromConfig([]dto.AgentMemorySlotConfig{
-		{ID: "stale-slot-id", Key: "profile", Enabled: true},
+		{ID: "stale-slot-id", Key: "profile", Name: "用户资料", Enabled: true},
 	}, false)
 	if len(req.Slots) != 1 {
 		t.Fatalf("len(req.Slots) = %d, want 1", len(req.Slots))
@@ -324,6 +324,9 @@ func TestAgentMemoryReplaceRequestCanDropHistoricalIDsForRollback(t *testing.T) 
 	if req.Slots[0].Key != "profile" {
 		t.Fatalf("rollback request key = %q, want profile", req.Slots[0].Key)
 	}
+	if req.Slots[0].Name != "用户资料" {
+		t.Fatalf("rollback request name = %q, want 用户资料", req.Slots[0].Name)
+	}
 }
 
 func TestAgentMemorySnapshotSlotsDoNotPersistVolatileIDs(t *testing.T) {
@@ -331,6 +334,7 @@ func TestAgentMemorySnapshotSlotsDoNotPersistVolatileIDs(t *testing.T) {
 		{
 			ID:          "draft-slot-id",
 			Key:         "profile",
+			Name:        "用户资料",
 			Description: "User profile",
 			MaxChars:    4000,
 			Enabled:     true,
@@ -350,6 +354,9 @@ func TestAgentMemorySnapshotSlotsDoNotPersistVolatileIDs(t *testing.T) {
 	}
 	if slots[0].MaxChars != 2000 {
 		t.Fatalf("snapshot max chars = %d, want 2000", slots[0].MaxChars)
+	}
+	if slots[0].Name != "用户资料" {
+		t.Fatalf("snapshot name = %q, want 用户资料", slots[0].Name)
 	}
 }
 

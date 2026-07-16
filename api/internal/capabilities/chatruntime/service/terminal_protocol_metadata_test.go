@@ -94,6 +94,98 @@ func TestPlanUpdateTraceMarksPlanCurrentAtLatestEvidence(t *testing.T) {
 	}
 }
 
+func TestPlanUpdateTracePreservesRuntimeCompletedPhaseEvidence(t *testing.T) {
+	metadata := map[string]interface{}{
+		"operation_plan": map[string]interface{}{
+			"phases": []interface{}{map[string]interface{}{
+				"id": "phase-1", "step": "Generate file", "status": "completed",
+				"expected_action": map[string]interface{}{"skill_id": skills.SkillFileGenerator, "tool_name": "generate_file"},
+				"evidence_refs":   []interface{}{"tool:file-generator/generate_file"},
+				"completed_at":    "2026-07-16T00:00:00Z",
+			}},
+		},
+	}
+	applyPlanUpdateTraceMetadata(metadata, skills.SkillTrace{
+		Kind:   "plan_update",
+		Status: "success",
+		Result: map[string]interface{}{
+			"plan": []interface{}{map[string]interface{}{
+				"id": "phase-1", "step": "Generate file", "status": "pending",
+			}},
+		},
+	})
+
+	phase := mapSliceFromAny(mapFromOperationContext(metadata["operation_plan"])["phases"])[0]
+	if got := stringFromAny(phase["status"]); got != operationPlanStepStatusCompleted {
+		t.Fatalf("phase status = %q, want completed", got)
+	}
+	if got := stringFromAny(mapFromOperationContext(phase["expected_action"])["tool_name"]); got != "generate_file" {
+		t.Fatalf("expected_action.tool_name = %q, want generate_file", got)
+	}
+	if refs := stringSliceFromAny(phase["evidence_refs"]); !containsString(refs, "tool:file-generator/generate_file") {
+		t.Fatalf("evidence_refs = %#v, want preserved runtime evidence", refs)
+	}
+	if got := stringFromAny(phase["completed_at"]); got != "2026-07-16T00:00:00Z" {
+		t.Fatalf("completed_at = %q, want preserved timestamp", got)
+	}
+}
+
+func TestPlanUpdateTraceCompilesOutcomeAcceptanceAndDoesNotTrustCompletedStatus(t *testing.T) {
+	metadata := map[string]interface{}{
+		"operation_plan": map[string]interface{}{
+			"status": operationPlanStatusRunning,
+		},
+	}
+	applyPlanUpdateTraceMetadata(metadata, skills.SkillTrace{
+		Kind:   "plan_update",
+		Status: "success",
+		Result: map[string]interface{}{
+			"outcomes": []interface{}{map[string]interface{}{
+				"id": "outcome-agent", "goal": "Update the Agent prompt", "status": "completed",
+				"target_resource_type": "agent", "target_resource_id": "agent-1",
+				"capabilities": []interface{}{agentCapabilitySystemPrompt},
+			}},
+		},
+	})
+	plan := mapFromOperationContext(metadata["operation_plan"])
+	outcome := mapSliceFromAny(plan[operationPlanOutcomesKey])[0]
+	if got := stringFromAny(outcome["status"]); got != operationPlanStepStatusPending {
+		t.Fatalf("outcome status = %q, want pending until runtime effect exists", got)
+	}
+	acceptance := mapFromOperationContext(outcome["acceptance"])
+	effects := mapSliceFromAny(acceptance["effects"])
+	if len(effects) != 1 || stringFromAny(effects[0]["type"]) != "agent.config.updated" {
+		t.Fatalf("acceptance = %#v, want compiled Agent update effect", acceptance)
+	}
+	if stringFromAny(effects[0]["resource_id"]) != "agent-1" {
+		t.Fatalf("acceptance resource = %#v, want agent-1", effects[0])
+	}
+}
+
+func TestFinalizeOperationPlanCannotBypassUnsatisfiedStructuredOutcome(t *testing.T) {
+	metadata := map[string]interface{}{
+		"operation_plan": map[string]interface{}{
+			"status": operationPlanStatusRunning,
+			operationPlanOutcomesKey: []interface{}{map[string]interface{}{
+				"id": "outcome-agent", "goal": "Update Agent", "status": operationPlanStepStatusPending,
+				"required": true, "verification_mode": "runtime_effects",
+			}},
+			"phases": []interface{}{map[string]interface{}{
+				"id": "phase-1", "outcome_id": "outcome-agent", "status": operationPlanStepStatusCompleted,
+			}},
+		},
+	}
+	finalizeOperationPlanForCompletedResult(metadata)
+	plan := mapFromOperationContext(metadata["operation_plan"])
+	if got := stringFromAny(plan["status"]); got != operationPlanStatusRunning {
+		t.Fatalf("plan status = %q, want running while required outcome is unsatisfied", got)
+	}
+	verification := mapFromOperationContext(plan["completion_verification"])
+	if got := stringFromAny(verification["status"]); got != "incomplete" {
+		t.Fatalf("completion verification = %#v, want incomplete", verification)
+	}
+}
+
 func TestSkillLoopPrefersExplicitFinalAnswerOnlyForPlannedAIChatTurn(t *testing.T) {
 	tests := []struct {
 		name       string

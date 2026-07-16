@@ -20,15 +20,22 @@ export interface AgentPublishedVersionListItem {
   agent_id: string;
   version: string;
   version_uuid: string;
+  name: string;
   description: string;
   config_snapshot: AgentRuntimeConfig;
   is_current: boolean;
   created_at: number;
 }
 
+export interface AgentPublishVersionDetails {
+  name: string;
+  description: string;
+}
+
 export interface AgentRuntimeSelectedSkillItem {
   skillId: string;
   label: string;
   description: string;
+  icon?: string;
   metadata?: AIChatSkillMetadata;
 }
