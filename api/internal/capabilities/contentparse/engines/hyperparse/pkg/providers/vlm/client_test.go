@@ -86,7 +86,7 @@ func TestParseBytesUsesImageUnderstandingPromptAndAcceptsMarkdown(t *testing.T) 
 		}, nil
 	})
 
-	doc, err := client.ParseBytes(context.Background(), "directory.jpg", []byte("image-bytes"), extractcommon.ParseOptions{})
+	doc, err := client.ParseBytes(context.Background(), "2号楼.jpg", []byte("image-bytes"), extractcommon.ParseOptions{})
 	if err != nil {
 		t.Fatalf("ParseBytes() error = %v", err)
 	}
@@ -97,7 +97,7 @@ func TestParseBytesUsesImageUnderstandingPromptAndAcceptsMarkdown(t *testing.T) 
 		t.Fatalf("response format = %q, want plain text", captured.ResponseFormat)
 	}
 	prompt, _ := captured.UserContent[0]["text"].(string)
-	for _, required := range []string{"ONE coherent", "Preserve the source language exactly", "Flowchart or process diagram", "directly as Markdown"} {
+	for _, required := range []string{"ONE coherent", "Preserve the source language exactly", "Flowchart or process diagram", "directly as Markdown", "Source image filename: 2号楼.jpg", "filename-derived context"} {
 		if !strings.Contains(prompt, required) {
 			t.Fatalf("image prompt missing %q", required)
 		}

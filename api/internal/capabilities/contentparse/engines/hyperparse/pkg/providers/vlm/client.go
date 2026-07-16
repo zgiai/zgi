@@ -264,6 +264,16 @@ Markdown document requirements:
 
 Return the complete knowledge document directly as Markdown. Do not wrap it in JSON or a code fence, and do not add commentary outside the document.`
 
+func buildImageUnderstandingPrompt(filename string) string {
+	filename = strings.TrimSpace(filename)
+	if filename == "" {
+		return imageUnderstandingPrompt
+	}
+	return imageUnderstandingPrompt + "\n\nSource image filename: " + filename + `.
+
+Use the filename as auxiliary document context when it contains meaningful labels, identifiers, locations, dates, departments, building names, or other metadata. If the filename provides context that is not visible in the image, include it clearly as filename-derived context. Do not let the filename override visible image content. If filename context conflicts with the image, mention the conflict instead of silently resolving it.`
+}
+
 type contentPart struct {
 	Type     string           `json:"type"`
 	Text     string           `json:"text,omitempty"`
@@ -505,7 +515,7 @@ func (c *Client) callImageOnce(ctx context.Context, filename string, imgData []b
 	dataURI := "data:" + mime + ";base64," + b64
 
 	userContent := []map[string]any{
-		{"type": "text", "text": imageUnderstandingPrompt},
+		{"type": "text", "text": buildImageUnderstandingPrompt(filename)},
 		{
 			"type": "image_url",
 			"image_url": map[string]any{
