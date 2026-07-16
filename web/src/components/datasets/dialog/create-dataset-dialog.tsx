@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useMemo, useState, useCallback } from 'react';
-import { BookOpen, ChevronLeft, Pencil } from 'lucide-react';
+import { BookOpen, ChevronRight, Pencil } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -37,6 +37,7 @@ import {
   type RetrievalConfig,
 } from '@/components/datasets/indexing-config';
 import { normalizeDatasetSearchMethod } from '@/utils/dataset/retrieval-config';
+import { DATASET_NAME_VALIDATION_OPTIONS } from '@/constants/dataset';
 
 interface CreateDatasetDialogProps {
   open: boolean;
@@ -205,15 +206,16 @@ function CreateDatasetDialog({ open, onOpenChange, currentFolderId }: CreateData
     setFormData(prev => ({ ...prev, [field]: value }));
   }
 
-  // Validate name: 2-32 Unicode chars; letters, numbers, underscore, hyphen, optional spaces
+  // Keep the client-side limit aligned with the dataset API's Unicode character count.
   const isNameValid = useMemo(
-    () => isValidNameInput(formData.name, { allowSpace: true }),
+    () => isValidNameInput(formData.name, DATASET_NAME_VALIDATION_OPTIONS),
     [formData.name]
   );
   const nameErrors = useMemo(
-    () => getNameValidationErrors(formData.name, { allowSpace: true }),
+    () => getNameValidationErrors(formData.name, DATASET_NAME_VALIDATION_OPTIONS),
     [formData.name]
   );
+  const showNameError = (hasSubmitted || nameErrors.includes('tooLong')) && !isNameValid;
   const isEmbeddingModelValid = useMemo(
     () => isEditMode || Boolean(formData.embedding_model_provider && formData.embedding_model),
     [isEditMode, formData.embedding_model_provider, formData.embedding_model]
@@ -226,7 +228,7 @@ function CreateDatasetDialog({ open, onOpenChange, currentFolderId }: CreateData
     // Check name validation
     if (!isNameValid) {
       const errorKey = nameErrors[0] || 'required';
-      toast.error(t(`datasets.validation.name.${errorKey}`));
+      toast.error(t(`datasets.validation.datasetName.${errorKey}`));
       return false;
     }
 
@@ -258,6 +260,9 @@ function CreateDatasetDialog({ open, onOpenChange, currentFolderId }: CreateData
 
     // Mark form as submitted to show validation errors
     setHasSubmitted(true);
+    if (!isEmbeddingModelValid) {
+      setShowAdvancedSettings(true);
+    }
 
     // Validate form and show toast for errors
     if (!validateForm()) {
@@ -376,14 +381,12 @@ function CreateDatasetDialog({ open, onOpenChange, currentFolderId }: CreateData
                   required
                   className={cn(
                     'h-11',
-                    hasSubmitted &&
-                      !isNameValid &&
-                      'border-destructive focus-visible:ring-destructive'
+                    showNameError && 'border-destructive focus-visible:ring-destructive'
                   )}
                 />
-                {hasSubmitted && !isNameValid && (
+                {showNameError && (
                   <p className="text-xs text-destructive font-medium animate-in fade-in slide-in-from-top-1">
-                    {t(`datasets.validation.name.${nameErrors[0] || 'required'}`)}
+                    {t(`datasets.validation.datasetName.${nameErrors[0] || 'required'}`)}
                   </p>
                 )}
               </div>
@@ -418,58 +421,6 @@ function CreateDatasetDialog({ open, onOpenChange, currentFolderId }: CreateData
                 </div>
               ) : null}
 
-              {/* Embedding Model Selector */}
-              {!isEditMode && (
-                <EmbeddingSettings
-                  embeddingModel={{
-                    provider: formData.embedding_model_provider || '',
-                    model: formData.embedding_model || '',
-                  }}
-                  onChange={embeddingModel => {
-                    setFormData(prev => ({
-                      ...prev,
-                      embedding_model_provider: embeddingModel.provider,
-                      embedding_model: embeddingModel.model,
-                    }));
-                  }}
-                  required
-                  title={t('datasets.createModal.embeddingModelLabel')}
-                  placeholder={t('datasets.createModal.embeddingModelPlaceholder')}
-                  hasError={hasSubmitted && !isEmbeddingModelValid}
-                  errorMessage={
-                    hasSubmitted && !isEmbeddingModelValid
-                      ? t('datasets.validation.embeddingModel.required')
-                      : undefined
-                  }
-                />
-              )}
-
-              {/* Rerank model selector - create mode only */}
-              {!isEditMode && (
-                <div className="space-y-2.5">
-                  <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                    {t('datasets.createWizard.processConfig.rerankModel')}
-                  </Label>
-                  <ModelSelector
-                    modelType="rerank"
-                    value={{
-                      provider: retrievalConfig.reranking_model?.reranking_provider_name || '',
-                      model: retrievalConfig.reranking_model?.reranking_model_name || '',
-                    }}
-                    onChange={({ provider, model }) =>
-                      setRetrievalConfig(prev => ({
-                        ...prev,
-                        reranking_enable: true,
-                        reranking_model: {
-                          reranking_provider_name: provider,
-                          reranking_model_name: model,
-                        },
-                      }))
-                    }
-                  />
-                </div>
-              )}
-
               {/* Advanced Settings */}
               <div className="space-y-3">
                 <button
@@ -477,10 +428,10 @@ function CreateDatasetDialog({ open, onOpenChange, currentFolderId }: CreateData
                   onClick={() => setShowAdvancedSettings(!showAdvancedSettings)}
                   className="flex items-center gap-2 text-sm font-semibold hover:text-primary transition-colors focus:outline-none"
                 >
-                  <ChevronLeft
+                  <ChevronRight
                     className={cn(
                       'size-4 transition-transform duration-300',
-                      showAdvancedSettings ? '-rotate-90' : ''
+                      showAdvancedSettings ? 'rotate-90' : ''
                     )}
                   />
                   {t('datasets.createModal.advancedSettingsLabel')}
@@ -493,6 +444,59 @@ function CreateDatasetDialog({ open, onOpenChange, currentFolderId }: CreateData
                   )}
                 >
                   <div className="space-y-4">
+                    {/* Embedding Model Selector */}
+                    {!isEditMode && (
+                      <EmbeddingSettings
+                        embeddingModel={{
+                          provider: formData.embedding_model_provider || '',
+                          model: formData.embedding_model || '',
+                        }}
+                        onChange={embeddingModel => {
+                          setFormData(prev => ({
+                            ...prev,
+                            embedding_model_provider: embeddingModel.provider,
+                            embedding_model: embeddingModel.model,
+                          }));
+                        }}
+                        required
+                        title={t('datasets.createModal.embeddingModelLabel')}
+                        placeholder={t('datasets.createModal.embeddingModelPlaceholder')}
+                        hasError={hasSubmitted && !isEmbeddingModelValid}
+                        errorMessage={
+                          hasSubmitted && !isEmbeddingModelValid
+                            ? t('datasets.validation.embeddingModel.required')
+                            : undefined
+                        }
+                      />
+                    )}
+
+                    {/* Rerank model selector - create mode only */}
+                    {!isEditMode && (
+                      <div className="space-y-2.5">
+                        <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                          {t('datasets.createWizard.processConfig.rerankModel')}
+                        </Label>
+                        <ModelSelector
+                          modelType="rerank"
+                          value={{
+                            provider:
+                              retrievalConfig.reranking_model?.reranking_provider_name || '',
+                            model: retrievalConfig.reranking_model?.reranking_model_name || '',
+                          }}
+                          onChange={({ provider, model }) =>
+                            setRetrievalConfig(prev => ({
+                              ...prev,
+                              reranking_enable: true,
+                              reranking_model: {
+                                reranking_provider_name: provider,
+                                reranking_model_name: model,
+                              },
+                            }))
+                          }
+                        />
+                      </div>
+                    )}
+
                     <div className="space-y-2.5">
                       <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
                         {t('datasets.createModal.iconLabel')}

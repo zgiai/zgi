@@ -52,7 +52,7 @@ var (
 
 var (
 	ErrDatasetName            = ErrorCode{102001, "Dataset name cannot be empty", true}
-	ErrDatasetNameLong        = ErrorCode{102002, "Dataset name cannot exceed 50 characters", true}
+	ErrDatasetNameLong        = ErrorCode{102002, "Dataset name cannot exceed 40 characters", true}
 	ErrDatasetDescriptionLong = ErrorCode{102003, "Dataset description cannot exceed 400 characters", true}
 	ErrDatasetIdRequired      = ErrorCode{102004, "Dataset ID cannot be empty", true}
 )

@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useRef, forwardRef, useCallback } from 'react';
 import { useT } from '@/i18n';
-import { Settings } from 'lucide-react';
+import { ArrowUpDown, Settings } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import {
   useDefaultModelByUseCase,
@@ -21,8 +21,10 @@ import {
   type PreprocessingSettingsRef as PreprocessingRulesCardRef,
 } from './indexing-config';
 import { useAvailableModels } from '@/hooks/model/use-model';
+import { ModelSelector } from '@/components/common/model-selector';
 import type { ProcessConfiguration } from '@/services/types/dataset';
 import { normalizeDatasetSearchMethod } from '@/utils/dataset/retrieval-config';
+import { ModelFieldSection } from './indexing-config/model-field-section';
 
 // Indexing types
 enum IndexingType {
@@ -272,13 +274,28 @@ export const DatasetIndexingConfigForm = forwardRef<FormRef, DatasetIndexingConf
       });
     };
 
+    const handleRerankModelChange = ({ provider, model }: { provider: string; model: string }) => {
+      setRetrieval(prev => {
+        const nextRetrieval = {
+          ...prev,
+          reranking_enable: true,
+          reranking_model: {
+            reranking_provider_name: provider,
+            reranking_model_name: model,
+          },
+        };
+        onChange({ retrievalConfig: nextRetrieval });
+        return nextRetrieval;
+      });
+    };
+
     // In settings mode, render configuration sections directly without chunking mode selection
     if (isSettingMode) {
       return (
         <div className={cn('space-y-4', className)}>
           {/* Embedding Model */}
           {showEmbeddingModelConfig && (
-            <div>
+            <div className="grid gap-4 md:grid-cols-2">
               <EmbeddingModelCard
                 ref={embeddingModelCardRef}
                 embeddingModel={{
@@ -287,7 +304,23 @@ export const DatasetIndexingConfigForm = forwardRef<FormRef, DatasetIndexingConf
                 }}
                 onChange={handleEmbeddingModelChange}
                 disabled
+                readOnlyDisplay
+                titleTooltip={t('createWizard.processConfig.embeddingModel.lockedTooltip')}
               />
+              <ModelFieldSection
+                icon={ArrowUpDown}
+                title={t('createWizard.processConfig.changeRerankModel')}
+              >
+                <ModelSelector
+                  modelType="rerank"
+                  value={{
+                    provider: retrieval.reranking_model?.reranking_provider_name || '',
+                    model: retrieval.reranking_model?.reranking_model_name || '',
+                  }}
+                  onChange={handleRerankModelChange}
+                  disabled={isModelAndRetrievalConfigDisabled}
+                />
+              </ModelFieldSection>
             </div>
           )}
 
@@ -318,6 +351,11 @@ export const DatasetIndexingConfigForm = forwardRef<FormRef, DatasetIndexingConf
                 disabled={isModelAndRetrievalConfigDisabled}
                 isGraphEnabled={graphFlowEnabled}
                 rerankingLabel={t('createWizard.processConfig.changeRerankModel')}
+                showRerankingModel={false}
+                onChange={updatedRetrieval => {
+                  setRetrieval(updatedRetrieval);
+                  onChange({ retrievalConfig: updatedRetrieval });
+                }}
               />
             </div>
           )}

@@ -16,7 +16,7 @@ import {
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { FileUpload, type FileUploadRef } from '@/components/common/file-upload';
 import { toast } from 'sonner';
-import { AlertCircle, FolderOpen, RefreshCw } from 'lucide-react';
+import { AlertCircle, FolderOpen, Info, RefreshCw } from 'lucide-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { FILES_QUERY_KEY, useFileFolders } from '@/hooks/use-files';
 import { useUploadConfig } from '@/hooks/use-upload';
@@ -32,6 +32,7 @@ import { FolderTreeNode } from './folder-tree-node';
 import { cn } from '@/lib/utils';
 import type { FileParseProviderKey, FileUploadProcessingMode } from '@/services/types/file';
 import { contentParseService } from '@/services/content-parse.service';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import {
   MAX_FILE_FOLDER_TREE_LEVEL,
   getFileFolderAncestorIds,
@@ -263,7 +264,10 @@ const CreateLocalFileDialog = ({
 
   return (
     <Dialog open={open} onOpenChange={handleDialogOpenChange}>
-      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-[760px]">
+      <DialogContent
+        className="max-h-[90vh] overflow-y-auto sm:max-w-[760px]"
+        onInteractOutside={event => event.preventDefault()}
+      >
         <DialogHeader>
           <DialogTitle>{t('files.upload.uploadFiles')}</DialogTitle>
         </DialogHeader>
@@ -278,7 +282,7 @@ const CreateLocalFileDialog = ({
             workspaceId={effectiveWorkspaceId}
             processingMode={selectedProcessingMode}
             parseProvider="auto"
-            showAllowedTypesHint={false}
+            showAllowedTypesHint
             useNativeAccept={false}
             onFilesChange={handleFilesChange}
             onQueueStateChange={state => setFailedUploadFilesCount(state.failedCount)}
@@ -292,6 +296,7 @@ const CreateLocalFileDialog = ({
                 value={selectedWorkspace}
                 placeholder={t('files.upload.workspacePlaceholder')}
                 autoSelectFirst
+                disabled={isUploading}
                 onChange={handleWorkspaceChange}
               />
             </div>
@@ -321,8 +326,10 @@ const CreateLocalFileDialog = ({
                   <button
                     type="button"
                     onClick={() => setSelectedFolderId('')}
+                    disabled={isUploading}
                     className={cn(
                       'flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm transition-colors',
+                      isUploading && 'cursor-not-allowed opacity-60',
                       selectedFolderId === ''
                         ? 'bg-background text-primary shadow-sm ring-1 ring-border'
                         : 'text-muted-foreground hover:bg-background/80 hover:text-foreground'
@@ -346,6 +353,7 @@ const CreateLocalFileDialog = ({
                         maxLevel={MAX_FILE_FOLDER_TREE_LEVEL}
                         variant="dialog"
                         workspaceId={effectiveWorkspaceId}
+                        disabled={isUploading}
                       />
                     ))}
                   </div>
@@ -357,57 +365,75 @@ const CreateLocalFileDialog = ({
             </p>
           </div>
 
-          <div className="rounded-xl border border-border bg-muted/20 p-4">
-            <div className="space-y-3">
+          <div className="space-y-3">
+            <div className="flex items-center gap-1.5">
               <Label className="text-sm font-semibold">{t('files.upload.processingMode')}</Label>
-              <RadioCardGroup
-                value={selectedProcessingMode}
-                onValueChange={value =>
-                  setSelectedProcessingMode(value as FileUploadProcessingMode)
-                }
-                className="grid grid-cols-1 gap-3 sm:grid-cols-2"
-              >
-                <RadioCard
-                  value="process_now"
-                  title={t('files.upload.processingModes.processNow.title')}
-                  description={t('files.upload.processingModes.processNow.desc')}
-                  className="h-full"
-                />
-                <RadioCard
-                  value="store_only"
-                  title={t('files.upload.processingModes.storeOnly.title')}
-                  description={t('files.upload.processingModes.storeOnly.desc')}
-                  className="h-full"
-                />
-              </RadioCardGroup>
-              {selectedProcessingMode === 'process_now' &&
-              isParserSettingsSuccess &&
-              !hasAvailableThirdPartyParser ? (
-                <Alert className="border-warning/40 bg-warning/10">
-                  <AlertCircle className="h-4 w-4 text-warning" />
-                  <AlertTitle className="text-sm font-semibold">
-                    {t('files.upload.parserFallbackWarningTitle')}
-                  </AlertTitle>
-                  <AlertDescription className="flex flex-col gap-3 text-sm leading-5 text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
-                    <span>{t('files.upload.parserFallbackWarningDescription')}</span>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className="shrink-0"
-                      onClick={() => router.push('/dashboard/settings/parsers')}
-                    >
-                      {t('files.upload.configureParserService')}
-                    </Button>
-                  </AlertDescription>
-                </Alert>
-              ) : null}
+              <Tooltip delayDuration={150}>
+                <TooltipTrigger asChild>
+                  <Info className="size-4 cursor-help text-muted-foreground" />
+                </TooltipTrigger>
+                <TooltipContent side="top" align="start" className="max-w-80 text-xs leading-5">
+                  {t('files.upload.processingModeHelp')}
+                </TooltipContent>
+              </Tooltip>
+            </div>
+            <div className="rounded-xl border border-border bg-muted/20 p-4">
+              <div className="space-y-3">
+                <RadioCardGroup
+                  value={selectedProcessingMode}
+                  onValueChange={value =>
+                    setSelectedProcessingMode(value as FileUploadProcessingMode)
+                  }
+                  className="grid grid-cols-1 gap-3 sm:grid-cols-2"
+                >
+                  <RadioCard
+                    value="process_now"
+                    title={t('files.upload.processingModes.processNow.title')}
+                    description={t('files.upload.processingModes.processNow.desc')}
+                    className="h-full"
+                    disabled={isUploading}
+                  />
+                  <RadioCard
+                    value="store_only"
+                    title={t('files.upload.processingModes.storeOnly.title')}
+                    description={t('files.upload.processingModes.storeOnly.desc')}
+                    className="h-full"
+                    disabled={isUploading}
+                  />
+                </RadioCardGroup>
+                {selectedProcessingMode === 'process_now' &&
+                isParserSettingsSuccess &&
+                !hasAvailableThirdPartyParser ? (
+                  <Alert className="border-warning/40 bg-warning/10">
+                    <AlertCircle className="h-4 w-4 text-warning" />
+                    <AlertTitle className="text-sm font-semibold">
+                      {t('files.upload.parserFallbackWarningTitle')}
+                    </AlertTitle>
+                    <AlertDescription className="flex flex-col gap-3 text-sm leading-5 text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+                      <span>{t('files.upload.parserFallbackWarningDescription')}</span>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="shrink-0"
+                        onClick={() => router.push('/dashboard/settings/parsers')}
+                      >
+                        {t('files.upload.configureParserService')}
+                      </Button>
+                    </AlertDescription>
+                  </Alert>
+                ) : null}
+              </div>
             </div>
           </div>
         </DialogBody>
         <DialogFooter>
           <Button
-            variant={isUploading ? 'destructive' : 'outline'}
+            variant="outline"
+            className={cn(
+              isUploading &&
+                'border-destructive/30 text-destructive hover:bg-destructive/10 hover:text-destructive'
+            )}
             onClick={isUploading ? () => setCloseConfirmOpen(true) : handleCancel}
           >
             {isUploading ? t('files.upload.cancelUpload') : t('common.cancel')}

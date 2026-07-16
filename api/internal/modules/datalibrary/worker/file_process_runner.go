@@ -157,6 +157,7 @@ func (r *FileProcessRunner) Run(ctx context.Context, processingRequestID uuid.UU
 		summary["route_plan"] = contentparseservice.RoutePlanSummary(routePlan)
 	}
 	contentparseservice.ApplyDatasetShadowArtifactSummary(summary, artifact)
+	parseMetadata := currentParseResultMetadata(request, routePlan, artifact)
 	persisted, err := r.artifactPersistence.PersistAssetParseArtifact(ctx, datalibraryservice.PersistAssetParseArtifactInput{
 		OrganizationID:    request.OrganizationID,
 		AssetID:           asset.ID,
@@ -167,6 +168,7 @@ func (r *FileProcessRunner) Run(ctx context.Context, processingRequestID uuid.UU
 		ParseRequest:      parseRequest,
 		Artifact:          artifact,
 		Summary:           summary,
+		MetadataJSON:      parseMetadata,
 	})
 	if err != nil {
 		return r.failRequest(ctx, request, asset, "artifact_persist_failed", err)
@@ -203,21 +205,31 @@ func (r *FileProcessRunner) Run(ctx context.Context, processingRequestID uuid.UU
 		}
 	}
 
-	_, err = r.processingService.CompleteRequest(ctx, request.OrganizationID, started.ID, map[string]any{
+	completionMetadata := map[string]any{
 		"parse_artifact_id":          persisted.Artifact.ID.String(),
 		"artifact_storage_key":       persisted.ArtifactStorageKey,
 		"pending_confirmation_count": quality.PendingCount,
 		"next_product_status":        model.DocumentAssetProductStatusGenerating,
 		"generation_no":              generationNo,
-		"parse_provider":             parseProviderFromRequest(request),
-		"requested_parse_provider":   parseProviderFromRequest(request),
-		"final_parse_provider":       contentparseservice.FinalProviderKey(routePlan, artifact),
-		"final_parse_adapter":        contentparseservice.FinalAdapterName(routePlan, artifact),
-		"final_parse_engine":         string(contentparseservice.FinalEngineName(routePlan, artifact)),
-		"parse_route_fallback_used":  artifact.FallbackUsed,
-		"attempted_parse_providers":  contentparseservice.AttemptedProviderOrder(routePlan, artifact),
-	})
+	}
+	for key, value := range parseMetadata {
+		completionMetadata[key] = value
+	}
+	_, err = r.processingService.CompleteRequest(ctx, request.OrganizationID, started.ID, completionMetadata)
 	return err
+}
+
+func currentParseResultMetadata(request *model.ProcessingRequest, routePlan *routing.RoutePlan, artifact *contracts.ParseArtifact) map[string]any {
+	requestedProvider := parseProviderFromRequest(request)
+	return map[string]any{
+		"parse_provider":            requestedProvider,
+		"requested_parse_provider":  requestedProvider,
+		"final_parse_provider":      contentparseservice.FinalProviderKey(routePlan, artifact),
+		"final_parse_adapter":       contentparseservice.FinalAdapterName(routePlan, artifact),
+		"final_parse_engine":        string(contentparseservice.FinalEngineName(routePlan, artifact)),
+		"parse_route_fallback_used": artifact != nil && artifact.FallbackUsed,
+		"attempted_parse_providers": contentparseservice.AttemptedProviderOrder(routePlan, artifact),
+	}
 }
 
 func (r *FileProcessRunner) queueGenerateCurrentResultRequest(ctx context.Context, request *model.ProcessingRequest, asset *model.DocumentAsset, runID uuid.UUID, generationNo int64) (*datalibraryservice.ProcessingRequestView, error) {

@@ -5,6 +5,9 @@ import { cn } from '@/lib/utils';
 import { ModelSelector } from '@/components/common/model-selector';
 import type { ModelSelectorValue } from '@/components/common/model-selector';
 import { ModelFieldSection } from './model-field-section';
+import { useAvailableModels } from '@/hooks/model/use-model';
+import { useLocale } from '@/hooks/use-locale';
+import { getModelDisplayName } from '@/utils/model-label';
 
 interface EmbeddingSettingsProps {
   /** Currently selected embedding model in "provider/model" format */
@@ -25,12 +28,29 @@ interface EmbeddingSettingsProps {
   title?: string;
   /** Optional description below the title */
   description?: string;
+  /** Optional tooltip displayed beside the title */
+  titleTooltip?: string;
   /** Optional placeholder override */
   placeholder?: string;
+  /** Render the selected model as plain read-only text instead of a disabled selector */
+  readOnlyDisplay?: boolean;
 }
 
 export interface EmbeddingSettingsRef {
   getFormData: () => ModelSelectorValue;
+}
+
+function ReadOnlyEmbeddingModelName({ embeddingModel }: { embeddingModel: ModelSelectorValue }) {
+  const { locale } = useLocale();
+  const { models } = useAvailableModels({ use_case: 'embedding' });
+  const matchedModel = models.find(
+    model => model.provider === embeddingModel.provider && model.model === embeddingModel.model
+  );
+  const displayName = matchedModel
+    ? getModelDisplayName(matchedModel, locale)
+    : embeddingModel.model || '-';
+
+  return <div className="text-sm font-medium text-foreground">{displayName}</div>;
 }
 
 /**
@@ -54,7 +74,9 @@ export const EmbeddingSettings = forwardRef<EmbeddingSettingsRef, EmbeddingSetti
       className,
       title,
       description,
+      titleTooltip,
       placeholder,
+      readOnlyDisplay = false,
     },
     ref
   ) => {
@@ -75,25 +97,30 @@ export const EmbeddingSettings = forwardRef<EmbeddingSettingsRef, EmbeddingSetti
         title={title || t('createWizard.processConfig.embeddingModel.title')}
         required={required}
         description={description}
+        titleTooltip={titleTooltip}
         errorMessage={errorMessage}
         className={cn(className)}
       >
-        <ModelSelector
-          modelType="embedding"
-          value={{
-            provider: embeddingModel.provider,
-            model: embeddingModel.model,
-          }}
-          onChange={({ provider, model }) =>
-            onChange({
-              provider,
-              model,
-            })
-          }
-          placeholder={placeholder || t('createWizard.processConfig.embedding.selectModel')}
-          disabled={disabled}
-          hasError={hasError}
-        />
+        {readOnlyDisplay ? (
+          <ReadOnlyEmbeddingModelName embeddingModel={embeddingModel} />
+        ) : (
+          <ModelSelector
+            modelType="embedding"
+            value={{
+              provider: embeddingModel.provider,
+              model: embeddingModel.model,
+            }}
+            onChange={({ provider, model }) =>
+              onChange({
+                provider,
+                model,
+              })
+            }
+            placeholder={placeholder || t('createWizard.processConfig.embedding.selectModel')}
+            disabled={disabled}
+            hasError={hasError}
+          />
+        )}
       </ModelFieldSection>
     );
   }

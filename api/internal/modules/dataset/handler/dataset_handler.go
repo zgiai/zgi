@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/zgiai/zgi/api/internal/capabilities/agentbindings"
 	"github.com/zgiai/zgi/api/internal/dto"
@@ -43,6 +44,10 @@ type DatasetHandler struct {
 	batchTaskManager    *service.BatchHitTestingTaskManager // Add batch task manager
 	permissionService   interfaces.ResourcePermissionService
 }
+
+const datasetNameMaxLength = 40
+
+var errDatasetNameTooLong = errors.New("dataset name exceeds maximum length")
 
 // NewDatasetHandler creates a new DatasetHandler instance
 func NewDatasetHandler(
@@ -287,7 +292,7 @@ func (h *DatasetHandler) PostDatasets(c *gin.Context) {
 
 	// Validate name
 	if err := h.validateName(req.Name); err != nil {
-		response.Fail(c, response.ErrDatasetName)
+		failDatasetNameValidation(c, err)
 		return
 	}
 
@@ -498,7 +503,7 @@ func (h *DatasetHandler) PatchDataset(c *gin.Context) {
 	// Validate name if provided
 	if req.Name != nil {
 		if err := h.validateName(*req.Name); err != nil {
-			response.Fail(c, response.ErrDatasetName)
+			failDatasetNameValidation(c, err)
 			return
 		}
 	}
@@ -1632,10 +1637,22 @@ func (h *DatasetHandler) GetDatasetQuestionCount(c *gin.Context) {
 
 // Helper methods for validation
 func (h *DatasetHandler) validateName(name string) error {
-	if len(name) < 1 || len(name) > 40 {
-		return fmt.Errorf("Name must be between 1 to 40 characters")
+	nameLength := utf8.RuneCountInString(name)
+	if nameLength < 1 {
+		return fmt.Errorf("dataset name is required")
+	}
+	if nameLength > datasetNameMaxLength {
+		return errDatasetNameTooLong
 	}
 	return nil
+}
+
+func failDatasetNameValidation(c *gin.Context, err error) {
+	if errors.Is(err, errDatasetNameTooLong) {
+		response.Fail(c, response.ErrDatasetNameLong)
+		return
+	}
+	response.Fail(c, response.ErrDatasetName)
 }
 
 func (h *DatasetHandler) validateDescriptionLength(description string) error {

@@ -648,7 +648,12 @@ func contentHash(content string) string {
 
 func defaultDatasetRefSyncVectorClassProperties() []map[string]interface{} {
 	return []map[string]interface{}{
-		{"name": "text", "dataType": []string{"text"}},
+		{
+			"name":            "text",
+			"dataType":        []string{"text"},
+			"tokenization":    "gse_ch",
+			"indexSearchable": true,
+		},
 	}
 }
 

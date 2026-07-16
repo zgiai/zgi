@@ -101,18 +101,7 @@ export default function HitTestingPage() {
     score_threshold_enabled: false,
     score_threshold: 0.35,
   });
-  const vectorPanelTitle = (() => {
-    switch (retrievalConfig.search_method) {
-      case 'hybrid_search':
-        return t('hitTesting.hybridResults');
-      case 'full_text_search':
-        return t('hitTesting.bm25Results');
-      case 'semantic_search':
-        return t('hitTesting.vectorResults');
-      default:
-        return t('hitTesting.results');
-    }
-  })();
+  const vectorPanelTitle = t('hitTesting.retrievalResults');
   // Comparison mode: show both vector and graph results side by side
   // Persist to localStorage
   const COMPARISON_MODE_KEY = 'hit-testing-comparison-mode';
@@ -364,7 +353,7 @@ export default function HitTestingPage() {
         </div>
       </div>
 
-      <div className="grid min-h-0 flex-1 grid-cols-[minmax(320px,380px)_minmax(0,1fr)]">
+      <div className="grid min-h-0 flex-1 grid-cols-[minmax(420px,520px)_minmax(0,1fr)]">
         <div className="flex min-h-0 flex-col gap-5 border-r bg-muted/10 px-6 py-5">
           {/* Query Input */}
           <div className="min-h-[300px] flex-[1.05]">

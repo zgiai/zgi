@@ -1,9 +1,9 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useId, useState } from 'react';
 import { FileUp } from 'lucide-react';
 import { useT } from '@/i18n';
-import { Button } from '@/components/ui/button';
+import { Button, buttonVariants } from '@/components/ui/button';
 import {
   Dialog,
   DialogBody,
@@ -24,6 +24,7 @@ import {
 } from '@/components/ui/select';
 import { useUploadConfig } from '@/hooks/use-upload';
 import type { FileItem, FileUploadProcessingMode } from '@/services/types/file';
+import { cn } from '@/lib/utils';
 
 interface ReplaceDocumentDialogProps {
   open: boolean;
@@ -46,6 +47,7 @@ export function ReplaceDocumentDialog({
 }: ReplaceDocumentDialogProps) {
   const { files: t, common } = useT();
   const { data: uploadConfig } = useUploadConfig({ enabled: open });
+  const replacementFileInputId = useId();
   const [replacementFile, setReplacementFile] = useState<File | null>(null);
   const [processingMode, setProcessingMode] = useState<FileUploadProcessingMode>('process_now');
 
@@ -88,10 +90,24 @@ export function ReplaceDocumentDialog({
           <div className="space-y-2">
             <Label className="text-sm font-semibold">{t('replaceDocument.newFile')}</Label>
             <Input
+              id={replacementFileInputId}
               type="file"
+              className="sr-only"
               disabled={loading}
               onChange={event => setReplacementFile(event.target.files?.[0] ?? null)}
             />
+            <div className="flex justify-center rounded-lg border border-input bg-background px-3 py-2">
+              <label
+                htmlFor={replacementFileInputId}
+                className={cn(
+                  buttonVariants({ variant: 'outline', size: 'default' }),
+                  'cursor-pointer',
+                  loading && 'pointer-events-none opacity-50'
+                )}
+              >
+                {t('replaceDocument.chooseFile')}
+              </label>
+            </div>
             {replacementFile ? (
               <p className="text-xs leading-5 text-muted-foreground">
                 {t('replaceDocument.selectedFile', { name: replacementFile.name })}

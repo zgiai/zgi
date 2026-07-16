@@ -3,7 +3,7 @@
 import { useState, useCallback, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useT } from '@/i18n';
-import { AlertCircle, FolderOpen } from 'lucide-react';
+import { AlertCircle, FolderOpen, Info } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
@@ -28,6 +28,7 @@ import {
 import { useCurrentWorkspace, useIsOrganizationMode } from '@/store';
 import type { FileParseProviderKey, FileUploadProcessingMode } from '@/services/types/file';
 import { contentParseService } from '@/services/content-parse.service';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import {
   MAX_FILE_FOLDER_TREE_LEVEL,
   getFileFolderAncestorIds,
@@ -225,7 +226,17 @@ export function UploadDialog({
 
           {addMode === 'file' ? (
             <div className="space-y-3">
-              <Label className="text-sm font-semibold">{t('files.upload.processingMode')}</Label>
+              <div className="flex items-center gap-1.5">
+                <Label className="text-sm font-semibold">{t('files.upload.processingMode')}</Label>
+                <Tooltip delayDuration={150}>
+                  <TooltipTrigger asChild>
+                    <Info className="size-4 cursor-help text-muted-foreground" />
+                  </TooltipTrigger>
+                  <TooltipContent side="top" align="start" className="max-w-80 text-xs leading-5">
+                    {t('files.upload.processingModeHelp')}
+                  </TooltipContent>
+                </Tooltip>
+              </div>
               <RadioCardGroup
                 value={processingMode}
                 onValueChange={value => setProcessingMode(value as FileUploadProcessingMode)}

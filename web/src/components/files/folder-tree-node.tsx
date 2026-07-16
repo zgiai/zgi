@@ -1,10 +1,9 @@
 'use client';
 
-import { useCallback } from 'react';
+import { useCallback, type MouseEvent } from 'react';
 import {
   ChevronDown,
   ChevronUp,
-  FolderInput,
   FolderOpen,
   FolderPlus,
   MoreHorizontal,
@@ -28,6 +27,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { MAX_FILE_FOLDER_TREE_LEVEL } from './file-folder-levels';
 
 /**
@@ -44,9 +44,9 @@ export interface FolderTreeNodeProps {
   variant?: 'sidebar' | 'dialog'; // UI variant
   onCreateChild?: (folder: FileFolder) => void;
   onRename?: (folder: FileFolder) => void;
-  onMove?: (folder: FileFolder) => void;
   onDelete?: (folder: FileFolder) => void;
   workspaceId?: string;
+  disabled?: boolean;
 }
 
 /**
@@ -64,9 +64,9 @@ export function FolderTreeNode({
   variant = 'sidebar',
   onCreateChild,
   onRename,
-  onMove,
   onDelete,
   workspaceId,
+  disabled = false,
 }: FolderTreeNodeProps) {
   const t = useT('files');
   const isFolderActive = activeItemId === folder.id;
@@ -74,7 +74,7 @@ export function FolderTreeNode({
 
   const isMaxLevel = level >= maxLevel;
   const canCreateChild = !isMaxLevel && !!onCreateChild;
-  const hasFolderActions = variant === 'sidebar' && (onCreateChild || onRename || onMove || onDelete);
+  const hasFolderActions = variant === 'sidebar' && (onCreateChild || onRename || onDelete);
 
   // Fetch child folders for expandable folders so empty folders do not show an expand icon.
   const { folders: childFolders, isLoading: isLoadingChildren } = useChildFolders(
@@ -85,6 +85,8 @@ export function FolderTreeNode({
   const canToggleExpand = !isMaxLevel && (hasChildFolders || isLoadingChildren);
 
   const handleClick = useCallback(() => {
+    if (disabled) return;
+
     onItemClick?.(folder.id);
 
     if (!canToggleExpand) return;
@@ -92,13 +94,31 @@ export function FolderTreeNode({
     if (!isExpanded || isFolderActive) {
       onToggleExpand(folder.id);
     }
-  }, [canToggleExpand, folder.id, isExpanded, isFolderActive, onItemClick, onToggleExpand]);
+  }, [
+    canToggleExpand,
+    disabled,
+    folder.id,
+    isExpanded,
+    isFolderActive,
+    onItemClick,
+    onToggleExpand,
+  ]);
+
+  const handleToggleClick = useCallback(
+    (event: MouseEvent<HTMLDivElement>) => {
+      event.stopPropagation();
+      if (disabled) return;
+      onToggleExpand(folder.id);
+    },
+    [disabled, folder.id, onToggleExpand]
+  );
 
   const shouldShowArrow = !isMaxLevel && (hasChildFolders || isLoadingChildren);
 
   // Styling based on variant
   const paddingLeft = variant === 'sidebar' ? level * 14 + 12 : level * 16 + 12;
   const iconSize = variant === 'sidebar' ? 'h-4 w-4' : 'h-5 w-5';
+  const arrowSlotSize = variant === 'sidebar' ? 'h-5 w-5' : 'h-6 w-6';
   const textSize = variant === 'sidebar' ? 'text-sm' : 'text-sm';
   const padding = variant === 'sidebar' ? 'px-3 py-2' : 'px-3 py-2.5';
 
@@ -119,10 +139,6 @@ export function FolderTreeNode({
         <Pencil className="size-4" />
         {t('folder.actions.rename')}
       </Item>
-      <Item onSelect={() => onMove?.(folder)} disabled={!onMove}>
-        <FolderInput className="size-4" />
-        {t('folder.actions.moveTo')}
-      </Item>
       <Item
         onSelect={() => onDelete?.(folder)}
         disabled={!onDelete}
@@ -140,6 +156,7 @@ export function FolderTreeNode({
         'w-full flex items-center justify-between rounded-md font-medium transition-colors group cursor-pointer',
         padding,
         textSize,
+        disabled && 'cursor-not-allowed opacity-60',
         variant === 'sidebar'
           ? isFolderActive
             ? 'bg-muted text-primary'
@@ -150,6 +167,7 @@ export function FolderTreeNode({
       )}
       style={{ paddingLeft: `${paddingLeft}px` }}
       role="button"
+      aria-disabled={disabled}
       tabIndex={0}
       onClick={handleClick}
       onKeyDown={event => {
@@ -160,24 +178,42 @@ export function FolderTreeNode({
       }}
     >
       <div className="flex items-center gap-1.5 flex-1 min-w-0">
-        {shouldShowArrow &&
-          (isLoadingChildren ? (
-            <div className={cn('flex items-center justify-center', iconSize)}>
+        {shouldShowArrow ? (
+          isLoadingChildren ? (
+            <div className={cn('flex shrink-0 items-center justify-center', arrowSlotSize)}>
               <div className="h-2 w-2 rounded-full bg-gray-400 animate-pulse" />
             </div>
           ) : (
-            <div className="flex-shrink-0 hover:bg-gray-200 rounded p-0.5">
+            <div
+              className={cn(
+                'flex shrink-0 items-center justify-center rounded hover:bg-gray-200',
+                arrowSlotSize
+              )}
+              onClick={handleToggleClick}
+            >
               {isExpanded ? (
                 <ChevronDown className={iconSize} />
               ) : (
                 <ChevronUp className={iconSize} />
               )}
             </div>
-          ))}
+          )
+        ) : (
+          <div className={cn('shrink-0', arrowSlotSize)} aria-hidden="true" />
+        )}
         <FolderOpen
           className={cn(iconSize, 'flex-shrink-0', variant === 'dialog' && 'text-gray-500')}
         />
-        <span className={cn('truncate', variant === 'dialog' && 'flex-1')}>{folder.name}</span>
+        <Tooltip delayDuration={150}>
+          <TooltipTrigger asChild>
+            <span className={cn('truncate', variant === 'dialog' && 'flex-1')}>
+              {folder.name}
+            </span>
+          </TooltipTrigger>
+          <TooltipContent side="right" align="center" className="max-w-64 break-words">
+            {folder.name}
+          </TooltipContent>
+        </Tooltip>
       </div>
 
       {hasFolderActions ? (
@@ -232,9 +268,9 @@ export function FolderTreeNode({
                 variant={variant}
                 onCreateChild={onCreateChild}
                 onRename={onRename}
-                onMove={onMove}
                 onDelete={onDelete}
                 workspaceId={workspaceId}
+                disabled={disabled}
               />
             ))}
         </div>

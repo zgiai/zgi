@@ -140,6 +140,10 @@ type fileQARequest struct {
 	TopK                int    `json:"top_k"`
 	AnswerModelProvider string `json:"answer_model_provider"`
 	AnswerModel         string `json:"answer_model"`
+	History             []struct {
+		Question string `json:"question"`
+		Answer   string `json:"answer"`
+	} `json:"history"`
 }
 
 type queuedFileProcessingRequest struct {
@@ -1003,6 +1007,7 @@ func (h *FileHandler) AskFileQuestion(c *gin.Context) {
 		AccountID:           c.GetString("account_id"),
 		AnswerModelProvider: req.AnswerModelProvider,
 		AnswerModel:         req.AnswerModel,
+		History:             toFileQAHistory(req.History),
 	})
 	if err != nil {
 		h.handleFileAssetQAError(c, err)
@@ -1035,6 +1040,7 @@ func (h *FileHandler) StreamFileQuestion(c *gin.Context) {
 		AccountID:           c.GetString("account_id"),
 		AnswerModelProvider: req.AnswerModelProvider,
 		AnswerModel:         req.AnswerModel,
+		History:             toFileQAHistory(req.History),
 	})
 	if err != nil {
 		h.handleFileAssetQAError(c, err)
@@ -1061,6 +1067,23 @@ func (h *FileHandler) StreamFileQuestion(c *gin.Context) {
 			return
 		}
 	}
+}
+
+func toFileQAHistory(items []struct {
+	Question string `json:"question"`
+	Answer   string `json:"answer"`
+}) []datalibraryservice.FileAssetQAHistoryMessage {
+	if len(items) == 0 {
+		return nil
+	}
+	history := make([]datalibraryservice.FileAssetQAHistoryMessage, 0, len(items))
+	for _, item := range items {
+		history = append(history, datalibraryservice.FileAssetQAHistoryMessage{
+			Question: item.Question,
+			Answer:   item.Answer,
+		})
+	}
+	return history
 }
 
 func writeFileQASSEvent(w io.Writer, eventName string, payload datalibraryservice.FileAssetQAStreamEvent) error {
@@ -1175,6 +1198,40 @@ func (h *FileHandler) BatchUpdateFileChunks(c *gin.Context) {
 		SourceFileID:   uploadFile.ID,
 		ChunkIDs:       chunkIDs,
 		Enabled:        *req.Enabled,
+		UpdatedBy:      accountID,
+	})
+	if err != nil {
+		h.handleFileAssetChunkEditError(c, err)
+		return
+	}
+	response.Success(c, result)
+}
+
+// DeleteFileChunk deletes one current generation chunk. Parent chunks delete their child chunks too.
+// DELETE /files/:file_id/chunks/:chunk_id
+func (h *FileHandler) DeleteFileChunk(c *gin.Context) {
+	if h.fileAssetChunkEditService == nil {
+		h.businessErrorWithMessage(c, response.ErrSystemError, "file asset chunk edit service is not available")
+		return
+	}
+	accountID := c.GetString("account_id")
+	if accountID == "" {
+		h.businessError(c, response.ErrUnauthorized)
+		return
+	}
+	organizationID, uploadFile, ok := h.authorizeManageDocumentFile(c)
+	if !ok {
+		return
+	}
+	chunkID, err := uuid.Parse(c.Param("chunk_id"))
+	if err != nil || chunkID == uuid.Nil {
+		h.businessError(c, response.ErrInvalidParams)
+		return
+	}
+	result, err := h.fileAssetChunkEditService.DeleteCurrentFileChunk(c.Request.Context(), datalibraryservice.FileAssetChunkDeleteInput{
+		OrganizationID: organizationID,
+		SourceFileID:   uploadFile.ID,
+		ChunkID:        chunkID,
 		UpdatedBy:      accountID,
 	})
 	if err != nil {
