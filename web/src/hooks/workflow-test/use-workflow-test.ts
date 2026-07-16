@@ -6,6 +6,7 @@ import { workflowTestService } from '@/services/workflow-test.service';
 import { WORKFLOW_TEST_KEYS } from '@/hooks/query-keys';
 import { useT } from '@/i18n';
 import { getErrorMessage } from '@/utils/error-notifications';
+import { localizeWorkflowTestError } from '@/utils/workflow-test-error';
 import type {
   CreateWorkflowTestBatchRequest,
   CreateWorkflowTestCaseRequest,
@@ -23,6 +24,12 @@ import type {
   WorkflowTestListResponse,
 } from '@/services/types/workflow-test';
 import type { ApiResponseData } from '@/services/types/common';
+
+function useWorkflowTestErrorMessage() {
+  const t = useT('agents.workflowTest.userErrors');
+  return (error: unknown, fallback: string) =>
+    localizeWorkflowTestError(getErrorMessage(error), t, fallback);
+}
 
 export function useWorkflowTestSettings(agentId: string) {
   return useQuery({
@@ -107,6 +114,7 @@ export function useSaveWorkflowTestScenarios(agentId: string) {
 
 export function useRecognizeWorkflowTestScenarios(agentId: string) {
   const t = useT('agents.workflowTest.toasts');
+  const errorMessage = useWorkflowTestErrorMessage();
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (data: RecognizeWorkflowTestScenariosRequest) =>
@@ -116,7 +124,7 @@ export function useRecognizeWorkflowTestScenarios(agentId: string) {
       queryClient.invalidateQueries({ queryKey: WORKFLOW_TEST_KEYS.all });
     },
     onError: error => {
-      toast.error(getErrorMessage(error) || t('scenariosRecognizeFailed'));
+      toast.error(errorMessage(error, t('scenariosRecognizeFailed')));
     },
   });
 }
@@ -151,6 +159,7 @@ export function useLatestWorkflowTestScenarioRecognitionTask(agentId: string) {
 
 export function useCreateWorkflowTestScenarioRecognitionTask(agentId: string) {
   const t = useT('agents.workflowTest.toasts');
+  const errorMessage = useWorkflowTestErrorMessage();
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (data: CreateWorkflowTestScenarioRecognitionTaskRequest) =>
@@ -167,7 +176,7 @@ export function useCreateWorkflowTestScenarioRecognitionTask(agentId: string) {
       });
     },
     onError: error => {
-      toast.error(getErrorMessage(error) || t('scenariosRecognizeFailed'));
+      toast.error(errorMessage(error, t('scenariosRecognizeFailed')));
     },
   });
 }
@@ -176,7 +185,8 @@ export function useCancelWorkflowTestScenarioRecognitionTask(agentId: string) {
   const t = useT('agents.workflowTest.toasts');
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (taskId: string) => workflowTestService.cancelScenarioRecognitionTask(agentId, taskId),
+    mutationFn: (taskId: string) =>
+      workflowTestService.cancelScenarioRecognitionTask(agentId, taskId),
     onSuccess: response => {
       toast.info(t('scenariosRecognitionCancelRequested'));
       queryClient.setQueryData(WORKFLOW_TEST_KEYS.scenarioRecognitionTaskLatest(agentId), response);
@@ -291,6 +301,7 @@ export function useDeleteWorkflowTestCases(agentId: string) {
 
 export function useGenerateWorkflowTestCases(agentId: string) {
   const t = useT('agents.workflowTest.toasts');
+  const errorMessage = useWorkflowTestErrorMessage();
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (data: GenerateWorkflowTestCasesRequest) =>
@@ -300,7 +311,7 @@ export function useGenerateWorkflowTestCases(agentId: string) {
       queryClient.invalidateQueries({ queryKey: WORKFLOW_TEST_KEYS.all });
     },
     onError: error => {
-      toast.error(getErrorMessage(error) || t('casesGenerateFailed'));
+      toast.error(errorMessage(error, t('casesGenerateFailed')));
     },
   });
 }
@@ -335,6 +346,7 @@ export function useLatestWorkflowTestGenerationTask(agentId: string) {
 
 export function useCreateWorkflowTestGenerationTask(agentId: string) {
   const t = useT('agents.workflowTest.toasts');
+  const errorMessage = useWorkflowTestErrorMessage();
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (data: CreateWorkflowTestGenerationTaskRequest) =>
@@ -352,7 +364,7 @@ export function useCreateWorkflowTestGenerationTask(agentId: string) {
       });
     },
     onError: error => {
-      toast.error(getErrorMessage(error) || t('casesGenerateFailed'));
+      toast.error(errorMessage(error, t('casesGenerateFailed')));
     },
   });
 }
@@ -382,6 +394,7 @@ export function useCancelWorkflowTestGenerationTask(agentId: string) {
 
 export function useResumeWorkflowTestGenerationTask(agentId: string) {
   const t = useT('agents.workflowTest.toasts');
+  const errorMessage = useWorkflowTestErrorMessage();
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (taskId: string) => workflowTestService.resumeGenerationTask(agentId, taskId),
@@ -399,7 +412,7 @@ export function useResumeWorkflowTestGenerationTask(agentId: string) {
       queryClient.invalidateQueries({ queryKey: WORKFLOW_TEST_KEYS.cases(agentId) });
     },
     onError: error => {
-      toast.error(getErrorMessage(error) || t('casesGenerationResumeFailed'));
+      toast.error(errorMessage(error, t('casesGenerationResumeFailed')));
     },
   });
 }
@@ -472,6 +485,7 @@ export function useCreateWorkflowTestBatch(agentId: string) {
 
 export function useStartWorkflowTestBatch(agentId: string) {
   const t = useT('agents.workflowTest.toasts');
+  const errorMessage = useWorkflowTestErrorMessage();
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (batchId: string) => workflowTestService.startBatch(agentId, batchId),
@@ -480,13 +494,14 @@ export function useStartWorkflowTestBatch(agentId: string) {
       queryClient.invalidateQueries({ queryKey: WORKFLOW_TEST_KEYS.batches(agentId) });
     },
     onError: error => {
-      toast.error(getErrorMessage(error) || t('batchStartFailed'));
+      toast.error(errorMessage(error, t('batchStartFailed')));
     },
   });
 }
 
 export function useExecuteWorkflowTestBatch(agentId: string) {
   const t = useT('agents.workflowTest.toasts');
+  const errorMessage = useWorkflowTestErrorMessage();
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (batchId: string) => workflowTestService.executeBatch(agentId, batchId),
@@ -496,7 +511,7 @@ export function useExecuteWorkflowTestBatch(agentId: string) {
       queryClient.invalidateQueries({ queryKey: WORKFLOW_TEST_KEYS.batchItems(agentId, batchId) });
     },
     onError: error => {
-      toast.error(getErrorMessage(error) || t('batchStartFailed'));
+      toast.error(errorMessage(error, t('batchStartFailed')));
     },
   });
 }
@@ -519,6 +534,7 @@ export function useCancelWorkflowTestBatch(agentId: string) {
 
 export function useRetestWorkflowTestBatch(agentId: string) {
   const t = useT('agents.workflowTest.toasts');
+  const errorMessage = useWorkflowTestErrorMessage();
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async ({
@@ -540,7 +556,7 @@ export function useRetestWorkflowTestBatch(agentId: string) {
       });
     },
     onError: error => {
-      toast.error(getErrorMessage(error) || t('batchRetestFailed'));
+      toast.error(errorMessage(error, t('batchRetestFailed')));
     },
   });
 }

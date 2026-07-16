@@ -26,6 +26,9 @@ func runSummarizer(ctx context.Context, summarizer Summarizer, req SummaryReques
 			return result.Summary
 		}
 		if err != nil {
+			if isModelPricingNotConfiguredError(err) {
+				return fmt.Sprintf("%s%s", summaryModelPricingMissing, fallbackBatchSummary(req.Batch, req.Items))
+			}
 			if isModelUnavailableError(err) {
 				return fmt.Sprintf("%s%s", summaryModelUnavailable, fallbackBatchSummary(req.Batch, req.Items))
 			}

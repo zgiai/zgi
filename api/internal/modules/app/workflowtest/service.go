@@ -33,7 +33,10 @@ const (
 	generationPromptExistingCasesMaxPerScenario = 5
 )
 
-var ErrJudgeModelNotConfigured = errors.New("judge model is not configured")
+var (
+	ErrJudgeModelNotConfigured        = errors.New("judge model is not configured")
+	ErrWorkflowTestModelNotConfigured = errors.New("workflow test model is not configured")
+)
 
 type Service struct {
 	repo                    *Repository
@@ -249,33 +252,24 @@ func (s *Service) resolveBatchJudgeSettings(ctx context.Context, agentID string)
 	if err != nil {
 		return nil, err
 	}
-	if strings.TrimSpace(settings.JudgeModelProvider) != "" && strings.TrimSpace(settings.JudgeModelName) != "" {
-		return settings, nil
-	}
-	if s.defaultModelResolver == nil {
-		return nil, ErrJudgeModelNotConfigured
-	}
-
-	organizationID, err := s.repo.GetAgentOrganizationID(ctx, agentID)
+	requested := normalizeModel(&Model{
+		Provider: settings.JudgeModelProvider,
+		Name:     settings.JudgeModelName,
+	})
+	resolved, err := s.resolveTextChatModel(ctx, agentID, requested)
 	if err != nil {
-		return nil, fmt.Errorf("resolve judge model organization: %w", err)
+		if errors.Is(err, ErrWorkflowTestModelNotConfigured) {
+			return nil, ErrJudgeModelNotConfigured
+		}
+		return nil, fmt.Errorf("resolve judge model: %w", err)
 	}
-	organizationID = strings.TrimSpace(organizationID)
-	if organizationID == "" {
-		return nil, ErrJudgeModelNotConfigured
-	}
-
-	resolved, err := s.defaultModelResolver.ResolveUseCase(ctx, organizationID, llmmodelmodel.UseCaseTextChat, nil, nil)
-	if err != nil {
-		return nil, fmt.Errorf("resolve default judge model: %w", err)
-	}
-	if resolved == nil || strings.TrimSpace(resolved.Provider) == "" || strings.TrimSpace(resolved.Model) == "" {
+	if resolved == nil {
 		return nil, ErrJudgeModelNotConfigured
 	}
 
 	copy := *settings
-	copy.JudgeModelProvider = strings.TrimSpace(resolved.Provider)
-	copy.JudgeModelName = strings.TrimSpace(resolved.Model)
+	copy.JudgeModelProvider = resolved.Provider
+	copy.JudgeModelName = resolved.Name
 	return &copy, nil
 }
 
@@ -788,16 +782,19 @@ func (s *Service) RunGenerationTask(ctx context.Context, taskID string, client l
 		AgentID:     task.AgentID,
 	}
 	req := generationTaskGenerateCasesRequest(task)
-	_, err = s.generateCasesForScenarios(ctx, task.AgentID, req, []string(task.ScenarioIDs), generator, generateCaseProgressHooks{
-		BeforeScenario: checkCanceled,
-		BeforeCase:     checkCanceled,
-		AfterCreate: func(ctx context.Context, item Case) error {
-			if err := s.repo.IncrementGenerationTaskCreatedCount(context.WithoutCancel(ctx), task.ID, 1); err != nil {
-				return err
-			}
-			return checkCanceled(ctx)
-		},
-	})
+	req.Model, err = s.resolveTextChatModel(ctx, task.AgentID, req.Model)
+	if err == nil {
+		_, err = s.generateCasesForScenarios(ctx, task.AgentID, req, []string(task.ScenarioIDs), generator, generateCaseProgressHooks{
+			BeforeScenario: checkCanceled,
+			BeforeCase:     checkCanceled,
+			AfterCreate: func(ctx context.Context, item Case) error {
+				if err := s.repo.IncrementGenerationTaskCreatedCount(context.WithoutCancel(ctx), task.ID, 1); err != nil {
+					return err
+				}
+				return checkCanceled(ctx)
+			},
+		})
+	}
 	if err != nil {
 		if errors.Is(err, errGenerationTaskCanceled) {
 			return nil
@@ -1007,6 +1004,11 @@ func (s *Service) GenerateCases(ctx context.Context, agentID string, req Generat
 			return nil, err
 		}
 	}
+	resolvedModel, err := s.resolveTextChatModel(ctx, agentID, req.Model)
+	if err != nil {
+		return nil, err
+	}
+	req.Model = resolvedModel
 	return s.generateCasesForScenarios(ctx, agentID, req, scenarioIDs, generator, generateCaseProgressHooks{})
 }
 
@@ -1448,13 +1450,17 @@ func (s *Service) recognizeScenarios(ctx context.Context, agentID string, req Re
 	if err != nil {
 		return nil, err
 	}
+	resolvedModel, err := s.resolveTextChatModel(ctx, agentID, req.Model)
+	if err != nil {
+		return nil, err
+	}
 	recognized, err := recognizer.RecognizeScenarios(ctx, ScenarioRecognitionInput{
 		AgentID:           agentID,
 		Context:           strings.TrimSpace(req.Context),
 		WorkflowContext:   strings.TrimSpace(workflowContext),
 		Prompt:            strings.TrimSpace(req.Prompt),
 		CaseMode:          normalizeCaseMode(req.CaseMode),
-		Model:             normalizeModel(req.Model),
+		Model:             resolvedModel,
 		Cases:             cases,
 		ExistingScenarios: existingScenarios,
 	})
@@ -1737,6 +1743,54 @@ func normalizeModel(model *Model) *Model {
 		return nil
 	}
 	return &Model{Provider: provider, Name: name}
+}
+
+func (s *Service) resolveTextChatModel(ctx context.Context, agentID string, requested *Model) (*Model, error) {
+	requested = normalizeModel(requested)
+	if s == nil || s.defaultModelResolver == nil {
+		return requested, nil
+	}
+
+	organizationID, err := s.repo.GetAgentOrganizationID(ctx, agentID)
+	if err != nil {
+		return nil, fmt.Errorf("resolve model organization: %w", err)
+	}
+	organizationID = strings.TrimSpace(organizationID)
+	if organizationID == "" {
+		return nil, ErrWorkflowTestModelNotConfigured
+	}
+
+	var explicitProvider, explicitModel *string
+	if requested != nil {
+		explicitProvider = &requested.Provider
+		explicitModel = &requested.Name
+	}
+	resolved, err := s.defaultModelResolver.ResolveUseCase(
+		ctx,
+		organizationID,
+		llmmodelmodel.UseCaseTextChat,
+		explicitProvider,
+		explicitModel,
+	)
+	if requested != nil && errors.Is(err, llmdefaultservice.ErrModelUnavailable) {
+		resolved, err = s.defaultModelResolver.ResolveUseCase(
+			ctx,
+			organizationID,
+			llmmodelmodel.UseCaseTextChat,
+			nil,
+			nil,
+		)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("resolve text chat model: %w", err)
+	}
+	if resolved == nil || strings.TrimSpace(resolved.Provider) == "" || strings.TrimSpace(resolved.Model) == "" {
+		return nil, ErrWorkflowTestModelNotConfigured
+	}
+	return &Model{
+		Provider: strings.TrimSpace(resolved.Provider),
+		Name:     strings.TrimSpace(resolved.Model),
+	}, nil
 }
 
 func normalizeScenarioSource(source string) string {

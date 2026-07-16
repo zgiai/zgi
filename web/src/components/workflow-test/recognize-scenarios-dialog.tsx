@@ -18,8 +18,6 @@ import { ModelSelector } from '@/components/common/model-selector';
 import type { ModelSelectorValue } from '@/components/common/model-selector';
 import { useCreateWorkflowTestScenarioRecognitionTask } from '@/hooks/workflow-test/use-workflow-test';
 import { useDefaultModelByUseCase } from '@/hooks/model/use-default-model-by-use-case';
-import { useCurrentUser } from '@/store/auth-store';
-import { getLastSelectedAiModel, saveLastSelectedAiModel } from '@/utils/ui-local';
 import { useT } from '@/i18n';
 import type { WorkflowTestMode } from './case-metadata';
 
@@ -101,9 +99,21 @@ const FOCUS_OPTIONS = [
 ];
 
 const GRANULARITY_OPTIONS = [
-  { value: 'merge_similar', labelKey: 'granularityMerge' as const, payloadKey: 'granularityMerge' as const },
-  { value: 'balanced', labelKey: 'granularityBalanced' as const, payloadKey: 'granularityBalanced' as const },
-  { value: 'fine_grained', labelKey: 'granularityFine' as const, payloadKey: 'granularityFine' as const },
+  {
+    value: 'merge_similar',
+    labelKey: 'granularityMerge' as const,
+    payloadKey: 'granularityMerge' as const,
+  },
+  {
+    value: 'balanced',
+    labelKey: 'granularityBalanced' as const,
+    payloadKey: 'granularityBalanced' as const,
+  },
+  {
+    value: 'fine_grained',
+    labelKey: 'granularityFine' as const,
+    payloadKey: 'granularityFine' as const,
+  },
 ];
 
 function defaultFocusValues(mode: WorkflowTestMode) {
@@ -122,21 +132,14 @@ export function RecognizeScenariosDialog({
   const t = useT('agents.workflowTest.dialogs.recognizeScenarios');
   const commonT = useT('agents.workflowTest.common');
   const createRecognitionTask = useCreateWorkflowTestScenarioRecognitionTask(agentId);
-  const user = useCurrentUser();
   const { value: defaultModel } = useDefaultModelByUseCase('text-chat');
-  const [selectedModel, setSelectedModel] = React.useState<ModelSelectorValue | null>(() => {
-    if (!user?.id) return null;
-    const saved = getLastSelectedAiModel(user.id, 'workflowTestScenario');
-    return saved ? { provider: saved.provider, model: saved.model } : null;
-  });
+  const [selectedModel, setSelectedModel] = React.useState<ModelSelectorValue | null>(null);
+  const [modelOverridden, setModelOverridden] = React.useState(false);
   React.useEffect(() => {
-    if (defaultModel && !selectedModel && user?.id) {
-      const saved = getLastSelectedAiModel(user.id, 'workflowTestScenario');
-      if (!saved) {
-        setSelectedModel({ provider: defaultModel.provider, model: defaultModel.model });
-      }
-    }
-  }, [defaultModel, selectedModel, user?.id]);
+    if (!open || !defaultModel) return;
+    setSelectedModel({ provider: defaultModel.provider, model: defaultModel.model });
+    setModelOverridden(false);
+  }, [defaultModel, open]);
 
   const [focusValues, setFocusValues] = React.useState<string[]>(() => defaultFocusValues(mode));
   const [granularity, setGranularity] = React.useState('balanced');
@@ -167,10 +170,12 @@ export function RecognizeScenariosDialog({
       item => item.modes.includes(mode) && focusValues.includes(item.value)
     ).map(item => t(item.payloadKey));
     if (selectedFocusLabels.length > 0) {
-      parts.push(`${t('focusPayloadTitle')}\n${selectedFocusLabels.join('、')}`);
+      parts.push(`${t('focusPayloadTitle')}\n${selectedFocusLabels.join(t('listSeparator'))}`);
     }
-    const granularityLabel =
-      t(GRANULARITY_OPTIONS.find(item => item.value === granularity)?.payloadKey ?? 'granularityBalanced');
+    const granularityLabel = t(
+      GRANULARITY_OPTIONS.find(item => item.value === granularity)?.payloadKey ??
+        'granularityBalanced'
+    );
     parts.push(`${t('granularityPayloadTitle')}\n${granularityLabel}`);
     if (businessPrompt.trim()) {
       parts.push(`${t('businessPromptPayloadTitle')}\n${businessPrompt.trim()}`);
@@ -200,12 +205,7 @@ export function RecognizeScenariosDialog({
               value={selectedModel ?? undefined}
               onChange={value => {
                 setSelectedModel(value);
-                if (user?.id) {
-                  saveLastSelectedAiModel(user.id, 'workflowTestScenario', {
-                    provider: value.provider,
-                    model: value.model,
-                  });
-                }
+                setModelOverridden(true);
               }}
               placeholder={t('modelPlaceholder')}
             />
@@ -221,7 +221,10 @@ export function RecognizeScenariosDialog({
                     key={item.value}
                     className="flex cursor-pointer items-center gap-2 rounded-xl border px-4 py-3 text-sm transition-colors"
                   >
-                    <Checkbox checked={checked} onCheckedChange={next => toggleFocus(item.value, Boolean(next))} />
+                    <Checkbox
+                      checked={checked}
+                      onCheckedChange={next => toggleFocus(item.value, Boolean(next))}
+                    />
                     <span>{t(item.labelKey)}</span>
                   </label>
                 );
@@ -247,12 +250,18 @@ export function RecognizeScenariosDialog({
           </section>
 
           <div className="space-y-2">
-            <Label htmlFor="workflow-test-recognize-business-prompt">{t('businessPromptLabel')}</Label>
+            <Label htmlFor="workflow-test-recognize-business-prompt">
+              {t('businessPromptLabel')}
+            </Label>
             <Textarea
               id="workflow-test-recognize-business-prompt"
               value={businessPrompt}
               onChange={event => setBusinessPrompt(event.target.value)}
-              placeholder={mode === 'task' ? t('taskBusinessPromptPlaceholder') : t('businessPromptPlaceholder')}
+              placeholder={
+                mode === 'task'
+                  ? t('taskBusinessPromptPlaceholder')
+                  : t('businessPromptPlaceholder')
+              }
               className="min-h-24 resize-none leading-7"
             />
           </div>
@@ -264,8 +273,12 @@ export function RecognizeScenariosDialog({
               onClick={() => setExpertPromptOpen(prev => !prev)}
             >
               <span>
-                <span className="block text-sm font-medium text-slate-900">{t('expertPromptLabel')}</span>
-                <span className="mt-1 block text-sm text-slate-500">{t('expertPromptDescription')}</span>
+                <span className="block text-sm font-medium text-slate-900">
+                  {t('expertPromptLabel')}
+                </span>
+                <span className="mt-1 block text-sm text-slate-500">
+                  {t('expertPromptDescription')}
+                </span>
               </span>
               <span className="text-sm font-medium text-blue-600">
                 {expertPromptOpen ? t('collapseExpertPrompt') : t('expandExpertPrompt')}
@@ -275,7 +288,9 @@ export function RecognizeScenariosDialog({
               <Textarea
                 value={expertPrompt}
                 onChange={event => setExpertPrompt(event.target.value)}
-                placeholder={mode === 'task' ? t('taskExpertPromptPlaceholder') : t('expertPromptPlaceholder')}
+                placeholder={
+                  mode === 'task' ? t('taskExpertPromptPlaceholder') : t('expertPromptPlaceholder')
+                }
                 className="min-h-28 resize-none leading-7"
               />
             ) : null}
@@ -294,10 +309,12 @@ export function RecognizeScenariosDialog({
                   context: defaultContext,
                   prompt: buildPrompt(),
                   case_mode: mode,
-                  model: {
-                    provider: selectedModel.provider,
-                    name: selectedModel.model,
-                  },
+                  model: modelOverridden
+                    ? {
+                        provider: selectedModel.provider,
+                        name: selectedModel.model,
+                      }
+                    : undefined,
                 },
                 { onSuccess: () => onOpenChange(false) }
               );

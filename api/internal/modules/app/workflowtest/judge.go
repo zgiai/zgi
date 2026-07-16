@@ -49,6 +49,9 @@ func judgeFailureReason(err error) string {
 	if err == nil {
 		return "AI 评分失败，请人工复核本次结果。"
 	}
+	if isModelPricingNotConfiguredError(err) {
+		return "AI 评分失败：" + modelPricingMissingReason
+	}
 	if isModelUnavailableError(err) {
 		return "AI 评分失败：" + modelUnavailableReason
 	}
@@ -56,6 +59,9 @@ func judgeFailureReason(err error) string {
 }
 
 func judgeFailureSuggestion(err error) string {
+	if isModelPricingNotConfiguredError(err) {
+		return modelPricingMissingAction
+	}
 	if isModelUnavailableError(err) {
 		return modelUnavailableAction
 	}

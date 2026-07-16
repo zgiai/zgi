@@ -1096,6 +1096,30 @@ const messages = {
       retestName: '{name} Retest {index}',
       cancelTest: 'Cancel test',
     },
+    userErrors: {
+      modelRouteUnavailable:
+        'The current model is not available in this workspace. Select an enabled model in the workflow or related AI settings, then try again.',
+      modelRouteUnavailableNamed:
+        'Model "{model}" is not enabled in this workspace. Select an enabled model in the workflow or related AI settings, then try again.',
+      modelPricingNotConfigured:
+        'Pricing is not configured for the current model, so it cannot be called. Ask an administrator to configure pricing or select a model with pricing configured.',
+      defaultModelNotConfigured:
+        'No default text model is configured. Configure one in Default Model Management, then try again.',
+      organizationBalanceInsufficient:
+        'The organization balance is insufficient. Add funds and try again.',
+      workspaceQuotaInsufficient:
+        'The workspace quota is insufficient. Ask an administrator to increase it, then try again.',
+      channelBalanceInsufficient:
+        'The model channel balance is insufficient. Add funds or switch channels, then try again.',
+      modelServiceUnavailable:
+        'The model service is temporarily unavailable because all available channels failed. Try again later; if the problem continues, check the channel configuration.',
+      requestTimedOut:
+        'The task timed out. Try again later or reduce the number of items generated or tested at once.',
+      networkUnavailable:
+        'The model service could not be reached. Check the network and service status, then try again.',
+      unknown:
+        'The task failed without a recognizable reason. Try again later; if the problem continues, ask an administrator to check the service logs.',
+    },
     overview: {
       breadcrumb: '{agentName} / Batch Testing',
       titleFallback: 'Test Question Library',
@@ -1407,6 +1431,7 @@ const messages = {
         expandExpertPrompt: 'Expand',
         collapseExpertPrompt: 'Collapse',
         focusPayloadTitle: 'Recognition focus:',
+        listSeparator: ', ',
         granularityPayloadTitle: 'Scenario granularity:',
         businessPromptPayloadTitle: 'User business notes:',
         expertPromptPayloadTitle: 'Expert prompt supplement:',
@@ -1730,6 +1755,76 @@ const messages = {
       viewTurnOutputRaw: 'View raw output for this turn',
       previousItem: 'Previous',
       nextItem: 'Next',
+      labelSeparator: ': ',
+      listSeparator: ', ',
+      expectedFocus: 'Expected Focus',
+      turnOutputTitle: 'Turn {index} Output',
+      workflowOptimizationTitle: 'Workflow Improvement Suggestions',
+      workflowOptimizationDescription:
+        'These suggestions apply to workflow configuration, node prompts, branch conditions, and knowledge references, not the test question itself.',
+      nodesNeedAttention: '{count} nodes need attention',
+      diagnosisResult: 'Diagnosis: {status}',
+      taskEvaluationTitle: 'Task Evaluation Criteria',
+      taskEvaluationDescription:
+        'Scoring uses the task input and final output. Task workflows are not expected to ask follow-up questions or retain conversational context.',
+      sourceGrounding: 'Based on input and output',
+      allowedExtras: 'Allowed additions: {values}',
+      missingPolicy:
+        'Missing-data policy: business omissions may be marked, but technical failures must not be reported incorrectly',
+      viewAllAssertions: 'View all evaluation assertions ({count})',
+      checkSummary: 'Check Summary',
+      genericCheckLabel: 'Reply covers the expected result for this turn',
+      viewAllChecks: 'View all check details ({count})',
+      troubleshootingTitle: 'Engineering diagnostics: node inputs and outputs',
+      troubleshootingDescription:
+        'Shown only when displayable data was recorded in runtime logs. A blank value does not mean the node did not run; it may not have produced a displayable field or detailed logs may not have been saved.',
+      input: 'Input',
+      output: 'Output',
+      fallbackNode: {
+        start: 'Start Node',
+        answer: 'Reply Generation',
+        branch: 'Branch Node',
+      },
+      taskGoalType: {
+        extract: 'Information Extraction',
+        classify: 'Classification',
+        transform: 'Content Transformation',
+        analyze: 'Analysis and Summary',
+        decision: 'Decision',
+        action: 'Action Execution',
+        general: 'General Task',
+      },
+      taskAssertionType: {
+        mustInclude: 'Must Include',
+        mustNotInclude: 'Must Not Include',
+        missingPolicy: 'Missing-data Handling',
+        factPresent: 'Fact Field',
+        missingFieldMarked: 'Missing Field',
+        statePresent: 'State Conclusion',
+        format: 'Format Requirement',
+        sourceGrounding: 'Input Grounding',
+        actionResult: 'Execution Result',
+        semanticMatch: 'Semantic Match',
+        assertion: 'Evaluation Assertion',
+      },
+      taskAssertionSeverity: {
+        critical: 'Critical',
+        normal: 'Normal',
+        hint: 'Hint',
+      },
+      recommendations: {
+        genericTarget: 'Reply generation strategy',
+        relatedNode: 'Related node',
+        failedCheck:
+          '{label}: Adjust the workflow prompt, branch conditions, or knowledge references so the reply covers verifiable business requirements.',
+        reviewCheck:
+          '{label}: This item only needs review and should not directly become a workflow change recommendation.',
+        filters: {
+          aiEvaluation: 'AI evaluation',
+          manualReview: 'manual review',
+          checkEvaluation: 'check evaluation',
+        },
+      },
       suggestionLabel: 'Improvement Suggestion',
       errorInfo: 'Execution Error',
       workflowRunId: 'Run ID',
@@ -1760,6 +1855,8 @@ const messages = {
         allPassed: 'All questions passed. No issues were found.',
         hasIssues:
           'This test has {failed} failed questions and {review} questions needing review. Prioritize failed questions and review scoring reasons and suggestions.',
+        modelUnavailableMarker: 'current default model is unavailable',
+        sentenceSeparator: '.',
         modelUnavailable:
           'AI summary failed: the current default model is unavailable. Go to Default Model Management and change the default text model, then retest.',
       },
@@ -1774,6 +1871,9 @@ const messages = {
         judgeFailedSuggestion: 'AI scoring failed. Review manually or rerun the test.',
         judgeManualReviewSuggestion: 'Review this result manually.',
         judgeConfigureSuggestion: 'Configure AI scoring and rerun, or review manually.',
+        modelUnavailableMarker: 'current scoring model is unavailable',
+        missingFieldDate: 'Missing field: date',
+        missingFieldRelatedParty: 'Missing field: related party',
         modelUnavailable:
           'AI scoring failed: the current scoring model is unavailable. Go to Default Model Management and change the default text model, then retest.',
       },
@@ -2353,7 +2453,8 @@ const messages = {
       removeSlot: 'Remove memory item',
       viewValues: 'View memory',
       nameLabel: 'Memory name (optional)',
-      nameHelp: 'Helps people identify this item. The memory ID is shown when left blank. Up to 80 characters.',
+      nameHelp:
+        'Helps people identify this item. The memory ID is shown when left blank. Up to 80 characters.',
       keyLabel: 'Memory ID',
       keyHelp: 'Stable identifier used by the Agent. It is locked after the item is saved.',
       keyLockedHelp:

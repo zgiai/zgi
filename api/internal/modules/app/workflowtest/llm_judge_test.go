@@ -270,3 +270,13 @@ func TestRunJudgeReturnsGenericUserFacingReasonForUnknownError(t *testing.T) {
 	require.Equal(t, "AI 评分失败，请人工复核本次结果。", result.Reason)
 	require.Equal(t, "AI 评分失败，请人工复核或重新测试。", result.Suggestion)
 }
+
+func TestRunJudgeReturnsPricingReasonWhenModelPricingIsMissing(t *testing.T) {
+	result := runJudge(context.Background(), failingJudge{
+		err: errors.New("all providers failed: failed to calculate credits: model_pricing_not_configured"),
+	}, JudgeRequest{})
+
+	require.Equal(t, BatchItemStatusReview, result.Status)
+	require.Equal(t, "AI 评分失败：当前评分模型未配置计费价格，暂时无法调用。", result.Reason)
+	require.Equal(t, "请联系管理员配置模型价格，或更换已配置价格的评分模型后重新执行。", result.Suggestion)
+}

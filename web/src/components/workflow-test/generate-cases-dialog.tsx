@@ -21,8 +21,6 @@ import { ModelSelector } from '@/components/common/model-selector';
 import type { ModelSelectorValue } from '@/components/common/model-selector';
 import { useCreateWorkflowTestGenerationTask } from '@/hooks/workflow-test/use-workflow-test';
 import { useDefaultModelByUseCase } from '@/hooks/model/use-default-model-by-use-case';
-import { useCurrentUser } from '@/store/auth-store';
-import { getLastSelectedAiModel, saveLastSelectedAiModel } from '@/utils/ui-local';
 import { useT } from '@/i18n';
 import {
   DEFAULT_QUESTION_TYPES,
@@ -80,13 +78,13 @@ export function GenerateCasesDialog({
   const commonT = useT('agents.workflowTest.common');
   const typeT = useT('agents.workflowTest.questionTypes');
   const createGenerationTask = useCreateWorkflowTestGenerationTask(agentId);
-  const user = useCurrentUser();
   const { value: defaultModel } = useDefaultModelByUseCase('text-chat');
   const [count, setCount] = React.useState(20);
   const [scenarioIds, setScenarioIds] = React.useState<string[]>([]);
   const [questionTypes, setQuestionTypes] = React.useState<string[]>(DEFAULT_QUESTION_TYPES);
   const [turnStrategy, setTurnStrategy] = React.useState<'mixed' | 'single' | 'multi'>('mixed');
   const [model, setModel] = React.useState<ModelSelectorValue | null>(null);
+  const [modelOverridden, setModelOverridden] = React.useState(false);
   const [businessPrompt, setBusinessPrompt] = React.useState('');
   const [expertPrompt, setExpertPrompt] = React.useState('');
   const [expertPromptOpen, setExpertPromptOpen] = React.useState(false);
@@ -113,16 +111,10 @@ export function GenerateCasesDialog({
       : t('submit');
 
   React.useEffect(() => {
-    if (!user?.id) return;
-    const saved = getLastSelectedAiModel(user.id, 'workflowTestScenario');
-    if (saved) {
-      setModel({ provider: saved.provider, model: saved.model });
-      return;
-    }
-    if (defaultModel) {
-      setModel({ provider: defaultModel.provider, model: defaultModel.model });
-    }
-  }, [defaultModel, user?.id]);
+    if (!open || !defaultModel) return;
+    setModel({ provider: defaultModel.provider, model: defaultModel.model });
+    setModelOverridden(false);
+  }, [defaultModel, open]);
 
   React.useEffect(() => {
     if (open) return;
@@ -481,12 +473,7 @@ export function GenerateCasesDialog({
               value={model ?? undefined}
               onChange={value => {
                 setModel(value);
-                if (user?.id) {
-                  saveLastSelectedAiModel(user.id, 'workflowTestScenario', {
-                    provider: value.provider,
-                    model: value.model,
-                  });
-                }
+                setModelOverridden(true);
               }}
               placeholder={t('modelPlaceholder')}
             />
@@ -566,10 +553,12 @@ export function GenerateCasesDialog({
                     }
                   : undefined,
                 prompt: buildPrompt(),
-                model: {
-                  provider: model.provider,
-                  name: model.model,
-                },
+                model: modelOverridden
+                  ? {
+                      provider: model.provider,
+                      name: model.model,
+                    }
+                  : undefined,
               };
               onGenerationStart?.(safeCount);
               onOpenChange(false);

@@ -73,6 +73,7 @@ import { WORKFLOW_TEST_KEYS } from '@/hooks/query-keys';
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
 import { workflowTestService } from '@/services/workflow-test.service';
+import { localizeWorkflowTestError } from '@/utils/workflow-test-error';
 import type {
   WorkflowTestBatch,
   WorkflowTestCase,
@@ -335,6 +336,7 @@ export function BatchTestOverview({
   const batchStatusT = useT('agents.workflowTest.batchStatus');
   const batchResultT = useT('agents.workflowTest.batchResult');
   const toastT = useT('agents.workflowTest.toasts');
+  const errorT = useT('agents.workflowTest.userErrors');
   const router = useRouter();
   const queryClient = useQueryClient();
   const batchTestHref = getAgentDetailBatchTestHref(agentId, 'workflow');
@@ -397,6 +399,12 @@ export function BatchTestOverview({
   const batches = React.useMemo(() => batchesData?.data?.items ?? [], [batchesData]);
   const generationTask = latestGenerationTaskData?.data?.task ?? null;
   const scenarioRecognitionTask = latestScenarioRecognitionTaskData?.data?.task ?? null;
+  const generationTaskError = generationTask?.error
+    ? localizeWorkflowTestError(generationTask.error, errorT)
+    : commonT('none');
+  const scenarioRecognitionTaskError = scenarioRecognitionTask?.error
+    ? localizeWorkflowTestError(scenarioRecognitionTask.error, errorT)
+    : commonT('none');
   const isScenarioRecognitionActive =
     scenarioRecognitionTask?.status === 'queued' ||
     scenarioRecognitionTask?.status === 'running' ||
@@ -445,7 +453,7 @@ export function BatchTestOverview({
     {
       recognized: scenarioRecognitionTask?.recognized_count ?? 0,
       assigned: scenarioRecognitionTask?.assigned_case_count ?? 0,
-      error: scenarioRecognitionTask?.error || commonT('none'),
+      error: scenarioRecognitionTaskError,
     }
   );
   const scenarioRecognitionProgressText = t('scenarios.recognitionProgressText', {
@@ -492,7 +500,7 @@ export function BatchTestOverview({
       total: generationBannerRequested,
       current: generationCurrentIndex,
       percent: generationProgress,
-      error: generationTask?.error || commonT('none'),
+      error: generationTaskError,
     }
   );
   const generationProgressText = t('cases.generationProgressText', {
@@ -601,7 +609,7 @@ export function BatchTestOverview({
     if (currentStatus === previousStatus) return;
 
     if (generationTask?.status === 'failed' && generationTask.error) {
-      toast.error(generationTask.error);
+      toast.error(generationTaskError);
     } else if (
       generationTask?.status === 'completed' &&
       (previousStatus === 'queued' ||
@@ -623,7 +631,7 @@ export function BatchTestOverview({
     }
 
     previousGenerationTaskStatusRef.current = currentStatus;
-  }, [agentId, generationTask, queryClient, toastT]);
+  }, [agentId, generationTask, generationTaskError, queryClient, toastT]);
 
   React.useEffect(() => {
     if (!completedGenerationTaskId) return;
@@ -637,7 +645,7 @@ export function BatchTestOverview({
     if (currentStatus === previousStatus) return;
 
     if (scenarioRecognitionTask?.status === 'failed' && scenarioRecognitionTask.error) {
-      toast.error(scenarioRecognitionTask.error);
+      toast.error(scenarioRecognitionTaskError);
     } else if (
       scenarioRecognitionTask?.status === 'completed' &&
       (previousStatus === 'queued' ||
@@ -659,7 +667,7 @@ export function BatchTestOverview({
     }
 
     previousScenarioRecognitionTaskStatusRef.current = currentStatus;
-  }, [agentId, queryClient, scenarioRecognitionTask]);
+  }, [agentId, queryClient, scenarioRecognitionTask, scenarioRecognitionTaskError]);
 
   React.useEffect(() => {
     if (!completedScenarioRecognitionTaskId) return;
@@ -740,9 +748,11 @@ export function BatchTestOverview({
 
   const buildRetestName = React.useCallback(
     (batchName: string) => {
-      const baseName = batchName.replace(/\s+重新测试\d*$/u, '').trim() || batchName;
+      const escapedRetestLabel = commonT('retest').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const suffixPattern = new RegExp(`\\s+${escapedRetestLabel}\\s*\\d*$`, 'u');
+      const baseName = batchName.replace(suffixPattern, '').trim() || batchName;
       const escapedBaseName = baseName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      const pattern = new RegExp(`^${escapedBaseName}\\s+重新测试(\\d*)$`, 'u');
+      const pattern = new RegExp(`^${escapedBaseName}\\s+${escapedRetestLabel}\\s*(\\d*)$`, 'u');
       const maxIndex = batches.reduce((max, item) => {
         const match = item.name.match(pattern);
         if (!match) return max;
@@ -751,7 +761,7 @@ export function BatchTestOverview({
       }, 1);
       return t('batches.retestName', { name: baseName, index: maxIndex + 1 });
     },
-    [batches, t]
+    [batches, commonT, t]
   );
 
   const confirmRetestBatch = () => {
@@ -946,7 +956,7 @@ export function BatchTestOverview({
                       <div className={`mt-2 text-sm ${scenarioRecognitionBannerTone.description}`}>
                         {scenarioRecognitionTask?.status === 'failed'
                           ? t('scenarios.recognitionFailedDescription', {
-                              error: scenarioRecognitionTask.error || commonT('none'),
+                              error: scenarioRecognitionTaskError,
                             })
                           : scenarioRecognitionTask?.status === 'canceled'
                             ? t('scenarios.recognitionCanceledDescription')
@@ -1082,7 +1092,7 @@ export function BatchTestOverview({
                         {displayedGenerationStatus === 'failed'
                           ? t('cases.generationFailedDescription', {
                               created: generationBannerCreated,
-                              error: generationTask?.error || commonT('none'),
+                              error: generationTaskError,
                             })
                           : displayedGenerationStatus === 'canceled'
                             ? t('cases.generationCanceledDescription', {

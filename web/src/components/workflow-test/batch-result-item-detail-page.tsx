@@ -25,6 +25,10 @@ import {
 import { useT } from '@/i18n';
 import { getErrorMessage } from '@/utils/error-notifications';
 import { formatWorkflowElapsedMs } from '@/utils/format';
+import {
+  getWorkflowTestUserError,
+  type WorkflowTestErrorTranslator,
+} from '@/utils/workflow-test-error';
 import type {
   WorkflowTestAnalysis,
   WorkflowTestBatchItem,
@@ -78,6 +82,68 @@ const RUNTIME_OUTPUT_KEYS = new Set([
   'conversation_id',
 ]);
 
+type ItemStatusKey = 'pending' | 'running' | 'passed' | 'failed' | 'review' | 'canceled';
+type TaskGoalTypeKey =
+  | 'extract'
+  | 'classify'
+  | 'transform'
+  | 'analyze'
+  | 'decision'
+  | 'action'
+  | 'general';
+type TaskAssertionTypeKey =
+  | 'must_include'
+  | 'must_not_include'
+  | 'missing_policy'
+  | 'fact_present'
+  | 'missing_field_marked'
+  | 'state_present'
+  | 'format'
+  | 'source_grounding'
+  | 'action_result'
+  | 'semantic_match'
+  | 'assertion';
+type TaskAssertionSeverityKey = 'critical' | 'normal' | 'hint';
+
+type ItemStatusLabels = Record<ItemStatusKey, string>;
+type TaskGoalTypeLabels = Record<TaskGoalTypeKey, string>;
+type TaskAssertionTypeLabels = Record<TaskAssertionTypeKey, string>;
+type TaskAssertionSeverityLabels = Record<TaskAssertionSeverityKey, string>;
+
+interface TextLocalizationLabels {
+  labelSeparator: string;
+  listSeparator: string;
+  missingFieldDate: string;
+  missingFieldRelatedParty: string;
+}
+
+interface WorkflowTestErrorLabels {
+  judgeModelRequired: string;
+  judgeNotConfigured: string;
+  judgeEmptyResult: string;
+  judgeFailed: string;
+  judgeFailedSuggestion: string;
+  judgeManualReviewSuggestion: string;
+  judgeConfigureSuggestion: string;
+  modelUnavailable: string;
+  modelUnavailableMarker: string;
+  text: TextLocalizationLabels;
+}
+
+interface RecommendationLabels {
+  genericTarget: string;
+  relatedNode: string;
+  failedCheck: (label: string) => string;
+  reviewCheck: (label: string) => string;
+  excludedTerms: string[];
+}
+
+interface FallbackNodeLabels {
+  start: string;
+  answer: string;
+  branch: string;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value));
 }
@@ -90,25 +156,12 @@ function itemStatusClass(status: string) {
   return 'bg-slate-100 text-slate-500 border-slate-200';
 }
 
-function itemStatusLabel(status: string, none: string) {
-  const map: Record<string, string> = {
-    pending: '待开始',
-    running: '执行中',
-    passed: '通过',
-    failed: '不通过',
-    review: '需复核',
-    canceled: '已取消',
-  };
-  return map[status] || status || none;
+function itemStatusLabel(status: string, labels: ItemStatusLabels, none: string) {
+  return labels[status as ItemStatusKey] || status || none;
 }
 
-function diagnosisStatusLabel(status: string) {
-  const map: Record<string, string> = {
-    passed: '通过',
-    failed: '不通过',
-    review: '需复核',
-  };
-  return map[status] || status || '需复核';
+function diagnosisStatusLabel(status: string, labels: ItemStatusLabels) {
+  return labels[status as ItemStatusKey] || status || labels.review;
 }
 
 function diagnosisStatusClass(status: string) {
@@ -234,6 +287,7 @@ function workflowTestTraceNodes(outputs: Record<string, unknown>): Array<Record<
 
 interface ExecutionFailureLabels {
   withReason: (reason: string) => string;
+  localizeReason: (reason: string) => string;
   noReply: string;
   nodeFailed: string;
 }
@@ -244,10 +298,10 @@ function executionFailureText(
   itemError?: string
 ) {
   if (itemError?.trim()) {
-    return labels.withReason(itemError.trim());
+    return labels.withReason(labels.localizeReason(itemError.trim()));
   }
   if (typeof outputs.error === 'string' && outputs.error.trim()) {
-    return labels.withReason(outputs.error.trim());
+    return labels.withReason(labels.localizeReason(outputs.error.trim()));
   }
   const traceError = workflowTestTraceNodes(outputs)
     .map(node => {
@@ -258,8 +312,8 @@ function executionFailureText(
         (typeof node.node_id === 'string' && node.node_id.trim()) ||
         (typeof node.id === 'string' && node.id.trim()) ||
         '';
-      if (error && nodeLabel) return `${nodeLabel}: ${error}`;
-      if (error) return error;
+      if (error && nodeLabel) return `${nodeLabel}: ${labels.localizeReason(error)}`;
+      if (error) return labels.localizeReason(error);
       if (nodeLabel) return `${nodeLabel}: ${labels.nodeFailed}`;
       return labels.nodeFailed;
     })
@@ -332,72 +386,74 @@ function formatJudgeScore(value: number) {
 
 function localizeWorkflowTestError(
   message: string,
-  t: (
-    key:
-      | 'errors.judgeModelRequired'
-      | 'errors.judgeNotConfigured'
-      | 'errors.judgeEmptyResult'
-      | 'errors.judgeFailed'
-      | 'errors.judgeFailedSuggestion'
-      | 'errors.judgeManualReviewSuggestion'
-      | 'errors.judgeConfigureSuggestion'
-      | 'errors.modelUnavailable'
-  ) => string
+  labels: WorkflowTestErrorLabels,
+  errorT: WorkflowTestErrorTranslator
 ) {
   const normalized = message.trim().toLowerCase();
   if (!normalized) return message;
+  const userError = getWorkflowTestUserError(message, errorT);
+  if (userError) return userError;
   if (
     normalized.includes('all providers failed') ||
     normalized.includes('current user api does not support http call') ||
     normalized.includes('upstream service error') ||
     normalized.includes('no provider available') ||
     normalized.includes('model unavailable') ||
-    normalized.includes('当前评分模型不可用')
+    normalized.includes(labels.modelUnavailableMarker.toLowerCase())
   ) {
-    return t('errors.modelUnavailable');
+    return labels.modelUnavailable;
   }
   if (
     normalized.includes('judge failed: model field is required') ||
     normalized.includes('model field is required')
   ) {
-    return t('errors.judgeModelRequired');
+    return labels.judgeModelRequired;
   }
   if (normalized.includes('judge is not configured')) {
-    return t('errors.judgeNotConfigured');
+    return labels.judgeNotConfigured;
   }
   if (normalized.includes('judge returned empty result')) {
-    return t('errors.judgeEmptyResult');
+    return labels.judgeEmptyResult;
   }
   if (
     normalized === 'ai scoring failed; review manually or rerun the test' ||
-    normalized === 'ai 评分失败，请人工复核或重新测试。'
+    normalized === labels.judgeFailedSuggestion.toLowerCase()
   ) {
-    return t('errors.judgeFailedSuggestion');
+    return labels.judgeFailedSuggestion;
   }
-  if (normalized === 'review this result manually' || normalized === '请人工复核本次结果。') {
-    return t('errors.judgeManualReviewSuggestion');
+  if (
+    normalized === 'review this result manually' ||
+    normalized === labels.judgeManualReviewSuggestion.toLowerCase()
+  ) {
+    return labels.judgeManualReviewSuggestion;
   }
   if (
     normalized === 'configure ai scoring and rerun, or review manually' ||
-    normalized === '请配置 ai 评分能力后重新执行，或人工复核本次结果。'
+    normalized === labels.judgeConfigureSuggestion.toLowerCase()
   ) {
-    return t('errors.judgeConfigureSuggestion');
+    return labels.judgeConfigureSuggestion;
   }
   if (normalized === 'judge failed') {
-    return t('errors.judgeFailed');
+    return labels.judgeFailed;
   }
   if (normalized.startsWith('judge failed: ')) {
-    return `${t('errors.judgeFailed')}：${translateMissingFieldPhrases(message.trim().slice('judge failed: '.length))}`;
+    const sourceDetail = message.trim().slice('judge failed: '.length);
+    const detail = translateMissingFieldPhrases(sourceDetail, labels.text);
+    return detail !== sourceDetail
+      ? `${labels.judgeFailed}${labels.text.labelSeparator}${detail}`
+      : labels.judgeFailed;
   }
-  return translateMissingFieldPhrases(message);
+  const translated = translateMissingFieldPhrases(message, labels.text);
+  if (translated !== message || /\p{Script=Han}/u.test(translated)) return translated;
+  return errorT('unknown');
 }
 
-function translateMissingFieldPhrases(value: string) {
+function translateMissingFieldPhrases(value: string, labels: TextLocalizationLabels) {
   return value
-    .replace(/missing field:\s*date/gi, '缺失字段：日期')
-    .replace(/missing field:\s*related party/gi, '缺失字段：相关方')
-    .replace(/missing fields:\s*date/gi, '缺失字段：日期')
-    .replace(/missing fields:\s*related party/gi, '缺失字段：相关方');
+    .replace(/missing field:\s*date/gi, labels.missingFieldDate)
+    .replace(/missing field:\s*related party/gi, labels.missingFieldRelatedParty)
+    .replace(/missing fields:\s*date/gi, labels.missingFieldDate)
+    .replace(/missing fields:\s*related party/gi, labels.missingFieldRelatedParty);
 }
 
 function workflowTestCheckKey(check: WorkflowTestCheckResult, index: number) {
@@ -407,8 +463,8 @@ function workflowTestCheckKey(check: WorkflowTestCheckResult, index: number) {
   return parts.length > 0 ? parts.join('::') : `check::${index}`;
 }
 
-function isGenericCheckLabel(value: string) {
-  return /^第\s*\d+\s*轮期望$/.test(value.trim());
+function isGenericCheck(check: Pick<WorkflowTestCheckResult, 'id' | 'type'>) {
+  return check.type === 'expected_result' && /^turn_\d+_expected$/.test(check.id);
 }
 
 function relevantChecks(analysis: WorkflowTestAnalysis | null) {
@@ -436,49 +492,35 @@ function checkCountByStatus(checks: WorkflowTestCheckResult[]) {
   );
 }
 
-function taskGoalTypeLabel(value: string | undefined) {
-  const map: Record<string, string> = {
-    extract: '信息抽取',
-    classify: '分类判断',
-    transform: '内容转换',
-    analyze: '分析总结',
-    decision: '决策判断',
-    action: '动作执行',
-    general: '通用任务',
-  };
-  return map[String(value || '').trim()] || value || '通用任务';
+function taskGoalTypeLabel(value: string | undefined, labels: TaskGoalTypeLabels) {
+  return labels[String(value || '').trim() as TaskGoalTypeKey] || value || labels.general;
 }
 
-function taskAssertionTypeLabel(value: string | undefined) {
-  const map: Record<string, string> = {
-    must_include: '必须覆盖',
-    must_not_include: '禁止出现',
-    missing_policy: '缺失处理',
-    fact_present: '事实字段',
-    missing_field_marked: '缺失字段',
-    state_present: '状态结论',
-    format: '格式要求',
-    source_grounding: '输入依据',
-    action_result: '执行结果',
-    semantic_match: '语义满足',
-  };
-  return map[String(value || '').trim()] || value || '评价断言';
+function taskAssertionTypeLabel(value: string | undefined, labels: TaskAssertionTypeLabels) {
+  return labels[String(value || '').trim() as TaskAssertionTypeKey] || value || labels.assertion;
 }
 
-function taskAssertionSeverityLabel(value: string | undefined) {
-  const map: Record<string, string> = {
-    critical: '关键',
-    normal: '普通',
-    hint: '提示',
-  };
-  return map[String(value || '').trim()] || value || '普通';
+function taskAssertionSeverityLabel(
+  value: string | undefined,
+  labels: TaskAssertionSeverityLabels
+) {
+  return labels[String(value || '').trim() as TaskAssertionSeverityKey] || value || labels.normal;
 }
 
-function taskAssertionText(assertion: WorkflowTestEvaluationAssertion) {
+function taskAssertionText(
+  assertion: WorkflowTestEvaluationAssertion,
+  typeLabels: TaskAssertionTypeLabels,
+  textLabels: TextLocalizationLabels
+) {
   const description = typeof assertion.description === 'string' ? assertion.description.trim() : '';
-  if (description) return translateMissingFieldPhrases(description);
-  const values = Array.isArray(assertion.values) ? assertion.values.filter(Boolean).join('、') : '';
-  return translateMissingFieldPhrases(values || taskAssertionTypeLabel(assertion.type));
+  if (description) return translateMissingFieldPhrases(description, textLabels);
+  const values = Array.isArray(assertion.values)
+    ? assertion.values.filter(Boolean).join(textLabels.listSeparator)
+    : '';
+  return translateMissingFieldPhrases(
+    values || taskAssertionTypeLabel(assertion.type, typeLabels),
+    textLabels
+  );
 }
 
 function compactTaskSchemaAssertions(schema: WorkflowTestEvaluationSchema | undefined) {
@@ -487,25 +529,35 @@ function compactTaskSchemaAssertions(schema: WorkflowTestEvaluationSchema | unde
     : [];
 }
 
-function readableAnalysisIssue(analysis: WorkflowTestAnalysis | null) {
+function readableAnalysisIssue(
+  analysis: WorkflowTestAnalysis | null,
+  textLabels: TextLocalizationLabels
+) {
   const firstProblem = relevantChecks(analysis)[0];
   if (firstProblem?.evidence?.trim()) {
-    return translateMissingFieldPhrases(firstProblem.evidence.trim());
+    return translateMissingFieldPhrases(firstProblem.evidence.trim(), textLabels);
   }
   const issue = analysis?.summary?.main_issue;
   if (typeof issue !== 'string') return '';
   const trimmed = issue.trim();
-  return trimmed && !isGenericCheckLabel(trimmed) ? translateMissingFieldPhrases(trimmed) : '';
+  return trimmed && analysis?.summary?.failed_stage !== 'expected_result'
+    ? translateMissingFieldPhrases(trimmed, textLabels)
+    : '';
 }
 
-function workflowOptimizationText(check: WorkflowTestCheckResult) {
+function workflowOptimizationText(
+  check: WorkflowTestCheckResult,
+  textLabels: TextLocalizationLabels,
+  labels: RecommendationLabels
+) {
   const label = translateMissingFieldPhrases(
-    isGenericCheckLabel(check.label) ? '回复生成策略' : check.label || '相关节点'
+    isGenericCheck(check) ? labels.genericTarget : check.label || labels.relatedNode,
+    textLabels
   );
   if (check.status === 'failed') {
-    return `${label}：请调整工作流中的提示词、分支条件或知识引用，确保回复覆盖可验证的业务要点。`;
+    return labels.failedCheck(label);
   }
-  return `${label}：当前仅需复核，不应直接作为工作流修改建议。`;
+  return labels.reviewCheck(label);
 }
 
 function hasDisplayValue(value: unknown) {
@@ -715,19 +767,18 @@ function sortExecutionNodesByWorkflowOrder(
   });
 }
 
-function fallbackExecutionStepMeta(nodeId: string): WorkflowDraftNodeMeta {
+function fallbackExecutionStepMeta(
+  nodeId: string,
+  labels: FallbackNodeLabels
+): WorkflowDraftNodeMeta {
   if (!nodeId) return { id: nodeId, title: nodeId, type: '' };
-  if (nodeId.includes('start')) return { id: nodeId, title: '开始节点', type: 'start' };
+  if (nodeId.includes('start')) return { id: nodeId, title: labels.start, type: 'start' };
   if (nodeId.includes('answer') || nodeId.includes('reply')) {
-    return { id: nodeId, title: '回复生成', type: 'answer' };
+    return { id: nodeId, title: labels.answer, type: 'answer' };
   }
   if (nodeId.includes('llm')) return { id: nodeId, title: 'LLM', type: 'llm' };
-  if (nodeId.includes('branch')) return { id: nodeId, title: '分支节点', type: 'if-else' };
+  if (nodeId.includes('branch')) return { id: nodeId, title: labels.branch, type: 'if-else' };
   return { id: nodeId, title: nodeId, type: '' };
-}
-
-function buildTurnTitle(index: number) {
-  return `第 ${index + 1} 轮`;
 }
 
 interface TurnResultSnapshot {
@@ -859,7 +910,9 @@ function uniqueTexts(values: string[]) {
 function buildRecommendationTexts(
   judgeSuggestionText: string,
   analysis: WorkflowTestAnalysis | null,
-  none: string
+  none: string,
+  textLabels: TextLocalizationLabels,
+  labels: RecommendationLabels
 ) {
   if (analysis?.mode === 'task' && analysis.summary?.status === 'passed') {
     return [];
@@ -869,42 +922,41 @@ function buildRecommendationTexts(
   if (
     judgeSuggestionText &&
     judgeSuggestionText !== none &&
-    !normalizedJudgeSuggestion.includes('ai 评分') &&
-    !normalizedJudgeSuggestion.includes('人工复核') &&
-    !normalizedJudgeSuggestion.includes('ai scoring')
+    !labels.excludedTerms.some(term => normalizedJudgeSuggestion.includes(term.toLowerCase()))
   ) {
-    values.push(translateMissingFieldPhrases(judgeSuggestionText));
+    values.push(translateMissingFieldPhrases(judgeSuggestionText, textLabels));
   }
   analysis?.suggestions.forEach(suggestion => {
     const target =
       typeof suggestion.target === 'string'
-        ? translateMissingFieldPhrases(suggestion.target.trim())
+        ? translateMissingFieldPhrases(suggestion.target.trim(), textLabels)
         : '';
     const content =
       typeof suggestion.content === 'string'
-        ? translateMissingFieldPhrases(suggestion.content.trim())
+        ? translateMissingFieldPhrases(suggestion.content.trim(), textLabels)
         : '';
     if (!content) return;
-    if (
-      content.includes('AI 评估') ||
-      content.includes('人工复核') ||
-      content.includes('检查点判断')
-    ) {
+    if (labels.excludedTerms.some(term => content.toLowerCase().includes(term.toLowerCase()))) {
       return;
     }
-    values.push(target && !isGenericCheckLabel(target) ? `${target}: ${content}` : content);
+    values.push(
+      target && suggestion.type !== 'expected_result' ? `${target}: ${content}` : content
+    );
   });
   relevantChecks(analysis)
     .filter(check => check.status === 'failed')
     .slice(0, 3)
     .forEach(check => {
-      values.push(workflowOptimizationText(check));
+      values.push(workflowOptimizationText(check, textLabels, labels));
     });
   return uniqueTexts(values).slice(0, 5);
 }
 
-function analysisMainIssue(analysis: WorkflowTestAnalysis | null) {
-  return readableAnalysisIssue(analysis);
+function analysisMainIssue(
+  analysis: WorkflowTestAnalysis | null,
+  textLabels: TextLocalizationLabels
+) {
+  return readableAnalysisIssue(analysis, textLabels);
 }
 
 function failedExecutionNodes(nodes: ExecutionNodeSnapshot[]) {
@@ -925,6 +977,81 @@ export function BatchResultItemDetailPage({
   const t = useT('agents.workflowTest.detail');
   const commonT = useT('agents.workflowTest.common');
   const typeT = useT('agents.workflowTest.questionTypes');
+  const errorT = useT('agents.workflowTest.userErrors');
+  const itemStatusLabels: ItemStatusLabels = {
+    pending: t('itemStatus.pending'),
+    running: t('itemStatus.running'),
+    passed: t('itemStatus.passed'),
+    failed: t('itemStatus.failed'),
+    review: t('itemStatus.review'),
+    canceled: t('itemStatus.canceled'),
+  };
+  const textLabels: TextLocalizationLabels = {
+    labelSeparator: t('labelSeparator'),
+    listSeparator: t('listSeparator'),
+    missingFieldDate: t('errors.missingFieldDate'),
+    missingFieldRelatedParty: t('errors.missingFieldRelatedParty'),
+  };
+  const errorLabels: WorkflowTestErrorLabels = {
+    judgeModelRequired: t('errors.judgeModelRequired'),
+    judgeNotConfigured: t('errors.judgeNotConfigured'),
+    judgeEmptyResult: t('errors.judgeEmptyResult'),
+    judgeFailed: t('errors.judgeFailed'),
+    judgeFailedSuggestion: t('errors.judgeFailedSuggestion'),
+    judgeManualReviewSuggestion: t('errors.judgeManualReviewSuggestion'),
+    judgeConfigureSuggestion: t('errors.judgeConfigureSuggestion'),
+    modelUnavailable: t('errors.modelUnavailable'),
+    modelUnavailableMarker: t('errors.modelUnavailableMarker'),
+    text: textLabels,
+  };
+  const taskGoalTypeLabels: TaskGoalTypeLabels = {
+    extract: t('taskGoalType.extract'),
+    classify: t('taskGoalType.classify'),
+    transform: t('taskGoalType.transform'),
+    analyze: t('taskGoalType.analyze'),
+    decision: t('taskGoalType.decision'),
+    action: t('taskGoalType.action'),
+    general: t('taskGoalType.general'),
+  };
+  const taskAssertionTypeLabels: TaskAssertionTypeLabels = {
+    must_include: t('taskAssertionType.mustInclude'),
+    must_not_include: t('taskAssertionType.mustNotInclude'),
+    missing_policy: t('taskAssertionType.missingPolicy'),
+    fact_present: t('taskAssertionType.factPresent'),
+    missing_field_marked: t('taskAssertionType.missingFieldMarked'),
+    state_present: t('taskAssertionType.statePresent'),
+    format: t('taskAssertionType.format'),
+    source_grounding: t('taskAssertionType.sourceGrounding'),
+    action_result: t('taskAssertionType.actionResult'),
+    semantic_match: t('taskAssertionType.semanticMatch'),
+    assertion: t('taskAssertionType.assertion'),
+  };
+  const taskAssertionSeverityLabels: TaskAssertionSeverityLabels = {
+    critical: t('taskAssertionSeverity.critical'),
+    normal: t('taskAssertionSeverity.normal'),
+    hint: t('taskAssertionSeverity.hint'),
+  };
+  const recommendationLabels: RecommendationLabels = {
+    genericTarget: t('recommendations.genericTarget'),
+    relatedNode: t('recommendations.relatedNode'),
+    failedCheck: label => t('recommendations.failedCheck', { label }),
+    reviewCheck: label => t('recommendations.reviewCheck', { label }),
+    excludedTerms: [
+      t('recommendations.filters.aiEvaluation'),
+      t('recommendations.filters.manualReview'),
+      t('recommendations.filters.checkEvaluation'),
+      'ai scoring',
+    ],
+  };
+  const fallbackNodeLabels: FallbackNodeLabels = {
+    start: t('fallbackNode.start'),
+    answer: t('fallbackNode.answer'),
+    branch: t('fallbackNode.branch'),
+  };
+  const getItemStatusLabel = (status: string) =>
+    itemStatusLabel(status, itemStatusLabels, commonT('none'));
+  const getDiagnosisStatusLabel = (status: string) =>
+    diagnosisStatusLabel(status, itemStatusLabels);
   const batchResultHref = `${getAgentDetailBatchTestHref(agentId, 'workflow')}/${batchId}`;
   const getBatchItemHref = (nextItemId: string) => `${batchResultHref}/items/${nextItemId}`;
   const { data: workflowDraft } = useWorkflowDraft(agentId);
@@ -1029,6 +1156,7 @@ export function BatchResultItemDetailPage({
   const outputs = selectedItem.outputs || {};
   const executionFailureLabels: ExecutionFailureLabels = {
     withReason: reason => t('executionFailedWithReason', { reason }),
+    localizeReason: reason => localizeWorkflowTestError(reason, errorLabels, errorT),
     noReply: t('executionFailedNoReply'),
     nodeFailed: t('nodeExecutionFailed'),
   };
@@ -1058,20 +1186,30 @@ export function BatchResultItemDetailPage({
   const questionSnapshot = selectedItem.case_snapshot.content || commonT('none');
   const expectedResult = selectedItem.case_snapshot.expected_result || commonT('none');
   const primaryReasonText =
-    (selectedItem.error ? localizeWorkflowTestError(selectedItem.error, t) : '') ||
-    (selectedItem.judge_reason ? localizeWorkflowTestError(selectedItem.judge_reason, t) : '') ||
+    (selectedItem.error
+      ? localizeWorkflowTestError(selectedItem.error, errorLabels, errorT)
+      : '') ||
+    (selectedItem.judge_reason
+      ? localizeWorkflowTestError(selectedItem.judge_reason, errorLabels, errorT)
+      : '') ||
     (selectedItem.status === 'passed' ? t('passedReasonFallback') : commonT('none'));
   const judgeReasonText = selectedItem.judge_reason
-    ? localizeWorkflowTestError(selectedItem.judge_reason, t)
+    ? localizeWorkflowTestError(selectedItem.judge_reason, errorLabels, errorT)
     : commonT('none');
   const judgeSuggestionText = selectedItem.judge_suggestion
-    ? localizeWorkflowTestError(selectedItem.judge_suggestion, t)
+    ? localizeWorkflowTestError(selectedItem.judge_suggestion, errorLabels, errorT)
     : '';
   const recommendations =
     selectedItem.status === 'passed'
       ? []
-      : buildRecommendationTexts(judgeSuggestionText, analysis, commonT('none'));
-  const diagnosisIssue = analysisMainIssue(analysis);
+      : buildRecommendationTexts(
+          judgeSuggestionText,
+          analysis,
+          commonT('none'),
+          textLabels,
+          recommendationLabels
+        );
+  const diagnosisIssue = analysisMainIssue(analysis, textLabels);
   const displayedDiagnosisStatus =
     selectedItem.status === 'passed' && analysis?.mode === 'task'
       ? 'passed'
@@ -1135,7 +1273,7 @@ export function BatchResultItemDetailPage({
                   {selectedItem.case_snapshot.content}
                 </h1>
                 <Badge className={itemStatusClass(selectedItem.status)}>
-                  {itemStatusLabel(selectedItem.status, commonT('none'))}
+                  {getItemStatusLabel(selectedItem.status)}
                 </Badge>
               </div>
               <div className="flex flex-wrap gap-2 text-sm text-slate-500">
@@ -1151,7 +1289,7 @@ export function BatchResultItemDetailPage({
               <div className={cn('rounded-2xl border p-5', itemStatusClass(selectedItem.status))}>
                 <div className="text-sm opacity-80">{t('table.testResult')}</div>
                 <div className="mt-2 text-2xl font-semibold">
-                  {itemStatusLabel(selectedItem.status, commonT('none'))}
+                  {getItemStatusLabel(selectedItem.status)}
                 </div>
                 <div className="mt-4 text-sm opacity-90">{t('judgeScore')}</div>
                 <div className="mt-1 text-xl font-semibold">{judgeScoreText}</div>
@@ -1196,7 +1334,7 @@ export function BatchResultItemDetailPage({
                     >
                       <div className="flex items-center justify-between gap-3">
                         <div className="text-base font-semibold text-slate-950">
-                          {buildTurnTitle(index)}
+                          {t('turnTitle', { index: index + 1 })}
                         </div>
                         {analysis?.comparisons.turns?.[index] ? (
                           <Badge
@@ -1204,7 +1342,7 @@ export function BatchResultItemDetailPage({
                               analysis.comparisons.turns[index].status
                             )}
                           >
-                            {diagnosisStatusLabel(analysis.comparisons.turns[index].status)}
+                            {getDiagnosisStatusLabel(analysis.comparisons.turns[index].status)}
                           </Badge>
                         ) : null}
                       </div>
@@ -1221,7 +1359,7 @@ export function BatchResultItemDetailPage({
                           {turn.expected || expectedResult ? (
                             <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
                               <div className="mb-2 text-xs font-medium text-slate-500">
-                                期望重点
+                                {t('expectedFocus')}
                               </div>
                               <div className="whitespace-pre-wrap text-sm text-slate-700">
                                 {turn.expected || expectedResult}
@@ -1241,7 +1379,12 @@ export function BatchResultItemDetailPage({
                       {SHOW_RAW_DATA_ACTIONS ? (
                         <button
                           type="button"
-                          onClick={() => openRawView(`第 ${turn.turnIndex} 轮输出`, turn.outputs)}
+                          onClick={() =>
+                            openRawView(
+                              t('turnOutputTitle', { index: turn.turnIndex }),
+                              turn.outputs
+                            )
+                          }
                           className="mt-3 text-left text-xs text-slate-500 underline-offset-4 hover:underline"
                         >
                           {t('viewTurnOutputRaw')}
@@ -1262,7 +1405,9 @@ export function BatchResultItemDetailPage({
                       </div>
                     </div>
                     <div className="rounded-2xl border border-slate-200 bg-white p-4">
-                      <div className="mb-2 text-xs font-medium text-slate-500">期望重点</div>
+                      <div className="mb-2 text-xs font-medium text-slate-500">
+                        {t('expectedFocus')}
+                      </div>
                       <div className="whitespace-pre-wrap text-sm text-slate-800">
                         {expectedResult}
                       </div>
@@ -1296,7 +1441,7 @@ export function BatchResultItemDetailPage({
                   </div>
                   <div className="mt-3">
                     <Badge className={itemStatusClass(selectedItem.status)}>
-                      {itemStatusLabel(selectedItem.status, commonT('none'))}
+                      {getItemStatusLabel(selectedItem.status)}
                     </Badge>
                   </div>
                 </div>
@@ -1309,11 +1454,11 @@ export function BatchResultItemDetailPage({
 
             {recommendations.length > 0 ? (
               <section className="space-y-3">
-                <h2 className="text-lg font-semibold text-slate-950">工作流优化建议</h2>
+                <h2 className="text-lg font-semibold text-slate-950">
+                  {t('workflowOptimizationTitle')}
+                </h2>
                 <div className="rounded-2xl border border-amber-200 bg-amber-50 p-5 text-sm text-amber-950">
-                  <div className="mb-3 text-amber-800">
-                    以下建议面向工作流配置、节点提示词、分支条件和知识引用，不是要求修改测试问题。
-                  </div>
+                  <div className="mb-3 text-amber-800">{t('workflowOptimizationDescription')}</div>
                   <div className="space-y-3">
                     {recommendations.map((recommendation, index) => (
                       <div key={`${recommendation}-${index}`} className="flex gap-3">
@@ -1336,15 +1481,17 @@ export function BatchResultItemDetailPage({
                     <div className="text-sm font-medium text-slate-950">{t('executionPath')}</div>
                     <div className="mt-1 text-xs text-slate-500">
                       {failedNodes.length > 0
-                        ? `${failedNodes.length} 个节点需要关注`
+                        ? t('nodesNeedAttention', { count: failedNodes.length })
                         : displayedDiagnosisStatus
-                          ? `诊断结果：${diagnosisStatusLabel(displayedDiagnosisStatus)}`
+                          ? t('diagnosisResult', {
+                              status: getDiagnosisStatusLabel(displayedDiagnosisStatus),
+                            })
                           : commonT('none')}
                     </div>
                   </div>
                   {displayedDiagnosisStatus ? (
                     <Badge className={diagnosisStatusClass(displayedDiagnosisStatus)}>
-                      {diagnosisStatusLabel(displayedDiagnosisStatus)}
+                      {getDiagnosisStatusLabel(displayedDiagnosisStatus)}
                     </Badge>
                   ) : null}
                 </div>
@@ -1353,7 +1500,8 @@ export function BatchResultItemDetailPage({
                   {executionNodes.length > 0 ? (
                     executionNodes.map((node, index) => {
                       const meta =
-                        draftNodeMetaById.get(node.id) || fallbackExecutionStepMeta(node.id);
+                        draftNodeMetaById.get(node.id) ||
+                        fallbackExecutionStepMeta(node.id, fallbackNodeLabels);
                       const theme =
                         meta.type in NODE_THEMES
                           ? NODE_THEMES[meta.type as keyof typeof NODE_THEMES]
@@ -1396,17 +1544,19 @@ export function BatchResultItemDetailPage({
                   <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-4">
                     <div className="flex flex-wrap items-start justify-between gap-3">
                       <div>
-                        <div className="text-sm font-medium text-slate-950">任务评价标准</div>
+                        <div className="text-sm font-medium text-slate-950">
+                          {t('taskEvaluationTitle')}
+                        </div>
                         <div className="mt-1 text-xs text-slate-500">
-                          评分按任务输入和最终输出判断，不要求任务工作流像对话一样追问或保留上下文。
+                          {t('taskEvaluationDescription')}
                         </div>
                       </div>
                       <div className="flex flex-wrap gap-2">
                         <Badge variant="outline">
-                          {taskGoalTypeLabel(taskEvaluationSchema.goal_type)}
+                          {taskGoalTypeLabel(taskEvaluationSchema.goal_type, taskGoalTypeLabels)}
                         </Badge>
                         {taskEvaluationSchema.source_grounding ? (
-                          <Badge variant="outline">依据输入输出</Badge>
+                          <Badge variant="outline">{t('sourceGrounding')}</Badge>
                         ) : null}
                       </div>
                     </div>
@@ -1426,16 +1576,19 @@ export function BatchResultItemDetailPage({
                           >
                             <div className="flex flex-wrap items-center gap-2">
                               <Badge variant="outline">
-                                {taskAssertionTypeLabel(assertion.type)}
+                                {taskAssertionTypeLabel(assertion.type, taskAssertionTypeLabels)}
                               </Badge>
                               {assertion.severity ? (
                                 <span className="text-xs text-slate-500">
-                                  {taskAssertionSeverityLabel(assertion.severity)}
+                                  {taskAssertionSeverityLabel(
+                                    assertion.severity,
+                                    taskAssertionSeverityLabels
+                                  )}
                                 </span>
                               ) : null}
                             </div>
                             <div className="mt-2 line-clamp-2 text-slate-800">
-                              {taskAssertionText(assertion)}
+                              {taskAssertionText(assertion, taskAssertionTypeLabels, textLabels)}
                             </div>
                           </div>
                         ))}
@@ -1445,12 +1598,16 @@ export function BatchResultItemDetailPage({
                     <div className="mt-3 flex flex-wrap gap-2 text-xs text-slate-600">
                       {taskEvaluationSchema.allowed_extra_types?.length ? (
                         <span className="rounded-full bg-white px-2 py-1">
-                          允许合理附加：{taskEvaluationSchema.allowed_extra_types.join('、')}
+                          {t('allowedExtras', {
+                            values: taskEvaluationSchema.allowed_extra_types.join(
+                              textLabels.listSeparator
+                            ),
+                          })}
                         </span>
                       ) : null}
                       {taskEvaluationSchema.missing_policy?.mode ? (
                         <span className="rounded-full bg-white px-2 py-1">
-                          缺失策略：允许标注业务缺失，禁止误报技术失败
+                          {t('missingPolicy')}
                         </span>
                       ) : null}
                     </div>
@@ -1458,7 +1615,7 @@ export function BatchResultItemDetailPage({
                     {taskEvaluationAssertions.length > visibleTaskEvaluationAssertions.length ? (
                       <details className="mt-3">
                         <summary className="cursor-pointer text-sm font-medium text-slate-700">
-                          查看全部评价断言（{taskEvaluationAssertions.length}）
+                          {t('viewAllAssertions', { count: taskEvaluationAssertions.length })}
                         </summary>
                         <div className="mt-2 space-y-2">
                           {taskEvaluationAssertions
@@ -1469,9 +1626,9 @@ export function BatchResultItemDetailPage({
                                 className="rounded-lg bg-white px-3 py-2 text-sm text-slate-700"
                               >
                                 <span className="mr-2 font-medium text-slate-900">
-                                  {taskAssertionTypeLabel(assertion.type)}
+                                  {taskAssertionTypeLabel(assertion.type, taskAssertionTypeLabels)}
                                 </span>
-                                {taskAssertionText(assertion)}
+                                {taskAssertionText(assertion, taskAssertionTypeLabels, textLabels)}
                               </div>
                             ))}
                         </div>
@@ -1483,16 +1640,16 @@ export function BatchResultItemDetailPage({
                 {checks.length ? (
                   <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-4">
                     <div className="flex flex-wrap items-center justify-between gap-3">
-                      <div className="text-sm font-medium text-slate-950">检查点摘要</div>
+                      <div className="text-sm font-medium text-slate-950">{t('checkSummary')}</div>
                       <div className="flex flex-wrap gap-2 text-xs">
                         <Badge className="border-emerald-200 bg-emerald-50 text-emerald-700">
-                          通过 {checkCounts.passed}
+                          {t('passed', { count: checkCounts.passed })}
                         </Badge>
                         <Badge className="border-red-200 bg-red-50 text-red-700">
-                          不通过 {checkCounts.failed}
+                          {t('failed', { count: checkCounts.failed })}
                         </Badge>
                         <Badge className="border-amber-200 bg-amber-50 text-amber-700">
-                          需复核 {checkCounts.review}
+                          {t('review', { count: checkCounts.review })}
                         </Badge>
                       </div>
                     </div>
@@ -1506,12 +1663,10 @@ export function BatchResultItemDetailPage({
                           >
                             <div className="flex flex-wrap items-center justify-between gap-2">
                               <div className="font-medium text-slate-900">
-                                {isGenericCheckLabel(check.label)
-                                  ? '回复是否覆盖本轮期望'
-                                  : check.label}
+                                {isGenericCheck(check) ? t('genericCheckLabel') : check.label}
                               </div>
                               <Badge className={diagnosisStatusClass(check.status)}>
-                                {diagnosisStatusLabel(check.status)}
+                                {getDiagnosisStatusLabel(check.status)}
                               </Badge>
                             </div>
                             {check.evidence ? (
@@ -1526,7 +1681,7 @@ export function BatchResultItemDetailPage({
 
                     <details className="mt-3">
                       <summary className="cursor-pointer text-sm font-medium text-slate-700">
-                        查看全部检查点明细（{checks.length}）
+                        {t('viewAllChecks', { count: checks.length })}
                       </summary>
                       <div className="mt-3 max-h-96 space-y-2 overflow-auto pr-1">
                         {checks.map((check, index) => (
@@ -1536,12 +1691,10 @@ export function BatchResultItemDetailPage({
                           >
                             <div className="flex flex-wrap items-center justify-between gap-2">
                               <div className="font-medium text-slate-900">
-                                {isGenericCheckLabel(check.label)
-                                  ? '回复是否覆盖本轮期望'
-                                  : check.label}
+                                {isGenericCheck(check) ? t('genericCheckLabel') : check.label}
                               </div>
                               <Badge className={diagnosisStatusClass(check.status)}>
-                                {diagnosisStatusLabel(check.status)}
+                                {getDiagnosisStatusLabel(check.status)}
                               </Badge>
                             </div>
                             {check.evidence ? (
@@ -1557,10 +1710,10 @@ export function BatchResultItemDetailPage({
                 {diagnosticTraceNodes.length ? (
                   <details className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-3">
                     <summary className="cursor-pointer text-sm font-medium text-slate-900">
-                      工程排障信息：节点输入输出
+                      {t('troubleshootingTitle')}
                     </summary>
                     <div className="mt-2 text-xs text-slate-500">
-                      仅在运行日志记录了可展示数据时显示。空白不代表节点没有执行，可能是该节点未产出前端可展示字段或日志未保存详细输入输出。
+                      {t('troubleshootingDescription')}
                     </div>
                     <div className="mt-3 space-y-2">
                       {diagnosticTraceNodes.map((node, index) => (
@@ -1580,7 +1733,9 @@ export function BatchResultItemDetailPage({
                           <div className="mt-3 grid gap-3 lg:grid-cols-2">
                             {hasDisplayValue(node.input) ? (
                               <div className="rounded-lg bg-slate-50 p-3">
-                                <div className="mb-2 text-xs font-medium text-slate-500">输入</div>
+                                <div className="mb-2 text-xs font-medium text-slate-500">
+                                  {t('input')}
+                                </div>
                                 <pre className="max-h-64 overflow-auto whitespace-pre-wrap text-xs text-slate-700">
                                   {stringifyJson(node.input, commonT('none'))}
                                 </pre>
@@ -1588,7 +1743,9 @@ export function BatchResultItemDetailPage({
                             ) : null}
                             {hasDisplayValue(node.output) ? (
                               <div className="rounded-lg bg-slate-50 p-3">
-                                <div className="mb-2 text-xs font-medium text-slate-500">输出</div>
+                                <div className="mb-2 text-xs font-medium text-slate-500">
+                                  {t('output')}
+                                </div>
                                 <pre className="max-h-64 overflow-auto whitespace-pre-wrap text-xs text-slate-700">
                                   {stringifyJson(node.output, commonT('none'))}
                                 </pre>
@@ -1597,7 +1754,7 @@ export function BatchResultItemDetailPage({
                           </div>
                           {node.error ? (
                             <div className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
-                              {node.error}
+                              {localizeWorkflowTestError(node.error, errorLabels, errorT)}
                             </div>
                           ) : null}
                         </details>
@@ -1609,295 +1766,12 @@ export function BatchResultItemDetailPage({
             </section>
           </CardContent>
         </Card>
-
-        {/*
-        <div className="hidden" aria-hidden="true">
-        <Card className="rounded-2xl border-slate-200">
-          <CardContent className="space-y-6 p-6">
-            <section className="space-y-3">
-              <h2 className="text-lg font-semibold text-slate-950">{t('questionSnapshot')}</h2>
-              <div className="rounded-2xl border border-slate-200 bg-white p-4 text-sm text-slate-800">
-                {questionSnapshot}
-              </div>
-              <div className="rounded-2xl border border-slate-200 bg-white p-4 text-sm text-slate-800">
-                <div className="mb-2 text-xs font-medium text-slate-500">{t('expectedResult')}</div>
-                <div className="whitespace-pre-wrap">{expectedResult}</div>
-              </div>
-              <div className="flex items-center justify-between gap-3">
-                <h2 className="text-lg font-semibold text-slate-950">{t('conversationContent')}</h2>
-                {SHOW_RAW_DATA_ACTIONS ? (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => openRawView(t('rawOutput'), outputs as Record<string, unknown>)}
-                  >
-                    <ExternalLink className="mr-2 size-4" />
-                    {t('rawData')}
-                  </Button>
-                ) : null}
-              </div>
-              {conversationTurns.length > 0 ? (
-                <div className="space-y-4">
-                  {conversationTurns.map((turn, index) => {
-                    const turnSnapshot = selectedItem.case_snapshot.turns?.[index];
-                    return (
-                      <div key={`${turn.workflowRunId || 'turn'}-${turn.turnIndex}`} className="rounded-2xl border border-slate-200 bg-slate-50 p-5">
-                        <div className="text-base font-medium text-slate-950">
-                          {buildTurnTitle(index)}
-                        </div>
-                        <div className="mt-3 space-y-3">
-                          <div className="rounded-xl border border-slate-200 bg-white p-4">
-                            <div className="mb-2 text-xs font-medium text-slate-500">{t('userQuestion')}</div>
-                            <div className="whitespace-pre-wrap text-sm text-slate-800">
-                              {turn.content || turnSnapshot?.content || commonT('none')}
-                            </div>
-                          </div>
-                          <div className="rounded-xl border border-slate-200 bg-white p-4">
-                            <div className="mb-2 text-xs font-medium text-slate-500">{t('agentReply')}</div>
-                            <div className="whitespace-pre-wrap text-sm text-slate-800">
-                              {turn.answer || commonT('none')}
-                            </div>
-                          </div>
-                          {SHOW_RAW_DATA_ACTIONS ? (
-                            <button
-                              type="button"
-                              onClick={() => openRawView(`第 ${turn.turnIndex} 轮输出`, turn.outputs)}
-                              className="text-left text-xs text-slate-500 underline-offset-4 hover:underline"
-                            >
-                              {t('viewTurnOutputRaw')}
-                            </button>
-                          ) : null}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              ) : (
-                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-6 text-sm text-slate-500">
-                  {t('conversationSnapshotFallback')}
-                </div>
-              )}
-            </section>
-
-            {analysis ? (
-              <section className="space-y-3">
-                <h2 className="text-lg font-semibold text-slate-950">工作流诊断</h2>
-                <div className="grid gap-4 lg:grid-cols-[220px_minmax(0,1fr)]">
-                  <div className={cn('rounded-2xl border p-4', diagnosisStatusClass(analysis.summary.status))}>
-                    <div className="text-sm opacity-80">诊断结论</div>
-                    <div className="mt-2 text-2xl font-semibold">
-                      {diagnosisStatusLabel(analysis.summary.status)}
-                    </div>
-                    <div className="mt-3 text-sm">
-                      {analysis.summary.main_issue || '暂未发现明确问题'}
-                    </div>
-                    <div className="mt-4 grid grid-cols-3 gap-2 text-center text-xs">
-                      <div className="rounded-xl bg-white/70 px-2 py-2">
-                        <div className="font-semibold">{analysis.summary.passed}</div>
-                        <div>通过</div>
-                      </div>
-                      <div className="rounded-xl bg-white/70 px-2 py-2">
-                        <div className="font-semibold">{analysis.summary.failed}</div>
-                        <div>失败</div>
-                      </div>
-                      <div className="rounded-xl bg-white/70 px-2 py-2">
-                        <div className="font-semibold">{analysis.summary.review}</div>
-                        <div>复核</div>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="space-y-4">
-                    {analysis.comparisons.overall ? (
-                      <div className="rounded-2xl border border-slate-200 bg-white p-4 text-sm">
-                        <div className="flex items-center justify-between gap-3">
-                          <div className="font-medium text-slate-950">整体预期对比</div>
-                          <Badge className={diagnosisStatusClass(analysis.comparisons.overall.status)}>
-                            {diagnosisStatusLabel(analysis.comparisons.overall.status)}
-                          </Badge>
-                        </div>
-                        <div className="mt-3 grid gap-3 lg:grid-cols-2">
-                          <div className="rounded-xl bg-slate-50 p-3">
-                            <div className="mb-1 text-xs text-slate-500">预期</div>
-                            <div className="whitespace-pre-wrap text-slate-800">
-                              {analysis.comparisons.overall.expected || commonT('none')}
-                            </div>
-                          </div>
-                          <div className="rounded-xl bg-slate-50 p-3">
-                            <div className="mb-1 text-xs text-slate-500">实际</div>
-                            <div className="whitespace-pre-wrap text-slate-800">
-                              {analysis.comparisons.overall.actual || commonT('none')}
-                            </div>
-                          </div>
-                        </div>
-                        <div className="mt-3 text-slate-600">{analysis.comparisons.overall.evidence}</div>
-                      </div>
-                    ) : null}
-
-                    {analysis.comparisons.checks.length > 0 ? (
-                      <div className="rounded-2xl border border-slate-200 bg-white p-4">
-                        <div className="font-medium text-slate-950">检查点结果</div>
-                        <div className="mt-3 space-y-2">
-                          {analysis.comparisons.checks.map((check, index) => (
-                            <div key={workflowTestCheckKey(check, index)} className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm">
-                              <div className="flex flex-wrap items-center justify-between gap-2">
-                                <div className="font-medium text-slate-900">{check.label}</div>
-                                <div className="flex items-center gap-2">
-                                  {check.severity === 'critical' ? (
-                                    <Badge className="bg-red-50 text-red-700">关键</Badge>
-                                  ) : null}
-                                  <Badge className={diagnosisStatusClass(check.status)}>
-                                    {diagnosisStatusLabel(check.status)}
-                                  </Badge>
-                                </div>
-                              </div>
-                              <div className="mt-2 text-slate-600">{check.evidence}</div>
-                              {check.suggestion ? (
-                                <div className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-amber-800">
-                                  {check.suggestion}
-                                </div>
-                              ) : null}
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    ) : null}
-                  </div>
-                </div>
-
-                {analysis.trace.nodes.length > 0 ? (
-                  <div className="rounded-2xl border border-slate-200 bg-white p-4">
-                    <div className="font-medium text-slate-950">节点输入输出</div>
-                    <div className="mt-3 space-y-2">
-                      {analysis.trace.nodes.map((node, index) => (
-                        <details key={`${node.node_id}-${index}`} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-                          <summary className="cursor-pointer text-sm font-medium text-slate-900">
-                            {node.node_name || node.node_id || commonT('none')}
-                            <span className="ml-2 text-xs font-normal text-slate-500">
-                              {node.node_type || commonT('none')} · {node.status || commonT('none')}
-                              {node.duration_ms > 0 ? ` · ${formatWorkflowElapsedMs(node.duration_ms)}` : ''}
-                            </span>
-                          </summary>
-                          <div className="mt-3 grid gap-3 lg:grid-cols-2">
-                            <div className="rounded-lg bg-white p-3">
-                              <div className="mb-2 text-xs font-medium text-slate-500">输入</div>
-                              <pre className="max-h-64 overflow-auto whitespace-pre-wrap text-xs text-slate-700">
-                                {stringifyJson(node.input, commonT('none'))}
-                              </pre>
-                            </div>
-                            <div className="rounded-lg bg-white p-3">
-                              <div className="mb-2 text-xs font-medium text-slate-500">输出</div>
-                              <pre className="max-h-64 overflow-auto whitespace-pre-wrap text-xs text-slate-700">
-                                {stringifyJson(node.output, commonT('none'))}
-                              </pre>
-                            </div>
-                          </div>
-                          {node.error ? (
-                            <div className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
-                              {node.error}
-                            </div>
-                          ) : null}
-                        </details>
-                      ))}
-                    </div>
-                  </div>
-                ) : null}
-
-                {analysis.suggestions.length > 0 ? (
-                  <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
-                    <div className="font-medium">优化建议</div>
-                    <div className="mt-2 space-y-2">
-                      {analysis.suggestions.map((suggestion, index) => (
-                        <div key={`${suggestion.target}-${index}`}>
-                          <span className="font-medium">{suggestion.target}：</span>
-                          {suggestion.content}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                ) : null}
-              </section>
-            ) : null}
-
-            <section className="space-y-3">
-              <h2 className="text-lg font-semibold text-slate-950">{t('judgeDetail')}</h2>
-              <div className="grid gap-4 lg:grid-cols-[160px_minmax(0,1fr)]">
-                <div className="rounded-2xl border border-slate-200 bg-white p-4">
-                  <div className="text-sm text-slate-500">{t('judgeScore')}</div>
-                  <div
-                    className={cn(
-                      'mt-3 text-3xl font-semibold',
-                      selectedItem.status === 'passed' ? 'text-emerald-600' : 'text-slate-700'
-                    )}
-                  >
-                    {judgeScoreText}
-                  </div>
-                </div>
-                <div className="rounded-2xl border border-slate-200 bg-white p-4 text-sm text-slate-800">
-                  <div className="text-slate-500">{t('judgeOpinion')}</div>
-                  <div className="mt-2 whitespace-pre-wrap">{judgeReasonText}</div>
-                  {judgeSuggestionText ? (
-                    <div className="mt-4 rounded-xl bg-amber-50 p-4 text-amber-800">
-                      <div className="font-medium">{t('suggestionLabel')}</div>
-                      <div className="mt-1 whitespace-pre-wrap">{judgeSuggestionText}</div>
-                    </div>
-                  ) : null}
-                </div>
-              </div>
-            </section>
-
-            <section className="space-y-3">
-              <h2 className="text-lg font-semibold text-slate-950">{t('executionRecord')}</h2>
-              <div className={cn('rounded-2xl border p-4 text-sm', reasonToneClass)}>
-                <div className={cn('text-xs', reasonTitleClass)}>{reasonTitle}</div>
-                <div className="mt-1 font-medium">{reasonText}</div>
-              </div>
-              <div className="rounded-2xl border border-slate-200 bg-white p-4">
-                <div className="text-xs text-slate-500">{t('executionPath')}</div>
-                <div className="mt-3 flex flex-wrap items-center gap-2">
-                  {executionNodes.length > 0 ? (
-                    executionNodes.map((node, index) => {
-                      const meta = draftNodeMetaById.get(node.id) || fallbackExecutionStepMeta(node.id);
-                      const theme =
-                        meta.type in NODE_THEMES
-                          ? NODE_THEMES[meta.type as keyof typeof NODE_THEMES]
-                          : undefined;
-                      const Icon = theme?.icon;
-                      return (
-                        <React.Fragment key={node.id}>
-                          <div className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1 text-sm font-medium text-slate-700">
-                            {Icon ? (
-                              <span
-                                className={cn(
-                                  'flex size-5 items-center justify-center rounded-md',
-                                  theme?.classNames.iconBg
-                                )}
-                              >
-                                <Icon className="size-3" />
-                              </span>
-                            ) : null}
-                            <span>{meta.title}</span>
-                          </div>
-                          {index < executionNodes.length - 1 ? <span className="text-slate-300">›</span> : null}
-                        </React.Fragment>
-                      );
-                    })
-                  ) : (
-                    <span className="text-sm text-slate-500">{commonT('none')}</span>
-                  )}
-                </div>
-              </div>
-            </section>
-          </CardContent>
-        </Card>
-        </div>
-        */}
       </div>
 
       <Dialog open={Boolean(rawView)} onOpenChange={open => !open && setRawView(null)}>
         <DialogContent size="lg">
           <DialogHeader>
-            <DialogTitle>{rawView?.title || '原始数据'}</DialogTitle>
+            <DialogTitle>{rawView?.title || t('rawData')}</DialogTitle>
           </DialogHeader>
           <DialogBody>
             <pre className="max-h-[70vh] overflow-auto whitespace-pre-wrap rounded-2xl border border-slate-200 bg-slate-50 p-5 text-xs text-slate-700">
