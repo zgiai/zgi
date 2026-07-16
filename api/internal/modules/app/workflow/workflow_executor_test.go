@@ -220,6 +220,54 @@ func TestCreateVariablePoolWithVars_PreservesOrganizationID(t *testing.T) {
 	}
 }
 
+func TestCreateVariablePoolWithVars_RegistersSystemFiles(t *testing.T) {
+	executor := &WorkflowExecutor{}
+	files := []interface{}{
+		map[string]interface{}{
+			"type":            "document",
+			"transfer_method": "local_file",
+			"upload_file_id":  "file-1",
+			"name":            "contract.docx",
+		},
+	}
+
+	variablePool := executor.createVariablePoolWithVars(map[string]any{
+		"sys.files": files,
+	}, nil, nil)
+
+	variable := variablePool.GetWithPath([]string{"sys", "files"})
+	if variable == nil {
+		t.Fatalf("expected sys.files to be registered in variable pool")
+	}
+	if got := variable.GetType(); got != shared.SegmentTypeArrayFile {
+		t.Fatalf("sys.files type = %s, want %s", got, shared.SegmentTypeArrayFile)
+	}
+}
+
+func TestCreateVariablePoolWithVars_RegistersHashFilesAsSystemFiles(t *testing.T) {
+	executor := &WorkflowExecutor{}
+	files := []interface{}{
+		map[string]interface{}{
+			"type":            "document",
+			"transfer_method": "local_file",
+			"upload_file_id":  "file-1",
+			"name":            "contract.docx",
+		},
+	}
+
+	variablePool := executor.createVariablePoolWithVars(map[string]any{
+		"#files#": files,
+	}, nil, nil)
+
+	variable := variablePool.GetWithPath([]string{"sys", "files"})
+	if variable == nil {
+		t.Fatalf("expected #files# to be registered as sys.files in variable pool")
+	}
+	if got := variable.GetType(); got != shared.SegmentTypeArrayFile {
+		t.Fatalf("sys.files type = %s, want %s", got, shared.SegmentTypeArrayFile)
+	}
+}
+
 func TestCreateVariablePoolWithVarsForRunRejectsUnauthorizedConversationBeforeVariableLoad(t *testing.T) {
 	conversationID := uuid.New()
 	agentID := uuid.New()
@@ -424,6 +472,9 @@ func TestExecuteWorkflowNodeWithCallbacks_VisionOnlyImageInputReachesGateway(t *
 				SourceURL: "https://example.com/files/paper.jpg",
 			}, nil
 		},
+		downloadFileFn: func(ctx context.Context, fileID string) ([]byte, error) {
+			return []byte{0xff, 0xd8, 0xff, 0xd9}, nil
+		},
 	}
 
 	executor := NewWorkflowExecutor()
@@ -431,7 +482,7 @@ func TestExecuteWorkflowNodeWithCallbacks_VisionOnlyImageInputReachesGateway(t *
 	executor.SetLLMClient(&mockWorkflowLLMClient{
 		appChatStreamFn: func(ctx context.Context, appCtx *llmClient.AppContext, req *llmAdapter.ChatRequest) (<-chan llmAdapter.StreamResponse, error) {
 			capturedRequest = req
-			hasSignedPreviewURL := false
+			hasWorkflowImageInput := false
 			hasPromptText := false
 
 			for _, message := range req.Messages {
@@ -440,9 +491,9 @@ func TestExecuteWorkflowNodeWithCallbacks_VisionOnlyImageInputReachesGateway(t *
 					continue
 				}
 				for _, part := range parts {
-					if part.Type == "image_url" && part.ImageURL != nil &&
-						strings.HasPrefix(part.ImageURL.URL, "https://api.zgi.im/console/api/files/file-1/file-preview?") {
-						hasSignedPreviewURL = true
+					if part.Type == "image_url" && part.ImageURL != nil {
+						hasWorkflowImageInput = strings.HasPrefix(part.ImageURL.URL, "https://api.zgi.im/console/api/files/file-1/file-preview?") ||
+							strings.HasPrefix(part.ImageURL.URL, "data:image/jpeg;base64,")
 					}
 					if part.Type == "text" && part.Text == "Analyze the uploaded image or file directly. Use all visible content, including questions, answers, annotations, scores, diagrams, and layout details, to complete the task." {
 						hasPromptText = true
@@ -451,7 +502,7 @@ func TestExecuteWorkflowNodeWithCallbacks_VisionOnlyImageInputReachesGateway(t *
 			}
 
 			responseText := "数据不足，无法进行诊断。"
-			if hasSignedPreviewURL && hasPromptText {
+			if hasWorkflowImageInput && hasPromptText {
 				responseText = "诊断成功"
 			}
 
@@ -617,8 +668,8 @@ func TestExecuteWorkflowNodeWithCallbacks_VisionOnlyImageInputReachesGateway(t *
 	if got := result.ProcessData["selected_file_url_is_public"]; got != true {
 		t.Fatalf("expected selected_file_url_is_public=true, got %v", got)
 	}
-	if got := result.ProcessData["final_prompt_contains_inline_data"]; got != false {
-		t.Fatalf("expected final_prompt_contains_inline_data=false, got %v", got)
+	if got := result.ProcessData["final_prompt_contains_inline_data"]; got != true {
+		t.Fatalf("expected final_prompt_contains_inline_data=true, got %v", got)
 	}
 	if got := result.ProcessData["resolved_model_source"]; got != "node_default" {
 		t.Fatalf("expected resolved_model_source=node_default, got %v", got)
@@ -890,8 +941,8 @@ func TestExecuteWorkflowNodeWithCallbacks_VisionFailureRetainsProcessData(t *tes
 	if result.Metadata[shared.ResolvedModelSource] != "node_default" {
 		t.Fatalf("expected resolved model source metadata to be preserved, got %v", result.Metadata[shared.ResolvedModelSource])
 	}
-	if !strings.Contains(result.ErrMsg, "FILES_URL") {
-		t.Fatalf("expected error message to mention FILES_URL, got %q", result.ErrMsg)
+	if !strings.Contains(result.ErrMsg, "workflow local media file is empty") {
+		t.Fatalf("expected error message to mention empty local media file, got %q", result.ErrMsg)
 	}
 }
 

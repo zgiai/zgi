@@ -11,6 +11,28 @@ import (
 	"gorm.io/gorm"
 )
 
+func jsonObjectOrValueMap(raw string) (map[string]interface{}, error) {
+	if raw == "" {
+		return make(map[string]interface{}), nil
+	}
+	var mapped map[string]interface{}
+	if err := json.Unmarshal([]byte(raw), &mapped); err == nil {
+		if mapped == nil {
+			return make(map[string]interface{}), nil
+		}
+		return mapped, nil
+	}
+
+	var value interface{}
+	if err := json.Unmarshal([]byte(raw), &value); err != nil {
+		return nil, err
+	}
+	if value == nil {
+		return make(map[string]interface{}), nil
+	}
+	return map[string]interface{}{"value": value}, nil
+}
+
 // WorkflowType represents workflow type enum
 
 type CreatedByRole string
@@ -190,8 +212,7 @@ func (wr *WorkflowRun) GetOutputsDict() map[string]interface{} {
 	if wr.Outputs == nil || *wr.Outputs == "" {
 		return make(map[string]interface{})
 	}
-	var outputs map[string]interface{}
-	json.Unmarshal([]byte(*wr.Outputs), &outputs)
+	outputs, _ := jsonObjectOrValueMap(*wr.Outputs)
 	return outputs
 }
 
@@ -253,8 +274,7 @@ func (wne *WorkflowNodeExecution) GetOutputsDict() map[string]interface{} {
 	if wne.Outputs == nil || *wne.Outputs == "" {
 		return make(map[string]interface{})
 	}
-	var outputs map[string]interface{}
-	json.Unmarshal([]byte(*wne.Outputs), &outputs)
+	outputs, _ := jsonObjectOrValueMap(*wne.Outputs)
 	return outputs
 }
 
@@ -458,11 +478,7 @@ func (w *WorkflowNodeRuntimeLog) GetOutputsDict() (map[string]interface{}, error
 		return make(map[string]interface{}), nil
 	}
 
-	var outputs map[string]interface{}
-	if err := json.Unmarshal([]byte(*w.Outputs), &outputs); err != nil {
-		return nil, err
-	}
-	return outputs, nil
+	return jsonObjectOrValueMap(*w.Outputs)
 }
 
 // GetExecutionMetadataDict parses execution_metadata JSON string to map
@@ -503,7 +519,6 @@ func (wrl *WorkflowRunLog) GetOutputsDict() map[string]interface{} {
 	if wrl.Outputs == nil || *wrl.Outputs == "" {
 		return make(map[string]interface{})
 	}
-	var outputs map[string]interface{}
-	json.Unmarshal([]byte(*wrl.Outputs), &outputs)
+	outputs, _ := jsonObjectOrValueMap(*wrl.Outputs)
 	return outputs
 }

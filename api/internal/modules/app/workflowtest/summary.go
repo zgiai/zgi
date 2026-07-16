@@ -26,7 +26,13 @@ func runSummarizer(ctx context.Context, summarizer Summarizer, req SummaryReques
 			return result.Summary
 		}
 		if err != nil {
-			return fmt.Sprintf("AI 总结生成失败：%v。%s", err, fallbackBatchSummary(req.Batch, req.Items))
+			if isModelPricingNotConfiguredError(err) {
+				return fmt.Sprintf("%s%s", summaryModelPricingMissing, fallbackBatchSummary(req.Batch, req.Items))
+			}
+			if isModelUnavailableError(err) {
+				return fmt.Sprintf("%s%s", summaryModelUnavailable, fallbackBatchSummary(req.Batch, req.Items))
+			}
+			return fmt.Sprintf("AI 总结生成失败，请稍后重试或人工查看明细。%s", fallbackBatchSummary(req.Batch, req.Items))
 		}
 	}
 	return fallbackBatchSummary(req.Batch, req.Items)

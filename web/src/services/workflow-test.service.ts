@@ -196,6 +196,26 @@ class WorkflowTestService extends BaseService {
     );
   }
 
+  resumeGenerationTask(
+    agentId: string,
+    taskId: string
+  ): Promise<ApiResponseData<WorkflowTestGenerationTaskResponse>> {
+    return this.request(
+      'post',
+      `/agents/${agentId}/workflow-tests/cases/generation-tasks/${taskId}/resume`
+    );
+  }
+
+  deleteGenerationTask(
+    agentId: string,
+    taskId: string
+  ): Promise<ApiResponseData<{ deleted: boolean }>> {
+    return this.request(
+      'delete',
+      `/agents/${agentId}/workflow-tests/cases/generation-tasks/${taskId}`
+    );
+  }
+
   listBatches(
     agentId: string
   ): Promise<ApiResponseData<WorkflowTestListResponse<WorkflowTestBatch>>> {
