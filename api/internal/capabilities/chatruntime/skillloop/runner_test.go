@@ -208,14 +208,7 @@ func TestRunnerLegacyToolChatUsesSimpleToolContract(t *testing.T) {
 
 func TestRunnerTerminalOnlyUsesOneFinalAnswerModelCall(t *testing.T) {
 	fakeLLM := &runnerTestLLMClient{appChatResponses: []*adapter.ChatResponse{{
-		Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", ToolCalls: []adapter.ToolCall{{
-			ID:   "final-answer",
-			Type: "function",
-			Function: adapter.FunctionCall{
-				Name:      skills.MetaToolFinalAnswer,
-				Arguments: `{"answer":"The approved update was completed."}`,
-			},
-		}}}}},
+		Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: "The approved update was completed."}}},
 	}}}
 	runner := &Runner{
 		LLMClient:    fakeLLM,
@@ -246,8 +239,8 @@ func TestRunnerTerminalOnlyUsesOneFinalAnswerModelCall(t *testing.T) {
 		t.Fatalf("model calls = %d, requests = %d; want 1", fakeLLM.appChatCalls, len(fakeLLM.appChatRequests))
 	}
 	request := fakeLLM.appChatRequests[0]
-	if len(request.Tools) != 1 || request.Tools[0].Function.Name != skills.MetaToolFinalAnswer {
-		t.Fatalf("tools = %#v, want submit_final_answer only", request.Tools)
+	if len(request.Tools) != 0 || request.ToolChoice != nil {
+		t.Fatalf("tools = %#v, tool_choice = %#v; want a tool-free terminal request", request.Tools, request.ToolChoice)
 	}
 	for _, message := range request.Messages {
 		if strings.Contains(messageContent(message.Content), "large instructions") {
@@ -256,7 +249,7 @@ func TestRunnerTerminalOnlyUsesOneFinalAnswerModelCall(t *testing.T) {
 	}
 }
 
-func TestRunnerTerminalOnlyDoesNotRetryEmptyModelResponse(t *testing.T) {
+func TestRunnerTerminalOnlyFallsBackFromEmptyModelResponseWhenOperationCompleted(t *testing.T) {
 	fakeLLM := &runnerTestLLMClient{appChatResponses: []*adapter.ChatResponse{{
 		Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant"}}},
 	}}}
@@ -269,7 +262,7 @@ func TestRunnerTerminalOnlyDoesNotRetryEmptyModelResponse(t *testing.T) {
 		Messages: []adapter.Message{{Role: "user", Content: "finish"}},
 	})
 
-	_, _, err := runner.Run(context.Background(), RunRequest{
+	answer, _, err := runner.Run(context.Background(), RunRequest{
 		Prepared:          prepared,
 		Resolved:          &skills.ResolvedSkills{},
 		ProtocolToolsOnly: true,
@@ -278,11 +271,87 @@ func TestRunnerTerminalOnlyDoesNotRetryEmptyModelResponse(t *testing.T) {
 			return map[string]interface{}{"operation_plan": map[string]interface{}{"status": "completed"}}
 		},
 	})
-	if err == nil || !strings.Contains(err.Error(), "terminal-only model returned no final answer") {
-		t.Fatalf("error = %v, want terminal-only empty response error", err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if answer != "The operation was completed." {
+		t.Fatalf("answer = %q, want deterministic completed-operation fallback", answer)
 	}
 	if fakeLLM.appChatCalls != 1 {
 		t.Fatalf("model calls = %d, want 1", fakeLLM.appChatCalls)
+	}
+}
+
+func TestRunnerTerminalOnlyFallsBackFromInventedToolAfterCompletedOperation(t *testing.T) {
+	fakeLLM := &runnerTestLLMClient{appChatResponses: []*adapter.ChatResponse{{
+		Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", ToolCalls: []adapter.ToolCall{{
+			ID:   "invented-file-list",
+			Type: "function",
+			Function: adapter.FunctionCall{
+				Name:      "file_list",
+				Arguments: `{}`,
+			},
+		}}}}},
+	}}}
+	var traces []skills.SkillTrace
+	runner := &Runner{
+		LLMClient:    fakeLLM,
+		SkillRuntime: skills.NewRuntime(nil, nil),
+		AppContext:   &llmclient.AppContext{},
+		OnTrace: func(_ []skills.SkillTrace, trace skills.SkillTrace) {
+			traces = append(traces, trace)
+		},
+	}
+	prepared := NewPreparedChat("conv-terminal-tool", "msg-terminal-tool", "", "auto", &adapter.ChatRequest{
+		Messages: []adapter.Message{{Role: "user", Content: "生成第十一章文件并更新智能体提示词"}},
+	})
+	prepared.Query = "生成第十一章文件并更新智能体提示词"
+
+	answer, _, err := runner.Run(context.Background(), RunRequest{
+		Prepared:          prepared,
+		Resolved:          &skills.ResolvedSkills{},
+		ProtocolToolsOnly: true,
+		TerminalOnly:      true,
+		RuntimeStateSnapshot: func() map[string]interface{} {
+			return map[string]interface{}{
+				"operation_plan": map[string]interface{}{"status": "completed"},
+			}
+		},
+		CurrentMetadata: func() map[string]interface{} {
+			return map[string]interface{}{
+				"generated_files": []interface{}{map[string]interface{}{
+					"file_id": "file-11", "filename": "第十一章.md", "target": "managed_file",
+				}},
+				"skill_invocations": []interface{}{map[string]interface{}{
+					"kind": "tool_call", "skill_id": "agent-management", "tool_name": "update_agent_config", "status": "success",
+					"result": map[string]interface{}{
+						"status": "completed", "agent_name": "灵澜学院说书人", "updated_fields": []interface{}{"system_prompt"},
+					},
+				}},
+			}
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "文件「第十一章.md」已生成并保存；智能体「灵澜学院说书人」的系统提示词已更新。"
+	if answer != want {
+		t.Fatalf("answer = %q, want %q", answer, want)
+	}
+	if len(fakeLLM.appChatRequests) != 1 || len(fakeLLM.appChatRequests[0].Tools) != 0 {
+		t.Fatalf("requests = %#v, want one tool-free terminal request", fakeLLM.appChatRequests)
+	}
+	foundFallback := false
+	for _, trace := range traces {
+		if trace.Kind == "final_answer" && trace.Status == "success" && trace.Arguments["fallback"] == true {
+			foundFallback = true
+			if trace.Arguments["fallback_reason"] != "unexpected_tool_call" {
+				t.Fatalf("fallback trace = %#v, want unexpected_tool_call reason", trace)
+			}
+		}
+	}
+	if !foundFallback {
+		t.Fatalf("traces = %#v, want successful fallback final_answer trace", traces)
 	}
 }
 
@@ -314,14 +383,7 @@ func TestRunnerTerminalOnlyDoesNotRetryTruncatedModelResponse(t *testing.T) {
 
 func TestRunnerTerminalOnlyProjectsOnlyGoalAndLatestEvidence(t *testing.T) {
 	fakeLLM := &runnerTestLLMClient{appChatResponses: []*adapter.ChatResponse{{
-		Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", ToolCalls: []adapter.ToolCall{{
-			ID:   "final-projected",
-			Type: "function",
-			Function: adapter.FunctionCall{
-				Name:      skills.MetaToolFinalAnswer,
-				Arguments: `{"answer":"done"}`,
-			},
-		}}}}},
+		Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: "done"}}},
 	}}}
 	runner := &Runner{LLMClient: fakeLLM, SkillRuntime: skills.NewRuntime(nil, nil), AppContext: &llmclient.AppContext{}}
 	prepared := NewPreparedChat("conv-terminal-projected", "msg-terminal-projected", "", "auto", &adapter.ChatRequest{
@@ -1561,7 +1623,7 @@ func TestRunnerRecordsTurnStateWhenModelWrapsMetaToolInSkillToolCall(t *testing.
 	}
 }
 
-func TestRunnerShowsContextualSidebarCheckpointForFileTurnState(t *testing.T) {
+func TestRunnerKeepsContextualSidebarModelOnlyTurnStateHidden(t *testing.T) {
 	ctx := context.Background()
 	fakeLLM := &runnerTestLLMClient{
 		appChatResponses: []*adapter.ChatResponse{
@@ -1614,21 +1676,10 @@ func TestRunnerShowsContextualSidebarCheckpointForFileTurnState(t *testing.T) {
 	if answer != "State recorded." {
 		t.Fatalf("answer = %q, want final answer", answer)
 	}
-	var checkpoints []Event
 	for _, event := range events {
 		if event.Type == EventIntermediateAnswer {
-			checkpoints = append(checkpoints, event)
+			t.Fatalf("event = %#v, want model_only turn state hidden on contextual sidebar", event)
 		}
-	}
-	if len(checkpoints) != 1 {
-		t.Fatalf("intermediate events = %#v, want exactly one file-derived checkpoint", checkpoints)
-	}
-	content := stringFromInterface(checkpoints[0].Payload["content"])
-	if !strings.Contains(content, "已记录文件小结") || !strings.Contains(content, "雪是主角的妹妹") {
-		t.Fatalf("checkpoint content = %q, want localized file summary", content)
-	}
-	if strings.Contains(content, "deepseek-v4-flash") {
-		t.Fatalf("checkpoint content = %q, want selected model state hidden", content)
 	}
 }
 

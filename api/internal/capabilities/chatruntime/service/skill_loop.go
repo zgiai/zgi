@@ -106,11 +106,13 @@ func (s *service) runPreparedToolLoop(
 	loopPrepared.Query = strings.TrimSpace(prepared.parts.Query)
 	loopPrepared.CurrentRoute = contextualTurnCurrentPage(prepared.parts)
 	loopPrepared.Surface = normalizeAIChatSurface(prepared.parts.Surface)
-	preferExplicitFinalAnswer := skillLoopPrefersExplicitFinalAnswer(prepared)
+	preferExplicitFinalAnswer := skillLoopPrefersExplicitFinalAnswer(prepared) && !prepared.TerminalOnly
 	if prepared.Message.Metadata == nil {
 		prepared.Message.Metadata = map[string]interface{}{}
 	}
-	if preferExplicitFinalAnswer {
+	if prepared.TerminalOnly {
+		prepared.Message.Metadata["final_answer_protocol"] = "terminal_assistant_content"
+	} else if preferExplicitFinalAnswer {
 		prepared.Message.Metadata["final_answer_protocol"] = skills.MetaToolFinalAnswer + "_preferred"
 	} else {
 		prepared.Message.Metadata["final_answer_protocol"] = "assistant_content"

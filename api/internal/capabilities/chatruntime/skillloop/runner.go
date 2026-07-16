@@ -92,15 +92,6 @@ func metaToolsForRun(resolved *skills.ResolvedSkills, loadedSkills map[string]st
 	return filtered
 }
 
-func terminalOnlyTools(input []adapter.Tool) []adapter.Tool {
-	for _, tool := range input {
-		if strings.EqualFold(strings.TrimSpace(tool.Function.Name), skills.MetaToolFinalAnswer) {
-			return []adapter.Tool{tool}
-		}
-	}
-	return nil
-}
-
 func controlToolsForRound(input []adapter.Tool, allowPlanUpdate bool, allowIntermediateAnswer bool) []adapter.Tool {
 	filtered := make([]adapter.Tool, 0, len(input))
 	for _, tool := range input {
@@ -137,7 +128,7 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 	if len(resolved.Skills) > 0 && r.SkillRuntime == nil {
 		return "", nil, fmt.Errorf("%w: skill runtime is not configured", ErrInvalidInput)
 	}
-	preferExplicitFinalAnswer := req.PreferExplicitFinalAnswer || req.TerminalOnly
+	preferExplicitFinalAnswer := req.PreferExplicitFinalAnswer && !req.TerminalOnly
 	historicalLoadedSkills, restoreValidationTraces := validatedHistoricalLoadedSkillsForRun(ctx, req, resolved)
 	restoredSkillState := restoredLoadedSkillInstructionStateForRun(resolved, historicalLoadedSkills, req.PreferredRestoredSkillID)
 	if req.TerminalOnly {
@@ -222,18 +213,20 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 			allowPlanUpdate,
 			allowIntermediateAnswer,
 		)
-		if req.TerminalOnly {
-			planningReq.Tools = terminalOnlyTools(planningReq.Tools)
-		}
 		if req.LegacyToolChat {
 			planningReq.Tools = legacyToolChatTools(planningReq.Tools, len(restoredSkillState.reloadRequired) > 0)
 		}
-		planningReq.ToolChoice = "auto"
+		if req.TerminalOnly {
+			planningReq.Tools = nil
+			planningReq.ToolChoice = nil
+		} else {
+			planningReq.ToolChoice = "auto"
+		}
 		r.diagnostics.activeSkillIDs = activeSkillIDsForDiagnostics(resolved, loadedSkills)
 		r.requestBudget = planningRequestBudgetForRun(req)
 
 		suppressNaturalProgress := req.SuppressInitialNaturalProgress && round == 0
-		deferTerminalContent := preferExplicitFinalAnswer || !terminalSubmissionAllowed
+		deferTerminalContent := preferExplicitFinalAnswer || req.TerminalOnly || !terminalSubmissionAllowed
 		planningResult := planningResult{}
 		var err error
 		if req.TerminalOnly {
@@ -243,6 +236,12 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 		}
 		usage = mergeUsage(usage, planningResult.usage)
 		if err != nil {
+			if req.TerminalOnly {
+				if fallback, ok := r.emitTerminalOnlyFallback(ctx, req, prepared, traces, roundRuntimeState, "model_error"); ok {
+					appendAnswerText(&answerBuilder, fallback)
+					return answerBuilder.String(), usage, nil
+				}
+			}
 			var streamedErr *streamedFinalAnswerError
 			if errors.As(err, &streamedErr) {
 				appendAnswerText(&answerBuilder, strings.TrimSpace(streamedErr.answer))
@@ -252,6 +251,20 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 		planningMessage := planningResult.message
 		toolCalls := normalizeToolCalls(planningMessage.ToolCalls)
 		text := assistantMessageText(planningMessage)
+		if req.TerminalOnly && len(toolCalls) > 0 {
+			if fallback, ok := r.emitTerminalOnlyFallback(ctx, req, prepared, traces, roundRuntimeState, "unexpected_tool_call"); ok {
+				appendAnswerText(&answerBuilder, fallback)
+				return answerBuilder.String(), usage, nil
+			}
+			return answerBuilder.String(), usage, fmt.Errorf("%w: terminal-only model returned an unexpected tool call", ErrInvalidInput)
+		}
+		if req.TerminalOnly && strings.TrimSpace(text) == "" {
+			if fallback, ok := r.emitTerminalOnlyFallback(ctx, req, prepared, traces, roundRuntimeState, "empty_response"); ok {
+				appendAnswerText(&answerBuilder, fallback)
+				return answerBuilder.String(), usage, nil
+			}
+			return answerBuilder.String(), usage, fmt.Errorf("%w: terminal-only model returned no final answer", ErrInvalidInput)
+		}
 		if text != "" && len(toolCalls) > 0 && !suppressNaturalProgress && !planningResult.naturalProgressStreamed && shouldEmitNaturalProgressForToolCalls(resolved, loadedSkills, toolCalls) {
 			r.emitAgentProgress(ctx, prepared, text, nil)
 		}
@@ -561,6 +574,57 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 		return answerBuilder.String(), usage, nil
 	}
 	return answerBuilder.String(), usage, err
+}
+
+func (r *Runner) emitTerminalOnlyFallback(
+	ctx context.Context,
+	req RunRequest,
+	prepared *PreparedChat,
+	traces []skills.SkillTrace,
+	runtimeState map[string]interface{},
+	reason string,
+) (string, bool) {
+	answer, ok := terminalOnlyFallbackAnswer(prepared, currentMetadataForRun(req), runtimeState)
+	if !ok || strings.TrimSpace(answer) == "" {
+		return "", false
+	}
+	trace := skills.SkillTrace{
+		Kind:    "final_answer",
+		Title:   "Final answer",
+		Message: answer,
+		Status:  "success",
+		Arguments: map[string]interface{}{
+			"fallback":        true,
+			"fallback_reason": strings.TrimSpace(reason),
+		},
+		Result: map[string]interface{}{
+			"source": "runtime_evidence",
+		},
+	}
+	traces = append(traces, trace)
+	r.recordTrace(traces, trace)
+	r.logSkillTrace(ctx, prepared, trace)
+	r.emitAnswerChunk(ctx, prepared, answer, nil)
+
+	decision := terminalStateGuardDecision{
+		Path:        terminalStateGuardAccepted,
+		Reason:      "completed runtime evidence supplied a deterministic terminal fallback",
+		FinalAnswer: answer,
+	}
+	terminalStateGuardRecord(req, decision)
+	if req.OnTerminalCompletion != nil {
+		req.OnTerminalCompletion(TerminalCompletionResult{
+			Status: "pass",
+			Source: "runtime_evidence_fallback",
+			Reason: decision.Reason,
+		})
+	}
+	logger.WarnContext(ctx, "aichat terminal model degraded to completed runtime evidence",
+		"conversation_id", prepared.Conversation.ID.String(),
+		"message_id", prepared.Message.ID.String(),
+		"fallback_reason", strings.TrimSpace(reason),
+	)
+	return answer, true
 }
 
 func operationPlanModelRevisionRequired(req RunRequest, runtimeState map[string]interface{}) bool {
@@ -1534,8 +1598,8 @@ func terminalOnlySystemMessage() adapter.Message {
 	return adapter.Message{Role: "system", Content: strings.Join([]string{
 		"The approved or resumed operation has already completed the remaining bound plan phase.",
 		"Use only the authoritative current-turn tool, approval, page, and operation-plan evidence supplied in context.",
-		"Do not call business tools, load skills, update the plan, repeat completed work, or invent results.",
-		"Call submit_final_answer exactly once with a concise, self-contained reply in the user's language.",
+		"No tools are available in this terminal response. Do not call or invent tools, load skills, update the plan, repeat completed work, or request more execution.",
+		"Reply directly with one concise, self-contained completion message in the user's language. Mention only outcomes supported by the supplied evidence.",
 	}, "\n")}
 }
 

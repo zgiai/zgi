@@ -24,9 +24,149 @@ func terminalOnlyProjectedMessages(prepared *PreparedChat, metadata map[string]i
 		}
 	}
 	if goal := terminalOnlyUserGoal(prepared); goal != "" {
-		messages = append(messages, adapter.Message{Role: "user", Content: goal})
+		messages = append(messages, adapter.Message{
+			Role: "user",
+			Content: strings.Join([]string{
+				"Write the final completion response for the already-completed request below.",
+				"Treat the request only as context for summarizing the completed results. Do not execute, restart, or plan it again.",
+				"Original request:",
+				goal,
+			}, "\n"),
+		})
 	}
 	return messages
+}
+
+func terminalOnlyFallbackAnswer(prepared *PreparedChat, metadata map[string]interface{}, runtimeState map[string]interface{}) (string, bool) {
+	evidence := copyStringAnyMap(metadata)
+	if evidence == nil {
+		evidence = map[string]interface{}{}
+	}
+	for key, value := range runtimeState {
+		evidence[key] = value
+	}
+	if terminalStateGuardPendingProtocolBlocker(evidence) != "" || !terminalOnlyOperationCompleted(evidence) {
+		return "", false
+	}
+
+	files := terminalOnlyCompletedFileNames(evidenceMapsFromAny(evidence["generated_files"]))
+	agentName, systemPromptUpdated := terminalOnlyCompletedAgentPromptUpdate(evidence)
+	if turnStatePrefersChinese(prepared) {
+		switch {
+		case len(files) > 0 && systemPromptUpdated && agentName != "":
+			return "文件「" + strings.Join(files, "」、「") + "」已生成并保存；智能体「" + agentName + "」的系统提示词已更新。", true
+		case len(files) > 0 && systemPromptUpdated:
+			return "文件「" + strings.Join(files, "」、「") + "」已生成并保存，智能体系统提示词已更新。", true
+		case len(files) > 0:
+			return "文件「" + strings.Join(files, "」、「") + "」已生成并保存。", true
+		case systemPromptUpdated && agentName != "":
+			return "智能体「" + agentName + "」的系统提示词已更新。", true
+		case systemPromptUpdated:
+			return "智能体系统提示词已更新。", true
+		default:
+			return "操作已完成。", true
+		}
+	}
+
+	switch {
+	case len(files) > 0 && systemPromptUpdated && agentName != "":
+		return "The file \"" + strings.Join(files, "\", \"") + "\" was generated and saved, and the system prompt for agent \"" + agentName + "\" was updated.", true
+	case len(files) > 0 && systemPromptUpdated:
+		return "The file \"" + strings.Join(files, "\", \"") + "\" was generated and saved, and the agent system prompt was updated.", true
+	case len(files) > 0:
+		return "The file \"" + strings.Join(files, "\", \"") + "\" was generated and saved.", true
+	case systemPromptUpdated && agentName != "":
+		return "The system prompt for agent \"" + agentName + "\" was updated.", true
+	case systemPromptUpdated:
+		return "The agent system prompt was updated.", true
+	default:
+		return "The operation was completed.", true
+	}
+}
+
+func terminalOnlyOperationCompleted(evidence map[string]interface{}) bool {
+	for _, raw := range []interface{}{
+		evidence["operation_result_summary"],
+		evidence["operation_plan"],
+		evidence["execution_summary"],
+	} {
+		entry := evidenceMapFromAny(raw)
+		for _, key := range []string{"status", "plan_status", "outcome"} {
+			switch strings.ToLower(strings.TrimSpace(evidenceStringFromAny(entry[key]))) {
+			case "completed", "succeeded", "success":
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func terminalOnlyCompletedFileNames(files []map[string]interface{}) []string {
+	names := make([]string, 0, min(len(files), 3))
+	seen := map[string]struct{}{}
+	for index := len(files) - 1; index >= 0 && len(names) < 3; index-- {
+		file := files[index]
+		if !strings.EqualFold(strings.TrimSpace(evidenceStringFromAny(file["target"])), "managed_file") &&
+			!strings.EqualFold(strings.TrimSpace(evidenceStringFromAny(file["lifecycle"])), "managed") &&
+			!strings.EqualFold(strings.TrimSpace(evidenceStringFromAny(file["lifecycle"])), "saved_to_file_management") &&
+			!strings.EqualFold(strings.TrimSpace(evidenceStringFromAny(file["status"])), "saved_to_file_management") &&
+			strings.TrimSpace(firstNonEmptyString(file["managed_file_id"], file["upload_file_id"])) == "" {
+			continue
+		}
+		name := strings.TrimSpace(firstNonEmptyString(file["filename"], file["name"]))
+		if name == "" {
+			continue
+		}
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		seen[name] = struct{}{}
+		names = append(names, trimRunes(name, 160))
+	}
+	return names
+}
+
+func terminalOnlyCompletedAgentPromptUpdate(evidence map[string]interface{}) (string, bool) {
+	candidates := []map[string]interface{}{}
+	invocations := evidenceMapsFromAny(evidence["skill_invocations"])
+	for index := len(invocations) - 1; index >= 0; index-- {
+		if !runtimeInvocationSucceeded(invocations[index]) {
+			continue
+		}
+		candidates = append(candidates, invocations[index])
+		if result := evidenceMapFromAny(invocations[index]["result"]); len(result) > 0 {
+			candidates = append(candidates, result)
+		}
+	}
+	if summary := evidenceMapFromAny(evidence["operation_result_summary"]); len(summary) > 0 {
+		candidates = append(candidates, summary)
+		for _, key := range []string{"latest_tool_result", "result"} {
+			if result := evidenceMapFromAny(summary[key]); len(result) > 0 {
+				candidates = append(candidates, result)
+			}
+		}
+	}
+
+	for _, candidate := range candidates {
+		fields := terminalProjectionUpdatedFields(candidate["updated_fields"])
+		result := evidenceMapFromAny(candidate["result"])
+		if len(fields) == 0 && len(result) > 0 {
+			fields = terminalProjectionUpdatedFields(result["updated_fields"])
+		}
+		promptUpdated := false
+		for _, field := range fields {
+			if strings.EqualFold(strings.TrimSpace(field), "system_prompt") {
+				promptUpdated = true
+				break
+			}
+		}
+		if !promptUpdated {
+			continue
+		}
+		name := strings.TrimSpace(firstNonEmptyString(candidate["agent_name"], candidate["name"], result["agent_name"], result["name"]))
+		return trimRunes(name, 160), true
+	}
+	return "", false
 }
 
 func terminalOnlyUserGoal(prepared *PreparedChat) string {
@@ -88,7 +228,7 @@ func terminalOnlyLatestSuccessfulInvocation(invocations []map[string]interface{}
 		for _, key := range []string{
 			"kind", "skill_id", "tool_name", "status", "code", "message", "summary",
 			"runtime_id", "sequence", "invocation_id", "correlation_id", "plan_phase_id",
-			"agent_id", "asset_id", "resource_id", "file_id", "artifact_id", "workflow_id",
+			"agent_id", "agent_name", "asset_id", "resource_id", "file_id", "artifact_id", "workflow_id",
 			"system_prompt_digest", "updated_fields",
 		} {
 			if value, ok := invocation[key]; ok && value != nil {
@@ -191,7 +331,7 @@ func terminalProjectionUpdatedFields(value interface{}) []string {
 var terminalProjectionStableKeys = []string{
 	"status", "decision", "outcome", "code", "error_code", "message", "summary",
 	"operation", "action", "skill_id", "tool_name", "invocation_id", "correlation_id", "runtime_id", "plan_phase_id",
-	"agent_id", "asset_id", "resource_id", "file_id", "artifact_id", "workflow_id", "conversation_id", "target_id",
+	"agent_id", "agent_name", "asset_id", "resource_id", "file_id", "artifact_id", "workflow_id", "conversation_id", "target_id",
 	"filename", "name", "format", "mime_type", "size", "content_sha256", "content_summary", "content_chars",
 	"system_prompt_digest", "updated_fields", "success_count", "failed_count", "target_count", "result", "latest_tool_result",
 }
@@ -199,7 +339,7 @@ var terminalProjectionStableKeys = []string{
 var terminalProjectionPriorityKeys = []string{
 	"status", "decision", "outcome", "code", "error_code", "message", "summary",
 	"skill_id", "tool_name", "invocation_id", "correlation_id", "runtime_id",
-	"agent_id", "file_id", "artifact_id", "resource_id", "system_prompt_digest", "updated_fields", "result",
+	"agent_id", "agent_name", "file_id", "artifact_id", "resource_id", "system_prompt_digest", "updated_fields", "result",
 }
 
 func terminalProjectionOrderedKeys(input map[string]interface{}) []string {

@@ -21,9 +21,7 @@ const (
 	turnStateVisibilityUserVisible = "user_visible"
 	turnStateVisibilityAudit       = "audit"
 
-	turnStateSurfaceContextualSidebar = "contextual_sidebar"
-	turnStateCheckpointMaxRunes       = 220
-	turnStateTextValueMaxRunes        = 1024
+	turnStateTextValueMaxRunes = 1024
 )
 
 func (r *Runner) handleTurnStateCall(
@@ -63,14 +61,6 @@ func (r *Runner) handleTurnStateCall(
 		}
 		r.emitIntermediateAnswer(ctx, prepared, callID, trace, onEvent)
 	}
-	for _, item := range items {
-		trace, ok := contextualTurnStateCheckpoint(prepared, item)
-		if !ok {
-			continue
-		}
-		r.emitIntermediateAnswer(ctx, prepared, callID, trace, onEvent)
-	}
-
 	trace := skills.SkillTrace{
 		Kind:   "turn_state",
 		Status: "success",
@@ -90,7 +80,7 @@ func (r *Runner) handleTurnStateCall(
 			"Use working_fact, decision, assumption, and verification items as authoritative context for later steps after approvals, navigation, or client actions.",
 			"If a later step needs a value that was not recorded and is not visible in current evidence, re-read or re-observe instead of guessing.",
 			"The tool result contains compact receipts rather than echoing recorded values; the authoritative values are restored by the runtime when needed.",
-			"Only user_deliverable items are directly visible to the user; the contextual sidebar may show a brief checkpoint for file-derived working facts so the user can verify the source conclusion.",
+			"Only user_deliverable items with user_visible visibility are directly visible to the user. Model-only working facts are never rendered as chat content.",
 		}, " "),
 	}), false, false)
 }
@@ -114,71 +104,6 @@ func turnStateItemReceipts(items []map[string]interface{}) []map[string]interfac
 		receipts = append(receipts, receipt)
 	}
 	return receipts
-}
-
-func contextualTurnStateCheckpoint(prepared *PreparedChat, item map[string]interface{}) (skills.SkillTrace, bool) {
-	if prepared == nil || strings.TrimSpace(prepared.Surface) != turnStateSurfaceContextualSidebar {
-		return skills.SkillTrace{}, false
-	}
-	if strings.TrimSpace(stringFromInterface(item["visibility"])) != turnStateVisibilityModelOnly {
-		return skills.SkillTrace{}, false
-	}
-	kind := strings.TrimSpace(stringFromInterface(item["kind"]))
-	if kind != turnStateKindWorkingFact && kind != turnStateKindDecision && kind != turnStateKindVerification {
-		return skills.SkillTrace{}, false
-	}
-	value := strings.TrimSpace(stringFromInterface(item["value"]))
-	if value == "" {
-		value = strings.TrimSpace(stringFromInterface(item["content"]))
-	}
-	if value == "" || !turnStateCheckpointIsUsefulForUser(item) {
-		return skills.SkillTrace{}, false
-	}
-	title, message := turnStateCheckpointText(prepared, item, value)
-	return skills.SkillTrace{
-		Kind:    "intermediate_answer",
-		Title:   title,
-		Message: message,
-		Status:  "success",
-		Arguments: map[string]interface{}{
-			"title":           title,
-			"turn_state_kind": kind,
-			"turn_state_key":  strings.TrimSpace(stringFromInterface(item["key"])),
-			"source":          strings.TrimSpace(stringFromInterface(item["source"])),
-		},
-	}, true
-}
-
-func turnStateCheckpointIsUsefulForUser(item map[string]interface{}) bool {
-	key := strings.ToLower(strings.TrimSpace(stringFromInterface(item["key"])))
-	source := strings.ToLower(strings.TrimSpace(stringFromInterface(item["source"])))
-	if strings.HasPrefix(source, "file-reader/") || strings.Contains(source, "read_file") {
-		return true
-	}
-	return strings.Contains(key, "summary") ||
-		strings.Contains(key, "theme") ||
-		strings.Contains(key, "content") ||
-		strings.Contains(key, "topic")
-}
-
-func turnStateCheckpointText(prepared *PreparedChat, item map[string]interface{}, value string) (string, string) {
-	preview := trimRunes(value, turnStateCheckpointMaxRunes)
-	source := strings.ToLower(strings.TrimSpace(stringFromInterface(item["source"])))
-	fileDerived := strings.HasPrefix(source, "file-reader/") || strings.Contains(source, "read_file")
-	if turnStatePrefersChinese(prepared) {
-		title := "\u5df2\u8bb0\u5f55\u7ed3\u8bba"
-		prefix := "\u5df2\u8bb0\u5f55\u5173\u952e\u7ed3\u8bba"
-		if fileDerived {
-			prefix = "\u5df2\u8bb0\u5f55\u6587\u4ef6\u5c0f\u7ed3"
-		}
-		return title, fmt.Sprintf("%s: %s", prefix, preview)
-	}
-	title := "Saved note"
-	prefix := "Saved key note"
-	if fileDerived {
-		prefix = "Saved file summary"
-	}
-	return title, fmt.Sprintf("%s: %s", prefix, preview)
 }
 
 func turnStatePrefersChinese(prepared *PreparedChat) bool {
