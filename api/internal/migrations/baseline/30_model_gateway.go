@@ -454,6 +454,7 @@ var ModelGatewaySchema = File{
 		`CREATE TABLE public.llm_official_model_snapshots (
     source_key character varying(50) NOT NULL,
     effective_models jsonb DEFAULT '[]'::jsonb NOT NULL,
+    effective_provider_models jsonb DEFAULT '[]'::jsonb NOT NULL,
     latest_models jsonb DEFAULT '[]'::jsonb NOT NULL,
     previous_models jsonb DEFAULT '[]'::jsonb NOT NULL,
     latest_event_version bigint DEFAULT 0 NOT NULL,

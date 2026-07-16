@@ -10,6 +10,10 @@ import {
   isSkillUserSelectable,
   type AIChatSkillDisplayInfo,
 } from '@/components/chat/variants/aichat/skill-display';
+import {
+  SKILL_CAPABILITY_CATEGORIES,
+  SKILL_SCENARIOS,
+} from '@/components/chat/variants/aichat/skill-taxonomy';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
@@ -22,18 +26,16 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { SearchInput } from '@/components/ui/input';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { AgentResourceBoundDialog } from '@/components/common/agent-resource-bound-dialog';
+import {
+  AIChatSkillCatalogFilters,
+  type SkillCapabilityFilter,
+  type SkillScenarioFilter,
+  type SkillSourceFilter,
+  type SkillStatusFilter,
+} from '@/components/dashboard/organization/aichat-skill-catalog-filters';
 import {
   useDeleteAIChatSkill,
   useAIChatSkillConfig,
@@ -63,8 +65,6 @@ const SYSTEM_SKILL_NAME_CONFLICT_ERROR =
   'This skill name is reserved by a built-in system skill. Please rename your custom skill and try again.';
 
 type SaveStatus = 'idle' | 'saving' | 'saved' | 'error';
-type RuntimeFilter = 'all' | AIChatSkillRuntimeType;
-type StatusFilter = 'all' | 'enabled' | 'disabled' | 'invalid';
 
 const RUNTIME_LABEL_KEYS: Record<AIChatSkillRuntimeType, DashboardSuffix> = {
   tool: 'organization.aichatSkills.runtime.tool',
@@ -138,6 +138,8 @@ function getFilterSearchText(
     display?.label,
     display?.description,
     display?.whenToUse,
+    display?.categoryLabel,
+    ...(display?.scenarios ?? []),
     ...(display?.tags ?? []),
   ]
     .filter(Boolean)
@@ -150,14 +152,19 @@ function filterSkills(
   displays: Record<string, AIChatSkillDisplayInfo>,
   enabledSkillIds: string[],
   searchQuery: string,
-  runtimeFilter: RuntimeFilter,
-  statusFilter: StatusFilter
+  scenarioFilter: SkillScenarioFilter,
+  capabilityFilter: SkillCapabilityFilter,
+  sourceFilter: SkillSourceFilter,
+  statusFilter: SkillStatusFilter
 ): AIChatSkillMetadata[] {
   const query = searchQuery.trim().toLowerCase();
   const enabledSet = new Set(enabledSkillIds);
 
   return skills.filter(skill => {
-    if (runtimeFilter !== 'all' && skill.runtime_type !== runtimeFilter) return false;
+    const display = displays[skill.skill_id];
+    if (scenarioFilter !== 'all' && !display?.scenarios.includes(scenarioFilter)) return false;
+    if (capabilityFilter !== 'all' && display?.category !== capabilityFilter) return false;
+    if (sourceFilter !== 'all' && getSkillSource(skill) !== sourceFilter) return false;
 
     const enabled = enabledSet.has(skill.skill_id);
     const invalid = isInvalidSkill(skill);
@@ -166,12 +173,8 @@ function filterSkills(
     if (statusFilter === 'invalid' && !invalid) return false;
 
     if (!query) return true;
-    return getFilterSearchText(skill, displays[skill.skill_id]).includes(query);
+    return getFilterSearchText(skill, display).includes(query);
   });
-}
-
-function formatTabCount(filteredCount: number, totalCount: number, hasActiveFilters: boolean) {
-  return hasActiveFilters ? `${filteredCount}/${totalCount}` : String(totalCount);
 }
 
 function formatBytes(bytes: number): string {
@@ -236,27 +239,55 @@ function AIChatSkillCard({
   onDelete,
 }: AIChatSkillCardProps) {
   const t = useT('dashboard');
-  const runtimeLabel = t(RUNTIME_LABEL_KEYS[skill.runtime_type]);
   const isCustom = getSkillSource(skill) === 'custom';
   const invalid = isInvalidSkill(skill);
   const scriptStatusLabelKey = getScriptStatusLabelKey(skill);
+  const wasEnabledRef = useRef(enabled);
+  const [showEnableTrace, setShowEnableTrace] = useState(false);
+  const isStartingEnable = enabled && !wasEnabledRef.current;
+  const isDrawingEnableBorder = isStartingEnable || showEnableTrace;
+
+  useEffect(() => {
+    const justEnabled = enabled && !wasEnabledRef.current;
+    wasEnabledRef.current = enabled;
+
+    if (!justEnabled) {
+      if (!enabled) setShowEnableTrace(false);
+      return;
+    }
+
+    setShowEnableTrace(true);
+    const timeout = window.setTimeout(() => setShowEnableTrace(false), 900);
+    return () => window.clearTimeout(timeout);
+  }, [enabled]);
 
   return (
     <article
       className={cn(
-        'flex h-full flex-col rounded-md border border-border bg-card p-3.5 shadow-sm transition-colors hover:border-primary/25',
+        'relative isolate flex h-full flex-col rounded-md border border-border bg-card p-3.5 shadow-sm transition-[border-color,box-shadow,background-color,opacity]',
+        enabled && !invalid && !isDrawingEnableBorder ? 'zgi-skill-card-enabled' : '',
+        !enabled && !invalid ? 'hover:border-primary/25' : '',
         disabled || invalid ? 'opacity-75' : ''
       )}
     >
+      {isDrawingEnableBorder ? (
+        <svg className="zgi-skill-card-enable-trace" aria-hidden="true">
+          <rect className="zgi-skill-card-enable-trace-line" pathLength="1" />
+        </svg>
+      ) : null}
       <div className="flex items-start gap-3">
-        <div className="flex size-8 shrink-0 items-center justify-center rounded-md border bg-background text-muted-foreground">
+        <div
+          className={cn(
+            'flex size-8 shrink-0 items-center justify-center rounded-md border bg-background text-muted-foreground transition-colors',
+            enabled && !invalid ? 'border-primary/25 bg-primary/10 text-primary' : ''
+          )}
+        >
           <AIChatSkillIcon icon={display.icon} className="size-4" />
         </div>
         <div className="min-w-0 flex-1">
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
               <h3 className="truncate text-sm font-semibold text-foreground">{display.label}</h3>
-              <p className="mt-0.5 truncate text-xs text-muted-foreground">{skill.skill_id}</p>
             </div>
             <Switch
               checked={enabled}
@@ -270,7 +301,7 @@ function AIChatSkillCard({
 
       <div className="mt-3 flex flex-wrap gap-1.5">
         <Badge variant="outline" className="rounded-md font-normal">
-          {runtimeLabel}
+          {display.categoryLabel}
         </Badge>
         <Badge
           variant={invalid ? 'destructive' : enabled ? 'success' : 'subtle'}
@@ -286,7 +317,7 @@ function AIChatSkillCard({
         </Badge>
         {scriptStatusLabelKey ? (
           <Badge
-            variant={skill.scripts_supported ? 'success' : 'warning'}
+            variant={skill.scripts_supported ? 'outline' : 'warning'}
             className="rounded-md font-normal"
           >
             {t(scriptStatusLabelKey)}
@@ -294,7 +325,7 @@ function AIChatSkillCard({
         ) : null}
       </div>
 
-      <p className="mt-2.5 line-clamp-2 min-h-10 text-sm leading-5 text-muted-foreground">
+      <p className="mt-2.5 line-clamp-3 min-h-[3.75rem] text-sm leading-5 text-muted-foreground">
         {display.description}
       </p>
 
@@ -438,93 +469,6 @@ function useAIChatSkillConfigPersistence({
     saveStatus,
     saveEnabledSkillIds,
   };
-}
-
-interface SkillFilterToolbarProps {
-  searchQuery: string;
-  runtimeFilter: RuntimeFilter;
-  statusFilter: StatusFilter;
-  hasActiveFilters: boolean;
-  onSearchQueryChange: (value: string) => void;
-  onRuntimeFilterChange: (value: RuntimeFilter) => void;
-  onStatusFilterChange: (value: StatusFilter) => void;
-  onClearFilters: () => void;
-}
-
-/**
- * @component SkillFilterToolbar
- * @category Feature
- * @status Stable
- * @description Search and filter controls for larger AIChat Skill catalogs.
- * @usage Render above Skill tab content to narrow the visible Skill cards.
- * @example
- * <SkillFilterToolbar searchQuery="" runtimeFilter="all" statusFilter="all" hasActiveFilters={false} onSearchQueryChange={setSearchQuery} onRuntimeFilterChange={setRuntimeFilter} onStatusFilterChange={setStatusFilter} onClearFilters={clearFilters} />
- */
-function SkillFilterToolbar({
-  searchQuery,
-  runtimeFilter,
-  statusFilter,
-  hasActiveFilters,
-  onSearchQueryChange,
-  onRuntimeFilterChange,
-  onStatusFilterChange,
-  onClearFilters,
-}: SkillFilterToolbarProps) {
-  const t = useT('dashboard');
-
-  return (
-    <div className="flex flex-col gap-2 lg:flex-row lg:items-center">
-      <SearchInput
-        value={searchQuery}
-        onChange={event => onSearchQueryChange(event.target.value)}
-        placeholder={t('organization.aichatSkills.filters.searchPlaceholder')}
-        aria-label={t('organization.aichatSkills.filters.searchAria')}
-        className="rounded-md lg:w-[360px]"
-      />
-      <div className="grid gap-2 sm:grid-cols-2 lg:flex lg:shrink-0">
-        <Select
-          value={runtimeFilter}
-          onValueChange={value => onRuntimeFilterChange(value as RuntimeFilter)}
-        >
-          <SelectTrigger
-            className="rounded-md bg-background lg:w-40"
-            aria-label={t('organization.aichatSkills.filters.runtimeAria')}
-          >
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">{t('organization.aichatSkills.filters.allRuntime')}</SelectItem>
-            <SelectItem value="tool">{t(RUNTIME_LABEL_KEYS.tool)}</SelectItem>
-            <SelectItem value="prompt">{t(RUNTIME_LABEL_KEYS.prompt)}</SelectItem>
-            <SelectItem value="hybrid">{t(RUNTIME_LABEL_KEYS.hybrid)}</SelectItem>
-          </SelectContent>
-        </Select>
-
-        <Select
-          value={statusFilter}
-          onValueChange={value => onStatusFilterChange(value as StatusFilter)}
-        >
-          <SelectTrigger
-            className="rounded-md bg-background lg:w-40"
-            aria-label={t('organization.aichatSkills.filters.statusAria')}
-          >
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">{t('organization.aichatSkills.filters.allStatus')}</SelectItem>
-            <SelectItem value="enabled">{t(STATUS_LABEL_KEYS.enabled)}</SelectItem>
-            <SelectItem value="disabled">{t(STATUS_LABEL_KEYS.disabled)}</SelectItem>
-            <SelectItem value="invalid">{t(STATUS_LABEL_KEYS.invalid)}</SelectItem>
-          </SelectContent>
-        </Select>
-      </div>
-      {hasActiveFilters ? (
-        <Button variant="ghost" size="sm" onClick={onClearFilters}>
-          {t('organization.aichatSkills.actions.clearFilters')}
-        </Button>
-      ) : null}
-    </div>
-  );
 }
 
 interface SkillImportPreviewDialogProps {
@@ -702,9 +646,10 @@ export function AIChatSkillSettingsSection() {
   const cancelImportPreview = useCancelImportAIChatSkillPreview();
   const deleteSkill = useDeleteAIChatSkill();
   const [searchQuery, setSearchQuery] = useState('');
-  const [runtimeFilter, setRuntimeFilter] = useState<RuntimeFilter>('all');
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
-  const [activeTab, setActiveTab] = useState<'system' | 'custom'>('system');
+  const [scenarioFilter, setScenarioFilter] = useState<SkillScenarioFilter>('all');
+  const [capabilityFilter, setCapabilityFilter] = useState<SkillCapabilityFilter>('all');
+  const [sourceFilter, setSourceFilter] = useState<SkillSourceFilter>('all');
+  const [statusFilter, setStatusFilter] = useState<SkillStatusFilter>('all');
   const [skillToDelete, setSkillToDelete] = useState<AIChatSkillMetadata | null>(null);
   const [bindingImpact, setBindingImpact] = useState<AgentResourceBoundImpact | null>(null);
   const [isCheckingDeleteImpact, setIsCheckingDeleteImpact] = useState(false);
@@ -791,40 +736,64 @@ export function AIChatSkillSettingsSection() {
     deleteSkill.isPending ||
     isCheckingDeleteImpact;
   const enabledCount = enabledSkillIds.length;
-  const systemSkills = useMemo(
-    () => manageableSkills.filter(skill => getSkillSource(skill) === 'system'),
-    [manageableSkills]
+  const availableScenarios = useMemo(
+    () =>
+      SKILL_SCENARIOS.filter(scenario =>
+        manageableSkills.some(skill => skillDisplays[skill.skill_id]?.scenarios.includes(scenario))
+      ),
+    [manageableSkills, skillDisplays]
   );
-  const customSkills = useMemo(
-    () => manageableSkills.filter(skill => getSkillSource(skill) === 'custom'),
-    [manageableSkills]
+  const scenarioScopedSkills = useMemo(
+    () =>
+      scenarioFilter === 'all'
+        ? manageableSkills
+        : manageableSkills.filter(skill =>
+            skillDisplays[skill.skill_id]?.scenarios.includes(scenarioFilter)
+          ),
+    [manageableSkills, scenarioFilter, skillDisplays]
+  );
+  const availableCapabilities = useMemo(
+    () =>
+      SKILL_CAPABILITY_CATEGORIES.filter(capability =>
+        scenarioScopedSkills.some(skill => skillDisplays[skill.skill_id]?.category === capability)
+      ),
+    [scenarioScopedSkills, skillDisplays]
   );
   const hasActiveFilters =
-    searchQuery.trim().length > 0 || runtimeFilter !== 'all' || statusFilter !== 'all';
-  const filteredSystemSkills = useMemo(
+    searchQuery.trim().length > 0 ||
+    scenarioFilter !== 'all' ||
+    capabilityFilter !== 'all' ||
+    sourceFilter !== 'all' ||
+    statusFilter !== 'all';
+  const filteredSkills = useMemo(
     () =>
       filterSkills(
-        systemSkills,
+        manageableSkills,
         skillDisplays,
         enabledSkillIds,
         searchQuery,
-        runtimeFilter,
+        scenarioFilter,
+        capabilityFilter,
+        sourceFilter,
         statusFilter
       ),
-    [enabledSkillIds, runtimeFilter, searchQuery, skillDisplays, statusFilter, systemSkills]
+    [
+      capabilityFilter,
+      enabledSkillIds,
+      manageableSkills,
+      scenarioFilter,
+      searchQuery,
+      skillDisplays,
+      sourceFilter,
+      statusFilter,
+    ]
   );
-  const filteredCustomSkills = useMemo(
-    () =>
-      filterSkills(
-        customSkills,
-        skillDisplays,
-        enabledSkillIds,
-        searchQuery,
-        runtimeFilter,
-        statusFilter
-      ),
-    [customSkills, enabledSkillIds, runtimeFilter, searchQuery, skillDisplays, statusFilter]
-  );
+
+  useEffect(() => {
+    if (capabilityFilter !== 'all' && !availableCapabilities.includes(capabilityFilter)) {
+      setCapabilityFilter('all');
+    }
+  }, [availableCapabilities, capabilityFilter]);
 
   const handleToggle = (skillId: string, enabled: boolean) => {
     const next = new Set(enabledSkillIds);
@@ -848,19 +817,25 @@ export function AIChatSkillSettingsSection() {
     fileInputRef.current?.click();
   };
 
-  const importButton =
-    activeTab === 'custom' && customSkills.length > 0 ? (
-      <Button size="sm" disabled={isMutating} onClick={handleImportClick}>
-        {isImporting ? <Loader2 className="size-4 animate-spin" /> : <Upload className="size-4" />}
-        {isImporting
-          ? t('organization.aichatSkills.actions.importing')
-          : t('organization.aichatSkills.actions.import')}
-      </Button>
-    ) : null;
+  const importButtons = (
+    <Button size="sm" disabled={isMutating} onClick={handleImportClick}>
+      {isImporting ? <Loader2 className="size-4 animate-spin" /> : <Upload className="size-4" />}
+      {isImporting
+        ? t('organization.aichatSkills.actions.importing')
+        : t('organization.aichatSkills.actions.import')}
+    </Button>
+  );
+
+  const handleScenarioChange = (value: SkillScenarioFilter) => {
+    setScenarioFilter(value);
+    setCapabilityFilter('all');
+  };
 
   const handleClearFilters = () => {
     setSearchQuery('');
-    setRuntimeFilter('all');
+    setScenarioFilter('all');
+    setCapabilityFilter('all');
+    setSourceFilter('all');
     setStatusFilter('all');
   };
 
@@ -991,149 +966,66 @@ export function AIChatSkillSettingsSection() {
           {t('organization.aichatSkills.empty')}
         </div>
       ) : (
-        <Tabs
-          value={activeTab}
-          onValueChange={value => setActiveTab(value as 'system' | 'custom')}
-          className="space-y-3"
-        >
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-            <div className="space-y-3">
-              <TabsList className="grid h-auto w-full grid-cols-2 justify-start rounded-md p-1 sm:w-[380px]">
-                <TabsTrigger value="system" className="h-9 gap-2 rounded-md px-3">
-                  <Wrench className="size-4" />
-                  {t('organization.aichatSkills.tabs.system')}
-                  <Badge variant="subtle" className="rounded-md">
-                    {formatTabCount(
-                      filteredSystemSkills.length,
-                      systemSkills.length,
-                      hasActiveFilters
-                    )}
-                  </Badge>
-                </TabsTrigger>
-                <TabsTrigger value="custom" className="h-9 gap-2 rounded-md px-3">
-                  <Upload className="size-4" />
-                  {t('organization.aichatSkills.tabs.custom')}
-                  <Badge variant="subtle" className="rounded-md">
-                    {formatTabCount(
-                      filteredCustomSkills.length,
-                      customSkills.length,
-                      hasActiveFilters
-                    )}
-                  </Badge>
-                </TabsTrigger>
-              </TabsList>
-              <SkillFilterToolbar
-                searchQuery={searchQuery}
-                runtimeFilter={runtimeFilter}
-                statusFilter={statusFilter}
-                hasActiveFilters={hasActiveFilters}
-                onSearchQueryChange={setSearchQuery}
-                onRuntimeFilterChange={setRuntimeFilter}
-                onStatusFilterChange={setStatusFilter}
-                onClearFilters={handleClearFilters}
-              />
-            </div>
-            <div className="flex flex-wrap items-center gap-2 lg:justify-end">
+        <div className="space-y-3">
+          <AIChatSkillCatalogFilters
+            locale={locale}
+            availableScenarios={availableScenarios}
+            availableCapabilities={availableCapabilities}
+            scenario={scenarioFilter}
+            capability={capabilityFilter}
+            source={sourceFilter}
+            status={statusFilter}
+            searchQuery={searchQuery}
+            hasActiveFilters={hasActiveFilters}
+            onScenarioChange={handleScenarioChange}
+            onCapabilityChange={setCapabilityFilter}
+            onSourceChange={setSourceFilter}
+            onStatusChange={setStatusFilter}
+            onSearchQueryChange={setSearchQuery}
+            onClearFilters={handleClearFilters}
+          />
+
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge variant="subtle" className="h-8 rounded-md">
+                {t('organization.aichatSkills.filters.visibleCount', {
+                  count: filteredSkills.length,
+                })}
+              </Badge>
               <Badge variant="secondary" className="h-8 rounded-md">
                 <Wrench className="size-4" />
                 {t('organization.aichatSkills.enabledCount', { count: enabledCount })}
               </Badge>
               <AutoSaveStatusIndicator status={saveStatus} />
-              {importButton}
             </div>
+            <div className="flex flex-wrap items-center gap-2 sm:justify-end">{importButtons}</div>
           </div>
 
-          <TabsContent value="system" className="mt-0">
-            <div className="space-y-3">
-              {filteredSystemSkills.length > 0 ? (
-                <div className={SKILL_CARD_GRID_CLASS}>
-                  {filteredSystemSkills.map(skill => (
-                    <AIChatSkillCard
-                      key={skill.skill_id}
-                      skill={skill}
-                      display={skillDisplays[skill.skill_id]}
-                      enabled={enabledSkillIds.includes(skill.skill_id)}
-                      disabled={isMutating}
-                      onToggle={handleToggle}
-                      onDelete={skill => void handleRequestDelete(skill)}
-                    />
-                  ))}
-                </div>
-              ) : systemSkills.length > 0 ? (
-                <div className="rounded-md border border-dashed p-6 text-sm text-muted-foreground">
-                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                    <span>{t('organization.aichatSkills.filters.empty')}</span>
-                    <Button variant="ghost" size="sm" onClick={handleClearFilters}>
-                      {t('organization.aichatSkills.actions.clearFilters')}
-                    </Button>
-                  </div>
-                </div>
-              ) : (
-                <div className="rounded-md border border-dashed p-6 text-sm text-muted-foreground">
-                  {t('organization.aichatSkills.sections.system.empty')}
-                </div>
-              )}
+          {filteredSkills.length > 0 ? (
+            <div className={SKILL_CARD_GRID_CLASS}>
+              {filteredSkills.map(skill => (
+                <AIChatSkillCard
+                  key={skill.skill_id}
+                  skill={skill}
+                  display={skillDisplays[skill.skill_id]}
+                  enabled={enabledSkillIds.includes(skill.skill_id)}
+                  disabled={isMutating}
+                  onToggle={handleToggle}
+                  onDelete={skill => void handleRequestDelete(skill)}
+                />
+              ))}
             </div>
-          </TabsContent>
-
-          <TabsContent value="custom" className="mt-0">
-            <div className="space-y-3">
-              {filteredCustomSkills.length > 0 ? (
-                <div className={SKILL_CARD_GRID_CLASS}>
-                  {filteredCustomSkills.map(skill => (
-                    <AIChatSkillCard
-                      key={skill.skill_id}
-                      skill={skill}
-                      display={skillDisplays[skill.skill_id]}
-                      enabled={enabledSkillIds.includes(skill.skill_id)}
-                      disabled={isMutating}
-                      onToggle={handleToggle}
-                      onDelete={skill => void handleRequestDelete(skill)}
-                    />
-                  ))}
-                </div>
-              ) : customSkills.length > 0 ? (
-                <div className="rounded-md border border-dashed p-6 text-sm text-muted-foreground">
-                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                    <span>{t('organization.aichatSkills.filters.empty')}</span>
-                    <Button variant="ghost" size="sm" onClick={handleClearFilters}>
-                      {t('organization.aichatSkills.actions.clearFilters')}
-                    </Button>
-                  </div>
-                </div>
-              ) : (
-                <div className="rounded-md border border-dashed bg-muted/20 p-8">
-                  <div className="mx-auto flex max-w-md flex-col items-center text-center">
-                    <div className="flex size-11 items-center justify-center rounded-md border bg-background text-muted-foreground">
-                      <Upload className="size-5" />
-                    </div>
-                    <h3 className="mt-4 text-sm font-medium text-foreground">
-                      {t('organization.aichatSkills.sections.custom.emptyTitle')}
-                    </h3>
-                    <p className="mt-2 text-sm leading-6 text-muted-foreground">
-                      {t('organization.aichatSkills.sections.custom.emptyDescription')}
-                    </p>
-                    <Button
-                      className="mt-5"
-                      size="sm"
-                      disabled={isMutating}
-                      onClick={handleImportClick}
-                    >
-                      {isImporting ? (
-                        <Loader2 className="size-4 animate-spin" />
-                      ) : (
-                        <Upload className="size-4" />
-                      )}
-                      {isImporting
-                        ? t('organization.aichatSkills.actions.importing')
-                        : t('organization.aichatSkills.actions.import')}
-                    </Button>
-                  </div>
-                </div>
-              )}
+          ) : (
+            <div className="rounded-md border border-dashed p-6 text-sm text-muted-foreground">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <span>{t('organization.aichatSkills.filters.empty')}</span>
+                <Button variant="ghost" size="sm" onClick={handleClearFilters}>
+                  {t('organization.aichatSkills.actions.clearFilters')}
+                </Button>
+              </div>
             </div>
-          </TabsContent>
-        </Tabs>
+          )}
+        </div>
       )}
 
       <ConfirmDialog

@@ -98,14 +98,18 @@ tool_governance:
     audit_required: true
     idempotency_required: false
 display:
-  icon: file-plus
-  category: productivity
+  icon: file-plus-2
+  category: document_processing
+  scenarios:
+    - document_handling
+    - office_collaboration
+    - content_creation
   label:
     en_US: File Generator
     zh_Hans: 文件生成器
   description:
-    en_US: Creates downloadable TXT, Markdown, HTML, JSON, CSV, SVG, DOCX, XLSX, PDF, and PPTX files.
-    zh_Hans: 创建可下载的 TXT、Markdown、HTML、JSON、CSV、SVG、DOCX、XLSX、PDF 和 PPTX 文件。
+    en_US: Designed for delivering results as downloadable files; turns prepared content into TXT, Markdown, HTML, JSON, CSV, SVG, DOCX, XLSX, PDF, or PPTX documents.
+    zh_Hans: 适用于将结果作为文件交付，可把已准备好的内容生成 TXT、Markdown、HTML、JSON、CSV、SVG、DOCX、XLSX、PDF 或 PPTX 文件。
   when_to_use:
     en_US: Use when the answer should be delivered as a generated file.
     zh_Hans: 当回答需要以生成文件交付时启用。

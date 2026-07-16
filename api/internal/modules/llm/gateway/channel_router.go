@@ -205,6 +205,7 @@ func (r *ChannelRouter) SelectChannelsForProvider(
 		// Model not in local registries - enable passthrough mode
 		logger.DebugContext(logCtx, "LLM model not found in local registries, using passthrough mode")
 		isPassthroughMode = true
+		modelProvider = providerHint
 	} else {
 		modelProvider = llmModel.Provider
 	}
@@ -230,7 +231,7 @@ func (r *ChannelRouter) SelectChannelsForProvider(
 		return nil, fmt.Errorf("no enabled routes found for organizationID %s. Please configure at least one active channel in your workspace", organizationID)
 	}
 
-	validRoutes, err := r.prepareCandidateRoutes(ctx, organizationID, routes, modelName, modelProvider, isPrivateCustomModel, llmModel, true, maxSelections > 1)
+	validRoutes, err := r.prepareCandidateRoutes(ctx, organizationID, routes, modelName, modelProvider, isPrivateCustomModel, llmModel, isPassthroughMode, true, maxSelections > 1)
 	if err != nil {
 		return nil, err
 	}
@@ -253,7 +254,7 @@ func (r *ChannelRouter) SelectChannelsForProvider(
 	var selections []*ChannelSelection
 	var buildErrors []string
 	for _, route := range selectedRoutes {
-		selection, err := r.buildChannelSelection(ctx, route, llmModel, privateModel, modelName, isPassthroughMode, modelCategory)
+		selection, err := r.buildChannelSelection(ctx, route, llmModel, privateModel, modelName, modelProvider, isPassthroughMode, modelCategory)
 		if err != nil {
 			errMsg := fmt.Sprintf("route %s (%s): %v", route.ID, route.Name, err)
 			buildErrors = append(buildErrors, errMsg)
@@ -420,12 +421,10 @@ func llmModelFromPrivateModel(customModel *llmmodel.CustomModel) *llmmodel.LLMMo
 	}
 }
 
-// getModel retrieves model by name, using cache if available
+// getModel resolves a providerless model name against the current catalog.
+// A name-only cache cannot represent ambiguity across providers, so this path
+// must query the catalog directly and fail closed when the provider is unclear.
 func (r *ChannelRouter) getModel(ctx context.Context, modelName string) (*llmmodel.LLMModel, error) {
-	if r.configCache != nil {
-		return r.configCache.GetModelByName(ctx, modelName)
-	}
-
 	return r.queryActiveModel(ctx, "", modelName)
 }
 
@@ -434,21 +433,41 @@ func (r *ChannelRouter) getModelForProvider(ctx context.Context, provider, model
 }
 
 func (r *ChannelRouter) queryActiveModel(ctx context.Context, provider, modelName string) (*llmmodel.LLMModel, error) {
+	if provider == "" {
+		var providers []string
+		if err := r.activeModelQuery(ctx, "", modelName).
+			Distinct("llm_models.provider").
+			Limit(2).
+			Pluck("llm_models.provider", &providers).Error; err != nil {
+			return nil, err
+		}
+		if len(providers) == 0 {
+			return nil, gorm.ErrRecordNotFound
+		}
+		if len(providers) > 1 {
+			return nil, fmt.Errorf("ambiguous active catalog model %q across providers; provider hint is required", modelName)
+		}
+		provider = providers[0]
+	}
+
 	var m llmmodel.LLMModel
+	err := r.activeModelQuery(ctx, provider, modelName).First(&m).Error
+	if err != nil {
+		return nil, err
+	}
+	return &m, nil
+}
+
+func (r *ChannelRouter) activeModelQuery(ctx context.Context, provider, modelName string) *gorm.DB {
 	query := r.db.WithContext(ctx).
 		Model(&llmmodel.LLMModel{}).
 		Joins("JOIN llm_providers ON llm_models.provider = llm_providers.provider")
 	if provider != "" {
 		query = query.Where("llm_models.provider = ?", provider)
 	}
-	err := query.
+	return query.
 		Where("llm_models.name = ? AND llm_models.is_active = ? AND llm_models.status = ? AND llm_models.deleted_at IS NULL", modelName, true, llmmodel.ModelStatusActive).
-		Where("llm_providers.is_active = ? AND llm_providers.deleted_at IS NULL", true).
-		First(&m).Error
-	if err != nil {
-		return nil, err
-	}
-	return &m, nil
+		Where("llm_providers.is_active = ? AND llm_providers.deleted_at IS NULL", true)
 }
 
 func (r *ChannelRouter) globalModelExists(ctx context.Context, provider, modelName string) (bool, error) {
@@ -498,19 +517,23 @@ func (r *ChannelRouter) filterRoutesForModel(routes []*channelmodel.LLMRoute, mo
 	return validRoutes
 }
 
-func (r *ChannelRouter) filterRoutesForSelection(routes []*channelmodel.LLMRoute, modelName, modelProvider string, isPrivateCustomModel bool) []*channelmodel.LLMRoute {
-	if !isPrivateCustomModel {
+func (r *ChannelRouter) filterRoutesForSelection(routes []*channelmodel.LLMRoute, modelName, modelProvider string, isPrivateCustomModel, isPassthroughMode bool) []*channelmodel.LLMRoute {
+	if !isPrivateCustomModel && !isPassthroughMode {
 		return r.filterRoutesForModel(routes, modelName, modelProvider)
 	}
 
 	validRoutes := make([]*channelmodel.LLMRoute, 0)
 	for _, route := range routes {
-		if isOfficialRoute(route) {
+		if isPrivateCustomModel && isOfficialRoute(route) {
 			continue
 		}
 
+		provider := ""
+		if isOfficialRoute(route) {
+			provider = modelProvider
+		}
 		strategy := r.strategyFactory.GetStrategy(route)
-		if strategy.SupportsModel(route, modelName, "") {
+		if strategy.SupportsModel(route, modelName, provider) {
 			validRoutes = append(validRoutes, route)
 		}
 	}
@@ -525,10 +548,11 @@ func (r *ChannelRouter) prepareCandidateRoutes(
 	modelName, modelProvider string,
 	isPrivateCustomModel bool,
 	llmModel *llmmodel.LLMModel,
+	isPassthroughMode bool,
 	allowHalfOpen bool,
 	allowAutomaticHalfOpen bool,
 ) ([]*channelmodel.LLMRoute, error) {
-	validRoutes := r.filterRoutesForSelection(routes, modelName, modelProvider, isPrivateCustomModel)
+	validRoutes := r.filterRoutesForSelection(routes, modelName, modelProvider, isPrivateCustomModel, isPassthroughMode)
 	modelUseCase, _ := ctx.Value(shared.ContextKeyModelUseCase).(string)
 	validRoutes = filterRoutesForModelScene(validRoutes, modelName, llmModel, modelUseCase, isPrivateCustomModel)
 	modelCategory, _ := ctx.Value(shared.ContextKeyModelCategory).(string)
@@ -832,6 +856,7 @@ func (r *ChannelRouter) buildChannelSelection(
 	llmModel *llmmodel.LLMModel,
 	privateModel *llmmodel.CustomModel,
 	modelName string,
+	modelProvider string,
 	isPassthroughMode bool,
 	modelCategory string,
 ) (*ChannelSelection, error) {
@@ -846,11 +871,14 @@ func (r *ChannelRouter) buildChannelSelection(
 		targetModelName = llmModel.Model
 	}
 
-	if !route.SupportsModel(targetModelName) {
+	isOfficial := route.IsOfficial || route.Type == shared.RouteTypeZGICloud
+	if llmModel != nil {
+		modelProvider = llmModel.Provider
+	}
+	if !route.SupportsModelForProvider(modelProvider, targetModelName) {
 		return nil, fmt.Errorf("model %s not supported by route %s (supported: %v)", targetModelName, route.ID, models)
 	}
 
-	isOfficial := route.IsOfficial || route.Type == shared.RouteTypeZGICloud
 	billingLane := UsageBillingLanePrivate
 	if isOfficial {
 		billingLane = UsageBillingLanePlatform

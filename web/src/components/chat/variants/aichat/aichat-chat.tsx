@@ -14,7 +14,7 @@ import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { useStore } from 'zustand';
-import { ArrowDown, RefreshCw, Settings2 } from 'lucide-react';
+import { ArrowDown, RefreshCw } from 'lucide-react';
 import type {
   ModelSelectorModelProps,
   ModelSelectorValue,
@@ -1125,22 +1125,6 @@ export function AIChatShell({
     );
   }, [draftSkillPreferenceIds, t, updateSkillPreference]);
 
-  const skillPreferenceAction = useMemo(() => {
-    if (!enableAIChatSkillPreference) return null;
-    return (
-      <Button
-        variant="ghost"
-        isIcon
-        className={cn(isEmbedded ? embeddedControlButtonClassName : 'size-8 text-muted-foreground')}
-        onClick={() => handleSkillPreferenceOpenChange(true)}
-        title={t('consoleChat.skillPreferences.action')}
-        aria-label={t('consoleChat.skillPreferences.action')}
-      >
-        <Settings2 className="size-4" />
-      </Button>
-    );
-  }, [enableAIChatSkillPreference, handleSkillPreferenceOpenChange, isEmbedded, t]);
-
   const embeddedConversationControls = useMemo(() => {
     if (!showEmbeddedConversationDrawer) return null;
     const controls = {
@@ -1160,14 +1144,7 @@ export function AIChatShell({
         startNewConversation={controls.startNewConversation}
         conversationsLabel={t('consoleChat.historySubtitle')}
         newConversationLabel={t('chat.newConversation')}
-        trailingAction={
-          assetAuditButton || skillPreferenceAction ? (
-            <>
-              {assetAuditButton}
-              {skillPreferenceAction}
-            </>
-          ) : null
-        }
+        trailingAction={assetAuditButton}
       />
     );
   }, [
@@ -1176,7 +1153,6 @@ export function AIChatShell({
     isHome,
     renderEmbeddedConversationControls,
     showEmbeddedConversationDrawer,
-    skillPreferenceAction,
     t,
   ]);
 
@@ -1239,11 +1215,8 @@ export function AIChatShell({
               onToggleSidebar={handleToggleSidebar}
               onStartNew={handleNewChat}
               rightAction={
-                assetAuditButton || skillPreferenceAction ? (
-                  <div className="flex items-center justify-end gap-1">
-                    {assetAuditButton}
-                    {skillPreferenceAction}
-                  </div>
+                assetAuditButton ? (
+                  <div className="flex items-center justify-end gap-1">{assetAuditButton}</div>
                 ) : undefined
               }
             />
@@ -1385,6 +1358,9 @@ export function AIChatShell({
             uploadScope={uploadScope}
             showFileLibraryPicker={showFileLibraryPicker}
             allowWorkspaceSwitch={allowWorkspaceSwitch}
+            showSkillManagement={enableAIChatSkillPreference}
+            skillManagementLabel={t('consoleChat.skillPreferences.action')}
+            onOpenSkillManagement={() => handleSkillPreferenceOpenChange(true)}
             inputPlaceholder={inputPlaceholder}
             surface={surface}
             showToolGovernancePermissionControl={showToolGovernancePermissionControl}
@@ -1473,6 +1449,7 @@ export function AIChatShell({
       {enableAIChatSkillPreference ? (
         <AIChatSkillPreferenceDialog
           open={skillPreferenceOpen}
+          context={runtimeSurface === 'contextual_sidebar' ? 'platform-assistant' : 'conversation'}
           locale={locale}
           skills={aichatConfigurableSkills}
           selectedSkillIds={draftSkillPreferenceIds}

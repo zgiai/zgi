@@ -14,14 +14,20 @@ import (
 	channelmodel "github.com/zgiai/zgi/api/internal/modules/llm/channel/model"
 	llmmodeldto "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/dto"
 	llmmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
+	officialmodel "github.com/zgiai/zgi/api/internal/modules/llm/officialmodel"
 	"github.com/zgiai/zgi/api/internal/modules/llm/shared"
 	"github.com/zgiai/zgi/api/internal/modules/llm/shared/types"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
+	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
 
 type availableModelRepoFake struct {
 	models                []*llmmodel.LLMModel
+	listByNames           int
+	lastNames             []string
+	list                  int
+	listErr               error
 	listAvailableByNames  int
 	listAvailableFiltered int
 	lastUseCase           string
@@ -44,8 +50,24 @@ func (f *availableModelRepoFake) GetByID(_ context.Context, id uuid.UUID) (*llmm
 func (f *availableModelRepoFake) GetByName(context.Context, string) (*llmmodel.LLMModel, error) {
 	return nil, errors.New("not implemented")
 }
-func (f *availableModelRepoFake) ListByNames(context.Context, []string) ([]*llmmodel.LLMModel, error) {
-	return nil, errors.New("not implemented")
+func (f *availableModelRepoFake) ListByNames(_ context.Context, names []string) ([]*llmmodel.LLMModel, error) {
+	f.listByNames++
+	f.lastNames = append([]string(nil), names...)
+	wanted := make(map[string]struct{}, len(names))
+	for _, name := range names {
+		wanted[name] = struct{}{}
+	}
+
+	models := make([]*llmmodel.LLMModel, 0)
+	for _, candidate := range f.models {
+		if candidate == nil {
+			continue
+		}
+		if _, ok := wanted[candidate.Model]; ok {
+			models = append(models, candidate)
+		}
+	}
+	return models, nil
 }
 func (f *availableModelRepoFake) ListAvailableByNames(_ context.Context, _ []string, _, useCase string) ([]*llmmodel.LLMModel, error) {
 	f.listAvailableByNames++
@@ -61,6 +83,10 @@ func (f *availableModelRepoFake) GetByProviderAndName(context.Context, string, s
 	return nil, errors.New("not implemented")
 }
 func (f *availableModelRepoFake) List(context.Context, *uuid.UUID, string, string, string, *bool, int, int) ([]*llmmodel.LLMModel, int64, error) {
+	f.list++
+	if f.listErr != nil {
+		return nil, 0, f.listErr
+	}
 	return f.models, int64(len(f.models)), nil
 }
 func (f *availableModelRepoFake) Update(context.Context, *llmmodel.LLMModel) error {
@@ -95,7 +121,14 @@ func (f *availableConfigRepoFake) GetByModelID(_ context.Context, _ uuid.UUID, m
 	return nil, gorm.ErrRecordNotFound
 }
 func (f *availableConfigRepoFake) List(context.Context, uuid.UUID, *bool, int, int) ([]*llmmodel.ModelConfig, int64, error) {
-	return nil, 0, errors.New("not implemented")
+	if f.err != nil {
+		return nil, 0, f.err
+	}
+	configs := make([]*llmmodel.ModelConfig, 0, len(f.configs))
+	for _, config := range f.configs {
+		configs = append(configs, config)
+	}
+	return configs, int64(len(configs)), nil
 }
 func (f *availableConfigRepoFake) ListAvailableConfigs(context.Context, uuid.UUID) ([]*llmmodel.ModelConfig, error) {
 	f.listAvailableConfigs++
@@ -290,6 +323,10 @@ func TestAvailableModels_AgentRequiresCatalogTagOnPlatformRoute(t *testing.T) {
 		Type:       shared.RouteTypeZGICloud,
 		IsOfficial: true,
 		Models:     []string{"gpt-agent", "gpt-workflow"},
+		OfficialProviderModels: []channelmodel.ProviderModel{
+			{Provider: "openai", Model: "gpt-agent"},
+			{Provider: "openai", Model: "gpt-workflow"},
+		},
 	}}}
 	svc := NewAvailableModelsService(modelRepo, &availableConfigRepoFake{}, &availableCustomRepoFake{}, routeRepo)
 
@@ -330,6 +367,11 @@ func TestAvailableModels_AgentRuntimeUnionsTaggedAndCompatibleTextChatModels(t *
 		{
 			Type: shared.RouteTypeZGICloud, IsOfficial: true,
 			Models: []string{"agent-only", "legacy-compatible", "plain-chat"},
+			OfficialProviderModels: []channelmodel.ProviderModel{
+				{Provider: "openai", Model: "agent-only"},
+				{Provider: "openai", Model: "legacy-compatible"},
+				{Provider: "openai", Model: "plain-chat"},
+			},
 		},
 		{
 			Type: shared.RouteTypePrivate, ChannelProvider: "google",
@@ -487,6 +529,48 @@ func TestRouteBacksModelForUseCase_GlobalAgentKeepsAdapterWhitelist(t *testing.T
 	}
 }
 
+func TestAvailableModels_OfficialRouteRequiresExactProviderModelPair(t *testing.T) {
+	modelName := "same-name"
+	modelRepo := &availableModelRepoFake{models: []*llmmodel.LLMModel{
+		{
+			ID:        uuid.New(),
+			Provider:  "openai",
+			Model:     modelName,
+			ModelName: "OpenAI Same Name",
+			IsActive:  true,
+			UseCases:  types.StringArray{"text-chat"},
+		},
+		{
+			ID:        uuid.New(),
+			Provider:  "anthropic",
+			Model:     modelName,
+			ModelName: "Anthropic Same Name",
+			IsActive:  true,
+			UseCases:  types.StringArray{"text-chat"},
+		},
+	}}
+	route := &channelmodel.LLMRoute{
+		Type:                   shared.RouteTypeZGICloud,
+		IsOfficial:             true,
+		Models:                 []string{modelName},
+		OfficialProviderModels: []channelmodel.ProviderModel{{Provider: "openai", Model: modelName}},
+	}
+	svc := NewAvailableModelsService(
+		modelRepo,
+		&availableConfigRepoFake{},
+		&availableCustomRepoFake{},
+		&availableRouteRepoFake{routes: []*channelmodel.LLMRoute{route}},
+	)
+
+	models, err := svc.ListAvailable(context.Background(), uuid.New(), "", "text-chat")
+	if err != nil {
+		t.Fatalf("ListAvailable returned error: %v", err)
+	}
+	if len(models) != 1 || models[0].Provider != "openai" || models[0].Name != modelName {
+		t.Fatalf("available same-name models = %#v, want only openai/%s", models, modelName)
+	}
+}
+
 func TestAvailableModels_WorkflowUsesTextChatModelsWithoutProjection(t *testing.T) {
 	organizationID := uuid.New()
 	modelRepo := &availableModelRepoFake{models: []*llmmodel.LLMModel{{
@@ -498,9 +582,10 @@ func TestAvailableModels_WorkflowUsesTextChatModelsWithoutProjection(t *testing.
 		UseCases:  types.StringArray{"text-chat"},
 	}}}
 	routeRepo := &availableRouteRepoFake{routes: []*channelmodel.LLMRoute{{
-		Type:       shared.RouteTypeZGICloud,
-		IsOfficial: true,
-		Models:     []string{"private-model"},
+		Type:                   shared.RouteTypeZGICloud,
+		IsOfficial:             true,
+		Models:                 []string{"private-model"},
+		OfficialProviderModels: []channelmodel.ProviderModel{{Provider: "custom", Model: "private-model"}},
 	}}}
 	svc := NewAvailableModelsService(modelRepo, &availableConfigRepoFake{}, &availableCustomRepoFake{}, routeRepo)
 
@@ -1048,6 +1133,299 @@ func TestModelAvailabilityBatchMatchesSingleDeprecatedModel(t *testing.T) {
 	}
 	if got.Message != single.Message {
 		t.Fatalf("batch message = %q, want single message %q", got.Message, single.Message)
+	}
+}
+
+func TestModelAvailabilitySingleAndBatchRejectWrongOfficialProvider(t *testing.T) {
+	organizationID := uuid.New()
+	modelID := uuid.New()
+	modelName := "same-name"
+	modelRepo := &availableModelRepoFake{models: []*llmmodel.LLMModel{{
+		ID:       modelID,
+		Provider: "anthropic",
+		Model:    modelName,
+		IsActive: true,
+		Status:   llmmodel.ModelStatusActive,
+	}}}
+	routeRepo := &availableRouteRepoFake{routes: []*channelmodel.LLMRoute{{
+		Type:                   shared.RouteTypeZGICloud,
+		IsOfficial:             true,
+		Models:                 []string{modelName},
+		OfficialProviderModels: []channelmodel.ProviderModel{{Provider: "openai", Model: modelName}},
+	}}}
+	svc := NewModelAvailabilityService(modelRepo, &availableConfigRepoFake{}, routeRepo)
+
+	single, err := svc.CheckModelAvailable(context.Background(), organizationID, modelID)
+	if err != nil {
+		t.Fatalf("CheckModelAvailable returned error: %v", err)
+	}
+	if single.Available || single.ChannelCount != 0 {
+		t.Fatalf("single availability = %#v, want unavailable for wrong official provider", single)
+	}
+
+	batch, err := svc.BatchCheckAvailability(context.Background(), organizationID, []string{modelName})
+	if err != nil {
+		t.Fatalf("BatchCheckAvailability returned error: %v", err)
+	}
+	if got := batch.Items[modelName]; got == nil || got.Available || got.ChannelCount != 0 {
+		t.Fatalf("batch availability = %#v, want unavailable for wrong official provider", got)
+	}
+}
+
+func TestModelAvailabilityBatchRejectsAmbiguousCatalogProviders(t *testing.T) {
+	organizationID := uuid.New()
+	modelName := "same-name"
+	modelRepo := &availableModelRepoFake{models: []*llmmodel.LLMModel{
+		{ID: uuid.New(), Provider: "openai", Model: modelName, IsActive: true, Status: llmmodel.ModelStatusActive},
+		{ID: uuid.New(), Provider: "anthropic", Model: modelName, IsActive: true, Status: llmmodel.ModelStatusActive},
+	}}
+	routeRepo := &availableRouteRepoFake{routes: []*channelmodel.LLMRoute{{
+		Type:                   shared.RouteTypeZGICloud,
+		IsOfficial:             true,
+		Models:                 []string{modelName},
+		OfficialProviderModels: []channelmodel.ProviderModel{{Provider: "openai", Model: modelName}},
+	}}}
+	svc := NewModelAvailabilityService(modelRepo, &availableConfigRepoFake{}, routeRepo)
+
+	batch, err := svc.BatchCheckAvailability(context.Background(), organizationID, []string{modelName})
+	if err != nil {
+		t.Fatalf("BatchCheckAvailability returned error: %v", err)
+	}
+	got := batch.Items[modelName]
+	if got == nil {
+		t.Fatalf("batch availability missing item %q", modelName)
+	}
+	if got.Available || got.ChannelCount != 0 {
+		t.Fatalf("batch availability = %#v, want unavailable for ambiguous catalog providers", got)
+	}
+	wantMessage := `Model "same-name" is ambiguous across multiple catalog providers`
+	if got.Message != wantMessage {
+		t.Fatalf("batch message = %q, want %q", got.Message, wantMessage)
+	}
+}
+
+func TestModelAvailabilityBatchQueriesRequestedNamesBeyondFirstCatalogPage(t *testing.T) {
+	organizationID := uuid.New()
+	modelName := "same-name"
+	models := make([]*llmmodel.LLMModel, 0, 1002)
+	for range 1000 {
+		models = append(models, &llmmodel.LLMModel{
+			ID:       uuid.New(),
+			Provider: "unrelated",
+			Model:    "unrelated-model",
+			IsActive: true,
+			Status:   llmmodel.ModelStatusActive,
+		})
+	}
+	models = append(models,
+		&llmmodel.LLMModel{ID: uuid.New(), Provider: "openai", Model: modelName, IsActive: true, Status: llmmodel.ModelStatusActive},
+		&llmmodel.LLMModel{ID: uuid.New(), Provider: "anthropic", Model: modelName, IsActive: true, Status: llmmodel.ModelStatusActive},
+	)
+	modelRepo := &availableModelRepoFake{
+		models:  models,
+		listErr: errors.New("List must not be used by batch availability"),
+	}
+	routeRepo := &availableRouteRepoFake{routes: []*channelmodel.LLMRoute{{
+		Type:                   shared.RouteTypeZGICloud,
+		IsOfficial:             true,
+		Models:                 []string{modelName},
+		OfficialProviderModels: []channelmodel.ProviderModel{{Provider: "openai", Model: modelName}},
+	}}}
+	svc := NewModelAvailabilityService(modelRepo, &availableConfigRepoFake{}, routeRepo)
+
+	batch, err := svc.BatchCheckAvailability(context.Background(), organizationID, []string{modelName})
+	if err != nil {
+		t.Fatalf("BatchCheckAvailability returned error: %v", err)
+	}
+	if modelRepo.list != 0 {
+		t.Fatalf("List called %d time(s), want 0", modelRepo.list)
+	}
+	if modelRepo.listByNames != 1 {
+		t.Fatalf("ListByNames called %d time(s), want 1", modelRepo.listByNames)
+	}
+	if !reflect.DeepEqual(modelRepo.lastNames, []string{modelName}) {
+		t.Fatalf("ListByNames names = %#v, want %#v", modelRepo.lastNames, []string{modelName})
+	}
+
+	got := batch.Items[modelName]
+	if got == nil {
+		t.Fatalf("batch availability missing item %q", modelName)
+	}
+	if got.Available || got.ChannelCount != 0 {
+		t.Fatalf("batch availability = %#v, want unavailable for ambiguous catalog providers", got)
+	}
+	wantMessage := `Model "same-name" is ambiguous across multiple catalog providers`
+	if got.Message != wantMessage {
+		t.Fatalf("batch message = %q, want %q", got.Message, wantMessage)
+	}
+}
+
+func TestModelAvailabilitySingleAndBatchKeepSingleProviderAvailable(t *testing.T) {
+	organizationID := uuid.New()
+	modelID := uuid.New()
+	modelName := "same-name"
+	modelRepo := &availableModelRepoFake{models: []*llmmodel.LLMModel{{
+		ID: modelID, Provider: "openai", Model: modelName, IsActive: true, Status: llmmodel.ModelStatusActive,
+	}}}
+	routeRepo := &availableRouteRepoFake{routes: []*channelmodel.LLMRoute{{
+		Type:                   shared.RouteTypeZGICloud,
+		IsOfficial:             true,
+		Models:                 []string{modelName},
+		OfficialProviderModels: []channelmodel.ProviderModel{{Provider: "openai", Model: modelName}},
+	}}}
+	svc := NewModelAvailabilityService(modelRepo, &availableConfigRepoFake{}, routeRepo)
+
+	single, err := svc.CheckModelAvailable(context.Background(), organizationID, modelID)
+	if err != nil {
+		t.Fatalf("CheckModelAvailable returned error: %v", err)
+	}
+	if !single.Available || single.ChannelCount != 1 {
+		t.Fatalf("single availability = %#v, want available through exact openai pair", single)
+	}
+
+	batch, err := svc.BatchCheckAvailability(context.Background(), organizationID, []string{modelName})
+	if err != nil {
+		t.Fatalf("BatchCheckAvailability returned error: %v", err)
+	}
+	if got := batch.Items[modelName]; got == nil || !got.Available || got.ChannelCount != 1 {
+		t.Fatalf("batch availability = %#v, want available through exact openai pair", got)
+	}
+}
+
+func TestModelServiceOfficialAvailabilityUsesExactProviderModelPair(t *testing.T) {
+	db := openOfficialModelServiceDB(t)
+	organizationID := uuid.New()
+	modelName := "same-name"
+	insertOfficialRouteAndSnapshot(t, db, organizationID, modelName, []channelmodel.ProviderModel{{Provider: "openai", Model: modelName}})
+	models := []*llmmodel.LLMModel{
+		{ID: uuid.New(), Provider: "openai", Model: modelName, ModelName: "OpenAI Same Name", IsActive: true, Status: llmmodel.ModelStatusActive},
+		{ID: uuid.New(), Provider: "anthropic", Model: modelName, ModelName: "Anthropic Same Name", IsActive: true, Status: llmmodel.ModelStatusActive},
+	}
+	svc := &modelService{
+		db:         db,
+		globalRepo: &availableModelRepoFake{models: models},
+		configRepo: &availableConfigRepoFake{},
+		customRepo: &availableCustomRepoFake{},
+	}
+
+	views, err := svc.ListTenantModels(context.Background(), organizationID, "", "", "")
+	if err != nil {
+		t.Fatalf("ListTenantModels returned error: %v", err)
+	}
+	if len(views) != 2 {
+		t.Fatalf("ListTenantModels returned %d models, want 2", len(views))
+	}
+	availability := make(map[string][2]bool, len(views))
+	for _, view := range views {
+		availability[view.Provider] = [2]bool{view.IsAvailable, view.ZgiOfficialAvailable}
+	}
+	if got := availability["openai"]; got != [2]bool{true, true} {
+		t.Fatalf("openai availability = %v, want [true true]", got)
+	}
+	if got := availability["anthropic"]; got != [2]bool{false, false} {
+		t.Fatalf("anthropic availability = %v, want [false false]", got)
+	}
+}
+
+func TestListOfficialModelsRequiresExactProviderModelPair(t *testing.T) {
+	db := openOfficialModelServiceDB(t)
+	organizationID := uuid.New()
+	modelName := "same-name"
+	insertOfficialRouteAndSnapshot(t, db, organizationID, modelName, []channelmodel.ProviderModel{{Provider: "openai", Model: modelName}})
+	for _, provider := range []string{"openai", "anthropic"} {
+		if err := db.Exec(
+			"INSERT INTO llm_models (id, provider, name, is_active, sort_order) VALUES (?, ?, ?, ?, ?)",
+			uuid.New().String(), provider, modelName, true, 0,
+		).Error; err != nil {
+			t.Fatalf("insert %s model: %v", provider, err)
+		}
+	}
+	svc := &modelService{db: db}
+
+	models, err := svc.ListOfficialModels(context.Background())
+	if err != nil {
+		t.Fatalf("ListOfficialModels returned error: %v", err)
+	}
+	if len(models) != 1 || models[0].Provider != "openai" || models[0].Model != modelName {
+		t.Fatalf("official models = %#v, want only openai/%s", models, modelName)
+	}
+}
+
+func openOfficialModelServiceDB(t *testing.T) *gorm.DB {
+	t.Helper()
+	db, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	statements := []string{
+		`CREATE TABLE llm_routes (
+			id text PRIMARY KEY,
+			organization_id text NOT NULL,
+			type text NOT NULL,
+			is_enabled boolean NOT NULL,
+			is_official boolean NOT NULL,
+			deleted_at datetime
+		)`,
+		`CREATE TABLE llm_official_model_snapshots (
+			source_key text PRIMARY KEY,
+			effective_models text NOT NULL DEFAULT '[]',
+			effective_provider_models text NOT NULL DEFAULT '[]',
+			latest_models text NOT NULL DEFAULT '[]',
+			previous_models text NOT NULL DEFAULT '[]',
+			latest_event_version integer NOT NULL DEFAULT 0,
+			latest_synced_at datetime,
+			effective_updated_at datetime,
+			last_check_status text NOT NULL DEFAULT 'accepted',
+			last_reject_reason text,
+			created_at datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE TABLE llm_models (
+			id text PRIMARY KEY,
+			provider text NOT NULL,
+			name text NOT NULL,
+			is_active boolean NOT NULL,
+			sort_order integer NOT NULL DEFAULT 0,
+			deleted_at datetime
+		)`,
+	}
+	for _, statement := range statements {
+		if err := db.Exec(statement).Error; err != nil {
+			t.Fatalf("create official model service table: %v", err)
+		}
+	}
+	return db
+}
+
+func insertOfficialRouteAndSnapshot(
+	t *testing.T,
+	db *gorm.DB,
+	organizationID uuid.UUID,
+	modelName string,
+	pairs []channelmodel.ProviderModel,
+) {
+	t.Helper()
+	if err := db.Exec(
+		"INSERT INTO llm_routes (id, organization_id, type, is_enabled, is_official) VALUES (?, ?, ?, ?, ?)",
+		uuid.New().String(), organizationID.String(), shared.RouteTypeZGICloud, true, true,
+	).Error; err != nil {
+		t.Fatalf("insert official route: %v", err)
+	}
+	payload, err := json.Marshal(pairs)
+	if err != nil {
+		t.Fatalf("marshal provider-model pairs: %v", err)
+	}
+	if err := db.Exec(
+		`INSERT INTO llm_official_model_snapshots
+			(source_key, effective_models, effective_provider_models, latest_models, previous_models)
+		 VALUES (?, ?, ?, ?, ?)`,
+		officialmodel.SourceKeyZGICloud,
+		`["`+modelName+`"]`,
+		string(payload),
+		`["`+modelName+`"]`,
+		`[]`,
+	).Error; err != nil {
+		t.Fatalf("insert official snapshot: %v", err)
 	}
 }
 
