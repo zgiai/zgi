@@ -490,6 +490,7 @@ func (r *processTimelineRecorder) persistInvocation(invocation map[string]interf
 
 func (r *processTimelineRecorder) mergeInvocation(invocation map[string]interface{}) map[string]interface{} {
 	metadata := mergeSkillInvocationMetadata(r.prepared.Message.Metadata, []map[string]interface{}{invocation})
+	applyManagedFileArtifactLinks(metadata, []map[string]interface{}{invocation})
 	if strings.TrimSpace(stringFromAny(invocation["kind"])) == "tool_governance" {
 		if event := toolGovernanceDecisionEventFromInvocation(invocation); toolGovernanceCorrelationID(event) != "" {
 			metadata = mergeToolGovernanceDecisionMetadata(metadata, event)
