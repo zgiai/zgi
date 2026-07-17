@@ -56,11 +56,11 @@ func hydrateMessageGeneratedFileURLsWithLookup(message *runtimemodel.Message, to
 
 	files := generatedFilesFromMetadata(message.Metadata["generated_files"])
 	if len(files) > 0 {
-		metadata["generated_files"] = hydrateGeneratedFileURLs(files)
+		metadata["generated_files"] = hydrateGeneratedFileURLs(files, toolFiles, lookupAttempted, now)
 		changed = true
 	}
 
-	if hydrateImageGenerationFileURLs(metadata) {
+	if hydrateImageGenerationFileURLs(metadata, toolFiles, lookupAttempted, now) {
 		changed = true
 	}
 	if changed {
@@ -68,7 +68,7 @@ func hydrateMessageGeneratedFileURLsWithLookup(message *runtimemodel.Message, to
 	}
 }
 
-func hydrateImageGenerationFileURLs(metadata map[string]interface{}) bool {
+func hydrateImageGenerationFileURLs(metadata map[string]interface{}, toolFiles map[string]*tool_file.ToolFile, lookupAttempted bool, now time.Time) bool {
 	imageGeneration, ok := metadata["image_generation"].(map[string]interface{})
 	if !ok {
 		return false
@@ -78,12 +78,12 @@ func hydrateImageGenerationFileURLs(metadata map[string]interface{}) bool {
 		return false
 	}
 	hydrated := copyStringAnyMap(imageGeneration)
-	hydrated["files"] = hydrateGeneratedFileURLs(files)
+	hydrated["files"] = hydrateGeneratedFileURLs(files, toolFiles, lookupAttempted, now)
 	metadata["image_generation"] = hydrated
 	return true
 }
 
-func hydrateGeneratedFileURLs(files []map[string]interface{}) []map[string]interface{} {
+func hydrateGeneratedFileURLs(files []map[string]interface{}, toolFiles map[string]*tool_file.ToolFile, lookupAttempted bool, now time.Time) []map[string]interface{} {
 	hydrated := make([]map[string]interface{}, 0, len(files))
 	for _, file := range files {
 		hydrated = append(hydrated, hydrateGeneratedFileURLWithLookup(file, toolFiles, lookupAttempted, now))

@@ -46,15 +46,16 @@ func (s *service) createConversationForCaller(ctx context.Context, scope Scope, 
 		return nil, fmt.Errorf("%w: source_web_app_id is required for webapp conversations", ErrInvalidInput)
 	}
 	conversation := &runtimemodel.Conversation{
-		OrganizationID: scope.OrganizationID,
-		WorkspaceID:    workspaceID,
-		AccountID:      scope.AccountID,
-		CallerType:     normalizeCallerType(caller.Type),
-		CallerID:       normalizeCallerID(caller.ID),
-		Title:          title,
-		Status:         runtimemodel.ConversationStatusNormal,
-		Source:         source,
-		SourceWebAppID: sourceWebAppID,
+		OrganizationID:   scope.OrganizationID,
+		WorkspaceID:      workspaceID,
+		AccountID:        scope.AccountID,
+		CallerType:       normalizeCallerType(caller.Type),
+		CallerID:         normalizeCallerID(caller.ID),
+		ConversationType: normalizeConversationType(caller.ConversationType),
+		Title:            title,
+		Status:           runtimemodel.ConversationStatusNormal,
+		Source:           source,
+		SourceWebAppID:   sourceWebAppID,
 	}
 	if strings.TrimSpace(surface) != "" {
 		normalizedSurface := normalizeAIChatSurface(surface)
@@ -88,6 +89,15 @@ func normalizeConversationSource(value string) string {
 	}
 }
 
+func normalizeConversationType(value string) string {
+	switch strings.TrimSpace(value) {
+	case runtimemodel.ConversationTypeImage:
+		return runtimemodel.ConversationTypeImage
+	default:
+		return runtimemodel.ConversationTypeChat
+	}
+}
+
 func normalizeCallerID(value *uuid.UUID) *uuid.UUID {
 	if value == nil || *value == uuid.Nil {
 		return nil
@@ -104,6 +114,7 @@ func (s *service) getConversationByCallerScoped(ctx context.Context, scope Scope
 		scope.AccountID,
 		normalizeCallerType(caller.Type),
 		normalizeCallerID(caller.ID),
+		normalizeConversationType(caller.ConversationType),
 	)
 	if err != nil {
 		return nil, mapRepoError(err)
@@ -456,6 +467,7 @@ func (s *service) ListConversationsByCaller(ctx context.Context, scope Scope, ca
 	}
 	limit = clampLimit(limit, 20, 100)
 	offset := pageOffset(page, limit)
+	conversationType := normalizeConversationType(caller.ConversationType)
 	if strings.TrimSpace(caller.Source) != "" {
 		return s.repos.Conversation.ListByCallerSourceScoped(
 			ctx,
@@ -463,13 +475,14 @@ func (s *service) ListConversationsByCaller(ctx context.Context, scope Scope, ca
 			scope.AccountID,
 			normalizeCallerType(caller.Type),
 			normalizeCallerID(caller.ID),
+			conversationType,
 			normalizeConversationSource(caller.Source),
 			normalizeCallerID(caller.SourceWebAppID),
 			limit,
 			offset,
 		)
 	}
-	return s.repos.Conversation.ListByCallerScoped(ctx, scope.OrganizationID, scope.AccountID, normalizeCallerType(caller.Type), normalizeCallerID(caller.ID), limit, offset)
+	return s.repos.Conversation.ListByCallerScoped(ctx, scope.OrganizationID, scope.AccountID, normalizeCallerType(caller.Type), normalizeCallerID(caller.ID), conversationType, limit, offset)
 }
 
 func (s *service) ListConversationsBySurface(ctx context.Context, scope Scope, surface string, page, limit int) ([]*runtimemodel.Conversation, int64, error) {
@@ -508,6 +521,7 @@ func (s *service) searchByCallerSurface(ctx context.Context, scope Scope, caller
 		scope.AccountID,
 		normalizeCallerType(caller.Type),
 		normalizeCallerID(caller.ID),
+		normalizeConversationType(caller.ConversationType),
 		strings.TrimSpace(caller.Source),
 		normalizeCallerID(caller.SourceWebAppID),
 		strings.TrimSpace(surface),

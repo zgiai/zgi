@@ -33,7 +33,8 @@ export function useImageRuntimeTransport({ models }: UseImageRuntimeTransportOpt
       }): Promise<{ items: ConversationSummary[]; pagination: Pagination }> {
         const resp = await queryClient.fetchQuery({
           queryKey: [...IMAGE_RUNTIME_KEYS.conversations, params],
-          queryFn: () => aichatService.listConversations(params),
+          queryFn: () =>
+            aichatService.listConversations({ ...params, conversation_type: 'image' }),
           staleTime: 30 * 1000,
           retry: false,
         });
@@ -46,13 +47,15 @@ export function useImageRuntimeTransport({ models }: UseImageRuntimeTransportOpt
 
       async get(conversationId: string): Promise<ConversationDetail> {
         const [conversationResp, messagesResp] = await Promise.all([
-          aichatService.getConversation(conversationId),
+          aichatService.getConversation(conversationId, 'image'),
           aichatService.listMessages(conversationId, { page: 1, limit: 200 }),
         ]);
         const summary = mapConversationToSummary(conversationResp.data);
         return {
           summary,
-          messages: [...messagesResp.data.data].sort((a, b) => a.created_at - b.created_at).map(mapMessage),
+          messages: [...messagesResp.data.data]
+            .sort((a, b) => a.created_at - b.created_at)
+            .map(mapMessage),
           loaded: true,
           loading: false,
         };
@@ -61,7 +64,7 @@ export function useImageRuntimeTransport({ models }: UseImageRuntimeTransportOpt
       async search(query: string, limit: number): Promise<ConversationSearchResult[]> {
         const normalized = query.trim();
         if (!normalized) return [];
-        const resp = await aichatService.search(normalized, limit);
+        const resp = await aichatService.search(normalized, limit, { conversation_type: 'image' });
         return resp.data.map(mapSearchResult);
       },
 
@@ -125,6 +128,11 @@ async function sendImageRuntimeMessage(
       conversation_id: data.conversation_id,
       message_id: data.message_id,
       metadata: { image_generation: data.image_generation },
+      image_generation: data.image_generation,
+      model_label: data.image_generation.model_label,
+      model_name: data.image_generation.model,
+      model_provider: data.image_generation.provider,
+      created_at: Math.floor(Date.now() / 1000),
       generatedImages,
     });
     callbacks.onMessage({ generatedImages });
@@ -157,12 +165,15 @@ function mapConversationToSummary(item: AIChatConversation): ConversationSummary
 
 function mapMessage(item: AIChatMessage): Message {
   const imageGeneration = objectValue(item.metadata?.image_generation) as ImageRuntimeGeneration | undefined;
+  const modelLabel = imageGeneration?.model_label || item.model_name;
   return {
     messageId: item.id,
     query: item.query,
     answer: item.answer,
     parentId: item.parent_id ?? '',
-    model: item.model_name ? { modelName: item.model_name, provider: item.model_provider } : null,
+    model: item.model_name
+      ? { modelName: modelLabel, provider: item.model_provider, rawModelName: item.model_name }
+      : null,
     clientState: {
       phase: item.status === 'streaming' ? 'streaming' : 'completed',
       status: item.status === 'completed' ? 'completed' : item.status === 'error' ? 'error' : undefined,
@@ -172,6 +183,11 @@ function mapMessage(item: AIChatMessage): Message {
       conversation_id: item.conversation_id,
       message_id: item.id,
       metadata: item.metadata,
+      image_generation: imageGeneration,
+      model_label: modelLabel,
+      model_name: item.model_name,
+      model_provider: item.model_provider,
+      created_at: item.created_at,
       status: item.status,
     },
     generatedImages: imageGeneration ? generatedImagesFromGeneration(imageGeneration) : undefined,

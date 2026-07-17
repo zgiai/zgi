@@ -7,7 +7,8 @@ const (
 )
 
 type CreateConversationRequest struct {
-	Title string `json:"title"`
+	Title            string `json:"title"`
+	ConversationType string `json:"conversation_type,omitempty"`
 }
 
 type UpdateConversationRequest struct {
@@ -183,6 +184,7 @@ type ConversationResponse struct {
 	Title                string                 `json:"title"`
 	Status               string                 `json:"status"`
 	RuntimeStatus        string                 `json:"runtime_status"`
+	ConversationType     string                 `json:"conversation_type"`
 	CurrentLeafMessageID *string                `json:"current_leaf_message_id,omitempty"`
 	ActiveMessageID      *string                `json:"active_message_id,omitempty"`
 	DialogueCount        int                    `json:"dialogue_count"`

@@ -20,6 +20,9 @@ const (
 
 	ConversationCallerAIChat = "aichat"
 	ConversationCallerAgent  = "agent"
+
+	ConversationTypeChat  = "chat"
+	ConversationTypeImage = "image"
 )
 
 // Conversation stores one AIChat conversation owned by an organization member.
@@ -30,6 +33,7 @@ type Conversation struct {
 	AccountID            uuid.UUID              `gorm:"type:uuid;not null;index:idx_chat_runtime_conversations_owner_updated,priority:2" json:"account_id"`
 	CallerType           string                 `gorm:"type:varchar(32);not null;default:'aichat';index:idx_chat_runtime_conversations_caller_updated,priority:3" json:"caller_type"`
 	CallerID             *uuid.UUID             `gorm:"type:uuid;index:idx_chat_runtime_conversations_caller_updated,priority:4" json:"caller_id,omitempty"`
+	ConversationType     string                 `gorm:"type:varchar(32);not null;default:'chat'" json:"conversation_type"`
 	Title                string                 `gorm:"type:varchar(255);not null" json:"title"`
 	Status               string                 `gorm:"type:varchar(32);not null;default:'normal'" json:"status"`
 	RuntimeStatus        string                 `gorm:"type:varchar(32);not null;default:'idle';index:idx_chat_runtime_conversations_runtime_status" json:"runtime_status"`

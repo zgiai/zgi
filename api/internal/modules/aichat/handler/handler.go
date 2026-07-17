@@ -315,7 +315,14 @@ func (h *Handler) CreateConversation(c *gin.Context) {
 		response.Fail(c, response.ErrInvalidParam)
 		return
 	}
-	conversation, err := h.service.CreateConversation(c.Request.Context(), scope, req.Title)
+	conversationType, ok := h.conversationType(c, req.ConversationType)
+	if !ok {
+		return
+	}
+	conversation, err := h.service.CreateConversationForCaller(c.Request.Context(), scope, runtimeservice.Caller{
+		Type:             runtimemodel.ConversationCallerAIChat,
+		ConversationType: conversationType,
+	}, req.Title)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -329,7 +336,21 @@ func (h *Handler) ListConversations(c *gin.Context) {
 		return
 	}
 	page, limit := pagination(c, 1, defaultConversationPageLimit, maxConversationPageLimit)
-	conversations, total, err := h.service.ListConversationsBySurface(c.Request.Context(), scope, c.Query("surface"), page, limit)
+	conversationType, ok := h.conversationType(c, c.Query("conversation_type"))
+	if !ok {
+		return
+	}
+	var conversations []*runtimemodel.Conversation
+	var total int64
+	var err error
+	if conversationType == runtimemodel.ConversationTypeImage {
+		conversations, total, err = h.service.ListConversationsByCaller(c.Request.Context(), scope, runtimeservice.Caller{
+			Type:             runtimemodel.ConversationCallerAIChat,
+			ConversationType: conversationType,
+		}, page, limit)
+	} else {
+		conversations, total, err = h.service.ListConversationsBySurface(c.Request.Context(), scope, c.Query("surface"), page, limit)
+	}
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -356,7 +377,20 @@ func (h *Handler) Search(c *gin.Context) {
 	if limit > maxSearchLimit {
 		limit = maxSearchLimit
 	}
-	results, err := h.service.SearchBySurface(c.Request.Context(), scope, c.Query("surface"), c.Query("query"), limit)
+	conversationType, ok := h.conversationType(c, c.Query("conversation_type"))
+	if !ok {
+		return
+	}
+	var results []*runtimeservice.SearchResult
+	var err error
+	if conversationType == runtimemodel.ConversationTypeImage {
+		results, err = h.service.SearchByCaller(c.Request.Context(), scope, runtimeservice.Caller{
+			Type:             runtimemodel.ConversationCallerAIChat,
+			ConversationType: conversationType,
+		}, c.Query("query"), limit)
+	} else {
+		results, err = h.service.SearchBySurface(c.Request.Context(), scope, c.Query("surface"), c.Query("query"), limit)
+	}
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -373,7 +407,14 @@ func (h *Handler) GetConversation(c *gin.Context) {
 	if !ok {
 		return
 	}
-	conversation, err := h.service.GetConversation(c.Request.Context(), scope, id)
+	conversationType, ok := h.conversationType(c, c.Query("conversation_type"))
+	if !ok {
+		return
+	}
+	conversation, err := h.service.GetConversationByCaller(c.Request.Context(), scope, runtimeservice.Caller{
+		Type:             runtimemodel.ConversationCallerAIChat,
+		ConversationType: conversationType,
+	}, id)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -915,19 +956,34 @@ func parsePositiveInt(raw string, fallback int) int {
 	return value
 }
 
+func (h *Handler) conversationType(c *gin.Context, raw string) (string, bool) {
+	value := strings.TrimSpace(raw)
+	if value == "" {
+		return runtimemodel.ConversationTypeChat, true
+	}
+	switch value {
+	case runtimemodel.ConversationTypeChat, runtimemodel.ConversationTypeImage:
+		return value, true
+	default:
+		response.Fail(c, response.ErrInvalidParam)
+		return "", false
+	}
+}
+
 func conversationResponse(conversation *runtimemodel.Conversation) runtimedto.ConversationResponse {
 	resp := runtimedto.ConversationResponse{
-		ID:             conversation.ID.String(),
-		OrganizationID: conversation.OrganizationID.String(),
-		AccountID:      conversation.AccountID.String(),
-		Title:          conversation.Title,
-		Status:         conversation.Status,
-		RuntimeStatus:  conversation.RuntimeStatus,
-		DialogueCount:  conversation.DialogueCount,
-		Source:         conversation.Source,
-		Metadata:       conversation.Metadata,
-		CreatedAt:      conversation.CreatedAt.Unix(),
-		UpdatedAt:      conversation.UpdatedAt.Unix(),
+		ID:               conversation.ID.String(),
+		OrganizationID:   conversation.OrganizationID.String(),
+		AccountID:        conversation.AccountID.String(),
+		Title:            conversation.Title,
+		Status:           conversation.Status,
+		RuntimeStatus:    conversation.RuntimeStatus,
+		ConversationType: conversation.ConversationType,
+		DialogueCount:    conversation.DialogueCount,
+		Source:           conversation.Source,
+		Metadata:         conversation.Metadata,
+		CreatedAt:        conversation.CreatedAt.Unix(),
+		UpdatedAt:        conversation.UpdatedAt.Unix(),
 	}
 	if resp.Metadata == nil {
 		resp.Metadata = map[string]interface{}{}

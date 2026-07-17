@@ -252,13 +252,23 @@ func (s *service) resolveConversation(ctx context.Context, scope chatruntime.Sco
 		if len([]rune(title)) > 50 {
 			title = string([]rune(title)[:50])
 		}
-		return s.chatService.CreateConversation(ctx, scope, title)
+		return s.chatService.CreateConversationForCaller(ctx, scope, chatruntime.Caller{
+			Type:             model.ConversationCallerAIChat,
+			ConversationType: model.ConversationTypeImage,
+		}, title)
 	}
 	conversationID, err := uuid.Parse(rawID)
 	if err != nil {
 		return nil, err
 	}
-	return s.chatService.GetConversation(ctx, scope, conversationID)
+	conversation, err := s.chatService.GetConversationByCaller(ctx, scope, chatruntime.Caller{
+		Type:             model.ConversationCallerAIChat,
+		ConversationType: model.ConversationTypeImage,
+	}, conversationID)
+	if err != nil {
+		return nil, err
+	}
+	return conversation, nil
 }
 
 func hasAmbiguousModel(models []*llmmodelsvc.AvailableModel) bool {

@@ -369,7 +369,7 @@ type callerScopedStreamConversationRepo struct {
 	deleteScopedCalled      bool
 }
 
-func (r *callerScopedStreamConversationRepo) GetByCallerScoped(_ context.Context, id, organizationID, accountID uuid.UUID, callerType string, callerID *uuid.UUID) (*runtimemodel.Conversation, error) {
+func (r *callerScopedStreamConversationRepo) GetByCallerScoped(_ context.Context, id, organizationID, accountID uuid.UUID, callerType string, callerID *uuid.UUID, _ string) (*runtimemodel.Conversation, error) {
 	r.getByCallerScopedCalled = true
 	if callerType != r.allowedCallerType || callerID == nil || *callerID != r.allowedCallerID {
 		return nil, gorm.ErrRecordNotFound

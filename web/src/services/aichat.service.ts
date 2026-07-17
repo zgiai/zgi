@@ -20,6 +20,7 @@ import type {
   AIChatCancelImportSkillPreviewResponse,
   AIChatClientActionResultRequest,
   AIChatConversation,
+  AIChatConversationType,
   AIChatConversationListResponse,
   AIChatConfirmImportSkillRequest,
   AIChatCreateConversationRequest,
@@ -256,14 +257,23 @@ export const aichatService = {
   },
 
   listConversations(
-    params: { page?: number; limit?: number; surface?: AIChatRuntimeSurface } = {}
+    params: {
+      page?: number;
+      limit?: number;
+      surface?: AIChatRuntimeSurface;
+      conversation_type?: AIChatConversationType;
+    } = {}
   ) {
     return http.get<AIChatConversationListResponse>(`${AICHAT_BASE_PATH}/conversations`, {
       params,
     });
   },
 
-  search(query: string, limit = 20, params: { surface?: AIChatRuntimeSurface } = {}) {
+  search(
+    query: string,
+    limit = 20,
+    params: { surface?: AIChatRuntimeSurface; conversation_type?: AIChatConversationType } = {}
+  ) {
     return http.get<AIChatSearchResponse>(`${AICHAT_BASE_PATH}/search`, {
       params: { query, limit, ...params },
     });
@@ -276,8 +286,10 @@ export const aichatService = {
     );
   },
 
-  getConversation(id: string) {
-    return http.get<ApiResponseData<AIChatConversation>>(`${AICHAT_BASE_PATH}/conversations/${id}`);
+  getConversation(id: string, conversationType?: AIChatConversationType) {
+    return http.get<ApiResponseData<AIChatConversation>>(`${AICHAT_BASE_PATH}/conversations/${id}`, {
+      params: { conversation_type: conversationType },
+    });
   },
 
   updateConversation(id: string, payload: AIChatUpdateConversationRequest) {

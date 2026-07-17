@@ -93,10 +93,11 @@ type Scope struct {
 }
 
 type Caller struct {
-	Type           string
-	ID             *uuid.UUID
-	Source         string
-	SourceWebAppID *uuid.UUID
+	Type             string
+	ID               *uuid.UUID
+	ConversationType string
+	Source           string
+	SourceWebAppID   *uuid.UUID
 }
 
 type RunConfig struct {
@@ -218,7 +219,6 @@ type Service interface {
 	RunClientActionContinuationStream(ctx context.Context, scope Scope, conversationID, messageID uuid.UUID, actionID string, req runtimedto.ClientActionResultRequest, onEvent func(StreamEvent) error) (*ChatResult, error)
 	RunUserInputContinuationStream(ctx context.Context, scope Scope, conversationID, messageID uuid.UUID, requestID string, req runtimedto.UserInputContinuationRequest, onEvent func(StreamEvent) error) (*ChatResult, error)
 	RunConfiguredUserInputContinuationStream(ctx context.Context, scope Scope, caller Caller, config RunConfig, conversationID, messageID uuid.UUID, requestID string, req runtimedto.UserInputContinuationRequest, onEvent func(StreamEvent) error) (*ChatResult, error)
-	StreamConversationEventsForCaller(ctx context.Context, scope Scope, caller Caller, conversationID, messageID uuid.UUID, afterID string, onEvent func(StreamEvent) error) error
 	CreateCompletedMessage(ctx context.Context, scope Scope, req CreateCompletedMessageRequest) (*runtimemodel.Message, error)
 	BeginWorkflowApprovalContinuation(ctx context.Context, scope Scope, caller Caller, config RunConfig, conversationID, messageID uuid.UUID) (*WorkflowApprovalContinuation, error)
 	RecordWorkflowApprovalContinuationEvent(ctx context.Context, continuation *WorkflowApprovalContinuation, eventType string, payload map[string]interface{}) (*StreamEvent, error)
