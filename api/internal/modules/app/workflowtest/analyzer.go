@@ -9,9 +9,6 @@ import (
 const (
 	workflowTestAnalysisOutputKey = "workflow_test_analysis"
 	checkResultsOutputKey         = "check_results"
-	workflowTestEvidenceTerm      = "\u8bc1\u636e"
-	workflowTestVideoTerm         = "\u89c6\u9891"
-	workflowTestLinkTerm          = "\u94fe\u63a5"
 )
 
 type WorkflowTestAnalysis struct {
@@ -260,7 +257,7 @@ func evaluateStatePresentAssertion(result WorkflowTestCheckResult, states []stri
 		return result
 	}
 	result.Status = "failed"
-	result.Evidence = "未识别到期望状态或可推断该状态的" + workflowTestEvidenceTerm + "：" + strings.Join(missing, "、")
+	result.Evidence = "未识别到期望状态或可推断该状态的证据：" + strings.Join(missing, "、")
 	result.Suggestion = "请在输出中明确给出业务状态，或同时列出足以推断该状态的关键事实。"
 	return result
 }
@@ -1083,7 +1080,7 @@ func normalizeTaskSemanticText(value string) string {
 		"方为", "方",
 		"说明已包含", "",
 		"已包含", "",
-		"作为"+workflowTestEvidenceTerm, workflowTestEvidenceTerm,
+		"作为证据", "证据",
 	)
 	text = replacer.Replace(text)
 	text = strings.ReplaceAll(text, "原合同", "合同")
@@ -1101,8 +1098,8 @@ func taskDomainEquivalentPresent(expected string, actual string) bool {
 	if strings.Contains(expected, "投诉方") && strings.Contains(expected, "王丽") && taskAllTokensPresent(actual, "投诉方", "王丽") {
 		return true
 	}
-	if strings.Contains(expected, workflowTestVideoTerm+workflowTestLinkTerm+workflowTestEvidenceTerm) || strings.Contains(expected, workflowTestVideoTerm+workflowTestEvidenceTerm) {
-		return taskAllTokensPresent(actual, workflowTestVideoTerm, workflowTestLinkTerm, workflowTestEvidenceTerm)
+	if strings.Contains(expected, "视频链接证据") || strings.Contains(expected, "视频证据") {
+		return taskAllTokensPresent(actual, "视频", "链接", "证据")
 	}
 	if strings.Contains(expected, "补偿物流费") || strings.Contains(expected, "物流费") && strings.Contains(expected, "诉求") {
 		return taskAllTokensPresent(actual, "补偿", "物流费")
@@ -1302,7 +1299,7 @@ func taskBusinessTerms(value string) []string {
 	candidates := []string{
 		"责任划分", "遗留问题", "测试环境", "联调", "修复", "提供",
 		"提起诉讼", "诉讼", "财产保全", "违约金", "信用风险",
-		workflowTestEvidenceTerm, workflowTestVideoTerm, workflowTestLinkTerm, "换货", "补偿", "物流费",
+		"证据", "视频", "链接", "换货", "补偿", "物流费",
 		"投诉方", "交接方", "接收方", "移交方",
 		"缺失信息", "发票", "客服联系记录",
 	}

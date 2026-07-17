@@ -280,7 +280,7 @@ func TestAnalyzeTaskSchemaNormalizesNaturalLanguageAssertions(t *testing.T) {
 func TestTaskSchemaTreatsExampleMissingItemsAsOptional(t *testing.T) {
 	snapshot := CaseSnapshot{
 		Content:        "请处理这份客户投诉文件。",
-		ExpectedResult: "输出应包含投诉方、事件时间线、主张事实、诉求内容、" + workflowTestEvidenceTerm + "引用，并明确列出缺失信息（如发票、客服联系记录）。不得声称文件无法读取、内容为空、解析失败或要求重新上传。",
+		ExpectedResult: "输出应包含投诉方、事件时间线、主张事实、诉求内容、证据引用，并明确列出缺失信息（如发票、客服联系记录）。不得声称文件无法读取、内容为空、解析失败或要求重新上传。",
 		Turns: CaseTurns{{
 			Role:    "user",
 			Content: "请处理这份客户投诉文件。",
@@ -351,8 +351,8 @@ func TestAnalyzeTaskSchemaMatchesDomainEquivalentPhrases(t *testing.T) {
 		},
 		{
 			name:     "video evidence wording",
-			expected: "输出应引用视频链接作为" + workflowTestEvidenceTerm,
-			actual:   workflowTestEvidenceTerm + "：提供了订单截图及开箱视频链接（https://example.com/video8892345）作为" + workflowTestEvidenceTerm + "。",
+			expected: "输出应引用视频链接作为证据",
+			actual:   "证据：提供了订单截图及开箱视频链接（https://example.com/video8892345）作为证据。",
 		},
 		{
 			name:     "handover parties with role labels",
