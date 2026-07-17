@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -465,6 +466,9 @@ func (s *service) ListConversationsByCaller(ctx context.Context, scope Scope, ca
 	if err := s.ensureMember(ctx, scope); err != nil {
 		return nil, 0, err
 	}
+	if normalizeCallerType(caller.Type) == runtimemodel.ConversationCallerAIChat && normalizeCallerID(caller.ID) == nil && normalizeConversationType(caller.ConversationType) == runtimemodel.ConversationTypeImage {
+		return s.listImageConversationsWithLegacy(ctx, scope, caller, page, limit)
+	}
 	limit = clampLimit(limit, 20, 100)
 	offset := pageOffset(page, limit)
 	conversationType := normalizeConversationType(caller.ConversationType)
@@ -503,6 +507,28 @@ func (s *service) SearchBySurface(ctx context.Context, scope Scope, surface stri
 }
 
 func (s *service) SearchByCaller(ctx context.Context, scope Scope, caller Caller, query string, limit int) ([]*SearchResult, error) {
+	if normalizeCallerType(caller.Type) == runtimemodel.ConversationCallerAIChat && normalizeCallerID(caller.ID) == nil && normalizeConversationType(caller.ConversationType) == runtimemodel.ConversationTypeImage {
+		searchLimit := clampLimit(limit, defaultSearchLimit, maxSearchLimit)
+		results, err := s.searchByCallerSurface(ctx, scope, caller, "", query, searchLimit)
+		if err != nil {
+			return nil, err
+		}
+		legacy, err := s.searchLegacyImageConversations(ctx, scope, query, searchLimit)
+		if err != nil {
+			return nil, err
+		}
+		results = append(results, legacy...)
+		sort.SliceStable(results, func(i, j int) bool {
+			if results[i].Type != results[j].Type {
+				return results[i].Type == "conversation"
+			}
+			return results[i].UpdatedAt.After(results[j].UpdatedAt)
+		})
+		if len(results) > searchLimit {
+			results = results[:searchLimit]
+		}
+		return results, nil
+	}
 	return s.searchByCallerSurface(ctx, scope, caller, "", query, limit)
 }
 
@@ -599,7 +625,14 @@ func (s *service) GetConversationByCaller(ctx context.Context, scope Scope, call
 	if err := s.ensureMember(ctx, scope); err != nil {
 		return nil, err
 	}
-	return s.getConversationByCallerScoped(ctx, scope, caller, id)
+	conversation, err := s.getConversationByCallerScoped(ctx, scope, caller, id)
+	if err == nil {
+		return conversation, nil
+	}
+	if normalizeCallerType(caller.Type) == runtimemodel.ConversationCallerAIChat && normalizeCallerID(caller.ID) == nil && normalizeConversationType(caller.ConversationType) == runtimemodel.ConversationTypeImage && errors.Is(err, ErrNotFound) {
+		return s.getLegacyImageConversation(ctx, scope, id)
+	}
+	return nil, err
 }
 
 func (s *service) UpdateConversation(ctx context.Context, scope Scope, id uuid.UUID, req runtimedto.UpdateConversationRequest) (*runtimemodel.Conversation, error) {
@@ -697,7 +730,19 @@ func (s *service) ListMessages(ctx context.Context, scope Scope, conversationID 
 	offset := pageOffset(page, limit)
 	messages, total, err := s.repos.Message.ListByConversationScoped(ctx, conversationID, scope.OrganizationID, scope.AccountID, limit, offset)
 	if err != nil {
+		if errors.Is(mapRepoError(err), ErrNotFound) {
+			return s.listLegacyImageMessages(ctx, scope, conversationID, page, limit)
+		}
 		return nil, 0, err
+	}
+	if total == 0 && len(messages) == 0 {
+		legacyMessages, legacyTotal, legacyErr := s.listLegacyImageMessages(ctx, scope, conversationID, page, limit)
+		if legacyErr == nil {
+			return legacyMessages, legacyTotal, nil
+		}
+		if !errors.Is(legacyErr, ErrNotFound) {
+			return nil, 0, legacyErr
+		}
 	}
 	hydrateMessagesGeneratedFileState(ctx, messages)
 	hydrateMessagesPublicErrors(messages)

@@ -492,8 +492,8 @@ func taskDerivedAtomicValues(value string) []string {
 	if strings.Contains(text, "责任划分") {
 		values = append(values, "责任划分")
 	}
-	if strings.Contains(text, "视频") && strings.Contains(text, "证据") {
-		values = append(values, "视频证据")
+	if strings.Contains(text, workflowTestVideoTerm) && strings.Contains(text, workflowTestEvidenceTerm) {
+		values = append(values, workflowTestVideoTerm+workflowTestEvidenceTerm)
 	}
 	if strings.Contains(text, "换货") {
 		values = append(values, "换货")
@@ -653,7 +653,7 @@ func cleanTaskValueFragment(value string) string {
 		{"缺失条款", ""},
 		{"服务标准", "服务验收标准"},
 		{"两项诉求", ""},
-		{"作为证据", "证据"},
+		{"作为" + workflowTestEvidenceTerm, workflowTestEvidenceTerm},
 		{"说明已包含", ""},
 		{"已包含", ""},
 	}

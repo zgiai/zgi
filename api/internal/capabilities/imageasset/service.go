@@ -8,7 +8,10 @@ import (
 	"fmt"
 	"io"
 	"mime"
+	"net"
 	"net/http"
+	"net/netip"
+	"net/url"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -27,6 +30,7 @@ const (
 	generatedImageDownloadTimeout     = 120 * time.Second
 	generatedImageTLSHandshakeTimeout = 30 * time.Second
 	generatedImageResponseTimeout     = 60 * time.Second
+	generatedImageMaxRedirects        = 5
 )
 
 var unsafeFilenamePattern = regexp.MustCompile(`[^a-zA-Z0-9._\-\p{Han}]`)
@@ -206,8 +210,18 @@ func downloadGeneratedImage(ctx context.Context, rawURL string) ([]byte, string,
 func generatedImageDownloadClient() *http.Client {
 	return &http.Client{
 		Timeout: generatedImageDownloadTimeout,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= generatedImageMaxRedirects {
+				return fmt.Errorf("generated image download exceeded %d redirects", generatedImageMaxRedirects)
+			}
+			if err := validateGeneratedImageDownloadURL(req.Context(), req.URL); err != nil {
+				return err
+			}
+			return nil
+		},
 		Transport: &http.Transport{
 			Proxy:                 http.ProxyFromEnvironment,
+			DialContext:           safeGeneratedImageDialContext,
 			TLSHandshakeTimeout:   generatedImageTLSHandshakeTimeout,
 			ResponseHeaderTimeout: generatedImageResponseTimeout,
 			DisableKeepAlives:     true,
@@ -221,6 +235,9 @@ func downloadGeneratedImageOnce(ctx context.Context, client *http.Client, rawURL
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
 		return nil, "", "", fmt.Errorf("failed to create generated image download request: %w", err)
+	}
+	if err := validateGeneratedImageDownloadURL(ctx, req.URL); err != nil {
+		return nil, "", "", fmt.Errorf("unsafe generated image url: %w", err)
 	}
 	resp, err := client.Do(req)
 	if err != nil {
@@ -240,6 +257,89 @@ func downloadGeneratedImageOnce(ctx context.Context, client *http.Client, rawURL
 		return nil, "", "", fmt.Errorf("failed to read generated image: %w", err)
 	}
 	return validateGeneratedImageData(data, resp.Header.Get("Content-Type"))
+}
+
+func validateGeneratedImageDownloadURL(ctx context.Context, parsed *url.URL) error {
+	if parsed == nil {
+		return fmt.Errorf("url is required")
+	}
+	scheme := strings.ToLower(strings.TrimSpace(parsed.Scheme))
+	if scheme != "http" && scheme != "https" {
+		return fmt.Errorf("url must use http or https")
+	}
+	host := strings.TrimSpace(parsed.Hostname())
+	if host == "" {
+		return fmt.Errorf("url host is required")
+	}
+	_, err := resolvePublicGeneratedImageHost(ctx, host)
+	return err
+}
+
+func safeGeneratedImageDialContext(ctx context.Context, network, address string) (net.Conn, error) {
+	host, port, err := net.SplitHostPort(address)
+	if err != nil {
+		return nil, fmt.Errorf("invalid generated image download address: %w", err)
+	}
+	addrs, err := resolvePublicGeneratedImageHost(ctx, host)
+	if err != nil {
+		return nil, err
+	}
+	dialer := &net.Dialer{}
+	var lastErr error
+	for _, addr := range addrs {
+		target := net.JoinHostPort(addr.String(), port)
+		conn, err := dialer.DialContext(ctx, network, target)
+		if err == nil {
+			return conn, nil
+		}
+		lastErr = err
+	}
+	if lastErr != nil {
+		return nil, lastErr
+	}
+	return nil, fmt.Errorf("generated image url host resolved no usable addresses")
+}
+
+func resolvePublicGeneratedImageHost(ctx context.Context, host string) ([]netip.Addr, error) {
+	host = strings.TrimSpace(host)
+	if host == "" {
+		return nil, fmt.Errorf("url host is required")
+	}
+	if addr, err := netip.ParseAddr(host); err == nil {
+		addr = addr.Unmap()
+		if !isPublicGeneratedImageAddr(addr) {
+			return nil, fmt.Errorf("url host resolves to a non-public address")
+		}
+		return []netip.Addr{addr}, nil
+	}
+	if strings.EqualFold(host, "localhost") || strings.HasSuffix(strings.ToLower(host), ".local") {
+		return nil, fmt.Errorf("url host resolves to a non-public address")
+	}
+	resolved, err := net.DefaultResolver.LookupNetIP(ctx, "ip", host)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve generated image url host: %w", err)
+	}
+	if len(resolved) == 0 {
+		return nil, fmt.Errorf("generated image url host resolved no addresses")
+	}
+	for idx, addr := range resolved {
+		addr = addr.Unmap()
+		if !isPublicGeneratedImageAddr(addr) {
+			return nil, fmt.Errorf("url host resolves to a non-public address")
+		}
+		resolved[idx] = addr
+	}
+	return resolved, nil
+}
+
+func isPublicGeneratedImageAddr(addr netip.Addr) bool {
+	return addr.IsValid() &&
+		!addr.IsPrivate() &&
+		!addr.IsLoopback() &&
+		!addr.IsLinkLocalUnicast() &&
+		!addr.IsLinkLocalMulticast() &&
+		!addr.IsMulticast() &&
+		!addr.IsUnspecified()
 }
 
 type generatedImageDownloadStatusError struct {
