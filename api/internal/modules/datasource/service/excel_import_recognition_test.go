@@ -5,7 +5,55 @@ import (
 	"testing"
 
 	"github.com/zgiai/zgi/api/internal/dto"
+	"github.com/zgiai/zgi/api/internal/prompt"
 )
+
+func TestExcelFieldRecognitionPromptKeepsPhoneNumbersAsText(t *testing.T) {
+	tmpl, err := prompt.GetTemplate(prompt.DatasourceExcelFieldRecognition)
+	if err != nil {
+		t.Fatalf("GetTemplate returned error: %v", err)
+	}
+
+	raw := tmpl.RawContent()
+	for _, want := range []string{
+		`"type": "text"`,
+		"phone numbers",
+		"must use type text",
+		"Preserve leading zeros",
+	} {
+		if !strings.Contains(raw, want) {
+			t.Fatalf("prompt template missing %q", want)
+		}
+	}
+}
+
+func TestNormalizeExcelRecognitionResultAppliesPhoneType(t *testing.T) {
+	req := dto.RecognizeExcelImportRequest{
+		Table: dto.RecognizeExcelImportTable{Name: "employees"},
+		Columns: []dto.InferredExcelColumn{{
+			SourceColumnIndex: 0,
+			SourceColumn:      "电话号码",
+			Name:              "column_1",
+			Type:              "integer",
+		}},
+	}
+	var llmResult excelFieldRecognitionLLMResponse
+	llmResult.Table.Name = "employees"
+	llmResult.Columns = []excelFieldRecognitionLLMResponseColumn{{
+		SourceColumnIndex: 0,
+		SourceColumn:      "电话号码",
+		Name:              "phone_number",
+		Type:              "text",
+	}}
+
+	result, err := normalizeExcelRecognitionResult(req, llmResult, nil)
+	if err != nil {
+		t.Fatalf("normalizeExcelRecognitionResult returned error: %v", err)
+	}
+	if got := result.Columns[0].Type; got != "text" {
+		t.Fatalf("phone type = %q, want text", got)
+	}
+}
 
 func TestNormalizeExcelRecognitionResultSanitizesNames(t *testing.T) {
 	req := dto.RecognizeExcelImportRequest{
@@ -25,10 +73,10 @@ func TestNormalizeExcelRecognitionResultSanitizesNames(t *testing.T) {
 	llmResult.Table.Name = "2026 合同表"
 	llmResult.Table.Description = "合同台账"
 	llmResult.Columns = append(llmResult.Columns,
-		excelFieldRecognitionLLMResponseColumn{SourceColumnIndex: 0, SourceColumn: "合同编号", Name: "id", DisplayName: "合同编号", Description: "合同或订单编号"},
-		excelFieldRecognitionLLMResponseColumn{SourceColumnIndex: 1, SourceColumn: "客户名称", Name: "customer name", DisplayName: "客户名称", Description: "客户公司名称"},
-		excelFieldRecognitionLLMResponseColumn{SourceColumnIndex: 2, SourceColumn: "客户联系人", Name: "customer-name", DisplayName: "客户联系人", Description: "客户侧联系人"},
-		excelFieldRecognitionLLMResponseColumn{SourceColumnIndex: 3, SourceColumn: "备注", Name: "", DisplayName: "备注", Description: ""},
+		excelFieldRecognitionLLMResponseColumn{SourceColumnIndex: 0, SourceColumn: "合同编号", Name: "id", DisplayName: "合同编号", Type: "text", Description: "合同或订单编号"},
+		excelFieldRecognitionLLMResponseColumn{SourceColumnIndex: 1, SourceColumn: "客户名称", Name: "customer name", DisplayName: "客户名称", Type: "text", Description: "客户公司名称"},
+		excelFieldRecognitionLLMResponseColumn{SourceColumnIndex: 2, SourceColumn: "客户联系人", Name: "customer-name", DisplayName: "客户联系人", Type: "text", Description: "客户侧联系人"},
+		excelFieldRecognitionLLMResponseColumn{SourceColumnIndex: 3, SourceColumn: "备注", Name: "", DisplayName: "备注", Type: "text", Description: ""},
 	)
 
 	result, err := normalizeExcelRecognitionResult(req, llmResult, nil)
@@ -79,7 +127,7 @@ func TestNormalizeExcelRecognitionResultAvoidsExistingTableNames(t *testing.T) {
 	}
 	var llmResult excelFieldRecognitionLLMResponse
 	llmResult.Table.Name = "invoice_records"
-	llmResult.Columns = append(llmResult.Columns, excelFieldRecognitionLLMResponseColumn{SourceColumnIndex: 0, SourceColumn: "Invoice No", Name: "invoice_no"})
+	llmResult.Columns = append(llmResult.Columns, excelFieldRecognitionLLMResponseColumn{SourceColumnIndex: 0, SourceColumn: "Invoice No", Name: "invoice_no", Type: "text"})
 
 	result, err := normalizeExcelRecognitionResult(req, llmResult, map[string]struct{}{
 		"invoice_records":   {},
@@ -105,9 +153,9 @@ func TestNormalizeExcelRecognitionResultMatchesColumnsBySourceIndex(t *testing.T
 	var llmResult excelFieldRecognitionLLMResponse
 	llmResult.Table.Name = "contracts"
 	llmResult.Columns = []excelFieldRecognitionLLMResponseColumn{
-		{SourceColumnIndex: 12, SourceColumn: "开票日期", Name: "issue_date"},
-		{SourceColumnIndex: 10, SourceColumn: "合同编号", Name: "contract_no"},
-		{SourceColumnIndex: 11, SourceColumn: "客户名称", Name: "customer_name"},
+		{SourceColumnIndex: 12, SourceColumn: "开票日期", Name: "issue_date", Type: "timestamp"},
+		{SourceColumnIndex: 10, SourceColumn: "合同编号", Name: "contract_no", Type: "text"},
+		{SourceColumnIndex: 11, SourceColumn: "客户名称", Name: "customer_name", Type: "text"},
 	}
 
 	result, err := normalizeExcelRecognitionResult(req, llmResult, nil)

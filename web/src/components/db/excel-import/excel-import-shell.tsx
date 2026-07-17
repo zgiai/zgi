@@ -46,6 +46,7 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import FileSelectorDialog from '@/components/files/file-selector-dialog';
 import { ModelSelector, type ModelSelectorValue } from '@/components/common/model-selector';
+import { StepsProgressBar } from '@/components/common/steps-progress-bar';
 import type { FileItem } from '@/services/types/file';
 import {
   Type,
@@ -106,6 +107,7 @@ function applyRecognizedColumns(
       name: suggestion.name || col.name,
       display_name: suggestion.display_name || col.display_name,
       description: suggestion.description || col.description,
+      type: suggestion.type || col.type,
     };
   });
 }
@@ -162,6 +164,7 @@ export default function ExcelImportShell({ dbId }: ExcelImportShellProps) {
       Boolean(importResult && importResult.failed_rows > 0)
   );
   const analyzeRequestSeq = useRef(0);
+  const schemaEditRevisionRef = useRef(0);
 
   useEffect(() => {
     if (!user?.id || selectedModel) return;
@@ -176,6 +179,8 @@ export default function ExcelImportShell({ dbId }: ExcelImportShellProps) {
   }, [defaultModel, selectedModel, user?.id]);
 
   const enabledColumns = useMemo(() => columns.filter(col => col.enabled !== false), [columns]);
+  const allEnabledColumnsRequired =
+    enabledColumns.length > 0 && enabledColumns.every(col => col.is_required);
   const duplicateNames = useMemo(() => getDuplicateDbColumnNames(enabledColumns), [enabledColumns]);
 
   const invalidFieldNames = useMemo(
@@ -282,8 +287,8 @@ export default function ExcelImportShell({ dbId }: ExcelImportShellProps) {
     setStep('result');
   };
 
-  const handleSmartRecognize = async () => {
-    if (!analysis || !selectedModel || recognizeMutation.isPending) return;
+  const recognizeCurrentColumns = async (): Promise<RecognizeExcelImportData | null> => {
+    if (!analysis || !selectedModel || recognizeMutation.isPending) return null;
     const res = await recognizeMutation.mutateAsync({
       table: {
         name: tableName.trim(),
@@ -297,7 +302,43 @@ export default function ExcelImportShell({ dbId }: ExcelImportShellProps) {
       model: { provider: selectedModel.provider, name: selectedModel.model },
       operator_language: locale,
     });
-    setRecognitionDraft(res.data);
+    return res.data;
+  };
+
+  const handleEnterSchema = async () => {
+    if (!isPreviewSheetReady || isAnalyzingWorkbook) return;
+    setStep('schema');
+    if (!selectedModel?.model || recognizeMutation.isPending) return;
+    const recognitionStartRevision = schemaEditRevisionRef.current;
+    try {
+      const recognized = await recognizeCurrentColumns();
+      if (!recognized) return;
+      if (schemaEditRevisionRef.current !== recognitionStartRevision) {
+        setRecognitionDraft(recognized);
+        setRecognitionDialogOpen(true);
+        return;
+      }
+      setTableName(recognized.table.name);
+      setTableDescription(recognized.table.description);
+      setColumns(prev => applyRecognizedColumns(prev, recognized.columns));
+      setRecognitionDraft(null);
+      setRecognitionDialogOpen(false);
+    } catch {
+      // The mutation displays the backend error; analyzed columns remain editable on this step.
+    }
+  };
+
+  const updateSchemaColumns = (
+    updater: (current: InferredExcelColumn[]) => InferredExcelColumn[]
+  ) => {
+    schemaEditRevisionRef.current += 1;
+    setColumns(updater);
+  };
+
+  const handleSmartRecognize = async () => {
+    const recognized = await recognizeCurrentColumns();
+    if (!recognized) return;
+    setRecognitionDraft(recognized);
     setRecognitionDialogOpen(true);
   };
 
@@ -444,19 +485,34 @@ export default function ExcelImportShell({ dbId }: ExcelImportShellProps) {
           </div>
 
           <div className="rounded-md border overflow-hidden flex flex-col">
-            <div className="px-3 py-2 border-b flex items-center justify-between">
+            <div className="px-3 py-2 border-b flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-center gap-2 text-sm font-medium">
                 <span>{t('excelImport.preview.rows')}</span>
               </div>
-              <Button
-                onClick={() => {
-                  if (isPreviewSheetReady) setStep('schema');
-                }}
-                disabled={!isPreviewSheetReady || isAnalyzingWorkbook}
-              >
-                {isAnalyzingWorkbook && <Loader2 className="h-4 w-4 animate-spin" />}
-                {t('excelImport.actions.next')}
-              </Button>
+              <div className="flex items-center gap-2">
+                <ModelSelector
+                  modelType="text-chat"
+                  value={selectedModel ?? undefined}
+                  onChange={value => {
+                    setSelectedModel(value);
+                    if (user?.id) {
+                      saveLastSelectedAiModel(user.id, 'excelImport', {
+                        provider: value.provider,
+                        model: value.model,
+                      });
+                    }
+                  }}
+                  placeholder={t('modelSelector.placeholder')}
+                  className="min-w-[220px]"
+                />
+                <Button
+                  onClick={handleEnterSchema}
+                  disabled={!isPreviewSheetReady || isAnalyzingWorkbook}
+                >
+                  {isAnalyzingWorkbook && <Loader2 className="h-4 w-4 animate-spin" />}
+                  {t('excelImport.actions.next')}
+                </Button>
+              </div>
             </div>
             <div className="overflow-auto">
               {!isPreviewSheetReady && (
@@ -468,7 +524,6 @@ export default function ExcelImportShell({ dbId }: ExcelImportShellProps) {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead className="w-20">#</TableHead>
                     {analysis.columns.map((col, index) => (
                       <TableHead key={getExcelColumnKey(col, index)}>{col.display_name}</TableHead>
                     ))}
@@ -477,7 +532,6 @@ export default function ExcelImportShell({ dbId }: ExcelImportShellProps) {
                 <TableBody>
                   {analysis.preview_rows.map(row => (
                     <TableRow key={row.row_index}>
-                      <TableCell>{row.row_index}</TableCell>
                       {analysis.columns.map((col, index) => (
                         <TableCell key={getExcelColumnKey(col, index)}>
                           {String(row.values[col.name] ?? '')}
@@ -544,7 +598,10 @@ export default function ExcelImportShell({ dbId }: ExcelImportShellProps) {
                 </div>
                 <Input
                   value={tableName}
-                  onChange={event => setTableName(event.target.value)}
+                  onChange={event => {
+                    schemaEditRevisionRef.current += 1;
+                    setTableName(event.target.value);
+                  }}
                   placeholder={t('excelImport.schema.tableName')}
                   className={
                     tableNameErrors.length > 0
@@ -567,7 +624,10 @@ export default function ExcelImportShell({ dbId }: ExcelImportShellProps) {
                 </div>
                 <Input
                   value={tableDescription}
-                  onChange={event => setTableDescription(event.target.value)}
+                  onChange={event => {
+                    schemaEditRevisionRef.current += 1;
+                    setTableDescription(event.target.value);
+                  }}
                   placeholder={t('excelImport.schema.description')}
                 />
               </div>
@@ -586,14 +646,37 @@ export default function ExcelImportShell({ dbId }: ExcelImportShellProps) {
             </Alert>
           )}
           <div className="rounded-md border overflow-auto">
-            <Table>
-              <TableHeader>
+            <Table containerClassName="overflow-visible">
+              <TableHeader className="[&_th]:sticky [&_th]:top-0 [&_th]:z-10 [&_th]:bg-[var(--table-header)]">
                 <TableRow>
                   <TableHead className="w-20">{t('excelImport.schema.enabled')}</TableHead>
                   <TableHead>{t('excelImport.schema.source')}</TableHead>
                   <TableHead>{t('excelImport.schema.name')}</TableHead>
+                  <TableHead className="min-w-64">
+                    {t('excelImport.schema.descriptionColumn')}
+                  </TableHead>
                   <TableHead className="w-44">{t('excelImport.schema.type')}</TableHead>
-                  <TableHead className="w-24">{t('excelImport.schema.required')}</TableHead>
+                  <TableHead className="w-32">
+                    <div className="flex items-center gap-2">
+                      <span>{t('excelImport.schema.required')}</span>
+                      <Switch
+                        checked={allEnabledColumnsRequired}
+                        disabled={enabledColumns.length === 0}
+                        onCheckedChange={checked =>
+                          updateSchemaColumns(prev =>
+                            prev.map(item =>
+                              item.enabled === false ? item : { ...item, is_required: checked }
+                            )
+                          )
+                        }
+                        aria-label={t(
+                          allEnabledColumnsRequired
+                            ? 'excelImport.schema.clearAllRequired'
+                            : 'excelImport.schema.setAllRequired'
+                        )}
+                      />
+                    </div>
+                  </TableHead>
                   <TableHead>{t('excelImport.schema.samples')}</TableHead>
                 </TableRow>
               </TableHeader>
@@ -617,7 +700,7 @@ export default function ExcelImportShell({ dbId }: ExcelImportShellProps) {
                         <Switch
                           checked={col.enabled !== false}
                           onCheckedChange={checked =>
-                            setColumns(prev =>
+                            updateSchemaColumns(prev =>
                               prev.map((item, i) =>
                                 i === index ? { ...item, enabled: checked } : item
                               )
@@ -637,7 +720,7 @@ export default function ExcelImportShell({ dbId }: ExcelImportShellProps) {
                             )}
                             aria-invalid={hasNameError}
                             onChange={event =>
-                              setColumns(prev =>
+                              updateSchemaColumns(prev =>
                                 prev.map((item, i) =>
                                   i === index ? { ...item, name: event.target.value } : item
                                 )
@@ -657,10 +740,22 @@ export default function ExcelImportShell({ dbId }: ExcelImportShellProps) {
                         </div>
                       </TableCell>
                       <TableCell>
+                        <Input
+                          value={col.description}
+                          onChange={event =>
+                            updateSchemaColumns(prev =>
+                              prev.map((item, i) =>
+                                i === index ? { ...item, description: event.target.value } : item
+                              )
+                            )
+                          }
+                        />
+                      </TableCell>
+                      <TableCell>
                         <Select
                           value={col.type}
                           onValueChange={value =>
-                            setColumns(prev =>
+                            updateSchemaColumns(prev =>
                               prev.map((item, i) =>
                                 i === index ? { ...item, type: value as Type } : item
                               )
@@ -683,7 +778,7 @@ export default function ExcelImportShell({ dbId }: ExcelImportShellProps) {
                         <Switch
                           checked={col.is_required}
                           onCheckedChange={checked =>
-                            setColumns(prev =>
+                            updateSchemaColumns(prev =>
                               prev.map((item, i) =>
                                 i === index ? { ...item, is_required: checked } : item
                               )
@@ -940,21 +1035,16 @@ function StepIndicator({ step }: { step: Step }) {
   const t = useT('dbs');
   const steps: Step[] = ['file', 'preview', 'schema', 'result'];
   const activeIndex = steps.indexOf(step);
+
   return (
-    <div className="flex items-center gap-2">
-      {steps.map((item, index) => (
-        <div
-          key={item}
-          className={cn(
-            'h-7 rounded-md border px-2 text-xs flex items-center',
-            index <= activeIndex
-              ? 'border-highlight text-highlight bg-highlight/10'
-              : 'text-muted-foreground'
-          )}
-        >
-          {t(`excelImport.steps.${item}`)}
-        </div>
-      ))}
-    </div>
+    <StepsProgressBar
+      currentStep={activeIndex + 1}
+      totalSteps={steps.length}
+      getStepInfo={stepNumber => ({
+        title: t(`excelImport.steps.${steps[stepNumber - 1]}`),
+      })}
+      allowStepNavigation={false}
+      className="w-[560px]"
+    />
   );
 }

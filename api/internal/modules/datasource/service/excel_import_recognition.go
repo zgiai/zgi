@@ -51,6 +51,7 @@ type excelFieldRecognitionLLMResponseColumn struct {
 	SourceColumn      string `json:"source_column"`
 	Name              string `json:"name"`
 	DisplayName       string `json:"display_name"`
+	Type              string `json:"type"`
 	Description       string `json:"description"`
 }
 
@@ -250,7 +251,12 @@ func normalizeExcelRecognitionResult(req dto.RecognizeExcelImportRequest, llmRes
 	for i, inputCol := range req.Columns {
 		modelCol := modelColumnsBySourceIndex[inputCol.SourceColumnIndex]
 		nextCol := inputCol
+		nextType, err := normalizeExcelRecognitionType(modelCol.Type)
+		if err != nil {
+			return dto.RecognizeExcelImportData{}, fmt.Errorf("field recognition returned invalid type for source column %q: %w", inputCol.SourceColumn, err)
+		}
 		nextCol.Name = uniqueExcelRecognitionFieldName(sanitizeExcelRecognitionFieldName(modelCol.Name, inputCol.Name, i), used)
+		nextCol.Type = nextType
 		if displayName := strings.TrimSpace(modelCol.DisplayName); displayName != "" {
 			nextCol.DisplayName = displayName
 		}
@@ -263,6 +269,16 @@ func normalizeExcelRecognitionResult(req dto.RecognizeExcelImportRequest, llmRes
 		result.Columns = append(result.Columns, nextCol)
 	}
 	return result, nil
+}
+
+func normalizeExcelRecognitionType(raw string) (string, error) {
+	normalized := strings.ToLower(strings.TrimSpace(raw))
+	switch normalized {
+	case "boolean", "text", "timestamp", "numeric", "integer":
+		return normalized, nil
+	default:
+		return "", fmt.Errorf("type %q is not supported", raw)
+	}
 }
 
 func excelRecognitionColumnsBySourceIndex(inputColumns []dto.InferredExcelColumn, modelColumns []excelFieldRecognitionLLMResponseColumn) (map[int]excelFieldRecognitionLLMResponseColumn, error) {

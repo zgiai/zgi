@@ -55,6 +55,7 @@ export default function TableColumns({ dbId, tableId }: TableColumnsProps) {
     includeSystemFields: true,
   });
   const { updateColumns, isPending } = useUpdateDbTableColumns(dbId, tableId);
+  const hasExistingStructure = columns.some(column => !column.is_system_field);
 
   // Always editing mode
   // Initialize with empty array to avoid undefined during first render
@@ -134,6 +135,7 @@ export default function TableColumns({ dbId, tableId }: TableColumnsProps) {
       )}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
+          <h2 className="text-base font-semibold">{t('columns.previewTitle')}</h2>
           {isFetching && (
             <span className="text-xs text-muted-foreground">{t('columns.syncing')}</span>
           )}
@@ -152,7 +154,7 @@ export default function TableColumns({ dbId, tableId }: TableColumnsProps) {
                 </Link>
               </Button>
             )}
-            {canManageSchema && (
+            {canManageSchema && !hasExistingStructure && (
               <Button asChild className="bg-highlight text-white hover:bg-highlight/90">
                 <Link
                   href={`/console/db/${dbId}/table/${tableId}/create`}

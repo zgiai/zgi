@@ -37,7 +37,8 @@ type fileConversionLLMResponse struct {
 }
 
 type fileConversionLLMRecord struct {
-	Fields []fileConversionLLMField `json:"fields"`
+	SourceRowIndex *int                     `json:"source_row_index,omitempty"`
+	Fields         []fileConversionLLMField `json:"fields"`
 }
 
 type fileConversionLLMField struct {

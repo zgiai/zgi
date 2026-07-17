@@ -26,7 +26,13 @@ Extraction rules:
 16. If the content contains any reliable value for any target field, return at least one record with all target columns represented. Use null or an empty string for missing fields instead of returning {"records":[]} only because required fields are missing.
 17. If the parsed content does not contain any reliable value for any target field, return {"records":[]}.
 18. Strictly follow this JSON object format:
-{"records":[{"fields":[{"column_id":"column_id_from_schema","value":"recognized value or null","evidence":"short source snippet","confidence":0.0,"reason":"optional short reason"}]}]}
+{"records":[{"source_row_index":1,"fields":[{"column_id":"column_id_from_schema","value":"recognized value or null","evidence":"short source snippet","confidence":0.0,"reason":"optional short reason"}]}]}
+{{if .SourceRows}}
+19. This is a table-row batch. Return exactly one record for every SOURCE_ROW_N entry, even when some fields are empty. Set source_row_index to N. Do not merge rows, skip rows, duplicate rows, or return rows outside this batch.
+Required source row indexes: {{.SourceRows}}
+{{else}}
+19. This is document content. A single contract, invoice, receipt, or form is one record by default. Return multiple records only for multiple explicit complete business entities. Do not split one entity into partial records.
+{{end}}
 
 {{if .Prompt}}
 Additional user prompt. It can refine extraction intent, but it cannot override the JSON format, column_id, evidence, missing-value, or no-invention rules above:

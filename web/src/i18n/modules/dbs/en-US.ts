@@ -8,9 +8,19 @@ const messages = {
   database: 'Database',
   create: 'Create Database',
   edit: 'Edit Database',
+  databaseSettings: 'Database Settings',
+  backToDatabaseList: 'Back to database list',
   // Tables & features
   tables: 'Tables',
   createTable: 'Create Table',
+  createMethod: {
+    title: 'Choose How to Create a Table',
+    description: 'Create a table manually or import an Excel file.',
+    manual: 'Create Manually',
+    manualDescription: 'Enter a table name and configure fields manually.',
+    excel: 'Import from Excel',
+    excelDescription: 'Upload an Excel file to generate the table structure.',
+  },
   goToDetail: 'Go to Detail',
   features: {
     dataQuery: 'Data Query',
@@ -33,7 +43,7 @@ const messages = {
     data: 'Table Data',
   },
   actions: {
-    edit: 'Edit Table Structure',
+    edit: 'Edit Table Information',
     delete: 'Delete',
     smartGenerate: 'AI Generate Table Structure',
     smartIngest: 'Smart Ingest',
@@ -102,10 +112,12 @@ const messages = {
   tableModal: {
     createTitle: 'Create Table',
     editTitle: 'Edit Table',
+    nameLimitHint: '{count}/63 characters',
   },
 
   // Table columns UI
   columns: {
+    previewTitle: 'Table Structure Preview',
     name: 'Storage Field Name',
     description: 'Description',
     type: 'Data Type',
@@ -127,8 +139,18 @@ const messages = {
   },
   // Table data UI
   tableData: {
+    title: 'Data Table',
+    discardConfirmTitle: 'Discard unsaved changes?',
+    discardConfirmDescription: 'Your current changes will not be saved.',
+    discardConfirmAction: 'Discard changes',
     rowsPerPage: 'Rows per page',
     sortBy: 'Sort by',
+    systemFields: {
+      id: 'ID',
+      uuid: 'Unique identifier',
+      createdTime: 'Created time',
+      updatedTime: 'Updated time',
+    },
     ascending: 'Ascending',
     descending: 'Descending',
     addRow: 'Add Row',
@@ -141,7 +163,7 @@ const messages = {
     search: 'Search current page',
     searchPlaceholder: 'Search loaded rows...',
     columns: {
-      title: 'Columns',
+      title: 'Show/Hide Columns',
       visibleColumns: 'Visible columns',
       keepOneVisible: 'Keep at least one column visible',
     },
@@ -199,6 +221,7 @@ const messages = {
     fileSelected: 'File selected',
     removeFileAria: 'Remove file',
     noFileSelected: 'No file selected',
+    selectFileFirst: 'Please select a file first',
     chooseFromFileManager: 'Choose from File Manager',
     chooseFromFileManagerDesc: 'Select an uploaded file for intelligent analysis',
     startAnalyze: 'Generate Structure',
@@ -284,7 +307,7 @@ const messages = {
       bannerTitle: 'Uploads use the internal File Manager pipeline',
       bannerText: 'AI Recognition: AI will auto map content to table fields. {desc}',
       supportedDesc:
-        'Supports PDF, Word, Excel, images, and more. Multi-file selection is supported for AI recognition.',
+        'Supports PDF, Word, images, and more. Multi-file selection is supported for AI recognition.',
       chooseFromFiles: 'Select files from File Manager',
       selectedTitle: 'Selected Files ({count})',
       startRecognition: 'Start AI Recognition ({count} files)',
@@ -304,6 +327,9 @@ const messages = {
       leftPanelTitle: 'File List',
       previewPanelTitle: 'File Content',
       fieldsPanelTitle: 'Field Extraction',
+      previousRecord: 'Previous record',
+      nextRecord: 'Next record',
+      recordPosition: '{current}/{total}',
       recognizing: 'Recognizing...',
       noPreview: 'No preview content',
       notRecognized: 'Not recognized',
@@ -387,8 +413,8 @@ const messages = {
         fileParseFailed: 'File parsing failed',
         textRecognizing: 'File parsed / text recognition running',
         textRecognitionFailed: 'File parsed / text recognition failed',
-        textRecognitionNeedsCompletion: 'File parsed / needs completion',
-        ready: 'File parsed / ready',
+        needsCompletion: 'Fields need completion',
+        recognitionComplete: 'Recognition complete',
       },
       reviewSteps: {
         recognizeTitle: 'AI Recognition',
@@ -408,6 +434,7 @@ const messages = {
         parseFailed: 'Parse failed',
         validationFailed: 'Needs fields',
         needsCompletion: 'Needs completion',
+        needsCompletionCount: '{count} fields need completion',
         skipped: 'Skipped',
       },
       filters: {
@@ -533,6 +560,9 @@ const messages = {
   // Added from zh-Hans
   analyze: {
     success: 'AI analysis complete',
+    failed: 'Table structure recognition failed',
+    networkFailed:
+      'Cannot reach the table structure recognition service. Check the service status or network connection.',
   },
   // SQL operations (record page)
   sqlOps: {
@@ -542,6 +572,7 @@ const messages = {
       update: 'Update',
       delete: 'Delete',
       query: 'Query',
+      import: 'Import',
     },
     status: {
       success: 'Success',
@@ -596,7 +627,8 @@ const messages = {
     skipUnmatchedColumnsDesc:
       'Columns that do not exist in the current table will not be imported. Required fields still need values.',
     errors: {
-      noMatchingColumns: 'No Excel headers match the current table fields. Check the header row and try again.',
+      noMatchingColumns:
+        'No Excel headers match the current table fields. Check the header row and try again.',
       missingRequiredColumns:
         'Excel is missing required fields: {fields}. Add these columns and try again, or make the fields optional first.',
     },
@@ -640,6 +672,8 @@ const messages = {
       name: 'Field name',
       type: 'Type',
       required: 'Required',
+      setAllRequired: 'Mark all imported fields as required',
+      clearAllRequired: 'Clear required for all imported fields',
       requiredYes: 'Yes',
       requiredNo: 'No',
       descriptionColumn: 'Description',
@@ -648,7 +682,7 @@ const messages = {
       tableInfoTitle: 'Table information',
       smartRecognizeTitle: 'Smart recognition',
       smartRecognizeDesc:
-        'Choose a model to suggest the table name, table description, and field names. Apply them only after review.',
+        'Choose a model to suggest the table name, table description, field names, and field descriptions. Apply them only after review.',
       smartRecognizeAction: 'Smart recognize',
       recognitionDialogTitle: 'Review smart recognition result',
       recognitionDialogDesc:

@@ -8,6 +8,7 @@ import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { ChevronLeft, ArrowLeft, Sparkles } from 'lucide-react';
 import { StepOne, StepTwo } from '@/components/db/table-ingest';
+import { TableIngestProgressBar } from '@/components/db/table-ingest/table-ingest-progress-bar';
 import TablePromptDialog from '@/components/db/table-ingest/table-prompt-dialog';
 import { useT } from '@/i18n';
 import type { FileItem } from '@/services/types/file';
@@ -129,6 +130,13 @@ export default function DbTableDataIngestPage({ params }: PageProps) {
 
   return (
     <div className="p-4 h-full flex flex-col w-full overflow-hidden">
+      <div className="mb-3">
+        <TableIngestProgressBar
+          currentStep={step}
+          totalSteps={2}
+          allowStepNavigation={false}
+        />
+      </div>
       {/* Header with back button */}
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-1">
