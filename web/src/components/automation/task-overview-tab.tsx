@@ -65,7 +65,9 @@ export function TaskOverviewTab({ taskDetail, showUnsupportedHint }: TaskOvervie
   );
   const selectedWorkflowAgentName =
     selectedWorkflowAgent.agent?.data?.name ||
-    (selectedWorkflowAgent.isLoading ? t('actions.loadingWorkflows') : t('misc.notAvailable'));
+    (selectedWorkflowAgent.isLoading
+      ? t('actions.loadingWorkflows')
+      : selectedWorkflowAgentId || t('misc.notAvailable'));
 
   return (
     <div className="space-y-4">

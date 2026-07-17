@@ -115,9 +115,10 @@ const CanvasWithDnd: React.FC<CanvasWithDndProps> = ({
       nodes: viewNodes,
       disabled: isReadOnly,
       onNodesChange,
-    });
+  });
   const hideRightPanels = isCanvasInteracting || Boolean(draggingNodeType) || createNodePickerOpen;
-  const isMouseMode = interactionMode === 'mouse';
+  const effectiveInteractionMode = isReadOnly ? 'mouse' : interactionMode;
+  const isMouseMode = effectiveInteractionMode === 'mouse';
 
   const onConnectWrapper = React.useMemo(
     () => (isReadOnly ? () => {} : onConnect),
@@ -125,11 +126,12 @@ const CanvasWithDnd: React.FC<CanvasWithDndProps> = ({
   );
 
   React.useEffect(() => {
+    if (isReadOnly) return;
     const saved = getSavedWorkflowInteractionMode();
     if (saved) {
       setInteractionMode(saved);
     }
-  }, [setInteractionMode]);
+  }, [isReadOnly, setInteractionMode]);
 
   const setEdgeDescId = useWorkflowStore.use.setEdgeDescId();
   const setEdgeDescPosition = useWorkflowStore.use.setEdgeDescPosition();
@@ -245,7 +247,7 @@ const CanvasWithDnd: React.FC<CanvasWithDndProps> = ({
         }
         zoomOnScroll
         zoomOnPinch
-        panOnScroll={interactionMode === 'trackpad' && !isConnecting}
+        panOnScroll={effectiveInteractionMode === 'trackpad' && !isConnecting}
         panOnScrollMode={PanOnScrollMode.Free}
         preventScrolling={isMouseMode}
       >
