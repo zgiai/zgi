@@ -198,22 +198,26 @@ function generatedImagesFromGeneration(generation: ImageRuntimeGeneration): Gene
 
 function resolveSize(model: ImageRuntimeModel | undefined, ratio: string): string {
   const fallback = model?.default_size ?? '1024x1024';
-  const preferred = ratioToSize(ratio);
-  if (!model) return preferred;
-  return model.supported_sizes.includes(preferred) ? preferred : fallback;
+  const supportedSizes = model?.supported_sizes ?? [];
+  const preferred = sizeForRatio(ratio, supportedSizes);
+  if (preferred) return preferred;
+  return fallback;
 }
 
-function ratioToSize(ratio: string): string {
-  switch (ratio) {
-    case '16:9':
-      return '1792x1024';
-    case '9:16':
-      return '1024x1792';
-    case '4:3':
-      return '1024x768';
-    default:
-      return '1024x1024';
-  }
+const RATIO_SIZE_CANDIDATES: Record<string, string[]> = {
+  '1:1': ['1024x1024', '2048x2048'],
+  '2:3': ['1024x1536'],
+  '3:2': ['1536x1024'],
+  '3:4': ['768x1024'],
+  '4:3': ['1024x768'],
+  '16:9': ['1792x1024', '2048x1152', '3840x2160'],
+  '9:16': ['1024x1792', '2160x3840'],
+};
+
+function sizeForRatio(ratio: string, supportedSizes: string[]): string | undefined {
+  const candidates = RATIO_SIZE_CANDIDATES[ratio] ?? RATIO_SIZE_CANDIDATES['1:1'];
+  if (supportedSizes.length === 0) return candidates[0];
+  return candidates.find(size => supportedSizes.includes(size));
 }
 
 function objectValue(value: unknown): Record<string, unknown> | undefined {

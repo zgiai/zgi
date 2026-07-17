@@ -72,6 +72,14 @@ func (s *service) ListModels(ctx context.Context, scope Scope) ([]registry.Image
 				return nil, err
 			}
 			result = append(result, item)
+			continue
+		}
+		ok, err := s.hasSingleRoute(ctx, scope.OrganizationID, item.Model)
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			result = append(result, item)
 		}
 	}
 	return result, nil
@@ -123,7 +131,7 @@ func (s *service) Generate(ctx context.Context, scope Scope, req GenerateRequest
 		Prompt:         prompt,
 		N:              &n,
 		Size:           size,
-		ResponseFormat: "url",
+		ResponseFormat: imageResponseFormat(modelSpec),
 		User:           scope.AccountID.String(),
 	}
 	resp, err := s.llmClient.CreateImage(ctx, scope.OrganizationID.String(), imageReq)
@@ -200,7 +208,28 @@ func (s *service) ensureModelAvailable(ctx context.Context, organizationID uuid.
 			return s.ensureSingleRoute(ctx, organizationID, modelSpec.Model)
 		}
 	}
+	ok, err := s.hasSingleRoute(ctx, organizationID, modelSpec.Model)
+	if err != nil {
+		return err
+	}
+	if ok {
+		return nil
+	}
 	return ErrModelNotAvailable
+}
+
+func (s *service) hasSingleRoute(ctx context.Context, organizationID uuid.UUID, modelName string) (bool, error) {
+	if s.routes == nil {
+		return false, nil
+	}
+	routes, err := s.routes.GetRoutesForModel(ctx, organizationID, modelName)
+	if err != nil {
+		return false, err
+	}
+	if len(routes) > 1 {
+		return false, ErrModelRouteAmbiguous
+	}
+	return len(routes) == 1, nil
 }
 
 func (s *service) ensureSingleRoute(ctx context.Context, organizationID uuid.UUID, modelName string) error {
@@ -268,6 +297,13 @@ func containsInt(items []int, value int) bool {
 		}
 	}
 	return false
+}
+
+func imageResponseFormat(modelSpec registry.ImageModel) string {
+	if modelSpec.Provider == "openai" && strings.HasPrefix(modelSpec.Model, "gpt-image") {
+		return ""
+	}
+	return "url"
 }
 
 func imageFileFromMeta(meta map[string]interface{}) ImageFile {

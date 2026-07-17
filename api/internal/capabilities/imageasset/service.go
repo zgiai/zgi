@@ -2,7 +2,9 @@ package imageasset
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
 	"mime"
@@ -18,9 +20,13 @@ import (
 )
 
 const (
-	defaultImageMIME = "image/png"
-	defaultImageExt  = ".png"
-	maxImageBytes    = 20 * 1024 * 1024
+	defaultImageMIME                  = "image/png"
+	defaultImageExt                   = ".png"
+	maxImageBytes                     = 20 * 1024 * 1024
+	generatedImageDownloadAttempts    = 3
+	generatedImageDownloadTimeout     = 120 * time.Second
+	generatedImageTLSHandshakeTimeout = 30 * time.Second
+	generatedImageResponseTimeout     = 60 * time.Second
 )
 
 var unsafeFilenamePattern = regexp.MustCompile(`[^a-zA-Z0-9._\-\p{Han}]`)
@@ -138,6 +144,7 @@ func (service) SaveGeneratedImage(ctx context.Context, req SaveRequest) (map[str
 	fileMeta := fileObj.ToDict()
 	fileMeta["file_id"] = toolFile.ID
 	fileMeta["filename"] = toolFile.Name
+	fileMeta["extension"] = extension
 	fileMeta["format"] = strings.TrimPrefix(extension, ".")
 	fileMeta["mime_type"] = mimeType
 	fileMeta["url"] = url
@@ -158,7 +165,44 @@ func decodeBase64Image(raw string) ([]byte, error) {
 }
 
 func downloadGeneratedImage(ctx context.Context, rawURL string) ([]byte, string, string, error) {
-	client := &http.Client{Timeout: 30 * time.Second}
+	client := generatedImageDownloadClient()
+	var lastErr error
+	for attempt := 1; attempt <= generatedImageDownloadAttempts; attempt++ {
+		data, mimeType, extension, err := downloadGeneratedImageOnce(ctx, client, rawURL)
+		if err == nil {
+			return data, mimeType, extension, nil
+		}
+		lastErr = err
+		if !shouldRetryGeneratedImageDownload(err) || attempt == generatedImageDownloadAttempts {
+			break
+		}
+		delay := time.Duration(attempt) * 500 * time.Millisecond
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, "", "", ctx.Err()
+		case <-timer.C:
+		}
+	}
+	return nil, "", "", lastErr
+}
+
+func generatedImageDownloadClient() *http.Client {
+	return &http.Client{
+		Timeout: generatedImageDownloadTimeout,
+		Transport: &http.Transport{
+			Proxy:                 http.ProxyFromEnvironment,
+			TLSHandshakeTimeout:   generatedImageTLSHandshakeTimeout,
+			ResponseHeaderTimeout: generatedImageResponseTimeout,
+			DisableKeepAlives:     true,
+			ForceAttemptHTTP2:     false,
+			TLSNextProto:          map[string]func(string, *tls.Conn) http.RoundTripper{},
+		},
+	}
+}
+
+func downloadGeneratedImageOnce(ctx context.Context, client *http.Client, rawURL string) ([]byte, string, string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
 		return nil, "", "", fmt.Errorf("failed to create generated image download request: %w", err)
@@ -170,7 +214,8 @@ func downloadGeneratedImage(ctx context.Context, rawURL string) ([]byte, string,
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, "", "", fmt.Errorf("failed to download generated image: status %d", resp.StatusCode)
+		err := generatedImageDownloadStatusError{statusCode: resp.StatusCode}
+		return nil, "", "", fmt.Errorf("failed to download generated image: %w", err)
 	}
 	if resp.ContentLength > maxImageBytes {
 		return nil, "", "", fmt.Errorf("generated image exceeds %d bytes", maxImageBytes)
@@ -180,6 +225,26 @@ func downloadGeneratedImage(ctx context.Context, rawURL string) ([]byte, string,
 		return nil, "", "", fmt.Errorf("failed to read generated image: %w", err)
 	}
 	return validateGeneratedImageData(data, resp.Header.Get("Content-Type"))
+}
+
+type generatedImageDownloadStatusError struct {
+	statusCode int
+}
+
+func (e generatedImageDownloadStatusError) Error() string {
+	return fmt.Sprintf("status %d", e.statusCode)
+}
+
+func shouldRetryGeneratedImageDownload(err error) bool {
+	if err == nil {
+		return false
+	}
+	var statusErr generatedImageDownloadStatusError
+	if errors.As(err, &statusErr) {
+		return statusErr.statusCode >= http.StatusInternalServerError
+	}
+	return strings.Contains(err.Error(), "failed to download generated image") ||
+		strings.Contains(err.Error(), "failed to read generated image")
 }
 
 func validateGeneratedImageData(data []byte, rawContentType string) ([]byte, string, string, error) {

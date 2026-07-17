@@ -95,6 +95,7 @@ func NewHTTPClientWithOptions(timeout time.Duration, maxRetries int, opts HTTPCl
 	// Non-streaming transport: force HTTP/1.1 to avoid HTTP/2 multiplexing issues
 	// (e.g. "http2: response body closed" under high concurrency).
 	transport := &http.Transport{
+		Proxy:                 http.ProxyFromEnvironment,
 		MaxIdleConns:          200,
 		MaxIdleConnsPerHost:   50,
 		MaxConnsPerHost:       100,
@@ -112,6 +113,7 @@ func NewHTTPClientWithOptions(timeout time.Duration, maxRetries int, opts HTTPCl
 	// in the connection buffer can cause subsequent requests to read stale data.
 	// Disabling keep-alives ensures each streaming request gets a fresh connection.
 	streamTransport := &http.Transport{
+		Proxy:                 http.ProxyFromEnvironment,
 		MaxIdleConns:          200,
 		MaxIdleConnsPerHost:   50,
 		MaxConnsPerHost:       100,
