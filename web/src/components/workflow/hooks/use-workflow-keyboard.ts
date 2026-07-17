@@ -1,6 +1,7 @@
 import { useEffect, useCallback } from 'react';
 import { useWorkflowStore } from '../store';
 import useWorkflowOperations from './use-workflow-operations';
+import { saveWorkflowInteractionMode } from '@/utils/ui-local';
 
 const isTextEditingElement = (element: HTMLElement | null) => {
   if (!element) return false;
@@ -116,10 +117,12 @@ const useWorkflowKeyboard = (options?: { onSave?: () => void; disabled?: boolean
       }
 
       if (!event.ctrlKey && !event.metaKey && !event.altKey) {
-        if (event.key.toLowerCase() === 'v') {
-          setInteractionMode('pointer');
-        } else if (event.key.toLowerCase() === 'h') {
-          setInteractionMode('hand');
+        if (event.key.toLowerCase() === 'm') {
+          setInteractionMode('mouse');
+          saveWorkflowInteractionMode('mouse');
+        } else if (event.key.toLowerCase() === 't') {
+          setInteractionMode('trackpad');
+          saveWorkflowInteractionMode('trackpad');
         }
       }
 
@@ -162,8 +165,8 @@ const useWorkflowKeyboard = (options?: { onSave?: () => void; disabled?: boolean
       save: 'Ctrl+S',
       undo: 'Ctrl+Z',
       redo: 'Ctrl+Shift+Z',
-      modePointer: 'V',
-      modeHand: 'H',
+      modeMouse: 'M',
+      modeTrackpad: 'T',
       deselect: 'Escape',
     },
   };

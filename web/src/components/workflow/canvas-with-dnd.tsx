@@ -9,8 +9,6 @@ import {
   StepEdge,
   SmoothStepEdge,
   SimpleBezierEdge,
-  type Node,
-  type Edge,
   type Viewport,
   type OnNodesChange,
   type OnEdgesChange,
@@ -26,11 +24,15 @@ import { useCreateNodeModal } from './hooks/use-create-node-modal';
 import { useCanvasInteractionGuard } from './hooks/use-canvas-interaction-guard';
 import { useConnectDropCreate } from './hooks/use-connect-drop-create';
 import { useDragCreateNode } from './hooks/use-drag-create-node';
+import { useNodeAlignmentGuides } from './hooks/use-node-alignment-guides';
 import WorkflowCanvasPanels from './ui/workflow-canvas-panels';
+import WorkflowAlignmentGuides from './ui/workflow-alignment-guides';
+import type { WorkflowEdge, WorkflowNode } from './store/type';
+import { getSavedWorkflowInteractionMode } from '@/utils/ui-local';
 
 interface CanvasWithDndProps {
-  viewNodes: Node[];
-  viewEdges: Edge[];
+  viewNodes: WorkflowNode[];
+  viewEdges: WorkflowEdge[];
   viewViewport: Viewport;
   isReadOnly: boolean;
   agentType: string;
@@ -39,8 +41,8 @@ interface CanvasWithDndProps {
   agentIconType?: string;
   agentIcon?: string;
   agentIconUrl?: string;
-  onNodesChange?: OnNodesChange;
-  onEdgesChange?: OnEdgesChange;
+  onNodesChange?: OnNodesChange<WorkflowNode>;
+  onEdgesChange?: OnEdgesChange<WorkflowEdge>;
   onConnect: OnConnect;
   onNodeClick: (event: React.MouseEvent, node: { id: string }) => void;
   onNodeContextMenu: (event: React.MouseEvent, node: { id: string }) => void;
@@ -55,6 +57,16 @@ const EDGE_TYPES = {
   step: StepEdge,
   smoothstep: SmoothStepEdge,
   simplebezier: SimpleBezierEdge,
+};
+
+const MIDDLE_MOUSE_BUTTON = 1;
+const LEFT_MOUSE_BUTTON = 0;
+const MOUSE_MODE_PAN_BUTTONS = [LEFT_MOUSE_BUTTON, MIDDLE_MOUSE_BUTTON];
+const TRACKPAD_MODE_PAN_BUTTONS = [MIDDLE_MOUSE_BUTTON];
+
+const isDraggingMultiSelection = (nodeId: string) => {
+  const selectedNodes = useWorkflowStore.getState().nodes.filter(node => node.selected);
+  return selectedNodes.length > 1 && selectedNodes.some(node => node.id === nodeId);
 };
 
 const CanvasWithDnd: React.FC<CanvasWithDndProps> = ({
@@ -80,6 +92,7 @@ const CanvasWithDnd: React.FC<CanvasWithDndProps> = ({
   const createNodePickerOpen = useCreateNodeModal(state => state.open);
 
   const interactionMode = useWorkflowStore.use.interactionMode();
+  const setInteractionMode = useWorkflowStore.use.setInteractionMode();
   const {
     isConnecting,
     isCanvasInteracting,
@@ -97,18 +110,34 @@ const CanvasWithDnd: React.FC<CanvasWithDndProps> = ({
     isReadOnly,
     viewViewport,
   });
+  const { alignmentGuides, clearAlignmentGuides, onNodesChangeWithAlignment } =
+    useNodeAlignmentGuides({
+      nodes: viewNodes,
+      disabled: isReadOnly,
+      onNodesChange,
+  });
   const hideRightPanels = isCanvasInteracting || Boolean(draggingNodeType) || createNodePickerOpen;
+  const effectiveInteractionMode = isReadOnly ? 'mouse' : interactionMode;
+  const isMouseMode = effectiveInteractionMode === 'mouse';
 
   const onConnectWrapper = React.useMemo(
     () => (isReadOnly ? () => {} : onConnect),
     [isReadOnly, onConnect]
   );
 
+  React.useEffect(() => {
+    if (isReadOnly) return;
+    const saved = getSavedWorkflowInteractionMode();
+    if (saved) {
+      setInteractionMode(saved);
+    }
+  }, [isReadOnly, setInteractionMode]);
+
   const setEdgeDescId = useWorkflowStore.use.setEdgeDescId();
   const setEdgeDescPosition = useWorkflowStore.use.setEdgeDescPosition();
 
   const handleEdgeDoubleClick = React.useCallback(
-    (event: React.MouseEvent, edge: Edge) => {
+    (event: React.MouseEvent, edge: WorkflowEdge) => {
       if (isReadOnly) return;
       // Record mouse client position for the floating editor
       setEdgeDescId(edge.id);
@@ -124,37 +153,43 @@ const CanvasWithDnd: React.FC<CanvasWithDndProps> = ({
         edges={viewEdges}
         nodeTypes={nodeTypes}
         edgeTypes={EDGE_TYPES}
-        onNodesChange={isReadOnly ? undefined : onNodesChange}
+        onNodesChange={isReadOnly ? undefined : onNodesChangeWithAlignment}
         onEdgesChange={isReadOnly ? undefined : onEdgesChange}
         onConnect={onConnectWrapper}
         onEdgeDoubleClick={handleEdgeDoubleClick}
         onConnectStart={handleConnectStart}
         onConnectEnd={handleConnectEnd}
         onNodeDragStart={(_e, node) => {
+          clearAlignmentGuides();
           useWorkflowStore.setState({ suppressNextLayoutDirty: false });
           beginInteraction('node-drag');
           const st = useWorkflowStore.getState() as unknown as {
             selectNode?: (id: string | null) => void;
             setSelectionSource?: (src: string) => void;
           };
-          st.selectNode?.(node.id);
+          if (!isDraggingMultiSelection(node.id)) {
+            st.selectNode?.(node.id);
+          }
           st.setSelectionSource?.('drag');
         }}
         onNodeDragStop={(_e, node) => {
+          clearAlignmentGuides();
           finishInteraction('node-drag');
           const st = useWorkflowStore.getState() as unknown as {
             selectNode?: (id: string | null) => void;
             setSelectionSource?: (src: string) => void;
           };
-          // Ensure selection persists
-          st.selectNode?.(node.id);
+          const keepMultiSelection = isDraggingMultiSelection(node.id);
+          if (!keepMultiSelection) {
+            st.selectNode?.(node.id);
+          }
           // Defer setting to 'click' so React Flow finishes internal drag state and click suppression window passes
           if (typeof window !== 'undefined') {
             window.requestAnimationFrame(() => {
-              st.setSelectionSource?.('click');
+              st.setSelectionSource?.(keepMultiSelection ? 'none' : 'click');
             });
           } else {
-            st.setSelectionSource?.('click');
+            st.setSelectionSource?.(keepMultiSelection ? 'none' : 'click');
           }
         }}
         onNodeClick={onNodeClick}
@@ -164,6 +199,7 @@ const CanvasWithDnd: React.FC<CanvasWithDndProps> = ({
         onDragOver={handleDragOver}
         onDrop={handleDrop}
         onMoveStart={() => {
+          clearAlignmentGuides();
           // Cancel auto-follow only for user-initiated moves (not programmatic pan)
           try {
             const st = useWorkflowStore.getState() as unknown as {
@@ -183,9 +219,11 @@ const CanvasWithDnd: React.FC<CanvasWithDndProps> = ({
           finishInteraction('move');
         }}
         onSelectionDragStart={() => {
+          clearAlignmentGuides();
           beginInteraction('selection-drag');
         }}
         onSelectionDragStop={() => {
+          clearAlignmentGuides();
           finishInteraction('selection-drag');
         }}
         viewport={viewViewport}
@@ -197,18 +235,21 @@ const CanvasWithDnd: React.FC<CanvasWithDndProps> = ({
         snapGrid={[5, 5]}
         // Enforce our own keyboard logic by disabling RF defaults
         deleteKeyCode={null}
-        selectionKeyCode={null}
+        selectionKeyCode={isMouseMode ? 'Shift' : null}
         multiSelectionKeyCode={null}
-        // Interaction based on mode and creation state
+        // Mouse mode favors canvas panning; trackpad mode favors marquee selection.
         elementsSelectable
         nodesDraggable={!isReadOnly}
         nodesConnectable={!isReadOnly}
-        selectionOnDrag={!isReadOnly && interactionMode !== 'hand'}
-        panOnDrag={interactionMode === 'hand' && !isConnecting}
+        selectionOnDrag={!isReadOnly && !isConnecting && !isMouseMode}
+        panOnDrag={
+          isConnecting ? false : isMouseMode ? MOUSE_MODE_PAN_BUTTONS : TRACKPAD_MODE_PAN_BUTTONS
+        }
         zoomOnScroll
-        panOnScroll={interactionMode === 'hand' && !isConnecting}
+        zoomOnPinch
+        panOnScroll={effectiveInteractionMode === 'trackpad' && !isConnecting}
         panOnScrollMode={PanOnScrollMode.Free}
-        preventScrolling={false}
+        preventScrolling={isMouseMode}
       >
         <Background
           variant={BackgroundVariant.Lines}
@@ -218,6 +259,7 @@ const CanvasWithDnd: React.FC<CanvasWithDndProps> = ({
           color="#e5e7eb"
         />
 
+        <WorkflowAlignmentGuides guides={alignmentGuides} />
         <GlobalContainerOverlay isReadOnly={isReadOnly} />
 
         <WorkflowCanvasPanels

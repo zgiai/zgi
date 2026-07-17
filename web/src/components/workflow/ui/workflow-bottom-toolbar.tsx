@@ -1,11 +1,11 @@
-import React, { useEffect, useMemo } from 'react';
+import React, { useMemo } from 'react';
 import { useReactFlow } from '@xyflow/react';
 import { Button } from '@/components/ui/button';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import {
-  Hand,
-  Pointer,
+  Mouse,
+  Touchpad,
   ZoomIn,
   ZoomOut,
   Maximize2,
@@ -18,11 +18,11 @@ import { useWorkflowStore } from '../store';
 import { useCreateNodeModal } from '../hooks/use-create-node-modal';
 import { cn } from '@/lib/utils';
 import { useT } from '@/i18n';
-import { getSavedWorkflowInteractionMode, saveWorkflowInteractionMode } from '@/utils/ui-local';
+import { saveWorkflowInteractionMode } from '@/utils/ui-local';
 
 /**
  * Bottom toolbar for workflow editor interactions
- * - Mode toggle: Pointer (edit/select) vs Hand (pan)
+ * - Input mode toggle: Mouse vs Trackpad
  * - View controls: Zoom out, Fit view, Zoom in
  * - History: Undo/Redo
  */
@@ -42,7 +42,6 @@ const WorkflowBottomToolbar: React.FC = () => {
   const canEdit = useWorkflowStore.use.canEdit();
   const isReadOnly = mode === 'history' || !canEdit;
 
-  const isHand = interactionMode === 'hand';
   const canUndo = !isReadOnly && historyPast.length > 0;
   const canRedo = !isReadOnly && historyFuture.length > 0;
   const { openModal } = useCreateNodeModal();
@@ -65,15 +64,7 @@ const WorkflowBottomToolbar: React.FC = () => {
     addNode({ type: 'note', text: '' }, center);
   };
 
-  const groupValue = useMemo(() => (isHand ? 'hand' : 'pointer'), [isHand]);
-
-  // Restore last selected interaction mode on mount; fallback handled by store default
-  useEffect(() => {
-    const saved = getSavedWorkflowInteractionMode();
-    if (saved) {
-      setInteractionMode(saved);
-    }
-  }, [setInteractionMode]);
+  const groupValue = useMemo(() => interactionMode, [interactionMode]);
 
   return (
     <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-10 flex items-center gap-2">
@@ -83,7 +74,7 @@ const WorkflowBottomToolbar: React.FC = () => {
           type="single"
           value={groupValue}
           onValueChange={v => {
-            if (v === 'hand' || v === 'pointer') {
+            if (v === 'mouse' || v === 'trackpad') {
               setInteractionMode(v);
               saveWorkflowInteractionMode(v);
             }
@@ -92,22 +83,22 @@ const WorkflowBottomToolbar: React.FC = () => {
         >
           <Tooltip>
             <TooltipTrigger asChild>
-              <ToggleGroupItem value="pointer" aria-label={t('workflow.toolbar.pointer')}>
-                <Pointer
-                  className={cn('h-4 w-4', groupValue === 'pointer' ? 'text-highlight' : '')}
-                />
+              <ToggleGroupItem value="mouse" aria-label={t('workflow.toolbar.mouse')}>
+                <Mouse className={cn('h-4 w-4', groupValue === 'mouse' ? 'text-highlight' : '')} />
               </ToggleGroupItem>
             </TooltipTrigger>
-            <TooltipContent>{t('workflow.toolbar.pointerTooltip')}</TooltipContent>
+            <TooltipContent>{t('workflow.toolbar.mouseTooltip')}</TooltipContent>
           </Tooltip>
 
           <Tooltip>
             <TooltipTrigger asChild>
-              <ToggleGroupItem value="hand" aria-label={t('workflow.toolbar.hand')}>
-                <Hand className={cn('h-4 w-4', groupValue === 'hand' ? 'text-highlight' : '')} />
+              <ToggleGroupItem value="trackpad" aria-label={t('workflow.toolbar.trackpad')}>
+                <Touchpad
+                  className={cn('h-4 w-4', groupValue === 'trackpad' ? 'text-highlight' : '')}
+                />
               </ToggleGroupItem>
             </TooltipTrigger>
-            <TooltipContent>{t('workflow.toolbar.handTooltip')}</TooltipContent>
+            <TooltipContent>{t('workflow.toolbar.trackpadTooltip')}</TooltipContent>
           </Tooltip>
         </ToggleGroup>
 

@@ -13,6 +13,7 @@ import {
   cloneRunSnapshot,
 } from '../helpers/history';
 import type { WorkflowNode, WorkflowEdge } from '../type';
+import type { InteractionMode } from '@/utils/ui-local';
 
 export interface ModeSelectionSlice {
   // UI
@@ -23,8 +24,8 @@ export interface ModeSelectionSlice {
   hasLayoutChanges: boolean;
 
   // Interaction
-  interactionMode: 'pointer' | 'hand';
-  setInteractionMode: (mode: 'pointer' | 'hand') => void;
+  interactionMode: InteractionMode;
+  setInteractionMode: (mode: InteractionMode) => void;
 
   // Editor mode
   mode: 'edit' | 'history';
@@ -109,7 +110,7 @@ export function createModeSelectionSlice(
     isDirty: false,
     hasLayoutChanges: false,
 
-    interactionMode: 'hand',
+    interactionMode: 'mouse',
     setInteractionMode: mode => {
       if (get().interactionMode === mode) return;
       set({ interactionMode: mode }, false, 'setInteractionMode');
