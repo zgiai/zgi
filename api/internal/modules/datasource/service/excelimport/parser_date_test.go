@@ -90,6 +90,45 @@ func TestParseXLSXDoesNotNormalizeNumericCustomFormatsAsDates(t *testing.T) {
 	}
 }
 
+func TestParseXLSXPreservesElapsedTimeValues(t *testing.T) {
+	tests := []struct {
+		name  string
+		style *excelize.Style
+		want  string
+	}{
+		{name: "custom elapsed hours", style: &excelize.Style{CustomNumFmt: stringPointer(`[h]:mm`)}, want: "36:00"},
+		{name: "built-in elapsed hours", style: &excelize.Style{NumFmt: 46}, want: "36:00:00"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := excelize.NewFile()
+			defer f.Close()
+			f.SetCellValue("Sheet1", "A1", "duration")
+			f.SetCellValue("Sheet1", "A2", 1.5)
+			styleID, err := f.NewStyle(tt.style)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := f.SetCellStyle("Sheet1", "A2", "A2", styleID); err != nil {
+				t.Fatal(err)
+			}
+			content, err := f.WriteToBuffer()
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			workbook, err := ParseWorkbook("durations.xlsx", content.Bytes())
+			if err != nil {
+				t.Fatalf("ParseWorkbook returned error: %v", err)
+			}
+			if got := workbook.Sheets[0].Rows[1][0]; got != tt.want {
+				t.Fatalf("parsed duration = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestExcelCustomDateFormatScanner(t *testing.T) {
 	tests := []struct {
 		format string
@@ -97,9 +136,9 @@ func TestExcelCustomDateFormatScanner(t *testing.T) {
 	}{
 		{format: `yyyy-mm-dd`, want: true},
 		{format: `hh:mm:ss`, want: true},
-		{format: `[h]:mm`, want: true},
-		{format: `[m]`, want: true},
-		{format: `[s]`, want: true},
+		{format: `[h]:mm`, want: false},
+		{format: `[m]`, want: false},
+		{format: `[s]`, want: false},
 		{format: `[Red]#,##0`, want: false},
 		{format: `"USD" 0.00`, want: false},
 		{format: `0.00\d`, want: false},
@@ -114,4 +153,8 @@ func TestExcelCustomDateFormatScanner(t *testing.T) {
 			}
 		})
 	}
+}
+
+func stringPointer(value string) *string {
+	return &value
 }

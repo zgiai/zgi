@@ -938,7 +938,10 @@ const StepTwo: React.FC<IngestStepTwoProps> = ({
     setFileStates(prev => {
       const current = prev[activeFileId];
       if (!current) return prev;
-      const recordIndex = activeRecordIndexes[activeFileId] || 0;
+      const recordIndex = Math.min(
+        activeRecordIndexes[activeFileId] || 0,
+        Math.max(current.records.length - 1, 0)
+      );
       if (!current.records[recordIndex]) return prev;
       const records = current.records.map((record, index) =>
         index === recordIndex ? { ...record, [col.name]: v } : record

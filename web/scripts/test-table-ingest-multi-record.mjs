@@ -16,6 +16,12 @@ assert.ok(
   'field evidence must follow the active record'
 );
 assert.ok(
+  /Math\.min\(\s*activeRecordIndexes\[activeFileId\] \|\| 0,\s*Math\.max\(current\.records\.length - 1, 0\)\s*\)/.test(
+    source
+  ),
+  'editing must clamp a stale record index after reprocessing returns fewer records'
+);
+assert.ok(
   source.includes('validFiles.flatMap'),
   'saving must include every recognized record from every valid file'
 );

@@ -141,7 +141,7 @@ func isExcelCustomDateFormat(format string) bool {
 			}
 			end += i + 1
 			if isExcelElapsedTimeToken(format[i+1 : end]) {
-				hasDateToken = true
+				return false
 			}
 			i = end + 1
 		default:
@@ -185,7 +185,7 @@ func isExcelElapsedTimeToken(token string) bool {
 func isExcelBuiltInDateFormat(numFmt int) bool {
 	return (numFmt >= 14 && numFmt <= 22) ||
 		(numFmt >= 27 && numFmt <= 36) ||
-		(numFmt >= 45 && numFmt <= 47) ||
+		numFmt == 45 || numFmt == 47 ||
 		(numFmt >= 50 && numFmt <= 58)
 }
 
