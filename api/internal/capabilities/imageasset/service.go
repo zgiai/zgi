@@ -43,6 +43,7 @@ type SaveRequest struct {
 
 type Service interface {
 	SaveGeneratedImage(ctx context.Context, req SaveRequest) (map[string]interface{}, error)
+	DeleteGeneratedImage(ctx context.Context, fileID string) error
 }
 
 type service struct{}
@@ -143,13 +144,27 @@ func (service) SaveGeneratedImage(ctx context.Context, req SaveRequest) (map[str
 	)
 	fileMeta := fileObj.ToDict()
 	fileMeta["file_id"] = toolFile.ID
+	fileMeta["tool_file_id"] = toolFile.ID
 	fileMeta["filename"] = toolFile.Name
 	fileMeta["extension"] = extension
 	fileMeta["format"] = strings.TrimPrefix(extension, ".")
 	fileMeta["mime_type"] = mimeType
+	fileMeta["transfer_method"] = string(workflowfile.FileTransferMethodToolFile)
+	fileMeta["lifecycle"] = string(toolFile.LifecycleValue())
+	if toolFile.ExpiresAt != nil {
+		fileMeta["expires_at"] = toolFile.ExpiresAt.Unix()
+	}
 	fileMeta["url"] = url
 	fileMeta["download_url"] = downloadURL
 	return fileMeta, nil
+}
+
+func (service) DeleteGeneratedImage(ctx context.Context, fileID string) error {
+	fileID = strings.TrimSpace(fileID)
+	if fileID == "" {
+		return fmt.Errorf("file id is required")
+	}
+	return tool_file.DeleteToolFileGlobal(ctx, fileID)
 }
 
 func decodeBase64Image(raw string) ([]byte, error) {

@@ -10,6 +10,7 @@ var (
 	ErrUnsupportedSize           = errors.New("UNSUPPORTED_SIZE")
 	ErrUnsupportedCount          = errors.New("UNSUPPORTED_COUNT")
 	ErrConversationNotAccessible = errors.New("CONVERSATION_NOT_ACCESSIBLE")
+	ErrBillingContextRequired    = errors.New("BILLING_CONTEXT_REQUIRED")
 	ErrUpstreamFailed            = errors.New("UPSTREAM_FAILED")
 	ErrImageSaveFailed           = errors.New("IMAGE_SAVE_FAILED")
 )

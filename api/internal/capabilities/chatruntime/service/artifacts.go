@@ -101,7 +101,7 @@ func generatedToolFilesForHistory(ctx context.Context, messages []*runtimemodel.
 		if message == nil || len(message.Metadata) == 0 {
 			continue
 		}
-		for _, file := range generatedFilesFromMetadata(message.Metadata["generated_files"]) {
+		for _, file := range generatedFileLifecycleLookupCandidates(message) {
 			if isManagedFileArtifact(file) || !generatedFileNeedsLifecycleLookup(file) {
 				continue
 			}
@@ -126,8 +126,26 @@ func generatedToolFilesForHistory(ctx context.Context, messages []*runtimemodel.
 	return toolFiles, true
 }
 
+func generatedFileLifecycleLookupCandidates(message *runtimemodel.Message) []map[string]interface{} {
+	if message == nil || len(message.Metadata) == 0 {
+		return nil
+	}
+	files := generatedFilesFromMetadata(message.Metadata["generated_files"])
+	if imageGeneration, ok := message.Metadata["image_generation"].(map[string]interface{}); ok {
+		files = append(files, generatedFilesFromMetadata(imageGeneration["files"])...)
+	}
+	return files
+}
+
 func generatedFileNeedsLifecycleLookup(file map[string]interface{}) bool {
-	return strings.TrimSpace(stringFromAny(file["lifecycle"])) == "" || file["expires_at"] == nil
+	lifecycle := strings.TrimSpace(stringFromAny(file["lifecycle"]))
+	if lifecycle == "" {
+		return true
+	}
+	if lifecycle == string(tool_file.ToolFileLifecycleTemporary) || lifecycle == conversationArtifactLifecycleTemp {
+		return file["expires_at"] == nil
+	}
+	return false
 }
 
 func hydrateGeneratedFileURL(file map[string]interface{}) map[string]interface{} {

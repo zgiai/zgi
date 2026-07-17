@@ -18,12 +18,16 @@ type GenerateRequest struct {
 }
 
 type ImageFile struct {
-	FileID      string `json:"file_id"`
-	URL         string `json:"url"`
-	DownloadURL string `json:"download_url"`
-	Filename    string `json:"filename"`
-	Extension   string `json:"extension"`
-	MimeType    string `json:"mime_type"`
+	FileID         string `json:"file_id"`
+	ToolFileID     string `json:"tool_file_id,omitempty"`
+	URL            string `json:"url"`
+	DownloadURL    string `json:"download_url"`
+	Filename       string `json:"filename"`
+	Extension      string `json:"extension"`
+	MimeType       string `json:"mime_type"`
+	TransferMethod string `json:"transfer_method,omitempty"`
+	Lifecycle      string `json:"lifecycle,omitempty"`
+	ExpiresAt      *int64 `json:"expires_at,omitempty"`
 }
 
 type ImageGenerationMetadata struct {

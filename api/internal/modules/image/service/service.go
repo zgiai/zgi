@@ -20,8 +20,10 @@ import (
 )
 
 const (
-	maxPromptRunes = 4000
-	successMessage = "已生成图片"
+	maxPromptRunes      = 4000
+	imageRuntimeAppID   = "image-runtime"
+	imageRuntimeAppType = "image-runtime"
+	successMessage      = "已生成图片"
 )
 
 type Service interface {
@@ -40,6 +42,13 @@ type service struct {
 	llmClient       llmclient.LLMClient
 	chatService     chatruntime.Service
 	imageAssets     imageasset.Service
+}
+
+type generationConversation struct {
+	ID           uuid.UUID
+	Title        string
+	Existing     *model.Conversation
+	ShouldCreate bool
 }
 
 func NewService(reg *registry.Registry, availableModels llmmodelsvc.AvailableModelsService, routes RouteLister, llmClient llmclient.LLMClient, chatService chatruntime.Service, imageAssets imageasset.Service) Service {
@@ -120,11 +129,15 @@ func (s *service) Generate(ctx context.Context, scope Scope, req GenerateRequest
 		AccountID:      scope.AccountID,
 		WorkspaceID:    scope.WorkspaceID,
 	}
-	conversation, err := s.resolveConversation(ctx, chatScope, strings.TrimSpace(req.ConversationID), prompt)
+	conversation, err := s.resolveGenerationConversation(ctx, chatScope, strings.TrimSpace(req.ConversationID), prompt)
 	if err != nil {
 		return nil, ErrConversationNotAccessible
 	}
 	conversationID := conversation.ID.String()
+	appCtx, err := buildAppContext(scope, conversation.ID)
+	if err != nil {
+		return nil, err
+	}
 	n := count
 	imageReq := &adapter.ImageRequest{
 		Model:          modelSpec.Model,
@@ -134,7 +147,7 @@ func (s *service) Generate(ctx context.Context, scope Scope, req GenerateRequest
 		ResponseFormat: imageResponseFormat(modelSpec),
 		User:           scope.AccountID.String(),
 	}
-	resp, err := s.llmClient.CreateImage(ctx, scope.OrganizationID.String(), imageReq)
+	resp, err := s.llmClient.AppCreateImage(ctx, appCtx, imageReq)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrUpstreamFailed, err)
 	}
@@ -155,6 +168,9 @@ func (s *service) Generate(ctx context.Context, scope Scope, req GenerateRequest
 			Lifecycle:      tool_file.ToolFileLifecyclePersistent,
 		})
 		if err != nil {
+			if cleanupErr := s.cleanupGeneratedFiles(ctx, files); cleanupErr != nil {
+				return nil, fmt.Errorf("%w: %v; cleanup failed: %v", ErrImageSaveFailed, err, cleanupErr)
+			}
 			return nil, fmt.Errorf("%w: %v", ErrImageSaveFailed, err)
 		}
 		files = append(files, imageFileFromMeta(fileMeta))
@@ -169,19 +185,56 @@ func (s *service) Generate(ctx context.Context, scope Scope, req GenerateRequest
 		Files:      files,
 		Status:     "succeeded",
 	}
-	completed, err := s.chatService.CreateCompletedMessage(ctx, chatScope, chatruntime.CreateCompletedMessageRequest{
+	messageReq := chatruntime.CreateCompletedMessageRequest{
 		ConversationID: conversation.ID,
 		Query:          prompt,
 		Answer:         successMessage,
 		ModelProvider:  modelSpec.Provider,
 		ModelName:      modelSpec.Model,
 		Metadata:       map[string]interface{}{"image_generation": generation},
-	})
-	if err != nil {
-		return nil, err
+	}
+	var completed *model.Message
+	if conversation.ShouldCreate {
+		createdConversation, message, createErr := s.chatService.CreateConversationWithCompletedMessage(ctx, chatScope, chatruntime.Caller{
+			Type:             model.ConversationCallerAIChat,
+			ConversationType: model.ConversationTypeImage,
+		}, chatruntime.CreateConversationWithCompletedMessageRequest{
+			ConversationID: conversation.ID,
+			Title:          conversation.Title,
+			Message:        messageReq,
+		})
+		if createErr != nil {
+			if cleanupErr := s.cleanupGeneratedFiles(ctx, files); cleanupErr != nil {
+				return nil, fmt.Errorf("%w; cleanup failed: %v", createErr, cleanupErr)
+			}
+			return nil, createErr
+		}
+		conversation.Existing = createdConversation
+		completed = message
+	} else {
+		message, createErr := s.chatService.CreateCompletedMessage(ctx, chatScope, messageReq)
+		if createErr != nil {
+			if cleanupErr := s.cleanupGeneratedFiles(ctx, files); cleanupErr != nil {
+				return nil, fmt.Errorf("%w; cleanup failed: %v", createErr, cleanupErr)
+			}
+			return nil, createErr
+		}
+		completed = message
+	}
+	if completed == nil {
+		if cleanupErr := s.cleanupGeneratedFiles(ctx, files); cleanupErr != nil {
+			return nil, fmt.Errorf("image message was not created; cleanup failed: %w", cleanupErr)
+		}
+		return nil, fmt.Errorf("image message was not created")
+	}
+	if conversation.Existing == nil {
+		if cleanupErr := s.cleanupGeneratedFiles(ctx, files); cleanupErr != nil {
+			return nil, fmt.Errorf("image conversation was not created; cleanup failed: %w", cleanupErr)
+		}
+		return nil, fmt.Errorf("image conversation was not created")
 	}
 	return &GenerateResult{
-		ConversationID:  conversation.ID.String(),
+		ConversationID:  conversation.Existing.ID.String(),
 		MessageID:       completed.ID.String(),
 		Message:         successMessage,
 		ImageGeneration: generation,
@@ -246,16 +299,17 @@ func (s *service) ensureSingleRoute(ctx context.Context, organizationID uuid.UUI
 	return nil
 }
 
-func (s *service) resolveConversation(ctx context.Context, scope chatruntime.Scope, rawID string, prompt string) (*model.Conversation, error) {
+func (s *service) resolveGenerationConversation(ctx context.Context, scope chatruntime.Scope, rawID string, prompt string) (*generationConversation, error) {
 	if rawID == "" {
 		title := prompt
 		if len([]rune(title)) > 50 {
 			title = string([]rune(title)[:50])
 		}
-		return s.chatService.CreateConversationForCaller(ctx, scope, chatruntime.Caller{
-			Type:             model.ConversationCallerAIChat,
-			ConversationType: model.ConversationTypeImage,
-		}, title)
+		return &generationConversation{
+			ID:           uuid.New(),
+			Title:        title,
+			ShouldCreate: true,
+		}, nil
 	}
 	conversationID, err := uuid.Parse(rawID)
 	if err != nil {
@@ -268,7 +322,25 @@ func (s *service) resolveConversation(ctx context.Context, scope chatruntime.Sco
 	if err != nil {
 		return nil, err
 	}
-	return conversation, nil
+	return &generationConversation{
+		ID:       conversation.ID,
+		Title:    conversation.Title,
+		Existing: conversation,
+	}, nil
+}
+
+func (s *service) cleanupGeneratedFiles(ctx context.Context, files []ImageFile) error {
+	var cleanupErr error
+	for _, file := range files {
+		fileID := strings.TrimSpace(file.FileID)
+		if fileID == "" {
+			continue
+		}
+		if err := s.imageAssets.DeleteGeneratedImage(ctx, fileID); err != nil {
+			cleanupErr = errors.Join(cleanupErr, fmt.Errorf("delete generated image %s: %w", fileID, err))
+		}
+	}
+	return cleanupErr
 }
 
 func hasAmbiguousModel(models []*llmmodelsvc.AvailableModel) bool {
@@ -316,14 +388,54 @@ func imageResponseFormat(modelSpec registry.ImageModel) string {
 	return "url"
 }
 
+func buildAppContext(scope Scope, conversationID uuid.UUID) (*llmclient.AppContext, error) {
+	if scope.OrganizationID == uuid.Nil || scope.AccountID == uuid.Nil || conversationID == uuid.Nil {
+		return nil, ErrBillingContextRequired
+	}
+	if scope.WorkspaceID == nil || *scope.WorkspaceID == uuid.Nil {
+		return nil, ErrBillingContextRequired
+	}
+	sessionID := conversationID.String()
+	return &llmclient.AppContext{
+		OrganizationID:     scope.OrganizationID.String(),
+		WorkspaceID:        scope.WorkspaceID.String(),
+		BillingSubjectType: llmclient.BillingSubjectTypeWorkspace,
+		AppID:              imageRuntimeAppID,
+		AppType:            imageRuntimeAppType,
+		AccountID:          scope.AccountID.String(),
+		SessionID:          sessionID,
+		ConversationID:     sessionID,
+	}, nil
+}
+
 func imageFileFromMeta(meta map[string]interface{}) ImageFile {
 	return ImageFile{
-		FileID:      stringValue(meta["file_id"]),
-		URL:         stringValue(meta["url"]),
-		DownloadURL: stringValue(meta["download_url"]),
-		Filename:    stringValue(meta["filename"]),
-		Extension:   stringValue(meta["extension"]),
-		MimeType:    stringValue(meta["mime_type"]),
+		FileID:         stringValue(meta["file_id"]),
+		ToolFileID:     stringValue(meta["tool_file_id"]),
+		URL:            stringValue(meta["url"]),
+		DownloadURL:    stringValue(meta["download_url"]),
+		Filename:       stringValue(meta["filename"]),
+		Extension:      stringValue(meta["extension"]),
+		MimeType:       stringValue(meta["mime_type"]),
+		TransferMethod: stringValue(meta["transfer_method"]),
+		Lifecycle:      stringValue(meta["lifecycle"]),
+		ExpiresAt:      int64PtrValue(meta["expires_at"]),
+	}
+}
+
+func int64PtrValue(value interface{}) *int64 {
+	switch typed := value.(type) {
+	case int:
+		out := int64(typed)
+		return &out
+	case int64:
+		out := typed
+		return &out
+	case float64:
+		out := int64(typed)
+		return &out
+	default:
+		return nil
 	}
 }
 
@@ -343,6 +455,7 @@ func ErrorCode(err error) string {
 		ErrUnsupportedSize,
 		ErrUnsupportedCount,
 		ErrConversationNotAccessible,
+		ErrBillingContextRequired,
 		ErrUpstreamFailed,
 		ErrImageSaveFailed,
 	} {

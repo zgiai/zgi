@@ -470,6 +470,43 @@ func TestHydrateGeneratedFileURLsBackfillsLegacyLifecycle(t *testing.T) {
 	}
 }
 
+func TestGeneratedFileLifecycleLookupCandidatesIncludesImageGenerationFiles(t *testing.T) {
+	message := &runtimemodel.Message{Metadata: map[string]interface{}{
+		"generated_files": []interface{}{map[string]interface{}{
+			"file_id": "tool-document", "filename": "document.txt",
+		}},
+		"image_generation": map[string]interface{}{
+			"files": []interface{}{map[string]interface{}{
+				"file_id": "tool-image", "filename": "image.png",
+			}},
+		},
+	}}
+
+	files := generatedFileLifecycleLookupCandidates(message)
+	if len(files) != 2 {
+		t.Fatalf("lifecycle lookup candidates = %#v, want generated and image files", files)
+	}
+	got := map[string]bool{}
+	for _, file := range files {
+		got[stringFromAny(file["file_id"])] = true
+	}
+	if !got["tool-document"] || !got["tool-image"] {
+		t.Fatalf("lifecycle lookup candidate ids = %#v, want both tool-document and tool-image", got)
+	}
+}
+
+func TestGeneratedFileNeedsLifecycleLookupSkipsPersistentImageFile(t *testing.T) {
+	file := map[string]interface{}{
+		"file_id":         "tool-image",
+		"filename":        "image.png",
+		"transfer_method": "tool_file",
+		"lifecycle":       string(tool_file.ToolFileLifecyclePersistent),
+	}
+	if generatedFileNeedsLifecycleLookup(file) {
+		t.Fatalf("persistent file should not need lifecycle lookup: %#v", file)
+	}
+}
+
 func TestHydrateGeneratedFileURLsMarksMissingLegacyToolFileExpired(t *testing.T) {
 	message := &runtimemodel.Message{Metadata: map[string]interface{}{
 		"generated_files": []interface{}{map[string]interface{}{
