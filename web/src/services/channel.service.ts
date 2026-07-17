@@ -109,6 +109,14 @@ export class ChannelService extends BaseService {
         body: data,
         abortSignal: options.abortSignal,
         onError: options.onError,
+        isTerminalMessage: message => {
+          const payload = message.data;
+          return (
+            typeof payload === 'object' &&
+            payload !== null &&
+            (payload as { completed?: unknown }).completed === true
+          );
+        },
         callbacks: {
           onMessage: payload => {
             options.onMessage(payload as unknown as BatchTestChannelModelsEvent);

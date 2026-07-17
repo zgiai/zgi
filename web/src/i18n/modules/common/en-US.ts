@@ -118,6 +118,7 @@ const messages = {
     placeholder: 'Select Workspace',
     search: 'Search Workspaces',
     loading: 'Loading...',
+    defaultWorkspace: 'Default Workspace',
     noResults: 'No matching workspaces found',
     noWorkspaces: 'No workspaces available',
     noWorkspacesMember: 'You are not assigned to a workspace yet.',

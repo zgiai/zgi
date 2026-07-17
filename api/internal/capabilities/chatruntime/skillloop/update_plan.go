@@ -10,13 +10,30 @@ import (
 const maxPlanPhases = 16
 
 func (r *Runner) handleUpdatePlanCall(callID string, args map[string]interface{}, evidence map[string]interface{}, round int) skillStepResult {
-	phases, err := normalizePlanSnapshot(args["plan"])
+	var phases []map[string]interface{}
+	var outcomes []map[string]interface{}
+	var err error
+	if args["plan"] != nil {
+		phases, err = normalizePlanSnapshot(args["plan"])
+	}
+	if err == nil && args["outcomes"] != nil {
+		outcomes, err = normalizeOutcomeSnapshot(args["outcomes"])
+	}
+	if err == nil && len(phases) == 0 && len(outcomes) == 0 {
+		err = fmt.Errorf("%w: update_plan requires outcomes or a compatibility plan snapshot", ErrInvalidInput)
+	}
 	if err != nil {
 		trace := failedSkillTrace("plan_update", skills.MetaToolUpdatePlan, err)
-		return recoverableSkillStep(trace, skills.ToolResultMessage(callID, recoverableErrorPayload(err, "submit a complete plan snapshot with stable IDs, valid statuses, and at most one in_progress phase")), false, false)
+		return recoverableSkillStep(trace, skills.ToolResultMessage(callID, recoverableErrorPayload(err, "submit independently verifiable outcomes with stable IDs, or a compatibility plan snapshot with valid statuses")), false, false)
 	}
 	explanation := trimRunes(stringFromInterface(args["explanation"]), 500)
-	result := map[string]interface{}{"plan": phases}
+	result := map[string]interface{}{}
+	if len(phases) > 0 {
+		result["plan"] = phases
+	}
+	if len(outcomes) > 0 {
+		result["outcomes"] = outcomes
+	}
 	if warnings := planEvidenceAuditWarnings(phases, evidence); len(warnings) > 0 {
 		result["evidence_warnings"] = warnings
 	}
@@ -28,15 +45,84 @@ func (r *Runner) handleUpdatePlanCall(callID string, args map[string]interface{}
 		ToolName: skills.MetaToolUpdatePlan,
 		Status:   "success",
 		Arguments: map[string]interface{}{
-			"phase_count": len(phases),
-			"round":       round,
+			"phase_count":   len(phases),
+			"outcome_count": len(outcomes),
+			"round":         round,
+			"call_id":       strings.TrimSpace(callID),
 		},
 		Result: result,
 	}
-	return successfulSkillStep(trace, skills.ToolResultMessage(callID, map[string]interface{}{
-		"status": "recorded",
-		"plan":   phases,
-	}), false, false)
+	payload := map[string]interface{}{"status": "recorded"}
+	if len(phases) > 0 {
+		payload["plan"] = phases
+	}
+	if len(outcomes) > 0 {
+		payload["outcomes"] = outcomes
+	}
+	return successfulSkillStep(trace, skills.ToolResultMessage(callID, payload), false, false)
+}
+
+func normalizeOutcomeSnapshot(value interface{}) ([]map[string]interface{}, error) {
+	raw := mapSliceFromAny(value)
+	if len(raw) == 0 {
+		return nil, fmt.Errorf("%w: update_plan outcomes must not be empty", ErrInvalidInput)
+	}
+	if len(raw) > maxPlanPhases {
+		return nil, fmt.Errorf("%w: update_plan supports at most %d outcomes", ErrInvalidInput, maxPlanPhases)
+	}
+	used := map[string]struct{}{}
+	out := make([]map[string]interface{}, 0, len(raw))
+	for index, item := range raw {
+		goal := trimRunes(firstNonEmptyString(item["goal"], item["title"], item["step"]), 240)
+		if goal == "" {
+			return nil, fmt.Errorf("%w: every outcome requires goal", ErrInvalidInput)
+		}
+		id := strings.ToLower(strings.TrimSpace(stringFromInterface(item["id"])))
+		if id == "" {
+			id = fmt.Sprintf("outcome-amendment-%d", index+1)
+		}
+		id = trimRunes(id, 80)
+		if _, exists := used[id]; exists {
+			return nil, fmt.Errorf("%w: duplicate outcome id %q", ErrInvalidInput, id)
+		}
+		used[id] = struct{}{}
+		status := strings.ToLower(strings.TrimSpace(stringFromInterface(item["status"])))
+		if status == "" {
+			status = "pending"
+		}
+		switch status {
+		case "pending", "in_progress", "completed", "skipped":
+		default:
+			return nil, fmt.Errorf("%w: invalid outcome status %q", ErrInvalidInput, status)
+		}
+		outcome := map[string]interface{}{
+			"id":     id,
+			"goal":   goal,
+			"status": status,
+		}
+		for _, key := range []string{"target_resource_type", "target_resource_id"} {
+			if text := trimRunes(stringFromInterface(item[key]), 160); text != "" {
+				outcome[key] = text
+			}
+		}
+		for _, key := range []string{"depends_on", "capabilities", "constraints", "evidence_refs"} {
+			if values := compactStringSlice(evidenceStringSliceFromAny(item[key]), 12, 180); len(values) > 0 {
+				outcome[key] = values
+			}
+		}
+		if required, ok := item["required"].(bool); ok {
+			outcome["required"] = required
+		}
+		out = append(out, outcome)
+	}
+	for _, outcome := range out {
+		for _, dependency := range evidenceStringSliceFromAny(outcome["depends_on"]) {
+			if _, exists := used[strings.ToLower(strings.TrimSpace(dependency))]; !exists {
+				return nil, fmt.Errorf("%w: unknown outcome dependency %q", ErrInvalidInput, dependency)
+			}
+		}
+	}
+	return out, nil
 }
 
 func normalizePlanSnapshot(value interface{}) ([]map[string]interface{}, error) {
@@ -83,6 +169,9 @@ func normalizePlanSnapshot(value interface{}) ([]map[string]interface{}, error) 
 		note := trimRunes(stringFromInterface(item["note"]), 500)
 		refs := compactPlanEvidenceRefs(evidenceStringSliceFromAny(item["evidence_refs"]), 12, 240)
 		phase := map[string]interface{}{"id": id, "step": step, "title": step, "status": status}
+		if expectedAction := normalizePlanExpectedAction(item["expected_action"]); len(expectedAction) > 0 {
+			phase["expected_action"] = expectedAction
+		}
 		if len(refs) > 0 {
 			phase["evidence_refs"] = refs
 		}
@@ -95,6 +184,33 @@ func normalizePlanSnapshot(value interface{}) ([]map[string]interface{}, error) 
 		return nil, fmt.Errorf("%w: at most one plan phase may be in_progress", ErrInvalidInput)
 	}
 	return out, nil
+}
+
+func normalizePlanExpectedAction(value interface{}) map[string]interface{} {
+	raw := evidenceMapFromAny(value)
+	if len(raw) == 0 {
+		return nil
+	}
+	skillID := strings.ToLower(strings.TrimSpace(stringFromInterface(raw["skill_id"])))
+	toolName := strings.TrimSpace(stringFromInterface(raw["tool_name"]))
+	if skillID == "" || toolName == "" {
+		return nil
+	}
+	action := map[string]interface{}{
+		"skill_id":  trimRunes(skillID, 120),
+		"tool_name": trimRunes(toolName, 160),
+	}
+	targetRaw := evidenceMapFromAny(raw["target"])
+	target := map[string]interface{}{}
+	for _, key := range []string{"agent_id", "file_id", "asset_id", "resource_id", "dataset_id", "data_source_id", "table_id", "workflow_id", "binding_id", "href", "route"} {
+		if value := trimRunes(stringFromInterface(targetRaw[key]), 240); value != "" {
+			target[key] = value
+		}
+	}
+	if len(target) > 0 {
+		action["target"] = target
+	}
+	return action
 }
 
 func compactPlanEvidenceRefs(values []string, limit int, maxRunes int) []string {

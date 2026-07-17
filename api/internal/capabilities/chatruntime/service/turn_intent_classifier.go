@@ -43,25 +43,26 @@ func (e *modelTurnIntentClassifierError) Unwrap() error {
 }
 
 type AIChatModelTurnIntent struct {
-	Intent                   string   `json:"intent"`
-	RawIntent                string   `json:"raw_intent,omitempty"`
-	TaskType                 string   `json:"task_type,omitempty"`
-	Phases                   []string `json:"phases,omitempty"`
-	EvidenceRequired         []string `json:"evidence_required,omitempty"`
-	RecommendedCapabilities  []string `json:"recommended_capabilities,omitempty"`
-	CompletionCriteria       []string `json:"completion_criteria,omitempty"`
-	NeedsExactAgentRuntime   bool     `json:"needs_exact_agent_runtime,omitempty"`
-	CurrentContextMaySummary bool     `json:"current_context_may_be_summary,omitempty"`
-	OpenCreatedAgentDetail   bool     `json:"open_created_agent_detail,omitempty"`
-	TargetPage               string   `json:"target_page,omitempty"`
-	TargetVisibleIndex       int      `json:"target_visible_index,omitempty"`
-	RouteRequired            *bool    `json:"route_required,omitempty"`
-	AssetEffect              string   `json:"asset_effect,omitempty"`
-	AssetRisk                string   `json:"asset_risk,omitempty"`
-	Approval                 string   `json:"approval,omitempty"`
-	Confidence               float64  `json:"confidence,omitempty"`
-	LowConfidence            bool     `json:"low_confidence,omitempty"`
-	Reason                   string   `json:"reason,omitempty"`
+	Intent                   string              `json:"intent"`
+	RawIntent                string              `json:"raw_intent,omitempty"`
+	TaskType                 string              `json:"task_type,omitempty"`
+	Outcomes                 []AIChatTurnOutcome `json:"outcomes,omitempty"`
+	Phases                   []string            `json:"phases,omitempty"`
+	EvidenceRequired         []string            `json:"evidence_required,omitempty"`
+	RecommendedCapabilities  []string            `json:"recommended_capabilities,omitempty"`
+	CompletionCriteria       []string            `json:"completion_criteria,omitempty"`
+	NeedsExactAgentRuntime   bool                `json:"needs_exact_agent_runtime,omitempty"`
+	CurrentContextMaySummary bool                `json:"current_context_may_be_summary,omitempty"`
+	OpenCreatedAgentDetail   bool                `json:"open_created_agent_detail,omitempty"`
+	TargetPage               string              `json:"target_page,omitempty"`
+	TargetVisibleIndex       int                 `json:"target_visible_index,omitempty"`
+	RouteRequired            *bool               `json:"route_required,omitempty"`
+	AssetEffect              string              `json:"asset_effect,omitempty"`
+	AssetRisk                string              `json:"asset_risk,omitempty"`
+	Approval                 string              `json:"approval,omitempty"`
+	Confidence               float64             `json:"confidence,omitempty"`
+	LowConfidence            bool                `json:"low_confidence,omitempty"`
+	Reason                   string              `json:"reason,omitempty"`
 }
 
 func (s *service) classifyContextualAIChatTurnIntent(ctx context.Context, scope Scope, conversation *runtimemodel.Conversation, config RunConfig, parts *chatRequestParts) (*AIChatModelTurnIntent, error) {
@@ -90,7 +91,7 @@ func (s *service) classifyContextualAIChatTurnIntent(ctx context.Context, scope 
 				Content: strings.Join([]string{
 					"You create a lightweight semantic Turn Contract for one contextual console assistant turn. Return JSON only.",
 					"This is not a tool script. Do not choose concrete tool names, tool arguments, or ordered tool calls.",
-					"The intent field is a broad compatibility label only. Phases, evidence_required, recommended_capabilities, and completion_criteria are advisory task brief fields for the executor, not a fixed tool script or completion verifier contract.",
+					"The intent field is a broad compatibility label only. Outcomes describe independently verifiable user-visible results. Phases, evidence_required, recommended_capabilities, and completion_criteria remain advisory task brief fields for compatibility.",
 					"When recent_task_context is present, use it as conversation history for elliptical follow-ups, corrections, and constraint changes. Preserve the still-relevant goal and pending work, apply the latest user correction, and do not invent an unrelated update type from the latest sentence alone.",
 					"If the latest request and recent_task_context still leave a material side effect ambiguous, return a low-confidence task brief that identifies the ambiguity; the executor may ask the user instead of guessing.",
 					"Pick exactly one broad compatibility intent label from:",
@@ -102,7 +103,9 @@ func (s *service) classifyContextualAIChatTurnIntent(ctx context.Context, scope 
 					"- save_generated_file_to_file_management: save a generated/external artifact into File Management.",
 					"- generate_temporary_file_artifact: generate an artifact only for the chat response, not File Management.",
 					"- continue_previous_task: continue, retry, resume, or finish a previously paused operation.",
-					"Also describe the user goal as phases and needed evidence. Phases are semantic checkpoints, not mandatory tool order. The phases value must be an array of concise strings, never objects.",
+					"Describe multi-result requests as outcomes. Each outcome has goal, optional target_resource_type and target_resource_id, depends_on outcome IDs, semantic capabilities, constraints, and optional required. Use a target ID only when it is explicit in the provided context; never invent one. Outcomes must never contain concrete Skill IDs, tool names, routes, or arguments.",
+					"Use stable outcome IDs such as outcome-1. Split results that can succeed or fail independently. Do not split incidental navigation, loading, or approval into outcomes.",
+					"Also describe the user goal as phases and needed evidence for compatibility. Phases are semantic checkpoints, not mandatory tool order. The phases value must be an array of concise strings, never objects.",
 					"Use recommended_capabilities for capabilities the executor may need, such as exact_agent_runtime, visible_file_content, page_navigation, generated_artifact, or asset_mutation.",
 					"For generated artifact turns, include chart_artifact for charts/graphs/data visualizations and file_artifact for ordinary documents, SVG/vector files, PDFs, spreadsheets, or text files.",
 					"For Agent management turns, include canonical Agent capability IDs in recommended_capabilities only when they may help the executor choose tools: agent.model_selection, agent.system_prompt, agent.skill_backed_capability:<capability query>, agent.accept_uploaded_files, agent.memory, agent.knowledge_binding:<action>, agent.database_binding:<action>, agent.workflow_binding:<action>, agent.suggested_questions. These are possible capabilities, not required completion facts.",
@@ -111,7 +114,7 @@ func (s *service) classifyContextualAIChatTurnIntent(ctx context.Context, scope 
 					"When the user refers to a visible current-page item by ordinal such as first, second, top, \u7b2c\u4e00\u4e2a, or \u7b2c\u4e8c\u4e2a, set target_visible_index to the 1-based visible index. Omit it when no visible ordinal is requested.",
 					"For Agent creation turns, set open_created_agent_detail=true only when the user explicitly asks to open, enter, edit, configure, or inspect the newly created Agent detail page after creation.",
 					"If the user asks for exact Agent prompt/config/runtime analysis and page context may be summary-level, set needs_exact_agent_runtime=true.",
-					"Respond with keys: intent, task_type, phases, evidence_required, recommended_capabilities, completion_criteria, needs_exact_agent_runtime, current_context_may_be_summary, open_created_agent_detail, target_visible_index, confidence, reason, target_page, route_required, asset_effect, asset_risk, approval.",
+					"Respond with keys: intent, task_type, outcomes, phases, evidence_required, recommended_capabilities, completion_criteria, needs_exact_agent_runtime, current_context_may_be_summary, open_created_agent_detail, target_visible_index, confidence, reason, target_page, route_required, asset_effect, asset_risk, approval.",
 					"Do not output skill IDs or tool names. Tool selection is handled later by the model from enabled tool schemas and latest evidence.",
 					"Use confidence from 0 to 1. If unsure, still output the closest compatibility intent with confidence below 0.5 and make the task contract precise.",
 				}, "\n"),
@@ -169,6 +172,7 @@ func finalizeModelTurnIntent(intent *AIChatModelTurnIntent) {
 		intent.TargetVisibleIndex = 0
 	}
 	intent.TaskType = strings.TrimSpace(intent.TaskType)
+	intent.Outcomes = normalizeModelTurnOutcomes(intent.Outcomes)
 	intent.Phases = normalizeModelTurnPlanStrings(intent.Phases, 8, 160)
 	intent.EvidenceRequired = normalizeModelTurnPlanStrings(intent.EvidenceRequired, 10, 160)
 	intent.RecommendedCapabilities = normalizeModelTurnRecommendedCapabilities(normalizeModelTurnPlanStrings(intent.RecommendedCapabilities, 10, 120))
@@ -190,6 +194,86 @@ func finalizeModelTurnIntent(intent *AIChatModelTurnIntent) {
 	if unsupportedIntent && intent.Reason == "" {
 		intent.Reason = "unsupported compatibility intent label; using task contract as the source of truth"
 	}
+}
+
+func normalizeModelTurnOutcomes(values []AIChatTurnOutcome) []AIChatTurnOutcome {
+	const maxOutcomes = 8
+	if len(values) == 0 {
+		return nil
+	}
+	out := make([]AIChatTurnOutcome, 0, minInt(len(values), maxOutcomes))
+	seen := map[string]struct{}{}
+	for _, value := range values {
+		goal := trimRunes(strings.TrimSpace(value.Goal), 240)
+		if goal == "" {
+			continue
+		}
+		id := strings.TrimSpace(value.ID)
+		if id == "" {
+			id = fmt.Sprintf("outcome-%d", len(out)+1)
+		}
+		id = normalizeModelTurnOutcomeID(id, len(out)+1)
+		if _, exists := seen[id]; exists {
+			id = fmt.Sprintf("outcome-%d", len(out)+1)
+		}
+		seen[id] = struct{}{}
+		out = append(out, AIChatTurnOutcome{
+			ID:                 id,
+			Goal:               goal,
+			TargetResourceType: trimRunes(strings.ToLower(strings.TrimSpace(value.TargetResourceType)), 80),
+			TargetResourceID:   trimRunes(strings.TrimSpace(value.TargetResourceID), 160),
+			DependsOn:          normalizeModelTurnPlanStrings(value.DependsOn, maxOutcomes, 80),
+			Capabilities:       normalizeModelTurnRecommendedCapabilities(normalizeModelTurnPlanStrings(value.Capabilities, 10, 120)),
+			Constraints:        normalizeModelTurnPlanStrings(value.Constraints, 8, 180),
+			Required:           value.Required,
+		})
+		if len(out) >= maxOutcomes {
+			break
+		}
+	}
+	valid := map[string]struct{}{}
+	for _, outcome := range out {
+		valid[outcome.ID] = struct{}{}
+	}
+	for index := range out {
+		deps := make([]string, 0, len(out[index].DependsOn))
+		for _, dependency := range out[index].DependsOn {
+			dependency = normalizeModelTurnOutcomeID(dependency, 0)
+			if dependency == "" || dependency == out[index].ID {
+				continue
+			}
+			if _, exists := valid[dependency]; exists {
+				deps = appendUniqueStrings(deps, dependency)
+			}
+		}
+		out[index].DependsOn = deps
+	}
+	return out
+}
+
+func normalizeModelTurnOutcomeID(value string, fallbackIndex int) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	var b strings.Builder
+	for _, r := range value {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+			b.WriteRune(r)
+		case r == '-' || r == '_':
+			b.WriteRune('-')
+		default:
+			if b.Len() > 0 && !strings.HasSuffix(b.String(), "-") {
+				b.WriteRune('-')
+			}
+		}
+		if b.Len() >= 64 {
+			break
+		}
+	}
+	value = strings.Trim(b.String(), "-")
+	if value == "" && fallbackIndex > 0 {
+		return fmt.Sprintf("outcome-%d", fallbackIndex)
+	}
+	return value
 }
 
 func normalizeModelTurnRecommendedCapabilities(values []string) []string {
@@ -308,6 +392,7 @@ func parseModelTurnIntentContent(content string) (*AIChatModelTurnIntent, error)
 	intent := &AIChatModelTurnIntent{
 		Intent:                   jsonRawString(raw["intent"]),
 		TaskType:                 firstNonEmptyString(jsonRawString(raw["task_type"]), jsonRawString(raw["goal_type"])),
+		Outcomes:                 jsonRawOutcomeSlice(raw["outcomes"]),
 		Phases:                   jsonRawPhaseSlice(raw["phases"]),
 		EvidenceRequired:         firstNonEmptyStringSlice(jsonRawStringSlice(raw["evidence_required"]), jsonRawStringSlice(raw["needed_evidence"])),
 		RecommendedCapabilities:  firstNonEmptyStringSlice(jsonRawStringSlice(raw["recommended_capabilities"]), jsonRawStringSlice(raw["needed_capabilities"])),
@@ -329,6 +414,34 @@ func parseModelTurnIntentContent(content string) (*AIChatModelTurnIntent, error)
 		Reason:        jsonRawString(raw["reason"]),
 	}
 	return intent, nil
+}
+
+func jsonRawOutcomeSlice(raw json.RawMessage) []AIChatTurnOutcome {
+	if len(raw) == 0 {
+		return nil
+	}
+	var items []map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &items); err != nil {
+		return nil
+	}
+	out := make([]AIChatTurnOutcome, 0, len(items))
+	for _, item := range items {
+		goal := firstNonEmptyString(jsonRawString(item["goal"]), jsonRawString(item["result"]), jsonRawString(item["title"]))
+		if goal == "" {
+			continue
+		}
+		out = append(out, AIChatTurnOutcome{
+			ID:                 jsonRawString(item["id"]),
+			Goal:               goal,
+			TargetResourceType: firstNonEmptyString(jsonRawString(item["target_resource_type"]), jsonRawString(item["resource_type"])),
+			TargetResourceID:   firstNonEmptyString(jsonRawString(item["target_resource_id"]), jsonRawString(item["resource_id"])),
+			DependsOn:          firstNonEmptyStringSlice(jsonRawStringSlice(item["depends_on"]), jsonRawStringSlice(item["dependencies"])),
+			Capabilities:       firstNonEmptyStringSlice(jsonRawStringSlice(item["capabilities"]), jsonRawStringSlice(item["required_capabilities"])),
+			Constraints:        jsonRawStringSlice(item["constraints"]),
+			Required:           jsonRawBoolPtr(item["required"]),
+		})
+	}
+	return out
 }
 
 func classifierJSONText(content string) string {
@@ -734,6 +847,13 @@ func modelTurnIntentHasActionableTaskContract(intent *AIChatModelTurnIntent) boo
 			return true
 		}
 	}
+	for _, outcome := range intent.Outcomes {
+		for _, capability := range outcome.Capabilities {
+			if modelTurnCapabilityHintRequiresSkillLoop(capability) {
+				return true
+			}
+		}
+	}
 	return false
 }
 
@@ -873,6 +993,9 @@ func modelTurnIntentTaskContract(intent *AIChatModelTurnIntent) map[string]inter
 	if len(intent.Phases) > 0 {
 		contract["phases"] = append([]string(nil), intent.Phases...)
 	}
+	if len(intent.Outcomes) > 0 {
+		contract["outcomes"] = mapsToInterfaceSlice(operationPlanTurnOutcomesToMaps(intent.Outcomes))
+	}
 	if len(intent.EvidenceRequired) > 0 {
 		contract["evidence_required"] = append([]string(nil), intent.EvidenceRequired...)
 	}
@@ -921,6 +1044,12 @@ func applyModelTurnIntentHints(parts *chatRequestParts, strategy *AIChatTurnStra
 	}
 	if strings.TrimSpace(intent.TaskType) != "" {
 		strategy.TaskType = strings.TrimSpace(intent.TaskType)
+	}
+	if len(intent.Outcomes) > 0 {
+		strategy.Outcomes = append([]AIChatTurnOutcome(nil), intent.Outcomes...)
+		for _, outcome := range intent.Outcomes {
+			strategy.PhaseGoals = appendUniqueStrings(strategy.PhaseGoals, outcome.Goal)
+		}
 	}
 	if len(intent.Phases) > 0 {
 		strategy.PhaseGoals = appendUniqueStrings(strategy.PhaseGoals, intent.Phases...)

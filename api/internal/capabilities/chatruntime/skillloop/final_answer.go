@@ -69,9 +69,8 @@ func parseFinalAnswerSubmission(call adapter.ToolCall, evidence map[string]inter
 	return submission, nil
 }
 
-func finalAnswerPlanSnapshotRequired(evidence map[string]interface{}) bool {
-	plan := evidenceMapFromAny(evidence["operation_plan"])
-	return len(mapSliceFromAny(plan["phases"])) > 0
+func finalAnswerPlanSnapshotRequired(_ map[string]interface{}) bool {
+	return false
 }
 
 func finalAnswerSkillStep(callID string, submission finalAnswerSubmission) skillStepResult {
@@ -95,6 +94,7 @@ func finalAnswerSkillStep(callID string, submission finalAnswerSubmission) skill
 		Arguments: map[string]interface{}{
 			"answer_chars": len([]rune(submission.answer)),
 			"phase_count":  len(submission.plan),
+			"call_id":      strings.TrimSpace(callID),
 		},
 		Result: result,
 	}

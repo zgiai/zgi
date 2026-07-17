@@ -53,13 +53,16 @@ tool_governance:
     idempotency_required: false
 display:
   icon: folder-cog
-  category: productivity
+  category: document_processing
+  scenarios:
+    - document_handling
+    - business_operations
   label:
     en_US: File Manager
     zh_Hans: 文件管理器
   description:
-    en_US: Performs governed File Management asset operations such as saving generated files or deleting visible files.
-    zh_Hans: 执行受治理保护的文件管理操作，例如保存生成文件或删除可见文件。
+    en_US: Designed for maintaining files from the console; saves generated files, imports approved assets, or deletes visible files under permission and confirmation controls.
+    zh_Hans: 适用于在控制台维护文件，可保存生成结果、导入合规文件或删除当前可见文件，并遵循权限与操作确认约束。
   when_to_use:
     en_US: Use when the user explicitly asks to change files in File Management and the target is resolved from page context.
     zh_Hans: 当用户明确要求变更文件管理中的文件，且目标已从页面上下文解析时使用。

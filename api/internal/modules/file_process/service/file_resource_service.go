@@ -25,6 +25,11 @@ const (
 
 var ErrFolderNameConflict = errors.New("folder name already exists in the same directory")
 
+type FolderDeleteSummary struct {
+	FolderIDs []string
+	FileIDs   []string
+}
+
 // FileFolderService defines the interface for file folder operations
 type FileFolderService interface {
 	// Folder operations
@@ -35,6 +40,8 @@ type FileFolderService interface {
 	GetFolderWithViewPermissionCheck(ctx context.Context, id, accountID, tenantID string, visibleWorkspaceIDs []string) (*file_model.FileFolder, error)
 	UpdateFolder(ctx context.Context, id string, updates map[string]interface{}) (*file_model.FileFolder, error)
 	DeleteFolder(ctx context.Context, id string) error
+	GetFolderDeleteSummary(ctx context.Context, id string) (*FolderDeleteSummary, error)
+	DeleteFolderTree(ctx context.Context, id string) error
 	ListFolders(ctx context.Context, tenantID string, page, limit int, keyword, sort, parentID string, workspaceIDs []string) ([]*file_model.FileFolder, int64, error)
 	ListFoldersWithPermissionFilter(ctx context.Context, tenantID, accountID string, page, limit int, keyword, sort, parentID, workspaceID string, visibleWorkspaceIDs []string) ([]*file_model.FileFolder, int64, error)
 	GetFolderFileCount(ctx context.Context, folderID string) (int64, error)
@@ -331,9 +338,31 @@ func (s *fileResourceService) UpdateFolder(ctx context.Context, id string, updat
 
 // DeleteFolder deletes a folder
 func (s *fileResourceService) DeleteFolder(ctx context.Context, id string) error {
-	// TODO: Implement cascade delete or check for dependencies
 	if err := s.fileFolderRepo.DeleteFolder(ctx, id); err != nil {
 		return fmt.Errorf("failed to delete folder: %w", err)
+	}
+	return nil
+}
+
+func (s *fileResourceService) GetFolderDeleteSummary(ctx context.Context, id string) (*FolderDeleteSummary, error) {
+	folderIDs, err := s.fileFolderRepo.ListDescendantFolderIDs(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list descendant folders: %w", err)
+	}
+	fileIDs, err := s.fileFolderRepo.ListFileIDsInFolders(ctx, folderIDs)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list files in folder tree: %w", err)
+	}
+	return &FolderDeleteSummary{FolderIDs: folderIDs, FileIDs: fileIDs}, nil
+}
+
+func (s *fileResourceService) DeleteFolderTree(ctx context.Context, id string) error {
+	summary, err := s.GetFolderDeleteSummary(ctx, id)
+	if err != nil {
+		return err
+	}
+	if err := s.fileFolderRepo.DeleteFolders(ctx, summary.FolderIDs); err != nil {
+		return fmt.Errorf("failed to delete folder tree: %w", err)
 	}
 	return nil
 }

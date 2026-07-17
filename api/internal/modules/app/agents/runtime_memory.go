@@ -166,6 +166,7 @@ func agentMemorySlotConfigFromResponse(slot agentmemory.SlotResponse) dto.AgentM
 	return dto.AgentMemorySlotConfig{
 		ID:               slot.ID,
 		Key:              strings.TrimSpace(slot.Key),
+		Name:             strings.TrimSpace(slot.Name),
 		Description:      strings.TrimSpace(slot.Description),
 		MaxChars:         slot.MaxChars,
 		Enabled:          slot.Enabled,
@@ -192,6 +193,7 @@ func agentMemoryReplaceRequestFromConfig(slots []dto.AgentMemorySlotConfig, pres
 		req.Slots = append(req.Slots, agentmemory.SlotUpsertRequest{
 			ID:          id,
 			Key:         strings.TrimSpace(slot.Key),
+			Name:        strings.TrimSpace(slot.Name),
 			Description: strings.TrimSpace(slot.Description),
 			MaxChars:    2000,
 			Enabled:     &enabled,
@@ -210,6 +212,7 @@ func agentMemorySnapshotSlots(slots []dto.AgentMemorySlotConfig) []dto.AgentMemo
 		}
 		out = append(out, dto.AgentMemorySlotConfig{
 			Key:         key,
+			Name:        truncateRunes(strings.TrimSpace(slot.Name), 80),
 			Description: strings.TrimSpace(slot.Description),
 			MaxChars:    2000,
 			Enabled:     slot.Enabled,
@@ -271,6 +274,7 @@ func normalizeAgentMemorySlotConfigs(slots []dto.AgentMemorySlotConfig) []dto.Ag
 		out = append(out, dto.AgentMemorySlotConfig{
 			ID:          strings.TrimSpace(slot.ID),
 			Key:         key,
+			Name:        truncateRunes(strings.TrimSpace(slot.Name), 80),
 			Description: truncateRunes(strings.TrimSpace(slot.Description), 200),
 			MaxChars:    maxChars,
 			Enabled:     slot.Enabled,

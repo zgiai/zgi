@@ -23,6 +23,7 @@ import {
   isContinuationLikelyStartedError,
   isRecoverableStreamTransportError,
 } from '@/components/chat/runtime/controller/chat-runtime-controller-utils';
+import { canStartClientActionContinuation } from '@/components/chat/runtime/client-action-continuation';
 import {
   buildOptimisticUserInputResponse,
   upsertUserInputResponse,
@@ -683,12 +684,33 @@ export function useWorkflowContinuationActions({
       actionId: string,
       payload: AIChatClientActionResultRequest
     ) => {
+      const currentState = stateRef.current;
+      const conversation = currentState.conversations.find(item => item.id === conversationId);
+      const sourceMessage = currentState.messagesByConversation[conversationId]?.find(
+        message => message.id === messageId
+      );
+      const streamingMessage = currentState.streamingByMessageId[messageId];
+      if (
+        !conversation ||
+        !sourceMessage ||
+        !canStartClientActionContinuation({
+          messageStatus: sourceMessage.status,
+          streamingStatus: streamingMessage?.status,
+          isSending: currentState.isSending,
+          conversationRuntimeStatus: conversation.runtime_status,
+          activeMessageMatches: conversation.active_message_id === messageId,
+        })
+      ) {
+        return false;
+      }
+
       await continueWorkflowApproval(conversationId, messageId, undefined, undefined, undefined, {
         actionId,
         payload,
       });
+      return true;
     },
-    [continueWorkflowApproval]
+    [continueWorkflowApproval, stateRef]
   );
 
   const continueUserInput = useCallback(

@@ -21,6 +21,30 @@ import (
 	"github.com/zgiai/zgi/api/internal/util"
 )
 
+func TestAgentRuntimeControlMetricsOmitsInternalDecisionIDs(t *testing.T) {
+	metrics := agentRuntimeControlMetrics(map[string]interface{}{
+		"skill_loop_control_diagnostics": map[string]interface{}{
+			"plan_update_count":                     2,
+			"tool_decision_without_execution_count": 1,
+			"suppressed_control_tool_count":         1,
+			"phase_mismatch_decision_ids":           []interface{}{"internal-call-id"},
+			"tool_decision_without_execution_ids":   []interface{}{"internal-call-id"},
+		},
+	})
+	if got := metrics["plan_update_count"]; got != 2 {
+		t.Fatalf("plan_update_count = %#v, want 2", got)
+	}
+	if got := metrics["suppressed_control_tool_count"]; got != 1 {
+		t.Fatalf("suppressed_control_tool_count = %#v, want 1", got)
+	}
+	if _, exists := metrics["phase_mismatch_decision_ids"]; exists {
+		t.Fatalf("control metrics exposed internal decision IDs: %#v", metrics)
+	}
+	if _, exists := metrics["tool_decision_without_execution_ids"]; exists {
+		t.Fatalf("control metrics exposed internal decision IDs: %#v", metrics)
+	}
+}
+
 func TestAgentRuntimeRunsReturnsOnlyNewWebAppMessages(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	handler, service, ids := setupRuntimeLogsHandler(t)
@@ -810,6 +834,148 @@ func TestAgentRuntimeStepsWithoutTraceKeepsFinalAnswer(t *testing.T) {
 	}
 	if items[0].Type != "model_answer" {
 		t.Fatalf("first type = %q, want model_answer", items[0].Type)
+	}
+}
+
+func TestAgentRuntimeEventsLegacyCompactToolNamesKeepUserInputsInOrder(t *testing.T) {
+	modelInvocation := func(runtimeID string, toolNames ...string) map[string]interface{} {
+		items := make([]interface{}, 0, len(toolNames))
+		for _, name := range toolNames {
+			items = append(items, name)
+		}
+		return map[string]interface{}{
+			"kind":       "model_call",
+			"runtime_id": runtimeID,
+			"response":   map[string]interface{}{"tool_call_names": items},
+		}
+	}
+	metadata := map[string]interface{}{
+		"model_invocations": []interface{}{
+			modelInvocation("m1", "request_user_input"),
+			modelInvocation("m2", "update_plan"),
+			modelInvocation("m3", "request_user_input"),
+			modelInvocation("m4", "update_plan"),
+			modelInvocation("m5"),
+		},
+		"skill_invocations": []interface{}{
+			map[string]interface{}{"kind": "user_input_request", "runtime_id": "u1"},
+			map[string]interface{}{"kind": "user_input_request", "runtime_id": "u2"},
+		},
+	}
+
+	events := agentRuntimeEvents(metadata)
+	want := []string{"m1", "u1", "m2", "m3", "u2", "m4", "m5"}
+	if len(events) != len(want) {
+		t.Fatalf("events len = %d, want %d: %#v", len(events), len(want), events)
+	}
+	for index, runtimeID := range want {
+		if got := runtimeString(events[index]["runtime_id"]); got != runtimeID {
+			t.Fatalf("events[%d].runtime_id = %q, want %q", index, got, runtimeID)
+		}
+	}
+}
+
+func TestAgentRuntimeEventsPreferPersistedTimeline(t *testing.T) {
+	metadata := map[string]interface{}{
+		"model_invocations": []interface{}{
+			map[string]interface{}{"kind": "model_call", "runtime_id": "m2", "created_at_ms": 1000.0},
+			map[string]interface{}{"kind": "model_call", "runtime_id": "m1", "created_at_ms": 1000.0},
+		},
+		"skill_invocations": []interface{}{
+			map[string]interface{}{"kind": "user_input_request", "runtime_id": "u1", "created_at_ms": 1000.0},
+		},
+		"runtime_timeline": []interface{}{
+			map[string]interface{}{"runtime_id": "m1", "source": "model_invocations", "sequence": 1.0, "created_at_ms": 1000.0},
+			map[string]interface{}{"runtime_id": "u1", "source": "skill_invocations", "sequence": 2.0, "created_at_ms": 1000.0},
+			map[string]interface{}{"runtime_id": "m2", "source": "model_invocations", "sequence": 3.0, "created_at_ms": 1000.0},
+		},
+	}
+
+	events := agentRuntimeEvents(metadata)
+	for index, runtimeID := range []string{"m1", "u1", "m2"} {
+		if got := runtimeString(events[index]["runtime_id"]); got != runtimeID {
+			t.Fatalf("events[%d].runtime_id = %q, want %q", index, got, runtimeID)
+		}
+		if got := int64(metadataNumber(events[index], "sequence")); got != int64(index+1) {
+			t.Fatalf("events[%d].sequence = %d, want %d", index, got, index+1)
+		}
+	}
+}
+
+func TestAgentRuntimeStepsDoNotInventMissingEventTimeAndUseAnswerCompletionTime(t *testing.T) {
+	createdAt := time.Unix(1700000000, 0)
+	updatedAt := createdAt.Add(9 * time.Second)
+	message := &runtimemodel.Message{
+		ID:             uuid.New(),
+		ConversationID: uuid.New(),
+		Status:         runtimemodel.MessageStatusCompleted,
+		Metadata: map[string]interface{}{
+			"skill_invocations": []interface{}{
+				map[string]interface{}{"kind": "user_input_request", "runtime_id": "legacy-input", "status": "success"},
+			},
+		},
+		CreatedAt: createdAt,
+		UpdatedAt: updatedAt,
+	}
+
+	steps := buildAgentRuntimeSteps(message)
+	if steps[0].CreatedAt != nil || steps[0].CreatedAtMS != nil || steps[0].FinishedAt != nil {
+		t.Fatalf("legacy event times = created:%v created_ms:%v finished:%v, want unknown", steps[0].CreatedAt, steps[0].CreatedAtMS, steps[0].FinishedAt)
+	}
+	if steps[1].CreatedAt == nil || *steps[1].CreatedAt != updatedAt.Unix() {
+		t.Fatalf("answer created_at = %v, want completion time %d", steps[1].CreatedAt, updatedAt.Unix())
+	}
+	if steps[1].CreatedAtMS == nil || *steps[1].CreatedAtMS != updatedAt.UnixMilli() {
+		t.Fatalf("answer created_at_ms = %v, want completion time %d", steps[1].CreatedAtMS, updatedAt.UnixMilli())
+	}
+}
+
+func TestAgentRuntimeStepsDoNotAppendAnswerWhileWaitingForContinuation(t *testing.T) {
+	message := &runtimemodel.Message{
+		ID:             uuid.New(),
+		ConversationID: uuid.New(),
+		Status:         runtimemodel.MessageStatusWaitingQuestion,
+		Metadata: map[string]interface{}{
+			"skill_invocations": []interface{}{
+				map[string]interface{}{"kind": "user_input_request", "runtime_id": "input-1"},
+			},
+		},
+	}
+
+	steps := buildAgentRuntimeSteps(message)
+	if len(steps) != 1 || steps[0].Type != "user_input_request" {
+		t.Fatalf("waiting steps = %#v, want only persisted runtime events", steps)
+	}
+	if got := agentRuntimeTotalSteps(message.Metadata, message.Status); got != 1 {
+		t.Fatalf("waiting total steps = %d, want 1", got)
+	}
+}
+
+func TestAgentRuntimeModelInputPrefersSanitizedLogContext(t *testing.T) {
+	event := map[string]interface{}{
+		"kind": "model_call",
+		"request": map[string]interface{}{
+			"messages": []interface{}{map[string]interface{}{"role": "user", "content": "old compact request"}},
+		},
+		"log_context": map[string]interface{}{
+			"messages": []interface{}{
+				map[string]interface{}{"role": "user", "content": "new snapshot"},
+				map[string]interface{}{"role": "tool", "content": `{"api_key":"secret","value":4}`},
+			},
+		},
+	}
+
+	input := agentRuntimeEventInput(event).(map[string]interface{})
+	data, err := json.Marshal(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	if !strings.Contains(text, "new snapshot") || strings.Contains(text, "old compact request") || strings.Contains(text, "secret") {
+		t.Fatalf("sanitized model input = %s", text)
+	}
+	if !strings.Contains(text, "[REDACTED]") {
+		t.Fatalf("sanitized model input missing redaction: %s", text)
 	}
 }
 

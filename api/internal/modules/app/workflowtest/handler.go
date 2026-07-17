@@ -474,6 +474,8 @@ func (h *Handler) GenerateCases(c *gin.Context) {
 		response.Fail(c, response.ErrInvalidParam)
 		return
 	}
+	req.WorkspaceID = workspaceID
+	req.AccountID = accountID
 	generator := &LLMCaseGenerator{
 		Client:      h.llmClient,
 		WorkspaceID: workspaceID,
@@ -521,27 +523,33 @@ func (h *Handler) CreateGenerationTask(c *gin.Context) {
 		response.Fail(c, response.ErrInvalidParam)
 		return
 	}
-	if h.taskBackend != WorkflowTestTaskBackendAsynq {
-		response.Success(c, GenerationTaskResponse{Task: task})
+	if !h.enqueueGenerationTask(c, task) {
 		return
+	}
+	response.Success(c, GenerationTaskResponse{Task: task})
+}
+
+func (h *Handler) enqueueGenerationTask(c *gin.Context, task *GenerationTask) bool {
+	if h.taskBackend != WorkflowTestTaskBackendAsynq {
+		return true
 	}
 	if h.taskManager == nil {
 		_ = h.service.finishGenerationTask(c.Request.Context(), task.ID, GenerationTaskStatusFailed, generationTaskFailureReason(fmt.Errorf("task manager is not configured")))
 		response.Fail(c, response.ErrSystemError)
-		return
+		return false
 	}
 	asynqTask, err := NewGenerationTaskAsynqTask(task.ID, h.taskManager)
 	if err != nil {
 		_ = h.service.finishGenerationTask(c.Request.Context(), task.ID, GenerationTaskStatusFailed, generationTaskFailureReason(err))
 		response.Fail(c, response.ErrSystemError)
-		return
+		return false
 	}
 	if _, err := h.taskManager.EnqueueTask(asynqTask); err != nil {
 		_ = h.service.finishGenerationTask(c.Request.Context(), task.ID, GenerationTaskStatusFailed, generationTaskFailureReason(err))
 		response.Fail(c, response.ErrSystemError)
-		return
+		return false
 	}
-	response.Success(c, GenerationTaskResponse{Task: task})
+	return true
 }
 
 func (h *Handler) GetActiveGenerationTask(c *gin.Context) {
@@ -609,6 +617,40 @@ func (h *Handler) CancelGenerationTask(c *gin.Context) {
 		return
 	}
 	response.Success(c, GenerationTaskResponse{Task: task})
+}
+
+func (h *Handler) ResumeGenerationTask(c *gin.Context) {
+	agentID, ok := bindAgentID(c)
+	if !ok {
+		return
+	}
+	if !h.ensureAgentPermission(c, agentID, workspace_model.WorkspacePermissionAgentManage) {
+		return
+	}
+	task, err := h.service.ResumeGenerationTask(c.Request.Context(), agentID, c.Param("task_id"))
+	if err != nil {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+	if !h.enqueueGenerationTask(c, task) {
+		return
+	}
+	response.Success(c, GenerationTaskResponse{Task: task})
+}
+
+func (h *Handler) DeleteGenerationTask(c *gin.Context) {
+	agentID, ok := bindAgentID(c)
+	if !ok {
+		return
+	}
+	if !h.ensureAgentPermission(c, agentID, workspace_model.WorkspacePermissionAgentManage) {
+		return
+	}
+	if err := h.service.DeleteGenerationTask(c.Request.Context(), agentID, c.Param("task_id")); err != nil {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+	response.Success(c, gin.H{"deleted": true})
 }
 
 func (h *Handler) recoverStaleGenerationTasks(c *gin.Context, agentID string) {

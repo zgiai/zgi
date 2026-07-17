@@ -1,3 +1,4 @@
+import type { ModelItem, ModelUseCase } from '@/services/types/model';
 import type { ModelSelectorValue } from './types';
 
 // Use compact URI-encoded value encoding to avoid JSON stringify/parse overhead
@@ -11,3 +12,18 @@ export const deserializeValue = (s: string): ModelSelectorValue | null => {
   if (p === undefined || m === undefined) return null;
   return { provider: decodeURIComponent(p), model: decodeURIComponent(m) };
 };
+
+export function prioritizeModelsByUseCase(
+  models: ModelItem[],
+  preferredUseCase?: ModelUseCase
+): ModelItem[] {
+  if (!preferredUseCase) return models;
+
+  const preferred: ModelItem[] = [];
+  const remaining: ModelItem[] = [];
+  for (const model of models) {
+    if (model.use_cases?.includes(preferredUseCase)) preferred.push(model);
+    else remaining.push(model);
+  }
+  return [...preferred, ...remaining];
+}

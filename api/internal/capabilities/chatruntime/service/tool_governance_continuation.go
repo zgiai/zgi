@@ -191,6 +191,7 @@ func (s *service) prepareToolGovernanceContinuationChat(ctx context.Context, sco
 		return nil, err
 	}
 	applyPersistedConversationSurface(continuation.Conversation, parts)
+	restoreExecutionModeFromMetadata(parts, message.Metadata)
 	restoreConsoleFilesContextFromMetadata(parts, message.Metadata, continuation.Event)
 	restoreConsoleAgentsContextFromMetadata(parts, message.Metadata, continuation.Event)
 	restoreTurnInitialContextFromMetadata(parts, message.Metadata)
@@ -199,7 +200,7 @@ func (s *service) prepareToolGovernanceContinuationChat(ctx context.Context, sco
 	if configured, ok := stringSliceValue(message.Metadata["configured_skill_ids"]); ok && len(configured) > 0 {
 		parts.ConfiguredSkillIDs = configured
 	}
-	if err := s.applyModelCapabilities(ctx, scope, parts); err != nil {
+	if err := s.applyModelCapabilities(ctx, scope, Caller{Type: runtimemodel.ConversationCallerAIChat}, parts); err != nil {
 		return nil, err
 	}
 	applyManagedUserMemoryPolicy(Caller{Type: runtimemodel.ConversationCallerAIChat}, parts)
@@ -232,6 +233,7 @@ func (s *service) runToolGovernanceApprovedContinuation(ctx context.Context, pre
 	if prepared == nil || prepared.LLMRequest == nil {
 		return nil, fmt.Errorf("%w: prepared chat is required", ErrInvalidInput)
 	}
+	prepared.ContinuationType = "tool_governance_approval"
 	persistCtx := context.WithoutCancel(ctx)
 	if result, handled, err := s.runToolGovernanceApprovedFrozenContinuation(ctx, persistCtx, prepared, event, onEvent); handled {
 		if err != nil {
@@ -245,7 +247,7 @@ func (s *service) runToolGovernanceApprovedContinuation(ctx context.Context, pre
 		}
 		return result, nil
 	}
-	prepared.LLMRequest.Messages = append(prepared.LLMRequest.Messages, toolGovernanceApprovalContinuationMessage(event))
+	prepared.LLMRequest.Messages = append(prepared.LLMRequest.Messages, continuationMessageForExecutionMode(toolGovernanceApprovalContinuationMessage(event), prepared.parts.ExecutionMode))
 	answer, usage, err := s.runPreparedToolLoop(ctx, persistCtx, prepared, nil, onEvent)
 	if err != nil {
 		var pendingGovernance *skillloop.ToolGovernancePendingError
@@ -280,7 +282,7 @@ func (s *service) runToolGovernanceApprovedContinuation(ctx context.Context, pre
 		}
 		return nil, newFinalizedStreamError(err)
 	}
-	metadata := preparedResultMetadata(prepared.Message.Metadata, usage)
+	metadata := preparedResultMetadataForPrepared(prepared, prepared.Message.Metadata, usage)
 	if err := s.completePreparedChat(persistCtx, prepared, answer, metadata); err != nil {
 		return nil, finalizedRuntimePersistenceError(err)
 	}
@@ -306,6 +308,8 @@ func (s *service) runToolGovernanceApprovedFrozenContinuation(
 		return nil, true, err
 	}
 	frozen = remapLegacyFileDeleteFrozenInvocation(frozen)
+	prepared.ContinuationType = "tool_governance_approval"
+	prepared.PreferredRestoredSkillID = strings.TrimSpace(frozen.SkillID)
 	if s.skillRuntime == nil {
 		return nil, true, fmt.Errorf("%w: skill runtime is not configured", ErrInvalidInput)
 	}
@@ -399,8 +403,21 @@ func (s *service) runToolGovernanceApprovedFrozenContinuation(
 	if invocation != nil {
 		prepared.Message.Metadata = preparedOperationEvidenceMetadata(prepared.Message.Metadata)
 	}
+	if executionErr == nil {
+		metadata, terminalOnly := completeBoundGovernedInvocationOperationPlan(prepared.Message.Metadata, frozen)
+		prepared.Message.Metadata = metadata
+		prepared.TerminalOnly = terminalOnly
+		if terminalOnly {
+			prepared.PreferredRestoredSkillID = ""
+		}
+		if s.repos != nil && s.repos.Message != nil {
+			if err := s.repos.Message.UpdateMetadata(persistCtx, prepared.Message.ID, metadata); err != nil {
+				return nil, true, finalizedRuntimePersistenceError(err)
+			}
+		}
+	}
 
-	prepared.LLMRequest.Messages = append(prepared.LLMRequest.Messages, toolGovernanceFrozenExecutionContinuationMessage(prepared.Message, event, invocation, executionErr))
+	prepared.LLMRequest.Messages = append(prepared.LLMRequest.Messages, continuationMessageForExecutionMode(toolGovernanceFrozenExecutionContinuationMessage(prepared.Message, event, invocation, executionErr), prepared.parts.ExecutionMode))
 	answer, usage, err := s.runPreparedToolLoop(ctx, persistCtx, prepared, nil, onEvent)
 	if err != nil {
 		var pendingGovernance *skillloop.ToolGovernancePendingError
@@ -432,7 +449,7 @@ func (s *service) runToolGovernanceApprovedFrozenContinuation(
 		}
 		return nil, true, err
 	}
-	metadata := preparedResultMetadata(prepared.Message.Metadata, usage)
+	metadata := preparedResultMetadataForPrepared(prepared, prepared.Message.Metadata, usage)
 	if err := s.completePreparedChat(persistCtx, prepared, answer, metadata); err != nil {
 		return nil, true, finalizedRuntimePersistenceError(err)
 	}
@@ -644,6 +661,9 @@ func toolGovernanceContinuationPlanStateSummary(message *runtimemodel.Message) m
 	}
 	if phases := operationPlanCompactPhasesForPrompt(plan["phases"], 8); len(phases) > 0 {
 		summary["phases"] = phases
+	}
+	if outcomes := operationPlanCompactOutcomesForPrompt(plan[operationPlanOutcomesKey], 8); len(outcomes) > 0 {
+		summary["outcomes"] = outcomes
 	}
 	if ledger := toolGovernanceContinuationEvidenceLedgerSummary(plan); len(ledger) > 0 {
 		summary["evidence_ledger"] = mapsToInterfaceSlice(ledger)
@@ -1304,7 +1324,7 @@ func (s *service) runToolGovernanceRejectionContinuation(ctx context.Context, pr
 		}
 		return nil, newFinalizedStreamError(err)
 	}
-	metadata := preparedResultMetadata(prepared.Message.Metadata, usage)
+	metadata := preparedResultMetadataForPrepared(prepared, prepared.Message.Metadata, usage)
 	if err := s.completePreparedChat(persistCtx, prepared, answer, metadata); err != nil {
 		return nil, finalizedRuntimePersistenceError(err)
 	}

@@ -56,8 +56,8 @@ func TestParseFinalAnswerSubmissionAllowsNoPlanForOpenCurrentPlan(t *testing.T) 
 	if submission.answer != "done" || len(submission.plan) != 0 {
 		t.Fatalf("submission = %#v, want answer accepted without final plan", submission)
 	}
-	if !strings.Contains(submission.planWarning, "missing_or_invalid_final_plan_snapshot") {
-		t.Fatalf("submission.planWarning = %q, want missing final plan audit warning", submission.planWarning)
+	if submission.planWarning != "" {
+		t.Fatalf("submission.planWarning = %q, want no plan bookkeeping warning", submission.planWarning)
 	}
 }
 
@@ -118,7 +118,7 @@ func TestParseFinalAnswerSubmissionRecoversCompleteAnswerFromMalformedOptionalMe
 	}
 }
 
-func TestParseFinalAnswerSubmissionRecoversAnswerAndWarnsWhenRequiredPlanIsMalformed(t *testing.T) {
+func TestParseFinalAnswerSubmissionRecoversAnswerAndTreatsMalformedPlanAsOptional(t *testing.T) {
 	call := adapter.ToolCall{Function: adapter.FunctionCall{
 		Name:      skills.MetaToolFinalAnswer,
 		Arguments: `{"answer":"done","plan":[`,
@@ -140,8 +140,8 @@ func TestParseFinalAnswerSubmissionRecoversAnswerAndWarnsWhenRequiredPlanIsMalfo
 	if submission.answer != "done" {
 		t.Fatalf("submission.answer = %q, want recovered complete answer", submission.answer)
 	}
-	if !strings.Contains(submission.planWarning, "missing_or_invalid_final_plan_snapshot") {
-		t.Fatalf("submission.planWarning = %q, want required plan audit warning", submission.planWarning)
+	if !strings.Contains(submission.planWarning, "optional metadata was invalid") {
+		t.Fatalf("submission.planWarning = %q, want optional metadata warning", submission.planWarning)
 	}
 }
 

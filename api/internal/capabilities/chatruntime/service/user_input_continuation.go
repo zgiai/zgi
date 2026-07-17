@@ -105,7 +105,7 @@ func (s *service) RunConfiguredUserInputContinuationStream(
 		return nil, ErrMessageStopped
 	}
 
-	metadata := preparedResultMetadata(prepared.Message.Metadata, usage)
+	metadata := preparedResultMetadataForPrepared(prepared, prepared.Message.Metadata, usage)
 	prepared.Message.Metadata = metadata
 	if err := s.completePreparedChat(persistCtx, prepared, answer, metadata); err != nil {
 		return nil, finalizedRuntimePersistenceError(err)
@@ -400,6 +400,7 @@ func (s *service) prepareUserInputContinuationChat(
 	applyRunConfigToParts(config, parts)
 	applyCallerRuntimeSurfacePolicy(caller, parts)
 	applyPersistedConversationSurface(continuation.Conversation, parts)
+	restoreExecutionModeFromMetadata(parts, message.Metadata)
 	restoreConsoleFilesContextFromMetadata(parts, message.Metadata, nil)
 	restoreConsoleAgentsContextFromMetadata(parts, message.Metadata, nil)
 	restoreTurnInitialContextFromMetadata(parts, message.Metadata)
@@ -410,7 +411,7 @@ func (s *service) prepareUserInputContinuationChat(
 			parts.ConfiguredSkillIDs = configured
 		}
 	}
-	if err := s.applyModelCapabilities(ctx, scope, parts); err != nil {
+	if err := s.applyModelCapabilities(ctx, scope, caller, parts); err != nil {
 		return nil, err
 	}
 	applyProtocolToolsPolicy(caller, parts)
@@ -427,17 +428,18 @@ func (s *service) prepareUserInputContinuationChat(
 	if stateMessage := currentTurnAuthoritativeStateMessage(message); stateMessage != nil {
 		llmRequest.Messages = append(llmRequest.Messages, *stateMessage)
 	}
-	llmRequest.Messages = append(llmRequest.Messages, userInputContinuationMessage(message, continuation.Request, continuation.Response))
+	llmRequest.Messages = append(llmRequest.Messages, continuationMessageForExecutionMode(userInputContinuationMessage(message, continuation.Request, continuation.Response), parts.ExecutionMode))
 	return &PreparedChat{
-		Conversation: continuation.Conversation,
-		Message:      message,
-		LLMRequest:   llmRequest,
-		Scope:        scope,
-		Caller:       caller,
-		RunConfig:    config,
-		ParentID:     message.ParentID,
-		Continuation: true,
-		parts:        parts,
+		Conversation:     continuation.Conversation,
+		Message:          message,
+		LLMRequest:       llmRequest,
+		Scope:            scope,
+		Caller:           caller,
+		RunConfig:        config,
+		ParentID:         message.ParentID,
+		Continuation:     true,
+		ContinuationType: "user_input",
+		parts:            parts,
 	}, nil
 }
 

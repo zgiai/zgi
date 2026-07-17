@@ -1151,13 +1151,17 @@ func (s *channelService) GetRoutesForModel(ctx context.Context, organizationID u
 	if err != nil {
 		return nil, fmt.Errorf("failed to get enabled routes: %w", err)
 	}
+	officialProvider, officialProviderErr := uniqueOfficialProviderForModel(routes, modelName)
 
 	// No auto-initialization - tenant must create routes manually
 
 	var result []*model.RouteQueryResult
 	for _, r := range routes {
+		if (r.IsOfficial || r.Type == shared.RouteTypeZGICloud) && officialProviderErr != nil {
+			continue
+		}
 		// Check if route supports the model
-		if !s.routeSupportsModel(r, modelName) {
+		if !s.routeSupportsModel(r, officialProvider, modelName) {
 			continue
 		}
 
@@ -1190,11 +1194,41 @@ func (s *channelService) GetRoutesForModel(ctx context.Context, organizationID u
 
 		result = append(result, qr)
 	}
+	if len(result) == 0 && officialProviderErr != nil {
+		return nil, officialProviderErr
+	}
 
 	return result, nil
 }
 
-func (s *channelService) routeSupportsModel(route *model.LLMRoute, modelName string) bool {
+func uniqueOfficialProviderForModel(routes []*model.LLMRoute, modelName string) (string, error) {
+	targetModel := strings.TrimSpace(modelName)
+	provider := ""
+	for _, route := range routes {
+		if route == nil || (!route.IsOfficial && route.Type != shared.RouteTypeZGICloud) {
+			continue
+		}
+		for _, pair := range route.OfficialProviderModels {
+			if strings.TrimSpace(pair.Model) != targetModel {
+				continue
+			}
+			candidate := strings.TrimSpace(pair.Provider)
+			if candidate == "" || candidate == provider {
+				continue
+			}
+			if provider != "" {
+				return "", fmt.Errorf("ambiguous official model %q across providers; provider is required", targetModel)
+			}
+			provider = candidate
+		}
+	}
+	return provider, nil
+}
+
+func (s *channelService) routeSupportsModel(route *model.LLMRoute, officialProvider, modelName string) bool {
+	if route.IsOfficial || route.Type == shared.RouteTypeZGICloud {
+		return route.SupportsModelForProvider(officialProvider, modelName)
+	}
 	return route.SupportsModel(modelName)
 }
 

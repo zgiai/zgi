@@ -32,7 +32,10 @@ import { cn } from '@/lib/utils';
 import { useCurrentUser } from '@/store/auth-store';
 import { embeddedControlButtonClassName } from '@/components/chat/variants/aichat/embedded-conversation-controls';
 import { isDraftAIChatConversationId } from '@/components/chat/utils/aichat-message';
-import { toast } from 'sonner';
+import {
+  openClientActionCompletionGate,
+  takeClientActionCompletion,
+} from '@/components/chat/runtime/client-action-continuation';
 import {
   createContextualAIChatTransport,
   normalizeZGIConsoleNavigationHref,
@@ -51,7 +54,6 @@ import type {
   AIChatContextRefreshHint,
 } from './types';
 
-const LOCAL_STORAGE_KEY = 'consoleChat';
 const DESKTOP_PANEL_MEDIA_QUERY = '(min-width: 1024px)';
 const DESKTOP_PANEL_WIDTH_STORAGE_KEY = 'consoleChat.aiChatDockWidth';
 const DEFAULT_DESKTOP_PANEL_WIDTH_RATIO = 0.28;
@@ -84,6 +86,8 @@ interface PendingClientActionContinuation {
   assets?: Array<Record<string, unknown>>;
   requestedAt: number;
   completed: boolean;
+  continuationReady: boolean;
+  deferredCompletion?: AIChatClientActionResultRequest;
   timeoutId?: number;
   settleTimeoutId?: number;
   recoveryTimeoutId?: number;
@@ -820,7 +824,6 @@ function assetOperationFromClientAction(
 interface ContextualAIChatPanelProps {
   controller: ReturnType<typeof useAIChatController>;
   isModelInitializing: boolean;
-  isSelectedModelUnavailable: boolean;
   items: ReturnType<typeof useContextualAIChat>['items'];
   modelSelectorValue: AIChatModelValue;
   onClose: () => void;
@@ -834,7 +837,6 @@ function ContextualAIChatPanel({
   controller,
   enableToolGovernance,
   isModelInitializing,
-  isSelectedModelUnavailable,
   items,
   modelSelectorValue,
   onClose,
@@ -876,14 +878,6 @@ function ContextualAIChatPanel({
           <div id={controlsPortalId} className="flex shrink-0 items-center" />
         </div>
       </div>
-      {isSelectedModelUnavailable ? (
-        <div
-          role="alert"
-          className="shrink-0 border-b border-destructive/20 bg-destructive/5 px-3 py-2 text-xs text-destructive"
-        >
-          {t('consoleChat.modelUnavailable')}
-        </div>
-      ) : null}
       <div className="min-h-0 flex-1">
         <Chat
           mode="aichat"
@@ -891,11 +885,6 @@ function ContextualAIChatPanel({
           modelSelectorValue={modelSelectorValue}
           isModelInitializing={isModelInitializing}
           onModelChange={onModelChange}
-          beforeSend={() => {
-            if (!isSelectedModelUnavailable) return true;
-            toast.error(t('consoleChat.modelUnavailable'));
-            return false;
-          }}
           variant="embedded"
           showMemoryToggle={false}
           runtimeSurface="contextual_sidebar"
@@ -979,11 +968,14 @@ export function ContextualAIChatDock() {
         return;
       }
 
+      const completionPayload = takeClientActionCompletion(pending, payload);
+      if (!completionPayload) return;
+
       if (isRecoveringMessagesRef.current && typeof window !== 'undefined') {
         if (pending.recoveryTimeoutId === undefined) {
           pending.recoveryTimeoutId = window.setTimeout(() => {
             pending.recoveryTimeoutId = undefined;
-            completePendingClientAction(pending, payload);
+            completePendingClientAction(pending, completionPayload);
           }, CLIENT_ACTION_ROUTE_CONTEXT_POLL_MS);
         }
         return;
@@ -996,6 +988,8 @@ export function ContextualAIChatDock() {
       const continueClientAction = clientActionContinuationRef.current;
       if (!continueClientAction) {
         pending.resuming = false;
+        pending.deferredCompletion = completionPayload;
+        setPendingClientActionVersion(version => version + 1);
         return;
       }
 
@@ -1003,10 +997,23 @@ export function ContextualAIChatDock() {
         pending.conversationId,
         pending.messageId,
         pending.actionId,
-        payload
+        completionPayload
       )
-        .then(() => {
+        .then(started => {
           if (pendingClientActionsRef.current.get(pending.key) !== pending) return;
+          if (!started) {
+            pending.resuming = false;
+            pending.deferredCompletion = completionPayload;
+            if (typeof window !== 'undefined' && pending.recoveryTimeoutId === undefined) {
+              pending.recoveryTimeoutId = window.setTimeout(() => {
+                pending.recoveryTimeoutId = undefined;
+                const deferred = pending.deferredCompletion;
+                if (deferred) completePendingClientAction(pending, deferred);
+              }, CLIENT_ACTION_ROUTE_CONTEXT_POLL_MS);
+            }
+            setPendingClientActionVersion(version => version + 1);
+            return;
+          }
           markClientActionDedupe(processedClientActionsRef.current, pending.key);
           pending.completed = true;
           pendingClientActionsRef.current.delete(pending.key);
@@ -1029,6 +1036,28 @@ export function ContextualAIChatDock() {
     [clearClientActionTimeout]
   );
 
+  const markPendingClientActionContinuationReady = useCallback(
+    (request: ContextualAIChatClientActionRequest) => {
+      const keys = [clientActionRequestKey(request)];
+      if (request.actionType === 'route_navigation') {
+        const href = normalizeZGIConsoleNavigationHref(request.href);
+        if (href) keys.unshift(routeClientActionRequestKey(request, href));
+      }
+      const pending = keys
+        .map(key => pendingClientActionsRef.current.get(key))
+        .find((item): item is PendingClientActionContinuation => Boolean(item));
+      if (!pending || pending.completed) return false;
+
+      const deferred = openClientActionCompletionGate(pending);
+      setPendingClientActionVersion(version => version + 1);
+      if (deferred && !pending.resuming) {
+        completePendingClientAction(pending, deferred);
+      }
+      return true;
+    },
+    [completePendingClientAction]
+  );
+
   const failUnsupportedClientAction = useCallback(
     (
       request: ContextualAIChatClientActionRequest,
@@ -1049,6 +1078,7 @@ export function ContextualAIChatDock() {
         reason: request.reason,
         requestedAt: Date.now(),
         completed: false,
+        continuationReady: false,
       };
       pendingClientActionsRef.current.set(options.key, pending);
       setPendingClientActionVersion(version => version + 1);
@@ -1179,6 +1209,7 @@ export function ContextualAIChatDock() {
           assets: recordListValue(request.payload.assets),
           requestedAt: Date.now(),
           completed: false,
+          continuationReady: false,
         };
         pendingClientActionsRef.current.set(key, pending);
         setPendingClientActionVersion(version => version + 1);
@@ -1259,6 +1290,7 @@ export function ContextualAIChatDock() {
         reason: request.reason,
         requestedAt: Date.now(),
         completed: false,
+        continuationReady: false,
       };
       pendingClientActionsRef.current.set(routeKey, pending);
       setPendingClientActionVersion(version => version + 1);
@@ -1413,8 +1445,15 @@ export function ContextualAIChatDock() {
 
   useEffect(() => {
     if (!waitingClientActionRequest) return;
-    handleClientActionRequired(waitingClientActionRequest);
-  }, [handleClientActionRequired, waitingClientActionRequest]);
+    if (!markPendingClientActionContinuationReady(waitingClientActionRequest)) {
+      handleClientActionRequired(waitingClientActionRequest);
+      markPendingClientActionContinuationReady(waitingClientActionRequest);
+    }
+  }, [
+    handleClientActionRequired,
+    markPendingClientActionContinuationReady,
+    waitingClientActionRequest,
+  ]);
 
   useEffect(() => {
     clientActionContinuationRef.current = controller.continueClientAction ?? null;
@@ -1511,10 +1550,12 @@ export function ContextualAIChatDock() {
     return () => pendingTimers.forEach(timer => window.clearTimeout(timer));
   }, [completePendingClientAction, items, pathname, pendingClientActionVersion]);
 
-  const { modelSelectorValue, isModelInitializing, isSelectedModelUnavailable, handleModelChange } =
+  const { modelSelectorValue, isModelInitializing, handleModelChange } =
     usePersistedAIChatModelSelection({
       accountId: user?.id,
-      scope: LOCAL_STORAGE_KEY,
+      scope: 'contextualSidebar',
+      legacyScope: 'consoleChat',
+      repairUnavailableSelection: true,
       useCase: 'agent',
     });
 
@@ -1619,7 +1660,6 @@ export function ContextualAIChatDock() {
     <ContextualAIChatPanel
       controller={contextualController}
       isModelInitializing={isModelInitializing}
-      isSelectedModelUnavailable={isSelectedModelUnavailable}
       items={items}
       modelSelectorValue={modelSelectorValue}
       onClose={() => setOpen(false)}

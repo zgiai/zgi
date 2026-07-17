@@ -20,6 +20,9 @@ type FileFolderRepository interface {
 	FolderNameExists(ctx context.Context, organizationID string, workspaceID *string, parentID *string, name string, excludeFolderID *string) (bool, error)
 	UpdateFolder(ctx context.Context, id string, updates map[string]interface{}) (*file_model.FileFolder, error)
 	DeleteFolder(ctx context.Context, id string) error
+	DeleteFolders(ctx context.Context, ids []string) error
+	ListDescendantFolderIDs(ctx context.Context, folderID string) ([]string, error)
+	ListFileIDsInFolders(ctx context.Context, folderIDs []string) ([]string, error)
 	ListFolders(ctx context.Context, tenantID string, parentID *string, page, limit int, keyword, sort string, workspaceIDs []string) ([]*file_model.FileFolder, int64, error)
 	ListFoldersWithPermissionFilter(ctx context.Context, tenantID, accountID string, parentID *string, page, limit int, keyword, sort, workspaceID string, workspaceIDs []string) ([]*file_model.FileFolder, int64, error)
 	GetFolderFileCount(ctx context.Context, folderID string) (int64, error)
@@ -273,6 +276,81 @@ func (r *fileFolderRepository) UpdateFolder(ctx context.Context, id string, upda
 // DeleteFolder deletes a folder
 func (r *fileFolderRepository) DeleteFolder(ctx context.Context, id string) error {
 	return r.db.WithContext(ctx).Where("id = ?", id).Delete(&file_model.FileFolder{}).Error
+}
+
+func (r *fileFolderRepository) DeleteFolders(ctx context.Context, ids []string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("folder_id IN ?", ids).Delete(&file_model.FileFolderJoins{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("folder_id IN ?", ids).Delete(&file_model.FileFolderPermission{}).Error; err != nil {
+			return err
+		}
+		return tx.Where("id IN ?", ids).Delete(&file_model.FileFolder{}).Error
+	})
+}
+
+func (r *fileFolderRepository) ListDescendantFolderIDs(ctx context.Context, folderID string) ([]string, error) {
+	if strings.TrimSpace(folderID) == "" {
+		return []string{}, nil
+	}
+
+	var root file_model.FileFolder
+	if err := r.db.WithContext(ctx).
+		Select("id", "organization_id", "workspace_id").
+		Where("id = ?", folderID).
+		First(&root).Error; err != nil {
+		return nil, err
+	}
+
+	result := []string{folderID}
+	queue := []string{folderID}
+	seen := map[string]struct{}{folderID: {}}
+	for len(queue) > 0 {
+		current := queue[0]
+		queue = queue[1:]
+
+		var children []file_model.FileFolder
+		query := r.db.WithContext(ctx).
+			Select("id").
+			Where("organization_id = ? AND parent_id = ?", root.OrganizationID, current)
+		if root.WorkspaceID == nil {
+			query = query.Where("workspace_id IS NULL")
+		} else {
+			query = query.Where("workspace_id = ?", *root.WorkspaceID)
+		}
+		if err := query.Find(&children).Error; err != nil {
+			return nil, err
+		}
+		for _, child := range children {
+			if _, ok := seen[child.ID]; ok {
+				continue
+			}
+			seen[child.ID] = struct{}{}
+			result = append(result, child.ID)
+			queue = append(queue, child.ID)
+		}
+	}
+	return result, nil
+}
+
+func (r *fileFolderRepository) ListFileIDsInFolders(ctx context.Context, folderIDs []string) ([]string, error) {
+	if len(folderIDs) == 0 {
+		return []string{}, nil
+	}
+
+	var ids []string
+	if err := r.db.WithContext(ctx).
+		Model(&file_model.FileFolderJoins{}).
+		Distinct("file_id").
+		Where("folder_id IN ?", folderIDs).
+		Pluck("file_id", &ids).Error; err != nil {
+		return nil, err
+	}
+	return ids, nil
 }
 
 // ListFolders lists folders with optional parent filter

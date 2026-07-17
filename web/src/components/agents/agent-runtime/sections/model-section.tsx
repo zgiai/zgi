@@ -1,5 +1,6 @@
 'use client';
 
+import { TriangleAlert } from 'lucide-react';
 import {
   ModelSelectorParameter,
   type ModelSelectorParameterValue,
@@ -12,6 +13,7 @@ interface AgentRuntimeModelSectionProps {
   open: boolean;
   modelValue: ModelSelectorParameterValue;
   unavailable?: boolean;
+  recommended?: boolean;
   readOnly?: boolean;
   onToggleSection: (section: AgentConfigSection) => void;
   onChangeModelValue: (value: ModelSelectorParameterValue) => void;
@@ -21,6 +23,7 @@ export function AgentRuntimeModelSection({
   open,
   modelValue,
   unavailable = false,
+  recommended = true,
   readOnly = false,
   onToggleSection,
   onChangeModelValue,
@@ -35,7 +38,10 @@ export function AgentRuntimeModelSection({
       onToggle={onToggleSection}
     >
       <ModelSelectorParameter
-        modelType="agent"
+        modelType="text-chat"
+        availabilityUseCase="agent-runtime"
+        preferredUseCase="agent"
+        capabilityFilter={{ features_tool_call: true }}
         value={modelValue}
         onChange={onChangeModelValue}
         hasError={unavailable}
@@ -45,6 +51,12 @@ export function AgentRuntimeModelSection({
       {unavailable ? (
         <div className="mt-2 rounded-md border border-destructive/20 bg-destructive/5 p-2 text-xs text-destructive">
           {t('toasts.modelUnavailable')}
+        </div>
+      ) : null}
+      {!unavailable && !recommended ? (
+        <div className="mt-2 flex gap-2 rounded-md border border-warning/20 bg-warning/10 p-2 text-xs leading-5 text-warning-foreground">
+          <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
+          <span>{t('modelSelection.compatibilityWarning')}</span>
         </div>
       ) : null}
     </RuntimeSection>

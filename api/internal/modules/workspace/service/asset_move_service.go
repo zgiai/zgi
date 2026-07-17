@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/capabilities/agentbindings"
 	"github.com/zgiai/zgi/api/internal/dto"
+	"github.com/zgiai/zgi/api/internal/modules/app/runtimeauth"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	shared_service "github.com/zgiai/zgi/api/internal/modules/shared/service"
 	workspace_model "github.com/zgiai/zgi/api/internal/modules/workspace/model"
@@ -786,6 +787,27 @@ func (s *WorkspaceAssetMoveService) movePreviewItem(ctx context.Context, tx *gor
 			Where("agent_id = ?", agentID).
 			Update("agent_owner_tenant_id", item.TargetWorkspaceID).Error; err != nil {
 			return err
+		}
+		agentUUID, err := uuid.Parse(agentID)
+		if err != nil {
+			return fmt.Errorf("invalid agent id for runtime authorization relocation: %w", err)
+		}
+		sourceWorkspaceUUID, err := uuid.Parse(item.FromWorkspaceID)
+		if err != nil {
+			return fmt.Errorf("invalid source workspace id for runtime authorization relocation: %w", err)
+		}
+		targetWorkspaceUUID, err := uuid.Parse(item.TargetWorkspaceID)
+		if err != nil {
+			return fmt.Errorf("invalid target workspace id for runtime authorization relocation: %w", err)
+		}
+		if err := runtimeauth.NewStore(tx).RelocateResourceWorkspace(
+			ctx,
+			runtimeauth.PublishedRuntimeResourceAgent,
+			agentUUID,
+			sourceWorkspaceUUID,
+			targetWorkspaceUUID,
+		); err != nil {
+			return fmt.Errorf("failed to relocate agent runtime authorization: %w", err)
 		}
 	case AssetMoveTypeDataset:
 		if err := tx.WithContext(ctx).Table("datasets").

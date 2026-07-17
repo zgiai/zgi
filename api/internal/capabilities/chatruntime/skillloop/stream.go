@@ -96,7 +96,7 @@ func (r *Runner) runSkillPlanningStream(
 				goto streamDone
 			}
 
-			usage = mergeUsage(usage, response.Usage)
+			usage = mergeStreamUsageSnapshot(usage, response.Usage)
 			if response.Error != nil {
 				r.recordModelInvocation(ModelInvocationTrace{
 					Phase:      "skill_planning",

@@ -152,12 +152,15 @@ type Runner struct {
 	OnModelInvocation func(ModelInvocationTrace)
 	FallbackDelay     time.Duration
 	ModelIdleTimeout  time.Duration
+	diagnostics       modelInvocationDiagnostics
+	requestBudget     planningRequestBudget
 }
 
 type RunRequest struct {
 	Prepared                       *PreparedChat
 	Resolved                       *skills.ResolvedSkills
 	ProtocolToolsOnly              bool
+	LegacyToolChat                 bool
 	ExecutionContext               skills.ExecutionContext
 	PreferExplicitFinalAnswer      bool
 	SuppressInitialNaturalProgress bool
@@ -169,6 +172,9 @@ type RunRequest struct {
 	OnChunk                        func(string) error
 	PlanningOutputTokenLimit       int
 	AuthorizeSkillStep             func(context.Context, string) (bool, error)
+	PreferredRestoredSkillID       string
+	ContinuationType               string
+	TerminalOnly                   bool
 }
 
 type TerminalStateGuardDecisionRecord struct {
@@ -194,18 +200,51 @@ type SkillToolCallRef struct {
 }
 
 type ModelInvocationTrace struct {
-	Phase              string
-	Round              int
-	Streaming          bool
-	StartedAt          time.Time
-	DurationMS         int64
-	Request            *adapter.ChatRequest
-	Response           *adapter.Message
-	Usage              *adapter.Usage
-	FinishReason       string
-	StreamDoneReceived bool
-	TerminatedBy       string
-	Error              string
+	Phase                      string
+	Round                      int
+	Streaming                  bool
+	StartedAt                  time.Time
+	DurationMS                 int64
+	Request                    *adapter.ChatRequest
+	Response                   *adapter.Message
+	Usage                      *adapter.Usage
+	FinishReason               string
+	StreamDoneReceived         bool
+	TerminatedBy               string
+	Error                      string
+	PromptChars                int
+	RequestChars               int
+	EstimatedPromptTokens      int
+	PromptEstimator            string
+	PromptComponentTokens      map[string]int
+	PromptComponentChars       map[string]int
+	ActiveSkillIDs             []string
+	LoadedSkillIDs             []string
+	RestoredSkillIDs           []string
+	ProjectedRefs              []string
+	ProjectedChars             int
+	ContinuationType           string
+	TerminalOnly               bool
+	BudgetSafeContextLimit     int
+	BudgetPromptLimit          int
+	BudgetOriginalPromptTokens int
+	BudgetCompressionChars     map[string]int
+	BudgetSavedChars           int
+	BudgetMaxTokensClamped     bool
+	BudgetOriginalMaxTokens    int
+	BudgetEffectiveMaxTokens   int
+	BudgetEstimateScale        float64
+}
+
+type modelInvocationDiagnostics struct {
+	activeSkillIDs   []string
+	loadedSkillIDs   []string
+	restoredSkillIDs []string
+	projectedRefs    []string
+	projectedChars   int
+	continuationType string
+	terminalOnly     bool
+	requestBudget    planningRequestBudgetDiagnostics
 }
 
 type PreparedChat struct {
@@ -284,7 +323,51 @@ func (r *Runner) recordModelInvocation(trace ModelInvocationTrace) {
 		cloned := *trace.Usage
 		trace.Usage = &cloned
 	}
+	if trace.Request != nil && trace.PromptChars <= 0 {
+		trace.PromptChars = chatRequestPromptChars(trace.Request)
+	}
+	if trace.Request != nil && trace.EstimatedPromptTokens <= 0 {
+		estimate := chatRequestPromptEstimate(trace.Request)
+		trace.RequestChars = estimate.Characters
+		trace.EstimatedPromptTokens = estimate.Tokens
+		trace.PromptEstimator = estimate.Tokenizer
+		trace.PromptComponentTokens = make(map[string]int, len(estimate.Components))
+		trace.PromptComponentChars = make(map[string]int, len(estimate.Components))
+		for name, component := range estimate.Components {
+			trace.PromptComponentTokens[name] = component.Tokens
+			trace.PromptComponentChars[name] = component.Characters
+		}
+	}
+	trace.PromptComponentTokens = cloneStringIntMap(trace.PromptComponentTokens)
+	trace.PromptComponentChars = cloneStringIntMap(trace.PromptComponentChars)
+	trace.ActiveSkillIDs = append([]string(nil), r.diagnostics.activeSkillIDs...)
+	trace.LoadedSkillIDs = append([]string(nil), r.diagnostics.loadedSkillIDs...)
+	trace.RestoredSkillIDs = append([]string(nil), r.diagnostics.restoredSkillIDs...)
+	trace.ProjectedRefs = append([]string(nil), r.diagnostics.projectedRefs...)
+	trace.ProjectedChars = r.diagnostics.projectedChars
+	trace.ContinuationType = r.diagnostics.continuationType
+	trace.TerminalOnly = r.diagnostics.terminalOnly
+	trace.BudgetSafeContextLimit = r.diagnostics.requestBudget.safeContextLimit
+	trace.BudgetPromptLimit = r.diagnostics.requestBudget.promptBudget
+	trace.BudgetOriginalPromptTokens = r.diagnostics.requestBudget.originalPromptTokens
+	trace.BudgetCompressionChars = cloneStringIntMap(r.diagnostics.requestBudget.compressionChars)
+	trace.BudgetSavedChars = r.diagnostics.requestBudget.savedChars
+	trace.BudgetMaxTokensClamped = r.diagnostics.requestBudget.maxTokensClamped
+	trace.BudgetOriginalMaxTokens = r.diagnostics.requestBudget.originalMaxTokens
+	trace.BudgetEffectiveMaxTokens = r.diagnostics.requestBudget.effectiveMaxTokens
+	trace.BudgetEstimateScale = r.diagnostics.requestBudget.estimateScale
 	r.OnModelInvocation(trace)
+}
+
+func cloneStringIntMap(source map[string]int) map[string]int {
+	if len(source) == 0 {
+		return nil
+	}
+	cloned := make(map[string]int, len(source))
+	for key, value := range source {
+		cloned[key] = value
+	}
+	return cloned
 }
 
 func (r *Runner) fallbackDelay() time.Duration {

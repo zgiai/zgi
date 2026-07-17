@@ -87,7 +87,7 @@ func (s *service) persistUserInputRequestPendingResult(ctx context.Context, prep
 	pendingPayload["message_id"] = prepared.Message.ID.String()
 
 	metadata := mergeUserInputRequestMetadata(prepared.Message.Metadata, pendingPayload)
-	metadata = preparedResultMetadata(metadata, usage)
+	metadata = preparedResultMetadataForPrepared(prepared, metadata, usage)
 	metadata["user_input_continuation"] = compactSkillInvocation(map[string]interface{}{
 		"status":         "waiting_question",
 		"request_id":     pendingPayload["request_id"],

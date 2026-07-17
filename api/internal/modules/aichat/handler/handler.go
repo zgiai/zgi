@@ -30,7 +30,22 @@ const (
 	maxMessagePageLimit          = 200
 	defaultSearchLimit           = 20
 	maxSearchLimit               = 50
+
+	skillConfigUpdateStatusApplied              = "applied"
+	skillConfigUpdateStatusConfirmationRequired = "confirmation_required"
 )
+
+type skillConfigAppliedResult struct {
+	Status          string   `json:"status"`
+	Applied         bool     `json:"applied"`
+	EnabledSkillIDs []string `json:"enabled_skill_ids"`
+}
+
+type skillConfigConfirmationRequiredResult struct {
+	Status  string               `json:"status"`
+	Applied bool                 `json:"applied"`
+	Impact  agentbindings.Impact `json:"impact"`
+}
 
 type Handler struct {
 	service runtimeservice.Service
@@ -138,13 +153,19 @@ func (h *Handler) UpdateSkillConfig(c *gin.Context) {
 	}
 	config, err := h.service.UpdateSkillConfig(c.Request.Context(), scope, req)
 	if err != nil {
-		if util.WriteAgentBindingConflict(c, err) {
+		var conflict *agentbindings.ConflictError
+		if errors.As(err, &conflict) && conflict != nil {
+			response.Success(c, skillConfigConfirmationRequiredResult{
+				Status:  skillConfigUpdateStatusConfirmationRequired,
+				Applied: false,
+				Impact:  conflict.Impact,
+			})
 			return
 		}
 		h.fail(c, err)
 		return
 	}
-	response.Success(c, skillConfigResponse(config))
+	response.Success(c, skillConfigAppliedUpdateResponse(config))
 }
 
 func (h *Handler) GetMySkillPreference(c *gin.Context) {
@@ -939,6 +960,7 @@ func skillResponse(metadata skills.SkillDiscoveryMetadata) runtimedto.SkillRespo
 		Display: runtimedto.SkillDisplayResponse{
 			Icon:        metadata.Display.Icon,
 			Category:    metadata.Display.Category,
+			Scenarios:   metadata.Display.Scenarios,
 			Label:       metadata.Display.Label,
 			Description: metadata.Display.Description,
 			WhenToUse:   metadata.Display.WhenToUse,
@@ -1033,6 +1055,18 @@ func skillConfigResponse(config *runtimeservice.SkillConfig) runtimedto.SkillCon
 		return runtimedto.SkillConfigResponse{EnabledSkillIDs: []string{}}
 	}
 	return runtimedto.SkillConfigResponse{EnabledSkillIDs: append([]string(nil), config.EnabledSkillIDs...)}
+}
+
+func skillConfigAppliedUpdateResponse(config *runtimeservice.SkillConfig) skillConfigAppliedResult {
+	result := skillConfigAppliedResult{
+		Status:          skillConfigUpdateStatusApplied,
+		Applied:         true,
+		EnabledSkillIDs: []string{},
+	}
+	if config != nil {
+		result.EnabledSkillIDs = append([]string(nil), config.EnabledSkillIDs...)
+	}
+	return result
 }
 
 func accountSkillPreferenceResponse(pref *runtimeservice.AccountSkillPreference) runtimedto.AccountSkillPreferenceResponse {

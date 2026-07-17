@@ -8,10 +8,8 @@ import {
   KeyRound,
   LayoutGrid,
   Save,
-  ShieldCheck,
   SlidersHorizontal,
   Users,
-  Workflow,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
@@ -49,15 +47,6 @@ import type {
 import { getErrorMessage } from '@/utils/error-notifications';
 
 const EDITABLE_AUDIENCE_SUBJECTS = ['organization', 'department', 'workspace', 'account'] as const;
-const SOURCE_LABEL_KEYS: Record<
-  string,
-  'sources.legacy_agent_fields' | 'sources.grant' | 'sources.system_default'
-> = {
-  legacy_agent_fields: 'sources.legacy_agent_fields',
-  grant: 'sources.grant',
-  system_default: 'sources.system_default',
-};
-
 type EditableAudienceSubject = (typeof EDITABLE_AUDIENCE_SUBJECTS)[number];
 type WebAppAudienceMode = 'public' | 'scoped';
 type AudiencePickerTarget = 'webapp' | 'app_center' | null;
@@ -207,7 +196,6 @@ export function PublishSettingsDialog({
   const webAppSurface = useMemo(() => findSurface(surfaces, 'webapp'), [surfaces]);
   const appCenterSurface = useMemo(() => findSurface(surfaces, 'app_center'), [surfaces]);
   const apiSurface = useMemo(() => findSurface(surfaces, 'api'), [surfaces]);
-  const internalSurface = useMemo(() => findSurface(surfaces, 'internal'), [surfaces]);
   const canUseWholeOrganization =
     capabilities?.organization.role === 'owner' || capabilities?.organization.role === 'admin';
 
@@ -418,11 +406,6 @@ export function PublishSettingsDialog({
     setWholeOrganizationTarget(target);
   };
 
-  const renderSourceBadge = (source?: string) =>
-    source ? (
-      <Badge variant="outline">{t(SOURCE_LABEL_KEYS[source] ?? 'sources.grant')}</Badge>
-    ) : null;
-
   const showLoading = isLoading || (isFetching && !runtimeData);
   const errorMessage = error ? getErrorMessage(error) || t('loadError') : null;
   const pickerValue =
@@ -484,7 +467,6 @@ export function PublishSettingsDialog({
                   description={t('surfaces.webappDescription')}
                   enabled={webAppEnabled}
                   disabled={!canManage}
-                  source={renderSourceBadge(webAppSurface?.compatibility_source)}
                   onChange={setWebAppEnabled}
                 >
                   {webAppEnabled ? (
@@ -533,7 +515,6 @@ export function PublishSettingsDialog({
                   description={t('surfaces.appCenterDescription')}
                   enabled={appCenterEnabled}
                   disabled={!canManage}
-                  source={renderSourceBadge(appCenterSurface?.compatibility_source)}
                   onChange={setAppCenterEnabled}
                 >
                   {appCenterEnabled ? (
@@ -560,23 +541,7 @@ export function PublishSettingsDialog({
                   description={t('surfaces.apiDescription')}
                   enabled={apiEnabled}
                   disabled={!canManage}
-                  source={renderSourceBadge(apiSurface?.compatibility_source)}
                   onChange={setApiEnabled}
-                />
-
-                <SurfaceSettingsRow
-                  icon={<Workflow className="h-5 w-5" />}
-                  title={t('surfaces.internal')}
-                  description={t('surfaces.internalDescription')}
-                  enabled={internalSurface?.enabled ?? true}
-                  disabled
-                  source={renderSourceBadge(internalSurface?.compatibility_source)}
-                  status={
-                    <Badge variant="success">
-                      <ShieldCheck className="h-3 w-3" />
-                      {t('status.enabled')}
-                    </Badge>
-                  }
                 />
               </div>
             )}
@@ -670,8 +635,6 @@ function SurfaceSettingsRow({
   description,
   enabled,
   disabled,
-  source,
-  status,
   children,
   onChange,
 }: {
@@ -680,8 +643,6 @@ function SurfaceSettingsRow({
   description: string;
   enabled: boolean;
   disabled: boolean;
-  source?: ReactNode;
-  status?: ReactNode;
   children?: ReactNode;
   onChange?: (checked: boolean) => void;
 }) {
@@ -703,12 +664,9 @@ function SurfaceSettingsRow({
             <div className="text-sm font-semibold text-foreground">{title}</div>
             <p className="mt-1 text-xs leading-5 text-muted-foreground">{description}</p>
             <div className="mt-2 flex flex-wrap items-center gap-2">
-              {status ?? (
-                <Badge variant={enabled ? 'success' : 'subtle'}>
-                  {enabled ? t('status.enabled') : t('status.disabled')}
-                </Badge>
-              )}
-              {source}
+              <Badge variant={enabled ? 'success' : 'subtle'}>
+                {enabled ? t('status.enabled') : t('status.disabled')}
+              </Badge>
             </div>
           </div>
         </div>

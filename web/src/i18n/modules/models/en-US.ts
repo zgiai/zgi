@@ -124,6 +124,9 @@ const messages = {
       'function-calling': 'Function Calling Model',
       agent: 'Agent Model',
     },
+    tags: {
+      agent: 'Recommended',
+    },
     empty: {
       noModelsTitle: 'Model setup required',
       noResults: 'No models found matching',

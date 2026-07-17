@@ -12,37 +12,55 @@ import (
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/dto"
+	llmmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
 	llmmodelservice "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/service"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 )
 
 type agentModelEligibilityFake struct {
-	models          []*llmmodelservice.AvailableModel
-	err             error
-	requiredUseCase string
+	models   []*llmmodelservice.AvailableModel
+	err      error
+	useCases *[]string
 }
 
 func (f agentModelEligibilityFake) ListAvailable(_ context.Context, _ uuid.UUID, _, useCase string) ([]*llmmodelservice.AvailableModel, error) {
-	if f.requiredUseCase != "" && useCase != f.requiredUseCase {
-		return nil, nil
+	if f.useCases != nil {
+		*f.useCases = append(*f.useCases, useCase)
 	}
 	return f.models, f.err
 }
 
-func TestValidateAgentModelEligibilityRequiresExactAvailablePair(t *testing.T) {
+func TestValidateAgentModelEligibilityAcceptsFunctionCallingTextChatModels(t *testing.T) {
+	var useCases []string
 	service := &agentsService{agentModels: agentModelEligibilityFake{
-		requiredUseCase: "agent",
-		models: []*llmmodelservice.AvailableModel{{
-			Provider: "deepseek",
-			Name:     "shared-model",
-		}},
+		models: []*llmmodelservice.AvailableModel{
+			{Provider: "deepseek", Name: "legacy-model", Features: llmmodel.ModelFeatures{FunctionCalling: true}},
+			{Provider: "deepseek", Name: "agent-model", Features: llmmodel.ModelFeatures{FunctionCalling: true}, UseCases: []string{"text-chat", "function-calling", "agent"}},
+			{Provider: "deepseek", Name: "plain-chat-model"},
+		},
+		useCases: &useCases,
 	}}
 
-	if err := service.validateAgentModelEligibility(context.Background(), uuid.New(), "deepseek", "shared-model"); err != nil {
-		t.Fatalf("validateAgentModelEligibility() error = %v", err)
+	if err := service.validateAgentModelEligibility(context.Background(), uuid.New(), "deepseek", "legacy-model"); err != nil {
+		t.Fatalf("validateAgentModelEligibility(legacy-model) error = %v", err)
 	}
-	if err := service.validateAgentModelEligibility(context.Background(), uuid.New(), "openai", "shared-model"); err == nil {
+	if !reflect.DeepEqual(useCases, []string{llmmodelservice.AgentRuntimeUseCase}) {
+		t.Fatalf("legacy model use cases = %#v, want Agent runtime compatibility lookup", useCases)
+	}
+
+	useCases = nil
+	if err := service.validateAgentModelEligibility(context.Background(), uuid.New(), "deepseek", "agent-model"); err != nil {
+		t.Fatalf("validateAgentModelEligibility(agent-model) error = %v", err)
+	}
+	if !reflect.DeepEqual(useCases, []string{llmmodelservice.AgentRuntimeUseCase}) {
+		t.Fatalf("recommended model use cases = %#v, want Agent runtime compatibility lookup", useCases)
+	}
+
+	if err := service.validateAgentModelEligibility(context.Background(), uuid.New(), "openai", "legacy-model"); err == nil {
 		t.Fatal("validateAgentModelEligibility() error = nil, want provider mismatch error")
+	}
+	if err := service.validateAgentModelEligibility(context.Background(), uuid.New(), "deepseek", "plain-chat-model"); err == nil || !strings.Contains(err.Error(), "does not support function calling") {
+		t.Fatalf("validateAgentModelEligibility(plain-chat-model) error = %v, want function calling error", err)
 	}
 }
 
@@ -295,7 +313,7 @@ func TestAgentMemoryReplaceRequestPreservesInvalidRowsForValidation(t *testing.T
 
 func TestAgentMemoryReplaceRequestCanDropHistoricalIDsForRollback(t *testing.T) {
 	req := agentMemoryReplaceRequestFromConfig([]dto.AgentMemorySlotConfig{
-		{ID: "stale-slot-id", Key: "profile", Enabled: true},
+		{ID: "stale-slot-id", Key: "profile", Name: "用户资料", Enabled: true},
 	}, false)
 	if len(req.Slots) != 1 {
 		t.Fatalf("len(req.Slots) = %d, want 1", len(req.Slots))
@@ -306,6 +324,9 @@ func TestAgentMemoryReplaceRequestCanDropHistoricalIDsForRollback(t *testing.T) 
 	if req.Slots[0].Key != "profile" {
 		t.Fatalf("rollback request key = %q, want profile", req.Slots[0].Key)
 	}
+	if req.Slots[0].Name != "用户资料" {
+		t.Fatalf("rollback request name = %q, want 用户资料", req.Slots[0].Name)
+	}
 }
 
 func TestAgentMemorySnapshotSlotsDoNotPersistVolatileIDs(t *testing.T) {
@@ -313,6 +334,7 @@ func TestAgentMemorySnapshotSlotsDoNotPersistVolatileIDs(t *testing.T) {
 		{
 			ID:          "draft-slot-id",
 			Key:         "profile",
+			Name:        "用户资料",
 			Description: "User profile",
 			MaxChars:    4000,
 			Enabled:     true,
@@ -332,6 +354,9 @@ func TestAgentMemorySnapshotSlotsDoNotPersistVolatileIDs(t *testing.T) {
 	}
 	if slots[0].MaxChars != 2000 {
 		t.Fatalf("snapshot max chars = %d, want 2000", slots[0].MaxChars)
+	}
+	if slots[0].Name != "用户资料" {
+		t.Fatalf("snapshot name = %q, want 用户资料", slots[0].Name)
 	}
 }
 

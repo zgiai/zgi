@@ -437,7 +437,7 @@ export function getTableNameValidationErrors(name: string): TableNameErrorCode[]
 /**
  * Validates a user-facing name with Unicode support.
  * Rules:
- * - Length between 2 and 32 Unicode code points
+ * - Length between configurable minimum and maximum Unicode code points
  * - Allowed characters: letters (Unicode), numbers (Unicode), underscore, hyphen,
  *   and optionally spaces.
  * - Must contain at least one non-space character when spaces are allowed.
@@ -445,6 +445,10 @@ export function getTableNameValidationErrors(name: string): TableNameErrorCode[]
 export interface NameValidationOptions {
   /** Whether spaces are allowed; defaults to true */
   allowSpace?: boolean;
+  /** Minimum Unicode code point count; defaults to 2 */
+  minLength?: number;
+  /** Maximum Unicode code point count; defaults to 32 */
+  maxLength?: number;
 }
 
 export function isValidNameInput(
@@ -456,7 +460,9 @@ export function isValidNameInput(
   // Measure length by Unicode code points (handles surrogate pairs correctly)
   const codePoints = Array.from(name);
   const len = codePoints.length;
-  if (len < 2 || len > 32) return false;
+  const minLength = options.minLength ?? 2;
+  const maxLength = options.maxLength ?? 32;
+  if (len < minLength || len > maxLength) return false;
 
   const allowSpace = options.allowSpace ?? true;
   // Avoid Unicode property escapes for broader runtime compatibility
@@ -503,6 +509,8 @@ export function getNameValidationErrors(
   const errors: NameErrorCode[] = [];
 
   const len = Array.from(name ?? '').length;
+  const minLength = options.minLength ?? 2;
+  const maxLength = options.maxLength ?? 32;
   const hasNonSpace = (name ?? '').trim().length > 0;
   // Same allowed-char check as in isValidNameInput
   const isAllowedChar = (ch: string): boolean => {
@@ -520,8 +528,8 @@ export function getNameValidationErrors(
     errors.push('required');
     return errors;
   }
-  if (len < 2) errors.push('tooShort');
-  if (len > 32) errors.push('tooLong');
+  if (len < minLength) errors.push('tooShort');
+  if (len > maxLength) errors.push('tooLong');
   if (!Array.from(name).every(isAllowedChar)) errors.push('invalidChars');
   if (allowSpace && !hasNonSpace) errors.push('onlySpaces');
   return errors;

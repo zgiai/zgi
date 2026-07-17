@@ -247,6 +247,39 @@ func TestFileFolderRepositoryFolderNameExistsScopesToSiblingDirectory(t *testing
 	}
 }
 
+func TestFileFolderRepositoryListsRecursiveFolderDeleteScope(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	createFileFolderRepositoryTables(t, db)
+
+	insertFileFolder(t, db, "root", "org-1", "workspace-1", "", "Root")
+	insertFileFolder(t, db, "child", "org-1", "workspace-1", "root", "Child")
+	insertFileFolder(t, db, "grandchild", "org-1", "workspace-1", "child", "Grandchild")
+	insertFileFolder(t, db, "other-workspace-child", "org-1", "workspace-2", "root", "Other Workspace Child")
+	insertFileFolder(t, db, "other-org-child", "org-2", "workspace-1", "root", "Other Org Child")
+
+	insertFileFolderJoin(t, db, "file-root", "root")
+	insertFileFolderJoin(t, db, "file-child", "child")
+	insertFileFolderJoin(t, db, "file-grandchild", "grandchild")
+	insertFileFolderJoin(t, db, "file-other-workspace", "other-workspace-child")
+	insertFileFolderJoin(t, db, "file-other-org", "other-org-child")
+
+	repo := NewFileFolderRepository(db)
+	folderIDs, err := repo.ListDescendantFolderIDs(context.Background(), "root")
+	if err != nil {
+		t.Fatalf("list descendant folder ids: %v", err)
+	}
+	assertStringSet(t, folderIDs, []string{"root", "child", "grandchild"})
+
+	fileIDs, err := repo.ListFileIDsInFolders(context.Background(), folderIDs)
+	if err != nil {
+		t.Fatalf("list file ids in folders: %v", err)
+	}
+	assertStringSet(t, fileIDs, []string{"file-root", "file-child", "file-grandchild"})
+}
+
 func openFileFolderPostgresMockDB(t *testing.T) *gorm.DB {
 	t.Helper()
 
@@ -419,5 +452,23 @@ func execFileFolderRepositorySQL(t *testing.T, db *gorm.DB, sql string, args ...
 	t.Helper()
 	if err := db.Exec(sql, args...).Error; err != nil {
 		t.Fatalf("exec sql failed: %v\nsql: %s", err, sql)
+	}
+}
+
+func assertStringSet(t *testing.T, got []string, want []string) {
+	t.Helper()
+
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+
+	seen := make(map[string]struct{}, len(got))
+	for _, value := range got {
+		seen[value] = struct{}{}
+	}
+	for _, value := range want {
+		if _, ok := seen[value]; !ok {
+			t.Fatalf("got %v, want %v", got, want)
+		}
 	}
 }

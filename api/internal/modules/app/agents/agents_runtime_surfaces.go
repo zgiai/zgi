@@ -15,6 +15,7 @@ import (
 	workspacemodel "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	"github.com/zgiai/zgi/api/pkg/logger"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 func (s *agentsService) GetAgentRuntimeSurfaces(ctx context.Context, agentID, accountID string) (*dto.AgentRuntimeSurfaceAuthorizationResponse, error) {
@@ -47,16 +48,9 @@ func (s *agentsService) GetAgentRuntimeSurfaces(ctx context.Context, agentID, ac
 	auth.Surfaces = agentRuntimeSupportedSurfaces(auth.Surfaces, ag.TenantID)
 
 	workspaceID := ag.TenantID.String()
-	if auth.WorkspaceID != nil && *auth.WorkspaceID != uuid.Nil {
-		workspaceID = auth.WorkspaceID.String()
-	}
-
-	organizationID := ""
-	if auth.OrganizationID != uuid.Nil {
+	organizationID := s.organizationIDForAgentWorkspace(ctx, workspaceID)
+	if organizationID == "" && auth.OrganizationID != uuid.Nil {
 		organizationID = auth.OrganizationID.String()
-	}
-	if organizationID == "" {
-		organizationID = s.organizationIDForAgentWorkspace(ctx, workspaceID)
 	}
 	if organizationID == "" {
 		organizationID = workspaceID
@@ -102,7 +96,7 @@ func (s *agentsService) UpdateAgentRuntimeSurfaces(ctx context.Context, agentID,
 	if err != nil {
 		return nil, err
 	}
-	auth, legacyUpdates, err := agentRuntimeAuthorizationFromUpdateRequest(agentUUID, ag.TenantID, organizationID, req)
+	auth, _, err := agentRuntimeAuthorizationFromUpdateRequest(agentUUID, ag.TenantID, organizationID, req)
 	if err != nil {
 		return nil, err
 	}
@@ -111,10 +105,47 @@ func (s *agentsService) UpdateAgentRuntimeSurfaces(ctx context.Context, agentID,
 	}
 
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := runtimeauth.NewStore(tx).SaveResourceAuthorization(ctx, auth); err != nil {
+		var currentAgent Agent
+		if err := tx.WithContext(ctx).
+			Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("id = ? AND deleted_at IS NULL", agentUUID).
+			Take(&currentAgent).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return fmt.Errorf("%w: agent not found", runtimeservice.ErrNotFound)
+			}
+			return fmt.Errorf("failed to lock agent runtime surface owner: %w", err)
+		}
+		if isSystemManagedAgent(&currentAgent) {
+			return fmt.Errorf("%w: agent not found", runtimeservice.ErrNotFound)
+		}
+		if err := s.ensureCanManageAgentRuntimeSurfaces(ctx, &currentAgent, accountID); err != nil {
+			if strings.EqualFold(err.Error(), "permission denied") {
+				return runtimeservice.ErrPermissionDenied
+			}
 			return err
 		}
-		return syncAgentRuntimeSurfaceLegacyFields(ctx, tx, ag, accountID, legacyUpdates)
+
+		currentOrganizationID, err := s.organizationUUIDForAgentWorkspace(ctx, currentAgent.TenantID.String())
+		if err != nil {
+			return err
+		}
+		currentAuth, currentLegacyUpdates, err := agentRuntimeAuthorizationFromUpdateRequest(
+			agentUUID,
+			currentAgent.TenantID,
+			currentOrganizationID,
+			req,
+		)
+		if err != nil {
+			return err
+		}
+		if err := s.validateAgentRuntimeGrantSubjects(ctx, currentOrganizationID, accountID, currentAuth.Surfaces); err != nil {
+			return err
+		}
+
+		if err := runtimeauth.NewStore(tx).SaveResourceAuthorization(ctx, currentAuth); err != nil {
+			return err
+		}
+		return syncAgentRuntimeSurfaceLegacyFields(ctx, tx, &currentAgent, accountID, currentLegacyUpdates)
 	}); err != nil {
 		return nil, err
 	}
@@ -725,13 +756,30 @@ func syncAgentRuntimeSurfaceLegacyFields(ctx context.Context, tx *gorm.DB, ag *A
 }
 
 func (s *agentsService) updateAgentWebAppStatusAndRuntimeSurface(ctx context.Context, ag *Agent, status AgentWebAppStatus, reason string, actorAccountID string) error {
-	organizationID, err := s.organizationUUIDForAgentWorkspace(ctx, ag.TenantID.String())
-	if err != nil {
-		return err
-	}
 	surfaceEnabled := NormalizeAgentWebAppStatus(status) == AgentWebAppStatusActive
 
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var currentAgent Agent
+		if err := tx.WithContext(ctx).
+			Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("id = ? AND deleted_at IS NULL", ag.ID).
+			Take(&currentAgent).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return fmt.Errorf("%w: agent not found", runtimeservice.ErrNotFound)
+			}
+			return fmt.Errorf("failed to lock agent web app owner: %w", err)
+		}
+		if isSystemManagedAgent(&currentAgent) {
+			return fmt.Errorf("%w: agent not found", runtimeservice.ErrNotFound)
+		}
+		if err := s.ensureCanManageAgent(ctx, &currentAgent, actorAccountID, agentRuntimeAccessManagePermissionCodes(currentAgent.AgentsType)...); err != nil {
+			return err
+		}
+		organizationID, err := s.organizationUUIDForAgentWorkspace(ctx, currentAgent.TenantID.String())
+		if err != nil {
+			return err
+		}
+
 		now := time.Now()
 		updates := map[string]interface{}{
 			"web_app_status": status,
@@ -753,7 +801,7 @@ func (s *agentsService) updateAgentWebAppStatusAndRuntimeSurface(ctx context.Con
 		}
 
 		result := tx.WithContext(ctx).Model(&Agent{}).
-			Where("id = ? AND deleted_at IS NULL", ag.ID).
+			Where("id = ? AND deleted_at IS NULL", currentAgent.ID).
 			Updates(updates)
 		if result.Error != nil {
 			return fmt.Errorf("failed to update web app status: %w", result.Error)
@@ -762,10 +810,10 @@ func (s *agentsService) updateAgentWebAppStatusAndRuntimeSurface(ctx context.Con
 			return fmt.Errorf("%w: agent not found", runtimeservice.ErrNotFound)
 		}
 
-		workspaceID := ag.TenantID
+		workspaceID := currentAgent.TenantID
 		if err := runtimeauth.NewStore(tx).SaveResourceAuthorization(ctx, runtimeauth.ResourceAuthorization{
 			ResourceType:   runtimeauth.PublishedRuntimeResourceAgent,
-			ResourceID:     ag.ID,
+			ResourceID:     currentAgent.ID,
 			OrganizationID: organizationID,
 			WorkspaceID:    &workspaceID,
 			Surfaces: []runtimeauth.SurfaceAuthorization{{
@@ -782,6 +830,7 @@ func (s *agentsService) updateAgentWebAppStatusAndRuntimeSurface(ctx context.Con
 		}
 
 		ag.WebAppStatus = status
+		ag.TenantID = currentAgent.TenantID
 		return nil
 	})
 }

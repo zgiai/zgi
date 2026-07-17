@@ -9,6 +9,7 @@ import (
 	"github.com/zgiai/zgi/api/config"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	tool_file "github.com/zgiai/zgi/api/internal/modules/app/workflow/tool_file"
+	"github.com/zgiai/zgi/api/internal/modules/skills"
 )
 
 func TestMergeGeneratedArtifactMetadataPersistsHydratableFile(t *testing.T) {
@@ -135,6 +136,46 @@ func TestMergeGeneratedArtifactMetadataPersistsManagedFileSignals(t *testing.T) 
 	} {
 		if artifacts[0][key] != want {
 			t.Fatalf("managed conversation artifact %s = %#v, want %#v in %#v", key, artifacts[0][key], want, artifacts[0])
+		}
+	}
+}
+
+func TestMergeGeneratedArtifactMetadataCarriesProjectionEvidenceIntoManagedFile(t *testing.T) {
+	metadata := mergeGeneratedArtifactMetadata(map[string]interface{}{}, map[string]interface{}{
+		"file_id":         "tool-file-1",
+		"tool_file_id":    "tool-file-1",
+		"filename":        "chapter.md",
+		"content_chars":   2048,
+		"content_sha256":  "sha256:chapter",
+		"content_summary": "Chapter summary",
+	})
+	metadata = mergeGeneratedArtifactMetadata(metadata, map[string]interface{}{
+		"file_id":             "managed-file-1",
+		"upload_file_id":      "managed-file-1",
+		"source_tool_file_id": "tool-file-1",
+		"filename":            "chapter.md",
+		"target":              "managed_file",
+	})
+
+	artifacts := conversationArtifactsFromMetadata(metadata["conversation_artifacts"])
+	var managed map[string]interface{}
+	for _, artifact := range artifacts {
+		if stringFromAny(artifact["artifact_id"]) == "managed_file:managed-file-1" {
+			managed = artifact
+			break
+		}
+	}
+	if managed == nil {
+		t.Fatalf("managed artifact missing from %#v", artifacts)
+	}
+	for key, want := range map[string]interface{}{
+		"source_tool_file_id": "tool-file-1",
+		"content_chars":       2048,
+		"content_sha256":      "sha256:chapter",
+		"content_summary":     "Chapter summary",
+	} {
+		if managed[key] != want {
+			t.Fatalf("managed artifact %s = %#v, want %#v in %#v", key, managed[key], want, managed)
 		}
 	}
 }
@@ -286,6 +327,58 @@ func TestConversationArtifactsKeepTemporaryAvailableAfterManagementCopy(t *testi
 	}}
 	if recent := recentGeneratedArtifactsFromBranch(branch); len(recent) != 1 || recent[0]["tool_file_id"] != "tool-1" {
 		t.Fatalf("recent generated artifacts = %#v, want retained tool-1 source", recent)
+	}
+}
+
+func TestMergeSkillTraceMetadataLinksManagedFileToTemporaryArtifact(t *testing.T) {
+	metadata := mergeGeneratedArtifactMetadata(map[string]interface{}{}, map[string]interface{}{
+		"file_id":         "tool-1",
+		"tool_file_id":    "tool-1",
+		"filename":        "chapter.md",
+		"mime_type":       "text/markdown",
+		"target":          "temporary_artifact",
+		"content_chars":   4096,
+		"content_sha256":  "sha256:chapter",
+		"content_summary": "Chapter summary",
+	})
+
+	metadata = mergeSkillTraceMetadata(metadata, []skills.SkillTrace{{
+		Kind:     "tool_call",
+		SkillID:  skills.SkillFileManager,
+		ToolName: "save_file_to_management",
+		Status:   "success",
+		Arguments: map[string]interface{}{
+			"source_type":  "tool_file",
+			"tool_file_id": "tool-1",
+			"filename":     "chapter.md",
+		},
+		Result: map[string]interface{}{
+			"file_id":        "managed-1",
+			"upload_file_id": "managed-1",
+			"filename":       "chapter.md",
+			"target":         "managed_file",
+		},
+	}})
+
+	artifacts := conversationArtifactsFromMetadata(metadata["conversation_artifacts"])
+	if len(artifacts) != 2 {
+		t.Fatalf("conversation_artifacts = %#v, want temporary and managed artifacts", artifacts)
+	}
+	managed := artifacts[1]
+	if got := stringFromAny(managed["artifact_id"]); got != "managed_file:managed-1" {
+		t.Fatalf("managed artifact_id = %q, want managed_file:managed-1", got)
+	}
+	if got := stringFromAny(managed["source_tool_file_id"]); got != "tool-1" {
+		t.Fatalf("managed source_tool_file_id = %q, want tool-1", got)
+	}
+	if got := stringFromAny(managed["content_sha256"]); got != "sha256:chapter" {
+		t.Fatalf("managed content_sha256 = %q, want inherited digest", got)
+	}
+	if got := stringFromAny(managed["content_summary"]); got != "Chapter summary" {
+		t.Fatalf("managed content_summary = %q, want inherited summary", got)
+	}
+	if got := intValueFromAny(managed["content_chars"]); got != 4096 {
+		t.Fatalf("managed content_chars = %d, want 4096", got)
 	}
 }
 

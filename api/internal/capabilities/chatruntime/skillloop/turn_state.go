@@ -21,8 +21,7 @@ const (
 	turnStateVisibilityUserVisible = "user_visible"
 	turnStateVisibilityAudit       = "audit"
 
-	turnStateSurfaceContextualSidebar = "contextual_sidebar"
-	turnStateCheckpointMaxRunes       = 220
+	turnStateTextValueMaxRunes = 1024
 )
 
 func (r *Runner) handleTurnStateCall(
@@ -62,99 +61,49 @@ func (r *Runner) handleTurnStateCall(
 		}
 		r.emitIntermediateAnswer(ctx, prepared, callID, trace, onEvent)
 	}
-	for _, item := range items {
-		trace, ok := contextualTurnStateCheckpoint(prepared, item)
-		if !ok {
-			continue
-		}
-		r.emitIntermediateAnswer(ctx, prepared, callID, trace, onEvent)
-	}
-
 	trace := skills.SkillTrace{
 		Kind:   "turn_state",
 		Status: "success",
 		Arguments: map[string]interface{}{
 			"item_count": len(items),
+			"call_id":    strings.TrimSpace(callID),
 		},
 		Result: map[string]interface{}{
 			"items": items,
 		},
 	}
 	return successfulSkillStep(trace, skills.ToolResultMessage(callID, map[string]interface{}{
-		"status": "recorded",
-		"items":  items,
+		"status":   "recorded",
+		"receipts": turnStateItemReceipts(items),
 		"instruction": strings.Join([]string{
 			"Turn state has been recorded for this same AIChat turn.",
 			"Use working_fact, decision, assumption, and verification items as authoritative context for later steps after approvals, navigation, or client actions.",
 			"If a later step needs a value that was not recorded and is not visible in current evidence, re-read or re-observe instead of guessing.",
-			"Only user_deliverable items are directly visible to the user; the contextual sidebar may show a brief checkpoint for file-derived working facts so the user can verify the source conclusion.",
+			"The tool result contains compact receipts rather than echoing recorded values; the authoritative values are restored by the runtime when needed.",
+			"Only user_deliverable items with user_visible visibility are directly visible to the user. Model-only working facts are never rendered as chat content.",
 		}, " "),
 	}), false, false)
 }
 
-func contextualTurnStateCheckpoint(prepared *PreparedChat, item map[string]interface{}) (skills.SkillTrace, bool) {
-	if prepared == nil || strings.TrimSpace(prepared.Surface) != turnStateSurfaceContextualSidebar {
-		return skills.SkillTrace{}, false
-	}
-	if strings.TrimSpace(stringFromInterface(item["visibility"])) != turnStateVisibilityModelOnly {
-		return skills.SkillTrace{}, false
-	}
-	kind := strings.TrimSpace(stringFromInterface(item["kind"]))
-	if kind != turnStateKindWorkingFact && kind != turnStateKindDecision && kind != turnStateKindVerification {
-		return skills.SkillTrace{}, false
-	}
-	value := strings.TrimSpace(stringFromInterface(item["value"]))
-	if value == "" {
-		value = strings.TrimSpace(stringFromInterface(item["content"]))
-	}
-	if value == "" || !turnStateCheckpointIsUsefulForUser(item) {
-		return skills.SkillTrace{}, false
-	}
-	title, message := turnStateCheckpointText(prepared, item, value)
-	return skills.SkillTrace{
-		Kind:    "intermediate_answer",
-		Title:   title,
-		Message: message,
-		Status:  "success",
-		Arguments: map[string]interface{}{
-			"title":           title,
-			"turn_state_kind": kind,
-			"turn_state_key":  strings.TrimSpace(stringFromInterface(item["key"])),
-			"source":          strings.TrimSpace(stringFromInterface(item["source"])),
-		},
-	}, true
-}
-
-func turnStateCheckpointIsUsefulForUser(item map[string]interface{}) bool {
-	key := strings.ToLower(strings.TrimSpace(stringFromInterface(item["key"])))
-	source := strings.ToLower(strings.TrimSpace(stringFromInterface(item["source"])))
-	if strings.HasPrefix(source, "file-reader/") || strings.Contains(source, "read_file") {
-		return true
-	}
-	return strings.Contains(key, "summary") ||
-		strings.Contains(key, "theme") ||
-		strings.Contains(key, "content") ||
-		strings.Contains(key, "topic")
-}
-
-func turnStateCheckpointText(prepared *PreparedChat, item map[string]interface{}, value string) (string, string) {
-	preview := trimRunes(value, turnStateCheckpointMaxRunes)
-	source := strings.ToLower(strings.TrimSpace(stringFromInterface(item["source"])))
-	fileDerived := strings.HasPrefix(source, "file-reader/") || strings.Contains(source, "read_file")
-	if turnStatePrefersChinese(prepared) {
-		title := "\u5df2\u8bb0\u5f55\u7ed3\u8bba"
-		prefix := "\u5df2\u8bb0\u5f55\u5173\u952e\u7ed3\u8bba"
-		if fileDerived {
-			prefix = "\u5df2\u8bb0\u5f55\u6587\u4ef6\u5c0f\u7ed3"
+func turnStateItemReceipts(items []map[string]interface{}) []map[string]interface{} {
+	receipts := make([]map[string]interface{}, 0, len(items))
+	for _, item := range items {
+		receipt := map[string]interface{}{
+			"kind":       stringFromInterface(item["kind"]),
+			"visibility": stringFromInterface(item["visibility"]),
 		}
-		return title, fmt.Sprintf("%s: %s", prefix, preview)
+		for _, key := range []string{"key", "source", "title"} {
+			if value := strings.TrimSpace(stringFromInterface(item[key])); value != "" {
+				receipt[key] = value
+			}
+		}
+		value := strings.TrimSpace(firstNonEmptyString(item["value"], item["content"]))
+		if value != "" {
+			receipt["recorded_chars"] = len([]rune(value))
+		}
+		receipts = append(receipts, receipt)
 	}
-	title := "Saved note"
-	prefix := "Saved key note"
-	if fileDerived {
-		prefix = "Saved file summary"
-	}
-	return title, fmt.Sprintf("%s: %s", prefix, preview)
+	return receipts
 }
 
 func turnStatePrefersChinese(prepared *PreparedChat) bool {
@@ -179,6 +128,9 @@ func normalizeTurnStateItems(args map[string]interface{}) ([]map[string]interfac
 	}
 	out := make([]map[string]interface{}, 0, len(items))
 	for _, raw := range items {
+		if err := validateTurnStateTextBounds(raw); err != nil {
+			return nil, err
+		}
 		item := normalizeTurnStateItem(raw)
 		if len(item) == 0 {
 			continue
@@ -191,6 +143,22 @@ func normalizeTurnStateItems(args map[string]interface{}) ([]map[string]interfac
 	return out, nil
 }
 
+func validateTurnStateTextBounds(raw map[string]interface{}) error {
+	for _, field := range []string{"value", "content"} {
+		text, ok := raw[field].(string)
+		if !ok || len([]rune(text)) <= turnStateTextValueMaxRunes {
+			continue
+		}
+		return fmt.Errorf(
+			"%w: submit_turn_state %s exceeds %d Unicode characters; store the full content as an artifact and record only {ref, digest, summary}",
+			ErrInvalidInput,
+			field,
+			turnStateTextValueMaxRunes,
+		)
+	}
+	return nil
+}
+
 func normalizeTurnStateItem(raw map[string]interface{}) map[string]interface{} {
 	kind := normalizeTurnStateKind(stringFromInterface(raw["kind"]))
 	if kind == "" {
@@ -198,9 +166,9 @@ func normalizeTurnStateItem(raw map[string]interface{}) map[string]interface{} {
 	}
 	visibility := normalizeTurnStateVisibility(stringFromInterface(raw["visibility"]), kind)
 	value := turnStateStringValue(raw["value"])
-	content := trimRunes(stringFromInterface(raw["content"]), 16000)
+	content := trimRunes(stringFromInterface(raw["content"]), turnStateTextValueMaxRunes)
 	if kind == turnStateKindUserDeliverable && content == "" {
-		content = trimRunes(value, 16000)
+		content = trimRunes(value, turnStateTextValueMaxRunes)
 	}
 	if kind != turnStateKindUserDeliverable && value == "" {
 		value = content
@@ -216,7 +184,7 @@ func normalizeTurnStateItem(raw map[string]interface{}) map[string]interface{} {
 		item["key"] = key
 	}
 	if value != "" {
-		item["value"] = trimRunes(value, 4000)
+		item["value"] = trimRunes(value, turnStateTextValueMaxRunes)
 	}
 	if title := trimRunes(stringFromInterface(raw["title"]), 120); title != "" {
 		item["title"] = title

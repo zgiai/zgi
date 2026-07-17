@@ -10,6 +10,7 @@ import {
   Minimize2,
   Paperclip,
   Send,
+  Settings2,
   Shield,
   ShieldAlert,
   ShieldCheck,
@@ -38,6 +39,7 @@ import { formatExtensionsForDisplay } from '@/utils/file-helpers';
 import { AIChatMemoryModule } from '@/components/chat/variants/aichat/memory-module';
 import type { AIChatModelValue } from '@/components/chat/variants/aichat/types';
 import type { AIChatToolGovernancePermissionTier } from '@/components/aichat/contextual/types';
+import type { ModelUseCase } from '@/services/types/model';
 import {
   imageAttachmentHintTranslationKey,
   type ScopedTranslatorWithHas,
@@ -64,6 +66,8 @@ interface AIChatInputToolbarProps {
   allowedExtensions: string[];
   imageExtensions: string[];
   showModelSelector?: boolean;
+  modelUseCase?: ModelUseCase;
+  preferredModelUseCase?: ModelUseCase;
   showMemoryToggle?: boolean;
   showComposerExpandButton?: boolean;
   isComposerExpanded?: boolean;
@@ -71,12 +75,15 @@ interface AIChatInputToolbarProps {
   toolGovernancePermissionTier?: AIChatToolGovernancePermissionTier;
   enableUpload?: boolean;
   showFileLibraryPicker?: boolean;
+  showSkillManagement?: boolean;
+  skillManagementLabel?: string;
   surface?: AIChatComposerSurface;
   onModelChange: (value: ModelSelectorValue) => void;
   onModelPropsChange: (model: ModelSelectorModelProps | null) => void;
   onUploadDocument: () => void;
   onUploadImage: () => void;
   onSelectFromFiles: () => void;
+  onOpenSkillManagement?: () => void;
   onMemoryEnabledChange: (enabled: boolean) => void;
   onToggleComposerExpanded?: () => void;
   onToolGovernancePermissionTierChange?: (tier: AIChatToolGovernancePermissionTier) => void;
@@ -157,6 +164,8 @@ export function AIChatInputToolbar({
   allowedExtensions,
   imageExtensions,
   showModelSelector = true,
+  modelUseCase = 'agent',
+  preferredModelUseCase,
   showMemoryToggle = true,
   showComposerExpandButton = false,
   isComposerExpanded = false,
@@ -164,12 +173,15 @@ export function AIChatInputToolbar({
   toolGovernancePermissionTier = 'basic',
   enableUpload = true,
   showFileLibraryPicker = true,
+  showSkillManagement = false,
+  skillManagementLabel,
   surface = 'aichat',
   onModelChange,
   onModelPropsChange,
   onUploadDocument,
   onUploadImage,
   onSelectFromFiles,
+  onOpenSkillManagement,
   onMemoryEnabledChange,
   onToggleComposerExpanded,
   onToolGovernancePermissionTierChange,
@@ -190,7 +202,8 @@ export function AIChatInputToolbar({
               <div className="h-8 rounded-full border border-border/70 bg-muted/50" />
             ) : (
               <ModelSelector
-                modelType="agent"
+                modelType={modelUseCase}
+                preferredUseCase={preferredModelUseCase}
                 value={modelSelectorValue}
                 onChange={onModelChange}
                 onModelPropsChange={onModelPropsChange}
@@ -362,6 +375,23 @@ export function AIChatInputToolbar({
               ) : null}
             </DropdownMenuContent>
           </DropdownMenu>
+        ) : null}
+        {showSkillManagement && onOpenSkillManagement && skillManagementLabel ? (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                type="button"
+                isIcon
+                variant="ghost"
+                className="size-8 rounded-full"
+                onClick={onOpenSkillManagement}
+                aria-label={skillManagementLabel}
+              >
+                <Settings2 className="size-4" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="top">{skillManagementLabel}</TooltipContent>
+          </Tooltip>
         ) : null}
         {showComposerExpandButton && onToggleComposerExpanded ? (
           <Button

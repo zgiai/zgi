@@ -305,17 +305,27 @@ func appendPageContextEvidence(metadata map[string]interface{}, current map[stri
 		"result_summary": map[string]interface{}{"route": current["route"], "source": current["source"], "item_count": current["item_count"]},
 		"result_facts":   map[string]interface{}{"observed_path": current["route"], "context_status": current["status"], "query_fingerprint": current["query_fingerprint"]},
 	}
-	ledger := mapSliceFromAny(metadata[operationPlanEvidenceLedgerKey])
+	plan := mapFromOperationContext(metadata["operation_plan"])
+	ledger := mapSliceFromAny(plan[operationPlanEvidenceLedgerKey])
+	if len(ledger) == 0 {
+		// Compatibility read only: old messages may still carry the ledger at the
+		// metadata root, but all new writes use operation_plan as the authority.
+		ledger = mapSliceFromAny(metadata[operationPlanEvidenceLedgerKey])
+	}
 	ledger = append(ledger, entry)
 	if len(ledger) > 50 {
 		ledger = ledger[len(ledger)-50:]
 	}
-	metadata[operationPlanEvidenceLedgerKey] = mapsToInterfaceSlice(ledger)
-	plan := mapFromOperationContext(metadata["operation_plan"])
 	if len(plan) > 0 {
 		plan[operationPlanEvidenceLedgerKey] = mapsToInterfaceSlice(ledger)
 		metadata["operation_plan"] = plan
+		metadata["evidence_ledger_ref"] = map[string]interface{}{
+			"source":   "operation_plan.evidence_ledger",
+			"revision": operationPlanCurrentEvidenceRevision(plan),
+			"count":    len(ledger),
+		}
 	}
+	delete(metadata, operationPlanEvidenceLedgerKey)
 }
 
 func (s *service) recordPageContextRefresh(prepared *PreparedChat, current map[string]interface{}, reason string, duration time.Duration, errorText string) {

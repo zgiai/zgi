@@ -83,6 +83,9 @@ func routeNavigationClientActionRequiredPayload(prepared *PreparedChat, trace sk
 		"result":              copyStringAnyMap(result),
 		"created_at":          time.Now().Unix(),
 	}
+	if phaseID := strings.TrimSpace(stringFromAny(trace.Arguments["plan_phase_id"])); phaseID != "" {
+		payload["plan_phase_id"] = phaseID
+	}
 	if label := strings.TrimSpace(stringFromAny(result["label"])); label != "" {
 		payload["label"] = label
 	}
@@ -518,7 +521,12 @@ func plannerFeedbackTrace(skillID string, toolName string, err error) skills.Ski
 }
 
 func internalPlannerFeedbackTrace(trace skills.SkillTrace) bool {
-	return strings.TrimSpace(trace.Kind) == "planner_feedback"
+	switch strings.TrimSpace(trace.Kind) {
+	case "planner_feedback", "skill_load_attempt":
+		return true
+	default:
+		return false
+	}
 }
 
 func skillToolLimitExceededTrace(skillID string, toolName string, args map[string]interface{}, err error) skills.SkillTrace {

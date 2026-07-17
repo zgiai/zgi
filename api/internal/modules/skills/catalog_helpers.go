@@ -331,6 +331,7 @@ func normalizeSkillDisplayWithFallback(frontmatter SkillFrontmatter, whenToUse s
 	display := frontmatter.Display
 	display.Icon = strings.TrimSpace(display.Icon)
 	display.Category = strings.TrimSpace(display.Category)
+	display.Scenarios = normalizeSkillIDs(display.Scenarios)
 	display.Label = normalizeLocalizedText(display.Label, strings.TrimSpace(frontmatter.Name))
 	display.Description = normalizeLocalizedText(display.Description, strings.TrimSpace(frontmatter.Description))
 	display.WhenToUse = normalizeLocalizedText(display.WhenToUse, strings.TrimSpace(whenToUse))

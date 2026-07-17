@@ -204,7 +204,7 @@ export const RetrievalSettings = forwardRef<RetrievalSettingsRef, RetrievalSetti
           <div className="mb-4">
             <div className="flex items-center gap-2">
               <Search className="h-4 w-4" />
-              <h3 className="text-lg font-semibold">
+              <h3 className="text-sm font-semibold">
                 {t('createWizard.processConfig.retrievalConfig')}
               </h3>
             </div>
@@ -212,7 +212,10 @@ export const RetrievalSettings = forwardRef<RetrievalSettingsRef, RetrievalSetti
           <div className="space-y-6">
             {/* Search Method Selection - always visible */}
             <div className="space-y-2">
-              <Label className="leading-5">{t('createWizard.processConfig.searchMethod')}</Label>
+              <SettingLabelWithTooltip
+                label={t('createWizard.processConfig.searchMethod')}
+                tooltip={t('createWizard.processConfig.searchMethodHelp')}
+              />
               <Select
                 value={localRetrieval.search_method}
                 onValueChange={val => updateLocalRetrieval('search_method', val as SearchMethod)}

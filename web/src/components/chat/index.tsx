@@ -22,6 +22,7 @@ import type { AIChatUploadScope } from '@/components/chat/variants/aichat/input-
 import type { AIChatController } from '@/components/chat/controllers/aichat-controller';
 import type { OpeningGuideBrand } from '@/components/chat/utils/opening-guide-brand';
 import type { AIChatRuntimeSurface } from '@/services/types/aichat';
+import type { ModelUseCase } from '@/services/types/model';
 
 interface SingleTestVariantProps {
   mode: 'singleTest';
@@ -126,6 +127,8 @@ interface AIChatVariantProps {
   beforeSend?: () => boolean | Promise<boolean>;
   variant?: 'full' | 'embedded';
   showModelSelector?: boolean;
+  modelUseCase?: ModelUseCase;
+  preferredModelUseCase?: ModelUseCase;
   requireModel?: boolean;
   showMemoryToggle?: boolean;
   forcedUseMemory?: boolean;

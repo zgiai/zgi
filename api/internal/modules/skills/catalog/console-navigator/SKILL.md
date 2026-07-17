@@ -10,12 +10,17 @@ tools:
 max_calls_per_turn: 2
 timeout_seconds: 15
 display:
-  icon: route
-  category: productivity
+  icon: compass
+  category: workflow_automation
+  scenarios:
+    - general
+    - technical_development
   label:
     en_US: Console Navigator
+    zh_Hans: 控制台导航
   description:
-    en_US: Routes the assistant to whitelisted internal console pages without mutating assets.
+    en_US: Designed for quickly reaching another console module; identifies the requested destination and opens an approved internal page without changing business data.
+    zh_Hans: 适用于快速前往控制台其他模块，可识别用户要访问的目标页面并安全跳转，不会修改业务数据。
   when_to_use:
     en_US: Use when the user asks to open or switch to another console module.
   tags:

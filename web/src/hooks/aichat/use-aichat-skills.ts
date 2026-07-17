@@ -85,7 +85,10 @@ export function useUpdateAIChatSkillConfig() {
       }
 
       if (response.data) {
-        queryClient.setQueryData(AICHAT_KEYS.skillConfig(), response.data);
+        if (!response.data.applied) return;
+        queryClient.setQueryData(AICHAT_KEYS.skillConfig(), {
+          enabled_skill_ids: response.data.enabled_skill_ids,
+        });
       }
 
       await Promise.all([

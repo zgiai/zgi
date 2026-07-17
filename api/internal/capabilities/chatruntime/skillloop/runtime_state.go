@@ -37,6 +37,14 @@ func runtimeStateForRun(req RunRequest) map[string]interface{} {
 			state[key] = value
 		}
 	}
+	if plan := evidenceMapFromAny(state["operation_plan"]); len(evidenceMapsFromAny(plan["evidence_ledger"])) > 0 {
+		delete(state, "evidence_ledger")
+		if execution := evidenceMapFromAny(state["execution_ledger"]); len(execution) > 0 {
+			compacted := copyStringAnyMap(execution)
+			delete(compacted, "evidence_ledger")
+			state["execution_ledger"] = compacted
+		}
+	}
 	if text := strings.TrimSpace(latestUserRequestText(req)); text != "" {
 		state["latest_user_request"] = text
 	}

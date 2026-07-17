@@ -596,6 +596,7 @@ const messages = {
     backToEdit: 'Back to Edit',
     restoreDraft: 'Restore Previous Draft',
     running: 'Running',
+    pending: 'Pending',
     succeeded: 'Succeeded',
     failed: 'Failed',
     stopped: 'Stopped',
@@ -614,7 +615,9 @@ const messages = {
     updating: 'Updating...',
     workflowUpdatedSuccessfully: 'Agent updated successfully',
     webapp: 'Web App',
-    webappLogs: 'Web App Logs',
+    agentLogs: 'Agent Logs',
+    workflowLogs: 'Workflow Logs',
+    webappLogs: 'Workflow Logs',
     webappStatus: {
       label: 'Web App Status',
       online: 'Online',
@@ -996,7 +999,7 @@ const messages = {
       appCenterDialogTitle: 'Select App Center audience',
       builtinDialogTitle: 'Select built-in app audience',
       rangeDialogDescription:
-        'Select workspaces, departments, and members. The owning workspace is included by default and is not shown again.',
+        'The owning workspace is included by default. Select any additional workspaces, departments, and members below.',
       departmentsTab: 'Departments',
       workspacesTab: 'Workspaces',
       membersTab: 'Members',
@@ -1004,6 +1007,9 @@ const messages = {
       noDepartments: 'No departments found',
       loadingWorkspaces: 'Loading workspaces...',
       noWorkspaces: 'No workspaces found',
+      noAdditionalWorkspaces: 'No additional workspaces available',
+      owningWorkspaceIncluded: 'Included by default',
+      memberCount: '{count} members',
       searchMembersPlaceholder: 'Search members',
       loadingMembers: 'Loading members...',
       noMembers: 'No members found',
@@ -1085,15 +1091,46 @@ const messages = {
       none: '-',
       chatWorkflow: 'Chatflow',
       attachmentsIncluded: 'Includes file / image input',
+      generatedAttachmentsIncluded: 'Includes generated file input',
       retest: 'Retest',
       retestName: '{name} Retest {index}',
       cancelTest: 'Cancel test',
+    },
+    userErrors: {
+      modelRouteUnavailable:
+        'The current model is not available in this workspace. Select an enabled model in the workflow or related AI settings, then try again.',
+      modelRouteUnavailableNamed:
+        'Model "{model}" is not enabled in this workspace. Select an enabled model in the workflow or related AI settings, then try again.',
+      modelPricingNotConfigured:
+        'Pricing is not configured for the current model, so it cannot be called. Ask an administrator to configure pricing or select a model with pricing configured.',
+      defaultModelNotConfigured:
+        'No default text model is configured. Configure one in Default Model Management, then try again.',
+      organizationBalanceInsufficient:
+        'The organization balance is insufficient. Add funds and try again.',
+      workspaceQuotaInsufficient:
+        'The workspace quota is insufficient. Ask an administrator to increase it, then try again.',
+      channelBalanceInsufficient:
+        'The model channel balance is insufficient. Add funds or switch channels, then try again.',
+      modelServiceUnavailable:
+        'The model service is temporarily unavailable because all available channels failed. Try again later; if the problem continues, check the channel configuration.',
+      requestTimedOut:
+        'The task timed out. Try again later or reduce the number of items generated or tested at once.',
+      networkUnavailable:
+        'The model service could not be reached. Check the network and service status, then try again.',
+      unknown:
+        'The task failed without a recognizable reason. Try again later; if the problem continues, ask an administrator to check the service logs.',
     },
     overview: {
       breadcrumb: '{agentName} / Batch Testing',
       titleFallback: 'Test Question Library',
       descriptionFallback:
         'Generate, edit, enable, and manage test questions for reusable batch test user inputs.',
+      taskDescriptionFallback:
+        'Generate, edit, enable, and manage task test cases for reusable structured inputs and checks.',
+      mode: {
+        task: 'Task workflow',
+        conversation: 'Conversation workflow',
+      },
       stats: {
         totalCases: 'Total questions',
         enabledCases: 'Enabled',
@@ -1103,13 +1140,18 @@ const messages = {
       actions: {
         judgeSettings: 'AI scoring settings',
         generateCases: 'Generate Questions',
+        generateTaskCases: 'Generate Cases',
+        generateFileCases: 'Generate File Test Samples',
         createCase: 'Add Question',
+        createTaskCase: 'Add Case',
         goTest: 'Run Test',
         recognizeScenarios: 'Recognize Business Scenarios',
         rerecognizeScenarios: 'Recognize Again',
         recognizingScenarios: 'Recognizing...',
         cancelRecognition: 'Stop Recognition',
         cancelGeneration: 'Stop Generation',
+        resumeGeneration: 'Continue Generation',
+        deleteGenerationTask: 'Delete Record',
         editScenarios: 'Edit Scenarios',
         createBatch: 'New Test',
       },
@@ -1126,10 +1168,36 @@ const messages = {
         recognizingDescription:
           'Recognizing business scenarios from the current workflow. Please wait.',
         cancelingDescription: 'Stopping business scenario recognition. Please wait.',
+        recognitionQueuedTitle: 'Business scenario recognition is queued',
+        recognitionRunningTitle: 'Recognizing business scenarios',
+        recognitionCancelingTitle: 'Stopping business scenario recognition',
+        recognitionCanceledTitle: 'Business scenario recognition stopped',
+        recognitionFailedTitle: 'Business scenario recognition failed',
+        recognitionCompletedTitle: 'Business scenario recognition completed',
+        recognitionStatusQueued: 'Waiting to start recognition.',
+        recognitionStatusRunning:
+          'Recognized {recognized} scenarios and assigned {assigned} questions so far.',
+        recognitionStatusCanceling:
+          'Stop requested. The current recognition step will finish before stopping.',
+        recognitionStatusCanceled:
+          'Recognition stopped. Recognized {recognized} scenarios and assigned {assigned} questions.',
+        recognitionStatusFailed: 'Recognition failed: {error}',
+        recognitionStatusCompleted:
+          'Recognized {recognized} scenarios and assigned {assigned} questions.',
+        recognitionProgressText: '{percent}%',
+        recognitionProgressDescription:
+          'Results will be written back to the scenario list and question library after recognition completes.',
+        recognitionCompletedDescription:
+          'Updated scenario coverage with {recognized} scenarios and {assigned} question assignments.',
+        recognitionCanceledDescription:
+          'Stopped recognition. Existing scenarios and questions were kept.',
+        recognitionFailedDescription: 'Error reason: {error}',
       },
       cases: {
         title: 'Test Question List',
+        taskTitle: 'Test Case List',
         description: 'Only enabled questions are included by default when creating a new test.',
+        taskDescription: 'Only enabled cases are included by default when creating a new test.',
         searchPlaceholder: 'Search question content',
         scenarioAll: 'Business scenario: All',
         typeAll: 'Question type: All',
@@ -1138,6 +1206,8 @@ const messages = {
         empty: 'No test questions yet. Add questions first, or use AI generation later.',
         filteredEmpty: 'No test questions match the filters.',
         selectedCount: 'Selected {count} questions',
+        selectedRunnableCount: '{count} selected enabled questions can run',
+        batchRun: 'Run Selected',
         batchEnable: 'Batch Enable',
         batchDisable: 'Batch Disable',
         batchDelete: 'Batch Delete',
@@ -1148,6 +1218,9 @@ const messages = {
           'Generating {count} test questions. They will be added to the library when ready.',
         generatingTaskBanner:
           'Generating {requested} test questions, {created} created. Refreshing the page will not interrupt the task.',
+        generatingQuestionTitle: 'Generating {count} test questions',
+        generatingTaskCaseTitle: 'Generating {count} test cases',
+        generatingFileTitle: 'Generating {count} file test samples',
         generatingTaskTitle: 'Generating {count} test questions...',
         generatingTaskDescription: 'Generated questions will be added to the list automatically.',
         generationCompletedTitle: 'Generated {count} test questions',
@@ -1162,11 +1235,27 @@ const messages = {
           'Failed to generate {requested} test questions. {created} were created. Error: {error}',
         generationFailedTitle: 'Failed to generate {count} test questions',
         generationFailedDescription: '{created} were created. Error: {error}',
+        generationStatusQueued: 'The task has been created and is waiting to start.',
+        generationStatusFirst: 'Processing item {current} of {total}.',
+        generationStatusNext: '{created} completed. Processing item {current} of {total}.',
+        generationStatusCanceling: 'Stopping after the current item finishes.',
+        generationStatusCanceled: 'Stopped. {created} items were kept.',
+        generationStatusFailed: 'Generation failed. {created} of {total} items were kept.',
+        generationStatusCompleted: 'All items have been generated.',
+        generationProgressText: '{created} / {total} · {percent}%',
+        generationProgressDescription:
+          'Generated items are added to the current question library automatically. You can stay on this page to watch progress.',
         clearSelection: 'Clear Selection',
         turnCount: '{count} turns',
         expandTurns: 'Expand',
         collapseTurns: 'Collapse',
         turnTitle: 'Turn {index}:',
+        focusVariables: 'Variables',
+        focusFiles: 'Files',
+        focusChecks: 'Checks',
+        focusCriticalChecks: 'Critical',
+        focusTurns: 'turns',
+        focusExpectations: 'expectations',
         deleteConfirmTitle: 'Delete this test question?',
         deleteConfirmDescription:
           'This question will be removed from the current test question library.',
@@ -1188,6 +1277,7 @@ const messages = {
         retestConfirmButton: 'Confirm Retest',
         activeTitle: 'A batch is currently running: {name}',
         activeProgress: '{done} / {total} executed',
+        selectedBatchName: '{date} Selected Cases Test {time}',
       },
       batchActions: {
         start: 'Start',
@@ -1201,6 +1291,9 @@ const messages = {
         questionType: 'Question Type',
         status: 'Status',
         updatedAt: 'Updated At',
+        taskFocus: 'Input / Checks',
+        conversationFocus: 'Turns / Expectations',
+        generatedAt: 'Generated At',
         operations: 'Actions',
         batch: 'Test Batch',
         batchStatus: 'Batch Status',
@@ -1289,7 +1382,8 @@ const messages = {
         namePlaceholder: 'For example: Pre-sales Consulting',
         nameRequired: 'Please enter a scenario name',
         descriptionLabel: 'Scenario Description',
-        descriptionPlaceholder: 'Briefly describe the user questions covered by this scenario.',
+        descriptionPlaceholder:
+          'Describe the business goal, input materials, edge cases, and expected output covered by this scenario.',
         add: 'Add Scenario',
         submit: 'Save',
       },
@@ -1303,6 +1397,44 @@ const messages = {
         promptPlaceholder: 'Enter the recognition prompt',
         promptDefault:
           'Recognize the real business scenarios that users may trigger based on the current agent workflow structure, node descriptions, and system prompts.\n\nRequirements:\n1. Business scenarios are user intents, not node names, branch names, or tool names, such as complaint escalation, order inquiry, and after-sales refund.\n2. Do not use node names, branch names, or tool names directly as scenario names.\n3. Merge semantically duplicate scenarios and keep clear, testable names.\n4. For each scenario, output the name, judgment description, and coverage angle suitable for generating test questions.\n5. Prioritize high-frequency, critical, abnormal, and fallback scenarios.\n6. Reuse existing scenarios when the name is identical or semantically close. Do not create duplicates.',
+        focusLabel: 'Recognition Focus',
+        focusHighFrequency: 'High-frequency Questions',
+        focusCriticalFlow: 'Critical Business Flows',
+        focusFallback: 'Abnormal / Fallback',
+        focusComplaint: 'Complaints / Negative Feedback',
+        focusHumanHandoff: 'Human Intervention',
+        focusFileInput: 'File / Attachment Input',
+        focusMultiTurnContext: 'Multi-turn / Context',
+        taskFocusCriticalFlow: 'Main Execution Path',
+        taskFocusFallback: 'Boundary / Abnormal Input',
+        taskFocusFileInput: 'File Input Processing',
+        taskFocusBusinessObject: 'Business Object / Document Type',
+        taskFocusProcessingGoal: 'Processing Goal',
+        taskFocusOutputUsage: 'Output Usage',
+        taskFocusIndustryContext: 'Industry / Real Context',
+        granularityLabel: 'Scenario Granularity',
+        granularityMerge: 'Merge Similar',
+        granularityBalanced: 'Balanced',
+        granularityFine: 'Fine-grained',
+        businessPromptLabel: 'Business Notes (Optional)',
+        businessPromptPlaceholder:
+          'Example: Focus on reimbursement, policy lookup, complaint feedback, and service process guidance. If users often ask “does this policy apply to me”, recognize it as policy applicability.',
+        taskBusinessPromptPlaceholder:
+          'Example: Recognize scenarios around concrete materials such as company contracts, delivery confirmations, school exam papers, meeting notes, invoices, resumes, and project reports. Do not treat empty files, unsupported formats, missing fields, long documents, or output-field completeness as business scenarios.',
+        expertPromptLabel: 'Expert Prompt (Optional)',
+        expertPromptDescription:
+          'Only for special recognition rules. Regular users can leave it empty. System recognition rules take priority if there is any conflict.',
+        expertPromptPlaceholder:
+          'Example: Do not merge policy lookup into one broad scenario. Split reimbursement, leave, and approval authority.',
+        taskExpertPromptPlaceholder:
+          'Example: Prefer scenarios named as concrete business object + processing goal, such as "company contract risk extraction" or "meeting notes summary generation". Put file format, abnormal input, and output assertions into later test generation, not into scenario names.',
+        expandExpertPrompt: 'Expand',
+        collapseExpertPrompt: 'Collapse',
+        focusPayloadTitle: 'Recognition focus:',
+        listSeparator: ', ',
+        granularityPayloadTitle: 'Scenario granularity:',
+        businessPromptPayloadTitle: 'User business notes:',
+        expertPromptPayloadTitle: 'Expert prompt supplement:',
         submit: 'Start Recognition',
         submitting: 'Recognizing...',
       },
@@ -1323,16 +1455,29 @@ const messages = {
       },
       generateCases: {
         title: 'Generate Test Questions',
+        taskTitle: 'Generate Test Cases',
+        fileTitle: 'Generate File Test Samples',
         description:
           'AI generates user inputs that can be used directly in batch tests. Generated questions are enabled by default.',
+        taskDescription:
+          'AI generates structured inputs and checks that can be used directly in task-workflow batch tests.',
         countLabel: 'Generation Count',
         scenarioLabel: 'Business Scenario',
         scenarioPlaceholder: 'Select business scenario',
         noScenario: 'Do not specify',
-        questionTypeLabel: 'Question Type',
+        taskDimensionDescription:
+          'Business scenario selects what to test; test scope controls whether cases cover normal inputs, input variants, incomplete inputs, or expected failures.',
+        questionTypeLabel: 'Test Scope',
         questionTypeDescription:
           'The system will generate matching questions from the selected scenarios.',
+        taskQuestionTypeDescription:
+          'Choose what this generation should cover. For regular validation, use the first three options. Select the last option only when you want cases that cannot be handled automatically or need human confirmation.',
+        taskQuestionTypeCore: 'Normal task',
+        taskQuestionTypeExtension: 'Different inputs for the same task',
+        taskQuestionTypeFuzzy: 'Incomplete or abnormal input',
+        taskQuestionTypeManual: 'Cannot decide automatically',
         turnStrategyLabel: 'Conversation Turn Strategy',
+        taskStrategyLabel: 'Case Input Strategy',
         turnStrategyMixed: 'Single + Multi-turn',
         turnStrategySingle: 'Single-turn',
         turnStrategyMulti: 'Multi-turn',
@@ -1342,13 +1487,55 @@ const messages = {
         turnStrategyHelpSingle: 'Single-turn: generate one-question, one-response test cases only.',
         turnStrategyHelpMulti:
           'Multi-turn: generate test cases with follow-up questions and carried context only.',
+        turnStrategyFilesRequired:
+          'This workflow requires an attachment on every run, so generated-file tests must use a single turn.',
+        taskStrategyHelpSingle:
+          'Single input: each case validates one task trigger and the final output.',
+        taskStrategyHelpMulti:
+          'Multi-step input: each case may describe follow-up information or staged task checks.',
+        fileGenerationLabel: 'Generate File Inputs',
+        fileGenerationDescription:
+          'The system will generate test files and attach them as workflow file inputs. Users do not upload files in this generation flow.',
+        fileGenerationConversationDescription:
+          'The system will generate test files and attach them to the first user turn. Use this for chat workflows that allow file or image input.',
+        fileFormatsLabel: 'File Types',
+        fileFormatDocx: 'Word',
+        fileFormatPdf: 'PDF',
+        fileFormatTxt: 'Text',
+        fileFormatCsv: 'CSV',
+        fileFormatXlsx: 'Excel',
+        filesPerCaseLabel: 'Files per Case',
+        fileComplexityLabel: 'File Complexity',
+        fileComplexityNormal: 'Standard content',
+        fileComplexityNoisy: 'With noise',
+        fileComplexityMissingFields: 'Missing key fields',
         modelLabel: 'Generation Model',
         modelPlaceholder: 'Select generation model',
         promptLabel: 'Additional Generation Requirements',
         promptPlaceholder: 'Enter the coverage focus for this generation',
+        businessPromptLabel: 'Business Notes (Optional)',
+        businessPromptPlaceholder:
+          'Example: Focus on travel reimbursement, hotel expenses, and approval limits. Users may ask follow-ups such as “does this also apply” or “what documents are needed”.',
+        taskBusinessPromptPlaceholder:
+          'Example: Focus on lessor, lessee, rent amount, and signing date in contract summaries. Also generate missing-field, malformed, and incomplete-file cases.',
+        expertPromptLabel: 'Expert Prompt (Optional)',
+        expertPromptDescription:
+          'Only for special generation rules. Regular users can leave it empty. System rules take priority if there is any conflict.',
+        expertPromptPlaceholder:
+          'Example: Generate only clarification cases. Each multi-turn case must include at least one pronoun or omitted-subject follow-up.',
+        taskExpertPromptPlaceholder:
+          'Example: Generate only boundary inputs and abnormal file contents. Each case must include checkable output fields.',
+        expandExpertPrompt: 'Expand',
+        collapseExpertPrompt: 'Collapse',
+        businessPromptPayloadTitle: 'User business notes:',
+        expertPromptPayloadTitle: 'Expert prompt supplement:',
         promptDefault:
           'Generate realistic test questions to verify whether the current agent handles real user inputs as expected.\n\nThe system automatically combines the current agent configuration, workflow nodes, business scenarios, and existing test questions. Use this field only to add the coverage focus for this generation.\n\nFocus this generation on:\n1. High-frequency core questions that verify whether the agent can complete its main tasks.\n2. Different phrasings of the same intent that verify understanding stability.\n3. Missing, vague, or unclear information that verifies whether the agent asks follow-up or clarification questions.\n4. Abnormal requests, complaints, unsupported cases, or human-intervention requests that verify fallback, escalation, or human handoff behavior.\n5. Avoid questions that read like test scripts; user inputs should sound like real user messages.\n6. Keep expected results concise and focused on how the agent should handle the input so later scoring is practical.',
+        taskPromptDefault:
+          'Generate task-workflow test cases that verify whether one independent task input triggers the correct workflow processing and final output.\n\nThe system automatically combines the current agent configuration, workflow nodes, business scenarios, and existing test questions. Use this field only to add the coverage focus for this generation.\n\nFocus this generation on:\n1. Each case is one independent task execution. Do not generate multi-turn conversations, follow-up turns, or carried context.\n2. High-frequency core inputs that verify whether the agent can complete the main task.\n3. Missing required information, invalid fields, abnormal file content, or boundary inputs that verify whether the task chain returns failure, missing-field, or needs-review results correctly.\n4. Checkable final output structure, key fields, summary content, node path, or tool calls so later results can locate the failing step.\n5. Do not generate complaint escalation, human handoff, contact-user, or continue-the-conversation expectations.\n6. Expected results should describe the final output and key checks, not a conversation reply script.',
         submit: 'Generate Questions',
+        submitTask: 'Generate Cases',
+        submitFile: 'Generate File Samples',
         submitting: 'Generating...',
         startedBanner: 'Generating {count} test questions. Please wait.',
       },
@@ -1368,15 +1555,127 @@ const messages = {
         typeLabel: 'Question Type',
         statusLabel: 'Status',
         turnsLabel: 'Conversation Turns',
+        taskInputLabel: 'Task Input',
         turnsDescription:
           'Maintain user inputs in order. The system will execute them sequentially during testing.',
+        taskInputDescription:
+          'Maintain the input for one task execution. Task workflows do not carry multi-turn context, so this usually only needs the task input and attachments.',
         turnTitle: 'Turn {index} · User Input',
         addTurn: 'Add Turn',
         removeTurn: 'Delete Turn',
+        taskContentPlaceholder:
+          'For example: Read the customer profile and output a lead summary, risks, and next-step recommendations.',
+        turnExpectationLabel: 'Turn Expectation',
+        turnExpectationPlaceholder:
+          'Optional. Describe what this turn should clarify, remember, or advance.',
+        turnChecksLabel: 'Turn Checks',
+        turnChecksDescription:
+          'Used to judge whether this turn understands intent, follows context, remembers information, or asks the right clarification.',
+        addTurnCheck: 'Add Turn Check',
+        emptyTurnChecks:
+          'No turn checks yet. You can keep only the turn expectation; it remains compatible as a check.',
+        conversationChecksLabel: 'Conversation-level Checks',
+        conversationChecksDescription:
+          'Used to judge context consistency, task completion, safety boundaries, and tone stability across the whole conversation.',
+        addConversationCheck: 'Add Global Check',
+        emptyConversationChecks:
+          'No global checks yet. Useful for multi-turn context, memory retention, and safety tests.',
+        conversationAdvancedChecksLabel: 'Professional Checkpoints (optional)',
+        conversationAdvancedChecksDescription:
+          'For normal tests, use turn expectations and the expected result first. Checkpoints are for precise professional assertions on a single reply or the full conversation, so they are hidden by default.',
+        conversationCheckTitle: 'Conversation Check {index}',
+        conversationCheckTypeLabel: 'Check Type',
+        conversationCheckRuleLabel: 'Rule',
+        conversationCheckValuesLabel: 'Check Content',
+        conversationOperatorPassed: 'Should satisfy',
+        conversationCheckTypeIntent: 'Intent Understanding',
+        conversationCheckTypeContext: 'Context Following',
+        conversationCheckTypeMemory: 'Information Memory',
+        conversationCheckTypeClarification: 'Clarification',
+        conversationCheckTypeOutputFormat: 'Output Format',
+        conversationCheckTypeFallback: 'Fallback / Handoff',
+        conversationCheckTypeReplyContains: 'Reply Content',
+        conversationCheckTypeSafety: 'Safety',
+        conversationCheckTypeTaskCompletion: 'Task Completion',
+        conversationCheckTypeConsistency: 'Multi-turn Consistency',
+        conversationCheckTypeNoHallucination: 'No Hallucination',
+        conversationCheckTypeNoSystemLeak: 'No System Leak',
+        conversationCheckTypeTone: 'Tone Stability',
+        taskVariablesLabel: 'Task Variables (optional)',
+        taskVariablesDescription:
+          'Custom input variables are recognized from the Start node. Select a variable and enter the value for this test. sys.query and sys.files are filled automatically.',
+        taskVariablesPlaceholder: 'document_type=contract\nsummary_style=structured summary',
+        taskVariableNameLabel: 'Variable',
+        taskVariableValueLabel: 'Test Value',
+        taskVariableCustomPlaceholder: 'Enter variable name',
+        taskVariableValuePlaceholder: 'Enter the value for this test',
+        addTaskVariable: 'Add Variable',
+        removeTaskVariable: 'Delete',
+        emptyTaskVariables:
+          'No task variables yet. Add one only when this case needs a Start-node variable.',
+        noTaskVariableOptions:
+          'No manually editable custom variables were found on the Start node.',
+        advancedChecksLabel: 'Advanced Checks',
+        advancedChecksDescription:
+          'Used to locate failing workflow steps more precisely. Normal tests can leave this empty; the system will infer checks from the workflow and expected result.',
+        taskChecksLabel: 'Result Checks (optional)',
+        taskChecksDescription:
+          'These are not user inputs. They are optional checks used after the batch test to judge whether the result is expected. Node and external capability checks are selected from the current workflow.',
+        mustVisitNodesLabel: 'Expected Nodes',
+        mustCallToolsLabel: 'Expected Tools',
+        outputContainsLabel: 'Expected Output Contains',
+        lineListPlaceholder: 'One item per line',
+        maxLatencyLabel: 'Max Latency (optional, ms)',
+        maxLatencyPlaceholder: 'For example: 30000',
+        addCheckCondition: 'Add Check',
+        emptyCheckConditions:
+          'No advanced checks yet. Add checks only when this case needs explicit workflow-path or output assertions.',
+        checkConditionTitle: 'Check {index}',
+        checkTypeLabel: 'Check Object',
+        checkSeverityLabel: 'Severity',
+        checkRuleLabel: 'Rule',
+        targetNodeLabel: 'Workflow Node',
+        targetCapabilityLabel: 'Tool / External Capability',
+        inputValuesLabel: 'Expected Input Content',
+        outputValuesLabel: 'Expected Content',
+        matchModeLabel: 'Match Mode',
+        latencyValueLabel: 'Max Latency (ms)',
+        noNodeOptions: 'No selectable workflow nodes were found in the current draft.',
+        noCapabilityOptions:
+          'No selectable tool or external capability nodes were found in the current draft.',
+        removeCheckCondition: 'Delete',
+        checkTypeNode: 'Workflow Node',
+        checkTypeCapability: 'Tool / External Capability',
+        checkTypeOutput: 'Output Content',
+        checkTypeLatency: 'Latency',
+        operatorVisited: 'Should run',
+        operatorNotVisited: 'Should not run',
+        operatorInputContains: 'Input should contain',
+        operatorInputNotContains: 'Input should not contain',
+        operatorOutputContains: 'Output should contain',
+        operatorOutputNotContains: 'Output should not contain',
+        operatorCalled: 'Should be called',
+        operatorNotCalled: 'Should not be called',
+        operatorContains: 'Should contain',
+        operatorNotContains: 'Should not contain',
+        operatorLatencyLte: 'Less than or equal to',
+        matchSemantic: 'Semantic',
+        matchKeyword: 'Keyword',
+        severityCritical: 'Critical',
+        severityNormal: 'Normal',
+        severityHint: 'Hint',
+        sourceAiGenerated: 'AI generated',
+        sourceUserAdded: 'User added',
+        sourceSystemDefault: 'System default',
+        invalidCheckConditions:
+          'Some advanced checks are incomplete. Please complete or delete them before saving.',
         attachmentsLabel: 'File / Image Input',
         selectFiles: 'Select from File Management',
         emptyAttachments:
           'No attachments selected. Use this for agents that need image, PDF, Excel, Word, or other file inputs.',
+        generatedFixtureTitle: 'Generated File Sample',
+        generatedFixtureFacts: 'Facts:',
+        generatedFixtureChecks: 'Checks:',
         submit: 'Save Question',
       },
       createBatch: {
@@ -1429,6 +1728,7 @@ const messages = {
       expectedResult: 'Expected Result',
       judgeDetail: 'AI Scoring Details',
       judgeScore: 'AI Score',
+      notScored: 'Not scored',
       judgeOpinion: 'Review Opinion',
       analysisAdvice: 'AI Analysis Advice',
       executionRecord: 'Execution Record',
@@ -1439,6 +1739,9 @@ const messages = {
       conversationContent: 'Conversation',
       userQuestion: 'User Question',
       agentReply: 'Agent Reply',
+      executionFailedWithReason: 'Execution failed: {reason}',
+      executionFailedNoReply: 'Execution failed: workflow did not return a valid reply',
+      nodeExecutionFailed: 'Node execution failed',
       systemReply: 'System Reply',
       rawData: 'Raw Data',
       rawOutput: 'Raw Output',
@@ -1452,6 +1755,76 @@ const messages = {
       viewTurnOutputRaw: 'View raw output for this turn',
       previousItem: 'Previous',
       nextItem: 'Next',
+      labelSeparator: ': ',
+      listSeparator: ', ',
+      expectedFocus: 'Expected Focus',
+      turnOutputTitle: 'Turn {index} Output',
+      workflowOptimizationTitle: 'Workflow Improvement Suggestions',
+      workflowOptimizationDescription:
+        'These suggestions apply to workflow configuration, node prompts, branch conditions, and knowledge references, not the test question itself.',
+      nodesNeedAttention: '{count} nodes need attention',
+      diagnosisResult: 'Diagnosis: {status}',
+      taskEvaluationTitle: 'Task Evaluation Criteria',
+      taskEvaluationDescription:
+        'Scoring uses the task input and final output. Task workflows are not expected to ask follow-up questions or retain conversational context.',
+      sourceGrounding: 'Based on input and output',
+      allowedExtras: 'Allowed additions: {values}',
+      missingPolicy:
+        'Missing-data policy: business omissions may be marked, but technical failures must not be reported incorrectly',
+      viewAllAssertions: 'View all evaluation assertions ({count})',
+      checkSummary: 'Check Summary',
+      genericCheckLabel: 'Reply covers the expected result for this turn',
+      viewAllChecks: 'View all check details ({count})',
+      troubleshootingTitle: 'Engineering diagnostics: node inputs and outputs',
+      troubleshootingDescription:
+        'Shown only when displayable data was recorded in runtime logs. A blank value does not mean the node did not run; it may not have produced a displayable field or detailed logs may not have been saved.',
+      input: 'Input',
+      output: 'Output',
+      fallbackNode: {
+        start: 'Start Node',
+        answer: 'Reply Generation',
+        branch: 'Branch Node',
+      },
+      taskGoalType: {
+        extract: 'Information Extraction',
+        classify: 'Classification',
+        transform: 'Content Transformation',
+        analyze: 'Analysis and Summary',
+        decision: 'Decision',
+        action: 'Action Execution',
+        general: 'General Task',
+      },
+      taskAssertionType: {
+        mustInclude: 'Must Include',
+        mustNotInclude: 'Must Not Include',
+        missingPolicy: 'Missing-data Handling',
+        factPresent: 'Fact Field',
+        missingFieldMarked: 'Missing Field',
+        statePresent: 'State Conclusion',
+        format: 'Format Requirement',
+        sourceGrounding: 'Input Grounding',
+        actionResult: 'Execution Result',
+        semanticMatch: 'Semantic Match',
+        assertion: 'Evaluation Assertion',
+      },
+      taskAssertionSeverity: {
+        critical: 'Critical',
+        normal: 'Normal',
+        hint: 'Hint',
+      },
+      recommendations: {
+        genericTarget: 'Reply generation strategy',
+        relatedNode: 'Related node',
+        failedCheck:
+          '{label}: Adjust the workflow prompt, branch conditions, or knowledge references so the reply covers verifiable business requirements.',
+        reviewCheck:
+          '{label}: This item only needs review and should not directly become a workflow change recommendation.',
+        filters: {
+          aiEvaluation: 'AI evaluation',
+          manualReview: 'manual review',
+          checkEvaluation: 'check evaluation',
+        },
+      },
       suggestionLabel: 'Improvement Suggestion',
       errorInfo: 'Execution Error',
       workflowRunId: 'Run ID',
@@ -1482,6 +1855,10 @@ const messages = {
         allPassed: 'All questions passed. No issues were found.',
         hasIssues:
           'This test has {failed} failed questions and {review} questions needing review. Prioritize failed questions and review scoring reasons and suggestions.',
+        modelUnavailableMarker: 'current default model is unavailable',
+        sentenceSeparator: '.',
+        modelUnavailable:
+          'AI summary failed: the current default model is unavailable. Go to Default Model Management and change the default text model, then retest.',
       },
       suggestion: 'Suggestion: {suggestion}',
       errors: {
@@ -1494,6 +1871,11 @@ const messages = {
         judgeFailedSuggestion: 'AI scoring failed. Review manually or rerun the test.',
         judgeManualReviewSuggestion: 'Review this result manually.',
         judgeConfigureSuggestion: 'Configure AI scoring and rerun, or review manually.',
+        modelUnavailableMarker: 'current scoring model is unavailable',
+        missingFieldDate: 'Missing field: date',
+        missingFieldRelatedParty: 'Missing field: related party',
+        modelUnavailable:
+          'AI scoring failed: the current scoring model is unavailable. Go to Default Model Management and change the default text model, then retest.',
       },
     },
     toasts: {
@@ -1522,6 +1904,10 @@ const messages = {
       casesGenerationStarted: 'Generating {count} test questions',
       casesGenerationCancelRequested: 'Test question generation stop requested',
       casesGenerationCancelFailed: 'Failed to stop test question generation',
+      casesGenerationResumed: 'Continuing generation for remaining {count} test questions',
+      casesGenerationResumeFailed: 'Failed to continue test question generation',
+      casesGenerationTaskDeleted: 'Generation record deleted',
+      casesGenerationTaskDeleteFailed: 'Failed to delete generation record',
       casesGenerationCompleted: 'Generated {count} test questions',
       batchCreated: 'Test batch created',
       batchCreateFailed: 'Failed to create test batch',
@@ -1584,6 +1970,10 @@ const messages = {
     defaultModeDescription: 'Autonomous planning mode',
     defaultHomeTitle: 'Agent',
     defaultInputPlaceholder: 'Enter command...',
+    modelSelection: {
+      compatibilityWarning:
+        'This model is not a recommended Agent model. It remains available, but Agent quality may be lower. For better Agent results, consider switching to an Agent model.',
+    },
     saveState: {
       saving: 'Saving...',
       dirty: 'Unsaved changes',
@@ -1598,7 +1988,7 @@ const messages = {
         'Configuration saved with {count} binding issue(s). Review them before publishing.',
       saveFailed: 'Save failed',
       saveFailedDraftKept: 'Save failed. Your changes are kept.',
-      modelUnavailable: 'The previous model is no longer eligible for Agents. Select another model.',
+      modelUnavailable: 'The current model is unavailable. Select another model.',
       noGeneratedSuggestions: 'No usable request examples were generated',
       suggestionsGenerated: 'Request examples generated',
       generateSuggestionsFailed: 'Failed to generate request examples',
@@ -1621,6 +2011,7 @@ const messages = {
       systemPromptTooLongBeforePublish:
         'Shorten the system prompt to {limit} characters or less before publishing.',
       abnormalBindingsRemoved: 'All abnormal bindings were removed from the draft. Save to apply.',
+      abnormalSkillsRemoved: 'Unavailable Skills were removed from the draft. Save to apply.',
       publishBindingsInvalid:
         'Publishing is blocked by invalid bindings. Review the highlighted binding issues.',
     },
@@ -1820,6 +2211,7 @@ const messages = {
       done: 'Save',
       cancel: 'Cancel',
       idLabel: 'ID: {id}',
+      noDescription: 'No description',
       requiresKnowledge: 'Configure knowledge bases first',
       unavailableName: 'Unavailable Skill',
       unavailableDescription:
@@ -1831,6 +2223,8 @@ const messages = {
         '{suspended} suspended and {unavailable} unavailable binding(s). Existing IDs are preserved until you remove them.',
       removeAll: 'Remove all abnormal bindings',
       removeAllPending: 'Cleanup pending save',
+      removeUnavailableSkills: 'Remove unavailable Skills',
+      removeUnavailableSkillsPending: 'Pending save',
       suggestion: 'Suggestion: {suggestion}',
       resourceId: 'Resource ID: {id}',
       cancel: 'Cancel',
@@ -1844,6 +2238,9 @@ const messages = {
       cleanupConfirmTitle: 'Remove all abnormal bindings?',
       cleanupConfirmDescription:
         'All unavailable and suspended bindings will be removed from the draft. Other settings remain unchanged.',
+      cleanupSkillsConfirmTitle: 'Remove unavailable Skills?',
+      cleanupSkillsConfirmDescription:
+        'All suspended and unavailable Skills will be removed from the draft. Knowledge bases, databases, workflows, and other settings remain unchanged.',
       status: {
         active: 'Active',
         suspended: 'Suspended',
@@ -2037,31 +2434,37 @@ const messages = {
     },
     files: {
       title: 'Allow file upload',
-      description: 'When enabled, debugging and WebApp chat can upload documents or images.',
+      description: 'When enabled, users can upload documents or images for the Agent to analyze.',
     },
     memory: {
       agentTitle: 'Memory',
       agentDescription:
-        'Define memory types the Agent can read and update for each user. The model manages content within these stable keys.',
+        'Define what the Agent should remember for each user. Each memory item has a stable ID and an optional display name.',
       emptySlots: 'No memory items configured yet.',
       addSlot: 'Add memory item',
       addCustomSlot: 'Custom item',
       applyTemplate: 'Apply template',
       addDialogTitle: 'Add memory item',
-      addDialogDescription: 'Create a stable key the model can use to manage one type of memory.',
+      addDialogDescription:
+        'Set an optional display name, a stable ID, and instructions for this memory item.',
       addDialogConfirm: 'Add item',
       addDialogCancel: 'Cancel',
       maxItemsReached: 'Up to 5 memory items',
       removeSlot: 'Remove memory item',
       viewValues: 'View memory',
-      keyLabel: 'Key',
-      keyHelp: 'Stable identifier used by the model. It is locked after the item is saved.',
+      nameLabel: 'Memory name (optional)',
+      nameHelp:
+        'Helps people identify this item. The memory ID is shown when left blank. Up to 80 characters.',
+      keyLabel: 'Memory ID',
+      keyHelp: 'Stable identifier used by the Agent. It is locked after the item is saved.',
       keyLockedHelp:
-        'This key has been saved and cannot be changed. Delete it and create a new item to use another key.',
+        'This memory ID has been saved and cannot be changed. Delete it and create a new item to use another ID.',
+      idValue: 'ID: {id}',
       descriptionLabel: 'Description',
       descriptionHelp:
         'Tell the model what this memory type should store and when to update it. Up to 200 characters.',
       slotKeyPlaceholder: 'memory_key',
+      slotNamePlaceholder: 'For example: Answer preferences',
       slotDescriptionPlaceholder: 'Describe what this memory item stores',
       maxChars: 'Maximum characters',
       maxCharsHelp: 'Limit the content length for this memory item.',
@@ -2100,22 +2503,46 @@ const messages = {
         },
       },
       templateSlots: {
-        profile:
-          'Store stable facts about the user only: user name, how the user wants to be addressed, job role, team role. Do not store agent name, assistant persona, roleplay style, what the user calls the agent, contact details, accounts, IDs, passwords, or temporary states.',
-        preferences:
-          'Store durable answer preferences: language, example stack, length, layout, explanation depth, tone, and style. Do not store one-off formatting requests, temporary moods, current task content, or a durable identity the agent should play.',
-        standing_instructions:
-          'Store long-term interaction rules, collaboration workflows, task procedures, how to address the user, what the user calls the agent, or agent persona instructions, such as conclusion first, risk review, or roleplay as a specific assistant. Do not store project facts or one-off task steps.',
-        project_context:
-          'Store ongoing project, goals, key background, workflow, and durable constraints. Update only when the user describes project or goal changes; do not infer from role changes.',
-        delivery_preferences:
-          'Store durable delivery preferences: output structure, review depth, file format, acceptance criteria. Do not store one-off formatting requests for a single task.',
-        customer_profile:
-          'Store stable customer identity, account background, product usage, contract or relationship status. Never store passwords, payment data, IDs, or one-off ticket details.',
-        communication_preferences:
-          'Store durable customer communication preferences: tone, channel, escalation wording, response cadence. Do not store temporary emotions or one-off service handling.',
-        business_context:
-          'Store long-term business process background, support scope, policy rules, and operational constraints tied to this customer/user. Do not store general product knowledge or temporary conclusions.',
+        profile: {
+          name: 'User profile',
+          description:
+            'Store stable facts about the user only: user name, how the user wants to be addressed, job role, team role. Do not store agent name, assistant persona, roleplay style, what the user calls the agent, contact details, accounts, IDs, passwords, or temporary states.',
+        },
+        preferences: {
+          name: 'Answer preferences',
+          description:
+            'Store durable answer preferences: language, example stack, length, layout, explanation depth, tone, and style. Do not store one-off formatting requests, temporary moods, current task content, or a durable identity the agent should play.',
+        },
+        standing_instructions: {
+          name: 'Standing instructions',
+          description:
+            'Store long-term interaction rules, collaboration workflows, task procedures, how to address the user, what the user calls the agent, or agent persona instructions, such as conclusion first, risk review, or roleplay as a specific assistant. Do not store project facts or one-off task steps.',
+        },
+        project_context: {
+          name: 'Project context',
+          description:
+            'Store ongoing project, goals, key background, workflow, and durable constraints. Update only when the user describes project or goal changes; do not infer from role changes.',
+        },
+        delivery_preferences: {
+          name: 'Delivery preferences',
+          description:
+            'Store durable delivery preferences: output structure, review depth, file format, acceptance criteria. Do not store one-off formatting requests for a single task.',
+        },
+        customer_profile: {
+          name: 'Customer profile',
+          description:
+            'Store stable customer identity, account background, product usage, contract or relationship status. Never store passwords, payment data, IDs, or one-off ticket details.',
+        },
+        communication_preferences: {
+          name: 'Communication preferences',
+          description:
+            'Store durable customer communication preferences: tone, channel, escalation wording, response cadence. Do not store temporary emotions or one-off service handling.',
+        },
+        business_context: {
+          name: 'Business context',
+          description:
+            'Store long-term business process background, support scope, policy rules, and operational constraints tied to this customer/user. Do not store general product knowledge or temporary conclusions.',
+        },
       },
       deleteConfirmTitle: 'Delete memory item?',
       deleteConfirmDescription:
@@ -2123,17 +2550,17 @@ const messages = {
       deleteConfirmAction: 'Delete item',
       deleteConfirmCancel: 'Cancel',
       validation: {
-        required: 'Key is required.',
+        required: 'Memory ID is required.',
         pattern:
-          'Use lowercase letters, numbers, and underscores. The first character must be a letter.',
-        duplicate: 'This key is already used.',
+          'Use lowercase letters, numbers, and underscores. The memory ID must start with a letter.',
+        duplicate: 'This memory ID is already used.',
         too_many: 'An Agent can have up to 5 memory items.',
       },
     },
     memoryValues: {
       title: 'Agent memory',
       description:
-        'View and edit your own memory values for draft debugging. Only configured memory keys can be changed.',
+        'View and edit your own memory values for draft debugging. Only configured memory items can be changed.',
       scopeAccount: 'Account user',
       scopeEndUser: 'End user',
       userIdPlaceholder: 'User ID',
@@ -2167,6 +2594,28 @@ const messages = {
       newConversation: 'New conversation',
       close: 'Close preview',
     },
+    publishVersion: {
+      publishTitle: 'Publish Agent',
+      updateTitle: 'Publish an update',
+      publishDescription:
+        'Add optional release details. Your current configuration will be saved before the first version is published.',
+      updateDescription:
+        'Add optional release details. Your current configuration will be saved before a new version is published.',
+      nameLabel: 'Version name',
+      optional: 'Optional',
+      namePlaceholder: 'For example: Improved knowledge answers',
+      nameHelp: 'Use a short name that makes this release easy to find and restore later.',
+      fallbackPreview: 'If left blank, it will appear as “{name}”.',
+      descriptionLabel: 'Version description',
+      descriptionPlaceholder: 'Summarize the main changes in this release',
+      descriptionHelp: 'You can note important experience, capability, or configuration changes.',
+      fallbackName: 'Version {time}',
+      cancel: 'Cancel',
+      publish: 'Publish',
+      update: 'Publish update',
+      publishing: 'Publishing...',
+      updating: 'Updating...',
+    },
     publishedVersions: {
       title: 'Published versions',
       description: 'Preview previous snapshots and restore one to the current draft.',
@@ -2175,6 +2624,10 @@ const messages = {
       close: 'Close',
       current: 'Current',
       previewing: 'Preview',
+      fallbackName: 'Version {time}',
+      publishedAt: 'Published {time}',
+      descriptionTitle: 'Version description',
+      noDescription: 'No version description was added for this release.',
       preview: 'Version preview',
       rollback: 'Restore to draft',
       cancelPreview: 'Cancel preview',

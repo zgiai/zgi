@@ -82,6 +82,133 @@ func TestInjectClientActionContinuationContextPromotesLoadedRouteContext(t *test
 	}
 }
 
+func TestPreferredRestoredSkillAfterNavigationUsesDestinationBusinessSkill(t *testing.T) {
+	parts := &chatRequestParts{SkillIDs: []string{
+		skills.SkillConsoleNavigator,
+		skills.SkillFileReader,
+		skills.SkillFileManager,
+		skills.SkillAgentManagement,
+	}}
+	event := map[string]interface{}{
+		"action_type": "route_navigation",
+		"skill_id":    skills.SkillConsoleNavigator,
+		"tool_name":   "navigate",
+	}
+	metadata := map[string]interface{}{
+		"operation_plan": map[string]interface{}{
+			"phases": []interface{}{
+				map[string]interface{}{"id": "phase-1", "status": operationPlanStepStatusCompleted, "step": "读取章节"},
+				map[string]interface{}{"id": "phase-2", "status": operationPlanStepStatusPending, "step": "更新当前智能体配置"},
+			},
+		},
+	}
+
+	got := preferredRestoredSkillAfterClientAction(parts, event, runtimedto.ClientActionResultRequest{
+		Status: clientActionStatusSucceeded,
+		Result: map[string]interface{}{"loaded_href": "/console/agents/agent-1/agent"},
+	}, metadata)
+	if got != skills.SkillAgentManagement {
+		t.Fatalf("preferred skill = %q, want %s", got, skills.SkillAgentManagement)
+	}
+
+	got = preferredRestoredSkillAfterClientAction(parts, event, runtimedto.ClientActionResultRequest{
+		Status: clientActionStatusSucceeded,
+		Result: map[string]interface{}{"observed_path": "/console/files"},
+	}, map[string]interface{}{})
+	if got != skills.SkillFileReader {
+		t.Fatalf("preferred files skill = %q, want %s", got, skills.SkillFileReader)
+	}
+}
+
+func TestPreferredRestoredSkillAfterFailedNavigationKeepsNavigator(t *testing.T) {
+	parts := &chatRequestParts{SkillIDs: []string{skills.SkillConsoleNavigator, skills.SkillAgentManagement}}
+	event := map[string]interface{}{
+		"action_type": "route_navigation",
+		"skill_id":    skills.SkillConsoleNavigator,
+		"tool_name":   "navigate",
+	}
+	got := preferredRestoredSkillAfterClientAction(parts, event, runtimedto.ClientActionResultRequest{Status: clientActionStatusFailed}, nil)
+	if got != skills.SkillConsoleNavigator {
+		t.Fatalf("preferred skill = %q, want navigator for retryable failure", got)
+	}
+}
+
+func TestResolveClientActionContinuationCompletesMatchingNavigationPhase(t *testing.T) {
+	actionID := "route_navigation:phase-navigation"
+	metadata := map[string]interface{}{
+		"client_actions": []interface{}{
+			map[string]interface{}{
+				"action_id": actionID, "action_type": "route_navigation", "status": clientActionStatusWaiting,
+				"skill_id": skills.SkillConsoleNavigator, "tool_name": "navigate", "href": "/console/agents", "plan_phase_id": "phase-navigation",
+			},
+		},
+		"operation_plan": map[string]interface{}{
+			"status": operationPlanStatusRunning,
+			"phases": []interface{}{
+				map[string]interface{}{
+					"id": "phase-navigation", "status": "in_progress", "step": "open Agent management",
+					"expected_action": map[string]interface{}{
+						"skill_id": skills.SkillConsoleNavigator, "tool_name": "navigate", "target": map[string]interface{}{"href": "/console/agents"},
+					},
+				},
+				map[string]interface{}{
+					"id": "phase-update", "status": operationPlanStepStatusPending, "step": "update Agent",
+					"expected_action": map[string]interface{}{"skill_id": skills.SkillAgentManagement, "tool_name": "update_agent_config"},
+				},
+			},
+		},
+	}
+
+	resolved := resolveClientActionContinuationMetadata(metadata, actionID, runtimedto.ClientActionResultRequest{
+		Status: clientActionStatusSucceeded,
+		Result: map[string]interface{}{"observed_path": "/console/agents", "loaded_href": "/console/agents"},
+	})
+	plan := mapFromOperationContext(resolved["operation_plan"])
+	phases := mapSliceFromAny(plan["phases"])
+	if got := stringFromAny(phases[0]["status"]); got != operationPlanStepStatusCompleted {
+		t.Fatalf("navigation phase status = %q, want completed", got)
+	}
+	if got := stringFromAny(phases[1]["status"]); got != "in_progress" {
+		t.Fatalf("business phase status = %q, want in_progress", got)
+	}
+	if got := stringFromAny(plan["status"]); got != operationPlanStatusRunning {
+		t.Fatalf("plan status = %q, want running", got)
+	}
+}
+
+func TestResolveClientActionContinuationInfersStructuredPhaseAfterCompletedPhase(t *testing.T) {
+	actionID := "route_navigation:inferred"
+	metadata := map[string]interface{}{
+		"client_actions": []interface{}{map[string]interface{}{
+			"action_id": actionID, "action_type": "route_navigation", "status": clientActionStatusWaiting,
+			"skill_id": skills.SkillConsoleNavigator, "tool_name": "navigate", "href": "/console/agents",
+		}},
+		"operation_plan": map[string]interface{}{
+			"status": operationPlanStatusRunning,
+			"phases": []interface{}{
+				map[string]interface{}{"id": "phase-done", "status": operationPlanStepStatusCompleted},
+				map[string]interface{}{
+					"id": "phase-navigation", "status": "in_progress",
+					"expected_action": map[string]interface{}{
+						"skill_id":  skills.SkillConsoleNavigator,
+						"tool_name": "navigate",
+						"target":    map[string]interface{}{"href": "/console/agents"},
+					},
+				},
+			},
+		},
+	}
+
+	resolved := resolveClientActionContinuationMetadata(metadata, actionID, runtimedto.ClientActionResultRequest{
+		Status: clientActionStatusSucceeded,
+		Result: map[string]interface{}{"observed_path": "/console/agents"},
+	})
+	phases := mapSliceFromAny(mapFromOperationContext(resolved["operation_plan"])["phases"])
+	if got := stringFromAny(phases[1]["status"]); got != operationPlanStepStatusCompleted {
+		t.Fatalf("navigation phase status = %q, want completed", got)
+	}
+}
+
 func TestClientActionContinuationRouteFailureFeedbackIsRecoverable(t *testing.T) {
 	parts := &chatRequestParts{
 		Query:   "创建智能体后进入详情继续配置",

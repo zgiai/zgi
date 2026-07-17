@@ -247,22 +247,22 @@ export function ConsoleSidebar({
             permissions: AGENT_VISIBLE_PERMISSION_CODES,
           },
           {
-            title: t('workflows'),
+            title: t('workflowAgents'),
             href: '/console/workflows',
             icon: Workflow,
             permissions: WORKFLOW_VISIBLE_PERMISSION_CODES,
-          },
-          {
-            title: t('datasets'),
-            href: '/console/dataset',
-            icon: BookOpen,
-            permissions: KNOWLEDGE_BASE_VISIBLE_PERMISSION_CODES,
           },
           {
             title: t('files'),
             href: '/console/files',
             icon: FileText,
             permissions: FILE_VISIBLE_PERMISSION_CODES,
+          },
+          {
+            title: t('datasets'),
+            href: '/console/dataset',
+            icon: BookOpen,
+            permissions: KNOWLEDGE_BASE_VISIBLE_PERMISSION_CODES,
           },
           {
             title: t('dbs'),
@@ -613,22 +613,22 @@ export function ConsoleMobileSidebar({
             permissions: AGENT_VISIBLE_PERMISSION_CODES,
           },
           {
-            title: t('workflows'),
+            title: t('workflowAgents'),
             href: '/console/workflows',
             icon: Workflow,
             permissions: WORKFLOW_VISIBLE_PERMISSION_CODES,
-          },
-          {
-            title: t('datasets'),
-            href: '/console/dataset',
-            icon: BookOpen,
-            permissions: KNOWLEDGE_BASE_VISIBLE_PERMISSION_CODES,
           },
           {
             title: t('files'),
             href: '/console/files',
             icon: FileText,
             permissions: FILE_VISIBLE_PERMISSION_CODES,
+          },
+          {
+            title: t('datasets'),
+            href: '/console/dataset',
+            icon: BookOpen,
+            permissions: KNOWLEDGE_BASE_VISIBLE_PERMISSION_CODES,
           },
           {
             title: t('dbs'),

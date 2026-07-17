@@ -957,7 +957,7 @@ func TestArchitectureDiagramSystemSkillMetadata(t *testing.T) {
 	if got := doc.Metadata.Display.Label["zh_Hans"]; got != "架构图生成器" {
 		t.Fatalf("zh label = %q", got)
 	}
-	if got := doc.Metadata.Display.Description["zh_Hans"]; got != "根据自然语言或结构化数据生成 SVG 和 HTML 技术架构图。" {
+	if got := doc.Metadata.Display.Description["zh_Hans"]; got != "适用于设计系统架构、业务流程或数据关系，可将自然语言或结构化数据生成 SVG 和 HTML 架构图、流程图、时序图、状态图或 ER 图。" {
 		t.Fatalf("zh description = %q", got)
 	}
 	if got := doc.Metadata.Display.WhenToUse["zh_Hans"]; got != "当回答需要生成技术架构图文件时使用。" {
@@ -1196,6 +1196,9 @@ func TestCalculatorMetaToolArgumentsExposeRequiredExpressionSchema(t *testing.T)
 	properties, ok := params["properties"].(map[string]interface{})
 	if !ok {
 		t.Fatalf("parameters.properties missing")
+	}
+	if _, ok := properties["plan_phase_id"].(map[string]interface{}); !ok {
+		t.Fatalf("plan_phase_id schema missing from call_skill_tool: %#v", properties)
 	}
 	arguments, ok := properties["arguments"].(map[string]interface{})
 	if !ok {
@@ -1505,6 +1508,59 @@ func TestAgentManagementSkillConstrainsMissingTargetSearch(t *testing.T) {
 	} {
 		if !strings.Contains(content, want) {
 			t.Fatalf("agent-management SKILL.md missing search convergence guidance %q", want)
+		}
+	}
+}
+
+func TestAgentManagementSystemPromptUpdatesUseFullReplacementOnly(t *testing.T) {
+	expected := ExpectedSkillToolArguments(SkillAgentManagement, "update_agent_config")
+	if expected == nil {
+		t.Fatal("ExpectedSkillToolArguments() = nil")
+	}
+	schema, ok := expected["schema"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("schema type = %T, want map[string]interface{}", expected["schema"])
+	}
+	properties, ok := schema["properties"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("schema.properties missing from %#v", schema)
+	}
+	if _, ok := properties["system_prompt_source"]; ok {
+		t.Fatal("system_prompt_source is exposed in the Skill Loop contract")
+	}
+	if _, ok := properties["system_prompt_patch"]; ok {
+		t.Fatal("system_prompt_patch is exposed in the Skill Loop contract")
+	}
+	prompt, ok := properties["system_prompt"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("system_prompt schema missing from %#v", properties)
+	}
+	description, _ := prompt["description"].(string)
+	for _, required := range []string{"complete replacement", "preserve every unrelated part", "input rather than content to copy by default", "scope and level of detail"} {
+		if !strings.Contains(description, required) {
+			t.Fatalf("system_prompt description missing %q: %q", required, description)
+		}
+	}
+
+	raw, err := os.ReadFile(filepath.Join(defaultSkillCatalogDir(), SkillAgentManagement, "SKILL.md"))
+	if err != nil {
+		t.Fatalf("read agent-management SKILL.md: %v", err)
+	}
+	content := string(raw)
+	for _, hidden := range []string{"system_prompt_source", "system_prompt_patch"} {
+		if strings.Contains(content, hidden) {
+			t.Fatalf("agent-management SKILL.md still exposes deferred parameter %q", hidden)
+		}
+	}
+	for _, required := range []string{
+		"first obtain the complete current `system_prompt`",
+		"preserve the transformation requested by the user",
+		"Treat the source as input, not as content to copy by default",
+		"does not imply permission to copy the source in full",
+		"matches the user's requested transformation, scope, and level of detail",
+	} {
+		if !strings.Contains(content, required) {
+			t.Fatalf("agent-management SKILL.md missing system-prompt safeguard %q", required)
 		}
 	}
 }

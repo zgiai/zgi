@@ -12,6 +12,7 @@ type AgentPublishedVersion struct {
 	WorkspaceID    uuid.UUID              `gorm:"type:uuid;not null;column:workspace_id" json:"workspace_id"`
 	Version        string                 `gorm:"type:varchar(255);not null" json:"version"`
 	VersionUUID    uuid.UUID              `gorm:"type:uuid;not null;column:version_uuid" json:"version_uuid"`
+	Name           string                 `gorm:"type:varchar(80);not null;default:''" json:"name"`
 	ConfigSnapshot map[string]interface{} `gorm:"type:jsonb;serializer:json;not null;default:'{}';column:config_snapshot" json:"config_snapshot"`
 	Description    string                 `gorm:"type:text;not null;default:''" json:"description"`
 	CreatedBy      *uuid.UUID             `gorm:"type:uuid;column:created_by" json:"created_by"`

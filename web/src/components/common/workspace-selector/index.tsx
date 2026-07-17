@@ -84,6 +84,15 @@ export function WorkspaceSelector({
       ),
     [excludedWorkspaceIdSet, workspaces]
   );
+  const getWorkspaceDisplayName = useCallback(
+    (workspace?: Pick<WorkspaceSelectorValue, 'name'> | null) => {
+      if (!workspace?.name) return '';
+      return workspace.name === 'Default Workspace'
+        ? t('workspaceSelector.defaultWorkspace')
+        : workspace.name;
+    },
+    [t]
+  );
 
   // Use translated placeholder if none provided
   const effectivePlaceholder = placeholder || t('workspaceSelector.placeholder');
@@ -111,9 +120,9 @@ export function WorkspaceSelector({
     if (!selectableWorkspaces) return selectableWorkspaces;
     if (!searchQuery) return selectableWorkspaces;
     return selectableWorkspaces.filter((t: WorkspaceSelectorValue) =>
-      t.name.toLowerCase().includes(searchQuery.toLowerCase())
+      getWorkspaceDisplayName(t).toLowerCase().includes(searchQuery.toLowerCase())
     );
-  }, [searchQuery, selectableWorkspaces]);
+  }, [getWorkspaceDisplayName, searchQuery, selectableWorkspaces]);
 
   // Ensure the current selection remains visible even if it doesn't match the search
   const computedWorkspaces = useMemo(() => {
@@ -193,7 +202,7 @@ export function WorkspaceSelector({
         <div className="flex items-center gap-2 overflow-hidden">
           <Users className="h-4 w-4 shrink-0 opacity-70" />
           {value && !isLoading ? (
-            <span className="truncate">{value.name || 'Unknown'}</span>
+            <span className="truncate">{getWorkspaceDisplayName(value) || 'Unknown'}</span>
           ) : (
             <SelectValue placeholder={effectivePlaceholder} />
           )}
@@ -235,7 +244,7 @@ export function WorkspaceSelector({
                   >
                     <div className="flex items-center gap-2">
                       <Users className="h-4 w-4 shrink-0 text-muted-foreground" />
-                      <span className="truncate">{workspace.name}</span>
+                      <span className="truncate">{getWorkspaceDisplayName(workspace)}</span>
                     </div>
                   </SelectItem>
                 ))}

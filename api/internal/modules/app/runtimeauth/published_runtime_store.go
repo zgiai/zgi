@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type PublishedRuntimeResourceType string
@@ -319,6 +320,105 @@ func (s *Store) SaveResourceAuthorization(ctx context.Context, auth ResourceAuth
 		}
 		return nil
 	})
+}
+
+// RelocateResourceWorkspace updates persisted runtime ownership after a resource
+// moves between workspaces. Callers must invoke it inside the same transaction as
+// the resource move so the runtime scope cannot diverge from the resource owner.
+func (s *Store) RelocateResourceWorkspace(
+	ctx context.Context,
+	resourceType PublishedRuntimeResourceType,
+	resourceID uuid.UUID,
+	sourceWorkspaceID uuid.UUID,
+	targetWorkspaceID uuid.UUID,
+) error {
+	if s == nil || s.db == nil {
+		return fmt.Errorf("database is required")
+	}
+	if resourceType == "" || resourceID == uuid.Nil {
+		return fmt.Errorf("resource type and resource id are required")
+	}
+	if sourceWorkspaceID == uuid.Nil || targetWorkspaceID == uuid.Nil {
+		return fmt.Errorf("source and target workspace ids are required")
+	}
+	if sourceWorkspaceID == targetWorkspaceID {
+		return nil
+	}
+
+	var surfaceRows []publishedRuntimeSurfaceRecord
+	if err := s.db.WithContext(ctx).
+		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("resource_type = ? AND resource_id = ? AND deleted_at IS NULL", string(resourceType), resourceID).
+		Order("id ASC").
+		Find(&surfaceRows).Error; err != nil {
+		return fmt.Errorf("failed to lock published runtime surfaces for workspace move: %w", err)
+	}
+	if len(surfaceRows) == 0 {
+		return nil
+	}
+
+	surfaceIDs := make([]uuid.UUID, 0, len(surfaceRows))
+	for _, row := range surfaceRows {
+		surfaceIDs = append(surfaceIDs, row.ID)
+	}
+
+	var workspaceGrantRows []publishedRuntimeGrantRecord
+	if err := s.db.WithContext(ctx).
+		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where(
+			"surface_id IN ? AND subject_type = ? AND subject_id IN ? AND deleted_at IS NULL",
+			surfaceIDs,
+			string(PublishedRuntimeSubjectWorkspace),
+			[]uuid.UUID{sourceWorkspaceID, targetWorkspaceID},
+		).
+		Order("surface_id ASC, subject_id ASC").
+		Find(&workspaceGrantRows).Error; err != nil {
+		return fmt.Errorf("failed to lock published runtime workspace grants for workspace move: %w", err)
+	}
+
+	now := time.Now()
+	if err := s.db.WithContext(ctx).Model(&publishedRuntimeSurfaceRecord{}).
+		Where("id IN ? AND deleted_at IS NULL", surfaceIDs).
+		Updates(map[string]interface{}{
+			"workspace_id": targetWorkspaceID,
+			"updated_at":   now,
+		}).Error; err != nil {
+		return fmt.Errorf("failed to relocate published runtime surfaces: %w", err)
+	}
+
+	targetGrantBySurfaceID := make(map[uuid.UUID]struct{}, len(workspaceGrantRows))
+	for _, row := range workspaceGrantRows {
+		if row.SubjectID != nil && *row.SubjectID == targetWorkspaceID {
+			targetGrantBySurfaceID[row.SurfaceID] = struct{}{}
+		}
+	}
+	for _, row := range workspaceGrantRows {
+		if row.SubjectID == nil || *row.SubjectID != sourceWorkspaceID {
+			continue
+		}
+		if _, exists := targetGrantBySurfaceID[row.SurfaceID]; exists {
+			if err := s.db.WithContext(ctx).Model(&publishedRuntimeGrantRecord{}).
+				Where("id = ? AND deleted_at IS NULL", row.ID).
+				Updates(map[string]interface{}{
+					"deleted_at": now,
+					"updated_at": now,
+				}).Error; err != nil {
+				return fmt.Errorf("failed to deduplicate published runtime workspace grant: %w", err)
+			}
+			continue
+		}
+		if err := s.db.WithContext(ctx).Model(&publishedRuntimeGrantRecord{}).
+			Where("id = ? AND deleted_at IS NULL", row.ID).
+			Updates(map[string]interface{}{
+				"subject_id": targetWorkspaceID,
+				"updated_at": now,
+			}).Error; err != nil {
+			return fmt.Errorf("failed to relocate published runtime workspace grant: %w", err)
+		}
+		targetGrantBySurfaceID[row.SurfaceID] = struct{}{}
+	}
+
+	return nil
 }
 
 func PolicyFromAuthorization(fallback PublishedRuntimePolicy, auth *ResourceAuthorization) PublishedRuntimePolicy {

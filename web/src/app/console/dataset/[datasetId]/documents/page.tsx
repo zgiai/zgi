@@ -15,6 +15,7 @@ import { useAccountPermissions } from '@/hooks/organization/use-account-permissi
 import { useDataset } from '@/hooks/dataset/use-datasets';
 import { useBulkDisableDocuments, useBulkEnableDocuments } from '@/hooks/dataset/use-documents';
 import {
+  useBulkDeleteDatasetFileRefs,
   useDatasetFileRefs,
   useDeleteDatasetFileRef,
   useRetryDatasetFileRefSync,
@@ -60,6 +61,8 @@ export default function DatasetDocumentsPage() {
   const [keyword, setKeyword] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const [refToRemove, setRefToRemove] = useState<DatasetFileRef | null>(null);
+  const [selectedRefIds, setSelectedRefIds] = useState<string[]>([]);
+  const [bulkRemoveConfirmOpen, setBulkRemoveConfirmOpen] = useState(false);
   const [togglingRefId, setTogglingRefId] = useState<string>();
 
   const {
@@ -77,6 +80,7 @@ export default function DatasetDocumentsPage() {
   );
   const retryFileRefMutation = useRetryDatasetFileRefSync(datasetId);
   const deleteFileRefMutation = useDeleteDatasetFileRef(datasetId);
+  const bulkDeleteFileRefsMutation = useBulkDeleteDatasetFileRefs(datasetId);
   const bulkEnableMutation = useBulkEnableDocuments(datasetId);
   const bulkDisableMutation = useBulkDisableDocuments(datasetId);
   const totalPages = Math.max(1, Math.ceil(fileRefTotal / FILE_REF_PAGE_SIZE));
@@ -103,6 +107,11 @@ export default function DatasetDocumentsPage() {
     if (!normalizedKeyword) return fileRefs;
     return fileRefs.filter(ref => ref.file_name.toLowerCase().includes(normalizedKeyword));
   }, [fileRefs, keyword]);
+
+  useEffect(() => {
+    const visibleRefIds = new Set(filteredRefs.map(ref => ref.id));
+    setSelectedRefIds(prev => prev.filter(refId => visibleRefIds.has(refId)));
+  }, [filteredRefs]);
 
   const stats = useMemo(() => {
     const synced = fileRefs.filter(ref => ref.sync_status === 'synced');
@@ -156,6 +165,14 @@ export default function DatasetDocumentsPage() {
     await refetchFileRefs();
   }, [canDeleteDocument, deleteFileRefMutation, refToRemove, refetchFileRefs]);
 
+  const confirmBulkRemoveFileRefs = useCallback(async () => {
+    if (!canDeleteDocument || selectedRefIds.length === 0) return;
+    await bulkDeleteFileRefsMutation.mutateAsync(selectedRefIds);
+    setSelectedRefIds([]);
+    setBulkRemoveConfirmOpen(false);
+    await refetchFileRefs();
+  }, [bulkDeleteFileRefsMutation, canDeleteDocument, refetchFileRefs, selectedRefIds]);
+
   if (isPermissionsLoading) {
     return <PermissionLoadingState />;
   }
@@ -166,7 +183,7 @@ export default function DatasetDocumentsPage() {
 
   return (
     <div className="min-h-full bg-background">
-      <section className="flex min-h-[88px] flex-wrap items-center justify-between gap-4 border-b px-6 py-4">
+      <section className="flex min-h-[88px] flex-wrap items-center justify-between gap-4 px-6 py-4">
         <div className="min-w-0">
           <div className="flex items-center gap-2 text-lg font-semibold text-foreground">
             <span>{t('datasets.documents.fileRefs.count', { count: stats.total })}</span>
@@ -224,9 +241,12 @@ export default function DatasetDocumentsPage() {
             deleteFileRefMutation.isPending ? deleteFileRefMutation.variables : undefined
           }
           togglingRefId={togglingRefId}
+          selectedRefIds={selectedRefIds}
           onRetry={handleRetryFileRef}
           onRemove={setRefToRemove}
           onToggleEnabled={handleToggleEnabled}
+          onSelectionChange={setSelectedRefIds}
+          onBatchRemove={() => setBulkRemoveConfirmOpen(true)}
         />
         <Pagination
           currentPage={currentPage}
@@ -239,7 +259,7 @@ export default function DatasetDocumentsPage() {
       </div>
 
       <ConfirmDialog
-        variant="warning"
+        variant="danger"
         open={!!refToRemove}
         onOpenChange={open => {
           if (!open) setRefToRemove(null);
@@ -252,6 +272,24 @@ export default function DatasetDocumentsPage() {
         cancelText={t('datasets.actions.cancel')}
         onConfirm={confirmRemoveFileRef}
         loading={deleteFileRefMutation.isPending}
+        titleClassName="pr-8"
+      />
+
+      <ConfirmDialog
+        variant="danger"
+        open={bulkRemoveConfirmOpen}
+        onOpenChange={open => {
+          setBulkRemoveConfirmOpen(open);
+        }}
+        title={t('datasets.documents.fileRefs.confirmBatchRemoveTitle', {
+          count: selectedRefIds.length,
+        })}
+        description={t('datasets.documents.fileRefs.confirmBatchRemoveDescription')}
+        confirmText={t('datasets.documents.fileRefs.removeConfirm')}
+        cancelText={t('datasets.actions.cancel')}
+        onConfirm={confirmBulkRemoveFileRefs}
+        loading={bulkDeleteFileRefsMutation.isPending}
+        titleClassName="pr-8"
       />
 
       <DatasetFileAssetDialog

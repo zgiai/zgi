@@ -2,10 +2,12 @@
 
 import * as React from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
   Ban,
+  Clock,
   Loader2,
   WandSparkles,
   Plus,
@@ -53,10 +55,13 @@ import {
   useCancelWorkflowTestBatch,
   useCancelWorkflowTestGenerationTask,
   useCancelWorkflowTestScenarioRecognitionTask,
+  useCreateWorkflowTestBatch,
+  useDeleteWorkflowTestGenerationTask,
   useDeleteWorkflowTestCases,
   useExecuteWorkflowTestBatch,
   useLatestWorkflowTestScenarioRecognitionTask,
   useLatestWorkflowTestGenerationTask,
+  useResumeWorkflowTestGenerationTask,
   useRetestWorkflowTestBatch,
   useUpdateWorkflowTestCase,
   useWorkflowTestBatches,
@@ -68,9 +73,25 @@ import { WORKFLOW_TEST_KEYS } from '@/hooks/query-keys';
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
 import { workflowTestService } from '@/services/workflow-test.service';
-import type { WorkflowTestBatch } from '@/services/types/workflow-test';
-import type { WorkflowNode } from '@/components/workflow/store';
+import { localizeWorkflowTestError } from '@/utils/workflow-test-error';
+import type {
+  WorkflowTestBatch,
+  WorkflowTestCase,
+  WorkflowTestGenerationTask,
+} from '@/services/types/workflow-test';
 import { QUESTION_TYPE_OPTIONS, formatQuestionTypeLabel } from './question-type';
+import {
+  draftAttachmentAcceptExtensions,
+  draftRequiresCurrentTurnFiles,
+  draftSupportsFileInputs,
+  expectedCheckConditionCount,
+  expectedChecks,
+  generatedFixtureSpecs,
+  hasGeneratedAssets,
+  turnExpectation,
+  visibleInputEntries,
+  workflowDraftMode,
+} from './case-metadata';
 import { getAgentDetailBatchTestHref } from '@/utils/agent-detail-routes';
 
 interface BatchTestOverviewProps {
@@ -90,6 +111,7 @@ interface WorkflowTestActionPermissions {
 
 type BatchStatusKey = 'queued' | 'running' | 'completed' | 'stopped' | 'canceled';
 type BatchResultKey = 'running' | 'incomplete' | 'completed';
+type GenerationKind = 'conversation' | 'task' | 'file';
 
 function statusLabel(status: string, commonT: (key: 'enabled' | 'disabled' | 'none') => string) {
   if (status === 'enabled') return commonT('enabled');
@@ -158,17 +180,147 @@ function batchProgressValue(batch: {
   return Math.min(100, Math.round((batchFinishedCount(batch) / batch.case_count) * 100));
 }
 
-function isFileInputType(type: unknown) {
-  return type === 'file' || type === 'file-list' || type === 'array[file]';
+function defaultBatchName(template: (values: { date: string; time: string }) => string) {
+  const now = new Date();
+  const yyyy = now.getFullYear();
+  const mm = String(now.getMonth() + 1).padStart(2, '0');
+  const dd = String(now.getDate()).padStart(2, '0');
+  const hh = String(now.getHours()).padStart(2, '0');
+  const min = String(now.getMinutes()).padStart(2, '0');
+  return template({ date: `${yyyy}-${mm}-${dd}`, time: `${hh}:${min}` });
 }
 
-function draftSupportsFileInputs(draft: { graph?: { nodes?: WorkflowNode[] } } | undefined) {
-  const nodes = draft?.graph?.nodes;
-  if (!Array.isArray(nodes)) return true;
-  const startNode = nodes.find(node => node?.data?.type === 'start');
-  const variables = startNode?.data?.variables;
-  if (!Array.isArray(variables)) return false;
-  return variables.some(variable => isFileInputType(variable?.type));
+function generationContextMode(context?: string) {
+  const match = (context || '').match(/\[workflow_test_case_mode:(task|conversation)\]/);
+  return match?.[1] as 'task' | 'conversation' | undefined;
+}
+
+function generationContextHasFileGeneration(context?: string) {
+  return (context || '').includes('[workflow_test_file_generation:');
+}
+
+function generationKindFromTask(
+  task: WorkflowTestGenerationTask | null,
+  fallbackMode: 'task' | 'conversation',
+  fallbackHasFiles: boolean
+): GenerationKind {
+  if (task) {
+    const mode = generationContextMode(task.context);
+    if (mode === 'task') {
+      return generationContextHasFileGeneration(task.context) ? 'file' : 'task';
+    }
+    if (mode === 'conversation') {
+      return 'conversation';
+    }
+  }
+  if (fallbackMode === 'task') {
+    return fallbackHasFiles ? 'file' : 'task';
+  }
+  return 'conversation';
+}
+
+function generationProgressValue(created: number, requested: number, status?: string) {
+  if (status === 'completed') return 100;
+  if (requested <= 0) return 0;
+  return Math.max(0, Math.min(100, Math.round((created / requested) * 100)));
+}
+
+function nextGenerationIndex(created: number, requested: number) {
+  if (requested <= 0) return 1;
+  return Math.min(requested, created + 1);
+}
+
+function generationTitleKey(kind: GenerationKind, status?: string) {
+  if (status === 'canceling') return 'generationCancelingTitle';
+  if (status === 'canceled') return 'generationCanceledTitle';
+  if (status === 'failed') return 'generationFailedTitle';
+  if (status === 'completed') return 'generationCompletedTitle';
+  if (kind === 'file') return 'generatingFileTitle';
+  if (kind === 'task') return 'generatingTaskCaseTitle';
+  return 'generatingQuestionTitle';
+}
+
+function generationStatusKey(status: string | undefined, created: number) {
+  if (status === 'queued') return 'generationStatusQueued';
+  if (status === 'canceling') return 'generationStatusCanceling';
+  if (status === 'canceled') return 'generationStatusCanceled';
+  if (status === 'failed') return 'generationStatusFailed';
+  if (status === 'completed') return 'generationStatusCompleted';
+  if (created === 0) return 'generationStatusFirst';
+  return 'generationStatusNext';
+}
+
+function scenarioRecognitionProgressValue(status?: string) {
+  if (status === 'completed') return 100;
+  if (status === 'canceled') return 100;
+  if (status === 'failed') return 100;
+  if (status === 'canceling') return 80;
+  if (status === 'running') return 45;
+  if (status === 'queued') return 8;
+  return 0;
+}
+
+function scenarioRecognitionTitleKey(status?: string) {
+  if (status === 'canceling') return 'recognitionCancelingTitle';
+  if (status === 'canceled') return 'recognitionCanceledTitle';
+  if (status === 'failed') return 'recognitionFailedTitle';
+  if (status === 'completed') return 'recognitionCompletedTitle';
+  if (status === 'queued') return 'recognitionQueuedTitle';
+  return 'recognitionRunningTitle';
+}
+
+function scenarioRecognitionStatusKey(status?: string) {
+  if (status === 'queued') return 'recognitionStatusQueued';
+  if (status === 'canceling') return 'recognitionStatusCanceling';
+  if (status === 'canceled') return 'recognitionStatusCanceled';
+  if (status === 'failed') return 'recognitionStatusFailed';
+  if (status === 'completed') return 'recognitionStatusCompleted';
+  return 'recognitionStatusRunning';
+}
+
+function formatTaskCaseFocus(
+  item: WorkflowTestCase,
+  none: string,
+  labels: { variables: string; files: string; checks: string; criticalChecks: string }
+) {
+  const inputs = visibleInputEntries(item.turns?.[0]);
+  const checks = expectedChecks(item);
+  const checkCount = expectedCheckConditionCount(checks);
+  const criticalCheckCount =
+    checks.conditions?.filter(condition => condition.severity === 'critical').length ?? 0;
+  const fixtureCount = generatedFixtureSpecs(item).length;
+  const parts: string[] = [];
+  if (inputs.length > 0) {
+    parts.push(
+      `${labels.variables}: ${inputs
+        .slice(0, 2)
+        .map(([key]) => key)
+        .join(', ')}`
+    );
+  }
+  if (fixtureCount > 0) {
+    parts.push(`${labels.files}: ${fixtureCount}`);
+  }
+  if (checkCount > 0) {
+    parts.push(
+      criticalCheckCount > 0
+        ? `${labels.checks}: ${checkCount} (${labels.criticalChecks}: ${criticalCheckCount})`
+        : `${labels.checks}: ${checkCount}`
+    );
+  }
+  return parts.length > 0 ? parts.join(' / ') : none;
+}
+
+function formatConversationCaseFocus(
+  item: WorkflowTestCase,
+  labels: { turns: string; expectations: string }
+) {
+  const turns = item.turns ?? [];
+  const turnCount = Math.max(turns.length, 1);
+  const expectationCount = turns.filter(turn => turnExpectation(turn).trim()).length;
+  return expectationCount > 0
+    ? `${turnCount} ${labels.turns} / ${expectationCount} ${labels.expectations}`
+    : `${turnCount} ${labels.turns}`;
 }
 
 export function BatchTestOverview({
@@ -184,10 +336,15 @@ export function BatchTestOverview({
   const batchStatusT = useT('agents.workflowTest.batchStatus');
   const batchResultT = useT('agents.workflowTest.batchResult');
   const toastT = useT('agents.workflowTest.toasts');
+  const errorT = useT('agents.workflowTest.userErrors');
+  const router = useRouter();
   const queryClient = useQueryClient();
   const batchTestHref = getAgentDetailBatchTestHref(agentId, 'workflow');
   const newBatchHref = `${getAgentDetailBatchTestHref(agentId, 'workflow', 'batches')}/new`;
-  const getBatchResultHref = (batchId: string) => `${batchTestHref}/${batchId}`;
+  const getBatchResultHref = React.useCallback(
+    (batchId: string) => `${batchTestHref}/${batchId}`,
+    [batchTestHref]
+  );
   const [settingsOpen, setSettingsOpen] = React.useState(false);
   const [caseDialogOpen, setCaseDialogOpen] = React.useState(false);
   const [generateDialogOpen, setGenerateDialogOpen] = React.useState(false);
@@ -197,6 +354,8 @@ export function BatchTestOverview({
   const [completedGenerationTaskId, setCompletedGenerationTaskId] = React.useState<string | null>(
     null
   );
+  const [completedScenarioRecognitionTaskId, setCompletedScenarioRecognitionTaskId] =
+    React.useState<string | null>(null);
   const [editingCaseId, setEditingCaseId] = React.useState<string | null>(null);
   const [deletingCaseIds, setDeletingCaseIds] = React.useState<string[]>([]);
   const [retestingBatch, setRetestingBatch] = React.useState<WorkflowTestBatch | null>(null);
@@ -214,9 +373,19 @@ export function BatchTestOverview({
   const { data: latestScenarioRecognitionTaskData } =
     useLatestWorkflowTestScenarioRecognitionTask(agentId);
   const { data: workflowDraft } = useWorkflowDraft(agentId);
+  const workflowTestMode = workflowDraftMode(workflowDraft);
+  const supportsAttachments = draftSupportsFileInputs(workflowDraft);
+  const requiresCurrentTurnFiles = draftRequiresCurrentTurnFiles(workflowDraft);
+  const attachmentAcceptExt = React.useMemo(
+    () => draftAttachmentAcceptExtensions(workflowDraft),
+    [workflowDraft]
+  );
+  const createBatch = useCreateWorkflowTestBatch(agentId);
   const executeBatch = useExecuteWorkflowTestBatch(agentId);
   const cancelBatch = useCancelWorkflowTestBatch(agentId);
   const cancelGenerationTask = useCancelWorkflowTestGenerationTask(agentId);
+  const resumeGenerationTask = useResumeWorkflowTestGenerationTask(agentId);
+  const deleteGenerationTask = useDeleteWorkflowTestGenerationTask(agentId);
   const cancelScenarioRecognitionTask = useCancelWorkflowTestScenarioRecognitionTask(agentId);
   const retestBatch = useRetestWorkflowTestBatch(agentId);
   const updateCase = useUpdateWorkflowTestCase(agentId);
@@ -230,6 +399,12 @@ export function BatchTestOverview({
   const batches = React.useMemo(() => batchesData?.data?.items ?? [], [batchesData]);
   const generationTask = latestGenerationTaskData?.data?.task ?? null;
   const scenarioRecognitionTask = latestScenarioRecognitionTaskData?.data?.task ?? null;
+  const generationTaskError = generationTask?.error
+    ? localizeWorkflowTestError(generationTask.error, errorT)
+    : commonT('none');
+  const scenarioRecognitionTaskError = scenarioRecognitionTask?.error
+    ? localizeWorkflowTestError(scenarioRecognitionTask.error, errorT)
+    : commonT('none');
   const isScenarioRecognitionActive =
     scenarioRecognitionTask?.status === 'queued' ||
     scenarioRecognitionTask?.status === 'running' ||
@@ -242,11 +417,48 @@ export function BatchTestOverview({
     scenarioRecognitionTask?.id &&
     (scenarioRecognitionTask.status === 'queued' || scenarioRecognitionTask.status === 'running');
   const canCancelGeneration =
-    generationTask?.id && (generationTask.status === 'queued' || generationTask.status === 'running');
+    generationTask?.id &&
+    (generationTask.status === 'queued' || generationTask.status === 'running');
+  const canResumeGeneration =
+    generationTask?.id &&
+    ['failed', 'canceled'].includes(generationTask.status) &&
+    generationTask.created_count < generationTask.requested_count;
+  const canDeleteGenerationTask =
+    generationTask?.id && ['completed', 'failed', 'canceled'].includes(generationTask.status);
   const isGenerationPendingLocally = pendingGenerationCount !== null && !isGenerationActive;
   const displayedGenerationStatus = isGenerationPendingLocally ? 'running' : generationTask?.status;
   const isGenerationCompleted =
     displayedGenerationStatus === 'completed' && generationTask?.id === completedGenerationTaskId;
+  const isScenarioRecognitionCompleted =
+    scenarioRecognitionTask?.status === 'completed' &&
+    scenarioRecognitionTask.id === completedScenarioRecognitionTaskId;
+  const shouldShowScenarioRecognitionBanner =
+    view === 'case-library' &&
+    (isScenarioRecognitionActive ||
+      isScenarioRecognitionCompleted ||
+      scenarioRecognitionTask?.status === 'canceled' ||
+      scenarioRecognitionTask?.status === 'failed');
+  const scenarioRecognitionProgress = scenarioRecognitionProgressValue(
+    scenarioRecognitionTask?.status
+  );
+  const scenarioRecognitionTitle = t(
+    `scenarios.${scenarioRecognitionTitleKey(scenarioRecognitionTask?.status)}`,
+    {
+      recognized: scenarioRecognitionTask?.recognized_count ?? 0,
+      assigned: scenarioRecognitionTask?.assigned_case_count ?? 0,
+    }
+  );
+  const scenarioRecognitionStatusText = t(
+    `scenarios.${scenarioRecognitionStatusKey(scenarioRecognitionTask?.status)}`,
+    {
+      recognized: scenarioRecognitionTask?.recognized_count ?? 0,
+      assigned: scenarioRecognitionTask?.assigned_case_count ?? 0,
+      error: scenarioRecognitionTaskError,
+    }
+  );
+  const scenarioRecognitionProgressText = t('scenarios.recognitionProgressText', {
+    percent: scenarioRecognitionProgress,
+  });
   const shouldShowGenerationBanner =
     view === 'case-library' &&
     (isGenerationActive ||
@@ -260,6 +472,42 @@ export function BatchTestOverview({
   const generationBannerCreated = isGenerationPendingLocally
     ? 0
     : (generationTask?.created_count ?? 0);
+  const generationKind = generationKindFromTask(
+    generationTask,
+    workflowTestMode,
+    supportsAttachments
+  );
+  const generationProgress = generationProgressValue(
+    generationBannerCreated,
+    generationBannerRequested,
+    displayedGenerationStatus
+  );
+  const generationCurrentIndex = nextGenerationIndex(
+    generationBannerCreated,
+    generationBannerRequested
+  );
+  const generationTitle = t(
+    `cases.${generationTitleKey(generationKind, displayedGenerationStatus)}`,
+    {
+      count: generationBannerRequested,
+      created: generationBannerCreated,
+    }
+  );
+  const generationStatusText = t(
+    `cases.${generationStatusKey(displayedGenerationStatus, generationBannerCreated)}`,
+    {
+      created: generationBannerCreated,
+      total: generationBannerRequested,
+      current: generationCurrentIndex,
+      percent: generationProgress,
+      error: generationTaskError,
+    }
+  );
+  const generationProgressText = t('cases.generationProgressText', {
+    created: generationBannerCreated,
+    total: generationBannerRequested,
+    percent: generationProgress,
+  });
   const generationBannerTone =
     displayedGenerationStatus === 'failed'
       ? {
@@ -281,14 +529,29 @@ export function BatchTestOverview({
             title: 'text-blue-700',
             description: 'text-slate-700',
           };
+  const scenarioRecognitionBannerTone =
+    scenarioRecognitionTask?.status === 'failed'
+      ? {
+          wrapper: 'border-red-200 bg-red-50',
+          icon: 'bg-white text-red-600',
+          title: 'text-red-700',
+          description: 'text-red-700',
+        }
+      : isScenarioRecognitionCompleted || scenarioRecognitionTask?.status === 'canceled'
+        ? {
+            wrapper: 'border-emerald-200 bg-emerald-50',
+            icon: 'bg-white text-emerald-600',
+            title: 'text-emerald-700',
+            description: 'text-slate-700',
+          }
+        : {
+            wrapper: 'border-blue-200 bg-blue-50',
+            icon: 'bg-white text-blue-600',
+            title: 'text-blue-700',
+            description: 'text-slate-700',
+          };
   const previousGenerationTaskStatusRef = React.useRef<string | null>(null);
   const previousScenarioRecognitionTaskStatusRef = React.useRef<string | null>(null);
-  const canUpdateTestAssets = Boolean(permissions?.canUpdate);
-  const canDebugTest = Boolean(permissions?.canDebug);
-  const canStopTestRun = Boolean(permissions?.canStop);
-  const canViewBatchResults = Boolean(permissions?.canViewLogs);
-  const canCreateAndRunBatch = canUpdateTestAssets && canDebugTest && canViewBatchResults;
-  const canRetestBatch = canDebugTest && canViewBatchResults;
   const enabledCases = cases.filter(item => item.status === 'enabled');
   const disabledCases = cases.filter(item => item.status !== 'enabled');
   const coveredScenarioIds = new Set(cases.map(item => item.scenario_id).filter(Boolean));
@@ -305,18 +568,30 @@ export function BatchTestOverview({
     batchStatusFilter === 'all'
       ? batches
       : batches.filter(item => item.status === batchStatusFilter);
-  const runningBatch = batches.find(item => item.status === 'running') ?? null;
-  const shouldShowRunningBatch =
+  const activeBatches = batches.filter(
+    (item): item is WorkflowTestBatch & { status: 'queued' | 'running' } =>
+      item.status === 'queued' || item.status === 'running'
+  );
+  const activeBatchIds = new Set(activeBatches.map(item => item.id));
+  const shouldShowActiveBatches =
     view === 'batches' &&
-    !!runningBatch &&
-    (batchStatusFilter === 'all' || batchStatusFilter === 'running');
-  const tableBatches = shouldShowRunningBatch
-    ? filteredBatches.filter(item => item.id !== runningBatch.id)
+    activeBatches.length > 0 &&
+    (batchStatusFilter === 'all' ||
+      batchStatusFilter === 'queued' ||
+      batchStatusFilter === 'running');
+  const tableBatches = shouldShowActiveBatches
+    ? filteredBatches.filter(item => !activeBatchIds.has(item.id))
     : filteredBatches;
   const selectedCases = cases.filter(item => selectedCaseIds.includes(item.id));
-  const supportsAttachments = draftSupportsFileInputs(workflowDraft);
+  const selectedEnabledCases = selectedCases.filter(item => item.status === 'enabled');
   const allCasesSelected =
     filteredCases.length > 0 && filteredCases.every(item => selectedCaseIds.includes(item.id));
+  const canUpdateTestAssets = permissions?.canUpdate ?? true;
+  const canDebugTest = permissions?.canDebug ?? true;
+  const canStopTestRun = permissions?.canStop ?? true;
+  const canViewBatchResults = permissions?.canViewLogs ?? true;
+  const canCreateAndRunBatch = canUpdateTestAssets && canDebugTest && canViewBatchResults;
+  const canRetestBatch = canDebugTest && canViewBatchResults;
   React.useEffect(() => {
     setSelectedCaseIds(prev => prev.filter(id => cases.some(item => item.id === id)));
     setExpandedCaseIds(prev => prev.filter(id => cases.some(item => item.id === id)));
@@ -334,7 +609,7 @@ export function BatchTestOverview({
     if (currentStatus === previousStatus) return;
 
     if (generationTask?.status === 'failed' && generationTask.error) {
-      toast.error(generationTask.error);
+      toast.error(generationTaskError);
     } else if (
       generationTask?.status === 'completed' &&
       (previousStatus === 'queued' ||
@@ -356,7 +631,7 @@ export function BatchTestOverview({
     }
 
     previousGenerationTaskStatusRef.current = currentStatus;
-  }, [agentId, generationTask, queryClient, toastT]);
+  }, [agentId, generationTask, generationTaskError, queryClient, toastT]);
 
   React.useEffect(() => {
     if (!completedGenerationTaskId) return;
@@ -370,7 +645,14 @@ export function BatchTestOverview({
     if (currentStatus === previousStatus) return;
 
     if (scenarioRecognitionTask?.status === 'failed' && scenarioRecognitionTask.error) {
-      toast.error(scenarioRecognitionTask.error);
+      toast.error(scenarioRecognitionTaskError);
+    } else if (
+      scenarioRecognitionTask?.status === 'completed' &&
+      (previousStatus === 'queued' ||
+        previousStatus === 'running' ||
+        previousStatus === 'canceling')
+    ) {
+      setCompletedScenarioRecognitionTaskId(scenarioRecognitionTask.id);
     }
 
     if (
@@ -385,10 +667,15 @@ export function BatchTestOverview({
     }
 
     previousScenarioRecognitionTaskStatusRef.current = currentStatus;
-  }, [agentId, queryClient, scenarioRecognitionTask]);
+  }, [agentId, queryClient, scenarioRecognitionTask, scenarioRecognitionTaskError]);
+
+  React.useEffect(() => {
+    if (!completedScenarioRecognitionTaskId) return;
+    const timer = window.setTimeout(() => setCompletedScenarioRecognitionTaskId(null), 6000);
+    return () => window.clearTimeout(timer);
+  }, [completedScenarioRecognitionTaskId]);
 
   const updateSelectedCaseStatus = async (status: 'enabled' | 'disabled') => {
-    if (!canUpdateTestAssets) return;
     await Promise.all(
       selectedCases.map(item =>
         workflowTestService.updateCase(agentId, item.id, {
@@ -410,13 +697,35 @@ export function BatchTestOverview({
     queryClient.invalidateQueries({ queryKey: WORKFLOW_TEST_KEYS.all });
   };
 
+  const runSelectedCases = () => {
+    if (selectedEnabledCases.length === 0 || createBatch.isPending || executeBatch.isPending) {
+      return;
+    }
+    const name = defaultBatchName(values => t('batches.selectedBatchName', values));
+    createBatch.mutate(
+      {
+        name,
+        case_ids: selectedEnabledCases.map(item => item.id),
+      },
+      {
+        onSuccess: response => {
+          const batchId = response.data.id;
+          executeBatch.mutate(batchId, {
+            onSuccess: () => {
+              setSelectedCaseIds([]);
+              router.push(getBatchResultHref(batchId));
+            },
+          });
+        },
+      }
+    );
+  };
+
   const requestDeleteCases = (caseIds: string[]) => {
-    if (!canUpdateTestAssets) return;
     setDeletingCaseIds(Array.from(new Set(caseIds)));
   };
 
   const confirmDeleteCases = () => {
-    if (!canUpdateTestAssets) return;
     if (deletingCaseIds.length === 0) return;
     const ids = deletingCaseIds;
     deleteCases.mutate(
@@ -439,9 +748,11 @@ export function BatchTestOverview({
 
   const buildRetestName = React.useCallback(
     (batchName: string) => {
-      const baseName = batchName.replace(/\s+重新测试\d*$/u, '').trim() || batchName;
+      const escapedRetestLabel = commonT('retest').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const suffixPattern = new RegExp(`\\s+${escapedRetestLabel}\\s*\\d*$`, 'u');
+      const baseName = batchName.replace(suffixPattern, '').trim() || batchName;
       const escapedBaseName = baseName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      const pattern = new RegExp(`^${escapedBaseName}\\s+重新测试(\\d*)$`, 'u');
+      const pattern = new RegExp(`^${escapedBaseName}\\s+${escapedRetestLabel}\\s*(\\d*)$`, 'u');
       const maxIndex = batches.reduce((max, item) => {
         const match = item.name.match(pattern);
         if (!match) return max;
@@ -450,11 +761,10 @@ export function BatchTestOverview({
       }, 1);
       return t('batches.retestName', { name: baseName, index: maxIndex + 1 });
     },
-    [batches, t]
+    [batches, commonT, t]
   );
 
   const confirmRetestBatch = () => {
-    if (!canRetestBatch) return;
     if (!retestingBatch) return;
     retestBatch.mutate(
       {
@@ -465,7 +775,18 @@ export function BatchTestOverview({
     );
   };
   const pageDescription =
-    view === 'batches' ? t('batches.description') : agentDescription || t('descriptionFallback');
+    view === 'batches'
+      ? t('batches.description')
+      : agentDescription ||
+        (workflowTestMode === 'task' ? t('taskDescriptionFallback') : t('descriptionFallback'));
+  const generateCasesLabel =
+    workflowTestMode === 'task' && supportsAttachments
+      ? t('actions.generateFileCases')
+      : workflowTestMode === 'task'
+        ? t('actions.generateTaskCases')
+        : t('actions.generateCases');
+  const createCaseLabel =
+    workflowTestMode === 'task' ? t('actions.createTaskCase') : t('actions.createCase');
   const defaultRecognitionContext = [agentName, agentDescription].filter(Boolean).join('\n');
 
   const sceneCards = scenarios.map(scene => {
@@ -493,7 +814,9 @@ export function BatchTestOverview({
               </h1>
               <p className="mt-2 max-w-3xl text-sm text-slate-600">{pageDescription}</p>
               <div className="mt-4 flex items-center gap-2 text-sm text-slate-500">
-                <Badge variant="outline">{commonT('chatWorkflow')}</Badge>
+                <Badge variant="outline">
+                  {workflowTestMode === 'task' ? t('mode.task') : t('mode.conversation')}
+                </Badge>
               </div>
             </div>
             <div className="flex flex-wrap items-center justify-end gap-2">
@@ -527,11 +850,22 @@ export function BatchTestOverview({
                   {canDebugTest ? (
                     <Button variant="outline" onClick={() => setGenerateDialogOpen(true)}>
                       <WandSparkles className="mr-2 size-4" />
-                      {t('actions.generateCases')}
+                      {generateCasesLabel}
                     </Button>
                   ) : null}
                 </>
-              ) : null}
+              ) : (
+                <Button
+                  variant="outline"
+                  disabled={isScenarioRecognitionActive}
+                  onClick={() => setRecognizeScenariosOpen(true)}
+                >
+                  <ScanSearch className="mr-2 size-4" />
+                  {isScenarioRecognitionActive
+                    ? t('actions.recognizingScenarios')
+                    : t('actions.recognizeScenarios')}
+                </Button>
+              )}
             </div>
           </div>
 
@@ -567,20 +901,18 @@ export function BatchTestOverview({
                 </div>
                 <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
                   {sceneCards.length > 0 ? (
-                    canDebugTest ? (
-                      <Button
-                        variant="outline"
-                        disabled={isScenarioRecognitionActive}
-                        onClick={() => setRecognizeScenariosOpen(true)}
-                      >
-                        <ScanSearch className="mr-2 size-4" />
-                        {isScenarioRecognitionActive
-                          ? t('actions.recognizingScenarios')
-                          : t('actions.rerecognizeScenarios')}
-                      </Button>
-                    ) : null
+                    <Button
+                      variant="outline"
+                      disabled={isScenarioRecognitionActive}
+                      onClick={() => setRecognizeScenariosOpen(true)}
+                    >
+                      <ScanSearch className="mr-2 size-4" />
+                      {isScenarioRecognitionActive
+                        ? t('actions.recognizingScenarios')
+                        : t('actions.rerecognizeScenarios')}
+                    </Button>
                   ) : null}
-                  {canStopTestRun && canCancelScenarioRecognition ? (
+                  {canCancelScenarioRecognition ? (
                     <Button
                       variant="outline"
                       disabled={cancelScenarioRecognitionTask.isPending}
@@ -592,15 +924,65 @@ export function BatchTestOverview({
                       {t('actions.cancelRecognition')}
                     </Button>
                   ) : null}
-                  {canUpdateTestAssets ? (
-                    <Button variant="outline" onClick={() => setScenarioDialogOpen(true)}>
-                      <SquarePen className="mr-2 size-4" />
-                      {t('actions.editScenarios')}
-                    </Button>
-                  ) : null}
+                  <Button variant="outline" onClick={() => setScenarioDialogOpen(true)}>
+                    <SquarePen className="mr-2 size-4" />
+                    {t('actions.editScenarios')}
+                  </Button>
                 </div>
               </CardHeader>
               <CardContent>
+                {shouldShowScenarioRecognitionBanner ? (
+                  <div
+                    className={`mb-4 flex items-start gap-3 rounded-xl border px-4 py-4 ${scenarioRecognitionBannerTone.wrapper}`}
+                  >
+                    <div
+                      className={`flex size-8 shrink-0 items-center justify-center rounded-lg ${scenarioRecognitionBannerTone.icon}`}
+                    >
+                      <ScanSearch className="size-4" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div
+                        className={`text-sm font-semibold ${scenarioRecognitionBannerTone.title}`}
+                      >
+                        {scenarioRecognitionTitle}
+                      </div>
+                      <div className="mt-3 space-y-2">
+                        <div className="flex items-center justify-between gap-3 text-xs font-medium text-slate-600">
+                          <span>{scenarioRecognitionStatusText}</span>
+                          <span className="shrink-0">{scenarioRecognitionProgressText}</span>
+                        </div>
+                        <Progress value={scenarioRecognitionProgress} className="h-2 bg-white/70" />
+                      </div>
+                      <div className={`mt-2 text-sm ${scenarioRecognitionBannerTone.description}`}>
+                        {scenarioRecognitionTask?.status === 'failed'
+                          ? t('scenarios.recognitionFailedDescription', {
+                              error: scenarioRecognitionTaskError,
+                            })
+                          : scenarioRecognitionTask?.status === 'canceled'
+                            ? t('scenarios.recognitionCanceledDescription')
+                            : isScenarioRecognitionCompleted
+                              ? t('scenarios.recognitionCompletedDescription', {
+                                  recognized: scenarioRecognitionTask?.recognized_count ?? 0,
+                                  assigned: scenarioRecognitionTask?.assigned_case_count ?? 0,
+                                })
+                              : t('scenarios.recognitionProgressDescription')}
+                      </div>
+                    </div>
+                    {canCancelScenarioRecognition ? (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={cancelScenarioRecognitionTask.isPending}
+                        onClick={() =>
+                          cancelScenarioRecognitionTask.mutate(scenarioRecognitionTask.id)
+                        }
+                      >
+                        <Ban className="mr-2 size-4" />
+                        {t('actions.cancelRecognition')}
+                      </Button>
+                    ) : null}
+                  </div>
+                ) : null}
                 {sceneCards.length === 0 ? (
                   <div className="flex min-h-[220px] flex-col items-center justify-center rounded-xl border border-dashed border-slate-200 bg-slate-50 px-6 text-center">
                     <div className="rounded-xl bg-white p-3 text-blue-600 shadow-sm">
@@ -619,56 +1001,19 @@ export function BatchTestOverview({
                         ? t('scenarios.recognizingDescription')
                         : t('scenarios.emptyDescription')}
                     </p>
-                    {canDebugTest ? (
-                      <Button
-                        className="mt-5"
-                        disabled={isScenarioRecognitionActive}
-                        onClick={() => setRecognizeScenariosOpen(true)}
-                      >
-                        <ScanSearch className="mr-2 size-4" />
-                        {isScenarioRecognitionActive
-                          ? t('actions.recognizingScenarios')
-                          : t('actions.recognizeScenarios')}
-                      </Button>
-                    ) : null}
-                    {canStopTestRun && canCancelScenarioRecognition ? (
-                      <Button
-                        className="mt-3"
-                        variant="outline"
-                        disabled={cancelScenarioRecognitionTask.isPending}
-                        onClick={() =>
-                          cancelScenarioRecognitionTask.mutate(scenarioRecognitionTask.id)
-                        }
-                      >
-                        <Ban className="mr-2 size-4" />
-                        {t('actions.cancelRecognition')}
-                      </Button>
-                    ) : null}
+                    <Button
+                      className="mt-5"
+                      disabled={isScenarioRecognitionActive}
+                      onClick={() => setRecognizeScenariosOpen(true)}
+                    >
+                      <ScanSearch className="mr-2 size-4" />
+                      {isScenarioRecognitionActive
+                        ? t('actions.recognizingScenarios')
+                        : t('actions.recognizeScenarios')}
+                    </Button>
                   </div>
                 ) : (
                   <>
-                    {isScenarioRecognitionActive ? (
-                      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-                        <p className="text-sm font-medium text-blue-600">
-                          {scenarioRecognitionTask?.status === 'canceling'
-                            ? t('scenarios.cancelingDescription')
-                            : t('scenarios.recognizingDescription')}
-                        </p>
-                        {canStopTestRun && canCancelScenarioRecognition ? (
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            disabled={cancelScenarioRecognitionTask.isPending}
-                            onClick={() =>
-                              cancelScenarioRecognitionTask.mutate(scenarioRecognitionTask.id)
-                            }
-                          >
-                            <Ban className="mr-2 size-4" />
-                            {t('actions.cancelRecognition')}
-                          </Button>
-                        ) : null}
-                      </div>
-                    ) : null}
                     <div className="scrollbar-thin flex gap-4 overflow-x-auto pb-2">
                       {sceneCards.map(scene => (
                         <div
@@ -704,14 +1049,20 @@ export function BatchTestOverview({
             <Card id="case-library" className="scroll-mt-6 rounded-2xl">
               <CardHeader className="flex-row items-start justify-between gap-4">
                 <div>
-                  <CardTitle>{t('cases.title')}</CardTitle>
-                  <p className="text-sm text-slate-600">{t('cases.description')}</p>
+                  <CardTitle>
+                    {workflowTestMode === 'task' ? t('cases.taskTitle') : t('cases.title')}
+                  </CardTitle>
+                  <p className="text-sm text-slate-600">
+                    {workflowTestMode === 'task'
+                      ? t('cases.taskDescription')
+                      : t('cases.description')}
+                  </p>
                 </div>
                 <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
                   {canUpdateTestAssets ? (
                     <Button variant="outline" onClick={() => setCaseDialogOpen(true)}>
                       <Plus className="mr-2 size-4" />
-                      {t('actions.createCase')}
+                      {createCaseLabel}
                     </Button>
                   ) : null}
                 </div>
@@ -728,42 +1079,31 @@ export function BatchTestOverview({
                     </div>
                     <div className="min-w-0 flex-1">
                       <div className={`text-sm font-semibold ${generationBannerTone.title}`}>
-                        {displayedGenerationStatus === 'canceling'
-                          ? t('cases.generationCancelingTitle')
-                          : displayedGenerationStatus === 'canceled'
-                            ? t('cases.generationCanceledTitle', {
-                                count: generationBannerCreated,
-                              })
-                            : displayedGenerationStatus === 'failed'
-                          ? t('cases.generationFailedTitle', {
-                              count: generationBannerRequested,
-                            })
-                          : isGenerationCompleted
-                            ? t('cases.generationCompletedTitle', {
-                                count: generationBannerCreated,
-                              })
-                            : t('cases.generatingTaskTitle', {
-                                count: generationBannerRequested,
-                              })}
+                        {generationTitle}
                       </div>
-                      <div className={`mt-1 text-sm ${generationBannerTone.description}`}>
-                        {displayedGenerationStatus === 'canceling'
-                          ? t('cases.generationCancelingDescription')
+                      <div className="mt-3 space-y-2">
+                        <div className="flex items-center justify-between gap-3 text-xs font-medium text-slate-600">
+                          <span>{generationStatusText}</span>
+                          <span className="shrink-0">{generationProgressText}</span>
+                        </div>
+                        <Progress value={generationProgress} className="h-2 bg-white/70" />
+                      </div>
+                      <div className={`mt-2 text-sm ${generationBannerTone.description}`}>
+                        {displayedGenerationStatus === 'failed'
+                          ? t('cases.generationFailedDescription', {
+                              created: generationBannerCreated,
+                              error: generationTaskError,
+                            })
                           : displayedGenerationStatus === 'canceled'
                             ? t('cases.generationCanceledDescription', {
                                 created: generationBannerCreated,
                               })
-                            : displayedGenerationStatus === 'failed'
-                          ? t('cases.generationFailedDescription', {
-                              created: generationBannerCreated,
-                              error: generationTask?.error || commonT('none'),
-                            })
-                          : isGenerationCompleted
-                            ? t('cases.generationCompletedDescription')
-                            : t('cases.generatingTaskDescription')}
+                            : isGenerationCompleted
+                              ? t('cases.generationCompletedDescription')
+                              : t('cases.generationProgressDescription')}
                       </div>
                     </div>
-                    {canStopTestRun && canCancelGeneration ? (
+                    {canCancelGeneration ? (
                       <Button
                         size="sm"
                         variant="outline"
@@ -772,6 +1112,28 @@ export function BatchTestOverview({
                       >
                         <Ban className="mr-2 size-4" />
                         {t('actions.cancelGeneration')}
+                      </Button>
+                    ) : null}
+                    {canResumeGeneration && generationTask ? (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={resumeGenerationTask.isPending}
+                        onClick={() => resumeGenerationTask.mutate(generationTask.id)}
+                      >
+                        <PlayCircle className="mr-2 size-4" />
+                        {t('actions.resumeGeneration')}
+                      </Button>
+                    ) : null}
+                    {canDeleteGenerationTask && generationTask ? (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={deleteGenerationTask.isPending}
+                        onClick={() => deleteGenerationTask.mutate(generationTask.id)}
+                      >
+                        <Trash2 className="mr-2 size-4" />
+                        {t('actions.deleteGenerationTask')}
                       </Button>
                     ) : null}
                   </div>
@@ -824,34 +1186,37 @@ export function BatchTestOverview({
                     <TableHeader className="bg-white">
                       <TableRow>
                         <TableHead className="sticky top-0 z-20 w-12 bg-white shadow-[inset_0_-1px_0_rgba(148,163,184,0.28)]">
-                          {canUpdateTestAssets ? (
-                            <Checkbox
-                              checked={allCasesSelected}
-                              onCheckedChange={checked => {
-                                const filteredIds = filteredCases.map(item => item.id);
-                                setSelectedCaseIds(prev =>
-                                  checked
-                                    ? Array.from(new Set([...prev, ...filteredIds]))
-                                    : prev.filter(id => !filteredIds.includes(id))
-                                );
-                              }}
-                            />
-                          ) : null}
+                          <Checkbox
+                            checked={allCasesSelected}
+                            onCheckedChange={checked => {
+                              const filteredIds = filteredCases.map(item => item.id);
+                              setSelectedCaseIds(prev =>
+                                checked
+                                  ? Array.from(new Set([...prev, ...filteredIds]))
+                                  : prev.filter(id => !filteredIds.includes(id))
+                              );
+                            }}
+                          />
                         </TableHead>
-                        <TableHead className="sticky top-0 z-20 w-[44%] bg-white shadow-[inset_0_-1px_0_rgba(148,163,184,0.28)]">
+                        <TableHead className="sticky top-0 z-20 w-[34%] bg-white shadow-[inset_0_-1px_0_rgba(148,163,184,0.28)]">
                           {t('table.questionContent')}
                         </TableHead>
-                        <TableHead className="sticky top-0 z-20 w-[15%] bg-white shadow-[inset_0_-1px_0_rgba(148,163,184,0.28)]">
+                        <TableHead className="sticky top-0 z-20 w-[13%] bg-white shadow-[inset_0_-1px_0_rgba(148,163,184,0.28)]">
                           {t('table.businessScenario')}
                         </TableHead>
-                        <TableHead className="sticky top-0 z-20 w-[11%] bg-white shadow-[inset_0_-1px_0_rgba(148,163,184,0.28)]">
+                        <TableHead className="sticky top-0 z-20 w-[10%] bg-white shadow-[inset_0_-1px_0_rgba(148,163,184,0.28)]">
                           {t('table.questionType')}
                         </TableHead>
-                        <TableHead className="sticky top-0 z-20 w-[10%] bg-white shadow-[inset_0_-1px_0_rgba(148,163,184,0.28)]">
+                        <TableHead className="sticky top-0 z-20 w-[9%] bg-white shadow-[inset_0_-1px_0_rgba(148,163,184,0.28)]">
                           {t('table.status')}
                         </TableHead>
-                        <TableHead className="sticky top-0 z-20 w-[13%] bg-white shadow-[inset_0_-1px_0_rgba(148,163,184,0.28)]">
-                          {t('table.updatedAt')}
+                        <TableHead className="sticky top-0 z-20 w-[12%] bg-white shadow-[inset_0_-1px_0_rgba(148,163,184,0.28)]">
+                          {workflowTestMode === 'task'
+                            ? t('table.taskFocus')
+                            : t('table.conversationFocus')}
+                        </TableHead>
+                        <TableHead className="sticky top-0 z-20 w-[14%] bg-white shadow-[inset_0_-1px_0_rgba(148,163,184,0.28)]">
+                          {t('table.generatedAt')}
                         </TableHead>
                         <TableHead className="sticky top-0 z-20 w-[150px] bg-white text-right shadow-[inset_0_-1px_0_rgba(148,163,184,0.28)]">
                           {t('table.operations')}
@@ -861,19 +1226,19 @@ export function BatchTestOverview({
                     <TableBody>
                       {casesLoading ? (
                         <TableRow>
-                          <TableCell colSpan={7} className="h-32 text-center text-slate-500">
+                          <TableCell colSpan={8} className="h-32 text-center text-slate-500">
                             {t('cases.loading')}
                           </TableCell>
                         </TableRow>
                       ) : cases.length === 0 ? (
                         <TableRow>
-                          <TableCell colSpan={7} className="h-32 text-center text-slate-500">
+                          <TableCell colSpan={8} className="h-32 text-center text-slate-500">
                             {t('cases.empty')}
                           </TableCell>
                         </TableRow>
                       ) : filteredCases.length === 0 ? (
                         <TableRow>
-                          <TableCell colSpan={7} className="h-32 text-center text-slate-500">
+                          <TableCell colSpan={8} className="h-32 text-center text-slate-500">
                             {t('cases.filteredEmpty')}
                           </TableCell>
                         </TableRow>
@@ -884,137 +1249,159 @@ export function BatchTestOverview({
                           const isExpanded = expandedCaseIds.includes(item.id);
 
                           return (
-                          <TableRow key={item.id}>
-                            <TableCell className="py-4">
-                              {canUpdateTestAssets ? (
-                                <Checkbox
-                                  checked={selectedCaseIds.includes(item.id)}
-                                  onCheckedChange={checked => {
-                                    setSelectedCaseIds(prev =>
-                                      checked
-                                        ? Array.from(new Set([...prev, item.id]))
-                                        : prev.filter(id => id !== item.id)
-                                    );
-                                  }}
-                                />
-                              ) : null}
-                            </TableCell>
-                            <TableCell className="min-w-0 whitespace-normal py-4 align-top">
-                              <div className="line-clamp-2 break-words font-medium text-slate-950">
-                                {item.content}
-                              </div>
-                              {hasMultipleTurns ? (
-                                <>
-                                  <div className="mt-1 text-xs text-slate-500">
-                                    {t('cases.turnCount', { count: turns.length })}
-                                    <button
-                                      type="button"
-                                      className="ml-1 font-medium text-blue-600 hover:text-blue-700 hover:underline"
-                                      onClick={() => toggleCaseExpanded(item.id)}
-                                    >
-                                      {isExpanded ? t('cases.collapseTurns') : t('cases.expandTurns')}
-                                    </button>
-                                  </div>
-                                  {isExpanded ? (
-                                    <div className="mt-3 min-w-0 space-y-3 border-l border-slate-200 pl-4 text-sm text-slate-700">
-                                      {turns.slice(1).map((turn, index) => (
-                                        <div
-                                          key={`${item.id}-turn-${index + 2}`}
-                                          className="relative min-w-0"
-                                        >
-                                          <span className="absolute -left-[19px] top-2 h-2 w-2 rounded-full border border-slate-300 bg-white" />
-                                          <div className="flex min-w-0 items-baseline gap-1">
-                                            <span className="shrink-0 whitespace-nowrap font-medium text-slate-600">
-                                              {t('cases.turnTitle', { index: index + 2 })}
-                                            </span>
-                                            <span className="min-w-0 truncate">{turn.content}</span>
-                                          </div>
-                                        </div>
-                                      ))}
-                                    </div>
-                                  ) : null}
-                                </>
-                              ) : null}
-                              {item.turns?.some(turn => turn.attachments?.length) ? (
-                                <div className="mt-1 text-xs text-slate-500">
-                                  {commonT('attachmentsIncluded')}
+                            <TableRow key={item.id}>
+                              <TableCell className="py-4">
+                                {canUpdateTestAssets ? (
+                                  <Checkbox
+                                    checked={selectedCaseIds.includes(item.id)}
+                                    onCheckedChange={checked => {
+                                      setSelectedCaseIds(prev =>
+                                        checked
+                                          ? Array.from(new Set([...prev, item.id]))
+                                          : prev.filter(id => id !== item.id)
+                                      );
+                                    }}
+                                  />
+                                ) : null}
+                              </TableCell>
+                              <TableCell className="min-w-0 whitespace-normal py-4 align-top">
+                                <div className="line-clamp-2 break-words font-medium text-slate-950">
+                                  {item.content}
                                 </div>
-                              ) : null}
-                            </TableCell>
-                            <TableCell className="py-4 align-top">
-                              <div className="line-clamp-2 break-words">
-                                {item.scenario_id
-                                  ? scenariosById.get(item.scenario_id) || commonT('none')
-                                  : commonT('none')}
-                              </div>
-                            </TableCell>
-                            <TableCell className="py-4 align-top">
-                              {formatQuestionTypeLabel(item.question_type, typeT)}
-                            </TableCell>
-                            <TableCell className="py-4 align-top">
-                              <Badge
-                                className={
-                                  item.status === 'enabled'
-                                    ? 'bg-emerald-50 text-emerald-700'
-                                    : 'bg-slate-100 text-slate-500'
-                                }
-                              >
-                                {statusLabel(item.status, commonT)}
-                              </Badge>
-                            </TableCell>
-                            <TableCell className="py-4 align-top text-xs text-slate-600">
-                              {new Date(item.updated_at).toLocaleString()}
-                            </TableCell>
-                            <TableCell className="py-3 text-right align-top">
-                              {canUpdateTestAssets ? (
-                                <>
-                                  <Button
-                                    variant="ghost"
-                                    size="sm"
-                                    onClick={() => setEditingCaseId(item.id)}
-                                  >
-                                    {commonT('edit')}
-                                  </Button>
-                                  <Button
-                                    variant="ghost"
-                                    size="sm"
-                                    disabled={updateCase.isPending}
-                                    onClick={() =>
-                                      updateCase.mutate({
-                                        caseId: item.id,
-                                        data: {
-                                          content: item.content,
-                                          expected_result: item.expected_result,
-                                          scenario_id: item.scenario_id,
-                                          question_type: item.question_type,
-                                          status: item.status === 'enabled' ? 'disabled' : 'enabled',
-                                          turns: item.turns,
-                                        },
-                                      })
-                                    }
-                                  >
-                                    {item.status === 'enabled' ? commonT('disable') : commonT('enable')}
-                                  </Button>
-                                  <DropdownMenu>
-                                    <DropdownMenuTrigger asChild>
-                                      <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
-                                        <MoreHorizontal className="size-4" />
-                                      </Button>
-                                    </DropdownMenuTrigger>
-                                    <DropdownMenuContent align="end">
-                                      <DropdownMenuItem
-                                        className="text-red-600 focus:text-red-600"
-                                        onSelect={() => requestDeleteCases([item.id])}
+                                {hasMultipleTurns ? (
+                                  <>
+                                    <div className="mt-1 text-xs text-slate-500">
+                                      {t('cases.turnCount', { count: turns.length })}
+                                      <button
+                                        type="button"
+                                        className="ml-1 font-medium text-blue-600 hover:text-blue-700 hover:underline"
+                                        onClick={() => toggleCaseExpanded(item.id)}
                                       >
-                                        <Trash2 className="mr-2 size-4" />
-                                        {commonT('delete')}
-                                      </DropdownMenuItem>
-                                    </DropdownMenuContent>
-                                  </DropdownMenu>
-                                </>
-                              ) : null}
-                            </TableCell>
-                          </TableRow>
+                                        {isExpanded
+                                          ? t('cases.collapseTurns')
+                                          : t('cases.expandTurns')}
+                                      </button>
+                                    </div>
+                                    {isExpanded ? (
+                                      <div className="mt-3 min-w-0 space-y-3 border-l border-slate-200 pl-4 text-sm text-slate-700">
+                                        {turns.slice(1).map((turn, index) => (
+                                          <div
+                                            key={`${item.id}-turn-${index + 2}`}
+                                            className="relative min-w-0"
+                                          >
+                                            <span className="absolute -left-[19px] top-2 h-2 w-2 rounded-full border border-slate-300 bg-white" />
+                                            <div className="flex min-w-0 items-baseline gap-1">
+                                              <span className="shrink-0 whitespace-nowrap font-medium text-slate-600">
+                                                {t('cases.turnTitle', { index: index + 2 })}
+                                              </span>
+                                              <span className="min-w-0 truncate">
+                                                {turn.content}
+                                              </span>
+                                            </div>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    ) : null}
+                                  </>
+                                ) : null}
+                                {item.turns?.some(turn => turn.attachments?.length) ? (
+                                  <div className="mt-1 text-xs text-slate-500">
+                                    {hasGeneratedAssets(item)
+                                      ? commonT('generatedAttachmentsIncluded')
+                                      : commonT('attachmentsIncluded')}
+                                  </div>
+                                ) : null}
+                              </TableCell>
+                              <TableCell className="py-4 align-top">
+                                <div className="line-clamp-2 break-words">
+                                  {item.scenario_id
+                                    ? scenariosById.get(item.scenario_id) || commonT('none')
+                                    : commonT('none')}
+                                </div>
+                              </TableCell>
+                              <TableCell className="py-4 align-top">
+                                {formatQuestionTypeLabel(item.question_type, typeT)}
+                              </TableCell>
+                              <TableCell className="py-4 align-top">
+                                <Badge
+                                  className={
+                                    item.status === 'enabled'
+                                      ? 'bg-emerald-50 text-emerald-700'
+                                      : 'bg-slate-100 text-slate-500'
+                                  }
+                                >
+                                  {statusLabel(item.status, commonT)}
+                                </Badge>
+                              </TableCell>
+                              <TableCell className="py-4 align-top text-xs text-slate-600">
+                                {workflowTestMode === 'task'
+                                  ? formatTaskCaseFocus(item, commonT('none'), {
+                                      variables: t('cases.focusVariables'),
+                                      files: t('cases.focusFiles'),
+                                      checks: t('cases.focusChecks'),
+                                      criticalChecks: t('cases.focusCriticalChecks'),
+                                    })
+                                  : formatConversationCaseFocus(item, {
+                                      turns: t('cases.focusTurns'),
+                                      expectations: t('cases.focusExpectations'),
+                                    })}
+                              </TableCell>
+                              <TableCell className="py-4 align-top text-xs text-slate-600">
+                                {new Date(item.created_at).toLocaleString()}
+                              </TableCell>
+                              <TableCell className="py-3 text-right align-top">
+                                {canUpdateTestAssets ? (
+                                  <>
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      onClick={() => setEditingCaseId(item.id)}
+                                    >
+                                      {commonT('edit')}
+                                    </Button>
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      disabled={updateCase.isPending}
+                                      onClick={() =>
+                                        updateCase.mutate({
+                                          caseId: item.id,
+                                          data: {
+                                            content: item.content,
+                                            expected_result: item.expected_result,
+                                            scenario_id: item.scenario_id,
+                                            question_type: item.question_type,
+                                            status:
+                                              item.status === 'enabled' ? 'disabled' : 'enabled',
+                                            turns: item.turns,
+                                          },
+                                        })
+                                      }
+                                    >
+                                      {item.status === 'enabled'
+                                        ? commonT('disable')
+                                        : commonT('enable')}
+                                    </Button>
+                                    <DropdownMenu>
+                                      <DropdownMenuTrigger asChild>
+                                        <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
+                                          <MoreHorizontal className="size-4" />
+                                        </Button>
+                                      </DropdownMenuTrigger>
+                                      <DropdownMenuContent align="end">
+                                        <DropdownMenuItem
+                                          className="text-red-600 focus:text-red-600"
+                                          onSelect={() => requestDeleteCases([item.id])}
+                                        >
+                                          <Trash2 className="mr-2 size-4" />
+                                          {commonT('delete')}
+                                        </DropdownMenuItem>
+                                      </DropdownMenuContent>
+                                    </DropdownMenu>
+                                  </>
+                                ) : null}
+                              </TableCell>
+                            </TableRow>
                           );
                         })
                       )}
@@ -1022,11 +1409,34 @@ export function BatchTestOverview({
                   </Table>
                 </div>
                 {canUpdateTestAssets && selectedCaseIds.length > 0 ? (
-                  <div className="sticky bottom-0 z-10 flex items-center justify-between border-t border-slate-200 bg-white px-4 py-3 shadow-[0_-8px_24px_rgba(15,23,42,0.08)]">
-                    <div className="text-sm text-slate-600">
-                      {t('cases.selectedCount', { count: selectedCaseIds.length })}
+                  <div className="sticky bottom-0 z-10 flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 bg-white px-4 py-3 shadow-[0_-8px_24px_rgba(15,23,42,0.08)]">
+                    <div className="min-w-0">
+                      <div className="text-sm text-slate-600">
+                        {t('cases.selectedCount', { count: selectedCaseIds.length })}
+                      </div>
+                      {selectedEnabledCases.length !== selectedCaseIds.length ? (
+                        <div className="mt-0.5 text-xs text-slate-500">
+                          {t('cases.selectedRunnableCount', { count: selectedEnabledCases.length })}
+                        </div>
+                      ) : null}
                     </div>
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center justify-end gap-2">
+                      <Button
+                        size="sm"
+                        disabled={
+                          selectedEnabledCases.length === 0 ||
+                          createBatch.isPending ||
+                          executeBatch.isPending
+                        }
+                        onClick={runSelectedCases}
+                      >
+                        {createBatch.isPending || executeBatch.isPending ? (
+                          <Loader2 className="mr-1 size-4 animate-spin" />
+                        ) : (
+                          <PlayCircle className="mr-1 size-4" />
+                        )}
+                        {t('cases.batchRun')}
+                      </Button>
                       <Button
                         variant="outline"
                         size="sm"
@@ -1092,54 +1502,63 @@ export function BatchTestOverview({
               </div>
             </CardHeader>
             <CardContent className="p-0">
-              {shouldShowRunningBatch && runningBatch ? (
+              {shouldShowActiveBatches ? (
                 <div className="border-t border-slate-200 p-4">
-                  <div className="rounded-xl border border-blue-100 bg-blue-50/50 px-4 py-3">
-                    <div className="flex items-center justify-between gap-4">
-                      <div className="min-w-0 flex-1">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <div className="truncate text-sm font-medium text-slate-950">
-                            {t('batches.activeTitle', { name: runningBatch.name })}
+                  <div className="space-y-2">
+                    {activeBatches.map(activeBatch => (
+                      <div
+                        key={activeBatch.id}
+                        className="rounded-xl border border-blue-100 bg-blue-50/50 px-4 py-3"
+                      >
+                        <div className="flex flex-wrap items-center justify-between gap-4">
+                          <div className="min-w-0 flex-1">
+                            <div className="flex flex-wrap items-center gap-3">
+                              <div className="truncate text-sm font-medium text-slate-950">
+                                {t('batches.activeTitle', { name: activeBatch.name })}
+                              </div>
+                              <Badge className="bg-blue-100 text-blue-700">
+                                {activeBatch.status === 'running' ? (
+                                  <Loader2 className="mr-1 size-3 animate-spin" />
+                                ) : (
+                                  <Clock className="mr-1 size-3" />
+                                )}
+                                {batchStatusT(activeBatch.status)}
+                              </Badge>
+                              <Progress
+                                value={batchProgressValue(activeBatch)}
+                                className="h-1.5 min-w-[180px] flex-1 bg-white sm:max-w-xl"
+                              />
+                              <span className="shrink-0 text-xs text-slate-500">
+                                {t('batches.activeProgress', {
+                                  done: batchFinishedCount(activeBatch),
+                                  total: activeBatch.case_count,
+                                })}
+                              </span>
+                            </div>
                           </div>
-                          <Badge className="bg-blue-100 text-blue-700">
-                            <Loader2 className="mr-1 size-3 animate-spin" />
-                            {batchStatusT('running')}
-                          </Badge>
-                        </div>
-                        <div className="mt-3 flex items-center gap-3">
-                          <Progress
-                            value={batchProgressValue(runningBatch)}
-                            className="h-1.5 max-w-md flex-1 bg-white"
-                          />
-                          <span className="shrink-0 text-xs text-slate-500">
-                            {t('batches.activeProgress', {
-                              done: batchFinishedCount(runningBatch),
-                              total: runningBatch.case_count,
-                            })}
-                          </span>
+                          <div className="flex shrink-0 items-center gap-2">
+                            {canViewBatchResults ? (
+                              <Button variant="outline" size="sm" asChild>
+                                <Link href={getBatchResultHref(activeBatch.id)}>
+                                  {t('batchActions.viewProgress')}
+                                </Link>
+                              </Button>
+                            ) : null}
+                            {canStopTestRun ? (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                disabled={cancelBatch.isPending}
+                                onClick={() => cancelBatch.mutate(activeBatch.id)}
+                              >
+                                <Ban className="mr-1 size-4" />
+                                {commonT('cancel')}
+                              </Button>
+                            ) : null}
+                          </div>
                         </div>
                       </div>
-                      <div className="flex shrink-0 items-center gap-2">
-                        {canViewBatchResults ? (
-                          <Button variant="outline" size="sm" asChild>
-                            <Link href={getBatchResultHref(runningBatch.id)}>
-                              {t('batchActions.viewProgress')}
-                            </Link>
-                          </Button>
-                        ) : null}
-                        {canStopTestRun ? (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            disabled={cancelBatch.isPending}
-                            onClick={() => cancelBatch.mutate(runningBatch.id)}
-                          >
-                            <Ban className="mr-1 size-4" />
-                            {commonT('cancel')}
-                          </Button>
-                        ) : null}
-                      </div>
-                    </div>
+                    ))}
                   </div>
                 </div>
               ) : null}
@@ -1211,7 +1630,8 @@ export function BatchTestOverview({
                                 </Link>
                               </Button>
                             ) : null}
-                            {canStopTestRun && (batch.status === 'queued' || batch.status === 'running') ? (
+                            {canStopTestRun &&
+                            (batch.status === 'queued' || batch.status === 'running') ? (
                               <Button
                                 variant="ghost"
                                 size="sm"
@@ -1229,34 +1649,32 @@ export function BatchTestOverview({
                                 </Link>
                               </Button>
                             ) : null}
-                            {(canStopTestRun && (batch.status === 'queued' || batch.status === 'running')) ||
-                            (canRetestBatch && batch.status !== 'queued' && batch.status !== 'running') ? (
-                              <DropdownMenu>
-                                <DropdownMenuTrigger asChild>
-                                  <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
-                                    <MoreHorizontal className="size-4" />
-                                  </Button>
-                                </DropdownMenuTrigger>
-                                <DropdownMenuContent align="end">
-                                  {batch.status === 'queued' || batch.status === 'running' ? (
-                                    <DropdownMenuItem
-                                      className="text-red-600"
-                                      disabled={cancelBatch.isPending}
-                                      onSelect={() => cancelBatch.mutate(batch.id)}
-                                    >
-                                      {commonT('cancelTest')}
-                                    </DropdownMenuItem>
-                                  ) : (
-                                    <DropdownMenuItem
-                                      disabled={retestBatch.isPending}
-                                      onSelect={() => setRetestingBatch(batch)}
-                                    >
-                                      {commonT('retest')}
-                                    </DropdownMenuItem>
-                                  )}
-                                </DropdownMenuContent>
-                              </DropdownMenu>
-                            ) : null}
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
+                                  <MoreHorizontal className="size-4" />
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end">
+                                {canStopTestRun &&
+                                (batch.status === 'queued' || batch.status === 'running') ? (
+                                  <DropdownMenuItem
+                                    className="text-red-600"
+                                    disabled={cancelBatch.isPending}
+                                    onSelect={() => cancelBatch.mutate(batch.id)}
+                                  >
+                                    {commonT('cancelTest')}
+                                  </DropdownMenuItem>
+                                ) : canRetestBatch ? (
+                                  <DropdownMenuItem
+                                    disabled={retestBatch.isPending}
+                                    onSelect={() => setRetestingBatch(batch)}
+                                  >
+                                    {commonT('retest')}
+                                  </DropdownMenuItem>
+                                ) : null}
+                              </DropdownMenuContent>
+                            </DropdownMenu>
                           </div>
                         </TableCell>
                       </TableRow>
@@ -1269,100 +1687,102 @@ export function BatchTestOverview({
         ) : null}
       </div>
 
-      {canUpdateTestAssets ? (
-        <>
-          <JudgePromptSettingsDialog
-            agentId={agentId}
-            open={settingsOpen}
-            onOpenChange={setSettingsOpen}
-          />
-          <ScenarioDialog
-            agentId={agentId}
-            scenarios={scenarios}
-            open={scenarioDialogOpen}
-            onOpenChange={setScenarioDialogOpen}
-          />
-          <CaseDialog
-            agentId={agentId}
-            scenarios={scenarioOptions}
-            open={caseDialogOpen}
-            onOpenChange={setCaseDialogOpen}
-            supportsAttachments={supportsAttachments}
-          />
-          <CaseDialog
-            agentId={agentId}
-            scenarios={scenarioOptions}
-            caseItem={editingCase}
-            open={!!editingCaseId}
-            onOpenChange={open => {
-              if (!open) setEditingCaseId(null);
-            }}
-            supportsAttachments={supportsAttachments}
-          />
-          <ConfirmDialog
-            variant="danger"
-            open={deletingCaseIds.length > 0}
-            onOpenChange={open => {
-              if (!open && !deleteCases.isPending) setDeletingCaseIds([]);
-            }}
-            title={
-              deletingCaseIds.length > 1
-                ? t('cases.batchDeleteConfirmTitle')
-                : t('cases.deleteConfirmTitle')
-            }
-            description={
-              deletingCaseIds.length > 1
-                ? t('cases.batchDeleteConfirmDescription', { count: deletingCaseIds.length })
-                : t('cases.deleteConfirmDescription')
-            }
-            confirmText={commonT('delete')}
-            cancelText={commonT('cancel')}
-            loading={deleteCases.isPending}
-            onConfirm={confirmDeleteCases}
-          />
-        </>
-      ) : null}
-      {canDebugTest ? (
-        <>
-          <RecognizeScenariosDialog
-            agentId={agentId}
-            defaultContext={defaultRecognitionContext}
-            open={recognizeScenariosOpen}
-            onOpenChange={setRecognizeScenariosOpen}
-          />
-          <GenerateCasesDialog
-            agentId={agentId}
-            scenarios={scenarioOptions}
-            open={generateDialogOpen}
-            onOpenChange={setGenerateDialogOpen}
-            onGenerationStart={setPendingGenerationCount}
-            onGenerationCreateFailed={() => setPendingGenerationCount(null)}
-          />
-          <ConfirmDialog
-            open={Boolean(retestingBatch)}
-            onOpenChange={open => {
-              if (!open && !retestBatch.isPending) setRetestingBatch(null);
-            }}
-            title={t('batches.retestConfirmTitle')}
-            description={
-              retestingBatch
-                ? t('batches.retestConfirmDescription', {
-                    name: retestingBatch.name,
-                    count: retestingBatch.case_count,
-                  })
-                : ''
-            }
-            confirmText={t('batches.retestConfirmButton')}
-            cancelText={commonT('cancel')}
-            loading={retestBatch.isPending}
-            contentClassName="max-w-2xl rounded-2xl"
-            footerClassName="justify-end bg-white px-8 py-6"
-            cancelClassName="border border-slate-200 bg-white hover:bg-slate-50"
-            confirmClassName="bg-slate-950 text-white hover:bg-slate-800"
-            onConfirm={confirmRetestBatch}
-          />
-        </>
-      ) : null}
+      <JudgePromptSettingsDialog
+        agentId={agentId}
+        open={settingsOpen}
+        onOpenChange={setSettingsOpen}
+      />
+      <ScenarioDialog
+        agentId={agentId}
+        scenarios={scenarios}
+        open={scenarioDialogOpen}
+        onOpenChange={setScenarioDialogOpen}
+      />
+      <RecognizeScenariosDialog
+        agentId={agentId}
+        defaultContext={defaultRecognitionContext}
+        open={recognizeScenariosOpen}
+        onOpenChange={setRecognizeScenariosOpen}
+        mode={workflowTestMode}
+      />
+      <CaseDialog
+        agentId={agentId}
+        scenarios={scenarioOptions}
+        open={caseDialogOpen}
+        onOpenChange={setCaseDialogOpen}
+        supportsAttachments={supportsAttachments}
+        attachmentAcceptExt={attachmentAcceptExt}
+        mode={workflowTestMode}
+        workflowDraft={workflowDraft}
+      />
+      <CaseDialog
+        agentId={agentId}
+        scenarios={scenarioOptions}
+        caseItem={editingCase}
+        open={!!editingCaseId}
+        onOpenChange={open => {
+          if (!open) setEditingCaseId(null);
+        }}
+        supportsAttachments={supportsAttachments}
+        attachmentAcceptExt={attachmentAcceptExt}
+        mode={workflowTestMode}
+        workflowDraft={workflowDraft}
+      />
+      <GenerateCasesDialog
+        agentId={agentId}
+        scenarios={scenarioOptions}
+        open={generateDialogOpen}
+        onOpenChange={setGenerateDialogOpen}
+        mode={workflowTestMode}
+        supportsGeneratedFiles={supportsAttachments}
+        requiresCurrentTurnFiles={requiresCurrentTurnFiles}
+        onGenerationStart={setPendingGenerationCount}
+        onGenerationCreateFailed={() => setPendingGenerationCount(null)}
+      />
+      <ConfirmDialog
+        variant="danger"
+        open={deletingCaseIds.length > 0}
+        onOpenChange={open => {
+          if (!open && !deleteCases.isPending) setDeletingCaseIds([]);
+        }}
+        title={
+          deletingCaseIds.length > 1
+            ? t('cases.batchDeleteConfirmTitle')
+            : t('cases.deleteConfirmTitle')
+        }
+        description={
+          deletingCaseIds.length > 1
+            ? t('cases.batchDeleteConfirmDescription', { count: deletingCaseIds.length })
+            : t('cases.deleteConfirmDescription')
+        }
+        confirmText={commonT('delete')}
+        cancelText={commonT('cancel')}
+        loading={deleteCases.isPending}
+        onConfirm={confirmDeleteCases}
+      />
+      <ConfirmDialog
+        open={Boolean(retestingBatch)}
+        onOpenChange={open => {
+          if (!open && !retestBatch.isPending) setRetestingBatch(null);
+        }}
+        title={t('batches.retestConfirmTitle')}
+        description={
+          retestingBatch
+            ? t('batches.retestConfirmDescription', {
+                name: retestingBatch.name,
+                count: retestingBatch.case_count,
+              })
+            : ''
+        }
+        confirmText={t('batches.retestConfirmButton')}
+        cancelText={commonT('cancel')}
+        loading={retestBatch.isPending}
+        contentClassName="max-w-2xl rounded-2xl"
+        footerClassName="justify-end bg-white px-8 py-6"
+        cancelClassName="border border-slate-200 bg-white hover:bg-slate-50"
+        confirmClassName="bg-slate-950 text-white hover:bg-slate-800"
+        onConfirm={confirmRetestBatch}
+      />
     </div>
   );
 }

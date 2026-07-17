@@ -168,6 +168,7 @@ type ExistingSkillResponse struct {
 type SkillDisplayResponse struct {
 	Icon        string              `json:"icon"`
 	Category    string              `json:"category"`
+	Scenarios   []string            `json:"scenarios,omitempty"`
 	Label       map[string]string   `json:"label"`
 	Description map[string]string   `json:"description"`
 	WhenToUse   map[string]string   `json:"when_to_use"`

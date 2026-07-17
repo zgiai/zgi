@@ -1,7 +1,5 @@
 'use client';
 
-import { AlertTriangle, ShieldAlert, Trash2 } from 'lucide-react';
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -125,60 +123,6 @@ export function AgentBindingHealthItemRow({ item }: { item: AgentBindingHealthIt
         {t('bindingHealth.resourceId', { id: item.resource_id })}
       </p>
     </div>
-  );
-}
-
-export function AgentBindingHealthPanel({
-  health,
-  readOnly = false,
-  cleanupPending = false,
-  onRemoveAllAbnormal,
-}: {
-  health?: AgentBindingHealth;
-  readOnly?: boolean;
-  cleanupPending?: boolean;
-  onRemoveAllAbnormal: () => void;
-}) {
-  const t = useT('agents.agentRuntime');
-  const abnormalItems = health?.items.filter(item => item.status !== 'active') ?? [];
-  if (!health || abnormalItems.length === 0) return null;
-
-  return (
-    <Alert
-      id="agent-binding-health"
-      variant={health.status === 'blocked' ? 'destructive' : 'default'}
-      className="scroll-mt-16"
-    >
-      {health.status === 'blocked' ? <ShieldAlert /> : <AlertTriangle />}
-      <AlertTitle>{t('bindingHealth.title')}</AlertTitle>
-      <AlertDescription>
-        <p>
-          {t('bindingHealth.summary', {
-            suspended: health.suspended_count,
-            unavailable: health.unavailable_count,
-          })}
-        </p>
-        <div className="mt-3 space-y-2">
-          {abnormalItems.map((item, index) => (
-            <AgentBindingHealthItemRow
-              key={`${item.binding_type}:${item.parent_resource_id ?? ''}:${item.resource_id}:${index}`}
-              item={item}
-            />
-          ))}
-        </div>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          className="mt-3"
-          onClick={onRemoveAllAbnormal}
-          disabled={readOnly || cleanupPending}
-        >
-          <Trash2 className="mr-1.5 size-4" />
-          {cleanupPending ? t('bindingHealth.removeAllPending') : t('bindingHealth.removeAll')}
-        </Button>
-      </AlertDescription>
-    </Alert>
   );
 }
 

@@ -79,6 +79,10 @@ type AppContext struct {
 	// AppType specifies the type of app: "agent", "dataset", or "workflow"
 	AppType string
 
+	// ModelUseCase explicitly selects the model routing contract for this call.
+	// When empty, Gateway preserves the legacy AppType-derived behavior.
+	ModelUseCase string
+
 	// AccountID is the user who triggered the LLM call
 	AccountID string
 

@@ -32,6 +32,7 @@ func (s *service) RunPreparedStream(ctx context.Context, prepared *PreparedChat,
 	if prepared == nil || prepared.Message == nil {
 		return nil, fmt.Errorf("%w: prepared chat is required", ErrInvalidInput)
 	}
+	beginPreparedUsageExecution(prepared)
 	eventCallback := firstStreamEventCallback(onEvent)
 	execution, err := s.beginRuntimeExecution(ctx, prepared.Message.ID)
 	if err != nil {
@@ -140,7 +141,7 @@ func (s *service) RunPreparedStream(ctx context.Context, prepared *PreparedChat,
 			_ = s.persistStoppedAnswer(persistCtx, prepared, answer, usage)
 			return nil, ErrMessageStopped
 		}
-		metadata := preparedResultMetadata(prepared.Message.Metadata, usage)
+		metadata := preparedResultMetadataForPrepared(prepared, prepared.Message.Metadata, usage)
 		if err := s.completePreparedChat(persistCtx, prepared, answer, metadata); err != nil {
 			if !errors.Is(err, gorm.ErrRecordNotFound) {
 				_ = s.clearPreparedRuntime(persistCtx, prepared)
@@ -207,7 +208,7 @@ func (s *service) RunPreparedStream(ctx context.Context, prepared *PreparedChat,
 		_ = s.persistStoppedAnswer(persistCtx, prepared, answer, usage)
 		return nil, ErrMessageStopped
 	}
-	metadata := preparedResultMetadata(prepared.Message.Metadata, usage)
+	metadata := preparedResultMetadataForPrepared(prepared, prepared.Message.Metadata, usage)
 	if err := s.completePreparedChat(persistCtx, prepared, answer, metadata); err != nil {
 		if !errors.Is(err, gorm.ErrRecordNotFound) {
 			_ = s.clearPreparedRuntime(persistCtx, prepared)
@@ -380,6 +381,8 @@ func (s *service) openChatStream(ctx context.Context, prepared *PreparedChat) (<
 		_ = s.repos.Message.UpdateError(ctx, prepared.Message.ID, err.Error())
 		return nil, err
 	}
+	prepared.LLMRequest.Messages = adapter.NormalizeSystemMessages(prepared.LLMRequest.Messages)
+	beginPreparedUsageExecution(prepared)
 	type openResult struct {
 		stream <-chan adapter.StreamResponse
 		err    error
@@ -492,11 +495,30 @@ func newBillingAppContext(prepared *PreparedChat) *llmclient.AppContext {
 		AccountID:          prepared.Conversation.AccountID.String(),
 		SessionID:          prepared.Conversation.ID.String(),
 		ConversationID:     prepared.Conversation.ID.String(),
+		ModelUseCase:       preparedModelUseCase(prepared),
 	}
 	if prepared.Conversation.WorkspaceID != nil {
 		appCtx.WorkspaceID = prepared.Conversation.WorkspaceID.String()
 	}
 	return appCtx
+}
+
+func preparedModelUseCase(prepared *PreparedChat) string {
+	mode := ""
+	if prepared != nil && prepared.parts != nil {
+		mode = normalizeExecutionMode(prepared.parts.ExecutionMode)
+	}
+	if mode == "" && prepared != nil && prepared.Message != nil {
+		mode = normalizeExecutionMode(stringMetadataValue(prepared.Message.Metadata["execution_mode"]))
+	}
+	switch mode {
+	case executionModeAgentLoop:
+		return "agent"
+	case executionModeLegacyToolChat, executionModeDirectChat:
+		return "text-chat"
+	default:
+		return ""
+	}
 }
 
 func (s *service) collectStreamAnswer(ctx context.Context, prepared *PreparedChat, stream <-chan adapter.StreamResponse, onChunk func(string) error) (string, *adapter.Usage, error) {
@@ -720,7 +742,7 @@ func (s *service) clearPreparedRuntime(ctx context.Context, prepared *PreparedCh
 }
 
 func (s *service) persistStoppedAnswer(ctx context.Context, prepared *PreparedChat, answer string, usage *adapter.Usage) error {
-	metadata := preparedResultMetadata(prepared.Message.Metadata, usage)
+	metadata := preparedResultMetadataForPrepared(prepared, prepared.Message.Metadata, usage)
 	metadata["stopped"] = true
 	if err := s.repos.Message.UpdateStoppedAnswer(ctx, prepared.Message.ID, answer, metadata); err != nil {
 		return err
@@ -1050,7 +1072,6 @@ func preparedResultMetadata(source map[string]interface{}, usage *adapter.Usage)
 	}
 	metadata["usage"] = usageMetadata(usage)
 	metadata["system_prompt_version"] = systemPromptVersion
-	finalizeOperationPlanForCompletedResult(metadata)
 	if summary := operationResultSummaryForPrompt(metadata); len(summary) > 0 {
 		metadata["operation_result_summary"] = summary
 	}

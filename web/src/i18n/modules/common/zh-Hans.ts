@@ -119,6 +119,7 @@ const messages: CommonMessages = {
     placeholder: '选择工作空间',
     search: '搜索工作空间',
     loading: '加载中...',
+    defaultWorkspace: '默认工作空间',
     noResults: '没有找到匹配的工作空间',
     noWorkspaces: '没有可用的工作空间',
     noWorkspacesMember: '您还没有被分配到任何工作空间。',

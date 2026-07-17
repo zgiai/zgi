@@ -34,8 +34,10 @@ function ChatPageContent() {
   const { modelSelectorValue, isModelInitializing, isSelectedModelUnavailable, handleModelChange } =
     usePersistedAIChatModelSelection({
       accountId: user?.id,
-      scope: 'consoleChat',
-      useCase: 'agent',
+      scope: 'workChat',
+      legacyScope: 'consoleChat',
+      useCase: 'text-chat',
+      preferredUseCase: 'agent',
     });
   const isRestoringConversationRoute = isConversationRouteRestoring(
     conversationIdParam,
@@ -165,6 +167,8 @@ function ChatPageContent() {
               mode="aichat"
               controller={controller}
               runtimeSurface="work_chat"
+              modelUseCase="text-chat"
+              preferredModelUseCase="agent"
               modelSelectorValue={modelSelectorValue}
               isModelInitializing={isModelInitializing}
               onModelChange={handleModelChange}

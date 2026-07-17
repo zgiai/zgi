@@ -75,16 +75,16 @@ export function RetrievalConfigModal({
         <DialogFooter className="bg-neutral-50/50 pt-4 pb-6 px-6 border-t gap-3">
           <Button
             variant="outline"
-            onClick={handleSaveAsTest}
+            onClick={handleSaveToSettings}
             className="font-bold rounded-xl h-11 px-6 transition-all active:scale-95"
           >
-            {t('hitTesting.saveAsTestOnly')}
+            {t('hitTesting.saveToSettings')}
           </Button>
           <Button
-            onClick={handleSaveToSettings}
+            onClick={handleSaveAsTest}
             className="font-bold rounded-xl h-11 px-6 shadow-premium transition-all active:scale-95"
           >
-            {t('hitTesting.saveToSettings')}
+            {t('hitTesting.saveAsTestOnly')}
           </Button>
         </DialogFooter>
       </DialogContent>

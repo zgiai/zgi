@@ -21,7 +21,10 @@ import type {
   CreateFolderResponse,
   UpdateFolderRequest,
   UpdateFolderResponse,
-  MoveFolderRequest,
+  MoveFilesToFolderRequest,
+  MoveFilesToFolderResponse,
+  DeleteFolderRequest,
+  DeleteFolderResponse,
   CreateTextFileRequest,
   CreateTextFileResponse,
   FileOriginalPreviewUrlResponse,
@@ -40,6 +43,7 @@ import type {
   UpdateFileChunkResponse,
   BatchUpdateFileChunksRequest,
   BatchUpdateFileChunksResponse,
+  DeleteFileChunkResponse,
   AskFileQuestionRequest,
   AskFileQuestionResponse,
   PrepareFileQAIndexResponse,
@@ -220,6 +224,13 @@ class FileManageService extends BaseService {
     return this.request('patch', `/console/api/files/${fileId}/chunks/batch`, data);
   }
 
+  async deleteFileChunk(
+    fileId: string,
+    chunkId: string
+  ): Promise<ApiResponseData<DeleteFileChunkResponse>> {
+    return this.request('delete', `/console/api/files/${fileId}/chunks/${chunkId}`);
+  }
+
   async askFileQuestion(
     fileId: string,
     data: AskFileQuestionRequest
@@ -368,20 +379,27 @@ class FileManageService extends BaseService {
   }
 
   /**
-   * Move folder to another folder
+   * Move files to another folder. Empty folder_id moves files to the default folder.
    */
-  async moveFolder(data: MoveFolderRequest): Promise<ApiResponseData<{ success: boolean }>> {
-    return this.request('post', '/console/api/file-folders/move-folder', {
+  async moveFilesToFolder(
+    data: MoveFilesToFolderRequest
+  ): Promise<ApiResponseData<MoveFilesToFolderResponse>> {
+    return this.request('post', '/console/api/file-folders/move-files', {
+      file_ids: data.file_ids,
       folder_id: data.folder_id,
-      target_id: data.target_id,
     });
   }
 
   /**
    * Delete folder
    */
-  async deleteFolder(folderId: string): Promise<ApiResponseData<{ success: boolean }>> {
-    return this.request('delete', `/console/api/file-folders/${folderId}`);
+  async deleteFolder(
+    folderId: string,
+    data?: DeleteFolderRequest
+  ): Promise<ApiResponseData<DeleteFolderResponse>> {
+    return this.request('delete', `/console/api/file-folders/${folderId}`, undefined, {
+      data,
+    });
   }
 
   /**

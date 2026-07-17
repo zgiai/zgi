@@ -6,14 +6,18 @@ runtime_type: prompt
 max_calls_per_turn: 5
 timeout_seconds: 5
 display:
-  icon: panel-top-open
-  category: productivity
+  icon: list-checks
+  category: workflow_automation
+  scenarios:
+    - business_operations
+    - customer_service
+    - technical_development
   label:
     en_US: Form Interaction
     zh_Hans: 表单交互
   description:
-    en_US: Creates structured clarification prompts with focused questions and concrete quick options.
-    zh_Hans: 使用结构化问题和可直接使用的选项收集用户补充信息。
+    en_US: Designed for workflows that are missing parameters, choices, or confirmation; asks focused structured questions and supplies concrete quick-select options before continuing.
+    zh_Hans: 适用于流程缺少参数、选择或确认信息的情况，可通过聚焦的结构化问题和快捷选项收集输入后再继续执行。
   when_to_use:
     en_US: Use when a workflow needs missing parameters or user confirmation before continuing.
     zh_Hans: 当流程继续前需要用户补充参数、选择选项或确认信息时使用。

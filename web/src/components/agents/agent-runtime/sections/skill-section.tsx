@@ -1,6 +1,7 @@
 'use client';
 
 import { Plus, Trash2 } from 'lucide-react';
+import { AIChatSkillIcon } from '@/components/chat/variants/aichat/skill-icon';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -9,6 +10,7 @@ import { RuntimeSection } from '../runtime-section';
 import type { AgentConfigSection, AgentRuntimeSelectedSkillItem } from '../types';
 import type { AgentBindingHealth } from '@/services/types/agent';
 import { AgentBindingHealthBadge } from '../binding-health';
+import { AgentRuntimeSelectionCardIcon } from '../selection-dialog';
 
 interface AgentRuntimeSkillSectionProps {
   open: boolean;
@@ -18,10 +20,12 @@ interface AgentRuntimeSkillSectionProps {
   isSkillsLoading: boolean;
   isSkillConfigLoading: boolean;
   bindingHealth?: AgentBindingHealth;
+  cleanupPending?: boolean;
   readOnly?: boolean;
   onToggleSection: (section: AgentConfigSection) => void;
   onOpenSkillDialog: () => void;
   onToggleSkill: (skillId: string, checked: boolean) => void;
+  onRemoveAbnormalSkills: () => void;
 }
 
 export function AgentRuntimeSkillSection({
@@ -32,12 +36,22 @@ export function AgentRuntimeSkillSection({
   isSkillsLoading,
   isSkillConfigLoading,
   bindingHealth,
+  cleanupPending = false,
   readOnly = false,
   onToggleSection,
   onOpenSkillDialog,
   onToggleSkill,
+  onRemoveAbnormalSkills,
 }: AgentRuntimeSkillSectionProps) {
   const t = useT('agents.agentRuntime');
+  const abnormalSkillIds = new Set(
+    bindingHealth?.items
+      .filter(item => item.binding_type === 'skill' && item.status !== 'active')
+      .map(item => item.resource_id.trim()) ?? []
+  );
+  const abnormalSkillCount = normalizedSelectedSkillIds.filter(id =>
+    abnormalSkillIds.has(id.trim())
+  ).length;
 
   return (
     <RuntimeSection
@@ -47,6 +61,21 @@ export function AgentRuntimeSkillSection({
       onToggle={onToggleSection}
       action={
         <div className="flex items-center gap-2">
+          {abnormalSkillCount > 0 ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-8 px-2 text-xs text-muted-foreground hover:text-destructive"
+              onClick={onRemoveAbnormalSkills}
+              disabled={readOnly || cleanupPending}
+            >
+              <Trash2 className="mr-1.5 size-3.5" />
+              {cleanupPending
+                ? t('bindingHealth.removeUnavailableSkillsPending')
+                : t('bindingHealth.removeUnavailableSkills')}
+            </Button>
+          ) : null}
           <Badge variant="subtle">
             {t('selectedCount', { count: normalizedSelectedSkillIds.length })}
           </Badge>
@@ -89,16 +118,16 @@ export function AgentRuntimeSkillSection({
                 key={skill.skillId}
                 className="flex items-start gap-3 rounded-md border bg-background p-3"
               >
+                <AgentRuntimeSelectionCardIcon>
+                  <AIChatSkillIcon icon={skill.icon} />
+                </AgentRuntimeSelectionCardIcon>
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-2">
                     <div className="min-w-0 truncate text-sm font-medium">{skill.label}</div>
                     <AgentBindingHealthBadge item={healthItem} />
                   </div>
                   <div className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">
-                    {skill.description || skill.skillId}
-                  </div>
-                  <div className="mt-1 truncate text-[11px] text-muted-foreground/70">
-                    {t('skills.idLabel', { id: skill.skillId })}
+                    {skill.description || t('skills.noDescription')}
                   </div>
                 </div>
                 <Button

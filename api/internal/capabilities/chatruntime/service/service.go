@@ -61,6 +61,10 @@ const (
 	skillModeAuto     = "auto"
 	skillModeRequired = "required"
 
+	executionModeAgentLoop      = "agent_loop"
+	executionModeLegacyToolChat = "legacy_tool_chat"
+	executionModeDirectChat     = "direct_chat"
+
 	userMemoryContextBudgetChars  = 4000
 	agentMemoryContextBudgetChars = 4000
 )
@@ -339,6 +343,9 @@ type PreparedChat struct {
 	ReplaceRoot                    bool
 	Continuation                   bool
 	SuppressInitialNaturalProgress bool
+	PreferredRestoredSkillID       string
+	ContinuationType               string
+	TerminalOnly                   bool
 	Scope                          Scope
 	Caller                         Caller
 	RunConfig                      RunConfig
@@ -347,6 +354,10 @@ type PreparedChat struct {
 
 	UserMemoryPreflightDone  bool
 	UserMemoryPreflightUsage *adapter.Usage
+
+	usageExecutionStarted  bool
+	usageExecutionBaseline *adapter.Usage
+	usageContinuation      bool
 }
 
 type ChatResult struct {
@@ -425,6 +436,8 @@ type chatRequestParts struct {
 	RecentGeneratedArtifacts     []map[string]interface{}
 	RecentOperationPlans         []map[string]interface{}
 	ModelSupportsVision          bool
+	ModelSupportsAgent           bool
+	ExecutionMode                string
 	FunctionCallingKnown         bool
 	ModelSupportsFunctionCalling bool
 	FunctionCallingAssumed       bool

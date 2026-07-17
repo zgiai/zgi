@@ -100,3 +100,46 @@ func TestBuildWorkflowRecognitionContextParsesStringGraphField(t *testing.T) {
 	require.Contains(t, summary, "订单查询")
 	require.Contains(t, summary, "处理订单查询和物流进度")
 }
+
+func TestDraftRequiresCurrentTurnFilesWhenEveryPathUsesDocumentExtractor(t *testing.T) {
+	draft := map[string]any{
+		"graph": map[string]any{
+			"nodes": []any{
+				map[string]any{"id": "start", "data": map[string]any{"type": "start"}},
+				map[string]any{"id": "extract", "data": map[string]any{
+					"type":              "document-extractor",
+					"variable_selector": []any{"sys", "files"},
+				}},
+				map[string]any{"id": "answer", "data": map[string]any{"type": "answer"}},
+			},
+			"edges": []any{
+				map[string]any{"source": "start", "target": "extract"},
+				map[string]any{"source": "extract", "target": "answer"},
+			},
+		},
+	}
+
+	require.True(t, draftRequiresCurrentTurnFiles(draft))
+}
+
+func TestDraftDoesNotRequireCurrentTurnFilesWhenAPathBypassesDocumentExtractor(t *testing.T) {
+	draft := map[string]any{
+		"graph": map[string]any{
+			"nodes": []any{
+				map[string]any{"id": "start", "data": map[string]any{"type": "start"}},
+				map[string]any{"id": "extract", "data": map[string]any{
+					"type":              "document-extractor",
+					"variable_selector": []any{"sys", "files"},
+				}},
+				map[string]any{"id": "answer", "data": map[string]any{"type": "answer"}},
+			},
+			"edges": []any{
+				map[string]any{"source": "start", "target": "extract"},
+				map[string]any{"source": "extract", "target": "answer"},
+				map[string]any{"source": "start", "target": "answer"},
+			},
+		},
+	}
+
+	require.False(t, draftRequiresCurrentTurnFiles(draft))
+}

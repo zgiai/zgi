@@ -42,7 +42,7 @@ func (s *service) persistWorkflowApprovalPendingResult(ctx context.Context, prep
 	pendingPayload["conversation_id"] = prepared.Conversation.ID.String()
 	pendingPayload["message_id"] = prepared.Message.ID.String()
 	metadata := mergeWorkflowRunMetadata(prepared.Message.Metadata, "approval_requested", pendingPayload)
-	metadata = preparedResultMetadata(metadata, usage)
+	metadata = preparedResultMetadataForPrepared(prepared, metadata, usage)
 	metadata["agent_workflow_continuation"] = compactWorkflowRun(map[string]interface{}{
 		"status":          "waiting_approval",
 		"workflow_run_id": firstNonEmptyString(pendingPayload["workflow_run_id"]),
@@ -90,7 +90,7 @@ func (s *service) persistWorkflowQuestionPendingResult(ctx context.Context, prep
 	pendingPayload["message_id"] = prepared.Message.ID.String()
 	metadata := mergeWorkflowRunMetadata(prepared.Message.Metadata, "workflow_paused", pendingPayload)
 	metadata = mergeWorkflowRunMetadata(metadata, "question_answer_requested", pendingPayload)
-	metadata = preparedResultMetadata(metadata, usage)
+	metadata = preparedResultMetadataForPrepared(prepared, metadata, usage)
 	metadata["agent_workflow_continuation"] = compactWorkflowRun(map[string]interface{}{
 		"status":          "waiting_question",
 		"workflow_run_id": firstNonEmptyString(pendingPayload["workflow_run_id"]),
@@ -132,6 +132,7 @@ func mergeWorkflowRunMetadata(source map[string]interface{}, eventType string, p
 		return metadata
 	}
 	runs := workflowRunsFromMetadata(metadata["workflow_runs"])
+	upsertWorkflowRuntimeTimeline(metadata, run)
 	runs = upsertWorkflowRun(runs, run)
 	metadata["has_trace"] = true
 	metadata["workflow_runs"] = workflowRunsToInterfaceSlice(runs)
