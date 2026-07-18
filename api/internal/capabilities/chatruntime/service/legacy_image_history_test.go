@@ -35,6 +35,9 @@ func TestLegacyImageConversationToRuntimeMarksImageHistory(t *testing.T) {
 	if conversation.Metadata["legacy_workflow_image"] != true {
 		t.Fatalf("metadata = %#v, want legacy marker", conversation.Metadata)
 	}
+	if !conversation.LegacyFallback {
+		t.Fatal("LegacyFallback = false, want true")
+	}
 }
 
 func TestLegacyImageMessageToRuntimeBuildsImageGenerationMetadata(t *testing.T) {

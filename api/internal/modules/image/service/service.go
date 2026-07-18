@@ -321,6 +321,9 @@ func (s *service) resolveGenerationConversation(ctx context.Context, scope chatr
 	if err != nil {
 		return nil, err
 	}
+	if conversation.LegacyFallback {
+		return nil, ErrConversationNotAccessible
+	}
 	if scope.WorkspaceID == nil || conversation.WorkspaceID == nil || *scope.WorkspaceID != *conversation.WorkspaceID {
 		return nil, ErrConversationNotAccessible
 	}

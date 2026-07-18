@@ -4,9 +4,12 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
+	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/google/uuid"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
+	chatruntimerepository "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/repository"
 	chatruntime "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
 	"github.com/zgiai/zgi/api/internal/capabilities/imageasset"
 	"github.com/zgiai/zgi/api/internal/modules/image/registry"
@@ -15,6 +18,9 @@ import (
 	llmmodelsvc "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/service"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
+	pkguuid "github.com/zgiai/zgi/api/pkg/uuid"
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
 )
 
 type fakeAvailableModels struct {
@@ -175,6 +181,22 @@ type fakeImageChatService struct {
 	atomicCreateCalls       int
 	completedMessageCalls   int
 	messageErr              error
+}
+
+type countingImageChatService struct {
+	chatruntime.Service
+	atomicCreateCalls     int
+	completedMessageCalls int
+}
+
+func (s *countingImageChatService) CreateConversationWithCompletedMessage(context.Context, chatruntime.Scope, chatruntime.Caller, chatruntime.CreateConversationWithCompletedMessageRequest) (*runtimemodel.Conversation, *runtimemodel.Message, error) {
+	s.atomicCreateCalls++
+	return nil, nil, errors.New("unexpected conversation write")
+}
+
+func (s *countingImageChatService) CreateCompletedMessage(context.Context, chatruntime.Scope, chatruntime.CreateCompletedMessageRequest) (*runtimemodel.Message, error) {
+	s.completedMessageCalls++
+	return nil, errors.New("unexpected message write")
 }
 
 func (f *fakeImageChatService) CreateConversationForCaller(_ context.Context, scope chatruntime.Scope, caller chatruntime.Caller, title string) (*runtimemodel.Conversation, error) {
@@ -439,6 +461,74 @@ func TestGenerateRejectsExistingConversationOutsideCurrentWorkspaceBeforeSideEff
 				t.Fatalf("side effects = llm:%d save:%d completed:%d atomic:%d, want all 0", llm.appCreateImageCalls, assets.saveCalls, chat.completedMessageCalls, chat.atomicCreateCalls)
 			}
 		})
+	}
+}
+
+func TestGenerateRejectsLegacyImageFallbackBeforeSideEffects(t *testing.T) {
+	organizationID := uuid.New()
+	accountID := uuid.New()
+	workspaceID := uuid.New()
+	conversationID := uuid.New()
+	now := time.Now()
+
+	sqlDB, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("create sql mock: %v", err)
+	}
+	t.Cleanup(func() { _ = sqlDB.Close() })
+	db, err := gorm.Open(postgres.New(postgres.Config{Conn: sqlDB}), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open gorm: %v", err)
+	}
+
+	mock.ExpectQuery(`SELECT count\(\*\) FROM "members"`).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectQuery(`SELECT \* FROM "chat_runtime_conversations"`).
+		WillReturnError(gorm.ErrRecordNotFound)
+	mock.ExpectQuery(`SELECT \* FROM "agents_conversations"`).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "agent_id", "mode", "name", "inputs", "status", "from_source",
+			"from_account_id", "created_by", "dialogue_count", "created_at", "updated_at",
+		}).AddRow(
+			conversationID,
+			pkguuid.GenerateBuiltInWorkflowUUID("imagegen_chat"),
+			"chat", "legacy image", `{}`, "normal", "console",
+			accountID, accountID, 1, now, now,
+		))
+
+	realChatService := chatruntime.NewService(chatruntimerepository.NewRepositories(db), nil)
+	chat := &countingImageChatService{Service: realChatService}
+	llm := &fakeImageLLMClient{}
+	assets := &fakeImageAssetService{}
+	svc := NewService(
+		registry.NewRegistry(),
+		&fakeAvailableModels{items: []*llmmodelsvc.AvailableModel{{Provider: "qwen", Name: "qwen-image"}}},
+		fakeRouteLister{},
+		llm,
+		chat,
+		assets,
+	)
+
+	_, err = svc.Generate(context.Background(), Scope{
+		OrganizationID: organizationID,
+		AccountID:      accountID,
+		WorkspaceID:    &workspaceID,
+	}, GenerateRequest{
+		Prompt:         "draw a flower",
+		Provider:       "qwen",
+		Model:          "qwen-image",
+		Size:           "1024x1024",
+		Count:          1,
+		ConversationID: conversationID.String(),
+	})
+	if !errors.Is(err, ErrConversationNotAccessible) {
+		t.Fatalf("Generate error = %v, want %v", err, ErrConversationNotAccessible)
+	}
+	if llm.appCreateImageCalls != 0 || assets.saveCalls != 0 || chat.atomicCreateCalls != 0 || chat.completedMessageCalls != 0 {
+		t.Fatalf("side effects = llm:%d save:%d atomic:%d completed:%d, want all 0", llm.appCreateImageCalls, assets.saveCalls, chat.atomicCreateCalls, chat.completedMessageCalls)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("SQL expectations: %v", err)
 	}
 }
 

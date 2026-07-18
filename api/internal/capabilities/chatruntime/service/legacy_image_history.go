@@ -221,6 +221,7 @@ func legacyImageConversationToRuntime(scope Scope, legacy *legacyconversation.Ag
 		DialogueCount:        legacy.DialogueCount,
 		Source:               runtimemodel.ConversationSourceMigration,
 		SourceConversationID: &sourceID,
+		LegacyFallback:       true,
 		Metadata: map[string]interface{}{
 			"legacy_workflow_image": true,
 		},

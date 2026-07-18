@@ -44,6 +44,7 @@ type Conversation struct {
 	SourceConversationID *uuid.UUID             `gorm:"type:uuid;uniqueIndex:idx_chat_runtime_conversations_source_conversation" json:"source_conversation_id,omitempty"`
 	SourceWebAppID       *uuid.UUID             `gorm:"type:uuid;index:idx_chat_runtime_conversations_source_web_app" json:"source_web_app_id,omitempty"`
 	Metadata             map[string]interface{} `gorm:"type:jsonb;serializer:json;not null;default:'{}'" json:"metadata,omitempty"`
+	LegacyFallback       bool                   `gorm:"-" json:"-"`
 	CreatedAt            time.Time              `gorm:"not null;default:CURRENT_TIMESTAMP" json:"created_at"`
 	UpdatedAt            time.Time              `gorm:"not null;default:CURRENT_TIMESTAMP;index:idx_chat_runtime_conversations_owner_updated,priority:3;index:idx_chat_runtime_conversations_caller_updated,priority:5" json:"updated_at"`
 	DeletedAt            *time.Time             `gorm:"index" json:"deleted_at,omitempty"`
