@@ -21,7 +21,6 @@ import (
 
 const (
 	maxPromptRunes      = 4000
-	imageRuntimeAppID   = "image-runtime"
 	imageRuntimeAppType = "image-runtime"
 	successMessage      = "已生成图片"
 )
@@ -400,7 +399,7 @@ func buildAppContext(scope Scope, conversationID uuid.UUID) (*llmclient.AppConte
 		OrganizationID:     scope.OrganizationID.String(),
 		WorkspaceID:        scope.WorkspaceID.String(),
 		BillingSubjectType: llmclient.BillingSubjectTypeWorkspace,
-		AppID:              imageRuntimeAppID,
+		AppID:              sessionID,
 		AppType:            imageRuntimeAppType,
 		AccountID:          scope.AccountID.String(),
 		SessionID:          sessionID,

@@ -329,6 +329,22 @@ func getCurrentWorkspaceIDInternal(c *gin.Context) string {
 	return currentWorkspace.ID
 }
 
+// CurrentWorkspaceRequired resolves the authenticated account's current workspace
+// and stores it in the request context for workspace-scoped handlers.
+func CurrentWorkspaceRequired() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		workspaceID := getCurrentWorkspaceIDInternal(c)
+		if workspaceID == "" {
+			response.Fail(c, response.ErrWorkspaceNotFound)
+			c.Abort()
+			return
+		}
+
+		util.SetWorkspaceScopeCompat(c, workspaceID)
+		c.Next()
+	}
+}
+
 func needsTenantID(path string) bool {
 	consoleAPIPaths := []string{
 		"/console/api/files",

@@ -306,8 +306,8 @@ func TestGenerateUsesAppCreateImageWithWorkspaceBillingContext(t *testing.T) {
 	if llm.lastAppCtx.SessionID != chat.conversation.ID.String() {
 		t.Fatalf("SessionID = %q, want %q", llm.lastAppCtx.SessionID, chat.conversation.ID)
 	}
-	if llm.lastAppCtx.AppID != imageRuntimeAppID {
-		t.Fatalf("AppID = %q, want %q", llm.lastAppCtx.AppID, imageRuntimeAppID)
+	if llm.lastAppCtx.AppID != chat.conversation.ID.String() {
+		t.Fatalf("AppID = %q, want %q", llm.lastAppCtx.AppID, chat.conversation.ID)
 	}
 	if llm.lastAppCtx.AppType != imageRuntimeAppType {
 		t.Fatalf("AppType = %q, want %q", llm.lastAppCtx.AppType, imageRuntimeAppType)
