@@ -38,6 +38,7 @@ type Config struct {
 	WorkflowFileExtraction WorkflowFileExtractionConfig
 	AnswerNodeStreaming    AnswerNodeStreamingConfig
 	Encryption             EncryptionConfig
+	Observability          ObservabilityConfig
 	OpenTelemetry          OpenTelemetryConfig
 	ModelMeta              ModelMetaConfig
 	Neo4j                  Neo4jConfig
@@ -260,6 +261,34 @@ type AnswerNodeStreamingConfig struct {
 type EncryptionConfig struct {
 	APIKeyEncryptionKey    string `json:"-"`
 	LLMCredentialSecretKey string `json:"-"`
+}
+
+// ObservabilityConfig selects the adapters used by the ZGI observability facade.
+// An empty list preserves auto-detection of configured providers. The special
+// value "none" disables every reporter.
+type ObservabilityConfig struct {
+	Reporters []string `json:"reporters"`
+}
+
+// ReporterEnabled reports whether a configured provider should be attached to
+// ZGIReporter. Provider-specific configuration is still required when a
+// provider is explicitly selected.
+func (c ObservabilityConfig) ReporterEnabled(name string, configured bool) bool {
+	if len(c.Reporters) == 0 {
+		return configured
+	}
+
+	for _, reporter := range c.Reporters {
+		if reporter == "none" {
+			return false
+		}
+	}
+	for _, reporter := range c.Reporters {
+		if reporter == name {
+			return configured
+		}
+	}
+	return false
 }
 
 type OpenTelemetryConfig struct {

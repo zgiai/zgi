@@ -1,11 +1,11 @@
 'use client';
 
 import { useEffect } from 'react';
-import { captureException } from '@/lib/sentry/client';
+import { captureError } from '@/lib/observability';
 
 export default function GlobalError({ error }: { error: Error & { digest?: string } }) {
   useEffect(() => {
-    captureException(error);
+    captureError(error, 'ui.application.render_failed');
   }, [error]);
 
   return (

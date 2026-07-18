@@ -12,8 +12,8 @@ import (
 	llmmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/internal/modules/llm/shared"
+	"github.com/zgiai/zgi/api/internal/observability"
 	"github.com/zgiai/zgi/api/pkg/logger"
-	sentryHelper "github.com/zgiai/zgi/api/pkg/sentry"
 	"go.uber.org/zap"
 )
 
@@ -337,18 +337,24 @@ func (s *llmGatewayServiceImpl) chatCompletionStreamInternal(
 
 	providerSelections, err := s.selectProvidersWithChannelRouter(ctx, shadowOrganizationID, effectiveReq.Provider, effectiveReq.Model, 3)
 	if err != nil {
-		sentryHelper.CaptureLLMError(err, "unknown", req.Model, organizationID.String(), map[string]interface{}{
-			"shadow_tenant_id": shadowOrganizationID.String(),
-			"error_type":       "provider_selection_failed",
-		})
+		observability.CaptureError(ctx, "llm.provider.selection_failed", err,
+			observability.Tags(map[string]string{"llm.provider": "unknown", "llm.model": req.Model}),
+			observability.Attributes(map[string]any{
+				"organization_id":  organizationID.String(),
+				"shadow_tenant_id": shadowOrganizationID.String(),
+			}),
+		)
 		return nil, fmt.Errorf("failed to select provider: %w", err)
 	}
 	if len(providerSelections) == 0 {
 		err := ErrNoProviderAvailable
-		sentryHelper.CaptureLLMError(err, "unknown", req.Model, organizationID.String(), map[string]interface{}{
-			"shadow_tenant_id": shadowOrganizationID.String(),
-			"error_type":       "no_provider_available",
-		})
+		observability.CaptureError(ctx, "llm.provider.unavailable", err,
+			observability.Tags(map[string]string{"llm.provider": "unknown", "llm.model": req.Model}),
+			observability.Attributes(map[string]any{
+				"organization_id":  organizationID.String(),
+				"shadow_tenant_id": shadowOrganizationID.String(),
+			}),
+		)
 		return nil, err
 	}
 
@@ -484,12 +490,18 @@ func (s *llmGatewayServiceImpl) tryChatCompletionStream(
 		s.logProviderError(ctx, attemptIdx, providerSelection, err, "stream_call_failed")
 		s.recordUpstreamProviderError(ctx, providerSelection, billingCtx, err)
 
-		sentryHelper.CaptureLLMError(err, providerSelection.Provider.Provider, providerSelection.Model.Model, organizationID.String(), map[string]interface{}{
-			"attempt_index":       attemptIdx,
-			"channel_id":          channelID,
-			"use_system_provider": providerSelection.UseSystemProvider,
-			"error_type":          "stream_call_failed",
-		})
+		observability.CaptureError(ctx, "llm.provider.stream_failed", err,
+			observability.Tags(map[string]string{
+				"llm.provider": providerSelection.Provider.Provider,
+				"llm.model":    providerSelection.Model.Model,
+			}),
+			observability.Attributes(map[string]any{
+				"organization_id":     organizationID.String(),
+				"attempt_index":       attemptIdx,
+				"channel_id":          channelID,
+				"use_system_provider": providerSelection.UseSystemProvider,
+			}),
+		)
 
 		if channelID != nil {
 			autoBan := providerSelection.HasRoute() && providerSelection.AutoBan
