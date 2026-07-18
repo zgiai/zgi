@@ -40,7 +40,6 @@ func RegisterImageRuntimeRoutes(router *gin.RouterGroup, deps ImageRuntimeRouteD
 	group := router.Group("")
 	group.Use(middleware.SetupRequired())
 	group.Use(middleware.JWTWithOrganizationAndService(deps.AccountService))
-	group.Use(middleware.CurrentWorkspaceRequired())
-	module.RegisterRoutes(group)
+	module.RegisterRoutes(group, middleware.CurrentWorkspaceRequired())
 	logger.Info("Image runtime routes registered", "path", "/console/api/image-runtime/*")
 }

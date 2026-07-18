@@ -199,6 +199,10 @@ func (f *fakeImageChatService) CreateCompletedMessage(_ context.Context, _ chatr
 	return &runtimemodel.Message{ID: uuid.New(), ConversationID: req.ConversationID}, nil
 }
 
+func (f *fakeImageChatService) GetConversationByCaller(context.Context, chatruntime.Scope, chatruntime.Caller, uuid.UUID) (*runtimemodel.Conversation, error) {
+	return f.conversation, nil
+}
+
 func (f *fakeImageChatService) CreateConversationWithCompletedMessage(_ context.Context, scope chatruntime.Scope, caller chatruntime.Caller, req chatruntime.CreateConversationWithCompletedMessageRequest) (*runtimemodel.Conversation, *runtimemodel.Message, error) {
 	f.atomicCreateCalls++
 	if f.messageErr != nil {
@@ -382,6 +386,107 @@ func TestGenerateDoesNotCreateConversationWhenUpstreamFails(t *testing.T) {
 	if chat.createConversationCalls != 0 || chat.atomicCreateCalls != 0 || chat.completedMessageCalls != 0 {
 		t.Fatalf("chat writes = create:%d atomic:%d completed:%d, want all 0", chat.createConversationCalls, chat.atomicCreateCalls, chat.completedMessageCalls)
 	}
+}
+
+func TestGenerateRejectsExistingConversationOutsideCurrentWorkspaceBeforeSideEffects(t *testing.T) {
+	organizationID := uuid.New()
+	accountID := uuid.New()
+	currentWorkspaceID := uuid.New()
+
+	for _, tc := range []struct {
+		name                    string
+		conversationWorkspaceID *uuid.UUID
+	}{
+		{name: "another workspace", conversationWorkspaceID: uuidPtr(uuid.New())},
+		{name: "legacy conversation without workspace", conversationWorkspaceID: nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			llm := &fakeImageLLMClient{}
+			assets := &fakeImageAssetService{}
+			chat := &fakeImageChatService{conversation: &runtimemodel.Conversation{
+				ID:               uuid.New(),
+				OrganizationID:   organizationID,
+				WorkspaceID:      tc.conversationWorkspaceID,
+				AccountID:        accountID,
+				CallerType:       runtimemodel.ConversationCallerAIChat,
+				ConversationType: runtimemodel.ConversationTypeImage,
+			}}
+			svc := NewService(
+				registry.NewRegistry(),
+				&fakeAvailableModels{items: []*llmmodelsvc.AvailableModel{{Provider: "qwen", Name: "qwen-image"}}},
+				fakeRouteLister{},
+				llm,
+				chat,
+				assets,
+			)
+
+			_, err := svc.Generate(context.Background(), Scope{
+				OrganizationID: organizationID,
+				AccountID:      accountID,
+				WorkspaceID:    &currentWorkspaceID,
+			}, GenerateRequest{
+				Prompt:         "draw a flower",
+				Provider:       "qwen",
+				Model:          "qwen-image",
+				Size:           "1024x1024",
+				Count:          1,
+				ConversationID: chat.conversation.ID.String(),
+			})
+			if !errors.Is(err, ErrConversationNotAccessible) {
+				t.Fatalf("Generate error = %v, want %v", err, ErrConversationNotAccessible)
+			}
+			if llm.appCreateImageCalls != 0 || assets.saveCalls != 0 || chat.completedMessageCalls != 0 || chat.atomicCreateCalls != 0 {
+				t.Fatalf("side effects = llm:%d save:%d completed:%d atomic:%d, want all 0", llm.appCreateImageCalls, assets.saveCalls, chat.completedMessageCalls, chat.atomicCreateCalls)
+			}
+		})
+	}
+}
+
+func TestGenerateContinuesExistingConversationInCurrentWorkspace(t *testing.T) {
+	organizationID := uuid.New()
+	accountID := uuid.New()
+	workspaceID := uuid.New()
+	llm := &fakeImageLLMClient{}
+	assets := &fakeImageAssetService{}
+	chat := &fakeImageChatService{conversation: &runtimemodel.Conversation{
+		ID:               uuid.New(),
+		OrganizationID:   organizationID,
+		WorkspaceID:      &workspaceID,
+		AccountID:        accountID,
+		CallerType:       runtimemodel.ConversationCallerAIChat,
+		ConversationType: runtimemodel.ConversationTypeImage,
+	}}
+	svc := NewService(
+		registry.NewRegistry(),
+		&fakeAvailableModels{items: []*llmmodelsvc.AvailableModel{{Provider: "qwen", Name: "qwen-image"}}},
+		fakeRouteLister{},
+		llm,
+		chat,
+		assets,
+	)
+
+	_, err := svc.Generate(context.Background(), Scope{
+		OrganizationID: organizationID,
+		AccountID:      accountID,
+		WorkspaceID:    &workspaceID,
+	}, GenerateRequest{
+		Prompt:         "draw a flower",
+		Provider:       "qwen",
+		Model:          "qwen-image",
+		Size:           "1024x1024",
+		Count:          1,
+		ConversationID: chat.conversation.ID.String(),
+	})
+	if err != nil {
+		t.Fatalf("Generate returned error: %v", err)
+	}
+	if llm.appCreateImageCalls != 1 || assets.saveCalls != 1 || chat.completedMessageCalls != 1 {
+		t.Fatalf("side effects = llm:%d save:%d completed:%d, want all 1", llm.appCreateImageCalls, assets.saveCalls, chat.completedMessageCalls)
+	}
+}
+
+func uuidPtr(value uuid.UUID) *uuid.UUID {
+	return &value
 }
 
 func TestGenerateCleansSavedImagesWhenLaterSaveFails(t *testing.T) {
