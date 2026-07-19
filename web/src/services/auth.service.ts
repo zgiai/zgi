@@ -23,6 +23,8 @@ import type {
   PhoneVerifyResponse,
   PhoneRegisterRequest,
   PhoneLoginRequest,
+  PhonePasswordLoginRequest,
+  PhoneResetPasswordRequest,
 } from './types/auth';
 import type { User, SystemFeatures, SetupStatus } from '@/services/types/auth';
 import type { ApiResponseData, BusinessError } from './types/common';
@@ -782,6 +784,51 @@ export class AuthenticationService extends BaseService {
     this.persistTokens(access_token, refresh_token);
     return { access_token, refresh_token, account };
   }
+
+  async phonePasswordLogin(
+    data: PhonePasswordLoginRequest
+  ): Promise<{ access_token: string; refresh_token?: string; account?: Account }> {
+    const response = await this.request<ApiResponseData<LoginResponse>>(
+      'post',
+      '/phone/password-login',
+      data,
+      { skipAuth: true }
+    );
+    if (response.code !== '0') {
+      const error = new Error(response.message || 'Login failed');
+      (error as unknown as BusinessError).businessError = {
+        code: response.code || '',
+        message: response.message || '',
+      };
+      this.handleBusinessError(error, 'Phone password login');
+    }
+    const access_token = response.data?.data?.access_token;
+    const refresh_token = response.data?.data?.refresh_token;
+    const account = response.data?.data?.account;
+
+    if (!access_token) {
+      throw new Error('Invalid phone password login response structure');
+    }
+    this.persistTokens(access_token, refresh_token);
+    return { access_token, refresh_token, account };
+  }
+
+  async resetPhonePassword(data: PhoneResetPasswordRequest): Promise<void> {
+    const response = await this.request<ApiResponseData<{ result: string }>>(
+      'post',
+      '/phone/reset-password',
+      data,
+      { skipAuth: true }
+    );
+    if (response.code !== '0') {
+      const error = new Error(response.message || 'Password reset failed');
+      (error as unknown as BusinessError).businessError = {
+        code: response.code || '',
+        message: response.message || '',
+      };
+      this.handleBusinessError(error, 'Phone reset password');
+    }
+  }
 }
 
 // Export singleton instance for new service
@@ -837,4 +884,8 @@ export const authService = {
   verifyPhoneCode: (data: PhoneVerifyRequest) => authenticationService.verifyPhoneCode(data),
   phoneRegister: (data: PhoneRegisterRequest) => authenticationService.phoneRegister(data),
   phoneLogin: (data: PhoneLoginRequest) => authenticationService.phoneLogin(data),
+  phonePasswordLogin: (data: PhonePasswordLoginRequest) =>
+    authenticationService.phonePasswordLogin(data),
+  resetPhonePassword: (data: PhoneResetPasswordRequest) =>
+    authenticationService.resetPhonePassword(data),
 };

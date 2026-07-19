@@ -13,6 +13,8 @@ import type {
   PhoneVerifyRequest,
   PhoneRegisterRequest,
   PhoneLoginRequest,
+  PhonePasswordLoginRequest,
+  PhoneResetPasswordRequest,
 } from '@/services/types/auth';
 import { useT } from '@/i18n';
 import { useAuthStore } from '@/store/auth-store';
@@ -132,6 +134,52 @@ export function usePhoneLogin() {
       const title = t('loginError');
       const descriptionKey = getAuthBusinessErrorDescriptionKey(error, {
         context: 'login',
+      });
+      const description = descriptionKey ? t(descriptionKey) : getAuthBusinessErrorMessage(error);
+      toast.error(title, {
+        description: normalizeToastDescription(title, description),
+      });
+    },
+  });
+}
+
+export function usePhonePasswordLogin() {
+  const t = useT('auth');
+  return useMutation({
+    mutationFn: (data: PhonePasswordLoginRequest) => authService.phonePasswordLogin(data),
+    onSuccess: async () => {
+      await clearSessionBoundClientState();
+      try {
+        await useAuthStore.getState().initializeAuth({ force: true });
+      } catch {
+        // Ignore bootstrap failures here and let subsequent navigation retry.
+      }
+      toast.success(t('loginSuccess'));
+    },
+    onError: error => {
+      const title = t('loginError');
+      const descriptionKey = getAuthBusinessErrorDescriptionKey(error, {
+        context: 'login',
+      });
+      const description = descriptionKey ? t(descriptionKey) : getAuthBusinessErrorMessage(error);
+      toast.error(title, {
+        description: normalizeToastDescription(title, description),
+      });
+    },
+  });
+}
+
+export function usePhoneResetPassword() {
+  const t = useT('auth');
+  return useMutation({
+    mutationFn: (data: PhoneResetPasswordRequest) => authService.resetPhonePassword(data),
+    onSuccess: () => {
+      toast.success(t('passwordResetSuccess'));
+    },
+    onError: error => {
+      const title = t('passwordResetFailed');
+      const descriptionKey = getAuthBusinessErrorDescriptionKey(error, {
+        context: 'resetPassword',
       });
       const description = descriptionKey ? t(descriptionKey) : getAuthBusinessErrorMessage(error);
       toast.error(title, {

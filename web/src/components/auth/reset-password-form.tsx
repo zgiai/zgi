@@ -15,10 +15,23 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { PasswordInput } from '@/components/ui/input';
 import { Loader2 } from 'lucide-react';
 import { useResetPassword } from '@/hooks/auth/use-reset-password';
+import { usePhoneResetPassword } from '@/hooks/auth/use-phone-auth';
 import { toast } from 'sonner';
 
 interface ResetPasswordFormProps {
   className?: string;
+}
+
+const DEFAULT_PHONE_COUNTRY_CODE = 'CN';
+
+function normalizeCountryCode(value: string): string {
+  const normalized = value.trim().toUpperCase();
+
+  if (normalized === '+86' || normalized === '86') {
+    return 'CN';
+  }
+
+  return normalized.startsWith('+') ? normalized.slice(1) : normalized;
 }
 
 export function ResetPasswordForm({ className }: ResetPasswordFormProps) {
@@ -26,6 +39,10 @@ export function ResetPasswordForm({ className }: ResetPasswordFormProps) {
   const searchParams = useSearchParams();
   const email = searchParams.get('email');
   const token = searchParams.get('token');
+  const phone = searchParams.get('phone');
+  const countryCode = searchParams.get('country_code') || DEFAULT_PHONE_COUNTRY_CODE;
+  const verifiedToken = searchParams.get('verified_token');
+  const isPhoneResetFlow = searchParams.get('method') === 'phone';
   const t = useT('auth');
   const { locale } = useLocale();
 
@@ -69,7 +86,8 @@ export function ResetPasswordForm({ className }: ResetPasswordFormProps) {
 
   // Auth state
   const resetPasswordMutation = useResetPassword();
-  const isLoading = resetPasswordMutation.isPending;
+  const phoneResetPasswordMutation = usePhoneResetPassword();
+  const isLoading = resetPasswordMutation.isPending || phoneResetPasswordMutation.isPending;
 
   // Form setup
   const {
@@ -86,23 +104,39 @@ export function ResetPasswordForm({ className }: ResetPasswordFormProps) {
 
   // Form submission
   const onSubmit = async (data: ResetPasswordFormData) => {
-    if (!email || !token) {
-      toast.error('Error');
+    if (isPhoneResetFlow && (!phone || !verifiedToken)) {
+      toast.error(t('missingTokenError'));
+      return;
+    }
+
+    if (!isPhoneResetFlow && (!email || !token)) {
+      toast.error(t('missingTokenError'));
       return;
     }
 
     try {
-      const result = await resetPasswordMutation.mutateAsync({
-        email,
-        password: data.password,
-        password_confirm: data.confirmPassword,
-        token,
-        language: locale,
-      });
+      if (isPhoneResetFlow) {
+        await phoneResetPasswordMutation.mutateAsync({
+          phone: phone || '',
+          country_code: normalizeCountryCode(countryCode),
+          verified_token: verifiedToken || '',
+          new_password: data.password,
+        });
+      } else {
+        const result = await resetPasswordMutation.mutateAsync({
+          email: email || '',
+          password: data.password,
+          password_confirm: data.confirmPassword,
+          token: token || '',
+          language: locale,
+        });
 
-      if (result) {
-        router.push('/login');
+        if (!result) {
+          return;
+        }
       }
+
+      router.push('/login');
     } catch (_err) {
       // Error is handled by the store
     }

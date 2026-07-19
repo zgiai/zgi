@@ -130,6 +130,8 @@ export {
   usePhoneVerify,
   usePhoneRegister,
   usePhoneLogin,
+  usePhonePasswordLogin,
+  usePhoneResetPassword,
 } from './auth/use-phone-auth';
 // DB hooks
 export { useDb, useCreateDb, useUpdateDb, useDeleteDb } from './db/use-dbs';

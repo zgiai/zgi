@@ -1,10 +1,10 @@
 'use client';
 
-import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { useEffect, useState, type CSSProperties, type ReactNode } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { KeyRound, Mail, ShieldCheck, Smartphone } from 'lucide-react';
+import { KeyRound, Mail, Smartphone } from 'lucide-react';
 import { useForm } from 'react-hook-form';
 import * as z from 'zod';
 
@@ -13,7 +13,7 @@ import { cn } from '@/lib/utils';
 import { withBasePathIfInternal } from '@/lib/config';
 import {
   hasNotificationSMSTemplate,
-  NOTIFICATION_SMS_AUTH_PHONE_LOGIN_TEMPLATE,
+  NOTIFICATION_SMS_AUTH_PHONE_RESET_PASSWORD_TEMPLATE,
 } from '@/lib/features/notification-sms';
 import { buildSsoStartUrl } from '@/utils/auth-sso';
 import { getAuthBusinessErrorCode, getAuthBusinessErrorData } from '@/utils/auth-errors';
@@ -27,10 +27,7 @@ import { Label } from '@/components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   useLogin,
-  usePhoneCheck,
-  usePhoneCode,
-  usePhoneLogin,
-  usePhoneVerify,
+  usePhonePasswordLogin,
   useSystemFeatures,
 } from '@/hooks';
 
@@ -77,22 +74,17 @@ export function LoginForm({ className }: LoginFormProps) {
 
   const [mounted, setMounted] = useState(false);
   const [loginMethod, setLoginMethod] = useState<LoginMethod>('email');
-  const [phoneToken, setPhoneToken] = useState('');
-  const [phoneTokenPhone, setPhoneTokenPhone] = useState('');
-  const [phoneCountdown, setPhoneCountdown] = useState(0);
 
   const loginMutation = useLogin();
-  const phoneCheckMutation = usePhoneCheck({ silentSuccess: true });
-  const phoneCodeMutation = usePhoneCode();
-  const phoneVerifyMutation = usePhoneVerify();
-  const phoneLoginMutation = usePhoneLogin();
+  const phonePasswordLoginMutation = usePhonePasswordLogin();
   const { data: systemFeatures } = useSystemFeatures();
 
   const canRegister = Boolean(systemFeatures?.is_allow_register);
   const hasSocialLogin = Boolean(systemFeatures?.enable_social_oauth_login);
-  const hasPhoneLogin = hasNotificationSMSTemplate(
+  const hasPhoneLogin = !inviteToken;
+  const hasPhonePasswordReset = hasNotificationSMSTemplate(
     systemFeatures,
-    NOTIFICATION_SMS_AUTH_PHONE_LOGIN_TEMPLATE
+    NOTIFICATION_SMS_AUTH_PHONE_RESET_PASSWORD_TEMPLATE
   );
 
   const emailLoginSchema = z.object({
@@ -106,11 +98,7 @@ export function LoginForm({ className }: LoginFormProps) {
       .string()
       .min(1, t('phoneRequired'))
       .refine(value => isValidPhoneNumber(value, 'INTL'), t('invalidPhoneNumber')),
-    code: z
-      .string()
-      .min(1, t('codeRequired'))
-      .length(6, t('codeLength'))
-      .regex(/^\d+$/, t('codeLength')),
+    password: z.string().min(8, t('passwordTooShort')).max(100, t('passwordTooLong')),
   });
 
   type EmailLoginFormData = z.infer<typeof emailLoginSchema>;
@@ -128,7 +116,7 @@ export function LoginForm({ className }: LoginFormProps) {
     resolver: zodResolver(phoneLoginSchema),
     defaultValues: {
       phone: '',
-      code: '',
+      password: '',
     },
   });
 
@@ -137,7 +125,9 @@ export function LoginForm({ className }: LoginFormProps) {
     ? `/forgot-password?email=${encodeURIComponent(forgotPasswordEmail)}`
     : '/forgot-password';
   const phoneValue = phoneForm.watch('phone');
-  const previousPhoneValueRef = useRef(phoneValue);
+  const forgotPasswordPhoneHref = phoneValue.trim()
+    ? `/forgot-password?phone=${encodeURIComponent(phoneValue.trim())}`
+    : '/forgot-password?method=phone';
 
   useEffect(() => {
     setMounted(true);
@@ -148,31 +138,6 @@ export function LoginForm({ className }: LoginFormProps) {
       setLoginMethod('email');
     }
   }, [hasPhoneLogin, loginMethod]);
-
-  useEffect(() => {
-    if (phoneCountdown <= 0) {
-      return;
-    }
-
-    const timer = window.setTimeout(() => {
-      setPhoneCountdown(phoneCountdown - 1);
-    }, 1000);
-
-    return () => window.clearTimeout(timer);
-  }, [phoneCountdown]);
-
-  useEffect(() => {
-    if (previousPhoneValueRef.current === phoneValue) {
-      return;
-    }
-
-    previousPhoneValueRef.current = phoneValue;
-    setPhoneToken('');
-    setPhoneTokenPhone('');
-    setPhoneCountdown(0);
-    phoneForm.setValue('code', '');
-    phoneForm.clearErrors('code');
-  }, [phoneForm, phoneValue]);
 
   const navigateAfterLogin = () => {
     const urlParams = new URLSearchParams(window.location.search);
@@ -209,82 +174,19 @@ export function LoginForm({ className }: LoginFormProps) {
     }
   };
 
-  const onSendPhoneCode = async () => {
-    if (!hasPhoneLogin) {
-      phoneForm.setError('phone', {
-        message: t('sendCodeError'),
-      });
-      return;
-    }
-
-    const isValid = await phoneForm.trigger(['phone']);
-    if (!isValid) {
-      return;
-    }
-
-    try {
-      const values = phoneForm.getValues();
-      const checkResponse = await phoneCheckMutation.mutateAsync({
-        country_code: DEFAULT_PHONE_COUNTRY_CODE,
-        phone: values.phone,
-      });
-
-      if (!checkResponse.is_registered) {
-        phoneForm.setError('phone', {
-          message: t('phoneNotRegistered'),
-        });
-        return;
-      }
-
-      const codeResponse = await phoneCodeMutation.mutateAsync({
-        country_code: DEFAULT_PHONE_COUNTRY_CODE,
-        phone: values.phone,
-        scene: 'login',
-      });
-
-      setPhoneToken(codeResponse.token);
-      setPhoneTokenPhone(values.phone);
-      setPhoneCountdown(60);
-    } catch (err) {
-      console.error('Failed to send phone code:', err);
-    }
-  };
-
   const onPhoneSubmit = async (data: PhoneLoginFormData) => {
     if (!hasPhoneLogin) {
       phoneForm.setError('phone', {
-        message: t('sendCodeError'),
-      });
-      return;
-    }
-
-    if (!phoneToken) {
-      phoneForm.setError('code', {
-        message: t('sendCodeFirst'),
-      });
-      return;
-    }
-
-    if (phoneTokenPhone !== data.phone) {
-      phoneForm.setError('code', {
-        message: t('sendCodeFirst'),
+        message: t('invalidPhoneNumber'),
       });
       return;
     }
 
     try {
-      const verifyResult = await phoneVerifyMutation.mutateAsync({
+      await phonePasswordLoginMutation.mutateAsync({
         country_code: DEFAULT_PHONE_COUNTRY_CODE,
         phone: data.phone,
-        scene: 'login',
-        token: phoneToken,
-        code: data.code,
-      });
-
-      await phoneLoginMutation.mutateAsync({
-        country_code: DEFAULT_PHONE_COUNTRY_CODE,
-        phone: data.phone,
-        verified_token: verifyResult.verified_token,
+        password: data.password,
       });
 
       navigateAfterLogin();
@@ -300,11 +202,7 @@ export function LoginForm({ className }: LoginFormProps) {
 
   const emailFormLoading = loginMutation.isPending || emailForm.formState.isSubmitting;
   const phoneFormLoading =
-    phoneCheckMutation.isPending ||
-    phoneCodeMutation.isPending ||
-    phoneVerifyMutation.isPending ||
-    phoneLoginMutation.isPending ||
-    phoneForm.formState.isSubmitting;
+    phonePasswordLoginMutation.isPending || phoneForm.formState.isSubmitting;
   const isAnyFormLoading = emailFormLoading || phoneFormLoading;
   const authRichT = t as typeof t & {
     rich: (
@@ -473,36 +371,33 @@ export function LoginForm({ className }: LoginFormProps) {
                   </div>
 
                   <div className="space-y-2">
-                    <Label
-                      htmlFor="phoneCode"
-                      className="ml-1 text-sm font-semibold text-[var(--text-primary)]"
-                    >
-                      {t('verificationCode')}
-                    </Label>
-                    <div className="flex items-start gap-3">
-                      <Input
-                        id="phoneCode"
-                        inputMode="numeric"
-                        leftIcon={<ShieldCheck />}
-                        placeholder={t('enterCode')}
-                        disabled={phoneFormLoading}
-                        {...phoneForm.register('code')}
-                        aria-invalid={phoneForm.formState.errors.code ? 'true' : 'false'}
-                        errorText={phoneForm.formState.errors.code?.message}
-                        className={loginInputClassName}
-                      />
-                      <Button
-                        type="button"
-                        variant="outline"
-                        className="h-11 min-w-28 rounded-xl border-[var(--border-strong)] text-[var(--text-primary)] hover:bg-[var(--bg-soft)]"
-                        disabled={phoneFormLoading || phoneCountdown > 0}
-                        onClick={onSendPhoneCode}
+                    <div className="ml-1 flex items-center justify-between">
+                      <Label
+                        htmlFor="phonePassword"
+                        className="text-sm font-semibold text-[var(--text-primary)]"
                       >
-                        {phoneCountdown > 0
-                          ? t('resendCodeIn', { countdown: phoneCountdown })
-                          : t('sendCode')}
-                      </Button>
+                        {t('password')}
+                      </Label>
+                      {hasPhonePasswordReset ? (
+                        <Link
+                          href={forgotPasswordPhoneHref}
+                          className="text-sm font-medium text-[var(--brand-primary)] transition-colors hover:text-[var(--brand-primary-hover)]"
+                          tabIndex={-1}
+                        >
+                          {t('forgotPasswordLink')}
+                        </Link>
+                      ) : null}
                     </div>
+                    <PasswordInput
+                      id="phonePassword"
+                      leftIcon={<KeyRound />}
+                      placeholder={t('enterPassword')}
+                      autoComplete="current-password"
+                      disabled={phoneFormLoading}
+                      {...phoneForm.register('password')}
+                      errorText={phoneForm.formState.errors.password?.message}
+                      className={loginInputClassName}
+                    />
                   </div>
 
                   <Button

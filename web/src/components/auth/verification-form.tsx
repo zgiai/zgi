@@ -156,7 +156,9 @@ export function VerificationForm({ className }: VerificationFormProps) {
   const type = searchParams.get('type') || 'reset';
   const countryCode = searchParams.get('country_code') || DEFAULT_PHONE_COUNTRY_CODE;
   const isPhoneRegisterFlow = method === 'phone' && type === 'register';
-  const destination = isPhoneRegisterFlow ? phone : email;
+  const isPhoneResetFlow = method === 'phone' && type === 'reset';
+  const isPhoneFlow = isPhoneRegisterFlow || isPhoneResetFlow;
+  const destination = isPhoneFlow ? phone : email;
 
   const [isResending, setIsResending] = useState(false);
   const [canResend, setCanResend] = useState(false);
@@ -181,13 +183,13 @@ export function VerificationForm({ className }: VerificationFormProps) {
       return null;
     }
 
-    const cooldownType = isPhoneRegisterFlow ? 'phone-register' : type;
+    const cooldownType = isPhoneFlow ? `phone-${type}` : type;
     return buildResendCooldownKey(destination, token, cooldownType);
-  }, [destination, isPhoneRegisterFlow, token, type]);
+  }, [destination, isPhoneFlow, token, type]);
 
   useEffect(() => {
-    const missingEmailParams = !isPhoneRegisterFlow && (!email || !token);
-    const missingPhoneParams = isPhoneRegisterFlow && (!phone || !token);
+    const missingEmailParams = !isPhoneFlow && (!email || !token);
+    const missingPhoneParams = isPhoneFlow && (!phone || !token);
 
     if (missingEmailParams || missingPhoneParams) {
       let redirectPath = type === 'reset' ? '/forgot-password' : '/register';
@@ -197,7 +199,7 @@ export function VerificationForm({ className }: VerificationFormProps) {
       }
       router.push(redirectPath);
     }
-  }, [email, isPhoneRegisterFlow, phone, router, searchParams, token, type]);
+  }, [email, isPhoneFlow, phone, router, searchParams, token, type]);
 
   useEffect(() => {
     if (!resendCooldownKey) {
@@ -257,36 +259,44 @@ export function VerificationForm({ className }: VerificationFormProps) {
       return;
     }
 
-    if (isPhoneRegisterFlow && !phone) {
+    if (isPhoneFlow && !phone) {
       return;
     }
 
-    if (!isPhoneRegisterFlow && !email) {
+    if (!isPhoneFlow && !email) {
       return;
     }
 
     setIsSubmitting(true);
     try {
-      if (isPhoneRegisterFlow) {
+      if (isPhoneFlow) {
         const normalizedCountryCode = normalizeCountryCode(countryCode);
         const res = await phoneVerifyMutation.mutateAsync({
           phone: phone || '',
           country_code: normalizedCountryCode,
-          scene: 'register',
+          scene: isPhoneRegisterFlow ? 'register' : 'reset_password',
           token,
           code,
         });
 
         if (res.verified_token) {
-          let completeUrl =
-            `/register/complete?method=phone&phone=${encodeURIComponent(phone || '')}` +
-            `&country_code=${encodeURIComponent(normalizedCountryCode)}` +
-            `&verified_token=${encodeURIComponent(res.verified_token)}`;
-          const redirect = searchParams.get('redirect');
-          if (redirect) {
-            completeUrl += `&redirect=${encodeURIComponent(redirect)}`;
+          if (isPhoneRegisterFlow) {
+            let completeUrl =
+              `/register/complete?method=phone&phone=${encodeURIComponent(phone || '')}` +
+              `&country_code=${encodeURIComponent(normalizedCountryCode)}` +
+              `&verified_token=${encodeURIComponent(res.verified_token)}`;
+            const redirect = searchParams.get('redirect');
+            if (redirect) {
+              completeUrl += `&redirect=${encodeURIComponent(redirect)}`;
+            }
+            router.push(completeUrl);
+          } else {
+            router.push(
+              `/reset-password?method=phone&phone=${encodeURIComponent(phone || '')}` +
+                `&country_code=${encodeURIComponent(normalizedCountryCode)}` +
+                `&verified_token=${encodeURIComponent(res.verified_token)}`
+            );
           }
-          router.push(completeUrl);
         }
         return;
       }
@@ -335,7 +345,7 @@ export function VerificationForm({ className }: VerificationFormProps) {
 
     setIsResending(true);
     try {
-      if (isPhoneRegisterFlow) {
+      if (isPhoneFlow) {
         if (!phone) {
           return;
         }
@@ -344,10 +354,10 @@ export function VerificationForm({ className }: VerificationFormProps) {
         const response = await phoneCodeMutation.mutateAsync({
           phone,
           country_code: normalizedCountryCode,
-          scene: 'register',
+          scene: isPhoneRegisterFlow ? 'register' : 'reset_password',
         });
         const nextCooldown = createCooldownSnapshot();
-        const nextCooldownKey = buildResendCooldownKey(phone, response.token, 'phone-register');
+        const nextCooldownKey = buildResendCooldownKey(phone, response.token, `phone-${type}`);
         writeResendCooldownSnapshot(nextCooldownKey, nextCooldown);
         setResendCooldown(nextCooldown);
 
@@ -382,7 +392,7 @@ export function VerificationForm({ className }: VerificationFormProps) {
 
   const formLoading = isLoading || isSubmitting;
   const title = type === 'reset' ? t('resetPasswordTitle') : t('completeRegistrationTitle');
-  const destinationLabel = destination || (isPhoneRegisterFlow ? t('phone') : t('yourEmail'));
+  const destinationLabel = destination || (isPhoneFlow ? t('phone') : t('yourEmail'));
 
   return (
     <div className={cn('flex flex-col gap-6', className)}>

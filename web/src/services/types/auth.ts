@@ -261,7 +261,7 @@ export interface UpdateProfileRequest {
 export interface PhoneCodeRequest {
   phone: string;
   country_code: string;
-  scene: 'login' | 'register';
+  scene: 'login' | 'register' | 'reset_password';
 }
 
 export interface PhoneCodeResponse {
@@ -284,7 +284,7 @@ export interface PhoneCheckResponse {
 export interface PhoneVerifyRequest {
   phone: string;
   country_code: string;
-  scene: 'login' | 'register';
+  scene: 'login' | 'register' | 'reset_password';
   token: string;
   code: string;
 }
@@ -305,4 +305,17 @@ export interface PhoneLoginRequest {
   phone: string;
   country_code: string;
   verified_token: string;
+}
+
+export interface PhonePasswordLoginRequest {
+  phone: string;
+  country_code: string;
+  password: string;
+}
+
+export interface PhoneResetPasswordRequest {
+  phone: string;
+  country_code: string;
+  verified_token: string;
+  new_password: string;
 }

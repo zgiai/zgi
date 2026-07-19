@@ -5,7 +5,8 @@ export const NOTIFICATION_SMS_CHANNEL_TYPE = 'sms' as const;
 export const NOTIFICATION_SMS_TEMPLATE = 'pending_action_notification' as const;
 export const NOTIFICATION_SMS_WORKFLOW_ALERT_TEMPLATE = 'workflow_alert' as const;
 export const NOTIFICATION_SMS_AUTH_PHONE_REGISTER_TEMPLATE = 'auth_phone_register_code' as const;
-export const NOTIFICATION_SMS_AUTH_PHONE_LOGIN_TEMPLATE = 'auth_phone_login_code' as const;
+export const NOTIFICATION_SMS_AUTH_PHONE_RESET_PASSWORD_TEMPLATE =
+  'auth_phone_reset_password_code' as const;
 
 export interface NotificationSMSTemplateParam {
   key: string;

@@ -93,7 +93,7 @@ const messages = {
   registrationFailed: 'Registration failed',
   failedToStartRegistration: 'Failed to start registration process',
   resetPasswordDesc:
-    "Enter your email address and we'll send you a verification code to reset your password",
+    "Enter your email address or phone number and we'll send you a verification code to reset your password",
   sendResetLink: 'Send Reset Link',
   codeSent: 'Code has been sent',
   sendCode: 'Send Code',
@@ -101,7 +101,9 @@ const messages = {
   dontHaveAccountRegister: "Don't have an account? <registerLink>Register</registerLink>",
   codeSentToEmail:
     "We've sent a verification code to your email address. Please check your inbox and enter the code on the next screen.",
-  errorSendingRecovery: 'Failed to send recovery email',
+  codeSentToPhone:
+    "We've sent a verification code to your phone number. Please enter the code on the next screen.",
+  errorSendingRecovery: 'Failed to send recovery code',
   resetPasswordTitle2: 'Reset your password',
   createNewPassword: 'Create a new strong password for your account',
   newPassword: 'New Password',
@@ -246,7 +248,7 @@ const messages = {
   phoneNotRegistered: 'This phone number is not registered yet',
   authMethodEmail: 'Email',
   authMethodPhone: 'Phone',
-  signInWithPhoneDesc: 'Sign in with your phone number and verification code',
+  signInWithPhoneDesc: 'Sign in with your phone number and password',
   phoneRegisterDesc: 'Create an account with your phone number',
 };
 
