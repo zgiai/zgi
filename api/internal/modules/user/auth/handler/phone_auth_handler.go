@@ -158,7 +158,7 @@ func (h *PhoneAuthHandler) respondPhoneAuthError(c *gin.Context, err error) {
 	case errors.Is(err, auth_service.ErrPhoneCodeInvalid):
 		response.Fail(c, response.ErrInvalidCode)
 	case errors.Is(err, auth_service.ErrPhonePasswordMismatch):
-		response.Fail(c, response.ErrEmailPasswordMismatch)
+		response.Fail(c, response.ErrInvalidCredentials)
 	case errors.Is(err, auth_service.ErrPhoneAccountInactive):
 		response.Fail(c, response.ErrAccountFrozen)
 	case errors.Is(err, auth_service.ErrPhoneSceneUnsupported):
