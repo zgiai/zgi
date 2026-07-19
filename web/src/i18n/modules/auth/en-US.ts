@@ -130,6 +130,7 @@ const messages = {
   businessErrors: {
     invalidParameter: 'Invalid request. Please check your input and try again.',
     invalidCredentials: 'The email or password is incorrect.',
+    phoneInvalidCredentials: 'The phone number or password is incorrect.',
     accountNotFound: 'This email is not registered. Please try again.',
     invalidLoginStatus: 'The verification link has expired. Please request a new code.',
     registrationNotAllowed: 'Registration is not allowed for this deployment.',

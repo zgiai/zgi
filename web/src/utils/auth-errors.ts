@@ -15,6 +15,7 @@ export interface ErrorWithBusinessError extends Error {
 export type AuthBusinessErrorDescriptionKey =
   | 'businessErrors.invalidParameter'
   | 'businessErrors.invalidCredentials'
+  | 'businessErrors.phoneInvalidCredentials'
   | 'businessErrors.accountNotFound'
   | 'businessErrors.invalidLoginStatus'
   | 'businessErrors.registrationNotAllowed'
@@ -42,6 +43,7 @@ export type AuthBusinessErrorDescriptionKey =
 export type AuthBusinessErrorContext =
   | 'login'
   | 'forgotPassword'
+  | 'phoneLogin'
   | 'verification'
   | 'register'
   | 'resetPassword';
@@ -81,6 +83,11 @@ const AUTH_CONTEXT_ERROR_DESCRIPTION_KEYS: Partial<
 > = {
   login: {
     '199001': 'businessErrors.invalidCredentials',
+  },
+  phoneLogin: {
+    '199001': 'businessErrors.phoneInvalidCredentials',
+    '401001': 'businessErrors.phoneInvalidCredentials',
+    '201017': 'businessErrors.phoneInvalidCredentials',
   },
   forgotPassword: {
     '201008': 'businessErrors.sendCodeTooManyAttempts',

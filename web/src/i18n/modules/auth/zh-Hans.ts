@@ -124,6 +124,7 @@ const messages: AuthMessages = {
   businessErrors: {
     invalidParameter: '请求参数不合法，请检查输入后重试。',
     invalidCredentials: '邮箱或密码不正确。',
+    phoneInvalidCredentials: '手机号或密码不正确。',
     accountNotFound: '这个邮箱没有被注册，请重试。',
     invalidLoginStatus: '验证链接已失效，请重新获取验证码。',
     registrationNotAllowed: '当前部署不允许注册。',

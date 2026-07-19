@@ -159,7 +159,7 @@ export function usePhonePasswordLogin() {
     onError: error => {
       const title = t('loginError');
       const descriptionKey = getAuthBusinessErrorDescriptionKey(error, {
-        context: 'login',
+        context: 'phoneLogin',
       });
       const description = descriptionKey ? t(descriptionKey) : getAuthBusinessErrorMessage(error);
       toast.error(title, {
