@@ -67,10 +67,7 @@ export function RegisterForm({ className }: RegisterFormProps) {
   const [refreshing, setRefreshing] = useState(false);
 
   const startRegisterMutation = useStartRegister();
-  const phoneCheckMutation = usePhoneCheck({
-    silentSuccess: true,
-    errorMessageKey: 'userAlreadyExists',
-  });
+  const phoneCheckMutation = usePhoneCheck({ silentSuccess: true });
   const phoneCodeMutation = usePhoneCode();
   const { data: systemFeatures, refetch } = useSystemFeatures();
 

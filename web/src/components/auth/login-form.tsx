@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, type CSSProperties, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -74,6 +74,7 @@ export function LoginForm({ className }: LoginFormProps) {
   const [mounted, setMounted] = useState(false);
   const [loginMethod, setLoginMethod] = useState<LoginMethod>('email');
   const [phoneToken, setPhoneToken] = useState('');
+  const [phoneTokenPhone, setPhoneTokenPhone] = useState('');
   const [phoneCountdown, setPhoneCountdown] = useState(0);
 
   const loginMutation = useLogin();
@@ -127,6 +128,8 @@ export function LoginForm({ className }: LoginFormProps) {
   const forgotPasswordHref = forgotPasswordEmail
     ? `/forgot-password?email=${encodeURIComponent(forgotPasswordEmail)}`
     : '/forgot-password';
+  const phoneValue = phoneForm.watch('phone');
+  const previousPhoneValueRef = useRef(phoneValue);
 
   useEffect(() => {
     setMounted(true);
@@ -143,6 +146,19 @@ export function LoginForm({ className }: LoginFormProps) {
 
     return () => window.clearTimeout(timer);
   }, [phoneCountdown]);
+
+  useEffect(() => {
+    if (previousPhoneValueRef.current === phoneValue) {
+      return;
+    }
+
+    previousPhoneValueRef.current = phoneValue;
+    setPhoneToken('');
+    setPhoneTokenPhone('');
+    setPhoneCountdown(0);
+    phoneForm.setValue('code', '');
+    phoneForm.clearErrors('code');
+  }, [phoneForm, phoneValue]);
 
   const navigateAfterLogin = () => {
     const urlParams = new URLSearchParams(window.location.search);
@@ -206,6 +222,7 @@ export function LoginForm({ className }: LoginFormProps) {
       });
 
       setPhoneToken(codeResponse.token);
+      setPhoneTokenPhone(values.phone);
       setPhoneCountdown(60);
     } catch (err) {
       console.error('Failed to send phone code:', err);
@@ -214,6 +231,13 @@ export function LoginForm({ className }: LoginFormProps) {
 
   const onPhoneSubmit = async (data: PhoneLoginFormData) => {
     if (!phoneToken) {
+      phoneForm.setError('code', {
+        message: t('sendCodeFirst'),
+      });
+      return;
+    }
+
+    if (phoneTokenPhone !== data.phone) {
       phoneForm.setError('code', {
         message: t('sendCodeFirst'),
       });

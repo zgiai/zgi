@@ -18,7 +18,11 @@ import { useT } from '@/i18n';
 import { useAuthStore } from '@/store/auth-store';
 import { clearSessionBoundClientState } from '@/lib/auth/client-state';
 
-type PhoneAuthMessageKey = 'verificationCodeSent' | 'phoneNotRegistered' | 'userAlreadyExists';
+type PhoneAuthMessageKey =
+  | 'verificationCodeSent'
+  | 'phoneNotRegistered'
+  | 'sendCodeError'
+  | 'userAlreadyExists';
 
 export function usePhoneCheck(options?: {
   successMessageKey?: PhoneAuthMessageKey;
@@ -36,7 +40,7 @@ export function usePhoneCheck(options?: {
       }
     },
     onError: error => {
-      const title = t(options?.errorMessageKey || 'phoneNotRegistered');
+      const title = t(options?.errorMessageKey || 'sendCodeError');
       const description = getAuthBusinessErrorMessage(error);
       toast.error(title, {
         description: normalizeToastDescription(title, description),
