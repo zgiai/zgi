@@ -4,38 +4,26 @@ import { useEffect, useState, type CSSProperties, type ReactNode } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { KeyRound, Mail, Smartphone } from 'lucide-react';
+import { KeyRound, Mail } from 'lucide-react';
 import { useForm } from 'react-hook-form';
 import * as z from 'zod';
 
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
 import { withBasePathIfInternal } from '@/lib/config';
-import {
-  hasNotificationSMSTemplate,
-  NOTIFICATION_SMS_AUTH_PHONE_RESET_PASSWORD_TEMPLATE,
-} from '@/lib/features/notification-sms';
 import { buildSsoStartUrl } from '@/utils/auth-sso';
 import { getAuthBusinessErrorCode, getAuthBusinessErrorData } from '@/utils/auth-errors';
-import { isValidPhoneNumber } from '@/utils/validation';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardTitle } from '@/components/ui/card';
 import { Input, PasswordInput } from '@/components/ui/input';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Icons } from '@/components/ui/icons';
 import { Label } from '@/components/ui/label';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import {
-  useLogin,
-  usePhonePasswordLogin,
-  useSystemFeatures,
-} from '@/hooks';
+import { useLogin, usePhonePasswordLogin, useSystemFeatures } from '@/hooks';
 
 interface LoginFormProps {
   className?: string;
 }
-
-type LoginMethod = 'email' | 'phone';
 
 const DEFAULT_PHONE_COUNTRY_CODE = 'CN';
 const authThemeVars = {
@@ -59,8 +47,35 @@ const loginInputClassName =
 const loginPrimaryButtonClassName =
   'mt-2 h-11 w-full rounded-xl bg-[var(--button-primary)] text-base font-bold tracking-normal text-white shadow-[0_12px_28px_-18px_rgba(17,24,39,0.7)] hover:bg-[var(--button-primary-hover)] hover:brightness-100';
 
-const loginTabTriggerClassName =
-  'h-9 gap-2 rounded-xl border border-transparent text-base font-semibold text-[var(--text-primary)] shadow-none data-[state=active]:border-[var(--brand-primary-border)] data-[state=active]:bg-white data-[state=active]:text-[var(--brand-primary)] data-[state=active]:shadow-[0_4px_12px_rgba(37,99,235,0.08)]';
+function isEmailLike(value: string): boolean {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
+}
+
+function isE164PhoneLike(value: string): boolean {
+  return /^\+[1-9]\d{7,14}$/.test(value.replace(/[\s()-]/g, ''));
+}
+
+function normalizePhoneAccount(value: string): string | null {
+  const trimmed = value.trim();
+  if (!/^[+\d\s()-]+$/.test(trimmed)) {
+    return null;
+  }
+
+  const compact = trimmed.replace(/[\s()-]/g, '');
+  if (isE164PhoneLike(compact)) {
+    return compact;
+  }
+
+  const digits = trimmed.replace(/\D/g, '');
+  if (/^1[3-9]\d{9}$/.test(digits)) {
+    return digits;
+  }
+  if (/^86(1[3-9]\d{9})$/.test(digits)) {
+    return `+${digits}`;
+  }
+
+  return null;
+}
 
 export function LoginForm({ className }: LoginFormProps) {
   const t = useT('auth');
@@ -73,7 +88,6 @@ export function LoginForm({ className }: LoginFormProps) {
     : '/register';
 
   const [mounted, setMounted] = useState(false);
-  const [loginMethod, setLoginMethod] = useState<LoginMethod>('email');
 
   const loginMutation = useLogin();
   const phonePasswordLoginMutation = usePhonePasswordLogin();
@@ -81,63 +95,55 @@ export function LoginForm({ className }: LoginFormProps) {
 
   const canRegister = Boolean(systemFeatures?.is_allow_register);
   const hasSocialLogin = Boolean(systemFeatures?.enable_social_oauth_login);
-  const hasPhoneLogin = !inviteToken;
-  const hasPhonePasswordReset = hasNotificationSMSTemplate(
-    systemFeatures,
-    NOTIFICATION_SMS_AUTH_PHONE_RESET_PASSWORD_TEMPLATE
-  );
 
-  const emailLoginSchema = z.object({
-    email: z.string().min(1, t('emailRequired')).email(t('invalidEmail')),
-    password: z.string().min(8, t('passwordTooShort')).max(100, t('passwordTooLong')),
-    invite_token: z.string().optional(),
-  });
+  const loginSchema = z
+    .object({
+      account: z.string().min(1, t('accountRequired')),
+      password: z.string().min(8, t('passwordTooShort')).max(100, t('passwordTooLong')),
+      invite_token: z.string().optional(),
+    })
+    .superRefine((data, ctx) => {
+      if (inviteToken) {
+        if (!isEmailLike(data.account)) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['account'],
+            message: t('invalidEmail'),
+          });
+        }
+        return;
+      }
 
-  const phoneLoginSchema = z.object({
-    phone: z
-      .string()
-      .min(1, t('phoneRequired'))
-      .refine(value => isValidPhoneNumber(value, 'INTL'), t('invalidPhoneNumber')),
-    password: z.string().min(8, t('passwordTooShort')).max(100, t('passwordTooLong')),
-  });
+      if (!isEmailLike(data.account) && !normalizePhoneAccount(data.account)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['account'],
+          message: t('invalidEmailOrPhone'),
+        });
+      }
+    });
 
-  type EmailLoginFormData = z.infer<typeof emailLoginSchema>;
-  type PhoneLoginFormData = z.infer<typeof phoneLoginSchema>;
+  type LoginFormData = z.infer<typeof loginSchema>;
 
-  const emailForm = useForm<EmailLoginFormData>({
-    resolver: zodResolver(emailLoginSchema),
+  const loginForm = useForm<LoginFormData>({
+    resolver: zodResolver(loginSchema),
     defaultValues: {
-      email: emailFromParams,
+      account: emailFromParams,
       password: '',
     },
   });
 
-  const phoneForm = useForm<PhoneLoginFormData>({
-    resolver: zodResolver(phoneLoginSchema),
-    defaultValues: {
-      phone: '',
-      password: '',
-    },
-  });
-
-  const forgotPasswordEmail = emailForm.watch('email').trim();
-  const forgotPasswordHref = forgotPasswordEmail
-    ? `/forgot-password?email=${encodeURIComponent(forgotPasswordEmail)}`
-    : '/forgot-password';
-  const phoneValue = phoneForm.watch('phone');
-  const forgotPasswordPhoneHref = phoneValue.trim()
-    ? `/forgot-password?phone=${encodeURIComponent(phoneValue.trim())}`
-    : '/forgot-password?method=phone';
+  const accountValue = loginForm.watch('account').trim();
+  const phoneAccountValue = normalizePhoneAccount(accountValue);
+  const forgotPasswordHref = isEmailLike(accountValue)
+    ? `/forgot-password?email=${encodeURIComponent(accountValue)}`
+    : phoneAccountValue
+      ? `/forgot-password?phone=${encodeURIComponent(phoneAccountValue)}`
+      : '/forgot-password';
 
   useEffect(() => {
     setMounted(true);
   }, []);
-
-  useEffect(() => {
-    if (!hasPhoneLogin && loginMethod === 'phone') {
-      setLoginMethod('email');
-    }
-  }, [hasPhoneLogin, loginMethod]);
 
   const navigateAfterLogin = () => {
     const urlParams = new URLSearchParams(window.location.search);
@@ -145,53 +151,48 @@ export function LoginForm({ className }: LoginFormProps) {
     window.location.href = redirectUrl;
   };
 
-  const onEmailSubmit = async (data: EmailLoginFormData) => {
+  const onSubmit = async (data: LoginFormData) => {
+    const account = data.account.trim();
+    const phoneAccount = normalizePhoneAccount(account);
     try {
-      const formData = { ...data };
-      if (inviteToken) {
-        formData.invite_token = inviteToken;
+      if (!inviteToken && !isEmailLike(account) && phoneAccount) {
+        await phonePasswordLoginMutation.mutateAsync({
+          country_code: DEFAULT_PHONE_COUNTRY_CODE,
+          phone: phoneAccount,
+          password: data.password,
+        });
+        navigateAfterLogin();
+        return;
       }
+
+      const formData = {
+        email: account,
+        password: data.password,
+        invite_token: inviteToken || undefined,
+      };
       await loginMutation.mutateAsync(formData);
       navigateAfterLogin();
     } catch (err) {
-      if (getAuthBusinessErrorCode(err) === 'account_not_found') {
-        const token = getAuthBusinessErrorData(err);
-        if (typeof token === 'string' && token.length > 0) {
-          const urlParams = new URLSearchParams(window.location.search);
-          const completeUrl = new URL('/register/complete', window.location.origin);
-          completeUrl.searchParams.set('email', data.email);
-          completeUrl.searchParams.set('token', token);
-          const redirect = urlParams.get('redirect');
-          if (redirect) {
-            completeUrl.searchParams.set('redirect', redirect);
-          }
-          window.location.href = withBasePathIfInternal(completeUrl.pathname + completeUrl.search);
-          return;
+      if (!isEmailLike(account) || getAuthBusinessErrorCode(err) !== 'account_not_found') {
+        console.error('Login failed:', err);
+        return;
+      }
+
+      const token = getAuthBusinessErrorData(err);
+      if (typeof token === 'string' && token.length > 0) {
+        const urlParams = new URLSearchParams(window.location.search);
+        const completeUrl = new URL('/register/complete', window.location.origin);
+        completeUrl.searchParams.set('email', account);
+        completeUrl.searchParams.set('token', token);
+        const redirect = urlParams.get('redirect');
+        if (redirect) {
+          completeUrl.searchParams.set('redirect', redirect);
         }
+        window.location.href = withBasePathIfInternal(completeUrl.pathname + completeUrl.search);
+        return;
       }
 
       console.error('Login failed:', err);
-    }
-  };
-
-  const onPhoneSubmit = async (data: PhoneLoginFormData) => {
-    if (!hasPhoneLogin) {
-      phoneForm.setError('phone', {
-        message: t('invalidPhoneNumber'),
-      });
-      return;
-    }
-
-    try {
-      await phonePasswordLoginMutation.mutateAsync({
-        country_code: DEFAULT_PHONE_COUNTRY_CODE,
-        phone: data.phone,
-        password: data.password,
-      });
-
-      navigateAfterLogin();
-    } catch (err) {
-      console.error('Phone login failed:', err);
     }
   };
 
@@ -200,10 +201,10 @@ export function LoginForm({ className }: LoginFormProps) {
     window.location.href = buildSsoStartUrl('casdoor', redirectTarget);
   };
 
-  const emailFormLoading = loginMutation.isPending || emailForm.formState.isSubmitting;
-  const phoneFormLoading =
-    phonePasswordLoginMutation.isPending || phoneForm.formState.isSubmitting;
-  const isAnyFormLoading = emailFormLoading || phoneFormLoading;
+  const formLoading =
+    loginMutation.isPending ||
+    phonePasswordLoginMutation.isPending ||
+    loginForm.formState.isSubmitting;
   const authRichT = t as typeof t & {
     rich: (
       key: 'termsPrivacyText',
@@ -226,9 +227,7 @@ export function LoginForm({ className }: LoginFormProps) {
           <CardTitle className="text-[32px] font-bold leading-tight tracking-normal text-[var(--text-primary)]">
             {t('welcomeBack')}
           </CardTitle>
-          <p className="text-base text-[var(--text-secondary)]">
-            {loginMethod === 'phone' ? t('signInWithPhoneDesc') : t('signInToAccount')}
-          </p>
+          <p className="text-base text-[var(--text-secondary)]">{t('signInToAccount')}</p>
         </div>
 
         <CardContent className="space-y-6 px-8 pb-9">
@@ -244,175 +243,74 @@ export function LoginForm({ className }: LoginFormProps) {
             </Alert>
           ) : null}
 
-          <Tabs
-            value={loginMethod}
-            onValueChange={value => setLoginMethod(value as LoginMethod)}
-            className="w-full"
+          <form
+            onSubmit={loginForm.handleSubmit(onSubmit)}
+            className={cn(
+              'space-y-6',
+              mounted
+                ? 'animate-in fade-in slide-in-from-bottom-4 duration-700 delay-100'
+                : 'opacity-0'
+            )}
           >
-            <TabsList
-              className={cn(
-                'grid h-11 w-full rounded-2xl border border-[var(--border-default)] bg-[var(--bg-soft)] p-1 text-[var(--text-primary)] shadow-none',
-                hasPhoneLogin ? 'grid-cols-2' : 'grid-cols-1'
-              )}
-            >
-              <TabsTrigger value="email" className={loginTabTriggerClassName}>
-                <Mail className="size-5" />
-                {t('authMethodEmail')}
-              </TabsTrigger>
-              {hasPhoneLogin ? (
-                <TabsTrigger value="phone" className={loginTabTriggerClassName}>
-                  <Smartphone className="size-5" />
-                  {t('authMethodPhone')}
-                </TabsTrigger>
-              ) : null}
-            </TabsList>
-
-            <TabsContent
-              value="email"
-              className={cn(
-                'mt-6',
-                mounted
-                  ? 'animate-in fade-in slide-in-from-bottom-4 duration-700 delay-100'
-                  : 'opacity-0'
-              )}
-            >
-              <form onSubmit={emailForm.handleSubmit(onEmailSubmit)} className="space-y-6">
-                <div className="space-y-2">
-                  <Label
-                    htmlFor="email"
-                    className="ml-1 text-sm font-semibold text-[var(--text-primary)]"
-                  >
-                    {t('email')}
-                  </Label>
-                  <Input
-                    id="email"
-                    type="email"
-                    leftIcon={<Mail />}
-                    placeholder={t('enterEmail')}
-                    autoComplete="email"
-                    disabled={emailFormLoading || Boolean(inviteToken)}
-                    {...emailForm.register('email')}
-                    aria-invalid={emailForm.formState.errors.email ? 'true' : 'false'}
-                    errorText={emailForm.formState.errors.email?.message}
-                    className={loginInputClassName}
-                  />
-                </div>
-
-                <div className="space-y-2">
-                  <div className="ml-1 flex items-center justify-between">
-                    <Label
-                      htmlFor="password"
-                      className="text-sm font-semibold text-[var(--text-primary)]"
-                    >
-                      {t('password')}
-                    </Label>
-                    <Link
-                      href={forgotPasswordHref}
-                      className="text-sm font-medium text-[var(--brand-primary)] transition-colors hover:text-[var(--brand-primary-hover)]"
-                      tabIndex={-1}
-                    >
-                      {t('forgotPasswordLink')}
-                    </Link>
-                  </div>
-                  <PasswordInput
-                    id="password"
-                    leftIcon={<KeyRound />}
-                    placeholder={t('enterPassword')}
-                    autoComplete="current-password"
-                    disabled={emailFormLoading}
-                    {...emailForm.register('password')}
-                    errorText={emailForm.formState.errors.password?.message}
-                    className={loginInputClassName}
-                  />
-                </div>
-
-                <Button
-                  type="submit"
-                  size="xl"
-                  className={loginPrimaryButtonClassName}
-                  loading={emailFormLoading}
-                  interactive
-                >
-                  {t('signIn')}
-                </Button>
-              </form>
-            </TabsContent>
-
-            {hasPhoneLogin ? (
-              <TabsContent
-                value="phone"
-                className={cn(
-                  'mt-6',
-                  mounted
-                    ? 'animate-in fade-in slide-in-from-bottom-4 duration-700 delay-100'
-                    : 'opacity-0'
-                )}
+            <div className="space-y-2">
+              <Label
+                htmlFor="account"
+                className="ml-1 text-sm font-semibold text-[var(--text-primary)]"
               >
-                <form onSubmit={phoneForm.handleSubmit(onPhoneSubmit)} className="space-y-6">
-                  <div className="space-y-2">
-                    <Label
-                      htmlFor="phone"
-                      className="ml-1 text-sm font-semibold text-[var(--text-primary)]"
-                    >
-                      {t('phone')}
-                    </Label>
-                    <Input
-                      id="phone"
-                      type="tel"
-                      leftIcon={<Smartphone />}
-                      placeholder={t('phonePlaceholder')}
-                      autoComplete="tel"
-                      disabled={phoneFormLoading}
-                      {...phoneForm.register('phone')}
-                      aria-invalid={phoneForm.formState.errors.phone ? 'true' : 'false'}
-                      errorText={phoneForm.formState.errors.phone?.message}
-                      className={loginInputClassName}
-                    />
-                  </div>
+                {t('account')}
+              </Label>
+              <Input
+                id="account"
+                type="text"
+                leftIcon={<Mail />}
+                placeholder={inviteToken ? t('enterEmail') : t('enterEmailOrPhone')}
+                autoComplete="username"
+                disabled={formLoading || Boolean(inviteToken)}
+                {...loginForm.register('account')}
+                aria-invalid={loginForm.formState.errors.account ? 'true' : 'false'}
+                errorText={loginForm.formState.errors.account?.message}
+                className={loginInputClassName}
+              />
+            </div>
 
-                  <div className="space-y-2">
-                    <div className="ml-1 flex items-center justify-between">
-                      <Label
-                        htmlFor="phonePassword"
-                        className="text-sm font-semibold text-[var(--text-primary)]"
-                      >
-                        {t('password')}
-                      </Label>
-                      {hasPhonePasswordReset ? (
-                        <Link
-                          href={forgotPasswordPhoneHref}
-                          className="text-sm font-medium text-[var(--brand-primary)] transition-colors hover:text-[var(--brand-primary-hover)]"
-                          tabIndex={-1}
-                        >
-                          {t('forgotPasswordLink')}
-                        </Link>
-                      ) : null}
-                    </div>
-                    <PasswordInput
-                      id="phonePassword"
-                      leftIcon={<KeyRound />}
-                      placeholder={t('enterPassword')}
-                      autoComplete="current-password"
-                      disabled={phoneFormLoading}
-                      {...phoneForm.register('password')}
-                      errorText={phoneForm.formState.errors.password?.message}
-                      className={loginInputClassName}
-                    />
-                  </div>
+            <div className="space-y-2">
+              <div className="ml-1 flex items-center justify-between">
+                <Label
+                  htmlFor="password"
+                  className="text-sm font-semibold text-[var(--text-primary)]"
+                >
+                  {t('password')}
+                </Label>
+                <Link
+                  href={forgotPasswordHref}
+                  className="text-sm font-medium text-[var(--brand-primary)] transition-colors hover:text-[var(--brand-primary-hover)]"
+                  tabIndex={-1}
+                >
+                  {t('forgotPasswordLink')}
+                </Link>
+              </div>
+              <PasswordInput
+                id="password"
+                leftIcon={<KeyRound />}
+                placeholder={t('enterPassword')}
+                autoComplete="current-password"
+                disabled={formLoading}
+                {...loginForm.register('password')}
+                errorText={loginForm.formState.errors.password?.message}
+                className={loginInputClassName}
+              />
+            </div>
 
-                  <Button
-                    type="submit"
-                    size="xl"
-                    className={loginPrimaryButtonClassName}
-                    loading={phoneFormLoading}
-                    interactive
-                  >
-                    {t('signIn')}
-                  </Button>
-                </form>
-              </TabsContent>
-            ) : null}
-          </Tabs>
+            <Button
+              type="submit"
+              size="xl"
+              className={loginPrimaryButtonClassName}
+              loading={formLoading}
+              interactive
+            >
+              {t('signIn')}
+            </Button>
+          </form>
 
           {hasSocialLogin ? (
             <div className="animate-in fade-in duration-700 delay-300">
@@ -432,7 +330,7 @@ export function LoginForm({ className }: LoginFormProps) {
                   variant="outline"
                   type="button"
                   size="lg"
-                  disabled={isAnyFormLoading}
+                  disabled={formLoading}
                   className="h-11 gap-2 rounded-xl border-[var(--border-default)] bg-white text-base font-semibold text-[var(--text-primary)] shadow-sm transition-all hover:bg-[var(--bg-soft)]"
                   onClick={onSsoLogin}
                 >
