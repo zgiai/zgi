@@ -4,6 +4,8 @@ export const NOTIFICATION_SMS_NODE_TYPE = 'notification-sms' as const;
 export const NOTIFICATION_SMS_CHANNEL_TYPE = 'sms' as const;
 export const NOTIFICATION_SMS_TEMPLATE = 'pending_action_notification' as const;
 export const NOTIFICATION_SMS_WORKFLOW_ALERT_TEMPLATE = 'workflow_alert' as const;
+export const NOTIFICATION_SMS_AUTH_PHONE_REGISTER_TEMPLATE = 'auth_phone_register_code' as const;
+export const NOTIFICATION_SMS_AUTH_PHONE_LOGIN_TEMPLATE = 'auth_phone_login_code' as const;
 
 export interface NotificationSMSTemplateParam {
   key: string;
@@ -60,6 +62,17 @@ export function isNotificationSMSEnabled(features?: SystemFeatures | null): bool
 
 export function isNotificationSMSConfigured(features?: SystemFeatures | null): boolean {
   return isNotificationSMSEnabled(features) && getNotificationSMSTemplates(features).length > 0;
+}
+
+export function hasNotificationSMSTemplate(
+  features: SystemFeatures | null | undefined,
+  templateKey: string
+): boolean {
+  if (!isNotificationSMSEnabled(features)) {
+    return false;
+  }
+
+  return getNotificationSMSTemplates(features).some(template => template.key === templateKey);
 }
 
 export function getNotificationSMSParamDisplayKey(

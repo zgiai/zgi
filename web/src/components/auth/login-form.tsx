@@ -11,6 +11,10 @@ import * as z from 'zod';
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
 import { withBasePathIfInternal } from '@/lib/config';
+import {
+  hasNotificationSMSTemplate,
+  NOTIFICATION_SMS_AUTH_PHONE_LOGIN_TEMPLATE,
+} from '@/lib/features/notification-sms';
 import { buildSsoStartUrl } from '@/utils/auth-sso';
 import { getAuthBusinessErrorCode, getAuthBusinessErrorData } from '@/utils/auth-errors';
 import { isValidPhoneNumber } from '@/utils/validation';
@@ -86,6 +90,10 @@ export function LoginForm({ className }: LoginFormProps) {
 
   const canRegister = Boolean(systemFeatures?.is_allow_register);
   const hasSocialLogin = Boolean(systemFeatures?.enable_social_oauth_login);
+  const hasPhoneLogin = hasNotificationSMSTemplate(
+    systemFeatures,
+    NOTIFICATION_SMS_AUTH_PHONE_LOGIN_TEMPLATE
+  );
 
   const emailLoginSchema = z.object({
     email: z.string().min(1, t('emailRequired')).email(t('invalidEmail')),
@@ -134,6 +142,12 @@ export function LoginForm({ className }: LoginFormProps) {
   useEffect(() => {
     setMounted(true);
   }, []);
+
+  useEffect(() => {
+    if (!hasPhoneLogin && loginMethod === 'phone') {
+      setLoginMethod('email');
+    }
+  }, [hasPhoneLogin, loginMethod]);
 
   useEffect(() => {
     if (phoneCountdown <= 0) {
@@ -196,6 +210,13 @@ export function LoginForm({ className }: LoginFormProps) {
   };
 
   const onSendPhoneCode = async () => {
+    if (!hasPhoneLogin) {
+      phoneForm.setError('phone', {
+        message: t('sendCodeError'),
+      });
+      return;
+    }
+
     const isValid = await phoneForm.trigger(['phone']);
     if (!isValid) {
       return;
@@ -230,6 +251,13 @@ export function LoginForm({ className }: LoginFormProps) {
   };
 
   const onPhoneSubmit = async (data: PhoneLoginFormData) => {
+    if (!hasPhoneLogin) {
+      phoneForm.setError('phone', {
+        message: t('sendCodeError'),
+      });
+      return;
+    }
+
     if (!phoneToken) {
       phoneForm.setError('code', {
         message: t('sendCodeFirst'),
@@ -323,15 +351,22 @@ export function LoginForm({ className }: LoginFormProps) {
             onValueChange={value => setLoginMethod(value as LoginMethod)}
             className="w-full"
           >
-            <TabsList className="grid h-11 w-full grid-cols-2 rounded-2xl border border-[var(--border-default)] bg-[var(--bg-soft)] p-1 text-[var(--text-primary)] shadow-none">
+            <TabsList
+              className={cn(
+                'grid h-11 w-full rounded-2xl border border-[var(--border-default)] bg-[var(--bg-soft)] p-1 text-[var(--text-primary)] shadow-none',
+                hasPhoneLogin ? 'grid-cols-2' : 'grid-cols-1'
+              )}
+            >
               <TabsTrigger value="email" className={loginTabTriggerClassName}>
                 <Mail className="size-5" />
                 {t('authMethodEmail')}
               </TabsTrigger>
-              <TabsTrigger value="phone" className={loginTabTriggerClassName}>
-                <Smartphone className="size-5" />
-                {t('authMethodPhone')}
-              </TabsTrigger>
+              {hasPhoneLogin ? (
+                <TabsTrigger value="phone" className={loginTabTriggerClassName}>
+                  <Smartphone className="size-5" />
+                  {t('authMethodPhone')}
+                </TabsTrigger>
+              ) : null}
             </TabsList>
 
             <TabsContent
@@ -405,81 +440,83 @@ export function LoginForm({ className }: LoginFormProps) {
               </form>
             </TabsContent>
 
-            <TabsContent
-              value="phone"
-              className={cn(
-                'mt-6',
-                mounted
-                  ? 'animate-in fade-in slide-in-from-bottom-4 duration-700 delay-100'
-                  : 'opacity-0'
-              )}
-            >
-              <form onSubmit={phoneForm.handleSubmit(onPhoneSubmit)} className="space-y-6">
-                <div className="space-y-2">
-                  <Label
-                    htmlFor="phone"
-                    className="ml-1 text-sm font-semibold text-[var(--text-primary)]"
-                  >
-                    {t('phone')}
-                  </Label>
-                  <Input
-                    id="phone"
-                    type="tel"
-                    leftIcon={<Smartphone />}
-                    placeholder={t('phonePlaceholder')}
-                    autoComplete="tel"
-                    disabled={phoneFormLoading}
-                    {...phoneForm.register('phone')}
-                    aria-invalid={phoneForm.formState.errors.phone ? 'true' : 'false'}
-                    errorText={phoneForm.formState.errors.phone?.message}
-                    className={loginInputClassName}
-                  />
-                </div>
-
-                <div className="space-y-2">
-                  <Label
-                    htmlFor="phoneCode"
-                    className="ml-1 text-sm font-semibold text-[var(--text-primary)]"
-                  >
-                    {t('verificationCode')}
-                  </Label>
-                  <div className="flex items-start gap-3">
+            {hasPhoneLogin ? (
+              <TabsContent
+                value="phone"
+                className={cn(
+                  'mt-6',
+                  mounted
+                    ? 'animate-in fade-in slide-in-from-bottom-4 duration-700 delay-100'
+                    : 'opacity-0'
+                )}
+              >
+                <form onSubmit={phoneForm.handleSubmit(onPhoneSubmit)} className="space-y-6">
+                  <div className="space-y-2">
+                    <Label
+                      htmlFor="phone"
+                      className="ml-1 text-sm font-semibold text-[var(--text-primary)]"
+                    >
+                      {t('phone')}
+                    </Label>
                     <Input
-                      id="phoneCode"
-                      inputMode="numeric"
-                      leftIcon={<ShieldCheck />}
-                      placeholder={t('enterCode')}
+                      id="phone"
+                      type="tel"
+                      leftIcon={<Smartphone />}
+                      placeholder={t('phonePlaceholder')}
+                      autoComplete="tel"
                       disabled={phoneFormLoading}
-                      {...phoneForm.register('code')}
-                      aria-invalid={phoneForm.formState.errors.code ? 'true' : 'false'}
-                      errorText={phoneForm.formState.errors.code?.message}
+                      {...phoneForm.register('phone')}
+                      aria-invalid={phoneForm.formState.errors.phone ? 'true' : 'false'}
+                      errorText={phoneForm.formState.errors.phone?.message}
                       className={loginInputClassName}
                     />
-                    <Button
-                      type="button"
-                      variant="outline"
-                      className="h-11 min-w-28 rounded-xl border-[var(--border-strong)] text-[var(--text-primary)] hover:bg-[var(--bg-soft)]"
-                      disabled={phoneFormLoading || phoneCountdown > 0}
-                      onClick={onSendPhoneCode}
-                    >
-                      {phoneCountdown > 0
-                        ? t('resendCodeIn', { countdown: phoneCountdown })
-                        : t('sendCode')}
-                    </Button>
                   </div>
-                </div>
 
-                <Button
-                  type="submit"
-                  size="xl"
-                  className={loginPrimaryButtonClassName}
-                  loading={phoneFormLoading}
-                  interactive
-                >
-                  {t('signIn')}
-                </Button>
-              </form>
-            </TabsContent>
+                  <div className="space-y-2">
+                    <Label
+                      htmlFor="phoneCode"
+                      className="ml-1 text-sm font-semibold text-[var(--text-primary)]"
+                    >
+                      {t('verificationCode')}
+                    </Label>
+                    <div className="flex items-start gap-3">
+                      <Input
+                        id="phoneCode"
+                        inputMode="numeric"
+                        leftIcon={<ShieldCheck />}
+                        placeholder={t('enterCode')}
+                        disabled={phoneFormLoading}
+                        {...phoneForm.register('code')}
+                        aria-invalid={phoneForm.formState.errors.code ? 'true' : 'false'}
+                        errorText={phoneForm.formState.errors.code?.message}
+                        className={loginInputClassName}
+                      />
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="h-11 min-w-28 rounded-xl border-[var(--border-strong)] text-[var(--text-primary)] hover:bg-[var(--bg-soft)]"
+                        disabled={phoneFormLoading || phoneCountdown > 0}
+                        onClick={onSendPhoneCode}
+                      >
+                        {phoneCountdown > 0
+                          ? t('resendCodeIn', { countdown: phoneCountdown })
+                          : t('sendCode')}
+                      </Button>
+                    </div>
+                  </div>
+
+                  <Button
+                    type="submit"
+                    size="xl"
+                    className={loginPrimaryButtonClassName}
+                    loading={phoneFormLoading}
+                    interactive
+                  >
+                    {t('signIn')}
+                  </Button>
+                </form>
+              </TabsContent>
+            ) : null}
           </Tabs>
 
           {hasSocialLogin ? (

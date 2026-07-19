@@ -12,6 +12,10 @@ import { useT } from '@/i18n';
 import { useLocale } from '@/hooks/use-locale';
 import { usePhoneCheck, usePhoneCode, useStartRegister, useSystemFeatures } from '@/hooks';
 import { cn } from '@/lib/utils';
+import {
+  hasNotificationSMSTemplate,
+  NOTIFICATION_SMS_AUTH_PHONE_REGISTER_TEMPLATE,
+} from '@/lib/features/notification-sms';
 import { isValidPhoneNumber } from '@/utils/validation';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardTitle } from '@/components/ui/card';
@@ -72,6 +76,10 @@ export function RegisterForm({ className }: RegisterFormProps) {
   const { data: systemFeatures, refetch } = useSystemFeatures();
 
   const canRegister = Boolean(systemFeatures?.is_allow_register);
+  const hasPhoneRegister = hasNotificationSMSTemplate(
+    systemFeatures,
+    NOTIFICATION_SMS_AUTH_PHONE_REGISTER_TEMPLATE
+  );
 
   const emailRegisterSchema = z.object({
     email: z.string().min(1, t('emailRequired')).email(t('invalidEmail')),
@@ -104,6 +112,12 @@ export function RegisterForm({ className }: RegisterFormProps) {
   useEffect(() => {
     setMounted(true);
   }, []);
+
+  useEffect(() => {
+    if (!hasPhoneRegister && registerMethod === 'phone') {
+      setRegisterMethod('email');
+    }
+  }, [hasPhoneRegister, registerMethod]);
 
   const onRefresh = async (): Promise<void> => {
     setRefreshing(true);
@@ -142,6 +156,13 @@ export function RegisterForm({ className }: RegisterFormProps) {
   };
 
   const onPhoneSubmit = async (data: PhoneRegisterFormData) => {
+    if (!hasPhoneRegister) {
+      phoneForm.setError('phone', {
+        message: t('sendCodeError'),
+      });
+      return;
+    }
+
     try {
       const countryCode = DEFAULT_PHONE_COUNTRY_CODE;
 
@@ -234,15 +255,22 @@ export function RegisterForm({ className }: RegisterFormProps) {
             onValueChange={value => setRegisterMethod(value as RegisterMethod)}
             className="w-full"
           >
-            <TabsList className="grid h-11 w-full grid-cols-2 rounded-2xl border border-[var(--border-default)] bg-[var(--bg-soft)] p-1 text-[var(--text-primary)] shadow-none">
+            <TabsList
+              className={cn(
+                'grid h-11 w-full rounded-2xl border border-[var(--border-default)] bg-[var(--bg-soft)] p-1 text-[var(--text-primary)] shadow-none',
+                hasPhoneRegister ? 'grid-cols-2' : 'grid-cols-1'
+              )}
+            >
               <TabsTrigger value="email" className={registerTabTriggerClassName}>
                 <Mail className="size-5" />
                 {t('authMethodEmail')}
               </TabsTrigger>
-              <TabsTrigger value="phone" className={registerTabTriggerClassName}>
-                <Smartphone className="size-5" />
-                {t('authMethodPhone')}
-              </TabsTrigger>
+              {hasPhoneRegister ? (
+                <TabsTrigger value="phone" className={registerTabTriggerClassName}>
+                  <Smartphone className="size-5" />
+                  {t('authMethodPhone')}
+                </TabsTrigger>
+              ) : null}
             </TabsList>
 
             <TabsContent
@@ -289,49 +317,51 @@ export function RegisterForm({ className }: RegisterFormProps) {
               </form>
             </TabsContent>
 
-            <TabsContent
-              value="phone"
-              className={cn(
-                'mt-6',
-                mounted
-                  ? 'animate-in fade-in slide-in-from-bottom-4 duration-700 delay-100'
-                  : 'opacity-0'
-              )}
-            >
-              <form onSubmit={phoneForm.handleSubmit(onPhoneSubmit)} className="space-y-6">
-                <div className="space-y-2">
-                  <Label
-                    htmlFor="phone"
-                    className="ml-1 text-sm font-semibold text-[var(--text-primary)]"
-                  >
-                    {t('phone')}
-                  </Label>
-                  <Input
-                    id="phone"
-                    type="tel"
-                    leftIcon={<Smartphone />}
-                    placeholder={t('phonePlaceholder')}
-                    autoComplete="tel"
-                    disabled={phoneFormLoading}
-                    {...phoneForm.register('phone')}
-                    aria-invalid={phoneForm.formState.errors.phone ? 'true' : 'false'}
-                    errorText={phoneForm.formState.errors.phone?.message}
-                    className={registerInputClassName}
-                  />
-                </div>
+            {hasPhoneRegister ? (
+              <TabsContent
+                value="phone"
+                className={cn(
+                  'mt-6',
+                  mounted
+                    ? 'animate-in fade-in slide-in-from-bottom-4 duration-700 delay-100'
+                    : 'opacity-0'
+                )}
+              >
+                <form onSubmit={phoneForm.handleSubmit(onPhoneSubmit)} className="space-y-6">
+                  <div className="space-y-2">
+                    <Label
+                      htmlFor="phone"
+                      className="ml-1 text-sm font-semibold text-[var(--text-primary)]"
+                    >
+                      {t('phone')}
+                    </Label>
+                    <Input
+                      id="phone"
+                      type="tel"
+                      leftIcon={<Smartphone />}
+                      placeholder={t('phonePlaceholder')}
+                      autoComplete="tel"
+                      disabled={phoneFormLoading}
+                      {...phoneForm.register('phone')}
+                      aria-invalid={phoneForm.formState.errors.phone ? 'true' : 'false'}
+                      errorText={phoneForm.formState.errors.phone?.message}
+                      className={registerInputClassName}
+                    />
+                  </div>
 
-                <Button
-                  type="submit"
-                  size="xl"
-                  className={registerPrimaryButtonClassName}
-                  loading={phoneFormLoading}
-                  disabled={!phoneForm.watch('phone')}
-                  interactive
-                >
-                  {t('continue')}
-                </Button>
-              </form>
-            </TabsContent>
+                  <Button
+                    type="submit"
+                    size="xl"
+                    className={registerPrimaryButtonClassName}
+                    loading={phoneFormLoading}
+                    disabled={!phoneForm.watch('phone')}
+                    interactive
+                  >
+                    {t('continue')}
+                  </Button>
+                </form>
+              </TabsContent>
+            ) : null}
           </Tabs>
 
           <div className="mt-8 animate-in fade-in text-center duration-700 delay-300">
