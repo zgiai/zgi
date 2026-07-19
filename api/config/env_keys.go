@@ -213,6 +213,8 @@ const (
 	envEnableEmailCodeLogin = "ENABLE_EMAIL_CODE_LOGIN"
 	// envEnableEmailPasswordLogin controls whether users can log in with email and password. Default: true.
 	envEnableEmailPasswordLogin = "ENABLE_EMAIL_PASSWORD_LOGIN"
+	// envEnablePhoneLogin controls whether the phone login entry is available. Default: false.
+	envEnablePhoneLogin = "ENABLE_PHONE_LOGIN"
 	// envEnableSocialOAuthLogin controls whether social OAuth login is enabled. Default: false.
 	envEnableSocialOAuthLogin = "ENABLE_SOCIAL_OAUTH_LOGIN"
 )

@@ -4,6 +4,7 @@ package model
 type SystemFeature struct {
 	EnableEmailCodeLogin        bool `json:"enable_email_code_login"`
 	EnableEmailPasswordLogin    bool `json:"enable_email_password_login"`
+	EnablePhoneLogin            bool `json:"enable_phone_login"`
 	EnableSocialOAuthLogin      bool `json:"enable_social_oauth_login"`
 	IsAllowRegister             bool `json:"is_allow_register"`
 	IsAllowCreateWorkspace      bool `json:"is_allow_create_workspace"`
@@ -22,6 +23,7 @@ func NewDefaultSystemFeature() *SystemFeature {
 	return &SystemFeature{
 		EnableEmailCodeLogin:        false,
 		EnableEmailPasswordLogin:    true,
+		EnablePhoneLogin:            false,
 		EnableSocialOAuthLogin:      false,
 		IsAllowRegister:             false,
 		IsAllowCreateWorkspace:      false,

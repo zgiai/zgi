@@ -43,6 +43,8 @@ func (s *featureService) IsFeatureEnabled(featureName string) bool {
 		return features.EnableEmailCodeLogin
 	case "email_password_login":
 		return features.EnableEmailPasswordLogin
+	case "phone_login":
+		return features.EnablePhoneLogin
 	case "social_oauth_login":
 		return features.EnableSocialOAuthLogin
 	case "allow_register":
@@ -63,6 +65,7 @@ func (s *featureService) fillFromEnv(sf *model.SystemFeature) {
 	features := cfg.Feature
 	sf.EnableEmailCodeLogin = features.EnableEmailCodeLogin
 	sf.EnableEmailPasswordLogin = features.EnableEmailPasswordLogin
+	sf.EnablePhoneLogin = features.EnablePhoneLogin
 	sf.EnableSocialOAuthLogin = features.EnableSocialOAuthLogin
 	sf.IsAllowRegister = features.AllowRegister
 	sf.IsAllowCreateWorkspace = features.AllowCreateWorkspace

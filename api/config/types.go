@@ -158,6 +158,7 @@ type FeatureConfig struct {
 	PublicDeploymentEnabled  bool `json:"public_deployment_enabled"`
 	EnableEmailCodeLogin     bool `json:"enable_email_code_login"`
 	EnableEmailPasswordLogin bool `json:"enable_email_password_login"`
+	EnablePhoneLogin         bool `json:"enable_phone_login"`
 	EnableSocialOAuthLogin   bool `json:"enable_social_oauth_login"`
 	AllowRegister            bool `json:"allow_register"`
 	AllowCreateWorkspace     bool `json:"allow_create_workspace"`
