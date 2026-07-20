@@ -412,6 +412,7 @@ func loadFeatureConfig(cfg *Config, source *envSource) {
 		PublicDeploymentEnabled:  mustBool(source.bool(false, envPublicDeploymentEnabled)),
 		EnableEmailCodeLogin:     mustBool(source.bool(false, envEnableEmailCodeLogin)),
 		EnableEmailPasswordLogin: mustBool(source.bool(true, envEnableEmailPasswordLogin)),
+		EnablePhoneLogin:         mustBool(source.bool(false, envEnablePhoneLogin)),
 		EnableSocialOAuthLogin:   mustBool(source.bool(false, envEnableSocialOAuthLogin)),
 		AllowRegister:            mustBool(source.bool(false, envAllowRegister)),
 		AllowCreateWorkspace:     mustBool(source.bool(false, envAllowCreateWorkspace)),
