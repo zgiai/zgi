@@ -79,6 +79,7 @@ import {
   type TableNameErrorCode,
 } from '@/utils/validation';
 import { DATABASE_PERMISSION_ACTIONS } from '@/constants/permissions';
+import { runLatestRecognition } from './recognition-request-guard.mjs';
 
 type Step = 'file' | 'preview' | 'schema' | 'result';
 
@@ -94,6 +95,10 @@ function getExcelColumnKey(col: InferredExcelColumn, index: number) {
 
 function getSampleValueKey(value: unknown, index: number) {
   return `${index}:${String(value)}`;
+}
+
+function getAnalysisKey(data: AnalyzeExcelImportData) {
+  return `${data.job_id}:${data.selection.sheet_name}`;
 }
 
 function applyRecognizedColumns(
@@ -166,6 +171,8 @@ export default function ExcelImportShell({ dbId }: ExcelImportShellProps) {
       Boolean(importResult && importResult.failed_rows > 0)
   );
   const analyzeRequestSeq = useRef(0);
+  const recognitionRequestSeqRef = useRef(0);
+  const currentAnalysisKeyRef = useRef('');
   const schemaEditRevisionRef = useRef(0);
 
   useEffect(() => {
@@ -239,6 +246,9 @@ export default function ExcelImportShell({ dbId }: ExcelImportShellProps) {
     }
     if (requestedSheetName && requestedSheetName === analysis?.selection.sheet_name) return;
 
+    recognitionRequestSeqRef.current += 1;
+    currentAnalysisKeyRef.current = '';
+    setHasRecognitionCompleted(false);
     const requestSeq = analyzeRequestSeq.current + 1;
     analyzeRequestSeq.current = requestSeq;
     setAnalyzingSheetName(requestedSheetName || null);
@@ -249,6 +259,7 @@ export default function ExcelImportShell({ dbId }: ExcelImportShellProps) {
         ...overrides,
       });
       if (requestSeq !== analyzeRequestSeq.current) return;
+      currentAnalysisKeyRef.current = getAnalysisKey(res.data);
       setAnalysis(res.data);
       setSelectedSheetName(res.data.selection.sheet_name);
       setColumns(res.data.columns.map(col => ({ ...col, enabled: col.enabled ?? true })));
@@ -296,22 +307,32 @@ export default function ExcelImportShell({ dbId }: ExcelImportShellProps) {
 
   const recognizeCurrentColumns = async (): Promise<RecognizeExcelImportData | null> => {
     if (!analysis || !selectedModel || recognizeMutation.isPending) return null;
+    const analysisKey = getAnalysisKey(analysis);
     setHasRecognitionCompleted(false);
-    const res = await recognizeMutation.mutateAsync({
-      table: {
-        name: tableName.trim(),
-        description: tableDescription.trim(),
+    const recognized = await runLatestRecognition({
+      recognitionRequestSeqRef,
+      currentAnalysisKeyRef,
+      analysisKey,
+      request: async () => {
+        const res = await recognizeMutation.mutateAsync({
+          table: {
+            name: tableName.trim(),
+            description: tableDescription.trim(),
+          },
+          source: {
+            file_name: analysis.source.file_name,
+            sheet_name: analysis.selection.sheet_name,
+          },
+          columns,
+          model: { provider: selectedModel.provider, name: selectedModel.model },
+          operator_language: locale,
+        });
+        return res.data;
       },
-      source: {
-        file_name: analysis.source.file_name,
-        sheet_name: analysis.selection.sheet_name,
-      },
-      columns,
-      model: { provider: selectedModel.provider, name: selectedModel.model },
-      operator_language: locale,
     });
+    if (!recognized) return null;
     setHasRecognitionCompleted(true);
-    return res.data;
+    return recognized;
   };
 
   const handleEnterSchema = async () => {

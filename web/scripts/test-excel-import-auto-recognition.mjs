@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { URL } from 'node:url';
+import { runLatestRecognition } from '../src/components/db/excel-import/recognition-request-guard.mjs';
 
 const source = readFileSync(
   new URL('../src/components/db/excel-import/excel-import-shell.tsx', import.meta.url),
@@ -52,5 +53,30 @@ assert.ok(
   source.includes('aria-disabled={!hasRecognitionCompleted'),
   'the import button must expose its unavailable state while recognition is incomplete'
 );
+
+let resolveRecognitionA;
+const recognitionA = new Promise(resolve => {
+  resolveRecognitionA = resolve;
+});
+const recognitionRequestSeqRef = { current: 0 };
+const currentAnalysisKeyRef = { current: 'job-a:sheet-a' };
+let appliedResult = null;
+
+const pendingRecognitionA = runLatestRecognition({
+  recognitionRequestSeqRef,
+  currentAnalysisKeyRef,
+  analysisKey: 'job-a:sheet-a',
+  request: () => recognitionA,
+});
+
+recognitionRequestSeqRef.current += 1;
+currentAnalysisKeyRef.current = 'job-b:sheet-b';
+resolveRecognitionA({ table: { name: 'table_a' }, columns: [{ name: 'column_a' }] });
+
+const staleResult = await pendingRecognitionA;
+if (staleResult) appliedResult = staleResult;
+
+assert.equal(staleResult, null, 'recognition A must be discarded after switching to analysis B');
+assert.equal(appliedResult, null, 'recognition A must not be applied to analysis B');
 
 console.log('Excel import auto-recognition regression check passed.');
