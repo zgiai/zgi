@@ -2,9 +2,11 @@ import type { ConversationTransport } from '@/components/chat/controllers/types'
 import type { Message } from '@/components/chat/types';
 import type { ApprovalRuntimeForm as ApprovalRuntimeFormData } from '@/services/approval.service';
 import type { QuestionAnswerChoice, WorkflowPrecheckWarning } from '@/services/types/workflow';
+import type { WorkflowConnectionState } from '@/hooks/workflow/workflow-runtime-controller';
 
 export interface UseWebappConversationTransportOptions {
   enablePrecheck?: boolean;
+  agentId?: string;
 }
 
 export interface UseWebappConversationTransportResult {
@@ -33,4 +35,10 @@ export interface UseWebappConversationTransportResult {
   retryApprovalForm: () => void;
   resumeWorkflowRun: (conversationId: string, message: Message) => void;
   continueWorkflowRun: (conversationId: string, message: Message) => void;
+  attachRun: (conversationId: string, workflowRunId: string) => void;
+  recoverRun: (conversationId: string, workflowRunId: string) => void;
+  stopRun: (conversationId: string) => Promise<void>;
+  detachForeground: (conversationId: string) => void;
+  disposeConversation: (conversationId: string) => void;
+  connectionStateByConversation: Record<string, WorkflowConnectionState>;
 }

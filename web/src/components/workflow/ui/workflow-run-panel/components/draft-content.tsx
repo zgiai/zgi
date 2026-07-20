@@ -1,6 +1,6 @@
 import React from 'react';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
-import { Loader2 } from 'lucide-react';
+import { AlertTriangle, Loader2 } from 'lucide-react';
 import ExecutionTab from '@/components/workflow/ui/workflow-run-panel/components/workflow-run-panel-execution';
 import InputsTab from '@/components/workflow/ui/workflow-run-panel/components/workflow-run-panel-inputs';
 import DetailsTab from '@/components/workflow/ui/workflow-run-panel/components/workflow-run-panel-details';
@@ -14,8 +14,7 @@ import { getInputVarSchemaDefaultValue } from '@/components/workflow/common/work
 import type { WorkflowFinishedData, HistoryResult } from '../types';
 import Results from './results';
 import { useT } from '@/i18n';
-import { ApprovalCompletedState } from '@/components/workflow/approval/approval-completed-state';
-import ApprovalRuntimeForm from '@/components/workflow/approval/approval-runtime-form';
+import WorkflowApprovalInteractionCard from '@/components/workflow/approval/workflow-approval-interaction-card';
 import {
   isApprovalFormAlreadySubmittedError,
   type ApprovalRuntimeForm as ApprovalRuntimeFormData,
@@ -25,6 +24,7 @@ import { QuestionAnswerRuntimePrompt } from '@/components/workflow/question-answ
 import type { QuestionAnswerChoice } from '@/services/types/workflow';
 import type { QuestionAnswerTranscriptItem } from '@/components/workflow/question-answer/runtime-events';
 import DebugInputGuide, { type DebugSampleInput } from './debug-input-guide';
+import { WorkflowRuntimeStopAction } from '@/components/workflow/runtime/workflow-runtime-stop-action';
 
 interface DraftContentProps {
   activeTab: 'inputs' | 'execution' | 'details' | 'results';
@@ -68,6 +68,17 @@ interface DraftContentProps {
   questionAnswerTranscript?: QuestionAnswerTranscriptItem[];
 }
 
+function hasMeaningfulResult(result?: HistoryResult | null): boolean {
+  if (!result || result.kind === 'empty') return false;
+  if (result.kind === 'text') return result.content.trim().length > 0;
+
+  const value = result.value;
+  if (value === null || value === undefined) return false;
+  if (Array.isArray(value)) return value.length > 0;
+  if (typeof value === 'object') return Object.keys(value as Record<string, unknown>).length > 0;
+  return true;
+}
+
 const DraftContent: React.FC<DraftContentProps> = ({
   activeTab,
   setActiveTab,
@@ -108,6 +119,19 @@ const DraftContent: React.FC<DraftContentProps> = ({
   const t = useT();
   const inputFormRef = React.useRef<WorkflowInputFormHandle>(null);
   const approvalAlreadyCompleted = isApprovalFormAlreadySubmittedError(approvalError);
+  const hasPendingInteraction = Boolean(
+    questionAnswerPrompt ||
+      approvalForm ||
+      approvalLoading ||
+      (approvalError && !approvalAlreadyCompleted && !approvalExpired)
+  );
+  const interactionStopAction = hasPendingInteraction ? (
+    <WorkflowRuntimeStopAction
+      onStop={onStop}
+      isStopping={isStopping}
+      disabled={stopDisabled || approvalSubmitting || questionAnswerSubmitting}
+    />
+  ) : null;
   const questionAnswerContent = questionAnswerPrompt ? (
     <QuestionAnswerRuntimePrompt
       question={questionAnswerPrompt.question}
@@ -115,11 +139,22 @@ const DraftContent: React.FC<DraftContentProps> = ({
       round={questionAnswerPrompt.round}
       submitting={questionAnswerSubmitting}
       onSelectChoice={onQuestionAnswerSelect}
+      secondaryAction={interactionStopAction}
     />
   ) : null;
   const hasInputs = startVariables.length > 0;
   const hasRunState =
     runItems.length > 0 || Boolean(runSummary) || Boolean(streamedText) || Boolean(finalResult);
+  const runStatus = String(runSummary?.status ?? '').toLowerCase();
+  const hasVisibleResult =
+    streamedText.trim().length > 0 ||
+    hasMeaningfulResult(finalResult) ||
+    Boolean(questionAnswerTranscript?.length);
+  const isWaitingForOutput = isRunning && !hasVisibleResult && !hasPendingInteraction;
+  const shouldHideEmptyResult = hasPendingInteraction && !hasVisibleResult;
+  const hasPartialFailedResult =
+    (runStatus === 'failed' || runStatus === 'error') &&
+    (streamedText.trim().length > 0 || Boolean(finalResult));
   const isPrimaryActionDisabled = runDisabled || isStarting || (isLoadingDraft && !hasLocalNodes);
   const debugSample = React.useMemo<DebugSampleInput | null>(() => {
     const values: FormInputs = {};
@@ -263,89 +298,105 @@ const DraftContent: React.FC<DraftContentProps> = ({
 
         <TabsContent value="results" className="h-full overflow-y-auto px-4 pb-4 mt-3 outline-none">
           {approvalLoading ? (
-            <div className="mb-4 flex min-h-[180px] items-center justify-center rounded-lg border bg-card p-3">
-              <Loader2 className="size-5 animate-spin text-muted-foreground" />
-            </div>
+            <WorkflowApprovalInteractionCard
+              mode="loading"
+              className="mb-4"
+              secondaryAction={interactionStopAction}
+            />
           ) : approvalExpired ? (
-            <ApprovalCompletedState compact variant="expired" className="mb-4" />
+            <WorkflowApprovalInteractionCard mode="expired" className="mb-4" />
           ) : approvalAlreadyCompleted ? (
-            <ApprovalCompletedState compact className="mb-4" />
+            <WorkflowApprovalInteractionCard mode="completed" className="mb-4" />
           ) : approvalError ? (
-            <div className="mb-4 rounded-lg border bg-card p-4 text-center">
-              <div className="text-sm font-medium">{t('nodes.approval.runtime.loadFailed')}</div>
-              <p className="mt-2 text-xs text-muted-foreground">
-                {approvalError instanceof Error
-                  ? approvalError.message
-                  : t('nodes.approval.runtime.loadFailedDescription')}
-              </p>
-              {onApprovalRetry ? (
-                <Button type="button" size="sm" className="mt-3" onClick={onApprovalRetry}>
-                  {t('nodes.approval.runtime.retry')}
-                </Button>
-              ) : null}
-            </div>
+            <WorkflowApprovalInteractionCard
+              mode="error"
+              className="mb-4"
+              error={approvalError}
+              onRetry={onApprovalRetry}
+              secondaryAction={interactionStopAction}
+            />
           ) : approvalForm && onApprovalSubmit ? (
-            <div className="mb-4 rounded-lg border bg-card p-3">
-              <ApprovalRuntimeForm
-                form={approvalForm}
-                onSubmit={onApprovalSubmit}
-                isSubmitting={approvalSubmitting}
-                submittedAction={approvalSubmittedAction}
-              />
+            <WorkflowApprovalInteractionCard
+              mode={approvalSubmittedAction ? 'submitted' : 'form'}
+              className="mb-4"
+              form={approvalForm}
+              onSubmit={onApprovalSubmit}
+              isSubmitting={approvalSubmitting}
+              submittedAction={approvalSubmittedAction}
+              secondaryAction={interactionStopAction}
+            />
+          ) : null}
+          {hasPartialFailedResult ? (
+            <div className="mb-3 flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+              <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
+              <span>{t('agents.workflow.partialResultAfterFailure')}</span>
             </div>
           ) : null}
-          <div className="min-h-[240px]">
-            <Results
-              mode="draft"
-              streamedText={streamedText}
-              historyResult={finalResult}
-              emptyText={t('agents.workflow.noOutputYet')}
-              questionAnswerTranscript={questionAnswerTranscript}
-            />
-          </div>
+          {!shouldHideEmptyResult ? (
+            <div className="min-h-[240px]">
+              {isWaitingForOutput ? (
+                <div className="flex min-h-[240px] flex-col items-center justify-center gap-3 text-muted-foreground">
+                  <div className="flex size-10 items-center justify-center rounded-full bg-muted/60">
+                    <Loader2 className="size-5 animate-spin text-primary/70" />
+                  </div>
+                  <span className="text-sm">{t('agents.workflow.waitingForOutput')}</span>
+                </div>
+              ) : (
+                <Results
+                  mode="draft"
+                  streamedText={streamedText}
+                  historyResult={finalResult}
+                  emptyText={t('agents.workflow.noOutputYet')}
+                  questionAnswerTranscript={questionAnswerTranscript}
+                />
+              )}
+            </div>
+          ) : null}
         </TabsContent>
       </div>
-      <div className="shrink-0 border-t bg-background/95 px-4 py-3 backdrop-blur">
-        <div className="flex items-center justify-between gap-2">
-          <Button
-            type="button"
-            size="sm"
-            variant={isRunning ? 'destructive' : 'default'}
-            className="h-9 min-w-[104px] rounded-md font-semibold"
-            disabled={isRunning ? isStopping || stopDisabled : isPrimaryActionDisabled}
-            onClick={handlePrimaryAction}
-          >
-            {isRunning
-              ? t('agents.workflow.stop')
-              : isStarting
-                ? t('agents.workflow.starting')
-                : hasRunState
-                  ? t('agents.workflow.rerunDebug')
-                  : t('agents.workflow.runNow')}
-          </Button>
-          {!isRunning && runDisabled && runDisabledMessage ? (
-            <div className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
-              {runDisabledMessage}
-            </div>
-          ) : isRunning && stopDisabled && stopDisabledMessage ? (
-            <div className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
-              {stopDisabledMessage}
-            </div>
-          ) : null}
-          {shouldShowRestoreDefaults && (
+      {!hasPendingInteraction ? (
+        <div className="shrink-0 border-t bg-background/95 px-4 py-3 backdrop-blur">
+          <div className="flex items-center justify-between gap-2">
             <Button
               type="button"
               size="sm"
-              variant="ghost"
-              className="h-9 rounded-md text-muted-foreground"
-              disabled={isRunning || isStarting}
-              onClick={handleResetInputs}
+              variant={isRunning ? 'destructive' : 'default'}
+              className="h-9 min-w-[104px] rounded-md font-semibold"
+              disabled={isRunning ? isStopping || stopDisabled : isPrimaryActionDisabled}
+              onClick={handlePrimaryAction}
             >
-              {t('agents.workflow.restoreDefaults')}
+              {isRunning
+                ? t('agents.workflow.stop')
+                : isStarting
+                  ? t('agents.workflow.starting')
+                  : hasRunState
+                    ? t('agents.workflow.rerunDebug')
+                    : t('agents.workflow.runNow')}
             </Button>
-          )}
+            {!isRunning && runDisabled && runDisabledMessage ? (
+              <div className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
+                {runDisabledMessage}
+              </div>
+            ) : isRunning && stopDisabled && stopDisabledMessage ? (
+              <div className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
+                {stopDisabledMessage}
+              </div>
+            ) : null}
+            {shouldShowRestoreDefaults && (
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                className="h-9 rounded-md text-muted-foreground"
+                disabled={isRunning || isStarting}
+                onClick={handleResetInputs}
+              >
+                {t('agents.workflow.restoreDefaults')}
+              </Button>
+            )}
+          </div>
         </div>
-      </div>
+      ) : null}
     </Tabs>
   );
 };

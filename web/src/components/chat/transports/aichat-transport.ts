@@ -317,6 +317,12 @@ export function dispatchAIChatStreamEvent(
     case 'workflow_started':
       callbacks.onWorkflowStarted?.((data ?? {}) as AIChatWorkflowEventData, eventId);
       break;
+    case 'workflow_resumed':
+      callbacks.onWorkflowStarted?.(
+        { ...((data ?? {}) as AIChatWorkflowEventData), workflow_event: event },
+        eventId
+      );
+      break;
     case 'node_started':
       callbacks.onWorkflowNodeStarted?.(
         { ...((data ?? {}) as AIChatWorkflowNodeEventData), workflow_event: event },

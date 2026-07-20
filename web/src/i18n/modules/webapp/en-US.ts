@@ -83,6 +83,17 @@ const messages = {
     regenerate: 'Regenerate',
     workflowRunFailed: 'Workflow run failed',
     workflowRunFailedWithReason: 'Workflow run failed: {reason}',
+    workflowErrors: {
+      model_service_timeout: 'The model service connection timed out. Please try again later.',
+      model_service_unavailable:
+        'The model service is temporarily unavailable. Please try again later.',
+      model_invocation_failed: 'The model call failed. Please try again later.',
+    },
+    conversationBusy:
+      'This conversation is still running. Wait for it to finish or switch conversations.',
+    streamDisconnected: 'Live updates are disconnected. The task may still be running.',
+    reconnectStream: 'Reconnect',
+    stop: 'Stop task',
     workspaceRequiredForConversation:
       'The app runtime workspace could not be resolved. Ask an administrator to check the app workspace or organization runtime workspace configuration.',
     imageHomeTitle: 'AI Image Generation',
@@ -104,6 +115,7 @@ const messages = {
     runNow: 'Run',
     rerun: 'Run again',
     stop: 'Stop run',
+    stopping: 'Stopping…',
     starting: 'Starting...',
     running: 'Running',
     completed: 'Run completed',
@@ -410,13 +422,12 @@ const messages = {
       continuationUnavailable: 'Unable to continue this question. Refresh the page and try again.',
     },
     workflow: {
-      approvalPending: 'Workflow is waiting for approval',
-      openApproval: 'Open approval',
-      formId: 'Form {id}',
-      token: 'Token {token}',
+      approvalPending: 'Waiting for approval',
+      approvalInlineHint: 'Complete the approval below. The workflow will continue automatically.',
+      approvalConfiguredChannelHint:
+        'Complete this request through a configured workflow approval channel. This view will update automatically.',
       loadingApprovalForm: 'Loading approval form...',
       approvalFormLoadFailed: 'Failed to load approval form',
-      approvalInputLocked: 'Complete this workflow approval to continue this conversation.',
       approvalSubmitFailed: 'Failed to submit approval',
     },
     operationCards: {

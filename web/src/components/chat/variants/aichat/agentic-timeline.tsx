@@ -1,14 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import {
-  AlertCircle,
-  CheckCircle2,
-  ChevronDown,
-  CircleHelp,
-  ExternalLink,
-  Loader2,
-} from 'lucide-react';
+import { AlertCircle, CheckCircle2, ChevronDown, CircleHelp, Loader2 } from 'lucide-react';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Button } from '@/components/ui/button';
 import MarkdownViewer from '@/components/common/markdown-viewer';
@@ -2989,52 +2982,6 @@ function ToolGovernanceDecisionRow({
   );
 }
 
-function WorkflowApprovalPanel({
-  approvalToken,
-  approvalUrl,
-  approvalFormId,
-}: {
-  approvalToken: string;
-  approvalUrl: string;
-  approvalFormId: string;
-}) {
-  const t = useT('webapp');
-
-  return (
-    <div className="mt-2 max-w-3xl rounded-md border bg-warning/10 px-3 py-2 text-xs text-muted-foreground">
-      <div className="font-medium text-foreground">{t('consoleChat.workflow.approvalPending')}</div>
-      <div className="mt-1 flex flex-wrap items-center gap-2">
-        {approvalUrl ? (
-          <a
-            className="inline-flex items-center gap-1 text-primary underline-offset-2 hover:underline"
-            href={approvalUrl}
-            target="_blank"
-            rel="noreferrer"
-          >
-            {t('consoleChat.workflow.openApproval')}
-            <ExternalLink className="size-3" />
-          </a>
-        ) : null}
-        {approvalFormId ? (
-          <span title={approvalFormId}>
-            {t('consoleChat.workflow.formId', { id: approvalFormId })}
-          </span>
-        ) : null}
-        {approvalToken && !approvalUrl ? (
-          <span title={approvalToken}>
-            {t('consoleChat.workflow.token', { token: approvalToken })}
-          </span>
-        ) : null}
-      </div>
-      {approvalToken ? (
-        <div className="mt-2 text-[11px] text-muted-foreground">
-          {t('consoleChat.workflow.approvalInputLocked')}
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
 function WorkflowTimelineRow({ item }: { item: WorkflowTimelineItem }) {
   const nodes: WorkflowRunNodeListItem[] = item.nodes.map((node, index) => ({
     title: node.title ?? node.nodeId ?? node.nodeType ?? '',
@@ -3058,20 +3005,6 @@ function WorkflowTimelineRow({ item }: { item: WorkflowTimelineItem }) {
     loopRounds: node.loopRounds as WorkflowRunNodeListItem['loopRounds'],
     steps: node.steps,
   }));
-  const approvalUrl =
-    typeof item.approval?.approval_url === 'string' ? item.approval.approval_url : '';
-  const approvalFormId =
-    typeof item.approval?.approval_form_id === 'string' ? item.approval.approval_form_id : '';
-  const approvalToken =
-    typeof item.approval?.approval_token === 'string' ? item.approval.approval_token : '';
-  const hasApproval = Boolean(approvalUrl || approvalFormId || approvalToken);
-  const approvalStatus =
-    typeof item.approval?.status === 'string' ? item.approval.status.toLowerCase() : '';
-  const showPendingApproval =
-    item.status === 'pending_approval' &&
-    hasApproval &&
-    !['submitted', 'approved', 'rejected', 'expired'].includes(approvalStatus);
-
   return (
     <div className="border-l-2 border-muted-foreground/20 pl-3">
       <WorkflowRunMonitor
@@ -3082,13 +3015,6 @@ function WorkflowTimelineRow({ item }: { item: WorkflowTimelineItem }) {
         defaultOpen={item.status === 'running' || item.status === 'pending_approval'}
         className="max-w-3xl rounded-md bg-background"
       />
-      {showPendingApproval ? (
-        <WorkflowApprovalPanel
-          approvalToken={approvalToken}
-          approvalUrl={approvalUrl}
-          approvalFormId={approvalFormId}
-        />
-      ) : null}
     </div>
   );
 }
@@ -3557,6 +3483,29 @@ function buildTransientProgressText(
   return t(key);
 }
 
+function isRedundantAgentWorkflowToolEvent(
+  item: AIChatAgenticTimelineItem,
+  workflowRunIds: ReadonlySet<string>,
+  workflowInvocationIds: ReadonlySet<string>
+): boolean {
+  if (item.type !== 'skill_event') return false;
+  const invocation = item.invocation;
+  if (
+    invocation.skill_id !== 'agent-workflow' ||
+    invocation.tool_name !== 'run_agent_workflow' ||
+    !invocationStatusIsSuccessful(invocation)
+  ) {
+    return false;
+  }
+  const result = invocationRecord(invocation.result);
+  const runId = invocationString(result.workflow_run_id);
+  const invocationId = invocationString(result.invocation_id);
+  return (
+    (Boolean(runId) && workflowRunIds.has(runId)) ||
+    (Boolean(invocationId) && workflowInvocationIds.has(invocationId))
+  );
+}
+
 function filterTimelineForRendering(
   timeline: AIChatAgenticTimelineItem[],
   messageStatus: AIChatMessage['status'] | undefined,
@@ -3590,6 +3539,14 @@ function filterTimelineForRendering(
       return key ? [key] : [];
     })
   );
+  const workflowRunIds = new Set(
+    timeline.flatMap(item => (item.type === 'workflow_run' ? [item.workflowRunId] : []))
+  );
+  const workflowInvocationIds = new Set(
+    timeline.flatMap(item =>
+      item.type === 'workflow_run' && item.invocationId ? [item.invocationId] : []
+    )
+  );
   return compactDuplicateRouteNavigationEvents(
     compactTerminalProgressText(
       compactTerminalIntermediateAnswers(timeline, messageStatus),
@@ -3602,6 +3559,7 @@ function filterTimelineForRendering(
         !isAssetObservationClientActionTimelineItem(item) &&
         !isInternalReferenceReadSkillEvent(item) &&
         !isRoutineSkillLoadTimelineItem(item) &&
+        !isRedundantAgentWorkflowToolEvent(item, workflowRunIds, workflowInvocationIds) &&
         !(
           item.type === 'tool_governance_decision' &&
           governanceItemCorrelationId(item) &&

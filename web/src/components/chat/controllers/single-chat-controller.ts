@@ -21,6 +21,7 @@ import type {
 } from '@/components/chat/types';
 import { SENSITIVE_OUTPUT_BLOCKED_TOKEN } from '@/utils/model-output-filter';
 import { resolveAnswerMergeMode } from '@/components/chat/utils/answer-merge';
+import { toast } from 'sonner';
 
 interface SingleChatControllerState {
   mode: ChatMode;
@@ -159,7 +160,10 @@ export class SingleChatController implements ChatController {
     return false;
   }
 
-  private applyConversationSnapshot(detail: ConversationDetail): { needsRefresh: boolean } {
+  private applyConversationSnapshot(
+    detail: ConversationDetail,
+    options: { replaceMessages?: boolean } = {}
+  ): { needsRefresh: boolean } {
     const summary = detail.summary;
     const conversations = this.store.getState().conversations;
     const current = conversations.find(
@@ -189,6 +193,7 @@ export class SingleChatController implements ChatController {
     ) {
       this.store.getState().setActiveDetail({
         ...activeDetail,
+        ...(options.replaceMessages ? { messages: detail.messages } : {}),
         summary: {
           ...activeDetail.summary,
           ...summary,
@@ -202,20 +207,22 @@ export class SingleChatController implements ChatController {
       id: current?.id ?? summary.id,
       conversationId: summary.conversationId,
       title: summary.title,
+      ...(options.replaceMessages ? { messages: detail.messages } : {}),
     });
 
     return { needsRefresh: this.conversationTitleNeedsRefresh(summary.title) };
   }
 
   private async refreshConversationSnapshotSilently(
-    conversationId: string
+    conversationId: string,
+    options: { replaceMessages?: boolean } = {}
   ): Promise<{ needsRefresh: boolean }> {
     if (!conversationId || conversationId.startsWith('draft-')) {
       return { needsRefresh: false };
     }
     try {
       const detail = await this.transport.get(conversationId);
-      return this.applyConversationSnapshot(detail);
+      return this.applyConversationSnapshot(detail, options);
     } catch (err) {
       console.error('[SingleChatController] Failed to refresh conversation snapshot:', err);
       return { needsRefresh: true };
@@ -656,9 +663,9 @@ export class SingleChatController implements ChatController {
           const currentMessage = useChatStore
             .getState()
             .conversations[currentId]?.messages.find(item => item.messageData?.tempKey === tempKey);
-        const shouldReplacePersistentAnswer =
-          Boolean(messageId || workflowRunId) &&
-          (currentMessage?.WorkflowRunInfo?.status === 'pending_approval' ||
+          const shouldReplacePersistentAnswer =
+            Boolean(messageId || workflowRunId) &&
+            (currentMessage?.WorkflowRunInfo?.status === 'pending_approval' ||
               currentMessage?.WorkflowRunInfo?.status === 'pending_question' ||
               currentMessage?.clientState?.status === 'pending_approval' ||
               currentMessage?.clientState?.status === 'pending_question');
@@ -778,6 +785,11 @@ export class SingleChatController implements ChatController {
             c.id === currentId
               ? {
                   ...c,
+                  metadata: {
+                    ...c.metadata,
+                    runtime_status: 'idle',
+                    active_workflow_run_id: undefined,
+                  },
                   dialogueCount:
                     meta.status === 'completed'
                       ? (c.dialogueCount ?? 0) + 1
@@ -796,6 +808,11 @@ export class SingleChatController implements ChatController {
             ...currentDetail,
             summary: {
               ...currentDetail.summary,
+              metadata: {
+                ...currentDetail.summary.metadata,
+                runtime_status: 'idle',
+                active_workflow_run_id: undefined,
+              },
               dialogueCount: (currentDetail.summary.dialogueCount ?? 0) + inc,
               updatedAt: now,
             },
@@ -808,6 +825,53 @@ export class SingleChatController implements ChatController {
       },
       onError: (err: Error) => {
         console.error('[SingleChatController] Send error:', err);
+        const runtimeError = err as Error & {
+          code?: string;
+          runtimeStatus?: unknown;
+          workflowRunId?: unknown;
+        };
+        if (runtimeError.code === 'workflow_conversation_busy') {
+          const runtimeStatus =
+            typeof runtimeError.runtimeStatus === 'string' ? runtimeError.runtimeStatus : 'running';
+          const workflowRunId =
+            typeof runtimeError.workflowRunId === 'string' ? runtimeError.workflowRunId : undefined;
+          const conversations = this.store.getState().conversations.map(conversation =>
+            conversation.id === currentId
+              ? {
+                  ...conversation,
+                  metadata: {
+                    ...conversation.metadata,
+                    runtime_status: runtimeStatus,
+                    active_workflow_run_id: workflowRunId,
+                  },
+                }
+              : conversation
+          );
+          this.store.getState().setConversations(conversations);
+          const activeDetail = this.store.getState().activeDetail;
+          if (activeDetail?.summary.id === currentId) {
+            this.store.getState().setActiveDetail({
+              ...activeDetail,
+              summary: conversations.find(item => item.id === currentId) ?? activeDetail.summary,
+            });
+          }
+          textThrottler.cancel();
+          useChatStore.getState().removeMessageByTempKey(currentId, tempKey);
+          this.store
+            .getState()
+            .setIsPaused(
+              runtimeStatus === 'pending_approval' || runtimeStatus === 'pending_question'
+            );
+          this.store.getState().setIsSending(false);
+          toast.info(err.message);
+          const persistedConversationId = requestConversationId || conv.conversationId;
+          if (persistedConversationId) {
+            void this.refreshConversationSnapshotSilently(persistedConversationId, {
+              replaceMessages: true,
+            });
+          }
+          return;
+        }
         useChatStore.getState().finalizeAiMessage(currentId, tempKey, {
           status: 'error',
           error: err.message,
@@ -870,7 +934,9 @@ export class SingleChatController implements ChatController {
       if (!normalizedQuery) return [];
       return this.store
         .getState()
-        .conversations.filter(conversation => conversation.title.toLowerCase().includes(normalizedQuery))
+        .conversations.filter(conversation =>
+          conversation.title.toLowerCase().includes(normalizedQuery)
+        )
         .slice(0, limit)
         .map<ConversationSearchResult>(conversation => ({
           type: 'conversation',

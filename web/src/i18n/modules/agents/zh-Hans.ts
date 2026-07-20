@@ -529,6 +529,7 @@ const messages: AgentsMessages = {
       virtualRunErrorPrefix: '错误原因',
     },
     noOutputYet: '暂无输出',
+    waitingForOutput: '工作流运行中，等待输出',
     noMessagesYet: '暂无消息记录',
     close: '关闭',
     // Tabs and common labels
@@ -796,11 +797,15 @@ const messages: AgentsMessages = {
     errors: {
       networkError: '网络连接错误',
       executionFailed: '智能体运行失败',
+      model_service_timeout: '模型服务连接超时，请稍后重试。',
+      model_service_unavailable: '模型服务暂时不可用，请稍后重试。',
+      model_invocation_failed: '模型调用失败，请稍后重试。',
       loadRunsFailed: '加载智能体运行记录失败',
       loadRunDetailFailed: '加载运行详情失败',
       loadNodeExecutionsFailed: '加载节点执行记录失败',
       loadChatMessagesFailed: '加载智能体消息记录失败',
     },
+    partialResultAfterFailure: '本次运行未完整结束，以下内容仅为失败前产生的部分结果。',
     search: '搜索变量...',
     edgeDescription: '连接描述',
     edgeDescriptionPlaceholder: '为该连接添加描述...',

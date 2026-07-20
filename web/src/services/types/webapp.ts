@@ -135,6 +135,7 @@ export type WebAppPrecheckResult = WorkflowPrecheckResult;
 // Unified SSE callbacks for webapp workflow run
 export interface WebAppRunSseCallbacks {
   onWorkflowStarted?: (payload: unknown) => void;
+  onWorkflowResumed?: (payload: unknown) => void;
   onWorkflowPaused?: (payload: unknown) => void;
   onApprovalRequested?: (payload: unknown) => void;
   onApprovalResultFilled?: (payload: unknown) => void;
@@ -176,6 +177,14 @@ export interface WebAppConversation {
   workflow_version_uuid: string;
   created_at: number;
   updated_at: number;
+  runtime_status?:
+    | 'idle'
+    | 'running'
+    | 'pending_approval'
+    | 'pending_question'
+    | 'resuming'
+    | 'stopping';
+  active_workflow_run_id?: string;
 }
 
 export interface WebAppConversationList {
@@ -197,8 +206,9 @@ export interface WebAppConversationSearchResult {
   updated_at: number;
 }
 
-export type WebAppConversationSearchResponse =
-  WebAppApiResponseData<WebAppConversationSearchResult[]>;
+export type WebAppConversationSearchResponse = WebAppApiResponseData<
+  WebAppConversationSearchResult[]
+>;
 
 // Conversation detail types
 export interface WebAppConversationHistoryItem {
@@ -258,4 +268,6 @@ export interface WebAppConversationDetail {
   status: string;
   updated_at: number;
   workflow_version_uuid: string;
+  runtime_status?: WebAppConversation['runtime_status'];
+  active_workflow_run_id?: string;
 }

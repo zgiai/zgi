@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { workflowService, type WorkflowRunSseCallbacks } from '@/services/workflow.service';
 import type { ChatAttachment } from '@/components/chat/types';
+import { ErrorNotificationService } from '@/utils/error-notifications';
 import type {
   WorkflowFinishedSseData,
   WorkflowMessageEndSseData,
@@ -35,6 +36,8 @@ export interface UseRunWorkflowChatDraftStreamOptions {
   onLoopStarted?: (data: unknown) => void;
   onLoopNext?: (data: unknown) => void;
   onLoopCompleted?: (data: unknown) => void;
+  /** Continue an established run from its durable snapshot and event tail. */
+  onTransportInterrupted?: (workflowRunId: string, error: Error) => void;
 }
 
 export interface UseRunWorkflowChatDraftStreamReturn {
@@ -64,6 +67,9 @@ export function useRunWorkflowChatDraftStream(
   const [isStopping, setIsStopping] = useState(false);
   const [workflowRunId, setWorkflowRunId] = useState<string | null>(null);
   const handleRef = useRef<{ close: () => void } | null>(null);
+  const workflowRunIdRef = useRef<string | null>(null);
+  const gracefulStreamBoundaryRef = useRef(false);
+  const transportRecoveryRequestedRef = useRef(false);
 
   const enabled = opts.enabled !== false;
 
@@ -77,6 +83,7 @@ export function useRunWorkflowChatDraftStream(
           // Store workflow run ID for stop functionality
           if (ev.id) {
             setWorkflowRunId(ev.id);
+            workflowRunIdRef.current = ev.id;
           }
           opts.onWorkflowStarted?.(ev);
         } catch {
@@ -204,6 +211,7 @@ export function useRunWorkflowChatDraftStream(
         }
       },
       onWorkflowPaused: payload => {
+        gracefulStreamBoundaryRef.current = true;
         try {
           const data = (payload as { data?: unknown })?.['data'] ?? payload;
           const ev = data as WorkflowPausedEvent;
@@ -213,6 +221,7 @@ export function useRunWorkflowChatDraftStream(
         }
       },
       onWorkflowFinished: payload => {
+        gracefulStreamBoundaryRef.current = true;
         try {
           const data = (payload as { data?: unknown })?.['data'] ?? payload;
           const ev = data as WorkflowFinishedEvent;
@@ -220,15 +229,18 @@ export function useRunWorkflowChatDraftStream(
         } finally {
           setIsRunning(false);
           setWorkflowRunId(null);
+          workflowRunIdRef.current = null;
         }
       },
       onError: payload => {
+        if (gracefulStreamBoundaryRef.current || transportRecoveryRequestedRef.current) return;
         try {
           opts.onError?.(payload);
         } finally {
           setIsRunning(false);
           setIsStopping(false);
           setWorkflowRunId(null);
+          workflowRunIdRef.current = null;
         }
       },
     }),
@@ -240,6 +252,9 @@ export function useRunWorkflowChatDraftStream(
     handleRef.current = null;
     setIsRunning(false);
     setWorkflowRunId(null);
+    workflowRunIdRef.current = null;
+    gracefulStreamBoundaryRef.current = false;
+    transportRecoveryRequestedRef.current = false;
   }, []);
 
   const stop = useCallback(async () => {
@@ -250,24 +265,11 @@ export function useRunWorkflowChatDraftStream(
     setIsStopping(true);
     try {
       await workflowService.stopWorkflowTask(agentId, runId);
-      setIsRunning(false);
-      setWorkflowRunId(null);
-      opts.onWorkflowFinished?.({
-        id: runId,
-        workflow_run_id: runId,
-        status: 'stopped',
-        created_at: Date.now() / 1000,
-        finished_at: Date.now() / 1000,
-        elapsed_time: 0,
-      });
-      handleRef.current?.close();
-      handleRef.current = null;
     } catch (err) {
       console.error('Failed to stop workflow task:', err);
-    } finally {
       setIsStopping(false);
     }
-  }, [agentId, opts, workflowRunId]);
+  }, [agentId, workflowRunId]);
 
   const start = useCallback(
     async (payload: {
@@ -279,19 +281,39 @@ export function useRunWorkflowChatDraftStream(
     }) => {
       if (!enabled) return;
       handleRef.current?.close();
+      gracefulStreamBoundaryRef.current = false;
+      transportRecoveryRequestedRef.current = false;
+      workflowRunIdRef.current = null;
       setIsStarting(true);
       try {
         const handle = await workflowService.ssePostRunWorkflowChatDraft(
           agentId,
           payload,
-          callbacks
+          callbacks,
+          {
+            suppressTransportErrorNotification: true,
+            onTransportError: error => {
+              if (gracefulStreamBoundaryRef.current || transportRecoveryRequestedRef.current) {
+                return;
+              }
+              const runId = workflowRunIdRef.current;
+              const recover = opts.onTransportInterrupted;
+              if (!runId || !recover) {
+                ErrorNotificationService.showNetworkError();
+                return;
+              }
+              transportRecoveryRequestedRef.current = true;
+              setIsRunning(false);
+              recover(runId, error);
+            },
+          }
         );
         handleRef.current = handle;
       } finally {
         setIsStarting(false);
       }
     },
-    [agentId, callbacks, enabled]
+    [agentId, callbacks, enabled, opts.onTransportInterrupted]
   );
 
   useEffect(() => () => cancel(), [cancel]);

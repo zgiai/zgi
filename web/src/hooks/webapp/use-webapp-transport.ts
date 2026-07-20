@@ -9,31 +9,29 @@ import type {
 } from '@/components/chat/controllers/types';
 import { useChatStore } from '@/components/chat/store';
 import { WebAppService } from '@/services/webapp.service';
+import { workflowService } from '@/services/workflow.service';
 import type { WebAppRunRequest, WebAppRunSseCallbacks } from '@/services/types/webapp';
 import type { WorkflowPrecheckWarning } from '@/services/types/workflow';
 import type { QuestionAnswerChoice } from '@/services/types/workflow';
 import { toast } from 'sonner';
 import { useRunWebAppWorkflowStream } from './use-run-webapp-workflow-stream';
 import { useWorkflowRunEventsStream } from '@/hooks/workflow/use-workflow-run-events-stream';
+import {
+  WorkflowConversationRuntimeController,
+  type WorkflowConnectionState,
+} from '@/hooks/workflow/workflow-runtime-controller';
 import { queryClient } from '@/lib/query-client';
 import { unwrap, mapNode } from '@/utils/webapp/run-mappers';
 import { WEBAPP_KEYS } from '@/hooks/query-keys';
 import { useT } from '@/i18n';
 import { useWebAppPrecheck } from './use-webapp-precheck';
 import { useWorkflowBillingFeedback } from '@/hooks/workflow/use-workflow-billing-feedback';
-import {
-  fetchApprovalEvents,
-  useApprovalForm,
-  useSubmitApprovalForm,
-} from '@/hooks/workflow/use-approval-form';
+import { useApprovalForm, useSubmitApprovalForm } from '@/hooks/workflow/use-approval-form';
 import {
   parseApprovalRequestedEvent,
   parseApprovalPausedEvent,
 } from '@/components/workflow/approval/runtime-events';
-import {
-  hasUnresolvedApprovalEntries,
-  useApprovalRuntimeEvents,
-} from '@/components/workflow/approval/use-approval-runtime-events';
+import { useApprovalRuntimeEvents } from '@/components/workflow/approval/use-approval-runtime-events';
 import {
   appendQuestionAnswerTranscriptQuestion,
   applyQuestionAnswerTranscriptLocalAnswer,
@@ -47,6 +45,7 @@ import {
 import { normalizeQuestionAnswerTranscript } from '@/components/workflow/question-answer/question-answer-transcript';
 import { getWorkflowPrecheckWarnings } from '@/utils/workflow/billing';
 import { emitWebAppOffline, isWebAppOfflineError } from '@/utils/webapp/errors';
+import { createWorkflowRunNodeAccumulator } from '@/utils/webapp/workflow-run-node-accumulator';
 import type {
   UseWebappConversationTransportOptions,
   UseWebappConversationTransportResult,
@@ -54,6 +53,7 @@ import type {
 import {
   getPendingQuestionAnswerPromptFromRuntimeMessage,
   hasPendingQuestionAnswerMessage,
+  isWorkflowConversationBusyError,
   isWorkspaceNotFoundError,
   mapWebAppConversationDetailToDetail,
   mapWebAppConversationToSummary,
@@ -69,6 +69,20 @@ export function useWebappConversationTransport(
   options: UseWebappConversationTransportOptions = {}
 ): UseWebappConversationTransportResult {
   const t = useT();
+  const stopAgentIdRef = useRef(options.agentId);
+  stopAgentIdRef.current = options.agentId;
+  const conversationRuntimeControllerRef = useRef<WorkflowConversationRuntimeController | null>(
+    null
+  );
+  if (!conversationRuntimeControllerRef.current) {
+    conversationRuntimeControllerRef.current = new WorkflowConversationRuntimeController({
+      stopRun: async workflowRunId => {
+        const agentId = stopAgentIdRef.current;
+        if (!agentId) throw new Error('workflow stop is unavailable');
+        await workflowService.stopWorkflowTask(agentId, workflowRunId);
+      },
+    });
+  }
   const { start } = useRunWebAppWorkflowStream(versionUuid);
   const { start: startWorkflowRunEvents, cancel: cancelWorkflowRunEvents } =
     useWorkflowRunEventsStream();
@@ -76,6 +90,9 @@ export function useWebappConversationTransport(
   const { notifyBillingError, getWorkflowRunErrorText } = useWorkflowBillingFeedback('webapp');
   const [precheckWarnings, setPrecheckWarnings] = useState<WorkflowPrecheckWarning[]>([]);
   const [latestTaskId, setLatestTaskId] = useState<string | null>(null);
+  const [connectionStateByConversation, setConnectionStateByConversation] = useState<
+    Record<string, WorkflowConnectionState>
+  >({});
   const [questionAnswerPrompt, setQuestionAnswerPrompt] = useState<{
     question: string;
     choices: QuestionAnswerChoice[];
@@ -83,7 +100,6 @@ export function useWebappConversationTransport(
   } | null>(null);
   const [questionAnswerSubmitting, setQuestionAnswerSubmitting] = useState(false);
   const {
-    state: approvalRuntimeState,
     activeEntry: approvalEntry,
     activeForm: approvalForm,
     activeToken: approvalToken,
@@ -96,16 +112,50 @@ export function useWebappConversationTransport(
     setLoadedForm: setLoadedApprovalForm,
     resetApprovalRuntime,
   } = useApprovalRuntimeEvents();
-  const activeRunCallbacksRef = useRef<ChatRunCallbacks | null>(null);
+  const runCallbacksByConversationRef = useRef<Map<string, ChatRunCallbacks>>(new Map());
   const abortSignalRef = useRef<AbortSignal | undefined>(undefined);
-  const restoredRunRef = useRef<string | null>(null);
-  const workflowFinishedRef = useRef(false);
-  const approvalRuntimeStateRef = useRef(approvalRuntimeState);
+  const restoredRunRef = useRef<Set<string>>(new Set());
   const questionAnswerTranscriptRef = useRef<QuestionAnswerTranscriptItem[]>([]);
   const questionAnswerPendingRef = useRef(false);
   const approvalFormQuery = useApprovalForm(approvalToken, Boolean(approvalToken && !approvalForm));
   const approvalSubmitMutation = useSubmitApprovalForm(approvalToken);
   const clearPrecheckWarnings = useCallback(() => setPrecheckWarnings([]), []);
+  const setConversationConnectionState = useCallback(
+    (conversationId: string, state: WorkflowConnectionState) => {
+      setConnectionStateByConversation(current =>
+        current[conversationId] === state ? current : { ...current, [conversationId]: state }
+      );
+    },
+    []
+  );
+  const attachRun = useCallback((conversationId: string, workflowRunId: string) => {
+    conversationRuntimeControllerRef.current?.attachRun(conversationId, workflowRunId);
+  }, []);
+  const recoverRun = useCallback((conversationId: string, workflowRunId: string) => {
+    conversationRuntimeControllerRef.current?.recoverRun(conversationId, workflowRunId);
+  }, []);
+  const stopRun = useCallback(async (conversationId: string) => {
+    await conversationRuntimeControllerRef.current?.stopRun(conversationId);
+  }, []);
+  const detachForeground = useCallback((conversationId: string) => {
+    conversationRuntimeControllerRef.current?.detachForeground(conversationId);
+  }, []);
+  const disposeConversation = useCallback((conversationId: string) => {
+    conversationRuntimeControllerRef.current?.disposeConversation(conversationId);
+  }, []);
+  const refreshConversationRuntime = useCallback(
+    (conversationId?: string) => {
+      void queryClient.invalidateQueries({
+        queryKey: WEBAPP_KEYS.conversations(versionUuid),
+      });
+      if (conversationId) {
+        void queryClient.invalidateQueries({
+          queryKey: WEBAPP_KEYS.conversation(versionUuid, conversationId),
+        });
+      }
+    },
+    [versionUuid]
+  );
   const resetQuestionAnswerRuntime = useCallback(() => {
     questionAnswerTranscriptRef.current = [];
     questionAnswerPendingRef.current = false;
@@ -132,14 +182,31 @@ export function useWebappConversationTransport(
       setQuestionAnswerSubmitting(false);
     }
   }, []);
-
-  useEffect(() => {
-    approvalRuntimeStateRef.current = approvalRuntimeState;
-  }, [approvalRuntimeState]);
-
-  const hasUnresolvedApprovals = useCallback(
-    () => hasUnresolvedApprovalEntries(approvalRuntimeStateRef.current),
-    []
+  const reconcileConversationRun = useCallback(
+    async (conversationId: string, workflowRunId: string): Promise<WorkflowConnectionState> => {
+      try {
+        const response = await WebAppService.getConversation(versionUuid, conversationId);
+        const detail = mapWebAppConversationDetailToDetail(response.data);
+        useChatStore.getState().initSingle({
+          id: detail.summary.id,
+          conversationId: detail.summary.conversationId,
+          title: detail.summary.title,
+          messages: detail.messages,
+        });
+        const message = detail.messages.find(item => item.WorkflowRunInfo?.id === workflowRunId);
+        const status = String(
+          message?.WorkflowRunInfo?.status ?? detail.summary.metadata?.runtime_status ?? 'idle'
+        ).toLowerCase();
+        return ['running', 'resuming', 'stopping', 'pending_approval', 'pending_question'].includes(
+          status
+        )
+          ? 'disconnected'
+          : 'idle';
+      } catch {
+        return 'disconnected';
+      }
+    },
+    [versionUuid]
   );
 
   const handleQuestionAnswerRequested = useCallback(
@@ -186,23 +253,26 @@ export function useWebappConversationTransport(
     []
   );
 
-  const handleQuestionAnswerSubmitted = useCallback((payload?: unknown, callbacks?: ChatRunCallbacks) => {
-    const parsed = parseQuestionAnswerSubmittedEvent(payload);
-    if (parsed) {
-      const transcript = applyQuestionAnswerTranscriptSubmission(
-        questionAnswerTranscriptRef.current,
-        parsed
-      );
-      questionAnswerTranscriptRef.current = transcript;
-      callbacks?.mergeMessageData?.({
-        questionAnswerTranscript: transcript,
-        questionAnswerPrompt: null,
-      });
-    }
-    questionAnswerPendingRef.current = false;
-    setQuestionAnswerPrompt(null);
-    setQuestionAnswerSubmitting(true);
-  }, []);
+  const handleQuestionAnswerSubmitted = useCallback(
+    (payload?: unknown, callbacks?: ChatRunCallbacks) => {
+      const parsed = parseQuestionAnswerSubmittedEvent(payload);
+      if (parsed) {
+        const transcript = applyQuestionAnswerTranscriptSubmission(
+          questionAnswerTranscriptRef.current,
+          parsed
+        );
+        questionAnswerTranscriptRef.current = transcript;
+        callbacks?.mergeMessageData?.({
+          questionAnswerTranscript: transcript,
+          questionAnswerPrompt: null,
+        });
+      }
+      questionAnswerPendingRef.current = false;
+      setQuestionAnswerPrompt(null);
+      setQuestionAnswerSubmitting(true);
+    },
+    []
+  );
 
   const handleWorkflowPaused = useCallback(
     (payload: unknown, callbacks: ChatRunCallbacks) => {
@@ -239,15 +309,21 @@ export function useWebappConversationTransport(
     [dispatchApprovalRuntimeEvent, handleQuestionAnswerRequested]
   );
 
-  const handleApprovalRequested = useCallback((payload: unknown) => {
-    const parsed = parseApprovalRequestedEvent(payload);
-    if (!parsed.form && !parsed.token && !parsed.formId && !parsed.nodeId) return;
-    dispatchApprovalRuntimeEvent('approval_requested', payload);
-  }, [dispatchApprovalRuntimeEvent]);
+  const handleApprovalRequested = useCallback(
+    (payload: unknown) => {
+      const parsed = parseApprovalRequestedEvent(payload);
+      if (!parsed.form && !parsed.token && !parsed.formId && !parsed.nodeId) return;
+      dispatchApprovalRuntimeEvent('approval_requested', payload);
+    },
+    [dispatchApprovalRuntimeEvent]
+  );
 
-  const handleApprovalResultFilled = useCallback((payload: unknown) => {
-    dispatchApprovalRuntimeEvent('approval_result_filled', payload);
-  }, [dispatchApprovalRuntimeEvent]);
+  const handleApprovalResultFilled = useCallback(
+    (payload: unknown) => {
+      dispatchApprovalRuntimeEvent('approval_result_filled', payload);
+    },
+    [dispatchApprovalRuntimeEvent]
+  );
 
   const handleApprovalExpired = useCallback(
     (payload: unknown) => {
@@ -265,10 +341,18 @@ export function useWebappConversationTransport(
 
   const dispatchApprovalEvent = useCallback(
     (event: { event?: string; data?: unknown; [key: string]: unknown }) => {
-      const callbacks = activeRunCallbacksRef.current;
+      const raw = event.data && typeof event.data === 'object' ? event.data : event;
+      const eventData = unwrap(raw) as Record<string, unknown>;
+      const eventConversationId =
+        typeof eventData.conversation_id === 'string'
+          ? eventData.conversation_id
+          : useChatStore.getState().currentId;
+      const callbacks = eventConversationId
+        ? runCallbacksByConversationRef.current.get(eventConversationId)
+        : undefined;
       if (!callbacks) return;
 
-      const payload = event.data && typeof event.data === 'object' ? event.data : event;
+      const payload = raw;
       const data = unwrap(payload) as Record<string, unknown>;
 
       switch (event.event) {
@@ -297,6 +381,16 @@ export function useWebappConversationTransport(
           });
           break;
         }
+        case 'workflow_resumed':
+          resetApprovalRuntime();
+          questionAnswerPendingRef.current = false;
+          setQuestionAnswerPrompt(null);
+          setQuestionAnswerSubmitting(false);
+          callbacks.mergeMessageData?.({
+            approval: null,
+            questionAnswerPrompt: null,
+          });
+          break;
         case 'approval_requested':
           handleApprovalRequested(event);
           if (callbacks.onNodeFinished) {
@@ -359,19 +453,6 @@ export function useWebappConversationTransport(
         case 'workflow_failed':
         case 'workflow_succeeded':
         case 'workflow_completed': {
-          const isSuccessfulTerminalEvent =
-            event.event === 'workflow_finished' ||
-            event.event === 'workflow_succeeded' ||
-            event.event === 'workflow_completed';
-          if (isSuccessfulTerminalEvent && hasUnresolvedApprovals()) {
-            callbacks.onPaused?.({
-              workflowRunId:
-                (typeof data.id === 'string' ? data.id : '') ||
-                (typeof data.workflow_run_id === 'string' ? data.workflow_run_id : '') ||
-                undefined,
-            });
-            break;
-          }
           const status = typeof data.status === 'string' ? data.status.toLowerCase() : '';
           const eventStatus =
             event.event === 'workflow_stopped'
@@ -402,12 +483,11 @@ export function useWebappConversationTransport(
             notifyBillingError(data.error);
           }
           setLatestTaskId(null);
-            workflowFinishedRef.current = true;
-            resetApprovalRuntime();
-            setQuestionAnswerPrompt(null);
-            setQuestionAnswerSubmitting(false);
-            questionAnswerPendingRef.current = false;
-            break;
+          resetApprovalRuntime();
+          setQuestionAnswerPrompt(null);
+          setQuestionAnswerSubmitting(false);
+          questionAnswerPendingRef.current = false;
+          break;
         }
         case 'error': {
           if (isWebAppOfflineError(payload)) {
@@ -417,6 +497,24 @@ export function useWebappConversationTransport(
             return;
           }
           const parsedError = parseSseRunError(payload);
+          if (isWorkflowConversationBusyError(payload)) {
+            const busyData = unwrap(payload);
+            const conversationId =
+              typeof busyData['conversation_id'] === 'string'
+                ? (busyData['conversation_id'] as string)
+                : undefined;
+            refreshConversationRuntime(conversationId);
+            callbacks.onError(
+              Object.assign(new Error(t('webapp.chat.conversationBusy')), {
+                code: 'workflow_conversation_busy',
+                runtimeStatus: busyData['runtime_status'],
+                workflowRunId: busyData['workflow_run_id'],
+              })
+            );
+            setLatestTaskId(null);
+            setQuestionAnswerSubmitting(false);
+            return;
+          }
           const reason = isWorkspaceNotFoundError(parsedError)
             ? t('webapp.chat.workspaceRequiredForConversation')
             : (getWorkflowRunErrorText(payload) ?? parsedError.message);
@@ -442,8 +540,8 @@ export function useWebappConversationTransport(
       handleQuestionAnswerRequested,
       handleQuestionAnswerSubmitted,
       handleWorkflowPaused,
-      hasUnresolvedApprovals,
       notifyBillingError,
+      refreshConversationRuntime,
       resetApprovalRuntime,
       t,
     ]
@@ -476,7 +574,7 @@ export function useWebappConversationTransport(
 
   const submitQuestionAnswerChoice = useCallback(
     async (conversationId: string, choice: QuestionAnswerChoice) => {
-      const callbacks = activeRunCallbacksRef.current;
+      const callbacks = runCallbacksByConversationRef.current.get(conversationId);
       const query = String(choice.label || choice.value || choice.id || '').trim();
       if (!callbacks || !conversationId || !query) return;
       const message =
@@ -496,17 +594,30 @@ export function useWebappConversationTransport(
       });
       setQuestionAnswerPrompt(null);
       setQuestionAnswerSubmitting(true);
+      const runNodes = createWorkflowRunNodeAccumulator({
+        onNodeStarted: callbacks.onNodeStarted,
+        onNodeFinished: callbacks.onNodeFinished,
+      });
       const runCallbacks: WebAppRunSseCallbacks = {
         onWorkflowStarted: payload =>
           dispatchApprovalEvent({ event: 'workflow_started', data: payload }),
-        onNodeStarted: payload => dispatchApprovalEvent({ event: 'node_started', data: payload }),
-        onNodeFinished: payload => dispatchApprovalEvent({ event: 'node_finished', data: payload }),
+        onWorkflowResumed: payload =>
+          dispatchApprovalEvent({ event: 'workflow_resumed', data: payload }),
+        onNodeStarted: runNodes.onNodeStarted,
+        onNodeFinished: runNodes.onNodeFinished,
+        onIterationStarted: runNodes.onIterationStarted,
+        onIterationNext: runNodes.onIterationNext,
+        onIterationCompleted: runNodes.onIterationCompleted,
+        onLoopStarted: runNodes.onLoopStarted,
+        onLoopNext: runNodes.onLoopNext,
+        onLoopCompleted: runNodes.onLoopCompleted,
         onWorkflowPaused: payload => handleWorkflowPaused(payload, callbacks),
         onApprovalRequested: payload =>
           dispatchApprovalEvent({ event: 'approval_requested', data: payload }),
         onApprovalResultFilled: payload =>
           dispatchApprovalEvent({ event: 'approval_result_filled', data: payload }),
-        onApprovalExpired: payload => dispatchApprovalEvent({ event: 'approval_expired', data: payload }),
+        onApprovalExpired: payload =>
+          dispatchApprovalEvent({ event: 'approval_expired', data: payload }),
         onQuestionAnswerRequested: payload =>
           dispatchApprovalEvent({ event: 'question_answer_requested', data: payload }),
         onQuestionAnswerSubmitted: payload =>
@@ -538,9 +649,7 @@ export function useWebappConversationTransport(
   const { resumeWorkflowRun, continueWorkflowRun } = useWebappWorkflowRunEvents({
     startWorkflowRunEvents,
     cancelWorkflowRunEvents,
-    approvalCursor: approvalRuntimeState.cursor,
     restoredRunRef,
-    workflowFinishedRef,
     questionAnswerTranscriptRef,
     setLatestTaskId,
     getWorkflowRunErrorText,
@@ -549,37 +658,24 @@ export function useWebappConversationTransport(
     handleApprovalResultFilled,
     handleQuestionAnswerRequested,
     handleQuestionAnswerSubmitted,
-    hasUnresolvedApprovals,
     resetApprovalRuntime,
+    clearQuestionAnswerRuntime: resetQuestionAnswerRuntime,
     workflowRunFailedText: t('webapp.chat.workflowRunFailed'),
+    setConversationConnectionState,
+    reconcileConversationRun,
   });
   useEffect(() => {
     if (!approvalToken || !approvalSubmittedAction) return;
-    let cancelled = false;
-    const timer = window.setInterval(async () => {
-      try {
-        const events = await fetchApprovalEvents(approvalToken, {
-          after: approvalRuntimeState.cursor,
-          limit: 100,
-        });
-        if (cancelled || events.length === 0) return;
-        events.forEach(event => {
-          dispatchApprovalEvent(event);
-        });
-      } catch {
-        // Keep polling; transient failures should not discard the paused approval UI.
-      }
-    }, 2000);
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-    };
-  }, [
-    approvalRuntimeState.cursor,
-    approvalSubmittedAction,
-    approvalToken,
-    dispatchApprovalEvent,
-  ]);
+    const timer = window.setTimeout(() => {
+      const conversationId = useChatStore.getState().currentId;
+      if (!conversationId) return;
+      const messages = useChatStore.getState().conversations[conversationId]?.messages ?? [];
+      const latestMessage = messages.at(-1);
+      if (!latestMessage) return;
+      resumeWorkflowRun(conversationId, latestMessage);
+    }, 5000);
+    return () => window.clearTimeout(timer);
+  }, [approvalSubmittedAction, approvalToken, resumeWorkflowRun]);
 
   const transport = useMemo<ConversationTransport>(
     () => ({
@@ -688,7 +784,7 @@ export function useWebappConversationTransport(
         callbacks: ChatRunCallbacks,
         abortSignal?: AbortSignal
       ): void {
-        activeRunCallbacksRef.current = callbacks;
+        runCallbacksByConversationRef.current.set(payload.conversationId, callbacks);
         abortSignalRef.current = abortSignal;
         let hasErrorToast = false;
         const showWorkflowErrorToast = (reason?: string) => {
@@ -707,6 +803,7 @@ export function useWebappConversationTransport(
           files: payload.files,
           inputs: payload.inputs,
         };
+        let durableConversationId = payload.conversationId;
 
         void (async () => {
           try {
@@ -721,7 +818,6 @@ export function useWebappConversationTransport(
             } else {
               clearPrecheckWarnings();
             }
-            workflowFinishedRef.current = false;
             resetApprovalRuntime();
             setQuestionAnswerPrompt(null);
             setQuestionAnswerSubmitting(false);
@@ -743,11 +839,15 @@ export function useWebappConversationTransport(
               questionAnswerPendingRef.current = false;
             }
 
+            const runNodes = createWorkflowRunNodeAccumulator({
+              onNodeStarted: callbacks.onNodeStarted,
+              onNodeFinished: callbacks.onNodeFinished,
+            });
+
             await start(
               runPayload,
               {
                 onWorkflowStarted: (ctx: unknown) => {
-                  workflowFinishedRef.current = false;
                   const data = unwrap(ctx) as {
                     conversation_id?: string;
                     message_id?: string;
@@ -761,6 +861,12 @@ export function useWebappConversationTransport(
                   };
                   const conversationId =
                     data.conversation_id || data.inputs?.['sys.conversation_id'] || '';
+                  durableConversationId = conversationId || durableConversationId;
+                  if (conversationId) {
+                    runCallbacksByConversationRef.current.set(conversationId, callbacks);
+                    const workflowRunId = data.id ?? data.workflow_run_id ?? data.task_id;
+                    if (workflowRunId) attachRun(conversationId, workflowRunId);
+                  }
                   setLatestTaskId(data.task_id ?? data.id ?? data.workflow_run_id ?? null);
 
                   callbacks.onStarted({
@@ -791,12 +897,14 @@ export function useWebappConversationTransport(
                 onTextReplace: () => {
                   callbacks.onTextReplace?.();
                 },
-                onNodeStarted: (node: unknown) => {
-                  if (callbacks.onNodeStarted) callbacks.onNodeStarted(mapNode(node, false));
-                },
-                onNodeFinished: (node: unknown) => {
-                  if (callbacks.onNodeFinished) callbacks.onNodeFinished(mapNode(node, true));
-                },
+                onNodeStarted: runNodes.onNodeStarted,
+                onNodeFinished: runNodes.onNodeFinished,
+                onIterationStarted: runNodes.onIterationStarted,
+                onIterationNext: runNodes.onIterationNext,
+                onIterationCompleted: runNodes.onIterationCompleted,
+                onLoopStarted: runNodes.onLoopStarted,
+                onLoopNext: runNodes.onLoopNext,
+                onLoopCompleted: runNodes.onLoopCompleted,
                 onWorkflowPaused: (ctx: unknown) => {
                   handleWorkflowPaused(ctx, callbacks);
                 },
@@ -841,9 +949,7 @@ export function useWebappConversationTransport(
                 onMessage: (meta: unknown) => {
                   const data = unwrap(meta);
                   callbacks.onMessage(
-                    isQuestionAnswerPromptMessage(data)
-                      ? stripQuestionAnswerPromptText(data)
-                      : data
+                    isQuestionAnswerPromptMessage(data) ? stripQuestionAnswerPromptText(data) : data
                   );
                 },
                 onMessageEnd: (meta: unknown) => {
@@ -855,27 +961,6 @@ export function useWebappConversationTransport(
                     workflow_run_id?: string;
                     status?: string;
                   };
-                  const rawStatus =
-                    typeof terminalData.status === 'string'
-                      ? terminalData.status.toLowerCase()
-                      : '';
-                  const isSuccessfulTerminalStatus = ![
-                    'failed',
-                    'error',
-                    'stopped',
-                    'expired',
-                  ].includes(rawStatus);
-                  if (isSuccessfulTerminalStatus && hasUnresolvedApprovals()) {
-                    callbacks.onPaused?.({
-                      workflowRunId:
-                        (typeof terminalData.id === 'string' ? terminalData.id : '') ||
-                        (typeof terminalData.workflow_run_id === 'string'
-                          ? terminalData.workflow_run_id
-                          : '') ||
-                        undefined,
-                    });
-                    return;
-                  }
                   const data = terminalData as {
                     id?: string;
                     workflow_run_id?: string;
@@ -904,7 +989,6 @@ export function useWebappConversationTransport(
                     notifyBillingError(data.error);
                   }
                   setLatestTaskId(null);
-                  workflowFinishedRef.current = true;
                   resetApprovalRuntime();
                   setQuestionAnswerPrompt(null);
                   setQuestionAnswerSubmitting(false);
@@ -918,12 +1002,27 @@ export function useWebappConversationTransport(
                     return;
                   }
                   const parsedError = parseSseRunError(err);
+                  if (isWorkflowConversationBusyError(err)) {
+                    const busyData = unwrap(err);
+                    refreshConversationRuntime(runPayload.conversation_id);
+                    setLatestTaskId(null);
+                    resetApprovalRuntime();
+                    setQuestionAnswerSubmitting(false);
+                    questionAnswerPendingRef.current = false;
+                    callbacks.onError(
+                      Object.assign(new Error(t('webapp.chat.conversationBusy')), {
+                        code: 'workflow_conversation_busy',
+                        runtimeStatus: busyData['runtime_status'],
+                        workflowRunId: busyData['workflow_run_id'],
+                      })
+                    );
+                    return;
+                  }
                   const reason = isWorkspaceNotFoundError(parsedError)
                     ? t('webapp.chat.workspaceRequiredForConversation')
                     : (getWorkflowRunErrorText(err) ?? parsedError.message);
                   const normalizedError = new Error(reason || 'Unknown error');
                   setLatestTaskId(null);
-                  workflowFinishedRef.current = true;
                   resetApprovalRuntime();
                   setQuestionAnswerSubmitting(false);
                   questionAnswerPendingRef.current = false;
@@ -937,7 +1036,26 @@ export function useWebappConversationTransport(
                   }
                 },
               },
-              { abortSignal }
+              {
+                abortSignal,
+                onTransportInterrupted: workflowRunId => {
+                  const store = useChatStore.getState();
+                  const conversationId =
+                    durableConversationId ||
+                    Object.keys(store.conversations).find(id =>
+                      store.conversations[id]?.messages.some(
+                        message => message.WorkflowRunInfo?.id === workflowRunId
+                      )
+                    ) ||
+                    '';
+                  if (!conversationId) return;
+                  setConversationConnectionState(conversationId, 'reconnecting');
+                  const message = store.conversations[conversationId]?.messages.find(
+                    item => item.WorkflowRunInfo?.id === workflowRunId
+                  );
+                  if (message) resumeWorkflowRun(conversationId, message);
+                },
+              }
             );
           } catch (error) {
             if (isWebAppOfflineError(error)) {
@@ -958,20 +1076,23 @@ export function useWebappConversationTransport(
     [
       clearPrecheckWarnings,
       getWorkflowRunErrorText,
-            handleApprovalExpired,
-            handleApprovalRequested,
-            handleApprovalResultFilled,
-            handleQuestionAnswerRequested,
-            handleQuestionAnswerSubmitted,
-            handleWorkflowPaused,
-      hasUnresolvedApprovals,
+      handleApprovalExpired,
+      handleApprovalRequested,
+      handleApprovalResultFilled,
+      handleQuestionAnswerRequested,
+      handleQuestionAnswerSubmitted,
+      handleWorkflowPaused,
       notifyBillingError,
       options.enablePrecheck,
       precheckMutation,
+      refreshConversationRuntime,
       resetApprovalRuntime,
       resetQuestionAnswerRuntime,
+      resumeWorkflowRun,
+      setConversationConnectionState,
       start,
       t,
+      attachRun,
       versionUuid,
     ]
   );
@@ -999,5 +1120,11 @@ export function useWebappConversationTransport(
     retryApprovalForm: () => void approvalFormQuery.refetch(),
     resumeWorkflowRun,
     continueWorkflowRun,
+    attachRun,
+    recoverRun,
+    stopRun,
+    detachForeground,
+    disposeConversation,
+    connectionStateByConversation,
   };
 }

@@ -151,6 +151,10 @@ export type AIChatAgenticTimelineItem =
       error?: string;
       nodes: NodeInfo[];
       approval?: Partial<AIChatWorkflowPausedEventData>;
+      sequence?: number;
+      executionGeneration?: number;
+      invocationId?: string;
+      invocationMode?: string;
       created_at?: number;
       event_id?: string | null;
     };

@@ -20,6 +20,7 @@ export interface AIChatWorkflowApprovalRequest {
   approvalUrl?: string;
   approvalFormId?: string;
   approvalForm?: ApprovalRuntimeForm | null;
+  canSubmitInline: boolean;
 }
 
 export interface AIChatWorkflowApprovalSubmitPayload {

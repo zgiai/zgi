@@ -67,13 +67,23 @@ export class WebAppService {
     versionUuid: string,
     payload: WebAppRunRequest,
     callbacks: WebAppRunSseCallbacks,
-    opts?: { abortSignal?: AbortSignal; onClose?: () => void }
+    opts?: {
+      abortSignal?: AbortSignal;
+      onClose?: () => void;
+      onTransportError?: (
+        error: Error,
+        meta: { terminalReceived: boolean; incompleteLastEvent: boolean }
+      ) => void;
+      suppressTransportErrorNotification?: boolean;
+    }
   ): Promise<{ close: () => void }> {
     return webappHttp.ssePost(`/console/api/workflows/${versionUuid}/run`, {
       body: buildWebAppRunBody(payload),
       callbacks: wrapModelOutputSseCallbacks(callbacks),
       abortSignal: opts?.abortSignal,
       onClose: opts?.onClose,
+      onTransportError: opts?.onTransportError,
+      suppressTransportErrorNotification: opts?.suppressTransportErrorNotification,
     });
   }
 
@@ -207,11 +217,9 @@ export class WebAppService {
       ? `/console/api/workflows/${encodeURIComponent(normalizedWebAppId)}/migrate-user`
       : `/console/api/workflows/migrate-user`;
     // Use main-site http client so it carries Authorization and refresh logic
-    return http.post<WebAppApiResponseData<{ result: 'success' | string }>>(
-      endpoint,
-      undefined,
-      { headers }
-    );
+    return http.post<WebAppApiResponseData<{ result: 'success' | string }>>(endpoint, undefined, {
+      headers,
+    });
   }
 }
 

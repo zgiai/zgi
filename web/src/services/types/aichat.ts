@@ -249,6 +249,7 @@ export interface AIChatWorkflowRunApprovalMetadata extends Record<string, unknow
   approval_token?: string;
   approval_url?: string;
   approval_form?: unknown;
+  ui_approval_allowed?: boolean;
   status?: string;
 }
 
@@ -990,6 +991,16 @@ export interface AIChatWorkflowEventData extends Record<string, unknown> {
   elapsed_time?: number;
   error?: string;
   created_at?: number;
+  sequence?: number;
+  schema_version?: number;
+  payload_version?: number;
+  execution_id?: string;
+  execution_generation?: number;
+  pause_id?: string;
+  pause_generation?: number;
+  invocation_id?: string;
+  invocation_mode?: string;
+  invocation_protocol_version?: number;
 }
 
 export interface AIChatWorkflowNodeEventData extends AIChatWorkflowEventData {
@@ -1015,6 +1026,7 @@ export interface AIChatWorkflowPausedEventData extends AIChatWorkflowEventData {
   approval_token?: string;
   approval_url?: string;
   approval_form?: unknown;
+  ui_approval_allowed?: boolean;
 }
 
 export interface AIChatFileParseStartEventData {

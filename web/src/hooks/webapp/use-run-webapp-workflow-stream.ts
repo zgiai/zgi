@@ -5,12 +5,14 @@ import { workflowService } from '@/services/workflow.service';
 import { toast } from 'sonner';
 import { useT } from '@/i18n';
 import { emitWebAppOffline, isWebAppOfflineError } from '@/utils/webapp/errors';
+import { ErrorNotificationService } from '@/utils/error-notifications';
 
 export interface UseRunWebAppWorkflowStreamOptions {
   enabled?: boolean;
   /** Agent ID for stop API - required for stop functionality */
   agentId?: string;
   onStarted?: (data: unknown) => void;
+  onResumed?: (data: unknown) => void;
   onPaused?: (data: unknown) => void;
   onApprovalRequested?: (data: unknown) => void;
   onApprovalResultFilled?: (data: unknown) => void;
@@ -37,7 +39,10 @@ export interface UseRunWebAppWorkflowStreamReturn {
   start: (
     payload: WebAppRunRequest,
     perRunCallbacks?: WebAppRunSseCallbacks,
-    opts?: { abortSignal?: AbortSignal }
+    opts?: {
+      abortSignal?: AbortSignal;
+      onTransportInterrupted?: (workflowRunId: string, error: Error) => void;
+    }
   ) => Promise<void>;
   cancel: () => void;
   stop: () => Promise<void>;
@@ -58,7 +63,7 @@ export function useRunWebAppWorkflowStream(
   const [isRunning, setIsRunning] = useState(false);
   const [isStopping, setIsStopping] = useState(false);
   const isRunningRef = useRef(false);
-  const handleRef = useRef<{ close: () => void } | null>(null);
+  const handlesRef = useRef<Map<string, { close: () => void }>>(new Map());
   const taskIdRef = useRef<string | null>(null);
 
   const enabled = opts.enabled !== false;
@@ -93,6 +98,12 @@ export function useRunWebAppWorkflowStream(
       },
       onNodeStarted: payload => optsRef.current.onNodeStarted?.(payload),
       onNodeFinished: payload => optsRef.current.onNodeFinished?.(payload),
+      onWorkflowResumed: payload => {
+        setIsRunning(true);
+        setIsStarting(false);
+        isRunningRef.current = true;
+        optsRef.current.onResumed?.(payload);
+      },
       onWorkflowPaused: payload => {
         try {
           optsRef.current.onPaused?.(payload);
@@ -115,7 +126,9 @@ export function useRunWebAppWorkflowStream(
         } finally {
           setIsRunning(false);
           setIsStarting(false);
+          setIsStopping(false);
           isRunningRef.current = false;
+          taskIdRef.current = null;
         }
       },
       onError: payload => {
@@ -146,8 +159,8 @@ export function useRunWebAppWorkflowStream(
 
   const cancel = useCallback(() => {
     isRunningRef.current = false;
-    handleRef.current?.close();
-    handleRef.current = null;
+    handlesRef.current.forEach(handle => handle.close());
+    handlesRef.current.clear();
     setIsRunning(false);
     setIsStarting(false);
   }, []);
@@ -156,15 +169,41 @@ export function useRunWebAppWorkflowStream(
     async (
       payload: WebAppRunRequest,
       perRunCallbacks?: WebAppRunSseCallbacks,
-      opts?: { abortSignal?: AbortSignal }
+      opts?: {
+        abortSignal?: AbortSignal;
+        onTransportInterrupted?: (workflowRunId: string, error: Error) => void;
+      }
     ) => {
       if (!enabled) return;
-      handleRef.current?.close();
+      const requestKey =
+        payload.conversation_id || `draft:${Date.now()}:${Math.random().toString(36).slice(2)}`;
+      let workflowRunId = '';
+      let terminalReceived = false;
+      let gracefulStreamBoundary = false;
+      let transportRecoveryRequested = false;
+      let suppressNextTransportErrorCallback = false;
+      const requestTransportRecovery = (error: Error): boolean => {
+        if (terminalReceived || transportRecoveryRequested) return transportRecoveryRequested;
+        const recover = opts?.onTransportInterrupted;
+        if (!workflowRunId || !recover) return false;
+        transportRecoveryRequested = true;
+        isRunningRef.current = false;
+        setIsRunning(false);
+        setIsStarting(false);
+        recover(workflowRunId, error);
+        return true;
+      };
       setIsStarting(true);
       isRunningRef.current = true;
       try {
         const merged: WebAppRunSseCallbacks = {
           onWorkflowStarted: p => {
+            const data = (p as { data?: unknown })?.data ?? p;
+            workflowRunId =
+              (data as { task_id?: string })?.task_id ||
+              (data as { id?: string })?.id ||
+              (data as { workflow_run_id?: string })?.workflow_run_id ||
+              workflowRunId;
             callbacks.onWorkflowStarted?.(p);
             perRunCallbacks?.onWorkflowStarted?.(p);
           },
@@ -176,7 +215,12 @@ export function useRunWebAppWorkflowStream(
             callbacks.onNodeFinished?.(p);
             perRunCallbacks?.onNodeFinished?.(p);
           },
+          onWorkflowResumed: p => {
+            callbacks.onWorkflowResumed?.(p);
+            perRunCallbacks?.onWorkflowResumed?.(p);
+          },
           onWorkflowPaused: p => {
+            gracefulStreamBoundary = true;
             callbacks.onWorkflowPaused?.(p);
             perRunCallbacks?.onWorkflowPaused?.(p);
           },
@@ -209,10 +253,17 @@ export function useRunWebAppWorkflowStream(
             perRunCallbacks?.onTextReplace?.(p);
           },
           onWorkflowFinished: p => {
+            gracefulStreamBoundary = true;
+            terminalReceived = true;
             callbacks.onWorkflowFinished?.(p);
             perRunCallbacks?.onWorkflowFinished?.(p);
           },
           onError: p => {
+            if (suppressNextTransportErrorCallback || transportRecoveryRequested) {
+              suppressNextTransportErrorCallback = false;
+              return;
+            }
+            terminalReceived = true;
             callbacks.onError?.(p);
             perRunCallbacks?.onError?.(p);
           },
@@ -251,17 +302,28 @@ export function useRunWebAppWorkflowStream(
         };
         const handle = await WebAppService.ssePostRun(versionUuid, payload, merged, {
           abortSignal: opts?.abortSignal,
+          suppressTransportErrorNotification: true,
+          onTransportError: error => {
+            const recoveryStarted = requestTransportRecovery(error);
+            if (gracefulStreamBoundary || recoveryStarted) {
+              // ssePost invokes the application onError callback immediately after
+              // onTransportError. Ignore that single transport callback because a
+              // paused run is already durable and an interrupted active run is now
+              // owned by the recovery stream.
+              suppressNextTransportErrorCallback = true;
+              return;
+            }
+            ErrorNotificationService.showNetworkError();
+          },
           onClose: () => {
-            if (!isRunningRef.current) return;
-            const errorPayload = {
-              error: 'Connection Closed',
-              message: 'The workflow execution stream was closed unexpectedly.',
-            };
-            callbacks.onError?.(errorPayload);
-            perRunCallbacks?.onError?.(errorPayload);
+            handlesRef.current.delete(requestKey);
+            if (terminalReceived || transportRecoveryRequested || !workflowRunId) return;
+            requestTransportRecovery(
+              new Error('The workflow execution stream was closed unexpectedly.')
+            );
           },
         });
-        handleRef.current = handle;
+        handlesRef.current.set(requestKey, handle);
       } catch (error) {
         if (isWebAppOfflineError(error)) {
           emitWebAppOffline();
@@ -286,23 +348,10 @@ export function useRunWebAppWorkflowStream(
     setIsStopping(true);
     try {
       await workflowService.stopWorkflowTask(agentId, taskId);
-      setIsRunning(false);
-      isRunningRef.current = false;
-      taskIdRef.current = null;
-      optsRef.current.onFinished?.({
-        data: {
-          id: taskId,
-          workflow_run_id: taskId,
-          status: 'stopped',
-        },
-      });
-      handleRef.current?.close();
-      handleRef.current = null;
-      toast.success(t('workflow.stopSuccess'));
-    } catch {
+    } catch (error) {
       toast.error(t('workflow.stopFailed'));
-    } finally {
       setIsStopping(false);
+      throw error;
     }
   }, [agentId, t]);
 

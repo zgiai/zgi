@@ -484,7 +484,7 @@ export class SseClient {
     endpointCfg: ApiEndpoint,
     meta: { terminalReceived: boolean; incompleteLastEvent: boolean }
   ): void {
-    if (!options.skipErrorHandling) {
+    if (!options.skipErrorHandling && !options.suppressTransportErrorNotification) {
       ErrorNotificationService.showNetworkError();
     }
     captureException(err, scope => {
@@ -521,6 +521,7 @@ export class SseClient {
 
     const eventHandlers: Record<string, ((p: unknown) => void) | undefined> = {
       workflow_started: callbacks.onWorkflowStarted,
+      workflow_resumed: callbacks.onWorkflowResumed,
       workflow_paused: callbacks.onWorkflowPaused,
       approval_requested: callbacks.onApprovalRequested,
       approval_result_filled: callbacks.onApprovalResultFilled,

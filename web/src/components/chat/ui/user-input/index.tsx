@@ -74,6 +74,8 @@ interface UserInputProps {
   isRunning?: boolean;
   /** Whether stop action is in progress */
   isStopping?: boolean;
+  /** Hide the composer stop control when a pending interaction card owns that action. */
+  hideStopControl?: boolean;
   placeholder?: string;
   enableUpload?: boolean;
   uploadFeature?: WorkflowFeatures['file_upload'];
@@ -117,6 +119,7 @@ const UserInput: React.FC<UserInputProps> = ({
   sendDisabled,
   isRunning,
   isStopping,
+  hideStopControl = false,
   placeholder,
   enableUpload,
   uploadFeature,
@@ -981,7 +984,7 @@ const UserInput: React.FC<UserInputProps> = ({
               <Send size={18} className="text-primary-foreground" />
             </Button>
           )}
-          {isRunning && (
+          {isRunning && !hideStopControl && (
             <Button
               isIcon
               variant="destructive"

@@ -158,6 +158,7 @@ export interface WorkflowRunList {
 // Detailed per-node execution record for a workflow run
 export interface WorkflowNodeExecution {
   id: string;
+  node_execution_id?: string;
   index: number;
   predecessor_node_id?: string | null;
   node_id: string;
@@ -175,6 +176,12 @@ export interface WorkflowNodeExecution {
   execution_metadata: Record<string, unknown> | null;
   extras: Record<string, unknown>;
   created_at: number | string; // unix seconds or RFC3339 string
+  created_at_ms?: number;
+  sequence?: number;
+  iteration_id?: string | null;
+  iteration_index?: number | null;
+  loop_id?: string | null;
+  loop_index?: number | null;
   created_by_role?: string;
   created_by_account?: {
     id: string;

@@ -109,6 +109,7 @@ import {
   workflowBillingToastClassNames,
 } from '@/components/workflow/common/workflow-billing-toast-action';
 import { normalizeApprovalRuntimeForm } from '@/components/workflow/approval/runtime-events';
+import { isWorkflowApprovalInlineAllowed } from '@/components/workflow/approval/workflow-approval-surface';
 import { AICHAT_SIDEBAR_BG_IMAGE } from '@/lib/config';
 import {
   MAX_AICHAT_BRANCHES,
@@ -519,7 +520,8 @@ export function AIChatShell({
             activeConversation,
             activeMessages,
             isSending,
-            hasActiveStreamingMessage
+            hasActiveStreamingMessage,
+            surface
           )
         : null,
     [
@@ -1469,7 +1471,8 @@ function resolveActiveWorkflowApprovalRequest(
   conversation: AIChatConversation | null,
   messages: AIChatMessage[],
   isSending: boolean,
-  hasActiveStreamingMessage: boolean
+  hasActiveStreamingMessage: boolean,
+  surface: 'aichat' | 'agent-draft' | 'agent-webapp'
 ): AIChatWorkflowApprovalRequest | null {
   if (
     !conversation ||
@@ -1511,6 +1514,11 @@ function resolveActiveWorkflowApprovalRequest(
     stringFromRecord(continuation, 'approval_token') ||
     stringFromUnknown(inlineApprovalForm?.token);
   if (!approvalToken) return null;
+  const canSubmitInline = isWorkflowApprovalInlineAllowed({
+    surface,
+    form: inlineApprovalForm,
+    uiApprovalAllowed: workflowApprovalUIAccess(approval, continuation),
+  });
   return {
     conversationId: conversation.id,
     messageId: leafMessage.id,
@@ -1520,7 +1528,17 @@ function resolveActiveWorkflowApprovalRequest(
     approvalFormId:
       stringFromUnknown(approval?.approval_form_id) || stringFromUnknown(inlineApprovalForm?.id),
     approvalForm: inlineApprovalForm,
+    canSubmitInline,
   };
+}
+
+function workflowApprovalUIAccess(approval: unknown, continuation: unknown): boolean | undefined {
+  for (const value of [approval, continuation]) {
+    if (!value || typeof value !== 'object') continue;
+    const allowed = (value as Record<string, unknown>).ui_approval_allowed;
+    if (typeof allowed === 'boolean') return allowed;
+  }
+  return undefined;
 }
 
 function isActiveWorkflowApprovalRun(

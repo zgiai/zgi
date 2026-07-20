@@ -36,6 +36,7 @@ interface ChatState {
     }
   ) => { tempKey: string };
   updateMessageInputs: (id: string, tempKey: string, inputs: Record<string, unknown>) => void;
+  removeMessageByTempKey: (id: string, tempKey: string) => void;
   ensureAiMessage: (id: string, tempKey: string) => void;
   appendAiChunk: (id: string, tempKey: string, chunk: string) => void;
   mergeAiMessage: (
@@ -83,6 +84,7 @@ interface ChatState {
   expireAiMessage: (id: string, tempKey: string, data?: { workflowRunId?: string }) => void;
   resumeAiMessage: (id: string, tempKey: string, data?: { workflowRunId?: string }) => void;
   updateRunNode: (id: string, tempKey: string, node: NodeInfo) => void;
+  replaceRunNodes: (id: string, tempKey: string, nodes: NodeInfo[]) => void;
 }
 
 const defaultConversation = (id: string): Conversation => ({
@@ -283,6 +285,23 @@ const useChatStoreBase = create<ChatState>()((set, get) => ({
       const nextMsgs = conv.messages.slice();
       nextMsgs[idx] = updated;
       return { conversations: { ...state.conversations, [id]: { ...conv, messages: nextMsgs } } };
+    });
+  },
+
+  removeMessageByTempKey: (id, tempKey) => {
+    set(state => {
+      const conv = state.conversations[id];
+      if (!conv) return state;
+      const nextMessages = conv.messages.filter(
+        message => message.messageData?.tempKey !== tempKey
+      );
+      if (nextMessages.length === conv.messages.length) return state;
+      return {
+        conversations: {
+          ...state.conversations,
+          [id]: { ...conv, messages: nextMessages },
+        },
+      };
     });
   },
 
@@ -648,6 +667,31 @@ const useChatStoreBase = create<ChatState>()((set, get) => ({
         ...target,
         // Do not override workflow-level status here to avoid UI jitter; only append node info
         WorkflowRunInfo: { ...run, runNodeInfo: normalizedRunNodeInfo },
+      };
+      const nextMsgs = conv.messages.slice();
+      nextMsgs[idx] = updated;
+      return { conversations: { ...state.conversations, [id]: { ...conv, messages: nextMsgs } } };
+    });
+  },
+
+  replaceRunNodes: (id, tempKey, nodes) => {
+    set(state => {
+      const conv = state.conversations[id];
+      if (!conv) return state;
+      const idx = findMessageIndexByTempKey(conv.messages, tempKey);
+      if (idx < 0) return state;
+      const target = conv.messages[idx];
+      const run = target.WorkflowRunInfo ?? {
+        id: '',
+        status: 'running' as RunStatus,
+        runNodeInfo: [],
+      };
+      const updated: Message = {
+        ...target,
+        WorkflowRunInfo: {
+          ...run,
+          runNodeInfo: removeNestedContainerChildren(nodes),
+        },
       };
       const nextMsgs = conv.messages.slice();
       nextMsgs[idx] = updated;

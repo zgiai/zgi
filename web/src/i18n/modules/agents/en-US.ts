@@ -552,6 +552,7 @@ const messages = {
       virtualRunErrorPrefix: 'Error',
     },
     noOutputYet: 'No output yet',
+    waitingForOutput: 'Workflow is running. Waiting for output',
     noMessagesYet: 'No messages yet',
     close: 'Close',
     // Tabs and common labels
@@ -828,11 +829,17 @@ const messages = {
     errors: {
       networkError: 'Network connection error',
       executionFailed: 'Agent run failed',
+      model_service_timeout: 'The model service connection timed out. Please try again later.',
+      model_service_unavailable:
+        'The model service is temporarily unavailable. Please try again later.',
+      model_invocation_failed: 'The model call failed. Please try again later.',
       loadRunsFailed: 'Failed to load agent runs',
       loadRunDetailFailed: 'Failed to load run detail',
       loadNodeExecutionsFailed: 'Failed to load node executions',
       loadChatMessagesFailed: 'Failed to load agent messages',
     },
+    partialResultAfterFailure:
+      'This run did not finish. The content below is only the partial result produced before it failed.',
     search: 'Search variables...',
     edgeDescription: 'Edge Description',
     edgeDescriptionPlaceholder: 'Add a description for this connection...',
@@ -2073,7 +2080,8 @@ const messages = {
       removeSlot: 'Remove memory item',
       viewValues: 'View memory',
       nameLabel: 'Memory name (optional)',
-      nameHelp: 'Helps people identify this item. The memory ID is shown when left blank. Up to 80 characters.',
+      nameHelp:
+        'Helps people identify this item. The memory ID is shown when left blank. Up to 80 characters.',
       keyLabel: 'Memory ID',
       keyHelp: 'Stable identifier used by the Agent. It is locked after the item is saved.',
       keyLockedHelp:

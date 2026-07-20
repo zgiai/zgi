@@ -20,6 +20,7 @@ export interface ApprovalRuntimeFormProps {
   isSubmitting?: boolean;
   submittedAction?: string | null;
   onSubmit: (payload: { inputs: Record<string, unknown>; action: string }) => void | Promise<void>;
+  secondaryAction?: React.ReactNode;
   className?: string;
 }
 
@@ -59,6 +60,7 @@ export function ApprovalRuntimeForm({
   isSubmitting = false,
   submittedAction,
   onSubmit,
+  secondaryAction,
   className,
 }: ApprovalRuntimeFormProps) {
   const t = useT('nodes');
@@ -104,7 +106,10 @@ export function ApprovalRuntimeForm({
       </div>
 
       <div className="rounded-lg border bg-background p-3">
-        <MarkdownViewer content={form.content || ''} className="md-viewer break-words whitespace-pre-wrap" />
+        <MarkdownViewer
+          content={form.content || ''}
+          className="md-viewer break-words whitespace-pre-wrap"
+        />
       </div>
 
       <div className="space-y-4">
@@ -141,22 +146,25 @@ export function ApprovalRuntimeForm({
         ))}
       </div>
 
-      <div className="flex flex-wrap justify-end gap-2 border-t pt-4">
-        {(form.actions || []).map(action => (
-          <Button
-            key={action.id}
-            type="button"
-            variant={action.style === 'secondary' ? 'outline' : 'default'}
-            className={getActionClassName(action)}
-            disabled={isSubmitting}
-            onClick={() => submit(action)}
-          >
-            {isSubmitting && submittedAction === action.id ? (
-              <Loader2 className="size-4 animate-spin" />
-            ) : null}
-            {action.label || action.id}
-          </Button>
-        ))}
+      <div className="flex flex-col gap-3 border-t pt-4 sm:flex-row sm:items-center sm:justify-between">
+        {secondaryAction ? <div className="shrink-0">{secondaryAction}</div> : <span />}
+        <div className="flex flex-wrap justify-end gap-2">
+          {(form.actions || []).map(action => (
+            <Button
+              key={action.id}
+              type="button"
+              variant={action.style === 'secondary' ? 'outline' : 'default'}
+              className={getActionClassName(action)}
+              disabled={isSubmitting}
+              onClick={() => submit(action)}
+            >
+              {isSubmitting && submittedAction === action.id ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : null}
+              {action.label || action.id}
+            </Button>
+          ))}
+        </div>
       </div>
     </div>
   );

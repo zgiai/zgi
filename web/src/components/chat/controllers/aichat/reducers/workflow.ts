@@ -23,6 +23,11 @@ import {
   sortWorkflowRunRounds
 } from '@/utils/workflow/run-events';
 import { isStaleAIChatStreamEvent, removeTransientProgressItems } from './shared';
+import { normalizeWorkflowRuntimeEvent } from '@/utils/workflow/runtime-event-envelope.js';
+
+function normalizeWorkflowPayload<T extends AIChatWorkflowEventData>(payload: T): T {
+  return normalizeWorkflowRuntimeEvent(payload).payload as unknown as T;
+}
 
 function workflowString(value: unknown): string | undefined {
   if (typeof value === 'string' && value.trim()) return value.trim();
@@ -466,6 +471,7 @@ function upsertWorkflowTimelineItem(
   const index = baseTimeline.findIndex(
     item => item.type === 'workflow_run' && item.workflowRunId === runId
   );
+  const envelope = normalizeWorkflowRuntimeEvent(payload);
   if (index < 0) {
     return [
       ...baseTimeline,
@@ -478,6 +484,10 @@ function upsertWorkflowTimelineItem(
         error: workflowString(payload.error),
         nodes: node ? upsertWorkflowNodeWithContainers([], payload, node, nodeFinished) : [],
         approval,
+        sequence: envelope.sequence || undefined,
+        executionGeneration: workflowNumber(payload.execution_generation),
+        invocationId: workflowString(payload.invocation_id),
+        invocationMode: workflowString(payload.invocation_mode),
         created_at: payload.created_at,
         event_id: eventId ?? null,
       },
@@ -486,12 +496,16 @@ function upsertWorkflowTimelineItem(
   const next = baseTimeline.slice();
   const previous = next[index];
   if (previous.type !== 'workflow_run') return baseTimeline;
+  if (envelope.sequence > 0 && envelope.sequence <= (previous.sequence ?? 0)) {
+    return baseTimeline;
+  }
   const closedApprovalStatus =
     workflowEventType(payload) === 'approval_result_filled'
       ? 'submitted'
       : workflowEventType(payload) === 'approval_expired'
         ? 'expired'
         : undefined;
+  const resumed = workflowEventType(payload) === 'workflow_resumed';
   next[index] = {
     ...previous,
     status: nextStatus,
@@ -500,11 +514,18 @@ function upsertWorkflowTimelineItem(
     nodes: node
       ? upsertWorkflowNodeWithContainers(previous.nodes, payload, node, nodeFinished)
       : previous.nodes,
-    approval: approval
-      ? { ...(previous.approval ?? {}), ...approval }
-      : closedApprovalStatus
-        ? { ...(previous.approval ?? {}), status: closedApprovalStatus }
-        : previous.approval,
+    approval: resumed
+      ? undefined
+      : approval
+        ? { ...(previous.approval ?? {}), ...approval }
+        : closedApprovalStatus
+          ? { ...(previous.approval ?? {}), status: closedApprovalStatus }
+          : previous.approval,
+    sequence: envelope.sequence || previous.sequence,
+    executionGeneration:
+      workflowNumber(payload.execution_generation) ?? previous.executionGeneration,
+    invocationId: workflowString(payload.invocation_id) ?? previous.invocationId,
+    invocationMode: workflowString(payload.invocation_mode) ?? previous.invocationMode,
     event_id: eventId ?? previous.event_id,
   };
   return next;
@@ -519,11 +540,23 @@ function applyWorkflowTimelineState(
   approval?: Partial<AIChatWorkflowPausedEventData>,
   nodeFinished = false
 ): AIChatControllerState {
+  payload = normalizeWorkflowPayload(payload);
   if (!payload.conversation_id || !payload.message_id || !workflowRunId(payload)) {
     return current;
   }
   const previousStreaming = current.streamingByMessageId[payload.message_id];
   if (!previousStreaming) {
+    return current;
+  }
+  const incomingSequence = normalizeWorkflowRuntimeEvent(payload).sequence;
+  const previousWorkflowRun = previousStreaming.timeline?.find(
+    item => item.type === 'workflow_run' && item.workflowRunId === workflowRunId(payload)
+  );
+  if (
+    incomingSequence > 0 &&
+    previousWorkflowRun?.type === 'workflow_run' &&
+    incomingSequence <= (previousWorkflowRun.sequence ?? 0)
+  ) {
     return current;
   }
   if (isStaleAIChatStreamEvent(eventId, previousStreaming.last_event_id)) {
@@ -563,6 +596,7 @@ export function applyWorkflowNodeStartedState(
   payload: AIChatWorkflowNodeEventData,
   eventId?: string | null
 ): AIChatControllerState {
+  payload = normalizeWorkflowPayload(payload);
   return applyWorkflowTimelineState(
     current,
     payload,
@@ -577,6 +611,7 @@ export function applyWorkflowNodeFinishedState(
   payload: AIChatWorkflowNodeEventData,
   eventId?: string | null
 ): AIChatControllerState {
+  payload = normalizeWorkflowPayload(payload);
   const node = mapWorkflowNodeTimelineItem(payload, true);
   const status = node.status === 'failed' ? 'error' : 'running';
   return applyWorkflowTimelineState(current, payload, eventId, status, node, undefined, true);
@@ -587,6 +622,7 @@ export function applyWorkflowPausedState(
   payload: AIChatWorkflowPausedEventData,
   eventId?: string | null
 ): AIChatControllerState {
+  payload = normalizeWorkflowPayload(payload);
   const status = normalizeWorkflowRunTimelineStatus(payload.status, 'pending_approval');
   return applyWorkflowTimelineState(
     current,
@@ -604,11 +640,13 @@ export function applyWorkflowApprovalRequestedState(
   payload: AIChatWorkflowPausedEventData,
   eventId?: string | null
 ): AIChatControllerState {
+  payload = normalizeWorkflowPayload(payload);
   return applyWorkflowTimelineState(current, payload, eventId, 'pending_approval', undefined, {
     approval_form_id: payload.approval_form_id,
     approval_token: payload.approval_token,
     approval_url: payload.approval_url,
     approval_form: payload.approval_form,
+    ui_approval_allowed: payload.ui_approval_allowed,
   });
 }
 

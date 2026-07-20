@@ -62,6 +62,8 @@ export interface SseOptions<TBody = unknown, TOut = unknown>
     error: Error,
     meta: { terminalReceived: boolean; incompleteLastEvent: boolean }
   ) => void;
+  /** Suppress the global toast for an interrupted established stream when the caller can recover. */
+  suppressTransportErrorNotification?: boolean;
   /** External abort signal to cancel the stream */
   abortSignal?: AbortSignal;
   /** Closed callback, called when the stream is closed */
@@ -71,6 +73,7 @@ export interface SseOptions<TBody = unknown, TOut = unknown>
 // Unified application-level SSE event callbacks
 export interface SseEventCallbacks {
   onWorkflowStarted?: (payload: unknown) => void;
+  onWorkflowResumed?: (payload: unknown) => void;
   onWorkflowPaused?: (payload: unknown) => void;
   onApprovalRequested?: (payload: unknown) => void;
   onApprovalResultFilled?: (payload: unknown) => void;

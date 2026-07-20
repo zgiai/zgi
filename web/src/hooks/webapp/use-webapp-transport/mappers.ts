@@ -33,15 +33,15 @@ function getQuestionAnswerTranscriptFromMetadata(
   return normalizeQuestionAnswerTranscript(record.questionAnswerTranscript);
 }
 
-function getPendingQuestionAnswerPromptFromMessage(item: WebAppConversationMessageItem):
-  | {
-      question: string;
-      choices: QuestionAnswerChoice[];
-      round?: number;
-    }
-  | null {
+function getPendingQuestionAnswerPromptFromMessage(item: WebAppConversationMessageItem): {
+  question: string;
+  choices: QuestionAnswerChoice[];
+  round?: number;
+} | null {
   if (normalizeMessageRunStatus(item.status) !== 'pending_question') return null;
-  const metadataPrompt = parseQuestionAnswerRequestedEvent(item.message_metadata?.questionAnswerPrompt);
+  const metadataPrompt = parseQuestionAnswerRequestedEvent(
+    item.message_metadata?.questionAnswerPrompt
+  );
   if (metadataPrompt) {
     return {
       question: metadataPrompt.question,
@@ -63,19 +63,29 @@ function getPendingQuestionAnswerPromptFromMessage(item: WebAppConversationMessa
 }
 
 export function parseSseRunError(error: unknown): ParsedSseRunError {
-  const parsed =
+  if (error instanceof Error) {
+    return { message: error.message };
+  }
+
+  const envelope =
     error && typeof error === 'object'
       ? (error as Record<string, unknown>)
       : typeof error === 'string'
         ? { message: error }
-        : error instanceof Error
-          ? { message: error.message }
-          : {};
+        : {};
+  const nested =
+    envelope['data'] && typeof envelope['data'] === 'object'
+      ? (envelope['data'] as Record<string, unknown>)
+      : envelope;
 
   return {
-    code: parsed['code'] as string | number | undefined,
-    message: parsed['message'] as string | undefined,
+    code: (nested['code'] ?? envelope['code']) as string | number | undefined,
+    message: (nested['message'] ?? envelope['message']) as string | undefined,
   };
+}
+
+export function isWorkflowConversationBusyError(error: unknown): boolean {
+  return String(parseSseRunError(error).code ?? '') === 'workflow_conversation_busy';
 }
 
 export function isWorkspaceNotFoundError(error: ParsedSseRunError): boolean {
@@ -83,7 +93,9 @@ export function isWorkspaceNotFoundError(error: ParsedSseRunError): boolean {
   return error.message?.toLowerCase() === 'workspace not found';
 }
 
-export function stripQuestionAnswerPromptText(data: Record<string, unknown>): Record<string, unknown> {
+export function stripQuestionAnswerPromptText(
+  data: Record<string, unknown>
+): Record<string, unknown> {
   const next = { ...data };
   delete next.answer;
   delete next.text;
@@ -108,13 +120,11 @@ export function hasPendingQuestionAnswerMessage(conversationId?: string): boolea
   );
 }
 
-export function getPendingQuestionAnswerPromptFromRuntimeMessage(message?: Message):
-  | {
-      question: string;
-      choices: QuestionAnswerChoice[];
-      round?: number;
-    }
-  | null {
+export function getPendingQuestionAnswerPromptFromRuntimeMessage(message?: Message): {
+  question: string;
+  choices: QuestionAnswerChoice[];
+  round?: number;
+} | null {
   const runStatus = message?.WorkflowRunInfo?.status ?? message?.clientState?.status;
   if (runStatus !== 'pending_question') return null;
 
@@ -161,11 +171,15 @@ export function mapWebAppConversationToSummary(item: WebAppConversation): Conver
       workflow_version_uuid: item.workflow_version_uuid,
       invoke_from: item.invoke_from,
       created_at: item.created_at,
+      runtime_status: item.runtime_status ?? 'idle',
+      active_workflow_run_id: item.active_workflow_run_id,
     },
   };
 }
 
-export function mapWebAppSearchResult(item: WebAppConversationSearchResult): ConversationSearchResult {
+export function mapWebAppSearchResult(
+  item: WebAppConversationSearchResult
+): ConversationSearchResult {
   return {
     type: item.type,
     conversationId: item.conversation_id,
@@ -222,7 +236,9 @@ export function normalizeFinalRunStatus(status: unknown): TerminalRunStatus {
 }
 
 // Map WebAppConversationDetail to ConversationDetail
-export function mapWebAppConversationDetailToDetail(data: WebAppConversationDetail): ConversationDetail {
+export function mapWebAppConversationDetailToDetail(
+  data: WebAppConversationDetail
+): ConversationDetail {
   const latestPendingQuestion = [...data.messages]
     .reverse()
     .map(getPendingQuestionAnswerPromptFromMessage)
@@ -243,6 +259,8 @@ export function mapWebAppConversationDetailToDetail(data: WebAppConversationDeta
         invoke_from: data.invoke_from,
         created_at: data.created_at,
         inputs: data.inputs,
+        runtime_status: data.runtime_status ?? 'idle',
+        active_workflow_run_id: data.active_workflow_run_id,
         ...(latestPendingQuestion ? { questionAnswerPrompt: latestPendingQuestion } : {}),
       },
     },
