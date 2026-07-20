@@ -14,6 +14,28 @@ import {
 } from '../helpers/history';
 import type { WorkflowNode, WorkflowEdge } from '../type';
 
+const VIEWPORT_EPSILON = 0.001;
+
+function sameViewport(left: Viewport | undefined, right: Viewport | undefined): boolean {
+  if (left === right) return true;
+  if (!left || !right) return false;
+  return (
+    Math.abs(left.x - right.x) < VIEWPORT_EPSILON &&
+    Math.abs(left.y - right.y) < VIEWPORT_EPSILON &&
+    Math.abs(left.zoom - right.zoom) < VIEWPORT_EPSILON
+  );
+}
+
+function sameGraphPart<T>(left: T[], right: T[]): boolean {
+  if (left === right) return true;
+  if (left.length !== right.length) return false;
+  try {
+    return JSON.stringify(left) === JSON.stringify(right);
+  } catch {
+    return false;
+  }
+}
+
 export interface ModeSelectionSlice {
   // UI
   selectedNodeId: string | null;
@@ -141,9 +163,22 @@ export function createModeSelectionSlice(
 
     historySnapshots: {},
     setHistorySnapshot: (runId, snapshot) => {
-      const cloned: RunGraphSnapshot = cloneRunSnapshot(snapshot);
       set(
         state => {
+          const current = state.historySnapshots[runId];
+          const sameNodes = Boolean(current && sameGraphPart(current.nodes, snapshot.nodes));
+          const sameEdges = Boolean(current && sameGraphPart(current.edges, snapshot.edges));
+          const sameSnapshotViewport = Boolean(
+            current && sameViewport(current.viewport, snapshot.viewport)
+          );
+          if (sameNodes && sameEdges && sameSnapshotViewport) return state;
+
+          const cloned: RunGraphSnapshot = cloneRunSnapshot(snapshot);
+          // Viewport updates are frequent in controlled React Flow mode. Keep
+          // graph object identity when graph content did not change so node
+          // measurement effects cannot feed another setNodes cycle.
+          if (current && sameNodes) cloned.nodes = current.nodes;
+          if (current && sameEdges) cloned.edges = current.edges;
           const nextSnapshots = { ...state.historySnapshots, [runId]: cloned };
           const keys = Object.keys(nextSnapshots);
           // Limit capacity to 2 to prevent memory overflow.

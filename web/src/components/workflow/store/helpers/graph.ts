@@ -1095,6 +1095,105 @@ export function getDescendants(
   return result;
 }
 
+export const CONTAINER_HEADER_HEIGHT = 40;
+export const CONTAINER_PADDING_X = 12;
+export const CONTAINER_PADDING_Y = 12;
+export const CONTAINER_RUNTIME_FOOTER_HEIGHT = 40;
+export const CONTAINER_BOTTOM_SAFE_INSET =
+  CONTAINER_RUNTIME_FOOTER_HEIGHT + CONTAINER_PADDING_Y;
+
+export interface WorkflowNodeLayoutSize {
+  width: number;
+  height: number;
+}
+
+/**
+ * Resolve the layout size used by container constraints. Resizable containers
+ * deliberately ignore React Flow's measured size: that value may include a
+ * transient, derived runtime size and must never become the persisted baseline.
+ */
+export function getWorkflowNodeLayoutSize(node: WorkflowNode): WorkflowNodeLayoutSize {
+  const type = (node.data as WorkflowNodeData).type;
+  const theme = NODE_THEMES[type] || NODE_THEMES.default;
+  const storedWidth = node.width ?? theme.width ?? 280;
+  const storedHeight = node.height ?? theme.height ?? 120;
+
+  if (isContainerNode(type)) {
+    return { width: storedWidth, height: storedHeight };
+  }
+
+  return {
+    width: Math.max(node.measured?.width ?? 0, storedWidth),
+    height: Math.max(node.measured?.height ?? 0, storedHeight),
+  };
+}
+
+/** Calculate the minimum size required to contain all direct children. */
+export function calculateContainerMinimumSize(
+  nodes: WorkflowNode[],
+  containerId: string,
+  derivedContainerSizes: ReadonlyMap<string, WorkflowNodeLayoutSize> = new Map()
+): WorkflowNodeLayoutSize {
+  let maxRight = 0;
+  let maxBottom = CONTAINER_HEADER_HEIGHT;
+
+  for (const child of nodes) {
+    const parentId = (child as unknown as { parentId?: string }).parentId;
+    if (parentId !== containerId) continue;
+
+    const baseSize = getWorkflowNodeLayoutSize(child);
+    const derivedSize = derivedContainerSizes.get(child.id);
+    const childWidth = derivedSize?.width ?? baseSize.width;
+    const childHeight = derivedSize?.height ?? baseSize.height;
+    const position = child.position || { x: 0, y: 0 };
+
+    maxRight = Math.max(maxRight, position.x + childWidth);
+    maxBottom = Math.max(maxBottom, position.y + childHeight);
+  }
+
+  return {
+    width: maxRight + CONTAINER_PADDING_X,
+    height: maxBottom + CONTAINER_BOTTOM_SAFE_INSET,
+  };
+}
+
+/**
+ * Resolve the stable layout size for every container from the inside out.
+ * Runtime result overlays are intentionally absent: opening or closing them
+ * must not resize a node or any of its ancestors.
+ */
+export function deriveContainerLayoutSizes(
+  nodes: WorkflowNode[]
+): ReadonlyMap<string, WorkflowNodeLayoutSize> {
+  const nodeById = new Map(nodes.map(node => [node.id, node]));
+  const getDepth = (node: WorkflowNode): number => {
+    let depth = 0;
+    let current: WorkflowNode | undefined = node;
+    while (current) {
+      const parentId = (current as unknown as { parentId?: string }).parentId;
+      if (!parentId) break;
+      depth += 1;
+      current = nodeById.get(parentId);
+    }
+    return depth;
+  };
+  const containerNodes = nodes
+    .filter(node => isContainerNode((node.data as WorkflowNodeData).type))
+    .sort((left, right) => getDepth(right) - getDepth(left));
+  const result = new Map<string, WorkflowNodeLayoutSize>();
+
+  for (const container of containerNodes) {
+    const baseline = getWorkflowNodeLayoutSize(container);
+    const minimum = calculateContainerMinimumSize(nodes, container.id, result);
+    result.set(container.id, {
+      width: Math.max(baseline.width, minimum.width),
+      height: Math.max(baseline.height, minimum.height),
+    });
+  }
+
+  return result;
+}
+
 /**
  * Adjust container layout constraints:
  * - Clamp only nodes whose position changed (avoid squeezing children on parent resize)
@@ -1103,7 +1202,8 @@ export function getDescendants(
  */
 export function adjustContainerLayout(
   nextNodes: WorkflowNode[],
-  nodeChanges: Array<NodeChange<WorkflowNode>>
+  nodeChanges: Array<NodeChange<WorkflowNode>>,
+  options: { skipAutoGrowNodeIds?: ReadonlySet<string> } = {}
 ): WorkflowNode[] {
   const positionChangedIds = new Set<string>(
     nodeChanges
@@ -1113,13 +1213,29 @@ export function adjustContainerLayout(
       )
       .map(c => c.id)
   );
-
-  // Padding constants (match iteration content paddings and header height where needed)
-  const ITER_HEADER_H = 40;
-  const PAD_X = 12;
-  const PAD_Y = 12;
+  const dimensionsChangedIds = new Set<string>(
+    nodeChanges
+      .filter(
+        (c): c is Extract<NodeChange<WorkflowNode>, { type: 'dimensions'; id: string }> =>
+          c.type === 'dimensions' && 'id' in c
+      )
+      .map(c => c.id)
+  );
 
   const parentById = new Map<string, WorkflowNode>(nextNodes.map(n => [n.id, n]));
+  const effectiveContainerSizes = deriveContainerLayoutSizes(nextNodes);
+  const containerIdsToMeasure = new Set<string>();
+  const layoutChangedIds = new Set([...positionChangedIds, ...dimensionsChangedIds]);
+  for (const changedId of layoutChangedIds) {
+    let current = parentById.get(changedId);
+    while (current) {
+      if (isContainerNode((current.data as WorkflowNodeData).type)) {
+        containerIdsToMeasure.add(current.id);
+      }
+      const parentId = (current as unknown as { parentId?: string }).parentId;
+      current = parentId ? parentById.get(parentId) : undefined;
+    }
+  }
 
   // 1) Clamp only nodes that moved
   const clampedNodes = nextNodes.map(n => {
@@ -1130,25 +1246,19 @@ export function adjustContainerLayout(
     const pType = (parent.data as WorkflowNodeData).type;
     if (!isContainerNode(pType)) return n;
     if (!positionChangedIds.has(n.id)) return n;
-    const getDim = (node: WorkflowNode) => {
-      const type = (node.data as WorkflowNodeData).type;
-      const theme = NODE_THEMES[type] || NODE_THEMES.default;
-      return {
-        w: node.measured?.width ?? node.width ?? theme.width ?? 280,
-        h: node.measured?.height ?? node.height ?? theme.height ?? 120,
-      };
-    };
+    const nodeDim = getWorkflowNodeLayoutSize(n);
+    const childW = nodeDim.width;
+    const childH = nodeDim.height;
 
-    const nodeDim = getDim(n);
-    const childW = nodeDim.w;
-    const childH = nodeDim.h;
-
-    const parentW = (parent as Partial<WorkflowNode>).width ?? 600;
-    const parentH = (parent as Partial<WorkflowNode>).height ?? 420;
-    const minX = PAD_X;
-    const minY = ITER_HEADER_H + PAD_Y;
-    const maxX = Math.max(minX, parentW - childW - PAD_X);
-    const maxY = Math.max(minY, parentH - childH - PAD_Y);
+    const effectiveParentSize = effectiveContainerSizes.get(parent.id);
+    const parentW =
+      effectiveParentSize?.width ?? (parent as Partial<WorkflowNode>).width ?? 600;
+    const parentH =
+      effectiveParentSize?.height ?? (parent as Partial<WorkflowNode>).height ?? 420;
+    const minX = CONTAINER_PADDING_X;
+    const minY = CONTAINER_HEADER_HEIGHT + CONTAINER_PADDING_Y;
+    const maxX = Math.max(minX, parentW - childW - CONTAINER_PADDING_X);
+    const maxY = Math.max(minY, parentH - childH - CONTAINER_BOTTOM_SAFE_INSET);
     const pos = n.position || { x: 0, y: 0 };
     const nx = Math.min(Math.max(pos.x, minX), maxX);
     const ny = Math.min(Math.max(pos.y, minY), maxY);
@@ -1156,45 +1266,42 @@ export function adjustContainerLayout(
     return { ...n, position: { x: nx, y: ny } } as WorkflowNode;
   });
 
-  // 2) Ensure iteration parent min size (12px headroom on right/bottom from children)
-  const dimensionsChangedIds = new Set<string>(
-    nodeChanges
-      .filter(
-        (c): c is Extract<NodeChange<WorkflowNode>, { type: 'dimensions'; id: string }> =>
-          c.type === 'dimensions' && 'id' in c
-      )
-      .map(c => c.id)
-  );
-
-  const adjustedNodes = clampedNodes.map(n => {
-    if (!dimensionsChangedIds.has(n.id)) return n;
-    const dataType = (n.data as WorkflowNodeData)?.type;
-    if (!isContainerNode(dataType)) return n;
-    const parentW = (n as Partial<WorkflowNode>).width ?? 600;
-    const parentH = (n as Partial<WorkflowNode>).height ?? 420;
-    let maxRight = 0;
-    let maxBottom = 0;
-    for (const child of clampedNodes) {
-      const pid = (child as unknown as { parentId?: string })?.parentId;
-      if (pid !== n.id) continue;
-
-      const type = (child.data as WorkflowNodeData).type;
-      const theme = NODE_THEMES[type] || NODE_THEMES.default;
-      const cw = child.measured?.width ?? child.width ?? theme.width ?? 280;
-      const ch = child.measured?.height ?? child.height ?? theme.height ?? 120;
-
-      const pos = child.position || { x: 0, y: 0 };
-      const right = pos.x + cw;
-      const bottom = pos.y + ch;
-      if (right > maxRight) maxRight = right;
-      if (bottom > maxBottom) maxBottom = bottom;
+  // 2) Grow affected containers from the inside out. Runtime result details are
+  // overlays and therefore never contribute to these layout measurements.
+  const containerDepth = (nodeId: string): number => {
+    let depth = 0;
+    let current = parentById.get(nodeId);
+    while (current) {
+      const parentId = (current as unknown as { parentId?: string }).parentId;
+      if (!parentId) break;
+      depth += 1;
+      current = parentById.get(parentId);
     }
-    // Leave 12px headroom on the right and bottom
-    const reqW = Math.max(parentW, maxRight + PAD_X);
-    const reqH = Math.max(parentH, maxBottom + PAD_Y);
-    if (reqW === parentW && reqH === parentH) return n;
-    return { ...n, width: reqW, height: reqH } as WorkflowNode;
-  });
+    return depth;
+  };
+  const orderedContainerIds = [...containerIdsToMeasure].sort(
+    (left, right) => containerDepth(right) - containerDepth(left)
+  );
+  const adjustedNodes = [...clampedNodes];
+  for (const containerId of orderedContainerIds) {
+    if (options.skipAutoGrowNodeIds?.has(containerId)) continue;
+    const containerIndex = adjustedNodes.findIndex(node => node.id === containerId);
+    if (containerIndex < 0) continue;
+    const container = adjustedNodes[containerIndex];
+    const dataType = (container.data as WorkflowNodeData)?.type;
+    if (!isContainerNode(dataType)) continue;
+    const parentW = (container as Partial<WorkflowNode>).width ?? 600;
+    const parentH = (container as Partial<WorkflowNode>).height ?? 420;
+    const minimum = calculateContainerMinimumSize(adjustedNodes, container.id);
+    const reqW = Math.max(parentW, minimum.width);
+    const reqH = Math.max(parentH, minimum.height);
+    if (reqW === parentW && reqH === parentH) continue;
+    adjustedNodes[containerIndex] = {
+      ...container,
+      width: reqW,
+      height: reqH,
+    } as WorkflowNode;
+  }
 
   return adjustedNodes;
 }

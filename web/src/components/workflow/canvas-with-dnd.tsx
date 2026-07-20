@@ -124,6 +124,7 @@ const CanvasWithDnd: React.FC<CanvasWithDndProps> = ({
         edges={viewEdges}
         nodeTypes={nodeTypes}
         edgeTypes={EDGE_TYPES}
+        elevateNodesOnSelect
         onNodesChange={isReadOnly ? undefined : onNodesChange}
         onEdgesChange={isReadOnly ? undefined : onEdgesChange}
         onConnect={onConnectWrapper}

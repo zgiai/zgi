@@ -1,11 +1,5 @@
 import React from 'react';
 import { AlertCircle, Loader2 } from 'lucide-react';
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 import { useT } from '@/i18n';
 import type { ScopedTranslations } from '@/i18n/translations';
@@ -58,10 +52,7 @@ const getLatestRuntimeItem = (items: RuntimeLogItem[]): RuntimeLogItem | null =>
   });
 };
 
-function getStatusMeta(
-  status: RunStatus,
-  t: ScopedTranslations<'agents'>
-): RuntimeStatusMeta {
+function getStatusMeta(status: RunStatus, t: ScopedTranslations<'agents'>): RuntimeStatusMeta {
   switch (status) {
     case 'running':
       return {
@@ -186,21 +177,12 @@ const NodeRuntimeLogDetails: React.FC<NodeRuntimeLogDetailsProps> = ({
           <span className="ml-auto shrink-0 tabular-nums text-muted-foreground/70">
             {duration ?? t('workflow.runtimeLog.runningNow')}
           </span>
-          <TooltipProvider>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <span
-                  className={cn(
-                    'flex size-4 shrink-0 items-center justify-center',
-                    meta.textClassName
-                  )}
-                >
-                  {meta.icon}
-                </span>
-              </TooltipTrigger>
-              <TooltipContent side="top">{tooltipLabel}</TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
+          <span
+            className={cn('flex size-4 shrink-0 items-center justify-center', meta.textClassName)}
+            title={tooltipLabel}
+          >
+            {meta.icon}
+          </span>
         </div>
       </div>
       {shouldRenderDetails ? (
@@ -209,7 +191,7 @@ const NodeRuntimeLogDetails: React.FC<NodeRuntimeLogDetailsProps> = ({
           data-node-id={nodeId}
           data-state={detailsVisible ? 'open' : 'closed'}
           className={cn(
-            'nodrag nowheel absolute left-0 top-[calc(100%+6px)] z-30 w-full cursor-text select-text',
+            'nodrag nowheel absolute left-0 top-[calc(100%+6px)] z-30 w-full cursor-text select-text rounded-md',
             'origin-top-right',
             detailsVisible
               ? 'workflow-runtime-details-enter'

@@ -42,6 +42,7 @@ export interface RunStatusSlice {
   runtimeLogPopoverOpenByNodeId: Record<string, boolean>;
   runtimeLogPopoverManualByNodeId: Record<string, boolean>;
   runtimeLogAutoOpenEnabled: boolean;
+  activeResizeNodeId: string | null;
   isAutoFollow: boolean;
   currentRunningNodeId: string | null;
   lastDebugInputs: Record<string, unknown> | null;
@@ -58,6 +59,7 @@ export interface RunStatusSlice {
   openRuntimeLogPopoversForActiveRun: (nodeIds: string[]) => void;
   finalizeRuntimeLogPopoversAfterRun: () => void;
   resetRuntimeLogPopovers: () => void;
+  setActiveResizeNodeId: (nodeId: string | null) => void;
   resetRunStatus: (nodeIds?: string[]) => void;
   setAutoFollow: (enabled: boolean) => void;
   setCurrentRunningNodeId: (nodeId: string | null) => void;
@@ -75,6 +77,7 @@ export type StoreSet = (
         runtimeLogPopoverOpenByNodeId: Record<string, boolean>;
         runtimeLogPopoverManualByNodeId: Record<string, boolean>;
         runtimeLogAutoOpenEnabled: boolean;
+        activeResizeNodeId: string | null;
         isAutoFollow: boolean;
         currentRunningNodeId: string | null;
         lastDebugInputs: Record<string, unknown> | null;
@@ -87,6 +90,7 @@ export type StoreSet = (
         runtimeLogPopoverOpenByNodeId: Record<string, boolean>;
         runtimeLogPopoverManualByNodeId: Record<string, boolean>;
         runtimeLogAutoOpenEnabled: boolean;
+        activeResizeNodeId: string | null;
         isAutoFollow: boolean;
         currentRunningNodeId: string | null;
         lastDebugInputs: Record<string, unknown> | null;
@@ -98,6 +102,7 @@ export type StoreSet = (
         runtimeLogPopoverOpenByNodeId: Record<string, boolean>;
         runtimeLogPopoverManualByNodeId: Record<string, boolean>;
         runtimeLogAutoOpenEnabled: boolean;
+        activeResizeNodeId: string | null;
         isAutoFollow: boolean;
         currentRunningNodeId: string | null;
         activeOutputHandleByNodeId: Record<string, string | null>;
@@ -114,6 +119,7 @@ export function createRunStatusSlice(set: StoreSet, _get: () => unknown): RunSta
     runtimeLogPopoverOpenByNodeId: {},
     runtimeLogPopoverManualByNodeId: {},
     runtimeLogAutoOpenEnabled: false,
+    activeResizeNodeId: null,
     isAutoFollow: false,
     currentRunningNodeId: null,
     lastDebugInputs: null,
@@ -292,6 +298,9 @@ export function createRunStatusSlice(set: StoreSet, _get: () => unknown): RunSta
         'resetRuntimeLogPopovers'
       ),
 
+    setActiveResizeNodeId: nodeId =>
+      set({ activeResizeNodeId: nodeId }, false, 'setActiveResizeNodeId'),
+
     resetRunStatus: nodeIds =>
       set(
         (state: {
@@ -310,6 +319,7 @@ export function createRunStatusSlice(set: StoreSet, _get: () => unknown): RunSta
               runtimeLogPopoverOpenByNodeId: {},
               runtimeLogPopoverManualByNodeId: {},
               runtimeLogAutoOpenEnabled: false,
+              activeResizeNodeId: null,
             };
           }
           const next: Record<string, RunStatus> = { ...state.runStatusByNodeId };

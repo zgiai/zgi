@@ -3,14 +3,23 @@ import JsonView from '@uiw/react-json-view';
 import { lightTheme } from '@uiw/react-json-view/light';
 import type { RuntimeLabel } from './types';
 import { compactValue, getReadableRecordEntries, isRecord } from './utils';
+import { cn } from '@/lib/utils';
 
 export const RuntimeValuePreview: React.FC<{
   value: unknown;
   lines?: number;
   expandable?: boolean;
   maxRecordEntries?: number;
+  bounded?: boolean;
   runtimeLabel: RuntimeLabel;
-}> = ({ value, lines = 2, expandable = false, maxRecordEntries = 3, runtimeLabel }) => {
+}> = ({
+  value,
+  lines = 2,
+  expandable = false,
+  maxRecordEntries = 3,
+  bounded = false,
+  runtimeLabel,
+}) => {
   const [expanded, setExpanded] = useState(false);
   const textValue =
     typeof value === 'string'
@@ -19,12 +28,28 @@ export const RuntimeValuePreview: React.FC<{
         ? String(value)
         : null;
   const normalizedTextValue = textValue?.replace(/\s+/g, ' ').trim();
-  const canExpand = Boolean(expandable && normalizedTextValue && normalizedTextValue.length > 90);
+  const canExpand = Boolean(
+    !bounded && expandable && normalizedTextValue && normalizedTextValue.length > 90
+  );
 
   if (isRecord(value)) {
     const entries = getReadableRecordEntries(value, runtimeLabel).slice(0, maxRecordEntries);
+    if (entries.length === 0) {
+      return (
+        <div className="text-muted-foreground">
+          {Object.keys(value).length === 0
+            ? runtimeLabel('emptyObject')
+            : runtimeLabel('technicalFieldsHidden')}
+        </div>
+      );
+    }
     return (
-      <div className="grid gap-1">
+      <div
+        className={cn(
+          'grid gap-1',
+          bounded && 'nowheel max-h-[200px] overflow-y-auto pr-1 technical-scrollbar'
+        )}
+      >
         {entries.map(([key, label, entryValue]) => (
           <div key={key} className="flex min-w-0 gap-1.5">
             <span className="shrink-0 text-muted-foreground/70">{label}:</span>
@@ -40,9 +65,16 @@ export const RuntimeValuePreview: React.FC<{
   return (
     <div className="grid gap-1">
       <div
-        className="break-words text-foreground/85"
+        className={cn(
+          'break-words text-foreground/85',
+          bounded &&
+            textValue &&
+            'nowheel max-h-40 overflow-y-auto whitespace-pre-wrap pr-1 technical-scrollbar'
+        )}
         style={
-          expanded
+          bounded && textValue
+            ? undefined
+            : expanded
             ? { whiteSpace: 'pre-wrap' }
             : {
                 display: '-webkit-box',
@@ -52,7 +84,7 @@ export const RuntimeValuePreview: React.FC<{
               }
         }
       >
-        {expanded && textValue ? textValue : compactValue(value, runtimeLabel)}
+        {(expanded || bounded) && textValue ? textValue : compactValue(value, runtimeLabel)}
       </div>
       {canExpand ? (
         <button
@@ -70,15 +102,21 @@ export const RuntimeValuePreview: React.FC<{
   );
 };
 
-export const RuntimeStructuredView: React.FC<{ value: unknown; runtimeLabel: RuntimeLabel }> = ({
-  value,
-  runtimeLabel,
-}) => {
+export const RuntimeStructuredView: React.FC<{
+  value: unknown;
+  runtimeLabel: RuntimeLabel;
+  bounded?: boolean;
+}> = ({ value, runtimeLabel, bounded = false }) => {
   const [showRaw, setShowRaw] = useState(false);
 
   if (typeof value === 'string') {
     return (
-      <div className="whitespace-pre-wrap break-words px-3 py-2 text-[12px] leading-5 text-foreground/85">
+      <div
+        className={cn(
+          'whitespace-pre-wrap break-words px-3 py-2 text-[12px] leading-5 text-foreground/85',
+          bounded && 'nowheel max-h-40 overflow-y-auto pr-2 technical-scrollbar'
+        )}
+      >
         {value}
       </div>
     );
@@ -86,6 +124,13 @@ export const RuntimeStructuredView: React.FC<{ value: unknown; runtimeLabel: Run
 
   const renderReadableValue = () => {
     if (Array.isArray(value)) {
+      if (value.length === 0) {
+        return (
+          <div className="px-3 py-2 text-[12px] text-muted-foreground">
+            {runtimeLabel('emptyArray')}
+          </div>
+        );
+      }
       return (
         <div className="grid gap-1.5 px-2 py-2">
           <div className="text-[11px] text-muted-foreground">
@@ -93,7 +138,12 @@ export const RuntimeStructuredView: React.FC<{ value: unknown; runtimeLabel: Run
           </div>
           {value.slice(0, 8).map((entry, index) => (
             <div key={index} className="rounded-md bg-background/70 px-2 py-1.5 text-[12px]">
-              <RuntimeValuePreview value={entry} lines={3} runtimeLabel={runtimeLabel} />
+              <RuntimeValuePreview
+                value={entry}
+                lines={3}
+                bounded={bounded}
+                runtimeLabel={runtimeLabel}
+              />
             </div>
           ))}
           {value.length > 8 ? (
@@ -110,7 +160,9 @@ export const RuntimeStructuredView: React.FC<{ value: unknown; runtimeLabel: Run
       if (entries.length === 0) {
         return (
           <div className="px-3 py-2 text-[12px] leading-5 text-muted-foreground">
-            {runtimeLabel('technicalFieldsHidden')}
+            {Object.keys(value).length === 0
+              ? runtimeLabel('emptyObject')
+              : runtimeLabel('technicalFieldsHidden')}
           </div>
         );
       }
@@ -124,7 +176,12 @@ export const RuntimeStructuredView: React.FC<{ value: unknown; runtimeLabel: Run
               <div className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
                 {label}
               </div>
-              <RuntimeValuePreview value={entryValue} lines={4} runtimeLabel={runtimeLabel} />
+              <RuntimeValuePreview
+                value={entryValue}
+                lines={4}
+                bounded={bounded}
+                runtimeLabel={runtimeLabel}
+              />
             </div>
           ))}
           {entries.length > 12 ? (
@@ -145,7 +202,14 @@ export const RuntimeStructuredView: React.FC<{ value: unknown; runtimeLabel: Run
 
   return (
     <div className="grid gap-1">
-      {renderReadableValue()}
+      <div
+        className={cn(
+          bounded &&
+            'nowheel max-h-[200px] overflow-y-auto overscroll-contain technical-scrollbar'
+        )}
+      >
+        {renderReadableValue()}
+      </div>
       <button
         type="button"
         className="mx-2 mb-2 w-fit rounded border border-border/50 bg-background px-2 py-1 text-[11px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
@@ -157,13 +221,20 @@ export const RuntimeStructuredView: React.FC<{ value: unknown; runtimeLabel: Run
         {showRaw ? runtimeLabel('hideRawData') : runtimeLabel('rawData')}
       </button>
       {showRaw ? (
-        <JsonView
-          value={value ?? {}}
-          style={{ ...lightTheme, background: 'transparent' }}
-          className="border-t border-border/30 p-1 px-2.5 text-[11px]"
-        />
+        <div
+          className={cn(
+            'border-t border-border/30',
+            bounded &&
+              'nowheel max-h-[200px] overflow-auto overscroll-contain technical-scrollbar'
+          )}
+        >
+          <JsonView
+            value={value ?? {}}
+            style={{ ...lightTheme, background: 'transparent' }}
+            className="p-1 px-2.5 text-[11px]"
+          />
+        </div>
       ) : null}
     </div>
   );
 };
-

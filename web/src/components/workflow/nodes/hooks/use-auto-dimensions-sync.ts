@@ -8,7 +8,8 @@ import { useWorkflowStore } from '../../store/store';
  */
 export default function useAutoDimensionsSync(
   nodeId: string | null | undefined,
-  element: HTMLElement | null
+  element: HTMLElement | null,
+  enabled = true
 ): void {
   const updateNodeInternals = useUpdateNodeInternals();
   const mode = useWorkflowStore.use.mode();
@@ -21,7 +22,7 @@ export default function useAutoDimensionsSync(
   const mountedRef = React.useRef<boolean>(false);
 
   React.useEffect(() => {
-    if (!nodeId || !element) return;
+    if (!enabled || !nodeId || !element) return;
     if (isReadOnly) return;
 
     // Check if the node already has valid dimensions (from stored layout)
@@ -95,5 +96,5 @@ export default function useAutoDimensionsSync(
       frameRef.current = null;
       pendingRef.current = false;
     };
-  }, [nodeId, element, isReadOnly, updateNodeInternals]);
+  }, [nodeId, element, enabled, isReadOnly, updateNodeInternals]);
 }
