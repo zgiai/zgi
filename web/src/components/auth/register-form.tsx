@@ -12,10 +12,7 @@ import { useT } from '@/i18n';
 import { useLocale } from '@/hooks/use-locale';
 import { usePhoneCheck, usePhoneCode, useStartRegister, useSystemFeatures } from '@/hooks';
 import { cn } from '@/lib/utils';
-import {
-  hasNotificationSMSTemplate,
-  NOTIFICATION_SMS_AUTH_PHONE_REGISTER_TEMPLATE,
-} from '@/lib/features/notification-sms';
+import { isPhoneRegisterEnabled } from '@/lib/features/notification-sms';
 import { isValidPhoneNumber } from '@/utils/validation';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardTitle } from '@/components/ui/card';
@@ -76,10 +73,7 @@ export function RegisterForm({ className }: RegisterFormProps) {
   const { data: systemFeatures, refetch } = useSystemFeatures();
 
   const canRegister = Boolean(systemFeatures?.is_allow_register);
-  const hasPhoneRegister = hasNotificationSMSTemplate(
-    systemFeatures,
-    NOTIFICATION_SMS_AUTH_PHONE_REGISTER_TEMPLATE
-  );
+  const phoneRegisterEnabled = isPhoneRegisterEnabled(systemFeatures);
 
   const emailRegisterSchema = z.object({
     email: z.string().min(1, t('emailRequired')).email(t('invalidEmail')),
@@ -114,10 +108,10 @@ export function RegisterForm({ className }: RegisterFormProps) {
   }, []);
 
   useEffect(() => {
-    if (!hasPhoneRegister && registerMethod === 'phone') {
+    if (!phoneRegisterEnabled && registerMethod === 'phone') {
       setRegisterMethod('email');
     }
-  }, [hasPhoneRegister, registerMethod]);
+  }, [phoneRegisterEnabled, registerMethod]);
 
   const onRefresh = async (): Promise<void> => {
     setRefreshing(true);
@@ -156,9 +150,9 @@ export function RegisterForm({ className }: RegisterFormProps) {
   };
 
   const onPhoneSubmit = async (data: PhoneRegisterFormData) => {
-    if (!hasPhoneRegister) {
+    if (!phoneRegisterEnabled) {
       phoneForm.setError('phone', {
-        message: t('sendCodeError'),
+        message: t('phoneAuthUnavailable'),
       });
       return;
     }
@@ -222,6 +216,77 @@ export function RegisterForm({ className }: RegisterFormProps) {
   const emailFormLoading = startRegisterMutation.isPending;
   const phoneFormLoading =
     phoneCheckMutation.isPending || phoneCodeMutation.isPending || phoneForm.formState.isSubmitting;
+  const activeRegisterMethod = phoneRegisterEnabled ? registerMethod : 'email';
+  const emailRegisterContent = (
+    <form onSubmit={emailForm.handleSubmit(onEmailSubmit)} className="space-y-6">
+      <div className="space-y-2">
+        <Label
+          htmlFor="email"
+          className="ml-1 text-sm font-semibold text-[var(--text-primary)]"
+        >
+          {t('emailAddress')}
+        </Label>
+        <Input
+          id="email"
+          type="email"
+          leftIcon={<Mail />}
+          placeholder={t('emailPlaceholder')}
+          disabled={emailFormLoading || registerStep === 'verifying'}
+          autoComplete="email"
+          {...emailForm.register('email')}
+          aria-invalid={emailForm.formState.errors.email ? 'true' : 'false'}
+          errorText={emailForm.formState.errors.email?.message}
+          className={registerInputClassName}
+        />
+      </div>
+
+      <Button
+        type="submit"
+        size="xl"
+        className={registerPrimaryButtonClassName}
+        loading={emailFormLoading}
+        disabled={registerStep === 'verifying' || !emailForm.watch('email')}
+        interactive
+      >
+        {registerStep === 'verifying' ? t('verificationCodeSent') : t('continue')}
+      </Button>
+    </form>
+  );
+  const phoneRegisterContent = (
+    <form onSubmit={phoneForm.handleSubmit(onPhoneSubmit)} className="space-y-6">
+      <div className="space-y-2">
+        <Label
+          htmlFor="phone"
+          className="ml-1 text-sm font-semibold text-[var(--text-primary)]"
+        >
+          {t('phone')}
+        </Label>
+        <Input
+          id="phone"
+          type="tel"
+          leftIcon={<Smartphone />}
+          placeholder={t('phonePlaceholder')}
+          autoComplete="tel"
+          disabled={phoneFormLoading}
+          {...phoneForm.register('phone')}
+          aria-invalid={phoneForm.formState.errors.phone ? 'true' : 'false'}
+          errorText={phoneForm.formState.errors.phone?.message}
+          className={registerInputClassName}
+        />
+      </div>
+
+      <Button
+        type="submit"
+        size="xl"
+        className={registerPrimaryButtonClassName}
+        loading={phoneFormLoading}
+        disabled={!phoneForm.watch('phone')}
+        interactive
+      >
+        {t('continue')}
+      </Button>
+    </form>
+  );
   const authRichT = t as typeof t & {
     rich: (
       key: 'byCreatingAccount',
@@ -245,79 +310,40 @@ export function RegisterForm({ className }: RegisterFormProps) {
             {t('createAccount')}
           </CardTitle>
           <p className="text-base text-[var(--text-secondary)]">
-            {registerMethod === 'phone' ? t('phoneRegisterDesc') : t('enterEmailToStart')}
+            {activeRegisterMethod === 'phone' ? t('phoneRegisterDesc') : t('enterEmailToStart')}
           </p>
         </div>
 
         <CardContent className="px-8 pb-9">
-          <Tabs
-            value={registerMethod}
-            onValueChange={value => setRegisterMethod(value as RegisterMethod)}
-            className="w-full"
-          >
-            <TabsList
-              className={cn(
-                'grid h-11 w-full rounded-2xl border border-[var(--border-default)] bg-[var(--bg-soft)] p-1 text-[var(--text-primary)] shadow-none',
-                hasPhoneRegister ? 'grid-cols-2' : 'grid-cols-1'
-              )}
+          {phoneRegisterEnabled ? (
+            <Tabs
+              value={registerMethod}
+              onValueChange={value => setRegisterMethod(value as RegisterMethod)}
+              className="w-full"
             >
-              <TabsTrigger value="email" className={registerTabTriggerClassName}>
-                <Mail className="size-5" />
-                {t('authMethodEmail')}
-              </TabsTrigger>
-              {hasPhoneRegister ? (
+              <TabsList className="grid h-11 w-full grid-cols-2 rounded-2xl border border-[var(--border-default)] bg-[var(--bg-soft)] p-1 text-[var(--text-primary)] shadow-none">
+                <TabsTrigger value="email" className={registerTabTriggerClassName}>
+                  <Mail className="size-5" />
+                  {t('authMethodEmail')}
+                </TabsTrigger>
                 <TabsTrigger value="phone" className={registerTabTriggerClassName}>
                   <Smartphone className="size-5" />
                   {t('authMethodPhone')}
                 </TabsTrigger>
-              ) : null}
-            </TabsList>
+              </TabsList>
 
-            <TabsContent
-              value="email"
-              className={cn(
-                'mt-6',
-                mounted
-                  ? 'animate-in fade-in slide-in-from-bottom-4 duration-700 delay-100'
-                  : 'opacity-0'
-              )}
-            >
-              <form onSubmit={emailForm.handleSubmit(onEmailSubmit)} className="space-y-6">
-                <div className="space-y-2">
-                  <Label
-                    htmlFor="email"
-                    className="ml-1 text-sm font-semibold text-[var(--text-primary)]"
-                  >
-                    {t('emailAddress')}
-                  </Label>
-                  <Input
-                    id="email"
-                    type="email"
-                    leftIcon={<Mail />}
-                    placeholder={t('emailPlaceholder')}
-                    disabled={emailFormLoading || registerStep === 'verifying'}
-                    autoComplete="email"
-                    {...emailForm.register('email')}
-                    aria-invalid={emailForm.formState.errors.email ? 'true' : 'false'}
-                    errorText={emailForm.formState.errors.email?.message}
-                    className={registerInputClassName}
-                  />
-                </div>
+              <TabsContent
+                value="email"
+                className={cn(
+                  'mt-6',
+                  mounted
+                    ? 'animate-in fade-in slide-in-from-bottom-4 duration-700 delay-100'
+                    : 'opacity-0'
+                )}
+              >
+                {emailRegisterContent}
+              </TabsContent>
 
-                <Button
-                  type="submit"
-                  size="xl"
-                  className={registerPrimaryButtonClassName}
-                  loading={emailFormLoading}
-                  disabled={registerStep === 'verifying' || !emailForm.watch('email')}
-                  interactive
-                >
-                  {registerStep === 'verifying' ? t('verificationCodeSent') : t('continue')}
-                </Button>
-              </form>
-            </TabsContent>
-
-            {hasPhoneRegister ? (
               <TabsContent
                 value="phone"
                 className={cn(
@@ -327,42 +353,20 @@ export function RegisterForm({ className }: RegisterFormProps) {
                     : 'opacity-0'
                 )}
               >
-                <form onSubmit={phoneForm.handleSubmit(onPhoneSubmit)} className="space-y-6">
-                  <div className="space-y-2">
-                    <Label
-                      htmlFor="phone"
-                      className="ml-1 text-sm font-semibold text-[var(--text-primary)]"
-                    >
-                      {t('phone')}
-                    </Label>
-                    <Input
-                      id="phone"
-                      type="tel"
-                      leftIcon={<Smartphone />}
-                      placeholder={t('phonePlaceholder')}
-                      autoComplete="tel"
-                      disabled={phoneFormLoading}
-                      {...phoneForm.register('phone')}
-                      aria-invalid={phoneForm.formState.errors.phone ? 'true' : 'false'}
-                      errorText={phoneForm.formState.errors.phone?.message}
-                      className={registerInputClassName}
-                    />
-                  </div>
-
-                  <Button
-                    type="submit"
-                    size="xl"
-                    className={registerPrimaryButtonClassName}
-                    loading={phoneFormLoading}
-                    disabled={!phoneForm.watch('phone')}
-                    interactive
-                  >
-                    {t('continue')}
-                  </Button>
-                </form>
+                {phoneRegisterContent}
               </TabsContent>
-            ) : null}
-          </Tabs>
+            </Tabs>
+          ) : (
+            <div
+              className={cn(
+                mounted
+                  ? 'animate-in fade-in slide-in-from-bottom-4 duration-700 delay-100'
+                  : 'opacity-0'
+              )}
+            >
+              {emailRegisterContent}
+            </div>
+          )}
 
           <div className="mt-8 animate-in fade-in text-center duration-700 delay-300">
             <p className="text-sm text-[var(--text-secondary)]">

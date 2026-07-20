@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -19,7 +19,9 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Checkbox } from '@/components/ui/checkbox';
 import { CheckCircle, Loader2 } from 'lucide-react';
 import { useFinishRegister } from '@/hooks/auth/use-finish-register';
+import { useSystemFeatures } from '@/hooks/auth/use-system-features';
 import { usePhoneRegister } from '@/hooks/auth/use-phone-auth';
+import { isPhoneRegisterEnabled } from '@/lib/features/notification-sms';
 
 interface CompleteRegistrationFormProps {
   className?: string;
@@ -95,6 +97,11 @@ export function CompleteRegistrationForm({ className }: CompleteRegistrationForm
 
   const finishRegisterMutation = useFinishRegister();
   const phoneRegisterMutation = usePhoneRegister();
+  const { data: systemFeatures } = useSystemFeatures();
+  const systemFeaturesLoaded = systemFeatures !== undefined;
+  const phoneRegisterEnabled = isPhoneRegisterEnabled(systemFeatures);
+  const phoneRegisterUnavailable =
+    isPhoneRegisterFlow && systemFeaturesLoaded && !phoneRegisterEnabled;
 
   const {
     register: registerField,
@@ -114,7 +121,7 @@ export function CompleteRegistrationForm({ className }: CompleteRegistrationForm
   const onSubmit = async (data: CompleteRegistrationFormData) => {
     try {
       if (isPhoneRegisterFlow) {
-        if (!phone || !verifiedToken) {
+        if (!phone || !verifiedToken || phoneRegisterUnavailable) {
           return;
         }
 
@@ -152,10 +159,24 @@ export function CompleteRegistrationForm({ className }: CompleteRegistrationForm
   const isFormLoading =
     finishRegisterMutation.isPending || phoneRegisterMutation.isPending || isSubmitting;
 
-  if (
-    (!isPhoneRegisterFlow && (!email || !token)) ||
-    (isPhoneRegisterFlow && (!phone || !verifiedToken))
-  ) {
+  useEffect(() => {
+    if (phoneRegisterUnavailable) {
+      router.replace('/register');
+    }
+  }, [phoneRegisterUnavailable, router]);
+
+  if (phoneRegisterUnavailable) {
+    return null;
+  }
+
+  if (!isPhoneRegisterFlow && (!email || !token)) {
+    if (typeof window !== 'undefined') {
+      router.push('/register');
+    }
+    return null;
+  }
+
+  if (isPhoneRegisterFlow && (!phone || !verifiedToken)) {
     if (typeof window !== 'undefined') {
       router.push('/register');
     }

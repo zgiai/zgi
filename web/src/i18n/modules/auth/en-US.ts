@@ -252,6 +252,7 @@ const messages = {
   registrationSuccess: 'Registration successful',
   phoneRequired: 'Phone number is required',
   phoneNotRegistered: 'This phone number is not registered yet',
+  phoneAuthUnavailable: 'Phone authentication is currently unavailable',
   authMethodEmail: 'Email',
   authMethodPhone: 'Phone',
   signInWithPhoneDesc: 'Sign in with your phone number and password',

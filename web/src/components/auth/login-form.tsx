@@ -20,6 +20,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Icons } from '@/components/ui/icons';
 import { Label } from '@/components/ui/label';
 import { useLogin, usePhonePasswordLogin, useSystemFeatures } from '@/hooks';
+import { isPhoneAuthEnabled, isPhonePasswordResetEnabled } from '@/lib/features/notification-sms';
 
 interface LoginFormProps {
   className?: string;
@@ -95,6 +96,10 @@ export function LoginForm({ className }: LoginFormProps) {
 
   const canRegister = Boolean(systemFeatures?.is_allow_register);
   const hasSocialLogin = Boolean(systemFeatures?.enable_social_oauth_login);
+  const systemFeaturesLoaded = systemFeatures !== undefined;
+  const phoneAuthEnabled = isPhoneAuthEnabled(systemFeatures);
+  const phoneAuthKnownDisabled = systemFeaturesLoaded && !phoneAuthEnabled;
+  const phoneResetEnabled = isPhonePasswordResetEnabled(systemFeatures);
 
   const loginSchema = z
     .object({
@@ -114,7 +119,20 @@ export function LoginForm({ className }: LoginFormProps) {
         return;
       }
 
-      if (!isEmailLike(data.account) && !normalizePhoneAccount(data.account)) {
+      if (phoneAuthKnownDisabled && !isEmailLike(data.account)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['account'],
+          message: t('invalidEmail'),
+        });
+        return;
+      }
+
+      if (
+        !phoneAuthKnownDisabled &&
+        !isEmailLike(data.account) &&
+        !normalizePhoneAccount(data.account)
+      ) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           path: ['account'],
@@ -137,7 +155,7 @@ export function LoginForm({ className }: LoginFormProps) {
   const phoneAccountValue = normalizePhoneAccount(accountValue);
   const forgotPasswordHref = isEmailLike(accountValue)
     ? `/forgot-password?email=${encodeURIComponent(accountValue)}`
-    : phoneAccountValue
+    : phoneResetEnabled && phoneAccountValue
       ? `/forgot-password?phone=${encodeURIComponent(phoneAccountValue)}`
       : '/forgot-password';
 
@@ -155,7 +173,7 @@ export function LoginForm({ className }: LoginFormProps) {
     const account = data.account.trim();
     const phoneAccount = normalizePhoneAccount(account);
     try {
-      if (!inviteToken && !isEmailLike(account) && phoneAccount) {
+      if (phoneAuthEnabled && !inviteToken && !isEmailLike(account) && phoneAccount) {
         await phonePasswordLoginMutation.mutateAsync({
           country_code: DEFAULT_PHONE_COUNTRY_CODE,
           phone: phoneAccount,
@@ -263,7 +281,9 @@ export function LoginForm({ className }: LoginFormProps) {
                 id="account"
                 type="text"
                 leftIcon={<Mail />}
-                placeholder={inviteToken ? t('enterEmail') : t('enterEmailOrPhone')}
+                placeholder={
+                  inviteToken || phoneAuthKnownDisabled ? t('enterEmail') : t('enterEmailOrPhone')
+                }
                 autoComplete="username"
                 disabled={formLoading || Boolean(inviteToken)}
                 {...loginForm.register('account')}

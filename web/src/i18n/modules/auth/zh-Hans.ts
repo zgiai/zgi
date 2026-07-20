@@ -212,6 +212,7 @@ const messages: AuthMessages = {
   registrationSuccess: '注册成功',
   phoneRequired: '请输入手机号',
   phoneNotRegistered: '该手机号尚未注册',
+  phoneAuthUnavailable: '手机号认证当前不可用',
   authMethodEmail: '邮箱',
   authMethodPhone: '手机号',
   signInWithPhoneDesc: '使用手机号和密码登录',

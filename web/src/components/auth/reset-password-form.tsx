@@ -1,5 +1,6 @@
 'use client';
 
+import { useEffect } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -15,7 +16,9 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { PasswordInput } from '@/components/ui/input';
 import { Loader2 } from 'lucide-react';
 import { useResetPassword } from '@/hooks/auth/use-reset-password';
+import { useSystemFeatures } from '@/hooks/auth/use-system-features';
 import { usePhoneResetPassword } from '@/hooks/auth/use-phone-auth';
+import { isPhonePasswordResetEnabled } from '@/lib/features/notification-sms';
 import { toast } from 'sonner';
 
 interface ResetPasswordFormProps {
@@ -45,6 +48,10 @@ export function ResetPasswordForm({ className }: ResetPasswordFormProps) {
   const isPhoneResetFlow = searchParams.get('method') === 'phone';
   const t = useT('auth');
   const { locale } = useLocale();
+  const { data: systemFeatures } = useSystemFeatures();
+  const systemFeaturesLoaded = systemFeatures !== undefined;
+  const phoneResetEnabled = isPhonePasswordResetEnabled(systemFeatures);
+  const phoneResetUnavailable = isPhoneResetFlow && systemFeaturesLoaded && !phoneResetEnabled;
 
   // Form validation schema with translated messages
   const resetPasswordSchema = z
@@ -104,7 +111,7 @@ export function ResetPasswordForm({ className }: ResetPasswordFormProps) {
 
   // Form submission
   const onSubmit = async (data: ResetPasswordFormData) => {
-    if (isPhoneResetFlow && (!phone || !verifiedToken)) {
+    if (isPhoneResetFlow && (!phone || !verifiedToken || phoneResetUnavailable)) {
       toast.error(t('missingTokenError'));
       return;
     }
@@ -141,6 +148,16 @@ export function ResetPasswordForm({ className }: ResetPasswordFormProps) {
       // Error is handled by the store
     }
   };
+
+  useEffect(() => {
+    if (phoneResetUnavailable) {
+      router.replace('/forgot-password');
+    }
+  }, [phoneResetUnavailable, router]);
+
+  if (phoneResetUnavailable) {
+    return null;
+  }
 
   return (
     <div className={cn('flex flex-col gap-6', className)}>

@@ -8,10 +8,7 @@ import { useForm } from 'react-hook-form';
 import { useLocale } from '@/hooks/use-locale';
 import * as z from 'zod';
 
-import {
-  hasNotificationSMSTemplate,
-  NOTIFICATION_SMS_AUTH_PHONE_RESET_PASSWORD_TEMPLATE,
-} from '@/lib/features/notification-sms';
+import { isPhonePasswordResetEnabled } from '@/lib/features/notification-sms';
 import { cn } from '@/lib/utils';
 import { isValidPhoneNumber } from '@/utils/validation';
 import { Button } from '@/components/ui/button';
@@ -68,10 +65,7 @@ export function ForgotPasswordForm({ className }: ForgotPasswordFormProps) {
   const phoneCheckMutation = usePhoneCheck({ silentSuccess: true });
   const phoneCodeMutation = usePhoneCode();
   const { data: systemFeatures } = useSystemFeatures();
-  const hasPhonePasswordReset = hasNotificationSMSTemplate(
-    systemFeatures,
-    NOTIFICATION_SMS_AUTH_PHONE_RESET_PASSWORD_TEMPLATE
-  );
+  const hasPhonePasswordReset = isPhonePasswordResetEnabled(systemFeatures);
   const emailFormLoading = isCheckingEmail || forgotPasswordMutation.isPending;
   const phoneFormLoading =
     phoneCheckMutation.isPending || phoneCodeMutation.isPending;
@@ -152,7 +146,9 @@ export function ForgotPasswordForm({ className }: ForgotPasswordFormProps) {
 
   const onPhoneSubmit = async (data: PhoneForgotPasswordFormData) => {
     if (!hasPhonePasswordReset) {
-      setPhoneError('phone', { message: t('sendCodeError') });
+      setPhoneError('phone', {
+        message: t('phoneAuthUnavailable'),
+      });
       return;
     }
 

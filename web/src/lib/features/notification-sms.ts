@@ -76,6 +76,25 @@ export function hasNotificationSMSTemplate(
   return getNotificationSMSTemplates(features).some(template => template.key === templateKey);
 }
 
+export function isPhoneAuthEnabled(features?: SystemFeatures | null): boolean {
+  return features?.enable_phone_login === true;
+}
+
+export function isPhoneRegisterEnabled(features?: SystemFeatures | null): boolean {
+  return (
+    isPhoneAuthEnabled(features) &&
+    features?.is_allow_register === true &&
+    hasNotificationSMSTemplate(features, NOTIFICATION_SMS_AUTH_PHONE_REGISTER_TEMPLATE)
+  );
+}
+
+export function isPhonePasswordResetEnabled(features?: SystemFeatures | null): boolean {
+  return (
+    isPhoneAuthEnabled(features) &&
+    hasNotificationSMSTemplate(features, NOTIFICATION_SMS_AUTH_PHONE_RESET_PASSWORD_TEMPLATE)
+  );
+}
+
 export function getNotificationSMSParamDisplayKey(
   param: NotificationSMSTemplateParam | string
 ): NotificationSMSParamDisplayKey | null {

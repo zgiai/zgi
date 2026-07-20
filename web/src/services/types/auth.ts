@@ -150,6 +150,7 @@ export interface SystemFeatures {
   max_plugin_package_size: number;
   enable_email_code_login: boolean;
   enable_email_password_login: boolean;
+  enable_phone_login: boolean;
   enable_social_oauth_login: boolean;
   is_allow_register: boolean;
   is_allow_create_workspace: boolean;

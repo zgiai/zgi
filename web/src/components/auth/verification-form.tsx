@@ -15,11 +15,16 @@ import { Label } from '@/components/ui/label';
 import { Loader2 } from 'lucide-react';
 import { useForgotPassword } from '@/hooks/auth/use-forgot-password';
 import { useStartRegister } from '@/hooks/auth/use-start-register';
+import { useSystemFeatures } from '@/hooks/auth/use-system-features';
 import { useVerifyForgotPassword } from '@/hooks/auth/use-verify-forgot-password';
 import { useVerifyRegister } from '@/hooks/auth/use-verify-register';
 import { usePhoneCode, usePhoneVerify } from '@/hooks/auth/use-phone-auth';
 import { VerificationCodeInput } from '@/components/ui/verification-code-input';
 import type { ForgotPasswordInitResponse, RegisterInitResponse } from '@/services/types/auth';
+import {
+  isPhonePasswordResetEnabled,
+  isPhoneRegisterEnabled,
+} from '@/lib/features/notification-sms';
 
 const verificationSchema = z.object({
   code: z
@@ -173,6 +178,14 @@ export function VerificationForm({ className }: VerificationFormProps) {
   const startRegisterMutation = useStartRegister();
   const phoneCodeMutation = usePhoneCode();
   const phoneVerifyMutation = usePhoneVerify();
+  const { data: systemFeatures } = useSystemFeatures();
+  const systemFeaturesLoaded = systemFeatures !== undefined;
+  const phoneRegisterEnabled = isPhoneRegisterEnabled(systemFeatures);
+  const phoneResetEnabled = isPhonePasswordResetEnabled(systemFeatures);
+  const phoneFlowUnavailable =
+    isPhoneFlow &&
+    systemFeaturesLoaded &&
+    ((isPhoneRegisterFlow && !phoneRegisterEnabled) || (isPhoneResetFlow && !phoneResetEnabled));
   const isLoading =
     verifyRegisterMutation.isPending ||
     verifyForgotPasswordMutation.isPending ||
@@ -191,7 +204,7 @@ export function VerificationForm({ className }: VerificationFormProps) {
     const missingEmailParams = !isPhoneFlow && (!email || !token);
     const missingPhoneParams = isPhoneFlow && (!phone || !token);
 
-    if (missingEmailParams || missingPhoneParams) {
+    if (missingEmailParams || missingPhoneParams || phoneFlowUnavailable) {
       let redirectPath = type === 'reset' ? '/forgot-password' : '/register';
       const redirect = searchParams.get('redirect');
       if (redirect && type !== 'reset') {
@@ -199,7 +212,7 @@ export function VerificationForm({ className }: VerificationFormProps) {
       }
       router.push(redirectPath);
     }
-  }, [email, isPhoneFlow, phone, router, searchParams, token, type]);
+  }, [email, isPhoneFlow, phone, phoneFlowUnavailable, router, searchParams, token, type]);
 
   useEffect(() => {
     if (!resendCooldownKey) {
@@ -259,7 +272,7 @@ export function VerificationForm({ className }: VerificationFormProps) {
       return;
     }
 
-    if (isPhoneFlow && !phone) {
+    if (isPhoneFlow && (!phone || phoneFlowUnavailable)) {
       return;
     }
 
@@ -346,7 +359,7 @@ export function VerificationForm({ className }: VerificationFormProps) {
     setIsResending(true);
     try {
       if (isPhoneFlow) {
-        if (!phone) {
+        if (!phone || phoneFlowUnavailable) {
           return;
         }
 
@@ -393,6 +406,10 @@ export function VerificationForm({ className }: VerificationFormProps) {
   const formLoading = isLoading || isSubmitting;
   const title = type === 'reset' ? t('resetPasswordTitle') : t('completeRegistrationTitle');
   const destinationLabel = destination || (isPhoneFlow ? t('phone') : t('yourEmail'));
+
+  if (phoneFlowUnavailable) {
+    return null;
+  }
 
   return (
     <div className={cn('flex flex-col gap-6', className)}>
