@@ -16,3 +16,4 @@ scripts/rag_evaluation/.env
 scripts/rag_evaluation/__pycache__/
 scripts/rag_evaluation/input/
 scripts/rag_evaluation/middle/
+scripts/rag_evaluation/result/
