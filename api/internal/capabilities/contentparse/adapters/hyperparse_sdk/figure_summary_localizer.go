@@ -93,7 +93,7 @@ func (l *DefaultChatFigureSummaryLocalizer) SummarizeMineruFigureImage(ctx conte
 	}
 
 	temperature := 0.1
-	maxTokens := 180
+	maxTokens := 600
 	req := &llmadapter.ChatRequest{
 		Provider: strings.TrimSpace(resolved.Provider),
 		Model:    strings.TrimSpace(resolved.Model),
@@ -103,7 +103,15 @@ func (l *DefaultChatFigureSummaryLocalizer) SummarizeMineruFigureImage(ctx conte
 				Content: []llmadapter.MessageContentPart{
 					{
 						Type: "text",
-						Text: "请用中文简要概括这张图片或图表表达的核心信息。只描述图中可见内容，不要补充没有依据的信息，不要输出标题或解释，控制在80字以内。",
+						Text: `Analyze the image carefully and produce a faithful Chinese summary for document retrieval.
+
+For a simple image, describe its main subject and key visible information concisely. For an information-dense image, preserve the important details and relationships instead of giving only a high-level description. In particular:
+- For flowcharts, describe the start and end points, the sequence of steps, branch conditions, directions, dependencies, loops, and exception paths when visible.
+- For diagrams, explain the main components and how they are connected or interact.
+- For charts, state the axes or compared dimensions, major values or categories, trends, differences, and conclusions supported by the image.
+- For tables, screenshots, and formulas, capture the key text, fields, structure, operations, and results needed to understand their meaning.
+
+Use only information visible in the image. Do not invent, infer unsupported details, or omit important content merely to satisfy the length target. Aim for no more than 200 Chinese characters, but exceed this limit when necessary to describe complex content clearly and completely. Output only the Chinese summary, without a title, preface, explanation, or Markdown formatting.`,
 					},
 					{
 						Type:     "image_url",
