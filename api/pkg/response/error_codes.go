@@ -116,7 +116,9 @@ var (
 	ErrInvalidStatus         = ErrorCode{201014, "Invalid status value", true}
 	ErrInvalidRoleType       = ErrorCode{201015, "Invalid role type", true}
 	ErrAccountBanned         = ErrorCode{201016, "Account has been banned", true}
-	ErrEmailPasswordMismatch = ErrorCode{201017, "Invalid email or password", true}
+	ErrInvalidCredentials    = ErrorCode{201017, "Invalid account or password", true}
+	// ErrEmailPasswordMismatch is kept as a compatibility alias for existing callers.
+	ErrEmailPasswordMismatch = ErrInvalidCredentials
 	ErrLoginErrorRateLimit   = ErrorCode{201018, "Too many login attempts, please try again later", true}
 	ErrEmailInvalid          = ErrorCode{201019, "Invalid email address", true}
 	ErrGetUserInfoFailed     = ErrorCode{201020, "Failed to get user information", true}

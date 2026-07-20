@@ -110,6 +110,25 @@ export function captureException(
   });
 }
 
+export function captureMessage(
+  message: string,
+  configureScope?: (scope: SentryScope) => void
+): void {
+  void loadSentry().then(Sentry => {
+    if (!Sentry) return;
+
+    if (configureScope) {
+      Sentry.withScope(scope => {
+        configureScope(scope as SentryScope);
+        Sentry.captureMessage(message);
+      });
+      return;
+    }
+
+    Sentry.captureMessage(message);
+  });
+}
+
 export function withScope(callback: (scope: SentryScope) => void): void {
   void loadSentry().then(Sentry => {
     Sentry?.withScope(scope => callback(scope as SentryScope));

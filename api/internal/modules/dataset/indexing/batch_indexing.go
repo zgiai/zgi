@@ -9,9 +9,9 @@ import (
 	"github.com/zgiai/zgi/api/config"
 	"github.com/zgiai/zgi/api/internal/modules/dataset/model"
 	dataset_repository "github.com/zgiai/zgi/api/internal/modules/dataset/repository"
+	"github.com/zgiai/zgi/api/internal/observability"
 	"github.com/zgiai/zgi/api/pkg/embedding"
 	"github.com/zgiai/zgi/api/pkg/logger"
-	"github.com/zgiai/zgi/api/pkg/sentry"
 	"github.com/zgiai/zgi/api/pkg/vectordb"
 )
 
@@ -354,13 +354,13 @@ func embedIndexingBatch(
 	for i, item := range items {
 		singleVectors, singleErr := embeddingService.EmbedTexts(ctx, []string{item.Text})
 		if singleErr != nil {
-			captureIndexingEmbeddingError(singleErr, dataset, item)
+			captureIndexingEmbeddingError(ctx, singleErr, dataset, item)
 			errs[i] = singleErr
 			continue
 		}
 		if len(singleVectors) == 0 {
 			singleErr = fmt.Errorf("no embeddings generated for index node %s", item.IndexNodeID)
-			captureIndexingEmbeddingError(singleErr, dataset, item)
+			captureIndexingEmbeddingError(ctx, singleErr, dataset, item)
 			errs[i] = singleErr
 			continue
 		}
@@ -446,7 +446,7 @@ func summarizeIndexingResults(
 	return tokens, nil
 }
 
-func captureIndexingEmbeddingError(err error, dataset *model.Dataset, item indexingItem) {
+func captureIndexingEmbeddingError(ctx context.Context, err error, dataset *model.Dataset, item indexingItem) {
 	if err == nil || dataset == nil {
 		return
 	}
@@ -460,17 +460,18 @@ func captureIndexingEmbeddingError(err error, dataset *model.Dataset, item index
 		modelName = *dataset.EmbeddingModel
 	}
 
-	sentry.CaptureEmbeddingError(err,
-		provider,
-		modelName,
-		dataset.ID,
-		item.statusTarget().id,
-		map[string]interface{}{
-			"tenant_id":    dataset.WorkspaceID,
-			"index_node":   item.IndexNodeID,
+	observability.CaptureError(ctx, "dataset.embedding.failed", err,
+		observability.Tags(map[string]string{
+			"llm.provider": provider,
+			"llm.model":    modelName,
 			"item_type":    string(item.ItemType),
-			"content_len":  len(item.Text),
-			"error_detail": err.Error(),
-		},
+		}),
+		observability.Attributes(map[string]any{
+			"workspace_id":  dataset.WorkspaceID,
+			"dataset_id":    dataset.ID,
+			"document_id":   item.statusTarget().id,
+			"index_node_id": item.IndexNodeID,
+			"content_len":   len(item.Text),
+		}),
 	)
 }

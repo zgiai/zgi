@@ -8,6 +8,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/zgiai/zgi/api/config"
+	"github.com/zgiai/zgi/api/internal/observability"
 )
 
 func TestProvideGinEngine_AllowsSSEConnectionHeaderPreflight(t *testing.T) {
@@ -24,7 +25,7 @@ func TestProvideGinEngine_AllowsSSEConnectionHeaderPreflight(t *testing.T) {
 		},
 	}
 
-	engine := provideGinEngine(config.GlobalConfig, &SentryResource{}, &OpenTelemetryResource{})
+	engine := provideGinEngine(config.GlobalConfig, observability.NewZGIReporter(), &OpenTelemetryResource{})
 	req := httptest.NewRequest(http.MethodOptions, "/console/api/aichat/chat", nil)
 	req.Header.Set("Origin", origin)
 	req.Header.Set("Access-Control-Request-Method", http.MethodPost)
