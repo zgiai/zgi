@@ -62,7 +62,6 @@ type AgentsRepository interface {
 	GetPaginatedAgentsMultipleTenants(ctx context.Context, tenantIDs []string, filter AgentsFilter, page, limit int) ([]Agent, int64, error)
 	GetPaginatedAgentsWithPermissions(ctx context.Context, accountID string, permissionContext *PermissionContext, filter AgentsFilter, page, limit int) ([]Agent, int64, error)
 
-	ExistsByName(ctx context.Context, tenantID, name string) (bool, error)
 	CreateExtension(ctx context.Context, ext *AgentExtension) error
 	GetExtensionByAgentID(ctx context.Context, agentID string) (*AgentExtension, error)
 	UpdateExtension(ctx context.Context, ext *AgentExtension) error
@@ -101,17 +100,6 @@ func (r *agentsRepository) Create(ctx context.Context, ag *Agent) error {
 		return fmt.Errorf("failed to create agent: %w", err)
 	}
 	return nil
-}
-
-// ExistsByName checks if an agent with the same name exists under the tenant
-func (r *agentsRepository) ExistsByName(ctx context.Context, tenantID, name string) (bool, error) {
-	var count int64
-	if err := r.db.WithContext(ctx).Model(&Agent{}).
-		Where("tenant_id = ? AND name = ? AND deleted_at IS NULL", tenantID, name).
-		Count(&count).Error; err != nil {
-		return false, fmt.Errorf("failed to check agent name: %w", err)
-	}
-	return count > 0, nil
 }
 
 // GetByID retrieves an agent by ID

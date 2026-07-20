@@ -1382,8 +1382,6 @@ func (h *AgentsHandler) UpdateAgent(c *gin.Context) {
 			response.SpecialFail(c, gin.H{"code": "404001", "message": "Agent not found"})
 		case "permission denied":
 			response.SpecialFail(c, gin.H{"code": "403001", "message": "Permission denied"})
-		case "agent with the same name already exists":
-			response.SpecialFail(c, gin.H{"code": "409001", "message": "Duplicated agent name in tenant"})
 		default:
 			response.SpecialFail(c, gin.H{"code": "399001", "message": err.Error()})
 		}
