@@ -150,6 +150,7 @@ export interface SystemFeatures {
   max_plugin_package_size: number;
   enable_email_code_login: boolean;
   enable_email_password_login: boolean;
+  enable_phone_login: boolean;
   enable_social_oauth_login: boolean;
   is_allow_register: boolean;
   is_allow_create_workspace: boolean;
@@ -255,4 +256,67 @@ export interface UpdateProfileRequest {
   mobile?: string | null;
   // Current selected workspace ID
   current_workspace_id?: string | null;
+}
+
+// Phone authentication related types
+export interface PhoneCodeRequest {
+  phone: string;
+  country_code: string;
+  scene: 'login' | 'register' | 'reset_password';
+}
+
+export interface PhoneCodeResponse {
+  token: string;
+  request_id?: string;
+  provider?: string;
+  code?: string;
+}
+
+export interface PhoneCheckRequest {
+  phone: string;
+  country_code: string;
+}
+
+export interface PhoneCheckResponse {
+  phone_e164: string;
+  is_registered: boolean;
+}
+
+export interface PhoneVerifyRequest {
+  phone: string;
+  country_code: string;
+  scene: 'login' | 'register' | 'reset_password';
+  token: string;
+  code: string;
+}
+
+export interface PhoneVerifyResponse {
+  verified_token: string;
+}
+
+export interface PhoneRegisterRequest {
+  phone: string;
+  country_code: string;
+  verified_token: string;
+  name: string;
+  password: string;
+}
+
+export interface PhoneLoginRequest {
+  phone: string;
+  country_code: string;
+  verified_token: string;
+}
+
+export interface PhonePasswordLoginRequest {
+  phone: string;
+  country_code: string;
+  password: string;
+}
+
+export interface PhoneResetPasswordRequest {
+  phone: string;
+  country_code: string;
+  verified_token: string;
+  new_password: string;
 }
