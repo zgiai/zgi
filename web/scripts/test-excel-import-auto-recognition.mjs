@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { URL } from 'node:url';
-import { runLatestRecognition } from '../src/components/db/excel-import/recognition-request-guard.mjs';
+import {
+  activateRecognitionAnalysis,
+  invalidateRecognitionAnalysis,
+  runLatestRecognition,
+} from '../src/components/db/excel-import/recognition-request-guard.mjs';
 
 const source = readFileSync(
   new URL('../src/components/db/excel-import/excel-import-shell.tsx', import.meta.url),
@@ -78,5 +82,30 @@ if (staleResult) appliedResult = staleResult;
 
 assert.equal(staleResult, null, 'recognition A must be discarded after switching to analysis B');
 assert.equal(appliedResult, null, 'recognition A must not be applied to analysis B');
+
+const recoveryRequestSeqRef = { current: 1 };
+const recoveryAnalysisKeyRef = { current: 'job-a:sheet-a' };
+
+const analyzeB = async () => {
+  invalidateRecognitionAnalysis(recoveryRequestSeqRef, recoveryAnalysisKeyRef);
+  await Promise.reject(new Error('sheet B analysis failed'));
+};
+
+// Analysis A was cached, analysis B failed after invalidating A, then the user returned to A.
+await assert.rejects(analyzeB, /sheet B analysis failed/);
+assert.equal(recoveryAnalysisKeyRef.current, '', 'failed analysis B must leave no active key');
+activateRecognitionAnalysis(recoveryAnalysisKeyRef, 'job-a:sheet-a');
+const recoveredResult = await runLatestRecognition({
+  recognitionRequestSeqRef: recoveryRequestSeqRef,
+  currentAnalysisKeyRef: recoveryAnalysisKeyRef,
+  analysisKey: 'job-a:sheet-a',
+  request: async () => ({ table: { name: 'table_a' }, columns: [{ name: 'column_a' }] }),
+});
+
+assert.deepEqual(
+  recoveredResult,
+  { table: { name: 'table_a' }, columns: [{ name: 'column_a' }] },
+  'cached analysis A must recognize successfully after analysis B fails'
+);
 
 console.log('Excel import auto-recognition regression check passed.');

@@ -79,7 +79,11 @@ import {
   type TableNameErrorCode,
 } from '@/utils/validation';
 import { DATABASE_PERMISSION_ACTIONS } from '@/constants/permissions';
-import { runLatestRecognition } from './recognition-request-guard.mjs';
+import {
+  activateRecognitionAnalysis,
+  invalidateRecognitionAnalysis,
+  runLatestRecognition,
+} from './recognition-request-guard.mjs';
 
 type Step = 'file' | 'preview' | 'schema' | 'result';
 
@@ -244,10 +248,13 @@ export default function ExcelImportShell({ dbId }: ExcelImportShellProps) {
     if (requestedSheetName) {
       setSelectedSheetName(requestedSheetName);
     }
-    if (requestedSheetName && requestedSheetName === analysis?.selection.sheet_name) return;
+    if (requestedSheetName && requestedSheetName === analysis?.selection.sheet_name) {
+      activateRecognitionAnalysis(currentAnalysisKeyRef, getAnalysisKey(analysis));
+      setHasRecognitionCompleted(false);
+      return;
+    }
 
-    recognitionRequestSeqRef.current += 1;
-    currentAnalysisKeyRef.current = '';
+    invalidateRecognitionAnalysis(recognitionRequestSeqRef, currentAnalysisKeyRef);
     setHasRecognitionCompleted(false);
     const requestSeq = analyzeRequestSeq.current + 1;
     analyzeRequestSeq.current = requestSeq;
@@ -259,7 +266,7 @@ export default function ExcelImportShell({ dbId }: ExcelImportShellProps) {
         ...overrides,
       });
       if (requestSeq !== analyzeRequestSeq.current) return;
-      currentAnalysisKeyRef.current = getAnalysisKey(res.data);
+      activateRecognitionAnalysis(currentAnalysisKeyRef, getAnalysisKey(res.data));
       setAnalysis(res.data);
       setSelectedSheetName(res.data.selection.sheet_name);
       setColumns(res.data.columns.map(col => ({ ...col, enabled: col.enabled ?? true })));
