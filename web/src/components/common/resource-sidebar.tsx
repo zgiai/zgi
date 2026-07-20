@@ -7,7 +7,6 @@ import type { LucideIcon } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { IconPreview } from '@/components/common/icon-input/icon-preview';
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
@@ -74,15 +73,14 @@ function ResourceSidebarTooltip({
   label: string;
 }) {
   if (!enabled) return children;
-
-  return (
-    <Tooltip delayDuration={250}>
-      <TooltipTrigger asChild>{children}</TooltipTrigger>
-      <TooltipContent side="right" sideOffset={8}>
-        {label}
-      </TooltipContent>
-    </Tooltip>
-  );
+  const child = children as React.ReactElement<{
+    title?: string;
+    'aria-label'?: string;
+  }>;
+  return React.cloneElement(child, {
+    title: child.props.title ?? label,
+    'aria-label': child.props['aria-label'] ?? label,
+  });
 }
 
 /**

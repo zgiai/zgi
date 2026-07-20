@@ -89,14 +89,15 @@ export const useCombinedWorkflowSave = (agentId: string) => {
   );
 
   const handlePublish = useCallback(
-    async (options?: { silent?: boolean }) => {
+    async (options?: { silent?: boolean; successToast?: string }) => {
       const silent = options?.silent ?? false;
       // Ensure the latest edits are saved quietly to avoid duplicate toasts
       await handleCombinedSave({ silent: true });
-      // Call publish API and show success toast here
+      // Publish is the user-facing action. Keep its success feedback here so
+      // the prerequisite draft save cannot produce a second toast.
       const res = await publishWorkflowMutation.mutateAsync({ agentId, silent: true });
       if (!silent && res?.code === '0') {
-        toast.success(t('workflow.workflowPublishedSuccessfully'));
+        toast.success(options?.successToast ?? t('workflow.workflowPublishedSuccessfully'));
       }
     },
     [agentId, handleCombinedSave, publishWorkflowMutation, t]

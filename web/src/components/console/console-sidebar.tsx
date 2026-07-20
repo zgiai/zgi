@@ -24,7 +24,6 @@ import { usePathname, useSearchParams } from 'next/navigation';
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { WorkspaceSwitcher } from './team-switcher';
 import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
 import { useWorkspaceStore } from '@/store/workspace-store';
@@ -70,14 +69,14 @@ interface RootRouteItem {
 const STORAGE_KEY = 'zgi:console:sidebar:groups';
 
 function CollapsedNavTooltip({ label, children }: { label: string; children: React.ReactElement }) {
-  return (
-    <Tooltip>
-      <TooltipTrigger asChild>{children}</TooltipTrigger>
-      <TooltipContent side="right" sideOffset={8} className="px-2.5 py-1.5 text-xs">
-        {label}
-      </TooltipContent>
-    </Tooltip>
-  );
+  const child = children as React.ReactElement<{
+    title?: string;
+    'aria-label'?: string;
+  }>;
+  return React.cloneElement(child, {
+    title: child.props.title ?? label,
+    'aria-label': child.props['aria-label'] ?? label,
+  });
 }
 
 function getDatasetReturnTo(value: string | null): string | null {

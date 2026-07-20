@@ -87,10 +87,10 @@ interface WorkflowHeaderProps {
   onSave: () => Promise<void> | void;
   onPublish: ({
     silent,
-    saveToast,
+    successToast,
   }: {
     silent?: boolean;
-    saveToast?: string;
+    successToast?: string;
   }) => Promise<void> | void;
   // Read-only states
   isReadOnly: boolean;
@@ -266,7 +266,7 @@ const WorkflowHeader: React.FC<WorkflowHeaderProps> = ({
   const handlePublishConfirmed = React.useCallback(async () => {
     await onPublish({
       silent: false,
-      saveToast: hasPubilshed
+      successToast: hasPubilshed
         ? t('workflow.workflowUpdatedSuccessfully')
         : t('workflow.workflowPublishedSuccessfully'),
     });
