@@ -8,8 +8,6 @@ export const TABLE_INGEST_DOCUMENT_EXTENSIONS = [
   'pdf',
   'html',
   'htm',
-  'xlsx',
-  'xls',
   'doc',
   'docx',
   'csv',

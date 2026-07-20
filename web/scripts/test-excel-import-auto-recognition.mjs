@@ -40,5 +40,17 @@ assert.ok(
   source.includes('schemaEditRevisionRef.current !== recognitionStartRevision'),
   'late recognition results must not overwrite manual schema edits'
 );
+assert.ok(
+  source.includes('const [hasRecognitionCompleted, setHasRecognitionCompleted] = useState(false);'),
+  'the import flow must track whether smart recognition completed'
+);
+assert.ok(
+  source.includes("toast.info(t('excelImport.schema.recognitionIncomplete'))"),
+  'clicking import before recognition completes must explain why it is unavailable'
+);
+assert.ok(
+  source.includes('aria-disabled={!hasRecognitionCompleted'),
+  'the import button must expose its unavailable state while recognition is incomplete'
+);
 
 console.log('Excel import auto-recognition regression check passed.');

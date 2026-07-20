@@ -527,7 +527,7 @@ const TableData: FC<TableDataProps> = ({ dbId, tableId }) => {
   }, []);
 
   return (
-    <div className="space-y-4">
+    <div className="flex min-h-0 flex-1 flex-col gap-4">
       <h1 className="text-base font-semibold">{t('dbs.tableData.title')}</h1>
       <SchemaHealthNotice
         columns={columns}
@@ -571,8 +571,8 @@ const TableData: FC<TableDataProps> = ({ dbId, tableId }) => {
         }
         onVisibleColumnNamesChange={setVisibleColumnNames}
       />
-      <div ref={tableContainerRef} className="overflow-x-auto border rounded-md">
-        <Table containerClassName="w-full text-xs" className="border-collapse">
+      <div ref={tableContainerRef} className="min-h-0 flex-1 overflow-auto border rounded-md">
+        <Table containerClassName="w-full overflow-visible text-xs" className="border-collapse">
           <TableDataHeader
             columns={visibleColumns}
             isEditing={isEditing}
