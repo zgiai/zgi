@@ -23,5 +23,13 @@ assert.ok(
   headerSource.includes("'sticky top-0 z-10"),
   'table header cells must stay visible while rows scroll'
 );
+assert.ok(
+  !headerSource.includes('bg-muted/50'),
+  'sticky header cells must use an opaque background so rows cannot show through'
+);
+assert.ok(
+  headerSource.includes('bg-[var(--table-header)]'),
+  'sticky header cells must use the shared opaque table header color'
+);
 
 console.log('DB table sticky header regression check passed.');
