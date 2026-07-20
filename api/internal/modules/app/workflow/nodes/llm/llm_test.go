@@ -3,6 +3,7 @@ package llm
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -711,8 +712,8 @@ func expectAgentConversationLookup(mock sqlmock.Sqlmock, conversationID, agentID
 
 func TestPromptMessagesFromAgentMessagesExpandsRounds(t *testing.T) {
 	records := []*conversation.AgentMessage{
-		{Query: "q1", Answer: "a1"},
-		{Query: "q2", Answer: "a2"},
+		{Query: "q1", Answer: "a1", Status: conversation.AgentMessageStatusCompleted},
+		{Query: "q2", Answer: "a2", Status: conversation.AgentMessageStatusStopped},
 	}
 
 	messages := promptMessagesFromAgentMessages(records)
@@ -730,6 +731,31 @@ func TestPromptMessagesFromAgentMessagesExpandsRounds(t *testing.T) {
 	}
 	if messages[3].Role != PromptMessageRoleAssistant || messages[3].Content != "a2" {
 		t.Fatalf("message[3] = %#v", messages[3])
+	}
+}
+
+func TestPromptMessagesFromAgentMessagesExcludesUnstableAnswers(t *testing.T) {
+	records := []*conversation.AgentMessage{
+		{Query: "completed", Answer: "stable", Status: conversation.AgentMessageStatusCompleted},
+		{Query: "stopped", Answer: "kept", Status: conversation.AgentMessageStatusStopped},
+		{Query: "failed", Answer: "partial failure", Status: conversation.AgentMessageStatusError},
+		{Query: "expired", Answer: "partial expiry", Status: conversation.AgentMessageStatusExpired},
+		{Query: "running", Answer: "partial running", Status: conversation.AgentMessageStatusRunning},
+		{Query: "approval", Answer: "partial approval", Status: conversation.AgentMessageStatusPendingApproval},
+		{Query: "question", Answer: "partial question", Status: conversation.AgentMessageStatusPendingQuestion},
+	}
+
+	messages := promptMessagesFromAgentMessages(records)
+	want := []PromptMessage{
+		{Role: PromptMessageRoleUser, Content: "completed"},
+		{Role: PromptMessageRoleAssistant, Content: "stable"},
+		{Role: PromptMessageRoleUser, Content: "stopped"},
+		{Role: PromptMessageRoleAssistant, Content: "kept"},
+		{Role: PromptMessageRoleUser, Content: "failed"},
+		{Role: PromptMessageRoleUser, Content: "expired"},
+	}
+	if !reflect.DeepEqual(messages, want) {
+		t.Fatalf("messages = %#v, want %#v", messages, want)
 	}
 }
 

@@ -92,7 +92,17 @@ func (e *WorkflowEngine) consumeNodeEvents(
 			logger.Debug("Processing RunStreamChunk event for nodeID: %s", nodeID)
 			if e.streamEventCallback != nil && event.Data != nil {
 				if streamEvent, ok := event.Data.(*shared.RunStreamChunkEvent); ok {
-					e.streamEventCallback(nodeID, streamEvent)
+					// Subgraph events are consumed by the outer container, so nodeID may
+					// identify an iteration/loop rather than the child that produced the
+					// chunk. Preserve the actual event source for answer coordination.
+					sourceNodeID := event.NodeID
+					if sourceNodeID == "" && len(streamEvent.FromVariableSelector) > 0 {
+						sourceNodeID = streamEvent.FromVariableSelector[0]
+					}
+					if sourceNodeID == "" {
+						sourceNodeID = nodeID
+					}
+					e.streamEventCallback(sourceNodeID, streamEvent)
 				}
 			}
 

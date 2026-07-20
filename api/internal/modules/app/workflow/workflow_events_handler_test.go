@@ -118,6 +118,55 @@ func TestGetWorkflowRunEventsRejectsSystemRunFromAnotherAccount(t *testing.T) {
 	}
 }
 
+func TestGetWorkflowRunEventsAllowsMatchingWebAppIdentityBeforeQueryValidation(t *testing.T) {
+	runID := "run-webapp"
+	virtualAccountID := "88e60b24-997c-4b42-a63f-9be088037d74"
+	run := &WorkflowRunLog{
+		ID:            runID,
+		TenantID:      "workspace-1",
+		AgentID:       "agent-1",
+		Status:        dto.WorkflowRunStatusRunning,
+		TriggeredFrom: string(InvokeFromWebApp),
+		CreatedByRole: CreatedByRoleEndUser,
+		CreatedBy:     virtualAccountID,
+	}
+	handler := &WorkflowHandler{workflowService: &WorkflowService{workflowRunLogRepo: &mockWorkflowRunLogRepo{
+		runsByID: map[string]*WorkflowRunLog{runID: run},
+	}}}
+	ctx, recorder := newWorkflowRunEventsContext(http.MethodGet, "/workflow-runs/"+runID+"/events?after=bad", runID, virtualAccountID, "")
+	ctx.Set("virtual_account_id", virtualAccountID)
+
+	handler.GetWorkflowRunEvents(ctx)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d after access succeeds, body=%s", recorder.Code, http.StatusBadRequest, recorder.Body.String())
+	}
+}
+
+func TestGetWorkflowRunEventsRejectsDifferentWebAppIdentity(t *testing.T) {
+	runID := "run-webapp"
+	run := &WorkflowRunLog{
+		ID:            runID,
+		TenantID:      "workspace-1",
+		AgentID:       "agent-1",
+		Status:        dto.WorkflowRunStatusRunning,
+		TriggeredFrom: string(InvokeFromWebApp),
+		CreatedByRole: CreatedByRoleEndUser,
+		CreatedBy:     "88e60b24-997c-4b42-a63f-9be088037d74",
+	}
+	handler := &WorkflowHandler{workflowService: &WorkflowService{workflowRunLogRepo: &mockWorkflowRunLogRepo{
+		runsByID: map[string]*WorkflowRunLog{runID: run},
+	}}}
+	ctx, recorder := newWorkflowRunEventsContext(http.MethodGet, "/workflow-runs/"+runID+"/events?after=bad", runID, "86b9dd7a-2b9b-4acb-8be7-0f5818e8e69a", "")
+	ctx.Set("virtual_account_id", "86b9dd7a-2b9b-4acb-8be7-0f5818e8e69a")
+
+	handler.GetWorkflowRunEvents(ctx)
+
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d, body=%s", recorder.Code, http.StatusForbidden, recorder.Body.String())
+	}
+}
+
 func newWorkflowRunEventsContext(method, target, runID, accountID, organizationID string) (*gin.Context, *httptest.ResponseRecorder) {
 	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()

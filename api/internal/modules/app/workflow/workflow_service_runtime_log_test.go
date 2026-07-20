@@ -347,7 +347,7 @@ func TestRunDraftWorkflowNode_LinksNodeRuntimeLogToSingleStepRun(t *testing.T) {
 	}
 }
 
-func TestRunDraftWorkflowNode_OmitsWorkflowRunIDWhenRunLogCreateFails(t *testing.T) {
+func TestRunDraftWorkflowNode_StopsWhenRunLogCreateFails(t *testing.T) {
 	graph := `{
 		"nodes": [
 			{
@@ -386,22 +386,17 @@ func TestRunDraftWorkflowNode_OmitsWorkflowRunIDWhenRunLogCreateFails(t *testing
 		&dto.DraftWorkflowNodeRunRequest{Inputs: map[string]interface{}{"query": "hello"}},
 		"account-1",
 	)
-	if err != nil {
-		t.Fatalf("RunDraftWorkflowNode returned error: %v", err)
+	if err == nil {
+		t.Fatal("RunDraftWorkflowNode error = nil, want durable run creation failure")
 	}
-
-	response, ok := resp.(map[string]interface{})
-	if !ok {
-		t.Fatalf("response type = %T, want map[string]interface{}", resp)
+	if !strings.Contains(err.Error(), "create durable workflow node run") {
+		t.Fatalf("RunDraftWorkflowNode error = %v, want durable run failure", err)
 	}
-	if _, exists := response["workflow_run_id"]; exists {
-		t.Fatalf("workflow_run_id should be omitted when run log is not persisted, got %v", response["workflow_run_id"])
+	if resp != nil {
+		t.Fatalf("response = %#v, want nil", resp)
 	}
-	if len(nodeLogRepo.createdLogs) != 1 {
-		t.Fatalf("created node logs = %d, want 1", len(nodeLogRepo.createdLogs))
-	}
-	if nodeLogRepo.createdLogs[0].WorkflowRunID != nil {
-		t.Fatalf("node log workflow_run_id = %v, want nil", *nodeLogRepo.createdLogs[0].WorkflowRunID)
+	if len(nodeLogRepo.createdLogs) != 0 {
+		t.Fatalf("created node logs = %d, want 0", len(nodeLogRepo.createdLogs))
 	}
 }
 
@@ -844,6 +839,32 @@ func TestWorkflowElapsedTracker_ReplacesSameNodeLogElapsed(t *testing.T) {
 	got = tracker.recordNodeElapsed("answer-log", 8.1)
 	if math.Abs(got-26.7) > 0.000001 {
 		t.Fatalf("workflow elapsed milliseconds after replace = %.9f, want %.9f", got, 26.7)
+	}
+}
+
+func TestWorkflowRuntimeMetricsExcludeContainerAggregateAndSumLeafTokens(t *testing.T) {
+	containerID := "loop-1"
+	childZeroOutputs := `{"usage":{"PromptTokens":2,"CompletionTokens":8,"TotalTokens":10}}`
+	childOneOutputs := `{"usage":{"prompt_tokens":4,"completion_tokens":16,"total_tokens":20}}`
+	topLevelMetadata := `{"total_tokens":7}`
+	containerMetadata := `{"total_tokens":30}`
+	logs := []WorkflowNodeRuntimeLog{
+		{ID: "loop-log", NodeID: containerID, NodeType: string(shared.Loop), Status: "succeeded", ElapsedTime: 100, ExecutionMetadata: &containerMetadata},
+		{ID: "child-0", NodeID: "llm", NodeType: "llm", Status: "succeeded", ElapsedTime: 40, ContainerID: &containerID, Outputs: &childZeroOutputs},
+		{ID: "child-1", NodeID: "llm", NodeType: "llm", Status: "succeeded", ElapsedTime: 50, ContainerID: &containerID, Outputs: &childOneOutputs},
+		{ID: "extractor", NodeID: "extractor", NodeType: "parameter-extractor", Status: "succeeded", ElapsedTime: 3, ExecutionMetadata: &topLevelMetadata},
+	}
+	service := &WorkflowService{workflowNodeRuntimeLogRepo: &mockWorkflowNodeRuntimeLogRepo{logsByWorkflowRunID: logs}}
+
+	if got := service.workflowRunNodeElapsedMilliseconds(context.Background(), "run-1"); math.Abs(got-93) > 0.000001 {
+		t.Fatalf("workflow elapsed milliseconds = %.9f, want 93", got)
+	}
+	if got := service.workflowRunNodeTotalTokens(context.Background(), "run-1"); got != 37 {
+		t.Fatalf("workflow total tokens = %d, want 37", got)
+	}
+	event := workflowFinishedEventFromOutputs(&WorkflowRunLog{ID: "run-1"}, service, map[string]interface{}{"__total_tokens__": 0}, 93)
+	if got, ok := workflowEventInt(event["total_tokens"]); !ok || got != 37 {
+		t.Fatalf("workflow finished total_tokens = %#v, want 37", event["total_tokens"])
 	}
 }
 

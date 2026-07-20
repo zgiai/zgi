@@ -2,11 +2,15 @@ package workflow
 
 import (
 	"context"
+	"encoding/json"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/zgiai/zgi/api/internal/modules/app/conversation"
 	graph_entities "github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine/entities"
 	workflowpause "github.com/zgiai/zgi/api/internal/modules/app/workflow/pause"
+	"github.com/zgiai/zgi/api/pkg/database"
 	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
@@ -16,6 +20,7 @@ type workflowStreamPauseParams struct {
 	Ctx                    context.Context
 	WorkspaceID            string
 	AppID                  string
+	AccountID              string
 	WorkflowRunID          string
 	WorkflowID             string
 	RunType                string
@@ -38,6 +43,7 @@ type workflowStreamPauseParams struct {
 	ExecutionOutputs       map[string]map[string]interface{}
 	PredecessorNodeID      *string
 	RequestInputs          map[string]interface{}
+	SystemInputs           map[string]interface{}
 	ResponseMode           string
 	SharedVariablePool     *graph_entities.VariablePool
 	WorkflowService        *WorkflowService
@@ -78,12 +84,22 @@ func handleWorkflowStreamPause(params workflowStreamPauseParams) {
 
 	trackedElapsedTime := 0.0
 	totalSteps := params.NodeIndex
+	owner, hasExecutionOwner := workflowExecutionOwnerFromContext(ctx)
+	nodeUpdates := make([]workflowpause.NodePauseUpdate, 0, len(pausedNodes))
 	for _, pausedNode := range pausedNodes {
 		elapsedTime := ElapsedMillisecondsSince(pausedNode.NodeStartTime)
 		if pausedNode.NodeLogID != "" && params.WorkflowService != nil {
-			updateErr := params.WorkflowService.PauseWorkflowNodeRuntimeLog(ctx, pausedNode.NodeLogID, pausedNode.Outputs, pausedNode.ProcessData, pausedNode.ExecutionMetadata, elapsedTime)
-			if updateErr != nil {
-				logger.ErrorContext(ctx, "failed to pause workflow node runtime log", "node_id", pausedNode.NodeID, "node_type", pausedNode.NodeType, updateErr)
+			if hasExecutionOwner {
+				nodeUpdates = append(nodeUpdates, workflowpause.NodePauseUpdate{
+					NodeLogID: pausedNode.NodeLogID, Outputs: pausedNode.Outputs,
+					ProcessData: pausedNode.ProcessData, ExecutionMetadata: pausedNode.ExecutionMetadata,
+					ElapsedTime: elapsedTime,
+				})
+			} else {
+				updateErr := params.WorkflowService.PauseWorkflowNodeRuntimeLog(ctx, pausedNode.NodeLogID, pausedNode.Outputs, pausedNode.ProcessData, pausedNode.ExecutionMetadata, elapsedTime)
+				if updateErr != nil {
+					logger.ErrorContext(ctx, "failed to pause workflow node runtime log", "node_id", pausedNode.NodeID, "node_type", pausedNode.NodeType, updateErr)
+				}
 			}
 		}
 		if params.WorkflowElapsedTracker != nil {
@@ -99,8 +115,8 @@ func handleWorkflowStreamPause(params workflowStreamPauseParams) {
 		workflowElapsedTime = params.WorkflowService.workflowRunElapsedMillisecondsForEvent(ctx, params.WorkflowRunID, trackedElapsedTime)
 	}
 
-	if params.WorkflowRunID != "" && params.WorkflowService != nil {
-		if err := params.WorkflowService.PauseWorkflowRunLog(ctx, params.WorkflowRunID, params.AllNodeOutputs, workflowElapsedTime, int64(params.TotalWorkflowTokens), totalSteps); err != nil {
+	if !hasExecutionOwner && params.WorkflowRunID != "" && params.WorkflowService != nil {
+		if err := params.WorkflowService.pauseLegacyWorkflowRunLog(ctx, params.WorkflowRunID, params.AllNodeOutputs, workflowElapsedTime, int64(params.TotalWorkflowTokens), totalSteps); err != nil {
 			logger.ErrorContext(ctx, "failed to pause workflow run log", "workflow_run_id", params.WorkflowRunID, err)
 		}
 	}
@@ -108,6 +124,7 @@ func handleWorkflowStreamPause(params workflowStreamPauseParams) {
 	pausedNodeIDs := make([]string, 0, len(pausedNodes))
 	eventReasons := make([]interface{}, 0, len(pausedNodes))
 	persistReasons := make([]workflowpause.Reason, 0, len(pausedNodes))
+	outboundEvents := make([]*WorkflowStreamEvent, 0, len(pausedNodes)*2+1)
 	pauseReason := workflowpause.ReasonTypeApprovalRequired
 	for _, pausedNode := range pausedNodes {
 		pausedNodeIDs = append(pausedNodeIDs, pausedNode.NodeID)
@@ -115,17 +132,17 @@ func handleWorkflowStreamPause(params workflowStreamPauseParams) {
 			pauseReason = workflowpause.ReasonTypeQuestionAnswerRequired
 			questionAnswerMessageEvent := buildQuestionAnswerMessageEvent(params, pausedNode)
 			if len(questionAnswerMessageEvent) > 0 {
-				params.ResultChan <- &WorkflowStreamEvent{
+				outboundEvents = append(outboundEvents, &WorkflowStreamEvent{
 					EventType: workflowEventMessage,
 					Data:      questionAnswerMessageEvent,
-				}
+				})
 			}
 			questionAnswerRequestedEvent := buildQuestionAnswerRequestedEvent(params.WorkflowRunID, pausedNode)
 			if len(questionAnswerRequestedEvent) > 0 {
-				params.ResultChan <- &WorkflowStreamEvent{
+				outboundEvents = append(outboundEvents, &WorkflowStreamEvent{
 					EventType: workflowpause.EventQuestionAnswerRequested,
 					Data:      questionAnswerRequestedEvent,
-				}
+				})
 			}
 			eventReason := map[string]interface{}{
 				"type":       workflowpause.ReasonTypeQuestionAnswerRequired,
@@ -157,10 +174,10 @@ func handleWorkflowStreamPause(params workflowStreamPauseParams) {
 			TriggeredFrom: params.TriggeredFrom,
 		}, pausedNode.Outputs)
 		if len(approvalRequestedEvent) > 0 {
-			params.ResultChan <- &WorkflowStreamEvent{
+			outboundEvents = append(outboundEvents, &WorkflowStreamEvent{
 				EventType: workflowpause.EventApprovalRequested,
 				Data:      approvalRequestedEvent,
-			}
+			})
 		}
 		formID, _ := approvalRequestedEvent["form_id"].(string)
 		eventReasons = append(eventReasons, map[string]interface{}{
@@ -224,15 +241,84 @@ func handleWorkflowStreamPause(params workflowStreamPauseParams) {
 		VariablePool: workflowpause.SnapshotVariablePool(params.SharedVariablePool),
 		AnswerOutput: answerOutputState,
 	}
-	if pauseReason == workflowpause.ReasonTypeQuestionAnswerRequired {
-		persistQuestionAnswerPause(ctx, params.WorkspaceID, params.AppID, params.WorkflowRunID, pausedNodeIDs[0], persistReasons, pauseState)
-	} else {
-		persistApprovalPause(ctx, params.WorkspaceID, params.AppID, params.WorkflowRunID, pausedNodeIDs[0], persistReasons, pauseState)
+	outboundEvents = append(outboundEvents, &WorkflowStreamEvent{EventType: workflowpause.EventWorkflowPaused, Data: pauseEvent})
+	persistEvents := make([]workflowpause.AppendEventParams, 0, len(outboundEvents))
+	for index, event := range outboundEvents {
+		persistEvents = append(persistEvents, workflowpause.AppendEventParams{
+			EventType:      event.EventType,
+			EventData:      event.Data,
+			IdempotencyKey: "pause:" + params.WorkflowRunID + ":" + pausedNodeIDs[0] + ":" + event.EventType + ":" + strconv.Itoa(index),
+			OccurredAt:     pausedAt,
+		})
 	}
-
-	params.ResultChan <- &WorkflowStreamEvent{
-		EventType: workflowpause.EventWorkflowPaused,
-		Data:      pauseEvent,
+	outputsJSON := "{}"
+	if encoded, err := json.Marshal(params.AllNodeOutputs); err == nil {
+		outputsJSON = string(encoded)
+	}
+	pauseConversationID := ""
+	if params.RunType == "CONVERSATION_WORKFLOW" {
+		pauseConversationID = workflowStreamPauseConversationID(params)
+	}
+	pauseAnswer := ""
+	if answerOutputState != nil {
+		pauseAnswer = answerOutputState.FullAnswer
+	}
+	var messageProjection *conversation.AgentMessage
+	if pauseConversationID != "" {
+		messageData, err := buildApprovalPauseConversationMessageData(
+			params.WorkflowRunID,
+			params.AppID,
+			params.AccountID,
+			pauseConversationID,
+			params.SystemInputs,
+			params.RequestInputs,
+			params.TriggeredFrom,
+			pauseAnswer,
+		)
+		if err != nil {
+			logger.ErrorContext(ctx, "failed to build paused workflow message projection", "workflow_run_id", params.WorkflowRunID, err)
+			return
+		}
+		messageProjection, err = workflowConversationMessageFromData(messageData, owner.Generation)
+		if err != nil {
+			logger.ErrorContext(ctx, "failed to prepare paused workflow message projection", "workflow_run_id", params.WorkflowRunID, err)
+			return
+		}
+	}
+	service := workflowpause.NewService(database.GetDB())
+	if _, err := service.Save(ctx, workflowpause.SaveParams{
+		TenantID:       params.WorkspaceID,
+		AppID:          params.AppID,
+		WorkflowRunID:  params.WorkflowRunID,
+		NodeID:         pausedNodeIDs[0],
+		Reason:         pauseReason,
+		ConversationID: pauseConversationID,
+		State:          pauseState,
+		Reasons:        persistReasons,
+		ExecutionID:    owner.ExecutionID,
+		Generation:     owner.Generation,
+		RunOutputsJSON: outputsJSON,
+		RunElapsedTime: workflowElapsedTime,
+		RunTotalTokens: int64(params.TotalWorkflowTokens),
+		RunTotalSteps:  totalSteps,
+		MessageStatus: func() string {
+			if pauseConversationID == "" {
+				return ""
+			}
+			return workflowPausedMessageStatus(pauseEvent)
+		}(),
+		MessageAnswer:       pauseAnswer,
+		UpdateMessageAnswer: pauseConversationID != "",
+		MessageProjection:   messageProjection,
+		NodeUpdates:         nodeUpdates,
+		Events:              persistEvents,
+	}); err != nil {
+		logger.ErrorContext(ctx, "failed to persist workflow pause transaction", "workflow_run_id", params.WorkflowRunID, err)
+		return
+	}
+	recordWorkflowDBStatements(ctx, "paused")
+	for _, event := range outboundEvents {
+		params.ResultChan <- event
 	}
 }
 

@@ -2,11 +2,13 @@ package workflow
 
 import (
 	"context"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/zgiai/zgi/api/internal/modules/app/agents"
+	workflowpause "github.com/zgiai/zgi/api/internal/modules/app/workflow/pause"
 	workspace_model "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	"github.com/zgiai/zgi/api/internal/util"
 	"github.com/zgiai/zgi/api/pkg/logger"
@@ -21,6 +23,10 @@ type runtimeLogWorkspacePermissionChecker interface {
 	CheckWorkspacePermission(ctx context.Context, organizationID, workspaceID, accountID string, permissionCode workspace_model.WorkspacePermissionCode) (bool, error)
 }
 
+type runtimeLogEventReader interface {
+	ListEvents(ctx context.Context, tenantID, workflowRunID string, afterSequence, limit int) (*workflowpause.RunEventsPayload, error)
+}
+
 type RuntimeLogHandlerOption func(*RuntimeLogHandler)
 
 // RuntimeLogHandler handles runtime log query operations
@@ -29,6 +35,7 @@ type RuntimeLogHandler struct {
 	workflowNodeRuntimeLogRepo WorkflowNodeRuntimeLogRepository
 	agentsRepo                 runtimeLogAgentResolver
 	enterpriseService          runtimeLogWorkspacePermissionChecker
+	workflowRunEventReader     runtimeLogEventReader
 }
 
 // NewRuntimeLogHandler creates a new RuntimeLogHandler
@@ -49,6 +56,12 @@ func WithRuntimeLogAuthorization(agentsRepo runtimeLogAgentResolver, enterpriseS
 	return func(handler *RuntimeLogHandler) {
 		handler.agentsRepo = agentsRepo
 		handler.enterpriseService = enterpriseService
+	}
+}
+
+func WithRuntimeLogEventReader(reader runtimeLogEventReader) RuntimeLogHandlerOption {
+	return func(handler *RuntimeLogHandler) {
+		handler.workflowRunEventReader = reader
 	}
 }
 
@@ -283,14 +296,15 @@ func (h *RuntimeLogHandler) GetWorkflowRunNodeLogs(c *gin.Context) {
 	items := make([]map[string]interface{}, 0, len(nodeLogs))
 	for _, nodeLog := range nodeLogs {
 		item := map[string]interface{}{
-			"id":           nodeLog.ID,
-			"node_id":      nodeLog.NodeID,
-			"node_type":    nodeLog.NodeType,
-			"title":        nodeLog.Title,
-			"index":        nodeLog.Index,
-			"status":       nodeLog.Status,
-			"elapsed_time": workflowNodeElapsedMilliseconds(nodeLog),
-			"created_at":   nodeLog.CreatedAt.Unix(),
+			"id":            nodeLog.ID,
+			"node_id":       nodeLog.NodeID,
+			"node_type":     nodeLog.NodeType,
+			"title":         nodeLog.Title,
+			"index":         nodeLog.Index,
+			"status":        nodeLog.Status,
+			"elapsed_time":  workflowNodeElapsedMilliseconds(nodeLog),
+			"created_at":    nodeLog.CreatedAt.Unix(),
+			"created_at_ms": nodeLog.CreatedAt.UnixMilli(),
 		}
 
 		if nodeLog.PredecessorNodeID != nil {
@@ -326,10 +340,175 @@ func (h *RuntimeLogHandler) GetWorkflowRunNodeLogs(c *gin.Context) {
 		items = append(items, item)
 	}
 
+	if h.workflowRunEventReader != nil {
+		eventItems, err := h.internalContainerNodeLogItems(c.Request.Context(), runID, items)
+		if err != nil {
+			logger.WarnContext(c.Request.Context(), "failed to load internal container node events", "workflow_run_id", runID, err)
+		} else {
+			items = append(items, eventItems...)
+		}
+	}
+
+	sort.SliceStable(items, func(i, j int) bool {
+		leftTime, _ := workflowFloatValue(items[i]["created_at_ms"])
+		rightTime, _ := workflowFloatValue(items[j]["created_at_ms"])
+		if leftTime != rightTime {
+			return leftTime < rightTime
+		}
+		leftSequence, _ := workflowEventInt(items[i]["sequence"])
+		rightSequence, _ := workflowEventInt(items[j]["sequence"])
+		return leftSequence < rightSequence
+	})
+
 	response.Success(c, map[string]interface{}{
 		"data":  items,
 		"total": len(items),
 	})
+}
+
+func (h *RuntimeLogHandler) internalContainerNodeLogItems(ctx context.Context, runID string, persistedItems []map[string]interface{}) ([]map[string]interface{}, error) {
+	if h == nil || h.workflowRunEventReader == nil || strings.TrimSpace(runID) == "" {
+		return nil, nil
+	}
+
+	existingExecutionIDs := make(map[string]struct{}, len(persistedItems))
+	for _, item := range persistedItems {
+		if executionID := workflowEventString(firstWorkflowValue(item["node_execution_id"], item["id"])); executionID != "" {
+			existingExecutionIDs[executionID] = struct{}{}
+		}
+	}
+
+	const pageSize = 200
+	afterSequence := 0
+	items := make([]map[string]interface{}, 0)
+	for {
+		payload, err := h.workflowRunEventReader.ListEvents(ctx, "", runID, afterSequence, pageSize)
+		if err != nil {
+			return nil, err
+		}
+		if payload == nil || len(payload.Events) == 0 {
+			break
+		}
+
+		for _, event := range payload.Events {
+			if event.Sequence > afterSequence {
+				afterSequence = event.Sequence
+			}
+			item := runtimeLogItemFromInternalNodeEvent(event)
+			if item == nil {
+				continue
+			}
+			executionID := workflowEventString(item["node_execution_id"])
+			if _, exists := existingExecutionIDs[executionID]; exists {
+				continue
+			}
+			existingExecutionIDs[executionID] = struct{}{}
+			items = append(items, item)
+		}
+
+		if len(payload.Events) < pageSize {
+			break
+		}
+	}
+	return items, nil
+}
+
+func runtimeLogItemFromInternalNodeEvent(event workflowpause.RunEventPayload) map[string]interface{} {
+	if event.Event != workflowpause.EventNodeFinished || event.Data == nil {
+		return nil
+	}
+	data := event.Data
+	metadata, _ := data["execution_metadata"].(map[string]interface{})
+	metadata = copyWorkflowAnyMap(metadata)
+	iterationID := workflowEventString(firstWorkflowValue(data["iteration_id"], metadata["iteration_id"]))
+	loopID := workflowEventString(firstWorkflowValue(data["loop_id"], metadata["loop_id"]))
+	if iterationID == "" && loopID == "" {
+		return nil
+	}
+
+	executionID := workflowEventString(firstWorkflowValue(data["execution_id"], data["id"]))
+	if executionID == "" {
+		return nil
+	}
+	nodeID := workflowEventString(data["node_id"])
+	nodeType := workflowEventString(data["node_type"])
+	title := workflowEventString(data["title"])
+	if title == "" {
+		title = firstNonEmptyWorkflowString(nodeType, nodeID)
+	}
+	createdAt := event.CreatedAt
+	if value, ok := workflowEventInt(data["created_at"]); ok {
+		createdAt = int64(value)
+	}
+	createdAtMs := createdAt * 1000
+	if value, ok := workflowEventInt(data["created_at_ms"]); ok {
+		createdAtMs = int64(value)
+	}
+
+	item := map[string]interface{}{
+		"id":                executionID,
+		"node_execution_id": executionID,
+		"node_id":           nodeID,
+		"node_type":         nodeType,
+		"title":             title,
+		"index":             1,
+		"status":            firstNonEmptyWorkflowString(workflowEventString(data["status"]), "succeeded"),
+		"elapsed_time":      firstWorkflowValue(data["elapsed_time"], 0),
+		"created_at":        createdAt,
+		"created_at_ms":     createdAtMs,
+		"sequence":          event.Sequence,
+	}
+	if value, ok := workflowEventInt(data["index"]); ok {
+		item["index"] = value
+	}
+	if predecessor := workflowEventString(data["predecessor_node_id"]); predecessor != "" {
+		item["predecessor_node_id"] = predecessor
+	}
+	if value, ok := workflowEventInt(data["finished_at"]); ok {
+		item["finished_at"] = int64(value)
+	}
+	if errValue := data["error"]; errValue != nil && workflowRunEventErrorMessage(errValue) != "" {
+		item["error"] = errValue
+	}
+	if inputs, ok := data["inputs"].(map[string]interface{}); ok && len(inputs) > 0 {
+		item["inputs"] = FilterFrontendInputs(nodeType, inputs)
+	}
+	if outputs, ok := data["outputs"].(map[string]interface{}); ok && len(outputs) > 0 {
+		item["outputs"] = FilterFrontendOutputs(nodeType, outputs)
+	}
+	if processData, ok := data["process_data"].(map[string]interface{}); ok && len(processData) > 0 {
+		item["process_data"] = processData
+	}
+
+	if iterationID != "" {
+		item["iteration_id"] = iterationID
+		metadata["iteration_id"] = iterationID
+		if value, ok := workflowEventInt(firstWorkflowValue(data["iteration_index"], metadata["iteration_index"])); ok {
+			item["iteration_index"] = value
+			metadata["iteration_index"] = value
+		}
+	}
+	if loopID != "" {
+		item["loop_id"] = loopID
+		metadata["loop_id"] = loopID
+		if value, ok := workflowEventInt(firstWorkflowValue(data["loop_index"], metadata["loop_index"])); ok {
+			item["loop_index"] = value
+			metadata["loop_index"] = value
+		}
+	}
+	if len(metadata) > 0 {
+		item["execution_metadata"] = metadata
+	}
+	return item
+}
+
+func firstNonEmptyWorkflowString(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func (h *RuntimeLogHandler) requireWorkflowRunAccess(c *gin.Context, agentID, runID string) bool {

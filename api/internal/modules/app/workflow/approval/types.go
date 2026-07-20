@@ -128,6 +128,28 @@ type SubmitRequest struct {
 	Action string                 `json:"action"`
 }
 
+// SubmitOptions controls which workflow-configured delivery channels may
+// authorize an interactive submission. Internal/debug callers intentionally
+// use the zero value; published application surfaces opt into the stricter
+// WebApp channel check.
+type SubmitOptions struct {
+	RequireWebAppEnabled bool
+}
+
+type SubmitResult struct {
+	Form             *Form
+	ResumeState      string
+	EventCursor      int
+	IdempotentReplay bool
+	Outbox           *workflowRuntimeOutboxRef
+}
+
+type workflowRuntimeOutboxRef struct {
+	ID             string
+	IdempotencyKey string
+	PayloadJSON    string
+}
+
 type CreateRuntimeFormParams struct {
 	TenantID      string
 	AppID         string

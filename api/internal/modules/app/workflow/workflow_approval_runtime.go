@@ -68,14 +68,22 @@ func (h *WorkflowHandler) resumeApprovalWorkflow(ctx context.Context, form *appr
 		responseMode = "streaming"
 	}
 
-	if err := workflowService.ResumeWorkflowRunLog(ctx, run.ID); err != nil {
-		return err
+	if run.RuntimeProtocolVersion >= workflowRuntimeProtocolVersionV2 {
+		claim, claimErr := claimWorkflowResume(ctx, pauseService, run, pauseRecord.ID)
+		if claimErr != nil {
+			return claimErr
+		}
+		ctx = withWorkflowExecutionOwner(ctx, workflowExecutionOwner{WorkflowRunID: run.ID, ExecutionID: claim.ExecutionID, Generation: claim.Generation, PauseID: claim.PauseID, PauseGeneration: claim.PauseGeneration})
+		var stopRenewal func()
+		ctx, stopRenewal = startWorkflowExecutionLeaseRenewal(ctx, pauseService, *claim)
+		defer stopRenewal()
+	} else {
+		if err := h.resumeLegacyWorkflowContinuation(ctx, workflowService, pauseService, run, "approval_resume"); err != nil {
+			return err
+		}
 	}
-
-	if err := pauseService.MarkResumed(ctx, run.ID); err != nil {
-		logger.WarnContext(ctx, "failed to mark approval pause resumed", "workflow_run_id", run.ID, err)
-	}
-	h.updateApprovalConversationMessageStatus(ctx, run.ID, conversation.AgentMessageStatusRunning, nil)
+	ctx, cancelResume := context.WithCancelCause(ctx)
+	defer cancelResume(nil)
 
 	req := &dto.DraftWorkflowRunRequest{
 		Inputs:       inputs,
@@ -108,13 +116,17 @@ func (h *WorkflowHandler) resumeApprovalWorkflow(ctx context.Context, form *appr
 		resumeStartedAt.Unix(),
 		workflowStartReasonResumption,
 	)
-	eventDispatcher := newWorkflowRunEventDispatcher(run.TenantID, run.AgentID, run.ID, true, workflowResumeEventHandler(onEvent))
-	defer eventDispatcher.Close(ctx)
-	eventDispatcher.Dispatch(ctx, workflowpause.EventWorkflowStarted, startedPayload)
+	eventDispatcher := newWorkflowRunEventDispatcher(run.TenantID, run.AgentID, run.ID, run.RuntimeProtocolVersion < workflowRuntimeProtocolVersionV2, workflowResumeEventHandler(onEvent))
+	defer func() { _ = eventDispatcher.Close(ctx) }()
+	if run.RuntimeProtocolVersion < workflowRuntimeProtocolVersionV2 {
+		if err := eventDispatcher.Dispatch(ctx, workflowpause.EventWorkflowStarted, startedPayload); err != nil {
+			return err
+		}
+	}
 
 	go func() {
 		defer close(doneChan)
-		h.executeWorkflowStream(nil, ctx, run.TenantID, run.AgentID, req, run.CreatedBy, run.ID, run.ID, run.WorkflowID, systemInputs, run.SequenceNumber, resultChan, errorChan, doneChan, isDraft, runType, run.TriggeredFrom)
+		h.executeWorkflowStream(ctx, run.TenantID, run.AgentID, req, run.CreatedBy, run.ID, run.ID, run.WorkflowID, systemInputs, run.SequenceNumber, resultChan, errorChan, doneChan, isDraft, runType, run.TriggeredFrom)
 	}()
 
 	return h.drainApprovalResumeStream(ctx, pauseService, workflowService, run, resultChan, errorChan, doneChan, resumeStartedAt, runType, systemInputs, inputs, eventDispatcher)
@@ -167,12 +179,50 @@ func (h *WorkflowHandler) resumeQuestionAnswerWorkflow(ctx context.Context, work
 	if responseMode == "" {
 		responseMode = "streaming"
 	}
-	if err := workflowService.ResumeWorkflowRunLog(ctx, run.ID); err != nil {
-		return err
+	var submittedEvent *workflowpause.RunEventPayload
+	if run.RuntimeProtocolVersion >= workflowRuntimeProtocolVersionV2 {
+		submission, submitErr := pauseService.SubmitInteraction(
+			ctx,
+			run.ID,
+			pauseRecord.ID,
+			"question-answer",
+			workflowpause.EventQuestionAnswerSubmitted,
+			buildQuestionAnswerSubmittedEvent(run.ID, pauseState, inputs),
+			fmt.Sprintf("question-answer:%s:%d", pauseRecord.ID, pauseRecord.Generation),
+		)
+		if submitErr != nil {
+			return submitErr
+		}
+		if submission != nil {
+			submittedEvent = submission.Event
+			publishWorkflowCommittedTail(ctx, run.ID, submission.Event)
+			if !submission.ResumeReady {
+				if onEvent != nil && submission.Event != nil {
+					data := copyWorkflowAnyMap(submission.Event.Data)
+					data["sequence"] = submission.Event.Sequence
+					data["event_id"] = submission.Event.EventID
+					if err := onEvent(workflowpause.EventQuestionAnswerSubmitted, data); err != nil {
+						return err
+					}
+				}
+				return nil
+			}
+		}
+		claim, claimErr := claimWorkflowResume(ctx, pauseService, run, pauseRecord.ID)
+		if claimErr != nil {
+			return claimErr
+		}
+		ctx = withWorkflowExecutionOwner(ctx, workflowExecutionOwner{WorkflowRunID: run.ID, ExecutionID: claim.ExecutionID, Generation: claim.Generation, PauseID: claim.PauseID, PauseGeneration: claim.PauseGeneration})
+		var stopRenewal func()
+		ctx, stopRenewal = startWorkflowExecutionLeaseRenewal(ctx, pauseService, *claim)
+		defer stopRenewal()
+	} else {
+		if err := h.resumeLegacyWorkflowContinuation(ctx, workflowService, pauseService, run, "question_resume"); err != nil {
+			return err
+		}
 	}
-	if err := pauseService.MarkResumed(ctx, run.ID); err != nil {
-		logger.WarnContext(ctx, "failed to mark question answer pause resumed", "workflow_run_id", run.ID, err)
-	}
+	ctx, cancelResume := context.WithCancelCause(ctx)
+	defer cancelResume(nil)
 	req := &dto.DraftWorkflowRunRequest{
 		Inputs:       inputs,
 		ResponseMode: responseMode,
@@ -198,13 +248,25 @@ func (h *WorkflowHandler) resumeQuestionAnswerWorkflow(ctx context.Context, work
 		resumeStartedAt.Unix(),
 		workflowStartReasonResumption,
 	)
-	eventDispatcher := newWorkflowRunEventDispatcher(run.TenantID, run.AgentID, run.ID, true, workflowResumeEventHandler(onEvent))
-	defer eventDispatcher.Close(ctx)
-	eventDispatcher.Dispatch(ctx, workflowpause.EventWorkflowStarted, startedPayload)
-	eventDispatcher.Dispatch(ctx, workflowpause.EventQuestionAnswerSubmitted, buildQuestionAnswerSubmittedEvent(run.ID, pauseState, req.Inputs))
+	eventDispatcher := newWorkflowRunEventDispatcher(run.TenantID, run.AgentID, run.ID, run.RuntimeProtocolVersion < workflowRuntimeProtocolVersionV2, workflowResumeEventHandler(onEvent))
+	defer func() { _ = eventDispatcher.Close(ctx) }()
+	if run.RuntimeProtocolVersion < workflowRuntimeProtocolVersionV2 {
+		if err := eventDispatcher.Dispatch(ctx, workflowpause.EventWorkflowStarted, startedPayload); err != nil {
+			return err
+		}
+	}
+	questionSubmittedData := buildQuestionAnswerSubmittedEvent(run.ID, pauseState, req.Inputs)
+	if submittedEvent != nil {
+		questionSubmittedData["__stored_sequence"] = submittedEvent.Sequence
+		questionSubmittedData["__stored_event_id"] = submittedEvent.EventID
+		questionSubmittedData["__stored_event_payload"] = submittedEvent
+	}
+	if err := eventDispatcher.Dispatch(ctx, workflowpause.EventQuestionAnswerSubmitted, questionSubmittedData); err != nil {
+		return err
+	}
 	go func() {
 		defer close(doneChan)
-		h.executeWorkflowStream(nil, ctx, run.TenantID, run.AgentID, req, run.CreatedBy, run.ID, run.ID, run.WorkflowID, systemInputs, run.SequenceNumber, resultChan, errorChan, doneChan, isDraft, runType, run.TriggeredFrom)
+		h.executeWorkflowStream(ctx, run.TenantID, run.AgentID, req, run.CreatedBy, run.ID, run.ID, run.WorkflowID, systemInputs, run.SequenceNumber, resultChan, errorChan, doneChan, isDraft, runType, run.TriggeredFrom)
 	}()
 	return h.drainApprovalResumeStream(ctx, pauseService, workflowService, run, resultChan, errorChan, doneChan, resumeStartedAt, runType, systemInputs, inputs, eventDispatcher)
 }
@@ -225,6 +287,9 @@ func (h *WorkflowHandler) StopWorkflowContinuation(ctx context.Context, workflow
 	if err := workflowService.StopWorkflowTask(ctx, run.TenantID, run.AgentID, run.ID, accountID); err != nil {
 		return err
 	}
+	if run.RuntimeProtocolVersion >= workflowRuntimeProtocolVersionV2 {
+		return nil
+	}
 	now := time.Now().Unix()
 	payload := map[string]interface{}{
 		"id":              run.ID,
@@ -234,8 +299,7 @@ func (h *WorkflowHandler) StopWorkflowContinuation(ctx context.Context, workflow
 		"error":           "Workflow stopped by user.",
 		"created_at":      now,
 	}
-	appendWorkflowRunEvent(ctx, run.TenantID, run.AgentID, run.ID, "workflow_stopped", payload)
-	appendWorkflowRunEvent(ctx, run.TenantID, run.AgentID, run.ID, workflowpause.EventWorkflowFinished, payload)
+	appendLegacyWorkflowStopEvents(ctx, run, payload)
 	return nil
 }
 
@@ -292,7 +356,12 @@ func workflowResumeEventHandler(onEvent func(string, map[string]interface{}) err
 func (h *WorkflowHandler) drainApprovalResumeStream(ctx context.Context, pauseService *workflowpause.Service, workflowService *WorkflowService, run *WorkflowRunLog, resultChan <-chan *WorkflowStreamEvent, errorChan <-chan error, doneChan <-chan map[string]interface{}, resumeStartedAt time.Time, runType string, systemInputs map[string]interface{}, resumeInputs map[string]interface{}, eventDispatcher *workflowRunEventDispatcher) error {
 	messageEventSent := false
 	approvalExpired := false
+	existingAnswer := h.approvalExistingConversationAnswer(ctx, run)
+	conversationAnswer := newWorkflowConversationAnswerAccumulator(existingAnswer)
 	answerSnapshots := newAnswerSnapshotWriter(h, run.ID, run.AgentID, run.CreatedBy, systemInputs, resumeInputs, run.TriggeredFrom)
+	if answerSnapshots != nil {
+		answerSnapshots.SeedPersistedAnswer(existingAnswer)
+	}
 	for {
 		selection := receiveWorkflowStreamSelection(resultChan, errorChan, doneChan, ctx.Done())
 		switch selection.kind {
@@ -301,45 +370,105 @@ func (h *WorkflowHandler) drainApprovalResumeStream(ctx context.Context, pauseSe
 				continue
 			}
 			if selection.event.EventType == workflowEventAnswerSnapshotReady {
+				var persistErr error
 				if runType == "CONVERSATION_WORKFLOW" && answerSnapshots != nil {
-					answerSnapshots.Persist(ctx, workflowAnswerSnapshotText(selection.event.Data), conversation.AgentMessageStatusRunning, false)
+					conversationAnswer.Merge(workflowAnswerSnapshotText(selection.event.Data))
+					if forceFlush, _ := selection.event.Data["force_flush"].(bool); forceFlush {
+						persistErr = answerSnapshots.Persist(ctx, conversationAnswer.String(), conversation.AgentMessageStatusRunning, true)
+					} else {
+						answerSnapshots.PersistAsync(ctx, conversationAnswer.String(), conversation.AgentMessageStatusRunning, false)
+					}
+				}
+				if selection.event.Persisted != nil {
+					selection.event.Persisted <- persistErr
 				}
 				continue
 			}
-			if selection.event.EventType == workflowEventMessage {
+			if selection.event.EventType == workflowEventMessage && workflowMessageEventKind(selection.event.Data) != workflowMessageKindQuestionAnswerPrompt {
 				messageEventSent = true
+				conversationAnswer.Append(workflowMessageEventText(selection.event.Data))
+				if runType == "CONVERSATION_WORKFLOW" && answerSnapshots != nil {
+					// Approval continuations do not have a long-lived POST SSE
+					// transport. Feed every visible message into the coalescing
+					// writer so snapshot+tail observers can see the answer while a
+					// container is still running. The writer bounds database writes
+					// to the 750ms/4KiB checkpoint cadence.
+					answerSnapshots.PersistAsync(ctx, conversationAnswer.String(), conversation.AgentMessageStatusRunning, false)
+				}
 			}
 			if selection.event.EventType == workflowpause.EventApprovalExpired {
 				approvalExpired = true
 			}
 			eventData := sanitizeWorkflowEventData(selection.event.Data)
+			if selection.event.EventType == workflowpause.EventWorkflowFinished && run.RuntimeProtocolVersion >= workflowRuntimeProtocolVersionV2 {
+				// The executor terminal signal is transient. The done branch owns the
+				// durable FinalizeRun transaction and only publishes after it commits.
+				continue
+			}
+			if selection.event.EventType == workflowpause.EventWorkflowFinished && runType == "CONVERSATION_WORKFLOW" {
+				eventData = workflowEventDataWithConversationAnswer(eventData, conversationAnswer.String())
+				if answerSnapshots != nil {
+					if err := answerSnapshots.PersistFinal(ctx, conversationAnswer.String(), approvalConversationMessageStatusFromWorkflowEvent(eventData, approvalExpired)); err != nil {
+						return err
+					}
+				}
+				persistWorkflowRunConversationAnswer(ctx, workflowService, run, eventData, conversationAnswer.String())
+			}
 			if selection.event.EventType == workflowpause.EventApprovalResultFilled && approvalResultFilledEventAlreadyRecorded(ctx, pauseService, run, eventData) {
 				continue
 			}
-			eventDispatcher.Dispatch(ctx, selection.event.EventType, eventData)
 			if selection.event.EventType == workflowpause.EventWorkflowPaused {
-				h.updateApprovalConversationMessageStatus(ctx, run.ID, conversation.AgentMessageStatusPendingApproval, nil)
+				if run.RuntimeProtocolVersion >= workflowRuntimeProtocolVersionV2 {
+					if answerSnapshots != nil {
+						answerSnapshots.closeWithoutFlush()
+					}
+				} else if answerSnapshots != nil {
+					if err := answerSnapshots.PersistFinal(ctx, conversationAnswer.String(), conversation.AgentMessageStatusPendingApproval); err != nil {
+						return err
+					}
+				}
+				if err := eventDispatcher.Dispatch(ctx, selection.event.EventType, eventData); err != nil {
+					return err
+				}
 				return nil
 			}
+			if err := eventDispatcher.Dispatch(ctx, selection.event.EventType, eventData); err != nil {
+				return err
+			}
 			if selection.event.EventType == workflowpause.EventWorkflowFinished {
-				h.updateApprovalConversationMessageStatus(ctx, run.ID, approvalConversationMessageStatusFromWorkflowEvent(eventData, approvalExpired), nil)
 				return nil
 			}
 		case workflowStreamSelectionError:
 			if selection.err == nil {
 				continue
 			}
-			h.persistApprovalResumeError(ctx, pauseService, workflowService, run, selection.err, resumeStartedAt, eventDispatcher)
+			if runType == "CONVERSATION_WORKFLOW" && answerSnapshots != nil {
+				if run.RuntimeProtocolVersion >= workflowRuntimeProtocolVersionV2 {
+					answerSnapshots.closeWithoutFlush()
+				} else if err := answerSnapshots.PersistFinal(ctx, conversationAnswer.String(), conversation.AgentMessageStatusError); err != nil {
+					return err
+				}
+			}
+			h.persistApprovalResumeError(ctx, pauseService, workflowService, run, selection.err, resumeStartedAt, eventDispatcher, conversationAnswer.String())
 			return selection.err
 		case workflowStreamSelectionDone:
 			if selection.ok {
-				h.persistApprovalResumeCompletion(ctx, pauseService, workflowService, run, selection.outputs, resumeStartedAt, runType, systemInputs, resumeInputs, messageEventSent, approvalExpired, eventDispatcher)
+				if runType == "CONVERSATION_WORKFLOW" && answerSnapshots != nil {
+					if run.RuntimeProtocolVersion >= workflowRuntimeProtocolVersionV2 {
+						answerSnapshots.closeWithoutFlush()
+					} else if err := answerSnapshots.PersistFinal(ctx, conversationAnswer.String(), conversation.AgentMessageStatusCompleted); err != nil {
+						return err
+					}
+				}
+				if err := h.persistApprovalResumeCompletion(ctx, pauseService, workflowService, run, selection.outputs, resumeStartedAt, runType, systemInputs, resumeInputs, messageEventSent, approvalExpired, eventDispatcher, conversationAnswer.String()); err != nil {
+					return err
+				}
 			}
 			return nil
 		case workflowStreamSelectionContextDone:
 			err := ctx.Err()
 			if err != nil {
-				h.persistApprovalResumeError(ctx, pauseService, workflowService, run, err, resumeStartedAt, eventDispatcher)
+				h.persistApprovalResumeError(ctx, pauseService, workflowService, run, err, resumeStartedAt, eventDispatcher, conversationAnswer.String())
 			}
 			return ctx.Err()
 		case workflowStreamSelectionHeartbeat:
@@ -374,18 +503,65 @@ func approvalResultFilledEventAlreadyRecorded(ctx context.Context, pauseService 
 	return false
 }
 
-func (h *WorkflowHandler) persistApprovalResumeCompletion(ctx context.Context, pauseService *workflowpause.Service, workflowService *WorkflowService, run *WorkflowRunLog, outputs map[string]interface{}, resumeStartedAt time.Time, runType string, systemInputs map[string]interface{}, resumeInputs map[string]interface{}, messageEventSent bool, approvalExpired bool, eventDispatcher *workflowRunEventDispatcher) {
+func (h *WorkflowHandler) persistApprovalResumeCompletion(ctx context.Context, pauseService *workflowpause.Service, workflowService *WorkflowService, run *WorkflowRunLog, outputs map[string]interface{}, resumeStartedAt time.Time, runType string, systemInputs map[string]interface{}, resumeInputs map[string]interface{}, messageEventSent bool, approvalExpired bool, eventDispatcher *workflowRunEventDispatcher, streamedAnswer string) error {
 	if runType == "CONVERSATION_WORKFLOW" {
 		previousAnswer := h.approvalExistingConversationAnswer(ctx, run)
-		conversationID, answer := h.persistApprovalResumeConversationEvents(ctx, run, outputs, systemInputs, messageEventSent, previousAnswer)
-		h.persistApprovalResumeConversationMessage(ctx, run, outputs, systemInputs, resumeInputs, conversationID, answer, approvalConversationMessageStatusFromOutputs(outputs, approvalExpired))
+		conversationID, answer, terminalMessageEnd := h.persistApprovalResumeConversationEvents(ctx, run, outputs, systemInputs, messageEventSent, previousAnswer, streamedAnswer)
+		messageStatus := approvalConversationMessageStatusFromOutputs(outputs, approvalExpired)
+		// Agent-embedded conversational workflows project their answer into the
+		// host chat runtime message, not into agents_messages. Requiring a
+		// workflow-owned message projection here would roll back an otherwise
+		// successful terminal transaction after an approval continuation.
+		if run.RuntimeProtocolVersion >= workflowRuntimeProtocolVersionV2 {
+			var err error
+			messageStatus, terminalMessageEnd, err = resolveWorkflowConversationProjection(ctx, run.ID, conversationID, messageStatus, terminalMessageEnd)
+			if err != nil {
+				return fmt.Errorf("resolve resumed workflow conversation projection: %w", err)
+			}
+		}
+		if run.RuntimeProtocolVersion < workflowRuntimeProtocolVersionV2 {
+			h.persistApprovalResumeConversationMessage(ctx, run, outputs, systemInputs, resumeInputs, conversationID, answer, messageStatus)
+		}
+		outputs = workflowOutputsWithConversationAnswer(outputs, answer)
+		if run.RuntimeProtocolVersion < workflowRuntimeProtocolVersionV2 {
+			persistWorkflowRunConversationAnswerFromOutputs(ctx, workflowService, run, outputs, answer)
+		}
+		return h.persistApprovalResumeFinished(ctx, pauseService, workflowService, run, outputs, resumeStartedAt, eventDispatcher, answer, messageStatus, terminalMessageEnd)
 	}
-	h.persistApprovalResumeFinished(ctx, pauseService, workflowService, run, outputs, resumeStartedAt, eventDispatcher)
+	return h.persistApprovalResumeFinished(ctx, pauseService, workflowService, run, outputs, resumeStartedAt, eventDispatcher, "", "", nil)
 }
 
-func (h *WorkflowHandler) persistApprovalResumeConversationEvents(ctx context.Context, run *WorkflowRunLog, outputs map[string]interface{}, systemInputs map[string]interface{}, messageEventSent bool, previousAnswer string) (string, string) {
+func workflowOwnsConversationProjection(ctx context.Context, workflowRunID, conversationID string) (bool, error) {
+	if strings.TrimSpace(workflowRunID) == "" || strings.TrimSpace(conversationID) == "" {
+		return false, nil
+	}
+	var count int64
+	err := database.GetDB().WithContext(ctx).Model(&conversation.AgentMessage{}).
+		Where("workflow_run_id = ? AND conversation_id = ? AND deleted_at IS NULL", workflowRunID, conversationID).
+		Count(&count).Error
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
+func resolveWorkflowConversationProjection(ctx context.Context, workflowRunID, conversationID, messageStatus string, messageEnd map[string]interface{}) (string, map[string]interface{}, error) {
+	if messageStatus == "" || len(messageEnd) == 0 {
+		return "", nil, nil
+	}
+	ownsProjection, err := workflowOwnsConversationProjection(ctx, workflowRunID, conversationID)
+	if err != nil {
+		return "", nil, err
+	}
+	if !ownsProjection {
+		return "", nil, nil
+	}
+	return messageStatus, messageEnd, nil
+}
+
+func (h *WorkflowHandler) persistApprovalResumeConversationEvents(ctx context.Context, run *WorkflowRunLog, outputs map[string]interface{}, systemInputs map[string]interface{}, messageEventSent bool, previousAnswer string, streamedAnswer string) (string, string, map[string]interface{}) {
 	if run == nil {
-		return "", ""
+		return "", "", nil
 	}
 	conversationID := ""
 	if value, ok := systemInputs["sys.conversation_id"].(string); ok {
@@ -395,8 +571,15 @@ func (h *WorkflowHandler) persistApprovalResumeConversationEvents(ctx context.Co
 		conversationID = workflowRunInputConversationID(*run)
 	}
 	answer := extractWorkflowAnswer(outputs)
+	if answer != "" {
+		// The terminal workflow output is authoritative. Streamed chunks and
+		// snapshots are a live projection and must not override it.
+		answer = mergeApprovalConversationAnswer(previousAnswer, answer)
+	} else if streamedAnswer != "" {
+		answer = mergeApprovalConversationAnswer(previousAnswer, streamedAnswer)
+	}
 	now := time.Now().Unix()
-	if !messageEventSent {
+	if !messageEventSent && run.RuntimeProtocolVersion < workflowRuntimeProtocolVersionV2 {
 		messageAnswer := approvalResumeMessageEventAnswer(answer, previousAnswer)
 		if messageAnswer != "" || previousAnswer == "" {
 			appendWorkflowRunEvent(ctx, run.TenantID, run.AgentID, run.ID, workflowEventMessage, map[string]interface{}{
@@ -408,7 +591,7 @@ func (h *WorkflowHandler) persistApprovalResumeConversationEvents(ctx context.Co
 			})
 		}
 	}
-	appendWorkflowRunEvent(ctx, run.TenantID, run.AgentID, run.ID, workflowEventMessageEnd, map[string]interface{}{
+	messageEnd := map[string]interface{}{
 		"id":              run.ID,
 		"message_id":      run.ID,
 		"conversation_id": conversationID,
@@ -428,8 +611,11 @@ func (h *WorkflowHandler) persistApprovalResumeConversationEvents(ctx context.Co
 			},
 		},
 		"created_at": now,
-	})
-	return conversationID, answer
+	}
+	if run.RuntimeProtocolVersion < workflowRuntimeProtocolVersionV2 {
+		appendWorkflowRunEvent(ctx, run.TenantID, run.AgentID, run.ID, workflowEventMessageEnd, messageEnd)
+	}
+	return conversationID, answer, messageEnd
 }
 
 func (h *WorkflowHandler) approvalExistingConversationAnswer(ctx context.Context, run *WorkflowRunLog) string {
@@ -455,6 +641,106 @@ func approvalResumeMessageEventAnswer(answer, previousAnswer string) string {
 		return strings.TrimPrefix(answer, previousAnswer)
 	}
 	return answer
+}
+
+type workflowConversationAnswerAccumulator struct {
+	baseAnswer     string
+	streamedAnswer string
+}
+
+func newWorkflowConversationAnswerAccumulator(existingAnswer string) *workflowConversationAnswerAccumulator {
+	return &workflowConversationAnswerAccumulator{baseAnswer: existingAnswer}
+}
+
+func (a *workflowConversationAnswerAccumulator) Append(chunk string) {
+	if a == nil || chunk == "" {
+		return
+	}
+	a.streamedAnswer += chunk
+}
+
+func (a *workflowConversationAnswerAccumulator) Merge(snapshot string) {
+	if a == nil {
+		return
+	}
+	// answer_snapshot_ready is an absolute snapshot for the current execution,
+	// not another delta. Replacing the live tail prevents cumulative snapshots
+	// from being appended after their corresponding message chunks.
+	a.streamedAnswer = snapshot
+}
+
+func (a *workflowConversationAnswerAccumulator) String() string {
+	if a == nil {
+		return ""
+	}
+	return mergeApprovalConversationAnswer(a.baseAnswer, a.streamedAnswer)
+}
+
+func workflowOutputsWithConversationAnswer(outputs map[string]interface{}, answer string) map[string]interface{} {
+	result := copyWorkflowAnyMap(outputs)
+	if answer != "" && extractWorkflowAnswer(result) == "" {
+		result["answer"] = answer
+	}
+	return result
+}
+
+func workflowEventDataWithConversationAnswer(data map[string]interface{}, answer string) map[string]interface{} {
+	result := copyWorkflowAnyMap(data)
+	outputs, _ := result["outputs"].(map[string]interface{})
+	result["outputs"] = workflowOutputsWithConversationAnswer(outputs, answer)
+	return result
+}
+
+func persistWorkflowRunConversationAnswer(ctx context.Context, workflowService *WorkflowService, run *WorkflowRunLog, eventData map[string]interface{}, answer string) {
+	if workflowService == nil || run == nil || answer == "" {
+		return
+	}
+	outputs, _ := eventData["outputs"].(map[string]interface{})
+	status, _ := eventData["status"].(string)
+	if status == "" {
+		status = "succeeded"
+	}
+	elapsed, _ := workflowFloatValue(eventData["elapsed_time"])
+	totalTokens, _ := workflowEventInt(eventData["total_tokens"])
+	totalSteps, _ := workflowEventInt(eventData["total_steps"])
+	errorMessage := workflowRunEventErrorMessage(eventData["error"])
+	if err := workflowService.UpdateWorkflowRunLogStatus(ctx, run.ID, status, workflowOutputsWithConversationAnswer(outputs, answer), elapsed, int64(totalTokens), totalSteps, errorMessage); err != nil {
+		logger.ErrorContext(ctx, "failed to persist workflow conversation answer", "workflow_run_id", run.ID, err)
+	}
+}
+
+func persistWorkflowRunConversationAnswerFromOutputs(ctx context.Context, workflowService *WorkflowService, run *WorkflowRunLog, outputs map[string]interface{}, answer string) {
+	if workflowService == nil || run == nil || answer == "" {
+		return
+	}
+	persistedOutputs := workflowOutputsWithConversationAnswer(outputs, answer)
+	status := "succeeded"
+	if value, ok := persistedOutputs["__workflow_status__"].(string); ok && value != "" {
+		status = value
+	}
+	errorMessage, _ := persistedOutputs["__workflow_error__"].(string)
+	totalTokens, _ := workflowEventInt(persistedOutputs["__total_tokens__"])
+	elapsed, _ := workflowFloatValue(persistedOutputs[workflowInternalElapsedTimeKey])
+	delete(persistedOutputs, "__workflow_status__")
+	delete(persistedOutputs, "__workflow_error__")
+	delete(persistedOutputs, "__total_tokens__")
+	delete(persistedOutputs, workflowInternalElapsedTimeKey)
+	totalSteps := workflowService.workflowRunNodeStepCount(ctx, run.ID)
+	if err := workflowService.UpdateWorkflowRunLogStatus(ctx, run.ID, status, persistedOutputs, elapsed, int64(totalTokens), totalSteps, errorMessage); err != nil {
+		logger.ErrorContext(ctx, "failed to persist completed workflow conversation answer", "workflow_run_id", run.ID, err)
+	}
+}
+
+func workflowRunEventErrorMessage(value interface{}) string {
+	switch typed := value.(type) {
+	case string:
+		return typed
+	case map[string]interface{}:
+		if message, ok := typed["message"].(string); ok {
+			return message
+		}
+	}
+	return ""
 }
 
 func (h *WorkflowHandler) persistApprovalResumeConversationMessage(ctx context.Context, run *WorkflowRunLog, outputs map[string]interface{}, systemInputs map[string]interface{}, resumeInputs map[string]interface{}, conversationID string, answer string, messageStatus string) {
@@ -862,35 +1148,77 @@ func approvalResumeInvokeFrom(run *WorkflowRunLog, inputs map[string]interface{}
 	return string(InvokeFromWorkflow)
 }
 
-func (h *WorkflowHandler) persistApprovalResumeFinished(ctx context.Context, pauseService *workflowpause.Service, workflowService *WorkflowService, run *WorkflowRunLog, outputs map[string]interface{}, resumeStartedAt time.Time, eventDispatcher *workflowRunEventDispatcher) {
+func (h *WorkflowHandler) persistApprovalResumeFinished(ctx context.Context, pauseService *workflowpause.Service, workflowService *WorkflowService, run *WorkflowRunLog, outputs map[string]interface{}, resumeStartedAt time.Time, eventDispatcher *workflowRunEventDispatcher, finalAnswer, messageStatus string, messageEnd map[string]interface{}) error {
 	if pauseService == nil || run == nil {
-		return
+		return nil
 	}
 	fallbackElapsed := ElapsedMillisecondsSince(resumeStartedAt)
 	if workflowService != nil {
 		fallbackElapsed = workflowService.workflowRunElapsedMillisecondsForEvent(ctx, run.ID, fallbackElapsed)
 	}
 	elapsed := workflowElapsedMillisecondsFromOutputs(outputs, fallbackElapsed)
+	if workflowService != nil {
+		if persistedElapsed := workflowService.workflowRunNodeElapsedMilliseconds(ctx, run.ID); persistedElapsed > 0 {
+			elapsed = persistedElapsed
+		}
+	}
 	eventData := workflowFinishedEventFromOutputs(run, workflowService, outputs, elapsed)
-	eventDispatcher.Dispatch(ctx, workflowpause.EventWorkflowFinished, eventData)
+	if metadata, ok := messageEnd["metadata"].(map[string]interface{}); ok {
+		if usage, ok := metadata["usage"].(map[string]interface{}); ok {
+			usage["total_tokens"], _ = workflowEventInt(eventData["total_tokens"])
+		}
+	}
+	if run.RuntimeProtocolVersion >= workflowRuntimeProtocolVersionV2 {
+		status, _ := eventData["status"].(string)
+		totalTokens, _ := workflowEventInt(eventData["total_tokens"])
+		totalSteps, _ := workflowEventInt(eventData["total_steps"])
+		exceptionsCount, _ := workflowEventInt(eventData["exceptions_count"])
+		finalOutputs, _ := eventData["outputs"].(map[string]interface{})
+		if finalOutputs == nil {
+			finalOutputs = map[string]interface{}{}
+		}
+		if err := finalizeWorkflowRun(ctx, finalizeWorkflowRunParams{
+			WorkflowRunID:    run.ID,
+			Status:           status,
+			Outputs:          finalOutputs,
+			ErrorMessage:     workflowRunEventErrorMessage(eventData["error"]),
+			ElapsedTime:      elapsed,
+			TotalTokens:      int64(totalTokens),
+			TotalSteps:       totalSteps,
+			ExceptionsCount:  exceptionsCount,
+			FinalAnswer:      finalAnswer,
+			MessageStatus:    messageStatus,
+			MessageEnd:       messageEnd,
+			WorkflowFinished: eventData,
+		}); err != nil {
+			return fmt.Errorf("finalize resumed workflow: %w", err)
+		}
+		if len(messageEnd) > 0 {
+			if err := eventDispatcher.Dispatch(ctx, workflowEventMessageEnd, messageEnd); err != nil {
+				return err
+			}
+		}
+	}
+	return eventDispatcher.Dispatch(ctx, workflowpause.EventWorkflowFinished, eventData)
 }
 
-func (h *WorkflowHandler) persistApprovalResumeError(ctx context.Context, pauseService *workflowpause.Service, workflowService *WorkflowService, run *WorkflowRunLog, err error, resumeStartedAt time.Time, eventDispatcher *workflowRunEventDispatcher) {
+func (h *WorkflowHandler) persistApprovalResumeError(ctx context.Context, pauseService *workflowpause.Service, workflowService *WorkflowService, run *WorkflowRunLog, err error, resumeStartedAt time.Time, eventDispatcher *workflowRunEventDispatcher, finalAnswer string) {
 	if pauseService == nil || run == nil || err == nil {
 		return
 	}
+	persistCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	defer cancel()
 	errorPayload := buildWorkflowStreamErrorPayload(err)
 	errorMessage := workflowStreamErrorMessage(errorPayload)
-	h.updateApprovalConversationMessageStatus(ctx, run.ID, conversation.AgentMessageStatusError, &errorMessage)
 	elapsed := ElapsedMillisecondsSince(resumeStartedAt)
 	totalSteps := 0
+	var totalTokens int64
 	if workflowService != nil {
-		elapsed = workflowService.workflowRunElapsedMillisecondsForEvent(ctx, run.ID, elapsed)
-		totalSteps = workflowService.workflowRunNodeStepCount(ctx, run.ID)
-		_ = workflowService.UpdateWorkflowRunLogStatus(ctx, run.ID, "failed", map[string]interface{}{}, elapsed, 0, totalSteps, errorMessage)
+		elapsed = workflowService.workflowRunElapsedMillisecondsForEvent(persistCtx, run.ID, elapsed)
+		totalSteps = workflowService.workflowRunNodeStepCount(persistCtx, run.ID)
+		totalTokens = workflowService.workflowRunNodeTotalTokens(persistCtx, run.ID)
 	}
-	eventDispatcher.Dispatch(ctx, workflowpause.EventError, map[string]interface{}{"message": errorMessage})
-	eventDispatcher.Dispatch(ctx, workflowpause.EventWorkflowFinished, map[string]interface{}{
+	workflowFinished := map[string]interface{}{
 		"id":               run.ID,
 		"workflow_id":      run.WorkflowID,
 		"sequence_number":  run.SequenceNumber,
@@ -898,14 +1226,40 @@ func (h *WorkflowHandler) persistApprovalResumeError(ctx context.Context, pauseS
 		"outputs":          map[string]interface{}{},
 		"error":            errorPayload,
 		"elapsed_time":     elapsed,
-		"total_tokens":     0,
+		"total_tokens":     totalTokens,
 		"total_steps":      totalSteps,
 		"created_by":       map[string]interface{}{"id": run.CreatedBy, "name": "", "email": ""},
 		"created_at":       time.Now().Unix(),
 		"finished_at":      time.Now().Unix(),
 		"exceptions_count": 1,
 		"files":            []interface{}{},
-	})
+	}
+	errorEvent := map[string]interface{}{"message": errorMessage, "error": errorPayload, "workflow_run_id": run.ID}
+	if run.RuntimeProtocolVersion >= workflowRuntimeProtocolVersionV2 {
+		messageStatus := ""
+		var messageCount int64
+		if countErr := database.GetDB().WithContext(persistCtx).Model(&conversation.AgentMessage{}).
+			Where("workflow_run_id = ? AND deleted_at IS NULL", run.ID).Count(&messageCount).Error; countErr == nil && messageCount > 0 {
+			messageStatus = conversation.AgentMessageStatusError
+		}
+		if finalizeErr := finalizeWorkflowRun(persistCtx, finalizeWorkflowRunParams{
+			WorkflowRunID: run.ID, Status: "failed", Outputs: map[string]interface{}{}, ErrorMessage: errorMessage,
+			ElapsedTime: elapsed, TotalTokens: totalTokens, TotalSteps: totalSteps, ExceptionsCount: 1, FinalAnswer: finalAnswer,
+			MessageStatus: messageStatus, ErrorEvent: errorEvent, WorkflowFinished: workflowFinished,
+		}); finalizeErr != nil {
+			logger.ErrorContext(persistCtx, "failed to durably finalize resumed workflow error", "workflow_run_id", run.ID, finalizeErr)
+			return
+		}
+		eventDispatcher.Dispatch(persistCtx, workflowpause.EventError, errorEvent)
+		eventDispatcher.Dispatch(persistCtx, workflowpause.EventWorkflowFinished, workflowFinished)
+		return
+	}
+	h.updateApprovalConversationMessageStatus(persistCtx, run.ID, conversation.AgentMessageStatusError, &errorMessage)
+	if workflowService != nil {
+		_ = workflowService.UpdateWorkflowRunLogStatus(persistCtx, run.ID, "failed", map[string]interface{}{}, elapsed, totalTokens, totalSteps, errorMessage)
+	}
+	eventDispatcher.Dispatch(persistCtx, workflowpause.EventError, errorEvent)
+	eventDispatcher.Dispatch(persistCtx, workflowpause.EventWorkflowFinished, workflowFinished)
 }
 
 func workflowFinishedEventFromOutputs(run *WorkflowRunLog, workflowService *WorkflowService, outputs map[string]interface{}, elapsed float64) map[string]interface{} {
@@ -946,6 +1300,9 @@ func workflowFinishedEventFromOutputs(run *WorkflowRunLog, workflowService *Work
 	totalSteps := 0
 	if workflowService != nil && run != nil {
 		totalSteps = workflowService.workflowRunNodeStepCount(context.Background(), run.ID)
+		if persistedTokens := workflowService.workflowRunNodeTotalTokens(context.Background(), run.ID); persistedTokens > 0 {
+			totalTokens = int(persistedTokens)
+		}
 	}
 	return map[string]interface{}{
 		"id":               run.ID,

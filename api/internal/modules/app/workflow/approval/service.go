@@ -17,6 +17,7 @@ import (
 	"github.com/zgiai/zgi/api/pkg/email"
 	"github.com/zgiai/zgi/api/pkg/logger"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 const (
@@ -140,14 +141,26 @@ func (s *Service) DebugAccessTokenByFormID(ctx context.Context, formID string) (
 }
 
 func (s *Service) SubmitByToken(ctx context.Context, token string, req SubmitRequest, submissionUserID, submissionEndUserID *string) (*Form, error) {
+	result, err := s.SubmitByTokenWithResume(ctx, token, req, submissionUserID, submissionEndUserID)
+	if err != nil {
+		return nil, err
+	}
+	return result.Form, nil
+}
+
+func (s *Service) SubmitByTokenWithResume(ctx context.Context, token string, req SubmitRequest, submissionUserID, submissionEndUserID *string) (*SubmitResult, error) {
 	form, recipient, err := s.getFormAndRecipientByToken(ctx, token)
 	if err != nil {
 		return nil, err
 	}
-	return s.submitForm(ctx, form, recipient, req, submissionUserID, submissionEndUserID)
+	return s.submitFormWithResume(ctx, form, recipient, req, submissionUserID, submissionEndUserID)
 }
 
 func (s *Service) SubmitByTokenForWorkflowRun(ctx context.Context, token, workflowRunID string, req SubmitRequest, submissionUserID, submissionEndUserID *string) (*Form, error) {
+	return s.SubmitByTokenForWorkflowRunWithOptions(ctx, token, workflowRunID, req, submissionUserID, submissionEndUserID, SubmitOptions{})
+}
+
+func (s *Service) SubmitByTokenForWorkflowRunWithOptions(ctx context.Context, token, workflowRunID string, req SubmitRequest, submissionUserID, submissionEndUserID *string, options SubmitOptions) (*Form, error) {
 	form, recipient, err := s.getFormAndRecipientByToken(ctx, token)
 	if err != nil {
 		return nil, err
@@ -155,15 +168,35 @@ func (s *Service) SubmitByTokenForWorkflowRun(ctx context.Context, token, workfl
 	if err := ensureFormWorkflowRun(form, workflowRunID); err != nil {
 		return nil, err
 	}
-	return s.submitForm(ctx, form, recipient, req, submissionUserID, submissionEndUserID)
+	if err := ensureFormSubmissionOptions(form, options); err != nil {
+		return nil, err
+	}
+	result, err := s.submitFormWithResume(ctx, form, recipient, req, submissionUserID, submissionEndUserID)
+	if err != nil {
+		return nil, err
+	}
+	return result.Form, nil
 }
 
 func (s *Service) submitForm(ctx context.Context, form *Form, recipient *Recipient, req SubmitRequest, submissionUserID, submissionEndUserID *string) (*Form, error) {
+	result, err := s.submitFormWithResume(ctx, form, recipient, req, submissionUserID, submissionEndUserID)
+	if err != nil {
+		return nil, err
+	}
+	return result.Form, nil
+}
+
+func (s *Service) submitFormWithResume(ctx context.Context, form *Form, recipient *Recipient, req SubmitRequest, submissionUserID, submissionEndUserID *string) (*SubmitResult, error) {
 	if s == nil || s.db == nil {
 		return nil, fmt.Errorf("approval service is not initialized")
 	}
-	if err := ensureFormSubmittable(form); err != nil {
-		return nil, err
+	if form == nil {
+		return nil, ErrFormNotFound
+	}
+	if form.Status != FormStatusSubmitted {
+		if err := ensureFormSubmittable(form); err != nil {
+			return nil, err
+		}
 	}
 	definition, err := decodeDefinition(form.FormDefinition)
 	if err != nil {
@@ -194,20 +227,189 @@ func (s *Service) submitForm(ctx context.Context, form *Form, recipient *Recipie
 		updates["submission_end_user_id"] = *submissionEndUserID
 	}
 
-	result := s.db.WithContext(ctx).Model(&Form{}).
-		Where("id = ? AND status = ?", form.ID, FormStatusWaiting).
-		Updates(updates)
-	if result.Error != nil {
-		return nil, fmt.Errorf("submit approval form: %w", result.Error)
+	submitResult := &SubmitResult{ResumeState: "waiting"}
+	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var locked Form
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&locked, "id = ?", form.ID).Error; err != nil {
+			return fmt.Errorf("lock approval form: %w", err)
+		}
+		if locked.Status == FormStatusSubmitted {
+			if !sameApprovalSubmission(&locked, req.Action, string(data)) {
+				return ErrFormAlreadySubmitted
+			}
+			*form = locked
+			submitResult.Form = form
+			submitResult.IdempotentReplay = true
+			return loadApprovalReplayState(tx, form, submitResult)
+		}
+		if err := ensureFormSubmittable(&locked); err != nil {
+			return err
+		}
+		result := tx.Model(&Form{}).
+			Where("id = ? AND status = ?", form.ID, FormStatusWaiting).
+			Updates(updates)
+		if result.Error != nil {
+			return fmt.Errorf("submit approval form: %w", result.Error)
+		}
+		if result.RowsAffected == 0 {
+			return ErrFormAlreadySubmitted
+		}
+		if err := tx.First(&locked, "id = ?", form.ID).Error; err != nil {
+			return fmt.Errorf("reload approval form: %w", err)
+		}
+		*form = locked
+		submitResult.Form = form
+
+		pauseService := workflowpause.NewService(tx)
+		pauseRecord, reasons, _, err := pauseService.GetActiveByWorkflowRunID(ctx, form.WorkflowRunID)
+		if err != nil {
+			if errors.Is(err, workflowpause.ErrPauseNotFound) {
+				return nil
+			}
+			return err
+		}
+		if !activePauseHasFormID(reasons, form.ID) {
+			return nil
+		}
+		eventData, err := approvalResultFilledEventData(form)
+		if err != nil {
+			return err
+		}
+		event, err := pauseService.AppendEventPayloadTx(ctx, tx, workflowpause.AppendEventParams{
+			TenantID:                pauseRecord.TenantID,
+			AppID:                   pauseRecord.AppID,
+			WorkflowRunID:           form.WorkflowRunID,
+			EventType:               workflowpause.EventApprovalResultFilled,
+			EventData:               eventData,
+			PauseID:                 pauseRecord.ID,
+			PauseGeneration:         &pauseRecord.Generation,
+			ExpectedPauseID:         pauseRecord.ID,
+			ExpectedPauseGeneration: &pauseRecord.Generation,
+			ExpectedPauseRevision:   &pauseRecord.Revision,
+			IdempotencyKey:          "approval-result:" + form.ID,
+		})
+		if err != nil {
+			return err
+		}
+		submitResult.EventCursor = event.Sequence
+
+		outbox, ready, err := pauseService.CompleteReasonsTx(ctx, tx, workflowpause.CompleteReasonsParams{
+			WorkflowRunID:     form.WorkflowRunID,
+			PauseID:           pauseRecord.ID,
+			ReasonType:        workflowpause.ReasonTypeApprovalRequired,
+			FormID:            form.ID,
+			SubmissionEventID: event.EventID,
+			TriggerID:         form.ID,
+		})
+		if err != nil {
+			return err
+		}
+		if !ready {
+			return nil
+		}
+		submitResult.ResumeState = "queued"
+		submitResult.Outbox = &workflowRuntimeOutboxRef{ID: outbox.ID, IdempotencyKey: outbox.IdempotencyKey, PayloadJSON: outbox.PayloadJSON}
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
-	if result.RowsAffected == 0 {
-		return nil, ErrFormAlreadySubmitted
+	if submitResult.Form == nil {
+		submitResult.Form = form
+	}
+	return submitResult, nil
+}
+
+func sameApprovalSubmission(form *Form, action, submittedData string) bool {
+	if form == nil || form.SelectedActionID == nil || form.SubmittedData == nil {
+		return false
+	}
+	return strings.TrimSpace(*form.SelectedActionID) == strings.TrimSpace(action) && *form.SubmittedData == submittedData
+}
+
+func loadApprovalReplayState(tx *gorm.DB, form *Form, result *SubmitResult) error {
+	if tx == nil || form == nil || result == nil {
+		return nil
+	}
+	var event workflowpause.RunEvent
+	if err := tx.Where("workflow_run_id = ? AND idempotency_key = ?", form.WorkflowRunID, "approval-result:"+form.ID).
+		First(&event).Error; err == nil {
+		result.EventCursor = event.Sequence
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return fmt.Errorf("load approval replay event: %w", err)
 	}
 
-	if err := s.db.WithContext(ctx).First(form, "id = ?", form.ID).Error; err != nil {
-		return nil, fmt.Errorf("reload approval form: %w", err)
+	var outbox workflowpause.RuntimeOutbox
+	if err := tx.Where("workflow_run_id = ? AND kind = ?", form.WorkflowRunID, workflowpause.RuntimeOutboxKindResume).
+		Order("created_at DESC").First(&outbox).Error; err == nil {
+		result.ResumeState = resumeStateForOutbox(outbox.Status)
+		result.Outbox = &workflowRuntimeOutboxRef{ID: outbox.ID, IdempotencyKey: outbox.IdempotencyKey, PayloadJSON: outbox.PayloadJSON}
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return fmt.Errorf("load approval replay outbox: %w", err)
 	}
-	return form, nil
+	return nil
+}
+
+func resumeStateForOutbox(status string) string {
+	switch status {
+	case workflowpause.RuntimeOutboxPublished:
+		return "running"
+	case workflowpause.RuntimeOutboxPending:
+		return "queued"
+	default:
+		return "waiting"
+	}
+}
+
+func activePauseApprovalFormsSubmittedTx(ctx context.Context, tx *gorm.DB, reasons []workflowpause.RunPauseReason) (bool, error) {
+	formIDs := make([]string, 0, len(reasons))
+	seen := make(map[string]struct{}, len(reasons))
+	for _, reason := range reasons {
+		if reason.Type != workflowpause.ReasonTypeApprovalRequired || reason.FormID == "" {
+			continue
+		}
+		if _, exists := seen[reason.FormID]; exists {
+			continue
+		}
+		seen[reason.FormID] = struct{}{}
+		formIDs = append(formIDs, reason.FormID)
+	}
+	if len(formIDs) == 0 {
+		return true, nil
+	}
+	var submittedCount int64
+	if err := tx.WithContext(ctx).Model(&Form{}).
+		Where("id IN ? AND status = ?", formIDs, FormStatusSubmitted).
+		Count(&submittedCount).Error; err != nil {
+		return false, fmt.Errorf("count submitted approval forms: %w", err)
+	}
+	return submittedCount == int64(len(formIDs)), nil
+}
+
+func (s *Service) pendingRuntimeOutbox(ctx context.Context, limit int) ([]workflowpause.RuntimeOutbox, error) {
+	return workflowpause.NewService(s.db).ListPendingOutbox(ctx, limit)
+}
+
+func (s *Service) markRuntimeOutboxPublished(ctx context.Context, id string) error {
+	return workflowpause.NewService(s.db).MarkOutboxPublished(ctx, id)
+}
+
+func (s *Service) markRuntimeOutboxRetry(ctx context.Context, id string, dispatchErr error) error {
+	return workflowpause.NewService(s.db).MarkOutboxRetry(ctx, id, dispatchErr)
+}
+
+func (s *Service) finalizeExpiredWorkflowExecutions(ctx context.Context, cutoff time.Time, limit int) ([]string, error) {
+	if s == nil || s.db == nil {
+		return nil, nil
+	}
+	return workflowpause.NewService(s.db).FinalizeExpiredExecutions(ctx, cutoff, limit)
+}
+
+func (s *Service) observeActiveV1WorkflowRuns(ctx context.Context) error {
+	if s == nil || s.db == nil {
+		return nil
+	}
+	return workflowpause.NewService(s.db).ObserveActiveV1Runs(ctx)
 }
 
 func (s *Service) ActivePauseApprovalFormsSubmitted(ctx context.Context, workflowRunID string) (bool, error) {
@@ -221,6 +423,21 @@ func (s *Service) ActivePauseApprovalFormsSubmitted(ctx context.Context, workflo
 			return true, nil
 		}
 		return false, err
+	}
+	var protocolVersion int
+	if err := s.db.WithContext(ctx).Table("workflow_run_logs").
+		Select("runtime_protocol_version").
+		Where("id = ?", workflowRunID).
+		Scan(&protocolVersion).Error; err != nil {
+		return false, fmt.Errorf("load workflow runtime protocol version: %w", err)
+	}
+	if protocolVersion >= 2 {
+		for _, reason := range reasons {
+			if reason.Status != workflowpause.RunPauseReasonStatusCompleted {
+				return false, nil
+			}
+		}
+		return true, nil
 	}
 
 	formIDs := make([]string, 0, len(reasons))
@@ -271,11 +488,17 @@ func (s *Service) AppendApprovalResultFilledEvent(ctx context.Context, form *For
 		return err
 	}
 	return pauseService.AppendEvent(ctx, workflowpause.AppendEventParams{
-		TenantID:      pauseRecord.TenantID,
-		AppID:         pauseRecord.AppID,
-		WorkflowRunID: form.WorkflowRunID,
-		EventType:     workflowpause.EventApprovalResultFilled,
-		EventData:     eventData,
+		TenantID:                pauseRecord.TenantID,
+		AppID:                   pauseRecord.AppID,
+		WorkflowRunID:           form.WorkflowRunID,
+		EventType:               workflowpause.EventApprovalResultFilled,
+		EventData:               eventData,
+		PauseID:                 pauseRecord.ID,
+		PauseGeneration:         &pauseRecord.Generation,
+		ExpectedPauseID:         pauseRecord.ID,
+		ExpectedPauseGeneration: &pauseRecord.Generation,
+		ExpectedPauseRevision:   &pauseRecord.Revision,
+		IdempotencyKey:          "approval-result:" + form.ID,
 	})
 }
 
@@ -1177,6 +1400,23 @@ func ensureFormWorkflowRun(form *Form, workflowRunID string) error {
 	return nil
 }
 
+func ensureFormSubmissionOptions(form *Form, options SubmitOptions) error {
+	if !options.RequireWebAppEnabled {
+		return nil
+	}
+	if form == nil {
+		return ErrFormNotFound
+	}
+	definition, err := decodeDefinition(form.FormDefinition)
+	if err != nil {
+		return err
+	}
+	if !isWebAppEnabled(definition.SubmitMethods.WebApp) {
+		return ErrWebAppSubmissionDisabled
+	}
+	return nil
+}
+
 func decodeDefinition(raw string) (FormDefinition, error) {
 	var definition FormDefinition
 	if err := json.Unmarshal([]byte(raw), &definition); err != nil {
@@ -1257,7 +1497,8 @@ func sanitizeSubject(subject string) string {
 }
 
 var (
-	ErrFormNotFound         = errors.New("approval form not found")
-	ErrFormAlreadySubmitted = errors.New("approval form already submitted")
-	ErrFormExpired          = errors.New("approval form expired")
+	ErrFormNotFound             = errors.New("approval form not found")
+	ErrFormAlreadySubmitted     = errors.New("approval form already submitted")
+	ErrFormExpired              = errors.New("approval form expired")
+	ErrWebAppSubmissionDisabled = errors.New("workflow approval webapp submission is disabled")
 )

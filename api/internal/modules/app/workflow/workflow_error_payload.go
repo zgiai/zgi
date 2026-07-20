@@ -3,11 +3,26 @@ package workflow
 import (
 	"errors"
 
+	workflowpause "github.com/zgiai/zgi/api/internal/modules/app/workflow/pause"
 	"github.com/zgiai/zgi/api/internal/modules/llm/gateway"
 	"github.com/zgiai/zgi/api/pkg/response"
 )
 
+var errWorkflowEventPersistenceFailed = errors.New("workflow event persistence failed")
+
 func buildWorkflowStreamErrorPayload(err error) map[string]any {
+	if errors.Is(err, workflowpause.ErrExecutionOwnershipLost) {
+		return map[string]any{
+			"message": "Workflow execution ownership was lost.",
+			"code":    "workflow_execution_ownership_lost",
+		}
+	}
+	if errors.Is(err, errWorkflowEventPersistenceFailed) {
+		return map[string]any{
+			"message": "Workflow event persistence failed.",
+			"code":    "workflow_event_persistence_failed",
+		}
+	}
 	code, message, ok := workflowBillingErrorCodeAndMessage(err)
 	if !ok {
 		message = workflowFallbackErrorMessage(err)

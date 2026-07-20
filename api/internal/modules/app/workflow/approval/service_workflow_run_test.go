@@ -2,6 +2,7 @@ package approval
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -72,6 +73,35 @@ func TestEnsureFormWorkflowRunRejectsMissingOrDifferentRun(t *testing.T) {
 				t.Fatalf("error = %v, want ErrFormNotFound", err)
 			}
 		})
+	}
+}
+
+func TestEnsureFormSubmissionOptionsRequiresConfiguredWebAppChannel(t *testing.T) {
+	disabled := false
+	definition, err := json.Marshal(FormDefinition{
+		SubmitMethods: SubmitMethods{WebApp: WebAppSubmitMethod{Enabled: &disabled}},
+	})
+	if err != nil {
+		t.Fatalf("marshal definition: %v", err)
+	}
+	form := &Form{FormDefinition: string(definition)}
+
+	err = ensureFormSubmissionOptions(form, SubmitOptions{RequireWebAppEnabled: true})
+	if !errors.Is(err, ErrWebAppSubmissionDisabled) {
+		t.Fatalf("error = %v, want ErrWebAppSubmissionDisabled", err)
+	}
+	if err := ensureFormSubmissionOptions(form, SubmitOptions{}); err != nil {
+		t.Fatalf("debug submission should ignore configured channels: %v", err)
+	}
+}
+
+func TestEnsureFormSubmissionOptionsPreservesLegacyWebAppDefault(t *testing.T) {
+	definition, err := json.Marshal(FormDefinition{})
+	if err != nil {
+		t.Fatalf("marshal definition: %v", err)
+	}
+	if err := ensureFormSubmissionOptions(&Form{FormDefinition: string(definition)}, SubmitOptions{RequireWebAppEnabled: true}); err != nil {
+		t.Fatalf("omitted webapp.enabled should remain enabled: %v", err)
 	}
 }
 

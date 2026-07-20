@@ -234,9 +234,6 @@ func (h *WorkflowHandler) workflowQuestionAnswerResumeState(ctx context.Context,
 	if state == nil || state.RunType != "CONVERSATION_WORKFLOW" {
 		return nil, "", false
 	}
-	if err := pauseService.MarkResumed(ctx, state.WorkflowRunID); err != nil {
-		logger.WarnContext(ctx, "failed to mark question answer pause resumed", "workflow_run_id", state.WorkflowRunID, err)
-	}
 	return state, pauseRecord.ID, true
 }
 

@@ -22,14 +22,19 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/file"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine/entities"
+	workflowpause "github.com/zgiai/zgi/api/internal/modules/app/workflow/pause"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/shared"
+	automationaction "github.com/zgiai/zgi/api/internal/modules/automation/service/action"
 	automationdefinition "github.com/zgiai/zgi/api/internal/modules/automation/service/definition"
 	"github.com/zgiai/zgi/api/internal/modules/dataset/graphflow"
 	promptservice "github.com/zgiai/zgi/api/internal/modules/prompts/service"
 	quota_model "github.com/zgiai/zgi/api/internal/modules/quota/model"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	"github.com/zgiai/zgi/api/internal/modules/shared/titlegen"
+	"github.com/zgiai/zgi/api/pkg/database"
 	"github.com/zgiai/zgi/api/pkg/logger"
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // WorkflowService workflow service
@@ -717,6 +722,7 @@ func (s *WorkflowService) RunDraftWorkflow(ctx context.Context, workspaceID, age
 			conversationID = &convIDStr
 			// Add conversation ID to inputs for workflow execution
 			draftReq.Inputs["sys.conversation_id"] = convIDStr
+			draftReq.Inputs["sys.workflow_type"] = "chat"
 		}
 
 		// Get the actual workflow ID from database
@@ -743,12 +749,20 @@ func (s *WorkflowService) RunDraftWorkflow(ctx context.Context, workspaceID, age
 		// Create workflow run log with triggered_from = "debugger" for draft workflow
 		workflowRunLog, err := s.CreateWorkflowRunLog(ctx, workspaceID, agentID, actualWorkflowID, "debugger", draftReq.Inputs, accountID)
 		if err != nil {
-			logger.Error("Failed to create workflow run log", err)
-			// Continue execution even if logging fails
-		} else if workflowRunLogTyped, ok := workflowRunLog.(*WorkflowRunLog); ok {
-			workflowRunLogID = workflowRunLogTyped.ID
-			workflowRunIDStr = workflowRunLogID
+			return nil, fmt.Errorf("create durable workflow run: %w", err)
 		}
+		workflowRunLogTyped, ok := workflowRunLog.(*WorkflowRunLog)
+		if !ok || workflowRunLogTyped == nil {
+			return nil, fmt.Errorf("create durable workflow run: unexpected run log type %T", workflowRunLog)
+		}
+		workflowRunLogID = workflowRunLogTyped.ID
+		workflowRunIDStr = workflowRunLogID
+		owner := workflowExecutionOwnerFromRun(workflowRunLogTyped)
+		ctx = withWorkflowExecutionOwner(ctx, owner)
+		ctx, stopRenewal := startWorkflowExecutionLeaseRenewal(ctx, workflowpause.NewService(database.GetDB()), workflowpause.ExecutionClaim{
+			WorkflowRunID: workflowRunLogTyped.ID, Generation: owner.Generation, ExecutionID: owner.ExecutionID,
+		})
+		defer stopRenewal()
 		if draftReq.Inputs == nil {
 			draftReq.Inputs = make(map[string]interface{})
 		}
@@ -759,23 +773,15 @@ func (s *WorkflowService) RunDraftWorkflow(ctx context.Context, workspaceID, age
 		executionResult, err := s.executor.ExecuteSimpleWorkflowWithRunID(ctx, workflowRunLogID, graphData, draftReq.Inputs)
 		elapsedTime := workflowExecutionResultElapsedMilliseconds(executionResult, ElapsedMillisecondsSince(startTime))
 
-		// Update workflow run log with results
-		if workflowRunLog != nil {
-			status, errorMessage := workflowExecutionLogStatusAndError(executionResult, err)
-
-			if workflowRunLogTyped, ok := workflowRunLog.(*WorkflowRunLog); ok {
-				nodeResults := map[string]interface{}{}
-				if executionResult != nil {
-					nodeResults = executionResult.NodeResults
-				}
-				updateErr := s.UpdateWorkflowRunLogStatus(ctx, workflowRunLogTyped.ID, status, nodeResults, elapsedTime, 0, len(nodeResults), errorMessage)
-				if updateErr != nil {
-					logger.Error("Failed to update workflow run log", updateErr)
-				}
-			}
-		}
-
 		if err != nil {
+			status, errorMessage := workflowExecutionLogStatusAndError(executionResult, err)
+			nodeResults := map[string]interface{}{}
+			if executionResult != nil {
+				nodeResults = executionResult.NodeResults
+			}
+			if finalizeErr := s.UpdateWorkflowRunLogStatus(ctx, workflowRunLogTyped.ID, status, nodeResults, elapsedTime, 0, len(nodeResults), errorMessage); finalizeErr != nil {
+				return nil, fmt.Errorf("workflow execution failed: %w; finalize run: %v", err, finalizeErr)
+			}
 			logger.Error("Failed to execute workflow", err)
 			return nil, fmt.Errorf("workflow execution failed: %w", err)
 		}
@@ -859,9 +865,16 @@ func (s *WorkflowService) RunDraftWorkflow(ctx context.Context, workspaceID, age
 				nil, // workflowVersionUUID - null for draft/debug mode
 			)
 			if err != nil {
-				logger.Error("Failed to create workflow message", err)
-				// Don't fail the entire workflow execution if message creation fails
+				messageErr := fmt.Errorf("persist workflow final answer: %w", err)
+				if finalizeErr := s.UpdateWorkflowRunLogStatus(ctx, workflowRunLogTyped.ID, string(dto.WorkflowRunStatusFailed), executionResult.NodeResults, elapsedTime, 0, len(executionResult.NodeResults), messageErr.Error()); finalizeErr != nil {
+					return nil, fmt.Errorf("%w; finalize run: %v", messageErr, finalizeErr)
+				}
+				return nil, messageErr
 			}
+		}
+
+		if err := s.UpdateWorkflowRunLogStatus(ctx, workflowRunLogTyped.ID, string(dto.WorkflowRunStatusSucceeded), executionResult.NodeResults, elapsedTime, 0, len(executionResult.NodeResults), ""); err != nil {
+			return nil, fmt.Errorf("finalize draft workflow run: %w", err)
 		}
 
 		// Build response with readable final output for blocking callers such as batch tests.
@@ -914,16 +927,20 @@ func (s *WorkflowService) RunDraftWorkflowNode(ctx context.Context, workspaceID,
 		s.cleanupWorkflowReusableSessionsWithTimeout(workflowRunLogID)
 	}()
 	if err != nil {
-		logger.Error("Failed to create workflow run log for single node", err)
-		// Use fallback ID if database creation fails
-		workflowRunLogID = fmt.Sprintf("run-%s-%d", agentID, time.Now().UnixNano())
-	} else if workflowRunLogTyped, ok := workflowRunLog.(*WorkflowRunLog); ok {
-		workflowRunLogID = workflowRunLogTyped.ID
-		persistedWorkflowRunLogID = workflowRunLogTyped.ID
-	} else {
-		// Use fallback ID if type assertion fails
-		workflowRunLogID = fmt.Sprintf("run-%s-%d", agentID, time.Now().UnixNano())
+		return nil, fmt.Errorf("create durable workflow node run: %w", err)
 	}
+	workflowRunLogTyped, ok := workflowRunLog.(*WorkflowRunLog)
+	if !ok || workflowRunLogTyped == nil {
+		return nil, fmt.Errorf("create durable workflow node run: unexpected run log type %T", workflowRunLog)
+	}
+	workflowRunLogID = workflowRunLogTyped.ID
+	persistedWorkflowRunLogID = workflowRunLogTyped.ID
+	owner := workflowExecutionOwnerFromRun(workflowRunLogTyped)
+	ctx = withWorkflowExecutionOwner(ctx, owner)
+	ctx, stopRenewal := startWorkflowExecutionLeaseRenewal(ctx, workflowpause.NewService(database.GetDB()), workflowpause.ExecutionClaim{
+		WorkflowRunID: workflowRunLogTyped.ID, Generation: owner.Generation, ExecutionID: owner.ExecutionID,
+	})
+	defer stopRenewal()
 
 	inputs["sys.user_id"] = accountID
 	inputs["sys.agent_id"] = agentID
@@ -980,8 +997,11 @@ func (s *WorkflowService) RunDraftWorkflowNode(ctx context.Context, workspaceID,
 		accountID,
 	)
 	if err != nil {
-		logger.Error("Failed to create workflow node runtime log", err)
-		// Continue execution even if logging fails
+		errorMessage := fmt.Sprintf("create durable workflow node projection: %v", err)
+		if finalizeErr := s.UpdateWorkflowRunLogStatus(ctx, workflowRunLogID, string(dto.WorkflowRunStatusFailed), map[string]interface{}{}, 0, 0, 0, errorMessage); finalizeErr != nil {
+			return nil, fmt.Errorf("%s; finalize run: %w", errorMessage, finalizeErr)
+		}
+		return nil, fmt.Errorf("%s", errorMessage)
 	}
 
 	// Execute single node
@@ -1266,32 +1286,49 @@ func (s *WorkflowService) StopWorkflowTask(ctx context.Context, tenantID, agentI
 		return fmt.Errorf("workflow run not found or access denied")
 	}
 
-	// Cancel the running workflow context first (this will trigger immediate stop)
-	if s.CancelRunningWorkflow(taskID) {
-		logger.Info("Successfully cancelled running workflow context for run: %s", taskID)
-	} else {
-		logger.Warn("No running workflow context found for run: %s (may have already completed)", taskID)
-	}
-
-	// Stop the workflow engine if it's running
-	if s.executor != nil {
-		if stopErr := s.executor.StopWorkflow(taskID); stopErr != nil {
-			logger.Warn("Failed to stop workflow engine: %v", stopErr)
-			// Continue with database update even if engine stop fails
+	cancelledLocally := false
+	if workflowRunNeedsRuntimeCancellation(run) {
+		// Only an actively owned execution can have in-memory answer and event
+		// buffers to flush. Paused V2 runs have already released their owner and
+		// engine, so probing both registries only creates misleading warnings.
+		cancelledLocally = s.CancelRunningWorkflow(taskID)
+		if cancelledLocally {
+			logger.Info("Successfully cancelled running workflow context for run: %s", taskID)
 		} else {
-			logger.Info("Successfully stopped workflow engine for run: %s", taskID)
+			logger.Debug("No local running workflow context found for run: %s", taskID)
+		}
+
+		if s.executor != nil {
+			if stopErr := s.executor.StopWorkflow(taskID); stopErr != nil {
+				logger.Debug("No local workflow engine stopped for run %s: %v", taskID, stopErr)
+			} else {
+				logger.Info("Successfully stopped workflow engine for run: %s", taskID)
+			}
 		}
 	}
 
-	// Update run status to stopped
 	now := time.Now()
-	if err := s.workflowRunLogRepo.UpdateStatus(ctx, run.ID, string(dto.WorkflowRunStatusStopped), &now); err != nil {
-		return fmt.Errorf("failed to stop workflow run: %w", err)
+	shouldStopNodeLogs := true
+	if run.RuntimeProtocolVersion >= workflowRuntimeProtocolVersionV2 {
+		persistCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), workflowRunFinalizePersistTimeout)
+		defer cancel()
+		if cancelledLocally {
+			run = s.waitForLocalWorkflowStopFinalization(persistCtx, run)
+		}
+		if err := s.finalizeStoppedWorkflowRunV2(persistCtx, run, now); err != nil {
+			return fmt.Errorf("failed to durably stop workflow run: %w", err)
+		}
+		if current, loadErr := s.workflowRunLogRepo.GetByID(persistCtx, run.ID); loadErr == nil && current != nil {
+			run = current
+			shouldStopNodeLogs = string(current.Status) == string(dto.WorkflowRunStatusStopped)
+		}
+	} else if err := s.stopLegacyWorkflowRun(ctx, run.ID, now); err != nil {
+		return err
 	}
 
 	// Stop any running node logs for this run
 	nodeLogs, err := s.workflowNodeRuntimeLogRepo.GetByWorkflowRunID(ctx, run.ID)
-	if err == nil {
+	if err == nil && shouldStopNodeLogs {
 		for _, nl := range nodeLogs {
 			if string(nl.Status) == string(dto.NodeStatusRunning) {
 				_ = s.workflowNodeRuntimeLogRepo.UpdateStatus(ctx, nl.ID, string(dto.WorkflowRunStatusStopped), &now)
@@ -1308,6 +1345,20 @@ func (s *WorkflowService) StopWorkflowTask(ctx context.Context, tenantID, agentI
 	s.UnregisterRunningWorkflow(taskID)
 
 	return nil
+}
+
+func workflowRunNeedsRuntimeCancellation(run *WorkflowRunLog) bool {
+	if run == nil {
+		return false
+	}
+	switch string(run.Status) {
+	case string(dto.WorkflowRunStatusSucceeded), string(dto.WorkflowRunStatusFailed), string(dto.WorkflowRunStatusStopped):
+		return false
+	}
+	if run.RuntimeProtocolVersion < workflowRuntimeProtocolVersionV2 {
+		return true
+	}
+	return run.ActiveExecutionID != nil && strings.TrimSpace(*run.ActiveExecutionID) != ""
 }
 
 // GetWorkflowRunByID gets workflow run by ID
@@ -1512,14 +1563,19 @@ func (s *WorkflowService) RunPublishedWorkflow(ctx context.Context, workspaceID,
 			s.cleanupWorkflowReusableSessionsWithTimeout(workflowRunLogID)
 		}()
 		if err != nil {
-			logger.Error("Failed to create workflow run log", err)
-			// Use fallback ID if database creation fails
-			workflowRunLogID = fmt.Sprintf("run-%s-%d", agentID, time.Now().UnixNano())
-		} else if workflowRunLogTyped, ok := workflowRunLog.(*WorkflowRunLog); ok {
-			workflowRunLogID = workflowRunLogTyped.ID
-		} else {
-			workflowRunLogID = fmt.Sprintf("run-%s-%d", agentID, time.Now().UnixNano())
+			return nil, fmt.Errorf("create durable published workflow run: %w", err)
 		}
+		workflowRunLogTyped, ok := workflowRunLog.(*WorkflowRunLog)
+		if !ok || workflowRunLogTyped == nil {
+			return nil, fmt.Errorf("create durable published workflow run: unexpected run log type %T", workflowRunLog)
+		}
+		workflowRunLogID = workflowRunLogTyped.ID
+		owner := workflowExecutionOwnerFromRun(workflowRunLogTyped)
+		ctx = withWorkflowExecutionOwner(ctx, owner)
+		ctx, stopRenewal := startWorkflowExecutionLeaseRenewal(ctx, workflowpause.NewService(database.GetDB()), workflowpause.ExecutionClaim{
+			WorkflowRunID: workflowRunLogTyped.ID, Generation: owner.Generation, ExecutionID: owner.ExecutionID,
+		})
+		defer stopRenewal()
 
 		if draftReq.Inputs == nil {
 			draftReq.Inputs = make(map[string]interface{})
@@ -1530,19 +1586,17 @@ func (s *WorkflowService) RunPublishedWorkflow(ctx context.Context, workspaceID,
 
 		// Execute workflow using executor
 		result, err := s.executor.ExecuteSimpleWorkflowWithRunID(ctx, workflowRunLogID, graphData, draftReq.Inputs)
-
+		status, errorMessage := workflowExecutionLogStatusAndError(result, err)
+		nodeResults := map[string]interface{}{}
+		if result != nil {
+			nodeResults = result.NodeResults
+		}
+		if finalizeErr := s.UpdateWorkflowRunLogStatus(ctx, workflowRunLogID, status, nodeResults, workflowExecutionResultElapsedMilliseconds(result, 0), 0, len(nodeResults), errorMessage); finalizeErr != nil {
+			return nil, fmt.Errorf("finalize published workflow run: %w", finalizeErr)
+		}
 		if err != nil {
 			logger.Error("Failed to execute published workflow", err)
 			return nil, fmt.Errorf("failed to execute published workflow: %w", err)
-		}
-
-		// Update workflow run log with results
-		if workflowRunLogID != "" {
-			updateErr := s.UpdateWorkflowRunLogStatus(ctx, workflowRunLogID, "succeeded", result.NodeResults, workflowExecutionResultElapsedMilliseconds(result, 0), 0, 0, "")
-			if updateErr != nil {
-				logger.Error("Failed to update workflow run log", updateErr)
-				// Don't return error here as workflow execution was successful
-			}
 		}
 
 		// Live agents runtime log creation removed as requested
@@ -1947,6 +2001,10 @@ func (s *WorkflowService) GetWorkflowAverageAppInteraction(ctx context.Context, 
 
 // CreateWorkflowRunLog creates a new workflow run log entry
 func (s *WorkflowService) CreateWorkflowRunLog(ctx context.Context, tenantID, agentID, workflowID string, triggeredFrom string, inputs map[string]interface{}, accountID string) (interface{}, error) {
+	return s.createWorkflowRunLog(ctx, tenantID, agentID, workflowID, triggeredFrom, inputs, accountID, nil)
+}
+
+func (s *WorkflowService) createWorkflowRunLog(ctx context.Context, tenantID, agentID, workflowID string, triggeredFrom string, inputs map[string]interface{}, accountID string, invocation *automationaction.WorkflowInvocationContext) (interface{}, error) {
 	if s.workflowRunLogRepo == nil {
 		return nil, fmt.Errorf("workflow run log repository not initialized")
 	}
@@ -2039,8 +2097,9 @@ func (s *WorkflowService) CreateWorkflowRunLog(ctx context.Context, tenantID, ag
 		ExceptionsCount: 0,
 		Features:        featuresStr,
 	}
+	applyWorkflowInvocationToRunLog(workflowRunLog, invocation)
 
-	if err := s.workflowRunLogRepo.Create(ctx, workflowRunLog); err != nil {
+	if err := s.createWorkflowRunLogWithConversationClaim(ctx, workflowRunLog); err != nil {
 		return nil, fmt.Errorf("failed to create workflow run log: %w", err)
 	}
 
@@ -2061,6 +2120,67 @@ func (s *WorkflowService) UpdateWorkflowRunLogStatus(ctx context.Context, workfl
 		if b, err := json.Marshal(outputs); err == nil {
 			outputsJSON = string(b)
 		}
+	}
+	if owner, hasOwner := workflowExecutionOwnerFromContext(ctx); hasOwner {
+		if isWorkflowRunTerminalStatus(status) {
+			run, err := s.workflowRunLogRepo.GetByID(ctx, workflowRunLogID)
+			if err != nil {
+				return fmt.Errorf("load owned workflow run for finalization: %w", err)
+			}
+			exceptionsCount := run.ExceptionsCount
+			var errorEvent map[string]interface{}
+			if status == string(dto.WorkflowRunStatusFailed) || status == "failed" {
+				exceptionsCount++
+				errorEvent = map[string]interface{}{
+					"id": workflowRunLogID, "workflow_run_id": workflowRunLogID,
+					"workflow_id": run.WorkflowID, "status": status,
+					"message": errorMsg, "error": errorMsg, "created_at": finishedAt.Unix(),
+				}
+			}
+			finishedEvent := map[string]interface{}{
+				"id": workflowRunLogID, "workflow_run_id": workflowRunLogID,
+				"workflow_id": run.WorkflowID, "sequence_number": run.SequenceNumber,
+				"status": status, "outputs": outputs, "error": errorMsg,
+				"elapsed_time": elapsedTime, "total_tokens": totalTokens, "total_steps": totalSteps,
+				"created_at": run.CreatedAt.Unix(), "finished_at": finishedAt.Unix(),
+				"exceptions_count": exceptionsCount, "files": []interface{}{},
+			}
+			return finalizeWorkflowRun(ctx, finalizeWorkflowRunParams{
+				WorkflowRunID: workflowRunLogID, Status: status, Outputs: outputs,
+				ErrorMessage: errorMsg, ElapsedTime: elapsedTime, TotalTokens: totalTokens,
+				TotalSteps: totalSteps, ExceptionsCount: exceptionsCount,
+				ErrorEvent: errorEvent, WorkflowFinished: finishedEvent,
+			})
+		}
+		updates := map[string]interface{}{
+			"status":       status,
+			"finished_at":  finishedAt,
+			"outputs":      outputsJSON,
+			"total_tokens": totalTokens,
+			"elapsed_time": elapsedTime,
+			"total_steps":  totalSteps,
+		}
+		if errorMsg != "" {
+			updates["error"] = errorMsg
+		}
+		if status == string(dto.WorkflowRunStatusFailed) || status == "failed" {
+			updates["exceptions_count"] = gorm.Expr("exceptions_count + 1")
+		}
+		if status == string(dto.WorkflowRunStatusSucceeded) || status == string(dto.WorkflowRunStatusFailed) || status == string(dto.WorkflowRunStatusStopped) {
+			updates["active_execution_id"] = nil
+			updates["execution_lease_expires_at"] = nil
+			updates["state_revision"] = gorm.Expr("state_revision + 1")
+		}
+		result := database.GetDB().WithContext(ctx).Model(&WorkflowRunLog{}).
+			Where("id = ? AND execution_generation = ? AND active_execution_id = ?", workflowRunLogID, owner.Generation, owner.ExecutionID).
+			Updates(updates)
+		if result.Error != nil {
+			return fmt.Errorf("failed to update owned workflow run log: %w", result.Error)
+		}
+		if result.RowsAffected != 1 {
+			return workflowpause.ErrExecutionOwnershipLost
+		}
+		return nil
 	}
 
 	// Update status and outputs
@@ -2094,41 +2214,13 @@ func (s *WorkflowService) UpdateWorkflowRunLogStatus(ctx context.Context, workfl
 	return nil
 }
 
-func (s *WorkflowService) PauseWorkflowRunLog(ctx context.Context, workflowRunLogID string, outputs map[string]interface{}, elapsedTime float64, totalTokens int64, totalSteps int) error {
-	if s.workflowRunLogRepo == nil {
-		return fmt.Errorf("workflow run log repository not initialized")
+func isWorkflowRunTerminalStatus(status string) bool {
+	switch dto.WorkflowRunStatus(strings.ToLower(strings.TrimSpace(status))) {
+	case dto.WorkflowRunStatusSucceeded, dto.WorkflowRunStatusFailed, dto.WorkflowRunStatusStopped:
+		return true
+	default:
+		return false
 	}
-
-	outputsJSON := "{}"
-	if outputs != nil {
-		if b, err := json.Marshal(outputs); err == nil {
-			outputsJSON = string(b)
-		}
-	}
-
-	if err := s.workflowRunLogRepo.UpdateStatus(ctx, workflowRunLogID, string(dto.WorkflowRunStatusPaused), nil); err != nil {
-		return fmt.Errorf("failed to pause workflow run log: %w", err)
-	}
-	if err := s.workflowRunLogRepo.UpdateOutputsAndTokens(ctx, workflowRunLogID, outputsJSON, totalTokens, elapsedTime); err != nil {
-		return fmt.Errorf("failed to update paused workflow outputs: %w", err)
-	}
-	if run, err := s.workflowRunLogRepo.GetByID(ctx, workflowRunLogID); err == nil && run != nil {
-		run.TotalSteps = totalSteps
-		if updateErr := s.workflowRunLogRepo.Update(ctx, run); updateErr != nil {
-			return fmt.Errorf("failed to update paused workflow details: %w", updateErr)
-		}
-	}
-	return nil
-}
-
-func (s *WorkflowService) ResumeWorkflowRunLog(ctx context.Context, workflowRunLogID string) error {
-	if s.workflowRunLogRepo == nil {
-		return fmt.Errorf("workflow run log repository not initialized")
-	}
-	if err := s.workflowRunLogRepo.UpdateStatus(ctx, workflowRunLogID, string(dto.WorkflowRunStatusRunning), nil); err != nil {
-		return fmt.Errorf("failed to resume workflow run log: %w", err)
-	}
-	return nil
 }
 
 // CreateWorkflowNodeRuntimeLog creates a new workflow node runtime log entry
@@ -2193,7 +2285,23 @@ func (s *WorkflowService) CreateWorkflowNodeRuntimeLog(ctx context.Context, tena
 		Features:          featuresStr,
 	}
 
-	if err := s.workflowNodeRuntimeLogRepo.Create(ctx, nodeLog); err != nil {
+	if owner, hasOwner := workflowExecutionOwnerFromContext(ctx); hasOwner {
+		err := database.GetDB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			var run WorkflowRunLog
+			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+				Where("id = ? AND execution_generation = ? AND active_execution_id = ?", workflowRunID, owner.Generation, owner.ExecutionID).
+				First(&run).Error; err != nil {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					return workflowpause.ErrExecutionOwnershipLost
+				}
+				return err
+			}
+			return tx.Create(nodeLog).Error
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to create owned workflow node runtime log: %w", err)
+		}
+	} else if err := s.workflowNodeRuntimeLogRepo.Create(ctx, nodeLog); err != nil {
 		return nil, fmt.Errorf("failed to create workflow node runtime log: %w", err)
 	}
 
@@ -2228,6 +2336,31 @@ func (s *WorkflowService) UpdateWorkflowNodeRuntimeLog(ctx context.Context, node
 		if b, err := json.Marshal(executionMetadata); err == nil {
 			executionMetadataJSON = string(b)
 		}
+	}
+	if owner, hasOwner := workflowExecutionOwnerFromContext(ctx); hasOwner {
+		updates := map[string]interface{}{
+			"status":             status,
+			"finished_at":        finishedAt,
+			"outputs":            outputsJSON,
+			"process_data":       processDataJSON,
+			"execution_metadata": executionMetadataJSON,
+			"elapsed_time":       elapsedTime,
+		}
+		if errorMsg != "" {
+			updates["error"] = errorMsg
+		}
+		ownedRun := database.GetDB().Table("workflow_run_logs").Select("id").
+			Where("id = workflow_node_runtime_logs.workflow_run_id AND execution_generation = ? AND active_execution_id = ?", owner.Generation, owner.ExecutionID)
+		result := database.GetDB().WithContext(ctx).Model(&WorkflowNodeRuntimeLog{}).
+			Where("id = ? AND EXISTS (?)", nodeLogID, ownedRun).
+			Updates(updates)
+		if result.Error != nil {
+			return fmt.Errorf("failed to update owned workflow node runtime log: %w", result.Error)
+		}
+		if result.RowsAffected != 1 {
+			return workflowpause.ErrExecutionOwnershipLost
+		}
+		return nil
 	}
 
 	// Update status
@@ -2634,13 +2767,39 @@ func newWorkflowElapsedTrackerFromNodeLogsWithPausedPolicy(nodeLogs []WorkflowNo
 	tracker := &workflowElapsedTracker{
 		nodeElapsed: make(map[string]float64),
 	}
-	for _, nodeLog := range nodeLogs {
+	for _, nodeLog := range workflowRuntimeMetricNodeLogs(nodeLogs) {
 		if !includePaused && nodeLog.Status == string(dto.NodeStatusPaused) {
 			continue
 		}
 		tracker.recordNodeElapsed(nodeLog.ID, workflowNodeElapsedMilliseconds(nodeLog))
 	}
 	return tracker
+}
+
+// workflowRuntimeMetricNodeLogs returns one timing/token contribution for each
+// executed branch. A container runtime includes the duration and usage of its
+// children, so retaining both the container row and its child rows would count
+// the same work twice.
+func workflowRuntimeMetricNodeLogs(nodeLogs []WorkflowNodeRuntimeLog) []WorkflowNodeRuntimeLog {
+	containersWithChildren := make(map[string]struct{})
+	for _, nodeLog := range nodeLogs {
+		if nodeLog.ContainerID == nil {
+			continue
+		}
+		if containerID := strings.TrimSpace(*nodeLog.ContainerID); containerID != "" {
+			containersWithChildren[containerID] = struct{}{}
+		}
+	}
+
+	filtered := make([]WorkflowNodeRuntimeLog, 0, len(nodeLogs))
+	for _, nodeLog := range nodeLogs {
+		_, hasChildren := containersWithChildren[nodeLog.NodeID]
+		if hasChildren && (nodeLog.NodeType == string(shared.Iteration) || nodeLog.NodeType == string(shared.Loop)) {
+			continue
+		}
+		filtered = append(filtered, nodeLog)
+	}
+	return filtered
 }
 
 func (s *WorkflowService) newWorkflowElapsedTracker(ctx context.Context, workflowRunID string) *workflowElapsedTracker {
@@ -3003,6 +3162,46 @@ func (s *WorkflowService) workflowRunNodeElapsedMilliseconds(ctx context.Context
 	return newWorkflowElapsedTrackerFromNodeLogsWithPausedPolicy(nodeLogs, true).elapsedOrFallback(0)
 }
 
+func (s *WorkflowService) workflowRunNodeTotalTokens(ctx context.Context, workflowRunID string) int64 {
+	if s == nil || s.workflowNodeRuntimeLogRepo == nil || workflowRunID == "" {
+		return 0
+	}
+
+	nodeLogs, err := s.workflowNodeRuntimeLogRepo.GetByWorkflowRunID(ctx, workflowRunID)
+	if err != nil {
+		return 0
+	}
+
+	var total int64
+	for _, nodeLog := range workflowRuntimeMetricNodeLogs(nodeLogs) {
+		total += workflowNodeRuntimeLogTotalTokens(nodeLog)
+	}
+	return total
+}
+
+func workflowNodeRuntimeLogTotalTokens(nodeLog WorkflowNodeRuntimeLog) int64 {
+	if outputs, err := nodeLog.GetOutputsDict(); err == nil {
+		if usage, ok := outputs["usage"].(map[string]interface{}); ok {
+			if total := workflowRuntimeTotalTokensValue(usage); total > 0 {
+				return total
+			}
+		}
+	}
+	if metadata, err := nodeLog.GetExecutionMetadataDict(); err == nil {
+		return workflowRuntimeTotalTokensValue(metadata)
+	}
+	return 0
+}
+
+func workflowRuntimeTotalTokensValue(values map[string]interface{}) int64 {
+	for _, key := range []string{"total_tokens", "totalTokens", "TotalTokens"} {
+		if value, ok := workflowEventInt(values[key]); ok && value > 0 {
+			return int64(value)
+		}
+	}
+	return 0
+}
+
 func (s *WorkflowService) workflowRunElapsedMillisecondsForEvent(ctx context.Context, workflowRunID string, fallback float64) float64 {
 	elapsed := s.workflowRunNodeElapsedMilliseconds(ctx, workflowRunID)
 	if elapsed > 0 {
@@ -3199,6 +3398,7 @@ func (s *WorkflowService) RunWorkflowByVersionUUID(ctx context.Context, versionU
 		conversationID = &convIDStr
 		// Add conversation ID to inputs for workflow execution
 		draftReq.Inputs["sys.conversation_id"] = convIDStr
+		draftReq.Inputs["sys.workflow_type"] = "chat"
 	}
 
 	// Resolve organization scope for workflow system variables.
@@ -3213,12 +3413,20 @@ func (s *WorkflowService) RunWorkflowByVersionUUID(ctx context.Context, versionU
 	// Create workflow run log with triggered_from = "web-app" and workflow_version_uuid = versionUUID
 	workflowRunLog, err := s.CreateWorkflowRunLogWithVersion(ctx, tenantID, agentID, workflow.ID, "web-app", versionUUID, draftReq.Inputs, accountID)
 	if err != nil {
-		logger.Error("Failed to create workflow run log", err)
-		// Continue execution even if logging fails
-	} else if workflowRunLogTyped, ok := workflowRunLog.(*WorkflowRunLog); ok {
-		workflowRunLogID = workflowRunLogTyped.ID
-		workflowRunIDStr = workflowRunLogID
+		return nil, fmt.Errorf("create durable version workflow run: %w", err)
 	}
+	workflowRunLogTyped, ok := workflowRunLog.(*WorkflowRunLog)
+	if !ok || workflowRunLogTyped == nil {
+		return nil, fmt.Errorf("create durable version workflow run: unexpected run log type %T", workflowRunLog)
+	}
+	workflowRunLogID = workflowRunLogTyped.ID
+	workflowRunIDStr = workflowRunLogID
+	owner := workflowExecutionOwnerFromRun(workflowRunLogTyped)
+	ctx = withWorkflowExecutionOwner(ctx, owner)
+	ctx, stopRenewal := startWorkflowExecutionLeaseRenewal(ctx, workflowpause.NewService(database.GetDB()), workflowpause.ExecutionClaim{
+		WorkflowRunID: workflowRunLogTyped.ID, Generation: owner.Generation, ExecutionID: owner.ExecutionID,
+	})
+	defer stopRenewal()
 
 	// Add system variables to inputs for workflow execution
 	if draftReq.Inputs == nil {
@@ -3246,26 +3454,14 @@ func (s *WorkflowService) RunWorkflowByVersionUUID(ctx context.Context, versionU
 	executionResult, err := s.executor.ExecuteSimpleWorkflowWithRunID(ctx, workflowRunLogID, graphData, draftReq.Inputs)
 	elapsedTime := workflowExecutionResultElapsedMilliseconds(executionResult, ElapsedMillisecondsSince(startTime))
 
-	// Update workflow run log with results
-	if workflowRunLog != nil {
-		status := "succeeded"
-		if err != nil {
-			status = "failed"
-		}
-
-		if workflowRunLogTyped, ok := workflowRunLog.(*WorkflowRunLog); ok {
-			nodeResults := map[string]interface{}{}
-			if executionResult != nil {
-				nodeResults = executionResult.NodeResults
-			}
-			updateErr := s.UpdateWorkflowRunLogStatus(ctx, workflowRunLogTyped.ID, status, nodeResults, elapsedTime, 0, len(nodeResults), "")
-			if updateErr != nil {
-				logger.Error("Failed to update workflow run log", updateErr)
-			}
-		}
-	}
-
 	if err != nil {
+		nodeResults := map[string]interface{}{}
+		if executionResult != nil {
+			nodeResults = executionResult.NodeResults
+		}
+		if finalizeErr := s.UpdateWorkflowRunLogStatus(ctx, workflowRunLogTyped.ID, string(dto.WorkflowRunStatusFailed), nodeResults, elapsedTime, 0, len(nodeResults), err.Error()); finalizeErr != nil {
+			return nil, fmt.Errorf("workflow execution failed: %w; finalize run: %v", err, finalizeErr)
+		}
 		logger.Error("Failed to execute workflow", err)
 		return nil, fmt.Errorf("workflow execution failed: %w", err)
 	}
@@ -3348,8 +3544,11 @@ func (s *WorkflowService) RunWorkflowByVersionUUID(ctx context.Context, versionU
 			&versionUUID, // workflowVersionUUID - set to the version UUID
 		)
 		if err != nil {
-			logger.Error("Failed to create workflow message", err)
-			// Don't fail the entire workflow execution if message creation fails
+			messageErr := fmt.Errorf("persist workflow final answer: %w", err)
+			if finalizeErr := s.UpdateWorkflowRunLogStatus(ctx, workflowRunLogTyped.ID, string(dto.WorkflowRunStatusFailed), executionResult.NodeResults, elapsedTime, 0, len(executionResult.NodeResults), messageErr.Error()); finalizeErr != nil {
+				return nil, fmt.Errorf("%w; finalize run: %v", messageErr, finalizeErr)
+			}
+			return nil, messageErr
 		} else {
 			s.enqueueWebAppConversationTitleGeneration(ctx, workflowConversationTitleParams{
 				WorkspaceID:    tenantID,
@@ -3360,6 +3559,10 @@ func (s *WorkflowService) RunWorkflowByVersionUUID(ctx context.Context, versionU
 				WebAppID:       versionUUID,
 			})
 		}
+	}
+
+	if err := s.UpdateWorkflowRunLogStatus(ctx, workflowRunLogTyped.ID, string(dto.WorkflowRunStatusSucceeded), executionResult.NodeResults, elapsedTime, 0, len(executionResult.NodeResults), ""); err != nil {
+		return nil, fmt.Errorf("finalize version workflow run: %w", err)
 	}
 
 	// Build response
@@ -3491,6 +3694,7 @@ func (s *WorkflowService) RunWorkflowByWebAppID(ctx context.Context, webAppID st
 		conversationID = &convIDStr
 		// Add conversation ID to inputs for workflow execution
 		draftReq.Inputs["sys.conversation_id"] = convIDStr
+		draftReq.Inputs["sys.workflow_type"] = "chat"
 	}
 
 	// Resolve organization scope for workflow system variables.
@@ -3505,12 +3709,20 @@ func (s *WorkflowService) RunWorkflowByWebAppID(ctx context.Context, webAppID st
 	// Create workflow run log with triggered_from = "web-app" and web_app_id = webAppID
 	workflowRunLog, err := s.CreateWorkflowRunLogWithWebAppID(ctx, tenantID, agentID, workflow.ID, "web-app", webAppID, draftReq.Inputs, accountID)
 	if err != nil {
-		logger.Error("Failed to create workflow run log", err)
-		// Continue execution even if logging fails
-	} else if workflowRunLogTyped, ok := workflowRunLog.(*WorkflowRunLog); ok {
-		workflowRunLogID = workflowRunLogTyped.ID
-		workflowRunIDStr = workflowRunLogID
+		return nil, fmt.Errorf("create durable web app workflow run: %w", err)
 	}
+	workflowRunLogTyped, ok := workflowRunLog.(*WorkflowRunLog)
+	if !ok || workflowRunLogTyped == nil {
+		return nil, fmt.Errorf("create durable web app workflow run: unexpected run log type %T", workflowRunLog)
+	}
+	workflowRunLogID = workflowRunLogTyped.ID
+	workflowRunIDStr = workflowRunLogID
+	owner := workflowExecutionOwnerFromRun(workflowRunLogTyped)
+	ctx = withWorkflowExecutionOwner(ctx, owner)
+	ctx, stopRenewal := startWorkflowExecutionLeaseRenewal(ctx, workflowpause.NewService(database.GetDB()), workflowpause.ExecutionClaim{
+		WorkflowRunID: workflowRunLogTyped.ID, Generation: owner.Generation, ExecutionID: owner.ExecutionID,
+	})
+	defer stopRenewal()
 
 	// Add system variables to inputs for workflow execution
 	if draftReq.Inputs == nil {
@@ -3539,26 +3751,14 @@ func (s *WorkflowService) RunWorkflowByWebAppID(ctx context.Context, webAppID st
 	executionResult, err := s.executor.ExecuteSimpleWorkflowWithRunID(ctx, workflowRunLogID, graphData, draftReq.Inputs)
 	elapsedTime := workflowExecutionResultElapsedMilliseconds(executionResult, ElapsedMillisecondsSince(startTime))
 
-	// Update workflow run log with results
-	if workflowRunLog != nil {
-		status := "succeeded"
-		if err != nil {
-			status = "failed"
-		}
-
-		if workflowRunLogTyped, ok := workflowRunLog.(*WorkflowRunLog); ok {
-			nodeResults := map[string]interface{}{}
-			if executionResult != nil {
-				nodeResults = executionResult.NodeResults
-			}
-			updateErr := s.UpdateWorkflowRunLogStatus(ctx, workflowRunLogTyped.ID, status, nodeResults, elapsedTime, 0, len(nodeResults), "")
-			if updateErr != nil {
-				logger.Error("Failed to update workflow run log", updateErr)
-			}
-		}
-	}
-
 	if err != nil {
+		nodeResults := map[string]interface{}{}
+		if executionResult != nil {
+			nodeResults = executionResult.NodeResults
+		}
+		if finalizeErr := s.UpdateWorkflowRunLogStatus(ctx, workflowRunLogTyped.ID, string(dto.WorkflowRunStatusFailed), nodeResults, elapsedTime, 0, len(nodeResults), err.Error()); finalizeErr != nil {
+			return nil, fmt.Errorf("workflow execution failed: %w; finalize run: %v", err, finalizeErr)
+		}
 		logger.Error("Failed to execute workflow", err)
 		return nil, fmt.Errorf("workflow execution failed: %w", err)
 	}
@@ -3641,8 +3841,11 @@ func (s *WorkflowService) RunWorkflowByWebAppID(ctx context.Context, webAppID st
 			&webAppID, // web_app_id - set to the web app ID
 		)
 		if err != nil {
-			logger.Error("Failed to create workflow message", err)
-			// Don't fail the entire workflow execution if message creation fails
+			messageErr := fmt.Errorf("persist workflow final answer: %w", err)
+			if finalizeErr := s.UpdateWorkflowRunLogStatus(ctx, workflowRunLogTyped.ID, string(dto.WorkflowRunStatusFailed), executionResult.NodeResults, elapsedTime, 0, len(executionResult.NodeResults), messageErr.Error()); finalizeErr != nil {
+				return nil, fmt.Errorf("%w; finalize run: %v", messageErr, finalizeErr)
+			}
+			return nil, messageErr
 		} else {
 			s.enqueueWebAppConversationTitleGeneration(ctx, workflowConversationTitleParams{
 				WorkspaceID:    tenantID,
@@ -3653,6 +3856,10 @@ func (s *WorkflowService) RunWorkflowByWebAppID(ctx context.Context, webAppID st
 				WebAppID:       webAppID,
 			})
 		}
+	}
+
+	if err := s.UpdateWorkflowRunLogStatus(ctx, workflowRunLogTyped.ID, string(dto.WorkflowRunStatusSucceeded), executionResult.NodeResults, elapsedTime, 0, len(executionResult.NodeResults), ""); err != nil {
+		return nil, fmt.Errorf("finalize web app workflow run: %w", err)
 	}
 
 	// Build response
@@ -3707,7 +3914,7 @@ func (s *WorkflowService) CreateWorkflowRunLogWithWebAppID(ctx context.Context, 
 	}
 
 	// Save to database
-	if err := s.workflowRunLogRepo.Create(ctx, workflowRunLog); err != nil {
+	if err := s.createWorkflowRunLogWithConversationClaim(ctx, workflowRunLog); err != nil {
 		return nil, fmt.Errorf("failed to create workflow run log: %w", err)
 	}
 
@@ -3769,7 +3976,7 @@ func (s *WorkflowService) CreateWorkflowRunLogWithVersion(ctx context.Context, t
 		ExceptionsCount: 0,
 	}
 
-	if err := s.workflowRunLogRepo.Create(ctx, workflowRunLog); err != nil {
+	if err := s.createWorkflowRunLogWithConversationClaim(ctx, workflowRunLog); err != nil {
 		return nil, fmt.Errorf("failed to create workflow run log: %w", err)
 	}
 

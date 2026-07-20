@@ -324,40 +324,76 @@ func (ConversationVariable) TableName() string {
 
 // WorkflowRunLog represents workflow run log model - for workflow execution logging
 type WorkflowRunLog struct {
-	ID              string                `gorm:"type:uuid;primary_key;default:uuid_generate_v4()" json:"id"`
-	TenantID        string                `gorm:"type:uuid;not null;index:idx_workflow_run_logs_triggered_from" json:"tenant_id"` // Legacy tenant_id column; stores workspace scope in workflow domain.
-	AgentID         string                `gorm:"type:uuid;not null;index:idx_workflow_run_logs_triggered_from" json:"agent_id"`
-	SequenceNumber  int                   `gorm:"not null;index:idx_workflow_run_logs_tenant_agent_sequence" json:"sequence_number"`
-	WorkflowID      string                `gorm:"type:uuid;not null" json:"workflow_id"`
-	Type            dto.WorkflowType      `gorm:"type:varchar(255);not null" json:"type"`
-	TriggeredFrom   string                `gorm:"type:varchar(255);not null;index:idx_workflow_run_logs_triggered_from" json:"triggered_from"`
-	Version         string                `gorm:"type:varchar(255);not null" json:"version"`
-	WebAppID        *string               `gorm:"type:uuid" json:"web_app_id"` // Track which web application was used
-	Graph           *string               `gorm:"type:text" json:"graph"`
-	Features        *string               `gorm:"type:text" json:"features"`
-	Inputs          *string               `gorm:"type:text" json:"inputs"`
-	Status          dto.WorkflowRunStatus `gorm:"type:varchar(255);not null" json:"status"`
-	Outputs         *string               `gorm:"type:text;default:'{}'" json:"outputs"`
-	Error           *string               `gorm:"type:text" json:"error"`
-	ElapsedTime     float64               `gorm:"not null;default:0" json:"elapsed_time"`
-	TotalTokens     int64                 `gorm:"not null;default:0" json:"total_tokens"`
-	TotalSteps      int                   `gorm:"not null;default:0" json:"total_steps"`
-	CreatedByRole   CreatedByRole         `gorm:"type:varchar(255);not null" json:"created_by_role"`
-	CreatedBy       string                `gorm:"type:uuid;not null" json:"created_by"`
-	CreatedAt       time.Time             `gorm:"not null;default:CURRENT_TIMESTAMP" json:"created_at"`
-	FinishedAt      *time.Time            `json:"finished_at"`
-	DeletedAt       *time.Time            `json:"deleted_at"`
-	DeletedBy       *string               `gorm:"type:uuid" json:"deleted_by"`
-	ExceptionsCount int                   `gorm:"not null;default:0" json:"exceptions_count"`
+	ID                        string                `gorm:"type:uuid;primary_key;default:uuid_generate_v4()" json:"id"`
+	TenantID                  string                `gorm:"type:uuid;not null;index:idx_workflow_run_logs_triggered_from" json:"tenant_id"` // Legacy tenant_id column; stores workspace scope in workflow domain.
+	AgentID                   string                `gorm:"type:uuid;not null;index:idx_workflow_run_logs_triggered_from" json:"agent_id"`
+	SequenceNumber            int                   `gorm:"not null;index:idx_workflow_run_logs_tenant_agent_sequence" json:"sequence_number"`
+	WorkflowID                string                `gorm:"type:uuid;not null" json:"workflow_id"`
+	ConversationID            *string               `gorm:"type:uuid;index" json:"conversation_id,omitempty"`
+	Type                      dto.WorkflowType      `gorm:"type:varchar(255);not null" json:"type"`
+	TriggeredFrom             string                `gorm:"type:varchar(255);not null;index:idx_workflow_run_logs_triggered_from" json:"triggered_from"`
+	Version                   string                `gorm:"type:varchar(255);not null" json:"version"`
+	WebAppID                  *string               `gorm:"type:uuid" json:"web_app_id"` // Track which web application was used
+	Graph                     *string               `gorm:"type:text" json:"graph"`
+	Features                  *string               `gorm:"type:text" json:"features"`
+	Inputs                    *string               `gorm:"type:text" json:"inputs"`
+	Status                    dto.WorkflowRunStatus `gorm:"type:varchar(255);not null" json:"status"`
+	Outputs                   *string               `gorm:"type:text;default:'{}'" json:"outputs"`
+	Error                     *string               `gorm:"type:text" json:"error"`
+	ElapsedTime               float64               `gorm:"not null;default:0" json:"elapsed_time"`
+	TotalTokens               int64                 `gorm:"not null;default:0" json:"total_tokens"`
+	TotalSteps                int                   `gorm:"not null;default:0" json:"total_steps"`
+	CreatedByRole             CreatedByRole         `gorm:"type:varchar(255);not null" json:"created_by_role"`
+	CreatedBy                 string                `gorm:"type:uuid;not null" json:"created_by"`
+	CreatedAt                 time.Time             `gorm:"not null;default:CURRENT_TIMESTAMP" json:"created_at"`
+	FinishedAt                *time.Time            `json:"finished_at"`
+	DeletedAt                 *time.Time            `json:"deleted_at"`
+	DeletedBy                 *string               `gorm:"type:uuid" json:"deleted_by"`
+	ExceptionsCount           int                   `gorm:"not null;default:0" json:"exceptions_count"`
+	RuntimeProtocolVersion    int                   `gorm:"not null;default:1" json:"runtime_protocol_version"`
+	NextEventSequence         int64                 `gorm:"not null;default:0" json:"next_event_sequence"`
+	ExecutionGeneration       int64                 `gorm:"not null;default:0" json:"execution_generation"`
+	ActiveExecutionID         *string               `gorm:"type:uuid" json:"active_execution_id,omitempty"`
+	ExecutionLeaseExpiresAt   *time.Time            `gorm:"type:timestamptz" json:"execution_lease_expires_at,omitempty"`
+	StateRevision             int64                 `gorm:"not null;default:0" json:"state_revision"`
+	InvocationProtocolVersion int                   `gorm:"not null;default:0" json:"invocation_protocol_version"`
+	InvocationMode            *string               `gorm:"type:varchar(64)" json:"invocation_mode,omitempty"`
+	ParentConversationID      *string               `gorm:"type:varchar(255);index" json:"parent_conversation_id,omitempty"`
+	ParentMessageID           *string               `gorm:"type:varchar(255);index" json:"parent_message_id,omitempty"`
+	ParentInvocationID        *string               `gorm:"type:varchar(128);index" json:"parent_invocation_id,omitempty"`
+	InvocationBindingID       *string               `gorm:"type:varchar(255)" json:"invocation_binding_id,omitempty"`
+	InvocationContextDigest   *string               `gorm:"type:varchar(128)" json:"invocation_context_digest,omitempty"`
 }
+
+const (
+	workflowRuntimeProtocolVersionV2 = 2
+	workflowExecutionLeaseDuration   = 2 * time.Minute
+)
 
 // BeforeCreate GORM hook
 func (wrl *WorkflowRunLog) BeforeCreate(tx *gorm.DB) error {
+	now := time.Now()
 	if wrl.ID == "" {
 		wrl.ID = uuid.New().String()
 	}
 	if wrl.CreatedAt.IsZero() {
-		wrl.CreatedAt = time.Now()
+		wrl.CreatedAt = now
+	}
+	if wrl.RuntimeProtocolVersion == 0 {
+		wrl.RuntimeProtocolVersion = workflowRuntimeProtocolVersionV2
+	}
+	if wrl.RuntimeProtocolVersion >= workflowRuntimeProtocolVersionV2 {
+		if wrl.ExecutionGeneration == 0 {
+			wrl.ExecutionGeneration = 1
+		}
+		if wrl.ActiveExecutionID == nil || *wrl.ActiveExecutionID == "" {
+			executionID := uuid.New().String()
+			wrl.ActiveExecutionID = &executionID
+		}
+		if wrl.ExecutionLeaseExpiresAt == nil {
+			leaseExpiresAt := now.Add(workflowExecutionLeaseDuration)
+			wrl.ExecutionLeaseExpiresAt = &leaseExpiresAt
+		}
 	}
 	return nil
 }
@@ -408,6 +444,13 @@ type WorkflowNodeRuntimeLog struct {
 	DeletedAt                *time.Time `json:"deleted_at" gorm:"type:timestamp"`
 	DeletedBy                *string    `json:"deleted_by" gorm:"type:uuid"`
 	FinishedAt               *time.Time `json:"finished_at" gorm:"type:timestamp"`
+	ParentExecutionID        *string    `json:"parent_execution_id,omitempty" gorm:"type:varchar(255);index"`
+	ContainerID              *string    `json:"container_id,omitempty" gorm:"type:varchar(255);index"`
+	ContainerType            *string    `json:"container_type,omitempty" gorm:"type:varchar(32)"`
+	RoundIndex               *int       `json:"round_index,omitempty" gorm:"type:integer"`
+	Attempt                  int        `json:"attempt" gorm:"type:integer;not null;default:1"`
+	StartedEventSequence     *int64     `json:"started_event_sequence,omitempty" gorm:"type:bigint"`
+	FinishedEventSequence    *int64     `json:"finished_event_sequence,omitempty" gorm:"type:bigint"`
 }
 
 // BeforeCreate hook for WorkflowNodeRuntimeLog

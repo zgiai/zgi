@@ -171,6 +171,7 @@ func (h *WorkflowHandler) executeWorkflowStreamGraphEngine(
 			h.handleWorkflowGraphStreamPause(ctx, workflowGraphStreamPauseParams{
 				WorkspaceID:            workspaceID,
 				AppID:                  appID,
+				AccountID:              accountID,
 				WorkflowRunID:          workflowRunID,
 				WorkflowID:             workflowID,
 				SystemInputs:           systemInputs,
@@ -501,6 +502,7 @@ func (h *WorkflowHandler) onWorkflowGraphStreamNodeFinished(ctx context.Context,
 type workflowGraphStreamPauseParams struct {
 	WorkspaceID            string
 	AppID                  string
+	AccountID              string
 	WorkflowRunID          string
 	WorkflowID             string
 	SystemInputs           map[string]interface{}
@@ -603,6 +605,7 @@ func (h *WorkflowHandler) handleWorkflowGraphStreamPause(ctx context.Context, pa
 		Ctx:                    ctx,
 		WorkspaceID:            params.WorkspaceID,
 		AppID:                  params.AppID,
+		AccountID:              params.AccountID,
 		WorkflowRunID:          params.WorkflowRunID,
 		WorkflowID:             params.WorkflowID,
 		RunType:                params.RunType,
@@ -626,6 +629,7 @@ func (h *WorkflowHandler) handleWorkflowGraphStreamPause(ctx context.Context, pa
 		PredecessorNodeID:      pausedNodes[0].PredecessorNodeID,
 		PausedNodes:            pausedNodes,
 		RequestInputs:          requestInputs,
+		SystemInputs:           params.SystemInputs,
 		ResponseMode:           responseMode,
 		SharedVariablePool:     variablePool,
 		WorkflowService:        params.WorkflowService,

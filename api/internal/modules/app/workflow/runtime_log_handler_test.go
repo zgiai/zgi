@@ -13,6 +13,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	agentspkg "github.com/zgiai/zgi/api/internal/modules/app/agents"
+	workflowpause "github.com/zgiai/zgi/api/internal/modules/app/workflow/pause"
 	workspace_model "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 )
 
@@ -169,6 +170,73 @@ func TestGetWorkflowRunNodeLogs_FiltersFrontendInputs(t *testing.T) {
 	for _, key := range []string{"body", "timeout", "sys.user_id"} {
 		if _, exists := inputs[key]; exists {
 			t.Fatalf("key %s should be removed from runtime log inputs: %#v", key, inputs)
+		}
+	}
+}
+
+func TestInternalContainerNodeLogItemsRestoresEveryIterationRound(t *testing.T) {
+	reader := &fakeRuntimeLogEventReader{events: []workflowpause.RunEventPayload{
+		{
+			Sequence: 10,
+			Event:    workflowpause.EventNodeFinished,
+			Data: map[string]interface{}{
+				"id":              "exec-llm-0",
+				"node_id":         "llm-node",
+				"node_type":       "llm",
+				"title":           "LLM",
+				"status":          "succeeded",
+				"created_at_ms":   1700000000100,
+				"elapsed_time":    1200.0,
+				"outputs":         map[string]interface{}{"text": "round 1"},
+				"iteration_id":    "iteration-node",
+				"iteration_index": 0,
+			},
+		},
+		{
+			Sequence: 20,
+			Event:    workflowpause.EventNodeFinished,
+			Data: map[string]interface{}{
+				"id":              "exec-llm-1",
+				"node_id":         "llm-node",
+				"node_type":       "llm",
+				"title":           "LLM",
+				"status":          "succeeded",
+				"created_at_ms":   1700000000200,
+				"elapsed_time":    900.0,
+				"outputs":         map[string]interface{}{"text": "round 2"},
+				"iteration_id":    "iteration-node",
+				"iteration_index": 1,
+			},
+		},
+		{
+			Sequence: 30,
+			Event:    workflowpause.EventNodeFinished,
+			Data: map[string]interface{}{
+				"id":        "exec-end",
+				"node_id":   "end-node",
+				"node_type": "end",
+				"status":    "succeeded",
+			},
+		},
+	}}
+	handler := NewRuntimeLogHandler(nil, nil, WithRuntimeLogEventReader(reader))
+
+	items, err := handler.internalContainerNodeLogItems(context.Background(), "run-1", nil)
+	if err != nil {
+		t.Fatalf("restore internal node logs: %v", err)
+	}
+	if len(items) != 2 {
+		t.Fatalf("internal node log count = %d, want 2: %#v", len(items), items)
+	}
+	for index, item := range items {
+		if got := item["iteration_id"]; got != "iteration-node" {
+			t.Fatalf("item %d iteration_id = %v", index, got)
+		}
+		if got, ok := item["iteration_index"].(int); !ok || got != index {
+			t.Fatalf("item %d iteration_index = %#v", index, item["iteration_index"])
+		}
+		if _, ok := item["outputs"].(map[string]interface{}); !ok {
+			t.Fatalf("item %d outputs missing: %#v", index, item)
 		}
 	}
 }
@@ -396,6 +464,24 @@ type fakeRuntimeLogWorkspacePermissionChecker struct {
 	allowed        bool
 	checked        bool
 	lastPermission workspace_model.WorkspacePermissionCode
+}
+
+type fakeRuntimeLogEventReader struct {
+	events []workflowpause.RunEventPayload
+}
+
+func (r *fakeRuntimeLogEventReader) ListEvents(_ context.Context, _ string, workflowRunID string, afterSequence, limit int) (*workflowpause.RunEventsPayload, error) {
+	events := make([]workflowpause.RunEventPayload, 0, limit)
+	for _, event := range r.events {
+		if event.Sequence <= afterSequence {
+			continue
+		}
+		events = append(events, event)
+		if len(events) == limit {
+			break
+		}
+	}
+	return &workflowpause.RunEventsPayload{WorkflowRunID: workflowRunID, Events: events}, nil
 }
 
 func (c *fakeRuntimeLogWorkspacePermissionChecker) CheckWorkspacePermission(_ context.Context, _ string, _ string, _ string, permission workspace_model.WorkspacePermissionCode) (bool, error) {

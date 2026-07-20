@@ -118,6 +118,7 @@ type workflowStreamGraph struct {
 	NodeMap            map[string]map[string]interface{}
 	RuntimeNodeMap     map[string]map[string]interface{}
 	EdgeMap            map[string]map[string][]string
+	RuntimeEdgeMap     map[string]map[string][]string
 	ReverseEdgeMap     map[string][]string
 	StartNodeID        string
 	WatchConfig        streamSelectorWatchConfig
@@ -138,7 +139,7 @@ func buildWorkflowStreamGraph(ctx context.Context, workflowData map[string]any) 
 	if err != nil {
 		return nil, err
 	}
-	runtimeNodeMap, _, _, err := buildWorkflowStreamGraphIndexes(reachabilityViews.RuntimeGraphData)
+	runtimeNodeMap, runtimeEdgeMap, _, err := buildWorkflowStreamGraphIndexes(reachabilityViews.RuntimeGraphData)
 	if err != nil {
 		return nil, err
 	}
@@ -157,6 +158,7 @@ func buildWorkflowStreamGraph(ctx context.Context, workflowData map[string]any) 
 		NodeMap:            executionNodeMap,
 		RuntimeNodeMap:     runtimeNodeMap,
 		EdgeMap:            executionEdgeMap,
+		RuntimeEdgeMap:     runtimeEdgeMap,
 		ReverseEdgeMap:     executionReverseEdgeMap,
 		StartNodeID:        reachabilityViews.StartNodeID,
 		WatchConfig:        streamWatchConfig,
@@ -341,13 +343,21 @@ func addWorkflowStreamSystemVariables(ctx context.Context, sharedVariablePool *g
 	if query, ok := systemInputs["sys.query"].(string); ok {
 		sharedVariablePool.SystemVariables.Query = query
 	}
-	if conversationID, ok := systemInputs["sys.conversation_id"].(string); ok {
+	if conversationID, ok := systemInputs["sys.conversation_id"].(string); ok && strings.TrimSpace(conversationID) != "" {
 		sharedVariablePool.SystemVariables.ConversationID = conversationID
 		logger.DebugContext(ctx, "set conversation id in shared variable pool",
 			zap.String("conversation_id", conversationID),
 		)
+	} else if parentConversationID, ok := systemInputs["sys.parent_conversation_id"].(string); ok && strings.TrimSpace(parentConversationID) != "" {
+		logger.DebugContext(ctx, "workflow uses host conversation context without a native workflow conversation",
+			zap.String("parent_conversation_id", strings.TrimSpace(parentConversationID)),
+		)
+	} else if workflowType, _ := systemInputs["sys.workflow_type"].(string); strings.EqualFold(strings.TrimSpace(workflowType), "chat") {
+		logger.WarnContext(ctx, "native workflow conversation id missing for conversational workflow",
+			zap.Int("system_input_count", len(systemInputs)),
+		)
 	} else {
-		logger.WarnContext(ctx, "conversation id missing from workflow system inputs",
+		logger.DebugContext(ctx, "workflow run has no native conversation",
 			zap.Int("system_input_count", len(systemInputs)),
 		)
 		sharedVariablePool.SystemVariables.ConversationID = ""
@@ -380,6 +390,12 @@ func addWorkflowStreamSystemVariables(ctx context.Context, sharedVariablePool *g
 		sharedVariablePool.Add([]string{"sys", "parent_message_id"}, parentMessageID)
 		logger.DebugContext(ctx, "added parent message id to shared variable pool",
 			zap.Bool("has_parent_message_id", parentMessageID != nil),
+		)
+	}
+	if parentConversationID, exists := systemInputs["sys.parent_conversation_id"]; exists {
+		sharedVariablePool.Add([]string{"sys", "parent_conversation_id"}, parentConversationID)
+		logger.DebugContext(ctx, "added host conversation id to shared variable pool",
+			zap.Bool("has_parent_conversation_id", parentConversationID != nil),
 		)
 	}
 }

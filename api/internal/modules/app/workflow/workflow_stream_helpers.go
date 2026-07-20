@@ -168,6 +168,11 @@ func buildInternalNodeWorkflowStreamEvent(event *graph_engine.NodeEvent, nodeTyp
 	}
 
 	iterationID, iterationIndex, loopID, loopIndex := internalEventContext(event)
+	containerID, containerType, roundIndex := internalEventContainer(iterationID, iterationIndex, loopID, loopIndex)
+	roundExecutionID := ""
+	if containerID != "" {
+		roundExecutionID = fmt.Sprintf("round-%s-%d", containerID, roundIndex)
+	}
 	startedAt := event.StartedAt
 	if startedAt.IsZero() {
 		startedAt = event.Timestamp
@@ -186,6 +191,12 @@ func buildInternalNodeWorkflowStreamEvent(event *graph_engine.NodeEvent, nodeTyp
 		"iteration_index":     iterationIndex,
 		"loop_id":             loopID,
 		"loop_index":          loopIndex,
+		"container_id":        containerID,
+		"container_type":      containerType,
+		"round_index":         roundIndex,
+		"round_execution_id":  roundExecutionID,
+		"parent_execution_id": roundExecutionID,
+		"attempt":             1,
 	}
 
 	switch event.Type {
@@ -223,6 +234,18 @@ func buildInternalNodeWorkflowStreamEvent(event *graph_engine.NodeEvent, nodeTyp
 	default:
 		return nil
 	}
+}
+
+func internalEventContainer(iterationID, iterationIndex, loopID, loopIndex any) (string, string, int) {
+	if id := workflowEventString(loopID); id != "" {
+		index, _ := workflowEventInt(loopIndex)
+		return id, "loop", index
+	}
+	if id := workflowEventString(iterationID); id != "" {
+		index, _ := workflowEventInt(iterationIndex)
+		return id, "iteration", index
+	}
+	return "", "", 0
 }
 
 func internalEventContext(event *graph_engine.NodeEvent) (iterationID any, iterationIndex any, loopID any, loopIndex any) {

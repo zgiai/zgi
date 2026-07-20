@@ -33,9 +33,23 @@ func registerApprovalTaskHandlers(registry approvalTaskRegistry, taskManager *qu
 			"task_type": taskType,
 		})
 	}
+	questionTaskType := approvalruntime.TypeQuestionResume
+	if taskManager != nil {
+		questionTaskType = taskManager.GetTaskTypeWithPrefix(questionTaskType)
+	}
+	questionTaskHandler := approvalruntime.NewQuestionResumeTaskHandler(handler.ResumeQuestionAnswerWorkflow)
+	if isNew := registry.Register(questionTaskType, questionTaskHandler); isNew {
+		logger.Info("Registered question resume handler", map[string]interface{}{
+			"task_type": questionTaskType,
+		})
+	} else {
+		logger.Warn("Question resume handler was replaced", map[string]interface{}{
+			"task_type": questionTaskType,
+		})
+	}
 }
 
-func registerApprovalScheduledTasks(scheduler *pkgscheduler.Scheduler, service *approvalruntime.Service, handler *workflowHandlerPkg.WorkflowHandler) {
+func registerApprovalScheduledTasks(scheduler *pkgscheduler.Scheduler, service *approvalruntime.Service, handler *workflowHandlerPkg.WorkflowHandler, taskManager *queue.TaskManager) {
 	if scheduler == nil || service == nil || handler == nil {
 		return
 	}
@@ -47,5 +61,23 @@ func registerApprovalScheduledTasks(scheduler *pkgscheduler.Scheduler, service *
 	}
 	logger.Info("Approval timeout scan task registered", map[string]interface{}{
 		"interval_seconds": int(task.Interval().Seconds()),
+	})
+	outboxTask := approvalruntime.NewRuntimeOutboxScanTask(0)
+	outboxHandler := approvalruntime.NewRuntimeOutboxScanHandler(service, taskManager, 100)
+	if err := scheduler.RegisterTask(outboxTask, outboxHandler); err != nil {
+		logger.Error("Failed to register workflow runtime outbox scan task", err)
+		return
+	}
+	logger.Info("Workflow runtime outbox scan task registered", map[string]interface{}{
+		"interval_seconds": int(outboxTask.Interval().Seconds()),
+	})
+	leaseTask := approvalruntime.NewExecutionLeaseScanTask(0)
+	leaseHandler := approvalruntime.NewExecutionLeaseScanHandler(service, 100)
+	if err := scheduler.RegisterTask(leaseTask, leaseHandler); err != nil {
+		logger.Error("Failed to register workflow execution lease scan task", err)
+		return
+	}
+	logger.Info("Workflow execution lease scan task registered", map[string]interface{}{
+		"interval_seconds": int(leaseTask.Interval().Seconds()),
 	})
 }

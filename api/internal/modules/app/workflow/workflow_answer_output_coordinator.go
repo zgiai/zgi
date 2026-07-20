@@ -30,6 +30,7 @@ const (
 
 	answerScopeTop       = "top"
 	answerScopeIteration = "iteration"
+	answerScopeLoop      = "loop"
 )
 
 // answerOutputCoordinator serializes conversation answer output according to
@@ -75,6 +76,8 @@ type answerEmitter struct {
 	drained             bool
 	batchBarrierPassed  bool
 	batchBlockers       map[string]bool
+	finalRendered       string
+	hasFinalRendered    bool
 }
 
 type answerOutputScope struct {
@@ -133,6 +136,10 @@ func newAnswerOutputCoordinator(
 	if runtimeNodeMap == nil {
 		runtimeNodeMap = streamGraph.NodeMap
 	}
+	runtimeEdgeMap := streamGraph.RuntimeEdgeMap
+	if runtimeEdgeMap == nil {
+		runtimeEdgeMap = streamGraph.EdgeMap
+	}
 
 	nodeOrder := workflowGraphNodeOrder(streamGraph.GraphData)
 	nodeTypes := workflowGraphNodeTypes(runtimeNodeMap)
@@ -145,7 +152,7 @@ func newAnswerOutputCoordinator(
 		templates:      make(map[string]string),
 		nodeOrder:      nodeOrder,
 		nodeTypes:      nodeTypes,
-		edgeMap:        streamGraph.EdgeMap,
+		edgeMap:        runtimeEdgeMap,
 		reachable:      make(map[string]bool),
 		variables:      make(map[string]*answerVariableState),
 		varsByStream:   make(map[string][]*answerVariableState),
@@ -176,7 +183,7 @@ func newAnswerOutputCoordinator(
 		return nil
 	}
 
-	coordinator.answerParents = buildAnswerPredecessorMap(allAnswerEmitters, streamGraph.EdgeMap)
+	coordinator.answerParents = buildAnswerPredecessorMap(allAnswerEmitters, runtimeEdgeMap)
 	coordinator.markReachableFromHandlesLocked(streamGraph.StartNodeID, []string{"source"})
 	return coordinator
 }
@@ -194,15 +201,24 @@ func answerTopScope() answerOutputScope {
 }
 
 func answerScopeFromReadyBatch(scope graph_engine.ReadyBatchScope) answerOutputScope {
-	if scope.Kind == graph_engine.ReadyBatchScopeIteration {
+	switch scope.Kind {
+	case graph_engine.ReadyBatchScopeIteration:
 		return answerOutputScope{kind: answerScopeIteration, parentNodeID: scope.ParentNodeID, index: scope.Index}
+	case graph_engine.ReadyBatchScopeLoop:
+		return answerOutputScope{kind: answerScopeLoop, parentNodeID: scope.ParentNodeID, index: scope.Index}
 	}
 	return answerTopScope()
 }
 
 func answerScopeFromStream(scope *workflow_shared.RunStreamScope) answerOutputScope {
-	if scope != nil && scope.Kind == graph_engine.ReadyBatchScopeIteration {
+	if scope == nil {
+		return answerTopScope()
+	}
+	switch scope.Kind {
+	case graph_engine.ReadyBatchScopeIteration:
 		return answerOutputScope{kind: answerScopeIteration, parentNodeID: scope.ParentNodeID, index: scope.Index}
+	case graph_engine.ReadyBatchScopeLoop:
+		return answerOutputScope{kind: answerScopeLoop, parentNodeID: scope.ParentNodeID, index: scope.Index}
 	}
 	return answerTopScope()
 }
@@ -211,15 +227,21 @@ func answerScopeFromMetadata(metadata map[string]interface{}) (answerOutputScope
 	if metadata == nil {
 		return answerTopScope(), false
 	}
-	iterationID, _ := metadata[string(workflow_shared.ITERATION_ID)].(string)
-	if iterationID == "" {
-		return answerTopScope(), false
+	if iterationID, _ := metadata[string(workflow_shared.ITERATION_ID)].(string); iterationID != "" {
+		index, ok := intFromAny(metadata[string(workflow_shared.IterationIndex)])
+		if !ok {
+			return answerTopScope(), false
+		}
+		return answerOutputScope{kind: answerScopeIteration, parentNodeID: iterationID, index: index}, true
 	}
-	index, ok := intFromAny(metadata[string(workflow_shared.IterationIndex)])
-	if !ok {
-		return answerTopScope(), false
+	if loopID, _ := metadata[string(workflow_shared.LoopId)].(string); loopID != "" {
+		index, ok := intFromAny(metadata[string(workflow_shared.LoopIndex)])
+		if !ok {
+			return answerTopScope(), false
+		}
+		return answerOutputScope{kind: answerScopeLoop, parentNodeID: loopID, index: index}, true
 	}
-	return answerOutputScope{kind: answerScopeIteration, parentNodeID: iterationID, index: index}, true
+	return answerTopScope(), false
 }
 
 func answerIterationContextFromMetadata(metadata map[string]interface{}) (map[string]any, bool) {
@@ -257,10 +279,14 @@ func intFromAny(value any) (int, bool) {
 }
 
 func answerScopeKey(scope answerOutputScope) string {
-	if scope.kind == answerScopeIteration {
-		return fmt.Sprintf("%s:%s:%d", answerScopeIteration, scope.parentNodeID, scope.index)
+	if answerScopeIsContainer(scope) {
+		return fmt.Sprintf("%s:%s:%d", scope.kind, scope.parentNodeID, scope.index)
 	}
 	return answerScopeTop
+}
+
+func answerScopeIsContainer(scope answerOutputScope) bool {
+	return scope.kind == answerScopeIteration || scope.kind == answerScopeLoop
 }
 
 func answerEmitterKey(scope answerOutputScope, nodeID string) string {
@@ -326,7 +352,7 @@ func (c *answerOutputCoordinator) ensureEmitterLocked(scope answerOutputScope, n
 	}
 	segments := c.parseTemplateSegments(scope, template)
 	parentOrder := c.nodeOrder[nodeID]
-	if scope.kind == answerScopeIteration {
+	if answerScopeIsContainer(scope) {
 		if order, ok := c.nodeOrder[scope.parentNodeID]; ok {
 			parentOrder = order
 		}
@@ -498,7 +524,7 @@ func (c *answerOutputCoordinator) MarkNodeFinishedScoped(scope answerOutputScope
 		c.markSourceNodeFinishedLocked(scope, nodeID, status, outputs, err)
 	}
 	if nodeType == "answer" {
-		c.markAnswerNodeFinishedLocked(scope, nodeID, status, err)
+		c.markAnswerNodeFinishedLocked(scope, nodeID, status, outputs, err)
 	}
 	messages := c.drainLocked()
 	c.mu.Unlock()
@@ -512,7 +538,11 @@ func (c *answerOutputCoordinator) HandleStreamChunk(nodeID string, streamEvent *
 	if c == nil || streamEvent == nil || len(streamEvent.FromVariableSelector) < 2 {
 		return false
 	}
-	if c.nodeTypes[nodeID] == "answer" && streamEvent.FromVariableSelector[1] == "text" {
+	sourceNodeID := streamEvent.FromVariableSelector[0]
+	if sourceNodeID == "" {
+		sourceNodeID = nodeID
+	}
+	if c.nodeTypes[sourceNodeID] == "answer" && streamEvent.FromVariableSelector[1] == "text" {
 		return true
 	}
 	scope := answerScopeFromStream(streamEvent.Scope)
@@ -522,6 +552,11 @@ func (c *answerOutputCoordinator) HandleStreamChunk(nodeID string, streamEvent *
 	defer c.emitMu.Unlock()
 
 	c.mu.Lock()
+	// Container callbacks can deliver the first source chunk before ReadyBatch
+	// after an approval or question continuation. Establish the same scoped
+	// answer watchers lazily so the chunk remains owned by the authoritative
+	// Answer output instead of falling through to the legacy direct stream.
+	c.markScopedAnswersReachableFromBatchLocked(scope, []string{sourceNodeID})
 	variables := c.varsByStream[streamKey]
 	if len(variables) == 0 {
 		c.mu.Unlock()
@@ -552,6 +587,12 @@ func (c *answerOutputCoordinator) RegisterReadyBatch(scope answerOutputScope, no
 	defer c.emitMu.Unlock()
 
 	c.mu.Lock()
+	// Container answer nodes are created lazily per round. Register answer
+	// descendants as soon as an upstream node becomes ready so their variable
+	// watchers exist before the upstream LLM starts streaming. Waiting until the
+	// answer node itself is ready loses both the stream and the source's final
+	// value because the source has already completed by then.
+	c.markScopedAnswersReachableFromBatchLocked(scope, nodeIDs)
 	answerEmitters := make([]*answerEmitter, 0, len(nodeIDs))
 	for _, nodeID := range nodeIDs {
 		if c.nodeTypes[nodeID] != "answer" {
@@ -578,6 +619,29 @@ func (c *answerOutputCoordinator) RegisterReadyBatch(scope answerOutputScope, no
 	c.mu.Unlock()
 
 	c.emitMessages(messages)
+}
+
+func (c *answerOutputCoordinator) markScopedAnswersReachableFromBatchLocked(scope answerOutputScope, nodeIDs []string) {
+	if !answerScopeIsContainer(scope) {
+		return
+	}
+	queue := append([]string(nil), nodeIDs...)
+	visited := make(map[string]bool, len(queue))
+	for len(queue) > 0 {
+		current := queue[0]
+		queue = queue[1:]
+		if current == "" || visited[current] {
+			continue
+		}
+		visited[current] = true
+		if c.nodeTypes[current] == "answer" {
+			c.markAnswerEligibleLocked(scope, current)
+		}
+		// Only the default handle is deterministic before the current node has
+		// finished. Branch-specific answers are registered by their own ready
+		// batch after the selected handle is known.
+		queue = append(queue, c.edgeMap[current]["source"]...)
+	}
 }
 
 // parseTemplateSegments splits an answer template into static and variable segments.
@@ -654,7 +718,13 @@ func (c *answerOutputCoordinator) markSourceNodeFinishedLocked(scope answerOutpu
 }
 
 // markAnswerNodeFinishedLocked updates the emitter lifecycle after the answer node itself finishes.
-func (c *answerOutputCoordinator) markAnswerNodeFinishedLocked(scope answerOutputScope, nodeID string, status string, err error) {
+func (c *answerOutputCoordinator) markAnswerNodeFinishedLocked(
+	scope answerOutputScope,
+	nodeID string,
+	status string,
+	outputs map[string]any,
+	err error,
+) {
 	emitter := c.ensureEmitterLocked(scope, nodeID)
 	if emitter == nil {
 		return
@@ -668,12 +738,27 @@ func (c *answerOutputCoordinator) markAnswerNodeFinishedLocked(scope answerOutpu
 		c.advanceIterationBarrierLocked(emitter)
 		return
 	}
+	if rendered, ok := answerNodeRenderedOutput(outputs); ok {
+		emitter.finalRendered = rendered
+		emitter.hasFinalRendered = true
+	}
 	emitter.lifecycle = answerEmitterCompleted
 	emitter.batchBarrierPassed = true
 	if emitter.currentIndex >= len(emitter.segments) {
 		emitter.drained = true
 	}
 	c.advanceIterationBarrierLocked(emitter)
+}
+
+func answerNodeRenderedOutput(outputs map[string]any) (string, bool) {
+	if outputs == nil {
+		return "", false
+	}
+	if answer, ok := outputs["answer"].(string); ok {
+		return answer, true
+	}
+	text, ok := outputs["text"].(string)
+	return text, ok
 }
 
 // drainLocked releases as many answer chunks as the current coordinator state allows.
@@ -727,7 +812,7 @@ func (c *answerOutputCoordinator) canEmitterOutputLocked(emitter *answerEmitter)
 	if emitter.lifecycle == answerEmitterEligible && !answerEmitterHasVariableSegment(emitter) {
 		return false
 	}
-	if emitter.scope.kind == answerScopeIteration {
+	if answerScopeIsContainer(emitter.scope) {
 		nextIndex := c.iterationNext[emitter.scope.parentNodeID]
 		if emitter.scope.index > nextIndex {
 			return false
@@ -814,7 +899,7 @@ func (c *answerOutputCoordinator) markAnswerEligibleLocked(scope answerOutputSco
 }
 
 func (c *answerOutputCoordinator) advanceIterationBarrierLocked(emitter *answerEmitter) {
-	if emitter == nil || emitter.scope.kind != answerScopeIteration || !emitter.batchBarrierPassed {
+	if emitter == nil || !answerScopeIsContainer(emitter.scope) || !emitter.batchBarrierPassed {
 		return
 	}
 	if emitter.lifecycle != answerEmitterSkipped && emitter.lifecycle != answerEmitterFailed && !emitter.drained {
@@ -833,11 +918,11 @@ func (c *answerOutputCoordinator) advanceIterationBarrierLocked(emitter *answerE
 func (c *answerOutputCoordinator) iterationIndexBarrierPassedLocked(parentID string, index int) bool {
 	found := false
 	for _, emitter := range c.emitters {
-		if emitter.scope.kind != answerScopeIteration || emitter.scope.parentNodeID != parentID || emitter.scope.index != index {
+		if !answerScopeIsContainer(emitter.scope) || emitter.scope.parentNodeID != parentID || emitter.scope.index != index {
 			continue
 		}
 		found = true
-		if !emitter.batchBarrierPassed {
+		if !emitter.batchBarrierPassed || (emitter.lifecycle != answerEmitterSkipped && emitter.lifecycle != answerEmitterFailed && !emitter.drained) {
 			return false
 		}
 	}
@@ -848,6 +933,12 @@ func (c *answerOutputCoordinator) iterationIndexBarrierPassedLocked(parentID str
 func (c *answerOutputCoordinator) canEmitterProgressLocked(emitter *answerEmitter) bool {
 	if emitter == nil {
 		return false
+	}
+	// The answer node's rendered value is an authoritative terminal snapshot.
+	// It can reconcile a streamed placeholder even when the source node's final
+	// callback was late or could not be associated with this container scope.
+	if emitter.lifecycle == answerEmitterCompleted && emitter.hasFinalRendered {
+		return true
 	}
 	if emitter.currentIndex >= len(emitter.segments) {
 		return emitter.lifecycle == answerEmitterCompleted
@@ -918,6 +1009,12 @@ func (c *answerOutputCoordinator) emitterCanReachVariableChunkLocked(emitter *an
 
 // drainEmitterLocked advances one answer emitter until it blocks, finishes, or fails.
 func (c *answerOutputCoordinator) drainEmitterLocked(emitter *answerEmitter) ([]answerMessageChunk, bool) {
+	if emitter.lifecycle == answerEmitterCompleted && emitter.hasFinalRendered {
+		if messages, reconciled := c.reconcileCompletedEmitterLocked(emitter); reconciled {
+			return messages, true
+		}
+	}
+
 	var messages []answerMessageChunk
 	for emitter.currentIndex < len(emitter.segments) {
 		segment := emitter.segments[emitter.currentIndex]
@@ -948,6 +1045,58 @@ func (c *answerOutputCoordinator) drainEmitterLocked(emitter *answerEmitter) ([]
 		return messages, true
 	}
 	return messages, len(messages) > 0
+}
+
+// reconcileCompletedEmitterLocked uses the answer node's rendered output as the
+// authoritative completion boundary. Streaming usually releases the variable
+// content before the answer node runs, but the source node's finished callback
+// can arrive late or without a usable scope. In that case the rendered answer is
+// the only reliable place to recover trailing static template text such as a
+// newline between iteration rounds.
+func (c *answerOutputCoordinator) reconcileCompletedEmitterLocked(emitter *answerEmitter) ([]answerMessageChunk, bool) {
+	released := c.emitterReleasedTextLocked(emitter)
+	if !strings.HasPrefix(emitter.finalRendered, released) {
+		logger.Warn("answer rendered output does not match released prefix",
+			"node_id", emitter.nodeID,
+			"released_length", len(released),
+			"rendered_length", len(emitter.finalRendered),
+		)
+		return nil, false
+	}
+
+	var messages []answerMessageChunk
+	suffix := strings.TrimPrefix(emitter.finalRendered, released)
+	for _, chunk := range answerChunkText(suffix, c.chunkSize) {
+		messages = append(messages, c.recordMessageLocked(emitter.nodeID, chunk))
+	}
+	emitter.currentIndex = len(emitter.segments)
+	emitter.drained = true
+	return messages, true
+}
+
+func (c *answerOutputCoordinator) emitterReleasedTextLocked(emitter *answerEmitter) string {
+	if emitter == nil {
+		return ""
+	}
+	var released strings.Builder
+	for index, segment := range emitter.segments {
+		if index > emitter.currentIndex {
+			break
+		}
+		switch segment.kind {
+		case answerSegmentStatic:
+			if index < emitter.currentIndex {
+				released.WriteString(segment.text)
+			}
+		case answerSegmentVariable:
+			if index <= emitter.currentIndex {
+				if variable := c.variables[segment.stateKey]; variable != nil {
+					released.WriteString(variable.releasedText)
+				}
+			}
+		}
+	}
+	return released.String()
 }
 
 // releaseVariableLocked emits buffered chunks, final replay chunks, or final suffixes for one placeholder.
@@ -1001,11 +1150,13 @@ func (c *answerOutputCoordinator) releaseVariableLocked(nodeID string, variable 
 		if variable.finalValue != "" {
 			messages = append(messages, c.recordMessageLocked(nodeID, variable.finalValue))
 		}
+		variable.releasedText = variable.finalValue
 	case strings.HasPrefix(variable.finalValue, variable.releasedText):
 		suffix := strings.TrimPrefix(variable.finalValue, variable.releasedText)
 		for _, chunk := range answerChunkText(suffix, c.chunkSize) {
 			messages = append(messages, c.recordMessageLocked(nodeID, chunk))
 		}
+		variable.releasedText = variable.finalValue
 	default:
 		logger.Warn("answer ordered output final value does not match streamed prefix",
 			"selector", variable.selectorKey,
@@ -1013,7 +1164,6 @@ func (c *answerOutputCoordinator) releaseVariableLocked(nodeID string, variable 
 			"final_length", len(variable.finalValue),
 		)
 	}
-	variable.releasedText = variable.finalValue
 	variable.finalizedSegment = true
 	return messages, true, false
 }

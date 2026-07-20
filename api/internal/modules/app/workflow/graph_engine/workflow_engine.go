@@ -64,6 +64,7 @@ type ReadyBatchScope struct {
 const (
 	ReadyBatchScopeTop       = "top"
 	ReadyBatchScopeIteration = "iteration"
+	ReadyBatchScopeLoop      = "loop"
 )
 
 // WorkflowEngine is the workflow execution engine

@@ -599,6 +599,20 @@ func (r *workflowRunLogRepository) GetByID(ctx context.Context, id string) (*Wor
 	return &log, nil
 }
 
+// GetByParentInvocationID returns the workflow run created for a stable parent
+// invocation. It intentionally lives on the concrete repository so existing
+// repository mocks do not need to know about Agent invocation semantics.
+func (r *workflowRunLogRepository) GetByParentInvocationID(ctx context.Context, invocationID string) (*WorkflowRunLog, error) {
+	var log WorkflowRunLog
+	err := r.db.WithContext(ctx).
+		Where("parent_invocation_id = ? AND deleted_at IS NULL", invocationID).
+		First(&log).Error
+	if err != nil {
+		return nil, err
+	}
+	return &log, nil
+}
+
 // Update updates an existing workflow run log
 func (r *workflowRunLogRepository) Update(ctx context.Context, log *WorkflowRunLog) error {
 	return r.db.WithContext(ctx).Save(log).Error
