@@ -115,6 +115,20 @@ export function isValidPhoneNumber(phoneNumber: string, countryCode = 'US'): boo
     return digits.length === 10;
   }
 
+  if (countryCode === 'CN') {
+    const compact = phoneNumber.trim().replace(/[\s()-]/g, '');
+    if (!/^\+?\d+$/.test(compact)) {
+      return false;
+    }
+    if (/^\+86(1[3-9]\d{9})$/.test(compact)) {
+      return true;
+    }
+    if (/^86(1[3-9]\d{9})$/.test(compact)) {
+      return true;
+    }
+    return /^1[3-9]\d{9}$/.test(compact);
+  }
+
   // Basic international validation (minimum 8 digits)
   return digits.length >= 8;
 }

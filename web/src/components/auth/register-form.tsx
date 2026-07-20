@@ -83,7 +83,10 @@ export function RegisterForm({ className }: RegisterFormProps) {
     phone: z
       .string()
       .min(1, t('phoneRequired'))
-      .refine(value => isValidPhoneNumber(value, 'INTL'), t('invalidPhoneNumber')),
+      .refine(
+        value => isValidPhoneNumber(value, DEFAULT_PHONE_COUNTRY_CODE),
+        t('invalidPhoneNumber')
+      ),
   });
 
   type EmailRegisterFormData = z.infer<typeof emailRegisterSchema>;
