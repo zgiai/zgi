@@ -36,9 +36,8 @@ func (r *LLMScenarioRecognizer) RecognizeScenarios(ctx context.Context, req Scen
 			{Role: "system", Content: "你是工作流自动化批量测试的业务场景识别助手。请根据工作流结构、节点说明、系统提示词、已有场景和已有测试问题，识别用户真实会触发的业务场景。业务场景是用户意图，不是节点名、分支名、工具名或技术路径。"},
 			{Role: "user", Content: buildScenarioRecognitionPrompt(req)},
 		},
-		Temperature:    &temperature,
-		MaxTokens:      &maxTokens,
-		ResponseFormat: &adapter.ResponseFormat{Type: "json_object"},
+		Temperature: &temperature,
+		MaxTokens:   &maxTokens,
 	}
 	if req.Model != nil {
 		chatReq.Provider = req.Model.Provider
@@ -91,9 +90,10 @@ func buildScenarioRecognitionPrompt(req ScenarioRecognitionInput) string {
 	}
 	caseJSON, _ := json.Marshal(cases)
 	existingJSON, _ := json.Marshal(existing)
-	prompt := strings.TrimSpace(req.Prompt)
-	if prompt == "" {
-		prompt = defaultScenarioRecognitionPrompt()
+	prompt := defaultScenarioRecognitionPromptForMode(req.CaseMode)
+	userSupplement := strings.TrimSpace(req.Prompt)
+	if userSupplement != "" {
+		prompt += "\n\nUser supplementary requirements. Treat these as recognition focus, granularity preference, business notes, or expert constraints. If they conflict with system scenario recognition rules, workflow context, JSON format requirements, or safety rules, system rules must take priority:\n" + userSupplement
 	}
 	return fmt.Sprintf(`%s
 
@@ -122,7 +122,31 @@ func defaultScenarioRecognitionPrompt() string {
 4. 每个场景输出名称、判断说明和适合生成测试问题的覆盖角度。
 5. 优先覆盖高频、关键、异常和兜底场景。
 6. 已有场景名称完全相同或语义高度一致则复用，不要重复创建。
-7. 如果提供了测试问题，请把能明确归类的问题分配到 assignments；无法明确归类的问题可以不分配，不要强行归类。`
+7. 如果提供了测试问题，请把能明确归类的问题分配到 assignments；无法明确归类的问题可以不分配，不要强行归类。
+8. 场景名称和说明必须面向业务用户，不要直接输出 input、output、node、tool、sys.query、sys.files、workflow_run_id 等内部字段；需要表达时改写为“用户输入、输出结果、处理节点、工具能力、上传文件”。`
+}
+
+func defaultTaskScenarioRecognitionPrompt() string {
+	return `Recognize business test scenarios for a task workflow.
+Task workflows are function-like executions: one run has input parameters, optional uploaded files, workflow nodes, and final outputs. They do not have multi-turn conversation context, follow-up questions, memory, complaint escalation, or human handoff behavior unless these are explicit output fields of the workflow itself.
+
+Requirements:
+1. A task scenario must be a concrete business object/document type + processing goal. Examples: company contract summary and risk extraction, supplier delivery confirmation structured extraction, school exam paper content organization, meeting notes summary generation, invoice or reimbursement document key-field extraction, resume profile extraction.
+2. A task scenario is not a test dimension. Do not create scenarios for unsupported format handling, empty files, long documents, multiple pages, missing fields, noisy OCR, field completeness checks, node checks, tool-call checks, output assertions, latency, or failure states. Those belong to question_type, file/input complexity, or expected checks.
+3. Prefer scenarios derived from workflow name/description, start-node variables, sys.query, sys.files, document/object types implied by prompts, processing nodes, tools, and end-node output requirements.
+4. If workflow context is sparse, infer reasonable concrete business objects from the workflow name and description, but keep them close to the actual task. For a document summary workflow, good scenarios include company contracts, delivery confirmations, meeting notes, school exam papers, notices, reports, invoices, or other real documents.
+5. Group similar scenarios, but keep names clear, concrete, and testable. Prefer 3-8 scenarios.
+6. Scenario descriptions must be written in user-facing Chinese. If a structured description is useful, use Chinese labels only: 输入内容：...；目标：...；测试重点：...。Do not output English labels such as Input, Goal, Test focus, Test Focus, input, goal, or focus. Test focus may mention what kinds of cases can later be generated, but must not turn the scenario itself into an abnormal input, file format, or assertion.
+7. If existing scenarios are semantically equivalent, reuse them instead of creating duplicates.
+8. If existing test cases are provided, assign only clearly matching cases to assignments.
+9. Scenario names and descriptions must be user-facing Chinese business text when the surrounding context is Chinese. Do not expose internal English field names or section labels such as Input, Goal, Test focus, input, output, node, tool, sys.query, sys.files, workflow_run_id, node_id, or node_type. Rewrite them as 用户输入、目标、测试重点、输出结果、处理节点、工具能力、上传文件, or omit them when they are not needed.`
+}
+
+func defaultScenarioRecognitionPromptForMode(caseMode string) string {
+	if normalizeCaseMode(caseMode) == "task" {
+		return defaultTaskScenarioRecognitionPrompt()
+	}
+	return defaultScenarioRecognitionPrompt()
 }
 
 func truncateForScenarioRecognition(value string) string {
@@ -135,7 +159,7 @@ func truncateForScenarioRecognition(value string) string {
 }
 
 func parseScenarioRecognitionResponse(content string) (*ScenarioRecognitionResult, error) {
-	raw := stripJSONCodeFence(strings.TrimSpace(content))
+	raw := extractScenarioRecognitionJSON(stripJSONCodeFence(strings.TrimSpace(content)))
 	var result ScenarioRecognitionResult
 	if err := json.Unmarshal([]byte(raw), &result); err != nil {
 		return nil, fmt.Errorf("failed to parse scenario recognition JSON: %w", err)
@@ -145,4 +169,47 @@ func parseScenarioRecognitionResponse(content string) (*ScenarioRecognitionResul
 		return nil, err
 	}
 	return normalized, nil
+}
+
+func extractScenarioRecognitionJSON(content string) string {
+	content = strings.TrimSpace(content)
+	if strings.HasPrefix(content, "{") {
+		return content
+	}
+	start := strings.Index(content, "{")
+	if start < 0 {
+		return content
+	}
+	depth := 0
+	inString := false
+	escaped := false
+	for i := start; i < len(content); i++ {
+		ch := content[i]
+		if inString {
+			if escaped {
+				escaped = false
+				continue
+			}
+			if ch == '\\' {
+				escaped = true
+				continue
+			}
+			if ch == '"' {
+				inString = false
+			}
+			continue
+		}
+		switch ch {
+		case '"':
+			inString = true
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				return strings.TrimSpace(content[start : i+1])
+			}
+		}
+	}
+	return content
 }

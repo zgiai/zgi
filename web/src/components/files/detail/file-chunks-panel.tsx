@@ -1,6 +1,15 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import {
+  forwardRef,
+  memo,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import {
   AlertCircle,
   AlertTriangle,
@@ -9,15 +18,16 @@ import {
   Edit3,
   Layers3,
   Loader2,
-  PanelLeftOpen,
   Save,
   Search,
   SearchX,
+  Trash2,
 } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { Input } from '@/components/ui/input';
 import MarkdownViewer from '@/components/common/markdown-viewer';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -27,6 +37,7 @@ import { useT } from '@/i18n';
 import type { FileDocumentChunk } from '@/services/types/file';
 import {
   useBatchUpdateFileChunks,
+  useDeleteFileChunk,
   useFileChunks,
   useUpdateFileChunk,
 } from '@/hooks/file/use-file-chunks';
@@ -44,9 +55,7 @@ interface FileChunksPanelProps {
   canUpdateFile: boolean;
   queryVersion?: number | string | null;
   className?: string;
-  originalPreviewHidden?: boolean;
   locateTarget?: FileChunkLocateTarget | null;
-  onToggleOriginalPreview?: () => void;
   onLocateIssue?: (locator: FilePreviewLocator) => void;
   onChunksChanged?: () => void;
 }
@@ -89,9 +98,7 @@ export function FileChunksPanel({
   canUpdateFile,
   queryVersion,
   className,
-  originalPreviewHidden = false,
   locateTarget,
-  onToggleOriginalPreview,
   onLocateIssue,
   onChunksChanged,
 }: FileChunksPanelProps) {
@@ -104,6 +111,7 @@ export function FileChunksPanel({
   const [filter, setFilter] = useState<ChunkFilter>('all');
   const [highlightedChunkId, setHighlightedChunkId] = useState<string | null>(null);
   const chunkCardRefs = useRef(new Map<string, HTMLDivElement>());
+  const tableEditorRefs = useRef(new Map<string, TableChunkEditorHandle>());
   const { data, isLoading, error } = useFileChunks(
     fileId,
     { limit: 500 },
@@ -111,6 +119,7 @@ export function FileChunksPanel({
   );
   const updateChunk = useUpdateFileChunk(fileId);
   const batchUpdateChunks = useBatchUpdateFileChunks(fileId);
+  const deleteChunk = useDeleteFileChunk(fileId);
   const response = data?.data;
   const primaryChunks = useMemo(() => response?.items ?? [], [response?.items]);
   const total = response?.primary_chunk_count ?? response?.total ?? primaryChunks.length;
@@ -130,6 +139,7 @@ export function FileChunksPanel({
       );
     });
   }, [filter, primaryChunks, search]);
+  const isFilteredEmpty = total > 0 && visibleChunks.length === 0;
 
   const visibleChunkIds = useMemo(() => visibleChunks.map(chunk => chunk.id), [visibleChunks]);
   const selectedVisibleIds = useMemo(
@@ -198,6 +208,14 @@ export function FileChunksPanel({
     chunkCardRefs.current.delete(chunkId);
   };
 
+  const setTableEditorRef = (chunkId: string) => (handle: TableChunkEditorHandle | null) => {
+    if (handle) {
+      tableEditorRefs.current.set(chunkId, handle);
+      return;
+    }
+    tableEditorRefs.current.delete(chunkId);
+  };
+
   const startEditPrimary = (chunk: FileDocumentChunk) => {
     if (!canUpdateFile) return;
     setEditingPrimaryChunkId(chunk.id);
@@ -207,13 +225,15 @@ export function FileChunksPanel({
   const cancelEditPrimary = () => {
     setEditingPrimaryChunkId(null);
     setPrimaryDraft('');
+    tableEditorRefs.current.clear();
   };
 
   const savePrimaryChunkContent = async (chunk: FileDocumentChunk) => {
     if (!canUpdateFile) return;
+    const nextContent = tableEditorRefs.current.get(chunk.id)?.getContent() ?? primaryDraft;
     await updateChunk.mutateAsync({
       chunkId: chunk.id,
-      data: { content: primaryDraft },
+      data: { content: nextContent },
     });
     onChunksChanged?.();
     cancelEditPrimary();
@@ -256,13 +276,34 @@ export function FileChunksPanel({
     setExpandedIds(current => ({ ...current, [chunkId]: !(current[chunkId] ?? false) }));
   };
 
+  const deletePrimaryChunk = (chunk: FileDocumentChunk) => {
+    deleteChunk.mutate(chunk.id, {
+      onSuccess: () => {
+        onChunksChanged?.();
+      },
+    });
+  };
+
   if (!enabled) {
     return (
-      <Alert className={className}>
-        <AlertCircle className="h-4 w-4" />
-        <AlertTitle>{t('detail.chunks.notReadyTitle')}</AlertTitle>
-        <AlertDescription>{t('detail.chunks.notReadyDescription')}</AlertDescription>
-      </Alert>
+      <div
+        className={cn(
+          'flex h-full min-h-[320px] items-center justify-center bg-background px-6 py-10 text-center',
+          className
+        )}
+      >
+        <div className="max-w-[360px]">
+          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-muted text-muted-foreground">
+            <Layers3 className="h-6 w-6" />
+          </div>
+          <h3 className="mt-4 text-base font-semibold text-foreground">
+            {t('detail.chunks.notReadyTitle')}
+          </h3>
+          <p className="mt-2 text-sm leading-6 text-muted-foreground">
+            {t('detail.chunks.notReadyDescription')}
+          </p>
+        </div>
+      </div>
     );
   }
 
@@ -296,18 +337,6 @@ export function FileChunksPanel({
               {t('detail.chunks.total', { count: total })}
             </Badge>
           </div>
-
-          {originalPreviewHidden && onToggleOriginalPreview ? (
-            <Button
-              type="button"
-              variant="outline"
-              className="h-8 gap-1.5 rounded-md px-2.5 text-sm"
-              onClick={onToggleOriginalPreview}
-            >
-              <PanelLeftOpen className="h-4 w-4" />
-              {t('detail.previewToggle.showOriginal')}
-            </Button>
-          ) : null}
 
           <div className="relative min-w-[220px] flex-1 sm:max-w-[360px]">
             <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -387,10 +416,14 @@ export function FileChunksPanel({
             <div>
               <SearchX className="mx-auto h-8 w-8 text-muted-foreground" />
               <div className="mt-3 text-sm font-medium text-foreground">
-                {t('detail.chunks.emptyTitle')}
+                {t(isFilteredEmpty ? 'detail.chunks.filteredEmptyTitle' : 'detail.chunks.emptyTitle')}
               </div>
               <p className="mt-1 text-sm text-muted-foreground">
-                {t('detail.chunks.emptyDescription')}
+                {t(
+                  isFilteredEmpty
+                    ? 'detail.chunks.filteredEmptyDescription'
+                    : 'detail.chunks.emptyDescription'
+                )}
               </p>
             </div>
           </div>
@@ -407,11 +440,18 @@ export function FileChunksPanel({
                   highlighted={highlightedChunkId === chunk.id}
                   editing={editingPrimaryChunkId === chunk.id}
                   draft={editingPrimaryChunkId === chunk.id ? primaryDraft : chunk.content}
-                  disabled={!canUpdateFile || updateChunk.isPending || batchUpdateChunks.isPending}
+                  disabled={
+                    !canUpdateFile ||
+                    updateChunk.isPending ||
+                    batchUpdateChunks.isPending ||
+                    deleteChunk.isPending
+                  }
                   canUpdateFile={canUpdateFile}
                   onEditPrimary={startEditPrimary}
+                  onDelete={deletePrimaryChunk}
                   onCancelEdit={cancelEditPrimary}
                   onDraftChange={setPrimaryDraft}
+                  tableEditorRef={setTableEditorRef(chunk.id)}
                   onSavePrimary={savePrimaryChunkContent}
                   onSelect={toggleChunkSelected}
                   onToggleEnabled={toggleChunkEnabled}
@@ -439,8 +479,10 @@ function PrimaryChunkCard({
   disabled,
   canUpdateFile,
   onEditPrimary,
+  onDelete,
   onCancelEdit,
   onDraftChange,
+  tableEditorRef,
   onSavePrimary,
   onSelect,
   onToggleEnabled,
@@ -458,8 +500,10 @@ function PrimaryChunkCard({
   disabled: boolean;
   canUpdateFile: boolean;
   onEditPrimary: (chunk: FileDocumentChunk) => void;
+  onDelete: (chunk: FileDocumentChunk) => void;
   onCancelEdit: () => void;
   onDraftChange: (value: string) => void;
+  tableEditorRef: (handle: TableChunkEditorHandle | null) => void;
   onSavePrimary: (chunk: FileDocumentChunk) => Promise<void>;
   onSelect: (chunkId: string, checked: boolean) => void;
   onToggleEnabled: (chunk: FileDocumentChunk, checked: boolean) => Promise<void>;
@@ -467,7 +511,42 @@ function PrimaryChunkCard({
   onLocateIssue?: (locator: FilePreviewLocator) => void;
 }) {
   const t = useT('files');
+  const [sourceEditMode, setSourceEditMode] = useState(false);
+  const [tableEditorDirty, setTableEditorDirty] = useState(false);
+  const tableEditorHandleRef = useRef<TableChunkEditorHandle | null>(null);
   const qualityIssues = SHOW_CHUNK_QUALITY_ISSUES ? chunkQualityIssues(chunk) : [];
+  const tableDraft = useMemo(() => parseEditableTableContent(draft), [draft]);
+  const useTableEditor = editing && tableDraft && !sourceEditMode;
+  const hasDraftChanges = useTableEditor ? tableEditorDirty : draft !== chunk.content;
+  const canSaveDraft = hasDraftChanges && (useTableEditor || draft.trim() !== '');
+
+  useEffect(() => {
+    if (!editing) {
+      setSourceEditMode(false);
+      setTableEditorDirty(false);
+    }
+  }, [editing]);
+
+  useEffect(() => {
+    if (editing) {
+      setTableEditorDirty(false);
+    }
+  }, [draft, editing]);
+
+  const setCurrentTableEditorRef = (handle: TableChunkEditorHandle | null) => {
+    tableEditorHandleRef.current = handle;
+    tableEditorRef(handle);
+  };
+
+  const toggleSourceEditMode = () => {
+    if (!sourceEditMode) {
+      const tableContent = tableEditorHandleRef.current?.getContent();
+      if (tableContent !== undefined) {
+        onDraftChange(tableContent);
+      }
+    }
+    setSourceEditMode(current => !current);
+  };
 
   return (
     <article
@@ -501,6 +580,9 @@ function PrimaryChunkCard({
               </Badge>
             ) : null}
             <Badge variant="subtle">{chunk.status}</Badge>
+            <span className="text-sm text-muted-foreground">
+              {t('detail.chunks.characters', { count: chunk.content.length })}
+            </span>
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -522,14 +604,27 @@ function PrimaryChunkCard({
               >
                 <Edit3 className="h-4 w-4" />
               </Button>
+              <ConfirmDialog
+                trigger={
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-9 w-9 p-0 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                    disabled={disabled || editing}
+                    aria-label={t('detail.chunks.delete')}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                }
+                title={t('detail.chunks.deleteConfirmTitle')}
+                description={t('detail.chunks.deleteConfirmDescription')}
+                confirmText={t('detail.chunks.delete')}
+                cancelText={t('detail.chunks.cancel')}
+                onConfirm={() => onDelete(chunk)}
+                variant="danger"
+              />
             </>
           ) : null}
-          {/* Re-enable after file chunk deletion API is implemented. */}
-          {/*
-          <Button variant="ghost" size="sm" className="h-9 w-9 p-0">
-            <Trash2 className="h-4 w-4" />
-          </Button>
-          */}
           <Button
             variant="ghost"
             size="sm"
@@ -556,13 +651,41 @@ function PrimaryChunkCard({
 
       {editing ? (
         <div className="mt-4 rounded-lg border border-primary/30 bg-primary/5 p-3">
-          <Textarea
-            value={draft}
-            onChange={event => onDraftChange(event.target.value)}
-            className="min-h-44 resize-y bg-background text-sm leading-6"
-            disabled={disabled}
-            autoFocus
-          />
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <span className="text-sm font-medium text-foreground">
+              {tableDraft && !sourceEditMode
+                ? t('detail.chunks.tableEdit')
+                : t('detail.chunks.sourceEdit')}
+            </span>
+            {tableDraft ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={toggleSourceEditMode}
+                disabled={disabled}
+              >
+                {sourceEditMode ? t('detail.chunks.tableEdit') : t('detail.chunks.sourceEdit')}
+              </Button>
+            ) : null}
+          </div>
+          {useTableEditor ? (
+            <TableChunkEditor
+              ref={setCurrentTableEditorRef}
+              table={tableDraft}
+              sourceContent={draft}
+              disabled={disabled}
+              onDirtyChange={setTableEditorDirty}
+            />
+          ) : (
+            <Textarea
+              value={draft}
+              onChange={event => onDraftChange(event.target.value)}
+              className="min-h-44 resize-y bg-background font-mono text-sm leading-6"
+              disabled={disabled}
+              autoFocus
+            />
+          )}
           <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
             <span className="text-xs text-muted-foreground">
               {t('detail.chunks.characters', { count: draft.length })}
@@ -575,7 +698,7 @@ function PrimaryChunkCard({
                 size="sm"
                 className="gap-1.5"
                 onClick={() => void onSavePrimary(chunk)}
-                disabled={disabled || draft.trim() === '' || draft === chunk.content}
+                disabled={disabled || !canSaveDraft}
               >
                 {disabled ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
@@ -606,7 +729,6 @@ function PrimaryChunkCard({
         <SecondaryChunkControls
           fileId={fileId}
           chunk={chunk}
-          characterCount={chunk.content.length}
           expanded={expanded}
           queryVersion={queryVersion}
           onToggleExpanded={onToggleExpanded}
@@ -623,17 +745,186 @@ function PrimaryChunkCard({
   );
 }
 
+interface EditableTableCell {
+  rowIndex: number;
+  cellIndex: number;
+  tagName: 'td' | 'th';
+  text: string;
+  rowSpan: number;
+  colSpan: number;
+}
+
+interface EditableTableContent {
+  html: string;
+  rows: EditableTableCell[][];
+}
+
+interface TableChunkEditorHandle {
+  getContent: () => string;
+}
+
+function cloneEditableTableRows(rows: EditableTableCell[][]): EditableTableCell[][] {
+  return rows.map(row => row.map(cell => ({ ...cell })));
+}
+
+function buildEditableTableContent(html: string, rows: EditableTableCell[][]): string {
+  const table = parseSingleTableElement(html);
+  if (!table) return html;
+
+  rows.forEach(row => {
+    row.forEach(cellDraft => {
+      const cell = table.rows[cellDraft.rowIndex]?.cells[cellDraft.cellIndex];
+      if (cell) {
+        cell.textContent = cellDraft.text;
+      }
+    });
+  });
+
+  return table.outerHTML;
+}
+
+const EditableTableInputCell = memo(function EditableTableInputCell({
+  cell,
+  disabled,
+  onChange,
+}: {
+  cell: EditableTableCell;
+  disabled: boolean;
+  onChange: (rowIndex: number, cellIndex: number, value: string) => void;
+}) {
+  const CellTag = cell.tagName;
+
+  return (
+    <CellTag
+      rowSpan={cell.rowSpan}
+      colSpan={cell.colSpan}
+      className={cn(
+        'min-w-[160px] border border-border align-top',
+        cell.tagName === 'th' && 'bg-muted/60 font-semibold'
+      )}
+    >
+      <textarea
+        value={cell.text}
+        onChange={event => onChange(cell.rowIndex, cell.cellIndex, event.target.value)}
+        className="min-h-10 w-full resize-y bg-transparent px-2.5 py-2 text-sm leading-5 outline-none focus:bg-primary/5 disabled:cursor-not-allowed disabled:opacity-70"
+        disabled={disabled}
+      />
+    </CellTag>
+  );
+});
+
+const TableChunkEditor = forwardRef<TableChunkEditorHandle, {
+  table: EditableTableContent;
+  sourceContent: string;
+  disabled: boolean;
+  onDirtyChange: (dirty: boolean) => void;
+}>(function TableChunkEditor(
+  {
+  table,
+    sourceContent,
+  disabled,
+    onDirtyChange,
+  },
+  ref
+) {
+  const [rows, setRows] = useState(() => cloneEditableTableRows(table.rows));
+
+  useEffect(() => {
+    setRows(cloneEditableTableRows(table.rows));
+    onDirtyChange(false);
+  }, [onDirtyChange, table.rows]);
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      getContent: () => buildEditableTableContent(sourceContent, rows),
+    }),
+    [rows, sourceContent]
+  );
+
+  const updateCell = useCallback(
+    (rowIndex: number, cellIndex: number, value: string) => {
+      setRows(current =>
+        current.map(row =>
+          row.map(cell =>
+            cell.rowIndex === rowIndex && cell.cellIndex === cellIndex
+              ? { ...cell, text: value }
+              : cell
+          )
+        )
+      );
+      onDirtyChange(true);
+    },
+    [onDirtyChange]
+  );
+
+  return (
+    <div className="max-h-[460px] overflow-auto rounded-md border border-border bg-background">
+      <table className="min-w-full border-collapse text-sm">
+        <tbody>
+          {rows.map((row, rowIndex) => (
+            <tr key={rowIndex}>
+              {row.map(cell => (
+                <EditableTableInputCell
+                  key={`${cell.rowIndex}-${cell.cellIndex}`}
+                  cell={cell}
+                  disabled={disabled}
+                  onChange={updateCell}
+                />
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+});
+
+function parseEditableTableContent(content: string): EditableTableContent | null {
+  const table = parseSingleTableElement(content);
+  if (!table) return null;
+
+  const rows = Array.from(table.rows).map((row, rowIndex) =>
+    Array.from(row.cells).map((cell, cellIndex) => ({
+      rowIndex,
+      cellIndex,
+      tagName: cell.tagName.toLowerCase() === 'th' ? ('th' as const) : ('td' as const),
+      text: cell.textContent ?? '',
+      rowSpan: cell.rowSpan || 1,
+      colSpan: cell.colSpan || 1,
+    }))
+  );
+
+  if (rows.length === 0 || rows.every(row => row.length === 0)) return null;
+  return { html: table.outerHTML, rows };
+}
+
+function parseSingleTableElement(content: string): HTMLTableElement | null {
+  const trimmed = content.trim();
+  if (!/^<table[\s>]/i.test(trimmed)) return null;
+
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(trimmed, 'text/html');
+  const meaningfulNodes = Array.from(doc.body.childNodes).filter(
+    node => node.nodeType !== 3 || Boolean(node.textContent?.trim())
+  );
+  if (meaningfulNodes.length !== 1) return null;
+
+  const table = meaningfulNodes[0];
+  if (!(table instanceof HTMLTableElement)) return null;
+  if (table.querySelector('table')) return null;
+  return table;
+}
+
 function SecondaryChunkControls({
   fileId,
   chunk,
-  characterCount,
   expanded,
   queryVersion,
   onToggleExpanded,
 }: {
   fileId: string;
   chunk: FileDocumentChunk;
-  characterCount: number;
   expanded: boolean;
   queryVersion?: number | string | null;
   onToggleExpanded: (chunkId: string) => void;
@@ -664,9 +955,6 @@ function SecondaryChunkControls({
       >
         {expanded ? t('detail.chunks.collapseSecondary') : t('detail.chunks.viewSecondary')}
       </Button>
-      <span className="text-muted-foreground">
-        {t('detail.chunks.characters', { count: characterCount })}
-      </span>
       {expanded ? (
         <div className="min-w-0 basis-full pt-1">
           {isLoading ? (
@@ -988,7 +1276,7 @@ function SecondaryChunkRow({ chunk, index }: { chunk: FileDocumentChunk; index: 
         </div>
       </div>
       <div className="mt-3 min-w-0 max-w-full overflow-hidden rounded-lg border border-border bg-background p-3 shadow-sm">
-        <div className="max-h-32 min-w-0 max-w-full flex-1 overflow-hidden whitespace-pre-wrap break-words text-sm leading-6 text-foreground [overflow-wrap:anywhere]">
+        <div className="min-w-0 max-w-full flex-1 whitespace-pre-wrap break-words text-sm leading-6 text-foreground [overflow-wrap:anywhere]">
           {chunk.content}
         </div>
       </div>

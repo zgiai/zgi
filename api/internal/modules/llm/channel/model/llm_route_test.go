@@ -59,6 +59,23 @@ func TestLLMRouteSupportsModelForProvider_OfficialRouteRequiresExactPair(t *test
 	}
 }
 
+func TestLLMRouteSupportsModelForProvider_OfficialLegacySnapshotFallsBackToModelNames(t *testing.T) {
+	route := &LLMRoute{
+		IsOfficial: true,
+		Models:     []string{"legacy-model"},
+	}
+
+	if !route.SupportsModelForProvider("openai", "legacy-model") {
+		t.Fatal("official route without provider-model pairs should preserve legacy model-name support")
+	}
+	if route.SupportsModelForProvider("openai", "missing-model") {
+		t.Fatal("legacy fallback must not allow a model absent from the snapshot")
+	}
+	if route.SupportsModelForProvider("", "legacy-model") {
+		t.Fatal("legacy fallback must still reject a missing provider")
+	}
+}
+
 func TestLLMRouteSupportsModelForProvider_PrivateRouteBehaviorIsUnchanged(t *testing.T) {
 	route := &LLMRoute{Models: []string{"same-name"}}
 

@@ -10,12 +10,11 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Button } from '@/components/ui/button';
 
 import type { RecordsTableProps } from '../types';
-import { useT, type DatasetsKey } from '@/i18n';
+import { useT } from '@/i18n';
 
 const getRecordKey = (record: RecordsTableProps['records'][number]) =>
   record.id || `${record.created_at}:${record.source}:${record.content}`;
@@ -40,16 +39,6 @@ export function RecordsTable({
   // Format ISO date string to readable date
   const formatDate = (isoString: string) => {
     return new Date(isoString).toLocaleString();
-  };
-
-  // Get source display name
-  const getSourceName = (source?: string) => {
-    if (!source) return '-';
-    try {
-      return t(`datasets.hitTesting.sources.${source}` as DatasetsKey);
-    } catch {
-      return source;
-    }
   };
 
   if (isLoading && records.length === 0) {
@@ -109,18 +98,20 @@ export function RecordsTable({
         ) : (
           <div>
             {/* Desktop Table View */}
-            <div className="relative">
-              <Table>
+            <div className="relative overflow-hidden">
+              <Table className="table-fixed">
+                <colgroup>
+                  <col className="w-[52%]" />
+                  <col className="w-[96px]" />
+                  <col className="w-[132px]" />
+                </colgroup>
                 <TableHeader className="bg-muted/40">
                   <TableRow>
-                    <TableHead className="h-9 text-xs text-muted-foreground">
+                    <TableHead className="h-9 w-[52%] text-xs text-muted-foreground">
                       {t('datasets.hitTesting.tableTestText')}
                     </TableHead>
-                    <TableHead className="h-9 w-[84px] text-xs text-muted-foreground">
-                      {t('datasets.hitTesting.tableElapsedTime')}
-                    </TableHead>
                     <TableHead className="h-9 w-[96px] text-xs text-muted-foreground">
-                      {t('datasets.hitTesting.source')}
+                      {t('datasets.hitTesting.tableElapsedTime')}
                     </TableHead>
                     <TableHead className="h-9 w-[132px] text-xs text-muted-foreground">
                       {t('datasets.hitTesting.tableTime')}
@@ -134,22 +125,17 @@ export function RecordsTable({
                       className="cursor-pointer hover:bg-muted/50"
                       onClick={() => onLoadQuery(record)}
                     >
-                      <TableCell className="py-2 text-sm font-medium">
-                        <div className="max-w-[180px] truncate" title={record.content}>
+                      <TableCell className="max-w-0 py-2 text-sm font-medium">
+                        <div className="truncate" title={record.content}>
                           {record.content}
                         </div>
                       </TableCell>
-                      <TableCell className="py-2">
+                      <TableCell className="py-2 whitespace-nowrap">
                         <span className="text-sm text-muted-foreground">
                           {(record.elapsed_time / 1000).toFixed(2)}s
                         </span>
                       </TableCell>
-                      <TableCell className="py-2">
-                        <Badge variant="outline" className="text-xs">
-                          {getSourceName(record.source)}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="py-2">
+                      <TableCell className="py-2 whitespace-nowrap">
                         <span className="text-sm text-muted-foreground">
                           {formatDate(record.created_at)}
                         </span>

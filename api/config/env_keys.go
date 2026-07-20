@@ -213,6 +213,8 @@ const (
 	envEnableEmailCodeLogin = "ENABLE_EMAIL_CODE_LOGIN"
 	// envEnableEmailPasswordLogin controls whether users can log in with email and password. Default: true.
 	envEnableEmailPasswordLogin = "ENABLE_EMAIL_PASSWORD_LOGIN"
+	// envEnablePhoneLogin controls whether the phone login entry is available. Default: false.
+	envEnablePhoneLogin = "ENABLE_PHONE_LOGIN"
 	// envEnableSocialOAuthLogin controls whether social OAuth login is enabled. Default: false.
 	envEnableSocialOAuthLogin = "ENABLE_SOCIAL_OAUTH_LOGIN"
 )
@@ -396,6 +398,10 @@ const (
 // Observability and dependency service keys.
 const (
 	// Observability providers.
+	// envZGIReporters selects comma-separated ZGI Reporter adapters.
+	// Supported built-ins: sentry, otel. Empty auto-detects configured providers;
+	// "none" disables all reporters.
+	envZGIReporters = "ZGI_REPORTERS"
 	// envOTELEnabled controls whether OpenTelemetry tracing is enabled. Default: false.
 	envOTELEnabled = "OTEL_ENABLED"
 	// envOTELServiceName sets the OpenTelemetry service name. Default: zgi-api.

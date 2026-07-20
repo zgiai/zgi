@@ -153,6 +153,7 @@ export default function DbRecordPage() {
               <SelectItem value="update">{t('dbs.sqlOps.types.update')}</SelectItem>
               <SelectItem value="delete">{t('dbs.sqlOps.types.delete')}</SelectItem>
               <SelectItem value="query">{t('dbs.sqlOps.types.query')}</SelectItem>
+              <SelectItem value="import">{t('dbs.sqlOps.types.import')}</SelectItem>
             </SelectContent>
           </Select>
         </div>

@@ -42,6 +42,8 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 	RegisterUserRoutes(v1, UserRouteDeps{
 		DB:                         db,
 		AccountService:             serviceContainer.GetAccountService(),
+		PhoneAuthAccounts:          serviceContainer.GetAccountServiceImpl(),
+		NotificationSMSService:     serviceContainer.GetNotificationSMSService(),
 		WorkspaceManagementService: serviceContainer.GetTenantService(),
 		OrganizationService:        serviceContainer.GetOrganizationService(),
 		DepartmentService:          serviceContainer.GetDepartmentService(),

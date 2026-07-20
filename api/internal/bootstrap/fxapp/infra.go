@@ -17,6 +17,7 @@ import (
 	"github.com/zgiai/zgi/api/config"
 	grpcinfra "github.com/zgiai/zgi/api/internal/infra/grpc"
 	"github.com/zgiai/zgi/api/internal/infra/platform"
+	"github.com/zgiai/zgi/api/internal/observability"
 	"github.com/zgiai/zgi/api/middleware"
 	"github.com/zgiai/zgi/api/pkg/database"
 	"github.com/zgiai/zgi/api/pkg/logger"
@@ -70,6 +71,7 @@ var infraModule = fx.Module("infra",
 		provideServerAddresses,
 		provideSentryResource,
 		provideOpenTelemetryResource,
+		provideZGIReporter,
 		provideDatabase,
 		provideRedis,
 		providePlatformContainer,
@@ -91,8 +93,8 @@ func provideServerAddresses(cfg *config.Config) ServerAddresses {
 
 func provideSentryResource(cfg *config.Config, log *zap.Logger) *SentryResource {
 	sentryDSN := strings.TrimSpace(cfg.Sentry.DSN)
-	if sentryDSN == "" {
-		log.Info("Sentry DSN not configured, skipping Sentry initialization")
+	if !cfg.Observability.ReporterEnabled("sentry", sentryDSN != "") {
+		log.Info("Sentry reporter disabled or not configured")
 		return &SentryResource{}
 	}
 
@@ -103,15 +105,13 @@ func provideSentryResource(cfg *config.Config, log *zap.Logger) *SentryResource 
 		EnableTracing:    true,
 		TracesSampleRate: 0.1,
 		BeforeSend: func(event *sentry.Event, hint *sentry.EventHint) *sentry.Event {
-			if hint == nil || hint.Context == nil {
-				return event
+			if hint != nil && hint.Context != nil {
+				req, ok := hint.Context.Value(sentry.RequestContextKey).(*http.Request)
+				if ok {
+					event.Request = sentry.NewRequest(req)
+				}
 			}
-
-			req, ok := hint.Context.Value(sentry.RequestContextKey).(*http.Request)
-			if ok {
-				event.Request = sentry.NewRequest(req)
-			}
-			return event
+			return observability.SanitizeSentryEvent(event)
 		},
 	})
 	if err != nil {
@@ -123,7 +123,26 @@ func provideSentryResource(cfg *config.Config, log *zap.Logger) *SentryResource 
 	return &SentryResource{Enabled: true}
 }
 
-func provideDatabase(cfg *config.Config, _ *zap.Logger) (*gorm.DB, error) {
+func provideZGIReporter(sentryResource *SentryResource, otelResource *OpenTelemetryResource, log *zap.Logger) *observability.ZGIReporter {
+	reporters := make([]observability.Reporter, 0, 2)
+	if sentryResource != nil && sentryResource.Enabled {
+		reporters = append(reporters, observability.NewSentryReporter())
+	}
+	if otelResource != nil && otelResource.Enabled {
+		reporters = append(reporters, observability.NewOTelReporter())
+	}
+
+	reporter := observability.NewZGIReporter(reporters...)
+	observability.SetDefaultReporter(reporter)
+	if reporter.Enabled() {
+		log.Info("ZGI Reporter initialized", zap.Strings("reporters", reporter.ReporterNames()))
+	} else {
+		log.Info("ZGI Reporter disabled; using No-op behavior")
+	}
+	return reporter
+}
+
+func provideDatabase(cfg *config.Config, _ *zap.Logger, _ *observability.ZGIReporter) (*gorm.DB, error) {
 	db, err := database.InitDB(cfg.Database)
 	if err != nil {
 		return nil, err
@@ -170,7 +189,7 @@ func provideListeners(addresses ServerAddresses) (listenerResult, error) {
 	}, nil
 }
 
-func provideGinEngine(cfg *config.Config, sentryResource *SentryResource, otelResource *OpenTelemetryResource) *gin.Engine {
+func provideGinEngine(cfg *config.Config, reporter *observability.ZGIReporter, otelResource *OpenTelemetryResource) *gin.Engine {
 	setGinMode(cfg.Server.Mode)
 
 	engine := gin.New()
@@ -190,14 +209,14 @@ func provideGinEngine(cfg *config.Config, sentryResource *SentryResource, otelRe
 	}))
 	engine.Use(middleware.Recovery())
 
-	if sentryResource.Enabled {
+	if reporter.HasReporter("sentry") {
 		engine.Use(sentrygin.New(sentrygin.Options{
 			Repanic:         true,
 			WaitForDelivery: false,
 			Timeout:         2 * time.Second,
 		}))
-		engine.Use(middleware.SentryErrorReporter())
 	}
+	engine.Use(middleware.ZGIErrorReporter(reporter))
 
 	return engine
 }

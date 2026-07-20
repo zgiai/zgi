@@ -124,6 +124,9 @@ func TestMapDocumentResultCarriesConfidence(t *testing.T) {
 	if artifact.Elements[0].Confidence == nil || *artifact.Elements[0].Confidence != 0.73 {
 		t.Fatalf("confidence=%v", artifact.Elements[0].Confidence)
 	}
+	if artifact.Metadata["structured_elements"] != nil {
+		t.Fatalf("local engine output must not be marked structured: %#v", artifact.Metadata)
+	}
 }
 
 func TestMapDocumentResultMarksEmptyOutputDegraded(t *testing.T) {
@@ -183,6 +186,9 @@ func TestMapDocumentResultCarriesImageAssetsForNormalization(t *testing.T) {
 	assets, ok := artifact.Metadata["image_assets"].(map[string]any)
 	if !ok || assets["chart.jpg"] != "data:image/jpeg;base64,aGVsbG8=" {
 		t.Fatalf("image assets not carried for normalization: %#v", artifact.Metadata["image_assets"])
+	}
+	if artifact.Metadata["structured_elements"] != true {
+		t.Fatalf("expected structured element marker: %#v", artifact.Metadata)
 	}
 }
 

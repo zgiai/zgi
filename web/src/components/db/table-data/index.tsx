@@ -8,6 +8,7 @@ import { useCallback, useEffect, useMemo, useState, useRef } from 'react';
 // UI and hooks split across subcomponents for readability and performance.
 import { Table } from '@/components/ui/table';
 import { Pagination } from '@/components/ui/pagination';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { useDbTableColumns } from '@/hooks/db/use-db-table-columns';
 import {
   useDbTableRecords,
@@ -84,6 +85,7 @@ const TableData: FC<TableDataProps> = ({ dbId, tableId }) => {
   // Pagination state
   const [pageSize, setPageSize] = useState<number>(DEFAULT_PAGE_SIZE);
   const [page, setPage] = useState<number>(1);
+  const [discardConfirmOpen, setDiscardConfirmOpen] = useState(false);
 
   // Sorting state: prefer recency fields for record-heavy business tables.
   const defaultSortKey = useMemo(() => {
@@ -205,7 +207,7 @@ const TableData: FC<TableDataProps> = ({ dbId, tableId }) => {
       return acc;
     }, {} as DbTableRecord);
     newRow.__temp_id = generateTempId();
-    setLocalRows(prev => [newRow, ...prev]);
+    setLocalRows(prev => [...prev, newRow]);
   };
 
   const onAddRowFromEmpty = () => {
@@ -413,12 +415,14 @@ const TableData: FC<TableDataProps> = ({ dbId, tableId }) => {
     }
   };
 
-  const onCancel = () => {
+  const discardChanges = () => {
     setLocalRows(records);
     setIsEditing(false);
     setPendingDeletes([]);
     setDrafts({});
   };
+
+  const onCancel = () => setDiscardConfirmOpen(true);
 
   const onDeleteRow = async (row: DbTableRecord) => {
     if (!canDeleteRecord) return;
@@ -524,9 +528,9 @@ const TableData: FC<TableDataProps> = ({ dbId, tableId }) => {
 
   return (
     <div className="space-y-4">
+      <h1 className="text-base font-semibold">{t('dbs.tableData.title')}</h1>
       <SchemaHealthNotice
         columns={columns}
-        manageStructureHref={`/console/db/${dbId}/table/${tableId}/structure`}
         compact
       />
       {/* Controls: page size, sort key, sort dir, edit actions */}
@@ -636,6 +640,16 @@ const TableData: FC<TableDataProps> = ({ dbId, tableId }) => {
         onOpenChange={setRowDetailOpen}
         row={selectedRow}
         columns={columns}
+      />
+      <ConfirmDialog
+        open={discardConfirmOpen}
+        onOpenChange={setDiscardConfirmOpen}
+        title={t('dbs.tableData.discardConfirmTitle')}
+        description={t('dbs.tableData.discardConfirmDescription')}
+        confirmText={t('dbs.tableData.discardConfirmAction')}
+        cancelText={t('common.cancel')}
+        variant="warning"
+        onConfirm={discardChanges}
       />
     </div>
   );

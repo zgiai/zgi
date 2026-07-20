@@ -1,16 +1,18 @@
 package database
 
 import (
+	"context"
 	"errors"
 	"math/rand"
 	"time"
 
-	sentryHelper "github.com/zgiai/zgi/api/pkg/sentry"
+	"github.com/zgiai/zgi/api/internal/observability"
 	"gorm.io/gorm"
 )
 
-// SentryPlugin is a GORM plugin that reports database errors to Sentry
-type SentryPlugin struct {
+// ReporterPlugin is a GORM plugin that reports database errors through
+// ZGIReporter without depending on a specific observability platform.
+type ReporterPlugin struct {
 	// SlowQueryThreshold defines the threshold for slow queries (in milliseconds)
 	SlowQueryThreshold time.Duration
 	// SlowQuerySampleRate defines the sample rate for slow query reporting (0.0 to 1.0)
@@ -19,12 +21,12 @@ type SentryPlugin struct {
 }
 
 // Name returns the plugin name
-func (p *SentryPlugin) Name() string {
-	return "sentry_plugin"
+func (p *ReporterPlugin) Name() string {
+	return "zgi_reporter_plugin"
 }
 
 // Initialize initializes the plugin
-func (p *SentryPlugin) Initialize(db *gorm.DB) error {
+func (p *ReporterPlugin) Initialize(db *gorm.DB) error {
 	// Set default slow query threshold if not set
 	if p.SlowQueryThreshold == 0 {
 		p.SlowQueryThreshold = 1000 * time.Millisecond // 1 second
@@ -36,31 +38,31 @@ func (p *SentryPlugin) Initialize(db *gorm.DB) error {
 	}
 
 	// Register callback BEFORE query to track start time
-	err := db.Callback().Query().Before("gorm:query").Register("sentry:before_query", p.beforeQuery)
+	err := db.Callback().Query().Before("gorm:query").Register("zgi_reporter:before_query", p.beforeQuery)
 	if err != nil {
 		return err
 	}
 
 	// Register callback for after query
-	err = db.Callback().Query().After("gorm:query").Register("sentry:after_query", p.afterQuery)
+	err = db.Callback().Query().After("gorm:query").Register("zgi_reporter:after_query", p.afterQuery)
 	if err != nil {
 		return err
 	}
 
 	// Register callback for after create
-	err = db.Callback().Create().After("gorm:create").Register("sentry:after_create", p.afterCreate)
+	err = db.Callback().Create().After("gorm:create").Register("zgi_reporter:after_create", p.afterCreate)
 	if err != nil {
 		return err
 	}
 
 	// Register callback for after update
-	err = db.Callback().Update().After("gorm:update").Register("sentry:after_update", p.afterUpdate)
+	err = db.Callback().Update().After("gorm:update").Register("zgi_reporter:after_update", p.afterUpdate)
 	if err != nil {
 		return err
 	}
 
 	// Register callback for after delete
-	err = db.Callback().Delete().After("gorm:delete").Register("sentry:after_delete", p.afterDelete)
+	err = db.Callback().Delete().After("gorm:delete").Register("zgi_reporter:after_delete", p.afterDelete)
 	if err != nil {
 		return err
 	}
@@ -69,59 +71,65 @@ func (p *SentryPlugin) Initialize(db *gorm.DB) error {
 }
 
 // beforeQuery is called before a query operation to track start time
-func (p *SentryPlugin) beforeQuery(db *gorm.DB) {
+func (p *ReporterPlugin) beforeQuery(db *gorm.DB) {
 	if db.Statement != nil {
-		db.Statement.Settings.Store("sentry:start_time", time.Now())
+		db.Statement.Settings.Store("zgi_reporter:start_time", time.Now())
 	}
 }
 
 // afterQuery is called after a query operation
-func (p *SentryPlugin) afterQuery(db *gorm.DB) {
+func (p *ReporterPlugin) afterQuery(db *gorm.DB) {
 	p.checkError(db, "SELECT")
 	p.checkSlowQuery(db)
 }
 
 // afterCreate is called after a create operation
-func (p *SentryPlugin) afterCreate(db *gorm.DB) {
+func (p *ReporterPlugin) afterCreate(db *gorm.DB) {
 	p.checkError(db, "INSERT")
 }
 
 // afterUpdate is called after an update operation
-func (p *SentryPlugin) afterUpdate(db *gorm.DB) {
+func (p *ReporterPlugin) afterUpdate(db *gorm.DB) {
 	p.checkError(db, "UPDATE")
 }
 
 // afterDelete is called after a delete operation
-func (p *SentryPlugin) afterDelete(db *gorm.DB) {
+func (p *ReporterPlugin) afterDelete(db *gorm.DB) {
 	p.checkError(db, "DELETE")
 }
 
-// checkError checks if there's an error and reports it to Sentry
-func (p *SentryPlugin) checkError(db *gorm.DB, operation string) {
+// checkError checks if there's an error and reports it through ZGI Reporter.
+func (p *ReporterPlugin) checkError(db *gorm.DB, operation string) {
 	if db.Error != nil && !errors.Is(db.Error, gorm.ErrRecordNotFound) {
+		ctx := context.Background()
 		// Get table name
 		tableName := "unknown"
-		if db.Statement != nil && db.Statement.Table != "" {
-			tableName = db.Statement.Table
+		if db.Statement != nil {
+			ctx = db.Statement.Context
+			if db.Statement.Table != "" {
+				tableName = db.Statement.Table
+			}
 		}
 
-		// Report to Sentry
-		sentryHelper.CaptureDBError(db.Error, operation, tableName, map[string]interface{}{
-			"sql":           db.Statement.SQL.String(),
-			"rows_affected": db.RowsAffected,
-		})
+		observability.CaptureError(ctx, "database.operation.failed", db.Error,
+			observability.Tags(map[string]string{
+				"db.operation": operation,
+				"db.table":     tableName,
+			}),
+			observability.Attribute("db.rows_affected", db.RowsAffected),
+		)
 	}
 }
 
 // checkSlowQuery checks if the query is slow and reports it
-func (p *SentryPlugin) checkSlowQuery(db *gorm.DB) {
+func (p *ReporterPlugin) checkSlowQuery(db *gorm.DB) {
 	// Skip if no statement
 	if db.Statement == nil {
 		return
 	}
 
 	// Get start time from statement settings
-	startTimeVal, ok := db.Statement.Settings.Load("sentry:start_time")
+	startTimeVal, ok := db.Statement.Settings.Load("zgi_reporter:start_time")
 	if !ok {
 		return
 	}
@@ -148,18 +156,20 @@ func (p *SentryPlugin) checkSlowQuery(db *gorm.DB) {
 			tableName = db.Statement.Table
 		}
 
-		// Report slow query to Sentry
-		sentryHelper.CaptureDBError(
+		observability.CaptureError(
+			db.Statement.Context,
+			"database.query.slow",
 			errors.New("slow query detected"),
-			"SLOW_QUERY",
-			tableName,
-			map[string]interface{}{
-				"sql":           db.Statement.SQL.String(),
+			observability.Tags(map[string]string{
+				"db.operation": "SLOW_QUERY",
+				"db.table":     tableName,
+			}),
+			observability.Attributes(map[string]any{
 				"duration_ms":   duration.Milliseconds(),
 				"threshold_ms":  p.SlowQueryThreshold.Milliseconds(),
 				"rows_affected": db.RowsAffected,
 				"sample_rate":   p.SlowQuerySampleRate,
-			},
+			}),
 		)
 	}
 }

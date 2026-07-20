@@ -571,6 +571,40 @@ func TestAvailableModels_OfficialRouteRequiresExactProviderModelPair(t *testing.
 	}
 }
 
+func TestAvailableModels_OfficialLegacySnapshotWithoutProviderPairsKeepsModelsAvailable(t *testing.T) {
+	modelName := "legacy-model"
+	modelRepo := &availableModelRepoFake{models: []*llmmodel.LLMModel{{
+		ID:        uuid.New(),
+		Provider:  "openai",
+		Model:     modelName,
+		ModelName: "Legacy Model",
+		IsActive:  true,
+		UseCases:  types.StringArray{"text-chat"},
+	}}}
+	route := &channelmodel.LLMRoute{
+		Type:       shared.RouteTypeZGICloud,
+		IsOfficial: true,
+		Models:     []string{modelName},
+		// effective_provider_models is empty on snapshots created before the
+		// provider-provenance migration is populated by a successful sync.
+		OfficialProviderModels: nil,
+	}
+	svc := NewAvailableModelsService(
+		modelRepo,
+		&availableConfigRepoFake{},
+		&availableCustomRepoFake{},
+		&availableRouteRepoFake{routes: []*channelmodel.LLMRoute{route}},
+	)
+
+	models, err := svc.ListAvailable(context.Background(), uuid.New(), "", "text-chat")
+	if err != nil {
+		t.Fatalf("ListAvailable returned error: %v", err)
+	}
+	if len(models) != 1 || models[0].Provider != "openai" || models[0].Name != modelName {
+		t.Fatalf("available models = %#v, want legacy openai/%s", models, modelName)
+	}
+}
+
 func TestAvailableModels_WorkflowUsesTextChatModelsWithoutProjection(t *testing.T) {
 	organizationID := uuid.New()
 	modelRepo := &availableModelRepoFake{models: []*llmmodel.LLMModel{{

@@ -114,15 +114,26 @@ const nextConfig = {
 
 const withPlugins = withNextIntl(nextConfig);
 
-export default withSentryConfig(withPlugins, {
-  org: process.env.SENTRY_ORG,
-  project: process.env.SENTRY_PROJECT,
-  authToken: process.env.SENTRY_AUTH_TOKEN,
-  silent: !process.env.CI,
-  widenClientFileUpload: Boolean(process.env.SENTRY_AUTH_TOKEN),
-  webpack: {
-    treeshake: {
-      removeDebugLogging: true,
-    },
-  },
-});
+const configuredReporters = process.env.ZGI_REPORTERS || process.env.NEXT_PUBLIC_ZGI_REPORTERS;
+const selectedReporters = configuredReporters
+  ?.split(/[\s,]+/)
+  .map(value => value.trim().toLowerCase())
+  .filter(Boolean);
+const sentryBuildEnabled =
+  !selectedReporters?.length ||
+  (!selectedReporters.includes('none') && selectedReporters.includes('sentry'));
+
+export default sentryBuildEnabled
+  ? withSentryConfig(withPlugins, {
+      org: process.env.SENTRY_ORG,
+      project: process.env.SENTRY_PROJECT,
+      authToken: process.env.SENTRY_AUTH_TOKEN,
+      silent: !process.env.CI,
+      widenClientFileUpload: Boolean(process.env.SENTRY_AUTH_TOKEN),
+      webpack: {
+        treeshake: {
+          removeDebugLogging: true,
+        },
+      },
+    })
+  : withPlugins;

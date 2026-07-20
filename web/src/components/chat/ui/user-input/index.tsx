@@ -92,6 +92,7 @@ interface UserInputProps {
   topNotice?: React.ReactNode;
   draftValue?: DraftValue | null;
   variant?: 'default' | 'webapp';
+  className?: string;
 }
 
 interface AttachmentUIItem {
@@ -132,6 +133,7 @@ const UserInput: React.FC<UserInputProps> = ({
   allowWorkspaceSwitch = false,
   draftValue,
   variant = 'default',
+  className,
 }) => {
   const t = useT();
   const [value, setValue] = useState('');
@@ -845,7 +847,8 @@ const UserInput: React.FC<UserInputProps> = ({
     <div
       className={cn(
         'w-full relative rounded-lg border shadow-sm',
-        variant === 'webapp' ? 'bg-background' : 'bg-muted'
+        variant === 'webapp' ? 'bg-background' : 'bg-muted',
+        className
       )}
       style={containerStyle}
     >

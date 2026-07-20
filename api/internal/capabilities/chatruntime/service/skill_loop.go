@@ -202,17 +202,25 @@ func planningOutputTokenLimit(prepared *PreparedChat) int {
 		return 0
 	}
 	control := prepared.parts.ContextControl
+	reservedOutput, _ := operationPlanEvidenceIntFromAny(control["reserved_output_tokens"])
 	modelLimit, _ := operationPlanEvidenceIntFromAny(control["model_max_output_tokens"])
 	safeLimit, _ := operationPlanEvidenceIntFromAny(control["safe_context_limit"])
 	promptTokens, _ := operationPlanEvidenceIntFromAny(control["estimated_prompt_tokens"])
 	available := safeLimit - promptTokens
-	if available <= 0 {
-		return modelLimit
+	limit := reservedOutput
+	if limit <= 0 {
+		limit = available
 	}
-	if modelLimit > 0 && modelLimit < available {
-		return modelLimit
+	if limit <= 0 {
+		limit = modelLimit
 	}
-	return available
+	if available > 0 && limit > available {
+		limit = available
+	}
+	if modelLimit > 0 && limit > modelLimit {
+		limit = modelLimit
+	}
+	return limit
 }
 
 func (s *service) persistPartialSkillLoopAnswerBestEffort(ctx context.Context, prepared *PreparedChat, answer string, usage *adapter.Usage) {

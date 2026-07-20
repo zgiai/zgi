@@ -15,6 +15,8 @@ export interface ErrorWithBusinessError extends Error {
 export type AuthBusinessErrorDescriptionKey =
   | 'businessErrors.invalidParameter'
   | 'businessErrors.invalidCredentials'
+  | 'businessErrors.phoneInvalidCredentials'
+  | 'businessErrors.phoneNotRegistered'
   | 'businessErrors.accountNotFound'
   | 'businessErrors.invalidLoginStatus'
   | 'businessErrors.registrationNotAllowed'
@@ -42,6 +44,7 @@ export type AuthBusinessErrorDescriptionKey =
 export type AuthBusinessErrorContext =
   | 'login'
   | 'forgotPassword'
+  | 'phoneLogin'
   | 'verification'
   | 'register'
   | 'resetPassword';
@@ -66,7 +69,7 @@ const AUTH_BUSINESS_ERROR_DESCRIPTION_KEYS: Record<string, AuthBusinessErrorDesc
   '201017': 'businessErrors.invalidCredentials',
   '201018': 'businessErrors.loginTooManyAttempts',
   '201001': 'businessErrors.emailAlreadyExists',
-  '201002': 'businessErrors.passwordRequired',
+  '201002': 'businessErrors.accountNotFound',
   '201003': 'businessErrors.emailAlreadyExists',
   '201004': 'businessErrors.invalidEmailFormat',
   '201005': 'businessErrors.passwordMismatch',
@@ -81,6 +84,12 @@ const AUTH_CONTEXT_ERROR_DESCRIPTION_KEYS: Partial<
 > = {
   login: {
     '199001': 'businessErrors.invalidCredentials',
+  },
+  phoneLogin: {
+    '199001': 'businessErrors.phoneInvalidCredentials',
+    '401001': 'businessErrors.phoneInvalidCredentials',
+    '201002': 'businessErrors.phoneNotRegistered',
+    '201017': 'businessErrors.phoneInvalidCredentials',
   },
   forgotPassword: {
     '201008': 'businessErrors.sendCodeTooManyAttempts',

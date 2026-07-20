@@ -145,6 +145,14 @@ func (r *LLMRoute) SupportsModelForProvider(provider, modelName string) bool {
 	if provider == "" || modelName == "" {
 		return false
 	}
+
+	// Snapshots created before provider provenance was introduced can retain
+	// their effective model names while the new provider-model list is empty.
+	// Preserve the legacy model-name behavior until a successful sync supplies
+	// exact pairs; once any pair exists, the strict provider check below applies.
+	if len(r.OfficialProviderModels) == 0 {
+		return r.SupportsModel(modelName)
+	}
 	for _, pair := range r.OfficialProviderModels {
 		if pair.Provider == provider && pair.Model == modelName {
 			return true

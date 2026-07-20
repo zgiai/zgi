@@ -110,6 +110,7 @@ func loadExecutionAndSecurityConfig(cfg *Config, source *envSource) error {
 		requiredConfigLoader("llm policy prompt", loadLLMPolicyPromptConfig),
 
 		optionalConfigLoader("auth", loadAuthConfig),
+		optionalConfigLoader("observability", loadObservabilityConfig),
 		optionalConfigLoader("opentelemetry", loadOpenTelemetryConfig),
 		optionalConfigLoader("sentry", loadSentryConfig),
 	)
@@ -411,6 +412,7 @@ func loadFeatureConfig(cfg *Config, source *envSource) {
 		PublicDeploymentEnabled:  mustBool(source.bool(false, envPublicDeploymentEnabled)),
 		EnableEmailCodeLogin:     mustBool(source.bool(false, envEnableEmailCodeLogin)),
 		EnableEmailPasswordLogin: mustBool(source.bool(true, envEnableEmailPasswordLogin)),
+		EnablePhoneLogin:         mustBool(source.bool(false, envEnablePhoneLogin)),
 		EnableSocialOAuthLogin:   mustBool(source.bool(false, envEnableSocialOAuthLogin)),
 		AllowRegister:            mustBool(source.bool(false, envAllowRegister)),
 		AllowCreateWorkspace:     mustBool(source.bool(false, envAllowCreateWorkspace)),
@@ -791,6 +793,14 @@ func loadEncryptionConfig(cfg *Config, source *envSource) error {
 		LLMCredentialSecretKey: llmCredentialSecretKey,
 	}
 	return nil
+}
+
+func loadObservabilityConfig(cfg *Config, source *envSource) {
+	reporters := source.scopeList(nil, envZGIReporters)
+	for i, reporter := range reporters {
+		reporters[i] = strings.ToLower(strings.TrimSpace(reporter))
+	}
+	cfg.Observability = ObservabilityConfig{Reporters: reporters}
 }
 
 func loadOpenTelemetryConfig(cfg *Config, source *envSource) {

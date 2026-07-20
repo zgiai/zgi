@@ -20,6 +20,7 @@ import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
 import { KNOWLEDGE_BASE_PERMISSION_ACTIONS } from '@/constants/permissions';
+import MarkdownViewer from '@/components/common/markdown-viewer';
 
 const formatDebugNumber = (value?: number) =>
   typeof value === 'number' && Number.isFinite(value) ? value.toFixed(4) : '-';
@@ -55,7 +56,7 @@ export function ResultItem({ result, index }: ResultItemProps) {
               <div className="flex shrink-0 items-center gap-2">
                 <Badge variant="secondary">#{index + 1}</Badge>
                 <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200">
-                  {scorePercentage}%
+                  {t('hitTesting.primaryChunkScore')} {scorePercentage}%
                 </Badge>
               </div>
               {result.segment.document && (
@@ -69,63 +70,36 @@ export function ResultItem({ result, index }: ResultItemProps) {
             </div>
           </CardHeader>
           <CardContent className="space-y-3">
-            <div className="overflow-hidden text-sm leading-relaxed line-clamp-3 [overflow-wrap:anywhere]">
-              {result.segment.content}
-            </div>
-            <Separator />
+            <MarkdownViewer
+              content={result.segment.content}
+              className="overflow-hidden text-sm leading-relaxed line-clamp-3 [overflow-wrap:anywhere] [&_.md-table-wrapper]:my-0 [&_.md-table-wrapper]:max-w-full [&_.md-table-wrapper]:overflow-hidden [&_table]:text-xs"
+            />
             {result.child_chunks && result.child_chunks.length > 0 && (
-              <div className="space-y-2">
-                <div className="text-xs font-medium text-muted-foreground">
-                  {t('hitTesting.childChunks')}
-                </div>
-                <div className="max-h-32 overflow-y-auto space-y-2">
-                  {result.child_chunks.map((chunk, idx) => (
-                    <div key={chunk.id} className="bg-muted/50 p-2 rounded text-xs">
-                      <div className="flex items-center justify-between mb-1">
-                        <span className="font-medium">#{idx + 1}</span>
-                        <span className="text-muted-foreground">
-                          {(chunk.score * 100).toFixed(1)}%
-                        </span>
-                      </div>
-                      <div className="text-muted-foreground [overflow-wrap:anywhere]">
-                        {chunk.content}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-            <Separator />
-            {retrievalSource && (
               <>
-                <div className="flex flex-wrap items-center gap-2 text-xs">
-                  {retrievalMethodLabel && <Badge variant="outline">{retrievalMethodLabel}</Badge>}
-                  {sourceBadges.map(source => (
-                    <Badge key={source} variant="secondary" className="uppercase">
-                      {source}
-                    </Badge>
-                  ))}
-                  {retrievalSource.best_rank !== undefined && (
-                    <span className="text-muted-foreground">
-                      {t('hitTesting.bestRank')}: {formatDebugRank(retrievalSource.best_rank)}
-                    </span>
-                  )}
-                </div>
                 <Separator />
+                <div className="space-y-2">
+                  <div className="text-xs font-medium text-muted-foreground">
+                    {t('hitTesting.childChunks')}
+                  </div>
+                  <div className="max-h-32 overflow-y-auto space-y-2">
+                    {result.child_chunks.map((chunk, idx) => (
+                      <div key={chunk.id} className="bg-muted/50 p-2 rounded text-xs">
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="font-medium">#{idx + 1}</span>
+                          <span className="text-muted-foreground">
+                            {t('hitTesting.secondaryChunkScore')} {(chunk.score * 100).toFixed(1)}%
+                          </span>
+                        </div>
+                        <MarkdownViewer
+                          content={chunk.content}
+                          className="text-muted-foreground [overflow-wrap:anywhere] [&_.md-table-wrapper]:my-1 [&_.md-table-wrapper]:max-w-full [&_.md-table-wrapper]:overflow-x-auto [&_table]:text-xs"
+                        />
+                      </div>
+                    ))}
+                  </div>
+                </div>
               </>
             )}
-            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-              <span>
-                {t('hitTesting.position')}: {result.segment.position}
-              </span>
-              <span>
-                {t('hitTesting.wordCount')}: {result.segment.word_count}
-              </span>
-              <span>|</span>
-              <span>
-                {t('hitTesting.tokens')}: {result.segment.tokens}
-              </span>
-            </div>
           </CardContent>
         </Card>
       </DialogTrigger>
@@ -151,7 +125,7 @@ export function ResultItem({ result, index }: ResultItemProps) {
                     variant="outline"
                     className="bg-emerald-50 text-emerald-700 border-emerald-100 font-bold px-2.5 py-0.5 rounded-lg shadow-sm"
                   >
-                    {scorePercentage}%
+                    {t('hitTesting.primaryChunkScore')} {scorePercentage}%
                   </Badge>
                 </div>
                 {result.segment.document && (
@@ -166,9 +140,10 @@ export function ResultItem({ result, index }: ResultItemProps) {
             </CardHeader>
             <CardContent className="p-6 space-y-6 bg-white">
               {/* Full Segment Content */}
-              <div className="text-sm leading-relaxed text-neutral-800 whitespace-pre-wrap font-medium [overflow-wrap:anywhere]">
-                {result.segment.content}
-              </div>
+              <MarkdownViewer
+                content={result.segment.content}
+                className="text-sm leading-relaxed text-neutral-800 font-medium [overflow-wrap:anywhere] [&_.md-table-wrapper]:max-w-full [&_.md-table-wrapper]:overflow-x-auto"
+              />
 
               <Separator className="bg-neutral-100" />
 
@@ -294,18 +269,19 @@ export function ResultItem({ result, index }: ResultItemProps) {
                       >
                         <div className="flex items-center justify-between mb-2">
                           <span className="text-xs font-bold text-neutral-500 uppercase">
-                            Chunk #{idx + 1}
+                            {t('hitTesting.secondaryChunk')} #{idx + 1}
                           </span>
                           <Badge
                             variant="outline"
                             className="bg-blue-50 text-blue-700 border-blue-100 text-[10px] font-bold"
                           >
-                            {(chunk.score * 100).toFixed(1)}%
+                            {t('hitTesting.secondaryChunkScore')} {(chunk.score * 100).toFixed(1)}%
                           </Badge>
                         </div>
-                        <div className="text-sm text-neutral-600 whitespace-pre-wrap leading-relaxed [overflow-wrap:anywhere]">
-                          {chunk.content}
-                        </div>
+                        <MarkdownViewer
+                          content={chunk.content}
+                          className="text-sm text-neutral-600 leading-relaxed [overflow-wrap:anywhere] [&_.md-table-wrapper]:max-w-full [&_.md-table-wrapper]:overflow-x-auto"
+                        />
                       </div>
                     ))}
                   </div>

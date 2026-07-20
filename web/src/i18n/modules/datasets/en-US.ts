@@ -229,6 +229,11 @@ const messages = {
       retry: 'Retry',
       removeFile: 'Remove {name} from dataset',
       removeConfirm: 'Remove',
+      selectAll: 'Select all files',
+      selectFile: 'Select {name}',
+      selectedCount: '{count} files selected',
+      clearSelection: 'Clear selection',
+      batchRemove: 'Batch remove',
       toggleEnabled: 'Enable {name} for recall',
       redirectTitle: 'View this file in file management',
       redirectDescription:
@@ -239,6 +244,11 @@ const messages = {
       confirmRemoveTitle: 'Remove "{name}" from this dataset?',
       confirmRemoveDescription:
         'This removes the file asset reference and deletes its copied dataset document. It will not delete the source file in file management.',
+      confirmBatchRemoveTitle: 'Remove {count} files from this dataset?',
+      confirmBatchRemoveDescription:
+        'This removes the selected file asset references and deletes their copied dataset documents. It will not delete the source files in file management.',
+      batchRemoveSuccess: '{count} files removed',
+      batchRemoveFailed: 'Failed to remove files. Please try again.',
       status: {
         pending: 'Pending',
         syncing: 'Syncing',
@@ -700,6 +710,7 @@ const messages = {
       embeddingModel: {
         title: 'Embedding Model',
         placeholder: 'Select Embedding Model',
+        lockedTooltip: 'The embedding model cannot be changed after the dataset is created.',
       },
 
       graphModel: {
@@ -788,6 +799,8 @@ const messages = {
       indexingTechnique: 'Indexing Technique',
       retrievalConfig: 'Retrieval Configuration',
       searchMethod: 'Search Method',
+      searchMethodHelp:
+        'Semantic search matches meaning even when wording differs. Full-text search matches exact keywords. Hybrid search combines semantic and keyword matching and is usually the most balanced.',
       semanticSearch: 'Semantic Search',
       fullTextSearch: 'Full-text Search',
       hybridSearch: 'Hybrid Search',
@@ -932,7 +945,7 @@ const messages = {
     processFailed: 'Failed to start document processing',
     uploadSuccess: 'Document uploaded successfully',
     uploadFailed: 'Document upload failed',
-    fileRefsCreateSuccess: '{count} file assets queued for sync',
+    fileRefsCreateSuccess: 'Added successfully',
     fileRefsCreatePartialFailed: '{count} file assets could not be added',
     fileCandidateEmbeddingGenerating: 'Generating vectors. Please wait.',
     fileCandidateEmbeddingQueued: 'Knowledge base vector generation started',
@@ -1119,6 +1132,13 @@ const messages = {
 
   // Validation messages
   validation: {
+    datasetName: {
+      required: 'Dataset name is required',
+      tooShort: 'Name must be at least 1 character',
+      tooLong: 'Name must be at most 40 characters',
+      invalidChars: 'Only letters, numbers, underscores, hyphens and spaces are allowed',
+      onlySpaces: 'Name must contain at least one non-space character',
+    },
     name: {
       required: 'Dataset name is required',
       tooShort: 'Name must be at least 2 characters',
@@ -1168,7 +1188,10 @@ const messages = {
       'Please wait for documents to finish indexing before testing retrieval.',
     foundResults: 'Recalled {count} results',
     retrievalTime: 'Recall time',
-    childChunks: 'Child chunks',
+    childChunks: 'Secondary chunks',
+    secondaryChunk: 'Secondary chunk',
+    primaryChunkScore: 'Relevance',
+    secondaryChunkScore: 'Relevance',
     externalSourceDescription: 'Testing external dataset recall',
     internalSourceDescription: 'Testing internal dataset recall',
     details: 'Details',

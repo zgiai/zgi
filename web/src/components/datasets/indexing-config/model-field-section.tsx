@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
-import type { LucideIcon } from 'lucide-react';
+import { Info, type LucideIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 
 interface ModelFieldSectionProps {
   icon: LucideIcon;
@@ -8,6 +9,7 @@ interface ModelFieldSectionProps {
   children: ReactNode;
   required?: boolean;
   description?: string;
+  titleTooltip?: string;
   errorMessage?: string;
   className?: string;
 }
@@ -29,6 +31,7 @@ export function ModelFieldSection({
   children,
   required = false,
   description,
+  titleTooltip,
   errorMessage,
   className,
 }: ModelFieldSectionProps) {
@@ -41,6 +44,22 @@ export function ModelFieldSection({
             {title}
             {required ? <span className="ml-1 text-destructive">*</span> : null}
           </h3>
+          {titleTooltip ? (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  className="inline-flex h-4 w-4 items-center justify-center rounded-full text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  aria-label={titleTooltip}
+                >
+                  <Info className="h-3.5 w-3.5" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="top" align="start" className="max-w-72 text-sm leading-6">
+                {titleTooltip}
+              </TooltipContent>
+            </Tooltip>
+          ) : null}
         </div>
         {description ? <p className="text-xs text-muted-foreground">{description}</p> : null}
       </div>

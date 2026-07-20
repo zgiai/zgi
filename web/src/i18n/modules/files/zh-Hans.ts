@@ -3,7 +3,7 @@ import type { FilesMessages } from './en-US';
 const messages: FilesMessages = {
   title: '文件管理',
   eyebrow: '资产库',
-  description: '上传并管理源文件，生成切片后用于后续问答和知识库引用。',
+  description: '上传并解析源文件，生成切片后用于知识库引用，提高AI对话准确度。',
 
   // Sidebar
   sidebar: {
@@ -27,6 +27,8 @@ const messages: FilesMessages = {
     fileType: '文件类型',
     fileSize: '文件大小',
     processingStatus: '文件状态',
+    processingStatusHelp:
+      '上传文件后，需要经过解析、切块和索引步骤；完成后会变为“已就绪”状态，即可导入知识库。',
     relatedStatus: '关联知识库',
     uploadDate: '上传时间',
     lastModified: '更新时间',
@@ -36,7 +38,7 @@ const messages: FilesMessages = {
     totalItems: '共{total}项',
     relatedCount: '已关联{count}条',
     notRelated: '未关联',
-    folderNotice: '当前位于「{name}」文件夹，如果需要查看所有文件，请返回默认文件夹。',
+    folderNotice: '当前位于「{name}」文件夹，如果需要查看所有文件，请返回视图中的全部文件查看。',
     pendingCount: '{count} 项待优化',
     chunkCount: '{count} 个切片',
     embeddingCount: '{count} 个向量',
@@ -92,6 +94,8 @@ const messages: FilesMessages = {
     batchParseNoStoredOnly: '所选文件中没有可解析的仅存储文件。',
     batchMove: '批量移动',
     batchUnavailable: '该批量能力需要后端接口支持，当前暂不可用。',
+    moveTo: '移动到',
+    moving: '移动中...',
     deleting: '删除中...',
     confirmParse: '查看优化',
     startParse: '去解析',
@@ -103,10 +107,11 @@ const messages: FilesMessages = {
     title: '更新文档',
     description: '用新文件替换「{name}」。已有知识库引用会保持关联，并在处理后自动同步。',
     newFile: '新文档',
+    chooseFile: '选择文件',
     selectedFile: '已选择：{name}',
     fileTooLarge: '文件大小不能超过 {max}MB',
     processingHint: '替换后会立即解析并建立索引。',
-    storeOnlyHint: '旧内容会立即失效。请稍后手动解析该文档后再使用。',
+    storeOnlyHint: '旧内容在关联知识库中会立即失效，请稍后手动解析该文档后再使用。',
     confirm: '更新',
     toasts: {
       started: '已提交文档更新',
@@ -153,13 +158,30 @@ const messages: FilesMessages = {
   delete: {
     cannotDelete: '无法删除文件',
     associationWarning: '该文件已关联到知识库或数据库，无法直接删除。',
-    unlinkFirst: '请先删除所有关联项目，使文件状态变为"关联"后，再进行删除操作。',
+    unlinkFirst: '请先删除所有关联知识库或数据库，使文件状态变为未关联后，再进行删除操作。',
     understood: '我知道了',
-    viewRelated: '查看关联项目',
+    viewRelated: '查看关联知识库',
     folderConfirmTitle: '删除文件夹 "{name}"？',
-    folderConfirmDescription: '此操作将永久删除文件夹，且无法撤销。',
+    folderConfirmDescription:
+      '如果该文件夹或其子文件夹中包含文件，系统会要求再次确认后才会继续删除。',
+    folderWithFilesConfirmDescription:
+      '该文件夹内还有 {count} 个文件。删除文件夹后，这些文件将不再位于该文件夹中。确认删除吗？',
+    folderForceConfirmTitle: '确认永久删除 "{name}"？',
+    folderForceConfirmDescription:
+      '该文件夹及其子文件夹中共有 {folderCount} 个文件夹、{fileCount} 个文件。继续后，这些文件夹和文件将被一并永久删除。',
+    folderForceConfirmWarning: '此操作无法撤销，删除后的文件无法恢复。',
+    folderForceConfirmInputLabel: '请输入文件夹名称 "{name}" 以确认删除',
+    folderForceConfirmButton: '永久删除',
+    folderForceConfirmDeleting: '正在删除...',
     bulkConfirmTitle: '确定删除 {count} 个文件？',
     bulkConfirmDescription: '此操作将永久删除所选文件，且无法撤销。',
+  },
+
+  relatedResources: {
+    title: '关联知识库',
+    empty: '暂无关联知识库',
+    retry: '重试',
+    open: '跳转',
   },
 
   // Search and filter
@@ -221,7 +243,7 @@ const messages: FilesMessages = {
         '系统已按文件类型和可用服务自动选择最佳解析方式；如果结果不满意，可以手动选择解析器后重新解析。',
       manualDescription:
         '该文件使用了用户指定的解析方式；如果结果不满意，可以切换解析器后重新解析。',
-      actualProvider: '实际：{provider}',
+      actualProvider: '具体使用：{provider}',
       engine: '引擎：{engine}',
       adapter: '适配器：{adapter}',
     },
@@ -247,12 +269,12 @@ const messages: FilesMessages = {
     },
     workbench: {
       title: '处理进度',
-      description: '质量检查待优化 {pending} 项，已生成 {chunks} 个切片和 {embeddings} 个向量。',
+      description: '已生成 {chunks} 个切片和 {embeddings} 个向量。',
       pendingHint: '{count} 项待优化',
       banners: {
         confirming: {
-          title: '质量检查发现标记内容',
-          description: '质量检查发现 {pending} 处待优化内容，可在切片中处理。',
+          title: '解析结果待确认',
+          description: '请确认解析结果后继续生成切片和索引。',
         },
         failed: {
           title: '处理失败',
@@ -274,7 +296,6 @@ const messages: FilesMessages = {
       steps: {
         uploaded: '已上传',
         parsed: '文档解析',
-        quality: '质量检查',
         chunks: '生成切片',
         index: '建立问答索引',
         ready: '已就绪',
@@ -368,6 +389,8 @@ const messages: FilesMessages = {
       generationNo: '生成批次 {value}',
       emptyTitle: '暂无切片',
       emptyDescription: '当前文件还没有可用的切片结果。',
+      filteredEmptyTitle: '暂无符合条件的切片',
+      filteredEmptyDescription: '可以调整搜索内容或筛选条件后再试。',
       chunkTitle: '切片 {position}',
       primary: '一级切片',
       secondary: '二级切片',
@@ -405,11 +428,15 @@ const messages: FilesMessages = {
       collapseSecondary: '收起二级切片',
       viewOriginal: '查看原文',
       edit: '编辑',
+      tableEdit: '表格编辑',
+      sourceEdit: '源码编辑',
       editPrimaryTitle: '编辑一级切片',
       editPrimaryDescription: '当前一级切片 {count} 字符，保存后会自动重建二级切片和向量。',
       editSecondaryTitle: '编辑二级切片',
       editSecondaryDescription: '当前二级切片 {count} 字符，保存后会重建该切片向量。',
       delete: '删除',
+      deleteConfirmTitle: '删除这个切片？',
+      deleteConfirmDescription: '删除后无法恢复；如果这是一级切片，关联的二级切片和向量也会一起删除。',
       characters: '{count} 字符',
       enabled: '启用',
       disabled: '停用',
@@ -418,7 +445,9 @@ const messages: FilesMessages = {
       toasts: {
         updated: '切片已更新',
         batchUpdated: '已批量更新 {count} 个切片',
+        deleted: '切片已删除',
         updateFailed: '切片更新失败',
+        deleteFailed: '切片删除失败',
       },
     },
     index: {
@@ -439,11 +468,12 @@ const messages: FilesMessages = {
       vectorSummary: '{count} 个向量',
       emptyTitle: '向这篇文档提问',
       emptyDescription: '输入问题后，系统会先召回相关二级切片，再使用对应一级切片作为回答依据。',
-      question: '问题',
+      question: '提问',
       answer: '回答',
       answerModel: '回答模型',
       defaultAnswerModel: '默认模型',
       noAvailableAnswerModels: '暂无可用聊天模型',
+      clearConversation: '清除对话',
       placeholder: '输入关于这篇文档的问题...',
       send: '发送',
       generating: '生成中...',
@@ -457,12 +487,11 @@ const messages: FilesMessages = {
     reparse: {
       action: '重新解析',
       reparsing: '提交中...',
-      confirmTitle: '重新解析这个文件？',
-      confirmDescription:
-        '重新解析期间，当前可检索资产会不可用，文件会重新经历解析、切片和索引流程。',
+      confirmTitle: '重新解析',
+      confirmDescription: '重新解析期间，文件无法被知识库使用。',
       providerLabel: '解析器',
       providerDescription:
-        '列表越靠上通常解析能力越强；灰色项表示当前未配置或健康检查不可用。如果解析效果不理想，可以配置 MinerU 或 Reducto 后选择更好的解析器。',
+        '选择本次重新解析使用的解析器。未配置或健康检查不可用的解析器会置灰；完成配置后可在这里选择 MinerU、Reducto 等解析器重新解析。',
       providerReady: '当前可用',
       providerUnavailable: '当前不可用',
       configureProvider: '点击此处，配置后可用',
@@ -518,7 +547,7 @@ const messages: FilesMessages = {
     deleteConfirm: '确定要删除文件 "{name}" 吗？',
     deleteConfirmDesc: '此操作无法撤销。',
     noFiles: '暂无文件',
-    noFilesDescWithUpload: '上传文档可加入知识库，上传表格可导入数据库，也可在对话工作流中引用。',
+    noFilesDescWithUpload: '上传文件可以导入知识库、数据库，也可在智能体、工作流中被调用。',
     noFilesDescWithUploadInSelector: '当前还没有文件，可以使用左侧栏中的上传入口添加文件。',
     noFilesDescWithoutUploadPermission:
       '当前工作空间暂无文件，且你没有该空间的上传权限。你可以联系管理员开通权限，或切换到其他工作空间。',
@@ -545,8 +574,8 @@ const messages: FilesMessages = {
     createFolderError: '文件夹创建失败',
     updateFolderSuccess: '文件夹更新成功',
     updateFolderError: '文件夹更新失败',
-    moveFolderSuccess: '文件夹移动成功',
-    moveFolderError: '文件夹移动失败',
+    moveFilesSuccess: '文件移动成功',
+    moveFilesError: '文件移动失败',
     deleteFolderSuccess: '文件夹删除成功',
     deleteFolderError: '文件夹删除失败',
     createTextFileSuccess: '文本文件创建成功',
@@ -612,6 +641,8 @@ const messages: FilesMessages = {
     uploadFolderRootHelp: '未选择具体文件夹时，文件会存放在默认文件夹下。',
     sourceType: '来源类型',
     processingMode: '处理方式',
+    processingModeHelp:
+      '解析会提取文件正文和结构；切片会把内容拆成可检索片段；索引会生成检索数据，方便知识库搜索和引用。',
     processingModes: {
       processNow: {
         title: '上传并解析',
@@ -623,12 +654,12 @@ const messages: FilesMessages = {
       },
     },
     parseProvider: '解析引擎',
-    parseProviderDescription: '上传后自动解析时使用，Auto 会按当前可用 provider 路由。',
+    parseProviderDescription: '上传后自动解析时使用，智能推荐会按当前可用解析器路由。',
     parseProviderStoreOnlyDescription: '仅存储模式不会触发解析，引擎选择将在上传并解析时生效。',
     parseProviderUnavailable: '不可用',
     parseProviderLoading: '正在检查可用引擎...',
     parseProviders: {
-      auto: 'Auto（按路由策略）',
+      auto: '智能推荐',
       mineru: 'MinerU',
       local: 'Local',
       reducto: 'Reducto',
@@ -671,22 +702,27 @@ const messages: FilesMessages = {
     workspacePlaceholder: '请选择所属工作空间',
     workspaceRequired: '请选择所属工作空间',
     duplicateName: '同一级目录下已存在同名文件夹，请更换名称。',
-    parentFolder: '父文件夹',
-    selectParentFolder: '选择父文件夹',
-    levelHint: '最多支持三级文件夹。已达到层级上限的文件夹不可作为父文件夹。',
+    nameTooLong: '文件夹名称不能超过 {max} 个字符，请缩短后再创建。',
+    parentFolder: '上级文件夹',
+    selectParentFolder: '选择上级文件夹',
+    levelHint: '最多支持三级文件夹。已达到层级上限的文件夹不可作为上级文件夹。',
     folderLabel: '文件夹：',
     rootFolder: '根目录',
     renameTitle: '重命名文件夹',
     renameDescription: '修改后会同步更新文件空间中的文件夹名称。',
-    moveTitle: '移动文件夹',
-    moveDescription: '选择“{name}”要移动到的位置。',
-    targetFolder: '目标文件夹',
     actions: {
       createChild: '新建子文件夹',
       rename: '重命名',
-      moveTo: '移动到',
       delete: '删除文件夹',
     },
+  },
+
+  moveFiles: {
+    title: '移动文件',
+    description: '选择这 {count} 个文件要移动到的目标文件夹。',
+    targetFolder: '目标文件夹',
+    confirm: '移动到这里',
+    moving: '移动中...',
   },
 
   // Text file creation

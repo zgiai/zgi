@@ -1034,6 +1034,34 @@ func (s *AccountService) RegisterEx(
 	isSetup *bool,
 	createWorkspaceRequired *bool,
 ) (*auth_model.Account, error) {
+	return s.registerExWithMobile(
+		ctx,
+		email,
+		name,
+		password,
+		openID,
+		provider,
+		language,
+		status,
+		isSetup,
+		createWorkspaceRequired,
+		"",
+	)
+}
+
+func (s *AccountService) registerExWithMobile(
+	ctx context.Context,
+	email string,
+	name string,
+	password *string,
+	openID *string,
+	provider *string,
+	language *string,
+	status *auth_model.AccountStatus,
+	isSetup *bool,
+	createWorkspaceRequired *bool,
+	mobileE164 string,
+) (*auth_model.Account, error) {
 	var account *auth_model.Account
 	var defaultOrganizationID string
 	var defaultWorkspaceID string
@@ -1054,6 +1082,10 @@ func (s *AccountService) RegisterEx(
 		account = &auth_model.Account{
 			Name:  name,
 			Email: email,
+		}
+		if mobileE164 != "" {
+			account.MobileE164 = &mobileE164
+			account.Extensions = auth_model.JSONMap{"mobile": mobileE164}
 		}
 		if password != nil {
 			account.Password = &hashedPassword

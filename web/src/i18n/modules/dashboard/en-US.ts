@@ -187,7 +187,7 @@ const messages = {
     parserSettings: {
       title: 'Parser Settings',
       description:
-        'Configure Reducto and MinerU for document reparsing. Optional fields are prefilled with defaults and can be changed when your deployment needs different endpoints or timeouts.',
+        'Configure Reducto and MinerU for document reparsing. Optional fields are prefilled with defaults and can be changed for your deployment. Configure either Reducto or MinerU successfully to get better PDF, Office, table, and scanned document parsing.',
       guide: {
         title: 'Not sure which parser to choose?',
         description:
@@ -212,7 +212,7 @@ const messages = {
       },
       reducto: {
         description:
-          'Official Reducto parsing service. Requires an API key before it can be enabled.',
+          'Official Reducto parsing service, recommended first for overseas or English-heavy use cases. Requires an API key before it can be enabled.',
         help: {
           title: 'How to get a Reducto API key',
           action: 'Open Reducto Studio',
@@ -225,7 +225,7 @@ const messages = {
       },
       mineru: {
         description:
-          'MinerU parsing service. Choose local sidecar mode or official service mode, then configure the fields for that mode.',
+          'MinerU parsing service, with the official service recommended first for Mainland China or Chinese-heavy use cases. Choose local sidecar mode or official service mode, then configure the fields for that mode.',
         help: {
           title: 'How to get a MinerU official token',
           action: 'Open MinerU Token Management',

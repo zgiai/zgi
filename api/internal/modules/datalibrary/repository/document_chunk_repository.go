@@ -229,6 +229,16 @@ func (r *documentChunkRepository) DeleteChildrenByParent(ctx context.Context, or
 		Delete(&model.DocumentChunk{}).Error
 }
 
+func (r *documentChunkRepository) DeleteByIDs(ctx context.Context, organizationID string, ids []uuid.UUID) error {
+	if organizationID == "" || len(ids) == 0 {
+		return nil
+	}
+	return r.db.WithContext(ctx).
+		Where("organization_id = ?", organizationID).
+		Where("id IN ?", ids).
+		Delete(&model.DocumentChunk{}).Error
+}
+
 func (r *documentChunkRepository) Update(ctx context.Context, id uuid.UUID, patch DocumentChunkPatch) (*model.DocumentChunk, error) {
 	if id == uuid.Nil {
 		return nil, nil

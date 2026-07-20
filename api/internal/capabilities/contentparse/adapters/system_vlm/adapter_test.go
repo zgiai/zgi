@@ -34,7 +34,7 @@ func (f *fakeVisionChatClient) Chat(ctx context.Context, organizationID string, 
 		Choices: []llmadapter.Choice{
 			{
 				Message: llmadapter.Message{
-					Content: `{"chunks":[{"type":"text","page":0,"bbox":[0,0,100,100],"text":"invoice total","markdown":"invoice total"}]}`,
+					Content: "# Invoice\n\nTotal: $42",
 				},
 				FinishReason: "stop",
 			},
@@ -72,18 +72,31 @@ func TestSystemVLMAdapterUsesDefaultVisionModel(t *testing.T) {
 	if got := artifact.Metadata["system_vlm_model"]; got != "gpt-vision" {
 		t.Fatalf("system_vlm_model = %v", got)
 	}
+	if artifact.Metadata["vision_image_document"] != true || artifact.Metadata["recommended_chunking"] != "full-doc" {
+		t.Fatalf("image parsing metadata = %#v", artifact.Metadata)
+	}
 	if chatClient.request == nil {
 		t.Fatalf("expected LLM chat request")
 	}
 	if chatClient.request.Provider != "openai" || chatClient.request.Model != "gpt-vision" {
 		t.Fatalf("chat provider/model = %q/%q", chatClient.request.Provider, chatClient.request.Model)
 	}
-	content, ok := chatClient.request.Messages[0].Content.([]map[string]any)
-	if !ok {
-		t.Fatalf("message content type = %T, want []map[string]any", chatClient.request.Messages[0].Content)
+	if chatClient.request.ResponseFormat != nil {
+		t.Fatalf("response format = %#v, want plain text", chatClient.request.ResponseFormat)
 	}
-	if len(content) < 2 || content[1]["type"] != "image_url" {
+	content, ok := chatClient.request.Messages[0].Content.([]llmadapter.MessageContentPart)
+	if !ok {
+		t.Fatalf("message content type = %T, want []MessageContentPart", chatClient.request.Messages[0].Content)
+	}
+	if len(content) < 2 || content[0].Type != "text" || content[0].Text == "" || content[1].Type != "image_url" {
 		t.Fatalf("content parts = %#v, want image_url part", content)
+	}
+	if content[1].ImageURL == nil || !strings.HasPrefix(content[1].ImageURL.URL, "data:image/png;base64,") {
+		t.Fatalf("image content = %#v, want PNG data URI", content[1])
+	}
+	prompt := content[0].Text
+	if !strings.Contains(prompt, "directly as Markdown") || !strings.Contains(prompt, "Flowchart or process diagram") {
+		t.Fatalf("unexpected image understanding prompt: %q", prompt)
 	}
 }
 

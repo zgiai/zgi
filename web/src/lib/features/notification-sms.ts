@@ -4,6 +4,9 @@ export const NOTIFICATION_SMS_NODE_TYPE = 'notification-sms' as const;
 export const NOTIFICATION_SMS_CHANNEL_TYPE = 'sms' as const;
 export const NOTIFICATION_SMS_TEMPLATE = 'pending_action_notification' as const;
 export const NOTIFICATION_SMS_WORKFLOW_ALERT_TEMPLATE = 'workflow_alert' as const;
+export const NOTIFICATION_SMS_AUTH_PHONE_REGISTER_TEMPLATE = 'auth_phone_register_code' as const;
+export const NOTIFICATION_SMS_AUTH_PHONE_RESET_PASSWORD_TEMPLATE =
+  'auth_phone_reset_password_code' as const;
 
 export interface NotificationSMSTemplateParam {
   key: string;
@@ -60,6 +63,36 @@ export function isNotificationSMSEnabled(features?: SystemFeatures | null): bool
 
 export function isNotificationSMSConfigured(features?: SystemFeatures | null): boolean {
   return isNotificationSMSEnabled(features) && getNotificationSMSTemplates(features).length > 0;
+}
+
+export function hasNotificationSMSTemplate(
+  features: SystemFeatures | null | undefined,
+  templateKey: string
+): boolean {
+  if (!isNotificationSMSEnabled(features)) {
+    return false;
+  }
+
+  return getNotificationSMSTemplates(features).some(template => template.key === templateKey);
+}
+
+export function isPhoneAuthEnabled(features?: SystemFeatures | null): boolean {
+  return features?.enable_phone_login === true;
+}
+
+export function isPhoneRegisterEnabled(features?: SystemFeatures | null): boolean {
+  return (
+    isPhoneAuthEnabled(features) &&
+    features?.is_allow_register === true &&
+    hasNotificationSMSTemplate(features, NOTIFICATION_SMS_AUTH_PHONE_REGISTER_TEMPLATE)
+  );
+}
+
+export function isPhonePasswordResetEnabled(features?: SystemFeatures | null): boolean {
+  return (
+    isPhoneAuthEnabled(features) &&
+    hasNotificationSMSTemplate(features, NOTIFICATION_SMS_AUTH_PHONE_RESET_PASSWORD_TEMPLATE)
+  );
 }
 
 export function getNotificationSMSParamDisplayKey(

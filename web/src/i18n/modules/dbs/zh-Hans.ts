@@ -10,8 +10,18 @@ const messages: DbsMessages = {
   database: '数据库',
   create: '新建数据库',
   edit: '编辑数据库',
+  databaseSettings: '数据库设置',
+  backToDatabaseList: '返回数据库列表',
   tables: '数据表',
   createTable: '新建表',
+  createMethod: {
+    title: '选择建表方式',
+    description: '请选择手动创建表或通过 Excel 文件创建表。',
+    manual: '手动创建表',
+    manualDescription: '填写表名并手动配置字段。',
+    excel: '导入 Excel 建表',
+    excelDescription: '上传 Excel 文件并生成表结构。',
+  },
   goToDetail: '查看详情',
   features: {
     dataQuery: '数据查询',
@@ -34,7 +44,7 @@ const messages: DbsMessages = {
     data: '数据表',
   },
   actions: {
-    edit: '编辑表结构',
+    edit: '编辑表格信息',
     delete: '删除',
     smartGenerate: '智能生成表结构',
     smartIngest: '智能录入',
@@ -94,8 +104,10 @@ const messages: DbsMessages = {
   tableModal: {
     createTitle: '新建表',
     editTitle: '编辑表',
+    nameLimitHint: '{count}/63 个字符',
   },
   columns: {
+    previewTitle: '表结构预览',
     name: '存储字段名称',
     description: '描述',
     type: '数据类型',
@@ -116,8 +128,18 @@ const messages: DbsMessages = {
     reservedNameTip: '禁止使用系统关键字作为字段名',
   },
   tableData: {
+    title: '数据表',
+    discardConfirmTitle: '确认不保存当前修改吗？',
+    discardConfirmDescription: '确认后将丢弃当前修改并退出编辑状态。',
+    discardConfirmAction: '确认不保存',
     rowsPerPage: '每页行数',
     sortBy: '排序字段',
+    systemFields: {
+      id: 'ID',
+      uuid: '唯一标识',
+      createdTime: '创建时间',
+      updatedTime: '更新时间',
+    },
     ascending: '升序',
     descending: '降序',
     addRow: '新增行',
@@ -130,7 +152,7 @@ const messages: DbsMessages = {
     search: '搜索当前页',
     searchPlaceholder: '搜索已加载行...',
     columns: {
-      title: '列',
+      title: '显示/隐藏列',
       visibleColumns: '显示列',
       keepOneVisible: '至少保留一列可见',
     },
@@ -186,6 +208,7 @@ const messages: DbsMessages = {
     fileSelected: '文件已选择',
     removeFileAria: '移除文件',
     noFileSelected: '未选择文件',
+    selectFileFirst: '请先选择文件',
     chooseFromFileManager: '从文件管理选择',
     chooseFromFileManagerDesc: '选择已上传的文件进行智能识别',
     startAnalyze: '开始生成识别',
@@ -239,15 +262,13 @@ const messages: DbsMessages = {
     headerTitle: '智能提取数据到表',
     leaveProcessingConfirm:
       '文件仍在识别中，离开或返回会中断当前页面的结果展示，未完成的结果可能丢失。确定要离开吗？',
-    leaveUnsavedConfirm:
-      '当前识别结果尚未审核入库，离开后这些页面状态不会保存。确定要离开吗？',
+    leaveUnsavedConfirm: '当前识别结果尚未审核入库，离开后这些页面状态不会保存。确定要离开吗？',
     leaveGuard: {
       processingTitle: '文件仍在识别中',
       processingDescription:
         '文件仍在识别中，离开当前审核页会中断待完成的识别任务，未完成的识别结果将丢失。',
       unsavedTitle: '离开并丢弃当前识别结果？',
-      unsavedDescription:
-        '识别结果仅保留在当前审核页，完成审核入库前离开会丢弃当前审核状态。',
+      unsavedDescription: '识别结果仅保留在当前审核页，完成审核入库前离开会丢弃当前审核状态。',
       continueReview: '继续审核',
       leaveAndDiscard: '离开并丢弃',
     },
@@ -266,7 +287,7 @@ const messages: DbsMessages = {
     stepOne: {
       bannerTitle: '文件统一走内部文件管理流程',
       bannerText: 'AI智能识别：AI将自动识别内容并匹配到表字段。{desc}',
-      supportedDesc: '支持 PDF、Word、Excel、图片等多种格式。支持批量选择多个文件进行AI识别。',
+      supportedDesc: '支持 PDF、Word、图片等多种格式。支持批量选择多个文件进行AI识别。',
       chooseFromFiles: '从文件管理中选择文件',
       selectedTitle: '已选择文件（{count}）',
       startRecognition: '开始AI识别（{count}个文件）',
@@ -285,6 +306,9 @@ const messages: DbsMessages = {
       leftPanelTitle: '文件列表',
       previewPanelTitle: '文件内容',
       fieldsPanelTitle: '字段提取',
+      previousRecord: '上一条记录',
+      nextRecord: '下一条记录',
+      recordPosition: '第 {current}/{total} 条',
       recognizing: '识别中...',
       noPreview: '暂无预览内容',
       notRecognized: '未识别到内容',
@@ -297,8 +321,7 @@ const messages: DbsMessages = {
       workspaceTitle: '审核工作台',
       processingLeaveHint:
         '文件正在识别中，请保持当前页面打开。刷新、关闭页面或返回上一步可能导致本次识别结果丢失。',
-      unsavedLeaveHint:
-        '识别结果仅保留在当前审核页，完成补全后请点击“审核通过并入库”保存。',
+      unsavedLeaveHint: '识别结果仅保留在当前审核页，完成补全后请点击“审核通过并入库”保存。',
       contentTabs: {
         original: '原件预览',
         text: '识别文本',
@@ -363,8 +386,8 @@ const messages: DbsMessages = {
         fileParseFailed: '文件解析失败',
         textRecognizing: '文件解析完成 / 文本识别中',
         textRecognitionFailed: '文件解析完成 / 文本识别失败',
-        textRecognitionNeedsCompletion: '文件解析完成 / 需补全',
-        ready: '文件解析完成 / 可入库',
+        needsCompletion: '待补全字段',
+        recognitionComplete: '识别完成',
       },
       reviewSteps: {
         recognizeTitle: 'AI 识别',
@@ -384,6 +407,7 @@ const messages: DbsMessages = {
         parseFailed: '解析失败',
         validationFailed: '待补全字段',
         needsCompletion: '需补全',
+        needsCompletionCount: '待补全 {count} 项',
         skipped: '已跳过',
       },
       filters: {
@@ -440,7 +464,8 @@ const messages: DbsMessages = {
       noParseFailedFiles: '当前没有文件解析失败的文件',
       noRecognitionFailedFiles: '当前没有字段获取失败的文件',
       confirmOverwriteCurrent: '重试当前文件会覆盖该文件现有识别结果和人工修改，是否继续？',
-      confirmOverwriteParseCurrent: '重试文件解析会重新读取文件，并覆盖该文件现有解析文本、字段结果和人工修改，是否继续？',
+      confirmOverwriteParseCurrent:
+        '重试文件解析会重新读取文件，并覆盖该文件现有解析文本、字段结果和人工修改，是否继续？',
       confirmOverwriteRecognitionCurrent:
         '重新获取字段会复用当前解析文本，并覆盖该文件现有字段结果和人工修改，是否继续？',
       confirmOverwriteAll: '重新识别全部会覆盖所有文件现有识别结果和人工修改，是否继续？',
@@ -497,6 +522,8 @@ const messages: DbsMessages = {
   },
   analyze: {
     success: 'AI分析完成',
+    failed: '表结构识别失败',
+    networkFailed: '无法连接表结构识别服务，请检查服务状态或网络连接',
   },
   sqlOps: {
     title: '数据库操作日志',
@@ -505,6 +532,7 @@ const messages: DbsMessages = {
       update: '更新',
       delete: '删除',
       query: '查询',
+      import: '导入',
     },
     status: {
       success: '成功',
@@ -553,8 +581,7 @@ const messages: DbsMessages = {
     importFailed: '导入失败',
     importResult: '总计：{total}，成功：{success}，失败：{failed}',
     skipUnmatchedColumns: '跳过不匹配字段',
-    skipUnmatchedColumnsDesc:
-      'Excel 中不存在于当前表结构的列将不会导入。必填字段缺失时仍需补齐。',
+    skipUnmatchedColumnsDesc: 'Excel 中不存在于当前表结构的列将不会导入。必填字段缺失时仍需补齐。',
     errors: {
       noMatchingColumns: 'Excel 表头没有匹配到当前表字段，请检查表头后重试。',
       missingRequiredColumns:
@@ -599,6 +626,8 @@ const messages: DbsMessages = {
       name: '字段名',
       type: '类型',
       required: '必填',
+      setAllRequired: '将全部导入字段设为必填',
+      clearAllRequired: '取消全部导入字段的必填设置',
       requiredYes: '是',
       requiredNo: '否',
       descriptionColumn: '字段说明',
@@ -606,7 +635,7 @@ const messages: DbsMessages = {
       import: '创建表并导入',
       tableInfoTitle: '表信息',
       smartRecognizeTitle: '智能识别',
-      smartRecognizeDesc: '选择模型识别表名、表描述和字段名，确认后再应用到当前草稿。',
+      smartRecognizeDesc: '选择模型识别表名、表描述、字段名和字段描述，确认后再应用到当前草稿。',
       smartRecognizeAction: '智能识别',
       recognitionDialogTitle: '确认智能识别结果',
       recognitionDialogDesc: '识别结果不会自动覆盖当前内容，确认后才会写入表信息和字段名。',

@@ -1,19 +1,24 @@
 # RAG Evaluation
 
-This directory contains a local evaluation workflow for ZGI knowledge-base RAG.
+This directory contains a local, paired evaluation workflow for Dify and ZGI knowledge-base RAG.
 
-The script reads QA pairs from Excel/CSV, calls the backend RAG evaluation API to collect answers and retrieved contexts, then runs Ragas metrics and saves intermediate and final results.
+The workflow intentionally has three independent commands: evaluate Dify, evaluate ZGI, then compare the two saved result sets. No command runs all three stages automatically.
 
 ## Directory Layout
 
 ```text
 scripts/rag_evaluation/
   input/                 # Put QA Excel/CSV files here
-  middle/                # Generated datasets, Ragas results, and analysis files
+  middle/                # Platform-collected datasets and partial checkpoints
+  result/                # Ragas results and Dify/ZGI comparison reports
   .env.example           # Example local config
   .env                   # Local config and cached token, ignored by git
   requirements.txt       # Python dependencies
-  run_ragas_eval.py      # Main evaluation script
+  run_dify_eval.py       # Stage 1: collect Dify data and run Ragas
+  run_zgi_eval.py        # Stage 2: collect ZGI data and run Ragas
+  compare_rag_eval.py    # Stage 3: compare existing result files offline
+  run_ragas_eval.py      # Shared implementation and legacy ZGI entry point
+  test_dify_chat.py      # Optional local Dify answer/retrieval smoke test
   test_llm_latency.py    # Optional judge LLM latency test
 ```
 
@@ -51,6 +56,11 @@ cp .env.example .env
 Edit `.env`:
 
 ```env
+DIFY_BASE_URL="http://127.0.0.1:18000/v1"
+DIFY_API_KEY="app-your-published-app-api-key"
+DIFY_USER_PREFIX="rag-eval"
+DIFY_RESPONSE_MODE="blocking"
+
 ZGI_BASE_URL="http://127.0.0.1:2670/console/api"
 ZGI_EMAIL="your-login-email"
 ZGI_KNOWLEDGE_BASE_NAME="your-knowledge-base-name"
@@ -72,51 +82,98 @@ Do not commit `.env`; it can contain API keys and cached login tokens.
 
 ## Prerequisites
 
-Before running:
+Before running the three stages:
 
-1. Start the ZGI backend.
-2. Make sure the target knowledge base exists and has finished indexing.
-3. Make sure the backend has the RAG evaluation route available: `POST /console/api/rag-evaluation/batch`.
-4. Make sure the Ragas judge model API key is valid.
+1. Start the local Dify app API and the ZGI backend.
+2. Import the same source documents into both target knowledge bases and wait for indexing to finish.
+3. Use the published Dify app API key (`app-...`), not a knowledge-base key (`dataset-...`).
+4. Make sure ZGI exposes `POST /console/api/rag-evaluation/batch`.
+5. Make sure the Ragas judge model API key is valid and keep the same judge configuration for both runs.
 
-## Run Evaluation
+## Three-Stage Comparison Workflow
 
-Interactive mode:
+All three commands must use the same QA input file. Each platform writes isolated files, so completing one stage never triggers or overwrites the other platform.
+
+### Stage 1: Evaluate Dify
 
 ```bash
-python run_ragas_eval.py
+python run_dify_eval.py \
+  --input input/rag-data_qa_pairs.xlsx \
+  --recollect
 ```
 
-The script will:
+This stage sends each question as a fresh Dify conversation, saves the answer, retrieval resources, usage, and client-observed latency, then runs the shared Ragas metrics. A partial dataset checkpoint is written during collection and removed after a complete dataset is saved.
 
-1. Ask you to select an input file from `input/`.
-2. Reuse or recollect an existing Ragas dataset if one already exists.
-3. Login to ZGI if there is no valid cached token.
-4. Ask for knowledge-base name if not set in `.env`.
-5. Ask for `top_k` and `score_threshold` on first use.
-6. Save retrieval defaults to `.env`.
-7. Collect backend answers and retrieved contexts.
-8. Run Ragas.
-9. Save outputs under `middle/`.
+Outputs:
 
-Non-interactive example:
+```text
+middle/rag-data_qa_pairs.dify.ragas.dataset.json
+result/rag-data_qa_pairs.dify.ragas.results.json
+result/rag-data_qa_pairs.dify.ragas.results.csv
+```
+
+### Stage 2: Evaluate ZGI
+
+Run this separately after the Dify evaluation:
 
 ```bash
-python run_ragas_eval.py \
+python run_zgi_eval.py \
   --input input/rag-data_qa_pairs.xlsx \
   --knowledge-base-name "rag评测" \
   --top-k 10 \
   --score-threshold 0.35 \
-  --retrieval-mode hybrid
+  --retrieval-mode hybrid \
+  --recollect
 ```
 
-Quick smoke test:
+Outputs:
+
+```text
+middle/rag-data_qa_pairs.zgi.ragas.dataset.json
+result/rag-data_qa_pairs.zgi.ragas.results.json
+result/rag-data_qa_pairs.zgi.ragas.results.csv
+```
+
+`run_ragas_eval.py` remains available as a legacy ZGI command, but the comparison workflow should use `run_zgi_eval.py` so result names include the `.zgi` platform suffix.
+
+### Stage 3: Generate the Comparison
+
+This command only reads files produced by stages 1 and 2. It does not call Dify, ZGI, or the Ragas judge:
 
 ```bash
-python run_ragas_eval.py \
+python compare_rag_eval.py \
+  --input input/rag-data_qa_pairs.xlsx
+```
+
+Outputs:
+
+```text
+result/rag-data_qa_pairs.comparison.csv
+result/rag-data_qa_pairs.comparison.json
+result/rag-data_qa_pairs.comparison.md
+```
+
+The report pairs rows by `sample_id`, validates that questions and references match, and reports per-metric means, Dify-minus-ZGI deltas, win/tie/loss counts, paired bootstrap confidence intervals, collection quality, latency when available, and the largest per-question differences.
+
+### Quick Smoke Test
+
+```bash
+python run_dify_eval.py \
   --input input/rag-data_qa_pairs_lite.xlsx \
   --limit 5 \
-  --ragas-limit 5
+  --ragas-limit 5 \
+  --recollect
+
+python run_zgi_eval.py \
+  --input input/rag-data_qa_pairs_lite.xlsx \
+  --limit 5 \
+  --ragas-limit 5 \
+  --top-k 10 \
+  --score-threshold 0.35 \
+  --recollect
+
+python compare_rag_eval.py \
+  --input input/rag-data_qa_pairs_lite.xlsx
 ```
 
 ## Retrieval Parameters
@@ -163,23 +220,32 @@ For input file:
 input/rag-data_qa_pairs.xlsx
 ```
 
-The script writes:
+The three-stage workflow writes:
 
 ```text
-middle/rag-data_qa_pairs.ragas.dataset.json
-middle/rag-data_qa_pairs.ragas.results.json
-middle/rag-data_qa_pairs.ragas.results.csv
+middle/rag-data_qa_pairs.dify.ragas.dataset.json
+result/rag-data_qa_pairs.dify.ragas.results.json
+result/rag-data_qa_pairs.dify.ragas.results.csv
+middle/rag-data_qa_pairs.zgi.ragas.dataset.json
+result/rag-data_qa_pairs.zgi.ragas.results.json
+result/rag-data_qa_pairs.zgi.ragas.results.csv
+result/rag-data_qa_pairs.comparison.csv
+result/rag-data_qa_pairs.comparison.json
+result/rag-data_qa_pairs.comparison.md
 ```
 
 File meanings:
 
 | File | Meaning |
 |---|---|
-| `.ragas.dataset.json` | Backend-collected dataset: question, response, retrieved contexts, reference, status |
-| `.ragas.results.json` | Ragas result rows in JSON |
-| `.ragas.results.csv` | Ragas metrics in CSV, easiest to analyze |
+| `.<platform>.ragas.dataset.json` | Platform-collected dataset: sample ID, question, response, contexts, reference, and status |
+| `.<platform>.ragas.results.json` | Platform Ragas result rows with stable sample IDs |
+| `.<platform>.ragas.results.csv` | Platform Ragas metrics in CSV |
+| `.comparison.csv` | Per-question paired scores, deltas, and winners |
+| `.comparison.json` | Machine-readable aggregate comparison |
+| `.comparison.md` | Human-readable analysis report |
 
-If `.ragas.dataset.json` already exists, the script asks whether to reuse it. Reusing skips backend retrieval and only reruns Ragas.
+If a platform dataset already exists, its evaluator asks whether to reuse it. Use `--reuse-dataset` or `--recollect` for non-interactive control.
 
 ## Metrics
 
@@ -207,6 +273,22 @@ python test_llm_latency.py "请用一句话介绍南阳市第一人民医院"
 ```
 
 It reads the same `.env` model settings.
+
+## Dify Smoke Test
+
+Set `DIFY_API_KEY` in `.env`, then send the default question `退号流程` to the local Dify app:
+
+```bash
+python test_dify_chat.py
+```
+
+Pass a different question as the positional argument when needed:
+
+```bash
+python test_dify_chat.py "门诊患者退号后的费用怎么退？"
+```
+
+The script prints the generated answer, end-to-end latency, retrieved knowledge contexts, and token usage returned by Dify.
 
 ## Common Issues
 
@@ -247,9 +329,9 @@ Try reducing:
 Or run a small sample first:
 
 ```bash
-python run_ragas_eval.py --limit 10 --ragas-limit 10
+python run_dify_eval.py --limit 10 --ragas-limit 10
 ```
 
 ### Existing dataset is stale
 
-If you changed retrieval code or knowledge-base data, do not reuse the existing `.ragas.dataset.json`. Press Enter when prompted to recollect backend data, or delete the old dataset file under `middle/`.
+If you changed retrieval code or knowledge-base data, do not reuse the existing platform dataset. Pass `--recollect` to the corresponding platform evaluator.

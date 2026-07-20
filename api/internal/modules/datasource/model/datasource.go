@@ -52,12 +52,15 @@ const (
 
 	// OperationTypeQuery represents a query operation
 	OperationTypeQuery OperationType = "query"
+
+	// OperationTypeImport represents an import operation
+	OperationTypeImport OperationType = "import"
 )
 
 // IsValidOperationType checks if a given string is a valid operation type
 func IsValidOperationType(opType string) bool {
 	switch OperationType(opType) {
-	case OperationTypeCreate, OperationTypeUpdate, OperationTypeDelete, OperationTypeQuery:
+	case OperationTypeCreate, OperationTypeUpdate, OperationTypeDelete, OperationTypeQuery, OperationTypeImport:
 		return true
 	default:
 		return false

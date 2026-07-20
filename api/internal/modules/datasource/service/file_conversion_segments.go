@@ -1,0 +1,279 @@
+package service
+
+import (
+	"encoding/csv"
+	"fmt"
+	"io"
+	"regexp"
+	"sort"
+	"strings"
+
+	"github.com/PuerkitoBio/goquery"
+)
+
+const (
+	fileConversionRowsPerSegment   = 40
+	fileConversionMaxTableSegments = 10
+	fileConversionMaxContentBytes  = 256 * 1024
+)
+
+var markdownTableSeparatorPattern = regexp.MustCompile(`^\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?\s*$`)
+
+type fileConversionSegment struct {
+	Content          string
+	SourceRowIndexes []int
+	Tabular          bool
+}
+
+func splitFileConversionContent(content string) ([]fileConversionSegment, bool, error) {
+	if size := len(content); size > fileConversionMaxContentBytes {
+		return nil, false, fmt.Errorf("file conversion content exceeds %d byte limit: got %d", fileConversionMaxContentBytes, size)
+	}
+	if segments, ok := markdownContentSegments(content); ok {
+		return validateFileConversionSegments(combineTextConversionSegments(segments), true)
+	}
+	if segments, ok := htmlContentSegments(content); ok {
+		return validateFileConversionSegments(combineTextConversionSegments(segments), true)
+	}
+	if rows, header := csvTableRows(content); len(rows) > 0 {
+		return validateFileConversionSegments(tableRowSegments(header, rows), true)
+	}
+	return singleTextConversionSegment(content), false, nil
+}
+
+func validateFileConversionSegments(segments []fileConversionSegment, tabular bool) ([]fileConversionSegment, bool, error) {
+	tableSegments := 0
+	for _, segment := range segments {
+		if segment.Tabular {
+			tableSegments++
+		}
+	}
+	if tableSegments > fileConversionMaxTableSegments {
+		return nil, tabular, fmt.Errorf("file conversion exceeds %d table segment limit: got %d", fileConversionMaxTableSegments, tableSegments)
+	}
+	return segments, tabular, nil
+}
+
+func markdownContentSegments(content string) ([]fileConversionSegment, bool) {
+	lines := strings.Split(strings.ReplaceAll(content, "\r\n", "\n"), "\n")
+	segments := make([]fileConversionSegment, 0)
+	textStart := 0
+	foundTable := false
+	for i := 0; i+2 < len(lines); {
+		if !strings.Contains(lines[i], "|") || !markdownTableSeparatorPattern.MatchString(lines[i+1]) {
+			i++
+			continue
+		}
+		rows := make([]string, 0)
+		j := i + 2
+		for ; j < len(lines); j++ {
+			line := strings.TrimSpace(lines[j])
+			if line == "" || !strings.Contains(line, "|") {
+				break
+			}
+			rows = append(rows, line)
+		}
+		if len(rows) == 0 {
+			i++
+			continue
+		}
+		segments = appendTextConversionSegments(segments, strings.Join(lines[textStart:i], "\n"))
+		segments = append(segments, tableRowSegments(strings.TrimSpace(lines[i]), rows)...)
+		foundTable = true
+		i = j
+		textStart = j
+	}
+	if !foundTable {
+		return nil, false
+	}
+	segments = appendTextConversionSegments(segments, strings.Join(lines[textStart:], "\n"))
+	return segments, true
+}
+
+func htmlContentSegments(content string) ([]fileConversionSegment, bool) {
+	if !strings.Contains(strings.ToLower(content), "<table") {
+		return nil, false
+	}
+	doc, err := goquery.NewDocumentFromReader(strings.NewReader(content))
+	if err != nil {
+		return nil, false
+	}
+	segments := make([]fileConversionSegment, 0)
+	var text strings.Builder
+	foundTable := false
+	flushText := func() {
+		segments = appendTextConversionSegments(segments, text.String())
+		text.Reset()
+	}
+	var walk func(*goquery.Selection)
+	walk = func(selection *goquery.Selection) {
+		selection.Contents().Each(func(_ int, child *goquery.Selection) {
+			name := goquery.NodeName(child)
+			if name == "script" || name == "style" {
+				return
+			}
+			if name == "table" {
+				if rows, header := htmlTableRows(child); len(rows) > 0 {
+					flushText()
+					segments = append(segments, tableRowSegments(header, rows)...)
+					foundTable = true
+					return
+				}
+			}
+			if name == "#text" {
+				text.WriteString(child.Text())
+				return
+			}
+			if isHTMLBlockElement(name) {
+				text.WriteString("\n\n")
+			}
+			walk(child)
+			if isHTMLBlockElement(name) {
+				text.WriteString("\n\n")
+			}
+		})
+	}
+	walk(doc.Selection)
+	if !foundTable {
+		return nil, false
+	}
+	flushText()
+	return segments, true
+}
+
+func htmlTableRows(table *goquery.Selection) ([]string, string) {
+	var header string
+	rows := make([]string, 0)
+	table.Find("tr").Each(func(_ int, row *goquery.Selection) {
+		cells := make([]string, 0)
+		row.Find("th,td").Each(func(_ int, cell *goquery.Selection) {
+			cells = append(cells, strings.TrimSpace(cell.Text()))
+		})
+		if len(cells) == 0 {
+			return
+		}
+		line := strings.Join(cells, " | ")
+		if header == "" && row.Find("th").Length() > 0 {
+			header = line
+			return
+		}
+		rows = append(rows, line)
+	})
+	if header == "" || len(rows) == 0 {
+		return nil, ""
+	}
+	return rows, header
+}
+
+func isHTMLBlockElement(name string) bool {
+	switch name {
+	case "address", "article", "aside", "blockquote", "br", "div", "footer", "h1", "h2", "h3", "h4", "h5", "h6", "header", "hr", "li", "main", "nav", "ol", "p", "pre", "section", "ul":
+		return true
+	default:
+		return false
+	}
+}
+
+func appendTextConversionSegments(segments []fileConversionSegment, content string) []fileConversionSegment {
+	content = strings.TrimSpace(content)
+	if content == "" {
+		return segments
+	}
+	return append(segments, fileConversionSegment{Content: content})
+}
+
+func csvTableRows(content string) ([]string, string) {
+	reader := csv.NewReader(strings.NewReader(content))
+	reader.FieldsPerRecord = -1
+	records := make([][]string, 0)
+	for {
+		record, err := reader.Read()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, ""
+		}
+		records = append(records, record)
+	}
+	if len(records) < 2 || len(records[0]) < 2 {
+		return nil, ""
+	}
+	rows := make([]string, 0, len(records)-1)
+	for _, record := range records[1:] {
+		if len(record) != len(records[0]) {
+			return nil, ""
+		}
+		rows = append(rows, strings.Join(record, " | "))
+	}
+	return rows, strings.Join(records[0], " | ")
+}
+
+func tableRowSegments(header string, rows []string) []fileConversionSegment {
+	segments := make([]fileConversionSegment, 0, (len(rows)+fileConversionRowsPerSegment-1)/fileConversionRowsPerSegment)
+	for start := 0; start < len(rows); start += fileConversionRowsPerSegment {
+		end := min(start+fileConversionRowsPerSegment, len(rows))
+		indexes := make([]int, 0, end-start)
+		var builder strings.Builder
+		fmt.Fprintf(&builder, "Source table header: %s\n", header)
+		for i := start; i < end; i++ {
+			rowIndex := i + 1
+			indexes = append(indexes, rowIndex)
+			fmt.Fprintf(&builder, "SOURCE_ROW_%d: %s\n", rowIndex, rows[i])
+		}
+		segments = append(segments, fileConversionSegment{Content: builder.String(), SourceRowIndexes: indexes, Tabular: true})
+	}
+	return segments
+}
+
+func singleTextConversionSegment(content string) []fileConversionSegment {
+	content = strings.TrimSpace(content)
+	if content == "" {
+		return nil
+	}
+	return []fileConversionSegment{{Content: content}}
+}
+
+func combineTextConversionSegments(segments []fileConversionSegment) []fileConversionSegment {
+	textParts := make([]string, 0)
+	tableSegments := make([]fileConversionSegment, 0, len(segments))
+	for _, segment := range segments {
+		if segment.Tabular {
+			tableSegments = append(tableSegments, segment)
+			continue
+		}
+		if content := strings.TrimSpace(segment.Content); content != "" {
+			textParts = append(textParts, content)
+		}
+	}
+	textSegments := singleTextConversionSegment(strings.Join(textParts, "\n\n"))
+	return append(textSegments, tableSegments...)
+}
+
+func validateAndOrderSourceRows(parsed *fileConversionLLMResponse, expected []int) error {
+	if len(parsed.Records) != len(expected) {
+		return fmt.Errorf("field extraction returned %d records for %d source rows", len(parsed.Records), len(expected))
+	}
+	expectedSet := make(map[int]struct{}, len(expected))
+	for _, index := range expected {
+		expectedSet[index] = struct{}{}
+	}
+	seen := make(map[int]struct{}, len(expected))
+	for _, record := range parsed.Records {
+		if record.SourceRowIndex == nil {
+			return fmt.Errorf("field extraction record is missing source_row_index")
+		}
+		index := *record.SourceRowIndex
+		if _, ok := expectedSet[index]; !ok {
+			return fmt.Errorf("field extraction returned unknown source_row_index %d", index)
+		}
+		if _, duplicate := seen[index]; duplicate {
+			return fmt.Errorf("field extraction returned duplicate source_row_index %d", index)
+		}
+		seen[index] = struct{}{}
+	}
+	sort.Slice(parsed.Records, func(i, j int) bool {
+		return *parsed.Records[i].SourceRowIndex < *parsed.Records[j].SourceRowIndex
+	})
+	return nil
+}

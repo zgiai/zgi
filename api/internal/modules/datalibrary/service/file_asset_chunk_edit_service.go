@@ -20,6 +20,7 @@ var (
 type FileAssetChunkEditService interface {
 	UpdateCurrentFileChunk(ctx context.Context, input FileAssetChunkEditInput) (*FileAssetChunkEditResult, error)
 	BatchUpdateCurrentFileChunks(ctx context.Context, input FileAssetChunkBatchEditInput) (*FileAssetChunkBatchEditResult, error)
+	DeleteCurrentFileChunk(ctx context.Context, input FileAssetChunkDeleteInput) (*FileAssetChunkDeleteResult, error)
 	SetDatasetRefSyncEnqueuer(enqueuer FileAssetChunkEditDatasetRefSyncEnqueuer)
 }
 
@@ -44,6 +45,13 @@ type FileAssetChunkBatchEditInput struct {
 	EmbeddingModel    string
 }
 
+type FileAssetChunkDeleteInput struct {
+	OrganizationID string
+	SourceFileID   string
+	ChunkID        uuid.UUID
+	UpdatedBy      string
+}
+
 type FileAssetChunkEditResult struct {
 	Asset          *model.DocumentAsset          `json:"asset"`
 	Chunk          *model.DocumentChunk          `json:"chunk"`
@@ -56,6 +64,12 @@ type FileAssetChunkBatchEditResult struct {
 	Chunks         []*model.DocumentChunk `json:"chunks"`
 	UpdatedCount   int                    `json:"updated_count"`
 	EmbeddingReady bool                   `json:"embedding_ready"`
+}
+
+type FileAssetChunkDeleteResult struct {
+	Asset          *model.DocumentAsset `json:"asset"`
+	DeletedChunkID uuid.UUID            `json:"deleted_chunk_id"`
+	DeletedCount   int                  `json:"deleted_count"`
 }
 
 type fileAssetChunkEditService struct {
@@ -141,6 +155,10 @@ type fileAssetChunkEditDatasetStore interface {
 
 type FileAssetChunkEditDatasetRefSyncEnqueuer interface {
 	EnqueueDatasetRefSync(ctx context.Context, refID uuid.UUID, assetID uuid.UUID, datasetID string, generationNo int64, syncRunID uuid.UUID) error
+}
+
+type fileAssetChunkDeleteRepository interface {
+	DeleteByIDs(ctx context.Context, organizationID string, ids []uuid.UUID) error
 }
 
 func (s *fileAssetChunkEditService) SetDatasetRefSyncEnqueuer(enqueuer FileAssetChunkEditDatasetRefSyncEnqueuer) {
@@ -306,6 +324,88 @@ func (s *fileAssetChunkEditService) BatchUpdateCurrentFileChunks(ctx context.Con
 		Chunks:         updatedChunks,
 		UpdatedCount:   len(updatedChunks),
 		EmbeddingReady: false,
+	}, nil
+}
+
+func (s *fileAssetChunkEditService) DeleteCurrentFileChunk(ctx context.Context, input FileAssetChunkDeleteInput) (*FileAssetChunkDeleteResult, error) {
+	if input.OrganizationID == "" {
+		return nil, ErrOrganizationIDRequired
+	}
+	if input.SourceFileID == "" {
+		return nil, ErrSourceFileIDRequired
+	}
+	if input.ChunkID == uuid.Nil {
+		return nil, ErrAssetIDRequired
+	}
+	asset, err := s.assets.FindAssetBySourceFileID(ctx, input.OrganizationID, input.SourceFileID)
+	if err != nil {
+		return nil, err
+	}
+	if asset == nil {
+		return nil, ErrDocumentAssetNotFound
+	}
+	if asset.GenerationNo <= 0 || asset.ProcessingRunID == nil {
+		return nil, ErrProcessingRunMismatch
+	}
+	chunk, err := s.chunks.GetByID(ctx, input.ChunkID)
+	if err != nil {
+		return nil, err
+	}
+	if chunk == nil || chunk.OrganizationID != input.OrganizationID || chunk.AssetID != asset.ID {
+		return nil, ErrDocumentAssetNotFound
+	}
+	if chunk.GenerationNo != asset.GenerationNo {
+		return nil, ErrProcessingRunMismatch
+	}
+	if !isDeletableChunk(chunk) {
+		return nil, ErrFileChunkEditNotAllowed
+	}
+	deleter, ok := s.chunks.(fileAssetChunkDeleteRepository)
+	if !ok {
+		return nil, ErrFileChunkEditNotAllowed
+	}
+
+	deleteIDs := []uuid.UUID{chunk.ID}
+	if chunk.ChunkType == model.DocumentChunkTypeParent {
+		children, err := s.listChildChunksByParent(ctx, asset, chunk.ID)
+		if err != nil {
+			return nil, err
+		}
+		for _, child := range children {
+			if child != nil {
+				deleteIDs = append(deleteIDs, child.ID)
+			}
+		}
+		if s.vectorIndex != nil {
+			if err := s.vectorIndex.DeleteChildVectorsByParent(ctx, asset, chunk.ID); err != nil {
+				return nil, err
+			}
+		}
+		if err := s.deleteChildEmbeddings(ctx, asset, children); err != nil {
+			return nil, err
+		}
+	} else {
+		if s.vectorIndex != nil {
+			if err := s.vectorIndex.DeleteChunkVector(ctx, asset, chunk.ID); err != nil {
+				return nil, err
+			}
+		}
+	}
+	if s.embeddings != nil {
+		if err := s.embeddings.DeleteByChunkID(ctx, input.OrganizationID, chunk.ID); err != nil {
+			return nil, err
+		}
+	}
+	if err := deleter.DeleteByIDs(ctx, input.OrganizationID, deleteIDs); err != nil {
+		return nil, err
+	}
+	if err := s.enqueueDatasetRefSyncsForAssetEdit(ctx, asset, input.UpdatedBy); err != nil {
+		return nil, err
+	}
+	return &FileAssetChunkDeleteResult{
+		Asset:          asset,
+		DeletedChunkID: chunk.ID,
+		DeletedCount:   len(deleteIDs),
 	}, nil
 }
 
@@ -556,6 +656,18 @@ func isEditableChunkUpdateAllowed(chunk *model.DocumentChunk, input FileAssetChu
 		return true
 	case model.DocumentChunkTypeParent:
 		return input.Content != nil || input.Enabled != nil
+	default:
+		return false
+	}
+}
+
+func isDeletableChunk(chunk *model.DocumentChunk) bool {
+	if chunk == nil {
+		return false
+	}
+	switch chunk.ChunkType {
+	case model.DocumentChunkTypeParent, model.DocumentChunkTypeChild, model.DocumentChunkTypeAuto, model.DocumentChunkTypeManual:
+		return true
 	default:
 		return false
 	}

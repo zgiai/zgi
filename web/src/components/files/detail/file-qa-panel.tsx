@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { FormEvent, KeyboardEvent } from 'react';
 import {
   AlertCircle,
@@ -12,22 +12,24 @@ import {
   Loader2,
   MessageSquareText,
   Send,
+  Trash2,
   User,
 } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
-import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
+import { ModelSelector, type ModelSelectorValue } from '@/components/common/model-selector';
+import MarkdownViewer from '@/components/common/markdown-viewer';
 import { useDefaultModelByUseCase } from '@/hooks/model/use-default-model-by-use-case';
-import { useAvailableModels } from '@/hooks/model/use-model';
 import { useT } from '@/i18n';
 import { fileManageService } from '@/services/file-manage.service';
 import type {
   AskFileQuestionResponse,
   FileAssetArtifactState,
   FileDetailProcessing,
+  FileQuestionHistoryMessage,
   FileQuestionAnswerSource,
   FileQuestionStreamEvent,
 } from '@/services/types/file';
@@ -43,8 +45,6 @@ interface FileQAPanelProps {
   onLocateSource?: (source: FileQuestionAnswerSource) => void;
 }
 
-const DEFAULT_ANSWER_MODEL_VALUE = '__default_answer_model__';
-
 interface FileQAExchange {
   id: string;
   question: string;
@@ -52,16 +52,14 @@ interface FileQAExchange {
   streaming?: boolean;
 }
 
+const MARKDOWN_IMAGE_PATTERN = /!\[([^\]\r\n]*)\]\(([^)\r\n]+)\)/g;
+
 function isComposingEnterEvent(event: KeyboardEvent<HTMLTextAreaElement>): boolean {
   const nativeEvent = event.nativeEvent as globalThis.KeyboardEvent & {
     isComposing?: boolean;
   };
 
   return nativeEvent.isComposing === true || event.keyCode === 229;
-}
-
-function answerModelValue(provider: string, model: string): string {
-  return `${encodeURIComponent(provider)}::${encodeURIComponent(model)}`;
 }
 
 export function FileQAPanel({
@@ -76,54 +74,12 @@ export function FileQAPanel({
   const [exchanges, setExchanges] = useState<FileQAExchange[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
   const [qaError, setQaError] = useState<string | null>(null);
-  const [answerModelSelection, setAnswerModelSelection] = useState(DEFAULT_ANSWER_MODEL_VALUE);
+  const [answerModelSelection, setAnswerModelSelection] = useState<ModelSelectorValue | null>(null);
   const isComposingRef = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
   const closeRef = useRef<(() => void) | null>(null);
   const { value: defaultAnswerModel } = useDefaultModelByUseCase('text-chat');
-  const {
-    models: availableAnswerModels,
-    isLoading: isLoadingAnswerModels,
-    isFetching: isFetchingAnswerModels,
-  } = useAvailableModels({
-    use_case: 'text-chat',
-  });
-  const answerModels = useMemo(
-    () => availableAnswerModels.filter(model => model.model),
-    [availableAnswerModels]
-  );
-  const selectedAnswerModel = useMemo(
-    () =>
-      answerModels.find(model => answerModelValue(model.provider, model.model) === answerModelSelection),
-    [answerModelSelection, answerModels]
-  );
-  const resolvedDefaultAnswerModel = useMemo(
-    () =>
-      defaultAnswerModel
-        ? answerModels.find(
-            model =>
-              model.provider === defaultAnswerModel.provider && model.model === defaultAnswerModel.model
-          )
-        : undefined,
-    [answerModels, defaultAnswerModel]
-  );
-  const defaultAnswerModelLabel =
-    resolvedDefaultAnswerModel?.model_name ||
-    resolvedDefaultAnswerModel?.model ||
-    defaultAnswerModel?.model ||
-    t('detail.qa.defaultAnswerModel');
-  const selectedAnswerModelLabel =
-    selectedAnswerModel?.model_name || selectedAnswerModel?.model || defaultAnswerModelLabel;
-  const selectableAnswerModels = useMemo(
-    () =>
-      answerModels.filter(
-        model =>
-          !defaultAnswerModel ||
-          model.provider !== defaultAnswerModel.provider ||
-          model.model !== defaultAnswerModel.model
-      ),
-    [answerModels, defaultAnswerModel]
-  );
+  const selectedAnswerModel = answerModelSelection ?? defaultAnswerModel ?? null;
   const canSubmit = enabled && !preparingIndex && !prepareError && question.trim().length > 0 && !isStreaming;
 
   useEffect(() => {
@@ -133,19 +89,22 @@ export function FileQAPanel({
     };
   }, []);
 
-  useEffect(() => {
-    if (
-      answerModelSelection !== DEFAULT_ANSWER_MODEL_VALUE &&
-      !isLoadingAnswerModels &&
-      answerModels.length > 0 &&
-      !selectedAnswerModel
-    ) {
-      setAnswerModelSelection(DEFAULT_ANSWER_MODEL_VALUE);
-    }
-  }, [answerModelSelection, answerModels.length, isLoadingAnswerModels, selectedAnswerModel]);
-
   const updateExchange = (id: string, updater: (exchange: FileQAExchange) => FileQAExchange) => {
     setExchanges(prev => prev.map(exchange => (exchange.id === id ? updater(exchange) : exchange)));
+  };
+
+  const buildQuestionHistory = (): FileQuestionHistoryMessage[] =>
+    exchanges
+      .filter(exchange => !exchange.streaming && exchange.result.answer.trim().length > 0)
+      .slice(-6)
+      .map(exchange => ({
+        question: exchange.question,
+        answer: exchange.result.answer,
+      }));
+
+  const clearConversation = () => {
+    setExchanges([]);
+    setQaError(null);
   };
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
@@ -232,6 +191,7 @@ export function FileQAPanel({
         {
           question: trimmed,
           top_k: 6,
+          history: buildQuestionHistory(),
           ...(selectedAnswerModel
             ? {
                 answer_model_provider: selectedAnswerModel.provider,
@@ -274,30 +234,41 @@ export function FileQAPanel({
 
   if (!enabled) {
     return (
-      <Alert>
+      <Alert className="rounded-md border-border bg-background px-4 py-3 [&>svg]:left-4 [&>svg]:top-3.5 [&>svg~*]:pl-7">
         <AlertCircle className="h-4 w-4" />
-        <AlertTitle>{t('detail.qa.notReadyTitle')}</AlertTitle>
-        <AlertDescription>{t('detail.qa.notReadyDescription')}</AlertDescription>
+        <AlertTitle className="mb-1 text-sm leading-5">{t('detail.qa.notReadyTitle')}</AlertTitle>
+        <AlertDescription className="text-sm leading-5 text-muted-foreground">
+          {t('detail.qa.notReadyDescription')}
+        </AlertDescription>
       </Alert>
     );
   }
 
   if (preparingIndex) {
     return (
-      <Alert>
+      <Alert className="rounded-md border-border bg-background px-4 py-3 [&>svg]:left-4 [&>svg]:top-3.5 [&>svg~*]:pl-7">
         <Loader2 className="h-4 w-4 animate-spin" />
-        <AlertTitle>{t('detail.qa.preparingTitle')}</AlertTitle>
-        <AlertDescription>{t('detail.qa.preparingDescription')}</AlertDescription>
+        <AlertTitle className="mb-1 text-sm leading-5">
+          {t('detail.qa.preparingTitle')}
+        </AlertTitle>
+        <AlertDescription className="text-sm leading-5 text-muted-foreground">
+          {t('detail.qa.preparingDescription')}
+        </AlertDescription>
       </Alert>
     );
   }
 
   if (prepareError) {
     return (
-      <Alert variant="destructive">
+      <Alert
+        variant="destructive"
+        className="rounded-md px-4 py-3 [&>svg]:left-4 [&>svg]:top-3.5 [&>svg~*]:pl-7"
+      >
         <AlertCircle className="h-4 w-4" />
-        <AlertTitle>{t('detail.qa.prepareFailedTitle')}</AlertTitle>
-        <AlertDescription>{prepareError}</AlertDescription>
+        <AlertTitle className="mb-1 text-sm leading-5">
+          {t('detail.qa.prepareFailedTitle')}
+        </AlertTitle>
+        <AlertDescription className="text-sm leading-5">{prepareError}</AlertDescription>
       </Alert>
     );
   }
@@ -309,43 +280,27 @@ export function FileQAPanel({
           <h2 className="text-base font-semibold text-foreground">{t('detail.qa.title')}</h2>
           <p className="mt-1 text-sm text-muted-foreground">{t('detail.qa.description')}</p>
         </div>
-        <div className="flex min-w-0 items-center gap-2">
-          <span className="text-sm text-muted-foreground">{t('detail.qa.answerModel')}</span>
-          <Select
-            value={answerModelSelection}
-            onValueChange={setAnswerModelSelection}
-            disabled={isStreaming || isLoadingAnswerModels}
+        <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-9 gap-1.5"
+            onClick={clearConversation}
+            disabled={isStreaming || exchanges.length === 0}
           >
-            <SelectTrigger
-              className="h-9 w-[220px] bg-background"
-              isLoading={isLoadingAnswerModels || isFetchingAnswerModels}
-              aria-label={t('detail.qa.answerModel')}
-            >
-              <span className="truncate">
-                {answerModelSelection === DEFAULT_ANSWER_MODEL_VALUE
-                  ? defaultAnswerModelLabel
-                  : selectedAnswerModelLabel}
-              </span>
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value={DEFAULT_ANSWER_MODEL_VALUE}>
-                <span className="truncate">{defaultAnswerModelLabel}</span>
-              </SelectItem>
-              {selectableAnswerModels.map(model => (
-                <SelectItem
-                  key={`${model.provider}:${model.model}`}
-                  value={answerModelValue(model.provider, model.model)}
-                >
-                  <span className="truncate">{model.model_name || model.model}</span>
-                </SelectItem>
-              ))}
-              {!isLoadingAnswerModels && answerModels.length === 0 ? (
-                <SelectItem value="__no_available_answer_models__" disabled>
-                  {t('detail.qa.noAvailableAnswerModels')}
-                </SelectItem>
-              ) : null}
-            </SelectContent>
-          </Select>
+            <Trash2 className="h-4 w-4" />
+            {t('detail.qa.clearConversation')}
+          </Button>
+          <span className="text-sm text-muted-foreground">{t('detail.qa.answerModel')}</span>
+          <ModelSelector
+            modelType="text-chat"
+            value={selectedAnswerModel ?? undefined}
+            onChange={setAnswerModelSelection}
+            placeholder={t('detail.qa.defaultAnswerModel')}
+            disabled={isStreaming}
+            className="h-9 w-[220px] bg-background"
+          />
         </div>
       </div>
 
@@ -358,9 +313,6 @@ export function FileQAPanel({
             <h3 className="mt-4 text-base font-semibold text-foreground">
               {t('detail.qa.emptyTitle')}
             </h3>
-            <p className="mt-2 max-w-md text-sm leading-6 text-muted-foreground">
-              {t('detail.qa.emptyDescription')}
-            </p>
           </div>
         ) : (
           exchanges.map(exchange => (
@@ -379,10 +331,15 @@ export function FileQAPanel({
                   <Bot className="h-4 w-4 text-primary" />
                   {t('detail.qa.answer')}
                 </div>
-                <div className="whitespace-pre-wrap text-sm leading-7 text-foreground">
+                <div className="text-sm leading-7 text-foreground">
                   {exchange.result.answer || exchange.streaming ? (
                     <>
-                      {exchange.result.answer}
+                      <MarkdownViewer
+                        content={buildFileQAAnswerMarkdown(exchange.result)}
+                        isStreaming={exchange.streaming}
+                        renderIdentity={`file-qa-${exchange.id}`}
+                        className="text-sm leading-7 [&_img]:max-h-[360px] [&_img]:rounded-md"
+                      />
                       {exchange.streaming ? (
                         <span className="ml-2 inline-flex items-center gap-1 text-muted-foreground">
                           <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -394,7 +351,9 @@ export function FileQAPanel({
                     t('detail.qa.askFailed')
                   )}
                 </div>
-                <SourceList result={exchange.result} onLocateSource={onLocateSource} />
+                {!exchange.streaming ? (
+                  <SourceList result={exchange.result} onLocateSource={onLocateSource} />
+                ) : null}
               </div>
             </div>
           ))
@@ -440,6 +399,41 @@ export function FileQAPanel({
       </form>
     </div>
   );
+}
+
+function buildFileQAAnswerMarkdown(result: AskFileQuestionResponse): string {
+  const answer = result.answer || '';
+  const sourceImageMarkdown = extractSourceImageMarkdown(result.sources);
+  if (!sourceImageMarkdown) {
+    return answer;
+  }
+  return [answer, sourceImageMarkdown].filter(Boolean).join('\n\n');
+}
+
+function extractSourceImageMarkdown(sources: FileQuestionAnswerSource[]): string {
+  const seen = new Set<string>();
+  const images: string[] = [];
+  const collect = (content?: string) => {
+    if (!content) return;
+    for (const match of content.matchAll(MARKDOWN_IMAGE_PATTERN)) {
+      const alt = match[1]?.trim() || 'image';
+      const src = match[2]?.trim();
+      if (!src || seen.has(src)) continue;
+      seen.add(src);
+      images.push(`![${alt}](${src})`);
+    }
+  };
+
+  sources.forEach(source => {
+    collect(source.content);
+    collect(source.snippet);
+    source.children.forEach(child => {
+      collect(child.content);
+      collect(child.snippet);
+    });
+  });
+
+  return images.join('\n\n');
 }
 
 function SourceList({

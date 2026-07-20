@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useT } from '@/i18n';
 import { Button } from '@/components/ui/button';
 import { RefreshCw, AlertTriangle, ArrowLeft, Home, Copy, Bug } from 'lucide-react';
-import { captureException } from '@/lib/sentry/client';
+import { captureError } from '@/lib/observability';
 
 export default function Error({
   error,
@@ -27,7 +27,7 @@ export default function Error({
   }, [error]);
 
   useEffect(() => {
-    captureException(error);
+    captureError(error, 'ui.page.render_failed');
   }, [error]);
 
   const copyDiagnostics = async () => {
