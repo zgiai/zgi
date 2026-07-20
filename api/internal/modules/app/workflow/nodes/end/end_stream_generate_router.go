@@ -67,6 +67,9 @@ func (r *EndStreamGeneratorRouter) ExtractStreamVariableSelectorFromNodeData(
 	valueSelectors := make([][]string, 0)
 
 	for _, variableSelector := range variableSelectors {
+		if variableSelector.ValueType == outputValueTypeConstant {
+			continue
+		}
 		if len(variableSelector.ValueSelector) == 0 {
 			continue
 		}
@@ -129,20 +132,10 @@ func (r *EndStreamGeneratorRouter) extractStreamVariableSelector(
 	if outputs, ok := data["outputs"].([]interface{}); ok {
 		for _, output := range outputs {
 			if outputMap, ok := output.(map[string]interface{}); ok {
-				variableSelector := VariableSelector{}
-				if variable, ok := outputMap["variable"].(string); ok {
-					variableSelector.Variable = variable
+				variableSelector, err := parseVariableSelector(outputMap)
+				if err == nil {
+					nodeData.Outputs = append(nodeData.Outputs, variableSelector)
 				}
-				if selector, ok := outputMap["selector"].([]interface{}); ok {
-					valueSelector := make([]string, len(selector))
-					for i, v := range selector {
-						if s, ok := v.(string); ok {
-							valueSelector[i] = s
-						}
-					}
-					variableSelector.ValueSelector = valueSelector
-				}
-				nodeData.Outputs = append(nodeData.Outputs, variableSelector)
 			}
 		}
 	}
