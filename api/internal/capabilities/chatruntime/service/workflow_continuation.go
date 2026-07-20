@@ -76,16 +76,16 @@ func (s *service) BeginWorkflowApprovalContinuation(ctx context.Context, scope S
 	state.Metadata = copyStringAnyMap(message.Metadata)
 	state.Caller = caller
 	state.RunConfig = config
-	if message.Status == runtimemodel.MessageStatusWaitingApproval &&
-		!workflowContinuationAllowsInlineApproval(caller, state) {
-		return nil, fmt.Errorf("%w: this workflow approval must be completed through its configured approval channel", ErrInvalidInput)
-	}
 	if message.Status == runtimemodel.MessageStatusCompleted {
 		state.Completed = true
 		return state, nil
 	}
 	if err := validateWorkflowContinuationBinding(state, config.WorkflowBindings); err != nil {
 		return nil, err
+	}
+	if message.Status == runtimemodel.MessageStatusWaitingApproval &&
+		!workflowContinuationAllowsInlineApproval(caller, state) {
+		return nil, fmt.Errorf("%w: this workflow approval must be completed through its configured approval channel", ErrInvalidInput)
 	}
 	if message.Status != runtimemodel.MessageStatusWaitingApproval && message.Status != runtimemodel.MessageStatusWaitingQuestion && message.Status != runtimemodel.MessageStatusStreaming {
 		return nil, fmt.Errorf("%w: message is not waiting for workflow continuation", ErrInvalidInput)
