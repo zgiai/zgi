@@ -144,12 +144,10 @@ func agentRuntimeEventProcess(event map[string]interface{}) map[string]interface
 			"node_count":       len(runtimeSkillInvocations(event["nodes"])),
 			"approval_count":   len(runtimeSkillInvocations(event["approvals"])),
 			"question_count":   len(runtimeSkillInvocations(event["question_answers"])),
-			"message_count":    len(runtimeSkillInvocations(runtimeMap(event["messages"])["chunks"])),
 			"invocation":       sanitizeAgentRuntimeSensitiveValue(event["invocation"]),
 			"nodes":            sanitizeAgentRuntimeResultValue(event["nodes"]),
 			"approvals":        sanitizeAgentRuntimeResultValue(event["approvals"]),
 			"question_answers": sanitizeAgentRuntimeResultValue(event["question_answers"]),
-			"messages":         sanitizeAgentRuntimeResultValue(event["messages"]),
 			"raw_event":        sanitizeAgentRuntimeRawEvent(event),
 		})
 	}

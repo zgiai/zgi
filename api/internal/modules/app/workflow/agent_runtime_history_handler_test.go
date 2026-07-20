@@ -997,6 +997,9 @@ func TestAgentRuntimeStepsIncludeWorkflowRunEvents(t *testing.T) {
 					"elapsed_time":    1500.0,
 					"inputs":          map[string]interface{}{"query": "run workflow", "api_key": "secret"},
 					"outputs":         map[string]interface{}{"answer": "workflow output"},
+					"messages": []interface{}{
+						map[string]interface{}{"event": "message", "answer": "legacy raw chunk"},
+					},
 					"approval": map[string]interface{}{
 						"approval_form_id": "form-1",
 						"approval_url":     "https://example.test/approve",
@@ -1042,6 +1045,16 @@ func TestAgentRuntimeStepsIncludeWorkflowRunEvents(t *testing.T) {
 		t.Fatalf("workflow run input = %#v, want sensitive fields redacted only", runInput)
 	}
 	process := items[0].Process
+	if _, ok := process["messages"]; ok {
+		t.Fatalf("workflow run process messages = %#v, want raw stream chunks hidden", process["messages"])
+	}
+	if _, ok := process["message_count"]; ok {
+		t.Fatalf("workflow run process message_count = %#v, want raw stream diagnostics removed", process["message_count"])
+	}
+	runOutput := items[0].Output.(map[string]interface{})
+	if runOutput["answer"] != "workflow output" {
+		t.Fatalf("workflow run output = %#v, want final workflow output", runOutput)
+	}
 	nodes := process["nodes"].([]interface{})
 	if len(nodes) != 1 {
 		t.Fatalf("workflow run process nodes = %#v, want one node", nodes)

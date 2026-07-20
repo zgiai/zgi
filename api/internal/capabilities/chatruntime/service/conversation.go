@@ -862,11 +862,27 @@ func (s *service) StopConversation(ctx context.Context, scope Scope, id uuid.UUI
 	if err != nil {
 		return nil, err
 	}
-	if conversation.RuntimeStatus != runtimemodel.ConversationRuntimeStatusStreaming || conversation.ActiveMessageID == nil {
+
+	messageID := conversation.ActiveMessageID
+	if messageID == nil && conversation.CurrentLeafMessageID != nil {
+		leaf, loadErr := s.repos.Message.GetScoped(
+			ctx,
+			*conversation.CurrentLeafMessageID,
+			scope.OrganizationID,
+			scope.AccountID,
+		)
+		if loadErr != nil {
+			return nil, mapRepoError(loadErr)
+		}
+		if isStoppableMessageStatus(leaf.Status) {
+			messageID = conversation.CurrentLeafMessageID
+		}
+	}
+	if messageID == nil {
 		return &StopConversationResult{Conversation: conversation}, nil
 	}
 
-	message, err := s.StopMessage(ctx, scope, *conversation.ActiveMessageID)
+	message, err := s.StopMessage(ctx, scope, *messageID)
 	if err != nil {
 		return nil, err
 	}

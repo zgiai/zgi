@@ -40,7 +40,7 @@ func mergeWorkflowRun(existing map[string]interface{}, incoming map[string]inter
 			merged["approval"] = workflowApprovalWithStatus(merged["approval"], "expired")
 		case "question_answer":
 			merged["question_answer"] = mergeWorkflowMap(workflowRecordFromAny(merged["question_answer"]), workflowRecordFromAny(value))
-		case "approval_results", "question_answers", "messages":
+		case "approval_results", "question_answers":
 			merged[key] = appendWorkflowRecordList(merged[key], value)
 		default:
 			if preserveTerminalFields && workflowRunTerminalPreservedField(key) {

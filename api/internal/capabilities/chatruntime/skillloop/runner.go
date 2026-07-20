@@ -484,7 +484,9 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 			}
 			if result.answer != "" {
 				appendAnswerText(&answerBuilder, result.answer)
-				r.emitAnswerChunk(ctx, prepared, result.answer, nil)
+				if !result.answerStreamed {
+					r.emitAnswerChunk(ctx, prepared, result.answer, nil)
+				}
 			}
 			if result.pendingUserInput != nil {
 				logger.DebugContext(ctx, "aichat skill planning requested user input",

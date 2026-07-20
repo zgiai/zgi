@@ -2,6 +2,7 @@ package workflow
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"sort"
@@ -24,6 +25,9 @@ const (
 	minTimeoutSeconds     = 30
 	maxTimeoutSeconds     = 1800
 	defaultInputKey       = "query"
+
+	agentRuntimeSourceParameter = "agent_runtime_source"
+	workflowApprovalUIAllowed   = "ui_approval_allowed"
 )
 
 type RunnerProvider func() automationaction.AutomationWorkflowRunner
@@ -89,9 +93,7 @@ func newWorkflowTool(runnerProvider RunnerProvider, kind string) tools.Tool {
 }
 
 func (t *workflowTool) Invoke(ctx context.Context, userID string, params map[string]interface{}, conversationID *string, appID *string, messageID *string) ([]tools.ToolInvokeMessage, error) {
-	_ = conversationID
 	_ = appID
-	_ = messageID
 	runtime := t.Runtime()
 	if runtime == nil || runtime.InvokeFrom != tools.ToolInvokeFromAgent {
 		return nil, fmt.Errorf("%s is only available to Agent skill runtimes", t.kind)
@@ -111,7 +113,7 @@ func (t *workflowTool) Invoke(ctx context.Context, userID string, params map[str
 			"workflows": workflowBindingList(bindings),
 		})
 	case ToolRunAgentWorkflow:
-		return t.runWorkflow(ctx, scope, params, bindings)
+		return t.runWorkflow(ctx, scope, params, bindings, stringPointerValue(conversationID), stringPointerValue(messageID))
 	case ToolGetWorkflowRunStatus:
 		return t.getWorkflowRunStatus(ctx, scope, params, bindings)
 	default:
@@ -134,7 +136,7 @@ func (t *workflowTool) runner() automationaction.AutomationWorkflowRunner {
 	return t.runnerProvider()
 }
 
-func (t *workflowTool) runWorkflow(ctx context.Context, scope workflowScope, params map[string]interface{}, bindings []workflowBinding) ([]tools.ToolInvokeMessage, error) {
+func (t *workflowTool) runWorkflow(ctx context.Context, scope workflowScope, params map[string]interface{}, bindings []workflowBinding, conversationID, messageID string) ([]tools.ToolInvokeMessage, error) {
 	bindingID := strings.TrimSpace(stringValue(params, "binding_id"))
 	if bindingID == "" {
 		return nil, fmt.Errorf("binding_id is required")
@@ -159,7 +161,10 @@ func (t *workflowTool) runWorkflow(ctx context.Context, scope workflowScope, par
 	if err != nil {
 		return nil, err
 	}
-	injectWorkflowContext(inputs, t.Runtime())
+	invocation := workflowInvocationContext(t.Runtime(), binding, conversationID, messageID)
+	if invocation.Mode == automationaction.WorkflowInvocationModeAgentDelegate {
+		injectWorkflowContext(inputs, t.Runtime())
+	}
 	timeout := time.Duration(normalizeTimeoutSeconds(binding.TimeoutSeconds)) * time.Second
 	runReq := automationaction.WorkflowRunRequest{
 		OrganizationID: scope.OrganizationID,
@@ -172,14 +177,32 @@ func (t *workflowTool) runWorkflow(ctx context.Context, scope workflowScope, par
 			VersionStrategy: binding.VersionStrategy,
 			VersionUUID:     binding.VersionUUID,
 		},
-		Inputs:  inputs,
-		Timeout: timeout,
+		Inputs:     inputs,
+		Timeout:    timeout,
+		Invocation: &invocation,
 	}
 	if emitter := workflowevents.FromContext(ctx); emitter != nil {
 		runReq.EventSink = func(event automationaction.WorkflowRunEvent) {
+			if invocation.Mode == automationaction.WorkflowInvocationModeAgentTaskTool && isWorkflowAnswerTransportEvent(event.Type) {
+				return
+			}
+			payload := make(map[string]interface{}, len(event.Payload)+3)
+			for key, value := range event.Payload {
+				payload[key] = value
+			}
+			payload["invocation_id"] = invocation.InvocationID
+			payload["invocation_mode"] = invocation.Mode
+			payload["invocation_protocol_version"] = invocation.ProtocolVersion
+			annotateWorkflowApprovalUIAccess(t.Runtime(), event.Type, payload)
 			emitter(workflowevents.Event{
-				Type:    event.Type,
-				Payload: event.Payload,
+				Type:            event.Type,
+				Payload:         payload,
+				Sequence:        event.Sequence,
+				SchemaVersion:   event.SchemaVersion,
+				PayloadVersion:  event.PayloadVersion,
+				ExecutionID:     event.ExecutionID,
+				PauseID:         event.PauseID,
+				PauseGeneration: event.PauseGeneration,
 			})
 		}
 	}
@@ -192,7 +215,15 @@ func (t *workflowTool) runWorkflow(ctx context.Context, scope workflowScope, par
 		}
 		return jsonMessages(failedWorkflowPayload("", "", "", fmt.Errorf("workflow returned empty result")))
 	}
-	payload := workflowResultPayload(result, runErr, binding)
+	// The invocation identity belongs to the parent Agent turn. Keep it intact
+	// even when a legacy/custom runner has not echoed the new result fields yet.
+	if strings.TrimSpace(result.InvocationID) == "" {
+		result.InvocationID = invocation.InvocationID
+	}
+	if strings.TrimSpace(result.InvocationMode) == "" {
+		result.InvocationMode = invocation.Mode
+	}
+	payload := workflowResultPayload(result, runErr, binding, t.Runtime())
 	return jsonMessages(payload)
 }
 
@@ -234,7 +265,7 @@ func (t *workflowTool) getWorkflowRunStatus(ctx context.Context, scope workflowS
 		if targetScope.AccountID != candidateScope.AccountID {
 			continue
 		}
-		return jsonMessages(workflowStatusPayload(result))
+		return jsonMessages(workflowStatusPayload(result, t.Runtime()))
 	}
 	if lastErr != nil {
 		return nil, lastErr
@@ -242,7 +273,7 @@ func (t *workflowTool) getWorkflowRunStatus(ctx context.Context, scope workflowS
 	return nil, fmt.Errorf("workflow run status is empty")
 }
 
-func workflowResultPayload(result *automationaction.WorkflowRunResult, runErr error, binding workflowBinding) map[string]interface{} {
+func workflowResultPayload(result *automationaction.WorkflowRunResult, runErr error, binding workflowBinding, runtime *tools.ToolRuntime) map[string]interface{} {
 	outputs := safeOutputs(result.Outputs)
 	status := normalizeWorkflowStatus(result.Status, outputs)
 	payload := map[string]interface{}{
@@ -257,9 +288,12 @@ func workflowResultPayload(result *automationaction.WorkflowRunResult, runErr er
 		"primary_output":  primaryWorkflowOutput(outputs),
 		"output_keys":     workflowOutputKeys(outputs),
 		"elapsed_time":    result.ElapsedTime,
+		"invocation_id":   result.InvocationID,
+		"invocation_mode": result.InvocationMode,
 	}
 	if status == "pending_approval" {
 		mergeApprovalFields(payload, result.Outputs)
+		applyWorkflowApprovalExposure(runtime, payload)
 	}
 	if status == "pending_question" {
 		mergeQuestionAnswerFields(payload, result.Outputs)
@@ -271,7 +305,96 @@ func workflowResultPayload(result *automationaction.WorkflowRunResult, runErr er
 	return payload
 }
 
-func workflowStatusPayload(result *automationaction.WorkflowRunStatusResult) map[string]interface{} {
+func workflowInvocationContext(runtime *tools.ToolRuntime, binding workflowBinding, conversationID, messageID string) automationaction.WorkflowInvocationContext {
+	conversationID = firstNonEmptyWorkflowString(conversationID, runtimeStringParameter(runtime, "workflow_parent_conversation_id"))
+	messageID = firstNonEmptyWorkflowString(messageID, runtimeStringParameter(runtime, "workflow_parent_message_id"))
+	toolCallID := runtimeStringParameter(runtime, "workflow_parent_tool_call_id")
+	invocationSeed := strings.Join([]string{messageID, toolCallID, strings.TrimSpace(binding.BindingID)}, ":")
+	if strings.Trim(invocationSeed, ":") == "" {
+		invocationSeed = strings.Join([]string{conversationID, strings.TrimSpace(binding.BindingID), time.Now().UTC().Format(time.RFC3339Nano)}, ":")
+	}
+	invocationID := fmt.Sprintf("%x", sha256.Sum256([]byte(invocationSeed)))
+	mode := automationaction.WorkflowInvocationModeAgentTaskTool
+	var contextSnapshot map[string]interface{}
+	if strings.EqualFold(strings.TrimSpace(binding.AgentType), "CONVERSATIONAL_WORKFLOW") {
+		mode = automationaction.WorkflowInvocationModeAgentDelegate
+		contextSnapshot = workflowRuntimeContextSnapshot(runtime)
+	}
+	return automationaction.WorkflowInvocationContext{
+		InvocationID:         invocationID,
+		ProtocolVersion:      1,
+		Mode:                 mode,
+		ParentConversationID: conversationID,
+		ParentMessageID:      messageID,
+		BindingID:            strings.TrimSpace(binding.BindingID),
+		ContextDigest:        workflowContextDigest(contextSnapshot),
+		ContextSnapshot:      contextSnapshot,
+	}
+}
+
+func isWorkflowAnswerTransportEvent(eventType string) bool {
+	switch strings.TrimSpace(eventType) {
+	case "message", "text_chunk", "text_replace", "message_end":
+		return true
+	default:
+		return false
+	}
+}
+
+func workflowRuntimeContextSnapshot(runtime *tools.ToolRuntime) map[string]interface{} {
+	if runtime == nil || runtime.RuntimeParameters == nil {
+		return nil
+	}
+	contextMap, ok := runtime.RuntimeParameters["workflow_context"].(map[string]interface{})
+	if !ok || len(contextMap) == 0 {
+		return nil
+	}
+	payload, err := json.Marshal(contextMap)
+	if err != nil {
+		return nil
+	}
+	var snapshot map[string]interface{}
+	if err := json.Unmarshal(payload, &snapshot); err != nil {
+		return nil
+	}
+	return snapshot
+}
+
+func workflowContextDigest(snapshot map[string]interface{}) string {
+	if len(snapshot) == 0 {
+		return ""
+	}
+	payload, err := json.Marshal(snapshot)
+	if err != nil {
+		return ""
+	}
+	return fmt.Sprintf("%x", sha256.Sum256(payload))
+}
+
+func runtimeStringParameter(runtime *tools.ToolRuntime, key string) string {
+	if runtime == nil || runtime.RuntimeParameters == nil {
+		return ""
+	}
+	return strings.TrimSpace(fmt.Sprint(runtime.RuntimeParameters[key]))
+}
+
+func firstNonEmptyWorkflowString(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" && trimmed != "<nil>" {
+			return trimmed
+		}
+	}
+	return ""
+}
+
+func stringPointerValue(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return strings.TrimSpace(*value)
+}
+
+func workflowStatusPayload(result *automationaction.WorkflowRunStatusResult, runtime *tools.ToolRuntime) map[string]interface{} {
 	outputs := safeOutputs(result.Outputs)
 	status := normalizeWorkflowStatus(result.Status, outputs)
 	payload := map[string]interface{}{
@@ -289,6 +412,7 @@ func workflowStatusPayload(result *automationaction.WorkflowRunStatusResult) map
 	}
 	if status == "pending_approval" {
 		mergeApprovalFields(payload, result.Outputs)
+		applyWorkflowApprovalExposure(runtime, payload)
 	}
 	if status == "pending_question" {
 		mergeQuestionAnswerFields(payload, result.Outputs)
@@ -405,6 +529,117 @@ func mergeApprovalFields(payload map[string]interface{}, outputs map[string]inte
 	for key, value := range fields {
 		payload[key] = value
 	}
+}
+
+func annotateWorkflowApprovalUIAccess(runtime *tools.ToolRuntime, eventType string, payload map[string]interface{}) {
+	if len(payload) == 0 {
+		return
+	}
+	switch strings.TrimSpace(eventType) {
+	case "approval_requested":
+		applyWorkflowApprovalExposure(runtime, payload)
+	}
+}
+
+func applyWorkflowApprovalExposure(runtime *tools.ToolRuntime, payload map[string]interface{}) {
+	allowed := workflowApprovalUIAccessAllowed(runtime, payload)
+	payload[workflowApprovalUIAllowed] = allowed
+	if allowed {
+		return
+	}
+	redacted, ok := redactWorkflowApprovalCredentials(payload, false).(map[string]interface{})
+	if !ok {
+		return
+	}
+	for key := range payload {
+		delete(payload, key)
+	}
+	for key, value := range redacted {
+		payload[key] = value
+	}
+}
+
+func redactWorkflowApprovalCredentials(value interface{}, inApprovalForm bool) interface{} {
+	switch typed := value.(type) {
+	case map[string]interface{}:
+		redacted := make(map[string]interface{}, len(typed))
+		for key, child := range typed {
+			normalizedKey := strings.ToLower(strings.TrimSpace(key))
+			if normalizedKey == "approval_token" || normalizedKey == "__approval_token" {
+				continue
+			}
+			childIsApprovalForm := inApprovalForm || normalizedKey == "approval_form" || normalizedKey == "__approval_form"
+			if childIsApprovalForm && normalizedKey == "token" {
+				continue
+			}
+			redacted[key] = redactWorkflowApprovalCredentials(child, childIsApprovalForm)
+		}
+		return redacted
+	case []interface{}:
+		redacted := make([]interface{}, len(typed))
+		for index, child := range typed {
+			redacted[index] = redactWorkflowApprovalCredentials(child, inApprovalForm)
+		}
+		return redacted
+	default:
+		return value
+	}
+}
+
+func workflowApprovalUIAccessAllowed(runtime *tools.ToolRuntime, payload map[string]interface{}) bool {
+	switch strings.ToLower(runtimeStringParameter(runtime, agentRuntimeSourceParameter)) {
+	case "console":
+		// Draft preview is an operator/debug surface. It deliberately provides
+		// an inline escape hatch regardless of the workflow delivery channels.
+		return true
+	case "webapp", "external-api":
+		// Published applications must honor the workflow's configured channel.
+		return workflowApprovalWebAppEnabled(payload)
+	default:
+		return false
+	}
+}
+
+func workflowApprovalWebAppEnabled(payload map[string]interface{}) bool {
+	methods, ok := workflowApprovalRecord(payload["submit_methods"])
+	if !ok {
+		if form, formOK := workflowApprovalRecord(payload["approval_form"]); formOK {
+			methods, ok = workflowApprovalRecord(form["submit_methods"])
+		}
+	}
+	if !ok {
+		return false
+	}
+	webApp, ok := workflowApprovalRecord(methods["webapp"])
+	if !ok {
+		return false
+	}
+	enabled, exists := webApp["enabled"]
+	if !exists || enabled == nil {
+		// The workflow approval contract defaults an omitted webapp.enabled to
+		// true for legacy definitions.
+		return true
+	}
+	value, ok := enabled.(bool)
+	return ok && value
+}
+
+func workflowApprovalRecord(value interface{}) (map[string]interface{}, bool) {
+	if value == nil {
+		return nil, false
+	}
+	if record, ok := value.(map[string]interface{}); ok {
+		return record, true
+	}
+	payload, err := json.Marshal(value)
+	if err != nil {
+		return nil, false
+	}
+	var record map[string]interface{}
+	if err := json.Unmarshal(payload, &record); err != nil {
+		return nil, false
+	}
+	return record, true
 }
 
 func findApprovalFields(value interface{}) map[string]interface{} {

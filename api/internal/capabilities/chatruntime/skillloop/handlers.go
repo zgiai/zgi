@@ -560,6 +560,17 @@ func (r *Runner) handleCallSkillTool(
 	}
 	r.emitEvent(EventSkillCallStart, skillCallStartPayload(prepared, skillID, toolName, argumentSummary))
 	if isAgentWorkflowRunTool(skillID, toolName) {
+		execCtx.RuntimeParameters = copyStringAnyMap(execCtx.RuntimeParameters)
+		if execCtx.RuntimeParameters == nil {
+			execCtx.RuntimeParameters = map[string]interface{}{}
+		}
+		parentMessageID := strings.TrimSpace(execCtx.MessageID)
+		if parentMessageID == "" && prepared != nil && prepared.Message != nil {
+			parentMessageID = prepared.Message.ID.String()
+		}
+		execCtx.RuntimeParameters["workflow_parent_tool_call_id"] = strings.TrimSpace(callID)
+		execCtx.RuntimeParameters["workflow_parent_message_id"] = parentMessageID
+		execCtx.RuntimeParameters["workflow_parent_conversation_id"] = strings.TrimSpace(execCtx.ConversationID)
 		ctx = workflowevents.WithEmitter(ctx, func(event workflowevents.Event) {
 			if event.Type == "" {
 				return
@@ -573,6 +584,24 @@ func (r *Runner) handleCallSkillTool(
 			}
 			if prepared != nil && prepared.Message != nil {
 				payload["message_id"] = prepared.Message.ID.String()
+			}
+			if event.Sequence > 0 {
+				payload["sequence"] = event.Sequence
+			}
+			if event.SchemaVersion > 0 {
+				payload["schema_version"] = event.SchemaVersion
+			}
+			if event.PayloadVersion > 0 {
+				payload["payload_version"] = event.PayloadVersion
+			}
+			if event.ExecutionID != "" {
+				payload["execution_id"] = event.ExecutionID
+			}
+			if event.PauseID != "" {
+				payload["pause_id"] = event.PauseID
+			}
+			if event.PauseGeneration > 0 {
+				payload["pause_generation"] = event.PauseGeneration
 			}
 			r.emitEvent(event.Type, payload)
 		})
@@ -665,7 +694,7 @@ func (r *Runner) handleCallSkillTool(
 				result.pendingQuestion = payload
 				return result
 			}
-			if strings.EqualFold(stringFromInterface(payload["agent_type"]), "CONVERSATIONAL_WORKFLOW") &&
+			if agentWorkflowInvocationIsDelegate(payload) &&
 				strings.EqualFold(stringFromInterface(payload["status"]), "succeeded") {
 				answer := strings.TrimSpace(stringFromInterface(payload["primary_output"]))
 				if answer == "" {
@@ -674,6 +703,9 @@ func (r *Runner) handleCallSkillTool(
 				result := terminalSkillStep(invocation.Trace, invocation.ToolMessage, true, true)
 				result.toolResult = guardToolResult
 				result.answer = answer
+				// The workflow event bridge already streamed the delegate answer. Keep
+				// the text for persistence without emitting it again from the Skill Loop.
+				result.answerStreamed = true
 				return result
 			}
 		}
@@ -693,6 +725,14 @@ func (r *Runner) handleCallSkillTool(
 	result := successfulSkillStep(invocation.Trace, invocation.ToolMessage, true, true)
 	result.toolResult = guardToolResult
 	return result
+}
+
+func agentWorkflowInvocationIsDelegate(payload map[string]interface{}) bool {
+	mode := strings.TrimSpace(stringFromInterface(payload["invocation_mode"]))
+	if mode != "" {
+		return strings.EqualFold(mode, "agent_conversation_delegate")
+	}
+	return strings.EqualFold(stringFromInterface(payload["agent_type"]), "CONVERSATIONAL_WORKFLOW")
 }
 
 func normalizeSkillToolCompletionIntent(value string) string {

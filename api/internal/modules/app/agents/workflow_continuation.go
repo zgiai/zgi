@@ -185,7 +185,7 @@ func (h *AgentsHandler) resumeAgentWorkflowApproval(ctx context.Context, scope r
 		if err := approvalService.AppendApprovalResultFilledEvent(ctx, form); err != nil {
 			logger.WarnContext(ctx, "failed to append agent workflow approval result filled event", "form_id", form.ID, err)
 		}
-		return fmt.Errorf("workflow run %s is waiting for additional approvals", continuation.WorkflowRunID)
+		return fmt.Errorf("workflow run %s is waiting for additional interactions", continuation.WorkflowRunID)
 	}
 	return h.workflowContinuationRunner.ResumeApprovalWorkflow(ctx, form)
 }
@@ -208,7 +208,7 @@ func (h *AgentsHandler) resumeAgentWorkflowApprovalStream(ctx context.Context, s
 		if err := approvalService.AppendApprovalResultFilledEvent(ctx, form); err != nil {
 			logger.WarnContext(ctx, "failed to append agent workflow approval result filled event", "form_id", form.ID, err)
 		}
-		return fmt.Errorf("workflow run %s is waiting for additional approvals", continuation.WorkflowRunID)
+		return fmt.Errorf("workflow run %s is waiting for additional interactions", continuation.WorkflowRunID)
 	}
 	return runner.ResumeApprovalWorkflowStream(ctx, form, onEvent)
 }
@@ -218,10 +218,10 @@ func submitAgentWorkflowApprovalForm(ctx context.Context, approvalService *appro
 	if continuation != nil {
 		workflowRunID = continuation.WorkflowRunID
 	}
-	form, err := approvalService.SubmitByTokenForWorkflowRun(ctx, strings.TrimSpace(req.ApprovalToken), workflowRunID, approvalruntime.SubmitRequest{
+	form, err := approvalService.SubmitByTokenForWorkflowRunWithOptions(ctx, strings.TrimSpace(req.ApprovalToken), workflowRunID, approvalruntime.SubmitRequest{
 		Inputs: copyMapForAgentWorkflowContinuation(req.Inputs),
 		Action: strings.TrimSpace(req.Action),
-	}, accountID, nil)
+	}, accountID, nil, agentWorkflowApprovalSubmitOptions(continuation))
 	if err != nil {
 		return nil, mapAgentWorkflowApprovalError(err)
 	}
@@ -231,9 +231,21 @@ func submitAgentWorkflowApprovalForm(ctx context.Context, approvalService *appro
 	return form, nil
 }
 
+func agentWorkflowApprovalSubmitOptions(continuation *runtimeservice.WorkflowApprovalContinuation) approvalruntime.SubmitOptions {
+	requireWebAppChannel := false
+	if continuation != nil {
+		source := strings.ToLower(strings.TrimSpace(continuation.Caller.Source))
+		requireWebAppChannel = source == runtimemodel.ConversationSourceWebApp || source == runtimemodel.ConversationSourceExternalAPI
+	}
+	return approvalruntime.SubmitOptions{RequireWebAppEnabled: requireWebAppChannel}
+}
+
 func mapAgentWorkflowApprovalError(err error) error {
 	if errors.Is(err, approvalruntime.ErrFormNotFound) {
 		return fmt.Errorf("%w: workflow continuation approval form not found", runtimeservice.ErrNotFound)
+	}
+	if errors.Is(err, approvalruntime.ErrWebAppSubmissionDisabled) {
+		return fmt.Errorf("%w: this workflow approval must be completed through its configured approval channel", runtimeservice.ErrInvalidInput)
 	}
 	return err
 }

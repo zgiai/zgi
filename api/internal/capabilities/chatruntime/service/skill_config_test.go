@@ -1149,6 +1149,19 @@ func TestSkillRuntimeParametersForPreparedUsesConversationWorkspaceWhenScopeMiss
 	}
 }
 
+func TestSkillRuntimeParametersForPreparedCarriesServerOwnedAgentSource(t *testing.T) {
+	prepared := &PreparedChat{
+		Scope:     Scope{OrganizationID: uuid.New()},
+		Caller:    Caller{Source: runtimemodel.ConversationSourceWebApp},
+		RunConfig: RunConfig{},
+	}
+
+	params := skillRuntimeParametersForPrepared(prepared)
+	if params["agent_runtime_source"] != runtimemodel.ConversationSourceWebApp {
+		t.Fatalf("agent_runtime_source = %#v, want %s", params["agent_runtime_source"], runtimemodel.ConversationSourceWebApp)
+	}
+}
+
 func TestSkillRuntimeParametersForPreparedDoesNotInferSelectedFileGovernanceAsset(t *testing.T) {
 	prepared := &PreparedChat{
 		Scope:     Scope{OrganizationID: uuid.New()},

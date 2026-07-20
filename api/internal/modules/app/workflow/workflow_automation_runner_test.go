@@ -4,11 +4,40 @@ import (
 	"testing"
 	"time"
 
+	workflowdto "github.com/zgiai/zgi/api/internal/dto"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine/entities"
 	workflowshared "github.com/zgiai/zgi/api/internal/modules/app/workflow/shared"
 	automationaction "github.com/zgiai/zgi/api/internal/modules/automation/service/action"
 )
+
+func TestAutomationWorkflowInputsKeepHostAndWorkflowConversationDomainsSeparate(t *testing.T) {
+	inputs := automationWorkflowInputs(automationaction.WorkflowRunRequest{
+		OrganizationID: "org-1",
+		WorkspaceID:    "workspace-1",
+		AccountID:      "account-1",
+		Inputs:         map[string]interface{}{"query": "hello"},
+		Invocation: &automationaction.WorkflowInvocationContext{
+			InvocationID:         "invocation-1",
+			Mode:                 automationaction.WorkflowInvocationModeAgentDelegate,
+			ParentConversationID: "agent-conversation-1",
+			ParentMessageID:      "agent-message-1",
+		},
+	}, &Workflow{ID: "workflow-1", AgentID: "workflow-agent-1", Type: workflowdto.WorkflowTypeChat})
+
+	if got := inputs["sys.parent_conversation_id"]; got != "agent-conversation-1" {
+		t.Fatalf("sys.parent_conversation_id = %#v, want agent-conversation-1", got)
+	}
+	if _, exists := inputs["sys.conversation_id"]; exists {
+		t.Fatalf("host Agent conversation leaked into workflow conversation domain: %#v", inputs)
+	}
+	if got := inputs["sys.parent_message_id"]; got != "agent-message-1" {
+		t.Fatalf("sys.parent_message_id = %#v, want agent-message-1", got)
+	}
+	if got := inputs["sys.workflow_type"]; got != string(workflowdto.WorkflowTypeChat) {
+		t.Fatalf("sys.workflow_type = %#v, want chat", got)
+	}
+}
 
 func TestAutomationWorkflowOutputsUsesRuntimeOutputs(t *testing.T) {
 	runtimeState := entities.NewGraphRuntimeState(entities.NewVariablePool())

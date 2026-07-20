@@ -1341,6 +1341,14 @@ func skillRuntimeParameters(scope Scope, config RunConfig) map[string]interface{
 
 func skillRuntimeParametersForPrepared(prepared *PreparedChat) map[string]interface{} {
 	params := skillRuntimeParameters(prepared.Scope, prepared.RunConfig)
+	if prepared != nil {
+		if source := strings.TrimSpace(prepared.Caller.Source); source != "" {
+			// Built-in tools use the server-owned conversation source to decide
+			// which interactive capabilities may be exposed to the current UI.
+			// Client requests must never be trusted to provide this value.
+			params["agent_runtime_source"] = source
+		}
+	}
 	if workspaceID := preparedSkillWorkspaceID(prepared); workspaceID != "" {
 		params["workspace_id"] = workspaceID
 	}

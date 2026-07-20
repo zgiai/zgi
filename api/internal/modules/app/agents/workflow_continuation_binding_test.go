@@ -10,9 +10,28 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
 	approvalruntime "github.com/zgiai/zgi/api/internal/modules/app/workflow/approval"
 )
+
+func TestAgentWorkflowApprovalSubmitOptionsEnforceOnlyPublishedWebAppChannel(t *testing.T) {
+	for name, source := range map[string]string{
+		"draft":  runtimemodel.ConversationSourceConsole,
+		"webapp": runtimemodel.ConversationSourceWebApp,
+		"api":    runtimemodel.ConversationSourceExternalAPI,
+	} {
+		t.Run(name, func(t *testing.T) {
+			options := agentWorkflowApprovalSubmitOptions(&runtimeservice.WorkflowApprovalContinuation{
+				Caller: runtimeservice.Caller{Source: source},
+			})
+			wantWebAppChannel := source == runtimemodel.ConversationSourceWebApp || source == runtimemodel.ConversationSourceExternalAPI
+			if options.RequireWebAppEnabled != wantWebAppChannel {
+				t.Fatalf("RequireWebAppEnabled = %v for source %q", options.RequireWebAppEnabled, source)
+			}
+		})
+	}
+}
 
 func TestWorkflowContinuationUnavailableBindingDeniedAcrossAgentSurfaces(t *testing.T) {
 	gin.SetMode(gin.TestMode)

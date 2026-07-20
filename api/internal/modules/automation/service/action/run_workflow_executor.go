@@ -14,11 +14,28 @@ import (
 const (
 	WorkflowVersionStrategyLatestPublished = "latest_published"
 	WorkflowVersionStrategyPinned          = "pinned"
+	WorkflowInvocationModeStandalone       = "standalone"
+	WorkflowInvocationModeAgentDelegate    = "agent_conversation_delegate"
+	WorkflowInvocationModeAgentTaskTool    = "agent_task_tool"
 
 	defaultWorkflowTimeoutSeconds = 600
 	minWorkflowTimeoutSeconds     = 30
 	maxWorkflowTimeoutSeconds     = 1800
 )
+
+// WorkflowInvocationContext identifies the parent runtime that owns an
+// embedded workflow invocation. InvocationID is stable across retries of the
+// same parent tool call and is never supplied by the model or HTTP client.
+type WorkflowInvocationContext struct {
+	InvocationID         string
+	ProtocolVersion      int
+	Mode                 string
+	ParentConversationID string
+	ParentMessageID      string
+	BindingID            string
+	ContextDigest        string
+	ContextSnapshot      map[string]interface{}
+}
 
 // AutomationWorkflowRunner is implemented by the workflow module for automation-triggered runs.
 type AutomationWorkflowRunner interface {
@@ -43,6 +60,7 @@ type WorkflowRunRequest struct {
 	Inputs         map[string]interface{}
 	Timeout        time.Duration
 	EventSink      WorkflowRunEventSink
+	Invocation     *WorkflowInvocationContext
 }
 
 // WorkflowRunEventSink receives normalized workflow run events during an automation-triggered run.
@@ -50,8 +68,14 @@ type WorkflowRunEventSink func(WorkflowRunEvent)
 
 // WorkflowRunEvent is the event contract exposed by automation-triggered workflow runs.
 type WorkflowRunEvent struct {
-	Type    string
-	Payload map[string]interface{}
+	Type            string
+	Payload         map[string]interface{}
+	Sequence        int
+	SchemaVersion   int
+	PayloadVersion  int
+	ExecutionID     string
+	PauseID         string
+	PauseGeneration int64
 }
 
 // WorkflowRef identifies the target workflow and version strategy.
@@ -64,13 +88,15 @@ type WorkflowRef struct {
 
 // WorkflowRunResult captures the workflow execution summary needed by automation.
 type WorkflowRunResult struct {
-	WorkflowRunID string
-	WorkflowID    string
-	AgentID       string
-	Version       string
-	Status        string
-	Outputs       map[string]interface{}
-	ElapsedTime   float64
+	WorkflowRunID  string
+	WorkflowID     string
+	AgentID        string
+	Version        string
+	Status         string
+	Outputs        map[string]interface{}
+	ElapsedTime    float64
+	InvocationID   string
+	InvocationMode string
 }
 
 // WorkflowRunStatusRequest identifies a previously created workflow run.

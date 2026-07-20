@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	runtimedto "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/dto"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/repository"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
@@ -26,15 +27,21 @@ const (
 )
 
 type WorkflowApprovalContinuation struct {
-	ConversationID uuid.UUID
-	MessageID      uuid.UUID
-	WorkflowRunID  string
-	AgentID        string
-	AgentType      string
-	BindingID      string
-	OriginalQuery  string
-	Completed      bool
-	Metadata       map[string]interface{}
+	ConversationID            uuid.UUID
+	MessageID                 uuid.UUID
+	WorkflowRunID             string
+	InvocationID              string
+	InvocationMode            string
+	InvocationProtocolVersion int
+	AgentID                   string
+	AgentType                 string
+	BindingID                 string
+	OriginalQuery             string
+	UIApprovalAllowed         bool
+	Completed                 bool
+	Metadata                  map[string]interface{}
+	Caller                    Caller
+	RunConfig                 RunConfig
 }
 
 type WorkflowContinuationSummaryRequest struct {
@@ -67,6 +74,12 @@ func (s *service) BeginWorkflowApprovalContinuation(ctx context.Context, scope S
 	state.MessageID = message.ID
 	state.OriginalQuery = message.Query
 	state.Metadata = copyStringAnyMap(message.Metadata)
+	state.Caller = caller
+	state.RunConfig = config
+	if message.Status == runtimemodel.MessageStatusWaitingApproval &&
+		!workflowContinuationAllowsInlineApproval(caller, state) {
+		return nil, fmt.Errorf("%w: this workflow approval must be completed through its configured approval channel", ErrInvalidInput)
+	}
 	if message.Status == runtimemodel.MessageStatusCompleted {
 		state.Completed = true
 		return state, nil
@@ -136,6 +149,9 @@ func (s *service) RecordWorkflowApprovalContinuationEvent(ctx context.Context, c
 	if _, ok := eventPayload["workflow_run_id"]; !ok && continuation.WorkflowRunID != "" {
 		eventPayload["workflow_run_id"] = continuation.WorkflowRunID
 	}
+	if !shouldPersistWorkflowRunMetadataEvent(eventType) {
+		return s.AppendWorkflowApprovalContinuationStreamEvent(ctx, continuation, eventType, eventPayload)
+	}
 	metadata := mergeWorkflowRunMetadata(continuation.Metadata, eventType, eventPayload)
 	metadata["agent_workflow_continuation"] = mergeWorkflowMap(
 		workflowRecordFromAny(metadata["agent_workflow_continuation"]),
@@ -146,6 +162,15 @@ func (s *service) RecordWorkflowApprovalContinuationEvent(ctx context.Context, c
 		return nil, err
 	}
 	return s.AppendWorkflowApprovalContinuationStreamEvent(ctx, continuation, eventType, eventPayload)
+}
+
+func shouldPersistWorkflowRunMetadataEvent(eventType string) bool {
+	switch strings.TrimSpace(eventType) {
+	case streamEventMessage, "text_chunk", streamEventMessageEnd:
+		return false
+	default:
+		return true
+	}
 }
 
 func (s *service) AppendWorkflowApprovalContinuationStreamEvent(ctx context.Context, continuation *WorkflowApprovalContinuation, eventType string, payload map[string]interface{}) (*StreamEvent, error) {
@@ -217,6 +242,9 @@ func (s *service) PauseWorkflowApprovalContinuation(ctx context.Context, continu
 func (s *service) SummarizeWorkflowApprovalContinuation(ctx context.Context, scope Scope, continuation *WorkflowApprovalContinuation, req WorkflowContinuationSummaryRequest, onEvent func(StreamEvent) error) (*ChatResult, error) {
 	if continuation == nil || continuation.MessageID == uuid.Nil || continuation.ConversationID == uuid.Nil {
 		return nil, fmt.Errorf("%w: workflow continuation is required", ErrInvalidInput)
+	}
+	if workflowContinuationInvocationMode(continuation) == "agent_task_tool" {
+		return s.continueWorkflowTaskInvocation(ctx, scope, continuation, req, onEvent)
 	}
 	if len(req.Outputs) == 0 {
 		answer := workflowNoDisplayableOutputAnswer(req.WorkflowRunID)
@@ -355,12 +383,170 @@ func (s *service) FailWorkflowApprovalContinuation(ctx context.Context, continua
 func workflowApprovalContinuationFromMetadata(metadata map[string]interface{}) *WorkflowApprovalContinuation {
 	state := workflowRecordFromAny(metadata["agent_workflow_continuation"])
 	return &WorkflowApprovalContinuation{
-		WorkflowRunID: firstNonEmptyString(state["workflow_run_id"]),
-		AgentID:       firstNonEmptyString(state["agent_id"]),
-		AgentType:     firstNonEmptyString(state["agent_type"]),
-		BindingID:     firstNonEmptyString(state["binding_id"]),
-		OriginalQuery: firstNonEmptyString(state["original_query"]),
-		Metadata:      copyStringAnyMap(metadata),
+		WorkflowRunID:             firstNonEmptyString(state["workflow_run_id"]),
+		InvocationID:              firstNonEmptyString(state["invocation_id"]),
+		InvocationMode:            firstNonEmptyString(state["invocation_mode"]),
+		InvocationProtocolVersion: intFromWorkflowContinuation(state["invocation_protocol_version"]),
+		AgentID:                   firstNonEmptyString(state["agent_id"]),
+		AgentType:                 firstNonEmptyString(state["agent_type"]),
+		BindingID:                 firstNonEmptyString(state["binding_id"]),
+		OriginalQuery:             firstNonEmptyString(state["original_query"]),
+		UIApprovalAllowed:         boolFromWorkflowContinuation(state["ui_approval_allowed"]),
+		Metadata:                  copyStringAnyMap(metadata),
+	}
+}
+
+func boolFromWorkflowContinuation(value interface{}) bool {
+	allowed, _ := value.(bool)
+	return allowed
+}
+
+func workflowContinuationAllowsInlineApproval(caller Caller, continuation *WorkflowApprovalContinuation) bool {
+	switch strings.ToLower(strings.TrimSpace(caller.Source)) {
+	case runtimemodel.ConversationSourceConsole:
+		return true
+	case runtimemodel.ConversationSourceWebApp, runtimemodel.ConversationSourceExternalAPI:
+		return continuation != nil && continuation.UIApprovalAllowed
+	default:
+		return false
+	}
+}
+
+func workflowContinuationInvocationMode(continuation *WorkflowApprovalContinuation) string {
+	if continuation == nil {
+		return ""
+	}
+	if mode := strings.ToLower(strings.TrimSpace(continuation.InvocationMode)); mode != "" {
+		return mode
+	}
+	if strings.EqualFold(strings.TrimSpace(continuation.AgentType), "CONVERSATIONAL_WORKFLOW") {
+		return "agent_conversation_delegate"
+	}
+	return "agent_task_tool"
+}
+
+func intFromWorkflowContinuation(value interface{}) int {
+	switch typed := value.(type) {
+	case int:
+		return typed
+	case int64:
+		return int(typed)
+	case float64:
+		return int(typed)
+	default:
+		return 0
+	}
+}
+
+func (s *service) continueWorkflowTaskInvocation(ctx context.Context, scope Scope, continuation *WorkflowApprovalContinuation, req WorkflowContinuationSummaryRequest, onEvent func(StreamEvent) error) (*ChatResult, error) {
+	conversation, err := s.repos.Conversation.GetScoped(ctx, continuation.ConversationID, scope.OrganizationID, scope.AccountID)
+	if err != nil {
+		return nil, mapRepoError(err)
+	}
+	message, err := s.repos.Message.GetScoped(ctx, continuation.MessageID, scope.OrganizationID, scope.AccountID)
+	if err != nil {
+		return nil, mapRepoError(err)
+	}
+	if message.ConversationID != conversation.ID {
+		return nil, fmt.Errorf("%w: message belongs to another conversation", ErrInvalidInput)
+	}
+
+	prepared, err := s.prepareWorkflowTaskContinuationChat(ctx, scope, continuation, conversation, message, req)
+	if err != nil {
+		return nil, err
+	}
+	execution, err := s.beginRuntimeExecution(ctx, message.ID)
+	if err != nil {
+		return nil, err
+	}
+	defer execution.Finish()
+	runCtx := execution.Context
+	persistCtx := execution.PersistContext
+	if s.streams.IsStopped(message.ID, execution.runID) {
+		_ = s.persistStoppedAnswer(persistCtx, prepared, "", nil)
+		return nil, ErrMessageStopped
+	}
+
+	answer, usage, err := s.runPreparedToolLoop(runCtx, persistCtx, prepared, nil, onEvent)
+	if err != nil {
+		return s.finishUserInputContinuationPendingOrError(persistCtx, prepared, answer, usage, err, onEvent)
+	}
+	if s.streams.IsStopped(message.ID, execution.runID) {
+		_ = s.persistStoppedAnswer(persistCtx, prepared, answer, usage)
+		return nil, ErrMessageStopped
+	}
+	metadata := preparedResultMetadataForPrepared(prepared, prepared.Message.Metadata, usage)
+	continuation.Metadata = metadata
+	metadata, err = s.CompleteWorkflowApprovalContinuation(persistCtx, continuation, answer, workflowContinuationStatusCompleted)
+	if err != nil {
+		return nil, finalizedRuntimePersistenceError(err)
+	}
+	return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, Status: runtimemodel.MessageStatusCompleted}, nil
+}
+
+func (s *service) prepareWorkflowTaskContinuationChat(ctx context.Context, scope Scope, continuation *WorkflowApprovalContinuation, conversation *runtimemodel.Conversation, message *runtimemodel.Message, req WorkflowContinuationSummaryRequest) (*PreparedChat, error) {
+	regenerateReq := applyRunConfigToRegenerateRequest(continuation.RunConfig, runtimedto.RegenerateMessageRequest{})
+	parts, err := normalizeRegenerateRequest(regenerateReq, message)
+	if err != nil {
+		return nil, err
+	}
+	applyRunConfigToParts(continuation.RunConfig, parts)
+	applyCallerRuntimeSurfacePolicy(continuation.Caller, parts)
+	applyPersistedConversationSurface(conversation, parts)
+	restoreExecutionModeFromMetadata(parts, message.Metadata)
+	restoreConsoleFilesContextFromMetadata(parts, message.Metadata, nil)
+	restoreConsoleAgentsContextFromMetadata(parts, message.Metadata, nil)
+	restoreTurnInitialContextFromMetadata(parts, message.Metadata)
+	restoreCurrentPageContextFromMetadata(parts, message.Metadata)
+	parts.Attachments = attachmentBundleFromMessageMetadata(message.Metadata)
+	if err := s.applyModelCapabilities(ctx, scope, continuation.Caller, parts); err != nil {
+		return nil, err
+	}
+	applyProtocolToolsPolicy(continuation.Caller, parts)
+	applyManagedUserMemoryPolicy(continuation.Caller, parts)
+	if err := s.applySkillConfig(ctx, scope, continuation.Caller, &continuation.RunConfig, parts); err != nil {
+		return nil, err
+	}
+	contextResult, err := s.buildUpstreamMessages(ctx, scope, message.ParentID, parts)
+	if err != nil {
+		return nil, err
+	}
+	parts.ContextControl = contextResult.Metadata
+	llmRequest := newLLMChatRequest(parts, contextResult.Messages)
+	if stateMessage := currentTurnAuthoritativeStateMessage(message); stateMessage != nil {
+		llmRequest.Messages = append(llmRequest.Messages, *stateMessage)
+	}
+	llmRequest.Messages = append(llmRequest.Messages, continuationMessageForExecutionMode(workflowTaskContinuationMessage(continuation, req), parts.ExecutionMode))
+	return &PreparedChat{
+		Conversation:     conversation,
+		Message:          message,
+		LLMRequest:       llmRequest,
+		Scope:            scope,
+		Caller:           continuation.Caller,
+		RunConfig:        continuation.RunConfig,
+		ParentID:         message.ParentID,
+		Continuation:     true,
+		ContinuationType: "agent_workflow_task",
+		parts:            parts,
+	}, nil
+}
+
+func workflowTaskContinuationMessage(continuation *WorkflowApprovalContinuation, req WorkflowContinuationSummaryRequest) adapter.Message {
+	payload := map[string]interface{}{
+		"invocation_id":   continuation.InvocationID,
+		"workflow_run_id": firstNonEmptyString(req.WorkflowRunID, continuation.WorkflowRunID),
+		"status":          strings.TrimSpace(req.Status),
+		"outputs":         req.Outputs,
+		"error":           strings.TrimSpace(req.Error),
+	}
+	return adapter.Message{
+		Role: "user",
+		Content: strings.Join([]string{
+			"The task workflow tool invocation for this same Agent turn has reached a terminal state.",
+			"Treat the JSON below as authoritative tool evidence. Continue the original Agent plan from this result; do not rerun the same workflow invocation.",
+			"You may answer the user if the task is complete, or use other already-authorized tools when the original request still requires work.",
+			"Workflow task result JSON:\n" + compactJSONForPrompt(payload, 24000),
+		}, "\n"),
 	}
 }
 

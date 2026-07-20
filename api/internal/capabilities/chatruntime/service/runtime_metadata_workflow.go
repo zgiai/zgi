@@ -13,7 +13,7 @@ import (
 )
 
 func (s *service) persistWorkflowRunEventBestEffort(ctx context.Context, prepared *PreparedChat, eventType string, payload map[string]interface{}) {
-	if prepared == nil || prepared.Message == nil || len(payload) == 0 {
+	if prepared == nil || prepared.Message == nil || len(payload) == 0 || !shouldPersistWorkflowRunMetadataEvent(eventType) {
 		return
 	}
 	metadata := mergeWorkflowRunMetadata(prepared.Message.Metadata, eventType, payload)
@@ -44,16 +44,20 @@ func (s *service) persistWorkflowApprovalPendingResult(ctx context.Context, prep
 	metadata := mergeWorkflowRunMetadata(prepared.Message.Metadata, "approval_requested", pendingPayload)
 	metadata = preparedResultMetadataForPrepared(prepared, metadata, usage)
 	metadata["agent_workflow_continuation"] = compactWorkflowRun(map[string]interface{}{
-		"status":          "waiting_approval",
-		"workflow_run_id": firstNonEmptyString(pendingPayload["workflow_run_id"]),
-		"workflow_id":     firstNonEmptyString(pendingPayload["workflow_id"]),
-		"agent_id":        firstNonEmptyString(pendingPayload["agent_id"]),
-		"agent_type":      firstNonEmptyString(pendingPayload["agent_type"]),
-		"binding_id":      firstNonEmptyString(pendingPayload["binding_id"]),
-		"original_query":  prepared.Message.Query,
-		"approval_token":  firstNonEmptyString(pendingPayload["approval_token"]),
-		"approval_url":    firstNonEmptyString(pendingPayload["approval_url"]),
-		"resume_policy":   "same_message",
+		"status":                      "waiting_approval",
+		"workflow_run_id":             firstNonEmptyString(pendingPayload["workflow_run_id"]),
+		"workflow_id":                 firstNonEmptyString(pendingPayload["workflow_id"]),
+		"agent_id":                    firstNonEmptyString(pendingPayload["agent_id"]),
+		"agent_type":                  firstNonEmptyString(pendingPayload["agent_type"]),
+		"invocation_id":               firstNonEmptyString(pendingPayload["invocation_id"]),
+		"invocation_mode":             firstNonEmptyString(pendingPayload["invocation_mode"]),
+		"invocation_protocol_version": pendingPayload["invocation_protocol_version"],
+		"binding_id":                  firstNonEmptyString(pendingPayload["binding_id"]),
+		"original_query":              prepared.Message.Query,
+		"approval_token":              firstNonEmptyString(pendingPayload["approval_token"]),
+		"approval_url":                firstNonEmptyString(pendingPayload["approval_url"]),
+		"ui_approval_allowed":         pendingPayload["ui_approval_allowed"],
+		"resume_policy":               "same_message",
 	})
 	prepared.Message.Metadata = metadata
 	if s == nil || s.repos == nil || s.repos.Message == nil || s.repos.Conversation == nil {
@@ -92,14 +96,17 @@ func (s *service) persistWorkflowQuestionPendingResult(ctx context.Context, prep
 	metadata = mergeWorkflowRunMetadata(metadata, "question_answer_requested", pendingPayload)
 	metadata = preparedResultMetadataForPrepared(prepared, metadata, usage)
 	metadata["agent_workflow_continuation"] = compactWorkflowRun(map[string]interface{}{
-		"status":          "waiting_question",
-		"workflow_run_id": firstNonEmptyString(pendingPayload["workflow_run_id"]),
-		"workflow_id":     firstNonEmptyString(pendingPayload["workflow_id"]),
-		"agent_id":        firstNonEmptyString(pendingPayload["agent_id"]),
-		"agent_type":      firstNonEmptyString(pendingPayload["agent_type"]),
-		"binding_id":      firstNonEmptyString(pendingPayload["binding_id"]),
-		"original_query":  prepared.Message.Query,
-		"resume_policy":   "same_message",
+		"status":                      "waiting_question",
+		"workflow_run_id":             firstNonEmptyString(pendingPayload["workflow_run_id"]),
+		"workflow_id":                 firstNonEmptyString(pendingPayload["workflow_id"]),
+		"agent_id":                    firstNonEmptyString(pendingPayload["agent_id"]),
+		"agent_type":                  firstNonEmptyString(pendingPayload["agent_type"]),
+		"invocation_id":               firstNonEmptyString(pendingPayload["invocation_id"]),
+		"invocation_mode":             firstNonEmptyString(pendingPayload["invocation_mode"]),
+		"invocation_protocol_version": pendingPayload["invocation_protocol_version"],
+		"binding_id":                  firstNonEmptyString(pendingPayload["binding_id"]),
+		"original_query":              prepared.Message.Query,
+		"resume_policy":               "same_message",
 	})
 	if request := workflowQuestionUserInputRequest(prepared.Conversation.ID.String(), prepared.Message.ID.String(), pendingPayload); len(request) > 0 {
 		metadata["user_input_request"] = request
@@ -137,6 +144,7 @@ func mergeWorkflowRunMetadata(source map[string]interface{}, eventType string, p
 	metadata["has_trace"] = true
 	metadata["workflow_runs"] = workflowRunsToInterfaceSlice(runs)
 	metadata["workflow_run_count"] = len(runs)
+	mergeWorkflowInvocationMetadata(metadata, run)
 	return metadata
 }
 
@@ -149,7 +157,8 @@ func workflowRunFromEvent(eventType string, payload map[string]interface{}) map[
 		"workflow_run_id": runID,
 		"status":          workflowRunStatusFromEvent(eventType, payload),
 	}
-	copyWorkflowFields(run, payload, "workflow_id", "agent_id", "version", "inputs", "outputs", "elapsed_time", "error", "created_at")
+	copyWorkflowFields(run, payload, "workflow_id", "agent_id", "version", "inputs", "outputs", "elapsed_time", "error", "created_at",
+		"invocation_id", "invocation_mode", "invocation_protocol_version", "binding_id", "sequence", "schema_version", "payload_version", "execution_id")
 	if createdAt := workflowCreatedAt(payload); createdAt != nil {
 		run["created_at"] = createdAt
 	}
@@ -169,9 +178,6 @@ func workflowRunFromEvent(eventType string, payload map[string]interface{}) map[
 		run["question_answer"] = question
 		run["question_answers"] = []interface{}{question}
 	}
-	if message := workflowMessageFromEvent(eventType, payload); len(message) > 0 {
-		run["messages"] = []interface{}{message}
-	}
 	switch strings.TrimSpace(eventType) {
 	case "node_started":
 		run["nodes"] = workflowNodesForEvent(payload, false)
@@ -190,6 +196,42 @@ func workflowRunFromEvent(eventType string, payload map[string]interface{}) map[
 		}
 	}
 	return compactWorkflowRun(run)
+}
+
+func mergeWorkflowInvocationMetadata(metadata map[string]interface{}, run map[string]interface{}) {
+	invocationID := firstNonEmptyString(run["invocation_id"])
+	if invocationID == "" {
+		return
+	}
+	incoming := compactWorkflowRun(map[string]interface{}{
+		"version":         1,
+		"invocation_id":   invocationID,
+		"invocation_mode": run["invocation_mode"],
+		"binding_id":      run["binding_id"],
+		"workflow_run_id": run["workflow_run_id"],
+		"workflow_id":     run["workflow_id"],
+		"agent_id":        run["agent_id"],
+		"status":          run["status"],
+		"sequence":        run["sequence"],
+		"execution_id":    run["execution_id"],
+		"schema_version":  run["schema_version"],
+		"payload_version": run["payload_version"],
+	})
+	items, _ := metadata["workflow_invocations"].([]interface{})
+	for index, item := range items {
+		existing, ok := item.(map[string]interface{})
+		if !ok || firstNonEmptyString(existing["invocation_id"]) != invocationID {
+			continue
+		}
+		merged := copyStringAnyMap(existing)
+		for key, value := range incoming {
+			merged[key] = value
+		}
+		items[index] = compactWorkflowRun(merged)
+		metadata["workflow_invocations"] = items
+		return
+	}
+	metadata["workflow_invocations"] = append(items, incoming)
 }
 
 func workflowNodesForEvent(payload map[string]interface{}, finished bool) []interface{} {
@@ -471,7 +513,7 @@ func workflowContainerNodeWithChild(nodeType string, nodeID string, indexValue i
 
 func workflowApprovalFromEvent(payload map[string]interface{}) map[string]interface{} {
 	approval := map[string]interface{}{}
-	copyWorkflowFields(approval, payload, "approval_form_id", "approval_token", "approval_url", "approval_form")
+	copyWorkflowFields(approval, payload, "approval_form_id", "approval_token", "approval_url", "approval_form", "ui_approval_allowed")
 	return compactWorkflowRun(approval)
 }
 
@@ -504,17 +546,6 @@ func workflowQuestionAnswerFromEvent(eventType string, payload map[string]interf
 	question := map[string]interface{}{}
 	copyWorkflowFields(question, payload, "node_id", "node_title", "question", "round", "choices", "answer", "choice_id", "choice_label", "choice_value")
 	return compactWorkflowRun(question)
-}
-
-func workflowMessageFromEvent(eventType string, payload map[string]interface{}) map[string]interface{} {
-	switch strings.TrimSpace(eventType) {
-	case "message", "text_chunk", "message_end":
-	default:
-		return nil
-	}
-	message := map[string]interface{}{"event": strings.TrimSpace(eventType)}
-	copyWorkflowFields(message, payload, "answer", "text", "data", "metadata", "created_at")
-	return compactWorkflowRun(message)
 }
 
 func workflowQuestionUserInputRequest(conversationID, messageID string, payload map[string]interface{}) map[string]interface{} {

@@ -175,6 +175,109 @@ func TestRunAgentWorkflowMapsQueryToTaskWorkflowStartInput(t *testing.T) {
 	}
 }
 
+func TestRunAgentWorkflowUsesTaskInvocationWithoutConversationHistory(t *testing.T) {
+	runner := &fakeWorkflowRunner{}
+	runtimeTool := workflowRuntimeToolWithBinding(t, ToolRunAgentWorkflow, runner, map[string]interface{}{
+		"binding_id": "task-flow", "agent_id": "agent-1", "workflow_id": "workflow-1",
+		"agent_type": "WORKFLOW", "version_strategy": "latest_published",
+	})
+	conversationID := "conversation-1"
+	messageID := "message-1"
+	_, err := runtimeTool.Invoke(context.Background(), "caller-1", map[string]interface{}{
+		"binding_id": "task-flow", "inputs": map[string]interface{}{"query": "run task"},
+	}, &conversationID, nil, &messageID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runner.lastReq.Invocation == nil || runner.lastReq.Invocation.Mode != automationaction.WorkflowInvocationModeAgentTaskTool {
+		t.Fatalf("invocation = %#v, want task tool mode", runner.lastReq.Invocation)
+	}
+	if runner.lastReq.Invocation.ParentConversationID != conversationID || runner.lastReq.Invocation.ParentMessageID != messageID {
+		t.Fatalf("invocation parent = %#v", runner.lastReq.Invocation)
+	}
+	if _, exists := runner.lastReq.Inputs["sys.conversation_history"]; exists {
+		t.Fatalf("task workflow received conversation history: %#v", runner.lastReq.Inputs)
+	}
+}
+
+func TestRunAgentWorkflowDelegatesConversationWithStableInvocationAndDurableEnvelope(t *testing.T) {
+	runner := &fakeWorkflowRunner{emitEvents: []automationaction.WorkflowRunEvent{{
+		Type: "node_started", Payload: map[string]interface{}{"workflow_run_id": "run-1", "node_id": "node-1"},
+		Sequence: 7, SchemaVersion: 2, PayloadVersion: 1, ExecutionID: "execution-1",
+	}}}
+	provider := NewProvider(func() automationaction.AutomationWorkflowRunner { return runner })
+	tool, err := provider.GetTool(ToolRunAgentWorkflow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtimeTool := tool.ForkToolRuntime(&tools.ToolRuntime{
+		TenantID: "workspace-1", InvokeFrom: tools.ToolInvokeFromAgent,
+		RuntimeParameters: map[string]interface{}{
+			"organization_id": "org-1", "workspace_id": "workspace-1",
+			"workflow_parent_tool_call_id": "tool-call-1",
+			"workflow_context":             map[string]interface{}{"conversation_history": []interface{}{"hello", "world"}},
+			"workflow_bindings": []map[string]interface{}{{
+				"binding_id": "chat-flow", "agent_id": "agent-1", "workflow_id": "workflow-1",
+				"agent_type": "CONVERSATIONAL_WORKFLOW", "version_strategy": "latest_published",
+			}},
+		},
+	})
+	conversationID := "conversation-1"
+	messageID := "message-1"
+	var events []workflowevents.Event
+	ctx := workflowevents.WithEmitter(context.Background(), func(event workflowevents.Event) { events = append(events, event) })
+	invoke := func() string {
+		_, invokeErr := runtimeTool.Invoke(ctx, "caller-1", map[string]interface{}{
+			"binding_id": "chat-flow", "inputs": map[string]interface{}{"query": "continue"},
+		}, &conversationID, nil, &messageID)
+		if invokeErr != nil {
+			t.Fatal(invokeErr)
+		}
+		return runner.lastReq.Invocation.InvocationID
+	}
+	firstInvocationID := invoke()
+	secondInvocationID := invoke()
+	if firstInvocationID == "" || firstInvocationID != secondInvocationID {
+		t.Fatalf("invocation IDs = %q, %q, want stable non-empty value", firstInvocationID, secondInvocationID)
+	}
+	if runner.lastReq.Invocation.Mode != automationaction.WorkflowInvocationModeAgentDelegate {
+		t.Fatalf("invocation mode = %q", runner.lastReq.Invocation.Mode)
+	}
+	if history, ok := runner.lastReq.Inputs["sys.conversation_history"].([]interface{}); !ok || len(history) != 2 {
+		t.Fatalf("conversation history = %#v", runner.lastReq.Inputs["sys.conversation_history"])
+	}
+	if len(events) == 0 || events[0].Sequence != 7 || events[0].SchemaVersion != 2 || events[0].ExecutionID != "execution-1" {
+		t.Fatalf("workflow events = %#v, want durable envelope", events)
+	}
+	if events[0].Payload["invocation_id"] != firstInvocationID || events[0].Payload["invocation_mode"] != automationaction.WorkflowInvocationModeAgentDelegate {
+		t.Fatalf("workflow event invocation = %#v", events[0].Payload)
+	}
+}
+
+func TestRunAgentTaskWorkflowDoesNotRelayAnswerTransportEvents(t *testing.T) {
+	runner := &fakeWorkflowRunner{emitEvents: []automationaction.WorkflowRunEvent{
+		{Type: "message", Payload: map[string]interface{}{"answer": "internal"}, Sequence: 1},
+		{Type: "node_finished", Payload: map[string]interface{}{"node_id": "node-1"}, Sequence: 2},
+	}}
+	runtimeTool := workflowRuntimeToolWithBinding(t, ToolRunAgentWorkflow, runner, map[string]interface{}{
+		"binding_id": "task-flow", "agent_id": "agent-1", "workflow_id": "workflow-1",
+		"agent_type": "WORKFLOW", "version_strategy": "latest_published",
+	})
+	var events []workflowevents.Event
+	ctx := workflowevents.WithEmitter(context.Background(), func(event workflowevents.Event) { events = append(events, event) })
+	conversationID := "conversation-1"
+	messageID := "message-1"
+	_, err := runtimeTool.Invoke(ctx, "caller-1", map[string]interface{}{
+		"binding_id": "task-flow", "inputs": map[string]interface{}{"query": "run"},
+	}, &conversationID, nil, &messageID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 1 || events[0].Type != "node_finished" || events[0].Sequence != 2 {
+		t.Fatalf("events = %#v, want only node_finished", events)
+	}
+}
+
 func TestListAgentWorkflowsReturnsStartInputSchema(t *testing.T) {
 	runtimeTool := workflowRuntimeToolWithBinding(t, ToolListAgentWorkflows, &fakeWorkflowRunner{}, map[string]interface{}{
 		"binding_id":        "task-flow",
@@ -242,6 +345,89 @@ func TestRunAgentWorkflowReturnsPendingApprovalFields(t *testing.T) {
 	}
 	if payload["approval_form"] == nil {
 		t.Fatalf("payload = %#v, want approval_form", payload)
+	}
+}
+
+func TestWorkflowApprovalUIAccessFollowsAgentSurfaceAndWorkflowChannel(t *testing.T) {
+	disabledPayload := map[string]interface{}{
+		"approval_form": map[string]interface{}{
+			"submit_methods": map[string]interface{}{
+				"webapp": map[string]interface{}{"enabled": false},
+			},
+		},
+	}
+	consoleRuntime := &tools.ToolRuntime{RuntimeParameters: map[string]interface{}{
+		agentRuntimeSourceParameter: "console",
+	}}
+	if !workflowApprovalUIAccessAllowed(consoleRuntime, disabledPayload) {
+		t.Fatal("Agent draft preview should allow inline approval regardless of workflow channel")
+	}
+
+	webAppRuntime := &tools.ToolRuntime{RuntimeParameters: map[string]interface{}{
+		agentRuntimeSourceParameter: "webapp",
+	}}
+	if workflowApprovalUIAccessAllowed(webAppRuntime, disabledPayload) {
+		t.Fatal("Agent WebApp should not allow inline approval when workflow webapp channel is disabled")
+	}
+	enabledPayload := map[string]interface{}{
+		"submit_methods": map[string]interface{}{
+			"webapp": map[string]interface{}{"enabled": true},
+		},
+	}
+	if !workflowApprovalUIAccessAllowed(webAppRuntime, enabledPayload) {
+		t.Fatal("Agent WebApp should allow inline approval when workflow webapp channel is enabled")
+	}
+
+	externalAPIRuntime := &tools.ToolRuntime{RuntimeParameters: map[string]interface{}{
+		agentRuntimeSourceParameter: "external-api",
+	}}
+	if workflowApprovalUIAccessAllowed(externalAPIRuntime, disabledPayload) {
+		t.Fatal("Agent external API should not allow inline approval when workflow webapp channel is disabled")
+	}
+	if !workflowApprovalUIAccessAllowed(externalAPIRuntime, enabledPayload) {
+		t.Fatal("Agent external API should allow inline approval when workflow webapp channel is enabled")
+	}
+}
+
+func TestApplyWorkflowApprovalExposureRedactsCredentialsWhenUIApprovalIsUnavailable(t *testing.T) {
+	payload := map[string]interface{}{
+		"approval_token": "top-secret",
+		"approval_form": map[string]interface{}{
+			"id":    "form-1",
+			"token": "form-secret",
+		},
+		"outputs": map[string]interface{}{
+			"__approval_token": "nested-secret",
+			"__approval_form": map[string]interface{}{
+				"id":    "form-1",
+				"token": "nested-form-secret",
+			},
+		},
+	}
+	applyWorkflowApprovalExposure(&tools.ToolRuntime{RuntimeParameters: map[string]interface{}{
+		agentRuntimeSourceParameter: "external-api",
+	}}, payload)
+
+	if allowed, _ := payload[workflowApprovalUIAllowed].(bool); allowed {
+		t.Fatalf("ui approval allowed = true, want false: %#v", payload)
+	}
+	if _, exists := payload["approval_token"]; exists {
+		t.Fatalf("top-level approval token was exposed: %#v", payload)
+	}
+	form := payload["approval_form"].(map[string]interface{})
+	if form["id"] != "form-1" {
+		t.Fatalf("approval form identity was removed: %#v", form)
+	}
+	if _, exists := form["token"]; exists {
+		t.Fatalf("approval form token was exposed: %#v", form)
+	}
+	outputs := payload["outputs"].(map[string]interface{})
+	if _, exists := outputs["__approval_token"]; exists {
+		t.Fatalf("nested approval token was exposed: %#v", outputs)
+	}
+	nestedForm := outputs["__approval_form"].(map[string]interface{})
+	if _, exists := nestedForm["token"]; exists {
+		t.Fatalf("nested approval form token was exposed: %#v", nestedForm)
 	}
 }
 
@@ -410,6 +596,7 @@ func workflowRuntimeToolWithBinding(t *testing.T, name string, runner *fakeWorkf
 		RuntimeParameters: map[string]interface{}{
 			"organization_id":              "org-1",
 			"workspace_id":                 "workspace-1",
+			agentRuntimeSourceParameter:    "console",
 			"workflow_bound_by_account_id": "binder-1",
 			"workflow_bindings": []map[string]interface{}{
 				binding,

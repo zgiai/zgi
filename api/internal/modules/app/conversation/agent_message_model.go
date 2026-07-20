@@ -56,6 +56,8 @@ type AgentMessage struct {
 	AgentBased              bool       `gorm:"not null;default:false" json:"agent_based"`
 	WorkflowRunID           *uuid.UUID `gorm:"type:uuid;index:agents_message_workflow_run_id_idx" json:"workflow_run_id"`
 	WebAppID                *string    `gorm:"type:uuid" json:"web_app_id"` // Track which web application was used
+	ProjectionRevision      int64      `gorm:"not null;default:0" json:"projection_revision"`
+	ExecutionGeneration     int64      `gorm:"not null;default:0" json:"execution_generation"`
 
 	// Relationships
 	Conversation *AgentConversation `gorm:"foreignKey:ConversationID;references:ID" json:"conversation,omitempty"`

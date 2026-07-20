@@ -1,6 +1,11 @@
 package agents
 
-import "testing"
+import (
+	"testing"
+
+	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
+	workflowpause "github.com/zgiai/zgi/api/internal/modules/app/workflow/pause"
+)
 
 func TestShouldSummarizeAgentWorkflowContinuation(t *testing.T) {
 	tests := []struct {
@@ -49,7 +54,7 @@ func TestShouldSummarizeAgentWorkflowContinuation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := shouldSummarizeAgentWorkflowContinuation(tt.agentType, tt.status, tt.outputs)
+			got := shouldSummarizeAgentWorkflowContinuation(&runtimeservice.WorkflowApprovalContinuation{AgentType: tt.agentType}, tt.status, tt.outputs)
 			if got != tt.want {
 				t.Fatalf("shouldSummarizeAgentWorkflowContinuation() = %v, want %v", got, tt.want)
 			}
@@ -79,5 +84,75 @@ func TestAgentWorkflowRunLogTerminal(t *testing.T) {
 		if agentWorkflowRunLogTerminal(status) {
 			t.Fatalf("agentWorkflowRunLogTerminal(%q) = true, want false", status)
 		}
+	}
+}
+
+func TestAgentWorkflowContinuationMessageChunkPreservesWhitespace(t *testing.T) {
+	for _, testCase := range []struct {
+		name    string
+		payload map[string]interface{}
+		want    string
+	}{
+		{name: "newline chunk", payload: map[string]interface{}{"answer": "\n"}, want: "\n"},
+		{name: "surrounding whitespace", payload: map[string]interface{}{"text": "  hello\n"}, want: "  hello\n"},
+		{name: "nested text", payload: map[string]interface{}{"data": map[string]interface{}{"text": "\nnext"}}, want: "\nnext"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			if got := agentWorkflowContinuationMessageChunk(testCase.payload); got != testCase.want {
+				t.Fatalf("agentWorkflowContinuationMessageChunk() = %q, want %q", got, testCase.want)
+			}
+		})
+	}
+}
+
+func TestAgentWorkflowContinuationFinalPassthroughAnswerPrefersWorkflowOutput(t *testing.T) {
+	got, ok := agentWorkflowContinuationFinalPassthroughAnswer(
+		map[string]interface{}{"answer": "first line\n\nsecond line\n"},
+		"first linesecond line",
+		true,
+	)
+	if !ok || got != "first line\n\nsecond line\n" {
+		t.Fatalf("final passthrough answer = %q ok=%v, want authoritative workflow output", got, ok)
+	}
+
+	got, ok = agentWorkflowContinuationFinalPassthroughAnswer(nil, "fallback\nanswer", true)
+	if !ok || got != "fallback\nanswer" {
+		t.Fatalf("fallback passthrough answer = %q ok=%v, want streamed fallback", got, ok)
+	}
+}
+
+func TestAgentWorkflowContinuationModePrefersPersistedInvocationMode(t *testing.T) {
+	continuation := &runtimeservice.WorkflowApprovalContinuation{
+		AgentType:      "CONVERSATIONAL_WORKFLOW",
+		InvocationMode: "agent_task_tool",
+	}
+	if got := agentWorkflowContinuationMode(continuation); got != "agent_task_tool" {
+		t.Fatalf("agentWorkflowContinuationMode() = %q, want persisted task mode", got)
+	}
+	if isAgentWorkflowPassthroughMessageEvent("message", continuation) {
+		t.Fatal("task workflow answer transport must not be projected as the agent answer")
+	}
+}
+
+func TestAgentWorkflowContinuationRelaysWorkflowResumed(t *testing.T) {
+	if got := agentWorkflowContinuationEventType(workflowpause.EventWorkflowResumed); got != workflowpause.EventWorkflowResumed {
+		t.Fatalf("agentWorkflowContinuationEventType(workflow_resumed) = %q", got)
+	}
+}
+
+func TestAgentWorkflowContinuationStreamStateAppliesReplacement(t *testing.T) {
+	state := &agentWorkflowContinuationStreamState{}
+	state.apply(agentWorkflowContinuationDrainResult{
+		HasWorkflowMessage:  true,
+		WorkflowMessageText: "old answer",
+	})
+	state.apply(agentWorkflowContinuationDrainResult{
+		HasWorkflowMessage:     true,
+		WorkflowMessageReplace: true,
+		WorkflowMessageText:    "authoritative answer\n",
+	})
+
+	if state.WorkflowMessageText != "authoritative answer\n" {
+		t.Fatalf("replacement answer = %q", state.WorkflowMessageText)
 	}
 }

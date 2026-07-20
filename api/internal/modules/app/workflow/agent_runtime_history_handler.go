@@ -69,6 +69,10 @@ func (h *AgentHistoryDispatchHandler) GetWorkflowRunNodeExecutions(c *gin.Contex
 		response.Fail(c, response.ErrNotFound)
 		return
 	}
+	if h.workflowRuntime != nil {
+		h.workflowRuntime.GetWorkflowRunNodeLogs(c)
+		return
+	}
 	h.workflowRuns.GetWorkflowRunNodeExecutions(c)
 }
 
@@ -415,6 +419,7 @@ func buildRuntimeConversationListItem(conversation *runtimemodel.Conversation) A
 		Annotated:          false,
 		ModelConfig:        runtimeConversationModelConfig(conversation.Metadata),
 		MessageCount:       conversation.DialogueCount,
+		RuntimeStatus:      "idle",
 		UserFeedbackStats:  defaultAgentConversationStats(),
 		AdminFeedbackStats: defaultAgentConversationStats(),
 	}
@@ -438,6 +443,7 @@ func buildRuntimeConversationDetailResponse(conversation *runtimemodel.Conversat
 		Introduction:       nil,
 		ModelConfig:        runtimeConversationModelConfig(conversation.Metadata),
 		MessageCount:       conversation.DialogueCount,
+		RuntimeStatus:      "idle",
 		UserFeedbackStats:  defaultAgentConversationStats(),
 		AdminFeedbackStats: defaultAgentConversationStats(),
 	}
