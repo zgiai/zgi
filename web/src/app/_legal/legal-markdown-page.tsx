@@ -3,6 +3,7 @@ import path from 'node:path';
 import ReactMarkdown from 'react-markdown';
 import type { Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { remarkSoftBreaks } from '@/utils/markdown-soft-breaks';
 
 type LegalDocument = 'privacy' | 'terms';
 
@@ -83,7 +84,7 @@ export default async function LegalMarkdownPage({ document }: LegalMarkdownPageP
 
   return (
     <main className="md-page">
-      <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+      <ReactMarkdown remarkPlugins={[remarkGfm, remarkSoftBreaks]} components={markdownComponents}>
         {markdown}
       </ReactMarkdown>
     </main>

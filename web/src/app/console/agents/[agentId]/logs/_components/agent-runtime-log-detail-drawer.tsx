@@ -481,12 +481,6 @@ function WorkflowApprovalCards({
             <div className="flex flex-wrap items-start justify-between gap-2">
               <div className="min-w-0">
                 <div className="truncate text-sm font-semibold">{title}</div>
-                <div className="mt-1 truncate text-xs text-muted-foreground">
-                  {stringValue(approval.approval_form_id) ??
-                    stringValue(request.approval_form_id) ??
-                    stringValue(form.id) ??
-                    '-'}
-                </div>
               </div>
               <RunStatusBadge status={status} />
             </div>
