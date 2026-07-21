@@ -4,6 +4,7 @@
 package service
 
 import (
+	"path/filepath"
 	"strings"
 
 	aichatmodel "github.com/zgiai/zgi/api/internal/modules/aichat/model"
@@ -20,17 +21,44 @@ func hydrateMessageGeneratedFileURLs(message *aichatmodel.Message) {
 	if message == nil || len(message.Metadata) == 0 {
 		return
 	}
+	metadata := copyStringAnyMap(message.Metadata)
+	changed := false
+
 	files := generatedFilesFromMetadata(message.Metadata["generated_files"])
-	if len(files) == 0 {
-		return
+	if len(files) > 0 {
+		metadata["generated_files"] = hydrateGeneratedFileURLs(files)
+		changed = true
 	}
+
+	if hydrateImageGenerationFileURLs(metadata) {
+		changed = true
+	}
+	if changed {
+		message.Metadata = metadata
+	}
+}
+
+func hydrateImageGenerationFileURLs(metadata map[string]interface{}) bool {
+	imageGeneration, ok := metadata["image_generation"].(map[string]interface{})
+	if !ok {
+		return false
+	}
+	files := generatedFilesFromMetadata(imageGeneration["files"])
+	if len(files) == 0 {
+		return false
+	}
+	hydrated := copyStringAnyMap(imageGeneration)
+	hydrated["files"] = hydrateGeneratedFileURLs(files)
+	metadata["image_generation"] = hydrated
+	return true
+}
+
+func hydrateGeneratedFileURLs(files []map[string]interface{}) []map[string]interface{} {
 	hydrated := make([]map[string]interface{}, 0, len(files))
 	for _, file := range files {
 		hydrated = append(hydrated, hydrateGeneratedFileURL(file))
 	}
-	metadata := copyStringAnyMap(message.Metadata)
-	metadata["generated_files"] = hydrated
-	message.Metadata = metadata
+	return hydrated
 }
 
 func hydrateGeneratedFileURL(file map[string]interface{}) map[string]interface{} {
@@ -40,7 +68,7 @@ func hydrateGeneratedFileURL(file map[string]interface{}) map[string]interface{}
 		return hydrated
 	}
 	fileID := firstNonEmptyString(hydrated["file_id"])
-	extension := normalizedFileExtension(hydrated["extension"])
+	extension := generatedFileExtension(hydrated)
 	if fileID == "" || extension == "" {
 		return hydrated
 	}
@@ -51,6 +79,19 @@ func hydrateGeneratedFileURL(file map[string]interface{}) map[string]interface{}
 	hydrated["url"] = url
 	hydrated["download_url"] = appendDownloadQuery(url)
 	return hydrated
+}
+
+func generatedFileExtension(file map[string]interface{}) string {
+	if file == nil {
+		return ""
+	}
+	if extension := normalizedFileExtension(file["extension"]); extension != "" {
+		return extension
+	}
+	if extension := normalizedFileExtension(filepath.Ext(stringFromAny(file["filename"]))); extension != "" {
+		return extension
+	}
+	return extensionFromMIMEType(file["mime_type"])
 }
 
 func hydrateStreamEventGeneratedFileURL(event StreamEvent) StreamEvent {
@@ -112,4 +153,17 @@ func normalizedFileExtension(value interface{}) string {
 		return extension
 	}
 	return "." + extension
+}
+
+func extensionFromMIMEType(value interface{}) string {
+	switch strings.ToLower(strings.TrimSpace(stringFromAny(value))) {
+	case "image/png":
+		return ".png"
+	case "image/jpeg", "image/jpg":
+		return ".jpg"
+	case "image/webp":
+		return ".webp"
+	default:
+		return ""
+	}
 }

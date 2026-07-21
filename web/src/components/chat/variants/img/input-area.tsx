@@ -6,6 +6,8 @@ import { cn } from '@/lib/utils';
 import { useT } from '@/i18n/translations';
 import { SettingsToolbar, type ImageSettings, type ImageSettingsPatch } from './settings-toolbar';
 import { ModelSelector, type ModelSelectorValue } from '@/components/common/model-selector';
+import type { ImageRuntimeModel } from '@/services/types/image-runtime';
+import type { ModelItem } from '@/services/types/model';
 
 interface InputAreaProps {
   input: string;
@@ -16,6 +18,9 @@ interface InputAreaProps {
   setSettings: (settings: ImageSettingsPatch) => void;
   modelSelectorValue?: ModelSelectorValue;
   onModelChange?: (value: ModelSelectorValue) => void;
+  imageRuntimeModels?: ImageRuntimeModel[];
+  ratioOptions?: string[];
+  countOptions?: number[];
   topNotice?: React.ReactNode;
 }
 
@@ -28,10 +33,17 @@ export function InputArea({
   setSettings,
   modelSelectorValue,
   onModelChange,
+  imageRuntimeModels,
+  ratioOptions,
+  countOptions,
   topNotice,
 }: InputAreaProps) {
   const t = useT('webapp');
   const textareaRef = React.useRef<HTMLTextAreaElement>(null);
+  const imageRuntimeModelItems = React.useMemo(
+    () => imageRuntimeModels?.map(mapImageRuntimeModelToModelItem),
+    [imageRuntimeModels]
+  );
 
   const adjustHeight = React.useCallback(() => {
     const textarea = textareaRef.current;
@@ -87,18 +99,24 @@ export function InputArea({
       {/* Toolbar */}
       <div className="flex items-end justify-between gap-2 px-1 sm:px-2 pt-2">
         <div className="flex items-center gap-2 min-w-0 flex-1 flex-wrap">
-          {onModelChange && (
+          {onModelChange ? (
             <div className="w-[140px] sm:w-[180px] shrink-0">
               <ModelSelector
                 modelType="image-gen"
                 value={modelSelectorValue}
                 onChange={onModelChange}
+                modelsOverride={imageRuntimeModelItems}
                 className="h-[26px] rounded-md border-border/50 bg-background px-2 text-xs font-medium hover:bg-muted/40 hover:border-border shadow-sm"
                 showCapabilities={false}
               />
             </div>
-          )}
-          <SettingsToolbar onSettingsChange={setSettings} initialSettings={settings} />
+          ) : null}
+          <SettingsToolbar
+            onSettingsChange={setSettings}
+            initialSettings={settings}
+            ratioOptions={ratioOptions}
+            countOptions={countOptions}
+          />
         </div>
 
         <div className="flex items-center gap-1 shrink-0">
@@ -119,4 +137,43 @@ export function InputArea({
       </div>
     </div>
   );
+}
+
+function mapImageRuntimeModelToModelItem(item: ImageRuntimeModel): ModelItem {
+  const now = Math.floor(Date.now() / 1000);
+  const label = item.model_label || item.model;
+
+  return {
+    id: `${item.provider}/${item.model}`,
+    provider: item.provider,
+    model: item.model,
+    model_name: label,
+    family: item.model,
+    family_name: label,
+    status: 'active',
+    tagline: '',
+    is_flagship: false,
+    is_recommended: false,
+    is_featured: false,
+    is_new: false,
+    access_type: 'open',
+    currency: '',
+    input_price: 0,
+    output_price: 0,
+    context_window: 0,
+    max_output_tokens: 0,
+    endpoints: { image: true },
+    features: {},
+    tools: {},
+    use_cases: ['image-gen'],
+    input_modalities: ['text'],
+    output_modalities: ['image'],
+    is_enabled: true,
+    is_available: true,
+    is_configured: true,
+    callable: true,
+    tier: '',
+    created_at: now,
+    updated_at: now,
+  };
 }

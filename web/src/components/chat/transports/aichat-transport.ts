@@ -440,7 +440,10 @@ export class AIChatTransport implements AIChatRuntimeTransport {
     limit: number;
     surface?: AIChatRuntimeSurface;
   }): Promise<AIChatConversationListResult> {
-    const response = await aichatService.listConversations(params);
+    const response = await aichatService.listConversations({
+      ...params,
+      conversation_type: 'chat',
+    });
 
     return {
       items: response.data.data,
@@ -455,7 +458,7 @@ export class AIChatTransport implements AIChatRuntimeTransport {
 
   async getConversation(conversationId: string): Promise<AIChatConversationDetail> {
     const [conversationResponse, messageList] = await Promise.all([
-      aichatService.getConversation(conversationId),
+      aichatService.getConversation(conversationId, 'chat'),
       this.listMessages(conversationId, {
         page: 1,
         limit: DEFAULT_AICHAT_MESSAGE_PAGINATION.limit,
@@ -490,7 +493,7 @@ export class AIChatTransport implements AIChatRuntimeTransport {
   }
 
   async refreshConversation(conversationId: string): Promise<AIChatConversation> {
-    const response = await aichatService.getConversation(conversationId);
+    const response = await aichatService.getConversation(conversationId, 'chat');
     return response.data;
   }
 
@@ -515,7 +518,10 @@ export class AIChatTransport implements AIChatRuntimeTransport {
     limit: number,
     options?: { surface?: AIChatRuntimeSurface }
   ): Promise<ConversationSearchResult[]> {
-    const response = await aichatService.search(query, limit, { surface: options?.surface });
+    const response = await aichatService.search(query, limit, {
+      surface: options?.surface,
+      conversation_type: 'chat',
+    });
     return (response.data ?? []).map(mapAIChatSearchResult);
   }
 

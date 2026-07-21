@@ -6,12 +6,32 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Button } from '@/components/ui/button';
 import WorkflowRunMonitor from '@/components/chat/ui/workflow-run-monitor';
 import { Bot, Copy, Loader } from 'lucide-react';
+import { ModelIcon } from 'modelicons';
 import { useT } from '@/i18n';
 import { isSensitiveOutputBlockedValue } from '@/utils/model-output-filter';
 import {
   normalizeQuestionAnswerTranscript,
   QuestionAnswerTranscript,
 } from '@/components/workflow/question-answer/question-answer-transcript';
+
+function stringValue(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function numberValue(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+function formatMessageTime(timestamp: number): string {
+  if (!timestamp) return '';
+  const date = new Date(timestamp * 1000);
+  return new Intl.DateTimeFormat(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(date);
+}
 
 interface MessageItemProps {
   message: Message;
@@ -67,6 +87,17 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
   const hasAddon = Boolean(messageAddon);
   const generatedImages = useMemo(() => message.generatedImages || [], [message.generatedImages]);
   const hasImages = generatedImages.length > 0;
+  const imageModelLabel =
+    stringValue(message.messageData?.model_label) ||
+    stringValue(message.model?.modelName) ||
+    stringValue(message.messageData?.model_name);
+  const imageModelName =
+    stringValue(message.messageData?.model_name) ||
+    stringValue(message.model?.rawModelName) ||
+    imageModelLabel ||
+    'unknown';
+  const imageCreatedAt = numberValue(message.messageData?.created_at);
+  const imageCreatedAtText = imageCreatedAt ? formatMessageTime(imageCreatedAt) : '';
 
   const isClientLoading = useMemo(() => {
     const phase = message.clientState?.phase ?? 'idle';
@@ -200,24 +231,33 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
             ) : null}
 
             {hasImages && (
-              <div className="mt-4 grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4">
-                {generatedImages.map((img, idx) => (
-                  <div
-                    key={idx}
-                    className="relative aspect-square overflow-hidden rounded-lg border bg-muted group"
-                  >
-                    {img.isLoading ? (
-                      <Skeleton className="h-full w-full" />
-                    ) : (
-                      <MarkdownImage
-                        src={img.url}
-                        alt={img.alt || `Generated image ${idx + 1}`}
-                        className="w-full h-full flex [&>div]:w-full [&>div]:h-full"
-                        imageClassName="w-full h-full object-cover transition-all group-hover:scale-105 max-h-none"
-                      />
-                    )}
-                  </div>
-                ))}
+              <div className="mt-4">
+                <div className="mb-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                  <span className="inline-flex size-6 items-center justify-center rounded-full border bg-background">
+                    <ModelIcon model={imageModelName} size={24} />
+                  </span>
+                  {imageModelLabel ? <span>{imageModelLabel}</span> : null}
+                  {imageCreatedAtText ? <span>{imageCreatedAtText}</span> : null}
+                </div>
+                <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4">
+                  {generatedImages.map((img, idx) => (
+                    <div
+                      key={idx}
+                      className="relative aspect-square overflow-hidden rounded-lg border bg-muted group"
+                    >
+                      {img.isLoading ? (
+                        <Skeleton className="h-full w-full" />
+                      ) : (
+                        <MarkdownImage
+                          src={img.url}
+                          alt={img.alt || `Generated image ${idx + 1}`}
+                          className="w-full h-full flex [&>div]:w-full [&>div]:h-full"
+                          imageClassName="w-full h-full object-cover transition-all group-hover:scale-105 max-h-none"
+                        />
+                      )}
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
 
@@ -260,6 +300,11 @@ const MessageItem = memo(MessageItemComponent, (prev, next) => {
       next.message.messageData?.questionAnswerTranscript &&
     prev.message.messageData?.metadata === next.message.messageData?.metadata;
   const sameImages = prev.message.generatedImages === next.message.generatedImages;
+  const sameImageHeader =
+    prev.message.model === next.message.model &&
+    prev.message.messageData?.model_label === next.message.messageData?.model_label &&
+    prev.message.messageData?.model_name === next.message.messageData?.model_name &&
+    prev.message.messageData?.created_at === next.message.messageData?.created_at;
   // If node counts are equal, shallow-compare the tail where updates are most frequent
   let sameNodesTail = true;
   if (sameNodeLen && nextNodes.length > 0) {
@@ -275,6 +320,7 @@ const MessageItem = memo(MessageItemComponent, (prev, next) => {
     sameClientPhase &&
     sameSensitiveBlocked &&
     sameQuestionAnswerTranscript &&
+    sameImageHeader &&
     sameNodeLen &&
     sameNodesTail &&
     sameImages &&

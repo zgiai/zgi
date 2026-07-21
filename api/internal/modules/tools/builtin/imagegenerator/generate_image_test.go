@@ -3,8 +3,6 @@ package imagegenerator
 import (
 	"context"
 	"encoding/base64"
-	"net/http"
-	"net/http/httptest"
 	"net/url"
 	"os"
 	"strings"
@@ -308,14 +306,9 @@ func TestEditImageUsesReferenceImageInPrompt(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-func TestGenerateImageRejectsNonImageURLResult(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/html")
-		_, _ = w.Write([]byte("<html>not an image</html>"))
-	}))
-	defer server.Close()
-
-	llm := &fakeImageLLMClient{response: &adapter.ImageResponse{Data: []adapter.ImageItem{{URL: server.URL}}}}
+func TestGenerateImageRejectsNonImageResult(t *testing.T) {
+	encoded := base64.StdEncoding.EncodeToString([]byte("<html>not an image</html>"))
+	llm := &fakeImageLLMClient{response: &adapter.ImageResponse{Data: []adapter.ImageItem{{B64JSON: encoded}}}}
 	tool := NewGenerateImageTool("tenant-1", &fakeGenerationFileService{}, llm, &fakeImageModels{})
 	_, err := tool.Invoke(context.Background(), "user-1", map[string]interface{}{
 		"prompt": "A small icon",

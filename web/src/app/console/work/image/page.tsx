@@ -3,10 +3,8 @@
 import * as React from 'react';
 import { SysImage } from '@/components/chat/variants/img/sys-image';
 import { SingleChatController } from '@/components/chat/controllers/single-chat-controller';
-import { useBuiltInWorkflows } from '@/hooks/workflow/use-built-in-workflows';
-import { useWebappConversationTransport } from '@/hooks/webapp/use-webapp-transport';
-import { useAvailableModels } from '@/hooks/model/use-model';
-import { useInitializeDefaultModelByUseCase } from '@/hooks/model/use-default-model-by-use-case';
+import { useImageRuntimeModels, IMAGE_RUNTIME_KEYS } from '@/hooks/image-runtime/use-image-runtime-models';
+import { useImageRuntimeTransport } from '@/hooks/image-runtime/use-image-runtime-transport';
 import { useCurrentUser } from '@/store/auth-store';
 import { getLastSelectedAiModel, saveLastSelectedAiModel } from '@/utils/ui-local';
 import type { ModelSelectorParameterValue } from '@/components/common/model-selector/model-selector-parameter';
@@ -17,7 +15,6 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Button } from '@/components/ui/button';
 import { AlertCircle, RefreshCw } from 'lucide-react';
 import { useT } from '@/i18n/translations';
-import { WorkflowPrecheckWarningBanner } from '@/components/workflow/common/workflow-precheck-warning';
 
 interface ImageInitializationErrorProps {
   type: 'load-failed' | 'config-missing';
@@ -74,23 +71,15 @@ function ImageInitializationError({ type, isRetrying, onRetry }: ImageInitializa
 function ImagePageContent() {
   const t = useT('webapp');
   const {
-    imageGenChatWorkflow,
     isLoading,
     isFetching,
-    error: workflowError,
-    refetch: refetchBuiltInWorkflows,
-  } = useBuiltInWorkflows();
-  const webAppId = imageGenChatWorkflow?.web_app_id;
+    error: modelsError,
+    refetch: refetchModels,
+    models: imageRuntimeModels,
+  } = useImageRuntimeModels();
   const user = useCurrentUser();
   const router = useRouter();
   const searchParams = useSearchParams();
-  const {
-    models: availableImageModels,
-    isLoading: isLoadingAvailableImageModels,
-    error: availableImageModelsError,
-  } = useAvailableModels({
-    use_case: 'image-gen',
-  });
 
   // Model config state - initialize from saved preference
   const [modelSelectorValue, setModelSelectorValue] = React.useState<ModelSelectorParameterValue>(
@@ -102,20 +91,6 @@ function ImagePageContent() {
         : { provider: '', model: '', params: {} };
     }
   );
-
-  // Apply default model when loaded (only if no saved preference)
-  useInitializeDefaultModelByUseCase({
-    useCase: 'image-gen',
-    currentModel: modelSelectorValue,
-    enabled: Boolean(user?.id && !getLastSelectedAiModel(user.id, 'imageGenChat')),
-    onInitialize: v => {
-      setModelSelectorValue({
-        provider: v.provider,
-        model: v.model,
-        params: v.params,
-      });
-    },
-  });
 
   const handleModelChange = React.useCallback(
     (value: { provider: string; model: string }) => {
@@ -136,16 +111,16 @@ function ImagePageContent() {
   );
 
   React.useEffect(() => {
-    if (isLoadingAvailableImageModels || availableImageModelsError || !modelSelectorValue.model) {
+    if (isLoading || modelsError) {
       return;
     }
 
-    const currentModelStillAvailable = availableImageModels.some(
+    const currentModelStillAvailable = imageRuntimeModels.some(
       item => item.provider === modelSelectorValue.provider && item.model === modelSelectorValue.model
     );
-    if (currentModelStillAvailable) return;
+    if (currentModelStillAvailable && modelSelectorValue.model) return;
 
-    const fallback = availableImageModels[0];
+    const fallback = imageRuntimeModels[0];
     if (!fallback) return;
 
     setModelSelectorValue(prev => ({
@@ -161,23 +136,21 @@ function ImagePageContent() {
       });
     }
   }, [
-    availableImageModels,
-    availableImageModelsError,
-    isLoadingAvailableImageModels,
+    imageRuntimeModels,
+    isLoading,
+    modelsError,
     modelSelectorValue.model,
     modelSelectorValue.provider,
     user?.id,
   ]);
 
-  const { transport, precheckWarnings } = useWebappConversationTransport(webAppId ?? '', {
-    enablePrecheck: true,
-  });
+  const { transport } = useImageRuntimeTransport({ models: imageRuntimeModels });
 
   // Use a ref to store the controller instance to prevent unnecessary re-instantiation
   const controllerRef = React.useRef<SingleChatController | null>(null);
 
   const controller = React.useMemo(() => {
-    if (!webAppId) return null;
+    if (modelsError || imageRuntimeModels.length === 0) return null;
 
     if (controllerRef.current) {
       return controllerRef.current;
@@ -186,7 +159,7 @@ function ImagePageContent() {
     const ctrl = new SingleChatController(transport);
     controllerRef.current = ctrl;
     return ctrl;
-  }, [webAppId]); // Only recreate if webAppId changes
+  }, [imageRuntimeModels.length, modelsError, transport]);
 
   // Effect to update transport when it changes
   React.useEffect(() => {
@@ -246,10 +219,10 @@ function ImagePageContent() {
   if (!controller) {
     return (
       <ImageInitializationError
-        type={workflowError ? 'load-failed' : 'config-missing'}
+        type={modelsError ? 'load-failed' : 'config-missing'}
         isRetrying={isFetching}
         onRetry={() => {
-          void refetchBuiltInWorkflows();
+          void refetchModels();
         }}
       />
     );
@@ -262,16 +235,8 @@ function ImagePageContent() {
         isLoading={isLoading}
         modelSelectorValue={modelSelectorValue}
         onModelChange={handleModelChange}
-        conversationSearchKey={['webapp', 'conversations', webAppId ?? 'image', 'search']}
-        inputTopNotice={
-          precheckWarnings.length > 0 ? (
-            <WorkflowPrecheckWarningBanner
-              warnings={precheckWarnings}
-              scope="webapp"
-              storageKey={`console-image-chat:${webAppId ?? 'image'}`}
-            />
-          ) : null
-        }
+        conversationSearchKey={IMAGE_RUNTIME_KEYS.search}
+        imageRuntimeModels={imageRuntimeModels}
       />
     </div>
   );

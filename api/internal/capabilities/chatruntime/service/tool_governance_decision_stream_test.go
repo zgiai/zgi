@@ -2063,7 +2063,7 @@ func (r *toolGovernanceStreamConversationRepo) GetScoped(context.Context, uuid.U
 	return r.conversation, nil
 }
 
-func (r *toolGovernanceStreamConversationRepo) GetByCallerScoped(_ context.Context, _ uuid.UUID, _ uuid.UUID, _ uuid.UUID, _ string, _ *uuid.UUID) (*runtimemodel.Conversation, error) {
+func (r *toolGovernanceStreamConversationRepo) GetByCallerScoped(_ context.Context, _ uuid.UUID, _ uuid.UUID, _ uuid.UUID, _ string, _ *uuid.UUID, _ string) (*runtimemodel.Conversation, error) {
 	return r.conversation, nil
 }
 

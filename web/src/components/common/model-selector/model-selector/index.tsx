@@ -54,6 +54,8 @@ export interface ModelSelectorProps {
   defaultValue?: ModelSelectorValue;
   /** Controlled full model props of the current selection. */
   modelProps?: ModelSelectorModelProps | null;
+  /** Optional model list supplied by a caller that owns the model source. */
+  modelsOverride?: ModelItem[];
   /** Callback to notify full model props on selection change. */
   onModelPropsChange?: (props: ModelSelectorModelProps | null) => void;
   /** Filter models by capability requirements. Multiple capabilities can be required. */
@@ -109,6 +111,7 @@ export function ModelSelector({
   collapsible = true,
   defaultValue,
   modelProps,
+  modelsOverride,
   onModelPropsChange,
   capabilityFilter,
   hasError = false,
@@ -184,9 +187,13 @@ export function ModelSelector({
   );
 
   // Fetch available models with use_case filter (non-paginated, non-expiring)
-  const { models, isLoading, isFetching, refetch } = useAvailableModels({
+  const availableModelsQuery = useAvailableModels({
     use_case: availabilityUseCase ?? modelType,
   });
+  const models = modelsOverride ?? availableModelsQuery.models;
+  const isLoading = modelsOverride ? false : availableModelsQuery.isLoading;
+  const isFetching = modelsOverride ? false : availableModelsQuery.isFetching;
+  const refetch = availableModelsQuery.refetch;
 
   // Apply capability filtering
   const filteredModelsByCapability = useMemo(() => {
