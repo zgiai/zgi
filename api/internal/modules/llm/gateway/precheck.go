@@ -193,14 +193,12 @@ func (s *llmGatewayServiceImpl) evaluateCandidateRouteWarnings(ctx context.Conte
 	if upstreamUnavailable != nil {
 		warnings = append(warnings, *upstreamUnavailable)
 	}
-	upstreamLow, err := s.allCandidateUpstreamBalancesLow(ctx, organizationID, routes)
+	upstreamLow, err := s.candidateUpstreamBalanceLowWarning(ctx, organizationID, routes)
 	if err != nil {
 		return false, nil, err
 	}
-	if upstreamLow {
-		warnings = append(warnings, AppModelRouteWarning{
-			Kind: AppModelRouteWarningKindPrivateChannelUpstreamBalanceLow,
-		})
+	if upstreamLow != nil {
+		warnings = append(warnings, *upstreamLow)
 	}
 	if len(warnings) == 0 {
 		return true, nil, nil
@@ -282,33 +280,57 @@ func (s *llmGatewayServiceImpl) candidateUpstreamUnavailableWarning(
 	}, nil
 }
 
-func (s *llmGatewayServiceImpl) allCandidateUpstreamBalancesLow(
+func (s *llmGatewayServiceImpl) candidateUpstreamBalanceLowWarning(
 	ctx context.Context,
 	organizationID uuid.UUID,
 	routes []*channelmodel.LLMRoute,
-) (bool, error) {
+) (*AppModelRouteWarning, error) {
 	if s.upstreamState == nil || len(routes) == 0 {
-		return false, nil
+		return nil, nil
 	}
 	credentialIDs := make([]uuid.UUID, 0, len(routes))
+	candidateCount := 0
 	for _, route := range routes {
-		if route == nil || isOfficialRoute(route) || route.CredentialID == nil {
-			return false, nil
+		if route == nil {
+			continue
+		}
+		candidateCount++
+		if isOfficialRoute(route) || route.CredentialID == nil {
+			continue
 		}
 		credentialIDs = append(credentialIDs, *route.CredentialID)
 	}
+	if candidateCount == 0 || len(credentialIDs) == 0 {
+		return nil, nil
+	}
 	states, err := s.upstreamState.GetMany(ctx, organizationID, credentialIDs)
 	if err != nil {
-		return false, err
+		return nil, err
 	}
 	now := time.Now()
-	for _, credentialID := range credentialIDs {
-		state := states[credentialID]
-		if state == nil || upstreamstate.IsStale(state, now) || !upstreamstate.IsLow(state) {
-			return false, nil
+	affectedCount := 0
+	for _, route := range routes {
+		if route == nil || isOfficialRoute(route) || route.CredentialID == nil {
+			continue
 		}
+		state := states[*route.CredentialID]
+		if state == nil || upstreamstate.IsStale(state, now) || !upstreamstate.IsLow(state) {
+			continue
+		}
+		affectedCount++
 	}
-	return len(credentialIDs) > 0, nil
+	if affectedCount == 0 {
+		return nil, nil
+	}
+
+	scope := AppModelRouteWarningScopePartial
+	if affectedCount == candidateCount {
+		scope = AppModelRouteWarningScopeAll
+	}
+	return &AppModelRouteWarning{
+		Kind:  AppModelRouteWarningKindPrivateChannelUpstreamBalanceLow,
+		Scope: scope,
+	}, nil
 }
 
 func summarizeCandidateRouteWarnings(states []candidateRouteWarningState) []AppModelRouteWarning {

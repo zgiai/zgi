@@ -1345,7 +1345,7 @@ func TestActivateUpstreamProbeAcquiresLeaseAtAttempt(t *testing.T) {
 	}
 }
 
-func TestAllCandidateUpstreamBalancesLowRequiresEveryCandidate(t *testing.T) {
+func TestCandidateUpstreamBalanceLowWarningReportsPartialAndAllScope(t *testing.T) {
 	db := openGatewayUpstreamGuardDB(t)
 	organizationID := uuid.New()
 	observedAt := time.Now()
@@ -1378,12 +1378,12 @@ func TestAllCandidateUpstreamBalancesLowRequiresEveryCandidate(t *testing.T) {
 	}
 	svc := &llmGatewayServiceImpl{upstreamState: upstreamstate.NewService(db, stubCryptoService{})}
 
-	allLow, err := svc.allCandidateUpstreamBalancesLow(context.Background(), organizationID, routes)
+	warning, err := svc.candidateUpstreamBalanceLowWarning(context.Background(), organizationID, routes)
 	if err != nil {
-		t.Fatalf("allCandidateUpstreamBalancesLow() error = %v", err)
+		t.Fatalf("candidateUpstreamBalanceLowWarning() error = %v", err)
 	}
-	if !allLow {
-		t.Fatal("allCandidateUpstreamBalancesLow() = false, want true")
+	if warning == nil || warning.Scope != AppModelRouteWarningScopeAll {
+		t.Fatalf("warning = %#v, want all scope", warning)
 	}
 
 	if err := db.Model(&upstreamstate.State{}).
@@ -1391,21 +1391,21 @@ func TestAllCandidateUpstreamBalancesLowRequiresEveryCandidate(t *testing.T) {
 		Update("balance_snapshot", `{"scope":"account_balance","items":[{"currency":"USD","remaining":"8"}]}`).Error; err != nil {
 		t.Fatalf("raise second balance: %v", err)
 	}
-	allLow, err = svc.allCandidateUpstreamBalancesLow(context.Background(), organizationID, routes)
+	warning, err = svc.candidateUpstreamBalanceLowWarning(context.Background(), organizationID, routes)
 	if err != nil {
-		t.Fatalf("allCandidateUpstreamBalancesLow() error = %v", err)
+		t.Fatalf("candidateUpstreamBalanceLowWarning() error = %v", err)
 	}
-	if allLow {
-		t.Fatal("allCandidateUpstreamBalancesLow() = true with one healthy candidate")
+	if warning == nil || warning.Scope != AppModelRouteWarningScopePartial {
+		t.Fatalf("warning = %#v, want partial scope with one healthy candidate", warning)
 	}
 
 	official := &channelmodel.LLMRoute{ID: uuid.New(), OrganizationID: organizationID, Type: shared.RouteTypeZGICloud, IsOfficial: true}
-	allLow, err = svc.allCandidateUpstreamBalancesLow(context.Background(), organizationID, append(routes, official))
+	warning, err = svc.candidateUpstreamBalanceLowWarning(context.Background(), organizationID, append(routes, official))
 	if err != nil {
-		t.Fatalf("allCandidateUpstreamBalancesLow(mixed) error = %v", err)
+		t.Fatalf("candidateUpstreamBalanceLowWarning(mixed) error = %v", err)
 	}
-	if allLow {
-		t.Fatal("allCandidateUpstreamBalancesLow() = true with official candidate")
+	if warning == nil || warning.Scope != AppModelRouteWarningScopePartial {
+		t.Fatalf("warning = %#v, want partial scope with official candidate", warning)
 	}
 }
 
