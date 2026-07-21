@@ -37,6 +37,10 @@ func NewModuleWithDependencies(
 	agentMemoryService *agentmemory.Service,
 	skillRuntimes ...*skills.Runtime,
 ) *Module {
+	modelPrechecker, ok := llmClient.(llmclient.AppModelPrechecker)
+	if !ok {
+		panic("aichat requires app model prechecker")
+	}
 	repos := repository.NewRepositories(db)
 	var titleGenerator titlegen.Service
 	if defaultModelSvc != nil {
@@ -70,7 +74,7 @@ func NewModuleWithDependencies(
 		logger.Warn("failed to cleanup expired aichat skill import previews", err)
 	}
 	return &Module{
-		Handler: handler.NewHandler(svc),
+		Handler: handler.NewHandler(svc, modelPrechecker),
 		Service: svc,
 	}
 }

@@ -949,6 +949,85 @@ func TestPrepareCandidateRoutes_GuardLetsFourthHealthyRouteFillAttemptWindow(t *
 	}
 }
 
+func TestPrecheckCandidateRoutesKeepGuardedRouteForWarningReason(t *testing.T) {
+	db := openGatewayUpstreamGuardDB(t)
+	organizationID := uuid.New()
+	credentialID := uuid.New()
+	modelName := "deepseek-chat"
+	route := &channelmodel.LLMRoute{
+		ID:              uuid.New(),
+		OrganizationID:  organizationID,
+		Type:            shared.RouteTypePrivate,
+		CredentialID:    &credentialID,
+		ChannelProvider: "deepseek",
+		Models:          []string{modelName},
+		IsEnabled:       true,
+	}
+	if err := db.Create(&upstreamstate.State{
+		CredentialID:      credentialID,
+		OrganizationID:    organizationID,
+		Generation:        1,
+		BalanceCapability: upstreamstate.BalanceCapabilityPermissionDenied,
+		Availability:      upstreamstate.AvailabilityInvalidKey,
+		LastCheckStatus:   upstreamstate.CheckStatusFailed,
+		WarningThresholds: []upstreamstate.WarningThreshold{},
+		BlockReason:       upstreamstate.GuardReasonAuthInvalid,
+	}).Error; err != nil {
+		t.Fatalf("create upstream state: %v", err)
+	}
+
+	router := &ChannelRouter{
+		strategyFactory: NewStrategyFactory(),
+		upstreamState:   upstreamstate.NewService(db, stubCryptoService{}),
+	}
+	llmModel := &llmmodel.LLMModel{Provider: "deepseek", Model: modelName}
+	if _, err := router.candidateRoutesForResolvedModel(
+		context.Background(), organizationID, modelName, "deepseek", 1,
+		[]*channelmodel.LLMRoute{route}, llmModel, nil,
+	); !errors.Is(err, llmerrors.DomainErrPrivateChannelUpstreamUnavailable) {
+		t.Fatalf("real candidate routing error = %v, want upstream unavailable", err)
+	}
+
+	routes, err := router.precheckCandidateRoutesForResolvedModel(
+		context.Background(), modelName, "deepseek",
+		[]*channelmodel.LLMRoute{route}, llmModel, nil,
+	)
+	if err != nil {
+		t.Fatalf("precheckCandidateRoutesForResolvedModel() error = %v", err)
+	}
+	if len(routes) != 1 || routes[0].ID != route.ID {
+		t.Fatalf("precheck routes = %#v, want guarded route %s", routes, route.ID)
+	}
+}
+
+func TestPrecheckCandidateRoutesIncludeEveryRouteBehindModel(t *testing.T) {
+	organizationID := uuid.New()
+	modelName := "deepseek-chat"
+	routes := make([]*channelmodel.LLMRoute, 0, 4)
+	for range 4 {
+		routes = append(routes, &channelmodel.LLMRoute{
+			ID:              uuid.New(),
+			OrganizationID:  organizationID,
+			Type:            shared.RouteTypePrivate,
+			ChannelProvider: "deepseek",
+			Models:          []string{modelName},
+			IsEnabled:       true,
+		})
+	}
+
+	router := &ChannelRouter{strategyFactory: NewStrategyFactory()}
+	got, err := router.precheckCandidateRoutesForResolvedModel(
+		context.Background(), modelName, "deepseek", routes,
+		&llmmodel.LLMModel{Provider: "deepseek", Model: modelName}, nil,
+	)
+	if err != nil {
+		t.Fatalf("precheckCandidateRoutesForResolvedModel() error = %v", err)
+	}
+	if len(got) != len(routes) {
+		t.Fatalf("precheck route count = %d, want every route (%d)", len(got), len(routes))
+	}
+}
+
 func TestUpstreamGenerationReloadsMatchingCredential(t *testing.T) {
 	db := openGatewayUpstreamGuardDB(t)
 	if err := db.Exec(`CREATE TABLE llm_credentials (

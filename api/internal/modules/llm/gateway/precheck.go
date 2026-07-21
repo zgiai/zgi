@@ -101,7 +101,7 @@ func (s *llmGatewayServiceImpl) PrecheckAppModels(ctx context.Context, organizat
 }
 
 func (s *llmGatewayServiceImpl) precheckSingleModelRoutes(ctx context.Context, shadowOrganizationID uuid.UUID, model AppModelRouteRef) ([]AppModelRouteWarning, error) {
-	routes, err := s.loadCandidateRoutesForModel(ctx, shadowOrganizationID, model.Provider, model.Model, 3)
+	routes, err := s.loadCandidateRoutesForModel(ctx, shadowOrganizationID, model.Provider, model.Model)
 	if err != nil {
 		if errors.Is(err, llmerrors.DomainErrPrivateChannelUpstreamUnavailable) {
 			return []AppModelRouteWarning{{
@@ -376,11 +376,11 @@ func (s *llmGatewayServiceImpl) buildWorkspaceQuotaWarning(ctx context.Context, 
 	}, nil
 }
 
-func (s *llmGatewayServiceImpl) loadCandidateRoutesForModel(ctx context.Context, organizationID uuid.UUID, provider, modelName string, maxSelections int) ([]*channelmodel.LLMRoute, error) {
+func (s *llmGatewayServiceImpl) loadCandidateRoutesForModel(ctx context.Context, organizationID uuid.UUID, provider, modelName string) ([]*channelmodel.LLMRoute, error) {
 	if s.channelRouter == nil {
 		return nil, fmt.Errorf("channel router is not configured")
 	}
-	return s.channelRouter.CandidateRoutesForProviderModel(ctx, organizationID, provider, modelName, maxSelections)
+	return s.channelRouter.PrecheckCandidateRoutesForProviderModel(ctx, organizationID, provider, modelName)
 }
 
 func (s *llmGatewayServiceImpl) loadWorkspaceQuota(ctx context.Context, organizationID uuid.UUID, workspaceID string) (*WorkspaceQuota, error) {

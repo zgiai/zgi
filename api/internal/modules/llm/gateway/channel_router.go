@@ -538,15 +538,13 @@ func (r *ChannelRouter) filterRoutesForSelection(routes []*channelmodel.LLMRoute
 	return validRoutes
 }
 
-func (r *ChannelRouter) prepareCandidateRoutes(
+func (r *ChannelRouter) filterCandidateRoutes(
 	ctx context.Context,
-	organizationID uuid.UUID,
 	routes []*channelmodel.LLMRoute,
 	modelName, modelProvider string,
 	isPrivateCustomModel bool,
 	llmModel *llmmodel.LLMModel,
 	isPassthroughMode bool,
-	allowHalfOpen bool,
 ) ([]*channelmodel.LLMRoute, error) {
 	validRoutes := r.filterRoutesForSelection(routes, modelName, modelProvider, isPrivateCustomModel, isPassthroughMode)
 	modelUseCase, _ := ctx.Value(shared.ContextKeyModelUseCase).(string)
@@ -558,6 +556,23 @@ func (r *ChannelRouter) prepareCandidateRoutes(
 	}
 	if len(validRoutes) == 0 {
 		return nil, llmerrors.NewModelNotFoundErrorWithName(modelName)
+	}
+	return validRoutes, nil
+}
+
+func (r *ChannelRouter) prepareCandidateRoutes(
+	ctx context.Context,
+	organizationID uuid.UUID,
+	routes []*channelmodel.LLMRoute,
+	modelName, modelProvider string,
+	isPrivateCustomModel bool,
+	llmModel *llmmodel.LLMModel,
+	isPassthroughMode bool,
+	allowHalfOpen bool,
+) ([]*channelmodel.LLMRoute, error) {
+	validRoutes, err := r.filterCandidateRoutes(ctx, routes, modelName, modelProvider, isPrivateCustomModel, llmModel, isPassthroughMode)
+	if err != nil {
+		return nil, err
 	}
 
 	eligibleRoutes, guardedCount := r.filterRoutesByUpstreamGuard(ctx, organizationID, validRoutes, allowHalfOpen)

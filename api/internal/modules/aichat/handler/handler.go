@@ -16,6 +16,7 @@ import (
 	runtimedto "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/dto"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
+	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"github.com/zgiai/zgi/api/internal/util"
 	"github.com/zgiai/zgi/api/middleware"
@@ -48,11 +49,12 @@ type skillConfigConfirmationRequiredResult struct {
 }
 
 type Handler struct {
-	service runtimeservice.Service
+	service         runtimeservice.Service
+	modelPrechecker llmclient.AppModelPrechecker
 }
 
-func NewHandler(service runtimeservice.Service) *Handler {
-	return &Handler{service: service}
+func NewHandler(service runtimeservice.Service, modelPrechecker llmclient.AppModelPrechecker) *Handler {
+	return &Handler{service: service, modelPrechecker: modelPrechecker}
 }
 
 func (h *Handler) RegisterRoutes(router *gin.RouterGroup) {
@@ -87,6 +89,7 @@ func (h *Handler) RegisterRoutes(router *gin.RouterGroup) {
 	group.POST("/conversations/:id/messages/:message_id/client-actions/:action_id/continue", h.ContinueClientAction)
 	group.POST("/conversations/:id/messages/:message_id/user-input/:request_id/continue", h.ContinueUserInput)
 	group.POST("/work-chat/chat", h.WorkChat)
+	group.POST(workChatModelPrecheckRoute, h.PrecheckWorkChatModel)
 	group.POST("/contextual/chat", h.ContextualChat)
 	// Keep the original route as a work-chat compatibility alias. Surface is
 	// fixed by the endpoint and is never trusted from the request body.

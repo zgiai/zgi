@@ -196,6 +196,8 @@ export const WORKFLOW_TEST_KEYS = {
 
 export const AICHAT_KEYS = {
   all: ['aichat'] as const,
+  workChatModelPrecheck: (provider: string, model: string) =>
+    [...AICHAT_KEYS.all, 'work-chat', 'model-precheck', provider, model] as const,
   skills: () => [...AICHAT_KEYS.all, 'skills'] as const,
   skill: (id: string) => [...AICHAT_KEYS.skills(), id] as const,
   skillConfig: () => [...AICHAT_KEYS.skills(), 'config'] as const,

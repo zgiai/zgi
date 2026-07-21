@@ -134,6 +134,7 @@ interface AIChatShellProps {
   isModelInitializing?: boolean;
   onModelChange: (value: ModelSelectorValue) => void;
   beforeSend?: () => boolean | Promise<boolean>;
+  inputTopNotice?: React.ReactNode;
   variant?: 'full' | 'embedded';
   showModelSelector?: boolean;
   modelUseCase?: ModelUseCase;
@@ -245,6 +246,7 @@ export function AIChatShell({
   isModelInitializing = false,
   onModelChange,
   beforeSend,
+  inputTopNotice,
   variant = 'full',
   showModelSelector = true,
   modelUseCase = 'agent',
@@ -1374,6 +1376,7 @@ export function AIChatShell({
               null
             }
             activeToolGovernanceApprovalFallback={activeToolGovernanceApprovalFallback}
+            topAccessory={inputTopNotice}
           />
         </main>
       </ToolGovernancePendingApprovalScopeProvider>

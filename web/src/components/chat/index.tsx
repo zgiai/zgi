@@ -126,6 +126,7 @@ interface AIChatVariantProps {
   isModelInitializing?: boolean;
   onModelChange: (value: ModelSelectorValue) => void;
   beforeSend?: () => boolean | Promise<boolean>;
+  inputTopNotice?: React.ReactNode;
   variant?: 'full' | 'embedded';
   showModelSelector?: boolean;
   modelUseCase?: ModelUseCase;

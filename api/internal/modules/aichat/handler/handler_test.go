@@ -22,7 +22,7 @@ func TestRegisterRoutesDoesNotConflict(t *testing.T) {
 	router := gin.New()
 	group := router.Group("/console/api")
 
-	NewHandler(nil).RegisterRoutes(group)
+	NewHandler(nil, nil).RegisterRoutes(group)
 }
 
 func TestChatEndpointsFixRuntimeSurface(t *testing.T) {
@@ -45,7 +45,7 @@ func TestChatEndpointsFixRuntimeSurface(t *testing.T) {
 				util.SetOrganizationID(c, uuid.NewString())
 				c.Next()
 			})
-			NewHandler(capture).RegisterRoutes(router.Group("/console/api"))
+			NewHandler(capture, nil).RegisterRoutes(router.Group("/console/api"))
 
 			body := []byte(`{"query":"test","model":"test-model","surface":"` + tt.bodySurface + `"}`)
 			recorder := httptest.NewRecorder()

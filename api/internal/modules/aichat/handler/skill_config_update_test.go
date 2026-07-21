@@ -98,7 +98,7 @@ func runUpdateSkillConfigRequest(
 ) *httptest.ResponseRecorder {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
-	handler := NewHandler(service)
+	handler := NewHandler(service, nil)
 	recorder := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(recorder)
 	ctx.Request = httptest.NewRequest(http.MethodPut, "/aichat/skills/config", strings.NewReader(body))
