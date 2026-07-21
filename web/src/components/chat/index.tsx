@@ -22,6 +22,7 @@ import type { AIChatUploadScope } from '@/components/chat/variants/aichat/input-
 import type { AIChatController } from '@/components/chat/controllers/aichat-controller';
 import type { OpeningGuideBrand } from '@/components/chat/utils/opening-guide-brand';
 import type { AIChatRuntimeSurface } from '@/services/types/aichat';
+import type { ImageRuntimeModel } from '@/services/types/image-runtime';
 import type { ModelUseCase } from '@/services/types/model';
 
 interface SingleTestVariantProps {
@@ -115,6 +116,7 @@ interface ImgChatVariantProps {
   onModelChange?: (value: ModelSelectorValue) => void;
   inputTopNotice?: React.ReactNode;
   conversationSearchKey?: readonly unknown[];
+  imageRuntimeModels?: ImageRuntimeModel[];
 }
 
 interface AIChatVariantProps {

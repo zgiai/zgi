@@ -11,6 +11,7 @@ import (
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	auth_model "github.com/zgiai/zgi/api/internal/modules/user/auth/model"
 	"github.com/zgiai/zgi/api/internal/modules/user/auth/statuscache"
+	workspacemodel "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	"github.com/zgiai/zgi/api/internal/util"
 	"github.com/zgiai/zgi/api/pkg/database"
 	jwtpkg "github.com/zgiai/zgi/api/pkg/jwt"
@@ -293,40 +294,69 @@ func getCurrentWorkspaceIDInternal(c *gin.Context) string {
 		logger.Debug("getCurrentWorkspaceIDInternal: found in context: %s", workspaceID)
 		return workspaceID
 	}
+	currentWorkspace := getCurrentWorkspaceInternal(c)
+	if currentWorkspace == nil {
+		return ""
+	}
+	return currentWorkspace.ID
+}
 
+func getCurrentWorkspaceInternal(c *gin.Context) *workspacemodel.Workspace {
 	accountID, exists := c.Get("account_id")
 	if !exists {
 		logger.Error("account_id not found in context", nil)
-		return ""
+		return nil
 	}
 
 	accountIDStr, ok := accountID.(string)
 	if !ok {
 		logger.Error("account_id is not a string type", nil)
-		return ""
+		return nil
 	}
-	logger.Debug("getCurrentWorkspaceIDInternal: found account_id: %s", accountIDStr)
+	logger.Debug("getCurrentWorkspaceInternal: found account_id: %s", accountIDStr)
 
 	accountService, exists := c.Get(accountServiceKey)
 	if !exists {
 		logger.Error("AccountService not found in context, skipping workspace resolution", nil)
-		return ""
+		return nil
 	}
 
 	service := accountService.(interfaces.AccountService)
-	logger.Debug("getCurrentWorkspaceIDInternal: calling GetCurrentWorkspace for account: %s", accountIDStr)
-	currentWorkspace, err := service.GetCurrentWorkspace(context.Background(), accountIDStr)
+	logger.Debug("getCurrentWorkspaceInternal: calling GetCurrentWorkspace for account: %s", accountIDStr)
+	currentWorkspace, err := service.GetCurrentWorkspace(c.Request.Context(), accountIDStr)
 	if err != nil {
 		logger.Error("Failed to get current workspace ID: %v", err)
-		return ""
+		return nil
 	}
 	if currentWorkspace == nil {
-		logger.Warn("getCurrentWorkspaceIDInternal: current workspace is nil for account: %s", accountIDStr)
-		return ""
+		logger.Warn("getCurrentWorkspaceInternal: current workspace is nil for account: %s", accountIDStr)
+		return nil
 	}
 
-	logger.Debug("getCurrentWorkspaceIDInternal: got workspace_id: %s", currentWorkspace.ID)
-	return currentWorkspace.ID
+	logger.Debug("getCurrentWorkspaceInternal: got workspace_id: %s", currentWorkspace.ID)
+	return currentWorkspace
+}
+
+// CurrentWorkspaceRequired resolves the authenticated account's current workspace
+// and stores it in the request context for workspace-scoped handlers.
+func CurrentWorkspaceRequired() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		workspace := getCurrentWorkspaceInternal(c)
+		if workspace == nil || strings.TrimSpace(workspace.ID) == "" {
+			response.Fail(c, response.ErrWorkspaceNotFound)
+			c.Abort()
+			return
+		}
+		organizationID := strings.TrimSpace(util.GetOrganizationID(c))
+		if workspace.OrganizationID == nil || strings.TrimSpace(*workspace.OrganizationID) != organizationID {
+			response.Fail(c, response.ErrWorkspaceNotInOrganization)
+			c.Abort()
+			return
+		}
+
+		util.SetWorkspaceScopeCompat(c, workspace.ID)
+		c.Next()
+	}
 }
 
 func needsTenantID(path string) bool {

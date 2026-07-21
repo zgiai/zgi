@@ -16,6 +16,7 @@ interface ChatMessageViewportProps {
   scrollAreaClassName?: string;
   listClassName?: string;
   itemClassName?: string;
+  trailingContent?: React.ReactNode;
   showCopyButton?: boolean;
 }
 
@@ -32,6 +33,7 @@ export function ChatMessageViewport({
   scrollAreaClassName,
   listClassName,
   itemClassName,
+  trailingContent,
   showCopyButton,
 }: ChatMessageViewportProps) {
   if (isLoadingDetail) {
@@ -71,6 +73,7 @@ export function ChatMessageViewport({
                 />
               </div>
             ))}
+            {trailingContent}
             <div ref={bottomRef} className="h-px w-full" />
           </div>
         </div>

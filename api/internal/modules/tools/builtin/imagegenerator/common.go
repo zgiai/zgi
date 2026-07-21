@@ -14,8 +14,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/zgiai/zgi/api/internal/capabilities/imageasset"
 	"github.com/zgiai/zgi/api/internal/dto"
-	workflowfile "github.com/zgiai/zgi/api/internal/modules/app/workflow/file"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/tool_file"
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
 	defaultmodelservice "github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/service"
@@ -234,89 +234,15 @@ func styleInstruction(style string) string {
 }
 
 func saveGeneratedImage(ctx context.Context, tenantID string, userID string, conversationID *string, item adapter.ImageItem, baseFilename string, index int, lifecycle tool_file.ToolFileLifecycle) (map[string]interface{}, error) {
-	var toolFile *tool_file.ToolFile
-	var err error
-	switch {
-	case strings.TrimSpace(item.B64JSON) != "":
-		data, decodeErr := decodeBase64Image(item.B64JSON)
-		if decodeErr != nil {
-			return nil, decodeErr
-		}
-		_, mimeType, extension, validateErr := validateGeneratedImageData(data, "")
-		if validateErr != nil {
-			return nil, validateErr
-		}
-		filename := buildImageFilename(baseFilename, index, extension)
-		toolFile, err = tool_file.CreateFileByRawGlobal(ctx, tool_file.CreateFileByRawParams{
-			UserID:         userID,
-			TenantID:       tenantID,
-			ConversationID: conversationID,
-			FileData:       data,
-			MimeType:       mimeType,
-			Filename:       &filename,
-			Lifecycle:      lifecycle,
-		})
-	case strings.TrimSpace(item.URL) != "":
-		data, mimeType, extension, downloadErr := downloadGeneratedImage(ctx, strings.TrimSpace(item.URL))
-		if downloadErr != nil {
-			return nil, downloadErr
-		}
-		filename := buildImageFilename(baseFilename, index, extension)
-		toolFile, err = tool_file.CreateFileByRawGlobal(ctx, tool_file.CreateFileByRawParams{
-			UserID:         userID,
-			TenantID:       tenantID,
-			ConversationID: conversationID,
-			FileData:       data,
-			MimeType:       mimeType,
-			Filename:       &filename,
-			Lifecycle:      lifecycle,
-		})
-	default:
-		return nil, fmt.Errorf("image item does not contain url or b64_json")
-	}
-	if err != nil {
-		return nil, err
-	}
-	extension := toolFile.GetFileExtension()
-	if extension == "" {
-		extension = extensionFromMIME(toolFile.MimeType)
-	}
-	if extension == "" {
-		extension = defaultImageExt
-	}
-	url, err := tool_file.SignToolFileGlobal(toolFile.ID, extension)
-	if err != nil {
-		return nil, fmt.Errorf("failed to sign generated image: %w", err)
-	}
-	downloadURL := appendDownloadQuery(url)
-	mimeType := strings.TrimSpace(toolFile.MimeType)
-	if mimeType == "" {
-		mimeType = defaultImageMIME
-	}
-	fileObj := workflowfile.NewFile(
-		tenantID,
-		workflowfile.FileTypeImage,
-		workflowfile.FileTransferMethodToolFile,
-		workflowfile.WithID(toolFile.ID),
-		workflowfile.WithRelatedID(toolFile.ID),
-		workflowfile.WithFilename(toolFile.Name),
-		workflowfile.WithExtension(extension),
-		workflowfile.WithMimeType(mimeType),
-		workflowfile.WithSize(int(toolFile.Size)),
-		workflowfile.WithURL(url),
-	)
-	fileMeta := fileObj.ToDict()
-	fileMeta["file_id"] = toolFile.ID
-	fileMeta["filename"] = toolFile.Name
-	fileMeta["format"] = strings.TrimPrefix(extension, ".")
-	fileMeta["mime_type"] = mimeType
-	fileMeta["url"] = url
-	fileMeta["download_url"] = downloadURL
-	fileMeta["lifecycle"] = toolFile.Lifecycle
-	if toolFile.ExpiresAt != nil {
-		fileMeta["expires_at"] = toolFile.ExpiresAt.Unix()
-	}
-	return fileMeta, nil
+	return imageasset.SaveGeneratedImage(ctx, imageasset.SaveRequest{
+		TenantID:       tenantID,
+		UserID:         userID,
+		ConversationID: conversationID,
+		Item:           item,
+		BaseFilename:   baseFilename,
+		Index:          index,
+		Lifecycle:      lifecycle,
+	})
 }
 
 func decodeBase64Image(raw string) ([]byte, error) {

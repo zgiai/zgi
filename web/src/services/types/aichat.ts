@@ -3,6 +3,7 @@ import type { AgentResourceBoundImpact, ApiResponseData } from './common';
 export type AIChatConversationStatus = 'normal' | 'archived';
 export type AIChatConversationSource = 'console' | 'webapp' | 'migration';
 export type AIChatConversationRuntimeStatus = 'idle' | 'streaming';
+export type AIChatConversationType = 'chat' | 'image';
 export type AIChatMessageStatus =
   | 'pending'
   | 'streaming'
@@ -414,6 +415,7 @@ export interface AIChatConversation {
   title: string;
   status: AIChatConversationStatus;
   runtime_status: AIChatConversationRuntimeStatus;
+  conversation_type: AIChatConversationType;
   active_message_id?: string;
   current_leaf_message_id?: string;
   dialogue_count: number;
@@ -471,6 +473,7 @@ export type AIChatSearchResponse = ApiResponseData<AIChatSearchResult[]>;
 
 export interface AIChatCreateConversationRequest {
   title: string;
+  conversation_type?: AIChatConversationType;
 }
 
 export interface AIChatUpdateConversationRequest {

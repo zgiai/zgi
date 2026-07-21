@@ -20,6 +20,7 @@ import type {
   AIChatCancelImportSkillPreviewResponse,
   AIChatClientActionResultRequest,
   AIChatConversation,
+  AIChatConversationType,
   AIChatConversationListResponse,
   AIChatConfirmImportSkillRequest,
   AIChatCreateConversationRequest,
@@ -256,14 +257,23 @@ export const aichatService = {
   },
 
   listConversations(
-    params: { page?: number; limit?: number; surface?: AIChatRuntimeSurface } = {}
+    params: {
+      page?: number;
+      limit?: number;
+      surface?: AIChatRuntimeSurface;
+      conversation_type?: AIChatConversationType;
+    } = {}
   ) {
     return http.get<AIChatConversationListResponse>(`${AICHAT_BASE_PATH}/conversations`, {
       params,
     });
   },
 
-  search(query: string, limit = 20, params: { surface?: AIChatRuntimeSurface } = {}) {
+  search(
+    query: string,
+    limit = 20,
+    params: { surface?: AIChatRuntimeSurface; conversation_type?: AIChatConversationType } = {}
+  ) {
     return http.get<AIChatSearchResponse>(`${AICHAT_BASE_PATH}/search`, {
       params: { query, limit, ...params },
     });
@@ -276,19 +286,28 @@ export const aichatService = {
     );
   },
 
-  getConversation(id: string) {
-    return http.get<ApiResponseData<AIChatConversation>>(`${AICHAT_BASE_PATH}/conversations/${id}`);
+  getConversation(id: string, conversationType?: AIChatConversationType) {
+    return http.get<ApiResponseData<AIChatConversation>>(`${AICHAT_BASE_PATH}/conversations/${id}`, {
+      params: { conversation_type: conversationType },
+    });
   },
 
-  updateConversation(id: string, payload: AIChatUpdateConversationRequest) {
+  updateConversation(
+    id: string,
+    payload: AIChatUpdateConversationRequest,
+    conversationType?: AIChatConversationType
+  ) {
     return http.patch<ApiResponseData<AIChatConversation>>(
       `${AICHAT_BASE_PATH}/conversations/${id}`,
-      payload
+      payload,
+      { params: { conversation_type: conversationType } }
     );
   },
 
-  deleteConversation(id: string) {
-    return http.delete<ApiResponseData<SuccessResponse>>(`${AICHAT_BASE_PATH}/conversations/${id}`);
+  deleteConversation(id: string, conversationType?: AIChatConversationType) {
+    return http.delete<ApiResponseData<SuccessResponse>>(`${AICHAT_BASE_PATH}/conversations/${id}`, {
+      params: { conversation_type: conversationType },
+    });
   },
 
   stopConversation(id: string) {
@@ -297,7 +316,10 @@ export const aichatService = {
     );
   },
 
-  listMessages(id: string, params: { page?: number; limit?: number } = {}) {
+  listMessages(
+    id: string,
+    params: { page?: number; limit?: number; conversation_type?: AIChatConversationType } = {}
+  ) {
     return http.get<AIChatMessageListResponse>(`${AICHAT_BASE_PATH}/conversations/${id}/messages`, {
       params,
     });

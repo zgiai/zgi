@@ -227,6 +227,43 @@ func TestUpdateConversationByCallerRejectsOtherCallerBeforeUpdate(t *testing.T) 
 	}
 }
 
+func TestUpdateConversationByCallerReturnsThroughCallerScope(t *testing.T) {
+	organizationID := uuid.New()
+	accountID := uuid.New()
+	agentID := uuid.New()
+	conversationID := uuid.New()
+	conversationRepo := &callerScopedStreamConversationRepo{
+		allowedCallerType: runtimemodel.ConversationCallerAgent,
+		allowedCallerID:   agentID,
+	}
+	svc := &service{
+		repos: &repository.Repositories{
+			Access:       callerScopedStreamAccessRepo{},
+			Conversation: conversationRepo,
+			Message:      &callerScopedStreamMessageRepo{},
+		},
+	}
+	title := "renamed"
+
+	_, err := svc.UpdateConversationByCaller(
+		context.Background(),
+		Scope{OrganizationID: organizationID, AccountID: accountID},
+		Caller{Type: runtimemodel.ConversationCallerAgent, ID: &agentID},
+		conversationID,
+		runtimedto.UpdateConversationRequest{Title: &title},
+	)
+
+	if err != nil {
+		t.Fatalf("UpdateConversationByCaller() error = %v", err)
+	}
+	if !conversationRepo.updateScopedCalled {
+		t.Fatal("conversation update was not called")
+	}
+	if conversationRepo.getScopedCalled {
+		t.Fatal("caller-scoped update should not fall back to an untyped conversation lookup")
+	}
+}
+
 func TestDeleteConversationByCallerRejectsOtherCallerBeforeDelete(t *testing.T) {
 	organizationID := uuid.New()
 	accountID := uuid.New()
@@ -369,7 +406,7 @@ type callerScopedStreamConversationRepo struct {
 	deleteScopedCalled      bool
 }
 
-func (r *callerScopedStreamConversationRepo) GetByCallerScoped(_ context.Context, id, organizationID, accountID uuid.UUID, callerType string, callerID *uuid.UUID) (*runtimemodel.Conversation, error) {
+func (r *callerScopedStreamConversationRepo) GetByCallerScoped(_ context.Context, id, organizationID, accountID uuid.UUID, callerType string, callerID *uuid.UUID, _ string) (*runtimemodel.Conversation, error) {
 	r.getByCallerScopedCalled = true
 	if callerType != r.allowedCallerType || callerID == nil || *callerID != r.allowedCallerID {
 		return nil, gorm.ErrRecordNotFound

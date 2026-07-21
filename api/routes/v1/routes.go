@@ -247,7 +247,7 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 	}
 
 	// ---------- AIChat ----------
-	RegisterAIChatRoutes(v1, AIChatRouteDeps{
+	chatService := RegisterAIChatRoutes(v1, AIChatRouteDeps{
 		DB:                         db,
 		LLMClient:                  serviceContainer.GetLLMClient(),
 		DefaultModelService:        serviceContainer.GetDefaultModelService(),
@@ -259,6 +259,15 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 		SkillRuntime:               newSkillRuntimeWithSandbox(serviceContainer.GetToolEngine(), serviceContainer.GetToolManager(), serviceContainer.GetFileService(), serviceContainer.GetOrganizationService()),
 		AccountService:             accountService,
 	})
+	if llmModule != nil && llmModule.LLMModelModule != nil {
+		RegisterImageRuntimeRoutes(v1, ImageRuntimeRouteDeps{
+			AvailableModels: llmModule.LLMModelModule.AvailableModelsSvc,
+			Routes:          llmModule.ChannelSvc,
+			LLMClient:       serviceContainer.GetLLMClient(),
+			ChatService:     chatService,
+			AccountService:  accountService,
+		})
+	}
 
 	// ---------- Dashboard ----------
 	var availableModels system_service.AvailableModelsLister
