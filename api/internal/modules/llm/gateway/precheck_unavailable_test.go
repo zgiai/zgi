@@ -19,10 +19,9 @@ func TestEvaluateCandidateRouteWarningsReportsKnownUnavailableCredentials(t *tes
 		wantScope   AppModelRouteWarningScope
 	}{
 		{
-			name:       "one unavailable credential is a partial warning",
-			reasons:    []upstreamstate.GuardReason{upstreamstate.GuardReasonBalanceExhausted, ""},
-			wantReason: string(upstreamstate.GuardReasonBalanceExhausted),
-			wantScope:  AppModelRouteWarningScopePartial,
+			name:        "one unavailable credential does not warn when other credentials are healthy",
+			reasons:     []upstreamstate.GuardReason{upstreamstate.GuardReasonBalanceExhausted, "", ""},
+			wantHealthy: true,
 		},
 		{
 			name:       "all unavailable credentials are an all warning",

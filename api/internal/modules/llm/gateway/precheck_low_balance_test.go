@@ -11,7 +11,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/llm/shared"
 )
 
-func TestEvaluateCandidateRouteWarningsReportsUpstreamLowBalanceScope(t *testing.T) {
+func TestEvaluateCandidateRouteWarningsReportsOnlyModelLevelUpstreamBalanceRisk(t *testing.T) {
 	tests := []struct {
 		name        string
 		states      []precheckBalanceState
@@ -19,18 +19,27 @@ func TestEvaluateCandidateRouteWarningsReportsUpstreamLowBalanceScope(t *testing
 		wantScope   AppModelRouteWarningScope
 	}{
 		{
-			name: "one low credential is a partial warning",
+			name: "one low credential does not warn when other credentials have enough balance",
 			states: []precheckBalanceState{
 				{remaining: "2", threshold: "5"},
 				{remaining: "8", threshold: "5"},
+				{remaining: "9", threshold: "5"},
 			},
-			wantScope: AppModelRouteWarningScopePartial,
+			wantHealthy: true,
 		},
 		{
 			name: "all low credentials are an all warning",
 			states: []precheckBalanceState{
 				{remaining: "2", threshold: "5"},
 				{remaining: "3", threshold: "5"},
+			},
+			wantScope: AppModelRouteWarningScopeAll,
+		},
+		{
+			name: "all usable credentials warn when another credential is unavailable",
+			states: []precheckBalanceState{
+				{blockReason: upstreamstate.GuardReasonBalanceExhausted},
+				{remaining: "2", threshold: "5"},
 			},
 			wantScope: AppModelRouteWarningScopeAll,
 		},
@@ -43,9 +52,9 @@ func TestEvaluateCandidateRouteWarningsReportsUpstreamLowBalanceScope(t *testing
 			wantHealthy: true,
 		},
 		{
-			name: "balance without a threshold does not warn",
+			name: "one low balance and one balance without a threshold does not warn",
 			states: []precheckBalanceState{
-				{remaining: "2"},
+				{remaining: "2", threshold: "5"},
 				{remaining: "8"},
 			},
 			wantHealthy: true,
@@ -88,6 +97,10 @@ func TestEvaluateCandidateRouteWarningsReportsUpstreamLowBalanceScope(t *testing
 				if balanceState.threshold != "" {
 					thresholds = append(thresholds, upstreamstate.WarningThreshold{Currency: "USD", Amount: balanceState.threshold})
 				}
+				availability := upstreamstate.AvailabilityAvailable
+				if balanceState.blockReason != "" {
+					availability = upstreamstate.AvailabilityExhausted
+				}
 				if err := db.Create(&upstreamstate.State{
 					CredentialID:      credentialID,
 					OrganizationID:    organizationID,
@@ -99,8 +112,9 @@ func TestEvaluateCandidateRouteWarningsReportsUpstreamLowBalanceScope(t *testing
 					},
 					BalanceObservedAt: &observedAt,
 					WarningThresholds: thresholds,
-					Availability:      upstreamstate.AvailabilityAvailable,
+					Availability:      availability,
 					LastCheckStatus:   upstreamstate.CheckStatusSuccess,
+					BlockReason:       balanceState.blockReason,
 				}).Error; err != nil {
 					t.Fatalf("create upstream state: %v", err)
 				}
@@ -135,7 +149,8 @@ func TestEvaluateCandidateRouteWarningsReportsUpstreamLowBalanceScope(t *testing
 }
 
 type precheckBalanceState struct {
-	remaining string
-	threshold string
-	stale     bool
+	remaining   string
+	threshold   string
+	blockReason upstreamstate.GuardReason
+	stale       bool
 }

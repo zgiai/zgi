@@ -1345,7 +1345,7 @@ func TestActivateUpstreamProbeAcquiresLeaseAtAttempt(t *testing.T) {
 	}
 }
 
-func TestCandidateUpstreamBalanceLowWarningReportsPartialAndAllScope(t *testing.T) {
+func TestCandidateUpstreamBalanceLowWarningRequiresEveryUsableCandidate(t *testing.T) {
 	db := openGatewayUpstreamGuardDB(t)
 	organizationID := uuid.New()
 	observedAt := time.Now()
@@ -1395,8 +1395,8 @@ func TestCandidateUpstreamBalanceLowWarningReportsPartialAndAllScope(t *testing.
 	if err != nil {
 		t.Fatalf("candidateUpstreamBalanceLowWarning() error = %v", err)
 	}
-	if warning == nil || warning.Scope != AppModelRouteWarningScopePartial {
-		t.Fatalf("warning = %#v, want partial scope with one healthy candidate", warning)
+	if warning != nil {
+		t.Fatalf("warning = %#v, want none with one healthy candidate", warning)
 	}
 
 	official := &channelmodel.LLMRoute{ID: uuid.New(), OrganizationID: organizationID, Type: shared.RouteTypeZGICloud, IsOfficial: true}
@@ -1404,8 +1404,8 @@ func TestCandidateUpstreamBalanceLowWarningReportsPartialAndAllScope(t *testing.
 	if err != nil {
 		t.Fatalf("candidateUpstreamBalanceLowWarning(mixed) error = %v", err)
 	}
-	if warning == nil || warning.Scope != AppModelRouteWarningScopePartial {
-		t.Fatalf("warning = %#v, want partial scope with official candidate", warning)
+	if warning != nil {
+		t.Fatalf("warning = %#v, want none with official candidate", warning)
 	}
 }
 

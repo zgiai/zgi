@@ -264,19 +264,18 @@ func (s *llmGatewayServiceImpl) candidateUpstreamUnavailableWarning(
 	if affectedCount == 0 {
 		return nil, nil
 	}
+	if affectedCount != candidateCount {
+		return nil, nil
+	}
 
 	warningReason := string(reason)
 	if mixedReasons {
 		warningReason = privateChannelCredentialUnavailableReason
 	}
-	scope := AppModelRouteWarningScopePartial
-	if affectedCount == candidateCount {
-		scope = AppModelRouteWarningScopeAll
-	}
 	return &AppModelRouteWarning{
 		Kind:   AppModelRouteWarningKindPrivateChannelUpstreamUnavailable,
 		Reason: warningReason,
-		Scope:  scope,
+		Scope:  AppModelRouteWarningScopeAll,
 	}, nil
 }
 
@@ -289,18 +288,16 @@ func (s *llmGatewayServiceImpl) candidateUpstreamBalanceLowWarning(
 		return nil, nil
 	}
 	credentialIDs := make([]uuid.UUID, 0, len(routes))
-	candidateCount := 0
 	for _, route := range routes {
 		if route == nil {
 			continue
 		}
-		candidateCount++
 		if isOfficialRoute(route) || route.CredentialID == nil {
 			continue
 		}
 		credentialIDs = append(credentialIDs, *route.CredentialID)
 	}
-	if candidateCount == 0 || len(credentialIDs) == 0 {
+	if len(credentialIDs) == 0 {
 		return nil, nil
 	}
 	states, err := s.upstreamState.GetMany(ctx, organizationID, credentialIDs)
@@ -308,28 +305,30 @@ func (s *llmGatewayServiceImpl) candidateUpstreamBalanceLowWarning(
 		return nil, err
 	}
 	now := time.Now()
-	affectedCount := 0
+	usableCount := 0
 	for _, route := range routes {
-		if route == nil || isOfficialRoute(route) || route.CredentialID == nil {
+		if route == nil {
 			continue
+		}
+		if isOfficialRoute(route) || route.CredentialID == nil {
+			return nil, nil
 		}
 		state := states[*route.CredentialID]
-		if state == nil || upstreamstate.IsStale(state, now) || !upstreamstate.IsLow(state) {
+		if state != nil && state.BlockReason != "" {
 			continue
 		}
-		affectedCount++
+		usableCount++
+		if state == nil || upstreamstate.IsStale(state, now) || !upstreamstate.IsLow(state) {
+			return nil, nil
+		}
 	}
-	if affectedCount == 0 {
+	if usableCount == 0 {
 		return nil, nil
 	}
 
-	scope := AppModelRouteWarningScopePartial
-	if affectedCount == candidateCount {
-		scope = AppModelRouteWarningScopeAll
-	}
 	return &AppModelRouteWarning{
 		Kind:  AppModelRouteWarningKindPrivateChannelUpstreamBalanceLow,
-		Scope: scope,
+		Scope: AppModelRouteWarningScopeAll,
 	}, nil
 }
 
