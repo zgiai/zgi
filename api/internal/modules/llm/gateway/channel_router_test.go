@@ -864,13 +864,6 @@ func TestCandidateRoutesForModelsLoadsEnabledRoutesOnce(t *testing.T) {
 
 func TestPrepareCandidateRoutes_GuardLetsFourthHealthyRouteFillAttemptWindow(t *testing.T) {
 	db := openGatewayUpstreamGuardDB(t)
-	oldConfig := config.GlobalConfig
-	config.GlobalConfig = &config.Config{LLM: config.LLMConfig{
-		UpstreamGuardMode:       "enforce",
-		UpstreamGuardPercentage: 100,
-	}}
-	t.Cleanup(func() { config.GlobalConfig = oldConfig })
-
 	organizationID := uuid.New()
 	modelName := "deepseek-chat"
 	cooldownUntil := time.Now().Add(time.Hour)
@@ -921,7 +914,6 @@ func TestPrepareCandidateRoutes_GuardLetsFourthHealthyRouteFillAttemptWindow(t *
 		&llmmodel.LLMModel{Provider: "deepseek", Model: modelName},
 		false,
 		true,
-		true,
 	)
 	if err != nil {
 		t.Fatalf("prepareCandidateRoutes() error = %v", err)
@@ -951,7 +943,6 @@ func TestPrepareCandidateRoutes_GuardLetsFourthHealthyRouteFillAttemptWindow(t *
 		&llmmodel.LLMModel{Provider: "deepseek", Model: modelName},
 		false,
 		true,
-		true,
 	)
 	if !errors.Is(err, llmerrors.DomainErrPrivateChannelUpstreamUnavailable) {
 		t.Fatalf("prepareCandidateRoutes(all guarded) error = %v, want private upstream unavailable", err)
@@ -978,10 +969,6 @@ func TestUpstreamGenerationReloadsMatchingCredential(t *testing.T) {
 	)`).Error; err != nil {
 		t.Fatalf("create credential table: %v", err)
 	}
-	oldConfig := config.GlobalConfig
-	config.GlobalConfig = &config.Config{LLM: config.LLMConfig{UpstreamGuardMode: "off"}}
-	t.Cleanup(func() { config.GlobalConfig = oldConfig })
-
 	organizationID := uuid.New()
 	credentialID := uuid.New()
 	credential := &credentialmodel.TenantCredential{
@@ -1032,7 +1019,7 @@ func TestUpstreamGenerationReloadsMatchingCredential(t *testing.T) {
 		upstreamState:          upstreamstate.NewService(db, identityCryptoService{}),
 	}
 
-	filtered, guarded := router.filterRoutesByUpstreamGuard(context.Background(), organizationID, []*channelmodel.LLMRoute{route}, true, true)
+	filtered, guarded := router.filterRoutesByUpstreamGuard(context.Background(), organizationID, []*channelmodel.LLMRoute{route}, true)
 	if len(filtered) != 1 || guarded != 0 {
 		t.Fatalf("filter result = %d/%d, want one eligible route", len(filtered), guarded)
 	}
@@ -1057,12 +1044,8 @@ func TestUpstreamGenerationReloadsMatchingCredential(t *testing.T) {
 	}
 }
 
-func TestUpstreamGuardOffKeepsRecoveryEvidenceWithoutBlocking(t *testing.T) {
+func TestUpstreamGuardAlwaysExcludesKnownUnavailableRoute(t *testing.T) {
 	db := openGatewayUpstreamGuardDB(t)
-	oldConfig := config.GlobalConfig
-	config.GlobalConfig = &config.Config{LLM: config.LLMConfig{UpstreamGuardMode: "off"}}
-	t.Cleanup(func() { config.GlobalConfig = oldConfig })
-
 	organizationID := uuid.New()
 	credentialID := uuid.New()
 	cooldownUntil := time.Now().Add(time.Hour)
@@ -1089,24 +1072,17 @@ func TestUpstreamGuardOffKeepsRecoveryEvidenceWithoutBlocking(t *testing.T) {
 	}
 	router := &ChannelRouter{upstreamState: upstreamstate.NewService(db, stubCryptoService{})}
 
-	eligible, guarded := router.filterRoutesByUpstreamGuard(context.Background(), organizationID, []*channelmodel.LLMRoute{route}, true, true)
-	if len(eligible) != 1 || guarded != 0 {
-		t.Fatalf("filter result = %d/%d, want route allowed while guard is off", len(eligible), guarded)
+	eligible, guarded := router.filterRoutesByUpstreamGuard(context.Background(), organizationID, []*channelmodel.LLMRoute{route}, true)
+	if len(eligible) != 0 || guarded != 1 {
+		t.Fatalf("filter result = %d/%d, want known unavailable route excluded", len(eligible), guarded)
 	}
-	if !eligible[0].UpstreamWouldGuard || eligible[0].UpstreamHalfOpen {
-		t.Fatalf("route evidence = would_guard:%t half_open:%t, want recovery evidence only", eligible[0].UpstreamWouldGuard, eligible[0].UpstreamHalfOpen)
+	if !route.UpstreamWouldGuard || route.UpstreamProbe || route.UpstreamHalfOpen {
+		t.Fatalf("route evidence = would_guard:%t probe:%t half_open:%t, want excluded without automatic probe", route.UpstreamWouldGuard, route.UpstreamProbe, route.UpstreamHalfOpen)
 	}
 }
 
-func TestUpstreamGuardAutomaticHalfOpenRequiresHealthyBackup(t *testing.T) {
+func TestUpstreamGuardOnlyAllowsExplicitManualRetry(t *testing.T) {
 	db := openGatewayUpstreamGuardDB(t)
-	oldConfig := config.GlobalConfig
-	config.GlobalConfig = &config.Config{LLM: config.LLMConfig{
-		UpstreamGuardMode:       "enforce",
-		UpstreamGuardPercentage: 100,
-	}}
-	t.Cleanup(func() { config.GlobalConfig = oldConfig })
-
 	organizationID := uuid.New()
 	blockedCredentialID := uuid.New()
 	healthyCredentialID := uuid.New()
@@ -1135,30 +1111,22 @@ func TestUpstreamGuardAutomaticHalfOpenRequiresHealthyBackup(t *testing.T) {
 	healthyRoute := &channelmodel.LLMRoute{ID: uuid.New(), OrganizationID: organizationID, Type: shared.RouteTypePrivate, CredentialID: &healthyCredentialID, ChannelProvider: "qwen"}
 	router := &ChannelRouter{upstreamState: upstreamstate.NewService(db, stubCryptoService{})}
 
-	withoutBackup, guarded := router.filterRoutesByUpstreamGuard(context.Background(), organizationID, []*channelmodel.LLMRoute{blockedRoute}, true, true)
+	withoutBackup, guarded := router.filterRoutesByUpstreamGuard(context.Background(), organizationID, []*channelmodel.LLMRoute{blockedRoute}, true)
 	if len(withoutBackup) != 0 || guarded != 1 {
 		t.Fatalf("without backup = %d/%d, want blocked", len(withoutBackup), guarded)
 	}
 	invalidPrivateRoute := &channelmodel.LLMRoute{ID: uuid.New(), OrganizationID: organizationID, Type: shared.RouteTypePrivate, ChannelProvider: "qwen"}
-	withInvalidBackup, guarded := router.filterRoutesByUpstreamGuard(context.Background(), organizationID, []*channelmodel.LLMRoute{blockedRoute, invalidPrivateRoute}, true, true)
+	withInvalidBackup, guarded := router.filterRoutesByUpstreamGuard(context.Background(), organizationID, []*channelmodel.LLMRoute{blockedRoute, invalidPrivateRoute}, true)
 	if len(withInvalidBackup) != 1 || guarded != 1 || withInvalidBackup[0].ID != invalidPrivateRoute.ID {
 		t.Fatalf("invalid backup = %#v/%d, want guarded credential and unchanged invalid route", withInvalidBackup, guarded)
 	}
 
-	withoutFallback, guarded := router.filterRoutesByUpstreamGuard(context.Background(), organizationID, []*channelmodel.LLMRoute{blockedRoute, healthyRoute}, true, false)
-	if len(withoutFallback) != 1 || guarded != 1 || withoutFallback[0].ID != healthyRoute.ID {
-		t.Fatalf("without fallback support = %#v/%d, want only healthy route", withoutFallback, guarded)
+	withBackup, guarded := router.filterRoutesByUpstreamGuard(context.Background(), organizationID, []*channelmodel.LLMRoute{blockedRoute, healthyRoute}, true)
+	if len(withBackup) != 1 || guarded != 1 || withBackup[0].ID != healthyRoute.ID {
+		t.Fatalf("with backup = %#v/%d, want known unavailable route excluded from ordinary request", withBackup, guarded)
 	}
-	if blockedRoute.UpstreamHalfOpen {
-		t.Fatal("blocked route received half-open lease without request fallback support")
-	}
-
-	withBackup, guarded := router.filterRoutesByUpstreamGuard(context.Background(), organizationID, []*channelmodel.LLMRoute{blockedRoute, healthyRoute}, true, true)
-	if len(withBackup) != 2 || guarded != 0 {
-		t.Fatalf("with backup = %d/%d, want probe candidate plus healthy", len(withBackup), guarded)
-	}
-	if !blockedRoute.UpstreamProbe || blockedRoute.UpstreamHalfOpen || !blockedRoute.UpstreamWouldGuard {
-		t.Fatalf("blocked route evidence = probe:%t half_open:%t would_guard:%t", blockedRoute.UpstreamProbe, blockedRoute.UpstreamHalfOpen, blockedRoute.UpstreamWouldGuard)
+	if blockedRoute.UpstreamProbe || blockedRoute.UpstreamHalfOpen || !blockedRoute.UpstreamWouldGuard {
+		t.Fatalf("blocked route evidence = probe:%t half_open:%t would_guard:%t, want no automatic probe", blockedRoute.UpstreamProbe, blockedRoute.UpstreamHalfOpen, blockedRoute.UpstreamWouldGuard)
 	}
 	stored, err := upstreamstate.NewRepository(db).Get(context.Background(), organizationID, blockedCredentialID)
 	if err != nil {
@@ -1166,6 +1134,20 @@ func TestUpstreamGuardAutomaticHalfOpenRequiresHealthyBackup(t *testing.T) {
 	}
 	if stored.HalfOpenLeaseUntil != nil {
 		t.Fatalf("route filtering acquired half-open lease until %v", stored.HalfOpenLeaseUntil)
+	}
+
+	manualRetryAt := time.Now()
+	if err := db.Model(&upstreamstate.State{}).
+		Where("credential_id = ?", blockedCredentialID).
+		Update("manual_retry_requested_at", manualRetryAt).Error; err != nil {
+		t.Fatalf("request manual retry: %v", err)
+	}
+	manualRetry, guarded := router.filterRoutesByUpstreamGuard(context.Background(), organizationID, []*channelmodel.LLMRoute{blockedRoute, healthyRoute}, true)
+	if len(manualRetry) != 2 || guarded != 0 {
+		t.Fatalf("manual retry = %#v/%d, want explicit probe plus healthy route", manualRetry, guarded)
+	}
+	if !blockedRoute.UpstreamProbe || blockedRoute.UpstreamProbeRequiresBackup {
+		t.Fatalf("manual retry evidence = probe:%t requires_backup:%t", blockedRoute.UpstreamProbe, blockedRoute.UpstreamProbeRequiresBackup)
 	}
 }
 

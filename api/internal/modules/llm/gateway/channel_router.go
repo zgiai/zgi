@@ -2,8 +2,6 @@ package gateway
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"math/rand"
@@ -11,7 +9,6 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
-	appconfig "github.com/zgiai/zgi/api/config"
 	platformchannel "github.com/zgiai/zgi/api/internal/infra/platform/channel"
 	channelmodel "github.com/zgiai/zgi/api/internal/modules/llm/channel/model"
 	channelrepo "github.com/zgiai/zgi/api/internal/modules/llm/channel/repository"
@@ -231,7 +228,7 @@ func (r *ChannelRouter) SelectChannelsForProvider(
 		return nil, fmt.Errorf("no enabled routes found for organizationID %s. Please configure at least one active channel in your workspace", organizationID)
 	}
 
-	validRoutes, err := r.prepareCandidateRoutes(ctx, organizationID, routes, modelName, modelProvider, isPrivateCustomModel, llmModel, isPassthroughMode, true, maxSelections > 1)
+	validRoutes, err := r.prepareCandidateRoutes(ctx, organizationID, routes, modelName, modelProvider, isPrivateCustomModel, llmModel, isPassthroughMode, true)
 	if err != nil {
 		return nil, err
 	}
@@ -550,7 +547,6 @@ func (r *ChannelRouter) prepareCandidateRoutes(
 	llmModel *llmmodel.LLMModel,
 	isPassthroughMode bool,
 	allowHalfOpen bool,
-	allowAutomaticHalfOpen bool,
 ) ([]*channelmodel.LLMRoute, error) {
 	validRoutes := r.filterRoutesForSelection(routes, modelName, modelProvider, isPrivateCustomModel, isPassthroughMode)
 	modelUseCase, _ := ctx.Value(shared.ContextKeyModelUseCase).(string)
@@ -564,7 +560,7 @@ func (r *ChannelRouter) prepareCandidateRoutes(
 		return nil, llmerrors.NewModelNotFoundErrorWithName(modelName)
 	}
 
-	eligibleRoutes, guardedCount := r.filterRoutesByUpstreamGuard(ctx, organizationID, validRoutes, allowHalfOpen, allowAutomaticHalfOpen)
+	eligibleRoutes, guardedCount := r.filterRoutesByUpstreamGuard(ctx, organizationID, validRoutes, allowHalfOpen)
 	if len(eligibleRoutes) == 0 && guardedCount > 0 {
 		upstreamstate.RecordNoCandidateMetric(ctx, "private_only")
 		return nil, fmt.Errorf("%w", llmerrors.DomainErrPrivateChannelUpstreamUnavailable)
@@ -615,7 +611,6 @@ func (r *ChannelRouter) filterRoutesByUpstreamGuard(
 	organizationID uuid.UUID,
 	routes []*channelmodel.LLMRoute,
 	allowHalfOpen bool,
-	allowAutomaticHalfOpen bool,
 ) ([]*channelmodel.LLMRoute, int) {
 	if r.upstreamState == nil || len(routes) == 0 {
 		return routes, 0
@@ -638,9 +633,6 @@ func (r *ChannelRouter) filterRoutesByUpstreamGuard(
 		return routes, 0
 	}
 
-	cfg := appconfig.Current().LLM
-	mode := strings.ToLower(strings.TrimSpace(cfg.UpstreamGuardMode))
-	enforce := mode == "enforce" && organizationInUpstreamGuardRollout(organizationID, cfg.UpstreamGuardPercentage)
 	eligible := make([]*channelmodel.LLMRoute, 0, len(routes))
 	guardedCount := 0
 	for _, route := range routes {
@@ -665,15 +657,9 @@ func (r *ChannelRouter) filterRoutesByUpstreamGuard(
 		// credential later so the key cannot come from an older generation.
 		route.TenantCredential = nil
 		route.UpstreamGeneration = state.Generation
-		if mode == "off" {
-			route.UpstreamWouldGuard = state.BlockReason != ""
-			eligible = append(eligible, route)
-			continue
-		}
-		decision := r.upstreamState.EvaluateGuardReadOnly(state, enforce)
+		decision := r.upstreamState.EvaluateGuardReadOnly(state, true)
 		if allowHalfOpen && decision.Block {
-			hasPotentialBackup := allowAutomaticHalfOpen && r.hasEligibleBackupRoute(routes, states, route, enforce)
-			probeEligible, requiresBackup := r.upstreamState.EvaluateProbeEligibility(state, enforce, hasPotentialBackup)
+			probeEligible, requiresBackup := r.upstreamState.EvaluateProbeEligibility(state, true, false)
 			if probeEligible {
 				route.UpstreamProbe = true
 				route.UpstreamProbeRequiresBackup = requiresBackup
@@ -692,45 +678,6 @@ func (r *ChannelRouter) filterRoutesByUpstreamGuard(
 		eligible = append(eligible, route)
 	}
 	return eligible, guardedCount
-}
-
-func (r *ChannelRouter) hasEligibleBackupRoute(
-	routes []*channelmodel.LLMRoute,
-	states map[uuid.UUID]*upstreamstate.State,
-	current *channelmodel.LLMRoute,
-	enforce bool,
-) bool {
-	for _, candidate := range routes {
-		if candidate == nil || candidate == current {
-			continue
-		}
-		if isOfficialRoute(candidate) {
-			return true
-		}
-		if candidate.CredentialID == nil {
-			continue
-		}
-		if current != nil && current.CredentialID != nil && *candidate.CredentialID == *current.CredentialID {
-			continue
-		}
-		state := states[*candidate.CredentialID]
-		if state == nil || !r.upstreamState.EvaluateGuardReadOnly(state, enforce).Block {
-			return true
-		}
-	}
-	return false
-}
-
-func organizationInUpstreamGuardRollout(organizationID uuid.UUID, percentage int) bool {
-	if percentage <= 0 {
-		return false
-	}
-	if percentage >= 100 {
-		return true
-	}
-	sum := sha256.Sum256(organizationID[:])
-	bucket := int(binary.BigEndian.Uint16(sum[:2]) % 100)
-	return bucket < percentage
 }
 
 // selectRoutesByPriorityAndWeight selects routes based on priority and weight

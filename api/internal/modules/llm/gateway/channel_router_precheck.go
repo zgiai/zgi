@@ -147,7 +147,7 @@ func (r *ChannelRouter) candidateRoutesForResolvedModel(
 		return nil, fmt.Errorf("no enabled routes found for organizationID %s", organizationID)
 	}
 
-	validRoutes, err := r.prepareCandidateRoutes(ctx, organizationID, routes, modelName, modelProvider, isPrivateCustomModel, llmModel, isPassthroughMode, false, false)
+	validRoutes, err := r.prepareCandidateRoutes(ctx, organizationID, routes, modelName, modelProvider, isPrivateCustomModel, llmModel, isPassthroughMode, false)
 	if err != nil {
 		return nil, err
 	}
