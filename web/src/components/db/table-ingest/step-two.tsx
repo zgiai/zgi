@@ -1514,36 +1514,42 @@ const StepTwo: React.FC<IngestStepTwoProps> = ({
           {t('tableIngest.stepTwo.stats.failed', { count: stats.failed })}
         </Badge>
         <div className="ml-auto flex flex-wrap items-center gap-2">
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={retryParseFailedFiles}
-            disabled={promptUnavailable || stats.parseFailed === 0}
-          >
-            <RotateCcw className="h-4 w-4" />
-            {t('tableIngest.stepTwo.retryParseFailedFiles')}
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={retryRecognitionFailedFiles}
-            disabled={promptUnavailable || stats.recognitionFailed === 0}
-          >
-            <RotateCcw className="h-4 w-4" />
-            {t('tableIngest.stepTwo.retryRecognitionFailedFiles')}
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={retryAllFiles}
-            disabled={promptUnavailable || selectedFiles.length === 0}
-          >
-            <RefreshCcw className="h-4 w-4" />
-            {t('tableIngest.stepTwo.reRecognizeAll')}
-          </Button>
+          {stats.parseFailed > 0 && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={retryParseFailedFiles}
+              disabled={promptUnavailable}
+            >
+              <RotateCcw className="h-4 w-4" />
+              {t('tableIngest.stepTwo.retryParseFailedFiles')}
+            </Button>
+          )}
+          {stats.recognitionFailed > 0 && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={retryRecognitionFailedFiles}
+              disabled={promptUnavailable}
+            >
+              <RotateCcw className="h-4 w-4" />
+              {t('tableIngest.stepTwo.retryRecognitionFailedFiles')}
+            </Button>
+          )}
+          {selectedFiles.length > 1 && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={retryAllFiles}
+              disabled={promptUnavailable}
+            >
+              <RefreshCcw className="h-4 w-4" />
+              {t('tableIngest.stepTwo.reRecognizeAll')}
+            </Button>
+          )}
         </div>
       </div>
 
