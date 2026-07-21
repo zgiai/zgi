@@ -74,6 +74,7 @@ func convertGatewayPrecheckResult(result *gateway.AppModelRoutePrecheckResult) *
 			CurrentValue: warning.CurrentValue,
 			Threshold:    warning.Threshold,
 			Reason:       warning.Reason,
+			Scope:        AppModelPrecheckWarningScope(warning.Scope),
 		})
 	}
 

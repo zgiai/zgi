@@ -6,6 +6,8 @@ type AppModelRoutePrecheckStatus string
 
 type AppModelRouteWarningKind string
 
+type AppModelRouteWarningScope string
+
 const (
 	AppModelRoutePrecheckStatusOK      AppModelRoutePrecheckStatus = "ok"
 	AppModelRoutePrecheckStatusWarning AppModelRoutePrecheckStatus = "warning"
@@ -21,9 +23,15 @@ const (
 )
 
 const (
+	AppModelRouteWarningScopePartial AppModelRouteWarningScope = "partial"
+	AppModelRouteWarningScopeAll     AppModelRouteWarningScope = "all"
+)
+
+const (
 	workflowOrganizationLowBalanceThreshold   = int64(500000)
 	workflowWorkspaceLowQuotaThreshold        = int64(100000)
 	workflowPrivateChannelLowBalanceThreshold = int64(500000)
+	privateChannelCredentialUnavailableReason = "credential_unavailable"
 )
 
 type AppModelRouteWarning struct {
@@ -31,6 +39,7 @@ type AppModelRouteWarning struct {
 	CurrentValue int64
 	Threshold    int64
 	Reason       string
+	Scope        AppModelRouteWarningScope
 }
 
 type AppModelRoutePrecheckResult struct {
