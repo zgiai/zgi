@@ -48,7 +48,11 @@ export function useImageRuntimeTransport({ models }: UseImageRuntimeTransportOpt
       async get(conversationId: string): Promise<ConversationDetail> {
         const [conversationResp, messagesResp] = await Promise.all([
           aichatService.getConversation(conversationId, 'image'),
-          aichatService.listMessages(conversationId, { page: 1, limit: 200 }),
+          aichatService.listMessages(conversationId, {
+            page: 1,
+            limit: 200,
+            conversation_type: 'image',
+          }),
         ]);
         const summary = mapConversationToSummary(conversationResp.data);
         return {
@@ -81,7 +85,7 @@ export function useImageRuntimeTransport({ models }: UseImageRuntimeTransportOpt
 
       async remove(conversationId: string): Promise<void> {
         if (!conversationId || conversationId.startsWith('draft-')) return;
-        await aichatService.deleteConversation(conversationId);
+        await aichatService.deleteConversation(conversationId, 'image');
         await queryClient.invalidateQueries({ queryKey: IMAGE_RUNTIME_KEYS.conversations });
       },
 

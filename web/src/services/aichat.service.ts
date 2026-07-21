@@ -292,15 +292,22 @@ export const aichatService = {
     });
   },
 
-  updateConversation(id: string, payload: AIChatUpdateConversationRequest) {
+  updateConversation(
+    id: string,
+    payload: AIChatUpdateConversationRequest,
+    conversationType?: AIChatConversationType
+  ) {
     return http.patch<ApiResponseData<AIChatConversation>>(
       `${AICHAT_BASE_PATH}/conversations/${id}`,
-      payload
+      payload,
+      { params: { conversation_type: conversationType } }
     );
   },
 
-  deleteConversation(id: string) {
-    return http.delete<ApiResponseData<SuccessResponse>>(`${AICHAT_BASE_PATH}/conversations/${id}`);
+  deleteConversation(id: string, conversationType?: AIChatConversationType) {
+    return http.delete<ApiResponseData<SuccessResponse>>(`${AICHAT_BASE_PATH}/conversations/${id}`, {
+      params: { conversation_type: conversationType },
+    });
   },
 
   stopConversation(id: string) {
@@ -309,7 +316,10 @@ export const aichatService = {
     );
   },
 
-  listMessages(id: string, params: { page?: number; limit?: number } = {}) {
+  listMessages(
+    id: string,
+    params: { page?: number; limit?: number; conversation_type?: AIChatConversationType } = {}
+  ) {
     return http.get<AIChatMessageListResponse>(`${AICHAT_BASE_PATH}/conversations/${id}/messages`, {
       params,
     });

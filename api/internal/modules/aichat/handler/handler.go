@@ -427,12 +427,19 @@ func (h *Handler) UpdateConversation(c *gin.Context) {
 	if !ok {
 		return
 	}
+	conversationType, ok := h.conversationType(c, c.Query("conversation_type"))
+	if !ok {
+		return
+	}
 	var req runtimedto.UpdateConversationRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.Fail(c, response.ErrInvalidParam)
 		return
 	}
-	conversation, err := h.service.UpdateConversation(c.Request.Context(), scope, id, req)
+	conversation, err := h.service.UpdateConversationByCaller(c.Request.Context(), scope, runtimeservice.Caller{
+		Type:             runtimemodel.ConversationCallerAIChat,
+		ConversationType: conversationType,
+	}, id, req)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -445,7 +452,14 @@ func (h *Handler) DeleteConversation(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if err := h.service.DeleteConversation(c.Request.Context(), scope, id); err != nil {
+	conversationType, ok := h.conversationType(c, c.Query("conversation_type"))
+	if !ok {
+		return
+	}
+	if err := h.service.DeleteConversationByCaller(c.Request.Context(), scope, runtimeservice.Caller{
+		Type:             runtimemodel.ConversationCallerAIChat,
+		ConversationType: conversationType,
+	}, id); err != nil {
 		h.fail(c, err)
 		return
 	}
@@ -457,8 +471,15 @@ func (h *Handler) ListMessages(c *gin.Context) {
 	if !ok {
 		return
 	}
+	conversationType, ok := h.conversationType(c, c.Query("conversation_type"))
+	if !ok {
+		return
+	}
 	page, limit := pagination(c, 1, defaultMessagePageLimit, maxMessagePageLimit)
-	messages, total, err := h.service.ListMessages(c.Request.Context(), scope, conversationID, page, limit)
+	messages, total, err := h.service.ListConversationMessagesByCaller(c.Request.Context(), scope, runtimeservice.Caller{
+		Type:             runtimemodel.ConversationCallerAIChat,
+		ConversationType: conversationType,
+	}, conversationID, page, limit)
 	if err != nil {
 		h.fail(c, err)
 		return

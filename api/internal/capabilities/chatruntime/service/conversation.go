@@ -639,7 +639,28 @@ func (s *service) UpdateConversation(ctx context.Context, scope Scope, id uuid.U
 	if err := s.ensureMember(ctx, scope); err != nil {
 		return nil, err
 	}
-	var conversation *runtimemodel.Conversation
+	conversation, err := s.getConversation(ctx, scope, id)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.updateConversation(ctx, scope, conversation, req); err != nil {
+		return nil, err
+	}
+	return s.getConversation(ctx, scope, id)
+}
+
+func (s *service) UpdateConversationByCaller(ctx context.Context, scope Scope, caller Caller, id uuid.UUID, req runtimedto.UpdateConversationRequest) (*runtimemodel.Conversation, error) {
+	conversation, err := s.GetConversationByCaller(ctx, scope, caller, id)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.updateConversation(ctx, scope, conversation, req); err != nil {
+		return nil, err
+	}
+	return s.GetConversationByCaller(ctx, scope, caller, id)
+}
+
+func (s *service) updateConversation(ctx context.Context, scope Scope, conversation *runtimemodel.Conversation, req runtimedto.UpdateConversationRequest) error {
 	updates := make(map[string]interface{})
 	if req.Title != nil {
 		updates["title"] = normalizeTitle(*req.Title, defaultConversationTitle)
@@ -647,35 +668,24 @@ func (s *service) UpdateConversation(ctx context.Context, scope Scope, id uuid.U
 	if req.Status != nil {
 		status := strings.TrimSpace(*req.Status)
 		if status != runtimemodel.ConversationStatusNormal && status != runtimemodel.ConversationStatusArchived {
-			return nil, fmt.Errorf("%w: invalid conversation status", ErrInvalidInput)
+			return fmt.Errorf("%w: invalid conversation status", ErrInvalidInput)
 		}
 		updates["status"] = status
 	}
 	if req.CurrentLeafMessageID != nil {
 		leafID, err := uuid.Parse(strings.TrimSpace(*req.CurrentLeafMessageID))
 		if err != nil || leafID == uuid.Nil {
-			return nil, fmt.Errorf("%w: invalid current leaf message id", ErrInvalidInput)
-		}
-		conversation, err = s.getConversation(ctx, scope, id)
-		if err != nil {
-			return nil, err
+			return fmt.Errorf("%w: invalid current leaf message id", ErrInvalidInput)
 		}
 		if err := s.validateCurrentLeafMessage(ctx, scope, conversation, leafID); err != nil {
-			return nil, err
+			return err
 		}
 		updates["current_leaf_message_id"] = leafID
 	}
-	if err := s.repos.Conversation.UpdateScoped(ctx, id, scope.OrganizationID, scope.AccountID, updates); err != nil {
-		return nil, mapRepoError(err)
+	if err := s.repos.Conversation.UpdateScoped(ctx, conversation.ID, scope.OrganizationID, scope.AccountID, updates); err != nil {
+		return mapRepoError(err)
 	}
-	return s.getConversation(ctx, scope, id)
-}
-
-func (s *service) UpdateConversationByCaller(ctx context.Context, scope Scope, caller Caller, id uuid.UUID, req runtimedto.UpdateConversationRequest) (*runtimemodel.Conversation, error) {
-	if _, err := s.GetConversationByCaller(ctx, scope, caller, id); err != nil {
-		return nil, err
-	}
-	return s.UpdateConversation(ctx, scope, id, req)
+	return nil
 }
 
 func (s *service) validateCurrentLeafMessage(ctx context.Context, scope Scope, conversation *runtimemodel.Conversation, leafID uuid.UUID) error {
