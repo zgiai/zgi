@@ -52,7 +52,14 @@ export const RuntimeValuePreview: React.FC<{
       >
         {entries.map(([key, label, entryValue]) => (
           <div key={key} className="flex min-w-0 gap-1.5">
-            <span className="shrink-0 text-muted-foreground/70">{label}:</span>
+            <span
+              className={cn(
+                'shrink-0 font-medium',
+                bounded ? 'text-primary' : 'text-muted-foreground/70'
+              )}
+            >
+              {label}:
+            </span>
             <span className="min-w-0 truncate text-foreground/80">
               {compactValue(entryValue, runtimeLabel, expanded ? 500 : 72)}
             </span>

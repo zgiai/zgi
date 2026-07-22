@@ -59,8 +59,8 @@ export interface RuntimeLogPreviewRow {
   label: string;
   value: unknown;
   tone?: 'input' | 'output' | 'meta' | 'warning';
+  labelKind?: 'section' | 'variable';
   maxRecordEntries?: number;
 }
 
 export type RuntimeLabel = (key: string, params?: Record<string, string | number>) => string;
-

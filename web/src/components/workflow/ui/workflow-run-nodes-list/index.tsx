@@ -322,7 +322,14 @@ const WorkflowRunNodesList: React.FC<WorkflowRunNodesListProps> = ({
                       row.tone ? previewToneClass[row.tone] : 'border-border/50 bg-muted/20'
                     )}
                   >
-                    <div className="mb-0.5 text-[10px] font-medium text-muted-foreground">
+                    <div
+                      className={cn(
+                        'mb-1 text-[11px] font-semibold leading-4 tracking-tight',
+                        row.labelKind === 'variable'
+                          ? 'text-primary'
+                          : 'text-foreground/80'
+                      )}
+                    >
                       {row.label}
                     </div>
                     <RuntimeValuePreview

@@ -365,6 +365,7 @@ export const getCanvasPreviewRows = (
             label: getReadableRuntimeKey(key, runtimeLabel),
             value,
             tone: 'output',
+            labelKind: 'variable',
           });
         });
       } else {
