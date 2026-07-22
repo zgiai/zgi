@@ -17,8 +17,13 @@ const (
 	maxPreviewLimit        = 500
 )
 
+type ValidatedRecord struct {
+	RowIndex int
+	Values   map[string]interface{}
+}
+
 type ExistingTableValidationResult struct {
-	Records     []map[string]interface{}
+	Records     []ValidatedRecord
 	Errors      []dto.ExcelImportFailedItem
 	PreviewRows []dto.ExistingTableExcelImportPreviewRow
 	TotalRows   int
@@ -218,7 +223,10 @@ func ValidateExistingTableDraft(wb *ParsedWorkbook, selection struct {
 			preview.Status = "failed"
 			failedRows[rowIndex] = struct{}{}
 		} else if !isEmptyRow(row) {
-			result.Records = append(result.Records, record)
+			if len(record) == 0 {
+				return nil, fmt.Errorf("row %d produced no target values", rowIndex)
+			}
+			result.Records = append(result.Records, ValidatedRecord{RowIndex: rowIndex, Values: record})
 			result.ValidRows++
 		}
 		appendPreviewRow(result, preview, rowOffset, offset, limit)
@@ -230,8 +238,9 @@ func ValidateExistingTableDraft(wb *ParsedWorkbook, selection struct {
 func validateExistingTableMappings(mappings []dto.ExistingTableExcelImportMapping) error {
 	usedSources := make(map[int]struct{})
 	usedTargets := make(map[string]struct{})
+	hasWritableMapping := false
 	for _, mapping := range mappings {
-		if mapping.Status != dto.ExcelImportMatchExact && !mapping.Confirmed {
+		if !mapping.Confirmed {
 			return fmt.Errorf("field mapping for %q must be confirmed", mappingSourceLabel(mapping))
 		}
 		if mapping.Action == dto.ExcelImportMappingSkip {
@@ -240,6 +249,7 @@ func validateExistingTableMappings(mappings []dto.ExistingTableExcelImportMappin
 			}
 			continue
 		}
+		hasWritableMapping = true
 		if mapping.TargetColumnName == "" {
 			return fmt.Errorf("target field is required for %q", mappingSourceLabel(mapping))
 		}
@@ -260,6 +270,9 @@ func validateExistingTableMappings(mappings []dto.ExistingTableExcelImportMappin
 			return fmt.Errorf("source field %d is mapped more than once", *mapping.SourceColumnIndex)
 		}
 		usedSources[*mapping.SourceColumnIndex] = struct{}{}
+	}
+	if !hasWritableMapping {
+		return fmt.Errorf("at least one target field must be mapped or assigned a fixed value")
 	}
 	return nil
 }

@@ -644,6 +644,8 @@ const messages = {
     fixedValue: 'Use fixed value',
     enterFixedValue: 'Enter a fixed value for this import',
     confirmMatch: 'Confirm match',
+    confirmSkip: 'Confirm skip',
+    noWritableMapping: 'Map at least one target field or assign a fixed value',
     mappingIncomplete: 'Confirm every possible or unmatched field and complete required target fields.',
     targetMissing: 'No Excel field is mapped to this target field',
     totalRows: 'Total',

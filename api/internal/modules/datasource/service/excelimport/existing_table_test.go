@@ -102,8 +102,44 @@ func TestValidateExistingTableDraftFailsWholeRowAndSeparatesSkippedRows(t *testi
 	if len(result.Records) != 1 || len(result.Errors) != 1 {
 		t.Fatalf("records/errors = %d/%d, want 1/1", len(result.Records), len(result.Errors))
 	}
-	if result.Records[0]["department"] != "研发" {
-		t.Fatalf("fixed department = %#v, want 研发", result.Records[0]["department"])
+	if result.Records[0].RowIndex != 2 {
+		t.Fatalf("record row index = %d, want 2", result.Records[0].RowIndex)
+	}
+	if result.Records[0].Values["department"] != "研发" {
+		t.Fatalf("fixed department = %#v, want 研发", result.Records[0].Values["department"])
+	}
+}
+
+func TestValidateExistingTableMappingsRequiresWritableTarget(t *testing.T) {
+	optionalSkip := dto.ExistingTableExcelImportMapping{
+		TargetColumnName: "nickname",
+		Action:           dto.ExcelImportMappingSkip,
+		Confirmed:        true,
+	}
+	if err := validateExistingTableMappings([]dto.ExistingTableExcelImportMapping{optionalSkip}); err == nil {
+		t.Fatal("all skipped mappings should fail")
+	}
+
+	sourceIndex := 0
+	mapped := dto.ExistingTableExcelImportMapping{
+		SourceColumnIndex: &sourceIndex,
+		TargetColumnName:  "name",
+		Action:            dto.ExcelImportMappingMap,
+		Confirmed:         true,
+	}
+	if err := validateExistingTableMappings([]dto.ExistingTableExcelImportMapping{mapped, optionalSkip}); err != nil {
+		t.Fatalf("map with optional skip should pass: %v", err)
+	}
+
+	fixedValue := "研发"
+	fixed := dto.ExistingTableExcelImportMapping{
+		TargetColumnName: "department",
+		Action:           dto.ExcelImportMappingFixed,
+		FixedValue:       &fixedValue,
+		Confirmed:        true,
+	}
+	if err := validateExistingTableMappings([]dto.ExistingTableExcelImportMapping{fixed}); err != nil {
+		t.Fatalf("fixed mapping should pass: %v", err)
 	}
 }
 
@@ -132,6 +168,9 @@ func TestValidateExistingTableDraftReturnsEmptyErrorsForValidRows(t *testing.T) 
 	}
 	if result.Errors == nil {
 		t.Fatal("errors = nil, want empty slice for JSON array contract")
+	}
+	if len(result.Records) != 1 || result.Records[0].RowIndex != 2 || len(result.Records[0].Values) == 0 {
+		t.Fatalf("validated records = %#v, want non-empty row 2", result.Records)
 	}
 }
 

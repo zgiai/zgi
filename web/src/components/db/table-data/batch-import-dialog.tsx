@@ -61,7 +61,8 @@ const BatchImportDialog: FC<BatchImportDialogProps> = ({ open, onOpenChange, dbI
     () => new Set(mappings.filter(item => item.action === 'map').map(item => item.target_column_id)),
     [mappings]
   );
-  const mappingReady = mappings.length > 0 && mappings.every(item => {
+  const hasWritableMapping = mappings.some(item => item.action === 'map' || item.action === 'fixed');
+  const mappingReady = mappings.length > 0 && hasWritableMapping && mappings.every(item => {
     if (!item.confirmed) return false;
     if (item.action === 'map') return Boolean(item.source_column && item.target_column_id);
     if (item.action === 'fixed') return Boolean(item.target_column_id && item.fixed_value?.trim());
@@ -410,7 +411,7 @@ const BatchImportDialog: FC<BatchImportDialogProps> = ({ open, onOpenChange, dbI
                         <td className="p-3">
                           {mapping.source_column ? <Select value={mapping.action === 'map' ? mapping.target_column_id : 'skip'} onValueChange={value => value === 'skip' ? skipSource(index) : selectTarget(index, value)}><SelectTrigger className={mapping.status === 'unmatched' && mapping.action !== 'skip' ? 'border-amber-500' : ''}><SelectValue placeholder={t('selectTarget')} /></SelectTrigger><SelectContent>{targetColumns.map(column => <SelectItem key={column.id} value={column.id} disabled={usedTargetIds.has(column.id) && column.id !== mapping.target_column_id}>{targetColumnLabel(column)}</SelectItem>)}<SelectItem value="skip">{t('skip')}</SelectItem></SelectContent></Select> : <><Select value={mapping.action} onValueChange={value => updateMapping(index, { action: value as 'fixed' | 'skip', confirmed: value === 'skip' && !mapping.target_required })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="fixed">{t('fixedValue')}</SelectItem><SelectItem value="skip" disabled={mapping.target_required}>{t('skip')}</SelectItem></SelectContent></Select>{mapping.action === 'fixed' && <Input className="mt-2" value={mapping.fixed_value ?? ''} placeholder={t('enterFixedValue')} onChange={event => updateMapping(index, { fixed_value: event.target.value, confirmed: Boolean(event.target.value.trim()) })} />}</>}
                         </td>
-                        <td className="p-3 text-center">{mapping.confirmed ? <CheckCircle2 className="mx-auto size-4 text-emerald-500" /> : mapping.action === 'map' && mapping.target_column_id ? <Button size="sm" variant="outline" onClick={() => updateMapping(index, { confirmed: true })}>{t('confirmMatch')}</Button> : <AlertCircle className="mx-auto size-4 text-destructive" />}</td>
+                        <td className="p-3 text-center">{mapping.confirmed ? <CheckCircle2 className="mx-auto size-4 text-emerald-500" /> : mapping.action === 'skip' && !mapping.target_required ? <Button size="sm" variant="outline" onClick={() => updateMapping(index, { confirmed: true })}>{t('confirmSkip')}</Button> : mapping.action === 'map' && mapping.target_column_id ? <Button size="sm" variant="outline" onClick={() => updateMapping(index, { confirmed: true })}>{t('confirmMatch')}</Button> : <AlertCircle className="mx-auto size-4 text-destructive" />}</td>
                       </tr>
                     ))}</tbody>
                   </table>
@@ -418,8 +419,8 @@ const BatchImportDialog: FC<BatchImportDialogProps> = ({ open, onOpenChange, dbI
                 </>}
               </DialogBody>
               <DialogFooter className="items-center justify-between border-t py-4 max-sm:flex-col max-sm:items-stretch">
-                <p className={isEnriching ? 'text-sm text-muted-foreground' : mappingReady ? 'text-sm text-emerald-600' : 'text-sm text-destructive'}>{isEnriching ? t('matchingProgress') : mappingReady ? t('allHandled') : t('pendingMappingCount', { count: pendingMappingCount })}</p>
-                <div className="flex gap-2"><Button variant="outline" onClick={() => setStep('file')} disabled={isEnriching}>{t('previous')}</Button><Button title={!isEnriching && !mappingReady ? t('pendingMappingCount', { count: pendingMappingCount }) : undefined} onClick={handlePreview} disabled={isEnriching || !mappingReady || preview.isPending}>{preview.isPending && <Loader className="mr-2 size-4 animate-spin" />}{t('previewAction')}</Button></div>
+                <p className={isEnriching ? 'text-sm text-muted-foreground' : mappingReady ? 'text-sm text-emerald-600' : 'text-sm text-destructive'}>{isEnriching ? t('matchingProgress') : mappingReady ? t('allHandled') : !hasWritableMapping && pendingMappingCount === 0 ? t('noWritableMapping') : t('pendingMappingCount', { count: pendingMappingCount })}</p>
+                <div className="flex gap-2"><Button variant="outline" onClick={() => setStep('file')} disabled={isEnriching}>{t('previous')}</Button><Button title={!isEnriching && !mappingReady ? (!hasWritableMapping && pendingMappingCount === 0 ? t('noWritableMapping') : t('pendingMappingCount', { count: pendingMappingCount })) : undefined} onClick={handlePreview} disabled={isEnriching || !mappingReady || preview.isPending}>{preview.isPending && <Loader className="mr-2 size-4 animate-spin" />}{t('previewAction')}</Button></div>
               </DialogFooter>
             </>
           )}

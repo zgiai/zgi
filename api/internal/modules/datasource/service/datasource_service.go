@@ -4143,7 +4143,7 @@ func (s *dataSourceService) ConfirmExcelImport(ctx context.Context, organization
 	importedRows := 0
 	batchSize := req.Options.BatchSize
 	if batchSize <= 0 {
-		batchSize = 500
+		batchSize = defaultExcelImportBatchSize
 	}
 	for start := 0; start < len(validation.Records); start += batchSize {
 		end := start + batchSize

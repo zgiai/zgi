@@ -12,7 +12,17 @@ import (
 	excelimportrepo "github.com/zgiai/zgi/api/internal/modules/datasource/repository/excelimport"
 	excelimportsvc "github.com/zgiai/zgi/api/internal/modules/datasource/service/excelimport"
 	workspace_model "github.com/zgiai/zgi/api/internal/modules/workspace/model"
+	"github.com/zgiai/zgi/api/pkg/logger"
 )
+
+const defaultExcelImportBatchSize = 500
+
+type existingTableInsertResult struct {
+	ImportedRows int
+	FailedItems  []dto.ExcelImportFailedItem
+}
+
+type existingTableBatchInserter func(records []map[string]interface{}) (int, error)
 
 func (s *dataSourceService) AnalyzeExistingTableExcelImport(ctx context.Context, organizationID, dataSourceID, tableID, accountID string, req dto.AnalyzeExcelImportRequest) (dto.AnalyzeExistingTableExcelImportData, error) {
 	dataSource, table, err := s.validateDataSourceAndTable(ctx, organizationID, dataSourceID, tableID)
@@ -161,40 +171,36 @@ func (s *dataSourceService) ConfirmExistingTableExcelImport(ctx context.Context,
 	if !sameExistingTableImportSchema(job.SchemaSnapshot, currentColumns.Columns) {
 		return s.failExistingTableImport(ctx, job, accountID, fmt.Errorf("target table structure changed; analyze the file again"))
 	}
-	if err := s.confirmExistingTableImportAliases(ctx, job, draft.Mappings, accountID); err != nil {
-		return s.failExistingTableImport(ctx, job, accountID, fmt.Errorf("failed to save confirmed field aliases: %w", err))
-	}
+	insertResult := insertExistingTableRecords(validation.Records, defaultExcelImportBatchSize, func(records []map[string]interface{}) (int, error) {
+		result, insertErr := s.addTableRecordsToTable(ctx, organizationID, dataSource, table, accountID, dto.AddRecordRequest{Records: records}, model.OperationTypeImport)
+		return int(result.AffectedRows), insertErr
+	})
+	failedItems := append(append([]dto.ExcelImportFailedItem{}, validation.Errors...), insertResult.FailedItems...)
+	failedRows := validation.FailedRows + len(insertResult.FailedItems)
 
-	importedRows := 0
-	if len(validation.Records) > 0 {
-		result, insertErr := s.addTableRecordsToTable(ctx, organizationID, dataSource, table, accountID, dto.AddRecordRequest{Records: validation.Records}, model.OperationTypeImport)
-		if insertErr != nil {
-			return s.failExistingTableImport(ctx, job, accountID, fmt.Errorf("failed to insert records: %w", insertErr))
-		}
-		importedRows = int(result.AffectedRows)
-		if importedRows == 0 {
-			importedRows = len(validation.Records)
-		}
+	errorSummary := map[string]interface{}{"skipped_rows": validation.SkippedRows}
+	if aliasErr := persistExistingTableImportAliases(insertResult.ImportedRows, func() error {
+		return s.confirmExistingTableImportAliases(ctx, job, draft.Mappings, accountID)
+	}); aliasErr != nil {
+		errorSummary["alias_persistence_error"] = aliasErr.Error()
+		logger.ErrorContext(ctx, "failed to save confirmed excel import aliases", "job_id", job.ID, "table_id", tableID, aliasErr)
 	}
 
 	errorRepo := excelimportrepo.NewErrorRepository(s.db)
 	if err := errorRepo.DeleteByJobID(ctx, job.ID); err != nil {
 		return dto.ConfirmExcelImportData{}, fmt.Errorf("failed to clear import errors: %w", err)
 	}
-	if err := errorRepo.CreateBatch(ctx, buildExcelImportErrors(job.ID, validation.Errors)); err != nil {
+	if err := errorRepo.CreateBatch(ctx, buildExcelImportErrors(job.ID, failedItems)); err != nil {
 		return dto.ConfirmExcelImportData{}, fmt.Errorf("failed to save import errors: %w", err)
 	}
 
-	status := dto.ExcelImportStatusCompleted
-	if validation.FailedRows > 0 {
-		status = dto.ExcelImportStatusPartialFailed
-	}
+	status := existingTableImportStatus(insertResult.ImportedRows, len(validation.Records), failedRows)
 	job.Status = string(status)
 	job.TotalRows = validation.TotalRows
 	job.ValidRows = validation.ValidRows
-	job.ImportedRows = importedRows
-	job.FailedRows = validation.FailedRows
-	job.ErrorSummary = mustJSON(map[string]interface{}{"skipped_rows": validation.SkippedRows})
+	job.ImportedRows = insertResult.ImportedRows
+	job.FailedRows = failedRows
+	job.ErrorSummary = mustJSON(errorSummary)
 	job.UpdatedBy = accountID
 	if err := jobRepo.Update(ctx, job); err != nil {
 		return dto.ConfirmExcelImportData{}, fmt.Errorf("failed to finalize import job: %w", err)
@@ -204,11 +210,70 @@ func (s *dataSourceService) ConfirmExistingTableExcelImport(ctx context.Context,
 		TableID:      tableID,
 		Status:       status,
 		TotalRows:    validation.TotalRows,
-		ImportedRows: importedRows,
-		FailedRows:   validation.FailedRows,
+		ImportedRows: insertResult.ImportedRows,
+		FailedRows:   failedRows,
 		SkippedRows:  validation.SkippedRows,
-		FailedItems:  validation.Errors,
+		FailedItems:  failedItems,
 	}, nil
+}
+
+func insertExistingTableRecords(records []excelimportsvc.ValidatedRecord, batchSize int, insert existingTableBatchInserter) existingTableInsertResult {
+	if batchSize <= 0 {
+		batchSize = defaultExcelImportBatchSize
+	}
+	result := existingTableInsertResult{FailedItems: []dto.ExcelImportFailedItem{}}
+	for start := 0; start < len(records); start += batchSize {
+		end := start + batchSize
+		if end > len(records) {
+			end = len(records)
+		}
+		batch := records[start:end]
+		values := make([]map[string]interface{}, len(batch))
+		for index := range batch {
+			values[index] = batch[index].Values
+		}
+		affectedRows, err := insert(values)
+		if err == nil {
+			if affectedRows <= 0 {
+				affectedRows = len(batch)
+			}
+			result.ImportedRows += affectedRows
+			continue
+		}
+		for _, record := range batch {
+			affectedRows, rowErr := insert([]map[string]interface{}{record.Values})
+			if rowErr != nil {
+				result.FailedItems = append(result.FailedItems, dto.ExcelImportFailedItem{
+					RowIndex:     record.RowIndex,
+					ErrorCode:    "database_insert_failed",
+					ErrorMessage: rowErr.Error(),
+				})
+				continue
+			}
+			if affectedRows <= 0 {
+				affectedRows = 1
+			}
+			result.ImportedRows += affectedRows
+		}
+	}
+	return result
+}
+
+func existingTableImportStatus(importedRows, candidateRows, failedRows int) dto.ExcelImportStatus {
+	if candidateRows > 0 && importedRows == 0 && failedRows > 0 {
+		return dto.ExcelImportStatusFailed
+	}
+	if failedRows > 0 {
+		return dto.ExcelImportStatusPartialFailed
+	}
+	return dto.ExcelImportStatusCompleted
+}
+
+func persistExistingTableImportAliases(importedRows int, persist func() error) error {
+	if importedRows == 0 {
+		return nil
+	}
+	return persist()
 }
 
 func (s *dataSourceService) loadExistingTableImportWorkbook(ctx context.Context, organizationID, dataSourceID, tableID, accountID, jobID string, permission workspace_model.WorkspacePermissionCode) (*excelimportmodel.ImportJob, *excelimportsvc.ParsedWorkbook, error) {
@@ -292,7 +357,7 @@ func (s *dataSourceService) failExistingTableImport(ctx context.Context, job *ex
 func (s *dataSourceService) confirmExistingTableImportAliases(ctx context.Context, job *excelimportmodel.ImportJob, mappings []dto.ExistingTableExcelImportMapping, accountID string) error {
 	repo := excelimportrepo.NewColumnAliasRepository(s.db)
 	for _, mapping := range mappings {
-		if mapping.Action != dto.ExcelImportMappingMap || mapping.SourceColumn == nil || mapping.TargetColumnID == "" {
+		if mapping.Action != dto.ExcelImportMappingMap || !mapping.Confirmed || mapping.SourceColumn == nil || mapping.TargetColumnID == "" {
 			continue
 		}
 		normalized := excelimportsvc.NormalizeImportHeader(*mapping.SourceColumn)

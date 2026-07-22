@@ -602,6 +602,8 @@ const messages: DbsMessages = {
     fixedValue: '使用固定值',
     enterFixedValue: '输入本次导入的固定值',
     confirmMatch: '确认匹配',
+    confirmSkip: '确认跳过',
+    noWritableMapping: '至少需要映射一个目标字段或设置固定值',
     mappingIncomplete: '请确认所有黄色、红色映射，并补齐必填目标字段。',
     targetMissing: '目标字段没有对应的 Excel 字段',
     totalRows: '总行数',
