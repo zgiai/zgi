@@ -1273,6 +1273,7 @@ const messages = {
         clear: 'Clear variable',
         setConstant: 'Set to fixed value {value}',
         setVariable: 'Set to {value}',
+        setVariablePrefix: 'Set to',
         math: '{action} {value}',
       },
     },
@@ -1931,6 +1932,21 @@ const messages = {
     invalidVariable: 'Invalid variable',
     noMatchingVariables: 'No matching variables available from upstream nodes',
     invalidUpstream: 'Invalid upstream variable reference',
+    deletedVariableSource: 'Deleted source node',
+    variableSourceDeleted: 'The source node was deleted. Choose another variable.',
+    variableSourceUnreachable:
+      'The source node is no longer upstream in the current connection graph.',
+    variableOutputRemoved: 'The source node no longer provides this output variable.',
+    deleteVariableSourceTitle: 'Delete this node?',
+    disconnectVariableSourceTitle: 'Disconnect this connection?',
+    variableImpactDescription:
+      'This operation will invalidate {count} variable reference(s) in downstream nodes.',
+    variableImpactPreserved:
+      'The original references will be kept so you can reconnect or replace them later.',
+    doNotWarnAgainThisEdit: 'Do not warn again while editing',
+    affectedNode: 'Affected node',
+    moreVariableImpacts: 'And {count} more reference(s)',
+    continueOperation: 'Continue',
   },
   common: {
     remove: 'Remove',

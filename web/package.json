@@ -18,6 +18,7 @@
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "test:workflow-tool-validation": "node scripts/test-workflow-tool-validation.mjs",
+    "test:workflow-variable-reference-health": "node scripts/test-workflow-variable-reference-health.mjs",
     "test:workflow-runtime-results": "node --experimental-strip-types --disable-warning=ExperimentalWarning --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-workflow-runtime-results.mjs",
     "test:workflow-conversation-runtime": "node --experimental-strip-types --disable-warning=ExperimentalWarning --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-workflow-conversation-runtime-controller.mjs",
     "test:workflow-end-fixed-output": "node --experimental-strip-types --disable-warning=ExperimentalWarning --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-workflow-end-fixed-output.mjs",

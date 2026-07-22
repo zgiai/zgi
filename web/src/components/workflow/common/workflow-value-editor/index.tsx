@@ -14,6 +14,7 @@ import { useWorkflowStore } from '@/components/workflow/store';
 import type { UpstreamExportItem } from '@/components/workflow/store/helpers/graph';
 import type { WorkflowVariable } from '@/components/workflow/store/type';
 import type { StructuredTypeField } from '@/components/workflow/types/input-var';
+import { resolveWorkflowVariableReferenceHealth } from '../variable-reference-health';
 
 // tiptap
 import { EditorContent, useEditor } from '@tiptap/react';
@@ -22,10 +23,10 @@ import { Extension, type Editor as TiptapEditor } from '@tiptap/core';
 import { Plugin, PluginKey, TextSelection } from '@tiptap/pm/state';
 import { Decoration, DecorationSet } from '@tiptap/pm/view';
 
-type ActiveSuggestController = {
+interface ActiveSuggestController {
   id: string;
   dismiss: () => void;
-};
+}
 
 let activeSuggestController: ActiveSuggestController | null = null;
 
@@ -277,7 +278,6 @@ const WorkflowValueEditor = forwardRef<WorkflowValueEditorHandle, WorkflowValueE
   ) => {
     // Access store safely to get upstream variables for suggestions
     const getUpstreamVariables = useWorkflowStore.use.getUpstreamVariables();
-    const getAncestors = useWorkflowStore.use.getAncestors();
     // Use graphVersion as a stable trigger for structural updates.
     // We avoid subscribing to nodeIdToTitle directly to prevent re-renders when nodes move.
     const graphVersion = useWorkflowStore.use.graphVersion();
@@ -372,7 +372,7 @@ const WorkflowValueEditor = forwardRef<WorkflowValueEditorHandle, WorkflowValueE
 
     const suggestInstanceId = React.useId();
     const dismissedSlashKeyRef = useRef<string | null>(null);
-    type SuggestState = {
+    interface SuggestState {
       open: boolean;
       x: number;
       y: number;
@@ -384,7 +384,7 @@ const WorkflowValueEditor = forwardRef<WorkflowValueEditorHandle, WorkflowValueE
       path: string[];
       activeGroupIndex: number;
       activeItemIndex: number;
-    };
+    }
     const [suggestState, setSuggestState] = useState<SuggestState | null>(null);
 
     // Refs need to be declared before callbacks that use them
@@ -1169,41 +1169,68 @@ const WorkflowValueEditor = forwardRef<WorkflowValueEditorHandle, WorkflowValueE
             });
           });
         }
-        const upstreamSet = nodeId ? new Set<string>(getAncestors(nodeId) || []) : null;
         const updates: Array<{ pos: number; attrs: Record<string, unknown> }> = [];
+        const workflowState = useWorkflowStore.getState();
         doc.descendants((node, pos) => {
           if (node.type === varType) {
             const sid = String((node.attrs as { sourceId?: string }).sourceId || '');
             const key = String((node.attrs as { key?: string }).key || '');
             const extraLabel = extraTokenLabels.get(`${sid}\0${key}`);
-            const desiredTitle = extraLabel?.title || idToTitleRef.current.get(sid) || sid;
             const desiredLabel = extraLabel?.label || '';
-            const currentTitle = String((node.attrs as { title?: string }).title || '');
-            const currentLabel = String((node.attrs as { label?: string }).label || '');
             const isExtraSource = Boolean(
               (Array.isArray(extraSuggestItems) &&
                 extraSuggestItems.some(item => item.sourceId === sid)) ||
-              (Array.isArray(extraSuggestGroups) &&
-                extraSuggestGroups.some(group => group.items.some(item => item.sourceId === sid)))
+                (Array.isArray(extraSuggestGroups) &&
+                  extraSuggestGroups.some(group => group.items.some(item => item.sourceId === sid)))
             );
+            const health =
+              !isExtraSource && nodeId && sid && !allowedSpecial.has(sid)
+                ? resolveWorkflowVariableReferenceHealth({
+                    nodes: workflowState.nodes,
+                    edges: workflowState.edges,
+                    consumerNodeId: nodeId,
+                    selector: [sid, ...key.split('.')],
+                    agentType: workflowState.agentType,
+                  })
+                : null;
+            const desiredTitle =
+              extraLabel?.title ||
+              health?.sourceNode?.data?.title ||
+              idToTitleRef.current.get(sid) ||
+              (health?.status === 'source_deleted'
+                ? t('nodes.validation.deletedVariableSource')
+                : sid);
             const shouldMarkInvalid = Boolean(
               sid &&
-              (isExtraSource
-                ? !extraLabel || extraLabel.invalid
-                : !allowedSpecial.has(sid) && upstreamSet
-                  ? !upstreamSet.has(sid)
-                  : false)
+                (isExtraSource
+                  ? !extraLabel || extraLabel.invalid
+                  : health
+                    ? health.status !== 'active'
+                    : false)
             );
-            if (desiredTitle && desiredTitle !== currentTitle) {
-              updates.push({
-                pos,
-                attrs: { ...node.attrs, title: desiredTitle, label: desiredLabel },
-              });
-            } else if (desiredLabel !== currentLabel) {
-              updates.push({ pos, attrs: { ...node.attrs, label: desiredLabel } });
-            }
-            if (shouldMarkInvalid !== Boolean((node.attrs as { invalid?: boolean }).invalid)) {
-              updates.push({ pos, attrs: { ...node.attrs, invalid: shouldMarkInvalid } });
+            const invalidReason =
+              health?.status === 'source_deleted'
+                ? t('nodes.validation.variableSourceDeleted')
+                : health?.status === 'source_unreachable'
+                  ? t('nodes.validation.variableSourceUnreachable')
+                  : health?.status === 'output_removed'
+                    ? t('nodes.validation.variableOutputRemoved')
+                    : '';
+            const nextAttrs = {
+              ...node.attrs,
+              title: desiredTitle,
+              label: desiredLabel,
+              invalid: shouldMarkInvalid,
+              invalidReason,
+            };
+            if (
+              desiredTitle !== String((node.attrs as { title?: string }).title || '') ||
+              desiredLabel !== String((node.attrs as { label?: string }).label || '') ||
+              shouldMarkInvalid !== Boolean((node.attrs as { invalid?: boolean }).invalid) ||
+              invalidReason !==
+                String((node.attrs as { invalidReason?: string }).invalidReason || '')
+            ) {
+              updates.push({ pos, attrs: nextAttrs });
             }
           }
           return true;
@@ -1218,7 +1245,7 @@ const WorkflowValueEditor = forwardRef<WorkflowValueEditorHandle, WorkflowValueE
       } catch (e) {
         console.error('Error updating token titles:', e);
       }
-    }, [editor, extraSuggestItems, extraSuggestGroups, extraTokenLabels, nodeId, getAncestors]);
+    }, [editor, extraSuggestItems, extraSuggestGroups, extraTokenLabels, nodeId, t]);
 
     // Compute UI groups for the suggestion panel based on current path and query
     const enrichedGroups = useMemo(() => {

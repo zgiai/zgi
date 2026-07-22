@@ -5,6 +5,12 @@ import type { StructuredTypeField } from '../types/input-var';
 
 export type WorkflowPrimitiveType = WorkflowVariable['type'];
 
+export type WorkflowVariableReferenceStatus =
+  | 'active'
+  | 'source_deleted'
+  | 'source_unreachable'
+  | 'output_removed';
+
 export interface ResolvedVariableReference {
   sourceId: string;
   sourceTitle: string;
@@ -12,6 +18,7 @@ export interface ResolvedVariableReference {
   displayPath: string;
   displayText: string;
   invalid: boolean;
+  status: WorkflowVariableReferenceStatus;
   isSpecialSource: boolean;
   type?: WorkflowPrimitiveType;
 }
@@ -19,7 +26,9 @@ export interface ResolvedVariableReference {
 export const SPECIAL_VARIABLE_SOURCE_IDS = ['sys', 'conversation', 'environment'] as const;
 
 export function isSpecialVariableSource(sourceId?: string | null): boolean {
-  return SPECIAL_VARIABLE_SOURCE_IDS.includes(sourceId as (typeof SPECIAL_VARIABLE_SOURCE_IDS)[number]);
+  return SPECIAL_VARIABLE_SOURCE_IDS.includes(
+    sourceId as (typeof SPECIAL_VARIABLE_SOURCE_IDS)[number]
+  );
 }
 
 export function parseTemplateToSelector(template?: string): string[] | null {
@@ -86,6 +95,7 @@ export function resolveVariableReference(args: {
   selector: string[];
   sourceTitle: string;
   invalid?: boolean;
+  status?: WorkflowVariableReferenceStatus;
   type?: WorkflowPrimitiveType;
 }): ResolvedVariableReference {
   const normalized = normalizeVariableSelector(args.selector);
@@ -103,6 +113,7 @@ export function resolveVariableReference(args: {
     displayPath,
     displayText: `${args.sourceTitle} (${displayPath})`,
     invalid: Boolean(args.invalid),
+    status: args.status ?? (args.invalid ? 'source_unreachable' : 'active'),
     isSpecialSource: isSpecialVariableSource(sourceId),
     type: args.type,
   };

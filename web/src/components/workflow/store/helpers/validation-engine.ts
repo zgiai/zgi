@@ -63,6 +63,10 @@ import type { BuiltinToolProvider, ToolParameter } from '@/services/types/tool';
 import type { Locale } from '@/lib/i18n';
 import { pickLocale } from '@/utils/tool-helpers';
 import type { ToolRequiredField } from '../../nodes/tool/config';
+import {
+  collectWorkflowVariableReferences,
+  createWorkflowVariableReferenceHealthResolver,
+} from '../../common/variable-reference-health';
 
 function getToolRequiredFields(
   toolProviders: BuiltinToolProvider[] | null | undefined,
@@ -430,6 +434,28 @@ export function validateWorkflow(
         }
       }
     }
+  }
+
+  // Invalid references are graph-derived and must be validated consistently across node types.
+  const invalidReferenceNodes = new Set<string>();
+  const resolveVariableHealth = createWorkflowVariableReferenceHealthResolver({
+    nodes,
+    edges,
+    agentType,
+  });
+  for (const reference of collectWorkflowVariableReferences(nodes)) {
+    if (invalidReferenceNodes.has(reference.consumerNodeId)) continue;
+    const health = resolveVariableHealth(reference.consumerNodeId, reference.selector);
+    if (!health || health.status === 'active') continue;
+    const consumer = nodesMap.get(reference.consumerNodeId);
+    if (!consumer || commentSet.has(consumer.id)) continue;
+    invalidReferenceNodes.add(consumer.id);
+    errors.push({
+      type: 'error',
+      code: 'validation.invalidUpstream',
+      nodeId: consumer.id,
+      nodeTitle: consumer.data.title,
+    });
   }
 
   // 5. Optimized Circular Dependency Check

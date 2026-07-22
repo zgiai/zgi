@@ -20,6 +20,7 @@ import {
 } from '../form-density';
 import { useWorkflowVariableCatalog } from '../../hooks';
 import { buildVariableSelectionKey, normalizeVariableSelector } from '../variable-reference';
+import { useResolvedVariableReference } from '../../hooks/use-resolved-variable-reference';
 
 // Primitive type alias derived from workflow variable type
 type PrimitiveType = WorkflowVariable['type'];
@@ -125,26 +126,38 @@ const NodeValueSelector: React.FC<NodeValueSelectorProps> = ({
     if (!normalizedValue) return null;
     return selectionIndex.get(buildVariableSelectionKey(normalizedValue) || '');
   }, [normalizedValue, selectionIndex]);
+  const resolvedFallback = useResolvedVariableReference({
+    selector: upstreamsOverride ? undefined : (normalizedValue ?? undefined),
+    currentNodeId: upstreamsOverride ? undefined : (nodeId ?? undefined),
+  });
 
   // Build selected label for trigger
   const { selectedLabel, selectedLabelText } = useMemo(() => {
-    if (!selectedOption) return { selectedLabel: '', selectedLabelText: '' };
+    if (!selectedOption && !resolvedFallback) return { selectedLabel: '', selectedLabelText: '' };
+    const sourceTitle = selectedOption?.sourceTitle ?? resolvedFallback?.sourceTitle ?? '';
+    const displayPath = selectedOption?.displayPath ?? resolvedFallback?.displayPath ?? '';
     const label = (
       <>
-        <span className="mr-1">{selectedOption.sourceTitle}</span>
-        <span className="text-highlight">
-          ({selectedOption.displayPath})
-        </span>
+        <span className="mr-1">{sourceTitle}</span>
+        <span className="text-highlight">({displayPath})</span>
       </>
     );
-    const text = selectedOption.displayText;
+    const text = selectedOption?.displayText ?? resolvedFallback?.displayText ?? '';
     return { selectedLabel: label, selectedLabelText: text };
-  }, [selectedOption]);
+  }, [resolvedFallback, selectedOption]);
 
   const invalidSelected = useMemo(() => {
     if (!normalizedValue) return false;
-    return !selectedOption;
-  }, [normalizedValue, selectedOption]);
+    return !selectedOption || Boolean(resolvedFallback?.invalid);
+  }, [normalizedValue, resolvedFallback?.invalid, selectedOption]);
+  const invalidReason =
+    resolvedFallback?.status === 'source_deleted'
+      ? t('nodes.validation.variableSourceDeleted')
+      : resolvedFallback?.status === 'source_unreachable'
+        ? t('nodes.validation.variableSourceUnreachable')
+        : resolvedFallback?.status === 'output_removed'
+          ? t('nodes.validation.variableOutputRemoved')
+          : '';
 
   const [open, setOpen] = useState(false);
   const hasAutoOpenedRef = useRef(false);
@@ -164,9 +177,7 @@ const NodeValueSelector: React.FC<NodeValueSelectorProps> = ({
   return (
     <div className={cn('space-y-2', className)}>
       {label ? (
-        <Label
-          className={cn(isCompact && WORKFLOW_FIELD_LABEL_COMPACT_CLASS, labelClassName)}
-        >
+        <Label className={cn(isCompact && WORKFLOW_FIELD_LABEL_COMPACT_CLASS, labelClassName)}>
           {label}
         </Label>
       ) : null}
@@ -208,7 +219,10 @@ const NodeValueSelector: React.FC<NodeValueSelectorProps> = ({
                   aria-invalid={invalidSelected || undefined}
                   className={cn(
                     'min-w-0 w-full justify-between overflow-hidden font-normal',
-                    invalidSelected && 'border-destructive',
+                    resolvedFallback?.status === 'source_unreachable' && 'border-amber-500',
+                    invalidSelected &&
+                      resolvedFallback?.status !== 'source_unreachable' &&
+                      'border-destructive',
                     !selectedLabel && 'text-muted-foreground',
                     isCompact && WORKFLOW_CONTROL_COMPACT_CLASS,
                     triggerClassName
@@ -229,7 +243,7 @@ const NodeValueSelector: React.FC<NodeValueSelectorProps> = ({
             </TooltipTrigger>
             {selectedLabel && (
               <TooltipContent side="top" className="max-w-sm break-all">
-                {selectedLabelText}
+                {invalidReason || selectedLabelText}
               </TooltipContent>
             )}
           </Tooltip>

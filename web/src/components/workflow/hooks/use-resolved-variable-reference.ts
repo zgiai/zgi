@@ -12,6 +12,7 @@ import {
   type ResolvedVariableReference,
 } from '../common/variable-reference';
 import { useWorkflowVariableCatalog } from './use-workflow-variable-catalog';
+import { resolveWorkflowVariableReferenceHealth } from '../common/variable-reference-health';
 
 interface UseResolvedVariableReferenceOptions {
   selector?: string[];
@@ -33,8 +34,10 @@ export function useResolvedVariableReference({
   const { selectionIndex } = useWorkflowVariableCatalog({
     nodeId: currentNodeId,
   });
-  const getAncestors = useWorkflowStore.use.getAncestors();
   const nodeIdToTitle = useWorkflowStore.use.nodeIdToTitle();
+  const nodes = useWorkflowStore.use.nodes();
+  const edges = useWorkflowStore.use.edges();
+  const agentType = useWorkflowStore.use.agentType();
   const mode = useWorkflowStore.use.mode();
   const selectedRunId = useWorkflowStore.use.selectedRunId();
   const historySnapshots = useWorkflowStore.use.historySnapshots();
@@ -48,7 +51,20 @@ export function useResolvedVariableReference({
     );
     const isSpecialSource = isSpecialVariableSource(sourceId);
 
-    let sourceTitle = matched?.sourceTitle ?? sourceId;
+    const snapshot = mode === 'history' && selectedRunId ? historySnapshots[selectedRunId] : null;
+    const effectiveNodes = snapshot?.nodes ?? nodes;
+    const effectiveEdges = snapshot?.edges ?? edges;
+    const health = currentNodeId
+      ? resolveWorkflowVariableReferenceHealth({
+          nodes: effectiveNodes,
+          edges: effectiveEdges,
+          consumerNodeId: currentNodeId,
+          selector: normalizedSelector,
+          agentType,
+        })
+      : null;
+
+    let sourceTitle = matched?.sourceTitle ?? '';
     if (!matched) {
       if (sourceId === 'sys') {
         sourceTitle = t('agents.workflow.systemVariables.title');
@@ -57,31 +73,37 @@ export function useResolvedVariableReference({
       } else if (sourceId === 'conversation') {
         sourceTitle = t('agents.workflow.conversationVariables.title');
       } else if (mode === 'history' && selectedRunId) {
-        const snapshot = historySnapshots[selectedRunId];
         const node = snapshot?.nodes.find(item => item.id === sourceId);
-        sourceTitle = node?.data?.title || nodeIdToTitle.get(sourceId) || sourceId;
+        sourceTitle =
+          node?.data?.title ||
+          nodeIdToTitle.get(sourceId) ||
+          t('nodes.validation.deletedVariableSource');
       } else {
-        sourceTitle = nodeIdToTitle.get(sourceId) || sourceId;
+        sourceTitle =
+          health?.sourceNode?.data?.title ||
+          nodeIdToTitle.get(sourceId) ||
+          t('nodes.validation.deletedVariableSource');
       }
     }
 
-    const invalid = currentNodeId
-      ? !isSpecialSource &&
-        (!matched || !getAncestors(currentNodeId).includes(sourceId))
-      : false;
+    const status = isSpecialSource ? 'active' : (health?.status ?? 'active');
+    const invalid = status !== 'active';
 
     return resolveVariableReference({
       selector: normalizedSelector,
       sourceTitle,
       invalid,
-      type: matched?.type,
+      status,
+      type: matched?.type ?? health?.type,
     });
   }, [
     currentNodeId,
-    getAncestors,
+    agentType,
+    edges,
     historySnapshots,
     mode,
     nodeIdToTitle,
+    nodes,
     normalizedSelector,
     selectedRunId,
     selectionIndex,

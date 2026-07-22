@@ -6,6 +6,7 @@ import { Plus } from 'lucide-react';
 import { RUN_STATUS_COLORS } from './constants';
 import { useCreateNodeModal } from '../hooks/use-create-node-modal';
 import { useT } from '@/i18n';
+import { useWorkflowVariableImpact } from './variable-reference-impact-provider';
 
 // Extend EdgeProps to ensure handle ids are available in props
 export type CustomEdgeProps = EdgeProps & {
@@ -131,6 +132,7 @@ const CustomEdge: React.FC<CustomEdgeProps> = ({
   // Custom context menu state for edge
   const [menuOpen, setMenuOpen] = React.useState<boolean>(false);
   const onEdgesChange = useWorkflowStore.use.onEdgesChange();
+  const { requestEdgeChanges } = useWorkflowVariableImpact();
   const { openEdgeInsertModal } = useCreateNodeModal();
 
   const description = data?.desc as string | undefined;
@@ -151,9 +153,10 @@ const CustomEdge: React.FC<CustomEdgeProps> = ({
   // Delete edge handler using onEdgesChange to keep state consistent
   const handleDeleteEdge = React.useCallback(() => {
     if (!id || isReadOnly) return;
-    onEdgesChange([{ id, type: 'remove' }]);
+    const changes = [{ id, type: 'remove' as const }];
+    requestEdgeChanges(changes, () => onEdgesChange(changes));
     setMenuOpen(false);
-  }, [id, isReadOnly, onEdgesChange]);
+  }, [id, isReadOnly, onEdgesChange, requestEdgeChanges]);
 
   // Open context menu on right click
   const handleEdgeContextMenu = React.useCallback(

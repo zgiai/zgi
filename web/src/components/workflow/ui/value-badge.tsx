@@ -28,13 +28,24 @@ const ValueBadge: React.FC<ValueBadgeProps> = ({
 
   if (!resolved) return null;
 
+  const invalidReason =
+    resolved.status === 'source_deleted'
+      ? t('nodes.validation.variableSourceDeleted')
+      : resolved.status === 'source_unreachable'
+        ? t('nodes.validation.variableSourceUnreachable')
+        : resolved.status === 'output_removed'
+          ? t('nodes.validation.variableOutputRemoved')
+          : '';
+
   return (
     <Badge
       variant="outline"
       aria-invalid={resolved.invalid || undefined}
       className={cn(
         'max-w-full flex items-center gap-1 bg-background rounded-sm',
-        resolved.invalid && 'border-destructive',
+        resolved.status === 'source_unreachable' && 'border-amber-500',
+        (resolved.status === 'source_deleted' || resolved.status === 'output_removed') &&
+          'border-destructive',
         className
       )}
       title={resolved.displayText}
@@ -47,14 +58,17 @@ const ValueBadge: React.FC<ValueBadgeProps> = ({
         <Tooltip>
           <TooltipTrigger asChild>
             <span
-              className="shrink-0 text-destructive"
-              aria-label={t('nodes.validation.invalidVariable')}
+              className={cn(
+                'shrink-0',
+                resolved.status === 'source_unreachable' ? 'text-amber-600' : 'text-destructive'
+              )}
+              aria-label={invalidReason || t('nodes.validation.invalidVariable')}
             >
               <AlertCircle size={14} />
             </span>
           </TooltipTrigger>
           <TooltipContent side="top" className="px-2 pt-1 pb-2 text-xs">
-            {t('nodes.validation.invalidVariable')}
+            {invalidReason || t('nodes.validation.invalidVariable')}
           </TooltipContent>
         </Tooltip>
       ) : null}

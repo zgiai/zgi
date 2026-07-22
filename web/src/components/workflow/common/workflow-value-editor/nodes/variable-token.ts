@@ -8,6 +8,7 @@ const VariableToken = TiptapNode.create<{
   title?: string; // node title for display
   label?: string; // human readable token label
   invalid?: boolean;
+  invalidReason?: string;
   syntax?: string;
 }>({
   name: 'variableToken',
@@ -46,6 +47,11 @@ const VariableToken = TiptapNode.create<{
         renderHTML: () => ({}),
         parseHTML: element =>
           ((element as HTMLElement).getAttribute('aria-invalid') ?? '') === 'true',
+      },
+      invalidReason: {
+        default: '',
+        renderHTML: () => ({}),
+        parseHTML: element => (element as HTMLElement).getAttribute('data-invalid-reason') ?? '',
       },
       syntax: {
         default: '',
@@ -100,6 +106,8 @@ const VariableToken = TiptapNode.create<{
         'data-title': title,
         'data-label': node.attrs.label || undefined,
         'data-syntax': node.attrs.syntax || undefined,
+        'data-invalid-reason': node.attrs.invalidReason || undefined,
+        title: node.attrs.invalid ? node.attrs.invalidReason || title : title,
         contenteditable: 'false',
         class: `${badgeBase} ${badgeSecondary} mx-0.5 align-baseline ${node.attrs.invalid ? 'border-destructive' : ''}`,
         'aria-invalid': node.attrs.invalid ? 'true' : undefined,
