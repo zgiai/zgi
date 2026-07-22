@@ -12,15 +12,14 @@ import type { WorkflowConnectionState } from '@/hooks/workflow/workflow-runtime-
 import { mapNode, unwrap } from '@/utils/webapp/run-mappers';
 import {
   isQuestionAnswerPromptMessage,
-  parseQuestionAnswerPausedEvent,
   parseQuestionAnswerRequestedEvent,
   type QuestionAnswerTranscriptItem,
 } from '@/components/workflow/question-answer/runtime-events';
 import {
   createWorkflowSnapshotPauseEvent,
-  parseApprovalPausedEvent,
   parseApprovalRequestedEvent,
 } from '@/components/workflow/approval/runtime-events';
+import { parseWorkflowPausedEvent } from '@/components/workflow/runtime/pause-events';
 
 import { normalizeFinalRunStatus, stripQuestionAnswerPromptText } from './mappers';
 import { createWorkflowRunNodeAccumulator } from '@/utils/webapp/workflow-run-node-accumulator';
@@ -169,24 +168,21 @@ export function useWebappWorkflowRunEvents({
 
             const pausePayload = createWorkflowSnapshotPauseEvent(payload);
             if (pausePayload) {
-              const parsed = parseApprovalPausedEvent(pausePayload);
-              if (parsed.isApproval) {
+              const parsed = parseWorkflowPausedEvent(pausePayload);
+              if (parsed.hasApproval) {
                 if (isForegroundConversation()) handleApprovalRequested(pausePayload);
-                useChatStore.getState().pauseAiMessage(conversationId, tempKey, {
-                  workflowRunId,
-                  status: 'pending_approval',
-                });
-              } else {
-                const qaPaused = parseQuestionAnswerPausedEvent(pausePayload);
-                if (qaPaused.isQuestionAnswer) {
-                  if (qaPaused.prompt && isForegroundConversation()) {
-                    handleQuestionAnswerRequested(qaPaused.prompt);
-                  }
-                  useChatStore.getState().pauseAiMessage(conversationId, tempKey, {
-                    workflowRunId,
-                    status: 'pending_question',
-                  });
+              }
+              if (parsed.hasQuestionAnswer) {
+                if (parsed.questionAnswer.prompt && isForegroundConversation()) {
+                  handleQuestionAnswerRequested(parsed.questionAnswer.prompt);
                 }
+              }
+              if (parsed.preferredStatus) {
+                useChatStore.getState().pauseAiMessage(conversationId, tempKey, {
+                  workflowRunId:
+                    parsed.questionAnswer.workflowRunId || workflowRunId,
+                  status: parsed.preferredStatus,
+                });
               }
               return;
             }
@@ -294,52 +290,54 @@ export function useWebappWorkflowRunEvents({
             });
           },
           onWorkflowPaused: payload => {
-            const parsed = parseApprovalPausedEvent(payload);
+            const parsed = parseWorkflowPausedEvent(payload);
             const data = unwrap(payload);
-            if (parsed.isApproval) {
+            if (parsed.hasApproval) {
               if (isForegroundConversation()) handleApprovalRequested(payload);
-              useChatStore.getState().pauseAiMessage(conversationId, tempKey, {
-                elapsedTime: typeof data.elapsed_time === 'number' ? data.elapsed_time : undefined,
-                workflowRunId,
-                status: 'pending_approval',
-              });
-              parsed.nodeIds.forEach(nodeId => {
+              parsed.approval.nodeIds.forEach(nodeId => {
                 useChatStore.getState().updateRunNode(conversationId, tempKey, {
                   status: 'paused',
                   nodeId,
                   nodeType: 'approval',
                 });
               });
-              return;
             }
-            const qaPaused = parseQuestionAnswerPausedEvent(payload);
-            if (!qaPaused.isQuestionAnswer) return;
-            if (qaPaused.prompt) {
-              if (isForegroundConversation()) handleQuestionAnswerRequested(qaPaused.prompt);
+
+            if (parsed.hasQuestionAnswer && parsed.questionAnswer.prompt) {
+              if (isForegroundConversation()) {
+                handleQuestionAnswerRequested(parsed.questionAnswer.prompt);
+              }
               useChatStore.getState().mergeAiMessage(conversationId, tempKey, {
                 messageData: {
                   questionAnswerTranscript: questionAnswerTranscriptRef.current,
                   questionAnswerPrompt: {
-                    question: qaPaused.prompt.question,
-                    choices: qaPaused.prompt.choices,
-                    round: qaPaused.prompt.round,
+                    question: parsed.questionAnswer.prompt.question,
+                    choices: parsed.questionAnswer.prompt.choices,
+                    round: parsed.questionAnswer.prompt.round,
                   },
                 },
               });
             }
+
+            if (parsed.hasQuestionAnswer) {
+              parsed.questionAnswer.nodeIds.forEach(nodeId => {
+                useChatStore.getState().updateRunNode(conversationId, tempKey, {
+                  status: 'paused',
+                  nodeId,
+                  nodeType: 'question-answer',
+                  title:
+                    parsed.questionAnswer.prompt?.nodeId === nodeId
+                      ? parsed.questionAnswer.prompt.nodeTitle || nodeId
+                      : nodeId,
+                });
+              });
+            }
+
+            if (!parsed.preferredStatus) return;
             useChatStore.getState().pauseAiMessage(conversationId, tempKey, {
               elapsedTime: typeof data.elapsed_time === 'number' ? data.elapsed_time : undefined,
-              workflowRunId: qaPaused.workflowRunId || workflowRunId,
-              status: 'pending_question',
-            });
-            qaPaused.nodeIds.forEach(nodeId => {
-              useChatStore.getState().updateRunNode(conversationId, tempKey, {
-                status: 'paused',
-                nodeId,
-                nodeType: 'question-answer',
-                title:
-                  qaPaused.prompt?.nodeId === nodeId ? qaPaused.prompt.nodeTitle || nodeId : nodeId,
-              });
+              workflowRunId: parsed.questionAnswer.workflowRunId || workflowRunId,
+              status: parsed.preferredStatus,
             });
           },
           onNodeStarted: runNodes.onNodeStarted,

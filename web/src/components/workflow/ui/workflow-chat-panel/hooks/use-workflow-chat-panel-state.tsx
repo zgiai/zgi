@@ -42,7 +42,6 @@ import WorkflowApprovalInteractionCard from '@/components/workflow/approval/work
 import {
   getApprovalEventSequence,
   parseApprovalRequestedEvent,
-  parseApprovalPausedEvent,
 } from '@/components/workflow/approval/runtime-events';
 import { isApprovalFormAlreadySubmittedError } from '@/services/approval.service';
 import { flushWorkflowPendingEdits } from '@/components/workflow/hooks/pending-edits';
@@ -51,11 +50,11 @@ import {
   appendQuestionAnswerTranscriptQuestion,
   applyQuestionAnswerTranscriptSubmission,
   isQuestionAnswerPromptMessage,
-  parseQuestionAnswerPausedEvent,
   parseQuestionAnswerRequestedEvent,
   parseQuestionAnswerSubmittedEvent,
   type QuestionAnswerTranscriptItem,
 } from '@/components/workflow/question-answer/runtime-events';
+import { parseWorkflowPausedEvent } from '@/components/workflow/runtime/pause-events';
 import {
   getQuestionAnswerChoiceQuery,
   QuestionAnswerRuntimePrompt,
@@ -459,39 +458,43 @@ export function useWorkflowChatPanelState({
       setIsDurableRunActive(false);
       rememberApprovalEventSequence(payload);
       sseCallbacks.onWorkflowPaused?.(payload);
-      const parsed = parseApprovalPausedEvent(payload);
+      const parsed = parseWorkflowPausedEvent(payload);
       const data =
         typeof payload === 'object' && payload && 'data' in (payload as Record<string, unknown>)
           ? ((payload as { data?: unknown }).data as Record<string, unknown> | undefined)
           : (payload as Record<string, unknown> | undefined);
 
-      if (parsed.isApproval) {
+      if (parsed.hasApproval) {
         dispatchApprovalRuntimeEvent('workflow_paused', payload);
-        setIsConversationPaused(true);
-        markApprovalPausedNodes(parsed.nodeIds, payload);
+        markApprovalPausedNodes(parsed.approval.nodeIds, payload);
         runnerRef.current?.onWorkflowPaused?.({
           elapsedTime: typeof data?.elapsed_time === 'number' ? data.elapsed_time : undefined,
           workflowRunId:
             (typeof data?.id === 'string' ? data.id : '') ||
             (typeof data?.workflow_run_id === 'string' ? data.workflow_run_id : '') ||
             undefined,
+          nodeIds: parsed.approval.nodeIds,
           status: 'pending_approval',
           nodeType: 'approval',
         });
-      } else {
-        const qaPaused = parseQuestionAnswerPausedEvent(payload);
-        if (!qaPaused.isQuestionAnswer) return;
-        if (qaPaused.prompt) handleQuestionAnswerRequested(qaPaused.prompt);
-        setIsConversationPaused(true);
-        markQuestionAnswerPausedNodes(qaPaused.nodeIds, payload);
+      }
+
+      if (parsed.hasQuestionAnswer) {
+        if (parsed.questionAnswer.prompt) {
+          handleQuestionAnswerRequested(parsed.questionAnswer.prompt);
+        }
+        markQuestionAnswerPausedNodes(parsed.questionAnswer.nodeIds, payload);
         runnerRef.current?.onWorkflowPaused?.({
           elapsedTime: typeof data?.elapsed_time === 'number' ? data.elapsed_time : undefined,
-          workflowRunId: qaPaused.workflowRunId,
-          nodeIds: qaPaused.nodeIds,
+          workflowRunId: parsed.questionAnswer.workflowRunId,
+          nodeIds: parsed.questionAnswer.nodeIds,
           status: 'pending_question',
           nodeType: 'question-answer',
         });
       }
+
+      if (!parsed.hasApproval && !parsed.hasQuestionAnswer) return;
+      setIsConversationPaused(true);
 
       if (!approvalResumeStreamActiveRef.current) {
         startApprovalResumeEventStreamRef.current(payload);

@@ -84,7 +84,15 @@ function runtimeTerminalMessage(message: { event: string | null; data: unknown }
   return (
     data &&
     typeof data === 'object' &&
-    ['completed', 'stopped', 'error', 'failed'].includes(
+    [
+      'completed',
+      'stopped',
+      'error',
+      'failed',
+      'waiting_approval',
+      'waiting_client_action',
+      'waiting_question',
+    ].includes(
       String((data as Record<string, unknown>).status)
     )
   );

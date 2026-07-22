@@ -259,7 +259,10 @@ export function parseQuestionAnswerPausedEvent(payload: unknown): ParsedQuestion
   const isQuestionAnswer = reasons.some(reason => {
     if (!reason || typeof reason !== 'object') return false;
     const record = reason as Record<string, unknown>;
-    const matched = record.type === 'question_answer_required';
+    const status = typeof record.status === 'string' ? record.status.toLowerCase() : '';
+    const matched =
+      record.type === 'question_answer_required' &&
+      (!status || status === 'pending' || status === 'waiting');
     const nodeId = typeof record.node_id === 'string' ? record.node_id : '';
     if (matched && nodeId) nodeIds.push(nodeId);
     if (matched && !prompt) {

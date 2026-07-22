@@ -86,20 +86,14 @@ export function parseApprovalPausedEvent(payload: unknown): ParsedApprovalPaused
   const hasApprovalReason = reasons.some(reason => {
     if (!reason || typeof reason !== 'object') return false;
     const record = reason as Record<string, unknown>;
-    if (typeof record.node_id === 'string' && record.node_id.trim().length > 0) {
-      nodeIds.add(record.node_id);
-    }
     const isApproval = record.type === 'approval_required' || typeof record.form_id === 'string';
     if (isApproval) {
+      if (typeof record.node_id === 'string' && record.node_id.trim().length > 0) {
+        nodeIds.add(record.node_id);
+      }
       entries.push(createParsedApprovalEntry(record, normalizeApprovalRuntimeForm(record)));
     }
     return isApproval;
-  });
-  const pausedNodes = Array.isArray(root.paused_nodes) ? root.paused_nodes : [];
-  pausedNodes.forEach(nodeId => {
-    if (typeof nodeId === 'string' && nodeId.trim().length > 0) {
-      nodeIds.add(nodeId);
-    }
   });
   if (
     nodeType === 'approval' &&
@@ -108,6 +102,17 @@ export function parseApprovalPausedEvent(payload: unknown): ParsedApprovalPaused
   ) {
     nodeIds.add(root.node_id);
     if (entries.length === 0) entries.push(createParsedApprovalEntry(root));
+  }
+  // Legacy single-reason events may only carry paused_nodes. Only use that fallback
+  // when the event itself is explicitly typed as approval; V2 mixed pauses derive
+  // node ownership from their typed reasons above.
+  if (nodeType === 'approval' && reasons.length === 0) {
+    const pausedNodes = Array.isArray(root.paused_nodes) ? root.paused_nodes : [];
+    pausedNodes.forEach(nodeId => {
+      if (typeof nodeId === 'string' && nodeId.trim().length > 0) {
+        nodeIds.add(nodeId);
+      }
+    });
   }
   const isApproval = nodeType === 'approval' || hasApprovalReason;
 

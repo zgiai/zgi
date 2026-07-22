@@ -24,6 +24,7 @@ import {
 } from '@/utils/workflow/run-events';
 import { isStaleAIChatStreamEvent, removeTransientProgressItems } from './shared';
 import { normalizeWorkflowRuntimeEvent } from '@/utils/workflow/runtime-event-envelope.js';
+import { parseWorkflowPausedEvent } from '@/components/workflow/runtime/pause-events';
 
 function normalizeWorkflowPayload<T extends AIChatWorkflowEventData>(payload: T): T {
   return normalizeWorkflowRuntimeEvent(payload).payload as unknown as T;
@@ -623,7 +624,10 @@ export function applyWorkflowPausedState(
   eventId?: string | null
 ): AIChatControllerState {
   payload = normalizeWorkflowPayload(payload);
-  const status = normalizeWorkflowRunTimelineStatus(payload.status, 'pending_approval');
+  const paused = parseWorkflowPausedEvent(payload);
+  const status =
+    paused.preferredStatus ??
+    normalizeWorkflowRunTimelineStatus(payload.status, 'pending_approval');
   return applyWorkflowTimelineState(
     current,
     payload,

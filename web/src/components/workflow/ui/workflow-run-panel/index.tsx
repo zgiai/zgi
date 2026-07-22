@@ -44,18 +44,17 @@ import {
   createWorkflowSnapshotPauseEvent,
   getApprovalEventSequence,
   parseApprovalRequestedEvent,
-  parseApprovalPausedEvent,
 } from '@/components/workflow/approval/runtime-events';
 import { useApprovalRuntimeEvents } from '@/components/workflow/approval/use-approval-runtime-events';
 import { getRightPanelMotionClassName, getRightPanelMotionStyle } from '../right-panel-motion';
 import {
   appendQuestionAnswerTranscriptQuestion,
   applyQuestionAnswerTranscriptSubmission,
-  parseQuestionAnswerPausedEvent,
   parseQuestionAnswerRequestedEvent,
   parseQuestionAnswerSubmittedEvent,
   type QuestionAnswerTranscriptItem,
 } from '@/components/workflow/question-answer/runtime-events';
+import { parseWorkflowPausedEvent } from '@/components/workflow/runtime/pause-events';
 import { getQuestionAnswerChoiceQuery } from '@/components/workflow/question-answer/question-answer-runtime-prompt';
 import { useResizableRightPanel } from '../use-resizable-right-panel';
 import { useActivePanel } from '../../hooks/use-active-panel';
@@ -640,19 +639,22 @@ const WorkflowRunPanel: React.FC<WorkflowRunPanelProps> = ({
   const applyWorkflowPausedState = useCallback(
     (payload: unknown) => {
       sseCallbacks.onWorkflowPaused?.(payload);
-      const parsed = parseApprovalPausedEvent(payload);
-      if (parsed.isApproval) {
-        markApprovalPausedNodes(parsed.nodeIds, payload);
+      const parsed = parseWorkflowPausedEvent(payload);
+      if (parsed.hasApproval) {
+        markApprovalPausedNodes(parsed.approval.nodeIds, payload);
         dispatchApprovalEvent('workflow_paused', payload);
         setActiveTab('results');
-        return;
       }
 
-      const qaPaused = parseQuestionAnswerPausedEvent(payload);
-      if (!qaPaused.isQuestionAnswer) return;
-      if (qaPaused.prompt) handleQuestionAnswerRequested(qaPaused.prompt);
-      markQuestionAnswerPausedNodes(qaPaused.nodeIds, payload);
-      setActiveTab('inputs');
+      if (parsed.hasQuestionAnswer) {
+        if (parsed.questionAnswer.prompt) {
+          handleQuestionAnswerRequested(parsed.questionAnswer.prompt);
+        }
+        markQuestionAnswerPausedNodes(parsed.questionAnswer.nodeIds, payload);
+        // A pending question requires direct user input, so it takes visual
+        // precedence when a parallel approval is waiting at the same pause.
+        setActiveTab('inputs');
+      }
     },
     [
       dispatchApprovalEvent,

@@ -58,7 +58,6 @@ import { useApprovalForm, useSubmitApprovalForm } from '@/hooks/workflow/use-app
 import {
   createWorkflowSnapshotPauseEvent,
   parseApprovalRequestedEvent,
-  parseApprovalPausedEvent,
 } from '@/components/workflow/approval/runtime-events';
 import { useApprovalRuntimeEvents } from '@/components/workflow/approval/use-approval-runtime-events';
 import { WebAppOfflineState } from '@/components/webapp/offline-state';
@@ -66,9 +65,9 @@ import { useWebAppOfflineState } from '@/hooks/webapp/use-webapp-offline-state';
 import { isWebAppOfflineError } from '@/utils/webapp/errors';
 import type { QuestionAnswerChoice } from '@/services/types/workflow';
 import {
-  parseQuestionAnswerPausedEvent,
   parseQuestionAnswerRequestedEvent,
 } from '@/components/workflow/question-answer/runtime-events';
+import { parseWorkflowPausedEvent } from '@/components/workflow/runtime/pause-events';
 import {
   getQuestionAnswerChoiceQuery,
   QuestionAnswerRuntimePrompt,
@@ -938,27 +937,27 @@ export const WebappRun: React.FC<WebappRunProps> = ({
       });
     },
     onPaused: payload => {
-      const parsed = parseApprovalPausedEvent(payload);
+      const parsed = parseWorkflowPausedEvent(payload);
       setIsRunning(false);
       setIsStopping(false);
       throttler.flush();
-      if (parsed.isApproval) {
+      if (parsed.hasApproval) {
         setApprovalPaused(true);
         dispatchApprovalRuntimeEvent('workflow_paused', payload);
-        markApprovalPausedNodes(parsed.nodeIds, payload);
-      } else {
-        const qaPaused = parseQuestionAnswerPausedEvent(payload);
-        if (!qaPaused.isQuestionAnswer) return;
-        if (qaPaused.prompt) {
+        markApprovalPausedNodes(parsed.approval.nodeIds, payload);
+      }
+      if (parsed.hasQuestionAnswer) {
+        if (parsed.questionAnswer.prompt) {
           setQuestionAnswerPrompt({
-            question: qaPaused.prompt.question,
-            choices: qaPaused.prompt.choices,
-            round: qaPaused.prompt.round,
+            question: parsed.questionAnswer.prompt.question,
+            choices: parsed.questionAnswer.prompt.choices,
+            round: parsed.questionAnswer.prompt.round,
           });
           setQuestionAnswerSubmitting(false);
         }
-        markQuestionAnswerPausedNodes(qaPaused.nodeIds, payload);
+        markQuestionAnswerPausedNodes(parsed.questionAnswer.nodeIds, payload);
       }
+      if (!parsed.hasApproval && !parsed.hasQuestionAnswer) return;
       setActiveTab('input');
       startWorkflowRunEventStreamRef.current(payload);
     },
@@ -1433,24 +1432,24 @@ export const WebappRun: React.FC<WebappRunProps> = ({
           break;
         }
         case 'workflow_paused': {
-          const parsed = parseApprovalPausedEvent(payload);
-          if (parsed.isApproval) {
+          const parsed = parseWorkflowPausedEvent(payload);
+          if (parsed.hasApproval) {
             setApprovalPaused(true);
             dispatchApprovalRuntimeEvent('workflow_paused', event);
-            markApprovalPausedNodes(parsed.nodeIds, payload);
-          } else {
-            const qaPaused = parseQuestionAnswerPausedEvent(payload);
-            if (!qaPaused.isQuestionAnswer) return;
-            if (qaPaused.prompt) {
+            markApprovalPausedNodes(parsed.approval.nodeIds, payload);
+          }
+          if (parsed.hasQuestionAnswer) {
+            if (parsed.questionAnswer.prompt) {
               setQuestionAnswerPrompt({
-                question: qaPaused.prompt.question,
-                choices: qaPaused.prompt.choices,
-                round: qaPaused.prompt.round,
+                question: parsed.questionAnswer.prompt.question,
+                choices: parsed.questionAnswer.prompt.choices,
+                round: parsed.questionAnswer.prompt.round,
               });
               setQuestionAnswerSubmitting(false);
             }
-            markQuestionAnswerPausedNodes(qaPaused.nodeIds, payload);
+            markQuestionAnswerPausedNodes(parsed.questionAnswer.nodeIds, payload);
           }
+          if (!parsed.hasApproval && !parsed.hasQuestionAnswer) return;
           setActiveTab('input');
           break;
         }

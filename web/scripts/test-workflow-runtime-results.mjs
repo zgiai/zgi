@@ -11,6 +11,8 @@ import {
   getWorkflowRunExecutionId,
   isVisibleWorkflowRunExecutionStatus,
 } from '../src/utils/workflow/run-events.ts';
+import { parseApprovalPausedEvent } from '../src/components/workflow/approval/runtime-events.ts';
+import { parseQuestionAnswerPausedEvent } from '../src/components/workflow/question-answer/runtime-events.ts';
 
 const root = process.cwd();
 const read = relativePath => readFileSync(path.join(root, relativePath), 'utf8');
@@ -87,6 +89,13 @@ const workflowRunNodeAccumulator = read('src/utils/webapp/workflow-run-node-accu
 const webappTransport = read('src/hooks/webapp/use-webapp-transport.ts');
 const webappTransportEvents = read('src/hooks/webapp/use-webapp-transport/events.ts');
 const approvalRuntimeEvents = read('src/components/workflow/approval/runtime-events.ts');
+const approvalRuntimeHook = read(
+  'src/components/workflow/approval/use-approval-runtime-events.ts'
+);
+const workflowPauseEvents = read('src/components/workflow/runtime/pause-events.ts');
+const aiChatWorkflowReducer = read(
+  'src/components/chat/controllers/aichat/reducers/workflow.ts'
+);
 const sseClient = read('src/lib/http/sse-client.ts');
 const chatWithController = read('src/components/chat/chat-with-controller.tsx');
 const singleChatController = read('src/components/chat/controllers/single-chat-controller.ts');
@@ -477,5 +486,59 @@ assert.equal(endRows.length, 1);
 assert.equal(endRows[0].label, 'output');
 assert.deepEqual(endRows[0].value, []);
 assert.equal(endRows[0].labelKind, 'variable');
+
+const mixedPausePayload = {
+  event: 'workflow_paused',
+  data: {
+    workflow_run_id: 'run-mixed-pause',
+    paused_nodes: ['approval-1', 'question-1'],
+    reasons: [
+      {
+        type: 'approval_required',
+        node_id: 'approval-1',
+        form_id: 'approval-form-1',
+        status: 'pending',
+      },
+      {
+        type: 'question_answer_required',
+        node_id: 'question-1',
+        question: 'Which option?',
+        status: 'pending',
+      },
+      {
+        type: 'question_answer_required',
+        node_id: 'question-completed',
+        question: 'Already answered',
+        status: 'completed',
+      },
+    ],
+  },
+};
+const mixedApproval = parseApprovalPausedEvent(mixedPausePayload);
+const mixedQuestion = parseQuestionAnswerPausedEvent(mixedPausePayload);
+assert.equal(mixedApproval.isApproval, true);
+assert.equal(mixedQuestion.isQuestionAnswer, true);
+assert.deepEqual(mixedApproval.nodeIds, ['approval-1']);
+assert.deepEqual(mixedQuestion.nodeIds, ['question-1']);
+assert.match(
+  workflowPauseEvents,
+  /hasQuestionAnswer\s*\?\s*'pending_question'/,
+  'a mixed pause must keep the question as its scalar status without dropping approval state'
+);
+assert.match(
+  aiChatWorkflowReducer,
+  /parseWorkflowPausedEvent\(payload\)[\s\S]*paused\.preferredStatus\s*\?\?/,
+  'Agent embedded workflow pauses must infer question state from durable pause reasons'
+);
+assert.match(
+  sseClient,
+  /if \(options\.isTerminalMessage\) \{[\s\S]*return options\.isTerminalMessage/,
+  'a transport-specific terminal predicate must override generic workflow pause classification'
+);
+assert.match(
+  approvalRuntimeHook,
+  /case 'workflow_resumed':\s*case 'workflow_finished':/,
+  'workflow resume must clear stale approval UI before execution continues'
+);
 
 console.log('Workflow canvas runtime result regression checks passed.');

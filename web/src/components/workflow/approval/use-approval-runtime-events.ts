@@ -375,6 +375,7 @@ export function useApprovalRuntimeEvents() {
         });
         break;
       }
+      case 'workflow_resumed':
       case 'workflow_finished':
       case 'workflow_stopped':
       case 'workflow_failed':

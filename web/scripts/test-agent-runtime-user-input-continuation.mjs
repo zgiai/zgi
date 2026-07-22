@@ -105,6 +105,24 @@ assert.strictEqual(draftCall.options.abortSignal, abortController.signal);
 assert.strictEqual(draftCall.options.onError, callbacks.onRequestError);
 assert.strictEqual(draftCall.options.onClose, callbacks.onClose);
 assert.equal(typeof draftCall.options.isTerminalMessage, 'function');
+for (const status of ['waiting_approval', 'waiting_client_action', 'waiting_question']) {
+  assert.equal(
+    draftCall.options.isTerminalMessage({
+      event: 'message_end',
+      data: { event: 'message_end', data: { status } },
+    }),
+    true,
+    `${status} must terminate the current Agent stream without reporting a transport error`
+  );
+}
+assert.equal(
+  draftCall.options.isTerminalMessage({
+    event: 'workflow_paused',
+    data: { event: 'workflow_paused', data: { status: 'waiting_question' } },
+  }),
+  false,
+  'an embedded workflow pause must not terminate the outer Agent stream'
+);
 
 const eventData = { message_id: 'message two', delta: 'continued' };
 draftCall.options.onMessage({

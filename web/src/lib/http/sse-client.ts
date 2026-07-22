@@ -397,8 +397,8 @@ export class SseClient {
     };
 
     const isTerminalMessage = (msg: SseMessage<TOut>): boolean => {
-      if (options.isTerminalMessage?.(msg as SseMessage<unknown>)) {
-        return true;
+      if (options.isTerminalMessage) {
+        return options.isTerminalMessage(msg as SseMessage<unknown>);
       }
       return isTerminalSseEvent(msg.event, msg.data);
     };
