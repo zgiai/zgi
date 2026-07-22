@@ -52,8 +52,17 @@ function ChatPageContent() {
       enabled: !isModelInitializing && !isSelectedModelUnavailable,
     }
   );
+  const { refetch: refetchModelPrecheck } = modelPrecheck;
   const modelPrecheckWarnings =
     modelPrecheck.data?.status === 'warning' ? modelPrecheck.data.warnings : [];
+  const previousIsSendingRef = useRef(controller.isSending);
+
+  useEffect(() => {
+    if (previousIsSendingRef.current && !controller.isSending) {
+      void refetchModelPrecheck();
+    }
+    previousIsSendingRef.current = controller.isSending;
+  }, [controller.isSending, refetchModelPrecheck]);
 
   const handleBeforeSend = useCallback(() => {
     if (!isSelectedModelUnavailable) return true;
