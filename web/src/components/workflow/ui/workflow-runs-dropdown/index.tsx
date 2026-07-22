@@ -17,6 +17,7 @@ interface WorkflowRunsDropdownProps {
   icon?: React.ReactNode;
   tooltipLabel?: string;
   dropdownLabel?: string;
+  description?: string;
   triggerText?: string;
   triggerClassName?: string;
   triggerVariant?: 'default' | 'destructive' | 'outline' | 'secondary' | 'ghost' | 'link';
@@ -120,6 +121,7 @@ const WorkflowRunsDropdown: React.FC<WorkflowRunsDropdownProps> = ({
   icon,
   tooltipLabel,
   dropdownLabel,
+  description,
   triggerText,
   triggerClassName,
   triggerVariant = 'ghost',
@@ -213,7 +215,12 @@ const WorkflowRunsDropdown: React.FC<WorkflowRunsDropdownProps> = ({
           aria-label={menuLabel}
           className="absolute right-0 top-[calc(100%+4px)] z-50 w-[380px] overflow-hidden rounded-md border bg-popover text-popover-foreground shadow-md"
         >
-          <div className="px-3 py-2 text-xs font-medium text-muted-foreground">{menuLabel}</div>
+          <div className="px-3 py-2">
+            <div className="text-xs font-medium text-foreground">{menuLabel}</div>
+            {description ? (
+              <div className="mt-1 text-xs leading-5 text-muted-foreground">{description}</div>
+            ) : null}
+          </div>
           <div className="h-px bg-border" />
           <ScrollArea
             className="max-h-[360px] overflow-auto"

@@ -10,6 +10,7 @@ import {
   getWorkflowRunCreatedAtMs,
   getWorkflowRunRoundDurationMap,
   getWorkflowRunRoundElapsedTime,
+  isVisibleWorkflowRunExecutionStatus,
   sortWorkflowRunItems,
   sortWorkflowRunRounds,
 } from '@/utils/workflow/run-events';
@@ -91,48 +92,52 @@ export function buildWorkflowRunExecutionItems(
   }
   const executionIdCounts = new Map<string, number>();
 
-  const records: ExecutionRecord[] = historyNodeExecutions.map(rec => {
-    const status = normalizeExecutionStatus(rec.status);
-    const baseExecutionId = rec.node_execution_id || rec.id || rec.node_id;
-    const occurrence = executionIdCounts.get(baseExecutionId) ?? 0;
-    executionIdCounts.set(baseExecutionId, occurrence + 1);
+  const records: ExecutionRecord[] = historyNodeExecutions
+    .filter(rec => isVisibleWorkflowRunExecutionStatus(rec.status))
+    .map(rec => {
+      const status = normalizeExecutionStatus(rec.status);
+      const baseExecutionId = rec.node_execution_id || rec.id || rec.node_id;
+      const occurrence = executionIdCounts.get(baseExecutionId) ?? 0;
+      executionIdCounts.set(baseExecutionId, occurrence + 1);
 
-    const item: WorkflowRunNodeListItem = {
-      executionId:
-        occurrence === 0 ? baseExecutionId : `${baseExecutionId}:${status}:${occurrence}`,
-      createdAtMs:
-        getWorkflowRunCreatedAtMs(rec) ??
-        (typeof rec.created_at === 'string' ? Date.parse(rec.created_at) || undefined : undefined),
-      receivedOrder: typeof rec.sequence === 'number' ? rec.sequence : occurrence,
-      nodeId: rec.node_id,
-      title:
-        typeof rec.title === 'string' && rec.title.length > 0
-          ? rec.title
-          : rec.node_type || rec.node_id,
-      nodeType: rec.node_type || 'unknown',
-      status,
-      nodeInput: rec.inputs,
-      nodeOutput: rec.outputs,
-      modelInput: extractLlmGatewayRequest(rec.process_data),
-      processData: rec.process_data,
-      executionMetadata: rec.execution_metadata,
-      elapsedTime: typeof rec.elapsed_time === 'number' ? rec.elapsed_time : undefined,
-      error:
-        typeof rec.error === 'string' ? rec.error : rec.error ? JSON.stringify(rec.error) : null,
-    };
-    const context = extractWorkflowRunContainerContext(rec);
-    const candidateOwner =
-      context.loopId && typeof context.loopIndex === 'number'
-        ? { kind: 'loop' as const, id: context.loopId, index: context.loopIndex }
-        : context.iterationId && typeof context.iterationIndex === 'number'
-          ? { kind: 'iteration' as const, id: context.iterationId, index: context.iterationIndex }
-          : undefined;
-    const owner =
-      candidateOwner?.id === rec.node_id && candidateOwner.kind === item.nodeType
-        ? undefined
-        : candidateOwner;
-    return { rec, item, owner };
-  });
+      const item: WorkflowRunNodeListItem = {
+        executionId:
+          occurrence === 0 ? baseExecutionId : `${baseExecutionId}:${status}:${occurrence}`,
+        createdAtMs:
+          getWorkflowRunCreatedAtMs(rec) ??
+          (typeof rec.created_at === 'string'
+            ? Date.parse(rec.created_at) || undefined
+            : undefined),
+        receivedOrder: typeof rec.sequence === 'number' ? rec.sequence : occurrence,
+        nodeId: rec.node_id,
+        title:
+          typeof rec.title === 'string' && rec.title.length > 0
+            ? rec.title
+            : rec.node_type || rec.node_id,
+        nodeType: rec.node_type || 'unknown',
+        status,
+        nodeInput: rec.inputs,
+        nodeOutput: rec.outputs,
+        modelInput: extractLlmGatewayRequest(rec.process_data),
+        processData: rec.process_data,
+        executionMetadata: rec.execution_metadata,
+        elapsedTime: typeof rec.elapsed_time === 'number' ? rec.elapsed_time : undefined,
+        error:
+          typeof rec.error === 'string' ? rec.error : rec.error ? JSON.stringify(rec.error) : null,
+      };
+      const context = extractWorkflowRunContainerContext(rec);
+      const candidateOwner =
+        context.loopId && typeof context.loopIndex === 'number'
+          ? { kind: 'loop' as const, id: context.loopId, index: context.loopIndex }
+          : context.iterationId && typeof context.iterationIndex === 'number'
+            ? { kind: 'iteration' as const, id: context.iterationId, index: context.iterationIndex }
+            : undefined;
+      const owner =
+        candidateOwner?.id === rec.node_id && candidateOwner.kind === item.nodeType
+          ? undefined
+          : candidateOwner;
+      return { rec, item, owner };
+    });
 
   const containerKeys = new Set(
     records

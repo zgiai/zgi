@@ -240,6 +240,8 @@ export function createModeSelectionSlice(
           mode: 'history',
           selectedRunId: prepared.selectedRunId,
           draftSnapshot: prepared.draftSnapshot,
+          selectedNodeId: null,
+          selectionSource: 'none',
         },
         false,
         'enterHistoryMode'

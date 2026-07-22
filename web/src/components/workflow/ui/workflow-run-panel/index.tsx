@@ -1214,13 +1214,14 @@ const WorkflowRunPanel: React.FC<WorkflowRunPanelProps> = ({
           closeLabel={t('common.close')}
           onClose={onClose}
           actions={
-            canViewRuntimeLogs ? (
+            !isHistory && canViewRuntimeLogs ? (
               <WorkflowRunsDropdown
                 agentId={agentId}
                 query={debugRunsQuery}
                 icon={<History size={14} />}
                 tooltipLabel={t('agents.workflow.debugRuns')}
                 dropdownLabel={t('agents.workflow.debugRuns')}
+                description={t('agents.workflow.debugRunsDescription')}
                 triggerText={t('agents.workflow.debugRuns')}
                 triggerVariant="outline"
                 triggerSize="xs"

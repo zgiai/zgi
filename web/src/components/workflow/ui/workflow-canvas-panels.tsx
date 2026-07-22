@@ -55,8 +55,18 @@ export function WorkflowCanvasPanels({
 }: WorkflowCanvasPanelsProps) {
   const activePanel = useActivePanel(s => s.active);
   const setActivePanel = useActivePanel(s => s.setActive);
+  const mode = useWorkflowStore.use.mode();
   const selectedRunId = useWorkflowStore.use.selectedRunId();
   const focusModeActive = isWorkflowDebugPanelActive(activePanel);
+  const isTaskHistory =
+    mode === 'history' && agentType === AgentType.WORKFLOW && Boolean(selectedRunId);
+  // A task run's history is the permanent right-most surface in history mode.
+  // Node inspection opens alongside it (the same layout used by conversational
+  // history) instead of replacing/remounting the history panel. Keeping the run
+  // panel mounted also prevents React Flow's transient selection reconciliation
+  // from collapsing every right-side panel while switching nodes.
+  const taskRunPanelOpen = isTaskHistory || activePanel === 'run';
+  const nodePanelHiddenByFocusMode = focusModeActive && !isTaskHistory;
 
   return (
     <PanelStackProvider>
@@ -68,11 +78,11 @@ export function WorkflowCanvasPanels({
         <WorkflowMinimap />
       </div>
 
-      <NodeFloatingPanel temporarilyHidden={temporarilyHidden || focusModeActive} />
+      <NodeFloatingPanel temporarilyHidden={temporarilyHidden || nodePanelHiddenByFocusMode} />
 
       {agentType === AgentType.WORKFLOW && (
         <WorkflowRunPanel
-          open={activePanel === 'run'}
+          open={taskRunPanelOpen}
           temporarilyHidden={temporarilyHidden}
           onClose={() => setActivePanel(null)}
           agentId={agentId}

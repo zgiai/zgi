@@ -417,12 +417,9 @@ const WorkflowHeader: React.FC<WorkflowHeaderProps> = ({
                 icon={
                   agentType === AgentType.CONVERSATIONAL_AGENT ? <History size={20} /> : undefined
                 }
-                tooltipLabel={
-                  agentType === AgentType.CONVERSATIONAL_AGENT
-                    ? t('workflow.conversationHistory.title')
-                    : t('workflow.recentRuns')
-                }
-                dropdownLabel={t('workflow.recentRuns')}
+                tooltipLabel={t('workflow.debugRuns')}
+                dropdownLabel={t('workflow.debugRuns')}
+                description={t('workflow.debugRunsDescription')}
                 itemFilter={
                   agentType === AgentType.CONVERSATIONAL_AGENT
                     ? item => Boolean(item.conversation_id)
@@ -500,6 +497,9 @@ const WorkflowHeader: React.FC<WorkflowHeaderProps> = ({
                 <WorkflowRunsDropdown
                   agentId={agentId}
                   query={debuggerRunsQuery}
+                  tooltipLabel={t('workflow.debugRuns')}
+                  dropdownLabel={t('workflow.debugRuns')}
+                  description={t('workflow.debugRunsDescription')}
                   onSelect={(runId: string) => {
                     onSelectRunHistory(runId);
                   }}
@@ -510,8 +510,9 @@ const WorkflowHeader: React.FC<WorkflowHeaderProps> = ({
                   agentId={agentId}
                   query={debuggerRunsQuery}
                   icon={<History size={20} />}
-                  tooltipLabel={t('workflow.conversationHistory.title')}
-                  dropdownLabel={t('workflow.recentRuns')}
+                  tooltipLabel={t('workflow.debugRuns')}
+                  dropdownLabel={t('workflow.debugRuns')}
+                  description={t('workflow.debugRunsDescription')}
                   itemFilter={item => Boolean(item.conversation_id)}
                   onSelect={(runId: string) => {
                     onSelectRunHistory(runId);
