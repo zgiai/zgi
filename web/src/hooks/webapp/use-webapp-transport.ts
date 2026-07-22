@@ -84,7 +84,7 @@ export function useWebappConversationTransport(
   }
   const { start } = useRunWebAppWorkflowStream(versionUuid);
   const { start: startWorkflowRunEvents, cancel: cancelWorkflowRunEvents } =
-    useWorkflowRunEventsStream();
+    useWorkflowRunEventsStream({ transport: 'webapp' });
   const precheckMutation = useWebAppPrecheck(versionUuid);
   const { notifyBillingError, getWorkflowRunErrorText } = useWorkflowBillingFeedback('webapp');
   const [precheckWarnings, setPrecheckWarnings] = useState<WorkflowPrecheckWarning[]>([]);

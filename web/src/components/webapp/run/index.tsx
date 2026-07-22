@@ -249,7 +249,7 @@ export const WebappRun: React.FC<WebappRunProps> = ({
     resetApprovalRuntime,
   } = useApprovalRuntimeEvents();
   const { start: startWorkflowRunEvents, cancel: cancelWorkflowRunEvents } =
-    useWorkflowRunEventsStream();
+    useWorkflowRunEventsStream({ transport: 'webapp' });
   const workflowRunIdRef = useRef<string | null>(null);
   const workflowRunEventsActiveRef = useRef(false);
   const workflowFinishedRef = useRef(false);

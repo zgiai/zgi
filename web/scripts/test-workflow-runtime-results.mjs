@@ -241,6 +241,24 @@ assert.match(
   'published workflow transport options must reach the shared SSE client'
 );
 assert.match(
+  workflowService,
+  /opts\?\.transport === 'webapp' \? webappHttp : this\.client/,
+  'anonymous WebApp durable recovery must use the WebApp-aware SSE transport'
+);
+assert.doesNotMatch(
+  workflowService.slice(
+    workflowService.indexOf('sseWorkflowRunEvents('),
+    workflowService.indexOf('async getWorkflowRunDetail(')
+  ),
+  /wrappedCallbacks\.onError/,
+  'durable stream transport failures must not be reported as workflow business failures'
+);
+assert.match(
+  `${webappTransport}\n${webappRun}`,
+  /useWorkflowRunEventsStream\(\{ transport: 'webapp' \}\)/,
+  'published WebApp durable event consumers must select WebApp authentication'
+);
+assert.match(
   webappRunStream,
   /onWorkflowPaused:\s*p\s*=>\s*\{[\s\S]*gracefulStreamBoundary\s*=\s*true/,
   'a published workflow pause must be treated as a graceful POST stream boundary'

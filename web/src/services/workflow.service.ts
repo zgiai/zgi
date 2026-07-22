@@ -1,4 +1,5 @@
 import { BaseService } from '@/lib/http/services';
+import { webappHttp } from '@/lib/http/webapp';
 import type { ApiResponseData } from './types/common';
 import type { WorkflowDraftData, WorkflowDraftSavePayload } from '@/components/workflow/store/type';
 import type {
@@ -30,6 +31,13 @@ export interface WorkflowValidationResult {
   valid: boolean;
   errors: Array<{ nodeId?: string; message: string }>; // optional node-scoped errors
   warnings?: string[];
+}
+
+export type WorkflowRunEventsTransport = 'console' | 'webapp';
+
+export interface WorkflowRunTransportErrorMeta {
+  terminalReceived: boolean;
+  incompleteLastEvent: boolean;
 }
 
 // Execution record type for workflow run history
@@ -435,12 +443,14 @@ export class WorkflowService extends BaseService {
     });
   }
 
-  sseWorkflowRunEvents(
+  async sseWorkflowRunEvents(
     workflowRunId: string,
     callbacks: WorkflowRunSseCallbacks,
     opts?: {
       abortSignal?: AbortSignal;
       onClose?: () => void;
+      onTransportError?: (error: Error, meta: WorkflowRunTransportErrorMeta) => void;
+      transport?: WorkflowRunEventsTransport;
       params?: {
         after?: number;
         include_snapshot?: boolean;
@@ -450,20 +460,41 @@ export class WorkflowService extends BaseService {
   ): Promise<{ close: () => void }> {
     const url = this.buildUrl(`/workflow-runs/${workflowRunId}/events`);
     const wrappedCallbacks = wrapModelOutputSseCallbacks(callbacks);
-    return this.client.sse<unknown>(url, {
+    const transport = opts?.transport === 'webapp' ? webappHttp : this.client;
+    let opened = false;
+    let openingError: Error | null = null;
+    const handle = await transport.sse<unknown>(url, {
       query: opts?.params,
       abortSignal: opts?.abortSignal,
       onClose: opts?.onClose,
+      onOpen: () => {
+        opened = true;
+      },
       onMessage: message => {
         dispatchWorkflowRunEvent(message.data, message.event, wrappedCallbacks);
       },
-      onError: error => {
-        wrappedCallbacks.onError?.({
-          message: error.message,
-          originalError: error,
-        });
+      onTransportError: (error, meta) => {
+        opts?.onTransportError?.(error, meta);
       },
+      onError: error => {
+        // Opening failures do not trigger onClose in SseClient. Surface them as transport
+        // failures so the run controller can retry without turning the workflow into an error.
+        // Established-stream failures already arrive through onTransportError and onClose.
+        if (!opened) {
+          openingError = error;
+          opts?.onTransportError?.(error, {
+            terminalReceived: false,
+            incompleteLastEvent: false,
+          });
+        }
+      },
+      suppressTransportErrorNotification: true,
     });
+    if (openingError) {
+      handle.close();
+      throw openingError;
+    }
+    return handle;
   }
 
   async getWorkflowRunDetail(

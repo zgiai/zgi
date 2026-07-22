@@ -2,7 +2,11 @@
 
 import { useCallback, useEffect, useRef } from 'react';
 
-import { workflowService, type WorkflowRunSseCallbacks } from '@/services/workflow.service';
+import {
+  workflowService,
+  type WorkflowRunEventsTransport,
+  type WorkflowRunSseCallbacks,
+} from '@/services/workflow.service';
 import {
   WorkflowRunEventSession,
   type WorkflowConnectionState,
@@ -20,6 +24,10 @@ export interface WorkflowRunEventsStreamOptions {
   onConnectionStateChange?: (state: WorkflowConnectionState) => void;
   onReconnectExhausted?: () => void;
   autoReconnect?: boolean;
+}
+
+export interface UseWorkflowRunEventsStreamOptions {
+  transport?: WorkflowRunEventsTransport;
 }
 
 export interface UseWorkflowRunEventsStreamReturn {
@@ -52,7 +60,9 @@ interface ActiveRunStream {
  * Streams persisted workflow events. Each run owns an independent connection, so selecting or
  * starting another conversation cannot cancel a background workflow run.
  */
-export function useWorkflowRunEventsStream(): UseWorkflowRunEventsStreamReturn {
+export function useWorkflowRunEventsStream({
+  transport = 'console',
+}: UseWorkflowRunEventsStreamOptions = {}): UseWorkflowRunEventsStreamReturn {
   const activeByRunRef = useRef<Record<string, ActiveRunStream>>({});
   const sessionByRunRef = useRef<Record<string, WorkflowRunEventSession>>({});
   const cursorByRunRef = useRef<Record<string, number>>({});
@@ -194,6 +204,7 @@ export function useWorkflowRunEventsStream(): UseWorkflowRunEventsStreamReturn {
       if (retryIndex > 0) setConnectionState(workflowRunId, 'reconnecting');
       try {
         const handle = await workflowService.sseWorkflowRunEvents(workflowRunId, wrappedCallbacks, {
+          transport,
           params: effectiveParams,
           onClose: () => {
             const current = activeByRunRef.current[workflowRunId];
@@ -242,7 +253,7 @@ export function useWorkflowRunEventsStream(): UseWorkflowRunEventsStreamReturn {
         current.options?.onClose?.();
       }
     },
-    [cancel, getSession, rememberEventCursor, setConnectionState]
+    [cancel, getSession, rememberEventCursor, setConnectionState, transport]
   );
   connectRef.current = connect;
 
