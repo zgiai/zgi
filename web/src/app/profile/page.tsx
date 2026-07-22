@@ -25,6 +25,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import type { User } from '@/services/types/auth';
 import { toast } from 'sonner';
 import type { TimezoneValue } from '@/lib/constants';
+import { getUserContactDisplay } from '@/utils/account-display';
 
 interface ProfileFormValues {
   name: string;
@@ -38,6 +39,7 @@ export default function ProfilePage() {
   const user = useAuthStore.use.user();
   const { data: profile, isLoading, isFetching } = useProfile();
   const updateMutation = useUpdateProfile();
+  const contactDisplay = getUserContactDisplay(profile, user);
 
   const form = useForm<ProfileFormValues>({
     defaultValues: {
@@ -178,7 +180,7 @@ export default function ProfilePage() {
                           {profile?.name || user?.name || '—'}
                         </div>
                         <div className="text-sm text-muted-foreground truncate mt-1">
-                          {profile?.email || user?.email || '—'}
+                          {contactDisplay || '—'}
                         </div>
                         <div className="mt-4">
                           {avatarPreview && (

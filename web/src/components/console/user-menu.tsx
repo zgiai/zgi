@@ -37,6 +37,7 @@ import { organizationService } from '@/services/organization.service';
 import { ORGANIZATION_KEYS } from '@/hooks/query-keys';
 import { getOrganizationDisplayName } from '@/utils/organization-display';
 import { normalizeOrganizationRole } from '@/utils/role-labels';
+import { getUserContactDisplay } from '@/utils/account-display';
 
 export function UserMenu() {
   const router = useRouter();
@@ -59,7 +60,7 @@ export function UserMenu() {
 
   const { data: profile } = useAutoProfile({ staleTime: 1_800_000 });
   const displayName = profile?.name || user?.name || tNav('profile');
-  const displayEmail = profile?.email || user?.email || '';
+  const displayEmail = getUserContactDisplay(profile, user);
   const displayOrganization = getOrganizationDisplayName(currentOrganization) || null;
   const organizationRole = normalizeOrganizationRole(
     currentOrganization?.organization_role || user?.organization_role
