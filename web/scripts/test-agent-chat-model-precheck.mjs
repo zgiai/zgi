@@ -28,36 +28,44 @@ const warning = {
 };
 
 assert.deepEqual(
-  structuredClone(visibleAgentModelPrecheckWarnings({ status: 'warning', warnings: [warning] })),
+  globalThis.structuredClone(
+    visibleAgentModelPrecheckWarnings({ status: 'warning', warnings: [warning] })
+  ),
   [warning],
   'warning status should expose warnings'
 );
 assert.deepEqual(
-  structuredClone(visibleAgentModelPrecheckWarnings({ status: 'ok', warnings: [warning] })),
+  globalThis.structuredClone(
+    visibleAgentModelPrecheckWarnings({ status: 'ok', warnings: [warning] })
+  ),
   [],
   'healthy model should not expose stale warnings'
 );
 assert.deepEqual(
-  structuredClone(visibleAgentModelPrecheckWarnings({ status: 'unknown', warnings: [warning] })),
+  globalThis.structuredClone(
+    visibleAgentModelPrecheckWarnings({ status: 'unknown', warnings: [warning] })
+  ),
   [],
   'unknown status should not guess a warning'
 );
 
-const events = [];
-const allowed = await allowSendAfterAgentModelPrecheck(async () => {
-  events.push('precheck');
+let finishRefresh;
+const pendingRefresh = new Promise(resolve => {
+  finishRefresh = resolve;
 });
-assert.equal(allowed, true, 'a warning precheck must never block sending');
-if (allowed) events.push('send');
-assert.deepEqual(events, ['precheck', 'send']);
+const allowed = allowSendAfterAgentModelPrecheck(() => pendingRefresh);
+assert.equal(allowed, true, 'an advisory precheck must allow sending before refresh completes');
+finishRefresh();
+await pendingRefresh;
 
 assert.equal(
-  await allowSendAfterAgentModelPrecheck(async () => {
+  allowSendAfterAgentModelPrecheck(async () => {
     throw new Error('precheck unavailable');
   }),
   true,
   'a failed precheck must never block sending'
 );
+await new Promise(resolve => globalThis.setImmediate(resolve));
 
 const files = {
   preview: fs.readFileSync(

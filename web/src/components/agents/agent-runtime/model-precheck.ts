@@ -9,11 +9,11 @@ export function visibleAgentModelPrecheckWarnings(
   return result?.status === 'warning' ? result.warnings : [];
 }
 
-export async function allowSendAfterAgentModelPrecheck(
-  refresh: () => Promise<unknown>
-): Promise<true> {
+export function allowSendAfterAgentModelPrecheck(refresh: () => Promise<unknown>): true {
   try {
-    await refresh();
+    void refresh().catch(() => {
+      // Precheck is advisory. Its availability must never decide whether a message can be sent.
+    });
   } catch {
     // Precheck is advisory. Its availability must never decide whether a message can be sent.
   }
