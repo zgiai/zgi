@@ -1127,10 +1127,7 @@ export function useAgentRuntimePageModel(agentId: string) {
   }, []);
 
   const publishCurrentDraft = useCallback(
-    async (
-      acknowledgeSuspendedBindings: boolean,
-      versionDetails: AgentPublishVersionDetails
-    ) => {
+    async (acknowledgeSuspendedBindings: boolean, versionDetails: AgentPublishVersionDetails) => {
       if (isPublishing) return;
       setIsPublishing(true);
       try {
@@ -1522,6 +1519,7 @@ export function useAgentRuntimePageModel(agentId: string) {
     },
     preview: {
       canUseDraftPreview: canConfigureAgentRuntime,
+      agentId,
       controller: chatController,
       modelSelectorValue,
       modelProps: selectedModelProps,

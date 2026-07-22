@@ -10,6 +10,7 @@ import type {
   WebAppPrecheckResult,
   WebAppRuntimeCapability,
 } from './types/webapp';
+import type { AIChatModelPrecheckResponse } from './types/aichat';
 import { sanitizeModelOutputValue, wrapModelOutputSseCallbacks } from '@/utils/model-output-filter';
 import {
   getWebAppErrorCode,
@@ -114,6 +115,13 @@ export class WebAppService {
     );
   }
 
+  static async precheckPublishedAgentModel(webAppId: string): Promise<AIChatModelPrecheckResponse> {
+    return webappHttp.post<AIChatModelPrecheckResponse>(
+      `/console/api/webapps/${webAppId}/runtime/model-precheck`,
+      undefined
+    );
+  }
+
   /**
    * List conversations for current webapp token and specific workflow version.
    * GET /console/api/workflows/{version_uuid}/conversations
@@ -207,11 +215,9 @@ export class WebAppService {
       ? `/console/api/workflows/${encodeURIComponent(normalizedWebAppId)}/migrate-user`
       : `/console/api/workflows/migrate-user`;
     // Use main-site http client so it carries Authorization and refresh logic
-    return http.post<WebAppApiResponseData<{ result: 'success' | string }>>(
-      endpoint,
-      undefined,
-      { headers }
-    );
+    return http.post<WebAppApiResponseData<{ result: 'success' | string }>>(endpoint, undefined, {
+      headers,
+    });
   }
 }
 

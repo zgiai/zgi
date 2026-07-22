@@ -5,6 +5,7 @@ import { LogIn } from 'lucide-react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useStore } from 'zustand';
 import Chat, { createAgentWebAppTransport, useAIChatController } from '@/components/chat';
+import { AIChatModelPrecheckWarning } from '@/components/aichat/model-precheck-warning';
 import { isDraftAIChatConversationId } from '@/components/chat/utils/aichat-message';
 import { IconPreview } from '@/components/common/icon-input/icon-preview';
 import { Button } from '@/components/ui/button';
@@ -15,6 +16,11 @@ import { useAuthStore } from '@/store/auth-store';
 import { WEBAPP_USER_MIGRATED_EVENT } from '@/hooks/webapp/use-maybe-migrate-user';
 import type { OpeningGuideBrand } from '@/components/chat/utils/opening-guide-brand';
 import { isConversationRouteRestoring } from '@/components/chat/runtime/conversation-route-state';
+import { usePublishedAgentModelPrecheck } from '@/hooks/webapp/use-published-agent-model-precheck';
+import {
+  allowSendAfterAgentModelPrecheck,
+  visibleAgentModelPrecheckWarnings,
+} from '@/components/agents/agent-runtime/model-precheck';
 import {
   type ConversationRouteHandoff,
   resolveConversationRouteSync,
@@ -82,6 +88,14 @@ export default function AgentWebappChat({ webAppId, config }: AgentWebappChatPro
   const transport = useMemo(() => createAgentWebAppTransport(webAppId), [webAppId]);
   const uploadScope = useMemo(() => ({ type: 'webapp' as const, webAppId }), [webAppId]);
   const controller = useAIChatController({ transport, requireModel: false });
+  const modelPrecheck = usePublishedAgentModelPrecheck(webAppId, {
+    enabled: !requiresLoginForMemory,
+  });
+  const modelPrecheckWarnings = visibleAgentModelPrecheckWarnings(modelPrecheck.data);
+  const handleBeforeSend = useCallback(
+    () => allowSendAfterAgentModelPrecheck(modelPrecheck.refetch),
+    [modelPrecheck.refetch]
+  );
   const initController = controller.init;
   const startNewConversation = controller.startNew;
   const activeConversationId = useStore(controller.store, state => state.activeConversationId);
@@ -233,6 +247,12 @@ export default function AgentWebappChat({ webAppId, config }: AgentWebappChatPro
       controller={controller}
       modelSelectorValue={modelValue}
       onModelChange={() => undefined}
+      beforeSend={handleBeforeSend}
+      inputTopNotice={
+        modelPrecheckWarnings.length > 0 ? (
+          <AIChatModelPrecheckWarning warnings={modelPrecheckWarnings} />
+        ) : undefined
+      }
       variant="full"
       showModelSelector={false}
       requireModel={false}

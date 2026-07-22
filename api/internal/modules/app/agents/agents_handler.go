@@ -21,6 +21,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/app/runtimeauth"
 	approvalruntime "github.com/zgiai/zgi/api/internal/modules/app/workflow/approval"
 	filemodel "github.com/zgiai/zgi/api/internal/modules/file_process/model"
+	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	workspace_model "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	"github.com/zgiai/zgi/api/internal/util"
@@ -39,6 +40,7 @@ type AgentsHandler struct {
 	fileService                interfaces.FileService
 	db                         *gorm.DB
 	chatRuntimeService         runtimeservice.Service
+	modelPrechecker            llmclient.AppModelPrechecker
 	workflowContinuationRunner interface {
 		ResumeApprovalWorkflow(ctx context.Context, form *approvalruntime.Form) error
 		ResumeQuestionAnswerWorkflow(ctx context.Context, workflowRunID string, inputs map[string]interface{}) error
@@ -68,6 +70,10 @@ func NewAgentsHandler(appService AgentsService, tenantService interfaces.Workspa
 
 func (h *AgentsHandler) SetFileService(fileService interfaces.FileService) {
 	h.fileService = fileService
+}
+
+func (h *AgentsHandler) SetModelPrechecker(modelPrechecker llmclient.AppModelPrechecker) {
+	h.modelPrechecker = modelPrechecker
 }
 
 func (h *AgentsHandler) SetWorkflowContinuationRunner(runner interface {

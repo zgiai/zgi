@@ -195,7 +195,7 @@ const messages = {
         description: 'Current channel balance is {currentValue}. Warning threshold is {threshold}.',
       },
       '207015': {
-        title: 'Private channel upstream unavailable',
+        title: 'Channel upstream unavailable',
         description:
           'Every candidate credential was explicitly rejected by its provider. Contact an organization administrator.',
       },

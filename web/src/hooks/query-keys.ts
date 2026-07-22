@@ -86,6 +86,8 @@ export const AGENT_KEYS = {
     [...AGENT_KEYS.detail(agentId), 'runtime-run-detail', messageId] as const,
   runtimeRunSteps: (agentId: string, messageId: string) =>
     [...AGENT_KEYS.detail(agentId), 'runtime-run-steps', messageId] as const,
+  modelPrecheck: (agentId: string, provider: string, model: string) =>
+    [...AGENT_KEYS.detail(agentId), 'model-precheck', provider, model] as const,
 } as const;
 
 export const PROMPT_KEYS = {
@@ -307,6 +309,8 @@ export const WEBAPP_KEYS = {
   all: ['webapp'] as const,
   config: (versionUuid: string) => [...WEBAPP_KEYS.all, 'config', versionUuid] as const,
   capability: (webAppId: string) => [...WEBAPP_KEYS.all, 'capability', webAppId] as const,
+  agentModelPrecheck: (webAppId: string) =>
+    [...WEBAPP_KEYS.all, 'agent-model-precheck', webAppId] as const,
   conversations: (versionUuid: string) =>
     [...WEBAPP_KEYS.all, 'conversations', versionUuid] as const,
   conversationList: (versionUuid: string, params: unknown) =>
