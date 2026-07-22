@@ -1604,6 +1604,53 @@ func TestAgentWorkflowAvailableBindingsMessageInjectsSafeContext(t *testing.T) {
 	}
 }
 
+func TestAgentWorkflowPromptBindingsKeepQueryConversationalOnly(t *testing.T) {
+	items := agentWorkflowPromptBindings([]AgentWorkflowBinding{
+		{
+			BindingID:       "task-flow",
+			AgentID:         "task-agent",
+			WorkflowID:      "task-workflow",
+			AgentType:       "WORKFLOW",
+			VersionStrategy: "latest_published",
+		},
+		{
+			BindingID:       "chat-flow",
+			AgentID:         "chat-agent",
+			WorkflowID:      "chat-workflow",
+			AgentType:       "CONVERSATIONAL_WORKFLOW",
+			VersionStrategy: "latest_published",
+		},
+	})
+	if len(items) != 2 {
+		t.Fatalf("prompt bindings = %#v, want 2", items)
+	}
+	byID := map[string]map[string]interface{}{}
+	for _, item := range items {
+		byID[item["binding_id"].(string)] = item
+	}
+
+	task := byID["task-flow"]
+	if _, exists := task["default_input_key"]; exists {
+		t.Fatalf("task default_input_key = %#v, want omitted", task["default_input_key"])
+	}
+	if required := task["required_inputs"].([]string); len(required) != 0 {
+		t.Fatalf("task required_inputs = %#v, want empty", required)
+	}
+	taskSchema := task["input_schema"].(map[string]interface{})
+	if properties := taskSchema["properties"].(map[string]interface{}); len(properties) != 0 {
+		t.Fatalf("task input properties = %#v, want empty", properties)
+	}
+
+	chat := byID["chat-flow"]
+	if chat["default_input_key"] != "query" {
+		t.Fatalf("chat default_input_key = %#v, want query", chat["default_input_key"])
+	}
+	required := chat["required_inputs"].([]string)
+	if len(required) != 1 || required[0] != "query" {
+		t.Fatalf("chat required_inputs = %#v, want [query]", required)
+	}
+}
+
 func TestVisibleSkillMetadataHidesNonUserSelectableSystemSkills(t *testing.T) {
 	metadata := []skills.SkillDiscoveryMetadata{
 		{ID: skills.SkillInternalKnowledge},

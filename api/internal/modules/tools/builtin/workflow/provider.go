@@ -927,18 +927,21 @@ func workflowBindingList(bindings []workflowBinding) []map[string]interface{} {
 	for _, binding := range bindings {
 		defaultInputKey := bindingDefaultInputKey(binding)
 		requiredInputs := bindingRequiredInputs(binding)
-		out = append(out, map[string]interface{}{
-			"binding_id":        binding.BindingID,
-			"label":             binding.Label,
-			"description":       binding.Description,
-			"agent_type":        binding.AgentType,
-			"version_strategy":  binding.VersionStrategy,
-			"timeout_seconds":   normalizeTimeoutSeconds(binding.TimeoutSeconds),
-			"input_schema":      workflowInputSchema(binding),
-			"required_inputs":   requiredInputs,
-			"default_input_key": defaultInputKey,
-			"start_inputs":      binding.StartInputs,
-		})
+		item := map[string]interface{}{
+			"binding_id":       binding.BindingID,
+			"label":            binding.Label,
+			"description":      binding.Description,
+			"agent_type":       binding.AgentType,
+			"version_strategy": binding.VersionStrategy,
+			"timeout_seconds":  normalizeTimeoutSeconds(binding.TimeoutSeconds),
+			"input_schema":     workflowInputSchema(binding),
+			"required_inputs":  requiredInputs,
+			"start_inputs":     binding.StartInputs,
+		}
+		if defaultInputKey != "" {
+			item["default_input_key"] = defaultInputKey
+		}
+		out = append(out, item)
 	}
 	return out
 }
@@ -984,16 +987,15 @@ func normalizeWorkflowInputs(inputs map[string]interface{}, binding workflowBind
 	if inputs == nil {
 		inputs = map[string]interface{}{}
 	}
-	query := cleanOutputText(inputs[defaultInputKey])
-	if query == "" {
-		query = cleanOutputText(inputs["sys.query"])
-	}
 	normalized := make(map[string]interface{}, len(inputs)+2)
 	for key, value := range inputs {
 		normalized[key] = value
 	}
-	startInputs := binding.StartInputs
-	if len(startInputs) == 0 || strings.EqualFold(strings.TrimSpace(binding.AgentType), "CONVERSATIONAL_WORKFLOW") {
+	if isConversationalWorkflowBinding(binding) {
+		query := cleanOutputText(inputs[defaultInputKey])
+		if query == "" {
+			query = cleanOutputText(inputs["sys.query"])
+		}
 		if query == "" {
 			return nil, fmt.Errorf("workflow inputs.%s is required; retry with inputs.%s set to the user's current request", defaultInputKey, defaultInputKey)
 		}
@@ -1001,19 +1003,17 @@ func normalizeWorkflowInputs(inputs map[string]interface{}, binding workflowBind
 		normalized["sys.query"] = query
 		return normalized, nil
 	}
-	if query != "" {
-		normalized["sys.query"] = query
-		if !workflowStartInputExists(startInputs, defaultInputKey) {
-			delete(normalized, defaultInputKey)
-		}
+
+	// query is a conversational-workflow transport input, not an implicit task
+	// workflow start variable. A task workflow may still declare a normal start
+	// variable named query; otherwise discard legacy callers' transport fields.
+	if !workflowStartInputExists(binding.StartInputs, defaultInputKey) {
+		delete(normalized, defaultInputKey)
 	}
-	defaultKey := bindingDefaultInputKey(binding)
-	if defaultKey != "" && cleanOutputText(normalized[defaultKey]) == "" && query != "" {
-		normalized[defaultKey] = query
-	}
+	delete(normalized, "sys.query")
 	missing := missingWorkflowInputs(normalized, bindingRequiredInputs(binding))
 	if len(missing) > 0 {
-		if query == "" && len(missing) == 1 {
+		if len(missing) == 1 {
 			return nil, fmt.Errorf("workflow inputs.%s is required; retry with inputs.%s set to the user's current task input", missing[0], missing[0])
 		}
 		return nil, fmt.Errorf("workflow start inputs are missing required fields: %s; retry with inputs matching the binding's required_inputs from available_workflows or list_agent_workflows", strings.Join(missing, ", "))
@@ -1115,29 +1115,30 @@ func normalizeWorkflowDefaultInputKey(key string, startInputs []workflowStartInp
 	if len(startInputs) == 1 {
 		return strings.TrimSpace(startInputs[0].Variable)
 	}
-	if len(startInputs) == 0 {
-		return defaultInputKey
-	}
 	return ""
 }
 
 func bindingRequiredInputs(binding workflowBinding) []string {
+	if isConversationalWorkflowBinding(binding) {
+		return []string{defaultInputKey}
+	}
 	required := normalizeWorkflowRequiredInputs(binding.RequiredInputs, binding.StartInputs)
 	if len(required) > 0 {
 		return required
-	}
-	if len(binding.StartInputs) == 0 {
-		return []string{defaultInputKey}
 	}
 	return []string{}
 }
 
 func bindingDefaultInputKey(binding workflowBinding) string {
-	key := normalizeWorkflowDefaultInputKey(binding.DefaultInputKey, binding.StartInputs)
-	if key != "" {
-		return key
+	if isConversationalWorkflowBinding(binding) {
+		return defaultInputKey
 	}
-	return defaultInputKey
+	key := normalizeWorkflowDefaultInputKey(binding.DefaultInputKey, binding.StartInputs)
+	return key
+}
+
+func isConversationalWorkflowBinding(binding workflowBinding) bool {
+	return strings.EqualFold(strings.TrimSpace(binding.AgentType), "CONVERSATIONAL_WORKFLOW")
 }
 
 func workflowStartInputExists(inputs []workflowStartInput, key string) bool {
@@ -1185,6 +1186,19 @@ func workflowJSONSchemaType(inputType string) string {
 }
 
 func workflowInputSchema(binding workflowBinding) map[string]interface{} {
+	if isConversationalWorkflowBinding(binding) {
+		return map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				defaultInputKey: map[string]interface{}{
+					"type":        "string",
+					"description": "The user's current request to pass into the conversational workflow.",
+				},
+			},
+			"required":             []string{defaultInputKey},
+			"additionalProperties": true,
+		}
+	}
 	startInputs := binding.StartInputs
 	if len(startInputs) > 0 {
 		properties := map[string]interface{}{}
@@ -1210,14 +1224,9 @@ func workflowInputSchema(binding workflowBinding) map[string]interface{} {
 		}
 	}
 	return map[string]interface{}{
-		"type": "object",
-		"properties": map[string]interface{}{
-			defaultInputKey: map[string]interface{}{
-				"type":        "string",
-				"description": "The user's current request or instruction to pass into the workflow.",
-			},
-		},
-		"required":             []string{defaultInputKey},
+		"type":                 "object",
+		"properties":           map[string]interface{}{},
+		"required":             []string{},
 		"additionalProperties": true,
 	}
 }
@@ -1237,7 +1246,7 @@ func normalizeTimeoutSeconds(value int) int {
 
 func workflowToolParameters(kind string) []tools.ToolParameter {
 	bindingID := stringParam("binding_id", "Binding ID", "Workflow binding ID from injected available_workflows, or from list_agent_workflows if the injected list is missing or ambiguous.", true)
-	inputs := jsonParam("inputs", "Inputs", "Workflow input object. Use the binding's input_schema and required_inputs from available_workflows or list_agent_workflows. For single-input workflows, inputs.query may be used as the user's current request and will be mapped to the start input and sys.query.", true)
+	inputs := jsonParam("inputs", "Inputs", "Workflow input object. For task workflows, pass only the start variables declared by input_schema and required_inputs; use an empty object when none are declared. For conversational workflows, pass the user's current request in inputs.query.", true)
 	workflowRunID := stringParam("workflow_run_id", "Workflow run ID", "Workflow run ID returned by run_agent_workflow.", true)
 	switch kind {
 	case ToolListAgentWorkflows:
@@ -1311,7 +1320,7 @@ func workflowToolDescription(kind string) string {
 	case ToolListAgentWorkflows:
 		return "List workflows bound to the current Agent. Does not expose arbitrary workflow lookup."
 	case ToolRunAgentWorkflow:
-		return "Run a workflow bound to the current Agent by binding_id. Pass the user's current request in inputs.query. Returns structured status, outputs, primary_output, workflow_run_id, and output_keys. After a succeeded run, the final answer must be based on primary_output or outputs; do not claim workflow output that is not present. If succeeded with no primary_output or outputs, say the workflow ran but returned no displayable output and include workflow_run_id."
+		return "Run a workflow bound to the current Agent by binding_id. For task workflows, follow the binding's input_schema exactly and use an empty inputs object when it declares no start inputs. For conversational workflows, pass the user's current request in inputs.query. Returns structured status, outputs, primary_output, workflow_run_id, and output_keys. After a succeeded run, the final answer must be based on primary_output or outputs; do not claim workflow output that is not present. If succeeded with no primary_output or outputs, say the workflow ran but returned no displayable output and include workflow_run_id."
 	case ToolGetWorkflowRunStatus:
 		return "Query a previously started Agent-bound workflow run by workflow_run_id."
 	default:

@@ -2251,23 +2251,20 @@ func workflowRunContract() SkillToolArgumentContract {
 	return SkillToolArgumentContract{
 		SkillID:     SkillAgentWorkflow,
 		ToolName:    "run_agent_workflow",
-		Description: "Run an Agent-bound workflow by binding_id. Do not pass workflow_id directly. Set inputs.query to the user's current request. After a succeeded run, final answers must use primary_output or outputs and must not invent workflow output.",
+		Description: "Run an Agent-bound workflow by binding_id. Do not pass workflow_id directly. For task workflows, follow the binding's declared input schema and use an empty inputs object when it has no start inputs. Only conversational workflows use inputs.query for the user's current request. After a succeeded run, final answers must use primary_output or outputs and must not invent workflow output.",
 		Schema: objectSchema(
 			map[string]interface{}{
 				"binding_id": stringValueSchema("Workflow binding ID from injected available_workflows, or from list_agent_workflows if the injected list is missing or ambiguous."),
 				"inputs": map[string]interface{}{
 					"type":                 "object",
-					"description":          "Workflow input object. Include query with the user's current request unless the binding's input_schema, required_inputs, or default_input_key says otherwise; the runtime also forwards query as sys.query.",
+					"description":          "Workflow input object. For task workflows, pass only declared start inputs; use an empty object when none are declared. For conversational workflows, pass the user's current request as query.",
 					"additionalProperties": true,
-					"properties": map[string]interface{}{
-						"query": stringValueSchema("The user's current request or instruction to pass into the workflow."),
-					},
-					"required": []string{"query"},
+					"properties":           map[string]interface{}{},
 				},
 			},
 			[]string{"binding_id", "inputs"},
 		),
-		Example: map[string]interface{}{"binding_id": "approval-flow", "inputs": map[string]interface{}{"query": "Approve refund request #123"}},
+		Example: map[string]interface{}{"binding_id": "approval-flow", "inputs": map[string]interface{}{}},
 	}
 }
 

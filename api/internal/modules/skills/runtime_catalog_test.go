@@ -109,8 +109,17 @@ func TestAgentWorkflowSystemSkillExposeExpectedTools(t *testing.T) {
 	if !IsHiddenSystemSkill(SkillAgentWorkflow) {
 		t.Fatal("agent-workflow should be hidden")
 	}
-	if got := ExpectedSkillToolArguments(SkillAgentWorkflow, "run_agent_workflow"); got == nil {
+	got := ExpectedSkillToolArguments(SkillAgentWorkflow, "run_agent_workflow")
+	if got == nil {
 		t.Fatal("run_agent_workflow contract missing")
+	}
+	schema := got["schema"].(map[string]interface{})
+	inputs := schema["properties"].(map[string]interface{})["inputs"].(map[string]interface{})
+	if properties := inputs["properties"].(map[string]interface{}); len(properties) != 0 {
+		t.Fatalf("generic workflow inputs properties = %#v, want binding-specific empty schema", properties)
+	}
+	if required, exists := inputs["required"]; exists {
+		t.Fatalf("generic workflow inputs required = %#v, want no universal query requirement", required)
 	}
 }
 
