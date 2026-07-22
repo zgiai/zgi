@@ -13,6 +13,7 @@ import { useProviderI18n } from '@/hooks/provider/use-provider-i18n';
 import { useLocale } from '@/hooks/use-locale';
 import { useAccountCapabilities } from '@/hooks/use-account-capabilities';
 import { getModelDisplayName } from '@/utils/model-label';
+import { AlertTriangle } from 'lucide-react';
 
 import type {
   ModelSelectorValue,
@@ -77,6 +78,8 @@ export interface ModelSelectorProps {
   showCapabilities?: boolean;
   /** Within each provider, place models for this use case first and highlight them. */
   preferredUseCase?: ModelUseCase;
+  /** Accessible warning shown for the currently selected model. */
+  selectedModelWarning?: string;
 }
 
 // Virtualization constants
@@ -117,6 +120,7 @@ export function ModelSelector({
   hasError = false,
   showCapabilities = true,
   preferredUseCase,
+  selectedModelWarning,
 }: ModelSelectorProps) {
   const t = useT();
   const { locale } = useLocale();
@@ -583,10 +587,14 @@ export function ModelSelector({
         onOpenChange={handleOpenChange}
       >
         <SelectTrigger
+          data-model-warning={selectedModelWarning ? 'true' : undefined}
+          title={selectedModelWarning}
           className={cn(
             'w-full',
-            hasError && 'border-destructive focus:ring-destructive',
-            className
+            className,
+            selectedModelWarning &&
+              'border-warning/50 bg-warning/5 hover:bg-warning/10 focus:ring-warning/30',
+            hasError && 'border-destructive focus:ring-destructive'
           )}
           id="model-selector-temp-trigger"
           isLoading={isLoading}
@@ -600,6 +608,12 @@ export function ModelSelector({
                   size={20}
                 />
                 <span className="truncate text-[13px]">{selectedResolved.label}</span>
+                {selectedModelWarning ? (
+                  <>
+                    <AlertTriangle className="size-3.5 shrink-0 text-warning" aria-hidden="true" />
+                    <span className="sr-only">{selectedModelWarning}</span>
+                  </>
+                ) : null}
                 {showCapabilities &&
                   selectedResolved.features &&
                   selectedResolved.features.length > 0 && (

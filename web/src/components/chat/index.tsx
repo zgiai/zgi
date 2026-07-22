@@ -123,6 +123,7 @@ interface AIChatVariantProps {
   mode: 'aichat';
   controller: AIChatController;
   modelSelectorValue: AIChatModelValue;
+  modelSelectorWarning?: boolean;
   modelProps?: ModelSelectorModelProps | null;
   supportsVisionOverride?: boolean;
   isModelInitializing?: boolean;

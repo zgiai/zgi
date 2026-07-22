@@ -129,6 +129,7 @@ export type { AIChatModelValue } from '@/components/chat/variants/aichat/types';
 interface AIChatShellProps {
   controller: AIChatController;
   modelSelectorValue: AIChatModelValue;
+  modelSelectorWarning?: boolean;
   modelProps?: ModelSelectorModelProps | null;
   supportsVisionOverride?: boolean;
   isModelInitializing?: boolean;
@@ -241,6 +242,7 @@ function resolveWorkflowQuestionAnswerInputs(
 export function AIChatShell({
   controller,
   modelSelectorValue,
+  modelSelectorWarning = false,
   modelProps,
   supportsVisionOverride,
   isModelInitializing = false,
@@ -1336,6 +1338,7 @@ export function AIChatShell({
             isLoadingMessages={isLoadingMessages}
             input={input}
             modelSelectorValue={modelSelectorValue}
+            modelSelectorWarning={modelSelectorWarning}
             modelProps={modelProps}
             supportsVisionOverride={supportsVisionOverride}
             isModelInitializing={isModelInitializing}

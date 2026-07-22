@@ -181,6 +181,7 @@ function ChatPageContent() {
               modelUseCase="text-chat"
               preferredModelUseCase="agent"
               modelSelectorValue={modelSelectorValue}
+              modelSelectorWarning={modelPrecheckWarnings.length > 0}
               isModelInitializing={isModelInitializing}
               onModelChange={handleModelChange}
               beforeSend={handleBeforeSend}

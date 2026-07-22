@@ -49,6 +49,7 @@ import {
 
 interface AIChatInputToolbarProps {
   modelSelectorValue: AIChatModelValue;
+  modelSelectorWarning?: boolean;
   isModelInitializing?: boolean;
   modelMissing: boolean;
   modelCapabilityFilter?: { features_vision: boolean };
@@ -147,6 +148,7 @@ function getToolGovernanceTierDisplay(
  */
 export function AIChatInputToolbar({
   modelSelectorValue,
+  modelSelectorWarning = false,
   isModelInitializing = false,
   modelMissing,
   modelCapabilityFilter,
@@ -207,6 +209,9 @@ export function AIChatInputToolbar({
                 value={modelSelectorValue}
                 onChange={onModelChange}
                 onModelPropsChange={onModelPropsChange}
+                selectedModelWarning={
+                  modelSelectorWarning ? t('consoleChat.modelPrecheck.title') : undefined
+                }
                 capabilityFilter={modelCapabilityFilter}
                 className={cn(
                   'h-8 rounded-full border-border/70 px-3 text-xs',
