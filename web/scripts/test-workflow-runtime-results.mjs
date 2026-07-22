@@ -6,6 +6,11 @@ import {
   getCanvasPreviewRows,
   groupWorkflowRunItems,
 } from '../src/components/workflow/ui/workflow-run-nodes-list/utils.ts';
+import {
+  extractWorkflowRunContainerContext,
+  getWorkflowRunExecutionId,
+  isVisibleWorkflowRunExecutionStatus,
+} from '../src/utils/workflow/run-events.ts';
 
 const root = process.cwd();
 const read = relativePath => readFileSync(path.join(root, relativePath), 'utf8');
@@ -56,8 +61,17 @@ const workflowChatPanelState = read(
   'src/components/workflow/ui/workflow-chat-panel/hooks/use-workflow-chat-panel-state.tsx'
 );
 const workflowRunPanel = read('src/components/workflow/ui/workflow-run-panel/index.tsx');
+const workflowRunHistoryContent = read(
+  'src/components/workflow/ui/workflow-run-panel/components/history-content.tsx'
+);
+const workflowNodePanel = read('src/components/workflow/ui/node-floating-panel.tsx');
+const workflowCanvasPanels = read('src/components/workflow/ui/workflow-canvas-panels.tsx');
+const workflowCanvasWithDnd = read('src/components/workflow/canvas-with-dnd.tsx');
 const workflowRunResults = read(
   'src/components/workflow/ui/workflow-run-panel/components/results.tsx'
+);
+const workflowRunHistory = read(
+  'src/components/workflow/ui/workflow-run-panel/utils/history-view-data.ts'
 );
 const workflowConversationHistory = read(
   'src/components/workflow/ui/conversation-history-panel/index.tsx'
@@ -69,6 +83,7 @@ const workflowChatDraftRunStream = read('src/hooks/workflow/use-run-workflow-cha
 const webappService = read('src/services/webapp.service.ts');
 const webappRunStream = read('src/hooks/webapp/use-run-webapp-workflow-stream.ts');
 const webappRun = read('src/components/webapp/run/index.tsx');
+const workflowRunNodeAccumulator = read('src/utils/webapp/workflow-run-node-accumulator.ts');
 const webappTransport = read('src/hooks/webapp/use-webapp-transport.ts');
 const webappTransportEvents = read('src/hooks/webapp/use-webapp-transport/events.ts');
 const approvalRuntimeEvents = read('src/components/workflow/approval/runtime-events.ts');
@@ -96,12 +111,17 @@ assert.match(runtimeList, /setSelectedExecutionByNode/);
 assert.match(runtimeList, /selectedRoundByNode/);
 assert.match(runtimeList, /visibleRounds\.map/);
 assert.match(runtimeList, /bounded=\{isCanvasVariant\}/);
+assert.match(runtimeList, /row\.labelKind === 'variable'/);
+assert.match(runtimeList, /text-\[11px\] font-semibold leading-4 tracking-tight/);
+assert.match(runtimeStructuredView, /bounded \? 'text-primary' : 'text-muted-foreground\/70'/);
 assert.match(workflowEditor, /isSelected \? 2_000 : 1_000/);
 assert.match(workflowEditor, /runtimeLogPopoverOpenByNodeId\[node\.id\]/);
 assert.match(workflowEditor, /const selectedHistoryNodes = selectedHistorySnapshot\?\.nodes/);
 assert.match(workflowEditor, /const selectedHistoryViewport = selectedHistorySnapshot\?\.viewport/);
 assert.match(workflowEditor, /historyViewNodesCacheRef/);
 assert.match(workflowEditor, /historyViewNodesCacheRef\.current\?\.signature === signature/);
+assert.match(workflowEditor, /selectionChanged = isHistoryMode/);
+assert.match(workflowEditor, /selectionChanged \? \{ selected: isSelected \}/);
 assert.match(workflowEditor, /deriveContainerLayoutSizes/);
 assert.match(graphHelpers, /calculateContainerMinimumSize/);
 assert.match(graphHelpers, /deriveContainerLayoutSizes/);
@@ -284,6 +304,56 @@ assert.match(
   'published workflow runs must leave the paused projection after resume'
 );
 assert.match(
+  webappRun,
+  /onIterationStarted:\s*streamPayload\s*=>[\s\S]*durableRunNodeAccumulator\.onIterationStarted\(streamPayload\)/,
+  'published task WebApps must project durable iteration events through the shared accumulator'
+);
+assert.match(
+  webappRun,
+  /onLoopStarted:\s*streamPayload\s*=>[\s\S]*durableRunNodeAccumulator\.onLoopStarted\(streamPayload\)/,
+  'published task WebApps must project durable loop events through the shared accumulator'
+);
+assert.match(
+  webappRun,
+  /durableRunNodeAccumulator\.replaceSnapshot\([\s\S]*executionItems\.map\(nodeInfoFromWorkflowRunItem\)/,
+  'published task WebApps must seed container projection from the authoritative snapshot'
+);
+assert.match(
+  webappRun,
+  /await start\(runPayload, undefined, \{[\s\S]*onTransportInterrupted: recoverInterruptedWorkflowRun/,
+  'published task WebApps must hand an interrupted POST stream over to durable run events'
+);
+assert.match(
+  webappRun,
+  /question_answer_option_id: choice\.id,[\s\S]*onTransportInterrupted: recoverInterruptedWorkflowRun/,
+  'question continuations must use the same durable recovery handoff'
+);
+assert.match(
+  webappRunStream,
+  /onNodeStarted: p => \{[\s\S]*captureWorkflowRunId\(p\)/,
+  'the initial stream must recover the workflow run id even when workflow_started is not delivered'
+);
+assert.match(
+  workflowRunNodeAccumulator,
+  /const replaceSnapshot = \(nodes: NodeInfo\[\]\) =>/,
+  'the shared workflow accumulator must support snapshot hydration before replaying event tails'
+);
+assert.match(
+  workflowRunNodeAccumulator,
+  /if \(handleContainerLifecycle\(payload, node, finished\)\) return;/,
+  'generic container node completion must not replace accumulated iteration or loop rounds'
+);
+assert.match(
+  webappRun,
+  /iterationRounds: next\.iterationRounds \?\? item\.iterationRounds/,
+  'partial lifecycle projections must preserve accumulated iteration rounds'
+);
+assert.match(
+  webappRun,
+  /loopRounds: next\.loopRounds \?\? item\.loopRounds/,
+  'partial lifecycle projections must preserve accumulated loop rounds'
+);
+assert.match(
   approvalRuntimeEvents,
   /activePause\.reasons\)[\s\S]*filter\(isPendingPauseReason\)/,
   'workflow snapshots must only restore pending interaction reasons'
@@ -338,6 +408,58 @@ assert.match(
   /<MarkdownViewer[\s\S]*?preserveSoftBreaks/,
   'workflow history must render the same line breaks as live output'
 );
+assert.match(workflowConversationHistory, /id: 'conversation-history',[\s\S]*?order: 1/);
+assert.doesNotMatch(workflowConversationHistory, /<RunStatusBadge status=\{inspectorSummary\.status\}/);
+assert.doesNotMatch(workflowConversationHistory, /workflow\.workflowRunId/);
+assert.match(workflowRunPanel, /!isHistory && canViewRuntimeLogs/);
+assert.match(workflowRunHistoryContent, /agents\.workflow\.runOverview/);
+assert.match(workflowRunHistoryContent, /agents\.workflow\.nodeDetails/);
+assert.match(workflowRunHistoryContent, /agents\.workflow\.finalResult/);
+assert.match(workflowNodePanel, /const displayedNodeId = selectedNodeId \?\? activeNodeId/);
+assert.doesNotMatch(workflowNodePanel, /historyDeselectTimerRef|shouldReturnToTaskHistory/);
+assert.match(workflowEditor, /!isTaskWorkflowHistoryMode[\s\S]*?setActivePanel\(null\)/);
+assert.match(modeSelection, /selectedRunId: prepared\.selectedRunId,[\s\S]*?selectedNodeId: null/);
+assert.match(workflowCanvasPanels, /const taskRunPanelOpen = isTaskHistory \|\| activePanel === 'run'/);
+assert.match(workflowCanvasPanels, /open=\{taskRunPanelOpen\}/);
+assert.match(workflowCanvasPanels, /focusModeActive && !isTaskHistory/);
+assert.doesNotMatch(workflowCanvasPanels, /taskHistoryNodeInspectorOpen/);
+assert.match(
+  workflowCanvasWithDnd,
+  /const hideRightPanels =\s*!isReadOnly && \(isCanvasInteracting \|\| Boolean\(draggingNodeType\) \|\| createNodePickerOpen\)/
+);
+assert.match(workflowCanvasWithDnd, /onMoveStart=\{\(\) => \{\s*if \(isReadOnly\) return;/);
+assert.match(workflowCanvasWithDnd, /onMoveEnd=\{\(\) => \{\s*if \(isReadOnly\) return;/);
+
+assert.deepEqual(
+  extractWorkflowRunContainerContext({
+    container_id: 'iteration-1',
+    container_type: 'iteration',
+    round_index: 2,
+  }),
+  {
+    containerId: 'iteration-1',
+    containerType: 'iteration',
+    roundIndex: 2,
+    iterationId: 'iteration-1',
+    iterationIndex: 2,
+    loopId: undefined,
+    loopIndex: undefined,
+  }
+);
+assert.equal(
+  getWorkflowRunExecutionId({ node_execution_id: 'node-execution-v2', execution_id: 'run-owner' }),
+  'node-execution-v2',
+  'V2 node execution identity must win over the run owner execution id'
+);
+
+assert.equal(isVisibleWorkflowRunExecutionStatus('pending'), false);
+assert.equal(isVisibleWorkflowRunExecutionStatus('skipped'), false);
+assert.equal(isVisibleWorkflowRunExecutionStatus('succeeded'), true);
+assert.match(
+  workflowRunHistory,
+  /\.filter\(rec => isVisibleWorkflowRunExecutionStatus\(rec\.status\)\)/,
+  'runtime history must not render untouched graph snapshots as failed executions'
+);
 
 const runtimeLabel = (key, params) =>
   params && 'count' in params ? `${key}:${String(params.count)}` : key;
@@ -354,5 +476,6 @@ const endRows = getCanvasPreviewRows(
 assert.equal(endRows.length, 1);
 assert.equal(endRows[0].label, 'output');
 assert.deepEqual(endRows[0].value, []);
+assert.equal(endRows[0].labelKind, 'variable');
 
 console.log('Workflow canvas runtime result regression checks passed.');

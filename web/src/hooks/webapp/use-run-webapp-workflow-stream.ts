@@ -182,6 +182,20 @@ export function useRunWebAppWorkflowStream(
       let gracefulStreamBoundary = false;
       let transportRecoveryRequested = false;
       let suppressNextTransportErrorCallback = false;
+      const captureWorkflowRunId = (eventPayload: unknown): void => {
+        const data =
+          eventPayload && typeof eventPayload === 'object' && 'data' in eventPayload
+            ? ((eventPayload as { data?: unknown }).data ?? eventPayload)
+            : eventPayload;
+        if (!data || typeof data !== 'object') return;
+        const record = data as Record<string, unknown>;
+        const candidate = [record.task_id, record.id, record.workflow_run_id].find(
+          value => typeof value === 'string' && value.length > 0
+        );
+        if (typeof candidate !== 'string') return;
+        workflowRunId = candidate;
+        taskIdRef.current = candidate;
+      };
       const requestTransportRecovery = (error: Error): boolean => {
         if (terminalReceived || transportRecoveryRequested) return transportRecoveryRequested;
         const recover = opts?.onTransportInterrupted;
@@ -198,16 +212,12 @@ export function useRunWebAppWorkflowStream(
       try {
         const merged: WebAppRunSseCallbacks = {
           onWorkflowStarted: p => {
-            const data = (p as { data?: unknown })?.data ?? p;
-            workflowRunId =
-              (data as { task_id?: string })?.task_id ||
-              (data as { id?: string })?.id ||
-              (data as { workflow_run_id?: string })?.workflow_run_id ||
-              workflowRunId;
+            captureWorkflowRunId(p);
             callbacks.onWorkflowStarted?.(p);
             perRunCallbacks?.onWorkflowStarted?.(p);
           },
           onNodeStarted: p => {
+            captureWorkflowRunId(p);
             callbacks.onNodeStarted?.(p);
             perRunCallbacks?.onNodeStarted?.(p);
           },
@@ -216,15 +226,18 @@ export function useRunWebAppWorkflowStream(
             perRunCallbacks?.onNodeFinished?.(p);
           },
           onWorkflowResumed: p => {
+            captureWorkflowRunId(p);
             callbacks.onWorkflowResumed?.(p);
             perRunCallbacks?.onWorkflowResumed?.(p);
           },
           onWorkflowPaused: p => {
+            captureWorkflowRunId(p);
             gracefulStreamBoundary = true;
             callbacks.onWorkflowPaused?.(p);
             perRunCallbacks?.onWorkflowPaused?.(p);
           },
           onApprovalRequested: p => {
+            captureWorkflowRunId(p);
             callbacks.onApprovalRequested?.(p);
             perRunCallbacks?.onApprovalRequested?.(p);
           },
@@ -237,6 +250,7 @@ export function useRunWebAppWorkflowStream(
             perRunCallbacks?.onApprovalExpired?.(p);
           },
           onQuestionAnswerRequested: p => {
+            captureWorkflowRunId(p);
             callbacks.onQuestionAnswerRequested?.(p);
             perRunCallbacks?.onQuestionAnswerRequested?.(p);
           },
@@ -253,6 +267,7 @@ export function useRunWebAppWorkflowStream(
             perRunCallbacks?.onTextReplace?.(p);
           },
           onWorkflowFinished: p => {
+            captureWorkflowRunId(p);
             gracefulStreamBoundary = true;
             terminalReceived = true;
             callbacks.onWorkflowFinished?.(p);

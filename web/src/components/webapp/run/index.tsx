@@ -78,6 +78,8 @@ import {
   buildWorkflowRunHistoryResult,
 } from '@/components/workflow/ui/workflow-run-panel/utils/history-view-data';
 import { WorkflowRuntimeStopAction } from '@/components/workflow/runtime/workflow-runtime-stop-action';
+import type { NodeInfo } from '@/components/chat/types';
+import { createWorkflowRunNodeAccumulator } from '@/utils/webapp/workflow-run-node-accumulator';
 
 interface WebappRunProps {
   versionUuid: string;
@@ -86,6 +88,77 @@ interface WebappRunProps {
 }
 
 const COMPACT_RUN_LAYOUT_WIDTH = 960;
+
+function workflowRunItemFromNodeInfo(node: NodeInfo): WorkflowRunNodeListItem {
+  const nodeId = node.nodeId || [node.nodeType, node.title].filter(Boolean).join('|') || 'unknown';
+  const status: WorkflowRunNodeListItem['status'] =
+    node.status === 'success' || node.status === 'partial-succeeded' ? 'succeeded' : node.status;
+  return {
+    nodeId,
+    executionId: node.executionId,
+    createdAtMs: node.createdAtMs,
+    receivedOrder: node.receivedOrder,
+    title: node.title || node.nodeType || nodeId,
+    nodeType: node.nodeType || 'unknown',
+    status,
+    nodeInput: node.data?.input,
+    nodeOutput: node.data?.output,
+    modelInput: node.data?.modelInput,
+    elapsedTime: node.elapsedTime,
+    error: node.error ?? null,
+    iterationInputs: node.iterationInputs,
+    iterationOutputs: node.iterationOutputs,
+    iterationRounds: node.iterationRounds?.map(round => ({
+      index: round.index,
+      nodes: round.nodes.map(workflowRunItemFromNodeInfo),
+      elapsedTime: round.elapsedTime,
+    })),
+    loopInputs: node.loopInputs,
+    loopOutputs: node.loopOutputs,
+    loopRounds: node.loopRounds?.map(round => ({
+      index: round.index,
+      nodes: round.nodes.map(workflowRunItemFromNodeInfo),
+      elapsedTime: round.elapsedTime,
+      variables: round.variables,
+    })),
+    steps: node.steps,
+  };
+}
+
+function nodeInfoFromWorkflowRunItem(item: WorkflowRunNodeListItem): NodeInfo {
+  return {
+    nodeId: item.nodeId,
+    executionId: item.executionId,
+    createdAtMs: item.createdAtMs,
+    receivedOrder: item.receivedOrder,
+    title: item.title,
+    nodeType: item.nodeType,
+    status: item.status,
+    data: {
+      input: item.nodeInput,
+      output: item.nodeOutput,
+      modelInput: item.modelInput,
+    },
+    elapsedTime: item.elapsedTime,
+    error: item.error ?? undefined,
+    iterationInputs: item.iterationInputs,
+    iterationOutputs: item.iterationOutputs,
+    iterationRounds: item.iterationRounds?.map(round => ({
+      index: round.index,
+      nodes: round.nodes.map(nodeInfoFromWorkflowRunItem),
+      elapsedTime: round.elapsedTime,
+    })),
+    loopInputs: item.loopInputs,
+    loopOutputs: item.loopOutputs,
+    loopRounds: item.loopRounds?.map(round => ({
+      index: round.index,
+      nodes: round.nodes.map(nodeInfoFromWorkflowRunItem),
+      elapsedTime: round.elapsedTime,
+      variables: round.variables,
+    })),
+    steps: item.steps,
+  };
+}
 
 function useMeasuredRunWidth() {
   const ref = useRef<HTMLDivElement | null>(null);
@@ -195,6 +268,47 @@ export const WebappRun: React.FC<WebappRunProps> = ({
   const throttler = useThrottledTextStream(STREAM_RENDER_THROTTLE_MS, (text: string) => {
     setStreamedText(prev => prev + text);
   });
+  const runItemsRef = useRef<WorkflowRunNodeListItem[]>([]);
+
+  useEffect(() => {
+    runItemsRef.current = runItems;
+  }, [runItems]);
+
+  const applyProjectedRunNode = useCallback((node: NodeInfo) => {
+    const next = workflowRunItemFromNodeInfo(node);
+    setRunItems(items => {
+      const index = items.findIndex(item => item.nodeId === next.nodeId);
+      if (index < 0) return [...items, next];
+      return items.map((item, itemIndex) =>
+        itemIndex === index
+          ? {
+              ...item,
+              ...next,
+              nodeInput: next.nodeInput ?? item.nodeInput,
+              nodeOutput: next.nodeOutput ?? item.nodeOutput,
+              modelInput: next.modelInput ?? item.modelInput,
+              elapsedTime: next.elapsedTime ?? item.elapsedTime,
+              iterationInputs: next.iterationInputs ?? item.iterationInputs,
+              iterationOutputs: next.iterationOutputs ?? item.iterationOutputs,
+              iterationRounds: next.iterationRounds ?? item.iterationRounds,
+              loopInputs: next.loopInputs ?? item.loopInputs,
+              loopOutputs: next.loopOutputs ?? item.loopOutputs,
+              loopRounds: next.loopRounds ?? item.loopRounds,
+              steps: next.steps ?? item.steps,
+            }
+          : item
+      );
+    });
+  }, []);
+
+  const durableRunNodeAccumulator = useMemo(
+    () =>
+      createWorkflowRunNodeAccumulator({
+        onNodeStarted: applyProjectedRunNode,
+        onNodeFinished: applyProjectedRunNode,
+      }),
+    [applyProjectedRunNode]
+  );
 
   useEffect(() => {
     if (approvalFormQuery.data) {
@@ -416,6 +530,7 @@ export const WebappRun: React.FC<WebappRunProps> = ({
         return;
       }
       setRunItems([]);
+      durableRunNodeAccumulator.reset();
       setStreamedText('');
       setFinalResult(null);
       resetApprovalRuntime();
@@ -1419,6 +1534,9 @@ export const WebappRun: React.FC<WebappRunProps> = ({
       rememberWorkflowRunId(runId);
       workflowRunEventsActiveRef.current = true;
       workflowFinishedRef.current = false;
+      durableRunNodeAccumulator.replaceSnapshot(
+        runItemsRef.current.map(nodeInfoFromWorkflowRunItem)
+      );
       const streamParams =
         approvalRuntimeState.cursor > 0
           ? { after: approvalRuntimeState.cursor, continue_on_pause: true }
@@ -1441,7 +1559,13 @@ export const WebappRun: React.FC<WebappRunProps> = ({
           onWorkflowSnapshot: streamPayload => {
             const snapshot = unwrap(streamPayload);
             const rawNodes = Array.isArray(snapshot.nodes) ? snapshot.nodes : [];
-            setRunItems(buildWorkflowRunExecutionItems(rawNodes as WorkflowNodeExecution[]));
+            const executionItems = buildWorkflowRunExecutionItems(
+              rawNodes as WorkflowNodeExecution[]
+            );
+            setRunItems(executionItems);
+            durableRunNodeAccumulator.replaceSnapshot(
+              executionItems.map(nodeInfoFromWorkflowRunItem)
+            );
 
             const message =
               snapshot.message && typeof snapshot.message === 'object'
@@ -1500,8 +1624,12 @@ export const WebappRun: React.FC<WebappRunProps> = ({
             dispatchWorkflowRunEvent('question_answer_submitted', streamPayload),
           onWorkflowPaused: streamPayload =>
             dispatchWorkflowRunEvent('workflow_paused', streamPayload),
-          onNodeStarted: streamPayload => dispatchWorkflowRunEvent('node_started', streamPayload),
-          onNodeFinished: streamPayload => dispatchWorkflowRunEvent('node_finished', streamPayload),
+          onNodeStarted: streamPayload => {
+            setIsRunning(true);
+            setQuestionAnswerSubmitting(false);
+            durableRunNodeAccumulator.onNodeStarted(streamPayload);
+          },
+          onNodeFinished: streamPayload => durableRunNodeAccumulator.onNodeFinished(streamPayload),
           onTextChunk: streamPayload => dispatchWorkflowRunEvent('text_chunk', streamPayload),
           onTextReplace: streamPayload => dispatchWorkflowRunEvent('text_replace', streamPayload),
           onWorkflowFinished: streamPayload =>
@@ -1509,6 +1637,16 @@ export const WebappRun: React.FC<WebappRunProps> = ({
           onError: streamPayload => dispatchWorkflowRunEvent('error', streamPayload),
           onMessage: streamPayload => dispatchWorkflowRunEvent('message', streamPayload),
           onMessageEnd: streamPayload => dispatchWorkflowRunEvent('message_end', streamPayload),
+          onIterationStarted: streamPayload =>
+            durableRunNodeAccumulator.onIterationStarted(streamPayload),
+          onIterationNext: streamPayload =>
+            durableRunNodeAccumulator.onIterationNext(streamPayload),
+          onIterationCompleted: streamPayload =>
+            durableRunNodeAccumulator.onIterationCompleted(streamPayload),
+          onLoopStarted: streamPayload => durableRunNodeAccumulator.onLoopStarted(streamPayload),
+          onLoopNext: streamPayload => durableRunNodeAccumulator.onLoopNext(streamPayload),
+          onLoopCompleted: streamPayload =>
+            durableRunNodeAccumulator.onLoopCompleted(streamPayload),
         },
         streamParams,
         {
@@ -1521,6 +1659,7 @@ export const WebappRun: React.FC<WebappRunProps> = ({
     [
       approvalRuntimeState.cursor,
       dispatchApprovalEvent,
+      durableRunNodeAccumulator,
       getWorkflowRunIdFromPayload,
       rememberWorkflowRunId,
       resetApprovalRuntime,
@@ -1533,6 +1672,14 @@ export const WebappRun: React.FC<WebappRunProps> = ({
   useEffect(() => {
     startWorkflowRunEventStreamRef.current = startWorkflowRunEventStream;
   }, [startWorkflowRunEventStream]);
+
+  const recoverInterruptedWorkflowRun = useCallback(
+    (runId: string) => {
+      rememberWorkflowRunId(runId);
+      startWorkflowRunEventStreamRef.current({ workflow_run_id: runId });
+    },
+    [rememberWorkflowRunId]
+  );
 
   useEffect(
     () => () => {
@@ -1631,7 +1778,9 @@ export const WebappRun: React.FC<WebappRunProps> = ({
           cancelWorkflowRunEvents();
           workflowRunEventsActiveRef.current = false;
         }
-        await start(runPayload);
+        await start(runPayload, undefined, {
+          onTransportInterrupted: recoverInterruptedWorkflowRun,
+        });
       } catch (err) {
         questionAnswerResumeRef.current = false;
         setQuestionAnswerSubmitting(false);
@@ -1653,6 +1802,7 @@ export const WebappRun: React.FC<WebappRunProps> = ({
       markOffline,
       precheckMutation,
       rememberWorkflowRunId,
+      recoverInterruptedWorkflowRun,
       resetApprovalRuntime,
       start,
       t,
@@ -1685,14 +1835,18 @@ export const WebappRun: React.FC<WebappRunProps> = ({
       try {
         questionAnswerResumeRef.current = true;
         setQuestionAnswerSubmitting(true);
-        await start({
-          query,
-          inputs: {
+        await start(
+          {
             query,
-            'sys.query': query,
-            question_answer_option_id: choice.id,
+            inputs: {
+              query,
+              'sys.query': query,
+              question_answer_option_id: choice.id,
+            },
           },
-        });
+          undefined,
+          { onTransportInterrupted: recoverInterruptedWorkflowRun }
+        );
       } catch (err) {
         questionAnswerResumeRef.current = false;
         setQuestionAnswerSubmitting(false);
@@ -1703,7 +1857,7 @@ export const WebappRun: React.FC<WebappRunProps> = ({
         toast.error(err instanceof Error ? err.message : t('run.startFailed'));
       }
     },
-    [markOffline, questionAnswerSubmitting, start, t]
+    [markOffline, questionAnswerSubmitting, recoverInterruptedWorkflowRun, start, t]
   );
 
   const questionAnswerNotice = questionAnswerPrompt ? (

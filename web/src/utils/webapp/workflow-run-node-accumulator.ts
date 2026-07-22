@@ -36,6 +36,8 @@ interface ContainerSession {
 }
 
 export interface WorkflowRunNodeAccumulator {
+  reset: () => void;
+  replaceSnapshot: (nodes: NodeInfo[]) => void;
   onNodeStarted: (payload: unknown) => void;
   onNodeFinished: (payload: unknown) => void;
   onIterationStarted: (payload: unknown) => void;
@@ -56,8 +58,9 @@ function numberField(source: Record<string, unknown>, key: string): number | und
 
 function containerIdentity(payload: unknown, kind: 'iteration' | 'loop') {
   const source = unwrap(payload);
-  const nodeId = stringField(source, 'node_id');
-  const nodeType = kind;
+  const context = extractWorkflowRunContainerContext(source);
+  const nodeId = stringField(source, 'node_id') ?? context.containerId;
+  const nodeType = context.containerType ?? kind;
   return {
     source,
     nodeId,
@@ -128,6 +131,58 @@ export function createWorkflowRunNodeAccumulator(
   };
   let receivedOrder = 0;
 
+  const reset = () => {
+    iterationSessions.clear();
+    loopSessions.clear();
+    activeIteration = { nodeId: null, index: null };
+    activeLoop = { nodeId: null, index: null };
+    receivedOrder = 0;
+  };
+
+  const replaceSnapshot = (nodes: NodeInfo[]) => {
+    reset();
+
+    const visit = (node: NodeInfo) => {
+      const kind = node.nodeType === 'iteration' || node.nodeType === 'loop' ? node.nodeType : null;
+      if (kind) {
+        const rounds = (kind === 'iteration' ? node.iterationRounds : node.loopRounds) ?? [];
+        const session: ContainerSession = {
+          nodeId: node.nodeId,
+          nodeType: kind,
+          title: node.title || node.nodeId || kind,
+          inputs: kind === 'iteration' ? node.iterationInputs : node.loopInputs,
+          outputs: kind === 'iteration' ? node.iterationOutputs : node.loopOutputs,
+          elapsedTime: node.elapsedTime,
+          error: node.error,
+          rounds: rounds.map(round => ({
+            index: round.index,
+            nodes: round.nodes,
+            elapsedTime: round.elapsedTime,
+            variables: 'variables' in round ? round.variables : undefined,
+          })),
+          activeIndex: null,
+        };
+        const key = node.nodeId || session.title;
+        const sessions = kind === 'iteration' ? iterationSessions : loopSessions;
+        sessions.set(key, session);
+
+        if (node.status === 'running' || node.status === 'paused') {
+          const lastRound = sortWorkflowRunRounds(session.rounds).at(-1);
+          session.activeIndex = lastRound?.index ?? null;
+          if (kind === 'iteration') {
+            activeIteration = { nodeId: key, index: session.activeIndex };
+          } else {
+            activeLoop = { nodeId: key, index: session.activeIndex };
+          }
+        }
+
+        session.rounds.forEach(round => round.nodes.forEach(visit));
+      }
+    };
+
+    nodes.forEach(visit);
+  };
+
   const emitContainer = (session: ContainerSession, finished: boolean) => {
     const rounds = sortWorkflowRunRounds(session.rounds).map(round => ({
       index: round.index,
@@ -163,15 +218,51 @@ export function createWorkflowRunNodeAccumulator(
     (finished ? callbacks.onNodeFinished : callbacks.onNodeStarted)?.(node);
   };
 
+  const handleContainerLifecycle = (
+    payload: unknown,
+    node: NodeInfo,
+    finished: boolean
+  ): boolean => {
+    const kind = node.nodeType === 'iteration' || node.nodeType === 'loop' ? node.nodeType : null;
+    if (!kind) return false;
+
+    const source = unwrap(payload);
+    const context = extractWorkflowRunContainerContext(source);
+    // A container node can itself be a child of another container. In that case it must still be
+    // projected into the parent round rather than consumed as a root container lifecycle update.
+    if (context.containerId && context.containerId !== node.nodeId) return false;
+
+    const key = node.nodeId || node.title || kind;
+    const sessions = kind === 'iteration' ? iterationSessions : loopSessions;
+    const session = sessions.get(key);
+    if (!session) return false;
+
+    session.nodeId = node.nodeId ?? session.nodeId;
+    session.title = node.title || session.title;
+    session.inputs = node.data?.input ?? session.inputs;
+    session.outputs = node.data?.output ?? session.outputs;
+    session.elapsedTime = node.elapsedTime ?? session.elapsedTime;
+    session.error = node.error ?? session.error;
+    sessions.set(key, session);
+
+    if (finished) {
+      if (kind === 'iteration') activeIteration = { nodeId: null, index: null };
+      else activeLoop = { nodeId: null, index: null };
+    }
+    emitContainer(session, finished);
+    return true;
+  };
+
   const handleChild = (payload: unknown, finished: boolean) => {
     const source = unwrap(payload);
     const node = childNode(payload, finished, ++receivedOrder);
+    if (handleContainerLifecycle(payload, node, finished)) return;
     const { loopId, loopIndex, iterationId, iterationIndex } =
       extractWorkflowRunContainerContext(source);
 
     const targetLoopId = loopId ?? activeLoop.nodeId ?? undefined;
     const targetLoopIndex =
-      typeof loopIndex === 'number' ? loopIndex : activeLoop.index ?? undefined;
+      typeof loopIndex === 'number' ? loopIndex : (activeLoop.index ?? undefined);
     if (targetLoopId && typeof targetLoopIndex === 'number') {
       const session = loopSessions.get(targetLoopId) ?? {
         nodeId: targetLoopId,
@@ -190,7 +281,7 @@ export function createWorkflowRunNodeAccumulator(
 
     const targetIterationId = iterationId ?? activeIteration.nodeId ?? undefined;
     const targetIterationIndex =
-      typeof iterationIndex === 'number' ? iterationIndex : activeIteration.index ?? undefined;
+      typeof iterationIndex === 'number' ? iterationIndex : (activeIteration.index ?? undefined);
     if (targetIterationId && typeof targetIterationIndex === 'number') {
       const session = iterationSessions.get(targetIterationId) ?? {
         nodeId: targetIterationId,
@@ -239,7 +330,9 @@ export function createWorkflowRunNodeAccumulator(
     };
     session.nodeId = nodeId ?? session.nodeId;
     session.title = title || session.title;
+    const containerContext = extractWorkflowRunContainerContext(source);
     const index =
+      containerContext.roundIndex ??
       numberField(source, kind === 'iteration' ? 'iteration_index' : 'loop_index') ??
       numberField(source, 'index') ??
       0;
@@ -286,6 +379,8 @@ export function createWorkflowRunNodeAccumulator(
   };
 
   return {
+    reset,
+    replaceSnapshot,
     onNodeStarted: payload => handleChild(payload, false),
     onNodeFinished: payload => handleChild(payload, true),
     onIterationStarted: payload => startContainer(payload, 'iteration'),
