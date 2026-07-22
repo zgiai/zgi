@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { URL } from 'node:url';
+import {
+  activateRecognitionAnalysis,
+  invalidateRecognitionAnalysis,
+  runLatestRecognition,
+} from '../src/components/db/excel-import/recognition-request-guard.mjs';
 
 const source = readFileSync(
   new URL('../src/components/db/excel-import/excel-import-shell.tsx', import.meta.url),
@@ -39,6 +44,68 @@ assert.ok(
 assert.ok(
   source.includes('schemaEditRevisionRef.current !== recognitionStartRevision'),
   'late recognition results must not overwrite manual schema edits'
+);
+assert.ok(
+  source.includes('const [hasRecognitionCompleted, setHasRecognitionCompleted] = useState(false);'),
+  'the import flow must track whether smart recognition completed'
+);
+assert.ok(
+  source.includes("toast.info(t('excelImport.schema.recognitionIncomplete'))"),
+  'clicking import before recognition completes must explain why it is unavailable'
+);
+assert.ok(
+  source.includes('aria-disabled={!hasRecognitionCompleted'),
+  'the import button must expose its unavailable state while recognition is incomplete'
+);
+
+let resolveRecognitionA;
+const recognitionA = new Promise(resolve => {
+  resolveRecognitionA = resolve;
+});
+const recognitionRequestSeqRef = { current: 0 };
+const currentAnalysisKeyRef = { current: 'job-a:sheet-a' };
+let appliedResult = null;
+
+const pendingRecognitionA = runLatestRecognition({
+  recognitionRequestSeqRef,
+  currentAnalysisKeyRef,
+  analysisKey: 'job-a:sheet-a',
+  request: () => recognitionA,
+});
+
+recognitionRequestSeqRef.current += 1;
+currentAnalysisKeyRef.current = 'job-b:sheet-b';
+resolveRecognitionA({ table: { name: 'table_a' }, columns: [{ name: 'column_a' }] });
+
+const staleResult = await pendingRecognitionA;
+if (staleResult) appliedResult = staleResult;
+
+assert.equal(staleResult, null, 'recognition A must be discarded after switching to analysis B');
+assert.equal(appliedResult, null, 'recognition A must not be applied to analysis B');
+
+const recoveryRequestSeqRef = { current: 1 };
+const recoveryAnalysisKeyRef = { current: 'job-a:sheet-a' };
+
+const analyzeB = async () => {
+  invalidateRecognitionAnalysis(recoveryRequestSeqRef, recoveryAnalysisKeyRef);
+  await Promise.reject(new Error('sheet B analysis failed'));
+};
+
+// Analysis A was cached, analysis B failed after invalidating A, then the user returned to A.
+await assert.rejects(analyzeB, /sheet B analysis failed/);
+assert.equal(recoveryAnalysisKeyRef.current, '', 'failed analysis B must leave no active key');
+activateRecognitionAnalysis(recoveryAnalysisKeyRef, 'job-a:sheet-a');
+const recoveredResult = await runLatestRecognition({
+  recognitionRequestSeqRef: recoveryRequestSeqRef,
+  currentAnalysisKeyRef: recoveryAnalysisKeyRef,
+  analysisKey: 'job-a:sheet-a',
+  request: async () => ({ table: { name: 'table_a' }, columns: [{ name: 'column_a' }] }),
+});
+
+assert.deepEqual(
+  recoveredResult,
+  { table: { name: 'table_a' }, columns: [{ name: 'column_a' }] },
+  'cached analysis A must recognize successfully after analysis B fails'
 );
 
 console.log('Excel import auto-recognition regression check passed.');

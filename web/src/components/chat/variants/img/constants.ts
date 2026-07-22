@@ -9,7 +9,9 @@ export const IMAGE_MODELS = [
 /** AI image generation: aspect ratio options */
 export const IMAGE_ASPECT_RATIOS = [
   { id: '1:1', name: '1:1', labelKey: 'square' },
+  { id: '2:3', name: '2:3', labelKey: 'portrait' },
   { id: '3:4', name: '3:4', labelKey: 'portrait' },
+  { id: '3:2', name: '3:2', labelKey: 'landscape' },
   { id: '4:3', name: '4:3', labelKey: 'landscape' },
   { id: '16:9', name: '16:9', labelKey: 'widescreen' },
   { id: '9:16', name: '9:16', labelKey: 'vertical' },

@@ -111,7 +111,7 @@ const messages = {
   // Table management modal
   tableModal: {
     createTitle: 'Create Table',
-    editTitle: 'Edit Table',
+    editTitle: 'Edit Table Information',
     nameLimitHint: '{count}/63 characters',
   },
 
@@ -679,6 +679,8 @@ const messages = {
       descriptionColumn: 'Description',
       samples: 'Samples',
       import: 'Create table and import',
+      recognitionIncomplete:
+        'Smart recognition is not complete. Wait for it to finish before creating and importing the table.',
       tableInfoTitle: 'Table information',
       smartRecognizeTitle: 'Smart recognition',
       smartRecognizeDesc:

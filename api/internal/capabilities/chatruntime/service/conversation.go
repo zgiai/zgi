@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -46,15 +47,16 @@ func (s *service) createConversationForCaller(ctx context.Context, scope Scope, 
 		return nil, fmt.Errorf("%w: source_web_app_id is required for webapp conversations", ErrInvalidInput)
 	}
 	conversation := &runtimemodel.Conversation{
-		OrganizationID: scope.OrganizationID,
-		WorkspaceID:    workspaceID,
-		AccountID:      scope.AccountID,
-		CallerType:     normalizeCallerType(caller.Type),
-		CallerID:       normalizeCallerID(caller.ID),
-		Title:          title,
-		Status:         runtimemodel.ConversationStatusNormal,
-		Source:         source,
-		SourceWebAppID: sourceWebAppID,
+		OrganizationID:   scope.OrganizationID,
+		WorkspaceID:      workspaceID,
+		AccountID:        scope.AccountID,
+		CallerType:       normalizeCallerType(caller.Type),
+		CallerID:         normalizeCallerID(caller.ID),
+		ConversationType: normalizeConversationType(caller.ConversationType),
+		Title:            title,
+		Status:           runtimemodel.ConversationStatusNormal,
+		Source:           source,
+		SourceWebAppID:   sourceWebAppID,
 	}
 	if strings.TrimSpace(surface) != "" {
 		normalizedSurface := normalizeAIChatSurface(surface)
@@ -88,6 +90,15 @@ func normalizeConversationSource(value string) string {
 	}
 }
 
+func normalizeConversationType(value string) string {
+	switch strings.TrimSpace(value) {
+	case runtimemodel.ConversationTypeImage:
+		return runtimemodel.ConversationTypeImage
+	default:
+		return runtimemodel.ConversationTypeChat
+	}
+}
+
 func normalizeCallerID(value *uuid.UUID) *uuid.UUID {
 	if value == nil || *value == uuid.Nil {
 		return nil
@@ -104,6 +115,7 @@ func (s *service) getConversationByCallerScoped(ctx context.Context, scope Scope
 		scope.AccountID,
 		normalizeCallerType(caller.Type),
 		normalizeCallerID(caller.ID),
+		normalizeConversationType(caller.ConversationType),
 	)
 	if err != nil {
 		return nil, mapRepoError(err)
@@ -454,8 +466,12 @@ func (s *service) ListConversationsByCaller(ctx context.Context, scope Scope, ca
 	if err := s.ensureMember(ctx, scope); err != nil {
 		return nil, 0, err
 	}
+	if normalizeCallerType(caller.Type) == runtimemodel.ConversationCallerAIChat && normalizeCallerID(caller.ID) == nil && normalizeConversationType(caller.ConversationType) == runtimemodel.ConversationTypeImage {
+		return s.listImageConversationsWithLegacy(ctx, scope, caller, page, limit)
+	}
 	limit = clampLimit(limit, 20, 100)
 	offset := pageOffset(page, limit)
+	conversationType := normalizeConversationType(caller.ConversationType)
 	if strings.TrimSpace(caller.Source) != "" {
 		return s.repos.Conversation.ListByCallerSourceScoped(
 			ctx,
@@ -463,13 +479,14 @@ func (s *service) ListConversationsByCaller(ctx context.Context, scope Scope, ca
 			scope.AccountID,
 			normalizeCallerType(caller.Type),
 			normalizeCallerID(caller.ID),
+			conversationType,
 			normalizeConversationSource(caller.Source),
 			normalizeCallerID(caller.SourceWebAppID),
 			limit,
 			offset,
 		)
 	}
-	return s.repos.Conversation.ListByCallerScoped(ctx, scope.OrganizationID, scope.AccountID, normalizeCallerType(caller.Type), normalizeCallerID(caller.ID), limit, offset)
+	return s.repos.Conversation.ListByCallerScoped(ctx, scope.OrganizationID, scope.AccountID, normalizeCallerType(caller.Type), normalizeCallerID(caller.ID), conversationType, limit, offset)
 }
 
 func (s *service) ListConversationsBySurface(ctx context.Context, scope Scope, surface string, page, limit int) ([]*runtimemodel.Conversation, int64, error) {
@@ -490,6 +507,28 @@ func (s *service) SearchBySurface(ctx context.Context, scope Scope, surface stri
 }
 
 func (s *service) SearchByCaller(ctx context.Context, scope Scope, caller Caller, query string, limit int) ([]*SearchResult, error) {
+	if normalizeCallerType(caller.Type) == runtimemodel.ConversationCallerAIChat && normalizeCallerID(caller.ID) == nil && normalizeConversationType(caller.ConversationType) == runtimemodel.ConversationTypeImage {
+		searchLimit := clampLimit(limit, defaultSearchLimit, maxSearchLimit)
+		results, err := s.searchByCallerSurface(ctx, scope, caller, "", query, searchLimit)
+		if err != nil {
+			return nil, err
+		}
+		legacy, err := s.searchLegacyImageConversations(ctx, scope, query, searchLimit)
+		if err != nil {
+			return nil, err
+		}
+		results = append(results, legacy...)
+		sort.SliceStable(results, func(i, j int) bool {
+			if results[i].Type != results[j].Type {
+				return results[i].Type == "conversation"
+			}
+			return results[i].UpdatedAt.After(results[j].UpdatedAt)
+		})
+		if len(results) > searchLimit {
+			results = results[:searchLimit]
+		}
+		return results, nil
+	}
 	return s.searchByCallerSurface(ctx, scope, caller, "", query, limit)
 }
 
@@ -508,6 +547,7 @@ func (s *service) searchByCallerSurface(ctx context.Context, scope Scope, caller
 		scope.AccountID,
 		normalizeCallerType(caller.Type),
 		normalizeCallerID(caller.ID),
+		normalizeConversationType(caller.ConversationType),
 		strings.TrimSpace(caller.Source),
 		normalizeCallerID(caller.SourceWebAppID),
 		strings.TrimSpace(surface),
@@ -585,14 +625,42 @@ func (s *service) GetConversationByCaller(ctx context.Context, scope Scope, call
 	if err := s.ensureMember(ctx, scope); err != nil {
 		return nil, err
 	}
-	return s.getConversationByCallerScoped(ctx, scope, caller, id)
+	conversation, err := s.getConversationByCallerScoped(ctx, scope, caller, id)
+	if err == nil {
+		return conversation, nil
+	}
+	if normalizeCallerType(caller.Type) == runtimemodel.ConversationCallerAIChat && normalizeCallerID(caller.ID) == nil && normalizeConversationType(caller.ConversationType) == runtimemodel.ConversationTypeImage && errors.Is(err, ErrNotFound) {
+		return s.getLegacyImageConversation(ctx, scope, id)
+	}
+	return nil, err
 }
 
 func (s *service) UpdateConversation(ctx context.Context, scope Scope, id uuid.UUID, req runtimedto.UpdateConversationRequest) (*runtimemodel.Conversation, error) {
 	if err := s.ensureMember(ctx, scope); err != nil {
 		return nil, err
 	}
-	var conversation *runtimemodel.Conversation
+	conversation, err := s.getConversation(ctx, scope, id)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.updateConversation(ctx, scope, conversation, req); err != nil {
+		return nil, err
+	}
+	return s.getConversation(ctx, scope, id)
+}
+
+func (s *service) UpdateConversationByCaller(ctx context.Context, scope Scope, caller Caller, id uuid.UUID, req runtimedto.UpdateConversationRequest) (*runtimemodel.Conversation, error) {
+	conversation, err := s.GetConversationByCaller(ctx, scope, caller, id)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.updateConversation(ctx, scope, conversation, req); err != nil {
+		return nil, err
+	}
+	return s.GetConversationByCaller(ctx, scope, caller, id)
+}
+
+func (s *service) updateConversation(ctx context.Context, scope Scope, conversation *runtimemodel.Conversation, req runtimedto.UpdateConversationRequest) error {
 	updates := make(map[string]interface{})
 	if req.Title != nil {
 		updates["title"] = normalizeTitle(*req.Title, defaultConversationTitle)
@@ -600,35 +668,24 @@ func (s *service) UpdateConversation(ctx context.Context, scope Scope, id uuid.U
 	if req.Status != nil {
 		status := strings.TrimSpace(*req.Status)
 		if status != runtimemodel.ConversationStatusNormal && status != runtimemodel.ConversationStatusArchived {
-			return nil, fmt.Errorf("%w: invalid conversation status", ErrInvalidInput)
+			return fmt.Errorf("%w: invalid conversation status", ErrInvalidInput)
 		}
 		updates["status"] = status
 	}
 	if req.CurrentLeafMessageID != nil {
 		leafID, err := uuid.Parse(strings.TrimSpace(*req.CurrentLeafMessageID))
 		if err != nil || leafID == uuid.Nil {
-			return nil, fmt.Errorf("%w: invalid current leaf message id", ErrInvalidInput)
-		}
-		conversation, err = s.getConversation(ctx, scope, id)
-		if err != nil {
-			return nil, err
+			return fmt.Errorf("%w: invalid current leaf message id", ErrInvalidInput)
 		}
 		if err := s.validateCurrentLeafMessage(ctx, scope, conversation, leafID); err != nil {
-			return nil, err
+			return err
 		}
 		updates["current_leaf_message_id"] = leafID
 	}
-	if err := s.repos.Conversation.UpdateScoped(ctx, id, scope.OrganizationID, scope.AccountID, updates); err != nil {
-		return nil, mapRepoError(err)
+	if err := s.repos.Conversation.UpdateScoped(ctx, conversation.ID, scope.OrganizationID, scope.AccountID, updates); err != nil {
+		return mapRepoError(err)
 	}
-	return s.getConversation(ctx, scope, id)
-}
-
-func (s *service) UpdateConversationByCaller(ctx context.Context, scope Scope, caller Caller, id uuid.UUID, req runtimedto.UpdateConversationRequest) (*runtimemodel.Conversation, error) {
-	if _, err := s.GetConversationByCaller(ctx, scope, caller, id); err != nil {
-		return nil, err
-	}
-	return s.UpdateConversation(ctx, scope, id, req)
+	return nil
 }
 
 func (s *service) validateCurrentLeafMessage(ctx context.Context, scope Scope, conversation *runtimemodel.Conversation, leafID uuid.UUID) error {
@@ -683,7 +740,19 @@ func (s *service) ListMessages(ctx context.Context, scope Scope, conversationID 
 	offset := pageOffset(page, limit)
 	messages, total, err := s.repos.Message.ListByConversationScoped(ctx, conversationID, scope.OrganizationID, scope.AccountID, limit, offset)
 	if err != nil {
+		if errors.Is(mapRepoError(err), ErrNotFound) {
+			return s.listLegacyImageMessages(ctx, scope, conversationID, page, limit)
+		}
 		return nil, 0, err
+	}
+	if total == 0 && len(messages) == 0 {
+		legacyMessages, legacyTotal, legacyErr := s.listLegacyImageMessages(ctx, scope, conversationID, page, limit)
+		if legacyErr == nil {
+			return legacyMessages, legacyTotal, nil
+		}
+		if !errors.Is(legacyErr, ErrNotFound) {
+			return nil, 0, legacyErr
+		}
 	}
 	hydrateMessagesGeneratedFileState(ctx, messages)
 	hydrateMessagesPublicErrors(messages)

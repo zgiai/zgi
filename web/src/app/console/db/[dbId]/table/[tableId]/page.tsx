@@ -32,7 +32,7 @@ export default function DbTableDetailPage({ params }: PageProps) {
   }
 
   return (
-    <div className="p-6 h-full flex flex-col w-full overflow-y-auto">
+    <div className="p-6 h-full min-h-0 flex flex-col w-full overflow-hidden">
       <TableData dbId={dbId} tableId={tableId} />
     </div>
   );

@@ -14,6 +14,7 @@ import {
   X,
 } from 'lucide-react';
 import Link from 'next/link';
+import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
@@ -78,6 +79,11 @@ import {
   type TableNameErrorCode,
 } from '@/utils/validation';
 import { DATABASE_PERMISSION_ACTIONS } from '@/constants/permissions';
+import {
+  activateRecognitionAnalysis,
+  invalidateRecognitionAnalysis,
+  runLatestRecognition,
+} from './recognition-request-guard.mjs';
 
 type Step = 'file' | 'preview' | 'schema' | 'result';
 
@@ -93,6 +99,10 @@ function getExcelColumnKey(col: InferredExcelColumn, index: number) {
 
 function getSampleValueKey(value: unknown, index: number) {
   return `${index}:${String(value)}`;
+}
+
+function getAnalysisKey(data: AnalyzeExcelImportData) {
+  return `${data.job_id}:${data.selection.sheet_name}`;
 }
 
 function applyRecognizedColumns(
@@ -148,6 +158,7 @@ export default function ExcelImportShell({ dbId }: ExcelImportShellProps) {
     return saved ? { provider: saved.provider, model: saved.model } : null;
   });
   const [recognitionDraft, setRecognitionDraft] = useState<RecognizeExcelImportData | null>(null);
+  const [hasRecognitionCompleted, setHasRecognitionCompleted] = useState(false);
   const [recognitionDialogOpen, setRecognitionDialogOpen] = useState(false);
   const [createdTableId, setCreatedTableId] = useState<string | null>(null);
   const [importResult, setImportResult] = useState<ConfirmExcelImportData | null>(null);
@@ -164,6 +175,8 @@ export default function ExcelImportShell({ dbId }: ExcelImportShellProps) {
       Boolean(importResult && importResult.failed_rows > 0)
   );
   const analyzeRequestSeq = useRef(0);
+  const recognitionRequestSeqRef = useRef(0);
+  const currentAnalysisKeyRef = useRef('');
   const schemaEditRevisionRef = useRef(0);
 
   useEffect(() => {
@@ -235,8 +248,14 @@ export default function ExcelImportShell({ dbId }: ExcelImportShellProps) {
     if (requestedSheetName) {
       setSelectedSheetName(requestedSheetName);
     }
-    if (requestedSheetName && requestedSheetName === analysis?.selection.sheet_name) return;
+    if (requestedSheetName && requestedSheetName === analysis?.selection.sheet_name) {
+      activateRecognitionAnalysis(currentAnalysisKeyRef, getAnalysisKey(analysis));
+      setHasRecognitionCompleted(false);
+      return;
+    }
 
+    invalidateRecognitionAnalysis(recognitionRequestSeqRef, currentAnalysisKeyRef);
+    setHasRecognitionCompleted(false);
     const requestSeq = analyzeRequestSeq.current + 1;
     analyzeRequestSeq.current = requestSeq;
     setAnalyzingSheetName(requestedSheetName || null);
@@ -247,10 +266,12 @@ export default function ExcelImportShell({ dbId }: ExcelImportShellProps) {
         ...overrides,
       });
       if (requestSeq !== analyzeRequestSeq.current) return;
+      activateRecognitionAnalysis(currentAnalysisKeyRef, getAnalysisKey(res.data));
       setAnalysis(res.data);
       setSelectedSheetName(res.data.selection.sheet_name);
       setColumns(res.data.columns.map(col => ({ ...col, enabled: col.enabled ?? true })));
       setRecognitionDraft(null);
+      setHasRecognitionCompleted(false);
       setRecognitionDialogOpen(false);
       if (!tableName) {
         const baseName = res.data.source.file_name.replace(/\.[^.]+$/, '').toLowerCase();
@@ -267,6 +288,10 @@ export default function ExcelImportShell({ dbId }: ExcelImportShellProps) {
   };
 
   const handleConfirm = async () => {
+    if (!hasRecognitionCompleted) {
+      toast.info(t('excelImport.schema.recognitionIncomplete'));
+      return;
+    }
     if (!analysis || !canImport || !canExecuteImport) return;
     const payload: ConfirmExcelImportRequest = {
       table: {
@@ -289,20 +314,32 @@ export default function ExcelImportShell({ dbId }: ExcelImportShellProps) {
 
   const recognizeCurrentColumns = async (): Promise<RecognizeExcelImportData | null> => {
     if (!analysis || !selectedModel || recognizeMutation.isPending) return null;
-    const res = await recognizeMutation.mutateAsync({
-      table: {
-        name: tableName.trim(),
-        description: tableDescription.trim(),
+    const analysisKey = getAnalysisKey(analysis);
+    setHasRecognitionCompleted(false);
+    const recognized = await runLatestRecognition({
+      recognitionRequestSeqRef,
+      currentAnalysisKeyRef,
+      analysisKey,
+      request: async () => {
+        const res = await recognizeMutation.mutateAsync({
+          table: {
+            name: tableName.trim(),
+            description: tableDescription.trim(),
+          },
+          source: {
+            file_name: analysis.source.file_name,
+            sheet_name: analysis.selection.sheet_name,
+          },
+          columns,
+          model: { provider: selectedModel.provider, name: selectedModel.model },
+          operator_language: locale,
+        });
+        return res.data;
       },
-      source: {
-        file_name: analysis.source.file_name,
-        sheet_name: analysis.selection.sheet_name,
-      },
-      columns,
-      model: { provider: selectedModel.provider, name: selectedModel.model },
-      operator_language: locale,
     });
-    return res.data;
+    if (!recognized) return null;
+    setHasRecognitionCompleted(true);
+    return recognized;
   };
 
   const handleEnterSchema = async () => {
@@ -807,7 +844,13 @@ export default function ExcelImportShell({ dbId }: ExcelImportShellProps) {
             </Button>
             <Button
               onClick={handleConfirm}
-              disabled={!canImport || !canExecuteImport || confirmMutation.isPending}
+              aria-disabled={!hasRecognitionCompleted || !canImport || !canExecuteImport}
+              disabled={
+                !canExecuteImport ||
+                confirmMutation.isPending ||
+                (hasRecognitionCompleted && !canImport)
+              }
+              className={cn(!hasRecognitionCompleted && 'opacity-50')}
             >
               {confirmMutation.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
               {t('excelImport.schema.import')}

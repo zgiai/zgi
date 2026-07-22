@@ -37,5 +37,17 @@ assert.ok(
   !source.includes('values: DbTableRecord;'),
   'records must be the only editable record data source'
 );
+assert.ok(
+  source.includes('{stats.parseFailed > 0 && ('),
+  'parse retry must only appear when parsing actually failed'
+);
+assert.ok(
+  source.includes('{stats.recognitionFailed > 0 && ('),
+  'field extraction retry must only appear when extraction actually failed'
+);
+assert.ok(
+  source.includes('{selectedFiles.length > 1 && ('),
+  're-recognize all must only appear for multiple files'
+);
 
 console.log('Table ingest multi-record regression check passed.');

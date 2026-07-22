@@ -6,6 +6,8 @@ type AppModelPrecheckStatus string
 
 type AppModelPrecheckWarningKind string
 
+type AppModelPrecheckWarningScope string
+
 const (
 	AppModelPrecheckStatusOK      AppModelPrecheckStatus = "ok"
 	AppModelPrecheckStatusWarning AppModelPrecheckStatus = "warning"
@@ -20,11 +22,17 @@ const (
 	AppModelPrecheckWarningPrivateChannelUpstreamUnavailable AppModelPrecheckWarningKind = "private_channel_upstream_unavailable"
 )
 
+const (
+	AppModelPrecheckWarningScopePartial AppModelPrecheckWarningScope = "partial"
+	AppModelPrecheckWarningScopeAll     AppModelPrecheckWarningScope = "all"
+)
+
 type AppModelPrecheckWarning struct {
 	Kind         AppModelPrecheckWarningKind
 	CurrentValue int64
 	Threshold    int64
 	Reason       string
+	Scope        AppModelPrecheckWarningScope
 }
 
 type AppModelPrecheckResult struct {

@@ -93,10 +93,11 @@ type Scope struct {
 }
 
 type Caller struct {
-	Type           string
-	ID             *uuid.UUID
-	Source         string
-	SourceWebAppID *uuid.UUID
+	Type             string
+	ID               *uuid.UUID
+	ConversationType string
+	Source           string
+	SourceWebAppID   *uuid.UUID
 }
 
 type RunConfig struct {
@@ -169,6 +170,22 @@ type AgentMemoryPlannerDecision = agentmemoryruntime.Decision
 type AgentMemoryPlannerResult = agentmemoryruntime.PlannerResult
 type AgentMemoryMutationResult = agentmemoryruntime.MutationResult
 
+type CreateCompletedMessageRequest struct {
+	ConversationID  uuid.UUID
+	Query           string
+	Answer          string
+	ModelProvider   string
+	ModelName       string
+	ModelParameters map[string]interface{}
+	Metadata        map[string]interface{}
+}
+
+type CreateConversationWithCompletedMessageRequest struct {
+	ConversationID uuid.UUID
+	Title          string
+	Message        CreateCompletedMessageRequest
+}
+
 type Service interface {
 	CreateConversation(ctx context.Context, scope Scope, title string) (*runtimemodel.Conversation, error)
 	CreateConversationForCaller(ctx context.Context, scope Scope, caller Caller, title string) (*runtimemodel.Conversation, error)
@@ -208,6 +225,8 @@ type Service interface {
 	RunClientActionContinuationStream(ctx context.Context, scope Scope, conversationID, messageID uuid.UUID, actionID string, req runtimedto.ClientActionResultRequest, onEvent func(StreamEvent) error) (*ChatResult, error)
 	RunUserInputContinuationStream(ctx context.Context, scope Scope, conversationID, messageID uuid.UUID, requestID string, req runtimedto.UserInputContinuationRequest, onEvent func(StreamEvent) error) (*ChatResult, error)
 	RunConfiguredUserInputContinuationStream(ctx context.Context, scope Scope, caller Caller, config RunConfig, conversationID, messageID uuid.UUID, requestID string, req runtimedto.UserInputContinuationRequest, onEvent func(StreamEvent) error) (*ChatResult, error)
+	CreateCompletedMessage(ctx context.Context, scope Scope, req CreateCompletedMessageRequest) (*runtimemodel.Message, error)
+	CreateConversationWithCompletedMessage(ctx context.Context, scope Scope, caller Caller, req CreateConversationWithCompletedMessageRequest) (*runtimemodel.Conversation, *runtimemodel.Message, error)
 	BeginWorkflowApprovalContinuation(ctx context.Context, scope Scope, caller Caller, config RunConfig, conversationID, messageID uuid.UUID) (*WorkflowApprovalContinuation, error)
 	RecordWorkflowApprovalContinuationEvent(ctx context.Context, continuation *WorkflowApprovalContinuation, eventType string, payload map[string]interface{}) (*StreamEvent, error)
 	AppendWorkflowApprovalContinuationStreamEvent(ctx context.Context, continuation *WorkflowApprovalContinuation, eventType string, payload map[string]interface{}) (*StreamEvent, error)

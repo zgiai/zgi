@@ -37,8 +37,8 @@ const Header: FC<TableDataHeaderProps> = ({
           const displayName = getColumnDisplayName(col);
           const sticky = stickyColumnNames.includes(col.name);
           const headClassName = cn(
-            'h-8 min-w-[140px] max-w-[280px] border-r bg-muted/50 last:border-r-0',
-            sticky && 'sticky left-0 z-20 min-w-[140px] shadow-[1px_0_0_hsl(var(--border))]'
+            'sticky top-0 z-10 h-8 min-w-[140px] max-w-[280px] border-r bg-[var(--table-header)] last:border-r-0',
+            sticky && 'left-0 z-30 min-w-[140px] shadow-[1px_0_0_hsl(var(--border))]'
           );
           const label = (
             <span className="flex min-w-0 items-center gap-0.5">
@@ -67,7 +67,7 @@ const Header: FC<TableDataHeaderProps> = ({
         })}
         {(isEditing || showRowActions) && (
           <TableHead
-            className="sticky right-0 z-20 h-8 max-w-[400px] border-r bg-muted/50 shadow-[-1px_0_0_hsl(var(--border))]"
+            className="sticky top-0 right-0 z-30 h-8 max-w-[400px] border-r bg-[var(--table-header)] shadow-[-1px_0_0_hsl(var(--border))]"
             title={actionsTitle}
           >
             {actionsTitle}

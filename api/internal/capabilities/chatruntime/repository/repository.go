@@ -17,14 +17,14 @@ import (
 type ConversationRepository interface {
 	Create(ctx context.Context, conversation *runtimemodel.Conversation) error
 	GetScoped(ctx context.Context, id, organizationID, accountID uuid.UUID) (*runtimemodel.Conversation, error)
-	GetByCallerScoped(ctx context.Context, id, organizationID, accountID uuid.UUID, callerType string, callerID *uuid.UUID) (*runtimemodel.Conversation, error)
+	GetByCallerScoped(ctx context.Context, id, organizationID, accountID uuid.UUID, callerType string, callerID *uuid.UUID, conversationType string) (*runtimemodel.Conversation, error)
 	GetRuntimeLogScoped(ctx context.Context, id, organizationID uuid.UUID, workspaceID *uuid.UUID, accountID uuid.UUID, callerType string, callerID *uuid.UUID, source string) (*runtimemodel.Conversation, error)
 	GetBySourceConversation(ctx context.Context, sourceConversationID uuid.UUID) (*runtimemodel.Conversation, error)
 	ListScoped(ctx context.Context, organizationID, accountID uuid.UUID, limit, offset int) ([]*runtimemodel.Conversation, int64, error)
-	ListByCallerScoped(ctx context.Context, organizationID, accountID uuid.UUID, callerType string, callerID *uuid.UUID, limit, offset int) ([]*runtimemodel.Conversation, int64, error)
-	ListByCallerSourceScoped(ctx context.Context, organizationID, accountID uuid.UUID, callerType string, callerID *uuid.UUID, source string, sourceWebAppID *uuid.UUID, limit, offset int) ([]*runtimemodel.Conversation, int64, error)
+	ListByCallerScoped(ctx context.Context, organizationID, accountID uuid.UUID, callerType string, callerID *uuid.UUID, conversationType string, limit, offset int) ([]*runtimemodel.Conversation, int64, error)
+	ListByCallerSourceScoped(ctx context.Context, organizationID, accountID uuid.UUID, callerType string, callerID *uuid.UUID, conversationType string, source string, sourceWebAppID *uuid.UUID, limit, offset int) ([]*runtimemodel.Conversation, int64, error)
 	ListByCallerSurfaceScoped(ctx context.Context, organizationID, accountID uuid.UUID, callerType string, callerID *uuid.UUID, surface string, limit, offset int) ([]*runtimemodel.Conversation, int64, error)
-	SearchByCallerScoped(ctx context.Context, organizationID, accountID uuid.UUID, callerType string, callerID *uuid.UUID, source string, sourceWebAppID *uuid.UUID, surface string, queryText string, limit int) ([]*SearchResult, error)
+	SearchByCallerScoped(ctx context.Context, organizationID, accountID uuid.UUID, callerType string, callerID *uuid.UUID, conversationType string, source string, sourceWebAppID *uuid.UUID, surface string, queryText string, limit int) ([]*SearchResult, error)
 	UpdateScoped(ctx context.Context, id, organizationID, accountID uuid.UUID, updates map[string]interface{}) error
 	UpdateMetadata(ctx context.Context, id uuid.UUID, metadata map[string]interface{}) error
 	DeleteScoped(ctx context.Context, id, organizationID, accountID uuid.UUID) error
@@ -159,6 +159,9 @@ func (r *conversationRepository) Create(ctx context.Context, conversation *runti
 	if conversation.CallerType == "" {
 		conversation.CallerType = runtimemodel.ConversationCallerAIChat
 	}
+	if conversation.ConversationType == "" {
+		conversation.ConversationType = runtimemodel.ConversationTypeChat
+	}
 	if conversation.Source == "" {
 		conversation.Source = runtimemodel.ConversationSourceConsole
 	}
@@ -184,10 +187,10 @@ func (r *conversationRepository) GetScoped(ctx context.Context, id, organization
 	return &conversation, nil
 }
 
-func (r *conversationRepository) GetByCallerScoped(ctx context.Context, id, organizationID, accountID uuid.UUID, callerType string, callerID *uuid.UUID) (*runtimemodel.Conversation, error) {
+func (r *conversationRepository) GetByCallerScoped(ctx context.Context, id, organizationID, accountID uuid.UUID, callerType string, callerID *uuid.UUID, conversationType string) (*runtimemodel.Conversation, error) {
 	var conversation runtimemodel.Conversation
-	query := applyCallerFilter(r.db.WithContext(ctx).
-		Where("id = ? AND organization_id = ? AND account_id = ? AND deleted_at IS NULL", id, organizationID, accountID), callerType, callerID)
+	query := applyConversationTypeFilter(applyCallerFilter(r.db.WithContext(ctx).
+		Where("id = ? AND organization_id = ? AND account_id = ? AND deleted_at IS NULL", id, organizationID, accountID), callerType, callerID), conversationType, "")
 	if err := query.Take(&conversation).Error; err != nil {
 		return nil, wrapNotFound(err, "chat runtime conversation")
 	}
@@ -232,11 +235,11 @@ func (r *conversationRepository) ListScoped(ctx context.Context, organizationID,
 	return conversations, total, nil
 }
 
-func (r *conversationRepository) ListByCallerScoped(ctx context.Context, organizationID, accountID uuid.UUID, callerType string, callerID *uuid.UUID, limit, offset int) ([]*runtimemodel.Conversation, int64, error) {
+func (r *conversationRepository) ListByCallerScoped(ctx context.Context, organizationID, accountID uuid.UUID, callerType string, callerID *uuid.UUID, conversationType string, limit, offset int) ([]*runtimemodel.Conversation, int64, error) {
 	var conversations []*runtimemodel.Conversation
 	var total int64
-	query := applyCallerFilter(r.db.WithContext(ctx).Model(&runtimemodel.Conversation{}).
-		Where("organization_id = ? AND account_id = ? AND deleted_at IS NULL", organizationID, accountID), callerType, callerID)
+	query := applyConversationTypeFilter(applyCallerFilter(r.db.WithContext(ctx).Model(&runtimemodel.Conversation{}).
+		Where("organization_id = ? AND account_id = ? AND deleted_at IS NULL", organizationID, accountID), callerType, callerID), conversationType, "")
 	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, fmt.Errorf("failed to count chat runtime conversations: %w", err)
 	}
@@ -246,11 +249,11 @@ func (r *conversationRepository) ListByCallerScoped(ctx context.Context, organiz
 	return conversations, total, nil
 }
 
-func (r *conversationRepository) ListByCallerSourceScoped(ctx context.Context, organizationID, accountID uuid.UUID, callerType string, callerID *uuid.UUID, source string, sourceWebAppID *uuid.UUID, limit, offset int) ([]*runtimemodel.Conversation, int64, error) {
+func (r *conversationRepository) ListByCallerSourceScoped(ctx context.Context, organizationID, accountID uuid.UUID, callerType string, callerID *uuid.UUID, conversationType string, source string, sourceWebAppID *uuid.UUID, limit, offset int) ([]*runtimemodel.Conversation, int64, error) {
 	var conversations []*runtimemodel.Conversation
 	var total int64
-	query := applyConversationSourceFilter(applyCallerFilter(r.db.WithContext(ctx).Model(&runtimemodel.Conversation{}).
-		Where("organization_id = ? AND account_id = ? AND deleted_at IS NULL", organizationID, accountID), callerType, callerID), source, sourceWebAppID)
+	query := applyConversationSourceFilter(applyConversationTypeFilter(applyCallerFilter(r.db.WithContext(ctx).Model(&runtimemodel.Conversation{}).
+		Where("organization_id = ? AND account_id = ? AND deleted_at IS NULL", organizationID, accountID), callerType, callerID), conversationType, ""), source, sourceWebAppID)
 	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, fmt.Errorf("failed to count chat runtime conversations: %w", err)
 	}
@@ -263,8 +266,8 @@ func (r *conversationRepository) ListByCallerSourceScoped(ctx context.Context, o
 func (r *conversationRepository) ListByCallerSurfaceScoped(ctx context.Context, organizationID, accountID uuid.UUID, callerType string, callerID *uuid.UUID, surface string, limit, offset int) ([]*runtimemodel.Conversation, int64, error) {
 	var conversations []*runtimemodel.Conversation
 	var total int64
-	query := applyConversationSurfaceFilter(applyCallerFilter(r.db.WithContext(ctx).Model(&runtimemodel.Conversation{}).
-		Where("organization_id = ? AND account_id = ? AND deleted_at IS NULL", organizationID, accountID), callerType, callerID), surface)
+	query := applyConversationSurfaceFilter(applyConversationTypeFilter(applyCallerFilter(r.db.WithContext(ctx).Model(&runtimemodel.Conversation{}).
+		Where("organization_id = ? AND account_id = ? AND deleted_at IS NULL", organizationID, accountID), callerType, callerID), runtimemodel.ConversationTypeChat, ""), surface)
 	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, fmt.Errorf("failed to count chat runtime conversations: %w", err)
 	}
@@ -274,7 +277,7 @@ func (r *conversationRepository) ListByCallerSurfaceScoped(ctx context.Context, 
 	return conversations, total, nil
 }
 
-func (r *conversationRepository) SearchByCallerScoped(ctx context.Context, organizationID, accountID uuid.UUID, callerType string, callerID *uuid.UUID, source string, sourceWebAppID *uuid.UUID, surface string, queryText string, limit int) ([]*SearchResult, error) {
+func (r *conversationRepository) SearchByCallerScoped(ctx context.Context, organizationID, accountID uuid.UUID, callerType string, callerID *uuid.UUID, conversationType string, source string, sourceWebAppID *uuid.UUID, surface string, queryText string, limit int) ([]*SearchResult, error) {
 	keyword := strings.TrimSpace(queryText)
 	if keyword == "" || limit <= 0 {
 		return []*SearchResult{}, nil
@@ -282,6 +285,7 @@ func (r *conversationRepository) SearchByCallerScoped(ctx context.Context, organ
 	if callerType == "" {
 		callerType = runtimemodel.ConversationCallerAIChat
 	}
+	conversationType = normalizeConversationType(conversationType)
 	pattern := "%" + escapeLikePattern(strings.ToLower(keyword)) + "%"
 
 	type searchRow struct {
@@ -311,13 +315,13 @@ func (r *conversationRepository) SearchByCallerScoped(ctx context.Context, organ
 		}
 	}
 	surfaceFilter, surfaceArgs := searchConversationSurfaceFilter(surface)
-	args := []interface{}{organizationID, accountID, callerType}
+	args := []interface{}{organizationID, accountID, callerType, conversationType}
 	args = append(args, callerArgs...)
 	args = append(args, sourceArgs...)
 	args = append(args, surfaceArgs...)
 	args = append(args, pattern)
 	args = append(args, pattern)
-	args = append(args, organizationID, accountID, callerType)
+	args = append(args, organizationID, accountID, callerType, conversationType)
 	args = append(args, callerArgs...)
 	args = append(args, sourceArgs...)
 	args = append(args, surfaceArgs...)
@@ -340,6 +344,7 @@ func (r *conversationRepository) SearchByCallerScoped(ctx context.Context, organ
 			WHERE c.organization_id = ?
 				AND c.account_id = ?
 				AND c.caller_type = ?
+				AND c.conversation_type = ?
 				AND %s
 				AND c.deleted_at IS NULL
 				%s
@@ -362,6 +367,7 @@ func (r *conversationRepository) SearchByCallerScoped(ctx context.Context, organ
 			WHERE c.organization_id = ?
 				AND c.account_id = ?
 				AND c.caller_type = ?
+				AND c.conversation_type = ?
 				AND %s
 				AND c.deleted_at IS NULL
 				AND m.deleted_at IS NULL
@@ -472,6 +478,19 @@ func applyConversationSurfaceFilter(query *gorm.DB, surface string) *gorm.DB {
 			)
 		)
 	)`, surface, surface)
+}
+
+func applyConversationTypeFilter(query *gorm.DB, conversationType string, alias string) *gorm.DB {
+	return query.Where(qualifiedColumn(alias, "conversation_type")+" = ?", normalizeConversationType(conversationType))
+}
+
+func normalizeConversationType(value string) string {
+	switch strings.TrimSpace(value) {
+	case runtimemodel.ConversationTypeImage:
+		return runtimemodel.ConversationTypeImage
+	default:
+		return runtimemodel.ConversationTypeChat
+	}
 }
 
 func applyRuntimeLogCallerFilter(query *gorm.DB, callerType string, callerID *uuid.UUID, alias string) *gorm.DB {

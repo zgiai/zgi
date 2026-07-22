@@ -103,7 +103,7 @@ const messages: DbsMessages = {
   },
   tableModal: {
     createTitle: '新建表',
-    editTitle: '编辑表',
+    editTitle: '编辑表格信息',
     nameLimitHint: '{count}/63 个字符',
   },
   columns: {
@@ -453,7 +453,7 @@ const messages: DbsMessages = {
       retryCurrentFile: '重试当前文件',
       retryFailedFiles: '重试失败文件',
       retryFileParse: '重试文件解析',
-      retryTextRecognition: '重新获取字段',
+      retryTextRecognition: '重新提取字段',
       reprocessCurrentFile: '重新识别当前文件',
       retryParseFailedFiles: '重试解析失败文件',
       retryRecognitionFailedFiles: '重试字段获取失败文件',
@@ -633,6 +633,7 @@ const messages: DbsMessages = {
       descriptionColumn: '字段说明',
       samples: '样例',
       import: '创建表并导入',
+      recognitionIncomplete: '智能识别尚未完成，请稍后再创建表并导入。',
       tableInfoTitle: '表信息',
       smartRecognizeTitle: '智能识别',
       smartRecognizeDesc: '选择模型识别表名、表描述、字段名和字段描述，确认后再应用到当前草稿。',

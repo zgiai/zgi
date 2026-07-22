@@ -22,10 +22,26 @@ export interface ImageSettingsPatch {
 interface SettingsToolbarProps {
   onSettingsChange?: (settings: ImageSettingsPatch) => void;
   initialSettings?: Pick<ImageSettings, 'ratio' | 'count'>;
+  ratioOptions?: string[];
+  countOptions?: number[];
 }
 
-export function SettingsToolbar({ onSettingsChange, initialSettings }: SettingsToolbarProps) {
+export function SettingsToolbar({
+  onSettingsChange,
+  initialSettings,
+  ratioOptions,
+  countOptions,
+}: SettingsToolbarProps) {
   const t = useT('webapp');
+  const availableRatios = React.useMemo(
+    () =>
+      IMAGE_ASPECT_RATIOS.filter(ratio => !ratioOptions?.length || ratioOptions.includes(ratio.id)),
+    [ratioOptions]
+  );
+  const availableCounts = React.useMemo(
+    () => IMAGE_COUNTS.filter(count => !countOptions?.length || countOptions.includes(count.id)),
+    [countOptions]
+  );
 
   const [selectedRatio, setSelectedRatio] = React.useState<string>(initialSettings?.ratio || '1:1');
   const [selectedCount, setSelectedCount] = React.useState<number>(
@@ -35,6 +51,18 @@ export function SettingsToolbar({ onSettingsChange, initialSettings }: SettingsT
   // Popover state
   const [isRatioOpen, setIsRatioOpen] = React.useState(false);
   const [isCountOpen, setIsCountOpen] = React.useState(false);
+
+  React.useEffect(() => {
+    if (availableRatios.length > 0 && !availableRatios.some(ratio => ratio.id === selectedRatio)) {
+      setSelectedRatio(availableRatios[0].id);
+    }
+  }, [availableRatios, selectedRatio]);
+
+  React.useEffect(() => {
+    if (availableCounts.length > 0 && !availableCounts.some(count => count.id === selectedCount)) {
+      setSelectedCount(availableCounts[0].id);
+    }
+  }, [availableCounts, selectedCount]);
 
   // Notify parent on change
   React.useEffect(() => {
@@ -56,7 +84,7 @@ export function SettingsToolbar({ onSettingsChange, initialSettings }: SettingsT
           <button type="button" className={optionBtnClass}>
             <span>
               {selectedRatio
-                ? IMAGE_ASPECT_RATIOS.find(r => r.id === selectedRatio)?.name
+                ? availableRatios.find(r => r.id === selectedRatio)?.name
                 : t('chat.imageInput.ratio')}
             </span>
             <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" />
@@ -66,7 +94,7 @@ export function SettingsToolbar({ onSettingsChange, initialSettings }: SettingsT
           align="start"
           className="w-[160px] p-1 rounded-xl border border-border/50 shadow-lg"
         >
-          {IMAGE_ASPECT_RATIOS.map(ratio => {
+          {availableRatios.map(ratio => {
             // Calculate preview dimensions for the aspect ratio
             const [w, h] = ratio.id.split(':').map(Number);
             const maxSize = 18;
@@ -120,7 +148,7 @@ export function SettingsToolbar({ onSettingsChange, initialSettings }: SettingsT
           align="start"
           className="w-[80px] p-1 rounded-xl border border-border/50 shadow-lg"
         >
-          {IMAGE_COUNTS.map(count => (
+          {availableCounts.map(count => (
             <button
               key={count.id}
               type="button"

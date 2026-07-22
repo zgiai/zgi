@@ -265,7 +265,7 @@ func (r *capturingConversationRepo) GetScoped(context.Context, uuid.UUID, uuid.U
 	return r.conversation, nil
 }
 
-func (r *capturingConversationRepo) GetByCallerScoped(context.Context, uuid.UUID, uuid.UUID, uuid.UUID, string, *uuid.UUID) (*runtimemodel.Conversation, error) {
+func (r *capturingConversationRepo) GetByCallerScoped(context.Context, uuid.UUID, uuid.UUID, uuid.UUID, string, *uuid.UUID, string) (*runtimemodel.Conversation, error) {
 	return r.conversation, nil
 }
 

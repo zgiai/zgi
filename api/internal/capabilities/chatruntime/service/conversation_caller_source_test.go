@@ -75,16 +75,16 @@ type sourceScopedConversationRepo struct {
 	unscopedListCalled bool
 }
 
-func (r *sourceScopedConversationRepo) GetByCallerScoped(context.Context, uuid.UUID, uuid.UUID, uuid.UUID, string, *uuid.UUID) (*runtimemodel.Conversation, error) {
+func (r *sourceScopedConversationRepo) GetByCallerScoped(context.Context, uuid.UUID, uuid.UUID, uuid.UUID, string, *uuid.UUID, string) (*runtimemodel.Conversation, error) {
 	return r.conversation, nil
 }
 
-func (r *sourceScopedConversationRepo) ListByCallerScoped(context.Context, uuid.UUID, uuid.UUID, string, *uuid.UUID, int, int) ([]*runtimemodel.Conversation, int64, error) {
+func (r *sourceScopedConversationRepo) ListByCallerScoped(context.Context, uuid.UUID, uuid.UUID, string, *uuid.UUID, string, int, int) ([]*runtimemodel.Conversation, int64, error) {
 	r.unscopedListCalled = true
 	return nil, 0, nil
 }
 
-func (r *sourceScopedConversationRepo) ListByCallerSourceScoped(_ context.Context, _, _ uuid.UUID, _ string, _ *uuid.UUID, source string, sourceWebAppID *uuid.UUID, _, _ int) ([]*runtimemodel.Conversation, int64, error) {
+func (r *sourceScopedConversationRepo) ListByCallerSourceScoped(_ context.Context, _, _ uuid.UUID, _ string, _ *uuid.UUID, _ string, source string, sourceWebAppID *uuid.UUID, _, _ int) ([]*runtimemodel.Conversation, int64, error) {
 	r.source = source
 	r.sourceWebAppID = normalizeCallerID(sourceWebAppID)
 	return nil, 0, nil
