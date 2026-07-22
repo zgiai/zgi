@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import { format, parseISO } from 'date-fns';
+import { useLocale } from 'next-intl';
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 
 import { useT } from '@/i18n';
@@ -9,12 +10,16 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
 import type { ModelUsageDailyItem } from '@/services/types/statistics';
-import { formatAiCreditValue } from '@/utils/ai-credits';
+import {
+  formatBillingDisplayAmountFromNormalizedCredits,
+  type BillingDisplaySettings,
+} from '@/utils/billing-display';
 import { formatNumber } from '@/utils/format';
 
 interface TokenTrendChartProps {
   dailyData: ModelUsageDailyItem[];
   showSourceBreakdown: boolean;
+  billingDisplay: BillingDisplaySettings;
 }
 
 interface StackedPointsShapeProps {
@@ -81,9 +86,12 @@ function StackedPointsBarShape({ x = 0, y = 0, width = 0, height = 0, payload, f
   );
 }
 
-export function TokenTrendChart({ dailyData, showSourceBreakdown }: TokenTrendChartProps) {
+export function TokenTrendChart({ dailyData, showSourceBreakdown, billingDisplay }: TokenTrendChartProps) {
   const t = useT('dashboard');
+  const locale = useLocale();
   const [chartMode, setChartMode] = useState<ChartMode>('points');
+  const formatCost = (value: number) =>
+    formatBillingDisplayAmountFromNormalizedCredits(value, billingDisplay, { locale });
 
   const chartData = useMemo(
     () =>
@@ -126,7 +134,7 @@ export function TokenTrendChart({ dailyData, showSourceBreakdown }: TokenTrendCh
         : t('usage.chart.pointConsumptionSeries')
       : t('usage.chart.totalTokensSeries');
 
-  const unitLabel = chartMode === 'points' ? t('usage.chart.points') : t('usage.chart.tokens');
+  const unitLabel = chartMode === 'points' ? '' : t('usage.chart.tokens');
   const showStackedPoints = chartMode === 'points' && hasPointBreakdownData;
 
   return (
@@ -186,7 +194,7 @@ export function TokenTrendChart({ dailyData, showSourceBreakdown }: TokenTrendCh
                   tickLine={false}
                   tick={{ fontSize: 12, fill: '#6B7280' }}
                   tickFormatter={value =>
-                    chartMode === 'points' ? formatAiCreditValue(value) : formatNumber(value, 2) || '0'
+                    chartMode === 'points' ? formatCost(value) : formatNumber(value, 2) || '0'
                   }
                   dx={-10}
                 />
@@ -201,16 +209,13 @@ export function TokenTrendChart({ dailyData, showSourceBreakdown }: TokenTrendCh
                         {showStackedPoints ? (
                           <div className="space-y-1 text-muted-foreground">
                             <div>
-                              {t('usage.filters.sourceOfficial')}: {formatAiCreditValue(data.officialPoints)}{' '}
-                              {t('usage.chart.points')}
+                              {t('usage.filters.sourceOfficial')}: {formatCost(data.officialPoints)}
                             </div>
                             <div>
-                              {t('usage.filters.sourcePrivate')}: {formatAiCreditValue(data.privatePoints)}{' '}
-                              {t('usage.chart.points')}
+                              {t('usage.filters.sourcePrivate')}: {formatCost(data.privatePoints)}
                             </div>
                             <div>
-                              {t('usage.chart.totalPointsSeries')}: {formatAiCreditValue(data.totalPoints)}{' '}
-                              {t('usage.chart.points')}
+                              {t('usage.chart.totalPointsSeries')}: {formatCost(data.totalPoints)}
                             </div>
                             <div>
                               {t('usage.cards.attemptCount')}: {formatNumber(data.attemptCount)}
@@ -230,7 +235,7 @@ export function TokenTrendChart({ dailyData, showSourceBreakdown }: TokenTrendCh
                             <div>
                               {seriesLabel}:{' '}
                               {chartMode === 'points'
-                                ? formatAiCreditValue(data.totalPoints)
+                                ? formatCost(data.totalPoints)
                                 : formatNumber(data.totalTokens, 2)}{' '}
                               {unitLabel}
                             </div>
@@ -289,9 +294,9 @@ export function TokenTrendChart({ dailyData, showSourceBreakdown }: TokenTrendCh
           )}
           <span className="text-muted-foreground">
             {t('usage.chart.totalLabel', {
-              count: chartMode === 'points' ? formatAiCreditValue(totalValue) : formatNumber(totalValue, 2),
-            })}{' '}
-            {unitLabel}
+              count: chartMode === 'points' ? formatCost(totalValue) : formatNumber(totalValue, 2),
+            })}
+            {unitLabel ? ` ${unitLabel}` : null}
           </span>
         </div>
       </CardContent>

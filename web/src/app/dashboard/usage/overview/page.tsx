@@ -16,10 +16,12 @@ import { Input, SearchInput } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useDebouncedValue } from '@/hooks/use-debounced-value';
+import { useOrganizations } from '@/hooks/organization/use-organizations';
 import { useModelUsage } from '@/hooks/statistics';
 import { IS_CLOUD } from '@/lib/config';
 import { cn } from '@/lib/utils';
 import type { ModelUsageAppType, ModelUsageSummary } from '@/services/types/statistics';
+import { getBillingDisplaySettings } from '@/utils/billing-display';
 
 type DateRangeKey = 'last7Days' | 'last30Days' | 'last90Days' | 'custom';
 type AppTypeFilter = 'all' | ModelUsageAppType;
@@ -70,6 +72,7 @@ function SectionEyebrow({ children }: { children: React.ReactNode }) {
 export default function UsageOverviewPage() {
   const t = useT('dashboard');
   const tCommon = useT('common');
+  const { currentOrganization, isLoading: isOrganizationLoading } = useOrganizations(true);
   const [dateRange, setDateRange] = useState<DateRangeKey>('last7Days');
   const [customStartDate, setCustomStartDate] = useState('');
   const [customEndDate, setCustomEndDate] = useState('');
@@ -128,6 +131,11 @@ export default function UsageOverviewPage() {
   const { data, isLoading, isFetching, refetch } = useModelUsage(params, {
     enabled: isCustomRangeValid,
   });
+  const billingDisplay = useMemo(
+    () => getBillingDisplaySettings(currentOrganization),
+    [currentOrganization]
+  );
+  const isPageLoading = isLoading || isOrganizationLoading;
   const summary = data?.summary ?? EMPTY_SUMMARY;
   const activeFilterBadges = useMemo(() => {
     const badges: string[] = [];
@@ -258,7 +266,7 @@ export default function UsageOverviewPage() {
                 </Badge>
               ))}
               <span className="ml-auto text-xs text-muted-foreground">
-                {isLoading
+                {isPageLoading
                   ? tCommon('loading')
                   : `当前结果共 ${data?.by_model?.length ?? 0} 个模型`}
               </span>
@@ -294,7 +302,7 @@ export default function UsageOverviewPage() {
           </CardContent>
         </Card>
 
-        {isLoading ? (
+        {isPageLoading ? (
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
             {Array.from({ length: showSourceBreakdown ? 5 : 4 }).map((_, index) => (
               <Card key={index}>
@@ -307,16 +315,25 @@ export default function UsageOverviewPage() {
             ))}
           </div>
         ) : (
-          <StatsCards summary={summary} models={data?.by_model ?? []} showSourceBreakdown={showSourceBreakdown} />
+          <StatsCards
+            summary={summary}
+            models={data?.by_model ?? []}
+            showSourceBreakdown={showSourceBreakdown}
+            billingDisplay={billingDisplay}
+          />
         )}
 
-        {isLoading ? (
+        {isPageLoading ? (
           <LoadingSection />
         ) : (
-          <TokenTrendChart dailyData={data?.daily_trend ?? []} showSourceBreakdown={showSourceBreakdown} />
+          <TokenTrendChart
+            dailyData={data?.daily_trend ?? []}
+            showSourceBreakdown={showSourceBreakdown}
+            billingDisplay={billingDisplay}
+          />
         )}
 
-        {isLoading ? (
+        {isPageLoading ? (
           <LoadingSection />
         ) : (
           <ModelDetailsSection
@@ -327,10 +344,18 @@ export default function UsageOverviewPage() {
             promptTokens={summary.prompt_tokens}
             completionTokens={summary.completion_tokens}
             showSourceBreakdown={showSourceBreakdown}
+            billingDisplay={billingDisplay}
           />
         )}
 
-        {isLoading ? <LoadingSection /> : <AppTypeDistributionSection items={data?.by_app_type ?? []} />}
+        {isPageLoading ? (
+          <LoadingSection />
+        ) : (
+          <AppTypeDistributionSection
+            items={data?.by_app_type ?? []}
+            billingDisplay={billingDisplay}
+          />
+        )}
       </div>
     </div>
   );
