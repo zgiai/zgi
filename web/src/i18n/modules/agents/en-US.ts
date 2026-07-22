@@ -788,13 +788,14 @@ const messages = {
           'Current organization balance is {currentValue}. Warning threshold is {threshold}.',
       },
       '207010': {
-        title: 'Channel balance is running low',
-        description: 'Current channel balance is {currentValue}. Warning threshold is {threshold}.',
+        title: 'Workflow model channel balance is low',
+        description:
+          'Every available channel for at least one workflow model is below the warning threshold. This warning does not block execution.',
       },
       '207015': {
-        title: 'Channel upstream unavailable',
+        title: 'Workflow model channels are unavailable',
         description:
-          'Every candidate credential was explicitly rejected by its provider. Contact an organization administrator.',
+          'Every candidate channel for at least one workflow model was rejected by its provider. Execution may fail, but this warning does not block it.',
       },
       unknown: {
         title: 'Potential billing risk detected',

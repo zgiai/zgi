@@ -92,6 +92,7 @@ func buildWorkflowRunPrecheckResponse(containsAICreditNodes bool, result *llmcli
 	}
 
 	warnings := make([]WorkflowRunPrecheckWarning, 0, len(result.Warnings))
+	seenCodes := make(map[int]struct{}, len(result.Warnings))
 	for _, warning := range result.Warnings {
 		code := 0
 		switch warning.Kind {
@@ -99,13 +100,18 @@ func buildWorkflowRunPrecheckResponse(containsAICreditNodes bool, result *llmcli
 			code = response.ErrWorkflowOrganizationBalanceLow.Code
 		case llmclient.AppModelPrecheckWarningWorkspaceQuotaLow:
 			code = response.ErrWorkflowWorkspaceQuotaLow.Code
-		case llmclient.AppModelPrecheckWarningPrivateChannelBalanceLow:
+		case llmclient.AppModelPrecheckWarningPrivateChannelBalanceLow,
+			llmclient.AppModelPrecheckWarningPrivateChannelUpstreamBalanceLow:
 			code = response.ErrWorkflowPrivateChannelBalanceLow.Code
 		case llmclient.AppModelPrecheckWarningPrivateChannelUpstreamUnavailable:
 			code = response.ErrWorkflowPrivateChannelUpstreamUnavailable.Code
 		default:
 			continue
 		}
+		if _, exists := seenCodes[code]; exists {
+			continue
+		}
+		seenCodes[code] = struct{}{}
 		warnings = append(warnings, WorkflowRunPrecheckWarning{
 			Code: code,
 			Params: map[string]any{

@@ -2,8 +2,10 @@
 
 import { useMutation } from '@tanstack/react-query';
 import { workflowService } from '@/services/workflow.service';
-import type { WorkflowRunInputValues } from '@/services/workflow.service';
-import type { ChatAttachment } from '@/components/chat/types';
+import type {
+  WorkflowChatDraftPrecheckRequest,
+  WorkflowDraftPrecheckRequest,
+} from '@/services/workflow.service';
 
 /**
  * @hook useWorkflowDraftPrecheck
@@ -11,7 +13,7 @@ import type { ChatAttachment } from '@/components/chat/types';
  */
 export function useWorkflowDraftPrecheck(agentId: string) {
   return useMutation({
-    mutationFn: (payload: { inputs?: WorkflowRunInputValues }) =>
+    mutationFn: (payload: WorkflowDraftPrecheckRequest) =>
       workflowService.precheckWorkflowDraft(agentId, payload),
   });
 }
@@ -22,12 +24,7 @@ export function useWorkflowDraftPrecheck(agentId: string) {
  */
 export function useWorkflowChatDraftPrecheck(agentId: string) {
   return useMutation({
-    mutationFn: (payload: {
-      query: string;
-      conversation_id?: string;
-      history_window_size?: number;
-      files?: ChatAttachment[];
-      inputs?: Record<string, unknown>;
-    }) => workflowService.precheckWorkflowChatDraft(agentId, payload),
+    mutationFn: (payload: WorkflowChatDraftPrecheckRequest) =>
+      workflowService.precheckWorkflowChatDraft(agentId, payload),
   });
 }
