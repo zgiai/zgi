@@ -164,6 +164,9 @@ type DataSourceService interface {
 
 	// Excel import operations
 	AnalyzeExcelImport(ctx context.Context, organizationID, dataSourceID, accountID string, req dto.AnalyzeExcelImportRequest) (dto.AnalyzeExcelImportData, error)
+	AnalyzeExistingTableExcelImport(ctx context.Context, organizationID, dataSourceID, tableID, accountID string, req dto.AnalyzeExcelImportRequest) (dto.AnalyzeExistingTableExcelImportData, error)
+	PreviewExistingTableExcelImport(ctx context.Context, organizationID, dataSourceID, tableID, accountID, jobID string, req dto.ExistingTableExcelImportDraftRequest) (dto.ExistingTableExcelImportPreviewData, error)
+	ConfirmExistingTableExcelImport(ctx context.Context, organizationID, dataSourceID, tableID, accountID, jobID string) (dto.ConfirmExcelImportData, error)
 	RecognizeExcelImportFields(ctx context.Context, organizationID, dataSourceID, accountID, jobID string, req dto.RecognizeExcelImportRequest) (dto.RecognizeExcelImportData, error)
 	ConfirmExcelImport(ctx context.Context, organizationID, dataSourceID, accountID, jobID string, req dto.ConfirmExcelImportRequest) (dto.ConfirmExcelImportData, error)
 	GetExcelImportJob(ctx context.Context, organizationID, dataSourceID, jobID string) (*dto.ExcelImportJobResponse, error)
@@ -1841,22 +1844,30 @@ func (s *dataSourceService) getExcelImportColumnMetadata(ctx context.Context, or
 	if job == nil {
 		return map[string]excelImportColumnMetadata{}, nil
 	}
+	return excelImportColumnMetadataFromSnapshot(job.SchemaSnapshot), nil
+}
 
+func excelImportColumnMetadataFromSnapshot(snapshot []byte) map[string]excelImportColumnMetadata {
+	metadata := make(map[string]excelImportColumnMetadata)
 	var inferredColumns []dto.InferredExcelColumn
-	if err := json.Unmarshal(job.SchemaSnapshot, &inferredColumns); err != nil {
-		return nil, fmt.Errorf("failed to parse import schema snapshot: %w", err)
-	}
-
-	metadata := make(map[string]excelImportColumnMetadata, len(inferredColumns))
-	for _, col := range inferredColumns {
-		if col.Name == "" || col.SourceColumn == "" {
-			continue
-		}
-		metadata[col.Name] = excelImportColumnMetadata{
-			SourceColumnName: col.SourceColumn,
+	if err := json.Unmarshal(snapshot, &inferredColumns); err == nil {
+		for _, col := range inferredColumns {
+			if strings.TrimSpace(col.Name) == "" || strings.TrimSpace(col.SourceColumn) == "" {
+				continue
+			}
+			metadata[col.Name] = excelImportColumnMetadata{SourceColumnName: strings.TrimSpace(col.SourceColumn)}
 		}
 	}
-	return metadata, nil
+	var tableColumns []dto.TableColumn
+	if err := json.Unmarshal(snapshot, &tableColumns); err == nil {
+		for _, col := range tableColumns {
+			if strings.TrimSpace(col.Name) == "" || col.SourceColumnName == nil || strings.TrimSpace(*col.SourceColumnName) == "" {
+				continue
+			}
+			metadata[col.Name] = excelImportColumnMetadata{SourceColumnName: strings.TrimSpace(*col.SourceColumnName)}
+		}
+	}
+	return metadata
 }
 
 // AddTableRecords adds records to a table

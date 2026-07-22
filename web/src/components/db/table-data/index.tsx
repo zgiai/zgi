@@ -527,7 +527,7 @@ const TableData: FC<TableDataProps> = ({ dbId, tableId }) => {
   }, []);
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-4">
+    <div className="relative flex min-h-0 flex-1 flex-col gap-4">
       <h1 className="text-base font-semibold">{t('dbs.tableData.title')}</h1>
       <SchemaHealthNotice columns={columns} compact />
       {/* Controls: page size, sort key, sort dir, edit actions */}

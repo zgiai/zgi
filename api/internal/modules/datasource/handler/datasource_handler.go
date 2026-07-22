@@ -2101,6 +2101,9 @@ func (h *DataSourceHandler) RegisterRoutes(router *gin.RouterGroup) {
 	authWithTenant.GET("/data-dbs/:id/tables/:table_id/records", h.QueryTableRecords)
 	authWithTenant.GET("/data-dbs/:id/tables/:table_id/template", h.DownloadTableTemplate)
 	authWithTenant.POST("/data-dbs/:id/tables/:table_id/records/import", h.ImportTableRecords)
+	authWithTenant.POST("/data-dbs/:id/tables/:table_id/import-jobs/analyze", h.AnalyzeExistingTableExcelImport)
+	authWithTenant.PUT("/data-dbs/:id/tables/:table_id/import-jobs/:job_id/preview", h.PreviewExistingTableExcelImport)
+	authWithTenant.POST("/data-dbs/:id/tables/:table_id/import-jobs/:job_id/confirm", h.ConfirmExistingTableExcelImport)
 
 	// File ingestion operations
 	authWithTenant.POST("/data-dbs/parse-file-for-table-ingest", h.ParseFileForTableIngest)

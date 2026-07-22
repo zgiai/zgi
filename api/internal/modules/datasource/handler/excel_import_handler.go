@@ -44,6 +44,90 @@ func (h *DataSourceHandler) AnalyzeExcelImport(c *gin.Context) {
 	response.Success(c, result)
 }
 
+func (h *DataSourceHandler) AnalyzeExistingTableExcelImport(c *gin.Context) {
+	organizationID := util.GetOrganizationIDCompat(c)
+	dataSourceID := c.Param("id")
+	tableID := c.Param("table_id")
+	accountID := c.GetString("account_id")
+	if organizationID == "" || dataSourceID == "" || tableID == "" {
+		response.FailWithMessage(c, response.ErrInvalidParam, "organization, data source, and table are required")
+		return
+	}
+	if accountID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+	if !h.ensureDatabasePermission(c, organizationID, dataSourceID, accountID, model.WorkspacePermissionDatabaseImportAnalyze) {
+		return
+	}
+	var req dto.AnalyzeExcelImportRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.FailWithMessage(c, response.ErrInvalidParam, "invalid request body: "+err.Error())
+		return
+	}
+	result, err := h.service.AnalyzeExistingTableExcelImport(c.Request.Context(), organizationID, dataSourceID, tableID, accountID, req)
+	if err != nil {
+		response.FailWithMessage(c, response.ErrSystemError, err.Error())
+		return
+	}
+	response.Success(c, result)
+}
+
+func (h *DataSourceHandler) PreviewExistingTableExcelImport(c *gin.Context) {
+	organizationID := util.GetOrganizationIDCompat(c)
+	dataSourceID := c.Param("id")
+	tableID := c.Param("table_id")
+	jobID := c.Param("job_id")
+	accountID := c.GetString("account_id")
+	if organizationID == "" || dataSourceID == "" || tableID == "" || jobID == "" {
+		response.FailWithMessage(c, response.ErrInvalidParam, "organization, data source, table, and import job are required")
+		return
+	}
+	if accountID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+	if !h.ensureDatabasePermission(c, organizationID, dataSourceID, accountID, model.WorkspacePermissionDatabaseImportAnalyze) {
+		return
+	}
+	var req dto.ExistingTableExcelImportDraftRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.FailWithMessage(c, response.ErrInvalidParam, "invalid request body: "+err.Error())
+		return
+	}
+	result, err := h.service.PreviewExistingTableExcelImport(c.Request.Context(), organizationID, dataSourceID, tableID, accountID, jobID, req)
+	if err != nil {
+		response.FailWithMessage(c, response.ErrSystemError, err.Error())
+		return
+	}
+	response.Success(c, result)
+}
+
+func (h *DataSourceHandler) ConfirmExistingTableExcelImport(c *gin.Context) {
+	organizationID := util.GetOrganizationIDCompat(c)
+	dataSourceID := c.Param("id")
+	tableID := c.Param("table_id")
+	jobID := c.Param("job_id")
+	accountID := c.GetString("account_id")
+	if organizationID == "" || dataSourceID == "" || tableID == "" || jobID == "" {
+		response.FailWithMessage(c, response.ErrInvalidParam, "organization, data source, table, and import job are required")
+		return
+	}
+	if accountID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+	if !h.ensureDatabasePermission(c, organizationID, dataSourceID, accountID, model.WorkspacePermissionDatabaseImportExecute) {
+		return
+	}
+	result, err := h.service.ConfirmExistingTableExcelImport(c.Request.Context(), organizationID, dataSourceID, tableID, accountID, jobID)
+	if err != nil {
+		response.FailWithMessage(c, response.ErrSystemError, err.Error())
+		return
+	}
+	response.Success(c, result)
+}
+
 func (h *DataSourceHandler) ConfirmExcelImport(c *gin.Context) {
 	organizationID := util.GetOrganizationIDCompat(c)
 	if organizationID == "" {

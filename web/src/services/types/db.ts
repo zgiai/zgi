@@ -545,7 +545,71 @@ export interface ConfirmExcelImportData {
   total_rows: number;
   imported_rows: number;
   failed_rows: number;
+  skipped_rows: number;
   failed_items: ExcelImportFailedItem[];
+}
+
+export type ExcelImportMatchStatus = 'exact' | 'possible' | 'unmatched';
+export type ExcelImportMappingAction = 'map' | 'fixed' | 'skip';
+
+export interface ExistingTableExcelImportMapping {
+  source_column?: string;
+  source_column_index?: number;
+  sample_values?: string[];
+  target_column_id: string;
+  target_column_name: string;
+  target_display_name: string;
+  target_type: string;
+  target_required: boolean;
+  confidence: number;
+  status: ExcelImportMatchStatus;
+  reason: string;
+  action: ExcelImportMappingAction;
+  fixed_value?: string;
+  confirmed: boolean;
+}
+
+export interface AnalyzeExistingTableExcelImportData {
+  job_id: string;
+  source: AnalyzeExcelImportData;
+  target_columns: DbTableColumn[];
+  mappings: ExistingTableExcelImportMapping[];
+  overall_match_rate: number;
+  low_match: boolean;
+}
+
+export interface ExistingTableExcelImportDraftRequest {
+  mappings: ExistingTableExcelImportMapping[];
+  row_changes?: Record<number, Record<string, string>>;
+  skipped_rows?: number[];
+  limit?: number;
+  offset?: number;
+}
+
+export interface ExistingTableExcelImportPreviewCell {
+  original_value: string;
+  transformed_value: DbRecordPrimitive | null;
+  error_code?: string;
+  error_message?: string;
+}
+
+export interface ExistingTableExcelImportPreviewRow {
+  row_index: number;
+  original: Record<string, string>;
+  cells: Record<string, ExistingTableExcelImportPreviewCell>;
+  status: 'valid' | 'failed' | 'skipped';
+}
+
+export interface ExistingTableExcelImportPreviewData {
+  job_id: string;
+  rows: ExistingTableExcelImportPreviewRow[];
+  total_rows: number;
+  valid_rows: number;
+  failed_rows: number;
+  skipped_rows: number;
+  has_more: boolean;
+  limit: number;
+  offset: number;
 }
 
 export interface ExcelImportJob {
