@@ -10,7 +10,6 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { TableCell, TableRow } from '@/components/ui/table';
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { StickyDataTable } from '@/components/common/sticky-data-table';
 import { useAgentRuntimeRunDetail } from '@/hooks/agent/use-agent-runtime-run-detail';
 import { useAgentRuntimeRunSteps } from '@/hooks/agent/use-agent-runtime-run-steps';
@@ -43,6 +42,11 @@ import { cn } from '@/lib/utils';
 import { AgentRuntimeLogDetailDrawer } from './_components/agent-runtime-log-detail-drawer';
 import { AgentLogsAIChatContextRegistration } from './_components/agent-logs-aichat-context';
 import { LogDetailDrawer, type HistoryTab } from './_components/log-detail-drawer';
+import {
+  RuntimeLogSourceBadge,
+  RuntimeLogSourceTabs,
+  type RuntimeLogSourceOption,
+} from './_components/runtime-log-source';
 import { RunStatusBadge } from '@/components/workflow/ui/run-status-badge';
 import { AGENT_PERMISSION_ACTIONS, WORKFLOW_PERMISSION_ACTIONS } from '@/constants/permissions';
 
@@ -52,6 +56,7 @@ interface AgentLogsPageProps {
 
 type LogRunListItem = WorkflowRunItem | AgentRuntimeRunItem;
 type AgentRuntimeLogSource = 'webapp' | 'console' | 'external-api';
+type WorkflowRuntimeLogSource = 'web-app' | 'external-api' | 'workflow' | 'automation';
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -96,10 +101,6 @@ function buildFallbackSummaryFromExecutions(
     elapsed_time: elapsedTime,
     total_steps: executions.length,
   };
-}
-
-function isAgentRuntimeRunItem(item: LogRunListItem): item is AgentRuntimeRunItem {
-  return 'query' in item;
 }
 
 function summarizeLogText(value?: string | null) {
@@ -150,9 +151,7 @@ function LogListState({
         {icon}
       </div>
       <div className="text-sm font-semibold text-foreground">{title}</div>
-      <div className="mt-1.5 max-w-md text-sm leading-6 text-muted-foreground">
-        {description}
-      </div>
+      <div className="mt-1.5 max-w-md text-sm leading-6 text-muted-foreground">{description}</div>
       {action ? <div className="mt-4">{action}</div> : null}
     </div>
   );
@@ -183,6 +182,7 @@ export default function AgentLogsPage({ params }: AgentLogsPageProps) {
   const [conversationFilterInput, setConversationFilterInput] = useState('');
   const [conversationFilter, setConversationFilter] = useState('');
   const [runtimeLogSource, setRuntimeLogSource] = useState<AgentRuntimeLogSource>('webapp');
+  const [workflowLogSource, setWorkflowLogSource] = useState<WorkflowRuntimeLogSource>('web-app');
   const [searchFilterInput, setSearchFilterInput] = useState('');
   const [searchFilter, setSearchFilter] = useState('');
 
@@ -207,6 +207,7 @@ export default function AgentLogsPage({ params }: AgentLogsPageProps) {
   const canQueryWorkflowLogs = canAccessRuntimeLogs && isPublished && !isAgentRuntime;
   const canQueryAgentRuntimeLogs = canAccessRuntimeLogs && isPublished && isAgentRuntime;
   const isConversationWorkflow = agentDetail?.agent_type === AgentType.CONVERSATIONAL_AGENT;
+  const showsConversationSummary = isAgentRuntime || isConversationWorkflow;
   const normalizedConversationFilter = conversationFilter.trim();
   const normalizedSearchFilter = searchFilter.trim();
   const agentRuntimeRunsQuery = useMemo(
@@ -244,7 +245,7 @@ export default function AgentLogsPage({ params }: AgentLogsPageProps) {
     {
       agentId: canQueryWorkflowLogs ? agentId : null,
       limit: 50,
-      query: { triggered_from: 'web-app' },
+      query: { triggered_from: workflowLogSource },
     },
     {
       enabled: canQueryWorkflowLogs,
@@ -455,9 +456,46 @@ export default function AgentLogsPage({ params }: AgentLogsPageProps) {
   const hasPendingRuntimeFilterChanges =
     conversationFilterInput.trim() !== normalizedConversationFilter ||
     searchFilterInput.trim() !== normalizedSearchFilter;
-  const logPageTitle = isAgentRuntime
-    ? t('appLogs.agentTitle')
-    : t('appLogs.workflowTitle');
+  const agentSourceOptions = useMemo<ReadonlyArray<RuntimeLogSourceOption<AgentRuntimeLogSource>>>(
+    () => [
+      { value: 'webapp', label: t('appLogs.filters.sources.webapp') },
+      { value: 'console', label: t('appLogs.filters.sources.console') },
+      { value: 'external-api', label: t('appLogs.filters.sources.externalApi') },
+    ],
+    [t]
+  );
+  const workflowSourceOptions = useMemo<
+    ReadonlyArray<RuntimeLogSourceOption<WorkflowRuntimeLogSource>>
+  >(
+    () => [
+      { value: 'web-app', label: t('appLogs.filters.sources.webapp') },
+      { value: 'external-api', label: t('appLogs.filters.sources.externalApi') },
+      { value: 'workflow', label: t('appLogs.filters.sources.workflow') },
+      { value: 'automation', label: t('appLogs.filters.sources.automation') },
+    ],
+    [t]
+  );
+  const sourceLabels = useMemo(
+    () =>
+      new Map<string, string>([
+        ['webapp', t('appLogs.filters.sources.webapp')],
+        ['web-app', t('appLogs.filters.sources.webapp')],
+        ['app-run', t('appLogs.filters.sources.webapp')],
+        ['console', t('appLogs.filters.sources.console')],
+        ['external-api', t('appLogs.filters.sources.externalApi')],
+        ['workflow', t('appLogs.filters.sources.workflow')],
+        ['automation', t('appLogs.filters.sources.automation')],
+      ]),
+    [t]
+  );
+  const getSourceLabel = (source?: string | null) =>
+    (source ? sourceLabels.get(source) : null) ?? t('appLogs.filters.sources.other');
+  const selectedSourceLabel = isAgentRuntime
+    ? getSourceLabel(
+        agentRuntimeDetail?.source ?? selectedAgentRuntimeRun?.source ?? runtimeLogSource
+      )
+    : getSourceLabel(detail?.triggered_from ?? selectedLog?.triggered_from ?? workflowLogSource);
+  const logPageTitle = t('appLogs.runtimeTitle');
   const logPageSubtitle = isAgentRuntime
     ? t('appLogs.agentSubtitle', { name: agentDetail?.name ?? '' })
     : t('appLogs.workflowSubtitle', { name: agentDetail?.name ?? '' });
@@ -468,8 +506,12 @@ export default function AgentLogsPage({ params }: AgentLogsPageProps) {
       }
     : !isAgentRuntime
       ? {
-          title: t('appLogs.empty.workflowTitle'),
-          description: t('appLogs.empty.workflowDescription'),
+          title: t('appLogs.empty.workflowSourceTitle', {
+            source: getSourceLabel(workflowLogSource),
+          }),
+          description: t('appLogs.empty.workflowSourceDescription', {
+            source: getSourceLabel(workflowLogSource),
+          }),
         }
       : runtimeLogSource === 'console'
         ? {
@@ -486,22 +528,31 @@ export default function AgentLogsPage({ params }: AgentLogsPageProps) {
               description: t('appLogs.empty.agentDescription'),
             };
   const logTableColumns = useMemo(() => {
-    const columns = [
+    const commonColumns = [
       { key: 'runId', header: t('appLogs.columns.runId'), className: 'pl-4' },
+      { key: 'source', header: t('appLogs.columns.source') },
       { key: 'status', header: t('appLogs.columns.status') },
       { key: 'steps', header: tAgents('workflow.steps') },
       { key: 'elapsed', header: tAgents('workflow.elapsed') },
       { key: 'createdAt', header: t('appLogs.columns.createdAt') },
       { key: 'conversation', header: t('appLogs.columns.conversation') },
     ];
-    if (!isAgentRuntime) return columns;
+    if (!showsConversationSummary) {
+      return [
+        commonColumns[0],
+        commonColumns[1],
+        { key: 'version', header: t('appLogs.columns.version') },
+        ...commonColumns.slice(2),
+      ];
+    }
     return [
-      columns[0],
+      commonColumns[0],
+      commonColumns[1],
       { key: 'query', header: t('appLogs.columns.query') },
       { key: 'answer', header: t('appLogs.columns.answer') },
-      ...columns.slice(1),
+      ...commonColumns.slice(2),
     ];
-  }, [isAgentRuntime, t, tAgents]);
+  }, [showsConversationSummary, t, tAgents]);
 
   useEffect(() => {
     if (
@@ -589,10 +640,13 @@ export default function AgentLogsPage({ params }: AgentLogsPageProps) {
     resetRuntimeLogSelection();
   };
 
-  const handleRuntimeSourceChange = (value: string) => {
-    const nextSource: AgentRuntimeLogSource =
-      value === 'console' || value === 'external-api' ? value : 'webapp';
-    setRuntimeLogSource(nextSource);
+  const handleRuntimeSourceChange = (value: AgentRuntimeLogSource) => {
+    setRuntimeLogSource(value);
+    resetRuntimeLogSelection();
+  };
+
+  const handleWorkflowSourceChange = (value: WorkflowRuntimeLogSource) => {
+    setWorkflowLogSource(value);
     resetRuntimeLogSelection();
   };
 
@@ -610,6 +664,16 @@ export default function AgentLogsPage({ params }: AgentLogsPageProps) {
       toast.success(t('appLogs.filters.copiedConversationId'));
     } catch {
       toast.error(t('appLogs.filters.copyConversationFailed'));
+    }
+  };
+
+  const handleCopyRunId = async (runId: string) => {
+    if (typeof navigator === 'undefined') return;
+    try {
+      await navigator.clipboard.writeText(runId);
+      toast.success(t('appLogs.filters.copiedRunId'));
+    } catch {
+      toast.error(t('appLogs.filters.copyRunIdFailed'));
     }
   };
 
@@ -671,7 +735,9 @@ export default function AgentLogsPage({ params }: AgentLogsPageProps) {
             <AlertCircle className="size-5 text-muted-foreground" />
           </div>
           <div className="text-lg font-semibold">
-            {supportsRuntimeLogs ? tRoot('common.accessDenied') : t('appCenter.appUnavailableTitle')}
+            {supportsRuntimeLogs
+              ? tRoot('common.accessDenied')
+              : t('appCenter.appUnavailableTitle')}
           </div>
           <div className="mt-2 text-sm text-muted-foreground">
             {supportsRuntimeLogs
@@ -696,7 +762,7 @@ export default function AgentLogsPage({ params }: AgentLogsPageProps) {
       <AgentLogsAIChatContextRegistration
         agent={agentDetail}
         isAgentRuntime={isAgentRuntime}
-        runtimeLogSource={runtimeLogSource}
+        runtimeLogSource={isAgentRuntime ? runtimeLogSource : workflowLogSource}
         searchFilter={normalizedSearchFilter}
         conversationFilter={normalizedConversationFilter}
         displayRunItems={displayRunItems}
@@ -742,20 +808,20 @@ export default function AgentLogsPage({ params }: AgentLogsPageProps) {
                 </div>
               </div>
               {isAgentRuntime ? (
-                <Tabs value={runtimeLogSource} onValueChange={handleRuntimeSourceChange}>
-                  <TabsList className="h-8">
-                    <TabsTrigger value="webapp" className="h-6 text-xs">
-                      {t('appLogs.filters.sources.webapp')}
-                    </TabsTrigger>
-                    <TabsTrigger value="console" className="h-6 text-xs">
-                      {t('appLogs.filters.sources.console')}
-                    </TabsTrigger>
-                    <TabsTrigger value="external-api" className="h-6 text-xs">
-                      {t('appLogs.filters.sources.externalApi')}
-                    </TabsTrigger>
-                  </TabsList>
-                </Tabs>
-              ) : null}
+                <RuntimeLogSourceTabs
+                  value={runtimeLogSource}
+                  options={agentSourceOptions}
+                  onValueChange={handleRuntimeSourceChange}
+                  ariaLabel={t('appLogs.filters.sourceLabel')}
+                />
+              ) : (
+                <RuntimeLogSourceTabs
+                  value={workflowLogSource}
+                  options={workflowSourceOptions}
+                  onValueChange={handleWorkflowSourceChange}
+                  ariaLabel={t('appLogs.filters.sourceLabel')}
+                />
+              )}
             </div>
 
             {isAgentRuntime ? (
@@ -909,12 +975,11 @@ export default function AgentLogsPage({ params }: AgentLogsPageProps) {
               >
                 {displayRunItems.map(item => {
                   const isSelected = item.id === selectedLogId;
-                  const querySummary = isAgentRuntimeRunItem(item)
-                    ? summarizeLogText(item.query)
-                    : '';
-                  const answerSummary = isAgentRuntimeRunItem(item)
-                    ? summarizeLogText(item.answer_preview)
-                    : '';
+                  const agentRuntimeItem = isAgentRuntime ? (item as AgentRuntimeRunItem) : null;
+                  const workflowItem = isAgentRuntime ? null : (item as WorkflowRunItem);
+                  const workflowVersion = workflowItem?.version;
+                  const querySummary = summarizeLogText(item.query);
+                  const answerSummary = summarizeLogText(item.answer_preview);
                   return (
                     <TableRow
                       key={item.id}
@@ -932,12 +997,36 @@ export default function AgentLogsPage({ params }: AgentLogsPageProps) {
                         handleSelectLog(item);
                       }}
                     >
-                      <TableCell className="max-w-[280px] py-4 pl-4 font-medium">
-                        <div className="truncate" title={item.id}>
-                          {item.id}
+                      <TableCell className="max-w-[220px] py-4 pl-4 font-medium">
+                        <div className="flex min-w-0 items-center gap-1">
+                          <div className="min-w-0 truncate" title={item.id}>
+                            {shortenID(item.id)}
+                          </div>
+                          <Button
+                            type="button"
+                            size="xs"
+                            variant="ghost"
+                            isIcon
+                            className="shrink-0 text-muted-foreground"
+                            aria-label={t('appLogs.filters.copyRunId')}
+                            title={t('appLogs.filters.copyRunId')}
+                            onClick={event => {
+                              event.stopPropagation();
+                              void handleCopyRunId(item.id);
+                            }}
+                          >
+                            <Copy className="size-3.5" />
+                          </Button>
                         </div>
                       </TableCell>
-                      {isAgentRuntime ? (
+                      <TableCell className="max-w-[180px] py-4">
+                        <RuntimeLogSourceBadge
+                          label={getSourceLabel(
+                            agentRuntimeItem?.source ?? workflowItem?.triggered_from
+                          )}
+                        />
+                      </TableCell>
+                      {showsConversationSummary ? (
                         <>
                           <TableCell className="max-w-[300px] py-4">
                             <div
@@ -956,7 +1045,13 @@ export default function AgentLogsPage({ params }: AgentLogsPageProps) {
                             </div>
                           </TableCell>
                         </>
-                      ) : null}
+                      ) : (
+                        <TableCell className="max-w-[180px] py-4">
+                          <div className="truncate" title={workflowVersion ?? '-'}>
+                            {workflowVersion ?? '-'}
+                          </div>
+                        </TableCell>
+                      )}
                       <TableCell className="py-4">
                         <RunStatusBadge status={item.status} />
                       </TableCell>
@@ -1027,6 +1122,7 @@ export default function AgentLogsPage({ params }: AgentLogsPageProps) {
             steps={agentRuntimeSteps}
             isLoading={agentRuntimeDetailLoading}
             error={agentRuntimeDetailError}
+            sourceLabel={selectedSourceLabel}
           />
         ) : (
           <LogDetailDrawer
@@ -1050,6 +1146,8 @@ export default function AgentLogsPage({ params }: AgentLogsPageProps) {
             onInspectMessage={handleInspectMessage}
             onBackToSelectedRun={handleBackToSelectedRun}
             showDeepLinkedHint={Boolean(focusRunId && !selectedLog && fallbackSummary)}
+            sourceLabel={selectedSourceLabel}
+            version={detail?.version ?? selectedLog?.version}
           />
         )}
       </div>
