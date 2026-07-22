@@ -51,8 +51,10 @@ const BatchImportDialog: FC<BatchImportDialogProps> = ({ open, onOpenChange, dbI
 
   const analysis = analyze.data?.data;
   const targetColumns = analysis?.target_columns ?? [];
+  const targetColumnBusinessName = (column: (typeof targetColumns)[number]) =>
+    column.source_column_name?.trim() || column.name;
   const targetColumnLabel = (column: (typeof targetColumns)[number]) => {
-    const businessLabel = column.source_column_name?.trim() || column.display_name?.trim() || column.name;
+    const businessLabel = targetColumnBusinessName(column);
     return businessLabel === column.name ? column.name : `${businessLabel} - ${column.name}`;
   };
   const usedTargetIds = useMemo(
@@ -148,10 +150,10 @@ const BatchImportDialog: FC<BatchImportDialogProps> = ({ open, onOpenChange, dbI
           const recognized = response.data.columns.find(column => column.source_column_index === item.source_column_index);
           if (!recognized) return item;
           const names = [recognized.name, recognized.display_name].map(normalize);
-          const target = data.target_columns.find(column => !occupied.has(column.id) && names.some(name => name && [column.name, column.display_name ?? ''].map(normalize).includes(name)));
+          const target = data.target_columns.find(column => !occupied.has(column.id) && names.some(name => name && [column.name, column.source_column_name ?? ''].map(normalize).includes(name)));
           if (!target) return item;
           occupied.add(target.id);
-          return { ...item, target_column_id: target.id, target_column_name: target.name, target_display_name: target.display_name ?? target.name, target_type: target.type, target_required: target.is_required, confidence: Math.max(item.confidence, 75), status: 'possible' as const, reason: t('modelSuggested'), action: 'map' as const };
+          return { ...item, target_column_id: target.id, target_column_name: target.name, target_display_name: targetColumnBusinessName(target), target_type: target.type, target_required: target.is_required, confidence: Math.max(item.confidence, 75), status: 'possible' as const, reason: t('modelSuggested'), action: 'map' as const };
         });
         return enriched.filter(item => item.source_column || !occupied.has(item.target_column_id));
       });
@@ -170,7 +172,7 @@ const BatchImportDialog: FC<BatchImportDialogProps> = ({ open, onOpenChange, dbI
     return {
       target_column_id: target.id,
       target_column_name: target.name,
-      target_display_name: target.display_name ?? target.name,
+      target_display_name: targetColumnBusinessName(target),
       target_type: target.type,
       target_required: target.is_required,
       confidence: 0,
@@ -190,7 +192,7 @@ const BatchImportDialog: FC<BatchImportDialogProps> = ({ open, onOpenChange, dbI
         .filter((item, itemIndex) => itemIndex === index || item.source_column || item.target_column_id !== targetId)
         .map(item => item);
       const currentIndex = next.findIndex(item => item === current[index]);
-      next[currentIndex] = { ...next[currentIndex], target_column_id: target.id, target_column_name: target.name, target_display_name: target.display_name ?? target.name, target_type: target.type, target_required: target.is_required, action: 'map', confirmed: true };
+      next[currentIndex] = { ...next[currentIndex], target_column_id: target.id, target_column_name: target.name, target_display_name: targetColumnBusinessName(target), target_type: target.type, target_required: target.is_required, action: 'map', confirmed: true };
       if (previousTargetId && previousTargetId !== targetId && !next.some(item => item.target_column_id === previousTargetId)) {
         const fallback = fallbackForTarget(previousTargetId);
         if (fallback) next.push(fallback);
