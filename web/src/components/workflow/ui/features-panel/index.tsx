@@ -59,6 +59,22 @@ function normalizeSuggestedQuestionsForEditor(questions: string[] = []): string[
     .slice(0, SUGGESTED_QUESTIONS_LIMIT);
 }
 
+function suggestedQuestionWarningKey(
+  warning: string
+):
+  | 'workflow.features.suggestedQuestions.queryNotUsed'
+  | 'workflow.features.suggestedQuestions.contextInsufficient'
+  | undefined {
+  switch (warning) {
+    case 'conversation_query_not_used':
+      return 'workflow.features.suggestedQuestions.queryNotUsed';
+    case 'conversation_generation_context_insufficient':
+      return 'workflow.features.suggestedQuestions.contextInsufficient';
+    default:
+      return undefined;
+  }
+}
+
 type FeaturesForm = Pick<
   WorkflowFeatures,
   | 'opening_statement_type'
@@ -313,14 +329,19 @@ export default function FeaturesPanel({
         },
       });
 
+      const warnings = (result.warnings ?? []).map(warning => {
+        const key = suggestedQuestionWarningKey(warning);
+        return key ? t(key) : warning;
+      });
+
       if (!result.questions?.length) {
-        toast.warning(t('workflow.features.suggestedQuestions.generateEmpty'));
-        return undefined;
+        toast.warning(warnings[0] ?? t('workflow.features.suggestedQuestions.generateEmpty'));
+        return { questions: [], warnings };
       }
 
       return {
         questions: result.questions.map(question => question.text),
-        warnings: result.warnings ?? [],
+        warnings,
       };
     } catch {
       // The mutation hook owns the user-facing error toast.

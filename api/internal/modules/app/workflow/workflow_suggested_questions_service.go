@@ -45,6 +45,22 @@ func (s *WorkflowService) GenerateDraftWorkflowSuggestedQuestions(ctx context.Co
 		}
 	}
 
+	generationContext := suggestedquestions.BuildContext(suggestedquestions.BuildContextInput{
+		Locale:            req.Locale,
+		AgentName:         agentName,
+		AgentDescription:  agentDescription,
+		WorkflowType:      string(workflow.Type),
+		Graph:             graph,
+		Features:          features,
+		ExistingQuestions: req.ExistingQuestions,
+	})
+	if generationContext.SkipGeneration {
+		return &dto.GenerateSuggestedQuestionsResponse{
+			Questions: []dto.SuggestedQuestionCandidate{},
+			Warnings:  generationContext.AnalysisWarnings,
+		}, nil
+	}
+
 	if s == nil || s.executor == nil {
 		return nil, fmt.Errorf("workflow executor is not configured")
 	}
@@ -61,16 +77,6 @@ func (s *WorkflowService) GenerateDraftWorkflowSuggestedQuestions(ctx context.Co
 	}
 
 	generator := suggestedquestions.NewGenerator(llm)
-	generationContext := suggestedquestions.BuildContext(suggestedquestions.BuildContextInput{
-		Locale:            req.Locale,
-		AgentName:         agentName,
-		AgentDescription:  agentDescription,
-		WorkflowType:      string(workflow.Type),
-		Graph:             graph,
-		Features:          features,
-		ExistingQuestions: req.ExistingQuestions,
-	})
-
 	result, err := generator.Generate(ctx, suggestedquestions.GenerateRequest{
 		Context:        generationContext,
 		Count:          req.Count,

@@ -357,13 +357,15 @@ const OpeningStatementDialog: React.FC<OpeningStatementDialogProps> = ({
       title: clampOpeningSlogan(draft.title),
       suggestedQuestions: normalizeQuestions(draft.suggestedQuestions),
     });
-    if (!result?.questions.length) return;
+    if (!result) return;
+
+    setGeneratedWarnings(result.warnings ?? []);
+    if (!result.questions.length) return;
 
     setDraft(prev => ({
       ...prev,
       suggestedQuestions: mergeGeneratedQuestions(prev.suggestedQuestions, result.questions),
     }));
-    setGeneratedWarnings(result.warnings ?? []);
   }, [draft, onGenerateSuggestedQuestions]);
 
   const questions = normalizeQuestions(draft.suggestedQuestions);

@@ -42,6 +42,9 @@ func firstNonEmpty(values ...string) string {
 
 // Generate returns editable suggested questions for the supplied workflow context.
 func (g *Generator) Generate(ctx context.Context, req GenerateRequest) (*GenerateResult, error) {
+	if req.Context.SkipGeneration {
+		return &GenerateResult{Warnings: uniqueTrimmed(req.Context.AnalysisWarnings, 6)}, nil
+	}
 	if g == nil || g.llmClient == nil {
 		return nil, fmt.Errorf("llm client is not configured")
 	}
@@ -119,13 +122,13 @@ func (g *Generator) Generate(ctx context.Context, req GenerateRequest) (*Generat
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrModelOutputInvalid, err)
 	}
-	if len(questions) == 0 {
+	if len(questions) == 0 && len(warnings) == 0 {
 		return nil, fmt.Errorf("%w: response did not contain suggested questions", ErrModelOutputInvalid)
 	}
 
 	return &GenerateResult{
 		Questions: questions,
-		Warnings:  warnings,
+		Warnings:  uniqueTrimmed(append(req.Context.AnalysisWarnings, warnings...), 6),
 		Provider:  provider,
 		Model:     model,
 	}, nil

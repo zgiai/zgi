@@ -45,10 +45,12 @@ func buildUserPrompt(ctx WorkflowContext, count int) (string, error) {
 }
 
 func applicationKind(workflowType string) string {
-	switch workflowType {
-	case "AGENT":
+	switch normalizeWorkflowType(workflowType) {
+	case "agent":
 		return "agent web app"
-	case "WORKFLOW", "CONVERSATIONAL_WORKFLOW":
+	case "conversational_workflow":
+		return "conversational workflow web app"
+	case "workflow":
 		return "workflow web app"
 	default:
 		return "AI app"
