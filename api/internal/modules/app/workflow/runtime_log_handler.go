@@ -295,6 +295,10 @@ func (h *RuntimeLogHandler) GetWorkflowRunNodeLogs(c *gin.Context) {
 	// Build response
 	items := make([]map[string]interface{}, 0, len(nodeLogs))
 	for _, nodeLog := range nodeLogs {
+		if !workflowNodeRuntimeStatusIsVisible(string(nodeLog.Status)) {
+			continue
+		}
+
 		item := map[string]interface{}{
 			"id":            nodeLog.ID,
 			"node_id":       nodeLog.NodeID,

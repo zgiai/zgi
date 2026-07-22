@@ -19,6 +19,7 @@ import (
 )
 
 const automationTriggeredFrom = string(InvokeFromAutomation)
+const embeddedWorkflowTriggeredFrom = string(InvokeFromWorkflow)
 
 const automationFinalizationTimeout = 30 * time.Second
 
@@ -51,7 +52,8 @@ const (
 	automationWorkflowEventFailed            = "workflow_failed"
 )
 
-// RunAutomationWorkflow executes a published workflow from an automation action.
+// RunAutomationWorkflow executes a published workflow from an automation action
+// or an embedded Agent workflow invocation.
 func (s *WorkflowService) RunAutomationWorkflow(ctx context.Context, req automationaction.WorkflowRunRequest) (*automationaction.WorkflowRunResult, error) {
 	if s == nil {
 		return nil, fmt.Errorf("workflow service is not configured")
@@ -94,11 +96,12 @@ func (s *WorkflowService) RunAutomationWorkflow(ctx context.Context, req automat
 	}
 
 	inputs := automationWorkflowInputs(req, target)
-	runCtx := context.WithValue(ctx, "invoke_from", automationTriggeredFrom)
-	runCtx = context.WithValue(runCtx, "created_from", automationTriggeredFrom)
+	triggeredFrom := workflowRunTriggeredFrom(req.Invocation)
+	runCtx := context.WithValue(ctx, "invoke_from", triggeredFrom)
+	runCtx = context.WithValue(runCtx, "created_from", triggeredFrom)
 	runCtx = context.WithValue(runCtx, "created_by_role", string(CreatedByRoleAccount))
 
-	workflowRunLog, err := s.createWorkflowRunLog(runCtx, req.WorkspaceID, target.AgentID, target.ID, automationTriggeredFrom, inputs, req.AccountID, req.Invocation)
+	workflowRunLog, err := s.createWorkflowRunLog(runCtx, req.WorkspaceID, target.AgentID, target.ID, triggeredFrom, inputs, req.AccountID, req.Invocation)
 	if err != nil {
 		if req.Invocation != nil {
 			if existing, lookupErr := s.findWorkflowInvocationRun(ctx, req.Invocation); lookupErr == nil && existing != nil {
@@ -199,13 +202,13 @@ func (s *WorkflowService) RunAutomationWorkflow(ctx context.Context, req automat
 	totalSteps := 0
 	if executionResult != nil {
 		outputs = automationWorkflowOutputs(executionResult)
-		totalSteps = len(executionResult.NodeResults)
+		totalSteps = workflowExecutionResultStepCount(executionResult)
 		if executionResult.ExecutionTime > 0 {
 			elapsedTime = durationMilliseconds(executionResult.ExecutionTime)
 		}
 	}
 
-	if err := s.persistAutomationWorkflowNodeRuntimeLogs(finalizeCtx, req.WorkspaceID, req.AccountID, target, graphData, workflowRunLogID, executionResult); err != nil {
+	if err := s.persistAutomationWorkflowNodeRuntimeLogs(finalizeCtx, req.WorkspaceID, req.AccountID, triggeredFrom, target, graphData, workflowRunLogID, executionResult); err != nil {
 		logger.ErrorContext(finalizeCtx, "failed to persist automation workflow node runtime logs",
 			zap.String("workflow_run_id", workflowRunLogID),
 			zap.String("workflow_id", target.ID),
@@ -305,6 +308,19 @@ func workflowInvocationMode(invocation *automationaction.WorkflowInvocationConte
 		return automationaction.WorkflowInvocationModeStandalone
 	}
 	return strings.TrimSpace(invocation.Mode)
+}
+
+func workflowRunTriggeredFrom(invocation *automationaction.WorkflowInvocationContext) string {
+	if invocation == nil {
+		return automationTriggeredFrom
+	}
+
+	switch strings.TrimSpace(invocation.Mode) {
+	case automationaction.WorkflowInvocationModeAgentDelegate, automationaction.WorkflowInvocationModeAgentTaskTool:
+		return embeddedWorkflowTriggeredFrom
+	default:
+		return automationTriggeredFrom
+	}
 }
 
 func emitAutomationWorkflowStarted(sink automationaction.WorkflowRunEventSink, req automationaction.WorkflowRunRequest, workflow *Workflow, workflowRunID string) {
@@ -676,7 +692,7 @@ func persistAutomationWorkflowPause(ctx context.Context, req automationaction.Wo
 		AppID:         appID,
 		TenantID:      req.WorkspaceID,
 		RunType:       runType,
-		TriggeredFrom: automationTriggeredFrom,
+		TriggeredFrom: workflowRunTriggeredFrom(req.Invocation),
 		Request: workflowpause.RequestState{
 			Inputs:       copyWorkflowAnyMap(inputs),
 			ResponseMode: "streaming",
@@ -1109,7 +1125,7 @@ type automationWorkflowNodeMeta struct {
 	PredecessorNodeID *string
 }
 
-func (s *WorkflowService) persistAutomationWorkflowNodeRuntimeLogs(ctx context.Context, workspaceID, accountID string, workflow *Workflow, graphData map[string]interface{}, workflowRunID string, result *WorkflowExecutionResult) error {
+func (s *WorkflowService) persistAutomationWorkflowNodeRuntimeLogs(ctx context.Context, workspaceID, accountID, triggeredFrom string, workflow *Workflow, graphData map[string]interface{}, workflowRunID string, result *WorkflowExecutionResult) error {
 	if s == nil || s.workflowNodeRuntimeLogRepo == nil || workflow == nil || result == nil || workflowRunID == "" {
 		return nil
 	}
@@ -1119,6 +1135,10 @@ func (s *WorkflowService) persistAutomationWorkflowNodeRuntimeLogs(ctx context.C
 	featuresSnapshot := optionalStringPointer(workflow.Features)
 
 	for index, snapshot := range result.NodeExecutions {
+		if !workflowNodeRuntimeStatusIsVisible(string(snapshot.Status)) {
+			continue
+		}
+
 		meta := nodeMetas[snapshot.NodeID]
 		if meta.NodeID == "" {
 			meta = automationWorkflowNodeMeta{
@@ -1135,7 +1155,7 @@ func (s *WorkflowService) persistAutomationWorkflowNodeRuntimeLogs(ctx context.C
 			meta.Title = meta.NodeID
 		}
 
-		nodeLog, err := automationWorkflowNodeRuntimeLog(workspaceID, accountID, workflow, workflowRunID, graphSnapshot, featuresSnapshot, meta, snapshot)
+		nodeLog, err := automationWorkflowNodeRuntimeLog(workspaceID, accountID, triggeredFrom, workflow, workflowRunID, graphSnapshot, featuresSnapshot, meta, snapshot)
 		if err != nil {
 			return err
 		}
@@ -1147,7 +1167,7 @@ func (s *WorkflowService) persistAutomationWorkflowNodeRuntimeLogs(ctx context.C
 	return nil
 }
 
-func automationWorkflowNodeRuntimeLog(workspaceID, accountID string, workflow *Workflow, workflowRunID string, graphSnapshot, featuresSnapshot *string, meta automationWorkflowNodeMeta, snapshot graph_engine.NodeExecutionSnapshot) (*WorkflowNodeRuntimeLog, error) {
+func automationWorkflowNodeRuntimeLog(workspaceID, accountID, triggeredFrom string, workflow *Workflow, workflowRunID string, graphSnapshot, featuresSnapshot *string, meta automationWorkflowNodeMeta, snapshot graph_engine.NodeExecutionSnapshot) (*WorkflowNodeRuntimeLog, error) {
 	inputs, err := jsonMapStringPointer(snapshot.Inputs)
 	if err != nil {
 		return nil, fmt.Errorf("marshal node inputs for node %s: %w", snapshot.NodeID, err)
@@ -1194,7 +1214,7 @@ func automationWorkflowNodeRuntimeLog(workspaceID, accountID string, workflow *W
 		TenantID:          workspaceID,
 		AgentID:           workflow.AgentID,
 		WorkflowID:        workflow.ID,
-		TriggeredFrom:     automationTriggeredFrom,
+		TriggeredFrom:     triggeredFrom,
 		WorkflowRunID:     &workflowRunID,
 		Index:             meta.Index,
 		PredecessorNodeID: meta.PredecessorNodeID,

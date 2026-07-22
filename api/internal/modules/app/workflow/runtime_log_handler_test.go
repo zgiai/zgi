@@ -174,6 +174,45 @@ func TestGetWorkflowRunNodeLogs_FiltersFrontendInputs(t *testing.T) {
 	}
 }
 
+func TestGetWorkflowRunNodeLogsOmitsUnexecutedGraphPlaceholders(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	createdAt := time.Unix(1700000000, 0)
+	repo := &mockWorkflowNodeRuntimeLogRepo{
+		logsByWorkflowRunID: []WorkflowNodeRuntimeLog{
+			{ID: "pending", NodeID: "inactive-loop", NodeType: "loop", Title: "Loop", Status: "pending", CreatedAt: createdAt},
+			{ID: "skipped", NodeID: "inactive-end", NodeType: "end", Title: "End", Status: "skipped", CreatedAt: createdAt},
+			{ID: "completed", NodeID: "active-end", NodeType: "end", Title: "End", Status: "succeeded", CreatedAt: createdAt},
+		},
+	}
+	handler := NewRuntimeLogHandler(nil, repo)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Params = gin.Params{{Key: "agent_id", Value: "agent-1"}, {Key: "run_id", Value: "run-1"}}
+	ctx.Set("account_id", "account-1")
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/agents/agent-1/workflow-runs/run-1/nodes", nil)
+
+	handler.GetWorkflowRunNodeLogs(ctx)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", recorder.Code)
+	}
+	var resp map[string]any
+	if err := json.Unmarshal(recorder.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	payload := resp["data"].(map[string]any)
+	items := payload["data"].([]any)
+	if len(items) != 1 {
+		t.Fatalf("visible node log count = %d, want 1: %#v", len(items), items)
+	}
+	if nodeID := items[0].(map[string]any)["node_id"]; nodeID != "active-end" {
+		t.Fatalf("visible node ID = %#v, want active-end", nodeID)
+	}
+	if total := payload["total"]; total != float64(1) {
+		t.Fatalf("visible total = %#v, want 1", total)
+	}
+}
+
 func TestInternalContainerNodeLogItemsRestoresEveryIterationRound(t *testing.T) {
 	reader := &fakeRuntimeLogEventReader{events: []workflowpause.RunEventPayload{
 		{

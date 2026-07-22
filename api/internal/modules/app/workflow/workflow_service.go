@@ -68,6 +68,8 @@ type workflowRunMessageLookup interface {
 type runLinkedMessage struct {
 	MessageID      string
 	ConversationID string
+	Query          string
+	AnswerPreview  string
 }
 
 type reusableSessionCleaner interface {
@@ -1507,7 +1509,7 @@ func (s *WorkflowService) GetLatestPublishedWorkflow(ctx context.Context, reques
 // RunPublishedWorkflow runs published workflow
 func (s *WorkflowService) RunPublishedWorkflow(ctx context.Context, workspaceID, agentID string, req interface{}, accountID string) (interface{}, error) {
 	// Get invoke_from, created_from, and created_by_role from context
-	invokeFrom := "app-run" // Default
+	invokeFrom := string(InvokeFromWebApp) // Default
 	if val := ctx.Value("invoke_from"); val != nil {
 		if str, ok := val.(string); ok {
 			invokeFrom = str
@@ -1887,6 +1889,9 @@ func (s *WorkflowService) GetWorkflowRunNodeExecutions(ctx context.Context, tena
 		// Node runtime logs still persist the execution workspace in TenantID, so
 		// agent ownership is the stable filter for legacy console paths.
 		if l.AgentID != agentID {
+			continue
+		}
+		if !workflowNodeRuntimeStatusIsVisible(string(l.Status)) {
 			continue
 		}
 
@@ -2569,6 +2574,8 @@ func (s *WorkflowService) GetWorkflowRuns(ctx context.Context, agentID string, r
 		if linkedMessage, exists := runMessages[workflowRuns[i].ID]; exists {
 			workflowRuns[i].ConversationID = newStringPointer(linkedMessage.ConversationID)
 			workflowRuns[i].MessageID = newStringPointer(linkedMessage.MessageID)
+			workflowRuns[i].Query = linkedMessage.Query
+			workflowRuns[i].AnswerPreview = linkedMessage.AnswerPreview
 		} else if conversationID := workflowRunSystemInputConversationID(logs[i]); conversationID != "" {
 			workflowRuns[i].ConversationID = newStringPointer(conversationID)
 		} else if conversationID := s.workflowRunNodeSystemInputConversationID(ctx, workflowRuns[i].ID); conversationID != "" {
@@ -2695,6 +2702,7 @@ func (s *WorkflowService) GetWorkflowRunDetail(ctx context.Context, tenantID, ag
 		ID:               log.ID,
 		SequenceNumber:   log.SequenceNumber,
 		Version:          log.Version,
+		TriggeredFrom:    log.TriggeredFrom,
 		Graph:            graph,
 		Features:         features,
 		Inputs:           inputs,
@@ -3105,10 +3113,10 @@ func (s *WorkflowService) WorkflowRunElapsedMillisecondsForEvent(ctx context.Con
 }
 
 func (s *WorkflowService) workflowRunTotalSteps(ctx context.Context, log WorkflowRunLog) int {
-	if log.TotalSteps > 0 {
-		return log.TotalSteps
+	if totalSteps := s.workflowRunNodeStepCount(ctx, log.ID); totalSteps > 0 {
+		return totalSteps
 	}
-	return s.workflowRunNodeStepCount(ctx, log.ID)
+	return log.TotalSteps
 }
 
 func workflowRunInputConversationID(log WorkflowRunLog) string {
@@ -3239,7 +3247,7 @@ func (s *WorkflowService) workflowRunNodeStepCount(ctx context.Context, workflow
 	if err != nil {
 		return 0
 	}
-	return len(nodeLogs)
+	return workflowNodeRuntimeLogStepCount(nodeLogs)
 }
 
 func inputMapConversationID(rawInputs string) string {
@@ -3298,6 +3306,8 @@ func (s *WorkflowService) getRunLinkedMessages(ctx context.Context, runs []dto.W
 		result[runID] = &runLinkedMessage{
 			MessageID:      message.ID.String(),
 			ConversationID: message.ConversationID.String(),
+			Query:          message.Query,
+			AnswerPreview:  truncateAgentRuntimeText(message.Answer, 160),
 		}
 	}
 

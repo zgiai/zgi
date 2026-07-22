@@ -520,6 +520,8 @@ func buildRuntimeWorkflowRunLogResponse(message *runtimemodel.Message) dto.Workf
 		SequenceNumber:  0,
 		Version:         metadataString(metadata, "system_prompt_version", "chat_runtime"),
 		TriggeredFrom:   string(CreatedFromWebApp),
+		Query:           message.Query,
+		AnswerPreview:   truncateAgentRuntimeText(message.Answer, 160),
 		Status:          runtimeWorkflowStatus(message.Status),
 		ElapsedTime:     runtimeElapsedTime(message),
 		TotalTokens:     int64(metadataTotalTokens(metadata)),

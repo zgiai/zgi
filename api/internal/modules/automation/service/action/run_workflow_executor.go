@@ -37,7 +37,8 @@ type WorkflowInvocationContext struct {
 	ContextSnapshot      map[string]interface{}
 }
 
-// AutomationWorkflowRunner is implemented by the workflow module for automation-triggered runs.
+// AutomationWorkflowRunner is implemented by the workflow module for automation
+// actions and embedded Agent workflow invocations.
 type AutomationWorkflowRunner interface {
 	RunAutomationWorkflow(ctx context.Context, req WorkflowRunRequest) (*WorkflowRunResult, error)
 }
@@ -63,7 +64,8 @@ type WorkflowRunRequest struct {
 	Invocation     *WorkflowInvocationContext
 }
 
-// WorkflowRunEventSink receives normalized workflow run events during an automation-triggered run.
+// WorkflowRunEventSink receives normalized workflow run events during an
+// automation action or embedded Agent workflow invocation.
 type WorkflowRunEventSink func(WorkflowRunEvent)
 
 // WorkflowRunEvent is the event contract exposed by automation-triggered workflow runs.
