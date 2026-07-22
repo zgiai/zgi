@@ -13,6 +13,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/repository"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/skillloop"
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
+	llmerrors "github.com/zgiai/zgi/api/internal/modules/llm/errors"
 	"github.com/zgiai/zgi/api/internal/modules/llm/gateway"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/pkg/logger"
@@ -989,6 +990,9 @@ func publicAichatErrorCodeAndMessage(err error) (int, string, bool) {
 	}
 	if errors.Is(err, adapter.ErrPlatformChannelUnavailable) {
 		return response.ErrWorkflowPlatformChannelUnavailable.Code, response.ErrWorkflowPlatformChannelUnavailable.Message, true
+	}
+	if errors.Is(err, llmerrors.DomainErrPrivateChannelUpstreamUnavailable) {
+		return response.ErrWorkflowPrivateChannelUpstreamUnavailable.Code, response.ErrWorkflowPrivateChannelUpstreamUnavailable.Message, true
 	}
 	return 0, "", false
 }
