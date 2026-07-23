@@ -3,6 +3,7 @@ package service
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -491,6 +492,57 @@ func TestWithSourceColumnNamesRejectsUnclearHeaderMatch(t *testing.T) {
 	}
 }
 
+func TestLLMSourceColumnNameSupportsCurrentAndLegacyFields(t *testing.T) {
+	tests := []struct {
+		name             string
+		sourceColumnName string
+		displayName      string
+		want             string
+	}{
+		{name: "current field", sourceColumnName: "工号", want: "工号"},
+		{name: "legacy field", displayName: "工号", want: "工号"},
+		{name: "current field wins", sourceColumnName: "员工编号", displayName: "工号", want: "员工编号"},
+		{name: "trim values", sourceColumnName: "  工号  ", displayName: " 姓名 ", want: "工号"},
+		{name: "empty fields", want: ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := llmSourceColumnName(tt.sourceColumnName, tt.displayName); got != tt.want {
+				t.Fatalf("llmSourceColumnName(%q, %q) = %q, want %q", tt.sourceColumnName, tt.displayName, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestLegacyLLMDisplayNameStillUsesStrictSourceHeaderMatching(t *testing.T) {
+	var llmColumns []llmTableColumn
+	if err := json.Unmarshal([]byte(`[{"Name":"employee_id","DisplayName":"工号","Type":"text","IsRequired":true,"Description":"员工工号"}]`), &llmColumns); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v", err)
+	}
+	if len(llmColumns) != 1 {
+		t.Fatalf("len(llmColumns) = %d, want 1", len(llmColumns))
+	}
+
+	sourceColumnName := llmSourceColumnName(llmColumns[0].SourceColumnName, llmColumns[0].DisplayName)
+	columns := []dto.TableColumn{
+		{Name: llmColumns[0].Name, SourceColumnName: &sourceColumnName, Type: llmColumns[0].Type},
+	}
+
+	got, err := withSourceColumnNames(columns, []string{"工号"})
+	if err != nil {
+		t.Fatalf("withSourceColumnNames() error = %v", err)
+	}
+	if got[0].SourceColumnName == nil || *got[0].SourceColumnName != "工号" {
+		t.Fatalf("got[0].SourceColumnName = %v, want 工号", got[0].SourceColumnName)
+	}
+
+	_, err = withSourceColumnNames(columns, []string{"员工编号"})
+	if err == nil {
+		t.Fatal("withSourceColumnNames() error = nil, want mismatched legacy header error")
+	}
+}
+
 func TestHasExplicitSourceColumnMetadata(t *testing.T) {
 	emptySource := ""
 	phoneSource := "手机号"
@@ -571,6 +623,50 @@ func TestTableSourceHeadersReadsExcelOriginalHeaders(t *testing.T) {
 	}
 	if len(headers) != 2 || headers[0] != "用户ID" || headers[1] != "手机号" {
 		t.Fatalf("tableSourceHeaders() = %#v, want [用户ID 手机号]", headers)
+	}
+}
+
+func TestTableSourceHeadersDetectsHeaderBelowTitleRow(t *testing.T) {
+	f := excelize.NewFile()
+	defer func() { _ = f.Close() }()
+	const sheet = "Sheet1"
+	if err := f.SetCellValue(sheet, "C1", "员工信息库"); err != nil {
+		t.Fatalf("SetCellValue(title) error = %v", err)
+	}
+	headers := []string{"工号", "性别", "部门", "岗位"}
+	values := []string{"10001", "男", "研发部", "工程师"}
+	for index, header := range headers {
+		cell, err := excelize.CoordinatesToCellName(index+1, 2)
+		if err != nil {
+			t.Fatalf("CoordinatesToCellName(header) error = %v", err)
+		}
+		if err := f.SetCellValue(sheet, cell, header); err != nil {
+			t.Fatalf("SetCellValue(header) error = %v", err)
+		}
+		cell, err = excelize.CoordinatesToCellName(index+1, 3)
+		if err != nil {
+			t.Fatalf("CoordinatesToCellName(value) error = %v", err)
+		}
+		if err := f.SetCellValue(sheet, cell, values[index]); err != nil {
+			t.Fatalf("SetCellValue(value) error = %v", err)
+		}
+	}
+	var buffer bytes.Buffer
+	if err := f.Write(&buffer); err != nil {
+		t.Fatalf("Write() error = %v", err)
+	}
+
+	got, err := tableSourceHeaders("employees.xlsx", buffer.Bytes())
+	if err != nil {
+		t.Fatalf("tableSourceHeaders() error = %v", err)
+	}
+	if len(got) < len(headers) {
+		t.Fatalf("tableSourceHeaders() = %#v, want at least %#v", got, headers)
+	}
+	for index, want := range headers {
+		if got[index] != want {
+			t.Fatalf("tableSourceHeaders()[%d] = %q, want %q", index, got[index], want)
+		}
 	}
 }
 

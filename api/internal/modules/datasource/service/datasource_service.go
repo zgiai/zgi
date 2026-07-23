@@ -2570,15 +2570,20 @@ func tableSourceHeaders(fileName string, content []byte) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
+	analysis, err := excelimportsvc.AnalyzeWorkbook(workbook, excelimportsvc.AnalyzeOptions{})
+	if err != nil {
+		return nil, err
+	}
 	sheet, err := excelimportsvc.RecommendedSheet(workbook)
 	if err != nil {
 		return nil, err
 	}
-	if len(sheet.Rows) == 0 {
+	headerRowIndex := analysis.Selection.HeaderRow - 1
+	if headerRowIndex < 0 || headerRowIndex >= len(sheet.Rows) {
 		return nil, fmt.Errorf("table file must contain a header row")
 	}
-	headers := make([]string, 0, len(sheet.Rows[0]))
-	for _, header := range sheet.Rows[0] {
+	headers := make([]string, 0, len(sheet.Rows[headerRowIndex]))
+	for _, header := range sheet.Rows[headerRowIndex] {
 		headers = append(headers, strings.TrimSpace(header))
 	}
 	return headers, nil
@@ -2697,14 +2702,6 @@ func (s *dataSourceService) inferTableStructureFromFile(ctx context.Context, ten
 		return nil, fmt.Errorf("failed to extract JSON from LLM response: %w", err)
 	}
 
-	type llmTableColumn struct {
-		Name             string `json:"Name"`
-		SourceColumnName string `json:"SourceColumnName"`
-		Type             string `json:"Type"`
-		IsRequired       bool   `json:"IsRequired"`
-		Description      string `json:"Description"`
-	}
-
 	var llmColumns []llmTableColumn
 	if err := json.Unmarshal([]byte(cleanContent), &llmColumns); err != nil {
 		return nil, fmt.Errorf("failed to parse LLM response: %w", err)
@@ -2718,13 +2715,29 @@ func (s *dataSourceService) inferTableStructureFromFile(ctx context.Context, ten
 			IsRequired:  llmCol.IsRequired,
 			Description: &description,
 		}
-		if sourceColumnName := strings.TrimSpace(llmCol.SourceColumnName); sourceColumnName != "" {
+		if sourceColumnName := llmSourceColumnName(llmCol.SourceColumnName, llmCol.DisplayName); sourceColumnName != "" {
 			column.SourceColumnName = &sourceColumnName
 		}
 		columns = append(columns, column)
 	}
 
 	return columns, nil
+}
+
+type llmTableColumn struct {
+	Name             string `json:"Name"`
+	SourceColumnName string `json:"SourceColumnName"`
+	DisplayName      string `json:"DisplayName"`
+	Type             string `json:"Type"`
+	IsRequired       bool   `json:"IsRequired"`
+	Description      string `json:"Description"`
+}
+
+func llmSourceColumnName(sourceColumnName, displayName string) string {
+	if sourceColumnName = strings.TrimSpace(sourceColumnName); sourceColumnName != "" {
+		return sourceColumnName
+	}
+	return strings.TrimSpace(displayName)
 }
 
 // getModelSlug returns the model name from modelSpec
