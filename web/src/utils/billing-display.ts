@@ -76,6 +76,8 @@ export function formatBillingDisplayAmountFromNormalizedCredits(
   }
 
   const displayAmount = settings.currency === 'CNY' ? amountUSD * settings.usdToCnyRate : amountUSD;
+  if (!Number.isFinite(displayAmount)) return '-';
+
   const symbol = getBillingCurrencySymbol(settings);
   const estimatePrefix = settings.currency === 'CNY' ? '≈' : '';
 
