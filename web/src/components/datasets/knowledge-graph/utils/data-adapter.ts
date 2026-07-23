@@ -1,4 +1,7 @@
-import type { DatasetGraph } from '@/services/types/dataset';
+import type { DatasetGraph, GraphNode } from '@/services/types/dataset';
+
+const MAX_RENDER_NODES = 500;
+const MAX_RENDER_EDGES = 1500;
 
 export interface G6Node {
   id: string;
@@ -7,7 +10,7 @@ export interface G6Node {
   category: string;
   weight: number;
   priority: number;
-  data: any;
+  data: GraphNode['data'];
 }
 
 export interface G6Edge {
@@ -23,10 +26,12 @@ export interface G6Data {
 
 export const transformToG6Data = (data: DatasetGraph, selectedSourceIds: string[]): G6Data => {
   const activeNodes = data.nodes
+    .filter(node => node.data.active_source_count > 0)
+    .slice(0, MAX_RENDER_NODES)
     .map((node, index) => {
       const activeSources =
-        node.data?.sources?.filter((s: any) => selectedSourceIds.includes(s.doc.id)) || [];
-      const totalWeight = activeSources.reduce((sum: number, s: any) => sum + s.weight, 0);
+        node.data?.sources?.filter(source => selectedSourceIds.includes(source.doc.id)) || [];
+      const totalWeight = activeSources.reduce((sum, source) => sum + source.weight, 0);
 
       return {
         ...node,
@@ -43,7 +48,8 @@ export const transformToG6Data = (data: DatasetGraph, selectedSourceIds: string[
 
   const nodeIds = new Set(activeNodes.map(n => n.id));
   const edges = data.edges
-    .filter(edge => nodeIds.has(edge.source) && nodeIds.has(edge.target))
+    .filter(edge => edge.active_weight > 0 && nodeIds.has(edge.source) && nodeIds.has(edge.target))
+    .slice(0, MAX_RENDER_EDGES)
     .map(edge => ({
       source: edge.source,
       target: edge.target,

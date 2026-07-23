@@ -10,8 +10,10 @@ import (
 // HitTestingRequest represents the request for hit testing
 type HitTestingRequest struct {
 	Query                  string                 `json:"query" binding:"required"`
+	RetrievalModel         map[string]interface{} `json:"retrieval_model,omitempty"`
 	ExternalRetrievalModel map[string]interface{} `json:"external_retrieval_model,omitempty"`
 	RetrievalMode          string                 `json:"retrieval_mode,omitempty"`
+	FallbackPolicy         string                 `json:"fallback_policy,omitempty"`
 	RecordHistory          *bool                  `json:"record_history,omitempty"`
 }
 
@@ -32,12 +34,18 @@ type HitTestingResponse struct {
 
 // GraphExecution represents the graph retrieval process and details
 type GraphExecution struct {
-	Entities  []string               `json:"entities"`             // Entities extracted from query
-	Triples   []TripleResponse       `json:"triples"`              // Related triples found in graph
-	Steps     []GraphExecutionStep   `json:"steps,omitempty"`      // Steps taken in graph retrieval
-	Summary   string                 `json:"summary,omitempty"`    // Human-readable summary of graph reasoning
-	Thinking  string                 `json:"thinking,omitempty"`   // Internal thinking/reasoning
-	DebugInfo map[string]interface{} `json:"debug_info,omitempty"` // Internal debug information
+	RequestedMethod    string                 `json:"requested_method,omitempty"`
+	ActualMethod       string                 `json:"actual_method,omitempty"`
+	FallbackPolicy     string                 `json:"fallback_policy,omitempty"`
+	FallbackReason     string                 `json:"fallback_reason,omitempty"`
+	GraphRevision      int64                  `json:"graph_revision,omitempty"`
+	VisibilityRevision int64                  `json:"visibility_revision,omitempty"`
+	Entities           []string               `json:"entities"`             // Entities extracted from query
+	Triples            []TripleResponse       `json:"triples"`              // Related triples found in graph
+	Steps              []GraphExecutionStep   `json:"steps,omitempty"`      // Steps taken in graph retrieval
+	Summary            string                 `json:"summary,omitempty"`    // Human-readable summary of graph reasoning
+	Thinking           string                 `json:"thinking,omitempty"`   // Internal thinking/reasoning
+	DebugInfo          map[string]interface{} `json:"debug_info,omitempty"` // Internal debug information
 }
 
 // GraphExecutionStep represents a step in the graph retrieval process
@@ -106,19 +114,20 @@ type HitTestingRecordResponse struct {
 
 // RetrievalSourceResponse explains why a segment was returned
 type RetrievalSourceResponse struct {
-	Method           string   `json:"method"`                      // "semantic_search", "full_text_search", "hybrid_search", "graph_knowledge"
-	Reason           string   `json:"reason,omitempty"`            // Human-readable explanation
-	RetrievalSources []string `json:"retrieval_sources,omitempty"` // Low-level retrieval sources such as "vector" and "bm25"
-	MatchedTerms     []string `json:"matched_terms,omitempty"`     // For full-text: matched keywords
-	MatchedEntities  []string `json:"matched_entities,omitempty"`  // For graph: matched entity names
-	VectorScore      *float64 `json:"vector_score,omitempty"`      // Raw vector score before fusion
-	BM25Score        *float64 `json:"bm25_score,omitempty"`        // Raw BM25 score before fusion
-	VectorRank       *int     `json:"vector_rank,omitempty"`       // Rank in vector result list
-	BM25Rank         *int     `json:"bm25_rank,omitempty"`         // Rank in BM25 result list
-	BestRank         *int     `json:"best_rank,omitempty"`         // Best rank across retrieval sources
-	FusionScore      *float64 `json:"fusion_score,omitempty"`      // Final fused retrieval score
-	RerankScore      *float64 `json:"rerank_score,omitempty"`      // Rerank model score after fusion
-	FinalScore       *float64 `json:"final_score,omitempty"`       // Final score returned to the UI
+	Method            string   `json:"method"`                      // "semantic_search", "full_text_search", "hybrid_search", "graph_knowledge"
+	Reason            string   `json:"reason,omitempty"`            // Human-readable explanation
+	RetrievalSources  []string `json:"retrieval_sources,omitempty"` // Low-level retrieval sources such as "vector" and "bm25"
+	MatchedTerms      []string `json:"matched_terms,omitempty"`     // For full-text: matched keywords
+	MatchedEntities   []string `json:"matched_entities,omitempty"`  // For graph: matched entity names
+	ActiveSourceCount int      `json:"active_source_count,omitempty"`
+	VectorScore       *float64 `json:"vector_score,omitempty"` // Raw vector score before fusion
+	BM25Score         *float64 `json:"bm25_score,omitempty"`   // Raw BM25 score before fusion
+	VectorRank        *int     `json:"vector_rank,omitempty"`  // Rank in vector result list
+	BM25Rank          *int     `json:"bm25_rank,omitempty"`    // Rank in BM25 result list
+	BestRank          *int     `json:"best_rank,omitempty"`    // Best rank across retrieval sources
+	FusionScore       *float64 `json:"fusion_score,omitempty"` // Final fused retrieval score
+	RerankScore       *float64 `json:"rerank_score,omitempty"` // Rerank model score after fusion
+	FinalScore        *float64 `json:"final_score,omitempty"`  // Final score returned to the UI
 }
 
 // RetrievalPipelineResponse shows the retrieval process summary
@@ -323,10 +332,13 @@ type FailedSegment struct {
 // BatchHitTestingRequest represents the request for batch hit testing
 type BatchHitTestingRequest struct {
 	Queries                []string               `json:"queries" binding:"required"`
+	RetrievalModel         map[string]interface{} `json:"retrieval_model,omitempty"`
 	ExternalRetrievalModel map[string]interface{} `json:"external_retrieval_model,omitempty"`
+	RetrievalMode          string                 `json:"retrieval_mode,omitempty"`
+	FallbackPolicy         string                 `json:"fallback_policy,omitempty"`
 }
 
 // BatchHitTestingResponse represents the response for batch hit testing
 type BatchHitTestingResponse struct {
-	Results []HitTestingResponse `json:"results"`
+	Results []QueryResult `json:"results"`
 }

@@ -65,8 +65,14 @@ func NewGlobalCleanupHandler(svc *graphflow.Service, taskManager *queue.TaskMana
 // Handle processes the task
 func (h *GlobalCleanupHandler) Handle(ctx context.Context, t *asynq.Task) error {
 	logger.Info("Starting GraphFlow global cleanup task", nil)
+	return h.RunOnce(ctx)
+}
 
-	// Batch size
+func (h *GlobalCleanupHandler) RunOnce(ctx context.Context) error {
+	if h == nil || h.svc == nil {
+		return fmt.Errorf("global graph cleanup handler is not configured")
+	}
+
 	limit := 100
 
 	// 1. Clean Relationships first
@@ -100,18 +106,12 @@ func (h *GlobalCleanupHandler) cleanRelationships(ctx context.Context, limit int
 	})
 
 	for _, rel := range rels {
-		// 1. Delete from Neo4j
-		// Note: Relationships in Neo4j (via our simple model) might be tricky to target uniquely if not careful.
-		// Our Neo4jClient's DeleteRelationship uses ID, assuming we store [r:TYPE {id: UUID}]
 		if h.svc.Neo4jClient != nil {
 			if err := h.svc.Neo4jClient.DeleteRelationship(ctx, rel.ID.String()); err != nil {
 				logger.Warn("Failed to delete relationship from Neo4j", map[string]interface{}{
 					"rel_id": rel.ID.String(),
-					"error":  err.Error(),
 				})
-				// We might want to continue or retry?
-				// For now, if Neo4j deletion fails, we probably shouldn't mark as deleted in postgres?
-				// But maybe the rel doesn't exist in Neo4j.
+				return fmt.Errorf("failed to delete relationship projection")
 			}
 		}
 
@@ -139,35 +139,26 @@ func (h *GlobalCleanupHandler) cleanEntities(ctx context.Context, limit int) err
 	})
 
 	for _, entity := range entities {
-		// 1. Delete from Neo4j
 		if h.svc.Neo4jClient != nil {
 			if err := h.svc.Neo4jClient.DeleteNode(ctx, entity.ID.String()); err != nil {
 				logger.Warn("Failed to delete node from Neo4j", map[string]interface{}{
 					"entity_id": entity.ID.String(),
-					"error":     err.Error(),
 				})
+				return fmt.Errorf("failed to delete entity projection")
 			}
 		}
 
 		// 2. Delete from Weaviate (if linked)
 		if h.svc.WeaviateClient != nil {
-			// Construct class name: Dataset_{KBID normalized}
-			// Weaviate client handles normalization usually but let's be safe or rely on client helpers if any.
-			// In WeaviateClient.findActualClassName, it replaces hyphens with underscores.
 			kbidStr := entity.KBID.String()
-			// Manually normalize to match typical Weaviate class name pattern if needed,
-			// but weaviate_client methods usually take the "raw" name and normalize internally
-			// OR we should pass the name we expect.
-			// Let's pass "Dataset_" + kbidStr and let the client handle it / or we assume it matches.
 			className := fmt.Sprintf("Dataset_%s", kbidStr)
 
-			// We try to delete by ID (which effectively is our entity ID)
 			if err := h.svc.WeaviateClient.DeleteObjectByID(ctx, className, entity.ID.String()); err != nil {
 				logger.Warn("Failed to delete object from Weaviate", map[string]interface{}{
 					"entity_id": entity.ID.String(),
 					"class":     className,
-					"error":     err.Error(),
 				})
+				return fmt.Errorf("failed to delete entity vector projection")
 			}
 		}
 

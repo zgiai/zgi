@@ -55,6 +55,40 @@ export function GraphExecutionDetails({ execution }: GraphExecutionDetailsProps)
       <CollapsibleContent className="mt-2">
         <Card>
           <CardContent className="p-4 space-y-4">
+            <div className="flex flex-wrap gap-2">
+              {execution.requested_method && (
+                <Badge variant="outline">
+                  {t('hitTesting.requestedMethod')}: {execution.requested_method}
+                </Badge>
+              )}
+              {execution.actual_method && (
+                <Badge variant="outline">
+                  {t('hitTesting.actualMethod')}: {execution.actual_method}
+                </Badge>
+              )}
+              {execution.fallback_policy && (
+                <Badge variant="secondary">
+                  {t('hitTesting.fallbackPolicy')}: {execution.fallback_policy}
+                </Badge>
+              )}
+              {typeof execution.graph_revision === 'number' && (
+                <Badge variant="secondary">
+                  {t('hitTesting.graphRevision')}: {execution.graph_revision}
+                </Badge>
+              )}
+              {typeof execution.visibility_revision === 'number' && (
+                <Badge variant="secondary">
+                  {t('hitTesting.visibilityRevision')}: {execution.visibility_revision}
+                </Badge>
+              )}
+            </div>
+
+            {execution.fallback_reason && (
+              <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+                {execution.fallback_reason}
+              </div>
+            )}
+
             {/* Summary */}
             <div className="rounded-md bg-muted/50 p-3 text-sm text-muted-foreground [overflow-wrap:anywhere]">
               {execution.summary}
@@ -104,11 +138,31 @@ export function GraphExecutionDetails({ execution }: GraphExecutionDetailsProps)
                         {step.step}
                       </Badge>
                       <div className="flex-1 space-y-1">
-                        <div className="font-medium [overflow-wrap:anywhere]">{step.description}</div>
+                        <div className="font-medium [overflow-wrap:anywhere]">
+                          {step.description}
+                        </div>
                         <div className="text-muted-foreground [overflow-wrap:anywhere]">
                           {step.result}
                         </div>
                       </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {execution.triples && execution.triples.length > 0 && (
+              <div className="space-y-2">
+                <div className="text-sm font-medium">{t('hitTesting.relationshipPaths')}:</div>
+                <div className="space-y-2">
+                  {execution.triples.map((triple, index) => (
+                    <div
+                      key={`${triple.subject}-${triple.predicate}-${triple.object}-${index}`}
+                      className="flex flex-wrap items-center gap-2 rounded-md border p-2 text-xs"
+                    >
+                      <Badge variant="secondary">{triple.subject}</Badge>
+                      <span className="text-muted-foreground">{triple.predicate}</span>
+                      <Badge variant="secondary">{triple.object}</Badge>
                     </div>
                   ))}
                 </div>

@@ -75,9 +75,31 @@ func (r knowledgeRuntime) applyAgentConfig(req *dataset_service.KnowledgeRetriev
 	}
 	if config := mapValue(r.runtime.RuntimeParameters, "knowledge_retrieval_config"); len(config) > 0 {
 		req.RetrievalConfig = config
+		applyKnowledgeGraphExecutionPolicy(req, config)
 	}
 	if boolValue(r.runtime.RuntimeParameters, "knowledge_binding_grant") {
 		req.AgentBindingGrant = true
+	}
+}
+
+func applyKnowledgeGraphExecutionPolicy(req *dataset_service.KnowledgeRetrieveRequest, config map[string]interface{}) {
+	if req == nil {
+		return
+	}
+	method := strings.TrimSpace(stringValue(config, "search_method"))
+	if req.RetrievalMode == "" {
+		switch method {
+		case "graph", "graph_search":
+			req.RetrievalMode = "graph"
+		case "hybrid":
+			req.RetrievalMode = "hybrid"
+		}
+	}
+	if req.FallbackPolicy == "" {
+		req.FallbackPolicy = strings.TrimSpace(stringValue(config, "fallback_policy"))
+	}
+	if req.RetrievalMode == "graph" && req.FallbackPolicy == "" {
+		req.FallbackPolicy = "none"
 	}
 }
 

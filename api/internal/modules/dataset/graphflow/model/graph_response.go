@@ -5,6 +5,20 @@ type GraphDataResponse struct {
 	Nodes      []GraphNode     `json:"nodes"`
 	Edges      []GraphEdge     `json:"edges"`
 	Categories []GraphCategory `json:"categories"`
+	NextCursor string          `json:"next_cursor,omitempty"`
+	NodeCount  int             `json:"node_count"`
+	EdgeCount  int             `json:"edge_count"`
+}
+
+type GraphQuery struct {
+	Keyword    string
+	Category   string
+	DocumentID string
+	SeedNodeID string
+	Cursor     string
+	HopDepth   int
+	NodeLimit  int
+	EdgeLimit  int
 }
 
 // GraphNode represents an entity node in the knowledge graph
@@ -17,8 +31,10 @@ type GraphNode struct {
 
 // GraphNodeData contains detailed node information
 type GraphNodeData struct {
-	Description string             `json:"description"`
-	Sources     []GraphNodeSource  `json:"sources"` // Document sources with weights
+	Description       string            `json:"description"`
+	Sources           []GraphNodeSource `json:"sources"` // Document sources with weights
+	SourceCount       int               `json:"source_count"`
+	ActiveSourceCount int               `json:"active_source_count"`
 }
 
 // GraphNodeSource represents a document source for an entity
@@ -35,14 +51,16 @@ type GraphSourceDoc struct {
 
 // GraphEdge represents a relationship edge in the knowledge graph
 type GraphEdge struct {
-	Source string `json:"source"` // Source node ID (must match GraphNode.ID)
-	Target string `json:"target"` // Target node ID (must match GraphNode.ID)
-	Label  string `json:"label"`  // Relationship type / predicate
+	Source       string `json:"source"` // Source node ID (must match GraphNode.ID)
+	Target       string `json:"target"` // Target node ID (must match GraphNode.ID)
+	Label        string `json:"label"`  // Relationship type / predicate
+	Weight       int    `json:"weight"`
+	ActiveWeight int    `json:"active_weight"`
 }
 
 // GraphCategory represents an entity type category for legend/filtering
 type GraphCategory struct {
-	ID    string           `json:"id"`    // Type key (e.g., "Person")
+	ID    string             `json:"id"`    // Type key (e.g., "Person")
 	Label GraphCategoryLabel `json:"label"` // Multi-language labels
 }
 

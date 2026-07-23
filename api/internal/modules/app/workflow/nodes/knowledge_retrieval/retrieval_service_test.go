@@ -8,7 +8,7 @@ import (
 	dservice "github.com/zgiai/zgi/api/internal/modules/dataset/service"
 )
 
-func TestBuildWorkflowRetrieveOptionsPromotesGraphSearchToHybridCandidates(t *testing.T) {
+func TestBuildWorkflowRetrieveOptionsPreservesGraphOnlyExecution(t *testing.T) {
 	base := &dservice.RetrievalOptions{
 		SearchMethod:          "graph_search",
 		TopK:                  4,
@@ -18,14 +18,42 @@ func TestBuildWorkflowRetrieveOptionsPromotesGraphSearchToHybridCandidates(t *te
 
 	opts := buildWorkflowRetrieveOptions(base)
 
-	if opts.RetrievalMode != "hybrid" {
-		t.Fatalf("RetrievalMode = %q, want %q", opts.RetrievalMode, "hybrid")
+	if opts.RetrievalMode != "graph" {
+		t.Fatalf("RetrievalMode = %q, want %q", opts.RetrievalMode, "graph")
 	}
-	if opts.SearchMethod != "" {
-		t.Fatalf("SearchMethod = %q, want empty string to enable vector fallback", opts.SearchMethod)
+	if opts.SearchMethod != "graph_search" {
+		t.Fatalf("SearchMethod = %q, want graph_search", opts.SearchMethod)
+	}
+	if opts.FallbackPolicy != "none" {
+		t.Fatalf("FallbackPolicy = %q, want none", opts.FallbackPolicy)
 	}
 	if base.SearchMethod != "graph_search" {
 		t.Fatalf("base options were mutated: SearchMethod = %q", base.SearchMethod)
+	}
+}
+
+func TestBuildWorkflowRetrieveOptionsPreservesExplicitGraphFallback(t *testing.T) {
+	opts := buildWorkflowRetrieveOptions(&dservice.RetrievalOptions{
+		SearchMethod:   "graph",
+		FallbackPolicy: "vector",
+	})
+	if opts.RetrievalMode != "graph" {
+		t.Fatalf("RetrievalMode = %q, want graph", opts.RetrievalMode)
+	}
+	if opts.FallbackPolicy != "vector" {
+		t.Fatalf("FallbackPolicy = %q, want vector", opts.FallbackPolicy)
+	}
+}
+
+func TestWorkflowGraphFailurePropagationPolicy(t *testing.T) {
+	if !workflowGraphFailureMustPropagate("graph_search", "none") {
+		t.Fatal("graph retrieval without fallback must propagate errors")
+	}
+	if workflowGraphFailureMustPropagate("graph_search", "vector") {
+		t.Fatal("explicit vector fallback may continue to other retrieval paths")
+	}
+	if workflowGraphFailureMustPropagate("hybrid_search", "none") {
+		t.Fatal("non-graph retrieval must keep existing multi-dataset behavior")
 	}
 }
 

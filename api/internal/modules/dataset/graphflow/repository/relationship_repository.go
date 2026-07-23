@@ -112,3 +112,36 @@ func (r *RelationshipRepository) FindByEntityIDs(ctx context.Context, kbID uuid.
 		Find(&results).Error
 	return results, err
 }
+
+func (r *RelationshipRepository) RecalculateSourceCounts(ctx context.Context, kbID uuid.UUID) error {
+	return r.db.WithContext(ctx).Exec(`
+		UPDATE kb_relationships AS relationship
+		SET weight = (
+				SELECT COUNT(*) FROM kb_triple_mentions AS mention
+				LEFT JOIN data_library_knowledge_base_asset_refs AS ref
+					ON ref.id = mention.source_ref_id
+					AND ref.dataset_document_id = mention.document_id
+					AND ref.deleted_at IS NULL
+				WHERE mention.kb_id = relationship.kb_id
+					AND mention.relationship_id = relationship.id
+					AND mention.is_deleted = false
+					AND (mention.source_ref_id IS NULL OR ref.id IS NOT NULL)
+			),
+			active_weight = (
+				SELECT COUNT(*) FROM kb_triple_mentions AS mention
+				LEFT JOIN data_library_knowledge_base_asset_refs AS ref
+					ON ref.id = mention.source_ref_id
+					AND ref.dataset_document_id = mention.document_id
+					AND ref.deleted_at IS NULL
+				LEFT JOIN documents AS document ON document.id = mention.document_id
+				WHERE mention.kb_id = relationship.kb_id
+					AND mention.relationship_id = relationship.id
+					AND mention.is_deleted = false
+					AND (
+						(mention.source_ref_id IS NOT NULL AND ref.id IS NOT NULL AND ref.retrieval_enabled = true AND document.enabled = true)
+						OR (mention.source_ref_id IS NULL AND document.enabled = true)
+					)
+			)
+		WHERE relationship.kb_id = ?
+	`, kbID).Error
+}

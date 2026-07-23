@@ -95,10 +95,20 @@ func registerRoutes(params routeParams) {
 }
 
 func registerRuntime(lc fx.Lifecycle, params runtimeParams) error {
+	graphLifecycle := params.ServiceContainer.GetGraphLifecycleService()
+	_ = params.ServiceContainer.GetGraphVisibilityService()
+	graphRuntimeHealth := params.ServiceContainer.GetGraphRuntimeHealthService()
+
 	graphflowworker.RegisterGraphFlowHandlers(
 		params.TaskHandlerRegistry,
 		params.GraphFlowService,
 		params.TaskManager,
+	)
+	outboxReconciler := graphflowworker.NewOutboxReconciler(
+		params.GraphFlowService.DB,
+		graphflowworker.NewRunOutboxHandler(params.GraphFlowService, params.TaskManager),
+		graphflowworker.NewVisibilityHandler(params.GraphFlowService),
+		graphflowworker.NewRunOutboxHandler(params.GraphFlowService, params.TaskManager),
 	)
 
 	if params.Scheduler != nil {
@@ -114,6 +124,10 @@ func registerRuntime(lc fx.Lifecycle, params runtimeParams) error {
 		system_service.NewCloudBootstrapRunner(params.Config, params.BootstrapService),
 		params.Logger,
 	)
+	RegisterGraphRuntimeHealthLifecycle(lc, graphRuntimeHealth)
+	RegisterGraphEvidenceRepairLifecycle(lc, params.GraphFlowService, params.Logger)
+	RegisterGraphOutboxReconcilerLifecycle(lc, outboxReconciler, params.Logger)
+	RegisterGraphRunReconcilerLifecycle(lc, graphLifecycle, params.Logger)
 	registerOpenTelemetryLifecycle(lc, params.OpenTelemetry, params.Logger)
 	RegisterWorkflowTestLocalWorkerLifecycle(lc, params.Config, params.WorkflowTestService, params.LLMClient, params.Logger)
 	RegisterVideoRuntimeTaskPollerLifecycle(lc, params.VideoTaskPoller, params.Logger)
@@ -125,6 +139,148 @@ func registerRuntime(lc fx.Lifecycle, params runtimeParams) error {
 	registerZGIReporterLifecycle(lc, params.ZGIReporter, params.Logger)
 
 	return nil
+}
+
+func RegisterGraphEvidenceRepairLifecycle(
+	lc fx.Lifecycle,
+	service *graphflow.Service,
+	log *zap.Logger,
+) {
+	lc.Append(fx.Hook{
+		OnStart: func(ctx context.Context) error {
+			if service == nil {
+				return nil
+			}
+			repairedDatasets, err := service.RepairLegacyEvidenceProvenance(ctx)
+			if err != nil {
+				log.Warn("Legacy graph evidence repair failed", zap.Error(err))
+				return nil
+			}
+			if repairedDatasets > 0 {
+				log.Info("Legacy graph evidence repaired", zap.Int("dataset_count", repairedDatasets))
+			}
+			return nil
+		},
+	})
+}
+
+func RegisterGraphRunReconcilerLifecycle(
+	lc fx.Lifecycle,
+	lifecycle *graphflow.LifecycleService,
+	log *zap.Logger,
+) {
+	var cancel context.CancelFunc
+	lc.Append(fx.Hook{
+		OnStart: func(ctx context.Context) error {
+			if lifecycle == nil {
+				return nil
+			}
+			if err := lifecycle.ReconcileActiveRuns(ctx); err != nil {
+				log.Warn("Initial graph run reconciliation failed", zap.Error(err))
+			}
+			monitorContext, stop := context.WithCancel(context.Background())
+			cancel = stop
+			go func() {
+				ticker := time.NewTicker(10 * time.Second)
+				defer ticker.Stop()
+				for {
+					select {
+					case <-monitorContext.Done():
+						return
+					case <-ticker.C:
+						if err := lifecycle.ReconcileActiveRuns(monitorContext); err != nil {
+							log.Warn("Graph run reconciliation failed", zap.Error(err))
+						}
+					}
+				}
+			}()
+			return nil
+		},
+		OnStop: func(context.Context) error {
+			if cancel != nil {
+				cancel()
+			}
+			return nil
+		},
+	})
+}
+
+func RegisterGraphOutboxReconcilerLifecycle(
+	lc fx.Lifecycle,
+	reconciler *graphflowworker.OutboxReconciler,
+	log *zap.Logger,
+) {
+	var cancel context.CancelFunc
+	lc.Append(fx.Hook{
+		OnStart: func(ctx context.Context) error {
+			if err := reconciler.RunOnce(ctx); err != nil {
+				log.Warn("Initial graph outbox reconciliation failed", zap.Error(err))
+			}
+			monitorContext, stop := context.WithCancel(context.Background())
+			cancel = stop
+			go func() {
+				ticker := time.NewTicker(5 * time.Second)
+				defer ticker.Stop()
+				for {
+					select {
+					case <-monitorContext.Done():
+						return
+					case <-ticker.C:
+						if err := reconciler.RunOnce(monitorContext); err != nil {
+							log.Warn("Graph outbox reconciliation failed", zap.Error(err))
+						}
+					}
+				}
+			}()
+			return nil
+		},
+		OnStop: func(context.Context) error {
+			if cancel != nil {
+				cancel()
+			}
+			return nil
+		},
+	})
+}
+
+func RegisterGraphRuntimeHealthLifecycle(
+	lc fx.Lifecycle,
+	health *system_service.GraphRuntimeHealthService,
+) {
+	var cancel context.CancelFunc
+	lc.Append(fx.Hook{
+		OnStart: func(context.Context) error {
+			if health == nil {
+				return nil
+			}
+			monitorContext, stop := context.WithCancel(context.Background())
+			cancel = stop
+			go func() {
+				initialContext, initialCancel := context.WithTimeout(monitorContext, 10*time.Second)
+				health.Check(initialContext)
+				initialCancel()
+				ticker := time.NewTicker(30 * time.Second)
+				defer ticker.Stop()
+				for {
+					select {
+					case <-monitorContext.Done():
+						return
+					case <-ticker.C:
+						checkContext, checkCancel := context.WithTimeout(monitorContext, 10*time.Second)
+						health.Check(checkContext)
+						checkCancel()
+					}
+				}
+			}()
+			return nil
+		},
+		OnStop: func(context.Context) error {
+			if cancel != nil {
+				cancel()
+			}
+			return nil
+		},
+	})
 }
 
 // RegisterCloudBootstrapLifecycle runs cloud bootstrap before network listeners start.

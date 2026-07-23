@@ -40,6 +40,11 @@ type knowledgeBaseAssetRefRepository struct {
 	db *gorm.DB
 }
 
+type KnowledgeBaseAssetRefVisibilityRepository interface {
+	UpdateRetrievalEnabled(ctx context.Context, organizationID string, id uuid.UUID, enabled bool) (*model.KnowledgeBaseAssetRef, error)
+	ListCurrentByAsset(ctx context.Context, organizationID string, assetID uuid.UUID) ([]*model.KnowledgeBaseAssetRef, error)
+}
+
 func NewKnowledgeBaseAssetRefRepository(db *gorm.DB) KnowledgeBaseAssetRefRepository {
 	return &knowledgeBaseAssetRefRepository{db: db}
 }
@@ -148,6 +153,21 @@ func (r *knowledgeBaseAssetRefRepository) ListActiveByAsset(ctx context.Context,
 	return items, nil
 }
 
+func (r *knowledgeBaseAssetRefRepository) ListCurrentByAsset(ctx context.Context, organizationID string, assetID uuid.UUID) ([]*model.KnowledgeBaseAssetRef, error) {
+	var items []*model.KnowledgeBaseAssetRef
+	err := r.db.WithContext(ctx).
+		Model(&model.KnowledgeBaseAssetRef{}).
+		Joins("JOIN datasets ON datasets.id = data_library_knowledge_base_asset_refs.dataset_id").
+		Where("data_library_knowledge_base_asset_refs.organization_id = ? AND data_library_knowledge_base_asset_refs.asset_id = ? AND data_library_knowledge_base_asset_refs.deleted_at IS NULL",
+			organizationID, assetID).
+		Order("data_library_knowledge_base_asset_refs.updated_at DESC").
+		Find(&items).Error
+	if err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 func (r *knowledgeBaseAssetRefRepository) CountActiveByAssetID(ctx context.Context, organizationID string, assetID uuid.UUID) (int64, error) {
 	var count int64
 	err := r.db.WithContext(ctx).Model(&model.KnowledgeBaseAssetRef{}).
@@ -169,6 +189,15 @@ func (r *knowledgeBaseAssetRefRepository) UpdateStatus(ctx context.Context, orga
 		return nil, nil
 	}
 	return r.GetByID(ctx, id)
+}
+
+func (r *knowledgeBaseAssetRefRepository) UpdateRetrievalEnabled(
+	ctx context.Context,
+	organizationID string,
+	id uuid.UUID,
+	enabled bool,
+) (*model.KnowledgeBaseAssetRef, error) {
+	return r.updateByID(ctx, organizationID, id, map[string]any{"retrieval_enabled": enabled})
 }
 
 func (r *knowledgeBaseAssetRefRepository) MarkPending(ctx context.Context, organizationID string, id uuid.UUID, syncRunID uuid.UUID, errorCode, errorMessage *string) (*model.KnowledgeBaseAssetRef, error) {

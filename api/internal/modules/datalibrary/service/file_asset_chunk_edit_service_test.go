@@ -159,8 +159,8 @@ func TestFileAssetChunkEditServiceEnqueuesDatasetRefSyncAfterEdit(t *testing.T) 
 	if err != nil {
 		t.Fatalf("UpdateCurrentFileChunk: %v", err)
 	}
-	if len(documentStore.disabledIDs) != 1 || documentStore.disabledIDs[0] != documentID.String() || documentStore.disabledBy != "user-1" {
-		t.Fatalf("disabled_ids=%v disabled_by=%s", documentStore.disabledIDs, documentStore.disabledBy)
+	if len(documentStore.disabledIDs) != 0 {
+		t.Fatalf("old document eligibility changed before replacement: %v", documentStore.disabledIDs)
 	}
 	if refStore.pendingRefID != refID || refStore.pendingSyncRunID == uuid.Nil {
 		t.Fatalf("pending_ref=%s sync_run=%s", refStore.pendingRefID, refStore.pendingSyncRunID)
@@ -269,8 +269,8 @@ func TestFileAssetChunkEditServiceBatchUpdatesChunksAndEnqueuesDatasetRefSyncOnc
 			t.Fatalf("chunk %s enabled=%v", chunkID, chunk != nil && chunk.Enabled)
 		}
 	}
-	if len(documentStore.disabledIDs) != 1 || documentStore.disabledIDs[0] != documentID.String() || documentStore.disabledBy != "user-1" {
-		t.Fatalf("disabled_ids=%v disabled_by=%s", documentStore.disabledIDs, documentStore.disabledBy)
+	if len(documentStore.disabledIDs) != 0 {
+		t.Fatalf("old document eligibility changed before replacement: %v", documentStore.disabledIDs)
 	}
 	if refStore.pendingRefID != refID || refStore.pendingSyncRunID == uuid.Nil {
 		t.Fatalf("pending_ref=%s sync_run=%s", refStore.pendingRefID, refStore.pendingSyncRunID)

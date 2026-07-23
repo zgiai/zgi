@@ -34,6 +34,7 @@ import { toast } from 'sonner';
 import { useUpdateDataset } from '@/hooks/dataset/use-datasets';
 import { normalizeDatasetSearchMethod } from '@/utils/dataset/retrieval-config';
 import { DATASET_KEYS } from '@/hooks/query-keys';
+import { useDatasetGraphStatus } from '@/hooks/dataset/use-dataset-graph';
 
 const getExternalResultKey = (
   result: ExternalDatasetHitTestingResponse['records'][number],
@@ -92,7 +93,13 @@ export default function HitTestingPage() {
 
   const dataset = datasetData?.data;
   const isExternalDataSource = !!dataset?.external_knowledge_info?.external_knowledge_id;
-  const supportsGraphFlow = !!dataset?.enable_graph_flow && !isExternalDataSource;
+  const graphConfigured = !!dataset?.enable_graph_flow && !isExternalDataSource;
+  const { data: graphStatusResponse } = useDatasetGraphStatus(datasetId, graphConfigured);
+  const graphStatus = graphStatusResponse?.data;
+  const supportsGraphFlow = graphConfigured && graphStatus?.can_search === true;
+  const graphUnavailableReason = !graphConfigured
+    ? t('hitTesting.graphNotEnabled')
+    : graphStatus?.error_message || t('hitTesting.graphNotReady');
   // Initialize retrieval config (defaults, then hydrate from dataset.retrieval_model_dict once)
   const [retrievalConfig, setRetrievalConfig] = useState<RetrievalConfig>({
     search_method: 'hybrid_search',
@@ -165,6 +172,10 @@ export default function HitTestingPage() {
       top_k: retrievalConfig.top_k,
       score_threshold_enabled: retrievalConfig.score_threshold_enabled,
       score_threshold: retrievalConfig.score_threshold,
+      fallback_policy:
+        retrievalConfig.search_method === 'graph_search'
+          ? (retrievalConfig.fallback_policy ?? 'none')
+          : retrievalConfig.fallback_policy,
     };
 
     try {
@@ -285,6 +296,10 @@ export default function HitTestingPage() {
         top_k: config.top_k,
         score_threshold_enabled: config.score_threshold_enabled,
         score_threshold: config.score_threshold,
+        fallback_policy:
+          config.search_method === 'graph_search'
+            ? (config.fallback_policy ?? 'none')
+            : config.fallback_policy,
         reranking_enable: true,
         reranking_model: config.reranking_model,
       },
@@ -502,6 +517,7 @@ export default function HitTestingPage() {
         onSave={handleConfigSave}
         onSaveAsTest={setRetrievalConfig}
         isGraphEnabled={supportsGraphFlow}
+        graphUnavailableReason={graphUnavailableReason}
       />
     </div>
   );

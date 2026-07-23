@@ -278,6 +278,25 @@ func TestHybridRecallCandidateLimit(t *testing.T) {
 	}
 }
 
+func TestGraphRetrievalConfigDefaultsToNoFallbackAndTwoHops(t *testing.T) {
+	config, err := NormalizeGraphRetrievalConfig("graph_search", "graph", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.RequestedMethod != "graph_search" || config.ActualMode != "graph" {
+		t.Fatalf("config=%#v", config)
+	}
+	if config.FallbackPolicy != "none" {
+		t.Fatalf("fallback policy=%q", config.FallbackPolicy)
+	}
+	if config.MaxHops != 2 {
+		t.Fatalf("max hops=%d", config.MaxHops)
+	}
+	if !ShouldPropagateRetrievalError(config, true) {
+		t.Fatal("graph-only failure was silently downgraded")
+	}
+}
+
 func TestFilterAndLimitFinalRecordsSortsAndAppliesThresholdBeforeTopK(t *testing.T) {
 	records := []dto.HitTestingRecordResponse{
 		{Segment: dto.SegmentResponse{ID: "mid"}, Score: 0.72},

@@ -32,6 +32,10 @@ type KnowledgeBaseAssetRefService interface {
 	RemoveRef(ctx context.Context, organizationID string, id uuid.UUID) (*KnowledgeBaseAssetRefView, error)
 }
 
+type KnowledgeBaseAssetRefVisibilityService interface {
+	SetRetrievalEnabled(ctx context.Context, organizationID string, id uuid.UUID, enabled bool) (*KnowledgeBaseAssetRefView, error)
+}
+
 type KnowledgeBaseAssetRefView struct {
 	ID                 uuid.UUID      `json:"id"`
 	OrganizationID     string         `json:"organization_id"`
@@ -46,6 +50,9 @@ type KnowledgeBaseAssetRefView struct {
 	SyncStatus         string         `json:"sync_status"`
 	SyncedGenerationNo *int64         `json:"synced_generation_no,omitempty"`
 	SyncRunID          *uuid.UUID     `json:"sync_run_id,omitempty"`
+	RetrievalEnabled   bool           `json:"retrieval_enabled"`
+	GraphRunID         *uuid.UUID     `json:"graph_run_id,omitempty"`
+	GraphSyncStatus    *string        `json:"graph_sync_status,omitempty"`
 	LastSyncedAt       *time.Time     `json:"last_synced_at,omitempty"`
 	SyncErrorCode      *string        `json:"sync_error_code,omitempty"`
 	SyncErrorMessage   *string        `json:"sync_error_message,omitempty"`
@@ -174,6 +181,32 @@ func (s *knowledgeBaseAssetRefService) DisableRef(ctx context.Context, organizat
 		return nil, ErrKnowledgeBaseAssetRefIDRequired
 	}
 	item, err := s.repo.UpdateStatus(ctx, organizationID, id, model.KnowledgeBaseAssetRefStatusDisabled)
+	if err != nil {
+		return nil, err
+	}
+	if item == nil {
+		return nil, ErrKnowledgeBaseAssetRefNotFound
+	}
+	return newKnowledgeBaseAssetRefView(item), nil
+}
+
+func (s *knowledgeBaseAssetRefService) SetRetrievalEnabled(
+	ctx context.Context,
+	organizationID string,
+	id uuid.UUID,
+	enabled bool,
+) (*KnowledgeBaseAssetRefView, error) {
+	if organizationID == "" {
+		return nil, ErrOrganizationIDRequired
+	}
+	if id == uuid.Nil {
+		return nil, ErrKnowledgeBaseAssetRefIDRequired
+	}
+	repo, ok := s.repo.(repository.KnowledgeBaseAssetRefVisibilityRepository)
+	if !ok {
+		return nil, errors.New("knowledge base asset ref visibility repository is not configured")
+	}
+	item, err := repo.UpdateRetrievalEnabled(ctx, organizationID, id, enabled)
 	if err != nil {
 		return nil, err
 	}
@@ -345,6 +378,9 @@ func newKnowledgeBaseAssetRefView(item *model.KnowledgeBaseAssetRef) *KnowledgeB
 		SyncStatus:         item.SyncStatus,
 		SyncedGenerationNo: item.SyncedGenerationNo,
 		SyncRunID:          item.SyncRunID,
+		RetrievalEnabled:   item.RetrievalEnabled,
+		GraphRunID:         item.GraphRunID,
+		GraphSyncStatus:    item.GraphSyncStatus,
 		LastSyncedAt:       item.LastSyncedAt,
 		SyncErrorCode:      item.SyncErrorCode,
 		SyncErrorMessage:   item.SyncErrorMessage,

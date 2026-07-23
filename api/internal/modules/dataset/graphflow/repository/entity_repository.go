@@ -113,6 +113,29 @@ func (r *EntityRepository) UpdateVectorStateBatch(ctx context.Context, entityIDs
 	return r.db.WithContext(ctx).Model(&model.Entity{}).Where("id IN ?", entityIDs).Update("vector_state", state).Error
 }
 
+func (r *EntityRepository) UpdateEmbeddingIdentityBatch(
+	ctx context.Context,
+	entityIDs []uuid.UUID,
+	provider string,
+	modelName string,
+	dimension int,
+	fingerprint string,
+	contentRevision int64,
+) error {
+	if len(entityIDs) == 0 {
+		return nil
+	}
+	return r.db.WithContext(ctx).Model(&model.Entity{}).Where("id IN ?", entityIDs).Updates(map[string]any{
+		"vector_state":             "synced",
+		"embedding_model_provider": provider,
+		"embedding_model":          modelName,
+		"embedding_dimension":      dimension,
+		"embedding_fingerprint":    fingerprint,
+		"content_revision":         contentRevision,
+		"sync_error_log":           "",
+	}).Error
+}
+
 // UpdateVectorStateFailureBatch updates the vector sync state and error log for multiple entities
 func (r *EntityRepository) UpdateVectorStateFailureBatch(ctx context.Context, entityIDs []uuid.UUID, state, syncErrorLog string) error {
 	if len(entityIDs) == 0 {
@@ -169,4 +192,37 @@ func (r *EntityRepository) FindByNameOrAlias(ctx context.Context, kbID uuid.UUID
 		Where("kb_id = ? AND (name = ? OR canonical_name = ?) AND is_deleted = ?", kbID, name, name, false).
 		Find(&results).Error
 	return results, err
+}
+
+func (r *EntityRepository) RecalculateSourceCounts(ctx context.Context, kbID uuid.UUID) error {
+	return r.db.WithContext(ctx).Exec(`
+		UPDATE kb_entities AS entity
+		SET source_count = (
+				SELECT COUNT(*) FROM kb_entity_mentions AS mention
+				LEFT JOIN data_library_knowledge_base_asset_refs AS ref
+					ON ref.id = mention.source_ref_id
+					AND ref.dataset_document_id = mention.document_id
+					AND ref.deleted_at IS NULL
+				WHERE mention.kb_id = entity.kb_id
+					AND mention.entity_id = entity.id
+					AND mention.is_deleted = false
+					AND (mention.source_ref_id IS NULL OR ref.id IS NOT NULL)
+			),
+			active_source_count = (
+				SELECT COUNT(*) FROM kb_entity_mentions AS mention
+				LEFT JOIN data_library_knowledge_base_asset_refs AS ref
+					ON ref.id = mention.source_ref_id
+					AND ref.dataset_document_id = mention.document_id
+					AND ref.deleted_at IS NULL
+				LEFT JOIN documents AS document ON document.id = mention.document_id
+				WHERE mention.kb_id = entity.kb_id
+					AND mention.entity_id = entity.id
+					AND mention.is_deleted = false
+					AND (
+						(mention.source_ref_id IS NOT NULL AND ref.id IS NOT NULL AND ref.retrieval_enabled = true AND document.enabled = true)
+						OR (mention.source_ref_id IS NULL AND document.enabled = true)
+					)
+			)
+		WHERE entity.kb_id = ?
+	`, kbID).Error
 }

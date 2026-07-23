@@ -132,6 +132,38 @@ func (c *WeaviateClient) DeleteVector(ctx context.Context, id, className string)
 	return nil
 }
 
+func (c *WeaviateClient) UpdateObjectProperties(ctx context.Context, id, className string, properties map[string]interface{}) error {
+	if c.endpoint == "" {
+		return fmt.Errorf("weaviate endpoint not configured")
+	}
+	if strings.TrimSpace(id) == "" || strings.TrimSpace(className) == "" {
+		return fmt.Errorf("weaviate object identity is required")
+	}
+	payload, err := json.Marshal(map[string]interface{}{"properties": properties})
+	if err != nil {
+		return fmt.Errorf("failed to marshal weaviate property update: %w", err)
+	}
+	url := fmt.Sprintf("%s/v1/objects/%s/%s", c.endpoint, className, id)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPatch, url, bytes.NewBuffer(payload))
+	if err != nil {
+		return fmt.Errorf("failed to create weaviate property request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if c.apiKey != "" {
+		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.apiKey))
+	}
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to update weaviate properties: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("weaviate property update returned status code: %d, response: %s", resp.StatusCode, string(body))
+	}
+	return nil
+}
+
 // StoreVectors stores vectors with metadata in Weaviate using the batch objects API.
 func (c *WeaviateClient) StoreVectors(ctx context.Context, objects []VectorObject) error {
 	if c.endpoint == "" {

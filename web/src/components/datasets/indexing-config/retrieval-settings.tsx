@@ -25,6 +25,7 @@ interface RetrievalSettingsProps {
   retrieval: RetrievalConfig;
   disabled?: boolean;
   isGraphEnabled?: boolean;
+  graphUnavailableReason?: string;
   rerankingLabel?: string;
   showRerankingModel?: boolean;
   onChange?: (retrieval: RetrievalConfig) => void;
@@ -85,6 +86,7 @@ export const RetrievalSettings = forwardRef<RetrievalSettingsRef, RetrievalSetti
       retrieval,
       disabled = false,
       isGraphEnabled = false,
+      graphUnavailableReason,
       rerankingLabel,
       showRerankingModel = true,
       onChange,
@@ -106,6 +108,7 @@ export const RetrievalSettings = forwardRef<RetrievalSettingsRef, RetrievalSetti
         score_threshold: retrieval.score_threshold ?? DEFAULT_RETRIEVAL_CONFIG.score_threshold,
         reranking_enable: true,
         reranking_model: retrieval.reranking_model ?? DEFAULT_RETRIEVAL_CONFIG.reranking_model,
+        fallback_policy: retrieval.fallback_policy ?? 'none',
       };
 
       return initialConfig;
@@ -124,6 +127,7 @@ export const RetrievalSettings = forwardRef<RetrievalSettingsRef, RetrievalSetti
         score_threshold: retrieval.score_threshold ?? DEFAULT_RETRIEVAL_CONFIG.score_threshold,
         reranking_enable: true,
         reranking_model: retrieval.reranking_model ?? DEFAULT_RETRIEVAL_CONFIG.reranking_model,
+        fallback_policy: retrieval.fallback_policy ?? 'none',
       });
       setTopKInput(String(newTopK));
 
@@ -234,13 +238,14 @@ export const RetrievalSettings = forwardRef<RetrievalSettingsRef, RetrievalSetti
                   <SelectItem value="full_text_search">
                     {t('hitTesting.methods.full_text_search')}
                   </SelectItem>
-                  {isGraphEnabled && (
-                    <SelectItem value="graph_search">
-                      {t('hitTesting.methods.graph_search')}
-                    </SelectItem>
-                  )}
+                  <SelectItem value="graph_search" disabled={!isGraphEnabled}>
+                    {t('hitTesting.methods.graph_search')}
+                  </SelectItem>
                 </SelectContent>
               </Select>
+              {!isGraphEnabled && graphUnavailableReason && (
+                <p className="text-xs text-muted-foreground">{graphUnavailableReason}</p>
+              )}
             </div>
 
             <div className="space-y-6 w-full">

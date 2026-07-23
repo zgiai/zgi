@@ -140,6 +140,7 @@ type RetrievalOptions struct {
 	CoveragePenaltyWeight float64 // Weight for coverage penalty
 	SemanticWeight        float64 // Final weight for semantic score (e.g., 0.7)
 	GraphWeight           float64 // Final weight for graph score (e.g., 0.3)
+	FallbackPolicy        string
 }
 
 const hybridRecallCandidateLimit = 50
@@ -153,6 +154,28 @@ func (s *RetrievalService) Retrieve(ctx context.Context, dataset *dataset_model.
 	// check dataset
 	if dataset == nil {
 		return []dto.HitTestingRecordResponse{}, nil, nil
+	}
+	if options == nil {
+		options = &RetrievalOptions{}
+	}
+	graphConfig, err := NormalizeGraphRetrievalConfig(options.SearchMethod, options.RetrievalMode, options.FallbackPolicy)
+	if err != nil {
+		return nil, nil, err
+	}
+	graphRequested := graphConfig.RequestedMethod == string(GraphSearch) || graphConfig.ActualMode == RetrievalModeGraph
+	if graphRequested {
+		if !dataset.EnableGraphFlow {
+			return nil, nil, fmt.Errorf("knowledge graph is not enabled")
+		}
+		if dataset.GraphAvailableRevision == nil {
+			return nil, nil, fmt.Errorf("knowledge graph is not ready")
+		}
+		if dataset.GraphVisibilityRevision != dataset.GraphProjectedVisibilityRevision {
+			return nil, nil, fmt.Errorf("knowledge graph visibility is not ready")
+		}
+		if s.graphFlowService == nil || s.graphFlowService.Neo4jClient == nil {
+			return nil, nil, fmt.Errorf("knowledge graph runtime is unavailable")
+		}
 	}
 	logCtx := logger.WithFields(ctx,
 		zap.String("dataset_id", dataset.ID),
@@ -187,6 +210,7 @@ func (s *RetrievalService) Retrieve(ctx context.Context, dataset *dataset_model.
 		documents      []retrieval.SearchResult
 		graphExecution *dto.GraphExecution
 		err            error
+		graph          bool
 	}
 
 	resultChan := make(chan result, 3) // hybrid/vector/BM25 plus graph
@@ -197,13 +221,8 @@ func (s *RetrievalService) Retrieve(ctx context.Context, dataset *dataset_model.
 	// - "vector": run vector/BM25 retrieval without graph search
 	// - "graph": run only graph search
 	// - "hybrid" or "": run both vector and graph searches
-	runVector := true
-	runGraph := true
-	if options.RetrievalMode == "vector" {
-		runGraph = false
-	} else if options.RetrievalMode == "graph" {
-		runVector = false
-	}
+	runVector := graphConfig.ActualMode != RetrievalModeGraph
+	runGraph := graphConfig.ActualMode == RetrievalModeGraph || graphConfig.ActualMode == RetrievalModeHybrid || graphConfig.RequestedMethod == string(GraphSearch)
 
 	searchMethod := normalizeVectorSearchMethod(options.SearchMethod)
 	options.SearchMethod = searchMethod
@@ -235,7 +254,7 @@ func (s *RetrievalService) Retrieve(ctx context.Context, dataset *dataset_model.
 					err,
 					zap.Int("documents_count", len(documents)),
 				)
-				resultChan <- result{documents, nil, err}
+				resultChan <- result{documents: documents, err: err}
 			}()
 		}
 
@@ -247,7 +266,7 @@ func (s *RetrievalService) Retrieve(ctx context.Context, dataset *dataset_model.
 					err,
 					zap.Int("documents_count", len(documents)),
 				)
-				resultChan <- result{documents, nil, err}
+				resultChan <- result{documents: documents, err: err}
 			}()
 		}
 
@@ -259,7 +278,7 @@ func (s *RetrievalService) Retrieve(ctx context.Context, dataset *dataset_model.
 					err,
 					zap.Int("documents_count", len(documents)),
 				)
-				resultChan <- result{documents, nil, err}
+				resultChan <- result{documents: documents, err: err}
 			}()
 		}
 	}
@@ -295,7 +314,7 @@ func (s *RetrievalService) Retrieve(ctx context.Context, dataset *dataset_model.
 				err,
 				zap.Int("documents_count", len(documents)),
 			)
-			resultChan <- result{documents, execution, nil} // Never pass error back to channel to avoid blocking
+			resultChan <- result{documents: documents, graphExecution: execution, err: err, graph: true}
 		}()
 	}
 
@@ -305,10 +324,15 @@ func (s *RetrievalService) Retrieve(ctx context.Context, dataset *dataset_model.
 	var semanticDocuments []retrieval.SearchResult
 
 	var finalExecution *dto.GraphExecution
+	var graphRetrievalErr error
 	for i := 0; i < pending; i++ {
 		res := <-resultChan
 		if res.err != nil {
 			exceptions = append(exceptions, res.err.Error())
+			if res.graph {
+				graphRetrievalErr = res.err
+				finalExecution = res.graphExecution
+			}
 		} else {
 			if res.graphExecution != nil {
 				finalExecution = res.graphExecution
@@ -321,6 +345,9 @@ func (s *RetrievalService) Retrieve(ctx context.Context, dataset *dataset_model.
 				}
 			}
 		}
+	}
+	if ShouldPropagateRetrievalError(graphConfig, graphRetrievalErr != nil) {
+		return nil, finalExecution, graphRetrievalErr
 	}
 
 	// Fault-tolerant error handling: log warnings but continue with partial results
@@ -1161,9 +1188,10 @@ func (s *RetrievalService) convertSearchResultsToRecords(documents []retrieval.S
 					"y": float64(i) * 0.1,
 				},
 				RetrievalSource: &dto.RetrievalSourceResponse{
-					Method:          "graph_knowledge",
-					Reason:          "通过知识图谱实体关联找到",
-					MatchedEntities: matchedEntities,
+					Method:            "graph_knowledge",
+					Reason:            "Graph evidence matched related entities",
+					MatchedEntities:   matchedEntities,
+					ActiveSourceCount: 1,
 				},
 			}
 			records = append(records, record)
@@ -1848,7 +1876,15 @@ func (s *RetrievalService) graphSearch(ctx context.Context, dataset *dataset_mod
 	)
 
 	execution := &dto.GraphExecution{
-		Steps: []dto.GraphExecutionStep{},
+		RequestedMethod:    string(GraphSearch),
+		ActualMethod:       RetrievalModeGraph,
+		FallbackPolicy:     options.FallbackPolicy,
+		GraphRevision:      dataset.GraphRevision,
+		VisibilityRevision: dataset.GraphVisibilityRevision,
+		Steps:              []dto.GraphExecutionStep{},
+	}
+	if execution.FallbackPolicy == "" {
+		execution.FallbackPolicy = FallbackPolicyNone
 	}
 
 	// 1. Extract entities from query
@@ -1890,10 +1926,9 @@ func (s *RetrievalService) graphSearch(ctx context.Context, dataset *dataset_mod
 	})
 
 	if len(entities) == 0 {
-		return []retrieval.SearchResult{}, &dto.GraphExecution{
-			Steps:   []dto.GraphExecutionStep{{Step: 1, Action: "extract_entities", Description: "从查询中提取实体", Result: "未提取到实体"}},
-			Summary: "未能从查询中提取到相关实体。",
-		}, nil
+		execution.Steps = []dto.GraphExecutionStep{{Step: 1, Action: "extract_entities", Description: "No query entities were extracted", Result: "No entities"}}
+		execution.Summary = "No relevant entities were extracted from the query."
+		return []retrieval.SearchResult{}, execution, nil
 	}
 
 	// 1.5 Detect Retrieval Boundary
@@ -2542,7 +2577,7 @@ func (s *RetrievalService) graphSearch(ctx context.Context, dataset *dataset_mod
 		"triples_count":  len(triples),
 		"entities_count": len(finalEntities),
 		"chunks_count":   len(results),
-		"hop_depth":      3,
+		"hop_depth":      effectiveHopDepth,
 	}
 
 	// Sort results by score descending, with ID fallback to ensure absolute stable ordering across identical scores

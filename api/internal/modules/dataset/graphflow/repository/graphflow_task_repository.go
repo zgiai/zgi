@@ -10,11 +10,24 @@ import (
 )
 
 type GraphFlowTaskRepository struct {
-	db *gorm.DB
+	db         *gorm.DB
+	changeHook func(context.Context, uuid.UUID) error
 }
 
 func NewGraphFlowTaskRepository(db *gorm.DB) *GraphFlowTaskRepository {
 	return &GraphFlowTaskRepository{db: db}
+}
+
+// SetChangeHook registers a callback that reconciles the durable run after a task changes.
+func (r *GraphFlowTaskRepository) SetChangeHook(hook func(context.Context, uuid.UUID) error) {
+	r.changeHook = hook
+}
+
+func (r *GraphFlowTaskRepository) notifyChange(ctx context.Context, taskID uuid.UUID) error {
+	if r.changeHook == nil {
+		return nil
+	}
+	return r.changeHook(ctx, taskID)
 }
 
 // CreateTask initializes a new task
@@ -48,7 +61,10 @@ func (r *GraphFlowTaskRepository) UpdateStatus(ctx context.Context, taskID uuid.
 		updates["error_message"] = errorMessage
 	}
 
-	return r.db.WithContext(ctx).Model(&model.GraphFlowTask{}).Where("id = ?", taskID).Updates(updates).Error
+	if err := r.db.WithContext(ctx).Model(&model.GraphFlowTask{}).Where("id = ?", taskID).Updates(updates).Error; err != nil {
+		return err
+	}
+	return r.notifyChange(ctx, taskID)
 }
 
 // GetByDocumentIDs retrieves the latest task state for multiple documents
@@ -76,10 +92,31 @@ func (r *GraphFlowTaskRepository) GetByDocumentID(ctx context.Context, documentI
 
 // CreateTaskAndReturnID creates a new task and returns the generated ID
 func (r *GraphFlowTaskRepository) CreateTaskAndReturnID(ctx context.Context, task *model.GraphFlowTask) (uuid.UUID, error) {
+	if task.RunID != nil {
+		var existing model.GraphFlowTask
+		err := r.db.WithContext(ctx).
+			Where("run_id = ? AND document_id = ? AND task_type = ?", *task.RunID, task.DocumentID, task.TaskType).
+			First(&existing).Error
+		if err == nil {
+			return existing.ID, nil
+		}
+		if err != gorm.ErrRecordNotFound {
+			return uuid.Nil, err
+		}
+	}
 	if task.ID == uuid.Nil {
 		task.ID = uuid.New()
 	}
 	if err := r.db.WithContext(ctx).Create(task).Error; err != nil {
+		if task.RunID != nil {
+			var existing model.GraphFlowTask
+			findErr := r.db.WithContext(ctx).
+				Where("run_id = ? AND document_id = ? AND task_type = ?", *task.RunID, task.DocumentID, task.TaskType).
+				First(&existing).Error
+			if findErr == nil {
+				return existing.ID, nil
+			}
+		}
 		return uuid.Nil, err
 	}
 	return task.ID, nil
@@ -88,14 +125,17 @@ func (r *GraphFlowTaskRepository) CreateTaskAndReturnID(ctx context.Context, tas
 // UpdateTaskCompleted marks a task as completed
 func (r *GraphFlowTaskRepository) UpdateTaskCompleted(ctx context.Context, taskID uuid.UUID) error {
 	now := time.Now()
-	return r.db.WithContext(ctx).Model(&model.GraphFlowTask{}).
+	if err := r.db.WithContext(ctx).Model(&model.GraphFlowTask{}).
 		Where("id = ?", taskID).
 		Updates(map[string]interface{}{
 			"status":       "completed",
 			"completed_at": now,
 			"updated_at":   now,
 			"progress":     100,
-		}).Error
+		}).Error; err != nil {
+		return err
+	}
+	return r.notifyChange(ctx, taskID)
 }
 
 // UpdateTaskFailed marks a task as failed with error message
@@ -111,26 +151,32 @@ func (r *GraphFlowTaskRepository) UpdateTaskFailed(ctx context.Context, taskID u
 			Update("graph_indexing_status", "failed")
 	}
 
-	return r.db.WithContext(ctx).Model(&model.GraphFlowTask{}).
+	if err := r.db.WithContext(ctx).Model(&model.GraphFlowTask{}).
 		Where("id = ?", taskID).
 		Updates(map[string]interface{}{
 			"status":        "failed",
 			"completed_at":  now,
 			"updated_at":    now,
 			"error_message": errorMessage,
-		}).Error
+		}).Error; err != nil {
+		return err
+	}
+	return r.notifyChange(ctx, taskID)
 }
 
 // UpdateTaskProcessing marks a task as processing
 func (r *GraphFlowTaskRepository) UpdateTaskProcessing(ctx context.Context, taskID uuid.UUID) error {
 	now := time.Now()
-	return r.db.WithContext(ctx).Model(&model.GraphFlowTask{}).
+	if err := r.db.WithContext(ctx).Model(&model.GraphFlowTask{}).
 		Where("id = ?", taskID).
 		Updates(map[string]interface{}{
 			"status":     "processing",
 			"started_at": now,
 			"updated_at": now,
-		}).Error
+		}).Error; err != nil {
+		return err
+	}
+	return r.notifyChange(ctx, taskID)
 }
 
 // GetTasksByDocumentAndTypes retrieves tasks for a document with specific task types
@@ -191,10 +237,13 @@ func (r *GraphFlowTaskRepository) GetPendingTaskByDocumentAndType(ctx context.Co
 
 // UpdateTaskProgress updates only the progress count and updated_at
 func (r *GraphFlowTaskRepository) UpdateTaskProgress(ctx context.Context, taskID uuid.UUID, progress int) error {
-	return r.db.WithContext(ctx).Model(&model.GraphFlowTask{}).
+	if err := r.db.WithContext(ctx).Model(&model.GraphFlowTask{}).
 		Where("id = ?", taskID).
 		Updates(map[string]interface{}{
 			"progress":   progress,
 			"updated_at": time.Now(),
-		}).Error
+		}).Error; err != nil {
+		return err
+	}
+	return r.notifyChange(ctx, taskID)
 }

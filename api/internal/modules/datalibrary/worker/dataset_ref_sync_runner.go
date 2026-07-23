@@ -12,6 +12,8 @@ import (
 	"github.com/google/uuid"
 	datalibModel "github.com/zgiai/zgi/api/internal/modules/datalibrary/model"
 	datalibRepo "github.com/zgiai/zgi/api/internal/modules/datalibrary/repository"
+	"github.com/zgiai/zgi/api/internal/modules/dataset/graphflow"
+	graphmodel "github.com/zgiai/zgi/api/internal/modules/dataset/graphflow/model"
 	datasetModel "github.com/zgiai/zgi/api/internal/modules/dataset/model"
 	"github.com/zgiai/zgi/api/pkg/vectordb"
 )
@@ -56,6 +58,11 @@ type datasetRefSyncEmbeddingStore interface {
 	List(ctx context.Context, filter datalibRepo.DocumentChunkEmbeddingListFilter) ([]*datalibModel.DocumentChunkEmbedding, int64, error)
 }
 
+type datasetRefSyncGraphLifecycle interface {
+	StartBuild(ctx context.Context, request graphflow.LifecycleRunRequest) (*graphmodel.GraphFlowRun, bool, error)
+	ReplaceDocument(ctx context.Context, build graphflow.LifecycleRunRequest, cleanup graphflow.LifecycleRunRequest) (*graphmodel.GraphFlowRun, *graphmodel.GraphFlowRun, error)
+}
+
 type DatasetRefSyncRunnerDeps struct {
 	Refs       datasetRefSyncRefStore
 	Assets     datasetRefSyncAssetStore
@@ -64,6 +71,7 @@ type DatasetRefSyncRunnerDeps struct {
 	Chunks     datasetRefSyncChunkStore
 	Embeddings datasetRefSyncEmbeddingStore
 	VectorDB   vectordb.VectorDB
+	Graph      datasetRefSyncGraphLifecycle
 }
 
 type DatasetRefSyncRunner struct {
@@ -74,6 +82,7 @@ type DatasetRefSyncRunner struct {
 	chunks     datasetRefSyncChunkStore
 	embeddings datasetRefSyncEmbeddingStore
 	vectorDB   vectordb.VectorDB
+	graph      datasetRefSyncGraphLifecycle
 }
 
 func NewDatasetRefSyncRunner(deps DatasetRefSyncRunnerDeps) *DatasetRefSyncRunner {
@@ -85,6 +94,7 @@ func NewDatasetRefSyncRunner(deps DatasetRefSyncRunnerDeps) *DatasetRefSyncRunne
 		chunks:     deps.Chunks,
 		embeddings: deps.Embeddings,
 		vectorDB:   deps.VectorDB,
+		graph:      deps.Graph,
 	}
 }
 
@@ -168,11 +178,6 @@ func (r *DatasetRefSyncRunner) copyAssetToDataset(ctx context.Context, ref *data
 	}
 
 	oldDocumentID := refDatasetDocumentID(ref)
-	if oldDocumentID != "" {
-		if err := r.documents.DisableDocuments(ctx, ref.DatasetID, []string{oldDocumentID}, ref.CreatedBy); err != nil {
-			return fmt.Errorf("disable old document: %w", err)
-		}
-	}
 
 	chunks, err := r.listCurrentChunks(ctx, asset)
 	if err != nil {
@@ -198,7 +203,7 @@ func (r *DatasetRefSyncRunner) copyAssetToDataset(ctx context.Context, ref *data
 	}
 
 	now := time.Now()
-	document.Enabled = true
+	document.Enabled = datasetRefRetrievalEnabled(ref)
 	document.IndexingStatus = datasetModel.DocumentStatusCompleted
 	document.CompletedAt = &now
 	document.ParsingCompletedAt = &now
@@ -209,9 +214,14 @@ func (r *DatasetRefSyncRunner) copyAssetToDataset(ctx context.Context, ref *data
 		_ = r.deleteDatasetDocumentTree(ctx, document.ID)
 		return fmt.Errorf("complete document: %w", err)
 	}
-	if err := r.documents.EnableDocuments(ctx, document.DatasetID, []string{document.ID}); err != nil {
+	if document.Enabled {
+		if err := r.documents.EnableDocuments(ctx, document.DatasetID, []string{document.ID}); err != nil {
+			_ = r.deleteDatasetDocumentTree(ctx, document.ID)
+			return fmt.Errorf("enable document: %w", err)
+		}
+	} else if err := r.documents.DisableDocuments(ctx, document.DatasetID, []string{document.ID}, ref.CreatedBy); err != nil {
 		_ = r.deleteDatasetDocumentTree(ctx, document.ID)
-		return fmt.Errorf("enable document: %w", err)
+		return fmt.Errorf("disable document: %w", err)
 	}
 
 	documentID, err := uuid.Parse(document.ID)
@@ -223,10 +233,82 @@ func (r *DatasetRefSyncRunner) copyAssetToDataset(ctx context.Context, ref *data
 		_ = r.deleteDatasetDocumentTree(ctx, document.ID)
 		return fmt.Errorf("mark ref synced: %w", err)
 	}
+	if dataset.EnableGraphFlow && r.graph != nil {
+		if err := r.enqueueGraphReplacement(ctx, dataset, ref, documentID, oldDocumentID, syncRunID, asset); err != nil {
+			return err
+		}
+	}
 	if oldDocumentID != "" && oldDocumentID != document.ID {
 		if err := r.deleteDatasetDocumentTree(ctx, oldDocumentID); err != nil {
 			return fmt.Errorf("delete old document: %w", err)
 		}
+	}
+	return nil
+}
+
+func (r *DatasetRefSyncRunner) enqueueGraphReplacement(
+	ctx context.Context,
+	dataset *datasetModel.Dataset,
+	ref *datalibModel.KnowledgeBaseAssetRef,
+	documentID uuid.UUID,
+	oldDocumentID string,
+	syncRunID uuid.UUID,
+	asset *datalibModel.DocumentAsset,
+) error {
+	organizationID, err := uuid.Parse(ref.OrganizationID)
+	if err != nil {
+		return fmt.Errorf("parse graph organization id: %w", err)
+	}
+	datasetID, err := uuid.Parse(ref.DatasetID)
+	if err != nil {
+		return fmt.Errorf("parse graph dataset id: %w", err)
+	}
+	var workspaceID *uuid.UUID
+	if dataset.WorkspaceID != "" {
+		parsedWorkspaceID, err := uuid.Parse(dataset.WorkspaceID)
+		if err != nil {
+			return fmt.Errorf("parse graph workspace id: %w", err)
+		}
+		workspaceID = &parsedWorkspaceID
+	}
+	generationNo := asset.GenerationNo
+	build := graphflow.LifecycleRunRequest{
+		OrganizationID:     organizationID,
+		WorkspaceID:        workspaceID,
+		DatasetID:          datasetID,
+		DocumentID:         &documentID,
+		SourceRefID:        &ref.ID,
+		SyncRunID:          &syncRunID,
+		AssetGenerationNo:  &generationNo,
+		Trigger:            "document_sync",
+		IdempotencyKey:     fmt.Sprintf("ref-sync:%s:%s:build", ref.ID, syncRunID),
+		EmbeddingProvider:  stringPtrValue(dataset.EmbeddingModelProvider),
+		EmbeddingModel:     stringPtrValue(dataset.EmbeddingModel),
+		EmbeddingDimension: intPtrValue(asset.EmbeddingDimension),
+	}
+	if oldDocumentID == "" || oldDocumentID == documentID.String() {
+		if _, _, err := r.graph.StartBuild(ctx, build); err != nil {
+			return fmt.Errorf("enqueue graph build: %w", err)
+		}
+		return nil
+	}
+	parsedOldDocumentID, err := uuid.Parse(oldDocumentID)
+	if err != nil {
+		return fmt.Errorf("parse old graph document id: %w", err)
+	}
+	cleanup := graphflow.LifecycleRunRequest{
+		OrganizationID:    organizationID,
+		WorkspaceID:       workspaceID,
+		DatasetID:         datasetID,
+		DocumentID:        &parsedOldDocumentID,
+		SourceRefID:       &ref.ID,
+		SyncRunID:         &syncRunID,
+		AssetGenerationNo: &generationNo,
+		Trigger:           "document_replaced",
+		IdempotencyKey:    fmt.Sprintf("ref-sync:%s:%s:cleanup:%s", ref.ID, syncRunID, oldDocumentID),
+	}
+	if _, _, err := r.graph.ReplaceDocument(ctx, build, cleanup); err != nil {
+		return fmt.Errorf("enqueue graph replacement: %w", err)
 	}
 	return nil
 }
@@ -616,6 +698,16 @@ func refDatasetDocumentID(ref *datalibModel.KnowledgeBaseAssetRef) string {
 		return ""
 	}
 	return ref.DatasetDocumentID.String()
+}
+
+func datasetRefRetrievalEnabled(ref *datalibModel.KnowledgeBaseAssetRef) bool {
+	if ref == nil {
+		return false
+	}
+	if ref.Status == "" {
+		return true
+	}
+	return ref.RetrievalEnabled
 }
 
 func isRunnableDatasetRefSyncStatus(status string) bool {

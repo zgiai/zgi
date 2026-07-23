@@ -2,6 +2,7 @@ package worker
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -41,6 +42,40 @@ func resolveExtractionOrganizationID(ctx context.Context, repo datasetOrganizati
 	return graphFlowTask.TenantID.String()
 }
 
+var (
+	errEmbeddingDimensionMismatch = errors.New("graph embedding dimension mismatch")
+	errStaleGraphFlowRun          = errors.New("stale graph flow run")
+)
+
+func validateExtractionRunSnapshot(
+	task *model.GraphFlowTask,
+	run *model.GraphFlowRun,
+	dataset *dataset_model.Dataset,
+	actualDimension int,
+) error {
+	if task == nil || run == nil || dataset == nil || task.RunID == nil || *task.RunID != run.ID || task.KBID != run.DatasetID {
+		return errStaleGraphFlowRun
+	}
+	if run.Status == model.GraphFlowRunStatusCancelled || run.Status == model.GraphFlowRunStatusSuperseded || run.Status == model.GraphFlowRunStatusFailed {
+		return errStaleGraphFlowRun
+	}
+	if run.EmbeddingProvider != strings.TrimSpace(pointerString(dataset.EmbeddingModelProvider)) ||
+		run.EmbeddingModel != strings.TrimSpace(pointerString(dataset.EmbeddingModel)) {
+		return errStaleGraphFlowRun
+	}
+	if run.EmbeddingDimension > 0 && actualDimension > 0 && run.EmbeddingDimension != actualDimension {
+		return errEmbeddingDimensionMismatch
+	}
+	return nil
+}
+
+func pointerString(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
+}
+
 // NewExtractionHandler creates a handler for extraction tasks.
 // All segments are processed concurrently within this single handler using a goroutine pool.
 func NewExtractionHandler(svc *graphflow.Service, taskManager *queue.TaskManager, limiter *ratelimit.KBLimiter) func(context.Context, *asynq.Task) error {
@@ -77,6 +112,24 @@ func NewExtractionHandler(svc *graphflow.Service, taskManager *queue.TaskManager
 		}
 		if graphFlowTask == nil {
 			return fmt.Errorf("graphflow task not found: %s: %w", taskID, asynq.SkipRetry)
+		}
+		var sourceRefID *uuid.UUID
+		if graphFlowTask.RunID != nil {
+			run, runErr := svc.RunRepo.FindByID(ctx, *graphFlowTask.RunID)
+			if runErr != nil {
+				return fmt.Errorf("failed to get graph flow run: %v: %w", runErr, asynq.SkipRetry)
+			}
+			dataset, datasetErr := svc.DatasetRepo.GetByID(ctx, graphFlowTask.KBID.String())
+			if datasetErr != nil {
+				return fmt.Errorf("failed to get graph flow dataset: %v: %w", datasetErr, asynq.SkipRetry)
+			}
+			if snapshotErr := validateExtractionRunSnapshot(graphFlowTask, run, dataset, run.EmbeddingDimension); snapshotErr != nil {
+				return fmt.Errorf("graph flow run snapshot rejected: %v: %w", snapshotErr, asynq.SkipRetry)
+			}
+			if run.SourceRefID != nil {
+				value := *run.SourceRefID
+				sourceRefID = &value
+			}
 		}
 
 		// Check for idempotency - skip if already completed or failed
@@ -227,7 +280,7 @@ func NewExtractionHandler(svc *graphflow.Service, taskManager *queue.TaskManager
 		segments = completedSegments
 
 		// 4. Process all completed segments with in-task concurrency
-		return handleConcurrentExtraction(ctx, svc, taskManager, graphFlowTask, segments, taskID)
+		return handleConcurrentExtraction(ctx, svc, taskManager, graphFlowTask, segments, taskID, sourceRefID)
 	}
 }
 
@@ -239,10 +292,16 @@ func handleConcurrentExtraction(
 	graphFlowTask *model.GraphFlowTask,
 	segments []*dataset_model.DocumentSegment,
 	taskID uuid.UUID,
+	sourceRefID *uuid.UUID,
 ) error {
 
 	totalSegments := len(segments)
 	organizationID := resolveExtractionOrganizationID(ctx, svc.DatasetRepo, graphFlowTask)
+	organizationUUID, err := uuid.Parse(organizationID)
+	if err != nil {
+		organizationUUID = graphFlowTask.TenantID
+	}
+	documentID := graphFlowTask.DocumentID
 
 	// FETCH DATASET: Get custom model settings if available
 	dataset, err := svc.DatasetRepo.GetByID(ctx, graphFlowTask.KBID.String())
@@ -387,13 +446,18 @@ func handleConcurrentExtraction(
 			mu.Lock()
 			for _, entity := range result.Entities {
 				mention := &model.EntityMention{
-					KBID:       graphFlowTask.KBID,
-					TenantID:   graphFlowTask.TenantID,
-					SegmentID:  segmentID,
-					RawName:    entity.Name,
-					RawType:    entity.Type,
-					Confidence: 1.0,
-					Status:     "pending",
+					KBID:                graphFlowTask.KBID,
+					TenantID:            graphFlowTask.TenantID,
+					SegmentID:           segmentID,
+					OrganizationID:      organizationUUID,
+					SourceRefID:         sourceRefID,
+					DocumentID:          &documentID,
+					RunID:               graphFlowTask.RunID,
+					EvidenceFingerprint: extractionEvidenceFingerprint("entity", graphFlowTask.KBID, documentID, segmentID, entity.Name, entity.Type),
+					RawName:             entity.Name,
+					RawType:             entity.Type,
+					Confidence:          1.0,
+					Status:              "pending",
 				}
 				allEntityMentions = append(allEntityMentions, mention)
 
@@ -403,13 +467,18 @@ func handleConcurrentExtraction(
 			}
 			for _, rel := range result.Relationships {
 				triple := &model.TripleMention{
-					KBID:         graphFlowTask.KBID,
-					TenantID:     graphFlowTask.TenantID,
-					SegmentID:    segmentID,
-					RawSubject:   rel.Source,
-					RawPredicate: rel.Type,
-					RawObject:    rel.Target,
-					Status:       "pending",
+					KBID:                graphFlowTask.KBID,
+					TenantID:            graphFlowTask.TenantID,
+					SegmentID:           segmentID,
+					OrganizationID:      organizationUUID,
+					SourceRefID:         sourceRefID,
+					DocumentID:          &documentID,
+					RunID:               graphFlowTask.RunID,
+					EvidenceFingerprint: extractionEvidenceFingerprint("relationship", graphFlowTask.KBID, documentID, segmentID, rel.Source, rel.Type, rel.Target),
+					RawSubject:          rel.Source,
+					RawPredicate:        rel.Type,
+					RawObject:           rel.Target,
+					Status:              "pending",
 				}
 				allTripleMentions = append(allTripleMentions, triple)
 			}
@@ -547,6 +616,16 @@ func validateExtractionOutcome(totalSegments, failedSegments, entityMentions, tr
 	return nil
 }
 
+func extractionEvidenceFingerprint(kind string, values ...interface{}) string {
+	parts := make([]string, 0, len(values)+1)
+	parts = append(parts, kind)
+	for _, value := range values {
+		parts = append(parts, fmt.Sprint(value))
+	}
+	sum := sha256.Sum256([]byte(strings.Join(parts, "\x00")))
+	return fmt.Sprintf("%x", sum)
+}
+
 func normalizeExtractionResult(result *extractor.ExtractionResult, documentTitle string) {
 	if result == nil {
 		return
@@ -622,6 +701,7 @@ func enqueueNextAlignmentTask(ctx context.Context, svc *graphflow.Service, taskM
 		TenantID:           currentTask.TenantID,
 		KBID:               currentTask.KBID,
 		DocumentID:         currentTask.DocumentID,
+		RunID:              currentTask.RunID,
 		TaskType:           "alignment",
 		ExtractionStrategy: currentTask.ExtractionStrategy,
 		Status:             "pending",

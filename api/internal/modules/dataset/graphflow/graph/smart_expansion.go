@@ -240,25 +240,6 @@ func (c *Neo4jClient) findAnchors(ctx context.Context, kbID string, keywords []s
 		})
 	}
 
-	// [DIAGNOSTIC] If no anchors found with kb_id, try a global search to see what's actually there
-	if len(anchors) == 0 {
-		logger.Warn(fmt.Sprintf("[DIAG_GRAPH] No anchors found for kb_id='%s' with keywords %v. Trying global search...", kbID, searchNames), nil)
-		diagQuery := `
-			MATCH (n:Entity)
-			WHERE (n.name IN $keywords OR n.canonical_name IN $keywords)
-			RETURN n.kb_id as real_kb_id, n.name as name, n.title as title, labels(n) as labels LIMIT 3
-		`
-		diagRes, _ := session.Run(ctx, diagQuery, map[string]interface{}{"keywords": searchNames})
-		for diagRes.Next(ctx) {
-			rec := diagRes.Record()
-			realID, _ := rec.Get("real_kb_id")
-			realName, _ := rec.Get("name")
-			realTitle, _ := rec.Get("title")
-			rLabels, _ := rec.Get("labels")
-			logger.Warn(fmt.Sprintf("[DIAG_RESULT] NODE FOUND GLOBALLY: name='%v', title='%v', kb_id='%v', labels=%v", realName, realTitle, realID, rLabels), nil)
-		}
-	}
-
 	return anchors, nil
 }
 
@@ -273,11 +254,11 @@ func (c *Neo4jClient) expandNode(ctx context.Context, kbID string, nodeID int64,
 	// We enforce kb_id and degree limits on ALL nodes in the path to prevent escaping the domain
 	// or hitting Super-Hubs that cause path explosion.
 	cypherQuery := fmt.Sprintf(`
-		MATCH (start) WHERE id(start) = $start_id
+		MATCH (start:Entity) WHERE id(start) = $start_id AND start.kb_id = $kb_id AND coalesce(start.active_source_count, 0) > 0
 
 		// Un-path expansion to find destination nodes uniquely
 		MATCH (start)-[*%s]-(m)
-		WHERE (m.kb_id = $kb_id OR m:Chunk OR m:Document OR m:File)
+		WHERE m.kb_id = $kb_id AND coalesce(m.active_source_count, 0) > 0
 		  AND (m.type IS NULL OR NOT (m.type IN ['Date', 'Time']))
 		  AND COUNT { (m)--() } <= 100
 
@@ -287,8 +268,8 @@ func (c *Neo4jClient) expandNode(ctx context.Context, kbID string, nodeID int64,
 		WITH m, COUNT { (m)--() } as degree
 
 		// Extract local environment edges of dest m
-		OPTIONAL MATCH (m)-[r]-(p)
-		WHERE p.kb_id = $kb_id AND id(p) <> id(m)
+		OPTIONAL MATCH (m)-[r]-(p:Entity)
+		WHERE p.kb_id = $kb_id AND id(p) <> id(m) AND coalesce(p.active_source_count, 0) > 0 AND coalesce(r.active_weight, 0) > 0
 		WITH m, degree, r, p LIMIT 500
 
 		WITH m, degree, collect(DISTINCT {

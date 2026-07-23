@@ -338,6 +338,10 @@ export const DatasetIndexingConfigForm = forwardRef<FormRef, DatasetIndexingConf
                   });
                 }}
                 disabled={isModelAndRetrievalConfigDisabled}
+                embeddingModel={{
+                  provider: data.embeddingModelProvider || '',
+                  model: data.embeddingModel || '',
+                }}
               />
             </div>
           ) : null}
@@ -402,6 +406,10 @@ export const DatasetIndexingConfigForm = forwardRef<FormRef, DatasetIndexingConf
               });
             }}
             disabled={isModelAndRetrievalConfigDisabled}
+            embeddingModel={{
+              provider: data.embeddingModelProvider || '',
+              model: data.embeddingModel || '',
+            }}
           />
         ) : null}
 

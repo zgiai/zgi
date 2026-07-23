@@ -145,11 +145,14 @@ func NewSyncHandler(svc *graphflow.Service, taskManager *queue.TaskManager, limi
 
 				for j, entity := range batch {
 					props := map[string]interface{}{
-						"id":             entity.ID.String(),
-						"name":           entity.Name,
-						"canonical_name": entity.CanonicalName,
-						"kb_id":          entity.KBID.String(),
-						"source_count":   entity.SourceCount,
+						"id":                  entity.ID.String(),
+						"name":                entity.Name,
+						"canonical_name":      entity.CanonicalName,
+						"kb_id":               entity.KBID.String(),
+						"source_count":        entity.SourceCount,
+						"active_source_count": entity.ActiveSourceCount,
+						"content_revision":    entity.ContentRevision,
+						"visibility_revision": entity.VisibilityRevision,
 					}
 					if len(embeddings[j]) > 0 {
 						props["embedding"] = embeddings[j]
@@ -247,8 +250,12 @@ func NewSyncHandler(svc *graphflow.Service, taskManager *queue.TaskManager, limi
 						"tail_id": rel.TailEntityID.String(),
 						"kb_id":   rel.KBID.String(),
 						"properties": map[string]interface{}{
-							"id":     rel.ID.String(),
-							"weight": rel.Weight,
+							"id":                  rel.ID.String(),
+							"kb_id":               rel.KBID.String(),
+							"weight":              rel.Weight,
+							"active_weight":       rel.ActiveWeight,
+							"content_revision":    rel.ContentRevision,
+							"visibility_revision": rel.VisibilityRevision,
 						},
 					})
 					syncedIDs = append(syncedIDs, rel.ID)
@@ -327,6 +334,11 @@ func NewSyncHandler(svc *graphflow.Service, taskManager *queue.TaskManager, limi
 			if len(pendingMentions) < 500 {
 				break
 			}
+		}
+
+		if err := svc.RefreshVisibilityProjection(ctx, kbID); err != nil {
+			svc.TaskRepo.UpdateTaskFailed(ctx, taskID, fmt.Sprintf("failed to refresh graph visibility projection: %v", err))
+			return fmt.Errorf("failed to refresh graph visibility projection: %w", err)
 		}
 
 		// 5. Update current task status to completed

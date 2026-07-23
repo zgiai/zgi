@@ -146,6 +146,8 @@ export const DATASET_KEYS = {
   randomQuestions: (datasetId: string, params: unknown) =>
     [...DATASET_KEYS.all, 'random-questions', datasetId, params] as const,
   graph: (datasetId: string) => [...DATASET_KEYS.all, 'graph', datasetId] as const,
+  graphCapability: () => [...DATASET_KEYS.all, 'graph-capability'] as const,
+  graphStatus: (datasetId: string) => [...DATASET_KEYS.graph(datasetId), 'status'] as const,
   // Segment questions
   segmentQuestions: (datasetId: string, documentId: string, segmentId: string) =>
     [...DATASET_KEYS.segments(datasetId, documentId), 'questions', segmentId] as const,

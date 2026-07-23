@@ -5,6 +5,7 @@ import { useParams } from 'next/navigation';
 import { useT } from '@/i18n';
 import { Save, ShieldAlert } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Switch } from '@/components/ui/switch';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -35,6 +36,14 @@ import { normalizeDatasetSearchMethod } from '@/utils/dataset/retrieval-config';
 import { toast } from 'sonner';
 import { KNOWLEDGE_BASE_PERMISSION_ACTIONS } from '@/constants/permissions';
 import { DATASET_NAME_VALIDATION_OPTIONS } from '@/constants/dataset';
+import {
+  useDatasetGraphStatus,
+  useGraphRuntimeCapability,
+  useRebuildDatasetGraph,
+  useRetryDocumentGraph,
+} from '@/hooks/dataset/use-dataset-graph';
+
+const GRAPH_MODEL_CHANGE_CONFIRMATION_ERROR = 'graph_model_change_confirmation_required';
 
 export default function DatasetSettingsPage() {
   const { datasetId } = useParams<{ datasetId: string }>();
@@ -45,6 +54,7 @@ export default function DatasetSettingsPage() {
   // Permission checking
   const { hasAnyPermission, isLoading: isPermissionsLoading } = useAccountPermissions();
   const canUpdateDataset = hasAnyPermission(KNOWLEDGE_BASE_PERMISSION_ACTIONS.update);
+  const canManageGraph = hasAnyPermission(KNOWLEDGE_BASE_PERMISSION_ACTIONS.graphManage);
   const { data, isLoading } = useDataset(datasetId, { enabled: canUpdateDataset });
 
   // Form state
@@ -85,6 +95,10 @@ export default function DatasetSettingsPage() {
 
   const dataset = data?.data;
   const isGraphFlowEnabled = Boolean(dataset?.enable_graph_flow);
+  const graphCapability = useGraphRuntimeCapability();
+  const graphStatus = useDatasetGraphStatus(datasetId, isGraphFlowEnabled);
+  const rebuildGraph = useRebuildDatasetGraph(datasetId);
+  const retryDocumentGraph = useRetryDocumentGraph(datasetId);
   // const isExternalDataSource = !!dataset?.external_knowledge_info?.external_knowledge_id;
 
   // Initialize form data from dataset
@@ -142,7 +156,9 @@ export default function DatasetSettingsPage() {
   const handleConfigChange = useCallback(
     (changes: Partial<DatasetUploadFormData>) => {
       setConfigData(prev => {
-        const nextGraphFlowEnabled = Boolean(dataset?.enable_graph_flow);
+        const nextGraphFlowEnabled = dataset?.enable_graph_flow
+          ? true
+          : Boolean(changes.enableGraphFlow ?? prev.enableGraphFlow);
         const nextRetrievalConfig = changes.retrievalConfig
           ? {
               ...changes.retrievalConfig,
@@ -187,7 +203,9 @@ export default function DatasetSettingsPage() {
 
     // Get current form data from child component
     const currentFormData = configFormRef.current?.getFormData() || configData;
-    const nextGraphFlowEnabled = Boolean(dataset.enable_graph_flow);
+    const nextGraphFlowEnabled = Boolean(
+      dataset.enable_graph_flow || currentFormData.enableGraphFlow
+    );
     const workspaceId = currentWorkspace?.id || dataset.workspace_id || dataset.workspace?.id || '';
     const normalizedRetrievalConfig = currentFormData.retrievalConfig
       ? {
@@ -233,6 +251,18 @@ export default function DatasetSettingsPage() {
           }
         : undefined,
     };
+
+    const graphModelChanged =
+      Boolean(dataset.enable_graph_flow) &&
+      (dataset.entity_model !== requestParams.entity_model ||
+        dataset.entity_model_provider !== requestParams.entity_model_provider);
+    if (graphModelChanged) {
+      const confirmed = window.confirm(t('datasets.graph.modelChangeConfirmation'));
+      if (!confirmed) return;
+      requestParams.confirm_graph_rebuild = true;
+    }
+
+    void GRAPH_MODEL_CHANGE_CONFIRMATION_ERROR;
 
     updateDataset.mutate(requestParams);
   }, [
@@ -375,6 +405,27 @@ export default function DatasetSettingsPage() {
                     {t('datasets.settings.graphFlowEnabledDescription')}
                   </p>
                 </div>
+              ) : canManageGraph ? (
+                <div className="flex items-center justify-between rounded-lg border border-border/70 bg-muted/30 p-4">
+                  <div>
+                    <div className="text-sm font-semibold">{t('datasets.graph.enableTitle')}</div>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      {t('datasets.graph.enableDescription')}
+                    </p>
+                    {configData.enableGraphFlow ? (
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {t('datasets.graph.enableSaveHint')}
+                      </p>
+                    ) : null}
+                  </div>
+                  <Switch
+                    checked={Boolean(configData.enableGraphFlow)}
+                    disabled={!graphCapability.data?.data?.available}
+                    onCheckedChange={checked =>
+                      setConfigData(previous => ({ ...previous, enableGraphFlow: checked }))
+                    }
+                  />
+                </div>
               ) : null}
             </CardContent>
           </Card>
@@ -395,6 +446,60 @@ export default function DatasetSettingsPage() {
               />
             </CardContent>
           </Card>
+
+          {isGraphFlowEnabled && graphStatus.data?.data ? (
+            <Card className="border-border/80 shadow-sm">
+              <CardHeader>
+                <CardTitle className="text-base">{t('datasets.graph.statusTitle')}</CardTitle>
+                <CardDescription>
+                  {t('datasets.graph.statusDescription', {
+                    status: t(`datasets.graph.statuses.${graphStatus.data.data.status}`),
+                    progress: graphStatus.data.data.progress,
+                  })}
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <Badge variant="secondary">
+                    {t(`datasets.graph.statuses.${graphStatus.data.data.status}`)}
+                  </Badge>
+                  {canManageGraph && graphStatus.data.data.can_rebuild ? (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={rebuildGraph.isPending}
+                      onClick={() => rebuildGraph.mutate()}
+                    >
+                      {t('datasets.graph.rebuild')}
+                    </Button>
+                  ) : null}
+                </div>
+                {graphStatus.data.data.documents.map(document => (
+                  <div
+                    key={document.document_id}
+                    className="flex items-center justify-between rounded-md border px-3 py-2 text-sm"
+                  >
+                    <span className="truncate">{document.document_id}</span>
+                    <div className="flex items-center gap-2">
+                      <Badge variant="outline">
+                        {t(`datasets.graph.documentStatuses.${document.status}`)}
+                      </Badge>
+                      {canManageGraph && document.status === 'failed' ? (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          disabled={retryDocumentGraph.isPending}
+                          onClick={() => retryDocumentGraph.mutate(document.document_id)}
+                        >
+                          {t('datasets.graph.retryDocument')}
+                        </Button>
+                      ) : null}
+                    </div>
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+          ) : null}
         </div>
       </div>
     </div>

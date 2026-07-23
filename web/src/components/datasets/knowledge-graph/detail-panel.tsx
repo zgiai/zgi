@@ -1,18 +1,21 @@
 'use client';
 
 import React, { useMemo } from 'react';
-import { Network, Info, FileText, ChevronRight } from 'lucide-react';
+import { Network, Info, FileText, ChevronRight, Expand } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
-import type { DatasetGraph, GraphNode } from '@/services/types/dataset';
+import type { DatasetGraph, GraphNode, GraphNodeSource } from '@/services/types/dataset';
+import { Button } from '@/components/ui/button';
+import { useT } from '@/i18n';
 
 interface DetailPanelProps {
   selectedNode: GraphNode | null;
   graphData: DatasetGraph | null;
   categoryColorMap: Record<string, { fill: string; stroke: string; text: string }>;
   onNodeSelect: (nodeId: string) => void;
+  onExpandNeighbors: (nodeId: string) => void;
   className?: string;
 }
 
@@ -21,8 +24,11 @@ export const DetailPanel: React.FC<DetailPanelProps> = ({
   graphData,
   categoryColorMap,
   onNodeSelect,
+  onExpandNeighbors,
   className,
 }) => {
+  const t = useT('datasets.knowledgeGraph');
+
   // Compute related entities (neighbors) and their relationships
   const relatedEntities = useMemo(() => {
     if (!selectedNode || !graphData) return [];
@@ -40,7 +46,7 @@ export const DetailPanel: React.FC<DetailPanelProps> = ({
           direction: isSource ? 'out' : 'in',
         };
       })
-      .filter(item => !!item.node);
+      .filter((item): item is typeof item & { node: GraphNode } => item.node !== undefined);
 
     return neighbors;
   }, [selectedNode, graphData]);
@@ -50,7 +56,7 @@ export const DetailPanel: React.FC<DetailPanelProps> = ({
       <Card className={cn('flex flex-col overflow-hidden bg-card', className)}>
         <div className="h-full flex flex-col items-center justify-center p-8 text-center text-muted-foreground">
           <Network className="w-12 h-12 mb-4 opacity-10" />
-          <p className="text-sm">在图谱中点击实体以查看详细信息</p>
+          <p className="text-sm">{t('selectEntity')}</p>
         </div>
       </Card>
     );
@@ -61,7 +67,7 @@ export const DetailPanel: React.FC<DetailPanelProps> = ({
       <div className="p-4 border-b border-border bg-muted/30">
         <h3 className="font-semibold flex items-center gap-2">
           <Info className="w-4 h-4" />
-          实体详情
+          {t('entityDetails')}
         </h3>
       </div>
 
@@ -85,13 +91,27 @@ export const DetailPanel: React.FC<DetailPanelProps> = ({
               {selectedNode.category}
             </Badge>
             <h2 className="text-xl font-bold">{selectedNode.label}</h2>
+            <div className="mt-2 flex items-center gap-2">
+              <Badge variant="secondary">
+                {t('activeSources', { count: selectedNode.data.active_source_count })}
+              </Badge>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => onExpandNeighbors(selectedNode.id)}
+              >
+                <Expand className="mr-1 h-3.5 w-3.5" />
+                {t('expandNeighbors')}
+              </Button>
+            </div>
           </div>
 
           {/* Description */}
           {selectedNode.data?.description && (
             <div className="space-y-2">
               <h4 className="text-xs font-bold text-muted-foreground uppercase tracking-wider">
-                描述
+                {t('description')}
               </h4>
               <p className="text-sm leading-relaxed text-foreground/90">
                 {selectedNode.data.description}
@@ -102,14 +122,14 @@ export const DetailPanel: React.FC<DetailPanelProps> = ({
           {/* Related Entities Section */}
           <div className="space-y-3">
             <h4 className="text-xs font-bold text-muted-foreground uppercase tracking-wider">
-              关联实体 ({relatedEntities.length})
+              {t('relatedEntities', { count: relatedEntities.length })}
             </h4>
             {relatedEntities.length > 0 ? (
               <div className="space-y-2">
                 {relatedEntities.map((item, idx) => (
                   <div
                     key={`${item.edge.source}-${item.edge.target}-${idx}`}
-                    onClick={() => onNodeSelect(item.node!.id)}
+                    onClick={() => onNodeSelect(item.node.id)}
                     className="p-3 rounded-lg border border-border bg-muted/20 hover:bg-muted/40 transition-all cursor-pointer group"
                   >
                     <div className="flex items-center justify-between gap-2">
@@ -126,9 +146,9 @@ export const DetailPanel: React.FC<DetailPanelProps> = ({
                           </span>
                         </div>
                         <p className="text-sm font-medium truncate group-hover:text-primary transition-colors">
-                          {item.node!.label}
+                          {item.node.label}
                         </p>
-                        <p className="text-[10px] text-muted-foreground">{item.node!.category}</p>
+                        <p className="text-[10px] text-muted-foreground">{item.node.category}</p>
                       </div>
                       <ChevronRight className="w-4 h-4 text-muted-foreground/30 group-hover:text-primary transition-colors shrink-0" />
                     </div>
@@ -136,7 +156,7 @@ export const DetailPanel: React.FC<DetailPanelProps> = ({
                 ))}
               </div>
             ) : (
-              <p className="text-xs text-muted-foreground italic">暂无关联实体</p>
+              <p className="text-xs text-muted-foreground italic">{t('noRelatedEntities')}</p>
             )}
           </div>
 
@@ -144,10 +164,10 @@ export const DetailPanel: React.FC<DetailPanelProps> = ({
           {selectedNode.data?.sources && selectedNode.data.sources.length > 0 && (
             <div className="space-y-3">
               <h4 className="text-xs font-bold text-muted-foreground uppercase tracking-wider">
-                来源文档 ({selectedNode.data.sources.length})
+                {t('activeSourceDocuments', { count: selectedNode.data.sources.length })}
               </h4>
               <div className="space-y-2">
-                {selectedNode.data.sources.map((src: any) => (
+                {selectedNode.data.sources.map((src: GraphNodeSource) => (
                   <div
                     key={src.doc.id}
                     className="p-3 rounded-lg border border-border bg-muted/20 hover:bg-muted/40 transition-colors cursor-pointer group"

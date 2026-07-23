@@ -318,7 +318,7 @@ func NewAlignmentHandler(svc *graphflow.Service, taskManager *queue.TaskManager,
 						"okTail":    okTail,
 					})
 					// Mark triple mention status as skipped to avoid infinite loop
-					if err := svc.TripleMentionRepo.UpdateStatus(ctx, triple.ID, "skipped", nil, nil); err != nil {
+					if err := svc.TripleMentionRepo.UpdateStatus(ctx, triple.ID, "skipped", nil, nil, nil); err != nil {
 						logger.Error("Failed to update triple status to skipped", err)
 					}
 					continue
@@ -326,7 +326,9 @@ func NewAlignmentHandler(svc *graphflow.Service, taskManager *queue.TaskManager,
 
 				// Check relationship
 				existing, _ := svc.RelationshipRepo.FindExisting(ctx, kbID, headID, tailID, triple.RawPredicate)
+				var relationshipID uuid.UUID
 				if existing != nil {
+					relationshipID = existing.ID
 					svc.RelationshipRepo.IncrementWeight(ctx, existing.ID)
 				} else {
 					rel := &model.Relationship{
@@ -342,11 +344,12 @@ func NewAlignmentHandler(svc *graphflow.Service, taskManager *queue.TaskManager,
 						logger.Error("Failed to create relationship", err)
 						return fmt.Errorf("failed to create relationship for triple %s: %w", triple.ID, err)
 					}
+					relationshipID = rel.ID
 					relationshipsCreated++
 				}
 
 				// Update triple mention status
-				if err := svc.TripleMentionRepo.UpdateStatus(ctx, triple.ID, "aligned", &headID, &tailID); err != nil {
+				if err := svc.TripleMentionRepo.UpdateStatus(ctx, triple.ID, "aligned", &headID, &tailID, &relationshipID); err != nil {
 					logger.Error("Failed to update triple status", err)
 					return fmt.Errorf("failed to update triple status for %s: %w", triple.ID, err)
 				}
@@ -356,6 +359,15 @@ func NewAlignmentHandler(svc *graphflow.Service, taskManager *queue.TaskManager,
 					svc.TaskRepo.UpdateTaskProgress(ctx, taskID, 75)
 				}
 			}
+		}
+
+		if err := svc.EntityRepo.RecalculateSourceCounts(ctx, kbID); err != nil {
+			svc.TaskRepo.UpdateTaskFailed(ctx, taskID, fmt.Sprintf("failed to recalculate entity source counts: %v", err))
+			return fmt.Errorf("failed to recalculate entity source counts: %w", err)
+		}
+		if err := svc.RelationshipRepo.RecalculateSourceCounts(ctx, kbID); err != nil {
+			svc.TaskRepo.UpdateTaskFailed(ctx, taskID, fmt.Sprintf("failed to recalculate relationship source counts: %v", err))
+			return fmt.Errorf("failed to recalculate relationship source counts: %w", err)
 		}
 
 		// 8. Create and enqueue sync tasks (parallel: graph_sync and vector_sync) - Moved before completion
@@ -390,6 +402,7 @@ func enqueueNextSyncTasks(ctx context.Context, svc *graphflow.Service, taskManag
 		TenantID:           currentTask.TenantID,
 		KBID:               currentTask.KBID,
 		DocumentID:         currentTask.DocumentID,
+		RunID:              currentTask.RunID,
 		TaskType:           "graph_sync",
 		ExtractionStrategy: currentTask.ExtractionStrategy,
 		Status:             "pending",
@@ -427,6 +440,7 @@ func enqueueNextSyncTasks(ctx context.Context, svc *graphflow.Service, taskManag
 		TenantID:           currentTask.TenantID,
 		KBID:               currentTask.KBID,
 		DocumentID:         currentTask.DocumentID,
+		RunID:              currentTask.RunID,
 		TaskType:           "vector_sync",
 		ExtractionStrategy: currentTask.ExtractionStrategy,
 		Status:             "pending",

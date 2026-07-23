@@ -324,6 +324,23 @@ func (h *DatasetHandler) PostDatasets(c *gin.Context) {
 			response.Fail(c, response.ErrPermissionDenied)
 			return
 		}
+		if req.EnableGraphFlow {
+			hasGraphPermission, err := h.organizationService.CheckWorkspacePermission(
+				c.Request.Context(),
+				tenantID,
+				*requestWorkspaceID,
+				accountID,
+				workspace_model.WorkspacePermissionKnowledgeBaseGraphManage,
+			)
+			if err != nil {
+				response.Fail(c, response.ErrSystemError)
+				return
+			}
+			if !hasGraphPermission {
+				response.Fail(c, response.ErrPermissionDenied)
+				return
+			}
+		}
 	}
 
 	// Set defaults
@@ -368,25 +385,33 @@ func (h *DatasetHandler) PostDatasets(c *gin.Context) {
 
 	// Create dataset request
 	createReq := &service.CreateDatasetRequest{
-		WorkspaceID:            *requestWorkspaceID,
-		Name:                   req.Name,
-		Description:            &req.Description,
-		Provider:               req.Provider,
-		Permission:             req.Permission,
-		EmbeddingModel:         embeddingModel,
-		EmbeddingModelProvider: embeddingModelProvider,
-		EntityModel:            req.EntityModel,
-		EntityModelProvider:    req.EntityModelProvider,
-		RetrievalConfig:        req.RetrievalConfig,
-		Icon:                   req.Icon,
-		IconType:               req.IconType,
-		IconBackground:         req.IconBackground,
-		CreatedBy:              accountID,
-		EnableGraphFlow:        req.EnableGraphFlow,
+		WorkspaceID:                 *requestWorkspaceID,
+		Name:                        req.Name,
+		Description:                 &req.Description,
+		Provider:                    req.Provider,
+		Permission:                  req.Permission,
+		EmbeddingModel:              embeddingModel,
+		EmbeddingModelProvider:      embeddingModelProvider,
+		EntityModel:                 req.EntityModel,
+		EntityModelProvider:         req.EntityModelProvider,
+		RetrievalConfig:             req.RetrievalConfig,
+		Icon:                        req.Icon,
+		IconType:                    req.IconType,
+		IconBackground:              req.IconBackground,
+		CreatedBy:                   accountID,
+		EnableGraphFlow:             req.EnableGraphFlow,
+		GraphEmbeddingModel:         req.GraphEmbeddingModel,
+		GraphEmbeddingModelProvider: req.GraphEmbeddingModelProvider,
+		GraphEmbeddingDimension:     req.GraphEmbeddingDimension,
 	}
 
 	dataset, err := h.datasetService.CreateDataset(c.Request.Context(), createReq)
 	if err != nil {
+		var graphErr *service.GraphOperationError
+		if errors.As(err, &graphErr) {
+			writeGraphOperationError(c, graphErr)
+			return
+		}
 		if errors.Is(err, service.ErrInvalidDatasetPermission) {
 			response.Fail(c, response.ErrInvalidPermission)
 			return
@@ -545,6 +570,24 @@ func (h *DatasetHandler) PatchDataset(c *gin.Context) {
 		response.Fail(c, response.ErrPermissionDenied)
 		return
 	}
+	if req.EnableGraphFlow != nil || req.EntityModel != nil || req.EntityModelProvider != nil ||
+		req.GraphEmbeddingModel != nil || req.GraphEmbeddingModelProvider != nil || req.GraphEmbeddingDimension != nil {
+		hasGraphPermission, err := h.organizationService.CheckWorkspacePermission(
+			c.Request.Context(),
+			organizationID,
+			dataset.WorkspaceID,
+			accountID,
+			workspace_model.WorkspacePermissionKnowledgeBaseGraphManage,
+		)
+		if err != nil {
+			response.Fail(c, response.ErrSystemError)
+			return
+		}
+		if !hasGraphPermission {
+			response.Fail(c, response.ErrPermissionDenied)
+			return
+		}
+	}
 
 	// Workspace transfer is distinct from metadata editing. Only require move when the target changes.
 	if req.WorkspaceID != nil && *req.WorkspaceID != "" && *req.WorkspaceID != dataset.WorkspaceID {
@@ -567,24 +610,34 @@ func (h *DatasetHandler) PatchDataset(c *gin.Context) {
 
 	// Update dataset
 	updateReq := &service.UpdateDatasetRequest{
-		ID:                     datasetID,
-		Name:                   req.Name,
-		Description:            req.Description,
-		EmbeddingModel:         req.EmbeddingModel,
-		EmbeddingModelProvider: req.EmbeddingModelProvider,
-		EntityModel:            req.EntityModel,
-		EntityModelProvider:    req.EntityModelProvider,
-		RetrievalConfig:        req.RetrievalConfig,
-		Icon:                   req.Icon,
-		IconType:               req.IconType,
-		IconBackground:         req.IconBackground,
-		WorkspaceID:            req.WorkspaceID,
-		UpdatedBy:              accountID,
-		EnableGraphFlow:        req.EnableGraphFlow,
+		ID:                          datasetID,
+		Name:                        req.Name,
+		Description:                 req.Description,
+		EmbeddingModel:              req.EmbeddingModel,
+		EmbeddingModelProvider:      req.EmbeddingModelProvider,
+		EntityModel:                 req.EntityModel,
+		EntityModelProvider:         req.EntityModelProvider,
+		RetrievalConfig:             req.RetrievalConfig,
+		Icon:                        req.Icon,
+		IconType:                    req.IconType,
+		IconBackground:              req.IconBackground,
+		WorkspaceID:                 req.WorkspaceID,
+		UpdatedBy:                   accountID,
+		EnableGraphFlow:             req.EnableGraphFlow,
+		ConfirmGraphRebuild:         req.ConfirmGraphRebuild,
+		IdempotencyKey:              c.GetHeader("Idempotency-Key"),
+		GraphEmbeddingModel:         req.GraphEmbeddingModel,
+		GraphEmbeddingModelProvider: req.GraphEmbeddingModelProvider,
+		GraphEmbeddingDimension:     req.GraphEmbeddingDimension,
 	}
 
 	dataset, err = h.datasetService.UpdateDataset(c.Request.Context(), updateReq)
 	if err != nil {
+		var graphErr *service.GraphOperationError
+		if errors.As(err, &graphErr) {
+			writeGraphOperationError(c, graphErr)
+			return
+		}
 		errMsg := err.Error()
 		switch {
 		case strings.Contains(errMsg, "not found"):
@@ -814,7 +867,7 @@ func (h *DatasetHandler) handleHitTesting(c *gin.Context, forcedMode string) {
 		dataset,
 		req.Query,
 		accountID,
-		nil,
+		retrievalModelWithFallback(req.RetrievalModel, req.FallbackPolicy),
 		req.ExternalRetrievalModel,
 		10,
 		"hit_testing",
@@ -918,12 +971,15 @@ func (h *DatasetHandler) BatchHitTesting(c *gin.Context) {
 		return
 	}
 
-	// Process each query and collect results
-	var results []dto.HitTestingResponse
+	// Process each query and preserve an independent result for every row.
+	results := make([]dto.QueryResult, 0, len(req.Queries))
 	for _, query := range req.Queries {
 		singleReq := &dto.HitTestingRequest{
 			Query:                  query,
+			RetrievalModel:         req.RetrievalModel,
 			ExternalRetrievalModel: req.ExternalRetrievalModel,
+			RetrievalMode:          req.RetrievalMode,
+			FallbackPolicy:         req.FallbackPolicy,
 		}
 
 		if err := h.hitTestingService.HitTestingArgsCheck(singleReq); err != nil {
@@ -931,6 +987,8 @@ func (h *DatasetHandler) BatchHitTesting(c *gin.Context) {
 				"query": query,
 				"error": err.Error(),
 			})
+			errMessage := err.Error()
+			results = append(results, dto.QueryResult{Query: query, Status: "failed", Error: &errMessage})
 			continue
 		}
 
@@ -939,12 +997,12 @@ func (h *DatasetHandler) BatchHitTesting(c *gin.Context) {
 			dataset,
 			query,
 			accountID,
-			nil,
+			retrievalModelWithFallback(req.RetrievalModel, req.FallbackPolicy),
 			req.ExternalRetrievalModel,
 			10,
 			"batch_hit_testing",
 			"batch",
-			"",
+			req.RetrievalMode,
 			true,
 		)
 		if err != nil {
@@ -953,9 +1011,10 @@ func (h *DatasetHandler) BatchHitTesting(c *gin.Context) {
 			logger.Error("Batch HitTesting failed for query", fmt.Errorf("query: %s, error: %s", query, errMsg))
 
 			// Continue with other queries
+			results = append(results, dto.QueryResult{Query: query, Status: "failed", Error: &errMsg})
 			continue
 		}
-		results = append(results, *result)
+		results = append(results, dto.QueryResult{Query: query, Status: "completed", Result: result})
 	}
 
 	// Create batch response
@@ -1115,7 +1174,10 @@ func (h *DatasetHandler) processBatchHitTesting(taskID string, dataset *model.Da
 
 		singleReq := &dto.HitTestingRequest{
 			Query:                  query,
+			RetrievalModel:         req.RetrievalModel,
 			ExternalRetrievalModel: req.ExternalRetrievalModel,
+			RetrievalMode:          req.RetrievalMode,
+			FallbackPolicy:         req.FallbackPolicy,
 		}
 
 		if err := h.hitTestingService.HitTestingArgsCheck(singleReq); err != nil {
@@ -1129,12 +1191,12 @@ func (h *DatasetHandler) processBatchHitTesting(taskID string, dataset *model.Da
 			dataset,
 			query,
 			accountID,
-			nil,
+			retrievalModelWithFallback(req.RetrievalModel, req.FallbackPolicy),
 			req.ExternalRetrievalModel,
 			10,
 			"batch_hit_testing",
 			"batch",
-			"",
+			req.RetrievalMode,
 			true,
 		)
 		if err != nil {
@@ -1147,6 +1209,18 @@ func (h *DatasetHandler) processBatchHitTesting(taskID string, dataset *model.Da
 	}
 
 	h.batchTaskManager.UpdateProgress(taskID)
+}
+
+func retrievalModelWithFallback(retrievalModel map[string]interface{}, fallbackPolicy string) map[string]interface{} {
+	if fallbackPolicy == "" {
+		return retrievalModel
+	}
+	result := make(map[string]interface{}, len(retrievalModel)+1)
+	for key, value := range retrievalModel {
+		result[key] = value
+	}
+	result["fallback_policy"] = fallbackPolicy
+	return result
 }
 
 type DatasetQueryResponse struct {
@@ -1678,36 +1752,49 @@ func generateIconURL(icon *string, iconType *string) string {
 
 func (h *DatasetHandler) convertDatasetToResponse(dataset *model.Dataset) dto.DatasetResponse {
 	response := dto.DatasetResponse{
-		ID:                     dataset.ID,
-		WorkspaceID:            dataset.WorkspaceID,
-		Name:                   dataset.Name,
-		Description:            dataset.Description,
-		Provider:               dataset.Provider,
-		CreatedBy:              dataset.CreatedBy,
-		CreatedAt:              dataset.CreatedAt,
-		UpdatedBy:              dataset.UpdatedBy,
-		UpdatedAt:              dataset.UpdatedAt,
-		Owner:                  dataset.Owner,
-		EmbeddingModel:         dataset.EmbeddingModel,
-		EmbeddingModelProvider: dataset.EmbeddingModelProvider,
-		EntityModel:            dataset.EntityModel,
-		EntityModelProvider:    dataset.EntityModelProvider,
-		CollectionBindingID:    dataset.CollectionBindingID,
-		Icon:                   dataset.Icon,
-		IconType:               dataset.IconType,
-		IconBackground:         dataset.IconBackground,
-		IconURL:                generateIconURL(dataset.Icon, dataset.IconType),
-		AppCount:               dataset.AppCount,
-		DocumentCount:          dataset.DocumentCount,
-		AvailableDocumentCount: dataset.AvailableDocumentCount,
-		AvailableSegmentCount:  dataset.AvailableSegmentCount,
-		WordCount:              dataset.WordCount,
-		EmbeddingAvailable:     true,
-		PartialMemberList:      []interface{}{},
-		Tags:                   dataset.Tags,
-		DocForm:                dataset.DocForm,
-		CanEdit:                false, // Default to false, will be set by caller if needed
-		EnableGraphFlow:        dataset.EnableGraphFlow,
+		ID:                               dataset.ID,
+		WorkspaceID:                      dataset.WorkspaceID,
+		Name:                             dataset.Name,
+		Description:                      dataset.Description,
+		Provider:                         dataset.Provider,
+		CreatedBy:                        dataset.CreatedBy,
+		CreatedAt:                        dataset.CreatedAt,
+		UpdatedBy:                        dataset.UpdatedBy,
+		UpdatedAt:                        dataset.UpdatedAt,
+		Owner:                            dataset.Owner,
+		EmbeddingModel:                   dataset.EmbeddingModel,
+		EmbeddingModelProvider:           dataset.EmbeddingModelProvider,
+		EntityModel:                      dataset.EntityModel,
+		EntityModelProvider:              dataset.EntityModelProvider,
+		CollectionBindingID:              dataset.CollectionBindingID,
+		Icon:                             dataset.Icon,
+		IconType:                         dataset.IconType,
+		IconBackground:                   dataset.IconBackground,
+		IconURL:                          generateIconURL(dataset.Icon, dataset.IconType),
+		AppCount:                         dataset.AppCount,
+		DocumentCount:                    dataset.DocumentCount,
+		AvailableDocumentCount:           dataset.AvailableDocumentCount,
+		AvailableSegmentCount:            dataset.AvailableSegmentCount,
+		WordCount:                        dataset.WordCount,
+		EmbeddingAvailable:               true,
+		PartialMemberList:                []interface{}{},
+		Tags:                             dataset.Tags,
+		DocForm:                          dataset.DocForm,
+		CanEdit:                          false, // Default to false, will be set by caller if needed
+		EnableGraphFlow:                  dataset.EnableGraphFlow,
+		GraphStatus:                      dataset.GraphStatus,
+		GraphRevision:                    dataset.GraphRevision,
+		GraphAvailableRevision:           dataset.GraphAvailableRevision,
+		GraphVisibilityRevision:          dataset.GraphVisibilityRevision,
+		GraphProjectedVisibilityRevision: dataset.GraphProjectedVisibilityRevision,
+		GraphProgress:                    dataset.GraphProgress,
+	}
+	if dataset.EnableGraphFlow {
+		response.GraphEmbedding = &dto.GraphEmbeddingResponse{
+			Mode:          "inherit",
+			ModelProvider: dataset.EmbeddingModelProvider,
+			Model:         dataset.EmbeddingModel,
+		}
 	}
 
 	// Convert RetrievalConfig
@@ -1716,6 +1803,20 @@ func (h *DatasetHandler) convertDatasetToResponse(dataset *model.Dataset) dto.Da
 	}
 
 	return response
+}
+
+func writeGraphOperationError(c *gin.Context, err *service.GraphOperationError) {
+	status := 409
+	if err.Code == service.GraphErrorCodeEmbeddingOverrideNotAllowed {
+		status = 422
+	} else if err.Code == service.GraphErrorCodeRuntimeUnavailable {
+		status = 503
+	}
+	c.JSON(status, gin.H{
+		"code":    err.Code,
+		"message": err.Message,
+		"details": err.Details,
+	})
 }
 
 // convertDatasetToResponseWithPermission converts a single dataset to response with permission check

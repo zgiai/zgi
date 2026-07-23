@@ -4,13 +4,30 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/hibiken/asynq"
 	"github.com/zgiai/zgi/api/internal/modules/dataset/graphflow"
+	graphmodel "github.com/zgiai/zgi/api/internal/modules/dataset/graphflow/model"
+	"github.com/zgiai/zgi/api/internal/modules/dataset/graphflow/repository"
 	"github.com/zgiai/zgi/api/pkg/logger"
 	"github.com/zgiai/zgi/api/pkg/queue"
+	"gorm.io/gorm"
 )
+
+type evidenceGarbageCollectionPlan struct {
+	DeleteRelationship bool
+	DeleteEntity       bool
+}
+
+func planEvidenceGarbageCollection(remainingEvidence int, remainingRelationships int) evidenceGarbageCollectionPlan {
+	deleteRelationship := remainingEvidence == 0
+	return evidenceGarbageCollectionPlan{
+		DeleteRelationship: deleteRelationship,
+		DeleteEntity:       deleteRelationship && remainingRelationships == 0,
+	}
+}
 
 // NewCleanupHandler creates a handler for cleaning up GraphFlow data when a document is deleted
 func NewCleanupHandler(svc *graphflow.Service, taskManager *queue.TaskManager) func(context.Context, *asynq.Task) error {
@@ -83,82 +100,14 @@ func NewCleanupHandler(svc *graphflow.Service, taskManager *queue.TaskManager) f
 			svc.TaskRepo.UpdateTaskProgress(ctx, taskID, 20)
 		}
 
-		// 2. Process entity mentions and handle cascade soft deletes
+		// 2. Remove concrete document evidence and derive garbage collection from remaining evidence.
 		if svc.EntityMentionRepo != nil && svc.EntityRepo != nil && svc.RelationshipRepo != nil {
-			// Find all entity mentions for this document
-			mentions, err := svc.EntityMentionRepo.FindByDocumentSegments(ctx, documentID)
-			if err != nil {
-				logger.Error("Failed to find entity mentions", err)
+			if err := cleanupDocumentEvidence(ctx, svc.DB, kbID, documentID); err != nil {
+				logger.Error("Failed to clean document graph evidence", err)
 				errors = append(errors, err)
-			} else {
-				// Map to track processed entities to avoid race conditions/redundant checks within this task
-				// though source count decrement should be atomic in DB.
-				// However, if one doc mentions the same entity 10 times, we should decrement 10 times?
-				// Requirement says: "Traverse every mention... a. entity.source_count -= 1"
-				// So yes, for EACH mention, we decrement.
-
-				totalMentions := len(mentions)
-				for i, mention := range mentions {
-					if mention.EntityID != nil {
-						entityID := *mention.EntityID
-
-						// a. Decrement source count
-						if err := svc.EntityRepo.DecrementSourceCount(ctx, entityID); err != nil {
-							logger.Error("Failed to decrement entity source count", err)
-						} else {
-							// b. Check if source count <= 0
-							entity, err := svc.EntityRepo.GetByID(ctx, entityID)
-							if err != nil {
-								logger.Error("Failed to fetching entity to check source count", err)
-								continue
-							}
-
-							if entity != nil && entity.SourceCount <= 0 {
-								// Soft delete entity
-								if err := svc.EntityRepo.SoftDelete(ctx, entityID); err != nil {
-									logger.Error("Failed to soft delete entity", err)
-									errors = append(errors, err)
-								} else {
-									logger.Info("Soft deleted entity due to zero source count", map[string]interface{}{
-										"entity_id": entityID.String(),
-									})
-
-									// Soft delete associated relationships
-									if err := svc.RelationshipRepo.SoftDeleteByEntityID(ctx, entityID); err != nil {
-										logger.Error("Failed to soft delete relationships", err)
-										errors = append(errors, err)
-									}
-								}
-							}
-						}
-					}
-					// Update progress incrementally from 20% to 80%
-					if hasTaskID && totalMentions > 0 {
-						progress := 20 + int(float64(i+1)/float64(totalMentions)*60)
-						if progress%10 == 0 { // Update every 10% to avoid too many DB writes
-							svc.TaskRepo.UpdateTaskProgress(ctx, taskID, progress)
-						}
-					}
-				}
-
-				// 3. Soft delete mentions (80% -> 90% progress)
-				if err := svc.EntityMentionRepo.SoftDeleteByDocumentSegments(ctx, documentID); err != nil {
-					logger.Error("Failed to soft delete entity mentions", err)
-					errors = append(errors, err)
-				}
-
-				if hasTaskID {
-					svc.TaskRepo.UpdateTaskProgress(ctx, taskID, 85)
-				}
-
-				if err := svc.TripleMentionRepo.SoftDeleteByDocumentSegments(ctx, documentID); err != nil {
-					logger.Error("Failed to soft delete triple mentions", err)
-					errors = append(errors, err)
-				}
-
-				if hasTaskID {
-					svc.TaskRepo.UpdateTaskProgress(ctx, taskID, 90)
-				}
+			}
+			if hasTaskID {
+				svc.TaskRepo.UpdateTaskProgress(ctx, taskID, 90)
 			}
 		}
 
@@ -181,4 +130,52 @@ func NewCleanupHandler(svc *graphflow.Service, taskManager *queue.TaskManager) f
 
 		return nil
 	}
+}
+
+func cleanupDocumentEvidence(ctx context.Context, db *gorm.DB, kbID uuid.UUID, documentID uuid.UUID) error {
+	if db == nil || kbID == uuid.Nil {
+		return fmt.Errorf("graph cleanup database and kb_id are required")
+	}
+	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		now := time.Now().UTC()
+		mentionScope := "kb_id = ? AND is_deleted = ? AND (document_id = ? OR (document_id IS NULL AND segment_id IN (SELECT id FROM document_segments WHERE document_id = ?)))"
+		if err := tx.Model(&graphmodel.EntityMention{}).
+			Where(mentionScope, kbID, false, documentID, documentID).
+			Updates(map[string]any{"is_deleted": true, "deleted_at": now}).Error; err != nil {
+			return err
+		}
+		if err := tx.Model(&graphmodel.TripleMention{}).
+			Where(mentionScope, kbID, false, documentID, documentID).
+			Updates(map[string]any{"is_deleted": true, "deleted_at": now}).Error; err != nil {
+			return err
+		}
+		if err := repository.NewRelationshipRepository(tx).RecalculateSourceCounts(ctx, kbID); err != nil {
+			return err
+		}
+		if err := repository.NewEntityRepository(tx).RecalculateSourceCounts(ctx, kbID); err != nil {
+			return err
+		}
+		if err := tx.Model(&graphmodel.Relationship{}).
+			Where("kb_id = ? AND is_deleted = ? AND weight = 0", kbID, false).
+			Updates(map[string]any{
+				"is_deleted":  true,
+				"deleted_at":  now,
+				"graph_state": "pending_delete",
+			}).Error; err != nil {
+			return err
+		}
+		return tx.Model(&graphmodel.Entity{}).
+			Where(`kb_id = ? AND is_deleted = ? AND source_count = 0 AND NOT EXISTS (
+				SELECT 1 FROM kb_relationships relationship
+				WHERE relationship.kb_id = kb_entities.kb_id
+				  AND relationship.is_deleted = false
+				  AND (relationship.head_entity_id = kb_entities.id OR relationship.tail_entity_id = kb_entities.id)
+			)`, kbID, false).
+			Updates(map[string]any{
+				"is_deleted":   true,
+				"deleted_at":   now,
+				"graph_state":  "pending_delete",
+				"vector_state": "pending_delete",
+			}).Error
+	})
 }

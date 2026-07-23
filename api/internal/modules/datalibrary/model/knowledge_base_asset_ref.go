@@ -31,6 +31,9 @@ type KnowledgeBaseAssetRef struct {
 	SyncStatus         string         `gorm:"type:varchar(32);not null;default:'pending';index:idx_data_library_kb_asset_refs_sync_status;column:sync_status" json:"sync_status"`
 	SyncedGenerationNo *int64         `gorm:"column:synced_generation_no" json:"synced_generation_no,omitempty"`
 	SyncRunID          *uuid.UUID     `gorm:"type:uuid;index:idx_data_library_kb_asset_refs_sync_run;column:sync_run_id" json:"sync_run_id,omitempty"`
+	RetrievalEnabled   bool           `gorm:"not null;default:true;column:retrieval_enabled" json:"retrieval_enabled"`
+	GraphRunID         *uuid.UUID     `gorm:"type:uuid;index:idx_data_library_kb_asset_refs_graph_run;column:graph_run_id" json:"graph_run_id,omitempty"`
+	GraphSyncStatus    *string        `gorm:"type:varchar(32);index:idx_data_library_kb_asset_refs_graph_status;column:graph_sync_status" json:"graph_sync_status,omitempty"`
 	LastSyncedAt       *time.Time     `gorm:"column:last_synced_at" json:"last_synced_at,omitempty"`
 	SyncErrorCode      *string        `gorm:"type:varchar(128);column:sync_error_code" json:"sync_error_code,omitempty"`
 	SyncErrorMessage   *string        `gorm:"type:text;column:sync_error_message" json:"sync_error_message,omitempty"`
@@ -54,6 +57,9 @@ func (m *KnowledgeBaseAssetRef) BeforeCreate(tx *gorm.DB) error {
 	}
 	if m.SyncStatus == "" {
 		m.SyncStatus = KnowledgeBaseAssetRefSyncStatusPending
+	}
+	if !m.RetrievalEnabled && m.Status != KnowledgeBaseAssetRefStatusDisabled {
+		m.RetrievalEnabled = true
 	}
 	if m.MetadataJSON == nil {
 		m.MetadataJSON = map[string]any{}

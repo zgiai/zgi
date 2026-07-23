@@ -11,12 +11,12 @@ import (
 	"github.com/hibiken/asynq"
 	"github.com/zgiai/zgi/api/config"
 	"github.com/zgiai/zgi/api/internal/dto"
+	"github.com/zgiai/zgi/api/internal/modules/dataset/graphflow"
 	"github.com/zgiai/zgi/api/internal/modules/dataset/task"
 	"github.com/zgiai/zgi/api/internal/modules/file_process/service/extractor"
 
 	graphflow_model "github.com/zgiai/zgi/api/internal/modules/dataset/graphflow/model"
 	graphflow_repo "github.com/zgiai/zgi/api/internal/modules/dataset/graphflow/repository"
-	graphflow_worker "github.com/zgiai/zgi/api/internal/modules/dataset/graphflow/worker"
 	dataset_model "github.com/zgiai/zgi/api/internal/modules/dataset/model"
 	dataset_repo "github.com/zgiai/zgi/api/internal/modules/dataset/repository"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
@@ -142,6 +142,30 @@ type DocumentServiceImpl struct {
 	indexing_runner   *DocumentIndexingService
 	taskManager       *queue.TaskManager
 	graphFlowTaskRepo *graphflow_repo.GraphFlowTaskRepository
+	graphLifecycle    *graphflow.LifecycleService
+}
+
+func (s *DocumentServiceImpl) ConfigureGraphLifecycle(lifecycle *graphflow.LifecycleService) {
+	s.graphLifecycle = lifecycle
+}
+
+type documentGraphVisibilityWriter interface {
+	SetDocumentRetrievalEnabled(ctx context.Context, request graphflow.VisibilityChangeRequest) (int64, bool, error)
+}
+
+type DocumentGraphVisibilityResult struct {
+	Revision   int64
+	Changed    bool
+	RunCreated bool
+}
+
+func syncDocumentGraphVisibility(
+	ctx context.Context,
+	writer documentGraphVisibilityWriter,
+	request graphflow.VisibilityChangeRequest,
+) (DocumentGraphVisibilityResult, error) {
+	revision, changed, err := writer.SetDocumentRetrievalEnabled(ctx, request)
+	return DocumentGraphVisibilityResult{Revision: revision, Changed: changed, RunCreated: false}, err
 }
 
 // DocumentVectorCleaner deletes vector objects by metadata field.
@@ -1327,63 +1351,40 @@ func (s *DocumentServiceImpl) DeleteDocuments(ctx context.Context, datasetID str
 		return err
 	}
 
-	// Trigger GraphFlow cleanup task for each document if GraphFlow is enabled
-	// Create cleanup task records in graphflow_tasks table FIRST, then trigger handler
-	if dataset.EnableGraphFlow && s.graphFlowTaskRepo != nil {
+	if dataset.EnableGraphFlow {
+		if s.graphLifecycle == nil {
+			return fmt.Errorf("graph cleanup lifecycle is not configured")
+		}
+		organizationID, err := uuid.Parse(dataset.OrganizationID)
+		if err != nil {
+			return fmt.Errorf("failed to parse dataset organization ID: %w", err)
+		}
+		kbUUID, err := uuid.Parse(datasetID)
+		if err != nil {
+			return fmt.Errorf("failed to parse dataset ID: %w", err)
+		}
+		var workspaceID *uuid.UUID
+		if dataset.WorkspaceID != "" {
+			parsedWorkspaceID, err := uuid.Parse(dataset.WorkspaceID)
+			if err != nil {
+				return fmt.Errorf("failed to parse dataset workspace ID: %w", err)
+			}
+			workspaceID = &parsedWorkspaceID
+		}
 		for _, documentID := range documentIDs {
-			// Parse UUIDs
 			docUUID, err := uuid.Parse(documentID)
 			if err != nil {
-				logger.Error("Failed to parse document ID", err)
-				continue
+				return fmt.Errorf("failed to parse document ID: %w", err)
 			}
-			kbUUID, _ := uuid.Parse(datasetID)
-			tenantUUID, _ := uuid.Parse(dataset.WorkspaceID)
-
-			// 1. Create cleanup task record FIRST
-			strategy := "llm" // Default
-			if dataset.RetrievalConfig != nil {
-				if s, ok := dataset.RetrievalConfig["extraction_strategy"].(string); ok && s != "" {
-					strategy = s
-				}
-			}
-
-			cleanupTask := &graphflow_model.GraphFlowTask{
-				TenantID:           tenantUUID,
-				KBID:               kbUUID,
-				DocumentID:         docUUID,
-				TaskType:           "cleanup",
-				Status:             "pending",
-				ExtractionStrategy: strategy,
-			}
-
-			taskID, err := s.graphFlowTaskRepo.CreateTaskAndReturnID(ctx, cleanupTask)
-			if err != nil {
-				logger.Error("Failed to create GraphFlow cleanup task record", err)
-				continue
-			}
-
-			// 2. Enqueue cleanup task with task ID using asynq
-			if s.taskManager != nil {
-				task, err := graphflow_worker.NewGraphFlowCleanupTask(taskID.String(), documentID, datasetID, s.taskManager)
-				if err != nil {
-					logger.Error("Failed to create GraphFlow cleanup task", err)
-					s.graphFlowTaskRepo.UpdateTaskFailed(ctx, taskID, fmt.Sprintf("failed to create task: %v", err))
-				} else {
-					_, err = s.taskManager.EnqueueTask(task, asynq.Queue("graphflow"))
-					if err != nil {
-						logger.Error("Failed to enqueue GraphFlow cleanup task", err)
-						s.graphFlowTaskRepo.UpdateTaskFailed(ctx, taskID, fmt.Sprintf("failed to enqueue: %v", err))
-					} else {
-						logger.Info("Created and enqueued GraphFlow cleanup task", map[string]interface{}{
-							"task_id":     taskID.String(),
-							"document_id": documentID,
-						})
-					}
-				}
-			} else {
-				logger.Warn("TaskManager not available, GraphFlow cleanup task not enqueued", nil)
-				s.graphFlowTaskRepo.UpdateTaskFailed(ctx, taskID, "taskManager not available")
+			if _, _, err := s.graphLifecycle.StartCleanup(ctx, graphflow.LifecycleRunRequest{
+				OrganizationID: organizationID,
+				WorkspaceID:    workspaceID,
+				DatasetID:      kbUUID,
+				DocumentID:     &docUUID,
+				Trigger:        "document_deleted",
+				IdempotencyKey: fmt.Sprintf("document-delete:%s", docUUID),
+			}); err != nil {
+				return fmt.Errorf("failed to create graph cleanup intent: %w", err)
 			}
 		}
 	}
@@ -1987,14 +1988,20 @@ func (s *DocumentServiceImpl) UpdateDocumentStatus(ctx context.Context, datasetI
 	// Process documents based on action
 	switch action {
 	case "enable":
-		// Enable documents
-		err = s.documentRepo.EnableDocuments(ctx, datasetID, documentIDs)
+		if repo, ok := s.documentRepo.(dataset_repo.DocumentGraphVisibilityRepository); ok {
+			_, _, err = repo.UpdateDocumentsRetrievalState(ctx, datasetID, documentIDs, accountID, true)
+		} else {
+			err = s.documentRepo.EnableDocuments(ctx, datasetID, documentIDs)
+		}
 		if err != nil {
 			return fmt.Errorf("failed to enable documents: %w", err)
 		}
 	case "disable":
-		// Disable documents
-		err = s.documentRepo.DisableDocuments(ctx, datasetID, documentIDs, accountID)
+		if repo, ok := s.documentRepo.(dataset_repo.DocumentGraphVisibilityRepository); ok {
+			_, _, err = repo.UpdateDocumentsRetrievalState(ctx, datasetID, documentIDs, accountID, false)
+		} else {
+			err = s.documentRepo.DisableDocuments(ctx, datasetID, documentIDs, accountID)
+		}
 		if err != nil {
 			return fmt.Errorf("failed to disable documents: %w", err)
 		}

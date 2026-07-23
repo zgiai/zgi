@@ -103,19 +103,6 @@ replace_env_value_if_current() {
   fi
 }
 
-remove_env_key() {
-  local target_path="$1"
-  local key="$2"
-
-  if [ ! -f "$target_path" ] || ! grep -q "^${key}=" "$target_path"; then
-    return 0
-  fi
-
-  sed -i.bak "/^${key}=.*/d" "$target_path"
-  rm -f "${target_path}.bak"
-  echo "[bootstrap] removed $(display_path "$target_path") ${key}"
-}
-
 get_env_value() {
   local target_path="$1"
   local key="$2"
@@ -145,21 +132,6 @@ ensure_env_value "$ROOT/api/.env" "API_KEY_ENCRYPTION_KEY" "$api_secret"
 ensure_env_value "$ROOT/api/.env.docker" "SECRET_KEY" "$(generate_secret_32)"
 ensure_env_value "$ROOT/api/.env.docker" "API_KEY_ENCRYPTION_KEY" "$api_docker_secret"
 replace_env_value_if_current "$ROOT/api/.env.docker" "SQL_BASE_INTERNAL_DB" "zgi" "zgi_sql_base"
-replace_env_value_if_current "$ROOT/api/.env" "NEO4J_URI" "bolt://localhost:7687" ""
-replace_env_value_if_current "$ROOT/api/.env.docker" "NEO4J_URI" "bolt://neo4j:7687" ""
-replace_env_value_if_current "$ROOT/docker/.env" "NEO4J_URI" "bolt://neo4j:7687" ""
-remove_env_key "$ROOT/api/.env" "NEO4J_URI"
-remove_env_key "$ROOT/api/.env" "NEO4J_USERNAME"
-remove_env_key "$ROOT/api/.env" "NEO4J_PASSWORD"
-remove_env_key "$ROOT/api/.env" "NEO4J_DATABASE"
-remove_env_key "$ROOT/api/.env.docker" "NEO4J_URI"
-remove_env_key "$ROOT/api/.env.docker" "NEO4J_USERNAME"
-remove_env_key "$ROOT/api/.env.docker" "NEO4J_PASSWORD"
-remove_env_key "$ROOT/api/.env.docker" "NEO4J_DATABASE"
-remove_env_key "$ROOT/docker/.env" "NEO4J_URI"
-remove_env_key "$ROOT/docker/.env" "NEO4J_USERNAME"
-remove_env_key "$ROOT/docker/.env" "NEO4J_PASSWORD"
-remove_env_key "$ROOT/docker/.env" "NEO4J_DATABASE"
 ensure_env_value "$ROOT/docker/.env" "PUBLIC_PORT" "2679"
 public_port="$(get_env_value "$ROOT/docker/.env" "PUBLIC_PORT" || printf '%s' "2679")"
 ensure_env_value "$ROOT/docker/.env" "PUBLIC_URL" "http://localhost:${public_port}"

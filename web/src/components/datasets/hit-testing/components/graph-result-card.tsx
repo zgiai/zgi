@@ -27,6 +27,11 @@ export function GraphResultCard({ result, index }: GraphResultCardProps) {
           <Badge variant="outline">
             {t('hitTesting.score')}: {score.toFixed(4)}
           </Badge>
+          {typeof retrieval_source?.active_source_count === 'number' && (
+            <Badge variant="secondary">
+              {t('hitTesting.activeSources')}: {retrieval_source.active_source_count}
+            </Badge>
+          )}
         </div>
 
         {/* Content */}

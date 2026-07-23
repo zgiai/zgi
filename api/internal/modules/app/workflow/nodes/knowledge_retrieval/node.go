@@ -333,6 +333,8 @@ func (n *Node) executeRun(ctx context.Context, eventChan chan *shared.NodeEventC
 			MetadataDocIDs:     docIdsGroupByDataSetId,
 			MetadataCond:       cond,
 			DatasetIDs:         availableSetsIds,
+			SearchMethod:       n.NodeData.SingleRetrievalConfig.SearchMethod,
+			FallbackPolicy:     n.NodeData.SingleRetrievalConfig.FallbackPolicy,
 		}
 
 		docs, err = datasetRetrieval.SingleRetrieve(ctx, srp)
@@ -389,6 +391,8 @@ func (n *Node) executeRun(ctx context.Context, eventChan chan *shared.NodeEventC
 			RerankingEnable:    n.NodeData.MultipleRetrievalConfig.RerankingEnable,
 			MetadataDocIDs:     docIdsGroupByDataSetId,
 			MetadataCond:       cond,
+			SearchMethod:       n.NodeData.MultipleRetrievalConfig.SearchMethod,
+			FallbackPolicy:     n.NodeData.MultipleRetrievalConfig.FallbackPolicy,
 		}
 
 		if n.NodeData.MultipleRetrievalConfig.ScoreThreshold != nil {

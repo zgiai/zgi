@@ -70,8 +70,12 @@ func (s *RelationshipSync) SyncPendingRelationships(ctx context.Context, kbID uu
 	for _, rel := range pendingRelationships {
 		// Properties map
 		props := map[string]interface{}{
-			"weight": rel.Weight,
-			"kb_id":  rel.KBID.String(),
+			"id":                  rel.ID.String(),
+			"weight":              rel.Weight,
+			"active_weight":       rel.ActiveWeight,
+			"content_revision":    rel.ContentRevision,
+			"visibility_revision": rel.VisibilityRevision,
+			"kb_id":               rel.KBID.String(),
 		}
 
 		// Item map for Neo4j UNWIND
@@ -125,8 +129,12 @@ func (s *RelationshipSync) SyncPendingRelationships(ctx context.Context, kbID uu
 func (s *RelationshipSync) syncRelationship(ctx context.Context, rel *model.Relationship) error {
 	// Build properties for the relationship
 	properties := map[string]interface{}{
-		"weight": rel.Weight,
-		"kb_id":  rel.KBID.String(),
+		"id":                  rel.ID.String(),
+		"weight":              rel.Weight,
+		"active_weight":       rel.ActiveWeight,
+		"content_revision":    rel.ContentRevision,
+		"visibility_revision": rel.VisibilityRevision,
+		"kb_id":               rel.KBID.String(),
 	}
 
 	// Create relationship in Neo4j

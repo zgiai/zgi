@@ -1,0 +1,89 @@
+package worker
+
+import (
+	"context"
+	"fmt"
+	"time"
+
+	"github.com/zgiai/zgi/api/internal/modules/dataset/graphflow/model"
+	"github.com/zgiai/zgi/api/internal/modules/dataset/graphflow/repository"
+	"gorm.io/gorm"
+)
+
+const (
+	defaultOutboxBatchSize = 100
+	outboxLeaseDuration    = time.Minute
+	outboxRetryDelay       = 5 * time.Second
+)
+
+type OutboxEventProcessor interface {
+	Process(context.Context, *model.GraphOutboxEvent) error
+}
+
+type OutboxReconciler struct {
+	repository *repository.GraphOutboxRepository
+	run        OutboxEventProcessor
+	visibility OutboxEventProcessor
+	cleanup    OutboxEventProcessor
+	now        func() time.Time
+}
+
+func NewOutboxReconciler(
+	db *gorm.DB,
+	run OutboxEventProcessor,
+	visibility OutboxEventProcessor,
+	cleanup OutboxEventProcessor,
+) *OutboxReconciler {
+	return &OutboxReconciler{
+		repository: repository.NewGraphOutboxRepository(db),
+		run:        run,
+		visibility: visibility,
+		cleanup:    cleanup,
+		now:        func() time.Time { return time.Now().UTC() },
+	}
+}
+
+func (r *OutboxReconciler) RunOnce(ctx context.Context) error {
+	if r == nil || r.repository == nil {
+		return fmt.Errorf("graph outbox reconciler is not configured")
+	}
+	now := r.now()
+	if _, err := r.repository.RequeueStale(ctx, now.Add(-outboxLeaseDuration), now); err != nil {
+		return err
+	}
+	events, err := r.repository.ClaimBatch(ctx, defaultOutboxBatchSize, now)
+	if err != nil {
+		return err
+	}
+	for _, event := range events {
+		processor := r.processor(event.EventType)
+		if processor == nil {
+			err = fmt.Errorf("no processor is registered for graph outbox event type %q", event.EventType)
+		} else {
+			err = processor.Process(ctx, event)
+		}
+		if err != nil {
+			if retryErr := r.repository.Retry(ctx, event.ID, now.Add(outboxRetryDelay), "Graph outbox processing failed."); retryErr != nil {
+				return retryErr
+			}
+			continue
+		}
+		if err := r.repository.Confirm(ctx, event.ID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (r *OutboxReconciler) processor(eventType string) OutboxEventProcessor {
+	switch eventType {
+	case model.GraphOutboxEventRun:
+		return r.run
+	case model.GraphOutboxEventVisibility:
+		return r.visibility
+	case model.GraphOutboxEventCleanup:
+		return r.cleanup
+	default:
+		return nil
+	}
+}

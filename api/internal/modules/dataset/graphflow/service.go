@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -40,6 +41,8 @@ type Service struct {
 
 	// Repositories
 	TaskRepo           *repository.GraphFlowTaskRepository
+	RunRepo            *repository.GraphFlowRunRepository
+	Lifecycle          *LifecycleService
 	EntityMentionRepo  *repository.EntityMentionRepository
 	TripleMentionRepo  *repository.TripleMentionRepository
 	EntityRepo         *repository.EntityRepository
@@ -73,11 +76,14 @@ func NewService(
 ) *Service {
 	// Initialize repositories
 	taskRepo := repository.NewGraphFlowTaskRepository(db)
+	runRepo := repository.NewGraphFlowRunRepository(db)
 	entityMentionRepo := repository.NewEntityMentionRepository(db)
 	tripleMentionRepo := repository.NewTripleMentionRepository(db)
 	entityRepo := repository.NewEntityRepository(db)
 	relationshipRepo := repository.NewRelationshipRepository(db)
 	typeDefinitionRepo := repository.NewTypeDefinitionRepository(db)
+	lifecycle := NewLifecycleService(db)
+	taskRepo.SetChangeHook(lifecycle.ReconcileTask)
 
 	// Initialize Neo4j client (optional, may be nil if not configured)
 	var neo4jClient *graph.Neo4jClient
@@ -97,6 +103,8 @@ func NewService(
 		llmClient:          llmClient,
 		DefaultModelSvc:    defaultModelSvc,
 		TaskRepo:           taskRepo,
+		RunRepo:            runRepo,
+		Lifecycle:          lifecycle,
 		EntityMentionRepo:  entityMentionRepo,
 		TripleMentionRepo:  tripleMentionRepo,
 		EntityRepo:         entityRepo,
@@ -107,19 +115,6 @@ func NewService(
 		Neo4jClient:        neo4jClient,
 		TaskManager:        taskManager,
 		WeaviateClient:     weaviateClient,
-	}
-
-	// Initialize Neo4j vector index asynchronously
-	if svc.Neo4jClient != nil {
-		go func() {
-			ctx, cancel := context.WithTimeout(context.Background(), 1*time.Minute)
-			defer cancel()
-			if err := svc.Neo4jClient.CreateVectorIndex(ctx, 1536); err != nil {
-				logger.Error("Failed to create Neo4j vector index", err)
-			} else {
-				logger.Info("Neo4j vector index ensured", nil)
-			}
-		}()
 	}
 
 	// Initialize Extractor factory with LLM Client
@@ -376,6 +371,9 @@ func (s *Service) GetGraphData(ctx context.Context, datasetID string) (*model.Gr
 	// 4. Build entity ID -> entity map for relationship resolution
 	entityMap := make(map[uuid.UUID]*model.Entity)
 	for _, ent := range entities {
+		if ent.IsDeleted || ent.ActiveSourceCount <= 0 {
+			continue
+		}
 		entityMap[ent.ID] = ent
 	}
 
@@ -437,9 +435,11 @@ func (s *Service) GetGraphData(ctx context.Context, datasetID string) (*model.Gr
 	}
 
 	docInfoCache := make(map[string]string) // doc ID -> doc name
+	docEnabledCache := make(map[string]bool)
 	for docID := range docIDSet {
 		if doc, err := s.DocumentRepo.GetByID(ctx, docID); err == nil && doc != nil {
 			docInfoCache[docID] = doc.Name
+			docEnabledCache[docID] = doc.Enabled
 		}
 	}
 
@@ -447,12 +447,18 @@ func (s *Service) GetGraphData(ctx context.Context, datasetID string) (*model.Gr
 	nodes := make([]model.GraphNode, 0, len(entities))
 	categorySet := make(map[string]bool)
 	for _, entity := range entities {
+		if _, active := entityMap[entity.ID]; !active {
+			continue
+		}
 		nodeID := fmt.Sprintf("ent:%s", entity.ID.String())
 
 		// Build sources array
 		var sources []model.GraphNodeSource
 		if entityDocs, exists := entitySources[entity.ID]; exists {
 			for docID, weight := range entityDocs {
+				if !docEnabledCache[docID] {
+					continue
+				}
 				docTitle := docID // Fallback to ID
 				if name, cached := docInfoCache[docID]; cached {
 					docTitle = name
@@ -472,8 +478,10 @@ func (s *Service) GetGraphData(ctx context.Context, datasetID string) (*model.Gr
 			Label:    entity.Name,
 			Category: entity.Type,
 			Data: model.GraphNodeData{
-				Description: entity.Description,
-				Sources:     sources,
+				Description:       entity.Description,
+				Sources:           sources,
+				SourceCount:       entity.SourceCount,
+				ActiveSourceCount: entity.ActiveSourceCount,
 			},
 		}
 		nodes = append(nodes, node)
@@ -483,6 +491,9 @@ func (s *Service) GetGraphData(ctx context.Context, datasetID string) (*model.Gr
 	// 8. Build edges
 	edges := make([]model.GraphEdge, 0, len(relationships))
 	for _, rel := range relationships {
+		if rel.IsDeleted || rel.ActiveWeight <= 0 {
+			continue
+		}
 		// Only include edges where both nodes exist
 		if _, headExists := entityMap[rel.HeadEntityID]; !headExists {
 			continue
@@ -492,9 +503,11 @@ func (s *Service) GetGraphData(ctx context.Context, datasetID string) (*model.Gr
 		}
 
 		edge := model.GraphEdge{
-			Source: fmt.Sprintf("ent:%s", rel.HeadEntityID.String()),
-			Target: fmt.Sprintf("ent:%s", rel.TailEntityID.String()),
-			Label:  rel.RelationType,
+			Source:       fmt.Sprintf("ent:%s", rel.HeadEntityID.String()),
+			Target:       fmt.Sprintf("ent:%s", rel.TailEntityID.String()),
+			Label:        rel.RelationType,
+			Weight:       rel.Weight,
+			ActiveWeight: rel.ActiveWeight,
 		}
 		edges = append(edges, edge)
 	}
@@ -528,5 +541,175 @@ func (s *Service) GetGraphData(ctx context.Context, datasetID string) (*model.Gr
 		Nodes:      nodes,
 		Edges:      edges,
 		Categories: categories,
+		NodeCount:  len(nodes),
+		EdgeCount:  len(edges),
 	}, nil
+}
+
+const (
+	defaultGraphNodeLimit = 300
+	defaultGraphEdgeLimit = 900
+	maxGraphNodeLimit     = 500
+	maxGraphEdgeLimit     = 1500
+	maxGraphHopDepth      = 2
+)
+
+func (s *Service) QueryGraphData(ctx context.Context, datasetID string, query model.GraphQuery) (*model.GraphDataResponse, error) {
+	graphData, err := s.GetGraphData(ctx, datasetID)
+	if err != nil {
+		return nil, err
+	}
+	return applyGraphQuery(graphData, query)
+}
+
+func applyGraphQuery(graph *model.GraphDataResponse, query model.GraphQuery) (*model.GraphDataResponse, error) {
+	query = normalizeGraphQuery(query)
+	if query.NodeLimit > maxGraphNodeLimit || query.EdgeLimit > maxGraphEdgeLimit || query.HopDepth > maxGraphHopDepth {
+		return nil, fmt.Errorf("graph query limit exceeded")
+	}
+	if graph == nil {
+		return &model.GraphDataResponse{Nodes: []model.GraphNode{}, Edges: []model.GraphEdge{}, Categories: []model.GraphCategory{}}, nil
+	}
+
+	nodesByID := make(map[string]model.GraphNode, len(graph.Nodes))
+	eligible := make(map[string]bool, len(graph.Nodes))
+	keyword := strings.ToLower(strings.TrimSpace(query.Keyword))
+	category := strings.TrimSpace(query.Category)
+	documentID := strings.TrimPrefix(strings.TrimSpace(query.DocumentID), "doc:")
+	for _, node := range graph.Nodes {
+		if node.Data.ActiveSourceCount <= 0 {
+			continue
+		}
+		if keyword != "" && !strings.Contains(strings.ToLower(node.Label+" "+node.Data.Description), keyword) {
+			continue
+		}
+		if category != "" && node.Category != category {
+			continue
+		}
+		if documentID != "" && !graphNodeHasDocument(node, documentID) {
+			continue
+		}
+		nodesByID[node.ID] = node
+		eligible[node.ID] = true
+	}
+
+	activeEdges := make([]model.GraphEdge, 0, len(graph.Edges))
+	for _, edge := range graph.Edges {
+		if edge.ActiveWeight <= 0 || !eligible[edge.Source] || !eligible[edge.Target] {
+			continue
+		}
+		activeEdges = append(activeEdges, edge)
+	}
+	if query.SeedNodeID != "" {
+		reachable := graphReachableNodes(query.SeedNodeID, query.HopDepth, activeEdges)
+		for nodeID := range eligible {
+			if !reachable[nodeID] {
+				delete(eligible, nodeID)
+				delete(nodesByID, nodeID)
+			}
+		}
+	}
+
+	ids := make([]string, 0, len(nodesByID))
+	for nodeID := range nodesByID {
+		if query.Cursor == "" || nodeID > query.Cursor {
+			ids = append(ids, nodeID)
+		}
+	}
+	sort.Strings(ids)
+	hasMore := len(ids) > query.NodeLimit
+	if hasMore {
+		ids = ids[:query.NodeLimit]
+	}
+	pageSet := make(map[string]bool, len(ids))
+	nodes := make([]model.GraphNode, 0, len(ids))
+	for _, nodeID := range ids {
+		pageSet[nodeID] = true
+		nodes = append(nodes, nodesByID[nodeID])
+	}
+
+	edges := make([]model.GraphEdge, 0)
+	for _, edge := range activeEdges {
+		if pageSet[edge.Source] && pageSet[edge.Target] {
+			edges = append(edges, edge)
+		}
+	}
+	sort.Slice(edges, func(i, j int) bool {
+		left := edges[i].Source + "\x00" + edges[i].Target + "\x00" + edges[i].Label
+		right := edges[j].Source + "\x00" + edges[j].Target + "\x00" + edges[j].Label
+		return left < right
+	})
+	if len(edges) > query.EdgeLimit {
+		edges = edges[:query.EdgeLimit]
+	}
+
+	categorySet := make(map[string]bool)
+	for _, node := range nodes {
+		categorySet[node.Category] = true
+	}
+	categories := make([]model.GraphCategory, 0)
+	for _, item := range graph.Categories {
+		if categorySet[item.ID] {
+			categories = append(categories, item)
+		}
+	}
+	sort.Slice(categories, func(i, j int) bool { return categories[i].ID < categories[j].ID })
+
+	result := &model.GraphDataResponse{
+		Nodes:      nodes,
+		Edges:      edges,
+		Categories: categories,
+		NodeCount:  len(nodes),
+		EdgeCount:  len(edges),
+	}
+	if hasMore && len(ids) > 0 {
+		result.NextCursor = ids[len(ids)-1]
+	}
+	return result, nil
+}
+
+func normalizeGraphQuery(query model.GraphQuery) model.GraphQuery {
+	if query.NodeLimit <= 0 {
+		query.NodeLimit = defaultGraphNodeLimit
+	}
+	if query.EdgeLimit <= 0 {
+		query.EdgeLimit = defaultGraphEdgeLimit
+	}
+	if query.HopDepth < 0 {
+		query.HopDepth = 0
+	}
+	if query.SeedNodeID != "" && query.HopDepth == 0 {
+		query.HopDepth = 1
+	}
+	return query
+}
+
+func graphNodeHasDocument(node model.GraphNode, documentID string) bool {
+	for _, source := range node.Data.Sources {
+		if strings.TrimPrefix(source.Doc.ID, "doc:") == documentID {
+			return true
+		}
+	}
+	return false
+}
+
+func graphReachableNodes(seedNodeID string, hopDepth int, edges []model.GraphEdge) map[string]bool {
+	reachable := map[string]bool{seedNodeID: true}
+	frontier := map[string]bool{seedNodeID: true}
+	for hop := 0; hop < hopDepth; hop++ {
+		next := make(map[string]bool)
+		for _, edge := range edges {
+			if frontier[edge.Source] && !reachable[edge.Target] {
+				next[edge.Target] = true
+			}
+			if frontier[edge.Target] && !reachable[edge.Source] {
+				next[edge.Source] = true
+			}
+		}
+		for nodeID := range next {
+			reachable[nodeID] = true
+		}
+		frontier = next
+	}
+	return reachable
 }

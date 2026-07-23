@@ -13,16 +13,21 @@ type GraphFlowTask struct {
 	KBID       uuid.UUID  `gorm:"type:uuid;column:kb_id;not null" json:"kb_id"` // Maps to datasets(id)
 	DocumentID uuid.UUID  `gorm:"type:uuid;not null" json:"document_id"`
 	SegmentID  *uuid.UUID `gorm:"type:uuid" json:"segment_id,omitempty"`
+	RunID      *uuid.UUID `gorm:"type:uuid;index" json:"run_id,omitempty"`
 
-	TaskType           string `gorm:"type:varchar(50);not null" json:"task_type"` // 'extraction', 'alignment', 'graph_sync', etc.
+	TaskType           string `gorm:"type:varchar(50);not null" json:"task_type"`                // 'extraction', 'alignment', 'graph_sync', etc.
 	ExtractionStrategy string `gorm:"type:varchar(20);default:'llm'" json:"extraction_strategy"` // 'llm' | 'openie'
-	Status     string `gorm:"type:varchar(50);not null;default:'pending'" json:"status"`
-	Progress   int    `gorm:"default:0" json:"progress"`
+	Status             string `gorm:"type:varchar(50);not null;default:'pending'" json:"status"`
+	Progress           int    `gorm:"default:0" json:"progress"`
 
-	StartedAt    *time.Time `json:"started_at,omitempty"`
-	CompletedAt  *time.Time `json:"completed_at,omitempty"`
-	ErrorMessage string     `gorm:"type:text" json:"error_message,omitempty"`
-	RetryCount   int        `gorm:"default:0" json:"retry_count"`
+	StartedAt      *time.Time `json:"started_at,omitempty"`
+	CompletedAt    *time.Time `json:"completed_at,omitempty"`
+	ErrorMessage   string     `gorm:"type:text" json:"error_message,omitempty"`
+	RetryCount     int        `gorm:"default:0" json:"retry_count"`
+	AttemptNo      int        `gorm:"not null;default:0" json:"attempt_no"`
+	LeaseExpiresAt *time.Time `json:"lease_expires_at,omitempty"`
+	HeartbeatAt    *time.Time `json:"heartbeat_at,omitempty"`
+	ErrorCode      string     `gorm:"type:varchar(128)" json:"error_code,omitempty"`
 
 	Metadata map[string]interface{} `gorm:"type:jsonb;serializer:json" json:"metadata"`
 

@@ -14,6 +14,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
@@ -33,6 +34,7 @@ import { useCurrentWorkspace } from '@/store/workspace-store';
 import { ICON_BG, ICON_TEXT } from '@/lib/config';
 import {
   EmbeddingSettings,
+  GraphModelSettings,
   RetrievalSettings as RetrievalConfigCard,
   type RetrievalConfig,
 } from '@/components/datasets/indexing-config';
@@ -119,7 +121,7 @@ function CreateDatasetDialog({ open, onOpenChange, currentFolderId }: CreateData
 
   // Track if form has been submitted to show validation errors only after submit
   const [hasSubmitted, setHasSubmitted] = useState(false);
-  const graphFlowEnabled = false;
+  const graphFlowEnabled = formData.enable_graph_flow;
 
   // Reset icon and form when dataset changes or dialog opens
   useEffect(() => {
@@ -198,6 +200,22 @@ function CreateDatasetDialog({ open, onOpenChange, currentFolderId }: CreateData
     },
   });
 
+  useInitializeDefaultModelByUseCase({
+    useCase: 'text-chat',
+    currentModel: {
+      provider: formData.entity_model_provider,
+      model: formData.entity_model,
+    },
+    enabled: open && graphFlowEnabled,
+    onInitialize: v => {
+      setFormData(prev => ({
+        ...prev,
+        entity_model_provider: v.provider,
+        entity_model: v.model,
+      }));
+    },
+  });
+
   // Typed change handler
   function handleInputChange<K extends keyof typeof formData>(
     field: K,
@@ -205,6 +223,14 @@ function CreateDatasetDialog({ open, onOpenChange, currentFolderId }: CreateData
   ) {
     setFormData(prev => ({ ...prev, [field]: value }));
   }
+
+  const handleGraphFlowChange = useCallback((checked: boolean) => {
+    setFormData(prev => ({ ...prev, enable_graph_flow: checked }));
+    setRetrievalConfig(prev => ({
+      ...prev,
+      search_method: normalizeDatasetSearchMethod(prev.search_method, checked),
+    }));
+  }, []);
 
   // Keep the client-side limit aligned with the dataset API's Unicode character count.
   const isNameValid = useMemo(
@@ -219,6 +245,10 @@ function CreateDatasetDialog({ open, onOpenChange, currentFolderId }: CreateData
   const isEmbeddingModelValid = useMemo(
     () => isEditMode || Boolean(formData.embedding_model_provider && formData.embedding_model),
     [isEditMode, formData.embedding_model_provider, formData.embedding_model]
+  );
+  const isGraphModelValid = useMemo(
+    () => !graphFlowEnabled || Boolean(formData.entity_model_provider && formData.entity_model),
+    [graphFlowEnabled, formData.entity_model_provider, formData.entity_model]
   );
   // Validate form and show toast for errors
   const validateForm = useCallback((): boolean => {
@@ -238,6 +268,11 @@ function CreateDatasetDialog({ open, onOpenChange, currentFolderId }: CreateData
       return false;
     }
 
+    if (!isGraphModelValid) {
+      toast.error(t('datasets.validation.graphModel.required'));
+      return false;
+    }
+
     // Check workspace
     if (!workspaceId) {
       toast.error(t('datasets.validation.workspace.required'));
@@ -249,6 +284,7 @@ function CreateDatasetDialog({ open, onOpenChange, currentFolderId }: CreateData
     isNameValid,
     nameErrors,
     isEmbeddingModelValid,
+    isGraphModelValid,
     currentWorkspace?.id,
     dataset?.workspace_id,
     dataset?.workspace?.id,
@@ -404,6 +440,57 @@ function CreateDatasetDialog({ open, onOpenChange, currentFolderId }: CreateData
                   className="resize-none min-h-[100px]"
                 />
               </div>
+
+              {!isEditMode ? (
+                <div className="flex items-center justify-between rounded-xl border border-border/50 bg-muted/20 p-4 transition-colors hover:bg-muted/30">
+                  <div className="space-y-0.5">
+                    <Label
+                      className="cursor-pointer text-sm font-semibold"
+                      htmlFor="enable-graph-flow"
+                    >
+                      {t('datasets.createModal.enableGraphFlowLabel')}
+                    </Label>
+                    <p className="max-w-[360px] text-xs text-muted-foreground">
+                      {t('datasets.createModal.enableGraphFlowDescription')}
+                    </p>
+                  </div>
+                  <Switch
+                    id="enable-graph-flow"
+                    checked={graphFlowEnabled}
+                    onCheckedChange={handleGraphFlowChange}
+                  />
+                </div>
+              ) : null}
+
+              {graphFlowEnabled ? (
+                <GraphModelSettings
+                  graphModel={{
+                    provider: formData.entity_model_provider || '',
+                    model: formData.entity_model || '',
+                  }}
+                  onChange={graphModel => {
+                    setFormData(prev => ({
+                      ...prev,
+                      entity_model_provider: graphModel.provider,
+                      entity_model: graphModel.model,
+                    }));
+                  }}
+                  required
+                  title={t('datasets.createModal.graphModelLabel')}
+                  description={t('datasets.createModal.graphModelDescription')}
+                  placeholder={t('datasets.createModal.graphModelPlaceholder')}
+                  hasError={hasSubmitted && !isGraphModelValid}
+                  errorMessage={
+                    hasSubmitted && !isGraphModelValid
+                      ? t('datasets.validation.graphModel.required')
+                      : undefined
+                  }
+                  embeddingModel={{
+                    provider: formData.embedding_model_provider || '',
+                    model: formData.embedding_model || '',
+                  }}
+                />
+              ) : null}
 
               {isEditMode && graphFlowEnabled ? (
                 <div className="rounded-xl border border-border/50 bg-muted/20 p-4">

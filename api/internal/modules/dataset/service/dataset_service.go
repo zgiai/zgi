@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/capabilities/agentbindings"
 	"github.com/zgiai/zgi/api/internal/dto"
+	graphflow "github.com/zgiai/zgi/api/internal/modules/dataset/graphflow"
 	graphflow_repo "github.com/zgiai/zgi/api/internal/modules/dataset/graphflow/repository"
 	"github.com/zgiai/zgi/api/internal/modules/dataset/indexing"
 	"github.com/zgiai/zgi/api/internal/modules/dataset/model"
@@ -22,6 +23,7 @@ import (
 	llmdefaultservice "github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/service"
 	quota_model "github.com/zgiai/zgi/api/internal/modules/quota/model"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
+	system_service "github.com/zgiai/zgi/api/internal/modules/system/service"
 	workspace_model "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	"github.com/zgiai/zgi/api/pkg/logger"
 	"github.com/zgiai/zgi/api/pkg/queue"
@@ -34,6 +36,27 @@ var (
 	ErrInvalidDatasetPermission  = errors.New("invalid dataset permission")
 	ErrInvalidAgentBindingAction = errors.New("invalid agent binding action")
 )
+
+const (
+	GraphErrorCodeRuntimeUnavailable              = "graph_runtime_unavailable"
+	GraphErrorCodeDisableNotSupported             = "graph_disable_not_supported"
+	GraphErrorCodeEmbeddingModelImmutable         = "embedding_model_immutable"
+	GraphErrorCodeEmbeddingOverrideNotAllowed     = "graph_embedding_override_not_allowed"
+	GraphErrorCodeModelChangeConfirmationRequired = "graph_model_change_confirmation_required"
+)
+
+type GraphOperationError struct {
+	Code    string
+	Message string
+	Details map[string]any
+}
+
+func (e *GraphOperationError) Error() string {
+	if e == nil {
+		return ""
+	}
+	return e.Message
+}
 
 const (
 	agentBindingActionUnbind      = "unbind"
@@ -149,39 +172,47 @@ type IndexingEstimateResponse struct {
 
 // CreateDatasetRequest Dataset creation request structure
 type CreateDatasetRequest struct {
-	WorkspaceID            string                 `json:"workspace_id" binding:"required"`
-	Name                   string                 `json:"name" binding:"required"`
-	Description            *string                `json:"description"`
-	Provider               string                 `json:"provider"`
-	Permission             *string                `json:"permission"`
-	EmbeddingModel         *string                `json:"embedding_model"`
-	EmbeddingModelProvider *string                `json:"embedding_model_provider"`
-	EntityModel            *string                `json:"entity_model"`
-	EntityModelProvider    *string                `json:"entity_model_provider"`
-	RetrievalConfig        map[string]interface{} `json:"retrieval_config"`
-	Icon                   *string                `json:"icon"`
-	IconType               *string                `json:"icon_type"`
-	IconBackground         *string                `json:"icon_background"`
-	CreatedBy              string                 `json:"created_by" binding:"required"`
-	EnableGraphFlow        bool                   `json:"enable_graph_flow"`
+	WorkspaceID                 string                 `json:"workspace_id" binding:"required"`
+	Name                        string                 `json:"name" binding:"required"`
+	Description                 *string                `json:"description"`
+	Provider                    string                 `json:"provider"`
+	Permission                  *string                `json:"permission"`
+	EmbeddingModel              *string                `json:"embedding_model"`
+	EmbeddingModelProvider      *string                `json:"embedding_model_provider"`
+	EntityModel                 *string                `json:"entity_model"`
+	EntityModelProvider         *string                `json:"entity_model_provider"`
+	RetrievalConfig             map[string]interface{} `json:"retrieval_config"`
+	Icon                        *string                `json:"icon"`
+	IconType                    *string                `json:"icon_type"`
+	IconBackground              *string                `json:"icon_background"`
+	CreatedBy                   string                 `json:"created_by" binding:"required"`
+	EnableGraphFlow             bool                   `json:"enable_graph_flow"`
+	GraphEmbeddingModel         *string                `json:"graph_embedding_model"`
+	GraphEmbeddingModelProvider *string                `json:"graph_embedding_model_provider"`
+	GraphEmbeddingDimension     *int                   `json:"graph_embedding_dimension"`
 }
 
 // UpdateDatasetRequest Dataset update request structure
 type UpdateDatasetRequest struct {
-	ID                     string                 `json:"id" binding:"required"`
-	Name                   *string                `json:"name"`
-	Description            *string                `json:"description"`
-	EmbeddingModel         *string                `json:"embedding_model"`
-	EmbeddingModelProvider *string                `json:"embedding_model_provider"`
-	EntityModel            *string                `json:"entity_model"`
-	EntityModelProvider    *string                `json:"entity_model_provider"`
-	RetrievalConfig        map[string]interface{} `json:"retrieval_config"`
-	Icon                   *string                `json:"icon"`
-	IconType               *string                `json:"icon_type"`
-	IconBackground         *string                `json:"icon_background"`
-	WorkspaceID            *string                `json:"workspace_id"`
-	UpdatedBy              string                 `json:"updated_by" binding:"required"`
-	EnableGraphFlow        *bool                  `json:"enable_graph_flow"`
+	ID                          string                 `json:"id" binding:"required"`
+	Name                        *string                `json:"name"`
+	Description                 *string                `json:"description"`
+	EmbeddingModel              *string                `json:"embedding_model"`
+	EmbeddingModelProvider      *string                `json:"embedding_model_provider"`
+	EntityModel                 *string                `json:"entity_model"`
+	EntityModelProvider         *string                `json:"entity_model_provider"`
+	RetrievalConfig             map[string]interface{} `json:"retrieval_config"`
+	Icon                        *string                `json:"icon"`
+	IconType                    *string                `json:"icon_type"`
+	IconBackground              *string                `json:"icon_background"`
+	WorkspaceID                 *string                `json:"workspace_id"`
+	UpdatedBy                   string                 `json:"updated_by" binding:"required"`
+	EnableGraphFlow             *bool                  `json:"enable_graph_flow"`
+	ConfirmGraphRebuild         bool                   `json:"confirm_graph_rebuild"`
+	IdempotencyKey              string                 `json:"-"`
+	GraphEmbeddingModel         *string                `json:"graph_embedding_model"`
+	GraphEmbeddingModelProvider *string                `json:"graph_embedding_model_provider"`
+	GraphEmbeddingDimension     *int                   `json:"graph_embedding_dimension"`
 }
 
 // UpdateDatasetExRequest represents request for updating dataset in ex API
@@ -209,18 +240,28 @@ type DatasetWithStats struct {
 }
 
 type datasetService struct {
-	datasetRepo       repository.DatasetRepository
-	documentRepo      repository.DocumentRepository
-	chunkRepo         repository.ChunkRepository
-	tenantSvc         interfaces.WorkspaceManagementService
-	fileService       interfaces.FileService
-	embeddingService  retrieval.Embedding
-	vectorDB          vectordb.VectorDB
-	defaultModelSvc   llmdefaultservice.DefaultModelService
-	indexingRunner    *indexing.IndexingRunner
-	db                *gorm.DB
-	quotaService      interfaces.QuotaService
-	enterpriseService interfaces.OrganizationService
+	datasetRepo           repository.DatasetRepository
+	documentRepo          repository.DocumentRepository
+	chunkRepo             repository.ChunkRepository
+	tenantSvc             interfaces.WorkspaceManagementService
+	fileService           interfaces.FileService
+	embeddingService      retrieval.Embedding
+	vectorDB              vectordb.VectorDB
+	defaultModelSvc       llmdefaultservice.DefaultModelService
+	indexingRunner        *indexing.IndexingRunner
+	db                    *gorm.DB
+	quotaService          interfaces.QuotaService
+	enterpriseService     interfaces.OrganizationService
+	graphLifecycleService *graphflow.LifecycleService
+	graphRuntimeHealth    *system_service.GraphRuntimeHealthService
+}
+
+func (s *datasetService) ConfigureGraphRuntime(
+	health *system_service.GraphRuntimeHealthService,
+	lifecycle *graphflow.LifecycleService,
+) {
+	s.graphRuntimeHealth = health
+	s.graphLifecycleService = lifecycle
 }
 
 func (s *datasetService) SetOrganizationService(organizationService interfaces.OrganizationService) {
@@ -342,6 +383,22 @@ func NewDatasetService(
 }
 
 func (s *datasetService) CreateDataset(ctx context.Context, req *CreateDatasetRequest) (*model.Dataset, error) {
+	if req.GraphEmbeddingModel != nil || req.GraphEmbeddingModelProvider != nil || req.GraphEmbeddingDimension != nil {
+		return nil, newGraphOperationError(
+			GraphErrorCodeEmbeddingOverrideNotAllowed,
+			"Knowledge graph embedding overrides are not allowed.",
+			nil,
+		)
+	}
+	if req.EnableGraphFlow && s.graphRuntimeHealth != nil {
+		if err := s.graphRuntimeHealth.RequireReady(ctx); err != nil {
+			return nil, newGraphOperationError(
+				GraphErrorCodeRuntimeUnavailable,
+				"Knowledge graph runtime is unavailable.",
+				nil,
+			)
+		}
+	}
 	// Step 1: Get groupID from tenantID for quota checking
 	var groupID *uuid.UUID
 	if s.enterpriseService == nil {
@@ -405,6 +462,10 @@ func (s *datasetService) CreateDataset(ctx context.Context, req *CreateDatasetRe
 		IconBackground:         req.IconBackground,
 		CreatedBy:              req.CreatedBy,
 		EnableGraphFlow:        req.EnableGraphFlow,
+		GraphStatus:            initialGraphStatus(req.EnableGraphFlow, 0),
+	}
+	if req.EnableGraphFlow {
+		dataset.GraphRevision = 1
 	}
 
 	// Set default retrieval_config if not provided
@@ -572,6 +633,18 @@ func (s *datasetService) UpdateDataset(ctx context.Context, req *UpdateDatasetRe
 	if err != nil {
 		return nil, fmt.Errorf("failed to get dataset: %w", err)
 	}
+	if err := validateGraphDatasetUpdate(dataset, req); err != nil {
+		return nil, err
+	}
+	if req.EnableGraphFlow != nil && *req.EnableGraphFlow && !dataset.EnableGraphFlow && s.graphRuntimeHealth != nil {
+		if err := s.graphRuntimeHealth.RequireReady(ctx); err != nil {
+			return nil, newGraphOperationError(
+				GraphErrorCodeRuntimeUnavailable,
+				"Knowledge graph runtime is unavailable.",
+				nil,
+			)
+		}
+	}
 
 	// Update fields if provided
 	if req.Name != nil {
@@ -602,6 +675,8 @@ func (s *datasetService) UpdateDataset(ctx context.Context, req *UpdateDatasetRe
 	if req.WorkspaceID != nil {
 		dataset.WorkspaceID = *req.WorkspaceID
 	}
+	graphWasEnabled := dataset.EnableGraphFlow
+	graphModelChanged := graphWasEnabled && graphExtractionModelChanged(dataset, req)
 	// Process EnableGraphFlow with validation
 	if req.EnableGraphFlow != nil && *req.EnableGraphFlow != dataset.EnableGraphFlow {
 		// Check if there are any documents in the dataset
@@ -610,11 +685,11 @@ func (s *datasetService) UpdateDataset(ctx context.Context, req *UpdateDatasetRe
 			return nil, fmt.Errorf("failed to check document count for graph flow validation: %w", err)
 		}
 
-		if docCount > 0 {
-			return nil, fmt.Errorf("cannot modify knowledge graph setting: dataset already contains %d document(s)", docCount)
-		}
-
 		dataset.EnableGraphFlow = *req.EnableGraphFlow
+		dataset.GraphStatus = initialGraphStatus(*req.EnableGraphFlow, docCount)
+	}
+	if graphModelChanged {
+		dataset.GraphStatus = "queued"
 	}
 	dataset.UpdatedBy = &req.UpdatedBy
 
@@ -625,7 +700,121 @@ func (s *datasetService) UpdateDataset(ctx context.Context, req *UpdateDatasetRe
 		return nil, fmt.Errorf("failed to update dataset: %w", err)
 	}
 
+	if s.graphLifecycleService != nil && ((req.EnableGraphFlow != nil && *req.EnableGraphFlow && !graphWasEnabled) || graphModelChanged) {
+		organizationID, parseErr := uuid.Parse(dataset.OrganizationID)
+		if parseErr != nil {
+			return nil, fmt.Errorf("failed to parse organization ID: %w", parseErr)
+		}
+		workspaceID, parseErr := uuid.Parse(dataset.WorkspaceID)
+		if parseErr != nil {
+			return nil, fmt.Errorf("failed to parse workspace ID: %w", parseErr)
+		}
+		datasetID, parseErr := uuid.Parse(dataset.ID)
+		if parseErr != nil {
+			return nil, fmt.Errorf("failed to parse dataset ID: %w", parseErr)
+		}
+		idempotencyKey := strings.TrimSpace(req.IdempotencyKey)
+		if idempotencyKey == "" {
+			idempotencyKey = fmt.Sprintf("dataset:%s:graph:%d", dataset.ID, dataset.GraphRevision+1)
+		}
+		runRequest := graphflow.LifecycleRunRequest{
+			OrganizationID:    organizationID,
+			WorkspaceID:       &workspaceID,
+			DatasetID:         datasetID,
+			Trigger:           "dataset_update",
+			IdempotencyKey:    idempotencyKey,
+			EmbeddingProvider: pointerValue(dataset.EmbeddingModelProvider),
+			EmbeddingModel:    pointerValue(dataset.EmbeddingModel),
+		}
+		if graphModelChanged {
+			if _, _, err := s.graphLifecycleService.StartRebuild(ctx, runRequest); err != nil {
+				return nil, fmt.Errorf("failed to enqueue graph rebuild: %w", err)
+			}
+		} else if dataset.GraphStatus != "waiting_content" {
+			if _, _, err := s.graphLifecycleService.StartBackfill(ctx, runRequest); err != nil {
+				return nil, fmt.Errorf("failed to enqueue graph backfill: %w", err)
+			}
+		}
+	}
+
 	return dataset, nil
+}
+
+func newGraphOperationError(code, message string, details map[string]any) *GraphOperationError {
+	return &GraphOperationError{Code: code, Message: message, Details: details}
+}
+
+func validateGraphDatasetUpdate(dataset *model.Dataset, req *UpdateDatasetRequest) error {
+	if dataset == nil || req == nil {
+		return nil
+	}
+	if req.GraphEmbeddingModel != nil || req.GraphEmbeddingModelProvider != nil || req.GraphEmbeddingDimension != nil {
+		return newGraphOperationError(
+			GraphErrorCodeEmbeddingOverrideNotAllowed,
+			"Knowledge graph embedding overrides are not allowed.",
+			nil,
+		)
+	}
+	if pointerChanged(req.EmbeddingModel, dataset.EmbeddingModel) ||
+		pointerChanged(req.EmbeddingModelProvider, dataset.EmbeddingModelProvider) {
+		return newGraphOperationError(
+			GraphErrorCodeEmbeddingModelImmutable,
+			"The knowledge base embedding model is immutable after creation.",
+			nil,
+		)
+	}
+	if dataset.EnableGraphFlow && req.EnableGraphFlow != nil && !*req.EnableGraphFlow {
+		return newGraphOperationError(
+			GraphErrorCodeDisableNotSupported,
+			"Disabling an existing knowledge graph is not supported.",
+			nil,
+		)
+	}
+	if dataset.EnableGraphFlow && graphExtractionModelChanged(dataset, req) && !req.ConfirmGraphRebuild {
+		return newGraphOperationError(
+			GraphErrorCodeModelChangeConfirmationRequired,
+			"Changing the graph extraction model requires confirmation.",
+			map[string]any{
+				"affected_scope":                    "all_current_documents",
+				"action":                            "full_graph_rebuild",
+				"current_revision_remains_readable": true,
+			},
+		)
+	}
+	return nil
+}
+
+func graphExtractionModelChanged(dataset *model.Dataset, req *UpdateDatasetRequest) bool {
+	return pointerChanged(req.EntityModel, dataset.EntityModel) ||
+		pointerChanged(req.EntityModelProvider, dataset.EntityModelProvider)
+}
+
+func pointerChanged(requested, current *string) bool {
+	return requested != nil && strings.TrimSpace(*requested) != strings.TrimSpace(pointerValue(current))
+}
+
+func pointerValue(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return strings.TrimSpace(*value)
+}
+
+func initialGraphStatus(enabled bool, documentCount int64) string {
+	if !enabled {
+		return "disabled"
+	}
+	if documentCount == 0 {
+		return "waiting_content"
+	}
+	return "queued"
+}
+
+func documentIndexingStatusWithGraph(documentStatus, graphStatus string) string {
+	if graphStatus == "failed" {
+		return documentStatus
+	}
+	return documentStatus
 }
 
 func (s *datasetService) DeleteDataset(ctx context.Context, datasetID, accountID, tenantID, agentBindingAction, impactToken string) error {
@@ -690,6 +879,45 @@ func (s *datasetService) DeleteDataset(ctx context.Context, datasetID, accountID
 			return err
 		}
 		dataset = currentDataset
+		if dataset.EnableGraphFlow {
+			if s.graphLifecycleService == nil {
+				return fmt.Errorf("graph cleanup lifecycle is not configured")
+			}
+			parsedDatasetID, err := uuid.Parse(dataset.ID)
+			if err != nil {
+				return fmt.Errorf("failed to parse dataset ID: %w", err)
+			}
+			var workspaceID *uuid.UUID
+			if dataset.WorkspaceID != "" {
+				parsedWorkspaceID, err := uuid.Parse(dataset.WorkspaceID)
+				if err != nil {
+					return fmt.Errorf("failed to parse dataset workspace ID: %w", err)
+				}
+				workspaceID = &parsedWorkspaceID
+			}
+			var graphDocumentIDs []string
+			if err := tx.WithContext(ctx).Model(&model.Document{}).
+				Where("dataset_id = ?", dataset.ID).
+				Pluck("id", &graphDocumentIDs).Error; err != nil {
+				return fmt.Errorf("list dataset graph documents: %w", err)
+			}
+			for _, graphDocumentID := range graphDocumentIDs {
+				parsedDocumentID, err := uuid.Parse(graphDocumentID)
+				if err != nil {
+					return fmt.Errorf("failed to parse document ID: %w", err)
+				}
+				if _, _, err := s.graphLifecycleService.StartCleanupInTx(ctx, tx, graphflow.LifecycleRunRequest{
+					OrganizationID: organizationID,
+					WorkspaceID:    workspaceID,
+					DatasetID:      parsedDatasetID,
+					DocumentID:     &parsedDocumentID,
+					Trigger:        "dataset_deleted",
+					IdempotencyKey: fmt.Sprintf("dataset-delete:%s:%s", parsedDatasetID, parsedDocumentID),
+				}); err != nil {
+					return fmt.Errorf("create dataset graph cleanup intent: %w", err)
+				}
+			}
+		}
 
 		if s.enterpriseService != nil {
 			group, err := s.enterpriseService.GetOrganizationByWorkspaceID(ctx, dataset.WorkspaceID)

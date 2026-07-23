@@ -1225,9 +1225,7 @@ func normalizeAgentConfigRequest(req dto.AgentConfigRequest) dto.AgentConfigRequ
 	req.EnabledSkillIDs = normalizeAgentEnabledSkillIDs(req.EnabledSkillIDs)
 	req.SuggestedQuestions = normalizeSuggestedQuestions(req.SuggestedQuestions)
 	req.KnowledgeDatasetIDs = normalizeStringIDs(req.KnowledgeDatasetIDs)
-	if req.KnowledgeRetrievalConfig == nil {
-		req.KnowledgeRetrievalConfig = map[string]interface{}{}
-	}
+	req.KnowledgeRetrievalConfig = normalizeAgentKnowledgeRetrievalConfig(req.KnowledgeRetrievalConfig)
 	req.DatabaseBindings = normalizeAgentDatabaseBindings(req.DatabaseBindings)
 	req.WorkflowBindings = normalizeAgentWorkflowBindings(req.WorkflowBindings)
 	return req
@@ -1322,7 +1320,7 @@ func agentConfigResponse(agentID string, cfg *AgentsConfig) *dto.AgentConfigResp
 		KnowledgeDatasetIDs:       normalizeStringIDs(mode.KnowledgeDatasetIDs),
 		KnowledgeBoundByAccountID: strings.TrimSpace(mode.KnowledgeBoundByAccountID),
 		KnowledgeBoundAtUnix:      mode.KnowledgeBoundAtUnix,
-		KnowledgeRetrievalConfig:  copyStringAnyMap(mode.KnowledgeRetrievalConfig),
+		KnowledgeRetrievalConfig:  normalizeAgentKnowledgeRetrievalConfig(mode.KnowledgeRetrievalConfig),
 		DatabaseBindings:          normalizeAgentDatabaseBindings(mode.DatabaseBindings),
 		DatabaseBoundByAccountID:  strings.TrimSpace(mode.DatabaseBoundByAccountID),
 		DatabaseBoundAtUnix:       mode.DatabaseBoundAtUnix,
@@ -1413,7 +1411,7 @@ func agentConfigResponseFromSnapshot(agentID string, snapshot map[string]interfa
 	resp.KnowledgeBoundByAccountID = strings.TrimSpace(stringFromSnapshot(snapshot, "knowledge_bound_by_account_id"))
 	resp.KnowledgeBoundAtUnix = int64FromSnapshot(snapshot["knowledge_bound_at_unix"])
 	if cfg, ok := snapshot["knowledge_retrieval_config"].(map[string]interface{}); ok {
-		resp.KnowledgeRetrievalConfig = copyStringAnyMap(cfg)
+		resp.KnowledgeRetrievalConfig = normalizeAgentKnowledgeRetrievalConfig(cfg)
 	}
 	resp.DatabaseBindings = agentDatabaseBindingsFromSnapshot(snapshot["database_bindings"])
 	resp.DatabaseBoundByAccountID = strings.TrimSpace(stringFromSnapshot(snapshot, "database_bound_by_account_id"))
@@ -1436,6 +1434,27 @@ func agentConfigResponseFromSnapshot(agentID string, snapshot map[string]interfa
 		})
 	}
 	return resp
+}
+
+func normalizeAgentKnowledgeRetrievalConfig(config map[string]interface{}) map[string]interface{} {
+	result := copyStringAnyMap(config)
+	if result == nil {
+		result = map[string]interface{}{}
+	}
+	method, _ := result["search_method"].(string)
+	method = strings.TrimSpace(method)
+	if method != "" {
+		result["search_method"] = method
+	}
+	if method == "graph" || method == "graph_search" {
+		policy, _ := result["fallback_policy"].(string)
+		policy = strings.TrimSpace(policy)
+		if policy == "" {
+			policy = "none"
+		}
+		result["fallback_policy"] = policy
+	}
+	return result
 }
 
 func agentBindingAuthorizationsFromSnapshot(value interface{}) []dto.AgentBindingAuthorization {

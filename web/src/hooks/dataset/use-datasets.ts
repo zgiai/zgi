@@ -237,9 +237,10 @@ export function useUpdateDataset(datasetId: string | undefined) {
       }
       return datasetService.updateDataset(datasetId, data);
     },
-    onSuccess: () => {
+    onSuccess: response => {
       toast.success(t('settings.saveSuccess'));
       if (datasetId) {
+        queryClient.setQueryData(DATASET_KEYS.detail(datasetId), response);
         // Refresh dataset detail consumers
         queryClient.invalidateQueries({ queryKey: DATASET_KEYS.detail(datasetId) });
         // Invalidate both paginated and basic lists that are either unfiltered or belong to current workspace

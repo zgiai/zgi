@@ -250,7 +250,9 @@ func (s *hitTestingService) Retrieve(ctx context.Context, dataset *dataset_model
 
 	// Get retrieval parameters
 	options := s.getRetrievalOptions(ctx, retrievalModel, dataset)
-	options.RetrievalMode = retrievalMode
+	if retrievalMode != "" {
+		options.RetrievalMode = retrievalMode
+	}
 
 	if options.TopK > limit {
 		options.TopK = limit
@@ -326,6 +328,7 @@ func (s *hitTestingService) Retrieve(ctx context.Context, dataset *dataset_model
 		ElapsedTime:    float64(elapsed.Microseconds()) / 1000.0,
 		GraphExecution: execution,
 	}
+	normalizeGraphExecution(response.GraphExecution, dataset, options)
 	if err := normalizeHitTestingResponseKnowledgeImageURLs(response, config.Current().App.FilesURL); err != nil {
 		return nil, err
 	}
@@ -354,6 +357,27 @@ func (s *hitTestingService) Retrieve(ctx context.Context, dataset *dataset_model
 	return response, nil
 }
 
+func normalizeGraphExecution(execution *dto.GraphExecution, dataset *dataset_model.Dataset, options *RetrievalOptions) {
+	if execution == nil || dataset == nil || options == nil {
+		return
+	}
+	if execution.RequestedMethod == "" {
+		execution.RequestedMethod = options.SearchMethod
+	}
+	if execution.ActualMethod == "" {
+		execution.ActualMethod = options.RetrievalMode
+	}
+	if execution.FallbackPolicy == "" {
+		execution.FallbackPolicy = options.FallbackPolicy
+	}
+	if execution.GraphRevision == 0 {
+		execution.GraphRevision = dataset.GraphRevision
+	}
+	if execution.VisibilityRevision == 0 {
+		execution.VisibilityRevision = dataset.GraphVisibilityRevision
+	}
+}
+
 // getRetrievalOptions Get retrieval options
 func (s *hitTestingService) getRetrievalOptions(ctx context.Context, retrievalModel map[string]interface{}, dataset *dataset_model.Dataset) *RetrievalOptions {
 	options := &RetrievalOptions{
@@ -374,6 +398,7 @@ func (s *hitTestingService) getRetrievalOptions(ctx context.Context, retrievalMo
 		CoveragePenaltyWeight: 0.3,               // Weight for coverage penalty
 		SemanticWeight:        0.7,               // Final weight for semantic score
 		GraphWeight:           0.3,               // Final weight for graph score
+		FallbackPolicy:        FallbackPolicyNone,
 	}
 
 	// Get retrieval configuration from input parameters or dataset
@@ -440,6 +465,9 @@ func (s *hitTestingService) getRetrievalOptions(ctx context.Context, retrievalMo
 		}
 		if gw, ok := model["graph_weight"].(float64); ok {
 			options.GraphWeight = gw
+		}
+		if policy, ok := model["fallback_policy"].(string); ok {
+			options.FallbackPolicy = policy
 		}
 	}
 

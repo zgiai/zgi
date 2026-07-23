@@ -2,13 +2,12 @@
 
 import React, { useRef, useState, useMemo, useEffect, useImperativeHandle } from 'react';
 import { useT } from '@/i18n';
-import type { DatasetGraph, GraphNode } from '@/services/types/dataset';
+import type { DatasetGraph, GraphNode, GraphNodeSource } from '@/services/types/dataset';
 import { cn } from '@/lib/utils';
 import { GraphCanvas } from './graph-canvas';
 import { GraphLegend } from './graph-legend';
 import { transformToG6Data } from './utils/data-adapter';
 import { useGraphInstance } from './hooks/use-graph-instance';
-import { getCategoryColorMap } from './utils/color';
 
 export * from './detail-panel';
 
@@ -32,7 +31,7 @@ export const KnowledgeGraph = React.forwardRef<KnowledgeGraphHandle, KnowledgeGr
     const allSources = useMemo(() => {
       const sourcesMap = new Map<string, string>();
       data.nodes.forEach(node => {
-        node.data?.sources?.forEach((s: any) => {
+        node.data?.sources?.forEach((s: GraphNodeSource) => {
           sourcesMap.set(s.doc.id, s.doc.title);
         });
       });
@@ -68,7 +67,11 @@ export const KnowledgeGraph = React.forwardRef<KnowledgeGraphHandle, KnowledgeGr
 
     return (
       <div className={cn('w-full h-full relative group', className)}>
-        <GraphCanvas containerRef={containerRef} />
+        <GraphCanvas
+          containerRef={containerRef}
+          nodeCount={g6Data.nodes.length}
+          edgeCount={g6Data.edges.length}
+        />
 
         <GraphLegend
           title={t('knowledgeGraphTitle')}

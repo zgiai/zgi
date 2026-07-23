@@ -227,7 +227,10 @@ type ServiceContainer struct {
 	defaultModelService llmdefaultsvc.DefaultModelService
 
 	// GraphFlow service
-	graphFlowService *graphflow.Service
+	graphFlowService       *graphflow.Service
+	graphLifecycleService  *graphflow.LifecycleService
+	graphVisibilityService *graphflow.VisibilityService
+	graphRuntimeHealth     *system_service.GraphRuntimeHealthService
 
 	// Automation definition service
 	automationDefinitionService automationdefinition.Service
@@ -1050,6 +1053,31 @@ func (c *ServiceContainer) GetGraphFlowService() *graphflow.Service {
 		)
 	}
 	return c.graphFlowService
+}
+
+// GetGraphLifecycleService returns the durable GraphFlow lifecycle service.
+func (c *ServiceContainer) GetGraphLifecycleService() *graphflow.LifecycleService {
+	if c.graphLifecycleService == nil {
+		c.graphLifecycleService = graphflow.NewLifecycleService(c.db)
+	}
+	return c.graphLifecycleService
+}
+
+// GetGraphVisibilityService returns the GraphFlow visibility service.
+func (c *ServiceContainer) GetGraphVisibilityService() *graphflow.VisibilityService {
+	if c.graphVisibilityService == nil {
+		c.graphVisibilityService = graphflow.NewVisibilityService(c.db)
+	}
+	return c.graphVisibilityService
+}
+
+// GetGraphRuntimeHealthService returns the sanitized graph runtime health service.
+func (c *ServiceContainer) GetGraphRuntimeHealthService() *system_service.GraphRuntimeHealthService {
+	if c.graphRuntimeHealth == nil {
+		graphService := c.GetGraphFlowService()
+		c.graphRuntimeHealth = system_service.NewGraphRuntimeHealthService(graphService.Neo4jClient)
+	}
+	return c.graphRuntimeHealth
 }
 
 func (c *ServiceContainer) SetAutomationDefinitionService(service automationdefinition.Service) {

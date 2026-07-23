@@ -2,10 +2,14 @@
 
 import * as React from 'react';
 import { useParams } from 'next/navigation';
-import { useDatasetGraph } from '@/hooks/dataset/use-dataset-graph';
+import {
+  useDatasetGraph,
+  useDatasetGraphStatus,
+  useRebuildDatasetGraph,
+} from '@/hooks/dataset/use-dataset-graph';
 import { useDataset } from '@/hooks/dataset/use-datasets';
 import { useT } from '@/i18n';
-import { Loader2, Network, Search, X } from 'lucide-react';
+import { AlertCircle, Loader2, Network, Search, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { KnowledgeGraph, DetailPanel } from '@/components/datasets/knowledge-graph';
@@ -19,6 +23,9 @@ import {
   PermissionLoadingState,
 } from '@/components/common/permission-gate-state';
 import { KNOWLEDGE_BASE_PERMISSION_ACTIONS } from '@/constants/permissions';
+import { Button } from '@/components/ui/button';
+
+const GRAPH_QUERY_LIMIT_ERROR = 'graph_query_limit_exceeded';
 
 export default function DatasetGraphPage() {
   const { datasetId } = useParams<{ datasetId: string }>();
@@ -27,16 +34,41 @@ export default function DatasetGraphPage() {
     ...KNOWLEDGE_BASE_PERMISSION_ACTIONS.graphView,
     ...KNOWLEDGE_BASE_PERMISSION_ACTIONS.graphManage,
   ]);
+  const canManageGraph = hasAnyPermission(KNOWLEDGE_BASE_PERMISSION_ACTIONS.graphManage);
+  const rebuildGraph = useRebuildDatasetGraph(datasetId);
   const { data: datasetData, isLoading: _isDatasetLoading } = useDataset(datasetId, {
-    enabled: canViewGraph,
-  });
-  const { data: graphData, isLoading: isGraphLoading } = useDatasetGraph(datasetId, {
     enabled: canViewGraph,
   });
   const t = useT('datasets');
   const [selectedNode, setSelectedNode] = React.useState<GraphNode | null>(null);
   const [searchQuery, setSearchQuery] = React.useState('');
   const [isSearchOpen, setIsSearchOpen] = React.useState(false);
+  const [cursor, setCursor] = React.useState<string | undefined>();
+  const [seedNodeId, setSeedNodeId] = React.useState<string | undefined>();
+  const { data: graphStatusData, isLoading: isStatusLoading } = useDatasetGraphStatus(
+    datasetId,
+    canViewGraph
+  );
+  const graphStatus = graphStatusData?.data;
+  const graphQuery = React.useMemo(
+    () => ({
+      keyword: searchQuery.trim() || undefined,
+      seed_node_id: seedNodeId,
+      cursor,
+      hop_depth: seedNodeId ? 1 : undefined,
+      node_limit: 300,
+      edge_limit: 900,
+    }),
+    [cursor, searchQuery, seedNodeId]
+  );
+  const {
+    data: graphData,
+    isLoading: isGraphLoading,
+    isError: isGraphError,
+    error: graphError,
+  } = useDatasetGraph(datasetId, graphQuery, {
+    enabled: canViewGraph && graphStatus?.can_search === true,
+  });
 
   const graphRef = React.useRef<KnowledgeGraphHandle>(null);
   const searchInputRef = React.useRef<HTMLInputElement>(null);
@@ -44,6 +76,8 @@ export default function DatasetGraphPage() {
 
   const _dataset = datasetData?.data;
   const graph = graphData?.data;
+  const graphErrorMessage = graphError instanceof Error ? graphError.message : '';
+  const graphLimitExceeded = graphErrorMessage.includes(GRAPH_QUERY_LIMIT_ERROR);
 
   // Check if dataset has completed documents (disabled for now)
   // const hasCompletedDocuments = (dataset?.available_document_count ?? 0) > 0;
@@ -147,6 +181,17 @@ export default function DatasetGraphPage() {
           <p className="text-sm text-muted-foreground mt-1">{t('knowledgeGraphDescription')}</p>
         </div>
         <div className="flex items-center gap-3">
+          {canManageGraph && (
+            <Button
+              type="button"
+              variant="outline"
+              disabled={rebuildGraph.isPending}
+              onClick={() => rebuildGraph.mutate()}
+            >
+              {rebuildGraph.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              {t('graph.rebuild')}
+            </Button>
+          )}
           {/* Entity Search with Dropdown */}
           <div ref={searchContainerRef} className="relative w-72">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
@@ -155,7 +200,11 @@ export default function DatasetGraphPage() {
               placeholder={t('hitTesting.entitySearch.placeholder')}
               className="pl-9 pr-8 h-9"
               value={searchQuery}
-              onChange={e => setSearchQuery(e.target.value)}
+              onChange={e => {
+                setSearchQuery(e.target.value);
+                setCursor(undefined);
+                setSeedNodeId(undefined);
+              }}
               onFocus={() => searchQuery.trim() && setIsSearchOpen(true)}
             />
             {searchQuery && (
@@ -163,6 +212,8 @@ export default function DatasetGraphPage() {
                 type="button"
                 onClick={() => {
                   setSearchQuery('');
+                  setCursor(undefined);
+                  setSeedNodeId(undefined);
                   setIsSearchOpen(false);
                   searchInputRef.current?.focus();
                 }}
@@ -231,11 +282,33 @@ export default function DatasetGraphPage() {
       <div className="flex-1 flex gap-6 min-h-0">
         {/* Left Side: Graph Visualization */}
         <div className="flex-1 flex flex-col min-w-0 bg-card rounded-xl border border-border shadow-sm overflow-hidden relative">
-          {isGraphLoading ? (
+          {isStatusLoading || isGraphLoading ? (
             <div className="flex-1 flex items-center justify-center">
               <Loader2 className="w-8 h-8 text-primary animate-spin" />
             </div>
-          ) : graph ? (
+          ) : graphStatus?.status === 'failed' || graphStatus?.status === 'unavailable' ? (
+            <div className="flex flex-1 flex-col items-center justify-center gap-3 p-8 text-center">
+              <AlertCircle className="h-10 w-10 text-destructive" />
+              <p className="font-medium">
+                {graphStatus.error_message || t('graph.runtimeUnavailable')}
+              </p>
+            </div>
+          ) : graphStatus && !graphStatus.can_search ? (
+            <div className="flex flex-1 flex-col items-center justify-center gap-3 p-8 text-center text-muted-foreground">
+              <Loader2 className="h-8 w-8 animate-spin" />
+              <p>
+                {t('graph.statusDescription', {
+                  status: t(`graph.statuses.${graphStatus.status}`),
+                  progress: graphStatus.progress,
+                })}
+              </p>
+            </div>
+          ) : isGraphError ? (
+            <div className="flex flex-1 flex-col items-center justify-center gap-3 p-8 text-center">
+              <AlertCircle className="h-10 w-10 text-destructive" />
+              <p>{graphLimitExceeded ? GRAPH_QUERY_LIMIT_ERROR : graphErrorMessage}</p>
+            </div>
+          ) : graph && graph.nodes.length > 0 ? (
             <div className="flex-1 relative">
               <KnowledgeGraph
                 ref={graphRef}
@@ -244,6 +317,16 @@ export default function DatasetGraphPage() {
                 categoryColorMap={categoryColorMap}
                 className="w-full h-full"
               />
+              {graph.next_cursor && (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  className="absolute bottom-4 right-4"
+                  onClick={() => setCursor(graph.next_cursor)}
+                >
+                  {t('loadMore')}
+                </Button>
+              )}
             </div>
           ) : (
             <div className="flex-1 flex items-center justify-center text-muted-foreground">
@@ -259,6 +342,10 @@ export default function DatasetGraphPage() {
             graphData={graph || null}
             categoryColorMap={categoryColorMap}
             onNodeSelect={handleNodeSelect}
+            onExpandNeighbors={nodeId => {
+              setSeedNodeId(nodeId);
+              setCursor(undefined);
+            }}
             className="flex-1"
           />
         </div>

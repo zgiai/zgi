@@ -40,6 +40,10 @@ import type {
   DatasetFileRefCreateResult,
   DatasetFileRefList,
   DatasetFileRefView,
+  GraphRuntimeCapability,
+  GraphDatasetStatus,
+  GraphOperationResponse,
+  GraphQueryParams,
 } from './types/dataset';
 import type {
   AgentBindingMutationConfirmation,
@@ -868,8 +872,39 @@ class DatasetService extends BaseService {
    * Get dataset graph data
    * GET /console/api/datasets/{dataset_id}/graph
    */
-  getDatasetGraph(datasetId: string): Promise<ApiResponseData<DatasetGraph>> {
-    return this.request('get', `/datasets/${datasetId}/graph`);
+  getDatasetGraph(
+    datasetId: string,
+    query: GraphQueryParams = {}
+  ): Promise<ApiResponseData<DatasetGraph>> {
+    const params = new URLSearchParams();
+    Object.entries(query).forEach(([key, value]) => {
+      if (value !== undefined && value !== null && value !== '') {
+        params.set(key, String(value));
+      }
+    });
+    const suffix = params.size > 0 ? `?${params.toString()}` : '';
+    return this.request('get', `/datasets/${datasetId}/graph${suffix}`);
+  }
+
+  getGraphRuntimeCapability(): Promise<ApiResponseData<GraphRuntimeCapability>> {
+    return this.request('get', '/datasets/graph-capability');
+  }
+
+  getDatasetGraphStatus(datasetId: string): Promise<ApiResponseData<GraphDatasetStatus>> {
+    return this.request('get', `/datasets/${datasetId}/graph/status`);
+  }
+
+  rebuildDatasetGraph(datasetId: string): Promise<ApiResponseData<GraphOperationResponse>> {
+    return this.request('post', `/datasets/${datasetId}/graph/rebuild`, {
+      reason: 'manual_rebuild',
+    });
+  }
+
+  retryDocumentGraph(
+    datasetId: string,
+    documentId: string
+  ): Promise<ApiResponseData<GraphOperationResponse>> {
+    return this.request('post', `/datasets/${datasetId}/documents/${documentId}/graph/retry`, {});
   }
 
   /**
