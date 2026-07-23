@@ -41,8 +41,16 @@ import type {
   DatasetFileRefList,
   DatasetFileRefView,
 } from './types/dataset';
-import type { ApiResponseData } from './types/common';
+import type {
+  AgentBindingMutationConfirmation,
+  AgentResourceBoundImpact,
+  ApiResponseData,
+} from './types/common';
 import type { FileProcessingRequestView } from './types/file';
+import type {
+  BatchHitTestingReportResponse,
+  BatchHitTestingStatusResponse,
+} from '@/components/datasets/batch-testing/type';
 
 /**
  * DatasetService
@@ -105,8 +113,19 @@ class DatasetService extends BaseService {
    * Delete dataset
    * DELETE /console/api/datasets/{dataset_id}
    */
-  deleteDataset(datasetId: string): Promise<ApiResponseData<Record<string, unknown>>> {
-    return this.request('delete', `/datasets/${datasetId}`);
+  deleteDataset(
+    datasetId: string,
+    confirmation?: AgentBindingMutationConfirmation
+  ): Promise<ApiResponseData<Record<string, unknown>>> {
+    return this.request('delete', `/datasets/${datasetId}`, undefined, {
+      params: confirmation,
+    });
+  }
+
+  previewDatasetDeleteImpact(
+    datasetId: string
+  ): Promise<ApiResponseData<AgentResourceBoundImpact | null>> {
+    return this.request('get', `/datasets/${datasetId}/delete-impact`);
   }
 
   /* ------------------------------------------------------------------------ */
@@ -807,14 +826,20 @@ class DatasetService extends BaseService {
   /**
    * Get batch hit testing status
    */
-  getBatchHitTestingStatus(datasetId: string, taskId: string): Promise<ApiResponseData<any>> {
+  getBatchHitTestingStatus(
+    datasetId: string,
+    taskId: string
+  ): Promise<ApiResponseData<BatchHitTestingStatusResponse>> {
     return this.request('get', `/datasets/${datasetId}/batch-hit-testing/${taskId}`);
   }
 
   /**
    * Stop batch hit testing task
    */
-  stopBatchHitTestingTask(datasetId: string, taskId: string): Promise<ApiResponseData<any>> {
+  stopBatchHitTestingTask(
+    datasetId: string,
+    taskId: string
+  ): Promise<ApiResponseData<Record<string, unknown>>> {
     return this.request('post', `/datasets/${datasetId}/batch-hit-testing/${taskId}/stop`, {});
   }
 
@@ -832,7 +857,10 @@ class DatasetService extends BaseService {
   /**
    * Get batch hit testing report
    */
-  getBatchHitTestingReport(datasetId: string, taskId: string): Promise<ApiResponseData<any>> {
+  getBatchHitTestingReport(
+    datasetId: string,
+    taskId: string
+  ): Promise<ApiResponseData<BatchHitTestingReportResponse>> {
     return this.request('get', `/datasets/${datasetId}/batch-hit-testing/${taskId}/report`);
   }
 

@@ -9,6 +9,7 @@ import (
 	"github.com/zgiai/zgi/api/config"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	tool_file "github.com/zgiai/zgi/api/internal/modules/app/workflow/tool_file"
+	"github.com/zgiai/zgi/api/internal/modules/skills"
 )
 
 func TestMergeGeneratedArtifactMetadataPersistsHydratableFile(t *testing.T) {
@@ -135,6 +136,46 @@ func TestMergeGeneratedArtifactMetadataPersistsManagedFileSignals(t *testing.T) 
 	} {
 		if artifacts[0][key] != want {
 			t.Fatalf("managed conversation artifact %s = %#v, want %#v in %#v", key, artifacts[0][key], want, artifacts[0])
+		}
+	}
+}
+
+func TestMergeGeneratedArtifactMetadataCarriesProjectionEvidenceIntoManagedFile(t *testing.T) {
+	metadata := mergeGeneratedArtifactMetadata(map[string]interface{}{}, map[string]interface{}{
+		"file_id":         "tool-file-1",
+		"tool_file_id":    "tool-file-1",
+		"filename":        "chapter.md",
+		"content_chars":   2048,
+		"content_sha256":  "sha256:chapter",
+		"content_summary": "Chapter summary",
+	})
+	metadata = mergeGeneratedArtifactMetadata(metadata, map[string]interface{}{
+		"file_id":             "managed-file-1",
+		"upload_file_id":      "managed-file-1",
+		"source_tool_file_id": "tool-file-1",
+		"filename":            "chapter.md",
+		"target":              "managed_file",
+	})
+
+	artifacts := conversationArtifactsFromMetadata(metadata["conversation_artifacts"])
+	var managed map[string]interface{}
+	for _, artifact := range artifacts {
+		if stringFromAny(artifact["artifact_id"]) == "managed_file:managed-file-1" {
+			managed = artifact
+			break
+		}
+	}
+	if managed == nil {
+		t.Fatalf("managed artifact missing from %#v", artifacts)
+	}
+	for key, want := range map[string]interface{}{
+		"source_tool_file_id": "tool-file-1",
+		"content_chars":       2048,
+		"content_sha256":      "sha256:chapter",
+		"content_summary":     "Chapter summary",
+	} {
+		if managed[key] != want {
+			t.Fatalf("managed artifact %s = %#v, want %#v in %#v", key, managed[key], want, managed)
 		}
 	}
 }
@@ -289,6 +330,58 @@ func TestConversationArtifactsKeepTemporaryAvailableAfterManagementCopy(t *testi
 	}
 }
 
+func TestMergeSkillTraceMetadataLinksManagedFileToTemporaryArtifact(t *testing.T) {
+	metadata := mergeGeneratedArtifactMetadata(map[string]interface{}{}, map[string]interface{}{
+		"file_id":         "tool-1",
+		"tool_file_id":    "tool-1",
+		"filename":        "chapter.md",
+		"mime_type":       "text/markdown",
+		"target":          "temporary_artifact",
+		"content_chars":   4096,
+		"content_sha256":  "sha256:chapter",
+		"content_summary": "Chapter summary",
+	})
+
+	metadata = mergeSkillTraceMetadata(metadata, []skills.SkillTrace{{
+		Kind:     "tool_call",
+		SkillID:  skills.SkillFileManager,
+		ToolName: "save_file_to_management",
+		Status:   "success",
+		Arguments: map[string]interface{}{
+			"source_type":  "tool_file",
+			"tool_file_id": "tool-1",
+			"filename":     "chapter.md",
+		},
+		Result: map[string]interface{}{
+			"file_id":        "managed-1",
+			"upload_file_id": "managed-1",
+			"filename":       "chapter.md",
+			"target":         "managed_file",
+		},
+	}})
+
+	artifacts := conversationArtifactsFromMetadata(metadata["conversation_artifacts"])
+	if len(artifacts) != 2 {
+		t.Fatalf("conversation_artifacts = %#v, want temporary and managed artifacts", artifacts)
+	}
+	managed := artifacts[1]
+	if got := stringFromAny(managed["artifact_id"]); got != "managed_file:managed-1" {
+		t.Fatalf("managed artifact_id = %q, want managed_file:managed-1", got)
+	}
+	if got := stringFromAny(managed["source_tool_file_id"]); got != "tool-1" {
+		t.Fatalf("managed source_tool_file_id = %q, want tool-1", got)
+	}
+	if got := stringFromAny(managed["content_sha256"]); got != "sha256:chapter" {
+		t.Fatalf("managed content_sha256 = %q, want inherited digest", got)
+	}
+	if got := stringFromAny(managed["content_summary"]); got != "Chapter summary" {
+		t.Fatalf("managed content_summary = %q, want inherited summary", got)
+	}
+	if got := intValueFromAny(managed["content_chars"]); got != 4096 {
+		t.Fatalf("managed content_chars = %d, want 4096", got)
+	}
+}
+
 func TestRecentGeneratedArtifactsKeepsOlderTempAfterLaterManagedCopy(t *testing.T) {
 	generatedMetadata := mergeGeneratedArtifactMetadata(map[string]interface{}{}, map[string]interface{}{
 		"file_id":         "tool-1",
@@ -377,6 +470,43 @@ func TestHydrateGeneratedFileURLsBackfillsLegacyLifecycle(t *testing.T) {
 	}
 }
 
+func TestGeneratedFileLifecycleLookupCandidatesIncludesImageGenerationFiles(t *testing.T) {
+	message := &runtimemodel.Message{Metadata: map[string]interface{}{
+		"generated_files": []interface{}{map[string]interface{}{
+			"file_id": "tool-document", "filename": "document.txt",
+		}},
+		"image_generation": map[string]interface{}{
+			"files": []interface{}{map[string]interface{}{
+				"file_id": "tool-image", "filename": "image.png",
+			}},
+		},
+	}}
+
+	files := generatedFileLifecycleLookupCandidates(message)
+	if len(files) != 2 {
+		t.Fatalf("lifecycle lookup candidates = %#v, want generated and image files", files)
+	}
+	got := map[string]bool{}
+	for _, file := range files {
+		got[stringFromAny(file["file_id"])] = true
+	}
+	if !got["tool-document"] || !got["tool-image"] {
+		t.Fatalf("lifecycle lookup candidate ids = %#v, want both tool-document and tool-image", got)
+	}
+}
+
+func TestGeneratedFileNeedsLifecycleLookupSkipsPersistentImageFile(t *testing.T) {
+	file := map[string]interface{}{
+		"file_id":         "tool-image",
+		"filename":        "image.png",
+		"transfer_method": "tool_file",
+		"lifecycle":       string(tool_file.ToolFileLifecyclePersistent),
+	}
+	if generatedFileNeedsLifecycleLookup(file) {
+		t.Fatalf("persistent file should not need lifecycle lookup: %#v", file)
+	}
+}
+
 func TestHydrateGeneratedFileURLsMarksMissingLegacyToolFileExpired(t *testing.T) {
 	message := &runtimemodel.Message{Metadata: map[string]interface{}{
 		"generated_files": []interface{}{map[string]interface{}{
@@ -419,6 +549,40 @@ func TestHydrateMessageGeneratedFileURLsRefreshesSignedURLs(t *testing.T) {
 	}
 	if strings.Contains(url, "download=1") {
 		t.Fatalf("url = %q, should not force download", url)
+	}
+	if !strings.HasPrefix(downloadURL, url+"&download=1") {
+		t.Fatalf("download_url = %q, want preview url plus download=1", downloadURL)
+	}
+}
+
+func TestHydrateMessageGeneratedFileURLsRefreshesImageGenerationFiles(t *testing.T) {
+	restoreToolFileSignature(t)
+	message := &runtimemodel.Message{Metadata: map[string]interface{}{
+		"image_generation": map[string]interface{}{
+			"files": []interface{}{map[string]interface{}{
+				"file_id":      "file-image",
+				"filename":     "generated-image.png",
+				"mime_type":    "image/png",
+				"url":          "http://stale.example/preview",
+				"download_url": "http://stale.example/download",
+			}},
+		},
+	}}
+
+	hydrateMessageGeneratedFileURLs(message)
+
+	imageGeneration, ok := message.Metadata["image_generation"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("image_generation = %#v, want object", message.Metadata["image_generation"])
+	}
+	files := generatedFilesFromMetadata(imageGeneration["files"])
+	if len(files) != 1 {
+		t.Fatalf("image_generation.files = %#v, want one file", imageGeneration["files"])
+	}
+	url := stringFromAny(files[0]["url"])
+	downloadURL := stringFromAny(files[0]["download_url"])
+	if !strings.HasPrefix(url, "http://files.example/console/api/files/tools/file-image.png?") {
+		t.Fatalf("url = %q, want refreshed signed image url", url)
 	}
 	if !strings.HasPrefix(downloadURL, url+"&download=1") {
 		t.Fatalf("download_url = %q, want preview url plus download=1", downloadURL)

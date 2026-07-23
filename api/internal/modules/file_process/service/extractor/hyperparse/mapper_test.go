@@ -42,6 +42,9 @@ func TestMapResultToExtractOutput_SortByOrdinal(t *testing.T) {
 	if output.Metadata["recognition_source"] != "hyperparse_sdk:mineru" {
 		t.Fatalf("unexpected recognition source: %v", output.Metadata["recognition_source"])
 	}
+	if output.Metadata["structured_elements"] != true {
+		t.Fatalf("expected structured element marker, got %v", output.Metadata["structured_elements"])
+	}
 	if !strings.Contains(output.Markdown, "page1-a") || !strings.Contains(output.Markdown, "# page0") {
 		t.Fatalf("expected generated markdown, got %q", output.Markdown)
 	}
@@ -68,6 +71,23 @@ func TestMapResultToExtractOutput_FallbackToMarkdown(t *testing.T) {
 	}
 	if output.Elements[0].Metadata["recognition_source"] != "hyperparse_sdk:local" {
 		t.Fatalf("unexpected recognition source: %v", output.Elements[0].Metadata["recognition_source"])
+	}
+	if output.Metadata["structured_elements"] != nil {
+		t.Fatalf("markdown fallback must not be marked structured: %#v", output.Metadata)
+	}
+}
+
+func TestMapResultToExtractOutput_LocalElementsAreNotMarkedStructured(t *testing.T) {
+	result := &extractcommon.DocumentResult{
+		Chunks: []extractcommon.Chunk{{Type: "text", Text: "plain local text", Ordinal: 1}},
+	}
+
+	output := mapResultToExtractOutput(result, "/tmp/a.txt", "local")
+	if output == nil || len(output.Elements) != 1 {
+		t.Fatalf("unexpected output: %#v", output)
+	}
+	if output.Metadata["structured_elements"] != nil {
+		t.Fatalf("local text output must not be marked structured: %#v", output.Metadata)
 	}
 }
 

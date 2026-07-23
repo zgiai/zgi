@@ -15,6 +15,7 @@ export function useAIChatSearch(
     queryFn: async () => {
       const response = await aichatService.search(normalizedQuery, limit, {
         surface: options?.surface,
+        conversation_type: 'chat',
       });
       return response.data ?? [];
     },

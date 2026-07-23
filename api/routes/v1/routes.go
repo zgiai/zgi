@@ -42,6 +42,8 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 	RegisterUserRoutes(v1, UserRouteDeps{
 		DB:                         db,
 		AccountService:             serviceContainer.GetAccountService(),
+		PhoneAuthAccounts:          serviceContainer.GetAccountServiceImpl(),
+		NotificationSMSService:     serviceContainer.GetNotificationSMSService(),
 		WorkspaceManagementService: serviceContainer.GetTenantService(),
 		OrganizationService:        serviceContainer.GetOrganizationService(),
 		DepartmentService:          serviceContainer.GetDepartmentService(),
@@ -53,6 +55,7 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 		DB:                               db,
 		AccountService:                   accountService,
 		OrganizationService:              serviceContainer.GetOrganizationService(),
+		AuthorizationService:             serviceContainer.GetAuthorizationService(),
 		WorkspacePermissionFilterService: serviceContainer.GetWorkspacePermissionFilterService(),
 		DepartmentService:                serviceContainer.GetDepartmentService(),
 		ConsoleWebURL:                    config.GlobalConfig.Email.ConsoleWebURL,
@@ -205,7 +208,7 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 
 	// ---------- Agent ----------
 	resourcePermissionService := serviceContainer.GetResourcePermissionService()
-	agentsService := RegisterAgentsRoutes(v1, db, accountService, tenantService, resourcePermissionService, serviceContainer.GetOrganizationService(), serviceContainer.GetQuotaService(), serviceContainer.GetFileService(), serviceContainer.GetContentExtractor(), serviceContainer.GetLLMClient(), serviceContainer.GetToolEngine(), serviceContainer.GetToolManager(), serviceContainer.GetMemoryService(), serviceContainer.GetGraphFlowService(), serviceContainer.GetPromptService(), serviceContainer.GetDataSourceService(), serviceContainer.GetKnowledgeRetrievalService(), workflowEngineFactory, serviceContainer.GetTaskManager(), serviceContainer.GetTaskHandlerRegistry(), serviceContainer.GetWorkflowTestService(), config.Current().TaskQueue.WorkflowTestTaskBackend)
+	agentsService := RegisterAgentsRoutes(v1, db, accountService, tenantService, resourcePermissionService, serviceContainer.GetOrganizationService(), serviceContainer.GetQuotaService(), serviceContainer.GetFileService(), serviceContainer.GetContentExtractor(), serviceContainer.GetLLMClient(), serviceContainer.GetToolEngine(), serviceContainer.GetToolManager(), serviceContainer.GetMemoryService(), serviceContainer.GetGraphFlowService(), serviceContainer.GetPromptService(), serviceContainer.GetDataSourceService(), serviceContainer.GetKnowledgeRetrievalService(), workflowEngineFactory, serviceContainer.GetTaskManager(), serviceContainer.GetTaskHandlerRegistry(), serviceContainer.GetWorkflowTestService(), serviceContainer.GetScheduler(), config.Current().TaskQueue.WorkflowTestTaskBackend)
 
 	// ---------- Prompt Library ----------
 	RegisterPromptRoutes(v1, PromptRouteDeps{
@@ -226,15 +229,25 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 		Scheduler:                  serviceContainer.GetScheduler(),
 	})
 	if llmModule != nil && llmModule.LLMModelModule != nil {
-		if err := serviceContainer.GetToolManager().RegisterProvider(agentmanagement_tools.NewProvider(agentsService, serviceContainer.GetOrganizationService(), llmModule.LLMModelModule.AvailableModelsSvc)); err != nil {
+		if err := serviceContainer.GetToolManager().RegisterProvider(agentmanagement_tools.NewProvider(
+			agentsService,
+			serviceContainer.GetOrganizationService(),
+			llmModule.LLMModelModule.AvailableModelsSvc,
+			agentmanagement_tools.WithManagedFileService(serviceContainer.GetFileService()),
+		)); err != nil {
 			log.Printf("failed to register agent management tools: %v", err)
 		}
-	} else if err := serviceContainer.GetToolManager().RegisterProvider(agentmanagement_tools.NewProvider(agentsService, serviceContainer.GetOrganizationService(), nil)); err != nil {
+	} else if err := serviceContainer.GetToolManager().RegisterProvider(agentmanagement_tools.NewProvider(
+		agentsService,
+		serviceContainer.GetOrganizationService(),
+		nil,
+		agentmanagement_tools.WithManagedFileService(serviceContainer.GetFileService()),
+	)); err != nil {
 		log.Printf("failed to register agent management tools: %v", err)
 	}
 
 	// ---------- AIChat ----------
-	RegisterAIChatRoutes(v1, AIChatRouteDeps{
+	chatService := RegisterAIChatRoutes(v1, AIChatRouteDeps{
 		DB:                         db,
 		LLMClient:                  serviceContainer.GetLLMClient(),
 		DefaultModelService:        serviceContainer.GetDefaultModelService(),
@@ -246,6 +259,15 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 		SkillRuntime:               newSkillRuntimeWithSandbox(serviceContainer.GetToolEngine(), serviceContainer.GetToolManager(), serviceContainer.GetFileService(), serviceContainer.GetOrganizationService()),
 		AccountService:             accountService,
 	})
+	if llmModule != nil && llmModule.LLMModelModule != nil {
+		RegisterImageRuntimeRoutes(v1, ImageRuntimeRouteDeps{
+			AvailableModels: llmModule.LLMModelModule.AvailableModelsSvc,
+			Routes:          llmModule.ChannelSvc,
+			LLMClient:       serviceContainer.GetLLMClient(),
+			ChatService:     chatService,
+			AccountService:  accountService,
+		})
+	}
 
 	// ---------- Dashboard ----------
 	var availableModels system_service.AvailableModelsLister

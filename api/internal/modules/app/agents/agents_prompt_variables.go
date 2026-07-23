@@ -46,6 +46,7 @@ type agentPromptTableSummary struct {
 }
 
 func (h *AgentsHandler) agentRunConfig(ctx context.Context, scope runtimeservice.Scope, agentID, systemPromptVersion string, cfg dto.AgentConfigResponse, agentMemoryUserScope string) (runtimeservice.RunConfig, error) {
+	cfg = filterAgentConfigByBindingHealth(cfg)
 	cfg.SystemPrompt = h.resolveAgentSystemPrompt(ctx, scope, cfg)
 	if err := validateAgentResolvedSystemPrompt(cfg.SystemPrompt); err != nil {
 		return runtimeservice.RunConfig{}, err

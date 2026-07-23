@@ -485,7 +485,7 @@ func TestEffectiveAgentSkillIDsDoesNotAutoAddAgentMemory(t *testing.T) {
 			Status:           skills.SkillStatusActive,
 			SupportedCallers: []string{runtimemodel.ConversationCallerAgent},
 		},
-	}, &RunConfig{
+	}, nil, &RunConfig{
 		AgentMemoryEnabled: true,
 		AgentMemorySlots: []AgentMemorySlotConfig{
 			{Key: "profile", Enabled: true},

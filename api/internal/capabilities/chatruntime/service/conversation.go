@@ -2,17 +2,22 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 	"unicode/utf8"
 
 	"github.com/google/uuid"
+	"github.com/zgiai/zgi/api/internal/capabilities/agentbindings"
 	runtimedto "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/dto"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/repository"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
+	"github.com/zgiai/zgi/api/pkg/logger"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 func (s *service) CreateConversation(ctx context.Context, scope Scope, title string) (*runtimemodel.Conversation, error) {
@@ -20,7 +25,11 @@ func (s *service) CreateConversation(ctx context.Context, scope Scope, title str
 }
 
 func (s *service) CreateConversationForCaller(ctx context.Context, scope Scope, caller Caller, title string) (*runtimemodel.Conversation, error) {
-	return s.createConversationForCaller(ctx, scope, caller, title, "")
+	surface := aiChatSurfaceWorkChat
+	if normalizeCallerType(caller.Type) == runtimemodel.ConversationCallerAgent {
+		surface = aiChatSurfaceExternalPageChat
+	}
+	return s.createConversationForCaller(ctx, scope, caller, title, surface)
 }
 
 func (s *service) createConversationForCaller(ctx context.Context, scope Scope, caller Caller, title string, surface string) (*runtimemodel.Conversation, error) {
@@ -38,15 +47,16 @@ func (s *service) createConversationForCaller(ctx context.Context, scope Scope, 
 		return nil, fmt.Errorf("%w: source_web_app_id is required for webapp conversations", ErrInvalidInput)
 	}
 	conversation := &runtimemodel.Conversation{
-		OrganizationID: scope.OrganizationID,
-		WorkspaceID:    workspaceID,
-		AccountID:      scope.AccountID,
-		CallerType:     normalizeCallerType(caller.Type),
-		CallerID:       normalizeCallerID(caller.ID),
-		Title:          title,
-		Status:         runtimemodel.ConversationStatusNormal,
-		Source:         source,
-		SourceWebAppID: sourceWebAppID,
+		OrganizationID:   scope.OrganizationID,
+		WorkspaceID:      workspaceID,
+		AccountID:        scope.AccountID,
+		CallerType:       normalizeCallerType(caller.Type),
+		CallerID:         normalizeCallerID(caller.ID),
+		ConversationType: normalizeConversationType(caller.ConversationType),
+		Title:            title,
+		Status:           runtimemodel.ConversationStatusNormal,
+		Source:           source,
+		SourceWebAppID:   sourceWebAppID,
 	}
 	if strings.TrimSpace(surface) != "" {
 		normalizedSurface := normalizeAIChatSurface(surface)
@@ -80,6 +90,15 @@ func normalizeConversationSource(value string) string {
 	}
 }
 
+func normalizeConversationType(value string) string {
+	switch strings.TrimSpace(value) {
+	case runtimemodel.ConversationTypeImage:
+		return runtimemodel.ConversationTypeImage
+	default:
+		return runtimemodel.ConversationTypeChat
+	}
+}
+
 func normalizeCallerID(value *uuid.UUID) *uuid.UUID {
 	if value == nil || *value == uuid.Nil {
 		return nil
@@ -96,6 +115,7 @@ func (s *service) getConversationByCallerScoped(ctx context.Context, scope Scope
 		scope.AccountID,
 		normalizeCallerType(caller.Type),
 		normalizeCallerID(caller.ID),
+		normalizeConversationType(caller.ConversationType),
 	)
 	if err != nil {
 		return nil, mapRepoError(err)
@@ -205,10 +225,178 @@ func (s *service) UpdateSkillConfig(ctx context.Context, scope Scope, req runtim
 		return nil, err
 	}
 	configs := organizationSkillConfigRows(scope.OrganizationID, metadata, normalized)
-	if err := s.repos.SkillConfig.ReplaceForOrganization(ctx, scope.OrganizationID, configs); err != nil {
+	update, err := s.persistOrganizationSkillPolicy(ctx, scope, req, metadata, normalized, configs)
+	if err != nil {
 		return nil, err
 	}
+	if len(update.disabledSkillIDs) > 0 && s.repos != nil && s.repos.DB != nil {
+		if update.committedImpact != nil {
+			logger.InfoContext(ctx, "agent binding organization skill policy changed",
+				"log_type", "audit",
+				"organization_id", scope.OrganizationID,
+				"account_id", scope.AccountID,
+				"operation", "retain_suspended",
+				"skill_ids_before", update.previous,
+				"skill_ids_after", normalized,
+				"affected_agents", update.committedImpact.Agents,
+				"binding_state_before", "active",
+				"binding_state_after", "suspended",
+			)
+		}
+		return &SkillConfig{EnabledSkillIDs: normalized}, nil
+	}
+	auditOperation := "update_skill_policy"
+	if len(update.restoredSkillIDs) > 0 {
+		auditOperation = "restore_suspended"
+	}
+	type restoredSkillBindingAudit struct {
+		AgentID      string              `json:"agent_id"`
+		BindingScope agentbindings.Scope `json:"binding_scope"`
+		ResourceID   string              `json:"resource_id"`
+	}
+	affectedBindings := []restoredSkillBindingAudit{}
+	if len(update.restoredSkillIDs) > 0 && s.repos != nil && s.repos.DB != nil {
+		if err := s.repos.DB.WithContext(ctx).Model(&agentbindings.Binding{}).
+			Select("agent_id, binding_scope, resource_id").
+			Where("organization_id = ? AND binding_type = ? AND resource_id IN ?", scope.OrganizationID, agentbindings.BindingTypeSkill, update.restoredSkillIDs).
+			Order("agent_id ASC, binding_scope ASC, resource_id ASC").
+			Find(&affectedBindings).Error; err != nil {
+			logger.WarnContext(ctx, "failed to resolve affected agents for restored organization skills", "organization_id", scope.OrganizationID, "skill_ids", update.restoredSkillIDs, err)
+		}
+	}
+	logger.InfoContext(ctx, "organization skill policy changed",
+		"log_type", "audit",
+		"organization_id", scope.OrganizationID,
+		"account_id", scope.AccountID,
+		"operation", auditOperation,
+		"skill_ids_before", update.previous,
+		"skill_ids_after", normalized,
+		"restored_skill_ids", update.restoredSkillIDs,
+		"affected_bindings", affectedBindings,
+		"binding_state_before", "suspended_or_active",
+		"binding_state_after", "active",
+	)
 	return &SkillConfig{EnabledSkillIDs: normalized}, nil
+}
+
+type organizationSkillPolicyUpdate struct {
+	previous         []string
+	disabledSkillIDs []string
+	restoredSkillIDs []string
+	committedImpact  *agentbindings.Impact
+}
+
+func (s *service) persistOrganizationSkillPolicy(
+	ctx context.Context,
+	scope Scope,
+	req runtimedto.UpdateSkillConfigRequest,
+	metadata []skills.SkillDiscoveryMetadata,
+	normalized []string,
+	configs []*runtimemodel.OrganizationSkillConfig,
+) (organizationSkillPolicyUpdate, error) {
+	var update organizationSkillPolicyUpdate
+	if s.repos == nil || s.repos.SkillConfig == nil {
+		return update, fmt.Errorf("organization skill config repository is required")
+	}
+	if s.repos.DB == nil {
+		previous, err := effectiveOrganizationSkillIDsFromRepository(ctx, scope.OrganizationID, metadata, s.repos.SkillConfig)
+		if err != nil {
+			return update, err
+		}
+		update.previous = previous
+		update.disabledSkillIDs = removedOrganizationSkillIDs(previous, normalized)
+		update.restoredSkillIDs = removedOrganizationSkillIDs(normalized, previous)
+		if err := s.repos.SkillConfig.ReplaceForOrganization(ctx, scope.OrganizationID, configs); err != nil {
+			return update, err
+		}
+		return update, nil
+	}
+
+	err := s.repos.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := lockOrganizationSkillPolicy(ctx, tx, scope.OrganizationID); err != nil {
+			return err
+		}
+		txSkillConfigRepository := repository.NewOrganizationSkillConfigRepository(tx)
+		previous, err := effectiveOrganizationSkillIDsFromRepository(ctx, scope.OrganizationID, metadata, txSkillConfigRepository)
+		if err != nil {
+			return err
+		}
+		update.previous = previous
+		update.disabledSkillIDs = removedOrganizationSkillIDs(previous, normalized)
+		update.restoredSkillIDs = removedOrganizationSkillIDs(normalized, previous)
+
+		if len(update.disabledSkillIDs) > 0 {
+			impactReq := agentbindings.SkillSuspensionImpactRequest{
+				OrganizationID: scope.OrganizationID,
+				SkillIDs:       update.disabledSkillIDs,
+				ActorID:        scope.AccountID,
+			}
+			resourceRefs := make([]agentbindings.ResourceRef, 0, len(update.disabledSkillIDs))
+			for _, skillID := range update.disabledSkillIDs {
+				resourceRefs = append(resourceRefs, agentbindings.ResourceRef{
+					OrganizationID: scope.OrganizationID,
+					BindingType:    agentbindings.BindingTypeSkill,
+					ResourceID:     skillID,
+				})
+			}
+			txBindingRepo := agentbindings.NewRepository(tx)
+			if err := txBindingRepo.LockResources(ctx, tx, resourceRefs); err != nil {
+				return err
+			}
+			lockedImpact, err := txBindingRepo.PreviewSkillSuspensionImpact(ctx, impactReq, time.Now())
+			if err != nil {
+				return err
+			}
+			update.committedImpact = lockedImpact
+			if lockedImpact != nil {
+				if strings.TrimSpace(req.AgentBindingAction) != "retain_suspended" || strings.TrimSpace(req.ImpactToken) == "" {
+					return &agentbindings.ConflictError{Impact: *lockedImpact}
+				}
+				if err := txBindingRepo.VerifySkillSuspensionImpactToken(ctx, impactReq, req.ImpactToken, time.Now()); err != nil {
+					return &agentbindings.ConflictError{Impact: *lockedImpact}
+				}
+			}
+		}
+		return txSkillConfigRepository.ReplaceForOrganization(ctx, scope.OrganizationID, configs)
+	})
+	return update, err
+}
+
+func lockOrganizationSkillPolicy(ctx context.Context, tx *gorm.DB, organizationID uuid.UUID) error {
+	var organization struct {
+		ID string
+	}
+	if err := tx.WithContext(ctx).
+		Table("organizations").
+		Select("id").
+		Where("id = ?", organizationID.String()).
+		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Take(&organization).Error; err != nil {
+		return fmt.Errorf("lock organization skill policy: %w", err)
+	}
+	return nil
+}
+
+func removedOrganizationSkillIDs(previous, next []string) []string {
+	nextSet := stringSet(next)
+	seen := map[string]struct{}{}
+	removed := make([]string, 0)
+	for _, raw := range previous {
+		id := strings.ToLower(strings.TrimSpace(raw))
+		if id == "" {
+			continue
+		}
+		if _, ok := nextSet[id]; ok {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		removed = append(removed, id)
+	}
+	sort.Strings(removed)
+	return removed
 }
 
 func (s *service) GetAccountSkillPreference(ctx context.Context, scope Scope, callerType string) (*AccountSkillPreference, error) {
@@ -278,8 +466,12 @@ func (s *service) ListConversationsByCaller(ctx context.Context, scope Scope, ca
 	if err := s.ensureMember(ctx, scope); err != nil {
 		return nil, 0, err
 	}
+	if normalizeCallerType(caller.Type) == runtimemodel.ConversationCallerAIChat && normalizeCallerID(caller.ID) == nil && normalizeConversationType(caller.ConversationType) == runtimemodel.ConversationTypeImage {
+		return s.listImageConversationsWithLegacy(ctx, scope, caller, page, limit)
+	}
 	limit = clampLimit(limit, 20, 100)
 	offset := pageOffset(page, limit)
+	conversationType := normalizeConversationType(caller.ConversationType)
 	if strings.TrimSpace(caller.Source) != "" {
 		return s.repos.Conversation.ListByCallerSourceScoped(
 			ctx,
@@ -287,13 +479,14 @@ func (s *service) ListConversationsByCaller(ctx context.Context, scope Scope, ca
 			scope.AccountID,
 			normalizeCallerType(caller.Type),
 			normalizeCallerID(caller.ID),
+			conversationType,
 			normalizeConversationSource(caller.Source),
 			normalizeCallerID(caller.SourceWebAppID),
 			limit,
 			offset,
 		)
 	}
-	return s.repos.Conversation.ListByCallerScoped(ctx, scope.OrganizationID, scope.AccountID, normalizeCallerType(caller.Type), normalizeCallerID(caller.ID), limit, offset)
+	return s.repos.Conversation.ListByCallerScoped(ctx, scope.OrganizationID, scope.AccountID, normalizeCallerType(caller.Type), normalizeCallerID(caller.ID), conversationType, limit, offset)
 }
 
 func (s *service) ListConversationsBySurface(ctx context.Context, scope Scope, surface string, page, limit int) ([]*runtimemodel.Conversation, int64, error) {
@@ -314,6 +507,28 @@ func (s *service) SearchBySurface(ctx context.Context, scope Scope, surface stri
 }
 
 func (s *service) SearchByCaller(ctx context.Context, scope Scope, caller Caller, query string, limit int) ([]*SearchResult, error) {
+	if normalizeCallerType(caller.Type) == runtimemodel.ConversationCallerAIChat && normalizeCallerID(caller.ID) == nil && normalizeConversationType(caller.ConversationType) == runtimemodel.ConversationTypeImage {
+		searchLimit := clampLimit(limit, defaultSearchLimit, maxSearchLimit)
+		results, err := s.searchByCallerSurface(ctx, scope, caller, "", query, searchLimit)
+		if err != nil {
+			return nil, err
+		}
+		legacy, err := s.searchLegacyImageConversations(ctx, scope, query, searchLimit)
+		if err != nil {
+			return nil, err
+		}
+		results = append(results, legacy...)
+		sort.SliceStable(results, func(i, j int) bool {
+			if results[i].Type != results[j].Type {
+				return results[i].Type == "conversation"
+			}
+			return results[i].UpdatedAt.After(results[j].UpdatedAt)
+		})
+		if len(results) > searchLimit {
+			results = results[:searchLimit]
+		}
+		return results, nil
+	}
 	return s.searchByCallerSurface(ctx, scope, caller, "", query, limit)
 }
 
@@ -332,6 +547,7 @@ func (s *service) searchByCallerSurface(ctx context.Context, scope Scope, caller
 		scope.AccountID,
 		normalizeCallerType(caller.Type),
 		normalizeCallerID(caller.ID),
+		normalizeConversationType(caller.ConversationType),
 		strings.TrimSpace(caller.Source),
 		normalizeCallerID(caller.SourceWebAppID),
 		strings.TrimSpace(surface),
@@ -409,14 +625,42 @@ func (s *service) GetConversationByCaller(ctx context.Context, scope Scope, call
 	if err := s.ensureMember(ctx, scope); err != nil {
 		return nil, err
 	}
-	return s.getConversationByCallerScoped(ctx, scope, caller, id)
+	conversation, err := s.getConversationByCallerScoped(ctx, scope, caller, id)
+	if err == nil {
+		return conversation, nil
+	}
+	if normalizeCallerType(caller.Type) == runtimemodel.ConversationCallerAIChat && normalizeCallerID(caller.ID) == nil && normalizeConversationType(caller.ConversationType) == runtimemodel.ConversationTypeImage && errors.Is(err, ErrNotFound) {
+		return s.getLegacyImageConversation(ctx, scope, id)
+	}
+	return nil, err
 }
 
 func (s *service) UpdateConversation(ctx context.Context, scope Scope, id uuid.UUID, req runtimedto.UpdateConversationRequest) (*runtimemodel.Conversation, error) {
 	if err := s.ensureMember(ctx, scope); err != nil {
 		return nil, err
 	}
-	var conversation *runtimemodel.Conversation
+	conversation, err := s.getConversation(ctx, scope, id)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.updateConversation(ctx, scope, conversation, req); err != nil {
+		return nil, err
+	}
+	return s.getConversation(ctx, scope, id)
+}
+
+func (s *service) UpdateConversationByCaller(ctx context.Context, scope Scope, caller Caller, id uuid.UUID, req runtimedto.UpdateConversationRequest) (*runtimemodel.Conversation, error) {
+	conversation, err := s.GetConversationByCaller(ctx, scope, caller, id)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.updateConversation(ctx, scope, conversation, req); err != nil {
+		return nil, err
+	}
+	return s.GetConversationByCaller(ctx, scope, caller, id)
+}
+
+func (s *service) updateConversation(ctx context.Context, scope Scope, conversation *runtimemodel.Conversation, req runtimedto.UpdateConversationRequest) error {
 	updates := make(map[string]interface{})
 	if req.Title != nil {
 		updates["title"] = normalizeTitle(*req.Title, defaultConversationTitle)
@@ -424,35 +668,24 @@ func (s *service) UpdateConversation(ctx context.Context, scope Scope, id uuid.U
 	if req.Status != nil {
 		status := strings.TrimSpace(*req.Status)
 		if status != runtimemodel.ConversationStatusNormal && status != runtimemodel.ConversationStatusArchived {
-			return nil, fmt.Errorf("%w: invalid conversation status", ErrInvalidInput)
+			return fmt.Errorf("%w: invalid conversation status", ErrInvalidInput)
 		}
 		updates["status"] = status
 	}
 	if req.CurrentLeafMessageID != nil {
 		leafID, err := uuid.Parse(strings.TrimSpace(*req.CurrentLeafMessageID))
 		if err != nil || leafID == uuid.Nil {
-			return nil, fmt.Errorf("%w: invalid current leaf message id", ErrInvalidInput)
-		}
-		conversation, err = s.getConversation(ctx, scope, id)
-		if err != nil {
-			return nil, err
+			return fmt.Errorf("%w: invalid current leaf message id", ErrInvalidInput)
 		}
 		if err := s.validateCurrentLeafMessage(ctx, scope, conversation, leafID); err != nil {
-			return nil, err
+			return err
 		}
 		updates["current_leaf_message_id"] = leafID
 	}
-	if err := s.repos.Conversation.UpdateScoped(ctx, id, scope.OrganizationID, scope.AccountID, updates); err != nil {
-		return nil, mapRepoError(err)
+	if err := s.repos.Conversation.UpdateScoped(ctx, conversation.ID, scope.OrganizationID, scope.AccountID, updates); err != nil {
+		return mapRepoError(err)
 	}
-	return s.getConversation(ctx, scope, id)
-}
-
-func (s *service) UpdateConversationByCaller(ctx context.Context, scope Scope, caller Caller, id uuid.UUID, req runtimedto.UpdateConversationRequest) (*runtimemodel.Conversation, error) {
-	if _, err := s.GetConversationByCaller(ctx, scope, caller, id); err != nil {
-		return nil, err
-	}
-	return s.UpdateConversation(ctx, scope, id, req)
+	return nil
 }
 
 func (s *service) validateCurrentLeafMessage(ctx context.Context, scope Scope, conversation *runtimemodel.Conversation, leafID uuid.UUID) error {
@@ -507,7 +740,19 @@ func (s *service) ListMessages(ctx context.Context, scope Scope, conversationID 
 	offset := pageOffset(page, limit)
 	messages, total, err := s.repos.Message.ListByConversationScoped(ctx, conversationID, scope.OrganizationID, scope.AccountID, limit, offset)
 	if err != nil {
+		if errors.Is(mapRepoError(err), ErrNotFound) {
+			return s.listLegacyImageMessages(ctx, scope, conversationID, page, limit)
+		}
 		return nil, 0, err
+	}
+	if total == 0 && len(messages) == 0 {
+		legacyMessages, legacyTotal, legacyErr := s.listLegacyImageMessages(ctx, scope, conversationID, page, limit)
+		if legacyErr == nil {
+			return legacyMessages, legacyTotal, nil
+		}
+		if !errors.Is(legacyErr, ErrNotFound) {
+			return nil, 0, legacyErr
+		}
 	}
 	hydrateMessagesGeneratedFileState(ctx, messages)
 	hydrateMessagesPublicErrors(messages)
@@ -649,7 +894,7 @@ func (s *service) StopMessage(ctx context.Context, scope Scope, id uuid.UUID) (*
 		return message, nil
 	}
 
-	s.streams.Stop(id)
+	s.streams.StopCurrent(id)
 	metadata := workflowContinuationMetadataWithoutUserInputRequest(message.Metadata)
 	if continuation := workflowApprovalContinuationFromMetadata(metadata); continuation.WorkflowRunID != "" {
 		metadata = mergeWorkflowRunMetadata(metadata, "workflow_stopped", map[string]interface{}{

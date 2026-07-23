@@ -30,6 +30,7 @@ export const createAIChatInitialState = (): AIChatControllerState => ({
   streamingByMessageId: {},
   recoveringByConversation: {},
   stoppingByConversation: {},
+  connectionByConversation: {},
   isLoadingList: false,
   isLoadingMessages: false,
   isSending: false,

@@ -638,7 +638,7 @@ func (s *providerService) getModelCounts(ctx context.Context) map[string]int {
 	s.db.WithContext(ctx).
 		Table("llm_models").
 		Select("provider, COUNT(*) as count").
-		Where("is_active = true AND deleted_at IS NULL AND provider != ''").
+		Where("status = ? AND is_active = true AND deleted_at IS NULL AND provider != ''", llmmodelmodel.ModelStatusActive).
 		Group("provider").
 		Scan(&counts)
 

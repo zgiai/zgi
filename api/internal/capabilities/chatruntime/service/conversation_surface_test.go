@@ -45,6 +45,42 @@ func TestCreateConversationForChatStoresSurfaceMetadata(t *testing.T) {
 	}
 }
 
+func TestCreateConversationForCallerStoresDefaultSurfaceMetadata(t *testing.T) {
+	for _, tt := range []struct {
+		name        string
+		caller      Caller
+		wantSurface string
+	}{
+		{name: "aichat", caller: Caller{Type: runtimemodel.ConversationCallerAIChat}, wantSurface: aiChatSurfaceWorkChat},
+		{name: "agent", caller: Caller{Type: runtimemodel.ConversationCallerAgent, ID: uuidPointer(uuid.New())}, wantSurface: aiChatSurfaceExternalPageChat},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			workspaceID := uuid.New()
+			conversationRepo := &capturingConversationRepo{}
+			svc := &service{repos: &repository.Repositories{
+				Access:       surfaceAccessRepo{},
+				Conversation: conversationRepo,
+			}}
+
+			conversation, err := svc.CreateConversationForCaller(context.Background(), Scope{
+				OrganizationID: uuid.New(),
+				AccountID:      uuid.New(),
+				WorkspaceID:    &workspaceID,
+			}, tt.caller, "new conversation")
+			if err != nil {
+				t.Fatalf("CreateConversationForCaller() error = %v", err)
+			}
+			if conversation.Metadata["surface"] != tt.wantSurface {
+				t.Fatalf("surface = %#v, want %q", conversation.Metadata["surface"], tt.wantSurface)
+			}
+		})
+	}
+}
+
+func uuidPointer(value uuid.UUID) *uuid.UUID {
+	return &value
+}
+
 func TestListConversationsBySurfaceNormalizesSurface(t *testing.T) {
 	conversationRepo := &capturingConversationRepo{}
 	svc := &service{
@@ -63,6 +99,86 @@ func TestListConversationsBySurfaceNormalizesSurface(t *testing.T) {
 	}
 	if conversationRepo.listSurface != aiChatSurfaceContextualSidebar {
 		t.Fatalf("list surface = %q, want %q", conversationRepo.listSurface, aiChatSurfaceContextualSidebar)
+	}
+}
+
+func TestResolveChatConversationUsesPersistedSurface(t *testing.T) {
+	organizationID := uuid.New()
+	accountID := uuid.New()
+	conversationID := uuid.New()
+	conversationRepo := &capturingConversationRepo{conversation: &runtimemodel.Conversation{
+		ID:             conversationID,
+		OrganizationID: organizationID,
+		AccountID:      accountID,
+		CallerType:     runtimemodel.ConversationCallerAIChat,
+		Source:         runtimemodel.ConversationSourceConsole,
+		Metadata: map[string]interface{}{
+			"surface": aiChatSurfaceWorkChat,
+		},
+	}}
+	svc := &service{repos: &repository.Repositories{Conversation: conversationRepo}}
+
+	parts := &chatRequestParts{Surface: aiChatSurfaceContextualSidebar}
+	conversation, err := svc.resolveChatConversation(
+		context.Background(),
+		Scope{OrganizationID: organizationID, AccountID: accountID},
+		Caller{Type: runtimemodel.ConversationCallerAIChat},
+		runtimedto.ChatRequest{ConversationID: conversationID.String()},
+		parts,
+	)
+	if err != nil {
+		t.Fatalf("resolveChatConversation() error = %v", err)
+	}
+	if conversation != conversationRepo.conversation {
+		t.Fatalf("conversation = %#v, want persisted conversation", conversation)
+	}
+	if parts.Surface != aiChatSurfaceWorkChat {
+		t.Fatalf("surface = %q, want persisted %q", parts.Surface, aiChatSurfaceWorkChat)
+	}
+}
+
+func TestApplyPersistedConversationSurfaceOverridesRequestHints(t *testing.T) {
+	for _, persisted := range []string{aiChatSurfaceWorkChat, aiChatSurfaceContextualSidebar, aiChatSurfaceExternalPageChat} {
+		t.Run(persisted, func(t *testing.T) {
+			parts := &chatRequestParts{Surface: aiChatSurfaceWorkChat}
+			conversation := &runtimemodel.Conversation{Metadata: map[string]interface{}{"surface": persisted}}
+
+			applyPersistedConversationSurface(conversation, parts)
+
+			if parts.Surface != persisted {
+				t.Fatalf("surface = %q, want persisted %q", parts.Surface, persisted)
+			}
+		})
+	}
+}
+
+func TestResolveChatConversationKeepsLegacyConversationBehavior(t *testing.T) {
+	organizationID := uuid.New()
+	accountID := uuid.New()
+	conversationID := uuid.New()
+	conversation := &runtimemodel.Conversation{
+		ID:             conversationID,
+		OrganizationID: organizationID,
+		AccountID:      accountID,
+		CallerType:     runtimemodel.ConversationCallerAIChat,
+		Source:         runtimemodel.ConversationSourceConsole,
+		Metadata:       map[string]interface{}{},
+	}
+	svc := &service{repos: &repository.Repositories{Conversation: &capturingConversationRepo{conversation: conversation}}}
+	parts := &chatRequestParts{Surface: aiChatSurfaceContextualSidebar}
+
+	got, err := svc.resolveChatConversation(
+		context.Background(),
+		Scope{OrganizationID: organizationID, AccountID: accountID},
+		Caller{Type: runtimemodel.ConversationCallerAIChat},
+		runtimedto.ChatRequest{ConversationID: conversationID.String()},
+		parts,
+	)
+	if err != nil {
+		t.Fatalf("resolveChatConversation() error = %v", err)
+	}
+	if got != conversation || parts.Surface != aiChatSurfaceContextualSidebar {
+		t.Fatalf("legacy conversation = %#v, surface = %q", got, parts.Surface)
 	}
 }
 
@@ -146,6 +262,10 @@ func (r *capturingConversationRepo) Create(_ context.Context, conversation *runt
 }
 
 func (r *capturingConversationRepo) GetScoped(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) (*runtimemodel.Conversation, error) {
+	return r.conversation, nil
+}
+
+func (r *capturingConversationRepo) GetByCallerScoped(context.Context, uuid.UUID, uuid.UUID, uuid.UUID, string, *uuid.UUID, string) (*runtimemodel.Conversation, error) {
 	return r.conversation, nil
 }
 

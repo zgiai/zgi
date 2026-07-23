@@ -10,14 +10,17 @@ tools:
 max_calls_per_turn: 5
 timeout_seconds: 10
 display:
-  icon: workflow
-  category: visualization
+  icon: network
+  category: content_creation
+  scenarios:
+    - content_creation
+    - technical_development
   label:
     en_US: Architecture Diagram Generator
     zh_Hans: 架构图生成器
   description:
-    en_US: Generates SVG and HTML technical diagrams from natural language or structured data.
-    zh_Hans: 根据自然语言或结构化数据生成 SVG 和 HTML 技术架构图。
+    en_US: Designed for system architecture, process, and data-relationship planning; turns natural language or structured data into SVG and HTML architecture, flow, sequence, state, or ER diagrams.
+    zh_Hans: 适用于设计系统架构、业务流程或数据关系，可将自然语言或结构化数据生成 SVG 和 HTML 架构图、流程图、时序图、状态图或 ER 图。
   when_to_use:
     en_US: Use when the answer should include generated technical diagram artifacts.
     zh_Hans: 当回答需要生成技术架构图文件时使用。

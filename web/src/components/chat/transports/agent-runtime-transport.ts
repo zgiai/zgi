@@ -1,4 +1,10 @@
-import { http, webappHttp, type ExtendedRequestConfig, type SseOptions } from '@/lib/http';
+import {
+  http,
+  SSE_IDLE_TIMEOUT_MS,
+  webappHttp,
+  type ExtendedRequestConfig,
+  type SseOptions,
+} from '@/lib/http';
 import type { ApiResponseData } from '@/services/types/common';
 import type {
   AIChatChatRequest,
@@ -186,12 +192,9 @@ export class AgentRuntimeTransport implements AIChatRuntimeTransport {
   }
 
   async searchConversations(query: string, limit: number) {
-    const response = await this.client.get<AIChatSearchResponse>(
-      `${this.runtimeBasePath}/search`,
-      {
-        params: { query, limit },
-      }
-    );
+    const response = await this.client.get<AIChatSearchResponse>(`${this.runtimeBasePath}/search`, {
+      params: { query, limit },
+    });
     return (response.data ?? []).map(mapAIChatSearchResult);
   }
 
@@ -211,7 +214,10 @@ export class AgentRuntimeTransport implements AIChatRuntimeTransport {
       method: 'POST',
       body: payload,
       abortSignal,
+      idleTimeoutMs: SSE_IDLE_TIMEOUT_MS,
+      skipErrorHandling: true,
       isTerminalMessage: runtimeTerminalMessage,
+      onOpen: callbacks.onOpen,
       onMessage: message =>
         dispatchAIChatStreamEvent(
           String((message.data as AIChatSseEnvelope | undefined)?.event ?? message.event ?? ''),
@@ -236,7 +242,10 @@ export class AgentRuntimeTransport implements AIChatRuntimeTransport {
         method: 'POST',
         body: payload,
         abortSignal,
+        idleTimeoutMs: SSE_IDLE_TIMEOUT_MS,
+        skipErrorHandling: true,
         isTerminalMessage: runtimeTerminalMessage,
+        onOpen: callbacks.onOpen,
         onMessage: message =>
           dispatchAIChatStreamEvent(
             String((message.data as AIChatSseEnvelope | undefined)?.event ?? message.event ?? ''),
@@ -265,7 +274,10 @@ export class AgentRuntimeTransport implements AIChatRuntimeTransport {
           after_id: params.afterId,
         },
         abortSignal,
+        idleTimeoutMs: SSE_IDLE_TIMEOUT_MS,
+        skipErrorHandling: true,
         isTerminalMessage: runtimeTerminalMessage,
+        onOpen: callbacks.onOpen,
         onMessage: message =>
           dispatchAIChatStreamEvent(
             String((message.data as AIChatSseEnvelope | undefined)?.event ?? message.event ?? ''),
@@ -297,7 +309,10 @@ export class AgentRuntimeTransport implements AIChatRuntimeTransport {
         method: 'POST',
         body: payload,
         abortSignal,
+        idleTimeoutMs: SSE_IDLE_TIMEOUT_MS,
+        skipErrorHandling: true,
         isTerminalMessage: runtimeTerminalMessage,
+        onOpen: callbacks.onOpen,
         onMessage: message =>
           dispatchAIChatStreamEvent(
             String((message.data as AIChatSseEnvelope | undefined)?.event ?? message.event ?? ''),
@@ -340,7 +355,10 @@ export class AgentRuntimeTransport implements AIChatRuntimeTransport {
             }
           : {},
         abortSignal,
+        idleTimeoutMs: SSE_IDLE_TIMEOUT_MS,
+        skipErrorHandling: true,
         isTerminalMessage: runtimeTerminalMessage,
+        onOpen: callbacks.onOpen,
         onMessage: message =>
           dispatchAIChatStreamEvent(
             String((message.data as AIChatSseEnvelope | undefined)?.event ?? message.event ?? ''),
@@ -373,7 +391,10 @@ export class AgentRuntimeTransport implements AIChatRuntimeTransport {
           inputs: payload.inputs,
         },
         abortSignal,
+        idleTimeoutMs: SSE_IDLE_TIMEOUT_MS,
+        skipErrorHandling: true,
         isTerminalMessage: runtimeTerminalMessage,
+        onOpen: callbacks.onOpen,
         onMessage: message =>
           dispatchAIChatStreamEvent(
             String((message.data as AIChatSseEnvelope | undefined)?.event ?? message.event ?? ''),

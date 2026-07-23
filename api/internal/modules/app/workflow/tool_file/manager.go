@@ -438,6 +438,13 @@ func GetToolFilesByIDsGlobal(ctx context.Context, toolFileIDs []string) (map[str
 	return GlobalToolFileManager.GetToolFilesByIDs(ctx, toolFileIDs)
 }
 
+func DeleteToolFileGlobal(ctx context.Context, toolFileID string) error {
+	if GlobalToolFileManager == nil {
+		return fmt.Errorf("tool file manager not initialized")
+	}
+	return GlobalToolFileManager.DeleteToolFile(ctx, toolFileID)
+}
+
 func CleanupExpiredTemporaryFilesGlobal(ctx context.Context) (int, error) {
 	if GlobalToolFileManager == nil {
 		return 0, fmt.Errorf("tool file manager not initialized")

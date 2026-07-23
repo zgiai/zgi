@@ -42,6 +42,53 @@ func TestMergeSkillTraceMetadataStoresTurnStateOutsideVisibleInvocations(t *test
 	}
 }
 
+func TestMergeSkillTraceMetadataStoresBlockedSkillLoadAttempt(t *testing.T) {
+	metadata := mergeSkillTraceMetadata(nil, []skills.SkillTrace{{
+		Kind:     "skill_load_attempt",
+		SkillID:  skills.SkillFileReader,
+		ToolName: skills.MetaToolLoadSkill,
+		Status:   "blocked",
+		Error:    "skill file-reader is not enabled for this turn",
+		Arguments: map[string]interface{}{
+			"requested_skill_id": skills.SkillFileReader,
+			"outcome":            "not_enabled",
+		},
+	}})
+
+	invocations := skillInvocationsFromMetadata(metadata["skill_invocations"])
+	if len(invocations) != 1 {
+		t.Fatalf("skill_invocations = %#v, want one diagnostic load attempt", invocations)
+	}
+	if got := stringFromAny(invocations[0]["kind"]); got != "skill_load_attempt" {
+		t.Fatalf("kind = %q, want skill_load_attempt", got)
+	}
+	if got := stringFromAny(invocations[0]["status"]); got != "blocked" {
+		t.Fatalf("status = %q, want blocked", got)
+	}
+}
+
+func TestMergeSkillTraceMetadataRetainsDistinctSkillLoadAttemptsAcrossContinuations(t *testing.T) {
+	metadata := mergeSkillTraceMetadata(nil, []skills.SkillTrace{{
+		Kind: "skill_load_attempt", SkillID: skills.SkillAgentManagement, ToolName: skills.MetaToolLoadSkill, Status: "blocked",
+		Arguments: map[string]interface{}{"runtime_id": "load-attempt:1", "outcome": "policy_denied"},
+	}})
+	metadata = mergeSkillTraceMetadata(metadata, []skills.SkillTrace{{
+		Kind: "skill_load_attempt", SkillID: skills.SkillAgentManagement, ToolName: skills.MetaToolLoadSkill, Status: "auto_restored",
+		Arguments: map[string]interface{}{"runtime_id": "load-attempt:2", "outcome": "auto_restored"},
+	}})
+
+	invocations := skillInvocationsFromMetadata(metadata["skill_invocations"])
+	if len(invocations) != 2 {
+		t.Fatalf("skill_invocations = %#v, want both continuation attempts", invocations)
+	}
+	if got := stringFromAny(invocations[0]["runtime_id"]); got != "load-attempt:1" {
+		t.Fatalf("first runtime_id = %q", got)
+	}
+	if got := stringFromAny(invocations[1]["runtime_id"]); got != "load-attempt:2" {
+		t.Fatalf("second runtime_id = %q", got)
+	}
+}
+
 func TestMergeSkillTraceMetadataAllowsWorkingFactToUpdateUserVisibleSummary(t *testing.T) {
 	metadata := mergeSkillTraceMetadata(nil, []skills.SkillTrace{{
 		Kind:   "turn_state",
@@ -224,6 +271,30 @@ func TestCurrentTurnAuthoritativeStateMessageIncludesGeneratedArtifacts(t *testi
 		"temporary_artifact",
 		"tool-file-1",
 	} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("current turn state message missing %q in:\n%s", want, content)
+		}
+	}
+}
+
+func TestCurrentTurnAuthoritativeStateMessagePreservesManagedFileHandoff(t *testing.T) {
+	message := &runtimemodel.Message{
+		Query: "append the saved chapter to the Agent prompt",
+		Metadata: map[string]interface{}{
+			"generated_files": []interface{}{map[string]interface{}{
+				"artifact_id": "managed_file:file-1", "target": "managed_file",
+				"managed_file_id": "file-1", "filename": "chapter-11.md",
+				"content_sha256": "digest-1", "content_chars": 7000,
+			}},
+		},
+	}
+
+	stateMessage := currentTurnAuthoritativeStateMessage(message)
+	if stateMessage == nil {
+		t.Fatal("currentTurnAuthoritativeStateMessage() = nil, want managed-file state")
+	}
+	content := messageContentText(stateMessage.Content)
+	for _, want := range []string{"managed_file_id", "file-1", "digest-1", "durable managed-file reference", "do not navigate back or call read_file"} {
 		if !strings.Contains(content, want) {
 			t.Fatalf("current turn state message missing %q in:\n%s", want, content)
 		}

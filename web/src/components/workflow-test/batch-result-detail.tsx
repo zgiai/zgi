@@ -27,6 +27,10 @@ import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
 import { getErrorMessage } from '@/utils/error-notifications';
 import { formatWorkflowElapsedMs } from '@/utils/format';
+import {
+  getWorkflowTestUserError,
+  type WorkflowTestErrorTranslator,
+} from '@/utils/workflow-test-error';
 import type { WorkflowTestBatch, WorkflowTestBatchItem } from '@/services/types/workflow-test';
 import { getAgentDetailBatchTestHref } from '@/utils/agent-detail-routes';
 
@@ -39,7 +43,13 @@ interface BatchResultDetailProps {
 
 type BatchStatusKey = 'queued' | 'running' | 'completed' | 'stopped' | 'canceled';
 type BatchItemStatusKey = 'pending' | 'running' | 'passed' | 'failed' | 'review' | 'canceled';
-type SummaryKey = 'running' | 'allPassed' | 'hasIssues';
+type SummaryKey =
+  | 'running'
+  | 'allPassed'
+  | 'hasIssues'
+  | 'modelUnavailable'
+  | 'modelUnavailableMarker'
+  | 'sentenceSeparator';
 const EMPTY_BATCHES: WorkflowTestBatch[] = [];
 const EMPTY_ITEMS: WorkflowTestBatchItem[] = [];
 const EMPTY_SCENARIOS: Array<{ id: string; name: string }> = [];
@@ -77,7 +87,13 @@ function batchStatusLabel(status: string, t: (key: BatchStatusKey) => string, no
 
 function formatResponseTime(item: WorkflowTestBatchItem, none: string) {
   const outputs = item.outputs || {};
-  const elapsedKeys = ['elapsed_time', 'elapsed_ms', 'duration_ms', 'latency_ms', 'response_time_ms'];
+  const elapsedKeys = [
+    'elapsed_time',
+    'elapsed_ms',
+    'duration_ms',
+    'latency_ms',
+    'response_time_ms',
+  ];
   for (const key of elapsedKeys) {
     const value = outputs[key];
     if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
@@ -94,10 +110,11 @@ function hasAttachments(item: WorkflowTestBatchItem) {
 function buildSummary(
   batch: WorkflowTestBatch,
   items: WorkflowTestBatchItem[],
-  t: (key: SummaryKey, values?: Record<string, string | number | Date>) => string
+  t: (key: SummaryKey, values?: Record<string, string | number | Date>) => string,
+  errorT: WorkflowTestErrorTranslator
 ) {
   if (batch.summary) {
-    return batch.summary;
+    return localizeBatchSummary(batch.summary, t, errorT);
   }
   if (batch.status !== 'completed') {
     return t('running');
@@ -107,6 +124,30 @@ function buildSummary(
     return t('allPassed');
   }
   return t('hasIssues', { failed: batch.failed_count, review: reviewItems });
+}
+
+function localizeBatchSummary(
+  summary: string,
+  t: (key: SummaryKey) => string,
+  errorT: WorkflowTestErrorTranslator
+) {
+  const userError = getWorkflowTestUserError(summary, errorT);
+  if (userError) return userError;
+
+  const normalized = summary.trim().toLowerCase();
+  if (
+    normalized.includes('all providers failed') ||
+    normalized.includes('current user api does not support http call') ||
+    normalized.includes('upstream service error') ||
+    normalized.includes('no provider available') ||
+    normalized.includes('model unavailable') ||
+    normalized.includes(t('modelUnavailableMarker').toLowerCase())
+  ) {
+    const suffixStart = summary.indexOf(t('sentenceSeparator'));
+    const suffix = suffixStart >= 0 ? summary.slice(suffixStart + 1) : '';
+    return `${t('modelUnavailable')}${suffix}`;
+  }
+  return summary;
 }
 
 export function BatchResultDetail({
@@ -119,6 +160,7 @@ export function BatchResultDetail({
   const commonT = useT('agents.workflowTest.common');
   const batchStatusT = useT('agents.workflowTest.batchStatus');
   const summaryT = useT('agents.workflowTest.detail.summary');
+  const errorT = useT('agents.workflowTest.userErrors');
   const itemStatusT = useT('agents.workflowTest.detail.itemStatus');
   const batchesHref = getAgentDetailBatchTestHref(agentId, 'workflow', 'batches');
   const getBatchItemHref = (itemId: string) =>
@@ -156,9 +198,14 @@ export function BatchResultDetail({
   );
   const buildRetestName = React.useCallback(
     (batchName: string) => {
-      const baseName = batchName.replace(/\s+重新测试\d*$/, '');
+      const escapedRetestLabel = commonT('retest').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const suffixPattern = new RegExp(`\\s+${escapedRetestLabel}\\s*\\d*$`, 'u');
+      const baseName = batchName.replace(suffixPattern, '').trim() || batchName;
       const escapedBaseName = baseName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      const retestPattern = new RegExp(`^${escapedBaseName}\\s+重新测试(\\d+)?$`);
+      const retestPattern = new RegExp(
+        `^${escapedBaseName}\\s+${escapedRetestLabel}\\s*(\\d+)?$`,
+        'u'
+      );
       const maxIndex = batches.reduce((max, existingBatch) => {
         const match = existingBatch.name.match(retestPattern);
         if (!match) return max;
@@ -307,9 +354,7 @@ export function BatchResultDetail({
                   </span>
                 </div>
                 {executionErrorCount > 0 ? (
-                  <div className="mt-2 text-xs text-red-600">
-                    {t('executionErrorsDescription')}
-                  </div>
+                  <div className="mt-2 text-xs text-red-600">{t('executionErrorsDescription')}</div>
                 ) : null}
               </div>
             </div>
@@ -321,7 +366,7 @@ export function BatchResultDetail({
                 </span>
                 <p>
                   <span className="font-semibold">{t('aiSummary')}</span>
-                  {buildSummary(batch, items, summaryT)}
+                  {buildSummary(batch, items, summaryT, errorT)}
                 </p>
               </div>
             </div>
@@ -389,9 +434,13 @@ export function BatchResultDetail({
                         </div>
                         <div className="mt-2 flex flex-wrap gap-2 text-xs text-slate-500">
                           {(item.case_snapshot.turns?.length ?? 0) > 1 ? (
-                            <span>{t('turnCount', { count: item.case_snapshot.turns.length })}</span>
+                            <span>
+                              {t('turnCount', { count: item.case_snapshot.turns.length })}
+                            </span>
                           ) : null}
-                          {hasAttachments(item) ? <span>{commonT('attachmentsIncluded')}</span> : null}
+                          {hasAttachments(item) ? (
+                            <span>{commonT('attachmentsIncluded')}</span>
+                          ) : null}
                         </div>
                       </TableCell>
                       <TableCell className="py-4 align-middle text-sm text-slate-700">
@@ -407,9 +456,7 @@ export function BatchResultDetail({
                       </TableCell>
                       <TableCell className="py-4 pr-6 text-right align-middle">
                         <Button variant="ghost" size="sm" asChild>
-                          <Link href={getBatchItemHref(item.id)}>
-                            {t('viewDetail')}
-                          </Link>
+                          <Link href={getBatchItemHref(item.id)}>{t('viewDetail')}</Link>
                         </Button>
                       </TableCell>
                     </TableRow>

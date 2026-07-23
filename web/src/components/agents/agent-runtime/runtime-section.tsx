@@ -23,7 +23,7 @@ export function RuntimeSection({
   children,
 }: RuntimeSectionProps) {
   return (
-    <section className="space-y-3">
+    <section id={`agent-config-section-${section}`} className="scroll-mt-16 space-y-3">
       <div className="flex items-center justify-between gap-3">
         <button
           type="button"

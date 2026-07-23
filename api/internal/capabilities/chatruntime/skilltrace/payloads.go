@@ -159,13 +159,26 @@ func SkillLoadPayload(ids PayloadIDs, skillID string) map[string]interface{} {
 
 // SkillLoadEndPayload builds the public skill_load_end event payload.
 func SkillLoadEndPayload(ids PayloadIDs, trace skills.SkillTrace) map[string]interface{} {
-	return withPayloadTimestamp(map[string]interface{}{
+	payload := map[string]interface{}{
 		"conversation_id": ids.ConversationID,
 		"message_id":      ids.MessageID,
 		"skill_id":        trace.SkillID,
 		"duration_ms":     trace.DurationMS,
 		"status":          trace.Status,
-	})
+	}
+	if digest, _ := trace.Result["instruction_digest"].(string); strings.TrimSpace(digest) != "" {
+		digest = strings.TrimSpace(digest)
+		payload["instruction_digest"] = digest
+	}
+	if chars, _ := trace.Result["instruction_chars"].(int); chars > 0 {
+		payload["instruction_chars"] = chars
+	}
+	for _, key := range []string{"effective_version", "policy_state", "access_status"} {
+		if value, _ := trace.Result[key].(string); strings.TrimSpace(value) != "" {
+			payload[key] = strings.TrimSpace(value)
+		}
+	}
+	return withPayloadTimestamp(payload)
 }
 
 // SkillReferenceReadPayload builds the public skill_reference_read event payload.
@@ -702,8 +715,14 @@ func compactAgentConfigOperationResult(payload map[string]interface{}) map[strin
 		"binding_final_states",
 		"config_changes",
 		"binding_changes",
+		"system_prompt_source",
+		"system_prompt_digest",
+		"system_prompt_chars",
 	} {
 		copyCompactField(result, payload, field)
+	}
+	if patch := compactAgentSystemPromptPatch(payload["system_prompt_patch"]); len(patch) > 0 {
+		result["system_prompt_patch"] = patch
 	}
 	config := recordFromAny(payload["config"])
 	if len(config) == 0 {
@@ -764,6 +783,35 @@ func compactAgentConfigOperationResult(payload map[string]interface{}) map[strin
 	if datasetIDs := compactStringList(config["knowledge_dataset_ids"], 24, 160); len(datasetIDs) > 0 {
 		result["knowledge_dataset_ids"] = datasetIDs
 	}
+	return result
+}
+
+func compactAgentSystemPromptPatch(value interface{}) map[string]interface{} {
+	patch := recordFromAny(value)
+	if len(patch) == 0 {
+		return nil
+	}
+	result := compactFields(patch,
+		"operation",
+		"base_sha256",
+		"appended_characters",
+		"resulting_characters",
+		"separator_sha256",
+		"separator_characters",
+	)
+	source := recordFromAny(patch["source"])
+	if len(source) == 0 {
+		return result
+	}
+	result["source"] = compactFields(source,
+		"type",
+		"file_id",
+		"name",
+		"size",
+		"summary",
+		"sha256",
+		"characters",
+	)
 	return result
 }
 

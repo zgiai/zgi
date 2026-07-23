@@ -9,12 +9,10 @@ import { toast } from 'sonner';
 import { dbService } from '@/services';
 import type { ApiResponseData } from '@/services/types/common';
 import {
-  type DbTableColumn,
   type DbTableColumnsPayload,
   Type,
   type AnalyzeFileForTableRequest,
 } from '@/services/types/db';
-import { DB_KEYS } from '@/hooks/query-keys';
 
 export interface UseAnalyzeFileForTableReturn {
   analyze: (payload: AnalyzeFileForTableRequest) => Promise<DbTableColumnsPayload>;
@@ -43,6 +41,34 @@ const normalizeType = (value: string): Type => {
   }
 };
 
+const getAnalyzeErrorMessage = (
+  error: unknown,
+  networkMessage: string,
+  fallback: string
+): string => {
+  const requestError = error as
+    | {
+        code?: string;
+        message?: string;
+        response?: { data?: { message?: string; errorMessage?: string } };
+        businessError?: { message?: string };
+      }
+    | undefined;
+  const backendMessage =
+    requestError?.response?.data?.message ||
+    requestError?.response?.data?.errorMessage ||
+    requestError?.businessError?.message;
+  if (backendMessage?.trim()) return backendMessage.trim();
+  if (
+    requestError?.code === 'ERR_NETWORK' ||
+    requestError?.code === 'NETWORK_ERROR' ||
+    requestError?.message === 'Network Error'
+  ) {
+    return networkMessage;
+  }
+  return requestError?.message?.trim() || fallback;
+};
+
 export function useAnalyzeFileForTable(): UseAnalyzeFileForTableReturn {
   const t = useT();
 
@@ -69,8 +95,9 @@ export function useAnalyzeFileForTable(): UseAnalyzeFileForTableReturn {
       toast.success(t('dbs.analyze.success'));
     },
     onError: error => {
-      const msg = (error as { message?: string }).message ?? 'Failed to analyze file';
-      toast.error(msg);
+      toast.error(
+        getAnalyzeErrorMessage(error, t('dbs.analyze.networkFailed'), t('dbs.analyze.failed'))
+      );
     },
   });
 

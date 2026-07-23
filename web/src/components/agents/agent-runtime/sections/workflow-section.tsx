@@ -3,7 +3,11 @@
 import { AlertCircle, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useT } from '@/i18n';
-import type { AgentWorkflowBinding, AgentWorkflowBindingCandidate } from '@/services/types/agent';
+import type {
+  AgentBindingHealth,
+  AgentWorkflowBinding,
+  AgentWorkflowBindingCandidate,
+} from '@/services/types/agent';
 import { AgentRuntimeResourceCard, AgentRuntimeResourceSection } from '../resource-section';
 import type { AgentConfigSection } from '../types';
 import { AgentWorkflowTypeBadge, AgentWorkflowTypeIcon } from '../workflow-type-display';
@@ -13,6 +17,7 @@ interface AgentRuntimeWorkflowSectionProps {
   bindings: AgentWorkflowBinding[];
   candidatesByBindingID: Map<string, AgentWorkflowBindingCandidate>;
   isLoading: boolean;
+  bindingHealth?: AgentBindingHealth;
   readOnly?: boolean;
   onToggleSection: (section: AgentConfigSection) => void;
   onOpenWorkflowDialog: () => void;
@@ -24,6 +29,7 @@ export function AgentRuntimeWorkflowSection({
   bindings,
   candidatesByBindingID,
   isLoading,
+  bindingHealth,
   readOnly = false,
   onToggleSection,
   onOpenWorkflowDialog,
@@ -69,6 +75,9 @@ export function AgentRuntimeWorkflowSection({
                 )
               }
               title={label}
+              healthItem={bindingHealth?.items.find(
+                item => item.binding_type === 'workflow' && item.resource_id === binding.binding_id
+              )}
               description={
                 unavailable
                   ? t('workflow.unavailableDescription')

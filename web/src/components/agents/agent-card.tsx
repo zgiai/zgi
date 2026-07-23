@@ -41,6 +41,10 @@ import {
 } from '@/utils/agent-detail-routes';
 import { AGENT_PERMISSION_ACTIONS, WORKFLOW_PERMISSION_ACTIONS } from '@/constants/permissions';
 import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
+import { AgentResourceBoundDialog } from '@/components/common/agent-resource-bound-dialog';
+import type { AgentResourceBoundImpact } from '@/services/types/common';
+import { getAgentResourceBoundImpact } from '@/utils/agent-resource-bound';
+import { toast } from 'sonner';
 
 interface AgentCardProps {
   agent: Agent;
@@ -60,6 +64,8 @@ function AgentCard({ agent, onDeleted, onNavigate, pageIndex }: AgentCardProps) 
   const [exportConfirmOpen, setExportConfirmOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [moveOpen, setMoveOpen] = useState(false);
+  const [bindingImpact, setBindingImpact] = useState<AgentResourceBoundImpact | null>(null);
+  const [isCheckingDeleteImpact, setIsCheckingDeleteImpact] = useState(false);
   const queryClient = useQueryClient();
   const { exportWorkflow, isExporting } = useExportWorkflow();
 
@@ -72,9 +78,7 @@ function AgentCard({ agent, onDeleted, onNavigate, pageIndex }: AgentCardProps) 
     : isAgentRuntime
       ? AGENT_PERMISSION_ACTIONS.update
       : [];
-  const exportPermissionCodes = isWorkflowRuntime
-    ? WORKFLOW_PERMISSION_ACTIONS.export
-    : [];
+  const exportPermissionCodes = isWorkflowRuntime ? WORKFLOW_PERMISSION_ACTIONS.export : [];
   const deletePermissionCodes = isWorkflowRuntime
     ? WORKFLOW_PERMISSION_ACTIONS.delete
     : isAgentRuntime
@@ -93,7 +97,9 @@ function AgentCard({ agent, onDeleted, onNavigate, pageIndex }: AgentCardProps) 
   const canMoveAssets = hasAnyPermission(movePermissionCodes);
   const canConfigureAgentRuntime = hasAnyPermission(AGENT_PERMISSION_ACTIONS.runtimeConfigManage);
   const canPublishAgent = hasAnyPermission(AGENT_PERMISSION_ACTIONS.publish);
-  const canManageAgentRuntimeAccess = hasAnyPermission(AGENT_PERMISSION_ACTIONS.runtimeAccessManage);
+  const canManageAgentRuntimeAccess = hasAnyPermission(
+    AGENT_PERMISSION_ACTIONS.runtimeAccessManage
+  );
   const canViewAgentLogs = hasAnyPermission(AGENT_PERMISSION_ACTIONS.logsView);
   const canCreateWorkflow = hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.create);
   const canImportWorkflow = hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.import);
@@ -127,16 +133,15 @@ function AgentCard({ agent, onDeleted, onNavigate, pageIndex }: AgentCardProps) 
       canConfigureWorkflowRuntime ||
       canManageWorkflowRuntimeAccess);
   const defaultAgentDetailHref = getAgentDetailDefaultHref(agent.id, agent.agent_type, {
-      canView: true,
-      canOpenEditor: isAgentRuntime ? canOpenAgentRuntimeEditor : canOpenWorkflowEditor,
-      canManageRuntimeAccess: isWorkflowRuntime && canManageWorkflowRuntimeAccess,
-      canViewRuntimeLogs: isAgentRuntime ? canViewAgentLogs : canViewWorkflowLogs,
-      canViewBatchTest:
-        isWorkflowRuntime && (canViewWorkflowTestLibrary || canViewWorkflowLogs),
-      canRunBatchTest: isWorkflowRuntime && canRunWorkflowDraft,
-      isPublished: agent.is_published,
-      preferBatchTestLibrary: canViewWorkflowTestLibrary,
-    });
+    canView: true,
+    canOpenEditor: isAgentRuntime ? canOpenAgentRuntimeEditor : canOpenWorkflowEditor,
+    canManageRuntimeAccess: isWorkflowRuntime && canManageWorkflowRuntimeAccess,
+    canViewRuntimeLogs: isAgentRuntime ? canViewAgentLogs : canViewWorkflowLogs,
+    canViewBatchTest: isWorkflowRuntime && (canViewWorkflowTestLibrary || canViewWorkflowLogs),
+    canRunBatchTest: isWorkflowRuntime && canRunWorkflowDraft,
+    isPublished: agent.is_published,
+    preferBatchTestLibrary: canViewWorkflowTestLibrary,
+  });
   const canOpenAgentDetail = Boolean(defaultAgentDetailHref);
   const agentHref = defaultAgentDetailHref ?? getAgentDetailBaseHref(agent.id, agent.agent_type);
   const modeText =
@@ -163,6 +168,43 @@ function AgentCard({ agent, onDeleted, onNavigate, pageIndex }: AgentCardProps) 
     : isPublishedOnline
       ? 'bg-success/10 text-success font-normal border-success'
       : 'bg-muted text-muted-foreground font-normal';
+
+  const deleteRuntime = async (impact?: AgentResourceBoundImpact) => {
+    if (!canDeleteRuntime) return;
+    try {
+      await deleteMutation.mutateAsync({
+        agentId: agent.id,
+        confirmation: impact
+          ? { agent_binding_action: 'unbind', impact_token: impact.impact_token }
+          : undefined,
+      });
+      setConfirmOpen(false);
+      setBindingImpact(null);
+      onDeleted?.(agent.id, pageIndex);
+    } catch (error) {
+      const nextImpact = getAgentResourceBoundImpact(error);
+      if (!nextImpact) return;
+      setConfirmOpen(false);
+      setBindingImpact(nextImpact);
+    }
+  };
+
+  const requestDeleteRuntime = async () => {
+    if (!canDeleteRuntime || isCheckingDeleteImpact) return;
+    setIsCheckingDeleteImpact(true);
+    try {
+      const response = await agentService.previewAgentDeleteImpact(agent.id);
+      if (response.data) {
+        setBindingImpact(response.data);
+        return;
+      }
+      setConfirmOpen(true);
+    } catch {
+      toast.error(tCommon('agentResourceBound.previewFailed'));
+    } finally {
+      setIsCheckingDeleteImpact(false);
+    }
+  };
 
   const cardContent = (
     <Card className="flex h-full shrink-0 flex-col border border-border/80 shadow-sm transition-colors hover:border-border hover:bg-muted/20 hover:shadow-sm">
@@ -277,7 +319,12 @@ function AgentCard({ agent, onDeleted, onNavigate, pageIndex }: AgentCardProps) 
                 </DropdownMenuItem>
               )}
               {canDeleteRuntime && (
-                <DropdownMenuItem variant="destructive" inset onSelect={() => setConfirmOpen(true)}>
+                <DropdownMenuItem
+                  variant="destructive"
+                  inset
+                  disabled={isCheckingDeleteImpact}
+                  onSelect={() => void requestDeleteRuntime()}
+                >
                   <Trash2 className="h-4 w-4" />
                   {t('actions.delete')}
                 </DropdownMenuItem>
@@ -321,17 +368,19 @@ function AgentCard({ agent, onDeleted, onNavigate, pageIndex }: AgentCardProps) 
         description={t('deleteConfirmDescription')}
         confirmText={tCommon('confirm')}
         cancelText={tCommon('close')}
-        onConfirm={() =>
-          canDeleteRuntime
-            ? deleteMutation.mutate(agent.id, {
-                onSuccess: () => {
-                  setConfirmOpen(false);
-                  onDeleted?.(agent.id, pageIndex);
-                },
-              })
-            : undefined
-        }
+        onConfirm={() => void deleteRuntime()}
         loading={deleteMutation.isPending}
+      />
+      <AgentResourceBoundDialog
+        open={Boolean(bindingImpact)}
+        impact={bindingImpact}
+        loading={deleteMutation.isPending}
+        onOpenChange={open => {
+          if (!open) setBindingImpact(null);
+        }}
+        onConfirm={() => {
+          if (bindingImpact) void deleteRuntime(bindingImpact);
+        }}
       />
     </div>
   );

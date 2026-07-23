@@ -11,9 +11,9 @@ func TestResolve_GLMAliasesUseGLMAdapter(t *testing.T) {
 		wantAdapterKey string
 		wantLookup     string
 	}{
-		{input: "glm", wantName: "glm", wantAdapterKey: "glm", wantLookup: "glm"},
-		{input: "zhipu", wantName: "glm", wantAdapterKey: "glm", wantLookup: "glm"},
-		{input: "bigmodel", wantName: "glm", wantAdapterKey: "glm", wantLookup: "glm"},
+		{input: "glm", wantName: "glm", wantAdapterKey: "glm", wantLookup: "zhipu"},
+		{input: "zhipu", wantName: "glm", wantAdapterKey: "glm", wantLookup: "zhipu"},
+		{input: "bigmodel", wantName: "glm", wantAdapterKey: "glm", wantLookup: "zhipu"},
 	}
 
 	for _, tc := range cases {

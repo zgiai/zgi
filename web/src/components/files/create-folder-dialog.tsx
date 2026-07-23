@@ -54,6 +54,8 @@ export interface CreateFolderDialogProps {
   initialParentId?: string;
 }
 
+const FOLDER_NAME_MAX_LENGTH = 40;
+
 function normalizeFolderName(name: string) {
   return name.trim().toLocaleLowerCase();
 }
@@ -202,6 +204,8 @@ export function CreateFolderDialog({
   // Check if can create
   const isParentFolderLoading = isLoading || isFolderOptionsLoading;
   const normalizedFolderName = normalizeFolderName(folderName);
+  const folderNameLength = Array.from(folderName.trim()).length;
+  const folderNameTooLong = folderNameLength > FOLDER_NAME_MAX_LENGTH;
   const normalizedParentId = normalizeParentId(parentId);
   const folderCandidates = folderOptions.length > 0 ? folderOptions : folders;
   const duplicateFolderExists =
@@ -213,13 +217,17 @@ export function CreateFolderDialog({
     );
   const canCreate =
     folderName.trim().length > 0 &&
+    !folderNameTooLong &&
     !!effectiveWorkspaceId &&
     !isParentFolderLoading &&
     !duplicateFolderExists;
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="max-w-[440px] p-0 overflow-hidden">
+      <DialogContent
+        className="max-w-[440px] p-0 overflow-hidden"
+        onInteractOutside={event => event.preventDefault()}
+      >
         <DialogHeader className="pb-2">
           <DialogTitle className="text-xl font-bold tracking-tight">
             {t('files.folder.createFolder')}
@@ -248,7 +256,11 @@ export function CreateFolderDialog({
                 className="h-11 shadow-sm"
                 autoFocus
               />
-              {duplicateFolderExists ? (
+              {folderNameTooLong ? (
+                <p className="text-xs text-destructive">
+                  {t('files.folder.nameTooLong', { max: FOLDER_NAME_MAX_LENGTH })}
+                </p>
+              ) : duplicateFolderExists ? (
                 <p className="text-xs text-destructive">{t('files.folder.duplicateName')}</p>
               ) : null}
             </div>
@@ -321,15 +333,13 @@ export function CreateFolderDialog({
         </DialogBody>
 
         <DialogFooter className="bg-neutral-50/50 pt-4 pb-6">
-          <Button variant="ghost" onClick={() => handleOpenChange(false)} className="font-semibold">
+          <Button type="button" variant="outline" onClick={() => handleOpenChange(false)}>
             {t('common.cancel')}
           </Button>
           <Button
+            type="submit"
             form="create-folder-form"
-            onClick={handleConfirm}
             disabled={!canCreate}
-            size="lg"
-            className="px-8 font-bold"
           >
             {t('common.create')}
           </Button>

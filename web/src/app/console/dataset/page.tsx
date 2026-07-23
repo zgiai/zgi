@@ -1,7 +1,7 @@
 'use client';
 
 import { Suspense, useRef, useState, useMemo, useEffect } from 'react';
-import { BookOpen, Folders, Loader2, Plus, Search, ShieldAlert } from 'lucide-react';
+import { BookOpen, FolderPlus, Folders, Loader2, Plus, Search, ShieldAlert } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
 import { useT } from '@/i18n';
@@ -48,6 +48,7 @@ function DatasetsPageContent() {
   const { hasAnyPermission, isLoading: isPermissionsLoading } = useAccountPermissions();
   const canView = hasAnyPermission(KNOWLEDGE_BASE_VISIBLE_PERMISSION_CODES);
   const canManage = hasAnyPermission(KNOWLEDGE_BASE_PERMISSION_ACTIONS.create);
+  const canManageFolders = hasAnyPermission(KNOWLEDGE_BASE_PERMISSION_ACTIONS.folderManage);
 
   // Replace local create-only dialog with centralized dialog state
   // const [open, setOpen] = useState(false);
@@ -189,12 +190,27 @@ function DatasetsPageContent() {
     });
   };
 
+  const handleCreateFolder = () => {
+    eventBus.publish<OpenFolderModalPayload>('folder:open-modal', {
+      mode: 'create',
+      parentFolderId: isRootView ? undefined : activeFolderId || undefined,
+    });
+  };
+
   // Breadcrumbs (subfolder view)
   const { data: ancestors = [] } = useFolderAncestors(activeFolderId);
 
   // Derived states for skeletons
   const showFolderSkeletons = isRootView ? isFoldersLoading : false;
   const showDatasetSkeletons = isDatasetsLoading;
+  const hasPageLevelEmptyState =
+    !showFolderSkeletons &&
+    !showDatasetSkeletons &&
+    (isRootView
+      ? rootFolders.length + allDatasetsRoot.length === 0
+      : datasetEntries.length === 0);
+  const shouldShowDatasetSectionNoResults =
+    Boolean(debouncedSearchKeyword) && !hasPageLevelEmptyState;
 
   // Virtualization decision is based on dataset entries only
   const enableVirtual = datasetEntries.length > 200;
@@ -231,6 +247,8 @@ function DatasetsPageContent() {
           searchKeyword={searchKeyword}
           onSearchChange={setSearchKeyword}
           searchPlaceholder={t('datasets.search.placeholder')}
+          createFolderText={t('datasets.createFolder')}
+          onCreateFolder={isRootView && canManageFolders ? handleCreateFolder : undefined}
           createText={t('datasets.create')}
           onCreateDataset={canManage ? handleCreate : undefined}
           onBack={handleBack}
@@ -335,7 +353,7 @@ function DatasetsPageContent() {
                 ) : // Dataset section empty state (only when folders exist but no datasets)
                 // Don't show if page-level empty state will be shown (both folders and datasets are empty)
                 // Don't show in organization mode (PersonalSpaceEmptyState handles it)
-                debouncedSearchKeyword ? (
+                shouldShowDatasetSectionNoResults ? (
                   <div className="flex flex-col items-center justify-center py-12 text-center">
                     <Search className="h-12 w-12 text-muted-foreground mb-4" />
                     <h3 className="text-lg font-medium mb-2">{t('datasets.empty.noResults')}</h3>
@@ -374,39 +392,41 @@ function DatasetsPageContent() {
           {/* Sentinel moved above to trigger earlier than visual spinner */}
 
           {/* Empty state: when both folders and datasets are empty and not loading */}
-          {!showFolderSkeletons &&
-            !showDatasetSkeletons &&
-            (isRootView
-              ? rootFolders.length + allDatasetsRoot.length === 0
-              : (datasetEntries.length || 0) === 0) && (
-              <div className="flex flex-col items-center justify-center py-12 text-center">
-                {debouncedSearchKeyword ? (
-                  <>
-                    <Search className="h-12 w-12 text-muted-foreground mb-4" />
-                    <h3 className="text-lg font-medium mb-2">{t('datasets.empty.noResults')}</h3>
-                    <p className="text-muted-foreground mb-2 max-w-sm">
-                      {t('datasets.empty.noResultsFor', { query: debouncedSearchKeyword })}
-                    </p>
-                    <Button onClick={() => setSearchKeyword('')}>
-                      {t('datasets.messages.clearFilters')}
-                    </Button>
-                  </>
-                ) : (
-                  <>
-                    <Search className="h-12 w-12 text-muted-foreground mb-4" />
-                    <h3 className="text-lg font-medium mb-2">{t('datasets.empty.empty')}</h3>
-                    <div className="flex gap-2">
-                      {canManage && (
-                        <Button onClick={handleCreate}>
-                          <Plus size={16} />
-                          {t('datasets.create')}
-                        </Button>
-                      )}
-                    </div>
-                  </>
-                )}
-              </div>
-            )}
+          {hasPageLevelEmptyState && (
+            <div className="flex flex-col items-center justify-center py-12 text-center">
+              {debouncedSearchKeyword ? (
+                <>
+                  <Search className="h-12 w-12 text-muted-foreground mb-4" />
+                  <h3 className="text-lg font-medium mb-2">{t('datasets.empty.noResults')}</h3>
+                  <p className="text-muted-foreground mb-2 max-w-sm">
+                    {t('datasets.empty.noResultsFor', { query: debouncedSearchKeyword })}
+                  </p>
+                  <Button onClick={() => setSearchKeyword('')}>
+                    {t('datasets.messages.clearFilters')}
+                  </Button>
+                </>
+              ) : (
+                <>
+                  <Search className="h-12 w-12 text-muted-foreground mb-4" />
+                  <h3 className="text-lg font-medium mb-2">{t('datasets.empty.empty')}</h3>
+                  <div className="flex gap-2">
+                    {isRootView && canManageFolders && (
+                      <Button variant="outline" onClick={handleCreateFolder}>
+                        <FolderPlus size={16} />
+                        {t('datasets.createFolder')}
+                      </Button>
+                    )}
+                    {canManage && (
+                      <Button onClick={handleCreate}>
+                        <Plus size={16} />
+                        {t('datasets.create')}
+                      </Button>
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
+          )}
         </section>
       </div>
 

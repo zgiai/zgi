@@ -60,6 +60,7 @@ import { ICON_BG, ICON_TEXT, WORKFLOW_AUTOSAVE_INTERVAL_MS } from '@/lib/config'
 import type { IconType } from '@/utils/icon-helpers';
 import { PublishSettingsDialog } from '@/components/agents/agent-runtime/publish-settings-dialog';
 import { getAgentDetailLogsHref } from '@/utils/agent-detail-routes';
+import { EditAgentDialog } from '@/components/agents/agent-dialog/edit-dialog';
 
 interface WorkflowHeaderProps {
   // Basic info
@@ -146,6 +147,7 @@ const WorkflowHeader: React.FC<WorkflowHeaderProps> = ({
   const [publishPromptRiskOpen, setPublishPromptRiskOpen] = React.useState(false);
   const [webAppStatusDialogOpen, setWebAppStatusDialogOpen] = React.useState(false);
   const [publishSettingsOpen, setPublishSettingsOpen] = React.useState(false);
+  const [basicInfoOpen, setBasicInfoOpen] = React.useState(false);
   const [offlineReason, setOfflineReason] = React.useState('');
   const [dontWarnAgain, setDontWarnAgain] = React.useState(false);
   const setOpenValidationIssues = useWorkflowStore.use.setOpenValidationIssues();
@@ -350,7 +352,28 @@ const WorkflowHeader: React.FC<WorkflowHeaderProps> = ({
   return (
     <div className="flex-shrink-0 bg-gradient-to-b from-background to-transparent absolute inset-x-0 top-0 z-10 h-14">
       <div className="flex items-center justify-between h-full px-4">
-        <div className="flex min-w-0 max-w-[250px] shrink items-center gap-2.5 xl:max-w-[340px]">
+        <div
+          role={canSave && !isHistoryMode ? 'button' : undefined}
+          tabIndex={canSave && !isHistoryMode ? 0 : undefined}
+          className={cn(
+            '-m-1 flex min-w-0 max-w-[250px] shrink items-center gap-2.5 rounded-lg p-1 text-left outline-none transition-colors xl:max-w-[340px]',
+            canSave &&
+              !isHistoryMode &&
+              'cursor-pointer hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2'
+          )}
+          onClick={canSave && !isHistoryMode ? () => setBasicInfoOpen(true) : undefined}
+          onKeyDown={
+            canSave && !isHistoryMode
+              ? event => {
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    setBasicInfoOpen(true);
+                  }
+                }
+              : undefined
+          }
+          aria-label={canSave && !isHistoryMode ? t('editBasicInfo') : undefined}
+        >
           <IconPreview
             iconType={agentIconType === 'image' ? 'image' : 'text'}
             icon={agentIconData.textIcon}
@@ -847,6 +870,11 @@ const WorkflowHeader: React.FC<WorkflowHeaderProps> = ({
                 open={publishSettingsOpen}
                 canManage={canManageRuntimeAccess}
                 onOpenChange={setPublishSettingsOpen}
+              />
+              <EditAgentDialog
+                open={basicInfoOpen}
+                onOpenChange={setBasicInfoOpen}
+                agentId={agentId}
               />
             </div>
           </>

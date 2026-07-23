@@ -74,6 +74,40 @@ func TestHydrateMessageGeneratedFileURLsRefreshesSignedURLs(t *testing.T) {
 	}
 }
 
+func TestHydrateMessageGeneratedFileURLsRefreshesImageGenerationFiles(t *testing.T) {
+	restoreToolFileSignature(t)
+	message := &aichatmodel.Message{Metadata: map[string]interface{}{
+		"image_generation": map[string]interface{}{
+			"files": []interface{}{map[string]interface{}{
+				"file_id":      "file-image",
+				"filename":     "generated-image.png",
+				"mime_type":    "image/png",
+				"url":          "http://stale.example/preview",
+				"download_url": "http://stale.example/download",
+			}},
+		},
+	}}
+
+	hydrateMessageGeneratedFileURLs(message)
+
+	imageGeneration, ok := message.Metadata["image_generation"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("image_generation = %#v, want object", message.Metadata["image_generation"])
+	}
+	files := generatedFilesFromMetadata(imageGeneration["files"])
+	if len(files) != 1 {
+		t.Fatalf("image_generation.files = %#v, want one file", imageGeneration["files"])
+	}
+	url := stringFromAny(files[0]["url"])
+	downloadURL := stringFromAny(files[0]["download_url"])
+	if !strings.HasPrefix(url, "http://files.example/console/api/files/tools/file-image.png?") {
+		t.Fatalf("url = %q, want refreshed signed image url", url)
+	}
+	if !strings.HasPrefix(downloadURL, url+"&download=1") {
+		t.Fatalf("download_url = %q, want preview url plus download=1", downloadURL)
+	}
+}
+
 func restoreToolFileSignature(t *testing.T) {
 	t.Helper()
 	previous := tool_file.GlobalFileSignature

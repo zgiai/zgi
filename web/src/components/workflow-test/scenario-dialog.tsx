@@ -14,6 +14,7 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
 import { useSaveWorkflowTestScenarios } from '@/hooks/workflow-test/use-workflow-test';
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
@@ -172,12 +173,13 @@ export function ScenarioDialog({ agentId, scenarios, open, onOpenChange }: Scena
                 </div>
                 <div className="space-y-2">
                   <Label>{t('descriptionLabel')}</Label>
-                  <Input
+                  <Textarea
                     value={item.description}
                     onChange={event =>
                       updateItem(item.clientId, { description: event.target.value })
                     }
                     placeholder={t('descriptionPlaceholder')}
+                    className="min-h-24 resize-y bg-white"
                   />
                 </div>
               </div>

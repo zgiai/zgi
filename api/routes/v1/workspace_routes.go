@@ -2,6 +2,7 @@ package v1
 
 import (
 	"github.com/gin-gonic/gin"
+	"github.com/zgiai/zgi/api/internal/capabilities/agentbindings"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	workspaceHandler "github.com/zgiai/zgi/api/internal/modules/workspace/handler"
 	workspaceRepo "github.com/zgiai/zgi/api/internal/modules/workspace/repository"
@@ -14,6 +15,7 @@ type WorkspaceRouteDeps struct {
 	DB                               *gorm.DB
 	AccountService                   interfaces.AccountService
 	OrganizationService              interfaces.OrganizationService
+	AuthorizationService             interfaces.AuthorizationService
 	WorkspacePermissionFilterService workspaceService.WorkspacePermissionFilterService
 	DepartmentService                workspaceService.DepartmentService
 	ConsoleWebURL                    string
@@ -44,6 +46,9 @@ func RegisterWorkspaceRoutes(router *gin.RouterGroup, deps WorkspaceRouteDeps) {
 	}
 	if deps.OrganizationService == nil {
 		panic("workspace routes require organization service")
+	}
+	if deps.AuthorizationService == nil {
+		panic("workspace routes require authorization service")
 	}
 	if deps.WorkspacePermissionFilterService == nil {
 		panic("workspace routes require workspace permission filter service")
@@ -86,7 +91,8 @@ func registerDepartmentRoutes(router *gin.RouterGroup, deps WorkspaceRouteDeps) 
 func registerWorkspaceAssetMoveRoutes(router *gin.RouterGroup, deps WorkspaceRouteDeps) {
 	assetMoveService := workspaceService.NewWorkspaceAssetMoveService(
 		deps.DB,
-		deps.OrganizationService,
+		deps.AuthorizationService,
+		agentbindings.NewRepository(deps.DB),
 	)
 	assetMoveHandler := workspaceHandler.NewWorkspaceAssetMoveHandler(deps.AccountService, assetMoveService)
 

@@ -1084,6 +1084,34 @@ func TestParseModelTurnIntentContentNormalizesObjectPhases(t *testing.T) {
 	}
 }
 
+func TestParseModelTurnIntentContentNormalizesOutcomeContract(t *testing.T) {
+	intent, err := parseModelTurnIntentContent(`{
+		"intent":"manage_agent_asset",
+		"outcomes":[
+			{"id":"Chapter File","goal":"Generate and save the chapter","capabilities":["file_artifact","managed_file"]},
+			{"id":"agent-update","goal":"Append the chapter to the Agent instructions","depends_on":["Chapter File"],"capabilities":["agent.system_prompt"]}
+		],
+		"confidence":0.95
+	}`)
+	if err != nil {
+		t.Fatalf("parseModelTurnIntentContent() error = %v", err)
+	}
+	finalizeModelTurnIntent(intent)
+	if len(intent.Outcomes) != 2 {
+		t.Fatalf("Outcomes = %#v, want 2", intent.Outcomes)
+	}
+	if intent.Outcomes[0].ID != "chapter-file" || intent.Outcomes[1].ID != "agent-update" {
+		t.Fatalf("outcome IDs = %#v, want normalized stable IDs", []string{intent.Outcomes[0].ID, intent.Outcomes[1].ID})
+	}
+	if !slices.Equal(intent.Outcomes[1].DependsOn, []string{"chapter-file"}) {
+		t.Fatalf("depends_on = %#v, want chapter-file", intent.Outcomes[1].DependsOn)
+	}
+	contract := modelTurnIntentTaskContract(intent)
+	if got := len(mapSliceFromAny(contract["outcomes"])); got != 2 {
+		t.Fatalf("task contract outcomes = %#v, want 2", contract["outcomes"])
+	}
+}
+
 func TestModelTurnTaskContractKeepsUnsupportedIntentAsLowConfidenceContract(t *testing.T) {
 	intent, err := parseModelTurnIntentContent(`{
 		"intent":"inspect_and_prepare_agent_story_writer",

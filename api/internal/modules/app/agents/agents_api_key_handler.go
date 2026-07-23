@@ -218,7 +218,7 @@ func (h *AgentsHandler) ContinueAPIKeyAgentRuntimeWorkflowContinuation(c *gin.Co
 		response.Fail(c, response.ErrSystemError)
 		return
 	}
-	runtimeCtx, ok := h.apiKeyAgentRuntimeContext(c)
+	runtimeCtx, ok := h.apiKeyAgentContinuationRuntimeContext(c)
 	if !ok {
 		return
 	}
@@ -259,6 +259,36 @@ func (h *AgentsHandler) apiKeyAgentRuntimeContext(c *gin.Context) (agentRuntimeC
 		Source: runtimemodel.ConversationSourceExternalAPI,
 	}
 	return agentRuntimeContext{Scope: scope, Caller: caller}, true
+}
+
+func (h *AgentsHandler) apiKeyAgentContinuationRuntimeContext(c *gin.Context) (agentRuntimeContext, bool) {
+	runtimeCtx, ok := h.apiKeyAgentRuntimeContext(c)
+	if !ok {
+		return agentRuntimeContext{}, false
+	}
+	if runtimeCtx.Caller.ID == nil {
+		response.Fail(c, response.ErrInvalidParam)
+		return agentRuntimeContext{}, false
+	}
+	published, err := h.appService.GetPublishedAgentRuntimeConfig(c.Request.Context(), runtimeCtx.Caller.ID.String())
+	if err != nil {
+		h.failRuntime(c, err)
+		return agentRuntimeContext{}, false
+	}
+	runConfig, err := h.agentRunConfig(
+		c.Request.Context(),
+		runtimeCtx.Scope,
+		published.AgentID,
+		"agent.published."+published.Version,
+		published.Config,
+		"end_user",
+	)
+	if err != nil {
+		h.failRuntime(c, err)
+		return agentRuntimeContext{}, false
+	}
+	runtimeCtx.RunConfig = runConfig
+	return runtimeCtx, true
 }
 
 func publishedAgentConfigRequiresExternalUser(cfg dto.AgentConfigResponse) bool {

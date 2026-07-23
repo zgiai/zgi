@@ -13,11 +13,13 @@ type fakeWorkflowConversationTitleGen struct {
 	called   bool
 	title    string
 	source   string
+	appType  string
 	messages []titlegen.Message
 }
 
 func (f *fakeWorkflowConversationTitleGen) Generate(ctx context.Context, req titlegen.GenerateRequest) (*titlegen.GenerateResult, error) {
 	f.called = true
+	f.appType = req.AppType
 	f.messages = append([]titlegen.Message(nil), req.Messages...)
 	return &titlegen.GenerateResult{Title: f.title, Source: f.source}, nil
 }
@@ -113,6 +115,9 @@ func TestGenerateWebAppConversationTitleUpdatesOnlyDefaultName(t *testing.T) {
 	}
 	if conv.Name != "退款进度查询" {
 		t.Fatalf("conversation name = %q, want semantic title", conv.Name)
+	}
+	if gen.appType != "workflow" {
+		t.Fatalf("title generation app type = %q, want workflow", gen.appType)
 	}
 	wantMessages := []titlegen.Message{
 		{Role: "user", Content: "怎么查询退款进度"},

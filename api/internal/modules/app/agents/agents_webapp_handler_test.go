@@ -934,6 +934,10 @@ func (s *stubWebAppStatusHandlerService) RollbackAgentPublishedVersion(context.C
 	return nil, nil
 }
 
+func (s *stubWebAppStatusHandlerService) PreviewAgentPublishedVersionRollback(context.Context, string, string, string) (*dto.AgentRollbackPreviewResponse, error) {
+	return nil, nil
+}
+
 func (s *stubWebAppStatusHandlerService) GetPublishedAgentWebAppConfig(_ context.Context, webAppID string) (*dto.AgentWebAppRuntimeConfigResponse, error) {
 	s.publishedConfigCalled = true
 	s.publishedConfigWebAppID = webAppID

@@ -4,6 +4,7 @@ import { AlertCircle, Database, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useT } from '@/i18n';
 import type { Dataset } from '@/services/types/dataset';
+import type { AgentBindingHealth } from '@/services/types/agent';
 import { AgentRuntimeResourceCard, AgentRuntimeResourceSection } from '../resource-section';
 import type { AgentConfigSection } from '../types';
 
@@ -15,6 +16,7 @@ interface AgentRuntimeKnowledgeSectionProps {
   canBindKnowledge: boolean;
   selectedKnowledgeDatasets: AgentKnowledgeDataset[];
   selectedKnowledgeDatasetIds: string[];
+  bindingHealth?: AgentBindingHealth;
   readOnly?: boolean;
   onToggleSection: (section: AgentConfigSection) => void;
   onOpenKnowledgeDialog: () => void;
@@ -27,6 +29,7 @@ export function AgentRuntimeKnowledgeSection({
   canBindKnowledge,
   selectedKnowledgeDatasets,
   selectedKnowledgeDatasetIds,
+  bindingHealth,
   readOnly = false,
   onToggleSection,
   onOpenKnowledgeDialog,
@@ -41,9 +44,7 @@ export function AgentRuntimeKnowledgeSection({
       open={open}
       count={selectedKnowledgeDatasetIds.length}
       addLabel={t('knowledge.add')}
-      addTooltip={
-        canBindKnowledge ? undefined : t('knowledge.bindingPermissionRequired')
-      }
+      addTooltip={canBindKnowledge ? undefined : t('knowledge.bindingPermissionRequired')}
       helpText={t('knowledge.helpText')}
       emptyText={t('knowledge.emptySelected')}
       isLoading={isDatasetsLoading}
@@ -63,6 +64,9 @@ export function AgentRuntimeKnowledgeSection({
               )
             }
             title={dataset.name}
+            healthItem={bindingHealth?.items.find(
+              item => item.binding_type === 'knowledge_dataset' && item.resource_id === dataset.id
+            )}
             description={
               dataset.load_error
                 ? t('knowledge.loadFailedDescription')

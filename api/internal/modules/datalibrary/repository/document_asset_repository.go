@@ -2,10 +2,12 @@ package repository
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/modules/datalibrary/model"
+	"gorm.io/datatypes"
 	"gorm.io/gorm"
 )
 
@@ -38,6 +40,7 @@ type DocumentAssetCurrentResultPatch struct {
 	VectorStatus                *string
 	LastErrorCode               *string
 	LastErrorMessage            *string
+	MetadataJSON                map[string]any
 	RequireProcessingRunID      *uuid.UUID
 	RequireGenerationNo         *int64
 	ClearActiveProcessingRunIDs bool
@@ -138,7 +141,21 @@ func (r *documentAssetRepository) ListAssets(ctx context.Context, filter Documen
 		query = query.Joins(
 			"JOIN upload_files ON CAST(upload_files.id AS TEXT) = data_library_document_assets.source_file_id AND CAST(upload_files.organization_id AS TEXT) = data_library_document_assets.organization_id AND upload_files.is_archived = ?",
 			false,
-		)
+		).Where(`
+			(
+				NOT EXISTS (
+					SELECT 1
+					FROM file_folder_joins
+					WHERE CAST(file_folder_joins.file_id AS TEXT) = CAST(upload_files.id AS TEXT)
+				)
+				OR EXISTS (
+					SELECT 1
+					FROM file_folder_joins
+					JOIN file_folders ON CAST(file_folders.id AS TEXT) = CAST(file_folder_joins.folder_id AS TEXT)
+					WHERE CAST(file_folder_joins.file_id AS TEXT) = CAST(upload_files.id AS TEXT)
+				)
+			)
+		`)
 	}
 	if filter.WorkspaceID != nil {
 		query = query.Where("data_library_document_assets.workspace_id = ?", *filter.WorkspaceID)
@@ -229,6 +246,13 @@ func (r *documentAssetRepository) UpdateCurrentResult(ctx context.Context, id uu
 	if patch.LastErrorMessage != nil {
 		updates["last_error_message"] = *patch.LastErrorMessage
 	}
+	if patch.MetadataJSON != nil {
+		metadata, err := r.mergedMetadataJSON(ctx, id, patch.MetadataJSON)
+		if err != nil {
+			return nil, err
+		}
+		updates["metadata_json"] = metadata
+	}
 	if patch.ClearActiveProcessingRunIDs {
 		updates["active_processing_request_id"] = nil
 		updates["processing_run_id"] = nil
@@ -267,6 +291,31 @@ func (r *documentAssetRepository) UpdateCurrentResult(ctx context.Context, id uu
 		return nil, result.Error
 	}
 	return r.GetAssetByID(ctx, id)
+}
+
+func (r *documentAssetRepository) mergedMetadataJSON(ctx context.Context, id uuid.UUID, patch map[string]any) (datatypes.JSON, error) {
+	merged := map[string]any{}
+
+	var current model.DocumentAsset
+	if err := r.db.WithContext(ctx).
+		Select("metadata_json").
+		Where("id = ?", id).
+		Where("deleted_at IS NULL").
+		First(&current).Error; err != nil && err != gorm.ErrRecordNotFound {
+		return nil, err
+	}
+	for key, value := range current.MetadataJSON {
+		merged[key] = value
+	}
+	for key, value := range patch {
+		merged[key] = value
+	}
+
+	metadataJSON, err := json.Marshal(merged)
+	if err != nil {
+		return nil, err
+	}
+	return datatypes.JSON(metadataJSON), nil
 }
 
 func (r *documentAssetRepository) CreateVersion(ctx context.Context, item *model.DocumentVersion) error {

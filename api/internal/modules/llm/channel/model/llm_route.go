@@ -67,12 +67,19 @@ type LLMRoute struct {
 	TenantCredential *credentialmodel.TenantCredential `gorm:"foreignKey:CredentialID;references:ID" json:"tenant_credential,omitempty"`
 
 	// Transient fields (not persisted)
-	PlatformAPIKey              string `gorm:"-" json:"-"`
-	UpstreamGeneration          int64  `gorm:"-" json:"-"`
-	UpstreamWouldGuard          bool   `gorm:"-" json:"-"`
-	UpstreamHalfOpen            bool   `gorm:"-" json:"-"`
-	UpstreamProbe               bool   `gorm:"-" json:"-"`
-	UpstreamProbeRequiresBackup bool   `gorm:"-" json:"-"`
+	PlatformAPIKey              string          `gorm:"-" json:"-"`
+	UpstreamGeneration          int64           `gorm:"-" json:"-"`
+	UpstreamWouldGuard          bool            `gorm:"-" json:"-"`
+	UpstreamHalfOpen            bool            `gorm:"-" json:"-"`
+	UpstreamProbe               bool            `gorm:"-" json:"-"`
+	UpstreamProbeRequiresBackup bool            `gorm:"-" json:"-"`
+	OfficialProviderModels      []ProviderModel `gorm:"-" json:"-"`
+}
+
+// ProviderModel identifies one exact provider/model pair advertised by an official channel.
+type ProviderModel struct {
+	Provider string `json:"provider"`
+	Model    string `json:"model"`
 }
 
 func (LLMRoute) TableName() string {
@@ -123,6 +130,34 @@ func (r *LLMRoute) SupportsModel(modelName string) bool {
 		}
 	}
 
+	return false
+}
+
+// SupportsModelForProvider requires exact provider provenance for official routes.
+// Private routes retain their existing model-list behavior.
+func (r *LLMRoute) SupportsModelForProvider(provider, modelName string) bool {
+	if !r.IsOfficial && r.Type != shared.RouteTypeZGICloud {
+		return r.SupportsModel(modelName)
+	}
+
+	provider = strings.TrimSpace(provider)
+	modelName = strings.TrimSpace(modelName)
+	if provider == "" || modelName == "" {
+		return false
+	}
+
+	// Snapshots created before provider provenance was introduced can retain
+	// their effective model names while the new provider-model list is empty.
+	// Preserve the legacy model-name behavior until a successful sync supplies
+	// exact pairs; once any pair exists, the strict provider check below applies.
+	if len(r.OfficialProviderModels) == 0 {
+		return r.SupportsModel(modelName)
+	}
+	for _, pair := range r.OfficialProviderModels {
+		if pair.Provider == provider && pair.Model == modelName {
+			return true
+		}
+	}
 	return false
 }
 

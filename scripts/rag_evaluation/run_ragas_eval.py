@@ -34,6 +34,7 @@ DEFAULT_ALIYUN_RAGAS_EMBEDDING_MODEL = "text-embedding-v4"
 SCRIPT_DIR = Path(__file__).resolve().parent
 INPUT_DIR = SCRIPT_DIR / "input"
 MIDDLE_DIR = SCRIPT_DIR / "middle"
+RESULT_DIR = SCRIPT_DIR / "result"
 ENV_FILE = SCRIPT_DIR / ".env"
 ENV_VALUES = {}
 INPUT_EXTENSIONS = {".xls", ".xlsx", ".csv"}
@@ -117,7 +118,7 @@ class OpenAICompatibleRagasEmbeddings:
         return [str(text) for text in texts if str(text).strip()]
 
 
-def main() -> int:
+def main(output_platform: str = "") -> int:
     global ENV_VALUES
     ENV_VALUES = load_env_file(ENV_FILE)
 
@@ -126,13 +127,18 @@ def main() -> int:
     if not input_path.exists():
         raise SystemExit(f"input file does not exist: {input_path}")
 
-    dataset_path, result_json_path, result_csv_path = output_paths_for_input(input_path)
+    dataset_path, result_json_path, result_csv_path = output_paths_for_input(input_path, output_platform)
     dataset_rows: list[dict[str, Any]] | None = None
     if dataset_path.exists():
-        answer = input(
-            f"Found existing Ragas dataset: {dataset_path}\n"
-            "Use it directly for evaluation? Enter y/yes to reuse, or press Enter to collect backend data again: "
-        ).strip().lower()
+        if args.reuse_dataset:
+            answer = "yes"
+        elif args.recollect:
+            answer = ""
+        else:
+            answer = input(
+                f"Found existing Ragas dataset: {dataset_path}\n"
+                "Use it directly for evaluation? Enter y/yes to reuse, or press Enter to collect backend data again: "
+            ).strip().lower()
         if answer in {"y", "yes"}:
             dataset_rows = load_existing_dataset(dataset_path)
             print(f"loaded existing Ragas dataset: {dataset_path} ({len(dataset_rows)} rows)")
@@ -232,6 +238,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--ragas-embedding-model", default=ragas_env_value("RAGAS_EMBEDDING_MODEL", "ALIYUN_EMBEDDING_MODEL", "DASHSCOPE_EMBEDDING_MODEL"), help="Embedding model used by Ragas.")
     parser.add_argument("--ragas-enable-thinking", default=ragas_env_value("RAGAS_ENABLE_THINKING", "ALIYUN_ENABLE_THINKING", "DASHSCOPE_ENABLE_THINKING"), help="Enable DashScope thinking mode for Ragas judge LLM. true/false.")
     parser.add_argument("--ragas-max-workers", type=int, default=int_env_value("RAGAS_MAX_WORKERS", DEFAULT_RAGAS_MAX_WORKERS), help="Ragas concurrent workers. Default: %(default)s")
+    dataset_group = parser.add_mutually_exclusive_group()
+    dataset_group.add_argument("--reuse-dataset", action="store_true", help="Reuse the existing platform dataset without collecting backend data.")
+    dataset_group.add_argument("--recollect", action="store_true", help="Ignore an existing platform dataset and recollect backend data.")
     return parser.parse_args()
 
 
@@ -432,13 +441,16 @@ def available_input_files(input_dir: Path) -> list[Path]:
     )
 
 
-def output_paths_for_input(input_path: Path) -> tuple[Path, Path, Path]:
+def output_paths_for_input(input_path: Path, platform: str = "") -> tuple[Path, Path, Path]:
     MIDDLE_DIR.mkdir(parents=True, exist_ok=True)
-    output_prefix = MIDDLE_DIR / input_path.with_suffix("").name
+    RESULT_DIR.mkdir(parents=True, exist_ok=True)
+    dataset_prefix = MIDDLE_DIR / input_path.with_suffix("").name
+    result_prefix = RESULT_DIR / input_path.with_suffix("").name
+    platform_suffix = f".{platform.strip().lower()}" if platform.strip() else ""
     return (
-        output_prefix.with_name(output_prefix.name + ".ragas.dataset.json"),
-        output_prefix.with_name(output_prefix.name + ".ragas.results.json"),
-        output_prefix.with_name(output_prefix.name + ".ragas.results.csv"),
+        dataset_prefix.with_name(dataset_prefix.name + platform_suffix + ".ragas.dataset.json"),
+        result_prefix.with_name(result_prefix.name + platform_suffix + ".ragas.results.json"),
+        result_prefix.with_name(result_prefix.name + platform_suffix + ".ragas.results.csv"),
     )
 
 
@@ -628,6 +640,10 @@ def write_cached_token(base_url: str, email: str, token: str) -> None:
 
 def write_env_file(path: Path, values: dict[str, str]) -> None:
     ordered_keys = [
+        "DIFY_BASE_URL",
+        "DIFY_API_KEY",
+        "DIFY_USER_PREFIX",
+        "DIFY_RESPONSE_MODE",
         "ZGI_BASE_URL",
         "ZGI_EMAIL",
         "ZGI_KNOWLEDGE_BASE_NAME",
@@ -795,12 +811,14 @@ def build_ragas_rows(qa_items: list[QAItem], eval_items: list[dict[str, Any]]) -
         raise SystemExit(f"backend returned {len(eval_items)} rows for {len(qa_items)} questions")
 
     rows: list[dict[str, Any]] = []
-    for qa, result in zip(qa_items, eval_items):
+    for sample_id, (qa, result) in enumerate(zip(qa_items, eval_items), start=1):
         contexts = result.get("retrieved_contexts") or []
         if not isinstance(contexts, list):
             contexts = []
         rows.append(
             {
+                "sample_id": sample_id,
+                "platform": "zgi",
                 "user_input": qa.question,
                 "response": str(result.get("response") or ""),
                 "retrieved_contexts": [str(ctx) for ctx in contexts],
@@ -849,6 +867,11 @@ def run_ragas(dataset_rows: list[dict[str, Any]], config: RagasModelConfig, batc
             flush=True,
         )
 
+    eligible_rows = [
+        row
+        for row in dataset_rows
+        if row["response"] and not row.get("error")
+    ]
     metric_rows = [
         {
             "user_input": row["user_input"],
@@ -856,13 +879,13 @@ def run_ragas(dataset_rows: list[dict[str, Any]], config: RagasModelConfig, batc
             "retrieved_contexts": row["retrieved_contexts"],
             "reference": row["reference"],
         }
-        for row in dataset_rows
-        if row["response"] and not row.get("error")
+        for row in eligible_rows
     ]
     if not metric_rows:
         raise SystemExit("no rows with responses are available for Ragas evaluation")
     if ragas_limit > 0:
         metric_rows = metric_rows[:ragas_limit]
+        eligible_rows = eligible_rows[:ragas_limit]
 
     llm_client = AsyncOpenAI(
         api_key=config.api_key,
@@ -909,6 +932,14 @@ def run_ragas(dataset_rows: list[dict[str, Any]], config: RagasModelConfig, batc
         batch_elapsed = time.perf_counter() - batch_started
         print(f"Ragas batch {start + 1}-{end}/{total} finished in {batch_elapsed:.1f}s", flush=True)
     ragas_elapsed = time.perf_counter() - ragas_started
+    if len(result_rows) != len(eligible_rows):
+        raise SystemExit(
+            f"Ragas returned {len(result_rows)} rows for {len(eligible_rows)} evaluated rows; cannot preserve sample identity"
+        )
+    for fallback_id, (result_row, source_row) in enumerate(zip(result_rows, eligible_rows), start=1):
+        result_row["sample_id"] = source_row.get("sample_id", fallback_id)
+        if source_row.get("platform"):
+            result_row["platform"] = source_row["platform"]
     print(f"Ragas evaluation finished: {len(result_rows)}/{total} in {ragas_elapsed:.1f}s", flush=True)
     return result_rows
 

@@ -14,6 +14,7 @@ import {
   ShieldCheck,
   Brain,
   Wrench,
+  Bot,
   HelpCircle,
   type LucideIcon,
 } from 'lucide-react';
@@ -34,6 +35,7 @@ const USE_CASE_ICONS: Record<string, LucideIcon> = {
   moderation: ShieldCheck,
   reasoning: Brain,
   'function-calling': Wrench,
+  agent: Bot,
   unknown: HelpCircle,
 };
 

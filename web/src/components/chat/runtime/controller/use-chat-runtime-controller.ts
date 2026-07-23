@@ -179,6 +179,7 @@ export function useChatRuntimeController(options?: {
     clearRecoveryRetry,
     closeRecoveryConnection,
     setControllerState,
+    refreshMessagesSilently,
     refreshAccountMemoryAfterMemoryMutation,
     eventAppliers,
   });
@@ -224,6 +225,7 @@ export function useChatRuntimeController(options?: {
     refreshConversationSilently,
     refreshMessagesSilently,
     refreshAccountMemoryAfterMemoryMutation,
+    recoverStreamingConversation,
     eventAppliers,
   });
 
@@ -259,6 +261,7 @@ export function useChatRuntimeController(options?: {
     isRecoveringMessages: viewModel.isRecoveringMessages,
     isStopping: viewModel.isStopping,
     isSending: viewModel.isSending,
+    connectionState: viewModel.connectionState,
     error: viewModel.error,
     init,
     refreshList,

@@ -60,6 +60,20 @@ function WorkspaceManagementPageContent() {
     initialData: null,
   });
 
+  useEffect(() => {
+    const params = new URLSearchParams(searchParamsString);
+    if (params.get('createWorkspace') !== '1') return;
+
+    setWorkspaceDialog({
+      open: true,
+      mode: 'create',
+      initialData: null,
+    });
+    params.delete('createWorkspace');
+    const query = params.toString();
+    router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
+  }, [pathname, router, searchParamsString]);
+
   // Get organization and mutations
   const { currentOrganization } = useOrganizations();
   const { createWorkspace, isCreating, updateWorkspace, isUpdating } = useWorkspaceActions();

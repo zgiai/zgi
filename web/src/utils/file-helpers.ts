@@ -286,8 +286,8 @@ export function getEffectiveAllowedFileExtensions(
  * The result follows workflow feature semantics:
  * - `custom` is exclusive and only honors explicit custom extensions
  * - non-`custom` uses type-derived extensions
- * - `document` is derived from supported server extensions minus image/audio/video
- * - final output is normalized and intersected with server-supported extensions when provided
+ * - `document` is derived from server-supported document extensions when provided
+ * - media categories are not intersected with the server document-parser capability list
  */
 export function getEffectiveChatUploadExtensions(
   fileTypes: string[] = [],
@@ -299,10 +299,7 @@ export function getEffectiveChatUploadExtensions(
   const hasSupportedExtensions = normalizedSupported.length > 0;
 
   if (normalizedTypes.includes('custom')) {
-    const normalizedCustomExtensions = filterLowercaseExtensions(allowedExtensions);
-    if (!hasSupportedExtensions) return normalizedCustomExtensions;
-
-    return normalizedCustomExtensions.filter(ext => normalizedSupported.includes(ext));
+    return filterLowercaseExtensions(allowedExtensions);
   }
 
   const typeSet = new Set(normalizedTypes);
@@ -323,10 +320,7 @@ export function getEffectiveChatUploadExtensions(
     effectiveExtensions.push(...documentExtensions);
   }
 
-  const normalizedEffectiveExtensions = filterLowercaseExtensions(effectiveExtensions);
-  if (!hasSupportedExtensions) return normalizedEffectiveExtensions;
-
-  return normalizedEffectiveExtensions.filter(ext => normalizedSupported.includes(ext));
+  return filterLowercaseExtensions(effectiveExtensions);
 }
 
 /**

@@ -2,6 +2,9 @@ package v1
 
 import (
 	"github.com/gin-gonic/gin"
+	"github.com/zgiai/zgi/api/config"
+	notificationsms "github.com/zgiai/zgi/api/internal/modules/notification/sms"
+	authService "github.com/zgiai/zgi/api/internal/modules/user/auth/service"
 
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	system_service "github.com/zgiai/zgi/api/internal/modules/system/service"
@@ -17,6 +20,8 @@ import (
 type UserRouteDeps struct {
 	DB                         *gorm.DB
 	AccountService             interfaces.AccountService
+	PhoneAuthAccounts          authService.PhoneAuthAccountGateway
+	NotificationSMSService     notificationsms.Service
 	WorkspaceManagementService interfaces.WorkspaceManagementService
 	OrganizationService        interfaces.OrganizationService
 	DepartmentService          workspaceService.DepartmentService
@@ -30,6 +35,12 @@ func RegisterUserRoutes(v1 *gin.RouterGroup, deps UserRouteDeps) {
 	}
 	if deps.AccountService == nil {
 		panic("user routes require account service")
+	}
+	if deps.PhoneAuthAccounts == nil {
+		panic("user routes require phone auth accounts")
+	}
+	if deps.NotificationSMSService == nil {
+		panic("user routes require notification sms service")
 	}
 	if deps.WorkspaceManagementService == nil {
 		panic("user routes require workspace management service")
@@ -51,6 +62,16 @@ func RegisterUserRoutes(v1 *gin.RouterGroup, deps UserRouteDeps) {
 	accountHandler := authHandler.NewAccountHandler(deps.AccountService, deps.WorkspaceManagementService)
 	forgotPasswordHandler := authHandler.NewForgotPasswordHandler(deps.AccountService)
 	authHandlerInstance := authHandler.NewAuthHandler(deps.AccountService, featureService, tokenMgr)
+	phoneAuthService := authService.NewPhoneAuthService(
+		deps.PhoneAuthAccounts,
+		tokenMgr,
+		authService.NewNotificationSMSPhoneCodeSender(deps.NotificationSMSService),
+		authService.PhoneAuthOptions{
+			AllowRegister:          config.Current().Feature.AllowRegister,
+			MasterVerificationCode: config.Current().Auth.MasterVerificationCode,
+		},
+	)
+	phoneAuthHandler := authHandler.NewPhoneAuthHandler(phoneAuthService)
 	activateHandler := authHandler.NewActivateHandler(deps.AccountService)
 
 	membersHandler := workspaceHandler.NewMembersHandler(
@@ -73,6 +94,7 @@ func RegisterUserRoutes(v1 *gin.RouterGroup, deps UserRouteDeps) {
 	accountHandler.RegisterRoutes(v1)
 	forgotPasswordHandler.RegisterRoutes(v1)
 	authHandlerInstance.RegisterAuthRoutes(v1)
+	phoneAuthHandler.RegisterRoutes(v1)
 	activateHandler.RegisterRoutes(v1)
 	enterpriseHandler.RegisterRoutes(v1)
 	membersHandler.RegisterRoutes(v1)

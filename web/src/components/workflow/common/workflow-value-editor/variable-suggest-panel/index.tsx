@@ -33,6 +33,7 @@ export interface VariableSuggestPanelProps {
   onExpand?: (item: VarOption) => void;
   onBack?: () => void;
   suggestPath?: string[];
+  ownerId: string;
   portalRoot?: FloatingPanelPortalRoot;
   labels: {
     empty: string;
@@ -54,6 +55,7 @@ export default function VariableSuggestPanel(props: VariableSuggestPanelProps) {
     onExpand,
     onBack,
     suggestPath = [],
+    ownerId,
     portalRoot,
   } = props;
   const hasActive = activeGroupIndex >= 0 && activeItemIndex >= 0;
@@ -111,7 +113,11 @@ export default function VariableSuggestPanel(props: VariableSuggestPanelProps) {
       className="overflow-hidden p-0"
       role="tooltip"
     >
-      <div data-wf-suggest="open" className="flex h-full min-h-0 flex-col">
+      <div
+        data-wf-suggest="open"
+        data-wf-suggest-owner={ownerId}
+        className="flex h-full min-h-0 flex-col"
+      >
         {/* Header/Breadcrumb (Hide if only sourceId is present) */}
         {suggestPath.length > 1 && (
           <div className="sticky top-0 z-10 flex items-center gap-2 border-b bg-popover/95 p-2 backdrop-blur">

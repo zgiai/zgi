@@ -54,7 +54,9 @@ interface AgentRuntimeAIChatKnowledgeContext {
 
 interface AgentRuntimeAIChatMemoryContext {
   enabled: boolean;
-  slots: Array<Pick<AgentMemorySlotConfig, 'key' | 'description' | 'enabled' | 'max_chars'>>;
+  slots: Array<
+    Pick<AgentMemorySlotConfig, 'key' | 'name' | 'description' | 'enabled' | 'max_chars'>
+  >;
 }
 
 interface AgentRuntimeAIChatPublishContext {
@@ -506,6 +508,7 @@ export function buildAgentRuntimeAIChatContext({
         enabled: Boolean(payload.agent_memory_enabled),
         slots: (payload.agent_memory_slots ?? []).map(slot => ({
           key: slot.key,
+          name: slot.name,
           description: slot.description,
           enabled: slot.enabled,
           max_chars: slot.max_chars,

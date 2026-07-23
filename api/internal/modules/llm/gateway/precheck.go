@@ -106,7 +106,8 @@ func (s *llmGatewayServiceImpl) precheckSingleModelRoutes(ctx context.Context, s
 		if errors.Is(err, llmerrors.DomainErrPrivateChannelUpstreamUnavailable) {
 			return []AppModelRouteWarning{{
 				Kind:   AppModelRouteWarningKindPrivateChannelUpstreamUnavailable,
-				Reason: "credential_unavailable",
+				Reason: privateChannelCredentialUnavailableReason,
+				Scope:  AppModelRouteWarningScopeAll,
 			}}, nil
 		}
 		return nil, err
@@ -185,6 +186,13 @@ func (s *llmGatewayServiceImpl) evaluateCandidateRouteWarnings(ctx context.Conte
 	}
 
 	warnings := summarizeCandidateRouteWarnings(states)
+	upstreamUnavailable, err := s.candidateUpstreamUnavailableWarning(ctx, organizationID, routes)
+	if err != nil {
+		return false, nil, err
+	}
+	if upstreamUnavailable != nil {
+		warnings = append(warnings, *upstreamUnavailable)
+	}
 	upstreamLow, err := s.allCandidateUpstreamBalancesLow(ctx, organizationID, routes)
 	if err != nil {
 		return false, nil, err
@@ -198,6 +206,80 @@ func (s *llmGatewayServiceImpl) evaluateCandidateRouteWarnings(ctx context.Conte
 		return true, nil, nil
 	}
 	return false, warnings, nil
+}
+
+func (s *llmGatewayServiceImpl) candidateUpstreamUnavailableWarning(
+	ctx context.Context,
+	organizationID uuid.UUID,
+	routes []*channelmodel.LLMRoute,
+) (*AppModelRouteWarning, error) {
+	if s.upstreamState == nil || len(routes) == 0 {
+		return nil, nil
+	}
+
+	credentialIDs := make([]uuid.UUID, 0, len(routes))
+	seenCredentialIDs := make(map[uuid.UUID]struct{}, len(routes))
+	candidateCount := 0
+	for _, route := range routes {
+		if route == nil {
+			continue
+		}
+		candidateCount++
+		if isOfficialRoute(route) || route.CredentialID == nil {
+			continue
+		}
+		if _, exists := seenCredentialIDs[*route.CredentialID]; exists {
+			continue
+		}
+		seenCredentialIDs[*route.CredentialID] = struct{}{}
+		credentialIDs = append(credentialIDs, *route.CredentialID)
+	}
+	if candidateCount == 0 || len(credentialIDs) == 0 {
+		return nil, nil
+	}
+
+	states, err := s.upstreamState.GetMany(ctx, organizationID, credentialIDs)
+	if err != nil {
+		return nil, err
+	}
+
+	affectedCount := 0
+	reason := upstreamstate.GuardReason("")
+	mixedReasons := false
+	for _, route := range routes {
+		if route == nil || isOfficialRoute(route) || route.CredentialID == nil {
+			continue
+		}
+		state := states[*route.CredentialID]
+		if state == nil || state.BlockReason == "" {
+			continue
+		}
+		affectedCount++
+		if reason == "" {
+			reason = state.BlockReason
+			continue
+		}
+		if reason != state.BlockReason {
+			mixedReasons = true
+		}
+	}
+	if affectedCount == 0 {
+		return nil, nil
+	}
+
+	warningReason := string(reason)
+	if mixedReasons {
+		warningReason = privateChannelCredentialUnavailableReason
+	}
+	scope := AppModelRouteWarningScopePartial
+	if affectedCount == candidateCount {
+		scope = AppModelRouteWarningScopeAll
+	}
+	return &AppModelRouteWarning{
+		Kind:   AppModelRouteWarningKindPrivateChannelUpstreamUnavailable,
+		Reason: warningReason,
+		Scope:  scope,
+	}, nil
 }
 
 func (s *llmGatewayServiceImpl) allCandidateUpstreamBalancesLow(

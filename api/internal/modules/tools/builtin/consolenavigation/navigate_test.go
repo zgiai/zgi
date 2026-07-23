@@ -58,6 +58,16 @@ func TestNormalizeConsoleRouteAllowsAgentDetailRoutes(t *testing.T) {
 	}
 }
 
+func TestNormalizeConsoleRouteCanonicalizesBareAgentDetailRoute(t *testing.T) {
+	href, label, err := normalizeConsoleRoute("/console/agents/3806ca05-55c0-4380-a07a-e1cbf6fdcdd1")
+	if err != nil {
+		t.Fatalf("normalizeConsoleRoute returned error: %v", err)
+	}
+	if href != "/console/agents/3806ca05-55c0-4380-a07a-e1cbf6fdcdd1/agent" || label != "Agent Detail" {
+		t.Fatalf("href=%q label=%q, want canonical Agent config route", href, label)
+	}
+}
+
 func TestNormalizeConsoleRouteRejectsExternalAndUnknownRoutes(t *testing.T) {
 	for _, href := range []string{
 		"https://example.com/console/files",

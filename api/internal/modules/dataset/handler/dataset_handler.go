@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
+	"github.com/zgiai/zgi/api/internal/capabilities/agentbindings"
 	"github.com/zgiai/zgi/api/internal/dto"
 	"github.com/zgiai/zgi/api/internal/util"
 
@@ -42,6 +44,10 @@ type DatasetHandler struct {
 	batchTaskManager    *service.BatchHitTestingTaskManager // Add batch task manager
 	permissionService   interfaces.ResourcePermissionService
 }
+
+const datasetNameMaxLength = 40
+
+var errDatasetNameTooLong = errors.New("dataset name exceeds maximum length")
 
 // NewDatasetHandler creates a new DatasetHandler instance
 func NewDatasetHandler(
@@ -286,7 +292,7 @@ func (h *DatasetHandler) PostDatasets(c *gin.Context) {
 
 	// Validate name
 	if err := h.validateName(req.Name); err != nil {
-		response.Fail(c, response.ErrDatasetName)
+		failDatasetNameValidation(c, err)
 		return
 	}
 
@@ -497,7 +503,7 @@ func (h *DatasetHandler) PatchDataset(c *gin.Context) {
 	// Validate name if provided
 	if req.Name != nil {
 		if err := h.validateName(*req.Name); err != nil {
-			response.Fail(c, response.ErrDatasetName)
+			failDatasetNameValidation(c, err)
 			return
 		}
 	}
@@ -652,10 +658,23 @@ func (h *DatasetHandler) DeleteDataset(c *gin.Context) {
 	}
 
 	// Delete dataset
-	err := h.datasetService.DeleteDataset(c.Request.Context(), datasetID, accountID, tenantID)
+	err := h.datasetService.DeleteDataset(
+		c.Request.Context(),
+		datasetID,
+		accountID,
+		tenantID,
+		c.Query("agent_binding_action"),
+		c.Query("impact_token"),
+	)
 	if err != nil {
+		if util.WriteAgentBindingConflict(c, err) {
+			return
+		}
 		errMsg := err.Error()
 		switch {
+		case errors.Is(err, service.ErrInvalidAgentBindingAction):
+			response.FailWithMessage(c, response.ErrInvalidParam, errMsg)
+			return
 		case strings.Contains(errMsg, "dataset not found") || strings.Contains(errMsg, "record not found"):
 			response.Fail(c, response.ErrDatasetNotFound)
 			return
@@ -1262,6 +1281,42 @@ func (h *DatasetHandler) DeleteDatasetQuery(c *gin.Context) {
 	response.Success(c, nil)
 }
 
+type datasetDeleteImpactPreviewer interface {
+	PreviewDatasetDeleteImpact(ctx context.Context, datasetID, accountID string) (*agentbindings.Impact, error)
+}
+
+func (h *DatasetHandler) PreviewDatasetDeleteImpact(c *gin.Context) {
+	accountID := c.GetString("account_id")
+	datasetID := c.Param("dataset_id")
+	if accountID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+	if _, err := uuid.Parse(datasetID); err != nil {
+		response.Fail(c, response.ErrInvalidUuid)
+		return
+	}
+	previewer, ok := h.datasetService.(datasetDeleteImpactPreviewer)
+	if !ok {
+		response.Fail(c, response.ErrSystemError)
+		return
+	}
+	impact, err := previewer.PreviewDatasetDeleteImpact(c.Request.Context(), datasetID, accountID)
+	if err != nil {
+		if errors.Is(err, service.ErrDatasetAccessDenied) {
+			response.Fail(c, response.ErrDatasetPermissionDenied)
+			return
+		}
+		if strings.Contains(err.Error(), "record not found") {
+			response.Fail(c, response.ErrDatasetNotFound)
+			return
+		}
+		response.FailWithMessage(c, response.ErrSystemError, err.Error())
+		return
+	}
+	response.Success(c, impact)
+}
+
 // GetRandomDatasetQuestions handles GET /datasets/:dataset_id/random-questions
 // This endpoint randomly selects a specified number of questions from the dataset
 func (h *DatasetHandler) GetRandomDatasetQuestions(c *gin.Context) {
@@ -1582,10 +1637,22 @@ func (h *DatasetHandler) GetDatasetQuestionCount(c *gin.Context) {
 
 // Helper methods for validation
 func (h *DatasetHandler) validateName(name string) error {
-	if len(name) < 1 || len(name) > 40 {
-		return fmt.Errorf("Name must be between 1 to 40 characters")
+	nameLength := utf8.RuneCountInString(name)
+	if nameLength < 1 {
+		return fmt.Errorf("dataset name is required")
+	}
+	if nameLength > datasetNameMaxLength {
+		return errDatasetNameTooLong
 	}
 	return nil
+}
+
+func failDatasetNameValidation(c *gin.Context, err error) {
+	if errors.Is(err, errDatasetNameTooLong) {
+		response.Fail(c, response.ErrDatasetNameLong)
+		return
+	}
+	response.Fail(c, response.ErrDatasetName)
 }
 
 func (h *DatasetHandler) validateDescriptionLength(description string) error {
@@ -1753,6 +1820,7 @@ func (h *DatasetHandler) RegisterRoutes(router *gin.RouterGroup) {
 	authWithTenant.GET("/datasets/:dataset_id", h.GetDataset)
 	authWithTenant.PATCH("/datasets/:dataset_id", h.PatchDataset)
 	authWithTenant.DELETE("/datasets/:dataset_id", h.DeleteDataset)
+	authWithTenant.GET("/datasets/:dataset_id/delete-impact", h.PreviewDatasetDeleteImpact)
 
 	// DatasetIndexingEstimateApi route: /datasets/indexing-estimate
 	authWithTenant.POST("/datasets/indexing-estimate", h.PostDatasetIndexingEstimate)

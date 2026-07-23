@@ -7,14 +7,6 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Skeleton } from '@/components/ui/skeleton';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
 import { Separator } from '@/components/ui/separator';
 import { Trash2, Loader, FileText, Check, Lightbulb, X, AlertTriangle } from 'lucide-react';
 import { Switch } from '@/components/ui/switch';
@@ -24,7 +16,7 @@ import MarkdownViewer from '@/components/common/markdown-viewer';
 import { useFilePreview } from '@/hooks/file/use-file-preview';
 import { useAnalyzeFileForTable } from '@/hooks/db/use-analyze-file-for-table';
 import type { DbTableColumn } from '@/services/types/db';
-import { useTranslations, useLocale } from 'next-intl';
+import { useLocale } from 'next-intl';
 import { ModelSelector } from '@/components/common/model-selector';
 import type { ModelSelectorValue } from '@/components/common/model-selector';
 import { useDefaultModelByUseCase } from '@/hooks/model/use-default-model-by-use-case';
@@ -45,11 +37,11 @@ import {
 } from '@/components/ui/dialog';
 import { cn } from '@/lib/utils';
 import { useT } from '@/i18n';
+import { toast } from 'sonner';
 
 export interface StepOneProps {
   dataSourceId: string;
   onAnalyzeDone: (cols: DbTableColumn[]) => void;
-  initialAiColumns?: DbTableColumn[];
 }
 
 // Prompt template type
@@ -89,7 +81,7 @@ const TEMPLATE_TEXTS: Readonly<
   },
 };
 
-export default function StepOne({ dataSourceId, onAnalyzeDone, initialAiColumns }: StepOneProps) {
+export default function StepOne({ dataSourceId, onAnalyzeDone }: StepOneProps) {
   const t = useT();
   const locale = useLocale();
   const currentLocale: SupportedLocale = locale === 'zh-Hans' ? 'zh-Hans' : 'en-US';
@@ -164,14 +156,7 @@ export default function StepOne({ dataSourceId, onAnalyzeDone, initialAiColumns 
     }
   }, [previewTemplate]);
 
-  // AI result
-  const [aiColumns, setAiColumns] = useState<DbTableColumn[]>(initialAiColumns ?? []);
   const [analyzedPreviewContent, setAnalyzedPreviewContent] = useState('');
-  useEffect(() => {
-    if (Array.isArray(initialAiColumns)) {
-      setAiColumns(initialAiColumns);
-    }
-  }, [initialAiColumns]);
 
   const { analyze, isPending: isAnalyzing } = useAnalyzeFileForTable();
   useEffect(() => {
@@ -185,8 +170,8 @@ export default function StepOne({ dataSourceId, onAnalyzeDone, initialAiColumns 
     const hasPrompt = prompt.trim().length > 0;
     const hasModel = !!selectedModel?.model;
     if (!referenceEnabled) return hasPrompt && hasModel;
-    return hasPrompt && hasModel;
-  }, [prompt, referenceEnabled, selectedModel]);
+    return hasPrompt && hasModel && Boolean(selectedFile?.id);
+  }, [prompt, referenceEnabled, selectedFile?.id, selectedModel]);
 
   const handleConfirmFiles = useCallback((files: FileItem[]) => {
     const first = files[0];
@@ -198,6 +183,10 @@ export default function StepOne({ dataSourceId, onAnalyzeDone, initialAiColumns 
   }, []);
 
   const handleAnalyze = useCallback(async () => {
+    if (referenceEnabled && !selectedFile?.id) {
+      toast.error(t('dbs.createPage.selectFileFirst'));
+      return;
+    }
     if (!canAnalyze || !selectedModel) return;
     const payload = {
       prompt,
@@ -207,7 +196,6 @@ export default function StepOne({ dataSourceId, onAnalyzeDone, initialAiColumns 
     };
     const result = await analyze(payload);
     const cols = result.columns;
-    setAiColumns(cols);
     setAnalyzedPreviewContent(result.content ?? '');
     onAnalyzeDone(cols);
   }, [
@@ -219,6 +207,7 @@ export default function StepOne({ dataSourceId, onAnalyzeDone, initialAiColumns 
     onAnalyzeDone,
     selectedModel,
     dataSourceId,
+    t,
   ]);
 
   // File preview (markdown) for selected file
@@ -232,26 +221,6 @@ export default function StepOne({ dataSourceId, onAnalyzeDone, initialAiColumns 
     }
   );
   const displayedPreviewContent = analyzedPreviewContent || previewContent;
-
-  // Terms to highlight inside preview based on AI columns
-  const highlightTerms = useMemo(() => {
-    const set = new Set<string>();
-    aiColumns.forEach(col => {
-      const name = (col.name || '').trim();
-      if (name.length > 0) set.add(name);
-      const desc = (col.description || '').trim();
-      if (desc.length > 0) {
-        // Split description into tokens by common separators (handles Chinese/English)
-        const tokens = desc
-          .split(/[\s,，。；;:：]/)
-          .map(t => t.trim())
-          .filter(t => t.length >= 2);
-        tokens.forEach(t => set.add(t));
-      }
-    });
-    // Limit the number of terms to avoid performance issues
-    return Array.from(set).slice(0, 40);
-  }, [aiColumns]);
 
   return (
     <div className="flex h-full min-h-0 border rounded-md overflow-hidden">
@@ -431,63 +400,23 @@ export default function StepOne({ dataSourceId, onAnalyzeDone, initialAiColumns 
         </Button>
       </div>
 
-      {/* Right – preview + analysis result */}
-      <div className="flex-1 min-h-0 p-4 h-full space-y-4 overflow-y-auto">
-        {/* File Markdown preview */}
-        {referenceEnabled && selectedFile?.id && (
-          <div className="rounded-md border p-3 max-h-[280px] overflow-auto">
-            {isLoadingPreview ? (
-              <div className="space-y-2">
-                {Array.from({ length: 8 }).map((_, i) => (
-                  <Skeleton key={i} className="h-4 w-full" />
-                ))}
-              </div>
-            ) : displayedPreviewContent ? (
-              <MarkdownViewer content={displayedPreviewContent} highlights={highlightTerms} />
-            ) : (
-              <div className="text-sm text-muted-foreground">{t('dbs.createPage.noPreview')}</div>
-            )}
-          </div>
-        )}
-
-        {isAnalyzing ? (
-          <div className="space-y-2">
-            {Array.from({ length: 8 }).map((_, i) => (
-              <Skeleton key={i} className="h-6 w-full" />
-            ))}
-          </div>
-        ) : aiColumns.length === 0 ? (
-          <div className="h-full flex items-center justify-center text-muted-foreground">
-            {t('dbs.createPage.emptyHint')}
-          </div>
-        ) : (
-          <div className="border rounded-md overflow-hidden">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>{t('dbs.createPage.colFieldName')}</TableHead>
-                  <TableHead>{t('dbs.createPage.colDescription')}</TableHead>
-                  <TableHead>{t('dbs.createPage.colType')}</TableHead>
-                  <TableHead>{t('dbs.createPage.colRequired')}</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {aiColumns.map((col, idx) => (
-                  <TableRow key={`${col.name}-${idx}`}>
-                    <TableCell className="font-mono text-sm">{col.name}</TableCell>
-                    <TableCell>{col.description}</TableCell>
-                    <TableCell>{String(col.type)}</TableCell>
-                    <TableCell>
-                      {col.is_required
-                        ? t('dbs.createPage.requiredYes')
-                        : t('dbs.createPage.requiredNo')}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </div>
-        )}
+      {/* Right – file preview only; generated fields are reviewed in step 2 */}
+      <div className="flex-1 min-h-0 p-4 h-full overflow-hidden">
+        <div className="h-full min-h-[420px] overflow-auto rounded-md border p-4">
+          {referenceEnabled && selectedFile?.id && isLoadingPreview ? (
+            <div className="space-y-2">
+              {Array.from({ length: 8 }).map((_, i) => (
+                <Skeleton key={i} className="h-4 w-full" />
+              ))}
+            </div>
+          ) : referenceEnabled && selectedFile?.id && displayedPreviewContent ? (
+            <MarkdownViewer content={displayedPreviewContent} />
+          ) : (
+            <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+              {t('dbs.createPage.noPreview')}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* File selection dialog */}

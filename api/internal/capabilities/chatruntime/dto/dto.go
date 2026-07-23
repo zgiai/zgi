@@ -1,7 +1,14 @@
 package dto
 
+const (
+	RuntimeSurfaceWorkChat          = "work_chat"
+	RuntimeSurfaceContextualSidebar = "contextual_sidebar"
+	RuntimeSurfaceExternalPageChat  = "external_page_chat"
+)
+
 type CreateConversationRequest struct {
-	Title string `json:"title"`
+	Title            string `json:"title"`
+	ConversationType string `json:"conversation_type,omitempty"`
 }
 
 type UpdateConversationRequest struct {
@@ -112,7 +119,9 @@ type SkillConfigResponse struct {
 }
 
 type UpdateSkillConfigRequest struct {
-	EnabledSkillIDs []string `json:"enabled_skill_ids"`
+	EnabledSkillIDs    []string `json:"enabled_skill_ids"`
+	AgentBindingAction string   `json:"agent_binding_action,omitempty"`
+	ImpactToken        string   `json:"impact_token,omitempty"`
 }
 
 type AccountSkillPreferenceResponse struct {
@@ -160,6 +169,7 @@ type ExistingSkillResponse struct {
 type SkillDisplayResponse struct {
 	Icon        string              `json:"icon"`
 	Category    string              `json:"category"`
+	Scenarios   []string            `json:"scenarios,omitempty"`
 	Label       map[string]string   `json:"label"`
 	Description map[string]string   `json:"description"`
 	WhenToUse   map[string]string   `json:"when_to_use"`
@@ -174,6 +184,7 @@ type ConversationResponse struct {
 	Title                string                 `json:"title"`
 	Status               string                 `json:"status"`
 	RuntimeStatus        string                 `json:"runtime_status"`
+	ConversationType     string                 `json:"conversation_type"`
 	CurrentLeafMessageID *string                `json:"current_leaf_message_id,omitempty"`
 	ActiveMessageID      *string                `json:"active_message_id,omitempty"`
 	DialogueCount        int                    `json:"dialogue_count"`

@@ -35,13 +35,17 @@ tool_governance:
     idempotency_required: false
 display:
   icon: chart-no-axes-combined
-  category: visualization
+  category: data_analysis
+  scenarios:
+    - data_insights
+    - content_creation
+    - office_collaboration
   label:
     en_US: Chart Generator
     zh_Hans: 图表生成器
   description:
-    en_US: Generates SVG radar, bar, line, pie, doughnut, scatter, and score distribution charts from structured data.
-    zh_Hans: 根据结构化数据生成 SVG 图表，可生成例如雷达图、柱状图、折线图、饼状图、环形图、散点图、分数段分布图。
+    en_US: Designed for reports and data analysis that need visual evidence; turns structured data into SVG radar, bar, line, pie, doughnut, scatter, or distribution charts.
+    zh_Hans: 适用于汇报和数据分析中的可视化展示，可将结构化数据生成雷达图、柱状图、折线图、饼图、环形图、散点图或分布图。
   when_to_use:
     en_US: Use when the answer should include a generated chart artifact.
     zh_Hans: 当回答需要生成图表文件时使用。

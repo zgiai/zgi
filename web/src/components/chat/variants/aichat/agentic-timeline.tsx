@@ -34,6 +34,7 @@ import {
 } from '@/components/chat/variants/aichat/skill-display';
 import { AIChatSkillIcon } from '@/components/chat/variants/aichat/skill-icon';
 import { AIChatSkillResultSummary } from '@/components/chat/variants/aichat/skill-result-summary';
+import { isRoutineSkillLoadInvocation } from '@/components/chat/variants/aichat/skill-load-timeline';
 import {
   ToolGovernanceDecisionCard,
   publishToolGovernancePendingApproval,
@@ -279,7 +280,13 @@ interface ToolGovernanceDecisionViewModel {
 function getInvocationTone(invocation: AIChatSkillInvocation): TimelineTone {
   if (invocation.status === 'loading' || invocation.status === 'running') return 'running';
   if (invocation.kind === 'guardrail') return 'success';
-  if (invocation.status === 'error' || invocation.status === 'blocked') return 'error';
+  if (
+    invocation.status === 'error' ||
+    invocation.status === 'blocked' ||
+    invocation.status === 'denied'
+  ) {
+    return 'error';
+  }
   return 'success';
 }
 
@@ -862,7 +869,7 @@ function buildSkillTitle(
     invocation.path ||
     t('consoleChat.skills.trace.unknownTool');
 
-  if (invocation.kind === 'skill_load') {
+  if (invocation.kind === 'skill_load' || invocation.kind === 'skill_load_attempt') {
     if (tone === 'running') {
       return t('consoleChat.skills.agentic.loadingSkill', { skill: skill.label });
     }
@@ -3335,23 +3342,9 @@ function isSupersededByClientActionSkillEvent(
   return Boolean(key && completedClientActionKeys.has(key));
 }
 
-function isCompletedSuccessfulSkillLoad(
-  item: AIChatAgenticTimelineItem,
-  messageStatus: AIChatMessage['status'] | undefined
-): boolean {
-  if (
-    item.type === 'skill_event' &&
-    item.invocation.kind === 'skill_load' &&
-    item.invocation.skill_id === 'console-navigator'
-  ) {
-    return true;
-  }
-  return (
-    messageStatus === 'completed' &&
-    item.type === 'skill_event' &&
-    item.invocation.kind === 'skill_load' &&
-    invocationStatusIsSuccessful(item.invocation)
-  );
+function isRoutineSkillLoadTimelineItem(item: AIChatAgenticTimelineItem): boolean {
+  if (item.type !== 'skill_event') return false;
+  return isRoutineSkillLoadInvocation(item.invocation);
 }
 
 function isInternalReferenceReadSkillEvent(item: AIChatAgenticTimelineItem): boolean {
@@ -3608,7 +3601,7 @@ function filterTimelineForRendering(
         !isSupersededByClientActionSkillEvent(item, completedClientActionKeys) &&
         !isAssetObservationClientActionTimelineItem(item) &&
         !isInternalReferenceReadSkillEvent(item) &&
-        !isCompletedSuccessfulSkillLoad(item, messageStatus) &&
+        !isRoutineSkillLoadTimelineItem(item) &&
         !(
           item.type === 'tool_governance_decision' &&
           governanceItemCorrelationId(item) &&

@@ -166,7 +166,12 @@ export function AgentRuntimeMemoryValuesDialog({
                     <div key={value.key} className="rounded-md border p-3">
                       <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0">
-                          <div className="text-sm font-medium">{value.key}</div>
+                          <div className="text-sm font-medium">
+                            {value.name?.trim() || value.key}
+                          </div>
+                          <div className="mt-0.5 font-mono text-[11px] text-muted-foreground">
+                            {t('memory.idValue', { id: value.key })}
+                          </div>
                           <div className="mt-1 text-xs text-muted-foreground">
                             {value.description || t('memoryValues.noDescription')}
                           </div>

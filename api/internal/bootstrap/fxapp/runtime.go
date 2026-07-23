@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/getsentry/sentry-go"
 	"github.com/gin-gonic/gin"
 	"github.com/hibiken/asynq"
 	"github.com/zgiai/zgi/api/config"
@@ -19,6 +18,7 @@ import (
 	graphflowworker "github.com/zgiai/zgi/api/internal/modules/dataset/graphflow/worker"
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
 	system_service "github.com/zgiai/zgi/api/internal/modules/system/service"
+	"github.com/zgiai/zgi/api/internal/observability"
 	"github.com/zgiai/zgi/api/pkg/queue"
 	pkgscheduler "github.com/zgiai/zgi/api/pkg/scheduler"
 	"github.com/zgiai/zgi/api/routes"
@@ -42,8 +42,8 @@ type runtimeParams struct {
 	TaskManager         *queue.TaskManager
 	TaskHandlerRegistry *container.TaskHandlerRegistrar
 	Scheduler           *pkgscheduler.Scheduler
-	Sentry              *SentryResource
 	OpenTelemetry       *OpenTelemetryResource
+	ZGIReporter         *observability.ZGIReporter
 	Logger              *zap.Logger
 }
 
@@ -117,7 +117,7 @@ func registerRuntime(lc fx.Lifecycle, params runtimeParams) error {
 	RegisterGRPCServerLifecycle(lc, params.GRPCServer, params.GRPCListener, params.Logger)
 	RegisterHTTPServerLifecycle(lc, params.HTTPServer, params.HTTPListener, params.Logger)
 	RegisterSQLAuditRecorderLifecycle(lc, params.ServiceContainer, params.Logger)
-	registerSentryLifecycle(lc, params.Sentry)
+	registerZGIReporterLifecycle(lc, params.ZGIReporter, params.Logger)
 
 	return nil
 }
@@ -285,14 +285,18 @@ func RegisterSchedulerLifecycle(lc fx.Lifecycle, scheduler SchedulerLifecycle, l
 	})
 }
 
-func registerSentryLifecycle(lc fx.Lifecycle, resource *SentryResource) {
-	if resource == nil || !resource.Enabled {
+func registerZGIReporterLifecycle(lc fx.Lifecycle, reporter *observability.ZGIReporter, log *zap.Logger) {
+	if reporter == nil || !reporter.Enabled() {
 		return
 	}
 
 	lc.Append(fx.Hook{
-		OnStop: func(context.Context) error {
-			sentry.Flush(2 * time.Second)
+		OnStop: func(ctx context.Context) error {
+			flushCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+			defer cancel()
+			if err := reporter.Flush(flushCtx); err != nil {
+				log.Warn("failed to flush ZGI Reporter", zap.Error(err))
+			}
 			return nil
 		},
 	})

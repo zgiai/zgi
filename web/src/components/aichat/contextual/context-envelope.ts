@@ -1152,7 +1152,6 @@ export function createContextualAIChatTransport(
         messageId,
         {
           ...payload,
-          surface: 'contextual_sidebar',
           runtime_context: envelope || payload.runtime_context,
           operation_context: snapshotOperationContext(mergedOperationContext),
         },
@@ -1212,7 +1211,6 @@ export function createContextualAIChatTransport(
         actionId,
         {
           ...payload,
-          surface: 'contextual_sidebar',
           runtime_context: envelope || payload.runtime_context,
           operation_context: snapshotOperationContext(mergedOperationContext),
         },
@@ -1241,7 +1239,6 @@ export function createContextualAIChatTransport(
         requestId,
         {
           ...payload,
-          surface: 'contextual_sidebar',
           runtime_context: envelope || payload.runtime_context,
           operation_context: snapshotOperationContext(mergedOperationContext),
         },

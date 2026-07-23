@@ -1,8 +1,5 @@
-import {
-  captureRouterTransitionStart,
-  initializeSentryClient,
-} from '@/lib/sentry/client';
+import { captureRouterTransitionStart, initializeZGIReporter } from '@/lib/observability';
 
-initializeSentryClient();
+initializeZGIReporter();
 
 export const onRouterTransitionStart = captureRouterTransitionStart;

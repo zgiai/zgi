@@ -6,6 +6,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { useT } from '@/i18n/translations';
 import type { ModelSelectorValue } from '@/components/common/model-selector';
 import type { SingleChatController } from '@/components/chat/controllers/single-chat-controller';
+import type { ImageRuntimeModel } from '@/services/types/image-runtime';
 
 export interface SysImageProps {
   controller: SingleChatController | null;
@@ -14,6 +15,7 @@ export interface SysImageProps {
   onModelChange: (value: ModelSelectorValue) => void;
   inputTopNotice?: React.ReactNode;
   conversationSearchKey?: readonly unknown[];
+  imageRuntimeModels?: ImageRuntimeModel[];
 }
 
 export function SysImage({
@@ -23,6 +25,7 @@ export function SysImage({
   onModelChange,
   inputTopNotice,
   conversationSearchKey,
+  imageRuntimeModels,
 }: SysImageProps) {
   const t = useT('webapp');
 
@@ -55,6 +58,7 @@ export function SysImage({
       onModelChange={onModelChange}
       inputTopNotice={inputTopNotice}
       conversationSearchKey={conversationSearchKey}
+      imageRuntimeModels={imageRuntimeModels}
     />
   );
 }

@@ -845,8 +845,9 @@ func (s *WorkflowService) RunDraftWorkflow(ctx context.Context, workspaceID, age
 				return nil, fmt.Errorf("invalid account ID: %w", err)
 			}
 
-			// Create message record with invoke_from = "debugger" and workflow_version_uuid = null
-			_, err = s.advancedChatHandler.CreateWorkflowMessage(
+			// Preserve both the execution inputs and lifecycle status. A failed
+			// workflow run must not become a completed blank assistant message.
+			_, err = s.advancedChatHandler.CreateWorkflowMessageWithInputsAndStatus(
 				agentUUID,
 				conversationUUID,
 				workflowRunUUID,
@@ -856,7 +857,9 @@ func (s *WorkflowService) RunDraftWorkflow(ctx context.Context, workspaceID, age
 				string(InvokeFromDebugger), // invokeFrom - debugger for draft workflow
 				accountUUID,
 				&accountUUID,
-				nil, // workflowVersionUUID - null for draft/debug mode
+				nil,
+				draftReq.Inputs,
+				workflowExecutionMessageStatus(executionResult.Status),
 			)
 			if err != nil {
 				logger.Error("Failed to create workflow message", err)
@@ -2779,6 +2782,23 @@ func buildBlockingWorkflowRunResponse(agentID string, workflowRunID string, resu
 		}
 	}
 	return response
+}
+
+func workflowExecutionMessageStatus(status string) string {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "failed", "error", "exception":
+		return conversation.AgentMessageStatusError
+	case "stopped", "canceled", "cancelled":
+		return conversation.AgentMessageStatusStopped
+	case "running":
+		return conversation.AgentMessageStatusRunning
+	case conversation.AgentMessageStatusPendingApproval:
+		return conversation.AgentMessageStatusPendingApproval
+	case conversation.AgentMessageStatusPendingQuestion:
+		return conversation.AgentMessageStatusPendingQuestion
+	default:
+		return conversation.AgentMessageStatusCompleted
+	}
 }
 
 func workflowExecutionLogStatusAndError(result *WorkflowExecutionResult, err error) (string, string) {

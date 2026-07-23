@@ -32,6 +32,7 @@ type AgentMemorySlot struct {
 	WorkspaceID uuid.UUID `gorm:"type:uuid;not null;uniqueIndex:idx_agent_memory_slots_agent_key,priority:1;index:idx_agent_memory_slots_agent_sort,priority:1" json:"workspace_id"`
 	AgentID     uuid.UUID `gorm:"type:uuid;not null;uniqueIndex:idx_agent_memory_slots_agent_key,priority:2;index:idx_agent_memory_slots_agent_sort,priority:2" json:"agent_id"`
 	Key         string    `gorm:"type:varchar(64);not null;uniqueIndex:idx_agent_memory_slots_agent_key,priority:3" json:"key"`
+	Name        string    `gorm:"type:varchar(80);not null;default:''" json:"name"`
 	Description string    `gorm:"type:text;not null;default:''" json:"description"`
 	MaxChars    int       `gorm:"not null;default:1000" json:"max_chars"`
 	Enabled     bool      `gorm:"not null;default:true;index" json:"enabled"`

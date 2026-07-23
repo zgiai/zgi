@@ -29,6 +29,7 @@ import (
 	"github.com/zgiai/zgi/api/pkg/tokenization"
 	"github.com/zgiai/zgi/api/pkg/vectordb"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 const (
@@ -75,6 +76,15 @@ type KnowledgeListResponse struct {
 	FallbackUsed   bool                      `json:"fallback_used"`
 	Limit          int                       `json:"limit"`
 	Warnings       []string                  `json:"warnings,omitempty"`
+	KnowledgeBases []KnowledgeDatasetSummary `json:"knowledge_bases"`
+}
+
+// KnowledgeCandidatePage is a stable page of accessible datasets for an Agent candidate picker.
+type KnowledgeCandidatePage struct {
+	Page           int                       `json:"page"`
+	Limit          int                       `json:"limit"`
+	Total          int64                     `json:"total"`
+	HasMore        bool                      `json:"has_more"`
 	KnowledgeBases []KnowledgeDatasetSummary `json:"knowledge_bases"`
 }
 
@@ -271,6 +281,115 @@ func (s *KnowledgeRetrievalService) ListAccessibleDatasets(ctx context.Context, 
 		})
 	}
 	return knowledgeListResponse(search, limit, fallbackUsed, out), nil
+}
+
+// ListAccessibleDatasetCandidates returns a permission-scoped page with persisted selections first.
+func (s *KnowledgeRetrievalService) ListAccessibleDatasetCandidates(ctx context.Context, scope KnowledgeScope, query string, selectedIDs []string, includeSelected bool, page, limit int) (*KnowledgeCandidatePage, error) {
+	if s == nil || s.db == nil {
+		return nil, fmt.Errorf("knowledge retrieval service is not configured")
+	}
+	page = normalizeKnowledgeCandidatePage(page)
+	limit = normalizeKnowledgeLimit(limit, defaultKnowledgeListLimit, maxKnowledgeListLimit)
+	workspaceID := strings.TrimSpace(scope.WorkspaceID)
+	organizationID := strings.TrimSpace(scope.OrganizationID)
+	accountID := strings.TrimSpace(scope.AccountID)
+	if organizationID == "" && workspaceID == "" {
+		return nil, fmt.Errorf("organization_id or workspace_id is required")
+	}
+	if accountID == "" {
+		return nil, fmt.Errorf("account_id is required")
+	}
+
+	workspaceIDs := []string{workspaceID}
+	if organizationID != "" {
+		accessibleWorkspaceIDs, err := s.accessibleKnowledgeWorkspaceIDs(ctx, organizationID, workspaceID, accountID)
+		if err != nil {
+			return nil, err
+		}
+		workspaceIDs = accessibleWorkspaceIDs
+	} else {
+		allowed, err := s.canAccessKnowledgeWorkspace(ctx, workspaceID, accountID)
+		if err != nil {
+			return nil, err
+		}
+		if !allowed {
+			workspaceIDs = nil
+		}
+	}
+	workspaceIDs = normalizeStringList(workspaceIDs)
+	if len(workspaceIDs) == 0 {
+		return &KnowledgeCandidatePage{
+			Page:           page,
+			Limit:          limit,
+			KnowledgeBases: []KnowledgeDatasetSummary{},
+		}, nil
+	}
+
+	dbQuery := s.db.WithContext(ctx).
+		Model(&dataset_model.Dataset{}).
+		Where("workspace_id IN ?", workspaceIDs)
+	if search := strings.TrimSpace(query); search != "" {
+		pattern := "%" + strings.ToLower(search) + "%"
+		dbQuery = dbQuery.Where(
+			"LOWER(COALESCE(name, '')) LIKE ? OR LOWER(COALESCE(description, '')) LIKE ?",
+			pattern,
+			pattern,
+		)
+	}
+	selectedIDs = normalizeStringList(selectedIDs)
+	if !includeSelected && len(selectedIDs) > 0 {
+		dbQuery = dbQuery.Where("id NOT IN ?", selectedIDs)
+	}
+
+	var total int64
+	if err := dbQuery.Count(&total).Error; err != nil {
+		return nil, fmt.Errorf("count accessible dataset candidates: %w", err)
+	}
+	if includeSelected && len(selectedIDs) > 0 {
+		dbQuery = dbQuery.Clauses(clause.OrderBy{Expression: clause.Expr{
+			SQL:                "CASE WHEN id IN ? THEN 0 ELSE 1 END, LOWER(name) ASC, id ASC",
+			Vars:               []interface{}{selectedIDs},
+			WithoutParentheses: true,
+		}})
+	} else {
+		dbQuery = dbQuery.Order("LOWER(name) ASC, id ASC")
+	}
+
+	var datasets []*dataset_model.Dataset
+	if err := dbQuery.
+		Limit(limit).
+		Offset((page - 1) * limit).
+		Find(&datasets).Error; err != nil {
+		return nil, fmt.Errorf("list accessible dataset candidates: %w", err)
+	}
+	items := make([]KnowledgeDatasetSummary, 0, len(datasets))
+	for _, dataset := range datasets {
+		if dataset == nil {
+			continue
+		}
+		items = append(items, KnowledgeDatasetSummary{
+			DatasetID:       dataset.ID,
+			WorkspaceID:     dataset.WorkspaceID,
+			Name:            dataset.Name,
+			Description:     stringPtrValue(dataset.Description),
+			Provider:        dataset.Provider,
+			EnableGraphFlow: dataset.EnableGraphFlow,
+		})
+	}
+	return &KnowledgeCandidatePage{
+		Page:           page,
+		Limit:          limit,
+		Total:          total,
+		HasMore:        int64(page*limit) < total,
+		KnowledgeBases: items,
+	}, nil
+}
+
+func normalizeKnowledgeCandidatePage(page int) int {
+	if page <= 0 {
+		return 1
+	}
+	return page
 }
 
 // Retrieve retrieves and merges knowledge from explicitly provided datasets.

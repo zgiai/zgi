@@ -118,7 +118,7 @@ func TestRunnerAcceptsStreamedFinalAnswerWithPendingPlanWithoutRetract(t *testin
 		Prepared:                  prepared,
 		Resolved:                  runnerTestResolvedSkills(),
 		PreferExplicitFinalAnswer: true,
-		RuntimeStateSnapshot:        func() map[string]interface{} { return evidence },
+		RuntimeStateSnapshot:      func() map[string]interface{} { return evidence },
 	})
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
@@ -178,7 +178,7 @@ func TestRunnerAcceptsStreamedAnswerWhenOptionalMetadataIsMalformed(t *testing.T
 		Prepared:                  prepared,
 		Resolved:                  runnerTestResolvedSkills(),
 		PreferExplicitFinalAnswer: true,
-		RuntimeStateSnapshot:        func() map[string]interface{} { return map[string]interface{}{} },
+		RuntimeStateSnapshot:      func() map[string]interface{} { return map[string]interface{}{} },
 	})
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
@@ -317,7 +317,7 @@ func TestRunnerReturnsPartialFinalAnswerWithoutRetryWhenStreamTerminatesEarly(t 
 		Prepared:                  prepared,
 		Resolved:                  runnerTestResolvedSkills(),
 		PreferExplicitFinalAnswer: true,
-		RuntimeStateSnapshot:        func() map[string]interface{} { return map[string]interface{}{} },
+		RuntimeStateSnapshot:      func() map[string]interface{} { return map[string]interface{}{} },
 	})
 	if err == nil {
 		t.Fatal("Run() error = nil, want truncated stream error")
@@ -573,8 +573,8 @@ func TestRunnerStreamsPlainAnswerWithoutExplicitFinalAnswerProtocol(t *testing.T
 	})
 
 	answer, _, err := runner.Run(context.Background(), RunRequest{
-		Prepared:           prepared,
-		Resolved:           runnerTestResolvedSkills(),
+		Prepared:             prepared,
+		Resolved:             runnerTestResolvedSkills(),
 		RuntimeStateSnapshot: func() map[string]interface{} { return map[string]interface{}{} },
 	})
 	if err != nil {
@@ -642,7 +642,7 @@ func TestRunnerUsesExplicitFinalAnswerProtocolWhenPreferred(t *testing.T) {
 		Prepared:                  prepared,
 		Resolved:                  runnerTestResolvedSkills(),
 		PreferExplicitFinalAnswer: true,
-		RuntimeStateSnapshot:        func() map[string]interface{} { return map[string]interface{}{} },
+		RuntimeStateSnapshot:      func() map[string]interface{} { return map[string]interface{}{} },
 	})
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
@@ -704,7 +704,7 @@ func TestRunnerAcceptsPlainCandidateThroughGateWhenFinalToolPreferred(t *testing
 		Prepared:                  prepared,
 		Resolved:                  runnerTestResolvedSkills(),
 		PreferExplicitFinalAnswer: true,
-		RuntimeStateSnapshot:        func() map[string]interface{} { return evidence },
+		RuntimeStateSnapshot:      func() map[string]interface{} { return evidence },
 	})
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
@@ -749,7 +749,7 @@ func TestRunnerAcceptsMainModelAnswerWhenAdvisoryPlanIsPending(t *testing.T) {
 		Prepared:                  prepared,
 		Resolved:                  runnerTestResolvedSkills(),
 		PreferExplicitFinalAnswer: true,
-		RuntimeStateSnapshot:        func() map[string]interface{} { return evidence },
+		RuntimeStateSnapshot:      func() map[string]interface{} { return evidence },
 	})
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
@@ -775,6 +775,12 @@ func TestUserInputPlanRevisionPendingUsesStructuredContinuationState(t *testing.
 	}
 	if !planRevisionRequiredForTool(skills.SkillAgentManagement, "get_agent_config") {
 		t.Fatal("business tool should require plan revision")
+	}
+	if userInputPlanRevisionRequiredForTool(RunRequest{
+		LegacyToolChat:  true,
+		CurrentMetadata: req.CurrentMetadata,
+	}, skills.SkillAgentManagement, "get_agent_config") {
+		t.Fatal("legacy tool chat must not require the Agent plan revision protocol")
 	}
 	if planRevisionRequiredForTool(skills.SkillAgentManagement, skills.MetaToolUpdatePlan) {
 		t.Fatal("update_plan must remain available while plan revision is pending")
@@ -862,9 +868,9 @@ max_calls_per_turn: 20
 	})
 
 	_, _, err = runner.Run(context.Background(), RunRequest{
-		Prepared:           prepared,
-		Resolved:           resolved,
-		CurrentMetadata:    func() map[string]interface{} { return metadata },
+		Prepared:             prepared,
+		Resolved:             resolved,
+		CurrentMetadata:      func() map[string]interface{} { return metadata },
 		RuntimeStateSnapshot: func() map[string]interface{} { return metadata },
 	})
 	var pending *UserInputPendingError

@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
+	"github.com/zgiai/zgi/api/internal/capabilities/toolgovernance"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 	workspacemodel "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 )
@@ -149,11 +150,48 @@ func TestEffectiveAgentSkillIDsAutoAddsHiddenKnowledge(t *testing.T) {
 	got := effectiveAgentSkillIDs(
 		[]string{skills.SkillCalculator, skills.SkillAgentKnowledge, skills.SkillUserMemory, skills.SkillInternalKnowledge},
 		catalog,
+		[]string{skills.SkillCalculator},
 		&RunConfig{KnowledgeDatasetIDs: []string{"dataset-1"}},
 	)
 	want := []string{skills.SkillAgentKnowledge, skills.SkillCalculator}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("effectiveAgentSkillIDs() = %#v, want %#v", got, want)
+	}
+}
+
+func TestEffectiveAgentSkillIDsFiltersOrganizationDisabledSkills(t *testing.T) {
+	catalog := []skills.SkillDiscoveryMetadata{
+		{ID: skills.SkillCalculator, Status: skills.SkillStatusActive, SupportedCallers: []string{skills.SkillCallerAgent}},
+		{ID: "organization-disabled", Status: skills.SkillStatusActive, SupportedCallers: []string{skills.SkillCallerAgent}},
+		{ID: skills.SkillAgentKnowledge, Status: skills.SkillStatusActive, SupportedCallers: []string{skills.SkillCallerAgent}, RequiredConfig: []string{skills.SkillRequiredConfigAgentKnowledge}},
+	}
+
+	got := effectiveAgentSkillIDs(
+		[]string{skills.SkillCalculator, "organization-disabled"},
+		catalog,
+		[]string{skills.SkillCalculator},
+		&RunConfig{KnowledgeDatasetIDs: []string{"dataset-1"}},
+	)
+	want := []string{skills.SkillAgentKnowledge, skills.SkillCalculator}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("effectiveAgentSkillIDs() = %#v, want %#v", got, want)
+	}
+}
+
+func TestOrganizationAllowsSkillID(t *testing.T) {
+	catalog := []skills.SkillDiscoveryMetadata{
+		{ID: skills.SkillCalculator, Status: skills.SkillStatusActive},
+		{ID: skills.SkillAgentKnowledge, Status: skills.SkillStatusActive},
+	}
+
+	if organizationAllowsSkillID(skills.SkillCalculator, catalog, nil) {
+		t.Fatal("organizationAllowsSkillID() = true for disabled selectable skill, want false")
+	}
+	if !organizationAllowsSkillID(skills.SkillCalculator, catalog, []string{skills.SkillCalculator}) {
+		t.Fatal("organizationAllowsSkillID() = false for enabled selectable skill, want true")
+	}
+	if !organizationAllowsSkillID(skills.SkillAgentKnowledge, catalog, nil) {
+		t.Fatal("organizationAllowsSkillID() = false for runtime-managed skill, want true")
 	}
 }
 
@@ -175,6 +213,7 @@ func TestEffectiveAgentSkillIDsRejectsSidebarManagedAssetSkills(t *testing.T) {
 			skills.SkillAgentKnowledge,
 		},
 		catalog,
+		[]string{skills.SkillCalculator},
 		&RunConfig{KnowledgeDatasetIDs: []string{"dataset-1"}},
 	)
 	want := []string{skills.SkillAgentKnowledge, skills.SkillCalculator}
@@ -192,6 +231,7 @@ func TestEffectiveAgentSkillIDsSkipsKnowledgeWithoutDatasets(t *testing.T) {
 	got := effectiveAgentSkillIDs(
 		[]string{skills.SkillCalculator, skills.SkillAgentKnowledge},
 		catalog,
+		[]string{skills.SkillCalculator},
 		&RunConfig{},
 	)
 	want := []string{skills.SkillCalculator}
@@ -209,6 +249,7 @@ func TestEffectiveAgentSkillIDsAutoAddsHiddenDatabase(t *testing.T) {
 	got := effectiveAgentSkillIDs(
 		[]string{skills.SkillCalculator},
 		catalog,
+		[]string{skills.SkillCalculator},
 		&RunConfig{DatabaseBindings: []AgentDatabaseBinding{{DataSourceID: "db-1", TableIDs: []string{"table-1"}}}},
 	)
 	want := []string{skills.SkillAgentDatabase, skills.SkillCalculator}
@@ -226,6 +267,7 @@ func TestEffectiveAgentSkillIDsSkipsDatabaseWithoutBindings(t *testing.T) {
 	got := effectiveAgentSkillIDs(
 		[]string{skills.SkillCalculator, skills.SkillAgentDatabase},
 		catalog,
+		[]string{skills.SkillCalculator},
 		&RunConfig{},
 	)
 	want := []string{skills.SkillCalculator}
@@ -243,6 +285,7 @@ func TestEffectiveAgentSkillIDsAutoAddsHiddenWorkflow(t *testing.T) {
 	got := effectiveAgentSkillIDs(
 		[]string{skills.SkillCalculator},
 		catalog,
+		[]string{skills.SkillCalculator},
 		&RunConfig{WorkflowBindings: []AgentWorkflowBinding{{BindingID: "approval-flow", AgentID: "agent-1", WorkflowID: "workflow-1"}}},
 	)
 	want := []string{skills.SkillAgentWorkflow, skills.SkillCalculator}
@@ -260,6 +303,7 @@ func TestEffectiveAgentSkillIDsSkipsWorkflowWithoutBindings(t *testing.T) {
 	got := effectiveAgentSkillIDs(
 		[]string{skills.SkillCalculator, skills.SkillAgentWorkflow},
 		catalog,
+		[]string{skills.SkillCalculator},
 		&RunConfig{},
 	)
 	want := []string{skills.SkillCalculator}
@@ -277,6 +321,7 @@ func TestEffectiveAgentSkillIDsDoesNotAutoAddHiddenAgentMemory(t *testing.T) {
 	got := effectiveAgentSkillIDs(
 		[]string{skills.SkillUserMemory},
 		catalog,
+		[]string{},
 		&RunConfig{
 			AgentMemoryEnabled: true,
 			AgentMemorySlots: []AgentMemorySlotConfig{{
@@ -1069,6 +1114,27 @@ func TestSkillRuntimeParametersUseCapabilityConfig(t *testing.T) {
 	}
 }
 
+func TestSkillRuntimeParametersPreservePerBindingAuthorizationEvidence(t *testing.T) {
+	params := skillRuntimeParameters(Scope{OrganizationID: uuid.New()}, RunConfig{
+		BillingAppType: runtimemodel.ConversationCallerAgent,
+		BindingAuthorizations: []ResourceBindingAuthorization{
+			{BindingType: "knowledge_dataset", ResourceID: "dataset-old", AccessMode: "read", BoundByAccountID: "binder-old", BoundAtUnix: 100},
+			{BindingType: "knowledge_dataset", ResourceID: "dataset-new", AccessMode: "read", BoundByAccountID: "binder-new", BoundAtUnix: 200},
+		},
+	})
+
+	if params["knowledge_binding_grant"] != true {
+		t.Fatalf("knowledge_binding_grant = %#v, want true", params["knowledge_binding_grant"])
+	}
+	authorizations, ok := params["agent_binding_authorizations"].([]ResourceBindingAuthorization)
+	if !ok || len(authorizations) != 2 {
+		t.Fatalf("agent_binding_authorizations = %#v, want two entries", params["agent_binding_authorizations"])
+	}
+	if _, exists := params["knowledge_bound_by_account_id"]; exists {
+		t.Fatalf("mixed per-binding grants must not synthesize one category actor: %#v", params)
+	}
+}
+
 func TestSkillRuntimeParametersForPreparedUsesConversationWorkspaceWhenScopeMissing(t *testing.T) {
 	workspaceID := uuid.New()
 	prepared := &PreparedChat{
@@ -1348,6 +1414,56 @@ func TestSkillRuntimeParametersForPreparedIncludesToolGovernanceProfileScope(t *
 	}
 	if governance["runtime_surface"] != aiChatSurfaceExternalPageChat {
 		t.Fatalf("runtime_surface = %#v, want external_page_chat", governance["runtime_surface"])
+	}
+}
+
+func TestAgentBindingPreauthorizationIsConsistentAcrossRuntimeSources(t *testing.T) {
+	manifest, ok := skills.SystemSkillToolGovernanceManifest(skills.SkillAgentDatabase, "delete_table_records")
+	if !ok {
+		t.Fatal("SystemSkillToolGovernanceManifest(agent-database/delete_table_records) = false")
+	}
+	for _, source := range []string{
+		runtimemodel.ConversationSourceConsole,
+		runtimemodel.ConversationSourceWebApp,
+		runtimemodel.ConversationSourceExternalAPI,
+	} {
+		t.Run(source, func(t *testing.T) {
+			prepared := &PreparedChat{
+				Scope:  Scope{OrganizationID: uuid.New()},
+				Caller: Caller{Type: runtimemodel.ConversationCallerAgent, Source: source},
+				RunConfig: RunConfig{
+					BillingAppType:           runtimemodel.ConversationCallerAgent,
+					DatabaseBoundByAccountID: "account-1",
+					DatabaseBoundAtUnix:      1_720_000_000,
+					DatabaseBindings: []AgentDatabaseBinding{{
+						DataSourceID:     "database-1",
+						TableIDs:         []string{"table-1"},
+						WritableTableIDs: []string{"table-1"},
+					}},
+				},
+				parts: &chatRequestParts{Surface: aiChatSurfaceContextualSidebar},
+			}
+			decision, err := skills.NewPolicyToolGovernanceGateway(toolgovernance.DefaultPolicy()).DecideSkillTool(context.Background(), skills.ToolGovernanceRequest{
+				Manifest: manifest,
+				SkillID:  skills.SkillAgentDatabase,
+				ToolName: "delete_table_records",
+				Arguments: map[string]interface{}{
+					"data_source_id": "database-1",
+					"table_id":       "table-1",
+					"records":        []map[string]interface{}{{"id": "record-1"}},
+				},
+				ExecutionContext: skills.ExecutionContext{RuntimeParameters: skillRuntimeParametersForPrepared(prepared)},
+			})
+			if err != nil {
+				t.Fatalf("DecideSkillTool() error = %v", err)
+			}
+			if decision.Status != toolgovernance.DecisionStatusAllowed || decision.RequiresApproval || decision.ApprovalEvent != nil {
+				t.Fatalf("decision = %#v, want direct Agent binding authorization", decision)
+			}
+			if decision.Preauthorization == nil || decision.Preauthorization.Source != "agent_binding" {
+				t.Fatalf("preauthorization = %#v, want Agent binding evidence", decision.Preauthorization)
+			}
+		})
 	}
 }
 
@@ -1793,6 +1909,22 @@ func TestEmitUserMemoryMutationEventUsesIndependentMemoryEvent(t *testing.T) {
 	if got.Payload["memory_scope"] != "account" || got.Payload["action"] != "update" || got.Payload["entry_id"] != "entry-1" {
 		t.Fatalf("payload = %#v, want account memory update payload", got.Payload)
 	}
+}
+
+func TestEmitUserMemoryMutationEventSkipsPreparePreflightWithoutMessage(t *testing.T) {
+	prepared := preparedTimelineTestChat()
+	prepared.Message = nil
+
+	(&service{}).emitUserMemoryMutationEvent(context.Background(), prepared, skills.SkillTrace{
+		Kind:   "user_memory",
+		Status: "success",
+	}, map[string]interface{}{
+		"action":   "update",
+		"entry_id": "entry-1",
+	}, func(StreamEvent) error {
+		t.Fatal("memory mutation event was emitted without a persisted message")
+		return nil
+	})
 }
 
 func TestProcessTimelineRecorderAggregatesIntermediateAnswerChunks(t *testing.T) {

@@ -1,11 +1,13 @@
 package handler
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strconv"
 	"strings"
 
+	"github.com/zgiai/zgi/api/internal/capabilities/agentbindings"
 	"github.com/zgiai/zgi/api/internal/dto"
 	"github.com/zgiai/zgi/api/internal/modules/datasource/service"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
@@ -336,13 +338,56 @@ func (h *DataSourceHandler) DeleteDataSourceByID(c *gin.Context) {
 	}
 
 	// Delete data source
-	err := h.service.DeleteDataSourceByID(c.Request.Context(), organizationID, id, accountID)
+	err := h.service.DeleteDataSourceByID(
+		c.Request.Context(),
+		organizationID,
+		id,
+		accountID,
+		c.Query("agent_binding_action"),
+		c.Query("impact_token"),
+	)
 	if err != nil {
+		if util.WriteAgentBindingConflict(c, err) {
+			return
+		}
+		if errors.Is(err, service.ErrInvalidAgentBindingAction) {
+			response.FailWithMessage(c, response.ErrInvalidParam, err.Error())
+			return
+		}
 		response.Fail(c, response.ErrSystemError)
 		return
 	}
 
 	response.Success(c, gin.H{"message": "data source deleted successfully"})
+}
+
+type dataSourceDeleteImpactPreviewer interface {
+	PreviewDataSourceDeleteImpact(ctx context.Context, organizationID, id, accountID string) (*agentbindings.Impact, error)
+	PreviewTableDeleteImpact(ctx context.Context, organizationID, dataSourceID, tableID, accountID string) (*agentbindings.Impact, error)
+}
+
+func (h *DataSourceHandler) PreviewDataSourceDeleteImpact(c *gin.Context) {
+	organizationID := util.GetOrganizationIDCompat(c)
+	id := c.Param("id")
+	accountID := c.GetString("account_id")
+	if organizationID == "" || id == "" || accountID == "" {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+	if !h.ensureDatabasePermission(c, organizationID, id, accountID, workspace_model.WorkspacePermissionDatabaseDelete) {
+		return
+	}
+	previewer, ok := h.service.(dataSourceDeleteImpactPreviewer)
+	if !ok {
+		response.Fail(c, response.ErrSystemError)
+		return
+	}
+	impact, err := previewer.PreviewDataSourceDeleteImpact(c.Request.Context(), organizationID, id, accountID)
+	if err != nil {
+		response.Fail(c, response.ErrSystemError)
+		return
+	}
+	response.Success(c, impact)
 }
 
 func (h *DataSourceHandler) GetGuardPolicy(c *gin.Context) {
@@ -640,13 +685,53 @@ func (h *DataSourceHandler) DeleteTable(c *gin.Context) {
 	}
 
 	// Delete table in data source
-	err := h.service.DeleteTable(c.Request.Context(), organizationID, id, tableID, accountID)
+	err := h.service.DeleteTable(
+		c.Request.Context(),
+		organizationID,
+		id,
+		tableID,
+		accountID,
+		c.Query("agent_binding_action"),
+		c.Query("impact_token"),
+	)
 	if err != nil {
+		if util.WriteAgentBindingConflict(c, err) {
+			return
+		}
+		if errors.Is(err, service.ErrInvalidAgentBindingAction) {
+			response.FailWithMessage(c, response.ErrInvalidParam, err.Error())
+			return
+		}
 		response.Fail(c, response.ErrSystemError)
 		return
 	}
 
 	response.Success(c, gin.H{"message": "table deleted successfully"})
+}
+
+func (h *DataSourceHandler) PreviewTableDeleteImpact(c *gin.Context) {
+	organizationID := util.GetOrganizationIDCompat(c)
+	id := c.Param("id")
+	tableID := c.Param("table_id")
+	accountID := c.GetString("account_id")
+	if organizationID == "" || id == "" || tableID == "" || accountID == "" {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+	if !h.ensureDatabasePermission(c, organizationID, id, accountID, workspace_model.WorkspacePermissionDatabaseSchemaManage) {
+		return
+	}
+	previewer, ok := h.service.(dataSourceDeleteImpactPreviewer)
+	if !ok {
+		response.Fail(c, response.ErrSystemError)
+		return
+	}
+	impact, err := previewer.PreviewTableDeleteImpact(c.Request.Context(), organizationID, id, tableID, accountID)
+	if err != nil {
+		response.Fail(c, response.ErrSystemError)
+		return
+	}
+	response.Success(c, impact)
 }
 
 // UpdateTable updates a table's metadata (name and/or description)
@@ -1982,6 +2067,7 @@ func (h *DataSourceHandler) RegisterRoutes(router *gin.RouterGroup) {
 	authWithTenant.GET("/data-dbs/:id", h.GetDataSourceByID)
 	authWithTenant.PUT("/data-dbs/:id", h.UpdateDataSource)
 	authWithTenant.DELETE("/data-dbs/:id", h.DeleteDataSourceByID)
+	authWithTenant.GET("/data-dbs/:id/delete-impact", h.PreviewDataSourceDeleteImpact)
 	authWithTenant.GET("/data-dbs/:id/guard/policy", h.GetGuardPolicy)
 	authWithTenant.PUT("/data-dbs/:id/guard/policy", h.UpdateGuardPolicy)
 	authWithTenant.POST("/data-dbs/:id/guard/preview", h.PreviewGuard)
@@ -1992,6 +2078,7 @@ func (h *DataSourceHandler) RegisterRoutes(router *gin.RouterGroup) {
 	authWithTenant.GET("/data-dbs/:id/tables/:table_id", h.GetTable)
 	authWithTenant.PUT("/data-dbs/:id/tables/:table_id", h.UpdateTable)
 	authWithTenant.DELETE("/data-dbs/:id/tables/:table_id", h.DeleteTable)
+	authWithTenant.GET("/data-dbs/:id/tables/:table_id/delete-impact", h.PreviewTableDeleteImpact)
 	authWithTenant.GET("/data-dbs/:id/tables/:table_id/prompt", h.GetTablePrompt)
 	authWithTenant.PUT("/data-dbs/:id/tables/:table_id/prompt", h.UpsertTablePrompt)
 	authWithTenant.DELETE("/data-dbs/:id/tables/:table_id/prompt", h.DeleteTablePrompt)

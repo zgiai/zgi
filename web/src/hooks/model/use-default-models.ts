@@ -26,6 +26,7 @@ export const DEFAULT_MODEL_USE_CASES = [
   'moderation',
   'reasoning',
   'function-calling',
+  'agent',
 ] as const satisfies readonly DefaultModelUseCase[];
 
 export type ManagedDefaultModelValue = DefaultModelValue;
@@ -151,7 +152,7 @@ export function useDefaultModels() {
 
   const updateMutation = useMutation({
     mutationFn: async (nextSettings: DefaultModelSettings) => {
-      const operations: Promise<unknown>[] = [];
+      const operations: Array<Promise<unknown>> = [];
 
       for (const useCase of DEFAULT_MODEL_USE_CASES) {
         const nextValue = nextSettings[useCase];

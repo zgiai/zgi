@@ -676,6 +676,9 @@ func TestSaveFileToolSavesGeneratedToolFileWithAdvancedPermission(t *testing.T) 
 	if payload["source_expires_at"] != expiresAt.Unix() {
 		t.Fatalf("source_expires_at = %#v, want %d", payload["source_expires_at"], expiresAt.Unix())
 	}
+	if handoff := stringValue(payload, "handoff_instruction"); !strings.Contains(handoff, "managed-file reference") || !strings.Contains(handoff, "file-reader/read_file") {
+		t.Fatalf("handoff_instruction = %q, want durable reference and no-reread guidance", handoff)
+	}
 }
 
 func TestSaveFileToolRejectsExpiredGeneratedToolFile(t *testing.T) {

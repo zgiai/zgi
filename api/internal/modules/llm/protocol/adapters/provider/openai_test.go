@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -10,6 +11,44 @@ import (
 
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 )
+
+func TestHandleOpenAICompatibleErrorMapsPlatformChannelUnavailable(t *testing.T) {
+	err := handleOpenAICompatibleError(
+		http.StatusBadGateway,
+		[]byte(`{"error":{"message":"Platform model service is temporarily unavailable","type":"server_error","code":"platform_channel_unavailable"}}`),
+	)
+
+	if !errors.Is(err, adapter.ErrPlatformChannelUnavailable) {
+		t.Fatalf("handleOpenAICompatibleError() error = %v, want ErrPlatformChannelUnavailable", err)
+	}
+}
+
+func TestOpenAIAdapterChatCompletionStreamParsesPlatformChannelError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = fmt.Fprint(w, `{"error":{"message":"Platform model service is temporarily unavailable","type":"server_error","code":"platform_channel_unavailable"}}`)
+	}))
+	defer server.Close()
+
+	a, err := NewOpenAIAdapter(&adapter.AdapterConfig{
+		APIKey:  "test-key",
+		BaseURL: server.URL + "/v1",
+	})
+	if err != nil {
+		t.Fatalf("NewOpenAIAdapter() error = %v", err)
+	}
+
+	_, err = a.ChatCompletionStream(context.Background(), &adapter.ChatRequest{
+		Model: "kimi-k2.6",
+		Messages: []adapter.Message{
+			{Role: "user", Content: "hello"},
+		},
+	})
+	if !errors.Is(err, adapter.ErrPlatformChannelUnavailable) {
+		t.Fatalf("ChatCompletionStream() error = %v, want ErrPlatformChannelUnavailable", err)
+	}
+}
 
 func TestOpenAIAdapterCreateResponseRaw_UsesResponsesEndpointAndRawBody(t *testing.T) {
 	t.Helper()

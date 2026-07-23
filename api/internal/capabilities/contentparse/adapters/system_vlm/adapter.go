@@ -84,6 +84,8 @@ func (a *Adapter) Parse(ctx context.Context, req contracts.ParseRequest) (*contr
 	artifact.Metadata["system_vlm_provider"] = strings.TrimSpace(resolved.Provider)
 	artifact.Metadata["system_vlm_model"] = strings.TrimSpace(resolved.Model)
 	artifact.Metadata["system_vlm_source"] = strings.TrimSpace(resolved.Source)
+	artifact.Metadata["vision_image_document"] = true
+	artifact.Metadata["recommended_chunking"] = "full-doc"
 	return artifact, nil
 }
 
@@ -107,7 +109,7 @@ func (a *Adapter) chatCompletionFunc(organizationID, provider string) extractvlm
 		chatReq := &llmadapter.ChatRequest{
 			Provider:    strings.TrimSpace(provider),
 			Model:       strings.TrimSpace(req.Model),
-			Messages:    []llmadapter.Message{{Role: "user", Content: cloneUserContent(req.UserContent)}},
+			Messages:    []llmadapter.Message{{Role: "user", Content: toMessageContentParts(req.UserContent)}},
 			MaxTokens:   &maxTokens,
 			Temperature: &temperature,
 		}
@@ -132,20 +134,35 @@ func (a *Adapter) chatCompletionFunc(organizationID, provider string) extractvlm
 	}
 }
 
-func cloneUserContent(input []map[string]any) []map[string]any {
+func toMessageContentParts(input []map[string]any) []llmadapter.MessageContentPart {
 	if len(input) == 0 {
 		return nil
 	}
-	out := make([]map[string]any, 0, len(input))
+	out := make([]llmadapter.MessageContentPart, 0, len(input))
 	for _, item := range input {
-		if len(item) == 0 {
-			continue
+		switch strings.TrimSpace(fmt.Sprint(item["type"])) {
+		case "text":
+			out = append(out, llmadapter.MessageContentPart{
+				Type: "text",
+				Text: fmt.Sprint(item["text"]),
+			})
+		case "image_url":
+			imageURL, ok := item["image_url"].(map[string]any)
+			if !ok {
+				continue
+			}
+			url := strings.TrimSpace(fmt.Sprint(imageURL["url"]))
+			if url == "" {
+				continue
+			}
+			out = append(out, llmadapter.MessageContentPart{
+				Type: "image_url",
+				ImageURL: &llmadapter.ImageURL{
+					URL:    url,
+					Detail: strings.TrimSpace(fmt.Sprint(imageURL["detail"])),
+				},
+			})
 		}
-		cloned := make(map[string]any, len(item))
-		for key, value := range item {
-			cloned[key] = value
-		}
-		out = append(out, cloned)
 	}
 	return out
 }

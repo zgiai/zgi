@@ -229,18 +229,9 @@ export function useGenerateDatasetFileCandidateEmbeddings(datasetId: string) {
   return useMutation({
     mutationFn: (variables: GenerateDatasetFileCandidateEmbeddingVariables) =>
       datasetService.generateDatasetFileCandidateEmbeddings(datasetId, getEmbeddingAssetId(variables)),
-    onMutate: variables => {
-      if (!isEmbeddingMutationSilent(variables)) {
-        toast.info(t('messages.fileCandidateEmbeddingGenerating'));
-      }
-    },
     onSuccess: (response, variables) => {
       if (!isEmbeddingMutationSilent(variables)) {
-        if (response.data?.accepted) {
-          toast.success(t('messages.fileCandidateEmbeddingQueued'));
-        } else if (response.data?.addable) {
-          toast.success(t('messages.fileCandidateEmbeddingGenerateSuccess'));
-        } else {
+        if (!response.data?.accepted && !response.data?.addable) {
           toast.error(response.data?.reason || t('messages.actionFailed'));
         }
       }
@@ -289,6 +280,37 @@ export function useDeleteDatasetFileRef(datasetId: string) {
     onError: (error: unknown) => {
       const message = (error as { message?: string }).message ?? t('messages.actionFailed');
       toast.error(message);
+    },
+  });
+}
+
+export function useBulkDeleteDatasetFileRefs(datasetId: string) {
+  const t = useT('datasets');
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (refIds: string[]) => {
+      const results = await Promise.allSettled(
+        refIds.map(refId => datasetService.deleteDatasetFileRef(datasetId, refId))
+      );
+      const failedCount = results.filter(result => result.status === 'rejected').length;
+
+      if (failedCount > 0) {
+        throw new Error(t('documents.fileRefs.batchRemoveFailed', { count: failedCount }));
+      }
+
+      return { count: refIds.length };
+    },
+    onSuccess: result => {
+      toast.success(t('documents.fileRefs.batchRemoveSuccess', { count: result.count }));
+    },
+    onError: (error: unknown) => {
+      const message =
+        (error as { message?: string }).message ?? t('documents.fileRefs.batchRemoveFailed');
+      toast.error(message);
+    },
+    onSettled: () => {
+      invalidateDatasetFileRefQueries(queryClient, datasetId);
     },
   });
 }

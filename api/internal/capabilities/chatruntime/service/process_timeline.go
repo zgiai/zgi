@@ -133,7 +133,9 @@ func (r *processTimelineRecorder) RecordTrace(traces []skills.SkillTrace, trace 
 	if index < 0 {
 		index = 0
 	}
-	r.persistInvocation(skillInvocationFromTrace(trace, index))
+	invocation := skillInvocationFromTrace(trace, index)
+	ensureInvocationTimelineTime(invocation, r.now())
+	r.persistInvocation(invocation)
 	r.service.logSkillTrace(r.ctx, r.prepared, trace)
 }
 
@@ -141,6 +143,8 @@ func nonVisibleTraceCarriesMetadata(trace skills.SkillTrace) bool {
 	switch strings.TrimSpace(trace.Kind) {
 	case "turn_state", "plan_update", "final_answer":
 		return true
+	case "planner_feedback":
+		return strings.EqualFold(strings.TrimSpace(stringFromAny(trace.Arguments["code"])), "operation_plan_phase_mismatch")
 	default:
 		return false
 	}
@@ -223,6 +227,13 @@ func (r *processTimelineRecorder) invocationFromEvent(eventType string, payload 
 	case streamEventSkillLoadEnd:
 		invocation := newSkillInvocation("skill_load", payloadString(payload, "skill_id"), "", payloadStatus(payload, "success"), invocationTimelineFields(payload, map[string]interface{}{
 			"duration_ms": payload["duration_ms"],
+			"result": map[string]interface{}{
+				"instruction_digest": payload["instruction_digest"],
+				"instruction_chars":  payload["instruction_chars"],
+				"effective_version":  payload["effective_version"],
+				"policy_state":       payload["policy_state"],
+				"access_status":      payload["access_status"],
+			},
 		}))
 		invocation["runtime_id"] = r.runtimeIDForEnd(invocation)
 		return invocation
@@ -479,6 +490,7 @@ func (r *processTimelineRecorder) persistInvocation(invocation map[string]interf
 
 func (r *processTimelineRecorder) mergeInvocation(invocation map[string]interface{}) map[string]interface{} {
 	metadata := mergeSkillInvocationMetadata(r.prepared.Message.Metadata, []map[string]interface{}{invocation})
+	applyManagedFileArtifactLinks(metadata, []map[string]interface{}{invocation})
 	if strings.TrimSpace(stringFromAny(invocation["kind"])) == "tool_governance" {
 		if event := toolGovernanceDecisionEventFromInvocation(invocation); toolGovernanceCorrelationID(event) != "" {
 			metadata = mergeToolGovernanceDecisionMetadata(metadata, event)

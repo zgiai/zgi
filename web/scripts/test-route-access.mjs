@@ -3356,6 +3356,21 @@ assert.match(
   'runtime audience picker selected chips should not resolve department/workspace labels while closed'
 );
 assert.match(
+  runtimeAudiencePickerSource,
+  /workspaceDisplayName\([\s\S]*?tNavigation\('defaultWorkspace'\)/,
+  'runtime audience picker should localize the built-in default workspace name'
+);
+assert.match(
+  runtimeAudiencePickerSource,
+  /picker\.memberCount/,
+  'runtime audience picker should label workspace and department member counts'
+);
+assert.match(
+  runtimeAudiencePickerSource,
+  /picker\.owningWorkspaceIncluded/,
+  'runtime audience picker should show the owning workspace as an implicit audience'
+);
+assert.match(
   consolePageSource,
   /const canOpenModelConfig\s*=\s*canAccessOrganizationDashboard && canManageModelConfig/,
   'console overview model configuration entry should require organization dashboard and model-config capabilities'

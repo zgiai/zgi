@@ -40,7 +40,7 @@ const ExecutionTab: React.FC<ExecutionTabProps> = ({
           </div>
         </div>
       ) : null}
-      <div className="flex-1 overflow-auto p-4 scrollbar-thin">
+      <div className="min-h-0 flex-1 overflow-auto p-4 scrollbar-thin">
         <WorkflowRunNodesList showDetail={showDetail} items={items} />
       </div>
     </div>

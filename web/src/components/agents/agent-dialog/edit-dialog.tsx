@@ -51,6 +51,7 @@ export function EditAgentDialog({ open, onOpenChange, agentId }: EditAgentDialog
   const portalHostRef = useRef<HTMLDivElement | null>(null);
 
   const updateMutation = useUpdateAgent();
+  const previousNameRef = useRef('');
 
   const [iconValue, setIconValue] = useState<IconValue>(createTextIconValue('', ICON_BG));
   const [selectedWorkspace, setSelectedWorkspace] = useState<WorkspaceSelectorValue | undefined>();
@@ -106,6 +107,7 @@ export function EditAgentDialog({ open, onOpenChange, agentId }: EditAgentDialog
     if (!detail) return;
     const workspace = detail.workspace ?? detail.tenant;
     const workspaceId = workspace?.id || detail.workspace_id || detail.tenant_id;
+    previousNameRef.current = detail.name || '';
     form.reset({
       name: detail.name || '',
       description: detail.description || '',
@@ -113,7 +115,9 @@ export function EditAgentDialog({ open, onOpenChange, agentId }: EditAgentDialog
       icon_type: (detail.icon_type as IconType) || 'text',
       workspace_id: workspaceId,
     });
-    setSelectedWorkspace(workspaceId ? { id: workspaceId, name: workspace?.name ?? '' } : undefined);
+    setSelectedWorkspace(
+      workspaceId ? { id: workspaceId, name: workspace?.name ?? '' } : undefined
+    );
 
     if (detail.icon_type === 'text') {
       try {
@@ -139,12 +143,19 @@ export function EditAgentDialog({ open, onOpenChange, agentId }: EditAgentDialog
 
   const watchedName = form.watch('name');
   useEffect(() => {
-    if (watchedName && iconValue.type === 'text') {
-      setIconValue(
-        createTextIconValue(watchedName.slice(0, 2).toUpperCase() || ICON_TEXT, ICON_BG)
+    const previousDefaultIcon = previousNameRef.current.slice(0, 2).toUpperCase() || ICON_TEXT;
+    previousNameRef.current = watchedName;
+    if (!watchedName) return;
+
+    setIconValue(current => {
+      if (current.type !== 'text') return current;
+      if (current.icon && current.icon !== previousDefaultIcon) return current;
+      return createTextIconValue(
+        watchedName.slice(0, 2).toUpperCase() || ICON_TEXT,
+        current.iconBackground || ICON_BG
       );
-    }
-  }, [watchedName, iconValue.type]);
+    });
+  }, [watchedName]);
 
   const onSubmit = (data: EditFormDataLocal) => {
     const payload: UpdateAgentRequest = {
@@ -197,7 +208,7 @@ export function EditAgentDialog({ open, onOpenChange, agentId }: EditAgentDialog
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-xl font-semibold">
             <Pencil className="h-5 w-5" />
-            {t('editAgent')}
+            {t('editBasicInfo')}
           </DialogTitle>
         </DialogHeader>
         <Form {...form}>

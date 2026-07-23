@@ -78,13 +78,16 @@ tool_governance:
     idempotency_required: false
 display:
   icon: workflow
-  category: system
+  category: workflow_automation
+  scenarios:
+    - business_operations
+    - technical_development
   label:
     en_US: Agent Workflow
     zh_Hans: Agent 工作流
   description:
-    en_US: Call workflows bound to this Agent.
-    zh_Hans: 调用绑定到当前 Agent 的工作流。
+    en_US: Designed for running configured approvals or business processes; invokes workflows bound to the current Agent and returns their results.
+    zh_Hans: 适用于执行已配置的审批或业务流程，可调用当前智能体绑定的工作流并返回运行结果。
   when_to_use:
     en_US: Use for configured approval or process workflows.
     zh_Hans: 用于已配置的审批或流程工作流。

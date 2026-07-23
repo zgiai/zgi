@@ -17,6 +17,7 @@ import (
 	llmdefaultservice "github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/service"
 	llmmodelmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
+	"github.com/zgiai/zgi/api/internal/modules/llm/shared"
 	"github.com/zgiai/zgi/api/internal/prompt"
 	"github.com/zgiai/zgi/api/pkg/logger"
 )
@@ -107,31 +108,40 @@ func (p *tenantRouteModelProvider) ListTitleModels(ctx context.Context, organiza
 	}
 	candidates := make([]routeCandidate, 0)
 	seen := map[string]bool{}
+	addCandidate := func(routeIndex, modelIndex int, provider, modelName string) {
+		provider = strings.TrimSpace(provider)
+		modelName = strings.TrimSpace(modelName)
+		if !titleRouteModelAllowed(modelName) {
+			return
+		}
+		key := candidateKey(provider, modelName)
+		if key == "::" || seen[key] {
+			return
+		}
+		seen[key] = true
+		candidates = append(candidates, routeCandidate{
+			routeIndex: routeIndex,
+			modelIndex: modelIndex,
+			model: &llmdefaultservice.ResolvedModel{
+				UseCase:  string(llmmodelmodel.UseCaseTextChat),
+				Provider: provider,
+				Model:    modelName,
+				Source:   llmdefaultservice.SourceAuto,
+			},
+		})
+	}
 	for routeIndex, route := range routes {
 		if route == nil {
 			continue
 		}
-		provider := strings.TrimSpace(route.ChannelProvider)
+		if route.IsOfficial || route.Type == shared.RouteTypeZGICloud {
+			for modelIndex, pair := range route.OfficialProviderModels {
+				addCandidate(routeIndex, modelIndex, pair.Provider, pair.Model)
+			}
+			continue
+		}
 		for modelIndex, modelName := range route.GetEffectiveModels() {
-			modelName = strings.TrimSpace(modelName)
-			if !titleRouteModelAllowed(modelName) {
-				continue
-			}
-			key := candidateKey(provider, modelName)
-			if key == "::" || seen[key] {
-				continue
-			}
-			seen[key] = true
-			candidates = append(candidates, routeCandidate{
-				routeIndex: routeIndex,
-				modelIndex: modelIndex,
-				model: &llmdefaultservice.ResolvedModel{
-					UseCase:  string(llmmodelmodel.UseCaseTextChat),
-					Provider: provider,
-					Model:    modelName,
-					Source:   llmdefaultservice.SourceAuto,
-				},
-			})
+			addCandidate(routeIndex, modelIndex, route.ChannelProvider, modelName)
 		}
 	}
 	sort.SliceStable(candidates, func(i, j int) bool {

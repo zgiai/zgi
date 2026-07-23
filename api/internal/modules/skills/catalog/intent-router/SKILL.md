@@ -10,12 +10,18 @@ tools:
 max_calls_per_turn: 5
 timeout_seconds: 5
 display:
-  icon: route
-  category: orchestration
+  icon: git-fork
+  category: workflow_automation
+  scenarios:
+    - business_operations
+    - customer_service
+    - technical_development
   label:
     en_US: Intent Router
+    zh_Hans: 意图路由
   description:
-    en_US: Classifies user requests into stable task types and recommends the next action.
+    en_US: Designed for ambiguous or compound requests; identifies the task type and recommends the right Skill, tool, workflow, database, or knowledge-retrieval path.
+    zh_Hans: 适用于意图不清或包含多项任务的请求，可识别任务类型并推荐合适的 Skill、工具、工作流、数据库或知识检索路径。
   when_to_use:
     en_US: Use before dispatching ambiguous or capability-dependent requests to skills, tools, workflows, databases, or knowledge retrieval.
   tags:

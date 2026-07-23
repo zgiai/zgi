@@ -19,10 +19,7 @@ function modelMatches(
   model: ModelItem
 ) {
   if (!candidate?.provider || !candidate.model) return false;
-  return (
-    model.provider === candidate.provider &&
-    (model.model === candidate.model || model.model_name === candidate.model)
-  );
+  return model.provider === candidate.provider && model.model === candidate.model;
 }
 
 function isModelAvailable(
@@ -40,14 +37,30 @@ function toAIChatModelValue(value: DefaultModelValue): AIChatModelValue {
   };
 }
 
+function firstAvailableAIChatModel(models: ModelItem[]): AIChatModelValue | null {
+  const candidate = models.find(model => model.provider && model.model);
+  if (!candidate) return null;
+  return {
+    provider: candidate.provider,
+    model: candidate.model,
+    params: {},
+  };
+}
+
 export function usePersistedAIChatModelSelection({
   accountId,
   scope,
-  useCase = 'text-chat',
+  legacyScope,
+  repairUnavailableSelection = false,
+  useCase = 'agent',
+  preferredUseCase,
 }: {
   accountId?: string | null;
   scope: AiModelScope;
+  legacyScope?: AiModelScope;
+  repairUnavailableSelection?: boolean;
   useCase?: DefaultModelUseCase;
+  preferredUseCase?: DefaultModelUseCase;
 }) {
   const [modelSelectorValue, setModelSelectorValue] = useState<AIChatModelValue>(() => {
     if (!accountId) return EMPTY_MODEL_VALUE;
@@ -56,10 +69,22 @@ export function usePersistedAIChatModelSelection({
   });
   const [isInitialModelResolved, setIsInitialModelResolved] = useState(false);
   const availableModels = useAvailableModels({ use_case: useCase });
-  const defaultModel = useDefaultModelByUseCase(useCase);
+  const preferredDefaultModel = useDefaultModelByUseCase(preferredUseCase ?? useCase);
+  const fallbackDefaultModel = useDefaultModelByUseCase(useCase);
+  const defaultModel =
+    preferredDefaultModel.value &&
+    isModelAvailable(preferredDefaultModel.value, availableModels.models)
+      ? preferredDefaultModel
+      : fallbackDefaultModel;
+  const areDefaultModelsResolved =
+    preferredDefaultModel.isResolved && fallbackDefaultModel.isResolved;
 
-  const canValidateModels = !availableModels.isLoading;
+  const canValidateModels = !availableModels.isLoading && !availableModels.error;
   const isModelInitializing = !isInitialModelResolved;
+  const isSelectedModelUnavailable =
+    canValidateModels &&
+    Boolean(modelSelectorValue.provider && modelSelectorValue.model) &&
+    !isModelAvailable(modelSelectorValue, availableModels.models);
 
   useEffect(() => {
     if (!accountId) {
@@ -72,23 +97,71 @@ export function usePersistedAIChatModelSelection({
       return;
     }
 
-    if (modelSelectorValue.model && isModelAvailable(modelSelectorValue, availableModels.models)) {
+    if (modelSelectorValue.model) {
+      if (
+        repairUnavailableSelection &&
+        !isModelAvailable(modelSelectorValue, availableModels.models)
+      ) {
+        if (!areDefaultModelsResolved) {
+          return;
+        }
+
+        const replacement =
+          defaultModel.value && isModelAvailable(defaultModel.value, availableModels.models)
+            ? toAIChatModelValue(defaultModel.value)
+            : (firstAvailableAIChatModel(availableModels.models) ?? EMPTY_MODEL_VALUE);
+        if (replacement.provider && replacement.model) {
+          saveLastSelectedAiModel(accountId, scope, {
+            provider: replacement.provider,
+            model: replacement.model,
+          });
+        }
+        setModelSelectorValue(replacement);
+        setIsInitialModelResolved(true);
+        return;
+      }
+
       setIsInitialModelResolved(true);
       return;
     }
 
     const saved = getLastSelectedAiModel(accountId, scope);
-    if (saved && isModelAvailable(saved, availableModels.models)) {
-      setModelSelectorValue({
-        provider: saved.provider,
-        model: saved.model,
+    if (saved?.provider && saved.model) {
+      if (!repairUnavailableSelection || isModelAvailable(saved, availableModels.models)) {
+        setModelSelectorValue({
+          provider: saved.provider,
+          model: saved.model,
+          params: {},
+        });
+        setIsInitialModelResolved(true);
+        return;
+      }
+    }
+
+    const legacySaved =
+      legacyScope && legacyScope !== scope
+        ? getLastSelectedAiModel(accountId, legacyScope)
+        : null;
+    if (
+      legacySaved?.provider &&
+      legacySaved.model &&
+      isModelAvailable(legacySaved, availableModels.models)
+    ) {
+      const next: AIChatModelValue = {
+        provider: legacySaved.provider,
+        model: legacySaved.model,
         params: {},
+      };
+      saveLastSelectedAiModel(accountId, scope, {
+        provider: next.provider,
+        model: next.model,
       });
+      setModelSelectorValue(next);
       setIsInitialModelResolved(true);
       return;
     }
 
-    if (!defaultModel.isResolved) {
+    if (!areDefaultModelsResolved) {
       return;
     }
 
@@ -103,15 +176,30 @@ export function usePersistedAIChatModelSelection({
       return;
     }
 
+    if (repairUnavailableSelection) {
+      const next = firstAvailableAIChatModel(availableModels.models);
+      if (next) {
+        saveLastSelectedAiModel(accountId, scope, {
+          provider: next.provider,
+          model: next.model,
+        });
+        setModelSelectorValue(next);
+        setIsInitialModelResolved(true);
+        return;
+      }
+    }
+
     setModelSelectorValue(EMPTY_MODEL_VALUE);
     setIsInitialModelResolved(true);
   }, [
     accountId,
     availableModels.models,
     canValidateModels,
-    defaultModel.isResolved,
     defaultModel.value,
+    areDefaultModelsResolved,
+    legacyScope,
     modelSelectorValue,
+    repairUnavailableSelection,
     scope,
   ]);
 
@@ -140,6 +228,7 @@ export function usePersistedAIChatModelSelection({
       setModelSelectorValue,
       isInitialModelResolved,
       isModelInitializing,
+      isSelectedModelUnavailable,
       handleModelChange,
       availableModels,
       defaultModel,
@@ -150,6 +239,7 @@ export function usePersistedAIChatModelSelection({
       handleModelChange,
       isInitialModelResolved,
       isModelInitializing,
+      isSelectedModelUnavailable,
       modelSelectorValue,
     ]
   );

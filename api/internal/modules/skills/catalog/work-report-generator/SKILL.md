@@ -36,13 +36,17 @@ tool_governance:
     idempotency_required: false
 display:
   icon: clipboard-list
-  category: productivity
+  category: office_productivity
+  scenarios:
+    - office_collaboration
+    - business_operations
+    - planning_decision
   label:
     en_US: Work Report Generator
     zh_Hans: 周报月报生成
   description:
-    en_US: Turns work notes, progress, metrics, risks, and plans into structured weekly or monthly reports.
-    zh_Hans: 将工作记录、项目进展、关键数据、风险问题和计划整理成结构化周报或月报。
+    en_US: Designed for weekly and monthly reporting; extracts project progress, key metrics, risks, and next steps from work notes, then produces a structured report.
+    zh_Hans: 适用于整理周报和月报，可根据工作记录自动提取项目进展、关键数据、风险问题及下周计划，并生成结构化报告。
   when_to_use:
     en_US: Use when the user needs a weekly report, monthly report, work summary, project update, or management report.
     zh_Hans: 当用户需要生成周报、月报、工作总结、项目进展汇报或管理汇报时使用。

@@ -37,6 +37,8 @@ func DefaultConfig() *Config {
 			"register":         1440,  // 24 hours
 			"sso_state":        5,     // 5 minutes
 			"sso_login_ticket": 5,     // 5 minutes
+			"phone_code":       5,     // 5 minutes
+			"phone_verified":   10,    // 10 minutes
 		},
 		MaxLoginAttempts: 5,
 		MaxResetAttempts: 5,
@@ -144,6 +146,37 @@ func (tm *TokenManager) GenerateToken(
 		return "", fmt.Errorf("failed to store token: %w", err)
 	}
 
+	return token, nil
+}
+
+// GenerateDataToken stores a short-lived token that is not tied to an account or email.
+func (tm *TokenManager) GenerateDataToken(
+	ctx context.Context,
+	tokenType string,
+	additionalData map[string]interface{},
+) (string, error) {
+	expiryMinutes, err := getTokenExpiryMinutes(tokenType)
+	if err != nil {
+		return "", fmt.Errorf("invalid token type or configuration: %w", err)
+	}
+
+	tokenData := map[string]interface{}{
+		"token_type": tokenType,
+	}
+	for key, value := range additionalData {
+		tokenData[key] = value
+	}
+
+	token := uuid.NewString()
+	tokenDataJSON, err := json.Marshal(tokenData)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal token data: %w", err)
+	}
+
+	tokenKey := tm.getTokenKey(token, tokenType)
+	if err := redisUtil.GetClient().SetEx(ctx, tokenKey, tokenDataJSON, time.Duration(expiryMinutes)*time.Minute).Err(); err != nil {
+		return "", fmt.Errorf("failed to store token: %w", err)
+	}
 	return token, nil
 }
 

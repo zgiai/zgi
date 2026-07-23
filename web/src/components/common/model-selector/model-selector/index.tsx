@@ -5,7 +5,7 @@ import { Select, SelectContent, SelectTrigger, SelectValue } from '@/components/
 
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
-import type { ModelUseCase, ModelItem } from '@/services/types/model';
+import type { AvailableModelUseCase, ModelUseCase, ModelItem } from '@/services/types/model';
 import { ModelIcon } from 'modelicons';
 import { useAvailableModels } from '@/hooks/model/use-model';
 import { ModelFeatureIcon } from '@/components/model/model-feature-icon';
@@ -21,7 +21,7 @@ import type {
   FlatRow,
   FeatureLabels,
 } from './types';
-import { serializeValue, deserializeValue } from './utils';
+import { deserializeValue, prioritizeModelsByUseCase, serializeValue } from './utils';
 import {
   LoadingSkeleton,
   EmptyState,
@@ -34,6 +34,8 @@ import {
 export interface ModelSelectorProps {
   /** The model use case to query, e.g. 'text-chat', 'embedding', 'rerank'. */
   modelType: ModelUseCase;
+  /** Optional availability query that is distinct from the model's declared use-case label. */
+  availabilityUseCase?: AvailableModelUseCase;
   /** Current selected value as an object with provider and model. */
   value?: ModelSelectorValue;
   /** Callback triggered when selection changes. */
@@ -52,6 +54,8 @@ export interface ModelSelectorProps {
   defaultValue?: ModelSelectorValue;
   /** Controlled full model props of the current selection. */
   modelProps?: ModelSelectorModelProps | null;
+  /** Optional model list supplied by a caller that owns the model source. */
+  modelsOverride?: ModelItem[];
   /** Callback to notify full model props on selection change. */
   onModelPropsChange?: (props: ModelSelectorModelProps | null) => void;
   /** Filter models by capability requirements. Multiple capabilities can be required. */
@@ -71,6 +75,8 @@ export interface ModelSelectorProps {
   hasError?: boolean;
   /** Whether to show capabilities icons in the trigger label. Default: true */
   showCapabilities?: boolean;
+  /** Within each provider, place models for this use case first and highlight them. */
+  preferredUseCase?: ModelUseCase;
 }
 
 // Virtualization constants
@@ -95,6 +101,7 @@ function getModelPropsSignature(props: ModelSelectorModelProps | null): string {
  */
 export function ModelSelector({
   modelType,
+  availabilityUseCase,
   value,
   onChange,
   placeholder,
@@ -104,10 +111,12 @@ export function ModelSelector({
   collapsible = true,
   defaultValue,
   modelProps,
+  modelsOverride,
   onModelPropsChange,
   capabilityFilter,
   hasError = false,
   showCapabilities = true,
+  preferredUseCase,
 }: ModelSelectorProps) {
   const t = useT();
   const { locale } = useLocale();
@@ -172,14 +181,19 @@ export function ModelSelector({
       moderation: t('models.selector.usecases.moderation'),
       reasoning: t('models.selector.usecases.reasoning'),
       'function-calling': t('models.selector.usecases.function-calling'),
+      agent: t('models.selector.usecases.agent'),
     }),
     [t]
   );
 
   // Fetch available models with use_case filter (non-paginated, non-expiring)
-  const { models, isLoading, isFetching, refetch } = useAvailableModels({
-    use_case: modelType as ModelUseCase,
+  const availableModelsQuery = useAvailableModels({
+    use_case: availabilityUseCase ?? modelType,
   });
+  const models = modelsOverride ?? availableModelsQuery.models;
+  const isLoading = modelsOverride ? false : availableModelsQuery.isLoading;
+  const isFetching = modelsOverride ? false : availableModelsQuery.isFetching;
+  const refetch = availableModelsQuery.refetch;
 
   // Apply capability filtering
   const filteredModelsByCapability = useMemo(() => {
@@ -214,9 +228,9 @@ export function ModelSelector({
     });
     return Array.from(groupMap.entries()).map(([provider, items]) => ({
       provider,
-      models: items,
+      models: prioritizeModelsByUseCase(items, preferredUseCase),
     }));
-  }, [filteredModelsByCapability]);
+  }, [filteredModelsByCapability, preferredUseCase]);
 
   // Clear search when dropdown closes or component unmounts
   useEffect(() => {
@@ -677,6 +691,16 @@ export function ModelSelector({
                           featureLabels={featureLabels}
                           useCaseLabels={useCaseLabels}
                           locale={locale}
+                          highlighted={Boolean(
+                            preferredUseCase && row.model.use_cases?.includes(preferredUseCase)
+                          )}
+                          highlightedLabel={
+                            preferredUseCase === 'agent'
+                              ? t('models.selector.tags.agent')
+                              : preferredUseCase
+                                ? useCaseLabels[preferredUseCase]
+                                : undefined
+                          }
                         />
                       );
                     })}

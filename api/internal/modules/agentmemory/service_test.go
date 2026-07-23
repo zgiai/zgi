@@ -72,6 +72,9 @@ func (f *fakeStore) UpdateSlotScoped(ctx context.Context, workspaceID, agentID, 
 	if v, ok := values["description"].(string); ok {
 		slot.Description = v
 	}
+	if v, ok := values["name"].(string); ok {
+		slot.Name = v
+	}
 	if v, ok := values["max_chars"].(int); ok {
 		slot.MaxChars = v
 	}
@@ -234,6 +237,42 @@ func TestReplaceSlotsLimitsSlotCountAndDescriptionLength(t *testing.T) {
 	}}})
 	if !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("ReplaceSlots long description error = %v, want ErrInvalidInput", err)
+	}
+	_, err = svc.ReplaceSlots(context.Background(), agentID, uuid.New(), ReplaceSlotsRequest{Slots: []SlotUpsertRequest{{
+		Key:  "profile",
+		Name: strings.Repeat("名", 81),
+	}}})
+	if !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("ReplaceSlots long name error = %v, want ErrInvalidInput", err)
+	}
+}
+
+func TestReplaceSlotsPersistsOptionalName(t *testing.T) {
+	store := newFakeStore(uuid.New())
+	svc := &Service{repo: store}
+	agentID := uuid.New()
+
+	slots, err := svc.ReplaceSlots(context.Background(), agentID, uuid.New(), ReplaceSlotsRequest{Slots: []SlotUpsertRequest{{
+		Key:  "profile",
+		Name: "用户资料",
+	}}})
+	if err != nil {
+		t.Fatalf("ReplaceSlots create error = %v", err)
+	}
+	if len(slots) != 1 || slots[0].Name != "用户资料" {
+		t.Fatalf("created slots = %#v, want localized name", slots)
+	}
+
+	slots, err = svc.ReplaceSlots(context.Background(), agentID, uuid.New(), ReplaceSlotsRequest{Slots: []SlotUpsertRequest{{
+		ID:   slots[0].ID,
+		Key:  "profile",
+		Name: "User profile",
+	}}})
+	if err != nil {
+		t.Fatalf("ReplaceSlots update error = %v", err)
+	}
+	if len(slots) != 1 || slots[0].Name != "User profile" {
+		t.Fatalf("updated slots = %#v, want edited name", slots)
 	}
 }
 

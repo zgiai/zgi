@@ -1,8 +1,9 @@
-import type { ApiResponseData } from './common';
+import type { AgentResourceBoundImpact, ApiResponseData } from './common';
 
 export type AIChatConversationStatus = 'normal' | 'archived';
 export type AIChatConversationSource = 'console' | 'webapp' | 'migration';
 export type AIChatConversationRuntimeStatus = 'idle' | 'streaming';
+export type AIChatConversationType = 'chat' | 'image';
 export type AIChatMessageStatus =
   | 'pending'
   | 'streaming'
@@ -34,11 +35,16 @@ export type AIChatSkillActivityStatus =
   | 'denied'
   | 'success'
   | 'advisory'
+  | 'already_loaded'
+  | 'auto_restored'
   | 'blocked'
-  | 'error';
+  | 'error'
+  | 'reload_required'
+  | 'skipped';
 export type AIChatSkillInvocationKind =
   | 'metadata_exposed'
   | 'skill_load'
+  | 'skill_load_attempt'
   | 'reference_read'
   | 'tool_call'
   | 'tool_governance'
@@ -59,6 +65,7 @@ export interface AIChatConversationMetadata {
 export interface AIChatSkillDisplayMetadata {
   icon?: string;
   category?: string;
+  scenarios?: string[];
   label?: Record<string, string>;
   description?: Record<string, string>;
   when_to_use?: Record<string, string>;
@@ -101,9 +108,25 @@ export type AIChatSkillDetailResponse = ApiResponseData<AIChatSkillMetadata>;
 
 export interface AIChatSkillOrganizationConfig {
   enabled_skill_ids: string[];
+  agent_binding_action?: 'retain_suspended';
+  impact_token?: string;
 }
 
 export type AIChatSkillConfigResponse = ApiResponseData<AIChatSkillOrganizationConfig>;
+
+export type AIChatSkillConfigUpdateResult =
+  | {
+      status: 'applied';
+      applied: true;
+      enabled_skill_ids: string[];
+    }
+  | {
+      status: 'confirmation_required';
+      applied: false;
+      impact: AgentResourceBoundImpact;
+    };
+
+export type AIChatSkillConfigUpdateResponse = ApiResponseData<AIChatSkillConfigUpdateResult>;
 
 export interface AIChatSkillPreference {
   enabled_skill_ids: string[];
@@ -392,6 +415,7 @@ export interface AIChatConversation {
   title: string;
   status: AIChatConversationStatus;
   runtime_status: AIChatConversationRuntimeStatus;
+  conversation_type: AIChatConversationType;
   active_message_id?: string;
   current_leaf_message_id?: string;
   dialogue_count: number;
@@ -449,6 +473,7 @@ export type AIChatSearchResponse = ApiResponseData<AIChatSearchResult[]>;
 
 export interface AIChatCreateConversationRequest {
   title: string;
+  conversation_type?: AIChatConversationType;
 }
 
 export interface AIChatUpdateConversationRequest {

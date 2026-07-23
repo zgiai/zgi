@@ -87,7 +87,7 @@ func (s *llmGatewayServiceImpl) createResponseInternal(
 	var lastErr error
 	for attemptIdx, providerSelection := range providerSelections {
 		requestID := uuid.New().String()
-		quote, err := s.quoteTokenPricing(ctx, pricingModelRefFromSelection(providerSelection), promptTokens, completionTokens)
+		quote, err := s.quoteTokenPricingForSelection(ctx, providerSelection, pricingModelRefFromSelection(providerSelection), promptTokens, completionTokens)
 		if err != nil {
 			lastErr = fmt.Errorf("failed to calculate credits: %w", err)
 			continue
@@ -229,7 +229,7 @@ func (s *llmGatewayServiceImpl) createEmbeddingsInternal(
 		requestID := uuid.New().String()
 		modelRef := pricingModelRefFromSelection(providerSelection)
 		modelRef.Operation = PricingOperationEmbedding
-		quote, err := s.quoteTokenPricing(ctx, modelRef, promptTokens, 0)
+		quote, err := s.quoteTokenPricingForSelection(ctx, providerSelection, modelRef, promptTokens, 0)
 		if err != nil {
 			lastErr = fmt.Errorf("failed to calculate credits: %w", err)
 			continue
@@ -357,7 +357,7 @@ func (s *llmGatewayServiceImpl) rerankInternal(
 		requestID := uuid.New().String()
 		modelRef := pricingModelRefFromSelection(providerSelection)
 		modelRef.Operation = PricingOperationRerank
-		quote, err := s.quoteTokenPricing(ctx, modelRef, promptTokens, 0)
+		quote, err := s.quoteTokenPricingForSelection(ctx, providerSelection, modelRef, promptTokens, 0)
 		if err != nil {
 			lastErr = fmt.Errorf("failed to calculate credits: %w", err)
 			continue

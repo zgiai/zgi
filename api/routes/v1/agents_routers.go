@@ -1,6 +1,9 @@
 package v1
 
 import (
+	"context"
+	"time"
+
 	"github.com/gin-gonic/gin"
 	runtimerepo "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/repository"
 	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
@@ -23,10 +26,11 @@ import (
 	"github.com/zgiai/zgi/api/middleware"
 	"github.com/zgiai/zgi/api/pkg/logger"
 	"github.com/zgiai/zgi/api/pkg/queue"
+	pkgscheduler "github.com/zgiai/zgi/api/pkg/scheduler"
 	"gorm.io/gorm"
 )
 
-func RegisterAgentsRoutes(v1 *gin.RouterGroup, db *gorm.DB, accountService interfaces.AccountService, tenantService interfaces.WorkspaceManagementService, resourcePermissionService interfaces.ResourcePermissionService, enterpriseService interfaces.OrganizationService, quotaService interfaces.QuotaService, fileService interfaces.FileService, contentExtractor runtimeservice.ContentExtractionService, llmClient llmclient.LLMClient, toolEngine *tools.ToolEngine, toolManager *tools.ToolManager, memoryService *memorymodule.Service, graphFlowService *graphflow.Service, promptResolver promptservice.PromptService, dataSourceService datasourceservice.DataSourceService, knowledgeRetrievalService *datasetservice.KnowledgeRetrievalService, engineFactory *graph_engine.EngineFactory, taskManager *queue.TaskManager, taskRegistry workflowtest.TaskHandlerRegistry, workflowTestService *workflowtest.Service, workflowTestTaskBackend string) app.AgentsService {
+func RegisterAgentsRoutes(v1 *gin.RouterGroup, db *gorm.DB, accountService interfaces.AccountService, tenantService interfaces.WorkspaceManagementService, resourcePermissionService interfaces.ResourcePermissionService, enterpriseService interfaces.OrganizationService, quotaService interfaces.QuotaService, fileService interfaces.FileService, contentExtractor runtimeservice.ContentExtractionService, llmClient llmclient.LLMClient, toolEngine *tools.ToolEngine, toolManager *tools.ToolManager, memoryService *memorymodule.Service, graphFlowService *graphflow.Service, promptResolver promptservice.PromptService, dataSourceService datasourceservice.DataSourceService, knowledgeRetrievalService *datasetservice.KnowledgeRetrievalService, engineFactory *graph_engine.EngineFactory, taskManager *queue.TaskManager, taskRegistry workflowtest.TaskHandlerRegistry, workflowTestService *workflowtest.Service, scheduler *pkgscheduler.Scheduler, workflowTestTaskBackend string) app.AgentsService {
 	repo := app.NewAgentsRepository(db)
 
 	// Initialize workflow service for agents with all required dependencies
@@ -77,6 +81,21 @@ func RegisterAgentsRoutes(v1 *gin.RouterGroup, db *gorm.DB, accountService inter
 		memoryService,
 		agentMemoryService,
 	)
+	cleanupContext, cancelCleanup := context.WithTimeout(context.Background(), 30*time.Second)
+	affected, cleanupErr := chatRuntimeService.CleanupStaleActiveMessages(cleanupContext)
+	cancelCleanup()
+	if cleanupErr != nil {
+		logger.Error("Failed to clean stale chat runtime leases during startup", cleanupErr)
+	} else if affected > 0 {
+		logger.Info("Cleaned stale chat runtime leases during startup", map[string]interface{}{"affected_count": affected})
+	}
+	if scheduler != nil {
+		task := runtimeservice.NewRuntimeLeaseCleanupTask()
+		handler := runtimeservice.NewRuntimeLeaseCleanupHandler(chatRuntimeService)
+		if err := scheduler.RegisterTask(task, handler); err != nil {
+			logger.Error("Failed to register chat runtime lease cleanup task", err)
+		}
+	}
 	service := app.NewAgentsService(repo, accountService, tenantService, workflowService, chatRuntimeService, agentMemoryService, dataSourceService, knowledgeRetrievalService, resourcePermissionService, enterpriseService, quotaService, fileService, llmClient, defaultModelResolver, db)
 	appHandler := app.NewAgentsHandler(service, tenantService, accountService, enterpriseService, db, chatRuntimeService)
 	appHandler.SetFileService(fileService)
@@ -116,6 +135,13 @@ func RegisterAgentsRoutes(v1 *gin.RouterGroup, db *gorm.DB, accountService inter
 	appsGroup.GET("", appHandler.GetAgentsList)
 	appsGroup.GET("/runnable-webapps", appHandler.GetRunnableWebApps)
 	appsGroup.POST("", appHandler.CreateAgent)
+	appsGroup.GET("/:agent_id/candidates/skills", appHandler.ListAgentSkillBindingCandidates)
+	appsGroup.GET("/:agent_id/candidates/knowledge", appHandler.ListAgentKnowledgeBindingCandidates)
+	appsGroup.GET("/:agent_id/candidates/workflows", appHandler.ListAgentWorkflowBindingCandidates)
+	appsGroup.GET("/:agent_id/candidates/databases", appHandler.ListAgentDatabaseBindingCandidates)
+	appsGroup.GET("/:agent_id/candidates/databases/:data_source_id/tables", appHandler.ListAgentDatabaseTableBindingCandidates)
+	// Compatibility aliases for clients using the original candidate paths.
+	appsGroup.GET("/:agent_id/skills/candidates", appHandler.ListAgentSkillBindingCandidates)
 	appsGroup.GET("/:agent_id/workflow-bindings/candidates", appHandler.ListAgentWorkflowBindingCandidates)
 	appsGroup.GET("/:agent_id", appHandler.GetAgent)
 	appsGroup.GET("/:agent_id/config", appHandler.GetAgentConfig)
@@ -125,6 +151,7 @@ func RegisterAgentsRoutes(v1 *gin.RouterGroup, db *gorm.DB, accountService inter
 	appsGroup.POST("/:agent_id/suggested-questions/generate", appHandler.GenerateAgentSuggestedQuestions)
 	appsGroup.POST("/:agent_id/publish", appHandler.PublishAgent)
 	appsGroup.GET("/:agent_id/published-versions", appHandler.ListAgentPublishedVersions)
+	appsGroup.GET("/:agent_id/published-versions/:version_id/rollback-preview", appHandler.PreviewAgentPublishedVersionRollback)
 	appsGroup.POST("/:agent_id/published-versions/rollback", appHandler.RollbackAgentPublishedVersion)
 	appsGroup.POST("/:agent_id/chat", appHandler.ChatAgent)
 	appsGroup.GET("/:agent_id/runtime/conversations", appHandler.ListAgentRuntimeConversations)
@@ -139,6 +166,7 @@ func RegisterAgentsRoutes(v1 *gin.RouterGroup, db *gorm.DB, accountService inter
 	appsGroup.POST("/:agent_id/runtime/messages/:message_id/regenerate", appHandler.RegenerateAgentRuntimeMessage)
 	appsGroup.PUT("/:agent_id", appHandler.UpdateAgent)
 	appsGroup.PATCH("/:agent_id/webapp/status", appHandler.UpdateWebAppStatus)
+	appsGroup.GET("/:agent_id/delete-impact", appHandler.PreviewAgentDeleteImpact)
 	appsGroup.DELETE("/:agent_id", appHandler.DeleteAgent)
 	appsGroup.GET("/:agent_id/memory/slots", appHandler.ListAgentMemorySlots)
 	appsGroup.PUT("/:agent_id/memory/slots", appHandler.ReplaceAgentMemorySlots)
@@ -194,6 +222,8 @@ func RegisterAgentsRoutes(v1 *gin.RouterGroup, db *gorm.DB, accountService inter
 	workflowTests.GET("/cases/generation-tasks/latest", workflowTestHandler.GetLatestGenerationTask)
 	workflowTests.GET("/cases/generation-tasks/:task_id", workflowTestHandler.GetGenerationTask)
 	workflowTests.POST("/cases/generation-tasks/:task_id/cancel", workflowTestHandler.CancelGenerationTask)
+	workflowTests.POST("/cases/generation-tasks/:task_id/resume", workflowTestHandler.ResumeGenerationTask)
+	workflowTests.DELETE("/cases/generation-tasks/:task_id", workflowTestHandler.DeleteGenerationTask)
 	workflowTests.POST("/cases/generate", workflowTestHandler.GenerateCases)
 	workflowTests.GET("/batches", workflowTestHandler.ListBatches)
 	workflowTests.POST("/batches", workflowTestHandler.CreateBatch)

@@ -1,7 +1,7 @@
 // Server-Sent Events (SSE) client implementation
 
 import { ErrorNotificationService } from '@/utils/error-notifications';
-import { captureException } from '@/lib/sentry/client';
+import { captureError } from '@/lib/observability';
 import { getEndpointConfig, type ApiEndpoint } from './config';
 import type { SseOptions, SseMessage, SsePostOptions, SseEventCallbacks } from './types';
 import { parseSseRawEvent, SseParser, type SseRawEvent } from './sse-parser';
@@ -12,7 +12,12 @@ interface SseRequestError extends Error {
   details?: unknown;
 }
 
-function withTerminalStatus(payload: Record<string, unknown>, status: string): Record<string, unknown> {
+export const SSE_IDLE_TIMEOUT_MS = 45_000;
+
+function withTerminalStatus(
+  payload: Record<string, unknown>,
+  status: string
+): Record<string, unknown> {
   const nested = payload.data;
   if (nested && typeof nested === 'object') {
     return {
@@ -229,9 +234,9 @@ export class SseClient {
     if (!options.skipErrorHandling) {
       ErrorNotificationService.showNetworkError();
     }
-    captureException(err, scope => {
-      scope.setContext('http', { url: urlObj.toString(), method });
-      scope.setTag('endpoint', endpointCfg.name);
+    captureError(err, 'sse.connection.failed', {
+      tags: { endpoint: endpointCfg.name },
+      attributes: { http: { path: urlObj.pathname, method } },
     });
     options.onError?.(err);
     return { close: () => controller.abort() };
@@ -249,14 +254,11 @@ export class SseClient {
       error instanceof Error ? error : new Error('Authentication session is not available');
     err.code = err.code || 'ERR_AUTH_SESSION_MISSING';
     err.status = err.status || 401;
-    captureException(err, scope => {
-      scope.setContext('http', {
-        url: urlObj.toString(),
-        method,
-        status: err.status,
-        code: err.code,
-      });
-      scope.setTag('endpoint', endpointCfg.name);
+    captureError(err, 'sse.authentication.failed', {
+      tags: { endpoint: endpointCfg.name },
+      attributes: {
+        http: { path: urlObj.pathname, method, status: err.status, code: err.code },
+      },
     });
     options.onError?.(err);
     return { close: () => controller.abort() };
@@ -296,15 +298,20 @@ export class SseClient {
     err.status = response.status;
     err.code = code;
     err.details = responseText || undefined;
-    captureException(err, scope => {
-      scope.setContext('http', {
-        url: urlObj.toString(),
-        method,
-        status: response.status,
-        code,
-        responseText,
-      });
-      scope.setTag('endpoint', endpointCfg.name);
+    const reportingError = new Error(
+      `SSE request failed with status ${response.status}${code ? ` (${code})` : ''}`
+    );
+    captureError(reportingError, 'sse.response.failed', {
+      tags: { endpoint: endpointCfg.name },
+      attributes: {
+        http: {
+          path: urlObj.pathname,
+          method,
+          status: response.status,
+          code,
+          response_size: responseText.length,
+        },
+      },
     });
     options.onError?.(err);
     return { close: () => controller.abort() };
@@ -327,9 +334,11 @@ export class SseClient {
       'Invalid SSE response: missing text/event-stream content-type'
     );
     err.status = response.status;
-    captureException(err, scope => {
-      scope.setContext('http', { url: urlObj.toString(), method, status: response.status });
-      scope.setTag('endpoint', endpointCfg.name);
+    captureError(err, 'sse.content_type.invalid', {
+      tags: { endpoint: endpointCfg.name },
+      attributes: {
+        http: { path: urlObj.pathname, method, status: response.status },
+      },
     });
     options.onError?.(err);
     return { close: () => controller.abort() };
@@ -358,6 +367,34 @@ export class SseClient {
     let terminalEventReceived = false;
     let incompleteLastEvent = false;
     let decoderFlushed = false;
+    const idleTimeoutMs =
+      typeof options.idleTimeoutMs === 'number' &&
+      Number.isFinite(options.idleTimeoutMs) &&
+      options.idleTimeoutMs > 0
+        ? options.idleTimeoutMs
+        : null;
+
+    const readWithIdleWatchdog = (): Promise<ReadableStreamReadResult<Uint8Array>> => {
+      if (idleTimeoutMs === null) return reader.read();
+
+      return new Promise((resolve, reject) => {
+        const timer = window.setTimeout(() => {
+          const error = new Error('SSE stream received no bytes before the idle timeout');
+          (error as SseRequestError).code = 'ERR_SSE_IDLE_TIMEOUT';
+          reject(error);
+        }, idleTimeoutMs);
+        reader.read().then(
+          result => {
+            window.clearTimeout(timer);
+            resolve(result);
+          },
+          error => {
+            window.clearTimeout(timer);
+            reject(error);
+          }
+        );
+      });
+    };
 
     const isTerminalMessage = (msg: SseMessage<TOut>): boolean => {
       if (options.isTerminalMessage?.(msg as SseMessage<unknown>)) {
@@ -396,12 +433,16 @@ export class SseClient {
     (async () => {
       try {
         for (;;) {
-          const { value, done } = await reader.read();
+          const { value, done } = await readWithIdleWatchdog();
           if (done) {
             flushPendingEvents();
-            if (incompleteLastEvent && !terminalEventReceived) {
+            if (!terminalEventReceived && !controller.signal.aborted) {
               this.handleStreamTransportError(
-                new Error('SSE stream ended with an incomplete JSON event'),
+                new Error(
+                  incompleteLastEvent
+                    ? 'SSE stream ended with an incomplete JSON event'
+                    : 'SSE stream ended before a terminal event'
+                ),
                 options,
                 urlObj,
                 method,
@@ -424,6 +465,7 @@ export class SseClient {
             terminalReceived: terminalEventReceived,
             incompleteLastEvent,
           });
+          controller.abort();
         }
       } finally {
         try {
@@ -449,14 +491,16 @@ export class SseClient {
     if (!options.skipErrorHandling) {
       ErrorNotificationService.showNetworkError();
     }
-    captureException(err, scope => {
-      scope.setContext('http', {
-        url: urlObj.toString(),
-        method,
-        incompleteLastEvent: meta.incompleteLastEvent,
-        terminalReceived: meta.terminalReceived,
-      });
-      scope.setTag('endpoint', endpointCfg.name);
+    captureError(err, 'sse.stream.interrupted', {
+      tags: { endpoint: endpointCfg.name },
+      attributes: {
+        http: {
+          path: urlObj.pathname,
+          method,
+          incomplete_last_event: meta.incompleteLastEvent,
+          terminal_received: meta.terminalReceived,
+        },
+      },
     });
     options.onTransportError?.(err, meta);
     options.onError?.(err);
@@ -514,7 +558,6 @@ export class SseClient {
     };
 
     eventHandlers[evt]?.(payload);
-
   }
 }
 

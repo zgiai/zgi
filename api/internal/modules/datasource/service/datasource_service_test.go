@@ -629,7 +629,7 @@ func TestDeleteDataSourceUsesWorkspaceDeletePermission(t *testing.T) {
 		},
 	}, nil, authorization)
 
-	if err := svc.DeleteDataSourceByID(context.Background(), "organization-1", "datasource-1", "workspace-manager"); err != nil {
+	if err := svc.DeleteDataSourceByID(context.Background(), "organization-1", "datasource-1", "workspace-manager", "", ""); err != nil {
 		t.Fatalf("DeleteDataSourceByID error = %v", err)
 	}
 	if len(authorization.workspaceRequests) != 1 {

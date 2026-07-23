@@ -23,6 +23,7 @@ import type { AIChatSkillMetadata } from '@/services/types/aichat';
 
 interface AIChatSkillPreferenceDialogProps {
   open: boolean;
+  context: 'conversation' | 'platform-assistant';
   locale: string;
   skills: AIChatSkillMetadata[];
   selectedSkillIds: string[];
@@ -36,6 +37,7 @@ interface AIChatSkillPreferenceDialogProps {
 
 export function AIChatSkillPreferenceDialog({
   open,
+  context,
   locale,
   skills,
   selectedSkillIds,
@@ -64,6 +66,8 @@ export function AIChatSkillPreferenceDialog({
         display.label,
         display.description,
         display.whenToUse,
+        display.categoryLabel,
+        ...display.scenarios,
         ...display.tags,
       ]
         .filter(Boolean)
@@ -119,7 +123,11 @@ export function AIChatSkillPreferenceDialog({
         <DialogContent size="xl">
           <DialogHeader>
             <DialogTitle>{t('consoleChat.skillPreferences.title')}</DialogTitle>
-            <DialogDescription>{t('consoleChat.skillPreferences.description')}</DialogDescription>
+            <DialogDescription>
+              {context === 'platform-assistant'
+                ? t('consoleChat.skillPreferences.platformAssistantDescription')
+                : t('consoleChat.skillPreferences.conversationDescription')}
+            </DialogDescription>
           </DialogHeader>
           <DialogBody className="max-h-[min(680px,calc(100vh-13rem))] space-y-4">
             <div className="flex flex-col gap-3 rounded-md border bg-muted/20 p-3 sm:flex-row sm:items-center sm:justify-between">
@@ -201,7 +209,7 @@ export function AIChatSkillPreferenceDialog({
                                 {display.label}
                               </h3>
                               <p className="mt-0.5 line-clamp-1 text-xs text-muted-foreground">
-                                {display.category || skill.source || 'Skill'}
+                                {display.categoryLabel}
                               </p>
                             </div>
                             <Switch

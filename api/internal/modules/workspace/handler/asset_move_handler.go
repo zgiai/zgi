@@ -24,9 +24,47 @@ func NewWorkspaceAssetMoveHandler(accountService interfaces.AccountService, serv
 func (h *WorkspaceAssetMoveHandler) RegisterRoutes(router *gin.RouterGroup) {
 	organization := router.Group("/organizations", middleware.JWTWithOrganizationAndService(h.accountService))
 	{
+		organization.POST("/current/assets/move/eligible-targets", h.EligibleTargets)
+		organization.POST("/current/assets/move/dependencies", h.PreviewDependencies)
 		organization.POST("/current/assets/move/preview", h.Preview)
 		organization.POST("/current/assets/move", h.Move)
 	}
+}
+
+func (h *WorkspaceAssetMoveHandler) PreviewDependencies(c *gin.Context) {
+	var req dto.WorkspaceAssetMoveDependencyPreviewRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.FailWithMessage(c, response.ErrInvalidParam, err.Error())
+		return
+	}
+	organizationID, accountID, ok := h.contextIDs(c)
+	if !ok {
+		return
+	}
+	result, err := h.service.PreviewDependencies(c.Request.Context(), organizationID, accountID, req)
+	if err != nil {
+		handleAssetMoveError(c, err, nil)
+		return
+	}
+	response.Success(c, result)
+}
+
+func (h *WorkspaceAssetMoveHandler) EligibleTargets(c *gin.Context) {
+	var req dto.WorkspaceAssetMoveEligibleTargetsRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.FailWithMessage(c, response.ErrInvalidParam, err.Error())
+		return
+	}
+	organizationID, accountID, ok := h.contextIDs(c)
+	if !ok {
+		return
+	}
+	result, err := h.service.EligibleTargets(c.Request.Context(), organizationID, accountID, req)
+	if err != nil {
+		handleAssetMoveError(c, err, nil)
+		return
+	}
+	response.Success(c, result)
 }
 
 func (h *WorkspaceAssetMoveHandler) Preview(c *gin.Context) {
@@ -80,6 +118,9 @@ func (h *WorkspaceAssetMoveHandler) contextIDs(c *gin.Context) (string, string, 
 }
 
 func handleAssetMoveError(c *gin.Context, err error, result interface{}) {
+	if helper.WriteAgentBindingConflict(c, err) {
+		return
+	}
 	switch {
 	case errors.Is(err, workspace_service.ErrAssetMovePermissionDenied):
 		response.Fail(c, response.ErrPermissionDenied)

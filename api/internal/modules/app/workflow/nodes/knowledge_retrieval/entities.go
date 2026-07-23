@@ -16,7 +16,7 @@ const (
 	multiple retrievalMode = "multiple"
 )
 
-const AppType = "agent"
+const AppType = "workflow"
 
 type metadataFilteringMode string
 

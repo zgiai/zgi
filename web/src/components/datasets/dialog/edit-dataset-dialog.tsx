@@ -24,6 +24,7 @@ import { buildIconValueFromDataset, iconValueToDatasetPayload } from '@/utils/ic
 import { getNameValidationErrors, isValidNameInput } from '@/utils/validation';
 import { cn } from '@/lib/utils';
 import { ICON_BG, ICON_TEXT } from '@/lib/config';
+import { DATASET_NAME_VALIDATION_OPTIONS } from '@/constants/dataset';
 
 interface EditDatasetDialogProps {
   open: boolean;
@@ -56,8 +57,15 @@ export function EditDatasetDialog({ open, onOpenChange, dataset }: EditDatasetDi
     setHasSubmitted(false);
   }, [dataset, open]);
 
-  const nameErrors = useMemo(() => getNameValidationErrors(name, { allowSpace: true }), [name]);
-  const isNameValid = useMemo(() => isValidNameInput(name, { allowSpace: true }), [name]);
+  const nameErrors = useMemo(
+    () => getNameValidationErrors(name, DATASET_NAME_VALIDATION_OPTIONS),
+    [name]
+  );
+  const isNameValid = useMemo(
+    () => isValidNameInput(name, DATASET_NAME_VALIDATION_OPTIONS),
+    [name]
+  );
+  const showNameError = (hasSubmitted || nameErrors.includes('tooLong')) && !isNameValid;
 
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -95,14 +103,10 @@ export function EditDatasetDialog({ open, onOpenChange, dataset }: EditDatasetDi
                 value={name}
                 onChange={event => setName(event.target.value)}
                 placeholder={t('datasets.createModal.namePlaceholder')}
-                className={cn(
-                  hasSubmitted &&
-                    !isNameValid &&
-                    'border-destructive focus-visible:ring-destructive'
-                )}
+                className={cn(showNameError && 'border-destructive focus-visible:ring-destructive')}
                 errorText={
-                  hasSubmitted && !isNameValid
-                    ? t(`datasets.validation.name.${nameErrors[0] || 'required'}`)
+                  showNameError
+                    ? t(`datasets.validation.datasetName.${nameErrors[0] || 'required'}`)
                     : undefined
                 }
               />

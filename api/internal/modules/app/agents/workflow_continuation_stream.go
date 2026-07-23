@@ -378,6 +378,9 @@ func (h *AgentsHandler) finishAgentWorkflowContinuation(ctx context.Context, sco
 			return nil
 		})
 		if summaryErr != nil {
+			if runtimeservice.IsFinalizedStreamError(summaryErr) {
+				return
+			}
 			h.failAgentWorkflowContinuation(ctx, continuation, summaryErr, emit)
 			return
 		}

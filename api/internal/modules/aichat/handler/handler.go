@@ -12,6 +12,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/zgiai/zgi/api/internal/capabilities/agentbindings"
 	runtimedto "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/dto"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
@@ -29,7 +30,22 @@ const (
 	maxMessagePageLimit          = 200
 	defaultSearchLimit           = 20
 	maxSearchLimit               = 50
+
+	skillConfigUpdateStatusApplied              = "applied"
+	skillConfigUpdateStatusConfirmationRequired = "confirmation_required"
 )
+
+type skillConfigAppliedResult struct {
+	Status          string   `json:"status"`
+	Applied         bool     `json:"applied"`
+	EnabledSkillIDs []string `json:"enabled_skill_ids"`
+}
+
+type skillConfigConfirmationRequiredResult struct {
+	Status  string               `json:"status"`
+	Applied bool                 `json:"applied"`
+	Impact  agentbindings.Impact `json:"impact"`
+}
 
 type Handler struct {
 	service runtimeservice.Service
@@ -51,6 +67,7 @@ func (h *Handler) RegisterRoutes(router *gin.RouterGroup) {
 	skillManagement.POST("/import/confirm", h.ConfirmImportSkill)
 	skillManagement.DELETE("/import/preview/:import_id", h.CancelImportSkillPreview)
 	skillManagement.PUT("/config", h.UpdateSkillConfig)
+	skillManagement.GET("/:id/delete-impact", h.PreviewSkillDeleteImpact)
 	skillManagement.DELETE("/:id", h.DeleteSkill)
 	group.GET("/conversations", h.ListConversations)
 	group.GET("/search", h.Search)
@@ -69,6 +86,10 @@ func (h *Handler) RegisterRoutes(router *gin.RouterGroup) {
 	group.POST("/conversations/:id/messages/:message_id/tool-governance/:correlation_id/continue", h.ContinueToolGovernanceDecision)
 	group.POST("/conversations/:id/messages/:message_id/client-actions/:action_id/continue", h.ContinueClientAction)
 	group.POST("/conversations/:id/messages/:message_id/user-input/:request_id/continue", h.ContinueUserInput)
+	group.POST("/work-chat/chat", h.WorkChat)
+	group.POST("/contextual/chat", h.ContextualChat)
+	// Keep the original route as a work-chat compatibility alias. Surface is
+	// fixed by the endpoint and is never trusted from the request body.
 	group.POST("/chat", h.Chat)
 }
 
@@ -132,10 +153,19 @@ func (h *Handler) UpdateSkillConfig(c *gin.Context) {
 	}
 	config, err := h.service.UpdateSkillConfig(c.Request.Context(), scope, req)
 	if err != nil {
+		var conflict *agentbindings.ConflictError
+		if errors.As(err, &conflict) && conflict != nil {
+			response.Success(c, skillConfigConfirmationRequiredResult{
+				Status:  skillConfigUpdateStatusConfirmationRequired,
+				Applied: false,
+				Impact:  conflict.Impact,
+			})
+			return
+		}
 		h.fail(c, err)
 		return
 	}
-	response.Success(c, skillConfigResponse(config))
+	response.Success(c, skillConfigAppliedUpdateResponse(config))
 }
 
 func (h *Handler) GetMySkillPreference(c *gin.Context) {
@@ -232,11 +262,47 @@ func (h *Handler) DeleteSkill(c *gin.Context) {
 		response.Fail(c, response.ErrInvalidParam)
 		return
 	}
-	if err := h.service.DeleteSkill(c.Request.Context(), scope, skillID); err != nil {
+	if err := h.service.DeleteSkill(
+		c.Request.Context(),
+		scope,
+		skillID,
+		c.Query("agent_binding_action"),
+		c.Query("impact_token"),
+	); err != nil {
+		if util.WriteAgentBindingConflict(c, err) {
+			return
+		}
 		h.fail(c, err)
 		return
 	}
 	response.Success(c, gin.H{"deleted": true})
+}
+
+type skillDeleteImpactPreviewer interface {
+	PreviewSkillDeleteImpact(ctx context.Context, scope runtimeservice.Scope, skillID string) (*agentbindings.Impact, error)
+}
+
+func (h *Handler) PreviewSkillDeleteImpact(c *gin.Context) {
+	scope, ok := h.scope(c)
+	if !ok {
+		return
+	}
+	skillID := strings.TrimSpace(c.Param("id"))
+	if skillID == "" {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+	previewer, ok := h.service.(skillDeleteImpactPreviewer)
+	if !ok {
+		response.Fail(c, response.ErrSystemError)
+		return
+	}
+	impact, err := previewer.PreviewSkillDeleteImpact(c.Request.Context(), scope, skillID)
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	response.Success(c, impact)
 }
 
 func (h *Handler) CreateConversation(c *gin.Context) {
@@ -249,7 +315,14 @@ func (h *Handler) CreateConversation(c *gin.Context) {
 		response.Fail(c, response.ErrInvalidParam)
 		return
 	}
-	conversation, err := h.service.CreateConversation(c.Request.Context(), scope, req.Title)
+	conversationType, ok := h.conversationType(c, req.ConversationType)
+	if !ok {
+		return
+	}
+	conversation, err := h.service.CreateConversationForCaller(c.Request.Context(), scope, runtimeservice.Caller{
+		Type:             runtimemodel.ConversationCallerAIChat,
+		ConversationType: conversationType,
+	}, req.Title)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -263,7 +336,21 @@ func (h *Handler) ListConversations(c *gin.Context) {
 		return
 	}
 	page, limit := pagination(c, 1, defaultConversationPageLimit, maxConversationPageLimit)
-	conversations, total, err := h.service.ListConversationsBySurface(c.Request.Context(), scope, c.Query("surface"), page, limit)
+	conversationType, ok := h.conversationType(c, c.Query("conversation_type"))
+	if !ok {
+		return
+	}
+	var conversations []*runtimemodel.Conversation
+	var total int64
+	var err error
+	if conversationType == runtimemodel.ConversationTypeImage {
+		conversations, total, err = h.service.ListConversationsByCaller(c.Request.Context(), scope, runtimeservice.Caller{
+			Type:             runtimemodel.ConversationCallerAIChat,
+			ConversationType: conversationType,
+		}, page, limit)
+	} else {
+		conversations, total, err = h.service.ListConversationsBySurface(c.Request.Context(), scope, c.Query("surface"), page, limit)
+	}
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -290,7 +377,20 @@ func (h *Handler) Search(c *gin.Context) {
 	if limit > maxSearchLimit {
 		limit = maxSearchLimit
 	}
-	results, err := h.service.SearchBySurface(c.Request.Context(), scope, c.Query("surface"), c.Query("query"), limit)
+	conversationType, ok := h.conversationType(c, c.Query("conversation_type"))
+	if !ok {
+		return
+	}
+	var results []*runtimeservice.SearchResult
+	var err error
+	if conversationType == runtimemodel.ConversationTypeImage {
+		results, err = h.service.SearchByCaller(c.Request.Context(), scope, runtimeservice.Caller{
+			Type:             runtimemodel.ConversationCallerAIChat,
+			ConversationType: conversationType,
+		}, c.Query("query"), limit)
+	} else {
+		results, err = h.service.SearchBySurface(c.Request.Context(), scope, c.Query("surface"), c.Query("query"), limit)
+	}
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -307,7 +407,14 @@ func (h *Handler) GetConversation(c *gin.Context) {
 	if !ok {
 		return
 	}
-	conversation, err := h.service.GetConversation(c.Request.Context(), scope, id)
+	conversationType, ok := h.conversationType(c, c.Query("conversation_type"))
+	if !ok {
+		return
+	}
+	conversation, err := h.service.GetConversationByCaller(c.Request.Context(), scope, runtimeservice.Caller{
+		Type:             runtimemodel.ConversationCallerAIChat,
+		ConversationType: conversationType,
+	}, id)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -320,12 +427,19 @@ func (h *Handler) UpdateConversation(c *gin.Context) {
 	if !ok {
 		return
 	}
+	conversationType, ok := h.conversationType(c, c.Query("conversation_type"))
+	if !ok {
+		return
+	}
 	var req runtimedto.UpdateConversationRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.Fail(c, response.ErrInvalidParam)
 		return
 	}
-	conversation, err := h.service.UpdateConversation(c.Request.Context(), scope, id, req)
+	conversation, err := h.service.UpdateConversationByCaller(c.Request.Context(), scope, runtimeservice.Caller{
+		Type:             runtimemodel.ConversationCallerAIChat,
+		ConversationType: conversationType,
+	}, id, req)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -338,7 +452,14 @@ func (h *Handler) DeleteConversation(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if err := h.service.DeleteConversation(c.Request.Context(), scope, id); err != nil {
+	conversationType, ok := h.conversationType(c, c.Query("conversation_type"))
+	if !ok {
+		return
+	}
+	if err := h.service.DeleteConversationByCaller(c.Request.Context(), scope, runtimeservice.Caller{
+		Type:             runtimemodel.ConversationCallerAIChat,
+		ConversationType: conversationType,
+	}, id); err != nil {
 		h.fail(c, err)
 		return
 	}
@@ -350,8 +471,15 @@ func (h *Handler) ListMessages(c *gin.Context) {
 	if !ok {
 		return
 	}
+	conversationType, ok := h.conversationType(c, c.Query("conversation_type"))
+	if !ok {
+		return
+	}
 	page, limit := pagination(c, 1, defaultMessagePageLimit, maxMessagePageLimit)
-	messages, total, err := h.service.ListMessages(c.Request.Context(), scope, conversationID, page, limit)
+	messages, total, err := h.service.ListConversationMessagesByCaller(c.Request.Context(), scope, runtimeservice.Caller{
+		Type:             runtimemodel.ConversationCallerAIChat,
+		ConversationType: conversationType,
+	}, conversationID, page, limit)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -501,6 +629,18 @@ func (h *Handler) RegenerateMessage(c *gin.Context) {
 }
 
 func (h *Handler) Chat(c *gin.Context) {
+	h.chatForSurface(c, runtimedto.RuntimeSurfaceWorkChat)
+}
+
+func (h *Handler) WorkChat(c *gin.Context) {
+	h.chatForSurface(c, runtimedto.RuntimeSurfaceWorkChat)
+}
+
+func (h *Handler) ContextualChat(c *gin.Context) {
+	h.chatForSurface(c, runtimedto.RuntimeSurfaceContextualSidebar)
+}
+
+func (h *Handler) chatForSurface(c *gin.Context, surface string) {
 	scope, ok := h.scope(c)
 	if !ok {
 		return
@@ -510,6 +650,7 @@ func (h *Handler) Chat(c *gin.Context) {
 		response.Fail(c, response.ErrInvalidParam)
 		return
 	}
+	req.Surface = surface
 
 	prepared, err := h.service.PrepareChat(c.Request.Context(), scope, req)
 	if err != nil {
@@ -689,6 +830,9 @@ func setupSSE(c *gin.Context) {
 	c.Writer.Header().Set("Transfer-Encoding", "chunked")
 	c.Status(http.StatusOK)
 	c.Writer.Flush()
+	writer := newRuntimeSSEWriter(c)
+	c.Set(runtimeSSEWriterContextKey, writer)
+	writer.StartHeartbeat(c.Request.Context())
 }
 
 func writeSSE(c *gin.Context, event string, data interface{}) error {
@@ -700,6 +844,15 @@ func writeStreamEvent(c *gin.Context, event runtimeservice.StreamEvent) error {
 }
 
 func writeSSEEvent(c *gin.Context, id string, event string, data interface{}) error {
+	if value, ok := c.Get(runtimeSSEWriterContextKey); ok {
+		if writer, writerOK := value.(*runtimeSSEWriter); writerOK && writer != nil {
+			return writer.WriteEvent(id, event, data)
+		}
+	}
+	return writeSSERaw(c, id, event, data)
+}
+
+func writeSSERaw(c *gin.Context, id string, event string, data interface{}) error {
 	payload := gin.H{"event": event, "data": enrichSSEPayload(id, data)}
 	encoded, err := json.Marshal(payload)
 	if err != nil {
@@ -824,19 +977,34 @@ func parsePositiveInt(raw string, fallback int) int {
 	return value
 }
 
+func (h *Handler) conversationType(c *gin.Context, raw string) (string, bool) {
+	value := strings.TrimSpace(raw)
+	if value == "" {
+		return runtimemodel.ConversationTypeChat, true
+	}
+	switch value {
+	case runtimemodel.ConversationTypeChat, runtimemodel.ConversationTypeImage:
+		return value, true
+	default:
+		response.Fail(c, response.ErrInvalidParam)
+		return "", false
+	}
+}
+
 func conversationResponse(conversation *runtimemodel.Conversation) runtimedto.ConversationResponse {
 	resp := runtimedto.ConversationResponse{
-		ID:             conversation.ID.String(),
-		OrganizationID: conversation.OrganizationID.String(),
-		AccountID:      conversation.AccountID.String(),
-		Title:          conversation.Title,
-		Status:         conversation.Status,
-		RuntimeStatus:  conversation.RuntimeStatus,
-		DialogueCount:  conversation.DialogueCount,
-		Source:         conversation.Source,
-		Metadata:       conversation.Metadata,
-		CreatedAt:      conversation.CreatedAt.Unix(),
-		UpdatedAt:      conversation.UpdatedAt.Unix(),
+		ID:               conversation.ID.String(),
+		OrganizationID:   conversation.OrganizationID.String(),
+		AccountID:        conversation.AccountID.String(),
+		Title:            conversation.Title,
+		Status:           conversation.Status,
+		RuntimeStatus:    conversation.RuntimeStatus,
+		ConversationType: conversation.ConversationType,
+		DialogueCount:    conversation.DialogueCount,
+		Source:           conversation.Source,
+		Metadata:         conversation.Metadata,
+		CreatedAt:        conversation.CreatedAt.Unix(),
+		UpdatedAt:        conversation.UpdatedAt.Unix(),
 	}
 	if resp.Metadata == nil {
 		resp.Metadata = map[string]interface{}{}
@@ -869,6 +1037,7 @@ func skillResponse(metadata skills.SkillDiscoveryMetadata) runtimedto.SkillRespo
 		Display: runtimedto.SkillDisplayResponse{
 			Icon:        metadata.Display.Icon,
 			Category:    metadata.Display.Category,
+			Scenarios:   metadata.Display.Scenarios,
 			Label:       metadata.Display.Label,
 			Description: metadata.Display.Description,
 			WhenToUse:   metadata.Display.WhenToUse,
@@ -963,6 +1132,18 @@ func skillConfigResponse(config *runtimeservice.SkillConfig) runtimedto.SkillCon
 		return runtimedto.SkillConfigResponse{EnabledSkillIDs: []string{}}
 	}
 	return runtimedto.SkillConfigResponse{EnabledSkillIDs: append([]string(nil), config.EnabledSkillIDs...)}
+}
+
+func skillConfigAppliedUpdateResponse(config *runtimeservice.SkillConfig) skillConfigAppliedResult {
+	result := skillConfigAppliedResult{
+		Status:          skillConfigUpdateStatusApplied,
+		Applied:         true,
+		EnabledSkillIDs: []string{},
+	}
+	if config != nil {
+		result.EnabledSkillIDs = append([]string(nil), config.EnabledSkillIDs...)
+	}
+	return result
 }
 
 func accountSkillPreferenceResponse(pref *runtimeservice.AccountSkillPreference) runtimedto.AccountSkillPreferenceResponse {

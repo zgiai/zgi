@@ -251,6 +251,7 @@ type SkillFrontmatter struct {
 type SkillDisplayMetadata struct {
 	Icon        string              `json:"icon" yaml:"icon"`
 	Category    string              `json:"category" yaml:"category"`
+	Scenarios   []string            `json:"scenarios,omitempty" yaml:"scenarios"`
 	Label       map[string]string   `json:"label" yaml:"label"`
 	Description map[string]string   `json:"description" yaml:"description"`
 	WhenToUse   map[string]string   `json:"when_to_use" yaml:"when_to_use"`

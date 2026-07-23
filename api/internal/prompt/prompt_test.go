@@ -87,6 +87,8 @@ func TestAIChatSystemTemplateRender(t *testing.T) {
 		"adjustable execution guide, not a fixed script",
 		"Prefer current page evidence",
 		"if the result is missing, partial, or failed, say that plainly",
+		"Conversation history and user authorization alone are not execution evidence",
+		"operation was not executed or cannot be verified",
 	} {
 		if !strings.Contains(rendered, expected) {
 			t.Fatalf("rendered aichat system template does not contain %q: %s", expected, rendered)

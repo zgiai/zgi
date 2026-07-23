@@ -7,7 +7,9 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
+	llmcache "github.com/zgiai/zgi/api/internal/modules/llm/cache"
 	llmmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
+	redisutil "github.com/zgiai/zgi/api/pkg/redis"
 )
 
 func TestModelCachePreservesInternalCapabilities(t *testing.T) {
@@ -63,6 +65,9 @@ func TestModelCacheRejectsLegacyJSONWithoutInternalCapabilities(t *testing.T) {
 func TestConfigCacheInvalidateModelCacheDeletesOnlyModelKeys(t *testing.T) {
 	ctx := context.Background()
 	redisClient := newGatewayTestRedis(t)
+	previousRedisClient := redisutil.GetClient()
+	redisutil.SetClient(redisClient)
+	t.Cleanup(func() { redisutil.SetClient(previousRedisClient) })
 	cache := NewConfigCache(redisClient, nil, &ConfigCacheConfig{
 		ModelTTL:    time.Minute,
 		ProviderTTL: time.Minute,
@@ -80,7 +85,11 @@ func TestConfigCacheInvalidateModelCacheDeletesOnlyModelKeys(t *testing.T) {
 		}
 	}
 
+	globalGenerationBefore := llmcache.GlobalGeneration(ctx)
 	cache.InvalidateModelCache(ctx)
+	if globalGenerationAfter := llmcache.GlobalGeneration(ctx); globalGenerationAfter == globalGenerationBefore {
+		t.Fatalf("global available-model generation = %q, want change from %q", globalGenerationAfter, globalGenerationBefore)
+	}
 
 	for _, key := range []string{
 		cache.prefix + "model:name:gpt-4o",

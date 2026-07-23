@@ -729,6 +729,11 @@ func (t *saveFileTool) Invoke(ctx context.Context, userID string, params map[str
 		"transfer_method": string(workflowfile.FileTransferMethodLocalFile),
 		"download_url":    downloadURL,
 		"source_type":     source.SourceType,
+		"handoff_instruction": strings.Join([]string{
+			"This file_id is the durable managed-file reference for later steps in the same task.",
+			"When a downstream tool accepts a managed_file source, pass this file_id directly.",
+			"Do not navigate back to File Management or call file-reader/read_file merely to retransmit the saved body.",
+		}, " "),
 	}
 	if urlValue != "" {
 		payload["url"] = urlValue

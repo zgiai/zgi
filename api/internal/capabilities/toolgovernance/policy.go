@@ -35,6 +35,7 @@ func Decide(req Request, policy Policy) Decision {
 		correlationID = uuid.NewString()
 	}
 
+	preauthorization := normalizePreauthorization(req.Preauthorization)
 	base := Decision{
 		Status:         DecisionStatusAllowed,
 		CorrelationID:  correlationID,
@@ -42,7 +43,6 @@ func Decide(req Request, policy Policy) Decision {
 		Assets:         assets,
 		ExpectedAssets: expectedAssets,
 	}
-
 	if manifest.ToolID == "" {
 		return finalizeDecision(base.withStatus(DecisionStatusDenied, "tool_id is required", false), tier, req)
 	}
@@ -59,6 +59,17 @@ func Decide(req Request, policy Policy) Decision {
 	}
 	if policy.CriticalRiskBlocked && manifest.RiskLevel == RiskLevelCritical {
 		decision := base.withStatus(DecisionStatusBlocked, "critical risk tools are blocked by policy", false)
+		return finalizeDecision(decision, tier, req)
+	}
+	if preauthorization != nil && preauthorization.Required {
+		base.Preauthorization = preauthorization
+		if base.Preauthorization.Matched {
+			reason := firstNonEmptyString(base.Preauthorization.Reason, "allowed by persistent preauthorization")
+			decision := base.withStatus(DecisionStatusAllowed, reason, false)
+			return finalizeDecision(decision, tier, req)
+		}
+		reason := firstNonEmptyString(base.Preauthorization.Reason, "persistent preauthorization is required")
+		decision := base.withStatus(DecisionStatusDenied, reason, false)
 		return finalizeDecision(decision, tier, req)
 	}
 	if grant, ok := matchingSessionGrant(req, manifest, assets); ok {
@@ -103,6 +114,20 @@ func (d Decision) withStatus(status DecisionStatus, reason string, requiresAppro
 }
 
 func (d Decision) needsApproval(tier PermissionTier, req Request, reason string) Decision {
+	if normalizeApprovalMode(req.ApprovalMode) == ApprovalModeNonInteractive {
+		if d.Preauthorization == nil {
+			d.Preauthorization = normalizePreauthorization(req.Preauthorization)
+		}
+		if d.Preauthorization == nil {
+			d.Preauthorization = &Preauthorization{
+				Source: "non_interactive_runtime",
+				Code:   "interactive_approval_unavailable",
+				Reason: "interactive approval is unavailable in this runtime",
+			}
+		}
+		denialReason := firstNonEmptyString(d.Preauthorization.Reason, reason)
+		return d.withStatus(DecisionStatusDenied, denialReason, false)
+	}
 	d = d.withStatus(DecisionStatusNeedsApproval, reason, true)
 	d.ApprovalEvent = approvalEvent(d, tier, req)
 	d.ModelFeedback = modelFeedback(d, tier)
@@ -182,6 +207,21 @@ func modelFeedback(decision Decision, tier PermissionTier) map[string]interface{
 			feedback["matched_assets"] = decision.Assets
 		}
 	}
+	if len(decision.Assets) > 0 {
+		feedback["assets"] = decision.Assets
+	}
+	if decision.Preauthorization != nil {
+		feedback["preauthorization"] = *decision.Preauthorization
+		if decision.Preauthorization.Source != "" {
+			feedback["authorization_source"] = decision.Preauthorization.Source
+		}
+		if decision.Preauthorization.Code != "" {
+			feedback["authorization_code"] = decision.Preauthorization.Code
+		}
+		if len(decision.Preauthorization.Resources) > 0 {
+			feedback["authorization_resources"] = decision.Preauthorization.Resources
+		}
+	}
 	if len(decision.AssetOperationAudit) > 0 {
 		feedback["asset_operation_audit"] = decision.AssetOperationAudit
 	}
@@ -194,7 +234,7 @@ func modelFeedback(decision Decision, tier PermissionTier) map[string]interface{
 
 func assetOperationAuditPayload(decision Decision, tier PermissionTier, req Request) map[string]interface{} {
 	manifest := decision.Manifest
-	if !manifest.AuditRequired && !isAssetOperation(manifest) && !decision.RequiresApproval {
+	if !manifest.AuditRequired && !isAssetOperation(manifest) && !decision.RequiresApproval && decision.Preauthorization == nil {
 		return nil
 	}
 	audit := map[string]interface{}{
@@ -241,6 +281,21 @@ func assetOperationAuditPayload(decision Decision, tier PermissionTier, req Requ
 	}
 	if decision.MatchedGrant != nil {
 		audit["matched_grant"] = *decision.MatchedGrant
+	}
+	if decision.Preauthorization != nil {
+		audit["preauthorization"] = *decision.Preauthorization
+		audit["authorization_source"] = decision.Preauthorization.Source
+		audit["authorization_binding_type"] = decision.Preauthorization.BindingType
+		audit["authorization_actor_id"] = decision.Preauthorization.AuthorizedBy
+		if decision.Preauthorization.AuthorizedAt != nil {
+			audit["authorization_granted_at"] = *decision.Preauthorization.AuthorizedAt
+		}
+		if len(decision.Preauthorization.Resources) > 0 {
+			audit["authorization_resources"] = decision.Preauthorization.Resources
+		}
+		if decision.Preauthorization.Code != "" {
+			audit["authorization_code"] = decision.Preauthorization.Code
+		}
 	}
 	return compactAuditPayload(audit)
 }

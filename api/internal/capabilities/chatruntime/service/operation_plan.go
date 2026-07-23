@@ -5,6 +5,7 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"time"
 
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/skillloop"
@@ -27,6 +28,9 @@ const (
 	operationPlanConfigGoalKey             = "config_goal"
 	operationPlanEvidenceStateKey          = "evidence_state"
 	operationPlanEvidenceLedgerKey         = "evidence_ledger"
+	operationPlanOutcomesKey               = "outcomes"
+	operationPlanActionAttemptsKey         = "action_attempts"
+	operationPlanEffectLedgerKey           = "effect_ledger"
 
 	operationPlanCandidateSelectionPolicyKey           = "candidate_selection_policy"
 	operationPlanCandidateSelectionAtMostOnePerField   = "at_most_one_per_binding_field"
@@ -44,13 +48,15 @@ func operationPlanFromTurnStrategy(taskID string, parts *chatRequestParts, strat
 			originalGoal = truncateRunes(goal, 500)
 		}
 	}
+	outcomes := operationPlanOutcomesFromTurnStrategy(strategy)
 	phases := operationPlanPhasesFromTurnStrategy(strategy)
 	if len(phases) == 0 && originalGoal != "" {
 		phases = []map[string]interface{}{{
-			"id":     "phase-1",
-			"step":   originalGoal,
-			"title":  originalGoal,
-			"status": operationPlanStepStatusPending,
+			"id":                "phase-1",
+			"step":              originalGoal,
+			"title":             originalGoal,
+			"status":            operationPlanStepStatusPending,
+			"verification_mode": "model_reconciliation",
 		}}
 	}
 	if len(phases) == 0 {
@@ -75,6 +81,10 @@ func operationPlanFromTurnStrategy(taskID string, parts *chatRequestParts, strat
 		"evidence_sequence_at_plan_update": 0,
 		"evidence_after_last_plan_update":  0,
 		"derived_from":                     "turn_strategy",
+	}
+	if len(outcomes) > 0 {
+		plan[operationPlanOutcomesKey] = mapsToInterfaceSlice(outcomes)
+		plan["planning_mode"] = "outcome_contract_model_decides"
 	}
 	if contract := operationPlanTaskContractFromTurnStrategy(strategy); len(contract) > 0 {
 		plan["task_contract"] = contract
@@ -149,6 +159,9 @@ func operationPlanTaskContractFromTurnStrategy(strategy *AIChatTurnStrategy) map
 	if len(strategy.PhaseGoals) > 0 {
 		contract["phases"] = compactStringSliceForPrompt(strategy.PhaseGoals, 8, 180)
 	}
+	if len(strategy.Outcomes) > 0 {
+		contract["outcomes"] = mapsToInterfaceSlice(operationPlanTurnOutcomesToMaps(strategy.Outcomes))
+	}
 	if len(strategy.EvidenceRequired) > 0 {
 		contract["evidence_required"] = compactStringSliceForPrompt(strategy.EvidenceRequired, 10, 180)
 	}
@@ -219,20 +232,226 @@ func operationPlanPhasesFromTurnStrategy(strategy *AIChatTurnStrategy) []map[str
 	if strategy == nil {
 		return nil
 	}
+	if len(strategy.Outcomes) > 0 {
+		phases := make([]map[string]interface{}, 0, len(strategy.Outcomes))
+		for index, outcome := range strategy.Outcomes {
+			goal := strings.TrimSpace(outcome.Goal)
+			if goal == "" {
+				continue
+			}
+			outcomeID := strings.TrimSpace(outcome.ID)
+			if outcomeID == "" {
+				outcomeID = fmt.Sprintf("outcome-%d", index+1)
+			}
+			phases = append(phases, map[string]interface{}{
+				"id":                fmt.Sprintf("phase-%d", len(phases)+1),
+				"outcome_id":        outcomeID,
+				"step":              goal,
+				"title":             goal,
+				"status":            operationPlanStepStatusPending,
+				"completion_source": "runtime_effect_reconciliation",
+			})
+		}
+		return phases
+	}
 	if len(strategy.PhaseGoals) > 0 {
 		phases := make([]map[string]interface{}, 0, len(strategy.PhaseGoals))
 		for idx, goal := range compactStringSliceForPrompt(strategy.PhaseGoals, 8, 180) {
 			phase := map[string]interface{}{
-				"id":     fmt.Sprintf("phase-%d", idx+1),
-				"step":   goal,
-				"title":  goal,
-				"status": operationPlanStepStatusPending,
+				"id":                fmt.Sprintf("phase-%d", idx+1),
+				"step":              goal,
+				"title":             goal,
+				"status":            operationPlanStepStatusPending,
+				"verification_mode": "model_reconciliation",
 			}
 			phases = append(phases, phase)
 		}
 		return phases
 	}
 	return nil
+}
+
+func operationPlanOutcomesFromTurnStrategy(strategy *AIChatTurnStrategy) []map[string]interface{} {
+	if strategy == nil || len(strategy.Outcomes) == 0 {
+		return nil
+	}
+	out := make([]map[string]interface{}, 0, len(strategy.Outcomes))
+	for index, outcome := range strategy.Outcomes {
+		goal := strings.TrimSpace(outcome.Goal)
+		if goal == "" {
+			continue
+		}
+		id := strings.TrimSpace(outcome.ID)
+		if id == "" {
+			id = fmt.Sprintf("outcome-%d", index+1)
+		}
+		required := true
+		if outcome.Required != nil {
+			required = *outcome.Required
+		}
+		effectiveOutcome := outcome
+		if len(effectiveOutcome.Capabilities) == 0 && len(strategy.Outcomes) == 1 {
+			effectiveOutcome.Capabilities = append([]string(nil), strategy.RecommendedCapabilities...)
+		}
+		acceptance := operationPlanOutcomeAcceptance(strategy, effectiveOutcome)
+		verificationMode := "runtime_unverified"
+		if len(mapSliceFromAny(acceptance["effects"])) > 0 {
+			verificationMode = "runtime_effects"
+		} else if len(effectiveOutcome.Capabilities) == 0 && operationPlanOutcomeCanCompleteWithFinalAnswer(strategy) {
+			verificationMode = "final_answer"
+		}
+		item := map[string]interface{}{
+			"id":                id,
+			"goal":              goal,
+			"title":             goal,
+			"status":            operationPlanStepStatusPending,
+			"required":          required,
+			"verification_mode": verificationMode,
+		}
+		if targetType := strings.TrimSpace(outcome.TargetResourceType); targetType != "" {
+			item["target_resource_type"] = targetType
+		}
+		if targetID := strings.TrimSpace(outcome.TargetResourceID); targetID != "" {
+			item["target_resource_id"] = targetID
+		}
+		if len(outcome.DependsOn) > 0 {
+			item["depends_on"] = append([]string(nil), outcome.DependsOn...)
+		}
+		if len(effectiveOutcome.Capabilities) > 0 {
+			item["capabilities"] = append([]string(nil), effectiveOutcome.Capabilities...)
+		}
+		if len(outcome.Constraints) > 0 {
+			item["constraints"] = append([]string(nil), outcome.Constraints...)
+		}
+		if len(acceptance) > 0 {
+			item["acceptance"] = acceptance
+		}
+		out = append(out, item)
+	}
+	return out
+}
+
+func operationPlanOutcomeCanCompleteWithFinalAnswer(strategy *AIChatTurnStrategy) bool {
+	if strategy == nil {
+		return false
+	}
+	intent := strings.TrimSpace(firstNonEmptyString(strategy.CompatibilityIntent, strategy.Intent))
+	return strings.EqualFold(intent, "answer_or_explain_console_context")
+}
+
+func operationPlanTurnOutcomesToMaps(outcomes []AIChatTurnOutcome) []map[string]interface{} {
+	if len(outcomes) == 0 {
+		return nil
+	}
+	out := make([]map[string]interface{}, 0, len(outcomes))
+	for _, outcome := range outcomes {
+		item := map[string]interface{}{
+			"id":   strings.TrimSpace(outcome.ID),
+			"goal": strings.TrimSpace(outcome.Goal),
+		}
+		if value := strings.TrimSpace(outcome.TargetResourceType); value != "" {
+			item["target_resource_type"] = value
+		}
+		if value := strings.TrimSpace(outcome.TargetResourceID); value != "" {
+			item["target_resource_id"] = value
+		}
+		if len(outcome.DependsOn) > 0 {
+			item["depends_on"] = append([]string(nil), outcome.DependsOn...)
+		}
+		if len(outcome.Capabilities) > 0 {
+			item["capabilities"] = append([]string(nil), outcome.Capabilities...)
+		}
+		if len(outcome.Constraints) > 0 {
+			item["constraints"] = append([]string(nil), outcome.Constraints...)
+		}
+		if outcome.Required != nil {
+			item["required"] = *outcome.Required
+		}
+		out = append(out, item)
+	}
+	return out
+}
+
+func operationPlanOutcomeAcceptance(strategy *AIChatTurnStrategy, outcome AIChatTurnOutcome) map[string]interface{} {
+	effects := make([]map[string]interface{}, 0, len(outcome.Capabilities)+1)
+	add := func(effectType, resourceType string, fields ...string) {
+		if effectType == "" {
+			return
+		}
+		for _, existing := range effects {
+			if stringFromAny(existing["type"]) == effectType && reflect.DeepEqual(stringSliceFromAny(existing["fields"]), fields) {
+				return
+			}
+		}
+		effect := map[string]interface{}{"type": effectType}
+		if resourceType != "" {
+			effect["resource_type"] = resourceType
+		}
+		if len(fields) > 0 {
+			effect["fields"] = fields
+		}
+		effects = append(effects, effect)
+	}
+	for _, capability := range outcome.Capabilities {
+		capability = strings.ToLower(strings.TrimSpace(capability))
+		switch {
+		case capability == "visible_file_content":
+			add("file.content.read", "file")
+		case capability == "generated_artifact", capability == "chart_artifact", capability == "file_artifact":
+			add("artifact.generated", "artifact")
+		case capability == "managed_file", capability == "file_management", capability == "managed_file_persistence":
+			add("file.persisted", "file")
+		case capability == "page_navigation":
+			add("page.observed", "page")
+		case capability == "exact_agent_runtime":
+			add("agent.config.read", "agent")
+		case capability == agentCapabilitySystemPrompt:
+			add("agent.config.updated", "agent", "system_prompt")
+		case capability == agentCapabilityModelSelection:
+			add("agent.config.updated", "agent", "model")
+		case capability == agentCapabilityAcceptUploaded:
+			add("agent.config.updated", "agent", "file_upload_enabled")
+		case capability == agentCapabilityMemory:
+			add("agent.config.updated", "agent", "agent_memory_enabled")
+		case capability == agentCapabilitySuggestedQuestion:
+			add("agent.config.updated", "agent", "suggested_questions")
+		case strings.HasPrefix(capability, agentCapabilitySkillBacked):
+			add("agent.config.updated", "agent", "enabled_skill_ids")
+		case strings.HasPrefix(capability, agentCapabilityKnowledgeBinding):
+			add("agent.config.updated", "agent", "knowledge_dataset_ids")
+		case strings.HasPrefix(capability, agentCapabilityDatabaseBinding):
+			add("agent.config.updated", "agent", "database_bindings")
+		case strings.HasPrefix(capability, agentCapabilityWorkflowBinding):
+			add("agent.config.updated", "agent", "workflow_bindings")
+		}
+	}
+	if len(effects) == 1 && stringFromAny(effects[0]["type"]) == "artifact.generated" && strategy != nil &&
+		strings.EqualFold(strings.TrimSpace(firstNonEmptyString(strategy.CompatibilityIntent, strategy.Intent)), "save_generated_file_to_file_management") {
+		add("file.persisted", "file")
+	}
+	if len(effects) == 0 {
+		return nil
+	}
+	for _, effect := range effects {
+		targetType := strings.TrimSpace(outcome.TargetResourceType)
+		effectType := strings.TrimSpace(stringFromAny(effect["resource_type"]))
+		if targetType != "" && effectType == "" {
+			effect["resource_type"] = targetType
+			effectType = targetType
+		}
+		if resourceID := strings.TrimSpace(outcome.TargetResourceID); resourceID != "" &&
+			(targetType == "" || strings.EqualFold(targetType, effectType)) {
+			effect["resource_id"] = resourceID
+		} else if strategy != nil && strings.EqualFold(strings.TrimSpace(stringFromAny(effect["type"])), "page.observed") {
+			if targetPage := normalizeConsoleNavigationGuardHref(strategy.TargetPage); targetPage != "" {
+				effect["resource_id"] = targetPage
+			}
+		}
+	}
+	return map[string]interface{}{
+		"mode":    "all",
+		"effects": mapsToInterfaceSlice(effects),
+	}
 }
 
 func operationPlanApprovalPolicy(strategy *AIChatTurnStrategy) string {
@@ -440,8 +659,14 @@ func operationPlanSyncStrategyState(plan map[string]interface{}) {
 	delete(state, "plan_steps")
 	delete(state, "structured_plan")
 	operationPlanStrategyStateSetInterfaceSlice(state, "phases", operationPlanCompactPhasesForPrompt(plan["phases"], 8))
+	operationPlanStrategyStateSetInterfaceSlice(state, "outcomes", operationPlanCompactOutcomesForPrompt(plan[operationPlanOutcomesKey], 8))
 	operationPlanStrategyStateSetInterfaceSlice(state, "capability_goals", operationPlanCompactCapabilityGoals(plan["capability_goals"], 8))
-	operationPlanStrategyStateSetInterfaceSlice(state, "evidence_ledger", mapsToInterfaceSlice(operationPlanCompactEvidenceLedger(plan[operationPlanEvidenceLedgerKey], 12)))
+	delete(state, "evidence_ledger")
+	if revision := operationPlanCurrentEvidenceRevision(plan); revision > 0 {
+		state["evidence_revision"] = revision
+	} else {
+		delete(state, "evidence_revision")
+	}
 	for _, key := range []string{
 		"pending_next_action", "approval_actions", "completion_criteria", "completed_steps", "failed_steps",
 		"plan_deviations", "blocked_deviations", "last_plan_deviation", "last_blocked_deviation",
@@ -1400,10 +1625,12 @@ func applyOperationPlanInvocationState(metadata map[string]interface{}, invocati
 		return
 	}
 	var lastActionable map[string]interface{}
+	hadActionableInvocation := false
 	for _, invocation := range invocations {
 		if !operationPlanInvocationIsActionable(invocation) {
 			continue
 		}
+		hadActionableInvocation = true
 		status := operationPlanStatusFromInvocation(invocation)
 		lastActionable = invocation
 		if operationPlanInvocationShouldUpdateCurrentPage(invocation, status) {
@@ -1412,14 +1639,204 @@ func applyOperationPlanInvocationState(metadata map[string]interface{}, invocati
 			}
 		}
 		operationPlanRecordInvocationEvidence(plan, invocation, status)
+		operationPlanRecordActionAttempt(plan, invocation, status)
+		operationPlanRecordInvocationEffects(plan, invocation, status)
+		if operationPlanHasStructuredOutcomes(plan) {
+			operationPlanReconcileOutcomes(plan)
+		} else {
+			operationPlanCompleteInvocationPhase(plan, invocation, status)
+		}
 	}
 
 	if lastActionable != nil {
 		plan["tool_result"] = operationPlanToolResult(lastActionable)
 	}
-	operationPlanRefreshSyncStatus(plan)
+	if hadActionableInvocation {
+		// New execution evidence does not change the outcome-level plan shape.
+		// Keep the persisted plan current even when a prerequisite call is not
+		// associated with a phase or an earlier attempt failed; the live runner
+		// separately exposes update_plan for the current failure segment. This
+		// avoids replaying historical failures as permanent plan invalidation on
+		// every continuation.
+		operationPlanMarkEvidenceCurrent(plan)
+	}
 	operationPlanSyncStrategyState(plan)
 	metadata["operation_plan"] = plan
+	applySkillLoopExecutionDiagnostics(metadata, invocations)
+}
+
+func operationPlanCompleteInvocationPhase(plan map[string]interface{}, invocation map[string]interface{}, status string) bool {
+	if len(plan) == 0 || status != operationPlanStepStatusCompleted ||
+		!strings.EqualFold(strings.TrimSpace(stringFromAny(invocation["kind"])), "tool_call") ||
+		operationPlanInvocationIsConsoleRouteNavigation(invocation) {
+		return false
+	}
+	arguments := mapFromOperationContext(invocation["arguments"])
+	phaseID := strings.TrimSpace(stringFromAny(arguments["plan_phase_id"]))
+	phases := mapSliceFromAny(plan["phases"])
+	match := -1
+	if phaseID != "" {
+		for index, phase := range phases {
+			if strings.TrimSpace(stringFromAny(phase["id"])) != phaseID || !operationPlanPhaseOpen(phase) {
+				continue
+			}
+			match = index
+			break
+		}
+	} else {
+		skillID := strings.TrimSpace(stringFromAny(invocation["skill_id"]))
+		toolName := strings.TrimSpace(stringFromAny(invocation["tool_name"]))
+		actualTarget := operationPlanInvocationExpectedActionTarget(invocation)
+		for index, phase := range phases {
+			if !operationPlanPhaseOpen(phase) ||
+				!operationPlanExpectedActionMatches(mapFromOperationContext(phase["expected_action"]), skillID, toolName, actualTarget) {
+				continue
+			}
+			if match >= 0 {
+				return false
+			}
+			match = index
+		}
+	}
+	if match < 0 {
+		return false
+	}
+
+	skillID := strings.TrimSpace(stringFromAny(invocation["skill_id"]))
+	toolName := strings.TrimSpace(stringFromAny(invocation["tool_name"]))
+	actualTarget := operationPlanInvocationExpectedActionTarget(invocation)
+	expected := mapFromOperationContext(phases[match]["expected_action"])
+	if len(expected) > 0 {
+		if !operationPlanExpectedActionMatches(expected, skillID, toolName, actualTarget) {
+			return false
+		}
+	} else {
+		// A model-provided phase ID is correlation metadata, not proof that an
+		// arbitrary successful call satisfied a coarse result. Structured
+		// outcomes are completed by effect reconciliation above.
+		return false
+	}
+
+	phases[match]["status"] = operationPlanStepStatusCompleted
+	phases[match]["completed_at"] = time.Now().UTC().Format(time.RFC3339)
+	refs := stringSliceFromAny(phases[match]["evidence_refs"])
+	if ref := operationPlanToolEvidenceKey(skillID, toolName); ref != "" {
+		refs = appendUniqueStrings(refs, ref)
+	}
+	if invocationID := operationPlanInvocationPlanID(invocation); invocationID != "" {
+		refs = appendUniqueStrings(refs, invocationID)
+	}
+	phases[match]["evidence_refs"] = refs
+	operationPlanAdvanceNextPendingPhase(phases)
+	plan["phases"] = mapsToInterfaceSlice(phases)
+	if operationPlanPhasesTerminal(phases) {
+		plan["status"] = operationPlanStatusCompleted
+		plan["pending_next_action"] = "none"
+	} else {
+		plan["status"] = operationPlanStatusRunning
+		plan["pending_next_action"] = "continue_next_plan_phase"
+	}
+	return true
+}
+
+func operationPlanPhaseOpen(phase map[string]interface{}) bool {
+	switch strings.ToLower(strings.TrimSpace(stringFromAny(phase["status"]))) {
+	case operationPlanStepStatusPending, "in_progress", "running":
+		return true
+	default:
+		return false
+	}
+}
+
+func operationPlanCurrentOpenPhaseID(phases []map[string]interface{}) string {
+	firstOpen := ""
+	inProgress := ""
+	for _, phase := range phases {
+		if !operationPlanPhaseOpen(phase) {
+			continue
+		}
+		phaseID := strings.TrimSpace(stringFromAny(phase["id"]))
+		if phaseID == "" {
+			continue
+		}
+		if firstOpen == "" {
+			firstOpen = phaseID
+		}
+		status := strings.ToLower(strings.TrimSpace(stringFromAny(phase["status"])))
+		if status == "in_progress" || status == "running" {
+			if inProgress != "" {
+				return ""
+			}
+			inProgress = phaseID
+		}
+	}
+	if inProgress != "" {
+		return inProgress
+	}
+	return firstOpen
+}
+
+func operationPlanInvocationExpectedActionTarget(invocation map[string]interface{}) map[string]interface{} {
+	arguments := mapFromOperationContext(invocation["arguments"])
+	target := copyStringAnyMap(mapFromOperationContext(arguments["operation_plan_target"]))
+	if target == nil {
+		target = map[string]interface{}{}
+	}
+	for _, key := range []string{"agent_id", "file_id", "asset_id", "resource_id", "dataset_id", "data_source_id", "table_id", "workflow_id", "binding_id", "href", "route"} {
+		if _, exists := target[key]; exists {
+			// The execution trace stores summarized arguments, while
+			// operation_plan_target is captured from the raw authorized call.
+			// Never replace the exact target with a redacted type/length summary.
+			continue
+		}
+		value := operationPlanInvocationArgumentValue(arguments, key)
+		if value != "" {
+			target[key] = value
+		}
+	}
+	return target
+}
+
+func operationPlanInvocationArgumentValue(arguments map[string]interface{}, key string) string {
+	if value := strings.TrimSpace(stringFromAny(arguments[key])); value != "" {
+		return value
+	}
+	for _, containerKey := range []string{"target", "system_prompt_source", "agent", "file", "resource"} {
+		if value := strings.TrimSpace(stringFromAny(mapFromOperationContext(arguments[containerKey])[key])); value != "" {
+			return value
+		}
+	}
+	if patch := mapFromOperationContext(arguments["system_prompt_patch"]); len(patch) > 0 {
+		if value := strings.TrimSpace(stringFromAny(mapFromOperationContext(patch["source"])[key])); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func operationPlanAdvanceNextPendingPhase(phases []map[string]interface{}) {
+	for _, phase := range phases {
+		status := strings.ToLower(strings.TrimSpace(stringFromAny(phase["status"])))
+		if status == "in_progress" || status == "running" {
+			return
+		}
+	}
+	for _, phase := range phases {
+		if strings.EqualFold(strings.TrimSpace(stringFromAny(phase["status"])), operationPlanStepStatusPending) {
+			phase["status"] = "in_progress"
+			return
+		}
+	}
+}
+
+func operationPlanMarkEvidenceCurrent(plan map[string]interface{}) {
+	current := operationPlanCurrentEvidenceRevision(plan)
+	plan["evidence_revision"] = current
+	plan["evidence_revision_at_plan_update"] = current
+	plan["evidence_sequence_at_plan_update"] = current
+	plan["evidence_after_last_plan_update"] = 0
+	plan["plan_sync_status"] = "current"
+	delete(plan, "plan_revision_reason")
 }
 
 func operationPlanCurrentEvidenceRevision(plan map[string]interface{}) int {
@@ -1830,6 +2247,36 @@ func finalizeOperationPlanForCompletedResult(metadata map[string]interface{}) {
 	if len(plan) == 0 {
 		return
 	}
+	operationPlanCompleteFinalAnswerOutcomes(plan)
+	if outcomes := mapSliceFromAny(plan[operationPlanOutcomesKey]); len(outcomes) > 0 && !operationPlanOutcomesTerminal(outcomes) {
+		plan["completion_verification"] = map[string]interface{}{
+			"status": "incomplete",
+			"source": "main_model_final",
+			"reason": "one or more required outcomes lack matching runtime effects",
+		}
+		plan["status"] = operationPlanStatusRunning
+		plan["pending_next_action"] = "complete_unsatisfied_outcomes"
+		operationPlanSyncStrategyState(plan)
+		metadata["operation_plan"] = plan
+		syncOperationPlanCompletionMetadata(metadata)
+		return
+	}
+	operationPlanCompleteModelReconciliationPhases(plan, "main_model_final")
+	if phases := mapSliceFromAny(plan["phases"]); len(phases) > 0 && !operationPlanPhasesTerminal(phases) {
+		plan["completion_verification"] = map[string]interface{}{
+			"status": "incomplete",
+			"source": "main_model_final",
+			"reason": "one or more operation plan phases remain incomplete",
+		}
+		plan["status"] = operationPlanStatusRunning
+		if strings.EqualFold(strings.TrimSpace(stringFromAny(plan["pending_next_action"])), "none") || strings.TrimSpace(stringFromAny(plan["pending_next_action"])) == "" {
+			plan["pending_next_action"] = "complete_remaining_plan_phases"
+		}
+		operationPlanSyncStrategyState(plan)
+		metadata["operation_plan"] = plan
+		syncOperationPlanCompletionMetadata(metadata)
+		return
+	}
 	if verification := mapFromOperationContext(plan["completion_verification"]); len(verification) == 0 {
 		plan["completion_verification"] = map[string]interface{}{
 			"status": "pass",
@@ -1884,8 +2331,23 @@ func applyOperationPlanTerminalCompletionResultWithSource(metadata map[string]in
 	plan["completion_verification"] = verification
 	switch {
 	case operationPlanCompletionVerificationPassStatus(status):
-		plan["status"] = operationPlanStatusCompleted
-		plan["pending_next_action"] = "none"
+		operationPlanCompleteFinalAnswerOutcomes(plan)
+		if outcomes := mapSliceFromAny(plan[operationPlanOutcomesKey]); len(outcomes) > 0 && !operationPlanOutcomesTerminal(outcomes) {
+			verification["status"] = "incomplete"
+			verification["reason"] = "one or more required outcomes lack matching runtime effects"
+			verification["next_action_hint"] = "complete_unsatisfied_outcomes"
+			plan["status"] = operationPlanStatusRunning
+			plan["pending_next_action"] = "complete_unsatisfied_outcomes"
+		} else if operationPlanCompleteModelReconciliationPhases(plan, source); phasesRemainIncomplete(plan) {
+			verification["status"] = "incomplete"
+			verification["reason"] = "one or more operation plan phases remain incomplete"
+			verification["next_action_hint"] = "complete_remaining_plan_phases"
+			plan["status"] = operationPlanStatusRunning
+			plan["pending_next_action"] = "complete_remaining_plan_phases"
+		} else {
+			plan["status"] = operationPlanStatusCompleted
+			plan["pending_next_action"] = "none"
+		}
 	case operationPlanCompletionVerificationTerminalFailure(status):
 		plan["status"] = operationPlanStatusFailed
 		plan["pending_next_action"] = "none"
@@ -1900,6 +2362,43 @@ func applyOperationPlanTerminalCompletionResultWithSource(metadata map[string]in
 	syncOperationPlanCompletionMetadata(metadata)
 }
 
+func operationPlanCompleteModelReconciliationPhases(plan map[string]interface{}, source string) bool {
+	phases := mapSliceFromAny(plan["phases"])
+	if len(phases) == 0 {
+		return false
+	}
+	completedAt := time.Now().UTC().Format(time.RFC3339)
+	evidenceRevision := operationPlanCurrentEvidenceRevision(plan)
+	changed := false
+	for _, phase := range phases {
+		if !operationPlanPhaseOpen(phase) ||
+			!strings.EqualFold(strings.TrimSpace(stringFromAny(phase["verification_mode"])), "model_reconciliation") {
+			continue
+		}
+		phase["status"] = operationPlanStepStatusCompleted
+		phase["completed_at"] = completedAt
+		phase["completion_source"] = firstNonEmptyString(source, "main_model_final")
+		phase["evidence_refs"] = appendUniqueStrings(
+			stringSliceFromAny(phase["evidence_refs"]),
+			"final_answer:"+firstNonEmptyString(source, "main_model_final"),
+		)
+		if evidenceRevision > 0 {
+			phase["evidence_revision"] = evidenceRevision
+		}
+		changed = true
+	}
+	if changed {
+		plan["phases"] = mapsToInterfaceSlice(phases)
+		operationPlanAdvanceNextPendingPhase(phases)
+	}
+	return changed
+}
+
+func phasesRemainIncomplete(plan map[string]interface{}) bool {
+	phases := mapSliceFromAny(plan["phases"])
+	return len(phases) > 0 && !operationPlanPhasesTerminal(phases)
+}
+
 func syncOperationPlanCompletionMetadata(metadata map[string]interface{}) {
 	if len(metadata) == 0 {
 		return
@@ -1909,7 +2408,12 @@ func syncOperationPlanCompletionMetadata(metadata map[string]interface{}) {
 		return
 	}
 	if ledger := operationPlanCompactEvidenceLedger(plan[operationPlanEvidenceLedgerKey], 50); len(ledger) > 0 {
-		metadata["evidence_ledger"] = mapsToInterfaceSlice(ledger)
+		metadata["evidence_ledger_ref"] = map[string]interface{}{
+			"source":   "operation_plan.evidence_ledger",
+			"revision": operationPlanCurrentEvidenceRevision(plan),
+			"count":    len(ledger),
+		}
+		delete(metadata, "evidence_ledger")
 	}
 	verification := mapFromOperationContext(plan["completion_verification"])
 	if len(verification) > 0 {

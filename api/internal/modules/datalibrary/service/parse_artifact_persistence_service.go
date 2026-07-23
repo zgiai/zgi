@@ -39,6 +39,7 @@ type PersistAssetParseArtifactInput struct {
 	ParseRequest      contracts.ParseRequest
 	Artifact          *contracts.ParseArtifact
 	Summary           map[string]interface{}
+	MetadataJSON      map[string]any
 }
 
 type PersistAssetParseArtifactResult struct {
@@ -126,6 +127,7 @@ func (s *parseArtifactPersistenceService) PersistAssetParseArtifact(ctx context.
 	updated, err := s.assets.UpdateCurrentResult(ctx, input.AssetID, repository.DocumentAssetCurrentResultPatch{
 		OrganizationID:         input.OrganizationID,
 		ParseArtifactID:        &item.ID,
+		MetadataJSON:           input.MetadataJSON,
 		RequireProcessingRunID: &input.ProcessingRunID,
 		RequireGenerationNo:    &input.GenerationNo,
 	})

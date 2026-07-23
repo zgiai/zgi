@@ -17,6 +17,8 @@ var (
 	ErrStreamEventsUnavailable     = errors.New("stream events are unavailable")
 	ErrContinuationAlreadyRunning  = errors.New("continuation is already running")
 	ErrMessageReplaceNotAllowed    = errors.New("message replacement is only allowed for the only root message")
+	ErrModelIdleTimeout            = errors.New("model idle timeout")
+	ErrWorkflowBindingUnavailable  = errors.New("workflow binding unavailable")
 )
 
 type finalizedStreamError struct {

@@ -11,12 +11,13 @@ import (
 
 // Spec defines the canonical behavior for a channel_provider.
 type Spec struct {
-	Name               string
-	AdapterKey         string
-	LookupProvider     string
-	RequiresBaseURL    bool
-	AllowsEmptyKey     bool
-	NativeCapabilities NativeCapabilities
+	Name                   string
+	AdapterKey             string
+	LookupProvider         string
+	RequiresBaseURL        bool
+	AllowsEmptyKey         bool
+	AgentProtocolSupported bool
+	NativeCapabilities     NativeCapabilities
 }
 
 // NativeCapabilities describes provider-native protocol support.
@@ -31,33 +32,33 @@ type NativeProtocolCapability struct {
 }
 
 var specs = map[string]Spec{
-	"zgi-cloud":         {Name: "zgi-cloud", AdapterKey: "zgi-cloud", LookupProvider: "zgi-cloud", RequiresBaseURL: true, NativeCapabilities: NativeCapabilities{OpenAIResponses: supportedNativeProtocol(), AnthropicMessages: supportedNativeProtocol()}},
-	"openai":            {Name: "openai", AdapterKey: "openai", LookupProvider: "openai", NativeCapabilities: NativeCapabilities{OpenAIResponses: supportedNativeProtocol()}},
-	"openai-compatible": {Name: "openai-compatible", AdapterKey: "openai-compatible", LookupProvider: "openai", RequiresBaseURL: true, NativeCapabilities: NativeCapabilities{OpenAIResponses: explicitNativeProtocol(), AnthropicMessages: explicitNativeProtocol()}},
+	"zgi-cloud":         {Name: "zgi-cloud", AdapterKey: "zgi-cloud", LookupProvider: "zgi-cloud", RequiresBaseURL: true, AgentProtocolSupported: true, NativeCapabilities: NativeCapabilities{OpenAIResponses: supportedNativeProtocol(), AnthropicMessages: supportedNativeProtocol()}},
+	"openai":            {Name: "openai", AdapterKey: "openai", LookupProvider: "openai", AgentProtocolSupported: true, NativeCapabilities: NativeCapabilities{OpenAIResponses: supportedNativeProtocol()}},
+	"openai-compatible": {Name: "openai-compatible", AdapterKey: "openai-compatible", LookupProvider: "openai", RequiresBaseURL: true, AgentProtocolSupported: true, NativeCapabilities: NativeCapabilities{OpenAIResponses: explicitNativeProtocol(), AnthropicMessages: explicitNativeProtocol()}},
 	"ollama":            {Name: "ollama", AdapterKey: "ollama", LookupProvider: "ollama", RequiresBaseURL: true, AllowsEmptyKey: true, NativeCapabilities: NativeCapabilities{OpenAIResponses: supportedNativeProtocol(), AnthropicMessages: supportedNativeProtocol()}},
 	"agicto":            {Name: "agicto", AdapterKey: "agicto", LookupProvider: "openai", NativeCapabilities: NativeCapabilities{OpenAIResponses: supportedNativeProtocol(), AnthropicMessages: supportedNativeProtocol()}},
-	"glm":               {Name: "glm", AdapterKey: "glm", LookupProvider: "glm", NativeCapabilities: NativeCapabilities{AnthropicMessages: supportedNativeProtocol()}},
-	"zhipu":             {Name: "glm", AdapterKey: "glm", LookupProvider: "glm", NativeCapabilities: NativeCapabilities{AnthropicMessages: supportedNativeProtocol()}},
-	"z.ai":              {Name: "glm", AdapterKey: "glm", LookupProvider: "glm", NativeCapabilities: NativeCapabilities{AnthropicMessages: supportedNativeProtocol()}},
-	"zai":               {Name: "glm", AdapterKey: "glm", LookupProvider: "glm", NativeCapabilities: NativeCapabilities{AnthropicMessages: supportedNativeProtocol()}},
-	"bigmodel":          {Name: "glm", AdapterKey: "glm", LookupProvider: "glm", NativeCapabilities: NativeCapabilities{AnthropicMessages: supportedNativeProtocol()}},
+	"glm":               {Name: "glm", AdapterKey: "glm", LookupProvider: "zhipu", AgentProtocolSupported: true, NativeCapabilities: NativeCapabilities{AnthropicMessages: supportedNativeProtocol()}},
+	"zhipu":             {Name: "glm", AdapterKey: "glm", LookupProvider: "zhipu", AgentProtocolSupported: true, NativeCapabilities: NativeCapabilities{AnthropicMessages: supportedNativeProtocol()}},
+	"z.ai":              {Name: "glm", AdapterKey: "glm", LookupProvider: "zhipu", AgentProtocolSupported: true, NativeCapabilities: NativeCapabilities{AnthropicMessages: supportedNativeProtocol()}},
+	"zai":               {Name: "glm", AdapterKey: "glm", LookupProvider: "zhipu", AgentProtocolSupported: true, NativeCapabilities: NativeCapabilities{AnthropicMessages: supportedNativeProtocol()}},
+	"bigmodel":          {Name: "glm", AdapterKey: "glm", LookupProvider: "zhipu", AgentProtocolSupported: true, NativeCapabilities: NativeCapabilities{AnthropicMessages: supportedNativeProtocol()}},
 	"minimax":           {Name: "minimax", AdapterKey: "minimax", LookupProvider: "minimax", NativeCapabilities: NativeCapabilities{AnthropicMessages: supportedNativeProtocol()}},
 	"minmax":            {Name: "minimax", AdapterKey: "minimax", LookupProvider: "minimax", NativeCapabilities: NativeCapabilities{AnthropicMessages: supportedNativeProtocol()}},
-	"deepseek":          {Name: "deepseek", AdapterKey: "deepseek", LookupProvider: "deepseek", NativeCapabilities: NativeCapabilities{AnthropicMessages: supportedNativeProtocol()}},
-	"siliconflow":       {Name: "siliconflow", AdapterKey: "siliconflow", LookupProvider: "deepseek", NativeCapabilities: NativeCapabilities{AnthropicMessages: supportedNativeProtocol()}},
+	"deepseek":          {Name: "deepseek", AdapterKey: "deepseek", LookupProvider: "deepseek", AgentProtocolSupported: true, NativeCapabilities: NativeCapabilities{AnthropicMessages: supportedNativeProtocol()}},
+	"siliconflow":       {Name: "siliconflow", AdapterKey: "siliconflow", LookupProvider: "siliconflow", AgentProtocolSupported: true, NativeCapabilities: NativeCapabilities{AnthropicMessages: supportedNativeProtocol()}},
 	"mistral":           {Name: "mistral", AdapterKey: "mistral", LookupProvider: "mistral"},
 	"cohere":            {Name: "cohere", AdapterKey: "cohere", LookupProvider: "cohere"},
 	"anthropic":         {Name: "anthropic", AdapterKey: "claude", LookupProvider: "anthropic", NativeCapabilities: NativeCapabilities{AnthropicMessages: supportedNativeProtocol()}},
 	"claude":            {Name: "anthropic", AdapterKey: "claude", LookupProvider: "anthropic", NativeCapabilities: NativeCapabilities{AnthropicMessages: supportedNativeProtocol()}},
 	"openrouter":        {Name: "openrouter", AdapterKey: "openrouter", LookupProvider: "openrouter", NativeCapabilities: NativeCapabilities{OpenAIResponses: supportedNativeProtocol(), AnthropicMessages: supportedNativeProtocol()}},
-	"qwen":              {Name: "qwen", AdapterKey: "dashscope", LookupProvider: "qwen", NativeCapabilities: NativeCapabilities{OpenAIResponses: supportedNativeProtocol(), AnthropicMessages: supportedNativeProtocol()}},
-	"alibaba":           {Name: "qwen", AdapterKey: "dashscope", LookupProvider: "qwen", NativeCapabilities: NativeCapabilities{OpenAIResponses: supportedNativeProtocol(), AnthropicMessages: supportedNativeProtocol()}},
-	"dashscope":         {Name: "qwen", AdapterKey: "dashscope", LookupProvider: "qwen", NativeCapabilities: NativeCapabilities{OpenAIResponses: supportedNativeProtocol(), AnthropicMessages: supportedNativeProtocol()}},
-	"aliyun":            {Name: "qwen", AdapterKey: "dashscope", LookupProvider: "qwen", NativeCapabilities: NativeCapabilities{OpenAIResponses: supportedNativeProtocol(), AnthropicMessages: supportedNativeProtocol()}},
-	"moonshot":          {Name: "moonshot", AdapterKey: "moonshotai", LookupProvider: "moonshot", NativeCapabilities: NativeCapabilities{AnthropicMessages: supportedNativeProtocol()}},
-	"moonshotai":        {Name: "moonshot", AdapterKey: "moonshotai", LookupProvider: "moonshot", NativeCapabilities: NativeCapabilities{AnthropicMessages: supportedNativeProtocol()}},
+	"qwen":              {Name: "qwen", AdapterKey: "dashscope", LookupProvider: "qwen", AgentProtocolSupported: true, NativeCapabilities: NativeCapabilities{OpenAIResponses: supportedNativeProtocol(), AnthropicMessages: supportedNativeProtocol()}},
+	"alibaba":           {Name: "qwen", AdapterKey: "dashscope", LookupProvider: "qwen", AgentProtocolSupported: true, NativeCapabilities: NativeCapabilities{OpenAIResponses: supportedNativeProtocol(), AnthropicMessages: supportedNativeProtocol()}},
+	"dashscope":         {Name: "qwen", AdapterKey: "dashscope", LookupProvider: "qwen", AgentProtocolSupported: true, NativeCapabilities: NativeCapabilities{OpenAIResponses: supportedNativeProtocol(), AnthropicMessages: supportedNativeProtocol()}},
+	"aliyun":            {Name: "qwen", AdapterKey: "dashscope", LookupProvider: "qwen", AgentProtocolSupported: true, NativeCapabilities: NativeCapabilities{OpenAIResponses: supportedNativeProtocol(), AnthropicMessages: supportedNativeProtocol()}},
+	"moonshot":          {Name: "moonshot", AdapterKey: "moonshotai", LookupProvider: "moonshot", AgentProtocolSupported: true, NativeCapabilities: NativeCapabilities{AnthropicMessages: supportedNativeProtocol()}},
+	"moonshotai":        {Name: "moonshot", AdapterKey: "moonshotai", LookupProvider: "moonshot", AgentProtocolSupported: true, NativeCapabilities: NativeCapabilities{AnthropicMessages: supportedNativeProtocol()}},
 	"moonshotai-cn":     {Name: "moonshotai-cn", AdapterKey: "moonshotai-cn", LookupProvider: "moonshot", NativeCapabilities: NativeCapabilities{AnthropicMessages: supportedNativeProtocol()}},
-	"kimi":              {Name: "moonshot", AdapterKey: "moonshotai", LookupProvider: "moonshot", NativeCapabilities: NativeCapabilities{AnthropicMessages: supportedNativeProtocol()}},
+	"kimi":              {Name: "moonshot", AdapterKey: "moonshotai", LookupProvider: "moonshot", AgentProtocolSupported: true, NativeCapabilities: NativeCapabilities{AnthropicMessages: supportedNativeProtocol()}},
 	"volcengine":        {Name: "volcengine", AdapterKey: "volcengine", LookupProvider: "doubao", NativeCapabilities: NativeCapabilities{OpenAIResponses: supportedNativeProtocol()}},
 	"doubao":            {Name: "doubao", AdapterKey: "doubao", LookupProvider: "doubao", NativeCapabilities: NativeCapabilities{OpenAIResponses: supportedNativeProtocol()}},
 	"ark":               {Name: "doubao", AdapterKey: "doubao", LookupProvider: "doubao", NativeCapabilities: NativeCapabilities{OpenAIResponses: supportedNativeProtocol()}},
@@ -203,6 +204,15 @@ func SupportsAnthropicMessages(raw string) bool {
 		return false
 	}
 	return spec.NativeCapabilities.AnthropicMessages.Supported
+}
+
+// SupportsAgentProtocol reports whether the adapter preserves ZGI's chat-completions tool loop contract.
+func SupportsAgentProtocol(raw string) bool {
+	spec, err := Resolve(raw)
+	if err != nil {
+		return false
+	}
+	return spec.AgentProtocolSupported
 }
 
 // AnthropicMessagesCapability returns the native Anthropic Messages capability for a provider.

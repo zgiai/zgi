@@ -7,13 +7,17 @@ max_calls_per_turn: 5
 timeout_seconds: 5
 display:
   icon: list-collapse
-  category: productivity
+  category: document_processing
+  scenarios:
+    - document_handling
+    - office_collaboration
+    - knowledge_research
   label:
     en_US: Content Summary
     zh_Hans: 内容总结
   description:
-    en_US: Distills existing content into summaries, key points, actions, risks, conclusions, and notes.
-    zh_Hans: 将已有内容压缩提炼为摘要、重点、行动项、风险、结论或会议纪要。
+    en_US: Designed for long text, meeting notes, or parsed documents that need faster reading; extracts summaries, key points, actions, risks, conclusions, and meeting minutes.
+    zh_Hans: 适用于快速理解长文本、会议记录或已解析文档，可提炼摘要、重点、行动项、风险、结论和会议纪要。
   when_to_use:
     en_US: Use when existing text or extracted document content needs to be summarized or distilled.
     zh_Hans: 当已有文本或文档读取结果需要总结、提炼或归纳时使用。

@@ -114,20 +114,6 @@ const ParameterExtractorManager: React.FC<ParameterExtractorManagerProps> = ({
       delay: 400,
     });
 
-  const handleChangeQuery = useCallback(
-    (payload: {
-      sourceId: string;
-      key: string;
-      valuePath: string[];
-      type: WorkflowVariable['type'];
-    }) => {
-      // Only allow text-like inputs for query
-      if (payload.type !== 'string') return;
-      updateNodeData({ query: payload.valuePath });
-    },
-    [updateNodeData]
-  );
-
   const handleVisionToggle = useCallback(
     (enabled: boolean) => {
       updateNodeData({ vision: { ...safe.vision, enabled } });
@@ -229,7 +215,7 @@ const ParameterExtractorManager: React.FC<ParameterExtractorManagerProps> = ({
           value={{
             provider: safe.model.provider,
             model: safe.model.name,
-            params: (safe.model.completion_params as Record<string, any>) || {},
+            params: safe.model.completion_params || {},
           }}
           disabled={readOnly}
           onChange={v => {
@@ -238,7 +224,7 @@ const ParameterExtractorManager: React.FC<ParameterExtractorManagerProps> = ({
                 provider: v.provider,
                 name: v.model,
                 mode: safe.model.mode,
-                completion_params: v.params as Record<string, any>,
+                completion_params: v.params,
               },
             });
           }}

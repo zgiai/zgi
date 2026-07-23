@@ -53,6 +53,8 @@ export interface SseOptions<TBody = unknown, TOut = unknown>
   onMessage: (msg: SseMessage<TOut>) => void;
   /** Optional terminal detector used to suppress transport errors after a completed stream */
   isTerminalMessage?: (msg: SseMessage<unknown>) => boolean;
+  /** Optional maximum time to wait for the next response byte; disabled when omitted */
+  idleTimeoutMs?: number;
   /** Error callback for network/parse issues */
   onError?: (error: Error) => void;
   /** Transport-level error callback with parser state metadata */

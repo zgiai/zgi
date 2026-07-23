@@ -83,18 +83,20 @@ func TestSearchByCallerScopedMapsResults(t *testing.T) {
 			organizationID,
 			accountID,
 			runtimemodel.ConversationCallerAIChat,
+			runtimemodel.ConversationTypeChat,
 			"%release%",
 			"%release%",
 			organizationID,
 			accountID,
 			runtimemodel.ConversationCallerAIChat,
+			runtimemodel.ConversationTypeChat,
 			"%release%",
 			"%release%",
 			20,
 		).
 		WillReturnRows(rows)
 
-	results, err := repo.SearchByCallerScoped(context.Background(), organizationID, accountID, runtimemodel.ConversationCallerAIChat, nil, "", nil, "", "release", 20)
+	results, err := repo.SearchByCallerScoped(context.Background(), organizationID, accountID, runtimemodel.ConversationCallerAIChat, nil, runtimemodel.ConversationTypeChat, "", nil, "", "release", 20)
 	if err != nil {
 		t.Fatalf("SearchByCallerScoped: %v", err)
 	}
@@ -135,6 +137,7 @@ func TestSearchByCallerScopedAppliesSurfaceFilter(t *testing.T) {
 			organizationID,
 			accountID,
 			runtimemodel.ConversationCallerAIChat,
+			runtimemodel.ConversationTypeChat,
 			"contextual_sidebar",
 			"contextual_sidebar",
 			"%asset%",
@@ -142,6 +145,7 @@ func TestSearchByCallerScopedAppliesSurfaceFilter(t *testing.T) {
 			organizationID,
 			accountID,
 			runtimemodel.ConversationCallerAIChat,
+			runtimemodel.ConversationTypeChat,
 			"contextual_sidebar",
 			"contextual_sidebar",
 			"%asset%",
@@ -150,7 +154,7 @@ func TestSearchByCallerScopedAppliesSurfaceFilter(t *testing.T) {
 		).
 		WillReturnRows(rows)
 
-	results, err := repo.SearchByCallerScoped(context.Background(), organizationID, accountID, runtimemodel.ConversationCallerAIChat, nil, "", nil, "contextual_sidebar", "asset", 10)
+	results, err := repo.SearchByCallerScoped(context.Background(), organizationID, accountID, runtimemodel.ConversationCallerAIChat, nil, runtimemodel.ConversationTypeChat, "", nil, "contextual_sidebar", "asset", 10)
 	if err != nil {
 		t.Fatalf("SearchByCallerScoped: %v", err)
 	}
@@ -173,6 +177,7 @@ func TestListByCallerSurfaceScopedAppliesSidebarSurfaceFilter(t *testing.T) {
 			organizationID,
 			accountID,
 			runtimemodel.ConversationCallerAIChat,
+			runtimemodel.ConversationTypeChat,
 			"contextual_sidebar",
 			"contextual_sidebar",
 		).
@@ -182,6 +187,7 @@ func TestListByCallerSurfaceScopedAppliesSidebarSurfaceFilter(t *testing.T) {
 			organizationID,
 			accountID,
 			runtimemodel.ConversationCallerAIChat,
+			runtimemodel.ConversationTypeChat,
 			"contextual_sidebar",
 			"contextual_sidebar",
 			20,
@@ -211,6 +217,7 @@ func TestListByCallerSurfaceScopedWorkChatKeepsLegacyOnlyWhenNoOtherSurface(t *t
 			organizationID,
 			accountID,
 			runtimemodel.ConversationCallerAIChat,
+			runtimemodel.ConversationTypeChat,
 			"work_chat",
 			"work_chat",
 		).
@@ -220,6 +227,7 @@ func TestListByCallerSurfaceScopedWorkChatKeepsLegacyOnlyWhenNoOtherSurface(t *t
 			organizationID,
 			accountID,
 			runtimemodel.ConversationCallerAIChat,
+			runtimemodel.ConversationTypeChat,
 			"work_chat",
 			"work_chat",
 			20,
@@ -252,6 +260,7 @@ func TestListByCallerSourceScopedFiltersWebAppIdentity(t *testing.T) {
 			accountID,
 			runtimemodel.ConversationCallerAgent,
 			agentID,
+			runtimemodel.ConversationTypeChat,
 			runtimemodel.ConversationSourceWebApp,
 			webAppID,
 		).
@@ -262,6 +271,7 @@ func TestListByCallerSourceScopedFiltersWebAppIdentity(t *testing.T) {
 			accountID,
 			runtimemodel.ConversationCallerAgent,
 			agentID,
+			runtimemodel.ConversationTypeChat,
 			runtimemodel.ConversationSourceWebApp,
 			webAppID,
 			20,
@@ -274,6 +284,7 @@ func TestListByCallerSourceScopedFiltersWebAppIdentity(t *testing.T) {
 		accountID,
 		runtimemodel.ConversationCallerAgent,
 		&agentID,
+		runtimemodel.ConversationTypeChat,
 		runtimemodel.ConversationSourceWebApp,
 		&webAppID,
 		20,

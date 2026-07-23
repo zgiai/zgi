@@ -413,6 +413,7 @@ type CatalogModel struct {
 	ReplacementProvider     string                  `protobuf:"bytes,32,opt,name=replacement_provider,json=replacementProvider,proto3" json:"replacement_provider,omitempty"`
 	ReplacementModel        string                  `protobuf:"bytes,33,opt,name=replacement_model,json=replacementModel,proto3" json:"replacement_model,omitempty"`
 	DeprecationReason       string                  `protobuf:"bytes,34,opt,name=deprecation_reason,json=deprecationReason,proto3" json:"deprecation_reason,omitempty"`
+	PricingJson             string                  `protobuf:"bytes,35,opt,name=pricing_json,json=pricingJson,proto3" json:"pricing_json,omitempty"`
 	unknownFields           protoimpl.UnknownFields
 	sizeCache               protoimpl.SizeCache
 }
@@ -681,6 +682,13 @@ func (x *CatalogModel) GetReplacementModel() string {
 func (x *CatalogModel) GetDeprecationReason() string {
 	if x != nil {
 		return x.DeprecationReason
+	}
+	return ""
+}
+
+func (x *CatalogModel) GetPricingJson() string {
+	if x != nil {
+		return x.PricingJson
 	}
 	return ""
 }
@@ -1224,7 +1232,7 @@ const file_pkg_rpc_v1_catalog_proto_rawDesc = "" +
 	"\x06status\x18\v \x01(\tR\x06status\x12\x1b\n" +
 	"\tis_active\x18\f \x01(\bR\bisActive\x12*\n" +
 	"\x11is_system_enabled\x18\r \x01(\bR\x0fisSystemEnabled\x12#\n" +
-	"\rmetadata_json\x18\x0e \x01(\tR\fmetadataJson\"\x89\v\n" +
+	"\rmetadata_json\x18\x0e \x01(\tR\fmetadataJson\"\xac\v\n" +
 	"\fCatalogModel\x12\x1a\n" +
 	"\bprovider\x18\x01 \x01(\tR\bprovider\x12\x14\n" +
 	"\x05model\x18\x02 \x01(\tR\x05model\x12\x1d\n" +
@@ -1268,7 +1276,8 @@ const file_pkg_rpc_v1_catalog_proto_rawDesc = "" +
 	"parameters\x121\n" +
 	"\x14replacement_provider\x18  \x01(\tR\x13replacementProvider\x12+\n" +
 	"\x11replacement_model\x18! \x01(\tR\x10replacementModel\x12-\n" +
-	"\x12deprecation_reason\x18\" \x01(\tR\x11deprecationReasonB\x0e\n" +
+	"\x12deprecation_reason\x18\" \x01(\tR\x11deprecationReason\x12!\n" +
+	"\fpricing_json\x18# \x01(\tR\vpricingJsonB\x0e\n" +
 	"\f_input_priceB\x0f\n" +
 	"\r_output_priceB\x15\n" +
 	"\x13_cached_input_price\"\x82\x04\n" +

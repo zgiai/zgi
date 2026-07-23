@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -76,6 +77,18 @@ func TestWorkflowContinuationMetadataWithStatusPreservesExistingFields(t *testin
 	}
 	if got := firstNonEmptyString(state["status"]); got != workflowContinuationStatusSummarizing {
 		t.Fatalf("status = %q, want %q", got, workflowContinuationStatusSummarizing)
+	}
+}
+
+func TestValidateWorkflowContinuationBindingMatchesBindingAndAgent(t *testing.T) {
+	continuation := &WorkflowApprovalContinuation{BindingID: "binding-1", AgentID: "agent-1"}
+	bindings := []AgentWorkflowBinding{{BindingID: "binding-1", AgentID: "agent-other"}}
+	if err := validateWorkflowContinuationBinding(continuation, bindings); !errors.Is(err, ErrWorkflowBindingUnavailable) {
+		t.Fatalf("validateWorkflowContinuationBinding() agent mismatch error = %v, want ErrWorkflowBindingUnavailable", err)
+	}
+	bindings = append(bindings, AgentWorkflowBinding{BindingID: "binding-1", AgentID: "agent-1"})
+	if err := validateWorkflowContinuationBinding(continuation, bindings); err != nil {
+		t.Fatalf("validateWorkflowContinuationBinding() error = %v, want active match", err)
 	}
 }
 

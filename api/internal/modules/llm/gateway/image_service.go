@@ -158,7 +158,7 @@ func (s *llmGatewayServiceImpl) createImageInternal(
 	pricingReq := buildImagePricingRequest(effectiveReq)
 
 	// 4. Calculate estimated credits
-	estimatedQuote, err := s.quoteImagePricing(ctx, pricingModelRefFromSelection(selection), pricingReq)
+	estimatedQuote, err := s.quoteImagePricingForSelection(ctx, selection, pricingModelRefFromSelection(selection), pricingReq)
 	if err != nil {
 		return nil, fmt.Errorf("failed to calculate image credits: %w", err)
 	}

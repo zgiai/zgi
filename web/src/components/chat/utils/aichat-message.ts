@@ -41,6 +41,7 @@ export function createDraftAIChatConversation(id: string, title: string): AIChat
     title,
     status: 'normal',
     runtime_status: 'idle',
+    conversation_type: 'chat',
     dialogue_count: 0,
     source: 'console',
     created_at: now,

@@ -7,13 +7,16 @@ max_calls_per_turn: 5
 timeout_seconds: 5
 display:
   icon: wand-sparkles
-  category: productivity
+  category: content_creation
+  scenarios:
+    - content_creation
+    - technical_development
   label:
     en_US: Prompt Professionalizer
     zh_Hans: 提示词专业化
   description:
-    en_US: Turns rough requests into professional prompts for image, video, architecture diagram, and visualization tools.
-    zh_Hans: 将口语化需求整理为适合生图、视频、架构图和可视化工具的专业提示词。
+    en_US: Designed for vague image, video, diagram, or visualization requests; clarifies intent, fills important parameters, and produces structured prompts adapted to the downstream tool.
+    zh_Hans: 适用于模糊的图片、视频、图表或可视化需求，可澄清意图、补齐关键参数，并生成适配下游工具的结构化专业提示词。
   when_to_use:
     en_US: Use when a prompt needs clearer structure, missing-parameter checks, or downstream tool adaptation.
     zh_Hans: 当提示词需要结构化、补齐关键参数或适配下游工具时使用。

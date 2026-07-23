@@ -32,6 +32,8 @@ type glmModelMetadata struct {
 }
 
 var glmDocumentedModelOrder = []string{
+	"glm-5.2",
+	"glm-5.1",
 	"glm-5-turbo",
 	"glm-5",
 	"glm-4.7",
@@ -60,6 +62,24 @@ var glmDocumentedModelOrder = []string{
 }
 
 var glmDocumentedModelCatalog = map[string]glmModelMetadata{
+	"glm-5.2": {
+		Type:         "chat",
+		Capabilities: []string{"chat", "stream"},
+		Architecture: &adapter.ModelArchitecture{
+			Modality:         "text",
+			InputModalities:  []string{"text"},
+			OutputModalities: []string{"text"},
+		},
+	},
+	"glm-5.1": {
+		Type:         "chat",
+		Capabilities: []string{"chat", "stream"},
+		Architecture: &adapter.ModelArchitecture{
+			Modality:         "text",
+			InputModalities:  []string{"text"},
+			OutputModalities: []string{"text"},
+		},
+	},
 	"glm-5-turbo": {
 		Type:         "chat",
 		Capabilities: []string{"chat", "stream"},

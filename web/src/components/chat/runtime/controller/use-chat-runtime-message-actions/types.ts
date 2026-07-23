@@ -1,6 +1,7 @@
 import type { MutableRefObject } from 'react';
 
 import type {
+  AIChatController,
   AIChatControllerStore,
   AIChatSetControllerState,
 } from '@/components/chat/controllers/aichat';
@@ -21,5 +22,6 @@ export interface UseChatRuntimeMessageActionsArgs {
   refreshAccountMemoryAfterMemoryMutation: (
     payload: Parameters<ChatRuntimeEventAppliers['applyMemoryMutation']>[0]
   ) => void;
+  recoverStreamingConversation: AIChatController['recoverStreamingConversation'];
   eventAppliers: ChatRuntimeEventAppliers;
 }

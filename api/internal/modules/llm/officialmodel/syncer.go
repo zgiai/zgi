@@ -185,8 +185,9 @@ func (s *Synchronizer) fullRefresh(ctx context.Context, client channelRPCClient,
 			continue
 		}
 		channels = append(channels, UpstreamChannel{
-			ID:     ch.GetId(),
-			Models: ch.GetModels(),
+			ID:       ch.GetId(),
+			Provider: ch.GetProvider(),
+			Models:   ch.GetModels(),
 		})
 	}
 

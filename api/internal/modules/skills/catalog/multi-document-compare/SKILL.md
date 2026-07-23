@@ -7,13 +7,18 @@ max_calls_per_turn: 5
 timeout_seconds: 5
 display:
   icon: files
-  category: productivity
+  category: document_processing
+  scenarios:
+    - document_handling
+    - knowledge_research
+    - legal_compliance
+    - business_operations
   label:
     en_US: Multi-document Compare
     zh_Hans: 多文档对比
   description:
-    en_US: Compares parsed document content for differences, conflicts, risks, and version changes.
-    zh_Hans: 对已解析文档内容进行差异、冲突、风险和版本变化对比。
+    en_US: Designed for comparing contracts, policies, proposals, or document versions; identifies content differences, conflicts, risks, missing items, and version changes across available documents.
+    zh_Hans: 适用于对比合同、制度、方案或文档版本，可识别多个已有文档之间的内容差异、冲突、风险、缺失项和版本变化。
   when_to_use:
     en_US: Use when two or more available document contents need comparison.
     zh_Hans: 当两个或多个已有文档内容需要对比时使用。

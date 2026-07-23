@@ -46,6 +46,8 @@ var dynamicConsoleRoutePatterns = []struct {
 	{regexp.MustCompile(`^/console/work/app/[A-Za-z0-9_-]+$`), "App Detail"},
 }
 
+var bareAgentDetailRoutePattern = regexp.MustCompile(`^/console/agents/[A-Za-z0-9_-]+$`)
+
 // NavigateTool emits a frontend-readable request to switch to a safe internal console route.
 type NavigateTool struct {
 	*builtin.BuiltinTool
@@ -194,6 +196,9 @@ func normalizeConsoleRoute(rawHref string) (string, string, error) {
 
 	if label, ok := exactConsoleRoutes[path]; ok {
 		return path, label, nil
+	}
+	if bareAgentDetailRoutePattern.MatchString(path) {
+		return path + "/agent", "Agent Detail", nil
 	}
 	for _, route := range dynamicConsoleRoutePatterns {
 		if route.pattern.MatchString(path) {

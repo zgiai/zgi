@@ -30,8 +30,13 @@ const (
 )
 
 func (s *service) persistToolGovernanceApprovalPending(ctx context.Context, prepared *PreparedChat, payload map[string]interface{}, usage *adapter.Usage) map[string]interface{} {
+	metadata, _ := s.persistToolGovernanceApprovalPendingResult(ctx, prepared, payload, usage)
+	return metadata
+}
+
+func (s *service) persistToolGovernanceApprovalPendingResult(ctx context.Context, prepared *PreparedChat, payload map[string]interface{}, usage *adapter.Usage) (map[string]interface{}, error) {
 	if prepared == nil || prepared.Message == nil || prepared.Conversation == nil {
-		return map[string]interface{}{}
+		return map[string]interface{}{}, nil
 	}
 	pendingPayload := copyStringAnyMap(payload)
 	if pendingPayload == nil {
@@ -41,7 +46,8 @@ func (s *service) persistToolGovernanceApprovalPending(ctx context.Context, prep
 	pendingPayload["message_id"] = prepared.Message.ID.String()
 
 	metadata := mergeToolGovernanceDecisionMetadata(prepared.Message.Metadata, pendingPayload)
-	metadata = preparedResultMetadata(metadata, usage)
+	metadata = preparedResultMetadataForPrepared(prepared, metadata, usage)
+	metadata = bindPendingGovernedInvocationToOperationPlan(metadata, pendingPayload)
 	metadata["tool_governance_continuation"] = compactSkillInvocation(map[string]interface{}{
 		"status":         "waiting_approval",
 		"correlation_id": toolGovernanceCorrelationID(pendingPayload),
@@ -53,9 +59,9 @@ func (s *service) persistToolGovernanceApprovalPending(ctx context.Context, prep
 	prepared.Message.Metadata = metadata
 
 	if s == nil || s.repos == nil || s.repos.Message == nil || s.repos.Conversation == nil {
-		return metadata
+		return metadata, nil
 	}
-	s.persistPendingMessageAndFinishConversationBestEffort(
+	err := s.persistPendingMessageAndFinishConversationBestEffort(
 		ctx,
 		prepared,
 		"tool governance approval",
@@ -66,7 +72,7 @@ func (s *service) persistToolGovernanceApprovalPending(ctx context.Context, prep
 			return repo.FinishWaitingApprovalMessage(ctx, prepared.Conversation.ID, prepared.Message.ID)
 		},
 	)
-	return metadata
+	return metadata, err
 }
 
 func (s *service) SubmitToolGovernanceDecision(

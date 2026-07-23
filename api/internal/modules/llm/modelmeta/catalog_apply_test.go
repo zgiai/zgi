@@ -3,6 +3,8 @@ package modelmeta
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -56,10 +58,25 @@ func TestApplyPublishedCatalogInvalidatesModelCacheAfterSuccess(t *testing.T) {
 	invalidator := &catalogApplyCacheInvalidatorFake{}
 	SetModelCacheInvalidator(invalidator)
 
-	svc := NewService(openCatalogApplyTestDB(t))
+	svc := NewService(newCatalogApplyTestDB(t))
 	err := svc.ApplyPublishedCatalog(context.Background(), PublishedCatalog{
 		Version:     1,
 		PublishedAt: time.Now().UTC(),
+		Providers: []PublishedProvider{{
+			Provider:        "openai",
+			ProviderName:    "OpenAI",
+			Status:          "active",
+			IsActive:        true,
+			IsSystemEnabled: true,
+		}},
+		Models: []PublishedModel{{
+			Provider:        "openai",
+			Model:           "gpt-5",
+			ModelName:       "GPT 5",
+			Status:          "active",
+			IsActive:        true,
+			IsSystemEnabled: true,
+		}},
 	})
 	if err != nil {
 		t.Fatalf("ApplyPublishedCatalog returned error: %v", err)
@@ -67,6 +84,35 @@ func TestApplyPublishedCatalogInvalidatesModelCacheAfterSuccess(t *testing.T) {
 	if invalidator.calls != 1 {
 		t.Fatalf("InvalidateModelCache calls = %d, want 1", invalidator.calls)
 	}
+}
+
+func TestApplyPublishedCatalogRejectsEmptySnapshotWithoutInvalidatingCache(t *testing.T) {
+	previous := currentModelCacheInvalidator()
+	t.Cleanup(func() {
+		SetModelCacheInvalidator(previous)
+	})
+	invalidator := &catalogApplyCacheInvalidatorFake{}
+	SetModelCacheInvalidator(invalidator)
+
+	db := newCatalogApplyTestDB(t)
+	insertCatalogApplyProvider(t, db, "openai", false)
+	insertCatalogApplyModel(t, db, "openai", "gpt-5", "active", false)
+
+	svc := NewService(db)
+	err := svc.ApplyPublishedCatalog(context.Background(), PublishedCatalog{
+		Version:     2,
+		PublishedAt: time.Now().UTC(),
+	})
+	require.Error(t, err)
+	require.True(t, strings.Contains(err.Error(), "providers are empty"), "error = %v", err)
+	require.Zero(t, invalidator.calls)
+
+	var status string
+	require.NoError(t, db.Table("llm_models").
+		Select("status").
+		Where("provider = ? AND name = ?", "openai", "gpt-5").
+		Scan(&status).Error)
+	require.Equal(t, "active", status)
 }
 
 func TestApplyPublishedCatalogMarksMissingModelsDeprecated(t *testing.T) {
@@ -123,7 +169,7 @@ func TestApplyPublishedCatalogMarksMissingModelsDeprecated(t *testing.T) {
 		Select("status").
 		Where("provider = ? AND name = ?", "qwen", "qwen-plus").
 		First(&qwenModel).Error)
-	require.Equal(t, "active", qwenModel.Status)
+	require.Equal(t, "deprecated", qwenModel.Status)
 }
 
 func TestApplyPublishedCatalogDoesNotRestoreSoftDeletedRecords(t *testing.T) {
@@ -238,7 +284,7 @@ func TestApplyPublishedCatalogStoresOptionalDeprecatedLifecycleFields(t *testing
 	require.Empty(t, withoutReason.DeprecationReason)
 }
 
-func TestApplyPublishedCatalogDoesNotSoftDeleteMissingProviders(t *testing.T) {
+func TestApplyPublishedCatalogDeprecatesAndDisablesMissingProviders(t *testing.T) {
 	db := newCatalogApplyTestDB(t)
 	insertCatalogApplyProvider(t, db, "anthropic", false)
 	insertCatalogApplyModel(t, db, "anthropic", "claude-sonnet", "active", false)
@@ -254,24 +300,210 @@ func TestApplyPublishedCatalogDoesNotSoftDeleteMissingProviders(t *testing.T) {
 			IsActive:        true,
 			IsSystemEnabled: true,
 		}},
+		Models: []PublishedModel{{
+			Provider:        "openai",
+			Model:           "gpt-5",
+			ModelName:       "GPT 5",
+			Status:          "active",
+			IsActive:        true,
+			IsSystemEnabled: true,
+		}},
 	})
 	require.NoError(t, err)
 
-	var deletedAt sql.NullTime
+	var provider struct {
+		Status          string
+		IsActive        bool
+		IsSystemEnabled bool
+		DeletedAt       sql.NullTime
+	}
 	require.NoError(t, db.Table("llm_providers").
-		Select("deleted_at").
+		Select("status, is_active, is_system_enabled, deleted_at").
 		Where("provider = ?", "anthropic").
-		Scan(&deletedAt).Error)
-	require.False(t, deletedAt.Valid)
+		Scan(&provider).Error)
+	require.False(t, provider.DeletedAt.Valid)
+	require.Equal(t, "deprecated", provider.Status)
+	require.False(t, provider.IsActive)
+	require.False(t, provider.IsSystemEnabled)
 
 	var modelStatus struct {
-		Status string
+		Status          string
+		IsActive        bool
+		IsSystemEnabled bool
 	}
 	require.NoError(t, db.Table("llm_models").
-		Select("status").
+		Select("status, is_active, is_system_enabled").
 		Where("provider = ? AND name = ?", "anthropic", "claude-sonnet").
 		First(&modelStatus).Error)
-	require.Equal(t, "active", modelStatus.Status)
+	require.Equal(t, "deprecated", modelStatus.Status)
+	require.False(t, modelStatus.IsActive)
+	require.False(t, modelStatus.IsSystemEnabled)
+}
+
+func TestApplyPublishedCatalogDeprecatesModelsWhenProviderRemainsWithoutModels(t *testing.T) {
+	db := newCatalogApplyTestDB(t)
+	insertCatalogApplyProvider(t, db, "anthropic", false)
+	insertCatalogApplyModel(t, db, "anthropic", "claude-old", "active", false)
+
+	svc := NewService(db)
+	err := svc.ApplyPublishedCatalog(context.Background(), PublishedCatalog{
+		Version:     1,
+		PublishedAt: time.Now(),
+		Providers: []PublishedProvider{
+			{
+				Provider:        "anthropic",
+				ProviderName:    "Anthropic",
+				Status:          "active",
+				IsActive:        true,
+				IsSystemEnabled: true,
+			},
+			{
+				Provider:        "openai",
+				ProviderName:    "OpenAI",
+				Status:          "active",
+				IsActive:        true,
+				IsSystemEnabled: true,
+			},
+		},
+		Models: []PublishedModel{{
+			Provider:        "openai",
+			Model:           "gpt-5",
+			ModelName:       "GPT 5",
+			Status:          "active",
+			IsActive:        true,
+			IsSystemEnabled: true,
+		}},
+	})
+	require.NoError(t, err)
+
+	var modelStatus struct {
+		Status          string
+		IsActive        bool
+		IsSystemEnabled bool
+	}
+	require.NoError(t, db.Table("llm_models").
+		Select("status, is_active, is_system_enabled").
+		Where("provider = ? AND name = ?", "anthropic", "claude-old").
+		First(&modelStatus).Error)
+	require.Equal(t, "deprecated", modelStatus.Status)
+	require.False(t, modelStatus.IsActive)
+	require.False(t, modelStatus.IsSystemEnabled)
+}
+
+func TestApplyPublishedCatalogStoresStructuredPricing(t *testing.T) {
+	db := newCatalogApplyTestDB(t)
+	pricing := `{"deployment_scope":"global","token_tiers":[{"min_input_tokens":0,"input_price_per_million":5,"output_price_per_million":30}]}`
+
+	svc := NewService(db)
+	err := svc.ApplyPublishedCatalog(context.Background(), PublishedCatalog{
+		Version:     1,
+		PublishedAt: time.Now().UTC(),
+		Providers: []PublishedProvider{{
+			Provider:        "openai",
+			ProviderName:    "OpenAI",
+			Status:          "active",
+			IsActive:        true,
+			IsSystemEnabled: true,
+		}},
+		Models: []PublishedModel{{
+			Provider:        "openai",
+			Model:           "gpt-5.5",
+			ModelName:       "GPT 5.5",
+			Status:          "active",
+			IsActive:        true,
+			IsSystemEnabled: true,
+			Pricing:         json.RawMessage(pricing),
+		}},
+	})
+	require.NoError(t, err)
+
+	var stored string
+	require.NoError(t, db.Table("llm_models").
+		Select("pricing").
+		Where("provider = ? AND name = ?", "openai", "gpt-5.5").
+		Scan(&stored).Error)
+	require.JSONEq(t, pricing, stored)
+}
+
+func TestApplyPublishedCatalogRejectsInvalidStructuredPricing(t *testing.T) {
+	for name, pricing := range map[string]json.RawMessage{
+		"invalid JSON":  json.RawMessage(`{"deployment_scope":`),
+		"not an object": json.RawMessage(`[]`),
+	} {
+		t.Run(name, func(t *testing.T) {
+			db := newCatalogApplyTestDB(t)
+			svc := NewService(db)
+
+			err := svc.ApplyPublishedCatalog(context.Background(), PublishedCatalog{
+				Version:     1,
+				PublishedAt: time.Now().UTC(),
+				Providers: []PublishedProvider{{
+					Provider: "openai",
+				}},
+				Models: []PublishedModel{{
+					Provider: "openai",
+					Model:    "gpt-5.5",
+					Pricing:  pricing,
+				}},
+			})
+			require.ErrorContains(t, err, "invalid pricing")
+		})
+	}
+}
+
+func TestMarkMissingProvidersDeprecatedSupportsProviderTableWithoutStatus(t *testing.T) {
+	db := openCatalogApplyTestDB(t)
+	require.NoError(t, db.Exec(`ALTER TABLE llm_providers ADD COLUMN is_active BOOLEAN DEFAULT true`).Error)
+	require.NoError(t, db.Exec(`ALTER TABLE llm_providers ADD COLUMN is_system_enabled BOOLEAN DEFAULT true`).Error)
+	require.NoError(t, db.Exec(`ALTER TABLE llm_models ADD COLUMN status TEXT DEFAULT 'supported'`).Error)
+	require.NoError(t, db.Exec(`ALTER TABLE llm_models ADD COLUMN is_active BOOLEAN DEFAULT true`).Error)
+	require.NoError(t, db.Exec(`ALTER TABLE llm_models ADD COLUMN is_system_enabled BOOLEAN DEFAULT true`).Error)
+	require.NoError(t, db.Exec(`ALTER TABLE llm_models ADD COLUMN updated_at DATETIME`).Error)
+
+	require.NoError(t, db.Table("llm_providers").Create(map[string]interface{}{
+		"id":                "legacy-provider-id",
+		"provider":          "legacy",
+		"is_active":         true,
+		"is_system_enabled": true,
+		"updated_at":        time.Now().UTC(),
+	}).Error)
+	require.NoError(t, db.Table("llm_models").Create(map[string]interface{}{
+		"id":                "legacy-model-id",
+		"provider":          "legacy",
+		"name":              "legacy-model",
+		"status":            "supported",
+		"is_active":         true,
+		"is_system_enabled": true,
+		"updated_at":        time.Now().UTC(),
+	}).Error)
+
+	svc := NewService(db)
+	_, err := svc.markMissingProvidersDeprecated(context.Background(), []string{"openai"})
+	require.NoError(t, err)
+
+	var provider struct {
+		IsActive        bool
+		IsSystemEnabled bool
+	}
+	require.NoError(t, db.Table("llm_providers").
+		Select("is_active, is_system_enabled").
+		Where("provider = ?", "legacy").
+		Scan(&provider).Error)
+	require.False(t, provider.IsActive)
+	require.False(t, provider.IsSystemEnabled)
+
+	var model struct {
+		Status          string
+		IsActive        bool
+		IsSystemEnabled bool
+	}
+	require.NoError(t, db.Table("llm_models").
+		Select("status, is_active, is_system_enabled").
+		Where("provider = ? AND name = ?", "legacy", "legacy-model").
+		Scan(&model).Error)
+	require.Equal(t, "deprecated", model.Status)
+	require.False(t, model.IsActive)
+	require.False(t, model.IsSystemEnabled)
 }
 
 func newCatalogApplyTestDB(t *testing.T) *gorm.DB {
@@ -293,6 +525,8 @@ func newCatalogApplyTestDB(t *testing.T) *gorm.DB {
 			description TEXT,
 			metadata TEXT,
 			status TEXT,
+			is_active BOOLEAN DEFAULT true,
+			is_system_enabled BOOLEAN DEFAULT true,
 			deleted_at DATETIME,
 			created_at DATETIME,
 			updated_at DATETIME
@@ -328,6 +562,7 @@ func newCatalogApplyTestDB(t *testing.T) *gorm.DB {
 			input_price NUMERIC,
 			output_price NUMERIC,
 			cached_input_price NUMERIC,
+			pricing TEXT,
 			is_active BOOLEAN DEFAULT true,
 			is_system_enabled BOOLEAN DEFAULT true,
 			deleted_at DATETIME,
@@ -355,14 +590,16 @@ func insertCatalogApplyProvider(t *testing.T, db *gorm.DB, provider string, dele
 		deletedAt = time.Now().UTC()
 	}
 	require.NoError(t, db.Table("llm_providers").Create(map[string]interface{}{
-		"id":            provider + "-id",
-		"provider":      provider,
-		"provider_name": provider,
-		"metadata":      "{}",
-		"status":        "active",
-		"created_at":    time.Now().UTC(),
-		"updated_at":    time.Now().UTC(),
-		"deleted_at":    deletedAt,
+		"id":                provider + "-id",
+		"provider":          provider,
+		"provider_name":     provider,
+		"metadata":          "{}",
+		"status":            "active",
+		"is_active":         true,
+		"is_system_enabled": true,
+		"created_at":        time.Now().UTC(),
+		"updated_at":        time.Now().UTC(),
+		"deleted_at":        deletedAt,
 	}).Error)
 }
 

@@ -11,6 +11,7 @@ export type AgentMemoryTemplateID =
 
 export interface AgentMemoryTemplateSlot {
   key: string;
+  name: string;
   description: string;
   max_chars: number;
   enabled: boolean;
@@ -85,6 +86,7 @@ export function applyAgentMemoryTemplate(
     if (!templateSlot) return slot;
     return {
       ...slot,
+      name: slot.name?.trim() || templateSlot.name,
       description: templateSlot.description,
       max_chars: templateSlot.max_chars,
       enabled: templateSlot.enabled,
@@ -138,7 +140,8 @@ export function validateAgentMemoryTemplates(templates: AgentMemoryTemplate[]): 
 function createTemplateSlot(key: string, t: Translate): AgentMemoryTemplateSlot {
   return {
     key,
-    description: t(`memory.templateSlots.${key}`),
+    name: t(`memory.templateSlots.${key}.name`),
+    description: t(`memory.templateSlots.${key}.description`),
     max_chars: DEFAULT_AGENT_MEMORY_MAX_CHARS,
     enabled: true,
   };
@@ -150,6 +153,7 @@ function templateSlotToConfig(
 ): AgentMemorySlotConfig {
   return {
     key: normalizeKey(slot.key),
+    name: slot.name.slice(0, 80),
     description: slot.description.slice(0, 200),
     max_chars: slot.max_chars,
     enabled: slot.enabled,

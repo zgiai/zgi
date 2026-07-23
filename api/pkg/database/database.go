@@ -80,15 +80,16 @@ func InitDB(cfg config.DatabaseConfig) (*gorm.DB, error) {
 		return nil, fmt.Errorf("failed to ping database: %w", err)
 	}
 
-	// Register Sentry plugin for error reporting only when DSN is configured.
-	if config.Current().Sentry.DSN != "" {
-		sentryPlugin := &SentryPlugin{
+	// Register the provider-neutral ZGI Reporter plugin when at least one
+	// observability adapter is active.
+	if observability.DefaultReporter().Enabled() {
+		reporterPlugin := &ReporterPlugin{
 			SlowQueryThreshold: 1000 * time.Millisecond, // 1 second
 		}
-		if err := db.Use(sentryPlugin); err != nil {
-			pkglogger.Warn("failed to register sentry plugin", "error", err)
+		if err := db.Use(reporterPlugin); err != nil {
+			pkglogger.Warn("failed to register ZGI Reporter database plugin", "error", err)
 		} else {
-			pkglogger.Info("sentry database plugin registered successfully")
+			pkglogger.Info("ZGI Reporter database plugin registered successfully")
 		}
 	}
 

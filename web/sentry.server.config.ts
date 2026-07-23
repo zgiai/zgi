@@ -3,6 +3,19 @@
 // https://docs.sentry.io/platforms/javascript/guides/nextjs/
 
 import * as Sentry from '@sentry/nextjs';
+import { sanitizeSentryEvent } from './src/lib/observability/sentry-sanitize';
+
+const sentryDSN = process.env.SENTRY_DSN || process.env.NEXT_PUBLIC_SENTRY_DSN;
+const configuredReporters = process.env.ZGI_REPORTERS || process.env.NEXT_PUBLIC_ZGI_REPORTERS;
+const selectedReporters = configuredReporters
+  ?.split(/[\s,]+/)
+  .map(value => value.trim().toLowerCase())
+  .filter(Boolean);
+const sentryEnabled = Boolean(
+  sentryDSN &&
+    (!selectedReporters?.length ||
+      (!selectedReporters.includes('none') && selectedReporters.includes('sentry')))
+);
 
 const sentryEnvironment =
   process.env.SENTRY_ENVIRONMENT ||
@@ -26,7 +39,8 @@ const tracesSampleRate = readSampleRate(
 );
 
 Sentry.init({
-  dsn: process.env.SENTRY_DSN || process.env.NEXT_PUBLIC_SENTRY_DSN,
+  dsn: sentryDSN,
+  enabled: sentryEnabled,
   environment: sentryEnvironment,
 
   // Define how likely traces are sampled. Adjust this value in production, or use tracesSampler for greater control.
@@ -35,7 +49,8 @@ Sentry.init({
   // Enable logs to be sent to Sentry
   enableLogs: true,
 
-  // Enable sending user PII (Personally Identifiable Information)
+  // Keep default user PII disabled for open-source and self-hosted deployments.
   // https://docs.sentry.io/platforms/javascript/guides/nextjs/configuration/options/#sendDefaultPii
-  sendDefaultPii: true,
+  sendDefaultPii: false,
+  beforeSend: sanitizeSentryEvent,
 });

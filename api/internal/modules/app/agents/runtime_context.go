@@ -22,6 +22,8 @@ type agentRuntimeContext struct {
 	RunConfig runtimeservice.RunConfig
 }
 
+const agentWorkflowBindingUnavailableCode = "agent_workflow_binding_unavailable"
+
 func (h *AgentsHandler) ListAgentRuntimeConversations(c *gin.Context) {
 	runtimeCtx, ok := h.agentRuntimeContext(c)
 	if !ok {
@@ -296,6 +298,7 @@ func agentRunConfig(agentID, systemPromptVersion string, cfg dto.AgentConfigResp
 		WorkflowBindings:          agentWorkflowRuntimeBindings(cfg.WorkflowBindings),
 		WorkflowBoundByAccountID:  cfg.WorkflowBoundByAccountID,
 		WorkflowBoundAtUnix:       cfg.WorkflowBoundAtUnix,
+		BindingAuthorizations:     agentRuntimeBindingAuthorizations(cfg.BindingAuthorizations),
 		UseMemory:                 false,
 		AgentMemoryEnabled:        cfg.AgentMemoryEnabled,
 		AgentMemorySlots:          agentMemoryRuntimeSlots(cfg.AgentMemorySlots),
@@ -303,6 +306,24 @@ func agentRunConfig(agentID, systemPromptVersion string, cfg dto.AgentConfigResp
 		BillingAppID:              agentID,
 		BillingAppType:            runtimemodel.ConversationCallerAgent,
 	}
+}
+
+func agentRuntimeBindingAuthorizations(authorizations []dto.AgentBindingAuthorization) []runtimeservice.ResourceBindingAuthorization {
+	result := make([]runtimeservice.ResourceBindingAuthorization, 0, len(authorizations))
+	for _, authorization := range normalizeAgentBindingAuthorizations(authorizations) {
+		if !validAgentBindingAuthorization(authorization) {
+			continue
+		}
+		result = append(result, runtimeservice.ResourceBindingAuthorization{
+			BindingType:      authorization.BindingType,
+			ResourceID:       authorization.ResourceID,
+			ParentResourceID: authorization.ParentResourceID,
+			AccessMode:       authorization.AccessMode,
+			BoundByAccountID: authorization.BoundByAccountID,
+			BoundAtUnix:      authorization.BoundAtUnix,
+		})
+	}
+	return result
 }
 
 func agentDatabaseRuntimeBindings(bindings []dto.AgentDatabaseBinding) []runtimeservice.AgentDatabaseBinding {
@@ -547,6 +568,15 @@ func (h *AgentsHandler) streamRuntimeEvents(c *gin.Context, runtimeCtx agentRunt
 }
 
 func (h *AgentsHandler) failRuntime(c *gin.Context, err error) {
+	var bindingErr *agentBindingAPIError
+	if errors.As(err, &bindingErr) && bindingErr != nil {
+		response.SpecialFail(c, gin.H{
+			"code":    bindingErr.Code,
+			"message": bindingErr.Message,
+			"data":    bindingErr.Data,
+		})
+		return
+	}
 	switch {
 	case errors.Is(err, runtimeservice.ErrNotFound):
 		response.Fail(c, response.ErrNotFound)
@@ -562,6 +592,15 @@ func (h *AgentsHandler) failRuntime(c *gin.Context, err error) {
 		response.Fail(c, response.ErrUnauthorized)
 	case errors.Is(err, runtimeservice.ErrPermissionDenied):
 		response.SpecialFail(c, gin.H{"code": "403001", "message": "Permission denied"})
+	case errors.Is(err, runtimeservice.ErrWorkflowBindingUnavailable):
+		response.SpecialFail(c, gin.H{
+			"code":    agentWorkflowBindingUnavailableCode,
+			"message": "workflow binding is no longer available",
+			"data": gin.H{
+				"status": "denied",
+				"reason": "unavailable",
+			},
+		})
 	case errors.Is(err, errAgentWebAppOffline):
 		response.Fail(c, response.ErrWebAppOffline)
 	case errors.Is(err, errAgentWebAppNotPublished):

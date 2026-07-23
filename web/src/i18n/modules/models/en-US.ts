@@ -122,6 +122,10 @@ const messages = {
       moderation: 'Moderation Model',
       reasoning: 'Reasoning Model',
       'function-calling': 'Function Calling Model',
+      agent: 'Agent Model',
+    },
+    tags: {
+      agent: 'Recommended',
     },
     empty: {
       noModelsTitle: 'Model setup required',

@@ -242,6 +242,59 @@ func TestPublishedRuntimeStoreSaveResourceAuthorizationCreatesSurfaceAndGrants(t
 	}
 }
 
+func TestPublishedRuntimeStoreRelocateResourceWorkspaceMovesOwnershipAndDeduplicatesGrants(t *testing.T) {
+	ctx := context.Background()
+	db, mock, cleanup := openPublishedRuntimeAuthMockDB(t)
+	defer cleanup()
+
+	resourceID := uuid.MustParse("10000000-0000-0000-0000-000000000001")
+	organizationID := uuid.MustParse("20000000-0000-0000-0000-000000000001")
+	sourceWorkspaceID := uuid.MustParse("30000000-0000-0000-0000-000000000001")
+	targetWorkspaceID := uuid.MustParse("40000000-0000-0000-0000-000000000001")
+	webAppSurfaceID := uuid.MustParse("50000000-0000-0000-0000-000000000001")
+	appCenterSurfaceID := uuid.MustParse("60000000-0000-0000-0000-000000000001")
+	webAppSourceGrantID := uuid.MustParse("70000000-0000-0000-0000-000000000001")
+	appCenterSourceGrantID := uuid.MustParse("80000000-0000-0000-0000-000000000001")
+	appCenterTargetGrantID := uuid.MustParse("90000000-0000-0000-0000-000000000001")
+	now := time.Now().UTC().Truncate(time.Second)
+
+	mock.ExpectQuery(`SELECT \* FROM "published_runtime_surfaces" WHERE resource_type = \$1 AND resource_id = \$2 AND deleted_at IS NULL ORDER BY id ASC FOR UPDATE`).
+		WithArgs(string(PublishedRuntimeResourceAgent), resourceID).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "resource_type", "resource_id", "organization_id", "workspace_id", "surface", "enabled", "compatibility_source", "created_at", "updated_at", "deleted_at",
+		}).
+			AddRow(webAppSurfaceID, string(PublishedRuntimeResourceAgent), resourceID, organizationID, sourceWorkspaceID, string(PublishedRuntimeSurfaceWebApp), true, PublishedRuntimeSourceGrant, now, now, nil).
+			AddRow(appCenterSurfaceID, string(PublishedRuntimeResourceAgent), resourceID, organizationID, sourceWorkspaceID, string(PublishedRuntimeSurfaceAppCenter), true, PublishedRuntimeSourceGrant, now, now, nil))
+	mock.ExpectQuery(`SELECT \* FROM "published_runtime_surface_grants" WHERE surface_id IN \(\$1,\$2\) AND subject_type = \$3 AND subject_id IN \(\$4,\$5\) AND deleted_at IS NULL ORDER BY surface_id ASC, subject_id ASC FOR UPDATE`).
+		WithArgs(webAppSurfaceID, appCenterSurfaceID, string(PublishedRuntimeSubjectWorkspace), sourceWorkspaceID, targetWorkspaceID).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "surface_id", "subject_type", "subject_id", "enabled", "created_at", "updated_at", "deleted_at",
+		}).
+			AddRow(webAppSourceGrantID, webAppSurfaceID, string(PublishedRuntimeSubjectWorkspace), sourceWorkspaceID, true, now, now, nil).
+			AddRow(appCenterSourceGrantID, appCenterSurfaceID, string(PublishedRuntimeSubjectWorkspace), sourceWorkspaceID, true, now, now, nil).
+			AddRow(appCenterTargetGrantID, appCenterSurfaceID, string(PublishedRuntimeSubjectWorkspace), targetWorkspaceID, true, now, now, nil))
+	mock.ExpectExec(`UPDATE "published_runtime_surfaces" SET .* WHERE id IN \(\$[0-9]+,\$[0-9]+\) AND deleted_at IS NULL`).
+		WillReturnResult(sqlmock.NewResult(0, 2))
+	mock.ExpectExec(`UPDATE "published_runtime_surface_grants" SET .*"subject_id"=.* WHERE id = .* AND deleted_at IS NULL`).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`UPDATE "published_runtime_surface_grants" SET .*"deleted_at"=.* WHERE id = .* AND deleted_at IS NULL`).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	err := NewStore(db).RelocateResourceWorkspace(
+		ctx,
+		PublishedRuntimeResourceAgent,
+		resourceID,
+		sourceWorkspaceID,
+		targetWorkspaceID,
+	)
+	if err != nil {
+		t.Fatalf("RelocateResourceWorkspace error = %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("sql expectations: %v", err)
+	}
+}
+
 func TestPublishedRuntimeStoreRejectsUnsupportedSurfaceGrantSubjectsBeforeSQL(t *testing.T) {
 	ctx := context.Background()
 	db, mock, cleanup := openPublishedRuntimeAuthMockDB(t)

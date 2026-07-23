@@ -245,7 +245,7 @@ func (s *service) updateUserMemoryRuntimeMetadataBestEffort(ctx context.Context,
 
 func (s *service) emitUserMemoryMutationEvent(ctx context.Context, prepared *PreparedChat, trace skills.SkillTrace, result map[string]interface{}, onEvent func(StreamEvent) error) {
 	eventType := userMemoryMutationEventType(result)
-	if eventType == "" {
+	if eventType == "" || prepared == nil || prepared.Conversation == nil || prepared.Message == nil {
 		return
 	}
 	payload := map[string]interface{}{

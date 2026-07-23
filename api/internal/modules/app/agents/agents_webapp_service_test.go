@@ -749,6 +749,38 @@ func TestAgentsService_GetAgentRuntimeSurfaces_UsesWorkspaceViewAndLegacyFallbac
 	require.False(t, hasBuiltinApp)
 }
 
+func TestAgentsService_GetAgentRuntimeSurfaces_UsesCurrentAgentWorkspaceOverPersistedMetadata(t *testing.T) {
+	ctx := webAppStatusTestContext()
+	db, mock, cleanup := openAgentRuntimeSurfacesMockDBWithMock(t)
+	defer cleanup()
+
+	agentID := uuid.MustParse("11111111-1111-1111-1111-111111111111")
+	currentWorkspaceID := uuid.MustParse("22222222-2222-2222-2222-222222222222")
+	staleWorkspaceID := uuid.MustParse("33333333-3333-3333-3333-333333333333")
+	expectAgentRuntimeSurfaceRows(mock, agentID, staleWorkspaceID, []agentRuntimeSurfaceExpectation{
+		{surface: string(runtimeauth.PublishedRuntimeSurfaceWebApp), enabled: true},
+	})
+
+	service := &agentsService{
+		db: db,
+		agentsRepo: &stubWebAppStatusRepository{agent: &Agent{
+			ID:           agentID,
+			TenantID:     currentWorkspaceID,
+			WebAppStatus: AgentWebAppStatusActive,
+		}},
+		enterpriseService: &stubWebAppStatusOrganizationService{
+			allowed:        true,
+			organizationID: "88888888-8888-8888-8888-888888888888",
+		},
+	}
+
+	resp, err := service.GetAgentRuntimeSurfaces(ctx, agentID.String(), "99999999-9999-9999-9999-999999999999")
+	require.NoError(t, err)
+	require.Equal(t, currentWorkspaceID.String(), resp.WorkspaceID)
+	require.Equal(t, "88888888-8888-8888-8888-888888888888", resp.OrganizationID)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestAgentsService_GetAgentRuntimeSurfaces_RejectsMissingWorkspaceViewPermission(t *testing.T) {
 	ctx := webAppStatusTestContext()
 	agentID := uuid.MustParse("11111111-1111-1111-1111-111111111111")

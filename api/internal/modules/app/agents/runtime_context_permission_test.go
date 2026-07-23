@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -915,6 +916,24 @@ type agentRuntimePermissionAppService struct {
 	ids webAppRuntimePermissionIDs
 }
 
+func (s *agentRuntimePermissionAppService) GetPublishedAgentRuntimeConfig(_ context.Context, agentID string) (*dto.AgentWebAppRuntimeConfigResponse, error) {
+	if agentID != s.ids.agentID.String() {
+		return nil, runtimeservice.ErrNotFound
+	}
+	return &dto.AgentWebAppRuntimeConfigResponse{
+		AgentID:        s.ids.agentID.String(),
+		WorkspaceID:    s.ids.workspaceID.String(),
+		OrganizationID: s.ids.organizationID.String(),
+		AgentType:      "AGENT",
+		Version:        "v1",
+		VersionUUID:    uuid.NewString(),
+		Config: dto.AgentConfigResponse{
+			AgentID:         s.ids.agentID.String(),
+			ModelParameters: map[string]interface{}{},
+		},
+	}, nil
+}
+
 func newAgentRuntimePermissionAppService(ids webAppRuntimePermissionIDs) *agentRuntimePermissionAppService {
 	return &agentRuntimePermissionAppService{ids: ids}
 }
@@ -938,6 +957,9 @@ type webAppRuntimePermissionService struct {
 
 	getConversationErr          error
 	beginContinuationErr        error
+	enforceContinuationBinding  bool
+	continuationBindingID       string
+	continuationAgentID         string
 	prepareRegenerationErr      error
 	getConversationCalled       bool
 	updateConversationCalled    bool
@@ -1052,14 +1074,28 @@ func (s *webAppRuntimePermissionService) StreamConversationEventsForCaller(_ con
 	return nil
 }
 
-func (s *webAppRuntimePermissionService) BeginWorkflowApprovalContinuation(_ context.Context, scope runtimeservice.Scope, caller runtimeservice.Caller, conversationID, messageID uuid.UUID) (*runtimeservice.WorkflowApprovalContinuation, error) {
+func (s *webAppRuntimePermissionService) BeginWorkflowApprovalContinuation(_ context.Context, scope runtimeservice.Scope, caller runtimeservice.Caller, config runtimeservice.RunConfig, conversationID, messageID uuid.UUID) (*runtimeservice.WorkflowApprovalContinuation, error) {
 	s.beginContinuationCalled = true
 	s.lastScope = scope
 	s.lastCaller = caller
+	s.lastRunConfig = config
 	s.lastConversationID = conversationID
 	s.lastMessageID = messageID
 	if s.beginContinuationErr != nil {
 		return nil, s.beginContinuationErr
+	}
+	if s.enforceContinuationBinding {
+		matched := false
+		for _, binding := range config.WorkflowBindings {
+			if strings.EqualFold(strings.TrimSpace(binding.BindingID), strings.TrimSpace(s.continuationBindingID)) &&
+				(strings.TrimSpace(s.continuationAgentID) == "" || strings.EqualFold(strings.TrimSpace(binding.AgentID), strings.TrimSpace(s.continuationAgentID))) {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return nil, runtimeservice.ErrWorkflowBindingUnavailable
+		}
 	}
 	return &runtimeservice.WorkflowApprovalContinuation{ConversationID: conversationID, MessageID: messageID}, nil
 }

@@ -41,7 +41,10 @@ func (s *service) PrepareConfiguredChat(ctx context.Context, scope Scope, caller
 		return nil, err
 	}
 	parts.Attachments = attachments
-	if err := s.applyModelCapabilities(ctx, scope, parts); err != nil {
+	if err := s.applyExistingConversationSurfaceForChat(ctx, scope, caller, req, parts); err != nil {
+		return nil, err
+	}
+	if err := s.applyModelCapabilities(ctx, scope, caller, parts); err != nil {
 		return nil, err
 	}
 	applyProtocolToolsPolicy(caller, parts)
@@ -132,8 +135,9 @@ func (s *service) prepareRootRegeneration(ctx context.Context, scope Scope, call
 	}
 	applyRunConfigToParts(config, parts)
 	applyCallerRuntimeSurfacePolicy(caller, parts)
+	applyPersistedConversationSurface(conversation, parts)
 	parts.Attachments = attachmentBundleFromMessageMetadata(message.Metadata)
-	if err := s.applyModelCapabilities(ctx, scope, parts); err != nil {
+	if err := s.applyRootRegenerationModelCapabilities(ctx, scope, caller, message, parts); err != nil {
 		return nil, err
 	}
 	applyProtocolToolsPolicy(caller, parts)
@@ -266,7 +270,12 @@ func (s *service) resolveChatConversation(ctx context.Context, scope Scope, call
 	if err != nil {
 		return nil, fmt.Errorf("%w: invalid conversation_id", ErrInvalidInput)
 	}
-	return s.getConversationByCallerScoped(ctx, scope, caller, conversationID)
+	conversation, err := s.getConversationByCallerScoped(ctx, scope, caller, conversationID)
+	if err != nil {
+		return nil, err
+	}
+	applyPersistedConversationSurface(conversation, parts)
+	return conversation, nil
 }
 
 func (s *service) createConversationForChat(ctx context.Context, scope Scope, caller Caller, parts *chatRequestParts) (*runtimemodel.Conversation, error) {
@@ -453,52 +462,99 @@ func (s *service) buildUpstreamMessages(ctx context.Context, scope Scope, parent
 	return &contextBudgetResult{Messages: messages, Metadata: contextMetadata}, nil
 }
 
-func (s *service) applyModelCapabilities(ctx context.Context, scope Scope, parts *chatRequestParts) error {
+func (s *service) applyModelCapabilities(ctx context.Context, scope Scope, caller Caller, parts *chatRequestParts) error {
 	if parts == nil {
 		return nil
 	}
 	if s.modelSpecResolver == nil {
-		assumeModelFunctionCalling(parts, "resolver_unavailable", "")
-		return nil
+		return fmt.Errorf("resolve AI Chat model capabilities: resolver is unavailable")
 	}
 	spec, ok, err := s.modelSpecResolver.Resolve(ctx, scope.OrganizationID, parts.Provider, parts.ModelName)
 	if err != nil {
-		assumeModelFunctionCalling(parts, "resolver_error", err.Error())
-		logger.WarnContext(ctx, "aichat model capabilities assumed because resolver failed",
-			"organization_id", scope.OrganizationID.String(),
-			"provider", parts.Provider,
-			"model", parts.ModelName,
-			"error", err.Error(),
-		)
-		return nil
+		return fmt.Errorf("resolve AI Chat model capabilities: %w", err)
 	}
 	if !ok {
-		assumeModelFunctionCalling(parts, "model_spec_unknown", "")
-		logger.DebugContext(ctx, "aichat model capabilities assumed because model spec is unknown",
-			"organization_id", scope.OrganizationID.String(),
-			"provider", parts.Provider,
-			"model", parts.ModelName,
-		)
-		return nil
+		return fmt.Errorf("resolve AI Chat model capabilities: model %s/%s was not found", parts.Provider, parts.ModelName)
 	}
-	parts.ModelSupportsVision = ok && spec.SupportsVision()
+	parts.ModelSupportsVision = spec.SupportsVision()
+	parts.ModelSupportsAgent = spec.SupportsAgent()
 	parts.FunctionCallingKnown = true
 	parts.ModelSupportsFunctionCalling = spec.SupportsFunctionCalling()
 	parts.FunctionCallingAssumed = false
 	parts.ModelCapabilityStatus = "resolved"
 	parts.ModelCapabilityError = ""
+	if strings.TrimSpace(parts.ExecutionMode) == "" {
+		parts.ExecutionMode = executionModeForModel(caller, parts)
+	}
+	if executionModeRequiresFunctionCalling(parts.ExecutionMode) && !spec.SupportsFunctionCalling() {
+		return fmt.Errorf("resolve AI Chat model capabilities: model %s/%s does not support function calling", parts.Provider, parts.ModelName)
+	}
 	return nil
 }
 
-func assumeModelFunctionCalling(parts *chatRequestParts, status string, errMessage string) {
-	if parts == nil {
-		return
+func (s *service) applyRootRegenerationModelCapabilities(
+	ctx context.Context,
+	scope Scope,
+	caller Caller,
+	message *runtimemodel.Message,
+	parts *chatRequestParts,
+) error {
+	if regenerationKeepsPersistedModel(message, parts) {
+		restoreExecutionModeFromMetadata(parts, message.Metadata)
 	}
-	parts.FunctionCallingKnown = true
-	parts.ModelSupportsFunctionCalling = true
-	parts.FunctionCallingAssumed = true
-	parts.ModelCapabilityStatus = strings.TrimSpace(status)
-	parts.ModelCapabilityError = trimRunes(strings.TrimSpace(errMessage), 500)
+	return s.applyModelCapabilities(ctx, scope, caller, parts)
+}
+
+func regenerationKeepsPersistedModel(message *runtimemodel.Message, parts *chatRequestParts) bool {
+	if message == nil || parts == nil {
+		return false
+	}
+	persistedProvider := ""
+	if message.ModelProvider != nil {
+		persistedProvider = strings.TrimSpace(*message.ModelProvider)
+	}
+	return strings.TrimSpace(message.ModelName) == strings.TrimSpace(parts.ModelName) &&
+		persistedProvider == strings.TrimSpace(parts.Provider)
+}
+
+func (s *service) applyExistingConversationSurfaceForChat(ctx context.Context, scope Scope, caller Caller, req runtimedto.ChatRequest, parts *chatRequestParts) error {
+	conversationIDValue := strings.TrimSpace(req.ConversationID)
+	if conversationIDValue == "" {
+		return nil
+	}
+	conversationID, err := uuid.Parse(conversationIDValue)
+	if err != nil {
+		return fmt.Errorf("%w: invalid conversation_id", ErrInvalidInput)
+	}
+	conversation, err := s.getConversationByCallerScoped(ctx, scope, caller, conversationID)
+	if err != nil {
+		return err
+	}
+	applyPersistedConversationSurface(conversation, parts)
+	return nil
+}
+
+func executionModeForModel(caller Caller, parts *chatRequestParts) string {
+	if parts == nil || normalizeCallerType(caller.Type) != runtimemodel.ConversationCallerAIChat ||
+		normalizeAIChatSurface(parts.Surface) != aiChatSurfaceWorkChat {
+		return executionModeAgentLoop
+	}
+	if parts.ModelSupportsAgent {
+		return executionModeAgentLoop
+	}
+	if parts.ModelSupportsFunctionCalling {
+		return executionModeLegacyToolChat
+	}
+	return executionModeDirectChat
+}
+
+func executionModeRequiresFunctionCalling(mode string) bool {
+	switch strings.TrimSpace(mode) {
+	case executionModeDirectChat:
+		return false
+	default:
+		return true
+	}
 }
 
 func applyManagedUserMemoryPolicy(caller Caller, parts *chatRequestParts) {
@@ -528,6 +584,12 @@ func (s *service) applySkillConfig(ctx context.Context, scope Scope, caller Call
 	if parts == nil {
 		return nil
 	}
+	if parts.ExecutionMode == executionModeDirectChat {
+		parts.SkillMode = skillModeDisabled
+		parts.SkillIDs = nil
+		parts.ToolSkillIDs = nil
+		return nil
+	}
 	if s.skillRuntime == nil {
 		parts.SkillMode = skillModeDisabled
 		parts.SkillIDs = nil
@@ -554,15 +616,15 @@ func (s *service) applySkillConfig(ctx context.Context, scope Scope, caller Call
 	if err != nil {
 		return err
 	}
+	orgEnabled, err := s.effectiveOrganizationSkillIDs(ctx, scope.OrganizationID, catalog)
+	if err != nil {
+		return err
+	}
 	callerType := normalizeCallerType(caller.Type)
 	var enabled []string
 	if callerType == runtimemodel.ConversationCallerAgent {
-		enabled = effectiveAgentSkillIDs(parts.ConfiguredSkillIDs, catalog, config)
+		enabled = effectiveAgentSkillIDs(parts.ConfiguredSkillIDs, catalog, orgEnabled, config)
 	} else {
-		orgEnabled, err := s.effectiveOrganizationSkillIDs(ctx, scope.OrganizationID, catalog)
-		if err != nil {
-			return err
-		}
 		if parts.ConfiguredSkillIDs == nil {
 			defaultEnabled, _, err := s.effectiveAccountSkillPreferenceIDs(ctx, scope, callerType, catalog, orgEnabled)
 			if err != nil {

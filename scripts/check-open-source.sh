@@ -138,7 +138,7 @@ if [ "${#scan_targets[@]}" -gt 0 ]; then
   done
   if [ "${#comment_targets[@]}" -gt 0 ]; then
     if rg -n --hidden --pcre2 '^\s*(//|/\*|\*|#)\s*.*\p{Han}' "${comment_targets[@]}" ||
-      rg -n --hidden --pcre2 '^\s*.*//.*\p{Han}' "${comment_targets[@]}"; then
+      rg -n --hidden --pcre2 '^\s*.*(?<!:)//.*\p{Han}' "${comment_targets[@]}"; then
       echo "open-source-check: source comments must be written in English" >&2
       failures=$((failures + 1))
     fi

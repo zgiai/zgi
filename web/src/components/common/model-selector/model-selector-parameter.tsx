@@ -29,8 +29,11 @@ import {
 import { Skeleton } from '@/components/ui/skeleton';
 import { ModelSelector, type ModelSelectorValue } from '@/components/common/model-selector';
 import { useModelParameterRules } from '@/hooks/model/use-model-parameter-rules';
-import type { ModelUseCase } from '@/services/types/model';
-import type { ParameterRuleItem } from '@/services/types/model';
+import type {
+  AvailableModelUseCase,
+  ModelUseCase,
+  ParameterRuleItem,
+} from '@/services/types/model';
 import { computeInitialNumber } from '@/utils/number';
 import { useT } from '@/i18n';
 import {
@@ -75,6 +78,7 @@ export interface ModelSelectorParameterValue {
 
 export interface ModelSelectorParameterProps {
   modelType: ModelUseCase;
+  availabilityUseCase?: AvailableModelUseCase;
   value: ModelSelectorParameterValue;
   onChange: (v: ModelSelectorParameterValue) => void;
   className?: string;
@@ -97,10 +101,13 @@ export interface ModelSelectorParameterProps {
   hasError?: boolean;
   /** Disable model selection and parameter editing. */
   disabled?: boolean;
+  /** Within each provider, place models for this use case first and highlight them. */
+  preferredUseCase?: ModelUseCase;
 }
 
 export default function ModelSelectorParameter({
   modelType,
+  availabilityUseCase,
   value,
   onChange,
   className,
@@ -108,6 +115,7 @@ export default function ModelSelectorParameter({
   capabilityFilter,
   hasError = false,
   disabled = false,
+  preferredUseCase,
 }: ModelSelectorParameterProps) {
   const t = useT();
   const [open, setOpen] = useState(false);
@@ -438,6 +446,7 @@ export default function ModelSelectorParameter({
         <div className="flex-1">
           <ModelSelector
             modelType={modelType}
+            availabilityUseCase={availabilityUseCase}
             value={
               value?.provider && value?.model
                 ? { provider: value.provider, model: value.model }
@@ -447,6 +456,7 @@ export default function ModelSelectorParameter({
             capabilityFilter={capabilityFilter}
             hasError={hasError}
             disabled={disabled}
+            preferredUseCase={preferredUseCase}
           />
         </div>
         {!parameterShow ? (

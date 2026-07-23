@@ -222,10 +222,10 @@
   max-width: none;
 }
 .md-viewer th {
-  @apply bg-muted/50 font-semibold text-left;
+  @apply min-w-[140px] max-w-[280px] overflow-hidden text-ellipsis whitespace-nowrap bg-muted/50 font-semibold text-left;
 }
 .md-viewer td {
-  @apply align-top;
+  @apply min-w-[140px] max-w-[420px] whitespace-normal break-words align-top;
 }
 .md-viewer tr:hover td {
   @apply bg-muted/30;

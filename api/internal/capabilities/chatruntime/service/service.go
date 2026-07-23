@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/zgiai/zgi/api/config"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/agentmemoryruntime"
 	runtimedto "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/dto"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
@@ -27,11 +28,14 @@ const (
 	defaultSearchLimit       = 20
 	maxSearchLimit           = 50
 	searchSnippetRunes       = 120
-	staleActiveMessageTTL    = time.Hour
-	staleActiveMessageError  = "stream interrupted before completion"
+	staleActiveMessageError  = "runtime_lease_expired"
 	streamEventsExpiredError = "stream events expired"
 	titleGenerationTimeout   = 15 * time.Second
 	runtimeContextMaxRunes   = 8000
+	runtimeLeaseHeartbeat    = 15 * time.Second
+	runtimeLeaseFailureTTL   = 90 * time.Second
+	runtimeLeaseLegacyTTL    = time.Hour
+	defaultModelIdleTimeout  = 5 * time.Minute
 
 	streamEventMessageStart         = "message_start"
 	streamEventMessage              = "message"
@@ -57,6 +61,10 @@ const (
 	skillModeAuto     = "auto"
 	skillModeRequired = "required"
 
+	executionModeAgentLoop      = "agent_loop"
+	executionModeLegacyToolChat = "legacy_tool_chat"
+	executionModeDirectChat     = "direct_chat"
+
 	userMemoryContextBudgetChars  = 4000
 	agentMemoryContextBudgetChars = 4000
 )
@@ -71,9 +79,9 @@ var defaultSystemSkillIDs = []string{
 }
 
 const (
-	aiChatSurfaceWorkChat          = "work_chat"
-	aiChatSurfaceContextualSidebar = "contextual_sidebar"
-	aiChatSurfaceExternalPageChat  = "external_page_chat"
+	aiChatSurfaceWorkChat          = runtimedto.RuntimeSurfaceWorkChat
+	aiChatSurfaceContextualSidebar = runtimedto.RuntimeSurfaceContextualSidebar
+	aiChatSurfaceExternalPageChat  = runtimedto.RuntimeSurfaceExternalPageChat
 )
 
 type Scope struct {
@@ -85,10 +93,11 @@ type Scope struct {
 }
 
 type Caller struct {
-	Type           string
-	ID             *uuid.UUID
-	Source         string
-	SourceWebAppID *uuid.UUID
+	Type             string
+	ID               *uuid.UUID
+	ConversationType string
+	Source           string
+	SourceWebAppID   *uuid.UUID
 }
 
 type RunConfig struct {
@@ -108,12 +117,24 @@ type RunConfig struct {
 	WorkflowBindings          []AgentWorkflowBinding
 	WorkflowBoundByAccountID  string
 	WorkflowBoundAtUnix       int64
+	BindingAuthorizations     []ResourceBindingAuthorization
 	UseMemory                 bool
 	AgentMemoryEnabled        bool
 	AgentMemorySlots          []AgentMemorySlotConfig
 	AgentMemoryUserScope      string
 	BillingAppID              string
 	BillingAppType            string
+}
+
+// ResourceBindingAuthorization is the runtime authorization evidence for one
+// concrete Agent resource binding.
+type ResourceBindingAuthorization struct {
+	BindingType      string `json:"binding_type"`
+	ResourceID       string `json:"resource_id"`
+	ParentResourceID string `json:"parent_resource_id,omitempty"`
+	AccessMode       string `json:"access_mode"`
+	BoundByAccountID string `json:"bound_by_account_id"`
+	BoundAtUnix      int64  `json:"bound_at_unix"`
 }
 
 type AgentMemorySlotConfig = agentmemoryruntime.Slot
@@ -148,6 +169,22 @@ type AgentMemoryRuntimeState = agentmemoryruntime.State
 type AgentMemoryPlannerDecision = agentmemoryruntime.Decision
 type AgentMemoryPlannerResult = agentmemoryruntime.PlannerResult
 type AgentMemoryMutationResult = agentmemoryruntime.MutationResult
+
+type CreateCompletedMessageRequest struct {
+	ConversationID  uuid.UUID
+	Query           string
+	Answer          string
+	ModelProvider   string
+	ModelName       string
+	ModelParameters map[string]interface{}
+	Metadata        map[string]interface{}
+}
+
+type CreateConversationWithCompletedMessageRequest struct {
+	ConversationID uuid.UUID
+	Title          string
+	Message        CreateCompletedMessageRequest
+}
 
 type Service interface {
 	CreateConversation(ctx context.Context, scope Scope, title string) (*runtimemodel.Conversation, error)
@@ -188,7 +225,9 @@ type Service interface {
 	RunClientActionContinuationStream(ctx context.Context, scope Scope, conversationID, messageID uuid.UUID, actionID string, req runtimedto.ClientActionResultRequest, onEvent func(StreamEvent) error) (*ChatResult, error)
 	RunUserInputContinuationStream(ctx context.Context, scope Scope, conversationID, messageID uuid.UUID, requestID string, req runtimedto.UserInputContinuationRequest, onEvent func(StreamEvent) error) (*ChatResult, error)
 	RunConfiguredUserInputContinuationStream(ctx context.Context, scope Scope, caller Caller, config RunConfig, conversationID, messageID uuid.UUID, requestID string, req runtimedto.UserInputContinuationRequest, onEvent func(StreamEvent) error) (*ChatResult, error)
-	BeginWorkflowApprovalContinuation(ctx context.Context, scope Scope, caller Caller, conversationID, messageID uuid.UUID) (*WorkflowApprovalContinuation, error)
+	CreateCompletedMessage(ctx context.Context, scope Scope, req CreateCompletedMessageRequest) (*runtimemodel.Message, error)
+	CreateConversationWithCompletedMessage(ctx context.Context, scope Scope, caller Caller, req CreateConversationWithCompletedMessageRequest) (*runtimemodel.Conversation, *runtimemodel.Message, error)
+	BeginWorkflowApprovalContinuation(ctx context.Context, scope Scope, caller Caller, config RunConfig, conversationID, messageID uuid.UUID) (*WorkflowApprovalContinuation, error)
 	RecordWorkflowApprovalContinuationEvent(ctx context.Context, continuation *WorkflowApprovalContinuation, eventType string, payload map[string]interface{}) (*StreamEvent, error)
 	AppendWorkflowApprovalContinuationStreamEvent(ctx context.Context, continuation *WorkflowApprovalContinuation, eventType string, payload map[string]interface{}) (*StreamEvent, error)
 	UpdateWorkflowApprovalContinuationStatus(ctx context.Context, continuation *WorkflowApprovalContinuation, status string) (map[string]interface{}, error)
@@ -205,7 +244,7 @@ type Service interface {
 	PreviewImportCustomSkill(ctx context.Context, scope Scope, fileHeader *multipart.FileHeader) (*SkillImportPreview, error)
 	ConfirmCustomSkillImport(ctx context.Context, scope Scope, importID string, overwriteConfirmed bool) (*skills.SkillDiscoveryMetadata, error)
 	CancelCustomSkillImportPreview(ctx context.Context, scope Scope, importID string) error
-	DeleteSkill(ctx context.Context, scope Scope, skillID string) error
+	DeleteSkill(ctx context.Context, scope Scope, skillID, agentBindingAction, impactToken string) error
 	CleanupStaleActiveMessages(ctx context.Context) (int64, error)
 	CleanupExpiredCustomSkillImportPreviews(ctx context.Context) error
 	MigrateWebAppConversation(ctx context.Context, scope Scope, sourceConversationID uuid.UUID) (*runtimemodel.Conversation, error)
@@ -237,6 +276,7 @@ type service struct {
 	memoryService      UserMemoryService
 	agentMemoryService AgentMemoryContextService
 	customSkillStorage customSkillStorage
+	modelIdleTimeout   time.Duration
 }
 
 func NewService(repos *repository.Repositories, llmClient llmclient.LLMClient) Service {
@@ -304,7 +344,15 @@ func NewServiceWithSkillRuntime(
 		memoryService:      memoryService,
 		agentMemoryService: agentMemoryService,
 		customSkillStorage: newFilesystemCustomSkillStorage(customSkillStorageRoot),
+		modelIdleTimeout:   configuredModelIdleTimeout(),
 	}
+}
+
+func configuredModelIdleTimeout() time.Duration {
+	if config.GlobalConfig == nil || config.GlobalConfig.ChatRuntime.ModelIdleTimeoutSeconds <= 0 {
+		return defaultModelIdleTimeout
+	}
+	return time.Duration(config.GlobalConfig.ChatRuntime.ModelIdleTimeoutSeconds) * time.Second
 }
 
 type PreparedChat struct {
@@ -314,6 +362,9 @@ type PreparedChat struct {
 	ReplaceRoot                    bool
 	Continuation                   bool
 	SuppressInitialNaturalProgress bool
+	PreferredRestoredSkillID       string
+	ContinuationType               string
+	TerminalOnly                   bool
 	Scope                          Scope
 	Caller                         Caller
 	RunConfig                      RunConfig
@@ -322,6 +373,10 @@ type PreparedChat struct {
 
 	UserMemoryPreflightDone  bool
 	UserMemoryPreflightUsage *adapter.Usage
+
+	usageExecutionStarted  bool
+	usageExecutionBaseline *adapter.Usage
+	usageContinuation      bool
 }
 
 type ChatResult struct {
@@ -400,6 +455,8 @@ type chatRequestParts struct {
 	RecentGeneratedArtifacts     []map[string]interface{}
 	RecentOperationPlans         []map[string]interface{}
 	ModelSupportsVision          bool
+	ModelSupportsAgent           bool
+	ExecutionMode                string
 	FunctionCallingKnown         bool
 	ModelSupportsFunctionCalling bool
 	FunctionCallingAssumed       bool

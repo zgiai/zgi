@@ -26,7 +26,7 @@ func SanitizeError(err error) error {
 	if err == nil {
 		return nil
 	}
-	return sanitizedError{message: SanitizeString(err.Error())}
+	return sanitizedError{message: sanitizeReporterString(err.Error())}
 }
 
 // SanitizeAttributes returns attributes with valid UTF-8 string values.

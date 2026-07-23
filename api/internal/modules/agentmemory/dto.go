@@ -3,6 +3,7 @@ package agentmemory
 type SlotResponse struct {
 	ID               string `json:"id"`
 	Key              string `json:"key"`
+	Name             string `json:"name"`
 	Description      string `json:"description"`
 	MaxChars         int    `json:"max_chars"`
 	Enabled          bool   `json:"enabled"`
@@ -29,6 +30,7 @@ type ReplaceSlotsRequest struct {
 type SlotUpsertRequest struct {
 	ID          string `json:"id,omitempty"`
 	Key         string `json:"key" binding:"required"`
+	Name        string `json:"name,omitempty"`
 	Description string `json:"description,omitempty"`
 	MaxChars    int    `json:"max_chars,omitempty"`
 	Enabled     *bool  `json:"enabled,omitempty"`

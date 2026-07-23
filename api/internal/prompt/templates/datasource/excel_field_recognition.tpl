@@ -25,6 +25,7 @@ Return strict JSON only, with this exact shape:
       "source_column": "original source column",
       "name": "snake_case_field_name",
       "display_name": "human readable source label",
+      "type": "text",
       "description": "short field description"
     }
   ]
@@ -45,4 +46,6 @@ Requirements:
 12. Keep table.name and columns[].name as database identifiers, not translated display text.
 13. Use source_column, display_name, type, description, and sample_values to infer meaning. Do not generate record data.
 14. If meaning is unclear, keep a conservative name based on the current field name.
-15. Return JSON only. Do not add Markdown, explanations, comments, or extra keys.
+15. Set columns[].type to exactly one of: boolean, text, timestamp, numeric, integer.
+16. Numeric-looking identifiers that are not used for arithmetic must use type text. This includes phone numbers, identity document numbers, bank card or account numbers, postal codes, tracking numbers, and similar codes. Preserve leading zeros, country codes, separators, and other formatting characters.
+17. Return JSON only. Do not add Markdown, explanations, comments, or extra keys.

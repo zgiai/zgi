@@ -6,14 +6,17 @@ runtime_type: prompt
 max_calls_per_turn: 5
 timeout_seconds: 5
 display:
-  icon: route
-  category: productivity
+  icon: tickets
+  category: workflow_automation
+  scenarios:
+    - customer_service
+    - business_operations
   label:
     en_US: Ticket Routing
     zh_Hans: 工单分流
   description:
-    en_US: Classifies tickets by issue type, urgency, department, workspace, and reply suggestion.
-    zh_Hans: 识别工单类型、紧急程度、处理部门、工作空间和回复建议。
+    en_US: Designed for customer or employee issues that need triage; identifies issue type and urgency, recommends the responsible department or owner, and drafts an initial reply.
+    zh_Hans: 适用于客户或员工问题的工单分流，可识别问题类型和紧急程度，推荐处理部门或负责人，并生成初步回复建议。
   when_to_use:
     en_US: Use when a customer or employee issue needs triage and routing recommendations.
     zh_Hans: 当客户或员工问题需要分类、定级和分流建议时使用。

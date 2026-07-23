@@ -60,6 +60,7 @@ export function AgentRuntimeMemorySection({
   );
   const [memoryItemDialogOpen, setMemoryItemDialogOpen] = useState(false);
   const [memoryTemplateDialogOpen, setMemoryTemplateDialogOpen] = useState(false);
+  const [newMemoryName, setNewMemoryName] = useState('');
   const [newMemoryKey, setNewMemoryKey] = useState('');
   const [newMemoryDescription, setNewMemoryDescription] = useState('');
   const memoryTemplates = createAgentMemoryTemplates(key => t(key as Parameters<typeof t>[0]));
@@ -93,12 +94,14 @@ export function AgentRuntimeMemorySection({
       ...agentMemorySlots,
       {
         key,
+        name: newMemoryName.trim().slice(0, 80),
         description: newMemoryDescription.trim().slice(0, 200),
         max_chars: 2000,
         enabled: true,
         sort_order: agentMemorySlots.length,
       },
     ]);
+    setNewMemoryName('');
     setNewMemoryKey('');
     setNewMemoryDescription('');
     setMemoryItemDialogOpen(false);
@@ -121,6 +124,7 @@ export function AgentRuntimeMemorySection({
   };
   const openCustomMemoryDialog = () => {
     if (readOnly) return;
+    setNewMemoryName('');
     setNewMemoryKey(nextAgentMemorySlotKey);
     setNewMemoryDescription('');
     setMemoryItemDialogOpen(true);
@@ -201,18 +205,41 @@ export function AgentRuntimeMemorySection({
           </DialogHeader>
           <DialogBody className="space-y-4">
             <div className="space-y-1.5">
+              <label htmlFor="agent-memory-display-name" className="text-sm font-medium">
+                {t('memory.nameLabel')}
+              </label>
               <Input
+                id="agent-memory-display-name"
+                value={newMemoryName}
+                maxLength={80}
+                placeholder={t('memory.slotNamePlaceholder')}
+                onChange={event => setNewMemoryName(event.target.value.slice(0, 80))}
+                disabled={readOnly}
+              />
+              <div className="text-xs leading-5 text-muted-foreground">{t('memory.nameHelp')}</div>
+            </div>
+            <div className="space-y-1.5">
+              <label htmlFor="agent-memory-id" className="text-sm font-medium">
+                {t('memory.keyLabel')}
+              </label>
+              <Input
+                id="agent-memory-id"
                 value={newMemoryKey}
                 maxLength={64}
-                placeholder={nextAgentMemorySlotKey}
+                placeholder={t('memory.slotKeyPlaceholder')}
                 error={Boolean(newMemoryKeyError)}
                 errorText={newMemoryKeyError ? t(`memory.validation.${newMemoryKeyError}`) : null}
                 onChange={event => setNewMemoryKey(event.target.value.toLowerCase().slice(0, 64))}
                 disabled={readOnly}
               />
+              <div className="text-xs leading-5 text-muted-foreground">{t('memory.keyHelp')}</div>
             </div>
             <div className="space-y-1.5">
+              <label htmlFor="agent-memory-description" className="text-sm font-medium">
+                {t('memory.descriptionLabel')}
+              </label>
               <Textarea
+                id="agent-memory-description"
                 value={newMemoryDescription}
                 maxLength={200}
                 showCharacterCount
@@ -278,7 +305,10 @@ export function AgentRuntimeMemorySection({
                           className="flex items-center justify-between gap-3 rounded-md border bg-muted/20 px-3 py-2"
                         >
                           <div className="min-w-0">
-                            <div className="font-mono text-xs font-semibold">{slot.key}</div>
+                            <div className="truncate text-sm font-semibold">{slot.name}</div>
+                            <div className="mt-0.5 truncate font-mono text-[11px] text-muted-foreground">
+                              {t('memory.idValue', { id: slot.key })}
+                            </div>
                             <div className="mt-0.5 line-clamp-2 text-xs text-muted-foreground">
                               {slot.description}
                             </div>
@@ -397,7 +427,12 @@ export function AgentRuntimeMemorySection({
                       >
                         <div className="flex items-center justify-between gap-3">
                           <div className="min-w-0 flex-1">
-                            <div className="truncate text-sm font-semibold">{slot.key}</div>
+                            <div className="truncate text-sm font-semibold">
+                              {slot.name?.trim() || slot.key}
+                            </div>
+                            <div className="mt-0.5 truncate font-mono text-[11px] text-muted-foreground">
+                              {t('memory.idValue', { id: slot.key })}
+                            </div>
                             {keyErrorText && (
                               <div className="mt-1 text-xs text-destructive">{keyErrorText}</div>
                             )}
@@ -426,6 +461,25 @@ export function AgentRuntimeMemorySection({
                             >
                               <Trash2 className="size-4" />
                             </Button>
+                          </div>
+                        </div>
+                        <div className="space-y-1">
+                          <div className="text-xs font-medium text-muted-foreground">
+                            {t('memory.nameLabel')}
+                          </div>
+                          <Input
+                            value={slot.name ?? ''}
+                            maxLength={80}
+                            placeholder={t('memory.slotNamePlaceholder')}
+                            disabled={readOnly}
+                            onChange={event =>
+                              updateAgentMemorySlot(index, {
+                                name: event.target.value.slice(0, 80),
+                              })
+                            }
+                          />
+                          <div className="text-[11px] text-muted-foreground">
+                            {t('memory.nameHelp')}
                           </div>
                         </div>
                         <div className="space-y-1">

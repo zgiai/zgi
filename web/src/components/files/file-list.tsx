@@ -4,15 +4,17 @@ import {
   MoreHorizontal,
   FileIcon,
   Download,
-  Eye,
   Trash2,
   CalendarDays,
   HardDrive,
   Link2,
   Activity,
+  HelpCircle,
   Info,
   FileSearch,
   FileUp,
+  MoveRight,
+  FolderInput,
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useQueryClient } from '@tanstack/react-query';
@@ -35,6 +37,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 import type { FileItem } from '@/services/types/file';
 import { formatDate } from '@/utils/format';
@@ -49,8 +52,6 @@ import {
 import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
 import { Badge } from '@/components/ui/badge';
 import { useIsMobile } from '@/hooks/use-mobile';
-import { FilePreviewDialog } from './file-preview-dialog';
-import { isOriginalPreviewSupported } from '@/utils/file-helpers';
 import { FILE_PERMISSION_ACTIONS } from '@/constants/permissions';
 import { fileManageService } from '@/services/file-manage.service';
 import { StartFileParseDialog } from './start-file-parse-dialog';
@@ -60,6 +61,7 @@ import { getFileDetailKey } from '@/hooks/file/use-file-detail';
 import { FILE_PARSE_PREVIEW_QUERY_KEY } from '@/hooks/file/use-file-parse-preview';
 import { FILE_CHUNKS_QUERY_KEY } from '@/hooks/file/use-file-chunks';
 import { FileTypeIcon } from './file-type-icon';
+import { WorkspaceAssetMoveDialog } from '@/components/common/workspace-asset-move-dialog';
 
 function getProcessingStatus(file: FileItem): string {
   return file.processing_status || 'stored_only';
@@ -206,6 +208,8 @@ export interface FileListProps {
   mobileEmptyActionLabel?: string;
   onMobileEmptyAction?: () => void;
   mobileEmptyDescription?: string;
+  onMoveFiles?: (fileIds: string[]) => void;
+  isMovingFiles?: boolean;
 }
 
 function formatFileSize(bytes: number): string {
@@ -228,6 +232,8 @@ function FileListBase({
   mobileEmptyActionLabel,
   onMobileEmptyAction,
   mobileEmptyDescription,
+  onMoveFiles,
+  isMovingFiles = false,
 }: FileListProps) {
   const { files: t, common } = useT();
   const router = useRouter();
@@ -235,26 +241,31 @@ function FileListBase({
   const isMobile = useIsMobile();
   const { downloadFile, isDownloading } = useDownloadFile();
   const { deleteFiles, isDeleting } = useDeleteFiles();
-  const [previewFile, setPreviewFile] = useState<FileItem | null>(null);
   const [startParseFile, setStartParseFile] = useState<FileItem | null>(null);
   const [replaceDocumentFile, setReplaceDocumentFile] = useState<FileItem | null>(null);
   const [startingParseFileId, setStartingParseFileId] = useState<string | null>(null);
   const [isBatchParsing, setIsBatchParsing] = useState(false);
   const [replacingFileId, setReplacingFileId] = useState<string | null>(null);
   const [reparsingFileId, setReparsingFileId] = useState<string | null>(null);
+  const [workspaceMoveFile, setWorkspaceMoveFile] = useState<FileItem | null>(null);
 
   // Permission checks
   const { hasAnyPermission } = useAccountPermissions();
   const canDownload = hasAnyPermission(FILE_PERMISSION_ACTIONS.download);
-  const canPreview = hasAnyPermission(FILE_PERMISSION_ACTIONS.preview);
   const canUpdateFile = hasAnyPermission(FILE_PERMISSION_ACTIONS.update);
   const canDeleteFilePermission = hasAnyPermission(FILE_PERMISSION_ACTIONS.delete);
+  const canMoveFile = !selectionMode && hasAnyPermission(FILE_PERMISSION_ACTIONS.move);
+  const canMoveFileToFolder = canMoveFile && Boolean(onMoveFiles);
   const canUpload = hasAnyPermission(FILE_PERMISSION_ACTIONS.upload);
   const canViewRelatedResources = !selectionMode;
   const canViewDetail = !selectionMode;
   const canRequestProcessing = !selectionMode && canUpdateFile;
   const hasAnyAction =
-    canViewDetail || canRequestProcessing || canDownload || canPreview || canDeleteFilePermission;
+    canViewDetail ||
+    canRequestProcessing ||
+    canDownload ||
+    canMoveFile ||
+    canDeleteFilePermission;
   const emptyDescription = mobileEmptyDescription
     ? mobileEmptyDescription
     : canUpload
@@ -316,10 +327,6 @@ function FileListBase({
     } catch (_error) {
       // Error is handled by the hook
     }
-  };
-
-  const handlePreview = (file: FileItem) => {
-    setPreviewFile(file);
   };
 
   const handleOpenDetail = (file: FileItem) => {
@@ -460,6 +467,11 @@ function FileListBase({
     if (!canDeleteFilePermission) return;
     if (selectedFiles.length === 0 || isDeleting) return;
     setShowBulkDeleteConfirm(true);
+  };
+
+  const handleBulkMoveClick = () => {
+    if (!canMoveFileToFolder || selectedFiles.length === 0 || isMovingFiles) return;
+    onMoveFiles?.(selectedFiles);
   };
 
   const handleBulkDeleteConfirm = async () => {
@@ -682,22 +694,6 @@ function FileListBase({
                             <Info className="h-4 w-4" />
                           </Button>
                         ) : null}
-                        {canPreview &&
-                        isOriginalPreviewSupported(file.extension, file.mime_type) ? (
-                          <Button
-                            isIcon
-                            type="button"
-                            variant="ghost"
-                            className="h-8 w-8 rounded-lg"
-                            onClick={e => {
-                              e.stopPropagation();
-                              handlePreview(file);
-                            }}
-                            aria-label={t('actions.preview')}
-                          >
-                            <Eye className="h-4 w-4" />
-                          </Button>
-                        ) : null}
                         {canReplaceDocument ? (
                           <Button
                             isIcon
@@ -806,21 +802,6 @@ function FileListBase({
           }}
         />
 
-        <FilePreviewDialog
-          open={Boolean(previewFile)}
-          onOpenChange={open => {
-            if (!open) setPreviewFile(null);
-          }}
-          file={previewFile}
-          onDownload={
-            canDownload
-              ? file => {
-                  void handleDownload(file);
-                }
-              : undefined
-          }
-          isDownloading={isDownloading}
-        />
       </div>
     );
   }
@@ -829,7 +810,7 @@ function FileListBase({
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
       <div className="flex min-h-12 items-center justify-between border-b px-4 py-2.5">
         <div className="flex min-w-0 items-center gap-3">
-          <div className="text-base font-medium text-foreground">
+          <div className="text-sm font-medium text-foreground">
             {t('fileList.totalItems', { total })}
           </div>
           {selectedFiles.length > 0 ? (
@@ -842,7 +823,7 @@ function FileListBase({
         </div>
 
         {selectedFiles.length > 0 && !selectionMode ? (
-          <div className="flex shrink-0 items-center gap-1.5 rounded-lg border bg-muted/30 p-1">
+          <div className="flex shrink-0 items-center gap-2">
             {canRequestProcessing ? (
               <Button
                 type="button"
@@ -861,11 +842,24 @@ function FileListBase({
                 ) : null}
               </Button>
             ) : null}
+            {canMoveFileToFolder ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-8 rounded-md px-3 text-xs shadow-none"
+                onClick={handleBulkMoveClick}
+                disabled={isMovingFiles}
+              >
+                <FolderInput className="h-4 w-4" />
+                {isMovingFiles ? t('actions.moving') : t('actions.moveTo')}
+              </Button>
+            ) : null}
             {canDeleteFilePermission ? (
               <Button
-                variant="ghost"
+                variant="outline"
                 size="sm"
-                className="h-8 rounded-md px-3 text-xs text-muted-foreground shadow-none hover:bg-destructive/5 hover:text-destructive"
+                className="h-8 rounded-md border-destructive/30 px-3 text-xs text-destructive shadow-none hover:bg-destructive/10 hover:text-destructive"
                 onClick={handleBulkDeleteClick}
                 disabled={isDeleting}
               >
@@ -913,7 +907,28 @@ function FileListBase({
             <TableHead className="text-[13px]">{t('fileList.fileName')}</TableHead>
             <TableHead className="text-[13px]">{t('fileList.fileType')}</TableHead>
             <TableHead className="text-[13px]">{t('fileList.fileSize')}</TableHead>
-            <TableHead className="text-[13px]">{t('fileList.processingStatus')}</TableHead>
+            <TableHead className="text-[13px]">
+              <span className="inline-flex items-center gap-1.5">
+                {t('fileList.processingStatus')}
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span
+                      tabIndex={0}
+                      className="inline-flex size-4 items-center justify-center rounded-full text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
+                    >
+                      <HelpCircle className="size-3.5" />
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent
+                    side="top"
+                    align="start"
+                    className="max-w-[320px] whitespace-normal text-left leading-5"
+                  >
+                    {t('fileList.processingStatusHelp')}
+                  </TooltipContent>
+                </Tooltip>
+              </span>
+            </TableHead>
             <TableHead className="text-[13px]">{t('fileList.relatedStatus')}</TableHead>
             <TableHead className="text-[13px]">{t('fileList.uploadDate')}</TableHead>
             {hasAnyAction && (
@@ -995,8 +1010,6 @@ function FileListBase({
               const processingStatus = getEffectiveProcessingStatus(file);
               const canStartParse = processingStatus === 'stored_only' && canRequestProcessing;
               const canOpenFileDetail = canViewDetail && processingStatus !== 'stored_only';
-              const canPreviewOriginal =
-                canPreview && isOriginalPreviewSupported(file.extension, file.mime_type);
               const canDeleteFile = canDeleteFilePermission && !selectionMode;
               const canReplaceDocument =
                 !selectionMode &&
@@ -1008,6 +1021,7 @@ function FileListBase({
                 canOpenFileDetail ||
                 canDownload ||
                 canReplaceDocument ||
+                canMoveFile ||
                 canDeleteFile;
 
               return (
@@ -1170,18 +1184,6 @@ function FileListBase({
                                   {t('actions.viewDetails')}
                                 </DropdownMenuItem>
                               ) : null}
-                              {canPreviewOriginal ? (
-                                <DropdownMenuItem
-                                  onClick={e => {
-                                    e.stopPropagation();
-                                    handlePreview(file);
-                                  }}
-                                >
-                                  <Eye className="h-4 w-4 mr-2" />
-                                  {t('actions.preview')}
-                                </DropdownMenuItem>
-                              ) : null}
-
                               {canDownload ? (
                                 <DropdownMenuItem
                                   onClick={e => {
@@ -1205,6 +1207,31 @@ function FileListBase({
                                 >
                                   <FileUp className="h-4 w-4 mr-2" />
                                   {t('actions.replaceDocument')}
+                                </DropdownMenuItem>
+                              ) : null}
+
+                              {canMoveFileToFolder ? (
+                                <DropdownMenuItem
+                                  onClick={e => {
+                                    e.stopPropagation();
+                                    onMoveFiles?.([file.id]);
+                                  }}
+                                  disabled={isMovingFiles}
+                                >
+                                  <FolderInput className="h-4 w-4 mr-2" />
+                                  {t('actions.moveTo')}
+                                </DropdownMenuItem>
+                              ) : null}
+
+                              {canMoveFile ? (
+                                <DropdownMenuItem
+                                  onClick={e => {
+                                    e.stopPropagation();
+                                    setWorkspaceMoveFile(file);
+                                  }}
+                                >
+                                  <MoveRight className="h-4 w-4 mr-2" />
+                                  {common('assetMove.title')}
                                 </DropdownMenuItem>
                               ) : null}
 
@@ -1280,21 +1307,6 @@ function FileListBase({
         variant="danger"
       />
 
-      <FilePreviewDialog
-        open={Boolean(previewFile)}
-        onOpenChange={open => {
-          if (!open) setPreviewFile(null);
-        }}
-        file={previewFile}
-        onDownload={
-          canDownload
-            ? file => {
-                void handleDownload(file);
-              }
-            : undefined
-        }
-        isDownloading={isDownloading}
-      />
       <StartFileParseDialog
         open={Boolean(startParseFile)}
         onOpenChange={open => {
@@ -1316,6 +1328,15 @@ function FileListBase({
         onConfirm={(file, replacementFile, processingMode) => {
           void handleReplaceDocument(file, replacementFile, processingMode);
         }}
+      />
+      <WorkspaceAssetMoveDialog
+        open={Boolean(workspaceMoveFile)}
+        onOpenChange={open => {
+          if (!open) setWorkspaceMoveFile(null);
+        }}
+        assetType="file"
+        assetId={workspaceMoveFile?.id ?? ''}
+        assetName={workspaceMoveFile?.name}
       />
     </div>
   );

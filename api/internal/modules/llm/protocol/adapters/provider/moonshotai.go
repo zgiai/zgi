@@ -363,16 +363,32 @@ func (a *MoonshotAIAdapter) handleError(statusCode int, body []byte) error {
 
 // enrichModelInfo enriches model information
 func (a *MoonshotAIAdapter) enrichModelInfo(model *adapter.Model) {
-	// Set default context length for Moonshotai models
-	// You can customize this based on actual model specifications
-	switch model.ID {
-	case "moonshot-v1-8k":
+	switch {
+	case model.ID == "kimi-k2.7-code", model.ID == "kimi-k2.7-code-highspeed":
+		model.ContextLength = 262144
+		model.Description = "Kimi K2.7 Code multimodal coding and agent model"
+		model.Capabilities = appendUniqueStrings(model.Capabilities, "stream", "function_calling")
+		model.Architecture = &adapter.ModelArchitecture{
+			Modality:         "multimodal",
+			InputModalities:  []string{"text", "image", "video"},
+			OutputModalities: []string{"text"},
+		}
+	case model.ID == "kimi-k2.6":
+		model.ContextLength = 262144
+		model.Description = "Kimi K2.6 multimodal general and agent model"
+		model.Capabilities = appendUniqueStrings(model.Capabilities, "stream", "function_calling")
+		model.Architecture = &adapter.ModelArchitecture{
+			Modality:         "multimodal",
+			InputModalities:  []string{"text", "image", "video"},
+			OutputModalities: []string{"text"},
+		}
+	case model.ID == "moonshot-v1-8k":
 		model.ContextLength = 8192
 		model.Description = "Moonshotai 8K context model"
-	case "moonshot-v1-32k":
+	case model.ID == "moonshot-v1-32k":
 		model.ContextLength = 32768
 		model.Description = "Moonshotai 32K context model"
-	case "moonshot-v1-128k":
+	case model.ID == "moonshot-v1-128k":
 		model.ContextLength = 131072
 		model.Description = "Moonshotai 128K context model"
 	default:

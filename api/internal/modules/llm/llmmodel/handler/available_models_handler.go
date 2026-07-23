@@ -30,7 +30,7 @@ func NewAvailableModelsHandler(svc service.AvailableModelsService) *AvailableMod
 // ListAvailableRequest represents the request for listing available models
 type ListAvailableRequest struct {
 	Provider string `form:"provider"`
-	UseCase  string `form:"use_case"` // Filter by use case (e.g., vision, embedding, text-chat)
+	UseCase  string `form:"use_case"` // Filter by use case or Agent runtime eligibility.
 }
 
 // ListAvailableResponse represents the response for listing available models
@@ -46,7 +46,7 @@ type ListAvailableResponse struct {
 // @Accept json
 // @Produce json
 // @Param provider query string false "Filter by provider name"
-// @Param use_case query string false "Filter by use case (vision, embedding, text-chat, function-calling, etc.)"
+// @Param use_case query string false "Filter by use case, or use agent-runtime for Agent runtime eligibility"
 // @Success 200 {object} ListAvailableResponse
 // @Router /llm/models/available [get]
 func (h *AvailableModelsHandler) ListAvailable(c *gin.Context) {
@@ -99,6 +99,9 @@ func (h *AvailableModelsHandler) ListAvailable(c *gin.Context) {
 }
 
 func isValidUseCase(v string) bool {
+	if v == service.AgentRuntimeUseCase {
+		return true
+	}
 	for _, uc := range llmmodel.ValidUseCases() {
 		if string(uc) == v {
 			return true

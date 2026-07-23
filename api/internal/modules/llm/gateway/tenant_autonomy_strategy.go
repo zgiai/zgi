@@ -1,7 +1,10 @@
 package gateway
 
 import (
+	"strings"
+
 	channelmodel "github.com/zgiai/zgi/api/internal/modules/llm/channel/model"
+	"github.com/zgiai/zgi/api/internal/modules/llm/channelprovider"
 	"github.com/zgiai/zgi/api/pkg/logger"
 	"go.uber.org/zap"
 )
@@ -49,7 +52,13 @@ func (s *TenantAutonomyStrategy) SupportsModel(route *channelmodel.LLMRoute, mod
 		return false
 	}
 
+	official := isOfficialRoute(route)
 	supported := route.SupportsModel(modelName)
+	if official {
+		supported = route.SupportsModelForProvider(modelProvider, modelName)
+	} else if supported && strings.TrimSpace(modelProvider) != "" {
+		supported = routeProviderMatchesCatalogProvider(route.ChannelProvider, modelProvider)
+	}
 	if !supported {
 		logger.Debug("private LLM route does not support model",
 			zap.String("strategy", s.GetStrategyName()),
@@ -61,4 +70,17 @@ func (s *TenantAutonomyStrategy) SupportsModel(route *channelmodel.LLMRoute, mod
 	}
 
 	return supported
+}
+
+func routeProviderMatchesCatalogProvider(routeProvider, catalogProvider string) bool {
+	routeProvider = strings.TrimSpace(routeProvider)
+	catalogProvider = strings.TrimSpace(catalogProvider)
+	if routeProvider == "" || catalogProvider == "" || routeProvider == "openai-compatible" {
+		return false
+	}
+	spec, err := channelprovider.Resolve(routeProvider)
+	if err != nil {
+		return false
+	}
+	return spec.LookupProvider == catalogProvider
 }

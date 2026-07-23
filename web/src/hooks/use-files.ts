@@ -20,10 +20,12 @@ import type {
   CreateFolderResponse,
   UpdateFolderRequest,
   UpdateFolderResponse,
-  MoveFolderRequest,
+  MoveFilesToFolderRequest,
   CreateTextFileRequest,
   CreateTextFileResponse,
   GetAllFilesRequest,
+  DeleteFolderRequest,
+  DeleteFolderResponse,
 } from '@/services/types/file';
 
 /* -------------------------------------------------------------------------- */
@@ -48,7 +50,7 @@ export const FILE_FOLDERS_KEY = 'file-folders';
 export const UPLOAD_FILE_KEY = 'upload-file';
 export const CREATE_FOLDER_KEY = 'create-folder';
 export const UPDATE_FOLDER_KEY = 'update-folder';
-export const MOVE_FOLDER_KEY = 'move-folder';
+export const MOVE_FILES_KEY = 'move-files';
 export const DELETE_FOLDER_KEY = 'delete-folder';
 export const CREATE_TEXT_FILE_KEY = 'create-text-file';
 
@@ -538,6 +540,7 @@ export function useDeleteFiles(): {
           return !wId || wId === currentWorkspaceId;
         },
       });
+      queryClient.invalidateQueries({ queryKey: [STORAGE_USAGE_KEY] });
     },
     onError: error => {
       // Don't show toast for association errors - let the component handle it
@@ -880,38 +883,48 @@ export function useUpdateFolder(): {
 }
 
 /**
- * Move folder hook
+ * Move files hook
  */
-export function useMoveFolder(): {
-  moveFolder: (data: MoveFolderRequest) => Promise<void>;
+export function useMoveFilesToFolder(): {
+  moveFilesToFolder: (data: MoveFilesToFolderRequest) => Promise<void>;
   isMoving: boolean;
 } {
   const t = useT('files');
   const queryClient = useQueryClient();
+  const currentWorkspaceId = useCurrentWorkspace()?.id;
 
-  const { mutateAsync: moveFolderMutation, isPending: isMoving } = useMutation({
-    mutationFn: async (data: MoveFolderRequest) => {
-      await fileManageService.moveFolder(data);
+  const { mutateAsync: moveFilesMutation, isPending: isMoving } = useMutation({
+    mutationFn: async (data: MoveFilesToFolderRequest) => {
+      await fileManageService.moveFilesToFolder(data);
     },
     onSuccess: () => {
-      toast.success(t('toast.moveFolderSuccess'));
+      toast.success(t('toast.moveFilesSuccess'));
+      queryClient.invalidateQueries({
+        queryKey: [FILES_QUERY_KEY],
+        predicate: query => {
+          const key = query.queryKey;
+          if (key[0] !== FILES_QUERY_KEY) return false;
+          const wId = getWorkspaceIdFromFilesQueryKey(key);
+          return !wId || wId === currentWorkspaceId;
+        },
+      });
       queryClient.invalidateQueries({
         queryKey: [FILE_FOLDERS_KEY],
         predicate: query => isFileFolderListQuery(query.queryKey),
       });
     },
     onError: error => {
-      const message = (error as { message?: string }).message ?? t('toast.moveFolderError');
+      const message = (error as { message?: string }).message ?? t('toast.moveFilesError');
       toast.error(message);
     },
   });
 
-  const moveFolder = async (data: MoveFolderRequest) => {
-    return await moveFolderMutation(data);
+  const moveFilesToFolder = async (data: MoveFilesToFolderRequest) => {
+    return await moveFilesMutation(data);
   };
 
   return {
-    moveFolder,
+    moveFilesToFolder,
     isMoving,
   };
 }
@@ -920,17 +933,29 @@ export function useMoveFolder(): {
  * Delete folder hook with optimistic updates
  */
 export function useDeleteFolder(): {
-  deleteFolder: (folderId: string) => Promise<void>;
+  deleteFolder: (
+    folderId: string,
+    data?: DeleteFolderRequest
+  ) => Promise<DeleteFolderResponse | undefined>;
   isDeleting: boolean;
 } {
   const t = useT('files');
   const queryClient = useQueryClient();
+  const currentWorkspaceId = useCurrentWorkspace()?.id;
 
   const { mutateAsync: deleteFolderMutation, isPending: isDeleting } = useMutation({
-    mutationFn: async (folderId: string) => {
-      await fileManageService.deleteFolder(folderId);
+    mutationFn: async ({
+      folderId,
+      data,
+    }: {
+      folderId: string;
+      data?: DeleteFolderRequest;
+    }) => {
+      const response = await fileManageService.deleteFolder(folderId, data);
+      return response.data;
     },
-    onSuccess: (_, folderId) => {
+    onSuccess: (result, { folderId }) => {
+      if (result?.result !== 'success') return;
       toast.success(t('toast.deleteFolderSuccess'));
       if (folderId) {
         queryClient.removeQueries({ queryKey: [FILE_FOLDERS_KEY, 'detail', folderId] });
@@ -940,6 +965,18 @@ export function useDeleteFolder(): {
         queryKey: [FILE_FOLDERS_KEY],
         predicate: query => isFileFolderListQuery(query.queryKey),
       });
+      queryClient.invalidateQueries({
+        queryKey: [FILES_QUERY_KEY],
+        predicate: query => {
+          const key = query.queryKey;
+          if (key[0] !== FILES_QUERY_KEY) return false;
+          const wId = getWorkspaceIdFromFilesQueryKey(key);
+          return !wId || wId === currentWorkspaceId;
+        },
+      });
+      if ((result.file_count ?? 0) > 0) {
+        queryClient.invalidateQueries({ queryKey: [STORAGE_USAGE_KEY] });
+      }
     },
     onError: error => {
       const message = (error as { message?: string }).message ?? t('toast.deleteFolderError');
@@ -947,8 +984,8 @@ export function useDeleteFolder(): {
     },
   });
 
-  const deleteFolder = async (folderId: string) => {
-    return await deleteFolderMutation(folderId);
+  const deleteFolder = async (folderId: string, data?: DeleteFolderRequest) => {
+    return await deleteFolderMutation({ folderId, data });
   };
 
   return {

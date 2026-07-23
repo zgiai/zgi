@@ -261,7 +261,7 @@ func buildAgentRuntimeRunItem(message *runtimemodel.Message, conversation *runti
 		ModelProvider:  message.ModelProvider,
 		ElapsedTime:    runtimeElapsedTime(message),
 		TotalTokens:    int64(metadataTotalTokens(metadata)),
-		TotalSteps:     agentRuntimeTotalSteps(metadata),
+		TotalSteps:     agentRuntimeTotalSteps(metadata, message.Status),
 		CreatedAt:      message.CreatedAt.Unix(),
 		FinishedAt:     runtimeFinishedAtUnix(message),
 		Error:          runtimeErrorString(message),
@@ -282,15 +282,43 @@ func buildAgentRuntimeRunDetail(message *runtimemodel.Message, conversation *run
 		ModelProvider:   message.ModelProvider,
 		ModelParameters: message.ModelParameters,
 		Usage:           metadata["usage"],
+		ControlMetrics:  agentRuntimeControlMetrics(metadata),
 		ElapsedTime:     runtimeElapsedTime(message),
 		TotalTokens:     int64(metadataTotalTokens(metadata)),
-		TotalSteps:      agentRuntimeTotalSteps(metadata),
+		TotalSteps:      agentRuntimeTotalSteps(metadata, message.Status),
 		CreatedAt:       message.CreatedAt.Unix(),
 		FinishedAt:      runtimeFinishedAtUnix(message),
 		Error:           runtimeErrorString(message),
 		Source:          runtimeConversationSource(conversation, runtimemodel.ConversationSourceWebApp),
 		SourceWebAppID:  runtimeSourceWebAppID(conversation),
 	}
+}
+
+func agentRuntimeControlMetrics(metadata map[string]interface{}) map[string]interface{} {
+	diagnostics, _ := metadata["skill_loop_control_diagnostics"].(map[string]interface{})
+	if len(diagnostics) == 0 {
+		return nil
+	}
+	out := map[string]interface{}{}
+	for _, key := range []string{
+		"plan_update_count",
+		"operation_plan_phase_mismatch_count",
+		"suppressed_control_tool_count",
+		"tool_decision_without_execution_count",
+		"business_tool_execution_count",
+		"business_tool_success_count",
+		"tracked_business_tool_decision_count",
+		"tool_decision_execution_gap",
+		"tool_decision_execution_rate_percent",
+	} {
+		if value, exists := diagnostics[key]; exists && value != nil {
+			out[key] = value
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 func buildAgentRuntimeSteps(message *runtimemodel.Message) []dto.AgentRuntimeStep {
@@ -300,7 +328,9 @@ func buildAgentRuntimeSteps(message *runtimemodel.Message) []dto.AgentRuntimeSte
 	for index, event := range events {
 		steps = append(steps, buildAgentRuntimeEventStep(message, event, index+1))
 	}
-	steps = append(steps, buildAgentRuntimeAnswerStep(message, len(steps)+1))
+	if agentRuntimeHasTerminalAnswerStep(message.Status) {
+		steps = append(steps, buildAgentRuntimeAnswerStep(message, len(steps)+1, nextAgentRuntimeStepSequence(events)))
+	}
 	return steps
 }
 
@@ -310,7 +340,12 @@ func buildAgentRuntimeEventStep(message *runtimemodel.Message, event map[string]
 	if errText == "" && status == string(dto.NodeStatusFailed) {
 		errText = runtimeString(event["message"])
 	}
-	createdAt := runtimeInvocationCreatedAt(message, event).Unix()
+	createdAt, createdAtMS := agentRuntimeEventCreatedAt(event)
+	sequence := agentRuntimeEventSequence(event)
+	var finishedAt *int64
+	if createdAt != nil {
+		finishedAt = timeUnixPtr(runtimeInvocationFinishedAt(message, event, status))
+	}
 	return dto.AgentRuntimeStep{
 		ID:          runtimeInvocationID(message.ID.String(), event, index-1),
 		Index:       index,
@@ -321,15 +356,22 @@ func buildAgentRuntimeEventStep(message *runtimemodel.Message, event map[string]
 		Output:      agentRuntimeEventOutput(event),
 		Process:     agentRuntimeEventProcess(event),
 		ElapsedTime: metadataNumber(event, "duration_ms"),
-		CreatedAt:   &createdAt,
-		FinishedAt:  timeUnixPtr(runtimeInvocationFinishedAt(message, event, status)),
+		CreatedAt:   createdAt,
+		CreatedAtMS: createdAtMS,
+		FinishedAt:  finishedAt,
+		Sequence:    sequence,
 		Error:       errText,
 	}
 }
 
-func buildAgentRuntimeAnswerStep(message *runtimemodel.Message, index int) dto.AgentRuntimeStep {
+func buildAgentRuntimeAnswerStep(message *runtimemodel.Message, index int, sequence int64) dto.AgentRuntimeStep {
 	metadata := runtimeMetadata(message)
-	createdAt := message.CreatedAt.Unix()
+	createdAt := runtimeFinishedAtUnix(message)
+	var createdAtMS *int64
+	if finishedAt := runtimeFinishedAtTime(message); finishedAt != nil {
+		value := finishedAt.UnixMilli()
+		createdAtMS = &value
+	}
 	return dto.AgentRuntimeStep{
 		ID:          message.ID.String() + ":answer",
 		Index:       index,
@@ -339,10 +381,42 @@ func buildAgentRuntimeAnswerStep(message *runtimemodel.Message, index int) dto.A
 		Output:      map[string]interface{}{"answer": message.Answer},
 		Process:     map[string]interface{}{"model_name": message.ModelName, "model_provider": message.ModelProvider, "usage": metadata["usage"]},
 		ElapsedTime: runtimeElapsedTime(message),
-		CreatedAt:   &createdAt,
+		CreatedAt:   createdAt,
+		CreatedAtMS: createdAtMS,
 		FinishedAt:  runtimeFinishedAtUnix(message),
+		Sequence:    &sequence,
 		Error:       runtimeErrorString(message),
 	}
+}
+
+func agentRuntimeEventCreatedAt(event map[string]interface{}) (*int64, *int64) {
+	createdAtMS := agentRuntimeEventSortValue(event)
+	if createdAtMS <= 0 {
+		return nil, nil
+	}
+	createdAt := createdAtMS / 1000
+	return &createdAt, &createdAtMS
+}
+
+func agentRuntimeEventSequence(event map[string]interface{}) *int64 {
+	sequence := int64(metadataNumber(event, "sequence"))
+	if sequence <= 0 {
+		return nil
+	}
+	return &sequence
+}
+
+func nextAgentRuntimeStepSequence(events []map[string]interface{}) int64 {
+	var maximum int64
+	for _, event := range events {
+		if sequence := int64(metadataNumber(event, "sequence")); sequence > maximum {
+			maximum = sequence
+		}
+	}
+	if maximum == 0 {
+		return int64(len(events) + 1)
+	}
+	return maximum + 1
 }
 
 func compactAgentRuntimeMap(values map[string]interface{}) map[string]interface{} {

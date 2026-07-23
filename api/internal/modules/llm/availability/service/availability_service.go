@@ -88,7 +88,7 @@ func (s *availabilityService) CheckModelAvailability(
 	}
 
 	// 3. Filter routes that support this model
-	supportedRoutes := s.filterRoutesForModel(routes, modelRecord.Model)
+	supportedRoutes := s.filterRoutesForModel(routes, modelRecord.Provider, modelRecord.Model)
 
 	// 4. Analyze channel status
 	channelInfo := s.analyzeChannelStatus(supportedRoutes)
@@ -133,12 +133,13 @@ func (s *availabilityService) BatchCheckAvailability(
 // filterRoutesForModel filters routes that support the given model
 func (s *availabilityService) filterRoutesForModel(
 	routes []*channelmodel.LLMRoute,
+	provider string,
 	modelName string,
 ) []*channelmodel.LLMRoute {
 	var validRoutes []*channelmodel.LLMRoute
 
 	for _, route := range routes {
-		if route.SupportsModel(modelName) {
+		if route.SupportsModelForProvider(provider, modelName) {
 			validRoutes = append(validRoutes, route)
 		}
 	}

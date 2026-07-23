@@ -43,6 +43,7 @@ export interface AgentRuntimeRunDetail {
   model_provider?: string | null;
   model_parameters?: Record<string, unknown>;
   usage?: unknown;
+  control_metrics?: Record<string, number>;
   elapsed_time?: number;
   total_tokens?: number;
   total_steps?: number;
@@ -83,6 +84,8 @@ export interface AgentRuntimeStep {
   process?: Record<string, unknown> | null;
   elapsed_time?: number;
   created_at?: number | null;
+  created_at_ms?: number | null;
   finished_at?: number | null;
+  sequence?: number | null;
   error?: string;
 }

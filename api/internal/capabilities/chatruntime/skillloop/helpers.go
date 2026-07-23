@@ -6,10 +6,13 @@ import (
 	"strings"
 
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
+	"github.com/zgiai/zgi/api/internal/modules/llm/tokenestimate"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 )
 
 const maxInvalidToolArgumentPreviewRunes = 800
+
+var modelInvocationTokenEstimator = tokenestimate.NewEstimator()
 
 func cloneChatRequest(source *adapter.ChatRequest) *adapter.ChatRequest {
 	if source == nil {
@@ -28,6 +31,28 @@ func cloneChatRequest(source *adapter.ChatRequest) *adapter.ChatRequest {
 		}
 	}
 	return &cloned
+}
+
+func chatRequestPromptChars(request *adapter.ChatRequest) int {
+	if request == nil {
+		return 0
+	}
+	payload := struct {
+		Messages []adapter.Message `json:"messages"`
+		Tools    []adapter.Tool    `json:"tools,omitempty"`
+	}{
+		Messages: request.Messages,
+		Tools:    request.Tools,
+	}
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return 0
+	}
+	return len([]rune(string(encoded)))
+}
+
+func chatRequestPromptEstimate(request *adapter.ChatRequest) tokenestimate.ChatRequestResult {
+	return modelInvocationTokenEstimator.EstimateChatRequest(request)
 }
 
 func cloneMessagesForProvider(source []adapter.Message) []adapter.Message {
@@ -91,6 +116,40 @@ func mergeUsage(current *adapter.Usage, next *adapter.Usage) *adapter.Usage {
 	current.CompletionTokens += next.CompletionTokens
 	current.TotalTokens += next.TotalTokens
 	return current
+}
+
+// mergeStreamUsageSnapshot merges cumulative usage snapshots emitted during one
+// streaming model invocation. Providers may attach the latest usage to multiple
+// chunks (including the terminal chunk), so summing those values inflates usage.
+func mergeStreamUsageSnapshot(current *adapter.Usage, next *adapter.Usage) *adapter.Usage {
+	if next == nil {
+		return current
+	}
+	if current == nil {
+		cloned := *next
+		normalizeUsageTotal(&cloned)
+		return &cloned
+	}
+	if next.PromptTokens > current.PromptTokens {
+		current.PromptTokens = next.PromptTokens
+	}
+	if next.CompletionTokens > current.CompletionTokens {
+		current.CompletionTokens = next.CompletionTokens
+	}
+	if next.TotalTokens > current.TotalTokens {
+		current.TotalTokens = next.TotalTokens
+	}
+	normalizeUsageTotal(current)
+	return current
+}
+
+func normalizeUsageTotal(usage *adapter.Usage) {
+	if usage == nil {
+		return
+	}
+	if componentTotal := usage.PromptTokens + usage.CompletionTokens; componentTotal > usage.TotalTokens {
+		usage.TotalTokens = componentTotal
+	}
 }
 
 func firstPlanningMessage(resp *adapter.ChatResponse) adapter.Message {

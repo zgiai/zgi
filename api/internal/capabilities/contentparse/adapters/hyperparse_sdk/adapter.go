@@ -262,6 +262,9 @@ func mapDocumentResultWithOptions(req contracts.ParseRequest, engine extractcomm
 			Metadata: metadata,
 		})
 	}
+	if len(artifact.Elements) > 0 && (engine == extractcommon.EngineMineru || engine == extractcommon.EngineReducto) {
+		artifact.Metadata["structured_elements"] = true
+	}
 
 	if artifact.Status == contracts.ParseStatusSucceeded && strings.TrimSpace(artifact.Markdown) == "" && len(artifact.Elements) == 0 {
 		artifact.Status = contracts.ParseStatusDegraded

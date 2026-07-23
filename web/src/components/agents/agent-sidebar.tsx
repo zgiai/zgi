@@ -177,7 +177,9 @@ export function AgentSidebar({ isMismatch = false, routeKind }: AgentSidebarProp
 
     if (routeAccess.canShowRuntimeLogs && agentData?.is_published) {
       items.push({
-        title: t('agents.workflow.webappLogs'),
+        title: isAgentRuntime
+          ? t('agents.workflow.agentLogs')
+          : t('agents.workflow.workflowLogs'),
         href: getAgentDetailLogsHref(agentId, effectiveRouteKind),
         icon: History,
       });
@@ -255,6 +257,7 @@ export function AgentSidebar({ isMismatch = false, routeKind }: AgentSidebarProp
     canViewWorkflowTestBatches,
     canViewWorkflowTestLibrary,
     effectiveRouteKind,
+    isAgentRuntime,
     routeAccess,
     t,
   ]);

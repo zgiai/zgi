@@ -1054,7 +1054,7 @@ func (s *excelImportPermissionDataSourceService) UpdateDataSource(_ context.Cont
 	}, nil
 }
 
-func (s *excelImportPermissionDataSourceService) DeleteDataSourceByID(_ context.Context, _, _ string, _ string) error {
+func (s *excelImportPermissionDataSourceService) DeleteDataSourceByID(_ context.Context, _, _ string, _, _, _ string) error {
 	s.deleteDataSourceCalls++
 	return nil
 }
@@ -1089,7 +1089,7 @@ func (s *excelImportPermissionDataSourceService) GetTable(_ context.Context, _, 
 	return &datasource_model.Table{}, nil
 }
 
-func (s *excelImportPermissionDataSourceService) DeleteTable(_ context.Context, _, _, _, _ string) error {
+func (s *excelImportPermissionDataSourceService) DeleteTable(_ context.Context, _, _, _, _, _, _ string) error {
 	s.deleteTableCalls++
 	return nil
 }

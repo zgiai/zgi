@@ -310,3 +310,33 @@ func TestRetrieveAgentKnowledgeUsesBindingActorAccount(t *testing.T) {
 		t.Fatalf("RetrievalConfig[top_k] = %#v, want 8", got)
 	}
 }
+
+func TestRetrieveAgentKnowledgeUsesPersistedResourceAuthorization(t *testing.T) {
+	service := &fakeRetrievalService{}
+	tool, err := NewProvider(service).GetTool(ToolRetrieveAgentKnowledge)
+	if err != nil {
+		t.Fatalf("GetTool() error = %v", err)
+	}
+	appID := "agent-1"
+	tool = tool.ForkToolRuntime(&tools.ToolRuntime{
+		TenantID:   "tenant-1",
+		InvokeFrom: tools.ToolInvokeFromAgent,
+		RuntimeParameters: map[string]interface{}{
+			"knowledge_binding_grant": true,
+			"knowledge_dataset_ids":   []string{"ds-new"},
+			"agent_binding_authorizations": []map[string]interface{}{{
+				"binding_type": "knowledge_dataset", "resource_id": "ds-new", "access_mode": "read", "bound_by_account_id": "resource-binder", "bound_at_unix": int64(200),
+			}},
+		},
+	})
+
+	_, err = tool.Invoke(context.Background(), "caller-1", map[string]interface{}{
+		"query": "refund policy",
+	}, nil, &appID, nil)
+	if err != nil {
+		t.Fatalf("Invoke() error = %v", err)
+	}
+	if service.lastRequest.Scope.AccountID != "resource-binder" {
+		t.Fatalf("Scope.AccountID = %q, want resource-binder", service.lastRequest.Scope.AccountID)
+	}
+}

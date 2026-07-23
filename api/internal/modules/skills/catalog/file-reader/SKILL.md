@@ -53,11 +53,17 @@ tool_governance:
     idempotency_required: false
 display:
   icon: file-text
-  category: productivity
+  category: document_processing
+  scenarios:
+    - document_handling
+    - office_collaboration
+    - knowledge_research
   label:
     en_US: File Reader
+    zh_Hans: 文件读取
   description:
-    en_US: Lists visible file context and reads accessible uploaded, historical, or console file text.
+    en_US: Designed for understanding uploaded, historical, or console files; locates accessible files and reads their text for answering, summarizing, comparing, or translating.
+    zh_Hans: 适用于理解上传文件、历史文件或控制台文件，可定位并读取有权限访问的文本，用于问答、总结、对比或翻译。
   when_to_use:
     en_US: Use when an answer needs content from a specific file available to the current user.
   tags:

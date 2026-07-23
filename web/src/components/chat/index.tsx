@@ -22,6 +22,8 @@ import type { AIChatUploadScope } from '@/components/chat/variants/aichat/input-
 import type { AIChatController } from '@/components/chat/controllers/aichat-controller';
 import type { OpeningGuideBrand } from '@/components/chat/utils/opening-guide-brand';
 import type { AIChatRuntimeSurface } from '@/services/types/aichat';
+import type { ImageRuntimeModel } from '@/services/types/image-runtime';
+import type { ModelUseCase } from '@/services/types/model';
 
 interface SingleTestVariantProps {
   mode: 'singleTest';
@@ -50,6 +52,7 @@ interface SingleTestVariantProps {
   /** Whether stop action is in progress */
   isStopping?: boolean;
   placeholder?: string;
+  inputClassName?: string;
   openingGuide?: OpeningGuideConfig;
   openingGuideBrand?: OpeningGuideBrand;
   suggestions?: string[];
@@ -113,6 +116,7 @@ interface ImgChatVariantProps {
   onModelChange?: (value: ModelSelectorValue) => void;
   inputTopNotice?: React.ReactNode;
   conversationSearchKey?: readonly unknown[];
+  imageRuntimeModels?: ImageRuntimeModel[];
 }
 
 interface AIChatVariantProps {
@@ -126,6 +130,8 @@ interface AIChatVariantProps {
   beforeSend?: () => boolean | Promise<boolean>;
   variant?: 'full' | 'embedded';
   showModelSelector?: boolean;
+  modelUseCase?: ModelUseCase;
+  preferredModelUseCase?: ModelUseCase;
   requireModel?: boolean;
   showMemoryToggle?: boolean;
   forcedUseMemory?: boolean;
@@ -179,6 +185,7 @@ const SingleTestChat: React.FC<SingleTestVariantProps> = ({
   isRunning,
   isStopping,
   placeholder,
+  inputClassName,
   openingGuide,
   openingGuideBrand,
   suggestions,
@@ -292,6 +299,7 @@ const SingleTestChat: React.FC<SingleTestVariantProps> = ({
               isRunning={isRunning}
               isStopping={isStopping}
               placeholder={placeholder}
+              className={inputClassName}
               toolbarForm={toolbarForm}
               topNotice={inputTopNotice}
               draftValue={draftSuggestion}

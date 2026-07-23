@@ -127,10 +127,10 @@ func TestSyncProviderModelsFullSyncMarksMissingActiveModelsDeprecated(t *testing
 
 	require.NoError(t, err)
 	require.Equal(t, SyncResultStatusSuccess, result.Status)
-	require.Equal(t, 1, result.DeprecatedModels)
+	require.Equal(t, 2, result.DeprecatedModels)
 	require.Equal(t, 1, invalidator.calls)
-	requireCatalogApplyModelLifecycle(t, db, "qwen", "qwen-coder", "deprecated", true, true)
-	requireCatalogApplyModelLifecycle(t, db, "qwen", "qwen-old", "deprecated", true, true)
+	requireCatalogApplyModelLifecycle(t, db, "qwen", "qwen-coder", "deprecated", false, false)
+	requireCatalogApplyModelLifecycle(t, db, "qwen", "qwen-old", "deprecated", false, false)
 	requireCatalogApplyModelLifecycle(t, db, "qwen", "qwen-plus", "active", true, true)
 }
 

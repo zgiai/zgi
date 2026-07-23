@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/repository"
@@ -15,12 +16,12 @@ func (s *service) persistPendingMessageAndFinishConversationBestEffort(
 	pendingKind string,
 	updateMessage func(repository.MessageRepository) error,
 	finishConversation func(repository.ConversationRepository) error,
-) bool {
+) error {
 	if s == nil || s.repos == nil || s.repos.Message == nil || s.repos.Conversation == nil {
-		return false
+		return fmt.Errorf("aichat repositories are not configured")
 	}
 	if updateMessage == nil || finishConversation == nil {
-		return false
+		return fmt.Errorf("pending state persistence callbacks are required")
 	}
 	var err error
 	if s.repos.DB != nil {
@@ -38,6 +39,9 @@ func (s *service) persistPendingMessageAndFinishConversationBestEffort(
 		err = finishConversation(s.repos.Conversation)
 	}
 	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return err
+		}
 		messageID := ""
 		conversationID := ""
 		if prepared != nil && prepared.Message != nil {
@@ -51,7 +55,7 @@ func (s *service) persistPendingMessageAndFinishConversationBestEffort(
 			"message_id", messageID,
 			err,
 		)
-		return false
+		return err
 	}
-	return true
+	return nil
 }

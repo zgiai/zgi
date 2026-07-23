@@ -18,6 +18,7 @@ import type {
   BatchToggleModelsResponse,
   ToggleProviderModelsRequest,
   ModelUseCase,
+  AvailableModelUseCase,
   CreateCustomModelRequest,
   UpdateCustomModelRequest,
 } from '@/services/types/model';
@@ -269,7 +270,7 @@ export function useAllModels(options?: {
 }
 
 /** Available models (enabled only) via new API. */
-export function useAvailableModels(options?: { use_case?: ModelUseCase }): {
+export function useAvailableModels(options?: { use_case?: AvailableModelUseCase }): {
   models: ModelItem[];
   isLoading: boolean;
   isFetching: boolean;

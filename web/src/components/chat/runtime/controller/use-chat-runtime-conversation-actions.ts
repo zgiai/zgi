@@ -290,13 +290,37 @@ export function useChatRuntimeConversationActions({
       }
 
       initializedRef.current = true;
+      if (!conversationId) {
+        void refreshList();
+        return;
+      }
+
+      const selectionSeq = markSelectionTarget(conversationId);
+      setControllerState(current => ({
+        ...current,
+        activeConversationId: conversationId,
+        isLoadingMessages: (current.messagesByConversation[conversationId]?.length ?? 0) === 0,
+        isSending: shouldTreatConversationAsRunning(current, conversationId),
+        error: null,
+      }));
       void refreshList().then(() => {
-        if (conversationId) {
+        if (
+          isLatestSelection(selectionSeq, conversationId) &&
+          stateRef.current.activeConversationId === conversationId
+        ) {
           void select(conversationId);
         }
       });
     },
-    [initializedRef, refreshList, select, stateRef]
+    [
+      initializedRef,
+      isLatestSelection,
+      markSelectionTarget,
+      refreshList,
+      select,
+      setControllerState,
+      stateRef,
+    ]
   );
 
   const startNew = useCallback(() => {
@@ -407,6 +431,10 @@ export function useChatRuntimeConversationActions({
           recoveringByConversation: {
             ...current.recoveringByConversation,
             [conversationId]: false,
+          },
+          connectionByConversation: {
+            ...current.connectionByConversation,
+            [conversationId]: 'idle',
           },
           stoppingByConversation: {
             ...current.stoppingByConversation,

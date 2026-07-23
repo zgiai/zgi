@@ -95,6 +95,7 @@ func NewHTTPClientWithOptions(timeout time.Duration, maxRetries int, opts HTTPCl
 	// Non-streaming transport: force HTTP/1.1 to avoid HTTP/2 multiplexing issues
 	// (e.g. "http2: response body closed" under high concurrency).
 	transport := &http.Transport{
+		Proxy:                 http.ProxyFromEnvironment,
 		MaxIdleConns:          200,
 		MaxIdleConnsPerHost:   50,
 		MaxConnsPerHost:       100,
@@ -112,6 +113,7 @@ func NewHTTPClientWithOptions(timeout time.Duration, maxRetries int, opts HTTPCl
 	// in the connection buffer can cause subsequent requests to read stale data.
 	// Disabling keep-alives ensures each streaming request gets a fresh connection.
 	streamTransport := &http.Transport{
+		Proxy:                 http.ProxyFromEnvironment,
 		MaxIdleConns:          200,
 		MaxIdleConnsPerHost:   50,
 		MaxConnsPerHost:       100,
@@ -282,6 +284,9 @@ func (c *HTTPClient) DoRequestDetailed(ctx context.Context, method, url string, 
 		lastStatusCode = resp.StatusCode
 		lastBody = respBody
 		lastHeader = resp.Header.Clone()
+		if isTerminalPlatformChannelResponse(resp.StatusCode, respBody) {
+			return &HTTPResponse{Body: respBody, StatusCode: resp.StatusCode, Header: resp.Header.Clone()}, nil
+		}
 
 		// 5xx server errors, retry
 		if resp.StatusCode >= 500 {
@@ -313,6 +318,23 @@ func (c *HTTPClient) DoRequestDetailed(ctx context.Context, method, url string, 
 		return &HTTPResponse{Body: lastBody, StatusCode: lastStatusCode, Header: lastHeader}, fmt.Errorf("request failed after %d retries: %w", c.maxRetries, lastErr)
 	}
 	return &HTTPResponse{Body: lastBody, StatusCode: lastStatusCode, Header: lastHeader}, fmt.Errorf("request failed after %d retries", c.maxRetries)
+}
+
+func isTerminalPlatformChannelResponse(statusCode int, body []byte) bool {
+	if statusCode < http.StatusInternalServerError {
+		return false
+	}
+	var payload struct {
+		Error struct {
+			Code string `json:"code"`
+			Type string `json:"type"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return false
+	}
+	return payload.Error.Code == ErrorCodePlatformChannelUnavailable ||
+		payload.Error.Type == ErrorCodePlatformChannelUnavailable
 }
 
 // DoStreamRequest executes streaming HTTP request

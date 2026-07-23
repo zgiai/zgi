@@ -34,7 +34,7 @@ import type {
 import { cn } from '@/lib/utils';
 import { formatDate, formatWorkflowElapsedMs } from '@/utils/format';
 import { getAgentRuntimeStepDisplay } from './agent-runtime-step-display';
-import { LogStatusBadge } from './log-status-badge';
+import { RunStatusBadge } from '@/components/workflow/ui/run-status-badge';
 import WorkflowRunNodesList, {
   type NodeRunStatus,
   type WorkflowRunNodeListItem,
@@ -168,8 +168,12 @@ function contentSize(value: unknown): number {
 }
 
 function modelRequestWithoutMessages(value: Record<string, unknown>) {
-  const { messages: _messages, ...rest } = value;
+  const { messages: _messages, snapshot_meta: _snapshotMeta, ...rest } = value;
   return rest;
+}
+
+function modelSnapshotMeta(value: Record<string, unknown>) {
+  return isRecord(value.snapshot_meta) ? value.snapshot_meta : null;
 }
 
 function roleLabel(role: unknown): string {
@@ -219,6 +223,8 @@ function renderModelMessage(message: unknown, index: number, labels: AgentRuntim
 interface AgentRuntimeModelInputLabels extends AgentRuntimeHiddenValueLabels {
   requestParams: string;
   messages: string;
+  contextTruncated: (count: number) => string;
+  contextContentTruncated: string;
   toolResult: string;
   toolResultMeta: string;
   messageRole: (role: string) => string;
@@ -232,8 +238,21 @@ function renderModelInput(value: unknown, labels: AgentRuntimeModelInputLabels) 
   }
 
   const requestParams = modelRequestWithoutMessages(value);
+  const snapshotMeta = modelSnapshotMeta(value);
+  const truncated = snapshotMeta?.truncated === true;
+  const omittedMessageCount = numberValue(snapshotMeta?.omitted_message_count) ?? 0;
   return (
     <div className="space-y-4">
+      {truncated ? (
+        <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50/60 px-3 py-2 text-xs leading-5 text-amber-800">
+          <AlertCircle className="mt-0.5 size-3.5 shrink-0" />
+          <span>
+            {omittedMessageCount > 0
+              ? labels.contextTruncated(omittedMessageCount)
+              : labels.contextContentTruncated}
+          </span>
+        </div>
+      ) : null}
       {!isEmptyValue(requestParams) ? (
         <div>
           <div className="mb-2 text-xs font-medium text-muted-foreground">
@@ -469,7 +488,7 @@ function WorkflowApprovalCards({
                     '-'}
                 </div>
               </div>
-              <LogStatusBadge status={status} />
+              <RunStatusBadge status={status} />
             </div>
 
             {!isEmptyValue(form.content) ? (
@@ -614,6 +633,8 @@ export function AgentRuntimeLogDetailDrawer({
       messageRole: role => t('appLogs.runtimeModelMessageRole', { role }),
       toolResultWithID: id => t('appLogs.runtimeToolResultWithID', { id }),
       toolResultSize: chars => t('appLogs.runtimeToolResultSize', { chars }),
+      contextTruncated: count => t('appLogs.runtimeModelContextTruncated', { count }),
+      contextContentTruncated: t('appLogs.runtimeModelContextContentTruncated'),
     }),
     [t]
   );
@@ -640,7 +661,7 @@ export function AgentRuntimeLogDetailDrawer({
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
                 <SheetTitle className="text-base">{t('appLogs.runtimeDialogTitle')}</SheetTitle>
-                {status ? <LogStatusBadge status={status} /> : null}
+                {status ? <RunStatusBadge status={status} /> : null}
               </div>
               <SheetDescription className="mt-1 truncate" title={runId ?? ''}>
                 {runId
@@ -730,7 +751,7 @@ export function AgentRuntimeLogDetailDrawer({
                               : ''}
                           </span>
                         </span>
-                        <LogStatusBadge status={step.status} />
+                        <RunStatusBadge status={step.status} />
                       </button>
                     );
                   })}
@@ -772,7 +793,11 @@ export function AgentRuntimeLogDetailDrawer({
                     />
                     <DetailMetric
                       label={t('appLogs.columns.createdAt')}
-                      value={selectedStep.created_at ? formatDate(selectedStep.created_at) : null}
+                      value={
+                        selectedStep.created_at
+                          ? formatDate(selectedStep.created_at)
+                          : t('appLogs.runtimeTimeUnknown')
+                      }
                     />
                   </div>
                 </DetailSection>

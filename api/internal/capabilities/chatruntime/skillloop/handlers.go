@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/zgiai/zgi/api/internal/capabilities/toolgovernance"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
@@ -63,9 +64,15 @@ func (r *Runner) handleProgressiveSkillCall(
 			return r.handleTurnStateCall(ctx, prepared, call.ID, toolArgs, onEvent)
 		}
 		if strings.EqualFold(toolName, skills.MetaToolUpdatePlan) {
+			if !runtimeControlToolAllowed(runtimeState, runtimeStateAllowPlanUpdateKey) {
+				return skippedControlToolStep(call.ID, skills.MetaToolUpdatePlan, "continue with the current outcome contract; runtime effects are reconciled automatically")
+			}
 			return r.handleUpdatePlanCall(call.ID, toolArgs, runtimeState, round)
 		}
 		if strings.EqualFold(toolName, skills.MetaToolIntermediateAnswer) {
+			if !runtimeControlToolAllowed(runtimeState, runtimeStateAllowIntermediateAnswerKey) {
+				return skippedControlToolStep(call.ID, skills.MetaToolIntermediateAnswer, "send the complete body directly to the file tool; only summarize the saved artifact afterward")
+			}
 			return r.handleIntermediateAnswerCall(ctx, prepared, call.ID, toolArgs, onEvent)
 		}
 		if _, ok := loadedSkills[skillID]; !ok {
@@ -92,14 +99,35 @@ func (r *Runner) handleProgressiveSkillCall(
 			trace := skillToolLimitExceededTrace(skillID, toolName, toolArgs, err)
 			return fatalSkillStep(trace, skills.ToolResultMessage(call.ID, errorPayload(err)), err)
 		}
+		planPhaseID, enforcePlanPhase, phaseErr := resolveOperationPlanPhaseForSkillCall(
+			runtimeState,
+			strings.TrimSpace(stringArg(args, "plan_phase_id")),
+			skillID,
+			toolName,
+			toolArgs,
+		)
+		if phaseErr != nil {
+			return operationPlanPhaseMismatchStep(call.ID, skillID, toolName, toolArgs, phaseErr)
+		}
+		if enforcePlanPhase && planPhaseID != "" {
+			args["plan_phase_id"] = planPhaseID
+		} else {
+			delete(args, "plan_phase_id")
+		}
 		return r.handleCallSkillTool(ctx, prepared, resolved, call.ID, args, execCtx, onEvent)
 	case skills.MetaToolRequestUserInput:
 		return r.handleRequestUserInputCall(ctx, prepared, call.ID, args, onEvent)
 	case skills.MetaToolTurnState:
 		return r.handleTurnStateCall(ctx, prepared, call.ID, args, onEvent)
 	case skills.MetaToolUpdatePlan:
+		if !runtimeControlToolAllowed(runtimeState, runtimeStateAllowPlanUpdateKey) {
+			return skippedControlToolStep(call.ID, skills.MetaToolUpdatePlan, "continue with the current outcome contract; runtime effects are reconciled automatically")
+		}
 		return r.handleUpdatePlanCall(call.ID, args, runtimeState, round)
 	case skills.MetaToolIntermediateAnswer:
+		if !runtimeControlToolAllowed(runtimeState, runtimeStateAllowIntermediateAnswerKey) {
+			return skippedControlToolStep(call.ID, skills.MetaToolIntermediateAnswer, "send the complete body directly to the file tool; only summarize the saved artifact afterward")
+		}
 		return r.handleIntermediateAnswerCall(ctx, prepared, call.ID, args, onEvent)
 	case skills.MetaToolFinalAnswer:
 		err := fmt.Errorf("%w: submit_final_answer must be handled as the terminal skill-loop action", ErrInvalidInput)
@@ -112,6 +140,32 @@ func (r *Runner) handleProgressiveSkillCall(
 		trace := failedSkillTrace("meta_tool", call.Function.Name, err)
 		return recoverableSkillStep(trace, skills.ToolResultMessage(call.ID, recoverableErrorPayload(err, "use one of load_skill, request_user_input, read_skill_reference, call_skill_tool, submit_turn_state, update_plan, submit_intermediate_answer, or submit_final_answer")), false, false)
 	}
+}
+
+func runtimeControlToolAllowed(runtimeState map[string]interface{}, key string) bool {
+	if runtimeState == nil {
+		return true
+	}
+	value, exists := runtimeState[key]
+	if !exists {
+		return true
+	}
+	allowed, ok := value.(bool)
+	return !ok || allowed
+}
+
+func skippedControlToolStep(callID string, toolName string, nextAction string) skillStepResult {
+	trace := plannerFeedbackTrace("", toolName, nil)
+	trace.Error = "control tool is not required for the current execution segment"
+	trace.Arguments["call_id"] = strings.TrimSpace(callID)
+	trace.Arguments["reason_code"] = "control_tool_not_required"
+	trace.Arguments["next_step"] = "continue_planning"
+	return successfulSkillStep(trace, skills.ToolResultMessage(callID, plannerFeedbackAdvisoryPayload(
+		trace.Error,
+		nextAction,
+		"",
+		toolName,
+	)), false, false)
 }
 
 func normalizeDirectLoadedSkillToolCall(
@@ -273,7 +327,8 @@ func (r *Runner) handleIntermediateAnswerCall(
 		Message: content,
 		Status:  "success",
 		Arguments: map[string]interface{}{
-			"title": title,
+			"title":   title,
+			"call_id": strings.TrimSpace(callID),
 		},
 	}
 	if boolArg(args, streamedIntermediateAnswerArg) {
@@ -371,15 +426,55 @@ func (r *Runner) handleLoadSkillCall(
 		canonicalSkillID = strings.TrimSpace(skillID)
 	}
 	if _, alreadyLoaded := loadedSkills[canonicalSkillID]; alreadyLoaded {
+		attemptRuntimeID := newSkillLoadAttemptRuntimeID(canonicalSkillID)
+		trace := skills.SkillTrace{
+			Kind:     "skill_load_attempt",
+			SkillID:  canonicalSkillID,
+			ToolName: skills.MetaToolLoadSkill,
+			Status:   "already_loaded",
+			Arguments: map[string]interface{}{
+				"runtime_id":         attemptRuntimeID,
+				"created_at_ms":      time.Now().UnixMilli(),
+				"requested_skill_id": canonicalSkillID,
+				"instruction_digest": skillInstructionDigest(doc.Instructions),
+				"effective_version":  skillInstructionDigest(doc.Instructions),
+				"policy_state":       "allowed",
+				"access_status":      "authorized",
+				"outcome":            "already_loaded",
+			},
+		}
 		return skillStepResult{
-			toolMessage: skills.ToolResultMessage(callID, skillDocumentPayload(doc)),
-			usedSkill:   true,
+			trace: trace,
+			toolMessage: skills.ToolResultMessage(callID, map[string]interface{}{
+				"status":             "already_loaded",
+				"skill_id":           canonicalSkillID,
+				"instruction_digest": skillInstructionDigest(doc.Instructions),
+				"next_action":        "Use the already active skill instructions and call its tool directly; do not load this skill again in the same user turn.",
+			}),
+			usedSkill: true,
 		}
 	}
 	r.emitEvent(EventSkillLoadStart, skillLoadPayload(prepared, skillID))
+	attemptRuntimeID := newSkillLoadAttemptRuntimeID(canonicalSkillID)
 	doc, trace, err := r.SkillRuntime.LoadSkill(ctx, resolved, skillID)
 	if err != nil {
+		if trace.Arguments == nil {
+			trace.Arguments = map[string]interface{}{}
+		}
+		trace.Arguments["runtime_id"] = attemptRuntimeID
+		trace.Arguments["created_at_ms"] = time.Now().UnixMilli()
+		trace.Arguments["outcome"] = "load_failed"
 		return recoverableSkillStep(trace, skills.ToolResultMessage(callID, recoverableErrorPayload(err, "choose an enabled skill_id from the exposed metadata and retry")), false, false)
+	}
+	trace.Result = map[string]interface{}{
+		"runtime_id":         attemptRuntimeID,
+		"created_at_ms":      time.Now().UnixMilli(),
+		"outcome":            "first_load",
+		"instruction_digest": skillInstructionDigest(doc.Instructions),
+		"instruction_chars":  len([]rune(strings.TrimSpace(doc.Instructions))),
+		"effective_version":  skillInstructionDigest(doc.Instructions),
+		"policy_state":       "allowed",
+		"access_status":      "authorized",
 	}
 	loadedSkills[doc.Metadata.ID] = struct{}{}
 	logger.DebugContext(ctx, "aichat skill loaded",
@@ -394,8 +489,20 @@ func (r *Runner) handleLoadSkillCall(
 func unavailableSkillLoadFeedbackStep(callID string, skillID string) skillStepResult {
 	normalizedSkillID := strings.ToLower(strings.TrimSpace(skillID))
 	err := fmt.Errorf("%w: skill %s is not enabled for this turn", ErrInvalidInput, normalizedSkillID)
-	trace := plannerFeedbackTrace(normalizedSkillID, "", err)
-	trace.Arguments["next_step"] = "choose_enabled_skill_or_continue_from_context"
+	trace := skills.SkillTrace{
+		Kind:     "skill_load_attempt",
+		SkillID:  normalizedSkillID,
+		ToolName: skills.MetaToolLoadSkill,
+		Status:   "blocked",
+		Error:    err.Error(),
+		Arguments: map[string]interface{}{
+			"runtime_id":         newSkillLoadAttemptRuntimeID(normalizedSkillID),
+			"created_at_ms":      time.Now().UnixMilli(),
+			"requested_skill_id": normalizedSkillID,
+			"outcome":            "not_enabled",
+			"next_step":          "choose_enabled_skill_or_continue_from_context",
+		},
+	}
 	nextAction := "Choose an enabled skill_id from the exposed metadata. If the unavailable skill was console-navigator, continue from current page evidence unless navigation is explicitly required and available."
 	return recoverableSkillStep(trace, skills.ToolResultMessage(callID, recoverableErrorPayload(err, nextAction)), false, false)
 }
@@ -441,7 +548,16 @@ func (r *Runner) handleCallSkillTool(
 	skillID := stringArg(args, "skill_id")
 	toolName := stringArg(args, "tool_name")
 	toolArgs := mapArg(args, "arguments")
+	planPhaseID := strings.TrimSpace(stringArg(args, "plan_phase_id"))
+	completionIntent := normalizeSkillToolCompletionIntent(stringArg(args, "completion_intent"))
+	planTarget := operationPlanSkillCallTarget(toolArgs)
 	argumentSummary := summarizeSkillToolArguments(skillID, toolName, toolArgs)
+	if planPhaseID != "" {
+		argumentSummary["plan_phase_id"] = planPhaseID
+	}
+	if completionIntent != "" {
+		argumentSummary["completion_intent"] = completionIntent
+	}
 	r.emitEvent(EventSkillCallStart, skillCallStartPayload(prepared, skillID, toolName, argumentSummary))
 	if isAgentWorkflowRunTool(skillID, toolName) {
 		ctx = workflowevents.WithEmitter(ctx, func(event workflowevents.Event) {
@@ -474,7 +590,28 @@ func (r *Runner) handleCallSkillTool(
 	if !traceHasGovernanceArgumentRewrite(invocation.Trace) {
 		invocation.Trace.Arguments = argumentSummary
 	}
+	if planPhaseID != "" {
+		if invocation.Trace.Arguments == nil {
+			invocation.Trace.Arguments = map[string]interface{}{}
+		}
+		invocation.Trace.Arguments["plan_phase_id"] = planPhaseID
+	}
+	if completionIntent != "" {
+		if invocation.Trace.Arguments == nil {
+			invocation.Trace.Arguments = map[string]interface{}{}
+		}
+		invocation.Trace.Arguments["completion_intent"] = completionIntent
+	}
 	applyGovernedAssetArguments(&invocation.Trace)
+	if len(planTarget) > 0 {
+		if invocation.Trace.Arguments == nil {
+			invocation.Trace.Arguments = map[string]interface{}{}
+		}
+		if governedFileID, ok := invocation.Trace.Arguments["file_id"].(string); ok && strings.TrimSpace(governedFileID) != "" {
+			planTarget["file_id"] = strings.TrimSpace(governedFileID)
+		}
+		invocation.Trace.Arguments["operation_plan_target"] = planTarget
+	}
 	if invocation.Trace.Governance != nil {
 		r.emitEvent(EventToolGovernanceDecision, toolGovernanceDecisionPayload(prepared, invocation.Trace))
 	}
@@ -496,8 +633,14 @@ func (r *Runner) handleCallSkillTool(
 	)
 	r.emitEvent(EventSkillCallEnd, skillCallEndPayload(prepared, invocation.Trace))
 	for _, artifact := range skillArtifactsFromToolMessages(prepared, invocation.Trace, invocation.Messages) {
+		artifact = enrichGeneratedArtifactContentMetadata(artifact, invocation.Trace)
 		r.recordArtifact(artifact)
 		r.emitEvent(EventSkillArtifactCreated, artifact)
+	}
+	if artifact := managedFileArtifactFromSaveResult(invocation.Trace, invocation.Messages); len(artifact) > 0 {
+		// Saving a temporary artifact must update continuation metadata without
+		// emitting a second public file card for the same user-visible file.
+		r.recordArtifact(artifact)
 	}
 	if payload := clientActionRequiredPayload(prepared, invocation.Trace, callID); len(payload) > 0 {
 		r.emitEvent(EventClientActionRequired, payload)
@@ -539,11 +682,28 @@ func (r *Runner) handleCallSkillTool(
 		result := successfulSkillStep(invocation.Trace, invocation.ToolMessage, true, true)
 		result.toolResult = guardToolResult
 		result.pendingGovernance = toolGovernanceDecisionPayload(prepared, invocation.Trace)
+		if planPhaseID != "" {
+			result.pendingGovernance["plan_phase_id"] = planPhaseID
+		}
+		if completionIntent != "" {
+			result.pendingGovernance["completion_intent"] = completionIntent
+		}
 		return result
 	}
 	result := successfulSkillStep(invocation.Trace, invocation.ToolMessage, true, true)
 	result.toolResult = guardToolResult
 	return result
+}
+
+func normalizeSkillToolCompletionIntent(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "finalize_if_success":
+		return "finalize_if_success"
+	case "continue":
+		return "continue"
+	default:
+		return ""
+	}
 }
 
 func toolGovernanceApprovalPending(trace skills.SkillTrace) bool {

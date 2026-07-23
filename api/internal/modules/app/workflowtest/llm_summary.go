@@ -32,7 +32,7 @@ func (s *LLMSummarizer) SummarizeBatch(ctx context.Context, req SummaryRequest) 
 		WorkspaceID:        s.WorkspaceID,
 		BillingSubjectType: llmclient.BillingSubjectTypeWorkspace,
 		AppID:              req.AgentID,
-		AppType:            "agent",
+		AppType:            "workflow",
 		AccountID:          s.AccountID,
 		SessionID:          req.Batch.ID,
 	}, &adapter.ChatRequest{

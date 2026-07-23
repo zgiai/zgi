@@ -670,6 +670,7 @@ export default function DbSearchPage() {
                 !isModelSelected
               }
               inputDisabledOverlay={inputDisabledOverlay}
+              inputClassName="border-foreground/25 bg-background hover:border-highlight focus-within:border-primary/70"
               showWorkflowRunHeader
               showWorkflowDetail
               showWorkflowNodeDetail

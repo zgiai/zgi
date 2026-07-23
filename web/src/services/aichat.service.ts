@@ -1,4 +1,4 @@
-import { http } from '@/lib/http';
+import { http, SSE_IDLE_TIMEOUT_MS } from '@/lib/http';
 import type { SseMessage } from '@/lib/http';
 import {
   SENSITIVE_OUTPUT_BLOCKED_FLAG,
@@ -8,13 +8,19 @@ import {
   createSensitiveWordStreamSession,
   isSensitiveWordFilterEnabled,
 } from '@/utils/sensitive-word-filter';
-import type { ApiResponseData, SuccessResponse } from './types/common';
+import type {
+  AgentBindingMutationConfirmation,
+  AgentResourceBoundImpact,
+  ApiResponseData,
+  SuccessResponse,
+} from './types/common';
 import type {
   AIChatAssetOperationAuditListResponse,
   AIChatChatRequest,
   AIChatCancelImportSkillPreviewResponse,
   AIChatClientActionResultRequest,
   AIChatConversation,
+  AIChatConversationType,
   AIChatConversationListResponse,
   AIChatConfirmImportSkillRequest,
   AIChatCreateConversationRequest,
@@ -27,6 +33,7 @@ import type {
   AIChatUserInputContinuationRequest,
   AIChatSearchResponse,
   AIChatSkillConfigResponse,
+  AIChatSkillConfigUpdateResponse,
   AIChatSkillDetailResponse,
   AIChatSkillListResponse,
   AIChatSkillOrganizationConfig,
@@ -40,6 +47,7 @@ import type {
 } from './types/aichat';
 
 export interface AIChatStreamCallbacks {
+  onOpen?: () => void;
   onEvent: (event: string, data: unknown, eventId?: string | null) => void;
   onError?: (error: Error) => void;
   onClose?: () => void;
@@ -199,7 +207,7 @@ export const aichatService = {
   },
 
   updateSkillConfig(payload: AIChatSkillOrganizationConfig) {
-    return http.put<AIChatSkillConfigResponse>(`${AICHAT_BASE_PATH}/skills/config`, payload);
+    return http.put<AIChatSkillConfigUpdateResponse>(`${AICHAT_BASE_PATH}/skills/config`, payload);
   },
 
   getSkillPreference() {
@@ -235,21 +243,37 @@ export const aichatService = {
     );
   },
 
-  deleteSkill(id: string) {
+  deleteSkill(id: string, confirmation?: AgentBindingMutationConfirmation) {
     return http.delete<AIChatDeleteSkillResponse>(
-      `${AICHAT_BASE_PATH}/skills/${encodeURIComponent(id)}`
+      `${AICHAT_BASE_PATH}/skills/${encodeURIComponent(id)}`,
+      { params: confirmation }
+    );
+  },
+
+  previewSkillDeleteImpact(id: string) {
+    return http.get<ApiResponseData<AgentResourceBoundImpact | null>>(
+      `${AICHAT_BASE_PATH}/skills/${encodeURIComponent(id)}/delete-impact`
     );
   },
 
   listConversations(
-    params: { page?: number; limit?: number; surface?: AIChatRuntimeSurface } = {}
+    params: {
+      page?: number;
+      limit?: number;
+      surface?: AIChatRuntimeSurface;
+      conversation_type?: AIChatConversationType;
+    } = {}
   ) {
     return http.get<AIChatConversationListResponse>(`${AICHAT_BASE_PATH}/conversations`, {
       params,
     });
   },
 
-  search(query: string, limit = 20, params: { surface?: AIChatRuntimeSurface } = {}) {
+  search(
+    query: string,
+    limit = 20,
+    params: { surface?: AIChatRuntimeSurface; conversation_type?: AIChatConversationType } = {}
+  ) {
     return http.get<AIChatSearchResponse>(`${AICHAT_BASE_PATH}/search`, {
       params: { query, limit, ...params },
     });
@@ -262,19 +286,28 @@ export const aichatService = {
     );
   },
 
-  getConversation(id: string) {
-    return http.get<ApiResponseData<AIChatConversation>>(`${AICHAT_BASE_PATH}/conversations/${id}`);
+  getConversation(id: string, conversationType?: AIChatConversationType) {
+    return http.get<ApiResponseData<AIChatConversation>>(`${AICHAT_BASE_PATH}/conversations/${id}`, {
+      params: { conversation_type: conversationType },
+    });
   },
 
-  updateConversation(id: string, payload: AIChatUpdateConversationRequest) {
+  updateConversation(
+    id: string,
+    payload: AIChatUpdateConversationRequest,
+    conversationType?: AIChatConversationType
+  ) {
     return http.patch<ApiResponseData<AIChatConversation>>(
       `${AICHAT_BASE_PATH}/conversations/${id}`,
-      payload
+      payload,
+      { params: { conversation_type: conversationType } }
     );
   },
 
-  deleteConversation(id: string) {
-    return http.delete<ApiResponseData<SuccessResponse>>(`${AICHAT_BASE_PATH}/conversations/${id}`);
+  deleteConversation(id: string, conversationType?: AIChatConversationType) {
+    return http.delete<ApiResponseData<SuccessResponse>>(`${AICHAT_BASE_PATH}/conversations/${id}`, {
+      params: { conversation_type: conversationType },
+    });
   },
 
   stopConversation(id: string) {
@@ -283,7 +316,10 @@ export const aichatService = {
     );
   },
 
-  listMessages(id: string, params: { page?: number; limit?: number } = {}) {
+  listMessages(
+    id: string,
+    params: { page?: number; limit?: number; conversation_type?: AIChatConversationType } = {}
+  ) {
     return http.get<AIChatMessageListResponse>(`${AICHAT_BASE_PATH}/conversations/${id}/messages`, {
       params,
     });
@@ -338,7 +374,10 @@ export const aichatService = {
         method: 'POST',
         body: payload,
         abortSignal,
+        idleTimeoutMs: SSE_IDLE_TIMEOUT_MS,
+        skipErrorHandling: true,
         isTerminalMessage: isAIChatTerminalMessage,
+        onOpen: callbacks.onOpen,
         onMessage: message => dispatchAIChatSseMessage(message, callbacks, outputFilter),
         onError: error => callbacks.onError?.(error),
         onClose: callbacks.onClose,
@@ -366,7 +405,10 @@ export const aichatService = {
         method: 'POST',
         body: payload,
         abortSignal,
+        idleTimeoutMs: SSE_IDLE_TIMEOUT_MS,
+        skipErrorHandling: true,
         isTerminalMessage: isAIChatTerminalMessage,
+        onOpen: callbacks.onOpen,
         onMessage: message => dispatchAIChatSseMessage(message, callbacks, outputFilter),
         onError: error => callbacks.onError?.(error),
         onClose: callbacks.onClose,
@@ -394,7 +436,10 @@ export const aichatService = {
         method: 'POST',
         body: payload,
         abortSignal,
+        idleTimeoutMs: SSE_IDLE_TIMEOUT_MS,
+        skipErrorHandling: true,
         isTerminalMessage: isAIChatTerminalMessage,
+        onOpen: callbacks.onOpen,
         onMessage: message => dispatchAIChatSseMessage(message, callbacks, outputFilter),
         onError: error => callbacks.onError?.(error),
         onClose: callbacks.onClose,
@@ -408,12 +453,26 @@ export const aichatService = {
     abortSignal?: AbortSignal
   ) {
     const outputFilter = createAIChatStreamOutputFilter(callbacks);
+    const surface = payload.surface ?? 'work_chat';
+    const endpoint =
+      surface === 'contextual_sidebar'
+        ? `${AICHAT_BASE_PATH}/contextual/chat`
+        : surface === 'work_chat'
+          ? `${AICHAT_BASE_PATH}/work-chat/chat`
+          : `${AICHAT_BASE_PATH}/chat`;
+    const body = { ...payload };
+    if (surface === 'contextual_sidebar' || surface === 'work_chat') {
+      delete body.surface;
+    }
 
-    return http.sse<AIChatSseEnvelope, AIChatChatRequest>(`${AICHAT_BASE_PATH}/chat`, {
+    return http.sse<AIChatSseEnvelope, typeof body>(endpoint, {
       method: 'POST',
-      body: payload,
+      body,
       abortSignal,
+      idleTimeoutMs: SSE_IDLE_TIMEOUT_MS,
+      skipErrorHandling: true,
       isTerminalMessage: isAIChatTerminalMessage,
+      onOpen: callbacks.onOpen,
       onMessage: message => dispatchAIChatSseMessage(message, callbacks, outputFilter),
       onError: error => callbacks.onError?.(error),
       onClose: callbacks.onClose,
@@ -434,7 +493,10 @@ export const aichatService = {
         method: 'POST',
         body: payload,
         abortSignal,
+        idleTimeoutMs: SSE_IDLE_TIMEOUT_MS,
+        skipErrorHandling: true,
         isTerminalMessage: isAIChatTerminalMessage,
+        onOpen: callbacks.onOpen,
         onMessage: message => dispatchAIChatSseMessage(message, callbacks, outputFilter),
         onError: error => callbacks.onError?.(error),
         onClose: callbacks.onClose,
@@ -456,7 +518,10 @@ export const aichatService = {
         method: 'GET',
         query: params,
         abortSignal,
+        idleTimeoutMs: SSE_IDLE_TIMEOUT_MS,
+        skipErrorHandling: true,
         isTerminalMessage: isAIChatTerminalMessage,
+        onOpen: callbacks.onOpen,
         onMessage: message => dispatchAIChatSseMessage(message, callbacks, outputFilter),
         onError: error => callbacks.onError?.(error),
         onClose: callbacks.onClose,

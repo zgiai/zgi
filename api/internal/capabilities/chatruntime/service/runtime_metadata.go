@@ -21,6 +21,7 @@ import (
 const (
 	maxModelInvocationMetadataRecords = 100
 	maxTurnStateMetadataItems         = 32
+	promptEstimateVersionChatRequest  = "chat_request.v1"
 
 	modelInvocationInlineImageDataRedactionReason = "inline_image_data_omitted_from_model_invocation_metadata"
 	modelInvocationRedactedDataURLToken           = "<redacted>"
@@ -57,8 +58,25 @@ func (s *service) persistModelInvocationBestEffort(ctx context.Context, prepared
 	if len(invocation) == 0 {
 		return
 	}
+	if shouldPersistAgentLogContext(prepared) {
+		invocation["log_context"] = modelInvocationLogContext(trace.Request, runtimeUserSystemPrompt(prepared))
+	}
 	metadata := mergeModelInvocationMetadata(prepared.Message.Metadata, invocation)
-	metadata = applyProviderPromptUsageCalibration(metadata, trace.Usage)
+	provider := ""
+	model := ""
+	if trace.Request != nil {
+		provider = trace.Request.Provider
+		model = trace.Request.Model
+	}
+	if prepared.parts != nil {
+		if strings.TrimSpace(provider) == "" {
+			provider = prepared.parts.Provider
+		}
+		if strings.TrimSpace(model) == "" {
+			model = prepared.parts.ModelName
+		}
+	}
+	metadata = applyProviderPromptUsageCalibrationWithEstimate(metadata, trace.Usage, trace.EstimatedPromptTokens, trace.PromptEstimator, provider, model)
 	prepared.Message.Metadata = metadata
 	if prepared.parts != nil {
 		prepared.parts.ContextControl = copyStringAnyMap(mapFromOperationContext(metadata["context_control"]))
@@ -72,6 +90,10 @@ func (s *service) persistModelInvocationBestEffort(ctx context.Context, prepared
 }
 
 func applyProviderPromptUsageCalibration(metadata map[string]interface{}, usage *adapter.Usage) map[string]interface{} {
+	return applyProviderPromptUsageCalibrationWithEstimate(metadata, usage, 0, "", "", "")
+}
+
+func applyProviderPromptUsageCalibrationWithEstimate(metadata map[string]interface{}, usage *adapter.Usage, finalEstimate int, estimator string, provider string, model string) map[string]interface{} {
 	if metadata == nil || usage == nil || usage.PromptTokens <= 0 {
 		return metadata
 	}
@@ -81,10 +103,24 @@ func applyProviderPromptUsageCalibration(metadata map[string]interface{}, usage 
 		contextControl = map[string]interface{}{}
 	}
 	estimated := intValueFromAny(contextControl["estimated_prompt_tokens"])
+	if finalEstimate > 0 {
+		if estimated > 0 && strings.TrimSpace(stringFromAny(contextControl["prompt_estimate_version"])) == "" {
+			contextControl["base_estimated_prompt_tokens"] = estimated
+		}
+		estimated = finalEstimate
+		contextControl["estimated_prompt_tokens"] = finalEstimate
+		contextControl["prompt_estimate_version"] = promptEstimateVersionChatRequest
+		if estimator = strings.TrimSpace(estimator); estimator != "" {
+			contextControl["tokenizer"] = estimator
+		}
+	}
 	actual := usage.PromptTokens
 	scale := 1.0
-	if estimated > 0 && actual > estimated {
+	if estimated > 0 {
 		scale = float64(actual) / float64(estimated)
+		if scale < 0.25 {
+			scale = 0.25
+		}
 		if scale > 20 {
 			scale = 20
 		}
@@ -100,7 +136,39 @@ func applyProviderPromptUsageCalibration(metadata map[string]interface{}, usage 
 		contextControl["provider_usage_over_budget"] = actual > budget
 	}
 	next["context_control"] = contextControl
+	if finalEstimate > 0 {
+		calibrationKey := promptUsageCalibrationKey(provider, model)
+		if calibrationKey != "" {
+			calibrations := copyStringAnyMap(mapFromOperationContext(next["prompt_usage_calibration"]))
+			if calibrations == nil {
+				calibrations = map[string]interface{}{}
+			}
+			record := map[string]interface{}{
+				"provider":                strings.TrimSpace(provider),
+				"model":                   strings.TrimSpace(model),
+				"estimate_version":        promptEstimateVersionChatRequest,
+				"estimated_prompt_tokens": finalEstimate,
+				"provider_prompt_tokens":  actual,
+				"prompt_estimate_scale":   scale,
+				"updated_at":              time.Now().UTC().Format(time.RFC3339),
+			}
+			if estimator = strings.TrimSpace(estimator); estimator != "" {
+				record["tokenizer"] = estimator
+			}
+			calibrations[calibrationKey] = record
+			next["prompt_usage_calibration"] = calibrations
+		}
+	}
 	return next
+}
+
+func promptUsageCalibrationKey(provider string, model string) string {
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	model = strings.ToLower(strings.TrimSpace(model))
+	if provider == "" || model == "" {
+		return ""
+	}
+	return provider + "/" + model
 }
 
 func mergeGeneratedArtifactMetadata(source map[string]interface{}, artifact map[string]interface{}) map[string]interface{} {
@@ -145,23 +213,170 @@ func mergeSkillTraceMetadata(source map[string]interface{}, traces []skills.Skil
 	for index, trace := range traces {
 		applyTurnStateTraceMetadata(metadata, trace)
 		applyPlanUpdateTraceMetadata(metadata, trace)
+		applySkillLoopControlTraceMetadata(metadata, trace)
 		markMetadataCurrentPageContextStale(metadata, trace)
 		if !visibleSkillInvocationKind(trace.Kind) {
 			continue
 		}
 		invocation := skillInvocationFromTrace(trace, index)
+		ensureInvocationTimelineTime(invocation, time.Now())
 		if internalPlannerFeedbackInvocation(invocation) {
 			continue
 		}
+		upsertRuntimeTimeline(metadata, invocation, "skill_invocations")
 		invocations = upsertSkillInvocation(invocations, invocation)
 	}
 	applySkillInvocationSummary(metadata, invocations)
+	applyManagedFileArtifactLinks(metadata, invocations)
 	if files := generatedFilesFromMetadata(metadata["generated_files"]); len(files) > 0 {
 		applyOperationPlanArtifactState(metadata, files)
 	}
 	applyOperationPlanInvocationState(metadata, invocations)
 	applyStructuredTurnStateMetadata(metadata, invocations)
 	return metadata
+}
+
+const skillLoopControlDiagnosticsKey = "skill_loop_control_diagnostics"
+
+func applySkillLoopControlTraceMetadata(metadata map[string]interface{}, trace skills.SkillTrace) {
+	if metadata == nil {
+		return
+	}
+	diagnostics := copyStringAnyMap(mapFromOperationContext(metadata[skillLoopControlDiagnosticsKey]))
+	if diagnostics == nil {
+		diagnostics = map[string]interface{}{}
+	}
+	changed := false
+	if skillLoopMetaToolExecutionSucceeded(trace) {
+		callID := strings.TrimSpace(stringFromAny(trace.Arguments["call_id"]))
+		if callID != "" {
+			seen := stringSliceFromAny(diagnostics["meta_tool_execution_ids"])
+			if !containsString(seen, callID) {
+				seen = append(seen, callID)
+				diagnostics["meta_tool_execution_ids"] = seen
+				diagnostics["meta_tool_execution_count"] = len(seen)
+				changed = true
+			}
+		}
+	}
+	if strings.EqualFold(strings.TrimSpace(trace.Kind), "plan_update") && strings.EqualFold(strings.TrimSpace(trace.Status), "success") {
+		plan := mapFromOperationContext(metadata["operation_plan"])
+		diagnostics["plan_update_count"] = intValueFromAny(plan["phase_revision"])
+		changed = true
+	}
+	if strings.EqualFold(strings.TrimSpace(trace.Kind), "planner_feedback") &&
+		strings.EqualFold(strings.TrimSpace(stringFromAny(trace.Arguments["code"])), "operation_plan_phase_mismatch") {
+		callID := strings.TrimSpace(stringFromAny(trace.Arguments["call_id"]))
+		seen := stringSliceFromAny(diagnostics["phase_mismatch_decision_ids"])
+		if callID == "" {
+			callID = fmt.Sprintf("phase-mismatch-%d", len(seen)+1)
+		}
+		if !containsString(seen, callID) {
+			seen = append(seen, callID)
+			diagnostics["phase_mismatch_decision_ids"] = seen
+			diagnostics["operation_plan_phase_mismatch_count"] = len(seen)
+			changed = true
+		}
+	}
+	if strings.EqualFold(strings.TrimSpace(trace.Kind), "planner_feedback") {
+		code := strings.ToLower(strings.TrimSpace(firstNonEmptyString(
+			trace.Arguments["code"],
+			trace.Arguments["reason_code"],
+		)))
+		if code == "operation_plan_phase_mismatch" || code == "control_tool_not_required" {
+			callID := strings.TrimSpace(stringFromAny(trace.Arguments["call_id"]))
+			idsKey := "tool_decision_without_execution_ids"
+			countKey := "tool_decision_without_execution_count"
+			if code == "control_tool_not_required" {
+				idsKey = "meta_tool_decision_without_execution_ids"
+				countKey = "meta_tool_decision_without_execution_count"
+			}
+			seen := stringSliceFromAny(diagnostics[idsKey])
+			if callID == "" {
+				callID = fmt.Sprintf("%s-%d", code, len(seen)+1)
+			}
+			if !containsString(seen, callID) {
+				seen = append(seen, callID)
+				diagnostics[idsKey] = seen
+				diagnostics[countKey] = len(seen)
+				if code == "control_tool_not_required" {
+					diagnostics["suppressed_control_tool_count"] = intValueFromAny(diagnostics["suppressed_control_tool_count"]) + 1
+				}
+				changed = true
+			}
+		}
+	}
+	if changed {
+		applySkillLoopMetaToolExecutionRates(diagnostics)
+		metadata[skillLoopControlDiagnosticsKey] = diagnostics
+	}
+}
+
+func skillLoopMetaToolExecutionSucceeded(trace skills.SkillTrace) bool {
+	if !strings.EqualFold(strings.TrimSpace(trace.Status), "success") {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(trace.Kind)) {
+	case "turn_state", "plan_update", "intermediate_answer", "final_answer":
+		return true
+	default:
+		return false
+	}
+}
+
+func applySkillLoopMetaToolExecutionRates(diagnostics map[string]interface{}) {
+	executed := intValueFromAny(diagnostics["meta_tool_execution_count"])
+	withoutExecution := intValueFromAny(diagnostics["meta_tool_decision_without_execution_count"])
+	diagnostics["tracked_meta_tool_decision_count"] = executed + withoutExecution
+	diagnostics["meta_tool_decision_execution_gap"] = withoutExecution
+	if total := executed + withoutExecution; total > 0 {
+		diagnostics["meta_tool_decision_execution_rate_percent"] = executed * 100 / total
+	} else {
+		delete(diagnostics, "meta_tool_decision_execution_rate_percent")
+	}
+}
+
+func applySkillLoopExecutionDiagnostics(metadata map[string]interface{}, invocations []map[string]interface{}) {
+	if metadata == nil {
+		return
+	}
+	executed := 0
+	succeeded := 0
+	seen := map[string]struct{}{}
+	for index, invocation := range invocations {
+		if !strings.EqualFold(strings.TrimSpace(stringFromAny(invocation["kind"])), "tool_call") {
+			continue
+		}
+		status := strings.ToLower(strings.TrimSpace(stringFromAny(invocation["status"])))
+		if status == "" || status == "running" || status == "loading" {
+			continue
+		}
+		id := strings.TrimSpace(stringFromAny(invocation["runtime_id"]))
+		if id == "" {
+			id = fmt.Sprintf("%s/%s#%d", stringFromAny(invocation["skill_id"]), stringFromAny(invocation["tool_name"]), index)
+		}
+		if _, exists := seen[id]; exists {
+			continue
+		}
+		seen[id] = struct{}{}
+		executed++
+		if operationPlanStatusFromInvocation(invocation) == operationPlanStepStatusCompleted {
+			succeeded++
+		}
+	}
+	diagnostics := copyStringAnyMap(mapFromOperationContext(metadata[skillLoopControlDiagnosticsKey]))
+	if diagnostics == nil {
+		diagnostics = map[string]interface{}{}
+	}
+	withoutExecution := intValueFromAny(diagnostics["tool_decision_without_execution_count"])
+	diagnostics["business_tool_execution_count"] = executed
+	diagnostics["business_tool_success_count"] = succeeded
+	diagnostics["tracked_business_tool_decision_count"] = executed + withoutExecution
+	diagnostics["tool_decision_execution_gap"] = withoutExecution
+	if total := executed + withoutExecution; total > 0 {
+		diagnostics["tool_decision_execution_rate_percent"] = executed * 100 / total
+	}
+	metadata[skillLoopControlDiagnosticsKey] = diagnostics
 }
 
 func applyPlanUpdateTraceMetadata(metadata map[string]interface{}, trace skills.SkillTrace) {
@@ -173,6 +388,7 @@ func applyPlanUpdateTraceMetadata(metadata map[string]interface{}, trace skills.
 	if plan == nil {
 		plan = map[string]interface{}{}
 	}
+	wasUserInputReplan := strings.EqualFold(strings.TrimSpace(stringFromAny(plan["pending_next_action"])), userInputPendingActionReplan)
 	if kind == "final_answer" {
 		if warning := strings.TrimSpace(stringFromAny(trace.Result["plan_warning"])); warning != "" {
 			plan["final_plan_warnings"] = []interface{}{compactForPrompt(warning, 500)}
@@ -182,10 +398,19 @@ func applyPlanUpdateTraceMetadata(metadata map[string]interface{}, trace skills.
 		metadata["operation_plan"] = plan
 	}
 	phases := mapSliceFromAny(trace.Result["plan"])
-	if len(phases) == 0 {
+	outcomeSnapshot := mapSliceFromAny(trace.Result["outcomes"])
+	if len(phases) == 0 && len(outcomeSnapshot) == 0 {
 		return
 	}
-	plan["phases"] = mapsToInterfaceSlice(phases)
+	if len(outcomeSnapshot) > 0 {
+		outcomes := reconcileOperationPlanOutcomeSnapshot(plan, outcomeSnapshot)
+		plan[operationPlanOutcomesKey] = mapsToInterfaceSlice(outcomes)
+		plan["phases"] = mapsToInterfaceSlice(operationPlanPhasesFromOutcomeSnapshot(mapSliceFromAny(plan["phases"]), outcomes))
+		operationPlanReconcileOutcomes(plan)
+	} else {
+		phases = reconcileOperationPlanPhaseSnapshot(mapSliceFromAny(plan["phases"]), phases)
+		plan["phases"] = mapsToInterfaceSlice(phases)
+	}
 	plan["phase_revision"] = intValueFromAny(plan["phase_revision"]) + 1
 	plan["phase_updated_at"] = time.Now().UTC().Format(time.RFC3339)
 	if explanation := strings.TrimSpace(stringFromAny(trace.Result["explanation"])); explanation != "" {
@@ -207,11 +432,54 @@ func applyPlanUpdateTraceMetadata(metadata map[string]interface{}, trace skills.
 	} else {
 		delete(plan, "phase_evidence_warnings")
 	}
-	if strings.EqualFold(strings.TrimSpace(stringFromAny(plan["pending_next_action"])), userInputPendingActionReplan) {
+	if wasUserInputReplan {
 		delete(plan, "pending_next_action")
 		applyUserInputPlanRevisionState(metadata, intValueFromAny(plan["phase_revision"]))
 	}
 	metadata["operation_plan"] = plan
+}
+
+func reconcileOperationPlanPhaseSnapshot(current []map[string]interface{}, next []map[string]interface{}) []map[string]interface{} {
+	if len(current) == 0 || len(next) == 0 {
+		return next
+	}
+	byID := make(map[string]map[string]interface{}, len(current))
+	for _, phase := range current {
+		if id := strings.TrimSpace(stringFromAny(phase["id"])); id != "" {
+			byID[id] = phase
+		}
+	}
+	for _, phase := range next {
+		id := strings.TrimSpace(stringFromAny(phase["id"]))
+		previous := byID[id]
+		if len(previous) == 0 {
+			continue
+		}
+		if len(mapFromOperationContext(phase["expected_action"])) == 0 {
+			if expected := mapFromOperationContext(previous["expected_action"]); len(expected) > 0 {
+				phase["expected_action"] = copyStringAnyMap(expected)
+			}
+		}
+		refs := appendUniqueStrings(stringSliceFromAny(previous["evidence_refs"]), stringSliceFromAny(phase["evidence_refs"])...)
+		if len(refs) > 0 {
+			phase["evidence_refs"] = refs
+		}
+		for _, key := range []string{"outcome_id", "verification_mode", "completion_source", "completed_at", "action_binding_source", operationPlanRuntimeBindingKey} {
+			if _, exists := phase[key]; exists {
+				continue
+			}
+			if value, exists := previous[key]; exists && value != nil {
+				phase[key] = value
+			}
+		}
+		if refs := appendUniqueStrings(stringSliceFromAny(previous["effect_refs"]), stringSliceFromAny(phase["effect_refs"])...); len(refs) > 0 {
+			phase["effect_refs"] = refs
+		}
+		if strings.EqualFold(strings.TrimSpace(stringFromAny(previous["status"])), operationPlanStepStatusCompleted) {
+			phase["status"] = operationPlanStepStatusCompleted
+		}
+	}
+	return next
 }
 
 func applyUserInputPlanRevisionState(metadata map[string]interface{}, phaseRevision int) {
@@ -639,10 +907,10 @@ func sanitizeTurnStateItemForMetadata(item map[string]interface{}) map[string]in
 		out["key"] = key
 	}
 	if value != "" {
-		out["value"] = truncateRunes(value, 4000)
+		out["value"] = truncateRunes(value, 1024)
 	}
 	if content != "" {
-		out["content"] = truncateRunes(content, 16000)
+		out["content"] = truncateRunes(content, 1024)
 	}
 	if title := strings.TrimSpace(stringFromAny(item["title"])); title != "" {
 		out["title"] = truncateRunes(title, 120)
@@ -773,6 +1041,8 @@ func mergeSkillInvocationMetadata(source map[string]interface{}, invocations []m
 	stored := sanitizeSkillInvocationsForMetadata(skillInvocationsFromMetadata(metadata["skill_invocations"]))
 	for _, invocation := range invocations {
 		markMetadataCurrentPageContextStaleFromInvocation(metadata, invocation)
+		ensureInvocationTimelineTime(invocation, time.Now())
+		upsertRuntimeTimeline(metadata, invocation, "skill_invocations")
 		invocation = sanitizeSkillInvocationForMetadata(invocation)
 		if !visibleSkillInvocationKind(stringFromAny(invocation["kind"])) {
 			continue
@@ -835,6 +1105,8 @@ func mergeModelInvocationMetadata(source map[string]interface{}, invocation map[
 	if len(invocation) == 0 {
 		return metadata
 	}
+	ensureInvocationTimelineTime(invocation, time.Now())
+	upsertRuntimeTimeline(metadata, invocation, "model_invocations")
 	stored := modelInvocationsFromMetadata(metadata["model_invocations"])
 	runtimeID := strings.TrimSpace(stringFromAny(invocation["runtime_id"]))
 	replaced := false
@@ -872,17 +1144,18 @@ func modelInvocationFromTrace(trace skillloop.ModelInvocationTrace, userSystemPr
 		status = "error"
 	}
 	invocation := map[string]interface{}{
-		"kind":        "model_call",
-		"phase":       phase,
-		"round":       trace.Round,
-		"streaming":   trace.Streaming,
-		"status":      status,
-		"title":       modelInvocationTitle(phase, trace.Round),
-		"created_at":  startedAt.Unix(),
-		"duration_ms": trace.DurationMS,
-		"runtime_id":  fmt.Sprintf("model_call:%s:%d:%d", phase, trace.Round, startedAt.UnixNano()),
-		"usage":       usageMetadata(trace.Usage),
-		"error":       strings.TrimSpace(trace.Error),
+		"kind":          "model_call",
+		"phase":         phase,
+		"round":         trace.Round,
+		"streaming":     trace.Streaming,
+		"status":        status,
+		"title":         modelInvocationTitle(phase, trace.Round),
+		"created_at":    startedAt.Unix(),
+		"created_at_ms": startedAt.UnixMilli(),
+		"duration_ms":   trace.DurationMS,
+		"runtime_id":    fmt.Sprintf("model_call:%s:%d:%d", phase, trace.Round, startedAt.UnixNano()),
+		"usage":         usageMetadata(trace.Usage),
+		"error":         strings.TrimSpace(trace.Error),
 	}
 	if trace.Streaming || trace.StreamDoneReceived || strings.TrimSpace(trace.TerminatedBy) != "" || strings.TrimSpace(trace.FinishReason) != "" {
 		invocation["stream_done_received"] = trace.StreamDoneReceived
@@ -914,10 +1187,93 @@ func modelInvocationFromTrace(trace skillloop.ModelInvocationTrace, userSystemPr
 		invocation["completion_tokens"] = trace.Usage.CompletionTokens
 		invocation["total_tokens"] = trace.Usage.TotalTokens
 	}
+	if trace.PromptChars > 0 {
+		invocation["prompt_chars"] = trace.PromptChars
+	}
+	if trace.RequestChars > 0 {
+		invocation["request_chars"] = trace.RequestChars
+	}
+	if trace.EstimatedPromptTokens > 0 {
+		invocation["estimated_prompt_tokens"] = trace.EstimatedPromptTokens
+	}
+	if estimator := strings.TrimSpace(trace.PromptEstimator); estimator != "" {
+		invocation["prompt_estimator"] = estimator
+	}
+	if components := promptComponentMetadata(trace.PromptComponentTokens); len(components) > 0 {
+		invocation["prompt_component_tokens"] = components
+	}
+	if components := promptComponentMetadata(trace.PromptComponentChars); len(components) > 0 {
+		invocation["prompt_component_chars"] = components
+	}
+	if trace.Usage != nil && trace.Usage.PromptTokens > 0 && trace.EstimatedPromptTokens > 0 {
+		invocation["prompt_estimate_scale"] = float64(trace.Usage.PromptTokens) / float64(trace.EstimatedPromptTokens)
+	}
+	if len(trace.ActiveSkillIDs) > 0 {
+		invocation["active_skill_ids"] = append([]string(nil), trace.ActiveSkillIDs...)
+	}
+	if len(trace.LoadedSkillIDs) > 0 {
+		invocation["loaded_skill_ids_this_run"] = append([]string(nil), trace.LoadedSkillIDs...)
+	}
+	if len(trace.RestoredSkillIDs) > 0 {
+		invocation["auto_restored_skill_ids"] = append([]string(nil), trace.RestoredSkillIDs...)
+	}
+	if len(trace.ProjectedRefs) > 0 {
+		invocation["projected_payload_refs"] = append([]string(nil), trace.ProjectedRefs...)
+	}
+	if trace.ProjectedChars > 0 {
+		invocation["projected_payload_chars"] = trace.ProjectedChars
+	}
+	if continuationType := strings.TrimSpace(trace.ContinuationType); continuationType != "" {
+		invocation["continuation_type"] = continuationType
+	}
+	if trace.TerminalOnly {
+		invocation["terminal_only"] = true
+	}
+	if trace.BudgetSafeContextLimit > 0 {
+		invocation["budget_safe_context_limit"] = trace.BudgetSafeContextLimit
+	}
+	if trace.BudgetPromptLimit > 0 {
+		invocation["budget_prompt_limit"] = trace.BudgetPromptLimit
+	}
+	if trace.BudgetOriginalPromptTokens > 0 {
+		invocation["budget_original_prompt_tokens"] = trace.BudgetOriginalPromptTokens
+	}
+	if components := promptComponentMetadata(trace.BudgetCompressionChars); len(components) > 0 {
+		invocation["budget_compression_chars"] = components
+	}
+	if trace.BudgetSavedChars > 0 {
+		invocation["budget_saved_chars"] = trace.BudgetSavedChars
+	}
+	if trace.BudgetMaxTokensClamped {
+		invocation["budget_max_tokens_clamped"] = true
+	}
+	if trace.BudgetOriginalMaxTokens > 0 {
+		invocation["budget_original_max_tokens"] = trace.BudgetOriginalMaxTokens
+	}
+	if trace.BudgetEffectiveMaxTokens > 0 {
+		invocation["budget_effective_max_tokens"] = trace.BudgetEffectiveMaxTokens
+	}
+	if trace.BudgetEstimateScale > 0 {
+		invocation["budget_estimate_scale"] = trace.BudgetEstimateScale
+	}
 	if strings.TrimSpace(userSystemPrompt) != "" {
 		invocation["user_system_prompt"] = strings.TrimSpace(userSystemPrompt)
 	}
 	return compactSkillInvocation(invocation)
+}
+
+func promptComponentMetadata(source map[string]int) map[string]interface{} {
+	if len(source) == 0 {
+		return nil
+	}
+	out := make(map[string]interface{}, len(source))
+	for key, value := range source {
+		if strings.TrimSpace(key) == "" || value <= 0 {
+			continue
+		}
+		out[key] = value
+	}
+	return out
 }
 
 func modelInvocationDebugPayloadEnabled() bool {
@@ -1640,6 +1996,7 @@ func applySkillInvocationSummary(metadata map[string]interface{}, invocations []
 	metadata["has_trace"] = true
 	metadata["selected_skill_ids"] = selected
 	metadata["loaded_skill_ids"] = loaded
+	applyLoadedSkillState(metadata, invocations)
 	actionTraceCount := countSkillActionInvocations(invocations)
 	metadata["skill_step_count"] = actionTraceCount
 	metadata["skill_call_count"] = actionTraceCount
@@ -1650,17 +2007,94 @@ func applySkillInvocationSummary(metadata map[string]interface{}, invocations []
 	metadata["skill_invocations"] = skillInvocationsToInterfaceSlice(invocations)
 }
 
+func applyLoadedSkillState(metadata map[string]interface{}, invocations []map[string]interface{}) {
+	if metadata == nil {
+		return
+	}
+	bySkill := map[string]map[string]interface{}{}
+	order := []string{}
+	for _, existing := range mapSliceFromAny(metadata["loaded_skill_state"]) {
+		skillID := strings.TrimSpace(stringFromAny(existing["skill_id"]))
+		if skillID == "" {
+			continue
+		}
+		bySkill[skillID] = copyStringAnyMap(existing)
+		order = appendUniqueStrings(order, skillID)
+	}
+	for index, invocation := range invocations {
+		if !strings.EqualFold(strings.TrimSpace(stringFromAny(invocation["kind"])), "skill_load") ||
+			!skillLoadInvocationSucceeded(invocation) {
+			continue
+		}
+		skillID := strings.TrimSpace(stringFromAny(invocation["skill_id"]))
+		if skillID == "" {
+			continue
+		}
+		result := mapFromOperationContext(invocation["result"])
+		digest := strings.TrimSpace(stringFromAny(result["instruction_digest"]))
+		if digest == "" {
+			continue
+		}
+		record := map[string]interface{}{
+			"skill_id":           skillID,
+			"instruction_digest": digest,
+			"loaded_sequence":    firstPositiveIntValue(invocation["sequence"], index+1),
+			"load_sequence":      firstPositiveIntValue(invocation["sequence"], index+1),
+			"effective_version":  firstNonEmptyString(result["effective_version"], digest),
+			"policy_state":       firstNonEmptyString(result["policy_state"], "allowed"),
+			"access_status":      firstNonEmptyString(result["access_status"], "authorized"),
+		}
+		if chars := intValueFromAny(result["instruction_chars"]); chars > 0 {
+			record["instruction_chars"] = chars
+		}
+		if createdAtMS := numericOrStringValue(invocation["created_at_ms"]); createdAtMS != nil {
+			record["loaded_at_ms"] = createdAtMS
+		}
+		if _, exists := bySkill[skillID]; !exists {
+			order = append(order, skillID)
+		}
+		bySkill[skillID] = record
+	}
+	if len(bySkill) == 0 {
+		delete(metadata, "loaded_skill_state")
+		return
+	}
+	state := make([]interface{}, 0, len(order))
+	seen := map[string]struct{}{}
+	for _, skillID := range order {
+		if _, duplicate := seen[skillID]; duplicate {
+			continue
+		}
+		seen[skillID] = struct{}{}
+		if record := bySkill[skillID]; len(record) > 0 {
+			state = append(state, record)
+		}
+	}
+	metadata["loaded_skill_state"] = state
+}
+
+func skillLoadInvocationSucceeded(invocation map[string]interface{}) bool {
+	switch strings.ToLower(strings.TrimSpace(stringFromAny(invocation["status"]))) {
+	case "success", "succeeded", "completed":
+		return true
+	default:
+		return false
+	}
+}
+
 func sortSkillInvocationsForMetadata(invocations []map[string]interface{}) []map[string]interface{} {
 	if len(invocations) <= 1 {
 		return invocations
 	}
+	for _, invocation := range invocations {
+		if _, ok := skillInvocationTimelineMilliseconds(invocation); !ok {
+			return invocations
+		}
+	}
 	sort.SliceStable(invocations, func(i, j int) bool {
 		leftAt, leftOK := skillInvocationTimelineMilliseconds(invocations[i])
 		rightAt, rightOK := skillInvocationTimelineMilliseconds(invocations[j])
-		if leftOK != rightOK {
-			return leftOK
-		}
-		if !leftOK {
+		if !leftOK || !rightOK {
 			return false
 		}
 		return leftAt < rightAt
@@ -2475,7 +2909,7 @@ func countSkillActionInvocations(invocations []map[string]interface{}) int {
 
 func visibleSkillInvocationKind(kind string) bool {
 	switch strings.TrimSpace(kind) {
-	case "skill_load", "reference_read", "tool_call", "tool_governance", "client_action", "intermediate_answer", "user_input_request", "guardrail":
+	case "skill_load", "skill_load_attempt", "reference_read", "tool_call", "tool_governance", "client_action", "intermediate_answer", "user_input_request", "guardrail":
 		return true
 	default:
 		return false

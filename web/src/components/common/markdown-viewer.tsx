@@ -80,6 +80,15 @@ function getClassName(x: unknown): string | undefined {
   return typeof cls === 'string' ? cls : undefined;
 }
 
+function getPlainText(node: React.ReactNode): string {
+  if (typeof node === 'string' || typeof node === 'number') return String(node);
+  if (Array.isArray(node)) return node.map(getPlainText).join('');
+  if (React.isValidElement<{ children?: React.ReactNode }>(node)) {
+    return getPlainText(node.props.children);
+  }
+  return '';
+}
+
 // Type guard for nodes that carry a literal string value (mdast code/inlineCode)
 function hasLiteralValue(x: unknown): x is { value: string } {
   return !!x && typeof (x as { value?: unknown }).value === 'string';
@@ -219,7 +228,7 @@ function normalizeMinerUImageSource(src: string): string {
   const value = stripMarkdownLinkBrackets(src);
   if (!value) return src;
 
-  if (DOCUMENT_IMAGE_ENDPOINTS.some((endpoint) => value.startsWith(endpoint))) {
+  if (DOCUMENT_IMAGE_ENDPOINTS.some(endpoint => value.startsWith(endpoint))) {
     return `${normalizeApiBaseUrl()}${value}`;
   }
 
@@ -258,7 +267,11 @@ function parseFenceOpen(line: string): FenceState | null {
   const char = marker[0] as '`' | '~';
   const info = match[2].trim();
   if (char === '`' && info.includes('`')) return null;
-  const firstToken = info.split(/\s+/, 1)[0]?.replace(/^[{.]+|[}]$/g, '').toLowerCase() ?? '';
+  const firstToken =
+    info
+      .split(/\s+/, 1)[0]
+      ?.replace(/^[{.]+|[}]$/g, '')
+      .toLowerCase() ?? '';
   return {
     char,
     length: marker.length,
@@ -640,7 +653,12 @@ const MarkdownViewer: React.FC<MarkdownViewerProps> = ({
           },
           th({ children, ...rest }) {
             const cls = getClassName(rest);
-            return <TableHead className={cls}>{renderChildrenWithHighlights(children)}</TableHead>;
+            const title = getPlainText(children);
+            return (
+              <TableHead className={cls} title={title || undefined}>
+                {renderChildrenWithHighlights(children)}
+              </TableHead>
+            );
           },
           td({ children, ...rest }) {
             const cls = getClassName(rest);

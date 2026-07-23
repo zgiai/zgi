@@ -13,6 +13,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/repository"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/skillloop"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
+	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"gorm.io/gorm"
 )
 
@@ -35,8 +36,13 @@ type ClientActionContinuation struct {
 }
 
 func (s *service) persistClientActionPending(ctx context.Context, prepared *PreparedChat, payload map[string]interface{}, usage *adapter.Usage) map[string]interface{} {
+	metadata, _ := s.persistClientActionPendingResult(ctx, prepared, payload, usage)
+	return metadata
+}
+
+func (s *service) persistClientActionPendingResult(ctx context.Context, prepared *PreparedChat, payload map[string]interface{}, usage *adapter.Usage) (map[string]interface{}, error) {
 	if prepared == nil || prepared.Message == nil || prepared.Conversation == nil {
-		return map[string]interface{}{}
+		return map[string]interface{}{}, nil
 	}
 	pendingPayload := copyStringAnyMap(payload)
 	if pendingPayload == nil {
@@ -47,7 +53,7 @@ func (s *service) persistClientActionPending(ctx context.Context, prepared *Prep
 	pendingPayload["status"] = clientActionStatusWaiting
 
 	metadata := mergeClientActionMetadata(prepared.Message.Metadata, pendingPayload)
-	metadata = preparedResultMetadata(metadata, usage)
+	metadata = preparedResultMetadataForPrepared(prepared, metadata, usage)
 	metadata["client_action_continuation"] = compactSkillInvocation(map[string]interface{}{
 		"status":              clientActionStatusWaiting,
 		"action_id":           clientActionID(pendingPayload),
@@ -67,9 +73,9 @@ func (s *service) persistClientActionPending(ctx context.Context, prepared *Prep
 	prepared.Message.Metadata = metadata
 
 	if s == nil || s.repos == nil || s.repos.Message == nil || s.repos.Conversation == nil {
-		return metadata
+		return metadata, nil
 	}
-	s.persistPendingMessageAndFinishConversationBestEffort(
+	err := s.persistPendingMessageAndFinishConversationBestEffort(
 		ctx,
 		prepared,
 		"client action",
@@ -80,7 +86,7 @@ func (s *service) persistClientActionPending(ctx context.Context, prepared *Prep
 			return repo.FinishContinuationMessage(ctx, prepared.Conversation.ID, prepared.Message.ID)
 		},
 	)
-	return metadata
+	return metadata, err
 }
 
 func (s *service) RunClientActionContinuationStream(
@@ -125,73 +131,92 @@ func (s *service) RunClientActionContinuationStream(
 		return nil, newFinalizedStreamError(err)
 	}
 
-	runCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
-	s.streams.Begin(message.ID, cancel)
-	defer func() {
-		cancel()
-		s.streams.Finish(message.ID)
-	}()
-	if s.streams.IsStopped(message.ID) {
-		_ = s.persistStoppedAnswer(context.WithoutCancel(ctx), prepared, "", nil)
+	execution, err := s.beginRuntimeExecution(ctx, message.ID)
+	if err != nil {
+		s.failClientActionContinuation(context.WithoutCancel(ctx), continuation, err, onEvent)
+		return nil, newFinalizedStreamError(err)
+	}
+	defer execution.Finish()
+	runCtx := execution.Context
+	persistCtx := execution.PersistContext
+	if s.streams.IsStopped(message.ID, execution.runID) {
+		_ = s.persistStoppedAnswer(persistCtx, prepared, "", nil)
 		return nil, ErrMessageStopped
 	}
 
-	s.emitPreparedEvent(ctx, prepared, streamEventMessageStart, messageStartPayload(conversation, message, false), onEvent)
-	s.emitPreparedEvent(ctx, prepared, streamEventClientActionResult, clientActionResultPayload(prepared, continuation.Event, req), onEvent)
+	s.emitPreparedEvent(persistCtx, prepared, streamEventMessageStart, messageStartPayload(conversation, message, false), onEvent)
+	s.emitPreparedEvent(persistCtx, prepared, streamEventClientActionResult, clientActionResultPayload(prepared, continuation.Event, req), onEvent)
 
 	var answer string
 	var usage *adapter.Usage
-	answer, usage, err = s.runPreparedToolStream(runCtx, context.WithoutCancel(ctx), prepared, nil, onEvent)
+	answer, usage, err = s.runPreparedToolStream(runCtx, persistCtx, prepared, nil, onEvent)
 	if err != nil {
 		var pendingGovernance *skillloop.ToolGovernancePendingError
 		if errors.As(err, &pendingGovernance) {
-			metadata := s.persistToolGovernanceApprovalPending(context.WithoutCancel(ctx), prepared, pendingGovernance.Payload, usage)
-			s.emitPreparedEvent(context.WithoutCancel(ctx), prepared, streamEventMessageEnd, messageEndPayloadWithStatus(prepared, metadata, runtimemodel.MessageStatusWaitingApproval), onEvent)
+			metadata, persistErr := s.persistToolGovernanceApprovalPendingResult(persistCtx, prepared, pendingGovernance.Payload, usage)
+			if ownershipErr := finalizedRuntimeOwnershipError(persistErr); ownershipErr != nil {
+				return nil, ownershipErr
+			}
+			s.emitPreparedEvent(persistCtx, prepared, streamEventMessageEnd, messageEndPayloadWithStatus(prepared, metadata, runtimemodel.MessageStatusWaitingApproval), onEvent)
 			return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, Status: runtimemodel.MessageStatusWaitingApproval}, nil
 		}
 		var pendingApproval *skillloop.WorkflowApprovalPendingError
 		if errors.As(err, &pendingApproval) {
-			metadata := s.persistWorkflowApprovalPending(context.WithoutCancel(ctx), prepared, pendingApproval.Payload, usage)
-			s.emitPreparedEvent(context.WithoutCancel(ctx), prepared, streamEventMessageEnd, messageEndPayloadWithStatus(prepared, metadata, runtimemodel.MessageStatusWaitingApproval), onEvent)
+			metadata, persistErr := s.persistWorkflowApprovalPendingResult(persistCtx, prepared, pendingApproval.Payload, usage)
+			if ownershipErr := finalizedRuntimeOwnershipError(persistErr); ownershipErr != nil {
+				return nil, ownershipErr
+			}
+			s.emitPreparedEvent(persistCtx, prepared, streamEventMessageEnd, messageEndPayloadWithStatus(prepared, metadata, runtimemodel.MessageStatusWaitingApproval), onEvent)
 			return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, Status: runtimemodel.MessageStatusWaitingApproval}, nil
 		}
 		var pendingQuestion *skillloop.WorkflowQuestionPendingError
 		if errors.As(err, &pendingQuestion) {
-			metadata := s.persistWorkflowQuestionPending(context.WithoutCancel(ctx), prepared, pendingQuestion.Payload, usage)
-			s.emitPreparedEvent(context.WithoutCancel(ctx), prepared, streamEventMessageEnd, messageEndPayloadWithStatus(prepared, metadata, runtimemodel.MessageStatusWaitingQuestion), onEvent)
+			metadata, persistErr := s.persistWorkflowQuestionPendingResult(persistCtx, prepared, pendingQuestion.Payload, usage)
+			if ownershipErr := finalizedRuntimeOwnershipError(persistErr); ownershipErr != nil {
+				return nil, ownershipErr
+			}
+			s.emitPreparedEvent(persistCtx, prepared, streamEventMessageEnd, messageEndPayloadWithStatus(prepared, metadata, runtimemodel.MessageStatusWaitingQuestion), onEvent)
 			return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, Status: runtimemodel.MessageStatusWaitingQuestion}, nil
 		}
 		var pendingClientAction *skillloop.ClientActionPendingError
 		if errors.As(err, &pendingClientAction) {
-			metadata := s.persistClientActionPending(context.WithoutCancel(ctx), prepared, pendingClientAction.Payload, usage)
-			s.emitPreparedEvent(context.WithoutCancel(ctx), prepared, streamEventMessageEnd, messageEndPayloadWithStatus(prepared, metadata, runtimemodel.MessageStatusWaitingClientAction), onEvent)
+			metadata, persistErr := s.persistClientActionPendingResult(persistCtx, prepared, pendingClientAction.Payload, usage)
+			if ownershipErr := finalizedRuntimeOwnershipError(persistErr); ownershipErr != nil {
+				return nil, ownershipErr
+			}
+			s.emitPreparedEvent(persistCtx, prepared, streamEventMessageEnd, messageEndPayloadWithStatus(prepared, metadata, runtimemodel.MessageStatusWaitingClientAction), onEvent)
 			return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, Status: runtimemodel.MessageStatusWaitingClientAction}, nil
 		}
 		var pendingUserInput *skillloop.UserInputPendingError
 		if errors.As(err, &pendingUserInput) {
-			metadata := s.persistUserInputRequestPending(context.WithoutCancel(ctx), prepared, pendingUserInput.Payload, usage)
-			s.emitPreparedEvent(context.WithoutCancel(ctx), prepared, streamEventMessageEnd, messageEndPayloadWithStatus(prepared, metadata, runtimemodel.MessageStatusWaitingQuestion), onEvent)
+			metadata, persistErr := s.persistUserInputRequestPendingResult(persistCtx, prepared, pendingUserInput.Payload, usage)
+			if ownershipErr := finalizedRuntimeOwnershipError(persistErr); ownershipErr != nil {
+				return nil, ownershipErr
+			}
+			s.emitPreparedEvent(persistCtx, prepared, streamEventMessageEnd, messageEndPayloadWithStatus(prepared, metadata, runtimemodel.MessageStatusWaitingQuestion), onEvent)
 			return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, Status: runtimemodel.MessageStatusWaitingQuestion}, nil
 		}
 		if errors.Is(err, ErrMessageStopped) {
-			_ = s.clearPreparedRuntime(context.WithoutCancel(ctx), prepared)
+			_ = s.persistStoppedAnswer(persistCtx, prepared, answer, usage)
 			return nil, err
 		}
-		s.finalizePreparedError(context.WithoutCancel(ctx), prepared, err, onEvent)
+		if finalizeErr := s.finalizePreparedError(persistCtx, prepared, err, onEvent); finalizeErr != nil {
+			return nil, finalizedRuntimePersistenceError(finalizeErr)
+		}
 		return nil, newFinalizedStreamError(err)
 	}
-	if s.streams.IsStopped(message.ID) {
-		_ = s.persistStoppedAnswer(context.WithoutCancel(ctx), prepared, answer, usage)
+	if s.streams.IsStopped(message.ID, execution.runID) {
+		_ = s.persistStoppedAnswer(persistCtx, prepared, answer, usage)
 		return nil, ErrMessageStopped
 	}
 
 	metadata := resolveClientActionContinuationMetadata(prepared.Message.Metadata, actionID, req)
-	metadata = preparedResultMetadata(metadata, usage)
+	metadata = preparedResultMetadataForPrepared(prepared, metadata, usage)
 	prepared.Message.Metadata = metadata
-	if err := s.completePreparedChat(context.WithoutCancel(ctx), prepared, answer, metadata); err != nil {
-		return nil, err
+	if err := s.completePreparedChat(persistCtx, prepared, answer, metadata); err != nil {
+		return nil, finalizedRuntimePersistenceError(err)
 	}
-	s.emitPreparedEvent(context.WithoutCancel(ctx), prepared, streamEventMessageEnd, messageEndPayload(prepared, metadata), onEvent)
+	s.emitPreparedEvent(persistCtx, prepared, streamEventMessageEnd, messageEndPayload(prepared, metadata), onEvent)
 	return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, Status: runtimemodel.MessageStatusCompleted}, nil
 }
 
@@ -317,6 +342,8 @@ func (s *service) prepareClientActionContinuationChat(ctx context.Context, scope
 	if err != nil {
 		return nil, err
 	}
+	applyPersistedConversationSurface(continuation.Conversation, parts)
+	restoreExecutionModeFromMetadata(parts, message.Metadata)
 	restoreTurnInitialContextFromMetadata(parts, message.Metadata)
 	restoreCurrentPageContextFromMetadata(parts, message.Metadata)
 	if actionID := clientActionID(continuation.Event); actionID != "" {
@@ -327,7 +354,7 @@ func (s *service) prepareClientActionContinuationChat(ctx context.Context, scope
 	if configured, ok := stringSliceValue(message.Metadata["configured_skill_ids"]); ok && len(configured) > 0 {
 		parts.ConfiguredSkillIDs = configured
 	}
-	if err := s.applyModelCapabilities(ctx, scope, parts); err != nil {
+	if err := s.applyModelCapabilities(ctx, scope, Caller{Type: runtimemodel.ConversationCallerAIChat}, parts); err != nil {
 		return nil, err
 	}
 	applyManagedUserMemoryPolicy(Caller{Type: runtimemodel.ConversationCallerAIChat}, parts)
@@ -338,18 +365,119 @@ func (s *service) prepareClientActionContinuationChat(ctx context.Context, scope
 	prepared := &PreparedChat{
 		Conversation: continuation.Conversation, Message: message, Scope: scope,
 		Caller: Caller{Type: runtimemodel.ConversationCallerAIChat}, ParentID: message.ParentID, parts: parts,
-		Continuation: true, SuppressInitialNaturalProgress: true,
+		Continuation:                   true,
+		ContinuationType:               "client_action",
+		SuppressInitialNaturalProgress: true,
 	}
 	s.refreshPageContextAfterClientAction(ctx, prepared, continuation.Event, req)
+	prepared.PreferredRestoredSkillID = preferredRestoredSkillAfterClientAction(parts, continuation.Event, req, message.Metadata)
 	contextResult, err := s.buildUpstreamMessages(ctx, scope, message.ParentID, parts)
 	if err != nil {
 		return nil, err
 	}
 	parts.ContextControl = contextResult.Metadata
 	llmRequest := newLLMChatRequest(parts, contextResult.Messages)
-	llmRequest.Messages = append(llmRequest.Messages, clientActionContinuationMessage(message, continuation.Event, req))
+	llmRequest.Messages = append(llmRequest.Messages, continuationMessageForExecutionMode(clientActionContinuationMessage(message, continuation.Event, req), parts.ExecutionMode))
 	prepared.LLMRequest = llmRequest
 	return prepared, nil
+}
+
+func preferredRestoredSkillAfterClientAction(parts *chatRequestParts, event map[string]interface{}, req runtimedto.ClientActionResultRequest, metadata map[string]interface{}) string {
+	eventSkillID := strings.TrimSpace(stringFromAny(event["skill_id"]))
+	if !strings.EqualFold(strings.TrimSpace(req.Status), clientActionStatusSucceeded) ||
+		(!strings.EqualFold(strings.TrimSpace(stringFromAny(event["action_type"])), "route_navigation") &&
+			!isConsoleNavigatorNavigateTool(eventSkillID, stringFromAny(event["tool_name"]))) {
+		return eventSkillID
+	}
+
+	// A completed navigation is transport evidence, not the next business capability.
+	// Prefer the skill for the page that has just loaded so a large business skill can
+	// be restored across the continuation budget instead of restoring navigator again.
+	result := mapFromOperationContext(req.Result)
+	route := normalizeConsoleNavigationGuardHref(firstNonEmptyString(
+		result["observed_path"],
+		result["current_href"],
+		result["loaded_href"],
+		result["href"],
+		event["href"],
+	))
+	phaseText := firstOpenOperationPlanPhaseText(metadata)
+	for _, skillID := range preferredBusinessSkillsForRoute(route, phaseText) {
+		if skillIDEnabled(parts.SkillIDs, skillID) {
+			return skillID
+		}
+	}
+	if skillID := operationPlanPreferredBusinessSkillID(metadata); skillID != "" && skillIDEnabled(parts.SkillIDs, skillID) {
+		return skillID
+	}
+	return ""
+}
+
+func preferredBusinessSkillsForRoute(route string, phaseText string) []string {
+	route = strings.ToLower(strings.TrimSpace(route))
+	phaseText = strings.ToLower(strings.TrimSpace(phaseText))
+	switch {
+	case strings.HasPrefix(route, "/console/agents"):
+		return []string{skills.SkillAgentManagement}
+	case strings.HasPrefix(route, "/console/files"):
+		switch {
+		case containsAnyFold(phaseText, "续写", "生成", "创建", "撰写", "generate", "write", "create"):
+			return []string{skills.SkillFileGenerator, skills.SkillFileReader, skills.SkillFileManager}
+		case containsAnyFold(phaseText, "保存", "删除", "移动", "导入", "save", "delete", "move", "import"):
+			return []string{skills.SkillFileManager, skills.SkillFileReader, skills.SkillFileGenerator}
+		default:
+			return []string{skills.SkillFileReader, skills.SkillFileManager, skills.SkillFileGenerator}
+		}
+	default:
+		return nil
+	}
+}
+
+func firstOpenOperationPlanPhaseText(metadata map[string]interface{}) string {
+	plan := mapFromOperationContext(metadata["operation_plan"])
+	for _, phase := range mapSliceFromAny(plan["phases"]) {
+		switch strings.ToLower(strings.TrimSpace(stringFromAny(phase["status"]))) {
+		case operationPlanStepStatusCompleted, "skipped", operationPlanStepStatusFailed:
+			continue
+		}
+		return strings.TrimSpace(firstNonEmptyString(phase["step"], phase["title"], phase["note"]))
+	}
+	return ""
+}
+
+func operationPlanPreferredBusinessSkillID(metadata map[string]interface{}) string {
+	plan := mapFromOperationContext(metadata["operation_plan"])
+	for _, phase := range mapSliceFromAny(plan["phases"]) {
+		switch strings.ToLower(strings.TrimSpace(stringFromAny(phase["status"]))) {
+		case operationPlanStepStatusCompleted, "skipped", operationPlanStepStatusFailed:
+			continue
+		}
+		binding := mapFromOperationContext(phase[operationPlanRuntimeBindingKey])
+		if skillID := strings.TrimSpace(stringFromAny(binding["skill_id"])); skillID != "" && !strings.EqualFold(skillID, skills.SkillConsoleNavigator) {
+			return skillID
+		}
+		if expectedAction := mapFromOperationContext(phase["expected_action"]); len(expectedAction) > 0 {
+			if skillID := strings.TrimSpace(stringFromAny(expectedAction["skill_id"])); skillID != "" && !strings.EqualFold(skillID, skills.SkillConsoleNavigator) {
+				return skillID
+			}
+		}
+		for _, key := range []string{"skill_id", "recommended_skill_id", "target_skill_id"} {
+			if skillID := strings.TrimSpace(stringFromAny(phase[key])); skillID != "" && !strings.EqualFold(skillID, skills.SkillConsoleNavigator) {
+				return skillID
+			}
+		}
+	}
+	return ""
+}
+
+func containsAnyFold(value string, candidates ...string) bool {
+	value = strings.ToLower(value)
+	for _, candidate := range candidates {
+		if strings.Contains(value, strings.ToLower(strings.TrimSpace(candidate))) {
+			return true
+		}
+	}
+	return false
 }
 
 func injectClientActionContinuationContext(parts *chatRequestParts, event map[string]interface{}, req runtimedto.ClientActionResultRequest, metadata map[string]interface{}) {
@@ -865,12 +993,103 @@ func resolveClientActionContinuationMetadata(source map[string]interface{}, acti
 	}
 	resolved := clientActionObservationRecord(event, req)
 	metadata = mergeClientActionMetadata(metadata, resolved)
+	metadata = completeClientActionOperationPlanPhase(metadata, resolved, req)
 	continuation := governanceMapFromAny(metadata["client_action_continuation"])
 	if len(continuation) > 0 && clientActionID(continuation) == actionID {
 		continuation = mergeInvocation(continuation, resolved)
 		metadata["client_action_continuation"] = compactSkillInvocation(continuation)
 	}
 	return metadata
+}
+
+func completeClientActionOperationPlanPhase(metadata map[string]interface{}, event map[string]interface{}, req runtimedto.ClientActionResultRequest) map[string]interface{} {
+	if !strings.EqualFold(strings.TrimSpace(req.Status), clientActionStatusSucceeded) {
+		return metadata
+	}
+	phaseID := strings.TrimSpace(stringFromAny(event["plan_phase_id"]))
+	plan := copyStringAnyMap(mapFromOperationContext(metadata["operation_plan"]))
+	if len(plan) == 0 {
+		return metadata
+	}
+	if operationPlanHasStructuredOutcomes(plan) {
+		operationPlanReconcileOutcomes(plan)
+		next := copyStringAnyMap(metadata)
+		next["operation_plan"] = plan
+		return next
+	}
+	result := mapFromOperationContext(req.Result)
+	href := normalizeConsoleNavigationGuardHref(firstNonEmptyString(
+		result["observed_path"], result["current_href"], result["loaded_href"], result["href"], event["href"],
+	))
+	target := map[string]interface{}{}
+	if href != "" {
+		target["href"] = href
+		target["route"] = href
+	}
+	for _, key := range []string{"agent_id", "file_id", "asset_id", "resource_id"} {
+		if value := strings.TrimSpace(firstNonEmptyString(result[key], event[key])); value != "" {
+			target[key] = value
+		}
+	}
+	phases := mapSliceFromAny(plan["phases"])
+	match := -1
+	for index, phase := range phases {
+		if phaseID != "" && strings.TrimSpace(stringFromAny(phase["id"])) != phaseID {
+			continue
+		}
+		switch strings.ToLower(strings.TrimSpace(stringFromAny(phase["status"]))) {
+		case operationPlanStepStatusCompleted, "skipped", operationPlanStepStatusFailed:
+			if phaseID != "" {
+				return metadata
+			}
+			continue
+		}
+		expected := mapFromOperationContext(phase["expected_action"])
+		if len(expected) > 0 && !operationPlanExpectedActionMatches(
+			expected,
+			stringFromAny(event["skill_id"]),
+			stringFromAny(event["tool_name"]),
+			target,
+		) {
+			if phaseID != "" {
+				return metadata
+			}
+			continue
+		}
+		if len(expected) == 0 {
+			continue
+		}
+		if match >= 0 {
+			return metadata
+		}
+		match = index
+	}
+	if match < 0 {
+		return metadata
+	}
+	phases[match]["status"] = operationPlanStepStatusCompleted
+	phases[match]["completed_at"] = time.Now().UTC().Format(time.RFC3339)
+	refs := stringSliceFromAny(phases[match]["evidence_refs"])
+	if actionID := clientActionID(event); actionID != "" {
+		refs = appendUniqueStrings(refs, "action_id:"+actionID)
+	}
+	if href != "" {
+		refs = appendUniqueStrings(refs, operationPlanPageEvidenceKey(href))
+	}
+	phases[match]["evidence_refs"] = refs
+	operationPlanAdvanceNextPendingPhase(phases)
+	plan["phases"] = mapsToInterfaceSlice(phases)
+	operationPlanMarkEvidenceCurrent(plan)
+	if operationPlanPhasesTerminal(phases) {
+		plan["status"] = operationPlanStatusCompleted
+		plan["pending_next_action"] = "none"
+	} else {
+		plan["status"] = operationPlanStatusRunning
+	}
+	operationPlanSyncStrategyState(plan)
+	next := copyStringAnyMap(metadata)
+	next["operation_plan"] = plan
+	return next
 }
 
 func clientActionEventFromMetadata(metadata map[string]interface{}, actionID string) (map[string]interface{}, bool) {

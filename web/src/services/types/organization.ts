@@ -1,3 +1,5 @@
+import type { AgentResourceBoundImpact, AgentResourceImpactAgent } from './common';
+
 export interface Organization {
   id: string;
   name: string;
@@ -419,11 +421,43 @@ export interface WorkspaceAssetMoveRequest {
   target_workspace_id: string;
   target_folder_id?: string;
   items: WorkspaceAssetMoveItem[];
+  agent_binding_action?: 'unbind';
+  impact_token?: string;
+}
+
+export interface WorkspaceAssetMoveEligibleTargetsRequest {
+  items: WorkspaceAssetMoveItem[];
+  keyword?: string;
+  page?: number;
+  limit?: number;
+}
+
+export interface WorkspaceAssetMoveDependencyPreviewRequest {
+  items: WorkspaceAssetMoveItem[];
+}
+
+export interface WorkspaceAssetMoveDependencyPreviewResponse {
+  agent_binding_impact?: {
+    agents: AgentResourceImpactAgent[];
+  };
 }
 
 export interface WorkspaceAssetMoveWorkspace {
   id: string;
   name?: string;
+}
+
+export interface WorkspaceAssetMoveEligibleTarget {
+  id: string;
+  name: string;
+}
+
+export interface WorkspaceAssetMoveEligibleTargetsResponse {
+  data: WorkspaceAssetMoveEligibleTarget[];
+  page: number;
+  limit: number;
+  total: number;
+  has_more: boolean;
 }
 
 export interface WorkspaceAssetMovePreviewItem {
@@ -439,6 +473,7 @@ export interface WorkspaceAssetMovePreviewItem {
 export interface WorkspaceAssetMovePreviewResponse {
   movable: boolean;
   items: WorkspaceAssetMovePreviewItem[];
+  agent_binding_impact?: AgentResourceBoundImpact;
 }
 
 export interface WorkspaceAssetMoveResponse {

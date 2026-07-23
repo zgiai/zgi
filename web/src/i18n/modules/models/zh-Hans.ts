@@ -111,6 +111,10 @@ const messages: ModelsMessages = {
       moderation: '内容审核',
       reasoning: '深度推理',
       'function-calling': '函数调用',
+      agent: '智能体模型',
+    },
+    tags: {
+      agent: '推荐',
     },
     empty: {
       noModelsTitle: '需要先配置模型',

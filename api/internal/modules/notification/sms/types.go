@@ -6,14 +6,18 @@ import (
 )
 
 const (
-	FeatureNotificationSMS            = "notification_sms"
-	TemplatePendingActionNotification = "pending_action_notification"
-	TemplateParamNotificationTitle    = "notification_title"
-	TemplateParamLinkCode             = "link_code"
-	ProviderAliyun                    = "aliyun"
-	ProviderChuanglan                 = "chuanglan"
-	ParamModeMap                      = "map"
-	ParamModeOrderedParam             = "ordered_param"
+	FeatureNotificationSMS             = "notification_sms"
+	TemplatePendingActionNotification  = "pending_action_notification"
+	TemplateParamNotificationTitle     = "notification_title"
+	TemplateAuthPhoneRegisterCode      = "auth_phone_register_code"
+	TemplateAuthPhoneLoginCode         = "auth_phone_login_code"
+	TemplateAuthPhoneResetPasswordCode = "auth_phone_reset_password_code"
+	TemplateParamVerificationCode      = "code"
+	TemplateParamLinkCode              = "link_code"
+	ProviderAliyun                     = "aliyun"
+	ProviderChuanglan                  = "chuanglan"
+	ParamModeMap                       = "map"
+	ParamModeOrderedParam              = "ordered_param"
 )
 
 type Service interface {

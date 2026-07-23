@@ -579,6 +579,36 @@ func TestPreparedResultMetadataStoresOperationResultSummary(t *testing.T) {
 	}
 }
 
+func TestPreparedResultMetadataDoesNotFinalizeRunningOperationPlan(t *testing.T) {
+	metadata := preparedResultMetadata(map[string]interface{}{
+		"operation_plan": map[string]interface{}{
+			"status": operationPlanStatusRunning,
+			"phases": []interface{}{
+				map[string]interface{}{
+					"id":                "phase-reconcile",
+					"status":            operationPlanStepStatusPending,
+					"verification_mode": "model_reconciliation",
+				},
+			},
+		},
+	}, nil)
+
+	plan := mapFromOperationContext(metadata["operation_plan"])
+	if got := stringFromAny(plan["status"]); got != operationPlanStatusRunning {
+		t.Fatalf("operation_plan.status = %q, want %q", got, operationPlanStatusRunning)
+	}
+	phases := mapSliceFromAny(plan["phases"])
+	if len(phases) != 1 {
+		t.Fatalf("operation_plan.phases = %#v, want one running phase", phases)
+	}
+	if got := stringFromAny(phases[0]["status"]); got != operationPlanStepStatusPending {
+		t.Fatalf("phase.status = %q, want %q", got, operationPlanStepStatusPending)
+	}
+	if _, exists := phases[0]["completed_at"]; exists {
+		t.Fatalf("phase.completed_at should not be written by intermediate metadata persistence: %#v", phases[0])
+	}
+}
+
 func TestCompactOperationPlanForPromptOmitsLegacyPlanDeviations(t *testing.T) {
 	compact := compactOperationPlanForPrompt(map[string]interface{}{
 		"version": operationPlanVersion,

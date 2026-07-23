@@ -40,6 +40,7 @@ import (
 type AppContext struct {
 	AppID              *uuid.UUID // App ID (agent or dataset)
 	AppType            *string    // App type: "agent" or "dataset"
+	ModelUseCase       *string    // Optional explicit model routing contract
 	AccountID          *uuid.UUID // User account ID who is using the app
 	WorkspaceID        *string    // Optional workspace subject for workspace-level quota billing
 	BillingSubjectType *string    // Optional billing subject override for app-scoped calls

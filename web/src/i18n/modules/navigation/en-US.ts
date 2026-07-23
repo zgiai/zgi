@@ -19,6 +19,7 @@ const messages = {
   datasets: 'Datasets',
   agents: 'Agents',
   workflows: 'Workflows',
+  workflowAgents: 'Workflow Agents',
   prompts: 'Prompts',
   dbs: 'Databases',
   files: 'Files',

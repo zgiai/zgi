@@ -11,6 +11,7 @@ import (
 	"unicode"
 
 	"github.com/google/uuid"
+	"github.com/zgiai/zgi/api/internal/capabilities/agentbindings"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/skillloop"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
@@ -42,6 +43,7 @@ func (s *service) runPreparedToolLoop(
 	onChunk func(string) error,
 	onEvent func(StreamEvent) error,
 ) (string, *adapter.Usage, error) {
+	beginPreparedUsageExecution(prepared)
 	if s.llmClient == nil {
 		return "", nil, fmt.Errorf("llm client is not configured")
 	}
@@ -72,9 +74,10 @@ func (s *service) runPreparedToolLoop(
 
 	timeline := newProcessTimelineRecorder(ctx, persistCtx, s, prepared, onEvent)
 	runner := &skillloop.Runner{
-		LLMClient:    s.llmClient,
-		SkillRuntime: s.skillRuntime,
-		AppContext:   newBillingAppContext(prepared),
+		LLMClient:        s.llmClient,
+		SkillRuntime:     s.skillRuntime,
+		AppContext:       newBillingAppContext(prepared),
+		ModelIdleTimeout: s.modelIdleTimeoutValue(),
 		OnEvent: func(event skillloop.Event) error {
 			if event.Type == skillloop.EventUserInputRequested {
 				s.persistUserInputRequestBestEffort(persistCtx, prepared, event.Payload)
@@ -103,34 +106,121 @@ func (s *service) runPreparedToolLoop(
 	loopPrepared.Query = strings.TrimSpace(prepared.parts.Query)
 	loopPrepared.CurrentRoute = contextualTurnCurrentPage(prepared.parts)
 	loopPrepared.Surface = normalizeAIChatSurface(prepared.parts.Surface)
-	preferExplicitFinalAnswer := skillLoopPrefersExplicitFinalAnswer(prepared)
+	preferExplicitFinalAnswer := skillLoopPrefersExplicitFinalAnswer(prepared) && !prepared.TerminalOnly
 	if prepared.Message.Metadata == nil {
 		prepared.Message.Metadata = map[string]interface{}{}
 	}
-	if preferExplicitFinalAnswer {
+	if prepared.TerminalOnly {
+		prepared.Message.Metadata["final_answer_protocol"] = "terminal_assistant_content"
+	} else if preferExplicitFinalAnswer {
 		prepared.Message.Metadata["final_answer_protocol"] = skills.MetaToolFinalAnswer + "_preferred"
 	} else {
 		prepared.Message.Metadata["final_answer_protocol"] = "assistant_content"
+	}
+	runtimeStateSnapshot := skillLoopRuntimeStateSnapshot(prepared)
+	onTerminalStateGuardDecision := skillLoopTerminalStateGuardDecision(prepared)
+	onTerminalCompletion := skillLoopTerminalCompletionResult(prepared)
+	if prepared.parts.ExecutionMode == executionModeLegacyToolChat {
+		runtimeStateSnapshot = nil
+		onTerminalStateGuardDecision = nil
+		onTerminalCompletion = nil
 	}
 	answer, usage, err := runner.Run(ctx, skillloop.RunRequest{
 		Prepared:                       loopPrepared,
 		Resolved:                       resolved,
 		ProtocolToolsOnly:              len(resolved.Skills) == 0,
+		LegacyToolChat:                 prepared.parts.ExecutionMode == executionModeLegacyToolChat,
 		ExecutionContext:               s.skillExecutionContext(prepared),
 		PreferExplicitFinalAnswer:      preferExplicitFinalAnswer,
 		SuppressInitialNaturalProgress: prepared.SuppressInitialNaturalProgress,
 		AdditionalSystemMessages:       skillLoopAdditionalSystemMessagesForResolved(prepared, resolved),
-		RuntimeStateSnapshot:           skillLoopRuntimeStateSnapshot(prepared),
+		RuntimeStateSnapshot:           runtimeStateSnapshot,
 		CurrentMetadata:                skillLoopCurrentMetadata(prepared),
-		OnTerminalStateGuardDecision:   skillLoopTerminalStateGuardDecision(prepared),
-		OnTerminalCompletion:           skillLoopTerminalCompletionResult(prepared),
+		OnTerminalStateGuardDecision:   onTerminalStateGuardDecision,
+		OnTerminalCompletion:           onTerminalCompletion,
 		OnChunk:                        onChunk,
+		PlanningOutputTokenLimit:       planningOutputTokenLimit(prepared),
+		AuthorizeSkillStep:             s.currentAgentSkillStepAuthorizer(prepared),
+		PreferredRestoredSkillID:       prepared.PreferredRestoredSkillID,
+		ContinuationType:               prepared.ContinuationType,
+		TerminalOnly:                   prepared.TerminalOnly,
 	})
 	timeline.FlushPendingIntermediateAnswers(err)
 	if err != nil && strings.TrimSpace(answer) != "" {
 		s.persistPartialSkillLoopAnswerBestEffort(persistCtx, prepared, answer, usage)
 	}
 	return answer, usage, err
+}
+
+func (s *service) currentOrganizationSkillStepAuthorizer(organizationID uuid.UUID) func(context.Context, string) (bool, error) {
+	return func(ctx context.Context, skillID string) (bool, error) {
+		catalog, err := s.catalogSkillMetadata(ctx, organizationID)
+		if err != nil {
+			return false, err
+		}
+		enabled, err := s.effectiveOrganizationSkillIDs(ctx, organizationID, catalog)
+		if err != nil {
+			return false, err
+		}
+		return organizationAllowsSkillID(skillID, catalog, enabled), nil
+	}
+}
+
+func (s *service) currentAgentSkillStepAuthorizer(prepared *PreparedChat) func(context.Context, string) (bool, error) {
+	organizationID := uuid.Nil
+	if prepared != nil {
+		organizationID = prepared.Scope.OrganizationID
+	}
+	organizationAuthorizer := s.currentOrganizationSkillStepAuthorizer(organizationID)
+	if prepared == nil || normalizeCallerType(prepared.Caller.Type) != runtimemodel.ConversationCallerAgent {
+		return organizationAuthorizer
+	}
+	bindingVerifier := s.currentAgentBindingVerifier(prepared)
+	return func(ctx context.Context, skillID string) (bool, error) {
+		allowed, err := organizationAuthorizer(ctx, skillID)
+		if err != nil || !allowed {
+			return allowed, err
+		}
+		// Runtime-managed hidden Skills are derived from their concrete resource
+		// bindings and are checked again by Tool Governance before invocation.
+		if skills.SystemSkillExposureProfile(skillID).RuntimeManaged {
+			return true, nil
+		}
+		if bindingVerifier == nil {
+			return false, nil
+		}
+		return bindingVerifier(ctx, skills.AgentBindingCheck{
+			BindingType: "skill",
+			ResourceID:  strings.TrimSpace(skillID),
+			AccessMode:  "execute",
+		})
+	}
+}
+
+func planningOutputTokenLimit(prepared *PreparedChat) int {
+	if prepared == nil || prepared.parts == nil {
+		return 0
+	}
+	control := prepared.parts.ContextControl
+	reservedOutput, _ := operationPlanEvidenceIntFromAny(control["reserved_output_tokens"])
+	modelLimit, _ := operationPlanEvidenceIntFromAny(control["model_max_output_tokens"])
+	safeLimit, _ := operationPlanEvidenceIntFromAny(control["safe_context_limit"])
+	promptTokens, _ := operationPlanEvidenceIntFromAny(control["estimated_prompt_tokens"])
+	available := safeLimit - promptTokens
+	limit := reservedOutput
+	if limit <= 0 {
+		limit = available
+	}
+	if limit <= 0 {
+		limit = modelLimit
+	}
+	if available > 0 && limit > available {
+		limit = available
+	}
+	if modelLimit > 0 && limit > modelLimit {
+		limit = modelLimit
+	}
+	return limit
 }
 
 func (s *service) persistPartialSkillLoopAnswerBestEffort(ctx context.Context, prepared *PreparedChat, answer string, usage *adapter.Usage) {
@@ -141,7 +231,7 @@ func (s *service) persistPartialSkillLoopAnswerBestEffort(ctx context.Context, p
 	if metadata == nil {
 		metadata = map[string]interface{}{}
 	}
-	metadata["usage"] = usageMetadata(usage)
+	metadata = applyPreparedUsageMetadata(prepared, metadata, usage)
 	metadata["system_prompt_version"] = systemPromptVersion
 	if err := s.repos.Message.UpdatePartialAnswer(ctx, prepared.Message.ID, answer, metadata); err != nil {
 		logger.WarnContext(ctx, "failed to persist partial aichat skill-loop answer", "message_id", prepared.Message.ID.String(), err)
@@ -196,6 +286,9 @@ func skillLoopHasOperationPlan(prepared *PreparedChat) bool {
 
 func skillLoopPrefersExplicitFinalAnswer(prepared *PreparedChat) bool {
 	if prepared == nil {
+		return false
+	}
+	if prepared.parts != nil && prepared.parts.ExecutionMode == executionModeLegacyToolChat {
 		return false
 	}
 	if normalizeCallerType(prepared.Caller.Type) == runtimemodel.ConversationCallerAgent {
@@ -288,9 +381,13 @@ func skillLoopRuntimeStateSnapshot(prepared *PreparedChat) skillloop.RuntimeStat
 			}
 		}
 		if ledger := skillLoopRuntimeStateSnapshotLedger(metadata); len(ledger) > 0 {
-			evidenceLedger := mapsToInterfaceSlice(ledger)
-			evidence["evidence_ledger"] = evidenceLedger
-			executionLedger["evidence_ledger"] = evidenceLedger
+			reference := map[string]interface{}{
+				"source":   "operation_plan.evidence_ledger",
+				"revision": operationPlanCurrentEvidenceRevision(mapFromOperationContext(metadata["operation_plan"])),
+				"count":    len(ledger),
+			}
+			evidence["evidence_ledger_ref"] = reference
+			executionLedger["evidence_ledger_ref"] = reference
 		}
 		if summary := skillLoopCompletionExecutionSummary(metadata); len(summary) > 0 {
 			if operationSummary := skillLoopCompletionOperationResultSummary(summary); len(operationSummary) > 0 {
@@ -713,6 +810,9 @@ func skillLoopCompletionPlanSummary(plan map[string]interface{}) map[string]inte
 	if phases := operationPlanCompactPhasesForPrompt(plan["phases"], 8); len(phases) > 0 {
 		summary["phases"] = phases
 	}
+	if outcomes := operationPlanCompactOutcomesForPrompt(plan[operationPlanOutcomesKey], 8); len(outcomes) > 0 {
+		summary["outcomes"] = outcomes
+	}
 	if state := mapFromOperationContext(plan["strategy_state"]); len(state) > 0 {
 		summary["strategy_state"] = operationPlanCompactStrategyStateForPrompt(state, true)
 	}
@@ -762,7 +862,7 @@ func operationPlanCompactPhasesForPrompt(value interface{}, limit int) []interfa
 			break
 		}
 		item := map[string]interface{}{}
-		for _, key := range []string{"id", "step", "title", "status", "note"} {
+		for _, key := range []string{"id", "outcome_id", "step", "title", "status", "note", "verification_mode", "completion_source"} {
 			if text := strings.TrimSpace(stringFromAny(phase[key])); text != "" {
 				item[key] = compactForPrompt(text, 240)
 			}
@@ -773,11 +873,28 @@ func operationPlanCompactPhasesForPrompt(value interface{}, limit int) []interfa
 		if refs := stringSliceFromAny(phase["evidence_refs"]); len(refs) > 0 {
 			item["evidence_refs"] = compactStringSliceForPrompt(refs, 12, 240)
 		}
+		if refs := stringSliceFromAny(phase["effect_refs"]); len(refs) > 0 {
+			item["effect_refs"] = compactStringSliceForPrompt(refs, 12, 240)
+		}
 		if points := stringSliceFromAny(phase["observation_points"]); len(points) > 0 {
 			item["observation_points"] = compactStringSliceForPrompt(points, 6, 180)
 		}
 		if criteria := stringSliceFromAny(phase["success_criteria"]); len(criteria) > 0 {
 			item["success_criteria"] = compactStringSliceForPrompt(criteria, 6, 180)
+		}
+		if expectedAction := mapFromOperationContext(phase["expected_action"]); len(expectedAction) > 0 {
+			action := map[string]interface{}{}
+			for _, key := range []string{"skill_id", "tool_name"} {
+				if value := strings.TrimSpace(stringFromAny(expectedAction[key])); value != "" {
+					action[key] = compactForPrompt(value, 160)
+				}
+			}
+			if target := mapFromOperationContext(expectedAction["target"]); len(target) > 0 {
+				action["target"] = target
+			}
+			if len(action) > 0 {
+				item["expected_action"] = action
+			}
 		}
 		if len(item) > 0 {
 			out = append(out, item)
@@ -785,6 +902,62 @@ func operationPlanCompactPhasesForPrompt(value interface{}, limit int) []interfa
 	}
 	if len(out) == 0 {
 		return nil
+	}
+	return out
+}
+
+func operationPlanCompactOutcomesForPrompt(value interface{}, limit int) []interface{} {
+	outcomes := mapSliceFromAny(value)
+	if len(outcomes) == 0 || limit <= 0 {
+		return nil
+	}
+	out := make([]interface{}, 0, minInt(len(outcomes), limit))
+	for _, outcome := range outcomes {
+		if len(out) >= limit {
+			break
+		}
+		item := map[string]interface{}{}
+		for _, key := range []string{"id", "goal", "title", "status", "verification_mode", "target_resource_type", "target_resource_id"} {
+			if text := strings.TrimSpace(stringFromAny(outcome[key])); text != "" {
+				item[key] = compactForPrompt(text, 240)
+			}
+		}
+		if required, exists := outcome["required"].(bool); exists {
+			item["required"] = required
+		}
+		for _, key := range []string{"depends_on", "capabilities", "constraints", "effect_refs"} {
+			if values := stringSliceFromAny(outcome[key]); len(values) > 0 {
+				item[key] = compactStringSliceForPrompt(values, 10, 180)
+			}
+		}
+		if acceptance := mapFromOperationContext(outcome["acceptance"]); len(acceptance) > 0 {
+			compactAcceptance := map[string]interface{}{"mode": firstNonEmptyString(acceptance["mode"], "all")}
+			effects := make([]interface{}, 0, 6)
+			for _, effect := range mapSliceFromAny(acceptance["effects"]) {
+				if len(effects) >= 6 {
+					break
+				}
+				compactEffect := map[string]interface{}{}
+				for _, key := range []string{"type", "resource_type", "resource_id"} {
+					if text := strings.TrimSpace(stringFromAny(effect[key])); text != "" {
+						compactEffect[key] = compactForPrompt(text, 160)
+					}
+				}
+				if fields := stringSliceFromAny(effect["fields"]); len(fields) > 0 {
+					compactEffect["fields"] = compactStringSliceForPrompt(fields, 8, 120)
+				}
+				if len(compactEffect) > 0 {
+					effects = append(effects, compactEffect)
+				}
+			}
+			if len(effects) > 0 {
+				compactAcceptance["effects"] = effects
+				item["acceptance"] = compactAcceptance
+			}
+		}
+		if len(item) > 0 {
+			out = append(out, item)
+		}
 	}
 	return out
 }
@@ -1119,6 +1292,10 @@ func (s *service) skillExecutionContext(prepared *PreparedChat) skills.Execution
 	if normalizeCallerType(prepared.Caller.Type) == runtimemodel.ConversationCallerAgent {
 		invokeFrom = tools.ToolInvokeFromAgent
 	}
+	runtimeParameters := skillRuntimeParametersForPrepared(prepared)
+	if verifier := s.currentAgentBindingVerifier(prepared); verifier != nil {
+		runtimeParameters = skills.WithAgentBindingVerifier(runtimeParameters, verifier)
+	}
 	return skills.ExecutionContext{
 		OrganizationID:    prepared.Scope.OrganizationID.String(),
 		UserID:            prepared.Scope.AccountID.String(),
@@ -1126,7 +1303,43 @@ func (s *service) skillExecutionContext(prepared *PreparedChat) skills.Execution
 		AppID:             appID,
 		MessageID:         prepared.Message.ID.String(),
 		InvokeFrom:        invokeFrom,
-		RuntimeParameters: skillRuntimeParametersForPrepared(prepared),
+		RuntimeParameters: runtimeParameters,
+	}
+}
+
+func (s *service) currentAgentBindingVerifier(prepared *PreparedChat) skills.AgentBindingVerifier {
+	if s == nil || s.repos == nil || s.repos.DB == nil || prepared == nil ||
+		normalizeCallerType(prepared.Caller.Type) != runtimemodel.ConversationCallerAgent ||
+		prepared.Caller.ID == nil || *prepared.Caller.ID == uuid.Nil {
+		return nil
+	}
+	agentID := *prepared.Caller.ID
+	scope := agentbindings.ScopePublished
+	if normalizeConversationSource(prepared.Caller.Source) == runtimemodel.ConversationSourceConsole {
+		scope = agentbindings.ScopeDraft
+	}
+	repo := agentbindings.NewRepository(s.repos.DB)
+	return func(ctx context.Context, check skills.AgentBindingCheck) (bool, error) {
+		ref := agentbindings.ScopeRef{AgentID: agentID, Scope: scope}
+		if scope == agentbindings.ScopePublished {
+			var versionIDs []uuid.UUID
+			if err := s.repos.DB.WithContext(ctx).Model(&agentbindings.Binding{}).
+				Where("agent_id = ? AND binding_scope = ? AND published_version_uuid IS NOT NULL", agentID, scope).
+				Limit(1).
+				Pluck("published_version_uuid", &versionIDs).Error; err != nil {
+				return false, fmt.Errorf("resolve current Agent published binding version: %w", err)
+			}
+			if len(versionIDs) == 0 || versionIDs[0] == uuid.Nil {
+				return false, nil
+			}
+			ref.PublishedVersionUUID = &versionIDs[0]
+		}
+		return repo.HasBinding(ctx, ref, agentbindings.Match{
+			BindingType:      agentbindings.BindingType(check.BindingType),
+			ResourceID:       check.ResourceID,
+			ParentResourceID: check.ParentResourceID,
+			AccessMode:       check.AccessMode,
+		})
 	}
 }
 
@@ -1364,11 +1577,12 @@ func contextualAIChatTurnStrategyMessage(prepared *PreparedChat) (adapter.Messag
 	content := strings.Join([]string{
 		"Current assistant turn task contract:",
 		"This is a soft semantic contract for the current user turn, not a fixed action runtime plan.",
-		"Use it to understand phases, target assets, success criteria, and verification points. Treat intent as a broad compatibility label, not as the full task meaning.",
+		"Use outcomes to understand the independently verifiable user-visible results, their dependencies, constraints, and semantic capabilities. Treat phases as a compatibility projection and intent as a broad routing label, not as the full task meaning.",
 		"Choose concrete tools from the currently enabled tool schemas and latest evidence.",
+		"Tool success records an action attempt and one or more runtime effects. Do not treat a prerequisite read, navigation request, approval, or arbitrary successful tool as proof of a different outcome.",
 		"For multi-action user requests, keep a private progress checklist from the full user goal. Do not stop after the first successful mutation if later requested outcomes remain unfinished.",
 		"If the initial strategy omits a clearly requested later step, choose the next relevant enabled skill/tool, let the operation plan be amended by evidence, and continue from the newest tool result.",
-		"Do not claim a structured operation is complete until a matching tool result or page/client evidence supports it. If a candidate or target resource is missing, stop and report the missing evidence instead of calling a governed mutation.",
+		"Do not claim a structured operation is complete until matching runtime effects or page/client evidence satisfy its outcome acceptance facts. If a candidate or target resource is missing, stop and report the missing evidence instead of calling a governed mutation.",
 		"Do not expose this strategy JSON, internal IDs, or raw fields to the user.",
 		"Turn strategy JSON: " + string(encoded),
 	}, "\n")
@@ -1457,6 +1671,7 @@ type AIChatTurnStrategy struct {
 	RouteRequired            bool                        `json:"route_required"`
 	PrimarySkills            []string                    `json:"primary_skills"`
 	SupportingSkills         []string                    `json:"supporting_skills"`
+	Outcomes                 []AIChatTurnOutcome         `json:"outcomes,omitempty"`
 	PhaseGoals               []string                    `json:"phase_goals,omitempty"`
 	EvidenceRequired         []string                    `json:"evidence_required,omitempty"`
 	RecommendedCapabilities  []string                    `json:"recommended_capabilities,omitempty"`
@@ -1477,6 +1692,20 @@ type AIChatTurnStrategy struct {
 	CapabilityGoals          []AIChatAgentCapabilityGoal `json:"capability_goals,omitempty"`
 
 	PlannedTools []AIChatTurnStrategyTool `json:"planned_tools,omitempty"`
+}
+
+// AIChatTurnOutcome describes a user-visible result, not a tool call. The
+// runtime compiles its semantic capability hints into verifiable effects and
+// is responsible for deciding which concrete tools can produce them.
+type AIChatTurnOutcome struct {
+	ID                 string   `json:"id,omitempty"`
+	Goal               string   `json:"goal"`
+	TargetResourceType string   `json:"target_resource_type,omitempty"`
+	TargetResourceID   string   `json:"target_resource_id,omitempty"`
+	DependsOn          []string `json:"depends_on,omitempty"`
+	Capabilities       []string `json:"capabilities,omitempty"`
+	Constraints        []string `json:"constraints,omitempty"`
+	Required           *bool    `json:"required,omitempty"`
 }
 
 const (
@@ -1892,7 +2121,20 @@ func chatPartsBusinessSkillsEnabled(parts *chatRequestParts) bool {
 }
 
 func chatPartsToolLoopEnabled(parts *chatRequestParts) bool {
-	return parts != nil && (parts.ProtocolToolsEnabled || chatPartsBusinessSkillsEnabled(parts))
+	return parts != nil && parts.ExecutionMode != executionModeDirectChat &&
+		(parts.ProtocolToolsEnabled || chatPartsBusinessSkillsEnabled(parts))
+}
+
+func continuationMessageForExecutionMode(message adapter.Message, mode string) adapter.Message {
+	if normalizeExecutionMode(mode) != executionModeLegacyToolChat {
+		return message
+	}
+	message.Content = strings.TrimSpace(stringFromAny(message.Content)) + "\n" + strings.Join([]string{
+		"Legacy tool-chat override for this continuation:",
+		"The Agent planning and terminal-answer protocol tools are not available. Ignore any instruction above to call update_plan, submit_turn_state, submit_intermediate_answer, or submit_final_answer.",
+		"Call only the tools exposed in this request when more work is needed; otherwise answer the user directly.",
+	}, "\n")
+	return message
 }
 
 func contextualAgentManagementStrategy(parts *chatRequestParts, strategy *AIChatTurnStrategy) *AIChatTurnStrategy {

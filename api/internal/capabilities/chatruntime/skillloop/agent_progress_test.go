@@ -64,10 +64,13 @@ func TestAgenticSkillLoopSystemMessageProgressGuidance(t *testing.T) {
 		"Do not start every task by listing resources or navigating",
 		"Do not announce that you need to navigate",
 		"describe the outcome as executed and verified",
-		"reconcile the complete user request with your latest plan and evidence",
+		"reconcile the complete user request with the execution evidence",
 		"A backend read or mutation does not prove that the page changed",
 		"do not submit while you still intend to perform an open phase",
 		"submit_intermediate_answer is for substantial user-facing deliverables only",
+		"except when the requested destination is a generated or managed file",
+		"Do not emit the same long body through submit_intermediate_answer and then repeat it in generate_file",
+		"Emit the full body in chat only when the user explicitly requests both an inline copy and a file",
 	} {
 		if !strings.Contains(content, want) {
 			t.Fatalf("system message missing %q in:\n%s", want, content)

@@ -105,6 +105,7 @@ func (r *tenantRouteRepository) Update(ctx context.Context, route *model.LLMRout
 		"model_maps",
 		"param_override",
 		"header_override",
+		"validation_report",
 		"tags",
 		"description",
 		"priority",

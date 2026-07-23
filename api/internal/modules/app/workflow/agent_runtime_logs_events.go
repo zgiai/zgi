@@ -6,8 +6,21 @@ import (
 	"strings"
 )
 
-func agentRuntimeTotalSteps(metadata map[string]interface{}) int {
-	return len(agentRuntimeEvents(metadata)) + 1
+func agentRuntimeTotalSteps(metadata map[string]interface{}, messageStatus string) int {
+	count := len(agentRuntimeEvents(metadata))
+	if agentRuntimeHasTerminalAnswerStep(messageStatus) {
+		count++
+	}
+	return count
+}
+
+func agentRuntimeHasTerminalAnswerStep(messageStatus string) bool {
+	switch strings.TrimSpace(messageStatus) {
+	case "completed", "error", "stopped":
+		return true
+	default:
+		return false
+	}
 }
 
 func agentRuntimeEvents(metadata map[string]interface{}) []map[string]interface{} {
@@ -17,11 +30,14 @@ func agentRuntimeEvents(metadata map[string]interface{}) []map[string]interface{
 		filterAgentRuntimeWorkflowToolEvents(runtimeSkillInvocations(metadata["skill_invocations"]), len(workflowEvents) > 0),
 		workflowEvents...,
 	))
+	allEvents := append(append(make([]map[string]interface{}, 0, len(modelEvents)+len(activityEvents)), modelEvents...), activityEvents...)
+	if timeline := runtimeSkillInvocations(metadata["runtime_timeline"]); len(timeline) > 0 {
+		return orderAgentRuntimeEventsFromTimeline(allEvents, timeline)
+	}
 	if len(modelEvents) > 0 && len(activityEvents) > 0 {
 		return interleaveAgentRuntimeEvents(modelEvents, activityEvents)
 	}
-	events := append(modelEvents, activityEvents...)
-	return sortAgentRuntimeEventsStable(events)
+	return sortAgentRuntimeEventsStable(allEvents)
 }
 
 func runtimeWorkflowRunEvents(value interface{}) []map[string]interface{} {
@@ -40,6 +56,8 @@ func runtimeWorkflowRunEvent(run map[string]interface{}, runIndex int) map[strin
 		"status":           runtimeString(run["status"]),
 		"duration_ms":      metadataNumber(run, "elapsed_time"),
 		"created_at":       run["created_at"],
+		"created_at_ms":    run["created_at_ms"],
+		"sequence":         run["sequence"],
 		"workflow_run_id":  runtimeString(run["workflow_run_id"]),
 		"workflow_id":      runtimeString(run["workflow_id"]),
 		"agent_id":         runtimeString(run["agent_id"]),
@@ -369,8 +387,14 @@ func sortAgentRuntimeEventsStable(events []map[string]interface{}) []map[string]
 	sort.SliceStable(events, func(i, j int) bool {
 		left := agentRuntimeEventSortValue(events[i])
 		right := agentRuntimeEventSortValue(events[j])
-		if left == 0 || right == 0 || left == right {
-			return i < j
+		if left == right {
+			return false
+		}
+		if left == 0 {
+			return false
+		}
+		if right == 0 {
+			return true
 		}
 		return left < right
 	})
@@ -381,11 +405,11 @@ func agentRuntimeEventSortValue(event map[string]interface{}) int64 {
 	if value := int64(metadataNumber(event, "created_at_ms")); value > 0 {
 		return value
 	}
-	if value := runtimeIDTimestampMillis(runtimeString(event["runtime_id"])); value > 0 {
-		return value
-	}
 	if value := int64(metadataNumber(event, "created_at")); value > 0 {
 		return value * 1000
+	}
+	if value := runtimeIDTimestampMillis(runtimeString(event["runtime_id"])); value > 0 {
+		return value
 	}
 	return 0
 }
@@ -410,31 +434,131 @@ func runtimeIDTimestampMillis(runtimeID string) int64 {
 
 func interleaveAgentRuntimeEvents(modelEvents []map[string]interface{}, skillEvents []map[string]interface{}) []map[string]interface{} {
 	events := make([]map[string]interface{}, 0, len(modelEvents)+len(skillEvents))
-	skillIndex := 0
+	used := make([]bool, len(skillEvents))
 	for _, modelEvent := range modelEvents {
 		events = append(events, modelEvent)
-		for range modelResponseToolCalls(modelEvent) {
-			if skillIndex >= len(skillEvents) {
+		for _, toolName := range modelResponseToolCallNames(modelEvent) {
+			for skillIndex, skillEvent := range skillEvents {
+				if used[skillIndex] || !agentRuntimeToolMatchesEvent(toolName, skillEvent) {
+					continue
+				}
+				events = append(events, skillEvent)
+				used[skillIndex] = true
 				break
 			}
-			events = append(events, skillEvents[skillIndex])
-			skillIndex++
 		}
 	}
-	for skillIndex < len(skillEvents) {
-		events = append(events, skillEvents[skillIndex])
-		skillIndex++
+	for skillIndex, skillEvent := range skillEvents {
+		if !used[skillIndex] {
+			events = append(events, skillEvent)
+		}
 	}
 	return events
 }
 
-func modelResponseToolCalls(event map[string]interface{}) []interface{} {
+func modelResponseToolCallNames(event map[string]interface{}) []string {
 	response := runtimeMap(event["response"])
-	message := runtimeMap(response["message"])
-	if calls, ok := message["tool_calls"].([]interface{}); ok {
-		return calls
+	names := runtimeStringList(response["tool_call_names"])
+	if len(names) > 0 {
+		return names
 	}
-	return nil
+	message := runtimeMap(response["message"])
+	calls, ok := message["tool_calls"].([]interface{})
+	if !ok {
+		return nil
+	}
+	names = make([]string, 0, len(calls))
+	for _, rawCall := range calls {
+		call := runtimeMap(rawCall)
+		function := runtimeMap(call["function"])
+		names = append(names, runtimeString(function["name"]))
+	}
+	return names
+}
+
+func runtimeStringList(value interface{}) []string {
+	if items, ok := value.([]string); ok {
+		out := make([]string, 0, len(items))
+		for _, item := range items {
+			if text := strings.TrimSpace(item); text != "" {
+				out = append(out, text)
+			}
+		}
+		return out
+	}
+	items, ok := value.([]interface{})
+	if !ok {
+		return nil
+	}
+	out := make([]string, 0, len(items))
+	for _, item := range items {
+		if text := runtimeString(item); text != "" {
+			out = append(out, text)
+		}
+	}
+	return out
+}
+
+func agentRuntimeToolMatchesEvent(toolName string, event map[string]interface{}) bool {
+	toolName = strings.TrimSpace(toolName)
+	if toolName == "" {
+		return true
+	}
+	if strings.EqualFold(runtimeString(event["tool_name"]), toolName) {
+		return true
+	}
+	switch agentRuntimeEventType(event) {
+	case "user_input_request":
+		return toolName == "request_user_input"
+	case "skill_load":
+		return toolName == "load_skill"
+	default:
+		return false
+	}
+}
+
+func orderAgentRuntimeEventsFromTimeline(events []map[string]interface{}, timeline []map[string]interface{}) []map[string]interface{} {
+	orderedTimeline := append([]map[string]interface{}(nil), timeline...)
+	sort.SliceStable(orderedTimeline, func(i, j int) bool {
+		return int64(metadataNumber(orderedTimeline[i], "sequence")) < int64(metadataNumber(orderedTimeline[j], "sequence"))
+	})
+	used := make([]bool, len(events))
+	ordered := make([]map[string]interface{}, 0, len(events))
+	for _, entry := range orderedTimeline {
+		for eventIndex, event := range events {
+			if used[eventIndex] || !runtimeTimelineEntryMatchesEvent(entry, event) {
+				continue
+			}
+			if sequence := int64(metadataNumber(entry, "sequence")); sequence > 0 {
+				event["sequence"] = sequence
+			}
+			if createdAtMS := int64(metadataNumber(entry, "created_at_ms")); createdAtMS > 0 && agentRuntimeEventSortValue(event) == 0 {
+				event["created_at_ms"] = createdAtMS
+				event["created_at"] = createdAtMS / 1000
+			}
+			ordered = append(ordered, event)
+			used[eventIndex] = true
+			break
+		}
+	}
+	remaining := make([]map[string]interface{}, 0, len(events)-len(ordered))
+	for eventIndex, event := range events {
+		if !used[eventIndex] {
+			remaining = append(remaining, event)
+		}
+	}
+	return append(ordered, sortAgentRuntimeEventsStable(remaining)...)
+}
+
+func runtimeTimelineEntryMatchesEvent(entry map[string]interface{}, event map[string]interface{}) bool {
+	source := runtimeString(entry["source"])
+	sourceID := runtimeString(entry["source_id"])
+	runtimeID := runtimeString(entry["runtime_id"])
+	if source == "workflow_runs" {
+		return agentRuntimeEventType(event) == "workflow_run" && sourceID != "" && sourceID == runtimeString(event["workflow_run_id"])
+	}
+	eventRuntimeID := runtimeString(event["runtime_id"])
+	return eventRuntimeID != "" && (eventRuntimeID == runtimeID || eventRuntimeID == sourceID)
 }
 
 func agentRuntimeEventType(event map[string]interface{}) string {

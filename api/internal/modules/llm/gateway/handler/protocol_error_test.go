@@ -61,6 +61,13 @@ func TestClassifyProtocolError(t *testing.T) {
 			wantAnthropicType: "api_error",
 		},
 		{
+			name:              "platform channel unavailable",
+			err:               adapter.ErrPlatformChannelUnavailable,
+			wantStatus:        http.StatusBadGateway,
+			wantCode:          adapter.ErrorCodePlatformChannelUnavailable,
+			wantAnthropicType: "api_error",
+		},
+		{
 			name:              "billing lane mismatch",
 			err:               gateway.ErrBillingLaneMismatch,
 			wantStatus:        http.StatusInternalServerError,

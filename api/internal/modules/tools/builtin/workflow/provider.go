@@ -146,6 +146,7 @@ func (t *workflowTool) runWorkflow(ctx context.Context, scope workflowScope, par
 	if binding.VersionStrategy == automationaction.WorkflowVersionStrategyPinned && strings.TrimSpace(binding.VersionUUID) == "" {
 		return nil, fmt.Errorf("workflow binding %s requires version_uuid for pinned strategy", binding.BindingID)
 	}
+	scope = workflowScopeForBinding(t.Runtime(), scope, binding)
 	runner := t.runner()
 	if runner == nil {
 		return nil, fmt.Errorf("automation workflow runner is not configured")
@@ -208,22 +209,37 @@ func (t *workflowTool) getWorkflowRunStatus(ctx context.Context, scope workflowS
 	if !ok {
 		return nil, fmt.Errorf("workflow run status reader is not configured")
 	}
-	result, err := reader.GetAutomationWorkflowRunStatus(ctx, automationaction.WorkflowRunStatusRequest{
-		OrganizationID: scope.OrganizationID,
-		WorkspaceID:    scope.WorkspaceID,
-		AccountID:      scope.AccountID,
-		WorkflowRunID:  workflowRunID,
-	})
-	if err != nil {
-		return nil, err
+	var lastErr error
+	for _, candidateScope := range workflowScopesForBindings(t.Runtime(), scope, bindings) {
+		result, err := reader.GetAutomationWorkflowRunStatus(ctx, automationaction.WorkflowRunStatusRequest{
+			OrganizationID: candidateScope.OrganizationID,
+			WorkspaceID:    candidateScope.WorkspaceID,
+			AccountID:      candidateScope.AccountID,
+			WorkflowRunID:  workflowRunID,
+		})
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		if result == nil {
+			lastErr = fmt.Errorf("workflow run status is empty")
+			continue
+		}
+		targetBinding, allowed := workflowBindingForRun(result, bindings)
+		if !allowed {
+			lastErr = fmt.Errorf("workflow_run_id %s is not part of the current Agent workflow bindings", workflowRunID)
+			continue
+		}
+		targetScope := workflowScopeForBinding(t.Runtime(), scope, targetBinding)
+		if targetScope.AccountID != candidateScope.AccountID {
+			continue
+		}
+		return jsonMessages(workflowStatusPayload(result))
 	}
-	if result == nil {
-		return nil, fmt.Errorf("workflow run status is empty")
+	if lastErr != nil {
+		return nil, lastErr
 	}
-	if !workflowRunAllowed(result, bindings) {
-		return nil, fmt.Errorf("workflow_run_id %s is not part of the current Agent workflow bindings", workflowRunID)
-	}
-	return jsonMessages(workflowStatusPayload(result))
+	return nil, fmt.Errorf("workflow run status is empty")
 }
 
 func workflowResultPayload(result *automationaction.WorkflowRunResult, runErr error, binding workflowBinding) map[string]interface{} {
@@ -520,18 +536,23 @@ func workflowOutputKeys(outputs map[string]interface{}) []string {
 }
 
 func workflowRunAllowed(result *automationaction.WorkflowRunStatusResult, bindings []workflowBinding) bool {
+	_, allowed := workflowBindingForRun(result, bindings)
+	return allowed
+}
+
+func workflowBindingForRun(result *automationaction.WorkflowRunStatusResult, bindings []workflowBinding) (workflowBinding, bool) {
 	if result == nil || strings.TrimSpace(result.WorkflowID) == "" || strings.TrimSpace(result.AgentID) == "" {
-		return false
+		return workflowBinding{}, false
 	}
 	for _, binding := range bindings {
 		if strings.TrimSpace(binding.AgentID) != strings.TrimSpace(result.AgentID) {
 			continue
 		}
 		if strings.TrimSpace(binding.WorkflowID) == strings.TrimSpace(result.WorkflowID) {
-			return true
+			return binding, true
 		}
 	}
-	return false
+	return workflowBinding{}, false
 }
 
 func jsonMessages(payload map[string]interface{}) ([]tools.ToolInvokeMessage, error) {
@@ -564,6 +585,42 @@ func workflowScopeFromRuntime(runtime *tools.ToolRuntime, userID string) (workfl
 		return workflowScope{}, fmt.Errorf("workspace_id is required")
 	}
 	return workflowScope{OrganizationID: organizationID, WorkspaceID: workspaceID, AccountID: accountID}, nil
+}
+
+func workflowScopeForBinding(runtime *tools.ToolRuntime, scope workflowScope, binding workflowBinding) workflowScope {
+	if runtime == nil || runtime.InvokeFrom != tools.ToolInvokeFromAgent {
+		return scope
+	}
+	if authorization, ok := tools.AgentBindingAuthorizationFor(
+		runtime.RuntimeParameters,
+		"workflow",
+		strings.TrimSpace(binding.AgentID),
+		strings.TrimSpace(binding.BindingID),
+		"execute",
+	); ok {
+		scope.AccountID = authorization.BoundByAccountID
+	}
+	return scope
+}
+
+func workflowScopesForBindings(runtime *tools.ToolRuntime, fallback workflowScope, bindings []workflowBinding) []workflowScope {
+	result := make([]workflowScope, 0, len(bindings)+1)
+	seen := make(map[string]struct{}, len(bindings)+1)
+	for _, binding := range bindings {
+		scope := workflowScopeForBinding(runtime, fallback, binding)
+		if strings.TrimSpace(scope.AccountID) == "" {
+			continue
+		}
+		if _, ok := seen[scope.AccountID]; ok {
+			continue
+		}
+		seen[scope.AccountID] = struct{}{}
+		result = append(result, scope)
+	}
+	if len(result) == 0 {
+		result = append(result, fallback)
+	}
+	return result
 }
 
 type workflowBinding struct {

@@ -72,6 +72,8 @@ const Input = React.forwardRef<HTMLInputElement, InputProps>(
         data-slot="input"
         className={cn(
           inputVariants({ variant, error: isError, className: !root ? className : undefined }),
+          // Preserve thin lower glyph strokes (for example "_") at fractional display scaling.
+          '[-webkit-text-stroke:0.1px_currentColor]',
           needsAdornmentLayer && 'w-full',
           leftIcon && 'pl-10',
           rightIcon && 'pr-10',

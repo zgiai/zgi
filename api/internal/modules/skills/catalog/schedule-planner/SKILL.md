@@ -11,13 +11,16 @@ max_calls_per_turn: 5
 timeout_seconds: 5
 display:
   icon: calendar-days
-  category: productivity
+  category: planning_decision
+  scenarios:
+    - office_collaboration
+    - planning_decision
   label:
     en_US: Schedule Planner
     zh_Hans: 日程规划
   description:
-    en_US: Turns goals, tasks, deadlines, and availability into practical schedules and agendas.
-    zh_Hans: 将目标、任务、截止时间和可用时间整理成可执行的日程计划。
+    en_US: Designed for daily plans, weekly schedules, meetings, study, or workload coordination; arranges goals, tasks, deadlines, priorities, and availability into an actionable timetable.
+    zh_Hans: 适用于每日计划、每周排期、会议、学习或工作负载安排，可根据目标、任务、截止时间、优先级和可用时间生成可执行日程。
   when_to_use:
     en_US: Use for planning days, weeks, task schedules, meeting agendas, study plans, or workload arrangements.
     zh_Hans: 用于规划每日安排、每周计划、任务排期、会议议程、学习计划或工作负载。

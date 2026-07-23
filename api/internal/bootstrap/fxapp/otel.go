@@ -33,7 +33,7 @@ type OpenTelemetryResource struct {
 }
 
 func provideOpenTelemetryResource(cfg *config.Config, log *zap.Logger) (*OpenTelemetryResource, error) {
-	if cfg == nil || !cfg.OpenTelemetry.Enabled {
+	if cfg == nil || !cfg.Observability.ReporterEnabled("otel", cfg.OpenTelemetry.Enabled) {
 		log.Info("OpenTelemetry tracing disabled")
 		return &OpenTelemetryResource{}, nil
 	}

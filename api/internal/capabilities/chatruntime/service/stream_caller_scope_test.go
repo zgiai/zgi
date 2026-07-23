@@ -77,6 +77,7 @@ func TestBeginWorkflowApprovalContinuationRejectsOtherCallerBeforeMessageLookup(
 		context.Background(),
 		Scope{OrganizationID: organizationID, AccountID: accountID},
 		Caller{Type: runtimemodel.ConversationCallerAgent, ID: &otherAgentID},
+		RunConfig{},
 		conversationID,
 		messageID,
 	)
@@ -89,6 +90,63 @@ func TestBeginWorkflowApprovalContinuationRejectsOtherCallerBeforeMessageLookup(
 	}
 	if messageRepo.getScopedCalled {
 		t.Fatalf("message lookup should not run after caller-scoped conversation denial")
+	}
+}
+
+func TestBeginWorkflowApprovalContinuationRejectsUnavailableBindingBeforeStreaming(t *testing.T) {
+	for _, status := range []string{
+		runtimemodel.MessageStatusWaitingApproval,
+		runtimemodel.MessageStatusWaitingQuestion,
+	} {
+		t.Run(status, func(t *testing.T) {
+			organizationID := uuid.New()
+			accountID := uuid.New()
+			agentID := uuid.New()
+			conversationID := uuid.New()
+			messageID := uuid.New()
+			targetAgentID := uuid.NewString()
+			message := &runtimemodel.Message{
+				ID:             messageID,
+				ConversationID: conversationID,
+				Status:         status,
+				Metadata: map[string]interface{}{
+					"agent_workflow_continuation": map[string]interface{}{
+						"workflow_run_id": "run-1",
+						"binding_id":      "removed-binding",
+						"agent_id":        targetAgentID,
+					},
+				},
+			}
+			messageRepo := &callerScopedStreamMessageRepo{message: message}
+			conversationRepo := &callerScopedStreamConversationRepo{
+				allowedCallerType: runtimemodel.ConversationCallerAgent,
+				allowedCallerID:   agentID,
+			}
+			svc := &service{repos: &repository.Repositories{
+				Access:       callerScopedStreamAccessRepo{},
+				Conversation: conversationRepo,
+				Message:      messageRepo,
+			}}
+
+			_, err := svc.BeginWorkflowApprovalContinuation(
+				context.Background(),
+				Scope{OrganizationID: organizationID, AccountID: accountID},
+				Caller{Type: runtimemodel.ConversationCallerAgent, ID: &agentID},
+				RunConfig{WorkflowBindings: []AgentWorkflowBinding{{
+					BindingID: "another-binding",
+					AgentID:   targetAgentID,
+				}}},
+				conversationID,
+				messageID,
+			)
+
+			if !errors.Is(err, ErrWorkflowBindingUnavailable) {
+				t.Fatalf("BeginWorkflowApprovalContinuation() error = %v, want ErrWorkflowBindingUnavailable", err)
+			}
+			if message.Status != status {
+				t.Fatalf("message status = %q, want waiting status %q unchanged", message.Status, status)
+			}
+		})
 	}
 }
 
@@ -166,6 +224,43 @@ func TestUpdateConversationByCallerRejectsOtherCallerBeforeUpdate(t *testing.T) 
 	}
 	if conversationRepo.updateScopedCalled {
 		t.Fatalf("conversation update should not run after caller-scoped denial")
+	}
+}
+
+func TestUpdateConversationByCallerReturnsThroughCallerScope(t *testing.T) {
+	organizationID := uuid.New()
+	accountID := uuid.New()
+	agentID := uuid.New()
+	conversationID := uuid.New()
+	conversationRepo := &callerScopedStreamConversationRepo{
+		allowedCallerType: runtimemodel.ConversationCallerAgent,
+		allowedCallerID:   agentID,
+	}
+	svc := &service{
+		repos: &repository.Repositories{
+			Access:       callerScopedStreamAccessRepo{},
+			Conversation: conversationRepo,
+			Message:      &callerScopedStreamMessageRepo{},
+		},
+	}
+	title := "renamed"
+
+	_, err := svc.UpdateConversationByCaller(
+		context.Background(),
+		Scope{OrganizationID: organizationID, AccountID: accountID},
+		Caller{Type: runtimemodel.ConversationCallerAgent, ID: &agentID},
+		conversationID,
+		runtimedto.UpdateConversationRequest{Title: &title},
+	)
+
+	if err != nil {
+		t.Fatalf("UpdateConversationByCaller() error = %v", err)
+	}
+	if !conversationRepo.updateScopedCalled {
+		t.Fatal("conversation update was not called")
+	}
+	if conversationRepo.getScopedCalled {
+		t.Fatal("caller-scoped update should not fall back to an untyped conversation lookup")
 	}
 }
 
@@ -311,7 +406,7 @@ type callerScopedStreamConversationRepo struct {
 	deleteScopedCalled      bool
 }
 
-func (r *callerScopedStreamConversationRepo) GetByCallerScoped(_ context.Context, id, organizationID, accountID uuid.UUID, callerType string, callerID *uuid.UUID) (*runtimemodel.Conversation, error) {
+func (r *callerScopedStreamConversationRepo) GetByCallerScoped(_ context.Context, id, organizationID, accountID uuid.UUID, callerType string, callerID *uuid.UUID, _ string) (*runtimemodel.Conversation, error) {
 	r.getByCallerScopedCalled = true
 	if callerType != r.allowedCallerType || callerID == nil || *callerID != r.allowedCallerID {
 		return nil, gorm.ErrRecordNotFound

@@ -14,7 +14,7 @@ import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { useStore } from 'zustand';
-import { ArrowDown, Settings2 } from 'lucide-react';
+import { ArrowDown, RefreshCw } from 'lucide-react';
 import type {
   ModelSelectorModelProps,
   ModelSelectorValue,
@@ -34,6 +34,7 @@ import {
   selectIsRecoveringMessages,
   selectIsLoadingOlderMessages,
   selectIsStopping,
+  shouldTreatConversationAsRunning,
   mergeRuntimeTimelineWithMessageTimeline,
   timelineFromAIChatMessage,
 } from '@/components/chat/controllers/aichat/selectors';
@@ -120,6 +121,7 @@ import type {
   AIChatOperationContext,
   AIChatToolGovernancePermissionTier,
 } from '@/components/aichat/contextual/types';
+import type { ModelUseCase } from '@/services/types/model';
 
 export { AIChatMessageBubble } from '@/components/chat/variants/aichat/message-bubble';
 export type { AIChatModelValue } from '@/components/chat/variants/aichat/types';
@@ -134,6 +136,8 @@ interface AIChatShellProps {
   beforeSend?: () => boolean | Promise<boolean>;
   variant?: 'full' | 'embedded';
   showModelSelector?: boolean;
+  modelUseCase?: ModelUseCase;
+  preferredModelUseCase?: ModelUseCase;
   requireModel?: boolean;
   showMemoryToggle?: boolean;
   forcedUseMemory?: boolean;
@@ -243,6 +247,8 @@ export function AIChatShell({
   beforeSend,
   variant = 'full',
   showModelSelector = true,
+  modelUseCase = 'agent',
+  preferredModelUseCase,
   requireModel = true,
   showMemoryToggle = true,
   forcedUseMemory,
@@ -310,6 +316,9 @@ export function AIChatShell({
   const conversationPagination = useStore(controller.store, state => state.pagination);
   const activeConversationId = useStore(controller.store, state => state.activeConversationId);
   const activeConversation = useStore(controller.store, selectActiveConversation);
+  const activeConversationRunning = useStore(controller.store, state =>
+    shouldTreatConversationAsRunning(state, state.activeConversationId)
+  );
   const activeMessages = useStore(controller.store, selectActiveMessages);
   const activeMessagePagination = useStore(controller.store, selectActiveMessagePagination);
   const isLoadingMessages = useStore(controller.store, state => state.isLoadingMessages);
@@ -781,7 +790,6 @@ export function AIChatShell({
           requestId,
           {
             answers,
-            surface: effectiveRuntimeSurface,
             operation_context: toolGovernanceOperationContext,
           }
         )
@@ -789,18 +797,11 @@ export function AIChatShell({
           toast.error(t('consoleChat.userInputRequest.continuationUnavailable'));
         });
     },
-    [
-      activeUserInputMessage,
-      controller,
-      isSending,
-      effectiveRuntimeSurface,
-      t,
-      toolGovernanceOperationContext,
-    ]
+    [activeUserInputMessage, controller, isSending, t, toolGovernanceOperationContext]
   );
 
   const handleRegenerate = useCallback(
-    (message: AIChatMessage) => {
+    async (message: AIChatMessage) => {
       const branchCount = branchNavigationByMessageId.get(message.id)?.total ?? 1;
       const canReplaceRoot = canReplaceRootMessage(message);
       if (messageActionsLocked) return;
@@ -809,6 +810,7 @@ export function AIChatShell({
         toast.error(t('consoleChat.modelRequired'));
         return;
       }
+      if (beforeSend && !(await beforeSend())) return;
 
       void controller.regenerate(
         message.id,
@@ -825,6 +827,7 @@ export function AIChatShell({
     },
     [
       branchNavigationByMessageId,
+      beforeSend,
       canReplaceRootMessage,
       controller,
       messageActionsLocked,
@@ -882,7 +885,6 @@ export function AIChatShell({
             model: modelSelectorValue.model,
             parameters: modelSelectorValue.params,
           },
-          runtimeSurface: effectiveRuntimeSurface,
           operationContext: toolGovernanceOperationContext,
         });
         return;
@@ -1123,22 +1125,6 @@ export function AIChatShell({
     );
   }, [draftSkillPreferenceIds, t, updateSkillPreference]);
 
-  const skillPreferenceAction = useMemo(() => {
-    if (!enableAIChatSkillPreference) return null;
-    return (
-      <Button
-        variant="ghost"
-        isIcon
-        className={cn(isEmbedded ? embeddedControlButtonClassName : 'size-8 text-muted-foreground')}
-        onClick={() => handleSkillPreferenceOpenChange(true)}
-        title={t('consoleChat.skillPreferences.action')}
-        aria-label={t('consoleChat.skillPreferences.action')}
-      >
-        <Settings2 className="size-4" />
-      </Button>
-    );
-  }, [enableAIChatSkillPreference, handleSkillPreferenceOpenChange, isEmbedded, t]);
-
   const embeddedConversationControls = useMemo(() => {
     if (!showEmbeddedConversationDrawer) return null;
     const controls = {
@@ -1158,14 +1144,7 @@ export function AIChatShell({
         startNewConversation={controls.startNewConversation}
         conversationsLabel={t('consoleChat.historySubtitle')}
         newConversationLabel={t('chat.newConversation')}
-        trailingAction={
-          assetAuditButton || skillPreferenceAction ? (
-            <>
-              {assetAuditButton}
-              {skillPreferenceAction}
-            </>
-          ) : null
-        }
+        trailingAction={assetAuditButton}
       />
     );
   }, [
@@ -1174,7 +1153,6 @@ export function AIChatShell({
     isHome,
     renderEmbeddedConversationControls,
     showEmbeddedConversationDrawer,
-    skillPreferenceAction,
     t,
   ]);
 
@@ -1237,11 +1215,8 @@ export function AIChatShell({
               onToggleSidebar={handleToggleSidebar}
               onStartNew={handleNewChat}
               rightAction={
-                assetAuditButton || skillPreferenceAction ? (
-                  <div className="flex items-center justify-end gap-1">
-                    {assetAuditButton}
-                    {skillPreferenceAction}
-                  </div>
+                assetAuditButton ? (
+                  <div className="flex items-center justify-end gap-1">{assetAuditButton}</div>
                 ) : undefined
               }
             />
@@ -1329,6 +1304,30 @@ export function AIChatShell({
             </Button>
           ) : null}
 
+          {controller.connectionState === 'disconnected' && activeConversationRunning ? (
+            <div
+              className="absolute inset-x-4 z-30 flex items-center justify-between gap-3 border-y bg-background/95 px-3 py-2 text-xs text-muted-foreground backdrop-blur"
+              style={{ bottom: Math.max(inputAreaHeight + 8, 86) }}
+            >
+              <span>{t('consoleChat.streamDisconnected')}</span>
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                className="h-7 shrink-0 px-2"
+                onClick={() => {
+                  if (!activeConversation?.id) return;
+                  void controller.recoverStreamingConversation(activeConversation.id, {
+                    mode: 'active',
+                  });
+                }}
+              >
+                <RefreshCw className="mr-1.5 size-3.5" />
+                {t('consoleChat.reconnectStream')}
+              </Button>
+            </div>
+          ) : null}
+
           <AIChatInputArea
             isEmbedded={isEmbedded}
             isHome={isHome}
@@ -1340,7 +1339,7 @@ export function AIChatShell({
             isModelInitializing={isModelInitializing}
             modelMissing={modelMissing}
             isSending={isSending}
-            canStop={canStopPendingWorkflowInteraction || isSending}
+            canStop={canStopPendingWorkflowInteraction || activeConversationRunning}
             isStopping={isStopping}
             onInputChange={setInput}
             onSend={handleSend}
@@ -1352,11 +1351,16 @@ export function AIChatShell({
             onModelChange={onModelChange}
             onHeightChange={setInputAreaHeight}
             showModelSelector={showModelSelector}
+            modelUseCase={modelUseCase}
+            preferredModelUseCase={preferredModelUseCase}
             showMemoryToggle={showMemoryToggle}
             enableUpload={enableUpload}
             uploadScope={uploadScope}
             showFileLibraryPicker={showFileLibraryPicker}
             allowWorkspaceSwitch={allowWorkspaceSwitch}
+            showSkillManagement={enableAIChatSkillPreference}
+            skillManagementLabel={t('consoleChat.skillPreferences.action')}
+            onOpenSkillManagement={() => handleSkillPreferenceOpenChange(true)}
             inputPlaceholder={inputPlaceholder}
             surface={surface}
             showToolGovernancePermissionControl={showToolGovernancePermissionControl}
@@ -1445,6 +1449,7 @@ export function AIChatShell({
       {enableAIChatSkillPreference ? (
         <AIChatSkillPreferenceDialog
           open={skillPreferenceOpen}
+          context={runtimeSurface === 'contextual_sidebar' ? 'platform-assistant' : 'conversation'}
           locale={locale}
           skills={aichatConfigurableSkills}
           selectedSkillIds={draftSkillPreferenceIds}

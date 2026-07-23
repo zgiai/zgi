@@ -13,7 +13,6 @@ import (
 	"github.com/google/uuid"
 	llmmodelmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
 	llmmodelrepo "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/repository"
-	llmmodelsvc "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/service"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 )
 
@@ -35,6 +34,11 @@ const (
 
 type modelLookupRepository interface {
 	ListAvailableByNames(ctx context.Context, names []string, provider string, useCase string) ([]*llmmodelmodel.LLMModel, error)
+}
+
+type privateModelLookup interface {
+	ListActiveModelsByNames(ctx context.Context, organizationID uuid.UUID, modelNames []string) ([]*llmmodelmodel.CustomModel, error)
+	ResolveActiveModelsForProvider(ctx context.Context, organizationID uuid.UUID, provider string, modelNames []string) ([]*llmmodelmodel.CustomModel, error)
 }
 
 type cachedModelCapability struct {
@@ -63,7 +67,7 @@ type ValidationResult struct {
 // Validator validates channels against local model metadata and upstream capabilities.
 type Validator struct {
 	modelRepo     modelLookupRepository
-	privateModels llmmodelsvc.PrivateModelLookupService
+	privateModels privateModelLookup
 	newAdapter    func(config *adapter.AdapterConfig) (adapter.LLMProviderAdapter, error)
 	now           func() time.Time
 	cacheTTL      time.Duration
@@ -73,7 +77,7 @@ type Validator struct {
 }
 
 // NewValidator creates a new usecase-aware channel validator.
-func NewValidator(modelRepo llmmodelrepo.ModelRepository, privateModels llmmodelsvc.PrivateModelLookupService) *Validator {
+func NewValidator(modelRepo llmmodelrepo.ModelRepository, privateModels privateModelLookup) *Validator {
 	return &Validator{
 		modelRepo:     modelRepo,
 		privateModels: privateModels,

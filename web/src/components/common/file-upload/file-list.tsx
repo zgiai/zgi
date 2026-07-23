@@ -51,6 +51,7 @@ export const FileList: React.FC<FileListProps> = ({
 
   const failedCount = items.filter(item => item.status === 'error').length;
   const successCount = items.filter(item => item.status === 'success').length;
+  const shouldShowQueueSummary = failedCount > 0 || successCount > 0;
   const tQueue = (key: string, values?: Record<string, number>) =>
     queueSummaryNamespace === 'files'
       ? tFiles(`upload.${key}` as never, values)
@@ -65,19 +66,19 @@ export const FileList: React.FC<FileListProps> = ({
           <h3 className="text-sm font-semibold text-foreground">
             {tQueue('selectedFilesTitle', { count: items.length })}
           </h3>
-          <p className="mt-1 text-xs text-muted-foreground">
-            {failedCount > 0
-              ? tQueue('selectedFilesValidationSummary', {
-                  count: items.length,
-                  failedCount,
-                })
-              : successCount > 0
-                ? tQueue('selectedFilesResultSummary', {
-                    successCount,
+          {shouldShowQueueSummary ? (
+            <p className="mt-1 text-xs text-muted-foreground">
+              {failedCount > 0
+                ? tQueue('selectedFilesValidationSummary', {
+                    count: items.length,
                     failedCount,
                   })
-                : tQueue('selectedFilesPendingSummary', { count: items.length })}
-          </p>
+                : tQueue('selectedFilesResultSummary', {
+                    successCount,
+                    failedCount,
+                  })}
+            </p>
+          ) : null}
         </div>
         {failedCount > 0 ? (
           <p className="flex items-center gap-1.5 text-xs text-destructive" role="status">

@@ -453,6 +453,50 @@ func TestSummarizeToolResultPreservesAgentConfigUpdatedFields(t *testing.T) {
 	}
 }
 
+func TestSummarizeToolResultPreservesSystemPromptPatchEvidenceWithoutBody(t *testing.T) {
+	result := SummarizeToolResult(skills.SkillAgentManagement, "update_agent_config", []tools.ToolInvokeMessage{{
+		Type: tools.ToolInvokeMessageTypeJSON,
+		Data: map[string]interface{}{
+			"status":               "completed",
+			"agent_id":             "agent-1",
+			"updated_fields":       []string{"system_prompt"},
+			"system_prompt_digest": "sha256:result",
+			"system_prompt_chars":  120,
+			"system_prompt_patch": map[string]interface{}{
+				"operation":            "append",
+				"base_sha256":          "sha256:base",
+				"appended_characters":  20,
+				"resulting_characters": 120,
+				"separator":            "\n\n",
+				"separator_sha256":     "sha256:separator",
+				"separator_characters": 2,
+				"source": map[string]interface{}{
+					"type":       "managed_file",
+					"file_id":    "file-1",
+					"name":       "chapter.md",
+					"sha256":     "sha256:source",
+					"characters": 20,
+					"text":       "must not leak",
+				},
+			},
+		},
+	}})
+	patch := recordFromAny(result["system_prompt_patch"])
+	if patch["operation"] != "append" || patch["separator_sha256"] != "sha256:separator" || patch["separator_characters"] != 2 {
+		t.Fatalf("patch evidence = %#v, want operation and separator digest", patch)
+	}
+	if _, leaked := patch["separator"]; leaked {
+		t.Fatalf("separator leaked into compact result: %#v", patch)
+	}
+	source := recordFromAny(patch["source"])
+	if source["file_id"] != "file-1" || source["sha256"] != "sha256:source" || source["characters"] != 20 {
+		t.Fatalf("source evidence = %#v, want file id/digest/chars", source)
+	}
+	if _, leaked := source["text"]; leaked {
+		t.Fatalf("prompt body leaked into compact result: %#v", source)
+	}
+}
+
 func TestSummarizeToolResultPreservesAgentConfigReadModelEvidence(t *testing.T) {
 	result := SummarizeToolResult(skills.SkillAgentManagement, "get_agent_config", []tools.ToolInvokeMessage{{
 		Type: tools.ToolInvokeMessageTypeJSON,

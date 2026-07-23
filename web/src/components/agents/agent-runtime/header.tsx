@@ -2,7 +2,6 @@
 
 import { useState, type ReactNode } from 'react';
 import {
-  Bot,
   CheckCircle2,
   Cloud,
   CloudOff,
@@ -45,6 +44,7 @@ import type { WebAppStatus } from '@/services/types/agent';
 import type { AgentRuntimeAgent, AgentRuntimeSaveState } from './types';
 import { PublishSettingsDialog } from './publish-settings-dialog';
 import { getAgentTextIconDisplay } from './utils';
+import { EditAgentDialog } from '@/components/agents/agent-dialog/edit-dialog';
 
 const WEB_APP_OFFLINE_REASON_MAX_LENGTH = 500;
 
@@ -55,6 +55,7 @@ interface AgentRuntimeHeaderProps {
   saveText: string;
   isDirty: boolean;
   isPublishing: boolean;
+  canEditBasicInfo?: boolean;
   disablePrimaryActions?: boolean;
   disablePublishActions?: boolean;
   disablePublishSettingsActions?: boolean;
@@ -76,6 +77,7 @@ export function AgentRuntimeHeader({
   saveText,
   isDirty,
   isPublishing,
+  canEditBasicInfo = true,
   disablePrimaryActions = false,
   disablePublishActions = disablePrimaryActions,
   disablePublishSettingsActions = disablePublishActions,
@@ -93,6 +95,7 @@ export function AgentRuntimeHeader({
   const webAppStatusMutation = useUpdateWebAppStatus();
   const [webAppStatusDialogOpen, setWebAppStatusDialogOpen] = useState(false);
   const [publishSettingsOpen, setPublishSettingsOpen] = useState(false);
+  const [basicInfoOpen, setBasicInfoOpen] = useState(false);
   const [offlineReason, setOfflineReason] = useState('');
   const saveDotClassName =
     saveState === 'error'
@@ -161,10 +164,32 @@ export function AgentRuntimeHeader({
   return (
     <>
       <header className="flex h-14 shrink-0 items-center justify-between gap-3 border-b bg-background px-4">
-        <div className="flex min-w-0 items-center gap-3">
+        <div
+          role={canEditBasicInfo ? 'button' : undefined}
+          tabIndex={canEditBasicInfo ? 0 : undefined}
+          className={cn(
+            '-m-1 flex min-w-0 items-center gap-3 rounded-lg p-1 text-left outline-none transition-colors',
+            canEditBasicInfo &&
+              'cursor-pointer hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2'
+          )}
+          onClick={canEditBasicInfo ? () => setBasicInfoOpen(true) : undefined}
+          onKeyDown={
+            canEditBasicInfo
+              ? event => {
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    setBasicInfoOpen(true);
+                  }
+                }
+              : undefined
+          }
+          aria-label={canEditBasicInfo ? t('header.editBasicInfo') : undefined}
+        >
           <div
             className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-sm font-semibold text-primary"
-            style={agent?.icon_type === 'text' ? { backgroundColor: textIcon.background } : undefined}
+            style={
+              agent?.icon_type === 'text' ? { backgroundColor: textIcon.background } : undefined
+            }
           >
             {agent?.icon_type === 'image' && agent.icon_url ? (
               <img src={agent.icon_url} alt="" className="size-full rounded-lg object-cover" />
@@ -174,20 +199,13 @@ export function AgentRuntimeHeader({
               </span>
             )}
           </div>
-          <div className="min-w-0">
-            <div className="flex min-w-0 items-center gap-2">
-              <h1 className="truncate text-sm font-semibold">{agent?.name || t('fallbackName')}</h1>
-              <Badge
-                variant="outline"
-                className="hidden h-6 gap-1 rounded-md px-2 text-[11px] sm:inline-flex"
-              >
-                <Bot className="size-3" />
-                {t('fallbackName')}
-              </Badge>
-            </div>
-            <div className="hidden truncate text-xs text-muted-foreground lg:block">
-              {agent?.description || t('defaultModeDescription')}
-            </div>
+          <div className="min-w-0 max-w-[320px]">
+            <h1 className="truncate text-sm font-semibold">{agent?.name || t('fallbackName')}</h1>
+            {agent?.description ? (
+              <div className="hidden truncate text-xs text-muted-foreground lg:block">
+                {agent.description}
+              </div>
+            ) : null}
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-1.5">
@@ -434,6 +452,7 @@ export function AgentRuntimeHeader({
         canManage={!disablePublishSettingsActions}
         onOpenChange={setPublishSettingsOpen}
       />
+      <EditAgentDialog open={basicInfoOpen} onOpenChange={setBasicInfoOpen} agentId={agentId} />
     </>
   );
 }

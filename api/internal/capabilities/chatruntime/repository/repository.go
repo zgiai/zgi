@@ -17,14 +17,14 @@ import (
 type ConversationRepository interface {
 	Create(ctx context.Context, conversation *runtimemodel.Conversation) error
 	GetScoped(ctx context.Context, id, organizationID, accountID uuid.UUID) (*runtimemodel.Conversation, error)
-	GetByCallerScoped(ctx context.Context, id, organizationID, accountID uuid.UUID, callerType string, callerID *uuid.UUID) (*runtimemodel.Conversation, error)
+	GetByCallerScoped(ctx context.Context, id, organizationID, accountID uuid.UUID, callerType string, callerID *uuid.UUID, conversationType string) (*runtimemodel.Conversation, error)
 	GetRuntimeLogScoped(ctx context.Context, id, organizationID uuid.UUID, workspaceID *uuid.UUID, accountID uuid.UUID, callerType string, callerID *uuid.UUID, source string) (*runtimemodel.Conversation, error)
 	GetBySourceConversation(ctx context.Context, sourceConversationID uuid.UUID) (*runtimemodel.Conversation, error)
 	ListScoped(ctx context.Context, organizationID, accountID uuid.UUID, limit, offset int) ([]*runtimemodel.Conversation, int64, error)
-	ListByCallerScoped(ctx context.Context, organizationID, accountID uuid.UUID, callerType string, callerID *uuid.UUID, limit, offset int) ([]*runtimemodel.Conversation, int64, error)
-	ListByCallerSourceScoped(ctx context.Context, organizationID, accountID uuid.UUID, callerType string, callerID *uuid.UUID, source string, sourceWebAppID *uuid.UUID, limit, offset int) ([]*runtimemodel.Conversation, int64, error)
+	ListByCallerScoped(ctx context.Context, organizationID, accountID uuid.UUID, callerType string, callerID *uuid.UUID, conversationType string, limit, offset int) ([]*runtimemodel.Conversation, int64, error)
+	ListByCallerSourceScoped(ctx context.Context, organizationID, accountID uuid.UUID, callerType string, callerID *uuid.UUID, conversationType string, source string, sourceWebAppID *uuid.UUID, limit, offset int) ([]*runtimemodel.Conversation, int64, error)
 	ListByCallerSurfaceScoped(ctx context.Context, organizationID, accountID uuid.UUID, callerType string, callerID *uuid.UUID, surface string, limit, offset int) ([]*runtimemodel.Conversation, int64, error)
-	SearchByCallerScoped(ctx context.Context, organizationID, accountID uuid.UUID, callerType string, callerID *uuid.UUID, source string, sourceWebAppID *uuid.UUID, surface string, queryText string, limit int) ([]*SearchResult, error)
+	SearchByCallerScoped(ctx context.Context, organizationID, accountID uuid.UUID, callerType string, callerID *uuid.UUID, conversationType string, source string, sourceWebAppID *uuid.UUID, surface string, queryText string, limit int) ([]*SearchResult, error)
 	UpdateScoped(ctx context.Context, id, organizationID, accountID uuid.UUID, updates map[string]interface{}) error
 	UpdateMetadata(ctx context.Context, id uuid.UUID, metadata map[string]interface{}) error
 	DeleteScoped(ctx context.Context, id, organizationID, accountID uuid.UUID) error
@@ -67,6 +67,14 @@ type MessageRepository interface {
 	MarkStaleActiveAsError(ctx context.Context, cutoff time.Time, message string) (int64, error)
 }
 
+type RuntimeLeaseRepository interface {
+	Begin(ctx context.Context, messageID, runID uuid.UUID, at time.Time) error
+	Renew(ctx context.Context, messageID, runID uuid.UUID, at time.Time) (bool, error)
+	Release(ctx context.Context, messageID, runID uuid.UUID) error
+	ListExpiredActiveIDs(ctx context.Context, heartbeatCutoff, legacyCutoff time.Time) ([]uuid.UUID, error)
+	MarkExpiredActiveAsError(ctx context.Context, heartbeatCutoff, legacyCutoff time.Time, message string) ([]uuid.UUID, error)
+}
+
 type AccessRepository interface {
 	IsOrganizationMember(ctx context.Context, organizationID, accountID uuid.UUID) (bool, error)
 	GetCurrentWorkspaceID(ctx context.Context, accountID uuid.UUID) (*uuid.UUID, error)
@@ -94,6 +102,7 @@ type CustomSkillRepository interface {
 type Repositories struct {
 	Conversation ConversationRepository
 	Message      MessageRepository
+	RuntimeLease RuntimeLeaseRepository
 	Access       AccessRepository
 	SkillConfig  OrganizationSkillConfigRepository
 	SkillPref    AccountSkillPreferenceRepository
@@ -119,6 +128,7 @@ func NewRepositories(db *gorm.DB) *Repositories {
 	return &Repositories{
 		Conversation: NewConversationRepository(db),
 		Message:      NewMessageRepository(db),
+		RuntimeLease: NewRuntimeLeaseRepository(db),
 		Access:       NewAccessRepository(db),
 		SkillConfig:  NewOrganizationSkillConfigRepository(db),
 		SkillPref:    NewAccountSkillPreferenceRepository(db),
@@ -149,6 +159,9 @@ func (r *conversationRepository) Create(ctx context.Context, conversation *runti
 	if conversation.CallerType == "" {
 		conversation.CallerType = runtimemodel.ConversationCallerAIChat
 	}
+	if conversation.ConversationType == "" {
+		conversation.ConversationType = runtimemodel.ConversationTypeChat
+	}
 	if conversation.Source == "" {
 		conversation.Source = runtimemodel.ConversationSourceConsole
 	}
@@ -174,10 +187,10 @@ func (r *conversationRepository) GetScoped(ctx context.Context, id, organization
 	return &conversation, nil
 }
 
-func (r *conversationRepository) GetByCallerScoped(ctx context.Context, id, organizationID, accountID uuid.UUID, callerType string, callerID *uuid.UUID) (*runtimemodel.Conversation, error) {
+func (r *conversationRepository) GetByCallerScoped(ctx context.Context, id, organizationID, accountID uuid.UUID, callerType string, callerID *uuid.UUID, conversationType string) (*runtimemodel.Conversation, error) {
 	var conversation runtimemodel.Conversation
-	query := applyCallerFilter(r.db.WithContext(ctx).
-		Where("id = ? AND organization_id = ? AND account_id = ? AND deleted_at IS NULL", id, organizationID, accountID), callerType, callerID)
+	query := applyConversationTypeFilter(applyCallerFilter(r.db.WithContext(ctx).
+		Where("id = ? AND organization_id = ? AND account_id = ? AND deleted_at IS NULL", id, organizationID, accountID), callerType, callerID), conversationType, "")
 	if err := query.Take(&conversation).Error; err != nil {
 		return nil, wrapNotFound(err, "chat runtime conversation")
 	}
@@ -222,11 +235,11 @@ func (r *conversationRepository) ListScoped(ctx context.Context, organizationID,
 	return conversations, total, nil
 }
 
-func (r *conversationRepository) ListByCallerScoped(ctx context.Context, organizationID, accountID uuid.UUID, callerType string, callerID *uuid.UUID, limit, offset int) ([]*runtimemodel.Conversation, int64, error) {
+func (r *conversationRepository) ListByCallerScoped(ctx context.Context, organizationID, accountID uuid.UUID, callerType string, callerID *uuid.UUID, conversationType string, limit, offset int) ([]*runtimemodel.Conversation, int64, error) {
 	var conversations []*runtimemodel.Conversation
 	var total int64
-	query := applyCallerFilter(r.db.WithContext(ctx).Model(&runtimemodel.Conversation{}).
-		Where("organization_id = ? AND account_id = ? AND deleted_at IS NULL", organizationID, accountID), callerType, callerID)
+	query := applyConversationTypeFilter(applyCallerFilter(r.db.WithContext(ctx).Model(&runtimemodel.Conversation{}).
+		Where("organization_id = ? AND account_id = ? AND deleted_at IS NULL", organizationID, accountID), callerType, callerID), conversationType, "")
 	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, fmt.Errorf("failed to count chat runtime conversations: %w", err)
 	}
@@ -236,11 +249,11 @@ func (r *conversationRepository) ListByCallerScoped(ctx context.Context, organiz
 	return conversations, total, nil
 }
 
-func (r *conversationRepository) ListByCallerSourceScoped(ctx context.Context, organizationID, accountID uuid.UUID, callerType string, callerID *uuid.UUID, source string, sourceWebAppID *uuid.UUID, limit, offset int) ([]*runtimemodel.Conversation, int64, error) {
+func (r *conversationRepository) ListByCallerSourceScoped(ctx context.Context, organizationID, accountID uuid.UUID, callerType string, callerID *uuid.UUID, conversationType string, source string, sourceWebAppID *uuid.UUID, limit, offset int) ([]*runtimemodel.Conversation, int64, error) {
 	var conversations []*runtimemodel.Conversation
 	var total int64
-	query := applyConversationSourceFilter(applyCallerFilter(r.db.WithContext(ctx).Model(&runtimemodel.Conversation{}).
-		Where("organization_id = ? AND account_id = ? AND deleted_at IS NULL", organizationID, accountID), callerType, callerID), source, sourceWebAppID)
+	query := applyConversationSourceFilter(applyConversationTypeFilter(applyCallerFilter(r.db.WithContext(ctx).Model(&runtimemodel.Conversation{}).
+		Where("organization_id = ? AND account_id = ? AND deleted_at IS NULL", organizationID, accountID), callerType, callerID), conversationType, ""), source, sourceWebAppID)
 	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, fmt.Errorf("failed to count chat runtime conversations: %w", err)
 	}
@@ -253,8 +266,8 @@ func (r *conversationRepository) ListByCallerSourceScoped(ctx context.Context, o
 func (r *conversationRepository) ListByCallerSurfaceScoped(ctx context.Context, organizationID, accountID uuid.UUID, callerType string, callerID *uuid.UUID, surface string, limit, offset int) ([]*runtimemodel.Conversation, int64, error) {
 	var conversations []*runtimemodel.Conversation
 	var total int64
-	query := applyConversationSurfaceFilter(applyCallerFilter(r.db.WithContext(ctx).Model(&runtimemodel.Conversation{}).
-		Where("organization_id = ? AND account_id = ? AND deleted_at IS NULL", organizationID, accountID), callerType, callerID), surface)
+	query := applyConversationSurfaceFilter(applyConversationTypeFilter(applyCallerFilter(r.db.WithContext(ctx).Model(&runtimemodel.Conversation{}).
+		Where("organization_id = ? AND account_id = ? AND deleted_at IS NULL", organizationID, accountID), callerType, callerID), runtimemodel.ConversationTypeChat, ""), surface)
 	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, fmt.Errorf("failed to count chat runtime conversations: %w", err)
 	}
@@ -264,7 +277,7 @@ func (r *conversationRepository) ListByCallerSurfaceScoped(ctx context.Context, 
 	return conversations, total, nil
 }
 
-func (r *conversationRepository) SearchByCallerScoped(ctx context.Context, organizationID, accountID uuid.UUID, callerType string, callerID *uuid.UUID, source string, sourceWebAppID *uuid.UUID, surface string, queryText string, limit int) ([]*SearchResult, error) {
+func (r *conversationRepository) SearchByCallerScoped(ctx context.Context, organizationID, accountID uuid.UUID, callerType string, callerID *uuid.UUID, conversationType string, source string, sourceWebAppID *uuid.UUID, surface string, queryText string, limit int) ([]*SearchResult, error) {
 	keyword := strings.TrimSpace(queryText)
 	if keyword == "" || limit <= 0 {
 		return []*SearchResult{}, nil
@@ -272,6 +285,7 @@ func (r *conversationRepository) SearchByCallerScoped(ctx context.Context, organ
 	if callerType == "" {
 		callerType = runtimemodel.ConversationCallerAIChat
 	}
+	conversationType = normalizeConversationType(conversationType)
 	pattern := "%" + escapeLikePattern(strings.ToLower(keyword)) + "%"
 
 	type searchRow struct {
@@ -301,13 +315,13 @@ func (r *conversationRepository) SearchByCallerScoped(ctx context.Context, organ
 		}
 	}
 	surfaceFilter, surfaceArgs := searchConversationSurfaceFilter(surface)
-	args := []interface{}{organizationID, accountID, callerType}
+	args := []interface{}{organizationID, accountID, callerType, conversationType}
 	args = append(args, callerArgs...)
 	args = append(args, sourceArgs...)
 	args = append(args, surfaceArgs...)
 	args = append(args, pattern)
 	args = append(args, pattern)
-	args = append(args, organizationID, accountID, callerType)
+	args = append(args, organizationID, accountID, callerType, conversationType)
 	args = append(args, callerArgs...)
 	args = append(args, sourceArgs...)
 	args = append(args, surfaceArgs...)
@@ -330,6 +344,7 @@ func (r *conversationRepository) SearchByCallerScoped(ctx context.Context, organ
 			WHERE c.organization_id = ?
 				AND c.account_id = ?
 				AND c.caller_type = ?
+				AND c.conversation_type = ?
 				AND %s
 				AND c.deleted_at IS NULL
 				%s
@@ -352,6 +367,7 @@ func (r *conversationRepository) SearchByCallerScoped(ctx context.Context, organ
 			WHERE c.organization_id = ?
 				AND c.account_id = ?
 				AND c.caller_type = ?
+				AND c.conversation_type = ?
 				AND %s
 				AND c.deleted_at IS NULL
 				AND m.deleted_at IS NULL
@@ -462,6 +478,19 @@ func applyConversationSurfaceFilter(query *gorm.DB, surface string) *gorm.DB {
 			)
 		)
 	)`, surface, surface)
+}
+
+func applyConversationTypeFilter(query *gorm.DB, conversationType string, alias string) *gorm.DB {
+	return query.Where(qualifiedColumn(alias, "conversation_type")+" = ?", normalizeConversationType(conversationType))
+}
+
+func normalizeConversationType(value string) string {
+	switch strings.TrimSpace(value) {
+	case runtimemodel.ConversationTypeImage:
+		return runtimemodel.ConversationTypeImage
+	default:
+		return runtimemodel.ConversationTypeChat
+	}
 }
 
 func applyRuntimeLogCallerFilter(query *gorm.DB, callerType string, callerID *uuid.UUID, alias string) *gorm.DB {
@@ -1046,14 +1075,17 @@ func (r *messageRepository) UpdateCompleted(ctx context.Context, id uuid.UUID, a
 	if err != nil {
 		return fmt.Errorf("failed to marshal aichat message metadata: %w", err)
 	}
-	result := r.db.WithContext(ctx).Model(&runtimemodel.Message{}).
-		Where("id = ? AND deleted_at IS NULL AND status IN ?", id, completableMessageStatuses()).
+	query := r.db.WithContext(ctx).Model(&runtimemodel.Message{}).
+		Where("id = ? AND deleted_at IS NULL AND status IN ?", id, completableMessageStatuses())
+	result := scopeRuntimeRunOwnership(ctx, query).
 		Updates(map[string]interface{}{
-			"answer":     answer,
-			"status":     runtimemodel.MessageStatusCompleted,
-			"error":      nil,
-			"metadata":   datatypes.JSON(metadataJSON),
-			"updated_at": time.Now(),
+			"answer":               answer,
+			"status":               runtimemodel.MessageStatusCompleted,
+			"error":                nil,
+			"metadata":             datatypes.JSON(metadataJSON),
+			"runtime_run_id":       nil,
+			"runtime_heartbeat_at": nil,
+			"updated_at":           time.Now(),
 		})
 	if result.Error != nil {
 		return fmt.Errorf("failed to complete aichat message: %w", result.Error)
@@ -1072,8 +1104,9 @@ func (r *messageRepository) UpdateMetadata(ctx context.Context, id uuid.UUID, me
 	if err != nil {
 		return fmt.Errorf("failed to marshal aichat message metadata: %w", err)
 	}
-	result := r.db.WithContext(ctx).Model(&runtimemodel.Message{}).
-		Where("id = ? AND deleted_at IS NULL AND status IN ?", id, mutableMessageStatuses()).
+	query := r.db.WithContext(ctx).Model(&runtimemodel.Message{}).
+		Where("id = ? AND deleted_at IS NULL AND status IN ?", id, mutableMessageStatuses())
+	result := scopeRuntimeRunOwnership(ctx, query).
 		Updates(map[string]interface{}{
 			"metadata":   datatypes.JSON(metadataJSON),
 			"updated_at": time.Now(),
@@ -1118,13 +1151,16 @@ func (r *messageRepository) UpdateWaitingApproval(ctx context.Context, id uuid.U
 	if err != nil {
 		return fmt.Errorf("failed to marshal waiting approval aichat message metadata: %w", err)
 	}
-	result := r.db.WithContext(ctx).Model(&runtimemodel.Message{}).
-		Where("id = ? AND deleted_at IS NULL AND status IN ?", id, activeMessageStatuses()).
+	query := r.db.WithContext(ctx).Model(&runtimemodel.Message{}).
+		Where("id = ? AND deleted_at IS NULL AND status IN ?", id, activeMessageStatuses())
+	result := scopeRuntimeRunOwnership(ctx, query).
 		Updates(map[string]interface{}{
-			"status":     runtimemodel.MessageStatusWaitingApproval,
-			"error":      nil,
-			"metadata":   datatypes.JSON(metadataJSON),
-			"updated_at": time.Now(),
+			"status":               runtimemodel.MessageStatusWaitingApproval,
+			"error":                nil,
+			"metadata":             datatypes.JSON(metadataJSON),
+			"runtime_run_id":       nil,
+			"runtime_heartbeat_at": nil,
+			"updated_at":           time.Now(),
 		})
 	if result.Error != nil {
 		return fmt.Errorf("failed to mark aichat message waiting approval: %w", result.Error)
@@ -1143,13 +1179,16 @@ func (r *messageRepository) UpdateWaitingQuestion(ctx context.Context, id uuid.U
 	if err != nil {
 		return fmt.Errorf("failed to marshal waiting question aichat message metadata: %w", err)
 	}
-	result := r.db.WithContext(ctx).Model(&runtimemodel.Message{}).
-		Where("id = ? AND deleted_at IS NULL AND status IN ?", id, activeMessageStatuses()).
+	query := r.db.WithContext(ctx).Model(&runtimemodel.Message{}).
+		Where("id = ? AND deleted_at IS NULL AND status IN ?", id, activeMessageStatuses())
+	result := scopeRuntimeRunOwnership(ctx, query).
 		Updates(map[string]interface{}{
-			"status":     runtimemodel.MessageStatusWaitingQuestion,
-			"error":      nil,
-			"metadata":   datatypes.JSON(metadataJSON),
-			"updated_at": time.Now(),
+			"status":               runtimemodel.MessageStatusWaitingQuestion,
+			"error":                nil,
+			"metadata":             datatypes.JSON(metadataJSON),
+			"runtime_run_id":       nil,
+			"runtime_heartbeat_at": nil,
+			"updated_at":           time.Now(),
 		})
 	if result.Error != nil {
 		return fmt.Errorf("failed to mark aichat message waiting question: %w", result.Error)
@@ -1168,13 +1207,16 @@ func (r *messageRepository) UpdateWaitingClientAction(ctx context.Context, id uu
 	if err != nil {
 		return fmt.Errorf("failed to marshal waiting client action aichat message metadata: %w", err)
 	}
-	result := r.db.WithContext(ctx).Model(&runtimemodel.Message{}).
-		Where("id = ? AND deleted_at IS NULL AND status IN ?", id, activeMessageStatuses()).
+	query := r.db.WithContext(ctx).Model(&runtimemodel.Message{}).
+		Where("id = ? AND deleted_at IS NULL AND status IN ?", id, activeMessageStatuses())
+	result := scopeRuntimeRunOwnership(ctx, query).
 		Updates(map[string]interface{}{
-			"status":     runtimemodel.MessageStatusWaitingClientAction,
-			"error":      nil,
-			"metadata":   datatypes.JSON(metadataJSON),
-			"updated_at": time.Now(),
+			"status":               runtimemodel.MessageStatusWaitingClientAction,
+			"error":                nil,
+			"metadata":             datatypes.JSON(metadataJSON),
+			"runtime_run_id":       nil,
+			"runtime_heartbeat_at": nil,
+			"updated_at":           time.Now(),
 		})
 	if result.Error != nil {
 		return fmt.Errorf("failed to mark aichat message waiting client action: %w", result.Error)
@@ -1186,12 +1228,15 @@ func (r *messageRepository) UpdateWaitingClientAction(ctx context.Context, id uu
 }
 
 func (r *messageRepository) UpdateError(ctx context.Context, id uuid.UUID, message string) error {
-	result := r.db.WithContext(ctx).Model(&runtimemodel.Message{}).
-		Where("id = ? AND deleted_at IS NULL AND status IN ?", id, activeMessageStatuses()).
+	query := r.db.WithContext(ctx).Model(&runtimemodel.Message{}).
+		Where("id = ? AND deleted_at IS NULL AND status IN ?", id, activeMessageStatuses())
+	result := scopeRuntimeRunOwnership(ctx, query).
 		Updates(map[string]interface{}{
-			"status":     runtimemodel.MessageStatusError,
-			"error":      message,
-			"updated_at": time.Now(),
+			"status":               runtimemodel.MessageStatusError,
+			"error":                message,
+			"runtime_run_id":       nil,
+			"runtime_heartbeat_at": nil,
+			"updated_at":           time.Now(),
 		})
 	if result.Error != nil {
 		return fmt.Errorf("failed to mark aichat message error: %w", result.Error)
@@ -1210,8 +1255,9 @@ func (r *messageRepository) UpdatePartialAnswer(ctx context.Context, id uuid.UUI
 	if err != nil {
 		return fmt.Errorf("failed to marshal partial aichat metadata: %w", err)
 	}
-	result := r.db.WithContext(ctx).Model(&runtimemodel.Message{}).
-		Where("id = ? AND deleted_at IS NULL AND status IN ?", id, activeMessageStatuses()).
+	query := r.db.WithContext(ctx).Model(&runtimemodel.Message{}).
+		Where("id = ? AND deleted_at IS NULL AND status IN ?", id, activeMessageStatuses())
+	result := scopeRuntimeRunOwnership(ctx, query).
 		Updates(map[string]interface{}{
 			"answer":     answer,
 			"metadata":   datatypes.JSON(metadataJSON),
@@ -1230,9 +1276,11 @@ func (r *messageRepository) MarkStopped(ctx context.Context, id uuid.UUID) error
 	result := r.db.WithContext(ctx).Model(&runtimemodel.Message{}).
 		Where("id = ? AND deleted_at IS NULL AND status IN ?", id, activeMessageStatuses()).
 		Updates(map[string]interface{}{
-			"status":     runtimemodel.MessageStatusStopped,
-			"error":      nil,
-			"updated_at": time.Now(),
+			"status":               runtimemodel.MessageStatusStopped,
+			"error":                nil,
+			"runtime_run_id":       nil,
+			"runtime_heartbeat_at": nil,
+			"updated_at":           time.Now(),
 		})
 	if result.Error != nil {
 		return fmt.Errorf("failed to stop aichat message: %w", result.Error)
@@ -1251,15 +1299,24 @@ func (r *messageRepository) UpdateStoppedAnswer(ctx context.Context, id uuid.UUI
 	if err != nil {
 		return fmt.Errorf("failed to marshal stopped aichat metadata: %w", err)
 	}
-	result := r.db.WithContext(ctx).Model(&runtimemodel.Message{}).
-		Where("id = ? AND deleted_at IS NULL AND status IN ?", id, append(mutableMessageStatuses(), runtimemodel.MessageStatusStopped)).
-		Updates(map[string]interface{}{
-			"answer":     answer,
-			"status":     runtimemodel.MessageStatusStopped,
-			"error":      nil,
-			"metadata":   datatypes.JSON(metadataJSON),
-			"updated_at": time.Now(),
-		})
+	query := r.db.WithContext(ctx).Model(&runtimemodel.Message{}).
+		Where("id = ? AND deleted_at IS NULL AND status IN ?", id, append(mutableMessageStatuses(), runtimemodel.MessageStatusStopped))
+	if runID, ok := RuntimeRunIDFromContext(ctx); ok {
+		query = query.Where(
+			"runtime_run_id = ? OR (status = ? AND runtime_run_id IS NULL)",
+			runID,
+			runtimemodel.MessageStatusStopped,
+		)
+	}
+	result := query.Updates(map[string]interface{}{
+		"answer":               answer,
+		"status":               runtimemodel.MessageStatusStopped,
+		"error":                nil,
+		"metadata":             datatypes.JSON(metadataJSON),
+		"runtime_run_id":       nil,
+		"runtime_heartbeat_at": nil,
+		"updated_at":           time.Now(),
+	})
 	if result.Error != nil {
 		return fmt.Errorf("failed to persist stopped aichat message: %w", result.Error)
 	}

@@ -28,6 +28,10 @@ const (
 	// Browser access policy.
 	// envWebAPICORSAllowOrigins sets the allowed CORS origins for the web API. Default: empty list.
 	envWebAPICORSAllowOrigins = "WEB_API_CORS_ALLOW_ORIGINS"
+
+	// envChatRuntimeModelIdleTimeoutSeconds stops one model call after this many
+	// seconds without any upstream response. Default: 300.
+	envChatRuntimeModelIdleTimeoutSeconds = "CHAT_RUNTIME_MODEL_IDLE_TIMEOUT_SECONDS"
 )
 
 // Database and cache keys.
@@ -209,6 +213,8 @@ const (
 	envEnableEmailCodeLogin = "ENABLE_EMAIL_CODE_LOGIN"
 	// envEnableEmailPasswordLogin controls whether users can log in with email and password. Default: true.
 	envEnableEmailPasswordLogin = "ENABLE_EMAIL_PASSWORD_LOGIN"
+	// envEnablePhoneLogin controls whether the phone login entry is available. Default: false.
+	envEnablePhoneLogin = "ENABLE_PHONE_LOGIN"
 	// envEnableSocialOAuthLogin controls whether social OAuth login is enabled. Default: false.
 	envEnableSocialOAuthLogin = "ENABLE_SOCIAL_OAUTH_LOGIN"
 )
@@ -392,6 +398,10 @@ const (
 // Observability and dependency service keys.
 const (
 	// Observability providers.
+	// envZGIReporters selects comma-separated ZGI Reporter adapters.
+	// Supported built-ins: sentry, otel. Empty auto-detects configured providers;
+	// "none" disables all reporters.
+	envZGIReporters = "ZGI_REPORTERS"
 	// envOTELEnabled controls whether OpenTelemetry tracing is enabled. Default: false.
 	envOTELEnabled = "OTEL_ENABLED"
 	// envOTELServiceName sets the OpenTelemetry service name. Default: zgi-api.

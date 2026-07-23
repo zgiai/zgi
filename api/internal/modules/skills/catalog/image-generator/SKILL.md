@@ -12,13 +12,17 @@ max_calls_per_turn: 5
 timeout_seconds: 120
 display:
   icon: image-plus
-  category: creative
+  category: content_creation
+  scenarios:
+    - content_creation
+    - office_collaboration
+    - business_operations
   label:
     en_US: Image Generator
     zh_Hans: 图片生成
   description:
-    en_US: Generates image assets and reference-image variants from prompts.
-    zh_Hans: 根据描述生成图片素材，并支持参考图变体与编辑式重生成。
+    en_US: Designed for illustrations, marketing visuals, concept art, and image revisions; generates new image assets from prompts or edits and creates variants from reference images.
+    zh_Hans: 适用于插画、营销素材、概念图和图片修改，可根据提示词生成新图片，也可基于参考图编辑并创建变体。
   when_to_use:
     en_US: Use when the answer should include generated image files.
     zh_Hans: 当回答需要生成图片文件时使用。

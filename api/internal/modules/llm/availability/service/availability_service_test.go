@@ -9,6 +9,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/llm/availability/dto"
 	channelmodel "github.com/zgiai/zgi/api/internal/modules/llm/channel/model"
 	llmmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
+	"github.com/zgiai/zgi/api/internal/modules/llm/shared"
 	"gorm.io/gorm"
 )
 
@@ -204,5 +205,46 @@ func TestAvailabilityBatchReturnsLookupError(t *testing.T) {
 	_, err := svc.BatchCheckAvailability(context.Background(), uuid.New(), []uuid.UUID{uuid.New()})
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("BatchCheckAvailability error = %v, want %v", err, wantErr)
+	}
+}
+
+func TestAvailabilitySingleAndBatchRejectWrongOfficialProvider(t *testing.T) {
+	modelID := uuid.New()
+	modelName := "same-name"
+	svc := NewAvailabilityServiceWithProviderRepos(
+		&availabilityModelRepoFake{model: &llmmodel.LLMModel{
+			ID:       modelID,
+			Provider: "anthropic",
+			Model:    modelName,
+			IsActive: true,
+			Status:   llmmodel.ModelStatusActive,
+		}},
+		&availabilityConfigRepoFake{},
+		&availabilityRouteRepoFake{routes: []*channelmodel.LLMRoute{{
+			ID:                     uuid.New(),
+			Type:                   shared.RouteTypeZGICloud,
+			Models:                 []string{modelName},
+			OfficialProviderModels: []channelmodel.ProviderModel{{Provider: "openai", Model: modelName}},
+			IsOfficial:             true,
+			IsEnabled:              true,
+		}}},
+		nil,
+		nil,
+	)
+
+	single, err := svc.CheckModelAvailability(context.Background(), uuid.New(), modelID)
+	if err != nil {
+		t.Fatalf("CheckModelAvailability returned error: %v", err)
+	}
+	if single.Status != dto.ModelUnavailable || single.ChannelInfo.TotalCount != 0 {
+		t.Fatalf("single availability = %#v, want unavailable with no matching official route", single)
+	}
+
+	batch, err := svc.BatchCheckAvailability(context.Background(), uuid.New(), []uuid.UUID{modelID})
+	if err != nil {
+		t.Fatalf("BatchCheckAvailability returned error: %v", err)
+	}
+	if len(batch) != 1 || batch[0].Status != dto.ModelUnavailable || batch[0].ChannelInfo.TotalCount != 0 {
+		t.Fatalf("batch availability = %#v, want unavailable with no matching official route", batch)
 	}
 }

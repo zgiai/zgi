@@ -29,8 +29,8 @@ func TestRuntimeRouterRoutesShortDomainDocumentToFullDoc(t *testing.T) {
 	if decision.RouteName != "full_doc_model" {
 		t.Fatalf("route name = %q, want full_doc_model", decision.RouteName)
 	}
-	if decision.TargetRules["parent_mode"] != "full-doc" {
-		t.Fatalf("parent_mode = %v, want full-doc", decision.TargetRules["parent_mode"])
+	if decision.TargetRules["parent_mode"] != "element_group" {
+		t.Fatalf("parent_mode = %v, want element_group", decision.TargetRules["parent_mode"])
 	}
 }
 
@@ -134,6 +134,9 @@ func TestRuntimeRouterRoutesLongSectionDocumentWithoutDomainAnalysis(t *testing.
 	}
 	if decision == nil || decision.RouteName != "section_model" {
 		t.Fatalf("expected section route, got %#v", decision)
+	}
+	if decision.TargetRules["parent_mode"] != "element_group" {
+		t.Fatalf("parent_mode = %v, want element_group", decision.TargetRules["parent_mode"])
 	}
 	if _, ok := decision.RouteMeta["doc_domain"]; ok {
 		t.Fatalf("long section document should skip domain analysis: %#v", decision.RouteMeta)

@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -96,7 +97,7 @@ func (a *ZGICloudAdapter) ChatCompletionStream(ctx context.Context, request *ada
 	url := fmt.Sprintf("%s/chat/completions", a.baseURL)
 	resp, err := a.httpClient.DoStreamRequest(ctx, "POST", url, a.buildHeaders(), buildOpenAICompatibleChatPayload(request))
 	if err != nil {
-		return nil, fmt.Errorf("stream request failed: %w", err)
+		return nil, handleZGICloudStreamError(err)
 	}
 
 	respChan := make(chan adapter.StreamResponse, 10)
@@ -219,7 +220,7 @@ func (a *ZGICloudAdapter) CreateResponseStream(ctx context.Context, request *ada
 	url := fmt.Sprintf("%s/responses", a.baseURL)
 	resp, err := a.httpClient.DoStreamRequest(ctx, "POST", url, a.buildHeaders(), body)
 	if err != nil {
-		return nil, fmt.Errorf("stream request failed: %w", err)
+		return nil, handleZGICloudStreamError(err)
 	}
 
 	return streamRawHTTPEvents(ctx, resp.Body, func(raw json.RawMessage, _ *adapter.Usage) *adapter.Usage {
@@ -239,7 +240,7 @@ func (a *ZGICloudAdapter) CreateAnthropicMessage(ctx context.Context, request *a
 		return nil, fmt.Errorf("request failed: %w", err)
 	}
 	if httpResp.StatusCode != http.StatusOK {
-		return nil, adapter.HandleNonJSONError(httpResp.StatusCode, httpResp.Body)
+		return nil, handleOpenAICompatibleError(httpResp.StatusCode, httpResp.Body)
 	}
 
 	return &adapter.RawResponse{
@@ -258,10 +259,18 @@ func (a *ZGICloudAdapter) CreateAnthropicMessageStream(ctx context.Context, requ
 	url := fmt.Sprintf("%s/anthropic/v1/messages", a.baseURL)
 	resp, err := a.httpClient.DoStreamRequest(ctx, "POST", url, a.buildAnthropicHeaders(request.Headers), body)
 	if err != nil {
-		return nil, fmt.Errorf("stream request failed: %w", err)
+		return nil, handleZGICloudStreamError(err)
 	}
 
 	return streamRawHTTPEvents(ctx, resp.Body, anthropicUsageFromRaw), nil
+}
+
+func handleZGICloudStreamError(err error) error {
+	var statusErr *adapter.HTTPStatusError
+	if errors.As(err, &statusErr) {
+		return handleOpenAICompatibleError(statusErr.StatusCode, statusErr.Body)
+	}
+	return fmt.Errorf("stream request failed: %w", err)
 }
 
 func (a *ZGICloudAdapter) CreateEmbeddings(ctx context.Context, request *adapter.EmbeddingsRequest) (*adapter.EmbeddingsResponse, error) {
