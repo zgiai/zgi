@@ -319,21 +319,12 @@ export function TokenTrendChart({
                     shape={(props: StackedPointsShapeProps) => <StackedPointsBarShape {...props} />}
                   />
                 ) : showStackedTokens ? (
-                  <>
-                    <Bar
-                      dataKey="officialTokens"
-                      stackId="tokens"
-                      fill={COLORS.official}
-                      maxBarSize={60}
-                    />
-                    <Bar
-                      dataKey="privateTokens"
-                      stackId="tokens"
-                      fill={COLORS.private}
-                      radius={[4, 4, 0, 0]}
-                      maxBarSize={60}
-                    />
-                  </>
+                  <Bar
+                    dataKey="officialTokens"
+                    stackId="tokens"
+                    fill={COLORS.official}
+                    maxBarSize={60}
+                  />
                 ) : (
                   <Bar
                     dataKey={chartMode === 'points' ? 'totalPoints' : 'totalTokens'}
@@ -343,6 +334,15 @@ export function TokenTrendChart({
                     minPointSize={2}
                   />
                 )}
+                {showStackedTokens ? (
+                  <Bar
+                    dataKey="privateTokens"
+                    stackId="tokens"
+                    fill={COLORS.private}
+                    radius={[4, 4, 0, 0]}
+                    maxBarSize={60}
+                  />
+                ) : null}
               </BarChart>
             </ResponsiveContainer>
           </div>

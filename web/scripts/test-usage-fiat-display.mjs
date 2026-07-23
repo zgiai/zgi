@@ -60,5 +60,10 @@ assert.match(
   /dataKey="privateTokens"[\s\S]*stackId="tokens"/,
   'the token trend must render private-channel tokens in the channel stack'
 );
+assert.doesNotMatch(
+  tokenTrendSource,
+  /showStackedTokens\s*\?\s*\(\s*<>/,
+  'Recharts bar series must be direct chart children instead of Fragment children'
+);
 
 console.log('Usage fiat display copy checks passed.');
