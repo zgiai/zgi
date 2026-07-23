@@ -46,4 +46,19 @@ assert.match(
   'the dashboard usage summary must not label raw internal credits as total cost'
 );
 
+const tokenTrendSource = await readFile(
+  new URL('../src/components/usage/token-trend-chart.tsx', import.meta.url),
+  'utf8'
+);
+assert.match(
+  tokenTrendSource,
+  /dataKey="officialTokens"[\s\S]*stackId="tokens"/,
+  'the token trend must render official-channel tokens in the channel stack'
+);
+assert.match(
+  tokenTrendSource,
+  /dataKey="privateTokens"[\s\S]*stackId="tokens"/,
+  'the token trend must render private-channel tokens in the channel stack'
+);
+
 console.log('Usage fiat display copy checks passed.');

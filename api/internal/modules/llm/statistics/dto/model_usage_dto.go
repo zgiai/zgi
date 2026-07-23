@@ -72,6 +72,8 @@ type ModelUsageDailyItem struct {
 	PromptTokens     int64  `json:"prompt_tokens"`
 	CompletionTokens int64  `json:"completion_tokens"`
 	TotalTokens      int64  `json:"total_tokens"`
+	OfficialTokens   int64  `json:"official_tokens"`
+	PrivateTokens    int64  `json:"private_tokens"`
 	OfficialPoints   int64  `json:"official_points"`
 	PrivatePoints    int64  `json:"private_points"`
 	TotalPoints      int64  `json:"total_points"`

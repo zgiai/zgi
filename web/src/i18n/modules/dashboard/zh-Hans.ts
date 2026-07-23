@@ -285,6 +285,8 @@ const messages: DashboardMessages = {
       officialPointsSeries: '官方渠道费用',
       privatePointsSeries: '私有渠道费用',
       totalTokensSeries: '总 Tokens',
+      officialTokensSeries: '官方渠道 Tokens',
+      privateTokensSeries: '私有渠道 Tokens',
       totalLabel: '总计: {count}',
     },
   },

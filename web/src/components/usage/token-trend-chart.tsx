@@ -44,7 +44,14 @@ const COLORS = {
   tokens: '#2563EB',
 };
 
-function StackedPointsBarShape({ x = 0, y = 0, width = 0, height = 0, payload, fill = COLORS.points }: StackedPointsShapeProps) {
+function StackedPointsBarShape({
+  x = 0,
+  y = 0,
+  width = 0,
+  height = 0,
+  payload,
+  fill = COLORS.points,
+}: StackedPointsShapeProps) {
   const officialPoints = payload?.officialPoints ?? 0;
   const privatePoints = payload?.privatePoints ?? 0;
   const totalPoints = payload?.totalPoints ?? 0;
@@ -74,19 +81,17 @@ function StackedPointsBarShape({ x = 0, y = 0, width = 0, height = 0, payload, f
         />
       ) : null}
       {officialHeight > 0 ? (
-        <rect
-          x={x}
-          y={y}
-          width={width}
-          height={officialHeight}
-          fill={COLORS.official}
-        />
+        <rect x={x} y={y} width={width} height={officialHeight} fill={COLORS.official} />
       ) : null}
     </g>
   );
 }
 
-export function TokenTrendChart({ dailyData, showSourceBreakdown, billingDisplay }: TokenTrendChartProps) {
+export function TokenTrendChart({
+  dailyData,
+  showSourceBreakdown,
+  billingDisplay,
+}: TokenTrendChartProps) {
   const t = useT('dashboard');
   const locale = useLocale();
   const [chartMode, setChartMode] = useState<ChartMode>('points');
@@ -99,6 +104,9 @@ export function TokenTrendChart({ dailyData, showSourceBreakdown, billingDisplay
         const officialPoints = item.official_points;
         const privatePoints = item.private_points;
         const totalPoints = Math.max(item.total_points, officialPoints + privatePoints);
+        const officialTokens = item.official_tokens;
+        const privateTokens = item.private_tokens;
+        const totalTokens = Math.max(item.total_tokens, officialTokens + privateTokens);
 
         return {
           date: format(parseISO(item.date), 'MM-dd'),
@@ -106,12 +114,15 @@ export function TokenTrendChart({ dailyData, showSourceBreakdown, billingDisplay
           officialPoints,
           privatePoints,
           totalPoints,
-          totalTokens: item.total_tokens,
+          officialTokens,
+          privateTokens,
+          totalTokens,
           attemptCount: item.attempt_count,
           successCount: item.success_count,
           failedCount: item.failed_count,
           partialCount: item.partial_count,
           hasPointBreakdown: officialPoints > 0 || privatePoints > 0,
+          hasTokenBreakdown: officialTokens > 0 || privateTokens > 0,
         };
       }),
     [dailyData]
@@ -122,8 +133,17 @@ export function TokenTrendChart({ dailyData, showSourceBreakdown, billingDisplay
     [chartData, showSourceBreakdown]
   );
 
+  const hasTokenBreakdownData = useMemo(
+    () => showSourceBreakdown && chartData.some(item => item.hasTokenBreakdown),
+    [chartData, showSourceBreakdown]
+  );
+
   const totalValue = useMemo(
-    () => chartData.reduce((sum, item) => sum + (chartMode === 'points' ? item.totalPoints : item.totalTokens), 0),
+    () =>
+      chartData.reduce(
+        (sum, item) => sum + (chartMode === 'points' ? item.totalPoints : item.totalTokens),
+        0
+      ),
     [chartData, chartMode]
   );
 
@@ -136,6 +156,7 @@ export function TokenTrendChart({ dailyData, showSourceBreakdown, billingDisplay
 
   const unitLabel = chartMode === 'points' ? '' : t('usage.chart.tokens');
   const showStackedPoints = chartMode === 'points' && hasPointBreakdownData;
+  const showStackedTokens = chartMode === 'tokens' && hasTokenBreakdownData;
 
   return (
     <Card>
@@ -143,7 +164,9 @@ export function TokenTrendChart({ dailyData, showSourceBreakdown, billingDisplay
         <div className="mb-6 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div>
             <h2 className="text-lg font-semibold">{t('usage.chart.dailyTrend')}</h2>
-            <p className="mt-1 text-sm text-muted-foreground">{t('usage.chart.dailyTrendSubtitle')}</p>
+            <p className="mt-1 text-sm text-muted-foreground">
+              {t('usage.chart.dailyTrendSubtitle')}
+            </p>
           </div>
           <div className="flex flex-wrap gap-2 rounded-lg border p-1">
             <Button
@@ -156,7 +179,9 @@ export function TokenTrendChart({ dailyData, showSourceBreakdown, billingDisplay
               )}
               onClick={() => setChartMode('points')}
             >
-              {hasPointBreakdownData ? t('usage.chart.totalPointsSeries') : t('usage.chart.pointConsumptionSeries')}
+              {hasPointBreakdownData
+                ? t('usage.chart.totalPointsSeries')
+                : t('usage.chart.pointConsumptionSeries')}
             </Button>
             <Button
               variant="ghost"
@@ -230,6 +255,33 @@ export function TokenTrendChart({ dailyData, showSourceBreakdown, billingDisplay
                               </div>
                             ) : null}
                           </div>
+                        ) : showStackedTokens ? (
+                          <div className="space-y-1 text-muted-foreground">
+                            <div>
+                              {t('usage.chart.officialTokensSeries')}:{' '}
+                              {formatNumber(data.officialTokens, 2)} {unitLabel}
+                            </div>
+                            <div>
+                              {t('usage.chart.privateTokensSeries')}:{' '}
+                              {formatNumber(data.privateTokens, 2)} {unitLabel}
+                            </div>
+                            <div>
+                              {t('usage.chart.totalTokensSeries')}:{' '}
+                              {formatNumber(data.totalTokens, 2)} {unitLabel}
+                            </div>
+                            <div>
+                              {t('usage.cards.attemptCount')}: {formatNumber(data.attemptCount)}
+                            </div>
+                            <div>
+                              {t('usage.cards.successCount')}: {formatNumber(data.successCount)} ·{' '}
+                              {t('usage.cards.failedCount')}: {formatNumber(data.failedCount)}
+                            </div>
+                            {data.partialCount > 0 ? (
+                              <div>
+                                {t('usage.cards.partialCount')}: {formatNumber(data.partialCount)}
+                              </div>
+                            ) : null}
+                          </div>
                         ) : (
                           <div className="space-y-1 text-muted-foreground">
                             <div>
@@ -266,6 +318,22 @@ export function TokenTrendChart({ dailyData, showSourceBreakdown, billingDisplay
                     minPointSize={2}
                     shape={(props: StackedPointsShapeProps) => <StackedPointsBarShape {...props} />}
                   />
+                ) : showStackedTokens ? (
+                  <>
+                    <Bar
+                      dataKey="officialTokens"
+                      stackId="tokens"
+                      fill={COLORS.official}
+                      maxBarSize={60}
+                    />
+                    <Bar
+                      dataKey="privateTokens"
+                      stackId="tokens"
+                      fill={COLORS.private}
+                      radius={[4, 4, 0, 0]}
+                      maxBarSize={60}
+                    />
+                  </>
                 ) : (
                   <Bar
                     dataKey={chartMode === 'points' ? 'totalPoints' : 'totalTokens'}
@@ -285,6 +353,11 @@ export function TokenTrendChart({ dailyData, showSourceBreakdown, billingDisplay
             <div className="flex flex-wrap items-center gap-4">
               <LegendItem color={COLORS.official} label={t('usage.filters.sourceOfficial')} />
               <LegendItem color={COLORS.private} label={t('usage.filters.sourcePrivate')} />
+            </div>
+          ) : showStackedTokens ? (
+            <div className="flex flex-wrap items-center gap-4">
+              <LegendItem color={COLORS.official} label={t('usage.chart.officialTokensSeries')} />
+              <LegendItem color={COLORS.private} label={t('usage.chart.privateTokensSeries')} />
             </div>
           ) : (
             <LegendItem

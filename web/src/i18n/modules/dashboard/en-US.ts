@@ -128,6 +128,8 @@ const messages = {
       officialPointsSeries: 'Official Cost',
       privatePointsSeries: 'Private Cost',
       totalTokensSeries: 'Total Tokens',
+      officialTokensSeries: 'Official Tokens',
+      privateTokensSeries: 'Private Tokens',
       totalLabel: 'Total: {count}',
     },
   },
