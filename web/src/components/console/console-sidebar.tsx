@@ -7,6 +7,7 @@ import {
   ArrowRightToLine,
   Home,
   Atom,
+  Bot,
   BookText,
   FileText,
   FileSearch,
@@ -276,6 +277,11 @@ export function ConsoleSidebar({
         key: 'tools',
         title: t('tools'),
         items: [
+          {
+            title: t('skills'),
+            href: '/console/skills',
+            icon: Bot,
+          },
           {
             title: t('prompts'),
             href: '/console/prompts',
@@ -642,6 +648,11 @@ export function ConsoleMobileSidebar({
         key: 'tools',
         title: t('tools'),
         items: [
+          {
+            title: t('skills'),
+            href: '/console/skills',
+            icon: Bot,
+          },
           {
             title: t('prompts'),
             href: '/console/prompts',
