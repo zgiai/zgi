@@ -1352,6 +1352,7 @@ const {
 
 const organizationRoutes = [
   '/console',
+  '/console/skills',
   '/console/settings',
   '/console/work',
   '/console/work/chat',
@@ -1365,6 +1366,7 @@ const consoleRouteRoot = path.join(rootDir, 'src', 'app', 'console');
 const expectedOrganizationConsolePageRoutes = [
   '/console',
   '/console/settings',
+  '/console/skills',
   '/console/work',
   '/console/work/app',
   '/console/work/app/:web_app_id',
@@ -1480,6 +1482,7 @@ assert.deepEqual(
   [...ORGANIZATION_SCOPED_CONSOLE_ROUTES],
   [
     '/console',
+    '/console/skills',
     '/console/settings',
     '/console/work',
     '/console/work/chat',
