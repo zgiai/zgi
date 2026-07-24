@@ -175,6 +175,9 @@ export function wrapModelOutputSseCallbacks<T extends SseEventCallbacks>(callbac
 
   return {
     ...callbacks,
+    onWorkflowSnapshot: payload => {
+      callbacks.onWorkflowSnapshot?.(sanitizeModelOutputValue(payload));
+    },
     onTextChunk: payload => {
       if (blocked) return;
       const text = getOutputText(payload);

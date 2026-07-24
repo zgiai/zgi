@@ -162,6 +162,47 @@ func TestAgentWorkflowContinuationRelaysWorkflowResumed(t *testing.T) {
 	}
 }
 
+func TestEmitAgentWorkflowPendingInteractionEventsRelaysQuestionProjection(t *testing.T) {
+	generation := int64(2)
+	var received []struct {
+		event   string
+		payload map[string]interface{}
+	}
+	err := emitAgentWorkflowPendingInteractionEvents([]*workflowpause.RunEventPayload{
+		{
+			EventID: "question-event", Sequence: 11, Event: workflowpause.EventQuestionAnswerRequested,
+			PauseID: "pause-1", PauseGeneration: &generation,
+			Data: map[string]interface{}{"node_id": "question-node", "question": "Continue?"},
+		},
+		{
+			EventID: "paused-event", Sequence: 12, Event: workflowpause.EventWorkflowPaused,
+			PauseID: "pause-1", PauseGeneration: &generation,
+			Data: map[string]interface{}{"status": "paused"},
+		},
+	}, func(event string, payload map[string]interface{}) error {
+		received = append(received, struct {
+			event   string
+			payload map[string]interface{}
+		}{event: event, payload: payload})
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("emit pending interaction events: %v", err)
+	}
+	if len(received) != 2 {
+		t.Fatalf("received event count = %d, want 2", len(received))
+	}
+	if received[0].event != workflowpause.EventQuestionAnswerRequested {
+		t.Fatalf("first event = %q, want question_answer_requested", received[0].event)
+	}
+	if received[0].payload["sequence"] != 11 || received[0].payload["event_id"] != "question-event" {
+		t.Fatalf("question event envelope = %#v", received[0].payload)
+	}
+	if received[0].payload["pause_generation"] != generation {
+		t.Fatalf("pause generation = %#v, want %d", received[0].payload["pause_generation"], generation)
+	}
+}
+
 func TestAgentWorkflowContinuationStreamStateAppliesReplacement(t *testing.T) {
 	state := &agentWorkflowContinuationStreamState{}
 	state.apply(agentWorkflowContinuationDrainResult{

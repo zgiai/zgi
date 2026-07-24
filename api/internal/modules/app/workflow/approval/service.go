@@ -161,6 +161,16 @@ func (s *Service) SubmitByTokenForWorkflowRun(ctx context.Context, token, workfl
 }
 
 func (s *Service) SubmitByTokenForWorkflowRunWithOptions(ctx context.Context, token, workflowRunID string, req SubmitRequest, submissionUserID, submissionEndUserID *string, options SubmitOptions) (*Form, error) {
+	result, err := s.SubmitByTokenForWorkflowRunWithResumeOptions(ctx, token, workflowRunID, req, submissionUserID, submissionEndUserID, options)
+	if err != nil {
+		return nil, err
+	}
+	return result.Form, nil
+}
+
+// SubmitByTokenForWorkflowRunWithResumeOptions submits an approval and returns
+// the durable projection needed when another pause interaction remains.
+func (s *Service) SubmitByTokenForWorkflowRunWithResumeOptions(ctx context.Context, token, workflowRunID string, req SubmitRequest, submissionUserID, submissionEndUserID *string, options SubmitOptions) (*SubmitResult, error) {
 	form, recipient, err := s.getFormAndRecipientByToken(ctx, token)
 	if err != nil {
 		return nil, err
@@ -171,11 +181,7 @@ func (s *Service) SubmitByTokenForWorkflowRunWithOptions(ctx context.Context, to
 	if err := ensureFormSubmissionOptions(form, options); err != nil {
 		return nil, err
 	}
-	result, err := s.submitFormWithResume(ctx, form, recipient, req, submissionUserID, submissionEndUserID)
-	if err != nil {
-		return nil, err
-	}
-	return result.Form, nil
+	return s.submitFormWithResume(ctx, form, recipient, req, submissionUserID, submissionEndUserID)
 }
 
 func (s *Service) submitForm(ctx context.Context, form *Form, recipient *Recipient, req SubmitRequest, submissionUserID, submissionEndUserID *string) (*Form, error) {
@@ -240,7 +246,7 @@ func (s *Service) submitFormWithResume(ctx context.Context, form *Form, recipien
 			*form = locked
 			submitResult.Form = form
 			submitResult.IdempotentReplay = true
-			return loadApprovalReplayState(tx, form, submitResult)
+			return loadApprovalReplayState(ctx, tx, form, submitResult)
 		}
 		if err := ensureFormSubmittable(&locked); err != nil {
 			return err
@@ -264,6 +270,7 @@ func (s *Service) submitFormWithResume(ctx context.Context, form *Form, recipien
 		pauseRecord, reasons, _, err := pauseService.GetActiveByWorkflowRunID(ctx, form.WorkflowRunID)
 		if err != nil {
 			if errors.Is(err, workflowpause.ErrPauseNotFound) {
+				submitResult.ResumeReady = true
 				return nil
 			}
 			return err
@@ -305,8 +312,19 @@ func (s *Service) submitFormWithResume(ctx context.Context, form *Form, recipien
 			return err
 		}
 		if !ready {
+			pendingEvents, pendingErr := pauseService.AppendNextPendingInteractionProjectionTx(
+				ctx,
+				tx,
+				pauseRecord,
+				event.EventID,
+			)
+			if pendingErr != nil {
+				return pendingErr
+			}
+			submitResult.PendingEvents = pendingEvents
 			return nil
 		}
+		submitResult.ResumeReady = true
 		submitResult.ResumeState = "queued"
 		submitResult.Outbox = &workflowRuntimeOutboxRef{ID: outbox.ID, IdempotencyKey: outbox.IdempotencyKey, PayloadJSON: outbox.PayloadJSON}
 		return nil
@@ -327,7 +345,7 @@ func sameApprovalSubmission(form *Form, action, submittedData string) bool {
 	return strings.TrimSpace(*form.SelectedActionID) == strings.TrimSpace(action) && *form.SubmittedData == submittedData
 }
 
-func loadApprovalReplayState(tx *gorm.DB, form *Form, result *SubmitResult) error {
+func loadApprovalReplayState(ctx context.Context, tx *gorm.DB, form *Form, result *SubmitResult) error {
 	if tx == nil || form == nil || result == nil {
 		return nil
 	}
@@ -342,10 +360,28 @@ func loadApprovalReplayState(tx *gorm.DB, form *Form, result *SubmitResult) erro
 	var outbox workflowpause.RuntimeOutbox
 	if err := tx.Where("workflow_run_id = ? AND kind = ?", form.WorkflowRunID, workflowpause.RuntimeOutboxKindResume).
 		Order("created_at DESC").First(&outbox).Error; err == nil {
+		result.ResumeReady = true
 		result.ResumeState = resumeStateForOutbox(outbox.Status)
 		result.Outbox = &workflowRuntimeOutboxRef{ID: outbox.ID, IdempotencyKey: outbox.IdempotencyKey, PayloadJSON: outbox.PayloadJSON}
 	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return fmt.Errorf("load approval replay outbox: %w", err)
+	}
+	if result.ResumeReady {
+		return nil
+	}
+
+	pauseService := workflowpause.NewService(tx)
+	pauseRecord, _, _, err := pauseService.GetActiveByWorkflowRunID(ctx, form.WorkflowRunID)
+	if err != nil {
+		if errors.Is(err, workflowpause.ErrPauseNotFound) {
+			result.ResumeReady = true
+			return nil
+		}
+		return err
+	}
+	result.PendingEvents, err = pauseService.AppendNextPendingInteractionProjectionTx(ctx, tx, pauseRecord, event.ID)
+	if err != nil {
+		return err
 	}
 	return nil
 }

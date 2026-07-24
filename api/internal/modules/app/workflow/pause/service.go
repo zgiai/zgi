@@ -570,7 +570,7 @@ func (s *Service) SubmitInteraction(ctx context.Context, workflowRunID, pauseID,
 		result.Outbox = outbox
 		result.ResumeReady = ready
 		if !ready {
-			pendingEvents, pendingErr := service.appendNextPendingInteractionProjectionTx(
+			pendingEvents, pendingErr := service.AppendNextPendingInteractionProjectionTx(
 				ctx,
 				tx,
 				pauseRecord,
@@ -589,7 +589,11 @@ func (s *Service) SubmitInteraction(ctx context.Context, workflowRunID, pauseID,
 	return result, nil
 }
 
-func (s *Service) appendNextPendingInteractionProjectionTx(
+// AppendNextPendingInteractionProjectionTx durably re-projects the next
+// unanswered approval or question for a pause that is not ready to resume.
+// The caller must invoke it in the same transaction as the interaction
+// submission that completed the preceding pause reason.
+func (s *Service) AppendNextPendingInteractionProjectionTx(
 	ctx context.Context,
 	tx *gorm.DB,
 	pauseRecord *RunPause,
@@ -698,7 +702,7 @@ func (s *Service) appendNextPendingInteractionProjectionTx(
 		TenantID:      pauseRecord.TenantID,
 		AppID:         pauseRecord.AppID,
 		WorkflowRunID: pauseRecord.WorkflowRunID,
-		FlushReason:   "question_pending",
+		FlushReason:   "interaction_pending",
 		Fence: RuntimeFence{
 			ExpectedPauseID:         pauseRecord.ID,
 			ExpectedPauseGeneration: &pauseGeneration,

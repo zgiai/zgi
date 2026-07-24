@@ -3,6 +3,8 @@ package approval
 import (
 	"context"
 	"time"
+
+	workflowpause "github.com/zgiai/zgi/api/internal/modules/app/workflow/pause"
 )
 
 const (
@@ -141,6 +143,8 @@ type SubmitResult struct {
 	ResumeState      string
 	EventCursor      int
 	IdempotentReplay bool
+	ResumeReady      bool
+	PendingEvents    []*workflowpause.RunEventPayload
 	Outbox           *workflowRuntimeOutboxRef
 }
 

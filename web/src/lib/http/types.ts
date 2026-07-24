@@ -72,6 +72,7 @@ export interface SseOptions<TBody = unknown, TOut = unknown>
 
 // Unified application-level SSE event callbacks
 export interface SseEventCallbacks {
+  onWorkflowSnapshot?: (payload: unknown) => void;
   onWorkflowStarted?: (payload: unknown) => void;
   onWorkflowResumed?: (payload: unknown) => void;
   onWorkflowPaused?: (payload: unknown) => void;

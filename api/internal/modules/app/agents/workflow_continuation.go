@@ -5,15 +5,16 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"strings"
+	"time"
+
 	"github.com/gin-gonic/gin"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
 	approvalruntime "github.com/zgiai/zgi/api/internal/modules/app/workflow/approval"
-	"github.com/zgiai/zgi/api/pkg/logger"
+	workflowpause "github.com/zgiai/zgi/api/internal/modules/app/workflow/pause"
 	"github.com/zgiai/zgi/api/pkg/response"
-	"io"
-	"strings"
-	"time"
 )
 
 const agentWorkflowContinuationMaxDuration = 35 * time.Minute
@@ -173,21 +174,14 @@ func (h *AgentsHandler) resumeAgentWorkflowApproval(ctx context.Context, scope r
 	}
 	approvalService := approvalruntime.NewService(h.db)
 	accountID := scope.AccountID.String()
-	form, err := submitAgentWorkflowApprovalForm(ctx, approvalService, continuation, req, &accountID)
+	submission, err := submitAgentWorkflowApprovalForm(ctx, approvalService, continuation, req, &accountID)
 	if err != nil {
 		return err
 	}
-	resumeReady, err := approvalService.ActivePauseApprovalFormsSubmitted(ctx, form.WorkflowRunID)
-	if err != nil {
-		return err
+	if !submission.ResumeReady {
+		return nil
 	}
-	if !resumeReady {
-		if err := approvalService.AppendApprovalResultFilledEvent(ctx, form); err != nil {
-			logger.WarnContext(ctx, "failed to append agent workflow approval result filled event", "form_id", form.ID, err)
-		}
-		return fmt.Errorf("workflow run %s is waiting for additional interactions", continuation.WorkflowRunID)
-	}
-	return h.workflowContinuationRunner.ResumeApprovalWorkflow(ctx, form)
+	return h.workflowContinuationRunner.ResumeApprovalWorkflow(ctx, submission.Form)
 }
 
 func (h *AgentsHandler) resumeAgentWorkflowApprovalStream(ctx context.Context, scope runtimeservice.Scope, continuation *runtimeservice.WorkflowApprovalContinuation, req agentWorkflowContinuationRequest, runner workflowContinuationStreamRunner, onEvent func(string, map[string]interface{}) error) error {
@@ -196,39 +190,62 @@ func (h *AgentsHandler) resumeAgentWorkflowApprovalStream(ctx context.Context, s
 	}
 	approvalService := approvalruntime.NewService(h.db)
 	accountID := scope.AccountID.String()
-	form, err := submitAgentWorkflowApprovalForm(ctx, approvalService, continuation, req, &accountID)
+	submission, err := submitAgentWorkflowApprovalForm(ctx, approvalService, continuation, req, &accountID)
 	if err != nil {
 		return err
 	}
-	resumeReady, err := approvalService.ActivePauseApprovalFormsSubmitted(ctx, form.WorkflowRunID)
-	if err != nil {
+	if err := emitAgentWorkflowPendingInteractionEvents(submission.PendingEvents, onEvent); err != nil {
 		return err
 	}
-	if !resumeReady {
-		if err := approvalService.AppendApprovalResultFilledEvent(ctx, form); err != nil {
-			logger.WarnContext(ctx, "failed to append agent workflow approval result filled event", "form_id", form.ID, err)
-		}
-		return fmt.Errorf("workflow run %s is waiting for additional interactions", continuation.WorkflowRunID)
+	if !submission.ResumeReady {
+		return nil
 	}
-	return runner.ResumeApprovalWorkflowStream(ctx, form, onEvent)
+	return runner.ResumeApprovalWorkflowStream(ctx, submission.Form, onEvent)
 }
 
-func submitAgentWorkflowApprovalForm(ctx context.Context, approvalService *approvalruntime.Service, continuation *runtimeservice.WorkflowApprovalContinuation, req agentWorkflowContinuationRequest, accountID *string) (*approvalruntime.Form, error) {
+func submitAgentWorkflowApprovalForm(ctx context.Context, approvalService *approvalruntime.Service, continuation *runtimeservice.WorkflowApprovalContinuation, req agentWorkflowContinuationRequest, accountID *string) (*approvalruntime.SubmitResult, error) {
 	workflowRunID := ""
 	if continuation != nil {
 		workflowRunID = continuation.WorkflowRunID
 	}
-	form, err := approvalService.SubmitByTokenForWorkflowRunWithOptions(ctx, strings.TrimSpace(req.ApprovalToken), workflowRunID, approvalruntime.SubmitRequest{
+	submission, err := approvalService.SubmitByTokenForWorkflowRunWithResumeOptions(ctx, strings.TrimSpace(req.ApprovalToken), workflowRunID, approvalruntime.SubmitRequest{
 		Inputs: copyMapForAgentWorkflowContinuation(req.Inputs),
 		Action: strings.TrimSpace(req.Action),
 	}, accountID, nil, agentWorkflowApprovalSubmitOptions(continuation))
 	if err != nil {
 		return nil, mapAgentWorkflowApprovalError(err)
 	}
-	if err := ensureAgentWorkflowContinuationApprovalForm(continuation, form); err != nil {
+	if submission == nil {
+		return nil, fmt.Errorf("%w: workflow continuation approval result is required", runtimeservice.ErrInvalidInput)
+	}
+	if err := ensureAgentWorkflowContinuationApprovalForm(continuation, submission.Form); err != nil {
 		return nil, err
 	}
-	return form, nil
+	return submission, nil
+}
+
+func emitAgentWorkflowPendingInteractionEvents(events []*workflowpause.RunEventPayload, onEvent func(string, map[string]interface{}) error) error {
+	if onEvent == nil {
+		return nil
+	}
+	for _, event := range events {
+		if event == nil {
+			continue
+		}
+		payload := copyMapForAgentWorkflowContinuation(event.Data)
+		payload["sequence"] = event.Sequence
+		payload["event_id"] = event.EventID
+		if event.PauseID != "" {
+			payload["pause_id"] = event.PauseID
+		}
+		if event.PauseGeneration != nil {
+			payload["pause_generation"] = *event.PauseGeneration
+		}
+		if err := onEvent(event.Event, payload); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func agentWorkflowApprovalSubmitOptions(continuation *runtimeservice.WorkflowApprovalContinuation) approvalruntime.SubmitOptions {

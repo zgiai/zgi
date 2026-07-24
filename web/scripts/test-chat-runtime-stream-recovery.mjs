@@ -21,6 +21,11 @@ assert.match(
   /TEXT_KEYS\s*=\s*\[[^\]]*['"]answer_delta['"]/,
   'durable workflow answer_delta events must pass through the shared sensitive-output filter'
 );
+assert.match(
+  modelOutputFilter,
+  /onWorkflowSnapshot:\s*payload\s*=>\s*\{[\s\S]*?sanitizeModelOutputValue\(payload\)/,
+  'workflow snapshot recovery must sanitize the complete snapshot before restoring chat state'
+);
 
 for (const transportPath of [
   'src/services/aichat.service.ts',
