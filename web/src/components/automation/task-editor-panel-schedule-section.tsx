@@ -8,6 +8,7 @@ import { Label } from '@/components/ui/label';
 import { RadioCard, RadioCardGroup } from '@/components/ui/radio-card';
 import { Separator } from '@/components/ui/separator';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { TimezoneSelector } from '@/components/common/timezone-selector';
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
 import { TASK_WEEKDAYS } from './registry';
@@ -236,19 +237,22 @@ export function TaskEditorScheduleSection({
 
         <div className="space-y-2">
           <Label htmlFor="automation-timezone">{t('schedule.timezone')}</Label>
-          <Input
+          <TimezoneSelector
             id="automation-timezone"
             value={schedule.timezone}
-            onChange={event =>
+            onChange={timezone =>
               onScheduleChange(current => ({
                 ...current,
-                timezone: event.target.value,
+                timezone,
               }))
             }
             placeholder={t('schedule.timezonePlaceholder')}
-            errorText={errors.timezone}
+            error={!!errors.timezone}
             disabled={!editable}
           />
+          {errors.timezone ? (
+            <p className="text-xs font-medium text-destructive">{errors.timezone}</p>
+          ) : null}
           <p className="text-xs leading-6 text-muted-foreground">{t('schedule.timezoneHelp')}</p>
         </div>
 

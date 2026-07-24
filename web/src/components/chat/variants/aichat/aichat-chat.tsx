@@ -131,11 +131,13 @@ export type { AIChatModelValue } from '@/components/chat/variants/aichat/types';
 interface AIChatShellProps {
   controller: AIChatController;
   modelSelectorValue: AIChatModelValue;
+  modelSelectorWarning?: boolean;
   modelProps?: ModelSelectorModelProps | null;
   supportsVisionOverride?: boolean;
   isModelInitializing?: boolean;
   onModelChange: (value: ModelSelectorValue) => void;
   beforeSend?: () => boolean | Promise<boolean>;
+  inputTopNotice?: React.ReactNode;
   variant?: 'full' | 'embedded';
   showModelSelector?: boolean;
   modelUseCase?: ModelUseCase;
@@ -244,11 +246,13 @@ function resolveWorkflowQuestionAnswerInputs(
 export function AIChatShell({
   controller,
   modelSelectorValue,
+  modelSelectorWarning = false,
   modelProps,
   supportsVisionOverride,
   isModelInitializing = false,
   onModelChange,
   beforeSend,
+  inputTopNotice,
   variant = 'full',
   showModelSelector = true,
   modelUseCase = 'agent',
@@ -1339,6 +1343,7 @@ export function AIChatShell({
             isLoadingMessages={isLoadingMessages}
             input={input}
             modelSelectorValue={modelSelectorValue}
+            modelSelectorWarning={modelSelectorWarning}
             modelProps={modelProps}
             supportsVisionOverride={supportsVisionOverride}
             isModelInitializing={isModelInitializing}
@@ -1379,6 +1384,7 @@ export function AIChatShell({
               null
             }
             activeToolGovernanceApprovalFallback={activeToolGovernanceApprovalFallback}
+            topAccessory={inputTopNotice}
           />
         </main>
       </ToolGovernancePendingApprovalScopeProvider>

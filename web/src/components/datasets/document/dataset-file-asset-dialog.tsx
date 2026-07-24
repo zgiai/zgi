@@ -85,25 +85,6 @@ function matchesFilter(candidate: DatasetFileCandidate, filter: CandidateFilter)
   return !candidate.addable && !candidate.requires_embedding_generation && !candidate.already_added;
 }
 
-function processingStatusLabel(t: ReturnType<typeof useT<'datasets'>>, status: string) {
-  switch (status) {
-    case 'ready':
-      return t('documents.fileAssets.processingStatus.ready');
-    case 'stored_only':
-      return t('documents.fileAssets.processingStatus.storedOnly');
-    case 'parsing':
-      return t('documents.fileAssets.processingStatus.parsing');
-    case 'confirming':
-      return t('documents.fileAssets.processingStatus.confirming');
-    case 'generating':
-      return t('documents.fileAssets.processingStatus.generating');
-    case 'parse_failed':
-      return t('documents.fileAssets.processingStatus.parseFailed');
-    default:
-      return status || '-';
-  }
-}
-
 function numberFromMetadata(value: unknown) {
   if (typeof value === 'number' && Number.isFinite(value)) return value;
   if (typeof value === 'string') {
@@ -709,14 +690,12 @@ export function DatasetFileAssetDialog({
 
           <div className="min-h-0 flex-1 overflow-auto p-5">
             <div className="overflow-hidden rounded-xl border">
-              <Table className="min-w-[1280px] table-fixed">
+              <Table className="min-w-[1000px] table-fixed">
                 <colgroup>
                   <col className="w-[44px]" />
-                  <col />
-                  <col className="w-[132px]" />
+                  <col className="w-[520px]" />
                   <col className="w-[260px]" />
                   <col className="w-[112px]" />
-                  <col className="w-[150px]" />
                   <col className="w-[160px]" />
                   <col className="w-[170px]" />
                 </colgroup>
@@ -731,10 +710,8 @@ export function DatasetFileAssetDialog({
                       />
                     </TableHead>
                     <TableHead>{t('documents.fileAssets.fileName')}</TableHead>
-                    <TableHead>{t('documents.fileAssets.status')}</TableHead>
                     <TableHead>{t('documents.fileAssets.availability')}</TableHead>
                     <TableHead>{t('documents.fileAssets.chunks')}</TableHead>
-                    <TableHead>{t('documents.fileAssets.references')}</TableHead>
                     <TableHead>{t('documents.fileAssets.updatedAt')}</TableHead>
                     <TableHead className="text-right">
                       {t('documents.fileAssets.actions')}
@@ -745,7 +722,7 @@ export function DatasetFileAssetDialog({
                   {isLoading
                     ? Array.from({ length: 7 }).map((_, index) => (
                         <TableRow key={index}>
-                          <TableCell colSpan={8}>
+                          <TableCell colSpan={6}>
                             <Skeleton className="h-9 w-full" />
                           </TableCell>
                         </TableRow>
@@ -754,7 +731,7 @@ export function DatasetFileAssetDialog({
 
                   {!isLoading && visibleCandidates.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={8} className="h-40 text-center text-muted-foreground">
+                      <TableCell colSpan={6} className="h-40 text-center text-muted-foreground">
                         {t('documents.fileAssets.empty')}
                       </TableCell>
                     </TableRow>
@@ -826,15 +803,6 @@ export function DatasetFileAssetDialog({
                               </div>
                             </div>
                           </TableCell>
-                          <TableCell>
-                            <Badge
-                              variant={
-                                candidate.processing_status === 'ready' ? 'success' : 'warning'
-                              }
-                            >
-                              {processingStatusLabel(t, candidate.processing_status)}
-                            </Badge>
-                          </TableCell>
                           <TableCell className="max-w-0">
                             {candidate.addable ? (
                               <Badge variant="success">{t('documents.fileAssets.ready')}</Badge>
@@ -903,13 +871,6 @@ export function DatasetFileAssetDialog({
                             requiresEmbeddingGeneration
                               ? candidate.chunk_count
                               : '-'}
-                          </TableCell>
-                          <TableCell className="text-sm text-muted-foreground">
-                            {candidate.reference_count && candidate.reference_count > 0
-                              ? t('documents.fileAssets.referenceCount', {
-                                  count: candidate.reference_count,
-                                })
-                              : t('documents.fileAssets.noReference')}
                           </TableCell>
                           <TableCell className="text-sm text-muted-foreground">
                             {candidate.updated_at ? formatDate(candidate.updated_at) : '-'}

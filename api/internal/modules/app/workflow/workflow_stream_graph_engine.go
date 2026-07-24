@@ -728,7 +728,7 @@ func workflowGraphStreamNodeError(err error) interface{} {
 	if err == nil {
 		return nil
 	}
-	return map[string]interface{}{"message": err.Error()}
+	return buildWorkflowStreamErrorPayload(err)
 }
 
 func workflowStreamGraphEdgeMap(streamGraph *workflowStreamGraph) map[string]map[string][]string {

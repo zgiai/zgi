@@ -13,6 +13,18 @@ import (
 	"github.com/zgiai/zgi/api/pkg/response"
 )
 
+type draftWorkflowPrecheckRequest struct {
+	Inputs map[string]any `json:"inputs"`
+	Graph  map[string]any `json:"graph"`
+}
+
+func (r draftWorkflowPrecheckRequest) workflowOr(stored any) any {
+	if _, ok := r.Graph["nodes"]; ok {
+		return r.Graph
+	}
+	return stored
+}
+
 func (h *WorkflowHandler) PrecheckDraftWorkflow(c *gin.Context) {
 	appID := c.Param("agent_id")
 	accountID := c.GetString("account_id")
@@ -20,6 +32,13 @@ func (h *WorkflowHandler) PrecheckDraftWorkflow(c *gin.Context) {
 
 	appWorkspaceID, ok := h.requireAgentWorkspacePermission(c, appID, workspace_model.WorkspacePermissionWorkflowRunDraft)
 	if !ok {
+		return
+	}
+
+	var req draftWorkflowPrecheckRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		logger.WarnContext(c.Request.Context(), "invalid workflow precheck request body", "agent_id", appID, err)
+		response.Fail(c, response.ErrInvalidParam)
 		return
 	}
 
@@ -36,7 +55,17 @@ func (h *WorkflowHandler) PrecheckDraftWorkflow(c *gin.Context) {
 		return
 	}
 
-	h.respondWorkflowRunPrecheck(c, workflow, agent, appID, accountID, callerOrganizationID, "", appWorkspaceID, nil)
+	h.respondWorkflowRunPrecheck(
+		c,
+		req.workflowOr(workflow),
+		agent,
+		appID,
+		accountID,
+		callerOrganizationID,
+		"",
+		appWorkspaceID,
+		req.Inputs,
+	)
 }
 
 func (h *WorkflowHandler) PrecheckAdvancedChatDraftWorkflow(c *gin.Context) {
@@ -49,6 +78,13 @@ func (h *WorkflowHandler) PrecheckAdvancedChatDraftWorkflow(c *gin.Context) {
 		return
 	}
 
+	var req draftWorkflowPrecheckRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		logger.WarnContext(c.Request.Context(), "invalid advanced chat workflow precheck request body", "agent_id", appID, err)
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+
 	workflow, err := h.workflowService.GetDraftWorkflow(c.Request.Context(), appID, true)
 	if err != nil {
 		logger.Error("Failed to get draft workflow for precheck", err)
@@ -62,7 +98,17 @@ func (h *WorkflowHandler) PrecheckAdvancedChatDraftWorkflow(c *gin.Context) {
 		return
 	}
 
-	h.respondWorkflowRunPrecheck(c, workflow, agent, appID, accountID, callerOrganizationID, "", appWorkspaceID, nil)
+	h.respondWorkflowRunPrecheck(
+		c,
+		req.workflowOr(workflow),
+		agent,
+		appID,
+		accountID,
+		callerOrganizationID,
+		"",
+		appWorkspaceID,
+		req.Inputs,
+	)
 }
 
 func (h *WorkflowHandler) PrecheckAdvancedChatWorkflow(c *gin.Context) {

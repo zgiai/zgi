@@ -10,6 +10,7 @@ import type {
   WebAppPrecheckResult,
   WebAppRuntimeCapability,
 } from './types/webapp';
+import type { AIChatModelPrecheckResponse } from './types/aichat';
 import { sanitizeModelOutputValue, wrapModelOutputSseCallbacks } from '@/utils/model-output-filter';
 import {
   getWebAppErrorCode,
@@ -121,6 +122,13 @@ export class WebAppService {
     return webappHttp.post<WebAppApiResponseData<WebAppPrecheckResult>>(
       `/console/api/workflows/${versionUuid}/precheck`,
       buildWebAppRunBody(payload)
+    );
+  }
+
+  static async precheckPublishedAgentModel(webAppId: string): Promise<AIChatModelPrecheckResponse> {
+    return webappHttp.post<AIChatModelPrecheckResponse>(
+      `/console/api/webapps/${webAppId}/runtime/model-precheck`,
+      undefined
     );
   }
 

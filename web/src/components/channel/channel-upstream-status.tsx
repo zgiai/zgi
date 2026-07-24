@@ -105,11 +105,6 @@ export function ChannelUpstreamStatus({
           {t('upstream.retryAfter', { time: new Date(state.cooldown_until).toLocaleString() })}
         </div>
       )}
-      {state?.provider_error_code && (
-        <div className="mt-1 truncate text-right font-mono text-[11px] text-muted-foreground">
-          {t('upstream.errorCode', { code: state.provider_error_code })}
-        </div>
-      )}
       {(state?.shared_channel_count ?? 0) > 1 && (
         <div className="mt-1 text-[11px] leading-4 text-amber-700">
           {t('upstream.sharedCredential', { count: state?.shared_channel_count ?? 0 })}

@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
+	llmerrors "github.com/zgiai/zgi/api/internal/modules/llm/errors"
 	"github.com/zgiai/zgi/api/internal/modules/llm/gateway"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/pkg/response"
@@ -77,6 +78,20 @@ func TestBuildStreamErrorPayloadMapsPlatformChannelUnavailable(t *testing.T) {
 	}
 	if got := payload["message"]; got != response.ErrWorkflowPlatformChannelUnavailable.Message {
 		t.Fatalf("stream error message = %#v, want %#v", got, response.ErrWorkflowPlatformChannelUnavailable.Message)
+	}
+}
+
+func TestBuildStreamErrorPayloadMapsPrivateChannelUpstreamUnavailable(t *testing.T) {
+	prepared := streamErrorTestPrepared()
+	err := fmt.Errorf("failed to select provider: %w", llmerrors.DomainErrPrivateChannelUpstreamUnavailable)
+
+	payload := BuildStreamErrorPayload(prepared, err)
+
+	if got := payload["code"]; got != response.ErrWorkflowPrivateChannelUpstreamUnavailable.Code {
+		t.Fatalf("stream error code = %#v, want %d", got, response.ErrWorkflowPrivateChannelUpstreamUnavailable.Code)
+	}
+	if got := payload["message"]; got != response.ErrWorkflowPrivateChannelUpstreamUnavailable.Message {
+		t.Fatalf("stream error message = %#v, want %#v", got, response.ErrWorkflowPrivateChannelUpstreamUnavailable.Message)
 	}
 }
 

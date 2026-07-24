@@ -69,10 +69,12 @@ const messages = {
       openAiBaseLabel: 'OpenAI Base URL',
       chatCompletionsLabel: 'Chat Completions Endpoint',
       responsesLabel: 'Responses Endpoint',
+      embeddingsLabel: 'Embeddings Endpoint',
+      imagesGenerationsLabel: 'Image Generations Endpoint',
       anthropicBaseLabel: 'Anthropic Base URL',
       anthropicMessagesLabel: 'Anthropic Messages Endpoint',
       supportNote:
-        'This guide covers OpenAI Chat Completions, Responses, and Anthropic Messages. Responses is available only for models that support the protocol.',
+        'This guide covers OpenAI Chat Completions, Responses, Embeddings, Images, and Anthropic Messages. Protocol availability depends on the selected model.',
       tabs: {
         curl: 'curl',
         ts: 'TypeScript',
@@ -81,17 +83,19 @@ const messages = {
       exampleTitle: 'curl Example',
       openAiCurlTitle: 'OpenAI Chat Completions',
       openAiResponsesCurlTitle: 'OpenAI Responses',
+      openAiEmbeddingsTitle: 'OpenAI Embeddings',
+      openAiImagesTitle: 'OpenAI Images',
       anthropicCurlTitle: 'Anthropic Messages',
       exampleNote:
-        'Replace `YOUR_API_KEY` with your API key and `your-model-name` with an available model.',
+        'Replace `YOUR_API_KEY` with your API key and each model placeholder with an available model for that example.',
       tsExampleTitle: 'OpenAI SDK Example (Node.js / TypeScript)',
       tsInstallLabel: 'Install',
       tsExampleNote:
-        'Use this on the server side. Put your key in an environment variable such as `PLATFORM_API_KEY`, and replace `your-model-name` with an available model.',
+        'Use this on the server side. Put your key in an environment variable such as `PLATFORM_API_KEY`, and replace each model placeholder with an available model for that example.',
       pythonExampleTitle: 'OpenAI SDK Example (Python)',
       pythonInstallLabel: 'Install',
       pythonExampleNote:
-        'Use this on the server side. Put your key in an environment variable such as `PLATFORM_API_KEY`, and replace `your-model-name` with an available model.',
+        'Use this on the server side. Put your key in an environment variable such as `PLATFORM_API_KEY`, and replace each model placeholder with an available model for that example.',
     },
   },
   dialog: {

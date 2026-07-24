@@ -1,99 +1,195 @@
 export const timezones = [
   {
     value: 'Pacific/Midway',
-    label: '(GMT-11:00) Midway Island, Samoa',
+    offset: 'UTC-11:00',
+    label: {
+      'en-US': 'Samoa Standard Time',
+      'zh-Hans': '萨摩亚标准时间',
+    },
   },
   {
     value: 'Pacific/Honolulu',
-    label: '(GMT-10:00) Hawaii',
+    offset: 'UTC-10:00',
+    label: {
+      'en-US': 'Hawaii-Aleutian Standard Time',
+      'zh-Hans': '夏威夷-阿留申标准时间',
+    },
   },
   {
     value: 'America/Anchorage',
-    label: '(GMT-09:00) Alaska',
+    offset: 'UTC-09:00',
+    label: {
+      'en-US': 'Alaska Time',
+      'zh-Hans': '阿拉斯加时间',
+    },
   },
   {
     value: 'America/Los_Angeles',
-    label: '(GMT-08:00) Pacific Time (US & Canada)',
+    offset: 'UTC-08:00',
+    label: {
+      'en-US': 'Pacific Time',
+      'zh-Hans': '北美太平洋时间',
+    },
   },
   {
     value: 'America/Denver',
-    label: '(GMT-07:00) Mountain Time (US & Canada)',
+    offset: 'UTC-07:00',
+    label: {
+      'en-US': 'Mountain Time',
+      'zh-Hans': '北美山区时间',
+    },
   },
   {
     value: 'America/Chicago',
-    label: '(GMT-06:00) Central Time (US & Canada)',
+    offset: 'UTC-06:00',
+    label: {
+      'en-US': 'Central Time',
+      'zh-Hans': '北美中部时间',
+    },
   },
   {
     value: 'America/New_York',
-    label: '(GMT-05:00) Eastern Time (US & Canada)',
+    offset: 'UTC-05:00',
+    label: {
+      'en-US': 'Eastern Time',
+      'zh-Hans': '北美东部时间',
+    },
   },
   {
     value: 'Atlantic/Bermuda',
-    label: '(GMT-04:00) Atlantic Time (Canada)',
+    offset: 'UTC-04:00',
+    label: {
+      'en-US': 'Atlantic Time',
+      'zh-Hans': '大西洋时间',
+    },
   },
   {
     value: 'America/Sao_Paulo',
-    label: '(GMT-03:00) Brasilia',
+    offset: 'UTC-03:00',
+    label: {
+      'en-US': 'Brasilia Standard Time',
+      'zh-Hans': '巴西利亚标准时间',
+    },
   },
   {
     value: 'Atlantic/South_Georgia',
-    label: '(GMT-02:00) Mid-Atlantic',
+    offset: 'UTC-02:00',
+    label: {
+      'en-US': 'South Georgia Time',
+      'zh-Hans': '南乔治亚岛时间',
+    },
   },
   {
     value: 'Atlantic/Azores',
-    label: '(GMT-01:00) Azores',
+    offset: 'UTC-01:00',
+    label: {
+      'en-US': 'Azores Time',
+      'zh-Hans': '亚速尔群岛时间',
+    },
   },
   {
     value: 'Europe/London',
-    label: '(GMT+00:00) London, Edinburgh, Dublin',
+    offset: 'UTC+00:00',
+    label: {
+      'en-US': 'United Kingdom Time',
+      'zh-Hans': '英国时间',
+    },
   },
   {
     value: 'Europe/Paris',
-    label: '(GMT+01:00) Paris, Berlin, Rome, Madrid',
+    offset: 'UTC+01:00',
+    label: {
+      'en-US': 'Central European Time',
+      'zh-Hans': '中欧时间',
+    },
   },
   {
     value: 'Europe/Helsinki',
-    label: '(GMT+02:00) Helsinki, Athens, Istanbul',
+    offset: 'UTC+02:00',
+    label: {
+      'en-US': 'Eastern European Time',
+      'zh-Hans': '东欧时间',
+    },
   },
   {
     value: 'Europe/Moscow',
-    label: '(GMT+03:00) Moscow, St. Petersburg',
+    offset: 'UTC+03:00',
+    label: {
+      'en-US': 'Moscow Standard Time',
+      'zh-Hans': '莫斯科标准时间',
+    },
   },
   {
     value: 'Asia/Dubai',
-    label: '(GMT+04:00) Abu Dhabi, Dubai',
+    offset: 'UTC+04:00',
+    label: {
+      'en-US': 'Gulf Standard Time',
+      'zh-Hans': '海湾标准时间',
+    },
   },
   {
     value: 'Asia/Karachi',
-    label: '(GMT+05:00) Islamabad, Karachi',
+    offset: 'UTC+05:00',
+    label: {
+      'en-US': 'Pakistan Standard Time',
+      'zh-Hans': '巴基斯坦标准时间',
+    },
   },
   {
     value: 'Asia/Dhaka',
-    label: '(GMT+06:00) Dhaka',
+    offset: 'UTC+06:00',
+    label: {
+      'en-US': 'Bangladesh Standard Time',
+      'zh-Hans': '孟加拉标准时间',
+    },
   },
   {
     value: 'Asia/Bangkok',
-    label: '(GMT+07:00) Bangkok, Jakarta',
+    offset: 'UTC+07:00',
+    label: {
+      'en-US': 'Indochina Time',
+      'zh-Hans': '中南半岛时间',
+    },
   },
   {
     value: 'Asia/Hong_Kong',
-    label: '(GMT+08:00) Beijing, Hong Kong, Singapore',
+    offset: 'UTC+08:00',
+    label: {
+      'en-US': 'Hong Kong Standard Time',
+      'zh-Hans': '香港标准时间',
+    },
   },
   {
     value: 'Asia/Shanghai',
-    label: '(GMT+08:00) Shanghai, Taipei',
+    offset: 'UTC+08:00',
+    label: {
+      'en-US': 'China Standard Time',
+      'zh-Hans': '中国标准时间',
+    },
   },
   {
     value: 'Asia/Tokyo',
-    label: '(GMT+09:00) Tokyo, Seoul',
+    offset: 'UTC+09:00',
+    label: {
+      'en-US': 'Japan Standard Time',
+      'zh-Hans': '日本标准时间',
+    },
   },
   {
     value: 'Australia/Sydney',
-    label: '(GMT+10:00) Sydney, Melbourne',
+    offset: 'UTC+10:00',
+    label: {
+      'en-US': 'Australian Eastern Time',
+      'zh-Hans': '澳大利亚东部时间',
+    },
   },
   {
     value: 'Pacific/Auckland',
-    label: '(GMT+12:00) Auckland',
+    offset: 'UTC+12:00',
+    label: {
+      'en-US': 'New Zealand Time',
+      'zh-Hans': '新西兰时间',
+    },
   },
 ] as const;
 
@@ -136,6 +232,6 @@ export const THEMES = [
 ] as const;
 
 // Type exports for better TypeScript support
-export type TimezoneValue = (typeof timezones)[number]['value'];
+export type TimezoneValue = string;
 export type LanguageValue = (typeof LANGUAGES)[number]['value'];
 export type ThemeValue = (typeof THEMES)[number]['value'];

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand/v2"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -291,7 +292,17 @@ func (s *Service) withProviderSlot(ctx context.Context, provider string, fn func
 }
 
 func (s *Service) handleCheckError(ctx context.Context, state *State, provider string, now time.Time, checkErr error) (*State, error) {
+	var adapterErr *adapter.AdapterError
+	unauthorized := errors.As(checkErr, &adapterErr) &&
+		adapterErr.StatusCode == http.StatusUnauthorized &&
+		errors.Is(checkErr, adapter.ErrAuthFailed)
 	switch {
+	case unauthorized:
+		recordCheckMetric(ctx, provider, "invalid_key")
+		if err := s.saveInvalidKeyResult(ctx, state, now, adapterErr); err != nil {
+			return nil, err
+		}
+		return s.Get(ctx, state.OrganizationID, state.CredentialID)
 	case errors.Is(checkErr, adapter.ErrCapabilityUnsupported):
 		recordCheckMetric(ctx, provider, "unsupported")
 		if err := s.saveCapabilityResult(ctx, state, now, BalanceCapabilityUnsupported, CheckStatusUnsupported, "unsupported"); err != nil {
@@ -311,6 +322,37 @@ func (s *Service) handleCheckError(ctx context.Context, state *State, provider s
 		}
 		return nil, fmt.Errorf("check upstream balance: %w", checkErr)
 	}
+}
+
+func (s *Service) saveInvalidKeyResult(ctx context.Context, state *State, now time.Time, adapterErr *adapter.AdapterError) error {
+	updated, err := s.repository.Update(ctx, state, map[string]any{
+		"balance_capability":        BalanceCapabilitySupported,
+		"balance_snapshot":          nil,
+		"balance_observed_at":       nil,
+		"availability":              AvailabilityInvalidKey,
+		"observation_source":        ObservationSourceBalanceAPI,
+		"availability_observed_at":  now,
+		"last_check_at":             now,
+		"last_check_status":         CheckStatusFailed,
+		"last_check_error_kind":     "invalid_key",
+		"next_check_at":             nil,
+		"consecutive_failures":      0,
+		"block_reason":              GuardReasonAuthInvalid,
+		"cooldown_until":            nil,
+		"guard_strikes":             1,
+		"half_open_lease_until":     nil,
+		"manual_retry_requested_at": nil,
+		"provider_error_code":       sanitizeProviderErrorCode(adapterErr.Code),
+		"provider_error_status":     adapterErr.StatusCode,
+		"updated_at":                now,
+	})
+	if err != nil {
+		return fmt.Errorf("save invalid upstream credential: %w", err)
+	}
+	if !updated {
+		return ErrStaleGeneration
+	}
+	return nil
 }
 
 func (s *Service) saveCapabilityResult(ctx context.Context, state *State, now time.Time, capability BalanceCapability, status CheckStatus, errorKind string) error {

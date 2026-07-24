@@ -213,7 +213,7 @@ func TestServiceCheckStoresUnsupportedAndPermissionDeniedAsCapabilityResults(t *
 		},
 		{
 			name:       "permission denied",
-			checkErr:   adapter.NewAdapterError("401", "not allowed", 401, adapter.ErrAuthFailed),
+			checkErr:   adapter.NewAdapterError("FORBIDDEN", "not allowed", http.StatusForbidden, adapter.ErrAuthFailed),
 			capability: BalanceCapabilityPermissionDenied,
 			status:     CheckStatusFailed,
 		},
@@ -267,6 +267,40 @@ func TestServiceCheckStoresUnsupportedAndPermissionDeniedAsCapabilityResults(t *
 				t.Fatalf("WarningThresholds = %#v, want preserved settings", state.WarningThresholds)
 			}
 		})
+	}
+}
+
+func TestServiceCheckMarksUnauthorizedCredentialInvalid(t *testing.T) {
+	db := openUpstreamStateTestDB(t)
+	credential := createTestCredential(t, db)
+	now := time.Date(2026, time.July, 21, 7, 0, 0, 0, time.UTC)
+	service := NewService(db, passthroughCrypto{})
+	service.now = func() time.Time { return now }
+	service.getBalance = func(context.Context, *credentialmodel.TenantCredential, string) (*adapter.Balance, error) {
+		return nil, adapter.NewAdapterError("invalid_request_error", "authentication failed", http.StatusUnauthorized, adapter.ErrAuthFailed)
+	}
+
+	state, err := service.Check(context.Background(), credential.OrganizationID, credential.ID)
+	if err != nil {
+		t.Fatalf("Check() error = %v", err)
+	}
+	if state.BalanceCapability != BalanceCapabilitySupported {
+		t.Fatalf("BalanceCapability = %q, want %q", state.BalanceCapability, BalanceCapabilitySupported)
+	}
+	if state.Availability != AvailabilityInvalidKey || state.BlockReason != GuardReasonAuthInvalid {
+		t.Fatalf("guard state = %q/%q, want %q/%q", state.Availability, state.BlockReason, AvailabilityInvalidKey, GuardReasonAuthInvalid)
+	}
+	if state.ObservationSource != ObservationSourceBalanceAPI || state.AvailabilityObservedAt == nil || !state.AvailabilityObservedAt.Equal(now) {
+		t.Fatalf("availability observation = %q/%v, want balance API at %v", state.ObservationSource, state.AvailabilityObservedAt, now)
+	}
+	if state.LastCheckStatus != CheckStatusFailed || state.LastCheckErrorKind != "invalid_key" {
+		t.Fatalf("check result = %q/%q, want failed/invalid_key", state.LastCheckStatus, state.LastCheckErrorKind)
+	}
+	if state.NextCheckAt != nil || state.CooldownUntil != nil {
+		t.Fatalf("retry scheduling = next:%v cooldown:%v, want none until key update", state.NextCheckAt, state.CooldownUntil)
+	}
+	if state.ProviderErrorCode != "invalid_request_error" || state.ProviderErrorStatus != http.StatusUnauthorized {
+		t.Fatalf("provider evidence = %q/%d, want invalid_request_error/401", state.ProviderErrorCode, state.ProviderErrorStatus)
 	}
 }
 
@@ -605,6 +639,14 @@ func TestClassifyProviderGuardErrorRequiresExactQwenAuthCode(t *testing.T) {
 	reason, availability, _, precise := classifyProviderGuardError("qwen", invalidKey)
 	if !precise || reason != GuardReasonAuthInvalid || availability != AvailabilityInvalidKey {
 		t.Fatalf("InvalidApiKey classified as reason=%q availability=%q precise=%t", reason, availability, precise)
+	}
+}
+
+func TestClassifyProviderGuardErrorClassifiesDeepSeekUnauthorized(t *testing.T) {
+	invalidKey := adapter.NewAdapterError("invalid_request_error", "authentication failed", http.StatusUnauthorized, adapter.ErrAuthFailed)
+	reason, availability, _, precise := classifyProviderGuardError("deepseek", invalidKey)
+	if !precise || reason != GuardReasonAuthInvalid || availability != AvailabilityInvalidKey {
+		t.Fatalf("DeepSeek 401 classified as reason=%q availability=%q precise=%t", reason, availability, precise)
 	}
 }
 

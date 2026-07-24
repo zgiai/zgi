@@ -4,6 +4,32 @@ export type AIChatConversationStatus = 'normal' | 'archived';
 export type AIChatConversationSource = 'console' | 'webapp' | 'migration';
 export type AIChatConversationRuntimeStatus = 'idle' | 'streaming';
 export type AIChatConversationType = 'chat' | 'image';
+export type AIChatModelPrecheckStatus = 'ok' | 'warning' | 'unknown';
+export type AIChatModelPrecheckWarningKind =
+  | 'organization_balance_low'
+  | 'workspace_quota_low'
+  | 'private_channel_balance_low'
+  | 'private_channel_upstream_balance_low'
+  | 'private_channel_upstream_unavailable';
+export type AIChatModelPrecheckWarningScope = 'all' | 'partial';
+
+export interface AIChatModelPrecheckRequest {
+  provider: string;
+  model: string;
+}
+
+export interface AIChatModelPrecheckWarning {
+  kind: AIChatModelPrecheckWarningKind;
+  reason?: string;
+  scope?: AIChatModelPrecheckWarningScope;
+}
+
+export interface AIChatModelPrecheckResult {
+  status: AIChatModelPrecheckStatus;
+  warnings: AIChatModelPrecheckWarning[];
+}
+
+export type AIChatModelPrecheckResponse = ApiResponseData<AIChatModelPrecheckResult>;
 export type AIChatMessageStatus =
   | 'pending'
   | 'streaming'

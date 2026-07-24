@@ -28,6 +28,8 @@ import type {
   AIChatImportSkillPreviewResponse,
   AIChatMessage,
   AIChatMessageListResponse,
+  AIChatModelPrecheckRequest,
+  AIChatModelPrecheckResponse,
   AIChatRegenerateMessageRequest,
   AIChatRuntimeSurface,
   AIChatUserInputContinuationRequest,
@@ -192,6 +194,14 @@ function createAIChatStreamOutputFilter(
  * AIChat service for the standalone console chat module.
  */
 export const aichatService = {
+  precheckWorkChatModel(payload: AIChatModelPrecheckRequest) {
+    return http.post<AIChatModelPrecheckResponse>(
+      `${AICHAT_BASE_PATH}/work-chat/models/precheck`,
+      payload,
+      { skipErrorHandling: true }
+    );
+  },
+
   listSkills() {
     return http.get<AIChatSkillListResponse>(`${AICHAT_BASE_PATH}/skills`);
   },

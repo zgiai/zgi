@@ -51,6 +51,33 @@ func (r *ChannelRouter) CandidateRoutesForProviderModel(
 	return r.candidateRoutesForResolvedModel(ctx, organizationID, modelName, providerHint, maxSelections, routes, llmModel, privateModel)
 }
 
+// PrecheckCandidateRoutesForProviderModel keeps guarded routes so the caller can
+// explain why every candidate is unavailable. Real routing still uses
+// CandidateRoutesForProviderModel and excludes guarded routes.
+func (r *ChannelRouter) PrecheckCandidateRoutesForProviderModel(
+	ctx context.Context,
+	organizationID uuid.UUID,
+	providerHint string,
+	modelName string,
+) ([]*channelmodel.LLMRoute, error) {
+	if r == nil {
+		return nil, fmt.Errorf("channel router is nil")
+	}
+
+	modelName = normalizeRequestedModelName(modelName)
+	providerHint = strings.TrimSpace(providerHint)
+	llmModel, privateModel, err := r.resolveCandidateModel(ctx, organizationID, providerHint, modelName)
+	if err != nil {
+		return nil, err
+	}
+
+	routes, err := r.organizationIDRouteRepo.GetEnabledRoutes(ctx, organizationID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get enabled routes: %w", err)
+	}
+	return r.precheckCandidateRoutesForResolvedModel(ctx, modelName, providerHint, routes, llmModel, privateModel)
+}
+
 func (r *ChannelRouter) resolveCandidateModel(
 	ctx context.Context,
 	organizationID uuid.UUID,
@@ -147,12 +174,41 @@ func (r *ChannelRouter) candidateRoutesForResolvedModel(
 		return nil, fmt.Errorf("no enabled routes found for organizationID %s", organizationID)
 	}
 
-	validRoutes, err := r.prepareCandidateRoutes(ctx, organizationID, routes, modelName, modelProvider, isPrivateCustomModel, llmModel, isPassthroughMode, false, false)
+	validRoutes, err := r.prepareCandidateRoutes(ctx, organizationID, routes, modelName, modelProvider, isPrivateCustomModel, llmModel, isPassthroughMode, false)
 	if err != nil {
 		return nil, err
 	}
 
 	return r.selectCandidateRoutesForAttemptWindow(validRoutes, maxSelections), nil
+}
+
+func (r *ChannelRouter) precheckCandidateRoutesForResolvedModel(
+	ctx context.Context,
+	modelName string,
+	providerHint string,
+	routes []*channelmodel.LLMRoute,
+	llmModel *llmmodel.LLMModel,
+	privateModel *llmmodel.CustomModel,
+) ([]*channelmodel.LLMRoute, error) {
+	modelName = normalizeRequestedModelName(modelName)
+	isPrivateCustomModel := privateModel != nil
+	isPassthroughMode := llmModel == nil && privateModel == nil
+	modelProvider := ""
+	if llmModel != nil {
+		modelProvider = llmModel.Provider
+	} else if isPassthroughMode {
+		modelProvider = strings.TrimSpace(providerHint)
+	}
+
+	if len(routes) == 0 {
+		return nil, fmt.Errorf("no enabled routes found")
+	}
+
+	validRoutes, err := r.filterCandidateRoutes(ctx, routes, modelName, modelProvider, isPrivateCustomModel, llmModel, isPassthroughMode)
+	if err != nil {
+		return nil, err
+	}
+	return validRoutes, nil
 }
 
 func (r *ChannelRouter) selectCandidateRoutesForAttemptWindow(routes []*channelmodel.LLMRoute, maxSelections int) []*channelmodel.LLMRoute {

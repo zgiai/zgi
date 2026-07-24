@@ -72,6 +72,7 @@ func TestWorkflowServicePrecheckWorkflowRun_MapsWarningCodes(t *testing.T) {
 			Warnings: []llmclient.AppModelPrecheckWarning{
 				{Kind: llmclient.AppModelPrecheckWarningOrganizationBalanceLow, CurrentValue: 300, Threshold: 500},
 				{Kind: llmclient.AppModelPrecheckWarningPrivateChannelBalanceLow, CurrentValue: 220, Threshold: 500},
+				{Kind: llmclient.AppModelPrecheckWarningPrivateChannelUpstreamBalanceLow},
 				{Kind: llmclient.AppModelPrecheckWarningPrivateChannelUpstreamUnavailable, Reason: "credential_unavailable"},
 			},
 		},
@@ -91,7 +92,7 @@ func TestWorkflowServicePrecheckWorkflowRun_MapsWarningCodes(t *testing.T) {
 		t.Fatalf("Status = %q, want %q", result.Status, WorkflowRunPrecheckStatusWarning)
 	}
 	if len(result.Warnings) != 3 {
-		t.Fatalf("len(Warnings) = %d, want 3", len(result.Warnings))
+		t.Fatalf("len(Warnings) = %d, want 3 after duplicate balance warnings are collapsed", len(result.Warnings))
 	}
 	if result.Warnings[0].Code != 207008 {
 		t.Fatalf("Warnings[0].Code = %d, want 207008", result.Warnings[0].Code)
@@ -104,6 +105,22 @@ func TestWorkflowServicePrecheckWorkflowRun_MapsWarningCodes(t *testing.T) {
 	}
 	if result.Warnings[2].Code != 207015 || result.Warnings[2].Params["reason"] != "credential_unavailable" {
 		t.Fatalf("Warnings[2] = %#v, want upstream unavailable", result.Warnings[2])
+	}
+}
+
+func TestBuildWorkflowRunPrecheckResponseMapsUpstreamBalanceLow(t *testing.T) {
+	result := buildWorkflowRunPrecheckResponse(true, &llmclient.AppModelPrecheckResult{
+		Status: llmclient.AppModelPrecheckStatusWarning,
+		Warnings: []llmclient.AppModelPrecheckWarning{
+			{Kind: llmclient.AppModelPrecheckWarningPrivateChannelUpstreamBalanceLow},
+		},
+	})
+
+	if result.Status != WorkflowRunPrecheckStatusWarning || len(result.Warnings) != 1 {
+		t.Fatalf("result = %#v, want one warning", result)
+	}
+	if result.Warnings[0].Code != 207010 {
+		t.Fatalf("warning code = %d, want 207010", result.Warnings[0].Code)
 	}
 }
 
@@ -228,5 +245,26 @@ func TestGraphContainsAICreditNodes_ReturnsFalseWhenWorkflowDoesNotSpendAICredit
 
 	if graphContainsAICreditNodes(graph) {
 		t.Fatalf("graphContainsAICreditNodes() = true, want false")
+	}
+}
+
+func TestDraftWorkflowPrecheckRequestPrefersCurrentGraph(t *testing.T) {
+	stored := map[string]any{
+		"graph": map[string]any{
+			"nodes": []any{map[string]any{"id": "stored-llm"}},
+		},
+	}
+	current := map[string]any{
+		"nodes": []any{map[string]any{"id": "current-llm"}},
+	}
+	req := draftWorkflowPrecheckRequest{Graph: current}
+
+	if got := req.workflowOr(stored); !reflect.DeepEqual(got, current) {
+		t.Fatalf("workflowOr() = %#v, want current request graph %#v", got, current)
+	}
+
+	req.Graph = nil
+	if got := req.workflowOr(stored); !reflect.DeepEqual(got, stored) {
+		t.Fatalf("workflowOr() = %#v, want stored workflow %#v", got, stored)
 	}
 }

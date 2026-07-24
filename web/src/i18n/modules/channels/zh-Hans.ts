@@ -395,7 +395,6 @@ const messages: ChannelsMessages = {
     observedPrefix: '观测于',
     stalePrefix: '数据已过期，检查于',
     retryAfter: '下次自动验证：{time}',
-    errorCode: '上游错误码：{code}',
     sharedCredential: '该 Credential 被 {count} 个渠道共享，此设置会同步影响这些渠道。',
     enableThreshold: '启用 {currency} 余额预警',
     thresholdPlaceholder: '预警金额',

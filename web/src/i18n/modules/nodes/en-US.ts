@@ -597,7 +597,7 @@ const messages = {
       taskDescription: 'Describe what this scheduled task is for',
       runAtVariable: 'e.g. 2026-04-11T09:00:00+08:00',
       cronExpr: 'e.g. 0 9 * * 1',
-      timezone: 'e.g. Asia/Shanghai',
+      timezone: 'Select timezone',
       recipient: 'Recipient {index}',
       subject: 'Email subject',
       body: 'Enter the notification body',

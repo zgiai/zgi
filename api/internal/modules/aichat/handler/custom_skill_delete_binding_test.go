@@ -43,7 +43,7 @@ func TestPreviewSkillDeleteImpactReturnsAffectedAgentPresentation(t *testing.T) 
 			Description: "Uses the custom Skill",
 		}},
 	}}
-	handler := NewHandler(service)
+	handler := NewHandler(service, nil)
 	recorder := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(recorder)
 	ctx.Request = httptest.NewRequest(http.MethodGet, "/aichat/skills/custom-skill/delete-impact", nil)
@@ -67,7 +67,7 @@ func TestDeleteSkillPassesBindingConfirmationAndMapsConflict(t *testing.T) {
 		ResourceID:  "custom-skill",
 		ImpactToken: "fresh-token",
 	}}}
-	handler := NewHandler(service)
+	handler := NewHandler(service, nil)
 	recorder := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(recorder)
 	ctx.Request = httptest.NewRequest(http.MethodDelete, "/aichat/skills/custom-skill?agent_binding_action=unbind&impact_token=stale-token", nil)

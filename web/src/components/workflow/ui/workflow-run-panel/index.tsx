@@ -36,7 +36,6 @@ import { useT } from '@/i18n';
 import { WorkflowPrecheckWarningBanner } from '@/components/workflow/common/workflow-precheck-warning';
 import type { QuestionAnswerChoice, WorkflowPrecheckWarning } from '@/services/types/workflow';
 import { useWorkflowDraftPrecheck } from '@/hooks/workflow/use-workflow-precheck';
-import { getWorkflowPrecheckWarnings } from '@/utils/workflow/billing';
 import { useWorkflowBillingFeedback } from '@/hooks/workflow/use-workflow-billing-feedback';
 import { toast } from 'sonner';
 import { useApprovalForm, useSubmitApprovalForm } from '@/hooks';
@@ -59,6 +58,11 @@ import { parseWorkflowPausedEvent } from '@/components/workflow/runtime/pause-ev
 import { getQuestionAnswerChoiceQuery } from '@/components/workflow/question-answer/question-answer-runtime-prompt';
 import { useResizableRightPanel } from '../use-resizable-right-panel';
 import { useActivePanel } from '../../hooks/use-active-panel';
+import {
+  loadAdvisoryWorkflowPrecheckWarnings,
+  workflowPrecheckGraphNodes,
+  workflowPrecheckModelFingerprint,
+} from '@/components/workflow/utils/workflow-precheck';
 
 interface WorkflowRunPanelProps {
   // Whether the run panel is visible
@@ -107,10 +111,12 @@ const WorkflowRunPanel: React.FC<WorkflowRunPanelProps> = ({
   const t = useT();
   const setActivePanel = useActivePanel(state => state.setActive);
   const workflowDraftPrecheck = useWorkflowDraftPrecheck(agentId);
+  const { mutateAsync: precheckWorkflowDraft } = workflowDraftPrecheck;
   const { notifyBillingError } = useWorkflowBillingFeedback('agents');
 
   // Local graph state from store (reflects unsaved edits immediately)
   const nodes = useWorkflowStore.use.nodes();
+  const precheckModelFingerprint = useMemo(() => workflowPrecheckModelFingerprint(nodes), [nodes]);
   const edges = useWorkflowStore.use.edges();
   const viewport = useWorkflowStore.use.viewport();
   const mode = useWorkflowStore.use.mode();
@@ -194,6 +200,38 @@ const WorkflowRunPanel: React.FC<WorkflowRunPanelProps> = ({
   const [isStarting, setIsStarting] = useState(false);
   const [shake, setShake] = useState(false);
   const [precheckWarnings, setPrecheckWarnings] = useState<WorkflowPrecheckWarning[]>([]);
+  const precheckRequestIdRef = useRef(0);
+
+  const loadWorkflowPrecheckWarnings = useCallback(
+    async (inputs?: WorkflowRunInputValues) => {
+      const requestId = ++precheckRequestIdRef.current;
+      const currentNodes = workflowPrecheckGraphNodes(useWorkflowStore.getState().nodes);
+      const warnings = await loadAdvisoryWorkflowPrecheckWarnings(() =>
+        precheckWorkflowDraft({
+          inputs,
+          graph: { nodes: currentNodes },
+        })
+      );
+      if (requestId === precheckRequestIdRef.current) {
+        setPrecheckWarnings(warnings);
+      }
+    },
+    [precheckWorkflowDraft]
+  );
+
+  useEffect(() => {
+    if (!open || isHistory || !canRunDraft || precheckModelFingerprint === '[]') {
+      setPrecheckWarnings([]);
+      return;
+    }
+
+    setPrecheckWarnings([]);
+    void loadWorkflowPrecheckWarnings();
+
+    return () => {
+      precheckRequestIdRef.current += 1;
+    };
+  }, [canRunDraft, isHistory, loadWorkflowPrecheckWarnings, open, precheckModelFingerprint]);
 
   // Remember last submitted inputs for details view
   const [lastInputs, setLastInputs] = useState<FormInputs | undefined>(undefined);
@@ -1045,13 +1083,7 @@ const WorkflowRunPanel: React.FC<WorkflowRunPanelProps> = ({
           },
         };
         if (!isQuestionAnswerResume) {
-          const precheck = await workflowDraftPrecheck.mutateAsync(payload);
-          const warnings = getWorkflowPrecheckWarnings(precheck);
-          if (precheck.status === 'warning' && warnings.length > 0) {
-            setPrecheckWarnings(warnings);
-          } else {
-            setPrecheckWarnings([]);
-          }
+          void loadWorkflowPrecheckWarnings(payload.inputs);
         }
 
         setLastInputs(values);
@@ -1072,6 +1104,7 @@ const WorkflowRunPanel: React.FC<WorkflowRunPanelProps> = ({
       cancelWorkflowRunEvents,
       canRunDraft,
       isHistory,
+      loadWorkflowPrecheckWarnings,
       persistDraftBeforeRun,
       resetApprovalRuntime,
       questionAnswerPrompt,
@@ -1079,7 +1112,6 @@ const WorkflowRunPanel: React.FC<WorkflowRunPanelProps> = ({
       setLastDebugInputs,
       start,
       t,
-      workflowDraftPrecheck,
     ]
   );
 

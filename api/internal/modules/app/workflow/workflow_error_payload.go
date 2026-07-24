@@ -4,6 +4,7 @@ import (
 	"errors"
 
 	workflowpause "github.com/zgiai/zgi/api/internal/modules/app/workflow/pause"
+	llmerrors "github.com/zgiai/zgi/api/internal/modules/llm/errors"
 	"github.com/zgiai/zgi/api/internal/modules/llm/gateway"
 	"github.com/zgiai/zgi/api/pkg/response"
 )
@@ -23,6 +24,13 @@ func buildWorkflowStreamErrorPayload(err error) map[string]any {
 			"code":    "workflow_event_persistence_failed",
 		}
 	}
+	if errors.Is(err, llmerrors.DomainErrPrivateChannelUpstreamUnavailable) {
+		return map[string]any{
+			"message": response.ErrWorkflowPrivateChannelUpstreamUnavailable.Message,
+			"code":    response.ErrWorkflowPrivateChannelUpstreamUnavailable.Code,
+		}
+	}
+
 	code, message, ok := workflowBillingErrorCodeAndMessage(err)
 	if !ok {
 		message = workflowFallbackErrorMessage(err)

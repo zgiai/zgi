@@ -101,7 +101,7 @@ func (s *llmGatewayServiceImpl) PrecheckAppModels(ctx context.Context, organizat
 }
 
 func (s *llmGatewayServiceImpl) precheckSingleModelRoutes(ctx context.Context, shadowOrganizationID uuid.UUID, model AppModelRouteRef) ([]AppModelRouteWarning, error) {
-	routes, err := s.loadCandidateRoutesForModel(ctx, shadowOrganizationID, model.Provider, model.Model, 3)
+	routes, err := s.loadCandidateRoutesForModel(ctx, shadowOrganizationID, model.Provider, model.Model)
 	if err != nil {
 		if errors.Is(err, llmerrors.DomainErrPrivateChannelUpstreamUnavailable) {
 			return []AppModelRouteWarning{{
@@ -193,14 +193,12 @@ func (s *llmGatewayServiceImpl) evaluateCandidateRouteWarnings(ctx context.Conte
 	if upstreamUnavailable != nil {
 		warnings = append(warnings, *upstreamUnavailable)
 	}
-	upstreamLow, err := s.allCandidateUpstreamBalancesLow(ctx, organizationID, routes)
+	upstreamLow, err := s.candidateUpstreamBalanceLowWarning(ctx, organizationID, routes)
 	if err != nil {
 		return false, nil, err
 	}
-	if upstreamLow {
-		warnings = append(warnings, AppModelRouteWarning{
-			Kind: AppModelRouteWarningKindPrivateChannelUpstreamBalanceLow,
-		})
+	if upstreamLow != nil {
+		warnings = append(warnings, *upstreamLow)
 	}
 	if len(warnings) == 0 {
 		return true, nil, nil
@@ -266,49 +264,72 @@ func (s *llmGatewayServiceImpl) candidateUpstreamUnavailableWarning(
 	if affectedCount == 0 {
 		return nil, nil
 	}
+	if affectedCount != candidateCount {
+		return nil, nil
+	}
 
 	warningReason := string(reason)
 	if mixedReasons {
 		warningReason = privateChannelCredentialUnavailableReason
 	}
-	scope := AppModelRouteWarningScopePartial
-	if affectedCount == candidateCount {
-		scope = AppModelRouteWarningScopeAll
-	}
 	return &AppModelRouteWarning{
 		Kind:   AppModelRouteWarningKindPrivateChannelUpstreamUnavailable,
 		Reason: warningReason,
-		Scope:  scope,
+		Scope:  AppModelRouteWarningScopeAll,
 	}, nil
 }
 
-func (s *llmGatewayServiceImpl) allCandidateUpstreamBalancesLow(
+func (s *llmGatewayServiceImpl) candidateUpstreamBalanceLowWarning(
 	ctx context.Context,
 	organizationID uuid.UUID,
 	routes []*channelmodel.LLMRoute,
-) (bool, error) {
+) (*AppModelRouteWarning, error) {
 	if s.upstreamState == nil || len(routes) == 0 {
-		return false, nil
+		return nil, nil
 	}
 	credentialIDs := make([]uuid.UUID, 0, len(routes))
 	for _, route := range routes {
-		if route == nil || isOfficialRoute(route) || route.CredentialID == nil {
-			return false, nil
+		if route == nil {
+			continue
+		}
+		if isOfficialRoute(route) || route.CredentialID == nil {
+			continue
 		}
 		credentialIDs = append(credentialIDs, *route.CredentialID)
 	}
+	if len(credentialIDs) == 0 {
+		return nil, nil
+	}
 	states, err := s.upstreamState.GetMany(ctx, organizationID, credentialIDs)
 	if err != nil {
-		return false, err
+		return nil, err
 	}
 	now := time.Now()
-	for _, credentialID := range credentialIDs {
-		state := states[credentialID]
+	usableCount := 0
+	for _, route := range routes {
+		if route == nil {
+			continue
+		}
+		if isOfficialRoute(route) || route.CredentialID == nil {
+			return nil, nil
+		}
+		state := states[*route.CredentialID]
+		if state != nil && state.BlockReason != "" {
+			continue
+		}
+		usableCount++
 		if state == nil || upstreamstate.IsStale(state, now) || !upstreamstate.IsLow(state) {
-			return false, nil
+			return nil, nil
 		}
 	}
-	return len(credentialIDs) > 0, nil
+	if usableCount == 0 {
+		return nil, nil
+	}
+
+	return &AppModelRouteWarning{
+		Kind:  AppModelRouteWarningKindPrivateChannelUpstreamBalanceLow,
+		Scope: AppModelRouteWarningScopeAll,
+	}, nil
 }
 
 func summarizeCandidateRouteWarnings(states []candidateRouteWarningState) []AppModelRouteWarning {
@@ -355,11 +376,11 @@ func (s *llmGatewayServiceImpl) buildWorkspaceQuotaWarning(ctx context.Context, 
 	}, nil
 }
 
-func (s *llmGatewayServiceImpl) loadCandidateRoutesForModel(ctx context.Context, organizationID uuid.UUID, provider, modelName string, maxSelections int) ([]*channelmodel.LLMRoute, error) {
+func (s *llmGatewayServiceImpl) loadCandidateRoutesForModel(ctx context.Context, organizationID uuid.UUID, provider, modelName string) ([]*channelmodel.LLMRoute, error) {
 	if s.channelRouter == nil {
 		return nil, fmt.Errorf("channel router is not configured")
 	}
-	return s.channelRouter.CandidateRoutesForProviderModel(ctx, organizationID, provider, modelName, maxSelections)
+	return s.channelRouter.PrecheckCandidateRoutesForProviderModel(ctx, organizationID, provider, modelName)
 }
 
 func (s *llmGatewayServiceImpl) loadWorkspaceQuota(ctx context.Context, organizationID uuid.UUID, workspaceID string) (*WorkspaceQuota, error) {

@@ -3,6 +3,7 @@
 import { useId } from 'react';
 import { Eye, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { AIChatModelPrecheckWarning } from '@/components/aichat/model-precheck-warning';
 import Chat, { type AIChatController } from '@/components/chat';
 import {
   AIChatEmbeddedConversationControls,
@@ -15,8 +16,14 @@ import type {
 } from '@/components/common/model-selector';
 import { useT } from '@/i18n';
 import type { OpeningGuideBrand } from '@/components/chat/utils/opening-guide-brand';
+import { useAgentDraftModelPrecheck } from '@/hooks/agent/use-agent-draft-model-precheck';
+import {
+  allowSendAfterAgentModelPrecheck,
+  visibleAgentModelPrecheckWarnings,
+} from './model-precheck';
 
 interface AgentRuntimePreviewPanelProps {
+  agentId: string;
   controller: AIChatController;
   modelSelectorValue: ModelSelectorParameterValue;
   modelProps?: ModelSelectorModelProps | null;
@@ -35,6 +42,7 @@ interface AgentRuntimePreviewPanelProps {
 }
 
 export function AgentRuntimePreviewPanel({
+  agentId,
   controller,
   modelSelectorValue,
   modelProps,
@@ -53,6 +61,18 @@ export function AgentRuntimePreviewPanel({
 }: AgentRuntimePreviewPanelProps) {
   const t = useT('agents.agentRuntime');
   const controlsPortalId = useId();
+  const modelPrecheck = useAgentDraftModelPrecheck(
+    agentId,
+    modelSelectorValue.provider,
+    modelSelectorValue.model
+  );
+  const warnings = visibleAgentModelPrecheckWarnings(modelPrecheck.data);
+  const handleBeforeSend = async () => {
+    if (beforeSend && !(await beforeSend())) {
+      return false;
+    }
+    return allowSendAfterAgentModelPrecheck(modelPrecheck.refetch);
+  };
 
   return (
     <section className="flex h-full min-h-0 w-full min-w-0 flex-col overflow-hidden">
@@ -102,7 +122,10 @@ export function AgentRuntimePreviewPanel({
           modelSelectorValue={modelSelectorValue}
           modelProps={modelProps}
           onModelChange={onModelChange}
-          beforeSend={beforeSend}
+          beforeSend={handleBeforeSend}
+          inputTopNotice={
+            warnings.length > 0 ? <AIChatModelPrecheckWarning warnings={warnings} /> : undefined
+          }
           variant="embedded"
           showModelSelector={false}
           showMemoryToggle={false}

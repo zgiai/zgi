@@ -99,6 +99,9 @@ func RegisterAgentsRoutes(v1 *gin.RouterGroup, db *gorm.DB, accountService inter
 	service := app.NewAgentsService(repo, accountService, tenantService, workflowService, chatRuntimeService, agentMemoryService, dataSourceService, knowledgeRetrievalService, resourcePermissionService, enterpriseService, quotaService, fileService, llmClient, defaultModelResolver, db)
 	appHandler := app.NewAgentsHandler(service, tenantService, accountService, enterpriseService, db, chatRuntimeService)
 	appHandler.SetFileService(fileService)
+	if modelPrechecker, ok := llmClient.(llmclient.AppModelPrechecker); ok {
+		appHandler.SetModelPrechecker(modelPrechecker)
+	}
 	appHandler.SetWorkflowContinuationRunner(workflow.NewWorkflowHandler(workflowService, accountService, fileService, nil, enterpriseService))
 	if workflowTestService == nil {
 		workflowTestService = workflowtest.NewService(workflowtest.NewRepository(db))
@@ -154,6 +157,7 @@ func RegisterAgentsRoutes(v1 *gin.RouterGroup, db *gorm.DB, accountService inter
 	appsGroup.GET("/:agent_id/published-versions/:version_id/rollback-preview", appHandler.PreviewAgentPublishedVersionRollback)
 	appsGroup.POST("/:agent_id/published-versions/rollback", appHandler.RollbackAgentPublishedVersion)
 	appsGroup.POST("/:agent_id/chat", appHandler.ChatAgent)
+	appsGroup.POST("/:agent_id/runtime/model-precheck", appHandler.PrecheckAgentDraftModel)
 	appsGroup.GET("/:agent_id/runtime/conversations", appHandler.ListAgentRuntimeConversations)
 	appsGroup.GET("/:agent_id/runtime/conversations/:conversation_id", appHandler.GetAgentRuntimeConversation)
 	appsGroup.PATCH("/:agent_id/runtime/conversations/:conversation_id", appHandler.UpdateAgentRuntimeConversation)
@@ -184,6 +188,7 @@ func RegisterAgentsRoutes(v1 *gin.RouterGroup, db *gorm.DB, accountService inter
 	protectedWebApps.Use(middleware.WebAppAuthMiddleware())
 	protectedWebApps.GET("/:web_app_id/capability", appHandler.GetWebAppRuntimeCapability)
 	protectedWebApps.POST("/:web_app_id/chat", appHandler.ChatWebAppAgent)
+	protectedWebApps.POST("/:web_app_id/runtime/model-precheck", appHandler.PrecheckPublishedAgentModel)
 	protectedWebApps.GET("/:web_app_id/files/upload", appHandler.GetWebAppUploadConfig)
 	protectedWebApps.POST("/:web_app_id/files/upload", appHandler.UploadWebAppFile)
 	protectedWebApps.GET("/:web_app_id/runtime/search", appHandler.SearchWebAppAgentRuntimeConversations)

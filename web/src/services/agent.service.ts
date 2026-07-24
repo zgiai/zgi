@@ -1,6 +1,7 @@
 import { BaseService } from '@/lib/http/services';
 import { wrapModelOutputSseCallbacks } from '@/utils/model-output-filter';
 import { webappHttp } from '@/lib/http';
+import type { AIChatModelPrecheckRequest, AIChatModelPrecheckResponse } from './types/aichat';
 import type {
   Agent,
   AgentList,
@@ -178,6 +179,16 @@ class AgentService extends BaseService {
   getAgentConfig(agentId: string): Promise<ApiResponseData<AgentRuntimeConfig>> {
     return this.request('get', `/agents/${agentId}/config`, undefined, {
       headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  precheckAgentDraftModel(
+    agentId: string,
+    data: AIChatModelPrecheckRequest
+  ): Promise<AIChatModelPrecheckResponse> {
+    return this.request('post', `/agents/${agentId}/runtime/model-precheck`, data, {
+      headers: { 'Content-Type': 'application/json' },
+      skipErrorHandling: true,
     });
   }
 
