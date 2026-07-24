@@ -178,6 +178,9 @@ func (h *AgentsHandler) resumeAgentWorkflowApproval(ctx context.Context, scope r
 	if err != nil {
 		return err
 	}
+	if approvalSubmissionObservesRunningExecution(submission) {
+		return workflowpause.ErrResumeAlreadyRunning
+	}
 	if !submission.ResumeReady {
 		return nil
 	}
@@ -194,6 +197,9 @@ func (h *AgentsHandler) resumeAgentWorkflowApprovalStream(ctx context.Context, s
 	if err != nil {
 		return err
 	}
+	if approvalSubmissionObservesRunningExecution(submission) {
+		return workflowpause.ErrResumeAlreadyRunning
+	}
 	if err := emitAgentWorkflowInteractionEvents(submission.Event, submission.PendingEvents, onEvent); err != nil {
 		return err
 	}
@@ -201,6 +207,10 @@ func (h *AgentsHandler) resumeAgentWorkflowApprovalStream(ctx context.Context, s
 		return nil
 	}
 	return runner.ResumeApprovalWorkflowStream(ctx, submission.Form, onEvent)
+}
+
+func approvalSubmissionObservesRunningExecution(submission *approvalruntime.SubmitResult) bool {
+	return submission != nil && strings.EqualFold(strings.TrimSpace(submission.ResumeState), "running")
 }
 
 func submitAgentWorkflowApprovalForm(ctx context.Context, approvalService *approvalruntime.Service, continuation *runtimeservice.WorkflowApprovalContinuation, req agentWorkflowContinuationRequest, accountID *string) (*approvalruntime.SubmitResult, error) {

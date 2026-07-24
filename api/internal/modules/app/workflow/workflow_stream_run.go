@@ -218,6 +218,17 @@ func (h *WorkflowHandler) runWorkflowStream(c *gin.Context, requestedWorkspaceID
 						return
 					}
 				}
+				if err := h.applyDurableWorkflowStreamResumeInputs(
+					c.Request.Context(),
+					pauseService,
+					workflowRunLogID,
+					resumePauseID,
+					resumePauseGeneration,
+					req,
+				); err != nil {
+					h.sendSSEError(c.Request.Context(), c.Writer, fmt.Sprintf("failed to load workflow resume inputs: %v", err))
+					return
+				}
 				claim, claimErr := claimWorkflowResume(c.Request.Context(), pauseService, run, resumePauseID)
 				if claimErr != nil {
 					if errors.Is(claimErr, workflowpause.ErrResumeAlreadyRunning) {
@@ -878,6 +889,31 @@ func (h *WorkflowHandler) runWorkflowStream(c *gin.Context, requestedWorkspaceID
 			return
 		}
 	}
+}
+
+func (h *WorkflowHandler) applyDurableWorkflowStreamResumeInputs(
+	ctx context.Context,
+	pauseService *workflowpause.Service,
+	workflowRunID string,
+	pauseID string,
+	pauseGeneration int64,
+	req *dto.DraftWorkflowRunRequest,
+) error {
+	if req == nil {
+		return fmt.Errorf("workflow run request is required")
+	}
+	inputs, err := loadDurableWorkflowResumeInputs(
+		ctx,
+		pauseService,
+		workflowRunID,
+		&workflowpause.RunPause{ID: pauseID, Generation: pauseGeneration},
+		req.Inputs,
+	)
+	if err != nil {
+		return err
+	}
+	req.Inputs = inputs
+	return nil
 }
 
 func newWorkflowExecutionContext(requestContext context.Context) (context.Context, context.CancelFunc) {

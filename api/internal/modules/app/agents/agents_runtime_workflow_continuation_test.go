@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
+	approvalruntime "github.com/zgiai/zgi/api/internal/modules/app/workflow/approval"
 	workflowpause "github.com/zgiai/zgi/api/internal/modules/app/workflow/pause"
 )
 
@@ -224,5 +225,26 @@ func TestAgentWorkflowContinuationStreamStateAppliesReplacement(t *testing.T) {
 
 	if state.WorkflowMessageText != "authoritative answer\n" {
 		t.Fatalf("replacement answer = %q", state.WorkflowMessageText)
+	}
+}
+
+func TestApprovalSubmissionObservesRunningExecution(t *testing.T) {
+	tests := []struct {
+		name       string
+		submission *approvalruntime.SubmitResult
+		want       bool
+	}{
+		{name: "nil submission"},
+		{name: "waiting", submission: &approvalruntime.SubmitResult{ResumeState: "waiting"}},
+		{name: "queued", submission: &approvalruntime.SubmitResult{ResumeState: "queued"}},
+		{name: "running", submission: &approvalruntime.SubmitResult{ResumeState: "running"}, want: true},
+		{name: "normalized running", submission: &approvalruntime.SubmitResult{ResumeState: " RUNNING "}, want: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := approvalSubmissionObservesRunningExecution(tt.submission); got != tt.want {
+				t.Fatalf("approvalSubmissionObservesRunningExecution() = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/zgiai/zgi/api/internal/dto"
 	graphentities "github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine/entities"
 	workflowpause "github.com/zgiai/zgi/api/internal/modules/app/workflow/pause"
 	"gorm.io/driver/sqlite"
@@ -171,6 +172,100 @@ func TestDurableWorkflowResumeInputsReachEveryQuestionInDirectResume(t *testing.
 				t.Fatalf("question-2 query = %#v, want second", second)
 			}
 		})
+	}
+}
+
+func TestWorkflowStreamResumeAppliesDurableInputsBeforeClaim(t *testing.T) {
+	dsn := "file:" + strings.ReplaceAll(t.Name(), "/", "_") + "?mode=memory&cache=shared"
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	if err != nil {
+		if strings.Contains(err.Error(), "requires cgo") {
+			t.Skipf("sqlite driver unavailable without cgo: %v", err)
+		}
+		t.Fatalf("open sqlite: %v", err)
+	}
+	if err := db.AutoMigrate(&workflowpause.RuntimeOutbox{}); err != nil {
+		t.Fatalf("migrate workflow outbox: %v", err)
+	}
+
+	const (
+		workflowRunID = "run-stream-resume"
+		pauseID       = "pause-stream-resume"
+		generation    = int64(3)
+	)
+	payload := workflowpause.RuntimeOutboxPayload{
+		WorkflowRunID: workflowRunID,
+		PauseID:       pauseID,
+		Generation:    generation,
+		ResumeInputs: map[string]interface{}{
+			"query": "second",
+			"interaction_submissions": []interface{}{
+				map[string]interface{}{
+					"reason_type": workflowpause.ReasonTypeQuestionAnswerRequired,
+					"node_id":     "question-1",
+					"data": map[string]interface{}{
+						"node_id": "question-1",
+						"answer":  "first",
+					},
+				},
+				map[string]interface{}{
+					"reason_type": workflowpause.ReasonTypeQuestionAnswerRequired,
+					"node_id":     "question-2",
+					"data": map[string]interface{}{
+						"node_id": "question-2",
+						"answer":  "second",
+					},
+				},
+			},
+		},
+	}
+	payloadJSON, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal workflow resume payload: %v", err)
+	}
+	now := time.Now()
+	pauseIDValue := pauseID
+	if err := db.Create(&workflowpause.RuntimeOutbox{
+		ID:             "outbox-stream-resume",
+		TenantID:       "tenant-stream-resume",
+		WorkflowRunID:  workflowRunID,
+		PauseID:        &pauseIDValue,
+		Kind:           workflowpause.RuntimeOutboxKindResume,
+		IdempotencyKey: "workflow-resume:" + pauseID + ":3",
+		PayloadJSON:    string(payloadJSON),
+		Status:         workflowpause.RuntimeOutboxPending,
+		NextAttemptAt:  now,
+		CreatedAt:      now,
+		UpdatedAt:      now,
+	}).Error; err != nil {
+		t.Fatalf("create workflow resume outbox: %v", err)
+	}
+
+	req := &dto.DraftWorkflowRunRequest{
+		Inputs: map[string]interface{}{
+			"query": "latest-request-only",
+		},
+	}
+	if err := (&WorkflowHandler{}).applyDurableWorkflowStreamResumeInputs(
+		context.Background(),
+		workflowpause.NewService(db),
+		workflowRunID,
+		pauseID,
+		generation,
+		req,
+	); err != nil {
+		t.Fatalf("apply durable stream resume inputs: %v", err)
+	}
+
+	pool := graphentities.NewVariablePool()
+	restoreQuestionAnswerResumeInputs(pool, nil, req.Inputs, nil)
+	first := pool.Get([]string{"question-1", "query"})
+	if first == nil || first.Text() != "first" {
+		t.Fatalf("question-1 query = %#v, want first", first)
+	}
+	second := pool.Get([]string{"question-2", "query"})
+	if second == nil || second.Text() != "second" {
+		t.Fatalf("question-2 query = %#v, want second", second)
 	}
 }
 

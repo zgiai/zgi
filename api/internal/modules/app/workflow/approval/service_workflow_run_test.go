@@ -592,6 +592,42 @@ func TestApprovalReplayDoesNotUseOutboxFromAnotherPauseGeneration(t *testing.T) 
 	if len(replay.PendingEvents) != 2 || replay.PendingEvents[0].Event != workflowpause.EventQuestionAnswerRequested {
 		t.Fatalf("pending replay events = %#v, want current question projection", replay.PendingEvents)
 	}
+
+	if err := db.Model(&workflowpause.RunPauseReason{}).
+		Where("pause_id = ?", pauseID).
+		Updates(map[string]interface{}{
+			"status":       workflowpause.RunPauseReasonStatusCompleted,
+			"completed_at": now,
+		}).Error; err != nil {
+		t.Fatalf("complete current pause reason: %v", err)
+	}
+	if err := db.Model(&workflowpause.RunPause{}).
+		Where("id = ?", pauseID).
+		Update("status", workflowpause.RunPauseStatusResuming).Error; err != nil {
+		t.Fatalf("mark current pause resuming: %v", err)
+	}
+
+	observed, err := NewService(db).SubmitByTokenForWorkflowRunWithResumeOptions(
+		context.Background(),
+		formToken,
+		runID,
+		SubmitRequest{Action: action, Inputs: map[string]interface{}{}},
+		nil,
+		nil,
+		SubmitOptions{},
+	)
+	if err != nil {
+		t.Fatalf("replay old approval while current pause resumes: %v", err)
+	}
+	if observed.ResumeReady || observed.Outbox != nil {
+		t.Fatalf("old replay authorized current resuming pause: ready:%v outbox:%#v", observed.ResumeReady, observed.Outbox)
+	}
+	if observed.ResumeState != "running" {
+		t.Fatalf("old replay resume state = %q, want running", observed.ResumeState)
+	}
+	if len(observed.PendingEvents) != 0 {
+		t.Fatalf("old replay pending events = %#v, want observation signal only", observed.PendingEvents)
+	}
 }
 
 func openApprovalServiceMockDB(t *testing.T) (*gorm.DB, sqlmock.Sqlmock, func()) {
