@@ -237,7 +237,7 @@ const messages: DashboardMessages = {
       agent: '智能体',
       aichat: '通用对话',
       'image-runtime': '绘图',
-      data_library_file: '知识库文件处理',
+      data_library_file: '文档向量生成与问答',
       prompt_optimizer: '提示词优化',
       prompt_playground: '提示词调试台',
       automation_task_draft: '定时任务草稿生成',
