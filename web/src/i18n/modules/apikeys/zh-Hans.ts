@@ -68,10 +68,12 @@ const messages: ApikeysMessages = {
       openAiBaseLabel: 'OpenAI Base URL',
       chatCompletionsLabel: 'Chat Completions 接口',
       responsesLabel: 'Responses 接口',
+      embeddingsLabel: 'Embeddings 接口',
+      imagesGenerationsLabel: 'Image Generations 接口',
       anthropicBaseLabel: 'Anthropic Base URL',
       anthropicMessagesLabel: 'Anthropic Messages 接口',
       supportNote:
-        '当前说明覆盖 OpenAI Chat Completions、Responses 与 Anthropic Messages；Responses 仅适用于支持该协议的模型。',
+        '当前说明覆盖 OpenAI Chat Completions、Responses、Embeddings、Images 与 Anthropic Messages；具体协议能力取决于所选模型。',
       tabs: {
         curl: 'curl',
         ts: 'TypeScript',
@@ -80,16 +82,19 @@ const messages: ApikeysMessages = {
       exampleTitle: 'curl 调用示例',
       openAiCurlTitle: 'OpenAI Chat Completions',
       openAiResponsesCurlTitle: 'OpenAI Responses',
+      openAiEmbeddingsTitle: 'OpenAI Embeddings',
+      openAiImagesTitle: 'OpenAI Images',
       anthropicCurlTitle: 'Anthropic Messages',
-      exampleNote: '请将 `YOUR_API_KEY` 替换为你的密钥，并将 `your-model-name` 替换为可用模型名。',
+      exampleNote:
+        '请将 `YOUR_API_KEY` 替换为你的密钥，并将各示例中的模型占位符替换为对应的可用模型名。',
       tsExampleTitle: 'OpenAI SDK 调用示例（Node.js / TypeScript）',
       tsInstallLabel: '安装',
       tsExampleNote:
-        '请在服务端使用该示例，并通过 `PLATFORM_API_KEY` 之类的环境变量传入密钥，同时将 `your-model-name` 替换为可用模型名。',
+        '请在服务端使用该示例，并通过 `PLATFORM_API_KEY` 之类的环境变量传入密钥，同时将各示例中的模型占位符替换为对应的可用模型名。',
       pythonExampleTitle: 'OpenAI SDK 调用示例（Python）',
       pythonInstallLabel: '安装',
       pythonExampleNote:
-        '请在服务端使用该示例，并通过 `PLATFORM_API_KEY` 之类的环境变量传入密钥，同时将 `your-model-name` 替换为可用模型名。',
+        '请在服务端使用该示例，并通过 `PLATFORM_API_KEY` 之类的环境变量传入密钥，同时将各示例中的模型占位符替换为对应的可用模型名。',
     },
   },
   dialog: {
