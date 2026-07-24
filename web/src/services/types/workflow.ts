@@ -69,7 +69,15 @@ export interface WorkflowRunGraph {
 
 export type WorkflowPrecheckStatus = 'ok' | 'warning' | 'unknown' | string;
 
-export type WorkflowPrecheckWarningCode = '207008' | '207009' | '207010' | 207008 | 207009 | 207010;
+export type WorkflowPrecheckWarningCode =
+  | '207008'
+  | '207009'
+  | '207010'
+  | '207015'
+  | 207008
+  | 207009
+  | 207010
+  | 207015;
 
 export type WorkflowRunBillingErrorCode =
   | '207011'

@@ -17,6 +17,7 @@ import { initialWorkflowData } from '@/components/workflow/store/initial-data';
 import { useSseCallbacks } from '../../workflow-run-panel/hooks/use-sse-callbacks';
 import type { ChatAttachment } from '@/components/chat/types';
 import type { WorkflowFeatures } from '@/components/workflow/store/type';
+import type { WorkflowChatDraftPrecheckRequest } from '@/services/workflow.service';
 import { useT } from '@/i18n';
 import useWorkflowValidation from '../../../hooks/use-workflow-validation';
 import { isBannerHidden, hideBanner, BannerKey } from '@/utils/ui-local';
@@ -24,8 +25,12 @@ import type { InputVar } from '@/components/workflow/types/input-var';
 import { WorkflowPrecheckWarningBanner } from '@/components/workflow/common/workflow-precheck-warning';
 import type { QuestionAnswerChoice, WorkflowPrecheckWarning } from '@/services/types/workflow';
 import { useWorkflowChatDraftPrecheck } from '@/hooks/workflow/use-workflow-precheck';
-import { getWorkflowPrecheckWarnings } from '@/utils/workflow/billing';
 import { useWorkflowBillingFeedback } from '@/hooks/workflow/use-workflow-billing-feedback';
+import {
+  loadAdvisoryWorkflowPrecheckWarnings,
+  workflowPrecheckGraphNodes,
+  workflowPrecheckModelFingerprint,
+} from '@/components/workflow/utils/workflow-precheck';
 import {
   extractLlmGatewayRequest,
   extractWorkflowRunContainerContext,
@@ -85,6 +90,7 @@ export function useWorkflowChatPanelState({
 }: WorkflowChatPanelProps) {
   const t = useT();
   const workflowChatPrecheck = useWorkflowChatDraftPrecheck(agentId);
+  const { mutateAsync: precheckWorkflowChatDraft } = workflowChatPrecheck;
   const setActivePanel = useActivePanel(state => state.setActive);
   const saveWorkflowDraft = useSaveWorkflowDraft();
   const { getWorkflowRunErrorText, notifyBillingError } = useWorkflowBillingFeedback('agents');
@@ -112,6 +118,7 @@ export function useWorkflowChatPanelState({
     [agentIcon, agentIconType, agentIconUrl, agentName]
   );
   const [precheckWarnings, setPrecheckWarnings] = useState<WorkflowPrecheckWarning[]>([]);
+  const precheckRequestIdRef = useRef(0);
   const chatConv = useChatStore.use.getConversation()(convId);
   const initSingle = useChatStore.use.initSingle();
   const updateConversation = useChatStore.use.updateConversation();
@@ -187,6 +194,7 @@ export function useWorkflowChatPanelState({
   // Wire up workflow store callbacks to mirror normal run panel behavior
   const rf = useReactFlow();
   const nodes = useWorkflowStore.use.nodes();
+  const precheckModelFingerprint = useMemo(() => workflowPrecheckModelFingerprint(nodes), [nodes]);
   const edges = useWorkflowStore.use.edges();
   const viewport = useWorkflowStore.use.viewport();
   const draft = useWorkflowStore.use.workflowData();
@@ -203,6 +211,42 @@ export function useWorkflowChatPanelState({
   const setRuntimeLogItems = useWorkflowStore.use.setRuntimeLogItems();
   const setCurrentRunningNodeId = useWorkflowStore.use.setCurrentRunningNodeId();
   const setLastDebugInputs = useWorkflowStore.use.setLastDebugInputs();
+
+  const loadWorkflowChatPrecheckWarnings = useCallback(
+    async (payload?: Partial<Omit<WorkflowChatDraftPrecheckRequest, 'graph'>>) => {
+      const requestId = ++precheckRequestIdRef.current;
+      const currentNodes = workflowPrecheckGraphNodes(useWorkflowStore.getState().nodes);
+      const warnings = await loadAdvisoryWorkflowPrecheckWarnings(() =>
+        precheckWorkflowChatDraft({
+          query: payload?.query ?? '',
+          conversation_id: payload?.conversation_id,
+          history_window_size: payload?.history_window_size,
+          files: payload?.files,
+          inputs: payload?.inputs,
+          graph: { nodes: currentNodes },
+        })
+      );
+      if (requestId === precheckRequestIdRef.current) {
+        setPrecheckWarnings(warnings);
+      }
+    },
+    [precheckWorkflowChatDraft]
+  );
+
+  useEffect(() => {
+    if (!open || !canRunDraft || precheckModelFingerprint === '[]') {
+      setPrecheckWarnings([]);
+      return;
+    }
+
+    setPrecheckWarnings([]);
+    void loadWorkflowChatPrecheckWarnings();
+
+    return () => {
+      precheckRequestIdRef.current += 1;
+    };
+  }, [canRunDraft, loadWorkflowChatPrecheckWarnings, open, precheckModelFingerprint]);
+
   const chatRunItemsRef = useRef<WorkflowRunNodeListItem[]>([]);
   const debugRunsQuery = useMemo(() => ({ triggered_from: 'debugging' as const }), []);
   const handleSelectDebugRun = useCallback(
@@ -2178,14 +2222,7 @@ export function useWorkflowChatPanelState({
         const isQuestionAnswerResume = Boolean(activeQuestionAnswerPrompt);
         if (!isQuestionAnswerResume) {
           await persistDraftBeforeRun();
-
-          const precheck = await workflowChatPrecheck.mutateAsync(payload);
-          const warnings = getWorkflowPrecheckWarnings(precheck);
-          if (precheck.status === 'warning' && warnings.length > 0) {
-            setPrecheckWarnings(warnings);
-          } else {
-            setPrecheckWarnings([]);
-          }
+          void loadWorkflowChatPrecheckWarnings(payload);
 
           resetApprovalRuntime();
           setQuestionAnswerPrompt(null);
@@ -2239,6 +2276,7 @@ export function useWorkflowChatPanelState({
       convId,
       chatConv,
       initSingle,
+      loadWorkflowChatPrecheckWarnings,
       onAgentRun,
       notifyBillingError,
       persistDraftBeforeRun,
@@ -2248,7 +2286,6 @@ export function useWorkflowChatPanelState({
       setLastDebugInputs,
       start,
       t,
-      workflowChatPrecheck,
     ]
   );
 

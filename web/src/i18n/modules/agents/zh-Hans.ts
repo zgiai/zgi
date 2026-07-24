@@ -758,12 +758,13 @@ const messages: AgentsMessages = {
         description: '当前组织余额为 {currentValue}，预警阈值为 {threshold}。',
       },
       '207010': {
-        title: '渠道余额接近阈值',
-        description: '当前渠道余额为 {currentValue}，预警阈值为 {threshold}。',
+        title: '工作流模型渠道余额偏低',
+        description: '工作流中至少一个模型的所有可用渠道余额均低于预警阈值；本提示不会阻止运行。',
       },
       '207015': {
-        title: '私人渠道上游暂不可用',
-        description: '所有候选 Credential 都已被上游明确拒绝，请联系组织管理员处理。',
+        title: '工作流模型渠道暂不可用',
+        description:
+          '工作流中至少一个模型的所有候选渠道均被上游拒绝，运行可能失败；本提示不会阻止运行。',
       },
       unknown: {
         title: '检测到潜在计费风险',

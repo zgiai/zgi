@@ -51,6 +51,10 @@ export interface WorkflowRunRequest {
   inputs?: WorkflowRunInputValues;
 }
 
+export interface WorkflowDraftPrecheckRequest extends WorkflowRunRequest {
+  graph?: { nodes: unknown[] };
+}
+
 interface WorkflowDraftRunBody extends WorkflowRunRequest {
   response_mode: 'streaming';
 }
@@ -61,6 +65,10 @@ interface WorkflowChatDraftRunRequest {
   history_window_size?: number;
   files?: ChatAttachment[];
   inputs?: Record<string, unknown>;
+}
+
+export interface WorkflowChatDraftPrecheckRequest extends WorkflowChatDraftRunRequest {
+  graph?: { nodes: unknown[] };
 }
 
 interface WorkflowChatDraftRunBody extends WorkflowChatDraftRunRequest {
@@ -142,6 +150,15 @@ function buildWorkflowDraftRunBody(payload: WorkflowRunRequest): WorkflowDraftRu
   };
 }
 
+function buildWorkflowDraftPrecheckBody(
+  payload: WorkflowDraftPrecheckRequest
+): WorkflowDraftPrecheckRequest {
+  return {
+    inputs: payload.inputs,
+    graph: payload.graph,
+  };
+}
+
 function buildWorkflowChatDraftRunBody(
   payload: WorkflowChatDraftRunRequest
 ): WorkflowChatDraftRunBody {
@@ -152,6 +169,19 @@ function buildWorkflowChatDraftRunBody(
     history_window_size: payload.history_window_size,
     files: payload.files,
     inputs: payload.inputs,
+  };
+}
+
+function buildWorkflowChatDraftPrecheckBody(
+  payload: WorkflowChatDraftPrecheckRequest
+): WorkflowChatDraftPrecheckRequest {
+  return {
+    query: payload.query,
+    conversation_id: payload.conversation_id,
+    history_window_size: payload.history_window_size,
+    files: payload.files,
+    inputs: payload.inputs,
+    graph: payload.graph,
   };
 }
 
@@ -369,12 +399,12 @@ export class WorkflowService extends BaseService {
 
   async precheckWorkflowDraft(
     agentId: string,
-    payload: WorkflowRunRequest
+    payload: WorkflowDraftPrecheckRequest
   ): Promise<WorkflowPrecheckResult> {
     const response = await this.request<ApiResponseData<WorkflowPrecheckResult>>(
       'post',
       `/agents/${agentId}/workflows/draft/precheck`,
-      buildWorkflowDraftRunBody(payload)
+      buildWorkflowDraftPrecheckBody(payload)
     );
 
     return response.data;
@@ -553,12 +583,12 @@ export class WorkflowService extends BaseService {
 
   async precheckWorkflowChatDraft(
     agentId: string,
-    payload: WorkflowChatDraftRunRequest
+    payload: WorkflowChatDraftPrecheckRequest
   ): Promise<WorkflowPrecheckResult> {
     const response = await this.request<ApiResponseData<WorkflowPrecheckResult>>(
       'post',
       `/agents/${agentId}/advanced-chat/workflows/draft/precheck`,
-      buildWorkflowChatDraftRunBody(payload)
+      buildWorkflowChatDraftPrecheckBody(payload)
     );
 
     return response.data;

@@ -6,7 +6,9 @@ import (
 	"strings"
 	"testing"
 
+	llmerrors "github.com/zgiai/zgi/api/internal/modules/llm/errors"
 	"github.com/zgiai/zgi/api/internal/modules/llm/gateway"
+	"github.com/zgiai/zgi/api/pkg/response"
 )
 
 func TestBuildWorkflowStreamErrorPayload_OrganizationBalanceInsufficient(t *testing.T) {
@@ -43,6 +45,19 @@ func TestBuildWorkflowStreamErrorPayload_FallsBackToRawMessage(t *testing.T) {
 	}
 	if got := payload["message"]; got != "plain failure" {
 		t.Fatalf("message = %#v, want %#v", got, "plain failure")
+	}
+}
+
+func TestBuildWorkflowStreamErrorPayload_PrivateChannelUpstreamUnavailable(t *testing.T) {
+	err := fmt.Errorf("node llm-node-1 failed: failed to invoke LLM: %w", llmerrors.DomainErrPrivateChannelUpstreamUnavailable)
+
+	payload := buildWorkflowStreamErrorPayload(err)
+
+	if got := payload["code"]; got != response.ErrWorkflowPrivateChannelUpstreamUnavailable.Code {
+		t.Fatalf("code = %#v, want %d", got, response.ErrWorkflowPrivateChannelUpstreamUnavailable.Code)
+	}
+	if got := payload["message"]; got != response.ErrWorkflowPrivateChannelUpstreamUnavailable.Message {
+		t.Fatalf("message = %#v, want %#v", got, response.ErrWorkflowPrivateChannelUpstreamUnavailable.Message)
 	}
 }
 

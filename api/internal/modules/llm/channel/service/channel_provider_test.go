@@ -15,6 +15,7 @@ import (
 	credentialdto "github.com/zgiai/zgi/api/internal/modules/llm/credential/dto"
 	credentialmodel "github.com/zgiai/zgi/api/internal/modules/llm/credential/model"
 	credentialsvc "github.com/zgiai/zgi/api/internal/modules/llm/credential/service"
+	"github.com/zgiai/zgi/api/internal/modules/llm/credential/upstreamstate"
 	"github.com/zgiai/zgi/api/internal/modules/llm/gateway"
 	llmmodelmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
 	llmmodelrepo "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/repository"
@@ -1540,6 +1541,93 @@ func TestTestChannelModel_ReusesValidatorResultShape(t *testing.T) {
 	require.Equal(t, int64(56), result.ResponseTimeMs)
 	require.Equal(t, "openai-compatible", validator.lastTestProvider)
 	require.True(t, validator.lastTestStream)
+}
+
+func TestTestChannelModel_RecordsInvalidProviderKey(t *testing.T) {
+	db := openChannelUpstreamStateTestDB(t)
+	routeID := uuid.New()
+	organizationID := uuid.New()
+	credentialID := uuid.New()
+	state := &upstreamstate.State{
+		CredentialID:      credentialID,
+		OrganizationID:    organizationID,
+		Generation:        1,
+		BalanceCapability: upstreamstate.BalanceCapabilityPermissionDenied,
+		Availability:      upstreamstate.AvailabilityUnknown,
+		LastCheckStatus:   upstreamstate.CheckStatusFailed,
+	}
+	require.NoError(t, db.Create(state).Error)
+
+	repo := &fakeTenantRouteRepo{
+		routeByID: &channelmodel.LLMRoute{
+			ID:              routeID,
+			OrganizationID:  organizationID,
+			ChannelProvider: "deepseek",
+			CredentialID:    &credentialID,
+		},
+	}
+	providerErr := adapter.NewAdapterError("AUTHENTICATION_FAILED", "invalid key", 401, adapter.ErrAuthFailed)
+	validator := &fakeChannelValidator{
+		testResult: &channelprovider.TestResult{
+			Success:       false,
+			Status:        channelprovider.TestStatusFailed,
+			Message:       "Private channel API key is invalid or expired. Update the API key and try again.",
+			Model:         "deepseek-chat",
+			ProviderError: providerErr,
+		},
+	}
+	upstreamService := upstreamstate.NewService(db, nil)
+	svc := &channelService{
+		tenantRouteRepo:   repo,
+		tenantCredService: &fakeTenantCredentialService{cred: &credentialmodel.TenantCredential{ID: credentialID}},
+		validator:         validator,
+		modelRepo:         &fakeModelRepo{},
+		upstreamState:     upstreamService,
+	}
+
+	result, err := svc.TestChannelModel(context.Background(), routeID, organizationID, "deepseek-chat", "", false)
+
+	require.NoError(t, err)
+	require.False(t, result.Success)
+	updated, err := upstreamService.Get(context.Background(), organizationID, credentialID)
+	require.NoError(t, err)
+	require.Equal(t, upstreamstate.AvailabilityInvalidKey, updated.Availability)
+	require.Equal(t, upstreamstate.GuardReasonAuthInvalid, updated.BlockReason)
+	require.Equal(t, 401, updated.ProviderErrorStatus)
+}
+
+func openChannelUpstreamStateTestDB(t *testing.T) *gorm.DB {
+	t.Helper()
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.Exec(`CREATE TABLE llm_credential_upstream_states (
+		credential_id text PRIMARY KEY,
+		organization_id text NOT NULL,
+		generation integer NOT NULL DEFAULT 1,
+		balance_capability text NOT NULL DEFAULT 'unknown',
+		balance_snapshot text,
+		balance_observed_at datetime,
+		warning_thresholds text NOT NULL DEFAULT '[]',
+		availability text NOT NULL DEFAULT 'unknown',
+		observation_source text,
+		availability_observed_at datetime,
+		last_check_at datetime,
+		last_check_status text NOT NULL DEFAULT 'unknown',
+		last_check_error_kind text,
+		next_check_at datetime,
+		check_lease_until datetime,
+		consecutive_failures integer NOT NULL DEFAULT 0,
+		block_reason text,
+		cooldown_until datetime,
+		guard_strikes integer NOT NULL DEFAULT 0,
+		half_open_lease_until datetime,
+		manual_retry_requested_at datetime,
+		provider_error_code text,
+		provider_error_status integer NOT NULL DEFAULT 0,
+		created_at datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		updated_at datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
+	)`).Error)
+	return db
 }
 
 func TestTestChannelModel_SkipsUnpricedModelBeforeValidator(t *testing.T) {

@@ -30,6 +30,7 @@ import (
 	providerrepo "github.com/zgiai/zgi/api/internal/modules/llm/provider/repository"
 	"github.com/zgiai/zgi/api/internal/modules/llm/shared"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
+	"github.com/zgiai/zgi/api/pkg/logger"
 	"gorm.io/gorm"
 )
 
@@ -1879,8 +1880,44 @@ func (s *channelService) TestChannelModel(ctx context.Context, channelID uuid.UU
 			Model:   strings.TrimSpace(modelName),
 		}, nil
 	}
+	s.recordChannelTestProviderError(ctx, organizationID, route, result)
 
 	return buildChannelModelTestResult(result), nil
+}
+
+func (s *channelService) recordChannelTestProviderError(
+	ctx context.Context,
+	organizationID uuid.UUID,
+	route *model.LLMRoute,
+	result *channelprovider.TestResult,
+) {
+	if s == nil || s.upstreamState == nil || route == nil || route.CredentialID == nil || result == nil || result.Success || result.ProviderError == nil {
+		return
+	}
+	state, err := s.upstreamState.Get(ctx, organizationID, *route.CredentialID)
+	if err != nil {
+		if !errors.Is(err, upstreamstate.ErrStateNotFound) {
+			logger.WarnContext(ctx, "failed to load upstream state after channel model test", err,
+				"credential_id", route.CredentialID.String(),
+				"provider", route.ChannelProvider,
+			)
+		}
+		return
+	}
+	if _, err := s.upstreamState.RecordProviderError(
+		ctx,
+		organizationID,
+		*route.CredentialID,
+		state.Generation,
+		route.ChannelProvider,
+		false,
+		result.ProviderError,
+	); err != nil {
+		logger.WarnContext(ctx, "failed to record upstream state after channel model test", err,
+			"credential_id", route.CredentialID.String(),
+			"provider", route.ChannelProvider,
+		)
+	}
 }
 
 // BatchTestChannelModels tests multiple models on a channel and streams results

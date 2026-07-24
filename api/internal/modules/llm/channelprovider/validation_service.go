@@ -439,6 +439,7 @@ func (v *Validator) probeModel(ctx context.Context, adapterInstance adapter.LLMP
 		result.Success = false
 		result.Status = TestStatusFailed
 		result.Message = normalizeValidationError(err)
+		result.ProviderError = err
 		return result
 	}
 

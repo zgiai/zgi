@@ -192,6 +192,7 @@ interface AIChatInputAreaProps {
   isLoadingMessages: boolean;
   input: string;
   modelSelectorValue: AIChatModelValue;
+  modelSelectorWarning?: boolean;
   modelProps?: ModelSelectorModelProps | null;
   supportsVisionOverride?: boolean;
   isModelInitializing?: boolean;
@@ -280,6 +281,7 @@ export function AIChatInputArea({
   isLoadingMessages,
   input,
   modelSelectorValue,
+  modelSelectorWarning = false,
   modelProps,
   supportsVisionOverride,
   isModelInitializing = false,
@@ -1404,6 +1406,7 @@ export function AIChatInputArea({
             {!hasBlockingApproval ? (
               <AIChatInputToolbar
                 modelSelectorValue={modelSelectorValue}
+                modelSelectorWarning={modelSelectorWarning}
                 isModelInitializing={isModelInitializing}
                 modelMissing={modelMissing}
                 modelCapabilityFilter={modelCapabilityFilter}

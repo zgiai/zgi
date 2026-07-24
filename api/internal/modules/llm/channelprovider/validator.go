@@ -57,6 +57,7 @@ type TestResult struct {
 	UseCase        string
 	TestMethod     string
 	Response       string
+	ProviderError  error
 }
 
 // TestModel validates a single model with the adapter selected by channel_provider.

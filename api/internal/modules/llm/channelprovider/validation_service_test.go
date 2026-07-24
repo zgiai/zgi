@@ -732,6 +732,33 @@ func TestValidatorTestModel_StreamUsesChatCompletionStream(t *testing.T) {
 	require.Equal(t, 1, fakeAdapter.streamCalls)
 }
 
+func TestValidatorTestModel_PreservesProviderErrorForStateObservation(t *testing.T) {
+	providerErr := adapter.NewAdapterError("AUTHENTICATION_FAILED", "invalid key", 401, adapter.ErrAuthFailed)
+	validator := NewValidator(nil, nil)
+	validator.modelRepo = &fakeModelLookupRepo{
+		models: map[string]*llmmodelmodel.LLMModel{
+			"deepseek-chat": {
+				Provider: "deepseek",
+				Model:    "deepseek-chat",
+				UseCases: llmmodelmodel.StringArray{"text-chat"},
+			},
+		},
+	}
+	validator.newAdapter = func(*adapter.AdapterConfig) (adapter.LLMProviderAdapter, error) {
+		return &fakeValidationAdapter{
+			chatFailures: map[string]error{"deepseek-chat": providerErr},
+		}, nil
+	}
+
+	result, err := validator.TestModel(context.Background(), uuid.Nil, "deepseek", "deleted-key", "", "deepseek-chat", "", false)
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.False(t, result.Success)
+	require.Equal(t, providerAPIKeyInvalidMessage, result.Message)
+	require.ErrorIs(t, result.ProviderError, adapter.ErrAuthFailed)
+}
+
 func TestValidatorTestModel_ImageProbeUsesDefaultSize(t *testing.T) {
 	validator := NewValidator(nil, nil)
 	validator.modelRepo = &fakeModelLookupRepo{

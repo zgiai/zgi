@@ -4,7 +4,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 
-	"github.com/zgiai/zgi/api/config"
 	pconsole "github.com/zgiai/zgi/api/internal/infra/platform/console"
 	"github.com/zgiai/zgi/api/internal/modules/llm"
 	apikeyrepo "github.com/zgiai/zgi/api/internal/modules/llm/apikey/repository"
@@ -111,7 +110,7 @@ func RegisterLLMRoutes(router *gin.RouterGroup, deps LLMRouteDeps) *llm.LLMModul
 }
 
 func registerLLMUpstreamPolling(scheduler *pkgscheduler.Scheduler, module *llm.LLMModule) {
-	if scheduler == nil || module == nil || module.UpstreamStateSvc == nil || !config.Current().LLM.UpstreamBalancePolling {
+	if scheduler == nil || module == nil || module.UpstreamStateSvc == nil {
 		return
 	}
 	task := upstreamstate.NewPollingTask()

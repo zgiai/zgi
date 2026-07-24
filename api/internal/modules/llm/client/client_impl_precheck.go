@@ -11,6 +11,8 @@ type gatewayAppModelPrechecker interface {
 	PrecheckAppModels(ctx context.Context, organizationID string, appCtx *gateway.AppContext, models []gateway.AppModelRouteRef) (*gateway.AppModelRoutePrecheckResult, error)
 }
 
+var _ AppModelPrechecker = (*llmClientImpl)(nil)
+
 func (c *llmClientImpl) PrecheckAppModels(ctx context.Context, appCtx *AppContext, models []AppModelRef) (*AppModelPrecheckResult, error) {
 	if appCtx == nil {
 		return &AppModelPrecheckResult{Status: AppModelPrecheckStatusUnknown}, nil

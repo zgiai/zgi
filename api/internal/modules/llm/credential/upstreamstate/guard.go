@@ -229,6 +229,10 @@ func classifyProviderGuardError(provider string, providerErr error) (GuardReason
 		return "", AvailabilityUnknown, nil, false
 	}
 	switch provider {
+	case "deepseek":
+		if adapterErr.StatusCode == http.StatusUnauthorized && errors.Is(providerErr, adapter.ErrAuthFailed) {
+			return GuardReasonAuthInvalid, AvailabilityInvalidKey, adapterErr, true
+		}
 	case "qwen", "alibaba", "dashscope", "aliyun":
 		normalizedCode := strings.ToLower(strings.TrimSpace(adapterErr.Code))
 		switch {

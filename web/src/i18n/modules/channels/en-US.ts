@@ -423,7 +423,6 @@ const messages = {
     observedPrefix: 'Observed',
     stalePrefix: 'Stale data, checked',
     retryAfter: 'Next automatic verification: {time}',
-    errorCode: 'Upstream error code: {code}',
     sharedCredential: 'This credential is shared by {count} channels. Changes affect all of them.',
     enableThreshold: 'Enable {currency} balance alert',
     thresholdPlaceholder: 'Alert amount',

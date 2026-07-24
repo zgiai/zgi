@@ -238,6 +238,31 @@ func TestDeepSeekAdapterGetBalance_UsesOfficialEndpoint(t *testing.T) {
 	}
 }
 
+func TestDeepSeekAdapterGetBalanceClassifiesAuthenticationStatus(t *testing.T) {
+	for _, statusCode := range []int{http.StatusUnauthorized, http.StatusForbidden} {
+		t.Run(http.StatusText(statusCode), func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(statusCode)
+				fmt.Fprint(w, `{"error":{"message":"authentication failed","type":"authentication_error","code":"invalid_request_error"}}`)
+			}))
+			defer server.Close()
+
+			a, err := NewDeepSeekAdapter(&adapter.AdapterConfig{APIKey: "config-key", BaseURL: server.URL})
+			if err != nil {
+				t.Fatalf("NewDeepSeekAdapter() error = %v", err)
+			}
+			_, err = a.GetBalance(context.Background(), "runtime-key")
+			if !errors.Is(err, adapter.ErrAuthFailed) {
+				t.Fatalf("GetBalance() error = %v, want ErrAuthFailed", err)
+			}
+			var adapterErr *adapter.AdapterError
+			if !errors.As(err, &adapterErr) || adapterErr.StatusCode != statusCode {
+				t.Fatalf("GetBalance() error = %#v, want status %d", err, statusCode)
+			}
+		})
+	}
+}
+
 func TestDeepSeekAdapterGetBalance_EmptyBalanceIsInvalidSnapshot(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, `{"is_available":true,"balance_infos":[]}`)

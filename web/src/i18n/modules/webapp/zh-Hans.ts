@@ -185,7 +185,7 @@ const messages: WebappMessages = {
         description: '当前渠道余额为 {currentValue}，预警阈值为 {threshold}。',
       },
       '207015': {
-        title: '私人渠道上游暂不可用',
+        title: '渠道上游暂不可用',
         description: '所有候选 Credential 都已被上游明确拒绝，请联系组织管理员处理。',
       },
       unknown: {
@@ -225,6 +225,20 @@ const messages: WebappMessages = {
     modelConfig: '模型',
     modelRequired: '请先选择模型',
     modelUnavailable: '当前模型已不再支持 AI Chat，请重新选择模型。原配置已保留。',
+    modelPrecheck: {
+      title: '当前模型存在渠道风险，但不会阻止发送',
+      organizationBalanceLow: '组织余额偏低，建议联系组织管理员及时充值。',
+      workspaceQuotaLow: '当前工作空间额度偏低，建议联系组织管理员调整额度。',
+      privateChannelBalanceLow: '当前模型的渠道额度偏低，建议及时补充额度。',
+      privateChannelUpstreamBalanceLow:
+        '当前模型所有可用渠道的上游账号余额均偏低，建议联系组织管理员充值。',
+      privateChannelUpstreamBalanceExhausted:
+        '当前模型的全部渠道均因上游账号余额耗尽而不可用，发送消息可能失败，请联系组织管理员充值。',
+      privateChannelUpstreamInvalidKey:
+        '当前模型的全部渠道均因上游 Key 无效而不可用，发送消息可能失败，请联系组织管理员更新 Key。',
+      privateChannelUpstreamUnavailable:
+        '当前模型的全部渠道均不可用，发送消息可能失败，请联系组织管理员检查渠道。',
+    },
     homeTitle: '有什么可以帮你？',
     homeDescription: '回答问题、整理信息，并协助完成各类任务。',
     inputPlaceholder: '描述你的问题，或告诉工作台助手要完成什么...',

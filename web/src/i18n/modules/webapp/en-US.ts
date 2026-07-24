@@ -195,7 +195,7 @@ const messages = {
         description: 'Current channel balance is {currentValue}. Warning threshold is {threshold}.',
       },
       '207015': {
-        title: 'Private channel upstream unavailable',
+        title: 'Channel upstream unavailable',
         description:
           'Every candidate credential was explicitly rejected by its provider. Contact an organization administrator.',
       },
@@ -239,6 +239,23 @@ const messages = {
     modelRequired: 'Please select a model first',
     modelUnavailable:
       'This model is no longer available for AI Chat. Select another model. The previous configuration is preserved.',
+    modelPrecheck: {
+      title: 'This model has channel risks, but sending remains available',
+      organizationBalanceLow:
+        'The organization balance is low. Ask an organization administrator to add funds.',
+      workspaceQuotaLow:
+        'The workspace quota is low. Ask an organization administrator to adjust it.',
+      privateChannelBalanceLow:
+        'The channel quota for this model is low. Add quota when possible.',
+      privateChannelUpstreamBalanceLow:
+        'Every available channel for this model has a low upstream balance. Ask an organization administrator to add funds.',
+      privateChannelUpstreamBalanceExhausted:
+        'Every channel for this model is unavailable because its upstream account balance is exhausted. Sending may fail; ask an organization administrator to add funds.',
+      privateChannelUpstreamInvalidKey:
+        'Every channel for this model is unavailable because its upstream API key is invalid. Sending may fail; ask an organization administrator to update the key.',
+      privateChannelUpstreamUnavailable:
+        'Every channel for this model is unavailable. Sending may fail; ask an organization administrator to check the channels.',
+    },
     homeTitle: 'How can I help?',
     homeDescription:
       'Answer questions, organize information, and help complete a wide range of tasks.',

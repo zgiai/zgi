@@ -1,6 +1,7 @@
 package workflow
 
 import (
+	"fmt"
 	"math"
 	"testing"
 	"time"
@@ -9,7 +10,24 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine"
 	graphentities "github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine/entities"
 	workflowpause "github.com/zgiai/zgi/api/internal/modules/app/workflow/pause"
+	llmerrors "github.com/zgiai/zgi/api/internal/modules/llm/errors"
+	"github.com/zgiai/zgi/api/pkg/response"
 )
+
+func TestWorkflowGraphStreamNodeErrorMapsPrivateChannelUpstreamUnavailable(t *testing.T) {
+	err := fmt.Errorf("failed to invoke LLM: failed to select provider: %w", llmerrors.DomainErrPrivateChannelUpstreamUnavailable)
+
+	got, ok := workflowGraphStreamNodeError(err).(map[string]interface{})
+	if !ok {
+		t.Fatalf("workflowGraphStreamNodeError() = %#v, want map", got)
+	}
+	if got["code"] != response.ErrWorkflowPrivateChannelUpstreamUnavailable.Code {
+		t.Fatalf("code = %#v, want %d", got["code"], response.ErrWorkflowPrivateChannelUpstreamUnavailable.Code)
+	}
+	if got["message"] != response.ErrWorkflowPrivateChannelUpstreamUnavailable.Message {
+		t.Fatalf("message = %#v, want %q", got["message"], response.ErrWorkflowPrivateChannelUpstreamUnavailable.Message)
+	}
+}
 
 func TestMergeWorkflowOutputsForNode_AllowsLoopOutputs(t *testing.T) {
 	outputs := map[string]any{}

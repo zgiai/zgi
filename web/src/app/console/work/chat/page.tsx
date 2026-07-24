@@ -8,6 +8,8 @@ import { useT } from '@/i18n/translations';
 import { useCurrentUser } from '@/store/auth-store';
 import { isDraftAIChatConversationId } from '@/components/chat/utils/aichat-message';
 import { isConversationRouteRestoring } from '@/components/chat/runtime/conversation-route-state';
+import { AIChatModelPrecheckWarning } from '@/components/aichat/model-precheck-warning';
+import { useAIChatModelPrecheck } from '@/hooks/aichat/use-aichat-model-precheck';
 import { toast } from 'sonner';
 
 function ChatLoading() {
@@ -43,6 +45,24 @@ function ChatPageContent() {
     conversationIdParam,
     activeConversationId
   );
+  const modelPrecheck = useAIChatModelPrecheck(
+    modelSelectorValue.provider,
+    modelSelectorValue.model,
+    {
+      enabled: !isModelInitializing && !isSelectedModelUnavailable,
+    }
+  );
+  const { refetch: refetchModelPrecheck } = modelPrecheck;
+  const modelPrecheckWarnings =
+    modelPrecheck.data?.status === 'warning' ? modelPrecheck.data.warnings : [];
+  const previousIsSendingRef = useRef(controller.isSending);
+
+  useEffect(() => {
+    if (previousIsSendingRef.current && !controller.isSending) {
+      void refetchModelPrecheck();
+    }
+    previousIsSendingRef.current = controller.isSending;
+  }, [controller.isSending, refetchModelPrecheck]);
 
   const handleBeforeSend = useCallback(() => {
     if (!isSelectedModelUnavailable) return true;
@@ -170,9 +190,15 @@ function ChatPageContent() {
               modelUseCase="text-chat"
               preferredModelUseCase="agent"
               modelSelectorValue={modelSelectorValue}
+              modelSelectorWarning={modelPrecheckWarnings.length > 0}
               isModelInitializing={isModelInitializing}
               onModelChange={handleModelChange}
               beforeSend={handleBeforeSend}
+              inputTopNotice={
+                modelPrecheckWarnings.length > 0 ? (
+                  <AIChatModelPrecheckWarning warnings={modelPrecheckWarnings} />
+                ) : undefined
+              }
               showMemoryToggle={false}
               homeTitle={t('consoleChat.homeTitle')}
               homeDescription={t('consoleChat.homeDescription')}
