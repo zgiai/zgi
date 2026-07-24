@@ -577,7 +577,7 @@ const messages: NodesMessages = {
       taskDescription: '说明这个定时任务要做什么',
       runAtVariable: '例如 2026-04-11T09:00:00+08:00',
       cronExpr: '例如 0 9 * * 1',
-      timezone: '例如 Asia/Shanghai',
+      timezone: '选择时区',
       recipient: '收件人 {index}',
       subject: '邮件主题',
       body: '输入通知正文',

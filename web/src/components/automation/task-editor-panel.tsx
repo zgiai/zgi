@@ -1029,16 +1029,6 @@ export function TaskEditorPanel({
                   <p className="mt-2 max-w-sm text-xs leading-6 text-muted-foreground">
                     {t('actions.emptyDescription')}
                   </p>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="mt-4"
-                    onClick={openCreateActionDialog}
-                    disabled={!editable}
-                  >
-                    <Plus className="size-4" />
-                    {t('actions.addAction')}
-                  </Button>
                 </div>
               )}
             </CardContent>

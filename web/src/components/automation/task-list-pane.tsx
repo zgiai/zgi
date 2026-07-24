@@ -292,7 +292,7 @@ export function TaskListHeader({
             onClick={() => onCompactModeChange(!compactMode)}
           >
             <List className="size-4" />
-            {compactLocked || !compactMode ? t('list.compactMode') : t('list.comfortableMode')}
+            {compactLocked || compactMode ? t('list.compactMode') : t('list.comfortableMode')}
           </Button>
         </div>
       </div>

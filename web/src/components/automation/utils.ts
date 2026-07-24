@@ -45,6 +45,9 @@ const MAX_WORKFLOW_TIMEOUT_SECONDS = 1800;
 const DEFAULT_WORKFLOW_INPUTS_JSON = '{}';
 const SENSITIVE_WORKFLOW_INPUT_KEY_PATTERN =
   /(api[_-]?key|authorization|credential|password|secret|token)/i;
+const BROWSER_TIMEZONE_ALIASES: Record<string, string> = {
+  'Etc/GMT-8': 'Asia/Shanghai',
+};
 
 const RUN_STATUS_VARIANT: Record<
   AutomationRunStatus,
@@ -63,10 +66,14 @@ export function getBrowserTimezone(): string {
   }
 
   try {
-    return Intl.DateTimeFormat().resolvedOptions().timeZone ?? '';
+    return normalizeBrowserTimezone(Intl.DateTimeFormat().resolvedOptions().timeZone ?? '');
   } catch {
     return '';
   }
+}
+
+function normalizeBrowserTimezone(timeZone: string): string {
+  return BROWSER_TIMEZONE_ALIASES[timeZone] ?? timeZone;
 }
 
 export function isValidTimeZone(timeZone?: string | null): boolean {

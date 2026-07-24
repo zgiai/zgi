@@ -15,7 +15,7 @@
     active: 'Active',
     paused: 'Paused',
     completed: 'Completed',
-    archived: 'Archived',
+    archived: 'Disabled',
   },
   workspaceRequired: {
     title: 'Select a workspace to manage scheduled tasks',
@@ -75,7 +75,7 @@
     active: 'Active',
     paused: 'Paused',
     completed: 'Completed',
-    archived: 'Archived',
+    archived: 'Disabled',
     queued: 'Queued',
     running: 'Running',
     succeeded: 'Succeeded',
@@ -99,9 +99,8 @@
     runAt: 'Run at',
     time: 'Time',
     timezone: 'Timezone',
-    timezonePlaceholder: 'Europe/Dublin',
-    timezoneHelp:
-      'Use an IANA timezone such as Europe/Dublin. Leave blank to keep the server default.',
+    timezonePlaceholder: 'Select timezone',
+    timezoneHelp: 'Choose the timezone used to calculate this task schedule.',
     cronExpression: 'Cron expression',
     customHelp: 'Use standard five-field cron syntax, for example: `0 9 * * 1`.',
     templatePresets: 'Common templates',
@@ -243,7 +242,7 @@
     unsupportedReadonly:
       'This task contains fields that are not editable in this version. You can still inspect the raw configuration.',
     archivedNotice:
-      'This task has been archived. Switch the filter to Archived if you want to see it in the list again.',
+      'This task has been disabled and will no longer run automatically. Run history is still preserved.',
   },
   editor: {
     createTitle: 'Create scheduled task',
@@ -299,10 +298,11 @@
     runNow: 'Run now',
     pause: 'Pause',
     resume: 'Resume',
-    archive: 'Archive',
+    archive: 'Disable',
     readOnly: 'Read only',
-    archiveTitle: 'Archive task?',
-    archiveDescription: 'Archiving stops future scheduling. You can still view it under Archived.',
+    archiveTitle: 'Disable task?',
+    archiveDescription:
+      'Disabling stops future automatic runs. Run history is still preserved.',
   },
   runsTimeline: {
     title: 'Run history',

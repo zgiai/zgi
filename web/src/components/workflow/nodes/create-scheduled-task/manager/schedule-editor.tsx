@@ -17,6 +17,7 @@ import {
   toLocalDateTimeInputValue,
   WorkflowDateTimeInput,
 } from '@/components/workflow/common/workflow-date-time-input';
+import { TimezoneSelector } from '@/components/common/timezone-selector';
 import { useT } from '@/i18n';
 import type { CreateScheduledTaskNodeData } from '../config';
 
@@ -440,13 +441,13 @@ export function ScheduleEditor({
               <Label htmlFor="workflow-task-timezone">
                 {t('createScheduledTask.fields.timezone')}
               </Label>
-              <Input
+              <TimezoneSelector
                 id="workflow-task-timezone"
                 value={schedule.timezone}
-                onChange={event =>
+                onChange={timezone =>
                   onChange({
                     ...schedule,
-                    timezone: event.target.value,
+                    timezone,
                   })
                 }
                 placeholder={t('createScheduledTask.placeholders.timezone')}
