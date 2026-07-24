@@ -1139,10 +1139,12 @@ func (s *webAppRuntimePermissionService) RunConfiguredUserInputContinuationStrea
 }
 
 type fakeWorkflowContinuationRunner struct {
-	stopCalled bool
+	resumeApprovalCalled bool
+	stopCalled           bool
 }
 
 func (r *fakeWorkflowContinuationRunner) ResumeApprovalWorkflow(context.Context, *approvalruntime.Form) error {
+	r.resumeApprovalCalled = true
 	return nil
 }
 

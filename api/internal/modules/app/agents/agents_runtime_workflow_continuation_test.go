@@ -1,6 +1,7 @@
 package agents
 
 import (
+	"context"
 	"testing"
 
 	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
@@ -247,5 +248,20 @@ func TestApprovalSubmissionObservesExistingExecution(t *testing.T) {
 				t.Fatalf("approvalSubmissionObservesExistingExecution() = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestResumeAgentWorkflowApprovalSubmissionObservesWithBaseRunner(t *testing.T) {
+	runner := &fakeWorkflowContinuationRunner{}
+	submission := &approvalruntime.SubmitResult{
+		ResumeState:              "queued",
+		ObserveExistingExecution: true,
+	}
+
+	if err := resumeAgentWorkflowApprovalSubmission(context.Background(), runner, submission); err != nil {
+		t.Fatalf("observe existing execution: %v", err)
+	}
+	if runner.resumeApprovalCalled {
+		t.Fatal("base workflow runner resumed an execution that should only be observed")
 	}
 }

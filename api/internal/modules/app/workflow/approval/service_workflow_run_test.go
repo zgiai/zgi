@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -601,10 +602,25 @@ func TestApprovalReplayDoesNotUseOutboxFromAnotherPauseGeneration(t *testing.T) 
 		}).Error; err != nil {
 		t.Fatalf("complete current pause reason: %v", err)
 	}
-	if err := db.Model(&workflowpause.RunPause{}).
-		Where("id = ?", pauseID).
-		Update("status", workflowpause.RunPauseStatusResumeReady).Error; err != nil {
-		t.Fatalf("mark current pause resume ready: %v", err)
+
+	const interleaveCallback = "test:approval-replay-resume-ready-interleave"
+	transitioned := false
+	if err := db.Callback().Query().After("gorm:query").Register(interleaveCallback, func(queryDB *gorm.DB) {
+		if transitioned || queryDB.Statement == nil ||
+			queryDB.Statement.Table != "workflow_run_pause_reasons" ||
+			!strings.Contains(strings.ToLower(queryDB.Statement.SQL.String()), "status =") {
+			return
+		}
+		transitioned = true
+		if updateErr := queryDB.Exec(
+			"UPDATE workflow_run_pauses SET status = ? WHERE id = ?",
+			workflowpause.RunPauseStatusResumeReady,
+			pauseID,
+		).Error; updateErr != nil {
+			queryDB.AddError(updateErr)
+		}
+	}); err != nil {
+		t.Fatalf("register replay interleave callback: %v", err)
 	}
 
 	queued, err := NewService(db).SubmitByTokenForWorkflowRunWithResumeOptions(
@@ -616,8 +632,14 @@ func TestApprovalReplayDoesNotUseOutboxFromAnotherPauseGeneration(t *testing.T) 
 		nil,
 		SubmitOptions{},
 	)
+	if removeErr := db.Callback().Query().Remove(interleaveCallback); removeErr != nil {
+		t.Fatalf("remove replay interleave callback: %v", removeErr)
+	}
 	if err != nil {
 		t.Fatalf("replay old approval while current pause is resume ready: %v", err)
+	}
+	if !transitioned {
+		t.Fatal("replay did not exercise the resume-ready interleave")
 	}
 	if queued.ResumeReady || queued.Outbox != nil {
 		t.Fatalf("old replay authorized current resume-ready pause: ready:%v outbox:%#v", queued.ResumeReady, queued.Outbox)

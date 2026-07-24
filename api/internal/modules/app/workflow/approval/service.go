@@ -391,21 +391,14 @@ func loadApprovalReplayState(ctx context.Context, tx *gorm.DB, form *Form, resul
 	}
 
 	if pauseRecord.ID != *event.PauseID || pauseRecord.Generation != *event.PauseGeneration {
-		switch pauseRecord.Status {
-		case workflowpause.RunPauseStatusResumeReady:
-			result.ResumeState = "queued"
-			result.ObserveExistingExecution = true
-			return nil
-		case workflowpause.RunPauseStatusResuming:
-			result.ResumeState = "running"
-			result.ObserveExistingExecution = true
+		if applyApprovalReplayObservation(pauseRecord, result) {
 			return nil
 		}
 		result.PendingEvents, err = pauseService.AppendNextPendingInteractionProjectionTx(ctx, tx, pauseRecord, event.ID)
 		if err != nil {
 			return err
 		}
-		return nil
+		return refreshApprovalReplayObservationAfterEmptyProjection(ctx, pauseService, result)
 	}
 
 	outboxKey := fmt.Sprintf("workflow-resume:%s:%d", *event.PauseID, *event.PauseGeneration)
@@ -429,7 +422,45 @@ func loadApprovalReplayState(ctx context.Context, tx *gorm.DB, form *Form, resul
 	if err != nil {
 		return err
 	}
+	return refreshApprovalReplayObservationAfterEmptyProjection(ctx, pauseService, result)
+}
+
+func refreshApprovalReplayObservationAfterEmptyProjection(
+	ctx context.Context,
+	pauseService *workflowpause.Service,
+	result *SubmitResult,
+) error {
+	if result == nil || len(result.PendingEvents) != 0 {
+		return nil
+	}
+	pauseRecord, _, _, err := pauseService.GetActiveByWorkflowRunID(ctx, result.Form.WorkflowRunID)
+	if err != nil {
+		if errors.Is(err, workflowpause.ErrPauseNotFound) {
+			return nil
+		}
+		return err
+	}
+	applyApprovalReplayObservation(pauseRecord, result)
 	return nil
+}
+
+func applyApprovalReplayObservation(pauseRecord *workflowpause.RunPause, result *SubmitResult) bool {
+	if pauseRecord == nil || result == nil {
+		return false
+	}
+	switch pauseRecord.Status {
+	case workflowpause.RunPauseStatusResumeReady:
+		result.ResumeState = "queued"
+	case workflowpause.RunPauseStatusResuming:
+		result.ResumeState = "running"
+	default:
+		return false
+	}
+	result.ResumeReady = false
+	result.ObserveExistingExecution = true
+	result.PendingEvents = nil
+	result.Outbox = nil
+	return true
 }
 
 func workflowRunUsesDurablePauseTx(ctx context.Context, tx *gorm.DB, workflowRunID string) (bool, error) {

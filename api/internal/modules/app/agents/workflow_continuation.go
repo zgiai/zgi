@@ -178,13 +178,14 @@ func (h *AgentsHandler) resumeAgentWorkflowApproval(ctx context.Context, scope r
 	if err != nil {
 		return err
 	}
-	if approvalSubmissionObservesExistingExecution(submission) {
-		return workflowpause.ErrResumeAlreadyRunning
-	}
-	if !submission.ResumeReady {
+	return resumeAgentWorkflowApprovalSubmission(ctx, h.workflowContinuationRunner, submission)
+}
+
+func resumeAgentWorkflowApprovalSubmission(ctx context.Context, runner workflowContinuationRunner, submission *approvalruntime.SubmitResult) error {
+	if submission == nil || approvalSubmissionObservesExistingExecution(submission) || !submission.ResumeReady {
 		return nil
 	}
-	return h.workflowContinuationRunner.ResumeApprovalWorkflow(ctx, submission.Form)
+	return runner.ResumeApprovalWorkflow(ctx, submission.Form)
 }
 
 func (h *AgentsHandler) resumeAgentWorkflowApprovalStream(ctx context.Context, scope runtimeservice.Scope, continuation *runtimeservice.WorkflowApprovalContinuation, req agentWorkflowContinuationRequest, runner workflowContinuationStreamRunner, onEvent func(string, map[string]interface{}) error) error {

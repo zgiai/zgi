@@ -39,11 +39,13 @@ type AgentsHandler struct {
 	fileService                interfaces.FileService
 	db                         *gorm.DB
 	chatRuntimeService         runtimeservice.Service
-	workflowContinuationRunner interface {
-		ResumeApprovalWorkflow(ctx context.Context, form *approvalruntime.Form) error
-		ResumeQuestionAnswerWorkflow(ctx context.Context, workflowRunID string, inputs map[string]interface{}) error
-		StopWorkflowContinuation(ctx context.Context, workflowRunID string, accountID string) error
-	}
+	workflowContinuationRunner workflowContinuationRunner
+}
+
+type workflowContinuationRunner interface {
+	ResumeApprovalWorkflow(ctx context.Context, form *approvalruntime.Form) error
+	ResumeQuestionAnswerWorkflow(ctx context.Context, workflowRunID string, inputs map[string]interface{}) error
+	StopWorkflowContinuation(ctx context.Context, workflowRunID string, accountID string) error
 }
 
 type workflowContinuationStreamRunner interface {
