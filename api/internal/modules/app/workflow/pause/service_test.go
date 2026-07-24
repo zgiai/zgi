@@ -2,6 +2,7 @@ package pause
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -842,5 +843,23 @@ func TestSubmitInteractionCompletesOnlyTheTargetQuestionReason(t *testing.T) {
 	}
 	if !second.ResumeReady || second.Outbox == nil {
 		t.Fatalf("second question did not make pause resume-ready: %#v", second)
+	}
+	var payload RuntimeOutboxPayload
+	if err := json.Unmarshal([]byte(second.Outbox.PayloadJSON), &payload); err != nil {
+		t.Fatalf("decode resume outbox payload: %v", err)
+	}
+	submissions, ok := payload.ResumeInputs["interaction_submissions"].([]interface{})
+	if !ok || len(submissions) != 2 {
+		t.Fatalf("interaction submissions = %#v, want two node-scoped answers", payload.ResumeInputs["interaction_submissions"])
+	}
+	firstSubmission, _ := submissions[0].(map[string]interface{})
+	firstData, _ := firstSubmission["data"].(map[string]interface{})
+	secondSubmission, _ := submissions[1].(map[string]interface{})
+	secondData, _ := secondSubmission["data"].(map[string]interface{})
+	if firstSubmission["node_id"] != "question-1" || firstData["answer"] != "first" {
+		t.Fatalf("first interaction submission = %#v, want question-1/first", firstSubmission)
+	}
+	if secondSubmission["node_id"] != "question-2" || secondData["answer"] != "second" {
+		t.Fatalf("second interaction submission = %#v, want question-2/second", secondSubmission)
 	}
 }

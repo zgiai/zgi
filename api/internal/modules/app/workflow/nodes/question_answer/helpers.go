@@ -225,24 +225,27 @@ func currentAnswer(vp *entities.VariablePool, nodeID string) string {
 	if vp == nil {
 		return ""
 	}
-	if value, ok := vp.UserInputs["sys.query"].(string); ok && strings.TrimSpace(value) != "" {
-		return strings.TrimSpace(value)
-	}
-	if value, ok := vp.UserInputs["query"].(string); ok && strings.TrimSpace(value) != "" {
-		return strings.TrimSpace(value)
-	}
 	if variable := vp.Get([]string{nodeID, "sys.query"}); variable != nil {
 		return strings.TrimSpace(variable.Text())
 	}
 	if variable := vp.Get([]string{nodeID, "query"}); variable != nil {
 		return strings.TrimSpace(variable.Text())
 	}
+	if value, ok := vp.UserInputs["sys.query"].(string); ok && strings.TrimSpace(value) != "" {
+		return strings.TrimSpace(value)
+	}
+	if value, ok := vp.UserInputs["query"].(string); ok && strings.TrimSpace(value) != "" {
+		return strings.TrimSpace(value)
+	}
 	return ""
 }
 
-func optionID(vp *entities.VariablePool) string {
+func optionID(vp *entities.VariablePool, nodeID string) string {
 	if vp == nil {
 		return ""
+	}
+	if variable := vp.Get([]string{nodeID, "question_answer_option_id"}); variable != nil {
+		return strings.TrimSpace(variable.Text())
 	}
 	if value, ok := vp.UserInputs["question_answer_option_id"].(string); ok {
 		return strings.TrimSpace(value)

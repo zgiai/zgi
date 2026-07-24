@@ -377,24 +377,7 @@ func loadApprovalReplayState(ctx context.Context, tx *gorm.DB, form *Form, resul
 		return fmt.Errorf("load approval replay event: %w", err)
 	}
 
-	if event.PauseID != nil && event.PauseGeneration != nil {
-		outboxKey := fmt.Sprintf("workflow-resume:%s:%d", *event.PauseID, *event.PauseGeneration)
-		var outbox workflowpause.RuntimeOutbox
-		if err := tx.Where(
-			"workflow_run_id = ? AND kind = ? AND pause_id = ? AND idempotency_key = ?",
-			form.WorkflowRunID,
-			workflowpause.RuntimeOutboxKindResume,
-			*event.PauseID,
-			outboxKey,
-		).First(&outbox).Error; err == nil {
-			result.ResumeReady = true
-			result.ResumeState = resumeStateForOutbox(outbox.Status)
-			result.Outbox = &workflowRuntimeOutboxRef{ID: outbox.ID, IdempotencyKey: outbox.IdempotencyKey, PayloadJSON: outbox.PayloadJSON}
-		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
-			return fmt.Errorf("load approval replay outbox: %w", err)
-		}
-	}
-	if result.ResumeReady {
+	if event.PauseID == nil || event.PauseGeneration == nil {
 		return nil
 	}
 
@@ -406,10 +389,32 @@ func loadApprovalReplayState(ctx context.Context, tx *gorm.DB, form *Form, resul
 		}
 		return err
 	}
-	if event.PauseID == nil || event.PauseGeneration == nil ||
-		pauseRecord.ID != *event.PauseID || pauseRecord.Generation != *event.PauseGeneration {
+
+	if pauseRecord.ID != *event.PauseID || pauseRecord.Generation != *event.PauseGeneration {
+		result.PendingEvents, err = pauseService.AppendNextPendingInteractionProjectionTx(ctx, tx, pauseRecord, event.ID)
+		if err != nil {
+			return err
+		}
 		return nil
 	}
+
+	outboxKey := fmt.Sprintf("workflow-resume:%s:%d", *event.PauseID, *event.PauseGeneration)
+	var outbox workflowpause.RuntimeOutbox
+	if err := tx.Where(
+		"workflow_run_id = ? AND kind = ? AND pause_id = ? AND idempotency_key = ?",
+		form.WorkflowRunID,
+		workflowpause.RuntimeOutboxKindResume,
+		*event.PauseID,
+		outboxKey,
+	).First(&outbox).Error; err == nil {
+		result.ResumeReady = true
+		result.ResumeState = resumeStateForOutbox(outbox.Status)
+		result.Outbox = &workflowRuntimeOutboxRef{ID: outbox.ID, IdempotencyKey: outbox.IdempotencyKey, PayloadJSON: outbox.PayloadJSON}
+		return nil
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return fmt.Errorf("load approval replay outbox: %w", err)
+	}
+
 	result.PendingEvents, err = pauseService.AppendNextPendingInteractionProjectionTx(ctx, tx, pauseRecord, event.ID)
 	if err != nil {
 		return err

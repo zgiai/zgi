@@ -496,6 +496,8 @@ func TestApprovalReplayDoesNotUseOutboxFromAnotherPauseGeneration(t *testing.T) 
 	now := time.Now()
 	generation := int64(2)
 	pauseIDValue := pauseID
+	oldGeneration := int64(1)
+	oldPauseID := "13131313-1313-1313-1313-131313131313"
 	action := "approve"
 	submittedData := "{}"
 	submittedAt := now
@@ -534,8 +536,8 @@ func TestApprovalReplayDoesNotUseOutboxFromAnotherPauseGeneration(t *testing.T) 
 			ID: "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee", TenantID: "tenant", AppID: "app",
 			WorkflowRunID: runID, Sequence: 1, EventType: workflowpause.EventApprovalResultFilled,
 			EventData: `{"node_id":"approval-node","action":"approve"}`, SchemaVersion: 2,
-			Category: workflowpause.EventCategoryInteraction, PauseID: &pauseIDValue,
-			PauseGeneration: &generation, IdempotencyKey: &eventKey, OccurredAt: now,
+			Category: workflowpause.EventCategoryInteraction, PauseID: &oldPauseID,
+			PauseGeneration: &oldGeneration, IdempotencyKey: &eventKey, OccurredAt: now,
 		},
 		&workflowpause.RunEvent{
 			ID: "ffffffff-ffff-ffff-ffff-ffffffffffff", TenantID: "tenant", AppID: "app",
@@ -557,7 +559,6 @@ func TestApprovalReplayDoesNotUseOutboxFromAnotherPauseGeneration(t *testing.T) 
 			t.Fatalf("create replay fixture %T: %v", record, err)
 		}
 	}
-	oldPauseID := "13131313-1313-1313-1313-131313131313"
 	oldPayload, err := json.Marshal(workflowpause.RuntimeOutboxPayload{
 		WorkflowRunID: runID, PauseID: oldPauseID, Generation: 1,
 	})
@@ -586,7 +587,7 @@ func TestApprovalReplayDoesNotUseOutboxFromAnotherPauseGeneration(t *testing.T) 
 		t.Fatalf("replay approval: %v", err)
 	}
 	if replay.ResumeReady || replay.Outbox != nil {
-		t.Fatalf("replay used stale outbox: ready:%v outbox:%#v", replay.ResumeReady, replay.Outbox)
+		t.Fatalf("replay of old pause authorized current resume: ready:%v outbox:%#v", replay.ResumeReady, replay.Outbox)
 	}
 	if len(replay.PendingEvents) != 2 || replay.PendingEvents[0].Event != workflowpause.EventQuestionAnswerRequested {
 		t.Fatalf("pending replay events = %#v, want current question projection", replay.PendingEvents)

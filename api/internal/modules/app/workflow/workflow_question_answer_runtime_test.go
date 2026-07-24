@@ -35,6 +35,46 @@ func TestRestoreQuestionAnswerResumeInputsRestoresPausedOutputs(t *testing.T) {
 	}
 }
 
+func TestRestoreQuestionAnswerResumeInputsKeepsAnswersScopedToEachNode(t *testing.T) {
+	pool := graphentities.NewVariablePool()
+	restoreQuestionAnswerResumeInputs(pool, nil, map[string]interface{}{
+		"query":     "second",
+		"sys.query": "second",
+		"interaction_submissions": []interface{}{
+			map[string]interface{}{
+				"reason_type": workflowpause.ReasonTypeQuestionAnswerRequired,
+				"node_id":     "question-1",
+				"data": map[string]interface{}{
+					"node_id": "question-1",
+					"answer":  "first",
+				},
+			},
+			map[string]interface{}{
+				"reason_type": workflowpause.ReasonTypeQuestionAnswerRequired,
+				"node_id":     "question-2",
+				"data": map[string]interface{}{
+					"node_id":   "question-2",
+					"answer":    "second",
+					"choice_id": "second-choice",
+				},
+			},
+		},
+	}, nil)
+
+	first := pool.Get([]string{"question-1", "query"})
+	if first == nil || first.Text() != "first" {
+		t.Fatalf("question-1 query = %#v, want first", first)
+	}
+	second := pool.Get([]string{"question-2", "query"})
+	if second == nil || second.Text() != "second" {
+		t.Fatalf("question-2 query = %#v, want second", second)
+	}
+	secondChoice := pool.Get([]string{"question-2", "question_answer_option_id"})
+	if secondChoice == nil || secondChoice.Text() != "second-choice" {
+		t.Fatalf("question-2 choice = %#v, want second-choice", secondChoice)
+	}
+}
+
 func TestRestoreQuestionAnswerPausedOutputsDoesNotOverwriteExistingVariables(t *testing.T) {
 	pool := graphentities.NewVariablePool()
 	pool.Add([]string{"qa-node", "question"}, "Existing question")

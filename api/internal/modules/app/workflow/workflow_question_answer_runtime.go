@@ -289,11 +289,10 @@ func questionAnswerSubmittedAnswer(inputs map[string]interface{}) string {
 	if inputs == nil {
 		return ""
 	}
-	if value, ok := inputs["sys.query"].(string); ok && strings.TrimSpace(value) != "" {
-		return strings.TrimSpace(value)
-	}
-	if value, ok := inputs["query"].(string); ok && strings.TrimSpace(value) != "" {
-		return strings.TrimSpace(value)
+	for _, key := range []string{"sys.query", "query", "answer"} {
+		if value, ok := inputs[key].(string); ok && strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
 	}
 	return ""
 }
@@ -302,11 +301,10 @@ func questionAnswerSubmittedOptionID(inputs map[string]interface{}) string {
 	if inputs == nil {
 		return ""
 	}
-	if value, ok := inputs["question_answer_option_id"].(string); ok {
-		return strings.TrimSpace(value)
-	}
-	if value, ok := inputs["inputs.question_answer_option_id"].(string); ok {
-		return strings.TrimSpace(value)
+	for _, key := range []string{"choice_id", "question_answer_option_id", "inputs.question_answer_option_id"} {
+		if value, ok := inputs[key].(string); ok && strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
 	}
 	return ""
 }
@@ -316,6 +314,7 @@ func restoreQuestionAnswerResumeInputs(pool *graphentities.VariablePool, systemI
 		return
 	}
 	restoreQuestionAnswerPausedOutputs(pool, state)
+	restoreQuestionAnswerNodeInputs(pool, requestInputs)
 	if pool.UserInputs == nil {
 		pool.UserInputs = make(map[string]interface{})
 	}
@@ -339,6 +338,50 @@ func restoreQuestionAnswerResumeInputs(pool *graphentities.VariablePool, systemI
 	}
 	if optionID != "" {
 		pool.UserInputs["question_answer_option_id"] = optionID
+	}
+}
+
+type questionAnswerInteractionSubmission struct {
+	ReasonType string                 `json:"reason_type"`
+	NodeID     string                 `json:"node_id"`
+	Data       map[string]interface{} `json:"data"`
+}
+
+func restoreQuestionAnswerNodeInputs(pool *graphentities.VariablePool, requestInputs map[string]interface{}) {
+	if pool == nil || requestInputs == nil {
+		return
+	}
+	rawSubmissions, ok := requestInputs["interaction_submissions"]
+	if !ok || rawSubmissions == nil {
+		return
+	}
+	payload, err := json.Marshal(rawSubmissions)
+	if err != nil {
+		return
+	}
+	var submissions []questionAnswerInteractionSubmission
+	if err := json.Unmarshal(payload, &submissions); err != nil {
+		return
+	}
+	for _, submission := range submissions {
+		if submission.ReasonType != workflowpause.ReasonTypeQuestionAnswerRequired {
+			continue
+		}
+		nodeID := strings.TrimSpace(submission.NodeID)
+		if nodeID == "" {
+			nodeID, _ = submission.Data["node_id"].(string)
+			nodeID = strings.TrimSpace(nodeID)
+		}
+		if nodeID == "" {
+			continue
+		}
+		if answer := questionAnswerSubmittedAnswer(submission.Data); answer != "" {
+			pool.Add([]string{nodeID, "sys.query"}, answer)
+			pool.Add([]string{nodeID, "query"}, answer)
+		}
+		if optionID := questionAnswerSubmittedOptionID(submission.Data); optionID != "" {
+			pool.Add([]string{nodeID, "question_answer_option_id"}, optionID)
+		}
 	}
 }
 
