@@ -15,6 +15,13 @@ assert.match(sseClient, /if \(idleTimeoutMs === null\) return reader\.read\(\)/)
 assert.match(sseClient, /SSE stream ended before a terminal event/);
 assert.match(sseClient, /controller\.signal\.aborted/);
 
+const modelOutputFilter = read('src/utils/model-output-filter.ts');
+assert.match(
+  modelOutputFilter,
+  /TEXT_KEYS\s*=\s*\[[^\]]*['"]answer_delta['"]/,
+  'durable workflow answer_delta events must pass through the shared sensitive-output filter'
+);
+
 for (const transportPath of [
   'src/services/aichat.service.ts',
   'src/components/chat/transports/agent-runtime-transport.ts',

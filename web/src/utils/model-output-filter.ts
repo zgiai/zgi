@@ -10,7 +10,7 @@ export const SENSITIVE_OUTPUT_BLOCKED_FLAG = '__sensitiveOutputBlocked';
 
 type RecordLike = Record<string, unknown>;
 
-const TEXT_KEYS = ['answer', 'text', 'content', 'delta'] as const;
+const TEXT_KEYS = ['answer', 'answer_delta', 'text', 'content', 'delta'] as const;
 
 function isRecord(value: unknown): value is RecordLike {
   return typeof value === 'object' && value !== null && !Array.isArray(value);

@@ -259,6 +259,7 @@ export function useWebappWorkflowRunEvents({
                 ...(parsed
                   ? {
                       questionAnswerPrompt: {
+                        nodeId: parsed.nodeId,
                         question: parsed.question,
                         choices: parsed.choices,
                         round: parsed.round,
@@ -311,6 +312,7 @@ export function useWebappWorkflowRunEvents({
                 messageData: {
                   questionAnswerTranscript: questionAnswerTranscriptRef.current,
                   questionAnswerPrompt: {
+                    nodeId: parsed.questionAnswer.prompt.nodeId,
                     question: parsed.questionAnswer.prompt.question,
                     choices: parsed.questionAnswer.prompt.choices,
                     round: parsed.questionAnswer.prompt.round,

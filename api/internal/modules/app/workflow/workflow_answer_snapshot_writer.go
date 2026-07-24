@@ -88,6 +88,13 @@ func newAnswerSnapshotWriter(handler *WorkflowHandler, workflowRunID, agentID, a
 	return w
 }
 
+func newWorkflowAnswerSnapshotWriter(runType string, handler *WorkflowHandler, workflowRunID, agentID, accountID string, systemInputs map[string]interface{}, requestInputs map[string]interface{}, triggeredFrom string) *answerSnapshotWriter {
+	if runType != "CONVERSATION_WORKFLOW" {
+		return nil
+	}
+	return newAnswerSnapshotWriter(handler, workflowRunID, agentID, accountID, systemInputs, requestInputs, triggeredFrom)
+}
+
 func (w *answerSnapshotWriter) run() {
 	defer close(w.done)
 	ticker := time.NewTicker(answerSnapshotFlushInterval)

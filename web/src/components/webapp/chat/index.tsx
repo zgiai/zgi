@@ -336,10 +336,18 @@ const WebappChat: React.FC<WebappChatProps> = ({
       if (!activeConversationId || !query) return;
       controller.send({
         query,
-        inputs: { question_answer_option_id: choice.id },
+        inputs: {
+          question_answer_option_id: choice.id,
+          ...(questionAnswerPrompt?.nodeId
+            ? { question_answer_node_id: questionAnswerPrompt.nodeId }
+            : {}),
+          ...(questionAnswerPrompt?.round !== undefined
+            ? { question_answer_round: questionAnswerPrompt.round }
+            : {}),
+        },
       });
     },
-    [activeConversationId, controller]
+    [activeConversationId, controller, questionAnswerPrompt]
   );
 
   useEffect(() => {

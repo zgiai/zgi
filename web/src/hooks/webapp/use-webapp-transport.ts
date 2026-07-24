@@ -38,6 +38,7 @@ import {
   isQuestionAnswerPromptMessage,
   parseQuestionAnswerRequestedEvent,
   parseQuestionAnswerSubmittedEvent,
+  type QuestionAnswerRuntimePromptState,
   type QuestionAnswerTranscriptItem,
 } from '@/components/workflow/question-answer/runtime-events';
 import { parseWorkflowPausedEvent } from '@/components/workflow/runtime/pause-events';
@@ -92,11 +93,8 @@ export function useWebappConversationTransport(
   const [connectionStateByConversation, setConnectionStateByConversation] = useState<
     Record<string, WorkflowConnectionState>
   >({});
-  const [questionAnswerPrompt, setQuestionAnswerPrompt] = useState<{
-    question: string;
-    choices: QuestionAnswerChoice[];
-    round?: number;
-  } | null>(null);
+  const [questionAnswerPrompt, setQuestionAnswerPrompt] =
+    useState<QuestionAnswerRuntimePromptState | null>(null);
   const [questionAnswerSubmitting, setQuestionAnswerSubmitting] = useState(false);
   const {
     activeEntry: approvalEntry,
@@ -218,6 +216,7 @@ export function useWebappConversationTransport(
         parsed
       );
       const prompt = {
+        nodeId: parsed.nodeId,
         question: parsed.question,
         choices: parsed.choices,
         round: parsed.round,
@@ -229,6 +228,7 @@ export function useWebappConversationTransport(
         questionAnswerPrompt: prompt,
       });
       setQuestionAnswerPrompt({
+        nodeId: parsed.nodeId,
         question: parsed.question,
         choices: parsed.choices,
         round: parsed.round,
@@ -573,6 +573,7 @@ export function useWebappConversationTransport(
   const submitQuestionAnswerChoice = useCallback(
     async (conversationId: string, choice: QuestionAnswerChoice) => {
       const callbacks = runCallbacksByConversationRef.current.get(conversationId);
+      const activePrompt = questionAnswerPrompt;
       const query = String(choice.label || choice.value || choice.id || '').trim();
       if (!callbacks || !conversationId || !query) return;
       const message =
@@ -635,13 +636,19 @@ export function useWebappConversationTransport(
           inputs: {
             ...inputs,
             question_answer_option_id: choice.id,
+            ...(activePrompt?.nodeId
+              ? { question_answer_node_id: activePrompt.nodeId }
+              : {}),
+            ...(typeof activePrompt?.round === 'number'
+              ? { question_answer_round: activePrompt.round }
+              : {}),
           },
         },
         runCallbacks,
         { abortSignal: abortSignalRef.current }
       );
     },
-    [dispatchApprovalEvent, handleWorkflowPaused, start]
+    [dispatchApprovalEvent, handleWorkflowPaused, questionAnswerPrompt, start]
   );
 
   const { resumeWorkflowRun, continueWorkflowRun } = useWebappWorkflowRunEvents({
@@ -714,6 +721,7 @@ export function useWebappConversationTransport(
             detail.summary.metadata?.questionAnswerPrompt &&
             typeof detail.summary.metadata.questionAnswerPrompt === 'object'
               ? (detail.summary.metadata.questionAnswerPrompt as {
+                  nodeId?: string;
                   question: string;
                   choices: QuestionAnswerChoice[];
                   round?: number;
@@ -794,12 +802,27 @@ export function useWebappConversationTransport(
               : t('webapp.chat.workflowRunFailed')
           );
         };
+        const latestMessage =
+          useChatStore.getState().conversations[payload.conversationId]?.messages.slice(-1)[0];
+        const activeQuestionAnswerPrompt =
+          getPendingQuestionAnswerPromptFromRuntimeMessage(latestMessage) ?? questionAnswerPrompt;
+        const isQuestionAnswerResume = Boolean(
+          activeQuestionAnswerPrompt || hasPendingQuestionAnswerMessage(payload.conversationId)
+        );
         const runPayload: WebAppRunRequest = {
           query: payload.query,
           conversation_id: payload.conversationId,
           history_window_size: payload.historyWindowSize,
           files: payload.files,
-          inputs: payload.inputs,
+          inputs: {
+            ...payload.inputs,
+            ...(activeQuestionAnswerPrompt?.nodeId
+              ? { question_answer_node_id: activeQuestionAnswerPrompt.nodeId }
+              : {}),
+            ...(typeof activeQuestionAnswerPrompt?.round === 'number'
+              ? { question_answer_round: activeQuestionAnswerPrompt.round }
+              : {}),
+          },
         };
         let durableConversationId = payload.conversationId;
 
@@ -819,7 +842,6 @@ export function useWebappConversationTransport(
             resetApprovalRuntime();
             setQuestionAnswerPrompt(null);
             setQuestionAnswerSubmitting(false);
-            const isQuestionAnswerResume = hasPendingQuestionAnswerMessage(payload.conversationId);
             if (isQuestionAnswerResume) {
               const transcript = applyQuestionAnswerTranscriptLocalAnswer(
                 questionAnswerTranscriptRef.current,
@@ -1083,6 +1105,7 @@ export function useWebappConversationTransport(
       notifyBillingError,
       options.enablePrecheck,
       precheckMutation,
+      questionAnswerPrompt,
       refreshConversationRuntime,
       resetApprovalRuntime,
       resetQuestionAnswerRuntime,

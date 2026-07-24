@@ -74,6 +74,28 @@ func TestCompletionContinuationStatus(t *testing.T) {
 	}
 }
 
+func TestNormalizeAgentWorkflowQuestionInputsPreservesQuestionIdentity(t *testing.T) {
+	inputs := normalizeAgentWorkflowQuestionInputs(map[string]interface{}{
+		"query":                     "answer",
+		"question_answer_option_id": "option-2",
+		"question_answer_node_id":   "question-node-2",
+		"question_answer_round":     3,
+	})
+
+	if inputs["query"] != "answer" || inputs["sys.query"] != "answer" {
+		t.Fatalf("normalized query = %#v, want query and sys.query", inputs)
+	}
+	if inputs["question_answer_option_id"] != "option-2" {
+		t.Fatalf("normalized option = %#v, want option-2", inputs["question_answer_option_id"])
+	}
+	if inputs["question_answer_node_id"] != "question-node-2" {
+		t.Fatalf("normalized node = %#v, want question-node-2", inputs["question_answer_node_id"])
+	}
+	if inputs["question_answer_round"] != 3 {
+		t.Fatalf("normalized round = %#v, want 3", inputs["question_answer_round"])
+	}
+}
+
 func TestAgentWorkflowRunLogTerminal(t *testing.T) {
 	for _, status := range []string{"succeeded", "failed", "stopped", "partial-succeeded"} {
 		if !agentWorkflowRunLogTerminal(status) {

@@ -121,6 +121,7 @@ export function hasPendingQuestionAnswerMessage(conversationId?: string): boolea
 }
 
 export function getPendingQuestionAnswerPromptFromRuntimeMessage(message?: Message): {
+  nodeId?: string;
   question: string;
   choices: QuestionAnswerChoice[];
   round?: number;
@@ -137,6 +138,7 @@ export function getPendingQuestionAnswerPromptFromRuntimeMessage(message?: Messa
   );
   if (metadataPrompt) {
     return {
+      nodeId: metadataPrompt.nodeId,
       question: metadataPrompt.question,
       choices: metadataPrompt.choices,
       round: metadataPrompt.round,
@@ -150,6 +152,7 @@ export function getPendingQuestionAnswerPromptFromRuntimeMessage(message?: Messa
     const entry = transcript[i];
     if (!entry.question || entry.answer) continue;
     return {
+      nodeId: entry.nodeId,
       question: entry.question,
       choices: [],
       round: entry.round,

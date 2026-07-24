@@ -107,3 +107,45 @@ func TestQuestionAnswerStateConversationIDPrefersVariablePoolSystemConversationI
 		t.Fatalf("question answer state conversation id = %q, want %q", got, "pool-conversation-id")
 	}
 }
+
+func TestQuestionAnswerSubmissionIdempotencyKeyDistinguishesQuestionsAndRounds(t *testing.T) {
+	state := &workflowpause.State{
+		ExecutorState: workflowpause.ExecutorState{
+			PausedNodeID: "question-1",
+			ExecutionOutputs: map[string]map[string]interface{}{
+				"question-1": {"answers": []interface{}{}},
+				"question-2": {"answers": []interface{}{"first"}},
+			},
+		},
+	}
+
+	first := questionAnswerSubmissionIdempotencyKey("pause-1", 2, state, map[string]interface{}{
+		"question_answer_node_id": "question-1",
+	})
+	replay := questionAnswerSubmissionIdempotencyKey("pause-1", 2, state, map[string]interface{}{
+		"question_answer_node_id": "question-1",
+	})
+	secondQuestion := questionAnswerSubmissionIdempotencyKey("pause-1", 2, state, map[string]interface{}{
+		"question_answer_node_id": "question-2",
+	})
+	secondRound := questionAnswerSubmissionIdempotencyKey("pause-1", 2, state, map[string]interface{}{
+		"question_answer_node_id": "question-1",
+		"question_answer_round":   2,
+	})
+	nextGeneration := questionAnswerSubmissionIdempotencyKey("pause-1", 3, state, map[string]interface{}{
+		"question_answer_node_id": "question-1",
+	})
+
+	if first != replay {
+		t.Fatalf("same question submission keys differ: %q != %q", first, replay)
+	}
+	for name, key := range map[string]string{
+		"second question": secondQuestion,
+		"second round":    secondRound,
+		"next generation": nextGeneration,
+	} {
+		if key == first {
+			t.Fatalf("%s reused first question idempotency key %q", name, key)
+		}
+	}
+}

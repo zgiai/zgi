@@ -58,6 +58,7 @@ import type {
   AIChatMessageFile,
   AIChatRuntimeSurface,
   AIChatUserInputRequest,
+  AIChatWorkflowQuestionAnswerInputs,
   AIChatWorkflowRunMetadata,
 } from '@/services/types/aichat';
 import {
@@ -210,7 +211,7 @@ function resolveWorkflowQuestionAnswerInputs(
   request: AIChatUserInputRequest,
   fallbackQuery: string,
   answers?: Record<string, string>
-): { query: string; question_answer_option_id?: string } | null {
+): AIChatWorkflowQuestionAnswerInputs | null {
   const firstQuestion = request.questions[0];
   if (!firstQuestion) return null;
   const answerKey = firstQuestion.id || 'q1';
@@ -226,6 +227,8 @@ function resolveWorkflowQuestionAnswerInputs(
   return {
     query: selectedOption?.label?.trim() || query,
     question_answer_option_id: selectedOption?.option_id?.trim() || undefined,
+    question_answer_node_id: request.node_id?.trim() || undefined,
+    question_answer_round: request.round,
   };
 }
 

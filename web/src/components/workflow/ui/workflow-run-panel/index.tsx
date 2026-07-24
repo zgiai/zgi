@@ -52,6 +52,7 @@ import {
   applyQuestionAnswerTranscriptSubmission,
   parseQuestionAnswerRequestedEvent,
   parseQuestionAnswerSubmittedEvent,
+  type QuestionAnswerRuntimePromptState,
   type QuestionAnswerTranscriptItem,
 } from '@/components/workflow/question-answer/runtime-events';
 import { parseWorkflowPausedEvent } from '@/components/workflow/runtime/pause-events';
@@ -200,11 +201,8 @@ const WorkflowRunPanel: React.FC<WorkflowRunPanelProps> = ({
   const [runSummary, setRunSummary] = useState<WorkflowFinishedData | null>(null);
   const [workflowRunId, setWorkflowRunId] = useState<string | null>(null);
   const [workflowConversationId, setWorkflowConversationId] = useState<string | null>(null);
-  const [questionAnswerPrompt, setQuestionAnswerPrompt] = useState<{
-    question: string;
-    choices: QuestionAnswerChoice[];
-    round?: number;
-  } | null>(null);
+  const [questionAnswerPrompt, setQuestionAnswerPrompt] =
+    useState<QuestionAnswerRuntimePromptState | null>(null);
   const [questionAnswerSubmitting, setQuestionAnswerSubmitting] = useState(false);
   const [questionAnswerTranscript, setQuestionAnswerTranscript] = useState<
     QuestionAnswerTranscriptItem[]
@@ -610,6 +608,7 @@ const WorkflowRunPanel: React.FC<WorkflowRunPanelProps> = ({
       if (!parsed) return;
       sseCallbacks.onQuestionAnswerRequested?.(payload);
       setQuestionAnswerPrompt({
+        nodeId: parsed.nodeId,
         question: parsed.question,
         choices: parsed.choices,
         round: parsed.round,
@@ -1034,7 +1033,17 @@ const WorkflowRunPanel: React.FC<WorkflowRunPanelProps> = ({
           setQuestionAnswerSubmitting(true);
         }
 
-        const payload = { inputs: values as unknown as WorkflowRunInputValues };
+        const payload = {
+          inputs: {
+            ...(values as unknown as WorkflowRunInputValues),
+            ...(questionAnswerPrompt?.nodeId
+              ? { question_answer_node_id: questionAnswerPrompt.nodeId }
+              : {}),
+            ...(typeof questionAnswerPrompt?.round === 'number'
+              ? { question_answer_round: questionAnswerPrompt.round }
+              : {}),
+          },
+        };
         if (!isQuestionAnswerResume) {
           const precheck = await workflowDraftPrecheck.mutateAsync(payload);
           const warnings = getWorkflowPrecheckWarnings(precheck);

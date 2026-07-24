@@ -52,6 +52,7 @@ import {
   isQuestionAnswerPromptMessage,
   parseQuestionAnswerRequestedEvent,
   parseQuestionAnswerSubmittedEvent,
+  type QuestionAnswerRuntimePromptState,
   type QuestionAnswerTranscriptItem,
 } from '@/components/workflow/question-answer/runtime-events';
 import { parseWorkflowPausedEvent } from '@/components/workflow/runtime/pause-events';
@@ -134,11 +135,8 @@ export function useWorkflowChatPanelState({
   // still executing. Keep that lifecycle separate from the transport hook so a
   // recovered run cannot accidentally re-enable the composer.
   const [isDurableRunActive, setIsDurableRunActive] = useState(false);
-  const [questionAnswerPrompt, setQuestionAnswerPrompt] = useState<{
-    question: string;
-    choices: QuestionAnswerChoice[];
-    round?: number;
-  } | null>(null);
+  const [questionAnswerPrompt, setQuestionAnswerPrompt] =
+    useState<QuestionAnswerRuntimePromptState | null>(null);
   const [questionAnswerSubmitting, setQuestionAnswerSubmitting] = useState(false);
   const [, setQuestionAnswerTranscript] = useState<QuestionAnswerTranscriptItem[]>([]);
   const updateQuestionAnswerTranscript = useCallback(
@@ -423,6 +421,7 @@ export function useWorkflowChatPanelState({
       const parsed = parseQuestionAnswerRequestedEvent(payload);
       if (!parsed) return;
       setQuestionAnswerPrompt({
+        nodeId: parsed.nodeId,
         question: parsed.question,
         choices: parsed.choices,
         round: parsed.round,
@@ -2303,6 +2302,15 @@ export function useWorkflowChatPanelState({
           setQuestionAnswerPrompt(null);
           setQuestionAnswerTranscript([]);
         } else {
+          payload.inputs = {
+            ...payload.inputs,
+            ...(activeQuestionAnswerPrompt?.nodeId
+              ? { question_answer_node_id: activeQuestionAnswerPrompt.nodeId }
+              : {}),
+            ...(typeof activeQuestionAnswerPrompt?.round === 'number'
+              ? { question_answer_round: activeQuestionAnswerPrompt.round }
+              : {}),
+          };
           setPrecheckWarnings([]);
           setQuestionAnswerSubmitting(true);
           setIsConversationPaused((activeQuestionAnswerPrompt?.choices.length ?? 0) > 0);

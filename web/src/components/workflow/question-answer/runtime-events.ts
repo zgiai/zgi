@@ -13,6 +13,11 @@ export interface ParsedQuestionAnswerRequested {
   round?: number;
 }
 
+export type QuestionAnswerRuntimePromptState = Pick<
+  ParsedQuestionAnswerRequested,
+  'nodeId' | 'question' | 'choices' | 'round'
+>;
+
 export interface ParsedQuestionAnswerSubmitted {
   workflowRunId?: string;
   nodeId?: string;

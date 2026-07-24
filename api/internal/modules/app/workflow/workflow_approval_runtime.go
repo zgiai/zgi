@@ -188,7 +188,7 @@ func (h *WorkflowHandler) resumeQuestionAnswerWorkflow(ctx context.Context, work
 			"question-answer",
 			workflowpause.EventQuestionAnswerSubmitted,
 			buildQuestionAnswerSubmittedEvent(run.ID, pauseState, inputs),
-			fmt.Sprintf("question-answer:%s:%d", pauseRecord.ID, pauseRecord.Generation),
+			questionAnswerSubmissionIdempotencyKey(pauseRecord.ID, pauseRecord.Generation, pauseState, inputs),
 		)
 		if submitErr != nil {
 			return submitErr
@@ -358,8 +358,9 @@ func (h *WorkflowHandler) drainApprovalResumeStream(ctx context.Context, pauseSe
 	approvalExpired := false
 	existingAnswer := h.approvalExistingConversationAnswer(ctx, run)
 	conversationAnswer := newWorkflowConversationAnswerAccumulator(existingAnswer)
-	answerSnapshots := newAnswerSnapshotWriter(h, run.ID, run.AgentID, run.CreatedBy, systemInputs, resumeInputs, run.TriggeredFrom)
+	answerSnapshots := newWorkflowAnswerSnapshotWriter(runType, h, run.ID, run.AgentID, run.CreatedBy, systemInputs, resumeInputs, run.TriggeredFrom)
 	if answerSnapshots != nil {
+		defer answerSnapshots.closeWithoutFlush()
 		answerSnapshots.SeedPersistedAnswer(existingAnswer)
 	}
 	for {

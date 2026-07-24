@@ -17,6 +17,7 @@ import type {
   AIChatSseEnvelope,
   AIChatStopConversationResponseData,
   AIChatUserInputContinuationRequest,
+  AIChatWorkflowQuestionAnswerInputs,
 } from '@/services/types/aichat';
 import {
   DEFAULT_AICHAT_MESSAGE_PAGINATION,
@@ -383,13 +384,13 @@ export class AgentRuntimeTransport implements AIChatRuntimeTransport {
   continueWorkflowQuestion(
     conversationId: string,
     messageId: string,
-    payload: { inputs: { query: string; question_answer_option_id?: string } },
+    payload: { inputs: AIChatWorkflowQuestionAnswerInputs },
     callbacks: AIChatStreamCallbacks,
     abortSignal?: AbortSignal
   ) {
     return this.client.sse<
       AIChatSseEnvelope,
-      { type: 'question_answer'; inputs: { query: string; question_answer_option_id?: string } }
+      { type: 'question_answer'; inputs: AIChatWorkflowQuestionAnswerInputs }
     >(
       `${this.runtimeBasePath}/conversations/${conversationId}/messages/${messageId}/workflow-continuation`,
       {

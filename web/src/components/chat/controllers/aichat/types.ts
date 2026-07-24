@@ -21,6 +21,7 @@ import type {
   AIChatToolGovernanceDecisionRequest,
   AIChatUserInputContinuationRequest,
   AIChatWorkflowPausedEventData,
+  AIChatWorkflowQuestionAnswerInputs,
 } from '@/services/types/aichat';
 import type { ChatBranchNavigation } from '@/components/chat/utils/message-tree';
 import type { ConversationSearchResult } from '@/components/chat/controllers/types';
@@ -284,7 +285,7 @@ export interface AIChatController {
   continueWorkflowQuestion?: (
     conversationId: string,
     messageId: string,
-    inputs: { query: string; question_answer_option_id?: string }
+    inputs: AIChatWorkflowQuestionAnswerInputs
   ) => Promise<void>;
   continueToolGovernanceDecision?: (
     conversationId: string,

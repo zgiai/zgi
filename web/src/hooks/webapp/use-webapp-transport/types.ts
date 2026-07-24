@@ -3,6 +3,7 @@ import type { Message } from '@/components/chat/types';
 import type { ApprovalRuntimeForm as ApprovalRuntimeFormData } from '@/services/approval.service';
 import type { QuestionAnswerChoice, WorkflowPrecheckWarning } from '@/services/types/workflow';
 import type { WorkflowConnectionState } from '@/hooks/workflow/workflow-runtime-controller';
+import type { QuestionAnswerRuntimePromptState } from '@/components/workflow/question-answer/runtime-events';
 
 export interface UseWebappConversationTransportOptions {
   enablePrecheck?: boolean;
@@ -20,11 +21,7 @@ export interface UseWebappConversationTransportResult {
   approvalError: unknown;
   approvalSubmitting: boolean;
   approvalSubmittedAction: string | null;
-  questionAnswerPrompt: {
-    question: string;
-    choices: QuestionAnswerChoice[];
-    round?: number;
-  } | null;
+  questionAnswerPrompt: QuestionAnswerRuntimePromptState | null;
   questionAnswerSubmitting: boolean;
   syncQuestionAnswerRuntime: (conversationId?: string) => void;
   submitApproval: (payload: { inputs: Record<string, unknown>; action: string }) => Promise<void>;

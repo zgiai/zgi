@@ -66,6 +66,7 @@ import { isWebAppOfflineError } from '@/utils/webapp/errors';
 import type { QuestionAnswerChoice } from '@/services/types/workflow';
 import {
   parseQuestionAnswerRequestedEvent,
+  type QuestionAnswerRuntimePromptState,
 } from '@/components/workflow/question-answer/runtime-events';
 import { parseWorkflowPausedEvent } from '@/components/workflow/runtime/pause-events';
 import {
@@ -227,11 +228,8 @@ export const WebappRun: React.FC<WebappRunProps> = ({
   const [executionOpen, setExecutionOpen] = useState(false);
   const [precheckWarnings, setPrecheckWarnings] = useState<WorkflowPrecheckWarning[]>([]);
   const [approvalPaused, setApprovalPaused] = useState(false);
-  const [questionAnswerPrompt, setQuestionAnswerPrompt] = useState<{
-    question: string;
-    choices: QuestionAnswerChoice[];
-    round?: number;
-  } | null>(null);
+  const [questionAnswerPrompt, setQuestionAnswerPrompt] =
+    useState<QuestionAnswerRuntimePromptState | null>(null);
   const [questionAnswerSubmitting, setQuestionAnswerSubmitting] = useState(false);
   const [workflowRunId, setWorkflowRunId] = useState<string | null>(null);
   const {
@@ -949,6 +947,7 @@ export const WebappRun: React.FC<WebappRunProps> = ({
       if (parsed.hasQuestionAnswer) {
         if (parsed.questionAnswer.prompt) {
           setQuestionAnswerPrompt({
+            nodeId: parsed.questionAnswer.prompt.nodeId,
             question: parsed.questionAnswer.prompt.question,
             choices: parsed.questionAnswer.prompt.choices,
             round: parsed.questionAnswer.prompt.round,
@@ -972,6 +971,7 @@ export const WebappRun: React.FC<WebappRunProps> = ({
       const parsed = parseQuestionAnswerRequestedEvent(payload);
       if (!parsed) return;
       setQuestionAnswerPrompt({
+        nodeId: parsed.nodeId,
         question: parsed.question,
         choices: parsed.choices,
         round: parsed.round,
@@ -1323,6 +1323,7 @@ export const WebappRun: React.FC<WebappRunProps> = ({
           const parsed = parseQuestionAnswerRequestedEvent(event);
           if (!parsed) return;
           setQuestionAnswerPrompt({
+            nodeId: parsed.nodeId,
             question: parsed.question,
             choices: parsed.choices,
             round: parsed.round,
@@ -1441,6 +1442,7 @@ export const WebappRun: React.FC<WebappRunProps> = ({
           if (parsed.hasQuestionAnswer) {
             if (parsed.questionAnswer.prompt) {
               setQuestionAnswerPrompt({
+                nodeId: parsed.questionAnswer.prompt.nodeId,
                 question: parsed.questionAnswer.prompt.question,
                 choices: parsed.questionAnswer.prompt.choices,
                 round: parsed.questionAnswer.prompt.round,
@@ -1749,7 +1751,15 @@ export const WebappRun: React.FC<WebappRunProps> = ({
         const runPayload = {
           query: queryValue,
           conversation_id: conversationIdParam || undefined,
-          inputs: values as unknown as Record<string, unknown>,
+          inputs: {
+            ...(values as unknown as Record<string, unknown>),
+            ...(questionAnswerPrompt?.nodeId
+              ? { question_answer_node_id: questionAnswerPrompt.nodeId }
+              : {}),
+            ...(typeof questionAnswerPrompt?.round === 'number'
+              ? { question_answer_round: questionAnswerPrompt.round }
+              : {}),
+          },
         };
 
         if (enablePrecheck && !isQuestionAnswerResume) {
@@ -1841,6 +1851,12 @@ export const WebappRun: React.FC<WebappRunProps> = ({
               query,
               'sys.query': query,
               question_answer_option_id: choice.id,
+              ...(questionAnswerPrompt?.nodeId
+                ? { question_answer_node_id: questionAnswerPrompt.nodeId }
+                : {}),
+              ...(typeof questionAnswerPrompt?.round === 'number'
+                ? { question_answer_round: questionAnswerPrompt.round }
+                : {}),
             },
           },
           undefined,
@@ -1856,7 +1872,14 @@ export const WebappRun: React.FC<WebappRunProps> = ({
         toast.error(err instanceof Error ? err.message : t('run.startFailed'));
       }
     },
-    [markOffline, questionAnswerSubmitting, recoverInterruptedWorkflowRun, start, t]
+    [
+      markOffline,
+      questionAnswerPrompt,
+      questionAnswerSubmitting,
+      recoverInterruptedWorkflowRun,
+      start,
+      t,
+    ]
   );
 
   const questionAnswerNotice = questionAnswerPrompt ? (

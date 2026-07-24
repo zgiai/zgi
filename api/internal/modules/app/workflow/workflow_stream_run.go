@@ -153,14 +153,16 @@ func (h *WorkflowHandler) runWorkflowStream(c *gin.Context, requestedWorkspaceID
 	}
 
 	var resumePauseID string
+	var resumePauseGeneration int64
 	var questionResumeState *workflowpause.State
 	if runType == "CONVERSATION_WORKFLOW" {
-		resumeState, pauseID, ok := h.workflowQuestionAnswerResumeState(c.Request.Context(), workspaceID, appID, systemInputs)
+		resumeState, pauseID, pauseGeneration, ok := h.workflowQuestionAnswerResumeState(c.Request.Context(), workspaceID, appID, systemInputs)
 		if ok {
 			questionResumeState = resumeState
 			systemInputs[workflowResumeStateInputKey] = resumeState
 			systemInputs[workflowResumePauseIDInputKey] = pauseID
 			resumePauseID = pauseID
+			resumePauseGeneration = pauseGeneration
 		}
 	}
 
@@ -192,7 +194,7 @@ func (h *WorkflowHandler) runWorkflowStream(c *gin.Context, requestedWorkspaceID
 					"question-answer",
 					workflowpause.EventQuestionAnswerSubmitted,
 					buildQuestionAnswerSubmittedEvent(workflowRunLogID, questionResumeState, req.Inputs),
-					"question-answer:"+resumePauseID,
+					questionAnswerSubmissionIdempotencyKey(resumePauseID, resumePauseGeneration, questionResumeState, req.Inputs),
 				)
 				if submitErr != nil {
 					h.sendSSEError(c.Request.Context(), c.Writer, fmt.Sprintf("failed to prepare workflow resume: %v", submitErr))
@@ -361,7 +363,10 @@ func (h *WorkflowHandler) runWorkflowStream(c *gin.Context, requestedWorkspaceID
 	// Track if any message events were sent (for conversation workflows)
 	messageEventSent := false
 	var conversationAnswer strings.Builder
-	answerSnapshots := newAnswerSnapshotWriter(h, workflowRunLogID, appID, accountID, systemInputs, req.Inputs, triggeredFrom)
+	answerSnapshots := newWorkflowAnswerSnapshotWriter(runType, h, workflowRunLogID, appID, accountID, systemInputs, req.Inputs, triggeredFrom)
+	if answerSnapshots != nil {
+		defer answerSnapshots.closeWithoutFlush()
+	}
 	answerPersistCtx := withWorkflowExecutionOwner(runtimeCtx, executionOwner)
 
 	// Register the cancel function with the workflow service for stop functionality

@@ -7,6 +7,14 @@ import (
 	"testing"
 )
 
+func TestTaskWorkflowDoesNotCreateAnswerSnapshotWriter(t *testing.T) {
+	writer := newWorkflowAnswerSnapshotWriter("WORKFLOW", &WorkflowHandler{}, "run-1", "agent-1", "account-1", nil, nil, "web-app")
+	if writer != nil {
+		writer.closeWithoutFlush()
+		t.Fatal("task workflow created a conversation answer snapshot writer")
+	}
+}
+
 func TestAnswerSnapshotWriterCoalescesTokenChunksAndFlushesTerminalAnswer(t *testing.T) {
 	writer := &answerSnapshotWriter{
 		workflowRunID: "run-1",

@@ -39,6 +39,7 @@ import type {
   AIChatWorkflowEventData,
   AIChatWorkflowNodeEventData,
   AIChatWorkflowPausedEventData,
+  AIChatWorkflowQuestionAnswerInputs,
 } from '@/services/types/aichat';
 import type { ConversationSearchResult } from '@/components/chat/controllers/types';
 import {
@@ -200,7 +201,7 @@ export interface AIChatRuntimeTransport {
   continueWorkflowQuestion?(
     conversationId: string,
     messageId: string,
-    payload: { inputs: { query: string; question_answer_option_id?: string } },
+    payload: { inputs: AIChatWorkflowQuestionAnswerInputs },
     callbacks: AIChatStreamCallbacks,
     abortSignal?: AbortSignal
   ): Promise<{ close: () => void }>;

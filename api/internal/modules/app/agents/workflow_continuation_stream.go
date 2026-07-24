@@ -82,6 +82,18 @@ func normalizeAgentWorkflowQuestionInputs(inputs map[string]interface{}) map[str
 	if optionID != "" {
 		out["question_answer_option_id"] = optionID
 	}
+	nodeID := strings.TrimSpace(stringFromAgentWorkflowContinuation(inputs["question_answer_node_id"]))
+	if nodeID == "" {
+		nodeID = strings.TrimSpace(stringFromAgentWorkflowContinuation(inputs["node_id"]))
+	}
+	if nodeID != "" {
+		out["question_answer_node_id"] = nodeID
+	}
+	if round, ok := inputs["question_answer_round"]; ok && round != nil {
+		out["question_answer_round"] = round
+	} else if round, ok := inputs["round"]; ok && round != nil {
+		out["question_answer_round"] = round
+	}
 	return out
 }
 

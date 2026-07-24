@@ -147,6 +147,24 @@ assert.equal(
 );
 assert.strictEqual(webappSseCalls[0].options.body, payload);
 
+const workflowQuestionInputs = {
+  query: 'answer',
+  question_answer_option_id: 'option-2',
+  question_answer_node_id: 'question-node-2',
+  question_answer_round: 3,
+};
+await createAgentDraftTransport('agent-123').continueWorkflowQuestion(
+  'conversation-3',
+  'message-3',
+  { inputs: workflowQuestionInputs },
+  callbacks
+);
+assert.deepEqual(
+  draftSseCalls.at(-1).options.body,
+  { type: 'question_answer', inputs: workflowQuestionInputs },
+  'Agent workflow question continuation must preserve the target node and round'
+);
+
 const continuationSource = readFileSync(
   path.join(
     root,

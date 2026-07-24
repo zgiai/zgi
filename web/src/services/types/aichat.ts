@@ -950,6 +950,13 @@ export interface AIChatAgentProgressEventData {
   created_at?: number;
 }
 
+export interface AIChatWorkflowQuestionAnswerInputs {
+  query: string;
+  question_answer_option_id?: string;
+  question_answer_node_id?: string;
+  question_answer_round?: string | number;
+}
+
 export interface AIChatIntermediateAnswerEventData {
   conversation_id: string;
   message_id: string;

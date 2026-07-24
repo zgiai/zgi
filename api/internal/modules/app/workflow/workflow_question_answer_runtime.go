@@ -2,8 +2,10 @@ package workflow
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -59,21 +61,67 @@ func buildQuestionAnswerSubmittedEvent(workflowRunID string, state *workflowpaus
 		"answer":          questionAnswerSubmittedAnswer(inputs),
 		"created_at":      time.Now().Unix(),
 	}
-	if state == nil {
-		return payload
-	}
 
-	nodeID := strings.TrimSpace(state.ExecutorState.PausedNodeID)
+	nodeID := questionAnswerSubmittedNodeID(state, inputs)
 	if nodeID != "" {
 		payload["node_id"] = nodeID
 	}
 
 	outputs := questionAnswerPausedOutputs(state, nodeID)
-	if round := questionAnswerEventRound(outputs); round > 0 {
+	round := questionAnswerSubmittedRound(inputs)
+	if round <= 0 {
+		round = questionAnswerEventRound(outputs)
+	}
+	if round > 0 {
 		payload["round"] = round
+	}
+	if triggerID := questionAnswerSubmittedTriggerID(inputs); triggerID != "" {
+		payload["trigger_id"] = triggerID
 	}
 	enrichQuestionAnswerSubmittedChoice(payload, outputs, inputs)
 	return payload
+}
+
+func questionAnswerSubmissionIdempotencyKey(pauseID string, generation int64, state *workflowpause.State, inputs map[string]interface{}) string {
+	nodeID := questionAnswerSubmittedNodeID(state, inputs)
+	round := questionAnswerSubmittedRound(inputs)
+	if round <= 0 {
+		round = questionAnswerEventRound(questionAnswerPausedOutputs(state, nodeID))
+	}
+	triggerID := questionAnswerSubmittedTriggerID(inputs)
+	identity := fmt.Sprintf("pause=%s\ngeneration=%d\nnode=%s\nround=%d\ntrigger=%s", pauseID, generation, nodeID, round, triggerID)
+	digest := sha256.Sum256([]byte(identity))
+	return fmt.Sprintf("question-answer:%s:%x", pauseID, digest[:12])
+}
+
+func questionAnswerSubmittedNodeID(state *workflowpause.State, inputs map[string]interface{}) string {
+	for _, key := range []string{"question_answer_node_id", "inputs.question_answer_node_id"} {
+		if value, ok := inputs[key].(string); ok && strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	if state == nil {
+		return ""
+	}
+	return strings.TrimSpace(state.ExecutorState.PausedNodeID)
+}
+
+func questionAnswerSubmittedRound(inputs map[string]interface{}) int {
+	for _, key := range []string{"question_answer_round", "inputs.question_answer_round"} {
+		if round, ok := questionAnswerInt(inputs[key]); ok && round > 0 {
+			return round
+		}
+	}
+	return 0
+}
+
+func questionAnswerSubmittedTriggerID(inputs map[string]interface{}) string {
+	for _, key := range []string{"question_answer_trigger_id", "inputs.question_answer_trigger_id"} {
+		if value, ok := inputs[key].(string); ok && strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
 }
 
 func questionAnswerPausedOutputs(state *workflowpause.State, nodeID string) map[string]interface{} {
@@ -218,10 +266,10 @@ func workflowPausedReasons(eventData map[string]interface{}) []string {
 	return out
 }
 
-func (h *WorkflowHandler) workflowQuestionAnswerResumeState(ctx context.Context, tenantID, appID string, systemInputs map[string]interface{}) (*workflowpause.State, string, bool) {
+func (h *WorkflowHandler) workflowQuestionAnswerResumeState(ctx context.Context, tenantID, appID string, systemInputs map[string]interface{}) (*workflowpause.State, string, int64, bool) {
 	conversationID, _ := systemInputs["sys.conversation_id"].(string)
 	if conversationID == "" {
-		return nil, "", false
+		return nil, "", 0, false
 	}
 	pauseService := workflowpause.NewService(database.GetDB())
 	pauseRecord, _, state, err := pauseService.GetActiveByConversationID(ctx, tenantID, appID, conversationID, workflowpause.ReasonTypeQuestionAnswerRequired)
@@ -229,12 +277,12 @@ func (h *WorkflowHandler) workflowQuestionAnswerResumeState(ctx context.Context,
 		if !errors.Is(err, workflowpause.ErrPauseNotFound) {
 			logger.WarnContext(ctx, "failed to load question answer pause by conversation", "conversation_id", conversationID, err)
 		}
-		return nil, "", false
+		return nil, "", 0, false
 	}
 	if state == nil || state.RunType != "CONVERSATION_WORKFLOW" {
-		return nil, "", false
+		return nil, "", 0, false
 	}
-	return state, pauseRecord.ID, true
+	return state, pauseRecord.ID, pauseRecord.Generation, true
 }
 
 func questionAnswerSubmittedAnswer(inputs map[string]interface{}) string {
