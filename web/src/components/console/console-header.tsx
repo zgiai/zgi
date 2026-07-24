@@ -50,6 +50,7 @@ export function ConsoleHeader({ hidden, onToggleMobileSidebar }: ConsoleHeaderPr
         match: path => path.startsWith('/console/developer/content-parse'),
         title: tNav('fileRecognition'),
       },
+      { match: path => path.startsWith('/console/skills'), title: tNav('skills') },
       { match: path => path.startsWith('/console/settings'), title: tNav('systemSettings') },
       { match: path => path.startsWith('/console/work/chat'), title: tNav('chat') },
       { match: path => path.startsWith('/console/work/image'), title: tNav('image') },
@@ -72,10 +73,6 @@ export function ConsoleHeader({ hidden, onToggleMobileSidebar }: ConsoleHeaderPr
       {
         match: path => path.startsWith('/dashboard/organization/settings'),
         title: tDash('items.organizationSettings'),
-      },
-      {
-        match: path => path.startsWith('/dashboard/organization/aichat-skills'),
-        title: tDash('items.aichatSkills'),
       },
       {
         match: path => path.startsWith('/dashboard/cost-center/overview'),

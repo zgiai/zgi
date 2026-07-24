@@ -21,6 +21,7 @@ const messages = {
   workflows: 'Workflows',
   workflowAgents: 'Workflow Agents',
   prompts: 'Prompts',
+  skills: 'Skills',
   dbs: 'Databases',
   files: 'Files',
   chat: 'Chat',

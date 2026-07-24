@@ -10,6 +10,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/zgiai/zgi/api/internal/capabilities/agentbindings"
 	runtimedto "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/dto"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
@@ -23,6 +24,44 @@ func TestRegisterRoutesDoesNotConflict(t *testing.T) {
 	group := router.Group("/console/api")
 
 	NewHandler(nil).RegisterRoutes(group)
+}
+
+func TestSkillManagementRoutesAllowOrganizationMembers(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	capture := &capturingSkillManagementService{}
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set("account_id", uuid.NewString())
+		util.SetOrganizationID(c, uuid.NewString())
+		c.Next()
+	})
+	NewHandler(capture).RegisterRoutes(router.Group("/console/api"))
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(
+		http.MethodGet,
+		"/console/api/aichat/skills/custom-skill/delete-impact",
+		nil,
+	)
+	router.ServeHTTP(recorder, request)
+
+	if !capture.called {
+		t.Fatal("PreviewSkillDeleteImpact() was not called for an organization member")
+	}
+}
+
+type capturingSkillManagementService struct {
+	runtimeservice.Service
+	called bool
+}
+
+func (s *capturingSkillManagementService) PreviewSkillDeleteImpact(
+	_ context.Context,
+	_ runtimeservice.Scope,
+	_ string,
+) (*agentbindings.Impact, error) {
+	s.called = true
+	return nil, runtimeservice.ErrInvalidInput
 }
 
 func TestChatEndpointsFixRuntimeSurface(t *testing.T) {

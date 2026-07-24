@@ -18,7 +18,6 @@ import (
 	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"github.com/zgiai/zgi/api/internal/util"
-	"github.com/zgiai/zgi/api/middleware"
 	"github.com/zgiai/zgi/api/pkg/logger"
 	"github.com/zgiai/zgi/api/pkg/response"
 )
@@ -62,7 +61,7 @@ func (h *Handler) RegisterRoutes(router *gin.RouterGroup) {
 	group.GET("/skill-preferences/me", h.GetMySkillPreference)
 	group.PUT("/skill-preferences/me", h.UpdateMySkillPreference)
 	group.GET("/skills/:id", h.GetSkill)
-	skillManagement := group.Group("/skills", middleware.EnterpriseAdminOrOwnerRequired())
+	skillManagement := group.Group("/skills")
 	skillManagement.POST("/import/preview", h.PreviewImportSkill)
 	skillManagement.POST("/import/confirm", h.ConfirmImportSkill)
 	skillManagement.DELETE("/import/preview/:import_id", h.CancelImportSkillPreview)
