@@ -626,6 +626,50 @@ func TestSubmitInteractionWaitsForEveryPauseReason(t *testing.T) {
 			{Type: ReasonTypeQuestionAnswerRequired, NodeID: "question"},
 			{Type: ReasonTypeApprovalRequired, NodeID: "approval", FormID: "form-1"},
 		},
+		Events: []AppendEventParams{
+			{
+				EventType: EventQuestionAnswerRequested,
+				EventData: map[string]interface{}{
+					"workflow_run_id": run.ID,
+					"node_id":         "question",
+					"question":        "Choose a branch",
+					"choices":         []interface{}{"yes", "no"},
+				},
+				IdempotencyKey: "question-requested:question",
+			},
+			{
+				EventType: EventApprovalRequested,
+				EventData: map[string]interface{}{
+					"workflow_run_id": run.ID,
+					"node_id":         "approval",
+					"form_id":         "form-1",
+					"content":         "Approve the next step",
+				},
+				IdempotencyKey: "approval-requested:approval",
+			},
+			{
+				EventType: EventWorkflowPaused,
+				EventData: map[string]interface{}{
+					"id":           run.ID,
+					"status":       "paused",
+					"paused_nodes": []interface{}{"question", "approval"},
+					"reasons": []interface{}{
+						map[string]interface{}{
+							"type":     ReasonTypeQuestionAnswerRequired,
+							"node_id":  "question",
+							"question": "Choose a branch",
+							"choices":  []interface{}{"yes", "no"},
+						},
+						map[string]interface{}{
+							"type":    ReasonTypeApprovalRequired,
+							"node_id": "approval",
+							"form_id": "form-1",
+						},
+					},
+				},
+				IdempotencyKey: "workflow-paused",
+			},
+		},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -638,6 +682,18 @@ func TestSubmitInteractionWaitsForEveryPauseReason(t *testing.T) {
 	}
 	if submission.ResumeReady || submission.Outbox != nil {
 		t.Fatalf("question submission resumed pause with pending approval: %#v", submission)
+	}
+	if len(submission.PendingEvents) != 2 {
+		t.Fatalf("pending events = %#v, want approval request and paused projection", submission.PendingEvents)
+	}
+	if submission.PendingEvents[0].Event != EventApprovalRequested {
+		t.Fatalf("next pending event = %q, want %q", submission.PendingEvents[0].Event, EventApprovalRequested)
+	}
+	if submission.PendingEvents[0].Data["form_id"] != "form-1" {
+		t.Fatalf("next pending approval = %#v", submission.PendingEvents[0].Data)
+	}
+	if submission.PendingEvents[1].Event != EventWorkflowPaused {
+		t.Fatalf("pending terminal event = %q, want %q", submission.PendingEvents[1].Event, EventWorkflowPaused)
 	}
 
 	var stored RunPause
@@ -680,6 +736,55 @@ func TestSubmitInteractionCompletesOnlyTheTargetQuestionReason(t *testing.T) {
 			{Type: ReasonTypeQuestionAnswerRequired, NodeID: "question-1"},
 			{Type: ReasonTypeQuestionAnswerRequired, NodeID: "question-2"},
 		},
+		Events: []AppendEventParams{
+			{
+				EventType: EventQuestionAnswerRequested,
+				EventData: map[string]interface{}{
+					"workflow_run_id": run.ID,
+					"node_id":         "question-1",
+					"round":           1,
+					"question":        "First question",
+					"choices":         []interface{}{"first-a", "first-b"},
+				},
+				IdempotencyKey: "question-requested:question-1",
+			},
+			{
+				EventType: EventQuestionAnswerRequested,
+				EventData: map[string]interface{}{
+					"workflow_run_id": run.ID,
+					"node_id":         "question-2",
+					"round":           2,
+					"question":        "Second question",
+					"choices":         []interface{}{"second-a", "second-b"},
+				},
+				IdempotencyKey: "question-requested:question-2",
+			},
+			{
+				EventType: EventWorkflowPaused,
+				EventData: map[string]interface{}{
+					"id":           run.ID,
+					"status":       "paused",
+					"paused_nodes": []interface{}{"question-1", "question-2"},
+					"reasons": []interface{}{
+						map[string]interface{}{
+							"type":     ReasonTypeQuestionAnswerRequired,
+							"node_id":  "question-1",
+							"round":    1,
+							"question": "First question",
+							"choices":  []interface{}{"first-a", "first-b"},
+						},
+						map[string]interface{}{
+							"type":     ReasonTypeQuestionAnswerRequired,
+							"node_id":  "question-2",
+							"round":    2,
+							"question": "Second question",
+							"choices":  []interface{}{"second-a", "second-b"},
+						},
+					},
+				},
+				IdempotencyKey: "workflow-paused",
+			},
+		},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -692,6 +797,35 @@ func TestSubmitInteractionCompletesOnlyTheTargetQuestionReason(t *testing.T) {
 	}
 	if first.ResumeReady || first.Outbox != nil {
 		t.Fatalf("first question unexpectedly resumed run: %#v", first)
+	}
+	if len(first.PendingEvents) != 2 {
+		t.Fatalf("pending events = %#v, want next question and paused projection", first.PendingEvents)
+	}
+	nextQuestion := first.PendingEvents[0]
+	if nextQuestion.Event != EventQuestionAnswerRequested {
+		t.Fatalf("next pending event = %q, want %q", nextQuestion.Event, EventQuestionAnswerRequested)
+	}
+	if nextQuestion.Data["node_id"] != "question-2" ||
+		nextQuestion.Data["question"] != "Second question" ||
+		nextQuestion.Data["round"] != float64(2) {
+		t.Fatalf("next pending question data = %#v", nextQuestion.Data)
+	}
+	choices, ok := nextQuestion.Data["choices"].([]interface{})
+	if !ok || len(choices) != 2 || choices[0] != "second-a" {
+		t.Fatalf("next pending question choices = %#v", nextQuestion.Data["choices"])
+	}
+	if first.PendingEvents[1].Event != EventWorkflowPaused {
+		t.Fatalf("pending terminal event = %q, want %q", first.PendingEvents[1].Event, EventWorkflowPaused)
+	}
+	replayed, err := service.SubmitInteraction(context.Background(), run.ID, pauseRecord.ID, "question-1", EventQuestionAnswerSubmitted,
+		map[string]interface{}{"node_id": "question-1", "answer": "first"}, "question-answer:"+pauseRecord.ID+":1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(replayed.PendingEvents) != 2 ||
+		replayed.PendingEvents[0].Sequence != first.PendingEvents[0].Sequence ||
+		replayed.PendingEvents[1].Sequence != first.PendingEvents[1].Sequence {
+		t.Fatalf("idempotent pending projection = %#v, want sequences %d and %d", replayed.PendingEvents, first.PendingEvents[0].Sequence, first.PendingEvents[1].Sequence)
 	}
 	var storedReasons []RunPauseReason
 	if err := db.Where("pause_id = ?", pauseRecord.ID).Order("node_id ASC").Find(&storedReasons).Error; err != nil {

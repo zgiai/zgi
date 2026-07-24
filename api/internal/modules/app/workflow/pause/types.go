@@ -157,9 +157,10 @@ type ExecutionClaim struct {
 }
 
 type InteractionSubmission struct {
-	Event       *RunEventPayload
-	Outbox      *RuntimeOutbox
-	ResumeReady bool
+	Event         *RunEventPayload
+	PendingEvents []*RunEventPayload
+	Outbox        *RuntimeOutbox
+	ResumeReady   bool
 }
 
 type RuntimeOutboxPayload struct {

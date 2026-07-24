@@ -196,12 +196,26 @@ func (h *WorkflowHandler) resumeQuestionAnswerWorkflow(ctx context.Context, work
 		if submission != nil {
 			submittedEvent = submission.Event
 			publishWorkflowCommittedTail(ctx, run.ID, submission.Event)
+			for _, pendingEvent := range submission.PendingEvents {
+				publishWorkflowCommittedTail(ctx, run.ID, pendingEvent)
+			}
 			if !submission.ResumeReady {
 				if onEvent != nil && submission.Event != nil {
 					data := copyWorkflowAnyMap(submission.Event.Data)
 					data["sequence"] = submission.Event.Sequence
 					data["event_id"] = submission.Event.EventID
 					if err := onEvent(workflowpause.EventQuestionAnswerSubmitted, data); err != nil {
+						return err
+					}
+				}
+				for _, pendingEvent := range submission.PendingEvents {
+					if onEvent == nil || pendingEvent == nil {
+						continue
+					}
+					data := copyWorkflowAnyMap(pendingEvent.Data)
+					data["sequence"] = pendingEvent.Sequence
+					data["event_id"] = pendingEvent.EventID
+					if err := onEvent(pendingEvent.Event, data); err != nil {
 						return err
 					}
 				}

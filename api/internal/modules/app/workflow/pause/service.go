@@ -569,12 +569,248 @@ func (s *Service) SubmitInteraction(ctx context.Context, workflowRunID, pauseID,
 		result.Event = stored
 		result.Outbox = outbox
 		result.ResumeReady = ready
+		if !ready {
+			pendingEvents, pendingErr := service.appendNextPendingInteractionProjectionTx(
+				ctx,
+				tx,
+				pauseRecord,
+				stored.EventID,
+			)
+			if pendingErr != nil {
+				return pendingErr
+			}
+			result.PendingEvents = pendingEvents
+		}
 		return nil
 	})
 	if err != nil {
 		return nil, err
 	}
 	return result, nil
+}
+
+func (s *Service) appendNextPendingInteractionProjectionTx(
+	ctx context.Context,
+	tx *gorm.DB,
+	pauseRecord *RunPause,
+	submissionEventID string,
+) ([]*RunEventPayload, error) {
+	if pauseRecord == nil {
+		return nil, ErrPauseNotFound
+	}
+
+	var pendingReasons []RunPauseReason
+	if err := tx.WithContext(ctx).
+		Where("pause_id = ? AND status = ?", pauseRecord.ID, RunPauseReasonStatusPending).
+		Order("created_at ASC, id ASC").
+		Find(&pendingReasons).Error; err != nil {
+		return nil, fmt.Errorf("load pending workflow pause reasons: %w", err)
+	}
+	pendingReasonIdentities := make(map[string]struct{}, len(pendingReasons))
+	for _, reason := range pendingReasons {
+		switch reason.Type {
+		case ReasonTypeQuestionAnswerRequired, ReasonTypeApprovalRequired:
+			pendingReasonIdentities[pauseReasonIdentity(reason.Type, reason.NodeID, reason.FormID)] = struct{}{}
+		}
+	}
+	if len(pendingReasonIdentities) == 0 {
+		return nil, nil
+	}
+
+	var storedEvents []RunEvent
+	if err := tx.WithContext(ctx).
+		Where(
+			"workflow_run_id = ? AND pause_id = ? AND pause_generation = ? AND event_type IN ?",
+			pauseRecord.WorkflowRunID,
+			pauseRecord.ID,
+			pauseRecord.Generation,
+			[]string{EventQuestionAnswerRequested, EventApprovalRequested, EventWorkflowPaused},
+		).
+		Order("sequence ASC").
+		Find(&storedEvents).Error; err != nil {
+		return nil, fmt.Errorf("load pending workflow interaction evidence: %w", err)
+	}
+
+	var interactionSource *RunEventPayload
+	var pausedSource *RunEventPayload
+	for index := range storedEvents {
+		payload, err := runEventPayloadFromModel(storedEvents[index])
+		if err != nil {
+			return nil, err
+		}
+		switch payload.Event {
+		case EventQuestionAnswerRequested:
+			identity := pauseReasonIdentity(
+				ReasonTypeQuestionAnswerRequired,
+				stringFromEventData(payload.Data["node_id"]),
+				"",
+			)
+			if _, pending := pendingReasonIdentities[identity]; pending && interactionSource == nil {
+				interactionSource = payload
+			}
+		case EventApprovalRequested:
+			identity := pauseReasonIdentity(
+				ReasonTypeApprovalRequired,
+				stringFromEventData(payload.Data["node_id"]),
+				stringFromEventData(payload.Data["form_id"]),
+			)
+			if _, pending := pendingReasonIdentities[identity]; pending && interactionSource == nil {
+				interactionSource = payload
+			}
+		case EventWorkflowPaused:
+			pausedSource = payload
+		}
+	}
+	if interactionSource == nil {
+		return nil, fmt.Errorf("pending workflow interaction has no durable request event")
+	}
+
+	now := time.Now()
+	interactionData := copyEventData(interactionSource.Data)
+	interactionData["created_at"] = now.Unix()
+	interactionNodeID := stringFromEventData(interactionData["node_id"])
+
+	pausedData := map[string]interface{}{
+		"id":           pauseRecord.WorkflowRunID,
+		"status":       "paused",
+		"paused_nodes": pendingPauseNodeIDs(pendingReasons),
+		"reasons":      pendingPauseReasonData(pendingReasons, pausedSource),
+		"created_at":   now.Unix(),
+	}
+	if pausedSource != nil {
+		pausedData = copyEventData(pausedSource.Data)
+		pausedData["status"] = "paused"
+		pausedData["paused_nodes"] = pendingPauseNodeIDs(pendingReasons)
+		pausedData["reasons"] = pendingPauseReasonData(pendingReasons, pausedSource)
+		pausedData["created_at"] = now.Unix()
+	}
+
+	pauseGeneration := pauseRecord.Generation
+	pauseRevision := pauseRecord.Revision
+	idempotencySuffix := fmt.Sprintf(
+		"%s:%d:%s:%s",
+		pauseRecord.ID,
+		pauseRecord.Generation,
+		interactionSource.EventID,
+		submissionEventID,
+	)
+	stored, err := s.AppendEventBatchTx(ctx, tx, AppendEventBatchRequest{
+		TenantID:      pauseRecord.TenantID,
+		AppID:         pauseRecord.AppID,
+		WorkflowRunID: pauseRecord.WorkflowRunID,
+		FlushReason:   "question_pending",
+		Fence: RuntimeFence{
+			ExpectedPauseID:         pauseRecord.ID,
+			ExpectedPauseGeneration: &pauseGeneration,
+			ExpectedPauseRevision:   &pauseRevision,
+		},
+		Events: []EventDraft{
+			{
+				EventType:       interactionSource.Event,
+				EventData:       interactionData,
+				PauseID:         pauseRecord.ID,
+				PauseGeneration: &pauseGeneration,
+				IdempotencyKey:  "interaction-pending:" + idempotencySuffix,
+				OccurredAt:      now,
+			},
+			{
+				EventType:       EventWorkflowPaused,
+				EventData:       pausedData,
+				PauseID:         pauseRecord.ID,
+				PauseGeneration: &pauseGeneration,
+				IdempotencyKey:  "pause-pending:" + idempotencySuffix,
+				OccurredAt:      now,
+			},
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("append pending workflow interaction projection for node %s: %w", interactionNodeID, err)
+	}
+	result := make([]*RunEventPayload, 0, len(stored))
+	for _, event := range stored {
+		if event.Payload != nil {
+			result = append(result, event.Payload)
+		}
+	}
+	if len(result) != 2 {
+		return nil, fmt.Errorf("pending workflow interaction projection returned %d events", len(result))
+	}
+	return result, nil
+}
+
+func copyEventData(source map[string]interface{}) map[string]interface{} {
+	if source == nil {
+		return map[string]interface{}{}
+	}
+	result := make(map[string]interface{}, len(source))
+	for key, value := range source {
+		result[key] = value
+	}
+	return result
+}
+
+func pendingPauseNodeIDs(reasons []RunPauseReason) []string {
+	result := make([]string, 0, len(reasons))
+	seen := make(map[string]struct{}, len(reasons))
+	for _, reason := range reasons {
+		nodeID := strings.TrimSpace(reason.NodeID)
+		if nodeID == "" {
+			continue
+		}
+		if _, ok := seen[nodeID]; ok {
+			continue
+		}
+		seen[nodeID] = struct{}{}
+		result = append(result, nodeID)
+	}
+	return result
+}
+
+func pendingPauseReasonData(reasons []RunPauseReason, pausedSource *RunEventPayload) []interface{} {
+	originalByIdentity := map[string]map[string]interface{}{}
+	if pausedSource != nil {
+		if original, ok := pausedSource.Data["reasons"].([]interface{}); ok {
+			for _, item := range original {
+				data, ok := item.(map[string]interface{})
+				if !ok {
+					continue
+				}
+				identity := pauseReasonIdentity(
+					stringFromEventData(data["type"]),
+					stringFromEventData(data["node_id"]),
+					stringFromEventData(data["form_id"]),
+				)
+				originalByIdentity[identity] = data
+			}
+		}
+	}
+
+	result := make([]interface{}, 0, len(reasons))
+	for _, reason := range reasons {
+		identity := pauseReasonIdentity(reason.Type, reason.NodeID, reason.FormID)
+		if original, ok := originalByIdentity[identity]; ok {
+			result = append(result, copyEventData(original))
+			continue
+		}
+		data := map[string]interface{}{"type": reason.Type}
+		if reason.NodeID != "" {
+			data["node_id"] = reason.NodeID
+		}
+		if reason.FormID != "" {
+			data["form_id"] = reason.FormID
+		}
+		result = append(result, data)
+	}
+	return result
+}
+
+func pauseReasonIdentity(reasonType, nodeID, formID string) string {
+	return strings.TrimSpace(reasonType) + "\x00" + strings.TrimSpace(nodeID) + "\x00" + strings.TrimSpace(formID)
+}
+
+func stringFromEventData(value interface{}) string {
+	text, _ := value.(string)
+	return strings.TrimSpace(text)
 }
 
 func (s *Service) loadInteractionSubmissionReplay(ctx context.Context, workflowRunID, idempotencyKey string) (*InteractionSubmission, error) {

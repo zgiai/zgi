@@ -203,19 +203,18 @@ func (h *WorkflowHandler) runWorkflowStream(c *gin.Context, requestedWorkspaceID
 				if submission != nil {
 					questionSubmittedEvent = submission.Event
 					publishWorkflowCommittedTail(c.Request.Context(), workflowRunLogID, submission.Event)
+					for _, pendingEvent := range submission.PendingEvents {
+						publishWorkflowCommittedTail(c.Request.Context(), workflowRunLogID, pendingEvent)
+					}
 					if !submission.ResumeReady {
 						if submission.Event != nil {
 							sendWorkflowSSEStoredEvent(c.Request.Context(), c.Writer, *submission.Event)
 						}
-						eventCursor := 0
-						if questionSubmittedEvent != nil {
-							eventCursor = questionSubmittedEvent.Sequence
+						for _, pendingEvent := range submission.PendingEvents {
+							if pendingEvent != nil {
+								sendWorkflowSSEStoredEvent(c.Request.Context(), c.Writer, *pendingEvent)
+							}
 						}
-						sendWorkflowSSEEvent(c.Request.Context(), c.Writer, "workflow_resume_waiting", map[string]interface{}{
-							"workflow_run_id": workflowRunLogID,
-							"event_cursor":    eventCursor,
-							"resume_state":    "waiting",
-						})
 						return
 					}
 				}
