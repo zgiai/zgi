@@ -391,8 +391,14 @@ func loadApprovalReplayState(ctx context.Context, tx *gorm.DB, form *Form, resul
 	}
 
 	if pauseRecord.ID != *event.PauseID || pauseRecord.Generation != *event.PauseGeneration {
-		if pauseRecord.Status == workflowpause.RunPauseStatusResuming {
+		switch pauseRecord.Status {
+		case workflowpause.RunPauseStatusResumeReady:
+			result.ResumeState = "queued"
+			result.ObserveExistingExecution = true
+			return nil
+		case workflowpause.RunPauseStatusResuming:
 			result.ResumeState = "running"
+			result.ObserveExistingExecution = true
 			return nil
 		}
 		result.PendingEvents, err = pauseService.AppendNextPendingInteractionProjectionTx(ctx, tx, pauseRecord, event.ID)

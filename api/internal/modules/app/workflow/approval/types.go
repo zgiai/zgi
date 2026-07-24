@@ -139,14 +139,15 @@ type SubmitOptions struct {
 }
 
 type SubmitResult struct {
-	Form             *Form
-	ResumeState      string
-	EventCursor      int
-	IdempotentReplay bool
-	ResumeReady      bool
-	Event            *workflowpause.RunEventPayload
-	PendingEvents    []*workflowpause.RunEventPayload
-	Outbox           *workflowRuntimeOutboxRef
+	Form                     *Form
+	ResumeState              string
+	EventCursor              int
+	IdempotentReplay         bool
+	ResumeReady              bool
+	ObserveExistingExecution bool
+	Event                    *workflowpause.RunEventPayload
+	PendingEvents            []*workflowpause.RunEventPayload
+	Outbox                   *workflowRuntimeOutboxRef
 }
 
 type workflowRuntimeOutboxRef struct {

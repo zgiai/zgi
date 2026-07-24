@@ -603,6 +603,37 @@ func TestApprovalReplayDoesNotUseOutboxFromAnotherPauseGeneration(t *testing.T) 
 	}
 	if err := db.Model(&workflowpause.RunPause{}).
 		Where("id = ?", pauseID).
+		Update("status", workflowpause.RunPauseStatusResumeReady).Error; err != nil {
+		t.Fatalf("mark current pause resume ready: %v", err)
+	}
+
+	queued, err := NewService(db).SubmitByTokenForWorkflowRunWithResumeOptions(
+		context.Background(),
+		formToken,
+		runID,
+		SubmitRequest{Action: action, Inputs: map[string]interface{}{}},
+		nil,
+		nil,
+		SubmitOptions{},
+	)
+	if err != nil {
+		t.Fatalf("replay old approval while current pause is resume ready: %v", err)
+	}
+	if queued.ResumeReady || queued.Outbox != nil {
+		t.Fatalf("old replay authorized current resume-ready pause: ready:%v outbox:%#v", queued.ResumeReady, queued.Outbox)
+	}
+	if queued.ResumeState != "queued" {
+		t.Fatalf("old replay resume state = %q, want queued", queued.ResumeState)
+	}
+	if !queued.ObserveExistingExecution {
+		t.Fatal("old replay should observe current resume-ready execution")
+	}
+	if len(queued.PendingEvents) != 0 {
+		t.Fatalf("old replay pending events = %#v, want observation signal only", queued.PendingEvents)
+	}
+
+	if err := db.Model(&workflowpause.RunPause{}).
+		Where("id = ?", pauseID).
 		Update("status", workflowpause.RunPauseStatusResuming).Error; err != nil {
 		t.Fatalf("mark current pause resuming: %v", err)
 	}
@@ -624,6 +655,9 @@ func TestApprovalReplayDoesNotUseOutboxFromAnotherPauseGeneration(t *testing.T) 
 	}
 	if observed.ResumeState != "running" {
 		t.Fatalf("old replay resume state = %q, want running", observed.ResumeState)
+	}
+	if !observed.ObserveExistingExecution {
+		t.Fatal("old replay should observe current resuming execution")
 	}
 	if len(observed.PendingEvents) != 0 {
 		t.Fatalf("old replay pending events = %#v, want observation signal only", observed.PendingEvents)
