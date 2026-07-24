@@ -862,4 +862,15 @@ func TestSubmitInteractionCompletesOnlyTheTargetQuestionReason(t *testing.T) {
 	if secondSubmission["node_id"] != "question-2" || secondData["answer"] != "second" {
 		t.Fatalf("second interaction submission = %#v, want question-2/second", secondSubmission)
 	}
+	loaded, err := service.LoadResumePayload(context.Background(), run.ID, pauseRecord.ID, pauseRecord.Generation)
+	if err != nil {
+		t.Fatalf("load durable resume payload: %v", err)
+	}
+	loadedSubmissions, ok := loaded.ResumeInputs["interaction_submissions"].([]interface{})
+	if !ok || len(loadedSubmissions) != 2 {
+		t.Fatalf("loaded interaction submissions = %#v, want two node-scoped answers", loaded.ResumeInputs["interaction_submissions"])
+	}
+	if _, err := service.LoadResumePayload(context.Background(), run.ID, pauseRecord.ID, pauseRecord.Generation+1); !errors.Is(err, ErrPauseNotResumeReady) {
+		t.Fatalf("load wrong pause generation error = %v, want %v", err, ErrPauseNotResumeReady)
+	}
 }

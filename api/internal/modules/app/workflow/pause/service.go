@@ -510,6 +510,46 @@ func (s *Service) prepareResumeTx(ctx context.Context, tx *gorm.DB, workflowRunI
 	return &outbox, nil
 }
 
+// LoadResumePayload returns the durable inputs prepared for one exact pause
+// generation. The outbox is the authoritative handoff between interaction
+// submission and synchronous or queued workflow resumption.
+func (s *Service) LoadResumePayload(ctx context.Context, workflowRunID, pauseID string, generation int64) (*RuntimeOutboxPayload, error) {
+	if s == nil || s.db == nil {
+		return nil, fmt.Errorf("workflow pause service is not initialized")
+	}
+	workflowRunID = strings.TrimSpace(workflowRunID)
+	pauseID = strings.TrimSpace(pauseID)
+	if workflowRunID == "" || pauseID == "" {
+		return nil, ErrPauseNotResumeReady
+	}
+
+	idempotencyKey := fmt.Sprintf("workflow-resume:%s:%d", pauseID, generation)
+	var outbox RuntimeOutbox
+	if err := s.db.WithContext(ctx).
+		Where(
+			"workflow_run_id = ? AND pause_id = ? AND kind = ? AND idempotency_key = ?",
+			workflowRunID,
+			pauseID,
+			RuntimeOutboxKindResume,
+			idempotencyKey,
+		).
+		First(&outbox).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrPauseNotResumeReady
+		}
+		return nil, fmt.Errorf("load workflow resume outbox: %w", err)
+	}
+
+	var payload RuntimeOutboxPayload
+	if err := json.Unmarshal([]byte(outbox.PayloadJSON), &payload); err != nil {
+		return nil, fmt.Errorf("decode workflow resume outbox payload: %w", err)
+	}
+	if payload.WorkflowRunID != workflowRunID || payload.PauseID != pauseID || payload.Generation != generation {
+		return nil, ErrPauseNotResumeReady
+	}
+	return &payload, nil
+}
+
 // SubmitInteraction durably records a question/client interaction and makes the
 // paused run resumable in the same transaction. Callers may publish Event only
 // after this method returns successfully.

@@ -59,9 +59,9 @@ func (h *WorkflowHandler) resumeApprovalWorkflow(ctx context.Context, form *appr
 		return fmt.Errorf("load workflow pause for approval resume: %w", err)
 	}
 
-	inputs := pauseState.Request.Inputs
-	if inputs == nil {
-		inputs = workflowRunInputs(run)
+	inputs := workflowRunInputs(run)
+	if pauseState.Request.Inputs != nil {
+		inputs = copyWorkflowAnyMap(pauseState.Request.Inputs)
 	}
 	responseMode := pauseState.Request.ResponseMode
 	if responseMode == "" {
@@ -69,6 +69,10 @@ func (h *WorkflowHandler) resumeApprovalWorkflow(ctx context.Context, form *appr
 	}
 
 	if run.RuntimeProtocolVersion >= workflowRuntimeProtocolVersionV2 {
+		inputs, err = loadDurableWorkflowResumeInputs(ctx, pauseService, run.ID, pauseRecord, inputs)
+		if err != nil {
+			return err
+		}
 		claim, claimErr := claimWorkflowResume(ctx, pauseService, run, pauseRecord.ID)
 		if claimErr != nil {
 			return claimErr
@@ -222,6 +226,10 @@ func (h *WorkflowHandler) resumeQuestionAnswerWorkflow(ctx context.Context, work
 				return nil
 			}
 		}
+		inputs, err = loadDurableWorkflowResumeInputs(ctx, pauseService, run.ID, pauseRecord, inputs)
+		if err != nil {
+			return err
+		}
 		claim, claimErr := claimWorkflowResume(ctx, pauseService, run, pauseRecord.ID)
 		if claimErr != nil {
 			return claimErr
@@ -283,6 +291,27 @@ func (h *WorkflowHandler) resumeQuestionAnswerWorkflow(ctx context.Context, work
 		h.executeWorkflowStream(ctx, run.TenantID, run.AgentID, req, run.CreatedBy, run.ID, run.ID, run.WorkflowID, systemInputs, run.SequenceNumber, resultChan, errorChan, doneChan, isDraft, runType, run.TriggeredFrom)
 	}()
 	return h.drainApprovalResumeStream(ctx, pauseService, workflowService, run, resultChan, errorChan, doneChan, resumeStartedAt, runType, systemInputs, inputs, eventDispatcher)
+}
+
+func loadDurableWorkflowResumeInputs(
+	ctx context.Context,
+	pauseService *workflowpause.Service,
+	workflowRunID string,
+	pauseRecord *workflowpause.RunPause,
+	baseInputs map[string]interface{},
+) (map[string]interface{}, error) {
+	if pauseRecord == nil {
+		return nil, workflowpause.ErrPauseNotResumeReady
+	}
+	payload, err := pauseService.LoadResumePayload(ctx, workflowRunID, pauseRecord.ID, pauseRecord.Generation)
+	if err != nil {
+		return nil, fmt.Errorf("load durable workflow resume inputs: %w", err)
+	}
+	inputs := copyWorkflowAnyMap(baseInputs)
+	for key, value := range payload.ResumeInputs {
+		inputs[key] = value
+	}
+	return inputs, nil
 }
 
 func (h *WorkflowHandler) StopWorkflowContinuation(ctx context.Context, workflowRunID string, accountID string) error {
