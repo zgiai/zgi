@@ -23,6 +23,21 @@ export interface TimezoneSelectorProps {
   name?: string;
 }
 
+function getEtcGmtOffset(timezone: string): { full: string; compact: string } | null {
+  const match = /^Etc\/GMT([+-])(\d{1,2})$/.exec(timezone);
+  if (!match) {
+    return null;
+  }
+
+  const [, sign, hour] = match;
+  const offsetSign = sign === '-' ? '+' : '-';
+
+  return {
+    full: `UTC${offsetSign}${hour.padStart(2, '0')}:00`,
+    compact: `UTC${offsetSign}${Number(hour)}`,
+  };
+}
+
 /**
  * Reusable timezone selector with i18n-ready UI texts.
  * Uses IANA timezone values from constants and displays labels.
@@ -47,6 +62,12 @@ export function TimezoneSelector({
 
   const formatLabel = (timezone: (typeof timezones)[number]) =>
     `(${timezone.offset}) ${timezone.label[locale] ?? timezone.label['en-US']}`;
+  const formatUnknownLabel = (timezone: string) => {
+    const offset = getEtcGmtOffset(timezone);
+    return offset
+      ? `(${offset.full}) ${t('timezoneSelector.fixedOffset', { offset: offset.compact })}`
+      : timezone;
+  };
 
   return (
     <Select
@@ -66,7 +87,7 @@ export function TimezoneSelector({
       <SelectContent className={contentClassName}>
         {currentUnknownValue ? (
           <SelectItem key={currentUnknownValue} value={currentUnknownValue}>
-            {currentUnknownValue}
+            {formatUnknownLabel(currentUnknownValue)}
           </SelectItem>
         ) : null}
         {timezones.map(tz => (

@@ -9,6 +9,7 @@ const messages = {
   timezoneSelector: {
     label: 'Timezone',
     placeholder: 'Select Timezone',
+    fixedOffset: 'Fixed {offset} Time Zone',
   },
   /** FileUpload component */
   fileUpload: {

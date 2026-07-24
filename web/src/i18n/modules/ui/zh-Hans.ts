@@ -11,6 +11,7 @@ const messages: UiMessages = {
   timezoneSelector: {
     label: '时区',
     placeholder: '选择时区',
+    fixedOffset: '固定 {offset} 时区',
   },
   /** FileUpload component */
   fileUpload: {
