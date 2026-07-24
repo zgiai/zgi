@@ -133,6 +133,9 @@ func (s *llmGatewayServiceImpl) createImageInternal(
 	if err := s.validateImageRequest(req); err != nil {
 		return nil, err
 	}
+	if err := s.checkModelAuthorization(apiKey, appCtx, req.Model); err != nil {
+		return nil, err
+	}
 	effectiveReq := s.policyPrompt.injectImageRequest(req)
 
 	// 2. Get shadow tenant info
