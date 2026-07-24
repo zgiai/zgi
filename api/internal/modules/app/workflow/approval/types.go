@@ -144,6 +144,7 @@ type SubmitResult struct {
 	EventCursor      int
 	IdempotentReplay bool
 	ResumeReady      bool
+	Event            *workflowpause.RunEventPayload
 	PendingEvents    []*workflowpause.RunEventPayload
 	Outbox           *workflowRuntimeOutboxRef
 }

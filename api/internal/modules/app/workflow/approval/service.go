@@ -270,12 +270,26 @@ func (s *Service) submitFormWithResume(ctx context.Context, form *Form, recipien
 		pauseRecord, reasons, _, err := pauseService.GetActiveByWorkflowRunID(ctx, form.WorkflowRunID)
 		if err != nil {
 			if errors.Is(err, workflowpause.ErrPauseNotFound) {
+				durablePause, protocolErr := workflowRunUsesDurablePauseTx(ctx, tx, form.WorkflowRunID)
+				if protocolErr != nil {
+					return protocolErr
+				}
+				if durablePause {
+					return ErrRuntimePauseNotReady
+				}
 				submitResult.ResumeReady = true
 				return nil
 			}
 			return err
 		}
 		if !activePauseHasFormID(reasons, form.ID) {
+			durablePause, protocolErr := workflowRunUsesDurablePauseTx(ctx, tx, form.WorkflowRunID)
+			if protocolErr != nil {
+				return protocolErr
+			}
+			if durablePause {
+				return ErrRuntimePauseNotReady
+			}
 			return nil
 		}
 		eventData, err := approvalResultFilledEventData(form)
@@ -299,6 +313,7 @@ func (s *Service) submitFormWithResume(ctx context.Context, form *Form, recipien
 			return err
 		}
 		submitResult.EventCursor = event.Sequence
+		submitResult.Event = event
 
 		outbox, ready, err := pauseService.CompleteReasonsTx(ctx, tx, workflowpause.CompleteReasonsParams{
 			WorkflowRunID:     form.WorkflowRunID,
@@ -353,18 +368,31 @@ func loadApprovalReplayState(ctx context.Context, tx *gorm.DB, form *Form, resul
 	if err := tx.Where("workflow_run_id = ? AND idempotency_key = ?", form.WorkflowRunID, "approval-result:"+form.ID).
 		First(&event).Error; err == nil {
 		result.EventCursor = event.Sequence
+		payload, payloadErr := approvalRunEventPayload(event)
+		if payloadErr != nil {
+			return payloadErr
+		}
+		result.Event = payload
 	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return fmt.Errorf("load approval replay event: %w", err)
 	}
 
-	var outbox workflowpause.RuntimeOutbox
-	if err := tx.Where("workflow_run_id = ? AND kind = ?", form.WorkflowRunID, workflowpause.RuntimeOutboxKindResume).
-		Order("created_at DESC").First(&outbox).Error; err == nil {
-		result.ResumeReady = true
-		result.ResumeState = resumeStateForOutbox(outbox.Status)
-		result.Outbox = &workflowRuntimeOutboxRef{ID: outbox.ID, IdempotencyKey: outbox.IdempotencyKey, PayloadJSON: outbox.PayloadJSON}
-	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
-		return fmt.Errorf("load approval replay outbox: %w", err)
+	if event.PauseID != nil && event.PauseGeneration != nil {
+		outboxKey := fmt.Sprintf("workflow-resume:%s:%d", *event.PauseID, *event.PauseGeneration)
+		var outbox workflowpause.RuntimeOutbox
+		if err := tx.Where(
+			"workflow_run_id = ? AND kind = ? AND pause_id = ? AND idempotency_key = ?",
+			form.WorkflowRunID,
+			workflowpause.RuntimeOutboxKindResume,
+			*event.PauseID,
+			outboxKey,
+		).First(&outbox).Error; err == nil {
+			result.ResumeReady = true
+			result.ResumeState = resumeStateForOutbox(outbox.Status)
+			result.Outbox = &workflowRuntimeOutboxRef{ID: outbox.ID, IdempotencyKey: outbox.IdempotencyKey, PayloadJSON: outbox.PayloadJSON}
+		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return fmt.Errorf("load approval replay outbox: %w", err)
+		}
 	}
 	if result.ResumeReady {
 		return nil
@@ -374,16 +402,60 @@ func loadApprovalReplayState(ctx context.Context, tx *gorm.DB, form *Form, resul
 	pauseRecord, _, _, err := pauseService.GetActiveByWorkflowRunID(ctx, form.WorkflowRunID)
 	if err != nil {
 		if errors.Is(err, workflowpause.ErrPauseNotFound) {
-			result.ResumeReady = true
 			return nil
 		}
 		return err
+	}
+	if event.PauseID == nil || event.PauseGeneration == nil ||
+		pauseRecord.ID != *event.PauseID || pauseRecord.Generation != *event.PauseGeneration {
+		return nil
 	}
 	result.PendingEvents, err = pauseService.AppendNextPendingInteractionProjectionTx(ctx, tx, pauseRecord, event.ID)
 	if err != nil {
 		return err
 	}
 	return nil
+}
+
+func workflowRunUsesDurablePauseTx(ctx context.Context, tx *gorm.DB, workflowRunID string) (bool, error) {
+	var run struct {
+		RuntimeProtocolVersion int `gorm:"column:runtime_protocol_version"`
+	}
+	err := tx.WithContext(ctx).
+		Table("workflow_run_logs").
+		Select("runtime_protocol_version").
+		Where("id = ? AND deleted_at IS NULL", workflowRunID).
+		Take(&run).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("load workflow runtime protocol: %w", err)
+	}
+	return run.RuntimeProtocolVersion >= 2, nil
+}
+
+func approvalRunEventPayload(event workflowpause.RunEvent) (*workflowpause.RunEventPayload, error) {
+	data := map[string]interface{}{}
+	if err := json.Unmarshal([]byte(event.EventData), &data); err != nil {
+		return nil, fmt.Errorf("decode approval replay event: %w", err)
+	}
+	payload := &workflowpause.RunEventPayload{
+		EventID: event.ID, Sequence: event.Sequence, Event: event.EventType, Category: event.Category,
+		SchemaVersion: event.SchemaVersion, PayloadVersion: 1, PauseGeneration: event.PauseGeneration,
+		Data: data, CreatedAt: event.CreatedAt.Unix(), OccurredAtMS: event.OccurredAt.UnixMilli(),
+		RecordedAtMS: event.CreatedAt.UnixMilli(),
+	}
+	if event.ExecutionID != nil {
+		payload.ExecutionID = *event.ExecutionID
+	}
+	if event.PauseID != nil {
+		payload.PauseID = *event.PauseID
+	}
+	if event.IdempotencyKey != nil {
+		payload.IdempotencyKey = *event.IdempotencyKey
+	}
+	return payload, nil
 }
 
 func resumeStateForOutbox(status string) string {
@@ -1536,5 +1608,6 @@ var (
 	ErrFormNotFound             = errors.New("approval form not found")
 	ErrFormAlreadySubmitted     = errors.New("approval form already submitted")
 	ErrFormExpired              = errors.New("approval form expired")
+	ErrRuntimePauseNotReady     = errors.New("workflow approval pause is not ready")
 	ErrWebAppSubmissionDisabled = errors.New("workflow approval webapp submission is disabled")
 )

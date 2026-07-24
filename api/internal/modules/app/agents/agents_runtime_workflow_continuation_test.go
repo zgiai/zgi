@@ -162,13 +162,17 @@ func TestAgentWorkflowContinuationRelaysWorkflowResumed(t *testing.T) {
 	}
 }
 
-func TestEmitAgentWorkflowPendingInteractionEventsRelaysQuestionProjection(t *testing.T) {
+func TestEmitAgentWorkflowInteractionEventsRelaysApprovalBeforeQuestionProjection(t *testing.T) {
 	generation := int64(2)
 	var received []struct {
 		event   string
 		payload map[string]interface{}
 	}
-	err := emitAgentWorkflowPendingInteractionEvents([]*workflowpause.RunEventPayload{
+	err := emitAgentWorkflowInteractionEvents(&workflowpause.RunEventPayload{
+		EventID: "approval-event", Sequence: 10, Event: workflowpause.EventApprovalResultFilled,
+		PauseID: "pause-1", PauseGeneration: &generation,
+		Data: map[string]interface{}{"node_id": "approval-node", "action": "approve"},
+	}, []*workflowpause.RunEventPayload{
 		{
 			EventID: "question-event", Sequence: 11, Event: workflowpause.EventQuestionAnswerRequested,
 			PauseID: "pause-1", PauseGeneration: &generation,
@@ -187,19 +191,22 @@ func TestEmitAgentWorkflowPendingInteractionEventsRelaysQuestionProjection(t *te
 		return nil
 	})
 	if err != nil {
-		t.Fatalf("emit pending interaction events: %v", err)
+		t.Fatalf("emit interaction events: %v", err)
 	}
-	if len(received) != 2 {
-		t.Fatalf("received event count = %d, want 2", len(received))
+	if len(received) != 3 {
+		t.Fatalf("received event count = %d, want 3", len(received))
 	}
-	if received[0].event != workflowpause.EventQuestionAnswerRequested {
-		t.Fatalf("first event = %q, want question_answer_requested", received[0].event)
+	if received[0].event != workflowpause.EventApprovalResultFilled {
+		t.Fatalf("first event = %q, want approval_result_filled", received[0].event)
 	}
-	if received[0].payload["sequence"] != 11 || received[0].payload["event_id"] != "question-event" {
-		t.Fatalf("question event envelope = %#v", received[0].payload)
+	if received[0].payload["sequence"] != 10 || received[0].payload["event_id"] != "approval-event" {
+		t.Fatalf("approval event envelope = %#v", received[0].payload)
 	}
-	if received[0].payload["pause_generation"] != generation {
-		t.Fatalf("pause generation = %#v, want %d", received[0].payload["pause_generation"], generation)
+	if received[1].event != workflowpause.EventQuestionAnswerRequested {
+		t.Fatalf("second event = %q, want question_answer_requested", received[1].event)
+	}
+	if received[1].payload["pause_generation"] != generation {
+		t.Fatalf("pause generation = %#v, want %d", received[1].payload["pause_generation"], generation)
 	}
 }
 

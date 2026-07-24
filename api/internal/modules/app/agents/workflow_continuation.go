@@ -194,7 +194,7 @@ func (h *AgentsHandler) resumeAgentWorkflowApprovalStream(ctx context.Context, s
 	if err != nil {
 		return err
 	}
-	if err := emitAgentWorkflowPendingInteractionEvents(submission.PendingEvents, onEvent); err != nil {
+	if err := emitAgentWorkflowInteractionEvents(submission.Event, submission.PendingEvents, onEvent); err != nil {
 		return err
 	}
 	if !submission.ResumeReady {
@@ -224,10 +224,15 @@ func submitAgentWorkflowApprovalForm(ctx context.Context, approvalService *appro
 	return submission, nil
 }
 
-func emitAgentWorkflowPendingInteractionEvents(events []*workflowpause.RunEventPayload, onEvent func(string, map[string]interface{}) error) error {
+func emitAgentWorkflowInteractionEvents(mainEvent *workflowpause.RunEventPayload, pendingEvents []*workflowpause.RunEventPayload, onEvent func(string, map[string]interface{}) error) error {
 	if onEvent == nil {
 		return nil
 	}
+	events := make([]*workflowpause.RunEventPayload, 0, 1+len(pendingEvents))
+	if mainEvent != nil {
+		events = append(events, mainEvent)
+	}
+	events = append(events, pendingEvents...)
 	for _, event := range events {
 		if event == nil {
 			continue
@@ -260,6 +265,9 @@ func agentWorkflowApprovalSubmitOptions(continuation *runtimeservice.WorkflowApp
 func mapAgentWorkflowApprovalError(err error) error {
 	if errors.Is(err, approvalruntime.ErrFormNotFound) {
 		return fmt.Errorf("%w: workflow continuation approval form not found", runtimeservice.ErrNotFound)
+	}
+	if errors.Is(err, approvalruntime.ErrRuntimePauseNotReady) {
+		return fmt.Errorf("%w: workflow approval is not ready yet; retry the submission", runtimeservice.ErrInvalidInput)
 	}
 	if errors.Is(err, approvalruntime.ErrWebAppSubmissionDisabled) {
 		return fmt.Errorf("%w: this workflow approval must be completed through its configured approval channel", runtimeservice.ErrInvalidInput)

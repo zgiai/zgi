@@ -940,6 +940,11 @@ func (s *Service) CompleteReasonsTx(ctx context.Context, tx *gorm.DB, params Com
 			return nil, false, ErrPauseNotResumeReady
 		}
 		reason.Status = RunPauseReasonStatusCompleted
+		reason.CompletedAt = &now
+		if params.SubmissionEventID != "" {
+			submissionEventID := params.SubmissionEventID
+			reason.SubmissionEventID = &submissionEventID
+		}
 	}
 	if !matched {
 		return nil, false, ErrPauseNotResumeReady
@@ -952,11 +957,83 @@ func (s *Service) CompleteReasonsTx(ctx context.Context, tx *gorm.DB, params Com
 	if pending != 0 {
 		return nil, false, nil
 	}
-	prepared, err := NewService(tx).prepareResumeTx(ctx, tx, params.WorkflowRunID, pause.ID, params.TriggerID, params.ReasonType, params.ResumeInputs)
+	triggerID, interactionType, resumeInputs, err := completedReasonResumePayloadTx(ctx, tx, reasons, params)
+	if err != nil {
+		return nil, false, err
+	}
+	prepared, err := NewService(tx).prepareResumeTx(ctx, tx, params.WorkflowRunID, pause.ID, triggerID, interactionType, resumeInputs)
 	if err != nil {
 		return nil, false, err
 	}
 	return prepared, true, nil
+}
+
+func completedReasonResumePayloadTx(
+	ctx context.Context,
+	tx *gorm.DB,
+	reasons []RunPauseReason,
+	params CompleteReasonsParams,
+) (string, string, map[string]interface{}, error) {
+	triggerID := params.TriggerID
+	interactionType := params.ReasonType
+	resumeInputs := copyEventData(params.ResumeInputs)
+
+	eventIDs := make([]string, 0, len(reasons))
+	for _, reason := range reasons {
+		if reason.Status != RunPauseReasonStatusCompleted || reason.SubmissionEventID == nil {
+			continue
+		}
+		eventID := strings.TrimSpace(*reason.SubmissionEventID)
+		if eventID != "" {
+			eventIDs = append(eventIDs, eventID)
+		}
+	}
+	if len(eventIDs) == 0 {
+		return triggerID, interactionType, resumeInputs, nil
+	}
+
+	var events []RunEvent
+	if err := tx.WithContext(ctx).Where("id IN ?", eventIDs).Find(&events).Error; err != nil {
+		return "", "", nil, fmt.Errorf("load completed workflow interaction submissions: %w", err)
+	}
+	eventsByID := make(map[string]RunEvent, len(events))
+	for _, event := range events {
+		eventsByID[event.ID] = event
+	}
+
+	submissions := make([]interface{}, 0, len(eventIDs))
+	for _, reason := range reasons {
+		if reason.Status != RunPauseReasonStatusCompleted || reason.SubmissionEventID == nil {
+			continue
+		}
+		event, ok := eventsByID[strings.TrimSpace(*reason.SubmissionEventID)]
+		if !ok {
+			return "", "", nil, fmt.Errorf("completed workflow pause reason %s has no submission event", reason.ID)
+		}
+		eventData := map[string]interface{}{}
+		if err := json.Unmarshal([]byte(event.EventData), &eventData); err != nil {
+			return "", "", nil, fmt.Errorf("decode completed workflow interaction submission %s: %w", event.ID, err)
+		}
+		submissions = append(submissions, map[string]interface{}{
+			"reason_type": reason.Type,
+			"node_id":     reason.NodeID,
+			"form_id":     reason.FormID,
+			"event_id":    event.ID,
+			"data":        copyEventData(eventData),
+		})
+		if reason.Type != ReasonTypeQuestionAnswerRequired {
+			continue
+		}
+		interactionType = ReasonTypeQuestionAnswerRequired
+		if strings.TrimSpace(reason.NodeID) != "" {
+			triggerID = strings.TrimSpace(reason.NodeID)
+		}
+		for key, value := range eventData {
+			resumeInputs[key] = value
+		}
+	}
+	resumeInputs["interaction_submissions"] = submissions
+	return triggerID, interactionType, resumeInputs, nil
 }
 
 func (s *Service) ClaimResume(ctx context.Context, workflowRunID, pauseID string, leaseDuration time.Duration) (*ExecutionClaim, error) {

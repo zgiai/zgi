@@ -19,6 +19,7 @@ type approvalWorkflowRunScope struct {
 	NextEventSequence      int     `gorm:"not null"`
 	ExecutionGeneration    int64   `gorm:"not null"`
 	ActiveExecutionID      *string `gorm:"type:uuid"`
+	DeletedAt              gorm.DeletedAt
 }
 
 func (approvalWorkflowRunScope) TableName() string {
@@ -275,6 +276,320 @@ func TestSubmitApprovalProjectsPendingQuestionBeforeAgentContinuation(t *testing
 			submission.PendingEvents[0].Sequence,
 			submission.PendingEvents[1].Sequence,
 		)
+	}
+}
+
+func TestSubmitApprovalAfterQuestionPreservesQuestionResumeInputs(t *testing.T) {
+	db := newApprovalTestDB(t)
+	if err := db.AutoMigrate(
+		&approvalWorkflowRunScope{},
+		&workflowpause.RunPause{},
+		&workflowpause.RunPauseReason{},
+		&workflowpause.RunEvent{},
+		&workflowpause.RuntimeOutbox{},
+	); err != nil {
+		t.Fatalf("migrate workflow pause tables: %v", err)
+	}
+
+	const (
+		tenantID     = "11111111-1111-1111-1111-111111111112"
+		appID        = "22222222-2222-2222-2222-222222222223"
+		runID        = "question-first-run"
+		pauseID      = "33333333-3333-3333-3333-333333333334"
+		formID       = "44444444-4444-4444-4444-444444444445"
+		formToken    = "question-first-token"
+		approvalNode = "approval-node"
+		questionNode = "question-node"
+	)
+	now := time.Now()
+	generation := int64(1)
+	pauseIDValue := pauseID
+	approvalRequestKey := "question-first-approval-request"
+	pausedKey := "question-first-paused"
+	definition, err := json.Marshal(FormDefinition{
+		Content: "Approve the request",
+		Actions: []Action{{ID: "approve", Label: "Approve"}},
+	})
+	if err != nil {
+		t.Fatalf("marshal approval definition: %v", err)
+	}
+	records := []interface{}{
+		&approvalWorkflowRunScope{
+			ID: runID, RuntimeProtocolVersion: 2, NextEventSequence: 2, ExecutionGeneration: 1,
+		},
+		&Form{
+			ID: formID, TenantID: tenantID, AppID: appID, WorkflowRunID: runID,
+			NodeID: approvalNode, NodeTitle: "Approval", AccessToken: formToken,
+			FormDefinition: string(definition), RenderedContent: "Approve the request",
+			Status: FormStatusWaiting, ExpirationTime: now.Add(time.Hour),
+		},
+		&workflowpause.RunPause{
+			ID: pauseID, TenantID: tenantID, AppID: appID, WorkflowRunID: runID,
+			NodeID: approvalNode, Reason: "mixed", StateJSON: `{}`,
+			Generation: generation, Status: workflowpause.RunPauseStatusPaused,
+		},
+		&workflowpause.RunPauseReason{
+			ID: "55555555-5555-5555-5555-555555555556", PauseID: pauseID,
+			Type: workflowpause.ReasonTypeQuestionAnswerRequired, NodeID: questionNode,
+			Status: workflowpause.RunPauseReasonStatusPending, CreatedAt: now,
+		},
+		&workflowpause.RunPauseReason{
+			ID: "66666666-6666-6666-6666-666666666667", PauseID: pauseID,
+			Type: workflowpause.ReasonTypeApprovalRequired, NodeID: approvalNode,
+			FormID: formID, Status: workflowpause.RunPauseReasonStatusPending, CreatedAt: now.Add(time.Millisecond),
+		},
+		&workflowpause.RunEvent{
+			ID: "77777777-7777-7777-7777-777777777778", TenantID: tenantID, AppID: appID,
+			WorkflowRunID: runID, Sequence: 1, EventType: workflowpause.EventApprovalRequested,
+			EventData:     `{"node_id":"approval-node","form_id":"44444444-4444-4444-4444-444444444445"}`,
+			SchemaVersion: 2, Category: workflowpause.EventCategoryInteraction,
+			PauseID: &pauseIDValue, PauseGeneration: &generation,
+			IdempotencyKey: &approvalRequestKey, OccurredAt: now,
+		},
+		&workflowpause.RunEvent{
+			ID: "88888888-8888-8888-8888-888888888889", TenantID: tenantID, AppID: appID,
+			WorkflowRunID: runID, Sequence: 2, EventType: workflowpause.EventWorkflowPaused,
+			EventData:     `{"id":"question-first-run","status":"paused","paused_nodes":["question-node","approval-node"]}`,
+			SchemaVersion: 2, Category: workflowpause.EventCategoryControl,
+			PauseID: &pauseIDValue, PauseGeneration: &generation,
+			IdempotencyKey: &pausedKey, OccurredAt: now,
+		},
+	}
+	for _, record := range records {
+		if err := db.Create(record).Error; err != nil {
+			t.Fatalf("create question-first fixture %T: %v", record, err)
+		}
+	}
+
+	questionSubmission, err := workflowpause.NewService(db).SubmitInteraction(
+		context.Background(),
+		runID,
+		pauseID,
+		questionNode,
+		workflowpause.EventQuestionAnswerSubmitted,
+		map[string]interface{}{"node_id": questionNode, "answer": "blue", "query": "blue"},
+		"question-answer:"+pauseID+":"+questionNode,
+	)
+	if err != nil {
+		t.Fatalf("submit question answer: %v", err)
+	}
+	if questionSubmission.ResumeReady {
+		t.Fatal("question submission became resume-ready while approval remains pending")
+	}
+
+	submission, err := NewService(db).SubmitByTokenForWorkflowRunWithResumeOptions(
+		context.Background(),
+		formToken,
+		runID,
+		SubmitRequest{Action: "approve", Inputs: map[string]interface{}{}},
+		nil,
+		nil,
+		SubmitOptions{},
+	)
+	if err != nil {
+		t.Fatalf("submit final approval: %v", err)
+	}
+	if !submission.ResumeReady || submission.Outbox == nil {
+		t.Fatalf("approval result = ready:%v outbox:%#v, want queued resume", submission.ResumeReady, submission.Outbox)
+	}
+	if submission.Event == nil || submission.Event.Event != workflowpause.EventApprovalResultFilled {
+		t.Fatalf("approval main event = %#v, want approval_result_filled", submission.Event)
+	}
+	var payload workflowpause.RuntimeOutboxPayload
+	if err := json.Unmarshal([]byte(submission.Outbox.PayloadJSON), &payload); err != nil {
+		t.Fatalf("decode resume outbox: %v", err)
+	}
+	if payload.InteractionType != workflowpause.ReasonTypeQuestionAnswerRequired {
+		t.Fatalf("interaction type = %q, want question answer", payload.InteractionType)
+	}
+	if payload.ResumeInputs["query"] != "blue" || payload.ResumeInputs["answer"] != "blue" {
+		t.Fatalf("resume inputs = %#v, want preserved question answer", payload.ResumeInputs)
+	}
+	if submissions, ok := payload.ResumeInputs["interaction_submissions"].([]interface{}); !ok || len(submissions) != 2 {
+		t.Fatalf("interaction submissions = %#v, want question and approval evidence", payload.ResumeInputs["interaction_submissions"])
+	}
+}
+
+func TestSubmitApprovalBeforeDurablePauseRollsBackForm(t *testing.T) {
+	db := newApprovalTestDB(t)
+	if err := db.AutoMigrate(
+		&approvalWorkflowRunScope{},
+		&workflowpause.RunPause{},
+		&workflowpause.RunPauseReason{},
+		&workflowpause.RunEvent{},
+		&workflowpause.RuntimeOutbox{},
+	); err != nil {
+		t.Fatalf("migrate workflow pause tables: %v", err)
+	}
+	const (
+		runID     = "pause-not-ready-run"
+		formID    = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+		formToken = "pause-not-ready-token"
+	)
+	now := time.Now()
+	definition, err := json.Marshal(FormDefinition{
+		Content: "Approve",
+		Actions: []Action{{ID: "approve", Label: "Approve"}},
+	})
+	if err != nil {
+		t.Fatalf("marshal approval definition: %v", err)
+	}
+	if err := db.Create(&approvalWorkflowRunScope{
+		ID: runID, RuntimeProtocolVersion: 2, NextEventSequence: 0, ExecutionGeneration: 1,
+	}).Error; err != nil {
+		t.Fatalf("create workflow run: %v", err)
+	}
+	if err := db.Create(&Form{
+		ID: formID, TenantID: "tenant", AppID: "app", WorkflowRunID: runID,
+		NodeID: "approval-node", NodeTitle: "Approval", AccessToken: formToken,
+		FormDefinition: string(definition), RenderedContent: "Approve",
+		Status: FormStatusWaiting, ExpirationTime: now.Add(time.Hour),
+	}).Error; err != nil {
+		t.Fatalf("create approval form: %v", err)
+	}
+
+	_, err = NewService(db).SubmitByTokenForWorkflowRunWithResumeOptions(
+		context.Background(),
+		formToken,
+		runID,
+		SubmitRequest{Action: "approve", Inputs: map[string]interface{}{}},
+		nil,
+		nil,
+		SubmitOptions{},
+	)
+	if !errors.Is(err, ErrRuntimePauseNotReady) {
+		t.Fatalf("submit error = %v, want ErrRuntimePauseNotReady", err)
+	}
+	var stored Form
+	if err := db.First(&stored, "id = ?", formID).Error; err != nil {
+		t.Fatalf("reload approval form: %v", err)
+	}
+	if stored.Status != FormStatusWaiting || stored.SubmittedAt != nil {
+		t.Fatalf("approval form after rollback = status:%q submitted_at:%v", stored.Status, stored.SubmittedAt)
+	}
+	var eventCount int64
+	if err := db.Model(&workflowpause.RunEvent{}).Count(&eventCount).Error; err != nil {
+		t.Fatalf("count workflow events: %v", err)
+	}
+	if eventCount != 0 {
+		t.Fatalf("workflow event count = %d, want 0", eventCount)
+	}
+}
+
+func TestApprovalReplayDoesNotUseOutboxFromAnotherPauseGeneration(t *testing.T) {
+	db := newApprovalTestDB(t)
+	if err := db.AutoMigrate(
+		&approvalWorkflowRunScope{},
+		&workflowpause.RunPause{},
+		&workflowpause.RunPauseReason{},
+		&workflowpause.RunEvent{},
+		&workflowpause.RuntimeOutbox{},
+	); err != nil {
+		t.Fatalf("migrate workflow pause tables: %v", err)
+	}
+	const (
+		runID     = "replay-generation-run"
+		pauseID   = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+		formID    = "cccccccc-cccc-cccc-cccc-cccccccccccc"
+		formToken = "replay-generation-token"
+	)
+	now := time.Now()
+	generation := int64(2)
+	pauseIDValue := pauseID
+	action := "approve"
+	submittedData := "{}"
+	submittedAt := now
+	eventKey := "approval-result:" + formID
+	questionKey := "current-question"
+	pausedKey := "current-paused"
+	definition, err := json.Marshal(FormDefinition{
+		Content: "Approve",
+		Actions: []Action{{ID: action, Label: "Approve"}},
+	})
+	if err != nil {
+		t.Fatalf("marshal approval definition: %v", err)
+	}
+	records := []interface{}{
+		&approvalWorkflowRunScope{
+			ID: runID, RuntimeProtocolVersion: 2, NextEventSequence: 3, ExecutionGeneration: 2,
+		},
+		&Form{
+			ID: formID, TenantID: "tenant", AppID: "app", WorkflowRunID: runID,
+			NodeID: "approval-node", NodeTitle: "Approval", AccessToken: formToken,
+			FormDefinition: string(definition), RenderedContent: "Approve",
+			Status: FormStatusSubmitted, ExpirationTime: now.Add(time.Hour),
+			SelectedActionID: &action, SubmittedData: &submittedData, SubmittedAt: &submittedAt,
+		},
+		&workflowpause.RunPause{
+			ID: pauseID, TenantID: "tenant", AppID: "app", WorkflowRunID: runID,
+			NodeID: "question-node", Reason: "question", StateJSON: `{}`,
+			Generation: generation, Status: workflowpause.RunPauseStatusPaused,
+		},
+		&workflowpause.RunPauseReason{
+			ID: "dddddddd-dddd-dddd-dddd-dddddddddddd", PauseID: pauseID,
+			Type: workflowpause.ReasonTypeQuestionAnswerRequired, NodeID: "question-node",
+			Status: workflowpause.RunPauseReasonStatusPending, CreatedAt: now,
+		},
+		&workflowpause.RunEvent{
+			ID: "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee", TenantID: "tenant", AppID: "app",
+			WorkflowRunID: runID, Sequence: 1, EventType: workflowpause.EventApprovalResultFilled,
+			EventData: `{"node_id":"approval-node","action":"approve"}`, SchemaVersion: 2,
+			Category: workflowpause.EventCategoryInteraction, PauseID: &pauseIDValue,
+			PauseGeneration: &generation, IdempotencyKey: &eventKey, OccurredAt: now,
+		},
+		&workflowpause.RunEvent{
+			ID: "ffffffff-ffff-ffff-ffff-ffffffffffff", TenantID: "tenant", AppID: "app",
+			WorkflowRunID: runID, Sequence: 2, EventType: workflowpause.EventQuestionAnswerRequested,
+			EventData: `{"node_id":"question-node","question":"Continue?"}`, SchemaVersion: 2,
+			Category: workflowpause.EventCategoryInteraction, PauseID: &pauseIDValue,
+			PauseGeneration: &generation, IdempotencyKey: &questionKey, OccurredAt: now,
+		},
+		&workflowpause.RunEvent{
+			ID: "12121212-1212-1212-1212-121212121212", TenantID: "tenant", AppID: "app",
+			WorkflowRunID: runID, Sequence: 3, EventType: workflowpause.EventWorkflowPaused,
+			EventData: `{"id":"replay-generation-run","status":"paused"}`, SchemaVersion: 2,
+			Category: workflowpause.EventCategoryControl, PauseID: &pauseIDValue,
+			PauseGeneration: &generation, IdempotencyKey: &pausedKey, OccurredAt: now,
+		},
+	}
+	for _, record := range records {
+		if err := db.Create(record).Error; err != nil {
+			t.Fatalf("create replay fixture %T: %v", record, err)
+		}
+	}
+	oldPauseID := "13131313-1313-1313-1313-131313131313"
+	oldPayload, err := json.Marshal(workflowpause.RuntimeOutboxPayload{
+		WorkflowRunID: runID, PauseID: oldPauseID, Generation: 1,
+	})
+	if err != nil {
+		t.Fatalf("marshal old outbox: %v", err)
+	}
+	if err := db.Create(&workflowpause.RuntimeOutbox{
+		ID: "14141414-1414-1414-1414-141414141414", TenantID: "tenant", WorkflowRunID: runID,
+		PauseID: &oldPauseID, Kind: workflowpause.RuntimeOutboxKindResume,
+		IdempotencyKey: "workflow-resume:" + oldPauseID + ":1", PayloadJSON: string(oldPayload),
+		Status: workflowpause.RuntimeOutboxPending, NextAttemptAt: now,
+	}).Error; err != nil {
+		t.Fatalf("create old outbox: %v", err)
+	}
+
+	replay, err := NewService(db).SubmitByTokenForWorkflowRunWithResumeOptions(
+		context.Background(),
+		formToken,
+		runID,
+		SubmitRequest{Action: action, Inputs: map[string]interface{}{}},
+		nil,
+		nil,
+		SubmitOptions{},
+	)
+	if err != nil {
+		t.Fatalf("replay approval: %v", err)
+	}
+	if replay.ResumeReady || replay.Outbox != nil {
+		t.Fatalf("replay used stale outbox: ready:%v outbox:%#v", replay.ResumeReady, replay.Outbox)
+	}
+	if len(replay.PendingEvents) != 2 || replay.PendingEvents[0].Event != workflowpause.EventQuestionAnswerRequested {
+		t.Fatalf("pending replay events = %#v, want current question projection", replay.PendingEvents)
 	}
 }
 

@@ -34,6 +34,7 @@
     "test:agent-binding-rebase-merge": "node scripts/test-agent-binding-rebase-merge.mjs",
     "test:user-input-response-history": "node scripts/test-user-input-response-history.mjs",
     "test:chat-runtime-stream-recovery": "node scripts/test-chat-runtime-stream-recovery.mjs",
+    "test:model-output-filter-snapshot": "node scripts/test-model-output-filter-snapshot.mjs",
     "test:reparse-parser-config-confirmation": "node scripts/test-reparse-parser-config-confirmation.mjs",
     "test:file-detail-return-context": "node scripts/test-file-detail-return-context.mjs",
     "test:dataset-file-asset-selection": "node scripts/test-dataset-file-asset-selection.mjs",
