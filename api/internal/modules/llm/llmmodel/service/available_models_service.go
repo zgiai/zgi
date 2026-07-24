@@ -736,17 +736,8 @@ func routeBacksModelForUseCase(routes []*channelmodel.LLMRoute, modelProvider, m
 			continue
 		}
 		official := route.IsOfficial || route.Type == shared.RouteTypeZGICloud
-		if official {
-			if !route.SupportsModelForProvider(modelProvider, modelName) {
-				continue
-			}
-		} else {
-			if !route.SupportsModel(modelName) {
-				continue
-			}
-			if !customModel && !routeProviderMatchesCatalogProvider(route.ChannelProvider, modelProvider) {
-				continue
-			}
+		if !route.SupportsModelForProvider(modelProvider, modelName) {
+			continue
 		}
 		if !requiresAgentProtocol {
 			return true
@@ -775,19 +766,6 @@ func modelMatchesAvailableUseCase(useCases types.StringArray, useCase string) bo
 	default:
 		return containsUseCase(useCases, useCase)
 	}
-}
-
-func routeProviderMatchesCatalogProvider(routeProvider, catalogProvider string) bool {
-	routeProvider = strings.TrimSpace(routeProvider)
-	catalogProvider = strings.TrimSpace(catalogProvider)
-	if routeProvider == "" || catalogProvider == "" || routeProvider == "openai-compatible" {
-		return false
-	}
-	spec, err := channelprovider.Resolve(routeProvider)
-	if err != nil {
-		return false
-	}
-	return spec.LookupProvider == catalogProvider
 }
 
 func effectiveModelUseCasesForRoutes(_ []*channelmodel.LLMRoute, _ string, useCases types.StringArray) types.StringArray {
