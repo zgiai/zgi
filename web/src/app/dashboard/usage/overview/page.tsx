@@ -6,7 +6,6 @@ import { RefreshCw } from 'lucide-react';
 
 import { useT } from '@/i18n';
 import { AppTypeDistributionSection } from '@/components/usage/app-type-distribution-section';
-import { Badge } from '@/components/ui/badge';
 import { ModelDetailsSection } from '@/components/usage/model-details-section';
 import { StatsCards } from '@/components/usage/stats-cards';
 import { TokenTrendChart } from '@/components/usage/token-trend-chart';
@@ -129,31 +128,6 @@ export default function UsageOverviewPage() {
     enabled: isCustomRangeValid,
   });
   const summary = data?.summary ?? EMPTY_SUMMARY;
-  const activeFilterBadges = useMemo(() => {
-    const badges: string[] = [];
-
-    badges.push(
-      isCustomRange && customStartDate && customEndDate
-        ? `${customStartDate} ~ ${customEndDate}`
-        : t(`usage.dateRange.${dateRange}`)
-    );
-
-    if (appType !== 'all') {
-      badges.push(t(`usage.appTypes.${appType}`));
-    }
-
-    if (IS_CLOUD && sourceFilter !== 'all') {
-      badges.push(
-        t(`usage.filters.source${sourceFilter === 'official' ? 'Official' : 'Private'}`)
-      );
-    }
-
-    if (modelNameInput.trim()) {
-      badges.push(`${t('usage.filters.modelName')}: ${modelNameInput.trim()}`);
-    }
-
-    return badges;
-  }, [appType, customEndDate, customStartDate, dateRange, isCustomRange, modelNameInput, sourceFilter, t]);
 
   const resetFilters = () => {
     setDateRange('last7Days');
@@ -251,16 +225,11 @@ export default function UsageOverviewPage() {
               />
             </div>
 
-            <div className="flex flex-wrap items-center gap-2 border-t border-border/60 pt-3">
-              {activeFilterBadges.map(badge => (
-                <Badge key={badge} variant="subtle" className="rounded-full px-2">
-                  {badge}
-                </Badge>
-              ))}
-              <span className="ml-auto text-xs text-muted-foreground">
+            <div className="flex items-center justify-end border-t border-border/60 pt-3">
+              <span className="text-xs tabular-nums text-muted-foreground">
                 {isLoading
                   ? tCommon('loading')
-                  : `当前结果共 ${data?.by_model?.length ?? 0} 个模型`}
+                  : t('usage.cards.modelCount', { count: data?.by_model?.length ?? 0 })}
               </span>
             </div>
 
