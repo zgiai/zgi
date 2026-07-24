@@ -7,6 +7,7 @@ import (
 	"github.com/google/uuid"
 	apikeymodel "github.com/zgiai/zgi/api/internal/modules/llm/apikey/model"
 	llmmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
+	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	providermodel "github.com/zgiai/zgi/api/internal/modules/llm/provider/model"
 )
 
@@ -37,6 +38,24 @@ func TestCheckModelAuthorization_APIKeySubject_EnforcesModelLimits(t *testing.T)
 	err := svc.checkModelAuthorization(apiKey, nil, "claude-3-5-sonnet")
 	if err != ErrModelNotAuthorized {
 		t.Fatalf("checkModelAuthorization err = %v, want %v", err, ErrModelNotAuthorized)
+	}
+}
+
+func TestCreateImageInternal_APIKeySubject_EnforcesModelLimits(t *testing.T) {
+	svc := &llmGatewayServiceImpl{}
+	limits := `["gpt-4o"]`
+	apiKey := &apikeymodel.TenantAPIKey{
+		ModelLimitsEnabled: true,
+		ModelLimits:        &limits,
+	}
+	req := &adapter.ImageRequest{
+		Model:  "claude-3-5-sonnet",
+		Prompt: "Generate an image",
+	}
+
+	_, err := svc.createImageInternal(t.Context(), apiKey, nil, req)
+	if err != ErrModelNotAuthorized {
+		t.Fatalf("createImageInternal err = %v, want %v", err, ErrModelNotAuthorized)
 	}
 }
 
