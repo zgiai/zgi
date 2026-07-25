@@ -3,6 +3,7 @@ package skillloop
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -56,7 +57,11 @@ func (r *Runner) handleProgressiveSkillCall(
 	case skills.MetaToolCallSkillTool:
 		skillID := normalizedSkillArg(args, "skill_id")
 		toolName := stringArg(args, "tool_name")
-		toolArgs := mapArg(args, "arguments")
+		toolArgs, argumentsErr := normalizeSkillToolArguments(args, skillID, toolName)
+		if argumentsErr != nil {
+			return invalidSkillToolArgumentsStep(call.ID, skillID, toolName, args["arguments"], argumentsErr)
+		}
+		args["arguments"] = toolArgs
 		if strings.EqualFold(toolName, skills.MetaToolRequestUserInput) {
 			return r.handleRequestUserInputCall(ctx, prepared, call.ID, toolArgs, onEvent)
 		}
@@ -166,6 +171,36 @@ func skippedControlToolStep(callID string, toolName string, nextAction string) s
 		"",
 		toolName,
 	)), false, false)
+}
+
+func invalidSkillToolArgumentsStep(
+	callID string,
+	skillID string,
+	toolName string,
+	rawArguments interface{},
+	err error,
+) skillStepResult {
+	trace := failedSkillTrace("tool_call", toolName, err)
+	trace.SkillID = strings.ToLower(strings.TrimSpace(skillID))
+	trace.Arguments = rawSkillToolArgumentsFingerprint(rawArguments)
+	var argumentErr *skillToolArgumentsError
+	if errors.As(err, &argumentErr) && argumentErr != nil {
+		trace.Arguments["reason_code"] = argumentErr.Code
+		trace.Arguments["missing_fields"] = append([]string(nil), argumentErr.MissingFields...)
+		trace.Arguments["expected_type"] = argumentErr.ExpectedType
+		trace.Arguments["actual_type"] = argumentErr.ActualType
+	}
+	return recoverableSkillStep(
+		trace,
+		skills.ToolResultMessage(callID, recoverableSkillToolErrorPayload(
+			err,
+			"correct the arguments using the structured error and retry once",
+			skillID,
+			toolName,
+		)),
+		false,
+		false,
+	)
 }
 
 func normalizeDirectLoadedSkillToolCall(
@@ -291,7 +326,7 @@ func (r *Runner) handleRequestUserInputCall(
 		trace.Message = visibleMessage
 	}
 	pendingPayload := userInputRequestPayload(prepared, callID, visibleMessage, questions)
-	r.emitEvent(EventUserInputRequested, pendingPayload)
+	r.emitEvent(prepared, EventUserInputRequested, pendingPayload)
 	logger.DebugContext(ctx, "aichat user input requested",
 		"conversation_id", prepared.Conversation.ID.String(),
 		"message_id", prepared.Message.ID.String(),
@@ -335,7 +370,7 @@ func (r *Runner) handleIntermediateAnswerCall(
 		if answerID == "" {
 			answerID = callID
 		}
-		r.emitEvent(EventIntermediateAnswer, intermediateAnswerPayload(prepared, trace, answerID, "", 0, true, "success"))
+		r.emitEvent(prepared, EventIntermediateAnswer, intermediateAnswerPayload(prepared, trace, answerID, "", 0, true, "success"))
 	} else {
 		r.emitIntermediateAnswer(ctx, prepared, callID, trace, onEvent)
 	}
@@ -366,7 +401,7 @@ func (r *Runner) emitIntermediateAnswer(
 		if done {
 			status = "success"
 		}
-		r.emitEvent(EventIntermediateAnswer, intermediateAnswerPayload(prepared, trace, answerID, chunk, index, done, status))
+		r.emitEvent(prepared, EventIntermediateAnswer, intermediateAnswerPayload(prepared, trace, answerID, chunk, index, done, status))
 	}
 }
 
@@ -454,7 +489,7 @@ func (r *Runner) handleLoadSkillCall(
 			usedSkill: true,
 		}
 	}
-	r.emitEvent(EventSkillLoadStart, skillLoadPayload(prepared, skillID))
+	r.emitEvent(prepared, EventSkillLoadStart, skillLoadPayload(prepared, skillID))
 	attemptRuntimeID := newSkillLoadAttemptRuntimeID(canonicalSkillID)
 	doc, trace, err := r.SkillRuntime.LoadSkill(ctx, resolved, skillID)
 	if err != nil {
@@ -482,7 +517,7 @@ func (r *Runner) handleLoadSkillCall(
 		"message_id", prepared.Message.ID.String(),
 		"skill_id", doc.Metadata.ID,
 	)
-	r.emitEvent(EventSkillLoadEnd, skillLoadEndPayload(prepared, trace))
+	r.emitEvent(prepared, EventSkillLoadEnd, skillLoadEndPayload(prepared, trace))
 	return successfulSkillStep(trace, skills.ToolResultMessage(callID, skillDocumentPayload(doc)), true, false)
 }
 
@@ -528,7 +563,7 @@ func (r *Runner) handleReadReferenceCall(
 		"path", path,
 		"duration_ms", trace.DurationMS,
 	)
-	r.emitEvent(EventSkillReferenceRead, skillReferenceReadPayload(prepared, trace, path))
+	r.emitEvent(prepared, EventSkillReferenceRead, skillReferenceReadPayload(prepared, trace, path))
 	return successfulSkillStep(trace, skills.ToolResultMessage(callID, map[string]interface{}{
 		"skill_id": skillID,
 		"path":     path,
@@ -558,7 +593,7 @@ func (r *Runner) handleCallSkillTool(
 	if completionIntent != "" {
 		argumentSummary["completion_intent"] = completionIntent
 	}
-	r.emitEvent(EventSkillCallStart, skillCallStartPayload(prepared, skillID, toolName, argumentSummary))
+	r.emitEvent(prepared, EventSkillCallStart, skillCallStartPayload(prepared, skillID, toolName, argumentSummary))
 	if isAgentWorkflowRunTool(skillID, toolName) {
 		execCtx.RuntimeParameters = copyStringAnyMap(execCtx.RuntimeParameters)
 		if execCtx.RuntimeParameters == nil {
@@ -603,7 +638,7 @@ func (r *Runner) handleCallSkillTool(
 			if event.PauseGeneration > 0 {
 				payload["pause_generation"] = event.PauseGeneration
 			}
-			r.emitEvent(event.Type, payload)
+			r.emitEvent(prepared, event.Type, payload)
 		})
 	}
 	invocation, err := r.SkillRuntime.CallSkillTool(ctx, resolved, skillID, toolName, toolArgs, execCtx, callID)
@@ -642,7 +677,7 @@ func (r *Runner) handleCallSkillTool(
 		invocation.Trace.Arguments["operation_plan_target"] = planTarget
 	}
 	if invocation.Trace.Governance != nil {
-		r.emitEvent(EventToolGovernanceDecision, toolGovernanceDecisionPayload(prepared, invocation.Trace))
+		r.emitEvent(prepared, EventToolGovernanceDecision, toolGovernanceDecisionPayload(prepared, invocation.Trace))
 	}
 	if err != nil {
 		return recoverableSkillStep(invocation.Trace, skills.ToolResultMessage(callID, recoverableSkillToolErrorPayload(err, "fix the tool arguments based on the error and retry", skillID, toolName)), true, false)
@@ -660,11 +695,11 @@ func (r *Runner) handleCallSkillTool(
 		"tool_name", invocation.Trace.ToolName,
 		"duration_ms", invocation.Trace.DurationMS,
 	)
-	r.emitEvent(EventSkillCallEnd, skillCallEndPayload(prepared, invocation.Trace))
+	r.emitEvent(prepared, EventSkillCallEnd, skillCallEndPayload(prepared, invocation.Trace))
 	for _, artifact := range skillArtifactsFromToolMessages(prepared, invocation.Trace, invocation.Messages) {
 		artifact = enrichGeneratedArtifactContentMetadata(artifact, invocation.Trace)
 		r.recordArtifact(artifact)
-		r.emitEvent(EventSkillArtifactCreated, artifact)
+		r.emitEvent(prepared, EventSkillArtifactCreated, artifact)
 	}
 	if artifact := managedFileArtifactFromSaveResult(invocation.Trace, invocation.Messages); len(artifact) > 0 {
 		// Saving a temporary artifact must update continuation metadata without
@@ -672,7 +707,7 @@ func (r *Runner) handleCallSkillTool(
 		r.recordArtifact(artifact)
 	}
 	if payload := clientActionRequiredPayload(prepared, invocation.Trace, callID); len(payload) > 0 {
-		r.emitEvent(EventClientActionRequired, payload)
+		r.emitEvent(prepared, EventClientActionRequired, payload)
 		result := successfulSkillStep(invocation.Trace, invocation.ToolMessage, true, true)
 		result.toolResult = guardToolResult
 		if clientActionRequiresModelContinuation(payload) {

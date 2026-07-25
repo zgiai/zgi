@@ -48,6 +48,7 @@ type skillStepResult struct {
 	pendingGovernance   map[string]interface{}
 	pendingClientAction map[string]interface{}
 	pendingUserInput    map[string]interface{}
+	stopBusinessLoop    bool
 	fatalErr            error
 }
 
@@ -181,10 +182,13 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 	recoverableFailureRoundCount := 0
 	consecutiveRecoverableFailureRounds := 0
 	recoverableFailureCallCount := 0
+	recoverableFailureCounts := map[string]int{}
+	failedToolCallAttemptCounts := map[string]int{}
 	emptyFinalAnswerRetryCount := 0
 	skillToolCallCounts := map[string]int{}
 	successfulToolCalls := []SkillToolCallRef{}
 	failedToolCallReasons := map[string]string{}
+	var latestRecoverableTrace skills.SkillTrace
 	skillUsed := false
 	maxSkillSteps := maxSkillStepsForTurn(resolved)
 	terminalStateGuardConfigured := req.RuntimeStateSnapshot != nil
@@ -376,7 +380,33 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 				"requested_tool_calls", len(toolCalls),
 				"max_steps", maxSkillSteps,
 			)
-			return answerBuilder.String(), usage, fmt.Errorf("%w: too many skill steps", ErrInvalidInput)
+			limitErr := fmt.Errorf("%w: too many skill steps", ErrInvalidInput)
+			trace := failedSkillTrace("tool_retry_guard", "", limitErr)
+			trace.Arguments = map[string]interface{}{
+				"reason_code":   "skill_step_limit_exceeded",
+				"current_steps": stepCount,
+				"requested":     len(toolCalls),
+				"max_steps":     maxSkillSteps,
+			}
+			traces = append(traces, trace)
+			r.recordTrace(traces, trace)
+			r.logSkillTrace(ctx, prepared, trace)
+			r.emitSkillError(ctx, prepared, trace)
+			answer, explanationUsage, explanationErr := r.completeBusinessToolFailure(
+				ctx,
+				req,
+				prepared,
+				traces,
+				trace,
+				successfulToolCalls,
+				"the business-tool step safety limit was reached before the requested operation completed",
+				round,
+			)
+			usage = mergeUsage(usage, explanationUsage)
+			if explanationErr != nil {
+				return answerBuilder.String(), usage, explanationErr
+			}
+			return answer, usage, nil
 		}
 		logger.DebugContext(ctx, "aichat skill planning requested tool calls",
 			"conversation_id", prepared.Conversation.ID.String(),
@@ -397,7 +427,10 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 
 		roundHadRecoverableFailure := false
 		roundHadSuccess := false
+		roundMadeFailureProgress := false
 		var lastRecoverableTrace skills.SkillTrace
+		stopBusinessLoop := false
+		var stopBusinessLoopTrace skills.SkillTrace
 		roundDeferredSystemMessages := []adapter.Message{}
 		for _, call := range toolCalls {
 			stepCount++
@@ -439,21 +472,42 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 				}
 				continue
 			}
+			if result.recoverable {
+				if result.trace.Arguments == nil {
+					result.trace.Arguments = map[string]interface{}{}
+				}
+				result.trace.Arguments["failure_category"] = recoverableSkillFailureCategory(result.trace)
+				annotateRecoverableSkillFailure(
+					&result.trace,
+					failedCallKey,
+					failedToolCallAttemptCounts,
+					result.stopBusinessLoop,
+				)
+				if recoverableSkillFailureMadeProgress(latestRecoverableTrace, result.trace) {
+					roundMadeFailureProgress = true
+				}
+			}
 			traces = append(traces, result.trace)
 			r.recordTrace(traces, result.trace)
 			r.logSkillTrace(ctx, prepared, result.trace)
-			if result.recoverable && failedCallKey != "" && strings.EqualFold(strings.TrimSpace(result.trace.Kind), "tool_call") {
+			if result.recoverable &&
+				failedCallKey != "" &&
+				strings.EqualFold(strings.TrimSpace(result.trace.Kind), "tool_call") &&
+				shouldRememberFailedToolCall(result.trace) {
 				failedToolCallReasons[failedCallKey] = strings.TrimSpace(result.trace.Error)
 				if failedToolCallReasons[failedCallKey] == "" {
 					failedToolCallReasons[failedCallKey] = "previous tool call with the same arguments failed"
 				}
 			}
 			if result.recoverable {
+				failureCategory := recoverableSkillFailureCategory(result.trace)
+				recoverableFailureCounts[failureCategory]++
 				if !internalPlannerFeedbackTrace(result.trace) {
 					r.emitSkillError(ctx, prepared, result.trace)
 				}
 				roundHadRecoverableFailure = true
 				lastRecoverableTrace = result.trace
+				latestRecoverableTrace = result.trace
 				recoverableFailureCallCount++
 				planRevisionRequired = true
 			} else {
@@ -534,9 +588,31 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 			if message, ok := governedReadFileTargetSystemMessage(result.trace); ok {
 				roundDeferredSystemMessages = append(roundDeferredSystemMessages, message)
 			}
+			if result.stopBusinessLoop {
+				stopBusinessLoop = true
+				stopBusinessLoopTrace = result.trace
+				break
+			}
 		}
 		if len(roundDeferredSystemMessages) > 0 {
 			messages = append(messages, roundDeferredSystemMessages...)
+		}
+		if stopBusinessLoop {
+			answer, explanationUsage, explanationErr := r.completeBusinessToolFailure(
+				ctx,
+				req,
+				prepared,
+				traces,
+				stopBusinessLoopTrace,
+				successfulToolCalls,
+				"the model repeated the same failed business-tool call without changing its arguments",
+				round,
+			)
+			usage = mergeUsage(usage, explanationUsage)
+			if explanationErr != nil {
+				return answerBuilder.String(), usage, explanationErr
+			}
+			return answer, usage, nil
 		}
 		if preferExplicitFinalAnswer && !roundHadRecoverableFailure && terminalMetaCallsOnly(toolCalls) {
 			messages = append(messages, adapter.Message{
@@ -546,7 +622,7 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 		}
 		if roundHadRecoverableFailure {
 			recoverableFailureRoundCount++
-			if !roundHadSuccess {
+			if !roundHadSuccess && !roundMadeFailureProgress {
 				consecutiveRecoverableFailureRounds++
 			} else {
 				consecutiveRecoverableFailureRounds = 0
@@ -557,23 +633,42 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 				"failure_round_count", recoverableFailureRoundCount,
 				"consecutive_failure_rounds", consecutiveRecoverableFailureRounds,
 				"failure_call_count", recoverableFailureCallCount,
+				"failure_categories", recoverableFailureCounts,
+				"failure_progress", roundMadeFailureProgress,
 			)
-			if recoverableFailureRoundCount > defaultMaxRecoverableFailureRounds ||
-				consecutiveRecoverableFailureRounds > defaultMaxConsecutiveRecoverableFailureRounds {
+			if recoverableFailureRoundCount >= defaultMaxRecoverableFailureRounds ||
+				consecutiveRecoverableFailureRounds >= defaultMaxConsecutiveRecoverableFailureRounds {
 				err := fmt.Errorf("%w: too many failed skill calls", ErrInvalidInput)
-				trace := failedSkillTrace(lastRecoverableTrace.Kind, lastRecoverableTrace.ToolName, err)
+				trace := failedSkillTrace("tool_retry_guard", lastRecoverableTrace.ToolName, err)
 				trace.SkillID = lastRecoverableTrace.SkillID
-				trace.Arguments = lastRecoverableTrace.Arguments
+				trace.Arguments = copyStringAnyMap(lastRecoverableTrace.Arguments)
+				if trace.Arguments == nil {
+					trace.Arguments = map[string]interface{}{}
+				}
+				trace.Arguments["reason_code"] = "skill_tool_failure_limit_reached"
+				trace.Arguments["failure_categories"] = copyStringIntMap(recoverableFailureCounts)
+				trace.Arguments["termination_reason"] = "safe_retry_limit_reached"
+				traces = append(traces, trace)
+				r.recordTrace(traces, trace)
+				r.logSkillTrace(ctx, prepared, trace)
 				if !internalPlannerFeedbackTrace(lastRecoverableTrace) {
 					r.emitSkillError(ctx, prepared, trace)
 				}
-				if terminalStateGuardConfigured {
-					text := recoverableFailureFinalAnswer(lastRecoverableTrace, err)
-					appendAnswerText(&answerBuilder, text)
-					r.emitAnswerChunk(ctx, prepared, text, nil)
-					return answerBuilder.String(), usage, nil
+				answer, explanationUsage, explanationErr := r.completeBusinessToolFailure(
+					ctx,
+					req,
+					prepared,
+					traces,
+					lastRecoverableTrace,
+					successfulToolCalls,
+					"the business tool continued to fail and the safe retry limit was reached",
+					round,
+				)
+				usage = mergeUsage(usage, explanationUsage)
+				if explanationErr != nil {
+					return answerBuilder.String(), usage, explanationErr
 				}
-				return answerBuilder.String(), usage, err
+				return answer, usage, nil
 			}
 		} else {
 			consecutiveRecoverableFailureRounds = 0
@@ -584,13 +679,37 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 	}
 
 	err := fmt.Errorf("%w: too many skill planning rounds", ErrInvalidInput)
-	if terminalStateGuardConfigured {
-		text := planningRoundsExhaustedFinalAnswer(err)
-		appendAnswerText(&answerBuilder, text)
-		r.emitAnswerChunk(ctx, prepared, text, nil)
-		return answerBuilder.String(), usage, nil
+	trace := latestRecoverableTrace
+	if strings.TrimSpace(trace.Kind) == "" {
+		trace = failedSkillTrace("tool_retry_guard", "", err)
+		trace.Arguments = map[string]interface{}{}
 	}
-	return answerBuilder.String(), usage, err
+	trace.Kind = "tool_retry_guard"
+	trace.Status = "error"
+	trace.Error = err.Error()
+	if trace.Arguments == nil {
+		trace.Arguments = map[string]interface{}{}
+	}
+	trace.Arguments["reason_code"] = "skill_planning_rounds_exhausted"
+	traces = append(traces, trace)
+	r.recordTrace(traces, trace)
+	r.logSkillTrace(ctx, prepared, trace)
+	r.emitSkillError(ctx, prepared, trace)
+	answer, explanationUsage, explanationErr := r.completeBusinessToolFailure(
+		ctx,
+		req,
+		prepared,
+		traces,
+		trace,
+		successfulToolCalls,
+		"the planning loop reached its safety limit before the requested operation completed",
+		defaultMaxSkillPlanningRounds,
+	)
+	usage = mergeUsage(usage, explanationUsage)
+	if explanationErr != nil {
+		return answerBuilder.String(), usage, explanationErr
+	}
+	return answer, usage, nil
 }
 
 func (r *Runner) emitTerminalOnlyFallback(
@@ -1130,7 +1249,10 @@ func skillToolCallIdentityForCall(resolved *skills.ResolvedSkills, loadedSkills 
 	}
 	skillID := normalizedSkillArg(args, "skill_id")
 	toolName := stringArg(args, "tool_name")
-	toolArgs := mapArg(args, "arguments")
+	toolArgs, argumentsErr := normalizeSkillToolArguments(args, skillID, toolName)
+	if argumentsErr != nil {
+		toolArgs = rawSkillToolArgumentsFingerprint(args["arguments"])
+	}
 	return skillID, toolName, toolArgs, failedToolCallKey(skillID, toolName, toolArgs)
 }
 
@@ -1218,46 +1340,195 @@ func failedToolCallKey(skillID string, toolName string, args map[string]interfac
 	return skillID + "/" + toolName + ":" + string(encoded)
 }
 
+func recoverableSkillFailureCategory(trace skills.SkillTrace) string {
+	switch category := strings.ToLower(strings.TrimSpace(evidenceStringFromAny(trace.Arguments["failure_category"]))); category {
+	case "arguments", "permission", "transient", "tool":
+		return category
+	}
+	reasonCode := strings.ToLower(strings.TrimSpace(evidenceStringFromAny(trace.Arguments["reason_code"])))
+	if strings.HasPrefix(reasonCode, "skill_tool_arguments_") {
+		return "arguments"
+	}
+	if strings.Contains(reasonCode, "permission") ||
+		strings.Contains(reasonCode, "denied") ||
+		strings.Contains(reasonCode, "unauthorized") ||
+		strings.Contains(reasonCode, "forbidden") ||
+		strings.Contains(reasonCode, "not_preauthorized") {
+		return "permission"
+	}
+
+	message := strings.ToLower(strings.TrimSpace(trace.Error))
+	for _, fragment := range []string{
+		"timeout",
+		"timed out",
+		"temporary",
+		"connection reset",
+		"connection refused",
+		"network",
+		"unexpected eof",
+		"service unavailable",
+		"tls handshake",
+		"too many requests",
+		"rate limit",
+	} {
+		if strings.Contains(message, fragment) {
+			return "transient"
+		}
+	}
+	for _, fragment := range []string{
+		"permission denied",
+		"access denied",
+		"unauthorized",
+		"forbidden",
+		"not preauthorized",
+	} {
+		if strings.Contains(message, fragment) {
+			return "permission"
+		}
+	}
+	return "tool"
+}
+
+func shouldRememberFailedToolCall(trace skills.SkillTrace) bool {
+	return recoverableSkillFailureCategory(trace) != "transient"
+}
+
+func annotateRecoverableSkillFailure(
+	trace *skills.SkillTrace,
+	failedCallKey string,
+	attemptCounts map[string]int,
+	stopBusinessLoop bool,
+) {
+	if trace == nil {
+		return
+	}
+	if trace.Arguments == nil {
+		trace.Arguments = map[string]interface{}{}
+	}
+
+	argumentFingerprint := digestDiagnosticValue(failedCallKey)
+	if argumentFingerprint != "" {
+		trace.Arguments["argument_fingerprint"] = argumentFingerprint
+		if attemptCounts != nil {
+			attemptCounts[failedCallKey]++
+			trace.Arguments["retry_count"] = attemptCounts[failedCallKey]
+		}
+	}
+	if failureFingerprint := recoverableSkillFailureFingerprint(*trace, argumentFingerprint); failureFingerprint != "" {
+		trace.Arguments["failure_fingerprint"] = failureFingerprint
+	}
+	if stopBusinessLoop {
+		trace.Arguments["termination_reason"] = "retry_no_progress"
+	}
+}
+
+func recoverableSkillFailureFingerprint(trace skills.SkillTrace, argumentFingerprint string) string {
+	payload := map[string]interface{}{
+		"skill_id":             strings.ToLower(strings.TrimSpace(trace.SkillID)),
+		"tool_name":            strings.ToLower(strings.TrimSpace(trace.ToolName)),
+		"reason_code":          strings.ToLower(strings.TrimSpace(evidenceStringFromAny(trace.Arguments["reason_code"]))),
+		"missing_fields":       evidenceStringSliceFromAny(trace.Arguments["missing_fields"]),
+		"argument_fingerprint": strings.TrimSpace(argumentFingerprint),
+	}
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return ""
+	}
+	return digestDiagnosticBytes(encoded)
+}
+
+func recoverableSkillFailureMadeProgress(previous skills.SkillTrace, current skills.SkillTrace) bool {
+	if strings.TrimSpace(previous.Kind) == "" || strings.TrimSpace(current.Kind) == "" {
+		return false
+	}
+	if recoverableSkillFailureCategory(previous) == "transient" ||
+		recoverableSkillFailureCategory(current) == "transient" {
+		return false
+	}
+
+	previousSkillID := strings.ToLower(strings.TrimSpace(previous.SkillID))
+	currentSkillID := strings.ToLower(strings.TrimSpace(current.SkillID))
+	previousToolName := strings.ToLower(strings.TrimSpace(previous.ToolName))
+	currentToolName := strings.ToLower(strings.TrimSpace(current.ToolName))
+	if previousSkillID != currentSkillID || previousToolName != currentToolName {
+		return currentSkillID != "" || currentToolName != ""
+	}
+
+	previousArgumentFingerprint := strings.TrimSpace(evidenceStringFromAny(previous.Arguments["argument_fingerprint"]))
+	currentArgumentFingerprint := strings.TrimSpace(evidenceStringFromAny(current.Arguments["argument_fingerprint"]))
+	if previousArgumentFingerprint != "" &&
+		currentArgumentFingerprint != "" &&
+		previousArgumentFingerprint != currentArgumentFingerprint {
+		return true
+	}
+
+	previousMissingFields := evidenceStringSliceFromAny(previous.Arguments["missing_fields"])
+	currentMissingFields := evidenceStringSliceFromAny(current.Arguments["missing_fields"])
+	if len(previousMissingFields) > 0 && len(currentMissingFields) < len(previousMissingFields) {
+		return true
+	}
+
+	previousActualType := strings.ToLower(strings.TrimSpace(evidenceStringFromAny(previous.Arguments["actual_type"])))
+	currentActualType := strings.ToLower(strings.TrimSpace(evidenceStringFromAny(current.Arguments["actual_type"])))
+	return previousActualType != "" &&
+		previousActualType != "object" &&
+		currentActualType == "object"
+}
+
+func digestDiagnosticValue(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	return digestDiagnosticBytes([]byte(value))
+}
+
+func digestDiagnosticBytes(value []byte) string {
+	digest := sha256.Sum256(value)
+	return fmt.Sprintf("sha256:%x", digest[:])
+}
+
+func copyStringIntMap(input map[string]int) map[string]interface{} {
+	if len(input) == 0 {
+		return nil
+	}
+	out := make(map[string]interface{}, len(input))
+	for key, value := range input {
+		out[key] = value
+	}
+	return out
+}
+
 func repeatedFailedToolCallRecoverableStep(callID string, skillID string, toolName string, args map[string]interface{}, reason string) skillStepResult {
 	message := "same tool call with the same arguments already failed in this turn"
 	if reason = strings.TrimSpace(reason); reason != "" {
 		message += ": " + reason
 	}
-	err := fmt.Errorf("%w: %s", ErrInvalidInput, message)
-	trace := plannerFeedbackTrace(skillID, toolName, err)
+	err := &skillToolArgumentsError{
+		Code:              skillToolRetryNoProgressCode,
+		SkillID:           strings.ToLower(strings.TrimSpace(skillID)),
+		ToolName:          strings.TrimSpace(toolName),
+		ExpectedType:      "object",
+		ActualType:        "object",
+		ExpectedArguments: skills.ExpectedSkillToolArguments(skillID, toolName),
+		RetryAction:       "stop retrying this business tool and explain the incomplete operation truthfully",
+		Cause:             fmt.Errorf("%w: %s", ErrInvalidInput, message),
+	}
+	trace := failedSkillTrace("tool_call", toolName, err)
+	trace.SkillID = strings.ToLower(strings.TrimSpace(skillID))
+	trace.Arguments = map[string]interface{}{}
 	if len(args) > 0 {
 		trace.Arguments = summarizeSkillToolArguments(skillID, toolName, args)
-		trace.Arguments["next_step"] = "continue_planning"
 	}
-	nextAction := strings.Join([]string{
-		"Do not repeat the same tool with identical arguments.",
-		"Change the arguments based on the previous error only if a safe retry is available.",
-		"Otherwise answer truthfully from the failed tool result.",
-	}, " ")
-	return recoverableSkillStep(trace, skills.ToolResultMessage(callID, recoverableSkillToolErrorPayload(err, nextAction, skillID, toolName)), false, false)
-}
-
-func recoverableFailureFinalAnswer(trace skills.SkillTrace, err error) string {
-	reason := strings.TrimSpace(trace.Error)
-	if reason == "" && err != nil {
-		reason = err.Error()
-	}
-	step := strings.TrimSpace(trace.SkillID)
-	if toolName := strings.TrimSpace(trace.ToolName); toolName != "" {
-		if step != "" {
-			step += "/"
-		}
-		step += toolName
-	}
-	return runtimeFailureAnswer(reason, step)
-}
-
-func planningRoundsExhaustedFinalAnswer(err error) string {
-	reason := "\u6267\u884c\u89c4\u5212\u8f6e\u6b21\u5df2\u8fbe\u5230\u4e0a\u9650\uff0c\u65e0\u6cd5\u786e\u8ba4\u672c\u8f6e\u64cd\u4f5c\u5df2\u7ecf\u5b8c\u6210\u3002"
-	if err != nil {
-		reason = reason + " " + err.Error()
-	}
-	return runtimeFailureAnswer(reason, "")
+	trace.Arguments["reason_code"] = skillToolRetryNoProgressCode
+	result := recoverableSkillStep(
+		trace,
+		skills.ToolResultMessage(callID, recoverableSkillToolErrorPayload(err, err.RetryAction, skillID, toolName)),
+		false,
+		false,
+	)
+	result.stopBusinessLoop = true
+	return result
 }
 
 func validAdditionalSystemMessages(input []adapter.Message) []adapter.Message {
