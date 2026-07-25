@@ -4,18 +4,38 @@ export interface ImageRuntimeModel {
   provider: string;
   model: string;
   model_label: string;
-  supported_sizes: string[];
-  supported_counts: number[];
-  default_size: string;
-  default_count: number;
+  generation_profile: ImageGenerationProfile;
+}
+
+export interface ImageGenerationProfile {
+  size?: {
+    default: string;
+    options: Array<{
+      value: string;
+      label: string;
+      aspect_ratio: string;
+    }>;
+  };
+  quantity?: {
+    mode: 'fixed' | 'exact' | 'sequence';
+    default: number;
+    min: number;
+    max: number;
+  };
+}
+
+export interface ImageRuntimeGenerateOptions {
+  size?: string;
+  count?: number;
+  generation_mode?: 'single' | 'sequence';
+  max_images?: number;
 }
 
 export interface ImageRuntimeGenerateRequest {
   prompt: string;
   provider: string;
   model: string;
-  size: string;
-  count: number;
+  options: ImageRuntimeGenerateOptions;
   conversation_id?: string;
 }
 

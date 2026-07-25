@@ -9,12 +9,18 @@ type Scope struct {
 }
 
 type GenerateRequest struct {
-	Prompt         string `json:"prompt"`
-	Provider       string `json:"provider"`
-	Model          string `json:"model"`
-	Size           string `json:"size"`
-	Count          int    `json:"count"`
-	ConversationID string `json:"conversation_id"`
+	Prompt         string          `json:"prompt"`
+	Provider       string          `json:"provider"`
+	Model          string          `json:"model"`
+	Options        GenerateOptions `json:"options"`
+	ConversationID string          `json:"conversation_id"`
+}
+
+type GenerateOptions struct {
+	Size           string `json:"size,omitempty"`
+	Count          *int   `json:"count,omitempty"`
+	GenerationMode string `json:"generation_mode,omitempty"`
+	MaxImages      *int   `json:"max_images,omitempty"`
 }
 
 type ImageFile struct {
@@ -31,13 +37,15 @@ type ImageFile struct {
 }
 
 type ImageGenerationMetadata struct {
-	Provider   string      `json:"provider"`
-	Model      string      `json:"model"`
-	ModelLabel string      `json:"model_label"`
-	Size       string      `json:"size"`
-	Count      int         `json:"count"`
-	Files      []ImageFile `json:"files"`
-	Status     string      `json:"status"`
+	Provider       string      `json:"provider"`
+	Model          string      `json:"model"`
+	ModelLabel     string      `json:"model_label"`
+	Size           string      `json:"size"`
+	Count          int         `json:"count"`
+	GenerationMode string      `json:"generation_mode,omitempty"`
+	MaxImages      *int        `json:"max_images,omitempty"`
+	Files          []ImageFile `json:"files"`
+	Status         string      `json:"status"`
 }
 
 type GenerateResult struct {

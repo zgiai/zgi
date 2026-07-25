@@ -31,7 +31,6 @@ const (
 	doubaoSeedreamSequentialOptionsKey     = "sequential_image_generation_options"
 	doubaoSeedreamSequentialMaxImagesKey   = "max_images"
 	doubaoSeedreamSequentialGenerationAuto = "auto"
-	doubaoSeedreamMultiImagePromptFormat   = "%s\n\nGenerate exactly %d images as separate image results."
 )
 
 // DoubaoAdapter implements the documented Ark API endpoints for Doubao.
@@ -277,29 +276,32 @@ func createDoubaoArkImage(
 	}
 	baseURL = strings.TrimRight(baseURL, "/")
 
-	size := request.Size
+	size := strings.TrimSpace(request.Size)
 	isSeedream := isDoubaoSeedreamImageModel(request.Model)
-	if isSeedream {
+	if isSeedream && size != "" {
 		size = normalizeDoubaoSeedreamSize(request.Size)
 	}
 
-	imageCount := 1
-	if request.N != nil && *request.N > 0 {
-		imageCount = *request.N
-	}
-	prompt := buildDoubaoSeedreamImagePrompt(request.Prompt, imageCount, isSeedream)
-
 	payload := map[string]any{
 		doubaoImagePayloadKeyModel:  request.Model,
-		doubaoImagePayloadKeyPrompt: prompt,
-		doubaoImagePayloadKeySize:   size,
-		doubaoImagePayloadKeyN:      imageCount,
+		doubaoImagePayloadKeyPrompt: request.Prompt,
 	}
-	if isSeedream && imageCount > 1 {
-		payload[doubaoSeedreamSequentialGenerationKey] = doubaoSeedreamSequentialGenerationAuto
-		payload[doubaoSeedreamSequentialOptionsKey] = map[string]any{
-			doubaoSeedreamSequentialMaxImagesKey: imageCount,
+	if size != "" {
+		payload[doubaoImagePayloadKeySize] = size
+	}
+	if isSeedream {
+		generationMode, maxImages := seedreamGenerationOptions(request)
+		switch generationMode {
+		case "single":
+			payload[doubaoSeedreamSequentialGenerationKey] = "disabled"
+		case "sequence":
+			payload[doubaoSeedreamSequentialGenerationKey] = doubaoSeedreamSequentialGenerationAuto
+			payload[doubaoSeedreamSequentialOptionsKey] = map[string]any{
+				doubaoSeedreamSequentialMaxImagesKey: maxImages,
+			}
 		}
+	} else if request.N != nil {
+		payload[doubaoImagePayloadKeyN] = *request.N
 	}
 	if request.Quality != "" {
 		payload[doubaoImagePayloadKeyQuality] = request.Quality
@@ -334,11 +336,22 @@ func createDoubaoArkImage(
 	return &response, nil
 }
 
-func buildDoubaoSeedreamImagePrompt(prompt string, imageCount int, isSeedream bool) string {
-	if !isSeedream || imageCount <= 1 {
-		return prompt
+func seedreamGenerationOptions(request *adapter.ImageRequest) (string, int) {
+	mode := strings.TrimSpace(request.GenerationMode)
+	if mode != "" {
+		maxImages := 0
+		if request.MaxImages != nil {
+			maxImages = *request.MaxImages
+		}
+		return mode, maxImages
 	}
-	return fmt.Sprintf(doubaoSeedreamMultiImagePromptFormat, prompt, imageCount)
+	if request.N != nil && *request.N > 1 {
+		return "sequence", *request.N
+	}
+	if request.N != nil {
+		return "single", 0
+	}
+	return "", 0
 }
 
 func isDoubaoSeedreamImageModel(model string) bool {

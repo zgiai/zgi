@@ -269,20 +269,21 @@ func TestDoubaoAdapterCreateImage_SeedreamMultiImageUsesSequentialOptions(t *tes
 
 	n := 3
 	resp, err := a.CreateImage(context.Background(), &adapter.ImageRequest{
-		Model:  doubaoSeedreamLiteTestModel,
-		Prompt: "a cat",
-		Size:   "1024x1024",
-		N:      &n,
+		Model:          doubaoSeedreamLiteTestModel,
+		Prompt:         "a cat",
+		Size:           "1024x1024",
+		GenerationMode: "sequence",
+		MaxImages:      &n,
 	})
 	if err != nil {
 		t.Fatalf("CreateImage() error = %v", err)
 	}
 
-	if got := gotPayload[doubaoImagePayloadKeyN]; got != float64(n) {
-		t.Fatalf("payload.%s = %#v, want %d", doubaoImagePayloadKeyN, got, n)
+	if _, exists := gotPayload[doubaoImagePayloadKeyN]; exists {
+		t.Fatalf("payload.%s must not represent a sequence upper bound", doubaoImagePayloadKeyN)
 	}
-	if got := gotPayload[doubaoImagePayloadKeyPrompt]; got != buildDoubaoSeedreamImagePrompt("a cat", n, true) {
-		t.Fatalf("payload.%s = %#v, want multi-image prompt", doubaoImagePayloadKeyPrompt, got)
+	if got := gotPayload[doubaoImagePayloadKeyPrompt]; got != "a cat" {
+		t.Fatalf("payload.%s = %#v, want unchanged prompt", doubaoImagePayloadKeyPrompt, got)
 	}
 	if got := gotPayload[doubaoSeedreamSequentialGenerationKey]; got != doubaoSeedreamSequentialGenerationAuto {
 		t.Fatalf("payload.%s = %#v, want %q", doubaoSeedreamSequentialGenerationKey, got, doubaoSeedreamSequentialGenerationAuto)
@@ -325,25 +326,24 @@ func TestDoubaoAdapterCreateImage_SeedreamSingleImageDoesNotUseSequentialOptions
 		t.Fatalf("NewDoubaoAdapter() error = %v", err)
 	}
 
-	n := 1
 	_, err = a.CreateImage(context.Background(), &adapter.ImageRequest{
-		Model:  doubaoSeedreamLiteTestModel,
-		Prompt: "a cat",
-		Size:   "1024x1024",
-		N:      &n,
+		Model:          doubaoSeedreamLiteTestModel,
+		Prompt:         "a cat",
+		Size:           "1024x1024",
+		GenerationMode: "single",
 	})
 	if err != nil {
 		t.Fatalf("CreateImage() error = %v", err)
 	}
 
-	if got := gotPayload[doubaoImagePayloadKeyN]; got != float64(n) {
-		t.Fatalf("payload.%s = %#v, want %d", doubaoImagePayloadKeyN, got, n)
+	if _, exists := gotPayload[doubaoImagePayloadKeyN]; exists {
+		t.Fatalf("payload.%s must not be sent for Seedream single mode", doubaoImagePayloadKeyN)
 	}
 	if got := gotPayload[doubaoImagePayloadKeyPrompt]; got != "a cat" {
 		t.Fatalf("payload.%s = %#v, want %q", doubaoImagePayloadKeyPrompt, got, "a cat")
 	}
-	if _, exists := gotPayload[doubaoSeedreamSequentialGenerationKey]; exists {
-		t.Fatalf("payload.%s exists for N=1: %#v", doubaoSeedreamSequentialGenerationKey, gotPayload[doubaoSeedreamSequentialGenerationKey])
+	if got := gotPayload[doubaoSeedreamSequentialGenerationKey]; got != "disabled" {
+		t.Fatalf("payload.%s = %#v, want disabled", doubaoSeedreamSequentialGenerationKey, got)
 	}
 	if _, exists := gotPayload[doubaoSeedreamSequentialOptionsKey]; exists {
 		t.Fatalf("payload.%s exists for N=1: %#v", doubaoSeedreamSequentialOptionsKey, gotPayload[doubaoSeedreamSequentialOptionsKey])
