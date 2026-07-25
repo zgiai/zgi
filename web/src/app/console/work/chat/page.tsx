@@ -1,9 +1,12 @@
 'use client';
 
 import React, { Suspense, useCallback, useEffect, useRef } from 'react';
+import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Chat, { useAIChatController } from '@/components/chat';
+import { Button } from '@/components/ui/button';
 import { usePersistedAIChatModelSelection } from '@/hooks/model/use-persisted-ai-chat-model-selection';
+import { useAccountCapabilities } from '@/hooks/use-account-capabilities';
 import { useT } from '@/i18n/translations';
 import { useCurrentUser } from '@/store/auth-store';
 import { isDraftAIChatConversationId } from '@/components/chat/utils/aichat-message';
@@ -11,6 +14,38 @@ import { isConversationRouteRestoring } from '@/components/chat/runtime/conversa
 import { AIChatModelPrecheckWarning } from '@/components/aichat/model-precheck-warning';
 import { useAIChatModelPrecheck } from '@/hooks/aichat/use-aichat-model-precheck';
 import { toast } from 'sonner';
+
+interface ModelUnavailableRecoveryProps {
+  message: string;
+  adminDescription: string;
+  memberDescription: string;
+  configureLabel: string;
+}
+
+function ModelUnavailableRecovery({
+  message,
+  adminDescription,
+  memberDescription,
+  configureLabel,
+}: ModelUnavailableRecoveryProps) {
+  const { canManageModelConfig } = useAccountCapabilities();
+
+  return (
+    <div className="flex w-full items-center justify-between gap-4">
+      <div className="min-w-0">
+        <p className="font-medium">{message}</p>
+        <p className="mt-0.5 text-xs text-destructive/80">
+          {canManageModelConfig ? adminDescription : memberDescription}
+        </p>
+      </div>
+      {canManageModelConfig ? (
+        <Button asChild size="sm" variant="outline" className="shrink-0 bg-background">
+          <Link href="/dashboard/settings/model">{configureLabel}</Link>
+        </Button>
+      ) : null}
+    </div>
+  );
+}
 
 function ChatLoading() {
   const t = useT('webapp');
@@ -175,7 +210,12 @@ function ChatPageContent() {
           role="alert"
           className="shrink-0 border-b border-destructive/20 bg-destructive/5 px-4 py-2 text-sm text-destructive"
         >
-          {t('consoleChat.modelUnavailable')}
+          <ModelUnavailableRecovery
+            message={t('consoleChat.modelUnavailable')}
+            adminDescription={t('consoleChat.modelUnavailableAdminDescription')}
+            memberDescription={t('consoleChat.modelUnavailableMemberDescription')}
+            configureLabel={t('consoleChat.configureModel')}
+          />
         </div>
       ) : null}
       <div className="min-h-0 flex-1">

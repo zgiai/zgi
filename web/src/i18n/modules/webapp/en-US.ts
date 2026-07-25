@@ -239,6 +239,11 @@ const messages = {
     modelRequired: 'Please select a model first',
     modelUnavailable:
       'This model is no longer available for AI Chat. Select another model. The previous configuration is preserved.',
+    modelUnavailableAdminDescription:
+      'Review the available models and channel configuration, then return here to continue.',
+    modelUnavailableMemberDescription:
+      'Select another available model or ask an organization administrator to restore the model configuration.',
+    configureModel: 'Open model settings',
     modelPrecheck: {
       title: 'This model has channel risks, but sending remains available',
       organizationBalanceLow:
