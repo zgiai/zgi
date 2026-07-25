@@ -26,13 +26,14 @@ import type { Workspace } from '@/store';
 
 interface WorkspaceSwitcherProps {
   isCollapsed?: boolean;
+  onOpen?: () => void;
 }
 
 /**
  * Workspace switcher component for sidebar
  * Displays current workspace selection and allows switching between workspaces
  */
-export function WorkspaceSwitcher({ isCollapsed }: WorkspaceSwitcherProps) {
+export function WorkspaceSwitcher({ isCollapsed, onOpen }: WorkspaceSwitcherProps) {
   const t = useT('navigation');
   const tCommon = useT('common');
   const pathname = usePathname();
@@ -48,6 +49,11 @@ export function WorkspaceSwitcher({ isCollapsed }: WorkspaceSwitcherProps) {
 
   // Fetch joined workspaces from API and sync to store
   const { isLoading, isFetching } = useJoinedWorkspaces({ syncToStore: true });
+  const maybeExpandSidebar = () => {
+    if (isCollapsed && onOpen) {
+      onOpen();
+    }
+  };
   const canManageWorkspaces = canManageOrganizationWorkspaces(user);
   const isLoadingWorkspaces = (isLoading || isFetching) && workspaces.length === 0;
 
@@ -92,7 +98,13 @@ export function WorkspaceSwitcher({ isCollapsed }: WorkspaceSwitcherProps) {
   };
 
   return (
-    <DropdownMenu>
+    <DropdownMenu
+      onOpenChange={open => {
+        if (open) {
+          maybeExpandSidebar();
+        }
+      }}
+    >
       <DropdownMenuTrigger asChild>
         <button
           className={cn(

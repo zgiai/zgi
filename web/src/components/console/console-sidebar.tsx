@@ -364,7 +364,14 @@ export function ConsoleSidebar({
     <div className="flex flex-col flex-1 h-full overflow-hidden">
       {/* Workspace Switcher */}
       <div className="shrink-0 px-2 py-2">
-        <WorkspaceSwitcher isCollapsed={isCollapsed} />
+        <WorkspaceSwitcher
+          isCollapsed={isCollapsed}
+          onOpen={() => {
+            if (!isTemporarilyCollapsed) {
+              setIsCollapsed(false);
+            }
+          }}
+        />
       </div>
       {/* Navigation Items */}
       <nav
