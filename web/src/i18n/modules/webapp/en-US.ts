@@ -243,7 +243,7 @@ const messages = {
       'Review the available models and channel configuration, then return here to continue.',
     modelUnavailableMemberDescription:
       'Select another available model or ask an organization administrator to restore the model configuration.',
-    configureModel: 'Open model settings',
+    configureModel: 'Open model management',
     modelPrecheck: {
       title: 'This model has channel risks, but sending remains available',
       organizationBalanceLow:

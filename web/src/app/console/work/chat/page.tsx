@@ -40,7 +40,7 @@ function ModelUnavailableRecovery({
       </div>
       {canManageModelConfig ? (
         <Button asChild size="sm" variant="outline" className="shrink-0 bg-background">
-          <Link href="/dashboard/settings/model">{configureLabel}</Link>
+          <Link href="/dashboard/provider">{configureLabel}</Link>
         </Button>
       ) : null}
     </div>
