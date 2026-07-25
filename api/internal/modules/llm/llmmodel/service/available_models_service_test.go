@@ -399,26 +399,25 @@ func TestAvailableModels_AgentRuntimeUnionsTaggedAndCompatibleTextChatModels(t *
 	}
 }
 
-func TestAvailableModels_MatchesRouteByCatalogProviderAndExactModelName(t *testing.T) {
+func TestAvailableModels_OpenAICompatiblePrivateRouteUsesExplicitModelName(t *testing.T) {
 	organizationID := uuid.New()
-	modelName := "shared-model"
-	modelRepo := &availableModelRepoFake{models: []*llmmodel.LLMModel{
-		{ID: uuid.New(), Provider: "openai", Model: modelName, ModelName: "OpenAI Shared", IsActive: true, UseCases: types.StringArray{"text-chat"}},
-		{ID: uuid.New(), Provider: "deepseek", Model: modelName, ModelName: "DeepSeek Shared", IsActive: true, UseCases: types.StringArray{"text-chat"}},
-	}}
+	modelName := "gpt-4o"
+	modelRepo := &availableModelRepoFake{models: []*llmmodel.LLMModel{{
+		ID: uuid.New(), Provider: "openai", Model: modelName, ModelName: "GPT-4o", IsActive: true, UseCases: types.StringArray{"text-chat"},
+	}}}
 	routeRepo := &availableRouteRepoFake{routes: []*channelmodel.LLMRoute{{
 		Type:            shared.RouteTypePrivate,
-		ChannelProvider: "deepseek",
+		ChannelProvider: "openai-compatible",
 		Models:          []string{modelName},
 	}}}
 	svc := NewAvailableModelsService(modelRepo, &availableConfigRepoFake{}, &availableCustomRepoFake{}, routeRepo)
 
-	models, err := svc.ListAvailable(context.Background(), organizationID, "", "text-chat")
+	models, err := svc.ListAvailable(t.Context(), organizationID, "", "text-chat")
 	if err != nil {
-		t.Fatalf("ListAvailable returned error: %v", err)
+		t.Fatalf("ListAvailable() error = %v", err)
 	}
-	if len(models) != 1 || models[0].Provider != "deepseek" {
-		t.Fatalf("available models = %#v, want only deepseek/shared-model", models)
+	if len(models) != 1 || models[0].Provider != "openai" || models[0].Name != modelName {
+		t.Fatalf("available models = %#v, want only openai/%s", models, modelName)
 	}
 }
 

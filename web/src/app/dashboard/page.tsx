@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { endOfDay, getUnixTime, startOfDay, subDays } from 'date-fns';
+import { useLocale } from 'next-intl';
 import {
   Activity,
   ArrowRight,
@@ -26,6 +27,10 @@ import { useJoinedWorkspaces } from '@/hooks/workspace/use-joined-workspaces';
 import { organizationService } from '@/services/organization.service';
 import { providerService } from '@/services/provider.service';
 import { channelService } from '@/services/channel.service';
+import {
+  formatBillingDisplayAmountFromNormalizedCredits,
+  getBillingDisplaySettings,
+} from '@/utils/billing-display';
 import { getOrganizationDisplayName } from '@/utils/organization-display';
 
 function SectionEyebrow({ children }: { children: React.ReactNode }) {
@@ -39,6 +44,7 @@ function SectionEyebrow({ children }: { children: React.ReactNode }) {
 export default function DashboardPage() {
   const t = useT('dashboard');
   const tCommon = useT('common');
+  const locale = useLocale();
   const { organizations, currentOrganization, isLoading: isOrgLoading } = useOrganizations(true);
   const { total: workspaceTotal, isLoading: isWorkspaceLoading } = useJoinedWorkspaces({
     syncToStore: false,
@@ -94,6 +100,11 @@ export default function DashboardPage() {
     isLoading: isUsageLoading,
     refetch: refetchUsageSummary,
   } = useModelUsage(usageParams);
+  const billingDisplay = useMemo(
+    () => getBillingDisplaySettings(currentOrganization),
+    [currentOrganization]
+  );
+  const isUsageCostLoading = isUsageLoading || isOrgLoading;
 
   const stats = dashboardStatsData?.data;
   const configuredModelCount = useMemo(() => {
@@ -417,7 +428,13 @@ export default function DashboardPage() {
                   <div className="rounded-lg border border-border/70 bg-muted/20 p-4">
                     <div className="text-sm font-medium text-foreground">{t('usage.cards.totalPoints')}</div>
                     <div className="mt-2 text-2xl font-semibold tracking-tight text-foreground">
-                      {isUsageLoading ? '-' : usageSummaryData?.summary.total_points ?? 0}
+                      {isUsageCostLoading
+                        ? '-'
+                        : formatBillingDisplayAmountFromNormalizedCredits(
+                            usageSummaryData?.summary.total_points,
+                            billingDisplay,
+                            { locale }
+                          )}
                     </div>
                     <div className="mt-1 text-sm text-muted-foreground">{t('usage.cards.pointsConsumptionHint')}</div>
                   </div>
