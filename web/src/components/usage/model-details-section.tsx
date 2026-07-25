@@ -13,7 +13,10 @@ import { useCustomProviders, useProviders } from '@/hooks/provider/use-provider'
 import { useProviderI18n } from '@/hooks/provider/use-provider-i18n';
 import type { ProviderItem } from '@/services/types/provider';
 import type { ModelUsageByModelItem } from '@/services/types/statistics';
-import { formatAiCreditValue } from '@/utils/ai-credits';
+import {
+  formatBillingDisplayAmountFromNormalizedCredits,
+  type BillingDisplaySettings,
+} from '@/utils/billing-display';
 import { formatNumber } from '@/utils/format';
 import { resolveProviderCanonicalKey, resolveProviderDisplayInfo } from '@/utils/provider/meta';
 
@@ -27,6 +30,7 @@ interface ModelDetailsSectionProps {
   promptTokens: number;
   completionTokens: number;
   showSourceBreakdown: boolean;
+  billingDisplay: BillingDisplaySettings;
 }
 
 interface PieDatum {
@@ -43,6 +47,7 @@ interface ChartViewProps {
   totalAttempts: number;
   totalPoints: number;
   totalTokens: number;
+  billingDisplay: BillingDisplaySettings;
 }
 
 type DistributionMetric = 'points' | 'attempts' | 'tokens';
@@ -92,8 +97,12 @@ export function ModelDetailsSection({
   promptTokens,
   completionTokens,
   showSourceBreakdown,
+  billingDisplay,
 }: ModelDetailsSectionProps) {
   const t = useT('dashboard');
+  const locale = useLocale();
+  const formatCost = (value: number) =>
+    formatBillingDisplayAmountFromNormalizedCredits(value, billingDisplay, { locale });
 
   const pointsData = useMemo(
     () =>
@@ -136,7 +145,11 @@ export function ModelDetailsSection({
           <p className="mt-1 text-sm text-muted-foreground">{t('usage.modelDetails.subtitle')}</p>
         </div>
 
-      <TableView models={models} showSourceBreakdown={showSourceBreakdown} />
+        <TableView
+          models={models}
+          showSourceBreakdown={showSourceBreakdown}
+          billingDisplay={billingDisplay}
+        />
 
         {models.length > 1 ? (
           <ChartView
@@ -146,6 +159,7 @@ export function ModelDetailsSection({
             totalAttempts={totalAttempts}
             totalPoints={totalPoints}
             totalTokens={totalTokens}
+            billingDisplay={billingDisplay}
           />
         ) : (
           <div className="border-t px-6 py-5 text-sm text-muted-foreground">
@@ -157,7 +171,7 @@ export function ModelDetailsSection({
           <span>
             {t('usage.modelDetails.totalModels', {
               count: models.length,
-              total: formatAiCreditValue(totalPoints),
+              total: formatCost(totalPoints),
             })}
           </span>
           <div className="flex flex-wrap gap-4">
@@ -173,12 +187,16 @@ export function ModelDetailsSection({
 function TableView({
   models,
   showSourceBreakdown,
+  billingDisplay,
 }: {
   models: ModelUsageByModelItem[];
   showSourceBreakdown: boolean;
+  billingDisplay: BillingDisplaySettings;
 }) {
   const t = useT('dashboard');
   const locale = useLocale();
+  const formatCost = (value: number) =>
+    formatBillingDisplayAmountFromNormalizedCredits(value, billingDisplay, { locale });
   const getProviderName = useProviderI18n();
   const { items: officialProviders } = useProviders({ limit: 200, refetchOnWindowFocus: false });
   const { items: customProviders } = useCustomProviders({ limit: 200, refetchOnWindowFocus: false });
@@ -269,20 +287,12 @@ function TableView({
                 <TableCell className={centeredCellClassName}>{formatNumber(model.completion_tokens, 2)}</TableCell>
                 {showSourceBreakdown ? (
                   <>
-                    <TableCell className={centeredCellClassName}>
-                      {formatAiCreditValue(model.official_points)}
-                    </TableCell>
-                    <TableCell className={centeredCellClassName}>
-                      {formatAiCreditValue(model.private_points)}
-                    </TableCell>
-                    <TableCell className={centeredCellClassName}>
-                      {formatAiCreditValue(model.total_points)}
-                    </TableCell>
+                    <TableCell className={centeredCellClassName}>{formatCost(model.official_points)}</TableCell>
+                    <TableCell className={centeredCellClassName}>{formatCost(model.private_points)}</TableCell>
+                    <TableCell className={centeredCellClassName}>{formatCost(model.total_points)}</TableCell>
                   </>
                 ) : (
-                  <TableCell className={centeredCellClassName}>
-                    {formatAiCreditValue(model.total_points)}
-                  </TableCell>
+                  <TableCell className={centeredCellClassName}>{formatCost(model.total_points)}</TableCell>
                 )}
                 <TableCell className="px-6 text-center font-medium">{formatShare(model.points_share)}</TableCell>
               </TableRow>
@@ -294,8 +304,17 @@ function TableView({
   );
 }
 
-function ChartView({ attemptsData, pointsData, tokensData, totalAttempts, totalPoints, totalTokens }: ChartViewProps) {
+function ChartView({
+  attemptsData,
+  pointsData,
+  tokensData,
+  totalAttempts,
+  totalPoints,
+  totalTokens,
+  billingDisplay,
+}: ChartViewProps) {
   const t = useT('dashboard');
+  const locale = useLocale();
   const [metric, setMetric] = useState<DistributionMetric>('points');
   const [showAll, setShowAll] = useState(false);
 
@@ -326,11 +345,25 @@ function ChartView({ attemptsData, pointsData, tokensData, totalAttempts, totalP
       data: pointsData,
       title: t('usage.chart.pointsDistribution'),
       totalLabel: t('usage.chart.totalPoints'),
-      totalValue: formatAiCreditValue(totalPoints),
-      unitLabel: t('usage.chart.points'),
-      formatValue: (value: number) => formatAiCreditValue(value),
+      totalValue: formatBillingDisplayAmountFromNormalizedCredits(totalPoints, billingDisplay, {
+        locale,
+      }),
+      unitLabel: '',
+      formatValue: (value: number) =>
+        formatBillingDisplayAmountFromNormalizedCredits(value, billingDisplay, { locale }),
     };
-  }, [attemptsData, metric, pointsData, t, tokensData, totalAttempts, totalPoints, totalTokens]);
+  }, [
+    attemptsData,
+    billingDisplay,
+    locale,
+    metric,
+    pointsData,
+    t,
+    tokensData,
+    totalAttempts,
+    totalPoints,
+    totalTokens,
+  ]);
 
   const rankedItems = useMemo(() => {
     const items = [...activeChart.data];
@@ -407,7 +440,8 @@ function ChartView({ attemptsData, pointsData, tokensData, totalAttempts, totalP
               </div>
               <Progress value={Number(item.percentage.replace('%', ''))} className="h-2.5" />
               <div className="mt-2 text-xs text-muted-foreground">
-                {activeChart.formatValue(item.value)} {activeChart.unitLabel}
+                {activeChart.formatValue(item.value)}
+                {activeChart.unitLabel ? ` ${activeChart.unitLabel}` : null}
               </div>
             </div>
           ))}
@@ -429,7 +463,9 @@ function ChartView({ attemptsData, pointsData, tokensData, totalAttempts, totalP
           <div className="mt-3 text-4xl font-semibold tracking-tight text-primary">
             {activeChart.totalValue}
           </div>
-          <div className="mt-2 text-sm text-muted-foreground">{activeChart.unitLabel}</div>
+          {activeChart.unitLabel ? (
+            <div className="mt-2 text-sm text-muted-foreground">{activeChart.unitLabel}</div>
+          ) : null}
           {rankedItems[0] ? (
             <div className="mt-6 rounded-lg border border-border/70 bg-background/70 p-4">
               <div className="text-xs font-medium uppercase tracking-[0.08em] text-muted-foreground">
@@ -445,8 +481,8 @@ function ChartView({ attemptsData, pointsData, tokensData, totalAttempts, totalP
                 </span>
               </div>
               <div className="mt-2 text-sm text-muted-foreground">
-                {rankedItems[0].percentage} · {activeChart.formatValue(rankedItems[0].value)}{' '}
-                {activeChart.unitLabel}
+                {rankedItems[0].percentage} · {activeChart.formatValue(rankedItems[0].value)}
+                {activeChart.unitLabel ? ` ${activeChart.unitLabel}` : null}
               </div>
             </div>
           ) : null}

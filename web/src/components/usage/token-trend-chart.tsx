@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import { format, parseISO } from 'date-fns';
+import { useLocale } from 'next-intl';
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 
 import { useT } from '@/i18n';
@@ -9,12 +10,16 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
 import type { ModelUsageDailyItem } from '@/services/types/statistics';
-import { formatAiCreditValue } from '@/utils/ai-credits';
+import {
+  formatBillingDisplayAmountFromNormalizedCredits,
+  type BillingDisplaySettings,
+} from '@/utils/billing-display';
 import { formatNumber } from '@/utils/format';
 
 interface TokenTrendChartProps {
   dailyData: ModelUsageDailyItem[];
   showSourceBreakdown: boolean;
+  billingDisplay: BillingDisplaySettings;
 }
 
 interface StackedPointsShapeProps {
@@ -39,7 +44,14 @@ const COLORS = {
   tokens: '#2563EB',
 };
 
-function StackedPointsBarShape({ x = 0, y = 0, width = 0, height = 0, payload, fill = COLORS.points }: StackedPointsShapeProps) {
+function StackedPointsBarShape({
+  x = 0,
+  y = 0,
+  width = 0,
+  height = 0,
+  payload,
+  fill = COLORS.points,
+}: StackedPointsShapeProps) {
   const officialPoints = payload?.officialPoints ?? 0;
   const privatePoints = payload?.privatePoints ?? 0;
   const totalPoints = payload?.totalPoints ?? 0;
@@ -69,21 +81,22 @@ function StackedPointsBarShape({ x = 0, y = 0, width = 0, height = 0, payload, f
         />
       ) : null}
       {officialHeight > 0 ? (
-        <rect
-          x={x}
-          y={y}
-          width={width}
-          height={officialHeight}
-          fill={COLORS.official}
-        />
+        <rect x={x} y={y} width={width} height={officialHeight} fill={COLORS.official} />
       ) : null}
     </g>
   );
 }
 
-export function TokenTrendChart({ dailyData, showSourceBreakdown }: TokenTrendChartProps) {
+export function TokenTrendChart({
+  dailyData,
+  showSourceBreakdown,
+  billingDisplay,
+}: TokenTrendChartProps) {
   const t = useT('dashboard');
+  const locale = useLocale();
   const [chartMode, setChartMode] = useState<ChartMode>('points');
+  const formatCost = (value: number) =>
+    formatBillingDisplayAmountFromNormalizedCredits(value, billingDisplay, { locale });
 
   const chartData = useMemo(
     () =>
@@ -91,6 +104,9 @@ export function TokenTrendChart({ dailyData, showSourceBreakdown }: TokenTrendCh
         const officialPoints = item.official_points;
         const privatePoints = item.private_points;
         const totalPoints = Math.max(item.total_points, officialPoints + privatePoints);
+        const officialTokens = item.official_tokens;
+        const privateTokens = item.private_tokens;
+        const totalTokens = Math.max(item.total_tokens, officialTokens + privateTokens);
 
         return {
           date: format(parseISO(item.date), 'MM-dd'),
@@ -98,12 +114,15 @@ export function TokenTrendChart({ dailyData, showSourceBreakdown }: TokenTrendCh
           officialPoints,
           privatePoints,
           totalPoints,
-          totalTokens: item.total_tokens,
+          officialTokens,
+          privateTokens,
+          totalTokens,
           attemptCount: item.attempt_count,
           successCount: item.success_count,
           failedCount: item.failed_count,
           partialCount: item.partial_count,
           hasPointBreakdown: officialPoints > 0 || privatePoints > 0,
+          hasTokenBreakdown: officialTokens > 0 || privateTokens > 0,
         };
       }),
     [dailyData]
@@ -114,8 +133,17 @@ export function TokenTrendChart({ dailyData, showSourceBreakdown }: TokenTrendCh
     [chartData, showSourceBreakdown]
   );
 
+  const hasTokenBreakdownData = useMemo(
+    () => showSourceBreakdown && chartData.some(item => item.hasTokenBreakdown),
+    [chartData, showSourceBreakdown]
+  );
+
   const totalValue = useMemo(
-    () => chartData.reduce((sum, item) => sum + (chartMode === 'points' ? item.totalPoints : item.totalTokens), 0),
+    () =>
+      chartData.reduce(
+        (sum, item) => sum + (chartMode === 'points' ? item.totalPoints : item.totalTokens),
+        0
+      ),
     [chartData, chartMode]
   );
 
@@ -126,8 +154,9 @@ export function TokenTrendChart({ dailyData, showSourceBreakdown }: TokenTrendCh
         : t('usage.chart.pointConsumptionSeries')
       : t('usage.chart.totalTokensSeries');
 
-  const unitLabel = chartMode === 'points' ? t('usage.chart.points') : t('usage.chart.tokens');
+  const unitLabel = chartMode === 'points' ? '' : t('usage.chart.tokens');
   const showStackedPoints = chartMode === 'points' && hasPointBreakdownData;
+  const showStackedTokens = chartMode === 'tokens' && hasTokenBreakdownData;
 
   return (
     <Card>
@@ -135,7 +164,9 @@ export function TokenTrendChart({ dailyData, showSourceBreakdown }: TokenTrendCh
         <div className="mb-6 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div>
             <h2 className="text-lg font-semibold">{t('usage.chart.dailyTrend')}</h2>
-            <p className="mt-1 text-sm text-muted-foreground">{t('usage.chart.dailyTrendSubtitle')}</p>
+            <p className="mt-1 text-sm text-muted-foreground">
+              {t('usage.chart.dailyTrendSubtitle')}
+            </p>
           </div>
           <div className="flex flex-wrap gap-2 rounded-lg border p-1">
             <Button
@@ -148,7 +179,9 @@ export function TokenTrendChart({ dailyData, showSourceBreakdown }: TokenTrendCh
               )}
               onClick={() => setChartMode('points')}
             >
-              {hasPointBreakdownData ? t('usage.chart.totalPointsSeries') : t('usage.chart.pointConsumptionSeries')}
+              {hasPointBreakdownData
+                ? t('usage.chart.totalPointsSeries')
+                : t('usage.chart.pointConsumptionSeries')}
             </Button>
             <Button
               variant="ghost"
@@ -186,7 +219,7 @@ export function TokenTrendChart({ dailyData, showSourceBreakdown }: TokenTrendCh
                   tickLine={false}
                   tick={{ fontSize: 12, fill: '#6B7280' }}
                   tickFormatter={value =>
-                    chartMode === 'points' ? formatAiCreditValue(value) : formatNumber(value, 2) || '0'
+                    chartMode === 'points' ? formatCost(value) : formatNumber(value, 2) || '0'
                   }
                   dx={-10}
                 />
@@ -201,16 +234,40 @@ export function TokenTrendChart({ dailyData, showSourceBreakdown }: TokenTrendCh
                         {showStackedPoints ? (
                           <div className="space-y-1 text-muted-foreground">
                             <div>
-                              {t('usage.filters.sourceOfficial')}: {formatAiCreditValue(data.officialPoints)}{' '}
-                              {t('usage.chart.points')}
+                              {t('usage.filters.sourceOfficial')}: {formatCost(data.officialPoints)}
                             </div>
                             <div>
-                              {t('usage.filters.sourcePrivate')}: {formatAiCreditValue(data.privatePoints)}{' '}
-                              {t('usage.chart.points')}
+                              {t('usage.filters.sourcePrivate')}: {formatCost(data.privatePoints)}
                             </div>
                             <div>
-                              {t('usage.chart.totalPointsSeries')}: {formatAiCreditValue(data.totalPoints)}{' '}
-                              {t('usage.chart.points')}
+                              {t('usage.chart.totalPointsSeries')}: {formatCost(data.totalPoints)}
+                            </div>
+                            <div>
+                              {t('usage.cards.attemptCount')}: {formatNumber(data.attemptCount)}
+                            </div>
+                            <div>
+                              {t('usage.cards.successCount')}: {formatNumber(data.successCount)} ·{' '}
+                              {t('usage.cards.failedCount')}: {formatNumber(data.failedCount)}
+                            </div>
+                            {data.partialCount > 0 ? (
+                              <div>
+                                {t('usage.cards.partialCount')}: {formatNumber(data.partialCount)}
+                              </div>
+                            ) : null}
+                          </div>
+                        ) : showStackedTokens ? (
+                          <div className="space-y-1 text-muted-foreground">
+                            <div>
+                              {t('usage.chart.officialTokensSeries')}:{' '}
+                              {formatNumber(data.officialTokens, 2)} {unitLabel}
+                            </div>
+                            <div>
+                              {t('usage.chart.privateTokensSeries')}:{' '}
+                              {formatNumber(data.privateTokens, 2)} {unitLabel}
+                            </div>
+                            <div>
+                              {t('usage.chart.totalTokensSeries')}:{' '}
+                              {formatNumber(data.totalTokens, 2)} {unitLabel}
                             </div>
                             <div>
                               {t('usage.cards.attemptCount')}: {formatNumber(data.attemptCount)}
@@ -230,7 +287,7 @@ export function TokenTrendChart({ dailyData, showSourceBreakdown }: TokenTrendCh
                             <div>
                               {seriesLabel}:{' '}
                               {chartMode === 'points'
-                                ? formatAiCreditValue(data.totalPoints)
+                                ? formatCost(data.totalPoints)
                                 : formatNumber(data.totalTokens, 2)}{' '}
                               {unitLabel}
                             </div>
@@ -261,6 +318,13 @@ export function TokenTrendChart({ dailyData, showSourceBreakdown }: TokenTrendCh
                     minPointSize={2}
                     shape={(props: StackedPointsShapeProps) => <StackedPointsBarShape {...props} />}
                   />
+                ) : showStackedTokens ? (
+                  <Bar
+                    dataKey="officialTokens"
+                    stackId="tokens"
+                    fill={COLORS.official}
+                    maxBarSize={60}
+                  />
                 ) : (
                   <Bar
                     dataKey={chartMode === 'points' ? 'totalPoints' : 'totalTokens'}
@@ -270,6 +334,15 @@ export function TokenTrendChart({ dailyData, showSourceBreakdown }: TokenTrendCh
                     minPointSize={2}
                   />
                 )}
+                {showStackedTokens ? (
+                  <Bar
+                    dataKey="privateTokens"
+                    stackId="tokens"
+                    fill={COLORS.private}
+                    radius={[4, 4, 0, 0]}
+                    maxBarSize={60}
+                  />
+                ) : null}
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -281,6 +354,11 @@ export function TokenTrendChart({ dailyData, showSourceBreakdown }: TokenTrendCh
               <LegendItem color={COLORS.official} label={t('usage.filters.sourceOfficial')} />
               <LegendItem color={COLORS.private} label={t('usage.filters.sourcePrivate')} />
             </div>
+          ) : showStackedTokens ? (
+            <div className="flex flex-wrap items-center gap-4">
+              <LegendItem color={COLORS.official} label={t('usage.chart.officialTokensSeries')} />
+              <LegendItem color={COLORS.private} label={t('usage.chart.privateTokensSeries')} />
+            </div>
           ) : (
             <LegendItem
               color={chartMode === 'points' ? COLORS.points : COLORS.tokens}
@@ -289,9 +367,9 @@ export function TokenTrendChart({ dailyData, showSourceBreakdown }: TokenTrendCh
           )}
           <span className="text-muted-foreground">
             {t('usage.chart.totalLabel', {
-              count: chartMode === 'points' ? formatAiCreditValue(totalValue) : formatNumber(totalValue, 2),
-            })}{' '}
-            {unitLabel}
+              count: chartMode === 'points' ? formatCost(totalValue) : formatNumber(totalValue, 2),
+            })}
+            {unitLabel ? ` ${unitLabel}` : null}
           </span>
         </div>
       </CardContent>
