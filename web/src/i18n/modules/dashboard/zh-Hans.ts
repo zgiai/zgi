@@ -236,6 +236,11 @@ const messages: DashboardMessages = {
       dataset: '知识库',
       agent: '智能体',
       aichat: '通用对话',
+      'image-runtime': '绘图',
+      data_library_file: '文档向量生成与问答',
+      prompt_optimizer: '提示词优化',
+      prompt_playground: '提示词调试台',
+      automation_task_draft: '定时任务草稿生成',
       unknown: '其他',
     },
     modelDetails: {

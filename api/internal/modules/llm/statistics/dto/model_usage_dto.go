@@ -5,7 +5,7 @@ import "github.com/google/uuid"
 type ModelUsageRequest struct {
 	StartTime         int64      `form:"start_time" binding:"required"`
 	EndTime           int64      `form:"end_time" binding:"required"`
-	AppType           *string    `form:"app_type" binding:"omitempty,oneof=workflow dataset agent aichat unknown"`
+	AppType           *string    `form:"app_type" binding:"omitempty,oneof=workflow dataset agent aichat image-runtime data_library_file prompt_optimizer prompt_playground automation_task_draft unknown"`
 	AppID             *uuid.UUID `form:"app_id"`
 	ModelName         *string    `form:"model_name"`
 	BillingLane       *string    `form:"billing_lane" binding:"omitempty,oneof=platform private"`

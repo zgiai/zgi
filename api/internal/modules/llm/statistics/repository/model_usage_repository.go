@@ -273,7 +273,12 @@ func applyUsageBillFilters(query *gorm.DB, alias string, filters modelUsageFilte
 }
 
 func usageBillAppTypeBucketExpr(alias string) string {
-	return "COALESCE(NULLIF(" + column(alias, "app_type") + ", ''), 'unknown')"
+	appType := column(alias, "app_type")
+	return "CASE WHEN " + appType + " IN (" +
+		"'workflow', 'dataset', 'agent', 'aichat', " +
+		"'image-runtime', 'data_library_file', 'prompt_optimizer', " +
+		"'prompt_playground', 'automation_task_draft', 'unknown'" +
+		") THEN " + appType + " ELSE 'unknown' END"
 }
 
 func buildModelUsageByModelItems(rows []modelUsageModelRow, totalPoints int64) []dto.ModelUsageByModelItem {

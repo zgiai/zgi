@@ -79,6 +79,11 @@ const messages = {
       dataset: 'Knowledge Base',
       agent: 'Agent',
       aichat: 'General Chat',
+      'image-runtime': 'Image Generation',
+      data_library_file: 'Document Vectorization & Q&A',
+      prompt_optimizer: 'Prompt Optimization',
+      prompt_playground: 'Prompt Playground',
+      automation_task_draft: 'Scheduled Task Draft Generation',
       unknown: 'Other',
     },
     modelDetails: {

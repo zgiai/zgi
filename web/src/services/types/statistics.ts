@@ -1,6 +1,8 @@
 // Statistics types for LLM usage analytics.
 
-export type ModelUsageAppType = 'workflow' | 'dataset' | 'agent' | 'aichat' | 'unknown';
+import type { ModelUsageAppType } from '@/utils/model-usage-app-type';
+
+export type { ModelUsageAppType } from '@/utils/model-usage-app-type';
 
 export interface ModelUsagePeriod {
   start_time: number;

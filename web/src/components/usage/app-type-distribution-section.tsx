@@ -7,12 +7,13 @@ import { useLocale } from 'next-intl';
 
 import { useT } from '@/i18n';
 import { Card, CardContent } from '@/components/ui/card';
-import type { ModelUsageAppType, ModelUsageByAppTypeItem } from '@/services/types/statistics';
+import type { ModelUsageByAppTypeItem } from '@/services/types/statistics';
 import {
   formatBillingDisplayAmountFromNormalizedCredits,
   type BillingDisplaySettings,
 } from '@/utils/billing-display';
 import { formatNumber } from '@/utils/format';
+import { normalizeModelUsageAppType } from '@/utils/model-usage-app-type';
 
 const COLORS = ['#0F766E', '#2563EB', '#CA8A04', '#9333EA'];
 
@@ -35,13 +36,18 @@ export function AppTypeDistributionSection({
     formatBillingDisplayAmountFromNormalizedCredits(value, billingDisplay, { locale });
 
   const chartData = useMemo(() => {
-    return items.map((item, index) => ({
-      attempts: item.attempt_count,
-      color: COLORS[index % COLORS.length],
-      label: t(`usage.appTypes.${item.app_type}` as `usage.appTypes.${ModelUsageAppType}`),
-      percentage: formatShare(item.points_share),
-      value: item.total_points,
-    }));
+    return items.map((item, index) => {
+      const appType = normalizeModelUsageAppType(item.app_type);
+
+      return {
+        appType,
+        attempts: item.attempt_count,
+        color: COLORS[index % COLORS.length],
+        label: t(`usage.appTypes.${appType}`),
+        percentage: formatShare(item.points_share),
+        value: item.total_points,
+      };
+    });
   }, [items, t]);
 
   return (
@@ -96,7 +102,7 @@ export function AppTypeDistributionSection({
 
             <div className="space-y-3">
               {chartData.map(item => (
-                <div key={item.label} className="rounded-lg border bg-card p-4">
+                <div key={item.appType} className="rounded-lg border bg-card p-4">
                   <div className="mb-2 flex items-center gap-2 text-sm font-medium">
                     <span className="h-3 w-3 rounded-full" style={{ backgroundColor: item.color }} />
                     <span>{item.label}</span>
