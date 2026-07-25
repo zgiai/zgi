@@ -34,7 +34,7 @@ function ModelUnavailableRecovery({
     <div className="flex w-full items-center justify-between gap-4">
       <div className="min-w-0">
         <p className="font-medium">{message}</p>
-        <p className="mt-0.5 text-xs text-destructive/80">
+        <p className="mt-0.5 text-xs text-amber-800 dark:text-amber-200">
           {canManageModelConfig ? adminDescription : memberDescription}
         </p>
       </div>
@@ -208,7 +208,7 @@ function ChatPageContent() {
       {isSelectedModelUnavailable ? (
         <div
           role="alert"
-          className="shrink-0 border-b border-destructive/20 bg-destructive/5 px-4 py-2 text-sm text-destructive"
+          className="shrink-0 border-b border-amber-300/70 bg-amber-50 px-4 py-2 text-sm text-amber-950 dark:border-amber-800/70 dark:bg-amber-950/30 dark:text-amber-100"
         >
           <ModelUnavailableRecovery
             message={t('consoleChat.modelUnavailable')}
