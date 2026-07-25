@@ -62,6 +62,8 @@ export interface ModelUsageDailyItem {
   prompt_tokens: number;
   completion_tokens: number;
   total_tokens: number;
+  official_tokens: number;
+  private_tokens: number;
   official_points: number;
   private_points: number;
   total_points: number;

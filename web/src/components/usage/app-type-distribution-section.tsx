@@ -3,25 +3,36 @@
 import { useMemo } from 'react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts';
 import { Inbox } from 'lucide-react';
+import { useLocale } from 'next-intl';
 
 import { useT } from '@/i18n';
 import { Card, CardContent } from '@/components/ui/card';
 import type { ModelUsageAppType, ModelUsageByAppTypeItem } from '@/services/types/statistics';
-import { formatAiCreditValue } from '@/utils/ai-credits';
+import {
+  formatBillingDisplayAmountFromNormalizedCredits,
+  type BillingDisplaySettings,
+} from '@/utils/billing-display';
 import { formatNumber } from '@/utils/format';
 
 const COLORS = ['#0F766E', '#2563EB', '#CA8A04', '#9333EA'];
 
 interface AppTypeDistributionSectionProps {
   items: ModelUsageByAppTypeItem[];
+  billingDisplay: BillingDisplaySettings;
 }
 
 function formatShare(share: number): string {
   return `${formatNumber(share * 100, 2)}%`;
 }
 
-export function AppTypeDistributionSection({ items }: AppTypeDistributionSectionProps) {
+export function AppTypeDistributionSection({
+  items,
+  billingDisplay,
+}: AppTypeDistributionSectionProps) {
   const t = useT('dashboard');
+  const locale = useLocale();
+  const formatCost = (value: number) =>
+    formatBillingDisplayAmountFromNormalizedCredits(value, billingDisplay, { locale });
 
   const chartData = useMemo(() => {
     return items.map((item, index) => ({
@@ -66,8 +77,8 @@ export function AppTypeDistributionSection({ items }: AppTypeDistributionSection
                         <div className="rounded-lg border bg-popover p-3 text-sm shadow-md">
                           <div className="font-medium">{datum.label}</div>
                           <div className="text-muted-foreground">
-                            {t('usage.chart.totalPointsSeries')}: {formatAiCreditValue(datum.value)}{' '}
-                            {t('usage.chart.points')} ({datum.percentage})
+                            {t('usage.chart.totalPointsSeries')}: {formatCost(datum.value)} (
+                            {datum.percentage})
                           </div>
                         </div>
                       );
@@ -77,7 +88,7 @@ export function AppTypeDistributionSection({ items }: AppTypeDistributionSection
               </ResponsiveContainer>
               <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
                 <div className="text-2xl font-bold text-primary">
-                  {formatAiCreditValue(items.reduce((sum, item) => sum + item.total_points, 0))}
+                  {formatCost(items.reduce((sum, item) => sum + item.total_points, 0))}
                 </div>
                 <div className="text-sm text-muted-foreground">{t('usage.chart.totalPoints')}</div>
               </div>
@@ -93,7 +104,7 @@ export function AppTypeDistributionSection({ items }: AppTypeDistributionSection
                   </div>
                   <div className="flex flex-wrap gap-4 text-sm text-muted-foreground">
                     <span>
-                      {t('usage.appTypeDistribution.totalPoints')}: {formatAiCreditValue(item.value)}
+                      {t('usage.appTypeDistribution.totalPoints')}: {formatCost(item.value)}
                     </span>
                     <span>
                       {t('usage.appTypeDistribution.attempts')}: {formatNumber(item.attempts)}

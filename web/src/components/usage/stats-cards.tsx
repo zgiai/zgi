@@ -1,11 +1,15 @@
 'use client';
 
 import { useMemo } from 'react';
+import { useLocale } from 'next-intl';
 
 import { useT } from '@/i18n';
 import { Card, CardContent } from '@/components/ui/card';
 import type { ModelUsageByModelItem, ModelUsageSummary } from '@/services/types/statistics';
-import { formatAiCreditValue } from '@/utils/ai-credits';
+import {
+  formatBillingDisplayAmountFromNormalizedCredits,
+  type BillingDisplaySettings,
+} from '@/utils/billing-display';
 import { formatNumber } from '@/utils/format';
 
 const CHART_COLORS = ['#3B82F6', '#F59E0B', '#22C55E'];
@@ -14,6 +18,7 @@ interface StatsCardsProps {
   summary: ModelUsageSummary;
   models: ModelUsageByModelItem[];
   showSourceBreakdown: boolean;
+  billingDisplay: BillingDisplaySettings;
 }
 
 function formatShare(share: number): string {
@@ -40,8 +45,16 @@ function TopModelsList({ models }: { models: Array<{ color: string; name: string
   );
 }
 
-export function StatsCards({ summary, models, showSourceBreakdown }: StatsCardsProps) {
+export function StatsCards({
+  summary,
+  models,
+  showSourceBreakdown,
+  billingDisplay,
+}: StatsCardsProps) {
   const t = useT('dashboard');
+  const locale = useLocale();
+  const formatCost = (value: number) =>
+    formatBillingDisplayAmountFromNormalizedCredits(value, billingDisplay, { locale });
 
   const topModels = useMemo(() => {
     return models.slice(0, 3).map((model, index) => ({
@@ -91,7 +104,7 @@ export function StatsCards({ summary, models, showSourceBreakdown }: StatsCardsP
           <Card>
             <CardContent className="space-y-1.5 p-5">
               <div className="text-base">{t('usage.cards.officialPoints')}</div>
-              <div className="text-3xl font-bold">{formatAiCreditValue(summary.official_points)}</div>
+              <div className="text-3xl font-bold">{formatCost(summary.official_points)}</div>
               <div className="text-sm text-muted-foreground">{t('usage.cards.officialPointsHint')}</div>
             </CardContent>
           </Card>
@@ -99,7 +112,7 @@ export function StatsCards({ summary, models, showSourceBreakdown }: StatsCardsP
           <Card>
             <CardContent className="space-y-1.5 p-5">
               <div className="text-base">{t('usage.cards.privatePoints')}</div>
-              <div className="text-3xl font-bold">{formatAiCreditValue(summary.private_points)}</div>
+              <div className="text-3xl font-bold">{formatCost(summary.private_points)}</div>
               <div className="text-sm text-muted-foreground">{t('usage.cards.privatePointsHint')}</div>
             </CardContent>
           </Card>
@@ -107,7 +120,7 @@ export function StatsCards({ summary, models, showSourceBreakdown }: StatsCardsP
           <Card>
             <CardContent className="space-y-1.5 p-5">
               <div className="text-base">{t('usage.cards.totalPoints')}</div>
-              <div className="text-3xl font-bold">{formatAiCreditValue(summary.total_points)}</div>
+              <div className="text-3xl font-bold">{formatCost(summary.total_points)}</div>
               <div className="mb-2 text-xs text-muted-foreground">
                 {t('usage.cards.modelCount', { count: models.length })}
               </div>
@@ -120,8 +133,10 @@ export function StatsCards({ summary, models, showSourceBreakdown }: StatsCardsP
           <Card>
             <CardContent className="space-y-1.5 p-5">
               <div className="text-base">{t('usage.cards.pointsConsumption')}</div>
-              <div className="text-3xl font-bold">{formatAiCreditValue(summary.total_points)}</div>
-              <div className="text-sm text-muted-foreground">{t('usage.cards.pointsConsumptionHint')}</div>
+              <div className="text-3xl font-bold">{formatCost(summary.total_points)}</div>
+              <div className="text-sm text-muted-foreground">
+                {t('usage.cards.pointsConsumptionHint')}
+              </div>
             </CardContent>
           </Card>
 
