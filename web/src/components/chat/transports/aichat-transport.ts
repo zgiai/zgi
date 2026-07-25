@@ -48,21 +48,20 @@ import {
 } from '@/components/chat/controllers/aichat';
 
 function sanitizeAIChatMessage(message: AIChatMessage): AIChatMessage {
-  const sanitizedAnswer = sanitizeModelOutputValue(message.answer);
-  if (sanitizedAnswer === message.answer) {
-    return message;
-  }
-
-  const isSensitiveOutputBlocked = isSensitiveOutputBlockedValue(sanitizedAnswer);
+  const sanitizedMessage = sanitizeModelOutputValue(message) as AIChatMessage;
+  const presentationBlocked = sanitizedMessage.metadata?.presentation?.items?.some(
+    item => item.kind === 'text' && isSensitiveOutputBlockedValue(item.content)
+  );
+  const isSensitiveOutputBlocked =
+    isSensitiveOutputBlockedValue(sanitizedMessage.answer) || presentationBlocked === true;
   return {
-    ...message,
-    answer: typeof sanitizedAnswer === 'string' ? sanitizedAnswer : message.answer,
+    ...sanitizedMessage,
     metadata: isSensitiveOutputBlocked
       ? {
-          ...message.metadata,
+          ...sanitizedMessage.metadata,
           sensitiveOutputBlocked: true,
         }
-      : message.metadata,
+      : sanitizedMessage.metadata,
   };
 }
 

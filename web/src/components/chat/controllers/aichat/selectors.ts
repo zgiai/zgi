@@ -516,6 +516,8 @@ export function timelineFromAIChatMessage(message: AIChatMessage): AIChatAgentic
             message: pendingUserInputRequest.message?.trim(),
             questions: pendingQuestions,
             created_at: pendingUserInputRequest.created_at,
+            presentation_id: pendingUserInputRequest.presentation_id,
+            presentation_sequence: pendingUserInputRequest.presentation_sequence,
           },
         ]
       : [];
@@ -537,6 +539,8 @@ export function timelineFromAIChatMessage(message: AIChatMessage): AIChatAgentic
         message: response.message?.trim(),
         answers,
         created_at: response.answered_at,
+        presentation_id: response.presentation_id,
+        presentation_sequence: response.presentation_sequence,
       };
     })
     .filter((item): item is AIChatAgenticTimelineItem => item !== null);
@@ -985,6 +989,8 @@ function timelineItemIdentity(item: AIChatAgenticTimelineItem): string {
         item.content.trim().replace(/\s+/g, ' '),
       ].join(':');
     }
+    case 'process_text':
+      return ['process-text', item.segment_id || item.id].join(':');
     case 'skill_event': {
       return timelineSkillInvocationIdentity(item.invocation);
     }

@@ -27,6 +27,7 @@ import type {
   AIChatGeneratedFile,
   AIChatMessage,
   AIChatMessageFile,
+  AIChatPresentationItem,
 } from '@/services/types/aichat';
 import { isSensitiveOutputBlockedValue } from '@/utils/model-output-filter';
 import type { ChatBranchNavigation } from '@/components/chat/utils/message-tree';
@@ -57,11 +58,18 @@ import {
   summarizeAIChatTimeline,
 } from '@/components/chat/controllers/aichat/debug';
 import { MAX_AICHAT_BRANCHES } from '@/components/chat/variants/aichat/types';
+import {
+  orderedPresentationTimeline,
+  presentationProjectionFromMetadata,
+  splitAnswerAroundTimeline,
+} from '@/components/chat/controllers/aichat/presentation-order';
 
 interface AIChatMessageBubbleProps {
   message: AIChatMessage;
   isSending?: boolean;
   timeline?: AIChatAgenticTimelineItem[];
+  presentationItems?: AIChatPresentationItem[];
+  answerBeforeTimelineLength?: number;
   skillDisplayById: AIChatSkillDisplayMap;
   isLastMessage?: boolean;
   canReplaceRoot?: boolean;
@@ -1136,6 +1144,8 @@ export function AIChatMessageBubble({
   message,
   isSending = false,
   timeline = [],
+  presentationItems,
+  answerBeforeTimelineLength,
   skillDisplayById,
   isLastMessage = false,
   canReplaceRoot = false,
@@ -1242,23 +1252,60 @@ export function AIChatMessageBubble({
     message.status,
     runtimeTimeline,
   ]);
-  const hasTimeline = displayTimeline.length > 0;
+  const resolvedPresentationItems = useMemo(
+    () => presentationItems ?? presentationProjectionFromMetadata(message.metadata)?.items,
+    [message.metadata, presentationItems]
+  );
+  const isPresentationV2 = Boolean(resolvedPresentationItems?.length);
+  const orderedDisplayTimeline = useMemo(
+    () =>
+      isPresentationV2
+        ? orderedPresentationTimeline(resolvedPresentationItems, displayTimeline)
+        : displayTimeline,
+    [displayTimeline, isPresentationV2, resolvedPresentationItems]
+  );
+  const hasTimeline = orderedDisplayTimeline.length > 0;
+  const { leadingAnswer, trailingAnswer } = useMemo(() => {
+    if (isPresentationV2) {
+      return { leadingAnswer: '', trailingAnswer: displayAnswer };
+    }
+    return splitAnswerAroundTimeline(
+      displayAnswer,
+      isSensitiveBlocked || !hasTimeline ? undefined : answerBeforeTimelineLength
+    );
+  }, [
+    answerBeforeTimelineLength,
+    displayAnswer,
+    hasTimeline,
+    isPresentationV2,
+    isSensitiveBlocked,
+  ]);
+  const hasLeadingAnswer = Boolean(leadingAnswer.trim());
+  const hasTrailingAnswer = Boolean(trailingAnswer.trim());
   const streamingStatus = useMemo(() => {
     if (isStreaming || isWaitingForClientAction) {
-      return streamingOperationStatus(displayTimeline, isStreaming);
+      return streamingOperationStatus(orderedDisplayTimeline, isStreaming);
     }
     return null;
-  }, [displayTimeline, isStreaming, isWaitingForClientAction]);
+  }, [isStreaming, isWaitingForClientAction, orderedDisplayTimeline]);
   const streamingStatusLabel = useMemo(
     () =>
-      streamingStatus
+      streamingStatus && streamingStatus.key !== 'toolCompleted'
         ? streamingOperationStatusText(streamingStatus, (key, values) => t(key as never, values))
         : null,
     [streamingStatus, t]
   );
+  const showInitialPlanningStatus =
+    isStreaming &&
+    !streamingStatusLabel &&
+    !userInputRequest &&
+    !hasGeneratedImagePreviews &&
+    !hasTimeline &&
+    !resolvedPresentationItems?.length &&
+    !answer;
   const shouldOpenTimelineByDefault =
     isActiveMessage ||
-    displayTimeline.some(
+    orderedDisplayTimeline.some(
       item =>
         item.type === 'user_input_request' ||
         item.type === 'user_input_response' ||
@@ -1465,8 +1512,10 @@ export function AIChatMessageBubble({
             key={`${message.id}-${isActiveMessage ? 'active' : 'history'}-${
               shouldOpenTimelineByDefault ? 'open' : 'closed'
             }`}
-            timeline={displayTimeline}
+            timeline={orderedDisplayTimeline}
             skillDisplayById={skillDisplayById}
+            processNarrative={!isPresentationV2 && hasLeadingAnswer ? leadingAnswer : undefined}
+            processNarrativeRenderIdentity={`${message.id}:process-narrative`}
             defaultOpen={shouldOpenTimelineByDefault}
             showMemoryKey={showMemoryKey}
             showSkillEventDetails={showSkillEventDetails}
@@ -1484,21 +1533,18 @@ export function AIChatMessageBubble({
           </div>
         ) : null}
 
-        {answer ? (
+        {hasTrailingAnswer ? (
           <div className="prose prose-sm min-w-0 max-w-full overflow-hidden dark:prose-invert">
             <MarkdownViewer
               className="md-viewer min-w-0 max-w-full overflow-hidden break-words"
-              content={displayAnswer}
+              content={trailingAnswer}
               isStreaming={isStreaming}
-              renderIdentity={message.id}
+              renderIdentity={`${message.id}:after-timeline`}
             />
           </div>
         ) : waitingMessage ? (
           <div className="text-sm text-muted-foreground">{waitingMessage}</div>
-        ) : isStreaming &&
-          !streamingStatusLabel &&
-          !userInputRequest &&
-          !hasGeneratedImagePreviews ? (
+        ) : showInitialPlanningStatus ? (
           <div className="border-l-2 border-muted-foreground/20 pl-3 text-sm leading-7 text-muted-foreground">
             <span className="inline-flex min-w-0 items-center gap-2">
               <Loader2 className="size-3.5 shrink-0 animate-spin" />

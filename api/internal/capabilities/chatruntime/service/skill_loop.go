@@ -82,8 +82,7 @@ func (s *service) runPreparedToolLoop(
 			if event.Type == skillloop.EventUserInputRequested {
 				s.persistUserInputRequestBestEffort(persistCtx, prepared, event.Payload)
 			}
-			timeline.RecordEvent(event.Type, event.Payload)
-			return nil
+			return timeline.RecordEvent(event.Type, event.Payload)
 		},
 		OnTrace: func(traces []skills.SkillTrace, trace skills.SkillTrace) {
 			timeline.RecordTrace(traces, trace)
@@ -145,7 +144,11 @@ func (s *service) runPreparedToolLoop(
 		ContinuationType:               prepared.ContinuationType,
 		TerminalOnly:                   prepared.TerminalOnly,
 	})
+	presentationErr := timeline.FinalizePresentation(err)
 	timeline.FlushPendingIntermediateAnswers(err)
+	if err == nil && presentationErr != nil {
+		err = presentationErr
+	}
 	if err != nil && strings.TrimSpace(answer) != "" {
 		s.persistPartialSkillLoopAnswerBestEffort(persistCtx, prepared, answer, usage)
 	}
@@ -307,6 +310,9 @@ func skillLoopTerminalCompletionResult(prepared *PreparedChat) func(skillloop.Te
 			status = "needs_action"
 		}
 		metadata := copyStringAnyMap(prepared.Message.Metadata)
+		if completionReason := strings.TrimSpace(result.CompletionReason); completionReason != "" {
+			metadata["completion_reason"] = completionReason
+		}
 		applyOperationPlanTerminalCompletionResultWithSource(
 			metadata,
 			status,

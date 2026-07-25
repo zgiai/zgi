@@ -29,10 +29,16 @@ type processTimelineRecorder struct {
 	openRuntimeIDs  map[string]string
 	runtimeCounters map[string]int
 	intermediate    map[string]intermediateAnswerPersistenceState
+	presentation    presentationProjection
+	activeSegmentID string
 	now             func() time.Time
 }
 
 func newProcessTimelineRecorder(ctx context.Context, persistCtx context.Context, svc *service, prepared *PreparedChat, onEvent func(StreamEvent) error) *processTimelineRecorder {
+	metadata := map[string]interface{}{}
+	if prepared != nil && prepared.Message != nil {
+		metadata = prepared.Message.Metadata
+	}
 	return &processTimelineRecorder{
 		service:         svc,
 		ctx:             ctx,
@@ -42,40 +48,175 @@ func newProcessTimelineRecorder(ctx context.Context, persistCtx context.Context,
 		openRuntimeIDs:  map[string]string{},
 		runtimeCounters: map[string]int{},
 		intermediate:    map[string]intermediateAnswerPersistenceState{},
+		presentation:    presentationProjectionFromMetadata(metadata),
 		now:             time.Now,
 	}
 }
 
-func (r *processTimelineRecorder) Emit(eventType string, payload map[string]interface{}) {
+func (r *processTimelineRecorder) Emit(eventType string, payload map[string]interface{}) error {
 	if r == nil || r.service == nil {
-		return
+		return nil
 	}
-	r.service.emitPreparedEvent(r.ctx, r.prepared, eventType, payload, r.onEvent)
+	return r.service.emitPreparedEvent(r.ctx, r.prepared, eventType, payload, r.onEvent)
 }
 
-func (r *processTimelineRecorder) RecordEvent(eventType string, payload map[string]interface{}) {
+func (r *processTimelineRecorder) RecordEvent(eventType string, payload map[string]interface{}) error {
 	if r == nil || r.service == nil {
-		return
+		return nil
 	}
 	if r.shouldSkipDuplicateSkillLoadEvent(eventType, payload) {
-		return
+		return nil
 	}
+	if payload == nil {
+		payload = map[string]interface{}{}
+	}
+	if eventType == streamEventMessage {
+		r.recordPresentationTextChunk(payload)
+		return r.Emit(eventType, payload)
+	}
+	if eventType == streamEventMessageRetract {
+		segmentID := r.activeSegmentID
+		r.transitionActivePresentationSegment(presentationPhaseProcess)
+		if item := r.presentation.itemByID(segmentID); len(item) > 0 {
+			annotatePresentationPayload(payload, item)
+		}
+		if err := r.persistPresentation(nil); err != nil {
+			return err
+		}
+		return r.Emit(eventType, payload)
+	}
+	if eventType == streamEventAgentProgress {
+		return r.Emit(eventType, payload)
+	}
+	r.transitionActivePresentationSegment(presentationPhaseProcess)
+	r.activeSegmentID = ""
 	if isWorkflowTimelineEvent(eventType) {
 		r.service.persistWorkflowRunEventBestEffort(r.persistCtx, r.prepared, eventType, payload)
 	}
 	invocation := r.invocationFromEvent(eventType, payload)
+	r.recordPresentationEvent(eventType, payload, invocation)
 	if len(invocation) > 0 {
 		if strings.TrimSpace(stringFromAny(invocation["kind"])) == "tool_governance" {
 			r.persistGovernedToolCallSuspension(payload)
 		}
 		if strings.TrimSpace(stringFromAny(invocation["kind"])) == "intermediate_answer" {
-			r.recordIntermediateAnswerInvocation(invocation)
+			if err := r.recordIntermediateAnswerInvocation(invocation); err != nil {
+				return err
+			}
 		} else {
-			r.persistInvocation(invocation)
+			if err := r.persistInvocation(invocation); err != nil {
+				return err
+			}
 		}
 		copyInvocationRuntimeFields(payload, invocation)
+	} else if err := r.persistPresentation(nil); err != nil {
+		return err
 	}
-	r.Emit(eventType, payload)
+	return r.Emit(eventType, payload)
+}
+
+func (r *processTimelineRecorder) recordPresentationTextChunk(payload map[string]interface{}) {
+	if r == nil || r.prepared == nil || r.prepared.Message == nil {
+		return
+	}
+	content := payloadText(payload, "answer")
+	if r.activeSegmentID == "" {
+		sequence := r.presentation.nextSequence()
+		item := newPresentationTextItem(r.prepared.Message.ID.String(), sequence, content, r.currentTime())
+		r.activeSegmentID = stringFromAny(item["presentation_id"])
+		r.presentation.upsert(item)
+	} else if item := r.presentation.itemByID(r.activeSegmentID); len(item) > 0 {
+		item["content"] = stringFromAny(item["content"]) + content
+		item["content_phase"] = presentationPhaseProvisional
+		r.presentation.upsert(item)
+	}
+	annotatePresentationPayload(payload, r.presentation.itemByID(r.activeSegmentID))
+	payload["segment_content"] = stringFromAny(r.presentation.itemByID(r.activeSegmentID)["content"])
+	r.applyPresentationMetadata()
+}
+
+func (r *processTimelineRecorder) transitionActivePresentationSegment(phase string) {
+	if r == nil || r.activeSegmentID == "" {
+		return
+	}
+	item := r.presentation.itemByID(r.activeSegmentID)
+	if len(item) == 0 {
+		return
+	}
+	item["content_phase"] = phase
+	r.presentation.upsert(item)
+	r.applyPresentationMetadata()
+	if phase == presentationPhaseProcess {
+		r.activeSegmentID = ""
+	}
+}
+
+func (r *processTimelineRecorder) recordPresentationEvent(eventType string, payload map[string]interface{}, invocation map[string]interface{}) {
+	if r == nil || r.prepared == nil || r.prepared.Message == nil {
+		return
+	}
+	reference := presentationEventReference(payload, invocation)
+	sequence := int64(0)
+	id := ""
+	createdAtMS := r.currentTime().UnixMilli()
+	if reference != "" {
+		id = presentationEventID(r.prepared.Message.ID.String(), eventType, reference, 0)
+		if existing := r.presentation.itemByID(id); len(existing) > 0 {
+			sequence, _ = int64FromPresentationValue(existing["presentation_sequence"])
+			if existingCreatedAtMS, ok := int64FromPresentationValue(existing["created_at_ms"]); ok {
+				createdAtMS = existingCreatedAtMS
+			}
+		}
+	}
+	if sequence == 0 {
+		sequence = r.presentation.nextSequence()
+		if id == "" {
+			id = presentationEventID(r.prepared.Message.ID.String(), eventType, reference, sequence)
+		}
+	}
+	item := map[string]interface{}{
+		"presentation_id":       id,
+		"presentation_sequence": sequence,
+		"kind":                  presentationKindEvent,
+		"event_type":            eventType,
+		"event_ref":             reference,
+		"created_at_ms":         createdAtMS,
+	}
+	r.presentation.upsert(item)
+	annotatePresentationPayload(payload, item)
+	r.applyPresentationMetadata()
+}
+
+func (r *processTimelineRecorder) applyPresentationMetadata() {
+	if r == nil || r.prepared == nil || r.prepared.Message == nil {
+		return
+	}
+	if r.prepared.Message.Metadata == nil {
+		r.prepared.Message.Metadata = map[string]interface{}{}
+	}
+	r.prepared.Message.Metadata["presentation_version"] = presentationVersionV2
+	r.prepared.Message.Metadata["presentation"] = r.presentation.metadataValue()
+}
+
+func (r *processTimelineRecorder) persistPresentation(invocation map[string]interface{}) error {
+	if r == nil || r.prepared == nil || r.prepared.Message == nil {
+		return nil
+	}
+	r.applyPresentationMetadata()
+	return r.persistMetadata(r.prepared.Message.Metadata, invocation)
+}
+
+func (r *processTimelineRecorder) FinalizePresentation(terminationErr error) error {
+	if r == nil || r.activeSegmentID == "" {
+		return nil
+	}
+	phase := presentationPhaseFinal
+	if terminationErr != nil {
+		phase = presentationPhaseProcess
+	}
+	r.transitionActivePresentationSegment(phase)
+	r.activeSegmentID = ""
+	return r.persistPresentation(nil)
 }
 
 func (r *processTimelineRecorder) shouldSkipDuplicateSkillLoadEvent(eventType string, payload map[string]interface{}) bool {
@@ -150,23 +291,22 @@ func nonVisibleTraceCarriesMetadata(trace skills.SkillTrace) bool {
 	}
 }
 
-func (r *processTimelineRecorder) RecordInvocationStart(skillID string, toolName string, arguments map[string]interface{}) {
+func (r *processTimelineRecorder) RecordInvocationStart(skillID string, toolName string, arguments map[string]interface{}) error {
 	if r == nil || r.service == nil || r.prepared == nil || r.prepared.Message == nil {
-		return
+		return nil
 	}
 	invocation := newSkillInvocation("tool_call", skillID, toolName, "running", map[string]interface{}{
 		"arguments": arguments,
 	})
 	invocation["runtime_id"] = r.runtimeIDForStart(invocation)
-	r.persistInvocation(invocation)
 	payload := skillCallStartPayload(r.prepared, skillID, toolName, arguments)
 	copyInvocationRuntimeFields(payload, invocation)
-	r.Emit(streamEventSkillCallStart, payload)
+	return r.recordInvocationEvent(streamEventSkillCallStart, payload, invocation)
 }
 
-func (r *processTimelineRecorder) RecordInvocationEnd(trace skills.SkillTrace) {
+func (r *processTimelineRecorder) RecordInvocationEnd(trace skills.SkillTrace) error {
 	if r == nil || r.service == nil || r.prepared == nil || r.prepared.Message == nil {
-		return
+		return nil
 	}
 	if strings.TrimSpace(trace.Kind) == "" {
 		trace.Kind = "tool_call"
@@ -178,15 +318,17 @@ func (r *processTimelineRecorder) RecordInvocationEnd(trace skills.SkillTrace) {
 	invocation["runtime_id"] = r.runtimeIDForEnd(invocation)
 	payload := skillCallEndPayload(r.prepared, trace)
 	fillInvocationTimelineFromPayload(invocation, payload)
-	r.persistInvocation(invocation)
 	copyInvocationRuntimeFields(payload, invocation)
-	r.Emit(streamEventSkillCallEnd, payload)
+	if err := r.recordInvocationEvent(streamEventSkillCallEnd, payload, invocation); err != nil {
+		return err
+	}
 	r.service.logSkillTrace(r.ctx, r.prepared, trace)
+	return nil
 }
 
-func (r *processTimelineRecorder) RecordInvocationError(trace skills.SkillTrace) {
+func (r *processTimelineRecorder) RecordInvocationError(trace skills.SkillTrace) error {
 	if r == nil || r.service == nil || r.prepared == nil || r.prepared.Message == nil {
-		return
+		return nil
 	}
 	if strings.TrimSpace(trace.Kind) == "" {
 		trace.Kind = "tool_call"
@@ -198,10 +340,21 @@ func (r *processTimelineRecorder) RecordInvocationError(trace skills.SkillTrace)
 	invocation["runtime_id"] = r.runtimeIDForEnd(invocation)
 	payload := skillCallErrorPayload(r.prepared, trace)
 	fillInvocationTimelineFromPayload(invocation, payload)
-	r.persistInvocation(invocation)
 	copyInvocationRuntimeFields(payload, invocation)
-	r.Emit(streamEventSkillCallError, payload)
+	if err := r.recordInvocationEvent(streamEventSkillCallError, payload, invocation); err != nil {
+		return err
+	}
 	r.service.logSkillTrace(r.ctx, r.prepared, trace)
+	return nil
+}
+
+func (r *processTimelineRecorder) recordInvocationEvent(eventType string, payload map[string]interface{}, invocation map[string]interface{}) error {
+	r.transitionActivePresentationSegment(presentationPhaseProcess)
+	r.recordPresentationEvent(eventType, payload, invocation)
+	if err := r.persistInvocation(invocation); err != nil {
+		return err
+	}
+	return r.Emit(eventType, payload)
 }
 
 func (r *processTimelineRecorder) RecordIntermediateAnswer(trace skills.SkillTrace) {
@@ -211,7 +364,7 @@ func (r *processTimelineRecorder) RecordIntermediateAnswer(trace skills.SkillTra
 	if strings.TrimSpace(trace.Kind) == "" {
 		trace.Kind = "intermediate_answer"
 	}
-	r.recordIntermediateAnswerInvocation(skillInvocationFromTrace(trace, 0))
+	_ = r.recordIntermediateAnswerInvocation(skillInvocationFromTrace(trace, 0))
 	r.service.logSkillTrace(r.ctx, r.prepared, trace)
 }
 
@@ -480,12 +633,12 @@ func isReusableGovernedToolCall(invocation map[string]interface{}) bool {
 		len(governanceMapFromAny(invocation["asset_operation_audit"])) > 0
 }
 
-func (r *processTimelineRecorder) persistInvocation(invocation map[string]interface{}) {
+func (r *processTimelineRecorder) persistInvocation(invocation map[string]interface{}) error {
 	if r == nil || r.service == nil || r.prepared == nil || r.prepared.Message == nil || len(invocation) == 0 {
-		return
+		return nil
 	}
 	metadata := r.mergeInvocation(invocation)
-	r.persistMetadata(metadata, invocation)
+	return r.persistMetadata(metadata, invocation)
 }
 
 func (r *processTimelineRecorder) mergeInvocation(invocation map[string]interface{}) map[string]interface{} {
@@ -500,7 +653,7 @@ func (r *processTimelineRecorder) mergeInvocation(invocation map[string]interfac
 	return metadata
 }
 
-func (r *processTimelineRecorder) persistMetadata(metadata map[string]interface{}, invocation map[string]interface{}) {
+func (r *processTimelineRecorder) persistMetadata(metadata map[string]interface{}, invocation map[string]interface{}) error {
 	if aichatTimelineDebugEnabled() {
 		invocations := skillInvocationsFromMetadata(metadata["skill_invocations"])
 		logger.DebugContext(r.ctx, "aichat timeline metadata persisted",
@@ -518,19 +671,21 @@ func (r *processTimelineRecorder) persistMetadata(metadata map[string]interface{
 		)
 	}
 	if r.service.repos == nil || r.service.repos.Message == nil {
-		return
+		return nil
 	}
-	_ = r.service.repos.Message.UpdateMetadata(r.persistCtx, r.prepared.Message.ID, metadata)
+	if err := r.service.repos.Message.UpdateMetadata(r.persistCtx, r.prepared.Message.ID, metadata); err != nil {
+		return fmt.Errorf("persist agent presentation metadata: %w", err)
+	}
+	return nil
 }
 
-func (r *processTimelineRecorder) recordIntermediateAnswerInvocation(invocation map[string]interface{}) {
+func (r *processTimelineRecorder) recordIntermediateAnswerInvocation(invocation map[string]interface{}) error {
 	if r == nil || r.prepared == nil || r.prepared.Message == nil || len(invocation) == 0 {
-		return
+		return nil
 	}
 	runtimeID := strings.TrimSpace(stringFromAny(invocation["runtime_id"]))
 	if runtimeID == "" {
-		r.persistInvocation(invocation)
-		return
+		return r.persistInvocation(invocation)
 	}
 	status := strings.TrimSpace(stringFromAny(invocation["status"]))
 	if status == "success" {
@@ -546,19 +701,22 @@ func (r *processTimelineRecorder) recordIntermediateAnswerInvocation(invocation 
 		now.Sub(state.lastPersistedAt) >= intermediateAnswerCheckpointInterval ||
 		messageSize-state.lastPersistedSize >= intermediateAnswerCheckpointBytes
 	if !shouldPersist {
-		return
+		return nil
 	}
 	invocation["checkpointed_at"] = now.Unix()
 	metadata = r.mergeInvocation(invocation)
-	r.persistMetadata(metadata, invocation)
+	if err := r.persistMetadata(metadata, invocation); err != nil {
+		return err
+	}
 	if status == "success" {
 		delete(r.intermediate, runtimeID)
-		return
+		return nil
 	}
 	r.intermediate[runtimeID] = intermediateAnswerPersistenceState{
 		lastPersistedAt:   now,
 		lastPersistedSize: messageSize,
 	}
+	return nil
 }
 
 func (r *processTimelineRecorder) FlushPendingIntermediateAnswers(terminationErr error) {

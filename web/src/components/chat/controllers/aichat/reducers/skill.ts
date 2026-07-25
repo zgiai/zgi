@@ -15,6 +15,7 @@ import {
   type AIChatControllerState,
   type AIChatAgenticTimelineItem,
 } from '@/components/chat/controllers/aichat/types';
+import type { AIChatPresentationPosition } from '@/services/types/aichat';
 import {
   isStaleAIChatStreamEvent,
   mergeSkillInvocationByStatus,
@@ -22,6 +23,21 @@ import {
   removeTransientProgressItems,
   skillInvocationSemanticIdentity,
 } from './shared';
+import {
+  captureAnswerTimelineBoundary,
+  presentationPositionFromPayload,
+} from '../presentation-order';
+
+function preserveLegacyAnswerBoundary(
+  previousStreaming: AIChatControllerState['streamingByMessageId'][string]
+): number | undefined {
+  return previousStreaming.presentationVersion === 2
+    ? previousStreaming.answer_before_timeline_length
+    : captureAnswerTimelineBoundary(
+        previousStreaming.answer_before_timeline_length,
+        previousStreaming.answer
+      );
+}
 
 function upsertSkillInvocation(
   invocations: AIChatSkillInvocation[],
@@ -186,15 +202,12 @@ function isVisibleSkillInvocation(invocation: AIChatSkillInvocation): boolean {
   ) {
     return false;
   }
-  if (
-    invocation.kind === 'skill_load' &&
-    invocation.skill_id === 'console-navigator'
-  ) {
+  if (invocation.kind === 'skill_load' && invocation.skill_id === 'console-navigator') {
     return false;
   }
   if (
     invocation.kind === 'client_action' &&
-    (actionType === 'route_navigation') &&
+    actionType === 'route_navigation' &&
     (status === 'success' || status === 'succeeded' || status === 'completed')
   ) {
     return false;
@@ -223,6 +236,7 @@ function upsertMemoryTimelineItem(
   eventId: string | null | undefined
 ): AIChatAgenticTimelineItem[] {
   const baseTimeline = removeTransientProgressItems(timeline);
+  const presentationPosition = presentationPositionFromPayload(payload);
   const itemId =
     eventId ??
     `memory-${payload.action}-${payload.entry_id ?? 'entry'}-${payload.created_at ?? Date.now()}`;
@@ -237,6 +251,7 @@ function upsertMemoryTimelineItem(
       event: payload,
       created_at: payload.created_at,
       event_id: eventId ?? null,
+      ...presentationPosition,
     },
   ];
 }
@@ -327,6 +342,7 @@ function upsertToolGovernanceTimelineItem(
 ): AIChatAgenticTimelineItem[] {
   const baseTimeline = removeTransientProgressItems(timeline);
   const normalizedPayload = normalizeToolGovernanceDecisionPayload(payload);
+  const presentationPosition = presentationPositionFromPayload(payload);
   if (baseTimeline.some(item => 'event_id' in item && item.event_id === eventId && eventId)) {
     return baseTimeline;
   }
@@ -357,6 +373,7 @@ function upsertToolGovernanceTimelineItem(
       },
       created_at: normalizedPayload.created_at ?? existing.created_at,
       event_id: eventId ?? existing.event_id,
+      ...presentationPosition,
     };
     return next;
   }
@@ -371,6 +388,7 @@ function upsertToolGovernanceTimelineItem(
       event: normalizedPayload,
       created_at: normalizedPayload.created_at,
       event_id: eventId ?? null,
+      ...presentationPosition,
     },
   ];
 }
@@ -419,7 +437,9 @@ function skillInvocationFromToolGovernanceDecision(
     governance: {
       ...(normalizedPayload.governance ?? {}),
       ...(normalizedPayload.decision ? { status: normalizedPayload.decision } : {}),
-      ...(normalizedPayload.correlation_id ? { correlation_id: normalizedPayload.correlation_id } : {}),
+      ...(normalizedPayload.correlation_id
+        ? { correlation_id: normalizedPayload.correlation_id }
+        : {}),
       ...(normalizedPayload.requires_approval !== undefined
         ? { requires_approval: normalizedPayload.requires_approval }
         : {}),
@@ -433,7 +453,9 @@ function skillInvocationFromToolGovernanceDecision(
       ...(normalizedPayload.asset_operation_audit
         ? { asset_operation_audit: normalizedPayload.asset_operation_audit }
         : {}),
-      ...(normalizedPayload.matched_grant ? { matched_grant: normalizedPayload.matched_grant } : {}),
+      ...(normalizedPayload.matched_grant
+        ? { matched_grant: normalizedPayload.matched_grant }
+        : {}),
       ...(normalizedPayload.approval_result
         ? { approval_result: normalizedPayload.approval_result }
         : {}),
@@ -451,7 +473,8 @@ function skillInvocationFromToolGovernanceDecision(
 function upsertSkillTimelineItem(
   timeline: AIChatAgenticTimelineItem[] | undefined,
   incoming: AIChatSkillInvocation,
-  eventId: string | null | undefined
+  eventId: string | null | undefined,
+  presentationPosition?: AIChatPresentationPosition
 ): AIChatAgenticTimelineItem[] {
   const baseTimeline = removeTransientProgressItems(timeline);
 
@@ -474,6 +497,7 @@ function upsertSkillTimelineItem(
         status: incoming.status === 'success' ? 'success' : 'streaming',
         created_at: existing.created_at ?? incoming.created_at,
         event_id: eventId ?? existing.event_id,
+        ...presentationPosition,
       };
       return next;
     }
@@ -492,6 +516,7 @@ function upsertSkillTimelineItem(
         status: incoming.status === 'success' ? 'success' : 'streaming',
         created_at: incoming.created_at,
         event_id: eventId ?? null,
+        ...presentationPosition,
       },
     ];
   }
@@ -510,6 +535,7 @@ function upsertSkillTimelineItem(
       invocation: mergeSkillInvocationByStatus(existing.invocation, incoming),
       created_at: incoming.created_at ?? existing.created_at,
       event_id: eventId ?? existing.event_id,
+      ...presentationPosition,
     };
     return next;
   }
@@ -541,6 +567,7 @@ function upsertSkillTimelineItem(
         invocation: incoming,
         created_at: incoming.created_at,
         event_id: eventId ?? null,
+        ...presentationPosition,
       },
     ];
   }
@@ -557,6 +584,7 @@ function upsertSkillTimelineItem(
     },
     created_at: incoming.created_at ?? existing.created_at,
     event_id: eventId ?? existing.event_id,
+    ...presentationPosition,
   };
   return next;
 }
@@ -566,7 +594,8 @@ export function updateSkillInvocationMetadata(
   conversationId: string,
   messageId: string,
   eventId: string | null | undefined,
-  invocation: AIChatSkillInvocation
+  invocation: AIChatSkillInvocation,
+  presentationPosition?: AIChatPresentationPosition
 ): AIChatControllerState {
   if (!isVisibleSkillInvocation(invocation)) {
     return current;
@@ -643,7 +672,13 @@ export function updateSkillInvocationMetadata(
           ...current.streamingByMessageId,
           [messageId]: {
             ...previousStreaming,
-            timeline: upsertSkillTimelineItem(previousStreaming.timeline, invocation, eventId),
+            timeline: upsertSkillTimelineItem(
+              previousStreaming.timeline,
+              invocation,
+              eventId,
+              presentationPosition
+            ),
+            answer_before_timeline_length: preserveLegacyAnswerBoundary(previousStreaming),
             last_event_id: eventId ?? previousStreaming.last_event_id,
           },
         }
@@ -674,14 +709,13 @@ export function applyAgentProgressState(
   if (isStaleAIChatStreamEvent(eventId, existingStreaming?.last_event_id)) {
     return current;
   }
-  const previousStreaming =
-    existingStreaming ?? {
-      conversation_id: payload.conversation_id,
-      message_id: payload.message_id,
-      answer: '',
-      status: 'streaming' as const,
-      timeline: [],
-    };
+  const previousStreaming = existingStreaming ?? {
+    conversation_id: payload.conversation_id,
+    message_id: payload.message_id,
+    answer: '',
+    status: 'streaming' as const,
+    timeline: [],
+  };
   if (!previousStreaming.conversation_id) {
     return current;
   }
@@ -744,6 +778,7 @@ export function applyAgentProgressState(
       arguments_chars: payload.arguments_chars,
       created_at: payload.created_at,
       event_id: eventId ?? null,
+      ...presentationPositionFromPayload(payload),
     },
   ];
 
@@ -754,6 +789,13 @@ export function applyAgentProgressState(
       [payload.message_id]: {
         ...previousStreaming,
         timeline: nextTimeline,
+        answer_before_timeline_length:
+          transient || previousStreaming.presentationVersion === 2
+            ? previousStreaming.answer_before_timeline_length
+            : captureAnswerTimelineBoundary(
+                previousStreaming.answer_before_timeline_length,
+                previousStreaming.answer
+              ),
         last_event_id: eventId ?? previousStreaming.last_event_id,
       },
     },
@@ -782,6 +824,7 @@ export function applyMemoryMutationState(
       [payload.message_id]: {
         ...previousStreaming,
         timeline: upsertMemoryTimelineItem(previousStreaming.timeline, payload, eventId),
+        answer_before_timeline_length: preserveLegacyAnswerBoundary(previousStreaming),
         last_event_id: eventId ?? previousStreaming.last_event_id,
       },
     },
@@ -867,7 +910,12 @@ export function applyToolGovernanceDecisionState(
           ...current.streamingByMessageId,
           [payload.message_id]: {
             ...previousStreaming,
-            timeline: upsertToolGovernanceTimelineItem(previousStreaming.timeline, payload, eventId),
+            timeline: upsertToolGovernanceTimelineItem(
+              previousStreaming.timeline,
+              payload,
+              eventId
+            ),
+            answer_before_timeline_length: preserveLegacyAnswerBoundary(previousStreaming),
             last_event_id: eventId ?? previousStreaming.last_event_id,
           },
         }
@@ -941,7 +989,8 @@ export function applySkillCallStartState(
       status: 'running',
       arguments: payload.arguments_summary ?? payload.arguments,
       created_at: payload.created_at,
-    }
+    },
+    presentationPositionFromPayload(payload)
   );
 }
 
@@ -974,7 +1023,8 @@ export function applySkillCallEndState(
       governance: payload.governance,
       asset_operation_audit: payload.asset_operation_audit,
       created_at: payload.created_at,
-    }
+    },
+    presentationPositionFromPayload(payload)
   );
   if (!payload.governance) {
     return next;
@@ -1015,7 +1065,8 @@ export function applySkillCallErrorState(
       governance: payload.governance,
       asset_operation_audit: payload.asset_operation_audit,
       created_at: payload.created_at,
-    }
+    },
+    presentationPositionFromPayload(payload)
   );
   if (!payload.governance) {
     return next;
@@ -1043,7 +1094,8 @@ export function applySkillLoadStartState(
       tool_name: '',
       status: 'loading',
       created_at: payload.created_at,
-    }
+    },
+    presentationPositionFromPayload(payload)
   );
 }
 
@@ -1064,7 +1116,8 @@ export function applySkillLoadEndState(
       status: 'success',
       duration_ms: payload.duration_ms,
       created_at: payload.created_at,
-    }
+    },
+    presentationPositionFromPayload(payload)
   );
 }
 
@@ -1086,6 +1139,7 @@ export function applySkillReferenceReadState(
       status: 'success',
       duration_ms: payload.duration_ms,
       created_at: payload.created_at,
-    }
+    },
+    presentationPositionFromPayload(payload)
   );
 }

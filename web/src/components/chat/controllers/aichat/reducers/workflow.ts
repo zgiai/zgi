@@ -1,15 +1,12 @@
 import type {
   AIChatWorkflowEventData,
   AIChatWorkflowNodeEventData,
-  AIChatWorkflowPausedEventData
+  AIChatWorkflowPausedEventData,
 } from '@/services/types/aichat';
-import type {
-  NodeInfo,
-  RunStatus
-} from '@/components/chat/types';
+import type { NodeInfo, RunStatus } from '@/components/chat/types';
 import {
   type AIChatControllerState,
-  type AIChatAgenticTimelineItem
+  type AIChatAgenticTimelineItem,
 } from '@/components/chat/controllers/aichat/types';
 import {
   extractLlmGatewayRequest,
@@ -20,9 +17,13 @@ import {
   getWorkflowRunRoundDurationMap,
   getWorkflowRunRoundElapsedTime,
   sortWorkflowRunItems,
-  sortWorkflowRunRounds
+  sortWorkflowRunRounds,
 } from '@/utils/workflow/run-events';
 import { isStaleAIChatStreamEvent, removeTransientProgressItems } from './shared';
+import {
+  captureAnswerTimelineBoundary,
+  presentationPositionFromPayload,
+} from '../presentation-order';
 import { normalizeWorkflowRuntimeEvent } from '@/utils/workflow/runtime-event-envelope.js';
 import { parseWorkflowPausedEvent } from '@/components/workflow/runtime/pause-events';
 
@@ -46,9 +47,7 @@ function workflowRunId(payload: AIChatWorkflowEventData): string {
 }
 
 function workflowElapsedMs(value: unknown): number | undefined {
-  return typeof value === 'number' && Number.isFinite(value) && value >= 0
-    ? value
-    : undefined;
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : undefined;
 }
 
 function workflowNumber(value: unknown): number | undefined {
@@ -215,8 +214,10 @@ function workflowRoundIndex(
 ): number | undefined {
   const eventType = workflowEventType(payload);
   if (kind === 'iteration') {
-    return workflowNumber(payload.iteration_index) ??
-      (eventType === 'iteration_next' ? workflowNumber(payload.index) : undefined);
+    return (
+      workflowNumber(payload.iteration_index) ??
+      (eventType === 'iteration_next' ? workflowNumber(payload.index) : undefined)
+    );
   }
   const loopIndex = workflowNumber(payload.loop_index);
   if (typeof loopIndex === 'number') return loopIndex;
@@ -285,7 +286,7 @@ function buildWorkflowContainerNode(
   const title =
     incoming.nodeType === kind
       ? workflowContainerTitle(payload, incoming, kind, nodeId)
-      : previous?.title ?? nodeId ?? kind;
+      : (previous?.title ?? nodeId ?? kind);
   const status = isWorkflowContainerCompletion(eventType, finished)
     ? incoming.status
     : ('running' as const);
@@ -339,7 +340,8 @@ function upsertWorkflowContainerRound(
 ): NodeInfo {
   const eventType = workflowEventType(payload);
   const explicitIndex = workflowRoundIndex(payload, kind);
-  const currentRounds = kind === 'iteration' ? container.iterationRounds ?? [] : container.loopRounds ?? [];
+  const currentRounds =
+    kind === 'iteration' ? (container.iterationRounds ?? []) : (container.loopRounds ?? []);
   if (typeof explicitIndex !== 'number' && !child && !isWorkflowContainerNextEvent(eventType)) {
     return container;
   }
@@ -376,7 +378,8 @@ function applyWorkflowContainerRoundDurations(
 ): NodeInfo {
   const durations = getWorkflowRunRoundDurationMap(payload, kind);
   if (durations.size === 0) return container;
-  const rounds = kind === 'iteration' ? container.iterationRounds ?? [] : container.loopRounds ?? [];
+  const rounds =
+    kind === 'iteration' ? (container.iterationRounds ?? []) : (container.loopRounds ?? []);
   const durationRounds: Array<{
     index: number;
     nodes: NodeInfo[];
@@ -410,7 +413,9 @@ function removeWorkflowContainerChildren(nodes: NodeInfo[]): NodeInfo[] {
     });
   });
   if (childKeys.size === 0) return nodes;
-  return nodes.filter(node => containerKeys.has(workflowNodeKey(node)) || !childKeys.has(workflowNodeKey(node)));
+  return nodes.filter(
+    node => containerKeys.has(workflowNodeKey(node)) || !childKeys.has(workflowNodeKey(node))
+  );
 }
 
 function upsertWorkflowNodeWithContainers(
@@ -445,7 +450,13 @@ function upsertWorkflowNodeWithContainers(
       node => node.nodeType === lifecycleKind && (!containerId || node.nodeId === containerId)
     );
     const previous = existingIndex >= 0 ? nodes[existingIndex] : undefined;
-    let container = buildWorkflowContainerNode(previous, payload, incoming, lifecycleKind, finished);
+    let container = buildWorkflowContainerNode(
+      previous,
+      payload,
+      incoming,
+      lifecycleKind,
+      finished
+    );
     container = upsertWorkflowContainerRound(container, payload, lifecycleKind);
     container = applyWorkflowContainerRoundDurations(container, payload, lifecycleKind);
     const next = nodes.slice();
@@ -469,6 +480,7 @@ function upsertWorkflowTimelineItem(
   const baseTimeline = removeTransientProgressItems(timeline);
   const runId = workflowRunId(payload);
   if (!runId) return baseTimeline;
+  const presentationPosition = presentationPositionFromPayload(payload);
   const index = baseTimeline.findIndex(
     item => item.type === 'workflow_run' && item.workflowRunId === runId
   );
@@ -491,6 +503,7 @@ function upsertWorkflowTimelineItem(
         invocationMode: workflowString(payload.invocation_mode),
         created_at: payload.created_at,
         event_id: eventId ?? null,
+        ...presentationPosition,
       },
     ];
   }
@@ -528,6 +541,7 @@ function upsertWorkflowTimelineItem(
     invocationId: workflowString(payload.invocation_id) ?? previous.invocationId,
     invocationMode: workflowString(payload.invocation_mode) ?? previous.invocationMode,
     event_id: eventId ?? previous.event_id,
+    ...presentationPosition,
   };
   return next;
 }
@@ -578,6 +592,13 @@ function applyWorkflowTimelineState(
           approval,
           nodeFinished
         ),
+        answer_before_timeline_length:
+          previousStreaming.presentationVersion === 2
+            ? previousStreaming.answer_before_timeline_length
+            : captureAnswerTimelineBoundary(
+                previousStreaming.answer_before_timeline_length,
+                previousStreaming.answer
+              ),
         last_event_id: eventId ?? previousStreaming.last_event_id,
       },
     },

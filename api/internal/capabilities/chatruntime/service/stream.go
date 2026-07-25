@@ -814,16 +814,16 @@ func (s *service) appendPreparedMessageEndEvent(ctx context.Context, prepared *P
 	return event.ID
 }
 
-func (s *service) emitPreparedEvent(ctx context.Context, prepared *PreparedChat, eventType string, payload map[string]interface{}, onEvent func(StreamEvent) error) {
+func (s *service) emitPreparedEvent(ctx context.Context, prepared *PreparedChat, eventType string, payload map[string]interface{}, onEvent func(StreamEvent) error) error {
 	if prepared == nil || prepared.Message == nil || prepared.Conversation == nil {
-		return
+		return nil
 	}
 	if suppressClientStreamEvent(eventType, payload) {
-		return
+		return nil
 	}
 	event := s.appendStreamEventBestEffort(ctx, prepared.Message.ID, prepared.Conversation.ID, eventType, payload)
 	if onEvent == nil {
-		return
+		return nil
 	}
 	if event == nil {
 		now := time.Now()
@@ -863,7 +863,9 @@ func (s *service) emitPreparedEvent(ctx context.Context, prepared *PreparedChat,
 		Sequence:    event.Sequence,
 	}); err != nil {
 		logger.WarnContext(ctx, "failed to deliver aichat stream event", "message_id", prepared.Message.ID.String(), "event_type", eventType, err)
+		return err
 	}
+	return nil
 }
 
 func (s *service) resetStreamEventsBestEffort(ctx context.Context, messageID uuid.UUID) {

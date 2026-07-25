@@ -375,8 +375,8 @@ func TestSkillPlanningStreamDefersTerminalToolTurnBodyUntilCallsAreValidated(t *
 	if progressCount != 0 {
 		t.Fatalf("terminal meta-tool body produced %d user-visible progress events before validation", progressCount)
 	}
-	if result.naturalProgressStreamed {
-		t.Fatal("terminal meta-tool body was marked as streamed natural progress")
+	if result.naturalAnswerStreamed {
+		t.Fatal("terminal meta-tool body was marked as a streamed natural answer")
 	}
 }
 
@@ -406,7 +406,7 @@ func TestSkillPlanningStreamSuppressesInitialContinuationBody(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("runSkillPlanningStream() = ok %v, error %v", ok, err)
 	}
-	if result.answerStreamed || result.naturalProgressStreamed {
+	if result.answerStreamed || result.naturalAnswerStreamed {
 		t.Fatalf("suppressed continuation body was marked streamed: %#v", result)
 	}
 	for _, event := range events {
@@ -418,7 +418,7 @@ func TestSkillPlanningStreamSuppressesInitialContinuationBody(t *testing.T) {
 	}
 }
 
-func TestSkillPlanningStreamEmitsCompleteToolTurnProgress(t *testing.T) {
+func TestSkillPlanningStreamMovesToolTurnTextIntoProcessTimeline(t *testing.T) {
 	index := 0
 	toolCallDelta := adapter.StreamResponse{
 		Choices: []adapter.StreamChoice{{
@@ -461,17 +461,124 @@ func TestSkillPlanningStreamEmitsCompleteToolTurnProgress(t *testing.T) {
 	if got := messageContent(result.message.Content); got != want {
 		t.Fatalf("tool-turn content = %q, want %q", got, want)
 	}
-	if !result.naturalProgressStreamed {
-		t.Fatal("complete tool-turn progress was not emitted")
+	if !result.naturalAnswerStreamed {
+		t.Fatal("complete tool-turn text was not emitted as a visible answer")
 	}
-	progress := ""
+	answer := ""
+	retracted := ""
 	for _, event := range events {
-		if event.Type == EventAgentProgress {
-			progress += stringFromInterface(event.Payload["content"])
+		switch event.Type {
+		case EventMessage:
+			answer += stringFromInterface(event.Payload["answer"])
+		case EventMessageRetract:
+			retracted += stringFromInterface(event.Payload["content"])
+		case EventAgentProgress:
+			if strings.TrimSpace(stringFromInterface(event.Payload["content"])) != "" {
+				t.Fatalf("tool-turn text was replayed as progress: %#v", event.Payload)
+			}
 		}
 	}
-	if progress != want {
-		t.Fatalf("progress = %q, want %q", progress, want)
+	if got := strings.TrimSpace(answer); got != want {
+		t.Fatalf("answer = %q, want %q", got, want)
+	}
+	if got := strings.TrimSpace(retracted); got != want {
+		t.Fatalf("retracted process text = %q, want %q", got, want)
+	}
+}
+
+func TestRunnerKeepsStreamedToolTurnTextOutOfFinalAnswer(t *testing.T) {
+	index := 0
+	client := &runnerTestLLMClient{appChatStreams: [][]adapter.StreamResponse{
+		{
+			{Choices: []adapter.StreamChoice{{Delta: adapter.Message{
+				Content: "先检查当前信息。",
+				ToolCalls: []adapter.ToolCall{{
+					Index: &index,
+					ID:    "load-1",
+					Type:  "function",
+					Function: adapter.FunctionCall{
+						Name:      skills.MetaToolLoadSkill,
+						Arguments: `{"skill_id":"test-skill"}`,
+					},
+				}},
+			}}}},
+			{Choices: []adapter.StreamChoice{{FinishReason: "tool_calls"}}, Done: true},
+		},
+		{
+			{Choices: []adapter.StreamChoice{{Delta: adapter.Message{Content: "已经处理完成。"}}}},
+			{Choices: []adapter.StreamChoice{{FinishReason: "stop"}}, Done: true},
+		},
+	}}
+	events := make([]Event, 0)
+	runner := &Runner{
+		LLMClient:    client,
+		SkillRuntime: skills.NewRuntime(nil, nil),
+		OnEvent: func(event Event) error {
+			events = append(events, event)
+			return nil
+		},
+	}
+	prepared := NewPreparedChat("conv-1", "msg-1", "qwen", "auto", &adapter.ChatRequest{Model: "qwen-plus"})
+
+	answer, _, err := runner.Run(context.Background(), RunRequest{
+		Prepared: prepared,
+		Resolved: runnerTestResolvedSkills(),
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	const want = "已经处理完成。"
+	if answer != want {
+		t.Fatalf("answer = %q, want %q", answer, want)
+	}
+
+	var visible strings.Builder
+	var retracted strings.Builder
+	for _, event := range events {
+		switch event.Type {
+		case EventMessage:
+			answerChunk, _ := event.Payload["answer"].(string)
+			visible.WriteString(answerChunk)
+		case EventMessageRetract:
+			retracted.WriteString(stringFromInterface(event.Payload["content"]))
+		case EventAgentProgress:
+			if strings.Contains(stringFromInterface(event.Payload["content"]), "先检查当前信息") {
+				t.Fatalf("tool-turn text was replayed as progress: %#v", event.Payload)
+			}
+		}
+	}
+	if got := visible.String(); got != "先检查当前信息。已经处理完成。" {
+		t.Fatalf("streamed text = %q", got)
+	}
+	if got := retracted.String(); got != "先检查当前信息。" {
+		t.Fatalf("process text = %q", got)
+	}
+}
+
+func TestPresentationEventErrorsAreIsolatedPerPreparedRun(t *testing.T) {
+	delivered := make([]string, 0, 2)
+	runner := &Runner{OnEvent: func(event Event) error {
+		messageID := stringFromInterface(event.Payload["message_id"])
+		delivered = append(delivered, messageID)
+		if messageID == "message-a" {
+			return errors.New("persist presentation")
+		}
+		return nil
+	}}
+	preparedA := NewPreparedChat("conversation-a", "message-a", "qwen", "auto", &adapter.ChatRequest{Model: "qwen-plus"})
+	preparedB := NewPreparedChat("conversation-b", "message-b", "qwen", "auto", &adapter.ChatRequest{Model: "qwen-plus"})
+
+	runner.emitEvent(preparedA, EventMessage, map[string]interface{}{"message_id": "message-a"})
+	runner.emitEvent(preparedB, EventMessage, map[string]interface{}{"message_id": "message-b"})
+
+	if preparedA.presentationEventError() == nil {
+		t.Fatal("prepared A event error = nil, want persistence error")
+	}
+	if err := preparedB.presentationEventError(); err != nil {
+		t.Fatalf("prepared B event error = %v, want nil", err)
+	}
+	if got := strings.Join(delivered, ","); got != "message-a,message-b" {
+		t.Fatalf("delivered events = %q, want both independent runs", got)
 	}
 }
 

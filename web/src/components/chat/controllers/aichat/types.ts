@@ -13,6 +13,7 @@ import type {
   AIChatMessageEndEventData,
   AIChatMessageRetractEventData,
   AIChatMessageStartEventData,
+  AIChatPresentationItem,
   AIChatMemoryMutationEventData,
   AIChatClientActionResultRequest,
   AIChatSkillInvocation,
@@ -54,6 +55,11 @@ export interface AIChatStreamingMessageState {
     | 'stopped'
     | 'error';
   timeline?: AIChatAgenticTimelineItem[];
+  presentationItems?: AIChatPresentationItem[];
+  presentationVersion?: number;
+  lastPresentationSequence?: number;
+  segmentsById?: Record<string, AIChatPresentationItem>;
+  answer_before_timeline_length?: number;
   last_event_id?: string;
   replay_base_answer?: string;
   replay_offset?: number;
@@ -85,6 +91,19 @@ export type AIChatAgenticTimelineItem =
       arguments_chars?: number;
       created_at?: number;
       event_id?: string | null;
+      presentation_id?: string;
+      presentation_sequence?: number;
+    }
+  | {
+      id: string;
+      type: 'process_text';
+      segment_id: string;
+      content: string;
+      content_phase: 'provisional' | 'process';
+      created_at?: number;
+      event_id?: string | null;
+      presentation_id?: string;
+      presentation_sequence?: number;
     }
   | {
       id: string;
@@ -92,6 +111,8 @@ export type AIChatAgenticTimelineItem =
       invocation: AIChatSkillInvocation;
       created_at?: number;
       event_id?: string | null;
+      presentation_id?: string;
+      presentation_sequence?: number;
     }
   | {
       id: string;
@@ -102,6 +123,8 @@ export type AIChatAgenticTimelineItem =
       status?: 'streaming' | 'success';
       created_at?: number;
       event_id?: string | null;
+      presentation_id?: string;
+      presentation_sequence?: number;
     }
   | {
       id: string;
@@ -115,6 +138,8 @@ export type AIChatAgenticTimelineItem =
       }>;
       created_at?: number;
       event_id?: string | null;
+      presentation_id?: string;
+      presentation_sequence?: number;
     }
   | {
       id: string;
@@ -128,6 +153,8 @@ export type AIChatAgenticTimelineItem =
       }>;
       created_at?: number;
       event_id?: string | null;
+      presentation_id?: string;
+      presentation_sequence?: number;
     }
   | {
       id: string;
@@ -135,6 +162,8 @@ export type AIChatAgenticTimelineItem =
       event: AIChatMemoryMutationEventData;
       created_at?: number;
       event_id?: string | null;
+      presentation_id?: string;
+      presentation_sequence?: number;
     }
   | {
       id: string;
@@ -142,6 +171,8 @@ export type AIChatAgenticTimelineItem =
       event: AIChatToolGovernanceDecisionEventData;
       created_at?: number;
       event_id?: string | null;
+      presentation_id?: string;
+      presentation_sequence?: number;
     }
   | {
       id: string;
@@ -158,6 +189,8 @@ export type AIChatAgenticTimelineItem =
       invocationMode?: string;
       created_at?: number;
       event_id?: string | null;
+      presentation_id?: string;
+      presentation_sequence?: number;
     };
 
 export type AIChatRecoveryMode = 'active' | 'background';

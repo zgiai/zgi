@@ -50,11 +50,9 @@ func (r *Runner) runSkillPlanningStream(
 	toolCallsByIndex := map[int]*streamingToolCallState{}
 	toolCallOrder := make([]int, 0)
 	sawChunk := false
-	sawToolCall := false
 	answerStreamed := false
-	naturalProgressStreamed := false
+	naturalAnswerStreamed := false
 	toolPlanningProgressStreamed := false
-	var speculativeAnswer strings.Builder
 	finishReason := ""
 	streamDoneReceived := false
 	terminatedBy := ""
@@ -85,7 +83,7 @@ func (r *Runner) runSkillPlanningStream(
 			)
 			return planningResult{usage: usage}, true, wrapStreamedFinalAnswerError(err, streamedFinalAnswerFromStates(toolCallsByIndex, toolCallOrder))
 		case <-fallbackTimer.C:
-			if !answerStreamed && !naturalProgressStreamed && !toolPlanningProgressStreamed && !fallbackProgressStreamed {
+			if !answerStreamed && !naturalAnswerStreamed && !toolPlanningProgressStreamed && !fallbackProgressStreamed {
 				fallbackProgressStreamed = r.emitPlanningFallbackProgress(ctx, prepared, onEvent)
 			}
 			continue
@@ -131,28 +129,18 @@ func (r *Runner) runSkillPlanningStream(
 				}
 				if text := streamChoiceText(choice); text != "" {
 					contentBuilder.WriteString(text)
-					if !terminalProtocol && !suppressNaturalProgress && !sawToolCall {
+					if !terminalProtocol && !suppressNaturalProgress {
 						r.emitAnswerChunk(ctx, prepared, text, onEvent)
-						speculativeAnswer.WriteString(text)
 						answerStreamed = true
+						naturalAnswerStreamed = true
 					}
 				}
 				for _, delta := range choice.Delta.ToolCalls {
-					if !sawToolCall {
-						sawToolCall = true
-						if !terminalProtocol {
-							if speculative := speculativeAnswer.String(); speculative != "" {
-								r.emitAnswerRetract(ctx, prepared, speculative, onEvent)
-								speculativeAnswer.Reset()
-								answerStreamed = false
-							}
-						}
-					}
 					state := mergeStreamingToolCall(toolCallsByIndex, &toolCallOrder, delta)
 					if state == nil {
 						continue
 					}
-					if (!toolPlanningProgressStreamed || isStreamingBusinessToolCall(state)) && (!naturalProgressStreamed || isStreamingBusinessToolCall(state)) && r.emitStreamingToolPlanningProgress(ctx, prepared, state, onEvent) {
+					if (!toolPlanningProgressStreamed || isStreamingBusinessToolCall(state)) && r.emitStreamingToolPlanningProgress(ctx, prepared, state, onEvent) {
 						toolPlanningProgressStreamed = true
 					}
 					r.emitStreamingIntermediateAnswerDelta(ctx, prepared, round, state, onEvent)
@@ -195,10 +183,8 @@ streamDone:
 		}
 		toolCalls = append(toolCalls, call)
 	}
-	if !terminalProtocol && len(toolCalls) > 0 && !suppressNaturalProgress {
-		if progress := strings.TrimSpace(contentBuilder.String()); progress != "" {
-			naturalProgressStreamed = r.emitAgentProgress(ctx, prepared, progress, onEvent)
-		}
+	if !terminalProtocol && len(toolCalls) > 0 && naturalAnswerStreamed {
+		r.emitAnswerRetract(ctx, prepared, contentBuilder.String())
 	}
 	message := adapter.Message{
 		Role:             "assistant",
@@ -232,10 +218,10 @@ streamDone:
 	}
 
 	return planningResult{
-		message:                 message,
-		usage:                   usage,
-		answerStreamed:          answerStreamed && (terminalProtocol || len(toolCalls) == 0),
-		naturalProgressStreamed: naturalProgressStreamed,
+		message:               message,
+		usage:                 usage,
+		answerStreamed:        answerStreamed && (terminalProtocol || len(toolCalls) == 0),
+		naturalAnswerStreamed: naturalAnswerStreamed && len(toolCalls) > 0,
 	}, true, nil
 }
 
@@ -446,7 +432,7 @@ func (r *Runner) emitStreamingIntermediateAnswerDelta(
 		Status:  "running",
 	}
 	answerID := streamingIntermediateAnswerID(prepared, round, state.call)
-	r.emitEvent(EventIntermediateAnswer, intermediateAnswerPayload(prepared, trace, answerID, delta, 0, false, "streaming"))
+	r.emitEvent(prepared, EventIntermediateAnswer, intermediateAnswerPayload(prepared, trace, answerID, delta, 0, false, "streaming"))
 }
 
 func (r *Runner) emitStreamingFinalAnswerDelta(
@@ -541,7 +527,7 @@ func (r *Runner) emitStreamingToolPlanningProgress(
 	state.emittedPlanningProgress = true
 	state.emittedPlanningSkillID = skillID
 	state.emittedPlanningToolName = toolName
-	r.emitEvent(EventAgentProgress, payload)
+	r.emitEvent(prepared, EventAgentProgress, payload)
 	return true
 }
 
@@ -556,7 +542,7 @@ func (r *Runner) emitPlanningFallbackProgress(
 		"phase":           "planning",
 		"created_at":      time.Now().Unix(),
 	}
-	r.emitEvent(EventAgentProgress, payload)
+	r.emitEvent(prepared, EventAgentProgress, payload)
 	return true
 }
 

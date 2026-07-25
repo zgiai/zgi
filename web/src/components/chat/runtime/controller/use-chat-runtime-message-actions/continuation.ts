@@ -29,6 +29,10 @@ import {
   buildOptimisticUserInputResponse,
   upsertUserInputResponse,
 } from '@/components/chat/controllers/aichat/user-input-response';
+import {
+  presentationStateFromMetadata,
+  withOptimisticUserInputResponsePresentation,
+} from '@/components/chat/controllers/aichat/presentation-order';
 
 import type { UseChatRuntimeMessageActionsArgs } from './types';
 
@@ -232,14 +236,23 @@ export function useWorkflowContinuationActions({
       streamAbortByConversationRef.current[conversationId] = abortController;
       markSelectionTarget(conversationId);
 
-      const continuationMetadata = sourceMessage.metadata
+      let continuationMetadata = sourceMessage.metadata
         ? { ...sourceMessage.metadata }
         : undefined;
+      let continuationTimeline = sourceTimeline;
       if (userInputContinuation && continuationMetadata) {
+        const optimisticPresentation = withOptimisticUserInputResponsePresentation(
+          continuationMetadata,
+          messageId,
+          userInputContinuation.requestId
+        );
+        continuationMetadata = optimisticPresentation.metadata;
         const response = buildOptimisticUserInputResponse(
           continuationMetadata.user_input_request,
           userInputContinuation.requestId,
-          userInputContinuation.payload.answers
+          userInputContinuation.payload.answers,
+          undefined,
+          optimisticPresentation.position
         );
         if (response) {
           continuationMetadata.user_input_responses = upsertUserInputResponse(
@@ -248,7 +261,16 @@ export function useWorkflowContinuationActions({
           );
         }
         delete continuationMetadata.user_input_request;
+        continuationTimeline = mergeRuntimeTimelineWithMessageTimeline(
+          timelineFromAIChatMessage({
+            ...sourceMessage,
+            metadata: continuationMetadata,
+          }),
+          sourceTimeline
+        );
       }
+      const continuationPresentationState =
+        presentationStateFromMetadata(continuationMetadata);
 
       setControllerState(current => {
         const now = Math.floor(Date.now() / 1000);
@@ -286,7 +308,8 @@ export function useWorkflowContinuationActions({
               message_id: messageId,
               answer: sourceMessage.answer ?? '',
               status: 'streaming',
-              timeline: sourceTimeline,
+              timeline: continuationTimeline,
+              ...continuationPresentationState,
             },
           },
         };

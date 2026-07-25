@@ -150,6 +150,8 @@ const AGENT_CONFIG_BINDING_FIELD_KEYS = new Set([
 interface AIChatAgenticTimelineProps {
   timeline: AIChatAgenticTimelineItem[];
   skillDisplayById: AIChatSkillDisplayMap;
+  processNarrative?: string;
+  processNarrativeRenderIdentity?: string;
   defaultOpen?: boolean;
   showMemoryKey?: boolean;
   showSkillEventDetails?: boolean;
@@ -179,6 +181,8 @@ interface SkillTimelineViewModel {
 }
 
 type ProgressTimelineItem = Extract<AIChatAgenticTimelineItem, { type: 'progress_text' }>;
+type ProcessTextTimelineItem = Extract<AIChatAgenticTimelineItem, { type: 'process_text' }>;
+type MarkdownTimelineItem = ProgressTimelineItem | ProcessTextTimelineItem;
 type IntermediateAnswerTimelineItem = Extract<
   AIChatAgenticTimelineItem,
   { type: 'intermediate_answer' }
@@ -208,7 +212,7 @@ type TimelineRenderItem =
   | {
       renderType: 'progress_markdown';
       key: string;
-      item: ProgressTimelineItem;
+      item: MarkdownTimelineItem;
       content: string;
     }
   | {
@@ -3607,6 +3611,13 @@ function timelineRenderItem(
   t: WebappTranslator
 ): TimelineRenderItem {
   switch (item.type) {
+    case 'process_text':
+      return {
+        renderType: 'progress_markdown',
+        key: item.id,
+        item,
+        content: item.content,
+      };
     case 'progress_text':
       if (isTransientProgressItem(item)) {
         return {
@@ -3810,6 +3821,8 @@ function UserInputResponseTimelineRow({ item }: { item: UserInputResponseTimelin
 export function AIChatAgenticTimeline({
   timeline,
   skillDisplayById,
+  processNarrative,
+  processNarrativeRenderIdentity,
   defaultOpen = true,
   showMemoryKey = true,
   showSkillEventDetails = true,
@@ -3936,6 +3949,18 @@ export function AIChatAgenticTimeline({
       </div>
       <CollapsibleContent>
         <div className="min-w-0 space-y-2">
+          {processNarrative?.trim() ? (
+            <div
+              className="min-w-0 border-l-2 border-muted-foreground/20 pl-3"
+              data-process-narrative
+            >
+              <MarkdownViewer
+                className="md-viewer min-w-0 max-w-full overflow-hidden break-words text-sm leading-7"
+                content={processNarrative}
+                renderIdentity={processNarrativeRenderIdentity}
+              />
+            </div>
+          ) : null}
           {renderItems.map(item => (
             <TimelineRenderRow
               key={item.key}

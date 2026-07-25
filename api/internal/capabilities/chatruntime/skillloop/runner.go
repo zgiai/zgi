@@ -52,10 +52,10 @@ type skillStepResult struct {
 }
 
 type planningResult struct {
-	message                 adapter.Message
-	usage                   *adapter.Usage
-	answerStreamed          bool
-	naturalProgressStreamed bool
+	message               adapter.Message
+	usage                 *adapter.Usage
+	answerStreamed        bool
+	naturalAnswerStreamed bool
 }
 
 type streamingToolCallState struct {
@@ -119,6 +119,7 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 	if prepared == nil || prepared.LLMRequest == nil {
 		return "", nil, fmt.Errorf("%w: prepared chat is invalid", ErrInvalidInput)
 	}
+	prepared.resetPresentationEventError()
 	if resolved == nil {
 		resolved = &skills.ResolvedSkills{}
 	}
@@ -196,6 +197,9 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 		terminalOnly:     req.TerminalOnly,
 	}
 	for round := 0; round < defaultMaxSkillPlanningRounds; round++ {
+		if eventErr := prepared.presentationEventError(); eventErr != nil {
+			return answerBuilder.String(), usage, eventErr
+		}
 		roundRuntimeState := map[string]interface{}{}
 		terminalSubmissionAllowed := true
 		if terminalStateGuardConfigured {
@@ -235,6 +239,9 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 			planningResult, err = r.runSkillPlanningWithRetry(ctx, prepared, planningReq, round, req.OnChunk, deferTerminalContent, terminalSubmissionAllowed, suppressNaturalProgress, req.PlanningOutputTokenLimit)
 		}
 		usage = mergeUsage(usage, planningResult.usage)
+		if eventErr := prepared.presentationEventError(); eventErr != nil {
+			return answerBuilder.String(), usage, eventErr
+		}
 		if err != nil {
 			if req.TerminalOnly {
 				if fallback, ok := r.emitTerminalOnlyFallback(ctx, req, prepared, traces, roundRuntimeState, "model_error"); ok {
@@ -265,8 +272,12 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 			}
 			return answerBuilder.String(), usage, fmt.Errorf("%w: terminal-only model returned no final answer", ErrInvalidInput)
 		}
-		if text != "" && len(toolCalls) > 0 && !suppressNaturalProgress && !planningResult.naturalProgressStreamed && shouldEmitNaturalProgressForToolCalls(resolved, loadedSkills, toolCalls) {
-			r.emitAgentProgress(ctx, prepared, text, nil)
+		if text != "" && len(toolCalls) > 0 && !suppressNaturalProgress {
+			if !planningResult.naturalAnswerStreamed &&
+				shouldEmitNaturalProgressForToolCalls(resolved, loadedSkills, toolCalls) {
+				r.emitAnswerChunk(ctx, prepared, text, nil)
+				r.emitAnswerRetract(ctx, prepared, text)
+			}
 		}
 		if len(toolCalls) == 0 && terminalStateGuardConfigured {
 			if strings.TrimSpace(text) == "" {
@@ -343,7 +354,7 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 			return answerBuilder.String(), usage, fmt.Errorf("%w: required skill was not used", ErrInvalidInput)
 		}
 		if text != "" && len(toolCalls) == 0 {
-			answerBuilder.WriteString(text)
+			appendAnswerText(&answerBuilder, text)
 			if !planningResult.answerStreamed {
 				r.emitAnswerChunk(ctx, prepared, text, nil)
 			}
@@ -376,8 +387,9 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 
 		planningMessage.Role = "assistant"
 		planningMessage.ToolCalls = toolCalls
-		if preferExplicitFinalAnswer {
-			// Process narration is user-visible progress, not durable model context.
+		if len(toolCalls) > 0 {
+			// Tool-turn narration is persisted in the presentation projection.
+			// It is not part of the final answer or the next model request.
 			planningMessage.Content = ""
 			planningMessage.ReasoningContent = ""
 		}
@@ -410,6 +422,9 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 			}
 			if result.trace.Kind == "" {
 				result = r.handleProgressiveSkillCall(ctx, prepared, resolved, call, req.ExecutionContext, toolCallCount, skillToolCallCounts, loadedSkills, callEvidence, round+1, nil)
+			}
+			if eventErr := prepared.presentationEventError(); eventErr != nil {
+				return answerBuilder.String(), usage, eventErr
 			}
 			if strings.TrimSpace(result.trace.Kind) == "" {
 				if result.usedSkill {
@@ -1487,18 +1502,18 @@ func (r *Runner) emitAnswerChunk(ctx context.Context, prepared *PreparedChat, te
 	if text == "" {
 		return
 	}
-	r.emitEvent(EventMessage, map[string]interface{}{
+	r.emitEvent(prepared, EventMessage, map[string]interface{}{
 		"conversation_id": prepared.Conversation.ID.String(),
 		"message_id":      prepared.Message.ID.String(),
 		"answer":          text,
 	})
 }
 
-func (r *Runner) emitAnswerRetract(ctx context.Context, prepared *PreparedChat, text string, _ func(Event) error) {
+func (r *Runner) emitAnswerRetract(ctx context.Context, prepared *PreparedChat, text string) {
 	if text == "" {
 		return
 	}
-	r.emitEvent(EventMessageRetract, map[string]interface{}{
+	r.emitEvent(prepared, EventMessageRetract, map[string]interface{}{
 		"conversation_id": prepared.Conversation.ID.String(),
 		"message_id":      prepared.Message.ID.String(),
 		"content":         text,
@@ -1516,7 +1531,7 @@ func (r *Runner) emitAgentProgress(ctx context.Context, prepared *PreparedChat, 
 	if content == "" {
 		return false
 	}
-	r.emitEvent(EventAgentProgress, map[string]interface{}{
+	r.emitEvent(prepared, EventAgentProgress, map[string]interface{}{
 		"conversation_id": prepared.Conversation.ID.String(),
 		"message_id":      prepared.Message.ID.String(),
 		"content":         content,

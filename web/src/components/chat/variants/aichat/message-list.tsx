@@ -13,6 +13,7 @@ import type { AIChatStreamingMessageState } from '@/components/chat/controllers/
 import { AIChatMessageBubble } from '@/components/chat/variants/aichat/message-bubble';
 import type { AIChatSkillDisplayMap } from '@/components/chat/variants/aichat/skill-display';
 import type { AIChatToolGovernanceDecisionSubmitPayload } from '@/components/chat/variants/aichat/agentic-timeline';
+import { presentationProjectionFromMetadata } from '@/components/chat/controllers/aichat/presentation-order';
 
 interface AIChatMessageListProps {
   messages: AIChatMessage[];
@@ -171,6 +172,14 @@ export function AIChatMessageList({
                 message={message}
                 isSending={isSending}
                 timeline={streamingByMessageId[message.id]?.timeline ?? []}
+                presentationItems={
+                  streamingByMessageId[message.id]?.presentationItems ??
+                  presentationProjectionFromMetadata(message.metadata)?.items
+                }
+                answerBeforeTimelineLength={
+                  streamingByMessageId[message.id]?.answer_before_timeline_length ??
+                  message.metadata?.answer_before_timeline_length
+                }
                 skillDisplayById={skillDisplayById}
                 isLastMessage={index === messages.length - 1}
                 canReplaceRoot={canReplaceRootMessage(
@@ -195,9 +204,7 @@ export function AIChatMessageList({
                 suppressPendingToolGovernanceApprovals={suppressPendingToolGovernanceApprovals}
               />
             ))}
-            {pendingUserMessage ? (
-              <PendingUserMessageBubble message={pendingUserMessage} />
-            ) : null}
+            {pendingUserMessage ? <PendingUserMessageBubble message={pendingUserMessage} /> : null}
             {showPlanningPlaceholder ? (
               <PendingAssistantPlanningStatus
                 label={t('consoleChat.operationStatus.planning')}
