@@ -13,6 +13,7 @@ import { ProviderSidebarSyncButton } from '@/components/providers/provider-sideb
 import { IS_CLOUD } from '@/lib/config';
 import { useProviderI18n } from '@/hooks/provider/use-provider-i18n';
 import { useProviderAvailableCounts } from '@/hooks/provider/use-provider-available-counts';
+import ModelChannelWorkspaceNav from '@/components/providers/model-channel-workspace-nav';
 
 export default function ProviderLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -37,7 +38,7 @@ export default function ProviderLayout({ children }: { children: React.ReactNode
 
   const enabled = useMemo(() => filtered.filter(it => it.is_enabled), [filtered]);
   const disabled = useMemo(() => filtered.filter(it => !it.is_enabled), [filtered]);
-  const { counts: availableCounts } = useProviderAvailableCounts(filtered);
+  const { counts: availableCounts } = useProviderAvailableCounts(items);
 
   // Determine current provider from route params or pathname segments for exact match
   const currentProvider = useMemo(() => {
@@ -63,127 +64,130 @@ export default function ProviderLayout({ children }: { children: React.ReactNode
   );
 
   return (
-    <div className="flex h-full w-full">
-      <aside className="flex-col flex w-72 shrink-0 border-r bg-background h-full">
-        <div className="p-3 border-b space-y-1.5">
-          <div className="flex items-center justify-between">
-            <h2 className="text-sm font-semibold">{t('sidebar.title')}</h2>
-            {!IS_CLOUD && <ProviderSidebarSyncButton />}
+    <div className="flex h-full min-h-0 w-full flex-col">
+      <ModelChannelWorkspaceNav />
+      <div className="flex min-h-0 flex-1">
+        <aside className="flex h-full w-72 shrink-0 flex-col border-r bg-background">
+          <div className="space-y-1.5 border-b p-3">
+            <div className="flex items-center justify-between">
+              <h2 className="text-sm font-semibold">{t('sidebar.title')}</h2>
+              {!IS_CLOUD && <ProviderSidebarSyncButton />}
+            </div>
+            <Input
+              className="h-8 text-xs"
+              placeholder={t('sidebar.searchPlaceholder')}
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+            />
           </div>
-          <Input
-            className="h-8 text-xs"
-            placeholder={t('sidebar.searchPlaceholder')}
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-          />
-        </div>
 
-        <div className="space-y-3 h-0 grow overflow-auto px-3 pt-3 pb-3 bg-muted/30">
-          {isLoading ? (
-            Array.from({ length: 8 }).map((_, i) => <Skeleton key={i} className="h-10 w-full" />)
-          ) : (
-            <>
-              {/* Enabled Section */}
-              <section className="space-y-1.5">
-                <div className="flex items-center justify-between px-1">
-                  <h3 className="text-[11px] font-semibold text-foreground uppercase tracking-wide">
-                    {t('sidebar.enabled')}
-                  </h3>
-                  {enabled.length > 0 && (
-                    <span className="text-[11px] text-muted-foreground font-medium">
-                      {enabled.length}
-                    </span>
-                  )}
-                </div>
-                <div className="space-y-1.5">
-                  {enabled.length === 0 ? (
-                    <div className="flex flex-col items-center justify-center py-6 px-3 text-center">
-                      <div className="text-muted-foreground/60 mb-1">
-                        <svg
-                          className="w-8 h-8 mx-auto"
-                          fill="none"
-                          stroke="currentColor"
-                          viewBox="0 0 24 24"
-                        >
-                          <path
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            strokeWidth={1.5}
-                            d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4"
-                          />
-                        </svg>
+          <div className="h-0 grow space-y-3 overflow-auto bg-muted/30 px-3 pb-3 pt-3">
+            {isLoading ? (
+              Array.from({ length: 8 }).map((_, i) => <Skeleton key={i} className="h-10 w-full" />)
+            ) : (
+              <>
+                {/* Enabled Section */}
+                <section className="space-y-1.5">
+                  <div className="flex items-center justify-between px-1">
+                    <h3 className="text-[11px] font-semibold uppercase tracking-wide text-foreground">
+                      {t('sidebar.enabled')}
+                    </h3>
+                    {enabled.length > 0 && (
+                      <span className="text-[11px] font-medium text-muted-foreground">
+                        {enabled.length}
+                      </span>
+                    )}
+                  </div>
+                  <div className="space-y-1.5">
+                    {enabled.length === 0 ? (
+                      <div className="flex flex-col items-center justify-center px-3 py-6 text-center">
+                        <div className="mb-1 text-muted-foreground/60">
+                          <svg
+                            className="mx-auto h-8 w-8"
+                            fill="none"
+                            stroke="currentColor"
+                            viewBox="0 0 24 24"
+                          >
+                            <path
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              strokeWidth={1.5}
+                              d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4"
+                            />
+                          </svg>
+                        </div>
+                        <p className="text-[11px] text-muted-foreground">{t('sidebar.empty')}</p>
                       </div>
-                      <p className="text-[11px] text-muted-foreground">{t('sidebar.empty')}</p>
-                    </div>
-                  ) : (
-                    enabled.map(it => (
-                      <ProviderSidebarItem
-                        key={it.id}
-                        provider={it}
-                        availableModelCount={availableCounts[it.provider] ?? 0}
-                        isActive={isActive(it)}
-                      />
-                    ))
-                  )}
-                </div>
-              </section>
+                    ) : (
+                      enabled.map(it => (
+                        <ProviderSidebarItem
+                          key={it.id}
+                          provider={it}
+                          availableModelCount={availableCounts[it.provider]}
+                          isActive={isActive(it)}
+                        />
+                      ))
+                    )}
+                  </div>
+                </section>
 
-              {/* Divider */}
-              <div className="relative">
-                <div className="absolute inset-0 flex items-center">
-                  <div className="w-full border-t border-border/50" />
+                {/* Divider */}
+                <div className="relative">
+                  <div className="absolute inset-0 flex items-center">
+                    <div className="w-full border-t border-border/50" />
+                  </div>
                 </div>
-              </div>
 
-              {/* Disabled Section */}
-              <section className="space-y-1.5 pt-1.5">
-                <div className="flex items-center justify-between px-1">
-                  <h3 className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">
-                    {t('sidebar.disabled')}
-                  </h3>
-                  {disabled.length > 0 && (
-                    <span className="text-[11px] text-muted-foreground/60 font-medium">
-                      {disabled.length}
-                    </span>
-                  )}
-                </div>
-                <div className="space-y-1.5">
-                  {disabled.length === 0 ? (
-                    <div className="flex flex-col items-center justify-center py-6 px-3 text-center">
-                      <div className="text-muted-foreground/60 mb-1">
-                        <svg
-                          className="w-8 h-8 mx-auto"
-                          fill="none"
-                          stroke="currentColor"
-                          viewBox="0 0 24 24"
-                        >
-                          <path
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            strokeWidth={1.5}
-                            d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
-                          />
-                        </svg>
+                {/* Disabled Section */}
+                <section className="space-y-1.5 pt-1.5">
+                  <div className="flex items-center justify-between px-1">
+                    <h3 className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                      {t('sidebar.disabled')}
+                    </h3>
+                    {disabled.length > 0 && (
+                      <span className="text-[11px] font-medium text-muted-foreground/60">
+                        {disabled.length}
+                      </span>
+                    )}
+                  </div>
+                  <div className="space-y-1.5">
+                    {disabled.length === 0 ? (
+                      <div className="flex flex-col items-center justify-center px-3 py-6 text-center">
+                        <div className="mb-1 text-muted-foreground/60">
+                          <svg
+                            className="mx-auto h-8 w-8"
+                            fill="none"
+                            stroke="currentColor"
+                            viewBox="0 0 24 24"
+                          >
+                            <path
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              strokeWidth={1.5}
+                              d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
+                            />
+                          </svg>
+                        </div>
+                        <p className="text-[11px] text-muted-foreground">{t('sidebar.empty')}</p>
                       </div>
-                      <p className="text-[11px] text-muted-foreground">{t('sidebar.empty')}</p>
-                    </div>
-                  ) : (
-                    disabled.map(it => (
-                      <ProviderSidebarItem
-                        key={it.id}
-                        provider={it}
-                        availableModelCount={availableCounts[it.provider] ?? 0}
-                        isActive={isActive(it)}
-                      />
-                    ))
-                  )}
-                </div>
-              </section>
-            </>
-          )}
-        </div>
-      </aside>
-      <main className="flex-1 h-full min-w-0 p-6 overflow-auto">{children}</main>
+                    ) : (
+                      disabled.map(it => (
+                        <ProviderSidebarItem
+                          key={it.id}
+                          provider={it}
+                          availableModelCount={availableCounts[it.provider]}
+                          isActive={isActive(it)}
+                        />
+                      ))
+                    )}
+                  </div>
+                </section>
+              </>
+            )}
+          </div>
+        </aside>
+        <main className="h-full min-w-0 flex-1 overflow-auto p-6">{children}</main>
+      </div>
     </div>
   );
 }

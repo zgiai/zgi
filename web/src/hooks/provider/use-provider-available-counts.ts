@@ -44,8 +44,6 @@ export function useProviderAvailableCounts(
 
         if (result.status === 'fulfilled') {
           acc[provider] = result.value[1];
-        } else {
-          acc[provider] = 0;
         }
 
         return acc;

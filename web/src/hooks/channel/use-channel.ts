@@ -28,7 +28,7 @@ import type {
   UpstreamState,
   UpdateUpstreamStateSettingsRequest,
 } from '@/services/types/channel';
-import { CHANNEL_KEYS, MODEL_KEYS } from '@/hooks/query-keys';
+import { CHANNEL_KEYS, MODEL_KEYS, PROVIDER_KEYS } from '@/hooks/query-keys';
 import {
   denormalizeAiCreditValue,
   normalizeAdjustChannelWalletResponse,
@@ -306,6 +306,8 @@ export function useUpdateChannel(): {
       });
       queryClient.invalidateQueries({ queryKey: CHANNEL_KEYS.all });
       queryClient.invalidateQueries({ queryKey: MODEL_KEYS.allRoot });
+      queryClient.invalidateQueries({ queryKey: PROVIDER_KEYS.all });
+      queryClient.invalidateQueries({ queryKey: PROVIDER_KEYS.details() });
     },
     onError: (error, { id }, context) => {
       if (context) {
@@ -372,6 +374,8 @@ export function useUpdateOfficialChannelSettings(): {
       // Also invalidate channel list as it might show the official channel status
       queryClient.invalidateQueries({ queryKey: CHANNEL_KEYS.all });
       queryClient.invalidateQueries({ queryKey: MODEL_KEYS.allRoot });
+      queryClient.invalidateQueries({ queryKey: PROVIDER_KEYS.all });
+      queryClient.invalidateQueries({ queryKey: PROVIDER_KEYS.details() });
     },
     onError: (_error, _variables, context) => {
       if (context?.prevPlatform) {
@@ -433,6 +437,8 @@ export function useDeleteChannel(): {
       });
       queryClient.invalidateQueries({ queryKey: CHANNEL_KEYS.all });
       queryClient.invalidateQueries({ queryKey: MODEL_KEYS.allRoot });
+      queryClient.invalidateQueries({ queryKey: PROVIDER_KEYS.all });
+      queryClient.invalidateQueries({ queryKey: PROVIDER_KEYS.details() });
     },
     onError: (error, { id }, context) => {
       if (context) {
@@ -528,6 +534,8 @@ export function useCreateChannel(): {
       });
       queryClient.invalidateQueries({ queryKey: CHANNEL_KEYS.all });
       queryClient.invalidateQueries({ queryKey: MODEL_KEYS.allRoot });
+      queryClient.invalidateQueries({ queryKey: PROVIDER_KEYS.all });
+      queryClient.invalidateQueries({ queryKey: PROVIDER_KEYS.details() });
     },
     onError: (error, _data, context) => {
       if (context) {

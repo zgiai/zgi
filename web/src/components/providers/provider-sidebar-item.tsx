@@ -7,8 +7,6 @@ import { Badge } from '@/components/ui/badge';
 import type { ProviderItem } from '@/services/types/provider';
 import { useProviderI18n } from '@/hooks/provider/use-provider-i18n';
 import { useT } from '@/i18n';
-import { getProviderRuntimeState } from '@/utils/provider-runtime-state';
-import { CheckCircle2, AlertCircle, Boxes, X } from 'lucide-react';
 
 export interface ProviderSidebarItemProps {
   /** Provider data */
@@ -26,44 +24,48 @@ export interface ProviderSidebarItemProps {
  */
 export function ProviderSidebarItem({
   provider,
-  availableModelCount = 0,
+  availableModelCount,
   isActive,
   onMouseEnter,
 }: ProviderSidebarItemProps): JSX.Element {
   const getProviderName = useProviderI18n();
   const t = useT('aiProviders');
-  const state = getProviderRuntimeState(provider, availableModelCount);
+  const modelCount = provider.model_count ?? 0;
+  const channelCount = provider.channel_count ?? 0;
 
-  const badgeContent =
-    state === 'available_models'
-      ? {
-          icon: CheckCircle2,
-          label: `${availableModelCount} ${t('providersList.runtimeStates.available_models')}`,
-          className:
-            'border-transparent bg-success/15 text-success shadow-none ring-1 ring-success/10',
-        }
-      : state === 'pending_channels'
-        ? {
-            icon: AlertCircle,
-            label: t('providersList.runtimeStates.pending_channels'),
-            className:
-              'border-transparent bg-warning/15 text-warning shadow-none ring-1 ring-warning/10',
-          }
-        : state === 'no_catalog_models'
-          ? {
-            icon: Boxes,
-            label: t('providersList.runtimeStates.no_catalog_models'),
-            className:
-              'border-border bg-muted/70 text-muted-foreground shadow-none ring-1 ring-border/60',
-          }
-          : {
-              icon: X,
-              label: t('providersList.runtimeStates.disabled'),
-              className:
-                'border-border bg-muted/70 text-muted-foreground shadow-none ring-1 ring-border/60',
-            };
+  let status: { label: string; dotClassName: string };
 
-  const Icon = badgeContent.icon;
+  if (!provider.is_enabled) {
+    status = {
+      label: t('providersList.runtimeStates.disabled'),
+      dotClassName: 'bg-muted-foreground/50',
+    };
+  } else if (modelCount === 0) {
+    status = {
+      label: t('providersList.runtimeStates.no_catalog_models'),
+      dotClassName: 'bg-muted-foreground/50',
+    };
+  } else if (channelCount === 0) {
+    status = {
+      label: t('providersList.runtimeStates.pending_channels'),
+      dotClassName: 'bg-muted-foreground/50',
+    };
+  } else if (availableModelCount === undefined) {
+    status = {
+      label: t('providersList.runtimeStates.unknown'),
+      dotClassName: 'bg-muted-foreground/50',
+    };
+  } else if (availableModelCount > 0) {
+    status = {
+      label: `${availableModelCount} ${t('providersList.runtimeStates.available_models')}`,
+      dotClassName: 'bg-emerald-500',
+    };
+  } else {
+    status = {
+      label: t('providersList.runtimeStates.configured_no_models'),
+      dotClassName: 'bg-amber-500',
+    };
+  }
 
   return (
     <Link
@@ -85,14 +87,16 @@ export function ProviderSidebarItem({
             {t('providersList.sidebar.modelCount', { count: provider.model_count ?? 0 })}
           </span>
           {provider.provider_type === 'custom' ? (
-            <Badge variant="info">{t('providersList.table.custom')}</Badge>
+            <Badge variant="outline" className="h-4 px-1 text-[9px] font-normal">
+              {t('providersList.table.custom')}
+            </Badge>
           ) : null}
         </div>
       </div>
-      <Badge className={`h-6 px-2.5 text-[11px] font-semibold ${badgeContent.className}`}>
-        <Icon className="h-3 w-3" />
-        {badgeContent.label}
-      </Badge>
+      <div className="flex shrink-0 items-center gap-1.5 text-[11px] text-muted-foreground">
+        <span className={`size-1.5 rounded-full ${status.dotClassName}`} />
+        <span>{status.label}</span>
+      </div>
     </Link>
   );
 }
