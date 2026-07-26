@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/google/uuid"
@@ -11,6 +12,8 @@ import (
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
+
+var ErrCredentialBindingChanged = errors.New("route credential binding changed")
 
 // ============================================================================
 // Tenant Route Repository
@@ -29,6 +32,10 @@ type TenantRouteRepository interface {
 	CountByCredentialID(ctx context.Context, organizationID uuid.UUID, credentialID uuid.UUID) (int64, error)
 	GetDistinctProviders(ctx context.Context, organizationID uuid.UUID) ([]string, error)
 	GetPlatformChannels(ctx context.Context) ([]*model.LLMRoute, error)
+}
+
+type CredentialBindingUpdater interface {
+	UpdateWithExpectedCredential(ctx context.Context, route *model.LLMRoute, expectedCredentialID *uuid.UUID) error
 }
 
 type tenantRouteRepository struct {
@@ -97,6 +104,38 @@ func (r *tenantRouteRepository) List(ctx context.Context, organizationID uuid.UU
 
 func (r *tenantRouteRepository) Update(ctx context.Context, route *model.LLMRoute) error {
 	// Use Updates with Select to only update specific fields and avoid constraint violations
+	return r.db.WithContext(ctx).Model(route).
+		Select(routeUpdateFields(route, false)).
+		Updates(route).Error
+}
+
+func (r *tenantRouteRepository) UpdateWithExpectedCredential(
+	ctx context.Context,
+	route *model.LLMRoute,
+	expectedCredentialID *uuid.UUID,
+) error {
+	query := r.db.WithContext(ctx).
+		Model(&model.LLMRoute{}).
+		Where("id = ? AND organization_id = ?", route.ID, route.OrganizationID)
+	if expectedCredentialID == nil {
+		query = query.Where("user_credential_id IS NULL")
+	} else {
+		query = query.Where("user_credential_id = ?", *expectedCredentialID)
+	}
+
+	result := query.
+		Select(routeUpdateFields(route, true)).
+		Updates(route)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected != 1 {
+		return ErrCredentialBindingChanged
+	}
+	return nil
+}
+
+func routeUpdateFields(route *model.LLMRoute, includeCredential bool) []string {
 	fields := []string{
 		"name",
 		"provider",
@@ -115,12 +154,13 @@ func (r *tenantRouteRepository) Update(ctx context.Context, route *model.LLMRout
 		"last_synced_at",
 		"updated_at",
 	}
+	if includeCredential {
+		fields = append(fields, "user_credential_id")
+	}
 	if !route.IsOfficial {
 		fields = append(fields, "models")
 	}
-	return r.db.WithContext(ctx).Model(route).
-		Select(fields).
-		Updates(route).Error
+	return fields
 }
 
 func (r *tenantRouteRepository) Delete(ctx context.Context, organizationID, id uuid.UUID) error {

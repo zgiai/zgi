@@ -290,6 +290,8 @@ const messages = {
       initialFundsDefault: 'Internal company channels default to $100. Adjust it for the use case.',
       providerLocked:
         'The adapter is locked to the current provider. Create a channel from Channels to choose another protocol.',
+      sharedCredentialIsolation:
+        'This channel currently shares a credential with {count} channels. Changing the provider, API base URL, or API key creates a separate credential for this channel; the other channels stay unchanged.',
       priority: 'Lower numbers are routed first.',
       weight: 'Used for traffic split within the same priority.',
     },
@@ -423,7 +425,8 @@ const messages = {
     observedPrefix: 'Observed',
     stalePrefix: 'Stale data, checked',
     retryAfter: 'Next automatic verification: {time}',
-    sharedCredential: 'This credential is shared by {count} channels. Changes affect all of them.',
+    sharedCredential:
+      'This credential is shared by {count} channels. Credential status and balance alert settings are shared.',
     enableThreshold: 'Enable {currency} balance alert',
     thresholdPlaceholder: 'Alert amount',
     pollingHint: 'Automatic polling starts when at least one threshold is enabled.',

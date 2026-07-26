@@ -64,7 +64,7 @@ type UpdateRouteRequest struct {
 	Weight          *int                               `json:"weight"`
 	IsEnabled       *bool                              `json:"is_enabled"`
 
-	// API Key - if provided, will update the associated credential's API key
+	// API Key - if provided, replaces this route's credential binding without mutating shared credentials.
 	APIKey *string `json:"api_key"`
 }
 

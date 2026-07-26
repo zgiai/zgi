@@ -24,6 +24,7 @@ var (
 	ErrCredentialInactive = errors.New("credential is inactive")
 	ErrCredentialExpired  = errors.New("credential has expired")
 	ErrInvalidAPIKey      = errors.New("invalid API key")
+	ErrCredentialInUse    = errors.New("credential is attached to one or more channels")
 )
 
 type tenantCredentialService struct {
@@ -136,6 +137,16 @@ func (s *tenantCredentialService) Update(ctx context.Context, organizationID, id
 	if err != nil {
 		return nil, ErrCredentialNotFound
 	}
+	connectionChanged := req.ChannelProvider != nil || req.APIBaseURL != nil || req.APIKey != nil
+	if connectionChanged {
+		inUse, err := s.isCredentialInUse(ctx, organizationID, id)
+		if err != nil {
+			return nil, err
+		}
+		if inUse {
+			return nil, ErrCredentialInUse
+		}
+	}
 
 	newChannelProvider := credential.ChannelProvider
 	if req.ChannelProvider != nil {
@@ -171,7 +182,6 @@ func (s *tenantCredentialService) Update(ctx context.Context, organizationID, id
 		credential.APIKeyHash = hashAPIKey(*req.APIKey)
 	}
 
-	connectionChanged := req.ChannelProvider != nil || req.APIBaseURL != nil || req.APIKey != nil
 	if s.db != nil {
 		err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 			if err := tx.Save(credential).Error; err != nil {
@@ -203,10 +213,14 @@ func (s *tenantCredentialService) Delete(ctx context.Context, organizationID, id
 	}
 
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.
+		var routeCount int64
+		if err := tx.Model(&channelmodel.LLMRoute{}).
 			Where("organization_id = ? AND user_credential_id = ?", organizationID, id).
-			Delete(&channelmodel.LLMRoute{}).Error; err != nil {
-			return fmt.Errorf("failed to delete dependent routes: %w", err)
+			Count(&routeCount).Error; err != nil {
+			return fmt.Errorf("count credential channel references: %w", err)
+		}
+		if routeCount > 0 {
+			return ErrCredentialInUse
 		}
 
 		if err := tx.
@@ -217,6 +231,20 @@ func (s *tenantCredentialService) Delete(ctx context.Context, organizationID, id
 
 		return nil
 	})
+}
+
+func (s *tenantCredentialService) isCredentialInUse(ctx context.Context, organizationID, id uuid.UUID) (bool, error) {
+	if s.db == nil {
+		return false, nil
+	}
+	var count int64
+	if err := s.db.WithContext(ctx).
+		Model(&channelmodel.LLMRoute{}).
+		Where("organization_id = ? AND user_credential_id = ?", organizationID, id).
+		Count(&count).Error; err != nil {
+		return false, fmt.Errorf("count credential channel references: %w", err)
+	}
+	return count > 0, nil
 }
 
 func (s *tenantCredentialService) GetDecryptedAPIKey(ctx context.Context, organizationID, id uuid.UUID) (string, error) {
