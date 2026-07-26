@@ -25,6 +25,9 @@ const messages = {
     conversational: 'Chatflow',
     workflow: 'Workflow',
   },
+  workflowRunMonitor: {
+    title: 'Workflow',
+  },
   // Status indicators
   status: {
     published: 'Published',

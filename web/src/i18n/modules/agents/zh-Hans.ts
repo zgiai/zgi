@@ -27,6 +27,9 @@ const messages: AgentsMessages = {
     conversational: '对话工作流',
     workflow: '任务工作流',
   },
+  workflowRunMonitor: {
+    title: '工作流',
+  },
 
   // Status indicators
   status: {

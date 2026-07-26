@@ -65,7 +65,7 @@ const WorkflowRunMonitor: React.FC<WorkflowRunMonitorProps> = ({
             />
           ) : null}
           <span className="text-[13px] font-semibold tracking-tight">
-            {t('modes.workflow')}
+            {t('workflowRunMonitor.title')}
             {status === 'running' && (
               <span className="ml-1.5 inline-block w-1 h-1 rounded-full bg-info animate-pulse-fast shadow-[0_0_4px_var(--info)]" />
             )}
