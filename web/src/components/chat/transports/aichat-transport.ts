@@ -40,6 +40,7 @@ import type {
   AIChatWorkflowNodeEventData,
   AIChatWorkflowPausedEventData,
   AIChatWorkflowQuestionAnswerInputs,
+  AIChatWorkflowRunNodeMetadata,
 } from '@/services/types/aichat';
 import type { ConversationSearchResult } from '@/components/chat/controllers/types';
 import {
@@ -47,9 +48,57 @@ import {
   type AIChatPagination,
 } from '@/components/chat/controllers/aichat';
 
-function sanitizeAIChatMessage(message: AIChatMessage): AIChatMessage {
-  const sanitizedMessage = sanitizeModelOutputValue(message) as AIChatMessage;
-  const presentationBlocked = sanitizedMessage.metadata?.presentation?.items?.some(
+function sanitizeWorkflowNodeOutputs(
+  node: AIChatWorkflowRunNodeMetadata
+): AIChatWorkflowRunNodeMetadata {
+  return {
+    ...node,
+    outputs: sanitizeModelOutputValue(node.outputs),
+    iteration_outputs: sanitizeModelOutputValue(node.iteration_outputs),
+    loop_outputs: sanitizeModelOutputValue(node.loop_outputs),
+    iteration_rounds: node.iteration_rounds?.map(round => ({
+      ...round,
+      nodes: round.nodes?.map(sanitizeWorkflowNodeOutputs),
+    })),
+    loop_rounds: node.loop_rounds?.map(round => ({
+      ...round,
+      nodes: round.nodes?.map(sanitizeWorkflowNodeOutputs),
+    })),
+  };
+}
+
+export function sanitizeAIChatMessage(message: AIChatMessage): AIChatMessage {
+  const metadata = message.metadata;
+  const sanitizedMetadata = metadata
+    ? {
+        ...metadata,
+        presentation: metadata.presentation
+          ? {
+              ...metadata.presentation,
+              items: metadata.presentation.items?.map(item =>
+                item.kind === 'text'
+                  ? { ...item, content: sanitizeModelOutputValue(item.content) as string }
+                  : item
+              ),
+            }
+          : metadata.presentation,
+        skill_invocations: metadata.skill_invocations?.map(invocation => ({
+          ...invocation,
+          result: sanitizeModelOutputValue(invocation.result) as typeof invocation.result,
+        })),
+        workflow_runs: metadata.workflow_runs?.map(run => ({
+          ...run,
+          outputs: sanitizeModelOutputValue(run.outputs),
+          nodes: run.nodes?.map(sanitizeWorkflowNodeOutputs),
+        })),
+      }
+    : metadata;
+  const sanitizedMessage: AIChatMessage = {
+    ...message,
+    answer: sanitizeModelOutputValue(message.answer) as string,
+    metadata: sanitizedMetadata,
+  };
+  const presentationBlocked = sanitizedMetadata?.presentation?.items?.some(
     item => item.kind === 'text' && isSensitiveOutputBlockedValue(item.content)
   );
   const isSensitiveOutputBlocked =
