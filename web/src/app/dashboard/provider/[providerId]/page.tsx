@@ -45,6 +45,7 @@ import { useProviderI18n } from '@/hooks/provider/use-provider-i18n';
 import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
 import { useOrganizationStore } from '@/store/organization-store';
 import { toast } from 'sonner';
+import { shouldPromptProviderChannelSetup } from '@/utils/provider-runtime-state';
 
 // Removed local badge color mapping; row badges use mapping inside ModelsGroupTable
 
@@ -214,9 +215,7 @@ export default function ModelPage() {
   const needsChannelSetup = Boolean(
     detail &&
       !isCustom &&
-      detail.is_enabled &&
-      (detail.model_count ?? 0) > 0 &&
-      (detail.channel_count ?? 0) === 0
+      shouldPromptProviderChannelSetup(detail, hasAnyConnectedModels)
   );
   const { name, description } = useProviderDisplay(detail);
   const accountPermissions = useAccountPermissions();

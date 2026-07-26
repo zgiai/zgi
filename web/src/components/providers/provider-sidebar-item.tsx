@@ -7,6 +7,7 @@ import { Badge } from '@/components/ui/badge';
 import type { ProviderItem } from '@/services/types/provider';
 import { useProviderI18n } from '@/hooks/provider/use-provider-i18n';
 import { useT } from '@/i18n';
+import { getProviderSidebarRuntimeState } from '@/utils/provider-runtime-state';
 
 export interface ProviderSidebarItemProps {
   /** Provider data */
@@ -30,35 +31,34 @@ export function ProviderSidebarItem({
 }: ProviderSidebarItemProps): JSX.Element {
   const getProviderName = useProviderI18n();
   const t = useT('aiProviders');
-  const modelCount = provider.model_count ?? 0;
-  const channelCount = provider.channel_count ?? 0;
+  const state = getProviderSidebarRuntimeState(provider, availableModelCount);
 
   let status: { label: string; dotClassName: string };
 
-  if (!provider.is_enabled) {
+  if (state === 'disabled') {
     status = {
       label: t('providersList.runtimeStates.disabled'),
       dotClassName: 'bg-muted-foreground/50',
     };
-  } else if (modelCount === 0) {
+  } else if (state === 'no_catalog_models') {
     status = {
       label: t('providersList.runtimeStates.no_catalog_models'),
       dotClassName: 'bg-muted-foreground/50',
     };
-  } else if (channelCount === 0) {
+  } else if (state === 'available_models') {
+    status = {
+      label: `${availableModelCount} ${t('providersList.runtimeStates.available_models')}`,
+      dotClassName: 'bg-emerald-500',
+    };
+  } else if (state === 'pending_channels') {
     status = {
       label: t('providersList.runtimeStates.pending_channels'),
       dotClassName: 'bg-muted-foreground/50',
     };
-  } else if (availableModelCount === undefined) {
+  } else if (state === 'unknown') {
     status = {
       label: t('providersList.runtimeStates.unknown'),
       dotClassName: 'bg-muted-foreground/50',
-    };
-  } else if (availableModelCount > 0) {
-    status = {
-      label: `${availableModelCount} ${t('providersList.runtimeStates.available_models')}`,
-      dotClassName: 'bg-emerald-500',
     };
   } else {
     status = {
