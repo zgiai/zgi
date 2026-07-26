@@ -3720,6 +3720,135 @@ Use the calculator tool.
 	}
 }
 
+func TestRunnerProcessesSuccessfulSiblingAfterRepeatedFailedToolCall(t *testing.T) {
+	ctx := context.Background()
+	catalogDir := t.TempDir()
+	writeRunnerTestSkill(t, catalogDir, "limited-calculator", `---
+name: limited-calculator
+description: Calculate with a tool that can fail.
+when_to_use: Use when testing mixed tool call batches.
+provider_type: builtin
+provider_id: calculator
+runtime_type: tool
+tools:
+  - evaluate_expression
+---
+
+# Limited Calculator
+
+Use the calculator tool.
+`)
+	fakeLLM := &runnerTestLLMClient{
+		appChatResponses: []*adapter.ChatResponse{
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{
+						Role: "assistant",
+						ToolCalls: []adapter.ToolCall{{
+							ID:   "call_load",
+							Type: "function",
+							Function: adapter.FunctionCall{
+								Name:      skills.MetaToolLoadSkill,
+								Arguments: `{"skill_id":"limited-calculator"}`,
+							},
+						}},
+					},
+				}},
+			},
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{
+						Role: "assistant",
+						ToolCalls: []adapter.ToolCall{
+							runnerTestSkillToolCall("call_bad_1", "limited-calculator", "evaluate_expression", map[string]interface{}{
+								"expression": "1/",
+							}),
+						},
+					},
+				}},
+			},
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{
+						Role: "assistant",
+						ToolCalls: []adapter.ToolCall{
+							runnerTestSkillToolCall("call_bad_2", "limited-calculator", "evaluate_expression", map[string]interface{}{
+								"expression": "1/",
+							}),
+							runnerTestSkillToolCall("call_good", "limited-calculator", "evaluate_expression", map[string]interface{}{
+								"expression": "2+2",
+							}),
+						},
+					},
+				}},
+			},
+			{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: "The corrected calculation succeeded."}}}},
+		},
+	}
+	manager := tools.NewToolManager(nil)
+	if err := manager.RegisterProvider(calculator.NewProvider()); err != nil {
+		t.Fatalf("register calculator provider: %v", err)
+	}
+	runtime := skills.NewRuntimeWithCatalog(tools.NewToolEngine(manager), manager, catalogDir)
+	resolved, err := runtime.ResolveEnabledSkills(ctx, []string{"limited-calculator"})
+	if err != nil {
+		t.Fatalf("resolve skills: %v", err)
+	}
+	var events []Event
+	var traces []skills.SkillTrace
+	runner := &Runner{
+		LLMClient:    fakeLLM,
+		SkillRuntime: runtime,
+		AppContext:   &llmclient.AppContext{},
+		OnEvent: func(event Event) error {
+			events = append(events, event)
+			return nil
+		},
+		OnTrace: func(_ []skills.SkillTrace, trace skills.SkillTrace) {
+			traces = append(traces, trace)
+		},
+	}
+	prepared := NewPreparedChat("conv-1", "msg-1", "", "auto", &adapter.ChatRequest{
+		Messages: []adapter.Message{{Role: "user", Content: "calculate both expressions"}},
+	})
+
+	answer, _, err := runner.Run(ctx, RunRequest{
+		Prepared: prepared,
+		Resolved: resolved,
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if answer != "The corrected calculation succeeded." {
+		t.Fatalf("answer = %q, want final answer after successful sibling call", answer)
+	}
+	if fakeLLM.appChatCalls != 4 {
+		t.Fatalf("AppChat calls = %d, want load, failure, mixed batch, and final answer", fakeLLM.appChatCalls)
+	}
+	starts := 0
+	for _, event := range events {
+		if event.Type == EventSkillCallStart {
+			starts++
+		}
+	}
+	if starts != 2 {
+		t.Fatalf("skill call start events = %d, want first failure and successful sibling only", starts)
+	}
+	foundSuccessfulSibling := false
+	for _, trace := range traces {
+		if trace.Kind == "tool_call" &&
+			trace.SkillID == "limited-calculator" &&
+			trace.ToolName == "evaluate_expression" &&
+			trace.Status == "success" {
+			foundSuccessfulSibling = true
+			break
+		}
+	}
+	if !foundSuccessfulSibling {
+		t.Fatalf("traces = %#v, want successful sibling tool trace", traces)
+	}
+}
+
 func TestRecoverableSkillFailureMadeProgress(t *testing.T) {
 	trace := func(skillID string, toolName string, category string, argumentFingerprint string, actualType string, missingFields ...string) skills.SkillTrace {
 		return skills.SkillTrace{

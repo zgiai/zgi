@@ -591,13 +591,12 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 			if result.stopBusinessLoop {
 				stopBusinessLoop = true
 				stopBusinessLoopTrace = result.trace
-				break
 			}
 		}
 		if len(roundDeferredSystemMessages) > 0 {
 			messages = append(messages, roundDeferredSystemMessages...)
 		}
-		if stopBusinessLoop {
+		if stopBusinessLoop && !roundHadSuccess && !roundMadeFailureProgress {
 			answer, explanationUsage, explanationErr := r.completeBusinessToolFailure(
 				ctx,
 				req,
