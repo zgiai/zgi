@@ -3,9 +3,30 @@ package workflow
 import (
 	"testing"
 
+	workflowpause "github.com/zgiai/zgi/api/internal/modules/app/workflow/pause"
+
 	"github.com/zgiai/zgi/api/internal/modules/llm/gateway"
 	"github.com/zgiai/zgi/api/pkg/response"
 )
+
+func TestBuildWorkflowStreamErrorPayloadRuntimeCodes(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		code string
+	}{
+		{name: "ownership lost", err: workflowpause.ErrExecutionOwnershipLost, code: "workflow_execution_ownership_lost"},
+		{name: "event persistence", err: errWorkflowEventPersistenceFailed, code: "workflow_event_persistence_failed"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			payload := buildWorkflowStreamErrorPayload(tt.err)
+			if got, _ := payload["code"].(string); got != tt.code {
+				t.Fatalf("error code = %q, want %q", got, tt.code)
+			}
+		})
+	}
+}
 
 func TestWorkflowBillingErrorCodeAndMessageModelPricingNotConfigured(t *testing.T) {
 	code, message, ok := workflowBillingErrorCodeAndMessage(&gateway.BillingUserError{

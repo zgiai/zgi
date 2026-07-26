@@ -3645,6 +3645,7 @@ Use the calculator tool.
 	}
 	var events []Event
 	var traces []skills.SkillTrace
+	var completion TerminalCompletionResult
 	runner := &Runner{
 		LLMClient:    fakeLLM,
 		SkillRuntime: runtime,
@@ -3657,13 +3658,17 @@ Use the calculator tool.
 			traces = append(traces, trace)
 		},
 	}
+	onTerminalCompletion := func(result TerminalCompletionResult) {
+		completion = result
+	}
 	prepared := NewPreparedChat("conv-1", "msg-1", "", "auto", &adapter.ChatRequest{
 		Messages: []adapter.Message{{Role: "user", Content: "calculate an invalid expression"}},
 	})
 
 	answer, _, err := runner.Run(ctx, RunRequest{
-		Prepared: prepared,
-		Resolved: resolved,
+		Prepared:             prepared,
+		Resolved:             resolved,
+		OnTerminalCompletion: onTerminalCompletion,
 	})
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
@@ -3680,21 +3685,326 @@ Use the calculator tool.
 	if starts != 1 {
 		t.Fatalf("skill call start events = %d, want only the first failed tool execution", starts)
 	}
-	foundFeedback := false
+	foundNoProgress := false
 	for _, trace := range traces {
-		if trace.Kind == "planner_feedback" &&
+		if trace.Kind == "tool_call" &&
 			trace.SkillID == "limited-calculator" &&
 			trace.ToolName == "evaluate_expression" &&
+			trace.Arguments["reason_code"] == skillToolRetryNoProgressCode &&
 			strings.Contains(trace.Error, "same tool call with the same arguments already failed") {
-			foundFeedback = true
+			if trace.Arguments["retry_count"] != 2 {
+				t.Fatalf("no-progress retry_count = %#v, want 2", trace.Arguments["retry_count"])
+			}
+			if trace.Arguments["termination_reason"] != "retry_no_progress" {
+				t.Fatalf("no-progress termination_reason = %#v, want retry_no_progress", trace.Arguments["termination_reason"])
+			}
+			if fingerprint := evidenceStringFromAny(trace.Arguments["failure_fingerprint"]); !strings.HasPrefix(fingerprint, "sha256:") {
+				t.Fatalf("no-progress failure_fingerprint = %q, want sha256 diagnostic", fingerprint)
+			}
+			foundNoProgress = true
 			break
 		}
 	}
-	if !foundFeedback {
-		t.Fatalf("traces = %#v, want repeated failed tool call planner feedback", traces)
+	if !foundNoProgress {
+		t.Fatalf("traces = %#v, want repeated failed tool call no-progress evidence", traces)
 	}
 	if fakeLLM.appChatCalls != 4 {
 		t.Fatalf("AppChat calls = %d, want load, first failure, blocked retry, final answer", fakeLLM.appChatCalls)
+	}
+	lastRequest := fakeLLM.appChatRequests[len(fakeLLM.appChatRequests)-1]
+	if len(lastRequest.Tools) != 0 || lastRequest.ToolChoice != nil {
+		t.Fatalf("final explanation request tools = %#v choice = %#v, want no business tools", lastRequest.Tools, lastRequest.ToolChoice)
+	}
+	if completion.CompletionReason != toolFailureExplainedCompletionReason {
+		t.Fatalf("completion reason = %q, want %q", completion.CompletionReason, toolFailureExplainedCompletionReason)
+	}
+}
+
+func TestRunnerProcessesSuccessfulSiblingAfterRepeatedFailedToolCall(t *testing.T) {
+	ctx := context.Background()
+	catalogDir := t.TempDir()
+	writeRunnerTestSkill(t, catalogDir, "limited-calculator", `---
+name: limited-calculator
+description: Calculate with a tool that can fail.
+when_to_use: Use when testing mixed tool call batches.
+provider_type: builtin
+provider_id: calculator
+runtime_type: tool
+tools:
+  - evaluate_expression
+---
+
+# Limited Calculator
+
+Use the calculator tool.
+`)
+	fakeLLM := &runnerTestLLMClient{
+		appChatResponses: []*adapter.ChatResponse{
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{
+						Role: "assistant",
+						ToolCalls: []adapter.ToolCall{{
+							ID:   "call_load",
+							Type: "function",
+							Function: adapter.FunctionCall{
+								Name:      skills.MetaToolLoadSkill,
+								Arguments: `{"skill_id":"limited-calculator"}`,
+							},
+						}},
+					},
+				}},
+			},
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{
+						Role: "assistant",
+						ToolCalls: []adapter.ToolCall{
+							runnerTestSkillToolCall("call_bad_1", "limited-calculator", "evaluate_expression", map[string]interface{}{
+								"expression": "1/",
+							}),
+						},
+					},
+				}},
+			},
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{
+						Role: "assistant",
+						ToolCalls: []adapter.ToolCall{
+							runnerTestSkillToolCall("call_bad_2", "limited-calculator", "evaluate_expression", map[string]interface{}{
+								"expression": "1/",
+							}),
+							runnerTestSkillToolCall("call_good", "limited-calculator", "evaluate_expression", map[string]interface{}{
+								"expression": "2+2",
+							}),
+						},
+					},
+				}},
+			},
+			{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: "The corrected calculation succeeded."}}}},
+		},
+	}
+	manager := tools.NewToolManager(nil)
+	if err := manager.RegisterProvider(calculator.NewProvider()); err != nil {
+		t.Fatalf("register calculator provider: %v", err)
+	}
+	runtime := skills.NewRuntimeWithCatalog(tools.NewToolEngine(manager), manager, catalogDir)
+	resolved, err := runtime.ResolveEnabledSkills(ctx, []string{"limited-calculator"})
+	if err != nil {
+		t.Fatalf("resolve skills: %v", err)
+	}
+	var events []Event
+	var traces []skills.SkillTrace
+	runner := &Runner{
+		LLMClient:    fakeLLM,
+		SkillRuntime: runtime,
+		AppContext:   &llmclient.AppContext{},
+		OnEvent: func(event Event) error {
+			events = append(events, event)
+			return nil
+		},
+		OnTrace: func(_ []skills.SkillTrace, trace skills.SkillTrace) {
+			traces = append(traces, trace)
+		},
+	}
+	prepared := NewPreparedChat("conv-1", "msg-1", "", "auto", &adapter.ChatRequest{
+		Messages: []adapter.Message{{Role: "user", Content: "calculate both expressions"}},
+	})
+
+	answer, _, err := runner.Run(ctx, RunRequest{
+		Prepared: prepared,
+		Resolved: resolved,
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if answer != "The corrected calculation succeeded." {
+		t.Fatalf("answer = %q, want final answer after successful sibling call", answer)
+	}
+	if fakeLLM.appChatCalls != 4 {
+		t.Fatalf("AppChat calls = %d, want load, failure, mixed batch, and final answer", fakeLLM.appChatCalls)
+	}
+	starts := 0
+	for _, event := range events {
+		if event.Type == EventSkillCallStart {
+			starts++
+		}
+	}
+	if starts != 2 {
+		t.Fatalf("skill call start events = %d, want first failure and successful sibling only", starts)
+	}
+	foundSuccessfulSibling := false
+	for _, trace := range traces {
+		if trace.Kind == "tool_call" &&
+			trace.SkillID == "limited-calculator" &&
+			trace.ToolName == "evaluate_expression" &&
+			trace.Status == "success" {
+			foundSuccessfulSibling = true
+			break
+		}
+	}
+	if !foundSuccessfulSibling {
+		t.Fatalf("traces = %#v, want successful sibling tool trace", traces)
+	}
+}
+
+func TestRecoverableSkillFailureMadeProgress(t *testing.T) {
+	trace := func(skillID string, toolName string, category string, argumentFingerprint string, actualType string, missingFields ...string) skills.SkillTrace {
+		return skills.SkillTrace{
+			Kind:     "tool_call",
+			SkillID:  skillID,
+			ToolName: toolName,
+			Status:   "error",
+			Arguments: map[string]interface{}{
+				"failure_category":     category,
+				"argument_fingerprint": argumentFingerprint,
+				"actual_type":          actualType,
+				"missing_fields":       missingFields,
+			},
+		}
+	}
+
+	tests := []struct {
+		name     string
+		previous skills.SkillTrace
+		current  skills.SkillTrace
+		want     bool
+	}{
+		{
+			name:     "identical failure is not progress",
+			previous: trace("file-generator", "generate_docx", "arguments", "sha256:same", "object", "document"),
+			current:  trace("file-generator", "generate_docx", "arguments", "sha256:same", "object", "document"),
+		},
+		{
+			name:     "changed arguments are progress",
+			previous: trace("file-generator", "generate_docx", "arguments", "sha256:before", "object", "document"),
+			current:  trace("file-generator", "generate_docx", "arguments", "sha256:after", "object", "document"),
+			want:     true,
+		},
+		{
+			name:     "fewer missing fields are progress",
+			previous: trace("file-generator", "generate_docx", "arguments", "", "object", "document", "filename"),
+			current:  trace("file-generator", "generate_docx", "arguments", "", "object", "document"),
+			want:     true,
+		},
+		{
+			name:     "corrected argument type is progress",
+			previous: trace("file-generator", "generate_docx", "arguments", "", "string"),
+			current:  trace("file-generator", "generate_docx", "arguments", "", "object", "document"),
+			want:     true,
+		},
+		{
+			name:     "reasonable tool switch is progress",
+			previous: trace("file-generator", "generate_docx", "tool", "sha256:before", "object"),
+			current:  trace("file-generator", "generate_file", "tool", "sha256:after", "object"),
+			want:     true,
+		},
+		{
+			name:     "transient failure does not claim argument progress",
+			previous: trace("file-generator", "generate_file", "transient", "sha256:before", "object"),
+			current:  trace("file-generator", "generate_file", "transient", "sha256:after", "object"),
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := recoverableSkillFailureMadeProgress(test.previous, test.current); got != test.want {
+				t.Fatalf("recoverableSkillFailureMadeProgress() = %v, want %v", got, test.want)
+			}
+		})
+	}
+}
+
+func TestRunnerToolFailureExplanationRetriesEmptyResponseOnce(t *testing.T) {
+	fakeLLM := &runnerTestLLMClient{
+		appChatResponses: []*adapter.ChatResponse{
+			{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant"}}}},
+			{Choices: []adapter.Choice{{Message: adapter.Message{
+				Role:    "assistant",
+				Content: "I could not create the file because the required document content was missing. Please retry or provide the content.",
+			}}}},
+		},
+	}
+	runner := &Runner{
+		LLMClient:  fakeLLM,
+		AppContext: &llmclient.AppContext{},
+	}
+	prepared := NewPreparedChat("conv-1", "msg-1", "", "auto", &adapter.ChatRequest{
+		Messages: []adapter.Message{{Role: "user", Content: "Create a Word document."}},
+	})
+
+	answer, _, err := runner.runToolFailureExplanation(
+		context.Background(),
+		RunRequest{Prepared: prepared},
+		prepared,
+		skills.SkillTrace{
+			Kind:     "tool_call",
+			SkillID:  "file-generator",
+			ToolName: "generate_docx",
+			Status:   "error",
+			Error:    "missing required argument: document",
+			Arguments: map[string]interface{}{
+				"reason_code":    skillToolArgumentsMissingCode,
+				"missing_fields": []string{"document"},
+			},
+		},
+		nil,
+		"repeated tool failure without progress",
+		2,
+	)
+	if err != nil {
+		t.Fatalf("runToolFailureExplanation() error = %v", err)
+	}
+	if !strings.Contains(answer, "could not create the file") {
+		t.Fatalf("answer = %q, want model-generated failure explanation", answer)
+	}
+	if fakeLLM.appChatCalls != 2 {
+		t.Fatalf("AppChat calls = %d, want one controlled retry after empty response", fakeLLM.appChatCalls)
+	}
+	for index, request := range fakeLLM.appChatRequests {
+		if len(request.Tools) != 0 || request.ToolChoice != nil {
+			t.Fatalf("request %d tools = %#v choice = %#v, want explanation-only request", index, request.Tools, request.ToolChoice)
+		}
+	}
+}
+
+func TestRunnerToolFailureExplanationPreservesModelError(t *testing.T) {
+	wantErr := errors.New("model provider unavailable")
+	fakeLLM := &runnerTestLLMClient{
+		appChatErrors: []error{wantErr},
+	}
+	runner := &Runner{
+		LLMClient:  fakeLLM,
+		AppContext: &llmclient.AppContext{},
+	}
+	prepared := NewPreparedChat("conv-1", "msg-1", "", "auto", &adapter.ChatRequest{
+		Messages: []adapter.Message{{Role: "user", Content: "Create a file."}},
+	})
+
+	answer, _, err := runner.runToolFailureExplanation(
+		context.Background(),
+		RunRequest{Prepared: prepared},
+		prepared,
+		skills.SkillTrace{
+			Kind:     "tool_call",
+			SkillID:  "file-generator",
+			ToolName: "generate_file",
+			Status:   "error",
+			Error:    "tool execution failed",
+		},
+		nil,
+		"tool execution failed",
+		1,
+	)
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("runToolFailureExplanation() error = %v, want %v", err, wantErr)
+	}
+	if answer != "" {
+		t.Fatalf("answer = %q, want no system-generated fallback answer", answer)
+	}
+	if fakeLLM.appChatCalls != 1 {
+		t.Fatalf("AppChat calls = %d, want infrastructure failure returned immediately", fakeLLM.appChatCalls)
 	}
 }
 
@@ -3818,6 +4128,124 @@ Use the calculator tool.
 	}
 }
 
+func TestRunnerExecutesSkillToolWithOneLayerJSONStringArguments(t *testing.T) {
+	ctx := context.Background()
+	catalogDir := t.TempDir()
+	writeRunnerTestSkill(t, catalogDir, "limited-calculator", `---
+name: limited-calculator
+description: Calculate with a tool that accepts normalized arguments.
+when_to_use: Use when testing string-encoded skill tool arguments.
+provider_type: builtin
+provider_id: calculator
+runtime_type: tool
+tools:
+  - evaluate_expression
+---
+
+# Limited Calculator
+
+Use the calculator tool.
+`)
+	fakeLLM := &runnerTestLLMClient{
+		appChatResponses: []*adapter.ChatResponse{
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{
+						Role: "assistant",
+						ToolCalls: []adapter.ToolCall{{
+							ID:   "call_load",
+							Type: "function",
+							Function: adapter.FunctionCall{
+								Name:      skills.MetaToolLoadSkill,
+								Arguments: `{"skill_id":"limited-calculator"}`,
+							},
+						}},
+					},
+				}},
+			},
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{
+						Role: "assistant",
+						ToolCalls: []adapter.ToolCall{{
+							ID:   "call_calculate",
+							Type: "function",
+							Function: adapter.FunctionCall{
+								Name: skills.MetaToolCallSkillTool,
+								Arguments: `{
+									"skill_id":"limited-calculator",
+									"tool_name":"evaluate_expression",
+									"arguments":"{\"expression\":\"1+1\"}"
+								}`,
+							},
+						}},
+					},
+				}},
+			},
+			{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: "The result is 2."}}}},
+		},
+	}
+	manager := tools.NewToolManager(nil)
+	if err := manager.RegisterProvider(calculator.NewProvider()); err != nil {
+		t.Fatalf("register calculator provider: %v", err)
+	}
+	runtime := skills.NewRuntimeWithCatalog(tools.NewToolEngine(manager), manager, catalogDir)
+	resolved, err := runtime.ResolveEnabledSkills(ctx, []string{"limited-calculator"})
+	if err != nil {
+		t.Fatalf("resolve skills: %v", err)
+	}
+	var events []Event
+	var traces []skills.SkillTrace
+	runner := &Runner{
+		LLMClient:    fakeLLM,
+		SkillRuntime: runtime,
+		AppContext:   &llmclient.AppContext{},
+		OnEvent: func(event Event) error {
+			events = append(events, event)
+			return nil
+		},
+		OnTrace: func(_ []skills.SkillTrace, trace skills.SkillTrace) {
+			traces = append(traces, trace)
+		},
+	}
+	prepared := NewPreparedChat("conv-1", "msg-1", "", "auto", &adapter.ChatRequest{
+		Messages: []adapter.Message{{Role: "user", Content: "calculate one plus one"}},
+	})
+
+	answer, _, err := runner.Run(ctx, RunRequest{
+		Prepared: prepared,
+		Resolved: resolved,
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if answer != "The result is 2." {
+		t.Fatalf("answer = %q, want successful final answer", answer)
+	}
+	starts := 0
+	for _, event := range events {
+		if event.Type == EventSkillCallStart {
+			starts++
+		}
+	}
+	if starts != 1 {
+		t.Fatalf("skill call start events = %d, want one provider execution", starts)
+	}
+	foundSuccess := false
+	for _, trace := range traces {
+		if trace.Kind == "tool_call" &&
+			trace.SkillID == "limited-calculator" &&
+			trace.ToolName == "evaluate_expression" &&
+			trace.Status == "success" {
+			foundSuccess = true
+			break
+		}
+	}
+	if !foundSuccess {
+		t.Fatalf("traces = %#v, want successful calculator tool trace", traces)
+	}
+}
+
 func TestRunnerRuntimeStateSnapshotTurnsRepeatedRecoverableFailuresIntoTruthfulAnswer(t *testing.T) {
 	ctx := context.Background()
 	catalogDir := t.TempDir()
@@ -3852,15 +4280,23 @@ Use the calculator tool.
 				},
 			}},
 		},
+		{
+			Choices: []adapter.Choice{{
+				Message: adapter.Message{
+					Role:    "assistant",
+					Content: "I could not complete the calculation because the expression was invalid. Please provide a complete expression and try again.",
+				},
+			}},
+		},
 	}
-	for i := 0; i < defaultMaxConsecutiveRecoverableFailureRounds+1; i++ {
-		responses = append(responses, &adapter.ChatResponse{
+	responses = append(responses[:1], []*adapter.ChatResponse{
+		{
 			Choices: []adapter.Choice{{
 				Message: adapter.Message{
 					Role: "assistant",
 					ToolCalls: []adapter.ToolCall{
 						runnerTestSkillToolCall(
-							fmt.Sprintf("call_bad_%d", i),
+							"call_bad_0",
 							"limited-calculator",
 							"evaluate_expression",
 							map[string]interface{}{"expression": "1/"},
@@ -3868,8 +4304,24 @@ Use the calculator tool.
 					},
 				},
 			}},
-		})
-	}
+		},
+		{
+			Choices: []adapter.Choice{{
+				Message: adapter.Message{
+					Role: "assistant",
+					ToolCalls: []adapter.ToolCall{
+						runnerTestSkillToolCall(
+							"call_bad_1",
+							"limited-calculator",
+							"evaluate_expression",
+							map[string]interface{}{"expression": "1/"},
+						),
+					},
+				},
+			}},
+		},
+		responses[1],
+	}...)
 	fakeLLM := &runnerTestLLMClient{appChatResponses: responses}
 	manager := tools.NewToolManager(nil)
 	if err := manager.RegisterProvider(calculator.NewProvider()); err != nil {
@@ -3906,11 +4358,19 @@ Use the calculator tool.
 	if err != nil {
 		t.Fatalf("Run() error = %v, want truthful failed answer", err)
 	}
-	if strings.TrimSpace(answer) == "" || !strings.Contains(answer, "limited-calculator/evaluate_expression") {
-		t.Fatalf("answer = %q, want failed-answer evidence for calculator tool", answer)
+	wantAnswer := "I could not complete the calculation because the expression was invalid. Please provide a complete expression and try again."
+	if answer != wantAnswer {
+		t.Fatalf("answer = %q, want model failure explanation %q", answer, wantAnswer)
 	}
 	if findRunnerTestEvent(events, EventSkillCallError) == nil {
 		t.Fatalf("events = %#v, want skill error event for failed tool evidence", events)
+	}
+	if fakeLLM.appChatCalls != 4 {
+		t.Fatalf("AppChat calls = %d, want load, first failure, no-progress retry, and explanation", fakeLLM.appChatCalls)
+	}
+	lastRequest := fakeLLM.appChatRequests[len(fakeLLM.appChatRequests)-1]
+	if len(lastRequest.Tools) != 0 || lastRequest.ToolChoice != nil {
+		t.Fatalf("final explanation request tools = %#v choice = %#v, want no business tools", lastRequest.Tools, lastRequest.ToolChoice)
 	}
 }
 
@@ -3932,7 +4392,7 @@ tools:
 
 Use the calculator tool.
 `)
-	responses := make([]*adapter.ChatResponse, 0, defaultMaxSkillPlanningRounds)
+	responses := make([]*adapter.ChatResponse, 0, defaultMaxSkillPlanningRounds+1)
 	for i := 0; i < defaultMaxSkillPlanningRounds; i++ {
 		responses = append(responses, &adapter.ChatResponse{
 			Choices: []adapter.Choice{{
@@ -3950,6 +4410,14 @@ Use the calculator tool.
 			}},
 		})
 	}
+	responses = append(responses, &adapter.ChatResponse{
+		Choices: []adapter.Choice{{
+			Message: adapter.Message{
+				Role:    "assistant",
+				Content: "I could not complete the calculation because planning did not reach an executable result. Please retry with a more specific expression.",
+			},
+		}},
+	})
 	fakeLLM := &runnerTestLLMClient{appChatResponses: responses}
 	manager := tools.NewToolManager(nil)
 	if err := manager.RegisterProvider(calculator.NewProvider()); err != nil {
@@ -3984,11 +4452,16 @@ Use the calculator tool.
 	if err != nil {
 		t.Fatalf("Run() error = %v, want truthful exhausted-plan answer", err)
 	}
-	if !strings.Contains(answer, "too many skill planning rounds") {
-		t.Fatalf("answer = %q, want planning-exhaustion failure answer", answer)
+	wantAnswer := "I could not complete the calculation because planning did not reach an executable result. Please retry with a more specific expression."
+	if answer != wantAnswer {
+		t.Fatalf("answer = %q, want model planning-exhaustion explanation %q", answer, wantAnswer)
 	}
-	if fakeLLM.appChatCalls != defaultMaxSkillPlanningRounds {
-		t.Fatalf("AppChat calls = %d, want %d", fakeLLM.appChatCalls, defaultMaxSkillPlanningRounds)
+	if fakeLLM.appChatCalls != defaultMaxSkillPlanningRounds+1 {
+		t.Fatalf("AppChat calls = %d, want %d", fakeLLM.appChatCalls, defaultMaxSkillPlanningRounds+1)
+	}
+	lastRequest := fakeLLM.appChatRequests[len(fakeLLM.appChatRequests)-1]
+	if len(lastRequest.Tools) != 0 || lastRequest.ToolChoice != nil {
+		t.Fatalf("final explanation request tools = %#v choice = %#v, want no business tools", lastRequest.Tools, lastRequest.ToolChoice)
 	}
 }
 
@@ -4982,6 +5455,7 @@ func runnerTestSkillToolCall(callID string, skillID string, toolName string, arg
 
 type runnerTestLLMClient struct {
 	appChatResponses      []*adapter.ChatResponse
+	appChatErrors         []error
 	appChatRequests       []*adapter.ChatRequest
 	appChatCalls          int
 	appChatStreams        [][]adapter.StreamResponse
@@ -6160,13 +6634,16 @@ func (f *runnerTestLLMClient) Rerank(ctx context.Context, organizationID string,
 }
 
 func (f *runnerTestLLMClient) AppChat(ctx context.Context, appCtx *llmclient.AppContext, req *adapter.ChatRequest) (*adapter.ChatResponse, error) {
-	if f.appChatCalls >= len(f.appChatResponses) {
+	callIndex := f.appChatCalls
+	f.appChatRequests = append(f.appChatRequests, cloneChatRequest(req))
+	f.appChatCalls++
+	if callIndex < len(f.appChatErrors) && f.appChatErrors[callIndex] != nil {
+		return nil, f.appChatErrors[callIndex]
+	}
+	if callIndex >= len(f.appChatResponses) {
 		return nil, errors.New("unexpected AppChat call")
 	}
-	f.appChatRequests = append(f.appChatRequests, cloneChatRequest(req))
-	resp := f.appChatResponses[f.appChatCalls]
-	f.appChatCalls++
-	return resp, nil
+	return f.appChatResponses[callIndex], nil
 }
 
 func (f *runnerTestLLMClient) AppChatStream(ctx context.Context, appCtx *llmclient.AppContext, req *adapter.ChatRequest) (<-chan adapter.StreamResponse, error) {

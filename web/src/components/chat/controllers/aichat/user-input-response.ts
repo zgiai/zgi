@@ -1,4 +1,5 @@
 import type {
+  AIChatPresentationPosition,
   AIChatUserInputRequest,
   AIChatUserInputResponse,
 } from '@/services/types/aichat';
@@ -7,7 +8,8 @@ export function buildOptimisticUserInputResponse(
   request: AIChatUserInputRequest | undefined,
   requestId: string,
   values: Record<string, string>,
-  answeredAt = Math.floor(Date.now() / 1000)
+  answeredAt = Math.floor(Date.now() / 1000),
+  presentationPosition?: AIChatPresentationPosition
 ): AIChatUserInputResponse | null {
   if (!request) return null;
   const answers = (request.questions ?? [])
@@ -30,6 +32,7 @@ export function buildOptimisticUserInputResponse(
     answer_count: answers.length,
     answered_at: answeredAt,
     optimistic: true,
+    ...presentationPosition,
   };
 }
 

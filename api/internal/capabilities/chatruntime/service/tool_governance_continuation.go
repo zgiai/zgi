@@ -74,8 +74,14 @@ func (s *service) RunToolGovernanceDecisionStream(
 	}
 	defer execution.Finish()
 	runCtx := execution.Context
-	s.emitPreparedEvent(runCtx, prepared, streamEventMessageStart, messageStartPayload(conversation, message, false), onEvent)
-	s.emitPreparedEvent(runCtx, prepared, streamEventToolGovernanceDecision, decision.Event, onEvent)
+	persistCtx := execution.PersistContext
+	if err := s.emitPreparedEvent(persistCtx, prepared, streamEventMessageStart, messageStartPayload(conversation, message, false), onEvent); err != nil {
+		return nil, finalizedRuntimePersistenceError(err)
+	}
+	timeline := newProcessTimelineRecorder(runCtx, persistCtx, s, prepared, onEvent)
+	if err := timeline.RecordEvent(streamEventToolGovernanceDecision, decision.Event); err != nil {
+		return nil, finalizedRuntimePersistenceError(err)
+	}
 
 	switch strings.TrimSpace(decision.Action) {
 	case toolGovernanceActionReject:
@@ -353,7 +359,9 @@ func (s *service) runToolGovernanceApprovedFrozenContinuation(
 	if callID == "" {
 		callID = strings.TrimSpace(frozen.ID)
 	}
-	timeline.RecordInvocationStart(frozen.SkillID, frozen.ToolName, args)
+	if err := timeline.RecordInvocationStart(frozen.SkillID, frozen.ToolName, args); err != nil {
+		return nil, true, finalizedRuntimePersistenceError(err)
+	}
 	invocation, err := s.skillRuntime.CallSkillTool(
 		ctx,
 		resolved,
@@ -369,7 +377,9 @@ func (s *service) runToolGovernanceApprovedFrozenContinuation(
 			executionErr = fmt.Errorf("%w: frozen skill tool returned no invocation result", ErrInvalidInput)
 		}
 		invocation = recoverableFrozenInvocationFailure(nil, frozen, args, callID, executionErr)
-		timeline.RecordInvocationError(invocation.Trace)
+		if err := timeline.RecordInvocationError(invocation.Trace); err != nil {
+			return nil, true, finalizedRuntimePersistenceError(err)
+		}
 	} else {
 		if invocation.Trace.Governance != nil {
 			if invocation.Trace.Governance.Status != toolgovernance.DecisionStatusAllowed {
@@ -378,16 +388,24 @@ func (s *service) runToolGovernanceApprovedFrozenContinuation(
 		}
 		if executionErr != nil {
 			invocation = recoverableFrozenInvocationFailure(invocation, frozen, args, callID, executionErr)
-			timeline.RecordInvocationError(invocation.Trace)
+			if err := timeline.RecordInvocationError(invocation.Trace); err != nil {
+				return nil, true, finalizedRuntimePersistenceError(err)
+			}
 		} else {
 			invocation.Trace = enrichSkillTraceResultFromMessages(invocation.Trace, invocation.Messages)
-			timeline.RecordInvocationEnd(invocation.Trace)
+			if err := timeline.RecordInvocationEnd(invocation.Trace); err != nil {
+				return nil, true, finalizedRuntimePersistenceError(err)
+			}
 			for _, artifact := range skillArtifactsFromToolMessages(prepared, invocation.Trace, invocation.Messages) {
 				s.persistGeneratedArtifactBestEffort(persistCtx, prepared, artifact)
-				timeline.Emit(streamEventSkillArtifactCreated, artifact)
+				if err := timeline.RecordEvent(streamEventSkillArtifactCreated, artifact); err != nil {
+					return nil, true, finalizedRuntimePersistenceError(err)
+				}
 			}
 			if payload := clientActionRequiredPayload(prepared, invocation.Trace, callID); len(payload) > 0 {
-				timeline.RecordEvent(streamEventClientActionRequired, payload)
+				if err := timeline.RecordEvent(streamEventClientActionRequired, payload); err != nil {
+					return nil, true, finalizedRuntimePersistenceError(err)
+				}
 				if clientActionRequiresModelContinuation(payload) {
 					metadata, persistErr := s.persistClientActionPendingResult(persistCtx, prepared, payload, nil)
 					if ownershipErr := finalizedRuntimeOwnershipError(persistErr); ownershipErr != nil {

@@ -16,15 +16,7 @@ import {
   Wrench,
   Workflow,
 } from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import {
-  Sheet,
-  SheetClose,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-} from '@/components/ui/sheet';
+import { Sheet, SheetContent } from '@/components/ui/sheet';
 import { useT } from '@/i18n/translations';
 import type {
   AgentRuntimeRunDetail,
@@ -39,6 +31,7 @@ import WorkflowRunNodesList, {
   type NodeRunStatus,
   type WorkflowRunNodeListItem,
 } from '@/components/workflow/ui/workflow-run-nodes-list';
+import { RuntimeLogDetailHeader } from './runtime-log-detail-header';
 
 interface AgentRuntimeLogDetailDrawerProps {
   open: boolean;
@@ -48,6 +41,7 @@ interface AgentRuntimeLogDetailDrawerProps {
   steps: AgentRuntimeStep[];
   isLoading: boolean;
   error?: string | null;
+  sourceLabel?: string | null;
 }
 
 const AGENT_RUNTIME_HIDDEN_SKILL_INSTRUCTIONS = '__ZGI_HIDDEN_SKILL_INSTRUCTIONS__';
@@ -481,12 +475,6 @@ function WorkflowApprovalCards({
             <div className="flex flex-wrap items-start justify-between gap-2">
               <div className="min-w-0">
                 <div className="truncate text-sm font-semibold">{title}</div>
-                <div className="mt-1 truncate text-xs text-muted-foreground">
-                  {stringValue(approval.approval_form_id) ??
-                    stringValue(request.approval_form_id) ??
-                    stringValue(form.id) ??
-                    '-'}
-                </div>
               </div>
               <RunStatusBadge status={status} />
             </div>
@@ -559,9 +547,7 @@ function WorkflowRunProcessSections({
   return (
     <>
       {!isEmptyValue(invocation) ? (
-        <DetailSection title={titles.invocation}>
-          {renderValue(invocation, labels)}
-        </DetailSection>
+        <DetailSection title={titles.invocation}>{renderValue(invocation, labels)}</DetailSection>
       ) : null}
       {!isEmptyValue(approvals) ? (
         <DetailSection title={titles.approvals}>
@@ -579,9 +565,7 @@ function WorkflowRunProcessSections({
         </DetailSection>
       ) : null}
       {!isEmptyValue(messages) ? (
-        <DetailSection title={titles.messages}>
-          {renderValue(messages, labels)}
-        </DetailSection>
+        <DetailSection title={titles.messages}>{renderValue(messages, labels)}</DetailSection>
       ) : null}
     </>
   );
@@ -595,6 +579,7 @@ export function AgentRuntimeLogDetailDrawer({
   steps,
   isLoading,
   error,
+  sourceLabel,
 }: AgentRuntimeLogDetailDrawerProps) {
   const t = useT('webapp');
   const tAgents = useT('agents');
@@ -656,26 +641,18 @@ export function AgentRuntimeLogDetailDrawer({
         showClose={false}
         className="flex h-full w-screen max-w-none flex-col gap-0 p-0 md:w-[80vw] sm:max-w-none"
       >
-        <SheetHeader className="shrink-0 border-b px-5 py-4 text-left">
-          <div className="flex min-w-0 items-start justify-between gap-3">
-            <div className="min-w-0">
-              <div className="flex flex-wrap items-center gap-2">
-                <SheetTitle className="text-base">{t('appLogs.runtimeDialogTitle')}</SheetTitle>
-                {status ? <RunStatusBadge status={status} /> : null}
-              </div>
-              <SheetDescription className="mt-1 truncate" title={runId ?? ''}>
-                {runId
-                  ? t('appLogs.runtimeDialogDescription', { id: runId })
-                  : t('appLogs.selectRunDescription')}
-              </SheetDescription>
-            </div>
-            <SheetClose asChild>
-              <Button type="button" variant="outline" size="xs" className="shrink-0">
-                {tCommon('close')}
-              </Button>
-            </SheetClose>
-          </div>
-        </SheetHeader>
+        <RuntimeLogDetailHeader
+          title={t('appLogs.runtimeDialogTitle')}
+          description={
+            runId
+              ? t('appLogs.runtimeDialogDescription', { id: runId })
+              : t('appLogs.selectRunDescription')
+          }
+          runId={runId}
+          status={status}
+          sourceLabel={sourceLabel}
+          closeLabel={tCommon('close')}
+        />
 
         <div className="grid shrink-0 grid-cols-2 gap-3 border-b px-5 py-4 md:grid-cols-6">
           <DetailMetric

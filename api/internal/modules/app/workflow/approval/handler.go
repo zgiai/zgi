@@ -55,33 +55,16 @@ func (h *Handler) SubmitForm(c *gin.Context) {
 		accountID = &value
 	}
 
-	if h.taskManager == nil {
-		logger.ErrorContext(c.Request.Context(), "approval resume task manager is not configured", "token", token)
-		response.FailWithMessage(c, response.ErrSystemError, "approval resume task manager is not configured")
-		return
-	}
-
-	form, err := h.service.SubmitByToken(c.Request.Context(), token, req, accountID, nil)
+	submitResult, err := h.service.SubmitByTokenWithResume(c.Request.Context(), token, req, accountID, nil)
 	if err != nil {
 		h.handleApprovalError(c, err)
 		return
 	}
 
-	resumeReady, err := h.service.ActivePauseApprovalFormsSubmitted(c.Request.Context(), form.WorkflowRunID)
-	if err != nil {
-		logger.ErrorContext(c.Request.Context(), "failed to check approval resume readiness", "form_id", form.ID, err)
-		response.FailWithMessage(c, response.ErrSystemError, "failed to check approval resume readiness")
-		return
-	}
-	if resumeReady {
-		if err := EnqueueResumeTask(c.Request.Context(), h.taskManager, form.ID); err != nil {
-			logger.ErrorContext(c.Request.Context(), "failed to enqueue approval resume task", "form_id", form.ID, err)
-			response.FailWithMessage(c, response.ErrSystemError, "failed to enqueue approval resume task")
-			return
-		}
-	} else {
-		if err := h.service.AppendApprovalResultFilledEvent(c.Request.Context(), form); err != nil {
-			logger.WarnContext(c.Request.Context(), "failed to append approval result filled event", "form_id", form.ID, err)
+	form := submitResult.Form
+	if submitResult.Outbox != nil && h.taskManager != nil {
+		if err := DispatchResumeOutbox(c.Request.Context(), h.service, h.taskManager, submitResult.Outbox); err != nil {
+			logger.WarnContext(c.Request.Context(), "approval resume queued for outbox retry", "form_id", form.ID, err)
 		}
 	}
 
@@ -90,11 +73,14 @@ func (h *Handler) SubmitForm(c *gin.Context) {
 		action = *form.SelectedActionID
 	}
 	response.Success(c, map[string]interface{}{
-		"form_id":         form.ID,
-		"workflow_run_id": form.WorkflowRunID,
-		"status":          form.Status,
-		"action":          action,
-		"resume_enqueued": resumeReady,
+		"form_id":           form.ID,
+		"workflow_run_id":   form.WorkflowRunID,
+		"status":            form.Status,
+		"action":            action,
+		"resume_enqueued":   submitResult.ResumeState != "waiting",
+		"resume_state":      submitResult.ResumeState,
+		"event_cursor":      submitResult.EventCursor,
+		"idempotent_replay": submitResult.IdempotentReplay,
 	})
 }
 

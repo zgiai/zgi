@@ -349,13 +349,34 @@ export const getCanvasPreviewRows = (
       );
       break;
     case 'answer':
-    case 'end':
       push(
         runtimeLabel('replyContent'),
         firstAvailableValue([output?.answer, output?.text, output?.result, item.nodeOutput]),
         'output'
       );
       break;
+    case 'end': {
+      const outputEntries = output
+        ? Object.entries(output).filter(([key]) => !isHiddenReadableRuntimeKey(key))
+        : [];
+      if (outputEntries.length > 0) {
+        outputEntries.slice(0, 4).forEach(([key, value]) => {
+          rows.push({
+            label: getReadableRuntimeKey(key, runtimeLabel),
+            value,
+            tone: 'output',
+            labelKind: 'variable',
+          });
+        });
+      } else {
+        rows.push({
+          label: runtimeLabel('replyContent'),
+          value: item.nodeOutput ?? null,
+          tone: 'output',
+        });
+      }
+      break;
+    }
     case 'knowledge-retrieval':
       push(
         runtimeLabel('query'),
@@ -445,4 +466,3 @@ export const previewToneClass: Record<NonNullable<RuntimeLogPreviewRow['tone']>,
   meta: 'border-primary/15 bg-primary/[0.04]',
   warning: 'border-destructive/20 bg-destructive/[0.04]',
 };
-

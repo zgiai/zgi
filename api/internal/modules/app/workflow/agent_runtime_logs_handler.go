@@ -472,10 +472,14 @@ func timeUnixPtr(value *time.Time) *int64 {
 }
 
 func truncateAgentRuntimeText(value string, limit int) string {
-	if limit <= 0 || len(value) <= limit {
+	if limit <= 0 {
 		return value
 	}
-	return value[:limit]
+	runes := []rune(value)
+	if len(runes) <= limit {
+		return value
+	}
+	return string(runes[:limit])
 }
 
 func failAgentRuntimeLog(c *gin.Context, err error) {

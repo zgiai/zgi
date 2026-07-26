@@ -121,7 +121,7 @@ func (n *Node) executeRun(ctx context.Context) (*shared.NodeRunResult, error) {
 
 	answer := currentAnswer(n.GraphRuntimeState.VariablePool, n.NodeID)
 	if answer == "" && n.NodeData.AnswerType == AnswerTypeChoice {
-		answer = optionID(n.GraphRuntimeState.VariablePool)
+		answer = optionID(n.GraphRuntimeState.VariablePool, n.NodeID)
 	}
 	if answer == "" {
 		return nil, fmt.Errorf("question answer response is required")
@@ -157,7 +157,7 @@ func (n *Node) executeChoice(ctx context.Context, question string, answer string
 	if err != nil {
 		return nil, err
 	}
-	selected, ok := matchChoice(choices, optionID(n.GraphRuntimeState.VariablePool), answer)
+	selected, ok := matchChoice(choices, optionID(n.GraphRuntimeState.VariablePool, n.NodeID), answer)
 	if ok {
 		outputs := n.outputs(question, answer, rounds, choices, true)
 		outputs["choice_id"] = selected.ID

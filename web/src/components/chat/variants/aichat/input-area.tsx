@@ -20,12 +20,16 @@ import {
 } from '@/components/common/model-selector';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
-import ApprovalRuntimeForm from '@/components/workflow/approval/approval-runtime-form';
+import WorkflowApprovalInteractionCard, {
+  type WorkflowApprovalInteractionMode,
+} from '@/components/workflow/approval/workflow-approval-interaction-card';
+import { WorkflowRuntimeStopAction } from '@/components/workflow/runtime/workflow-runtime-stop-action';
 import { useApprovalForm, useSubmitApprovalForm } from '@/hooks/workflow/use-approval-form';
 import { useUploadConfig } from '@/hooks/use-upload';
 import { useT } from '@/i18n/translations';
 import { cn } from '@/lib/utils';
 import { uploadService } from '@/services/upload.service';
+import { isApprovalFormAlreadySubmittedError } from '@/services/approval.service';
 import { useCurrentWorkspace } from '@/store/workspace-store';
 import type { FileItem } from '@/services/types/file';
 import type { AIChatMessageFile, AIChatUserInputRequest } from '@/services/types/aichat';
@@ -37,7 +41,7 @@ import {
   filterLowercaseExtensions,
   formatExtensionsForDisplay,
 } from '@/utils/file-helpers';
-import { ChevronLeft, ChevronRight, ExternalLink, HelpCircle, Loader2 } from 'lucide-react';
+import { ChevronLeft, ChevronRight, HelpCircle } from 'lucide-react';
 import {
   AIChatAttachmentStrip,
   AIChatDragUploadOverlay,
@@ -345,15 +349,35 @@ export function AIChatInputArea({
   const [activeToolGovernanceApproval, setActiveToolGovernanceApproval] =
     useState<ToolGovernancePendingApproval | null>(null);
   const toolGovernancePendingApprovalScopeId = useToolGovernancePendingApprovalScope();
-  const activeApprovalForm = activeWorkflowApprovalRequest?.approvalForm ?? null;
+  const canSubmitWorkflowApprovalInline = activeWorkflowApprovalRequest?.canSubmitInline === true;
+  const activeApprovalForm = canSubmitWorkflowApprovalInline
+    ? (activeWorkflowApprovalRequest?.approvalForm ?? null)
+    : null;
   const approvalFormQuery = useApprovalForm(
     activeWorkflowApprovalRequest?.approvalToken,
-    Boolean(activeWorkflowApprovalRequest?.approvalToken && !activeApprovalForm)
+    Boolean(
+      canSubmitWorkflowApprovalInline &&
+        activeWorkflowApprovalRequest?.approvalToken &&
+        !activeApprovalForm
+    )
   );
   const approvalForm = activeApprovalForm ?? approvalFormQuery.data ?? null;
   const approvalSubmitMutation = useSubmitApprovalForm(
     activeWorkflowApprovalRequest?.approvalToken
   );
+  const workflowApprovalMode: WorkflowApprovalInteractionMode = submittedApprovalAction
+    ? 'submitted'
+    : !canSubmitWorkflowApprovalInline
+      ? 'external'
+      : approvalFormQuery.isLoading || approvalFormQuery.isFetching
+        ? 'loading'
+        : isApprovalFormAlreadySubmittedError(approvalFormQuery.error)
+          ? 'completed'
+          : approvalFormQuery.error
+            ? 'error'
+            : approvalForm
+              ? 'form'
+              : 'loading';
 
   const clearCompositionEndGuard = useCallback(() => {
     if (compositionEndTimerRef.current !== null) {
@@ -468,7 +492,7 @@ export function AIChatInputArea({
     [activeQuestions, activeUserInputRequest?.request_id]
   );
   const hasActiveUserInputRequest = activeQuestions.length > 0;
-  const hasActiveWorkflowApprovalRequest = Boolean(activeWorkflowApprovalRequest?.approvalToken);
+  const hasActiveWorkflowApprovalRequest = Boolean(activeWorkflowApprovalRequest);
   const isCurrentToolGovernanceApproval = useCallback(
     (approval: ToolGovernancePendingApproval | null) => {
       if (!approval) return false;
@@ -1157,55 +1181,33 @@ export function AIChatInputArea({
           ) : null}
           <div
             className={cn(
-              'pointer-events-auto border bg-background p-2 focus-within:border-primary/40',
-              isEmbedded ? 'rounded-lg' : 'rounded-2xl shadow-sm'
+              'pointer-events-auto',
+              hasActiveWorkflowApprovalRequest
+                ? 'border-0 bg-transparent p-0 shadow-none'
+                : 'border bg-background p-2 focus-within:border-primary/40',
+              !hasActiveWorkflowApprovalRequest &&
+                (isEmbedded ? 'rounded-lg' : 'rounded-2xl shadow-sm')
             )}
           >
             {hasActiveWorkflowApprovalRequest && activeWorkflowApprovalRequest ? (
-              <div className="rounded-xl border bg-card p-3 shadow-sm">
-                <div className="mb-3 flex flex-wrap items-start justify-between gap-2 text-sm">
-                  <div className="min-w-0">
-                    <div className="font-medium text-foreground">
-                      {t('consoleChat.workflow.approvalPending')}
-                    </div>
-                    <div className="mt-0.5 text-xs text-muted-foreground">
-                      {activeWorkflowApprovalRequest.approvalFormId
-                        ? t('consoleChat.workflow.formId', {
-                            id: activeWorkflowApprovalRequest.approvalFormId,
-                          })
-                        : t('consoleChat.workflow.approvalInputLocked')}
-                    </div>
-                  </div>
-                  {activeWorkflowApprovalRequest.approvalUrl ? (
-                    <a
-                      className="inline-flex shrink-0 items-center gap-1 text-xs text-primary underline-offset-2 hover:underline"
-                      href={activeWorkflowApprovalRequest.approvalUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      {t('consoleChat.workflow.openApproval')}
-                      <ExternalLink className="size-3" />
-                    </a>
-                  ) : null}
-                </div>
-                {approvalFormQuery.isLoading ? (
-                  <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                    <Loader2 className="size-3.5 animate-spin" />
-                    <span>{t('consoleChat.workflow.loadingApprovalForm')}</span>
-                  </div>
-                ) : approvalForm ? (
-                  <ApprovalRuntimeForm
-                    form={approvalForm}
-                    isSubmitting={approvalSubmitMutation.isPending || isSending}
-                    submittedAction={submittedApprovalAction}
-                    onSubmit={handleWorkflowApprovalSubmit}
-                  />
-                ) : (
-                  <div className="text-xs text-destructive">
-                    {t('consoleChat.workflow.approvalFormLoadFailed')}
-                  </div>
-                )}
-              </div>
+              <WorkflowApprovalInteractionCard
+                mode={workflowApprovalMode}
+                form={approvalForm}
+                error={approvalFormQuery.error}
+                isSubmitting={approvalSubmitMutation.isPending || isSending}
+                submittedAction={submittedApprovalAction}
+                onSubmit={handleWorkflowApprovalSubmit}
+                onRetry={() => void approvalFormQuery.refetch()}
+                secondaryAction={
+                  canStop ? (
+                    <WorkflowRuntimeStopAction
+                      onStop={onStop}
+                      isStopping={isStopping}
+                      disabled={approvalSubmitMutation.isPending || isSending}
+                    />
+                  ) : null
+                }
+              />
             ) : hasActiveToolGovernanceApproval && effectiveToolGovernanceApproval ? (
               <ToolGovernanceApprovalPanel approval={effectiveToolGovernanceApproval} />
             ) : hasActiveUserInputRequest && activeQuestion ? (

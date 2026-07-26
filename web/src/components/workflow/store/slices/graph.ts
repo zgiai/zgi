@@ -101,6 +101,7 @@ interface GraphGet {
   resetRunStatus: (nodeIds?: string[]) => void;
   resetActiveOutputHandles: (nodeIds?: string[]) => void;
   currentRunningNodeId: string | null;
+  activeResizeNodeId: string | null;
   setCurrentRunningNodeId: (nodeId: string | null) => void;
   // Performance: sync cached runnable sets
   syncRunnableSets: () => void;
@@ -200,7 +201,10 @@ export function createGraphSlice(set: StoreSet, get: () => GraphGet): GraphSlice
       const hasLayoutUpdate = nodeChanges.some(
         c => c.type === 'position' || c.type === 'dimensions'
       );
-      const adjustedNodes = adjustContainerLayout(nextNodes, nodeChanges);
+      const activeResizeNodeId = get().activeResizeNodeId;
+      const adjustedNodes = adjustContainerLayout(nextNodes, nodeChanges, {
+        skipAutoGrowNodeIds: activeResizeNodeId ? new Set([activeResizeNodeId]) : undefined,
+      });
       // Sync selectedNodeId based on React Flow selection (single select only)
       const selectedNodesList = adjustedNodes.filter(n => (n as WorkflowNode).selected);
       const nextSelectedId = selectedNodesList.length === 1 ? selectedNodesList[0].id : null;

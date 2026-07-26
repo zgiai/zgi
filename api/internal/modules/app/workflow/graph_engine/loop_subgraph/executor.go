@@ -92,9 +92,36 @@ func (e *Executor) Run(ctx context.Context, index int) (Result, error) {
 		nodeStartedAt := make(map[string]time.Time)
 		var nodeTimeMu sync.Mutex
 
+		engine.SetReadyBatchCallback(graph_engine.ReadyBatchScope{
+			Kind:         graph_engine.ReadyBatchScopeLoop,
+			ParentNodeID: e.cfg.NodeID,
+			Index:        index,
+		}, func(scope graph_engine.ReadyBatchScope, nodeIDs []string) {
+			event := &shared.NodeEventCh{
+				Type: shared.EventTypeInternalReadyBatch,
+				Data: &shared.ReadyBatchEvent{
+					ScopeKind:    scope.Kind,
+					ParentNodeID: scope.ParentNodeID,
+					Index:        scope.Index,
+					NodeIDs:      append([]string(nil), nodeIDs...),
+				},
+				Timestamp: time.Now(),
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case e.cfg.EventChan <- event:
+			}
+		})
+
 		engine.SetStreamEventCallback(func(nodeID string, streamEvent *shared.RunStreamChunkEvent) {
 			if streamEvent == nil {
 				return
+			}
+			streamEvent.Scope = &shared.RunStreamScope{
+				Kind:         graph_engine.ReadyBatchScopeLoop,
+				ParentNodeID: e.cfg.NodeID,
+				Index:        index,
 			}
 			event := &shared.NodeEventCh{
 				Type:      shared.EventTypeRunStreamChunk,

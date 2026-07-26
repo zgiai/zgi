@@ -24,7 +24,6 @@ import { useHistoryView } from '../workflow-run-panel/hooks/use-history-view';
 import type { WorkflowFinishedData } from '../workflow-run-panel/types';
 import type { ConversationHistoryMessageItem, SelectedMessageRunState } from './types';
 import { getRightPanelMotionClassName, getRightPanelMotionStyle } from '../right-panel-motion';
-import { RunStatusBadge } from '../run-status-badge';
 
 interface ConversationHistoryPanelProps {
   open: boolean;
@@ -140,7 +139,9 @@ export function ConversationHistoryPanel({
   const { panelStyle } = usePanelStackItem({
     id: 'conversation-history',
     position: 'top-right',
-    order: 3,
+    // The conversation transcript is the primary history surface, so keep it
+    // nearest the right edge while node inspection opens immediately to its left.
+    order: 1,
     visible: open,
     width: HISTORY_PANEL_WIDTH,
     gap: 8,
@@ -354,32 +355,6 @@ export function ConversationHistoryPanel({
 
         {view === 'messages' ? (
           <>
-            <div className="border-b border-border/50 px-3 py-3">
-              {!selectedBaseRunId ? (
-                <div className="text-sm text-muted-foreground">
-                  {t('workflow.conversationHistory.selectRunFromDropdown')}
-                </div>
-              ) : inspectorSummary ? (
-                <div className="flex flex-wrap gap-2">
-                  <RunStatusBadge status={inspectorSummary.status} />
-                  <Badge variant="outline">
-                    {t('workflow.workflowRunId')}: {selectedBaseRunId}
-                  </Badge>
-                  {inspectorSummary.conversation_id ? (
-                    <Badge variant="outline">
-                      {t('workflow.conversationHistory.conversations')}:{' '}
-                      {inspectorSummary.conversation_id}
-                    </Badge>
-                  ) : null}
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  <Skeleton className="h-6 w-28 rounded-full" />
-                  <Skeleton className="h-6 w-full rounded-full" />
-                </div>
-              )}
-            </div>
-
             <div className="min-h-0 flex-1 overflow-y-auto bg-muted/10 px-3 py-4">
               {!selectedBaseRunId ? (
                 <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center text-muted-foreground">
@@ -429,6 +404,7 @@ export function ConversationHistoryPanel({
                         <div className="max-w-[92%] rounded-2xl border bg-background px-4 py-3 text-sm shadow-sm">
                           <div className="prose prose-sm max-w-none dark:prose-invert">
                             <MarkdownViewer
+                              preserveSoftBreaks
                               content={
                                 isSensitiveOutputBlockedValue(message.answer)
                                   ? tCommon('sensitiveOutput.blocked')

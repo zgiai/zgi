@@ -2,8 +2,7 @@
 
 import React, { useCallback, useEffect, useLayoutEffect } from 'react';
 import { useShallow } from 'zustand/react/shallow';
-import { ReactFlowProvider } from '@xyflow/react';
-import { type Viewport } from '@xyflow/react';
+import { ReactFlowProvider, type EdgeChange, type Viewport } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { WorkflowHeader } from './ui';
 import { useCombinedWorkflowSave, WorkflowEditorProvider } from './hooks';
@@ -23,12 +22,41 @@ import { useWorkflowLifecycle } from './hooks/use-workflow-lifecycle';
 import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
 import { useWorkflowLeaveGuard } from './hooks/use-workflow-leave-guard';
 import { isWorkflowDebugPanelActive } from './hooks/use-debug-focus-mode';
-import { getNodeAbsolutePosition } from './store/helpers/graph';
+import {
+  deriveContainerLayoutSizes,
+  getNodeAbsolutePosition,
+  getWorkflowNodeLayoutSize,
+} from './store/helpers/graph';
 import { useAuthStore } from '@/store/auth-store';
 import { useBuiltinTools } from '@/hooks/workflow/use-builtin-tools';
 import { useLocale } from '@/hooks/use-locale';
 import { WorkflowAIChatContextRegistration } from './aichat-context';
 import { WORKFLOW_PERMISSION_ACTIONS } from '@/constants/permissions';
+import {
+  WorkflowVariableImpactProvider,
+  useWorkflowVariableImpact,
+} from './ui/variable-reference-impact-provider';
+import type { WorkflowEdge } from './store/type';
+
+const GuardedCanvasWithDnd: React.FC<React.ComponentProps<typeof CanvasWithDnd>> = props => {
+  const { requestEdgeChanges } = useWorkflowVariableImpact();
+  const { onEdgesChange, ...canvasProps } = props;
+  const guardedOnEdgesChange = useCallback<NonNullable<typeof onEdgesChange>>(
+    changes => {
+      const removals = changes.filter(change => change.type === 'remove');
+      if (removals.length === 0) {
+        onEdgesChange?.(changes);
+        return;
+      }
+      requestEdgeChanges(changes as Array<EdgeChange<WorkflowEdge>>, () =>
+        onEdgesChange?.(changes)
+      );
+    },
+    [onEdgesChange, requestEdgeChanges]
+  );
+
+  return <CanvasWithDnd {...canvasProps} onEdgesChange={guardedOnEdgesChange} />;
+};
 
 // Throttled global mouse tracker to isolate re-renders from WorkflowEditor
 // Uses both requestAnimationFrame and time-based throttling (50ms) to minimize store updates
@@ -113,17 +141,15 @@ const WorkflowEditor: React.FC<WorkflowEditorProps> = ({ agentDetail, focusNodeI
     handleCombinedSave();
   }, [handleCombinedSave]);
   const onPublish = useCallback(
-    async ({ silent = true, saveToast }: { silent?: boolean; saveToast?: string }) => {
+    async ({ silent = true, successToast }: { silent?: boolean; successToast?: string }) => {
       // Block publish when validation errors exist
       if (!isValid) {
         toast.error(t('workflow.fixErrorsBeforePublishing'));
         return;
       }
-      // Ensure latest edits are persisted before publishing to avoid stale graph
-      await handleCombinedSave({ silent, saveToast });
-      await handlePublish({ silent });
+      await handlePublish({ silent, successToast });
     },
-    [handleCombinedSave, handlePublish, isValid, t]
+    [handlePublish, isValid, t]
   );
   // Disable keyboard shortcuts in history (read-only) mode or permission-based read-only
   const mode = useWorkflowStore.use.mode();
@@ -140,13 +166,16 @@ const WorkflowEditor: React.FC<WorkflowEditorProps> = ({ agentDetail, focusNodeI
   const isReadOnly = isHistoryMode || isPermissionReadOnly;
 
   // Use shallow subscription for core graph arrays to avoid re-renders on unrelated store changes
-  const { nodes, edges, viewport } = useWorkflowStore(
-    useShallow(state => ({
-      nodes: state.nodes,
-      edges: state.edges,
-      viewport: state.viewport,
-    }))
-  );
+  const { nodes, edges, viewport, selectedNodeId, runtimeLogPopoverOpenByNodeId } =
+    useWorkflowStore(
+      useShallow(state => ({
+        nodes: state.nodes,
+        edges: state.edges,
+        viewport: state.viewport,
+        selectedNodeId: state.selectedNodeId,
+        runtimeLogPopoverOpenByNodeId: state.runtimeLogPopoverOpenByNodeId,
+      }))
+    );
 
   const onNodesChange = useWorkflowStore.use.onNodesChange();
   const onEdgesChange = useWorkflowStore.use.onEdgesChange();
@@ -154,7 +183,6 @@ const WorkflowEditor: React.FC<WorkflowEditorProps> = ({ agentDetail, focusNodeI
   const setViewport = useWorkflowStore.use.setViewport();
   const selectNode = useWorkflowStore.use.selectNode();
   const setSelectionSource = useWorkflowStore.use.setSelectionSource();
-  // const selectedNodeId = useWorkflowStore.use.selectedNodeId();
   // const currentIsDirty = useWorkflowStore.use.isDirty();
   // const interactionMode = useWorkflowStore.use.interactionMode();
   const setAgentType = useWorkflowStore.use.setAgentType();
@@ -165,11 +193,21 @@ const WorkflowEditor: React.FC<WorkflowEditorProps> = ({ agentDetail, focusNodeI
   const setActivePanel = useActivePanel(state => state.setActive);
   const closeAllPanels = useActivePanel(state => state.closeAll);
   const selectedRunId = useWorkflowStore.use.selectedRunId();
+  const isTaskWorkflowHistoryMode =
+    isHistoryMode && agentType === AgentType.WORKFLOW && Boolean(selectedRunId);
   const historySnapshots = useWorkflowStore.use.historySnapshots();
   const setHistorySnapshot = useWorkflowStore.use.setHistorySnapshot();
   const currentRunningNodeId = useWorkflowStore.use.currentRunningNodeId();
   const setLastDebugInputs = useWorkflowStore.use.setLastDebugInputs();
   const centeredFocusRef = React.useRef<string | null>(null);
+  const historyViewNodesCacheRef = React.useRef<{
+    signature: string;
+    nodes: typeof nodes;
+  } | null>(null);
+  const selectedHistorySnapshot = selectedRunId ? historySnapshots[selectedRunId] : undefined;
+  const selectedHistoryNodes = selectedHistorySnapshot?.nodes;
+  const selectedHistoryEdges = selectedHistorySnapshot?.edges;
+  const selectedHistoryViewport = selectedHistorySnapshot?.viewport;
   // const setLastMouseClient = useWorkflowStore.use.setLastMouseClient();
 
   // Default LLM model for bootstrapping the template graph
@@ -179,35 +217,81 @@ const WorkflowEditor: React.FC<WorkflowEditorProps> = ({ agentDetail, focusNodeI
   const viewNodes = React.useMemo(() => {
     let baseNodes: typeof nodes = nodes;
     if (isHistoryMode && selectedRunId) {
-      const snap = historySnapshots[selectedRunId];
-      if (snap && Array.isArray(snap.nodes)) {
-        baseNodes = snap.nodes as typeof nodes;
+      if (Array.isArray(selectedHistoryNodes)) {
+        baseNodes = selectedHistoryNodes as typeof nodes;
       } else {
         // No snapshot yet: render empty until data arrives to avoid showing draft
-        return [] as typeof nodes;
+        baseNodes = [] as typeof nodes;
       }
     }
 
-    return baseNodes;
-  }, [isHistoryMode, selectedRunId, historySnapshots, nodes]);
+    const derivedContainerSizes = deriveContainerLayoutSizes(baseNodes);
+    const nextNodes = baseNodes.map(node => {
+      // History snapshots retain the selection state captured when the run was saved.
+      // In read-only history mode the current inspector selection must be authoritative,
+      // otherwise the old snapshot selection masks the node the user just clicked.
+      const isSelected = isHistoryMode
+        ? selectedNodeId === node.id
+        : selectedNodeId === node.id || node.selected;
+      const selectionChanged = isHistoryMode && Boolean(node.selected) !== isSelected;
+      const isRuntimeLogOpen = runtimeLogPopoverOpenByNodeId[node.id] === true;
+      const derivedSize = derivedContainerSizes.get(node.id);
+      const baselineSize = derivedSize ? getWorkflowNodeLayoutSize(node) : null;
+      const shouldGrowContainer =
+        derivedSize !== undefined &&
+        baselineSize !== null &&
+        (derivedSize.width > baselineSize.width || derivedSize.height > baselineSize.height);
+      if (!isSelected && !selectionChanged && !isRuntimeLogOpen && !shouldGrowContainer) {
+        return node;
+      }
+
+      const elevatedZIndex = isSelected ? 2_000 : 1_000;
+      return {
+        ...node,
+        ...(selectionChanged ? { selected: isSelected } : {}),
+        ...(shouldGrowContainer && derivedSize
+          ? { width: derivedSize.width, height: derivedSize.height }
+          : {}),
+        ...((isSelected || isRuntimeLogOpen) && {
+          zIndex: Math.max(node.zIndex ?? 0, elevatedZIndex),
+        }),
+      };
+    });
+    if (!isHistoryMode) {
+      historyViewNodesCacheRef.current = null;
+      return nextNodes;
+    }
+
+    const signature = JSON.stringify(nextNodes);
+    if (historyViewNodesCacheRef.current?.signature === signature) {
+      return historyViewNodesCacheRef.current.nodes;
+    }
+    historyViewNodesCacheRef.current = { signature, nodes: nextNodes };
+    return nextNodes;
+  }, [
+    isHistoryMode,
+    selectedRunId,
+    selectedHistoryNodes,
+    nodes,
+    selectedNodeId,
+    runtimeLogPopoverOpenByNodeId,
+  ]);
 
   const viewEdges = React.useMemo(() => {
     if (isHistoryMode && selectedRunId) {
-      const snap = historySnapshots[selectedRunId];
-      if (snap && Array.isArray(snap.edges)) return snap.edges as typeof edges;
+      if (Array.isArray(selectedHistoryEdges)) return selectedHistoryEdges as typeof edges;
       return [] as typeof edges;
     }
     return edges;
-  }, [isHistoryMode, selectedRunId, historySnapshots, edges]);
+  }, [isHistoryMode, selectedRunId, selectedHistoryEdges, edges]);
 
   const viewViewport = React.useMemo(() => {
     if (isHistoryMode && selectedRunId) {
-      const snap = historySnapshots[selectedRunId];
-      if (snap && snap.viewport) return snap.viewport;
+      if (selectedHistoryViewport) return selectedHistoryViewport;
       return { x: 0, y: 0, zoom: 1 };
     }
     return viewport;
-  }, [isHistoryMode, selectedRunId, historySnapshots, viewport]);
+  }, [isHistoryMode, selectedRunId, selectedHistoryViewport, viewport]);
 
   const {
     hasAnyPermission,
@@ -326,13 +410,24 @@ const WorkflowEditor: React.FC<WorkflowEditorProps> = ({ agentDetail, focusNodeI
       }
 
       // In read-only mode, allow selecting for inspection only
-      if (isWorkflowDebugPanelActive(activePanel) && !currentRunningNodeId) {
+      if (
+        isWorkflowDebugPanelActive(activePanel) &&
+        !currentRunningNodeId &&
+        !isTaskWorkflowHistoryMode
+      ) {
         setActivePanel(null);
       }
       selectNode(node.id);
       setSelectionSource('click');
     },
-    [activePanel, currentRunningNodeId, selectNode, setActivePanel, setSelectionSource]
+    [
+      activePanel,
+      currentRunningNodeId,
+      isTaskWorkflowHistoryMode,
+      selectNode,
+      setActivePanel,
+      setSelectionSource,
+    ]
   );
 
   const handleNodeContextMenu = useCallback((event: React.MouseEvent, node: { id: string }) => {
@@ -362,15 +457,24 @@ const WorkflowEditor: React.FC<WorkflowEditorProps> = ({ agentDetail, focusNodeI
     (vp: Viewport) => {
       // In history mode, update the viewport inside the run snapshot without touching draft state
       if (isReadOnly && selectedRunId) {
-        const snap = historySnapshots[selectedRunId];
+        const snap = selectedHistorySnapshot;
         if (snap) {
+          const current = snap.viewport;
+          if (
+            current &&
+            Math.abs(current.x - vp.x) < 0.001 &&
+            Math.abs(current.y - vp.y) < 0.001 &&
+            Math.abs(current.zoom - vp.zoom) < 0.001
+          ) {
+            return;
+          }
           setHistorySnapshot(selectedRunId, { nodes: snap.nodes, edges: snap.edges, viewport: vp });
         }
         return;
       }
       setViewport(vp);
     },
-    [setViewport, isReadOnly, selectedRunId, historySnapshots, setHistorySnapshot]
+    [setViewport, isReadOnly, selectedRunId, selectedHistorySnapshot, setHistorySnapshot]
   );
 
   // onConnect handling moved into CanvasWithDnd
@@ -472,108 +576,110 @@ const WorkflowEditor: React.FC<WorkflowEditorProps> = ({ agentDetail, focusNodeI
 
   return (
     <ReactFlowProvider>
-      <WorkflowEditorProvider value={{ agentId, agentType, workspaceId }}>
-        <WorkflowAIChatContextRegistration
-          agentDetail={agentDetail}
-          workflowDraft={workflowData}
-          viewNodes={viewNodes}
-          viewEdges={viewEdges}
-          isDirty={isDirty}
-          isSaving={isSaving}
-          isPublishing={isPublishing}
-          isReadOnly={isReadOnly}
-          isHistoryMode={isHistoryMode}
-          isPermissionReadOnly={isPermissionReadOnly}
-          canPublish={isValid}
-          selectedRunId={selectedRunId}
-        />
-        {/* Bind keyboard shortcuts within provider to ensure context availability */}
-        <WorkflowKeyboardBindings onSave={onSave} disabled={isReadOnly} />
-        {leaveGuardDialog}
-        <div className="h-full w-full flex flex-col bg-gray-50 relative">
-          <WorkflowHeader
-            agentId={agentId}
-            agentName={agentDetail.name}
-            agentIconType={agentDetail.icon_type}
-            agentIcon={agentDetail.icon}
-            agentIconUrl={agentDetail.icon_url}
-            agentType={agentType}
-            webAppStatus={agentDetail.web_app_status}
+      <WorkflowVariableImpactProvider>
+        <WorkflowEditorProvider value={{ agentId, agentType, workspaceId }}>
+          <WorkflowAIChatContextRegistration
+            agentDetail={agentDetail}
+            workflowDraft={workflowData}
+            viewNodes={viewNodes}
+            viewEdges={viewEdges}
             isDirty={isDirty}
             isSaving={isSaving}
             isPublishing={isPublishing}
-            canPublish={isValid}
-            canSave={canEditWorkflow}
-            canRunDraft={canRunWorkflowDraft}
-            canPublishWorkflow={canPublishCurrentDraft}
-            canManageRuntimeAccess={canManageWorkflowRuntimeAccess}
-            canViewRuntimeLogs={canViewWorkflowRuntimeLogs}
-            onSave={() => {
-              handleCombinedSave({
-                silent: false,
-                saveToast: t('workflow.workflowSavedSuccessfully'),
-              });
-            }}
-            onPublish={onPublish}
             isReadOnly={isReadOnly}
             isHistoryMode={isHistoryMode}
             isPermissionReadOnly={isPermissionReadOnly}
+            canPublish={isValid}
             selectedRunId={selectedRunId}
-            onSelectRunHistory={(runId: string) => {
-              enterHistoryMode(runId);
-              try {
-                const setActive = useActivePanel.getState().setActive;
-                setActive(
-                  agentType === AgentType.CONVERSATIONAL_AGENT ? 'conversation-history' : 'run'
-                );
-              } catch {
-                // no-op
-              }
-            }}
-            onExitHistory={() => {
-              exitHistoryMode();
-              resetRunStatus();
-              try {
-                const setActive = useActivePanel.getState().setActive;
-                setActive(null);
-              } catch {
-                // no-op
-              }
-            }}
           />
+          {/* Bind keyboard shortcuts within provider to ensure context availability */}
+          <WorkflowKeyboardBindings onSave={onSave} disabled={isReadOnly} />
+          {leaveGuardDialog}
+          <div className="h-full w-full flex flex-col bg-gray-50 relative">
+            <WorkflowHeader
+              agentId={agentId}
+              agentName={agentDetail.name}
+              agentIconType={agentDetail.icon_type}
+              agentIcon={agentDetail.icon}
+              agentIconUrl={agentDetail.icon_url}
+              agentType={agentType}
+              webAppStatus={agentDetail.web_app_status}
+              isDirty={isDirty}
+              isSaving={isSaving}
+              isPublishing={isPublishing}
+              canPublish={isValid}
+              canSave={canEditWorkflow}
+              canRunDraft={canRunWorkflowDraft}
+              canPublishWorkflow={canPublishCurrentDraft}
+              canManageRuntimeAccess={canManageWorkflowRuntimeAccess}
+              canViewRuntimeLogs={canViewWorkflowRuntimeLogs}
+              onSave={() => {
+                handleCombinedSave({
+                  silent: false,
+                  saveToast: t('workflow.workflowSavedSuccessfully'),
+                });
+              }}
+              onPublish={onPublish}
+              isReadOnly={isReadOnly}
+              isHistoryMode={isHistoryMode}
+              isPermissionReadOnly={isPermissionReadOnly}
+              selectedRunId={selectedRunId}
+              onSelectRunHistory={(runId: string) => {
+                enterHistoryMode(runId);
+                try {
+                  const setActive = useActivePanel.getState().setActive;
+                  setActive(
+                    agentType === AgentType.CONVERSATIONAL_AGENT ? 'conversation-history' : 'run'
+                  );
+                } catch {
+                  // no-op
+                }
+              }}
+              onExitHistory={() => {
+                exitHistoryMode();
+                resetRunStatus();
+                try {
+                  const setActive = useActivePanel.getState().setActive;
+                  setActive(null);
+                } catch {
+                  // no-op
+                }
+              }}
+            />
 
-          {/* Main Content - ReactFlow directly in the main container */}
-          <div className="flex-1 relative overflow-hidden">
-            <div className="flex h-full">
-              {/* Editor container */}
-              <div className="flex-1 min-w-0">
-                <CanvasWithDnd
-                  viewNodes={viewNodes}
-                  viewEdges={viewEdges}
-                  viewViewport={viewViewport}
-                  isReadOnly={isReadOnly}
-                  agentType={agentType}
-                  agentId={agentId}
-                  agentName={agentDetail.name}
-                  agentIconType={agentDetail.icon_type}
-                  agentIcon={agentDetail.icon}
-                  agentIconUrl={agentDetail.icon_url}
-                  onNodesChange={onNodesChange}
-                  onEdgesChange={onEdgesChange}
-                  onConnect={onConnect}
-                  onNodeClick={handleNodeClick}
-                  onNodeContextMenu={handleNodeContextMenu}
-                  onPaneClick={handlePaneClick}
-                  onViewportChange={handleViewportChange}
-                />
+            {/* Main Content - ReactFlow directly in the main container */}
+            <div className="flex-1 relative overflow-hidden">
+              <div className="flex h-full">
+                {/* Editor container */}
+                <div className="flex-1 min-w-0">
+                  <GuardedCanvasWithDnd
+                    viewNodes={viewNodes}
+                    viewEdges={viewEdges}
+                    viewViewport={viewViewport}
+                    isReadOnly={isReadOnly}
+                    agentType={agentType}
+                    agentId={agentId}
+                    agentName={agentDetail.name}
+                    agentIconType={agentDetail.icon_type}
+                    agentIcon={agentDetail.icon}
+                    agentIconUrl={agentDetail.icon_url}
+                    onNodesChange={onNodesChange}
+                    onEdgesChange={onEdgesChange}
+                    onConnect={onConnect}
+                    onNodeClick={handleNodeClick}
+                    onNodeContextMenu={handleNodeContextMenu}
+                    onPaneClick={handlePaneClick}
+                    onViewportChange={handleViewportChange}
+                  />
 
-                {/* NodeFloatingPanel is now rendered within ReactFlow as a Panel; outer usage removed */}
+                  {/* NodeFloatingPanel is now rendered within ReactFlow as a Panel; outer usage removed */}
+                </div>
               </div>
             </div>
+            <MouseTracker />
           </div>
-          <MouseTracker />
-        </div>
-      </WorkflowEditorProvider>
+        </WorkflowEditorProvider>
+      </WorkflowVariableImpactProvider>
     </ReactFlowProvider>
   );
 };

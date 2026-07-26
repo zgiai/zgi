@@ -1149,6 +1149,19 @@ func TestSkillRuntimeParametersForPreparedUsesConversationWorkspaceWhenScopeMiss
 	}
 }
 
+func TestSkillRuntimeParametersForPreparedCarriesServerOwnedAgentSource(t *testing.T) {
+	prepared := &PreparedChat{
+		Scope:     Scope{OrganizationID: uuid.New()},
+		Caller:    Caller{Source: runtimemodel.ConversationSourceWebApp},
+		RunConfig: RunConfig{},
+	}
+
+	params := skillRuntimeParametersForPrepared(prepared)
+	if params["agent_runtime_source"] != runtimemodel.ConversationSourceWebApp {
+		t.Fatalf("agent_runtime_source = %#v, want %s", params["agent_runtime_source"], runtimemodel.ConversationSourceWebApp)
+	}
+}
+
 func TestSkillRuntimeParametersForPreparedDoesNotInferSelectedFileGovernanceAsset(t *testing.T) {
 	prepared := &PreparedChat{
 		Scope:     Scope{OrganizationID: uuid.New()},
@@ -1591,6 +1604,53 @@ func TestAgentWorkflowAvailableBindingsMessageInjectsSafeContext(t *testing.T) {
 	}
 }
 
+func TestAgentWorkflowPromptBindingsKeepQueryConversationalOnly(t *testing.T) {
+	items := agentWorkflowPromptBindings([]AgentWorkflowBinding{
+		{
+			BindingID:       "task-flow",
+			AgentID:         "task-agent",
+			WorkflowID:      "task-workflow",
+			AgentType:       "WORKFLOW",
+			VersionStrategy: "latest_published",
+		},
+		{
+			BindingID:       "chat-flow",
+			AgentID:         "chat-agent",
+			WorkflowID:      "chat-workflow",
+			AgentType:       "CONVERSATIONAL_WORKFLOW",
+			VersionStrategy: "latest_published",
+		},
+	})
+	if len(items) != 2 {
+		t.Fatalf("prompt bindings = %#v, want 2", items)
+	}
+	byID := map[string]map[string]interface{}{}
+	for _, item := range items {
+		byID[item["binding_id"].(string)] = item
+	}
+
+	task := byID["task-flow"]
+	if _, exists := task["default_input_key"]; exists {
+		t.Fatalf("task default_input_key = %#v, want omitted", task["default_input_key"])
+	}
+	if required := task["required_inputs"].([]string); len(required) != 0 {
+		t.Fatalf("task required_inputs = %#v, want empty", required)
+	}
+	taskSchema := task["input_schema"].(map[string]interface{})
+	if properties := taskSchema["properties"].(map[string]interface{}); len(properties) != 0 {
+		t.Fatalf("task input properties = %#v, want empty", properties)
+	}
+
+	chat := byID["chat-flow"]
+	if chat["default_input_key"] != "query" {
+		t.Fatalf("chat default_input_key = %#v, want query", chat["default_input_key"])
+	}
+	required := chat["required_inputs"].([]string)
+	if len(required) != 1 || required[0] != "query" {
+		t.Fatalf("chat required_inputs = %#v, want [query]", required)
+	}
+}
+
 func TestVisibleSkillMetadataHidesNonUserSelectableSystemSkills(t *testing.T) {
 	metadata := []skills.SkillDiscoveryMetadata{
 		{ID: skills.SkillInternalKnowledge},
@@ -1682,7 +1742,7 @@ func TestMessageEndPayloadPreservesTraceMetadata(t *testing.T) {
 	messageID := uuid.New()
 	payload := messageEndPayload(&PreparedChat{
 		Conversation: &runtimemodel.Conversation{ID: conversationID},
-		Message:      &runtimemodel.Message{ID: messageID},
+		Message:      &runtimemodel.Message{ID: messageID, Answer: "final answer"},
 	}, map[string]interface{}{
 		"usage": map[string]interface{}{"total_tokens": 1},
 		"context_control": map[string]interface{}{
@@ -1705,6 +1765,15 @@ func TestMessageEndPayloadPreservesTraceMetadata(t *testing.T) {
 	invocations := skillInvocationsFromMetadata(metadata["skill_invocations"])
 	if len(invocations) != 1 || stringFromAny(invocations[0]["kind"]) != "tool_call" {
 		t.Fatalf("skill_invocations = %#v, want only user-visible tool call", metadata["skill_invocations"])
+	}
+	if payload["answer"] != "final answer" {
+		t.Fatalf("answer = %#v, want authoritative final answer", payload["answer"])
+	}
+	if _, ok := messageEndPayloadWithStatus(&PreparedChat{
+		Conversation: &runtimemodel.Conversation{ID: conversationID},
+		Message:      &runtimemodel.Message{ID: messageID, Answer: "partial answer"},
+	}, nil, runtimemodel.MessageStatusWaitingApproval)["answer"]; ok {
+		t.Fatal("waiting message_end must not expose a partial answer")
 	}
 }
 

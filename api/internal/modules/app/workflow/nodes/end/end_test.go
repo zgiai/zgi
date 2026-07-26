@@ -2,6 +2,7 @@ package end
 
 import (
 	"context"
+	"reflect"
 	"testing"
 
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine/entities"
@@ -173,6 +174,56 @@ func TestEndNode_ExecuteRun(t *testing.T) {
 		} else if inputValue != value {
 			t.Errorf("Input[%s] = %v, expected %v", key, inputValue, value)
 		}
+	}
+}
+
+func TestEndNode_ExecuteRunSupportsConstantOutputs(t *testing.T) {
+	config := map[string]any{
+		"id": "end-node-constant",
+		"data": map[string]any{
+			"outputs": []any{
+				map[string]any{
+					"variable":   "message",
+					"value_type": "constant",
+					"value":      "workflow completed",
+				},
+				map[string]any{
+					"variable":   "metadata",
+					"value_type": "constant",
+					"value": map[string]any{
+						"source": "fixed",
+					},
+				},
+			},
+		},
+	}
+
+	variablePool := entities.NewVariablePool()
+	node, err := New(
+		"instance-constant",
+		config,
+		entities.GraphInitParams{WorkflowType: entities.WorkflowTypeWorkflow},
+		&entities.Graph{},
+		&entities.GraphRuntimeState{VariablePool: variablePool},
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	result, err := node.(*Node).executeRun(context.Background())
+	if err != nil {
+		t.Fatalf("executeRun() error = %v", err)
+	}
+	if got := result.Outputs["message"]; got != "workflow completed" {
+		t.Fatalf("message output = %#v, want %q", got, "workflow completed")
+	}
+	metadata, ok := result.Outputs["metadata"].(map[string]any)
+	if !ok {
+		t.Fatalf("metadata output = %#v, want object", result.Outputs["metadata"])
+	}
+	if got := metadata["source"]; got != "fixed" {
+		t.Fatalf("metadata.source = %#v, want %q", got, "fixed")
 	}
 }
 
@@ -367,5 +418,94 @@ func TestParseVariableSelector(t *testing.T) {
 	_, err = parseVariableSelector(invalidData)
 	if err == nil {
 		t.Error("Expected error for missing selector field")
+	}
+}
+
+func TestEndNode_ExecuteRunPreservesIterationObjectArray(t *testing.T) {
+	want := []any{
+		map[string]any{"text": "first", "index": float64(0)},
+		map[string]any{"text": "second", "index": float64(1)},
+		map[string]any{"text": "third", "index": float64(2)},
+	}
+	variablePool := &entities.VariablePool{
+		VariableDictionary: make(map[string]map[string]entities.Variable),
+		UserInputs:         make(map[string]any),
+		SystemVariables:    &entities.SystemVariable{},
+	}
+	variablePool.Add([]string{"iteration-node", "output"}, want)
+
+	node, err := New(
+		"instance-iteration-output",
+		map[string]any{
+			"id": "end-node",
+			"data": map[string]any{"outputs": []any{map[string]any{
+				"variable":       "output",
+				"value_selector": []any{"iteration-node", "output"},
+			}}},
+		},
+		entities.GraphInitParams{WorkflowType: entities.WorkflowTypeWorkflow},
+		&entities.Graph{},
+		&entities.GraphRuntimeState{VariablePool: variablePool},
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	result, err := node.(*Node).executeRun(context.Background())
+	if err != nil {
+		t.Fatalf("executeRun() error = %v", err)
+	}
+	if got := result.Outputs["output"]; !reflect.DeepEqual(got, want) {
+		t.Fatalf("output = %#v, want %#v", got, want)
+	}
+}
+
+func TestEndNode_ExecuteRunFailsWhenSelectedVariableIsMissing(t *testing.T) {
+	variablePool := &entities.VariablePool{
+		VariableDictionary: make(map[string]map[string]entities.Variable),
+		UserInputs:         make(map[string]any),
+		SystemVariables:    &entities.SystemVariable{},
+	}
+	node, err := New(
+		"instance-missing-output",
+		map[string]any{
+			"id": "end-node",
+			"data": map[string]any{"outputs": []any{map[string]any{
+				"variable":       "output",
+				"value_selector": []any{"iteration-node", "output"},
+			}}},
+		},
+		entities.GraphInitParams{WorkflowType: entities.WorkflowTypeWorkflow},
+		&entities.Graph{},
+		&entities.GraphRuntimeState{VariablePool: variablePool},
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	if _, err := node.(*Node).executeRun(context.Background()); err == nil {
+		t.Fatal("executeRun() error = nil, want missing variable error")
+	}
+}
+
+func TestEndNode_NewRejectsMalformedOutputItem(t *testing.T) {
+	_, err := New(
+		"instance-invalid-output",
+		map[string]any{
+			"id": "end-node",
+			"data": map[string]any{"outputs": []any{map[string]any{
+				"variable":       "output",
+				"value_selector": []any{"iteration-node"},
+			}}},
+		},
+		entities.GraphInitParams{},
+		&entities.Graph{},
+		&entities.GraphRuntimeState{},
+		nil,
+	)
+	if err == nil {
+		t.Fatal("New() error = nil, want malformed output error")
 	}
 }

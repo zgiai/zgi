@@ -36,18 +36,62 @@ type CapabilitySummary struct {
 	Dependency string `json:"dependency,omitempty"`
 }
 
+// QueryRole describes how a conversational workflow uses the implicit user
+// query. It is intentionally semantic rather than tied to a particular node
+// implementation so the generation prompt remains stable as nodes evolve.
+type QueryRole string
+
+const (
+	QueryRoleUnused           QueryRole = "unused"
+	QueryRoleContentInput     QueryRole = "content_input"
+	QueryRoleRouteSelector    QueryRole = "route_selector"
+	QueryRoleExtractionSource QueryRole = "extraction_source"
+	QueryRoleMixed            QueryRole = "mixed"
+	QueryRoleUnknown          QueryRole = "unknown"
+)
+
+const (
+	WarningConversationQueryUnused         = "conversation_query_not_used"
+	WarningConversationContextInsufficient = "conversation_generation_context_insufficient"
+)
+
+// ConversationRouteSummary describes a reachable user-facing route without
+// exposing node IDs or other implementation details.
+type ConversationRouteSummary struct {
+	Intent       string   `json:"intent,omitempty"`
+	Description  string   `json:"description,omitempty"`
+	Capabilities []string `json:"capabilities,omitempty"`
+}
+
+// ConversationSummary contains graph-derived semantics for conversational
+// workflows. The implicit query is represented by its role and never as a
+// start-node field the user needs to fill in.
+type ConversationSummary struct {
+	QueryRole       QueryRole                  `json:"query_role"`
+	Routes          []ConversationRouteSummary `json:"routes,omitempty"`
+	RequiredContext []VariableSummary          `json:"required_context,omitempty"`
+}
+
 // WorkflowContext is the product context used for question generation.
 type WorkflowContext struct {
-	Locale            string              `json:"locale,omitempty"`
-	AgentName         string              `json:"agent_name,omitempty"`
-	AgentDescription  string              `json:"agent_description,omitempty"`
-	WorkflowType      string              `json:"workflow_type,omitempty"`
-	OpeningStatement  string              `json:"opening_statement,omitempty"`
-	ExistingQuestions []string            `json:"existing_questions,omitempty"`
-	StartVariables    []VariableSummary   `json:"start_variables,omitempty"`
-	LLMPrompts        []PromptSummary     `json:"llm_prompts,omitempty"`
-	Notes             []NoteSummary       `json:"notes,omitempty"`
-	Capabilities      []CapabilitySummary `json:"capabilities,omitempty"`
+	Locale            string               `json:"locale,omitempty"`
+	AgentName         string               `json:"agent_name,omitempty"`
+	AgentDescription  string               `json:"agent_description,omitempty"`
+	WorkflowType      string               `json:"workflow_type,omitempty"`
+	OpeningStatement  string               `json:"opening_statement,omitempty"`
+	ExistingQuestions []string             `json:"existing_questions,omitempty"`
+	StartVariables    []VariableSummary    `json:"start_variables,omitempty"`
+	LLMPrompts        []PromptSummary      `json:"llm_prompts,omitempty"`
+	Notes             []NoteSummary        `json:"notes,omitempty"`
+	Capabilities      []CapabilitySummary  `json:"capabilities,omitempty"`
+	Conversation      *ConversationSummary `json:"conversation,omitempty"`
+
+	// AnalysisWarnings are stable product warning codes. They are returned to
+	// the editor but are not included in the model prompt.
+	AnalysisWarnings []string `json:"-"`
+	// SkipGeneration prevents a model call when graph semantics prove that no
+	// user query can affect the workflow result.
+	SkipGeneration bool `json:"-"`
 }
 
 // BuildContextInput contains raw workflow data from either the saved draft or

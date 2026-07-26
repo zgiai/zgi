@@ -1,13 +1,5 @@
 import React, { useMemo } from 'react';
 import { Button } from '@/components/ui/button';
-import {
-  DropdownMenu,
-  DropdownMenuTrigger,
-  DropdownMenuContent,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-} from '@/components/ui/dropdown-menu';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Clock, Loader2 } from 'lucide-react';
@@ -25,6 +17,7 @@ interface WorkflowRunsDropdownProps {
   icon?: React.ReactNode;
   tooltipLabel?: string;
   dropdownLabel?: string;
+  description?: string;
   triggerText?: string;
   triggerClassName?: string;
   triggerVariant?: 'default' | 'destructive' | 'outline' | 'secondary' | 'ghost' | 'link';
@@ -128,6 +121,7 @@ const WorkflowRunsDropdown: React.FC<WorkflowRunsDropdownProps> = ({
   icon,
   tooltipLabel,
   dropdownLabel,
+  description,
   triggerText,
   triggerClassName,
   triggerVariant = 'ghost',
@@ -139,6 +133,7 @@ const WorkflowRunsDropdown: React.FC<WorkflowRunsDropdownProps> = ({
 }) => {
   const t = useT('agents');
   const [open, setOpen] = React.useState(false);
+  const containerRef = React.useRef<HTMLDivElement | null>(null);
   const viewportRef = React.useRef<HTMLDivElement | null>(null);
 
   const { pages, fetchNextPage, hasNextPage, isFetchingNextPage, isLoading, error, reload } =
@@ -181,69 +176,91 @@ const WorkflowRunsDropdown: React.FC<WorkflowRunsDropdownProps> = ({
     }
   }, [open, items.length, hasNextPage, isFetchingNextPage, isLoading, fetchNextPage]);
 
-  return (
-    <DropdownMenu open={open} onOpenChange={setOpen}>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <DropdownMenuTrigger asChild>
-            <Button
-              variant={triggerVariant}
-              size={triggerSize}
-              isIcon={!triggerText}
-              className={cn('gap-1.5', triggerClassName)}
-              aria-label={triggerLabel}
-            >
-              {icon ?? <Clock size={20} />}
-              {triggerText ? <span>{triggerText}</span> : null}
-            </Button>
-          </DropdownMenuTrigger>
-        </TooltipTrigger>
-        <TooltipContent>{triggerLabel}</TooltipContent>
-      </Tooltip>
+  React.useEffect(() => {
+    if (!open) return;
+    const closeOnOutsidePointer = (event: PointerEvent) => {
+      if (!containerRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setOpen(false);
+    };
+    document.addEventListener('pointerdown', closeOnOutsidePointer);
+    document.addEventListener('keydown', closeOnEscape);
+    return () => {
+      document.removeEventListener('pointerdown', closeOnOutsidePointer);
+      document.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [open]);
 
-      <DropdownMenuContent align="end" className="w-[380px] p-0">
-        <DropdownMenuLabel className="text-xs text-muted-foreground px-3 py-2">
-          {menuLabel}
-        </DropdownMenuLabel>
-        <DropdownMenuSeparator />
-        <ScrollArea
-          className="max-h-[360px] overflow-auto"
-          viewportRef={viewportRef}
-          viewportProps={{ onScroll: handleScroll }}
+  return (
+    <div ref={containerRef} className="relative">
+      <Button
+        variant={triggerVariant}
+        size={triggerSize}
+        isIcon={!triggerText}
+        className={cn('gap-1.5', triggerClassName)}
+        aria-label={triggerLabel}
+        aria-expanded={open}
+        aria-haspopup="menu"
+        title={triggerLabel}
+        onClick={() => setOpen(current => !current)}
+      >
+        {icon ?? <Clock size={20} />}
+        {triggerText ? <span>{triggerText}</span> : null}
+      </Button>
+
+      {open ? (
+        <div
+          role="menu"
+          aria-label={menuLabel}
+          className="absolute right-0 top-[calc(100%+4px)] z-50 w-[380px] overflow-hidden rounded-md border bg-popover text-popover-foreground shadow-md"
         >
-          {isLoading ? (
-            <FirstLoadSkeleton />
-          ) : error ? (
-            <ErrorState message={error} onRetry={reload} />
-          ) : items.length === 0 ? (
-            <div className="py-6 text-sm text-center text-muted-foreground">
-              {t('workflow.noRuns')}
-            </div>
-          ) : (
-            <div className="divide-y">
-              {items.map(item => (
-                <RunItem
-                  key={item.id}
-                  item={item}
-                  agentId={agentId}
-                  onClick={() => {
-                    onSelect?.(item.id);
-                    setOpen(false);
-                  }}
-                />
-              ))}
-              {hasNextPage && (
-                <div className="p-2 flex items-center justify-center">
-                  {isFetchingNextPage ? (
-                    <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
-                  ) : null}
-                </div>
-              )}
-            </div>
-          )}
-        </ScrollArea>
-      </DropdownMenuContent>
-    </DropdownMenu>
+          <div className="px-3 py-2">
+            <div className="text-xs font-medium text-foreground">{menuLabel}</div>
+            {description ? (
+              <div className="mt-1 text-xs leading-5 text-muted-foreground">{description}</div>
+            ) : null}
+          </div>
+          <div className="h-px bg-border" />
+          <ScrollArea
+            className="max-h-[360px] overflow-auto"
+            viewportRef={viewportRef}
+            viewportProps={{ onScroll: handleScroll }}
+          >
+            {isLoading ? (
+              <FirstLoadSkeleton />
+            ) : error ? (
+              <ErrorState message={error} onRetry={reload} />
+            ) : items.length === 0 ? (
+              <div className="py-6 text-sm text-center text-muted-foreground">
+                {t('workflow.noRuns')}
+              </div>
+            ) : (
+              <div className="divide-y">
+                {items.map(item => (
+                  <RunItem
+                    key={item.id}
+                    item={item}
+                    agentId={agentId}
+                    onClick={() => {
+                      setOpen(false);
+                      onSelect?.(item.id);
+                    }}
+                  />
+                ))}
+                {hasNextPage && (
+                  <div className="p-2 flex items-center justify-center">
+                    {isFetchingNextPage ? (
+                      <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
+                    ) : null}
+                  </div>
+                )}
+              </div>
+            )}
+          </ScrollArea>
+        </div>
+      ) : null}
+    </div>
   );
 };
 

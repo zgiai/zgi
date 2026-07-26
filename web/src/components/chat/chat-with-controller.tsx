@@ -14,7 +14,7 @@ import { useT } from '@/lib/i18n';
 import ConversationHistoryList from '@/components/chat/ui/conversation-history-list';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
-import { Menu, Plus } from 'lucide-react';
+import { Loader2, Menu, Plus, RefreshCw, Square } from 'lucide-react';
 import { IconPreview } from '@/components/common/icon-input/icon-preview';
 import type { WebAppWorkflowMeta } from '@/services/types/webapp';
 import { useStore } from 'zustand';
@@ -23,6 +23,7 @@ import type { OpeningGuideConfig } from '@/utils/webapp/opening-statement';
 import { cn } from '@/lib/utils';
 import type { WorkflowFileUploadAccessMode } from '@/components/workflow/common/workflow-input-form';
 import type { OpeningGuideBrand } from '@/components/chat/utils/opening-guide-brand';
+import type { WorkflowConnectionState } from '@/hooks/workflow/workflow-runtime-controller';
 
 interface ChatWithControllerProps {
   controller: ChatController;
@@ -69,6 +70,12 @@ interface ChatWithControllerProps {
   renderMessageAddon?: (message: Message) => React.ReactNode;
   surface?: 'default' | 'webapp';
   conversationSearchKey?: readonly unknown[];
+  onSelectConversation?: (conversationId: string) => void;
+  onStartNewConversation?: () => void;
+  connectionState?: WorkflowConnectionState;
+  onReconnect?: () => void;
+  /** Approval/question cards render the stop action instead of the composer. */
+  pendingInteractionControlsIntegrated?: boolean;
 }
 
 const ChatWithController: React.FC<ChatWithControllerProps> = ({
@@ -105,6 +112,11 @@ const ChatWithController: React.FC<ChatWithControllerProps> = ({
   renderMessageAddon,
   surface = 'default',
   conversationSearchKey,
+  onSelectConversation,
+  onStartNewConversation,
+  connectionState = 'idle',
+  onReconnect,
+  pendingInteractionControlsIntegrated = false,
 }) => {
   const t = useT();
   const isWebappSurface = surface === 'webapp';
@@ -168,31 +180,51 @@ const ChatWithController: React.FC<ChatWithControllerProps> = ({
   const currentConversation = conv ?? fallbackConv;
   const latestMessage = currentConversation.messages[currentConversation.messages.length - 1];
   const latestRunStatus = latestMessage?.WorkflowRunInfo?.status as string | undefined;
+  const persistedRuntimeStatus =
+    typeof activeConversationSummary?.metadata?.runtime_status === 'string'
+      ? activeConversationSummary.metadata.runtime_status
+      : 'idle';
   const hasWorkflowRun = Boolean(latestMessage?.WorkflowRunInfo);
+  const currentRuntimeStatus =
+    latestRunStatus ||
+    latestMessage?.clientState?.status ||
+    (persistedRuntimeStatus !== 'idle'
+      ? persistedRuntimeStatus
+      : hasWorkflowRun && latestMessage?.clientState?.phase === 'streaming'
+        ? 'running'
+        : 'idle');
   const isCurrentWorkflowRunning =
-    latestRunStatus === 'running' ||
-    (hasWorkflowRun && latestMessage?.clientState?.phase === 'streaming');
-  const isCurrentWorkflowPendingApproval = latestRunStatus === 'pending_approval';
-  const isCurrentWorkflowPendingQuestion = latestRunStatus === 'pending_question';
+    currentRuntimeStatus === 'running' ||
+    currentRuntimeStatus === 'resuming' ||
+    currentRuntimeStatus === 'stopping';
+  const isCurrentWorkflowPendingApproval = currentRuntimeStatus === 'pending_approval';
+  const isCurrentWorkflowPendingQuestion = currentRuntimeStatus === 'pending_question';
   const isSendBlocked = Boolean(
     sendDisabled ||
       isCurrentWorkflowRunning ||
       isCurrentWorkflowPendingApproval ||
       (isCurrentWorkflowPendingQuestion && !allowPendingQuestionInput)
   );
-  const isConversationActionBlocked = Boolean(
-    sendDisabled ||
-      isCurrentWorkflowRunning ||
-      isCurrentWorkflowPendingApproval ||
-      isCurrentWorkflowPendingQuestion
-  );
   const effectiveIsRunning = Boolean(onStop && isCurrentWorkflowRunning);
+  const canStopActiveRun = Boolean(
+    onStop &&
+      (isCurrentWorkflowRunning ||
+        isCurrentWorkflowPendingApproval ||
+        isCurrentWorkflowPendingQuestion ||
+        connectionState === 'disconnected')
+  );
+  const hasPendingInteraction =
+    isCurrentWorkflowPendingApproval || isCurrentWorkflowPendingQuestion;
+  const pendingInteractionOwnsStop = pendingInteractionControlsIntegrated && hasPendingInteraction;
   const isNewConversation = activeConversationSummary
     ? !activeConversationSummary.conversationId || activeConversationSummary.id.startsWith('draft-')
     : !currentConversation.conversationId || currentConversation.id.startsWith('draft-');
 
   const handleCreateNewConversation = () => {
-    if (isConversationActionBlocked) return;
+    if (onStartNewConversation) {
+      onStartNewConversation();
+      return;
+    }
     const draft = controller.createDraft(t('agents.workflow.chat.newConversation'));
     controller.select(draft.id);
   };
@@ -235,6 +267,8 @@ const ChatWithController: React.FC<ChatWithControllerProps> = ({
             controller={controller}
             backgroundImage={isWebappSurface ? WEBAPP_CHAT_SIDEBAR_BG_IMAGE : undefined}
             searchKey={conversationSearchKey}
+            onCreateConversation={onStartNewConversation}
+            onSelectConversation={onSelectConversation}
           />
         </div>
 
@@ -277,7 +311,6 @@ const ChatWithController: React.FC<ChatWithControllerProps> = ({
               <Button
                 variant="ghost"
                 size="xs"
-                disabled={isConversationActionBlocked}
                 onClick={handleCreateNewConversation}
                 className="h-8 w-8 p-0"
                 aria-label={t('webapp.chat.newConversation')}
@@ -318,8 +351,55 @@ const ChatWithController: React.FC<ChatWithControllerProps> = ({
             />
           </div>
           <div className="p-2 w-full max-w-6xl mx-auto">
+            {connectionState === 'disconnected' ? (
+              <div className="mb-2 flex items-center justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-100">
+                <span>{t('webapp.chat.streamDisconnected')}</span>
+                <div className="flex shrink-0 items-center gap-2">
+                  <Button type="button" size="sm" variant="outline" onClick={onReconnect}>
+                    <RefreshCw className="size-4" />
+                    {t('webapp.chat.reconnectStream')}
+                  </Button>
+                  {canStopActiveRun ? (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="destructive"
+                      disabled={isStopping}
+                      onClick={onStop}
+                    >
+                      {isStopping ? (
+                        <Loader2 className="size-4 animate-spin" />
+                      ) : (
+                        <Square className="size-4" />
+                      )}
+                      {t('webapp.chat.stop')}
+                    </Button>
+                  ) : null}
+                </div>
+              </div>
+            ) : null}
             {inputReplacement ? (
-              inputReplacement
+              <div className="space-y-2">
+                {inputReplacement}
+                {canStopActiveRun && !pendingInteractionOwnsStop ? (
+                  <div className="flex justify-end">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="destructive"
+                      disabled={isStopping}
+                      onClick={onStop}
+                    >
+                      {isStopping ? (
+                        <Loader2 className="size-4 animate-spin" />
+                      ) : (
+                        <Square className="size-4" />
+                      )}
+                      {t('webapp.chat.stop')}
+                    </Button>
+                  </div>
+                ) : null}
+              </div>
             ) : (
               <UserInput
                 onSend={handleSend}
@@ -329,8 +409,9 @@ const ChatWithController: React.FC<ChatWithControllerProps> = ({
                 disabled={inputDisabled}
                 disabledOverlay={inputDisabledOverlay}
                 sendDisabled={isSendBlocked}
-                isRunning={effectiveIsRunning}
+                isRunning={effectiveIsRunning || (canStopActiveRun && !pendingInteractionOwnsStop)}
                 isStopping={isStopping}
+                hideStopControl={pendingInteractionOwnsStop}
                 placeholder={placeholder}
                 toolbarForm={toolbarForm}
                 variant={isWebappSurface ? 'webapp' : 'default'}
@@ -376,6 +457,8 @@ const ChatWithController: React.FC<ChatWithControllerProps> = ({
                 backgroundImage={isWebappSurface ? WEBAPP_CHAT_SIDEBAR_BG_IMAGE : undefined}
                 onActionComplete={() => setMobileDrawerOpen(false)}
                 searchKey={conversationSearchKey}
+                onCreateConversation={onStartNewConversation}
+                onSelectConversation={onSelectConversation}
               />
             </div>
           </div>

@@ -155,6 +155,10 @@ func (h *ConversationQueryHandler) GetConversationList(c *gin.Context) {
 			"dialogue_count": conv.DialogueCount,
 			"created_at":     conv.CreatedAt.Unix(),
 			"updated_at":     conv.UpdatedAt.Unix(),
+			"runtime_status": conv.RuntimeStatus,
+		}
+		if conv.ActiveWorkflowRunID != nil {
+			item["active_workflow_run_id"] = conv.ActiveWorkflowRunID.String()
 		}
 
 		if conv.Summary != nil {
@@ -361,6 +365,10 @@ func (h *ConversationQueryHandler) GetConversationDetail(c *gin.Context) {
 		"created_at":     conv.CreatedAt.Unix(),
 		"updated_at":     conv.UpdatedAt.Unix(),
 		"messages":       messageItems,
+		"runtime_status": conv.RuntimeStatus,
+	}
+	if conv.ActiveWorkflowRunID != nil {
+		convDetail["active_workflow_run_id"] = conv.ActiveWorkflowRunID.String()
 	}
 
 	if conv.Summary != nil {

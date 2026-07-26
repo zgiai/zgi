@@ -29,6 +29,8 @@ interface ConversationHistoryListProps {
   backgroundImage?: string;
   onCreateWhileDraft?: () => void;
   onActionComplete?: () => void;
+  onCreateConversation?: () => void;
+  onSelectConversation?: (id: string) => void;
   searchKey?: readonly unknown[];
 }
 
@@ -38,6 +40,8 @@ const ConversationHistoryList: React.FC<ConversationHistoryListProps> = ({
   backgroundImage,
   onCreateWhileDraft,
   onActionComplete,
+  onCreateConversation,
+  onSelectConversation,
   searchKey,
 }) => {
   const activeId = useStore(controller.store, s => s.activeId);
@@ -59,17 +63,22 @@ const ConversationHistoryList: React.FC<ConversationHistoryListProps> = ({
       onActionComplete?.();
       return;
     }
-    const draft = controller.createDraft(t('webapp.chat.newConversation'));
-    controller.select(draft.id);
+    if (onCreateConversation) {
+      onCreateConversation();
+    } else {
+      const draft = controller.createDraft(t('webapp.chat.newConversation'));
+      controller.select(draft.id);
+    }
     onActionComplete?.();
-  }, [controller, isActiveDraft, onActionComplete, onCreateWhileDraft, t]);
+  }, [controller, isActiveDraft, onActionComplete, onCreateConversation, onCreateWhileDraft, t]);
 
   const handleSelect = useCallback(
     (id: string) => {
-      controller.select(id);
+      if (onSelectConversation) onSelectConversation(id);
+      else controller.select(id);
       onActionComplete?.();
     },
-    [controller, onActionComplete]
+    [controller, onActionComplete, onSelectConversation]
   );
   const conversationSearch = useCallback(
     (query: string, limit: number) => controller.search?.(query, limit) ?? Promise.resolve([]),
@@ -259,9 +268,11 @@ const ConversationHistoryList: React.FC<ConversationHistoryListProps> = ({
         }}
         onSelectSearchResult={result => {
           if (controller.loadAndSelect) {
-            void controller.loadAndSelect(result.conversationId);
+            if (onSelectConversation) onSelectConversation(result.conversationId);
+            else void controller.loadAndSelect(result.conversationId);
           } else {
-            controller.select(result.conversationId);
+            if (onSelectConversation) onSelectConversation(result.conversationId);
+            else controller.select(result.conversationId);
           }
           onActionComplete?.();
         }}

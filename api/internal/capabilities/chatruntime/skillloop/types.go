@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
@@ -186,10 +187,11 @@ type TerminalStateGuardDecisionRecord struct {
 type RuntimeStateSnapshotFunc func() map[string]interface{}
 
 type TerminalCompletionResult struct {
-	Status   string
-	Source   string
-	Reason   string
-	Blockers []string
+	Status           string
+	Source           string
+	Reason           string
+	Blockers         []string
+	CompletionReason string
 }
 
 type SkillToolCallRef struct {
@@ -255,6 +257,12 @@ type PreparedChat struct {
 	Surface      string
 	parts        *chatParts
 	LLMRequest   *adapter.ChatRequest
+	eventState   presentationEventState
+}
+
+type presentationEventState struct {
+	mu  sync.Mutex
+	err error
 }
 
 type Conversation struct {
@@ -283,11 +291,40 @@ func NewPreparedChat(conversationID string, messageID string, provider string, s
 	}
 }
 
-func (r *Runner) emitEvent(eventType string, payload map[string]interface{}) {
+func (r *Runner) emitEvent(prepared *PreparedChat, eventType string, payload map[string]interface{}) {
 	if r == nil || r.OnEvent == nil {
 		return
 	}
-	_ = r.OnEvent(Event{Type: eventType, Payload: payload})
+	if prepared == nil {
+		_ = r.OnEvent(Event{Type: eventType, Payload: payload})
+		return
+	}
+	prepared.eventState.mu.Lock()
+	defer prepared.eventState.mu.Unlock()
+	if prepared.eventState.err != nil {
+		return
+	}
+	if err := r.OnEvent(Event{Type: eventType, Payload: payload}); err != nil {
+		prepared.eventState.err = err
+	}
+}
+
+func (prepared *PreparedChat) resetPresentationEventError() {
+	if prepared == nil {
+		return
+	}
+	prepared.eventState.mu.Lock()
+	prepared.eventState.err = nil
+	prepared.eventState.mu.Unlock()
+}
+
+func (prepared *PreparedChat) presentationEventError() error {
+	if prepared == nil {
+		return nil
+	}
+	prepared.eventState.mu.Lock()
+	defer prepared.eventState.mu.Unlock()
+	return prepared.eventState.err
 }
 
 func (r *Runner) recordTrace(traces []skills.SkillTrace, trace skills.SkillTrace) {

@@ -26,6 +26,167 @@ func (r *countingTimelineMessageRepo) UpdateMetadata(_ context.Context, _ uuid.U
 	return nil
 }
 
+func TestProcessTimelineRecorderKeepsPresentationOrderAcrossActionsAndContinuation(t *testing.T) {
+	message := &runtimemodel.Message{ID: uuid.New(), Metadata: map[string]interface{}{}}
+	prepared := &PreparedChat{
+		Conversation: &runtimemodel.Conversation{ID: uuid.New()},
+		Message:      message,
+	}
+	recorder := newProcessTimelineRecorder(
+		t.Context(),
+		t.Context(),
+		&service{},
+		prepared,
+		nil,
+	)
+	now := time.Unix(1_700_000_000, 0)
+	recorder.now = func() time.Time {
+		now = now.Add(time.Millisecond)
+		return now
+	}
+
+	if err := recorder.RecordEvent(streamEventMessage, map[string]interface{}{"answer": "Before tool. "}); err != nil {
+		t.Fatalf("record first text: %v", err)
+	}
+	if err := recorder.RecordEvent(streamEventSkillCallStart, map[string]interface{}{
+		"skill_id":  skills.SkillCalculator,
+		"tool_name": "calculate",
+		"arguments": map[string]interface{}{"expression": "1+1"},
+	}); err != nil {
+		t.Fatalf("record tool event: %v", err)
+	}
+	if err := recorder.RecordEvent(streamEventMessage, map[string]interface{}{"answer": "Before question. "}); err != nil {
+		t.Fatalf("record second text: %v", err)
+	}
+	if err := recorder.RecordEvent(streamEventUserInputRequested, map[string]interface{}{
+		"request_id": "request-1",
+		"message":    "Need more information",
+	}); err != nil {
+		t.Fatalf("record question event: %v", err)
+	}
+	if err := recorder.RecordEvent(streamEventMessage, map[string]interface{}{"answer": "Final answer."}); err != nil {
+		t.Fatalf("record final text: %v", err)
+	}
+	if err := recorder.FinalizePresentation(nil); err != nil {
+		t.Fatalf("finalize presentation: %v", err)
+	}
+
+	projection := presentationProjectionFromMetadata(message.Metadata)
+	if projection.Version != presentationVersionV2 {
+		t.Fatalf("presentation version = %d, want %d", projection.Version, presentationVersionV2)
+	}
+	if projection.LastSequence != 5 || len(projection.Items) != 5 {
+		t.Fatalf("presentation = %#v, want five ordered items through sequence 5", projection)
+	}
+	wantKinds := []string{
+		presentationKindText,
+		presentationKindEvent,
+		presentationKindText,
+		presentationKindEvent,
+		presentationKindText,
+	}
+	wantPhases := []string{
+		presentationPhaseProcess,
+		"",
+		presentationPhaseProcess,
+		"",
+		presentationPhaseFinal,
+	}
+	for index, item := range projection.Items {
+		sequence, ok := int64FromPresentationValue(item["presentation_sequence"])
+		if !ok || sequence != int64(index+1) {
+			t.Fatalf("item %d sequence = %#v, want %d", index, item["presentation_sequence"], index+1)
+		}
+		if got := stringFromAny(item["kind"]); got != wantKinds[index] {
+			t.Fatalf("item %d kind = %q, want %q", index, got, wantKinds[index])
+		}
+		if got := stringFromAny(item["content_phase"]); got != wantPhases[index] {
+			t.Fatalf("item %d phase = %q, want %q", index, got, wantPhases[index])
+		}
+	}
+
+	continuation := newProcessTimelineRecorder(
+		t.Context(),
+		t.Context(),
+		&service{},
+		prepared,
+		nil,
+	)
+	if err := continuation.RecordEvent(streamEventMessage, map[string]interface{}{"answer": "Continued answer."}); err != nil {
+		t.Fatalf("record continuation text: %v", err)
+	}
+	if err := continuation.FinalizePresentation(nil); err != nil {
+		t.Fatalf("finalize continuation presentation: %v", err)
+	}
+	continuedProjection := presentationProjectionFromMetadata(message.Metadata)
+	if continuedProjection.LastSequence != 6 || len(continuedProjection.Items) != 6 {
+		t.Fatalf("continued presentation = %#v, want sequence 6 without renumbering", continuedProjection)
+	}
+}
+
+func TestUserInputResponseGetsPositionAfterRequestedPresentation(t *testing.T) {
+	message := &runtimemodel.Message{ID: uuid.New(), Metadata: map[string]interface{}{}}
+	prepared := &PreparedChat{
+		Conversation: &runtimemodel.Conversation{ID: uuid.New()},
+		Message:      message,
+	}
+	recorder := newProcessTimelineRecorder(
+		t.Context(),
+		t.Context(),
+		&service{},
+		prepared,
+		nil,
+	)
+	request := map[string]interface{}{
+		"request_id": "request-1",
+		"message":    "Need more information",
+		"questions": []interface{}{map[string]interface{}{
+			"id":       "q1",
+			"question": "Which option?",
+		}},
+	}
+	if err := recorder.RecordEvent(streamEventUserInputRequested, request); err != nil {
+		t.Fatalf("record user input request: %v", err)
+	}
+
+	requestProjection := presentationProjectionFromMetadata(message.Metadata)
+	if len(requestProjection.Items) != 1 {
+		t.Fatalf("request presentation = %#v, want one item", requestProjection)
+	}
+	requestItem := requestProjection.Items[0]
+	response := map[string]interface{}{
+		"request_id":   "request-1",
+		"status":       userInputContinuationStatusAnswered,
+		"answer_count": 1,
+		"answered_at":  time.Now().Unix(),
+		"answers": []interface{}{map[string]interface{}{
+			"question_id": "q1",
+			"question":    "Which option?",
+			"value":       "First",
+		}},
+	}
+	metadata := resolveUserInputContinuationMetadata(
+		message.Metadata,
+		message.ID.String(),
+		request,
+		response,
+	)
+	responseProjection := presentationProjectionFromMetadata(metadata)
+	if responseProjection.LastSequence != 2 || len(responseProjection.Items) != 2 {
+		t.Fatalf("response presentation = %#v, want request and response items", responseProjection)
+	}
+	responseItem := responseProjection.Items[1]
+	if got := stringFromAny(responseItem["presentation_id"]); got == stringFromAny(requestItem["presentation_id"]) {
+		t.Fatalf("response presentation_id = %q, must differ from request", got)
+	}
+	if got := stringFromAny(responseItem["event_ref"]); got != "user_input_response:request-1" {
+		t.Fatalf("response event_ref = %q, want user_input_response:request-1", got)
+	}
+	if got, ok := int64FromPresentationValue(response["presentation_sequence"]); !ok || got != 2 {
+		t.Fatalf("response presentation_sequence = %#v, want 2", response["presentation_sequence"])
+	}
+}
+
 func TestProcessTimelineRecorderCheckpointsIntermediateAnswerWithoutWriteAmplification(t *testing.T) {
 	messageRepo := &countingTimelineMessageRepo{}
 	message := &runtimemodel.Message{ID: uuid.New(), Metadata: map[string]interface{}{}}

@@ -15,6 +15,7 @@ type AgentMessageRepository interface {
 	Create(ctx context.Context, message *AgentMessage) error
 	GetByID(ctx context.Context, id uuid.UUID) (*AgentMessage, error)
 	GetByConversationID(ctx context.Context, conversationID uuid.UUID, limit, offset int) ([]*AgentMessage, int64, error)
+	GetContextHistoryByConversationID(ctx context.Context, conversationID uuid.UUID, limit int) ([]*AgentMessage, error)
 	Update(ctx context.Context, message *AgentMessage) error
 	Delete(ctx context.Context, id uuid.UUID, deletedBy uuid.UUID) error
 	GetByAgentAndUser(ctx context.Context, agentID uuid.UUID, fromSource string, userID uuid.UUID, limit, offset int) ([]*AgentMessage, int64, error)
@@ -94,6 +95,35 @@ func (r *agentMessageRepository) GetByConversationID(ctx context.Context, conver
 	}
 
 	return messages, total, nil
+}
+
+// GetContextHistoryByConversationID returns the most recent stable logical turns in chronological
+// order. In-flight and waiting messages are deliberately excluded so partial workflow output does
+// not become model context for a later turn.
+func (r *agentMessageRepository) GetContextHistoryByConversationID(ctx context.Context, conversationID uuid.UUID, limit int) ([]*AgentMessage, error) {
+	if limit <= 0 {
+		return []*AgentMessage{}, nil
+	}
+
+	var messages []*AgentMessage
+	err := r.db.WithContext(ctx).
+		Where("conversation_id = ? AND deleted_at IS NULL AND status IN ?", conversationID, []string{
+			AgentMessageStatusCompleted,
+			AgentMessageStatusStopped,
+			AgentMessageStatusError,
+			AgentMessageStatusExpired,
+		}).
+		Order("created_at DESC").
+		Limit(limit).
+		Find(&messages).Error
+	if err != nil {
+		return nil, fmt.Errorf("failed to get conversation context history: %w", err)
+	}
+
+	for left, right := 0, len(messages)-1; left < right; left, right = left+1, right-1 {
+		messages[left], messages[right] = messages[right], messages[left]
+	}
+	return messages, nil
 }
 
 // Update updates an agent message

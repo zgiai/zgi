@@ -27,6 +27,7 @@ import {
   isPendingToolGovernanceInvocation,
 } from './governance';
 import { preferCompleteIntermediateAnswerContent } from './reducers/shared';
+import { isSensitiveOutputBlockedValue } from '@/utils/model-output-filter';
 
 const EMPTY_AICHAT_MESSAGES: AIChatMessage[] = [];
 
@@ -471,12 +472,16 @@ export function timelineFromAIChatMessage(message: AIChatMessage): AIChatAgentic
       };
     }
     if (invocation.kind === 'intermediate_answer' && invocation.message) {
+      const sensitiveOutputBlocked =
+        isSensitiveOutputBlockedValue(invocation.title) ||
+        isSensitiveOutputBlockedValue(invocation.message);
       return {
         id: `history-intermediate-${message.id}-${invocation.answer_id ?? index}`,
         type: 'intermediate_answer',
         answer_id: invocation.answer_id,
-        title: invocation.title,
-        content: invocation.message,
+        title: sensitiveOutputBlocked ? undefined : invocation.title,
+        content: sensitiveOutputBlocked ? '' : invocation.message,
+        sensitiveOutputBlocked,
         status: invocation.status === 'success' ? 'success' : undefined,
         created_at: invocation.created_at,
       };
@@ -516,6 +521,8 @@ export function timelineFromAIChatMessage(message: AIChatMessage): AIChatAgentic
             message: pendingUserInputRequest.message?.trim(),
             questions: pendingQuestions,
             created_at: pendingUserInputRequest.created_at,
+            presentation_id: pendingUserInputRequest.presentation_id,
+            presentation_sequence: pendingUserInputRequest.presentation_sequence,
           },
         ]
       : [];
@@ -537,6 +544,8 @@ export function timelineFromAIChatMessage(message: AIChatMessage): AIChatAgentic
         message: response.message?.trim(),
         answers,
         created_at: response.answered_at,
+        presentation_id: response.presentation_id,
+        presentation_sequence: response.presentation_sequence,
       };
     })
     .filter((item): item is AIChatAgenticTimelineItem => item !== null);
@@ -985,6 +994,8 @@ function timelineItemIdentity(item: AIChatAgenticTimelineItem): string {
         item.content.trim().replace(/\s+/g, ' '),
       ].join(':');
     }
+    case 'process_text':
+      return ['process-text', item.segment_id || item.id].join(':');
     case 'skill_event': {
       return timelineSkillInvocationIdentity(item.invocation);
     }

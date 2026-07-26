@@ -84,6 +84,10 @@ export interface DefaultValueEditorProps {
   value: unknown;
   onChange: (v: unknown) => void;
   density?: 'default' | 'compact';
+  arrayMode?: 'list' | 'json';
+  onArrayModeChange?: (mode: 'list' | 'json') => void;
+  jsonValue?: string;
+  onJsonValueChange?: (value: string) => void;
   readOnly?: boolean;
 }
 
@@ -92,19 +96,42 @@ const DefaultValueEditor: React.FC<DefaultValueEditorProps> = ({
   value,
   onChange,
   density = 'default',
+  arrayMode,
+  onArrayModeChange,
+  jsonValue,
+  onJsonValueChange,
   readOnly = false,
 }) => {
   const t = useT('agents');
   const tCommon = useT('common');
   const isCompact = density === 'compact';
 
-  const [mode, setMode] = React.useState<'list' | 'json'>(
+  const [internalMode, setInternalMode] = React.useState<'list' | 'json'>(
     isListEditableArray(type) ? 'list' : 'json'
+  );
+  const mode = arrayMode ?? internalMode;
+
+  const handleModeChange = React.useCallback(
+    (nextMode: 'list' | 'json') => {
+      if (onArrayModeChange) onArrayModeChange(nextMode);
+      else setInternalMode(nextMode);
+    },
+    [onArrayModeChange]
+  );
+
+  const handleJsonChange = React.useCallback(
+    (raw: string) => {
+      if (onJsonValueChange) onJsonValueChange(raw);
+      else onChange(parseValueByType(type, raw));
+    },
+    [onChange, onJsonValueChange, type]
   );
 
   React.useEffect(() => {
-    setMode(isListEditableArray(type) ? 'list' : 'json');
-  }, [type]);
+    if (arrayMode === undefined) {
+      setInternalMode(isListEditableArray(type) ? 'list' : 'json');
+    }
+  }, [arrayMode, type]);
 
   if (type === 'string') {
     return (
@@ -149,8 +176,8 @@ const DefaultValueEditor: React.FC<DefaultValueEditorProps> = ({
     if (type === 'array[object]') {
       return (
         <CodeEditor
-          value={serializeValueByType(type, value)}
-          onChange={val => onChange(parseValueByType(type, String(val)))}
+          value={jsonValue ?? serializeValueByType(type, value)}
+          onChange={val => handleJsonChange(String(val))}
           language="json"
           allowLanguages={['json']}
           showLanguageSelector={false}
@@ -168,7 +195,7 @@ const DefaultValueEditor: React.FC<DefaultValueEditorProps> = ({
 
     return (
       <div className="flex flex-col gap-2">
-        <Tabs value={mode} onValueChange={v => setMode(v as 'list' | 'json')}>
+        <Tabs value={mode} onValueChange={v => handleModeChange(v as 'list' | 'json')}>
           <TabsList>
             <TabsTrigger value="list" disabled={readOnly}>
               {t('workflow.conversationVariables.editMode.list')}
@@ -261,8 +288,8 @@ const DefaultValueEditor: React.FC<DefaultValueEditorProps> = ({
           </TabsContent>
           <TabsContent value="json">
             <CodeEditor
-              value={serializeValueByType(type, value)}
-              onChange={val => onChange(parseValueByType(type, String(val)))}
+              value={jsonValue ?? serializeValueByType(type, value)}
+              onChange={val => handleJsonChange(String(val))}
               language="json"
               allowLanguages={['json']}
               showLanguageSelector={false}
@@ -281,8 +308,8 @@ const DefaultValueEditor: React.FC<DefaultValueEditorProps> = ({
 
   return (
     <CodeEditor
-      value={serializeValueByType(type, value)}
-      onChange={val => onChange(parseValueByType(type, String(val)))}
+      value={jsonValue ?? serializeValueByType(type, value)}
+      onChange={val => handleJsonChange(String(val))}
       language="json"
       allowLanguages={['json']}
       showLanguageSelector={false}

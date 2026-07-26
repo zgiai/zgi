@@ -6,8 +6,14 @@ type contextKey struct{}
 
 // Event is a normalized workflow event emitted while an Agent workflow tool is running.
 type Event struct {
-	Type    string
-	Payload map[string]interface{}
+	Type            string
+	Payload         map[string]interface{}
+	Sequence        int
+	SchemaVersion   int
+	PayloadVersion  int
+	ExecutionID     string
+	PauseID         string
+	PauseGeneration int64
 }
 
 // Emitter receives workflow runtime events.

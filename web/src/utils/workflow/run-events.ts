@@ -11,6 +11,9 @@ export function extractLlmGatewayRequest(source: unknown): unknown {
 }
 
 export interface WorkflowRunContainerContext {
+  containerId?: string;
+  containerType?: 'iteration' | 'loop';
+  roundIndex?: number;
   iterationId?: string;
   iterationIndex?: number;
   loopId?: string;
@@ -30,6 +33,17 @@ export interface WorkflowRunExecutionItem extends WorkflowRunOrderedItem {
   title?: string;
 }
 
+export function isVisibleWorkflowRunExecutionStatus(status: unknown): boolean {
+  const value = typeof status === 'string' ? status.trim().toLowerCase() : '';
+  return (
+    value !== 'pending' &&
+    value !== 'skipped' &&
+    value !== 'idle' &&
+    value !== 'not_started' &&
+    value !== 'not-started'
+  );
+}
+
 /**
  * @util extractWorkflowRunContainerContext
  * @description Extract container ownership from a workflow SSE node payload.
@@ -38,12 +52,37 @@ export function extractWorkflowRunContainerContext(source: unknown): WorkflowRun
   const record = toRecord(source);
   const execMeta = toRecord(record?.['execution_metadata']);
 
+  const containerId = pickString(record, 'container_id') ?? pickString(execMeta, 'container_id');
+  const rawContainerType =
+    pickString(record, 'container_type') ?? pickString(execMeta, 'container_type');
+  const containerType =
+    rawContainerType === 'iteration' || rawContainerType === 'loop' ? rawContainerType : undefined;
+  const roundIndex = pickNumber(record, 'round_index') ?? pickNumber(execMeta, 'round_index');
+  const iterationId =
+    (containerType === 'iteration' ? containerId : undefined) ??
+    pickString(record, 'iteration_id') ??
+    pickString(execMeta, 'iteration_id');
+  const iterationIndex =
+    (containerType === 'iteration' ? roundIndex : undefined) ??
+    pickNumber(record, 'iteration_index') ??
+    pickNumber(execMeta, 'iteration_index');
+  const loopId =
+    (containerType === 'loop' ? containerId : undefined) ??
+    pickString(record, 'loop_id') ??
+    pickString(execMeta, 'loop_id');
+  const loopIndex =
+    (containerType === 'loop' ? roundIndex : undefined) ??
+    pickNumber(record, 'loop_index') ??
+    pickNumber(execMeta, 'loop_index');
+
   return {
-    iterationId: pickString(record, 'iteration_id') ?? pickString(execMeta, 'iteration_id'),
-    iterationIndex:
-      pickNumber(record, 'iteration_index') ?? pickNumber(execMeta, 'iteration_index'),
-    loopId: pickString(record, 'loop_id') ?? pickString(execMeta, 'loop_id'),
-    loopIndex: pickNumber(record, 'loop_index') ?? pickNumber(execMeta, 'loop_index'),
+    containerId,
+    containerType,
+    roundIndex,
+    iterationId,
+    iterationIndex,
+    loopId,
+    loopIndex,
   };
 }
 
@@ -54,6 +93,8 @@ export function extractWorkflowRunContainerContext(source: unknown): WorkflowRun
 export function getWorkflowRunExecutionId(source: unknown): string | undefined {
   const record = toRecord(source);
   return (
+    pickString(record, 'node_execution_id') ??
+    pickNumberString(record, 'node_execution_id') ??
     pickString(record, 'execution_id') ??
     pickNumberString(record, 'execution_id') ??
     pickString(record, 'id') ??
@@ -115,9 +156,9 @@ export function sortWorkflowRunRounds<T extends { index: number }>(rounds: T[]):
  * @util getWorkflowRunRoundElapsedTime
  * @description Resolve a container round duration from the sum of finished child node durations.
  */
-export function getWorkflowRunRoundElapsedTime(
-  round: { nodes: WorkflowRunOrderedItem[] }
-): number | undefined {
+export function getWorkflowRunRoundElapsedTime(round: {
+  nodes: WorkflowRunOrderedItem[];
+}): number | undefined {
   const total = round.nodes.reduce(
     (total, node) => total + (typeof node.elapsedTime === 'number' ? node.elapsedTime : 0),
     0

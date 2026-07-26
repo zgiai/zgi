@@ -82,8 +82,7 @@ func (s *service) runPreparedToolLoop(
 			if event.Type == skillloop.EventUserInputRequested {
 				s.persistUserInputRequestBestEffort(persistCtx, prepared, event.Payload)
 			}
-			timeline.RecordEvent(event.Type, event.Payload)
-			return nil
+			return timeline.RecordEvent(event.Type, event.Payload)
 		},
 		OnTrace: func(traces []skills.SkillTrace, trace skills.SkillTrace) {
 			timeline.RecordTrace(traces, trace)
@@ -145,7 +144,11 @@ func (s *service) runPreparedToolLoop(
 		ContinuationType:               prepared.ContinuationType,
 		TerminalOnly:                   prepared.TerminalOnly,
 	})
+	presentationErr := timeline.FinalizePresentation(err)
 	timeline.FlushPendingIntermediateAnswers(err)
+	if err == nil && presentationErr != nil {
+		err = presentationErr
+	}
 	if err != nil && strings.TrimSpace(answer) != "" {
 		s.persistPartialSkillLoopAnswerBestEffort(persistCtx, prepared, answer, usage)
 	}
@@ -307,6 +310,9 @@ func skillLoopTerminalCompletionResult(prepared *PreparedChat) func(skillloop.Te
 			status = "needs_action"
 		}
 		metadata := copyStringAnyMap(prepared.Message.Metadata)
+		if completionReason := strings.TrimSpace(result.CompletionReason); completionReason != "" {
+			metadata["completion_reason"] = completionReason
+		}
 		applyOperationPlanTerminalCompletionResultWithSource(
 			metadata,
 			status,
@@ -1349,6 +1355,14 @@ func skillRuntimeParameters(scope Scope, config RunConfig) map[string]interface{
 
 func skillRuntimeParametersForPrepared(prepared *PreparedChat) map[string]interface{} {
 	params := skillRuntimeParameters(prepared.Scope, prepared.RunConfig)
+	if prepared != nil {
+		if source := strings.TrimSpace(prepared.Caller.Source); source != "" {
+			// Built-in tools use the server-owned conversation source to decide
+			// which interactive capabilities may be exposed to the current UI.
+			// Client requests must never be trusted to provide this value.
+			params["agent_runtime_source"] = source
+		}
+	}
 	if workspaceID := preparedSkillWorkspaceID(prepared); workspaceID != "" {
 		params["workspace_id"] = workspaceID
 	}
@@ -3303,7 +3317,7 @@ func agentWorkflowAvailableBindingsMessage(bindings []AgentWorkflowBinding) (ada
 		"The current Agent can call these bound workflows through the agent-workflow skill.",
 		"Use this injected available_workflows list first when selecting a workflow binding. Call list_agent_workflows only if this list is missing, ambiguous, or stale.",
 		"Never invent workflow IDs or pass workflow_id/agent_id. Call run_agent_workflow with a binding_id from available_workflows.",
-		"For single-input or conversational workflows, pass the user's current request in inputs.query unless the binding's input_schema, required_inputs, or default_input_key says otherwise.",
+		"For task workflows, follow input_schema and required_inputs exactly; if no start inputs are declared, call with an empty inputs object. Only conversational workflows use inputs.query for the user's current request.",
 		"Available workflows JSON: " + string(payload),
 	}, "\n")
 	return adapter.Message{Role: "system", Content: content}, true
@@ -3323,18 +3337,21 @@ func agentWorkflowPromptBindings(bindings []AgentWorkflowBinding) []map[string]i
 		seen[binding.BindingID] = struct{}{}
 		defaultInputKey := agentWorkflowDefaultInputKey(binding)
 		requiredInputs := agentWorkflowRequiredInputs(binding)
-		out = append(out, map[string]interface{}{
-			"binding_id":        binding.BindingID,
-			"label":             binding.Label,
-			"description":       binding.Description,
-			"agent_type":        binding.AgentType,
-			"version_strategy":  agentWorkflowVersionStrategy(binding.VersionStrategy),
-			"timeout_seconds":   agentWorkflowTimeoutSeconds(binding.TimeoutSeconds),
-			"input_schema":      agentWorkflowInputSchema(binding, requiredInputs),
-			"required_inputs":   requiredInputs,
-			"default_input_key": defaultInputKey,
-			"start_inputs":      binding.StartInputs,
-		})
+		item := map[string]interface{}{
+			"binding_id":       binding.BindingID,
+			"label":            binding.Label,
+			"description":      binding.Description,
+			"agent_type":       binding.AgentType,
+			"version_strategy": agentWorkflowVersionStrategy(binding.VersionStrategy),
+			"timeout_seconds":  agentWorkflowTimeoutSeconds(binding.TimeoutSeconds),
+			"input_schema":     agentWorkflowInputSchema(binding, requiredInputs),
+			"required_inputs":  requiredInputs,
+			"start_inputs":     binding.StartInputs,
+		}
+		if defaultInputKey != "" {
+			item["default_input_key"] = defaultInputKey
+		}
+		out = append(out, item)
 	}
 	sort.SliceStable(out, func(i, j int) bool {
 		return strings.Compare(fmt.Sprint(out[i]["binding_id"]), fmt.Sprint(out[j]["binding_id"])) < 0
@@ -3343,6 +3360,19 @@ func agentWorkflowPromptBindings(bindings []AgentWorkflowBinding) []map[string]i
 }
 
 func agentWorkflowInputSchema(binding AgentWorkflowBinding, requiredInputs []string) map[string]interface{} {
+	if agentWorkflowIsConversational(binding) {
+		return map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"query": map[string]interface{}{
+					"type":        "string",
+					"description": "The user's current request to pass into the conversational workflow.",
+				},
+			},
+			"required":             []string{"query"},
+			"additionalProperties": true,
+		}
+	}
 	if len(binding.StartInputs) > 0 {
 		properties := map[string]interface{}{}
 		for _, input := range binding.StartInputs {
@@ -3367,19 +3397,17 @@ func agentWorkflowInputSchema(binding AgentWorkflowBinding, requiredInputs []str
 		}
 	}
 	return map[string]interface{}{
-		"type": "object",
-		"properties": map[string]interface{}{
-			"query": map[string]interface{}{
-				"type":        "string",
-				"description": "The user's current request or instruction to pass into the workflow.",
-			},
-		},
-		"required":             []string{"query"},
+		"type":                 "object",
+		"properties":           map[string]interface{}{},
+		"required":             []string{},
 		"additionalProperties": true,
 	}
 }
 
 func agentWorkflowRequiredInputs(binding AgentWorkflowBinding) []string {
+	if agentWorkflowIsConversational(binding) {
+		return []string{"query"}
+	}
 	if len(binding.RequiredInputs) > 0 {
 		allowed := map[string]struct{}{}
 		for _, input := range binding.StartInputs {
@@ -3418,13 +3446,13 @@ func agentWorkflowRequiredInputs(binding AgentWorkflowBinding) []string {
 	if len(out) > 0 {
 		return out
 	}
-	if len(binding.StartInputs) == 0 {
-		return []string{"query"}
-	}
 	return []string{}
 }
 
 func agentWorkflowDefaultInputKey(binding AgentWorkflowBinding) string {
+	if agentWorkflowIsConversational(binding) {
+		return "query"
+	}
 	key := strings.TrimSpace(binding.DefaultInputKey)
 	if key != "" && agentWorkflowStartInputExists(binding.StartInputs, key) {
 		return key
@@ -3439,7 +3467,11 @@ func agentWorkflowDefaultInputKey(binding AgentWorkflowBinding) string {
 	if len(binding.StartInputs) == 1 {
 		return strings.TrimSpace(binding.StartInputs[0].Variable)
 	}
-	return "query"
+	return ""
+}
+
+func agentWorkflowIsConversational(binding AgentWorkflowBinding) bool {
+	return strings.EqualFold(strings.TrimSpace(binding.AgentType), "CONVERSATIONAL_WORKFLOW")
 }
 
 func agentWorkflowStartInputExists(inputs []AgentWorkflowStartInput, key string) bool {

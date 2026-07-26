@@ -12,6 +12,7 @@ export interface QuestionAnswerRuntimePromptProps {
   submitting?: boolean;
   compact?: boolean;
   onSelectChoice?: (choice: QuestionAnswerChoice) => void;
+  secondaryAction?: React.ReactNode;
 }
 
 function choiceText(choice: QuestionAnswerChoice): string {
@@ -25,6 +26,7 @@ export function QuestionAnswerRuntimePrompt({
   submitting = false,
   compact = false,
   onSelectChoice,
+  secondaryAction,
 }: QuestionAnswerRuntimePromptProps) {
   const t = useT();
   const hasChoices = choices.length > 0;
@@ -54,12 +56,17 @@ export function QuestionAnswerRuntimePrompt({
           <p className="mt-1 whitespace-pre-wrap break-words text-sm leading-6 text-foreground">
             {question}
           </p>
+        </div>
+      </div>
+      {hasChoices || secondaryAction ? (
+        <div className="mt-4 flex flex-col gap-3 border-t pt-3 sm:flex-row sm:items-end sm:justify-between">
+          {secondaryAction ? <div className="shrink-0">{secondaryAction}</div> : <span />}
           {hasChoices ? (
-            <div className="mt-3">
+            <div className="min-w-0 sm:text-right">
               <div className="mb-2 text-xs text-muted-foreground">
                 {t('nodes.questionAnswer.runtime.chooseOne')}
               </div>
-              <div className="flex flex-wrap gap-2">
+              <div className="flex flex-wrap gap-2 sm:justify-end">
                 {choices.map(choice => {
                   const text = choiceText(choice);
                   return (
@@ -82,7 +89,7 @@ export function QuestionAnswerRuntimePrompt({
             </div>
           ) : null}
         </div>
-      </div>
+      ) : null}
     </div>
   );
 }

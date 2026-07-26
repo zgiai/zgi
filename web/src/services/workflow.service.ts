@@ -1,4 +1,5 @@
 import { BaseService } from '@/lib/http/services';
+import { webappHttp } from '@/lib/http/webapp';
 import type { ApiResponseData } from './types/common';
 import type { WorkflowDraftData, WorkflowDraftSavePayload } from '@/components/workflow/store/type';
 import type {
@@ -23,12 +24,20 @@ import type {
 } from './types/workflow';
 import type { ChatAttachment } from '@/components/chat/types';
 import { sanitizeModelOutputValue, wrapModelOutputSseCallbacks } from '@/utils/model-output-filter';
+import { normalizeWorkflowRuntimeEvent } from '@/utils/workflow/runtime-event-envelope.js';
 
 // Validation result type for workflow validation API
 export interface WorkflowValidationResult {
   valid: boolean;
   errors: Array<{ nodeId?: string; message: string }>; // optional node-scoped errors
   warnings?: string[];
+}
+
+export type WorkflowRunEventsTransport = 'console' | 'webapp';
+
+export interface WorkflowRunTransportErrorMeta {
+  terminalReceived: boolean;
+  incompleteLastEvent: boolean;
 }
 
 // Execution record type for workflow run history
@@ -187,8 +196,14 @@ function buildWorkflowChatDraftPrecheckBody(
 
 // Callbacks for workflow streaming events (payload shapes will be refined later)
 export interface WorkflowRunSseCallbacks {
+  /** Replaces the local workflow projection before replaying later events. */
+  onWorkflowSnapshot?: (payload: unknown) => void;
+  /** Advances the shared durable event cursor for every sequenced event. */
+  onEventCursor?: (sequence: number) => void;
   /** Fired when the workflow run is started */
   onWorkflowStarted?: (payload: unknown) => void;
+  /** Fired after a paused workflow has been claimed and resumed */
+  onWorkflowResumed?: (payload: unknown) => void;
   /** Fired when the workflow run pauses for human approval */
   onWorkflowPaused?: (payload: unknown) => void;
   /** Fired when an approval form should be rendered */
@@ -236,10 +251,7 @@ export interface WorkflowRunSseCallbacks {
 }
 
 function getWorkflowSseEventName(envelope: unknown, fallbackEvent?: string | null): string {
-  const obj =
-    typeof envelope === 'object' && envelope !== null ? (envelope as Record<string, unknown>) : {};
-  const evt = obj.event;
-  return (typeof evt === 'string' && evt) || fallbackEvent || '';
+  return normalizeWorkflowRuntimeEvent(envelope, fallbackEvent).event ?? '';
 }
 
 function withTerminalStatus(envelope: unknown, status: string): unknown {
@@ -265,6 +277,7 @@ function dispatchWorkflowRunEvent(
   callbacks: WorkflowRunSseCallbacks
 ): void {
   const event = getWorkflowSseEventName(envelope, fallbackEvent);
+  const sequence = normalizeWorkflowRuntimeEvent(envelope, fallbackEvent).sequence || null;
   const terminalStatusByEvent: Record<string, string | undefined> = {
     workflow_stopped: 'stopped',
     workflow_failed: 'failed',
@@ -274,7 +287,9 @@ function dispatchWorkflowRunEvent(
   const terminalStatus = terminalStatusByEvent[event];
   const payload = terminalStatus ? withTerminalStatus(envelope, terminalStatus) : envelope;
   const handlers: Record<string, ((payload: unknown) => void) | undefined> = {
+    workflow_snapshot: callbacks.onWorkflowSnapshot,
     workflow_started: callbacks.onWorkflowStarted,
+    workflow_resumed: callbacks.onWorkflowResumed,
     workflow_paused: callbacks.onWorkflowPaused,
     approval_requested: callbacks.onApprovalRequested,
     approval_result_filled: callbacks.onApprovalResultFilled,
@@ -305,6 +320,12 @@ function dispatchWorkflowRunEvent(
   };
 
   handlers[event]?.(payload);
+  // Advance the durable cursor only after the event has been applied. Resume consumers use
+  // this cursor to reject duplicates; publishing it before the callback makes the current
+  // event look stale and can permanently skip it during approval recovery.
+  if (sequence !== null && Number.isFinite(sequence)) {
+    callbacks.onEventCursor?.(sequence);
+  }
 }
 
 /**
@@ -431,7 +452,15 @@ export class WorkflowService extends BaseService {
     agentId: string,
     payload: WorkflowRunRequest,
     callbacks: WorkflowRunSseCallbacks,
-    opts?: { abortSignal?: AbortSignal; onClose?: () => void }
+    opts?: {
+      abortSignal?: AbortSignal;
+      onClose?: () => void;
+      onTransportError?: (
+        error: Error,
+        meta: { terminalReceived: boolean; incompleteLastEvent: boolean }
+      ) => void;
+      suppressTransportErrorNotification?: boolean;
+    }
   ): Promise<{ close: () => void }> {
     const url = this.buildUrl(`/agents/${agentId}/workflows/draft/run`);
     return this.client.ssePost<WorkflowDraftRunBody>(url, {
@@ -439,15 +468,19 @@ export class WorkflowService extends BaseService {
       callbacks: wrapModelOutputSseCallbacks(callbacks),
       abortSignal: opts?.abortSignal,
       onClose: opts?.onClose,
+      onTransportError: opts?.onTransportError,
+      suppressTransportErrorNotification: opts?.suppressTransportErrorNotification,
     });
   }
 
-  sseWorkflowRunEvents(
+  async sseWorkflowRunEvents(
     workflowRunId: string,
     callbacks: WorkflowRunSseCallbacks,
     opts?: {
       abortSignal?: AbortSignal;
       onClose?: () => void;
+      onTransportError?: (error: Error, meta: WorkflowRunTransportErrorMeta) => void;
+      transport?: WorkflowRunEventsTransport;
       params?: {
         after?: number;
         include_snapshot?: boolean;
@@ -457,20 +490,41 @@ export class WorkflowService extends BaseService {
   ): Promise<{ close: () => void }> {
     const url = this.buildUrl(`/workflow-runs/${workflowRunId}/events`);
     const wrappedCallbacks = wrapModelOutputSseCallbacks(callbacks);
-    return this.client.sse<unknown>(url, {
+    const transport = opts?.transport === 'webapp' ? webappHttp : this.client;
+    let opened = false;
+    let openingError: Error | null = null;
+    const handle = await transport.sse<unknown>(url, {
       query: opts?.params,
       abortSignal: opts?.abortSignal,
       onClose: opts?.onClose,
+      onOpen: () => {
+        opened = true;
+      },
       onMessage: message => {
         dispatchWorkflowRunEvent(message.data, message.event, wrappedCallbacks);
       },
-      onError: error => {
-        wrappedCallbacks.onError?.({
-          message: error.message,
-          originalError: error,
-        });
+      onTransportError: (error, meta) => {
+        opts?.onTransportError?.(error, meta);
       },
+      onError: error => {
+        // Opening failures do not trigger onClose in SseClient. Surface them as transport
+        // failures so the run controller can retry without turning the workflow into an error.
+        // Established-stream failures already arrive through onTransportError and onClose.
+        if (!opened) {
+          openingError = error;
+          opts?.onTransportError?.(error, {
+            terminalReceived: false,
+            incompleteLastEvent: false,
+          });
+        }
+      },
+      suppressTransportErrorNotification: true,
     });
+    if (openingError) {
+      handle.close();
+      throw openingError;
+    }
+    return handle;
   }
 
   async getWorkflowRunDetail(
@@ -570,7 +624,15 @@ export class WorkflowService extends BaseService {
     agentId: string,
     payload: WorkflowChatDraftRunRequest,
     callbacks: WorkflowRunSseCallbacks,
-    opts?: { abortSignal?: AbortSignal; onClose?: () => void }
+    opts?: {
+      abortSignal?: AbortSignal;
+      onClose?: () => void;
+      onTransportError?: (
+        error: Error,
+        meta: { terminalReceived: boolean; incompleteLastEvent: boolean }
+      ) => void;
+      suppressTransportErrorNotification?: boolean;
+    }
   ): Promise<{ close: () => void }> {
     const url = this.buildUrl(`/agents/${agentId}/advanced-chat/workflows/draft/run`);
     return this.client.ssePost<WorkflowChatDraftRunBody>(url, {
@@ -578,6 +640,8 @@ export class WorkflowService extends BaseService {
       callbacks: wrapModelOutputSseCallbacks(callbacks),
       abortSignal: opts?.abortSignal,
       onClose: opts?.onClose,
+      onTransportError: opts?.onTransportError,
+      suppressTransportErrorNotification: opts?.suppressTransportErrorNotification,
     });
   }
 

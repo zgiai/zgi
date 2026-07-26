@@ -345,7 +345,7 @@ func TestMergeWorkflowRunMetadataStoresQuestionAnswerFields(t *testing.T) {
 	}
 }
 
-func TestMergeWorkflowRunMetadataStoresApprovalLifecycleAndMessages(t *testing.T) {
+func TestMergeWorkflowRunMetadataStoresApprovalLifecycleWithoutStreamChunks(t *testing.T) {
 	metadata := mergeWorkflowRunMetadata(nil, "approval_requested", map[string]interface{}{
 		"workflow_run_id":  "run-lifecycle",
 		"approval_form_id": "form-1",
@@ -387,9 +387,19 @@ func TestMergeWorkflowRunMetadataStoresApprovalLifecycleAndMessages(t *testing.T
 	if !ok || len(results) != 1 {
 		t.Fatalf("approval_results = %#v, want submitted transcript", run["approval_results"])
 	}
-	messages, ok := run["messages"].([]interface{})
-	if !ok || len(messages) != 2 {
-		t.Fatalf("messages = %#v, want message and message_end events", run["messages"])
+	if _, ok := run["messages"]; ok {
+		t.Fatalf("messages = %#v, want stream chunks omitted from durable metadata", run["messages"])
+	}
+}
+
+func TestShouldPersistWorkflowRunMetadataEventExcludesStreamChunks(t *testing.T) {
+	for _, eventType := range []string{"message", "text_chunk", "message_end"} {
+		if shouldPersistWorkflowRunMetadataEvent(eventType) {
+			t.Fatalf("shouldPersistWorkflowRunMetadataEvent(%q) = true, want false", eventType)
+		}
+	}
+	if !shouldPersistWorkflowRunMetadataEvent("workflow_finished") {
+		t.Fatal("shouldPersistWorkflowRunMetadataEvent(workflow_finished) = false, want true")
 	}
 }
 

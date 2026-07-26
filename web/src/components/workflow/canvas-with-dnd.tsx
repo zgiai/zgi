@@ -116,7 +116,11 @@ const CanvasWithDnd: React.FC<CanvasWithDndProps> = ({
       disabled: isReadOnly,
       onNodesChange,
   });
-  const hideRightPanels = isCanvasInteracting || Boolean(draggingNodeType) || createNodePickerOpen;
+  // Read-only/history canvases still support panning, including starting a pan
+  // from a node. That navigation must not be treated as an editing interaction
+  // that temporarily slides the inspector/history panels off screen.
+  const hideRightPanels =
+    !isReadOnly && (isCanvasInteracting || Boolean(draggingNodeType) || createNodePickerOpen);
   const effectiveInteractionMode = isReadOnly ? 'mouse' : interactionMode;
   const isMouseMode = effectiveInteractionMode === 'mouse';
 
@@ -153,6 +157,7 @@ const CanvasWithDnd: React.FC<CanvasWithDndProps> = ({
         edges={viewEdges}
         nodeTypes={nodeTypes}
         edgeTypes={EDGE_TYPES}
+        elevateNodesOnSelect
         onNodesChange={isReadOnly ? undefined : onNodesChangeWithAlignment}
         onEdgesChange={isReadOnly ? undefined : onEdgesChange}
         onConnect={onConnectWrapper}
@@ -199,6 +204,7 @@ const CanvasWithDnd: React.FC<CanvasWithDndProps> = ({
         onDragOver={handleDragOver}
         onDrop={handleDrop}
         onMoveStart={() => {
+          if (isReadOnly) return;
           clearAlignmentGuides();
           // Cancel auto-follow only for user-initiated moves (not programmatic pan)
           try {
@@ -216,6 +222,7 @@ const CanvasWithDnd: React.FC<CanvasWithDndProps> = ({
           }
         }}
         onMoveEnd={() => {
+          if (isReadOnly) return;
           finishInteraction('move');
         }}
         onSelectionDragStart={() => {

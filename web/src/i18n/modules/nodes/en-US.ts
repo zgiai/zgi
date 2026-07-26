@@ -1,6 +1,15 @@
 import { APP_NAME } from '@/lib/config';
 
 const messages = {
+  runtimeControl: {
+    stopAction: 'End run',
+    stopping: 'Ending...',
+    stopTitle: 'End this run?',
+    stopDescription:
+      'The current workflow will stop and will not continue from this approval or question. Completed steps and outputs will be kept.',
+    stopConfirm: 'End run',
+    stopCancel: 'Continue processing',
+  },
   catalog: {
     start: {
       title: 'Start',
@@ -1077,7 +1086,8 @@ const messages = {
     },
     promptTemplates: {
       title: 'Quick Templates',
-      footerTip: 'Choose a template to preview it, then confirm to replace the current system prompt.',
+      footerTip:
+        'Choose a template to preview it, then confirm to replace the current system prompt.',
       preview: {
         title: 'Apply Quick Template',
         description:
@@ -1091,51 +1101,43 @@ const messages = {
         customerService: {
           title: 'Customer Service Assistant',
           description: 'Professional customer service assistant template',
-          text:
-            "You are a professional customer service assistant. The user's request is: {{#sys.query#}}. First, restate the request in one sentence to confirm understanding. If key information is missing, ask one concise clarifying question. Then provide a step-by-step solution, followed by a brief final answer. Keep the tone friendly and concise.",
+          text: "You are a professional customer service assistant. The user's request is: {{#sys.query#}}. First, restate the request in one sentence to confirm understanding. If key information is missing, ask one concise clarifying question. Then provide a step-by-step solution, followed by a brief final answer. Keep the tone friendly and concise.",
         },
         contentCreator: {
           title: 'Content Creation Assistant',
           description: 'Professional content creation and writing assistant',
-          text:
-            'You are a seasoned content creator. Topic: {{#sys.query#}}. Produce content with a clear structure (Introduction / Body / Conclusion). Use bullet points or subheadings when helpful. Keep the tone natural and easy to read; avoid verbosity.',
+          text: 'You are a seasoned content creator. Topic: {{#sys.query#}}. Produce content with a clear structure (Introduction / Body / Conclusion). Use bullet points or subheadings when helpful. Keep the tone natural and easy to read; avoid verbosity.',
         },
         dataAnalyst: {
           title: 'Data Analyst',
           description: 'Professional data analysis and interpretation assistant',
-          text:
-            'You are a data analyst. Analysis question: {{#sys.query#}}. Provide data-driven insights, explain possible causes and impacts, and offer actionable recommendations. Explicitly mark uncertainties and suggest methods for further validation.',
+          text: 'You are a data analyst. Analysis question: {{#sys.query#}}. Provide data-driven insights, explain possible causes and impacts, and offer actionable recommendations. Explicitly mark uncertainties and suggest methods for further validation.',
         },
         productConsultant: {
           title: 'Product Consultant',
           description: 'Professional product consulting and recommendation assistant',
-          text:
-            'You are a product consultant. User requirements: {{#sys.query#}}. Recommend suitable products and explain the rationale, pros/cons, and applicable scenarios. If information is incomplete, first ask for the essential requirements.',
+          text: 'You are a product consultant. User requirements: {{#sys.query#}}. Recommend suitable products and explain the rationale, pros/cons, and applicable scenarios. If information is incomplete, first ask for the essential requirements.',
         },
         // Workflow-oriented templates
         translation: {
           title: 'Content Translation',
           description: 'Translate text between languages with style preservation',
-          text:
-            'You are a professional localization specialist. Perform faithful, fluent translation that preserves domain terminology, tone, intent, and formatting (Markdown, lists, tables). Keep inline code, placeholders, and variables unchanged. Ensure numbers, units, and punctuation follow target-language conventions. Do not add explanations or notes; output the translated text only. Maintain sentence-level coherence and paragraph breaks. If the source contains code or commands, keep them unchanged unless localization is explicitly required. Align with brand style when inferable.',
+          text: 'You are a professional localization specialist. Perform faithful, fluent translation that preserves domain terminology, tone, intent, and formatting (Markdown, lists, tables). Keep inline code, placeholders, and variables unchanged. Ensure numbers, units, and punctuation follow target-language conventions. Do not add explanations or notes; output the translated text only. Maintain sentence-level coherence and paragraph breaks. If the source contains code or commands, keep them unchanged unless localization is explicitly required. Align with brand style when inferable.',
         },
         copywriting: {
           title: 'Copywriting Generation',
           description: 'Generate marketing copies, headlines, and slogans',
-          text:
-            'You are a senior copywriter. Produce high-converting copy aligned with modern marketing best practices. Deliver 3 distinct variants with different tones: informative, persuasive, playful. Each variant must include a concise headline (<= 12 words), a 1-2 sentence body, and a clear CTA. Keep benefits concrete, avoid cliches, reflect brand voice and target audience when inferable, and do not invent facts. Use concise language and strong verbs. Separate variants with a blank line.',
+          text: 'You are a senior copywriter. Produce high-converting copy aligned with modern marketing best practices. Deliver 3 distinct variants with different tones: informative, persuasive, playful. Each variant must include a concise headline (<= 12 words), a 1-2 sentence body, and a clear CTA. Keep benefits concrete, avoid cliches, reflect brand voice and target audience when inferable, and do not invent facts. Use concise language and strong verbs. Separate variants with a blank line.',
         },
         story: {
           title: 'Story Creation',
           description: 'Create short stories from a topic or outline',
-          text:
-            'You are a professional storyteller. Write an original short story (~400-600 words) with a clear arc (setup, development, climax, resolution). Use vivid imagery, consistent point of view, and natural dialogue. Avoid cliches and moralizing; show, not tell. Maintain thematic coherence and believable character motivation. Output the title on the first line, then the story body. Output story only.',
+          text: 'You are a professional storyteller. Write an original short story (~400-600 words) with a clear arc (setup, development, climax, resolution). Use vivid imagery, consistent point of view, and natural dialogue. Avoid cliches and moralizing; show, not tell. Maintain thematic coherence and believable character motivation. Output the title on the first line, then the story body. Output story only.',
         },
         codeGeneration: {
           title: 'Code Generation',
           description: 'Generate code snippets or functions from requirements',
-          text:
-            'You are a senior software engineer. Produce clean, production-ready code that solves the specified task. Use TypeScript by default unless another language is explicitly required. Requirements: strong typing (no any), clear function signature, small pure functions, basic input validation and error handling, minimal but helpful inline comments, and a brief header comment indicating time/space complexity. Provide a minimal usage example or unit-test-style snippet after the main function. Output code only.',
+          text: 'You are a senior software engineer. Produce clean, production-ready code that solves the specified task. Use TypeScript by default unless another language is explicitly required. Requirements: strong typing (no any), clear function signature, small pure functions, basic input validation and error handling, minimal but helpful inline comments, and a brief header comment indicating time/space complexity. Provide a minimal usage example or unit-test-style snippet after the main function. Output code only.',
         },
       },
     },
@@ -1271,6 +1273,7 @@ const messages = {
         clear: 'Clear variable',
         setConstant: 'Set to fixed value {value}',
         setVariable: 'Set to {value}',
+        setVariablePrefix: 'Set to',
         math: '{action} {value}',
       },
     },
@@ -1428,7 +1431,19 @@ const messages = {
     outputsCount: 'Outputs: {count} variables',
     outputs: {
       variable: 'Variable',
+      constant: 'Fixed value',
+      variablePlaceholder: 'Output name',
+      selectorPlaceholder: 'Select upstream variable',
       type: 'Type',
+      editConstant: 'Edit',
+      viewConstant: 'View',
+      editConstantTitle: 'Edit fixed value for “{name}”',
+      arraySummary: 'Array · {count} items',
+      objectSummary: 'JSON · {count} fields',
+      invalidJson: 'Enter valid JSON.',
+      expectedObject: 'The fixed value must be a JSON object.',
+      expectedArray: 'The fixed value must be an array.',
+      invalidArrayItems: 'Array items must match the selected output type.',
       title: 'Outputs',
       addVariable: 'Add Variable',
       noOutputs: 'No outputs defined, click "Add Variable" to create your first output',
@@ -1917,6 +1932,21 @@ const messages = {
     invalidVariable: 'Invalid variable',
     noMatchingVariables: 'No matching variables available from upstream nodes',
     invalidUpstream: 'Invalid upstream variable reference',
+    deletedVariableSource: 'Deleted source node',
+    variableSourceDeleted: 'The source node was deleted. Choose another variable.',
+    variableSourceUnreachable:
+      'The source node is no longer upstream in the current connection graph.',
+    variableOutputRemoved: 'The source node no longer provides this output variable.',
+    deleteVariableSourceTitle: 'Delete this node?',
+    disconnectVariableSourceTitle: 'Disconnect this connection?',
+    variableImpactDescription:
+      'This operation will invalidate {count} variable reference(s) in downstream nodes.',
+    variableImpactPreserved:
+      'The original references will be kept so you can reconnect or replace them later.',
+    doNotWarnAgainThisEdit: 'Do not warn again while editing',
+    affectedNode: 'Affected node',
+    moreVariableImpacts: 'And {count} more reference(s)',
+    continueOperation: 'Continue',
   },
   common: {
     remove: 'Remove',

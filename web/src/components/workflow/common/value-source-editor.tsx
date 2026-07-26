@@ -28,6 +28,7 @@ interface ValueSourceEditorProps {
   variablePlaceholder?: string;
   disabled?: boolean;
   density?: 'default' | 'compact';
+  layout?: 'stacked' | 'inline';
   showModeSwitcher?: boolean;
   label?: string;
   hint?: string;
@@ -55,6 +56,7 @@ export function ValueSourceEditor({
   variablePlaceholder,
   disabled = false,
   density = 'default',
+  layout = 'stacked',
   showModeSwitcher = true,
   label,
   hint,
@@ -64,38 +66,53 @@ export function ValueSourceEditor({
   variableLabel = 'Variable',
 }: ValueSourceEditorProps) {
   const isCompact = density === 'compact';
+  const isInline = layout === 'inline';
+
+  const modeSwitcher =
+    showModeSwitcher && onModeChange ? (
+      <Tabs value={mode} onValueChange={value => onModeChange(value as 'constant' | 'variable')}>
+        <WorkflowCompactTabsList className="w-fit">
+          <WorkflowCompactTabsTrigger value="constant" disabled={disabled}>
+            <span>{constantLabel}</span>
+          </WorkflowCompactTabsTrigger>
+          <WorkflowCompactTabsTrigger value="variable" disabled={disabled}>
+            <span>{variableLabel}</span>
+          </WorkflowCompactTabsTrigger>
+        </WorkflowCompactTabsList>
+      </Tabs>
+    ) : null;
+
+  const valueEditor =
+    mode === 'variable' ? (
+      <NodeValueSelector
+        nodeId={nodeId}
+        value={variableValue}
+        onChange={onVariableChange}
+        typeFilter={variableTypeFilter}
+        disabled={disabled}
+        writableOnly={writableOnly}
+        density={isCompact ? 'compact' : 'default'}
+        className={isCompact ? 'space-y-1' : undefined}
+        placeholder={variablePlaceholder}
+      />
+    ) : (
+      constantEditor
+    );
 
   return (
     <div className={cn('space-y-2', className)}>
       {label ? <WorkflowCompactFieldLabel>{label}</WorkflowCompactFieldLabel> : null}
 
-      {showModeSwitcher && onModeChange ? (
-        <Tabs value={mode} onValueChange={value => onModeChange(value as 'constant' | 'variable')}>
-          <WorkflowCompactTabsList className="w-fit">
-            <WorkflowCompactTabsTrigger value="constant" disabled={disabled}>
-              <span>{constantLabel}</span>
-            </WorkflowCompactTabsTrigger>
-            <WorkflowCompactTabsTrigger value="variable" disabled={disabled}>
-              <span>{variableLabel}</span>
-            </WorkflowCompactTabsTrigger>
-          </WorkflowCompactTabsList>
-        </Tabs>
-      ) : null}
-
-      {mode === 'variable' ? (
-        <NodeValueSelector
-          nodeId={nodeId}
-          value={variableValue}
-          onChange={onVariableChange}
-          typeFilter={variableTypeFilter}
-          disabled={disabled}
-          writableOnly={writableOnly}
-          density={isCompact ? 'compact' : 'default'}
-          className={isCompact ? 'space-y-1' : undefined}
-          placeholder={variablePlaceholder}
-        />
+      {isInline ? (
+        <div className="flex flex-wrap items-start gap-2">
+          <div className="shrink-0">{modeSwitcher}</div>
+          <div className="min-w-0 basis-[180px] flex-1">{valueEditor}</div>
+        </div>
       ) : (
-        constantEditor
+        <div className="space-y-2">
+          {modeSwitcher}
+          {valueEditor}
+        </div>
       )}
 
       {hint ? <WorkflowCompactFieldHint>{hint}</WorkflowCompactFieldHint> : null}

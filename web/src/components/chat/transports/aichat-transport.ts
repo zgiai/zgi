@@ -39,6 +39,8 @@ import type {
   AIChatWorkflowEventData,
   AIChatWorkflowNodeEventData,
   AIChatWorkflowPausedEventData,
+  AIChatWorkflowQuestionAnswerInputs,
+  AIChatWorkflowRunNodeMetadata,
 } from '@/services/types/aichat';
 import type { ConversationSearchResult } from '@/components/chat/controllers/types';
 import {
@@ -46,22 +48,75 @@ import {
   type AIChatPagination,
 } from '@/components/chat/controllers/aichat';
 
-function sanitizeAIChatMessage(message: AIChatMessage): AIChatMessage {
-  const sanitizedAnswer = sanitizeModelOutputValue(message.answer);
-  if (sanitizedAnswer === message.answer) {
-    return message;
-  }
-
-  const isSensitiveOutputBlocked = isSensitiveOutputBlockedValue(sanitizedAnswer);
+function sanitizeWorkflowNodeOutputs(
+  node: AIChatWorkflowRunNodeMetadata
+): AIChatWorkflowRunNodeMetadata {
   return {
+    ...node,
+    outputs: sanitizeModelOutputValue(node.outputs),
+    iteration_outputs: sanitizeModelOutputValue(node.iteration_outputs),
+    loop_outputs: sanitizeModelOutputValue(node.loop_outputs),
+    iteration_rounds: node.iteration_rounds?.map(round => ({
+      ...round,
+      nodes: round.nodes?.map(sanitizeWorkflowNodeOutputs),
+    })),
+    loop_rounds: node.loop_rounds?.map(round => ({
+      ...round,
+      nodes: round.nodes?.map(sanitizeWorkflowNodeOutputs),
+    })),
+  };
+}
+
+export function sanitizeAIChatMessage(message: AIChatMessage): AIChatMessage {
+  const metadata = message.metadata;
+  const sanitizedMetadata = metadata
+    ? {
+        ...metadata,
+        presentation: metadata.presentation
+          ? {
+              ...metadata.presentation,
+              items: metadata.presentation.items?.map(item =>
+                item.kind === 'text'
+                  ? { ...item, content: sanitizeModelOutputValue(item.content) as string }
+                  : item
+              ),
+            }
+          : metadata.presentation,
+        skill_invocations: metadata.skill_invocations?.map(invocation => ({
+          ...invocation,
+          result: sanitizeModelOutputValue(invocation.result) as typeof invocation.result,
+          ...(invocation.kind === 'intermediate_answer'
+            ? {
+                title: sanitizeModelOutputValue(invocation.title) as typeof invocation.title,
+                message: sanitizeModelOutputValue(invocation.message) as typeof invocation.message,
+              }
+            : {}),
+        })),
+        workflow_runs: metadata.workflow_runs?.map(run => ({
+          ...run,
+          outputs: sanitizeModelOutputValue(run.outputs),
+          nodes: run.nodes?.map(sanitizeWorkflowNodeOutputs),
+        })),
+      }
+    : metadata;
+  const sanitizedMessage: AIChatMessage = {
     ...message,
-    answer: typeof sanitizedAnswer === 'string' ? sanitizedAnswer : message.answer,
+    answer: sanitizeModelOutputValue(message.answer) as string,
+    metadata: sanitizedMetadata,
+  };
+  const presentationBlocked = sanitizedMetadata?.presentation?.items?.some(
+    item => item.kind === 'text' && isSensitiveOutputBlockedValue(item.content)
+  );
+  const isSensitiveOutputBlocked =
+    isSensitiveOutputBlockedValue(sanitizedMessage.answer) || presentationBlocked === true;
+  return {
+    ...sanitizedMessage,
     metadata: isSensitiveOutputBlocked
       ? {
-          ...message.metadata,
+          ...sanitizedMessage.metadata,
           sensitiveOutputBlocked: true,
         }
-      : message.metadata,
+      : sanitizedMessage.metadata,
   };
 }
 
@@ -200,7 +255,7 @@ export interface AIChatRuntimeTransport {
   continueWorkflowQuestion?(
     conversationId: string,
     messageId: string,
-    payload: { inputs: { query: string; question_answer_option_id?: string } },
+    payload: { inputs: AIChatWorkflowQuestionAnswerInputs },
     callbacks: AIChatStreamCallbacks,
     abortSignal?: AbortSignal
   ): Promise<{ close: () => void }>;
@@ -316,6 +371,12 @@ export function dispatchAIChatStreamEvent(
       break;
     case 'workflow_started':
       callbacks.onWorkflowStarted?.((data ?? {}) as AIChatWorkflowEventData, eventId);
+      break;
+    case 'workflow_resumed':
+      callbacks.onWorkflowStarted?.(
+        { ...((data ?? {}) as AIChatWorkflowEventData), workflow_event: event },
+        eventId
+      );
       break;
     case 'node_started':
       callbacks.onWorkflowNodeStarted?.(

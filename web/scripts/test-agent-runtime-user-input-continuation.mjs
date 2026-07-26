@@ -105,6 +105,24 @@ assert.strictEqual(draftCall.options.abortSignal, abortController.signal);
 assert.strictEqual(draftCall.options.onError, callbacks.onRequestError);
 assert.strictEqual(draftCall.options.onClose, callbacks.onClose);
 assert.equal(typeof draftCall.options.isTerminalMessage, 'function');
+for (const status of ['waiting_approval', 'waiting_client_action', 'waiting_question']) {
+  assert.equal(
+    draftCall.options.isTerminalMessage({
+      event: 'message_end',
+      data: { event: 'message_end', data: { status } },
+    }),
+    true,
+    `${status} must terminate the current Agent stream without reporting a transport error`
+  );
+}
+assert.equal(
+  draftCall.options.isTerminalMessage({
+    event: 'workflow_paused',
+    data: { event: 'workflow_paused', data: { status: 'waiting_question' } },
+  }),
+  false,
+  'an embedded workflow pause must not terminate the outer Agent stream'
+);
 
 const eventData = { message_id: 'message two', delta: 'continued' };
 draftCall.options.onMessage({
@@ -128,6 +146,24 @@ assert.equal(
   '/console/api/webapps/webapp-456/runtime/conversations/conversation-2/messages/message-2/user-input/request-2/continue'
 );
 assert.strictEqual(webappSseCalls[0].options.body, payload);
+
+const workflowQuestionInputs = {
+  query: 'answer',
+  question_answer_option_id: 'option-2',
+  question_answer_node_id: 'question-node-2',
+  question_answer_round: 3,
+};
+await createAgentDraftTransport('agent-123').continueWorkflowQuestion(
+  'conversation-3',
+  'message-3',
+  { inputs: workflowQuestionInputs },
+  callbacks
+);
+assert.deepEqual(
+  draftSseCalls.at(-1).options.body,
+  { type: 'question_answer', inputs: workflowQuestionInputs },
+  'Agent workflow question continuation must preserve the target node and round'
+);
 
 const continuationSource = readFileSync(
   path.join(

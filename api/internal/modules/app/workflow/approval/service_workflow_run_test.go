@@ -2,14 +2,30 @@ package approval
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	workflowpause "github.com/zgiai/zgi/api/internal/modules/app/workflow/pause"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
+
+type approvalWorkflowRunScope struct {
+	ID                     string  `gorm:"primaryKey"`
+	RuntimeProtocolVersion int     `gorm:"not null"`
+	NextEventSequence      int     `gorm:"not null"`
+	ExecutionGeneration    int64   `gorm:"not null"`
+	ActiveExecutionID      *string `gorm:"type:uuid"`
+	DeletedAt              gorm.DeletedAt
+}
+
+func (approvalWorkflowRunScope) TableName() string {
+	return "workflow_run_logs"
+}
 
 func TestSubmitByTokenForWorkflowRunRejectsDifferentRunBeforeUpdate(t *testing.T) {
 	db, mock, closeDB := openApprovalServiceMockDB(t)
@@ -72,6 +88,601 @@ func TestEnsureFormWorkflowRunRejectsMissingOrDifferentRun(t *testing.T) {
 				t.Fatalf("error = %v, want ErrFormNotFound", err)
 			}
 		})
+	}
+}
+
+func TestEnsureFormSubmissionOptionsRequiresConfiguredWebAppChannel(t *testing.T) {
+	disabled := false
+	definition, err := json.Marshal(FormDefinition{
+		SubmitMethods: SubmitMethods{WebApp: WebAppSubmitMethod{Enabled: &disabled}},
+	})
+	if err != nil {
+		t.Fatalf("marshal definition: %v", err)
+	}
+	form := &Form{FormDefinition: string(definition)}
+
+	err = ensureFormSubmissionOptions(form, SubmitOptions{RequireWebAppEnabled: true})
+	if !errors.Is(err, ErrWebAppSubmissionDisabled) {
+		t.Fatalf("error = %v, want ErrWebAppSubmissionDisabled", err)
+	}
+	if err := ensureFormSubmissionOptions(form, SubmitOptions{}); err != nil {
+		t.Fatalf("debug submission should ignore configured channels: %v", err)
+	}
+}
+
+func TestEnsureFormSubmissionOptionsPreservesLegacyWebAppDefault(t *testing.T) {
+	definition, err := json.Marshal(FormDefinition{})
+	if err != nil {
+		t.Fatalf("marshal definition: %v", err)
+	}
+	if err := ensureFormSubmissionOptions(&Form{FormDefinition: string(definition)}, SubmitOptions{RequireWebAppEnabled: true}); err != nil {
+		t.Fatalf("omitted webapp.enabled should remain enabled: %v", err)
+	}
+}
+
+func TestSubmitApprovalProjectsPendingQuestionBeforeAgentContinuation(t *testing.T) {
+	db := newApprovalTestDB(t)
+	if err := db.AutoMigrate(
+		&approvalWorkflowRunScope{},
+		&workflowpause.RunPause{},
+		&workflowpause.RunPauseReason{},
+		&workflowpause.RunEvent{},
+		&workflowpause.RuntimeOutbox{},
+	); err != nil {
+		t.Fatalf("migrate workflow pause tables: %v", err)
+	}
+
+	const (
+		tenantID     = "11111111-1111-1111-1111-111111111111"
+		appID        = "22222222-2222-2222-2222-222222222222"
+		runID        = "mixed-pause-run"
+		pauseID      = "33333333-3333-3333-3333-333333333333"
+		formID       = "44444444-4444-4444-4444-444444444444"
+		formToken    = "mixed-pause-token"
+		approvalNode = "approval-node"
+		questionNode = "question-node"
+	)
+	now := time.Now()
+	pauseGeneration := int64(1)
+	pauseIDValue := pauseID
+	approvalRequestKey := "approval-requested"
+	questionRequestKey := "question-requested"
+	pausedKey := "workflow-paused"
+	definition, err := json.Marshal(FormDefinition{
+		Content: "Approve the request",
+		Actions: []Action{{ID: "approve", Label: "Approve"}},
+	})
+	if err != nil {
+		t.Fatalf("marshal approval definition: %v", err)
+	}
+
+	records := []interface{}{
+		&approvalWorkflowRunScope{
+			ID:                     runID,
+			RuntimeProtocolVersion: 2,
+			NextEventSequence:      3,
+			ExecutionGeneration:    1,
+		},
+		&Form{
+			ID: formID, TenantID: tenantID, AppID: appID, WorkflowRunID: runID,
+			NodeID: approvalNode, NodeTitle: "Approval", AccessToken: formToken,
+			FormDefinition: string(definition), RenderedContent: "Approve the request",
+			Status: FormStatusWaiting, ExpirationTime: now.Add(time.Hour),
+		},
+		&workflowpause.RunPause{
+			ID: pauseID, TenantID: tenantID, AppID: appID, WorkflowRunID: runID,
+			NodeID: approvalNode, Reason: "mixed", StateJSON: `{}`,
+			Generation: pauseGeneration, Status: workflowpause.RunPauseStatusPaused,
+		},
+		&workflowpause.RunPauseReason{
+			ID: "55555555-5555-5555-5555-555555555555", PauseID: pauseID,
+			Type: workflowpause.ReasonTypeApprovalRequired, NodeID: approvalNode,
+			FormID: formID, Status: workflowpause.RunPauseReasonStatusPending, CreatedAt: now,
+		},
+		&workflowpause.RunPauseReason{
+			ID: "66666666-6666-6666-6666-666666666666", PauseID: pauseID,
+			Type: workflowpause.ReasonTypeQuestionAnswerRequired, NodeID: questionNode,
+			Status: workflowpause.RunPauseReasonStatusPending, CreatedAt: now.Add(time.Millisecond),
+		},
+		&workflowpause.RunEvent{
+			ID: "77777777-7777-7777-7777-777777777777", TenantID: tenantID, AppID: appID,
+			WorkflowRunID: runID, Sequence: 1, EventType: workflowpause.EventApprovalRequested,
+			EventData:     `{"node_id":"approval-node","form_id":"44444444-4444-4444-4444-444444444444"}`,
+			SchemaVersion: 2, Category: workflowpause.EventCategoryInteraction,
+			PauseID: &pauseIDValue, PauseGeneration: &pauseGeneration,
+			IdempotencyKey: &approvalRequestKey, OccurredAt: now,
+		},
+		&workflowpause.RunEvent{
+			ID: "88888888-8888-8888-8888-888888888888", TenantID: tenantID, AppID: appID,
+			WorkflowRunID: runID, Sequence: 2, EventType: workflowpause.EventQuestionAnswerRequested,
+			EventData:     `{"node_id":"question-node","question":"Which option?","choices":["one","two"]}`,
+			SchemaVersion: 2, Category: workflowpause.EventCategoryInteraction,
+			PauseID: &pauseIDValue, PauseGeneration: &pauseGeneration,
+			IdempotencyKey: &questionRequestKey, OccurredAt: now,
+		},
+		&workflowpause.RunEvent{
+			ID: "99999999-9999-9999-9999-999999999999", TenantID: tenantID, AppID: appID,
+			WorkflowRunID: runID, Sequence: 3, EventType: workflowpause.EventWorkflowPaused,
+			EventData:     `{"id":"mixed-pause-run","status":"paused","paused_nodes":["approval-node","question-node"]}`,
+			SchemaVersion: 2, Category: workflowpause.EventCategoryControl,
+			PauseID: &pauseIDValue, PauseGeneration: &pauseGeneration,
+			IdempotencyKey: &pausedKey, OccurredAt: now,
+		},
+	}
+	for _, record := range records {
+		if err := db.Create(record).Error; err != nil {
+			t.Fatalf("create mixed-pause fixture %T: %v", record, err)
+		}
+	}
+
+	service := NewService(db)
+	submission, err := service.SubmitByTokenForWorkflowRunWithResumeOptions(
+		context.Background(),
+		formToken,
+		runID,
+		SubmitRequest{Action: "approve", Inputs: map[string]interface{}{}},
+		nil,
+		nil,
+		SubmitOptions{},
+	)
+	if err != nil {
+		t.Fatalf("submit approval: %v", err)
+	}
+	if submission.ResumeReady {
+		t.Fatal("mixed pause became resume-ready before the question was answered")
+	}
+	if submission.ResumeState != "waiting" {
+		t.Fatalf("resume state = %q, want waiting", submission.ResumeState)
+	}
+	if len(submission.PendingEvents) != 2 {
+		t.Fatalf("pending event count = %d, want 2", len(submission.PendingEvents))
+	}
+	if submission.PendingEvents[0].Event != workflowpause.EventQuestionAnswerRequested {
+		t.Fatalf("first pending event = %q, want question_answer_requested", submission.PendingEvents[0].Event)
+	}
+	if submission.PendingEvents[0].Data["node_id"] != questionNode {
+		t.Fatalf("pending question node = %#v, want %q", submission.PendingEvents[0].Data["node_id"], questionNode)
+	}
+	if submission.PendingEvents[1].Event != workflowpause.EventWorkflowPaused {
+		t.Fatalf("second pending event = %q, want workflow_paused", submission.PendingEvents[1].Event)
+	}
+	if submission.Outbox != nil {
+		t.Fatal("resume outbox created while a question remains pending")
+	}
+
+	replay, err := service.SubmitByTokenForWorkflowRunWithResumeOptions(
+		context.Background(),
+		formToken,
+		runID,
+		SubmitRequest{Action: "approve", Inputs: map[string]interface{}{}},
+		nil,
+		nil,
+		SubmitOptions{},
+	)
+	if err != nil {
+		t.Fatalf("replay approval submission: %v", err)
+	}
+	if !replay.IdempotentReplay {
+		t.Fatal("repeat approval submission was not recognized as an idempotent replay")
+	}
+	if len(replay.PendingEvents) != 2 {
+		t.Fatalf("replayed pending event count = %d, want 2", len(replay.PendingEvents))
+	}
+	if replay.PendingEvents[0].Sequence != submission.PendingEvents[0].Sequence ||
+		replay.PendingEvents[1].Sequence != submission.PendingEvents[1].Sequence {
+		t.Fatalf(
+			"replayed pending sequences = [%d %d], want [%d %d]",
+			replay.PendingEvents[0].Sequence,
+			replay.PendingEvents[1].Sequence,
+			submission.PendingEvents[0].Sequence,
+			submission.PendingEvents[1].Sequence,
+		)
+	}
+}
+
+func TestSubmitApprovalAfterQuestionPreservesQuestionResumeInputs(t *testing.T) {
+	db := newApprovalTestDB(t)
+	if err := db.AutoMigrate(
+		&approvalWorkflowRunScope{},
+		&workflowpause.RunPause{},
+		&workflowpause.RunPauseReason{},
+		&workflowpause.RunEvent{},
+		&workflowpause.RuntimeOutbox{},
+	); err != nil {
+		t.Fatalf("migrate workflow pause tables: %v", err)
+	}
+
+	const (
+		tenantID     = "11111111-1111-1111-1111-111111111112"
+		appID        = "22222222-2222-2222-2222-222222222223"
+		runID        = "question-first-run"
+		pauseID      = "33333333-3333-3333-3333-333333333334"
+		formID       = "44444444-4444-4444-4444-444444444445"
+		formToken    = "question-first-token"
+		approvalNode = "approval-node"
+		questionNode = "question-node"
+	)
+	now := time.Now()
+	generation := int64(1)
+	pauseIDValue := pauseID
+	approvalRequestKey := "question-first-approval-request"
+	pausedKey := "question-first-paused"
+	definition, err := json.Marshal(FormDefinition{
+		Content: "Approve the request",
+		Actions: []Action{{ID: "approve", Label: "Approve"}},
+	})
+	if err != nil {
+		t.Fatalf("marshal approval definition: %v", err)
+	}
+	records := []interface{}{
+		&approvalWorkflowRunScope{
+			ID: runID, RuntimeProtocolVersion: 2, NextEventSequence: 2, ExecutionGeneration: 1,
+		},
+		&Form{
+			ID: formID, TenantID: tenantID, AppID: appID, WorkflowRunID: runID,
+			NodeID: approvalNode, NodeTitle: "Approval", AccessToken: formToken,
+			FormDefinition: string(definition), RenderedContent: "Approve the request",
+			Status: FormStatusWaiting, ExpirationTime: now.Add(time.Hour),
+		},
+		&workflowpause.RunPause{
+			ID: pauseID, TenantID: tenantID, AppID: appID, WorkflowRunID: runID,
+			NodeID: approvalNode, Reason: "mixed", StateJSON: `{}`,
+			Generation: generation, Status: workflowpause.RunPauseStatusPaused,
+		},
+		&workflowpause.RunPauseReason{
+			ID: "55555555-5555-5555-5555-555555555556", PauseID: pauseID,
+			Type: workflowpause.ReasonTypeQuestionAnswerRequired, NodeID: questionNode,
+			Status: workflowpause.RunPauseReasonStatusPending, CreatedAt: now,
+		},
+		&workflowpause.RunPauseReason{
+			ID: "66666666-6666-6666-6666-666666666667", PauseID: pauseID,
+			Type: workflowpause.ReasonTypeApprovalRequired, NodeID: approvalNode,
+			FormID: formID, Status: workflowpause.RunPauseReasonStatusPending, CreatedAt: now.Add(time.Millisecond),
+		},
+		&workflowpause.RunEvent{
+			ID: "77777777-7777-7777-7777-777777777778", TenantID: tenantID, AppID: appID,
+			WorkflowRunID: runID, Sequence: 1, EventType: workflowpause.EventApprovalRequested,
+			EventData:     `{"node_id":"approval-node","form_id":"44444444-4444-4444-4444-444444444445"}`,
+			SchemaVersion: 2, Category: workflowpause.EventCategoryInteraction,
+			PauseID: &pauseIDValue, PauseGeneration: &generation,
+			IdempotencyKey: &approvalRequestKey, OccurredAt: now,
+		},
+		&workflowpause.RunEvent{
+			ID: "88888888-8888-8888-8888-888888888889", TenantID: tenantID, AppID: appID,
+			WorkflowRunID: runID, Sequence: 2, EventType: workflowpause.EventWorkflowPaused,
+			EventData:     `{"id":"question-first-run","status":"paused","paused_nodes":["question-node","approval-node"]}`,
+			SchemaVersion: 2, Category: workflowpause.EventCategoryControl,
+			PauseID: &pauseIDValue, PauseGeneration: &generation,
+			IdempotencyKey: &pausedKey, OccurredAt: now,
+		},
+	}
+	for _, record := range records {
+		if err := db.Create(record).Error; err != nil {
+			t.Fatalf("create question-first fixture %T: %v", record, err)
+		}
+	}
+
+	questionSubmission, err := workflowpause.NewService(db).SubmitInteraction(
+		context.Background(),
+		runID,
+		pauseID,
+		questionNode,
+		workflowpause.EventQuestionAnswerSubmitted,
+		map[string]interface{}{"node_id": questionNode, "answer": "blue", "query": "blue"},
+		"question-answer:"+pauseID+":"+questionNode,
+	)
+	if err != nil {
+		t.Fatalf("submit question answer: %v", err)
+	}
+	if questionSubmission.ResumeReady {
+		t.Fatal("question submission became resume-ready while approval remains pending")
+	}
+
+	submission, err := NewService(db).SubmitByTokenForWorkflowRunWithResumeOptions(
+		context.Background(),
+		formToken,
+		runID,
+		SubmitRequest{Action: "approve", Inputs: map[string]interface{}{}},
+		nil,
+		nil,
+		SubmitOptions{},
+	)
+	if err != nil {
+		t.Fatalf("submit final approval: %v", err)
+	}
+	if !submission.ResumeReady || submission.Outbox == nil {
+		t.Fatalf("approval result = ready:%v outbox:%#v, want queued resume", submission.ResumeReady, submission.Outbox)
+	}
+	if submission.Event == nil || submission.Event.Event != workflowpause.EventApprovalResultFilled {
+		t.Fatalf("approval main event = %#v, want approval_result_filled", submission.Event)
+	}
+	var payload workflowpause.RuntimeOutboxPayload
+	if err := json.Unmarshal([]byte(submission.Outbox.PayloadJSON), &payload); err != nil {
+		t.Fatalf("decode resume outbox: %v", err)
+	}
+	if payload.InteractionType != workflowpause.ReasonTypeQuestionAnswerRequired {
+		t.Fatalf("interaction type = %q, want question answer", payload.InteractionType)
+	}
+	if payload.ResumeInputs["query"] != "blue" || payload.ResumeInputs["answer"] != "blue" {
+		t.Fatalf("resume inputs = %#v, want preserved question answer", payload.ResumeInputs)
+	}
+	if submissions, ok := payload.ResumeInputs["interaction_submissions"].([]interface{}); !ok || len(submissions) != 2 {
+		t.Fatalf("interaction submissions = %#v, want question and approval evidence", payload.ResumeInputs["interaction_submissions"])
+	}
+}
+
+func TestSubmitApprovalBeforeDurablePauseRollsBackForm(t *testing.T) {
+	db := newApprovalTestDB(t)
+	if err := db.AutoMigrate(
+		&approvalWorkflowRunScope{},
+		&workflowpause.RunPause{},
+		&workflowpause.RunPauseReason{},
+		&workflowpause.RunEvent{},
+		&workflowpause.RuntimeOutbox{},
+	); err != nil {
+		t.Fatalf("migrate workflow pause tables: %v", err)
+	}
+	const (
+		runID     = "pause-not-ready-run"
+		formID    = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+		formToken = "pause-not-ready-token"
+	)
+	now := time.Now()
+	definition, err := json.Marshal(FormDefinition{
+		Content: "Approve",
+		Actions: []Action{{ID: "approve", Label: "Approve"}},
+	})
+	if err != nil {
+		t.Fatalf("marshal approval definition: %v", err)
+	}
+	if err := db.Create(&approvalWorkflowRunScope{
+		ID: runID, RuntimeProtocolVersion: 2, NextEventSequence: 0, ExecutionGeneration: 1,
+	}).Error; err != nil {
+		t.Fatalf("create workflow run: %v", err)
+	}
+	if err := db.Create(&Form{
+		ID: formID, TenantID: "tenant", AppID: "app", WorkflowRunID: runID,
+		NodeID: "approval-node", NodeTitle: "Approval", AccessToken: formToken,
+		FormDefinition: string(definition), RenderedContent: "Approve",
+		Status: FormStatusWaiting, ExpirationTime: now.Add(time.Hour),
+	}).Error; err != nil {
+		t.Fatalf("create approval form: %v", err)
+	}
+
+	_, err = NewService(db).SubmitByTokenForWorkflowRunWithResumeOptions(
+		context.Background(),
+		formToken,
+		runID,
+		SubmitRequest{Action: "approve", Inputs: map[string]interface{}{}},
+		nil,
+		nil,
+		SubmitOptions{},
+	)
+	if !errors.Is(err, ErrRuntimePauseNotReady) {
+		t.Fatalf("submit error = %v, want ErrRuntimePauseNotReady", err)
+	}
+	var stored Form
+	if err := db.First(&stored, "id = ?", formID).Error; err != nil {
+		t.Fatalf("reload approval form: %v", err)
+	}
+	if stored.Status != FormStatusWaiting || stored.SubmittedAt != nil {
+		t.Fatalf("approval form after rollback = status:%q submitted_at:%v", stored.Status, stored.SubmittedAt)
+	}
+	var eventCount int64
+	if err := db.Model(&workflowpause.RunEvent{}).Count(&eventCount).Error; err != nil {
+		t.Fatalf("count workflow events: %v", err)
+	}
+	if eventCount != 0 {
+		t.Fatalf("workflow event count = %d, want 0", eventCount)
+	}
+}
+
+func TestApprovalReplayDoesNotUseOutboxFromAnotherPauseGeneration(t *testing.T) {
+	db := newApprovalTestDB(t)
+	if err := db.AutoMigrate(
+		&approvalWorkflowRunScope{},
+		&workflowpause.RunPause{},
+		&workflowpause.RunPauseReason{},
+		&workflowpause.RunEvent{},
+		&workflowpause.RuntimeOutbox{},
+	); err != nil {
+		t.Fatalf("migrate workflow pause tables: %v", err)
+	}
+	const (
+		runID     = "replay-generation-run"
+		pauseID   = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+		formID    = "cccccccc-cccc-cccc-cccc-cccccccccccc"
+		formToken = "replay-generation-token"
+	)
+	now := time.Now()
+	generation := int64(2)
+	pauseIDValue := pauseID
+	oldGeneration := int64(1)
+	oldPauseID := "13131313-1313-1313-1313-131313131313"
+	action := "approve"
+	submittedData := "{}"
+	submittedAt := now
+	eventKey := "approval-result:" + formID
+	questionKey := "current-question"
+	pausedKey := "current-paused"
+	definition, err := json.Marshal(FormDefinition{
+		Content: "Approve",
+		Actions: []Action{{ID: action, Label: "Approve"}},
+	})
+	if err != nil {
+		t.Fatalf("marshal approval definition: %v", err)
+	}
+	records := []interface{}{
+		&approvalWorkflowRunScope{
+			ID: runID, RuntimeProtocolVersion: 2, NextEventSequence: 3, ExecutionGeneration: 2,
+		},
+		&Form{
+			ID: formID, TenantID: "tenant", AppID: "app", WorkflowRunID: runID,
+			NodeID: "approval-node", NodeTitle: "Approval", AccessToken: formToken,
+			FormDefinition: string(definition), RenderedContent: "Approve",
+			Status: FormStatusSubmitted, ExpirationTime: now.Add(time.Hour),
+			SelectedActionID: &action, SubmittedData: &submittedData, SubmittedAt: &submittedAt,
+		},
+		&workflowpause.RunPause{
+			ID: pauseID, TenantID: "tenant", AppID: "app", WorkflowRunID: runID,
+			NodeID: "question-node", Reason: "question", StateJSON: `{}`,
+			Generation: generation, Status: workflowpause.RunPauseStatusPaused,
+		},
+		&workflowpause.RunPauseReason{
+			ID: "dddddddd-dddd-dddd-dddd-dddddddddddd", PauseID: pauseID,
+			Type: workflowpause.ReasonTypeQuestionAnswerRequired, NodeID: "question-node",
+			Status: workflowpause.RunPauseReasonStatusPending, CreatedAt: now,
+		},
+		&workflowpause.RunEvent{
+			ID: "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee", TenantID: "tenant", AppID: "app",
+			WorkflowRunID: runID, Sequence: 1, EventType: workflowpause.EventApprovalResultFilled,
+			EventData: `{"node_id":"approval-node","action":"approve"}`, SchemaVersion: 2,
+			Category: workflowpause.EventCategoryInteraction, PauseID: &oldPauseID,
+			PauseGeneration: &oldGeneration, IdempotencyKey: &eventKey, OccurredAt: now,
+		},
+		&workflowpause.RunEvent{
+			ID: "ffffffff-ffff-ffff-ffff-ffffffffffff", TenantID: "tenant", AppID: "app",
+			WorkflowRunID: runID, Sequence: 2, EventType: workflowpause.EventQuestionAnswerRequested,
+			EventData: `{"node_id":"question-node","question":"Continue?"}`, SchemaVersion: 2,
+			Category: workflowpause.EventCategoryInteraction, PauseID: &pauseIDValue,
+			PauseGeneration: &generation, IdempotencyKey: &questionKey, OccurredAt: now,
+		},
+		&workflowpause.RunEvent{
+			ID: "12121212-1212-1212-1212-121212121212", TenantID: "tenant", AppID: "app",
+			WorkflowRunID: runID, Sequence: 3, EventType: workflowpause.EventWorkflowPaused,
+			EventData: `{"id":"replay-generation-run","status":"paused"}`, SchemaVersion: 2,
+			Category: workflowpause.EventCategoryControl, PauseID: &pauseIDValue,
+			PauseGeneration: &generation, IdempotencyKey: &pausedKey, OccurredAt: now,
+		},
+	}
+	for _, record := range records {
+		if err := db.Create(record).Error; err != nil {
+			t.Fatalf("create replay fixture %T: %v", record, err)
+		}
+	}
+	oldPayload, err := json.Marshal(workflowpause.RuntimeOutboxPayload{
+		WorkflowRunID: runID, PauseID: oldPauseID, Generation: 1,
+	})
+	if err != nil {
+		t.Fatalf("marshal old outbox: %v", err)
+	}
+	if err := db.Create(&workflowpause.RuntimeOutbox{
+		ID: "14141414-1414-1414-1414-141414141414", TenantID: "tenant", WorkflowRunID: runID,
+		PauseID: &oldPauseID, Kind: workflowpause.RuntimeOutboxKindResume,
+		IdempotencyKey: "workflow-resume:" + oldPauseID + ":1", PayloadJSON: string(oldPayload),
+		Status: workflowpause.RuntimeOutboxPending, NextAttemptAt: now,
+	}).Error; err != nil {
+		t.Fatalf("create old outbox: %v", err)
+	}
+
+	replay, err := NewService(db).SubmitByTokenForWorkflowRunWithResumeOptions(
+		context.Background(),
+		formToken,
+		runID,
+		SubmitRequest{Action: action, Inputs: map[string]interface{}{}},
+		nil,
+		nil,
+		SubmitOptions{},
+	)
+	if err != nil {
+		t.Fatalf("replay approval: %v", err)
+	}
+	if replay.ResumeReady || replay.Outbox != nil {
+		t.Fatalf("replay of old pause authorized current resume: ready:%v outbox:%#v", replay.ResumeReady, replay.Outbox)
+	}
+	if len(replay.PendingEvents) != 2 || replay.PendingEvents[0].Event != workflowpause.EventQuestionAnswerRequested {
+		t.Fatalf("pending replay events = %#v, want current question projection", replay.PendingEvents)
+	}
+
+	if err := db.Model(&workflowpause.RunPauseReason{}).
+		Where("pause_id = ?", pauseID).
+		Updates(map[string]interface{}{
+			"status":       workflowpause.RunPauseReasonStatusCompleted,
+			"completed_at": now,
+		}).Error; err != nil {
+		t.Fatalf("complete current pause reason: %v", err)
+	}
+
+	const interleaveCallback = "test:approval-replay-resume-ready-interleave"
+	transitioned := false
+	if err := db.Callback().Query().After("gorm:query").Register(interleaveCallback, func(queryDB *gorm.DB) {
+		if transitioned || queryDB.Statement == nil ||
+			queryDB.Statement.Table != "workflow_run_pause_reasons" ||
+			!strings.Contains(strings.ToLower(queryDB.Statement.SQL.String()), "status =") {
+			return
+		}
+		transitioned = true
+		if updateErr := queryDB.Exec(
+			"UPDATE workflow_run_pauses SET status = ? WHERE id = ?",
+			workflowpause.RunPauseStatusResumeReady,
+			pauseID,
+		).Error; updateErr != nil {
+			queryDB.AddError(updateErr)
+		}
+	}); err != nil {
+		t.Fatalf("register replay interleave callback: %v", err)
+	}
+
+	queued, err := NewService(db).SubmitByTokenForWorkflowRunWithResumeOptions(
+		context.Background(),
+		formToken,
+		runID,
+		SubmitRequest{Action: action, Inputs: map[string]interface{}{}},
+		nil,
+		nil,
+		SubmitOptions{},
+	)
+	if removeErr := db.Callback().Query().Remove(interleaveCallback); removeErr != nil {
+		t.Fatalf("remove replay interleave callback: %v", removeErr)
+	}
+	if err != nil {
+		t.Fatalf("replay old approval while current pause is resume ready: %v", err)
+	}
+	if !transitioned {
+		t.Fatal("replay did not exercise the resume-ready interleave")
+	}
+	if queued.ResumeReady || queued.Outbox != nil {
+		t.Fatalf("old replay authorized current resume-ready pause: ready:%v outbox:%#v", queued.ResumeReady, queued.Outbox)
+	}
+	if queued.ResumeState != "queued" {
+		t.Fatalf("old replay resume state = %q, want queued", queued.ResumeState)
+	}
+	if !queued.ObserveExistingExecution {
+		t.Fatal("old replay should observe current resume-ready execution")
+	}
+	if len(queued.PendingEvents) != 0 {
+		t.Fatalf("old replay pending events = %#v, want observation signal only", queued.PendingEvents)
+	}
+
+	if err := db.Model(&workflowpause.RunPause{}).
+		Where("id = ?", pauseID).
+		Update("status", workflowpause.RunPauseStatusResuming).Error; err != nil {
+		t.Fatalf("mark current pause resuming: %v", err)
+	}
+
+	observed, err := NewService(db).SubmitByTokenForWorkflowRunWithResumeOptions(
+		context.Background(),
+		formToken,
+		runID,
+		SubmitRequest{Action: action, Inputs: map[string]interface{}{}},
+		nil,
+		nil,
+		SubmitOptions{},
+	)
+	if err != nil {
+		t.Fatalf("replay old approval while current pause resumes: %v", err)
+	}
+	if observed.ResumeReady || observed.Outbox != nil {
+		t.Fatalf("old replay authorized current resuming pause: ready:%v outbox:%#v", observed.ResumeReady, observed.Outbox)
+	}
+	if observed.ResumeState != "running" {
+		t.Fatalf("old replay resume state = %q, want running", observed.ResumeState)
+	}
+	if !observed.ObserveExistingExecution {
+		t.Fatal("old replay should observe current resuming execution")
+	}
+	if len(observed.PendingEvents) != 0 {
+		t.Fatalf("old replay pending events = %#v, want observation signal only", observed.PendingEvents)
 	}
 }
 

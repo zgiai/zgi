@@ -4,7 +4,6 @@ import React from 'react';
 import type { AssignerNodeData, AssignerNodeOperation } from './config';
 import ValueBadge from '../../ui/value-badge';
 import { useT, type NodesKey } from '@/i18n';
-import { useResolvedVariableReference } from '../../hooks';
 
 export interface AssignerContentProps {
   nodeId: string;
@@ -18,10 +17,9 @@ interface AssignerSummaryTextProps {
 
 const AssignerSummaryText: React.FC<AssignerSummaryTextProps> = ({ nodeId, operation }) => {
   const t = useT();
-  const value = useResolvedVariableReference({
-    selector: Array.isArray(operation.value) ? (operation.value as string[]) : undefined,
-    currentNodeId: nodeId,
-  });
+  const valueSelector = Array.isArray(operation.value)
+    ? (operation.value as string[])
+    : undefined;
 
   const mathActionKey = (op: AssignerNodeOperation['operation']) => {
     switch (op) {
@@ -68,11 +66,37 @@ const AssignerSummaryText: React.FC<AssignerSummaryTextProps> = ({ nodeId, opera
 
   if (operation.operation === 'over-write') {
     return (
-      <>
-        {t('nodes.assigner.content.summary.setVariable', {
-          value: value?.displayText ?? t('nodes.assigner.preview.pendingValue'),
-        })}
-      </>
+      <span className="flex min-w-0 items-center gap-1">
+        <span className="shrink-0">{t('nodes.assigner.content.summary.setVariablePrefix')}</span>
+        {valueSelector?.length && valueSelector.length >= 2 ? (
+          <ValueBadge
+            selector={valueSelector}
+            currentNodeId={nodeId}
+            className="h-5 min-w-0 px-1.5 py-0 text-[11px]"
+          />
+        ) : (
+          <span className="truncate">{t('nodes.assigner.preview.pendingValue')}</span>
+        )}
+      </span>
+    );
+  }
+
+  if (operation.input_type === 'variable') {
+    return (
+      <span className="flex min-w-0 items-center gap-1">
+        <span className="shrink-0">
+          {t(`nodes.assigner.preview.actions.${mathActionKey(operation.operation)}` as NodesKey)}
+        </span>
+        {valueSelector?.length && valueSelector.length >= 2 ? (
+          <ValueBadge
+            selector={valueSelector}
+            currentNodeId={nodeId}
+            className="h-5 min-w-0 px-1.5 py-0 text-[11px]"
+          />
+        ) : (
+          <span className="truncate">{t('nodes.assigner.preview.pendingValue')}</span>
+        )}
+      </span>
     );
   }
 
@@ -80,10 +104,7 @@ const AssignerSummaryText: React.FC<AssignerSummaryTextProps> = ({ nodeId, opera
     <>
       {t('nodes.assigner.content.summary.math', {
         action: t(`nodes.assigner.preview.actions.${mathActionKey(operation.operation)}` as NodesKey),
-        value:
-          operation.input_type === 'variable'
-            ? (value?.displayText ?? t('nodes.assigner.preview.pendingValue'))
-            : formatLiteralValue(operation.value),
+        value: formatLiteralValue(operation.value),
       })}
     </>
   );
@@ -117,7 +138,7 @@ const AssignerContent: React.FC<AssignerContentProps> = ({ nodeId, data }) => {
             <div className="max-w-full truncate inline-flex items-center">
               {renderTargetBadge(operation)}
             </div>
-            <div className="mt-1 text-xs text-muted-foreground truncate">
+            <div className="mt-1 min-w-0 overflow-hidden text-xs text-muted-foreground">
               <AssignerSummaryText nodeId={nodeId} operation={operation} />
             </div>
           </div>

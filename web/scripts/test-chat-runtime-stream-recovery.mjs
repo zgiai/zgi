@@ -15,6 +15,18 @@ assert.match(sseClient, /if \(idleTimeoutMs === null\) return reader\.read\(\)/)
 assert.match(sseClient, /SSE stream ended before a terminal event/);
 assert.match(sseClient, /controller\.signal\.aborted/);
 
+const modelOutputFilter = read('src/utils/model-output-filter.ts');
+assert.match(
+  modelOutputFilter,
+  /TEXT_KEYS\s*=\s*\[[^\]]*['"]answer_delta['"]/,
+  'durable workflow answer_delta events must pass through the shared sensitive-output filter'
+);
+assert.match(
+  modelOutputFilter,
+  /onWorkflowSnapshot:\s*payload\s*=>\s*\{[\s\S]*?sanitizeModelOutputValue\(payload\)/,
+  'workflow snapshot recovery must sanitize the complete snapshot before restoring chat state'
+);
+
 for (const transportPath of [
   'src/services/aichat.service.ts',
   'src/components/chat/transports/agent-runtime-transport.ts',
@@ -121,6 +133,33 @@ const routeStateJavaScript = ts.transpileModule(routeStateSource, {
 const routeState = await import(
   `data:text/javascript;base64,${Buffer.from(routeStateJavaScript).toString('base64')}`
 );
+
+const answerMergeSource = read('src/components/chat/utils/answer-merge.ts');
+const answerMergeJavaScript = ts.transpileModule(answerMergeSource, {
+  compilerOptions: {
+    module: ts.ModuleKind.ESNext,
+    target: ts.ScriptTarget.ES2022,
+  },
+  fileName: 'answer-merge.ts',
+}).outputText;
+const answerMerge = await import(
+  `data:text/javascript;base64,${Buffer.from(answerMergeJavaScript).toString('base64')}`
+);
+assert.equal(
+  answerMerge.shouldPreserveLocalAnswerForSnapshot('first\nsecond', 'first'),
+  true,
+  'a late durable snapshot must not roll back newer live workflow answer chunks'
+);
+assert.equal(
+  answerMerge.shouldPreserveLocalAnswerForSnapshot('first', 'first\nsecond'),
+  false,
+  'a newer durable snapshot must still replace an older local workflow answer'
+);
+assert.equal(
+  answerMerge.shouldPreserveLocalAnswerForSnapshot('different', 'first'),
+  false,
+  'divergent durable state must remain authoritative'
+);
 assert.equal(
   routeState.isConversationRouteRestoring('conversation-a', null),
   true,
@@ -146,7 +185,7 @@ assert.match(
   'a published Agent route must stay in a loading state until its persisted conversation is selected'
 );
 
-const routeHandoffSource = read('src/components/webapp/agent-chat/route-handoff.ts');
+const routeHandoffSource = read('src/components/chat/runtime/conversation-route-handoff.ts');
 const routeHandoffJavaScript = ts.transpileModule(routeHandoffSource, {
   compilerOptions: {
     module: ts.ModuleKind.ESNext,

@@ -11,3 +11,10 @@ export function resolveAnswerMergeMode(
   if (currentAnswer.endsWith(incomingAnswer)) return 'skip';
   return 'append';
 }
+
+export function shouldPreserveLocalAnswerForSnapshot(
+  localAnswer: string,
+  snapshotAnswer: string
+): boolean {
+  return localAnswer.length > snapshotAnswer.length && localAnswer.startsWith(snapshotAnswer);
+}

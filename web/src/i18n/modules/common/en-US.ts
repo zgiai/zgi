@@ -344,6 +344,7 @@ const messages = {
 
   sensitiveOutput: {
     blocked: 'Sorry, I cannot process this request. Please ask another compliant question.',
+    timelineBlocked: 'Some content was blocked',
   },
 
   notificationSms: {

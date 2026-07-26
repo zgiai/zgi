@@ -28,19 +28,73 @@ func TestListAgentWorkflowsReturnsRuntimeBindingsOnly(t *testing.T) {
 	if workflows[0]["workflow_id"] != nil {
 		t.Fatalf("workflow_id leaked in list payload: %#v", workflows[0])
 	}
-	if workflows[0]["default_input_key"] != "query" {
-		t.Fatalf("default_input_key = %#v, want query", workflows[0]["default_input_key"])
+	if _, exists := workflows[0]["default_input_key"]; exists {
+		t.Fatalf("default_input_key = %#v, want omitted for zero-input task workflow", workflows[0]["default_input_key"])
 	}
-	if schema, ok := workflows[0]["input_schema"].(map[string]interface{}); !ok || schema["type"] != "object" {
+	schema, ok := workflows[0]["input_schema"].(map[string]interface{})
+	if !ok || schema["type"] != "object" {
 		t.Fatalf("input_schema = %#v, want object schema", workflows[0]["input_schema"])
+	}
+	properties, ok := schema["properties"].(map[string]interface{})
+	if !ok || len(properties) != 0 {
+		t.Fatalf("input_schema properties = %#v, want empty", schema["properties"])
+	}
+	required, ok := workflows[0]["required_inputs"].([]string)
+	if !ok || len(required) != 0 {
+		t.Fatalf("required_inputs = %#v, want empty", workflows[0]["required_inputs"])
 	}
 }
 
-func TestRunAgentWorkflowRejectsMissingQuery(t *testing.T) {
-	runtimeTool := workflowRuntimeTool(t, ToolRunAgentWorkflow, &fakeWorkflowRunner{})
+func TestListAgentWorkflowsRequiresQueryForConversationalWorkflow(t *testing.T) {
+	runtimeTool := workflowRuntimeToolWithBinding(t, ToolListAgentWorkflows, &fakeWorkflowRunner{}, map[string]interface{}{
+		"binding_id": "chat-flow", "agent_id": "agent-1", "workflow_id": "workflow-1",
+		"agent_type": "CONVERSATIONAL_WORKFLOW", "version_strategy": "latest_published",
+	})
+
+	messages, err := runtimeTool.Invoke(context.Background(), "caller-1", nil, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Invoke() error = %v", err)
+	}
+	workflows := messages[0].Data["workflows"].([]map[string]interface{})
+	if workflows[0]["default_input_key"] != "query" {
+		t.Fatalf("default_input_key = %#v, want query", workflows[0]["default_input_key"])
+	}
+	required := workflows[0]["required_inputs"].([]string)
+	if len(required) != 1 || required[0] != "query" {
+		t.Fatalf("required_inputs = %#v, want [query]", required)
+	}
+	properties := workflows[0]["input_schema"].(map[string]interface{})["properties"].(map[string]interface{})
+	if _, exists := properties["query"]; !exists {
+		t.Fatalf("input_schema properties = %#v, want query", properties)
+	}
+}
+
+func TestRunAgentTaskWorkflowWithNoStartInputsAcceptsEmptyInputs(t *testing.T) {
+	runner := &fakeWorkflowRunner{}
+	runtimeTool := workflowRuntimeTool(t, ToolRunAgentWorkflow, runner)
 
 	_, err := runtimeTool.Invoke(context.Background(), "caller-1", map[string]interface{}{
 		"binding_id": "approval-flow",
+	}, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Invoke() error = %v", err)
+	}
+	if _, exists := runner.lastReq.Inputs["query"]; exists {
+		t.Fatalf("task workflow inputs = %#v, want no query", runner.lastReq.Inputs)
+	}
+	if _, exists := runner.lastReq.Inputs["sys.query"]; exists {
+		t.Fatalf("task workflow inputs = %#v, want no sys.query", runner.lastReq.Inputs)
+	}
+}
+
+func TestRunAgentConversationalWorkflowRejectsMissingQuery(t *testing.T) {
+	runtimeTool := workflowRuntimeToolWithBinding(t, ToolRunAgentWorkflow, &fakeWorkflowRunner{}, map[string]interface{}{
+		"binding_id": "chat-flow", "agent_id": "agent-1", "workflow_id": "workflow-1",
+		"agent_type": "CONVERSATIONAL_WORKFLOW", "version_strategy": "latest_published",
+	})
+
+	_, err := runtimeTool.Invoke(context.Background(), "caller-1", map[string]interface{}{
+		"binding_id": "chat-flow",
 	}, nil, nil, nil)
 	if err == nil || !strings.Contains(err.Error(), "inputs.query is required") {
 		t.Fatalf("Invoke() error = %v, want missing query rejection", err)
@@ -73,7 +127,7 @@ func TestRunAgentWorkflowReturnsSucceededOutputs(t *testing.T) {
 
 	messages, err := runtimeTool.Invoke(context.Background(), "caller-1", map[string]interface{}{
 		"binding_id": "approval-flow",
-		"inputs":     map[string]interface{}{"query": "approve"},
+		"inputs":     map[string]interface{}{},
 	}, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("Invoke() error = %v", err)
@@ -84,8 +138,11 @@ func TestRunAgentWorkflowReturnsSucceededOutputs(t *testing.T) {
 	if runner.lastReq.WorkflowRef.WorkflowID != "workflow-1" || runner.lastReq.WorkflowRef.AgentID != "agent-1" {
 		t.Fatalf("workflow ref = %#v, want bound workflow", runner.lastReq.WorkflowRef)
 	}
-	if runner.lastReq.Inputs["query"] != "approve" || runner.lastReq.Inputs["sys.query"] != "approve" {
-		t.Fatalf("workflow inputs = %#v, want query and sys.query", runner.lastReq.Inputs)
+	if _, exists := runner.lastReq.Inputs["query"]; exists {
+		t.Fatalf("workflow inputs = %#v, want no implicit query", runner.lastReq.Inputs)
+	}
+	if _, exists := runner.lastReq.Inputs["sys.query"]; exists {
+		t.Fatalf("workflow inputs = %#v, want no implicit sys.query", runner.lastReq.Inputs)
 	}
 	payload := messages[0].Data
 	if payload["status"] != "succeeded" || payload["workflow_run_id"] != "run-1" {
@@ -125,7 +182,7 @@ func TestRunAgentWorkflowUsesTargetBindingAuthorizationActor(t *testing.T) {
 
 	_, err = runtimeTool.Invoke(context.Background(), "caller-1", map[string]interface{}{
 		"binding_id": "approval-flow",
-		"inputs":     map[string]interface{}{"query": "approve"},
+		"inputs":     map[string]interface{}{},
 	}, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("Invoke() error = %v", err)
@@ -135,7 +192,7 @@ func TestRunAgentWorkflowUsesTargetBindingAuthorizationActor(t *testing.T) {
 	}
 }
 
-func TestRunAgentWorkflowMapsQueryToTaskWorkflowStartInput(t *testing.T) {
+func TestRunAgentTaskWorkflowUsesDeclaredStartInputWithoutQueryAlias(t *testing.T) {
 	runner := &fakeWorkflowRunner{
 		result: &automationaction.WorkflowRunResult{
 			WorkflowRunID: "run-1",
@@ -162,16 +219,162 @@ func TestRunAgentWorkflowMapsQueryToTaskWorkflowStartInput(t *testing.T) {
 
 	_, err := runtimeTool.Invoke(context.Background(), "caller-1", map[string]interface{}{
 		"binding_id": "task-flow",
-		"inputs":     map[string]interface{}{"query": "write a summer poem"},
+		"inputs":     map[string]interface{}{"input": "write a summer poem"},
 	}, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("Invoke() error = %v", err)
 	}
-	if runner.lastReq.Inputs["input"] != "write a summer poem" || runner.lastReq.Inputs["sys.query"] != "write a summer poem" {
-		t.Fatalf("workflow inputs = %#v, want input and sys.query", runner.lastReq.Inputs)
+	if runner.lastReq.Inputs["input"] != "write a summer poem" {
+		t.Fatalf("workflow inputs = %#v, want declared input", runner.lastReq.Inputs)
 	}
-	if _, exists := runner.lastReq.Inputs["query"]; exists {
-		t.Fatalf("workflow inputs kept undeclared query key: %#v", runner.lastReq.Inputs)
+	if _, exists := runner.lastReq.Inputs["sys.query"]; exists {
+		t.Fatalf("workflow inputs kept conversational sys.query: %#v", runner.lastReq.Inputs)
+	}
+}
+
+func TestRunAgentTaskWorkflowRejectsQueryAliasForDifferentStartInput(t *testing.T) {
+	runtimeTool := workflowRuntimeToolWithBinding(t, ToolRunAgentWorkflow, &fakeWorkflowRunner{}, map[string]interface{}{
+		"binding_id": "task-flow", "agent_id": "agent-1", "workflow_id": "workflow-1",
+		"agent_type": "WORKFLOW", "version_strategy": "latest_published",
+		"start_inputs": []map[string]interface{}{
+			{"variable": "input", "label": "Input", "type": "paragraph", "required": true},
+		},
+	})
+
+	_, err := runtimeTool.Invoke(context.Background(), "caller-1", map[string]interface{}{
+		"binding_id": "task-flow",
+		"inputs":     map[string]interface{}{"query": "write a summer poem"},
+	}, nil, nil, nil)
+	if err == nil || !strings.Contains(err.Error(), "inputs.input is required") {
+		t.Fatalf("Invoke() error = %v, want declared input rejection", err)
+	}
+}
+
+func TestRunAgentTaskWorkflowAllowsExplicitQueryStartInput(t *testing.T) {
+	runner := &fakeWorkflowRunner{}
+	runtimeTool := workflowRuntimeToolWithBinding(t, ToolRunAgentWorkflow, runner, map[string]interface{}{
+		"binding_id": "task-flow", "agent_id": "agent-1", "workflow_id": "workflow-1",
+		"agent_type": "WORKFLOW", "version_strategy": "latest_published",
+		"start_inputs": []map[string]interface{}{
+			{"variable": "query", "label": "Search query", "type": "string", "required": true},
+		},
+	})
+
+	_, err := runtimeTool.Invoke(context.Background(), "caller-1", map[string]interface{}{
+		"binding_id": "task-flow",
+		"inputs":     map[string]interface{}{"query": "explicit business input"},
+	}, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Invoke() error = %v", err)
+	}
+	if runner.lastReq.Inputs["query"] != "explicit business input" {
+		t.Fatalf("workflow inputs = %#v, want explicit query start input", runner.lastReq.Inputs)
+	}
+	if _, exists := runner.lastReq.Inputs["sys.query"]; exists {
+		t.Fatalf("workflow inputs = %#v, want no conversational sys.query", runner.lastReq.Inputs)
+	}
+}
+
+func TestRunAgentWorkflowUsesTaskInvocationWithoutConversationHistory(t *testing.T) {
+	runner := &fakeWorkflowRunner{}
+	runtimeTool := workflowRuntimeToolWithBinding(t, ToolRunAgentWorkflow, runner, map[string]interface{}{
+		"binding_id": "task-flow", "agent_id": "agent-1", "workflow_id": "workflow-1",
+		"agent_type": "WORKFLOW", "version_strategy": "latest_published",
+	})
+	conversationID := "conversation-1"
+	messageID := "message-1"
+	_, err := runtimeTool.Invoke(context.Background(), "caller-1", map[string]interface{}{
+		"binding_id": "task-flow", "inputs": map[string]interface{}{},
+	}, &conversationID, nil, &messageID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runner.lastReq.Invocation == nil || runner.lastReq.Invocation.Mode != automationaction.WorkflowInvocationModeAgentTaskTool {
+		t.Fatalf("invocation = %#v, want task tool mode", runner.lastReq.Invocation)
+	}
+	if runner.lastReq.Invocation.ParentConversationID != conversationID || runner.lastReq.Invocation.ParentMessageID != messageID {
+		t.Fatalf("invocation parent = %#v", runner.lastReq.Invocation)
+	}
+	if _, exists := runner.lastReq.Inputs["sys.conversation_history"]; exists {
+		t.Fatalf("task workflow received conversation history: %#v", runner.lastReq.Inputs)
+	}
+}
+
+func TestRunAgentWorkflowDelegatesConversationWithStableInvocationAndDurableEnvelope(t *testing.T) {
+	runner := &fakeWorkflowRunner{emitEvents: []automationaction.WorkflowRunEvent{{
+		Type: "node_started", Payload: map[string]interface{}{"workflow_run_id": "run-1", "node_id": "node-1"},
+		Sequence: 7, SchemaVersion: 2, PayloadVersion: 1, ExecutionID: "execution-1",
+	}}}
+	provider := NewProvider(func() automationaction.AutomationWorkflowRunner { return runner })
+	tool, err := provider.GetTool(ToolRunAgentWorkflow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtimeTool := tool.ForkToolRuntime(&tools.ToolRuntime{
+		TenantID: "workspace-1", InvokeFrom: tools.ToolInvokeFromAgent,
+		RuntimeParameters: map[string]interface{}{
+			"organization_id": "org-1", "workspace_id": "workspace-1",
+			"workflow_parent_tool_call_id": "tool-call-1",
+			"workflow_context":             map[string]interface{}{"conversation_history": []interface{}{"hello", "world"}},
+			"workflow_bindings": []map[string]interface{}{{
+				"binding_id": "chat-flow", "agent_id": "agent-1", "workflow_id": "workflow-1",
+				"agent_type": "CONVERSATIONAL_WORKFLOW", "version_strategy": "latest_published",
+			}},
+		},
+	})
+	conversationID := "conversation-1"
+	messageID := "message-1"
+	var events []workflowevents.Event
+	ctx := workflowevents.WithEmitter(context.Background(), func(event workflowevents.Event) { events = append(events, event) })
+	invoke := func() string {
+		_, invokeErr := runtimeTool.Invoke(ctx, "caller-1", map[string]interface{}{
+			"binding_id": "chat-flow", "inputs": map[string]interface{}{"query": "continue"},
+		}, &conversationID, nil, &messageID)
+		if invokeErr != nil {
+			t.Fatal(invokeErr)
+		}
+		return runner.lastReq.Invocation.InvocationID
+	}
+	firstInvocationID := invoke()
+	secondInvocationID := invoke()
+	if firstInvocationID == "" || firstInvocationID != secondInvocationID {
+		t.Fatalf("invocation IDs = %q, %q, want stable non-empty value", firstInvocationID, secondInvocationID)
+	}
+	if runner.lastReq.Invocation.Mode != automationaction.WorkflowInvocationModeAgentDelegate {
+		t.Fatalf("invocation mode = %q", runner.lastReq.Invocation.Mode)
+	}
+	if history, ok := runner.lastReq.Inputs["sys.conversation_history"].([]interface{}); !ok || len(history) != 2 {
+		t.Fatalf("conversation history = %#v", runner.lastReq.Inputs["sys.conversation_history"])
+	}
+	if len(events) == 0 || events[0].Sequence != 7 || events[0].SchemaVersion != 2 || events[0].ExecutionID != "execution-1" {
+		t.Fatalf("workflow events = %#v, want durable envelope", events)
+	}
+	if events[0].Payload["invocation_id"] != firstInvocationID || events[0].Payload["invocation_mode"] != automationaction.WorkflowInvocationModeAgentDelegate {
+		t.Fatalf("workflow event invocation = %#v", events[0].Payload)
+	}
+}
+
+func TestRunAgentTaskWorkflowDoesNotRelayAnswerTransportEvents(t *testing.T) {
+	runner := &fakeWorkflowRunner{emitEvents: []automationaction.WorkflowRunEvent{
+		{Type: "message", Payload: map[string]interface{}{"answer": "internal"}, Sequence: 1},
+		{Type: "node_finished", Payload: map[string]interface{}{"node_id": "node-1"}, Sequence: 2},
+	}}
+	runtimeTool := workflowRuntimeToolWithBinding(t, ToolRunAgentWorkflow, runner, map[string]interface{}{
+		"binding_id": "task-flow", "agent_id": "agent-1", "workflow_id": "workflow-1",
+		"agent_type": "WORKFLOW", "version_strategy": "latest_published",
+	})
+	var events []workflowevents.Event
+	ctx := workflowevents.WithEmitter(context.Background(), func(event workflowevents.Event) { events = append(events, event) })
+	conversationID := "conversation-1"
+	messageID := "message-1"
+	_, err := runtimeTool.Invoke(ctx, "caller-1", map[string]interface{}{
+		"binding_id": "task-flow", "inputs": map[string]interface{}{},
+	}, &conversationID, nil, &messageID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 1 || events[0].Type != "node_finished" || events[0].Sequence != 2 {
+		t.Fatalf("events = %#v, want only node_finished", events)
 	}
 }
 
@@ -231,7 +434,7 @@ func TestRunAgentWorkflowReturnsPendingApprovalFields(t *testing.T) {
 
 	messages, err := runtimeTool.Invoke(context.Background(), "caller-1", map[string]interface{}{
 		"binding_id": "approval-flow",
-		"inputs":     map[string]interface{}{"query": "approval request"},
+		"inputs":     map[string]interface{}{},
 	}, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("Invoke() error = %v", err)
@@ -242,6 +445,89 @@ func TestRunAgentWorkflowReturnsPendingApprovalFields(t *testing.T) {
 	}
 	if payload["approval_form"] == nil {
 		t.Fatalf("payload = %#v, want approval_form", payload)
+	}
+}
+
+func TestWorkflowApprovalUIAccessFollowsAgentSurfaceAndWorkflowChannel(t *testing.T) {
+	disabledPayload := map[string]interface{}{
+		"approval_form": map[string]interface{}{
+			"submit_methods": map[string]interface{}{
+				"webapp": map[string]interface{}{"enabled": false},
+			},
+		},
+	}
+	consoleRuntime := &tools.ToolRuntime{RuntimeParameters: map[string]interface{}{
+		agentRuntimeSourceParameter: "console",
+	}}
+	if !workflowApprovalUIAccessAllowed(consoleRuntime, disabledPayload) {
+		t.Fatal("Agent draft preview should allow inline approval regardless of workflow channel")
+	}
+
+	webAppRuntime := &tools.ToolRuntime{RuntimeParameters: map[string]interface{}{
+		agentRuntimeSourceParameter: "webapp",
+	}}
+	if workflowApprovalUIAccessAllowed(webAppRuntime, disabledPayload) {
+		t.Fatal("Agent WebApp should not allow inline approval when workflow webapp channel is disabled")
+	}
+	enabledPayload := map[string]interface{}{
+		"submit_methods": map[string]interface{}{
+			"webapp": map[string]interface{}{"enabled": true},
+		},
+	}
+	if !workflowApprovalUIAccessAllowed(webAppRuntime, enabledPayload) {
+		t.Fatal("Agent WebApp should allow inline approval when workflow webapp channel is enabled")
+	}
+
+	externalAPIRuntime := &tools.ToolRuntime{RuntimeParameters: map[string]interface{}{
+		agentRuntimeSourceParameter: "external-api",
+	}}
+	if workflowApprovalUIAccessAllowed(externalAPIRuntime, disabledPayload) {
+		t.Fatal("Agent external API should not allow inline approval when workflow webapp channel is disabled")
+	}
+	if !workflowApprovalUIAccessAllowed(externalAPIRuntime, enabledPayload) {
+		t.Fatal("Agent external API should allow inline approval when workflow webapp channel is enabled")
+	}
+}
+
+func TestApplyWorkflowApprovalExposureRedactsCredentialsWhenUIApprovalIsUnavailable(t *testing.T) {
+	payload := map[string]interface{}{
+		"approval_token": "top-secret",
+		"approval_form": map[string]interface{}{
+			"id":    "form-1",
+			"token": "form-secret",
+		},
+		"outputs": map[string]interface{}{
+			"__approval_token": "nested-secret",
+			"__approval_form": map[string]interface{}{
+				"id":    "form-1",
+				"token": "nested-form-secret",
+			},
+		},
+	}
+	applyWorkflowApprovalExposure(&tools.ToolRuntime{RuntimeParameters: map[string]interface{}{
+		agentRuntimeSourceParameter: "external-api",
+	}}, payload)
+
+	if allowed, _ := payload[workflowApprovalUIAllowed].(bool); allowed {
+		t.Fatalf("ui approval allowed = true, want false: %#v", payload)
+	}
+	if _, exists := payload["approval_token"]; exists {
+		t.Fatalf("top-level approval token was exposed: %#v", payload)
+	}
+	form := payload["approval_form"].(map[string]interface{})
+	if form["id"] != "form-1" {
+		t.Fatalf("approval form identity was removed: %#v", form)
+	}
+	if _, exists := form["token"]; exists {
+		t.Fatalf("approval form token was exposed: %#v", form)
+	}
+	outputs := payload["outputs"].(map[string]interface{})
+	if _, exists := outputs["__approval_token"]; exists {
+		t.Fatalf("nested approval token was exposed: %#v", outputs)
+	}
+	nestedForm := outputs["__approval_form"].(map[string]interface{})
+	if _, exists := nestedForm["token"]; exists {
+		t.Fatalf("nested approval form token was exposed: %#v", nestedForm)
 	}
 }
 
@@ -259,7 +545,7 @@ func TestRunAgentWorkflowReturnsFailedSummary(t *testing.T) {
 
 	messages, err := runtimeTool.Invoke(context.Background(), "caller-1", map[string]interface{}{
 		"binding_id": "approval-flow",
-		"inputs":     map[string]interface{}{"query": "fail this"},
+		"inputs":     map[string]interface{}{},
 	}, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("Invoke() error = %v", err)
@@ -304,7 +590,7 @@ func TestRunAgentWorkflowForwardsWorkflowEvents(t *testing.T) {
 
 	_, err := runtimeTool.Invoke(ctx, "caller-1", map[string]interface{}{
 		"binding_id": "approval-flow",
-		"inputs":     map[string]interface{}{"query": "emit events"},
+		"inputs":     map[string]interface{}{},
 	}, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("Invoke() error = %v", err)
@@ -410,6 +696,7 @@ func workflowRuntimeToolWithBinding(t *testing.T, name string, runner *fakeWorkf
 		RuntimeParameters: map[string]interface{}{
 			"organization_id":              "org-1",
 			"workspace_id":                 "workspace-1",
+			agentRuntimeSourceParameter:    "console",
 			"workflow_bound_by_account_id": "binder-1",
 			"workflow_bindings": []map[string]interface{}{
 				binding,

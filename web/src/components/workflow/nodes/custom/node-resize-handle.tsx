@@ -1,8 +1,13 @@
 import { useNodeId, useUpdateNodeInternals } from '@xyflow/react';
 import { useWorkflowStore } from '../../store';
 import React from 'react';
-import { PAD_X, PAD_Y } from '../../ui/create-node-modal/constants/iteration-layout';
 import { cn } from '@/lib/utils';
+import { isContainerNode } from '../../store/type';
+import {
+  calculateContainerMinimumSize,
+  deriveContainerLayoutSizes,
+  getWorkflowNodeLayoutSize,
+} from '../../store/helpers/graph';
 
 /**
  * Bottom-right manual resize handle
@@ -22,6 +27,7 @@ export default function ManualResizeHandle({
   const isReadOnly = mode === 'history' || !canEdit;
   const viewport = useWorkflowStore.use.viewport();
   const updateNode = useWorkflowStore.use.updateNode();
+  const setActiveResizeNodeId = useWorkflowStore.use.setActiveResizeNodeId();
   const updateNodeInternals = useUpdateNodeInternals();
 
   const dragRafRef = React.useRef<number | null>(null);
@@ -38,8 +44,10 @@ export default function ManualResizeHandle({
       const startY = e.clientY;
       const state = useWorkflowStore.getState();
       const node = state.nodes.find(n => n.id === nodeId);
-      const startW = (node?.width ?? 280) as number;
-      const startH = (node?.height ?? 120) as number;
+      const startSize = node ? getWorkflowNodeLayoutSize(node) : { width: 280, height: 120 };
+      const startW = startSize.width;
+      const startH = startSize.height;
+      setActiveResizeNodeId(nodeId);
 
       const onMouseMove = (ev: MouseEvent) => {
         if (dragRafRef.current) cancelAnimationFrame(dragRafRef.current);
@@ -48,32 +56,22 @@ export default function ManualResizeHandle({
           const zoom = (viewport?.zoom ?? 1) as number;
           const dw = (ev.clientX - startX) / zoom;
           const dh = (ev.clientY - startY) / zoom;
-          // Enforce min-size for iteration parent to avoid squeezing child nodes
+          // Keep every resizable container large enough for its measured children.
+          // Runtime result overlays are deliberately excluded from layout size.
           let minAllowedW = minWidth;
           let minAllowedH = minHeight;
-          try {
-            const st = useWorkflowStore.getState();
-            const cur = st.nodes.find(n => n.id === (nodeId as string));
-            const t = (cur?.data as { type?: string } | undefined)?.type;
-            if (t === 'iteration') {
-              let maxRight = 0;
-              let maxBottom = 0;
-              for (const child of st.nodes) {
-                const pid = (child as unknown as { parentId?: string })?.parentId;
-                if (pid !== (nodeId as string)) continue;
-                const cw = (child.width ?? 240) as number;
-                const ch = (child.height ?? 120) as number;
-                const pos = child.position || { x: 0, y: 0 };
-                const right = pos.x + cw;
-                const bottom = pos.y + ch;
-                if (right > maxRight) maxRight = right;
-                if (bottom > maxBottom) maxBottom = bottom;
-              }
-              minAllowedW = Math.max(minAllowedW, maxRight + PAD_X * 2);
-              minAllowedH = Math.max(minAllowedH, maxBottom + PAD_Y * 2);
-            }
-          } catch {
-            // ignore and fall back to provided minWidth/minHeight
+          const st = useWorkflowStore.getState();
+          const current = st.nodes.find(n => n.id === nodeId);
+          const type = (current?.data as { type?: string } | undefined)?.type;
+          if (isContainerNode(type)) {
+            const derivedContainerSizes = deriveContainerLayoutSizes(st.nodes);
+            const minimum = calculateContainerMinimumSize(
+              st.nodes,
+              nodeId,
+              derivedContainerSizes
+            );
+            minAllowedW = Math.max(minAllowedW, minimum.width);
+            minAllowedH = Math.max(minAllowedH, minimum.height);
           }
           const nextW = Math.max(minAllowedW, startW + dw);
           const nextH = Math.max(minAllowedH, startH + dh);
@@ -86,15 +84,27 @@ export default function ManualResizeHandle({
           cancelAnimationFrame(dragRafRef.current);
           dragRafRef.current = null;
         }
-        updateNodeInternals(nodeId as string);
         window.removeEventListener('mousemove', onMouseMove);
         window.removeEventListener('mouseup', onMouseUp);
+        window.removeEventListener('blur', onMouseUp);
+        setActiveResizeNodeId(null);
+        window.requestAnimationFrame(() => updateNodeInternals(nodeId as string));
       };
 
       window.addEventListener('mousemove', onMouseMove);
       window.addEventListener('mouseup', onMouseUp);
+      window.addEventListener('blur', onMouseUp);
     },
-    [nodeId, isReadOnly, viewport?.zoom, updateNode, updateNodeInternals, minWidth, minHeight]
+    [
+      nodeId,
+      isReadOnly,
+      viewport?.zoom,
+      updateNode,
+      updateNodeInternals,
+      minWidth,
+      minHeight,
+      setActiveResizeNodeId,
+    ]
   );
 
   return (

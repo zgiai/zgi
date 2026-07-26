@@ -10,7 +10,7 @@ export const SENSITIVE_OUTPUT_BLOCKED_FLAG = '__sensitiveOutputBlocked';
 
 type RecordLike = Record<string, unknown>;
 
-const TEXT_KEYS = ['answer', 'text', 'content', 'delta'] as const;
+const TEXT_KEYS = ['answer', 'answer_delta', 'text', 'content', 'delta'] as const;
 
 function isRecord(value: unknown): value is RecordLike {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -52,6 +52,23 @@ function getOutputText(payload: unknown): string {
   }
 
   return '';
+}
+
+function getWorkflowSnapshotAnswer(payload: unknown): string {
+  const data = getPayloadData(payload);
+  if (!data) {
+    return '';
+  }
+  const message = data.message;
+  if (!isRecord(message)) {
+    return '';
+  }
+  return typeof message.answer === 'string' ? message.answer : '';
+}
+
+function takeLastCharacters(value: string, count: number): string {
+  const characters = Array.from(value);
+  return characters.slice(Math.max(0, characters.length - count)).join('');
 }
 
 export function isSensitiveOutputBlockedValue(value: unknown): boolean {
@@ -161,10 +178,22 @@ export function wrapModelOutputSseCallbacks<T extends SseEventCallbacks>(callbac
 
   const session = createSensitiveWordStreamSession({ chunkSize: 50, lookbehindSize: 50 });
   let blocked = false;
+  let streamTail = '';
 
   const block = (): void => {
     blocked = true;
     callbacks.onTextReplace?.(createSensitiveOutputBlockedPayload());
+  };
+
+  const appendStreamText = (text: string): boolean => {
+    if (!text) {
+      return false;
+    }
+    if (SensitiveWordMatcher.contains(`${streamTail}${text}`) || session.append(text).matched) {
+      return true;
+    }
+    streamTail = takeLastCharacters(`${streamTail}${text}`, 50);
+    return false;
   };
 
   const finish = (): void => {
@@ -175,10 +204,27 @@ export function wrapModelOutputSseCallbacks<T extends SseEventCallbacks>(callbac
 
   return {
     ...callbacks,
+    onWorkflowSnapshot: payload => {
+      const answer = getWorkflowSnapshotAnswer(payload);
+      const sanitizedPayload = sanitizeModelOutputValue(payload);
+      const sanitizedAnswer = getWorkflowSnapshotAnswer(sanitizedPayload);
+      const snapshotBlocked =
+        isSensitiveOutputBlockedValue(answer) ||
+        isSensitiveOutputBlockedValue(sanitizedAnswer) ||
+        (answer.length > 0 && SensitiveWordMatcher.contains(answer));
+
+      if (snapshotBlocked) {
+        blocked = true;
+        streamTail = '';
+      } else if (!blocked && answer.length > 0 && appendStreamText(answer)) {
+        blocked = true;
+      }
+      callbacks.onWorkflowSnapshot?.(sanitizedPayload);
+    },
     onTextChunk: payload => {
       if (blocked) return;
       const text = getOutputText(payload);
-      if (text && session.append(text).matched) {
+      if (appendStreamText(text)) {
         block();
         return;
       }
@@ -196,7 +242,7 @@ export function wrapModelOutputSseCallbacks<T extends SseEventCallbacks>(callbac
     onMessage: payload => {
       if (blocked) return;
       const text = getOutputText(payload);
-      if (text && session.append(text).matched) {
+      if (appendStreamText(text)) {
         block();
         return;
       }

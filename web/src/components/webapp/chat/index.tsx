@@ -11,9 +11,8 @@ import type {
   FileUploadMethod,
 } from '@/components/workflow/store/type';
 import type { InputVar } from '@/components/workflow/types/input-var';
-import { Clock3, Loader2, Send, SlidersHorizontal } from 'lucide-react';
+import { SlidersHorizontal } from 'lucide-react';
 import { useT } from '@/i18n';
-import { workflowService } from '@/services/workflow.service';
 import { toast } from 'sonner';
 import { useStore } from 'zustand';
 import { useWebappConversationTransport } from '@/hooks/webapp/use-webapp-transport';
@@ -21,14 +20,19 @@ import { WorkflowPrecheckWarningBanner } from '@/components/workflow/common/work
 import { stableStringify } from '@/utils/object';
 import { getOpeningGuide } from '@/utils/webapp/opening-statement';
 import { useAuthStore } from '@/store/auth-store';
-import { ApprovalCompletedState } from '@/components/workflow/approval/approval-completed-state';
-import ApprovalRuntimeForm from '@/components/workflow/approval/approval-runtime-form';
-import { Button } from '@/components/ui/button';
+import WorkflowApprovalInteractionCard from '@/components/workflow/approval/workflow-approval-interaction-card';
+import { isWorkflowApprovalInlineAllowed } from '@/components/workflow/approval/workflow-approval-surface';
 import { isApprovalFormAlreadySubmittedError } from '@/services/approval.service';
 import { WebAppOfflineState } from '@/components/webapp/offline-state';
 import { useWebAppOfflineState } from '@/hooks/webapp/use-webapp-offline-state';
 import { QuestionAnswerRuntimePrompt } from '@/components/workflow/question-answer/question-answer-runtime-prompt';
+import { WorkflowRuntimeStopAction } from '@/components/workflow/runtime/workflow-runtime-stop-action';
 import { SUGGESTED_QUESTIONS_LIMIT } from '@/constants/suggested-questions';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
+import {
+  type ConversationRouteHandoff,
+  resolveConversationRouteSync,
+} from '@/components/chat/runtime/conversation-route-handoff';
 
 interface WebappChatProps {
   versionUuid: string;
@@ -109,41 +113,6 @@ function sanitizeInputsForRestore(
   return sanitizedInputs;
 }
 
-function ApprovalWaitingState({
-  loading = false,
-  submitted = false,
-}: {
-  loading?: boolean;
-  submitted?: boolean;
-}) {
-  const t = useT();
-  const Icon = loading ? Loader2 : Send;
-
-  return (
-    <div className="relative overflow-hidden rounded-xl border bg-card px-5 py-5 text-center shadow-sm">
-      <div className="mx-auto flex size-11 items-center justify-center rounded-full bg-amber-500/10 text-amber-600 ring-1 ring-amber-500/20">
-        <Icon className={loading ? 'size-5 animate-spin' : 'size-5'} />
-      </div>
-      <div className="mt-3 text-sm font-semibold text-foreground">
-        {submitted
-          ? t('nodes.approval.runtime.submitted')
-          : loading
-            ? t('nodes.approval.runtime.paused')
-            : t('nodes.approval.runtime.requestSubmitted')}
-      </div>
-      <p className="mx-auto mt-1.5 max-w-md text-xs leading-5 text-muted-foreground">
-        {submitted
-          ? t('nodes.approval.runtime.waitingResume')
-          : t('nodes.approval.runtime.waitingForReviewer')}
-      </p>
-      <div className="mt-3 inline-flex items-center gap-1.5 rounded-full border bg-muted/40 px-3 py-1 text-xs text-muted-foreground">
-        <Clock3 className="size-3.5" />
-        <span>{t('nodes.approval.runtime.waitingForReviewerStatus')}</span>
-      </div>
-    </div>
-  );
-}
-
 const WebappChat: React.FC<WebappChatProps> = ({
   versionUuid,
   config,
@@ -151,13 +120,16 @@ const WebappChat: React.FC<WebappChatProps> = ({
   enablePrecheck = false,
 }) => {
   const t = useT();
+  const pathname = usePathname();
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const conversationIdParam = searchParams.get('convId');
   const { isOffline } = useWebAppOfflineState();
 
   // Stop functionality state
   const [isRunning, setIsRunning] = useState(false);
-  const [isStopping, setIsStopping] = useState(false);
+  const [stoppingByConversation, setStoppingByConversation] = useState<Record<string, boolean>>({});
   const isAuthenticated = useAuthStore.use.isAuthenticated();
-  const taskIdRef = useRef<string | null>(null);
   // Remember last submitted inputs to repopulate form
   const [lastInputs, setLastInputs] = useState<Record<string, unknown>>({});
   const lastInputsSignatureRef = useRef(stableStringify({}));
@@ -167,7 +139,6 @@ const WebappChat: React.FC<WebappChatProps> = ({
   const {
     transport,
     precheckWarnings,
-    latestTaskId,
     approvalForm,
     approvalToken,
     approvalLoading,
@@ -181,8 +152,14 @@ const WebappChat: React.FC<WebappChatProps> = ({
     retryApprovalForm,
     resumeWorkflowRun,
     continueWorkflowRun,
-  } = useWebappConversationTransport(versionUuid, { enablePrecheck });
+    recoverRun,
+    stopRun,
+    detachForeground,
+    connectionStateByConversation,
+  } = useWebappConversationTransport(versionUuid, { enablePrecheck, agentId });
   const controllerRef = useRef<SingleChatController | null>(null);
+  const routeHandoffRef = useRef<ConversationRouteHandoff | undefined>(undefined);
+  const lastInitializedConversationIdRef = useRef<string | null | undefined>(undefined);
   const controller = useMemo(() => {
     if (controllerRef.current) {
       return controllerRef.current;
@@ -192,38 +169,6 @@ const WebappChat: React.FC<WebappChatProps> = ({
     controllerRef.current = nextController;
     return nextController;
   }, [transport]);
-
-  // Handle stop workflow
-  const handleStop = useCallback(async () => {
-    const stopRunId = taskIdRef.current;
-    if (!stopRunId || !agentId) return;
-    setIsStopping(true);
-    try {
-      await workflowService.stopWorkflowTask(agentId, stopRunId);
-      const state = controller.store.getState();
-      state.setIsSending(false);
-      state.setIsPaused(false);
-      setIsRunning(false);
-      taskIdRef.current = null;
-
-      const activeId = state.activeId;
-      const conversation = activeId ? useChatStore.getState().conversations[activeId] : undefined;
-      const latestMessage = conversation?.messages[conversation.messages.length - 1];
-      const tempKey =
-        typeof latestMessage?.messageData?.tempKey === 'string'
-          ? latestMessage.messageData.tempKey
-          : '';
-      if (activeId && tempKey) {
-        useChatStore.getState().finalizeAiMessage(activeId, tempKey, {
-          status: 'stopped',
-        });
-      }
-    } catch {
-      toast.error(t('agents.workflow.stopFailed'));
-    } finally {
-      setIsStopping(false);
-    }
-  }, [agentId, controller, t]);
 
   useEffect(() => {
     controller.initTransport();
@@ -263,9 +208,19 @@ const WebappChat: React.FC<WebappChatProps> = ({
     controller.updateTransport(transport);
   }, [controller, transport]);
 
-  useEffect(() => {
-    taskIdRef.current = latestTaskId;
-  }, [latestTaskId]);
+  const replaceConversationRoute = useCallback(
+    (conversationId: string | null, nullMode: 'new-chat' | 'draft-persistence' = 'new-chat') => {
+      const params = new URLSearchParams(searchParams.toString());
+      routeHandoffRef.current = conversationId
+        ? { conversationId, mode: 'selection' }
+        : { conversationId: null, mode: nullMode };
+      if (conversationId) params.set('convId', conversationId);
+      else params.delete('convId');
+      const query = params.toString();
+      router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
+    },
+    [pathname, router, searchParams]
+  );
 
   useEffect(() => {
     const html = document.documentElement;
@@ -294,8 +249,7 @@ const WebappChat: React.FC<WebappChatProps> = ({
 
   const webappWorkflowConfig = useMemo(
     () => ({
-      allow_view_run_detail:
-        config.features.webapp_workflow_config?.allow_view_run_detail ?? true,
+      allow_view_run_detail: config.features.webapp_workflow_config?.allow_view_run_detail ?? true,
       auto_expand_run_detail:
         config.features.webapp_workflow_config?.auto_expand_run_detail ?? false,
     }),
@@ -346,12 +300,31 @@ const WebappChat: React.FC<WebappChatProps> = ({
     activeConversationId ? state.conversations[activeConversationId] : undefined
   );
   const latestActiveMessage = activeConversation?.messages[activeConversation.messages.length - 1];
+  const activeRunId =
+    (typeof latestActiveMessage?.WorkflowRunInfo?.id === 'string'
+      ? latestActiveMessage.WorkflowRunInfo.id
+      : '') ||
+    (typeof latestActiveMessage?.messageData?.workflow_run_id === 'string'
+      ? (latestActiveMessage.messageData.workflow_run_id as string)
+      : '');
   const latestRunStatus =
     latestActiveMessage?.WorkflowRunInfo?.status ?? latestActiveMessage?.clientState?.status;
+  const activeConversationIsDraft = Boolean(
+    activeConversation &&
+      (activeConversationId?.startsWith('draft-') || !activeConversation.conversationId)
+  );
+  const activeConnectionState = activeConversationId
+    ? (connectionStateByConversation[activeConversationId] ?? 'idle')
+    : 'idle';
+  const isStopping = activeConversationId
+    ? Boolean(stoppingByConversation[activeConversationId])
+    : false;
   const isApprovalPending = latestRunStatus === 'pending_approval';
   const isQuestionPending = latestRunStatus === 'pending_question' && Boolean(questionAnswerPrompt);
   const allowQuestionTextInput =
-    isQuestionPending && Boolean(questionAnswerPrompt) && questionAnswerPrompt?.choices.length === 0;
+    isQuestionPending &&
+    Boolean(questionAnswerPrompt) &&
+    questionAnswerPrompt?.choices.length === 0;
 
   useEffect(() => {
     syncQuestionAnswerRuntime(activeConversationId ?? undefined);
@@ -363,15 +336,123 @@ const WebappChat: React.FC<WebappChatProps> = ({
       if (!activeConversationId || !query) return;
       controller.send({
         query,
-        inputs: { question_answer_option_id: choice.id },
+        inputs: {
+          question_answer_option_id: choice.id,
+          ...(questionAnswerPrompt?.nodeId
+            ? { question_answer_node_id: questionAnswerPrompt.nodeId }
+            : {}),
+          ...(questionAnswerPrompt?.round !== undefined
+            ? { question_answer_round: questionAnswerPrompt.round }
+            : {}),
+        },
       });
     },
-    [activeConversationId, controller]
+    [activeConversationId, controller, questionAnswerPrompt]
   );
 
   useEffect(() => {
     setIsRunning(controllerIsSending);
   }, [controllerIsSending]);
+
+  useEffect(() => {
+    if (['completed', 'stopped', 'error', 'expired'].includes(String(latestRunStatus))) {
+      if (!activeConversationId) return;
+      setStoppingByConversation(current => {
+        if (!current[activeConversationId]) return current;
+        const next = { ...current };
+        delete next[activeConversationId];
+        return next;
+      });
+    }
+  }, [activeConversationId, latestRunStatus]);
+
+  const handleStop = useCallback(async () => {
+    if (!activeConversationId || !activeRunId || !agentId) return;
+    setStoppingByConversation(current => ({ ...current, [activeConversationId]: true }));
+    try {
+      await stopRun(activeConversationId);
+    } catch {
+      setStoppingByConversation(current => {
+        const next = { ...current };
+        delete next[activeConversationId];
+        return next;
+      });
+      toast.error(t('agents.workflow.stopFailed'));
+    }
+  }, [activeConversationId, activeRunId, agentId, stopRun, t]);
+
+  const interactionStopAction = useMemo(
+    () =>
+      activeRunId ? (
+        <WorkflowRuntimeStopAction
+          onStop={handleStop}
+          isStopping={isStopping}
+          disabled={approvalSubmitting || questionAnswerSubmitting}
+        />
+      ) : null,
+    [activeRunId, approvalSubmitting, handleStop, isStopping, questionAnswerSubmitting]
+  );
+
+  useEffect(() => {
+    if (lastInitializedConversationIdRef.current === conversationIdParam) return;
+    lastInitializedConversationIdRef.current = conversationIdParam;
+    if (conversationIdParam) {
+      routeHandoffRef.current = { conversationId: conversationIdParam, mode: 'selection' };
+      controller.init(conversationIdParam);
+      return;
+    }
+    routeHandoffRef.current = { conversationId: null, mode: 'new-chat' };
+    if (!activeConversationId || !activeConversationIsDraft) {
+      const draft = controller.createDraft(t('agents.workflow.chat.newConversation'));
+      controller.select(draft.id);
+    }
+  }, [activeConversationIsDraft, activeConversationId, controller, conversationIdParam, t]);
+
+  useEffect(() => {
+    const decision = resolveConversationRouteSync({
+      activeConversationId,
+      currentConversationId: conversationIdParam,
+      routeHandoff: routeHandoffRef.current,
+      activeConversationIsDraft,
+    });
+    routeHandoffRef.current = decision.routeHandoff;
+    if (decision.action.type === 'replace') {
+      replaceConversationRoute(decision.action.conversationId);
+    } else if (decision.action.type === 'clear') {
+      replaceConversationRoute(null);
+    }
+  }, [
+    activeConversationId,
+    activeConversationIsDraft,
+    conversationIdParam,
+    replaceConversationRoute,
+  ]);
+
+  const handleSelectConversation = useCallback(
+    (conversationId: string) => {
+      if (!conversationId) return;
+      if (activeConversationId && activeConversationId !== conversationId) {
+        detachForeground(activeConversationId);
+      }
+      routeHandoffRef.current = { conversationId, mode: 'selection' };
+      replaceConversationRoute(conversationId);
+      void controller.loadAndSelect(conversationId);
+    },
+    [activeConversationId, controller, detachForeground, replaceConversationRoute]
+  );
+
+  const handleStartNewConversation = useCallback(() => {
+    if (activeConversationId) detachForeground(activeConversationId);
+    const draft = controller.createDraft(t('agents.workflow.chat.newConversation'));
+    controller.select(draft.id);
+    replaceConversationRoute(null, 'draft-persistence');
+  }, [activeConversationId, controller, detachForeground, replaceConversationRoute, t]);
+
+  const handleReconnect = useCallback(() => {
+    if (!activeConversationId || !latestActiveMessage) return;
+    if (activeRunId) recoverRun(activeConversationId, activeRunId);
+    resumeWorkflowRun(activeConversationId, latestActiveMessage);
+  }, [activeConversationId, activeRunId, latestActiveMessage, recoverRun, resumeWorkflowRun]);
 
   useEffect(() => {
     if (!activeConversationId || !activeConversation?.messages.length) return;
@@ -385,6 +466,7 @@ const WebappChat: React.FC<WebappChatProps> = ({
         ? (latestMessage.messageData.workflow_run_id as string)
         : '');
     if (!workflowRunId) return;
+    recoverRun(activeConversationId, workflowRunId);
 
     const tempKey =
       typeof latestMessage.messageData?.tempKey === 'string'
@@ -407,58 +489,71 @@ const WebappChat: React.FC<WebappChatProps> = ({
     if (!isRestoredMessage && runStatus === 'pending_approval') {
       continueWorkflowRun(activeConversationId, latestMessage);
     }
-  }, [activeConversation, activeConversationId, continueWorkflowRun, resumeWorkflowRun]);
+  }, [
+    activeConversation,
+    activeConversationId,
+    continueWorkflowRun,
+    recoverRun,
+    resumeWorkflowRun,
+  ]);
 
   const approvalInputReplacement = useMemo(() => {
     if (isQuestionPending) return null;
     if (!isApprovalPending) return null;
 
     if (approvalSubmittedAction) {
-      return <ApprovalWaitingState loading submitted />;
+      return (
+        <WorkflowApprovalInteractionCard mode="submitted" secondaryAction={interactionStopAction} />
+      );
     }
 
     if (!approvalToken) {
-      return <ApprovalWaitingState />;
+      return (
+        <WorkflowApprovalInteractionCard mode="external" secondaryAction={interactionStopAction} />
+      );
     }
 
     if (approvalLoading) {
-      return <ApprovalWaitingState loading />;
+      return (
+        <WorkflowApprovalInteractionCard mode="loading" secondaryAction={interactionStopAction} />
+      );
     }
 
     if (!approvalForm && isApprovalFormAlreadySubmittedError(approvalError)) {
-      return <ApprovalCompletedState compact />;
+      return <WorkflowApprovalInteractionCard mode="completed" />;
     }
 
     if (!approvalForm && approvalError) {
       return (
-        <div className="rounded-xl border bg-card p-4 text-center shadow-sm">
-          <div className="text-sm font-medium">{t('nodes.approval.runtime.loadFailed')}</div>
-          <p className="mt-2 text-xs text-muted-foreground">
-            {approvalError instanceof Error
-              ? approvalError.message
-              : t('nodes.approval.runtime.loadFailedDescription')}
-          </p>
-          <Button type="button" size="sm" className="mt-3" onClick={retryApprovalForm}>
-            {t('nodes.approval.runtime.retry')}
-          </Button>
-        </div>
+        <WorkflowApprovalInteractionCard
+          mode="error"
+          error={approvalError}
+          onRetry={retryApprovalForm}
+          secondaryAction={interactionStopAction}
+        />
       );
     }
 
     if (approvalForm) {
+      const canSubmitInline = isWorkflowApprovalInlineAllowed({
+        surface: 'workflow-webapp',
+        form: approvalForm,
+      });
       return (
-        <div className="max-h-[45vh] overflow-y-auto rounded-xl border bg-card p-3 shadow-sm">
-          <ApprovalRuntimeForm
-            form={approvalForm}
-            onSubmit={payload => void submitApproval(payload)}
-            isSubmitting={approvalSubmitting}
-            submittedAction={approvalSubmittedAction}
-          />
-        </div>
+        <WorkflowApprovalInteractionCard
+          mode={canSubmitInline ? 'form' : 'external'}
+          form={approvalForm}
+          onSubmit={payload => void submitApproval(payload)}
+          isSubmitting={approvalSubmitting}
+          submittedAction={approvalSubmittedAction}
+          secondaryAction={interactionStopAction}
+        />
       );
     }
 
-    return <ApprovalWaitingState loading />;
+    return (
+      <WorkflowApprovalInteractionCard mode="loading" secondaryAction={interactionStopAction} />
+    );
   }, [
     approvalError,
     approvalForm,
@@ -469,8 +564,8 @@ const WebappChat: React.FC<WebappChatProps> = ({
     isApprovalPending,
     retryApprovalForm,
     submitApproval,
-    t,
     isQuestionPending,
+    interactionStopAction,
   ]);
 
   const questionAnswerNotice = useMemo(() => {
@@ -482,6 +577,7 @@ const WebappChat: React.FC<WebappChatProps> = ({
         round={questionAnswerPrompt.round}
         submitting={questionAnswerSubmitting}
         onSelectChoice={handleQuestionAnswerChoice}
+        secondaryAction={interactionStopAction}
       />
     );
   }, [
@@ -489,6 +585,7 @@ const WebappChat: React.FC<WebappChatProps> = ({
     isQuestionPending,
     questionAnswerPrompt,
     questionAnswerSubmitting,
+    interactionStopAction,
   ]);
 
   if (isOffline) {
@@ -535,6 +632,11 @@ const WebappChat: React.FC<WebappChatProps> = ({
           ) : null)
         }
         allowPendingQuestionInput={allowQuestionTextInput}
+        onSelectConversation={handleSelectConversation}
+        onStartNewConversation={handleStartNewConversation}
+        connectionState={activeConnectionState}
+        onReconnect={handleReconnect}
+        pendingInteractionControlsIntegrated={isApprovalPending || isQuestionPending}
       />
     </div>
   );

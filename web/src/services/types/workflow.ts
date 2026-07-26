@@ -28,6 +28,9 @@ export interface WorkflowRunsQuery {
 // Minimal item for workflow run list
 export interface WorkflowRunItem {
   id: string;
+  triggered_from?: string;
+  query?: string;
+  answer_preview?: string;
   sequence_number?: number;
   version?: string;
   status: WorkflowRunStatus | string; // allow unknown backend statuses gracefully
@@ -80,14 +83,7 @@ export type WorkflowPrecheckWarningCode =
   | 207015;
 
 export type WorkflowRunBillingErrorCode =
-  | '207011'
-  | '207012'
-  | '207013'
-  | '207014'
-  | 207011
-  | 207012
-  | 207013
-  | 207014;
+  '207011' | '207012' | '207013' | '207014' | 207011 | 207012 | 207013 | 207014;
 
 export interface WorkflowRunBillingError {
   code?: string | number;
@@ -122,6 +118,7 @@ export interface WorkflowNodeRunResponse {
 // Full run detail response shape
 export interface WorkflowRunDetail {
   id: string;
+  triggered_from?: string;
   sequence_number?: number;
   version?: string;
   status: WorkflowRunStatus | string;
@@ -166,6 +163,7 @@ export interface WorkflowRunList {
 // Detailed per-node execution record for a workflow run
 export interface WorkflowNodeExecution {
   id: string;
+  node_execution_id?: string;
   index: number;
   predecessor_node_id?: string | null;
   node_id: string;
@@ -183,6 +181,16 @@ export interface WorkflowNodeExecution {
   execution_metadata: Record<string, unknown> | null;
   extras: Record<string, unknown>;
   created_at: number | string; // unix seconds or RFC3339 string
+  created_at_ms?: number;
+  sequence?: number;
+  iteration_id?: string | null;
+  iteration_index?: number | null;
+  loop_id?: string | null;
+  loop_index?: number | null;
+  parent_execution_id?: string | null;
+  container_id?: string | null;
+  container_type?: 'iteration' | 'loop' | string | null;
+  round_index?: number | null;
   created_by_role?: string;
   created_by_account?: {
     id: string;
@@ -669,10 +677,7 @@ export interface LoopCompletedData {
 export type WorkflowExportVersion = 'draft' | 'published';
 
 export type WorkflowImportWarningType =
-  | 'unsupported_node'
-  | 'datasource_requires_config'
-  | 'knowledge_base_requires_config'
-  | string;
+  'unsupported_node' | 'datasource_requires_config' | 'knowledge_base_requires_config' | string;
 
 export interface WorkflowImportWarning {
   type: WorkflowImportWarningType;
@@ -751,21 +756,10 @@ export interface BuiltInWorkflow {
 export type BuiltInWorkflowList = BuiltInWorkflow[];
 
 export type PublishedRuntimeSurface =
-  | 'webapp'
-  | 'api'
-  | 'app_center'
-  | 'builtin_app'
-  | 'internal'
-  | string;
+  'webapp' | 'api' | 'app_center' | 'builtin_app' | 'internal' | string;
 
 export type PublishedRuntimeGrantSubject =
-  | 'public'
-  | 'organization'
-  | 'department'
-  | 'workspace'
-  | 'account'
-  | 'internal'
-  | string;
+  'public' | 'organization' | 'department' | 'workspace' | 'account' | 'internal' | string;
 
 export interface PublishedRuntimeSurfaceGrant {
   subject_type: PublishedRuntimeGrantSubject;

@@ -379,7 +379,7 @@ const CustomNode: React.FC<CustomNodeProps> = ({ id, data, selected }) => {
   };
 
   const rootRef = useRef<HTMLDivElement | null>(null);
-  useAutoDimensionsSync(id as string, rootRef.current);
+  useAutoDimensionsSync(id as string, rootRef.current, theme.autoHeight !== false);
   const setHoveredNodeId = useWorkflowStore.use.setHoveredNodeId();
 
   // No longer need to compute isComment here as it is selected above

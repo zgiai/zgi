@@ -18,6 +18,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/diagnosis"
 	workflow_file "github.com/zgiai/zgi/api/internal/modules/app/workflow/file"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine"
+	workflowpause "github.com/zgiai/zgi/api/internal/modules/app/workflow/pause"
 	automationaction "github.com/zgiai/zgi/api/internal/modules/automation/service/action"
 	automationdefinition "github.com/zgiai/zgi/api/internal/modules/automation/service/definition"
 	"github.com/zgiai/zgi/api/internal/modules/dataset/graphflow"
@@ -107,6 +108,7 @@ func RegisterWorkflowRoutes(router *gin.RouterGroup, deps WorkflowRouteDeps) {
 		workflowRunLogRepo,
 		workflowNodeRuntimeLogRepo,
 		workflowHandlerPkg.WithRuntimeLogAuthorization(agentsRepo, deps.OrganizationService),
+		workflowHandlerPkg.WithRuntimeLogEventReader(workflowpause.NewService(deps.DB)),
 	)
 	chatRuntimeService := runtimeservice.NewServiceWithDependencies(
 		runtimerepo.NewRepositories(deps.DB),
@@ -173,7 +175,7 @@ func RegisterWorkflowRoutes(router *gin.RouterGroup, deps WorkflowRouteDeps) {
 
 	approvalService := approvalruntime.NewServiceWithShortLinkService(deps.DB, deps.ShortLinkService)
 	registerApprovalTaskHandlers(deps.TaskRegistry, deps.TaskManager, approvalService, handler)
-	registerApprovalScheduledTasks(deps.Scheduler, approvalService, handler)
+	registerApprovalScheduledTasks(deps.Scheduler, approvalService, handler, deps.TaskManager)
 
 	approvalHandler := approvalruntime.NewHandler(approvalService, deps.TaskManager)
 	approvalRoutes := router.Group("/approval")
@@ -191,8 +193,7 @@ func RegisterWorkflowRoutes(router *gin.RouterGroup, deps WorkflowRouteDeps) {
 
 	workflowRunEvents := router.Group("/workflow-runs")
 	workflowRunEvents.Use(middleware.SetupRequired())
-	workflowRunEvents.Use(middleware.JWTWithOrganizationAndService(deps.AccountService))
-	workflowRunEvents.Use(middleware.SetAccountService(deps.AccountService))
+	workflowRunEvents.Use(middleware.WorkflowRunEventsAuthMiddleware(deps.AccountService))
 	workflowRunEvents.GET("/:workflow_run_id/events", handler.GetWorkflowRunEvents)
 
 	// Web app workflow configuration is public, but still requires the system to be initialized.

@@ -116,15 +116,6 @@ func (s *agentsService) CreateAgent(ctx context.Context, tenantID string, req in
 		return nil, err
 	}
 
-	// Duplicate name in tenant
-	exists, err := s.agentsRepo.ExistsByName(ctx, tenantID, name)
-	if err != nil {
-		return nil, err
-	}
-	if exists {
-		return nil, fmt.Errorf("agent with the same name already exists")
-	}
-
 	// Step 1: Get organization ID from workspace for quota checking and default model resolution.
 	var groupID *uuid.UUID
 	organizationID := strings.TrimSpace(tenantID)
@@ -180,7 +171,7 @@ func (s *agentsService) CreateAgent(ctx context.Context, tenantID string, req in
 	}
 
 	// Step 4: Create agent and record usage in transaction
-	err = s.db.Transaction(func(tx *gorm.DB) error {
+	err := s.db.Transaction(func(tx *gorm.DB) error {
 		// Create agent
 		if err := tx.WithContext(ctx).Create(ag).Error; err != nil {
 			return fmt.Errorf("failed to create agent: %w", err)
@@ -690,23 +681,12 @@ func (s *agentsService) UpdateAgent(ctx context.Context, agentID string, req int
 		}
 	}
 
-	// Apply name change with duplicate check (within target tenant)
+	// Names are display labels rather than identifiers. Keep validation local to this
+	// resource and allow multiple agents or workflows to share the same name.
 	if namePtr != nil {
 		newName := strings.TrimSpace(*namePtr)
 		if newName == "" {
 			return nil, fmt.Errorf("invalid name")
-		}
-		// Determine target workspace for name conflict check.
-		workspaceForName := ag.TenantID.String()
-		if workspaceIDPtr != nil && strings.TrimSpace(*workspaceIDPtr) != "" {
-			workspaceForName = strings.TrimSpace(*workspaceIDPtr)
-		}
-		if !strings.EqualFold(newName, ag.Name) {
-			if exists, err := s.agentsRepo.ExistsByName(ctx, workspaceForName, newName); err != nil {
-				return nil, err
-			} else if exists {
-				return nil, fmt.Errorf("agent with the same name already exists")
-			}
 		}
 		ag.Name = newName
 	}

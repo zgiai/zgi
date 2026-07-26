@@ -103,6 +103,7 @@ const WorkflowRunNodesList: React.FC<WorkflowRunNodesListProps> = ({
   const [containerRoundsViewSet, setContainerRoundsViewSet] = useState<Set<string>>(
     () => new Set()
   );
+  const [selectedRoundByNode, setSelectedRoundByNode] = useState<Record<string, number>>({});
   const isContainerRoundsView = (id: string) => containerRoundsViewSet.has(id);
   const enterContainerRoundsView = (id: string, e?: React.MouseEvent) => {
     e?.stopPropagation();
@@ -158,6 +159,15 @@ const WorkflowRunNodesList: React.FC<WorkflowRunNodesListProps> = ({
         const isContainer = isIteration || isLoop;
         const rounds = isLoop ? (raw.loopRounds ?? []) : (raw.iterationRounds ?? []);
         const shouldInlineContainerRounds = isContainer && isCanvasDetailOnly;
+        const selectedRoundPosition = Math.min(
+          selectedRoundByNode[itemKey] ?? Math.max(0, rounds.length - 1),
+          Math.max(0, rounds.length - 1)
+        );
+        const visibleRounds = shouldInlineContainerRounds
+          ? rounds[selectedRoundPosition]
+            ? [rounds[selectedRoundPosition]]
+            : []
+          : rounds;
         const inContainerRoundsView =
           isContainer && (shouldInlineContainerRounds || isContainerRoundsView(itemKey));
         const debugDetailsId = `${itemKey}-debug-details`;
@@ -195,10 +205,10 @@ const WorkflowRunNodesList: React.FC<WorkflowRunNodesListProps> = ({
               isCanvasDetailOnly
                 ? 'border-border/70 hover:border-border/70'
                 : isCanvasVariant
-                ? 'border-border/70 hover:border-border/80 hover:bg-background hover:shadow-md'
-                : isOpen(itemKey)
-                  ? 'shadow-[0_4px_12px_rgba(0,0,0,0.06),0_0_1px_rgba(0,0,0,0.1)] bg-card border-border/80 scale-[1.01]'
-                  : 'border-transparent hover:border-border/40 hover:bg-muted/10 hover:shadow-sm'
+                  ? 'border-border/70 hover:border-border/80 hover:bg-background hover:shadow-md'
+                  : isOpen(itemKey)
+                    ? 'shadow-[0_4px_12px_rgba(0,0,0,0.06),0_0_1px_rgba(0,0,0,0.1)] bg-card border-border/80 scale-[1.01]'
+                    : 'border-transparent hover:border-border/40 hover:bg-muted/10 hover:shadow-sm'
             )}
           >
             {!isCanvasDetailOnly ? (
@@ -275,6 +285,33 @@ const WorkflowRunNodesList: React.FC<WorkflowRunNodesListProps> = ({
                 </div>
               </div>
             ) : null}
+            {isCanvasDetailOnly && group.executions.length > 1 ? (
+              <div className="mb-1.5 flex items-center gap-1.5 rounded-md border border-border/50 bg-muted/20 px-2 py-1.5">
+                <span className="mr-auto text-[10px] text-muted-foreground">
+                  {runtimeLabel('totalCount', { count: group.executions.length })}
+                </span>
+                <div className="flex max-w-full gap-1 overflow-x-auto">
+                  {executions.map((execution, index) => (
+                    <button
+                      key={`${group.key}-canvas-execution-${execution.executionId ?? index}`}
+                      type="button"
+                      className={cn(
+                        'h-5 min-w-5 rounded border px-1.5 text-[10px] tabular-nums transition-colors',
+                        index === selectedIndex
+                          ? 'border-primary bg-primary/10 text-primary'
+                          : 'border-border/60 bg-background text-muted-foreground hover:bg-muted'
+                      )}
+                      onClick={event => {
+                        event.stopPropagation();
+                        setSelectedExecutionByNode(prev => ({ ...prev, [group.key]: index }));
+                      }}
+                    >
+                      {index + 1}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : null}
             {isCanvasVariant && previewRows.length > 0 ? (
               <div className={cn('grid gap-1.5', isCanvasDetailOnly ? 'mt-0' : 'mt-2')}>
                 {previewRows.map(row => (
@@ -285,7 +322,14 @@ const WorkflowRunNodesList: React.FC<WorkflowRunNodesListProps> = ({
                       row.tone ? previewToneClass[row.tone] : 'border-border/50 bg-muted/20'
                     )}
                   >
-                    <div className="mb-0.5 text-[10px] font-medium text-muted-foreground">
+                    <div
+                      className={cn(
+                        'mb-1 text-[11px] font-semibold leading-4 tracking-tight',
+                        row.labelKind === 'variable'
+                          ? 'text-primary'
+                          : 'text-foreground/80'
+                      )}
+                    >
                       {row.label}
                     </div>
                     <RuntimeValuePreview
@@ -297,6 +341,7 @@ const WorkflowRunNodesList: React.FC<WorkflowRunNodesListProps> = ({
                           : 2
                       }
                       expandable
+                      bounded={isCanvasVariant}
                       maxRecordEntries={row.maxRecordEntries}
                       runtimeLabel={runtimeLabel}
                     />
@@ -460,6 +505,7 @@ const WorkflowRunNodesList: React.FC<WorkflowRunNodesListProps> = ({
                         <div className="bg-muted/10 rounded-md overflow-hidden border border-border/10 shadow-[inset_0_1px_4px_rgba(0,0,0,0.03)] technical-scrollbar">
                           <RuntimeStructuredView
                             value={raw.modelInput ?? {}}
+                            bounded={isCanvasVariant}
                             runtimeLabel={runtimeLabel}
                           />
                         </div>
@@ -500,6 +546,7 @@ const WorkflowRunNodesList: React.FC<WorkflowRunNodesListProps> = ({
                         <div className="bg-muted/10 rounded-md overflow-hidden border border-border/10 shadow-[inset_0_1px_4px_rgba(0,0,0,0.03)] technical-scrollbar">
                           <RuntimeStructuredView
                             value={raw.nodeInput ?? {}}
+                            bounded={isCanvasVariant}
                             runtimeLabel={runtimeLabel}
                           />
                         </div>
@@ -539,6 +586,7 @@ const WorkflowRunNodesList: React.FC<WorkflowRunNodesListProps> = ({
                         <div className="bg-muted/10 rounded-md overflow-hidden border border-border/10 shadow-[inset_0_1px_4px_rgba(0,0,0,0.03)] technical-scrollbar">
                           <RuntimeStructuredView
                             value={raw.loopInputs ?? {}}
+                            bounded={isCanvasVariant}
                             runtimeLabel={runtimeLabel}
                           />
                         </div>
@@ -593,6 +641,7 @@ const WorkflowRunNodesList: React.FC<WorkflowRunNodesListProps> = ({
                         <div className="bg-muted/10 rounded-md overflow-hidden border border-border/10 shadow-[inset_0_1px_4px_rgba(0,0,0,0.03)] technical-scrollbar">
                           <RuntimeStructuredView
                             value={raw.nodeOutput ?? {}}
+                            bounded={isCanvasVariant}
                             runtimeLabel={runtimeLabel}
                           />
                         </div>
@@ -641,6 +690,7 @@ const WorkflowRunNodesList: React.FC<WorkflowRunNodesListProps> = ({
                         <div className="bg-muted/10 rounded-md overflow-hidden border border-border/10 shadow-[inset_0_1px_4px_rgba(0,0,0,0.03)] technical-scrollbar">
                           <RuntimeStructuredView
                             value={raw.loopOutputs ?? {}}
+                            bounded={isCanvasVariant}
                             runtimeLabel={runtimeLabel}
                           />
                         </div>
@@ -694,6 +744,7 @@ const WorkflowRunNodesList: React.FC<WorkflowRunNodesListProps> = ({
                         <div className="bg-muted/10 rounded-md overflow-hidden border border-border/10 shadow-[inset_0_1px_4px_rgba(0,0,0,0.03)] technical-scrollbar">
                           <RuntimeStructuredView
                             value={raw.processData ?? {}}
+                            bounded={isCanvasVariant}
                             runtimeLabel={runtimeLabel}
                           />
                         </div>
@@ -747,6 +798,7 @@ const WorkflowRunNodesList: React.FC<WorkflowRunNodesListProps> = ({
                         <div className="bg-muted/10 rounded-md overflow-hidden border border-border/10 shadow-[inset_0_1px_4px_rgba(0,0,0,0.03)] technical-scrollbar">
                           <RuntimeStructuredView
                             value={raw.executionMetadata ?? {}}
+                            bounded={isCanvasVariant}
                             runtimeLabel={runtimeLabel}
                           />
                         </div>
@@ -772,9 +824,7 @@ const WorkflowRunNodesList: React.FC<WorkflowRunNodesListProps> = ({
                     </div>
                   </button>
                 )}
-                {isContainer &&
-                  inContainerRoundsView &&
-                  !shouldInlineContainerRounds && (
+                {isContainer && inContainerRoundsView && !shouldInlineContainerRounds && (
                   <button
                     type="button"
                     className="inline-flex w-fit items-center gap-1 rounded-md border border-border/40 bg-muted/30 px-2 py-1 text-xs text-foreground hover:bg-muted transition-colors"
@@ -783,12 +833,42 @@ const WorkflowRunNodesList: React.FC<WorkflowRunNodesListProps> = ({
                     <ChevronLeft className="h-3 w-3" />
                     {t('agents.workflow.backToSummary')}
                   </button>
-                  )}
+                )}
                 {isContainer && inContainerRoundsView && rounds.length > 0 && (
                   <div className="grid gap-1 bg-muted shadow-md rounded-md p-1">
-                    {rounds.map(round => {
+                    {shouldInlineContainerRounds && rounds.length > 1 ? (
+                      <div className="flex items-center gap-1 rounded border border-border/50 bg-background px-1.5 py-1">
+                        <span className="mr-auto text-[10px] text-muted-foreground">
+                          {runtimeLabel('totalCount', { count: rounds.length })}
+                        </span>
+                        <div className="flex max-w-full gap-1 overflow-x-auto">
+                          {rounds.map((round, index) => (
+                            <button
+                              key={`${itemKey}-canvas-round-${round.index}`}
+                              type="button"
+                              className={cn(
+                                'h-5 min-w-5 rounded border px-1.5 text-[10px] tabular-nums transition-colors',
+                                index === selectedRoundPosition
+                                  ? 'border-primary bg-primary/10 text-primary'
+                                  : 'border-border/60 bg-background text-muted-foreground hover:bg-muted'
+                              )}
+                              onClick={event => {
+                                event.stopPropagation();
+                                setSelectedRoundByNode(previous => ({
+                                  ...previous,
+                                  [itemKey]: index,
+                                }));
+                              }}
+                            >
+                              {index + 1}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    ) : null}
+                    {visibleRounds.map(round => {
                       const roundKey = `${itemKey}-round-${round.index}`;
-                      const roundOpen = isRoundOpen(roundKey, shouldInlineContainerRounds);
+                      const roundOpen = shouldInlineContainerRounds || isRoundOpen(roundKey);
                       const roundElapsedTime =
                         round.elapsedTime ?? getNodesElapsedTime(round.nodes);
                       return (
@@ -797,16 +877,23 @@ const WorkflowRunNodesList: React.FC<WorkflowRunNodesListProps> = ({
                           className="rounded-md border p-1 bg-background"
                         >
                           <div
-                            className={cn('flex items-center justify-between cursor-pointer')}
-                            onClick={() => toggleOpen(roundKey)}
+                            className={cn(
+                              'flex items-center justify-between',
+                              !shouldInlineContainerRounds && 'cursor-pointer'
+                            )}
+                            onClick={() => {
+                              if (!shouldInlineContainerRounds) toggleOpen(roundKey);
+                            }}
                           >
                             <div className="flex items-center gap-1">
-                              <ChevronDown
-                                className={cn(
-                                  'h-3.5 w-3.5 transition-transform',
-                                  roundOpen ? '' : '-rotate-90'
-                                )}
-                              />
+                              {!shouldInlineContainerRounds ? (
+                                <ChevronDown
+                                  className={cn(
+                                    'h-3.5 w-3.5 transition-transform',
+                                    roundOpen ? '' : '-rotate-90'
+                                  )}
+                                />
+                              ) : null}
                               <span className="text-xs font-medium text-foreground">
                                 {isLoop
                                   ? t('agents.workflow.loopRound', { index: round.index + 1 })

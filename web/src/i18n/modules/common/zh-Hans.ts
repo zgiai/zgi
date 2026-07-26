@@ -331,6 +331,7 @@ const messages: CommonMessages = {
 
   sensitiveOutput: {
     blocked: '抱歉，我无法处理这个问题，请换一个试试吧。',
+    timelineBlocked: '部分内容已被拦截',
   },
 
   notificationSms: {

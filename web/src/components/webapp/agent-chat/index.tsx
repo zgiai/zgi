@@ -25,7 +25,7 @@ import {
   type ConversationRouteHandoff,
   resolveConversationRouteSync,
   shouldStartNewConversationForRoute,
-} from './route-handoff';
+} from '@/components/chat/runtime/conversation-route-handoff';
 
 interface AgentWebappChatProps {
   webAppId: string;

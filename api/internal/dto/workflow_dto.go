@@ -660,6 +660,8 @@ type WorkflowRunLogResponse struct {
 	SequenceNumber   int                       `json:"sequence_number"`
 	Version          string                    `json:"version"`
 	TriggeredFrom    string                    `json:"triggered_from"`
+	Query            string                    `json:"query,omitempty"`
+	AnswerPreview    string                    `json:"answer_preview,omitempty"`
 	Status           string                    `json:"status"`
 	ElapsedTime      float64                   `json:"elapsed_time"`
 	TotalTokens      int64                     `json:"total_tokens"`
@@ -689,6 +691,7 @@ type WorkflowRunDetailResponse struct {
 	ID               string                    `json:"id"`
 	SequenceNumber   int                       `json:"sequence_number"`
 	Version          string                    `json:"version"`
+	TriggeredFrom    string                    `json:"triggered_from"`
 	Graph            map[string]interface{}    `json:"graph"`
 	Features         map[string]interface{}    `json:"features"`
 	Inputs           map[string]interface{}    `json:"inputs"`

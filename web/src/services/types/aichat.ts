@@ -276,6 +276,7 @@ export interface AIChatWorkflowRunApprovalMetadata extends Record<string, unknow
   approval_token?: string;
   approval_url?: string;
   approval_form?: unknown;
+  ui_approval_allowed?: boolean;
   status?: string;
 }
 
@@ -358,6 +359,9 @@ export interface AIChatGeneratedFile {
 
 export interface AIChatMessageMetadata {
   usage?: AIChatUsage;
+  answer_before_timeline_length?: number;
+  presentation_version?: number;
+  presentation?: AIChatPresentationProjection;
   system_prompt_version?: string;
   trace_id?: string;
   has_trace?: boolean;
@@ -383,6 +387,37 @@ export interface AIChatMessageMetadata {
   [key: string]: unknown;
 }
 
+export type AIChatPresentationContentPhase = 'provisional' | 'process' | 'final';
+
+export interface AIChatPresentationPosition {
+  presentation_version?: number;
+  presentation_id?: string;
+  presentation_sequence?: number;
+}
+
+export interface AIChatPresentationTextItem extends AIChatPresentationPosition {
+  kind: 'text';
+  segment_id: string;
+  content: string;
+  content_phase: AIChatPresentationContentPhase;
+  created_at_ms?: number;
+}
+
+export interface AIChatPresentationEventItem extends AIChatPresentationPosition {
+  kind: 'event';
+  event_type: string;
+  event_ref?: string;
+  created_at_ms?: number;
+}
+
+export type AIChatPresentationItem = AIChatPresentationTextItem | AIChatPresentationEventItem;
+
+export interface AIChatPresentationProjection {
+  version?: number;
+  last_sequence?: number;
+  items?: AIChatPresentationItem[];
+}
+
 export interface AIChatUserInputOption {
   label: string;
   value?: string;
@@ -396,7 +431,7 @@ export interface AIChatUserInputQuestion {
   options?: AIChatUserInputOption[];
 }
 
-export interface AIChatUserInputRequest {
+export interface AIChatUserInputRequest extends AIChatPresentationPosition {
   request_id?: string;
   message?: string;
   status?: 'waiting_question' | 'answered' | string;
@@ -416,7 +451,7 @@ export interface AIChatUserInputAnswer {
   value: string;
 }
 
-export interface AIChatUserInputResponse {
+export interface AIChatUserInputResponse extends AIChatPresentationPosition {
   request_id?: string;
   message?: string;
   status?: 'answered' | string;
@@ -556,18 +591,24 @@ export interface AIChatMessageStartEventData {
   created_at?: number;
 }
 
-export interface AIChatMessageChunkEventData {
+export interface AIChatMessageChunkEventData extends AIChatPresentationPosition {
   conversation_id: string;
   message_id: string;
   answer?: string;
+  segment_id?: string;
+  segment_content?: string;
+  content_phase?: AIChatPresentationContentPhase;
   __sensitiveOutputBlocked?: boolean;
 }
 
-export interface AIChatMessageRetractEventData {
+export interface AIChatMessageRetractEventData extends AIChatPresentationPosition {
   conversation_id: string;
   message_id: string;
   content?: string;
   length?: number;
+  segment_id?: string;
+  segment_content?: string;
+  content_phase?: AIChatPresentationContentPhase;
   created_at?: number;
 }
 
@@ -575,6 +616,7 @@ export interface AIChatMessageEndEventData {
   conversation_id: string;
   message_id: string;
   status: AIChatMessageStatus;
+  answer?: string;
   metadata?: AIChatMessageMetadata;
 }
 
@@ -975,6 +1017,13 @@ export interface AIChatAgentProgressEventData {
   created_at?: number;
 }
 
+export interface AIChatWorkflowQuestionAnswerInputs {
+  query: string;
+  question_answer_option_id?: string;
+  question_answer_node_id?: string;
+  question_answer_round?: string | number;
+}
+
 export interface AIChatIntermediateAnswerEventData {
   conversation_id: string;
   message_id: string;
@@ -1019,6 +1068,16 @@ export interface AIChatWorkflowEventData extends Record<string, unknown> {
   elapsed_time?: number;
   error?: string;
   created_at?: number;
+  sequence?: number;
+  schema_version?: number;
+  payload_version?: number;
+  execution_id?: string;
+  execution_generation?: number;
+  pause_id?: string;
+  pause_generation?: number;
+  invocation_id?: string;
+  invocation_mode?: string;
+  invocation_protocol_version?: number;
 }
 
 export interface AIChatWorkflowNodeEventData extends AIChatWorkflowEventData {
@@ -1044,6 +1103,7 @@ export interface AIChatWorkflowPausedEventData extends AIChatWorkflowEventData {
   approval_token?: string;
   approval_url?: string;
   approval_form?: unknown;
+  ui_approval_allowed?: boolean;
 }
 
 export interface AIChatFileParseStartEventData {

@@ -21,6 +21,7 @@ import {
   type WorkflowBillingTranslationScope,
   type WorkflowTranslator,
 } from '@/utils/workflow/billing';
+import { classifyWorkflowRuntimeError } from '@/utils/workflow/runtime-error';
 
 interface WorkflowPrecheckWarningView {
   code?: string;
@@ -44,10 +45,7 @@ export function useWorkflowBillingFeedback(
 ): UseWorkflowBillingFeedbackReturn {
   const router = useRouter();
   const t = useT();
-  const billingT = useCallback<WorkflowTranslator>(
-    (key, values) => t(key as never, values),
-    [t]
-  );
+  const billingT = useCallback<WorkflowTranslator>((key, values) => t(key as never, values), [t]);
   const currentWorkspace = useWorkspaceStore.use.currentWorkspace();
   const { canManageModelConfig: isAdmin } = useAccountCapabilities();
 
@@ -59,6 +57,7 @@ export function useWorkflowBillingFeedback(
       const message = getWorkflowBillingErrorMessage(billingT, scope, parsed, {
         isAdmin,
         workspaceId: currentWorkspace?.id,
+        includeRuntimeDetails: true,
       });
       return message?.description;
     },
@@ -78,22 +77,24 @@ export function useWorkflowBillingFeedback(
       }
 
       const code = resolveWorkflowBillingErrorCode(parsed?.code, parsed?.message);
+      const runtimeErrorKind = classifyWorkflowRuntimeError(parsed?.message);
       const isBillingError = isWorkflowBillingErrorCode(code);
       const toastFn = isBillingError ? toast.warning : toast.error;
 
       toastFn(message.title, {
-        id: code ? `workflow-billing-${scope}-${code}` : undefined,
+        id: code
+          ? `workflow-billing-${scope}-${code}`
+          : runtimeErrorKind
+            ? `workflow-runtime-${scope}-${runtimeErrorKind}`
+            : undefined,
         description: message.description,
         classNames: isBillingError ? workflowBillingToastClassNames : undefined,
         action:
           isAdmin && message.href && message.actionLabel
-            ? createElement(
-                WorkflowBillingToastAction,
-                {
-                  label: message.actionLabel,
-                  onClick: () => router.push(message.href as string),
-                }
-              )
+            ? createElement(WorkflowBillingToastAction, {
+                label: message.actionLabel,
+                onClick: () => router.push(message.href as string),
+              })
             : undefined,
       });
       return true;

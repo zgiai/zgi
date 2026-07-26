@@ -107,6 +107,36 @@ func TestAgentsService_UpdateWorkflowTenantRequiresMovePermission(t *testing.T) 
 	require.False(t, repo.updateAgentCalled)
 }
 
+func TestAgentsService_UpdateAgentAllowsDuplicateDisplayName(t *testing.T) {
+	ctx := webAppStatusTestContext()
+	agentID := uuid.MustParse("11111111-1111-1111-1111-111111111111")
+
+	for _, agentType := range []string{"AGENT", "WORKFLOW"} {
+		t.Run(agentType, func(t *testing.T) {
+			repo := &stubWebAppStatusRepository{
+				agent: &Agent{
+					ID:         agentID,
+					TenantID:   uuid.MustParse("22222222-2222-2222-2222-222222222222"),
+					Name:       "Original",
+					AgentsType: agentType,
+				},
+			}
+			service := &agentsService{
+				agentsRepo:        repo,
+				enterpriseService: &stubWebAppStatusOrganizationService{allowed: true},
+			}
+
+			updated, err := service.UpdateAgent(ctx, agentID.String(), map[string]interface{}{
+				"name": "Existing display name",
+			})
+
+			require.NoError(t, err)
+			require.Equal(t, "Existing display name", updated.(*Agent).Name)
+			require.True(t, repo.updateAgentCalled)
+		})
+	}
+}
+
 func TestAgentsService_UpdateWebAppStatus_RejectsInvalidInputs(t *testing.T) {
 	service := &agentsService{}
 

@@ -35,7 +35,7 @@ func ParseQuestions(raw string, count int, existing []string) ([]Question, []str
 			continue
 		}
 		normalized := normalizeQuestions(questions, count, existing)
-		if len(normalized) > 0 {
+		if len(normalized) > 0 || len(warnings) > 0 {
 			return normalized, uniqueTrimmed(warnings, 6), nil
 		}
 	}
@@ -65,6 +65,9 @@ func parseJSONQuestions(raw string) ([]Question, []string, error) {
 			if questions := parseQuestionValue(payload); len(questions) > 0 {
 				return questions, response.Warnings, nil
 			}
+		}
+		if len(response.Warnings) > 0 {
+			return nil, response.Warnings, nil
 		}
 	}
 

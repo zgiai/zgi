@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gin-gonic/gin"
 	"github.com/zgiai/zgi/api/internal/dto"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/diagnosis"
 	workflowpause "github.com/zgiai/zgi/api/internal/modules/app/workflow/pause"
@@ -18,7 +17,7 @@ import (
 )
 
 // executeWorkflowStream executes workflow and sends events through channels.
-func (h *WorkflowHandler) executeWorkflowStream(c *gin.Context, ctx context.Context, workspaceID, appID string, req *dto.DraftWorkflowRunRequest, accountID, taskID, workflowRunID, workflowID string, systemInputs map[string]interface{}, sequenceNumber int, resultChan chan<- *WorkflowStreamEvent, errorChan chan<- error, doneChan chan<- map[string]interface{}, isDraft bool, runType string, triggeredFrom string) {
+func (h *WorkflowHandler) executeWorkflowStream(ctx context.Context, workspaceID, appID string, req *dto.DraftWorkflowRunRequest, accountID, taskID, workflowRunID, workflowID string, systemInputs map[string]interface{}, sequenceNumber int, resultChan chan<- *WorkflowStreamEvent, errorChan chan<- error, doneChan chan<- map[string]interface{}, isDraft bool, runType string, triggeredFrom string) {
 	// Record workflow start time for elapsed time calculation
 	workflowStartTime := time.Now()
 
@@ -339,9 +338,13 @@ func (h *WorkflowHandler) executeWorkflowStream(c *gin.Context, ctx context.Cont
 			nodeLogInterface, err := workflowService.CreateWorkflowNodeRuntimeLog(ctx, workspaceID, appID, workflowID, "workflow-run", workflowRunID, currentNodeID, nodeType, title, nodeIndex, predecessorNodeID, nodeInputs, accountID)
 			if err != nil {
 				logger.ErrorContext(ctx, "failed to create workflow node runtime log", "node_id", currentNodeID, "node_type", nodeType, err)
-				// Continue execution even if logging fails
+				errorChan <- fmt.Errorf("create durable workflow node projection for %s: %w", currentNodeID, err)
+				return
 			} else if nodeLog, ok := nodeLogInterface.(*WorkflowNodeRuntimeLog); ok {
 				nodeLogID = nodeLog.ID
+			} else {
+				errorChan <- fmt.Errorf("create durable workflow node projection for %s: unexpected log type %T", currentNodeID, nodeLogInterface)
+				return
 			}
 		}
 
@@ -671,6 +674,7 @@ func (h *WorkflowHandler) executeWorkflowStream(c *gin.Context, ctx context.Cont
 				Ctx:                    ctx,
 				WorkspaceID:            workspaceID,
 				AppID:                  appID,
+				AccountID:              accountID,
 				WorkflowRunID:          workflowRunID,
 				WorkflowID:             workflowID,
 				RunType:                runType,
@@ -693,6 +697,7 @@ func (h *WorkflowHandler) executeWorkflowStream(c *gin.Context, ctx context.Cont
 				ExecutionOutputs:       executionOutputs,
 				PredecessorNodeID:      predecessorNodeID,
 				RequestInputs:          req.Inputs,
+				SystemInputs:           systemInputs,
 				ResponseMode:           responseMode,
 				SharedVariablePool:     sharedVariablePool,
 				WorkflowService:        workflowService,

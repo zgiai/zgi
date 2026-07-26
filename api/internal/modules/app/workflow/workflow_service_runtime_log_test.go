@@ -9,7 +9,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/dto"
+	"github.com/zgiai/zgi/api/internal/modules/app/conversation"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine/entities"
 	workflowpause "github.com/zgiai/zgi/api/internal/modules/app/workflow/pause"
@@ -117,6 +119,47 @@ type mockWorkflowRepository struct {
 	draft *Workflow
 }
 
+func TestWorkflowRunStepCountOmitsUnexecutedGraphPlaceholders(t *testing.T) {
+	repo := &mockWorkflowNodeRuntimeLogRepo{logsByWorkflowRunID: []WorkflowNodeRuntimeLog{
+		{NodeID: "inactive-loop", NodeType: "loop", Status: "pending"},
+		{NodeID: "inactive-end", NodeType: "end", Status: "skipped"},
+		{NodeID: "approval", NodeType: "approval", Status: "paused"},
+		{NodeID: "approval", NodeType: "approval", Status: "succeeded"},
+		{NodeID: "active-end", NodeType: "end", Status: "succeeded"},
+	}}
+	service := &WorkflowService{workflowNodeRuntimeLogRepo: repo}
+	if got := service.workflowRunNodeStepCount(context.Background(), "run-1"); got != 2 {
+		t.Fatalf("workflowRunNodeStepCount() = %d, want 2", got)
+	}
+	if got := service.workflowRunTotalSteps(context.Background(), WorkflowRunLog{ID: "run-1", TotalSteps: 14}); got != 2 {
+		t.Fatalf("workflowRunTotalSteps() = %d, want visible node count 2", got)
+	}
+}
+
+func TestGetWorkflowRunNodeExecutionsOmitsUnexecutedGraphPlaceholders(t *testing.T) {
+	repo := &mockWorkflowNodeRuntimeLogRepo{logsByWorkflowRunID: []WorkflowNodeRuntimeLog{
+		{ID: "pending", AgentID: "agent-1", NodeID: "inactive-loop", NodeType: "loop", Status: "pending"},
+		{ID: "skipped", AgentID: "agent-1", NodeID: "inactive-end", NodeType: "end", Status: "skipped"},
+		{ID: "completed", AgentID: "agent-1", NodeID: "active-end", NodeType: "end", Status: "succeeded"},
+	}}
+	service := &WorkflowService{workflowNodeRuntimeLogRepo: repo}
+
+	raw, err := service.GetWorkflowRunNodeExecutions(context.Background(), "tenant-1", "agent-1", "run-1")
+	if err != nil {
+		t.Fatalf("GetWorkflowRunNodeExecutions returned error: %v", err)
+	}
+	response, ok := raw.(*dto.WorkflowRunNodeExecutionListResponse)
+	if !ok {
+		t.Fatalf("response type = %T, want *dto.WorkflowRunNodeExecutionListResponse", raw)
+	}
+	if len(response.Data) != 1 {
+		t.Fatalf("visible node executions = %d, want 1: %#v", len(response.Data), response.Data)
+	}
+	if response.Data[0].NodeID != "active-end" {
+		t.Fatalf("visible node ID = %q, want active-end", response.Data[0].NodeID)
+	}
+}
+
 func (m *mockWorkflowRepository) Create(ctx context.Context, workflow *Workflow) error {
 	return nil
 }
@@ -200,6 +243,20 @@ type mockWorkflowRunLogRepo struct {
 	lastRuntimeLimit  int
 }
 
+type workflowRunMessageLookupStub struct {
+	messages map[string]*conversation.AgentMessage
+}
+
+func (s *workflowRunMessageLookupStub) GetFirstMessagesByWorkflowRunIDs(_ context.Context, workflowRunIDs []string) (map[string]*conversation.AgentMessage, error) {
+	result := make(map[string]*conversation.AgentMessage, len(workflowRunIDs))
+	for _, workflowRunID := range workflowRunIDs {
+		if message, exists := s.messages[workflowRunID]; exists {
+			result[workflowRunID] = message
+		}
+	}
+	return result, nil
+}
+
 func (m *mockWorkflowRunLogRepo) Create(ctx context.Context, log *WorkflowRunLog) error {
 	if m.createErr != nil {
 		return m.createErr
@@ -281,6 +338,57 @@ func (m *mockWorkflowRunLogRepo) MigrateWorkflowRunLogsByAccountID(ctx context.C
 	return 0, nil
 }
 
+func TestGetWorkflowRunsIncludesLinkedConversationSummary(t *testing.T) {
+	messageID := uuid.New()
+	conversationID := uuid.New()
+	answer := strings.Repeat("回答", 100)
+	service := &WorkflowService{
+		workflowRunLogRepo: &mockWorkflowRunLogRepo{createdLogs: []WorkflowRunLog{{
+			ID:            "run-1",
+			AgentID:       "agent-1",
+			Status:        dto.WorkflowRunStatusSucceeded,
+			TotalSteps:    1,
+			CreatedAt:     time.Unix(100, 0),
+			TriggeredFrom: "web-app",
+		}}},
+		workflowRunMessageLookup: &workflowRunMessageLookupStub{messages: map[string]*conversation.AgentMessage{
+			"run-1": {
+				ID:             messageID,
+				ConversationID: conversationID,
+				Query:          "summarize this conversation",
+				Answer:         answer,
+			},
+		}},
+	}
+
+	response, err := service.GetWorkflowRuns(
+		context.Background(),
+		"agent-1",
+		&dto.WorkflowRunsRequest{Page: 1, Limit: 20},
+		"workspace-1",
+		"account-1",
+	)
+	if err != nil {
+		t.Fatalf("GetWorkflowRuns returned error: %v", err)
+	}
+	if len(response.Data) != 1 {
+		t.Fatalf("run count = %d, want 1", len(response.Data))
+	}
+	run := response.Data[0]
+	if run.Query != "summarize this conversation" {
+		t.Fatalf("query = %q", run.Query)
+	}
+	if run.AnswerPreview != string([]rune(answer)[:160]) {
+		t.Fatalf("answer preview rune length = %d, want 160", len([]rune(run.AnswerPreview)))
+	}
+	if run.ConversationID == nil || *run.ConversationID != conversationID.String() {
+		t.Fatalf("conversation ID = %v", run.ConversationID)
+	}
+	if run.MessageID == nil || *run.MessageID != messageID.String() {
+		t.Fatalf("message ID = %v", run.MessageID)
+	}
+}
+
 func TestRunDraftWorkflowNode_LinksNodeRuntimeLogToSingleStepRun(t *testing.T) {
 	graph := `{
 		"nodes": [
@@ -347,7 +455,7 @@ func TestRunDraftWorkflowNode_LinksNodeRuntimeLogToSingleStepRun(t *testing.T) {
 	}
 }
 
-func TestRunDraftWorkflowNode_OmitsWorkflowRunIDWhenRunLogCreateFails(t *testing.T) {
+func TestRunDraftWorkflowNode_StopsWhenRunLogCreateFails(t *testing.T) {
 	graph := `{
 		"nodes": [
 			{
@@ -386,22 +494,17 @@ func TestRunDraftWorkflowNode_OmitsWorkflowRunIDWhenRunLogCreateFails(t *testing
 		&dto.DraftWorkflowNodeRunRequest{Inputs: map[string]interface{}{"query": "hello"}},
 		"account-1",
 	)
-	if err != nil {
-		t.Fatalf("RunDraftWorkflowNode returned error: %v", err)
+	if err == nil {
+		t.Fatal("RunDraftWorkflowNode error = nil, want durable run creation failure")
 	}
-
-	response, ok := resp.(map[string]interface{})
-	if !ok {
-		t.Fatalf("response type = %T, want map[string]interface{}", resp)
+	if !strings.Contains(err.Error(), "create durable workflow node run") {
+		t.Fatalf("RunDraftWorkflowNode error = %v, want durable run failure", err)
 	}
-	if _, exists := response["workflow_run_id"]; exists {
-		t.Fatalf("workflow_run_id should be omitted when run log is not persisted, got %v", response["workflow_run_id"])
+	if resp != nil {
+		t.Fatalf("response = %#v, want nil", resp)
 	}
-	if len(nodeLogRepo.createdLogs) != 1 {
-		t.Fatalf("created node logs = %d, want 1", len(nodeLogRepo.createdLogs))
-	}
-	if nodeLogRepo.createdLogs[0].WorkflowRunID != nil {
-		t.Fatalf("node log workflow_run_id = %v, want nil", *nodeLogRepo.createdLogs[0].WorkflowRunID)
+	if len(nodeLogRepo.createdLogs) != 0 {
+		t.Fatalf("created node logs = %d, want 0", len(nodeLogRepo.createdLogs))
 	}
 }
 
@@ -882,6 +985,32 @@ func TestWorkflowElapsedTracker_ReplacesSameNodeLogElapsed(t *testing.T) {
 	got = tracker.recordNodeElapsed("answer-log", 8.1)
 	if math.Abs(got-26.7) > 0.000001 {
 		t.Fatalf("workflow elapsed milliseconds after replace = %.9f, want %.9f", got, 26.7)
+	}
+}
+
+func TestWorkflowRuntimeMetricsExcludeContainerAggregateAndSumLeafTokens(t *testing.T) {
+	containerID := "loop-1"
+	childZeroOutputs := `{"usage":{"PromptTokens":2,"CompletionTokens":8,"TotalTokens":10}}`
+	childOneOutputs := `{"usage":{"prompt_tokens":4,"completion_tokens":16,"total_tokens":20}}`
+	topLevelMetadata := `{"total_tokens":7}`
+	containerMetadata := `{"total_tokens":30}`
+	logs := []WorkflowNodeRuntimeLog{
+		{ID: "loop-log", NodeID: containerID, NodeType: string(shared.Loop), Status: "succeeded", ElapsedTime: 100, ExecutionMetadata: &containerMetadata},
+		{ID: "child-0", NodeID: "llm", NodeType: "llm", Status: "succeeded", ElapsedTime: 40, ContainerID: &containerID, Outputs: &childZeroOutputs},
+		{ID: "child-1", NodeID: "llm", NodeType: "llm", Status: "succeeded", ElapsedTime: 50, ContainerID: &containerID, Outputs: &childOneOutputs},
+		{ID: "extractor", NodeID: "extractor", NodeType: "parameter-extractor", Status: "succeeded", ElapsedTime: 3, ExecutionMetadata: &topLevelMetadata},
+	}
+	service := &WorkflowService{workflowNodeRuntimeLogRepo: &mockWorkflowNodeRuntimeLogRepo{logsByWorkflowRunID: logs}}
+
+	if got := service.workflowRunNodeElapsedMilliseconds(context.Background(), "run-1"); math.Abs(got-93) > 0.000001 {
+		t.Fatalf("workflow elapsed milliseconds = %.9f, want 93", got)
+	}
+	if got := service.workflowRunNodeTotalTokens(context.Background(), "run-1"); got != 37 {
+		t.Fatalf("workflow total tokens = %d, want 37", got)
+	}
+	event := workflowFinishedEventFromOutputs(&WorkflowRunLog{ID: "run-1"}, service, map[string]interface{}{"__total_tokens__": 0}, 93)
+	if got, ok := workflowEventInt(event["total_tokens"]); !ok || got != 37 {
+		t.Fatalf("workflow finished total_tokens = %#v, want 37", event["total_tokens"])
 	}
 }
 

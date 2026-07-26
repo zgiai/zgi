@@ -17,6 +17,7 @@ type WorkflowStreamEvent struct {
 	WorkflowRunID string         `json:"workflow_run_id,omitempty"`
 	TaskID        string         `json:"task_id,omitempty"`
 	Data          map[string]any `json:"data"`
+	Persisted     chan error     `json:"-"`
 }
 
 func prepareWorkflowStreamSSE(c *gin.Context) {
@@ -42,6 +43,10 @@ func (h *WorkflowHandler) workflowElapsedMillisecondsForEvent(ctx context.Contex
 
 // sendSSEError sends a Server-Sent Event error.
 func (h *WorkflowHandler) sendSSEError(ctx context.Context, w http.ResponseWriter, message string) {
+	h.sendSSEErrorData(ctx, w, map[string]interface{}{"message": message})
+}
+
+func (h *WorkflowHandler) sendSSEErrorData(ctx context.Context, w http.ResponseWriter, data map[string]interface{}) {
 	if w == nil {
 		logger.CriticalContext(ctx, "response writer is nil in send sse error")
 		return
@@ -49,9 +54,7 @@ func (h *WorkflowHandler) sendSSEError(ctx context.Context, w http.ResponseWrite
 
 	event := map[string]interface{}{
 		"event": "error",
-		"data": map[string]interface{}{
-			"message": message,
-		},
+		"data":  data,
 	}
 
 	jsonData, err := json.Marshal(event)
@@ -231,9 +234,17 @@ func finalizeWorkflowStreamExecution(params workflowStreamFinalizeParams) {
 		defer cancel()
 		actualWorkflowElapsedTime = params.WorkflowService.workflowRunElapsedMillisecondsForEvent(persistCtx, params.WorkflowRunID, trackedWorkflowElapsedTime)
 		finalStatus, finalError := workflowFinalStatusFromFailedNodes(params.FailedNodes)
-		updateErr := params.WorkflowService.UpdateWorkflowRunLogStatus(persistCtx, params.WorkflowRunID, finalStatus, allNodeOutputs, actualWorkflowElapsedTime, 0, params.NodeIndex-1, finalError)
-		if updateErr != nil {
-			logger.ErrorContext(persistCtx, "failed to update workflow run log", "workflow_run_id", params.WorkflowRunID, updateErr)
+		runtimeV2 := false
+		if params.WorkflowService.workflowRunLogRepo != nil {
+			if run, loadErr := params.WorkflowService.workflowRunLogRepo.GetByID(persistCtx, params.WorkflowRunID); loadErr == nil && run != nil {
+				runtimeV2 = run.RuntimeProtocolVersion >= workflowRuntimeProtocolVersionV2
+			}
+		}
+		if !runtimeV2 {
+			updateErr := params.WorkflowService.UpdateWorkflowRunLogStatus(persistCtx, params.WorkflowRunID, finalStatus, allNodeOutputs, actualWorkflowElapsedTime, 0, params.NodeIndex-1, finalError)
+			if updateErr != nil {
+				logger.ErrorContext(persistCtx, "failed to update workflow run log", "workflow_run_id", params.WorkflowRunID, updateErr)
+			}
 		}
 	}
 

@@ -599,6 +599,20 @@ func (r *workflowRunLogRepository) GetByID(ctx context.Context, id string) (*Wor
 	return &log, nil
 }
 
+// GetByParentInvocationID returns the workflow run created for a stable parent
+// invocation. It intentionally lives on the concrete repository so existing
+// repository mocks do not need to know about Agent invocation semantics.
+func (r *workflowRunLogRepository) GetByParentInvocationID(ctx context.Context, invocationID string) (*WorkflowRunLog, error) {
+	var log WorkflowRunLog
+	err := r.db.WithContext(ctx).
+		Where("parent_invocation_id = ? AND deleted_at IS NULL", invocationID).
+		First(&log).Error
+	if err != nil {
+		return nil, err
+	}
+	return &log, nil
+}
+
 // Update updates an existing workflow run log
 func (r *workflowRunLogRepository) Update(ctx context.Context, log *WorkflowRunLog) error {
 	return r.db.WithContext(ctx).Save(log).Error
@@ -638,7 +652,7 @@ func (r *workflowRunLogRepository) GetByAgentID(ctx context.Context, agentID str
 	}
 
 	if triggeredFrom != "" {
-		query = query.Where("triggered_from = ?", triggeredFrom)
+		query = applyWorkflowRunTriggeredFromFilter(query, triggeredFrom)
 	}
 
 	// Get total count
@@ -779,7 +793,7 @@ func (r *workflowRunLogRepository) GetRuntimeLogs(ctx context.Context, filter Wo
 
 	// Exclude debugging logs if requested
 	if filter.ExcludeDebug {
-		query = query.Where("triggered_from IN (?)", []string{"web-app", "external-api"})
+		query = query.Where("triggered_from IN (?)", []string{"web-app", "app-run", "external-api"})
 	}
 
 	// Apply date range filters
@@ -817,7 +831,7 @@ func (r *workflowRunLogRepository) applyRunLogFilters(query *gorm.DB, filter Wor
 		query = query.Where("status = ?", filter.Status)
 	}
 	if filter.TriggeredFrom != "" {
-		query = query.Where("triggered_from = ?", filter.TriggeredFrom)
+		query = applyWorkflowRunTriggeredFromFilter(query, filter.TriggeredFrom)
 	}
 	if filter.CreatedByRole != "" {
 		query = query.Where("created_by_role = ?", filter.CreatedByRole)
@@ -826,6 +840,13 @@ func (r *workflowRunLogRepository) applyRunLogFilters(query *gorm.DB, filter Wor
 		query = query.Where("created_by = ?", filter.CreatedBy)
 	}
 	return query
+}
+
+func applyWorkflowRunTriggeredFromFilter(query *gorm.DB, triggeredFrom string) *gorm.DB {
+	if triggeredFrom == string(InvokeFromWebApp) {
+		return query.Where("triggered_from IN (?)", []string{string(InvokeFromWebApp), "app-run"})
+	}
+	return query.Where("triggered_from = ?", triggeredFrom)
 }
 
 // GetLatestPublishedVersion retrieves the latest published version for an agent

@@ -80,6 +80,74 @@ func TestWorkflowContinuationMetadataWithStatusPreservesExistingFields(t *testin
 	}
 }
 
+func TestWorkflowApprovalContinuationFromMetadataRestoresInvocationIdentity(t *testing.T) {
+	continuation := workflowApprovalContinuationFromMetadata(map[string]interface{}{
+		"agent_workflow_continuation": map[string]interface{}{
+			"workflow_run_id":             "run-1",
+			"invocation_id":               "invocation-1",
+			"invocation_mode":             "agent_task_tool",
+			"invocation_protocol_version": 2,
+			"ui_approval_allowed":         true,
+		},
+	})
+
+	if continuation.InvocationID != "invocation-1" || continuation.InvocationMode != "agent_task_tool" {
+		t.Fatalf("unexpected invocation identity: %+v", continuation)
+	}
+	if continuation.InvocationProtocolVersion != 2 {
+		t.Fatalf("invocation protocol version = %d, want 2", continuation.InvocationProtocolVersion)
+	}
+	if !continuation.UIApprovalAllowed {
+		t.Fatal("ui approval capability was not restored")
+	}
+}
+
+func TestWorkflowContinuationInlineApprovalHonorsSurfaceCapability(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		source  string
+		allowed bool
+		want    bool
+	}{
+		{name: "draft override", source: runtimemodel.ConversationSourceConsole, allowed: false, want: true},
+		{name: "webapp enabled", source: runtimemodel.ConversationSourceWebApp, allowed: true, want: true},
+		{name: "webapp disabled", source: runtimemodel.ConversationSourceWebApp, allowed: false, want: false},
+		{name: "webapp missing capability", source: runtimemodel.ConversationSourceWebApp, allowed: false, want: false},
+		{name: "external api enabled", source: runtimemodel.ConversationSourceExternalAPI, allowed: true, want: true},
+		{name: "external api disabled", source: runtimemodel.ConversationSourceExternalAPI, allowed: false, want: false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			got := workflowContinuationAllowsInlineApproval(
+				Caller{Source: tt.source},
+				&WorkflowApprovalContinuation{UIApprovalAllowed: tt.allowed},
+			)
+			if got != tt.want {
+				t.Fatalf("workflowContinuationAllowsInlineApproval() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestWorkflowTaskContinuationMessageCarriesStructuredToolEvidence(t *testing.T) {
+	message := workflowTaskContinuationMessage(&WorkflowApprovalContinuation{
+		WorkflowRunID: "run-1",
+		InvocationID:  "invocation-1",
+	}, WorkflowContinuationSummaryRequest{
+		WorkflowRunID: "run-1",
+		Status:        "succeeded",
+		Outputs:       map[string]interface{}{"result": "done"},
+	})
+	content, ok := message.Content.(string)
+	if !ok {
+		t.Fatalf("message content type = %T, want string", message.Content)
+	}
+	for _, expected := range []string{"invocation-1", "run-1", "succeeded", "done", "do not rerun"} {
+		if !strings.Contains(content, expected) {
+			t.Fatalf("task continuation message missing %q:\n%s", expected, content)
+		}
+	}
+}
+
 func TestValidateWorkflowContinuationBindingMatchesBindingAndAgent(t *testing.T) {
 	continuation := &WorkflowApprovalContinuation{BindingID: "binding-1", AgentID: "agent-1"}
 	bindings := []AgentWorkflowBinding{{BindingID: "binding-1", AgentID: "agent-other"}}

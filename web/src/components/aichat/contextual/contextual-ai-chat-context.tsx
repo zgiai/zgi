@@ -7,6 +7,7 @@ import {
   useEffect,
   useId,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from 'react';
@@ -189,6 +190,7 @@ export function ContextualAIChatProvider({
       const normalized = normalizeContextItems(items);
       setGroups(current => {
         if (normalized.length === 0) {
+          if (!(scopeId in current)) return current;
           const { [scopeId]: _removed, ...next } = current;
           return next;
         }
@@ -205,6 +207,7 @@ export function ContextualAIChatProvider({
 
       return () => {
         setGroups(current => {
+          if (!(scopeId in current)) return current;
           const { [scopeId]: _removed, ...next } = current;
           return next;
         });
@@ -262,8 +265,14 @@ export function useAIChatContextRegistration(
   const replace = options?.replace;
   const priority = options?.priority;
   const visibility = options?.visibility;
+  const itemsRef = useRef(items);
+  itemsRef.current = items;
+  // Page surfaces may rebuild equivalent context arrays as transient canvas
+  // state changes. Register by serializable content so that array identity
+  // alone cannot feed a provider update back into the page.
+  const itemsSignature = useMemo(() => JSON.stringify(items), [items]);
 
   useEffect(() => {
-    return registerItems(items, { scopeId, replace, priority, visibility });
-  }, [items, priority, registerItems, replace, scopeId, visibility]);
+    return registerItems(itemsRef.current, { scopeId, replace, priority, visibility });
+  }, [itemsSignature, priority, registerItems, replace, scopeId, visibility]);
 }

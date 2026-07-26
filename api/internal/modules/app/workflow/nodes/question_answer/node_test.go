@@ -38,6 +38,29 @@ func TestExecuteRun_FirstEntryPausesWithoutConsumingQuery(t *testing.T) {
 	}
 }
 
+func TestQuestionAnswerResumeValuesPreferNodeScopedInputs(t *testing.T) {
+	vp := entities.NewVariablePool()
+	vp.UserInputs["sys.query"] = "global-answer"
+	vp.UserInputs["question_answer_option_id"] = "global-choice"
+	vp.Add([]string{"question-1", "query"}, "first-answer")
+	vp.Add([]string{"question-1", "question_answer_option_id"}, "first-choice")
+	vp.Add([]string{"question-2", "query"}, "second-answer")
+	vp.Add([]string{"question-2", "question_answer_option_id"}, "second-choice")
+
+	if got := currentAnswer(vp, "question-1"); got != "first-answer" {
+		t.Fatalf("question-1 answer = %q, want first-answer", got)
+	}
+	if got := currentAnswer(vp, "question-2"); got != "second-answer" {
+		t.Fatalf("question-2 answer = %q, want second-answer", got)
+	}
+	if got := optionID(vp, "question-1"); got != "first-choice" {
+		t.Fatalf("question-1 choice = %q, want first-choice", got)
+	}
+	if got := optionID(vp, "question-2"); got != "second-choice" {
+		t.Fatalf("question-2 choice = %q, want second-choice", got)
+	}
+}
+
 func TestExecuteRun_FirstEntryRendersQuestionTemplate(t *testing.T) {
 	vp := entities.NewVariablePool()
 	vp.Add([]string{"start", "city"}, "Beijing")

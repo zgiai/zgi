@@ -63,10 +63,20 @@ func receiveWorkflowStreamSelection(
 			}
 		}
 
-		select {
-		case outputs, ok := <-doneChan:
-			return workflowStreamSelection{kind: workflowStreamSelectionDone, outputs: outputs, ok: ok}
-		default:
+		// executeWorkflowStream closes resultChan and errorChan before its wrapper closes
+		// doneChan. Do not observe completion until both event channels have been fully
+		// drained. A best-effort priority check is insufficient here: when the producer
+		// emits its final events and exits before this goroutine is scheduled again, all
+		// three channels are ready and a select may randomly choose done first.
+		if resultChan == nil && errorChan == nil {
+			select {
+			case outputs, ok := <-doneChan:
+				return workflowStreamSelection{kind: workflowStreamSelectionDone, outputs: outputs, ok: ok}
+			case <-ctxDone:
+				return workflowStreamSelection{kind: workflowStreamSelectionContextDone}
+			case <-heartbeat:
+				return workflowStreamSelection{kind: workflowStreamSelectionHeartbeat}
+			}
 		}
 
 		if ctxDone != nil {
@@ -94,8 +104,6 @@ func receiveWorkflowStreamSelection(
 			if event != nil {
 				return workflowStreamSelection{kind: workflowStreamSelectionResult, event: event}
 			}
-		case outputs, ok := <-doneChan:
-			return workflowStreamSelection{kind: workflowStreamSelectionDone, outputs: outputs, ok: ok}
 		case <-ctxDone:
 			return workflowStreamSelection{kind: workflowStreamSelectionContextDone}
 		case <-heartbeat:

@@ -2,6 +2,7 @@ package skillloop
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -461,7 +462,7 @@ func skillTracePayloadIDs(prepared *PreparedChat) skilltrace.PayloadIDs {
 }
 
 func (r *Runner) emitSkillError(ctx context.Context, prepared *PreparedChat, trace skills.SkillTrace) {
-	r.emitEvent(EventSkillCallError, skillCallErrorPayload(prepared, trace))
+	r.emitEvent(prepared, EventSkillCallError, skillCallErrorPayload(prepared, trace))
 }
 
 func (r *Runner) logSkillTrace(ctx context.Context, prepared *PreparedChat, trace skills.SkillTrace) {
@@ -591,6 +592,19 @@ func recoverableErrorPayload(err error, nextAction string) map[string]interface{
 
 func recoverableSkillToolErrorPayload(err error, nextAction string, skillID string, toolName string) map[string]interface{} {
 	payload := recoverableErrorPayload(err, nextAction)
+	var argumentErr *skillToolArgumentsError
+	if errors.As(err, &argumentErr) && argumentErr != nil {
+		payload["code"] = argumentErr.Code
+		payload["skill_id"] = argumentErr.SkillID
+		payload["tool_name"] = argumentErr.ToolName
+		payload["expected_type"] = argumentErr.ExpectedType
+		payload["actual_type"] = argumentErr.ActualType
+		payload["missing_fields"] = append([]string(nil), argumentErr.MissingFields...)
+		payload["expected_arguments"] = copyStringAnyMap(argumentErr.ExpectedArguments)
+		payload["retry_action"] = argumentErr.RetryAction
+		payload["next_action"] = argumentErr.RetryAction
+		return payload
+	}
 	if expected := skills.ExpectedSkillToolArguments(skillID, toolName); expected != nil {
 		payload["expected_arguments"] = expected
 		payload["next_action"] = strings.TrimSpace(nextAction + ". Retry call_skill_tool with arguments matching expected_arguments.schema")

@@ -41,11 +41,13 @@ type AgentsHandler struct {
 	db                         *gorm.DB
 	chatRuntimeService         runtimeservice.Service
 	modelPrechecker            llmclient.AppModelPrechecker
-	workflowContinuationRunner interface {
-		ResumeApprovalWorkflow(ctx context.Context, form *approvalruntime.Form) error
-		ResumeQuestionAnswerWorkflow(ctx context.Context, workflowRunID string, inputs map[string]interface{}) error
-		StopWorkflowContinuation(ctx context.Context, workflowRunID string, accountID string) error
-	}
+	workflowContinuationRunner workflowContinuationRunner
+}
+
+type workflowContinuationRunner interface {
+	ResumeApprovalWorkflow(ctx context.Context, form *approvalruntime.Form) error
+	ResumeQuestionAnswerWorkflow(ctx context.Context, workflowRunID string, inputs map[string]interface{}) error
+	StopWorkflowContinuation(ctx context.Context, workflowRunID string, accountID string) error
 }
 
 type workflowContinuationStreamRunner interface {
@@ -1388,8 +1390,6 @@ func (h *AgentsHandler) UpdateAgent(c *gin.Context) {
 			response.SpecialFail(c, gin.H{"code": "404001", "message": "Agent not found"})
 		case "permission denied":
 			response.SpecialFail(c, gin.H{"code": "403001", "message": "Permission denied"})
-		case "agent with the same name already exists":
-			response.SpecialFail(c, gin.H{"code": "409001", "message": "Duplicated agent name in tenant"})
 		default:
 			response.SpecialFail(c, gin.H{"code": "399001", "message": err.Error()})
 		}

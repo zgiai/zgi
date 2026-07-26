@@ -33,3 +33,20 @@ func TestBuildPromptsUseRegisteredTemplates(t *testing.T) {
 		}
 	}
 }
+
+func TestBuildUserPromptRecognizesPersistedChatWorkflowType(t *testing.T) {
+	userPrompt, err := buildUserPrompt(WorkflowContext{
+		Locale:       "en-US",
+		WorkflowType: "chat",
+		Conversation: &ConversationSummary{QueryRole: QueryRoleRouteSelector},
+	}, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(userPrompt, "conversational workflow web app") {
+		t.Fatalf("user prompt did not recognize chat workflow type:\n%s", userPrompt)
+	}
+	if !strings.Contains(userPrompt, `"query_role": "route_selector"`) {
+		t.Fatalf("user prompt missing conversation semantics:\n%s", userPrompt)
+	}
+}

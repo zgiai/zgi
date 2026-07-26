@@ -228,7 +228,7 @@ func (s *service) beginUserInputContinuation(
 		return nil, fmt.Errorf("%w: message is not waiting for user input", ErrInvalidInput)
 	}
 
-	metadata := resolveUserInputContinuationMetadata(message.Metadata, request, response)
+	metadata := resolveUserInputContinuationMetadata(message.Metadata, message.ID.String(), request, response)
 	if s.repos.DB != nil {
 		err = s.repos.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 			result := tx.Model(&runtimemodel.Message{}).
@@ -295,13 +295,20 @@ func normalizeUserInputContinuationResponse(requestID string, request map[string
 	}, nil
 }
 
-func resolveUserInputContinuationMetadata(source map[string]interface{}, request map[string]interface{}, response map[string]interface{}) map[string]interface{} {
+func resolveUserInputContinuationMetadata(source map[string]interface{}, messageID string, request map[string]interface{}, response map[string]interface{}) map[string]interface{} {
 	metadata := copyStringAnyMap(source)
 	if metadata == nil {
 		metadata = map[string]interface{}{}
 	}
 	requestID := strings.TrimSpace(stringFromAny(response["request_id"]))
 	delete(metadata, "user_input_request")
+	metadata = ensurePresentationEventPositionWithReference(
+		metadata,
+		messageID,
+		"user_input_response",
+		userInputResponsePresentationReference(requestID),
+		response,
+	)
 
 	responses := mapSliceFromAny(metadata["user_input_responses"])
 	replaced := false
@@ -365,6 +372,10 @@ func resolveUserInputContinuationMetadata(source map[string]interface{}, request
 	summary["updated_at"] = time.Now().UTC().Format(time.RFC3339)
 	metadata["operation_result_summary"] = summary
 	return metadata
+}
+
+func userInputResponsePresentationReference(requestID string) string {
+	return "user_input_response:" + strings.TrimSpace(requestID)
 }
 
 func userInputResponseRecorded(metadata map[string]interface{}, requestID string) bool {

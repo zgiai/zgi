@@ -117,7 +117,7 @@ func (h *WorkflowHandler) RunPublishedWorkflow(c *gin.Context) {
 	// Determine runType and triggeredFrom
 	triggeredFrom := invokeFrom // Use invokeFrom from context (e.g., "external-api", "web-app")
 	if triggeredFrom == "" {
-		triggeredFrom = "app-run" // Default for published workflows
+		triggeredFrom = string(InvokeFromWebApp) // Default for published workflows
 	}
 	h.runWorkflowStream(c, requestedWorkspaceID, appID, &req, accountID, false, runType, triggeredFrom)
 }

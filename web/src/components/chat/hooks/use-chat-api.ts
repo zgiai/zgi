@@ -188,6 +188,70 @@ export function useChatApi() {
           }
 
           const m = (meta ?? {}) as Record<string, unknown>;
+          const checkpointDelta =
+            typeof m['answer_delta'] === 'string' ? (m['answer_delta'] as string) : null;
+          const checkpointRevision =
+            typeof m['answer_revision'] === 'number' ? (m['answer_revision'] as number) : 0;
+          if (checkpointDelta !== null) {
+            const messageId =
+              typeof m['message_id'] === 'string' ? (m['message_id'] as string) : '';
+            const workflowRunId =
+              (typeof m['workflow_run_id'] === 'string'
+                ? (m['workflow_run_id'] as string)
+                : '') || (typeof m['id'] === 'string' ? (m['id'] as string) : '');
+            const serverConversationId =
+              typeof m['conversation_id'] === 'string' ? (m['conversation_id'] as string) : '';
+            const currentMessage = getConversation(conversationId)?.messages.find(
+              item => item.messageData?.tempKey === tempKey
+            );
+            const currentRevision =
+              typeof currentMessage?.messageData?.projection_revision === 'number'
+                ? currentMessage.messageData.projection_revision
+                : 0;
+
+            // V2 workflow recovery persists answer checkpoints as answer_delta. Treat a
+            // checkpoint revision as idempotent because the same event can be observed by
+            // both the live stream and the durable recovery stream around a reconnect.
+            if (checkpointRevision <= 0 || checkpointRevision > currentRevision) {
+              if (m['replace'] === true) {
+                // A replace checkpoint is the durable, authoritative projection.
+                // Keeping a longer local value here preserves duplicated or stale
+                // live chunks and prevents terminal reconciliation from repairing it.
+                throttler.flush();
+                mergeAiMessage(conversationId, tempKey, {
+                  answer: checkpointDelta,
+                  answerMode: 'replace' as const,
+                  messageId: messageId || undefined,
+                  workflowRunId: workflowRunId || undefined,
+                  conversationId: serverConversationId || undefined,
+                  messageData:
+                    checkpointRevision > 0
+                      ? { projection_revision: checkpointRevision }
+                      : undefined,
+                });
+              } else {
+                if (checkpointDelta.length > 0) throttler.append(checkpointDelta);
+                mergeAiMessage(conversationId, tempKey, {
+                  messageId: messageId || undefined,
+                  workflowRunId: workflowRunId || undefined,
+                  conversationId: serverConversationId || undefined,
+                  messageData:
+                    checkpointRevision > 0
+                      ? { projection_revision: checkpointRevision }
+                      : undefined,
+                });
+              }
+            }
+
+            safe.onMessage?.(meta);
+            eventBus.publish('chat:scroll', {
+              conversationId,
+              type: 'message',
+              tempKey,
+            });
+            return;
+          }
+
           let chunk = '';
           if (typeof m['answer'] === 'string') chunk = m['answer'] as string;
           else if (typeof m['text'] === 'string') chunk = m['text'] as string;

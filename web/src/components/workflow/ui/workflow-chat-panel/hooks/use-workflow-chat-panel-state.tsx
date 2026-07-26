@@ -4,14 +4,12 @@ import { usePanelStackItem } from '../../../hooks';
 import { useChatApi, useChatStore } from '@/components/chat';
 import {
   useApprovalForm,
-  fetchApprovalEvents,
   useSaveWorkflowDraft,
   useSubmitApprovalForm,
   useWorkflowRunEventsStream,
 } from '@/hooks';
 import { useRunWorkflowChatDraftStream } from '@/hooks/workflow/use-run-workflow-chat-draft-stream';
 import { SlidersHorizontal } from 'lucide-react';
-import { Button } from '@/components/ui/button';
 import { useWorkflowStore } from '@/components/workflow/store';
 import { initialWorkflowData } from '@/components/workflow/store/initial-data';
 import { useSseCallbacks } from '../../workflow-run-panel/hooks/use-sse-callbacks';
@@ -45,28 +43,24 @@ import {
 import { toast } from 'sonner';
 import { getEffectiveAllowedFileExtensions } from '@/utils/file-helpers';
 import { getOpeningGuide } from '@/utils/webapp/opening-statement';
-import { ApprovalCompletedState } from '@/components/workflow/approval/approval-completed-state';
-import ApprovalRuntimeForm from '@/components/workflow/approval/approval-runtime-form';
+import WorkflowApprovalInteractionCard from '@/components/workflow/approval/workflow-approval-interaction-card';
 import {
   getApprovalEventSequence,
   parseApprovalRequestedEvent,
-  parseApprovalPausedEvent,
 } from '@/components/workflow/approval/runtime-events';
 import { isApprovalFormAlreadySubmittedError } from '@/services/approval.service';
 import { flushWorkflowPendingEdits } from '@/components/workflow/hooks/pending-edits';
-import {
-  hasUnresolvedApprovalEntries,
-  useApprovalRuntimeEvents,
-} from '@/components/workflow/approval/use-approval-runtime-events';
+import { useApprovalRuntimeEvents } from '@/components/workflow/approval/use-approval-runtime-events';
 import {
   appendQuestionAnswerTranscriptQuestion,
   applyQuestionAnswerTranscriptSubmission,
   isQuestionAnswerPromptMessage,
-  parseQuestionAnswerPausedEvent,
   parseQuestionAnswerRequestedEvent,
   parseQuestionAnswerSubmittedEvent,
+  type QuestionAnswerRuntimePromptState,
   type QuestionAnswerTranscriptItem,
 } from '@/components/workflow/question-answer/runtime-events';
+import { parseWorkflowPausedEvent } from '@/components/workflow/runtime/pause-events';
 import {
   getQuestionAnswerChoiceQuery,
   QuestionAnswerRuntimePrompt,
@@ -77,8 +71,23 @@ import { useActivePanel } from '../../../hooks/use-active-panel';
 import type { WorkflowRunNodeListItem } from '../../workflow-run-nodes-list';
 import { generateClientId } from '@/utils/client-id';
 import { buildOpeningGuideBrand } from '@/components/chat/utils/opening-guide-brand';
-import { ApprovalWaitingState } from '../components/approval-waiting-state';
 import type { WorkflowChatPanelProps } from '../types';
+import { WorkflowRuntimeStopAction } from '@/components/workflow/runtime/workflow-runtime-stop-action';
+
+function getWorkflowRunIdFromEvent(payload: unknown): string {
+  const envelope =
+    payload && typeof payload === 'object' ? (payload as Record<string, unknown>) : {};
+  const data =
+    envelope.data && typeof envelope.data === 'object'
+      ? (envelope.data as Record<string, unknown>)
+      : envelope;
+  return typeof data.workflow_run_id === 'string'
+    ? data.workflow_run_id
+    : typeof data.id === 'string'
+      ? data.id
+      : '';
+}
+
 export function useWorkflowChatPanelState({
   open,
   onClose,
@@ -129,11 +138,12 @@ export function useWorkflowChatPanelState({
   const [lastInputs, setLastInputs] = useState<Record<string, unknown>>({});
   const [workflowRunId, setWorkflowRunId] = useState<string | null>(null);
   const [isConversationPaused, setIsConversationPaused] = useState(false);
-  const [questionAnswerPrompt, setQuestionAnswerPrompt] = useState<{
-    question: string;
-    choices: QuestionAnswerChoice[];
-    round?: number;
-  } | null>(null);
+  // The POST stream may hand off to durable event recovery while the workflow is
+  // still executing. Keep that lifecycle separate from the transport hook so a
+  // recovered run cannot accidentally re-enable the composer.
+  const [isDurableRunActive, setIsDurableRunActive] = useState(false);
+  const [questionAnswerPrompt, setQuestionAnswerPrompt] =
+    useState<QuestionAnswerRuntimePromptState | null>(null);
   const [questionAnswerSubmitting, setQuestionAnswerSubmitting] = useState(false);
   const [, setQuestionAnswerTranscript] = useState<QuestionAnswerTranscriptItem[]>([]);
   const updateQuestionAnswerTranscript = useCallback(
@@ -148,7 +158,6 @@ export function useWorkflowChatPanelState({
   );
 
   const {
-    state: approvalRuntimeState,
     activeEntry: approvalEntry,
     activeForm: approvalForm,
     activeToken: approvalToken,
@@ -161,35 +170,18 @@ export function useWorkflowChatPanelState({
     setLoadedForm: setLoadedApprovalForm,
     resetApprovalRuntime,
   } = useApprovalRuntimeEvents();
-  const approvalRuntimeStateRef = useRef(approvalRuntimeState);
-  const approvalEventCursorRef = useRef(0);
-  const { start: startWorkflowRunEvents, cancel: cancelWorkflowRunEvents } =
-    useWorkflowRunEventsStream();
+  const {
+    start: startWorkflowRunEvents,
+    cancel: cancelWorkflowRunEvents,
+    rememberEventCursor: rememberWorkflowRunEventCursor,
+    getEventCursor: getWorkflowRunEventCursor,
+    resetEventCursor: resetWorkflowRunEventCursor,
+  } = useWorkflowRunEventsStream();
   const approvalResumeStreamActiveRef = useRef(false);
   const workflowFinishedRef = useRef(false);
   const startApprovalResumeEventStreamRef = useRef<(payload?: unknown) => void>(() => {});
   const approvalFormQuery = useApprovalForm(approvalToken, Boolean(approvalToken && !approvalForm));
   const approvalSubmitMutation = useSubmitApprovalForm(approvalToken);
-
-  useEffect(() => {
-    approvalRuntimeStateRef.current = approvalRuntimeState;
-  }, [approvalRuntimeState]);
-
-  const hasBlockingApprovalStop = useCallback(
-    () =>
-      Object.values(approvalRuntimeStateRef.current.byKey).some(entry =>
-        ['waiting', 'submitting'].includes(entry.status)
-      ),
-    []
-  );
-
-  const isApprovalStopBlocked = useMemo(
-    () =>
-      Object.values(approvalRuntimeState.byKey).some(entry =>
-        ['waiting', 'submitting'].includes(entry.status)
-      ),
-    [approvalRuntimeState.byKey]
-  );
 
   // Wire up workflow store callbacks to mirror normal run panel behavior
   const rf = useReactFlow();
@@ -313,13 +305,18 @@ export function useWorkflowChatPanelState({
     setFinalResult: () => {},
   });
 
-  const rememberApprovalEventSequence = useCallback((payload: unknown) => {
-    const record =
-      payload && typeof payload === 'object' ? (payload as Record<string, unknown>) : {};
-    const sequence = getApprovalEventSequence(record);
-    if (sequence === null) return;
-    approvalEventCursorRef.current = Math.max(approvalEventCursorRef.current, sequence);
-  }, []);
+  const rememberApprovalEventSequence = useCallback(
+    (payload: unknown) => {
+      const record =
+        payload && typeof payload === 'object' ? (payload as Record<string, unknown>) : {};
+      const sequence = getApprovalEventSequence(record);
+      if (sequence === null) return;
+      const runId = workflowRunId || getWorkflowRunIdFromEvent(record);
+      if (!runId) return;
+      rememberWorkflowRunEventCursor(runId, sequence);
+    },
+    [rememberWorkflowRunEventCursor, workflowRunId]
+  );
 
   const getEventData = useCallback((payload: unknown): Record<string, unknown> => {
     const record =
@@ -347,12 +344,17 @@ export function useWorkflowChatPanelState({
     [chatConv, convId, getEventData, initSingle, t, updateConversation]
   );
 
-  const isStaleApprovalResumeEvent = useCallback((payload: unknown) => {
-    const record =
-      payload && typeof payload === 'object' ? (payload as Record<string, unknown>) : {};
-    const sequence = getApprovalEventSequence(record);
-    return sequence !== null && sequence <= approvalEventCursorRef.current;
-  }, []);
+  const isStaleApprovalResumeEvent = useCallback(
+    (payload: unknown) => {
+      const record =
+        payload && typeof payload === 'object' ? (payload as Record<string, unknown>) : {};
+      const sequence = getApprovalEventSequence(record);
+      if (sequence === null) return false;
+      const runId = workflowRunId || getWorkflowRunIdFromEvent(record);
+      return Boolean(runId) && sequence <= getWorkflowRunEventCursor(runId);
+    },
+    [getWorkflowRunEventCursor, workflowRunId]
+  );
 
   const markApprovalPausedNodes = useCallback(
     (nodeIds: string[], payload: unknown) => {
@@ -463,12 +465,14 @@ export function useWorkflowChatPanelState({
       const parsed = parseQuestionAnswerRequestedEvent(payload);
       if (!parsed) return;
       setQuestionAnswerPrompt({
+        nodeId: parsed.nodeId,
         question: parsed.question,
         choices: parsed.choices,
         round: parsed.round,
       });
       updateQuestionAnswerTranscript(prev => appendQuestionAnswerTranscriptQuestion(prev, parsed));
       setQuestionAnswerSubmitting(false);
+      setIsDurableRunActive(false);
       setIsConversationPaused(true);
       sseCallbacks.onQuestionAnswerRequested?.(payload);
       if (parsed.nodeId) {
@@ -494,41 +498,46 @@ export function useWorkflowChatPanelState({
 
   const handleWorkflowPaused = useCallback(
     (payload: unknown) => {
+      setIsDurableRunActive(false);
       rememberApprovalEventSequence(payload);
       sseCallbacks.onWorkflowPaused?.(payload);
-      const parsed = parseApprovalPausedEvent(payload);
+      const parsed = parseWorkflowPausedEvent(payload);
       const data =
         typeof payload === 'object' && payload && 'data' in (payload as Record<string, unknown>)
           ? ((payload as { data?: unknown }).data as Record<string, unknown> | undefined)
           : (payload as Record<string, unknown> | undefined);
 
-      if (parsed.isApproval) {
+      if (parsed.hasApproval) {
         dispatchApprovalRuntimeEvent('workflow_paused', payload);
-        setIsConversationPaused(true);
-        markApprovalPausedNodes(parsed.nodeIds, payload);
+        markApprovalPausedNodes(parsed.approval.nodeIds, payload);
         runnerRef.current?.onWorkflowPaused?.({
           elapsedTime: typeof data?.elapsed_time === 'number' ? data.elapsed_time : undefined,
           workflowRunId:
             (typeof data?.id === 'string' ? data.id : '') ||
             (typeof data?.workflow_run_id === 'string' ? data.workflow_run_id : '') ||
             undefined,
+          nodeIds: parsed.approval.nodeIds,
           status: 'pending_approval',
           nodeType: 'approval',
         });
-      } else {
-        const qaPaused = parseQuestionAnswerPausedEvent(payload);
-        if (!qaPaused.isQuestionAnswer) return;
-        if (qaPaused.prompt) handleQuestionAnswerRequested(qaPaused.prompt);
-        setIsConversationPaused(true);
-        markQuestionAnswerPausedNodes(qaPaused.nodeIds, payload);
+      }
+
+      if (parsed.hasQuestionAnswer) {
+        if (parsed.questionAnswer.prompt) {
+          handleQuestionAnswerRequested(parsed.questionAnswer.prompt);
+        }
+        markQuestionAnswerPausedNodes(parsed.questionAnswer.nodeIds, payload);
         runnerRef.current?.onWorkflowPaused?.({
           elapsedTime: typeof data?.elapsed_time === 'number' ? data.elapsed_time : undefined,
-          workflowRunId: qaPaused.workflowRunId,
-          nodeIds: qaPaused.nodeIds,
+          workflowRunId: parsed.questionAnswer.workflowRunId,
+          nodeIds: parsed.questionAnswer.nodeIds,
           status: 'pending_question',
           nodeType: 'question-answer',
         });
       }
+
+      if (!parsed.hasApproval && !parsed.hasQuestionAnswer) return;
+      setIsConversationPaused(true);
 
       if (!approvalResumeStreamActiveRef.current) {
         startApprovalResumeEventStreamRef.current(payload);
@@ -555,6 +564,7 @@ export function useWorkflowChatPanelState({
     {
       enabled: canRunDraft,
       onWorkflowStarted: payload => {
+        setIsDurableRunActive(false);
         rememberApprovalEventSequence(payload);
         rememberBackendConversation(payload);
         workflowFinishedRef.current = false;
@@ -919,14 +929,8 @@ export function useWorkflowChatPanelState({
         handleWorkflowPaused(payload);
       },
       onWorkflowFinished: payload => {
+        setIsDurableRunActive(false);
         const rawStatus = typeof payload.status === 'string' ? payload.status.toLowerCase() : '';
-        const shouldKeepApprovalPending =
-          !['failed', 'error', 'stopped', 'expired'].includes(rawStatus) &&
-          hasUnresolvedApprovalEntries(approvalRuntimeStateRef.current);
-        if (shouldKeepApprovalPending) {
-          setIsConversationPaused(true);
-          return;
-        }
         setIsConversationPaused(false);
         workflowFinishedRef.current = true;
         resetApprovalRuntime();
@@ -966,6 +970,25 @@ export function useWorkflowChatPanelState({
         }
       },
       onError: err => {
+        const errorData = getEventData(err);
+        if (errorData.code === 'workflow_conversation_busy') {
+          const activeRunId =
+            typeof errorData.workflow_run_id === 'string' ? errorData.workflow_run_id : '';
+          if (activeRunId) {
+            setWorkflowRunId(activeRunId);
+            setIsDurableRunActive(true);
+            setIsConversationPaused(
+              errorData.runtime_status === 'pending_approval' ||
+                errorData.runtime_status === 'pending_question'
+            );
+            workflowFinishedRef.current = false;
+            startApprovalResumeEventStreamRef.current({
+              data: { id: activeRunId, workflow_run_id: activeRunId },
+            });
+            return;
+          }
+        }
+        setIsDurableRunActive(false);
         setIsConversationPaused(false);
         workflowFinishedRef.current = true;
         resetApprovalRuntime();
@@ -975,6 +998,15 @@ export function useWorkflowChatPanelState({
           error: getWorkflowRunErrorText(err) ?? String(err ?? 'Error'),
         });
         notifyBillingError(err);
+      },
+      onTransportInterrupted: (runId, _error) => {
+        setIsDurableRunActive(true);
+        setWorkflowRunId(runId);
+        if (!approvalResumeStreamActiveRef.current) {
+          startApprovalResumeEventStreamRef.current({
+            data: { id: runId, workflow_run_id: runId },
+          });
+        }
       },
       onIterationStarted: data => {
         try {
@@ -1233,11 +1265,85 @@ export function useWorkflowChatPanelState({
         typeof payload === 'object' && payload ? (payload as Record<string, unknown>) : {};
 
       switch (event.event) {
+        case 'workflow_snapshot': {
+          sseCallbacks.onWorkflowSnapshot?.(payload);
+          const message =
+            record.message && typeof record.message === 'object'
+              ? (record.message as Record<string, unknown>)
+              : null;
+          if (message && typeof message.answer === 'string' && message.answer.length > 0) {
+            runnerRef.current?.onMessage?.({
+              answer_delta: message.answer,
+              answer_revision:
+                typeof message.projection_revision === 'number'
+                  ? message.projection_revision
+                  : undefined,
+              message_id: typeof message.id === 'string' ? message.id : undefined,
+              conversation_id:
+                typeof message.conversation_id === 'string' ? message.conversation_id : undefined,
+              workflow_run_id:
+                typeof message.workflow_run_id === 'string' ? message.workflow_run_id : undefined,
+              replace: true,
+            });
+          }
+          const activePause =
+            record.active_pause && typeof record.active_pause === 'object'
+              ? (record.active_pause as Record<string, unknown>)
+              : null;
+          if (activePause) {
+            setIsDurableRunActive(false);
+            const pause =
+              activePause.pause && typeof activePause.pause === 'object'
+                ? (activePause.pause as Record<string, unknown>)
+                : {};
+            handleWorkflowPaused({
+              event: 'workflow_paused',
+              sequence: typeof record.last_sequence === 'number' ? record.last_sequence : undefined,
+              data: {
+                ...pause,
+                reasons: Array.isArray(activePause.reasons) ? activePause.reasons : [],
+                state: activePause.state,
+              },
+            });
+          }
+          const run =
+            record.workflow_run && typeof record.workflow_run === 'object'
+              ? (record.workflow_run as Record<string, unknown>)
+              : null;
+          const rawStatus = typeof run?.status === 'string' ? run.status.toLowerCase() : '';
+          if (
+            ['succeeded', 'success', 'completed', 'failed', 'error', 'stopped'].includes(rawStatus)
+          ) {
+            setIsDurableRunActive(false);
+            runnerRef.current?.onWorkflowFinished({
+              status:
+                rawStatus === 'failed' || rawStatus === 'error'
+                  ? 'error'
+                  : rawStatus === 'stopped'
+                    ? 'stopped'
+                    : 'completed',
+              workflowRunId: typeof run?.id === 'string' ? run.id : undefined,
+              elapsedTime: typeof run?.elapsed_time === 'number' ? run.elapsed_time : undefined,
+              error: getWorkflowRunErrorText(run?.error),
+            });
+            workflowFinishedRef.current = true;
+            setIsConversationPaused(false);
+          }
+          break;
+        }
         case 'workflow_started':
           sseCallbacks.onWorkflowStarted?.(payload);
           rememberBackendConversation(payload);
           setIsConversationPaused(false);
           runnerRef.current?.onWorkflowStarted(payload as never);
+          break;
+        case 'workflow_resumed':
+          setIsDurableRunActive(true);
+          sseCallbacks.onWorkflowResumed?.(payload);
+          resetApprovalRuntime();
+          setQuestionAnswerPrompt(null);
+          setQuestionAnswerSubmitting(false);
+          setIsConversationPaused(false);
           break;
         case 'approval_requested':
           handleApprovalRequested(event);
@@ -1692,9 +1798,17 @@ export function useWorkflowChatPanelState({
           }
           break;
         case 'message':
-        case 'text_chunk':
+        case 'text_chunk': {
+          const messageId = typeof record.message_id === 'string' ? record.message_id : undefined;
+          const conversationId =
+            typeof record.conversation_id === 'string' ? record.conversation_id : '';
+          if (messageId) lastMessageIdRef.current = messageId;
+          if (conversationId && chatConv?.conversationId !== conversationId) {
+            updateConversation(convId, { conversationId });
+          }
           runnerRef.current?.onMessage?.(record);
           break;
+        }
         case 'message_end':
           runnerRef.current?.onMessageEnd?.(payload as never);
           break;
@@ -1706,17 +1820,7 @@ export function useWorkflowChatPanelState({
         case 'workflow_failed':
         case 'workflow_succeeded':
         case 'workflow_completed': {
-          const isSuccessfulTerminalEvent =
-            event.event === 'workflow_finished' ||
-            event.event === 'workflow_succeeded' ||
-            event.event === 'workflow_completed';
-          if (
-            isSuccessfulTerminalEvent &&
-            hasUnresolvedApprovalEntries(approvalRuntimeStateRef.current)
-          ) {
-            setIsConversationPaused(true);
-            break;
-          }
+          setIsDurableRunActive(false);
           sseCallbacks.onWorkflowFinished?.(payload);
           const rawStatus = typeof record.status === 'string' ? record.status : '';
           const eventStatus =
@@ -1762,6 +1866,7 @@ export function useWorkflowChatPanelState({
           break;
         }
         case 'error':
+          setIsDurableRunActive(false);
           setIsConversationPaused(false);
           setQuestionAnswerSubmitting(false);
           resetApprovalRuntime();
@@ -1782,6 +1887,8 @@ export function useWorkflowChatPanelState({
     },
     [
       cancelWorkflowRunEvents,
+      chatConv?.conversationId,
+      convId,
       getWorkflowRunErrorText,
       handleApprovalExpired,
       handleApprovalRequested,
@@ -1795,31 +1902,17 @@ export function useWorkflowChatPanelState({
       rememberApprovalEventSequence,
       resetApprovalRuntime,
       sseCallbacks,
+      updateConversation,
     ]
   );
 
   useEffect(() => {
     if (!approvalToken || !approvalSubmittedAction) return;
-    let cancelled = false;
-    const timer = window.setInterval(async () => {
-      try {
-        const events = await fetchApprovalEvents(approvalToken, {
-          after: approvalRuntimeStateRef.current.cursor,
-          limit: 100,
-        });
-        if (cancelled || events.length === 0) return;
-        events.forEach(event => {
-          dispatchApprovalEvent(event);
-        });
-      } catch {
-        // Keep waiting; the workflow resume stream may still deliver the final event.
-      }
-    }, 2000);
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-    };
-  }, [approvalSubmittedAction, approvalToken, dispatchApprovalEvent]);
+    const timer = window.setTimeout(() => {
+      startApprovalResumeEventStreamRef.current?.();
+    }, 5000);
+    return () => window.clearTimeout(timer);
+  }, [approvalSubmittedAction, approvalToken]);
 
   const startApprovalResumeEventStream = useCallback(
     (payload?: unknown) => {
@@ -1837,9 +1930,10 @@ export function useWorkflowChatPanelState({
       setWorkflowRunId(runId);
       approvalResumeStreamActiveRef.current = true;
       workflowFinishedRef.current = false;
+      const rememberedCursor = getWorkflowRunEventCursor(runId);
       const streamParams =
-        approvalEventCursorRef.current > 0
-          ? { after: approvalEventCursorRef.current, continue_on_pause: true }
+        rememberedCursor > 0
+          ? { continue_on_pause: true }
           : { include_snapshot: true, continue_on_pause: true };
       const dispatchWorkflowRunEvent = (eventName: string, eventPayload: unknown) => {
         const record =
@@ -1856,8 +1950,12 @@ export function useWorkflowChatPanelState({
       void startWorkflowRunEvents(
         runId,
         {
+          onWorkflowSnapshot: streamPayload =>
+            dispatchWorkflowRunEvent('workflow_snapshot', streamPayload),
           onWorkflowStarted: streamPayload =>
             dispatchWorkflowRunEvent('workflow_started', streamPayload),
+          onWorkflowResumed: streamPayload =>
+            dispatchWorkflowRunEvent('workflow_resumed', streamPayload),
           onApprovalRequested: streamPayload =>
             dispatchWorkflowRunEvent('approval_requested', streamPayload),
           onApprovalResultFilled: streamPayload =>
@@ -1892,11 +1990,6 @@ export function useWorkflowChatPanelState({
         {
           onClose: () => {
             approvalResumeStreamActiveRef.current = false;
-            if (!workflowFinishedRef.current) {
-              window.setTimeout(() => {
-                if (!workflowFinishedRef.current) startApprovalResumeEventStream();
-              }, 1000);
-            }
           },
         }
       );
@@ -1905,6 +1998,7 @@ export function useWorkflowChatPanelState({
       canViewRuntimeEvents,
       dispatchApprovalEvent,
       getEventData,
+      getWorkflowRunEventCursor,
       startWorkflowRunEvents,
       workflowRunId,
     ]
@@ -1913,6 +2007,25 @@ export function useWorkflowChatPanelState({
   useEffect(() => {
     startApprovalResumeEventStreamRef.current = startApprovalResumeEventStream;
   }, [startApprovalResumeEventStream]);
+
+  const handleStop = useCallback(() => {
+    if (!canStopRun) {
+      toast.error(t('common.unauthorizedDescription'));
+      return;
+    }
+    stop();
+  }, [canStopRun, stop, t]);
+
+  const interactionStopAction = useMemo(
+    () => (
+      <WorkflowRuntimeStopAction
+        onStop={handleStop}
+        isStopping={isStopping}
+        disabled={!canStopRun || approvalRuntimeSubmitting || questionAnswerSubmitting}
+      />
+    ),
+    [approvalRuntimeSubmitting, canStopRun, handleStop, isStopping, questionAnswerSubmitting]
+  );
 
   const handleApprovalSubmit = useCallback(
     async (payload: { inputs: Record<string, unknown>; action: string }) => {
@@ -1949,56 +2062,54 @@ export function useWorkflowChatPanelState({
     if (!isConversationPaused) return null;
 
     if (approvalSubmittedAction) {
-      return <ApprovalWaitingState loading submitted />;
+      return (
+        <WorkflowApprovalInteractionCard mode="submitted" secondaryAction={interactionStopAction} />
+      );
     }
 
     if (!approvalToken) {
-      return <ApprovalWaitingState />;
+      return (
+        <WorkflowApprovalInteractionCard mode="external" secondaryAction={interactionStopAction} />
+      );
     }
 
     if (!approvalForm && (approvalFormQuery.isLoading || approvalFormQuery.isFetching)) {
-      return <ApprovalWaitingState loading />;
+      return (
+        <WorkflowApprovalInteractionCard mode="loading" secondaryAction={interactionStopAction} />
+      );
     }
 
     if (!approvalForm && isApprovalFormAlreadySubmittedError(approvalFormQuery.error)) {
-      return <ApprovalCompletedState compact />;
+      return <WorkflowApprovalInteractionCard mode="completed" />;
     }
 
     if (!approvalForm && approvalFormQuery.error) {
       return (
-        <div className="rounded-xl border bg-card p-4 text-center shadow-sm">
-          <div className="text-sm font-medium">{t('nodes.approval.runtime.loadFailed')}</div>
-          <p className="mt-2 text-xs text-muted-foreground">
-            {approvalFormQuery.error instanceof Error
-              ? approvalFormQuery.error.message
-              : t('nodes.approval.runtime.loadFailedDescription')}
-          </p>
-          <Button
-            type="button"
-            size="sm"
-            className="mt-3"
-            onClick={() => void approvalFormQuery.refetch()}
-          >
-            {t('nodes.approval.runtime.retry')}
-          </Button>
-        </div>
+        <WorkflowApprovalInteractionCard
+          mode="error"
+          error={approvalFormQuery.error}
+          onRetry={() => void approvalFormQuery.refetch()}
+          secondaryAction={interactionStopAction}
+        />
       );
     }
 
     if (approvalForm) {
       return (
-        <div className="max-h-[45vh] overflow-y-auto rounded-xl border bg-card p-3 shadow-sm">
-          <ApprovalRuntimeForm
-            form={approvalForm}
-            onSubmit={payload => void handleApprovalSubmit(payload)}
-            isSubmitting={approvalSubmitMutation.isPending || approvalRuntimeSubmitting}
-            submittedAction={approvalSubmittedAction}
-          />
-        </div>
+        <WorkflowApprovalInteractionCard
+          mode="form"
+          form={approvalForm}
+          onSubmit={payload => void handleApprovalSubmit(payload)}
+          isSubmitting={approvalSubmitMutation.isPending || approvalRuntimeSubmitting}
+          submittedAction={approvalSubmittedAction}
+          secondaryAction={interactionStopAction}
+        />
       );
     }
 
-    return <ApprovalWaitingState loading />;
+    return (
+      <WorkflowApprovalInteractionCard mode="loading" secondaryAction={interactionStopAction} />
+    );
   }, [
     approvalForm,
     approvalFormQuery,
@@ -2008,8 +2119,8 @@ export function useWorkflowChatPanelState({
     approvalToken,
     handleApprovalSubmit,
     isConversationPaused,
+    interactionStopAction,
     questionAnswerPrompt,
-    t,
   ]);
 
   interface IterationRound {
@@ -2228,12 +2339,21 @@ export function useWorkflowChatPanelState({
           setQuestionAnswerPrompt(null);
           setQuestionAnswerTranscript([]);
         } else {
+          payload.inputs = {
+            ...payload.inputs,
+            ...(activeQuestionAnswerPrompt?.nodeId
+              ? { question_answer_node_id: activeQuestionAnswerPrompt.nodeId }
+              : {}),
+            ...(typeof activeQuestionAnswerPrompt?.round === 'number'
+              ? { question_answer_round: activeQuestionAnswerPrompt.round }
+              : {}),
+          };
           setPrecheckWarnings([]);
           setQuestionAnswerSubmitting(true);
           setIsConversationPaused((activeQuestionAnswerPrompt?.choices.length ?? 0) > 0);
         }
         if (!isQuestionAnswerResume) {
-          approvalEventCursorRef.current = 0;
+          resetWorkflowRunEventCursor();
           setWorkflowRunId(null);
           workflowFinishedRef.current = false;
           setIsConversationPaused(false);
@@ -2282,6 +2402,7 @@ export function useWorkflowChatPanelState({
       persistDraftBeforeRun,
       questionAnswerPrompt,
       resetApprovalRuntime,
+      resetWorkflowRunEventCursor,
       sanitizeInputsForRestore,
       setLastDebugInputs,
       start,
@@ -2316,9 +2437,15 @@ export function useWorkflowChatPanelState({
         round={questionAnswerPrompt.round}
         submitting={questionAnswerSubmitting}
         onSelectChoice={handleQuestionAnswerChoice}
+        secondaryAction={interactionStopAction}
       />
     );
-  }, [handleQuestionAnswerChoice, questionAnswerPrompt, questionAnswerSubmitting]);
+  }, [
+    handleQuestionAnswerChoice,
+    interactionStopAction,
+    questionAnswerPrompt,
+    questionAnswerSubmitting,
+  ]);
 
   const handleSend = useCallback(
     (
@@ -2329,6 +2456,7 @@ export function useWorkflowChatPanelState({
         inputs: Record<string, unknown>;
       }
     ) => {
+      if (isRunning || isDurableRunActive) return;
       if (isConversationPaused && !questionAnswerPrompt) return;
       if (!canRunDraft) {
         toast.error(t('common.unauthorizedDescription'));
@@ -2345,6 +2473,8 @@ export function useWorkflowChatPanelState({
       canRunDraft,
       errors.length,
       isConversationPaused,
+      isDurableRunActive,
+      isRunning,
       questionAnswerPrompt,
       startChatWithPrecheck,
       t,
@@ -2368,7 +2498,8 @@ export function useWorkflowChatPanelState({
     setQuestionAnswerPrompt(null);
     setQuestionAnswerSubmitting(false);
     setQuestionAnswerTranscript([]);
-    approvalEventCursorRef.current = 0;
+    setIsDurableRunActive(false);
+    resetWorkflowRunEventCursor();
     setWorkflowRunId(null);
     workflowFinishedRef.current = true;
     setIsConversationPaused(false);
@@ -2387,24 +2518,13 @@ export function useWorkflowChatPanelState({
     cancel,
     cancelWorkflowRunEvents,
     resetApprovalRuntime,
+    resetWorkflowRunEventCursor,
     resetRunStatus,
     setLastDebugInputs,
     setRuntimeLogItems,
     setConvId,
     updateConversation,
   ]);
-
-  const handleStop = useCallback(() => {
-    if (hasBlockingApprovalStop()) {
-      toast.info(t('nodes.approval.runtime.stopDisabled'));
-      return;
-    }
-    if (!canStopRun) {
-      toast.error(t('common.unauthorizedDescription'));
-      return;
-    }
-    stop();
-  }, [canStopRun, hasBlockingApprovalStop, stop, t]);
 
   // features already derived above
 
@@ -2436,6 +2556,7 @@ export function useWorkflowChatPanelState({
 
   useEffect(() => {
     if (open) return;
+    setIsDurableRunActive(false);
     workflowFinishedRef.current = true;
     cancelWorkflowRunEvents();
     approvalResumeStreamActiveRef.current = false;
@@ -2488,11 +2609,6 @@ export function useWorkflowChatPanelState({
     startVariables.length > 0 ? t('agents.workflow.startForm.fillFormToStart') : undefined;
   const inputTopNotice =
     questionAnswerInputNotice ||
-    (isApprovalStopBlocked ? (
-      <div className="rounded-md border border-muted bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
-        {t('nodes.approval.runtime.stopDisabled')}
-      </div>
-    ) : null) ||
     (precheckWarnings.length > 0 ? (
       <WorkflowPrecheckWarningBanner
         warnings={precheckWarnings}
@@ -2503,6 +2619,7 @@ export function useWorkflowChatPanelState({
   const sendDisabled = Boolean(
     !canRunDraft ||
       isStarting ||
+      isDurableRunActive ||
       (isConversationPaused && !questionAnswerPrompt) ||
       questionAnswerSubmitting
   );
@@ -2546,8 +2663,9 @@ export function useWorkflowChatPanelState({
     inputTopNotice,
     placeholder,
     sendDisabled,
-    isRunning,
+    isRunning: isRunning || isDurableRunActive,
     isStopping,
+    hasIntegratedPendingInteraction: Boolean(isConversationPaused || questionAnswerPrompt),
     runWarnOpen,
     setRunWarnOpen,
     dontWarnAgain,

@@ -1373,21 +1373,9 @@ func (n *Node) loadConversationHistoryPromptMessages(ctx context.Context, conver
 		return nil, err
 	}
 
-	repo := conversation.NewAgentMessageRepository(n.db)
-	_, total, err := repo.GetByConversationID(ctx, conversationUUID, 1, 0)
-	if err != nil {
-		return nil, err
-	}
-	if total <= 0 {
-		return []PromptMessage{}, nil
-	}
-
 	limit := clampConversationHistoryWindowSize(windowSize)
-	offset := int(total) - limit
-	if offset < 0 {
-		offset = 0
-	}
-	records, _, err := repo.GetByConversationID(ctx, conversationUUID, limit, offset)
+	repo := conversation.NewAgentMessageRepository(n.db)
+	records, err := repo.GetContextHistoryByConversationID(ctx, conversationUUID, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -1400,13 +1388,19 @@ func promptMessagesFromAgentMessages(records []*conversation.AgentMessage) []Pro
 		if record == nil {
 			continue
 		}
+		if record.Status != conversation.AgentMessageStatusCompleted &&
+			record.Status != conversation.AgentMessageStatusStopped &&
+			record.Status != conversation.AgentMessageStatusError &&
+			record.Status != conversation.AgentMessageStatusExpired {
+			continue
+		}
 		if record.Query != "" {
 			messages = append(messages, PromptMessage{
 				Role:    PromptMessageRoleUser,
 				Content: record.Query,
 			})
 		}
-		if record.Answer != "" {
+		if record.Answer != "" && (record.Status == conversation.AgentMessageStatusCompleted || record.Status == conversation.AgentMessageStatusStopped) {
 			messages = append(messages, PromptMessage{
 				Role:    PromptMessageRoleAssistant,
 				Content: record.Answer,
@@ -1738,7 +1732,10 @@ func (n *Node) handleChatModelTemplate(
 								)
 							}
 						} else {
-							logger.WarnContext(logCtx, "LLM file content variable not found",
+							// A regular scalar/object template variable is valid without a
+							// sibling `_content` value. Only file variables populate that
+							// companion, so its absence is diagnostic rather than a warning.
+							logger.DebugContext(logCtx, "LLM template variable has no file content companion",
 								zap.String("content_variable_path", contentVarPath),
 							)
 						}
@@ -2412,7 +2409,7 @@ func (n *Node) processTemplateMessageWithFiles(
 						zap.String("content_variable_path", contentVarPath),
 					)
 				} else {
-					logger.WarnContext(n.logContext(context.Background()), "file content variable not found for LLM template",
+					logger.DebugContext(n.logContext(context.Background()), "LLM template variable has no file content companion",
 						zap.String("content_variable_path", contentVarPath),
 					)
 				}
@@ -2543,7 +2540,7 @@ func (n *Node) renderTemplateMessage(
 					zap.String("content_variable_path", contentVarPath),
 				)
 			} else {
-				logger.WarnContext(logCtx, "file content variable not found for LLM template render",
+				logger.DebugContext(logCtx, "LLM template variable has no file content companion during render",
 					zap.String("content_variable_path", contentVarPath),
 				)
 			}

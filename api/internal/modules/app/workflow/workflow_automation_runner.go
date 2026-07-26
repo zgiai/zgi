@@ -19,6 +19,7 @@ import (
 )
 
 const automationTriggeredFrom = string(InvokeFromAutomation)
+const embeddedWorkflowTriggeredFrom = string(InvokeFromWorkflow)
 
 const automationFinalizationTimeout = 30 * time.Second
 
@@ -51,7 +52,8 @@ const (
 	automationWorkflowEventFailed            = "workflow_failed"
 )
 
-// RunAutomationWorkflow executes a published workflow from an automation action.
+// RunAutomationWorkflow executes a published workflow from an automation action
+// or an embedded Agent workflow invocation.
 func (s *WorkflowService) RunAutomationWorkflow(ctx context.Context, req automationaction.WorkflowRunRequest) (*automationaction.WorkflowRunResult, error) {
 	if s == nil {
 		return nil, fmt.Errorf("workflow service is not configured")
@@ -76,6 +78,17 @@ func (s *WorkflowService) RunAutomationWorkflow(ctx context.Context, req automat
 	if target.TenantID != "" && target.TenantID != req.WorkspaceID {
 		return nil, fmt.Errorf("workflow %s does not belong to workspace %s", target.ID, req.WorkspaceID)
 	}
+	if err := validateWorkflowInvocation(target, req.Invocation); err != nil {
+		return nil, err
+	}
+	if existing, err := s.findWorkflowInvocationRun(ctx, req.Invocation); err != nil {
+		return nil, err
+	} else if existing != nil {
+		if err := validateWorkflowInvocationRun(existing, target, req.Invocation); err != nil {
+			return nil, err
+		}
+		return workflowInvocationResult(existing), nil
+	}
 
 	graphData, err := automationWorkflowGraphData(target)
 	if err != nil {
@@ -83,48 +96,104 @@ func (s *WorkflowService) RunAutomationWorkflow(ctx context.Context, req automat
 	}
 
 	inputs := automationWorkflowInputs(req, target)
-	runCtx := context.WithValue(ctx, "invoke_from", automationTriggeredFrom)
-	runCtx = context.WithValue(runCtx, "created_from", automationTriggeredFrom)
+	triggeredFrom := workflowRunTriggeredFrom(req.Invocation)
+	runCtx := context.WithValue(ctx, "invoke_from", triggeredFrom)
+	runCtx = context.WithValue(runCtx, "created_from", triggeredFrom)
 	runCtx = context.WithValue(runCtx, "created_by_role", string(CreatedByRoleAccount))
 
-	workflowRunLog, err := s.CreateWorkflowRunLog(runCtx, req.WorkspaceID, target.AgentID, target.ID, automationTriggeredFrom, inputs, req.AccountID)
+	workflowRunLog, err := s.createWorkflowRunLog(runCtx, req.WorkspaceID, target.AgentID, target.ID, triggeredFrom, inputs, req.AccountID, req.Invocation)
 	if err != nil {
+		if req.Invocation != nil {
+			if existing, lookupErr := s.findWorkflowInvocationRun(ctx, req.Invocation); lookupErr == nil && existing != nil {
+				if validationErr := validateWorkflowInvocationRun(existing, target, req.Invocation); validationErr != nil {
+					return nil, validationErr
+				}
+				return workflowInvocationResult(existing), nil
+			} else if lookupErr != nil {
+				return nil, lookupErr
+			}
+		}
 		return nil, fmt.Errorf("create automation workflow run log: %w", err)
 	}
 
 	workflowRunLogID := ""
+	runtimeV2 := false
+	var executionOwner workflowExecutionOwner
 	if typed, ok := workflowRunLog.(*WorkflowRunLog); ok && typed != nil {
 		workflowRunLogID = typed.ID
+		runtimeV2 = typed.RuntimeProtocolVersion >= workflowRuntimeProtocolVersionV2
+		executionOwner = workflowExecutionOwnerFromRun(typed)
+		runCtx = withWorkflowExecutionOwner(runCtx, executionOwner)
 	}
 	if workflowRunLogID == "" {
 		return nil, fmt.Errorf("create automation workflow run log returned empty id")
 	}
 
 	inputs["sys.workflow_run_id"] = workflowRunLogID
+	stopLeaseRenewal := func() {}
+	if runtimeV2 {
+		runCtx, stopLeaseRenewal = startWorkflowExecutionLeaseRenewal(runCtx, workflowpause.NewService(database.GetDB()), workflowpause.ExecutionClaim{
+			WorkflowRunID: workflowRunLogID, Generation: executionOwner.Generation, ExecutionID: executionOwner.ExecutionID,
+		})
+	}
+	defer stopLeaseRenewal()
+	runCtx, cancelRuntime := context.WithCancelCause(runCtx)
+	defer cancelRuntime(nil)
 	nodeMetas := automationWorkflowNodeMetas(graphData)
 	nodeMap := automationWorkflowNodeMap(graphData)
-	emitAutomationWorkflowStarted(req.EventSink, req, target, workflowRunLogID)
+	eventSink := req.EventSink
+	var eventDispatcher *workflowRunEventDispatcher
+	durableEventErr := make(chan error, 1)
+	if runtimeV2 {
+		eventDispatcher = newWorkflowRunEventDispatcher(req.WorkspaceID, target.AgentID, workflowRunLogID, false,
+			func(eventType string, data map[string]interface{}, stored *workflowpause.RunEventPayload) error {
+				emitAutomationWorkflowStoredEvent(req.EventSink, eventType, data, stored)
+				return nil
+			})
+		eventSink = func(event automationaction.WorkflowRunEvent) {
+			if err := eventDispatcher.Dispatch(runCtx, event.Type, event.Payload); err != nil {
+				select {
+				case durableEventErr <- err:
+				default:
+				}
+				cancelRuntime(errWorkflowEventPersistenceFailed)
+			}
+		}
+		defer func() {
+			closeCtx, cancel := context.WithTimeout(context.WithoutCancel(runCtx), workflowRunEventAppendTimeout)
+			defer cancel()
+			if err := eventDispatcher.Close(closeCtx); err != nil {
+				logger.WarnContext(closeCtx, "failed to close automation workflow event dispatcher", "workflow_run_id", workflowRunLogID, err)
+			}
+		}()
+	}
+	emitAutomationWorkflowStarted(eventSink, req, target, workflowRunLogID)
 
 	startedAt := time.Now()
 	executionResult, execErr := s.executor.ExecuteSimpleWorkflowWithRunIDAndCallbacks(runCtx, workflowRunLogID, graphData, inputs, graph_engine.EngineCallbacks{
 		Iteration: func(event *graph_engine.IterationEvent) {
-			emitAutomationWorkflowIterationEvent(req.EventSink, req, target, workflowRunLogID, nodeMetas, event)
+			emitAutomationWorkflowIterationEvent(eventSink, req, target, workflowRunLogID, nodeMetas, event)
 		},
 		Loop: func(event *graph_engine.LoopEvent) {
-			emitAutomationWorkflowLoopEvent(req.EventSink, req, target, workflowRunLogID, nodeMetas, event)
+			emitAutomationWorkflowLoopEvent(eventSink, req, target, workflowRunLogID, nodeMetas, event)
 		},
 		InternalNode: func(event *graph_engine.NodeEvent) {
-			emitAutomationWorkflowInternalNodeEvent(req.EventSink, req, target, workflowRunLogID, nodeMap, event)
+			emitAutomationWorkflowInternalNodeEvent(eventSink, req, target, workflowRunLogID, nodeMap, event)
 		},
 		NodeStarted: func(nodeID string, nodeType string, inputs map[string]any) {
 			meta := automationWorkflowEventNodeMeta(nodeMetas, nodeID, nodeType)
-			emitAutomationWorkflowNodeStarted(req.EventSink, req, target, workflowRunLogID, meta, inputs)
+			emitAutomationWorkflowNodeStarted(eventSink, req, target, workflowRunLogID, meta, inputs)
 		},
 		NodeFinishedDetailed: func(event graph_engine.NodeFinishedEvent) {
 			meta := automationWorkflowEventNodeMeta(nodeMetas, event.NodeID, event.NodeType)
-			emitAutomationWorkflowNodeFinished(req.EventSink, req, target, workflowRunLogID, meta, event)
+			emitAutomationWorkflowNodeFinished(eventSink, req, target, workflowRunLogID, meta, event)
 		},
 	})
+	select {
+	case durableErr := <-durableEventErr:
+		execErr = fmt.Errorf("%w: %v", errWorkflowEventPersistenceFailed, durableErr)
+	default:
+	}
 	elapsedTime := ElapsedMillisecondsSince(startedAt)
 	finalizeCtx, cancelFinalize := automationFinalizationContext(runCtx)
 	defer cancelFinalize()
@@ -133,13 +202,13 @@ func (s *WorkflowService) RunAutomationWorkflow(ctx context.Context, req automat
 	totalSteps := 0
 	if executionResult != nil {
 		outputs = automationWorkflowOutputs(executionResult)
-		totalSteps = len(executionResult.NodeResults)
+		totalSteps = workflowExecutionResultStepCount(executionResult)
 		if executionResult.ExecutionTime > 0 {
 			elapsedTime = durationMilliseconds(executionResult.ExecutionTime)
 		}
 	}
 
-	if err := s.persistAutomationWorkflowNodeRuntimeLogs(finalizeCtx, req.WorkspaceID, req.AccountID, target, graphData, workflowRunLogID, executionResult); err != nil {
+	if err := s.persistAutomationWorkflowNodeRuntimeLogs(finalizeCtx, req.WorkspaceID, req.AccountID, triggeredFrom, target, graphData, workflowRunLogID, executionResult); err != nil {
 		logger.ErrorContext(finalizeCtx, "failed to persist automation workflow node runtime logs",
 			zap.String("workflow_run_id", workflowRunLogID),
 			zap.String("workflow_id", target.ID),
@@ -157,41 +226,101 @@ func (s *WorkflowService) RunAutomationWorkflow(ctx context.Context, req automat
 	}
 
 	if status == string(dto.WorkflowRunStatusPaused) {
-		if err := s.PauseWorkflowRunLog(finalizeCtx, workflowRunLogID, outputs, elapsedTime, 0, totalSteps); err != nil {
-			return nil, fmt.Errorf("pause automation workflow run log: %w", err)
+		if !runtimeV2 {
+			if err := s.pauseLegacyWorkflowRunLog(finalizeCtx, workflowRunLogID, outputs, elapsedTime, 0, totalSteps); err != nil {
+				return nil, fmt.Errorf("pause automation workflow run log: %w", err)
+			}
 		}
-		if err := persistAutomationWorkflowPause(finalizeCtx, req, target, workflowRunLogID, executionResult, inputs, outputs, totalSteps); err != nil {
+		pauseEvents := collectAutomationWorkflowPausedEvents(req, target, workflowRunLogID, executionResult, outputs, elapsedTime, nodeMetas)
+		if err := persistAutomationWorkflowPause(finalizeCtx, req, target, workflowRunLogID, executionResult, inputs, outputs, totalSteps, elapsedTime, pauseEvents); err != nil {
 			return nil, fmt.Errorf("save automation workflow pause: %w", err)
 		}
-		emitAutomationWorkflowPaused(req.EventSink, req, target, workflowRunLogID, executionResult, outputs, elapsedTime, nodeMetas)
+		for _, event := range pauseEvents {
+			emitAutomationWorkflowEvent(eventSink, event.Type, event.Payload)
+		}
+	} else if runtimeV2 {
+		finished := automationWorkflowTerminalEvent(req, target, workflowRunLogID, status, outputs, elapsedTime, totalSteps, errorMessage)
+		var errorEvent map[string]interface{}
+		exceptionsCount := 0
+		if errorMessage != "" {
+			errorEvent = automationWorkflowBasePayload(req, target, workflowRunLogID, map[string]interface{}{
+				"status": "failed", "outputs": copyWorkflowAnyMap(outputs), "elapsed_time": elapsedTime,
+				"error": errorMessage, "message": errorMessage, "created_at": time.Now().Unix(),
+			})
+			exceptionsCount = 1
+		}
+		if err := finalizeWorkflowRun(finalizeCtx, finalizeWorkflowRunParams{
+			WorkflowRunID: workflowRunLogID, Status: status, Outputs: outputs, ErrorMessage: errorMessage,
+			ElapsedTime: elapsedTime, TotalSteps: totalSteps, ExceptionsCount: exceptionsCount,
+			ErrorEvent: errorEvent, WorkflowFinished: finished,
+		}); err != nil {
+			return nil, fmt.Errorf("finalize automation workflow run: %w", err)
+		}
+		if len(errorEvent) > 0 {
+			emitAutomationWorkflowEvent(eventSink, automationWorkflowEventFailed, errorEvent)
+		}
+		emitAutomationWorkflowEvent(eventSink, automationWorkflowEventFinished, finished)
 	} else if err := s.UpdateWorkflowRunLogStatus(finalizeCtx, workflowRunLogID, status, outputs, elapsedTime, 0, totalSteps, errorMessage); err != nil {
 		return nil, fmt.Errorf("update automation workflow run log: %w", err)
 	}
 	if execErr != nil {
-		emitAutomationWorkflowFailed(req.EventSink, req, target, workflowRunLogID, outputs, elapsedTime, execErr)
+		if !runtimeV2 {
+			emitAutomationWorkflowFailed(eventSink, req, target, workflowRunLogID, outputs, elapsedTime, execErr)
+		}
 		return &automationaction.WorkflowRunResult{
-			WorkflowRunID: workflowRunLogID,
-			WorkflowID:    target.ID,
-			AgentID:       target.AgentID,
-			Version:       target.Version,
-			Status:        status,
-			Outputs:       outputs,
-			ElapsedTime:   elapsedTime,
+			WorkflowRunID:  workflowRunLogID,
+			WorkflowID:     target.ID,
+			AgentID:        target.AgentID,
+			Version:        target.Version,
+			Status:         status,
+			Outputs:        outputs,
+			ElapsedTime:    elapsedTime,
+			InvocationID:   workflowInvocationID(req.Invocation),
+			InvocationMode: workflowInvocationMode(req.Invocation),
 		}, fmt.Errorf("workflow execution failed: %w", execErr)
 	}
-	if status != string(dto.WorkflowRunStatusPaused) {
-		emitAutomationWorkflowFinished(req.EventSink, req, target, workflowRunLogID, outputs, elapsedTime)
+	if status != string(dto.WorkflowRunStatusPaused) && !runtimeV2 {
+		emitAutomationWorkflowFinished(eventSink, req, target, workflowRunLogID, outputs, elapsedTime)
 	}
 
 	return &automationaction.WorkflowRunResult{
-		WorkflowRunID: workflowRunLogID,
-		WorkflowID:    target.ID,
-		AgentID:       target.AgentID,
-		Version:       target.Version,
-		Status:        status,
-		Outputs:       outputs,
-		ElapsedTime:   elapsedTime,
+		WorkflowRunID:  workflowRunLogID,
+		WorkflowID:     target.ID,
+		AgentID:        target.AgentID,
+		Version:        target.Version,
+		Status:         status,
+		Outputs:        outputs,
+		ElapsedTime:    elapsedTime,
+		InvocationID:   workflowInvocationID(req.Invocation),
+		InvocationMode: workflowInvocationMode(req.Invocation),
 	}, nil
+}
+
+func workflowInvocationID(invocation *automationaction.WorkflowInvocationContext) string {
+	if invocation == nil {
+		return ""
+	}
+	return strings.TrimSpace(invocation.InvocationID)
+}
+
+func workflowInvocationMode(invocation *automationaction.WorkflowInvocationContext) string {
+	if invocation == nil {
+		return automationaction.WorkflowInvocationModeStandalone
+	}
+	return strings.TrimSpace(invocation.Mode)
+}
+
+func workflowRunTriggeredFrom(invocation *automationaction.WorkflowInvocationContext) string {
+	if invocation == nil {
+		return automationTriggeredFrom
+	}
+
+	switch strings.TrimSpace(invocation.Mode) {
+	case automationaction.WorkflowInvocationModeAgentDelegate, automationaction.WorkflowInvocationModeAgentTaskTool:
+		return embeddedWorkflowTriggeredFrom
+	default:
+		return automationTriggeredFrom
+	}
 }
 
 func emitAutomationWorkflowStarted(sink automationaction.WorkflowRunEventSink, req automationaction.WorkflowRunRequest, workflow *Workflow, workflowRunID string) {
@@ -484,7 +613,33 @@ func emitAutomationWorkflowFailed(sink automationaction.WorkflowRunEventSink, re
 	emitAutomationWorkflowEvent(sink, automationWorkflowEventFailed, payload)
 }
 
-func persistAutomationWorkflowPause(ctx context.Context, req automationaction.WorkflowRunRequest, workflow *Workflow, workflowRunID string, result *WorkflowExecutionResult, inputs map[string]interface{}, outputs map[string]interface{}, totalSteps int) error {
+func automationWorkflowTerminalEvent(req automationaction.WorkflowRunRequest, workflow *Workflow, workflowRunID, status string, outputs map[string]interface{}, elapsedTime float64, totalSteps int, errorMessage string) map[string]interface{} {
+	workflowID := ""
+	if workflow != nil {
+		workflowID = workflow.ID
+	}
+	var errorValue interface{}
+	if errorMessage != "" {
+		errorValue = map[string]interface{}{"message": errorMessage}
+	}
+	return map[string]interface{}{
+		"id": workflowRunID, "workflow_run_id": workflowRunID, "workflow_id": workflowID,
+		"status": status, "outputs": outputs, "error": errorValue, "elapsed_time": elapsedTime,
+		"total_tokens": 0, "total_steps": totalSteps, "created_by": map[string]interface{}{"id": req.AccountID},
+		"finished_at": time.Now().Unix(), "exceptions_count": map[bool]int{true: 1, false: 0}[errorMessage != ""],
+		"files": []interface{}{},
+	}
+}
+
+func collectAutomationWorkflowPausedEvents(req automationaction.WorkflowRunRequest, workflow *Workflow, workflowRunID string, result *WorkflowExecutionResult, outputs map[string]interface{}, elapsedTime float64, nodeMetas map[string]automationWorkflowNodeMeta) []automationaction.WorkflowRunEvent {
+	events := make([]automationaction.WorkflowRunEvent, 0, 2)
+	emitAutomationWorkflowPaused(func(event automationaction.WorkflowRunEvent) {
+		events = append(events, event)
+	}, req, workflow, workflowRunID, result, outputs, elapsedTime, nodeMetas)
+	return events
+}
+
+func persistAutomationWorkflowPause(ctx context.Context, req automationaction.WorkflowRunRequest, workflow *Workflow, workflowRunID string, result *WorkflowExecutionResult, inputs map[string]interface{}, outputs map[string]interface{}, totalSteps int, elapsedTime float64, durableEvents []automationaction.WorkflowRunEvent) error {
 	if result == nil {
 		return nil
 	}
@@ -537,7 +692,7 @@ func persistAutomationWorkflowPause(ctx context.Context, req automationaction.Wo
 		AppID:         appID,
 		TenantID:      req.WorkspaceID,
 		RunType:       runType,
-		TriggeredFrom: automationTriggeredFrom,
+		TriggeredFrom: workflowRunTriggeredFrom(req.Invocation),
 		Request: workflowpause.RequestState{
 			Inputs:       copyWorkflowAnyMap(inputs),
 			ResponseMode: "streaming",
@@ -556,6 +711,18 @@ func persistAutomationWorkflowPause(ctx context.Context, req automationaction.Wo
 		VariablePool: workflowpause.SnapshotVariablePool(variablePool),
 	}
 	service := workflowpause.NewService(database.GetDB())
+	owner, _ := workflowExecutionOwnerFromContext(ctx)
+	outputsJSON, _ := json.Marshal(outputs)
+	pauseEvents := make([]workflowpause.AppendEventParams, 0, len(durableEvents))
+	for index := range durableEvents {
+		event := &durableEvents[index]
+		pauseEvents = append(pauseEvents, workflowpause.AppendEventParams{
+			EventType:      event.Type,
+			EventData:      event.Payload,
+			Category:       workflowEventCategory(event.Type),
+			IdempotencyKey: fmt.Sprintf("automation-pause:%s:%s", workflowRunID, event.Type),
+		})
+	}
 	_, err := service.Save(ctx, workflowpause.SaveParams{
 		TenantID:       req.WorkspaceID,
 		AppID:          appID,
@@ -565,6 +732,12 @@ func persistAutomationWorkflowPause(ctx context.Context, req automationaction.Wo
 		ConversationID: automationWorkflowConversationID(inputs),
 		State:          pauseState,
 		Reasons:        reasons,
+		ExecutionID:    owner.ExecutionID,
+		Generation:     owner.Generation,
+		RunOutputsJSON: string(outputsJSON),
+		RunElapsedTime: elapsedTime,
+		RunTotalSteps:  totalSteps,
+		Events:         pauseEvents,
 	})
 	return err
 }
@@ -611,6 +784,27 @@ func emitAutomationWorkflowEvent(sink automationaction.WorkflowRunEventSink, eve
 		payload = map[string]interface{}{}
 	}
 	sink(automationaction.WorkflowRunEvent{Type: eventType, Payload: payload})
+}
+
+func emitAutomationWorkflowStoredEvent(sink automationaction.WorkflowRunEventSink, eventType string, payload map[string]interface{}, stored *workflowpause.RunEventPayload) {
+	if sink == nil {
+		return
+	}
+	if payload == nil {
+		payload = map[string]interface{}{}
+	}
+	event := automationaction.WorkflowRunEvent{Type: eventType, Payload: payload}
+	if stored != nil {
+		event.Sequence = stored.Sequence
+		event.SchemaVersion = stored.SchemaVersion
+		event.PayloadVersion = stored.PayloadVersion
+		event.ExecutionID = stored.ExecutionID
+		event.PauseID = stored.PauseID
+		if stored.PauseGeneration != nil {
+			event.PauseGeneration = *stored.PauseGeneration
+		}
+	}
+	sink(event)
 }
 
 func automationWorkflowBasePayload(req automationaction.WorkflowRunRequest, workflow *Workflow, workflowRunID string, payload map[string]interface{}) map[string]interface{} {
@@ -896,11 +1090,26 @@ func automationWorkflowInputs(req automationaction.WorkflowRunRequest, workflow 
 	inputs["sys.tenant_id"] = req.WorkspaceID
 	inputs["sys.agent_id"] = workflow.AgentID
 	inputs["sys.workflow_id"] = workflow.ID
+	inputs["sys.workflow_type"] = string(workflow.Type)
 	inputs["sys.user_id"] = req.AccountID
 	inputs["sys.automation_task_id"] = req.TaskID
 	inputs["sys.automation_task_run_id"] = req.TaskRunID
 	inputs["sys.automation_action_id"] = req.ActionID
 	inputs["sys.scheduled_for"] = req.ScheduledFor.Format(time.RFC3339)
+	if req.Invocation != nil {
+		if parentConversationID := strings.TrimSpace(req.Invocation.ParentConversationID); parentConversationID != "" {
+			inputs["sys.parent_conversation_id"] = parentConversationID
+		}
+		if parentMessageID := strings.TrimSpace(req.Invocation.ParentMessageID); parentMessageID != "" {
+			inputs["sys.parent_message_id"] = parentMessageID
+		}
+		if invocationID := strings.TrimSpace(req.Invocation.InvocationID); invocationID != "" {
+			inputs["sys.invocation_id"] = invocationID
+		}
+		if invocationMode := strings.TrimSpace(req.Invocation.Mode); invocationMode != "" {
+			inputs["sys.invocation_mode"] = invocationMode
+		}
+	}
 	if query, ok := inputs["query"].(string); ok && query != "" {
 		inputs["sys.query"] = query
 	}
@@ -916,7 +1125,7 @@ type automationWorkflowNodeMeta struct {
 	PredecessorNodeID *string
 }
 
-func (s *WorkflowService) persistAutomationWorkflowNodeRuntimeLogs(ctx context.Context, workspaceID, accountID string, workflow *Workflow, graphData map[string]interface{}, workflowRunID string, result *WorkflowExecutionResult) error {
+func (s *WorkflowService) persistAutomationWorkflowNodeRuntimeLogs(ctx context.Context, workspaceID, accountID, triggeredFrom string, workflow *Workflow, graphData map[string]interface{}, workflowRunID string, result *WorkflowExecutionResult) error {
 	if s == nil || s.workflowNodeRuntimeLogRepo == nil || workflow == nil || result == nil || workflowRunID == "" {
 		return nil
 	}
@@ -926,6 +1135,10 @@ func (s *WorkflowService) persistAutomationWorkflowNodeRuntimeLogs(ctx context.C
 	featuresSnapshot := optionalStringPointer(workflow.Features)
 
 	for index, snapshot := range result.NodeExecutions {
+		if !workflowNodeRuntimeStatusIsVisible(string(snapshot.Status)) {
+			continue
+		}
+
 		meta := nodeMetas[snapshot.NodeID]
 		if meta.NodeID == "" {
 			meta = automationWorkflowNodeMeta{
@@ -942,7 +1155,7 @@ func (s *WorkflowService) persistAutomationWorkflowNodeRuntimeLogs(ctx context.C
 			meta.Title = meta.NodeID
 		}
 
-		nodeLog, err := automationWorkflowNodeRuntimeLog(workspaceID, accountID, workflow, workflowRunID, graphSnapshot, featuresSnapshot, meta, snapshot)
+		nodeLog, err := automationWorkflowNodeRuntimeLog(workspaceID, accountID, triggeredFrom, workflow, workflowRunID, graphSnapshot, featuresSnapshot, meta, snapshot)
 		if err != nil {
 			return err
 		}
@@ -954,7 +1167,7 @@ func (s *WorkflowService) persistAutomationWorkflowNodeRuntimeLogs(ctx context.C
 	return nil
 }
 
-func automationWorkflowNodeRuntimeLog(workspaceID, accountID string, workflow *Workflow, workflowRunID string, graphSnapshot, featuresSnapshot *string, meta automationWorkflowNodeMeta, snapshot graph_engine.NodeExecutionSnapshot) (*WorkflowNodeRuntimeLog, error) {
+func automationWorkflowNodeRuntimeLog(workspaceID, accountID, triggeredFrom string, workflow *Workflow, workflowRunID string, graphSnapshot, featuresSnapshot *string, meta automationWorkflowNodeMeta, snapshot graph_engine.NodeExecutionSnapshot) (*WorkflowNodeRuntimeLog, error) {
 	inputs, err := jsonMapStringPointer(snapshot.Inputs)
 	if err != nil {
 		return nil, fmt.Errorf("marshal node inputs for node %s: %w", snapshot.NodeID, err)
@@ -1001,7 +1214,7 @@ func automationWorkflowNodeRuntimeLog(workspaceID, accountID string, workflow *W
 		TenantID:          workspaceID,
 		AgentID:           workflow.AgentID,
 		WorkflowID:        workflow.ID,
-		TriggeredFrom:     automationTriggeredFrom,
+		TriggeredFrom:     triggeredFrom,
 		WorkflowRunID:     &workflowRunID,
 		Index:             meta.Index,
 		PredecessorNodeID: meta.PredecessorNodeID,

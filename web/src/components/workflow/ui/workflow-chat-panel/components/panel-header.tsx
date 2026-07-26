@@ -35,6 +35,7 @@ export function PanelHeader({
             icon={<History size={14} />}
             tooltipLabel={t('agents.workflow.debugRuns')}
             dropdownLabel={t('agents.workflow.debugRuns')}
+            description={t('agents.workflow.debugRunsDescription')}
             triggerText={t('agents.workflow.debugRuns')}
             triggerVariant="outline"
             triggerSize="xs"

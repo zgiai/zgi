@@ -679,14 +679,19 @@ func (s *service) completePreparedChat(ctx context.Context, prepared *PreparedCh
 		return err
 	}
 	if prepared.ReplaceRoot {
-		return s.repos.Conversation.CompleteRootReplacement(ctx, prepared.Conversation.ID, prepared.Message.ID)
+		if err := s.repos.Conversation.CompleteRootReplacement(ctx, prepared.Conversation.ID, prepared.Message.ID); err != nil {
+			return err
+		}
+	} else if prepared.Continuation {
+		if err := s.repos.Conversation.FinishContinuationMessage(ctx, prepared.Conversation.ID, prepared.Message.ID); err != nil {
+			return err
+		}
+	} else {
+		if err := s.repos.Conversation.UpdateAfterMessage(ctx, prepared.Conversation.ID, prepared.Message.ID); err != nil {
+			return err
+		}
 	}
-	if prepared.Continuation {
-		return s.repos.Conversation.FinishContinuationMessage(ctx, prepared.Conversation.ID, prepared.Message.ID)
-	}
-	if err := s.repos.Conversation.UpdateAfterMessage(ctx, prepared.Conversation.ID, prepared.Message.ID); err != nil {
-		return err
-	}
+	prepared.Message.Answer = answer
 	return nil
 }
 
@@ -748,6 +753,8 @@ func (s *service) persistStoppedAnswer(ctx context.Context, prepared *PreparedCh
 	if err := s.repos.Message.UpdateStoppedAnswer(ctx, prepared.Message.ID, answer, metadata); err != nil {
 		return err
 	}
+	prepared.Message.Answer = answer
+	prepared.Message.Metadata = metadata
 	if prepared.ReplaceRoot {
 		if err := s.repos.Conversation.CompleteRootReplacement(ctx, prepared.Conversation.ID, prepared.Message.ID); err != nil {
 			return err
@@ -814,16 +821,16 @@ func (s *service) appendPreparedMessageEndEvent(ctx context.Context, prepared *P
 	return event.ID
 }
 
-func (s *service) emitPreparedEvent(ctx context.Context, prepared *PreparedChat, eventType string, payload map[string]interface{}, onEvent func(StreamEvent) error) {
+func (s *service) emitPreparedEvent(ctx context.Context, prepared *PreparedChat, eventType string, payload map[string]interface{}, onEvent func(StreamEvent) error) error {
 	if prepared == nil || prepared.Message == nil || prepared.Conversation == nil {
-		return
+		return nil
 	}
 	if suppressClientStreamEvent(eventType, payload) {
-		return
+		return nil
 	}
 	event := s.appendStreamEventBestEffort(ctx, prepared.Message.ID, prepared.Conversation.ID, eventType, payload)
 	if onEvent == nil {
-		return
+		return nil
 	}
 	if event == nil {
 		now := time.Now()
@@ -863,7 +870,9 @@ func (s *service) emitPreparedEvent(ctx context.Context, prepared *PreparedChat,
 		Sequence:    event.Sequence,
 	}); err != nil {
 		logger.WarnContext(ctx, "failed to deliver aichat stream event", "message_id", prepared.Message.ID.String(), "event_type", eventType, err)
+		return err
 	}
+	return nil
 }
 
 func (s *service) resetStreamEventsBestEffort(ctx context.Context, messageID uuid.UUID) {
@@ -928,7 +937,9 @@ func baseFileParsePayload(prepared *PreparedChat, file attachmentFile, index, to
 }
 
 func messageEndPayload(prepared *PreparedChat, metadata map[string]interface{}) map[string]interface{} {
-	return messageEndPayloadWithStatus(prepared, metadata, completedStatusFromMetadata(metadata))
+	payload := messageEndPayloadWithStatus(prepared, metadata, completedStatusFromMetadata(metadata))
+	payload["answer"] = prepared.Message.Answer
+	return payload
 }
 
 func messageEndPayloadWithStatus(prepared *PreparedChat, metadata map[string]interface{}, status string) map[string]interface{} {

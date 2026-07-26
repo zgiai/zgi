@@ -39,6 +39,17 @@ import {
   preferCompleteIntermediateAnswerContent,
   removeTransientProgressItems,
 } from './shared';
+import {
+  captureAnswerTimelineBoundary,
+  clearAnswerTimelineBoundaryWithoutDurableTimeline,
+  finalPresentationAnswer,
+  mergePresentationItems,
+  presentationPositionFromPayload,
+  presentationStateFromMetadata,
+  processTextPresentationItem,
+  upsertPresentationItem,
+  withPresentationItems,
+} from '../presentation-order';
 import { updateSkillInvocationMetadata } from './skill';
 
 export function mergeAIChatMessages(
@@ -163,7 +174,8 @@ export function applyIntermediateAnswerState(
       status: payload.done === false ? 'running' : 'success',
       message: nextContent,
       created_at: payload.created_at,
-    }
+    },
+    presentationPositionFromPayload(payload)
   );
 }
 
@@ -176,6 +188,7 @@ export function applyUserInputRequestedState(
   if (!payload.conversation_id || !payload.message_id || questions.length === 0) {
     return current;
   }
+  const presentationPosition = presentationPositionFromPayload(payload);
   const request = {
     request_id: payload.request_id,
     message: payload.message,
@@ -192,18 +205,31 @@ export function applyUserInputRequestedState(
       options: question.options?.filter(option => option.label?.trim()),
     })),
     created_at: payload.created_at,
+    ...presentationPosition,
   };
   const messages = current.messagesByConversation[payload.conversation_id] ?? [];
+  const requestedMessage = messages.find(message => message.id === payload.message_id);
   const previousStreaming = current.streamingByMessageId[payload.message_id];
   if (isStaleAIChatStreamEvent(eventId, previousStreaming?.last_event_id)) {
     return current;
   }
+  const answerBeforeTimelineLength =
+    presentationPosition || previousStreaming?.presentationVersion === 2
+      ? previousStreaming?.answer_before_timeline_length
+      : captureAnswerTimelineBoundary(
+          previousStreaming?.answer_before_timeline_length ??
+            (typeof requestedMessage?.metadata?.answer_before_timeline_length === 'number'
+              ? requestedMessage.metadata.answer_before_timeline_length
+              : undefined),
+          previousStreaming?.answer ?? requestedMessage?.answer ?? ''
+        );
   const nextMessages = messages.map(message =>
     message.id === payload.message_id
       ? {
           ...message,
           metadata: {
             ...(message.metadata ?? {}),
+            answer_before_timeline_length: answerBeforeTimelineLength,
             user_input_request: request,
           },
           updated_at: Math.floor(Date.now() / 1000),
@@ -221,6 +247,7 @@ export function applyUserInputRequestedState(
           ...current.streamingByMessageId,
           [payload.message_id]: {
             ...previousStreaming,
+            answer_before_timeline_length: answerBeforeTimelineLength,
             last_event_id: eventId ?? previousStreaming.last_event_id,
           },
         }
@@ -355,6 +382,26 @@ export function applyMessageStartState(
     answer: message.answer,
     status: 'streaming',
     timeline: isReplace ? [] : (previousStreaming?.timeline ?? []),
+    ...(isReplace
+      ? {}
+      : {
+          ...presentationStateFromMetadata(message.metadata),
+          presentationItems:
+            previousStreaming?.presentationItems ??
+            presentationStateFromMetadata(message.metadata).presentationItems,
+          presentationVersion:
+            previousStreaming?.presentationVersion ??
+            presentationStateFromMetadata(message.metadata).presentationVersion,
+          lastPresentationSequence:
+            previousStreaming?.lastPresentationSequence ??
+            presentationStateFromMetadata(message.metadata).lastPresentationSequence,
+          segmentsById:
+            previousStreaming?.segmentsById ??
+            presentationStateFromMetadata(message.metadata).segmentsById,
+        }),
+    answer_before_timeline_length: isReplace
+      ? undefined
+      : previousStreaming?.answer_before_timeline_length,
     last_event_id: eventId ?? (isReplace ? undefined : previousStreaming?.last_event_id),
     replay_base_answer: isReplace ? undefined : previousStreaming?.replay_base_answer,
     replay_offset: isReplace ? undefined : previousStreaming?.replay_offset,
@@ -441,6 +488,19 @@ export function applyMessageChunkState(
   if (isStaleAIChatStreamEvent(eventId, previousStreaming?.last_event_id)) {
     return current;
   }
+  const presentationItem = processTextPresentationItem(
+    isSensitiveBlocked
+      ? {
+          ...(payload as unknown as Record<string, unknown>),
+          segment_content: answerChunk,
+        }
+      : (payload as unknown as Record<string, unknown>),
+    answerChunk
+  );
+  const isPresentationV2 = Boolean(presentationItem);
+  const nextPresentationItems = presentationItem
+    ? upsertPresentationItem(previousStreaming?.presentationItems, presentationItem)
+    : previousStreaming?.presentationItems;
   const { appendChunk, replayBaseAnswer, replayOffset } = isSensitiveBlocked
     ? {
         appendChunk: answerChunk,
@@ -452,7 +512,11 @@ export function applyMessageChunkState(
   const nextMessage = existingMessage
     ? {
         ...existingMessage,
-        answer: isSensitiveBlocked ? answerChunk : `${existingMessage.answer}${appendChunk}`,
+        answer: isPresentationV2
+          ? existingMessage.answer
+          : isSensitiveBlocked
+            ? answerChunk
+            : `${existingMessage.answer}${appendChunk}`,
         status: 'streaming' as const,
         metadata: isSensitiveBlocked
           ? {
@@ -470,7 +534,7 @@ export function applyMessageChunkState(
         createdAt: now,
       });
   if (!existingMessage) {
-    nextMessage.answer = appendChunk;
+    nextMessage.answer = isPresentationV2 ? '' : appendChunk;
     if (isSensitiveBlocked) {
       nextMessage.metadata = {
         ...nextMessage.metadata,
@@ -478,9 +542,16 @@ export function applyMessageChunkState(
       };
     }
   }
-  const nextStreamingAnswer = isSensitiveBlocked
-    ? answerChunk
-    : `${previousStreaming?.answer ?? existingMessage?.answer ?? ''}${appendChunk}`;
+  const nextStreamingAnswer = isPresentationV2
+    ? (previousStreaming?.answer ?? existingMessage?.answer ?? '')
+    : isSensitiveBlocked
+      ? answerChunk
+      : `${previousStreaming?.answer ?? existingMessage?.answer ?? ''}${appendChunk}`;
+  const nextTimeline = removeTransientProgressItems(previousStreaming?.timeline);
+  const nextAnswerBeforeTimelineLength = clearAnswerTimelineBoundaryWithoutDurableTimeline(
+    previousStreaming?.answer_before_timeline_length,
+    nextTimeline.length > 0
+  );
   let conversationChanged = false;
   const nextConversations = current.conversations.map(conversation => {
     if (conversation.id !== payload.conversation_id) return conversation;
@@ -514,7 +585,22 @@ export function applyMessageChunkState(
         message_id: payload.message_id,
         answer: nextStreamingAnswer,
         status: 'streaming',
-        timeline: removeTransientProgressItems(previousStreaming?.timeline),
+        timeline: nextTimeline,
+        presentationItems: nextPresentationItems,
+        presentationVersion: isPresentationV2 ? 2 : previousStreaming?.presentationVersion,
+        lastPresentationSequence: presentationItem?.presentation_sequence
+          ? Math.max(
+              previousStreaming?.lastPresentationSequence ?? 0,
+              presentationItem.presentation_sequence
+            )
+          : previousStreaming?.lastPresentationSequence,
+        segmentsById: presentationItem
+          ? {
+              ...(previousStreaming?.segmentsById ?? {}),
+              [presentationItem.segment_id]: presentationItem,
+            }
+          : previousStreaming?.segmentsById,
+        answer_before_timeline_length: nextAnswerBeforeTimelineLength,
         last_event_id: eventId ?? previousStreaming?.last_event_id,
         replay_base_answer: replayBaseAnswer,
         replay_offset: replayOffset,
@@ -596,6 +682,41 @@ export function applyMessageRetractState(
   if (isStaleAIChatStreamEvent(eventId, previousStreaming?.last_event_id)) {
     return current;
   }
+  const presentationItem = processTextPresentationItem(
+    payload as unknown as Record<string, unknown>,
+    content
+  );
+  if (presentationItem) {
+    const processItem = {
+      ...presentationItem,
+      content_phase: 'process' as const,
+    };
+    return {
+      ...current,
+      streamingByMessageId: previousStreaming
+        ? {
+            ...current.streamingByMessageId,
+            [payload.message_id]: {
+              ...previousStreaming,
+              presentationItems: upsertPresentationItem(
+                previousStreaming.presentationItems,
+                processItem
+              ),
+              presentationVersion: 2,
+              lastPresentationSequence: Math.max(
+                previousStreaming.lastPresentationSequence ?? 0,
+                processItem.presentation_sequence ?? 0
+              ),
+              segmentsById: {
+                ...(previousStreaming.segmentsById ?? {}),
+                [processItem.segment_id]: processItem,
+              },
+              last_event_id: eventId ?? previousStreaming.last_event_id,
+            },
+          }
+        : current.streamingByMessageId,
+    };
+  }
   const nextMessages = messages.map(message =>
     message.id === payload.message_id
       ? {
@@ -617,6 +738,13 @@ export function applyMessageRetractState(
           [payload.message_id]: {
             ...previousStreaming,
             answer: removeRetractedSuffix(previousStreaming.answer, content, payload.length),
+            answer_before_timeline_length:
+              typeof previousStreaming.answer_before_timeline_length === 'number'
+                ? Math.min(
+                    previousStreaming.answer_before_timeline_length,
+                    removeRetractedSuffix(previousStreaming.answer, content, payload.length).length
+                  )
+                : undefined,
             last_event_id: eventId ?? previousStreaming.last_event_id,
           },
         }
@@ -637,22 +765,56 @@ export function applyMessageEndState(
     return current;
   }
   const nextTimeline = removeTransientProgressItems(previousStreaming?.timeline);
-  const nextMessages = messages.map(message =>
-    message.id === payload.message_id
-      ? {
-          ...message,
-          status: normalizeAIChatStatus(payload.status),
-          metadata:
-            message.metadata?.sensitiveOutputBlocked === true
-              ? {
-                  ...mergeRuntimeTimelineMetadata(message.metadata, payload.metadata, nextTimeline),
-                  sensitiveOutputBlocked: true,
-                }
-              : mergeRuntimeTimelineMetadata(message.metadata, payload.metadata, nextTimeline),
-          updated_at: endedAt,
-        }
-      : message
-  );
+  let endedPresentationState = presentationStateFromMetadata(payload.metadata);
+  const nextMessages = messages.map(message => {
+    if (message.id !== payload.message_id) {
+      return message;
+    }
+    const baseMergedMetadata =
+      message.metadata?.sensitiveOutputBlocked === true
+        ? {
+            ...mergeRuntimeTimelineMetadata(message.metadata, payload.metadata, nextTimeline),
+            sensitiveOutputBlocked: true,
+          }
+        : mergeRuntimeTimelineMetadata(message.metadata, payload.metadata, nextTimeline);
+    const hasAuthoritativeAnswer = typeof payload.answer === 'string';
+    const terminalPresentationState = presentationStateFromMetadata(baseMergedMetadata);
+    const mergedPresentationItems = hasAuthoritativeAnswer
+      ? (terminalPresentationState.presentationItems ?? [])
+      : mergePresentationItems(
+          previousStreaming?.presentationItems,
+          terminalPresentationState.presentationItems
+        );
+    const mergedMetadata =
+      !hasAuthoritativeAnswer && mergedPresentationItems.length
+        ? withPresentationItems(baseMergedMetadata, mergedPresentationItems)
+        : baseMergedMetadata;
+    const presentationState = presentationStateFromMetadata(mergedMetadata);
+    endedPresentationState = presentationState;
+    const presentationAnswer = finalPresentationAnswer(presentationState.presentationItems);
+    const answerBeforeTimelineLength =
+      previousStreaming?.answer_before_timeline_length ??
+      (typeof message.metadata?.answer_before_timeline_length === 'number'
+        ? message.metadata.answer_before_timeline_length
+        : undefined);
+    return {
+      ...message,
+      answer:
+        payload.answer ??
+        (presentationState.presentationVersion === 2
+          ? (presentationAnswer ?? message.answer)
+          : message.answer),
+      status: normalizeAIChatStatus(payload.status),
+      metadata:
+        typeof answerBeforeTimelineLength === 'number'
+          ? {
+              ...(mergedMetadata ?? {}),
+              answer_before_timeline_length: answerBeforeTimelineLength,
+            }
+          : mergedMetadata,
+      updated_at: endedAt,
+    };
+  });
   const nextStreamingByMessageId = { ...current.streamingByMessageId };
   const terminalStatus = normalizeAIChatStatus(payload.status);
   if (
@@ -664,6 +826,7 @@ export function applyMessageEndState(
   ) {
     nextStreamingByMessageId[payload.message_id] = {
       ...previousStreaming,
+      ...endedPresentationState,
       timeline: nextTimeline,
       status: terminalStatus,
       last_event_id: eventId ?? previousStreaming.last_event_id,

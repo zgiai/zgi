@@ -24,20 +24,25 @@ func newWorkflowStreamChunkCallback(
 	answerCoordinator *answerOutputCoordinator,
 ) func(nodeID string, streamEvent *workflow_shared.RunStreamChunkEvent) {
 	return func(nodeID string, streamEvent *workflow_shared.RunStreamChunkEvent) {
+		if streamEvent == nil || len(streamEvent.FromVariableSelector) < 2 {
+			return
+		}
+		sourceNodeID := streamEvent.FromVariableSelector[0]
+		if sourceNodeID == "" {
+			sourceNodeID = nodeID
+		}
 		logger.DebugContext(ctx, "workflow stream chunk callback called",
-			zap.String("node_id", nodeID),
+			zap.String("node_id", sourceNodeID),
+			zap.String("callback_node_id", nodeID),
 			zap.Int("selector_depth", len(streamEvent.FromVariableSelector)),
 			zap.Int("chunk_length", len(streamEvent.ChunkContent)),
 		)
 
-		currentNodeType := workflowStreamNodeType(nodeMap, nodeID)
-		if len(streamEvent.FromVariableSelector) < 2 {
-			return
-		}
+		currentNodeType := workflowStreamNodeType(nodeMap, sourceNodeID)
 
 		selector := streamEvent.FromVariableSelector[0] + "|" + streamEvent.FromVariableSelector[1]
 		if runType == "CONVERSATION_WORKFLOW" && answerCoordinator != nil && answerCoordinator.Enabled() {
-			if answerCoordinator.HandleStreamChunk(nodeID, streamEvent) {
+			if answerCoordinator.HandleStreamChunk(sourceNodeID, streamEvent) {
 				return
 			}
 		}
@@ -75,7 +80,7 @@ func newWorkflowStreamChunkCallback(
 				},
 			}
 			if currentNodeType == "answer" {
-				conversationMessageChunkNodes[nodeID] = true
+				conversationMessageChunkNodes[sourceNodeID] = true
 			}
 			return
 		}

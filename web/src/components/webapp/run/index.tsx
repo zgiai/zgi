@@ -14,7 +14,7 @@ import type { WebAppWorkflowConfig, WebAppVariable } from '@/services/types/weba
 import { useRunWebAppWorkflowStream } from '@/hooks/webapp/use-run-webapp-workflow-stream';
 import { useWorkflowRunEventsStream } from '@/hooks/workflow/use-workflow-run-events-stream';
 import { Button } from '@/components/ui/button';
-import { ChevronDown, Clock3, HelpCircle, Loader2, Play, FileOutput, Send } from 'lucide-react';
+import { ChevronDown, Clock3, HelpCircle, Play, FileOutput } from 'lucide-react';
 import { useT } from '@/i18n';
 import { toast } from 'sonner';
 import ExecutionTab from '@/components/workflow/ui/workflow-run-panel/components/workflow-run-panel-execution';
@@ -27,7 +27,11 @@ import type { WorkflowRunNodeListItem } from '@/components/workflow/ui/workflow-
 import { unwrap } from '@/utils/webapp/run-mappers';
 import { useWebAppPrecheck } from '@/hooks/webapp/use-webapp-precheck';
 import { WorkflowPrecheckWarningBanner } from '@/components/workflow/common/workflow-precheck-warning';
-import type { WorkflowPrecheckWarning } from '@/services/types/workflow';
+import type {
+  WorkflowNodeExecution,
+  WorkflowPrecheckWarning,
+  WorkflowRunDetail,
+} from '@/services/types/workflow';
 import { getWorkflowPrecheckWarnings } from '@/utils/workflow/billing';
 import {
   extractLlmGatewayRequest,
@@ -47,30 +51,35 @@ import {
   getSensitiveOutputTextFromPayload,
   SENSITIVE_OUTPUT_BLOCKED_TOKEN,
 } from '@/utils/model-output-filter';
-import { ApprovalCompletedState } from '@/components/workflow/approval/approval-completed-state';
-import ApprovalRuntimeForm from '@/components/workflow/approval/approval-runtime-form';
+import WorkflowApprovalInteractionCard from '@/components/workflow/approval/workflow-approval-interaction-card';
+import { isWorkflowApprovalInlineAllowed } from '@/components/workflow/approval/workflow-approval-surface';
 import { isApprovalFormAlreadySubmittedError } from '@/services/approval.service';
 import { useApprovalForm, useSubmitApprovalForm } from '@/hooks/workflow/use-approval-form';
 import {
+  createWorkflowSnapshotPauseEvent,
   parseApprovalRequestedEvent,
-  parseApprovalPausedEvent,
 } from '@/components/workflow/approval/runtime-events';
-import {
-  hasUnresolvedApprovalEntries,
-  useApprovalRuntimeEvents,
-} from '@/components/workflow/approval/use-approval-runtime-events';
+import { useApprovalRuntimeEvents } from '@/components/workflow/approval/use-approval-runtime-events';
 import { WebAppOfflineState } from '@/components/webapp/offline-state';
 import { useWebAppOfflineState } from '@/hooks/webapp/use-webapp-offline-state';
 import { isWebAppOfflineError } from '@/utils/webapp/errors';
 import type { QuestionAnswerChoice } from '@/services/types/workflow';
 import {
-  parseQuestionAnswerPausedEvent,
   parseQuestionAnswerRequestedEvent,
+  type QuestionAnswerRuntimePromptState,
 } from '@/components/workflow/question-answer/runtime-events';
+import { parseWorkflowPausedEvent } from '@/components/workflow/runtime/pause-events';
 import {
   getQuestionAnswerChoiceQuery,
   QuestionAnswerRuntimePrompt,
 } from '@/components/workflow/question-answer/question-answer-runtime-prompt';
+import {
+  buildWorkflowRunExecutionItems,
+  buildWorkflowRunHistoryResult,
+} from '@/components/workflow/ui/workflow-run-panel/utils/history-view-data';
+import { WorkflowRuntimeStopAction } from '@/components/workflow/runtime/workflow-runtime-stop-action';
+import type { NodeInfo } from '@/components/chat/types';
+import { createWorkflowRunNodeAccumulator } from '@/utils/webapp/workflow-run-node-accumulator';
 
 interface WebappRunProps {
   versionUuid: string;
@@ -79,6 +88,77 @@ interface WebappRunProps {
 }
 
 const COMPACT_RUN_LAYOUT_WIDTH = 960;
+
+function workflowRunItemFromNodeInfo(node: NodeInfo): WorkflowRunNodeListItem {
+  const nodeId = node.nodeId || [node.nodeType, node.title].filter(Boolean).join('|') || 'unknown';
+  const status: WorkflowRunNodeListItem['status'] =
+    node.status === 'success' || node.status === 'partial-succeeded' ? 'succeeded' : node.status;
+  return {
+    nodeId,
+    executionId: node.executionId,
+    createdAtMs: node.createdAtMs,
+    receivedOrder: node.receivedOrder,
+    title: node.title || node.nodeType || nodeId,
+    nodeType: node.nodeType || 'unknown',
+    status,
+    nodeInput: node.data?.input,
+    nodeOutput: node.data?.output,
+    modelInput: node.data?.modelInput,
+    elapsedTime: node.elapsedTime,
+    error: node.error ?? null,
+    iterationInputs: node.iterationInputs,
+    iterationOutputs: node.iterationOutputs,
+    iterationRounds: node.iterationRounds?.map(round => ({
+      index: round.index,
+      nodes: round.nodes.map(workflowRunItemFromNodeInfo),
+      elapsedTime: round.elapsedTime,
+    })),
+    loopInputs: node.loopInputs,
+    loopOutputs: node.loopOutputs,
+    loopRounds: node.loopRounds?.map(round => ({
+      index: round.index,
+      nodes: round.nodes.map(workflowRunItemFromNodeInfo),
+      elapsedTime: round.elapsedTime,
+      variables: round.variables,
+    })),
+    steps: node.steps,
+  };
+}
+
+function nodeInfoFromWorkflowRunItem(item: WorkflowRunNodeListItem): NodeInfo {
+  return {
+    nodeId: item.nodeId,
+    executionId: item.executionId,
+    createdAtMs: item.createdAtMs,
+    receivedOrder: item.receivedOrder,
+    title: item.title,
+    nodeType: item.nodeType,
+    status: item.status,
+    data: {
+      input: item.nodeInput,
+      output: item.nodeOutput,
+      modelInput: item.modelInput,
+    },
+    elapsedTime: item.elapsedTime,
+    error: item.error ?? undefined,
+    iterationInputs: item.iterationInputs,
+    iterationOutputs: item.iterationOutputs,
+    iterationRounds: item.iterationRounds?.map(round => ({
+      index: round.index,
+      nodes: round.nodes.map(nodeInfoFromWorkflowRunItem),
+      elapsedTime: round.elapsedTime,
+    })),
+    loopInputs: item.loopInputs,
+    loopOutputs: item.loopOutputs,
+    loopRounds: item.loopRounds?.map(round => ({
+      index: round.index,
+      nodes: round.nodes.map(nodeInfoFromWorkflowRunItem),
+      elapsedTime: round.elapsedTime,
+      variables: round.variables,
+    })),
+    steps: item.steps,
+  };
+}
 
 function useMeasuredRunWidth() {
   const ref = useRef<HTMLDivElement | null>(null);
@@ -128,41 +208,6 @@ function toInputVars(vars: WebAppVariable[], fileUploadLimit?: number): InputVar
   }));
 }
 
-function ApprovalWaitingState({
-  loading = false,
-  submitted = false,
-}: {
-  loading?: boolean;
-  submitted?: boolean;
-}) {
-  const t = useT();
-  const Icon = loading ? Loader2 : Send;
-
-  return (
-    <div className="relative overflow-hidden rounded-xl border bg-card px-5 py-6 text-center shadow-sm">
-      <div className="mx-auto flex size-12 items-center justify-center rounded-full bg-amber-500/10 text-amber-600 ring-1 ring-amber-500/20">
-        <Icon className={cn('size-6', loading ? 'animate-spin' : '')} />
-      </div>
-      <div className="mt-4 text-base font-semibold text-foreground">
-        {submitted
-          ? t('nodes.approval.runtime.submitted')
-          : loading
-            ? t('nodes.approval.runtime.paused')
-            : t('nodes.approval.runtime.requestSubmitted')}
-      </div>
-      <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-muted-foreground">
-        {submitted
-          ? t('nodes.approval.runtime.waitingResume')
-          : t('nodes.approval.runtime.waitingForReviewer')}
-      </p>
-      <div className="mt-4 inline-flex items-center gap-1.5 rounded-full border bg-muted/40 px-3 py-1 text-xs text-muted-foreground">
-        <Clock3 className="size-3.5" />
-        <span>{t('nodes.approval.runtime.waitingForReviewerStatus')}</span>
-      </div>
-    </div>
-  );
-}
-
 export const WebappRun: React.FC<WebappRunProps> = ({
   versionUuid,
   config,
@@ -177,16 +222,14 @@ export const WebappRun: React.FC<WebappRunProps> = ({
   const [runItems, setRunItems] = useState<WorkflowRunNodeListItem[]>([]);
   const [streamedText, setStreamedText] = useState<string>('');
   const [isRunning, setIsRunning] = useState(false);
+  const [isStopping, setIsStopping] = useState(false);
   const [finalResult, setFinalResult] = useState<HistoryResult | null>(null);
   const [activeTab, setActiveTab] = useState('input');
   const [executionOpen, setExecutionOpen] = useState(false);
   const [precheckWarnings, setPrecheckWarnings] = useState<WorkflowPrecheckWarning[]>([]);
   const [approvalPaused, setApprovalPaused] = useState(false);
-  const [questionAnswerPrompt, setQuestionAnswerPrompt] = useState<{
-    question: string;
-    choices: QuestionAnswerChoice[];
-    round?: number;
-  } | null>(null);
+  const [questionAnswerPrompt, setQuestionAnswerPrompt] =
+    useState<QuestionAnswerRuntimePromptState | null>(null);
   const [questionAnswerSubmitting, setQuestionAnswerSubmitting] = useState(false);
   const [workflowRunId, setWorkflowRunId] = useState<string | null>(null);
   const {
@@ -204,10 +247,9 @@ export const WebappRun: React.FC<WebappRunProps> = ({
     resetApprovalRuntime,
   } = useApprovalRuntimeEvents();
   const { start: startWorkflowRunEvents, cancel: cancelWorkflowRunEvents } =
-    useWorkflowRunEventsStream();
+    useWorkflowRunEventsStream({ transport: 'webapp' });
   const workflowRunIdRef = useRef<string | null>(null);
   const workflowRunEventsActiveRef = useRef(false);
-  const approvalRuntimeStateRef = useRef(approvalRuntimeState);
   const workflowFinishedRef = useRef(false);
   const startWorkflowRunEventStreamRef = useRef<(payload?: unknown) => void>(() => {});
   const questionAnswerResumeRef = useRef(false);
@@ -223,28 +265,46 @@ export const WebappRun: React.FC<WebappRunProps> = ({
   const throttler = useThrottledTextStream(STREAM_RENDER_THROTTLE_MS, (text: string) => {
     setStreamedText(prev => prev + text);
   });
+  const runItemsRef = useRef<WorkflowRunNodeListItem[]>([]);
 
   useEffect(() => {
-    approvalRuntimeStateRef.current = approvalRuntimeState;
-  }, [approvalRuntimeState]);
+    runItemsRef.current = runItems;
+  }, [runItems]);
 
-  const hasUnresolvedApprovals = useCallback(
-    () => hasUnresolvedApprovalEntries(approvalRuntimeStateRef.current),
-    []
-  );
-  const hasBlockingApprovalStop = useCallback(
+  const applyProjectedRunNode = useCallback((node: NodeInfo) => {
+    const next = workflowRunItemFromNodeInfo(node);
+    setRunItems(items => {
+      const index = items.findIndex(item => item.nodeId === next.nodeId);
+      if (index < 0) return [...items, next];
+      return items.map((item, itemIndex) =>
+        itemIndex === index
+          ? {
+              ...item,
+              ...next,
+              nodeInput: next.nodeInput ?? item.nodeInput,
+              nodeOutput: next.nodeOutput ?? item.nodeOutput,
+              modelInput: next.modelInput ?? item.modelInput,
+              elapsedTime: next.elapsedTime ?? item.elapsedTime,
+              iterationInputs: next.iterationInputs ?? item.iterationInputs,
+              iterationOutputs: next.iterationOutputs ?? item.iterationOutputs,
+              iterationRounds: next.iterationRounds ?? item.iterationRounds,
+              loopInputs: next.loopInputs ?? item.loopInputs,
+              loopOutputs: next.loopOutputs ?? item.loopOutputs,
+              loopRounds: next.loopRounds ?? item.loopRounds,
+              steps: next.steps ?? item.steps,
+            }
+          : item
+      );
+    });
+  }, []);
+
+  const durableRunNodeAccumulator = useMemo(
     () =>
-      Object.values(approvalRuntimeStateRef.current.byKey).some(entry =>
-        ['waiting', 'submitting'].includes(entry.status)
-      ),
-    []
-  );
-  const isApprovalStopBlocked = useMemo(
-    () =>
-      Object.values(approvalRuntimeState.byKey).some(entry =>
-        ['waiting', 'submitting'].includes(entry.status)
-      ),
-    [approvalRuntimeState.byKey]
+      createWorkflowRunNodeAccumulator({
+        onNodeStarted: applyProjectedRunNode,
+        onNodeFinished: applyProjectedRunNode,
+      }),
+    [applyProjectedRunNode]
   );
 
   useEffect(() => {
@@ -451,7 +511,7 @@ export const WebappRun: React.FC<WebappRunProps> = ({
     });
   }, []);
 
-  const { start, cancel, isStarting } = useRunWebAppWorkflowStream(versionUuid, {
+  const { start, stop, isStarting } = useRunWebAppWorkflowStream(versionUuid, {
     enabled: true,
     onStarted: payload => {
       const runId = getWorkflowRunIdFromPayload(payload);
@@ -467,6 +527,7 @@ export const WebappRun: React.FC<WebappRunProps> = ({
         return;
       }
       setRunItems([]);
+      durableRunNodeAccumulator.reset();
       setStreamedText('');
       setFinalResult(null);
       resetApprovalRuntime();
@@ -874,26 +935,28 @@ export const WebappRun: React.FC<WebappRunProps> = ({
       });
     },
     onPaused: payload => {
-      const parsed = parseApprovalPausedEvent(payload);
+      const parsed = parseWorkflowPausedEvent(payload);
       setIsRunning(false);
+      setIsStopping(false);
       throttler.flush();
-      if (parsed.isApproval) {
+      if (parsed.hasApproval) {
         setApprovalPaused(true);
         dispatchApprovalRuntimeEvent('workflow_paused', payload);
-        markApprovalPausedNodes(parsed.nodeIds, payload);
-      } else {
-        const qaPaused = parseQuestionAnswerPausedEvent(payload);
-        if (!qaPaused.isQuestionAnswer) return;
-        if (qaPaused.prompt) {
+        markApprovalPausedNodes(parsed.approval.nodeIds, payload);
+      }
+      if (parsed.hasQuestionAnswer) {
+        if (parsed.questionAnswer.prompt) {
           setQuestionAnswerPrompt({
-            question: qaPaused.prompt.question,
-            choices: qaPaused.prompt.choices,
-            round: qaPaused.prompt.round,
+            nodeId: parsed.questionAnswer.prompt.nodeId,
+            question: parsed.questionAnswer.prompt.question,
+            choices: parsed.questionAnswer.prompt.choices,
+            round: parsed.questionAnswer.prompt.round,
           });
           setQuestionAnswerSubmitting(false);
         }
-        markQuestionAnswerPausedNodes(qaPaused.nodeIds, payload);
+        markQuestionAnswerPausedNodes(parsed.questionAnswer.nodeIds, payload);
       }
+      if (!parsed.hasApproval && !parsed.hasQuestionAnswer) return;
       setActiveTab('input');
       startWorkflowRunEventStreamRef.current(payload);
     },
@@ -908,6 +971,7 @@ export const WebappRun: React.FC<WebappRunProps> = ({
       const parsed = parseQuestionAnswerRequestedEvent(payload);
       if (!parsed) return;
       setQuestionAnswerPrompt({
+        nodeId: parsed.nodeId,
         question: parsed.question,
         choices: parsed.choices,
         round: parsed.round,
@@ -1107,7 +1171,8 @@ export const WebappRun: React.FC<WebappRunProps> = ({
       const variableMap: Record<string, unknown> | undefined =
         execMeta && typeof execMeta === 'object'
           ? ((execMeta as Record<string, unknown>)['loop_variable_map'] as
-              Record<string, unknown> | undefined)
+              | Record<string, unknown>
+              | undefined)
           : undefined;
       const roundDurations = getWorkflowRunRoundDurationMap(d, 'loop');
       const sess = loopSessions.current.get(key) ?? {
@@ -1151,16 +1216,8 @@ export const WebappRun: React.FC<WebappRunProps> = ({
     onFinished: payload => {
       const data = unwrap(payload) as Record<string, unknown>;
       const status = typeof data['status'] === 'string' ? data['status'] : '';
-      const isSuccessfulTerminalStatus = !['failed', 'error', 'stopped', 'expired'].includes(
-        status.toLowerCase()
-      );
-      if (isSuccessfulTerminalStatus && hasUnresolvedApprovals()) {
-        setIsRunning(false);
-        setApprovalPaused(true);
-        setActiveTab('input');
-        return;
-      }
       setIsRunning(false);
+      setIsStopping(false);
       cancelWorkflowRunEvents();
       workflowRunEventsActiveRef.current = false;
       workflowFinishedRef.current = true;
@@ -1209,6 +1266,7 @@ export const WebappRun: React.FC<WebappRunProps> = ({
         return;
       }
       setIsRunning(false);
+      setIsStopping(false);
       setApprovalPaused(false);
       questionAnswerResumeRef.current = false;
       cancelWorkflowRunEvents();
@@ -1235,6 +1293,14 @@ export const WebappRun: React.FC<WebappRunProps> = ({
           setIsRunning(true);
           break;
         }
+        case 'workflow_resumed': {
+          setIsRunning(true);
+          setApprovalPaused(false);
+          resetApprovalRuntime();
+          setQuestionAnswerPrompt(null);
+          setQuestionAnswerSubmitting(false);
+          break;
+        }
         case 'approval_requested': {
           const parsed = parseApprovalRequestedEvent(event);
           if (!parsed.form && !parsed.token && !parsed.formId && !parsed.nodeId) return;
@@ -1257,6 +1323,7 @@ export const WebappRun: React.FC<WebappRunProps> = ({
           const parsed = parseQuestionAnswerRequestedEvent(event);
           if (!parsed) return;
           setQuestionAnswerPrompt({
+            nodeId: parsed.nodeId,
             question: parsed.question,
             choices: parsed.choices,
             round: parsed.round,
@@ -1337,6 +1404,16 @@ export const WebappRun: React.FC<WebappRunProps> = ({
         }
         case 'message':
         case 'text_chunk': {
+          if (typeof data.answer_delta === 'string') {
+            if (data.replace === true) {
+              throttler.cancel();
+              setStreamedText(data.answer_delta);
+              setFinalResult({ kind: 'text', content: data.answer_delta });
+            } else if (data.answer_delta.length > 0) {
+              throttler.append(data.answer_delta);
+            }
+            break;
+          }
           const text =
             typeof data.text === 'string'
               ? data.text
@@ -1356,24 +1433,25 @@ export const WebappRun: React.FC<WebappRunProps> = ({
           break;
         }
         case 'workflow_paused': {
-          const parsed = parseApprovalPausedEvent(payload);
-          if (parsed.isApproval) {
+          const parsed = parseWorkflowPausedEvent(payload);
+          if (parsed.hasApproval) {
             setApprovalPaused(true);
             dispatchApprovalRuntimeEvent('workflow_paused', event);
-            markApprovalPausedNodes(parsed.nodeIds, payload);
-          } else {
-            const qaPaused = parseQuestionAnswerPausedEvent(payload);
-            if (!qaPaused.isQuestionAnswer) return;
-            if (qaPaused.prompt) {
+            markApprovalPausedNodes(parsed.approval.nodeIds, payload);
+          }
+          if (parsed.hasQuestionAnswer) {
+            if (parsed.questionAnswer.prompt) {
               setQuestionAnswerPrompt({
-                question: qaPaused.prompt.question,
-                choices: qaPaused.prompt.choices,
-                round: qaPaused.prompt.round,
+                nodeId: parsed.questionAnswer.prompt.nodeId,
+                question: parsed.questionAnswer.prompt.question,
+                choices: parsed.questionAnswer.prompt.choices,
+                round: parsed.questionAnswer.prompt.round,
               });
               setQuestionAnswerSubmitting(false);
             }
-            markQuestionAnswerPausedNodes(qaPaused.nodeIds, payload);
+            markQuestionAnswerPausedNodes(parsed.questionAnswer.nodeIds, payload);
           }
+          if (!parsed.hasApproval && !parsed.hasQuestionAnswer) return;
           setActiveTab('input');
           break;
         }
@@ -1382,17 +1460,8 @@ export const WebappRun: React.FC<WebappRunProps> = ({
         case 'workflow_failed':
         case 'workflow_succeeded':
         case 'workflow_completed': {
-          const isSuccessfulTerminalEvent =
-            event.event === 'workflow_finished' ||
-            event.event === 'workflow_succeeded' ||
-            event.event === 'workflow_completed';
-          if (isSuccessfulTerminalEvent && hasUnresolvedApprovals()) {
-            setIsRunning(false);
-            setApprovalPaused(true);
-            setActiveTab('input');
-            break;
-          }
           setIsRunning(false);
+          setIsStopping(false);
           throttler.flush();
           const result = normalizeOutputs(data.outputs);
           setFinalResult(result);
@@ -1424,6 +1493,7 @@ export const WebappRun: React.FC<WebappRunProps> = ({
         }
         case 'error': {
           setIsRunning(false);
+          setIsStopping(false);
           setApprovalPaused(false);
           resetApprovalRuntime();
           setQuestionAnswerSubmitting(false);
@@ -1443,7 +1513,6 @@ export const WebappRun: React.FC<WebappRunProps> = ({
       getWorkflowRunIdFromPayload,
       getWorkflowRunErrorText,
       globalT,
-      hasUnresolvedApprovals,
       markApprovalPausedNodes,
       markQuestionAnswerPausedNodes,
       normalizeOutputs,
@@ -1466,6 +1535,9 @@ export const WebappRun: React.FC<WebappRunProps> = ({
       rememberWorkflowRunId(runId);
       workflowRunEventsActiveRef.current = true;
       workflowFinishedRef.current = false;
+      durableRunNodeAccumulator.replaceSnapshot(
+        runItemsRef.current.map(nodeInfoFromWorkflowRunItem)
+      );
       const streamParams =
         approvalRuntimeState.cursor > 0
           ? { after: approvalRuntimeState.cursor, continue_on_pause: true }
@@ -1485,8 +1557,62 @@ export const WebappRun: React.FC<WebappRunProps> = ({
       void startWorkflowRunEvents(
         runId,
         {
+          onWorkflowSnapshot: streamPayload => {
+            const snapshot = unwrap(streamPayload);
+            const rawNodes = Array.isArray(snapshot.nodes) ? snapshot.nodes : [];
+            const executionItems = buildWorkflowRunExecutionItems(
+              rawNodes as WorkflowNodeExecution[]
+            );
+            setRunItems(executionItems);
+            durableRunNodeAccumulator.replaceSnapshot(
+              executionItems.map(nodeInfoFromWorkflowRunItem)
+            );
+
+            const message =
+              snapshot.message && typeof snapshot.message === 'object'
+                ? (snapshot.message as Record<string, unknown>)
+                : null;
+            const run =
+              snapshot.workflow_run && typeof snapshot.workflow_run === 'object'
+                ? (snapshot.workflow_run as Record<string, unknown>)
+                : null;
+            throttler.cancel();
+            if (message && typeof message.answer === 'string') {
+              setStreamedText(message.answer);
+              if (message.answer.length > 0) {
+                setFinalResult({ kind: 'text', content: message.answer });
+              }
+            }
+
+            const status = typeof run?.status === 'string' ? run.status.toLowerCase() : '';
+            if (
+              ['succeeded', 'success', 'completed', 'failed', 'error', 'stopped'].includes(status)
+            ) {
+              const detail = run as unknown as WorkflowRunDetail;
+              const result = buildWorkflowRunHistoryResult(detail);
+              if (result.kind !== 'empty' || !message?.answer) {
+                setFinalResult(result);
+                if (result.kind === 'text') setStreamedText(result.content);
+              }
+              dispatchApprovalEvent({ event: 'workflow_finished', data: run });
+              return;
+            }
+
+            const pauseEvent = createWorkflowSnapshotPauseEvent(streamPayload);
+            if (pauseEvent) {
+              dispatchApprovalEvent(pauseEvent);
+            } else {
+              setApprovalPaused(false);
+              resetApprovalRuntime();
+              setQuestionAnswerPrompt(null);
+              setQuestionAnswerSubmitting(false);
+              setIsRunning(true);
+            }
+          },
           onWorkflowStarted: streamPayload =>
             dispatchWorkflowRunEvent('workflow_started', streamPayload),
+          onWorkflowResumed: streamPayload =>
+            dispatchWorkflowRunEvent('workflow_resumed', streamPayload),
           onApprovalRequested: streamPayload =>
             dispatchWorkflowRunEvent('approval_requested', streamPayload),
           onApprovalResultFilled: streamPayload =>
@@ -1499,8 +1625,12 @@ export const WebappRun: React.FC<WebappRunProps> = ({
             dispatchWorkflowRunEvent('question_answer_submitted', streamPayload),
           onWorkflowPaused: streamPayload =>
             dispatchWorkflowRunEvent('workflow_paused', streamPayload),
-          onNodeStarted: streamPayload => dispatchWorkflowRunEvent('node_started', streamPayload),
-          onNodeFinished: streamPayload => dispatchWorkflowRunEvent('node_finished', streamPayload),
+          onNodeStarted: streamPayload => {
+            setIsRunning(true);
+            setQuestionAnswerSubmitting(false);
+            durableRunNodeAccumulator.onNodeStarted(streamPayload);
+          },
+          onNodeFinished: streamPayload => durableRunNodeAccumulator.onNodeFinished(streamPayload),
           onTextChunk: streamPayload => dispatchWorkflowRunEvent('text_chunk', streamPayload),
           onTextReplace: streamPayload => dispatchWorkflowRunEvent('text_replace', streamPayload),
           onWorkflowFinished: streamPayload =>
@@ -1508,16 +1638,21 @@ export const WebappRun: React.FC<WebappRunProps> = ({
           onError: streamPayload => dispatchWorkflowRunEvent('error', streamPayload),
           onMessage: streamPayload => dispatchWorkflowRunEvent('message', streamPayload),
           onMessageEnd: streamPayload => dispatchWorkflowRunEvent('message_end', streamPayload),
+          onIterationStarted: streamPayload =>
+            durableRunNodeAccumulator.onIterationStarted(streamPayload),
+          onIterationNext: streamPayload =>
+            durableRunNodeAccumulator.onIterationNext(streamPayload),
+          onIterationCompleted: streamPayload =>
+            durableRunNodeAccumulator.onIterationCompleted(streamPayload),
+          onLoopStarted: streamPayload => durableRunNodeAccumulator.onLoopStarted(streamPayload),
+          onLoopNext: streamPayload => durableRunNodeAccumulator.onLoopNext(streamPayload),
+          onLoopCompleted: streamPayload =>
+            durableRunNodeAccumulator.onLoopCompleted(streamPayload),
         },
         streamParams,
         {
           onClose: () => {
             workflowRunEventsActiveRef.current = false;
-            if (!workflowFinishedRef.current) {
-              window.setTimeout(() => {
-                if (!workflowFinishedRef.current) startWorkflowRunEventStream();
-              }, 1000);
-            }
           },
         }
       );
@@ -1525,9 +1660,12 @@ export const WebappRun: React.FC<WebappRunProps> = ({
     [
       approvalRuntimeState.cursor,
       dispatchApprovalEvent,
+      durableRunNodeAccumulator,
       getWorkflowRunIdFromPayload,
       rememberWorkflowRunId,
+      resetApprovalRuntime,
       startWorkflowRunEvents,
+      throttler,
       workflowRunId,
     ]
   );
@@ -1535,6 +1673,14 @@ export const WebappRun: React.FC<WebappRunProps> = ({
   useEffect(() => {
     startWorkflowRunEventStreamRef.current = startWorkflowRunEventStream;
   }, [startWorkflowRunEventStream]);
+
+  const recoverInterruptedWorkflowRun = useCallback(
+    (runId: string) => {
+      rememberWorkflowRunId(runId);
+      startWorkflowRunEventStreamRef.current({ workflow_run_id: runId });
+    },
+    [rememberWorkflowRunId]
+  );
 
   useEffect(
     () => () => {
@@ -1605,7 +1751,15 @@ export const WebappRun: React.FC<WebappRunProps> = ({
         const runPayload = {
           query: queryValue,
           conversation_id: conversationIdParam || undefined,
-          inputs: values as unknown as Record<string, unknown>,
+          inputs: {
+            ...(values as unknown as Record<string, unknown>),
+            ...(questionAnswerPrompt?.nodeId
+              ? { question_answer_node_id: questionAnswerPrompt.nodeId }
+              : {}),
+            ...(typeof questionAnswerPrompt?.round === 'number'
+              ? { question_answer_round: questionAnswerPrompt.round }
+              : {}),
+          },
         };
 
         if (enablePrecheck && !isQuestionAnswerResume) {
@@ -1633,7 +1787,9 @@ export const WebappRun: React.FC<WebappRunProps> = ({
           cancelWorkflowRunEvents();
           workflowRunEventsActiveRef.current = false;
         }
-        await start(runPayload);
+        await start(runPayload, undefined, {
+          onTransportInterrupted: recoverInterruptedWorkflowRun,
+        });
       } catch (err) {
         questionAnswerResumeRef.current = false;
         setQuestionAnswerSubmitting(false);
@@ -1655,40 +1811,31 @@ export const WebappRun: React.FC<WebappRunProps> = ({
       markOffline,
       precheckMutation,
       rememberWorkflowRunId,
+      recoverInterruptedWorkflowRun,
       resetApprovalRuntime,
       start,
       t,
     ]
   );
 
-  const handleStop = useCallback(() => {
-    if (hasBlockingApprovalStop()) {
-      toast.info(globalT('nodes.approval.runtime.stopDisabled'));
-      return;
+  const handleStop = useCallback(async () => {
+    setIsStopping(true);
+    try {
+      await stop();
+    } catch {
+      setIsStopping(false);
     }
-    cancel();
-    cancelWorkflowRunEvents();
-    workflowRunEventsActiveRef.current = false;
-    rememberWorkflowRunId(null);
-    workflowFinishedRef.current = true;
-    setApprovalPaused(false);
-    setQuestionAnswerPrompt(null);
-    setQuestionAnswerSubmitting(false);
-    questionAnswerResumeRef.current = false;
-    resetApprovalRuntime();
-    setIsRunning(false);
-    throttler.flush();
-    toast.info(t('run.stopped'));
-  }, [
-    cancel,
-    cancelWorkflowRunEvents,
-    globalT,
-    hasBlockingApprovalStop,
-    rememberWorkflowRunId,
-    resetApprovalRuntime,
-    t,
-    throttler,
-  ]);
+  }, [stop]);
+
+  const interactionStopAction = (
+    <WorkflowRuntimeStopAction
+      onStop={handleStop}
+      isStopping={isStopping}
+      disabled={
+        approvalSubmitMutation.isPending || approvalRuntimeSubmitting || questionAnswerSubmitting
+      }
+    />
+  );
 
   const handleQuestionAnswerSelect = useCallback(
     async (choice: QuestionAnswerChoice) => {
@@ -1697,14 +1844,24 @@ export const WebappRun: React.FC<WebappRunProps> = ({
       try {
         questionAnswerResumeRef.current = true;
         setQuestionAnswerSubmitting(true);
-        await start({
-          query,
-          inputs: {
+        await start(
+          {
             query,
-            'sys.query': query,
-            question_answer_option_id: choice.id,
+            inputs: {
+              query,
+              'sys.query': query,
+              question_answer_option_id: choice.id,
+              ...(questionAnswerPrompt?.nodeId
+                ? { question_answer_node_id: questionAnswerPrompt.nodeId }
+                : {}),
+              ...(typeof questionAnswerPrompt?.round === 'number'
+                ? { question_answer_round: questionAnswerPrompt.round }
+                : {}),
+            },
           },
-        });
+          undefined,
+          { onTransportInterrupted: recoverInterruptedWorkflowRun }
+        );
       } catch (err) {
         questionAnswerResumeRef.current = false;
         setQuestionAnswerSubmitting(false);
@@ -1715,7 +1872,14 @@ export const WebappRun: React.FC<WebappRunProps> = ({
         toast.error(err instanceof Error ? err.message : t('run.startFailed'));
       }
     },
-    [markOffline, questionAnswerSubmitting, start, t]
+    [
+      markOffline,
+      questionAnswerPrompt,
+      questionAnswerSubmitting,
+      recoverInterruptedWorkflowRun,
+      start,
+      t,
+    ]
   );
 
   const questionAnswerNotice = questionAnswerPrompt ? (
@@ -1726,6 +1890,7 @@ export const WebappRun: React.FC<WebappRunProps> = ({
         round={questionAnswerPrompt.round}
         submitting={questionAnswerSubmitting}
         onSelectChoice={handleQuestionAnswerSelect}
+        secondaryAction={interactionStopAction}
       />
     </div>
   ) : null;
@@ -1782,43 +1947,37 @@ export const WebappRun: React.FC<WebappRunProps> = ({
   );
 
   const approvalInputContent = approvalSubmittedAction ? (
-    <ApprovalWaitingState loading submitted />
+    <WorkflowApprovalInteractionCard mode="submitted" secondaryAction={interactionStopAction} />
   ) : !approvalToken ? (
-    <ApprovalWaitingState />
+    <WorkflowApprovalInteractionCard mode="external" secondaryAction={interactionStopAction} />
   ) : !approvalForm &&
     !approvalFormQuery.error &&
     (approvalFormQuery.isLoading || approvalFormQuery.isFetching) ? (
-    <ApprovalWaitingState loading />
+    <WorkflowApprovalInteractionCard mode="loading" secondaryAction={interactionStopAction} />
   ) : !approvalForm && isApprovalFormAlreadySubmittedError(approvalFormQuery.error) ? (
-    <ApprovalCompletedState compact />
+    <WorkflowApprovalInteractionCard mode="completed" />
   ) : !approvalForm && approvalFormQuery.error ? (
-    <div className="rounded-lg border bg-card p-4 text-center">
-      <div className="text-sm font-medium">{globalT('nodes.approval.runtime.loadFailed')}</div>
-      <p className="mt-2 text-xs text-muted-foreground">
-        {approvalFormQuery.error instanceof Error
-          ? approvalFormQuery.error.message
-          : globalT('nodes.approval.runtime.loadFailedDescription')}
-      </p>
-      <Button
-        type="button"
-        size="sm"
-        className="mt-3"
-        onClick={() => void approvalFormQuery.refetch()}
-      >
-        {globalT('nodes.approval.runtime.retry')}
-      </Button>
-    </div>
+    <WorkflowApprovalInteractionCard
+      mode="error"
+      error={approvalFormQuery.error}
+      onRetry={() => void approvalFormQuery.refetch()}
+      secondaryAction={interactionStopAction}
+    />
   ) : approvalForm ? (
-    <div className="rounded-lg border bg-card p-3">
-      <ApprovalRuntimeForm
-        form={approvalForm}
-        onSubmit={payload => void handleApprovalSubmit(payload)}
-        isSubmitting={approvalSubmitMutation.isPending || approvalRuntimeSubmitting}
-        submittedAction={approvalSubmittedAction}
-      />
-    </div>
+    <WorkflowApprovalInteractionCard
+      mode={
+        isWorkflowApprovalInlineAllowed({ surface: 'workflow-webapp', form: approvalForm })
+          ? 'form'
+          : 'external'
+      }
+      form={approvalForm}
+      onSubmit={payload => void handleApprovalSubmit(payload)}
+      isSubmitting={approvalSubmitMutation.isPending || approvalRuntimeSubmitting}
+      submittedAction={approvalSubmittedAction}
+      secondaryAction={interactionStopAction}
+    />
   ) : (
-    <ApprovalWaitingState loading />
+    <WorkflowApprovalInteractionCard mode="loading" secondaryAction={interactionStopAction} />
   );
 
   const failedExecution = runItems.some(item => item.status === 'failed');
@@ -1847,23 +2006,21 @@ export const WebappRun: React.FC<WebappRunProps> = ({
             ? 'bg-emerald-500'
             : 'bg-muted-foreground/50';
 
-  const runActionFooter = (
+  const runActionFooter = waitingForInput ? null : (
     <div
       className={cn(
         'shrink-0 bg-background/95 backdrop-blur',
         isCompactLayout ? 'rounded-xl border p-2 shadow-sm' : 'border-t border-border/70 px-4 py-3'
       )}
     >
-      {isApprovalPending ? (
-        <div className="flex h-10 w-full items-center justify-center gap-2 rounded-lg border bg-muted/40 text-sm font-medium text-muted-foreground">
-          <Clock3 className="size-4" />
-          {isApprovalStopBlocked
-            ? globalT('nodes.approval.runtime.stopDisabled')
-            : globalT('nodes.approval.runtime.paused')}
-        </div>
-      ) : isRunning ? (
-        <Button onClick={handleStop} variant="destructive" className="h-10 w-full font-medium">
-          {t('run.stop')}
+      {isRunning ? (
+        <Button
+          onClick={handleStop}
+          variant="destructive"
+          className="h-10 w-full font-medium"
+          disabled={isStopping}
+        >
+          {isStopping ? t('run.stopping') : t('run.stop')}
         </Button>
       ) : questionAnswerHasChoices ? (
         <div className="flex h-10 w-full items-center justify-center gap-2 rounded-lg border bg-muted/40 text-sm font-medium text-muted-foreground">

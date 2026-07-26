@@ -21,36 +21,30 @@ func BuildContext(input BuildContextInput) WorkflowContext {
 		Locale:            normalizeLocale(input.Locale),
 		AgentName:         cleanShortText(input.AgentName),
 		AgentDescription:  cleanText(input.AgentDescription, 300),
-		WorkflowType:      cleanShortText(input.WorkflowType),
+		WorkflowType:      normalizeWorkflowType(input.WorkflowType),
 		OpeningStatement:  extractOpeningStatement(features),
 		ExistingQuestions: existingQuestions(features, input.ExistingQuestions),
 	}
 
-	nodes := sliceValue(input.Graph["nodes"])
+	graphAnalysis := analyzeWorkflowGraph(input.Graph)
 	capabilitySeen := make(map[string]struct{})
-	for _, item := range nodes {
-		node := mapValue(item)
-		if node == nil {
+	for _, node := range graphAnalysis.Nodes {
+		if !graphAnalysis.isEffective(node.ID) {
 			continue
 		}
-		data := mapValue(node["data"])
-		if data == nil {
-			data = map[string]interface{}{}
-		}
-		nodeType := firstString(data["type"], node["type"])
-		if nodeType == "" {
-			continue
-		}
-		title := firstString(data["title"], data["label"], node["id"], nodeType)
+		data := node.Data
+		nodeType := node.Type
+		title := firstString(node.Title, nodeType)
 
 		addCapability(&workflowContext, capabilitySeen, nodeType, title)
 
 		switch nodeType {
 		case "start":
-			workflowContext.StartVariables = append(
-				workflowContext.StartVariables,
-				extractVariables(data)...,
-			)
+			variables := extractVariables(data)
+			if isConversationalWorkflow(workflowContext.WorkflowType) {
+				variables = excludeImplicitQueryVariables(variables)
+			}
+			workflowContext.StartVariables = append(workflowContext.StartVariables, variables...)
 			if len(workflowContext.StartVariables) > maxStartVariables {
 				workflowContext.StartVariables = workflowContext.StartVariables[:maxStartVariables]
 			}
@@ -72,7 +66,34 @@ func BuildContext(input BuildContextInput) WorkflowContext {
 		}
 	}
 
+	if isConversationalWorkflow(workflowContext.WorkflowType) {
+		conversation := analyzeConversation(graphAnalysis)
+		workflowContext.Conversation = &conversation
+		switch conversation.QueryRole {
+		case QueryRoleUnused:
+			workflowContext.SkipGeneration = true
+			workflowContext.AnalysisWarnings = append(workflowContext.AnalysisWarnings, WarningConversationQueryUnused)
+		case QueryRoleUnknown:
+			if len(workflowContext.LLMPrompts) == 0 && len(workflowContext.Capabilities) == 0 && workflowContext.OpeningStatement == "" {
+				workflowContext.SkipGeneration = true
+				workflowContext.AnalysisWarnings = append(workflowContext.AnalysisWarnings, WarningConversationContextInsufficient)
+			}
+		}
+	}
+
 	return workflowContext
+}
+
+func excludeImplicitQueryVariables(values []VariableSummary) []VariableSummary {
+	result := make([]VariableSummary, 0, len(values))
+	for _, value := range values {
+		name := strings.ToLower(strings.TrimSpace(value.Name))
+		if name == "query" || strings.HasPrefix(name, "sys.") {
+			continue
+		}
+		result = append(result, value)
+	}
+	return result
 }
 
 func normalizeLocale(locale string) string {

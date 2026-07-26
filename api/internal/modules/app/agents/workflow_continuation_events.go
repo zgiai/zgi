@@ -11,14 +11,27 @@ import (
 	"time"
 )
 
-func shouldSummarizeAgentWorkflowContinuation(agentType, status string, outputs map[string]interface{}) bool {
-	if !strings.EqualFold(strings.TrimSpace(agentType), "WORKFLOW") {
+func shouldSummarizeAgentWorkflowContinuation(continuation *runtimeservice.WorkflowApprovalContinuation, status string, outputs map[string]interface{}) bool {
+	if agentWorkflowContinuationMode(continuation) != "agent_task_tool" {
 		return false
 	}
 	if agentWorkflowRunLogFailed(status) {
 		return false
 	}
 	return len(outputs) > 0
+}
+
+func agentWorkflowContinuationMode(continuation *runtimeservice.WorkflowApprovalContinuation) string {
+	if continuation == nil {
+		return ""
+	}
+	if mode := strings.ToLower(strings.TrimSpace(continuation.InvocationMode)); mode != "" {
+		return mode
+	}
+	if strings.EqualFold(strings.TrimSpace(continuation.AgentType), "CONVERSATIONAL_WORKFLOW") {
+		return "agent_conversation_delegate"
+	}
+	return "agent_task_tool"
 }
 
 func completionContinuationStatus(status string) string {
@@ -103,6 +116,8 @@ func agentWorkflowContinuationEventType(eventType string) string {
 		return "node_finished"
 	case workflowpause.EventWorkflowPaused:
 		return "workflow_paused"
+	case workflowpause.EventWorkflowResumed:
+		return workflowpause.EventWorkflowResumed
 	case workflowpause.EventApprovalRequested:
 		return "approval_requested"
 	case workflowpause.EventApprovalResultFilled:
@@ -119,19 +134,28 @@ func agentWorkflowContinuationEventType(eventType string) string {
 		return "workflow_failed"
 	case "iteration_started", "iteration_next", "iteration_completed", "iteration_succeeded", "iteration_failed",
 		"loop_started", "loop_next", "loop_completed", "loop_succeeded", "loop_failed",
-		"message", "text_chunk", "message_end", "workflow_stopped":
+		"message", "text_chunk", "text_replace", "message_end", "workflow_stopped":
 		return strings.TrimSpace(eventType)
 	default:
 		return ""
 	}
 }
 
-func isAgentWorkflowPassthroughMessageEvent(eventType string, agentType string) bool {
-	if !strings.EqualFold(strings.TrimSpace(agentType), "CONVERSATIONAL_WORKFLOW") {
+func isAgentWorkflowPassthroughMessageEvent(eventType string, continuation *runtimeservice.WorkflowApprovalContinuation) bool {
+	if agentWorkflowContinuationMode(continuation) != "agent_conversation_delegate" {
 		return false
 	}
 	switch strings.TrimSpace(eventType) {
-	case "message", "text_chunk":
+	case "message", "text_chunk", "text_replace":
+		return true
+	default:
+		return false
+	}
+}
+
+func agentWorkflowAnswerTransportEvent(eventType string) bool {
+	switch strings.TrimSpace(eventType) {
+	case "message", "text_chunk", "text_replace", "message_end":
 		return true
 	default:
 		return false
@@ -142,17 +166,17 @@ func agentWorkflowContinuationMessageChunk(payload map[string]interface{}) strin
 	if payload == nil {
 		return ""
 	}
-	if answer := strings.TrimSpace(stringFromAgentWorkflowContinuation(payload["answer"])); answer != "" {
+	if answer := stringFromAgentWorkflowContinuation(payload["answer"]); answer != "" {
 		return answer
 	}
-	if text := strings.TrimSpace(stringFromAgentWorkflowContinuation(payload["text"])); text != "" {
+	if text := stringFromAgentWorkflowContinuation(payload["text"]); text != "" {
 		return text
 	}
 	if data, ok := payload["data"].(map[string]interface{}); ok {
-		if text := strings.TrimSpace(stringFromAgentWorkflowContinuation(data["text"])); text != "" {
+		if text := stringFromAgentWorkflowContinuation(data["text"]); text != "" {
 			return text
 		}
-		if answer := strings.TrimSpace(stringFromAgentWorkflowContinuation(data["answer"])); answer != "" {
+		if answer := stringFromAgentWorkflowContinuation(data["answer"]); answer != "" {
 			return answer
 		}
 	}
@@ -202,13 +226,23 @@ func primaryAgentWorkflowOutput(outputs map[string]interface{}) string {
 	if len(outputs) == 0 {
 		return ""
 	}
-	if answer := strings.TrimSpace(fmt.Sprint(outputs["answer"])); answer != "" && answer != "<nil>" {
+	if answer := fmt.Sprint(outputs["answer"]); strings.TrimSpace(answer) != "" && answer != "<nil>" {
 		return answer
 	}
-	if output := strings.TrimSpace(fmt.Sprint(outputs["output"])); output != "" && output != "<nil>" {
+	if output := fmt.Sprint(outputs["output"]); strings.TrimSpace(output) != "" && output != "<nil>" {
 		return output
 	}
 	return ""
+}
+
+func agentWorkflowContinuationFinalPassthroughAnswer(outputs map[string]interface{}, passthroughAnswer string, hasPassthroughAnswer bool) (string, bool) {
+	if answer := primaryAgentWorkflowOutput(outputs); answer != "" {
+		return answer, true
+	}
+	if hasPassthroughAnswer {
+		return passthroughAnswer, true
+	}
+	return "", false
 }
 
 func agentWorkflowContinuationWaiting(metadata map[string]interface{}) bool {

@@ -508,7 +508,7 @@ func (h *AgentsHandler) listRuntimeMessages(c *gin.Context, runtimeCtx agentRunt
 	}
 	items := make([]runtimedto.MessageResponse, 0, len(messages))
 	for _, message := range messages {
-		items = append(items, runtimeMessageResponse(message))
+		items = append(items, runtimeMessageResponse(message, runtimeCtx.Caller))
 	}
 	response.Success(c, runtimedto.ListResponse[runtimedto.MessageResponse]{
 		Data:    items,
@@ -680,7 +680,7 @@ func runtimeConversationResponse(conversation *runtimemodel.Conversation) runtim
 	return resp
 }
 
-func runtimeMessageResponse(message *runtimemodel.Message) runtimedto.MessageResponse {
+func runtimeMessageResponse(message *runtimemodel.Message, caller runtimeservice.Caller) runtimedto.MessageResponse {
 	resp := runtimedto.MessageResponse{
 		ID:                  message.ID.String(),
 		ConversationID:      message.ConversationID.String(),
@@ -692,7 +692,7 @@ func runtimeMessageResponse(message *runtimemodel.Message) runtimedto.MessageRes
 		ModelName:           message.ModelName,
 		BillingReasonSource: message.BillingReasonSource,
 		ModelParameters:     message.ModelParameters,
-		Metadata:            message.Metadata,
+		Metadata:            publicAgentRuntimeMessageMetadata(message, caller),
 		CreatedAt:           message.CreatedAt.Unix(),
 		UpdatedAt:           message.UpdatedAt.Unix(),
 	}

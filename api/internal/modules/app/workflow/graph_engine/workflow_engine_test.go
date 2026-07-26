@@ -3,6 +3,7 @@ package graph_engine
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -40,6 +41,70 @@ func (r *blockingNodeRunner) RunNode(ctx context.Context, req NodeRunRequest, ev
 type fastNodeRunner struct {
 	mu     sync.Mutex
 	counts map[string]int
+}
+
+type iterationOutputOrderingRunner struct {
+	mu       sync.Mutex
+	observed any
+}
+
+func TestConsumeNodeEventsUsesNestedStreamSourceNode(t *testing.T) {
+	engine := &WorkflowEngine{}
+	var callbackNodeID string
+	engine.streamEventCallback = func(nodeID string, _ *shared.RunStreamChunkEvent) {
+		callbackNodeID = nodeID
+	}
+	events := make(chan *shared.NodeEventCh, 1)
+	events <- &shared.NodeEventCh{
+		Type:   shared.EventTypeRunStreamChunk,
+		NodeID: "child-llm",
+		Data: &shared.RunStreamChunkEvent{
+			ChunkContent:         "hello",
+			FromVariableSelector: []string{"child-llm", "text"},
+		},
+	}
+	close(events)
+
+	var result *shared.NodeRunResult
+	var execErr error
+	if ok := engine.consumeNodeEvents("iteration-container", &NodeState{}, events, &result, &execErr); !ok {
+		t.Fatal("consumeNodeEvents() = false, want true")
+	}
+	if got, want := callbackNodeID, "child-llm"; got != want {
+		t.Fatalf("callback node ID = %q, want %q", got, want)
+	}
+}
+
+func (r *iterationOutputOrderingRunner) RunNode(
+	_ context.Context,
+	req NodeRunRequest,
+	_ chan<- *shared.NodeEventCh,
+) (*shared.NodeRunResult, error) {
+	switch req.NodeID {
+	case "iteration":
+		return &shared.NodeRunResult{
+			Status: shared.SUCCEEDED,
+			Outputs: map[string]any{"output": []any{
+				map[string]any{"index": 0, "text": "first"},
+				map[string]any{"index": 1, "text": "second"},
+			}},
+		}, nil
+	case "end":
+		variable := req.RuntimeState.VariablePool.GetWithPath([]string{"iteration", "output"})
+		if variable == nil {
+			return nil, fmt.Errorf("iteration output was not committed before downstream execution")
+		}
+		value := variable.ToObject()
+		r.mu.Lock()
+		r.observed = value
+		r.mu.Unlock()
+		return &shared.NodeRunResult{
+			Status:  shared.SUCCEEDED,
+			Outputs: map[string]any{"output": value},
+		}, nil
+	default:
+		return nil, fmt.Errorf("unexpected node %q", req.NodeID)
+	}
 }
 
 func (r *fastNodeRunner) RunNode(ctx context.Context, req NodeRunRequest, eventChan chan<- *shared.NodeEventCh) (*shared.NodeRunResult, error) {
@@ -229,6 +294,36 @@ func TestUpdateRuntimeOutputsForNode_IgnoresNonResponseNodes(t *testing.T) {
 
 	if outputs := engine.runtimeState.OutputsSnapshot(); len(outputs) != 0 {
 		t.Fatalf("runtimeState.Outputs = %#v, want empty", outputs)
+	}
+}
+
+func TestExecuteCommitsIterationOutputBeforeDownstreamNodeRuns(t *testing.T) {
+	runner := &iterationOutputOrderingRunner{}
+	engine := NewWorkflowEngine(1)
+	engine.SetNodeRunner(runner)
+	engine.SetRuntimeState(
+		entities.NewGraphRuntimeState(entities.NewVariablePool()),
+		&entities.Graph{Config: map[string]any{}},
+	)
+	engine.AddNode("iteration", shared.Iteration, map[string]any{"id": "iteration"})
+	engine.AddNode("end", shared.End, map[string]any{"id": "end"})
+	if err := engine.AddDependency("iteration", "end"); err != nil {
+		t.Fatalf("AddDependency() error = %v", err)
+	}
+
+	if err := engine.Execute(context.Background()); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	runner.mu.Lock()
+	got := runner.observed
+	runner.mu.Unlock()
+	want := []any{
+		map[string]any{"index": 0, "text": "first"},
+		map[string]any{"index": 1, "text": "second"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("downstream iteration output = %#v, want %#v", got, want)
 	}
 }
 

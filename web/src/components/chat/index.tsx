@@ -51,6 +51,8 @@ interface SingleTestVariantProps {
   isRunning?: boolean;
   /** Whether stop action is in progress */
   isStopping?: boolean;
+  /** Pending approval/question card renders the stop action itself. */
+  hideStopControl?: boolean;
   placeholder?: string;
   inputClassName?: string;
   openingGuide?: OpeningGuideConfig;
@@ -186,6 +188,7 @@ const SingleTestChat: React.FC<SingleTestVariantProps> = ({
   sendDisabled,
   isRunning,
   isStopping,
+  hideStopControl,
   placeholder,
   inputClassName,
   openingGuide,
@@ -300,6 +303,7 @@ const SingleTestChat: React.FC<SingleTestVariantProps> = ({
               sendDisabled={sendDisabled}
               isRunning={isRunning}
               isStopping={isStopping}
+              hideStopControl={hideStopControl}
               placeholder={placeholder}
               className={inputClassName}
               toolbarForm={toolbarForm}

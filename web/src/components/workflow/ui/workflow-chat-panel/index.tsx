@@ -75,6 +75,7 @@ const WorkflowChatPanel: React.FC<WorkflowChatPanelProps> = props => {
               sendDisabled={state.sendDisabled}
               isRunning={state.isRunning}
               isStopping={state.isStopping}
+              hideStopControl={state.hasIntegratedPendingInteraction}
             />
             <RunWarningDialog
               open={state.runWarnOpen}

@@ -21,6 +21,10 @@ func (h *AgentsHandler) streamWorkflowApprovalContinuationDirect(c *gin.Context,
 	if !ok {
 		return false
 	}
+	observeAfter := 0
+	if run, loadErr := h.loadAgentWorkflowRunLog(c.Request.Context(), continuation.WorkflowRunID); loadErr == nil {
+		observeAfter = h.latestAgentWorkflowContinuationSequence(c.Request.Context(), run.TenantID, continuation.WorkflowRunID)
+	}
 	workCtx, cancelWork := context.WithTimeout(context.WithoutCancel(c.Request.Context()), agentWorkflowContinuationMaxDuration)
 	defer cancelWork()
 	state := &agentWorkflowContinuationStreamState{}
@@ -39,6 +43,10 @@ func (h *AgentsHandler) streamWorkflowApprovalContinuationDirect(c *gin.Context,
 		err = streamRunner.ResumeQuestionAnswerWorkflowStream(workCtx, continuation.WorkflowRunID, resumeInputs, onWorkflowEvent)
 	}
 	if err != nil {
+		if errors.Is(err, workflowpause.ErrResumeAlreadyRunning) {
+			h.streamWorkflowApprovalContinuation(c, scope, continuation, observeAfter, nil)
+			return true
+		}
 		h.failAgentWorkflowContinuation(context.WithoutCancel(c.Request.Context()), continuation, err, emit)
 		return true
 	}
@@ -74,6 +82,18 @@ func normalizeAgentWorkflowQuestionInputs(inputs map[string]interface{}) map[str
 	if optionID != "" {
 		out["question_answer_option_id"] = optionID
 	}
+	nodeID := strings.TrimSpace(stringFromAgentWorkflowContinuation(inputs["question_answer_node_id"]))
+	if nodeID == "" {
+		nodeID = strings.TrimSpace(stringFromAgentWorkflowContinuation(inputs["node_id"]))
+	}
+	if nodeID != "" {
+		out["question_answer_node_id"] = nodeID
+	}
+	if round, ok := inputs["question_answer_round"]; ok && round != nil {
+		out["question_answer_round"] = round
+	} else if round, ok := inputs["round"]; ok && round != nil {
+		out["question_answer_round"] = round
+	}
 	return out
 }
 
@@ -104,7 +124,7 @@ func (h *AgentsHandler) streamWorkflowApprovalContinuation(c *gin.Context, scope
 		lastSequence = drained.NextSequence
 		if drained.HasWorkflowMessage {
 			hasPassthroughAnswer = true
-			passthroughAnswer.WriteString(drained.WorkflowMessageText)
+			applyAgentWorkflowMessage(&passthroughAnswer, drained)
 		}
 		if drained.Terminal {
 			h.finishAgentWorkflowContinuation(workCtx, scope, continuation, passthroughAnswer.String(), hasPassthroughAnswer, emit)
@@ -126,7 +146,7 @@ func (h *AgentsHandler) streamWorkflowApprovalContinuation(c *gin.Context, scope
 			lastSequence = drained.NextSequence
 			if drained.HasWorkflowMessage {
 				hasPassthroughAnswer = true
-				passthroughAnswer.WriteString(drained.WorkflowMessageText)
+				applyAgentWorkflowMessage(&passthroughAnswer, drained)
 			}
 			if drained.Terminal {
 				h.finishAgentWorkflowContinuation(workCtx, scope, continuation, passthroughAnswer.String(), hasPassthroughAnswer, emit)
@@ -177,7 +197,7 @@ func (h *AgentsHandler) startWorkflowApprovalContinuationBackground(ctx context.
 			lastSequence = drained.NextSequence
 			if drained.HasWorkflowMessage {
 				hasPassthroughAnswer = true
-				passthroughAnswer.WriteString(drained.WorkflowMessageText)
+				applyAgentWorkflowMessage(&passthroughAnswer, drained)
 			}
 			if drained.Terminal {
 				h.finishAgentWorkflowContinuation(ctx, scope, continuation, passthroughAnswer.String(), hasPassthroughAnswer, nil)
@@ -196,7 +216,7 @@ func (h *AgentsHandler) startWorkflowApprovalContinuationBackground(ctx context.
 				lastSequence = drained.NextSequence
 				if drained.HasWorkflowMessage {
 					hasPassthroughAnswer = true
-					passthroughAnswer.WriteString(drained.WorkflowMessageText)
+					applyAgentWorkflowMessage(&passthroughAnswer, drained)
 				}
 				if drained.Terminal {
 					h.finishAgentWorkflowContinuation(ctx, scope, continuation, passthroughAnswer.String(), hasPassthroughAnswer, nil)
@@ -213,19 +233,31 @@ func (h *AgentsHandler) startWorkflowApprovalContinuationBackground(ctx context.
 	}()
 }
 
+func applyAgentWorkflowMessage(target *strings.Builder, result agentWorkflowContinuationDrainResult) {
+	if target == nil || !result.HasWorkflowMessage {
+		return
+	}
+	if result.WorkflowMessageReplace {
+		target.Reset()
+	}
+	target.WriteString(result.WorkflowMessageText)
+}
+
 type agentWorkflowContinuationDrainResult struct {
-	Terminal            bool
-	WaitingStatus       string
-	NextSequence        int
-	WorkflowMessageText string
-	HasWorkflowMessage  bool
+	Terminal               bool
+	WaitingStatus          string
+	NextSequence           int
+	WorkflowMessageText    string
+	HasWorkflowMessage     bool
+	WorkflowMessageReplace bool
 }
 
 type agentWorkflowContinuationStreamState struct {
-	Terminal            bool
-	WaitingStatus       string
-	WorkflowMessageText string
-	HasWorkflowMessage  bool
+	Terminal               bool
+	WaitingStatus          string
+	WorkflowMessageText    string
+	HasWorkflowMessage     bool
+	WorkflowMessageReplace bool
 }
 
 func (s *agentWorkflowContinuationStreamState) apply(result agentWorkflowContinuationDrainResult) {
@@ -237,7 +269,12 @@ func (s *agentWorkflowContinuationStreamState) apply(result agentWorkflowContinu
 	}
 	if result.HasWorkflowMessage {
 		s.HasWorkflowMessage = true
-		s.WorkflowMessageText += result.WorkflowMessageText
+		if result.WorkflowMessageReplace {
+			s.WorkflowMessageText = result.WorkflowMessageText
+		} else {
+			s.WorkflowMessageText += result.WorkflowMessageText
+		}
+		s.WorkflowMessageReplace = result.WorkflowMessageReplace
 	}
 }
 
@@ -251,9 +288,23 @@ func (h *AgentsHandler) drainAgentWorkflowContinuationEvents(ctx context.Context
 	messageText := strings.Builder{}
 	for _, event := range payload.Events {
 		result.NextSequence = event.Sequence
-		eventResult := h.handleAgentWorkflowContinuationEvent(ctx, continuation, event.Event, event.Data, emit)
+		eventData := copyMapForAgentWorkflowContinuation(event.Data)
+		eventData["event_id"] = event.EventID
+		eventData["sequence"] = event.Sequence
+		eventData["schema_version"] = event.SchemaVersion
+		eventData["payload_version"] = event.PayloadVersion
+		eventData["execution_id"] = event.ExecutionID
+		eventData["pause_id"] = event.PauseID
+		eventData["pause_generation"] = event.PauseGeneration
+		eventData["occurred_at_ms"] = event.OccurredAtMS
+		eventData["recorded_at_ms"] = event.RecordedAtMS
+		eventResult := h.handleAgentWorkflowContinuationEvent(ctx, continuation, event.Event, eventData, emit)
 		if eventResult.HasWorkflowMessage {
 			result.HasWorkflowMessage = true
+			if eventResult.WorkflowMessageReplace {
+				messageText.Reset()
+				result.WorkflowMessageReplace = true
+			}
 			messageText.WriteString(eventResult.WorkflowMessageText)
 		}
 		if eventResult.Terminal {
@@ -271,6 +322,9 @@ func (h *AgentsHandler) handleAgentWorkflowContinuationEvent(ctx context.Context
 	result := agentWorkflowContinuationDrainResult{}
 	eventType := agentWorkflowContinuationEventType(rawEventType)
 	if eventType == "" {
+		return result
+	}
+	if agentWorkflowContinuationMode(continuation) == "agent_task_tool" && agentWorkflowAnswerTransportEvent(eventType) {
 		return result
 	}
 	data := copyMapForAgentWorkflowContinuation(rawData)
@@ -303,11 +357,12 @@ func (h *AgentsHandler) handleAgentWorkflowContinuationEvent(ctx context.Context
 			h.emitAgentWorkflowContinuationStreamEvent(ctx, continuation, "user_input_requested", userInput, emit)
 		}
 	}
-	if isAgentWorkflowPassthroughMessageEvent(eventType, continuation.AgentType) {
+	if isAgentWorkflowPassthroughMessageEvent(eventType, continuation) {
 		chunk := agentWorkflowContinuationMessageChunk(data)
 		if chunk != "" {
 			result.HasWorkflowMessage = true
 			result.WorkflowMessageText = chunk
+			result.WorkflowMessageReplace = eventType == "text_replace"
 			if eventType != "message" && emit != nil {
 				h.emitAgentWorkflowContinuationStreamEvent(ctx, continuation, "message", gin.H{
 					"conversation_id": continuation.ConversationID.String(),
@@ -349,8 +404,23 @@ func (h *AgentsHandler) finishAgentWorkflowContinuation(ctx context.Context, sco
 		return
 	}
 	outputs := run.OutputsMap()
-	if hasPassthroughAnswer && strings.EqualFold(strings.TrimSpace(continuation.AgentType), "CONVERSATIONAL_WORKFLOW") {
-		metadata, err := h.chatRuntimeService.CompleteWorkflowApprovalContinuation(ctx, continuation, passthroughAnswer, completionContinuationStatus(run.Status))
+	finalPassthroughAnswer, hasFinalPassthroughAnswer := agentWorkflowContinuationFinalPassthroughAnswer(outputs, passthroughAnswer, hasPassthroughAnswer)
+	if hasFinalPassthroughAnswer && agentWorkflowContinuationMode(continuation) == "agent_conversation_delegate" {
+		if hasPassthroughAnswer && finalPassthroughAnswer != passthroughAnswer {
+			h.emitAgentWorkflowContinuationStreamEvent(ctx, continuation, "message_retract", gin.H{
+				"conversation_id": continuation.ConversationID.String(),
+				"message_id":      continuation.MessageID.String(),
+				"content":         passthroughAnswer,
+			}, emit)
+		}
+		if !hasPassthroughAnswer || finalPassthroughAnswer != passthroughAnswer {
+			h.emitAgentWorkflowContinuationStreamEvent(ctx, continuation, "message", gin.H{
+				"conversation_id": continuation.ConversationID.String(),
+				"message_id":      continuation.MessageID.String(),
+				"answer":          finalPassthroughAnswer,
+			}, emit)
+		}
+		metadata, err := h.chatRuntimeService.CompleteWorkflowApprovalContinuation(ctx, continuation, finalPassthroughAnswer, completionContinuationStatus(run.Status))
 		if err != nil {
 			h.failAgentWorkflowContinuation(ctx, continuation, err, emit)
 			return
@@ -363,7 +433,7 @@ func (h *AgentsHandler) finishAgentWorkflowContinuation(ctx context.Context, sco
 		}, emit)
 		return
 	}
-	if shouldSummarizeAgentWorkflowContinuation(continuation.AgentType, run.Status, outputs) {
+	if shouldSummarizeAgentWorkflowContinuation(continuation, run.Status, outputs) {
 		errorMessage := ""
 		if run.Error != nil {
 			errorMessage = *run.Error
@@ -382,6 +452,9 @@ func (h *AgentsHandler) finishAgentWorkflowContinuation(ctx context.Context, sco
 				return
 			}
 			h.failAgentWorkflowContinuation(ctx, continuation, summaryErr, emit)
+			return
+		}
+		if result != nil && result.Status != "" && result.Status != runtimemodel.MessageStatusCompleted {
 			return
 		}
 		metadata := map[string]interface{}{}

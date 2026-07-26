@@ -86,6 +86,10 @@ export function NodeFloatingPanel({ temporarilyHidden = false }: NodeFloatingPan
       setActiveNodeId(null);
     }
   }, [selectedNodeId, selectionSource]);
+  // Prefer the current selection immediately. The sticky id only bridges transient
+  // deselection while React Flow reconciles nodes, so switching nodes never closes
+  // and remounts the whole inspector for a frame.
+  const displayedNodeId = selectedNodeId ?? activeNodeId;
 
   const selectedNode = useWorkflowStore(
     useCallback(
@@ -93,12 +97,12 @@ export function NodeFloatingPanel({ temporarilyHidden = false }: NodeFloatingPan
         if (state.mode === 'history' && state.selectedRunId) {
           const snap = state.historySnapshots[state.selectedRunId];
           if (snap) {
-            return snap.nodes.find(n => n.id === activeNodeId) as WorkflowNode | undefined;
+            return snap.nodes.find(n => n.id === displayedNodeId) as WorkflowNode | undefined;
           }
         }
-        return state.nodes.find(n => n.id === activeNodeId) as WorkflowNode | undefined;
+        return state.nodes.find(n => n.id === displayedNodeId) as WorkflowNode | undefined;
       },
-      [activeNodeId]
+      [displayedNodeId]
     )
   );
 
@@ -109,7 +113,6 @@ export function NodeFloatingPanel({ temporarilyHidden = false }: NodeFloatingPan
 
   // Track previous selection and selection source to control auto open/close behavior
   const prevSelectedRef = useRef<string | null>(null);
-  const prevSelSrcRef = useRef<string>('none');
   useEffect(() => {
     const prevSelected = prevSelectedRef.current;
 
@@ -128,13 +131,12 @@ export function NodeFloatingPanel({ temporarilyHidden = false }: NodeFloatingPan
 
     // Update previous refs
     prevSelectedRef.current = selectedNodeId ?? null;
-    prevSelSrcRef.current = selectionSource as string;
   }, [selectedNodeId, isExpanded, selectionSource]);
 
   // Derived open state: keep panel open during graph interactions (including drags)
   const open =
     isExpanded &&
-    !!activeNodeId &&
+    !!displayedNodeId &&
     selectedNode?.data.type !== 'loop-end' &&
     selectedNode?.data.type !== 'note';
 
@@ -202,20 +204,18 @@ export function NodeFloatingPanel({ temporarilyHidden = false }: NodeFloatingPan
   // Node update helpers
   const handleNodeUpdate = useCallback(
     (key: keyof WorkflowNodeData | 'data', value: unknown) => {
-      // Use activeNodeId from local state as it is more stable than selectedNodeId from store
-      // but still represents the currently displayed node.
-      if (!activeNodeId || isReadOnly) return;
+      if (!displayedNodeId || isReadOnly) return;
       if (key === 'data') {
         // Merge partial node data via store helper for type safety
-        updateNodeData(activeNodeId, value as Partial<WorkflowNodeData>);
+        updateNodeData(displayedNodeId, value as Partial<WorkflowNodeData>);
       } else {
         // Future non-data updates fallback
-        updateNode(activeNodeId, {
+        updateNode(displayedNodeId, {
           [key]: value,
         } as Partial<WorkflowNode>);
       }
     },
-    [activeNodeId, updateNode, updateNodeData, isReadOnly]
+    [displayedNodeId, updateNode, updateNodeData, isReadOnly]
   );
 
   const handleDuplicate = useCallback(() => {

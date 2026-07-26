@@ -132,7 +132,7 @@ This skill creates new workflow files; it does not edit an existing uploaded fil
 1. Decide the target file format from the user's request.
 2. If the user did not specify a format, choose the most appropriate supported format:
    - Use `md` for reports, notes, plans, structured prose, and documentation drafts.
-   - Use `docx` when the user explicitly asks for Word, an editable document, or a formal document file.
+   - Use `docx` only when the user explicitly asks for Word, DOCX, an editable Word document, or Word-specific rich formatting.
    - Use `xlsx` when the user explicitly asks for Excel or a spreadsheet workbook. Provide valid CSV content.
    - Use `pdf` when the user explicitly asks for PDF or a simple read-only distribution file.
    - Use `pptx` when the user explicitly asks for PowerPoint, slides, a deck, or an editable presentation.
@@ -154,6 +154,8 @@ This skill creates new workflow files; it does not edit an existing uploaded fil
 13. For file-first requests, put the complete body directly in the generation tool call. Do not first emit the same complete body through `submit_intermediate_answer`. Only show the complete body in chat as well when the user explicitly asks to see both the chat text and the file.
 14. In the final answer, briefly mention the generated filename and format.
 15. Do not invent, rewrite, shorten, or manually format download links. The system UI displays generated file download controls from structured artifact events.
+16. A generic request for a "file" or "document" does not imply Word. When the content is structured prose and no format is specified, use `generate_file` with `md`; use `txt` only when formatting is unnecessary.
+17. If a generation call fails schema validation, correct the selected tool's arguments and retry it at most once. Do not switch to another format-specific tool merely to bypass a missing required argument.
 
 ## References
 
@@ -180,6 +182,7 @@ Read exactly one reference after choosing a complex target format. References fo
 - Do not call `generate_docx`, `generate_pdf`, `generate_pptx`, or complex `generate_file` formats (XLSX or SVG) until the selected format reference has been read. MD, TXT, JSON, CSV, and HTML generation may proceed directly from the core skill and tool schema.
 - `generate_file` accepts only its documented simple parameters. Do not invent format-specific parameters such as `sheets`, `styles`, `pages`, `columns`, `headers`, or `metadata`. XLSX output applies the default table styling documented in `format-xlsx.md`; the caller cannot customize those styles through `generate_file`.
 - `generate_docx` accepts a JSON string document specification. Do not pass raw Markdown or HTML as `document`.
+- Do not call `generate_docx` unless the user explicitly requested Word/DOCX, an editable Word document, or Word-specific rich formatting. A generic request to "write this as a file/document" should use `generate_file` with `md` (or `txt` for plain text).
 - `generate_pdf` accepts self-contained HTML and optional inline CSS. Do not pass JSON document specs.
 - `generate_pptx` accepts a JSON string presentation specification. Do not pass HTML or Markdown as `presentation`.
 - PPTX readable content should not use negative coordinates. Negative `x` or `y` is only appropriate for decorative shapes that intentionally bleed off an edge.

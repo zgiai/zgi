@@ -38,22 +38,23 @@ import type { QuestionAnswerChoice, WorkflowPrecheckWarning } from '@/services/t
 import { useWorkflowDraftPrecheck } from '@/hooks/workflow/use-workflow-precheck';
 import { useWorkflowBillingFeedback } from '@/hooks/workflow/use-workflow-billing-feedback';
 import { toast } from 'sonner';
-import { fetchApprovalEvents, useApprovalForm, useSubmitApprovalForm } from '@/hooks';
+import { useApprovalForm, useSubmitApprovalForm } from '@/hooks';
 import {
+  createWorkflowSnapshotPauseEvent,
   getApprovalEventSequence,
   parseApprovalRequestedEvent,
-  parseApprovalPausedEvent,
 } from '@/components/workflow/approval/runtime-events';
 import { useApprovalRuntimeEvents } from '@/components/workflow/approval/use-approval-runtime-events';
 import { getRightPanelMotionClassName, getRightPanelMotionStyle } from '../right-panel-motion';
 import {
   appendQuestionAnswerTranscriptQuestion,
   applyQuestionAnswerTranscriptSubmission,
-  parseQuestionAnswerPausedEvent,
   parseQuestionAnswerRequestedEvent,
   parseQuestionAnswerSubmittedEvent,
+  type QuestionAnswerRuntimePromptState,
   type QuestionAnswerTranscriptItem,
 } from '@/components/workflow/question-answer/runtime-events';
+import { parseWorkflowPausedEvent } from '@/components/workflow/runtime/pause-events';
 import { getQuestionAnswerChoiceQuery } from '@/components/workflow/question-answer/question-answer-runtime-prompt';
 import { useResizableRightPanel } from '../use-resizable-right-panel';
 import { useActivePanel } from '../../hooks/use-active-panel';
@@ -238,17 +239,13 @@ const WorkflowRunPanel: React.FC<WorkflowRunPanelProps> = ({
   const [runSummary, setRunSummary] = useState<WorkflowFinishedData | null>(null);
   const [workflowRunId, setWorkflowRunId] = useState<string | null>(null);
   const [workflowConversationId, setWorkflowConversationId] = useState<string | null>(null);
-  const [questionAnswerPrompt, setQuestionAnswerPrompt] = useState<{
-    question: string;
-    choices: QuestionAnswerChoice[];
-    round?: number;
-  } | null>(null);
+  const [questionAnswerPrompt, setQuestionAnswerPrompt] =
+    useState<QuestionAnswerRuntimePromptState | null>(null);
   const [questionAnswerSubmitting, setQuestionAnswerSubmitting] = useState(false);
   const [questionAnswerTranscript, setQuestionAnswerTranscript] = useState<
     QuestionAnswerTranscriptItem[]
   >([]);
   const {
-    state: approvalRuntimeState,
     activeEntry: approvalEntry,
     activeForm: approvalForm,
     activeToken: approvalToken,
@@ -262,36 +259,14 @@ const WorkflowRunPanel: React.FC<WorkflowRunPanelProps> = ({
     setLoadedForm: setLoadedApprovalForm,
     resetApprovalRuntime,
   } = useApprovalRuntimeEvents();
-  const approvalRuntimeStateRef = useRef(approvalRuntimeState);
   const approvalFormQuery = useApprovalForm(approvalToken, Boolean(approvalToken && !approvalForm));
   const approvalSubmitMutation = useSubmitApprovalForm(approvalToken);
   const { start: startWorkflowRunEvents, cancel: cancelWorkflowRunEvents } =
     useWorkflowRunEventsStream();
-  const cancelStreamRef = useRef<() => void>(() => {});
   const approvalEventCursorRef = useRef(0);
   const approvalResumeStreamActiveRef = useRef(false);
   const workflowFinishedRef = useRef(false);
   const runtimeLogSignatureRef = useRef('');
-
-  useEffect(() => {
-    approvalRuntimeStateRef.current = approvalRuntimeState;
-  }, [approvalRuntimeState]);
-
-  const hasBlockingApprovalStop = useCallback(
-    () =>
-      Object.values(approvalRuntimeStateRef.current.byKey).some(entry =>
-        ['waiting', 'submitting'].includes(entry.status)
-      ),
-    []
-  );
-
-  const isApprovalStopBlocked = useMemo(
-    () =>
-      Object.values(approvalRuntimeState.byKey).some(entry =>
-        ['waiting', 'submitting'].includes(entry.status)
-      ),
-    [approvalRuntimeState.byKey]
-  );
 
   useEffect(() => {
     const items = isHistory ? (open ? historyExecutionItems : []) : runItems;
@@ -530,6 +505,8 @@ const WorkflowRunPanel: React.FC<WorkflowRunPanelProps> = ({
 
   const handleWorkflowFinished = useCallback(
     (payload: unknown) => {
+      if (workflowFinishedRef.current) return;
+      workflowFinishedRef.current = true;
       rememberApprovalEventSequence(payload);
       sseCallbacks.onWorkflowFinished?.(payload);
       const data =
@@ -542,7 +519,6 @@ const WorkflowRunPanel: React.FC<WorkflowRunPanelProps> = ({
       }
       cancelWorkflowRunEvents();
       approvalResumeStreamActiveRef.current = false;
-      workflowFinishedRef.current = true;
       resetApprovalRuntime();
       setQuestionAnswerPrompt(null);
       setQuestionAnswerSubmitting(false);
@@ -585,6 +561,17 @@ const WorkflowRunPanel: React.FC<WorkflowRunPanelProps> = ({
       setQuestionAnswerSubmitting(false);
     },
     [getEventData, rememberApprovalEventSequence, sseCallbacks]
+  );
+
+  const handleWorkflowResumed = useCallback(
+    (payload: unknown) => {
+      rememberApprovalEventSequence(payload);
+      sseCallbacks.onWorkflowResumed?.(payload);
+      resetApprovalRuntime();
+      setQuestionAnswerPrompt(null);
+      setQuestionAnswerSubmitting(false);
+    },
+    [rememberApprovalEventSequence, resetApprovalRuntime, sseCallbacks]
   );
 
   const getWorkflowRunIdFromPayload = useCallback(
@@ -659,6 +646,7 @@ const WorkflowRunPanel: React.FC<WorkflowRunPanelProps> = ({
       if (!parsed) return;
       sseCallbacks.onQuestionAnswerRequested?.(payload);
       setQuestionAnswerPrompt({
+        nodeId: parsed.nodeId,
         question: parsed.question,
         choices: parsed.choices,
         round: parsed.round,
@@ -685,6 +673,35 @@ const WorkflowRunPanel: React.FC<WorkflowRunPanelProps> = ({
     [sseCallbacks]
   );
 
+  const applyWorkflowPausedState = useCallback(
+    (payload: unknown) => {
+      sseCallbacks.onWorkflowPaused?.(payload);
+      const parsed = parseWorkflowPausedEvent(payload);
+      if (parsed.hasApproval) {
+        markApprovalPausedNodes(parsed.approval.nodeIds, payload);
+        dispatchApprovalEvent('workflow_paused', payload);
+        setActiveTab('results');
+      }
+
+      if (parsed.hasQuestionAnswer) {
+        if (parsed.questionAnswer.prompt) {
+          handleQuestionAnswerRequested(parsed.questionAnswer.prompt);
+        }
+        markQuestionAnswerPausedNodes(parsed.questionAnswer.nodeIds, payload);
+        // A pending question requires direct user input, so it takes visual
+        // precedence when a parallel approval is waiting at the same pause.
+        setActiveTab('inputs');
+      }
+    },
+    [
+      dispatchApprovalEvent,
+      handleQuestionAnswerRequested,
+      markApprovalPausedNodes,
+      markQuestionAnswerPausedNodes,
+      sseCallbacks,
+    ]
+  );
+
   const dispatchWorkflowRunEvent = useCallback(
     (event: WorkflowRunEventEnvelope) => {
       if (isStaleApprovalResumeEvent(event)) return;
@@ -693,6 +710,9 @@ const WorkflowRunPanel: React.FC<WorkflowRunPanelProps> = ({
       switch (event.event) {
         case 'workflow_started':
           handleWorkflowStarted(event);
+          break;
+        case 'workflow_resumed':
+          handleWorkflowResumed(event);
           break;
         case 'approval_requested':
           handleApprovalRequested(event);
@@ -709,25 +729,16 @@ const WorkflowRunPanel: React.FC<WorkflowRunPanelProps> = ({
         case 'question_answer_submitted':
           handleQuestionAnswerSubmitted(event);
           break;
-        case 'workflow_paused': {
-          sseCallbacks.onWorkflowPaused?.(event);
-          const parsed = parseApprovalPausedEvent(event);
-          if (parsed.isApproval) {
-            markApprovalPausedNodes(parsed.nodeIds, event);
-            dispatchApprovalEvent('workflow_paused', event);
-            setActiveTab('results');
-            break;
-          }
-          const qaPaused = parseQuestionAnswerPausedEvent(event);
-          if (qaPaused.isQuestionAnswer) {
-            if (qaPaused.prompt) handleQuestionAnswerRequested(qaPaused.prompt);
-            markQuestionAnswerPausedNodes(qaPaused.nodeIds, event);
-            setActiveTab('inputs');
-          }
+        case 'workflow_paused':
+          applyWorkflowPausedState(event);
           break;
-        }
         case 'node_started':
           setQuestionAnswerSubmitting(false);
+          setRunSummary(prev =>
+            prev && String(prev.status).toLowerCase() === 'paused'
+              ? ({ ...prev, status: 'running' } as WorkflowFinishedData)
+              : prev
+          );
           sseCallbacks.onNodeStarted?.(event);
           break;
         case 'node_finished':
@@ -777,17 +788,16 @@ const WorkflowRunPanel: React.FC<WorkflowRunPanelProps> = ({
       }
     },
     [
-      dispatchApprovalEvent,
+      applyWorkflowPausedState,
       handleApprovalExpired,
       handleApprovalRequested,
       handleApprovalResultFilled,
       handleQuestionAnswerRequested,
       handleQuestionAnswerSubmitted,
       handleWorkflowFinished,
+      handleWorkflowResumed,
       handleWorkflowStarted,
       isStaleApprovalResumeEvent,
-      markApprovalPausedNodes,
-      markQuestionAnswerPausedNodes,
       rememberApprovalEventSequence,
       sseCallbacks,
     ]
@@ -801,15 +811,28 @@ const WorkflowRunPanel: React.FC<WorkflowRunPanelProps> = ({
       setWorkflowRunId(runId);
       approvalResumeStreamActiveRef.current = true;
       workflowFinishedRef.current = false;
-      const streamParams =
-        approvalEventCursorRef.current > 0
-          ? { after: approvalEventCursorRef.current, continue_on_pause: true }
-          : { include_snapshot: true, continue_on_pause: true };
+      const streamParams = {
+        after: approvalEventCursorRef.current,
+        include_snapshot: true,
+        continue_on_pause: true,
+      };
       void startWorkflowRunEvents(
         runId,
         {
+          onWorkflowSnapshot: streamPayload => {
+            sseCallbacks.onWorkflowSnapshot?.(streamPayload);
+            const pauseEvent = createWorkflowSnapshotPauseEvent(streamPayload);
+            // The snapshot is authoritative even when its cursor equals the last live pause
+            // event. Apply it directly so cursor de-duplication cannot hide the interaction UI.
+            if (pauseEvent) applyWorkflowPausedState(pauseEvent);
+          },
+          onEventCursor: sequence => {
+            approvalEventCursorRef.current = Math.max(approvalEventCursorRef.current, sequence);
+          },
           onWorkflowStarted: streamPayload =>
             dispatchWorkflowRunEvent(toWorkflowRunEvent('workflow_started', streamPayload)),
+          onWorkflowResumed: streamPayload =>
+            dispatchWorkflowRunEvent(toWorkflowRunEvent('workflow_resumed', streamPayload)),
           onApprovalRequested: streamPayload =>
             dispatchWorkflowRunEvent(toWorkflowRunEvent('approval_requested', streamPayload)),
           onApprovalResultFilled: streamPayload =>
@@ -859,19 +882,16 @@ const WorkflowRunPanel: React.FC<WorkflowRunPanelProps> = ({
         {
           onClose: () => {
             approvalResumeStreamActiveRef.current = false;
-            if (!workflowFinishedRef.current) {
-              window.setTimeout(() => {
-                if (!workflowFinishedRef.current) startApprovalResumeEventStream();
-              }, 1000);
-            }
           },
         }
       );
     },
     [
+      applyWorkflowPausedState,
       canViewRuntimeEvents,
       dispatchWorkflowRunEvent,
       getWorkflowRunIdFromPayload,
+      sseCallbacks,
       startWorkflowRunEvents,
       toWorkflowRunEvent,
       workflowRunId,
@@ -880,60 +900,23 @@ const WorkflowRunPanel: React.FC<WorkflowRunPanelProps> = ({
 
   useEffect(() => {
     if (!approvalToken || !approvalSubmittedAction) return;
-    let cancelled = false;
-
-    const pollApprovalResumeEvents = async () => {
-      try {
-        const events = await fetchApprovalEvents(approvalToken, {
-          after: approvalEventCursorRef.current,
-          limit: 100,
-        });
-        if (cancelled || events.length === 0) return;
-        events.forEach(event => {
-          dispatchWorkflowRunEvent(event);
-        });
-      } catch {
-        // Keep waiting for the SSE stream; polling is only a resume safety net.
+    const timer = window.setTimeout(() => {
+      if (!approvalResumeStreamActiveRef.current) {
+        startApprovalResumeEventStream();
       }
-    };
-
-    void pollApprovalResumeEvents();
-    const timer = window.setInterval(pollApprovalResumeEvents, 2000);
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-    };
-  }, [approvalSubmittedAction, approvalToken, dispatchWorkflowRunEvent]);
+    }, 5000);
+    return () => window.clearTimeout(timer);
+  }, [approvalSubmittedAction, approvalToken, startApprovalResumeEventStream]);
 
   const handleWorkflowPaused = useCallback(
     (payload: unknown) => {
       rememberApprovalEventSequence(payload);
-      sseCallbacks.onWorkflowPaused?.(payload);
-      const parsed = parseApprovalPausedEvent(payload);
-      if (parsed.isApproval) {
-        markApprovalPausedNodes(parsed.nodeIds, payload);
-        dispatchApprovalEvent('workflow_paused', payload);
-        setActiveTab('results');
-      } else {
-        const qaPaused = parseQuestionAnswerPausedEvent(payload);
-        if (!qaPaused.isQuestionAnswer) return;
-        if (qaPaused.prompt) handleQuestionAnswerRequested(qaPaused.prompt);
-        markQuestionAnswerPausedNodes(qaPaused.nodeIds, payload);
-        setActiveTab('inputs');
-      }
+      applyWorkflowPausedState(payload);
       if (!approvalResumeStreamActiveRef.current) {
         startApprovalResumeEventStream(payload);
       }
     },
-    [
-      dispatchApprovalEvent,
-      handleQuestionAnswerRequested,
-      markApprovalPausedNodes,
-      markQuestionAnswerPausedNodes,
-      rememberApprovalEventSequence,
-      sseCallbacks,
-      startApprovalResumeEventStream,
-    ]
+    [applyWorkflowPausedState, rememberApprovalEventSequence, startApprovalResumeEventStream]
   );
 
   useEffect(() => {
@@ -1006,65 +989,15 @@ const WorkflowRunPanel: React.FC<WorkflowRunPanelProps> = ({
 
   // Stop workflow mutation
   const stopWorkflowMutation = useStopWorkflowTask();
-  const markRunningItemsStopped = useCallback(() => {
-    runItems.forEach(item => {
-      if (item.status === 'running') {
-        setNodeRunStatus(item.nodeId, 'stopped');
-      }
-    });
-    setCurrentRunningNodeId(null);
-    setRunItems(items =>
-      items.map(item => (item.status === 'running' ? { ...item, status: 'stopped' } : item))
-    );
-  }, [runItems, setCurrentRunningNodeId, setNodeRunStatus]);
-
   const handleStop = useCallback(() => {
-    if (hasBlockingApprovalStop()) {
-      toast.info(t('nodes.approval.runtime.stopDisabled'));
-      return;
-    }
     if (!canStopRun) {
       toast.error(t('common.unauthorizedDescription'));
       return;
     }
     const activeRunId = workflowRunId || runSummary?.id;
     if (!activeRunId) return;
-    stopWorkflowMutation.mutate(
-      { agentId, workflowRunId: activeRunId },
-      {
-        onSuccess: () => {
-          markRunningItemsStopped();
-          handleWorkflowFinished({
-            data: {
-              id: activeRunId,
-              workflow_run_id: activeRunId,
-              status: 'stopped',
-              elapsed_time: runSummary?.elapsed_time,
-              total_steps: runSummary?.total_steps,
-              outputs: runSummary?.outputs,
-            },
-          });
-          cancelStreamRef.current();
-          cancelWorkflowRunEvents();
-          approvalResumeStreamActiveRef.current = false;
-        },
-      }
-    );
-  }, [
-    agentId,
-    cancelWorkflowRunEvents,
-    canStopRun,
-    hasBlockingApprovalStop,
-    handleWorkflowFinished,
-    markRunningItemsStopped,
-    runSummary?.elapsed_time,
-    runSummary?.id,
-    runSummary?.outputs,
-    runSummary?.total_steps,
-    stopWorkflowMutation,
-    t,
-    workflowRunId,
-  ]);
+    stopWorkflowMutation.mutate({ agentId, workflowRunId: activeRunId });
+  }, [agentId, canStopRun, runSummary?.id, stopWorkflowMutation, t, workflowRunId]);
   const setOpenValidationIssues = useWorkflowStore.use.setOpenValidationIssues();
   const openIssues = useCallback(() => setOpenValidationIssues(true), [setOpenValidationIssues]);
   const [runWarnOpen, setRunWarnOpen] = useState(false);
@@ -1098,13 +1031,19 @@ const WorkflowRunPanel: React.FC<WorkflowRunPanelProps> = ({
     onLoopStarted: sseCallbacks.onLoopStarted,
     onLoopNext: sseCallbacks.onLoopNext,
     onLoopCompleted: sseCallbacks.onLoopCompleted,
+    onTransportInterrupted: canViewRuntimeEvents
+      ? runId => {
+          setWorkflowRunId(runId);
+          if (!approvalResumeStreamActiveRef.current) {
+            startApprovalResumeEventStream({ data: { workflow_run_id: runId } });
+          }
+        }
+      : undefined,
   });
   useEffect(() => {
     setIsStarting(isHookStarting);
   }, [isHookStarting]);
-  useEffect(() => {
-    cancelStreamRef.current = cancel;
-  }, [cancel]);
+  useEffect(() => {}, [cancel]);
 
   const runDraftWithPrecheck = useCallback(
     async (values: FormInputs) => {
@@ -1132,7 +1071,17 @@ const WorkflowRunPanel: React.FC<WorkflowRunPanelProps> = ({
           setQuestionAnswerSubmitting(true);
         }
 
-        const payload = { inputs: values as unknown as WorkflowRunInputValues };
+        const payload = {
+          inputs: {
+            ...(values as unknown as WorkflowRunInputValues),
+            ...(questionAnswerPrompt?.nodeId
+              ? { question_answer_node_id: questionAnswerPrompt.nodeId }
+              : {}),
+            ...(typeof questionAnswerPrompt?.round === 'number'
+              ? { question_answer_round: questionAnswerPrompt.round }
+              : {}),
+          },
+        };
         if (!isQuestionAnswerResume) {
           void loadWorkflowPrecheckWarnings(payload.inputs);
         }
@@ -1260,7 +1209,20 @@ const WorkflowRunPanel: React.FC<WorkflowRunPanelProps> = ({
 
   // history derivations moved to useHistoryView
   const runSummaryStatus = (runSummary?.status || '').toLowerCase();
+  const isTerminalRunSummary = [
+    'succeeded',
+    'completed',
+    'failed',
+    'error',
+    'stopped',
+    'cancelled',
+    'canceled',
+  ].includes(runSummaryStatus);
   const isPaused = !isHistory && runSummaryStatus === 'paused';
+  // A durable terminal projection is authoritative. A superseded POST stream may still
+  // finish updating its local hook state after recovery has already applied the terminal event.
+  const isRuntimeRunning =
+    !isHistory && !isTerminalRunSummary && (isRunning || runSummaryStatus === 'running');
 
   // After all hooks are called, conditionally render nothing when closed
   if (!open) {
@@ -1295,13 +1257,14 @@ const WorkflowRunPanel: React.FC<WorkflowRunPanelProps> = ({
           closeLabel={t('common.close')}
           onClose={onClose}
           actions={
-            canViewRuntimeLogs ? (
+            !isHistory && canViewRuntimeLogs ? (
               <WorkflowRunsDropdown
                 agentId={agentId}
                 query={debugRunsQuery}
                 icon={<History size={14} />}
                 tooltipLabel={t('agents.workflow.debugRuns')}
                 dropdownLabel={t('agents.workflow.debugRuns')}
+                description={t('agents.workflow.debugRunsDescription')}
                 triggerText={t('agents.workflow.debugRuns')}
                 triggerVariant="outline"
                 triggerSize="xs"
@@ -1314,7 +1277,7 @@ const WorkflowRunPanel: React.FC<WorkflowRunPanelProps> = ({
         />
 
         {/* Run Status Bar */}
-        {isRunning && !isHistory && (
+        {isRuntimeRunning && (
           <div className="flex items-center px-4 py-2 bg-highlight/10 border-b border-highlight/30">
             <div className="flex items-center gap-2">
               <Loader className="h-4 w-4 animate-spin text-highlight" />
@@ -1324,7 +1287,7 @@ const WorkflowRunPanel: React.FC<WorkflowRunPanelProps> = ({
             </div>
           </div>
         )}
-        {!isRunning && isPaused ? (
+        {!isRuntimeRunning && isPaused ? (
           <div className="flex items-center justify-between px-4 py-2 bg-warning/10 border-b border-warning/30">
             <div className="flex items-center gap-2">
               <div className="flex h-4 w-4 items-center justify-center rounded-full bg-warning text-white">
@@ -1357,11 +1320,11 @@ const WorkflowRunPanel: React.FC<WorkflowRunPanelProps> = ({
               startVariables={startVariables}
               initialValues={lastInputs}
               isStarting={isStarting}
-              isRunning={isRunning}
+              isRunning={isRuntimeRunning}
               isStopping={stopWorkflowMutation.isPending}
               runDisabled={!canRunDraft}
               runDisabledMessage={t('common.unauthorizedDescription')}
-              stopDisabled={isApprovalStopBlocked || !canStopRun}
+              stopDisabled={!canStopRun}
               stopDisabledMessage={
                 !canStopRun
                   ? t('common.unauthorizedDescription')

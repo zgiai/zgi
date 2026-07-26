@@ -17,8 +17,15 @@ import (
 // VariableSelector represents a variable selector
 type VariableSelector struct {
 	Variable      string   `json:"variable"`
-	ValueSelector []string `json:"value_selector"`
+	ValueSelector []string `json:"value_selector,omitempty"`
+	ValueType     string   `json:"value_type,omitempty"`
+	Value         any      `json:"value,omitempty"`
 }
+
+const (
+	outputValueTypeVariable = "variable"
+	outputValueTypeConstant = "constant"
+)
 
 // NodeData represents the data for an end node
 type NodeData struct {
@@ -126,14 +133,23 @@ func (n *Node) executeRun(ctx context.Context) (*shared.NodeRunResult, error) {
 			continue
 		}
 
-		// Get variables from variable pool
-		variable := n.GraphRuntimeState.VariablePool.GetWithPath(variableSelector.ValueSelector)
-		// Convert variable value
 		var value any
-		if variable != nil {
-			value = variable.ToObject()
+		if variableSelector.ValueType == outputValueTypeConstant {
+			value = variableSelector.Value
 		} else {
-			value = nil
+			if n.GraphRuntimeState == nil || n.GraphRuntimeState.VariablePool == nil {
+				return nil, fmt.Errorf("resolve output %q: variable pool is unavailable", variableSelector.Variable)
+			}
+			// Get variables from variable pool
+			variable := n.GraphRuntimeState.VariablePool.GetWithPath(variableSelector.ValueSelector)
+			if variable == nil {
+				return nil, fmt.Errorf(
+					"resolve output %q from selector %v: variable not found",
+					variableSelector.Variable,
+					variableSelector.ValueSelector,
+				)
+			}
+			value = variable.ToObject()
 		}
 
 		// Set output values
@@ -237,16 +253,20 @@ func getData(config map[string]any) (NodeData, string, error) {
 
 	var outputs []VariableSelector
 	if outputsData, exists := dataMap["outputs"]; exists {
-		if outputsList, ok := outputsData.([]any); ok {
-			for _, outputData := range outputsList {
-				if outputMap, ok := outputData.(map[string]any); ok {
-					variableSelector, err := parseVariableSelector(outputMap)
-					if err != nil {
-						continue
-					}
-					outputs = append(outputs, variableSelector)
-				}
+		outputsList, ok := outputsData.([]any)
+		if !ok {
+			return NodeData{}, "", fmt.Errorf("outputs must be array")
+		}
+		for index, outputData := range outputsList {
+			outputMap, ok := outputData.(map[string]any)
+			if !ok {
+				return NodeData{}, "", fmt.Errorf("output %d must be object", index+1)
 			}
+			variableSelector, err := parseVariableSelector(outputMap)
+			if err != nil {
+				return NodeData{}, "", fmt.Errorf("output %d: %w", index+1, err)
+			}
+			outputs = append(outputs, variableSelector)
 		}
 	}
 
@@ -258,12 +278,26 @@ func getData(config map[string]any) (NodeData, string, error) {
 }
 
 func parseVariableSelector(data map[string]any) (VariableSelector, error) {
-	var variableSelector VariableSelector
+	variableSelector := VariableSelector{ValueType: outputValueTypeVariable}
 
-	if variable, ok := data["variable"].(string); ok {
-		variableSelector.Variable = variable
+	if variable, ok := data["variable"].(string); ok && strings.TrimSpace(variable) != "" {
+		variableSelector.Variable = strings.TrimSpace(variable)
 	} else {
 		return VariableSelector{}, fmt.Errorf("variable field is required and must be string")
+	}
+
+	if valueType, ok := data["value_type"].(string); ok && strings.TrimSpace(valueType) != "" {
+		variableSelector.ValueType = strings.TrimSpace(valueType)
+	}
+
+	switch variableSelector.ValueType {
+	case outputValueTypeConstant:
+		variableSelector.Value = data["value"]
+		return variableSelector, nil
+	case outputValueTypeVariable:
+		// Continue parsing the variable selector below.
+	default:
+		return VariableSelector{}, fmt.Errorf("unsupported output value_type %q", variableSelector.ValueType)
 	}
 
 	var selectorData any
@@ -275,17 +309,22 @@ func parseVariableSelector(data map[string]any) (VariableSelector, error) {
 		return VariableSelector{}, fmt.Errorf("value_selector or selector field is required")
 	}
 
-	if selectorArray, ok := selectorData.([]any); ok {
-		valSelector := make([]string, 0, len(selectorArray))
-		for _, item := range selectorArray {
-			if str, ok := item.(string); ok {
-				valSelector = append(valSelector, str)
-			}
-		}
-		variableSelector.ValueSelector = valSelector
-	} else {
+	selectorArray, ok := selectorData.([]any)
+	if !ok {
 		return VariableSelector{}, fmt.Errorf("selector must be array")
 	}
+	valSelector := make([]string, 0, len(selectorArray))
+	for index, item := range selectorArray {
+		str, ok := item.(string)
+		if !ok || strings.TrimSpace(str) == "" {
+			return VariableSelector{}, fmt.Errorf("selector item %d must be non-empty string", index+1)
+		}
+		valSelector = append(valSelector, strings.TrimSpace(str))
+	}
+	if len(valSelector) < 2 {
+		return VariableSelector{}, fmt.Errorf("selector must contain node ID and variable path")
+	}
+	variableSelector.ValueSelector = valSelector
 
 	return variableSelector, nil
 }

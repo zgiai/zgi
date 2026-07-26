@@ -58,6 +58,7 @@ import type {
   AIChatMessageFile,
   AIChatRuntimeSurface,
   AIChatUserInputRequest,
+  AIChatWorkflowQuestionAnswerInputs,
   AIChatWorkflowRunMetadata,
 } from '@/services/types/aichat';
 import {
@@ -109,6 +110,7 @@ import {
   workflowBillingToastClassNames,
 } from '@/components/workflow/common/workflow-billing-toast-action';
 import { normalizeApprovalRuntimeForm } from '@/components/workflow/approval/runtime-events';
+import { isWorkflowApprovalInlineAllowed } from '@/components/workflow/approval/workflow-approval-surface';
 import { AICHAT_SIDEBAR_BG_IMAGE } from '@/lib/config';
 import {
   MAX_AICHAT_BRANCHES,
@@ -211,7 +213,7 @@ function resolveWorkflowQuestionAnswerInputs(
   request: AIChatUserInputRequest,
   fallbackQuery: string,
   answers?: Record<string, string>
-): { query: string; question_answer_option_id?: string } | null {
+): AIChatWorkflowQuestionAnswerInputs | null {
   const firstQuestion = request.questions[0];
   if (!firstQuestion) return null;
   const answerKey = firstQuestion.id || 'q1';
@@ -227,6 +229,8 @@ function resolveWorkflowQuestionAnswerInputs(
   return {
     query: selectedOption?.label?.trim() || query,
     question_answer_option_id: selectedOption?.option_id?.trim() || undefined,
+    question_answer_node_id: request.node_id?.trim() || undefined,
+    question_answer_round: request.round,
   };
 }
 
@@ -523,7 +527,8 @@ export function AIChatShell({
             activeConversation,
             activeMessages,
             isSending,
-            hasActiveStreamingMessage
+            hasActiveStreamingMessage,
+            surface
           )
         : null,
     [
@@ -1278,6 +1283,7 @@ export function AIChatShell({
             layout={isEmbedded ? 'embedded' : 'full'}
             showMemoryKey={surface !== 'agent-webapp'}
             showSkillEventDetails={surface !== 'agent-webapp'}
+            showContextualOperationStatus={effectiveRuntimeSurface === 'contextual_sidebar'}
             showPlanningPlaceholder={showPlanningPlaceholder}
             pendingUserMessage={visiblePendingUserMessage}
           />
@@ -1475,7 +1481,8 @@ function resolveActiveWorkflowApprovalRequest(
   conversation: AIChatConversation | null,
   messages: AIChatMessage[],
   isSending: boolean,
-  hasActiveStreamingMessage: boolean
+  hasActiveStreamingMessage: boolean,
+  surface: 'aichat' | 'agent-draft' | 'agent-webapp'
 ): AIChatWorkflowApprovalRequest | null {
   if (
     !conversation ||
@@ -1517,6 +1524,11 @@ function resolveActiveWorkflowApprovalRequest(
     stringFromRecord(continuation, 'approval_token') ||
     stringFromUnknown(inlineApprovalForm?.token);
   if (!approvalToken) return null;
+  const canSubmitInline = isWorkflowApprovalInlineAllowed({
+    surface,
+    form: inlineApprovalForm,
+    uiApprovalAllowed: workflowApprovalUIAccess(approval, continuation),
+  });
   return {
     conversationId: conversation.id,
     messageId: leafMessage.id,
@@ -1526,7 +1538,17 @@ function resolveActiveWorkflowApprovalRequest(
     approvalFormId:
       stringFromUnknown(approval?.approval_form_id) || stringFromUnknown(inlineApprovalForm?.id),
     approvalForm: inlineApprovalForm,
+    canSubmitInline,
   };
+}
+
+function workflowApprovalUIAccess(approval: unknown, continuation: unknown): boolean | undefined {
+  for (const value of [approval, continuation]) {
+    if (!value || typeof value !== 'object') continue;
+    const allowed = (value as Record<string, unknown>).ui_approval_allowed;
+    if (typeof allowed === 'boolean') return allowed;
+  }
+  return undefined;
 }
 
 function isActiveWorkflowApprovalRun(

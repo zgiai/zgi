@@ -184,7 +184,6 @@ export function getAgentRuntimeStepDisplay(
         title: translate(t, 'appLogs.runtimeEventTitles.workflowApproval'),
         subtitle:
           stringValue(process.workflow_run_id) ||
-          stringValue(process.approval_form_id) ||
           rawTitle ||
           type,
       };

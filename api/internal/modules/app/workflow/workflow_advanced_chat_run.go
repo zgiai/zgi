@@ -339,7 +339,7 @@ func (h *WorkflowHandler) RunAdvancedChatWorkflow(c *gin.Context) {
 		// Determine triggeredFrom for published conversation workflow
 		triggeredFrom := invokeFrom // Use invokeFrom from context (e.g., "external-api", "web-app")
 		if triggeredFrom == "" {
-			triggeredFrom = "app-run" // Default for published workflows
+			triggeredFrom = string(InvokeFromWebApp) // Default for published workflows
 		}
 
 		// Run published workflow (isDraft=false)

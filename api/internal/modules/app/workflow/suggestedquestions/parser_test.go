@@ -68,3 +68,20 @@ func TestParseQuestionsSupportsMarkdownListFallback(t *testing.T) {
 		t.Fatalf("questions = %#v", questions)
 	}
 }
+
+func TestParseQuestionsSupportsWarningsWithoutQuestions(t *testing.T) {
+	questions, warnings, err := ParseQuestions(
+		`{"questions":[],"warnings":["conversation_generation_context_insufficient"]}`,
+		3,
+		nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(questions) != 0 {
+		t.Fatalf("questions = %#v, want empty", questions)
+	}
+	if len(warnings) != 1 || warnings[0] != WarningConversationContextInsufficient {
+		t.Fatalf("warnings = %#v", warnings)
+	}
+}

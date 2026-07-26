@@ -6,6 +6,7 @@ import type { WorkflowRunSseCallbacks } from '@/services/workflow.service';
 import { useAutoFollowNode } from './use-auto-follow-node';
 import type { HistoryResult, WorkflowFinishedData } from '../types';
 import type { WorkflowRunNodeListItem } from '../../workflow-run-nodes-list';
+import type { WorkflowNodeExecution, WorkflowRunDetail } from '@/services/types/workflow';
 import type { WorkflowNode, WorkflowEdge } from '../../../store/type';
 import type { RunGraphSnapshot } from '../../../store/helpers/history';
 import { useWorkflowBillingFeedback } from '@/hooks/workflow/use-workflow-billing-feedback';
@@ -24,6 +25,12 @@ import {
   getSensitiveOutputTextFromPayload,
   SENSITIVE_OUTPUT_BLOCKED_TOKEN,
 } from '@/utils/model-output-filter';
+import {
+  buildWorkflowRunExecutionItems,
+  buildWorkflowRunHistoryResult,
+  buildWorkflowRunSummary,
+  normalizeCanvasRunStatus,
+} from '../utils/history-view-data';
 
 interface RecordLike {
   [key: string]: unknown;
@@ -168,6 +175,66 @@ export function useSseCallbacks(params: UseSseCallbacksParams): WorkflowRunSseCa
 
   return useMemo<WorkflowRunSseCallbacks>(
     () => ({
+      onWorkflowSnapshot: (payload: unknown) => {
+        try {
+          const snapshot = getSseData(payload);
+          if (!snapshot) return;
+          const run = pickRecord(snapshot, 'workflow_run');
+          const message = pickRecord(snapshot, 'message');
+          const rawNodes = Array.isArray(snapshot.nodes) ? snapshot.nodes : [];
+          const executionItems = buildWorkflowRunExecutionItems(
+            rawNodes as WorkflowNodeExecution[]
+          );
+
+          iterationSessionsRef.current.clear();
+          activeIterationRef.current = { nodeId: null, index: null };
+          loopSessionsRef.current.clear();
+          activeLoopRef.current = { nodeId: null, index: null };
+          receiveOrderRef.current = 0;
+          resetRunStatus();
+          resetActiveOutputHandles();
+          setCurrentRunningNodeId(null);
+          setAutoFollow(false);
+          throttler.cancel();
+
+          const applyNodeStatus = (items: WorkflowRunNodeListItem[]) => {
+            for (const item of items) {
+              setNodeRunStatus(item.nodeId, normalizeCanvasRunStatus(item.status));
+              for (const round of item.iterationRounds ?? []) applyNodeStatus(round.nodes);
+              for (const round of item.loopRounds ?? []) applyNodeStatus(round.nodes);
+            }
+          };
+          applyNodeStatus(executionItems);
+          setRunItems(executionItems);
+
+          if (run) {
+            const detail = run as unknown as WorkflowRunDetail;
+            setRunSummary(buildWorkflowRunSummary(detail));
+            const result = buildWorkflowRunHistoryResult(detail);
+            setFinalResult(result);
+            if (result.kind === 'text') setStreamedText(result.content);
+            else if (message && typeof message.answer === 'string') {
+              setStreamedText(message.answer);
+              if (message.answer.length > 0) {
+                setFinalResult({ kind: 'text', content: message.answer });
+              }
+            } else {
+              setStreamedText('');
+            }
+
+            const status = typeof run.status === 'string' ? run.status.toLowerCase() : '';
+            if (['succeeded', 'success', 'completed', 'failed', 'error', 'stopped'].includes(status)) {
+              finalizeRuntimeLogPopoversAfterRun();
+            }
+          } else {
+            setStreamedText(typeof message?.answer === 'string' ? message.answer : '');
+          }
+          setActiveTab('results');
+        } catch (error) {
+          // eslint-disable-next-line no-console
+          console.warn('onWorkflowSnapshot parse error', error);
+        }
+      },
       onWorkflowStarted: (payload: unknown) => {
         try {
           const d = getSseData(payload);
@@ -217,6 +284,20 @@ export function useSseCallbacks(params: UseSseCallbacksParams): WorkflowRunSseCa
           setFinalResult(null);
           setActiveTab('results');
         }
+      },
+      onWorkflowResumed: (payload: unknown) => {
+        const d = getSseData(payload);
+        setRunSummary(
+          prev =>
+            ({
+              ...prev,
+              id: pickString(d, 'id') ?? pickString(d, 'workflow_run_id') ?? prev?.id ?? '',
+              status: 'running',
+            }) as WorkflowFinishedData
+        );
+        setAutoFollow(true);
+        setCurrentRunningNodeId(null);
+        setActiveTab('results');
       },
       onWorkflowPaused: (payload: unknown) => {
         try {
@@ -1079,6 +1160,18 @@ export function useSseCallbacks(params: UseSseCallbacksParams): WorkflowRunSseCa
       },
       onMessage: (payload: unknown) => {
         try {
+          const data = getSseData(payload);
+          const answerDelta = pickString(data, 'answer_delta');
+          if (typeof answerDelta === 'string') {
+            if (data?.replace === true) {
+              throttler.cancel();
+              setStreamedText(answerDelta);
+              setFinalResult({ kind: 'text', content: answerDelta });
+            } else if (answerDelta.length > 0) {
+              throttler.append(answerDelta);
+            }
+            return;
+          }
           const text = getSensitiveOutputTextFromPayload(payload);
           if (typeof text === 'string' && text.length > 0) {
             throttler.append(text);

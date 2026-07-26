@@ -43,6 +43,7 @@ import { DEFAULT_ANSWER_NODE_DATA } from '../nodes/answer/config';
 import { DEFAULT_CODE_NODE_DATA } from '../nodes/code/config';
 import { DEFAULT_ASSIGNER_NODE_DATA } from '../nodes/assigner/config';
 import { DEFAULT_DOCUMENT_EXTRACTOR_NODE_DATA } from '../nodes/document-extractor/config';
+import { useWorkflowVariableImpact } from '../ui/variable-reference-impact-provider';
 
 const isWorkflowStoreReadOnly = () => {
   const { mode, canEdit } = useWorkflowStore.getState();
@@ -69,6 +70,7 @@ const useWorkflowOperations = () => {
   const beginHistoryBatch = useWorkflowStore.use.beginHistoryBatch();
   const endHistoryBatch = useWorkflowStore.use.endHistoryBatch();
   const selectedNodeId = useWorkflowStore.use.selectedNodeId();
+  const { requestNodeDeletion } = useWorkflowVariableImpact();
 
   const isLoading = useWorkflowStore.use.isLoading();
   const isDirty = useWorkflowStore.use.isDirty();
@@ -83,8 +85,10 @@ const useWorkflowOperations = () => {
   const { value: defaultLlm } = useDefaultModelByUseCase('text-chat');
   const defaultLlmProvider = defaultLlm?.provider ?? '';
   const defaultLlmName = defaultLlm?.model ?? '';
-  const { conversational: defaultConversationalPrompt, standard: defaultStandardPrompt } =
-    useMemo(() => getDefaultWorkflowPrompts(locale), [locale]);
+  const { conversational: defaultConversationalPrompt, standard: defaultStandardPrompt } = useMemo(
+    () => getDefaultWorkflowPrompts(locale),
+    [locale]
+  );
 
   // side effects moved to useWorkflowInitializer
 
@@ -434,9 +438,7 @@ const useWorkflowOperations = () => {
   const addLLMNode = useCallback(
     (position: { x: number; y: number }, parentId?: string): string | null => {
       const isConversational = agentType === AgentType.CONVERSATIONAL_AGENT;
-      const defaultPrompt = isConversational
-        ? defaultConversationalPrompt
-        : defaultStandardPrompt;
+      const defaultPrompt = isConversational ? defaultConversationalPrompt : defaultStandardPrompt;
       const promptTemplate = [
         {
           id: 'system',
@@ -1020,10 +1022,9 @@ const useWorkflowOperations = () => {
       if (node.data.type === NODE_TYPES.START) {
         return false;
       }
-      deleteNode(nodeId);
-      return true;
+      return requestNodeDeletion([nodeId], () => deleteNode(nodeId));
     },
-    [deleteNode]
+    [deleteNode, requestNodeDeletion]
   );
 
   // Delete selected node
@@ -1040,8 +1041,8 @@ const useWorkflowOperations = () => {
     const { nodes } = useWorkflowStore.getState();
     const selectedIds = nodes.filter(n => n.selected).map(n => n.id);
     if (selectedIds.length === 0) return;
-    deleteNodes(selectedIds);
-  }, [deleteNodes]);
+    requestNodeDeletion(selectedIds, () => deleteNodes(selectedIds));
+  }, [deleteNodes, requestNodeDeletion]);
 
   // Copy selected node (to internal clipboard only)
   const copySelectedNode = useCallback(() => {

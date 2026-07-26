@@ -864,7 +864,6 @@ func WebAppAuthMiddleware() gin.HandlerFunc {
 		c.Set("virtual_account_id", virtualAccountID)
 		c.Set("authenticated_account_id", authenticatedAccountID)
 		c.Set("migration_required", migrationRequired)
-
 		// Determine authentication mode for logging
 		authMode := "unknown"
 		if migrationRequired {
@@ -888,4 +887,33 @@ func WebAppAuthMiddleware() gin.HandlerFunc {
 
 		c.Next()
 	}
+}
+
+// WorkflowRunEventsAuthMiddleware accepts both console JWT sessions and public
+// WebApp virtual identities. JWT-only requests retain the normal organization
+// resolution and account validation contract; requests carrying a virtual
+// identity use the WebApp migration-aware authentication path.
+func WorkflowRunEventsAuthMiddleware(accountService interfaces.AccountService) gin.HandlerFunc {
+	jwtAuth := JWTWithOrganizationAndService(accountService)
+	webAppAuth := WebAppAuthMiddleware()
+	return func(c *gin.Context) {
+		if isWorkflowRunEventsWebAppIdentity(c) {
+			webAppAuth(c)
+			return
+		}
+		jwtAuth(c)
+	}
+}
+
+func isWorkflowRunEventsWebAppIdentity(c *gin.Context) bool {
+	if strings.TrimSpace(c.GetHeader("X-User-Account-Id")) != "" {
+		return true
+	}
+	authHeader := strings.TrimSpace(c.GetHeader("Authorization"))
+	parts := strings.SplitN(authHeader, " ", 2)
+	if len(parts) != 2 || parts[0] != "Bearer" {
+		return false
+	}
+	_, err := uuid.Parse(strings.TrimSpace(parts[1]))
+	return err == nil
 }

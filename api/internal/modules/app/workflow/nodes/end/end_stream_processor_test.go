@@ -51,3 +51,37 @@ func TestGenerateStreamOutputsWhenNodeFinished_UsesNestedSelector(t *testing.T) 
 		t.Fatalf("ChunkContent = %q, want %q", streamEvent.ChunkContent, "nested stream")
 	}
 }
+
+func TestEndStreamGeneratorRouterIgnoresConstantOutputs(t *testing.T) {
+	router := &EndStreamGeneratorRouter{}
+	selectors := router.extractStreamVariableSelector(
+		map[string]map[string]interface{}{
+			"llm-1": {
+				"data": map[string]interface{}{"type": "llm"},
+			},
+		},
+		map[string]interface{}{
+			"data": map[string]interface{}{
+				"outputs": []interface{}{
+					map[string]interface{}{
+						"variable":   "fixed",
+						"value_type": "constant",
+						"value":      "done",
+					},
+					map[string]interface{}{
+						"variable":       "generated",
+						"value_type":     "variable",
+						"value_selector": []interface{}{"llm-1", "text"},
+					},
+				},
+			},
+		},
+	)
+
+	if len(selectors) != 1 {
+		t.Fatalf("selectors = %#v, want one model text selector", selectors)
+	}
+	if got := selectors[0]; len(got) != 2 || got[0] != "llm-1" || got[1] != "text" {
+		t.Fatalf("selector = %#v, want [llm-1 text]", got)
+	}
+}

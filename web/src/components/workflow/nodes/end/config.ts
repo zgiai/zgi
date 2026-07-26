@@ -12,7 +12,9 @@ export interface OutputVariable {
     | 'array[boolean]'
     | 'array[object]'
     | 'array[file]';
-  value_selector: string[];
+  value_type?: 'variable' | 'constant';
+  value_selector?: string[];
+  value?: unknown;
 }
 export interface EndNodeData {
   type: 'end';
@@ -52,17 +54,25 @@ export const checkValid = (data: EndNodeData, ctx?: ValidationCtx): ValidationRe
           params: { index: idx + 1 },
         });
       }
-      if (!Array.isArray(o.value_selector) || o.value_selector.length < 2) {
+      const valueType = o.value_type ?? 'variable';
+      if (
+        valueType === 'variable' &&
+        (!Array.isArray(o.value_selector) || o.value_selector.length < 2)
+      ) {
         errors.push({
           code: 'end.validation.outputSelectorRequired',
           params: { index: idx + 1 },
         });
       }
       // upstream missing warning
-      if (Array.isArray(o.value_selector) && o.value_selector.length >= 2) {
+      if (
+        valueType === 'variable' &&
+        Array.isArray(o.value_selector) &&
+        o.value_selector.length >= 2
+      ) {
         const [sourceId] = o.value_selector;
         const allowed = new Set<string>(['sys', 'conversation', 'environment']);
-        const hasNode = Array.isArray(ctx?.nodes) ? ctx!.nodes!.some(n => n.id === sourceId) : true;
+        const hasNode = Array.isArray(ctx?.nodes) ? ctx.nodes.some(n => n.id === sourceId) : true;
         if (!allowed.has(sourceId) && !hasNode) {
           warnings.push({ code: 'validation.invalidUpstream' });
         }

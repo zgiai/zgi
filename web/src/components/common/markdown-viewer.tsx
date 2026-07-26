@@ -14,6 +14,7 @@ import { API_URL } from '@/lib/config';
 import { cn } from '@/lib/utils';
 import { isVoidElement, safeCloneElement } from '@/utils/dom';
 import { normalizeMarkdownMathDelimiters } from '@/utils/markdown';
+import { remarkSoftBreaks } from '@/utils/markdown-soft-breaks';
 import { Badge } from '@/components/ui/badge';
 import { useT } from '@/i18n/translations';
 import { transformThinkTags } from '@/components/common/markdown-think-block';
@@ -32,6 +33,8 @@ import { MarkdownMermaid } from '@/components/common/markdown-mermaid';
 interface MarkdownViewerProps {
   content: string;
   className?: string;
+  /** Preserve source soft line breaks instead of letting Markdown collapse them into spaces. */
+  preserveSoftBreaks?: boolean;
   /** Render raw HTML embedded in Markdown. Disable for public or untrusted content. */
   allowRawHtml?: boolean;
   /** Optional highlight terms. Matching occurrences will be highlighted. */
@@ -60,7 +63,7 @@ interface MarkdownParagraphRendererProps extends React.HTMLAttributes<HTMLParagr
   node?: MarkdownElementNode;
 }
 
-const remarkPluginsList: PluggableList = [remarkGfm, remarkMath];
+const remarkPluginsList: PluggableList = [remarkGfm, remarkMath, remarkSoftBreaks];
 const rehypePluginsList: PluggableList = [
   [rehypeHighlight, { ignoreMissing: true }],
   rehypeRaw,
@@ -326,6 +329,7 @@ function cacheIdentityPart(value: string): string {
 const MarkdownViewer: React.FC<MarkdownViewerProps> = ({
   content,
   className,
+  preserveSoftBreaks = false,
   allowRawHtml = true,
   highlights,
   isStreaming = false,
@@ -590,7 +594,10 @@ const MarkdownViewer: React.FC<MarkdownViewerProps> = ({
   let mermaidCodeBlockIndex = 0;
 
   return (
-    <div ref={viewerRef} className={cn('md-viewer', className)}>
+    <div
+      ref={viewerRef}
+      className={cn('md-viewer', preserveSoftBreaks && 'whitespace-pre-wrap', className)}
+    >
       <ReactMarkdown
         remarkPlugins={remarkPluginsList}
         rehypePlugins={allowRawHtml ? rehypePluginsList : safeRehypePluginsList}

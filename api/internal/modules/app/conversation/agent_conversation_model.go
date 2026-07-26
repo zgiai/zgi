@@ -31,16 +31,33 @@ type AgentConversation struct {
 	ReadAt                  *time.Time `json:"read_at"`
 	ReadAccountID           *uuid.UUID `gorm:"type:uuid" json:"read_account_id"`
 	DialogueCount           int        `gorm:"type:integer;not null;default:0" json:"dialogue_count"`
-	CreatedBy               *uuid.UUID `gorm:"type:uuid" json:"created_by"`
-	CreatedAt               time.Time  `gorm:"not null;default:CURRENT_TIMESTAMP(0)" json:"created_at"`
-	UpdatedBy               *uuid.UUID `gorm:"type:uuid" json:"updated_by"`
-	UpdatedAt               time.Time  `gorm:"not null;default:CURRENT_TIMESTAMP(0)" json:"updated_at"`
-	DeletedBy               *uuid.UUID `gorm:"type:uuid" json:"deleted_by"`
-	DeletedAt               *time.Time `json:"deleted_at"`
+	// RuntimeStatus and ActiveWorkflowRunID form the durable single-active-run
+	// slot for conversational workflows.  They are deliberately stored on the
+	// conversation (rather than inferred from messages) so every entry point,
+	// browser tab and pod observes the same state.
+	RuntimeStatus       string     `gorm:"type:varchar(32);not null;default:'idle'" json:"runtime_status"`
+	ActiveWorkflowRunID *uuid.UUID `gorm:"type:uuid;index" json:"active_workflow_run_id,omitempty"`
+	RuntimeGeneration   int64      `gorm:"not null;default:0" json:"runtime_generation"`
+	RuntimeRevision     int64      `gorm:"not null;default:0" json:"runtime_revision"`
+	CreatedBy           *uuid.UUID `gorm:"type:uuid" json:"created_by"`
+	CreatedAt           time.Time  `gorm:"not null;default:CURRENT_TIMESTAMP(0)" json:"created_at"`
+	UpdatedBy           *uuid.UUID `gorm:"type:uuid" json:"updated_by"`
+	UpdatedAt           time.Time  `gorm:"not null;default:CURRENT_TIMESTAMP(0)" json:"updated_at"`
+	DeletedBy           *uuid.UUID `gorm:"type:uuid" json:"deleted_by"`
+	DeletedAt           *time.Time `json:"deleted_at"`
 
 	// Relationships
 	Messages []AgentMessage `gorm:"foreignKey:ConversationID;references:ID" json:"messages,omitempty"`
 }
+
+const (
+	ConversationRuntimeIdle            = "idle"
+	ConversationRuntimeRunning         = "running"
+	ConversationRuntimePendingApproval = "pending_approval"
+	ConversationRuntimePendingQuestion = "pending_question"
+	ConversationRuntimeResuming        = "resuming"
+	ConversationRuntimeStopping        = "stopping"
+)
 
 // TableName specifies the table name for AgentConversation
 func (AgentConversation) TableName() string {

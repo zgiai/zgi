@@ -73,6 +73,8 @@ func (c *answerOutputCoordinator) RestorePauseSnapshot(snapshot *workflowpause.A
 		emitter.currentIndex = 0
 		emitter.drained = false
 		emitter.batchBarrierPassed = false
+		emitter.finalRendered = ""
+		emitter.hasFinalRendered = false
 	}
 
 	c.fullAnswer = strings.Builder{}

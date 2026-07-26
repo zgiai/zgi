@@ -144,8 +144,13 @@ func (s *service) RunClientActionContinuationStream(
 		return nil, ErrMessageStopped
 	}
 
-	s.emitPreparedEvent(persistCtx, prepared, streamEventMessageStart, messageStartPayload(conversation, message, false), onEvent)
-	s.emitPreparedEvent(persistCtx, prepared, streamEventClientActionResult, clientActionResultPayload(prepared, continuation.Event, req), onEvent)
+	if err := s.emitPreparedEvent(persistCtx, prepared, streamEventMessageStart, messageStartPayload(conversation, message, false), onEvent); err != nil {
+		return nil, finalizedRuntimePersistenceError(err)
+	}
+	timeline := newProcessTimelineRecorder(runCtx, persistCtx, s, prepared, onEvent)
+	if err := timeline.RecordEvent(streamEventClientActionResult, clientActionResultPayload(prepared, continuation.Event, req)); err != nil {
+		return nil, finalizedRuntimePersistenceError(err)
+	}
 
 	var answer string
 	var usage *adapter.Usage

@@ -68,7 +68,6 @@ func runtimeWorkflowRunEvent(run map[string]interface{}, runIndex int) map[strin
 		"nodes":            runtimeWorkflowNodeDetails(run, runIndex),
 		"approvals":        runtimeWorkflowApprovalDetails(run),
 		"question_answers": runtimeWorkflowQuestionDetails(run),
-		"messages":         runtimeWorkflowMessageDetails(run),
 		"invocation":       runtimeWorkflowInvocationDetails(run),
 		"error":            runtimeString(run["error"]),
 		"runtime_id":       workflowRuntimeID("workflow_run", run, nil, runIndex, 0),
@@ -184,26 +183,6 @@ func validRuntimeWorkflowQuestion(question map[string]interface{}) bool {
 		return true
 	}
 	return false
-}
-
-func runtimeWorkflowMessageDetails(run map[string]interface{}) map[string]interface{} {
-	messages := runtimeSkillInvocations(run["messages"])
-	if len(messages) == 0 {
-		return nil
-	}
-	chunks := make([]interface{}, 0, len(messages))
-	var text strings.Builder
-	for _, message := range messages {
-		chunks = append(chunks, message)
-		if answer := firstRuntimeString(message["answer"], message["text"]); answer != "" {
-			text.WriteString(answer)
-		}
-	}
-	return compactAgentRuntimeMap(map[string]interface{}{
-		"text":        text.String(),
-		"chunks":      chunks,
-		"chunk_count": len(chunks),
-	})
 }
 
 func runtimeWorkflowInvocationDetails(run map[string]interface{}) map[string]interface{} {

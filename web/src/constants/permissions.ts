@@ -198,7 +198,7 @@ const permissionFallbackNames: Record<string, { zhHans: string; enUS: string }> 
     zhHans: '配置工作流访问范围',
     enUS: 'Configure workflow access',
   },
-  'workflow.logs.view': { zhHans: '查看工作流日志', enUS: 'View workflow logs' },
+  'workflow.logs.view': { zhHans: '查看运行日志', enUS: 'View runtime logs' },
   'knowledge_base.view': { zhHans: '查看知识库', enUS: 'View knowledge bases' },
   'knowledge_base.retrieval_test': { zhHans: '使用召回测试', enUS: 'Run retrieval tests' },
   'knowledge_base.folder_manage': { zhHans: '管理知识库文件夹', enUS: 'Manage knowledge folders' },

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/zgiai/zgi/api/config"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine"
 	workflowpause "github.com/zgiai/zgi/api/internal/modules/app/workflow/pause"
 	workflow_shared "github.com/zgiai/zgi/api/internal/modules/app/workflow/shared"
 )
@@ -48,6 +49,23 @@ func TestAnswerOutputCoordinatorEligibleAnswerStreamsBeforeAnswerStarts(t *testi
 		t.Fatal("HandleStreamChunk() = false, want true for watched answer selector")
 	}
 	assertAnswerMessages(t, resultChan, []string{"prefix ", "hello"})
+}
+
+func TestAnswerOutputCoordinatorUsesSelectorSourceForNestedStream(t *testing.T) {
+	restoreAnswerCoordinatorConfig(t, 20, nil)
+	coordinator, resultChan := newTestAnswerOutputCoordinator(t, []testAnswerNode{
+		{id: "start", nodeType: "start"},
+		{id: "llm", nodeType: "llm"},
+		{id: "answer", nodeType: "answer", answer: "{{#llm.text#}}"},
+	}, []testAnswerEdge{
+		{source: "start", target: "llm"},
+		{source: "llm", target: "answer"},
+	})
+
+	if !coordinator.HandleStreamChunk("iteration-container", testRunChunk("llm", "text", "hello")) {
+		t.Fatal("HandleStreamChunk() = false, want true for selector source")
+	}
+	assertAnswerMessages(t, resultChan, []string{"hello"})
 }
 
 func TestAnswerOutputCoordinatorEmitsSnapshotAfterReleasedMessages(t *testing.T) {
@@ -211,6 +229,238 @@ func TestAnswerOutputCoordinatorIterationScopeOrdersIndexes(t *testing.T) {
 	assertAnswerMessages(t, resultChan, []string{"1", "2"})
 	if got := coordinator.FullAnswer(); got != "012" {
 		t.Fatalf("FullAnswer() = %q, want %q", got, "012")
+	}
+}
+
+func TestAnswerOutputCoordinatorLazilyRegistersIterationAnswerBeforeReadyBatch(t *testing.T) {
+	restoreAnswerCoordinatorConfig(t, 20, nil)
+	coordinator, resultChan := newTestAnswerOutputCoordinator(t, []testAnswerNode{
+		{id: "iteration", nodeType: "iteration"},
+		{id: "llm", nodeType: "llm", parentID: "iteration"},
+		{id: "inneranswer", nodeType: "answer", answer: "{{#llm.text#}}", parentID: "iteration"},
+	}, []testAnswerEdge{{source: "llm", target: "inneranswer"}})
+
+	scope := answerOutputScope{kind: answerScopeIteration, parentNodeID: "iteration", index: 0}
+	if consumed := coordinator.HandleStreamChunk("llm", &workflow_shared.RunStreamChunkEvent{
+		ChunkContent:         "only once",
+		FromVariableSelector: []string{"llm", "text"},
+		Scope: &workflow_shared.RunStreamScope{
+			Kind:         graph_engine.ReadyBatchScopeIteration,
+			ParentNodeID: "iteration",
+			Index:        0,
+		},
+	}); !consumed {
+		t.Fatal("HandleStreamChunk() = false before ReadyBatch, want scoped answer to consume chunk")
+	}
+	assertAnswerMessages(t, resultChan, []string{"only once"})
+
+	coordinator.MarkNodeFinishedScoped(scope, "llm", "llm", string(workflow_shared.SUCCEEDED), map[string]any{"text": "only once"}, nil)
+	coordinator.RegisterReadyBatch(scope, []string{"inneranswer"})
+	coordinator.MarkAnswerActiveScoped(scope, "inneranswer")
+	coordinator.MarkNodeFinishedScoped(scope, "inneranswer", "answer", string(workflow_shared.SUCCEEDED), map[string]any{"answer": "only once"}, nil)
+
+	assertNoAnswerMessages(t, resultChan)
+	if got, want := coordinator.FullAnswer(), "only once"; got != want {
+		t.Fatalf("FullAnswer() = %q, want %q", got, want)
+	}
+}
+
+func TestAnswerOutputCoordinatorRestoredIterationScopePreservesRoundContentAndNewlines(t *testing.T) {
+	restoreAnswerCoordinatorConfig(t, 20, nil)
+	nodes := []testAnswerNode{
+		{id: "approval", nodeType: "human-input"},
+		{id: "iteration", nodeType: "iteration"},
+		{id: "llm", nodeType: "llm", parentID: "iteration"},
+		{id: "inneranswer", nodeType: "answer", answer: "{{#llm.text#}}\n", parentID: "iteration"},
+	}
+	edges := []testAnswerEdge{{source: "llm", target: "inneranswer"}}
+
+	original, _ := newTestAnswerOutputCoordinator(t, nodes, edges)
+	snapshot, _ := original.PreparePauseSnapshot()
+	if snapshot == nil {
+		t.Fatal("PreparePauseSnapshot() snapshot = nil, want snapshot")
+	}
+
+	restored, resultChan := newTestAnswerOutputCoordinator(t, nodes, edges)
+	if err := restored.RestorePauseSnapshot(snapshot); err != nil {
+		t.Fatalf("RestorePauseSnapshot() error = %v, want nil", err)
+	}
+	for index, text := range []string{"first", "second", "third"} {
+		scope := answerOutputScope{kind: answerScopeIteration, parentNodeID: "iteration", index: index}
+		restored.RegisterReadyBatch(scope, []string{"llm"})
+		if consumed := restored.HandleStreamChunk("llm", &workflow_shared.RunStreamChunkEvent{
+			ChunkContent:         text,
+			FromVariableSelector: []string{"llm", "text"},
+			Scope: &workflow_shared.RunStreamScope{
+				Kind:         graph_engine.ReadyBatchScopeIteration,
+				ParentNodeID: "iteration",
+				Index:        index,
+			},
+		}); !consumed {
+			t.Fatalf("round %d LLM chunk was not consumed by restored scoped answer", index)
+		}
+		// Match the resumed production ordering: the answer node may finish with
+		// its authoritative rendered value before the coordinator receives a
+		// usable final callback for the streamed source node.
+		restored.RegisterReadyBatch(scope, []string{"inneranswer"})
+		restored.MarkAnswerActiveScoped(scope, "inneranswer")
+		restored.MarkNodeFinishedScoped(scope, "inneranswer", "answer", string(workflow_shared.SUCCEEDED), map[string]any{"answer": text + "\n"}, nil)
+	}
+
+	assertAnswerMessages(t, resultChan, []string{"first", "\n", "second", "\n", "third", "\n"})
+	if got, want := restored.FullAnswer(), "first\nsecond\nthird\n"; got != want {
+		t.Fatalf("FullAnswer() = %q, want %q", got, want)
+	}
+}
+
+func TestAnswerOutputCoordinatorLoopScopeEmitsEachRoundInOrder(t *testing.T) {
+	restoreAnswerCoordinatorConfig(t, 20, nil)
+	coordinator, resultChan := newTestAnswerOutputCoordinator(t, []testAnswerNode{
+		{id: "loop", nodeType: "loop"},
+		{id: "llm", nodeType: "llm", parentID: "loop"},
+		{id: "inneranswer", nodeType: "answer", answer: "{{#llm.text#}}", parentID: "loop"},
+	}, []testAnswerEdge{{source: "llm", target: "inneranswer"}})
+
+	roundZero := answerOutputScope{kind: answerScopeLoop, parentNodeID: "loop", index: 0}
+	roundOne := answerOutputScope{kind: answerScopeLoop, parentNodeID: "loop", index: 1}
+
+	coordinator.RegisterReadyBatch(roundZero, []string{"llm"})
+	if consumed := coordinator.HandleStreamChunk("llm", &workflow_shared.RunStreamChunkEvent{
+		ChunkContent:         "zero",
+		FromVariableSelector: []string{"llm", "text"},
+		Scope: &workflow_shared.RunStreamScope{
+			Kind:         graph_engine.ReadyBatchScopeLoop,
+			ParentNodeID: "loop",
+			Index:        0,
+		},
+	}); !consumed {
+		t.Fatal("round zero LLM chunk was not consumed by scoped answer")
+	}
+	assertAnswerMessages(t, resultChan, []string{"zero"})
+	coordinator.MarkNodeFinishedScoped(roundZero, "llm", "llm", string(workflow_shared.SUCCEEDED), map[string]any{"text": "zero"}, nil)
+	coordinator.RegisterReadyBatch(roundZero, []string{"inneranswer"})
+	coordinator.MarkAnswerActiveScoped(roundZero, "inneranswer")
+	coordinator.MarkNodeFinishedScoped(roundZero, "inneranswer", "answer", string(workflow_shared.SUCCEEDED), map[string]any{"answer": "zero"}, nil)
+	assertNoAnswerMessages(t, resultChan)
+
+	coordinator.RegisterReadyBatch(roundOne, []string{"llm"})
+	if consumed := coordinator.HandleStreamChunk("llm", &workflow_shared.RunStreamChunkEvent{
+		ChunkContent:         "one",
+		FromVariableSelector: []string{"llm", "text"},
+		Scope: &workflow_shared.RunStreamScope{
+			Kind:         graph_engine.ReadyBatchScopeLoop,
+			ParentNodeID: "loop",
+			Index:        1,
+		},
+	}); !consumed {
+		t.Fatal("round one LLM chunk was not consumed by scoped answer")
+	}
+	assertAnswerMessages(t, resultChan, []string{"one"})
+	coordinator.MarkNodeFinishedScoped(roundOne, "llm", "llm", string(workflow_shared.SUCCEEDED), map[string]any{"text": "one"}, nil)
+	coordinator.RegisterReadyBatch(roundOne, []string{"inneranswer"})
+	coordinator.MarkAnswerActiveScoped(roundOne, "inneranswer")
+	coordinator.MarkNodeFinishedScoped(roundOne, "inneranswer", "answer", string(workflow_shared.SUCCEEDED), map[string]any{"answer": "one"}, nil)
+	assertNoAnswerMessages(t, resultChan)
+
+	if got := coordinator.FullAnswer(); got != "zeroone" {
+		t.Fatalf("FullAnswer() = %q, want %q", got, "zeroone")
+	}
+}
+
+func TestAnswerOutputCoordinatorLoopScopePreservesTrailingTemplateNewline(t *testing.T) {
+	restoreAnswerCoordinatorConfig(t, 20, nil)
+	coordinator, resultChan := newTestAnswerOutputCoordinator(t, []testAnswerNode{
+		{id: "loop", nodeType: "loop"},
+		{id: "llm", nodeType: "llm", parentID: "loop"},
+		{id: "inneranswer", nodeType: "answer", answer: "{{#llm.text#}}\n", parentID: "loop"},
+	}, []testAnswerEdge{{source: "llm", target: "inneranswer"}})
+
+	for index, text := range []string{"zero", "one"} {
+		scope := answerOutputScope{kind: answerScopeLoop, parentNodeID: "loop", index: index}
+		coordinator.RegisterReadyBatch(scope, []string{"llm"})
+		if consumed := coordinator.HandleStreamChunk("llm", &workflow_shared.RunStreamChunkEvent{
+			ChunkContent:         text,
+			FromVariableSelector: []string{"llm", "text"},
+			Scope: &workflow_shared.RunStreamScope{
+				Kind:         graph_engine.ReadyBatchScopeLoop,
+				ParentNodeID: "loop",
+				Index:        index,
+			},
+		}); !consumed {
+			t.Fatalf("round %d LLM chunk was not consumed by scoped answer", index)
+		}
+		coordinator.MarkNodeFinishedScoped(scope, "llm", "llm", string(workflow_shared.SUCCEEDED), map[string]any{"text": text}, nil)
+		coordinator.RegisterReadyBatch(scope, []string{"inneranswer"})
+		coordinator.MarkAnswerActiveScoped(scope, "inneranswer")
+		coordinator.MarkNodeFinishedScoped(scope, "inneranswer", "answer", string(workflow_shared.SUCCEEDED), map[string]any{"answer": text + "\n"}, nil)
+	}
+
+	assertAnswerMessages(t, resultChan, []string{"zero", "\n", "one", "\n"})
+	if got, want := coordinator.FullAnswer(), "zero\none\n"; got != want {
+		t.Fatalf("FullAnswer() = %q, want %q", got, want)
+	}
+}
+
+func TestAnswerOutputCoordinatorRestoredLoopScopePreservesTrailingTemplateNewline(t *testing.T) {
+	restoreAnswerCoordinatorConfig(t, 20, nil)
+	nodes := []testAnswerNode{
+		{id: "approval", nodeType: "human-input"},
+		{id: "loop", nodeType: "loop"},
+		{id: "llm", nodeType: "llm", parentID: "loop"},
+		{id: "inneranswer", nodeType: "answer", answer: "{{#llm.text#}}\n", parentID: "loop"},
+	}
+	edges := []testAnswerEdge{{source: "llm", target: "inneranswer"}}
+
+	original, originalChan := newTestAnswerOutputCoordinator(t, nodes, edges)
+	snapshot, messages := original.PreparePauseSnapshot()
+	if snapshot == nil {
+		t.Fatal("PreparePauseSnapshot() snapshot = nil, want snapshot")
+	}
+	if len(messages) != 0 {
+		t.Fatalf("PreparePauseSnapshot() messages = %#v, want none", messages)
+	}
+	assertNoAnswerMessages(t, originalChan)
+
+	restored, resultChan := newTestAnswerOutputCoordinator(t, nodes, edges)
+	if err := restored.RestorePauseSnapshot(snapshot); err != nil {
+		t.Fatalf("RestorePauseSnapshot() error = %v, want nil", err)
+	}
+	for index, text := range []string{"zero", "one"} {
+		scope := answerOutputScope{kind: answerScopeLoop, parentNodeID: "loop", index: index}
+		restored.RegisterReadyBatch(scope, []string{"llm"})
+		if consumed := restored.HandleStreamChunk("llm", &workflow_shared.RunStreamChunkEvent{
+			ChunkContent:         text,
+			FromVariableSelector: []string{"llm", "text"},
+			Scope: &workflow_shared.RunStreamScope{
+				Kind:         graph_engine.ReadyBatchScopeLoop,
+				ParentNodeID: "loop",
+				Index:        index,
+			},
+		}); !consumed {
+			t.Fatalf("round %d LLM chunk was not consumed by restored scoped answer", index)
+		}
+		restored.MarkNodeFinishedScoped(scope, "llm", "llm", string(workflow_shared.SUCCEEDED), map[string]any{"text": text}, nil)
+		restored.RegisterReadyBatch(scope, []string{"inneranswer"})
+		restored.MarkAnswerActiveScoped(scope, "inneranswer")
+		restored.MarkNodeFinishedScoped(scope, "inneranswer", "answer", string(workflow_shared.SUCCEEDED), map[string]any{"answer": text + "\n"}, nil)
+	}
+
+	assertAnswerMessages(t, resultChan, []string{"zero", "\n", "one", "\n"})
+	if got, want := restored.FullAnswer(), "zero\none\n"; got != want {
+		t.Fatalf("FullAnswer() = %q, want %q", got, want)
+	}
+}
+
+func TestAnswerScopeFromLoopMetadata(t *testing.T) {
+	scope, ok := answerScopeFromMetadata(map[string]interface{}{
+		string(workflow_shared.LoopId):    "loop-1",
+		string(workflow_shared.LoopIndex): 3,
+	})
+	if !ok {
+		t.Fatal("answerScopeFromMetadata() did not recognize loop scope")
+	}
+	if scope.kind != answerScopeLoop || scope.parentNodeID != "loop-1" || scope.index != 3 {
+		t.Fatalf("answerScopeFromMetadata() = %#v, want loop scope index 3", scope)
 	}
 }
 
@@ -620,9 +870,13 @@ func newTestAnswerOutputCoordinator(t *testing.T, nodes []testAnswerNode, edges 
 				"nodes": graphNodes,
 				"edges": graphEdges,
 			},
-			NodeMap:     nodeMap,
-			EdgeMap:     edgeMap,
-			StartNodeID: startNodeID,
+			NodeMap:        nodeMap,
+			RuntimeNodeMap: nodeMap,
+			// The production execution graph excludes container-internal edges.
+			// Ordered answers must use the expanded runtime edge graph instead.
+			EdgeMap:        nil,
+			RuntimeEdgeMap: edgeMap,
+			StartNodeID:    startNodeID,
 		},
 		resultChan,
 	)

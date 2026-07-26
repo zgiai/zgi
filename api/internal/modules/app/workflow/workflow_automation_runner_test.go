@@ -1,14 +1,128 @@
 package workflow
 
 import (
+	"context"
 	"testing"
 	"time"
 
+	workflowdto "github.com/zgiai/zgi/api/internal/dto"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine/entities"
 	workflowshared "github.com/zgiai/zgi/api/internal/modules/app/workflow/shared"
 	automationaction "github.com/zgiai/zgi/api/internal/modules/automation/service/action"
 )
+
+func TestWorkflowRunTriggeredFrom(t *testing.T) {
+	tests := []struct {
+		name       string
+		invocation *automationaction.WorkflowInvocationContext
+		want       string
+	}{
+		{name: "automation", want: string(InvokeFromAutomation)},
+		{
+			name: "agent conversation delegate",
+			invocation: &automationaction.WorkflowInvocationContext{
+				Mode: automationaction.WorkflowInvocationModeAgentDelegate,
+			},
+			want: string(InvokeFromWorkflow),
+		},
+		{
+			name: "agent task tool",
+			invocation: &automationaction.WorkflowInvocationContext{
+				Mode: automationaction.WorkflowInvocationModeAgentTaskTool,
+			},
+			want: string(InvokeFromWorkflow),
+		},
+		{
+			name: "standalone invocation",
+			invocation: &automationaction.WorkflowInvocationContext{
+				Mode: automationaction.WorkflowInvocationModeStandalone,
+			},
+			want: string(InvokeFromAutomation),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := workflowRunTriggeredFrom(tt.invocation); got != tt.want {
+				t.Fatalf("workflowRunTriggeredFrom() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestPersistAutomationWorkflowNodeRuntimeLogsSkipsUnexecutedGraphStates(t *testing.T) {
+	repo := &mockWorkflowNodeRuntimeLogRepo{}
+	service := &WorkflowService{workflowNodeRuntimeLogRepo: repo}
+	startedAt := time.Unix(1700000000, 0)
+	finishedAt := startedAt.Add(time.Second)
+	result := &WorkflowExecutionResult{
+		NodeExecutions: []graph_engine.NodeExecutionSnapshot{
+			{NodeID: "start", NodeType: workflowshared.Start, Status: workflowshared.SUCCEEDED, StartTime: startedAt, EndTime: finishedAt},
+			{NodeID: "approval", NodeType: workflowshared.Approval, Status: workflowshared.PAUSED, StartTime: finishedAt, EndTime: finishedAt},
+			{NodeID: "inactive-loop", NodeType: workflowshared.Loop, Status: workflowshared.PENDING},
+			{NodeID: "inactive-end", NodeType: workflowshared.End, Status: workflowshared.SKIPPED},
+		},
+	}
+	workflow := &Workflow{ID: "workflow-1", AgentID: "agent-1"}
+
+	err := service.persistAutomationWorkflowNodeRuntimeLogs(
+		context.Background(),
+		"workspace-1",
+		"account-1",
+		string(InvokeFromWorkflow),
+		workflow,
+		map[string]interface{}{},
+		"run-1",
+		result,
+	)
+	if err != nil {
+		t.Fatalf("persist node runtime logs: %v", err)
+	}
+
+	if len(repo.createdLogs) != 2 {
+		t.Fatalf("created node logs = %d, want 2: %#v", len(repo.createdLogs), repo.createdLogs)
+	}
+	if repo.createdLogs[0].NodeID != "start" || repo.createdLogs[1].NodeID != "approval" {
+		t.Fatalf("created node IDs = [%s %s], want [start approval]", repo.createdLogs[0].NodeID, repo.createdLogs[1].NodeID)
+	}
+	for _, nodeLog := range repo.createdLogs {
+		if nodeLog.TriggeredFrom != string(InvokeFromWorkflow) {
+			t.Fatalf("node %s triggered_from = %q, want %q", nodeLog.NodeID, nodeLog.TriggeredFrom, InvokeFromWorkflow)
+		}
+	}
+	if got := workflowExecutionResultStepCount(result); got != 2 {
+		t.Fatalf("executed step count = %d, want 2", got)
+	}
+}
+
+func TestAutomationWorkflowInputsKeepHostAndWorkflowConversationDomainsSeparate(t *testing.T) {
+	inputs := automationWorkflowInputs(automationaction.WorkflowRunRequest{
+		OrganizationID: "org-1",
+		WorkspaceID:    "workspace-1",
+		AccountID:      "account-1",
+		Inputs:         map[string]interface{}{"query": "hello"},
+		Invocation: &automationaction.WorkflowInvocationContext{
+			InvocationID:         "invocation-1",
+			Mode:                 automationaction.WorkflowInvocationModeAgentDelegate,
+			ParentConversationID: "agent-conversation-1",
+			ParentMessageID:      "agent-message-1",
+		},
+	}, &Workflow{ID: "workflow-1", AgentID: "workflow-agent-1", Type: workflowdto.WorkflowTypeChat})
+
+	if got := inputs["sys.parent_conversation_id"]; got != "agent-conversation-1" {
+		t.Fatalf("sys.parent_conversation_id = %#v, want agent-conversation-1", got)
+	}
+	if _, exists := inputs["sys.conversation_id"]; exists {
+		t.Fatalf("host Agent conversation leaked into workflow conversation domain: %#v", inputs)
+	}
+	if got := inputs["sys.parent_message_id"]; got != "agent-message-1" {
+		t.Fatalf("sys.parent_message_id = %#v, want agent-message-1", got)
+	}
+	if got := inputs["sys.workflow_type"]; got != string(workflowdto.WorkflowTypeChat) {
+		t.Fatalf("sys.workflow_type = %#v, want chat", got)
+	}
+}
 
 func TestAutomationWorkflowOutputsUsesRuntimeOutputs(t *testing.T) {
 	runtimeState := entities.NewGraphRuntimeState(entities.NewVariablePool())

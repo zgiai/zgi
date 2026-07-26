@@ -4,12 +4,14 @@ import type {
   WorkflowRunBillingError,
 } from '@/services/types/workflow';
 import { normalizeAiCreditMetricValue } from '@/utils/ai-credits';
+import { classifyWorkflowRuntimeError } from '@/utils/workflow/runtime-error';
 
 export type WorkflowBillingTranslationScope = 'agents' | 'webapp';
 
 export interface WorkflowBillingMessageOptions {
   isAdmin?: boolean;
   workspaceId?: string | null;
+  includeRuntimeDetails?: boolean;
 }
 
 export interface WorkflowTranslator {
@@ -338,12 +340,21 @@ export function getWorkflowBillingErrorMessage(
   }
 
   if (error.message?.trim()) {
+    const runtimeErrorKind = classifyWorkflowRuntimeError(error.message);
+    const runtimeDescription =
+      runtimeErrorKind && !options.includeRuntimeDetails
+        ? t(
+            scope === 'agents'
+              ? `agents.workflow.errors.${runtimeErrorKind}`
+              : `webapp.chat.workflowErrors.${runtimeErrorKind}`
+          )
+        : error.message.trim();
     return {
       title:
         scope === 'agents'
           ? t('agents.workflow.errors.executionFailed')
           : t('webapp.chat.workflowRunFailed'),
-      description: error.message.trim(),
+      description: runtimeDescription,
     };
   }
 
