@@ -101,6 +101,9 @@ const messages = {
     imageInput: {
       ratio: 'Aspect Ratio',
       countValue: '{count} images',
+      maxCountValue: 'Up to {count} images',
+      singleMode: 'Single image',
+      sequenceMode: 'Image sequence',
       aspectRatios: {
         square: 'Square',
         portrait: 'Portrait',

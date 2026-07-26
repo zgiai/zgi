@@ -8,7 +8,6 @@ import { Sidebar } from '../common/sidebar';
 import { Loader2, PanelLeft, Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import type { ChatController } from '@/components/chat/controllers/types';
-import { IMAGE_COUNTS } from './constants';
 import { cn } from '@/lib/utils';
 import { useSysImageStore } from './store';
 import { useStore } from 'zustand';
@@ -69,12 +68,7 @@ export function ImgChat({
   const isMobile = useIsMobile();
 
   // Local settings state for the toolbar
-  const [settings, setImageSettings] = React.useState<ImageSettings>({
-    ratio: '1:1',
-    count: IMAGE_COUNTS[0].id,
-    customRatio: { width: 1024, height: 1024 },
-    isCustomRatio: false,
-  });
+  const [settings, setImageSettings] = React.useState<ImageSettings>({});
   const currentRuntimeModel = React.useMemo(
     () =>
       imageRuntimeModels?.find(
@@ -82,19 +76,21 @@ export function ImgChat({
       ),
     [imageRuntimeModels, modelSelectorValue?.model, modelSelectorValue?.provider]
   );
-  const ratioOptions = React.useMemo(
-    () => Array.from(new Set(currentRuntimeModel?.supported_sizes.map(sizeToRatio).filter(Boolean))),
-    [currentRuntimeModel?.supported_sizes]
-  );
+  const previousProfileRef = React.useRef(currentRuntimeModel?.generation_profile);
+
+  React.useEffect(() => {
+    setImageSettings(previous =>
+      settingsForProfile(
+        currentRuntimeModel?.generation_profile,
+        previous,
+        previousProfileRef.current
+      )
+    );
+    previousProfileRef.current = currentRuntimeModel?.generation_profile;
+  }, [currentRuntimeModel?.generation_profile]);
 
   const handleSettingsChange = React.useCallback((next: ImageSettingsPatch) => {
-    setImageSettings(prev => ({
-      ...prev,
-      ratio: next.ratio,
-      count: next.count,
-      customRatio: next.customRatio ?? prev.customRatio,
-      isCustomRatio: next.isCustomRatio ?? prev.isCustomRatio,
-    }));
+    setImageSettings(next);
   }, []);
 
   const { pendingPrompt, clearPendingPrompt } = useSysImageStore();
@@ -147,13 +143,10 @@ export function ImgChat({
           try {
             const params = JSON.parse(storedParams);
             const newSettings = { ...settings };
-            if (params.isCustom && params.customSize) {
-              newSettings.isCustomRatio = true;
-              newSettings.customRatio = params.customSize;
-            } else if (params.ratio) {
-              newSettings.ratio = params.ratio;
-              newSettings.isCustomRatio = false;
-            }
+            const sizeOption = currentRuntimeModel?.generation_profile.size?.options.find(
+              option => option.aspect_ratio === params.ratio
+            );
+            if (sizeOption) newSettings.size = sizeOption.value;
             if (params.count) newSettings.count = params.count;
             // TODO: Handle model if needed
             setImageSettings(newSettings);
@@ -164,7 +157,7 @@ export function ImgChat({
         }
       }
     }
-  }, [pendingPrompt, clearPendingPrompt, setInput, settings, setImageSettings]);
+  }, [pendingPrompt, clearPendingPrompt, setInput, settings, currentRuntimeModel]);
 
   const handleSendAction = React.useCallback(
     (prompt: string) => {
@@ -186,8 +179,10 @@ export function ImgChat({
               }
             : {}),
           image_gen_config: {
-            aspect_ratio: settings.isCustomRatio ? '1:1' : settings.ratio,
-            n: settings.count,
+            size: settings.size,
+            count: settings.count,
+            generation_mode: settings.generationMode,
+            max_images: settings.maxImages,
           },
         },
       });
@@ -346,8 +341,7 @@ export function ImgChat({
               modelSelectorValue={modelSelectorValue}
               onModelChange={onModelChange}
               imageRuntimeModels={imageRuntimeModels}
-              ratioOptions={ratioOptions}
-              countOptions={currentRuntimeModel?.supported_counts}
+              currentRuntimeModel={currentRuntimeModel}
               topNotice={inputTopNotice}
             />
           </div>
@@ -381,25 +375,25 @@ export function ImgChat({
   );
 }
 
-function sizeToRatio(size: string): string {
-  switch (size) {
-    case '1536x1024':
-      return '3:2';
-    case '1024x1536':
-      return '2:3';
-    case '1792x1024':
-    case '2048x1152':
-    case '3840x2160':
-      return '16:9';
-    case '1024x1792':
-    case '2160x3840':
-      return '9:16';
-    case '1024x768':
-      return '4:3';
-    case '1024x1024':
-    case '2048x2048':
-      return '1:1';
-    default:
-      return '';
+function settingsForProfile(
+  profile: ImageRuntimeModel['generation_profile'] | undefined,
+  previous: ImageSettings,
+  previousProfile: ImageRuntimeModel['generation_profile'] | undefined
+): ImageSettings {
+  const previousAspectRatio = previousProfile?.size?.options.find(
+    option => option.value === previous.size
+  )?.aspect_ratio;
+  const matchingSize = profile?.size?.options.find(
+    option => option.aspect_ratio === previousAspectRatio
+  )?.value;
+  const size = matchingSize ?? profile?.size?.default;
+  const quantity = profile?.quantity;
+
+  if (quantity?.mode === 'exact') {
+    return { size, count: quantity.default };
   }
+  if (quantity?.mode === 'sequence') {
+    return { size, generationMode: 'single' };
+  }
+  return { size };
 }

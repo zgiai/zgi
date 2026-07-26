@@ -493,6 +493,7 @@ type AdapterConfig struct {
 
 // ImageRequest represents image generation request
 type ImageRequest struct {
+	Provider       string `json:"-"`
 	Model          string `json:"model"`
 	Prompt         string `json:"prompt"`
 	N              *int   `json:"n,omitempty"`
@@ -501,6 +502,8 @@ type ImageRequest struct {
 	Style          string `json:"style,omitempty"`
 	ResponseFormat string `json:"response_format,omitempty"`
 	User           string `json:"user,omitempty"`
+	GenerationMode string `json:"generation_mode,omitempty"`
+	MaxImages      *int   `json:"max_images,omitempty"`
 
 	// AdditionalParameters model-specific parameters
 	AdditionalParameters map[string]interface{} `json:"-"`

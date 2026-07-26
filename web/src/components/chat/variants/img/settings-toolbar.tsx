@@ -3,171 +3,165 @@ import { ChevronDown } from 'lucide-react';
 import { useT } from '@/i18n/translations';
 import { cn } from '@/lib/utils';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { IMAGE_ASPECT_RATIOS, IMAGE_COUNTS } from './constants';
+import type { ImageGenerationProfile } from '@/services/types/image-runtime';
 
 export interface ImageSettings {
-  ratio: string;
-  count: number;
-  customRatio: { width: number; height: number };
-  isCustomRatio: boolean;
+  size?: string;
+  count?: number;
+  generationMode?: 'single' | 'sequence';
+  maxImages?: number;
 }
 
-export interface ImageSettingsPatch {
-  ratio: string;
-  count: number;
-  customRatio?: { width: number; height: number };
-  isCustomRatio?: boolean;
-}
+export type ImageSettingsPatch = ImageSettings;
 
 interface SettingsToolbarProps {
   onSettingsChange?: (settings: ImageSettingsPatch) => void;
-  initialSettings?: Pick<ImageSettings, 'ratio' | 'count'>;
-  ratioOptions?: string[];
-  countOptions?: number[];
+  settings: ImageSettings;
+  profile?: ImageGenerationProfile;
 }
 
-export function SettingsToolbar({
-  onSettingsChange,
-  initialSettings,
-  ratioOptions,
-  countOptions,
-}: SettingsToolbarProps) {
+export function SettingsToolbar({ onSettingsChange, settings, profile }: SettingsToolbarProps) {
   const t = useT('webapp');
-  const availableRatios = React.useMemo(
-    () =>
-      IMAGE_ASPECT_RATIOS.filter(ratio => !ratioOptions?.length || ratioOptions.includes(ratio.id)),
-    [ratioOptions]
-  );
-  const availableCounts = React.useMemo(
-    () => IMAGE_COUNTS.filter(count => !countOptions?.length || countOptions.includes(count.id)),
-    [countOptions]
-  );
-
-  const [selectedRatio, setSelectedRatio] = React.useState<string>(initialSettings?.ratio || '1:1');
-  const [selectedCount, setSelectedCount] = React.useState<number>(
-    initialSettings?.count || IMAGE_COUNTS[0].id
-  );
-
-  // Popover state
-  const [isRatioOpen, setIsRatioOpen] = React.useState(false);
-  const [isCountOpen, setIsCountOpen] = React.useState(false);
-
-  React.useEffect(() => {
-    if (availableRatios.length > 0 && !availableRatios.some(ratio => ratio.id === selectedRatio)) {
-      setSelectedRatio(availableRatios[0].id);
-    }
-  }, [availableRatios, selectedRatio]);
-
-  React.useEffect(() => {
-    if (availableCounts.length > 0 && !availableCounts.some(count => count.id === selectedCount)) {
-      setSelectedCount(availableCounts[0].id);
-    }
-  }, [availableCounts, selectedCount]);
-
-  // Notify parent on change
-  React.useEffect(() => {
-    onSettingsChange?.({
-      ratio: selectedRatio,
-      count: selectedCount,
-    });
-  }, [selectedRatio, selectedCount, onSettingsChange]);
-
-  // Option button styles
+  const [isSizeOpen, setIsSizeOpen] = React.useState(false);
+  const [isQuantityOpen, setIsQuantityOpen] = React.useState(false);
+  const sizes = profile?.size?.options ?? [];
+  const quantity = profile?.quantity;
   const optionBtnClass =
     'flex items-center gap-1.5 rounded-md border border-border/50 bg-background px-2 py-1 text-xs text-foreground hover:bg-muted/40 hover:border-border transition-colors shadow-sm whitespace-nowrap';
 
   return (
     <div className="flex items-center gap-2 flex-wrap">
-      {/* Aspect ratio selection */}
-      <Popover open={isRatioOpen} onOpenChange={setIsRatioOpen}>
-        <PopoverTrigger asChild>
-          <button type="button" className={optionBtnClass}>
-            <span>
-              {selectedRatio
-                ? availableRatios.find(r => r.id === selectedRatio)?.name
-                : t('chat.imageInput.ratio')}
-            </span>
-            <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" />
-          </button>
-        </PopoverTrigger>
-        <PopoverContent
-          align="start"
-          className="w-[160px] p-1 rounded-xl border border-border/50 shadow-lg"
-        >
-          {availableRatios.map(ratio => {
-            // Calculate preview dimensions for the aspect ratio
-            const [w, h] = ratio.id.split(':').map(Number);
-            const maxSize = 18;
-            const scale = maxSize / Math.max(w, h);
-            const previewW = w * scale;
-            const previewH = h * scale;
-
-            return (
+      {sizes.length > 0 ? (
+        <Popover open={isSizeOpen} onOpenChange={setIsSizeOpen}>
+          <PopoverTrigger asChild>
+            <button type="button" className={optionBtnClass}>
+              <span>{sizes.find(item => item.value === settings.size)?.label ?? settings.size}</span>
+              <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" />
+            </button>
+          </PopoverTrigger>
+          <PopoverContent align="start" className="w-[190px] p-1 rounded-xl">
+            {sizes.map(size => (
               <button
-                key={ratio.id}
+                key={size.value}
                 type="button"
                 onClick={() => {
-                  setSelectedRatio(ratio.id);
-                  setIsRatioOpen(false);
+                  onSettingsChange?.({ ...settings, size: size.value });
+                  setIsSizeOpen(false);
                 }}
                 className={cn(
-                  'w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs transition-colors',
-                  selectedRatio === ratio.id
+                  'w-full flex justify-between px-2 py-1.5 rounded-lg text-xs',
+                  settings.size === size.value
                     ? 'bg-neutral-100 dark:bg-neutral-800 text-foreground'
                     : 'text-muted-foreground hover:text-foreground hover:bg-muted/40'
                 )}
               >
-                {/* Aspect ratio preview */}
-                <div className="flex items-center justify-center w-[18px] h-[18px] shrink-0">
-                  <div
-                    className="border border-current rounded-[1.5px]"
-                    style={{ width: previewW, height: previewH }}
-                  />
-                </div>
-                <span>{ratio.name}</span>
-                <span className="text-[10px] text-muted-foreground ml-auto">
-                  {t(`chat.imageInput.aspectRatios.${ratio.labelKey}` as const)}
-                </span>
+                <span>{size.label}</span>
+                <span>{size.aspect_ratio}</span>
               </button>
-            );
-          })}
-        </PopoverContent>
-      </Popover>
+            ))}
+          </PopoverContent>
+        </Popover>
+      ) : null}
 
-      {/* Count selection */}
-      <Popover open={isCountOpen} onOpenChange={setIsCountOpen}>
-        <PopoverTrigger asChild>
-          <button type="button" className={optionBtnClass}>
-            <span>
-              {t('chat.imageInput.countValue', { count: selectedCount })}
-            </span>
-            <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" />
+      {quantity?.mode === 'exact' ? (
+        <QuantityPopover
+          value={settings.count ?? quantity.default}
+          min={quantity.min}
+          max={quantity.max}
+          open={isQuantityOpen}
+          onOpenChange={setIsQuantityOpen}
+          onChange={count => onSettingsChange?.({ ...settings, count })}
+        />
+      ) : null}
+
+      {quantity?.mode === 'sequence' ? (
+        <>
+          <button
+            type="button"
+            className={optionBtnClass}
+            onClick={() =>
+              onSettingsChange?.({
+                ...settings,
+                generationMode: settings.generationMode === 'sequence' ? 'single' : 'sequence',
+                maxImages:
+                  settings.generationMode === 'sequence' ? undefined : quantity.default,
+              })
+            }
+          >
+            {settings.generationMode === 'sequence'
+              ? t('chat.imageInput.sequenceMode')
+              : t('chat.imageInput.singleMode')}
           </button>
-        </PopoverTrigger>
-        <PopoverContent
-          align="start"
-          className="w-[80px] p-1 rounded-xl border border-border/50 shadow-lg"
-        >
-          {availableCounts.map(count => (
-            <button
-              key={count.id}
-              type="button"
-              onClick={() => {
-                setSelectedCount(count.id);
-                setIsCountOpen(false);
-              }}
-              className={cn(
-                'w-full text-center px-2 py-1.5 rounded-lg text-xs transition-colors',
-                selectedCount === count.id
-                  ? 'bg-neutral-100 dark:bg-neutral-800 text-foreground'
-                  : 'text-muted-foreground hover:text-foreground hover:bg-muted/40'
-              )}
-            >
-              {t('chat.imageInput.countValue', { count: count.id })}
-            </button>
-          ))}
-        </PopoverContent>
-      </Popover>
+          {settings.generationMode === 'sequence' ? (
+            <QuantityPopover
+              value={settings.maxImages ?? quantity.default}
+              min={quantity.min}
+              max={quantity.max}
+              maximum
+              open={isQuantityOpen}
+              onOpenChange={setIsQuantityOpen}
+              onChange={maxImages => onSettingsChange?.({ ...settings, maxImages })}
+            />
+          ) : null}
+        </>
+      ) : null}
     </div>
+  );
+}
+
+function QuantityPopover({
+  value,
+  min,
+  max,
+  maximum = false,
+  open,
+  onOpenChange,
+  onChange,
+}: {
+  value: number;
+  min: number;
+  max: number;
+  maximum?: boolean;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onChange: (value: number) => void;
+}) {
+  const t = useT('webapp');
+  const values = Array.from({ length: max - min + 1 }, (_, index) => min + index);
+  const countLabel = (count: number) =>
+    t(maximum ? 'chat.imageInput.maxCountValue' : 'chat.imageInput.countValue', { count });
+
+  return (
+    <Popover open={open} onOpenChange={onOpenChange}>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          className="flex items-center gap-1.5 rounded-md border border-border/50 bg-background px-2 py-1 text-xs shadow-sm"
+        >
+          {countLabel(value)}
+          <ChevronDown className="h-3 w-3 text-muted-foreground" />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent align="start" className="max-h-64 w-[90px] overflow-y-auto p-1 rounded-xl">
+        {values.map(item => (
+          <button
+            key={item}
+            type="button"
+            onClick={() => {
+              onChange(item);
+              onOpenChange(false);
+            }}
+            className={cn(
+              'w-full px-2 py-1.5 rounded-lg text-xs',
+              item === value
+                ? 'bg-neutral-100 dark:bg-neutral-800 text-foreground'
+                : 'text-muted-foreground hover:text-foreground hover:bg-muted/40'
+            )}
+          >
+            {countLabel(item)}
+          </button>
+        ))}
+      </PopoverContent>
+    </Popover>
   );
 }

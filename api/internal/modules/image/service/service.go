@@ -66,29 +66,25 @@ func (s *service) ListModels(ctx context.Context, scope Scope) ([]registry.Image
 	if err != nil {
 		return nil, err
 	}
-	if hasAmbiguousModel(available) {
-		return nil, ErrModelRouteAmbiguous
-	}
-	byKey := map[string]struct{}{}
+	result := make([]registry.ImageModel, 0, len(available))
 	for _, item := range available {
-		byKey[modelKey(item.Provider, item.Name)] = struct{}{}
-	}
-	result := make([]registry.ImageModel, 0)
-	for _, item := range s.registry.ListEnabled() {
-		if _, ok := byKey[modelKey(item.Provider, item.Model)]; ok {
-			if err := s.ensureSingleRoute(ctx, scope.OrganizationID, item.Model); err != nil {
-				return nil, err
-			}
-			result = append(result, item)
+		if item == nil {
 			continue
 		}
-		ok, err := s.hasSingleRoute(ctx, scope.OrganizationID, item.Model)
+		routes, err := s.routesForModel(ctx, scope.OrganizationID, item.Name)
 		if err != nil {
 			return nil, err
 		}
-		if ok {
-			result = append(result, item)
+		label := strings.TrimSpace(item.DisplayName)
+		if label == "" {
+			label = strings.TrimSpace(item.Name)
 		}
+		result = append(result, registry.ImageModel{
+			Provider:          strings.TrimSpace(item.Provider),
+			Model:             strings.TrimSpace(item.Name),
+			ModelLabel:        label,
+			GenerationProfile: s.registry.Resolve(item.Provider, item.Name, routes),
+		})
 	}
 	return result, nil
 }
@@ -101,25 +97,28 @@ func (s *service) Generate(ctx context.Context, scope Scope, req GenerateRequest
 	if len([]rune(prompt)) > maxPromptRunes {
 		return nil, ErrPromptTooLong
 	}
-	modelSpec, ok := s.registry.Get(req.Provider, req.Model)
-	if !ok {
+	availableModel, err := s.findAvailableModel(ctx, scope.OrganizationID, req.Provider, req.Model)
+	if err != nil {
+		return nil, err
+	}
+	if availableModel == nil {
 		return nil, ErrModelNotAvailable
 	}
-	size := strings.TrimSpace(req.Size)
-	if size == "" {
-		size = modelSpec.DefaultSize
+	routes, err := s.routesForModel(ctx, scope.OrganizationID, availableModel.Name)
+	if err != nil {
+		return nil, err
 	}
-	if !containsString(modelSpec.SupportedSizes, size) {
-		return nil, ErrUnsupportedSize
+	modelSpec := registry.ImageModel{
+		Provider:   strings.TrimSpace(availableModel.Provider),
+		Model:      strings.TrimSpace(availableModel.Name),
+		ModelLabel: strings.TrimSpace(availableModel.DisplayName),
 	}
-	count := req.Count
-	if count == 0 {
-		count = modelSpec.DefaultCount
+	if modelSpec.ModelLabel == "" {
+		modelSpec.ModelLabel = modelSpec.Model
 	}
-	if !containsInt(modelSpec.SupportedCounts, count) {
-		return nil, ErrUnsupportedCount
-	}
-	if err := s.ensureModelAvailable(ctx, scope.OrganizationID, modelSpec); err != nil {
+	modelSpec.GenerationProfile = s.registry.Resolve(modelSpec.Provider, modelSpec.Model, routes)
+	options, err := validateGenerateOptions(modelSpec.GenerationProfile, req.Options)
+	if err != nil {
 		return nil, err
 	}
 
@@ -137,14 +136,15 @@ func (s *service) Generate(ctx context.Context, scope Scope, req GenerateRequest
 	if err != nil {
 		return nil, err
 	}
-	n := count
 	imageReq := &adapter.ImageRequest{
+		Provider:       modelSpec.Provider,
 		Model:          modelSpec.Model,
 		Prompt:         prompt,
-		N:              &n,
-		Size:           size,
-		ResponseFormat: imageResponseFormat(modelSpec),
+		N:              options.Count,
+		Size:           options.Size,
 		User:           scope.AccountID.String(),
+		GenerationMode: options.GenerationMode,
+		MaxImages:      options.MaxImages,
 	}
 	resp, err := s.llmClient.AppCreateImage(ctx, appCtx, imageReq)
 	if err != nil {
@@ -176,13 +176,15 @@ func (s *service) Generate(ctx context.Context, scope Scope, req GenerateRequest
 	}
 
 	generation := ImageGenerationMetadata{
-		Provider:   modelSpec.Provider,
-		Model:      modelSpec.Model,
-		ModelLabel: modelSpec.ModelLabel,
-		Size:       size,
-		Count:      count,
-		Files:      files,
-		Status:     "succeeded",
+		Provider:       modelSpec.Provider,
+		Model:          modelSpec.Model,
+		ModelLabel:     modelSpec.ModelLabel,
+		Size:           options.Size,
+		Count:          len(files),
+		GenerationMode: options.GenerationMode,
+		MaxImages:      options.MaxImages,
+		Files:          files,
+		Status:         "succeeded",
 	}
 	messageReq := chatruntime.CreateCompletedMessageRequest{
 		ConversationID: conversation.ID,
@@ -247,55 +249,24 @@ func (s *service) availableImageModels(ctx context.Context, organizationID uuid.
 	return s.availableModels.ListAvailable(ctx, organizationID, "", string(llmmodelmodel.UseCaseImageGen))
 }
 
-func (s *service) ensureModelAvailable(ctx context.Context, organizationID uuid.UUID, modelSpec registry.ImageModel) error {
+func (s *service) findAvailableModel(ctx context.Context, organizationID uuid.UUID, provider, modelName string) (*llmmodelsvc.AvailableModel, error) {
 	available, err := s.availableImageModels(ctx, organizationID)
 	if err != nil {
-		return err
-	}
-	if hasAmbiguousModel(available) {
-		return ErrModelRouteAmbiguous
+		return nil, err
 	}
 	for _, item := range available {
-		if item.Provider == modelSpec.Provider && item.Name == modelSpec.Model {
-			return s.ensureSingleRoute(ctx, organizationID, modelSpec.Model)
+		if item != nil && strings.TrimSpace(item.Provider) == strings.TrimSpace(provider) && strings.TrimSpace(item.Name) == strings.TrimSpace(modelName) {
+			return item, nil
 		}
 	}
-	ok, err := s.hasSingleRoute(ctx, organizationID, modelSpec.Model)
-	if err != nil {
-		return err
-	}
-	if ok {
-		return nil
-	}
-	return ErrModelNotAvailable
+	return nil, nil
 }
 
-func (s *service) hasSingleRoute(ctx context.Context, organizationID uuid.UUID, modelName string) (bool, error) {
+func (s *service) routesForModel(ctx context.Context, organizationID uuid.UUID, modelName string) ([]*channelmodel.RouteQueryResult, error) {
 	if s.routes == nil {
-		return false, nil
+		return nil, nil
 	}
-	routes, err := s.routes.GetRoutesForModel(ctx, organizationID, modelName)
-	if err != nil {
-		return false, err
-	}
-	if len(routes) > 1 {
-		return false, ErrModelRouteAmbiguous
-	}
-	return len(routes) == 1, nil
-}
-
-func (s *service) ensureSingleRoute(ctx context.Context, organizationID uuid.UUID, modelName string) error {
-	if s.routes == nil {
-		return nil
-	}
-	routes, err := s.routes.GetRoutesForModel(ctx, organizationID, modelName)
-	if err != nil {
-		return err
-	}
-	if len(routes) > 1 {
-		return ErrModelRouteAmbiguous
-	}
-	return nil
+	return s.routes.GetRoutesForModel(ctx, organizationID, modelName)
 }
 
 func (s *service) resolveGenerationConversation(ctx context.Context, scope chatruntime.Scope, rawID string, prompt string) (*generationConversation, error) {
@@ -348,49 +319,82 @@ func (s *service) cleanupGeneratedFiles(ctx context.Context, files []ImageFile) 
 	return cleanupErr
 }
 
-func hasAmbiguousModel(models []*llmmodelsvc.AvailableModel) bool {
-	seen := map[string]string{}
-	for _, item := range models {
-		modelName := strings.TrimSpace(item.Name)
-		provider := strings.TrimSpace(item.Provider)
-		if modelName == "" {
-			continue
+func validateGenerateOptions(profile registry.GenerationProfile, requested GenerateOptions) (GenerateOptions, error) {
+	options := GenerateOptions{
+		Size:           strings.TrimSpace(requested.Size),
+		Count:          requested.Count,
+		GenerationMode: strings.TrimSpace(requested.GenerationMode),
+		MaxImages:      requested.MaxImages,
+	}
+	if profile.Size == nil {
+		if options.Size != "" {
+			return GenerateOptions{}, ErrParameterNotSupported
 		}
-		if prev, ok := seen[modelName]; ok && prev != provider {
+	} else {
+		if options.Size == "" {
+			options.Size = profile.Size.Default
+		}
+		if !profileSupportsSize(profile.Size, options.Size) {
+			return GenerateOptions{}, ErrUnsupportedSize
+		}
+	}
+	if profile.Quantity == nil {
+		if options.Count != nil || options.GenerationMode != "" || options.MaxImages != nil {
+			return GenerateOptions{}, ErrParameterNotSupported
+		}
+		return options, nil
+	}
+	switch profile.Quantity.Mode {
+	case registry.QuantityModeExact:
+		if options.GenerationMode != "" || options.MaxImages != nil {
+			return GenerateOptions{}, ErrParameterNotSupported
+		}
+		if options.Count == nil {
+			value := profile.Quantity.Default
+			options.Count = &value
+		}
+		if *options.Count < profile.Quantity.Min || *options.Count > profile.Quantity.Max {
+			return GenerateOptions{}, ErrUnsupportedCount
+		}
+	case registry.QuantityModeFixed:
+		if options.Count != nil || options.GenerationMode != "" || options.MaxImages != nil {
+			return GenerateOptions{}, ErrParameterNotSupported
+		}
+	case registry.QuantityModeSequence:
+		if options.Count != nil {
+			return GenerateOptions{}, ErrParameterNotSupported
+		}
+		if options.GenerationMode == "" {
+			options.GenerationMode = "single"
+		}
+		switch options.GenerationMode {
+		case "single":
+			if options.MaxImages != nil {
+				return GenerateOptions{}, ErrMaxImagesNotAllowed
+			}
+		case "sequence":
+			if options.MaxImages == nil {
+				return GenerateOptions{}, ErrMaxImagesRequired
+			}
+			if *options.MaxImages < profile.Quantity.Min || *options.MaxImages > profile.Quantity.Max {
+				return GenerateOptions{}, ErrMaxImagesOutOfRange
+			}
+		default:
+			return GenerateOptions{}, ErrGenerationModeInvalid
+		}
+	default:
+		return GenerateOptions{}, ErrParameterNotSupported
+	}
+	return options, nil
+}
+
+func profileSupportsSize(profile *registry.SizeProfile, value string) bool {
+	for _, option := range profile.Options {
+		if option.Value == value {
 			return true
 		}
-		seen[modelName] = provider
 	}
 	return false
-}
-
-func modelKey(provider, model string) string {
-	return strings.TrimSpace(provider) + "/" + strings.TrimSpace(model)
-}
-
-func containsString(items []string, value string) bool {
-	for _, item := range items {
-		if item == value {
-			return true
-		}
-	}
-	return false
-}
-
-func containsInt(items []int, value int) bool {
-	for _, item := range items {
-		if item == value {
-			return true
-		}
-	}
-	return false
-}
-
-func imageResponseFormat(modelSpec registry.ImageModel) string {
-	if modelSpec.Provider == "openai" && strings.HasPrefix(modelSpec.Model, "gpt-image") {
-		return ""
-	}
-	return "url"
 }
 
 func buildAppContext(scope Scope, conversationID uuid.UUID) (*llmclient.AppContext, error) {
@@ -456,9 +460,13 @@ func ErrorCode(err error) string {
 		ErrPromptRequired,
 		ErrPromptTooLong,
 		ErrModelNotAvailable,
-		ErrModelRouteAmbiguous,
+		ErrParameterNotSupported,
 		ErrUnsupportedSize,
 		ErrUnsupportedCount,
+		ErrGenerationModeInvalid,
+		ErrMaxImagesRequired,
+		ErrMaxImagesNotAllowed,
+		ErrMaxImagesOutOfRange,
 		ErrConversationNotAccessible,
 		ErrBillingContextRequired,
 		ErrUpstreamFailed,

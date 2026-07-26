@@ -1223,6 +1223,14 @@ func (a *AliyunAdapter) createQwenImage(ctx context.Context, baseURL string, req
 		size = strings.ReplaceAll(size, "x", "*")
 	}
 
+	parameters := map[string]interface{}{}
+	if size != "" {
+		parameters["size"] = size
+	}
+	if request.N != nil {
+		parameters["n"] = *request.N
+	}
+
 	// Build payload for Qwen/Wan2 (Chat-like format)
 	// Ref: https://help.aliyun.com/zh/model-studio/developer-reference/qwen-image-edit-api
 	payload := map[string]interface{}{
@@ -1237,28 +1245,12 @@ func (a *AliyunAdapter) createQwenImage(ctx context.Context, baseURL string, req
 				},
 			},
 		},
-		"parameters": map[string]interface{}{
-			"size":          size,
-			"n":             1,
-			"prompt_extend": true,  // Enable prompt extension by default for better results
-			"watermark":     false, // Disable watermark by default
-		},
-	}
-
-	if request.N != nil && *request.N > 1 {
-		payload["parameters"].(map[string]interface{})["n"] = *request.N
+		"parameters": parameters,
 	}
 
 	// Add additional parameters
 	for k, v := range request.AdditionalParameters {
-		payload["parameters"].(map[string]interface{})[k] = v
-	}
-
-	// Set default negative prompt only if not provided by user
-	params := payload["parameters"].(map[string]interface{})
-	if _, ok := params["negative_prompt"]; !ok {
-		// Use standard English negative prompts for better compatibility
-		params["negative_prompt"] = "low resolution, low quality, bad anatomy, deformed, oversaturated, wax figure, no face details, overly smooth, AI look, messy composition, blurry text, distorted"
+		parameters[k] = v
 	}
 
 	// Send synchronous request

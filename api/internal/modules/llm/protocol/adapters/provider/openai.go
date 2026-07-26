@@ -400,7 +400,7 @@ func (a *OpenAIAdapter) CreateImage(ctx context.Context, request *adapter.ImageR
 	if request.Style != "" {
 		payload["style"] = request.Style
 	}
-	if request.ResponseFormat != "" {
+	if request.ResponseFormat != "" && !strings.HasPrefix(strings.ToLower(strings.TrimSpace(request.Model)), "gpt-image") {
 		payload["response_format"] = request.ResponseFormat
 	}
 	if request.User != "" {

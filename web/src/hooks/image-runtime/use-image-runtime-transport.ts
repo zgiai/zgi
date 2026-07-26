@@ -109,9 +109,7 @@ async function sendImageRuntimeMessage(
   const modelConfig = objectValue(payload.inputs?.model_config);
   const provider = stringValue(modelConfig?.provider);
   const model = stringValue(modelConfig?.model);
-  const runtimeModel = models.find(item => item.provider === provider && item.model === model);
-  const size = resolveSize(runtimeModel, stringValue(objectValue(payload.inputs?.image_gen_config)?.aspect_ratio));
-  const count = numberValue(objectValue(payload.inputs?.image_gen_config)?.n) ?? runtimeModel?.default_count ?? 1;
+  const imageOptions = objectValue(payload.inputs?.image_gen_config);
 
   try {
     const resp = await ImageRuntimeService.generate(
@@ -119,8 +117,12 @@ async function sendImageRuntimeMessage(
         prompt: payload.query,
         provider,
         model,
-        size,
-        count,
+        options: {
+          size: optionalStringValue(imageOptions?.size),
+          count: numberValue(imageOptions?.count),
+          generation_mode: generationModeValue(imageOptions?.generation_mode),
+          max_images: numberValue(imageOptions?.max_images),
+        },
         conversation_id: payload.conversationId || undefined,
       },
       abortSignal
@@ -216,30 +218,6 @@ function generatedImagesFromGeneration(generation: ImageRuntimeGeneration): Gene
   }));
 }
 
-function resolveSize(model: ImageRuntimeModel | undefined, ratio: string): string {
-  const fallback = model?.default_size ?? '1024x1024';
-  const supportedSizes = model?.supported_sizes ?? [];
-  const preferred = sizeForRatio(ratio, supportedSizes);
-  if (preferred) return preferred;
-  return fallback;
-}
-
-const RATIO_SIZE_CANDIDATES: Record<string, string[]> = {
-  '1:1': ['1024x1024', '2048x2048'],
-  '2:3': ['1024x1536'],
-  '3:2': ['1536x1024'],
-  '3:4': ['768x1024'],
-  '4:3': ['1024x768'],
-  '16:9': ['1792x1024', '2048x1152', '3840x2160'],
-  '9:16': ['1024x1792', '2160x3840'],
-};
-
-function sizeForRatio(ratio: string, supportedSizes: string[]): string | undefined {
-  const candidates = RATIO_SIZE_CANDIDATES[ratio] ?? RATIO_SIZE_CANDIDATES['1:1'];
-  if (supportedSizes.length === 0) return candidates[0];
-  return candidates.find(size => supportedSizes.includes(size));
-}
-
 function objectValue(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === 'object' ? (value as Record<string, unknown>) : undefined;
 }
@@ -248,6 +226,15 @@ function stringValue(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
 }
 
+function optionalStringValue(value: unknown): string | undefined {
+  const normalized = stringValue(value);
+  return normalized || undefined;
+}
+
 function numberValue(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isInteger(value) ? value : undefined;
+}
+
+function generationModeValue(value: unknown): 'single' | 'sequence' | undefined {
+  return value === 'single' || value === 'sequence' ? value : undefined;
 }
