@@ -429,8 +429,20 @@ const messages = {
       never: 'Never',
     },
     groups: {
-      official: 'Available Models',
+      official: 'Connected Models',
       extensible: 'Needs Channels',
+    },
+    pending: {
+      description:
+        'These catalog models do not have a callable source yet. Select models to connect them together.',
+      selectHint: 'Select models to connect',
+      selectionSummary: '{selected} of {total} selected',
+      connectSelected: 'Connect selected',
+      connectSelectedCount: 'Connect selected ({count})',
+      adminRequired: 'Admin access required',
+      expandAll: 'Show all ({count})',
+      collapse: 'Collapse',
+      noMatches: 'No models needing channels match the current filters',
     },
     tooltips: {
       official:

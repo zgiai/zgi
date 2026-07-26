@@ -356,11 +356,11 @@ const messages = {
       done: 'Done',
     },
     contextual: {
-      assistantLabel: 'Platform operation assistant',
-      close: 'Collapse platform operation assistant',
-      resize: 'Resize platform operation assistant',
-      resizeHint: 'Drag to resize platform operation assistant',
-      sheetDescription: 'Ask the platform operation assistant for help with the current page.',
+      assistantLabel: 'Z Assistant',
+      close: 'Collapse Z Assistant',
+      resize: 'Resize Z Assistant',
+      resizeHint: 'Drag to resize Z Assistant',
+      sheetDescription: 'Ask Z Assistant for help with the current page.',
       contextItems: '{count} context items',
       contextSummaryEmpty: 'No page context',
       contextSummaryItem: '{type}: {title}',
@@ -401,13 +401,13 @@ const messages = {
         viewOnlyAgentAccess: 'View-only access',
       },
       home: {
-        filesTitle: 'Platform operation assistant',
+        filesTitle: 'Z Assistant',
         filesDescription:
           'Use visible or selected files as context, and help generate or manage files. File changes may require confirmation.',
-        contextTitle: 'Platform operation assistant',
+        contextTitle: 'Z Assistant',
         contextDescription:
           'Use the current page context to answer questions and complete operations.',
-        emptyTitle: 'Platform operation assistant',
+        emptyTitle: 'Z Assistant',
         emptyDescription: 'Describe your goal and the assistant will work with the current page.',
       },
       input: {
@@ -732,7 +732,7 @@ const messages = {
       conversationDescription:
         'Choose which Skills the model can call in conversations for questions, content processing, and task collaboration.',
       platformAssistantDescription:
-        'Choose which Skills the platform assistant can call to answer questions with the current page context and help complete actions.',
+        'Choose which Skills Z Assistant can call to answer questions with the current page context and help complete actions.',
       empty: 'No organization-enabled Skill is available.',
       save: 'Save',
       saving: 'Saving...',

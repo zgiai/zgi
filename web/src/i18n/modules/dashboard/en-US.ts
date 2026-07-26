@@ -735,10 +735,10 @@ const messages = {
     aichatSkills: {
       pageTitle: 'Skill Management',
       pageSubtitle:
-        'Manage the Skills available to conversations, the platform assistant, and agents for office collaboration, document processing, content creation, data analysis, knowledge retrieval, and task automation.',
+        'Manage the Skills available to conversations, Z Assistant, and agents for office collaboration, document processing, content creation, data analysis, knowledge retrieval, and task automation.',
       title: 'Skill Management',
       description:
-        'Manage the Skills available to conversations, the platform assistant, and agents for office collaboration, document processing, content creation, data analysis, knowledge retrieval, and task automation.',
+        'Manage the Skills available to conversations, Z Assistant, and agents for office collaboration, document processing, content creation, data analysis, knowledge retrieval, and task automation.',
       enabledCount: '{count} Skills enabled',
       sectionCount: '{count} Skills',
       empty: 'No Skills are available.',
@@ -768,13 +768,13 @@ const messages = {
         system: {
           title: 'System Skills',
           description:
-            'Provided and maintained by the platform, ready to enable for conversations, the platform assistant, and agents.',
+            'Provided and maintained by the platform, ready to enable for conversations, Z Assistant, and agents.',
           empty: 'No built-in Skills are available.',
         },
         custom: {
           title: 'Custom Skills',
           description:
-            'Upload organization-owned Skill packages, then review and enable them for conversations, the platform assistant, and agents.',
+            'Upload organization-owned Skill packages, then review and enable them for conversations, Z Assistant, and agents.',
           emptyTitle: 'No custom Skills yet',
           emptyDescription:
             'Upload a zip Skill package here. Imported Skills stay disabled until you enable them.',

@@ -709,10 +709,10 @@ const messages: DashboardMessages = {
     aichatSkills: {
       pageTitle: 'Skill 管理',
       pageSubtitle:
-        '统一管理可在对话、平台操作助手和智能体中使用的 Skill，覆盖办公协作、文档处理、内容创作、数据分析、知识检索和任务自动化。',
+        '统一管理可在对话、小 Z 和智能体中使用的 Skill，覆盖办公协作、文档处理、内容创作、数据分析、知识检索和任务自动化。',
       title: 'Skill 管理',
       description:
-        '统一管理可在对话、平台操作助手和智能体中使用的 Skill，覆盖办公协作、文档处理、内容创作、数据分析、知识检索和任务自动化。',
+        '统一管理可在对话、小 Z 和智能体中使用的 Skill，覆盖办公协作、文档处理、内容创作、数据分析、知识检索和任务自动化。',
       enabledCount: '已启用 {count} 个 Skill',
       sectionCount: '{count} 个 Skill',
       empty: '暂无可用 Skill。',
@@ -741,12 +741,12 @@ const messages: DashboardMessages = {
       sections: {
         system: {
           title: '系统 Skill',
-          description: '由平台提供并维护，可按需启用给对话、平台操作助手和智能体使用。',
+          description: '由平台提供并维护，可按需启用给对话、小 Z 和智能体使用。',
           empty: '暂无系统 Skill。',
         },
         custom: {
           title: '自定义 Skill',
-          description: '上传组织自己的 Skill 包，验证后可启用给对话、平台操作助手和智能体使用。',
+          description: '上传组织自己的 Skill 包，验证后可启用给对话、小 Z 和智能体使用。',
           emptyTitle: '还没有自定义 Skill',
           emptyDescription: '上传 zip 格式的 Skill 包后，会出现在这里并默认保持关闭。',
         },

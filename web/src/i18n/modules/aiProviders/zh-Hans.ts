@@ -415,8 +415,19 @@ const messages: AiProvidersMessages = {
       never: '从未',
     },
     groups: {
-      official: '可用模型',
+      official: '已接入模型',
       extensible: '待接入模型',
+    },
+    pending: {
+      description: '已收录但尚无调用来源，选择模型后可统一接入渠道。',
+      selectHint: '选择本次要接入的模型',
+      selectionSummary: '已选 {selected} / {total}',
+      connectSelected: '接入所选',
+      connectSelectedCount: '接入所选（{count}）',
+      adminRequired: '需管理员接入',
+      expandAll: '展开全部（{count}）',
+      collapse: '收起',
+      noMatches: '当前筛选条件下没有待接入模型',
     },
     tooltips: {
       official: '这些模型已经有可用渠道，接下来只需要决定组织是否允许使用。',
