@@ -113,27 +113,6 @@ func upAddWorkflowRuntimeV2(schema *mschema.Builder) error {
 			FROM public.agents_messages
 			WHERE workflow_run_id IS NOT NULL AND deleted_at IS NULL
 			ORDER BY workflow_run_id, created_at ASC, id ASC
-		), duplicate_counts AS (
-			SELECT message.conversation_id, COUNT(*) AS duplicate_count
-			FROM public.agents_messages AS message
-			JOIN canonical ON canonical.workflow_run_id = message.workflow_run_id
-			WHERE message.deleted_at IS NULL
-				AND message.id <> canonical.id
-			GROUP BY message.conversation_id
-		)
-		UPDATE public.agents_conversations AS conversation
-		SET dialogue_count = GREATEST(
-			conversation.dialogue_count - duplicate_counts.duplicate_count::integer,
-			0
-		)
-		FROM duplicate_counts
-		WHERE conversation.id = duplicate_counts.conversation_id;
-
-		WITH canonical AS (
-			SELECT DISTINCT ON (workflow_run_id) workflow_run_id, id
-			FROM public.agents_messages
-			WHERE workflow_run_id IS NOT NULL AND deleted_at IS NULL
-			ORDER BY workflow_run_id, created_at ASC, id ASC
 		)
 		DELETE FROM public.agents_messages AS message
 		USING canonical
