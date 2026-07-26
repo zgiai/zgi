@@ -27,6 +27,7 @@ import {
   isPendingToolGovernanceInvocation,
 } from './governance';
 import { preferCompleteIntermediateAnswerContent } from './reducers/shared';
+import { isSensitiveOutputBlockedValue } from '@/utils/model-output-filter';
 
 const EMPTY_AICHAT_MESSAGES: AIChatMessage[] = [];
 
@@ -471,12 +472,16 @@ export function timelineFromAIChatMessage(message: AIChatMessage): AIChatAgentic
       };
     }
     if (invocation.kind === 'intermediate_answer' && invocation.message) {
+      const sensitiveOutputBlocked =
+        isSensitiveOutputBlockedValue(invocation.title) ||
+        isSensitiveOutputBlockedValue(invocation.message);
       return {
         id: `history-intermediate-${message.id}-${invocation.answer_id ?? index}`,
         type: 'intermediate_answer',
         answer_id: invocation.answer_id,
-        title: invocation.title,
-        content: invocation.message,
+        title: sensitiveOutputBlocked ? undefined : invocation.title,
+        content: sensitiveOutputBlocked ? '' : invocation.message,
+        sensitiveOutputBlocked,
         status: invocation.status === 'success' ? 'success' : undefined,
         created_at: invocation.created_at,
       };

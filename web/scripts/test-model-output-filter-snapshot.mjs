@@ -19,15 +19,7 @@ function compileCommonJS(source, fileName) {
 function loadSensitiveWordFilter() {
   const fileName = path.join(root, 'src/utils/sensitive-word-filter.ts');
   const automaton = {
-    transitions: [
-      { s: 1 },
-      { e: 2 },
-      { c: 3 },
-      { r: 4 },
-      { e: 5 },
-      { t: 6 },
-      {},
-    ],
+    transitions: [{ s: 1 }, { e: 2 }, { c: 3 }, { r: 4 }, { e: 5 }, { t: 6 }, {}],
     failures: [0, 0, 0, 0, 0, 0, 0],
     outputs: [0, 0, 0, 0, 0, 0, 1],
     wordCount: 1,
@@ -52,9 +44,7 @@ function loadModelOutputFilter(sensitiveWordFilter) {
   testModule.paths = Module._nodeModulePaths(path.dirname(fileName));
   const originalRequire = testModule.require.bind(testModule);
   testModule.require = request =>
-    request === '@/utils/sensitive-word-filter'
-      ? sensitiveWordFilter
-      : originalRequire(request);
+    request === '@/utils/sensitive-word-filter' ? sensitiveWordFilter : originalRequire(request);
   testModule._compile(compileCommonJS(source, fileName), fileName);
   return testModule.exports;
 }
@@ -82,14 +72,59 @@ function loadAIChatTransport(modelOutputFilter) {
   return testModule.exports;
 }
 
+function loadAIChatSelectors(modelOutputFilter) {
+  const fileName = path.join(root, 'src/components/chat/controllers/aichat/selectors.ts');
+  const source = readFileSync(fileName, 'utf8');
+  const testModule = new Module(fileName);
+  testModule.filename = fileName;
+  testModule.paths = Module._nodeModulePaths(path.dirname(fileName));
+  const originalRequire = testModule.require.bind(testModule);
+  testModule.require = request => {
+    if (request === '@/components/chat/controllers/aichat/types') {
+      return {
+        DEFAULT_AICHAT_MESSAGE_PAGINATION: {
+          page: 1,
+          limit: 20,
+          total: 0,
+          total_pages: 0,
+        },
+      };
+    }
+    if (request === '@/utils/model-output-filter') {
+      return modelOutputFilter;
+    }
+    if (request === '@/components/chat/utils/message-tree') {
+      return {
+        buildChatBranchNavigationByMessageId: () => ({}),
+        buildChatMessageById: () => ({}),
+        getCurrentChatPathIds: () => [],
+        materializeChatMessages: () => [],
+      };
+    }
+    if (request === '@/components/chat/utils/aichat-message') {
+      return { upsertAIChatMessage: messages => messages };
+    }
+    if (request === './governance') {
+      return {
+        governanceCorrelationIdFromInvocation: () => undefined,
+        isPendingToolGovernanceInvocation: () => false,
+      };
+    }
+    if (request === './reducers/shared') {
+      return { preferCompleteIntermediateAnswerContent: (_previous, incoming) => incoming };
+    }
+    return originalRequire(request);
+  };
+  testModule._compile(compileCommonJS(source, fileName), fileName);
+  return testModule.exports;
+}
+
 process.env.NEXT_PUBLIC_SENSITIVE_WORD_FILTER_ENABLED = 'true';
 const sensitiveWordFilter = loadSensitiveWordFilter();
 const modelOutputFilter = loadModelOutputFilter(sensitiveWordFilter);
-const {
-  SENSITIVE_OUTPUT_BLOCKED_TOKEN,
-  wrapModelOutputSseCallbacks,
-} = modelOutputFilter;
+const { SENSITIVE_OUTPUT_BLOCKED_TOKEN, wrapModelOutputSseCallbacks } = modelOutputFilter;
 const { sanitizeAIChatMessage } = loadAIChatTransport(modelOutputFilter);
+const { timelineFromAIChatMessage } = loadAIChatSelectors(modelOutputFilter);
 
 {
   const snapshots = [];
@@ -215,6 +250,16 @@ const { sanitizeAIChatMessage } = loadAIChatTransport(modelOutputFilter);
     message.metadata.workflow_runs[0].nodes[0].outputs.answer,
     SENSITIVE_OUTPUT_BLOCKED_TOKEN
   );
+
+  const intermediateAnswer = timelineFromAIChatMessage(message).find(
+    item => item.type === 'intermediate_answer'
+  );
+  assert.ok(intermediateAnswer, 'the blocked intermediate answer should retain a visible state');
+  assert.equal(intermediateAnswer.sensitiveOutputBlocked, true);
+  assert.equal(intermediateAnswer.title, undefined);
+  assert.equal(intermediateAnswer.content, '');
+  assert.notEqual(intermediateAnswer.title, SENSITIVE_OUTPUT_BLOCKED_TOKEN);
+  assert.notEqual(intermediateAnswer.content, SENSITIVE_OUTPUT_BLOCKED_TOKEN);
 }
 
 console.log('model output snapshot filter behavior passed');

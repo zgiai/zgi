@@ -120,6 +120,7 @@ export type AIChatAgenticTimelineItem =
       answer_id?: string;
       title?: string;
       content: string;
+      sensitiveOutputBlocked?: boolean;
       status?: 'streaming' | 'success';
       created_at?: number;
       event_id?: string | null;

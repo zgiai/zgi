@@ -3735,6 +3735,17 @@ function TimelineRenderRow({
 }
 
 function IntermediateAnswerTimelineRow({ item }: { item: IntermediateAnswerTimelineItem }) {
+  const tCommon = useT('common');
+
+  if (item.sensitiveOutputBlocked) {
+    return (
+      <div className="flex items-center gap-2 border-l-2 border-muted-foreground/20 py-1 pl-3 text-sm text-muted-foreground">
+        <AlertCircle className="size-4 shrink-0" />
+        <span>{tCommon('sensitiveOutput.timelineBlocked')}</span>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-1.5 border-l-2 border-muted-foreground/20 pl-3">
       {item.title || item.status === 'streaming' ? (
