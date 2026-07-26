@@ -85,6 +85,12 @@ export function sanitizeAIChatMessage(message: AIChatMessage): AIChatMessage {
         skill_invocations: metadata.skill_invocations?.map(invocation => ({
           ...invocation,
           result: sanitizeModelOutputValue(invocation.result) as typeof invocation.result,
+          ...(invocation.kind === 'intermediate_answer'
+            ? {
+                title: sanitizeModelOutputValue(invocation.title) as typeof invocation.title,
+                message: sanitizeModelOutputValue(invocation.message) as typeof invocation.message,
+              }
+            : {}),
         })),
         workflow_runs: metadata.workflow_runs?.map(run => ({
           ...run,

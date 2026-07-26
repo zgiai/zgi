@@ -161,7 +161,18 @@ const { sanitizeAIChatMessage } = loadAIChatTransport(modelOutputFilter);
         {
           skill_id: 'secret-skill-id',
           tool_name: 'secret-tool-name',
+          title: 'secret stable tool title',
+          message: 'secret stable tool status',
           result: { output: 'secret skill result' },
+        },
+        {
+          kind: 'intermediate_answer',
+          answer_id: 'secret-answer-id',
+          skill_id: 'secret-intermediate-skill-id',
+          tool_name: 'secret-intermediate-tool-name',
+          title: 'secret intermediate title',
+          message: 'secret intermediate answer',
+          status: 'success',
         },
       ],
       workflow_runs: [
@@ -189,7 +200,14 @@ const { sanitizeAIChatMessage } = loadAIChatTransport(modelOutputFilter);
   assert.equal(message.metadata.presentation.items[1].event_type, 'secret-tool-name');
   assert.equal(message.metadata.skill_invocations[0].skill_id, 'secret-skill-id');
   assert.equal(message.metadata.skill_invocations[0].tool_name, 'secret-tool-name');
+  assert.equal(message.metadata.skill_invocations[0].title, 'secret stable tool title');
+  assert.equal(message.metadata.skill_invocations[0].message, 'secret stable tool status');
   assert.equal(message.metadata.skill_invocations[0].result.output, SENSITIVE_OUTPUT_BLOCKED_TOKEN);
+  assert.equal(message.metadata.skill_invocations[1].answer_id, 'secret-answer-id');
+  assert.equal(message.metadata.skill_invocations[1].skill_id, 'secret-intermediate-skill-id');
+  assert.equal(message.metadata.skill_invocations[1].tool_name, 'secret-intermediate-tool-name');
+  assert.equal(message.metadata.skill_invocations[1].title, SENSITIVE_OUTPUT_BLOCKED_TOKEN);
+  assert.equal(message.metadata.skill_invocations[1].message, SENSITIVE_OUTPUT_BLOCKED_TOKEN);
   assert.equal(message.metadata.workflow_runs[0].workflow_run_id, 'secret-workflow-run-id');
   assert.equal(message.metadata.workflow_runs[0].outputs.answer, SENSITIVE_OUTPUT_BLOCKED_TOKEN);
   assert.equal(message.metadata.workflow_runs[0].nodes[0].node_id, 'secret-node-id');
