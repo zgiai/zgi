@@ -130,6 +130,11 @@ func (f *fakeTenantRouteRepo) Update(_ context.Context, route *channelmodel.LLMR
 	return nil
 }
 
+func (f *fakeTenantRouteRepo) UpdateWithExpectedCredential(_ context.Context, route *channelmodel.LLMRoute, _ *uuid.UUID) error {
+	f.updated = routeClone(route)
+	return nil
+}
+
 func (f *fakeTenantRouteRepo) Delete(context.Context, uuid.UUID, uuid.UUID) error {
 	return errors.New("not implemented")
 }
@@ -221,6 +226,7 @@ type fakeTenantCredentialService struct {
 	createdReq *credentialdto.CreateTenantCredentialRequest
 	updatedReq *credentialdto.UpdateTenantCredentialRequest
 	cred       *credentialmodel.TenantCredential
+	nextCred   *credentialmodel.TenantCredential
 }
 
 func (f *fakeTenantCredentialService) Create(context.Context, uuid.UUID, *credentialdto.CreateTenantCredentialRequest) (*credentialmodel.TenantCredential, error) {
@@ -229,6 +235,9 @@ func (f *fakeTenantCredentialService) Create(context.Context, uuid.UUID, *creden
 
 func (f *fakeTenantCredentialService) GetOrCreateByAPIKey(_ context.Context, _ uuid.UUID, req *credentialdto.CreateTenantCredentialRequest) (*credentialmodel.TenantCredential, bool, error) {
 	f.createdReq = req
+	if f.nextCred != nil {
+		return f.nextCred, true, nil
+	}
 	if f.cred == nil {
 		f.cred = &credentialmodel.TenantCredential{
 			ID:              uuid.New(),
@@ -840,6 +849,59 @@ func TestUpdateRoute_UsesCreationValidationLogic(t *testing.T) {
 	require.Equal(t, []string{"qwen2.5-14b-instruct", "qwen-image-2.0"}, repo.updated.Models)
 	require.Equal(t, []string{"representative models failed validation: qwen-image-2.0 [image-gen] (unauthorized)"}, view.Warnings)
 	require.Contains(t, view.ValidationReport, "failed_models")
+}
+
+func TestUpdateRoute_RebindsInsteadOfMutatingSharedCredential(t *testing.T) {
+	organizationID := uuid.New()
+	routeID := uuid.New()
+	sharedCredentialID := uuid.New()
+	replacementCredentialID := uuid.New()
+	replacementKey := "replacement-api-key"
+	repo := &fakeTenantRouteRepo{
+		routeByID: &channelmodel.LLMRoute{
+			ID:              routeID,
+			OrganizationID:  organizationID,
+			Type:            shared.RouteTypePrivate,
+			CredentialID:    &sharedCredentialID,
+			Name:            "Qwen Route",
+			ChannelProvider: "qwen",
+			APIBaseURL:      "https://dashscope.aliyuncs.com/compatible-mode/v1",
+			Models:          []string{"qwen-plus"},
+			IsEnabled:       true,
+		},
+	}
+	credSvc := &fakeTenantCredentialService{
+		cred: &credentialmodel.TenantCredential{
+			ID:              sharedCredentialID,
+			ChannelProvider: "qwen",
+			APIBaseURL:      "https://dashscope.aliyuncs.com/compatible-mode/v1",
+		},
+		nextCred: &credentialmodel.TenantCredential{
+			ID:              replacementCredentialID,
+			ChannelProvider: "qwen",
+			APIBaseURL:      "https://dashscope.aliyuncs.com/compatible-mode/v1",
+		},
+	}
+	svc := &channelService{
+		tenantRouteRepo:   repo,
+		tenantCredService: credSvc,
+		validator:         &fakeChannelValidator{},
+		modelRepo: &fakeModelRepo{
+			models: []*llmmodelmodel.LLMModel{{ID: uuid.New(), Model: "qwen-plus"}},
+		},
+	}
+
+	_, err := svc.UpdateRoute(context.Background(), organizationID, routeID, &channeldto.UpdateRouteRequest{
+		APIKey: &replacementKey,
+	})
+
+	require.NoError(t, err)
+	require.Nil(t, credSvc.updatedReq, "a route edit must never mutate its attached credential")
+	require.NotNil(t, credSvc.createdReq)
+	require.Equal(t, replacementKey, credSvc.createdReq.APIKey)
+	require.NotNil(t, repo.updated)
+	require.NotNil(t, repo.updated.CredentialID)
+	require.Equal(t, replacementCredentialID, *repo.updated.CredentialID)
 }
 
 func TestUpdateRoute_RejectsUnsupportedNativeProtocol(t *testing.T) {
@@ -1493,9 +1555,9 @@ func TestUpdateRoute_OllamaCanClearAPIKey(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Equal(t, "", validator.lastAPIKey)
-	require.NotNil(t, credSvc.updatedReq)
-	require.NotNil(t, credSvc.updatedReq.APIKey)
-	require.Equal(t, "", *credSvc.updatedReq.APIKey)
+	require.Nil(t, credSvc.updatedReq)
+	require.NotNil(t, credSvc.createdReq)
+	require.Equal(t, "", credSvc.createdReq.APIKey)
 }
 
 func TestTestChannelModel_ReusesValidatorResultShape(t *testing.T) {

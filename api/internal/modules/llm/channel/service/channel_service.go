@@ -731,6 +731,11 @@ func (s *channelService) UpdateRoute(ctx context.Context, organizationID, id uui
 	if err != nil {
 		return nil, ErrRouteNotFound
 	}
+	var originalCredentialID *uuid.UUID
+	if route.CredentialID != nil {
+		credentialID := *route.CredentialID
+		originalCredentialID = &credentialID
+	}
 
 	newChannelProvider := route.ChannelProvider
 	var normalizedChannelProvider *string
@@ -783,18 +788,18 @@ func (s *channelService) UpdateRoute(ctx context.Context, organizationID, id uui
 	}
 
 	coreChanged := req.ChannelProvider != nil || req.Models != nil || req.APIBaseURL != nil || req.APIKey != nil
+	effectiveAPIKey := ""
 	if coreChanged && !route.IsOfficial {
-		apiKey := ""
 		if req.APIKey != nil {
-			apiKey = *req.APIKey
+			effectiveAPIKey = *req.APIKey
 		} else if route.CredentialID != nil {
-			apiKey, err = s.tenantCredService.GetDecryptedAPIKey(ctx, organizationID, *route.CredentialID)
+			effectiveAPIKey, err = s.tenantCredService.GetDecryptedAPIKey(ctx, organizationID, *route.CredentialID)
 			if err != nil {
 				return nil, fmt.Errorf("failed to load credential api key: %w", err)
 			}
 		}
 
-		if err := s.ensureOllamaCustomModels(ctx, organizationID, newChannelProvider, newAPIBaseURL, apiKey, newModels); err != nil {
+		if err := s.ensureOllamaCustomModels(ctx, organizationID, newChannelProvider, newAPIBaseURL, effectiveAPIKey, newModels); err != nil {
 			return nil, err
 		}
 		if err := s.validateRouteModelNames(ctx, organizationID, newModels); err != nil {
@@ -804,7 +809,7 @@ func (s *channelService) UpdateRoute(ctx context.Context, organizationID, id uui
 			return nil, fmt.Errorf("route has no credential configured")
 		}
 
-		validationResult, err := s.validator.ValidateModelsForCreation(ctx, organizationID, newChannelProvider, apiKey, newAPIBaseURL, newModels)
+		validationResult, err := s.validator.ValidateModelsForCreation(ctx, organizationID, newChannelProvider, effectiveAPIKey, newAPIBaseURL, newModels)
 		if err != nil {
 			return nil, err
 		}
@@ -852,21 +857,57 @@ func (s *channelService) UpdateRoute(ctx context.Context, organizationID, id uui
 		route.IsEnabled = *req.IsEnabled
 	}
 
-	if route.CredentialID != nil && (normalizedChannelProvider != nil || req.APIBaseURL != nil || req.APIKey != nil) {
-		credUpdateReq := &credentialdto.UpdateTenantCredentialRequest{
-			ChannelProvider: normalizedChannelProvider,
-			APIBaseURL:      req.APIBaseURL,
+	connectionChanged := !route.IsOfficial &&
+		(normalizedChannelProvider != nil || req.APIBaseURL != nil || req.APIKey != nil)
+	credentialRebound := false
+	createdCredential := false
+	if connectionChanged {
+		credential, created, err := s.tenantCredService.GetOrCreateByAPIKey(ctx, organizationID, &credentialdto.CreateTenantCredentialRequest{
+			Name:            route.Name + " Credential",
+			ChannelProvider: newChannelProvider,
+			APIKey:          effectiveAPIKey,
+			APIBaseURL:      newAPIBaseURL,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to resolve replacement credential: %w", err)
 		}
-		if req.APIKey != nil {
-			credUpdateReq.APIKey = req.APIKey
-		}
-		if _, err := s.tenantCredService.Update(ctx, organizationID, *route.CredentialID, credUpdateReq); err != nil {
-			return nil, fmt.Errorf("failed to update credential: %w", err)
+		createdCredential = created
+		if originalCredentialID == nil || credential.ID != *originalCredentialID {
+			if s.upstreamState != nil {
+				if err := s.upstreamState.ScheduleCheck(ctx, organizationID, credential.ID); err != nil {
+					if createdCredential {
+						_ = s.tenantCredService.Delete(context.Background(), organizationID, credential.ID)
+					}
+					return nil, fmt.Errorf("schedule replacement credential check: %w", err)
+				}
+			}
+			route.CredentialID = &credential.ID
+			route.TenantCredential = credential
+			credentialRebound = true
 		}
 	}
 
-	if err := s.tenantRouteRepo.Update(ctx, route); err != nil {
+	if credentialRebound {
+		if updater, ok := s.tenantRouteRepo.(repository.CredentialBindingUpdater); ok {
+			err = updater.UpdateWithExpectedCredential(ctx, route, originalCredentialID)
+		} else {
+			err = errors.New("route repository does not support credential rebinding")
+		}
+	} else {
+		err = s.tenantRouteRepo.Update(ctx, route)
+	}
+	if err != nil {
+		if credentialRebound && createdCredential && route.CredentialID != nil {
+			_ = s.tenantCredService.Delete(context.Background(), organizationID, *route.CredentialID)
+		}
+		if errors.Is(err, repository.ErrCredentialBindingChanged) {
+			return nil, fmt.Errorf("route credential changed concurrently; retry the update: %w", err)
+		}
 		return nil, fmt.Errorf("failed to update route: %w", err)
+	}
+
+	if credentialRebound && originalCredentialID != nil {
+		go s.cleanupUnusedCredential(context.Background(), organizationID, *originalCredentialID)
 	}
 	if req.Models != nil {
 		cacheInvalidated, err := s.autoEnableModelsForRoute(ctx, organizationID, route.Models)

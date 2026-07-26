@@ -271,6 +271,8 @@ const messages: ChannelsMessages = {
       initialFundsRate: '按美元输入更直观，系统会换算为点数额度。',
       initialFundsDefault: '公司内部渠道建议默认 $100，可根据使用场景调整。',
       providerLocked: '已按当前提供商锁定适配器；如需选择其他协议，请从渠道页新建渠道。',
+      sharedCredentialIsolation:
+        '当前凭据由 {count} 个渠道共享。修改服务商、API 基础地址或 API 密钥时，系统会为当前渠道创建独立凭据，其他渠道保持不变。',
       priority: '数字越小越优先。',
       weight: '同优先级内按权重分流。',
     },
@@ -395,7 +397,7 @@ const messages: ChannelsMessages = {
     observedPrefix: '观测于',
     stalePrefix: '数据已过期，检查于',
     retryAfter: '下次自动验证：{time}',
-    sharedCredential: '该 Credential 被 {count} 个渠道共享，此设置会同步影响这些渠道。',
+    sharedCredential: '该 Credential 被 {count} 个渠道共享，凭据状态和余额预警设置会同步共享。',
     enableThreshold: '启用 {currency} 余额预警',
     thresholdPlaceholder: '预警金额',
     pollingHint: '至少启用一个阈值后，系统会自动周期巡检。',
