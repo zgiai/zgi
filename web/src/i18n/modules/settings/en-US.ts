@@ -2,10 +2,10 @@ import { APP_NAME } from '@/lib/config';
 
 /* eslint-disable */
 const messages = {
-  title: 'Settings',
-  description: 'Manage your workspace settings and preferences.',
-  pageTitle: 'Settings',
-  pageDescription: `Configure your ${APP_NAME} system settings and preferences`,
+  title: 'Personal Settings',
+  description: 'Manage your account settings and personal preferences.',
+  pageTitle: 'Personal Settings',
+  pageDescription: `Manage your ${APP_NAME} theme, language, and account preferences. Changes only affect your account.`,
   searchSettings: 'Search settings...',
   noSettingsFound: 'No settings found',
   system: {
@@ -20,7 +20,7 @@ const messages = {
     language: 'Language & Region',
     languageDesc: 'Interface language',
     languageLongDesc:
-      'Global preferences do not belong to a workspace, so they live in system settings.',
+      'Language is an account preference and stays the same when switching workspaces or organizations.',
     interfaceLanguage: 'Interface language',
     interfaceLanguageDesc: 'Switch the display language for the console.',
     integrations: 'Integrations',

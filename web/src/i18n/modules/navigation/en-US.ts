@@ -1,6 +1,6 @@
 const messages = {
   home: 'Home',
-  dashboard: 'Organization dashboard',
+  dashboard: 'Organization Management',
   console: 'Console',
   organizations: 'Organizations',
   currentOrganization: 'Current organization',
@@ -11,7 +11,7 @@ const messages = {
   users: 'User Management',
   analytics: 'Analytics',
   settings: 'Settings',
-  systemSettings: 'System Settings',
+  systemSettings: 'Personal Settings',
   profile: 'Profile',
   models: 'Models',
   orders: 'Orders',
