@@ -26,6 +26,34 @@ func (r *countingTimelineMessageRepo) UpdateMetadata(_ context.Context, _ uuid.U
 	return nil
 }
 
+func TestProcessTimelineRecorderDoesNotFailRunWhenClientDeliveryFails(t *testing.T) {
+	prepared := &PreparedChat{
+		Conversation: &runtimemodel.Conversation{ID: uuid.New()},
+		Message: &runtimemodel.Message{
+			ID:       uuid.New(),
+			Metadata: map[string]interface{}{},
+		},
+	}
+	deliveryCalls := 0
+	recorder := newProcessTimelineRecorder(
+		t.Context(),
+		t.Context(),
+		&service{},
+		prepared,
+		func(StreamEvent) error {
+			deliveryCalls++
+			return errors.New("client disconnected")
+		},
+	)
+
+	if err := recorder.RecordEvent(streamEventMessage, map[string]interface{}{"answer": "continues in background"}); err != nil {
+		t.Fatalf("RecordEvent() error = %v, want client delivery failure ignored", err)
+	}
+	if deliveryCalls != 1 {
+		t.Fatalf("delivery callback calls = %d, want 1", deliveryCalls)
+	}
+}
+
 func TestProcessTimelineRecorderKeepsPresentationOrderAcrossActionsAndContinuation(t *testing.T) {
 	message := &runtimemodel.Message{ID: uuid.New(), Metadata: map[string]interface{}{}}
 	prepared := &PreparedChat{

@@ -869,8 +869,7 @@ func (s *service) emitPreparedEvent(ctx context.Context, prepared *PreparedChat,
 		CreatedAtMS: event.CreatedAtMS,
 		Sequence:    event.Sequence,
 	}); err != nil {
-		logger.WarnContext(ctx, "failed to deliver aichat stream event", "message_id", prepared.Message.ID.String(), "event_type", eventType, err)
-		return err
+		logger.WarnContext(context.WithoutCancel(ctx), "failed to deliver aichat stream event to client", "message_id", prepared.Message.ID.String(), "event_type", eventType, err)
 	}
 	return nil
 }
