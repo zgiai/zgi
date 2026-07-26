@@ -42,10 +42,13 @@ import {
 import {
   captureAnswerTimelineBoundary,
   clearAnswerTimelineBoundaryWithoutDurableTimeline,
+  finalPresentationAnswer,
+  mergePresentationItems,
   presentationPositionFromPayload,
   presentationStateFromMetadata,
   processTextPresentationItem,
   upsertPresentationItem,
+  withPresentationItems,
 } from '../presentation-order';
 import { updateSkillInvocationMetadata } from './skill';
 
@@ -762,22 +765,33 @@ export function applyMessageEndState(
     return current;
   }
   const nextTimeline = removeTransientProgressItems(previousStreaming?.timeline);
+  let endedPresentationState = presentationStateFromMetadata(payload.metadata);
   const nextMessages = messages.map(message => {
     if (message.id !== payload.message_id) {
       return message;
     }
-    const mergedMetadata =
+    const baseMergedMetadata =
       message.metadata?.sensitiveOutputBlocked === true
         ? {
             ...mergeRuntimeTimelineMetadata(message.metadata, payload.metadata, nextTimeline),
             sensitiveOutputBlocked: true,
           }
         : mergeRuntimeTimelineMetadata(message.metadata, payload.metadata, nextTimeline);
+    const hasAuthoritativeAnswer = typeof payload.answer === 'string';
+    const terminalPresentationState = presentationStateFromMetadata(baseMergedMetadata);
+    const mergedPresentationItems = hasAuthoritativeAnswer
+      ? (terminalPresentationState.presentationItems ?? [])
+      : mergePresentationItems(
+          previousStreaming?.presentationItems,
+          terminalPresentationState.presentationItems
+        );
+    const mergedMetadata =
+      !hasAuthoritativeAnswer && mergedPresentationItems.length
+        ? withPresentationItems(baseMergedMetadata, mergedPresentationItems)
+        : baseMergedMetadata;
     const presentationState = presentationStateFromMetadata(mergedMetadata);
-    const finalPresentationAnswer = presentationState.presentationItems
-      ?.filter(item => item.kind === 'text' && item.content_phase === 'final')
-      .map(item => (item.kind === 'text' ? item.content : ''))
-      .join('');
+    endedPresentationState = presentationState;
+    const presentationAnswer = finalPresentationAnswer(presentationState.presentationItems);
     const answerBeforeTimelineLength =
       previousStreaming?.answer_before_timeline_length ??
       (typeof message.metadata?.answer_before_timeline_length === 'number'
@@ -786,9 +800,10 @@ export function applyMessageEndState(
     return {
       ...message,
       answer:
-        presentationState.presentationVersion === 2
-          ? (finalPresentationAnswer ?? message.answer)
-          : message.answer,
+        payload.answer ??
+        (presentationState.presentationVersion === 2
+          ? (presentationAnswer ?? message.answer)
+          : message.answer),
       status: normalizeAIChatStatus(payload.status),
       metadata:
         typeof answerBeforeTimelineLength === 'number'
@@ -811,7 +826,7 @@ export function applyMessageEndState(
   ) {
     nextStreamingByMessageId[payload.message_id] = {
       ...previousStreaming,
-      ...presentationStateFromMetadata(payload.metadata),
+      ...endedPresentationState,
       timeline: nextTimeline,
       status: terminalStatus,
       last_event_id: eventId ?? previousStreaming.last_event_id,

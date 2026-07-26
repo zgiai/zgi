@@ -27,11 +27,14 @@ const { buildOptimisticUserInputResponse, upsertUserInputResponse } =
 const {
   captureAnswerTimelineBoundary,
   clearAnswerTimelineBoundaryWithoutDurableTimeline,
+  finalPresentationAnswer,
+  mergePresentationItems,
   optimisticUserInputResponsePresentationPosition,
   orderedPresentationTimeline,
   processTextPresentationItem,
   splitAnswerAroundTimeline,
   upsertPresentationItem,
+  withPresentationItems,
   withOptimisticUserInputResponsePresentation,
 } = loadTypeScriptModule(
   path.join(root, 'src/components/chat/controllers/aichat/presentation-order.ts')
@@ -340,6 +343,34 @@ const finalizedSegment = upsertPresentationItem([processTextB], {
 assert.equal(finalizedSegment.length, 1);
 assert.equal(finalizedSegment[0].content_phase, 'final');
 assert.equal(finalizedSegment[0].content, 'Final response');
+assert.equal(finalPresentationAnswer([processTextA, processTextB]), undefined);
+assert.equal(finalPresentationAnswer(finalizedSegment), 'Final response');
+
+const mergedTerminalPresentation = mergePresentationItems(
+  [processTextA],
+  [
+    {
+      presentation_version: 2,
+      presentation_id: 'event-question',
+      presentation_sequence: 2,
+      kind: 'event',
+      event_type: 'user_input_requested',
+      event_ref: 'request-2',
+      created_at_ms: 2000,
+    },
+  ]
+);
+assert.deepEqual(
+  mergedTerminalPresentation.map(item => item.presentation_id),
+  ['segment-a', 'event-question']
+);
+const mergedTerminalMetadata = withPresentationItems(
+  { trace_id: 'trace-1' },
+  mergedTerminalPresentation
+);
+assert.equal(mergedTerminalMetadata.presentation_version, 2);
+assert.equal(mergedTerminalMetadata.presentation?.last_sequence, 2);
+assert.equal(mergedTerminalMetadata.trace_id, 'trace-1');
 
 const messageListSource = readFileSync(
   path.join(root, 'src/components/chat/variants/aichat/message-list.tsx'),
@@ -353,6 +384,9 @@ const reducerSource = readFileSync(
 );
 assert.match(reducerSource, /answer_before_timeline_length: answerBeforeTimelineLength/);
 assert.match(reducerSource, /clearAnswerTimelineBoundaryWithoutDurableTimeline/);
+assert.match(reducerSource, /typeof payload\.answer === 'string'/);
+assert.match(reducerSource, /mergePresentationItems\(/);
+assert.match(reducerSource, /withPresentationItems\(/);
 assert.equal(clearAnswerTimelineBoundaryWithoutDurableTimeline(0, false), undefined);
 assert.equal(clearAnswerTimelineBoundaryWithoutDurableTimeline(firstBoundary, true), firstBoundary);
 

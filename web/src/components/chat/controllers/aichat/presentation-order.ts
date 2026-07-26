@@ -96,6 +96,46 @@ export function upsertPresentationItem(
   );
 }
 
+export function mergePresentationItems(
+  base: AIChatPresentationItem[] | undefined,
+  incoming: AIChatPresentationItem[] | undefined
+): AIChatPresentationItem[] {
+  return (incoming ?? []).reduce(
+    (items, item) => upsertPresentationItem(items, item),
+    [...(base ?? [])]
+  );
+}
+
+export function finalPresentationAnswer(
+  items: AIChatPresentationItem[] | undefined
+): string | undefined {
+  const finalItems = (items ?? []).filter(
+    (item): item is AIChatPresentationTextItem =>
+      item.kind === 'text' && item.content_phase === 'final'
+  );
+  if (!finalItems.length) return undefined;
+  return finalItems.map(item => item.content).join('');
+}
+
+export function withPresentationItems(
+  metadata: AIChatMessageMetadata | undefined,
+  items: AIChatPresentationItem[]
+): AIChatMessageMetadata {
+  const lastSequence = items.reduce(
+    (maximum, item) => Math.max(maximum, item.presentation_sequence ?? 0),
+    0
+  );
+  return {
+    ...(metadata ?? {}),
+    presentation_version: PRESENTATION_VERSION,
+    presentation: {
+      version: PRESENTATION_VERSION,
+      last_sequence: lastSequence,
+      items,
+    },
+  };
+}
+
 export function processTextPresentationItem(
   payload: Record<string, unknown>,
   fallbackContent: string

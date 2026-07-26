@@ -616,6 +616,7 @@ export interface AIChatMessageEndEventData {
   conversation_id: string;
   message_id: string;
   status: AIChatMessageStatus;
+  answer?: string;
   metadata?: AIChatMessageMetadata;
 }
 

@@ -1742,7 +1742,7 @@ func TestMessageEndPayloadPreservesTraceMetadata(t *testing.T) {
 	messageID := uuid.New()
 	payload := messageEndPayload(&PreparedChat{
 		Conversation: &runtimemodel.Conversation{ID: conversationID},
-		Message:      &runtimemodel.Message{ID: messageID},
+		Message:      &runtimemodel.Message{ID: messageID, Answer: "final answer"},
 	}, map[string]interface{}{
 		"usage": map[string]interface{}{"total_tokens": 1},
 		"context_control": map[string]interface{}{
@@ -1765,6 +1765,15 @@ func TestMessageEndPayloadPreservesTraceMetadata(t *testing.T) {
 	invocations := skillInvocationsFromMetadata(metadata["skill_invocations"])
 	if len(invocations) != 1 || stringFromAny(invocations[0]["kind"]) != "tool_call" {
 		t.Fatalf("skill_invocations = %#v, want only user-visible tool call", metadata["skill_invocations"])
+	}
+	if payload["answer"] != "final answer" {
+		t.Fatalf("answer = %#v, want authoritative final answer", payload["answer"])
+	}
+	if _, ok := messageEndPayloadWithStatus(&PreparedChat{
+		Conversation: &runtimemodel.Conversation{ID: conversationID},
+		Message:      &runtimemodel.Message{ID: messageID, Answer: "partial answer"},
+	}, nil, runtimemodel.MessageStatusWaitingApproval)["answer"]; ok {
+		t.Fatal("waiting message_end must not expose a partial answer")
 	}
 }
 
