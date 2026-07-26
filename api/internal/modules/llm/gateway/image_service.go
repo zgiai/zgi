@@ -152,7 +152,7 @@ func (s *llmGatewayServiceImpl) createImageInternal(
 	// Note: We use maxSelections=1 because we don't support fallback for image generation yet (or maybe later)
 	// Tag the request category so the router can apply capability-aware matching.
 	ctx = context.WithValue(ctx, shared.ContextKeyModelCategory, "image")
-	selections, err := s.selectProvidersWithChannelRouter(ctx, billingOrganizationID, "", effectiveReq.Model, 1)
+	selections, err := s.selectProvidersWithChannelRouter(ctx, billingOrganizationID, effectiveReq.Provider, effectiveReq.Model, 1)
 	if err != nil {
 		return nil, err
 	}

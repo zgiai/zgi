@@ -45,16 +45,17 @@ func (f fakeRouteLister) GetRoutesForModel(_ context.Context, _ uuid.UUID, model
 	if f.routes != nil {
 		return f.routes[modelName], nil
 	}
-	return []*channelmodel.RouteQueryResult{{RouteID: uuid.New()}}, nil
+	return []*channelmodel.RouteQueryResult{{RouteID: uuid.New(), ChannelProvider: "qwen", Models: []string{modelName}}}, nil
 }
 
-func TestListModelsReturnsRegisteredAvailableImageModels(t *testing.T) {
+func TestListModelsReturnsEveryAvailableImageModel(t *testing.T) {
 	svc := NewService(
 		registry.NewRegistry(),
 		&fakeAvailableModels{items: []*llmmodelsvc.AvailableModel{
 			{Provider: "openai", Name: "gpt-image-2"},
 			{Provider: "qwen", Name: "qwen-image"},
 			{Provider: "qwen", Name: "qwen-image-2.0"},
+			{Provider: "custom", Name: "future-image-model"},
 		}},
 		fakeRouteLister{},
 		nil,
@@ -68,9 +69,10 @@ func TestListModelsReturnsRegisteredAvailableImageModels(t *testing.T) {
 	}
 
 	want := map[string]bool{
-		"openai/gpt-image-2":  false,
-		"qwen/qwen-image":     false,
-		"qwen/qwen-image-2.0": false,
+		"openai/gpt-image-2":        false,
+		"qwen/qwen-image":           false,
+		"qwen/qwen-image-2.0":       false,
+		"custom/future-image-model": false,
 	}
 	for _, model := range models {
 		key := model.Provider + "/" + model.Model
@@ -85,7 +87,7 @@ func TestListModelsReturnsRegisteredAvailableImageModels(t *testing.T) {
 	}
 }
 
-func TestListModelsIncludesRegisteredModelWhenOnlyRouteIsAvailable(t *testing.T) {
+func TestListModelsDoesNotInventRouteOnlyModels(t *testing.T) {
 	svc := NewService(
 		registry.NewRegistry(),
 		&fakeAvailableModels{items: []*llmmodelsvc.AvailableModel{
@@ -93,7 +95,7 @@ func TestListModelsIncludesRegisteredModelWhenOnlyRouteIsAvailable(t *testing.T)
 			{Provider: "qwen", Name: "qwen-image-2.0"},
 		}},
 		fakeRouteLister{routes: map[string][]*channelmodel.RouteQueryResult{
-			"qwen-image": {{RouteID: uuid.New()}},
+			"qwen-image": {{RouteID: uuid.New(), ChannelProvider: "qwen", Models: []string{"qwen-image"}}},
 		}},
 		nil,
 		nil,
@@ -106,23 +108,47 @@ func TestListModelsIncludesRegisteredModelWhenOnlyRouteIsAvailable(t *testing.T)
 	}
 	for _, model := range models {
 		if model.Provider == "qwen" && model.Model == "qwen-image" {
-			return
+			t.Fatalf("ListModels unexpectedly included route-only model in %#v", models)
 		}
 	}
-	t.Fatalf("ListModels missing qwen/qwen-image in %#v", models)
 }
 
-func TestImageResponseFormatOmitsURLForOpenAIGPTImage(t *testing.T) {
-	got := imageResponseFormat(registry.ImageModel{Provider: "openai", Model: "gpt-image-2"})
-	if got != "" {
-		t.Fatalf("imageResponseFormat() = %q, want empty for OpenAI GPT image models", got)
+func TestValidateGenerateOptionsRejectsParametersOutsideSafeIntersection(t *testing.T) {
+	_, err := validateGenerateOptions(registry.GenerationProfile{}, GenerateOptions{Size: "1024x1024"})
+	if !errors.Is(err, ErrParameterNotSupported) {
+		t.Fatalf("validateGenerateOptions() error = %v, want %v", err, ErrParameterNotSupported)
 	}
 }
 
-func TestImageResponseFormatUsesURLForOtherImageModels(t *testing.T) {
-	got := imageResponseFormat(registry.ImageModel{Provider: "qwen", Model: "qwen-image"})
-	if got != "url" {
-		t.Fatalf("imageResponseFormat() = %q, want url", got)
+func TestValidateGenerateOptionsRejectsFixedModelCount(t *testing.T) {
+	profile := registry.GenerationProfile{
+		Quantity: &registry.QuantityProfile{Mode: registry.QuantityModeFixed, Default: 1},
+	}
+	_, err := validateGenerateOptions(profile, GenerateOptions{Count: intPtr(2)})
+	if !errors.Is(err, ErrParameterNotSupported) {
+		t.Fatalf("validateGenerateOptions() error = %v, want %v", err, ErrParameterNotSupported)
+	}
+}
+
+func TestValidateGenerateOptionsValidatesSequenceSemantics(t *testing.T) {
+	profile := registry.GenerationProfile{
+		Quantity: &registry.QuantityProfile{Mode: registry.QuantityModeSequence, Default: 1, Min: 2, Max: 15},
+	}
+	for _, tc := range []struct {
+		name    string
+		options GenerateOptions
+		wantErr error
+	}{
+		{name: "sequence requires max", options: GenerateOptions{GenerationMode: "sequence"}, wantErr: ErrMaxImagesRequired},
+		{name: "single rejects max", options: GenerateOptions{GenerationMode: "single", MaxImages: intPtr(4)}, wantErr: ErrMaxImagesNotAllowed},
+		{name: "sequence enforces upper bound", options: GenerateOptions{GenerationMode: "sequence", MaxImages: intPtr(16)}, wantErr: ErrMaxImagesOutOfRange},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := validateGenerateOptions(profile, tc.options)
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("validateGenerateOptions() error = %v, want %v", err, tc.wantErr)
+			}
+		})
 	}
 }
 
@@ -153,6 +179,7 @@ type fakeImageLLMClient struct {
 	createImageCalls    int
 	appCreateImageCalls int
 	lastAppCtx          *llmclient.AppContext
+	lastImageReq        *adapter.ImageRequest
 	response            *adapter.ImageResponse
 	err                 error
 }
@@ -162,9 +189,10 @@ func (f *fakeImageLLMClient) CreateImage(context.Context, string, *adapter.Image
 	return nil, errors.New("unexpected CreateImage call")
 }
 
-func (f *fakeImageLLMClient) AppCreateImage(_ context.Context, appCtx *llmclient.AppContext, _ *adapter.ImageRequest) (*adapter.ImageResponse, error) {
+func (f *fakeImageLLMClient) AppCreateImage(_ context.Context, appCtx *llmclient.AppContext, req *adapter.ImageRequest) (*adapter.ImageResponse, error) {
 	f.appCreateImageCalls++
 	f.lastAppCtx = appCtx
+	f.lastImageReq = req
 	if f.err != nil {
 		return nil, f.err
 	}
@@ -299,8 +327,7 @@ func TestGenerateUsesAppCreateImageWithWorkspaceBillingContext(t *testing.T) {
 		Prompt:   "draw a flower",
 		Provider: "qwen",
 		Model:    "qwen-image",
-		Size:     "1024x1024",
-		Count:    1,
+		Options:  GenerateOptions{Size: "1664x928"},
 	})
 	if err != nil {
 		t.Fatalf("Generate returned error: %v", err)
@@ -313,6 +340,12 @@ func TestGenerateUsesAppCreateImageWithWorkspaceBillingContext(t *testing.T) {
 	}
 	if llm.lastAppCtx == nil {
 		t.Fatalf("AppCreateImage app context is nil")
+	}
+	if llm.lastImageReq == nil {
+		t.Fatalf("AppCreateImage image request is nil")
+	}
+	if llm.lastImageReq.Provider != "qwen" {
+		t.Fatalf("image request provider = %q, want %q", llm.lastImageReq.Provider, "qwen")
 	}
 	if llm.lastAppCtx.OrganizationID != organizationID.String() {
 		t.Fatalf("OrganizationID = %q, want %q", llm.lastAppCtx.OrganizationID, organizationID)
@@ -364,8 +397,7 @@ func TestGenerateFailsWithoutWorkspaceBillingContext(t *testing.T) {
 		Prompt:   "draw a flower",
 		Provider: "qwen",
 		Model:    "qwen-image",
-		Size:     "1024x1024",
-		Count:    1,
+		Options:  GenerateOptions{Size: "1664x928"},
 	})
 	if !errors.Is(err, ErrBillingContextRequired) {
 		t.Fatalf("Generate error = %v, want %v", err, ErrBillingContextRequired)
@@ -399,8 +431,7 @@ func TestGenerateDoesNotCreateConversationWhenUpstreamFails(t *testing.T) {
 		Prompt:   "draw a flower",
 		Provider: "qwen",
 		Model:    "qwen-image",
-		Size:     "1024x1024",
-		Count:    1,
+		Options:  GenerateOptions{Size: "1664x928"},
 	})
 	if !errors.Is(err, ErrUpstreamFailed) {
 		t.Fatalf("Generate error = %v, want %v", err, ErrUpstreamFailed)
@@ -450,8 +481,7 @@ func TestGenerateRejectsExistingConversationOutsideCurrentWorkspaceBeforeSideEff
 				Prompt:         "draw a flower",
 				Provider:       "qwen",
 				Model:          "qwen-image",
-				Size:           "1024x1024",
-				Count:          1,
+				Options:        GenerateOptions{Size: "1664x928"},
 				ConversationID: chat.conversation.ID.String(),
 			})
 			if !errors.Is(err, ErrConversationNotAccessible) {
@@ -517,8 +547,7 @@ func TestGenerateRejectsLegacyImageFallbackBeforeSideEffects(t *testing.T) {
 		Prompt:         "draw a flower",
 		Provider:       "qwen",
 		Model:          "qwen-image",
-		Size:           "1024x1024",
-		Count:          1,
+		Options:        GenerateOptions{Size: "1664x928"},
 		ConversationID: conversationID.String(),
 	})
 	if !errors.Is(err, ErrConversationNotAccessible) {
@@ -563,8 +592,7 @@ func TestGenerateContinuesExistingConversationInCurrentWorkspace(t *testing.T) {
 		Prompt:         "draw a flower",
 		Provider:       "qwen",
 		Model:          "qwen-image",
-		Size:           "1024x1024",
-		Count:          1,
+		Options:        GenerateOptions{Size: "1664x928"},
 		ConversationID: chat.conversation.ID.String(),
 	})
 	if err != nil {
@@ -576,6 +604,10 @@ func TestGenerateContinuesExistingConversationInCurrentWorkspace(t *testing.T) {
 }
 
 func uuidPtr(value uuid.UUID) *uuid.UUID {
+	return &value
+}
+
+func intPtr(value int) *int {
 	return &value
 }
 
@@ -600,8 +632,7 @@ func TestGenerateCleansSavedImagesWhenLaterSaveFails(t *testing.T) {
 		Prompt:   "draw flowers",
 		Provider: "qwen",
 		Model:    "qwen-image-2.0",
-		Size:     "1024x1024",
-		Count:    2,
+		Options:  GenerateOptions{Size: "2048x2048", Count: intPtr(2)},
 	})
 	if !errors.Is(err, ErrImageSaveFailed) {
 		t.Fatalf("Generate error = %v, want %v", err, ErrImageSaveFailed)
@@ -635,8 +666,7 @@ func TestGenerateCleansSavedImagesWhenMessageWriteFails(t *testing.T) {
 		Prompt:   "draw a flower",
 		Provider: "qwen",
 		Model:    "qwen-image",
-		Size:     "1024x1024",
-		Count:    1,
+		Options:  GenerateOptions{Size: "1664x928"},
 	})
 	if err == nil {
 		t.Fatalf("Generate error = nil, want message write error")

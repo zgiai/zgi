@@ -19,8 +19,7 @@ interface InputAreaProps {
   modelSelectorValue?: ModelSelectorValue;
   onModelChange?: (value: ModelSelectorValue) => void;
   imageRuntimeModels?: ImageRuntimeModel[];
-  ratioOptions?: string[];
-  countOptions?: number[];
+  currentRuntimeModel?: ImageRuntimeModel;
   topNotice?: React.ReactNode;
 }
 
@@ -34,8 +33,7 @@ export function InputArea({
   modelSelectorValue,
   onModelChange,
   imageRuntimeModels,
-  ratioOptions,
-  countOptions,
+  currentRuntimeModel,
   topNotice,
 }: InputAreaProps) {
   const t = useT('webapp');
@@ -113,9 +111,8 @@ export function InputArea({
           ) : null}
           <SettingsToolbar
             onSettingsChange={setSettings}
-            initialSettings={settings}
-            ratioOptions={ratioOptions}
-            countOptions={countOptions}
+            settings={settings}
+            profile={currentRuntimeModel?.generation_profile}
           />
         </div>
 

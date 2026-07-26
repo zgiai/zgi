@@ -96,6 +96,9 @@ const messages: WebappMessages = {
     imageInput: {
       ratio: '比例',
       countValue: '{count}张',
+      maxCountValue: '最多{count}张',
+      singleMode: '单张',
+      sequenceMode: '组图',
       aspectRatios: {
         square: '正方形',
         portrait: '竖版',

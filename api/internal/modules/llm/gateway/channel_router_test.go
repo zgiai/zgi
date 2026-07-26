@@ -697,6 +697,51 @@ func TestSelectChannelsForProviderRejectsAmbiguousProviderlessCatalogModel(t *te
 	}
 }
 
+func TestSelectChannelsForProviderUsesHintForAmbiguousCatalogModel(t *testing.T) {
+	setGatewayConsoleAPIURL(t, "https://console-api.zgi.im")
+	db, mock := openGatewayModelLookupDB(t)
+	organizationID := uuid.New()
+	modelName := "doubao-seedream-4-0-250828"
+	providerHint := "doubao"
+	modelID := uuid.New()
+	mock.ExpectQuery(`(?s)FROM "llm_models" JOIN llm_providers .*llm_models\.provider.*llm_models\.name`).
+		WithArgs(providerHint, modelName, true, llmmodel.ModelStatusActive, true, 1).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "provider", "name", "display_name", "status", "is_active"}).
+			AddRow(modelID, providerHint, modelName, "Doubao Seedream 4.0", llmmodel.ModelStatusActive, true))
+	router := &ChannelRouter{
+		db: db,
+		organizationIDRouteRepo: &fakeCandidateRouteRepo{routes: []*channelmodel.LLMRoute{{
+			ID:              uuid.New(),
+			OrganizationID:  organizationID,
+			Type:            shared.RouteTypePrivate,
+			ChannelProvider: "doubao",
+			Models:          []string{modelName},
+			IsEnabled:       true,
+		}}},
+		strategyFactory: NewStrategyFactory(),
+	}
+
+	selections, err := router.SelectChannelsForProvider(
+		context.Background(),
+		organizationID,
+		providerHint,
+		modelName,
+		1,
+	)
+	if err != nil {
+		t.Fatalf("SelectChannelsForProvider returned error: %v", err)
+	}
+	if len(selections) != 1 {
+		t.Fatalf("len(selections) = %d, want 1", len(selections))
+	}
+	if selections[0].Model == nil || selections[0].Model.Provider != "doubao" {
+		t.Fatalf("selection model = %#v, want doubao model", selections[0].Model)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("sql expectations: %v", err)
+	}
+}
+
 func TestSelectChannelsForProviderKeepsUnambiguousProviderlessCatalogModel(t *testing.T) {
 	setGatewayConsoleAPIURL(t, "https://console-api.zgi.im")
 	db := openGatewayCatalogDB(t)
