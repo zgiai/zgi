@@ -20,7 +20,7 @@ func TestAddWorkflowRuntimeV2Migration(t *testing.T) {
 	}
 
 	db, mock := openMigrationMockDB(t)
-	mock.ExpectExec("(?s).*ALTER TABLE public.workflow_run_logs.*runtime_protocol_version.*CREATE UNIQUE INDEX IF NOT EXISTS idx_workflow_run_events_tenant_run_sequence_unique.*UPDATE public.agents_conversations AS conversation.*dialogue_count.*DELETE FROM public.agents_messages AS message.*CREATE TABLE IF NOT EXISTS public.workflow_runtime_outbox.*").
+	mock.ExpectExec("(?s).*ALTER TABLE public.workflow_run_logs.*runtime_protocol_version.*CREATE UNIQUE INDEX IF NOT EXISTS idx_workflow_run_events_tenant_run_sequence_unique.*DELETE FROM public.agents_messages AS message.*CREATE TABLE IF NOT EXISTS public.workflow_runtime_outbox.*").
 		WillReturnResult(sqlmock.NewResult(0, 0))
 
 	if err := migrate(db); err != nil {
