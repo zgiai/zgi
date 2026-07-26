@@ -1283,6 +1283,7 @@ export function AIChatShell({
             layout={isEmbedded ? 'embedded' : 'full'}
             showMemoryKey={surface !== 'agent-webapp'}
             showSkillEventDetails={surface !== 'agent-webapp'}
+            showContextualOperationStatus={effectiveRuntimeSurface === 'contextual_sidebar'}
             showPlanningPlaceholder={showPlanningPlaceholder}
             pendingUserMessage={visiblePendingUserMessage}
           />

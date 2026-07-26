@@ -88,6 +88,7 @@ interface AIChatMessageBubbleProps {
   showAssistantModelMeta?: boolean;
   showMemoryKey?: boolean;
   showSkillEventDetails?: boolean;
+  showContextualOperationStatus?: boolean;
   enableToolGovernanceApprovals?: boolean;
   suppressPendingToolGovernanceApprovals?: boolean;
 }
@@ -1162,6 +1163,7 @@ export function AIChatMessageBubble({
   showAssistantModelMeta = true,
   showMemoryKey = true,
   showSkillEventDetails = true,
+  showContextualOperationStatus = false,
   enableToolGovernanceApprovals = false,
   suppressPendingToolGovernanceApprovals = false,
 }: AIChatMessageBubbleProps) {
@@ -1283,11 +1285,16 @@ export function AIChatMessageBubble({
   const hasLeadingAnswer = Boolean(leadingAnswer.trim());
   const hasTrailingAnswer = Boolean(trailingAnswer.trim());
   const streamingStatus = useMemo(() => {
-    if (isStreaming || isWaitingForClientAction) {
+    if (showContextualOperationStatus && (isStreaming || isWaitingForClientAction)) {
       return streamingOperationStatus(orderedDisplayTimeline, isStreaming);
     }
     return null;
-  }, [isStreaming, isWaitingForClientAction, orderedDisplayTimeline]);
+  }, [
+    isStreaming,
+    isWaitingForClientAction,
+    orderedDisplayTimeline,
+    showContextualOperationStatus,
+  ]);
   const streamingStatusLabel = useMemo(
     () =>
       streamingStatus && streamingStatus.key !== 'toolCompleted'
