@@ -49,28 +49,43 @@ func TestGetModelUsage_ReturnsBadRequestForValidationError(t *testing.T) {
 	}
 }
 
-func TestGetModelUsage_AllowsAIChatAppType(t *testing.T) {
+func TestGetModelUsage_AllowsSupportedAppTypes(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
-	fakeSvc := &fakeStatisticsService{}
-	h := NewStatisticsHandler(fakeSvc)
+	for _, appType := range []string{
+		"workflow",
+		"dataset",
+		"agent",
+		"aichat",
+		"image-runtime",
+		"data_library_file",
+		"prompt_optimizer",
+		"prompt_playground",
+		"automation_task_draft",
+		"unknown",
+	} {
+		t.Run(appType, func(t *testing.T) {
+			fakeSvc := &fakeStatisticsService{}
+			h := NewStatisticsHandler(fakeSvc)
 
-	w := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(w)
-	c.Set("organization_id", uuid.NewString())
-	c.Request = httptest.NewRequest(
-		http.MethodGet,
-		"/console/api/llm/statistics/model-usage?start_time=1710000000&end_time=1710086400&app_type=aichat",
-		nil,
-	)
+			w := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(w)
+			c.Set("organization_id", uuid.NewString())
+			c.Request = httptest.NewRequest(
+				http.MethodGet,
+				"/console/api/llm/statistics/model-usage?start_time=1710000000&end_time=1710086400&app_type="+appType,
+				nil,
+			)
 
-	h.GetModelUsage(c)
+			h.GetModelUsage(c)
 
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected status 200, got %d body=%s", w.Code, w.Body.String())
-	}
-	if fakeSvc.modelUsageReq == nil || fakeSvc.modelUsageReq.AppType == nil || *fakeSvc.modelUsageReq.AppType != "aichat" {
-		t.Fatalf("app_type = %#v, want aichat", fakeSvc.modelUsageReq)
+			if w.Code != http.StatusOK {
+				t.Fatalf("expected status 200, got %d body=%s", w.Code, w.Body.String())
+			}
+			if fakeSvc.modelUsageReq == nil || fakeSvc.modelUsageReq.AppType == nil || *fakeSvc.modelUsageReq.AppType != appType {
+				t.Fatalf("app_type = %#v, want %s", fakeSvc.modelUsageReq, appType)
+			}
+		})
 	}
 }
 

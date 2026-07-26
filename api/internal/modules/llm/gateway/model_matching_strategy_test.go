@@ -42,15 +42,16 @@ func TestTenantAutonomyStrategy_SupportsModel(t *testing.T) {
 			want:          true,
 		},
 		{
-			name: "provider_mismatch_is_rejected_even_when_model_name_matches",
+			name: "private_route_uses_explicit_model_list_even_when_catalog_provider_differs",
 			route: &channelmodel.LLMRoute{
 				ID:              uuid.New(),
+				Type:            shared.RouteTypePrivate,
 				ChannelProvider: "anthropic",
 				Models:          []string{"claude-3-opus", "claude-3-sonnet"},
 			},
 			modelName:     "claude-3-opus",
 			modelProvider: "openai",
-			want:          false,
+			want:          true,
 		},
 		{
 			name: "official_route_rejects_same_name_under_wrong_provider",
@@ -66,7 +67,7 @@ func TestTenantAutonomyStrategy_SupportsModel(t *testing.T) {
 			want:          false,
 		},
 		{
-			name: "provider_alias_resolves_to_catalog_provider",
+			name: "private_route_accepts_explicit_model_with_catalog_provider",
 			route: &channelmodel.LLMRoute{
 				ID:              uuid.New(),
 				ChannelProvider: "dashscope",
@@ -77,15 +78,16 @@ func TestTenantAutonomyStrategy_SupportsModel(t *testing.T) {
 			want:          true,
 		},
 		{
-			name: "generic_openai_compatible_cannot_inherit_openai_catalog_identity",
+			name: "openai_compatible_private_route_uses_explicit_model_list",
 			route: &channelmodel.LLMRoute{
 				ID:              uuid.New(),
+				Type:            shared.RouteTypePrivate,
 				ChannelProvider: "openai-compatible",
 				Models:          []string{"gpt-4"},
 			},
 			modelName:     "gpt-4",
 			modelProvider: "openai",
-			want:          false,
+			want:          true,
 		},
 		{
 			name: "custom_model_without_catalog_provider_uses_explicit_route_model",

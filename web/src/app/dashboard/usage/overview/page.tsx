@@ -6,7 +6,6 @@ import { RefreshCw } from 'lucide-react';
 
 import { useT } from '@/i18n';
 import { AppTypeDistributionSection } from '@/components/usage/app-type-distribution-section';
-import { Badge } from '@/components/ui/badge';
 import { ModelDetailsSection } from '@/components/usage/model-details-section';
 import { StatsCards } from '@/components/usage/stats-cards';
 import { TokenTrendChart } from '@/components/usage/token-trend-chart';
@@ -16,10 +15,12 @@ import { Input, SearchInput } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useDebouncedValue } from '@/hooks/use-debounced-value';
+import { useOrganizations } from '@/hooks/organization/use-organizations';
 import { useModelUsage } from '@/hooks/statistics';
 import { IS_CLOUD } from '@/lib/config';
 import { cn } from '@/lib/utils';
 import type { ModelUsageAppType, ModelUsageSummary } from '@/services/types/statistics';
+import { getBillingDisplaySettings } from '@/utils/billing-display';
 
 type DateRangeKey = 'last7Days' | 'last30Days' | 'last90Days' | 'custom';
 type AppTypeFilter = 'all' | ModelUsageAppType;
@@ -70,6 +71,7 @@ function SectionEyebrow({ children }: { children: React.ReactNode }) {
 export default function UsageOverviewPage() {
   const t = useT('dashboard');
   const tCommon = useT('common');
+  const { currentOrganization, isLoading: isOrganizationLoading } = useOrganizations(true);
   const [dateRange, setDateRange] = useState<DateRangeKey>('last7Days');
   const [customStartDate, setCustomStartDate] = useState('');
   const [customEndDate, setCustomEndDate] = useState('');
@@ -128,32 +130,12 @@ export default function UsageOverviewPage() {
   const { data, isLoading, isFetching, refetch } = useModelUsage(params, {
     enabled: isCustomRangeValid,
   });
+  const billingDisplay = useMemo(
+    () => getBillingDisplaySettings(currentOrganization),
+    [currentOrganization]
+  );
+  const isPageLoading = isLoading || isOrganizationLoading;
   const summary = data?.summary ?? EMPTY_SUMMARY;
-  const activeFilterBadges = useMemo(() => {
-    const badges: string[] = [];
-
-    badges.push(
-      isCustomRange && customStartDate && customEndDate
-        ? `${customStartDate} ~ ${customEndDate}`
-        : t(`usage.dateRange.${dateRange}`)
-    );
-
-    if (appType !== 'all') {
-      badges.push(t(`usage.appTypes.${appType}`));
-    }
-
-    if (IS_CLOUD && sourceFilter !== 'all') {
-      badges.push(
-        t(`usage.filters.source${sourceFilter === 'official' ? 'Official' : 'Private'}`)
-      );
-    }
-
-    if (modelNameInput.trim()) {
-      badges.push(`${t('usage.filters.modelName')}: ${modelNameInput.trim()}`);
-    }
-
-    return badges;
-  }, [appType, customEndDate, customStartDate, dateRange, isCustomRange, modelNameInput, sourceFilter, t]);
 
   const resetFilters = () => {
     setDateRange('last7Days');
@@ -251,16 +233,11 @@ export default function UsageOverviewPage() {
               />
             </div>
 
-            <div className="flex flex-wrap items-center gap-2 border-t border-border/60 pt-3">
-              {activeFilterBadges.map(badge => (
-                <Badge key={badge} variant="subtle" className="rounded-full px-2">
-                  {badge}
-                </Badge>
-              ))}
-              <span className="ml-auto text-xs text-muted-foreground">
-                {isLoading
+            <div className="flex items-center justify-end border-t border-border/60 pt-3">
+              <span className="text-xs tabular-nums text-muted-foreground">
+                {isPageLoading
                   ? tCommon('loading')
-                  : `当前结果共 ${data?.by_model?.length ?? 0} 个模型`}
+                  : t('usage.cards.modelCount', { count: data?.by_model?.length ?? 0 })}
               </span>
             </div>
 
@@ -294,7 +271,7 @@ export default function UsageOverviewPage() {
           </CardContent>
         </Card>
 
-        {isLoading ? (
+        {isPageLoading ? (
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
             {Array.from({ length: showSourceBreakdown ? 5 : 4 }).map((_, index) => (
               <Card key={index}>
@@ -307,16 +284,25 @@ export default function UsageOverviewPage() {
             ))}
           </div>
         ) : (
-          <StatsCards summary={summary} models={data?.by_model ?? []} showSourceBreakdown={showSourceBreakdown} />
+          <StatsCards
+            summary={summary}
+            models={data?.by_model ?? []}
+            showSourceBreakdown={showSourceBreakdown}
+            billingDisplay={billingDisplay}
+          />
         )}
 
-        {isLoading ? (
+        {isPageLoading ? (
           <LoadingSection />
         ) : (
-          <TokenTrendChart dailyData={data?.daily_trend ?? []} showSourceBreakdown={showSourceBreakdown} />
+          <TokenTrendChart
+            dailyData={data?.daily_trend ?? []}
+            showSourceBreakdown={showSourceBreakdown}
+            billingDisplay={billingDisplay}
+          />
         )}
 
-        {isLoading ? (
+        {isPageLoading ? (
           <LoadingSection />
         ) : (
           <ModelDetailsSection
@@ -327,10 +313,18 @@ export default function UsageOverviewPage() {
             promptTokens={summary.prompt_tokens}
             completionTokens={summary.completion_tokens}
             showSourceBreakdown={showSourceBreakdown}
+            billingDisplay={billingDisplay}
           />
         )}
 
-        {isLoading ? <LoadingSection /> : <AppTypeDistributionSection items={data?.by_app_type ?? []} />}
+        {isPageLoading ? (
+          <LoadingSection />
+        ) : (
+          <AppTypeDistributionSection
+            items={data?.by_app_type ?? []}
+            billingDisplay={billingDisplay}
+          />
+        )}
       </div>
     </div>
   );

@@ -5,7 +5,7 @@ import "github.com/google/uuid"
 type ModelUsageRequest struct {
 	StartTime         int64      `form:"start_time" binding:"required"`
 	EndTime           int64      `form:"end_time" binding:"required"`
-	AppType           *string    `form:"app_type" binding:"omitempty,oneof=workflow dataset agent aichat unknown"`
+	AppType           *string    `form:"app_type" binding:"omitempty,oneof=workflow dataset agent aichat image-runtime data_library_file prompt_optimizer prompt_playground automation_task_draft unknown"`
 	AppID             *uuid.UUID `form:"app_id"`
 	ModelName         *string    `form:"model_name"`
 	BillingLane       *string    `form:"billing_lane" binding:"omitempty,oneof=platform private"`
@@ -72,6 +72,8 @@ type ModelUsageDailyItem struct {
 	PromptTokens     int64  `json:"prompt_tokens"`
 	CompletionTokens int64  `json:"completion_tokens"`
 	TotalTokens      int64  `json:"total_tokens"`
+	OfficialTokens   int64  `json:"official_tokens"`
+	PrivateTokens    int64  `json:"private_tokens"`
 	OfficialPoints   int64  `json:"official_points"`
 	PrivatePoints    int64  `json:"private_points"`
 	TotalPoints      int64  `json:"total_points"`

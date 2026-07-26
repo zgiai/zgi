@@ -76,6 +76,8 @@ type modelUsageDailyRow struct {
 	PromptTokens     int64  `gorm:"column:prompt_tokens"`
 	CompletionTokens int64  `gorm:"column:completion_tokens"`
 	TotalTokens      int64  `gorm:"column:total_tokens"`
+	OfficialTokens   int64  `gorm:"column:official_tokens"`
+	PrivateTokens    int64  `gorm:"column:private_tokens"`
 	OfficialPoints   int64  `gorm:"column:official_points"`
 	PrivatePoints    int64  `gorm:"column:private_points"`
 	TotalPoints      int64  `gorm:"column:total_points"`
@@ -231,6 +233,8 @@ func (r *statisticsRepositoryImpl) queryModelUsageDailyTrend(ctx context.Context
 			COALESCE(SUM(b.prompt_tokens), 0) as prompt_tokens,
 			COALESCE(SUM(b.completion_tokens), 0) as completion_tokens,
 			COALESCE(SUM(b.total_tokens), 0) as total_tokens,
+			COALESCE(SUM(CASE WHEN b.billing_lane = 'platform' THEN b.total_tokens ELSE 0 END), 0) as official_tokens,
+			COALESCE(SUM(CASE WHEN b.billing_lane = 'private' THEN b.total_tokens ELSE 0 END), 0) as private_tokens,
 			COALESCE(SUM(b.official_points), 0) as official_points,
 			COALESCE(SUM(b.private_points), 0) as private_points,
 			COALESCE(SUM(b.total_points), 0) as total_points
@@ -269,7 +273,12 @@ func applyUsageBillFilters(query *gorm.DB, alias string, filters modelUsageFilte
 }
 
 func usageBillAppTypeBucketExpr(alias string) string {
-	return "COALESCE(NULLIF(" + column(alias, "app_type") + ", ''), 'unknown')"
+	appType := column(alias, "app_type")
+	return "CASE WHEN " + appType + " IN (" +
+		"'workflow', 'dataset', 'agent', 'aichat', " +
+		"'image-runtime', 'data_library_file', 'prompt_optimizer', " +
+		"'prompt_playground', 'automation_task_draft', 'unknown'" +
+		") THEN " + appType + " ELSE 'unknown' END"
 }
 
 func buildModelUsageByModelItems(rows []modelUsageModelRow, totalPoints int64) []dto.ModelUsageByModelItem {
@@ -329,6 +338,8 @@ func buildModelUsageDailyItems(rows []modelUsageDailyRow) []dto.ModelUsageDailyI
 			PromptTokens:     row.PromptTokens,
 			CompletionTokens: row.CompletionTokens,
 			TotalTokens:      row.TotalTokens,
+			OfficialTokens:   row.OfficialTokens,
+			PrivateTokens:    row.PrivateTokens,
 			OfficialPoints:   row.OfficialPoints,
 			PrivatePoints:    row.PrivatePoints,
 			TotalPoints:      row.TotalPoints,

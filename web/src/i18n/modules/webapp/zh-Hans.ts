@@ -235,6 +235,9 @@ const messages: WebappMessages = {
     modelConfig: '模型',
     modelRequired: '请先选择模型',
     modelUnavailable: '当前模型已不再支持 AI Chat，请重新选择模型。原配置已保留。',
+    modelUnavailableAdminDescription: '请检查可用模型与渠道配置，恢复后即可继续发送消息。',
+    modelUnavailableMemberDescription: '请切换到其他可用模型，或联系组织管理员恢复模型配置。',
+    configureModel: '前往模型管理',
     modelPrecheck: {
       title: '当前模型存在渠道风险，但不会阻止发送',
       organizationBalanceLow: '组织余额偏低，建议联系组织管理员及时充值。',

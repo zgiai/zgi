@@ -98,6 +98,8 @@ function sanitizeDailyItem(item: ModelUsageDailyItem): ModelUsageDailyItem {
     prompt_tokens: toNumber(item.prompt_tokens),
     completion_tokens: toNumber(item.completion_tokens),
     total_tokens: toNumber(item.total_tokens),
+    official_tokens: toNumber(item.official_tokens),
+    private_tokens: toNumber(item.private_tokens),
     official_points: toNumber(item.official_points),
     private_points: toNumber(item.private_points),
     total_points: toNumber(item.total_points),
