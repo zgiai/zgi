@@ -21,6 +21,13 @@ import { Logo } from '@/components/logo';
 import { ICON_BG } from '@/lib/config';
 
 const SIDEBAR_PAGE_SIZE = 20;
+const COLLAPSED_APP_LIMIT = 6;
+
+interface SidebarNavItem {
+  id: string;
+  title: string;
+  preview: ReturnType<typeof toPreviewData>;
+}
 
 function toPreviewData(item: RunnableWebAppResolvedItem) {
   let iconType: 'image' | 'text' = item.icon_type === 'image' ? 'image' : 'text';
@@ -41,11 +48,21 @@ function toPreviewData(item: RunnableWebAppResolvedItem) {
     }
   }
 
+  textIcon = Array.from(textIcon.trim()).slice(0, 2).join('') || 'A';
+
   return {
     iconType,
     src,
     textIcon,
     iconBackground,
+  };
+}
+
+function toSidebarNavItem(item: RunnableWebAppResolvedItem): SidebarNavItem {
+  return {
+    id: item.web_app_id,
+    title: item.meta_data.title,
+    preview: toPreviewData(item),
   };
 }
 
@@ -67,6 +84,7 @@ export default function ConsoleWorkAppLayout({ children }: { children: React.Rea
       workspaceId: null,
       keyword: queryKeyword || undefined,
       pageSize: SIDEBAR_PAGE_SIZE,
+      enabled: !isCollapsed || mobileDrawerOpen,
     });
   const { items: currentItems } = useRunnableWebApps({
     workspaceId: null,
@@ -74,6 +92,12 @@ export default function ConsoleWorkAppLayout({ children }: { children: React.Rea
     page: 1,
     pageSize: 1,
     enabled: Boolean(currentWebappId),
+  });
+  const { items: collapsedItems, isLoading: isCollapsedAppsLoading } = useRunnableWebApps({
+    workspaceId: null,
+    page: 1,
+    pageSize: COLLAPSED_APP_LIMIT,
+    enabled: isCollapsed,
   });
   const isSearchPending = searchQuery.trim() !== queryKeyword;
   const showNavLoading = isLoading || isSearchPending || (isFetching && items.length === 0);
@@ -84,6 +108,7 @@ export default function ConsoleWorkAppLayout({ children }: { children: React.Rea
     isFetchingNextPage,
     fetchNextPage,
     rootRef: desktopScrollRef,
+    enabled: !isCollapsed,
   });
   const mobileLoadMoreRef = useInfiniteObserver({
     hasNextPage: hasMore && !isSearchPending,
@@ -108,25 +133,8 @@ export default function ConsoleWorkAppLayout({ children }: { children: React.Rea
     [currentItems, currentWebappId, items]
   );
 
-  const sidebarItems = useMemo(() => {
-    if (!currentApp || queryKeyword) return items;
-    return [currentApp, ...items.filter(item => item.web_app_id !== currentApp.web_app_id)];
-  }, [currentApp, items, queryKeyword]);
-
-  const navItems = useMemo(
-    () =>
-      sidebarItems.map(item => {
-        const title = item.meta_data.title;
-        const preview = toPreviewData(item);
-        return {
-          id: item.web_app_id,
-          title,
-          description: item.meta_data.desc?.trim() || '',
-          preview,
-        };
-      }),
-    [sidebarItems]
-  );
+  const navItems = useMemo(() => items.map(toSidebarNavItem), [items]);
+  const collapsedNavItems = useMemo(() => collapsedItems.map(toSidebarNavItem), [collapsedItems]);
 
   const currentAppPreview = useMemo(
     () => (currentApp ? toPreviewData(currentApp) : null),
@@ -138,9 +146,116 @@ export default function ConsoleWorkAppLayout({ children }: { children: React.Rea
     setQueryKeyword('');
   };
 
+  const renderDesktopAppLink = (item: SidebarNavItem) => {
+    const isActive = pathname === `/console/work/app/${item.id}`;
+    const appLink = (
+      <Link
+        key={item.id}
+        href={`/console/work/app/${item.id}`}
+        onClick={() => setMobileDrawerOpen(false)}
+        aria-current={isActive ? 'page' : undefined}
+        aria-label={item.title}
+        className={cn(
+          'relative flex h-11 w-full shrink-0 items-center rounded-md px-3 py-2 text-[13px] transition-colors',
+          isCollapsed && 'justify-center px-2',
+          isActive
+            ? 'bg-primary/10 text-primary'
+            : 'text-muted-foreground hover:bg-background/70 hover:text-foreground'
+        )}
+        title={isCollapsed ? undefined : item.title}
+      >
+        {isActive ? (
+          <span
+            aria-hidden="true"
+            className="absolute inset-y-2 left-0 w-0.5 rounded-r-full bg-primary"
+          />
+        ) : null}
+        <IconPreview
+          iconType={item.preview.iconType}
+          src={item.preview.src}
+          icon={item.preview.textIcon}
+          iconBackground={item.preview.iconBackground}
+          alt={item.title}
+          editable={false}
+          size="xs"
+        />
+        {!isCollapsed ? (
+          <span className="ml-2 min-w-0 truncate text-ellipsis text-[13px] leading-5">
+            {item.title}
+          </span>
+        ) : null}
+      </Link>
+    );
+
+    if (!isCollapsed) return appLink;
+
+    return (
+      <Tooltip key={item.id}>
+        <TooltipTrigger asChild>{appLink}</TooltipTrigger>
+        <TooltipContent side="right" sideOffset={8} className="max-w-64 px-3 py-2">
+          <div className="text-sm font-medium leading-5">{item.title}</div>
+        </TooltipContent>
+      </Tooltip>
+    );
+  };
+
+  const renderDesktopAllAppsLink = () => {
+    const isActive = pathname === '/console/work/app';
+    const allAppsLink = (
+      <Link
+        href="/console/work/app"
+        onClick={() => setMobileDrawerOpen(false)}
+        aria-current={isActive ? 'page' : undefined}
+        aria-label={t('appCenter.allApps')}
+        className={cn(
+          'group relative flex h-11 w-full shrink-0 items-center rounded-md border px-3 py-2 text-[13px] font-medium shadow-xs transition-colors',
+          isCollapsed && 'justify-center px-2',
+          isActive
+            ? 'border-primary/25 bg-primary/10 text-primary'
+            : 'border-border/70 bg-background/70 text-foreground hover:border-primary/30 hover:bg-primary/5 hover:text-primary'
+        )}
+      >
+        {isActive ? (
+          <span
+            aria-hidden="true"
+            className="absolute inset-y-2 left-0 w-0.5 rounded-r-full bg-primary"
+          />
+        ) : null}
+        <span
+          className={cn(
+            'flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground transition-colors',
+            isActive
+              ? 'bg-primary text-primary-foreground'
+              : 'group-hover:bg-primary/15 group-hover:text-primary'
+          )}
+        >
+          <AppWindow className="size-4" />
+        </span>
+        {!isCollapsed ? (
+          <span className="ml-2 min-w-0 truncate text-ellipsis text-[13px] leading-5">
+            {t('appCenter.allApps')}
+          </span>
+        ) : null}
+      </Link>
+    );
+
+    if (!isCollapsed) return allAppsLink;
+
+    return (
+      <Tooltip>
+        <TooltipTrigger asChild>{allAppsLink}</TooltipTrigger>
+        <TooltipContent side="right" sideOffset={8} className="px-3 py-2">
+          <div className="text-sm font-medium leading-5">{t('appCenter.allApps')}</div>
+        </TooltipContent>
+      </Tooltip>
+    );
+  };
+
   const appSearch = (
     <div className="relative">
       <SearchInput
+        type="text"
+        role="searchbox"
         value={searchQuery}
         onChange={event => setSearchQuery(event.target.value)}
         placeholder={t('appCenter.searchPlaceholder')}
@@ -162,102 +277,40 @@ export default function ConsoleWorkAppLayout({ children }: { children: React.Rea
 
   const navList = (
     <div className="flex h-0 grow flex-col">
-      {!isCollapsed ? (
-        <div className="space-y-3 border-b px-3 py-3">
-          <div className="min-w-0">
-            <div className="text-sm font-semibold leading-5">{t('appCenter.title')}</div>
-            <div className="mt-0.5 text-xs leading-4 text-muted-foreground">
-              {t('appCenter.sidebarSubtitle')}
-            </div>
-          </div>
-          {appSearch}
-        </div>
-      ) : null}
-      <div ref={desktopScrollRef} className="w-full flex-1 overflow-y-auto">
+      {!isCollapsed ? <div className="border-b px-3 py-3">{appSearch}</div> : null}
+      <div
+        ref={desktopScrollRef}
+        className={cn(
+          'w-full flex-1',
+          isCollapsed
+            ? 'overflow-hidden'
+            : 'overflow-y-auto scrollbar-thin [scrollbar-gutter:stable]'
+        )}
+      >
         <div className={cn('flex w-full flex-col gap-0.5 p-2', isCollapsed && 'px-2')}>
-          <Link
-            href="/console/work/app"
-            onClick={() => setMobileDrawerOpen(false)}
-            aria-current={pathname === '/console/work/app' ? 'page' : undefined}
-            className={cn(
-              'flex h-10 w-full shrink-0 items-center rounded-md px-3 py-2 text-[13px] font-medium transition-colors',
-              isCollapsed && 'justify-center px-2',
-              pathname === '/console/work/app'
-                ? 'bg-background text-foreground shadow-sm ring-1 ring-border/70'
-                : 'text-muted-foreground hover:bg-background/70 hover:text-foreground'
-            )}
-            title={t('appCenter.allApps')}
-          >
-            <AppWindow className="size-4 shrink-0" />
-            {!isCollapsed ? (
-              <span className="ml-2 line-clamp-1 truncate text-ellipsis">
-                {t('appCenter.allApps')}
-              </span>
-            ) : null}
-          </Link>
-          {showNavLoading
+          <div className="mb-1 border-b border-border/70 pb-2">{renderDesktopAllAppsLink()}</div>
+          {!isCollapsed && showNavLoading
             ? Array.from({ length: 6 }).map((_, index) => (
-                <div
-                  key={`app-skeleton-${index}`}
-                  className={cn('h-10 shrink-0 rounded-md px-3 py-2', isCollapsed && 'px-2')}
-                >
-                  <div className={cn('flex items-center gap-2', isCollapsed && 'justify-center')}>
+                <div key={`app-skeleton-${index}`} className="h-11 shrink-0 rounded-md px-3 py-2">
+                  <div className="flex items-center gap-2">
                     <Skeleton className="size-6 rounded-md" />
-                    {!isCollapsed ? <Skeleton className="h-4 w-32" /> : null}
+                    <Skeleton className="h-4 w-32" />
                   </div>
                 </div>
               ))
-            : navItems.map(item => {
-                const isActive = pathname === `/console/work/app/${item.id}`;
-                const appLink = (
-                  <Link
-                    key={item.id}
-                    href={`/console/work/app/${item.id}`}
-                    onClick={() => setMobileDrawerOpen(false)}
-                    aria-current={isActive ? 'page' : undefined}
-                    aria-label={item.title}
-                    className={cn(
-                      'flex h-10 w-full shrink-0 items-center rounded-md px-3 py-2 text-[13px] transition-colors',
-                      isCollapsed && 'justify-center px-2',
-                      isActive
-                        ? 'bg-background text-foreground shadow-sm ring-1 ring-border/70'
-                        : 'text-muted-foreground hover:bg-background/70 hover:text-foreground'
-                    )}
-                    title={isCollapsed ? undefined : item.title}
-                  >
-                    <IconPreview
-                      iconType={item.preview.iconType}
-                      src={item.preview.src}
-                      icon={item.preview.textIcon}
-                      iconBackground={item.preview.iconBackground}
-                      alt={item.title}
-                      editable={false}
-                      size="xs"
-                    />
-                    {!isCollapsed ? (
-                      <span className="ml-2 min-w-0 truncate text-ellipsis text-[13px] leading-5">
-                        {item.title}
-                      </span>
-                    ) : null}
-                  </Link>
-                );
-
-                if (!isCollapsed) return appLink;
-
-                return (
-                  <Tooltip key={item.id}>
-                    <TooltipTrigger asChild>{appLink}</TooltipTrigger>
-                    <TooltipContent side="right" sideOffset={8} className="max-w-64 px-3 py-2.5">
-                      <div className="text-sm font-semibold leading-5">{item.title}</div>
-                      {item.description ? (
-                        <div className="mt-1 line-clamp-3 whitespace-pre-line text-xs font-normal leading-5 text-muted-foreground">
-                          {item.description}
-                        </div>
-                      ) : null}
-                    </TooltipContent>
-                  </Tooltip>
-                );
-              })}
+            : (isCollapsed ? collapsedNavItems : navItems).map(item => renderDesktopAppLink(item))}
+          {isCollapsed && isCollapsedAppsLoading ? (
+            <div className="space-y-0.5">
+              {Array.from({ length: 3 }).map((_, index) => (
+                <div
+                  key={`app-collapsed-skeleton-${index}`}
+                  className="flex h-11 items-center justify-center rounded-md"
+                >
+                  <Skeleton className="size-8 rounded-md" />
+                </div>
+              ))}
+            </div>
+          ) : null}
           {!showNavLoading && queryKeyword && navItems.length === 0 && !isCollapsed ? (
             <div className="px-3 py-6 text-center" role="status" aria-live="polite">
               <p className="text-xs text-muted-foreground">{t('appCenter.noSearchResults')}</p>
@@ -266,17 +319,17 @@ export default function ConsoleWorkAppLayout({ children }: { children: React.Rea
               </Button>
             </div>
           ) : null}
-          {!showNavLoading && isFetchingNextPage ? (
-            <div className={cn('space-y-1 py-1', isCollapsed && 'px-1')} role="status">
+          {!isCollapsed && !showNavLoading && isFetchingNextPage ? (
+            <div className="space-y-1 py-1" role="status">
               <span className="sr-only">{t('appCenter.loadingMoreApps')}</span>
               <Skeleton className="h-10 w-full rounded-md" />
               <Skeleton className="h-10 w-full rounded-md" />
             </div>
           ) : null}
-          {!showNavLoading && hasMore ? (
+          {!isCollapsed && !showNavLoading && hasMore ? (
             <div ref={desktopLoadMoreRef} className="h-1 shrink-0" aria-hidden="true" />
           ) : null}
-          {!showNavLoading && !hasMore && navItems.length > 0 && !isCollapsed ? (
+          {!isCollapsed && !showNavLoading && !hasMore && navItems.length > 0 ? (
             <div className="px-3 py-3 text-center text-xs text-muted-foreground">
               {t('appCenter.noMoreApps')}
             </div>
@@ -291,7 +344,7 @@ export default function ConsoleWorkAppLayout({ children }: { children: React.Rea
       <aside
         className={cn(
           'hidden shrink-0 flex-col border-r bg-muted/10 transition-all duration-300 md:flex',
-          isCollapsed ? 'w-14' : 'w-60'
+          isCollapsed ? 'w-16' : 'w-64'
         )}
       >
         {navList}
@@ -378,13 +431,22 @@ export default function ConsoleWorkAppLayout({ children }: { children: React.Rea
                 onClick={() => setMobileDrawerOpen(false)}
                 aria-current={pathname === '/console/work/app' ? 'page' : undefined}
                 className={cn(
-                  'flex min-h-10 w-full items-center rounded-md px-3 py-2 text-sm transition-colors',
+                  'group mb-1 flex min-h-10 w-full items-center rounded-md border px-3 py-2 text-sm font-medium shadow-xs transition-colors',
                   pathname === '/console/work/app'
-                    ? 'bg-primary/10 text-primary'
-                    : 'hover:bg-accent text-foreground'
+                    ? 'border-primary/25 bg-primary/10 text-primary'
+                    : 'border-border/70 bg-background/70 text-foreground hover:border-primary/30 hover:bg-primary/5 hover:text-primary'
                 )}
               >
-                <AppWindow className="size-4 shrink-0" />
+                <span
+                  className={cn(
+                    'flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground transition-colors',
+                    pathname === '/console/work/app'
+                      ? 'bg-primary text-primary-foreground'
+                      : 'group-hover:bg-primary/15 group-hover:text-primary'
+                  )}
+                >
+                  <AppWindow className="size-4" />
+                </span>
                 <span className="ml-2 truncate">{t('appCenter.allApps')}</span>
               </Link>
               {showNavLoading
