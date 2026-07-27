@@ -106,14 +106,19 @@ INTEGRATION_OAUTH_CALLBACK_URL=https://api.example.com/console/api/integrations/
 INTEGRATION_OAUTH_RESULT_URL=https://app.example.com/console/integrations/oauth/result
 ```
 
+This single switch registers every built-in Provider, including Exa Web
+Search. Individual Provider availability is then determined by its configured
+Connections, connection health, usage rules, and caller selection or binding;
+Web Search has no separate enable flag.
+
 The example key above is illustrative; generate a unique random 32-byte value
 for every deployment and store it in a secret manager. Do not commit the JSON
 keyring or expose it through a browser environment variable.
 
 For backward compatibility, ZGI can read `API_KEY_ENCRYPTION_KEY` as a legacy
 credential key when the explicit keyring is absent. New deployments should use
-the named keyring. `API_KEY_ENCRYPTION_KEY` is still required when Web Search
-is enabled because it also derives the audit input-HMAC key.
+the named keyring. The active integration credential key also derives the
+audit input-HMAC key for every Provider.
 
 Apply migrations before enabling traffic:
 

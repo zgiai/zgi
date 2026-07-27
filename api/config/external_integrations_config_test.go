@@ -6,22 +6,17 @@ import (
 	"testing"
 )
 
-func TestLoadExternalIntegrationsConfigUsesWebSearchCompatibilityDefaults(t *testing.T) {
+func TestLoadExternalIntegrationsConfigUsesUnifiedDefaults(t *testing.T) {
 	cfg := &Config{
 		Encryption: EncryptionConfig{APIKeyEncryptionKey: "01234567890123456789012345678901"},
-		WebSearch: WebSearchConfig{
-			Enabled:       true,
-			OrgDailyLimit: 321,
-			Exa:           ExaConfig{TimeoutSeconds: 27},
-		},
 	}
 	if err := loadExternalIntegrationsConfig(cfg, externalIntegrationsEnvSource(nil)); err != nil {
 		t.Fatalf("loadExternalIntegrationsConfig() error = %v", err)
 	}
 
 	got := cfg.ExternalIntegrations
-	if !got.Enabled || got.OrgDailyLimit != 321 || got.TimeoutSeconds != 27 {
-		t.Fatalf("compatibility defaults = enabled %v, daily %d, timeout %d", got.Enabled, got.OrgDailyLimit, got.TimeoutSeconds)
+	if got.Enabled || got.OrgDailyLimit != 1000 || got.TimeoutSeconds != 20 {
+		t.Fatalf("unified defaults = enabled %v, daily %d, timeout %d", got.Enabled, got.OrgDailyLimit, got.TimeoutSeconds)
 	}
 	if got.CredentialActiveKeyID != "legacy" || got.CredentialKeys["legacy"] != cfg.Encryption.APIKeyEncryptionKey {
 		t.Fatalf("legacy key fallback was not configured: active=%q keys=%v", got.CredentialActiveKeyID, len(got.CredentialKeys))
@@ -36,6 +31,19 @@ func TestLoadExternalIntegrationsConfigUsesWebSearchCompatibilityDefaults(t *tes
 		got.OAuth.CallbackURL != "http://127.0.0.1:2679/console/api/integrations/oauth/callback" ||
 		got.OAuth.ResultURL != "http://localhost:3000/console/integrations/oauth/result" {
 		t.Fatalf("unexpected OAuth flow defaults: %+v", got.OAuth)
+	}
+}
+
+func TestLegacyWebSearchEnableDoesNotControlExternalIntegrations(t *testing.T) {
+	cfg := &Config{}
+	source := externalIntegrationsEnvSource(map[string]string{
+		"WEB_SEARCH_ENABLED": "true",
+	})
+	if err := loadExternalIntegrationsConfig(cfg, source); err != nil {
+		t.Fatalf("loadExternalIntegrationsConfig() error = %v", err)
+	}
+	if cfg.ExternalIntegrations.Enabled {
+		t.Fatal("legacy WEB_SEARCH_ENABLED unexpectedly enabled the shared runtime")
 	}
 }
 

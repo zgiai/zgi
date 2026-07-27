@@ -17,6 +17,7 @@ import (
 func TestIntegrationRegistryRegistersGitHubWithExternalIntegrations(t *testing.T) {
 	container := &ServiceContainer{config: &config.Config{
 		ExternalIntegrations: config.ExternalIntegrationsConfig{Enabled: true},
+		WebSearch:            testWebSearchConfig(),
 	}}
 
 	registry := container.GetIntegrationRegistry()
@@ -30,11 +31,15 @@ func TestIntegrationRegistryRegistersGitHubWithExternalIntegrations(t *testing.T
 	if len(definition.AuthMethods) != 2 || definition.AuthMethods[0].CredentialSource == definition.AuthMethods[1].CredentialSource {
 		t.Fatalf("GitHub auth methods = %#v", definition.AuthMethods)
 	}
+	if _, found := registry.ProviderDefinition(integrations.IntegrationWebSearch); !found {
+		t.Fatal("Web Search must be registered with the unified external-integration runtime")
+	}
 }
 
 func TestIntegrationRegistryRegistersOAuthProvidersWithoutPlatformCredentials(t *testing.T) {
 	container := &ServiceContainer{config: &config.Config{
 		ExternalIntegrations: config.ExternalIntegrationsConfig{Enabled: true},
+		WebSearch:            testWebSearchConfig(),
 	}}
 	registry := container.GetIntegrationRegistry()
 	for _, expected := range []struct {
@@ -64,24 +69,27 @@ func TestIntegrationRegistryRegistersOAuthProvidersWithoutPlatformCredentials(t 
 	}
 }
 
-func TestIntegrationRegistryDoesNotRegisterGitHubForWebSearchOnly(t *testing.T) {
+func TestIntegrationRegistryDoesNotRegisterProvidersWhenExternalIntegrationsAreDisabled(t *testing.T) {
 	container := &ServiceContainer{config: &config.Config{
-		WebSearch: config.WebSearchConfig{
-			Enabled: true,
-			Exa: config.ExaConfig{
-				TimeoutSeconds:       20,
-				MaxResults:           10,
-				DefaultSearchType:    "auto",
-				MaxFetchURLs:         5,
-				MaxContentCharacters: 20000,
-			},
-		},
+		WebSearch: testWebSearchConfig(),
 	}}
 
 	registry := container.GetIntegrationRegistry()
 	if _, found := registry.ProviderDefinition(github.IntegrationID); found {
 		t.Fatal("GitHub provider must require EXTERNAL_INTEGRATIONS_ENABLED")
 	}
+	if _, found := registry.ProviderDefinition(integrations.IntegrationWebSearch); found {
+		t.Fatal("Web Search must use the same EXTERNAL_INTEGRATIONS_ENABLED lifecycle")
+	}
+}
+
+func TestIntegrationRegistryWebSearchUsesConnectionCredentials(t *testing.T) {
+	container := &ServiceContainer{config: &config.Config{
+		ExternalIntegrations: config.ExternalIntegrationsConfig{Enabled: true},
+		WebSearch:            testWebSearchConfig(),
+	}}
+
+	registry := container.GetIntegrationRegistry()
 	definition, found := registry.ProviderDefinition(integrations.IntegrationWebSearch)
 	if !found {
 		t.Fatal("Exa provider was not registered without EXA_API_KEY")
@@ -107,6 +115,19 @@ func TestIntegrationRegistryDoesNotRegisterGitHubForWebSearchOnly(t *testing.T) 
 	}
 	if definition.DriverID != exa.ProviderDefinition("auto").DriverID {
 		t.Fatalf("Exa definition = %#v", definition)
+	}
+}
+
+func testWebSearchConfig() config.WebSearchConfig {
+	return config.WebSearchConfig{
+		Provider: "exa",
+		Exa: config.ExaConfig{
+			TimeoutSeconds:       20,
+			MaxResults:           10,
+			DefaultSearchType:    "auto",
+			MaxFetchURLs:         5,
+			MaxContentCharacters: 20000,
+		},
 	}
 }
 

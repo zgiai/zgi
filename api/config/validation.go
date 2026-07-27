@@ -104,11 +104,10 @@ func validateConfig(cfg *Config) error {
 		return fmt.Errorf("%s must be exactly 32 bytes long, got %d bytes", envLLMEncryptionKey, len(cfg.LLM.EncryptionKey))
 	}
 
-	if err := validateWebSearchConfig(cfg.WebSearch); err != nil {
-		return err
-	}
-	if err := validateWebSearchAuditKey(cfg.WebSearch, cfg.Encryption.APIKeyEncryptionKey); err != nil {
-		return err
+	if cfg.ExternalIntegrations.Enabled {
+		if err := validateWebSearchConfig(cfg.WebSearch); err != nil {
+			return err
+		}
 	}
 	if err := validateExternalIntegrationsConfig(cfg.ExternalIntegrations); err != nil {
 		return err
@@ -205,29 +204,9 @@ func validIntegrationOAuthURL(value string) bool {
 	return address != nil && address.IsLoopback()
 }
 
-func validateWebSearchAuditKey(cfg WebSearchConfig, encryptionKey string) error {
-	if !cfg.Enabled {
-		return nil
-	}
-	if strings.TrimSpace(encryptionKey) == "" {
-		return fmt.Errorf("%s is required when %s is enabled", envAPIKeyEncryptionKey, envWebSearchEnabled)
-	}
-	if len(encryptionKey) != 32 {
-		return fmt.Errorf("%s must be exactly 32 bytes long when %s is enabled", envAPIKeyEncryptionKey, envWebSearchEnabled)
-	}
-	return nil
-}
-
 func validateWebSearchConfig(cfg WebSearchConfig) error {
-	if !cfg.Enabled {
-		return nil
-	}
-
 	if !strings.EqualFold(strings.TrimSpace(cfg.Provider), "exa") {
-		return fmt.Errorf("%s must be exa when %s is enabled", envWebSearchProvider, envWebSearchEnabled)
-	}
-	if cfg.OrgDailyLimit <= 0 {
-		return fmt.Errorf("%s must be greater than 0", envWebSearchOrgDailyLimit)
+		return fmt.Errorf("%s must be exa", envWebSearchProvider)
 	}
 	if cfg.Exa.TimeoutSeconds <= 0 {
 		return fmt.Errorf("%s must be greater than 0", envExaTimeoutSeconds)

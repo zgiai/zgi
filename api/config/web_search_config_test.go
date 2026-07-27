@@ -11,14 +11,8 @@ func TestLoadWebSearchConfigDefaults(t *testing.T) {
 		t.Fatalf("loadWebSearchConfig() error = %v", err)
 	}
 
-	if cfg.WebSearch.Enabled {
-		t.Fatal("WebSearch.Enabled = true, want false")
-	}
 	if cfg.WebSearch.Provider != "exa" {
 		t.Fatalf("WebSearch.Provider = %q, want exa", cfg.WebSearch.Provider)
-	}
-	if cfg.WebSearch.OrgDailyLimit != 1000 {
-		t.Fatalf("WebSearch.OrgDailyLimit = %d, want 1000", cfg.WebSearch.OrgDailyLimit)
 	}
 	if cfg.WebSearch.Exa.TimeoutSeconds != 20 {
 		t.Fatalf("WebSearch.Exa.TimeoutSeconds = %d, want 20", cfg.WebSearch.Exa.TimeoutSeconds)
@@ -40,9 +34,7 @@ func TestLoadWebSearchConfigDefaults(t *testing.T) {
 func TestLoadWebSearchConfigFromEnvironment(t *testing.T) {
 	cfg := &Config{}
 	source := webSearchEnvSource(map[string]string{
-		envWebSearchEnabled:        "true",
 		envWebSearchProvider:       " EXA ",
-		envWebSearchOrgDailyLimit:  "321",
 		envExaTimeoutSeconds:       "30",
 		envExaMaxResults:           "8",
 		envExaDefaultSearchType:    " FAST ",
@@ -54,11 +46,11 @@ func TestLoadWebSearchConfigFromEnvironment(t *testing.T) {
 		t.Fatalf("loadWebSearchConfig() error = %v", err)
 	}
 
-	if !cfg.WebSearch.Enabled || cfg.WebSearch.Provider != "exa" {
-		t.Fatalf("WebSearch enabled/provider = %v/%q, want true/exa", cfg.WebSearch.Enabled, cfg.WebSearch.Provider)
+	if cfg.WebSearch.Provider != "exa" {
+		t.Fatalf("WebSearch provider = %q, want exa", cfg.WebSearch.Provider)
 	}
-	if cfg.WebSearch.OrgDailyLimit != 321 || cfg.WebSearch.Exa.TimeoutSeconds != 30 {
-		t.Fatalf("WebSearch limits = daily %d, timeout %d", cfg.WebSearch.OrgDailyLimit, cfg.WebSearch.Exa.TimeoutSeconds)
+	if cfg.WebSearch.Exa.TimeoutSeconds != 30 {
+		t.Fatalf("WebSearch timeout = %d, want 30", cfg.WebSearch.Exa.TimeoutSeconds)
 	}
 	if cfg.WebSearch.Exa.MaxResults != 8 || cfg.WebSearch.Exa.DefaultSearchType != "fast" || cfg.WebSearch.Exa.MaxFetchURLs != 4 || cfg.WebSearch.Exa.MaxContentCharacters != 12000 {
 		t.Fatalf("unexpected Exa limits: %+v", cfg.WebSearch.Exa)
@@ -71,8 +63,6 @@ func TestLoadWebSearchConfigRejectsInvalidScalar(t *testing.T) {
 		key   string
 		value string
 	}{
-		{name: "enabled", key: envWebSearchEnabled, value: "sometimes"},
-		{name: "daily limit", key: envWebSearchOrgDailyLimit, value: "many"},
 		{name: "timeout", key: envExaTimeoutSeconds, value: "slow"},
 		{name: "max results", key: envExaMaxResults, value: "all"},
 		{name: "max fetch URLs", key: envExaMaxFetchURLs, value: "several"},
@@ -92,9 +82,7 @@ func TestLoadWebSearchConfigRejectsInvalidScalar(t *testing.T) {
 
 func TestValidateWebSearchConfig(t *testing.T) {
 	valid := WebSearchConfig{
-		Enabled:       true,
-		Provider:      "exa",
-		OrgDailyLimit: 1000,
+		Provider: "exa",
 		Exa: ExaConfig{
 			TimeoutSeconds:       20,
 			MaxResults:           10,
@@ -104,9 +92,6 @@ func TestValidateWebSearchConfig(t *testing.T) {
 		},
 	}
 
-	if err := validateWebSearchConfig(WebSearchConfig{}); err != nil {
-		t.Fatalf("disabled config validation error = %v", err)
-	}
 	if err := validateWebSearchConfig(valid); err != nil {
 		t.Fatalf("valid config validation error = %v", err)
 	}
@@ -117,7 +102,6 @@ func TestValidateWebSearchConfig(t *testing.T) {
 		wantKey string
 	}{
 		{name: "provider", mutate: func(cfg *WebSearchConfig) { cfg.Provider = "other" }, wantKey: envWebSearchProvider},
-		{name: "daily limit", mutate: func(cfg *WebSearchConfig) { cfg.OrgDailyLimit = 0 }, wantKey: envWebSearchOrgDailyLimit},
 		{name: "timeout", mutate: func(cfg *WebSearchConfig) { cfg.Exa.TimeoutSeconds = 0 }, wantKey: envExaTimeoutSeconds},
 		{name: "max results", mutate: func(cfg *WebSearchConfig) { cfg.Exa.MaxResults = 0 }, wantKey: envExaMaxResults},
 		{name: "max results cap", mutate: func(cfg *WebSearchConfig) { cfg.Exa.MaxResults = 11 }, wantKey: envExaMaxResults},
@@ -137,21 +121,6 @@ func TestValidateWebSearchConfig(t *testing.T) {
 				t.Fatalf("validateWebSearchConfig() error = %v, want error containing %s", err, tt.wantKey)
 			}
 		})
-	}
-}
-
-func TestValidateWebSearchAuditKey(t *testing.T) {
-	if err := validateWebSearchAuditKey(WebSearchConfig{}, ""); err != nil {
-		t.Fatalf("disabled web search audit-key validation error = %v", err)
-	}
-	if err := validateWebSearchAuditKey(WebSearchConfig{Enabled: true}, ""); err == nil || !strings.Contains(err.Error(), envAPIKeyEncryptionKey) {
-		t.Fatalf("enabled web search audit-key validation error = %v", err)
-	}
-	if err := validateWebSearchAuditKey(WebSearchConfig{Enabled: true}, "too-short"); err == nil || !strings.Contains(err.Error(), "32 bytes") {
-		t.Fatalf("short web search audit-key validation error = %v", err)
-	}
-	if err := validateWebSearchAuditKey(WebSearchConfig{Enabled: true}, "01234567890123456789012345678901"); err != nil {
-		t.Fatalf("configured web search audit-key validation error = %v", err)
 	}
 }
 

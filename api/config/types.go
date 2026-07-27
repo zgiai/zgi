@@ -455,8 +455,7 @@ type ToolingConfig struct {
 }
 
 // ExternalIntegrationsConfig controls the provider/connection runtime shared
-// by every external application. WebSearch remains a provider-specific
-// compatibility switch; new providers should depend on this configuration.
+// by every external application, including Web Search.
 type ExternalIntegrationsConfig struct {
 	Enabled               bool                            `json:"enabled"`
 	OrgDailyLimit         int                             `json:"org_daily_limit"`
@@ -491,13 +490,12 @@ type ExternalIntegrationOAuthClientConfig struct {
 	Config       map[string]string `json:"-"`
 }
 
-// WebSearchConfig controls Web Search registration and provider runtime limits.
-// Provider credentials are supplied by encrypted organization or account Connections.
+// WebSearchConfig contains Exa-specific runtime limits. Web Search registration
+// follows ExternalIntegrationsConfig.Enabled, and credentials are supplied by
+// encrypted organization or account Connections.
 type WebSearchConfig struct {
-	Enabled       bool      `json:"enabled"`
-	Provider      string    `json:"provider"`
-	OrgDailyLimit int       `json:"org_daily_limit"`
-	Exa           ExaConfig `json:"exa"`
+	Provider string    `json:"provider"`
+	Exa      ExaConfig `json:"exa"`
 }
 
 type ExaConfig struct {

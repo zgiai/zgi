@@ -1071,14 +1071,6 @@ func loadAutomationConfig(cfg *Config, source *envSource) {
 }
 
 func loadWebSearchConfig(cfg *Config, source *envSource) error {
-	enabled, err := source.bool(false, envWebSearchEnabled)
-	if err != nil {
-		return err
-	}
-	orgDailyLimit, err := source.int(1000, envWebSearchOrgDailyLimit)
-	if err != nil {
-		return err
-	}
 	timeoutSeconds, err := source.int(20, envExaTimeoutSeconds)
 	if err != nil {
 		return err
@@ -1097,9 +1089,7 @@ func loadWebSearchConfig(cfg *Config, source *envSource) error {
 	}
 
 	cfg.WebSearch = WebSearchConfig{
-		Enabled:       enabled,
-		Provider:      strings.ToLower(strings.TrimSpace(source.string("exa", envWebSearchProvider))),
-		OrgDailyLimit: orgDailyLimit,
+		Provider: strings.ToLower(strings.TrimSpace(source.string("exa", envWebSearchProvider))),
 		Exa: ExaConfig{
 			TimeoutSeconds:       timeoutSeconds,
 			MaxResults:           maxResults,
@@ -1112,24 +1102,15 @@ func loadWebSearchConfig(cfg *Config, source *envSource) error {
 }
 
 func loadExternalIntegrationsConfig(cfg *Config, source *envSource) error {
-	defaultDailyLimit := cfg.WebSearch.OrgDailyLimit
-	if defaultDailyLimit <= 0 {
-		defaultDailyLimit = 1000
-	}
-	defaultTimeout := cfg.WebSearch.Exa.TimeoutSeconds
-	if defaultTimeout <= 0 {
-		defaultTimeout = 20
-	}
-
-	enabled, err := source.bool(cfg.WebSearch.Enabled, envExternalIntegrationsEnabled)
+	enabled, err := source.bool(false, envExternalIntegrationsEnabled)
 	if err != nil {
 		return err
 	}
-	orgDailyLimit, err := source.int(defaultDailyLimit, envIntegrationOrgDailyLimit)
+	orgDailyLimit, err := source.int(1000, envIntegrationOrgDailyLimit)
 	if err != nil {
 		return err
 	}
-	timeoutSeconds, err := source.int(defaultTimeout, envIntegrationTimeoutSeconds)
+	timeoutSeconds, err := source.int(20, envIntegrationTimeoutSeconds)
 	if err != nil {
 		return err
 	}

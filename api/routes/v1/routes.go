@@ -79,7 +79,7 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 		WorkspaceManagementService: tenantService,
 	})
 
-	if currentConfig := config.Current(); currentConfig != nil && (currentConfig.ExternalIntegrations.Enabled || currentConfig.WebSearch.Enabled) {
+	if currentConfig := config.Current(); currentConfig != nil && currentConfig.ExternalIntegrations.Enabled {
 		RegisterIntegrationRoutes(v1, IntegrationRouteDeps{
 			DB:               db,
 			Registry:         serviceContainer.GetIntegrationRegistry(),
@@ -270,7 +270,7 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 
 	// ---------- AIChat ----------
 	var aiChatIntegrationPreferences *integrations.DefaultAIChatIntegrationPreferenceService
-	if currentConfig := config.Current(); currentConfig != nil && (currentConfig.ExternalIntegrations.Enabled || currentConfig.WebSearch.Enabled) {
+	if currentConfig := config.Current(); currentConfig != nil && currentConfig.ExternalIntegrations.Enabled {
 		aiChatIntegrationPreferences = serviceContainer.GetIntegrationAIChatPreferenceService()
 	}
 	chatService := RegisterAIChatRoutes(v1, AIChatRouteDeps{

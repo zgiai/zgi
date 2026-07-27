@@ -999,7 +999,7 @@ func (c *ServiceContainer) GetIntegrationRegistry() *integrations.Registry {
 		return c.integrationRegistry
 	}
 	registry := integrations.NewRegistry()
-	if c.config != nil && c.config.WebSearch.Enabled {
+	if c.config != nil && c.config.ExternalIntegrations.Enabled {
 		adapter, err := exa_integration.New(exa_integration.Config{
 			Timeout:              time.Duration(c.config.WebSearch.Exa.TimeoutSeconds) * time.Second,
 			MaxResults:           c.config.WebSearch.Exa.MaxResults,
@@ -1075,7 +1075,7 @@ func (c *ServiceContainer) GetIntegrationRegistry() *integrations.Registry {
 }
 
 func (c *ServiceContainer) externalIntegrationsEnabled() bool {
-	return c != nil && c.config != nil && (c.config.ExternalIntegrations.Enabled || c.config.WebSearch.Enabled)
+	return c != nil && c.config != nil && c.config.ExternalIntegrations.Enabled
 }
 
 func (c *ServiceContainer) integrationOAuthDeploymentClients() ([]integrations.OAuthDeploymentClient, error) {
@@ -1471,8 +1471,6 @@ func (c *ServiceContainer) getIntegrationDailyQuota() integrations.DailyQuota {
 		limit := 1000
 		if c.config != nil && c.config.ExternalIntegrations.OrgDailyLimit > 0 {
 			limit = c.config.ExternalIntegrations.OrgDailyLimit
-		} else if c.config != nil && c.config.WebSearch.OrgDailyLimit > 0 {
-			limit = c.config.WebSearch.OrgDailyLimit
 		}
 		c.integrationDailyQuota = integrations.NewRedisDailyQuota(redisPkg.GetClient(), limit)
 	}
@@ -1486,8 +1484,6 @@ func (c *ServiceContainer) GetIntegrationExecutor() *integrations.Executor {
 		if c.config != nil {
 			if c.config.ExternalIntegrations.TimeoutSeconds > 0 {
 				timeout = time.Duration(c.config.ExternalIntegrations.TimeoutSeconds) * time.Second
-			} else if c.config.WebSearch.Exa.TimeoutSeconds > 0 {
-				timeout = time.Duration(c.config.WebSearch.Exa.TimeoutSeconds) * time.Second
 			}
 			masterKey = c.config.ExternalIntegrations.CredentialKeys[c.config.ExternalIntegrations.CredentialActiveKeyID]
 			if masterKey == "" {

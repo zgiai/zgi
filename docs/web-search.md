@@ -42,16 +42,16 @@ them through browser environment variables.
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `WEB_SEARCH_ENABLED` | `false` | Registers the Web Search Connector and makes the Skill available to organizations. |
 | `WEB_SEARCH_PROVIDER` | `exa` | Provider selection. The current native adapter supports only `exa`. |
-| `WEB_SEARCH_ORG_DAILY_LIMIT` | `1000` | Maximum Web Search and webpage-fetch tool calls per organization per UTC day. Must be positive. |
 | `EXA_TIMEOUT_SECONDS` | `20` | Total timeout for an Exa operation, including retries. Must be positive. |
 | `EXA_MAX_RESULTS` | `10` | Search-result limit. The phase-one hard maximum is 10. |
 | `EXA_DEFAULT_SEARCH_TYPE` | `auto` | Search mode used when the tool call omits one: `auto`, `fast`, or `instant`. |
 | `EXA_MAX_FETCH_URLS` | `5` | URL limit for one webpage-fetch call. The phase-one hard maximum is 5. |
 | `EXA_MAX_CONTENT_CHARACTERS` | `20000` | Maximum retained content per fetched page. The phase-one hard maximum is 20,000. |
-| `API_KEY_ENCRYPTION_KEY` | empty | Exactly 32 bytes. Required for the Web Search audit HMAC and accepted as a legacy Connection-key fallback. |
-| `EXTERNAL_INTEGRATIONS_ENABLED` | `false` | Enables the shared Connection catalog, grants, preferences, health services, and generic Connected Apps runtime. |
+| `API_KEY_ENCRYPTION_KEY` | empty | Legacy 32-byte Connection-key fallback. New deployments should use the named Integration keyring. |
+| `EXTERNAL_INTEGRATIONS_ENABLED` | `false` | Enables the shared Connection catalog and all built-in providers, including Web Search. |
+| `INTEGRATION_ORG_DAILY_LIMIT` | `1000` | Maximum external-application calls per organization per UTC day, shared by Web Search and other providers. |
+| `INTEGRATION_TIMEOUT_SECONDS` | `20` | Shared execution timeout for external actions. |
 | `INTEGRATION_CREDENTIAL_ACTIVE_KEY_ID` | empty | Key ID used for newly encrypted Connection credentials. |
 | `INTEGRATION_CREDENTIAL_KEYS_JSON` | empty | JSON object from key ID to exactly 32-byte key. Retain old entries while stored envelopes use them. |
 
@@ -64,10 +64,10 @@ selected or bound.
 Example API environment:
 
 ```env
-WEB_SEARCH_ENABLED=true
 EXTERNAL_INTEGRATIONS_ENABLED=true
 WEB_SEARCH_PROVIDER=exa
-WEB_SEARCH_ORG_DAILY_LIMIT=1000
+INTEGRATION_ORG_DAILY_LIMIT=1000
+INTEGRATION_TIMEOUT_SECONDS=20
 EXA_TIMEOUT_SECONDS=20
 EXA_MAX_RESULTS=10
 EXA_DEFAULT_SEARCH_TYPE=auto
@@ -80,8 +80,9 @@ INTEGRATION_CREDENTIAL_KEYS_JSON={"2026-07":"<another-exactly-32-byte-secret>"}
 
 ### Docker deployment
 
-For the repository Docker stack, put the `WEB_SEARCH_*` and `EXA_*` values in
-`docker/.env`. The API reads `API_KEY_ENCRYPTION_KEY` from
+For the repository Docker stack, put the `EXTERNAL_INTEGRATIONS_*`,
+`INTEGRATION_*`, `WEB_SEARCH_PROVIDER`, and `EXA_*` values in `docker/.env`.
+The API reads `API_KEY_ENCRYPTION_KEY` from
 `api/.env.docker`. A fresh `make bootstrap` or the platform-specific bootstrap
 script generates that 32-byte key automatically; replace it with a
 deployment-specific secret for production.
@@ -121,8 +122,8 @@ docker compose --env-file .env logs -f api
 ```
 
 For a source deployment, restart the API process after the migration and
-configuration changes. Changing `WEB_SEARCH_ENABLED` without restarting does
-not add or remove the Connector from a running process.
+configuration changes. Changing `EXTERNAL_INTEGRATIONS_ENABLED` without
+restarting does not add or remove providers from a running process.
 
 ## Configure a Connection and Enable the Skill
 
@@ -226,7 +227,7 @@ and other prompt-injection attempts.
 ## Troubleshooting
 
 - **Web Search is missing from the organization Skill catalog:** confirm that
-  `WEB_SEARCH_ENABLED=true` and that the API restarted successfully.
+  `EXTERNAL_INTEGRATIONS_ENABLED=true` and that the API restarted successfully.
 - **Web Search is missing from an AIChat or Agent Skill picker:** confirm that
   an organization administrator enabled the Skill first.
 - **The API fails during startup:** check `WEB_SEARCH_PROVIDER`, positive
@@ -241,7 +242,7 @@ and other prompt-injection attempts.
   that PostgreSQL and `API_KEY_ENCRYPTION_KEY` are available to the API.
 - **Calls report a quota-service failure:** confirm Redis connectivity.
 - **Calls report the daily limit was reached:** increase
-  `WEB_SEARCH_ORG_DAILY_LIMIT` deliberately or wait for the next UTC day.
+  `INTEGRATION_ORG_DAILY_LIMIT` deliberately or wait for the next UTC day.
 
 ## Migrating from the legacy platform credential
 

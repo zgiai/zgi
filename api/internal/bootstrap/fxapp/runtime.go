@@ -110,7 +110,7 @@ func registerRuntime(lc fx.Lifecycle, params runtimeParams) error {
 		system_service.NewCloudBootstrapRunner(params.Config, params.BootstrapService),
 		params.Logger,
 	)
-	if params.Config != nil && (params.Config.ExternalIntegrations.Enabled || params.Config.WebSearch.Enabled) && params.ServiceContainer != nil {
+	if params.Config != nil && params.Config.ExternalIntegrations.Enabled && params.ServiceContainer != nil {
 		RegisterIntegrationAuditCompletionLifecycle(lc, params.ServiceContainer.GetIntegrationExecutor(), params.Logger)
 		RegisterIntegrationOAuthMaintenanceLifecycle(lc, params.ServiceContainer.GetIntegrationOAuthFlowService(), params.Logger)
 		RegisterIntegrationOAuthRecoveryLifecycle(lc, params.ServiceContainer.GetIntegrationOAuthRecoveryService(), params.Logger)

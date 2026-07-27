@@ -579,8 +579,7 @@ const (
 
 // Domain behavior and toolchain keys.
 const (
-	// Shared external-integration runtime. When EXTERNAL_INTEGRATIONS_ENABLED
-	// is omitted, WEB_SEARCH_ENABLED is used as the compatibility default.
+	// Shared external-integration runtime, including Web Search.
 	envExternalIntegrationsEnabled          = "EXTERNAL_INTEGRATIONS_ENABLED"
 	envIntegrationOrgDailyLimit             = "INTEGRATION_ORG_DAILY_LIMIT"
 	envIntegrationTimeoutSeconds            = "INTEGRATION_TIMEOUT_SECONDS"
@@ -594,12 +593,8 @@ const (
 	envIntegrationOAuthClientsJSON          = "INTEGRATION_OAUTH_CLIENTS_JSON"
 
 	// Web search provider runtime configuration.
-	// envWebSearchEnabled controls whether web search tools are available. Default: false.
-	envWebSearchEnabled = "WEB_SEARCH_ENABLED"
 	// envWebSearchProvider selects the web search provider. Phase one supports exa. Default: exa.
 	envWebSearchProvider = "WEB_SEARCH_PROVIDER"
-	// envWebSearchOrgDailyLimit sets the per-organization daily request limit. Default: 1000.
-	envWebSearchOrgDailyLimit = "WEB_SEARCH_ORG_DAILY_LIMIT"
 	// envExaTimeoutSeconds sets the total Exa request timeout in seconds. Default: 20.
 	envExaTimeoutSeconds = "EXA_TIMEOUT_SECONDS"
 	// envExaMaxResults caps results returned by one search action. Default: 10.
