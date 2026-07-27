@@ -859,12 +859,21 @@ export function AIChatShell({
     [activeUserInputMessage, controller, isSending, t, toolGovernanceOperationContext]
   );
 
-  const handleRegenerate = useCallback(
-    async (message: AIChatMessage) => {
+  const canRegenerateMessage = useCallback(
+    (message: AIChatMessage) => {
       const branchCount = branchNavigationByMessageId.get(message.id)?.total ?? 1;
       const canReplaceRoot = canReplaceRootMessage(message);
-      if (messageActionsLocked) return;
-      if (!canReplaceRoot && (!message.parent_id || branchCount >= MAX_AICHAT_BRANCHES)) return;
+      return (
+        !messageActionsLocked &&
+        (canReplaceRoot || (Boolean(message.parent_id) && branchCount < MAX_AICHAT_BRANCHES))
+      );
+    },
+    [branchNavigationByMessageId, canReplaceRootMessage, messageActionsLocked]
+  );
+
+  const handleRegenerate = useCallback(
+    async (message: AIChatMessage) => {
+      if (!canRegenerateMessage(message)) return;
       if (requireModel && !modelSelectorValue.model) {
         toast.error(t('consoleChat.modelRequired'));
         return;
@@ -885,11 +894,9 @@ export function AIChatShell({
       );
     },
     [
-      branchNavigationByMessageId,
       beforeSend,
-      canReplaceRootMessage,
+      canRegenerateMessage,
       controller,
-      messageActionsLocked,
       modelSelectorValue,
       requireModel,
       effectiveRuntimeSurface,
@@ -902,8 +909,12 @@ export function AIChatShell({
     if (!matchingRuntimeErrorMessage) return;
     void handleRegenerate(matchingRuntimeErrorMessage);
   }, [handleRegenerate, matchingRuntimeErrorMessage]);
-  const runtimeErrorActionHref =
-    resolvedRuntimeError?.href || (isBillingAdmin ? '/dashboard/provider' : null);
+  const canRetryRuntimeError = Boolean(
+    matchingRuntimeErrorMessage && canRegenerateMessage(matchingRuntimeErrorMessage)
+  );
+  const runtimeErrorActionHref = isBillingAdmin
+    ? resolvedRuntimeError?.href || '/dashboard/provider'
+    : null;
   const runtimeErrorNotice =
     showInlineRuntimeError && resolvedRuntimeError ? (
       <AIChatRuntimeErrorNotice
@@ -916,7 +927,7 @@ export function AIChatShell({
             : undefined
         }
         isBilling={resolvedRuntimeError.isBilling}
-        canRetry={Boolean(matchingRuntimeErrorMessage)}
+        canRetry={canRetryRuntimeError}
         onRetry={handleRetryRuntimeError}
         onConfigure={
           runtimeErrorActionHref ? () => router.push(runtimeErrorActionHref) : undefined
