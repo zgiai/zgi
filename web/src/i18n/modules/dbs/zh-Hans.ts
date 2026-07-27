@@ -14,6 +14,11 @@ const messages: DbsMessages = {
   backToDatabaseList: '返回数据库列表',
   tables: '数据表',
   createTable: '新建表',
+  tableNavigation: {
+    searchPlaceholder: '搜索数据表...',
+    noSearchResults: '未找到匹配的数据表',
+    noTables: '暂无数据表',
+  },
   createMethod: {
     title: '选择建表方式',
     description: '请选择手动创建表或通过 Excel 文件创建表。',

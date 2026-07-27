@@ -13,6 +13,11 @@ const messages = {
   // Tables & features
   tables: 'Tables',
   createTable: 'Create Table',
+  tableNavigation: {
+    searchPlaceholder: 'Search tables...',
+    noSearchResults: 'No matching tables',
+    noTables: 'No tables yet',
+  },
   createMethod: {
     title: 'Choose How to Create a Table',
     description: 'Create a table manually or import an Excel file.',
