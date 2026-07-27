@@ -59,7 +59,9 @@ const messages: AiProvidersMessages = {
     },
     runtimeStates: {
       available_models: '有可用模型',
-      pending_channels: '待接入渠道',
+      pending_channels: '未接入',
+      configured_no_models: '待启用模型',
+      unknown: '状态未知',
       no_catalog_models: '未收录模型',
       disabled: '已关闭',
     },
@@ -99,6 +101,12 @@ const messages: AiProvidersMessages = {
     defaultDescription: '选择一个提供商来配置和管理其模型',
     strategyHint: '渠道决定模型来源。',
     strategyDescription: '模型管理决定组织是否允许使用这些已经接入来源的模型。',
+    organizationAccess: '允许组织使用',
+    channelGuide: {
+      title: '{provider} 尚未接入调用渠道',
+      description: '添加 API Key 并选择模型，保存渠道后完成连接测试，这些模型才能用于真实调用。',
+      action: '现在接入',
+    },
   },
   providerList: '提供商列表',
   providerListDescription: '选择要配置的AI模型提供商',
@@ -328,12 +336,12 @@ const messages: AiProvidersMessages = {
       allStatus: '所有状态',
     },
     channelStates: {
-      connected: '已接入渠道',
-      missing: '未接入渠道',
+      connected: '已配置来源',
+      missing: '未配置来源',
     },
     channelHints: {
-      connected: '这个模型当前已经有至少一个可用来源。',
-      missing: '请先配置渠道，这个模型才会真正变成可调用状态。',
+      connected: '至少一个已启用路由声明支持此模型。',
+      missing: '接入渠道后，这个模型才具备调用条件。',
     },
     policyStates: {
       allowed: '允许使用',
@@ -365,7 +373,10 @@ const messages: AiProvidersMessages = {
       configure: '去配置',
       setPrice: '设置价格',
       add: '添加模型',
+      addSource: '添加备用渠道',
+      connectSource: '接入渠道',
       addChannel: '添加渠道',
+      addChannelForSelected: '为已选模型接入渠道（{count}）',
     },
     pricing: {
       input: '输入',
@@ -404,8 +415,19 @@ const messages: AiProvidersMessages = {
       never: '从未',
     },
     groups: {
-      official: '可用模型',
+      official: '已接入模型',
       extensible: '待接入模型',
+    },
+    pending: {
+      description: '已收录但尚无调用来源，选择模型后可统一接入渠道。',
+      selectHint: '选择本次要接入的模型',
+      selectionSummary: '已选 {selected} / {total}',
+      connectSelected: '接入所选',
+      connectSelectedCount: '接入所选（{count}）',
+      adminRequired: '需管理员接入',
+      expandAll: '展开全部（{count}）',
+      collapse: '收起',
+      noMatches: '当前筛选条件下没有待接入模型',
     },
     tooltips: {
       official: '这些模型已经有可用渠道，接下来只需要决定组织是否允许使用。',

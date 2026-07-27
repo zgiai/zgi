@@ -2,7 +2,7 @@ import type { NavigationMessages } from './en-US';
 
 const messages: NavigationMessages = {
   home: '首页',
-  dashboard: '组织后台',
+  dashboard: '组织管理',
   console: '控制台',
   organizations: '组织',
   currentOrganization: '当前组织',
@@ -13,7 +13,7 @@ const messages: NavigationMessages = {
   users: '用户管理',
   analytics: '分析',
   settings: '设置',
-  systemSettings: '系统设置',
+  systemSettings: '个人设置',
   profile: '个人资料',
   models: '模型',
   orders: '订单',

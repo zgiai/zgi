@@ -266,7 +266,8 @@ export const APIKEY_KEYS = {
 export const PROVIDER_KEYS = {
   all: ['providers'] as const,
   list: (params: unknown) => [...PROVIDER_KEYS.all, params] as const,
-  detail: (provider: string) => ['provider', provider] as const,
+  details: () => ['provider'] as const,
+  detail: (provider: string) => [...PROVIDER_KEYS.details(), provider] as const,
   availableCounts: (providers: string[]) =>
     [...PROVIDER_KEYS.all, 'available-counts', providers] as const,
 } as const;

@@ -26,7 +26,6 @@ import { formatTokens } from '@/utils/format';
 import { getBillingDisplaySettings } from '@/utils/billing-display';
 import { getModelPriceDisplay } from '@/utils/model-price';
 import { getModelDisplayName } from '@/utils/model-label';
-import { USE_CASE_BADGE_COLORS } from '@/config/model-colors';
 import { useT, type AiProvidersKey } from '@/i18n';
 import { useOrganizationStore } from '@/store/organization-store';
 
@@ -55,6 +54,7 @@ interface ModelsGroupTableProps {
   onDeleteModel?: (m: ModelItem) => void;
   onEditPrice?: (m: ModelItem) => void;
   onCreateModel?: () => void;
+  onConfigureChannel?: (m: ModelItem) => void;
 }
 
 export default function ModelsGroupTable({
@@ -81,6 +81,7 @@ export default function ModelsGroupTable({
   onDeleteModel,
   onEditPrice,
   onCreateModel,
+  onConfigureChannel,
 }: ModelsGroupTableProps): JSX.Element {
   const headerState = headerAllSelected
     ? true
@@ -99,23 +100,43 @@ export default function ModelsGroupTable({
     6 + Number(showSelectionColumn) + Number(showEnabledColumn) + Number(showActionsColumn);
 
   const renderChannelStatus = (model: ModelItem) => {
+    const configureAction = onConfigureChannel ? (
+      <Button
+        type="button"
+        variant="link"
+        size="sm"
+        className={`h-auto p-0 text-xs font-normal ${
+          model.is_available ? 'text-muted-foreground hover:text-foreground' : ''
+        }`}
+        onClick={() => onConfigureChannel(model)}
+      >
+        {t(
+          model.is_available
+            ? 'aiProviders.models.actions.addSource'
+            : 'aiProviders.models.actions.connectSource'
+        )}
+      </Button>
+    ) : null;
+
     if (model.is_available) {
       return (
         <div className="space-y-1">
-          <Badge variant="success">{t('aiProviders.models.channelStates.connected')}</Badge>
-          <p className="text-xs text-muted-foreground">
-            {t('aiProviders.models.channelHints.connected')}
-          </p>
+          <div className="flex items-center gap-2 text-xs font-medium text-foreground">
+            <span className="size-1.5 rounded-full bg-emerald-500" />
+            {t('aiProviders.models.channelStates.connected')}
+          </div>
+          {configureAction}
         </div>
       );
     }
 
     return (
       <div className="space-y-1">
-        <Badge variant="warning">{t('aiProviders.models.channelStates.missing')}</Badge>
-        <p className="text-xs text-muted-foreground">
-          {t('aiProviders.models.channelHints.missing')}
-        </p>
+        <div className="flex items-center gap-2 text-xs font-medium text-foreground">
+          <span className="size-1.5 rounded-full bg-amber-500" />
+          {t('aiProviders.models.channelStates.missing')}
+        </div>
+        {configureAction}
       </div>
     );
   };
@@ -127,7 +148,7 @@ export default function ModelsGroupTable({
 
     return (
       <div className="flex items-center justify-end gap-2">
-        <Badge variant={model.is_enabled ? 'success' : 'outline'}>{policyLabel}</Badge>
+        <span className="text-xs text-muted-foreground">{policyLabel}</span>
         <Switch
           checked={model.is_enabled}
           onCheckedChange={checked => onToggleModel(model, checked as boolean)}
@@ -137,7 +158,6 @@ export default function ModelsGroupTable({
             isBatchToggling ||
             model.is_configured === false
           }
-          className="data-[state=checked]:bg-green-600"
         />
       </div>
     );
@@ -314,6 +334,14 @@ export default function ModelsGroupTable({
                 )
                 .map(m => {
                   const modelLabel = getModelDisplayName(m, locale);
+                  const visibleUseCases = m.use_cases?.slice(0, 2) ?? [];
+                  const remainingUseCases = Math.max((m.use_cases?.length ?? 0) - 2, 0);
+                  const enabledFeatures = Object.entries(m.features || {}).filter(
+                    ([, enabled]) => enabled
+                  );
+                  const visibleFeatures = enabledFeatures.slice(0, 3);
+                  const remainingFeatures = Math.max(enabledFeatures.length - 3, 0);
+
                   return (
                     <TableRow key={m.id}>
                       {showSelectionColumn && (
@@ -334,7 +362,7 @@ export default function ModelsGroupTable({
                               {m.zgi_official_available && (
                                 <Tooltip>
                                   <TooltipTrigger asChild>
-                                    <ShieldCheck className="w-3.5 h-3.5 text-green-600 cursor-help" />
+                                    <ShieldCheck className="h-3.5 w-3.5 cursor-help text-muted-foreground" />
                                   </TooltipTrigger>
                                   <TooltipContent>
                                     {t('aiProviders.models.tooltips.systemChannel')}
@@ -349,44 +377,58 @@ export default function ModelsGroupTable({
                       <TableCell>{renderChannelStatus(m)}</TableCell>
                       <TableCell>
                         <div className="flex flex-wrap gap-1">
-                          {m.use_cases?.map(uc => (
+                          {visibleUseCases.map(uc => (
                             <Badge
                               key={uc}
                               variant="outline"
-                              className={`text-[10px] px-1.5 py-0 leading-3 h-5 ${USE_CASE_BADGE_COLORS[uc] || ''}`}
+                              className="h-5 border-border bg-muted/40 px-1.5 py-0 text-[10px] leading-3 text-muted-foreground shadow-none"
                             >
                               {t(`aiProviders.models.usecases.${uc}`)}
                             </Badge>
                           ))}
+                          {remainingUseCases > 0 ? (
+                            <Badge
+                              variant="outline"
+                              className="h-5 border-border bg-background px-1.5 py-0 text-[10px] leading-3 text-muted-foreground shadow-none"
+                            >
+                              +{remainingUseCases}
+                            </Badge>
+                          ) : null}
                         </div>
                       </TableCell>
                       <TableCell>
-                        <div className="flex flex-wrap gap-2">
-                          {Object.entries(m.features || {})
-                            .filter(([, enabled]) => enabled)
-                            .slice(0, 6)
-                            .map(([key]) => (
-                              <Tooltip key={key}>
-                                <TooltipTrigger asChild>
-                                  <span
-                                    role="img"
-                                    aria-label={t(
-                                      `aiProviders.models.features.${key}` as AiProvidersKey
-                                    )}
-                                    className="inline-flex items-center justify-center size-6 rounded-md bg-accent/60"
-                                  >
-                                    <ModelFeatureIcon feature={key} />
-                                  </span>
-                                </TooltipTrigger>
-                                <TooltipContent>
-                                  {t(`aiProviders.models.features.${key}` as AiProvidersKey)}
-                                </TooltipContent>
-                              </Tooltip>
-                            ))}
+                        <div className="flex flex-wrap gap-1">
+                          {visibleFeatures.map(([key]) => (
+                            <Tooltip key={key}>
+                              <TooltipTrigger asChild>
+                                <span
+                                  role="img"
+                                  aria-label={t(
+                                    `aiProviders.models.features.${key}` as AiProvidersKey
+                                  )}
+                                  className="inline-flex size-6 items-center justify-center rounded-md bg-muted/60 text-muted-foreground"
+                                >
+                                  <ModelFeatureIcon
+                                    feature={key}
+                                    colored={false}
+                                    className="text-muted-foreground"
+                                  />
+                                </span>
+                              </TooltipTrigger>
+                              <TooltipContent>
+                                {t(`aiProviders.models.features.${key}` as AiProvidersKey)}
+                              </TooltipContent>
+                            </Tooltip>
+                          ))}
+                          {remainingFeatures > 0 ? (
+                            <span className="inline-flex h-6 items-center text-[10px] text-muted-foreground">
+                              +{remainingFeatures}
+                            </span>
+                          ) : null}
                         </div>
                       </TableCell>
                       <TableCell>
-                        <span className="bg-accent text-secondary-foreground text-sm px-2 py-0.5 rounded-full">
+                        <span className="text-sm tabular-nums text-muted-foreground">
                           {formatTokens(m.context_window)}
                         </span>
                       </TableCell>

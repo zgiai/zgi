@@ -5,7 +5,6 @@ import { ProviderIcon } from '@/components/common/provider-icon';
 import { ChevronLeft, Edit, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import Link from 'next/link';
-import { Badge } from '@/components/ui/badge';
 import { useT } from '@/i18n';
 
 interface ProviderPageHeaderProps {
@@ -39,14 +38,7 @@ export default function ProviderPageHeader({
         </Link>
         <ProviderIcon provider={providerId || displayName} size={40} />
         <div>
-          <div className="flex items-center gap-2">
-            <div className="text-lg font-medium">{displayName || providerId}</div>
-            <Badge variant={isEnabled ? 'info' : 'outline'}>
-              {isEnabled
-                ? t('providersList.policyStates.allowed')
-                : t('providersList.policyStates.disabled')}
-            </Badge>
-          </div>
+          <div className="text-lg font-medium">{displayName || providerId}</div>
           <div className="text-sm text-muted-foreground">{description}</div>
         </div>
       </div>
@@ -71,10 +63,12 @@ export default function ProviderPageHeader({
             <Trash2 className="h-4 w-4" />
           </Button>
         )}
+        <span className="hidden text-xs text-muted-foreground sm:inline">
+          {t('management.organizationAccess')}
+        </span>
         <Switch
           checked={isEnabled}
           onCheckedChange={checked => onToggle(checked as boolean)}
-          className="data-[state=checked]:bg-green-600"
           disabled={toggling}
         />
       </div>

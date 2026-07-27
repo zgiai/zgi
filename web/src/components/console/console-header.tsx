@@ -84,11 +84,11 @@ export function ConsoleHeader({ hidden, onToggleMobileSidebar }: ConsoleHeaderPr
       },
       {
         match: path => path.startsWith('/dashboard/provider'),
-        title: tDash('items.llmProviders'),
+        title: tDash('items.modelChannels'),
       },
       {
         match: path => path.startsWith('/dashboard/channel'),
-        title: tDash('items.channel'),
+        title: tDash('items.modelChannels'),
       },
       {
         match: path => path.startsWith('/dashboard/api-keys'),

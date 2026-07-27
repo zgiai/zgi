@@ -26,14 +26,16 @@ import type {
   UpdateCustomModelRequest,
 } from '@/services/types/model';
 import type { UpdateCustomProviderRequest } from '@/services/types/provider';
-import { ShieldCheck, Puzzle } from 'lucide-react';
+import { ArrowRight, Info, RadioTower } from 'lucide-react';
 import ModelsActionsBar from '@/components/providers/models-actions-bar';
 import ModelTypeChips from '@/components/providers/model-type-chips';
 import ModelsGroupTable from '@/components/providers/models-group-table';
+import PendingModelsList from '@/components/providers/pending-models-list';
 import ProviderPageHeader from '@/components/providers/provider-page-header';
 import { CustomProviderDialog } from '@/components/providers/custom-provider-dialog';
 import { CustomModelDialog } from '@/components/providers/custom-model-dialog';
 import { ModelPriceDialog } from '@/components/providers/model-price-dialog';
+import ChannelDialog from '@/components/channel/channel-dialog';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { useT } from '@/i18n';
 import { useProviderDisplay } from '@/hooks/provider/use-provider-display';
@@ -43,6 +45,7 @@ import { useProviderI18n } from '@/hooks/provider/use-provider-i18n';
 import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
 import { useOrganizationStore } from '@/store/organization-store';
 import { toast } from 'sonner';
+import { shouldPromptProviderChannelSetup } from '@/utils/provider-runtime-state';
 
 // Removed local badge color mapping; row badges use mapping inside ModelsGroupTable
 
@@ -83,6 +86,8 @@ export default function ModelPage() {
   const [deletingModel, setDeletingModel] = useState<ModelItem | null>(null);
   const [isPriceDialogOpen, setIsPriceDialogOpen] = useState(false);
   const [pricingModel, setPricingModel] = useState<ModelItem | null>(null);
+  const [isChannelDialogOpen, setIsChannelDialogOpen] = useState(false);
+  const [channelDialogModels, setChannelDialogModels] = useState<string[]>([]);
   const openedPricingQueryRef = React.useRef<string | null>(null);
 
   // Frontend filtering by search query (name, display_name)
@@ -97,6 +102,7 @@ export default function ModelPage() {
   }, [allModels, query]);
   // Selection state for batch operations (must be defined before derived memos)
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [pendingSelected, setPendingSelected] = useState<Set<string>>(new Set());
   const selectedCount = selected.size;
   const officialVisible = React.useMemo(
     () =>
@@ -124,32 +130,42 @@ export default function ModelPage() {
     () => officialVisible.reduce((acc, m) => acc + (selected.has(m.model) ? 1 : 0), 0),
     [officialVisible, selected]
   );
-  const isAllExtensibleSelected = React.useMemo(
-    () => extensibleVisible.length > 0 && extensibleVisible.every(m => selected.has(m.model)),
-    [extensibleVisible, selected]
+  const isAllPendingSelected = React.useMemo(
+    () =>
+      extensibleVisible.length > 0 &&
+      extensibleVisible.every(model => pendingSelected.has(model.model)),
+    [extensibleVisible, pendingSelected]
   );
-  const isSomeExtensibleSelected = React.useMemo(
-    () => extensibleVisible.some(m => selected.has(m.model)),
-    [extensibleVisible, selected]
-  );
-  const extensibleSelectedCount = React.useMemo(
-    () => extensibleVisible.reduce((acc, m) => acc + (selected.has(m.model) ? 1 : 0), 0),
-    [extensibleVisible, selected]
+  const isSomePendingSelected = React.useMemo(
+    () => extensibleVisible.some(model => pendingSelected.has(model.model)),
+    [extensibleVisible, pendingSelected]
   );
   const availableUseCases = React.useMemo(() => {
     const set = new Set<ModelUseCase>();
     models.forEach(m => m.use_cases?.forEach(uc => set.add(uc)));
     return set;
   }, [models]);
-  const visibleModelKeys = React.useMemo(
-    () => new Set([...officialVisible, ...extensibleVisible].map(model => model.model)),
-    [extensibleVisible, officialVisible]
+  const connectedVisibleModelKeys = React.useMemo(
+    () => new Set(officialVisible.map(model => model.model)),
+    [officialVisible]
+  );
+  const pendingVisibleModelKeys = React.useMemo(
+    () => new Set(extensibleVisible.map(model => model.model)),
+    [extensibleVisible]
   );
   const toggleableVisibleModels = React.useMemo(
     () => officialVisible.filter(model => model.is_configured !== false),
     [officialVisible]
   );
   const hasActiveFilters = Boolean(query.trim() || selectedUseCase !== null);
+  const hasAnyConnectedModels = React.useMemo(
+    () => allModels.some(model => model.is_available),
+    [allModels]
+  );
+  const hasAnyPendingModels = React.useMemo(
+    () => allModels.some(model => !model.is_available),
+    [allModels]
+  );
   useEffect(() => {
     // Clear selected use case if it's no longer available
     if (selectedUseCase !== null && !availableUseCases.has(selectedUseCase)) {
@@ -157,12 +173,16 @@ export default function ModelPage() {
     }
   }, [availableUseCases, selectedUseCase]);
   useEffect(() => {
+    setSelected(new Set<string>());
+    setPendingSelected(new Set<string>());
+  }, [provider]);
+  useEffect(() => {
     setSelected(prev => {
       let changed = false;
       const next = new Set<string>();
 
       prev.forEach(modelName => {
-        if (visibleModelKeys.has(modelName)) {
+        if (connectedVisibleModelKeys.has(modelName)) {
           next.add(modelName);
         } else {
           changed = true;
@@ -171,11 +191,32 @@ export default function ModelPage() {
 
       return changed ? next : prev;
     });
-  }, [visibleModelKeys]);
+  }, [connectedVisibleModelKeys]);
+  useEffect(() => {
+    setPendingSelected(prev => {
+      let changed = false;
+      const next = new Set<string>();
+
+      prev.forEach(modelName => {
+        if (pendingVisibleModelKeys.has(modelName)) {
+          next.add(modelName);
+        } else {
+          changed = true;
+        }
+      });
+
+      return changed ? next : prev;
+    });
+  }, [pendingVisibleModelKeys]);
   const { toggleModel } = useToggleModel();
   const { toggleProvider } = useToggleProvider();
   const { toggleBatchModels, isBatchToggling } = useBatchToggleModels();
   const isCustom = detail?.provider_type === 'custom';
+  const needsChannelSetup = Boolean(
+    detail &&
+      !isCustom &&
+      shouldPromptProviderChannelSetup(detail, hasAnyConnectedModels)
+  );
   const { name, description } = useProviderDisplay(detail);
   const accountPermissions = useAccountPermissions();
   const currentOrganization = useOrganizationStore.use.currentOrganization();
@@ -225,6 +266,32 @@ export default function ModelPage() {
     });
   }, []);
 
+  const onSelectPendingRow = useCallback((modelName: string, next: boolean) => {
+    setPendingSelected(prev => {
+      const nextSet = new Set(prev);
+      if (next) nextSet.add(modelName);
+      else nextSet.delete(modelName);
+      return nextSet;
+    });
+  }, []);
+
+  const onToggleAllPending = useCallback(() => {
+    const modelNames = extensibleVisible.map(model => model.model);
+
+    setPendingSelected(prev => {
+      const nextSet = new Set(prev);
+      const allSelected = modelNames.length > 0 && modelNames.every(name => nextSet.has(name));
+
+      if (allSelected) {
+        modelNames.forEach(name => nextSet.delete(name));
+      } else {
+        modelNames.forEach(name => nextSet.add(name));
+      }
+
+      return nextSet;
+    });
+  }, [extensibleVisible]);
+
   const clearSelection = useCallback(() => setSelected(new Set<string>()), []);
 
   const onBatchEnableDisable = useCallback(
@@ -262,8 +329,20 @@ export default function ModelPage() {
       return;
     }
 
-    router.push(`/dashboard/channel?create=1&provider=${encodeURIComponent(provider)}`);
-  }, [canManageModels, isCustom, provider, router]);
+    setChannelDialogModels(Array.from(selected));
+    setIsChannelDialogOpen(true);
+  }, [canManageModels, isCustom, selected]);
+
+  const handleConfigureChannel = useCallback((model: ModelItem) => {
+    setChannelDialogModels([model.model]);
+    setIsChannelDialogOpen(true);
+  }, []);
+
+  const handleConfigurePendingSelected = useCallback(() => {
+    if (!canManageModels || pendingSelected.size === 0) return;
+    setChannelDialogModels(Array.from(pendingSelected));
+    setIsChannelDialogOpen(true);
+  }, [canManageModels, pendingSelected]);
 
   const handleUpdate = async (data: UpdateCustomProviderRequest) => {
     if (detail) {
@@ -365,6 +444,27 @@ export default function ModelPage() {
     }
   };
 
+  const pendingModelsSection =
+    detail && !isCustom && hasAnyPendingModels ? (
+      <PendingModelsList
+        key={provider}
+        models={extensibleVisible}
+        selected={pendingSelected}
+        onSelectRow={onSelectPendingRow}
+        headerAllSelected={isAllPendingSelected}
+        headerSomeSelected={isSomePendingSelected}
+        onHeaderToggle={onToggleAllPending}
+        onConnectModel={handleConfigureChannel}
+        onConnectSelected={handleConfigurePendingSelected}
+        canManage={canManageModels}
+        hasActiveFilters={hasActiveFilters}
+        onClearFilters={() => {
+          setSelectedUseCase(null);
+          setQuery('');
+        }}
+      />
+    ) : null;
+
   if (isLoading && !detail) {
     return (
       <div className="space-y-6">
@@ -406,16 +506,47 @@ export default function ModelPage() {
         onDelete={isCustom ? () => setIsDeleteDialogOpen(true) : undefined}
       />
 
-      <div className="rounded-xl border border-border/70 bg-muted/20 px-4 py-3 text-sm text-muted-foreground">
-        <span className="font-medium text-foreground">
-          {t('aiProviders.management.strategyHint')}
-        </span>{' '}
-        {t('aiProviders.management.strategyDescription')}
-      </div>
+      {needsChannelSetup ? (
+        <div className="flex flex-col gap-3 rounded-lg border border-border bg-muted/30 px-4 py-3 sm:flex-row sm:items-center">
+          <div className="flex min-w-0 items-start gap-3">
+            <span className="mt-0.5 inline-flex size-8 shrink-0 items-center justify-center rounded-md bg-background text-muted-foreground ring-1 ring-border">
+              <RadioTower className="h-4 w-4" />
+            </span>
+            <div className="min-w-0">
+              <div className="text-sm font-medium text-foreground">
+                {t('aiProviders.management.channelGuide.title', { provider: name })}
+              </div>
+              <p className="mt-0.5 text-xs leading-5 text-muted-foreground">
+                {t('aiProviders.management.channelGuide.description')}
+              </p>
+            </div>
+          </div>
+          {canManageModels ? (
+            <Button
+              type="button"
+              variant="link"
+              size="sm"
+              className="h-auto shrink-0 justify-start p-0 sm:ml-auto"
+              onClick={handleAdd}
+            >
+              {t('aiProviders.management.channelGuide.action')}
+              <ArrowRight className="ml-1 h-3.5 w-3.5" />
+            </Button>
+          ) : null}
+        </div>
+      ) : (
+        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <Info className="h-3.5 w-3.5 shrink-0" />
+          <span>
+            {t('aiProviders.management.strategyHint')}{' '}
+            {t('aiProviders.management.strategyDescription')}
+          </span>
+        </div>
+      )}
 
       <div className="space-y-2">
         <ModelsActionsBar
-          totalCount={models.length}
+          totalCount={allModels.length}
           visibleCount={officialVisible.length + extensibleVisible.length}
           query={query}
           onQueryChange={setQuery}
@@ -430,7 +561,11 @@ export default function ModelPage() {
           addLabel={
             isCustom
               ? (t('aiProviders.models.actions.add') as string)
-              : (t('aiProviders.models.actions.addChannel') as string)
+              : selectedCount > 0
+                ? (t('aiProviders.models.actions.addChannelForSelected', {
+                    count: selectedCount,
+                  }) as string)
+                : (t('aiProviders.models.actions.addChannel') as string)
           }
           disabled={!canManageModels || isBatchToggling}
           hasActiveFilters={hasActiveFilters}
@@ -442,124 +577,124 @@ export default function ModelPage() {
         />
       </div>
 
-      <ModelsGroupTable
-        title={t('aiProviders.models.groups.official')}
-        tooltip={t('aiProviders.models.tooltips.official')}
-        IconSlot={
-          <span className="inline-flex items-center justify-center size-6 rounded-md bg-accent/60">
-            <ShieldCheck className="w-4 h-4 text-green-600" />
-          </span>
-        }
-        groupType="official"
-        models={officialVisible}
-        selected={selected}
-        onSelectRow={onSelectRow}
-        headerAllSelected={isAllOfficialSelected}
-        headerSomeSelected={isSomeOfficialSelected}
-        onHeaderToggle={() => {
-          const names = officialVisible.map(m => m.model);
-          setSelected(prev => {
-            const nextSet = new Set(prev);
-            const allSelected = officialSelectedCount === officialVisible.length;
-            if (allSelected) names.forEach(n => nextSet.delete(n));
-            else names.forEach(n => nextSet.add(n));
-            return nextSet;
-          });
-        }}
-        isLoading={isLoading}
-        isTogglingAll={isBatchToggling}
-        isBatchToggling={isBatchToggling}
-        togglingModel={togglingModel}
-        onToggleModel={onToggleModel}
-        onEditPrice={canManageModels ? openPriceDialog : undefined}
-        searchQuery={query}
-        hasTypeFilter={selectedUseCase !== null}
-        onClearFilters={() => {
-          setSelectedUseCase(null);
-          setQuery('');
-        }}
-        onEditModel={
-          isCustom && canManageModels
-            ? m => {
-                setEditingModel(m);
-                setIsModelDialogOpen(true);
-              }
-            : undefined
-        }
-        onDeleteModel={
-          isCustom && canManageModels
-            ? m => {
-                setDeletingModel(m);
-                setIsModelDeleteConfirmOpen(true);
-              }
-            : undefined
-        }
-        readOnly={!canManageModels}
-        isCustom
-      />
+      {!hasAnyConnectedModels ? pendingModelsSection : null}
 
-      <ModelsGroupTable
-        title={t('aiProviders.models.groups.extensible')}
-        tooltip={t('aiProviders.models.tooltips.extensible')}
-        IconSlot={
-          <span className="inline-flex items-center justify-center size-6 rounded-md bg-accent/60">
-            <Puzzle className="w-4 h-4 text-blue-600" />
-          </span>
-        }
-        groupType="extensible"
-        models={extensibleVisible}
-        selected={selected}
-        onSelectRow={onSelectRow}
-        headerAllSelected={isAllExtensibleSelected}
-        headerSomeSelected={isSomeExtensibleSelected}
-        onHeaderToggle={() => {
-          const names = extensibleVisible.map(m => m.model);
-          setSelected(prev => {
-            const nextSet = new Set(prev);
-            const allSelected = extensibleSelectedCount === extensibleVisible.length;
-            if (allSelected) names.forEach(n => nextSet.delete(n));
-            else names.forEach(n => nextSet.add(n));
-            return nextSet;
-          });
-        }}
-        isLoading={isLoading}
-        isTogglingAll={isBatchToggling}
-        isBatchToggling={isBatchToggling}
-        togglingModel={togglingModel}
-        onToggleModel={onToggleModel}
-        onEditPrice={canManageModels ? openPriceDialog : undefined}
-        searchQuery={query}
-        hasTypeFilter={selectedUseCase !== null}
-        readOnly
-        onClearFilters={() => {
-          setSelectedUseCase(null);
-          setQuery('');
-        }}
-        onEditModel={
-          isCustom && canManageModels
-            ? m => {
-                setEditingModel(m);
-                setIsModelDialogOpen(true);
-              }
-            : undefined
-        }
-        onDeleteModel={
-          isCustom && canManageModels
-            ? m => {
-                setDeletingModel(m);
-                setIsModelDeleteConfirmOpen(true);
-              }
-            : undefined
-        }
-        onCreateModel={
-          isCustom && canManageModels
-            ? () => {
-                setEditingModel(null);
-                setIsModelDialogOpen(true);
-              }
-            : undefined
-        }
-      />
+      {isCustom || hasAnyConnectedModels || !hasAnyPendingModels ? (
+        <ModelsGroupTable
+          title={t('aiProviders.models.groups.official')}
+          tooltip={t('aiProviders.models.tooltips.official')}
+          IconSlot={
+            <span className="inline-flex size-6 items-center justify-center rounded-md bg-muted text-muted-foreground">
+              <Info className="h-3.5 w-3.5" />
+            </span>
+          }
+          groupType="official"
+          models={officialVisible}
+          selected={selected}
+          onSelectRow={onSelectRow}
+          headerAllSelected={isAllOfficialSelected}
+          headerSomeSelected={isSomeOfficialSelected}
+          onHeaderToggle={() => {
+            const names = officialVisible.map(m => m.model);
+            setSelected(prev => {
+              const nextSet = new Set(prev);
+              const allSelected = officialSelectedCount === officialVisible.length;
+              if (allSelected) names.forEach(n => nextSet.delete(n));
+              else names.forEach(n => nextSet.add(n));
+              return nextSet;
+            });
+          }}
+          isLoading={isLoading}
+          isTogglingAll={isBatchToggling}
+          isBatchToggling={isBatchToggling}
+          togglingModel={togglingModel}
+          onToggleModel={onToggleModel}
+          onEditPrice={canManageModels ? openPriceDialog : undefined}
+          onConfigureChannel={canManageModels && !isCustom ? handleConfigureChannel : undefined}
+          searchQuery={query}
+          hasTypeFilter={selectedUseCase !== null}
+          onClearFilters={() => {
+            setSelectedUseCase(null);
+            setQuery('');
+          }}
+          onEditModel={
+            isCustom && canManageModels
+              ? m => {
+                  setEditingModel(m);
+                  setIsModelDialogOpen(true);
+                }
+              : undefined
+          }
+          onDeleteModel={
+            isCustom && canManageModels
+              ? m => {
+                  setDeletingModel(m);
+                  setIsModelDeleteConfirmOpen(true);
+                }
+              : undefined
+          }
+          readOnly={!canManageModels}
+          isCustom
+        />
+      ) : null}
+
+      {hasAnyConnectedModels ? pendingModelsSection : null}
+
+      {isCustom ? (
+        <ModelsGroupTable
+          title={t('aiProviders.models.groups.extensible')}
+          tooltip={t('aiProviders.models.tooltips.extensible')}
+          IconSlot={
+            <span className="inline-flex size-6 items-center justify-center rounded-md bg-muted text-muted-foreground">
+              <Info className="h-3.5 w-3.5" />
+            </span>
+          }
+          groupType="extensible"
+          models={extensibleVisible}
+          selected={selected}
+          onSelectRow={onSelectRow}
+          headerAllSelected={false}
+          headerSomeSelected={false}
+          onHeaderToggle={() => undefined}
+          isLoading={isLoading}
+          isTogglingAll={isBatchToggling}
+          isBatchToggling={isBatchToggling}
+          togglingModel={togglingModel}
+          onToggleModel={onToggleModel}
+          onEditPrice={canManageModels ? openPriceDialog : undefined}
+          searchQuery={query}
+          hasTypeFilter={selectedUseCase !== null}
+          readOnly
+          onClearFilters={() => {
+            setSelectedUseCase(null);
+            setQuery('');
+          }}
+          onEditModel={
+            canManageModels
+              ? model => {
+                  setEditingModel(model);
+                  setIsModelDialogOpen(true);
+                }
+              : undefined
+          }
+          onDeleteModel={
+            canManageModels
+              ? model => {
+                  setDeletingModel(model);
+                  setIsModelDeleteConfirmOpen(true);
+                }
+              : undefined
+          }
+          onCreateModel={
+            canManageModels
+              ? () => {
+                  setEditingModel(null);
+                  setIsModelDialogOpen(true);
+                }
+              : undefined
+          }
+        />
+      ) : null}
 
       {/* Floating action bar for batch operations */}
       {canManageModels && selectedCount > 0 && (
@@ -595,6 +730,18 @@ export default function ModelPage() {
           </div>
         </div>
       )}
+
+      <ChannelDialog
+        open={isChannelDialogOpen}
+        onOpenChange={open => {
+          setIsChannelDialogOpen(open);
+          if (!open) setChannelDialogModels([]);
+        }}
+        mode="create"
+        defaultChannelProvider={provider}
+        defaultModels={channelDialogModels}
+        lockChannelProvider
+      />
 
       <CustomProviderDialog
         open={isEditDialogOpen}

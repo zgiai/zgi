@@ -65,7 +65,9 @@ const messages = {
     },
     runtimeStates: {
       available_models: 'Usable models',
-      pending_channels: 'Needs channels',
+      pending_channels: 'Not connected',
+      configured_no_models: 'Models not enabled',
+      unknown: 'Status unknown',
       no_catalog_models: 'No catalog models',
       disabled: 'Closed',
     },
@@ -106,6 +108,13 @@ const messages = {
     strategyHint: 'Channels decide model supply.',
     strategyDescription:
       'Model management decides whether your organization allows that supplied model to be used.',
+    organizationAccess: 'Allow organization use',
+    channelGuide: {
+      title: '{provider} has no access channel yet',
+      description:
+        'Add an API key and select models, then save the channel and complete a connection test before using these models.',
+      action: 'Connect now',
+    },
   },
   providerList: 'Provider List',
   providerListDescription: 'Select an AI model provider to configure',
@@ -341,12 +350,12 @@ const messages = {
       allStatus: 'All Status',
     },
     channelStates: {
-      connected: 'Channel connected',
-      missing: 'Channel missing',
+      connected: 'Source configured',
+      missing: 'No source configured',
     },
     channelHints: {
-      connected: 'This model already has at least one usable route.',
-      missing: 'Configure a channel first before this model can actually run.',
+      connected: 'At least one enabled route declares support for this model.',
+      missing: 'Connect a channel before this model can be called.',
     },
     policyStates: {
       allowed: 'Allowed',
@@ -378,7 +387,10 @@ const messages = {
       configure: 'Configure',
       setPrice: 'Set Price',
       add: 'Add Model',
+      addSource: 'Add another channel',
+      connectSource: 'Connect channel',
       addChannel: 'Add Channel',
+      addChannelForSelected: 'Connect selected models ({count})',
     },
     pricing: {
       input: 'Input',
@@ -417,8 +429,20 @@ const messages = {
       never: 'Never',
     },
     groups: {
-      official: 'Available Models',
+      official: 'Connected Models',
       extensible: 'Needs Channels',
+    },
+    pending: {
+      description:
+        'These catalog models do not have a callable source yet. Select models to connect them together.',
+      selectHint: 'Select models to connect',
+      selectionSummary: '{selected} of {total} selected',
+      connectSelected: 'Connect selected',
+      connectSelectedCount: 'Connect selected ({count})',
+      adminRequired: 'Admin access required',
+      expandAll: 'Show all ({count})',
+      collapse: 'Collapse',
+      noMatches: 'No models needing channels match the current filters',
     },
     tooltips: {
       official:

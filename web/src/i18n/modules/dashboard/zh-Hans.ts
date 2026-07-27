@@ -5,7 +5,7 @@ const messages: DashboardMessages = {
   groups: {
     billing: '费用中心',
     usage: '用量总览',
-    llm: 'AI 能力与接入',
+    llm: 'AI 能力配置',
     security: 'API 令牌',
     org: '组织管理',
     settings: '平台设置',
@@ -18,19 +18,32 @@ const messages: DashboardMessages = {
     usageOverview: '总览',
     usageGroup: '分组统计',
     usageDetails: '使用详情',
+    modelChannels: '模型接入',
     llmProviders: '模型管理',
     channel: '渠道管理',
-    pricingPolicy: '计费策略',
-    apiKeys: 'API 令牌',
+    pricingPolicy: '模型计费',
+    apiKeys: 'API 访问',
     organization: '组织与成员',
-    workspaces: '工作空间管理',
-    contacts: '成员与部门',
-    permissions: '角色与权限',
+    workspaces: '工作空间',
+    contacts: '成员管理',
+    permissions: '角色权限',
     organizationSettings: '组织设置',
     aichatSkills: 'Skill 管理',
-    modelSettings: '默认模型管理',
-    parserSettings: '解析器配置',
+    modelSettings: '默认模型',
+    parserSettings: '文档解析',
     marketplace: '插件市场',
+  },
+  modelChannels: {
+    navigationLabel: '模型与渠道导航',
+    tabs: {
+      models: '模型目录',
+      channels: '接入渠道',
+    },
+    channelCue: '配置密钥',
+    guidance: {
+      models: '选择模型后可直接接入渠道，厂商和已选模型会自动带入',
+      channels: '添加密钥并保存渠道后，请完成连接测试',
+    },
   },
   costCenter: {
     title: '费用中心-账户总览',
@@ -696,10 +709,10 @@ const messages: DashboardMessages = {
     aichatSkills: {
       pageTitle: 'Skill 管理',
       pageSubtitle:
-        '统一管理可在对话、平台操作助手和智能体中使用的 Skill，覆盖办公协作、文档处理、内容创作、数据分析、知识检索和任务自动化。',
+        '统一管理可在对话、小 Z 和智能体中使用的 Skill，覆盖办公协作、文档处理、内容创作、数据分析、知识检索和任务自动化。',
       title: 'Skill 管理',
       description:
-        '统一管理可在对话、平台操作助手和智能体中使用的 Skill，覆盖办公协作、文档处理、内容创作、数据分析、知识检索和任务自动化。',
+        '统一管理可在对话、小 Z 和智能体中使用的 Skill，覆盖办公协作、文档处理、内容创作、数据分析、知识检索和任务自动化。',
       enabledCount: '已启用 {count} 个 Skill',
       sectionCount: '{count} 个 Skill',
       empty: '暂无可用 Skill。',
@@ -728,12 +741,12 @@ const messages: DashboardMessages = {
       sections: {
         system: {
           title: '系统 Skill',
-          description: '由平台提供并维护，可按需启用给对话、平台操作助手和智能体使用。',
+          description: '由平台提供并维护，可按需启用给对话、小 Z 和智能体使用。',
           empty: '暂无系统 Skill。',
         },
         custom: {
           title: '自定义 Skill',
-          description: '上传组织自己的 Skill 包，验证后可启用给对话、平台操作助手和智能体使用。',
+          description: '上传组织自己的 Skill 包，验证后可启用给对话、小 Z 和智能体使用。',
           emptyTitle: '还没有自定义 Skill',
           emptyDescription: '上传 zip 格式的 Skill 包后，会出现在这里并默认保持关闭。',
         },

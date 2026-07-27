@@ -34,6 +34,7 @@
     "test:agent-chat-model-precheck": "node scripts/test-agent-chat-model-precheck.mjs",
     "test:aichat-model-precheck-refresh": "node scripts/test-aichat-model-precheck-refresh.mjs",
     "test:model-selector-risk-marker": "node scripts/test-model-selector-risk-marker.mjs",
+    "test:provider-runtime-state": "node --experimental-strip-types --disable-warning=ExperimentalWarning --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-provider-runtime-state.mjs",
     "test:workflow-draft-precheck-warning": "node scripts/test-workflow-draft-precheck-warning.mjs",
     "test:agent-runtime-database-batch-config": "node scripts/test-agent-runtime-database-batch-config.mjs",
     "test:agent-binding-rebase-merge": "node scripts/test-agent-binding-rebase-merge.mjs",

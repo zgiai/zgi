@@ -331,11 +331,11 @@ const messages: WebappMessages = {
       done: '完成',
     },
     contextual: {
-      assistantLabel: '平台操作助手',
-      close: '收起平台操作助手',
-      resize: '调整平台操作助手宽度',
-      resizeHint: '拖动调整平台操作助手宽度',
-      sheetDescription: '让平台操作助手基于当前页面提供帮助。',
+      assistantLabel: '小 Z',
+      close: '收起小 Z',
+      resize: '调整小 Z 宽度',
+      resizeHint: '拖动调整小 Z 宽度',
+      sheetDescription: '让小 Z 基于当前页面提供帮助。',
       contextItems: '{count} 个上下文项',
       contextSummaryEmpty: '暂无页面上下文',
       contextSummaryItem: '{type}：{title}',
@@ -376,12 +376,12 @@ const messages: WebappMessages = {
         viewOnlyAgentAccess: '仅可查看',
       },
       home: {
-        filesTitle: '平台操作助手',
+        filesTitle: '小 Z',
         filesDescription:
           '基于当前可见或已选文件回答，并协助生成或管理文件。文件变更可能需要确认。',
-        contextTitle: '平台操作助手',
+        contextTitle: '小 Z',
         contextDescription: '基于当前页面上下文回答问题并协助完成操作。',
-        emptyTitle: '平台操作助手',
+        emptyTitle: '小 Z',
         emptyDescription: '描述目标，助手会结合当前页面协助处理。',
       },
       input: {
@@ -702,7 +702,7 @@ const messages: WebappMessages = {
       title: 'Skill 管理',
       conversationDescription: '选择对话中模型可调用的 Skill，用于问答、内容处理和任务协作。',
       platformAssistantDescription:
-        '选择平台操作助手可调用的 Skill，用于结合当前页面上下文回答问题并协助完成操作。',
+        '选择小 Z 可调用的 Skill，用于结合当前页面上下文回答问题并协助完成操作。',
       empty: '当前组织还没有启用可用的 Skill。',
       save: '保存',
       saving: '保存中...',

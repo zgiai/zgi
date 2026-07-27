@@ -3,11 +3,7 @@
 import React, { useMemo } from 'react';
 import { cn } from '@/lib/utils';
 import type { ModelUseCase } from '@/services/types/model';
-import {
-  USE_CASE_ORDER,
-  USE_CASE_SELECTED_COLORS,
-  USE_CASE_UNSELECTED_COLORS,
-} from '@/config/model-colors';
+import { USE_CASE_ORDER } from '@/config/model-colors';
 import { useT } from '@/i18n';
 
 interface ModelTypeChipsProps {
@@ -34,10 +30,10 @@ export default function ModelTypeChips({
         type="button"
         onClick={() => onSelect(null)}
         className={cn(
-          'inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-full border transition-all duration-200',
+          'inline-flex items-center rounded-md border px-3 py-1.5 text-xs font-medium transition-colors',
           isAllSelected
-            ? 'bg-primary text-primary-foreground border-primary shadow-sm'
-            : 'bg-muted/50 text-muted-foreground border-border hover:bg-muted'
+            ? 'border-primary/30 bg-primary/10 text-primary'
+            : 'border-border bg-background text-muted-foreground hover:bg-muted hover:text-foreground'
         )}
       >
         {t('aiProviders.models.filters.allTypes')}
@@ -50,9 +46,10 @@ export default function ModelTypeChips({
             type="button"
             onClick={() => onSelect(selected ? null : type)}
             className={cn(
-              'inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-full border transition-all duration-200',
-              selected ? USE_CASE_SELECTED_COLORS[type] : USE_CASE_UNSELECTED_COLORS[type],
-              selected && 'shadow-sm'
+              'inline-flex items-center rounded-md border px-3 py-1.5 text-xs font-medium transition-colors',
+              selected
+                ? 'border-primary/30 bg-primary/10 text-primary'
+                : 'border-border bg-background text-muted-foreground hover:bg-muted hover:text-foreground'
             )}
           >
             {t(`aiProviders.models.usecases.${type}`)}

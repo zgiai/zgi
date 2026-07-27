@@ -3,7 +3,7 @@ const messages = {
   groups: {
     billing: 'Billing',
     usage: 'Usage Statistics',
-    llm: 'AI & Access',
+    llm: 'AI Configuration',
     security: 'API Keys',
     org: 'Organization',
     settings: 'Platform Settings',
@@ -16,19 +16,32 @@ const messages = {
     usageOverview: 'Overview',
     usageGroup: 'Group Statistics',
     usageDetails: 'Usage Details',
+    modelChannels: 'Model Access',
     llmProviders: 'Model Management',
     channel: 'Channel Management',
-    pricingPolicy: 'Billing Policy',
-    apiKeys: 'API Keys',
+    pricingPolicy: 'Model Billing',
+    apiKeys: 'API Access',
     organization: 'Organization & Members',
-    workspaces: 'Workspace Management',
-    contacts: 'Members & Departments',
-    permissions: 'Roles & Permissions',
+    workspaces: 'Workspaces',
+    contacts: 'Members',
+    permissions: 'Roles & Access',
     organizationSettings: 'Organization Settings',
     aichatSkills: 'Skill Management',
-    modelSettings: 'Default Model Management',
-    parserSettings: 'Parser Settings',
+    modelSettings: 'Default Models',
+    parserSettings: 'Document Parsing',
     marketplace: 'Marketplace',
+  },
+  modelChannels: {
+    navigationLabel: 'Models and channels navigation',
+    tabs: {
+      models: 'Model Catalog',
+      channels: 'Access Channels',
+    },
+    channelCue: 'Add API key',
+    guidance: {
+      models: 'Select models first; the provider and selected models carry into channel setup',
+      channels: 'After adding a key and saving the channel, run a connection test',
+    },
   },
   usage: {
     title: 'Usage Statistics - Overview',
@@ -722,10 +735,10 @@ const messages = {
     aichatSkills: {
       pageTitle: 'Skill Management',
       pageSubtitle:
-        'Manage the Skills available to conversations, the platform assistant, and agents for office collaboration, document processing, content creation, data analysis, knowledge retrieval, and task automation.',
+        'Manage the Skills available to conversations, Z Assistant, and agents for office collaboration, document processing, content creation, data analysis, knowledge retrieval, and task automation.',
       title: 'Skill Management',
       description:
-        'Manage the Skills available to conversations, the platform assistant, and agents for office collaboration, document processing, content creation, data analysis, knowledge retrieval, and task automation.',
+        'Manage the Skills available to conversations, Z Assistant, and agents for office collaboration, document processing, content creation, data analysis, knowledge retrieval, and task automation.',
       enabledCount: '{count} Skills enabled',
       sectionCount: '{count} Skills',
       empty: 'No Skills are available.',
@@ -755,13 +768,13 @@ const messages = {
         system: {
           title: 'System Skills',
           description:
-            'Provided and maintained by the platform, ready to enable for conversations, the platform assistant, and agents.',
+            'Provided and maintained by the platform, ready to enable for conversations, Z Assistant, and agents.',
           empty: 'No built-in Skills are available.',
         },
         custom: {
           title: 'Custom Skills',
           description:
-            'Upload organization-owned Skill packages, then review and enable them for conversations, the platform assistant, and agents.',
+            'Upload organization-owned Skill packages, then review and enable them for conversations, Z Assistant, and agents.',
           emptyTitle: 'No custom Skills yet',
           emptyDescription:
             'Upload a zip Skill package here. Imported Skills stay disabled until you enable them.',

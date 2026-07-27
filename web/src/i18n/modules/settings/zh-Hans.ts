@@ -2,10 +2,10 @@ import { APP_NAME } from '@/lib/config';
 import type { SettingsMessages } from './en-US';
 
 const messages: SettingsMessages = {
-  title: '设置',
-  description: '管理您的工作空间设置和偏好。',
-  pageTitle: '设置',
-  pageDescription: `配置您的${APP_NAME}系统设置和偏好`,
+  title: '个人设置',
+  description: '管理您的账号设置和个人偏好。',
+  pageTitle: '个人设置',
+  pageDescription: `管理${APP_NAME}的主题、语言和账号偏好，仅影响当前账号`,
   searchSettings: '搜索设置...',
   noSettingsFound: '未找到设置',
   system: {
@@ -18,7 +18,7 @@ const messages: SettingsMessages = {
     appearanceLongDesc: '控制后台界面的主色、选中态和基础视觉风格。',
     language: '语言与地区',
     languageDesc: '界面语言',
-    languageLongDesc: '这类全局偏好不属于工作空间，统一放在系统设置里管理。',
+    languageLongDesc: '语言属于当前账号偏好，不随工作空间或组织切换。',
     interfaceLanguage: '界面语言',
     interfaceLanguageDesc: '切换后台界面的显示语言。',
     integrations: '集成',

@@ -22,10 +22,7 @@ import type { ModelItem } from '@/services/types/model';
 import { useT } from '@/i18n';
 import ModelMultiSelector from '@/components/common/model-multi-selector/model-multi-selector';
 import { buildModelSelectionKey } from '@/components/common/model-multi-selector/model-selection';
-import {
-  ArrowLeft,
-  ChevronDown,
-} from 'lucide-react';
+import { ArrowLeft, ChevronDown } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import ChannelProviderSelector, {
@@ -236,6 +233,7 @@ export interface ChannelDialogProps {
   mode: 'create' | 'edit';
   initial?: ChannelDetail | null;
   defaultChannelProvider?: string;
+  defaultModels?: string[];
   lockChannelProvider?: boolean;
   providerOptions?: string[];
 }
@@ -315,6 +313,7 @@ interface ChannelFormProps {
   mode: 'create' | 'edit';
   initial?: ChannelDetail | null;
   defaultChannelProvider?: string;
+  defaultModels?: string[];
   lockChannelProvider?: boolean;
   onOpenChange: (open: boolean) => void;
 }
@@ -323,6 +322,7 @@ function ChannelForm({
   mode,
   initial,
   defaultChannelProvider,
+  defaultModels,
   lockChannelProvider = false,
   onOpenChange,
 }: ChannelFormProps) {
@@ -330,10 +330,13 @@ function ChannelForm({
   const rawInitialChannelProvider =
     initial?.channel_provider ?? initial?.provider ?? defaultChannelProvider ?? 'openai-compatible';
   const initialSetupOption =
-    mode === 'create' && defaultChannelProvider ? getSetupOption(defaultChannelProvider) : undefined;
+    mode === 'create' && defaultChannelProvider
+      ? getSetupOption(defaultChannelProvider)
+      : undefined;
   const initialChannelProvider =
     initialSetupOption?.channelProvider ??
-    getChannelProviderOption(rawInitialChannelProvider)?.value ?? rawInitialChannelProvider;
+    getChannelProviderOption(rawInitialChannelProvider)?.value ??
+    rawInitialChannelProvider;
   const initialProviderOption = getChannelProviderOption(initialChannelProvider);
   const initialFundsMaxLabel = CHANNEL_INITIAL_CREDIT_MAX.toLocaleString();
   const maxInitialFundsUsd = CHANNEL_INITIAL_CREDIT_MAX / CHANNEL_POINTS_PER_USD;
@@ -351,7 +354,11 @@ function ChannelForm({
   // Edit mode: toggle to update API key
   const [updateApiKey, setUpdateApiKey] = React.useState<boolean>(false);
   const [modelsSelected, setModelsSelected] = React.useState<string[]>(
-    Array.isArray(initial?.models) ? (initial?.models as string[]) : []
+    mode === 'create'
+      ? [...(defaultModels ?? [])]
+      : Array.isArray(initial?.models)
+        ? (initial.models as string[])
+        : []
   );
   const [selectedModelItems, setSelectedModelItems] = React.useState<ModelItem[]>([]);
   const [priority, setPriority] = React.useState<string>(
@@ -428,12 +435,6 @@ function ChannelForm({
   };
 
   const disabled = isCreating || isUpdating;
-
-  React.useEffect(() => {
-    if (mode !== 'create') return;
-    setModelsSelected([]);
-    setSelectedModelItems([]);
-  }, [channelProvider, mode]);
 
   const onSubmit = async (): Promise<void> => {
     if (compatibilityWarningKey) {
@@ -691,6 +692,10 @@ function ChannelForm({
               value={channelProvider}
               onChange={option => {
                 if (lockChannelProvider || setupOption?.lockProtocol) return;
+                if (option.value !== channelProvider) {
+                  setModelsSelected([]);
+                  setSelectedModelItems([]);
+                }
                 setChannelProvider(option.value);
                 if (option.defaultApiBaseUrl) {
                   setApiBaseUrl(option.defaultApiBaseUrl);
@@ -923,6 +928,7 @@ export default function ChannelDialog({
   mode,
   initial,
   defaultChannelProvider,
+  defaultModels,
   lockChannelProvider,
   providerOptions: _providerOptions,
 }: ChannelDialogProps): JSX.Element {
@@ -947,6 +953,7 @@ export default function ChannelDialog({
             mode={mode}
             initial={normalizedInitial}
             defaultChannelProvider={defaultChannelProvider}
+            defaultModels={defaultModels}
             lockChannelProvider={lockChannelProvider}
             onOpenChange={onOpenChange}
           />

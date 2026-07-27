@@ -19,7 +19,6 @@ import {
   CreditCard,
   FileSearch,
   KeyRound,
-  RadioTower,
   ReceiptText,
   Settings,
   ShieldCheck,
@@ -36,6 +35,7 @@ interface NavItem {
   title: string;
   href: string;
   icon?: React.ElementType;
+  activePrefixes?: string[];
 }
 
 interface NavGroup {
@@ -48,6 +48,13 @@ interface NavGroup {
 }
 
 const STORAGE_KEY = 'zgi:dashboard:sidebar:groups';
+
+function isNavItemActive(pathname: string, item: NavItem, strict = false): boolean {
+  if (strict) return pathname === item.href;
+
+  const prefixes = item.activePrefixes?.length ? item.activePrefixes : [item.href];
+  return prefixes.some(prefix => pathname === prefix || pathname.startsWith(`${prefix}/`));
+}
 
 function buildDashboardGroups(t: ReturnType<typeof useT<'dashboard'>>) {
   return [
@@ -91,16 +98,16 @@ function buildDashboardGroups(t: ReturnType<typeof useT<'dashboard'>>) {
           icon: ContactRound,
         },
         {
-          key: 'workspaces',
-          title: t('items.workspaces'),
-          href: '/dashboard/organization/workspaces',
-          icon: Building2,
-        },
-        {
           key: 'permissions',
           title: t('items.permissions'),
           href: '/dashboard/organization/permissions',
           icon: ShieldCheck,
+        },
+        {
+          key: 'workspaces',
+          title: t('items.workspaces'),
+          href: '/dashboard/organization/workspaces',
+          icon: Building2,
         },
         {
           key: 'organization-settings',
@@ -117,10 +124,11 @@ function buildDashboardGroups(t: ReturnType<typeof useT<'dashboard'>>) {
       defaultOpen: true,
       items: [
         {
-          key: 'providers',
-          title: t('items.llmProviders'),
+          key: 'model-channels',
+          title: t('items.modelChannels'),
           href: '/dashboard/provider',
           icon: Brain,
+          activePrefixes: ['/dashboard/provider', '/dashboard/channel'],
         },
         {
           key: 'model-settings',
@@ -135,22 +143,16 @@ function buildDashboardGroups(t: ReturnType<typeof useT<'dashboard'>>) {
           icon: FileSearch,
         },
         {
-          key: 'channel',
-          title: t('items.channel'),
-          href: '/dashboard/channel',
-          icon: RadioTower,
+          key: 'api-keys',
+          title: t('items.apiKeys'),
+          href: '/dashboard/api-keys',
+          icon: KeyRound,
         },
         {
           key: 'pricing-policy',
           title: t('items.pricingPolicy'),
           href: '/dashboard/settings/pricing',
           icon: ReceiptText,
-        },
-        {
-          key: 'api-keys',
-          title: t('items.apiKeys'),
-          href: '/dashboard/api-keys',
-          icon: KeyRound,
         },
       ],
     },
@@ -302,10 +304,7 @@ export function DashboardSidebar(): JSX.Element {
             const item = group.items[0];
             const ItemIcon = item.icon || Icon;
             // Use strict match for root dashboard to prevent always-active state
-            const isActive =
-              group.key === 'root'
-                ? pathname === item.href
-                : pathname === item.href || pathname.startsWith(item.href + '/');
+            const isActive = isNavItemActive(pathname, item, group.key === 'root');
             return (
               <Link
                 key={item.key}
@@ -333,7 +332,7 @@ export function DashboardSidebar(): JSX.Element {
           if (isCollapsed) {
             return group.items.map(item => {
               const ItemIcon = item.icon || Icon;
-              const isActive = pathname === item.href || pathname.startsWith(item.href + '/');
+              const isActive = isNavItemActive(pathname, item);
               return (
                 <Link
                   key={item.key}
@@ -379,7 +378,7 @@ export function DashboardSidebar(): JSX.Element {
                 <div className="mt-1 space-y-0.5">
                   {group.items.map(item => {
                     const ItemIcon = item.icon || Icon;
-                    const isActive = pathname === item.href || pathname.startsWith(item.href + '/');
+                    const isActive = isNavItemActive(pathname, item);
                     return (
                       <Link
                         key={item.key}
@@ -503,10 +502,7 @@ export function DashboardMobileSidebar({
               if (isSingleLink) {
                 const item = group.items[0];
                 const ItemIcon = item.icon || Icon;
-                const isActive =
-                  group.key === 'root'
-                    ? pathname === item.href
-                    : pathname === item.href || pathname.startsWith(item.href + '/');
+                const isActive = isNavItemActive(pathname, item, group.key === 'root');
 
                 return (
                   <Link
@@ -548,8 +544,7 @@ export function DashboardMobileSidebar({
                     <div className="mt-1 space-y-0.5">
                       {group.items.map(item => {
                         const ItemIcon = item.icon || Icon;
-                        const isActive =
-                          pathname === item.href || pathname.startsWith(item.href + '/');
+                        const isActive = isNavItemActive(pathname, item);
                         return (
                           <Link
                             key={item.key}
