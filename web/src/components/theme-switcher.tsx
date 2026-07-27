@@ -9,6 +9,9 @@ import {
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Palette, Sun, Monitor, Check, Sparkles } from 'lucide-react';
@@ -176,77 +179,56 @@ export function ThemeSwitcher({
   );
 }
 
-// Quick toggle is hidden while dark mode is temporarily disabled.
-export function QuickThemeToggle({ className }: { className?: string }) {
-  void className;
-  return null;
-}
+export function ThemeSwitcherSubmenu() {
+  const t = useT();
+  const { theme, setTheme, themes } = useSafeTheme();
 
-// Theme preview component for settings
-export function ThemePreview({
-  themeName,
-  isSelected,
-  onSelect,
-  className,
-  displayName,
-  description,
-}: {
-  themeName: Theme;
-  isSelected: boolean;
-  onSelect: (theme: Theme) => void;
-  className?: string;
-  displayName?: string;
-  description?: string;
-}) {
-  const { themes } = useSafeTheme();
-  const themeConfig = themes.find(t => t.name === themeName);
-
-  if (!themeConfig?.preview) {
+  if (!ENABLE_THEME_SWITCH) {
     return null;
   }
 
   return (
-    <button
-      onClick={() => onSelect(themeName)}
-      className={cn(
-        'relative w-full rounded-lg border p-4 text-left transition-colors duration-150',
-        'focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2',
-        'bg-card hover:bg-muted/40',
-        isSelected
-          ? 'border-primary/70 bg-primary/[0.025]'
-          : 'border-border hover:border-primary/30',
-        className
-      )}
-    >
-      <div className="space-y-3">
-        <div className="flex gap-2">
-          <div
-            className="h-4 w-4 rounded-full border border-border/60"
-            style={{ backgroundColor: themeConfig.preview.primary }}
-          />
-          <div
-            className="h-4 w-4 rounded-full border border-border/60"
-            style={{ backgroundColor: themeConfig.preview.secondary }}
-          />
-          <div
-            className="h-4 w-4 rounded-full border border-border/60"
-            style={{ backgroundColor: themeConfig.preview.background }}
-          />
-        </div>
+    <DropdownMenuSub>
+      <DropdownMenuSubTrigger className="gap-2">
+        <Palette className="h-4 w-4" />
+        <span>{t('settings.themes.chooseTheme')}</span>
+      </DropdownMenuSubTrigger>
+      <DropdownMenuSubContent sideOffset={6} className="w-52">
+        {THEME_OPTIONS.map(option => {
+          const preview = themes.find(themeConfig => themeConfig.name === option.key)?.preview;
 
-        <div>
-          <div className="text-sm font-medium leading-5 text-foreground">{displayName}</div>
-          {description && (
-            <div className="mt-1 text-xs leading-5 text-muted-foreground">{description}</div>
-          )}
-        </div>
-      </div>
-
-      {isSelected && (
-        <div className="absolute right-3 top-3 flex h-5 w-5 items-center justify-center rounded-full bg-primary text-primary-foreground">
-          <Check className="h-3 w-3" />
-        </div>
-      )}
-    </button>
+          return (
+            <DropdownMenuItem
+              key={option.key}
+              onClick={() => setTheme(option.key)}
+              className="gap-2"
+            >
+              <span className="flex shrink-0 items-center gap-1" aria-hidden="true">
+                <span
+                  className="h-3 w-3 rounded-full border border-border/70"
+                  style={{ backgroundColor: preview?.primary }}
+                />
+                <span
+                  className="h-3 w-3 rounded-full border border-border/70"
+                  style={{ backgroundColor: preview?.secondary }}
+                />
+                <span
+                  className="h-3 w-3 rounded-full border border-border/70"
+                  style={{ backgroundColor: preview?.background }}
+                />
+              </span>
+              <span className="min-w-0 flex-1 truncate">{t(option.labelKey)}</span>
+              {theme === option.key && <Check className="h-4 w-4 shrink-0 text-primary" />}
+            </DropdownMenuItem>
+          );
+        })}
+      </DropdownMenuSubContent>
+    </DropdownMenuSub>
   );
+}
+
+// Quick toggle is hidden while dark mode is temporarily disabled.
+export function QuickThemeToggle({ className }: { className?: string }) {
+  void className;
+  return null;
 }

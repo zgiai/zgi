@@ -3,7 +3,6 @@
 import * as React from 'react';
 import Link from 'next/link';
 import {
-  Settings,
   ArrowRightToLine,
   Home,
   Atom,
@@ -36,7 +35,7 @@ import {
   WORKFLOW_VISIBLE_PERMISSION_CODES,
   type PermissionCode,
 } from '@/constants/permissions';
-import { ENABLE_THEME_SWITCH, withBasePathIfInternal } from '@/lib/config';
+import { withBasePathIfInternal } from '@/lib/config';
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
 import { useWorkflowDebugFocusMode } from '@/components/workflow/hooks/use-debug-focus-mode';
 import { usePersistentSidebarCollapse } from '@/hooks/use-persistent-sidebar-collapse';
@@ -138,13 +137,7 @@ function filterConsoleNavGroups(
 ) {
   return groups
     .map(group => {
-      let items = group.items;
-
-      if (!ENABLE_THEME_SWITCH) {
-        items = items.filter(item => item.href !== '/console/settings');
-      }
-
-      items = items.filter(item =>
+      const items = group.items.filter(item =>
         shouldShowConsoleNavItem(item, isWorkspaceRequired, hasPermission, hasAnyPermission)
       );
 
@@ -302,7 +295,6 @@ export function ConsoleSidebar({
             href: '/console/workspace',
             icon: Users,
           },
-          { title: t('systemSettings'), href: '/console/settings', icon: Settings },
         ],
       },
     ],
@@ -680,7 +672,6 @@ export function ConsoleMobileSidebar({
             href: '/console/workspace',
             icon: Users,
           },
-          { title: t('systemSettings'), href: '/console/settings', icon: Settings },
         ],
       },
     ];

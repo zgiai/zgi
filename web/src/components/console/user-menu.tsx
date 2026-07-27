@@ -38,6 +38,7 @@ import { ORGANIZATION_KEYS } from '@/hooks/query-keys';
 import { getOrganizationDisplayName } from '@/utils/organization-display';
 import { normalizeOrganizationRole } from '@/utils/role-labels';
 import { getUserContactDisplay } from '@/utils/account-display';
+import { ThemeSwitcherSubmenu } from '@/components/theme-switcher';
 
 export function UserMenu() {
   const router = useRouter();
@@ -218,6 +219,7 @@ export function UserMenu() {
             </DropdownMenuSubContent>
           </DropdownMenuSub>
         )}
+        <ThemeSwitcherSubmenu />
         {/* Profile */}
         <DropdownMenuItem asChild>
           <Link href="/profile" className="!cursor-pointer">

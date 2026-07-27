@@ -157,7 +157,6 @@ export const ZGI_CONSOLE_SITE_MAP = [
     label: 'Workspace Settings',
     purpose: 'workspace configuration',
   },
-  { href: '/console/settings', label: 'System Settings', purpose: 'account and system settings' },
 ] as const;
 
 const ZGI_CONSOLE_EXACT_ROUTES: ReadonlySet<string> = new Set(
