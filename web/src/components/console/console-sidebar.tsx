@@ -179,9 +179,40 @@ export function ConsoleSidebar({
     isDebugFocusMode || temporarilyCollapsed
   );
   const isTemporarilyCollapsed = isDebugFocusMode || temporarilyCollapsed;
-  const isCollapsed = isTemporarilyCollapsed || persistedIsCollapsed;
+  const [isHoverExpanded, setIsHoverExpanded] = React.useState(false);
+  const hoverTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const layoutIsCollapsed = isTemporarilyCollapsed || persistedIsCollapsed;
+  const isCollapsed = layoutIsCollapsed && !isHoverExpanded;
 
   const toggleCollapse = () => setIsCollapsed(prev => !prev);
+
+  React.useEffect(() => {
+    if (!layoutIsCollapsed) {
+      if (hoverTimerRef.current) {
+        clearTimeout(hoverTimerRef.current);
+        hoverTimerRef.current = null;
+      }
+      setIsHoverExpanded(false);
+    }
+  }, [layoutIsCollapsed]);
+
+  React.useEffect(
+    () => () => {
+      if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
+    },
+    []
+  );
+
+  const scheduleHoverExpanded = React.useCallback((expanded: boolean) => {
+    if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
+    hoverTimerRef.current = setTimeout(
+      () => {
+        setIsHoverExpanded(expanded);
+        hoverTimerRef.current = null;
+      },
+      expanded ? 60 : 220
+    );
+  }, []);
 
   // Group open state
   const [openGroups, setOpenGroups] = React.useState<Record<string, boolean>>(() => {
@@ -386,42 +417,29 @@ export function ConsoleSidebar({
         )}
 
         {navGroups.map(group => {
-          // If collapsed, we flatten the structure visually (hide headers, show items)
-          if (isCollapsed) {
-            return group.items.map(item => {
-              const Icon = item.icon;
-              const isActive = isItemActive(activePathname, item.href);
-              return (
-                <CollapsedNavTooltip key={item.href} label={item.title}>
-                  <Link
-                    href={item.href}
-                    className={cn(
-                      'flex w-8 items-center justify-center rounded-md py-1.5 text-[13px] font-medium transition-colors',
-                      'text-foreground/70 hover:bg-muted/70 hover:text-foreground',
-                      isActive && 'bg-muted/80 text-foreground'
-                    )}
-                  >
-                    <Icon
-                      size={16}
-                      className={cn('shrink-0 text-foreground/65', isActive && 'text-foreground')}
-                    />
-                  </Link>
-                </CollapsedNavTooltip>
-              );
-            });
-          }
-
           const isExpanded = openGroups[group.key] ?? true;
 
           return (
-            <div key={group.key} className="w-full pt-2">
+            <div
+              key={group.key}
+              className={cn(
+                'w-full transition-[padding] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none',
+                isCollapsed ? 'pt-0' : 'pt-2'
+              )}
+            >
               <button
                 type="button"
                 onClick={() => toggleGroup(group.key)}
                 className={cn(
-                  'w-full flex items-center justify-between rounded-md px-2 py-1 text-[12px]',
-                  'font-medium text-foreground/55 hover:bg-muted/60 hover:text-foreground/80'
+                  'flex w-full origin-left items-center justify-between overflow-hidden rounded-md px-2 text-[12px]',
+                  'font-medium text-foreground/55 hover:bg-muted/60 hover:text-foreground/80',
+                  'transition-[max-height,opacity,transform,padding] duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none',
+                  isCollapsed
+                    ? 'pointer-events-none max-h-0 -translate-x-1 py-0 opacity-0'
+                    : 'max-h-7 translate-x-0 py-1 opacity-100'
                 )}
+                tabIndex={isCollapsed ? -1 : 0}
+                aria-hidden={isCollapsed}
               >
                 <span className="truncate">{group.title}</span>
                 <ChevronDown
@@ -432,17 +450,20 @@ export function ConsoleSidebar({
                 />
               </button>
 
-              {isExpanded && (
-                <div className="mt-1 space-y-0.5">
+              {(isCollapsed || isExpanded) && (
+                <div className={cn('space-y-0.5', isCollapsed ? 'mt-0' : 'mt-1')}>
                   {group.items.map(item => {
                     const Icon = item.icon;
                     const isActive = isItemActive(activePathname, item.href);
-                    return (
+                    const navLink = (
                       <Link
                         key={item.href}
                         href={item.href}
                         className={cn(
-                          'flex items-center gap-2 rounded-md px-2 py-1.5 text-[13px] transition-colors',
+                          'flex h-8 items-center rounded-md py-1.5 text-[13px]',
+                          'transition-[width,padding,background-color,color,transform] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none',
+                          'active:scale-[0.98]',
+                          isCollapsed ? 'w-8 justify-center px-0' : 'w-full justify-start px-2',
                           isActive
                             ? 'bg-muted/80 text-foreground'
                             : 'text-foreground/70 hover:bg-muted/70 hover:text-foreground'
@@ -455,8 +476,25 @@ export function ConsoleSidebar({
                             isActive && 'text-foreground'
                           )}
                         />
-                        <span className="truncate font-medium">{item.title}</span>
+                        <span
+                          className={cn(
+                            'truncate font-medium transition-[max-width,margin,opacity,transform] duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none',
+                            isCollapsed
+                              ? 'ml-0 max-w-0 -translate-x-1 opacity-0'
+                              : 'ml-2 max-w-32 translate-x-0 opacity-100 delay-75'
+                          )}
+                        >
+                          {item.title}
+                        </span>
                       </Link>
+                    );
+
+                    return isCollapsed ? (
+                      <CollapsedNavTooltip key={item.href} label={item.title}>
+                        {navLink}
+                      </CollapsedNavTooltip>
+                    ) : (
+                      navLink
                     );
                   })}
                 </div>
@@ -523,43 +561,59 @@ export function ConsoleSidebar({
   }
   return (
     <aside
-      className={cn(
-        'hidden md:flex md:flex-col shrink-0 border-r border-border/60 bg-background text-sidebar-foreground transition-[width] duration-300 ease-in-out',
-        isCollapsed ? 'w-12' : 'w-44'
-      )}
+      onPointerEnter={event => {
+        if (event.pointerType !== 'mouse') return;
+        if (layoutIsCollapsed) {
+          scheduleHoverExpanded(true);
+        }
+      }}
+      onPointerLeave={event => {
+        if (event.pointerType !== 'mouse') return;
+        scheduleHoverExpanded(false);
+      }}
+      className={cn('relative hidden shrink-0 md:block', layoutIsCollapsed ? 'w-12' : 'w-44')}
     >
-      {sidebarContent}
-      {!isTemporarilyCollapsed ? (
-        <div className={cn('shrink-0 flex p-2 pt-1', isCollapsed && 'justify-center')}>
-          <Button
-            onClick={toggleCollapse}
-            variant="ghost"
-            size="xs"
-            aria-label={isCollapsed ? t('expand') : t('collapse')}
-            className={cn(
-              'flex h-7 items-center rounded-md py-0 text-[13px] font-medium transition-colors gap-0',
-              isCollapsed ? 'justify-center w-8 px-0' : 'justify-start w-full px-2',
-              'text-foreground/70 hover:bg-muted/70 hover:text-foreground'
-            )}
-          >
-            <ArrowRightToLine
-              size={16}
+      <div
+        className={cn(
+          'absolute inset-y-0 left-0 z-40 flex flex-col overflow-hidden border-r border-border/60 bg-background text-sidebar-foreground',
+          'will-change-[width] transition-[width,box-shadow] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none',
+          isCollapsed ? 'w-12' : 'w-44',
+          layoutIsCollapsed && !isCollapsed && 'shadow-[12px_0_28px_-18px_rgba(15,23,42,0.45)]'
+        )}
+      >
+        {sidebarContent}
+        {!isTemporarilyCollapsed ? (
+          <div className={cn('shrink-0 flex p-2 pt-1', isCollapsed && 'justify-center')}>
+            <Button
+              onClick={toggleCollapse}
+              variant="ghost"
+              size="xs"
+              aria-label={isCollapsed ? t('expand') : t('collapse')}
               className={cn(
-                'shrink-0 transition-transform duration-300',
-                !isCollapsed && 'rotate-180'
-              )}
-            />
-            <span
-              className={cn(
-                'truncate transition-all duration-300 ml-2 opacity-100 font-normal',
-                isCollapsed && 'ml-0 opacity-0 w-0 hidden'
+                'flex h-7 items-center rounded-md py-0 text-[13px] font-medium transition-colors gap-0',
+                isCollapsed ? 'justify-center w-8 px-0' : 'justify-start w-full px-2',
+                'text-foreground/70 hover:bg-muted/70 hover:text-foreground'
               )}
             >
-              {isCollapsed ? t('expand') : t('collapse')}
-            </span>
-          </Button>
-        </div>
-      ) : null}
+              <ArrowRightToLine
+                size={16}
+                className={cn(
+                  'shrink-0 transition-transform duration-300',
+                  !isCollapsed && 'rotate-180'
+                )}
+              />
+              <span
+                className={cn(
+                  'truncate transition-all duration-300 ml-2 opacity-100 font-normal',
+                  isCollapsed && 'ml-0 opacity-0 w-0 hidden'
+                )}
+              >
+                {isCollapsed ? t('expand') : t('collapse')}
+              </span>
+            </Button>
+          </div>
+        ) : null}
+      </div>
     </aside>
   );
 }

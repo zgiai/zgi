@@ -834,6 +834,8 @@ const messages: AgentsMessages = {
       model_service_timeout: '模型服务连接超时，请稍后重试。',
       model_service_unavailable: '模型服务暂时不可用，请稍后重试。',
       model_invocation_failed: '模型调用失败，请稍后重试。',
+      server_unavailable:
+        'AI 服务暂时异常，可能是模型渠道或上游服务不可用。请稍后重试；若持续失败，请联系管理员检查模型与渠道状态。',
       loadRunsFailed: '加载智能体运行记录失败',
       loadRunDetailFailed: '加载运行详情失败',
       loadNodeExecutionsFailed: '加载节点执行记录失败',

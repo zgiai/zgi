@@ -138,7 +138,9 @@ const messages: DbsMessages = {
     discardConfirmDescription: '确认后将丢弃当前修改并退出编辑状态。',
     discardConfirmAction: '确认不保存',
     rowsPerPage: '每页行数',
+    perPage: '每页',
     sortBy: '排序字段',
+    sort: '排序',
     systemFields: {
       id: 'ID',
       uuid: '唯一标识',
@@ -149,6 +151,8 @@ const messages: DbsMessages = {
     descending: '降序',
     addRow: '新增行',
     edit: '编辑',
+    editData: '编辑数据',
+    fieldSettings: '字段设置',
     save: '保存',
     cancel: '取消',
     actions: '操作',
@@ -157,7 +161,7 @@ const messages: DbsMessages = {
     search: '搜索当前页',
     searchPlaceholder: '搜索已加载行...',
     columns: {
-      title: '显示/隐藏列',
+      title: '列设置',
       visibleColumns: '显示列',
       keepOneVisible: '至少保留一列可见',
     },

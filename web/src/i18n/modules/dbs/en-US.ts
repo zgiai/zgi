@@ -149,7 +149,9 @@ const messages = {
     discardConfirmDescription: 'Your current changes will not be saved.',
     discardConfirmAction: 'Discard changes',
     rowsPerPage: 'Rows per page',
+    perPage: 'Per page',
     sortBy: 'Sort by',
+    sort: 'Sort',
     systemFields: {
       id: 'ID',
       uuid: 'Unique identifier',
@@ -160,6 +162,8 @@ const messages = {
     descending: 'Descending',
     addRow: 'Add Row',
     edit: 'Edit',
+    editData: 'Edit data',
+    fieldSettings: 'Field settings',
     save: 'Save',
     cancel: 'Cancel',
     actions: 'Actions',
@@ -168,7 +172,7 @@ const messages = {
     search: 'Search current page',
     searchPlaceholder: 'Search loaded rows...',
     columns: {
-      title: 'Show/Hide Columns',
+      title: 'Column settings',
       visibleColumns: 'Visible columns',
       keepOneVisible: 'Keep at least one column visible',
     },
