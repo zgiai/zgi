@@ -61,6 +61,14 @@ func Decide(req Request, policy Policy) Decision {
 		decision := base.withStatus(DecisionStatusBlocked, "critical risk tools are blocked by policy", false)
 		return finalizeDecision(decision, tier, req)
 	}
+	if manifest.ApprovalEveryInvocation {
+		if grant, ok := matchingOneShotApprovalGrant(req, manifest, assets); ok {
+			decision := base.withStatus(DecisionStatusAllowed, "allowed by the approval for this invocation", false)
+			decision = decision.withMatchedGrant(grant)
+			return finalizeDecision(decision, tier, req)
+		}
+		return finalizeDecision(base.needsApproval(tier, req, "tool policy requires approval for every invocation"), tier, req)
+	}
 	if preauthorization != nil && preauthorization.Required {
 		base.Preauthorization = preauthorization
 		if base.Preauthorization.Matched {
@@ -151,19 +159,23 @@ func approvalEvent(decision Decision, tier PermissionTier, req Request) *Approva
 	manifest := decision.Manifest
 	now := time.Now().UTC()
 	return &ApprovalEvent{
-		Type:               ApprovalEventTypeAssetToolApproval,
-		CorrelationID:      decision.CorrelationID,
-		ToolID:             manifest.ToolID,
-		SkillID:            manifest.SkillID,
-		Domain:             manifest.Domain,
-		Effect:             manifest.Effect,
-		AssetType:          manifest.AssetType,
-		RiskLevel:          manifest.RiskLevel,
-		Assets:             decision.Assets,
-		Reversible:         manifest.Reversible,
-		BulkSensitive:      manifest.BulkSensitive,
-		ExternalSideEffect: manifest.ExternalSideEffect,
-		PermissionTier:     tier,
+		Type:                    ApprovalEventTypeAssetToolApproval,
+		CorrelationID:           decision.CorrelationID,
+		ToolID:                  manifest.ToolID,
+		SkillID:                 manifest.SkillID,
+		Domain:                  manifest.Domain,
+		Effect:                  manifest.Effect,
+		AssetType:               manifest.AssetType,
+		RiskLevel:               manifest.RiskLevel,
+		Assets:                  decision.Assets,
+		Reversible:              manifest.Reversible,
+		BulkSensitive:           manifest.BulkSensitive,
+		ExternalSideEffect:      manifest.ExternalSideEffect,
+		DataEgress:              manifest.DataEgress,
+		ExternalDestination:     manifest.ExternalDestination,
+		SensitiveDataAllowed:    manifest.SensitiveDataAllowed,
+		ApprovalEveryInvocation: manifest.ApprovalEveryInvocation,
+		PermissionTier:          tier,
 		Grant: SessionGrant{
 			ConversationID:        strings.TrimSpace(req.ConversationID),
 			OrganizationID:        strings.TrimSpace(req.OrganizationID),
@@ -174,6 +186,9 @@ func approvalEvent(decision Decision, tier PermissionTier, req Request) *Approva
 			ToolID:                manifest.ToolID,
 			Effect:                manifest.Effect,
 			AssetType:             manifest.AssetType,
+			DataEgress:            manifest.DataEgress,
+			ExternalDestination:   manifest.ExternalDestination,
+			SensitiveDataAllowed:  manifest.SensitiveDataAllowed,
 			Assets:                decision.Assets,
 			RiskLevel:             manifest.RiskLevel,
 			ApprovalCorrelationID: decision.CorrelationID,
@@ -186,17 +201,20 @@ func approvalEvent(decision Decision, tier PermissionTier, req Request) *Approva
 func modelFeedback(decision Decision, tier PermissionTier) map[string]interface{} {
 	manifest := decision.Manifest
 	feedback := map[string]interface{}{
-		"status":            string(decision.Status),
-		"reason":            decision.Reason,
-		"correlation_id":    decision.CorrelationID,
-		"tool_id":           manifest.ToolID,
-		"skill_id":          manifest.SkillID,
-		"effect":            string(manifest.Effect),
-		"asset_type":        manifest.AssetType,
-		"asset_count":       len(decision.Assets),
-		"risk_level":        string(manifest.RiskLevel),
-		"permission_tier":   string(tier),
-		"requires_approval": decision.RequiresApproval,
+		"status":                 string(decision.Status),
+		"reason":                 decision.Reason,
+		"correlation_id":         decision.CorrelationID,
+		"tool_id":                manifest.ToolID,
+		"skill_id":               manifest.SkillID,
+		"effect":                 string(manifest.Effect),
+		"asset_type":             manifest.AssetType,
+		"asset_count":            len(decision.Assets),
+		"risk_level":             string(manifest.RiskLevel),
+		"permission_tier":        string(tier),
+		"requires_approval":      decision.RequiresApproval,
+		"data_egress":            manifest.DataEgress,
+		"external_destination":   manifest.ExternalDestination,
+		"sensitive_data_allowed": manifest.SensitiveDataAllowed,
 	}
 	if decision.ApprovedByCorrelationID != "" {
 		feedback["approved_by_correlation_id"] = decision.ApprovedByCorrelationID
@@ -238,30 +256,33 @@ func assetOperationAuditPayload(decision Decision, tier PermissionTier, req Requ
 		return nil
 	}
 	audit := map[string]interface{}{
-		"schema_version":       "tool_governance.asset_operation.v1",
-		"event_type":           "asset_operation",
-		"correlation_id":       strings.TrimSpace(decision.CorrelationID),
-		"conversation_id":      strings.TrimSpace(req.ConversationID),
-		"organization_id":      strings.TrimSpace(req.OrganizationID),
-		"user_id":              strings.TrimSpace(req.UserID),
-		"governance_status":    string(decision.Status),
-		"requires_approval":    decision.RequiresApproval,
-		"decision_reason":      strings.TrimSpace(decision.Reason),
-		"tool_id":              manifest.ToolID,
-		"skill_id":             firstNonEmptyString(req.SkillID, manifest.SkillID),
-		"provider_type":        strings.TrimSpace(req.ProviderType),
-		"provider_id":          strings.TrimSpace(req.ProviderID),
-		"domain":               manifest.Domain,
-		"effect":               string(manifest.Effect),
-		"asset_type":           manifest.AssetType,
-		"asset_count":          len(decision.Assets),
-		"risk_level":           string(manifest.RiskLevel),
-		"permission_tier":      string(tier),
-		"reversible":           manifest.Reversible,
-		"bulk_sensitive":       manifest.BulkSensitive,
-		"external_side_effect": manifest.ExternalSideEffect,
-		"audit_required":       manifest.AuditRequired,
-		"idempotency_required": manifest.IdempotencyRequired,
+		"schema_version":         "tool_governance.asset_operation.v1",
+		"event_type":             "asset_operation",
+		"correlation_id":         strings.TrimSpace(decision.CorrelationID),
+		"conversation_id":        strings.TrimSpace(req.ConversationID),
+		"organization_id":        strings.TrimSpace(req.OrganizationID),
+		"user_id":                strings.TrimSpace(req.UserID),
+		"governance_status":      string(decision.Status),
+		"requires_approval":      decision.RequiresApproval,
+		"decision_reason":        strings.TrimSpace(decision.Reason),
+		"tool_id":                manifest.ToolID,
+		"skill_id":               firstNonEmptyString(req.SkillID, manifest.SkillID),
+		"provider_type":          strings.TrimSpace(req.ProviderType),
+		"provider_id":            strings.TrimSpace(req.ProviderID),
+		"domain":                 manifest.Domain,
+		"effect":                 string(manifest.Effect),
+		"asset_type":             manifest.AssetType,
+		"asset_count":            len(decision.Assets),
+		"risk_level":             string(manifest.RiskLevel),
+		"permission_tier":        string(tier),
+		"reversible":             manifest.Reversible,
+		"bulk_sensitive":         manifest.BulkSensitive,
+		"external_side_effect":   manifest.ExternalSideEffect,
+		"data_egress":            manifest.DataEgress,
+		"external_destination":   manifest.ExternalDestination,
+		"sensitive_data_allowed": manifest.SensitiveDataAllowed,
+		"audit_required":         manifest.AuditRequired,
+		"idempotency_required":   manifest.IdempotencyRequired,
 	}
 	if len(manifest.PermissionScopes) > 0 {
 		audit["permission_scopes"] = manifest.PermissionScopes
@@ -482,7 +503,9 @@ func matchingSessionGrant(req Request, manifest Manifest, assets []AssetRef) (Se
 			!grantScopeMatches(strings.TrimSpace(req.ProviderID), grant.ProviderID) {
 			continue
 		}
-		if grant.ToolID != manifest.ToolID || grant.Effect != manifest.Effect || grant.AssetType != manifest.AssetType {
+		if grant.ToolID != manifest.ToolID || grant.Effect != manifest.Effect || grant.AssetType != manifest.AssetType ||
+			grant.DataEgress != manifest.DataEgress || grant.ExternalDestination != manifest.ExternalDestination ||
+			grant.SensitiveDataAllowed != manifest.SensitiveDataAllowed {
 			continue
 		}
 		if RiskRank(grant.RiskLevel) < RiskRank(manifest.RiskLevel) {
@@ -500,6 +523,22 @@ func matchingSessionGrant(req Request, manifest Manifest, assets []AssetRef) (Se
 		return grant, true
 	}
 	return SessionGrant{}, false
+}
+
+func matchingOneShotApprovalGrant(req Request, manifest Manifest, assets []AssetRef) (SessionGrant, bool) {
+	correlationID := strings.TrimSpace(req.CorrelationID)
+	if correlationID == "" {
+		return SessionGrant{}, false
+	}
+	oneShotRequest := req
+	oneShotRequest.SessionGrants = make([]SessionGrant, 0, len(req.SessionGrants))
+	for _, raw := range req.SessionGrants {
+		grant := normalizeSessionGrant(raw)
+		if grant.ApprovalCorrelationID == correlationID {
+			oneShotRequest.SessionGrants = append(oneShotRequest.SessionGrants, grant)
+		}
+	}
+	return matchingSessionGrant(oneShotRequest, manifest, assets)
 }
 
 func grantScopeMatches(requestValue string, grantValue string) bool {

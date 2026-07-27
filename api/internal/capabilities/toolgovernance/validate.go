@@ -44,6 +44,9 @@ func ValidateManifest(manifest Manifest) (Manifest, error) {
 	if len(normalized.PermissionScopes) == 0 {
 		problems = append(problems, "permission_scopes is required")
 	}
+	if normalized.DataEgress && normalized.ExternalDestination == "" {
+		problems = append(problems, "external_destination is required when data_egress is true")
+	}
 
 	if len(problems) > 0 {
 		return Manifest{}, fmt.Errorf("invalid tool governance manifest: %s", strings.Join(problems, "; "))

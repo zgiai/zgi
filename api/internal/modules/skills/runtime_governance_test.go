@@ -688,6 +688,38 @@ func TestCallSkillToolMatchingSessionGrantAllowsEnginePath(t *testing.T) {
 	}
 }
 
+func TestSessionGrantFromMapPreservesDataEgressScope(t *testing.T) {
+	tests := []struct {
+		name  string
+		input map[string]interface{}
+	}{
+		{
+			name: "snake case",
+			input: map[string]interface{}{
+				"data_egress":            true,
+				"external_destination":   "api.exa.ai",
+				"sensitive_data_allowed": true,
+			},
+		},
+		{
+			name: "camel case",
+			input: map[string]interface{}{
+				"dataEgress":           "true",
+				"externalDestination":  "api.exa.ai",
+				"sensitiveDataAllowed": true,
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			grant := sessionGrantFromMap(tt.input)
+			if !grant.DataEgress || grant.ExternalDestination != "api.exa.ai" || !grant.SensitiveDataAllowed {
+				t.Fatalf("session grant = %#v, want preserved data-egress scope", grant)
+			}
+		})
+	}
+}
+
 func TestPolicyToolGovernanceMatchingSessionGrantCarriesApprovalCorrelation(t *testing.T) {
 	gateway := NewPolicyToolGovernanceGateway(toolgovernance.DefaultPolicy())
 	decision, err := gateway.DecideSkillTool(context.Background(), ToolGovernanceRequest{

@@ -14,6 +14,10 @@ import type {
   AgentWorkflowBinding,
   AgentWorkflowBindingCandidate,
 } from '@/services/types/agent';
+import type {
+  AgentIntegrationConnectionBinding,
+  AgentIntegrationConnectionCandidate,
+} from '@/services/types/integration';
 import type { Dataset } from '@/services/types/dataset';
 import { AgentRuntimeDatabaseSection } from './sections/database-section';
 import { AgentRuntimeExperienceSection } from './sections/experience-section';
@@ -23,6 +27,7 @@ import { AgentRuntimeMemorySection } from './sections/memory-section';
 import { AgentRuntimeModelSection } from './sections/model-section';
 import { AgentRuntimeSkillSection } from './sections/skill-section';
 import { AgentRuntimeWorkflowSection } from './sections/workflow-section';
+import { AgentRuntimeIntegrationSection } from './sections/integration-section';
 import type { AgentConfigSection, AgentRuntimeSelectedSkillItem } from './types';
 import type { AgentMemorySlotValidationError } from './utils';
 
@@ -48,6 +53,10 @@ interface AgentRuntimeOrchestrationPanelProps {
   workflowBindings: AgentWorkflowBinding[];
   workflowCandidatesByBindingID: Map<string, AgentWorkflowBindingCandidate>;
   isWorkflowCandidatesLoading: boolean;
+  integrationBindings: AgentIntegrationConnectionBinding[];
+  integrationCandidatesByConnectionID: Map<string, AgentIntegrationConnectionCandidate>;
+  isIntegrationCandidatesLoading: boolean;
+  externalIntegrationsEnabled: boolean;
   suggestedQuestions: string[];
   isGeneratingSuggestions: boolean;
   fileUploadEnabled: boolean;
@@ -72,10 +81,12 @@ interface AgentRuntimeOrchestrationPanelProps {
   onOpenSkillDialog: () => void;
   onOpenKnowledgeDialog: () => void;
   onOpenWorkflowDialog: () => void;
+  onOpenIntegrationDialog: () => void;
   onToggleSkill: (skillId: string, checked: boolean) => void;
   onToggleKnowledgeDataset: (datasetId: string, checked: boolean) => void;
   onChangeDatabaseBindings: (value: AgentDatabaseBinding[]) => void;
   onChangeWorkflowBindings: (value: AgentWorkflowBinding[]) => void;
+  onChangeIntegrationBindings: (value: AgentIntegrationConnectionBinding[]) => void;
   onGenerateSuggestedQuestions: (
     value: OpeningStatementDialogValue
   ) => Promise<{ questions: string[]; warnings?: string[] } | undefined>;
@@ -107,6 +118,10 @@ export function AgentRuntimeOrchestrationPanel({
   workflowBindings,
   workflowCandidatesByBindingID,
   isWorkflowCandidatesLoading,
+  integrationBindings,
+  integrationCandidatesByConnectionID,
+  isIntegrationCandidatesLoading,
+  externalIntegrationsEnabled,
   suggestedQuestions,
   isGeneratingSuggestions,
   fileUploadEnabled,
@@ -131,10 +146,12 @@ export function AgentRuntimeOrchestrationPanel({
   onOpenSkillDialog,
   onOpenKnowledgeDialog,
   onOpenWorkflowDialog,
+  onOpenIntegrationDialog,
   onToggleSkill,
   onToggleKnowledgeDataset,
   onChangeDatabaseBindings,
   onChangeWorkflowBindings,
+  onChangeIntegrationBindings,
   onGenerateSuggestedQuestions,
   onChangeSuggestedQuestions,
   onChangeFileUploadEnabled,
@@ -226,6 +243,24 @@ export function AgentRuntimeOrchestrationPanel({
             onOpenWorkflowDialog={onOpenWorkflowDialog}
             onChangeBindings={onChangeWorkflowBindings}
           />
+
+          {externalIntegrationsEnabled ? (
+            <>
+              <Separator className="h-px" />
+
+              <AgentRuntimeIntegrationSection
+                open={openSections.integrations}
+                bindings={integrationBindings}
+                candidatesByConnectionID={integrationCandidatesByConnectionID}
+                isLoading={isIntegrationCandidatesLoading}
+                bindingHealth={bindingHealth}
+                readOnly={readOnly}
+                onToggleSection={onToggleSection}
+                onOpenDialog={onOpenIntegrationDialog}
+                onChangeBindings={onChangeIntegrationBindings}
+              />
+            </>
+          ) : null}
 
           <Separator className="h-px" />
 

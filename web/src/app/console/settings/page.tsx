@@ -9,7 +9,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
-import { Languages, Palette, Plug, Shield, SlidersHorizontal } from 'lucide-react';
+import { Languages, Palette, Shield, SlidersHorizontal } from 'lucide-react';
 import type { Theme, ThemeConfig } from '@/lib/theme';
 import { useT, type SettingsKey } from '@/i18n';
 
@@ -27,13 +27,6 @@ const SETTING_GROUPS = [
     titleKey: 'settings.system.language',
     descKey: 'settings.system.languageDesc',
     statusKey: 'settings.system.available',
-  },
-  {
-    key: 'integrations',
-    icon: Plug,
-    titleKey: 'settings.system.integrations',
-    descKey: 'settings.system.integrationsDesc',
-    statusKey: 'settings.system.later',
   },
   {
     key: 'security',
@@ -71,6 +64,7 @@ export default function SettingsPage() {
             {SETTING_GROUPS.map(item => {
               const Icon = item.icon;
               const isActive = item.key === 'appearance';
+              const statusKey = item.statusKey;
 
               return (
                 <div
@@ -85,7 +79,7 @@ export default function SettingsPage() {
                       <div className="flex items-center justify-between gap-2">
                         <p className="text-sm font-medium">{t(item.titleKey as SettingsKey)}</p>
                         <span className="text-[11px] text-muted-foreground">
-                          {t(item.statusKey as SettingsKey)}
+                          {t(statusKey as SettingsKey)}
                         </span>
                       </div>
                       <p className="mt-0.5 text-xs leading-5 text-muted-foreground">

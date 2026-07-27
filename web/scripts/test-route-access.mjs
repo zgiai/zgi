@@ -1353,6 +1353,8 @@ const {
 const organizationRoutes = [
   '/console',
   '/console/skills',
+  '/console/integrations',
+  '/console/integrations/oauth/result',
   '/console/settings',
   '/console/work',
   '/console/work/chat',
@@ -1365,6 +1367,8 @@ const workRouteRoot = path.join(rootDir, 'src', 'app', 'console', 'work');
 const consoleRouteRoot = path.join(rootDir, 'src', 'app', 'console');
 const expectedOrganizationConsolePageRoutes = [
   '/console',
+  '/console/integrations',
+  '/console/integrations/oauth/result',
   '/console/settings',
   '/console/skills',
   '/console/work',
@@ -1483,18 +1487,19 @@ assert.deepEqual(
   [
     '/console',
     '/console/skills',
+    '/console/integrations',
     '/console/settings',
     '/console/work',
     '/console/work/chat',
     '/console/work/image',
     '/console/work/app',
   ],
-  'console organization-scoped exact route metadata should include the personal workbench, settings, and product routes'
+  'console organization-scoped exact route metadata should include the personal workbench, connection center, settings, and product routes'
 );
 assert.deepEqual(
   [...ORGANIZATION_SCOPED_CONSOLE_ROUTE_PREFIXES],
-  ['/console/work/app/'],
-  'console organization-scoped prefix metadata should include app detail routes'
+  ['/console/integrations/', '/console/work/app/'],
+  'console organization-scoped prefix metadata should include connection and app detail routes'
 );
 assert.deepEqual(
   [...ORGANIZATION_SCOPED_WORK_ROUTES],
@@ -2944,9 +2949,19 @@ const dashboardVisiblePermissionPairs = [
     'dashboardKnowledgeBaseVisiblePermissionCodes',
     ['knowledge_base.create', 'knowledge_base.document.create'],
   ],
-  ['database', 'DATABASE_PERMISSION_ACTIONS', 'dashboardDatabaseVisiblePermissionCodes', ['database.create']],
+  [
+    'database',
+    'DATABASE_PERMISSION_ACTIONS',
+    'dashboardDatabaseVisiblePermissionCodes',
+    ['database.create'],
+  ],
 ];
-for (const [label, frontendActionName, backendHelperName, excludedResourceOnlyCodes] of dashboardVisiblePermissionPairs) {
+for (const [
+  label,
+  frontendActionName,
+  backendHelperName,
+  excludedResourceOnlyCodes,
+] of dashboardVisiblePermissionPairs) {
   const frontendPageCodes = [
     ...new Set(collectPermissionActionPageCodes(permissionConstantsSource, frontendActionName)),
   ]

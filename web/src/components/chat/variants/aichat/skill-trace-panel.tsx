@@ -2,12 +2,8 @@
 
 import { useMemo, useState } from 'react';
 import { AlertCircle, CheckCircle2, ChevronDown, Loader2 } from 'lucide-react';
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from '@/components/ui/collapsible';
-import { useT } from '@/i18n/translations';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+import { useT, type ScopedTranslations } from '@/i18n/translations';
 import { useLocale } from '@/hooks/use-locale';
 import { cn } from '@/lib/utils';
 import { formatMs } from '@/utils/format';
@@ -21,6 +17,17 @@ import {
 } from '@/components/chat/variants/aichat/skill-display';
 import { AIChatSkillIcon } from '@/components/chat/variants/aichat/skill-icon';
 import { AIChatSkillResultSummary } from '@/components/chat/variants/aichat/skill-result-summary';
+import {
+  getAIChatExternalInvocationDisplayName,
+  isAIChatExternalAppsInvocation,
+} from '@/components/chat/variants/aichat/external-app-display';
+import { sanitizeTimelineDisplayString } from '@/components/chat/variants/aichat/timeline-display-safety';
+import {
+  formatAIChatTimelineArgumentSummary,
+  formatAIChatTimelineValue,
+  getAIChatInvocationKindLabel,
+  localizeAIChatRuntimeMessage,
+} from '@/components/chat/variants/aichat/timeline-display-i18n';
 
 type SkillTraceTone = 'running' | 'success' | 'error';
 type SkillTraceDebugLabel = keyof typeof SKILL_TRACE_DEBUG_LABEL_KEYS;
@@ -61,34 +68,51 @@ function getStatusIcon(tone: SkillTraceTone) {
   return <CheckCircle2 className="size-3.5 text-emerald-600" />;
 }
 
-function getDurationText(durationMs: number | undefined): string | null {
+function getDurationText(
+  durationMs: number | undefined,
+  t: ScopedTranslations<'webapp'>
+): string | null {
   if (typeof durationMs !== 'number' || !Number.isFinite(durationMs)) return null;
   if (durationMs < 0) return null;
-  if (durationMs === 0) return '<1ms';
+  if (durationMs === 0) return t('consoleChat.skills.trace.values.lessThanOneMillisecond');
   return formatMs(durationMs);
 }
 
-function formatDebugValue(value: unknown): string | null {
-  if (value === undefined || value === null || value === '') return null;
-  if (typeof value === 'string') return value;
-  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
-  try {
-    return JSON.stringify(value);
-  } catch {
-    return String(value);
-  }
-}
-
-function skillTraceDebugRows(invocation: AIChatSkillInvocation, locale: string) {
+function skillTraceDebugRows(
+  invocation: AIChatSkillInvocation,
+  locale: string,
+  t: ScopedTranslations<'webapp'>
+) {
+  const isExternalApp = isAIChatExternalAppsInvocation(invocation);
+  const fallbackToolName =
+    getAIChatSkillToolDisplayName(invocation.skill_id, invocation.tool_name, locale) ||
+    t('consoleChat.connectedApps.actions.generic');
+  const externalToolName = getAIChatExternalInvocationDisplayName(
+    invocation,
+    locale,
+    t,
+    fallbackToolName
+  );
+  const argumentSummary = isExternalApp
+    ? {
+        type: 'object',
+        keys: Object.keys(invocation.arguments ?? {}).filter(
+          key => key !== 'argument_labels_i18n' && key !== 'argument_value_labels_i18n'
+        ).length,
+      }
+    : invocation.arguments;
   return [
-    ['kind', invocation.kind],
-    ['skillId', invocation.skill_id],
-    ['toolName', getAIChatSkillToolDisplayName(invocation.skill_id, invocation.tool_name, locale)],
-    ['path', invocation.path],
-    ['duration', getDurationText(invocation.duration_ms)],
-    ['arguments', invocation.arguments],
-    ['message', invocation.message],
-    ['error', invocation.error],
+    ['kind', getAIChatInvocationKindLabel(invocation.kind, t)],
+    ['skillId', isExternalApp ? null : invocation.skill_id],
+    ['toolName', externalToolName ?? fallbackToolName],
+    ['path', isExternalApp ? null : invocation.path],
+    ['duration', getDurationText(invocation.duration_ms, t)],
+    ['arguments', formatAIChatTimelineArgumentSummary(argumentSummary, t)],
+    [
+      'message',
+      localizeAIChatRuntimeMessage(invocation.message, t, undefined, invocation.error_code),
+    ],
+    ['error', localizeAIChatRuntimeMessage(invocation.error, t, undefined, invocation.error_code)],
   ] as const satisfies ReadonlyArray<readonly [SkillTraceDebugLabel, unknown]>;
 }
 
@@ -113,12 +137,19 @@ export function AIChatSkillTracePanel({
     () =>
       invocations.map(invocation => {
         const skillId = invocation.skill_id || t('consoleChat.skills.trace.unknownSkill');
-        const skill =
+        const baseSkill =
           skillDisplayById[skillId] ?? getFallbackAIChatSkillDisplayInfo(skillId, locale);
-        const toolName =
+        const isExternalApp = isAIChatExternalAppsInvocation(invocation);
+        const skill = isExternalApp
+          ? { ...baseSkill, label: t('consoleChat.connectedApps.title') }
+          : baseSkill;
+        const fallbackToolName =
           getAIChatSkillToolDisplayName(invocation.skill_id, invocation.tool_name, locale) ||
-          invocation.path ||
+          (isExternalApp ? null : invocation.path) ||
           t('consoleChat.skills.trace.unknownTool');
+        const toolName =
+          getAIChatExternalInvocationDisplayName(invocation, locale, t, fallbackToolName) ??
+          fallbackToolName;
         const tone = getInvocationTone(invocation);
         const resultDetail = getAIChatSkillResultDisplay(invocation, locale);
 
@@ -133,7 +164,16 @@ export function AIChatSkillTracePanel({
                 : tone === 'error'
                   ? t('consoleChat.skills.trace.error', { skill: skill.label })
                   : t('consoleChat.skills.trace.loaded', { skill: skill.label }),
-            detail: resultDetail || invocation.message || invocation.error,
+            detail:
+              resultDetail ||
+              localizeAIChatRuntimeMessage(
+                invocation.message,
+                t,
+                undefined,
+                invocation.error_code
+              ) ||
+              localizeAIChatRuntimeMessage(invocation.error, t, undefined, invocation.error_code) ||
+              undefined,
           };
         }
 
@@ -144,9 +184,20 @@ export function AIChatSkillTracePanel({
             tone,
             title: t('consoleChat.skills.trace.referenceRead', {
               skill: skill.label,
-              path: invocation.path || t('consoleChat.skills.trace.unknownReference'),
+              path: isExternalApp
+                ? toolName
+                : invocation.path || t('consoleChat.skills.trace.unknownReference'),
             }),
-            detail: resultDetail || invocation.message || invocation.error,
+            detail:
+              resultDetail ||
+              localizeAIChatRuntimeMessage(
+                invocation.message,
+                t,
+                undefined,
+                invocation.error_code
+              ) ||
+              localizeAIChatRuntimeMessage(invocation.error, t, undefined, invocation.error_code) ||
+              undefined,
           };
         }
 
@@ -166,7 +217,11 @@ export function AIChatSkillTracePanel({
                     skill: skill.label,
                     tool: toolName,
                   }),
-          detail: resultDetail || invocation.message || invocation.error,
+          detail:
+            resultDetail ||
+            localizeAIChatRuntimeMessage(invocation.message, t, undefined, invocation.error_code) ||
+            localizeAIChatRuntimeMessage(invocation.error, t, undefined, invocation.error_code) ||
+            undefined,
         };
       }),
     [invocations, locale, skillDisplayById, t]
@@ -225,7 +280,14 @@ export function AIChatSkillTracePanel({
           <div className="max-h-56 overflow-y-auto pr-2">
             <div className="space-y-2">
               {events.map((event, index) => {
-                const duration = getDurationText(event.invocation.duration_ms);
+                const duration = getDurationText(event.invocation.duration_ms, t);
+                const detail = event.detail
+                  ? sanitizeTimelineDisplayString(
+                      event.detail,
+                      t('consoleChat.skills.trace.values.hidden'),
+                      t('consoleChat.skills.trace.values.truncated')
+                    )
+                  : null;
 
                 return (
                   <div
@@ -255,31 +317,36 @@ export function AIChatSkillTracePanel({
                           <span className="shrink-0 text-muted-foreground">{duration}</span>
                         ) : null}
                       </div>
-                      {event.detail ? (
-                        <div className="mt-1 line-clamp-2 text-muted-foreground">
-                          {event.detail}
-                        </div>
+                      {detail ? (
+                        <div className="mt-1 line-clamp-2 text-muted-foreground">{detail}</div>
                       ) : null}
-                      <AIChatSkillResultSummary result={event.invocation.result} className="mt-2" />
+                      <AIChatSkillResultSummary
+                        result={event.invocation.result}
+                        skillId={event.invocation.skill_id}
+                        toolName={event.invocation.tool_name}
+                        className="mt-2"
+                      />
                       <dl className="mt-2 grid gap-1 rounded-md bg-muted/30 p-2 text-[11px]">
-                        {skillTraceDebugRows(event.invocation, locale).map(([labelKey, value]) => {
-                          const formatted = formatDebugValue(value);
-                          if (!formatted) return null;
+                        {skillTraceDebugRows(event.invocation, locale, t).map(
+                          ([labelKey, value]) => {
+                            const formatted = formatAIChatTimelineValue(value, t);
+                            if (!formatted) return null;
 
-                          return (
-                            <div
-                              key={labelKey}
-                              className="grid grid-cols-[88px_minmax(0,1fr)] gap-2"
-                            >
-                              <dt className="text-muted-foreground">
-                                {t(SKILL_TRACE_DEBUG_LABEL_KEYS[labelKey])}
-                              </dt>
-                              <dd className="min-w-0 whitespace-pre-wrap break-all font-mono text-foreground/80">
-                                {formatted}
-                              </dd>
-                            </div>
-                          );
-                        })}
+                            return (
+                              <div
+                                key={labelKey}
+                                className="grid grid-cols-[88px_minmax(0,1fr)] gap-2"
+                              >
+                                <dt className="text-muted-foreground">
+                                  {t(SKILL_TRACE_DEBUG_LABEL_KEYS[labelKey])}
+                                </dt>
+                                <dd className="min-w-0 whitespace-pre-wrap break-all font-mono text-foreground/80">
+                                  {formatted}
+                                </dd>
+                              </div>
+                            );
+                          }
+                        )}
                       </dl>
                     </div>
                   </div>

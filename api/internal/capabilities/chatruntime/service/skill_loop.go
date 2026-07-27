@@ -1340,6 +1340,18 @@ func (s *service) currentAgentBindingVerifier(prepared *PreparedChat) skills.Age
 			}
 			ref.PublishedVersionUUID = &versionIDs[0]
 		}
+		if agentbindings.BindingType(check.BindingType) == agentbindings.BindingTypeIntegrationConnection {
+			binding, err := repo.FindBinding(ctx, ref, agentbindings.Match{
+				BindingType:      agentbindings.BindingTypeIntegrationConnection,
+				ResourceID:       check.ResourceID,
+				ParentResourceID: check.ParentResourceID,
+				AccessMode:       check.AccessMode,
+			})
+			if err != nil || binding == nil {
+				return false, err
+			}
+			return binding.AllowsIntegrationAction(check.ActionID), nil
+		}
 		return repo.HasBinding(ctx, ref, agentbindings.Match{
 			BindingType:      agentbindings.BindingType(check.BindingType),
 			ResourceID:       check.ResourceID,

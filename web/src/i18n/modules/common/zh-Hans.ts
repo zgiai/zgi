@@ -9,6 +9,7 @@ const messages: CommonMessages = {
   cancel: '取消',
   confirm: '确认',
   close: '关闭',
+  switchLanguage: '切换语言',
   save: '保存',
   loading: '加载中...',
   error: '错误',

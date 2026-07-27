@@ -107,6 +107,25 @@ export interface AIChatSkillExposureProfile {
   governance_risk?: 'none' | 'low' | 'medium' | 'high' | 'mixed' | string;
 }
 
+export interface AIChatSkillIntegrationRequirement {
+  integration_id: string;
+  action_ids?: string[];
+  required: boolean;
+}
+
+export type AIChatSkillAvailabilityState =
+  | 'ready'
+  | 'setup_required'
+  | 'no_access'
+  | 'degraded'
+  | 'unavailable';
+
+export interface AIChatSkillAvailability {
+  state: AIChatSkillAvailabilityState;
+  reason?: string;
+  integration_ids?: string[];
+}
+
 export interface AIChatSkillMetadata {
   skill_id: string;
   source?: AIChatSkillSource;
@@ -126,6 +145,12 @@ export interface AIChatSkillMetadata {
   validation_error?: string;
   supported_callers?: Array<'aichat' | 'agent'>;
   required_config?: string[];
+  dependency_type?: 'standalone' | 'integration' | string;
+  provider_type?: string;
+  provider_id?: string;
+  integration_requirements?: Array<AIChatSkillIntegrationRequirement | string>;
+  external_dependencies?: Array<AIChatSkillIntegrationRequirement | string>;
+  availability?: AIChatSkillAvailability;
   exposure?: AIChatSkillExposureProfile;
 }
 
@@ -231,6 +256,7 @@ export interface AIChatSkillInvocation {
   path?: string;
   message?: string;
   error?: string;
+  error_code?: string;
   approval_status?: AIChatToolGovernanceDecisionEventData['approval_status'];
   governance?: AIChatToolGovernanceDecision | null;
   asset_operation_audit?: AIChatAssetOperationAudit;
@@ -683,6 +709,7 @@ export interface AIChatSkillCallEndEventData {
   duration_ms?: number;
   status?: AIChatSkillActivityStatus;
   message?: string;
+  error_code?: string;
   result?: Record<string, unknown> | null;
   governance?: AIChatToolGovernanceDecision | null;
   asset_operation_audit?: AIChatAssetOperationAudit;
@@ -706,6 +733,7 @@ export interface AIChatSkillCallErrorEventData {
   duration_ms?: number;
   status?: AIChatSkillActivityStatus;
   message?: string;
+  error_code?: string;
   governance?: AIChatToolGovernanceDecision | null;
   asset_operation_audit?: AIChatAssetOperationAudit;
   created_at?: number;
@@ -972,6 +1000,7 @@ export interface AIChatToolGovernanceDecisionEventData extends Record<string, un
   session_grant?: Record<string, unknown>;
   execution_status?: string;
   execution_error?: string;
+  execution_error_code?: string;
   execution_message?: string;
   execution_duration_ms?: number;
   execution_result?: Record<string, unknown> | null;

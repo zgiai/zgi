@@ -2,6 +2,8 @@ package config
 
 import (
 	"fmt"
+	"net"
+	"net/url"
 	"strings"
 )
 
@@ -102,6 +104,157 @@ func validateConfig(cfg *Config) error {
 		return fmt.Errorf("%s must be exactly 32 bytes long, got %d bytes", envLLMEncryptionKey, len(cfg.LLM.EncryptionKey))
 	}
 
+	if err := validateWebSearchConfig(cfg.WebSearch); err != nil {
+		return err
+	}
+	if err := validateWebSearchAuditKey(cfg.WebSearch, cfg.Encryption.APIKeyEncryptionKey); err != nil {
+		return err
+	}
+	if err := validateExternalIntegrationsConfig(cfg.ExternalIntegrations); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func validateExternalIntegrationsConfig(cfg ExternalIntegrationsConfig) error {
+	if !cfg.Enabled {
+		return nil
+	}
+	if len(cfg.CredentialKeys) == 0 {
+		return fmt.Errorf("%s must configure at least one credential key", envIntegrationCredentialKeysJSON)
+	}
+	if strings.TrimSpace(cfg.CredentialActiveKeyID) == "" {
+		return fmt.Errorf("%s is required when %s is enabled", envIntegrationCredentialActiveKeyID, envExternalIntegrationsEnabled)
+	}
+	if _, ok := cfg.CredentialKeys[cfg.CredentialActiveKeyID]; !ok {
+		return fmt.Errorf("%s must reference a key in %s", envIntegrationCredentialActiveKeyID, envIntegrationCredentialKeysJSON)
+	}
+	for keyID, key := range cfg.CredentialKeys {
+		if strings.TrimSpace(keyID) == "" {
+			return fmt.Errorf("%s contains an empty key id", envIntegrationCredentialKeysJSON)
+		}
+		if len(key) != 32 {
+			return fmt.Errorf("credential key %q in %s must be exactly 32 bytes long", keyID, envIntegrationCredentialKeysJSON)
+		}
+	}
+	positive := []struct {
+		key   string
+		value int
+	}{
+		{envIntegrationOrgDailyLimit, cfg.OrgDailyLimit},
+		{envIntegrationTimeoutSeconds, cfg.TimeoutSeconds},
+		{envIntegrationHealthFailureThreshold, cfg.Health.FailureThreshold},
+		{envIntegrationOAuthRefreshWindowSeconds, cfg.OAuth.RefreshWindowSeconds},
+		{envIntegrationOAuthFlowTTLSeconds, cfg.OAuth.FlowTTLSeconds},
+	}
+	for _, item := range positive {
+		if item.value <= 0 {
+			return fmt.Errorf("%s must be greater than 0", item.key)
+		}
+	}
+	if cfg.OAuth.FlowTTLSeconds > 1800 {
+		return fmt.Errorf("%s must not exceed 1800", envIntegrationOAuthFlowTTLSeconds)
+	}
+	if !validIntegrationOAuthURL(cfg.OAuth.CallbackURL) {
+		return fmt.Errorf("%s must be an HTTPS URL or a loopback HTTP URL", envIntegrationOAuthCallbackURL)
+	}
+	if !validIntegrationOAuthURL(cfg.OAuth.ResultURL) {
+		return fmt.Errorf("%s must be an HTTPS URL or a loopback HTTP URL", envIntegrationOAuthResultURL)
+	}
+	for key, client := range cfg.OAuth.Clients {
+		if strings.TrimSpace(key) == "" || len(key) > 128 {
+			return fmt.Errorf("%s contains an invalid provider key", envIntegrationOAuthClientsJSON)
+		}
+		if strings.TrimSpace(client.ClientID) == "" {
+			return fmt.Errorf("%s client %q is missing client_id", envIntegrationOAuthClientsJSON, key)
+		}
+		if strings.TrimSpace(client.ClientSecret) == "" && !integrationOAuthPublicClientSupported(key) {
+			return fmt.Errorf("%s client %q is missing client_secret", envIntegrationOAuthClientsJSON, key)
+		}
+	}
+	return nil
+}
+
+// X OAuth 2.0 explicitly supports public PKCE clients. Other built-in OAuth
+// providers currently use confidential web applications and must retain a
+// client secret. Keep this allowlist narrow so a typo cannot silently weaken
+// an unrelated provider's client authentication.
+func integrationOAuthPublicClientSupported(providerKey string) bool {
+	key := strings.ToLower(strings.TrimSpace(providerKey))
+	key = strings.ReplaceAll(key, "/", ":")
+	return key == "x" || key == "x:x"
+}
+
+func validIntegrationOAuthURL(value string) bool {
+	parsed, err := url.ParseRequestURI(strings.TrimSpace(value))
+	if err != nil || parsed == nil || parsed.Host == "" || parsed.User != nil || parsed.Fragment != "" {
+		return false
+	}
+	if strings.EqualFold(parsed.Scheme, "https") {
+		return true
+	}
+	if !strings.EqualFold(parsed.Scheme, "http") {
+		return false
+	}
+	host := strings.ToLower(parsed.Hostname())
+	if host == "localhost" {
+		return true
+	}
+	address := net.ParseIP(host)
+	return address != nil && address.IsLoopback()
+}
+
+func validateWebSearchAuditKey(cfg WebSearchConfig, encryptionKey string) error {
+	if !cfg.Enabled {
+		return nil
+	}
+	if strings.TrimSpace(encryptionKey) == "" {
+		return fmt.Errorf("%s is required when %s is enabled", envAPIKeyEncryptionKey, envWebSearchEnabled)
+	}
+	if len(encryptionKey) != 32 {
+		return fmt.Errorf("%s must be exactly 32 bytes long when %s is enabled", envAPIKeyEncryptionKey, envWebSearchEnabled)
+	}
+	return nil
+}
+
+func validateWebSearchConfig(cfg WebSearchConfig) error {
+	if !cfg.Enabled {
+		return nil
+	}
+
+	if !strings.EqualFold(strings.TrimSpace(cfg.Provider), "exa") {
+		return fmt.Errorf("%s must be exa when %s is enabled", envWebSearchProvider, envWebSearchEnabled)
+	}
+	if cfg.OrgDailyLimit <= 0 {
+		return fmt.Errorf("%s must be greater than 0", envWebSearchOrgDailyLimit)
+	}
+	if cfg.Exa.TimeoutSeconds <= 0 {
+		return fmt.Errorf("%s must be greater than 0", envExaTimeoutSeconds)
+	}
+	if cfg.Exa.MaxResults <= 0 {
+		return fmt.Errorf("%s must be greater than 0", envExaMaxResults)
+	}
+	if cfg.Exa.MaxResults > 10 {
+		return fmt.Errorf("%s must be less than or equal to 10", envExaMaxResults)
+	}
+	switch strings.ToLower(strings.TrimSpace(cfg.Exa.DefaultSearchType)) {
+	case "auto", "fast", "instant":
+	default:
+		return fmt.Errorf("%s must be one of: auto, fast, instant", envExaDefaultSearchType)
+	}
+	if cfg.Exa.MaxFetchURLs <= 0 {
+		return fmt.Errorf("%s must be greater than 0", envExaMaxFetchURLs)
+	}
+	if cfg.Exa.MaxFetchURLs > 5 {
+		return fmt.Errorf("%s must be less than or equal to 5", envExaMaxFetchURLs)
+	}
+	if cfg.Exa.MaxContentCharacters <= 0 {
+		return fmt.Errorf("%s must be greater than 0", envExaMaxContentCharacters)
+	}
+	if cfg.Exa.MaxContentCharacters > 20000 {
+		return fmt.Errorf("%s must be less than or equal to 20000", envExaMaxContentCharacters)
+	}
 	return nil
 }
 

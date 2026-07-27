@@ -228,6 +228,11 @@ interface AIChatInputAreaProps {
   uploadScope?: AIChatUploadScope;
   showFileLibraryPicker?: boolean;
   allowWorkspaceSwitch?: boolean;
+  showConnectedApps?: boolean;
+  connectedAppsLabel?: string;
+  connectedAppsSelectedCount?: number;
+  connectedAppsAttentionRequired?: boolean;
+  onOpenConnectedApps?: () => void;
   showSkillManagement?: boolean;
   skillManagementLabel?: string;
   onOpenSkillManagement?: () => void;
@@ -310,6 +315,11 @@ export function AIChatInputArea({
   uploadScope = { type: 'console' },
   showFileLibraryPicker = true,
   allowWorkspaceSwitch = false,
+  showConnectedApps = false,
+  connectedAppsLabel,
+  connectedAppsSelectedCount = 0,
+  connectedAppsAttentionRequired = false,
+  onOpenConnectedApps,
   showSkillManagement = false,
   skillManagementLabel,
   onOpenSkillManagement,
@@ -1436,6 +1446,10 @@ export function AIChatInputArea({
                 onToolGovernancePermissionTierChange={onToolGovernancePermissionTierChange}
                 enableUpload={!hasActiveUserInputRequest && enableUpload}
                 showFileLibraryPicker={showFileLibraryPicker}
+                showConnectedApps={showConnectedApps}
+                connectedAppsLabel={connectedAppsLabel}
+                connectedAppsSelectedCount={connectedAppsSelectedCount}
+                connectedAppsAttentionRequired={connectedAppsAttentionRequired}
                 showSkillManagement={showSkillManagement}
                 skillManagementLabel={skillManagementLabel}
                 surface={surface}
@@ -1444,6 +1458,7 @@ export function AIChatInputArea({
                 onUploadDocument={() => fileInputRef.current?.click()}
                 onUploadImage={handleImageUpload}
                 onSelectFromFiles={() => setIsFileSelectorOpen(true)}
+                onOpenConnectedApps={onOpenConnectedApps}
                 onOpenSkillManagement={onOpenSkillManagement}
                 onMemoryEnabledChange={setUseMemory}
                 onToggleComposerExpanded={() => setIsComposerExpanded(current => !current)}

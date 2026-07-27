@@ -106,13 +106,13 @@ func (r *Runtime) preflightToolGovernance(
 		ToolName:   toolDef.Name,
 		Status:     string(decision.Status),
 		DurationMS: time.Since(start).Milliseconds(),
-		Arguments:  summarizeArguments(arguments),
+		Arguments:  summarizeToolArguments(toolDef, arguments),
 		Governance: &decision,
 		Result:     governanceTraceResult(decision),
 	}
 	if err != nil {
 		trace.Status = "error"
-		trace.Error = err.Error()
+		trace.Error, trace.ErrorCode = skillTraceError(err)
 		return decision, true, &ToolInvocationResult{Trace: trace}, err
 	}
 	if decision.Status == toolgovernance.DecisionStatusNeedsApproval && decision.RequiresApproval {

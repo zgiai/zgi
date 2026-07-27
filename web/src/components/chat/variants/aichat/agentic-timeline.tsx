@@ -1,7 +1,14 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { AlertCircle, CheckCircle2, ChevronDown, CircleHelp, Loader2 } from 'lucide-react';
+import {
+  AlertCircle,
+  CheckCircle2,
+  ChevronDown,
+  CircleHelp,
+  Loader2,
+  RotateCcw,
+} from 'lucide-react';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Button } from '@/components/ui/button';
 import MarkdownViewer from '@/components/common/markdown-viewer';
@@ -29,6 +36,25 @@ import { AIChatSkillIcon } from '@/components/chat/variants/aichat/skill-icon';
 import { AIChatSkillResultSummary } from '@/components/chat/variants/aichat/skill-result-summary';
 import { isRoutineSkillLoadInvocation } from '@/components/chat/variants/aichat/skill-load-timeline';
 import {
+  looksLikeOpaqueTimelineIdentifier as looksLikeOpaqueAssetID,
+  recoveredInvalidArgumentTimelineItemIds,
+  sanitizeTimelineDisplayPayload as sanitizeDisplayPayload,
+  sanitizeTimelineDisplayString as sanitizeDisplayString,
+} from '@/components/chat/variants/aichat/timeline-display-safety';
+import {
+  formatAIChatTimelineArgumentSummary,
+  formatAIChatTimelineValue,
+  getAIChatInvocationKindLabel,
+  localizeAIChatRuntimeMessage,
+} from '@/components/chat/variants/aichat/timeline-display-i18n';
+import {
+  getAIChatExternalArgumentDisplayEntries,
+  getAIChatExternalActionDisplayName,
+  getAIChatExternalAppDisplayName,
+  getAIChatExternalInvocationDisplayName,
+  isAIChatExternalAppsInvocation,
+} from '@/components/chat/variants/aichat/external-app-display';
+import {
   ToolGovernanceDecisionCard,
   publishToolGovernancePendingApproval,
   useToolGovernancePendingApprovalScope,
@@ -40,7 +66,7 @@ import {
 import WorkflowRunMonitor from '@/components/chat/ui/workflow-run-monitor';
 import type { WorkflowRunNodeListItem } from '@/components/workflow/ui/workflow-run-nodes-list';
 
-type TimelineTone = 'running' | 'success' | 'error';
+type TimelineTone = 'running' | 'success' | 'error' | 'recovered';
 type TimelineDebugLabel = keyof typeof TIMELINE_DEBUG_LABEL_KEYS;
 type GovernanceFieldLabel = keyof typeof GOVERNANCE_FIELD_LABEL_KEYS;
 export type WebappTranslator = ScopedTranslations<'webapp'>;
@@ -75,6 +101,11 @@ const GOVERNANCE_FIELD_LABEL_KEYS = {
   approvalResult: 'consoleChat.governance.fields.approvalResult',
   sessionGrant: 'consoleChat.governance.fields.sessionGrant',
   approvalEvent: 'consoleChat.governance.fields.approvalEvent',
+  integration: 'consoleChat.governance.fields.integration',
+  action: 'consoleChat.governance.fields.action',
+  connection: 'consoleChat.governance.fields.connection',
+  destination: 'consoleChat.governance.fields.destination',
+  actionArguments: 'consoleChat.governance.fields.actionArguments',
 } as const;
 
 const assistantMarkdownClassName =
@@ -86,33 +117,6 @@ const TRANSIENT_PROGRESS_TEXT_KEYS = [
   'consoleChat.skills.agentic.preparing',
   'consoleChat.skills.agentic.checkingTools',
 ] as const;
-
-const INTERNAL_DISPLAY_FIELD_KEYS = new Set([
-  'id',
-  'file_id',
-  'file_ids',
-  'upload_file_id',
-  'upload_file_ids',
-  'workspace_id',
-  'workspace_ids',
-  'organization_id',
-  'organization_ids',
-  'conversation_id',
-  'message_id',
-  'correlation_id',
-  'approved_by_correlation_id',
-  'source_id',
-  'runtime_id',
-  'deleted_count',
-]);
-
-const INTERNAL_DISPLAY_FIELD_NAME_PATTERN =
-  /\b(?:file_ids?|fileIds?|upload_file_ids?|uploadFileIds?|workspace_ids?|workspaceIds?|organization_ids?|organizationIds?|conversation_id|conversationId|message_id|messageId|correlation_id|correlationId|approved_by_correlation_id|approvedByCorrelationId|source_id|sourceId|runtime_id|runtimeId|deleted_count|deletedCount)\b/i;
-
-const UUID_DISPLAY_PATTERN = /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi;
-
-const OPAQUE_INLINE_ID_PATTERN =
-  /\b(?:file|upload[-_]?file|asset|workspace|ws)[-_](?=[a-z0-9_-]*\d)[a-z0-9][a-z0-9_-]*\b/gi;
 
 interface AgentBindingDisplayChange {
   action: string;
@@ -290,85 +294,23 @@ function getInvocationTone(invocation: AIChatSkillInvocation): TimelineTone {
 function getStatusIcon(tone: TimelineTone) {
   if (tone === 'running') return <Loader2 className="size-3.5 animate-spin" />;
   if (tone === 'error') return <AlertCircle className="size-3.5" />;
+  if (tone === 'recovered') return <RotateCcw className="size-3.5 text-amber-600" />;
   return <CheckCircle2 className="size-3.5 text-emerald-600" />;
 }
 
-function getDurationText(durationMs: number | undefined): string | null {
+function getDurationText(durationMs: number | undefined, t: WebappTranslator): string | null {
   if (typeof durationMs !== 'number' || !Number.isFinite(durationMs)) return null;
   if (durationMs < 0) return null;
-  if (durationMs === 0) return '<1ms';
+  if (durationMs === 0) return t('consoleChat.skills.trace.values.lessThanOneMillisecond');
   return formatMs(durationMs);
 }
 
-function normalizeDisplayFieldKey(key: string): string {
-  return key
-    .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
-    .replace(/[-\s]+/g, '_')
-    .toLowerCase();
-}
-
-function isInternalDisplayFieldKey(key: string): boolean {
-  const normalized = normalizeDisplayFieldKey(key);
-  return (
-    INTERNAL_DISPLAY_FIELD_KEYS.has(normalized) ||
-    normalized.endsWith('_id') ||
-    normalized.endsWith('_ids') ||
-    normalized.endsWith('_uuid') ||
-    normalized.endsWith('_uuids')
-  );
-}
-
-function sanitizeDisplayString(value: string): string | null {
-  const trimmed = value.trim();
-  if (!trimmed || INTERNAL_DISPLAY_FIELD_NAME_PATTERN.test(trimmed)) return null;
-  if (looksLikeOpaqueAssetID(trimmed)) return null;
-
-  const sanitized = trimmed
-    .replace(UUID_DISPLAY_PATTERN, '')
-    .replace(OPAQUE_INLINE_ID_PATTERN, '')
-    .replace(/\s{2,}/g, ' ')
-    .trim();
-  if (!sanitized) return null;
-  return sanitized;
-}
-
-function sanitizeDisplayPayload(value: unknown): unknown {
-  if (value === undefined || value === null || value === '') return null;
-  if (typeof value === 'string') return sanitizeDisplayString(value);
-  if (typeof value === 'number' || typeof value === 'boolean') return value;
-  if (Array.isArray(value)) {
-    const items = value
-      .map(item => sanitizeDisplayPayload(item))
-      .filter(item => item !== null && item !== undefined);
-    return items.length > 0 ? items : null;
-  }
-  if (typeof value === 'object') {
-    const entries = Object.entries(value as Record<string, unknown>).flatMap(([key, rawValue]) => {
-      if (isInternalDisplayFieldKey(key)) return [];
-      const sanitized = sanitizeDisplayPayload(rawValue);
-      return sanitized === null || sanitized === undefined ? [] : [[key, sanitized] as const];
-    });
-    return entries.length > 0 ? Object.fromEntries(entries) : null;
-  }
-  return String(value);
-}
-
-function formatDebugValue(value: unknown): string | null {
-  const sanitized = sanitizeDisplayPayload(value);
-  if (sanitized === undefined || sanitized === null || sanitized === '') return null;
-  if (typeof sanitized === 'string') return sanitized;
-  if (typeof sanitized === 'number' || typeof sanitized === 'boolean') return String(sanitized);
-  try {
-    return JSON.stringify(sanitized);
-  } catch {
-    return String(sanitized);
-  }
-}
-
 function sanitizeTimelineResultForDisplay(
-  result?: Record<string, unknown> | null
+  result?: Record<string, unknown> | null,
+  redactedDisplayValue?: string,
+  truncatedDisplayValue?: string
 ): Record<string, unknown> | null {
-  const sanitized = sanitizeDisplayPayload(result);
+  const sanitized = sanitizeDisplayPayload(result, redactedDisplayValue, truncatedDisplayValue);
   return governanceRecord(sanitized);
 }
 
@@ -377,10 +319,13 @@ function stringListFromUnknown(value: unknown): string[] {
     return value
       .map(item => governanceStringValue(item))
       .filter((item): item is string => Boolean(item))
+      .map(name => sanitizeDisplayString(name))
+      .filter((name): name is string => Boolean(name))
       .filter(name => !looksLikeOpaqueAssetID(name));
   }
   const single = governanceStringValue(value);
-  return single && !looksLikeOpaqueAssetID(single) ? [single] : [];
+  const safeSingle = single ? sanitizeDisplayString(single) : null;
+  return safeSingle && !looksLikeOpaqueAssetID(safeSingle) ? [safeSingle] : [];
 }
 
 function recordListFromUnknown(value: unknown): Array<Record<string, unknown>> {
@@ -463,9 +408,10 @@ function agentBindingDisplaySummaryFromRecord(
     )
     .filter((change): change is AgentBindingDisplayChange => Boolean(change));
   const agent = governanceRecord(root.agent);
-  const agentName =
+  const rawAgentName =
     governanceRecordString(root, ['agent_name']) ??
     governanceRecordString(agent, ['name', 'agent_name']);
+  const agentName = rawAgentName ? sanitizeDisplayString(rawAgentName) : null;
   const changeCount = changes.length || changeRecords.length || 1;
   const derivedMultiSummary =
     !hasTopLevelSummary && changes.length > 1 ? agentBindingMultipleDisplaySummary(changes) : null;
@@ -768,14 +714,14 @@ function agentOwnerNameFromSkillInvocation(invocation: AIChatSkillInvocation): s
   const args = governanceRecord(invocation.arguments);
   const result = invocationRecord(invocation.result);
   const resultAgent = governanceRecord(result.agent);
-  return (
+  const name =
     governanceRecordString(result, ['agent_name', 'name']) ??
     governanceRecordString(resultAgent, ['name', 'agent_name']) ??
     agentOwnerNameFromAssets(audit?.assets) ??
     agentOwnerNameFromAssets(approvalEvent?.assets) ??
     agentOwnerNameFromAssets(governance?.assets) ??
-    governanceRecordString(args, ['agent_name', 'name'])
-  );
+    governanceRecordString(args, ['agent_name', 'name']);
+  return name ? sanitizeDisplayString(name) : null;
 }
 
 function agentBindingBindTranslationKey(kind: string) {
@@ -823,16 +769,37 @@ function agentBindingUpdateTranslationKey(kind: string) {
   }
 }
 
-function timelineDebugRows(invocation: AIChatSkillInvocation, locale: string) {
+function timelineDebugRows(invocation: AIChatSkillInvocation, locale: string, t: WebappTranslator) {
+  const isExternalApp = isAIChatExternalAppsInvocation(invocation);
+  const fallbackToolName =
+    getAIChatSkillToolDisplayName(invocation.skill_id, invocation.tool_name, locale) ||
+    t('consoleChat.connectedApps.actions.generic');
+  const externalToolName = getAIChatExternalInvocationDisplayName(
+    invocation,
+    locale,
+    t,
+    fallbackToolName
+  );
+  const argumentSummary = isExternalApp
+    ? {
+        type: 'object',
+        keys: Object.keys(invocation.arguments ?? {}).filter(
+          key => key !== 'argument_labels_i18n' && key !== 'argument_value_labels_i18n'
+        ).length,
+      }
+    : invocation.arguments;
   return [
-    ['kind', invocation.kind],
-    ['skillId', invocation.skill_id],
-    ['toolName', getAIChatSkillToolDisplayName(invocation.skill_id, invocation.tool_name, locale)],
-    ['path', invocation.path],
-    ['duration', getDurationText(invocation.duration_ms)],
-    ['arguments', invocation.arguments],
-    ['message', invocation.message],
-    ['error', invocation.error],
+    ['kind', getAIChatInvocationKindLabel(invocation.kind, t)],
+    ['skillId', isExternalApp ? null : invocation.skill_id],
+    ['toolName', externalToolName ?? fallbackToolName],
+    ['path', isExternalApp ? null : invocation.path],
+    ['duration', getDurationText(invocation.duration_ms, t)],
+    ['arguments', formatAIChatTimelineArgumentSummary(argumentSummary, t)],
+    [
+      'message',
+      localizeAIChatRuntimeMessage(invocation.message, t, undefined, invocation.error_code),
+    ],
+    ['error', localizeAIChatRuntimeMessage(invocation.error, t, undefined, invocation.error_code)],
   ] as const satisfies ReadonlyArray<readonly [TimelineDebugLabel, unknown]>;
 }
 
@@ -848,23 +815,25 @@ function buildSkillTitle(
   if (routeTarget) {
     const alreadyLoaded = routeNavigationAlreadyLoaded(invocation);
     if (alreadyLoaded && tone !== 'running' && tone !== 'error') {
-      return locale === 'en-US' ? `Already on ${routeTarget}` : `已在 ${routeTarget}`;
+      return t('consoleChat.skills.agentic.navigationAlreadyThere', { target: routeTarget });
     }
     if (tone === 'running') {
-      return locale === 'en-US' ? `Navigating to ${routeTarget}` : `正在导航到 ${routeTarget}`;
+      return t('consoleChat.skills.agentic.navigationRunning', { target: routeTarget });
     }
     if (tone === 'error') {
-      return locale === 'en-US'
-        ? `Failed to navigate to ${routeTarget}`
-        : `导航到 ${routeTarget} 失败`;
+      return t('consoleChat.skills.agentic.navigationFailed', { target: routeTarget });
     }
-    return locale === 'en-US' ? `Navigated to ${routeTarget}` : `已导航到 ${routeTarget}`;
+    return t('consoleChat.skills.agentic.navigationSucceeded', { target: routeTarget });
   }
 
-  const toolName =
+  const isExternalApp = isAIChatExternalAppsInvocation(invocation);
+  const fallbackToolName =
     getAIChatSkillToolDisplayName(invocation.skill_id, invocation.tool_name, locale) ||
-    invocation.path ||
+    (isExternalApp ? null : invocation.path) ||
     t('consoleChat.skills.trace.unknownTool');
+  const toolName =
+    getAIChatExternalInvocationDisplayName(invocation, locale, t, fallbackToolName) ??
+    fallbackToolName;
 
   if (invocation.kind === 'skill_load' || invocation.kind === 'skill_load_attempt') {
     if (tone === 'running') {
@@ -877,7 +846,9 @@ function buildSkillTitle(
   if (invocation.kind === 'reference_read') {
     return t('consoleChat.skills.agentic.referenceRead', {
       skill: skill.label,
-      path: invocation.path || t('consoleChat.skills.trace.unknownReference'),
+      path: isExternalApp
+        ? toolName
+        : invocation.path || t('consoleChat.skills.trace.unknownReference'),
     });
   }
 
@@ -935,9 +906,19 @@ function SkillTimelineRow({
   const t = useT('webapp');
   const { locale } = useLocale();
   const [isOpen, setIsOpen] = useState(false);
-  const duration = getDurationText(event.item.invocation.duration_ms);
-  const detail = event.detail ? sanitizeDisplayString(event.detail) : null;
-  const displayResult = sanitizeTimelineResultForDisplay(event.item.invocation.result);
+  const duration = getDurationText(event.item.invocation.duration_ms, t);
+  const detail = event.detail
+    ? sanitizeDisplayString(
+        event.detail,
+        t('consoleChat.skills.trace.values.hidden'),
+        t('consoleChat.skills.trace.values.truncated')
+      )
+    : null;
+  const displayResult = sanitizeTimelineResultForDisplay(
+    event.item.invocation.result,
+    t('consoleChat.skills.trace.values.hidden'),
+    t('consoleChat.skills.trace.values.truncated')
+  );
   const rowContent = (
     <>
       <span
@@ -945,7 +926,9 @@ function SkillTimelineRow({
           'flex size-5 shrink-0 items-center justify-center rounded-full border bg-background',
           event.tone === 'error'
             ? 'border-destructive/40 text-destructive'
-            : 'border-border text-muted-foreground'
+            : event.tone === 'recovered'
+              ? 'border-amber-500/40 text-amber-700 dark:text-amber-300'
+              : 'border-border text-muted-foreground'
         )}
       >
         {getStatusIcon(event.tone)}
@@ -970,7 +953,11 @@ function SkillTimelineRow({
     <div
       className={cn(
         'rounded-md border bg-background/80 text-xs',
-        event.tone === 'error' ? 'border-destructive/30' : 'border-border'
+        event.tone === 'error'
+          ? 'border-destructive/30'
+          : event.tone === 'recovered'
+            ? 'border-amber-500/30 bg-amber-500/[0.03]'
+            : 'border-border'
       )}
     >
       {showDetails ? (
@@ -994,10 +981,15 @@ function SkillTimelineRow({
               {detail}
             </div>
           ) : null}
-          <AIChatSkillResultSummary result={displayResult} className="mb-2" />
+          <AIChatSkillResultSummary
+            result={displayResult}
+            skillId={event.item.invocation.skill_id}
+            toolName={event.item.invocation.tool_name}
+            className="mb-2"
+          />
           <dl className="grid gap-1 rounded-md bg-background/80 p-2 text-[11px]">
-            {timelineDebugRows(event.item.invocation, locale).map(([labelKey, value]) => {
-              const formatted = formatDebugValue(value);
+            {timelineDebugRows(event.item.invocation, locale, t).map(([labelKey, value]) => {
+              const formatted = formatAIChatTimelineValue(value, t);
               if (!formatted) return null;
 
               return (
@@ -1147,13 +1139,36 @@ function canPublishPendingGovernanceApproval(messageStatus?: AIChatMessage['stat
   );
 }
 
-function governanceDisplayText(value: unknown): string | null {
-  return formatDebugValue(value);
-}
-
-function governanceReason(item: GovernanceTimelineItem): string {
+function governanceReason(
+  item: GovernanceTimelineItem,
+  t: WebappTranslator,
+  locale: string
+): string {
   const reason = String(item.event.reason ?? item.event.governance?.reason ?? '').trim();
-  return reason ? (sanitizeDisplayString(reason) ?? '') : '';
+  if (!reason) return '';
+  const normalized = reason.toLowerCase();
+  if (normalized.includes('persistent preauthorization')) {
+    return normalized.includes('required')
+      ? t('consoleChat.governance.reasons.persistentAuthorizationRequired')
+      : t('consoleChat.governance.reasons.persistentAuthorizationMatched');
+  }
+  if (normalized.includes('interactive approval is unavailable')) {
+    return t('consoleChat.governance.reasons.interactiveApprovalUnavailable');
+  }
+  if (normalized.includes('not bound')) {
+    return t('consoleChat.governance.reasons.resourceNotBound');
+  }
+  if (normalized.includes('external side effect')) {
+    return t('consoleChat.governance.reasons.externalSideEffect');
+  }
+  const safeReason = sanitizeDisplayString(
+    reason,
+    t('consoleChat.skills.trace.values.hidden'),
+    t('consoleChat.skills.trace.values.truncated')
+  );
+  return locale === 'en-US'
+    ? (safeReason ?? '')
+    : t('consoleChat.governance.reasons.policyDecision');
 }
 
 function governanceApprovalEvent(item: GovernanceTimelineItem) {
@@ -1486,13 +1501,309 @@ function governanceFrozenInvocationArguments(
   return governanceRecord(governanceFrozenInvocation(item)?.arguments);
 }
 
+interface ExternalGovernedActionIdentity {
+  integrationId: string;
+  integrationName: string | null;
+  integrationNameI18n: Record<string, string> | null;
+  actionId: string;
+  actionName: string | null;
+  actionNameI18n: Record<string, string> | null;
+  connectionName: string | null;
+  connectionSelection: string | null;
+  destination: string | null;
+  arguments: Record<string, unknown> | null;
+  argumentLabelsI18n: Record<string, unknown> | null;
+  argumentValueLabelsI18n: Record<string, unknown> | null;
+}
+
+function externalDisplayText(value: unknown): string | null {
+  const text = governanceStringValue(value);
+  if (!text) return null;
+  const safe = sanitizeDisplayString(text);
+  return safe && safe !== '[hidden]' ? safe : null;
+}
+
+function externalLocalizedTextMap(value: unknown): Record<string, string> | null {
+  const record = governanceRecord(value);
+  if (!record) return null;
+  const entries = Object.entries(record).flatMap(([locale, text]) => {
+    const localized = externalDisplayText(text);
+    return localized ? ([[locale, localized]] as const) : [];
+  });
+  return entries.length > 0 ? Object.fromEntries(entries) : null;
+}
+
+const EXTERNAL_APPROVAL_SECRET_KEY_PATTERN =
+  /(?:authorization|proxy[_-]?authorization|cookie|credential|password|passwd|private[_-]?key|secret|token|api[_-]?key|access[_-]?key|session|jwt|signature)/i;
+const EXTERNAL_APPROVAL_SECRET_VALUE_PATTERNS = [
+  /-----BEGIN(?: [A-Z0-9]+)? PRIVATE KEY-----/i,
+  /\b(?:bearer|basic)\s+[a-z0-9._~+/=-]{8,}/i,
+  /\b(?:proxy-)?authorization\s*[:=]\s*[^\r\n]{4,}/i,
+  /\b(?:set-)?cookie\s*:\s*[^\r\n]{8,}/i,
+  /\b(?:sk|exa)[-_][a-z0-9_-]{12,}/i,
+  /\bgh[pousr]_[a-z0-9]{20,}\b/i,
+  /\bgithub_pat_[a-z0-9_]{20,}\b/i,
+  /\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/,
+  /\bAIza[A-Za-z0-9_-]{20,}\b/,
+  /\bxox[baprs]-[A-Za-z0-9-]{16,}\b/,
+  /\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\b/,
+  /\b(?:api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|password|passwd|token|secret|access[_-]?key)\s*[:=]\s*["']?[^\s"'&,;}]{8,}/i,
+  /\b[a-z][a-z0-9+.-]*:\/\/[^\s/:@]+:[^\s/@]+@/i,
+  /(?:[?&]|\b)(?:access[_-]?token|refresh[_-]?token|api[_-]?key|apikey|client[_-]?secret|password|secret|signature|sig|token|key|googleaccessid|key[_-]?pair[_-]?id|x-amz-credential|x-amz-signature|x-amz-security-token|x-goog-credential|x-goog-signature)=[^&#\s]+/i,
+];
+
+function externalApprovalSecretKey(key: string): boolean {
+  const normalized = key
+    .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
+    .replace(/[.-]/g, '_')
+    .toLowerCase();
+  if (['key', 'googleaccessid', 'key_pair_id'].includes(normalized)) return true;
+  return EXTERNAL_APPROVAL_SECRET_KEY_PATTERN.test(normalized);
+}
+
+function externalApprovalSecretString(value: string): boolean {
+  if (EXTERNAL_APPROVAL_SECRET_VALUE_PATTERNS.some(pattern => pattern.test(value))) return true;
+  try {
+    const parsed = new URL(value.trim());
+    if (parsed.username || parsed.password) return true;
+    for (const key of parsed.searchParams.keys()) {
+      if (externalApprovalSecretKey(key)) return true;
+    }
+  } catch {
+    // Non-URL text is covered by the embedded credential patterns above.
+  }
+  return false;
+}
+
+function externalGovernedActionIdentity(
+  item: GovernanceTimelineItem
+): ExternalGovernedActionIdentity | null {
+  const frozen = governanceFrozenInvocation(item);
+  const frozenArguments = governanceFrozenInvocationArguments(item);
+  const skillId = (
+    governanceStringValue(frozen?.skill_id) ??
+    governanceEventString(item, ['skill_id']) ??
+    ''
+  ).toLowerCase();
+  const toolName = (
+    governanceStringValue(frozen?.tool_name) ??
+    governanceEventString(item, ['tool_name']) ??
+    ''
+  ).toLowerCase();
+  const providerId = (
+    governanceStringValue(frozen?.provider_id) ??
+    governanceEventString(item, ['provider_id']) ??
+    ''
+  ).toLowerCase();
+  const integrationId = (
+    governanceStringValue(frozenArguments?.integration_id) ??
+    governanceEventString(item, ['integration_id']) ??
+    ''
+  ).toLowerCase();
+  const actionId =
+    governanceStringValue(frozenArguments?.action_id) ??
+    governanceEventString(item, ['action_id', 'governed_tool_id']) ??
+    governanceStringValue(frozen?.tool_id) ??
+    '';
+  const executionResult = governanceExecutionResult(item);
+  const integrationName =
+    governanceStringValue(frozenArguments?.integration_name) ??
+    governanceRecordString(executionResult, ['integration_name']) ??
+    governanceEventString(item, ['integration_name']);
+  const integrationNameI18n =
+    externalLocalizedTextMap(frozenArguments?.integration_name_i18n) ??
+    externalLocalizedTextMap(executionResult?.integration_name_i18n);
+  const actionName =
+    governanceStringValue(frozenArguments?.action_name) ??
+    governanceRecordString(executionResult, ['action_name']) ??
+    governanceEventString(item, ['action_name']);
+  const actionNameI18n =
+    externalLocalizedTextMap(frozenArguments?.action_name_i18n) ??
+    externalLocalizedTextMap(executionResult?.action_name_i18n);
+  const connectionName =
+    governanceRecordString(executionResult, ['connection_name', 'connection_display_name']) ??
+    governanceEventString(item, ['connection_name', 'connection_display_name']);
+  const connectionSelection =
+    governanceStringValue(frozenArguments?.connection_selector) ??
+    governanceRecordString(executionResult, ['connection_selection']) ??
+    governanceEventString(item, ['connection_selector', 'connection_selection']);
+  const isExternalFacade =
+    (skillId === 'external-apps' && toolName === 'execute_action') ||
+    providerId === 'external-integrations';
+  if (!isExternalFacade || !integrationId || !actionId) return null;
+  const sanitizedConnectionName = externalDisplayText(connectionName);
+  const displayConnectionName =
+    sanitizedConnectionName &&
+    sanitizedConnectionName !== '[hidden]' &&
+    sanitizedConnectionName.toLowerCase() !== integrationId
+      ? sanitizedConnectionName
+      : null;
+
+  return {
+    integrationId,
+    integrationName: externalDisplayText(integrationName),
+    integrationNameI18n,
+    actionId,
+    actionName: externalDisplayText(actionName),
+    actionNameI18n,
+    connectionName: displayConnectionName,
+    connectionSelection: connectionSelection?.toLowerCase() ?? null,
+    destination: externalDisplayText(
+      governanceStringValue(frozen?.external_destination) ??
+        governanceEventString(item, ['external_destination'])
+    ),
+    arguments: governanceRecord(frozenArguments?.arguments),
+    argumentLabelsI18n: governanceRecord(frozenArguments?.argument_labels_i18n),
+    argumentValueLabelsI18n: governanceRecord(frozenArguments?.argument_value_labels_i18n),
+  };
+}
+
+function externalIntegrationDisplayName(
+  external: ExternalGovernedActionIdentity,
+  locale: string,
+  t: WebappTranslator
+): string {
+  return getAIChatExternalAppDisplayName(
+    external.integrationId,
+    external.integrationName ?? external.integrationId,
+    t,
+    {
+      locale,
+      nameI18n: external.integrationNameI18n,
+    }
+  );
+}
+
+function externalActionDisplayName(
+  external: ExternalGovernedActionIdentity,
+  locale: string,
+  t: WebappTranslator
+): string {
+  return getAIChatExternalActionDisplayName(external.actionId, t, {
+    locale,
+    fallbackName: external.actionName,
+    nameI18n: external.actionNameI18n,
+  });
+}
+
+function externalConnectionDisplayName(
+  external: ExternalGovernedActionIdentity,
+  t: WebappTranslator
+): string {
+  if (external.connectionName && !looksLikeOpaqueAssetID(external.connectionName)) {
+    return external.connectionName;
+  }
+  if (external.connectionSelection === 'preferred') {
+    return t('consoleChat.governance.approvalPanel.preferredConnection');
+  }
+  return t('consoleChat.governance.approvalPanel.selectedConnection');
+}
+
+function sanitizeExternalApprovalArguments(
+  value: unknown,
+  t: WebappTranslator,
+  depth = 0
+): unknown {
+  if (depth > 6) return t('consoleChat.skills.trace.values.truncated');
+  if (value === undefined || value === null) return value;
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    const normalized = trimmed.toLowerCase();
+    if (normalized === '__zgi_truncated__' || normalized === '[truncated]') {
+      return t('consoleChat.skills.trace.values.truncated');
+    }
+    if (normalized === '__zgi_redacted__' || normalized === '[redacted]') {
+      return t('consoleChat.skills.trace.values.redacted');
+    }
+    if (externalApprovalSecretString(trimmed)) {
+      return t('consoleChat.skills.trace.values.redacted');
+    }
+    return value.length > 500 ? `${value.slice(0, 500)}\u2026` : value;
+  }
+  if (typeof value === 'number' || typeof value === 'boolean') return value;
+  if (Array.isArray(value)) {
+    return value.slice(0, 20).map(entry => sanitizeExternalApprovalArguments(entry, t, depth + 1));
+  }
+  const record = governanceRecord(value);
+  if (!record) return String(value);
+  return Object.fromEntries(
+    Object.entries(record)
+      .filter(([key]) => key !== 'argument_labels_i18n' && key !== 'argument_value_labels_i18n')
+      .slice(0, 40)
+      .map(([key, entry]) => [
+        key,
+        externalApprovalSecretKey(key)
+          ? t('consoleChat.skills.trace.values.redacted')
+          : sanitizeExternalApprovalArguments(entry, t, depth + 1),
+      ])
+  );
+}
+
+function externalApprovalArgumentValue(
+  value: unknown,
+  t: WebappTranslator,
+  depth = 0
+): string | null {
+  if (value === undefined || value === null || depth > 4) return null;
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' && Number.isFinite(value)) return String(value);
+  if (typeof value === 'boolean') {
+    return value ? t('consoleChat.governance.values.yes') : t('consoleChat.governance.values.no');
+  }
+  if (Array.isArray(value)) {
+    const entries = value
+      .slice(0, 20)
+      .map(entry => externalApprovalArgumentValue(entry, t, depth + 1))
+      .filter((entry): entry is string => Boolean(entry));
+    return entries.length > 0 ? entries.join(', ') : null;
+  }
+  const record = governanceRecord(value);
+  if (!record) return null;
+  const entries = Object.values(record)
+    .slice(0, 40)
+    .map(entry => externalApprovalArgumentValue(entry, t, depth + 1))
+    .filter((entry): entry is string => Boolean(entry));
+  return entries.length > 0 ? entries.join(', ') : null;
+}
+
+function externalApprovalArgumentRows(
+  external: ExternalGovernedActionIdentity | null,
+  t: WebappTranslator,
+  locale: string
+): ToolGovernanceDisplayRow[] {
+  const argumentsValue = external?.arguments ?? null;
+  if (!external || !argumentsValue || Object.keys(argumentsValue).length === 0) return [];
+  const sanitizedArguments = sanitizeExternalApprovalArguments(argumentsValue, t);
+  return getAIChatExternalArgumentDisplayEntries(sanitizedArguments, {
+    locale,
+    argumentLabelsI18n: external.argumentLabelsI18n,
+    argumentValueLabelsI18n: external.argumentValueLabelsI18n,
+  }).flatMap(entry => {
+    const safeValue = sanitizeDisplayPayload(
+      entry.value,
+      t('consoleChat.skills.trace.values.hidden'),
+      t('consoleChat.skills.trace.values.truncated')
+    );
+    const value = externalApprovalArgumentValue(safeValue, t);
+    return value
+      ? [
+          {
+            key: `actionArgument:${entry.key}`,
+            label: entry.label ?? t('consoleChat.governance.approvalPanel.otherArgument'),
+            value,
+          },
+        ]
+      : [];
+  });
+}
+
 function agentNameFromExecutionResult(item: GovernanceTimelineItem): string | null {
   const result = governanceExecutionResult(item);
   const agent = governanceRecord(result?.agent);
-  return (
+  const name =
     governanceRecordString(result, ['agent_name', 'name']) ??
-    governanceRecordString(agent, ['name', 'agent_name'])
-  );
+    governanceRecordString(agent, ['name', 'agent_name']);
+  return name ? sanitizeDisplayString(name) : null;
 }
 
 function hasArgumentKey(args: Record<string, unknown>, key: string): boolean {
@@ -2084,10 +2395,11 @@ function agentConfigResultActionSentence(
     return null;
   }
   const agent = governanceRecord(result.agent);
-  const agentName =
+  const rawAgentName =
     governanceRecordString(result, ['agent_name', 'name']) ??
     governanceRecordString(agent, ['name', 'agent_name']) ??
     fallbackAgentName;
+  const agentName = sanitizeDisplayString(rawAgentName) ?? fallbackAgentName;
   return t('consoleChat.governance.approvalPanel.agentUpdateConfigFields', {
     agent: agentName,
     fields: formatAgentConfigFieldList(descriptors, locale, t),
@@ -2154,7 +2466,8 @@ function governanceAssetSpecificDisplayName(asset: AIChatToolGovernanceAssetRef)
   const fileName =
     governanceRecordString(asset, ['filename', 'file_name']) ??
     governanceRecordString(asset.metadata, ['filename', 'file_name']);
-  if (fileName && !looksLikeOpaqueAssetID(fileName)) return fileName;
+  const safeFileName = fileName ? sanitizeDisplayString(fileName) : null;
+  if (safeFileName && !looksLikeOpaqueAssetID(safeFileName)) return safeFileName;
   const displayName =
     governanceRecordString(asset, ['name', 'title', 'label', 'agent_name', 'resource_name']) ??
     governanceRecordString(asset.metadata, [
@@ -2164,8 +2477,9 @@ function governanceAssetSpecificDisplayName(asset: AIChatToolGovernanceAssetRef)
       'agent_name',
       'resource_name',
     ]);
-  if (displayName && displayName !== id && !looksLikeOpaqueAssetID(displayName)) {
-    return displayName;
+  const safeDisplayName = displayName ? sanitizeDisplayString(displayName) : null;
+  if (safeDisplayName && safeDisplayName !== id && !looksLikeOpaqueAssetID(safeDisplayName)) {
+    return safeDisplayName;
   }
   return null;
 }
@@ -2181,24 +2495,6 @@ function governanceAssetDisplayName(
   if (assetType && t) return governanceAssetTypeLabel(assetType, t);
   if (assetType && !looksLikeOpaqueAssetID(assetType)) return assetType;
   return t ? t('consoleChat.governance.values.asset') : 'asset';
-}
-
-function looksLikeOpaqueAssetID(value: string): boolean {
-  const normalized = value.trim();
-  if (!normalized) return false;
-  if (
-    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?:\.[a-z0-9]+)?$/i.test(
-      normalized
-    )
-  ) {
-    return true;
-  }
-  if (
-    /^(file|upload[-_]?file|asset|workspace|ws)[_-](?=[a-z0-9_-]*\d)[a-z0-9_-]+$/i.test(normalized)
-  ) {
-    return true;
-  }
-  return /^[0-9a-f]{24,}$/i.test(normalized);
 }
 
 function governanceFileSizeText(bytes: number | null): string | null {
@@ -2477,11 +2773,16 @@ function governanceSummaryRows(
       'externalSideEffect',
       governanceBooleanLabel(governanceEventBoolean(item, ['external_side_effect']), t),
     ],
-    ['permissionTier', governanceEventString(item, ['permission_tier'])],
+    [
+      'permissionTier',
+      governanceEventString(item, ['permission_tier'])
+        ? governancePermissionTierLabel(governanceEventString(item, ['permission_tier']) ?? '', t)
+        : null,
+    ],
   ] as const satisfies ReadonlyArray<readonly [GovernanceFieldLabel, string | null]>;
 }
 
-function governanceFieldRows(item: GovernanceTimelineItem) {
+function governanceFieldRows(item: GovernanceTimelineItem, t: WebappTranslator) {
   const approvalEvent = governanceApprovalEvent(item);
   return [
     ['decision', item.event.decision ?? item.event.governance?.status ?? item.event.status],
@@ -2503,8 +2804,52 @@ function governanceFieldRows(item: GovernanceTimelineItem) {
     ],
     ['executionStatus', item.event.execution_status],
     ['executionError', item.event.execution_error],
-    ['executionDuration', getDurationText(item.event.execution_duration_ms)],
+    ['executionDuration', getDurationText(item.event.execution_duration_ms, t)],
   ] as const satisfies ReadonlyArray<readonly [GovernanceFieldLabel, unknown]>;
+}
+
+function governanceFieldDisplayText(
+  labelKey: GovernanceFieldLabel,
+  value: unknown,
+  t: WebappTranslator,
+  errorCode?: unknown
+): string | null {
+  const stringValue = typeof value === 'string' ? value.trim() : '';
+  switch (labelKey) {
+    case 'decision': {
+      const normalized = stringValue.toLowerCase();
+      if (normalized === 'allowed') return t('consoleChat.governance.allowed');
+      if (normalized === 'denied') return t('consoleChat.governance.denied');
+      if (normalized === 'blocked') return t('consoleChat.governance.blocked');
+      if (normalized === 'needs_approval') return t('consoleChat.governance.needsApproval');
+      if (normalized === 'needs_resolution') return t('consoleChat.governance.needsResolution');
+      return formatAIChatTimelineValue(value, t);
+    }
+    case 'riskLevel':
+      return stringValue ? governanceRiskLabel(stringValue, t) : null;
+    case 'effect':
+      return stringValue ? governanceEffectLabel(stringValue, t) : null;
+    case 'assetType':
+      return stringValue ? governanceAssetTypeLabel(stringValue, t) : null;
+    case 'executionStatus': {
+      const normalized = stringValue.toLowerCase();
+      if (['success', 'succeeded', 'completed'].includes(normalized)) {
+        return t('consoleChat.skills.trace.result.statuses.success');
+      }
+      if (['running', 'pending'].includes(normalized)) {
+        return t('consoleChat.skills.trace.result.statuses.running');
+      }
+      if (['failed', 'error'].includes(normalized)) {
+        return t('consoleChat.skills.trace.result.statuses.failed');
+      }
+      if (normalized === 'blocked') return t('consoleChat.skills.trace.result.statuses.blocked');
+      return formatAIChatTimelineValue(value, t);
+    }
+    case 'executionError':
+      return localizeAIChatRuntimeMessage(value, t, undefined, errorCode);
+    default:
+      return formatAIChatTimelineValue(value, t);
+  }
 }
 
 function buildGovernanceTitle(item: GovernanceTimelineItem, t: WebappTranslator): string {
@@ -2528,11 +2873,39 @@ function governanceToolLabel(
   locale: string,
   t: WebappTranslator
 ): string | null {
-  void item;
-  void skillDisplayById;
-  void locale;
-  void t;
-  return null;
+  const external = externalGovernedActionIdentity(item);
+  if (external) {
+    return t('consoleChat.governance.externalToolLabel', {
+      integration: externalIntegrationDisplayName(external, locale, t),
+      action: externalActionDisplayName(external, locale, t),
+    });
+  }
+
+  const frozen = governanceFrozenInvocation(item);
+  const skillId =
+    governanceStringValue(frozen?.skill_id) ?? governanceEventString(item, ['skill_id']);
+  const toolName =
+    governanceStringValue(frozen?.tool_name) ??
+    governanceEventString(item, ['tool_name', 'tool_id']);
+  if (!skillId || !toolName) return null;
+  const skill = skillDisplayById[skillId] ?? getFallbackAIChatSkillDisplayInfo(skillId, locale);
+  const displaySkill =
+    skillId.toLowerCase() === 'external-apps'
+      ? { ...skill, label: t('consoleChat.connectedApps.title') }
+      : skill;
+  return t('consoleChat.governance.toolLabel', {
+    skill: displaySkill.label,
+    tool:
+      getAIChatExternalInvocationDisplayName(
+        { skill_id: skillId, tool_name: toolName },
+        locale,
+        t,
+        getAIChatSkillToolDisplayName(skillId, toolName, locale) ||
+          t('consoleChat.connectedApps.actions.generic')
+      ) ||
+      getAIChatSkillToolDisplayName(skillId, toolName, locale) ||
+      toolName,
+  });
 }
 
 function governancePermissionTierLabel(permissionTier: string, t: WebappTranslator): string {
@@ -2556,6 +2929,14 @@ function governanceActionSentence(
   locale: string,
   skillDisplayById: AIChatSkillDisplayMap
 ): string {
+  const external = externalGovernedActionIdentity(item);
+  if (external) {
+    return t('consoleChat.governance.approvalPanel.externalAction', {
+      action: externalActionDisplayName(external, locale, t),
+      integration: externalIntegrationDisplayName(external, locale, t),
+      connection: externalConnectionDisplayName(external, t),
+    });
+  }
   const effect = governanceEventString(item, ['effect'])?.toLowerCase();
   const assetType = governanceEventString(item, ['asset_type'])?.toLowerCase();
   const skillId = governanceEventString(item, ['skill_id'])?.toLowerCase();
@@ -2783,7 +3164,7 @@ function buildToolGovernanceDecisionViewModel(
   const approvalStatus = governanceApprovalStatus(item);
   const title = buildGovernanceTitle(item, t);
   const toolLabel = governanceToolLabel(item, skillDisplayById, locale, t);
-  const reason = governanceReason(item);
+  const reason = governanceReason(item, t, locale);
   const approvalAssets = governanceApprovalAssets(item);
   const displayAssets = governanceDecisionDisplayAssets(item, approvalAssets);
   const assetCount = governanceAssetCount(item, approvalAssets);
@@ -2803,9 +3184,44 @@ function buildToolGovernanceDecisionViewModel(
         ]
       : []
   );
-  const details: ToolGovernanceDisplayRow[] = governanceFieldRows(item).flatMap(
+  const externalAction = externalGovernedActionIdentity(item);
+  if (externalAction) {
+    const externalSummaryRows: ToolGovernanceDisplayRow[] = [
+      {
+        key: 'integration',
+        label: t(GOVERNANCE_FIELD_LABEL_KEYS.integration),
+        value: externalIntegrationDisplayName(externalAction, locale, t),
+      },
+      {
+        key: 'action',
+        label: t(GOVERNANCE_FIELD_LABEL_KEYS.action),
+        value: externalActionDisplayName(externalAction, locale, t),
+      },
+      {
+        key: 'connection',
+        label: t(GOVERNANCE_FIELD_LABEL_KEYS.connection),
+        value: externalConnectionDisplayName(externalAction, t),
+      },
+    ];
+    if (externalAction.destination) {
+      externalSummaryRows.push({
+        key: 'destination',
+        label: t(GOVERNANCE_FIELD_LABEL_KEYS.destination),
+        value: externalAction.destination,
+      });
+    }
+    summaryRows.unshift(...externalSummaryRows);
+  }
+  const details: ToolGovernanceDisplayRow[] = governanceFieldRows(item, t).flatMap(
     ([labelKey, value]) => {
-      const formatted = governanceDisplayText(value);
+      const formatted = governanceFieldDisplayText(
+        labelKey,
+        value,
+        t,
+        labelKey === 'executionError'
+          ? governanceEventString(item, ['execution_error_code', 'error_code'])
+          : undefined
+      );
       return formatted
         ? [
             {
@@ -2817,6 +3233,7 @@ function buildToolGovernanceDecisionViewModel(
         : [];
     }
   );
+  details.unshift(...externalApprovalArgumentRows(externalAction, t, locale));
   const assets: ToolGovernanceDisplayAsset[] = displayAssets.map((asset, index) => {
     const key = `${governanceStringValue(asset.id) ?? governanceAssetDisplayName(asset, t)}-${index}`;
     return {
@@ -2899,6 +3316,8 @@ function toPendingToolGovernanceApproval(
     toolLabel: view.toolLabel,
     actionSentence: view.actionSentence,
     assets: view.assets,
+    summaryRows: view.summaryRows,
+    details: view.details,
     riskLabel: view.riskLabel,
     permissionLabel: view.permissionLabel,
     canSubmit: view.canSubmit,
@@ -3448,13 +3867,28 @@ function buildProgressText(
     return item.content;
   }
 
-  const skill = item.skill_id
+  const baseSkill = item.skill_id
     ? (skillDisplayById[item.skill_id] ?? getFallbackAIChatSkillDisplayInfo(item.skill_id, locale))
     : null;
+  const isExternalApp = item.skill_id?.toLowerCase() === 'external-apps';
+  const skill =
+    baseSkill && isExternalApp
+      ? { ...baseSkill, label: t('consoleChat.connectedApps.title') }
+      : baseSkill;
+  const fallbackTool =
+    item.skill_id && item.tool_name
+      ? getAIChatSkillToolDisplayName(item.skill_id, item.tool_name, locale) ||
+        (isExternalApp ? t('consoleChat.connectedApps.actions.generic') : item.tool_name)
+      : item.tool_name;
   const tool =
     item.skill_id && item.tool_name
-      ? getAIChatSkillToolDisplayName(item.skill_id, item.tool_name, locale) || item.tool_name
-      : item.tool_name;
+      ? (getAIChatExternalInvocationDisplayName(
+          { skill_id: item.skill_id, tool_name: item.tool_name },
+          locale,
+          t,
+          fallbackTool ?? t('consoleChat.connectedApps.actions.generic')
+        ) ?? fallbackTool)
+      : fallbackTool;
 
   if (skill && tool) {
     return t('consoleChat.skills.agentic.preparingTool', { skill: skill.label, tool });
@@ -3586,11 +4020,35 @@ function skillTimelineViewModel(
   item: Extract<AIChatAgenticTimelineItem, { type: 'skill_event' }>,
   skillDisplayById: AIChatSkillDisplayMap,
   locale: string,
-  t: WebappTranslator
+  t: WebappTranslator,
+  recoveredInvalidArguments = false
 ): SkillTimelineViewModel {
   const skillId = item.invocation.skill_id || t('consoleChat.skills.trace.unknownSkill');
-  const skill = skillDisplayById[skillId] ?? getFallbackAIChatSkillDisplayInfo(skillId, locale);
+  const baseSkill = skillDisplayById[skillId] ?? getFallbackAIChatSkillDisplayInfo(skillId, locale);
+  const isExternalApp = isAIChatExternalAppsInvocation(item.invocation);
+  const skill = isExternalApp
+    ? { ...baseSkill, label: t('consoleChat.connectedApps.title') }
+    : baseSkill;
   const tone = getInvocationTone(item.invocation);
+  if (recoveredInvalidArguments) {
+    const fallbackToolName =
+      getAIChatSkillToolDisplayName(item.invocation.skill_id, item.invocation.tool_name, locale) ||
+      (isExternalApp ? null : item.invocation.path) ||
+      t('consoleChat.skills.trace.unknownTool');
+    const toolName =
+      getAIChatExternalInvocationDisplayName(item.invocation, locale, t, fallbackToolName) ??
+      fallbackToolName;
+    return {
+      item,
+      skill,
+      tone: 'recovered',
+      title: t('consoleChat.skills.agentic.invalidArgumentsCorrected', {
+        skill: skill.label,
+        tool: toolName,
+      }),
+      detail: t('consoleChat.skills.agentic.invalidArgumentsCorrectedDetail'),
+    };
+  }
 
   return {
     item,
@@ -3599,8 +4057,19 @@ function skillTimelineViewModel(
     title: buildSkillTitle(item.invocation, skill, tone, locale, t, skillDisplayById),
     detail:
       getAIChatSkillResultDisplay(item.invocation, locale) ||
-      item.invocation.message ||
-      item.invocation.error,
+      localizeAIChatRuntimeMessage(
+        item.invocation.message,
+        t,
+        undefined,
+        item.invocation.error_code
+      ) ||
+      localizeAIChatRuntimeMessage(
+        item.invocation.error,
+        t,
+        undefined,
+        item.invocation.error_code
+      ) ||
+      undefined,
   };
 }
 
@@ -3608,7 +4077,8 @@ function timelineRenderItem(
   item: AIChatAgenticTimelineItem,
   skillDisplayById: AIChatSkillDisplayMap,
   locale: string,
-  t: WebappTranslator
+  t: WebappTranslator,
+  recoveredInvalidArgumentIds: ReadonlySet<string>
 ): TimelineRenderItem {
   switch (item.type) {
     case 'process_text':
@@ -3649,7 +4119,13 @@ function timelineRenderItem(
       return {
         renderType: 'skill',
         key: item.id,
-        view: skillTimelineViewModel(item, skillDisplayById, locale, t),
+        view: skillTimelineViewModel(
+          item,
+          skillDisplayById,
+          locale,
+          t,
+          recoveredInvalidArgumentIds.has(item.id)
+        ),
       };
   }
 }
@@ -3663,12 +4139,16 @@ function buildTimelineRenderItems(
   governanceCorrelationIds: ReadonlySet<string>,
   enableToolGovernanceApprovals: boolean
 ): TimelineRenderItem[] {
-  return filterTimelineForRendering(
+  const filteredTimeline = filterTimelineForRendering(
     timeline,
     messageStatus,
     governanceCorrelationIds,
     enableToolGovernanceApprovals
-  ).map(item => timelineRenderItem(item, skillDisplayById, locale, t));
+  );
+  const recoveredInvalidArgumentIds = recoveredInvalidArgumentTimelineItemIds(filteredTimeline);
+  return filteredTimeline.map(item =>
+    timelineRenderItem(item, skillDisplayById, locale, t, recoveredInvalidArgumentIds)
+  );
 }
 
 function TimelineRenderRow({

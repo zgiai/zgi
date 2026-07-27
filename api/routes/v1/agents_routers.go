@@ -22,6 +22,7 @@ import (
 	promptservice "github.com/zgiai/zgi/api/internal/modules/prompts/service"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	"github.com/zgiai/zgi/api/internal/modules/shared/titlegen"
+	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"github.com/zgiai/zgi/api/internal/modules/tools"
 	"github.com/zgiai/zgi/api/middleware"
 	"github.com/zgiai/zgi/api/pkg/logger"
@@ -30,7 +31,7 @@ import (
 	"gorm.io/gorm"
 )
 
-func RegisterAgentsRoutes(v1 *gin.RouterGroup, db *gorm.DB, accountService interfaces.AccountService, tenantService interfaces.WorkspaceManagementService, resourcePermissionService interfaces.ResourcePermissionService, enterpriseService interfaces.OrganizationService, quotaService interfaces.QuotaService, fileService interfaces.FileService, contentExtractor runtimeservice.ContentExtractionService, llmClient llmclient.LLMClient, toolEngine *tools.ToolEngine, toolManager *tools.ToolManager, memoryService *memorymodule.Service, graphFlowService *graphflow.Service, promptResolver promptservice.PromptService, dataSourceService datasourceservice.DataSourceService, knowledgeRetrievalService *datasetservice.KnowledgeRetrievalService, engineFactory *graph_engine.EngineFactory, taskManager *queue.TaskManager, taskRegistry workflowtest.TaskHandlerRegistry, workflowTestService *workflowtest.Service, scheduler *pkgscheduler.Scheduler, workflowTestTaskBackend string) app.AgentsService {
+func RegisterAgentsRoutes(v1 *gin.RouterGroup, db *gorm.DB, accountService interfaces.AccountService, tenantService interfaces.WorkspaceManagementService, resourcePermissionService interfaces.ResourcePermissionService, enterpriseService interfaces.OrganizationService, quotaService interfaces.QuotaService, fileService interfaces.FileService, contentExtractor runtimeservice.ContentExtractionService, llmClient llmclient.LLMClient, toolEngine *tools.ToolEngine, toolManager *tools.ToolManager, memoryService *memorymodule.Service, graphFlowService *graphflow.Service, promptResolver promptservice.PromptService, dataSourceService datasourceservice.DataSourceService, knowledgeRetrievalService *datasetservice.KnowledgeRetrievalService, engineFactory *graph_engine.EngineFactory, taskManager *queue.TaskManager, taskRegistry workflowtest.TaskHandlerRegistry, workflowTestService *workflowtest.Service, scheduler *pkgscheduler.Scheduler, workflowTestTaskBackend string, integrationActions app.IntegrationActionCatalog, manifestResolvers ...skills.ToolGovernanceManifestResolver) app.AgentsService {
 	repo := app.NewAgentsRepository(db)
 
 	// Initialize workflow service for agents with all required dependencies
@@ -77,7 +78,7 @@ func RegisterAgentsRoutes(v1 *gin.RouterGroup, db *gorm.DB, accountService inter
 		fileService,
 		contentExtractor,
 		enterpriseService,
-		newSkillRuntimeWithSandbox(toolEngine, toolManager, fileService, enterpriseService),
+		newSkillRuntimeWithSandbox(toolEngine, toolManager, fileService, enterpriseService, manifestResolvers...),
 		memoryService,
 		agentMemoryService,
 	)
@@ -96,7 +97,7 @@ func RegisterAgentsRoutes(v1 *gin.RouterGroup, db *gorm.DB, accountService inter
 			logger.Error("Failed to register chat runtime lease cleanup task", err)
 		}
 	}
-	service := app.NewAgentsService(repo, accountService, tenantService, workflowService, chatRuntimeService, agentMemoryService, dataSourceService, knowledgeRetrievalService, resourcePermissionService, enterpriseService, quotaService, fileService, llmClient, defaultModelResolver, db)
+	service := app.NewAgentsService(repo, accountService, tenantService, workflowService, chatRuntimeService, agentMemoryService, dataSourceService, knowledgeRetrievalService, resourcePermissionService, enterpriseService, quotaService, fileService, llmClient, defaultModelResolver, db, integrationActions)
 	appHandler := app.NewAgentsHandler(service, tenantService, accountService, enterpriseService, db, chatRuntimeService)
 	appHandler.SetFileService(fileService)
 	if modelPrechecker, ok := llmClient.(llmclient.AppModelPrechecker); ok {
@@ -143,6 +144,7 @@ func RegisterAgentsRoutes(v1 *gin.RouterGroup, db *gorm.DB, accountService inter
 	appsGroup.GET("/:agent_id/candidates/workflows", appHandler.ListAgentWorkflowBindingCandidates)
 	appsGroup.GET("/:agent_id/candidates/databases", appHandler.ListAgentDatabaseBindingCandidates)
 	appsGroup.GET("/:agent_id/candidates/databases/:data_source_id/tables", appHandler.ListAgentDatabaseTableBindingCandidates)
+	appsGroup.GET("/:agent_id/candidates/integration-connections", appHandler.ListAgentIntegrationConnectionBindingCandidates)
 	// Compatibility aliases for clients using the original candidate paths.
 	appsGroup.GET("/:agent_id/skills/candidates", appHandler.ListAgentSkillBindingCandidates)
 	appsGroup.GET("/:agent_id/workflow-bindings/candidates", appHandler.ListAgentWorkflowBindingCandidates)

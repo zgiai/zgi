@@ -19,6 +19,7 @@ import {
   AppWindow,
   Clock3,
   ChevronDown,
+  PlugZap,
   Workflow,
 } from 'lucide-react';
 import { usePathname, useSearchParams } from 'next/navigation';
@@ -41,6 +42,7 @@ import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
 import { useWorkflowDebugFocusMode } from '@/components/workflow/hooks/use-debug-focus-mode';
 import { usePersistentSidebarCollapse } from '@/hooks/use-persistent-sidebar-collapse';
 import { getConsoleRouteAccess } from '@/routes/access';
+import { useSystemFeatures } from '@/hooks/auth/use-system-features';
 
 interface NavItem {
   title: string;
@@ -170,6 +172,8 @@ export function ConsoleSidebar({
   const { hasPermission, hasAnyPermission } = useAccountPermissions();
   const contextStatus = useWorkspaceStore.use.contextStatus();
   const isWorkspaceRequired = contextStatus === 'workspace_required';
+  const systemFeatures = useSystemFeatures();
+  const externalIntegrationsEnabled = Boolean(systemFeatures.data?.enable_external_integrations);
   const isDebugFocusMode = useWorkflowDebugFocusMode();
 
   // Collapsed state persisted via ui-local helpers
@@ -276,6 +280,15 @@ export function ConsoleSidebar({
         key: 'tools',
         title: t('tools'),
         items: [
+          ...(externalIntegrationsEnabled
+            ? [
+                {
+                  title: t('integrations'),
+                  href: '/console/integrations',
+                  icon: PlugZap,
+                },
+              ]
+            : []),
           {
             title: t('skills'),
             href: '/console/skills',
@@ -306,7 +319,7 @@ export function ConsoleSidebar({
         ],
       },
     ],
-    [t]
+    [externalIntegrationsEnabled, t]
   );
 
   // Filter groups and items
@@ -579,6 +592,8 @@ export function ConsoleMobileSidebar({
   const { hasPermission, hasAnyPermission } = useAccountPermissions();
   const contextStatus = useWorkspaceStore.use.contextStatus();
   const isWorkspaceRequired = contextStatus === 'workspace_required';
+  const systemFeatures = useSystemFeatures();
+  const externalIntegrationsEnabled = Boolean(systemFeatures.data?.enable_external_integrations);
   const [openGroups, setOpenGroups] = React.useState<Record<string, boolean>>({
     work: true,
     resources: true,
@@ -654,6 +669,15 @@ export function ConsoleMobileSidebar({
         key: 'tools',
         title: t('tools'),
         items: [
+          ...(externalIntegrationsEnabled
+            ? [
+                {
+                  title: t('integrations'),
+                  href: '/console/integrations',
+                  icon: PlugZap,
+                },
+              ]
+            : []),
           {
             title: t('skills'),
             href: '/console/skills',
@@ -686,7 +710,7 @@ export function ConsoleMobileSidebar({
     ];
 
     return filterConsoleNavGroups(groups, isWorkspaceRequired, hasPermission, hasAnyPermission);
-  }, [hasPermission, hasAnyPermission, isWorkspaceRequired, t]);
+  }, [externalIntegrationsEnabled, hasPermission, hasAnyPermission, isWorkspaceRequired, t]);
 
   const closeSidebar = () => onOpenChange(false);
   const toggleGroup = (key: string) => setOpenGroups(prev => ({ ...prev, [key]: !prev[key] }));

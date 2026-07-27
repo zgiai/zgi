@@ -41,6 +41,7 @@ import type {
   AgentRuntimeSurfaceAuthorizationResponse,
   UpdateAgentRuntimeSurfacesRequest,
 } from './types/agent';
+import type { AgentIntegrationConnectionCandidatesResponse } from './types/integration';
 import type { WebAppRunRequest, WebAppRunSseCallbacks } from './types/webapp';
 import type {
   AgentBindingMutationConfirmation,
@@ -206,6 +207,22 @@ class AgentService extends BaseService {
     params?: { query?: string; page?: number; limit?: number }
   ): Promise<ApiResponseData<AgentWorkflowBindingCandidatesResponse>> {
     return this.request('get', `/agents/${agentId}/candidates/workflows`, undefined, {
+      headers: { 'Content-Type': 'application/json' },
+      params,
+    });
+  }
+
+  getAgentIntegrationConnectionCandidates(
+    agentId: string,
+    params?: {
+      query?: string;
+      integration_id?: string;
+      page?: number;
+      limit?: number;
+      include_selected?: boolean;
+    }
+  ): Promise<ApiResponseData<AgentIntegrationConnectionCandidatesResponse>> {
+    return this.request('get', `/agents/${agentId}/candidates/integration-connections`, undefined, {
       headers: { 'Content-Type': 'application/json' },
       params,
     });

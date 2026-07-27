@@ -2,6 +2,7 @@ package config
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"runtime"
 	"strings"
@@ -122,6 +123,8 @@ func loadDomainConfig(cfg *Config, source *envSource) error {
 		optionalConfigLoader("neo4j", loadNeo4jConfig),
 		optionalConfigLoader("marketplace", loadMarketplaceConfig),
 
+		requiredConfigLoader("web search", loadWebSearchConfig),
+		requiredConfigLoader("external integrations", loadExternalIntegrationsConfig),
 		optionalConfigLoader("knowledge", loadKnowledgeConfig),
 		optionalConfigLoader("graph flow", loadGraphFlowConfig),
 		optionalConfigLoader("content parse", loadContentParseConfig),
@@ -1065,6 +1068,169 @@ func loadAutomationConfig(cfg *Config, source *envSource) {
 	cfg.Automation = AutomationConfig{
 		DispatchEnabled: mustBool(source.bool(true, envAutomationDispatchEnabled)),
 	}
+}
+
+func loadWebSearchConfig(cfg *Config, source *envSource) error {
+	enabled, err := source.bool(false, envWebSearchEnabled)
+	if err != nil {
+		return err
+	}
+	orgDailyLimit, err := source.int(1000, envWebSearchOrgDailyLimit)
+	if err != nil {
+		return err
+	}
+	timeoutSeconds, err := source.int(20, envExaTimeoutSeconds)
+	if err != nil {
+		return err
+	}
+	maxResults, err := source.int(10, envExaMaxResults)
+	if err != nil {
+		return err
+	}
+	maxFetchURLs, err := source.int(5, envExaMaxFetchURLs)
+	if err != nil {
+		return err
+	}
+	maxContentCharacters, err := source.int(20000, envExaMaxContentCharacters)
+	if err != nil {
+		return err
+	}
+
+	cfg.WebSearch = WebSearchConfig{
+		Enabled:       enabled,
+		Provider:      strings.ToLower(strings.TrimSpace(source.string("exa", envWebSearchProvider))),
+		OrgDailyLimit: orgDailyLimit,
+		Exa: ExaConfig{
+			TimeoutSeconds:       timeoutSeconds,
+			MaxResults:           maxResults,
+			DefaultSearchType:    strings.ToLower(strings.TrimSpace(source.string("auto", envExaDefaultSearchType))),
+			MaxFetchURLs:         maxFetchURLs,
+			MaxContentCharacters: maxContentCharacters,
+		},
+	}
+	return nil
+}
+
+func loadExternalIntegrationsConfig(cfg *Config, source *envSource) error {
+	defaultDailyLimit := cfg.WebSearch.OrgDailyLimit
+	if defaultDailyLimit <= 0 {
+		defaultDailyLimit = 1000
+	}
+	defaultTimeout := cfg.WebSearch.Exa.TimeoutSeconds
+	if defaultTimeout <= 0 {
+		defaultTimeout = 20
+	}
+
+	enabled, err := source.bool(cfg.WebSearch.Enabled, envExternalIntegrationsEnabled)
+	if err != nil {
+		return err
+	}
+	orgDailyLimit, err := source.int(defaultDailyLimit, envIntegrationOrgDailyLimit)
+	if err != nil {
+		return err
+	}
+	timeoutSeconds, err := source.int(defaultTimeout, envIntegrationTimeoutSeconds)
+	if err != nil {
+		return err
+	}
+	healthFailureThreshold, err := source.int(3, envIntegrationHealthFailureThreshold)
+	if err != nil {
+		return err
+	}
+	oauthRefreshWindow, err := source.int(600, envIntegrationOAuthRefreshWindowSeconds)
+	if err != nil {
+		return err
+	}
+	oauthFlowTTL, err := source.int(600, envIntegrationOAuthFlowTTLSeconds)
+	if err != nil {
+		return err
+	}
+	oauthAPIBaseURL := strings.TrimRight(strings.TrimSpace(cfg.Console.APIURL), "/")
+	if oauthAPIBaseURL == "" {
+		oauthAPIBaseURL = "http://127.0.0.1:2679"
+	}
+	oauthWebBaseURL := strings.TrimRight(strings.TrimSpace(cfg.Console.WebURL), "/")
+	if oauthWebBaseURL == "" {
+		oauthWebBaseURL = "http://localhost:3000"
+	}
+	oauthCallbackURL := strings.TrimSpace(source.string(
+		oauthAPIBaseURL+"/console/api/integrations/oauth/callback",
+		envIntegrationOAuthCallbackURL,
+	))
+	oauthResultURL := strings.TrimSpace(source.string(
+		oauthWebBaseURL+"/console/integrations/oauth/result",
+		envIntegrationOAuthResultURL,
+	))
+	type rawOAuthClientConfig struct {
+		ClientID     string            `json:"client_id"`
+		ClientSecret string            `json:"client_secret"`
+		Config       map[string]string `json:"config"`
+	}
+	rawOAuthClients := make(map[string]rawOAuthClientConfig)
+	clientsJSON := strings.TrimSpace(source.string("", envIntegrationOAuthClientsJSON))
+	if clientsJSON != "" {
+		if err := json.Unmarshal([]byte(clientsJSON), &rawOAuthClients); err != nil {
+			return fmt.Errorf("%s must be a JSON object: %w", envIntegrationOAuthClientsJSON, err)
+		}
+	}
+	oauthClients := make(map[string]ExternalIntegrationOAuthClientConfig, len(rawOAuthClients))
+	for rawKey, rawClient := range rawOAuthClients {
+		key := strings.ToLower(strings.TrimSpace(rawKey))
+		if key == "" {
+			return fmt.Errorf("%s contains an empty provider key", envIntegrationOAuthClientsJSON)
+		}
+		configValues := make(map[string]string, len(rawClient.Config))
+		for rawConfigKey, rawValue := range rawClient.Config {
+			configKey := strings.ToLower(strings.TrimSpace(rawConfigKey))
+			if configKey == "" {
+				return fmt.Errorf("%s contains an empty config key for %q", envIntegrationOAuthClientsJSON, key)
+			}
+			configValues[configKey] = strings.TrimSpace(rawValue)
+		}
+		oauthClients[key] = ExternalIntegrationOAuthClientConfig{
+			ClientID:     strings.TrimSpace(rawClient.ClientID),
+			ClientSecret: strings.TrimSpace(rawClient.ClientSecret),
+			Config:       configValues,
+		}
+	}
+	credentialKeys := make(map[string]string)
+	keysJSON := strings.TrimSpace(source.string("", envIntegrationCredentialKeysJSON))
+	if keysJSON != "" {
+		if err := json.Unmarshal([]byte(keysJSON), &credentialKeys); err != nil {
+			return fmt.Errorf("%s must be a JSON object: %w", envIntegrationCredentialKeysJSON, err)
+		}
+	}
+	activeKeyID := strings.TrimSpace(source.string("", envIntegrationCredentialActiveKeyID))
+	if len(credentialKeys) == 0 && strings.TrimSpace(cfg.Encryption.APIKeyEncryptionKey) != "" {
+		credentialKeys["legacy"] = cfg.Encryption.APIKeyEncryptionKey
+		if activeKeyID == "" {
+			activeKeyID = "legacy"
+		}
+	}
+	if activeKeyID == "" {
+		if _, ok := credentialKeys["default"]; ok {
+			activeKeyID = "default"
+		}
+	}
+
+	cfg.ExternalIntegrations = ExternalIntegrationsConfig{
+		Enabled:               enabled,
+		OrgDailyLimit:         orgDailyLimit,
+		TimeoutSeconds:        timeoutSeconds,
+		CredentialActiveKeyID: activeKeyID,
+		CredentialKeys:        credentialKeys,
+		Health: ExternalIntegrationHealthConfig{
+			FailureThreshold: healthFailureThreshold,
+		},
+		OAuth: ExternalIntegrationOAuthConfig{
+			RefreshWindowSeconds: oauthRefreshWindow,
+			FlowTTLSeconds:       oauthFlowTTL,
+			CallbackURL:          oauthCallbackURL,
+			ResultURL:            oauthResultURL,
+			Clients:              oauthClients,
+		},
+	}
+	return nil
 }
 
 func loadToolingConfig(cfg *Config, source *envSource) {

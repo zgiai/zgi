@@ -45,6 +45,60 @@ func TestToolGovernanceDecisionPayloadIncludesAssetOperationAudit(t *testing.T) 
 	}
 }
 
+func TestToolGovernanceDecisionPayloadSurfacesDynamicActionIdentityWithoutDuplicatingArguments(t *testing.T) {
+	frozen := toolgovernance.NewFrozenInvocation(toolgovernance.FrozenInvocationRequest{
+		CorrelationID: "corr-external-1",
+		Manifest: toolgovernance.Manifest{
+			ToolID:              "feishu.message.send",
+			Effect:              toolgovernance.EffectCreate,
+			RiskLevel:           toolgovernance.RiskLevelHigh,
+			DataEgress:          true,
+			ExternalDestination: "open.feishu.cn",
+		},
+		SkillID:      "external-apps",
+		ToolName:     "execute_action",
+		ProviderType: "connector",
+		ProviderID:   "external-integrations",
+		Arguments: map[string]interface{}{
+			"integration_id":       "feishu",
+			"action_id":            "feishu.message.send",
+			"connection_id":        "33333333-3333-3333-3333-333333333333",
+			"connection_name":      "Team Feishu",
+			"connection_selection": "preferred",
+			"arguments": map[string]interface{}{
+				"message": "private content that stays inside frozen_invocation",
+			},
+		},
+	})
+	payload := ToolGovernanceDecisionPayload(PayloadIDs{ConversationID: "conversation-1", MessageID: "message-1"}, skills.SkillTrace{
+		Kind: "tool_governance", SkillID: "external-apps", ToolName: "execute_action",
+		Status: string(toolgovernance.DecisionStatusNeedsApproval),
+		Governance: &toolgovernance.Decision{
+			Status: toolgovernance.DecisionStatusNeedsApproval, RequiresApproval: true,
+			Manifest: frozenManifest(frozen), FrozenInvocation: &frozen,
+		},
+	})
+
+	if payload["integration_id"] != "feishu" || payload["action_id"] != "feishu.message.send" ||
+		payload["connection_name"] != "Team Feishu" || payload["connection_selection"] != "preferred" ||
+		payload["tool_id"] != "feishu.message.send" || payload["external_destination"] != "open.feishu.cn" {
+		t.Fatalf("dynamic approval identity = %#v", payload)
+	}
+	if _, exposed := payload["connection_id"]; exposed {
+		t.Fatalf("dynamic approval duplicated internal connection id: %#v", payload)
+	}
+	if _, exposed := payload["arguments"]; exposed {
+		t.Fatalf("dynamic action arguments must remain inside the frozen invocation: %#v", payload["arguments"])
+	}
+}
+
+func frozenManifest(frozen toolgovernance.FrozenInvocation) toolgovernance.Manifest {
+	return toolgovernance.Manifest{
+		ToolID: frozen.ToolID, Effect: frozen.Effect, RiskLevel: frozen.RiskLevel,
+		DataEgress: frozen.DataEgress, ExternalDestination: frozen.ExternalDestination,
+	}
+}
+
 func TestSkillCallErrorPayloadPreservesGuardrailBlockedStatus(t *testing.T) {
 	payload := SkillCallErrorPayload(PayloadIDs{
 		ConversationID: "conversation-1",
@@ -62,6 +116,40 @@ func TestSkillCallErrorPayloadPreservesGuardrailBlockedStatus(t *testing.T) {
 	}
 	if payload["kind"] != "guardrail" {
 		t.Fatalf("kind = %#v, want guardrail", payload["kind"])
+	}
+}
+
+func TestSkillCallErrorPayloadIncludesStableErrorCode(t *testing.T) {
+	payload := SkillCallErrorPayload(PayloadIDs{
+		ConversationID: "conversation-1",
+		MessageID:      "message-1",
+	}, skills.SkillTrace{
+		Kind:      "tool_call",
+		SkillID:   "external-apps",
+		ToolName:  "execute_action",
+		Status:    "error",
+		Error:     "integration_auth_invalid",
+		ErrorCode: "integration_auth_invalid",
+	}, "error", true)
+
+	if got := payload["error_code"]; got != "integration_auth_invalid" {
+		t.Fatalf("error_code = %#v, want integration_auth_invalid", got)
+	}
+	if got := payload["message"]; got != "integration_auth_invalid" {
+		t.Fatalf("message = %#v, want safe stable code", got)
+	}
+}
+
+func TestSkillCallErrorPayloadOmitsEmptyErrorCode(t *testing.T) {
+	payload := SkillCallErrorPayload(PayloadIDs{}, skills.SkillTrace{
+		Kind:     "tool_call",
+		SkillID:  "calculator",
+		ToolName: "calculate",
+		Status:   "error",
+		Error:    "ordinary tool failure",
+	}, "error", true)
+	if _, exists := payload["error_code"]; exists {
+		t.Fatalf("ordinary error payload unexpectedly contains error_code: %#v", payload)
 	}
 }
 

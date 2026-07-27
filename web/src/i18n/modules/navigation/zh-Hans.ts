@@ -24,6 +24,7 @@ const messages: NavigationMessages = {
   workflowAgents: '工作流智能体',
   prompts: '提示词',
   skills: 'Skill 管理',
+  integrations: '连接中心',
   dbs: '数据库',
   files: '文件管理',
   chat: '对话',

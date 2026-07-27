@@ -26,6 +26,7 @@ export const AVAILABLE_MODULES = [
   'automation',
   'contentParse',
   'prompts',
+  'integrations',
 ] as const;
 
 export type ModuleName = (typeof AVAILABLE_MODULES)[number];
@@ -145,6 +146,10 @@ const moduleRegistry: ModuleRegistry = {
   prompts: {
     'zh-Hans': () => import('./modules/prompts/zh-Hans'),
     'en-US': () => import('./modules/prompts/en-US'),
+  },
+  integrations: {
+    'zh-Hans': () => import('./modules/integrations/zh-Hans'),
+    'en-US': () => import('./modules/integrations/en-US'),
   },
 };
 

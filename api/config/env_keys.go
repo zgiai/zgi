@@ -579,6 +579,38 @@ const (
 
 // Domain behavior and toolchain keys.
 const (
+	// Shared external-integration runtime. When EXTERNAL_INTEGRATIONS_ENABLED
+	// is omitted, WEB_SEARCH_ENABLED is used as the compatibility default.
+	envExternalIntegrationsEnabled          = "EXTERNAL_INTEGRATIONS_ENABLED"
+	envIntegrationOrgDailyLimit             = "INTEGRATION_ORG_DAILY_LIMIT"
+	envIntegrationTimeoutSeconds            = "INTEGRATION_TIMEOUT_SECONDS"
+	envIntegrationCredentialActiveKeyID     = "INTEGRATION_CREDENTIAL_ACTIVE_KEY_ID"
+	envIntegrationCredentialKeysJSON        = "INTEGRATION_CREDENTIAL_KEYS_JSON"
+	envIntegrationHealthFailureThreshold    = "INTEGRATION_HEALTH_FAILURE_THRESHOLD"
+	envIntegrationOAuthRefreshWindowSeconds = "INTEGRATION_OAUTH_REFRESH_WINDOW_SECONDS"
+	envIntegrationOAuthFlowTTLSeconds       = "INTEGRATION_OAUTH_FLOW_TTL_SECONDS"
+	envIntegrationOAuthCallbackURL          = "INTEGRATION_OAUTH_CALLBACK_URL"
+	envIntegrationOAuthResultURL            = "INTEGRATION_OAUTH_RESULT_URL"
+	envIntegrationOAuthClientsJSON          = "INTEGRATION_OAUTH_CLIENTS_JSON"
+
+	// Web search provider runtime configuration.
+	// envWebSearchEnabled controls whether web search tools are available. Default: false.
+	envWebSearchEnabled = "WEB_SEARCH_ENABLED"
+	// envWebSearchProvider selects the web search provider. Phase one supports exa. Default: exa.
+	envWebSearchProvider = "WEB_SEARCH_PROVIDER"
+	// envWebSearchOrgDailyLimit sets the per-organization daily request limit. Default: 1000.
+	envWebSearchOrgDailyLimit = "WEB_SEARCH_ORG_DAILY_LIMIT"
+	// envExaTimeoutSeconds sets the total Exa request timeout in seconds. Default: 20.
+	envExaTimeoutSeconds = "EXA_TIMEOUT_SECONDS"
+	// envExaMaxResults caps results returned by one search action. Default: 10.
+	envExaMaxResults = "EXA_MAX_RESULTS"
+	// envExaDefaultSearchType selects the search mode used when a tool call omits search_type. Default: auto.
+	envExaDefaultSearchType = "EXA_DEFAULT_SEARCH_TYPE"
+	// envExaMaxFetchURLs caps URLs handled by one fetch action. Default: 5.
+	envExaMaxFetchURLs = "EXA_MAX_FETCH_URLS"
+	// envExaMaxContentCharacters caps content retained for one fetched page. Default: 20000.
+	envExaMaxContentCharacters = "EXA_MAX_CONTENT_CHARACTERS"
+
 	// Knowledge retrieval limit switch.
 	// envKnowledgeRateLimitEnabled controls whether knowledge retrieval rate limiting is enabled. Default: false.
 	envKnowledgeRateLimitEnabled = "KNOWLEDGE_RATE_LIMIT_ENABLED"

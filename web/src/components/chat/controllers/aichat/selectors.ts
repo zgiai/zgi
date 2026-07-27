@@ -153,6 +153,7 @@ function toolGovernanceEventFromInvocation(
     execution_status: invocation.status,
     execution_error:
       invocation.status === 'error' ? (invocation.error ?? invocation.message) : undefined,
+    execution_error_code: invocation.error_code,
     execution_message: invocation.message,
     execution_duration_ms: invocation.duration_ms,
     execution_result: invocation.result,

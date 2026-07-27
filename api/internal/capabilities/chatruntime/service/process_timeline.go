@@ -429,6 +429,7 @@ func (r *processTimelineRecorder) invocationFromEvent(eventType string, payload 
 		invocation := newSkillInvocation(kind, payloadString(payload, "skill_id"), payloadString(payload, "tool_name"), payloadStatus(payload, "success"), invocationTimelineFields(payload, map[string]interface{}{
 			"duration_ms":     payload["duration_ms"],
 			"message":         payloadString(payload, "message"),
+			"error_code":      payloadString(payload, "error_code"),
 			"result":          payloadMap(payload, "result"),
 			"governance":      governanceMapFromAny(payload["governance"]),
 			"conversation_id": payload["conversation_id"],
@@ -477,6 +478,7 @@ func (r *processTimelineRecorder) invocationFromEvent(eventType string, payload 
 			"duration_ms": payload["duration_ms"],
 			"message":     payloadString(payload, "message"),
 			"error":       payloadString(payload, "message"),
+			"error_code":  payloadString(payload, "error_code"),
 		}))
 		invocation["runtime_id"] = r.runtimeIDForEnd(invocation)
 		return invocation

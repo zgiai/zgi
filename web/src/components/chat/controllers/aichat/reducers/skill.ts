@@ -947,6 +947,7 @@ function toolGovernanceDecisionEventFromSkillCall(
     execution_status: payload.status ?? (payload.message ? 'error' : 'success'),
     execution_error:
       'message' in payload && payload.status === 'error' ? payload.message : undefined,
+    execution_error_code: payload.error_code,
     execution_message: payload.message,
     execution_duration_ms: payload.duration_ms,
     execution_result: 'result' in payload ? payload.result : undefined,
@@ -1019,6 +1020,7 @@ export function applySkillCallEndState(
       status: payload.status ?? 'success',
       duration_ms: payload.duration_ms,
       message: payload.message,
+      error_code: payload.error_code,
       result: payload.result,
       governance: payload.governance,
       asset_operation_audit: payload.asset_operation_audit,
@@ -1062,6 +1064,7 @@ export function applySkillCallErrorState(
       duration_ms: payload.duration_ms,
       message: payload.message,
       error: payload.status === 'blocked' ? undefined : payload.message,
+      error_code: payload.error_code,
       governance: payload.governance,
       asset_operation_audit: payload.asset_operation_audit,
       created_at: payload.created_at,

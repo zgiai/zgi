@@ -28,7 +28,11 @@ func (s *service) PrepareConfiguredChat(ctx context.Context, scope Scope, caller
 	if err := s.ensureMember(ctx, scope); err != nil {
 		return nil, err
 	}
-
+	var err error
+	config, err = s.refreshAIChatIntegrationRunConfig(ctx, scope, caller, config)
+	if err != nil {
+		return nil, err
+	}
 	req = applyRunConfigToChatRequest(config, req)
 	parts, err := normalizeChatRequest(req)
 	if err != nil {
@@ -109,6 +113,11 @@ func (s *service) prepareRootRegeneration(ctx context.Context, scope Scope, call
 	if err := s.ensureMember(ctx, scope); err != nil {
 		return nil, err
 	}
+	var err error
+	config, err = s.refreshAIChatIntegrationRunConfig(ctx, scope, caller, config)
+	if err != nil {
+		return nil, err
+	}
 	message, err := s.repos.Message.GetScoped(ctx, id, scope.OrganizationID, scope.AccountID)
 	if err != nil {
 		return nil, mapRepoError(err)
@@ -124,6 +133,9 @@ func (s *service) prepareRootRegeneration(ctx context.Context, scope Scope, call
 		if err != nil {
 			return nil, err
 		}
+	}
+	if err := ensureConversationWorkspaceScope(scope, conversation); err != nil {
+		return nil, err
 	}
 	if err := s.ensureConversationAllowsNewTurn(ctx, scope, conversation); err != nil {
 		return nil, err
@@ -272,6 +284,9 @@ func (s *service) resolveChatConversation(ctx context.Context, scope Scope, call
 	}
 	conversation, err := s.getConversationByCallerScoped(ctx, scope, caller, conversationID)
 	if err != nil {
+		return nil, err
+	}
+	if err := ensureConversationWorkspaceScope(scope, conversation); err != nil {
 		return nil, err
 	}
 	applyPersistedConversationSurface(conversation, parts)
@@ -637,6 +652,7 @@ func (s *service) applySkillConfig(ctx context.Context, scope Scope, caller Call
 		enabled = filterAIChatSkillIDsForSurface(enabled, parts)
 		trustedCapabilities := s.trustedContextualAIChatSkillCapabilities(ctx, scope, parts)
 		enabled = addContextualAIChatSkillIDsWithCapabilities(enabled, orgEnabled, catalog, parts, trustedCapabilities)
+		enabled = addAIChatExternalAppsSkillID(enabled, catalog, config)
 	}
 	parts.SkillIDs, parts.ToolSkillIDs = filterSkillsForModel(enabled, catalog, parts)
 	if len(parts.SkillIDs) == 0 {

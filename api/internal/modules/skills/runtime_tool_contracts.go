@@ -1,8 +1,11 @@
 package skills
 
 import (
+	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/zgiai/zgi/api/internal/modules/tools"
 )
 
 func SkillToolArgumentContractFor(skillID string, toolName string) (SkillToolArgumentContract, bool) {
@@ -569,6 +572,68 @@ func ExpectedSkillToolArguments(skillID string, toolName string) map[string]inte
 	}
 }
 
+// ExpectedSkillToolArgumentsForResolved returns the runtime schema attached to
+// the resolved provider tool, without schema annotations or argument values.
+func ExpectedSkillToolArgumentsForResolved(resolved *ResolvedSkills, skillID string, toolName string) map[string]interface{} {
+	if doc, ok := resolved.Get(skillID); ok {
+		if tool, ok := findSkillTool(*doc, toolName); ok && len(tool.InputSchema) > 0 {
+			schema := tools.SafeJSONSchemaForFeedback(tool.InputSchema)
+			if len(schema) == 0 {
+				return nil
+			}
+			return map[string]interface{}{
+				"skill_id":  normalizeSkillID(doc.Metadata.ID),
+				"tool_name": strings.TrimSpace(tool.Name),
+				"schema":    schema,
+			}
+		}
+	}
+	return ExpectedSkillToolArguments(skillID, toolName)
+}
+
+func SkillToolUsesResolvedInputSchema(resolved *ResolvedSkills, skillID string, toolName string) bool {
+	doc, ok := resolved.Get(skillID)
+	if !ok {
+		return false
+	}
+	tool, ok := findSkillTool(*doc, toolName)
+	return ok && len(tool.InputSchema) > 0
+}
+
+// SkillToolArgumentValidationError retains only schema-derived structural issues.
+type SkillToolArgumentValidationError struct {
+	SkillID  string
+	ToolName string
+	Issues   []tools.JSONSchemaValidationIssue
+}
+
+func (e *SkillToolArgumentValidationError) Error() string {
+	if e == nil {
+		return "skill tool has invalid arguments"
+	}
+	base := fmt.Sprintf("skill tool %s/%s has invalid arguments", normalizeSkillID(e.SkillID), strings.TrimSpace(e.ToolName))
+	if len(e.Issues) == 0 {
+		return base + ": arguments must match the current input schema"
+	}
+	details := make([]string, 0, len(e.Issues))
+	for _, issue := range e.Issues {
+		path := strings.TrimSpace(issue.Path)
+		if path == "" {
+			path = "$"
+		}
+		details = append(details, path+" expects "+strings.TrimSpace(issue.Expected))
+	}
+	return base + ": " + strings.Join(details, "; ")
+}
+
+func SkillToolArgumentValidationIssues(err error) []tools.JSONSchemaValidationIssue {
+	var validationErr *SkillToolArgumentValidationError
+	if !errors.As(err, &validationErr) || validationErr == nil || len(validationErr.Issues) == 0 {
+		return nil
+	}
+	return append([]tools.JSONSchemaValidationIssue(nil), validationErr.Issues...)
+}
+
 func validateSkillToolArgumentsAgainstContract(skillID string, toolName string, arguments map[string]interface{}) error {
 	contract, ok := SkillToolArgumentContractFor(skillID, toolName)
 	if !ok {
@@ -588,6 +653,32 @@ func validateSkillToolArgumentsAgainstContract(skillID string, toolName string, 
 		return nil
 	}
 	return fmt.Errorf("skill tool %s/%s missing required argument(s): %s", normalizeSkillID(skillID), strings.TrimSpace(toolName), strings.Join(missing, ", "))
+}
+
+func validateSkillToolArguments(skillID string, toolDef SkillToolDefinition, arguments map[string]interface{}) error {
+	if len(toolDef.InputSchema) == 0 {
+		return validateSkillToolArgumentsAgainstContract(skillID, toolDef.Name, arguments)
+	}
+	if err := tools.ValidateJSONSchemaValue(toolDef.InputSchema, arguments); err != nil {
+		return &SkillToolArgumentValidationError{
+			SkillID:  normalizeSkillID(skillID),
+			ToolName: strings.TrimSpace(toolDef.Name),
+			Issues:   tools.SafeJSONSchemaValidationIssues(toolDef.InputSchema, err),
+		}
+	}
+	return nil
+}
+
+func dynamicSchemaValidationTraceArguments(toolDef SkillToolDefinition, arguments map[string]interface{}) map[string]interface{} {
+	summary := map[string]interface{}{
+		"schema_validation_failed": true,
+		"arguments_redacted":       true,
+		"argument_count":           len(arguments),
+	}
+	if toolDef.Governance != nil && toolDef.Governance.DataEgress {
+		summary["data_egress_redacted"] = true
+	}
+	return summary
 }
 
 func schemaRequiredFields(schema map[string]interface{}) []string {

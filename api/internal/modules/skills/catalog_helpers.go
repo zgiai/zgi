@@ -524,6 +524,16 @@ func summarizeArguments(args map[string]interface{}) map[string]interface{} {
 	return out
 }
 
+func summarizeToolArguments(tool SkillToolDefinition, args map[string]interface{}) map[string]interface{} {
+	if tool.Governance == nil || !tool.Governance.DataEgress || tool.Governance.SensitiveDataAllowed {
+		return summarizeArguments(args)
+	}
+	return map[string]interface{}{
+		"data_egress_redacted": true,
+		"argument_count":       len(args),
+	}
+}
+
 func summarizeValue(value interface{}) interface{} {
 	switch typed := value.(type) {
 	case string:

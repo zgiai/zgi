@@ -217,6 +217,7 @@ type AgentRuntimeModeConfig struct {
 	WorkflowBindings          []AgentWorkflowBinding      `json:"workflow_bindings,omitempty"`
 	WorkflowBoundByAccountID  string                      `json:"workflow_bound_by_account_id,omitempty"`
 	WorkflowBoundAtUnix       int64                       `json:"workflow_bound_at_unix,omitempty"`
+	IntegrationBindings       []AgentIntegrationBinding   `json:"integration_bindings,omitempty"`
 	BindingAuthorizations     []AgentBindingAuthorization `json:"binding_authorizations,omitempty"`
 }
 
@@ -224,12 +225,13 @@ type AgentRuntimeModeConfig struct {
 // concrete Agent resource binding. Category-level grant fields above are kept
 // for backwards compatibility with existing snapshots.
 type AgentBindingAuthorization struct {
-	BindingType      string `json:"binding_type"`
-	ResourceID       string `json:"resource_id"`
-	ParentResourceID string `json:"parent_resource_id,omitempty"`
-	AccessMode       string `json:"access_mode"`
-	BoundByAccountID string `json:"bound_by_account_id"`
-	BoundAtUnix      int64  `json:"bound_at_unix"`
+	BindingType      string   `json:"binding_type"`
+	ResourceID       string   `json:"resource_id"`
+	ParentResourceID string   `json:"parent_resource_id,omitempty"`
+	AccessMode       string   `json:"access_mode"`
+	AllowedActionIDs []string `json:"allowed_action_ids,omitempty"`
+	BoundByAccountID string   `json:"bound_by_account_id"`
+	BoundAtUnix      int64    `json:"bound_at_unix"`
 }
 
 type AgentDatabaseBinding struct {
@@ -251,6 +253,52 @@ type AgentWorkflowBinding struct {
 	StartInputs     []AgentWorkflowStartInput `json:"start_inputs,omitempty"`
 	RequiredInputs  []string                  `json:"required_inputs,omitempty"`
 	DefaultInputKey string                    `json:"default_input_key,omitempty"`
+}
+
+type AgentIntegrationBinding struct {
+	ConnectionID     string   `json:"connection_id"`
+	IntegrationID    string   `json:"integration_id"`
+	AccessMode       string   `json:"access_mode"`
+	AllowedActionIDs []string `json:"allowed_action_ids"`
+}
+
+type AgentIntegrationConnectionCandidatesRequest struct {
+	Query           string `form:"query" json:"query,omitempty" binding:"omitempty,max=200"`
+	IntegrationID   string `form:"integration_id" json:"integration_id,omitempty" binding:"omitempty,max=100"`
+	Page            int    `form:"page" json:"page,omitempty" binding:"omitempty,min=1,max=99999"`
+	Limit           int    `form:"limit" json:"limit,omitempty" binding:"omitempty,min=1,max=100"`
+	IncludeSelected bool   `form:"include_selected" json:"include_selected,omitempty"`
+}
+
+type AgentIntegrationConnectionCandidate struct {
+	ConnectionID        string   `json:"connection_id"`
+	IntegrationID       string   `json:"integration_id"`
+	DriverID            string   `json:"driver_id"`
+	AuthMethodID        string   `json:"auth_method_id"`
+	Name                string   `json:"name"`
+	Status              string   `json:"status"`
+	CredentialSource    string   `json:"credential_source"`
+	IsDefault           bool     `json:"is_default"`
+	Selected            bool     `json:"selected,omitempty"`
+	AccessMode          string   `json:"access_mode,omitempty"`
+	AllowedActionIDs    []string `json:"allowed_action_ids,omitempty"`
+	AvailableAccessMode string   `json:"available_access_mode,omitempty"`
+	AvailableActionIDs  []string `json:"available_action_ids"`
+	UpdatedAt           int64    `json:"updated_at,omitempty"`
+}
+
+type AgentIntegrationConnectionCandidatesResponse struct {
+	AgentID         string                                `json:"agent_id"`
+	WorkspaceID     string                                `json:"workspace_id"`
+	Query           string                                `json:"query,omitempty"`
+	IntegrationID   string                                `json:"integration_id,omitempty"`
+	Page            int                                   `json:"page"`
+	Limit           int                                   `json:"limit"`
+	Total           int                                   `json:"total"`
+	HasMore         bool                                  `json:"has_more"`
+	IncludeSelected bool                                  `json:"include_selected,omitempty"`
+	Count           int                                   `json:"count"`
+	Data            []AgentIntegrationConnectionCandidate `json:"data"`
 }
 
 type AgentWorkflowBindingCandidate struct {
@@ -520,6 +568,7 @@ type AgentConfigRequest struct {
 	WorkflowBindings          []AgentWorkflowBinding      `json:"workflow_bindings"`
 	WorkflowBoundByAccountID  string                      `json:"-"`
 	WorkflowBoundAtUnix       int64                       `json:"-"`
+	IntegrationBindings       []AgentIntegrationBinding   `json:"integration_bindings"`
 	BindingAuthorizations     []AgentBindingAuthorization `json:"-"`
 }
 
@@ -566,6 +615,7 @@ type AgentConfigResponse struct {
 	WorkflowBindings          []AgentWorkflowBinding      `json:"workflow_bindings"`
 	WorkflowBoundByAccountID  string                      `json:"-"`
 	WorkflowBoundAtUnix       int64                       `json:"-"`
+	IntegrationBindings       []AgentIntegrationBinding   `json:"integration_bindings"`
 	BindingAuthorizations     []AgentBindingAuthorization `json:"-"`
 }
 
@@ -584,14 +634,15 @@ type AgentBindingHealth struct {
 }
 
 type AgentBindingHealthItem struct {
-	BindingType      string `json:"binding_type"`
-	ResourceID       string `json:"resource_id"`
-	ParentResourceID string `json:"parent_resource_id,omitempty"`
-	DisplayName      string `json:"display_name,omitempty"`
-	Status           string `json:"status"`
-	Reason           string `json:"reason"`
-	AccessMode       string `json:"access_mode,omitempty"`
-	Suggestion       string `json:"suggestion,omitempty"`
+	BindingType      string   `json:"binding_type"`
+	ResourceID       string   `json:"resource_id"`
+	ParentResourceID string   `json:"parent_resource_id,omitempty"`
+	DisplayName      string   `json:"display_name,omitempty"`
+	Status           string   `json:"status"`
+	Reason           string   `json:"reason"`
+	AccessMode       string   `json:"access_mode,omitempty"`
+	AllowedActionIDs []string `json:"allowed_action_ids,omitempty"`
+	Suggestion       string   `json:"suggestion,omitempty"`
 }
 
 type AgentSuggestedQuestionSkillContext struct {

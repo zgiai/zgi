@@ -18,6 +18,8 @@ export interface AIChatSkillDisplayInfo {
   categoryLabel: string;
   scenarios: SkillScenario[];
   icon: string;
+  dependencyKind?: 'standalone' | 'external_integration';
+  integrationRequirements?: string[];
 }
 
 export type AIChatSkillDisplayMap = Record<string, AIChatSkillDisplayInfo>;
@@ -33,9 +35,36 @@ const AGENT_KNOWLEDGE_SKILL_ID = 'agent-knowledge';
 const AGENT_DATABASE_SKILL_ID = 'agent-database';
 const AGENT_WORKFLOW_SKILL_ID = 'agent-workflow';
 const AGENT_MANAGEMENT_SKILL_ID = 'agent-management';
+const EXTERNAL_APPS_SKILL_ID = 'external-apps';
 
 function normalizeSkillId(skillId: string): string {
   return skillId.trim().toLowerCase();
+}
+
+function normalizeIntegrationRequirement(value: unknown): string {
+  if (typeof value === 'string') return value.trim().toLowerCase();
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return '';
+  const integrationId = (value as { integration_id?: unknown }).integration_id;
+  return typeof integrationId === 'string' ? integrationId.trim().toLowerCase() : '';
+}
+
+export function getSkillIntegrationRequirements(skill: AIChatSkillMetadata): string[] {
+  const explicit = [
+    ...(skill.integration_requirements ?? []),
+    ...(skill.external_dependencies ?? []),
+  ]
+    .map(normalizeIntegrationRequirement)
+    .filter(Boolean);
+  if (skill.provider_type?.toLowerCase() === 'connector' && skill.provider_id?.trim()) {
+    explicit.push(skill.provider_id.trim().toLowerCase());
+  }
+
+  // Compatibility for the initial Web Search metadata. New integrations should
+  // expose `integration_requirements` instead of adding frontend mappings.
+  if (skill.required_config?.some(value => value.trim().toLowerCase() === 'web_search')) {
+    explicit.push('web-search');
+  }
+  return Array.from(new Set(explicit));
 }
 
 export function isHiddenSystemSkill(skillId: string): boolean {
@@ -50,7 +79,8 @@ export function isHiddenSystemSkill(skillId: string): boolean {
     normalized === AGENT_KNOWLEDGE_SKILL_ID ||
     normalized === AGENT_DATABASE_SKILL_ID ||
     normalized === AGENT_WORKFLOW_SKILL_ID ||
-    normalized === AGENT_MANAGEMENT_SKILL_ID
+    normalized === AGENT_MANAGEMENT_SKILL_ID ||
+    normalized === EXTERNAL_APPS_SKILL_ID
   );
 }
 
@@ -206,6 +236,26 @@ const SYSTEM_SKILL_DISPLAY: Record<
     },
     category: 'productivity',
     icon: 'route',
+  },
+  [EXTERNAL_APPS_SKILL_ID]: {
+    label: {
+      en_US: 'Connected Apps',
+      zh_Hans: '已连接应用',
+    },
+    description: {
+      en_US: 'Securely uses external app connections selected for the current AIChat workspace.',
+      zh_Hans: '安全使用当前 AIChat 工作空间中已选择的外部应用连接。',
+    },
+    whenToUse: {
+      en_US: 'Use when a connected external application can complete the user request.',
+      zh_Hans: '当已连接的外部应用可以完成用户请求时使用。',
+    },
+    tags: {
+      en_US: ['Connected apps', 'External'],
+      zh_Hans: ['已连接应用', '外部应用'],
+    },
+    category: 'productivity',
+    icon: 'plug',
   },
   [AGENT_MANAGEMENT_SKILL_ID]: {
     label: {
@@ -438,6 +488,24 @@ const SYSTEM_SKILL_DISPLAY: Record<
 };
 
 const SYSTEM_SKILL_TOOL_LABELS: Record<string, Record<string, Record<string, string>>> = {
+  [EXTERNAL_APPS_SKILL_ID]: {
+    list_connections: {
+      en_US: 'Review selected connections',
+      zh_Hans: '查看已选连接',
+    },
+    search_actions: {
+      en_US: 'Find external app actions',
+      zh_Hans: '查找外部应用操作',
+    },
+    get_action_guide: {
+      en_US: 'Review action requirements',
+      zh_Hans: '查看操作要求',
+    },
+    execute_action: {
+      en_US: 'Run external app action',
+      zh_Hans: '执行外部应用操作',
+    },
+  },
   time: {
     current_time: {
       en_US: 'Current time',
@@ -774,24 +842,32 @@ export function getAIChatSkillDisplayInfo(
   const rawCategory = skill.display?.category ?? fallback?.category;
   const category = normalizeSkillCapabilityCategory(rawCategory);
   const tags = pickLocalizedTags(skill.display?.tags, locale);
+  const integrationRequirements = getSkillIntegrationRequirements(skill);
+  const useFriendlySystemDisplay = normalizeSkillId(skill.skill_id) === EXTERNAL_APPS_SKILL_ID;
 
   return {
     skillId: skill.skill_id,
-    label: pickLocalizedText(
-      skill.display?.label,
-      locale,
-      fallback?.label || skill.name || skill.skill_id
-    ),
-    description: pickLocalizedText(
-      skill.display?.description,
-      locale,
-      fallback?.description || skill.description
-    ),
-    whenToUse: pickLocalizedText(
-      skill.display?.when_to_use,
-      locale,
-      fallback?.whenToUse || skill.when_to_use
-    ),
+    label: useFriendlySystemDisplay
+      ? (fallback?.label ?? skill.name ?? skill.skill_id)
+      : pickLocalizedText(
+          skill.display?.label,
+          locale,
+          fallback?.label || skill.name || skill.skill_id
+        ),
+    description: useFriendlySystemDisplay
+      ? (fallback?.description ?? skill.description)
+      : pickLocalizedText(
+          skill.display?.description,
+          locale,
+          fallback?.description || skill.description
+        ),
+    whenToUse: useFriendlySystemDisplay
+      ? (fallback?.whenToUse ?? skill.when_to_use)
+      : pickLocalizedText(
+          skill.display?.when_to_use,
+          locale,
+          fallback?.whenToUse || skill.when_to_use
+        ),
     tags: tags.length > 0 ? tags : (fallback?.tags ?? []),
     category,
     categoryLabel: getSkillCapabilityLabel(category, locale),
@@ -800,6 +876,8 @@ export function getAIChatSkillDisplayInfo(
       scenarios: skill.display?.scenarios,
     }),
     icon: skill.display?.icon ?? fallback?.icon ?? 'sparkles',
+    dependencyKind: integrationRequirements.length > 0 ? 'external_integration' : 'standalone',
+    integrationRequirements,
   };
 }
 

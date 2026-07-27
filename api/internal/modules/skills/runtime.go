@@ -105,7 +105,6 @@ func (r *Runtime) ResolveEnabledSkills(ctx context.Context, skillIDs []string) (
 }
 
 func (r *Runtime) ResolveEnabledSkillsWithCustom(ctx context.Context, skillIDs []string, custom []CustomSkillCatalogEntry) (*ResolvedSkills, error) {
-	_ = ctx
 	ids := withRequiredPreflightSkills(normalizeSkillIDs(skillIDs))
 	resolved := &ResolvedSkills{Skills: make([]SkillDocument, 0, len(ids))}
 	locations, err := r.skillLocations(custom)
@@ -121,6 +120,7 @@ func (r *Runtime) ResolveEnabledSkillsWithCustom(ctx context.Context, skillIDs [
 		if err != nil {
 			return nil, err
 		}
+		r.attachProviderToolSchemas(ctx, &doc)
 		resolved.Skills = append(resolved.Skills, doc)
 	}
 	return resolved, nil
@@ -452,13 +452,17 @@ func (r *Runtime) CallSkillTool(
 		governanceArgumentRewrite = rewriteSummary
 	}
 	executionArguments = r.enrichToolGovernanceArguments(ctx, toolDef, executionArguments, execCtx)
-	if err := validateSkillToolArgumentsAgainstContract(doc.Metadata.ID, toolDef.Name, executionArguments); err != nil {
+	if err := validateSkillToolArguments(doc.Metadata.ID, toolDef, executionArguments); err != nil {
+		traceArguments := summarizeToolArguments(toolDef, executionArguments)
+		if len(toolDef.InputSchema) > 0 {
+			traceArguments = dynamicSchemaValidationTraceArguments(toolDef, executionArguments)
+		}
 		trace := SkillTrace{
 			Kind:      "tool_call",
 			SkillID:   doc.Metadata.ID,
 			ToolName:  toolDef.Name,
 			Status:    "error",
-			Arguments: summarizeArguments(executionArguments),
+			Arguments: traceArguments,
 			Error:     err.Error(),
 		}
 		return &ToolInvocationResult{Trace: trace}, err
@@ -499,7 +503,7 @@ func (r *Runtime) CallSkillTool(
 		ToolName:   toolDef.Name,
 		Status:     "success",
 		DurationMS: time.Since(start).Milliseconds(),
-		Arguments:  summarizeArguments(executionArguments),
+		Arguments:  summarizeToolArguments(toolDef, executionArguments),
 	}
 	if len(governanceArgumentRewrite) > 0 {
 		trace.Arguments["governance_argument_rewrite"] = governanceArgumentRewrite
@@ -509,7 +513,7 @@ func (r *Runtime) CallSkillTool(
 	}
 	if err != nil {
 		trace.Status = "error"
-		trace.Error = err.Error()
+		trace.Error, trace.ErrorCode = skillTraceError(err)
 		return &ToolInvocationResult{Trace: trace}, err
 	}
 	if result == nil || !result.Success {

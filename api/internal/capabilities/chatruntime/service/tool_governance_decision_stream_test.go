@@ -340,7 +340,7 @@ func TestRunToolGovernanceDecisionStreamRejectsWithoutTools(t *testing.T) {
 	assertToolGovernanceStreamEvents(t, events)
 }
 
-func TestRunToolGovernanceDecisionStreamApproveExecutesBuiltinDeleteBeforeAnswer(t *testing.T) {
+func TestRunToolGovernanceDecisionStreamApproveEveryInvocationExecutesFrozenCallOnce(t *testing.T) {
 	ctx := context.Background()
 	organizationID := uuid.New()
 	accountID := uuid.New()
@@ -354,6 +354,7 @@ func TestRunToolGovernanceDecisionStreamApproveExecutesBuiltinDeleteBeforeAnswer
 	invocation := metadata["skill_invocations"].([]interface{})[0].(map[string]interface{})
 	governance := invocation["governance"].(map[string]interface{})
 	approvalEvent := governance["approval_event"].(map[string]interface{})
+	approvalEvent["approval_every_invocation"] = true
 	approvalEvent["assets"] = []interface{}{
 		map[string]interface{}{
 			"id":           "file-1",
@@ -380,11 +381,12 @@ func TestRunToolGovernanceDecisionStreamApproveExecutesBuiltinDeleteBeforeAnswer
 	approvalEvent["frozen_invocation"] = toolgovernance.NewFrozenInvocation(toolgovernance.FrozenInvocationRequest{
 		CorrelationID: "corr-approve",
 		Manifest: toolgovernance.Manifest{
-			ToolID:    "file.delete",
-			SkillID:   skills.SkillFileManager,
-			Effect:    toolgovernance.EffectDelete,
-			AssetType: "file",
-			RiskLevel: toolgovernance.RiskLevelHigh,
+			ToolID:                  "file.delete",
+			SkillID:                 skills.SkillFileManager,
+			Effect:                  toolgovernance.EffectDelete,
+			AssetType:               "file",
+			RiskLevel:               toolgovernance.RiskLevelHigh,
+			ApprovalEveryInvocation: true,
 		},
 		SkillID:      skills.SkillFileManager,
 		ToolName:     "delete_file",
@@ -442,7 +444,7 @@ func TestRunToolGovernanceDecisionStreamApproveExecutesBuiltinDeleteBeforeAnswer
 		},
 	}
 	workspacePerms := &toolGovernanceStreamWorkspacePermissionService{allowed: true}
-	runtime := newToolGovernanceStreamSkillRuntime(t, fileService, workspacePerms)
+	runtime := newToolGovernanceStreamSkillRuntime(t, fileService, workspacePerms, true)
 	llm := &toolGovernanceStreamLLM{
 		streamChunks: []string{"Deleted report.pdf."},
 	}
@@ -1944,12 +1946,16 @@ func toolGovernanceStreamChatResponse(content string) *adapter.ChatResponse {
 	}
 }
 
-func newToolGovernanceStreamSkillRuntime(t *testing.T, fileService *toolGovernanceStreamFileService, workspacePerms *toolGovernanceStreamWorkspacePermissionService) *skills.Runtime {
+func newToolGovernanceStreamSkillRuntime(t *testing.T, fileService *toolGovernanceStreamFileService, workspacePerms *toolGovernanceStreamWorkspacePermissionService, approvalEveryInvocation ...bool) *skills.Runtime {
 	t.Helper()
 	catalogDir := t.TempDir()
 	root := filepath.Join(catalogDir, skills.SkillFileManager)
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		t.Fatalf("mkdir skill root: %v", err)
+	}
+	approvalEveryInvocationLine := ""
+	if len(approvalEveryInvocation) > 0 && approvalEveryInvocation[0] {
+		approvalEveryInvocationLine = "    approval_every_invocation: true\n"
 	}
 	skill := `---
 name: file-manager
@@ -1972,7 +1978,7 @@ tool_governance:
     permission_scopes:
       - file:manage
     default_approval_policy: always_ask
-    allowed_permission_tiers:
+` + approvalEveryInvocationLine + `    allowed_permission_tiers:
       - basic
       - advanced
       - full

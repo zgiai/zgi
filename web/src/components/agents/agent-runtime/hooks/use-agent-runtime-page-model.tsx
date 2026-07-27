@@ -18,6 +18,7 @@ import { useAccountPermissions } from '@/hooks/organization/use-account-permissi
 import { AGENT_KEYS, DATASET_KEYS } from '@/hooks/query-keys';
 import { useLocale } from '@/hooks/use-locale';
 import { useAutoProfile } from '@/hooks/use-profile';
+import { useSystemFeatures } from '@/hooks/auth/use-system-features';
 import { useT } from '@/i18n';
 import { SUGGESTED_QUESTIONS_LIMIT } from '@/constants/suggested-questions';
 import {
@@ -44,6 +45,10 @@ import type {
   AgentPublishedVersionRollbackPreview,
   UpdateAgentRuntimeConfigRequest,
 } from '@/services/types/agent';
+import type {
+  AgentIntegrationConnectionBinding,
+  AgentIntegrationConnectionCandidate,
+} from '@/services/types/integration';
 import type { AIChatSkillMetadata } from '@/services/types/aichat';
 import type { Dataset } from '@/services/types/dataset';
 import { getErrorMessage } from '@/utils/error-notifications';
@@ -62,6 +67,7 @@ import { buildAgentRuntimeAIChatContext } from '../aichat-context';
 import { normalizeAgentDatabaseBindings } from '../database-binding-draft';
 import {
   mergeSupersededAgentRuntimePayload,
+  normalizeAgentIntegrationBindings,
   normalizeAgentWorkflowBindings,
 } from '../binding-rebase-merge';
 
@@ -74,27 +80,57 @@ const EMPTY_PUBLISH_VERSION_DETAILS: AgentPublishVersionDetails = {
 
 function describeBindingChanges(
   local: UpdateAgentRuntimeConfigRequest,
-  server: Partial<AgentRuntimeConfig>
+  server: Partial<AgentRuntimeConfig>,
+  labels: {
+    skill: string;
+    knowledge: string;
+    database: string;
+    databaseTable: string;
+    writableDatabaseTable: string;
+    workflow: string;
+    integrationConnection: string;
+    integrationAction: string;
+  }
 ) {
   const collect = (value: Partial<AgentRuntimeConfig | UpdateAgentRuntimeConfigRequest>) => {
-    const out = new Set<string>();
-    for (const id of value.enabled_skill_ids ?? []) out.add(`Skill:${id}`);
-    for (const id of value.knowledge_dataset_ids ?? []) out.add(`Knowledge:${id}`);
+    const out = new Map<string, string>();
+    const add = (identity: string, display = identity) => out.set(identity, display);
+    for (const id of value.enabled_skill_ids ?? []) add(`Skill:${id}`, labels.skill);
+    for (const id of value.knowledge_dataset_ids ?? []) add(`Knowledge:${id}`, labels.knowledge);
     for (const binding of value.database_bindings ?? []) {
-      out.add(`Database:${binding.data_source_id}`);
-      for (const id of binding.table_ids ?? []) out.add(`Table:${id}`);
-      for (const id of binding.writable_table_ids ?? []) out.add(`Writable table:${id}`);
+      add(`Database:${binding.data_source_id}`, labels.database);
+      for (const id of binding.table_ids ?? []) add(`Table:${id}`, labels.databaseTable);
+      for (const id of binding.writable_table_ids ?? []) {
+        add(`Writable table:${id}`, labels.writableDatabaseTable);
+      }
     }
     for (const binding of value.workflow_bindings ?? []) {
-      out.add(`Workflow:${binding.binding_id}`);
+      add(`Workflow:${binding.binding_id}`, labels.workflow);
+    }
+    for (const binding of value.integration_bindings ?? []) {
+      add(
+        `Integration:${binding.integration_id}:${binding.connection_id}`,
+        labels.integrationConnection
+      );
+      for (const id of binding.allowed_action_ids) {
+        add(
+          `Integration Action:${binding.integration_id}:${binding.connection_id}:${id}`,
+          labels.integrationAction
+        );
+      }
     }
     return out;
   };
   const localBindings = collect(local);
   const serverBindings = collect(server);
-  return [...localBindings, ...serverBindings].filter(
-    (value, index, all) =>
-      all.indexOf(value) === index && localBindings.has(value) !== serverBindings.has(value)
+  const changedIdentities = new Set([...localBindings.keys(), ...serverBindings.keys()]);
+  return Array.from(
+    new Set(
+      [...changedIdentities]
+        .filter(identity => localBindings.has(identity) !== serverBindings.has(identity))
+        .map(identity => localBindings.get(identity) ?? serverBindings.get(identity) ?? '')
+        .filter(Boolean)
+    )
   );
 }
 
@@ -227,6 +263,8 @@ export function useAgentRuntimePageModel(agentId: string) {
   const { locale } = useLocale();
   const t = useT('agents.agentRuntime');
   const tRoot = useT();
+  const systemFeatures = useSystemFeatures();
+  const externalIntegrationsEnabled = Boolean(systemFeatures.data?.enable_external_integrations);
   const {
     permissions,
     organizationRole,
@@ -275,10 +313,26 @@ export function useAgentRuntimePageModel(agentId: string) {
     enabled: Boolean(agentId) && canConfigureAgentRuntime,
     staleTime: 60_000,
   });
+  const { data: integrationCandidatesResponse, isLoading: isIntegrationCandidatesLoading } =
+    useQuery({
+      queryKey: AGENT_KEYS.integrationConnectionCandidates(agentId),
+      queryFn: () =>
+        agentService.getAgentIntegrationConnectionCandidates(agentId, {
+          page: 1,
+          limit: 100,
+          include_selected: true,
+        }),
+      enabled: Boolean(agentId) && canConfigureAgentRuntime && externalIntegrationsEnabled,
+      staleTime: 60_000,
+    });
   const config = configResponse?.data;
   const workflowCandidates = useMemo<AgentWorkflowBindingCandidate[]>(
     () => (workflowCandidatesResponse?.data.data ?? []) as AgentWorkflowBindingCandidate[],
     [workflowCandidatesResponse?.data.data]
+  );
+  const integrationCandidates = useMemo<AgentIntegrationConnectionCandidate[]>(
+    () => integrationCandidatesResponse?.data.data ?? [],
+    [integrationCandidatesResponse?.data.data]
   );
   const {
     models: availableAgentRuntimeModels,
@@ -311,12 +365,16 @@ export function useAgentRuntimePageModel(agentId: string) {
   const [knowledgeDatasetIds, setKnowledgeDatasetIds] = useState<string[]>([]);
   const [databaseBindings, setDatabaseBindings] = useState<AgentDatabaseBinding[]>([]);
   const [workflowBindings, setWorkflowBindings] = useState<AgentWorkflowBinding[]>([]);
+  const [integrationBindings, setIntegrationBindings] = useState<
+    AgentIntegrationConnectionBinding[]
+  >([]);
   const [bindingRevision, setBindingRevision] = useState('');
   const [bindingHealth, setBindingHealth] = useState<AgentBindingHealth>();
   const [isAbnormalSkillCleanupPending, setIsAbnormalSkillCleanupPending] = useState(false);
   const [skillDialogOpen, setSkillDialogOpen] = useState(false);
   const [knowledgeDialogOpen, setKnowledgeDialogOpen] = useState(false);
   const [workflowDialogOpen, setWorkflowDialogOpen] = useState(false);
+  const [integrationDialogOpen, setIntegrationDialogOpen] = useState(false);
   const [promptOptimizerOpen, setPromptOptimizerOpen] = useState(false);
   const [memoryValuesOpen, setMemoryValuesOpen] = useState(false);
   const [isGeneratingSuggestions, setIsGeneratingSuggestions] = useState(false);
@@ -343,6 +401,7 @@ export function useAgentRuntimePageModel(agentId: string) {
     knowledge: true,
     databases: true,
     workflows: true,
+    integrations: true,
     files: true,
     memory: true,
   });
@@ -427,6 +486,12 @@ export function useAgentRuntimePageModel(agentId: string) {
   const workflowCandidatesByBindingID = useMemo<Map<string, AgentWorkflowBindingCandidate>>(
     () => new Map(workflowCandidates.map(candidate => [candidate.binding_id, candidate])),
     [workflowCandidates]
+  );
+  const integrationCandidatesByConnectionID = useMemo<
+    Map<string, AgentIntegrationConnectionCandidate>
+  >(
+    () => new Map(integrationCandidates.map(candidate => [candidate.connection_id, candidate])),
+    [integrationCandidates]
   );
   const normalizedSelectedSkillIds = useMemo(
     () => Array.from(new Set(selectedSkillIds.map(id => id.trim()).filter(Boolean))),
@@ -513,6 +578,7 @@ export function useAgentRuntimePageModel(agentId: string) {
       knowledge_retrieval_config: {},
       database_bindings: databaseBindings,
       workflow_bindings: workflowBindings,
+      integration_bindings: integrationBindings,
       binding_revision: bindingRevision || undefined,
     }),
     [
@@ -530,6 +596,7 @@ export function useAgentRuntimePageModel(agentId: string) {
       knowledgeDatasetIds,
       databaseBindings,
       workflowBindings,
+      integrationBindings,
       bindingRevision,
       systemPrompt,
     ]
@@ -567,6 +634,7 @@ export function useAgentRuntimePageModel(agentId: string) {
     setKnowledgeDatasetIds(payload.knowledge_dataset_ids ?? []);
     setDatabaseBindings(normalizeAgentDatabaseBindings(payload.database_bindings ?? []));
     setWorkflowBindings(normalizeAgentWorkflowBindings(payload.workflow_bindings ?? []));
+    setIntegrationBindings(normalizeAgentIntegrationBindings(payload.integration_bindings ?? []));
     const nextBindingRevision = payload.binding_revision ?? '';
     setBindingRevision(nextBindingRevision);
     bindingRevisionRef.current = nextBindingRevision;
@@ -595,6 +663,9 @@ export function useAgentRuntimePageModel(agentId: string) {
       knowledge_retrieval_config: runtimeConfig.knowledge_retrieval_config ?? {},
       database_bindings: normalizeAgentDatabaseBindings(runtimeConfig.database_bindings ?? []),
       workflow_bindings: normalizeAgentWorkflowBindings(runtimeConfig.workflow_bindings ?? []),
+      integration_bindings: normalizeAgentIntegrationBindings(
+        runtimeConfig.integration_bindings ?? []
+      ),
       binding_revision: runtimeConfig.binding_revision,
     }),
     [defaultHomeTitle, defaultInputPlaceholder]
@@ -617,6 +688,7 @@ export function useAgentRuntimePageModel(agentId: string) {
       setKnowledgeDatasetIds(payload.knowledge_dataset_ids ?? []);
       setDatabaseBindings(normalizeAgentDatabaseBindings(payload.database_bindings ?? []));
       setWorkflowBindings(normalizeAgentWorkflowBindings(payload.workflow_bindings ?? []));
+      setIntegrationBindings(normalizeAgentIntegrationBindings(payload.integration_bindings ?? []));
       applySavedBindingMetadata(payload, health);
     },
     [applySavedBindingMetadata]
@@ -646,7 +718,16 @@ export function useAgentRuntimePageModel(agentId: string) {
         if (conflict?.bindingHealth) setBindingHealth(conflict.bindingHealth);
         const serverConfig = conflict?.currentConfig;
         if (!serverConfig?.binding_revision) throw error;
-        const changedBindings = describeBindingChanges(payload, serverConfig);
+        const changedBindings = describeBindingChanges(payload, serverConfig, {
+          skill: t('bindingHealth.types.skill'),
+          knowledge: t('bindingHealth.types.knowledge_dataset'),
+          database: t('bindingHealth.types.database'),
+          databaseTable: t('bindingHealth.types.database_table'),
+          writableDatabaseTable: t('bindingHealth.types.writable_database_table'),
+          workflow: t('bindingHealth.types.workflow'),
+          integrationConnection: t('bindingHealth.types.integration_connection'),
+          integrationAction: t('bindingHealth.types.integration_action'),
+        });
         if (changedBindings.length > 0) {
           toast.warning(
             t('toasts.bindingRevisionRebased', {
@@ -660,6 +741,9 @@ export function useAgentRuntimePageModel(agentId: string) {
           knowledge_dataset_ids: serverConfig.knowledge_dataset_ids ?? [],
           database_bindings: normalizeAgentDatabaseBindings(serverConfig.database_bindings ?? []),
           workflow_bindings: normalizeAgentWorkflowBindings(serverConfig.workflow_bindings ?? []),
+          integration_bindings: normalizeAgentIntegrationBindings(
+            serverConfig.integration_bindings ?? []
+          ),
           binding_revision: serverConfig.binding_revision,
         };
         wasBindingRevisionRebased = true;
@@ -736,7 +820,12 @@ export function useAgentRuntimePageModel(agentId: string) {
     },
     onSaveFailed: (error, options) => {
       if (!options.silent) {
-        toast.error(getErrorMessage(error) || t('toasts.saveFailedDraftKept'));
+        const bindingConflict = getAgentBindingConflict(error);
+        toast.error(
+          bindingConflict?.code === 'agent_bindings_invalid'
+            ? t('toasts.saveBindingsInvalid')
+            : t('toasts.saveFailedDraftKept')
+        );
       }
     },
   });
@@ -803,6 +892,10 @@ export function useAgentRuntimePageModel(agentId: string) {
 
   const handleConfirmWorkflows = useCallback((bindings: AgentWorkflowBinding[]) => {
     setWorkflowBindings(normalizeAgentWorkflowBindings(bindings));
+  }, []);
+
+  const handleConfirmIntegrations = useCallback((bindings: AgentIntegrationConnectionBinding[]) => {
+    setIntegrationBindings(normalizeAgentIntegrationBindings(bindings));
   }, []);
 
   const handleRemoveAbnormalSkills = useCallback(() => {
@@ -1100,6 +1193,9 @@ export function useAgentRuntimePageModel(agentId: string) {
       targetSection = 'databases';
     }
     if (firstAbnormalBinding?.binding_type === 'workflow') targetSection = 'workflows';
+    if (firstAbnormalBinding?.binding_type === 'integration_connection') {
+      targetSection = 'integrations';
+    }
 
     if (health) {
       setOpenSections(current => {
@@ -1113,6 +1209,7 @@ export function useAgentRuntimePageModel(agentId: string) {
               next.databases = true;
             }
             if (item.binding_type === 'workflow') next.workflows = true;
+            if (item.binding_type === 'integration_connection') next.integrations = true;
           });
         return next;
       });
@@ -1352,6 +1449,7 @@ export function useAgentRuntimePageModel(agentId: string) {
     agentId,
     locale,
     t,
+    externalIntegrationsEnabled,
     aiChatContext,
     isLoading: isAgentLoading || isConfigLoading || isPermissionsLoading,
     canOpenAgentRuntimeEditor,
@@ -1438,6 +1536,10 @@ export function useAgentRuntimePageModel(agentId: string) {
       workflowBindings,
       workflowCandidatesByBindingID,
       isWorkflowCandidatesLoading,
+      integrationBindings,
+      integrationCandidatesByConnectionID,
+      isIntegrationCandidatesLoading,
+      externalIntegrationsEnabled,
       suggestedQuestions,
       isGeneratingSuggestions,
       fileUploadEnabled,
@@ -1480,6 +1582,10 @@ export function useAgentRuntimePageModel(agentId: string) {
         if (isRuntimeConfigReadOnly) return;
         setWorkflowDialogOpen(true);
       },
+      onOpenIntegrationDialog: () => {
+        if (isRuntimeConfigReadOnly || !externalIntegrationsEnabled) return;
+        setIntegrationDialogOpen(true);
+      },
       onToggleSkill: (skillId: string, checked: boolean) => {
         if (isRuntimeConfigReadOnly) return;
         handleToggleSkill(skillId, checked);
@@ -1495,6 +1601,10 @@ export function useAgentRuntimePageModel(agentId: string) {
       onChangeWorkflowBindings: (value: AgentWorkflowBinding[]) => {
         if (isRuntimeConfigReadOnly) return;
         setWorkflowBindings(normalizeAgentWorkflowBindings(value));
+      },
+      onChangeIntegrationBindings: (value: AgentIntegrationConnectionBinding[]) => {
+        if (isRuntimeConfigReadOnly) return;
+        setIntegrationBindings(normalizeAgentIntegrationBindings(value));
       },
       onGenerateSuggestedQuestions: async (value: OpeningStatementDialogValue) => {
         if (isRuntimeConfigReadOnly) return undefined;
@@ -1574,6 +1684,13 @@ export function useAgentRuntimePageModel(agentId: string) {
         bindings: workflowBindings,
         onOpenChange: setWorkflowDialogOpen,
         onConfirmWorkflows: handleConfirmWorkflows,
+      },
+      integration: {
+        agentId,
+        open: integrationDialogOpen && externalIntegrationsEnabled,
+        bindings: integrationBindings,
+        onOpenChange: setIntegrationDialogOpen,
+        onConfirmBindings: handleConfirmIntegrations,
       },
       memoryValues: {
         agentId,

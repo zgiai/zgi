@@ -76,6 +76,45 @@ func TestValidateManifestRejectsNoneEffect(t *testing.T) {
 	assertManifestValidationError(t, err, "effect")
 }
 
+func TestValidateManifestNormalizesDataEgressDestination(t *testing.T) {
+	manifest, err := ValidateManifest(Manifest{
+		ToolID:                 "web.search",
+		SkillID:                "web-search",
+		Domain:                 "web",
+		Effect:                 EffectRead,
+		AssetType:              "web_result",
+		RiskLevel:              RiskLevelLow,
+		DataEgress:             true,
+		ExternalDestination:    "  ExA.AI  ",
+		PermissionScopes:       []string{"web:search"},
+		DefaultApprovalPolicy:  ApprovalPolicyNeverAsk,
+		AllowedPermissionTiers: []PermissionTier{PermissionTierBasic},
+	})
+	if err != nil {
+		t.Fatalf("ValidateManifest() error = %v", err)
+	}
+	if manifest.ExternalDestination != "exa.ai" {
+		t.Fatalf("external_destination = %q, want exa.ai", manifest.ExternalDestination)
+	}
+}
+
+func TestValidateManifestRejectsDataEgressWithoutDestination(t *testing.T) {
+	_, err := ValidateManifest(Manifest{
+		ToolID:                 "web.search",
+		SkillID:                "web-search",
+		Domain:                 "web",
+		Effect:                 EffectRead,
+		AssetType:              "web_result",
+		RiskLevel:              RiskLevelLow,
+		DataEgress:             true,
+		ExternalDestination:    "  ",
+		PermissionScopes:       []string{"web:search"},
+		DefaultApprovalPolicy:  ApprovalPolicyNeverAsk,
+		AllowedPermissionTiers: []PermissionTier{PermissionTierBasic},
+	})
+	assertManifestValidationError(t, err, "external_destination")
+}
+
 func assertManifestValidationError(t *testing.T, err error, fields ...string) {
 	t.Helper()
 	if err == nil {

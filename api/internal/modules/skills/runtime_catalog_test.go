@@ -1209,17 +1209,16 @@ func TestCalculatorMetaToolArgumentsExposeRequiredExpressionSchema(t *testing.T)
 	if _, ok := properties["plan_phase_id"].(map[string]interface{}); !ok {
 		t.Fatalf("plan_phase_id schema missing from call_skill_tool: %#v", properties)
 	}
-	arguments, ok := properties["arguments"].(map[string]interface{})
-	if !ok {
+	if _, ok := properties["arguments"].(map[string]interface{}); !ok {
 		t.Fatalf("arguments schema missing")
 	}
-	oneOf, ok := arguments["oneOf"].([]interface{})
-	if !ok || len(oneOf) == 0 {
-		t.Fatalf("arguments.oneOf = %#v, want calculator tool schemas", arguments["oneOf"])
+	argumentSchemas := argumentSchemasFromPairBranches(params)
+	if len(argumentSchemas) == 0 {
+		t.Fatalf("pair branches = %#v, want calculator tool schemas", params["oneOf"])
 	}
-	expressionSchema := findSchemaWithRequired(oneOf, "expression")
+	expressionSchema := findSchemaWithRequired(argumentSchemas, "expression")
 	if expressionSchema == nil {
-		t.Fatalf("evaluate_expression schema requiring expression not found in %#v", oneOf)
+		t.Fatalf("evaluate_expression schema requiring expression not found in %#v", argumentSchemas)
 	}
 	expressionProperties, _ := expressionSchema["properties"].(map[string]interface{})
 	if _, ok := expressionProperties["expression"]; !ok {
@@ -1660,20 +1659,16 @@ func TestMetaToolArgumentsExposeAllLoadedSystemToolContracts(t *testing.T) {
 	if !ok {
 		t.Fatalf("parameters.properties missing")
 	}
-	arguments, ok := properties["arguments"].(map[string]interface{})
-	if !ok {
+	if _, ok := properties["arguments"].(map[string]interface{}); !ok {
 		t.Fatalf("arguments schema missing")
 	}
-	if _, hasOneOf := arguments["oneOf"]; hasOneOf {
-		t.Fatalf("arguments.oneOf should not be used when optional-only contracts are loaded: %#v", arguments)
-	}
-	anyOf, ok := arguments["anyOf"].([]interface{})
-	if !ok || len(anyOf) < 7 {
-		t.Fatalf("arguments.anyOf = %#v, want built-in tool schemas", arguments["anyOf"])
+	argumentSchemas := argumentSchemasFromPairBranches(params)
+	if len(argumentSchemas) < 7 {
+		t.Fatalf("pair branches = %#v, want built-in tool schemas", params["oneOf"])
 	}
 	for _, required := range []string{"content", "file_id", "query", "operation"} {
-		if findSchemaWithRequired(anyOf, required) == nil {
-			t.Fatalf("schema requiring %s not found in %#v", required, anyOf)
+		if findSchemaWithRequired(argumentSchemas, required) == nil {
+			t.Fatalf("schema requiring %s not found in %#v", required, argumentSchemas)
 		}
 	}
 }
@@ -1889,6 +1884,20 @@ func findSchemaWithRequired(schemas []interface{}, required string) map[string]i
 		}
 	}
 	return nil
+}
+
+func argumentSchemasFromPairBranches(parameters map[string]interface{}) []interface{} {
+	branches, _ := parameters["oneOf"].([]interface{})
+	result := make([]interface{}, 0, len(branches))
+	for _, rawBranch := range branches {
+		branch, _ := rawBranch.(map[string]interface{})
+		properties, _ := branch["properties"].(map[string]interface{})
+		arguments, _ := properties["arguments"].(map[string]interface{})
+		if len(arguments) > 0 {
+			result = append(result, arguments)
+		}
+	}
+	return result
 }
 
 func branchAllowsLabelOnlyBands(branch map[string]interface{}) bool {

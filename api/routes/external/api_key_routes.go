@@ -15,11 +15,13 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/dataset/graphflow"
 	datasetservice "github.com/zgiai/zgi/api/internal/modules/dataset/service"
 	datasourceservice "github.com/zgiai/zgi/api/internal/modules/datasource/service"
+	"github.com/zgiai/zgi/api/internal/modules/integrations"
 	"github.com/zgiai/zgi/api/internal/modules/llm/client"
 	llmdefaultservice "github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/service"
 	"github.com/zgiai/zgi/api/internal/modules/memory"
 	promptservice "github.com/zgiai/zgi/api/internal/modules/prompts/service"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
+	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"github.com/zgiai/zgi/api/internal/modules/tools"
 	"github.com/zgiai/zgi/api/internal/util"
 	"github.com/zgiai/zgi/api/middleware"
@@ -27,7 +29,7 @@ import (
 )
 
 // RegisterAPIKeyRoutes registers external API routes with API key authentication
-func RegisterAPIKeyRoutes(r *gin.RouterGroup, db *gorm.DB, accountService interfaces.AccountService, fileService interfaces.FileService, contentExtractor workflow_file.ContentExtractor, quotaService interfaces.QuotaService, enterpriseService interfaces.OrganizationService, llmClient client.LLMClient, toolEngine *tools.ToolEngine, toolManager *tools.ToolManager, memoryService *memory.Service, graphFlowService *graphflow.Service, promptResolver promptservice.PromptService, dataSourceService datasourceservice.DataSourceService, knowledgeRetrievalService *datasetservice.KnowledgeRetrievalService, resourcePermissionService interfaces.ResourcePermissionService, engineFactory *graph_engine.EngineFactory) {
+func RegisterAPIKeyRoutes(r *gin.RouterGroup, db *gorm.DB, accountService interfaces.AccountService, fileService interfaces.FileService, contentExtractor workflow_file.ContentExtractor, quotaService interfaces.QuotaService, enterpriseService interfaces.OrganizationService, llmClient client.LLMClient, toolEngine *tools.ToolEngine, toolManager *tools.ToolManager, memoryService *memory.Service, graphFlowService *graphflow.Service, promptResolver promptservice.PromptService, dataSourceService datasourceservice.DataSourceService, knowledgeRetrievalService *datasetservice.KnowledgeRetrievalService, resourcePermissionService interfaces.ResourcePermissionService, engineFactory *graph_engine.EngineFactory, manifestResolver skills.ToolGovernanceManifestResolver, integrationRegistry *integrations.Registry) {
 	// Create repositories
 	workflowRepo := workflow.NewWorkflowRepository(db)
 	workflowRunLogRepo := workflow.NewWorkflowRunLogRepository(db)
@@ -74,7 +76,7 @@ func RegisterAPIKeyRoutes(r *gin.RouterGroup, db *gorm.DB, accountService interf
 		fileService,
 		contentExtractor,
 		enterpriseService,
-		newExternalSkillRuntimeWithSandbox(toolEngine, toolManager, fileService, enterpriseService),
+		newExternalSkillRuntimeWithSandbox(toolEngine, toolManager, fileService, enterpriseService, manifestResolver),
 		memoryService,
 		agentMemoryService,
 	)
@@ -82,7 +84,7 @@ func RegisterAPIKeyRoutes(r *gin.RouterGroup, db *gorm.DB, accountService interf
 	if graphFlowService != nil {
 		defaultModelResolver = graphFlowService.DefaultModelSvc
 	}
-	agentService := agents.NewAgentsService(agentsRepo, accountService, nil, workflowService, chatRuntimeService, agentMemoryService, dataSourceService, knowledgeRetrievalService, resourcePermissionService, enterpriseService, quotaService, fileService, llmClient, defaultModelResolver, db)
+	agentService := agents.NewAgentsService(agentsRepo, accountService, nil, workflowService, chatRuntimeService, agentMemoryService, dataSourceService, knowledgeRetrievalService, resourcePermissionService, enterpriseService, quotaService, fileService, llmClient, defaultModelResolver, db, integrationRegistry)
 	agentHandler := agents.NewAgentsHandler(agentService, nil, accountService, enterpriseService, db, chatRuntimeService)
 	agentHandler.SetFileService(fileService)
 	agentHandler.SetWorkflowContinuationRunner(internalWorkflowHandler)

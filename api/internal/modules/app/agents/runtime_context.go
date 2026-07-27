@@ -282,29 +282,31 @@ func (h *AgentsHandler) webAppAgentRuntimeContext(c *gin.Context) (agentRuntimeC
 
 func agentRunConfig(agentID, systemPromptVersion string, cfg dto.AgentConfigResponse, agentMemoryUserScope string) runtimeservice.RunConfig {
 	return runtimeservice.RunConfig{
-		SystemPrompt:              cfg.SystemPrompt,
-		SystemPromptVersion:       systemPromptVersion,
-		ModelProvider:             cfg.ModelProvider,
-		Model:                     cfg.Model,
-		ModelParameters:           cfg.ModelParameters,
-		EnabledSkillIDs:           cfg.EnabledSkillIDs,
-		KnowledgeDatasetIDs:       cfg.KnowledgeDatasetIDs,
-		KnowledgeBoundByAccountID: cfg.KnowledgeBoundByAccountID,
-		KnowledgeBoundAtUnix:      cfg.KnowledgeBoundAtUnix,
-		KnowledgeRetrievalConfig:  cfg.KnowledgeRetrievalConfig,
-		DatabaseBindings:          agentDatabaseRuntimeBindings(cfg.DatabaseBindings),
-		DatabaseBoundByAccountID:  cfg.DatabaseBoundByAccountID,
-		DatabaseBoundAtUnix:       cfg.DatabaseBoundAtUnix,
-		WorkflowBindings:          agentWorkflowRuntimeBindings(cfg.WorkflowBindings),
-		WorkflowBoundByAccountID:  cfg.WorkflowBoundByAccountID,
-		WorkflowBoundAtUnix:       cfg.WorkflowBoundAtUnix,
-		BindingAuthorizations:     agentRuntimeBindingAuthorizations(cfg.BindingAuthorizations),
-		UseMemory:                 false,
-		AgentMemoryEnabled:        cfg.AgentMemoryEnabled,
-		AgentMemorySlots:          agentMemoryRuntimeSlots(cfg.AgentMemorySlots),
-		AgentMemoryUserScope:      agentMemoryUserScope,
-		BillingAppID:              agentID,
-		BillingAppType:            runtimemodel.ConversationCallerAgent,
+		SystemPrompt:                     cfg.SystemPrompt,
+		SystemPromptVersion:              systemPromptVersion,
+		ModelProvider:                    cfg.ModelProvider,
+		Model:                            cfg.Model,
+		ModelParameters:                  cfg.ModelParameters,
+		EnabledSkillIDs:                  cfg.EnabledSkillIDs,
+		KnowledgeDatasetIDs:              cfg.KnowledgeDatasetIDs,
+		KnowledgeBoundByAccountID:        cfg.KnowledgeBoundByAccountID,
+		KnowledgeBoundAtUnix:             cfg.KnowledgeBoundAtUnix,
+		KnowledgeRetrievalConfig:         cfg.KnowledgeRetrievalConfig,
+		DatabaseBindings:                 agentDatabaseRuntimeBindings(cfg.DatabaseBindings),
+		DatabaseBoundByAccountID:         cfg.DatabaseBoundByAccountID,
+		DatabaseBoundAtUnix:              cfg.DatabaseBoundAtUnix,
+		WorkflowBindings:                 agentWorkflowRuntimeBindings(cfg.WorkflowBindings),
+		WorkflowBoundByAccountID:         cfg.WorkflowBoundByAccountID,
+		WorkflowBoundAtUnix:              cfg.WorkflowBoundAtUnix,
+		IntegrationConnectionIDs:         agentIntegrationRuntimeConnectionIDs(cfg.IntegrationBindings),
+		IntegrationSelectedConnectionIDs: agentIntegrationRuntimeSelectedConnectionIDs(cfg.IntegrationBindings),
+		BindingAuthorizations:            agentRuntimeBindingAuthorizations(cfg.BindingAuthorizations),
+		UseMemory:                        false,
+		AgentMemoryEnabled:               cfg.AgentMemoryEnabled,
+		AgentMemorySlots:                 agentMemoryRuntimeSlots(cfg.AgentMemorySlots),
+		AgentMemoryUserScope:             agentMemoryUserScope,
+		BillingAppID:                     agentID,
+		BillingAppType:                   runtimemodel.ConversationCallerAgent,
 	}
 }
 
@@ -319,9 +321,36 @@ func agentRuntimeBindingAuthorizations(authorizations []dto.AgentBindingAuthoriz
 			ResourceID:       authorization.ResourceID,
 			ParentResourceID: authorization.ParentResourceID,
 			AccessMode:       authorization.AccessMode,
+			AllowedActionIDs: append([]string(nil), authorization.AllowedActionIDs...),
 			BoundByAccountID: authorization.BoundByAccountID,
 			BoundAtUnix:      authorization.BoundAtUnix,
 		})
+	}
+	return result
+}
+
+func agentIntegrationRuntimeConnectionIDs(bindings []dto.AgentIntegrationBinding) map[string]string {
+	result := make(map[string]string, len(bindings))
+	for _, binding := range normalizeAgentIntegrationBindings(bindings) {
+		if binding.IntegrationID == "" || binding.ConnectionID == "" {
+			continue
+		}
+		result[binding.IntegrationID] = binding.ConnectionID
+	}
+	if len(result) == 0 {
+		return nil
+	}
+	return result
+}
+
+func agentIntegrationRuntimeSelectedConnectionIDs(bindings []dto.AgentIntegrationBinding) map[string][]string {
+	preferred := agentIntegrationRuntimeConnectionIDs(bindings)
+	if len(preferred) == 0 {
+		return nil
+	}
+	result := make(map[string][]string, len(preferred))
+	for integrationID, connectionID := range preferred {
+		result[integrationID] = []string{connectionID}
 	}
 	return result
 }

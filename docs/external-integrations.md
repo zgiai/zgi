@@ -1,0 +1,653 @@
+# External integrations
+
+ZGI external integrations let AIChat use approved third-party applications
+through organization or personal connections. Providers describe their
+authentication methods, actions, schemas, health probe, and governance
+metadata. AIChat discovers those actions through one hidden Connected Apps
+runtime capability, so adding a provider does not require adding one visible
+Skill per application.
+
+The current built-in providers are:
+
+- GitHub REST: authenticated user, repository listing, and issue listing.
+- Exa Web Search: public web search and bounded webpage retrieval. Web Search
+  also has a curated Skill because it contains search-specific instructions,
+  citation behavior, and prompt-injection guidance.
+- Gmail: Google account identity and explicitly approved plain-text email
+  sending through Google OAuth 2.0.
+- Feishu (China): delegated user identity, Drive and document reads, plus
+  explicitly approved user or tenant-app messages.
+- X API v2: account identity and own-post reads, with recent search and post
+  creation disabled by default until an administrator enables them.
+
+OAuth 2.0 browser connection, token refresh, reconnect, and scope upgrade are
+included for Gmail, delegated Feishu accounts, and X. Workflow integration
+nodes, MCP transport, dynamic OpenAPI imports, and the global Lark provider are
+not part of this release.
+
+## Runtime model
+
+The main runtime boundary is:
+
+```text
+ProviderDefinition
+  -> Connection (encrypted credential and non-secret configuration)
+  -> Connection grant and organization Action policy
+  -> AIChat connection preference
+  -> Connected Apps meta tools
+  -> Integration Executor
+  -> Provider Adapter
+  -> execution audit and health signal
+```
+
+Provider definitions and Action schemas are authoritative server-side. The
+browser never submits provider credentials as model arguments. At invocation
+time, the Executor rechecks the organization, account, workspace, Connection,
+grant, Action allowlist, provider scopes, policy, and health/auth state before
+decrypting a request-scoped credential. Resolved secrets are destroyed after
+the adapter call.
+
+AIChat preferences are selections, not authorization. Revoking a grant,
+disabling a Connection, changing an Action policy, or invalidating a token
+takes effect on the next call even when the conversation was already open.
+
+## Authentication method model
+
+Provider authentication is described with stable, composable metadata rather
+than a growing list of provider-specific core types. Each authentication
+method declares:
+
+- `identity_kind`: `user`, `application`, `channel`, or `service`;
+- `acquisition_strategy`: `browser_redirect`, `manual_form`, or `none`;
+- `lifecycle_strategy`: `static`, `oauth_refresh`, `exchange_on_demand`, or
+  `signed_request`;
+- `request_auth_strategy`: `bearer_header`, `api_key_header`,
+  `api_key_query`, `basic_header`, `oauth1_signature`, `webhook_url`,
+  `provider_custom`, or `none`.
+
+The existing storage-oriented method types (`oauth2`, `api_key`,
+`custom_credential`, and `service_account`) remain compatible. `no_auth`
+remains a reserved catalog type but fails closed when marked available until a
+credential-free Connection runtime is implemented. Legacy Provider
+definitions that omit the four strategy fields receive safe defaults during
+registration. New definitions should declare the fields explicitly so the UI
+can present browser authorization and manual connection methods without
+provider-name conditionals.
+
+An Action still lists its compatible authentication method IDs. Adding a
+manual token method therefore does not automatically grant that method access
+to user-context or write Actions. Credential ownership also remains explicit:
+personal and organization-managed variants use separate authentication method
+IDs and the existing `account` or `organization` Connection source.
+
+This catalog-only expansion does not require a database migration. Connections
+continue to persist the stable `auth_method_id`; credentials continue to use
+the encrypted Connection vault.
+
+## Deployment configuration
+
+Enable the external integrations subsystem with:
+
+```env
+EXTERNAL_INTEGRATIONS_ENABLED=true
+INTEGRATION_ORG_DAILY_LIMIT=1000
+INTEGRATION_TIMEOUT_SECONDS=20
+
+# Each value must be exactly 32 bytes. Use an opaque key ID.
+INTEGRATION_CREDENTIAL_ACTIVE_KEY_ID=2026-07
+INTEGRATION_CREDENTIAL_KEYS_JSON={"2026-07":"0123456789abcdef0123456789abcdef"}
+
+INTEGRATION_HEALTH_FAILURE_THRESHOLD=3
+
+# OAuth browser flow and refresh behavior.
+INTEGRATION_OAUTH_FLOW_TTL_SECONDS=600
+INTEGRATION_OAUTH_REFRESH_WINDOW_SECONDS=600
+INTEGRATION_OAUTH_CALLBACK_URL=https://api.example.com/console/api/integrations/oauth/callback
+INTEGRATION_OAUTH_RESULT_URL=https://app.example.com/console/integrations/oauth/result
+```
+
+The example key above is illustrative; generate a unique random 32-byte value
+for every deployment and store it in a secret manager. Do not commit the JSON
+keyring or expose it through a browser environment variable.
+
+For backward compatibility, ZGI can read `API_KEY_ENCRYPTION_KEY` as a legacy
+credential key when the explicit keyring is absent. New deployments should use
+the named keyring. `API_KEY_ENCRYPTION_KEY` is still required when Web Search
+is enabled because it also derives the audit input-HMAC key.
+
+Apply migrations before enabling traffic:
+
+```bash
+cd api
+go run ./cmd/migrate up
+go run ./cmd/migrate status
+```
+
+Restart every API instance after changing provider or keyring configuration.
+
+### OAuth application ownership
+
+ZGI does not depend on an OpenConnector, OOMOL, Creao, or other hosted
+credential broker. An organization owner or administrator configures its own
+Google, Feishu, or X OAuth application from **Connection Center → Management
+center → OAuth application**. The UI displays the exact callback URL that must
+be registered at the provider.
+
+OAuth client secrets are write-only and encrypted with the same credential
+keyring as Connection tokens. Client ID changes and OAuth application deletion
+fail closed while dependent or disabled Connections, or an unexpired pending
+authorization flow, still exist.
+
+`INTEGRATION_OAUTH_CLIENTS_JSON` is an optional deployment-level fallback for
+self-hosted installations that intentionally share one OAuth application. An
+organization-owned UI configuration takes precedence. The JSON shape is:
+
+```json
+{
+  "gmail": {
+    "client_id": "google-client-id",
+    "client_secret": "google-client-secret",
+    "config": {}
+  },
+  "feishu": {
+    "client_id": "feishu-app-id",
+    "client_secret": "feishu-app-secret",
+    "config": {}
+  },
+  "x": {
+    "client_id": "x-client-id",
+    "config": {}
+  }
+}
+```
+
+X public PKCE clients may omit `client_secret`. If an X application is
+configured as a confidential web client, include its client secret instead.
+Google and Feishu clients always require their provider-issued secret.
+
+The OAuth configuration dialog includes a provider-owned setup guide before
+the credential fields. The guide is catalog metadata, not organization data,
+so it does not require a database migration and never contains credential
+values. It explains where to create the provider application, where to copy
+the client identifier and secret, how to register the exact callback URL, and
+which provider-specific publishing or test-user steps are required.
+
+The built-in guides intentionally differ:
+
+- Feishu points administrators to Credentials & Basic Info, Security Settings,
+  permission management, and application publishing. `user_profile` and
+  `auth:user.id:read` are implicit identity scopes and must not be manually
+  inserted into the authorization request.
+- Gmail requires a Google Cloud project, the Gmail API, Google Auth Platform
+  branding/audience/data-access setup, test users when the application is in
+  Testing, a Web application OAuth client, and an exact authorized redirect
+  URI.
+- X requires OAuth 2.0 Authorization Code with PKCE, an exact callback URI,
+  and an explicit client type. Public clients omit the client secret;
+  confidential Web/Automated/Bot clients use one.
+
+Provider setup guides are declared on authentication methods and are also
+rendered in the personal and organization Connection dialogs for manually
+entered credentials. The guide changes with the selected authentication
+method; OAuth application setup is not reused for a PAT, API key, Bearer token,
+or service-account credential.
+
+The built-in manual credential guides cover:
+
+- GitHub fine-grained PAT creation, repository ownership, minimum permissions,
+  expiration, and possible organization approval;
+- Exa dashboard API-key creation plus credit and budget checks;
+- X application-only Bearer tokens, including the distinction between
+  app-only public-data access and delegated OAuth user actions; and
+- Feishu tenant application App ID/App Secret, application-identity
+  permissions, availability scope, and publishing.
+
+New service-account or token-based providers can reuse the same safe step
+contract without adding provider-specific UI branches. Guide links must be
+absolute HTTPS URLs, steps and notices are bounded and localized, and only the
+built-in open-console, open-documentation, and copy-callback actions are
+accepted. The metadata contains no credential value and does not require a
+database migration.
+
+Never commit this value. Prefer the organization-owned encrypted UI
+configuration unless the deployment operator deliberately manages OAuth
+applications centrally.
+
+The callback and result URLs must be HTTPS in production. Loopback HTTP is
+accepted only for local development. The callback URL is server-owned and
+must not be derived from an inbound `Host` header.
+
+When the Web UI and API use separate origins, keep them on the same
+schemeful site (for example `app.example.com` and `api.example.com`), allow
+the exact Web origin in `WEB_API_CORS_ALLOW_ORIGINS`, and enable credentials
+on the reverse proxy. The OAuth start request is the only application API
+request that accepts the HttpOnly browser-binding cookie; the cookie is then
+sent directly to the API callback during the provider redirect.
+
+### OAuth connection lifecycle
+
+The **Connect** button opens the provider authorization page in a new browser
+window. The flow uses:
+
+- a short-lived opaque flow reference;
+- one-time, server-stored OAuth state;
+- a high-entropy HttpOnly browser binding whose SHA-256 digest is checked
+  atomically with state, so a callback opened in another browser cannot
+  consume the original browser's flow;
+- PKCE S256;
+- an exact allowlisted callback URL;
+- a callback that rechecks current organization membership and, for shared
+  Connections, current administrator/owner authority;
+- a result page that receives only a safe status and opaque flow reference,
+  never an authorization code, state, token, Connection UUID, or provider
+  error description.
+
+On success, access and refresh tokens are encrypted in the Connection vault.
+Before a call, ZGI refreshes an expiring token under a distributed Redis lock
+and persists rotating refresh tokens with compare-and-swap protection.
+Provider-reported refresh-token expiry is stored separately from short-lived
+access-token expiry; an expired refresh token moves the Connection to
+reconnect-required without making another provider request. A successful
+provider refresh whose database write is temporarily unavailable is retained
+as an encrypted recovery task, so the old rotating token is not reused.
+Immediately after a provider exchanges an authorization code, ZGI also commits
+an encrypted compensation task containing the issued tokens and an immutable
+OAuth client snapshot before it performs local scope, profile, or Connection
+work. The task is guarded by the OAuth flow outcome: a successful Connection
+commit only acknowledges it, while a failed, expired, or interrupted flow is
+revoked immediately when possible and retried by a leased worker after restart.
+This guard prevents a delayed worker from revoking tokens that belong to a
+successfully committed Connection. The callback fails before calling the
+provider token endpoint when this durable recovery path is not fully wired; it
+never downgrades silently to in-process-only compensation.
+Deleting an OAuth Connection commits its encrypted provider-revocation task
+and the local deletion in one database transaction. Provider or Redis outages
+therefore cannot lose cleanup work. The task also contains an encrypted,
+immutable OAuth client snapshot, so a later client configuration rotation or
+deletion cannot orphan the revocation; leased workers retry it safely after a
+process restart.
+In Connection Center this operation is presented as **Disconnect account** for
+OAuth Connections. It removes the local encrypted tokens and AIChat selection
+as one operation, then requests provider revocation when the provider supports
+it. Shared accounts remain blocked from disconnection while an Agent binding
+still depends on them. API-key and PAT Connections continue to use the
+**Delete connection** label because they do not represent a delegated OAuth
+account.
+`invalid_grant`, revoked access, or missing scopes changes the Connection to a
+reconnect/attention state rather than silently falling back to another
+account. Reconnect and scope-upgrade flows update the existing Connection
+without exposing its internal identifier in the UI.
+
+OAuth success has different next steps:
+
+- a personal Connection is immediately eligible for its owner's AIChat
+  Connected Apps selector;
+- a shared Connection still requires an explicit usage rule before members or
+  Agents can use it.
+
+### Rotating credential keys
+
+Key rotation is read-old/write-new:
+
+1. Add a new 32-byte entry to `INTEGRATION_CREDENTIAL_KEYS_JSON` while keeping
+   every key ID still referenced by stored envelopes.
+2. Change `INTEGRATION_CREDENTIAL_ACTIVE_KEY_ID` to the new ID and restart all
+   API instances.
+3. New and updated Connections are encrypted with the active key. Existing
+   envelopes remain readable with their embedded key ID.
+4. Keep old keys until all corresponding Connections have had their
+   credentials replaced. Removing an in-use old key makes those Connections
+   unavailable and fail closed.
+
+Key IDs are metadata, not secrets. Key values are secrets.
+
+## Using Connection Center
+
+Open `/console/integrations` from **Authoring tools → Connection Center**.
+The page deliberately separates two tasks:
+
+- **Available** discovers providers and starts a personal or organization-owned
+  connection with the authentication methods that provider supports.
+- **Connected** groups existing Connections by provider and shows credential
+  health, usage-rule coverage, AIChat selection, and management actions.
+
+Every organization member can manage personal Connections and view shared
+Connections they are authorized to use. Organization owners and administrators
+can also create, edit, test, disable, or delete organization-owned Connections;
+define who can use them at the organization, workspace, or account level;
+configure Action policies; and inspect execution records from **Management
+center**.
+
+The legacy `/dashboard/organization/integrations` routes redirect to Connection
+Center. They no longer expose a second connection-management surface.
+
+Connection ownership, usage rules, and chat selection are separate concepts:
+
+- **Personal connections** contain credentials owned by the current account.
+  Only that account can manage or use them, and Agents cannot bind them.
+- **Shared connections** contain organization-owned credentials. Organization
+  administrators manage them and explicitly define eligible callers and
+  available Actions through usage rules.
+- **Connected Apps** in AIChat only selects which currently available
+  connections a conversation may use. Selection never creates a usage rule or
+  bypasses a removed rule.
+
+Connection details use one permission-summary contract for personal and shared
+Connections. The summary separates:
+
+- **ZGI capabilities**, which are the provider Actions currently adapted by
+  this deployment and compatible with the Connection authentication method;
+- **provider grants**, which are the raw scopes or permissions reported by the
+  provider;
+- **identity and lifecycle permissions**, which authenticate the external
+  identity or keep an OAuth Connection signed in; and
+- **missing permissions**, which require a credential replacement or OAuth
+  scope upgrade.
+
+Raw provider scopes remain the source for fail-closed runtime authorization and
+are not replaced by this presentation summary. Unknown future scopes are shown
+by their safe provider identifier instead of being collapsed into an ambiguous
+"other permission" label. Broad provider grants are highlighted, while ZGI
+still limits execution to adapted Actions that pass usage rules, organization
+policy, approval, and runtime scope checks. Providers that do not return a
+scope list are reported as such; no permissions are inferred from an empty
+scope response.
+
+Personal authentication methods create account-owned Connections. A user can
+manage, test, disable, and remove only their own personal Connections from the
+**Connected** view in Connection Center. Personal
+credentials are not exposed to organization peers through catalog or Agent
+candidate APIs. Secret fields are write-only: leaving them unchanged during an
+edit preserves the existing encrypted value, while submitting a replacement
+rotates the credential version. Disable or delete a Connection that should no
+longer retain a usable credential.
+
+Every usage rule stores explicit Action IDs. The management API represents
+these rules as grants internally and does not accept a wildcard that could
+silently authorize Actions added by a provider later. When a
+ProviderDefinition changes, administrators review and enable the new Actions
+deliberately. If a previously enabled Action is removed from the provider, the
+management interface marks it as unavailable and requires the administrator to
+remove it before saving other changes.
+
+Usage targets mean:
+
+- **Entire organization** applies to organization members. Agents still need
+  an explicit binding to the exact Connection and Action.
+- **Specific workspace** applies only in that workspace context. Agents in the
+  workspace still need an explicit binding.
+- **Specific member** applies only to that member's AIChat usage and never
+  authorizes an Agent.
+
+Only active organization members and non-archived workspaces can receive new
+usage rules. Existing rules whose subject is no longer active remain visible
+as needing attention so an administrator can replace or delete them.
+
+Applicable usage rules are additive: if any matching rule permits the requested
+Action and effect, the call may proceed to the remaining policy checks. A more
+specific member or workspace rule does not reduce an organization-wide rule.
+To remove broad access, narrow or remove the broad rule, or disable the Action
+through the organization Action policy. In the API, `access_mode=write` means
+read and write; the management interface displays it as **Read and write**.
+Legacy provider-owned rules with resource-level constraints are shown as
+read-only. The list API exposes only whether such constraints exist and does
+not return their non-editable policy body to this editor.
+
+A successful connection test proves only the provider authentication and
+reported scopes at that moment. Provider availability and connection health
+are shown separately; “configured” is never treated as synonymous with
+“healthy.” ZGI does not run periodic provider probes. Health changes only
+after an explicit connection test, credential lifecycle operation, or a real
+AIChat/Agent invocation, so background monitoring cannot consume provider
+quota or account balance.
+
+## Using connected applications in AIChat
+
+1. Create and test a personal Connection, or ask an organization
+   administrator to add a usage rule for your account/workspace.
+2. Open AIChat and choose **Connected Apps** in the composer toolbar.
+3. Select one or more healthy Connections. When an application has multiple
+   Connections, choose its preferred Connection.
+4. Save the selection, then ask AIChat for the task in normal language, for
+   example “list my recently updated GitHub repositories.”
+
+The Connected Apps selector is separate from the Skill selector. A generic
+provider such as GitHub does not appear as a visible Skill. The hidden runtime
+can list the selected Connections, search their allowed Actions, request an
+Action guide, and execute the exact Action. All final calls still pass through
+the Executor and current usage, policy, and permission checks.
+
+Select the Web Search Skill when you want its curated search/citation behavior.
+Its Connection is managed on the same integrations page, but the visible Skill
+contains domain instructions that generic Action discovery cannot replace.
+
+## GitHub authentication and Actions
+
+GitHub supports two PAT-based methods in this release:
+
+- personal access token: an account-owned personal Connection;
+- organization personal access token: an administrator-managed shared
+  Connection that still uses a GitHub PAT but is governed by ZGI grants.
+
+Fine-grained PATs with the minimum repository access are recommended. ZGI does
+not return the token after creation. Available read-only Actions are:
+
+- `github.user.get`
+- `github.repository.list`
+- `github.issue.list`
+
+Repository and issue responses are bounded before entering model context.
+
+GitHub remains PAT-based in this release. It does not reuse the Gmail, Feishu,
+or X OAuth application because provider tokens and authorization semantics are
+kept provider-specific.
+
+## Gmail OAuth and Actions
+
+Gmail offers personal and organization-owned delegated Google OAuth methods.
+The default consent request asks only for OpenID identity and email scopes.
+Selecting the send Action during connection or scope upgrade additionally
+requests `https://www.googleapis.com/auth/gmail.send`.
+
+Available Actions are:
+
+- `gmail.account.get`: enabled by default, read-only;
+- `gmail.mail.send`: disabled by default, high risk, non-idempotent, and every
+  invocation requires explicit approval after an administrator enables it.
+
+Email bodies and recipients are validated and bounded before network I/O.
+ZGI sends a plain-text RFC 2822 message through the official Gmail API and
+never asks for or stores the user's Google password.
+
+## Feishu authentication and Actions
+
+This release registers the China-region Feishu provider only. It supports:
+
+- personal delegated Feishu OAuth;
+- organization-owned delegated Feishu OAuth;
+- an organization-owned Feishu tenant app using write-only App ID and App
+  Secret fields.
+
+Delegated user Actions are:
+
+- `feishu.account.get`;
+- `feishu.drive.list`;
+- `feishu.document.read`;
+- `feishu.message.send_user`.
+
+Delegated OAuth code exchange and refresh use the current fixed Feishu OpenAPI
+endpoint `https://open.feishu.cn/open-apis/authen/v2/oauth/token`. The
+authorization-code exchange includes the server-held PKCE verifier.
+`auth:user.id:read` and `user_profile` may appear in the token response as
+implicit identity scopes, but ZGI never sends them as application permissions
+in the authorization URL. The account identity Action therefore needs no
+explicit business permission. Long-lived connections request
+`offline_access`, which must be enabled and published in the Feishu app.
+
+Sending as a delegated user requests only `im:message.send_as_user`. Tenant-app
+messaging requests only `im:message:send_as_bot`; ZGI does not request the
+broader `im:message` permission merely to send a message.
+
+Tenant-app messaging uses `feishu.message.send_bot`. Both message Actions are
+disabled by default, high risk, non-idempotent, and require approval for every
+invocation. Reads remain bounded and use fixed `open.feishu.cn` endpoints.
+
+Lark global is intentionally not presented as a region selector. Its endpoints,
+application registration, and governance destination differ; add it later as
+an independently reviewed Provider rather than switching domains through a
+user-controlled field.
+
+Feishu does not publish a general revocation endpoint for this delegated web
+flow. If authorization succeeds at Feishu but ZGI cannot finish validating or
+committing the Connection, ZGI stores only an encrypted compensation envelope
+and marks the operation as requiring administrator remediation. The
+administrator must ask the user to remove the application authorization in
+Feishu account settings, then explicitly acknowledge either that provider
+access was removed or that the token was confirmed expired. Unacknowledged
+dead letters are never deleted automatically and remain visible in Connection
+Center; their API and UI summaries contain provider, reason, attempt count, and
+timestamps only, never tokens, client secrets, or Connection identifiers.
+Acknowledgement atomically destroys the encrypted token and OAuth client-secret
+payload. ZGI retains a secret-free audit tombstone with the provider, auth
+method, sanitized reason, attempt count, failure time, acknowledging
+administrator, acknowledgement time, and explicit resolution; acknowledgement
+does not delete the recovery history.
+Gmail and X support a provider revocation endpoint, so ZGI attempts immediate
+revocation and retains the encrypted task for restart-safe retries until it
+succeeds or requires the same explicit administrator remediation.
+
+## X authentication and Actions
+
+X supports two intentionally separate authentication identities:
+
+- delegated user OAuth 2.0 Authorization Code with PKCE, requesting
+  `offline.access` so an eligible application can issue refresh tokens;
+- an organization-managed, manually entered X app Bearer Token for public,
+  read-only recent search.
+
+The app Bearer Token never represents a user. It cannot read the current
+account, list that account's posts, or publish a post. Those Actions remain
+restricted to delegated OAuth methods. The token is write-only in the browser,
+encrypted before storage, and sent only in the fixed `Authorization: Bearer`
+header to the official X API.
+
+Available Actions are:
+
+- `x.account.get`: enabled by default, read-only;
+- `x.post.list_own`: enabled by default, read-only;
+- `x.post.search_recent`: disabled by default because availability and cost
+  depend on the connected X developer plan; it supports delegated OAuth and
+  the app-only Bearer method;
+- `x.post.create`: disabled by default, high risk, non-idempotent, and every
+  invocation requires explicit approval after an administrator enables it.
+
+X responses, pagination tokens, queries, and post text are bounded. All API
+traffic uses fixed official X API v2 endpoints.
+
+## Adding another provider
+
+Adding Notion, Slack, or another provider normally requires an Adapter,
+not a new Skill:
+
+1. Add a provider package under
+   `api/internal/modules/integrations/adapters/<provider>`.
+2. Define a stable `ProviderDefinition`: identity, categories, documentation,
+   explicit authentication methods and write-only credential fields, the four
+   generic authentication strategy dimensions, health probe characteristics,
+   and bounded Actions.
+3. Provide `en-US` and `zh-Hans` metadata for every user-visible provider,
+   Action, authentication method, credential field, option, category, tag,
+   scope, health-probe description, and input field. Use
+   `category_labels_i18n`, `tag_labels_i18n`, and `scope_labels_i18n` for
+   stable identifiers; use `title_i18n` and `enum_labels_i18n` in input JSON
+   Schema properties. Registration fails when a supported locale or declared
+   enum value is missing, so a new provider cannot silently leak English or
+   technical identifiers into a Chinese interface.
+4. Give every Action strict Draft 2020-12 input/output schemas, caller support,
+   required scopes, effect, risk, data-egress destination, idempotency, and a
+   conservative default policy.
+5. Implement `Adapter.Execute`; optionally implement connection validation,
+   health probing, credential validation, and dynamic governance. For OAuth
+   methods also implement the provider OAuth contract for authorization URL,
+   code exchange, profile resolution, refresh, and revocation. Keep base URLs
+   fixed or allowlisted and normalize provider output.
+6. Register the provider in the service container only when the external
+   integrations subsystem is enabled.
+7. Test authentication headers, request mapping, pagination/limits, retries,
+   safe errors, output bounds, scope drift, health mapping, and secret
+   non-disclosure. Also test both supported locales, nested input-property
+   labels, and every enum label. Add a container registration test and an
+   AIChat meta-tool execution test.
+
+Add a visible Skill only when the application needs reusable domain
+instructions or a multi-step workflow, such as citation rules, mandatory
+confirmation, or a specialized task playbook. Do not create a Skill merely to
+make a provider's Actions callable.
+
+## Legacy platform-credential compatibility
+
+New Connections use only `organization` or `account` credential sources.
+Provider credentials are never read from provider-specific server environment
+variables. The legacy `platform` source and auth identifiers remain internal
+constants only so older database rows can be recognized and rejected safely.
+They are not advertised in the Provider catalog, accepted by create or update
+APIs, returned as usable Connections, or resolved at runtime.
+
+Legacy platform rows cannot be converted automatically because they do not
+contain an encrypted provider secret. Create and test an explicit organization
+or personal replacement Connection, update grants, AIChat preferences, and
+Agent bindings, and then retire the old deployment secret.
+
+## Security and audit behavior
+
+- Credentials are AES-256-GCM envelopes bound to organization, Connection,
+  Integration, credential revision, and key ID.
+- Organization grants, personal ownership, Action scopes, and current policies
+  are checked again immediately before each call.
+- Sensitive outbound values and unsafe URLs are rejected before network I/O.
+- Quota and initial audit creation fail closed.
+- Audit records store bounded operational metadata and an HMAC fingerprint,
+  not raw prompts, credentials, webpage bodies, or upstream responses.
+- Completion updates use a durable Redis outbox so a paid successful call is
+  not repeated when the database update temporarily fails.
+- Passive runtime outcomes and explicit manual tests update orthogonal health,
+  auth, and scope states with bounded history. No periodic provider request is
+  issued for health monitoring.
+- Approval prompts for dynamic external Actions show the actual provider,
+  Action, Connection, external destination, and a credential-redacted summary
+  of the data that will be sent—not merely the generic meta-tool name.
+- Remembered approvals for dynamic Actions are scoped to the provider Action
+  and exact Connection; approval for one Connection cannot authorize another.
+
+## Troubleshooting
+
+- Provider missing: verify `EXTERNAL_INTEGRATIONS_ENABLED=true` and restart the
+  API.
+- Cannot create a Connection: choose an available authentication method and
+  configure a valid active credential key.
+- OAuth button says configuration is required: an organization administrator
+  must save that provider's OAuth client ID/secret and register the exact
+  callback URL shown by Connection Center.
+- OAuth application credentials are managed separately from connected
+  accounts. After initial setup, administrators can reopen **OAuth application
+  settings** from the provider card, rotate the write-only client secret, or
+  change the client ID. The previous secret is never returned to the browser.
+- Removing an OAuth application configuration is blocked while account
+  Connections or pending authorization flows still depend on it. The settings
+  dialog shows the current dependency counts before enabling removal.
+- OAuth window was closed or expired: restart the connection. Flow references,
+  state, and PKCE verifiers are intentionally short-lived and cannot be reused.
+- OAuth succeeded but the shared account is unavailable: add an explicit usage
+  rule for the organization, workspace, or member; connection success does not
+  grant shared access.
+- Reconnect required: the refresh token was revoked/expired or the provider no
+  longer reports required scopes. Reauthorize the same Connection or run a
+  scope upgrade; ZGI does not silently use a different account.
+- Connection is not selectable: test it, resolve reconnect/scope warnings, and
+  confirm a matching organization/workspace/account grant exists.
+- AIChat selection disappeared: preferences are authoritative and stale or
+  revoked Connections are removed rather than silently retained.
+- Action denied: check the grant Action allowlist, read/write mode, provider
+  scopes, and organization Action policy.
+- Health is unknown: no successful probe or runtime signal has been recorded;
+  “unknown” must not be interpreted as healthy.

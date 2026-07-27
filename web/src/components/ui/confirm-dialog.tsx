@@ -30,6 +30,10 @@ export interface ConfirmDialogProps {
   onConfirm: () => void;
   /** Loading state for confirm action */
   loading?: boolean;
+  /** Keep the confirm action unavailable for a known blocking condition. */
+  confirmDisabled?: boolean;
+  /** Close immediately after confirmation. Disable when the caller closes after an async success. */
+  closeOnConfirm?: boolean;
   /** Controlled open state (optional) */
   open?: boolean;
   /** Controlled open change handler (optional) */
@@ -54,6 +58,8 @@ export function ConfirmDialog({
   cancelText = 'Cancel',
   onConfirm,
   loading = false,
+  confirmDisabled = false,
+  closeOnConfirm = true,
   open: openProp,
   onOpenChange: onOpenChangeProp,
   variant = 'default',
@@ -73,7 +79,7 @@ export function ConfirmDialog({
   // Handle confirm action then close dialog
   const handleConfirm = () => {
     onConfirm();
-    setOpen(false);
+    if (closeOnConfirm) setOpen(false);
   };
 
   return (
@@ -124,7 +130,7 @@ export function ConfirmDialog({
           <Button
             variant={variant === 'warning' ? 'destructive' : isDanger ? 'outline' : 'default'}
             onClick={handleConfirm}
-            disabled={loading}
+            disabled={loading || confirmDisabled}
             size="xl"
             className={cn(
               'px-6 font-semibold',

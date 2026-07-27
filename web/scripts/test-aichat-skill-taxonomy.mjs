@@ -100,7 +100,7 @@ const catalogIcons = fs
     return icon;
   });
 
-assert.equal(catalogIcons.length, 30);
-assert.equal(new Set(catalogIcons).size, 30, 'built-in Skills should use distinct icons');
+assert.equal(catalogIcons.length, 32);
+assert.equal(new Set(catalogIcons).size, 32, 'built-in Skills should use distinct icons');
 
 console.log('AIChat Skill taxonomy checks passed.');

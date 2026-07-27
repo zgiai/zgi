@@ -9,6 +9,7 @@ func NormalizeManifest(manifest Manifest) Manifest {
 	manifest.Effect = NormalizeEffect(manifest.Effect)
 	manifest.AssetType = normalizeAssetType(manifest.AssetType)
 	manifest.RiskLevel = NormalizeRiskLevel(manifest.RiskLevel)
+	manifest.ExternalDestination = strings.ToLower(strings.TrimSpace(manifest.ExternalDestination))
 	manifest.DefaultApprovalPolicy = NormalizeApprovalPolicy(manifest.DefaultApprovalPolicy)
 	manifest.PermissionScopes = normalizeStringList(manifest.PermissionScopes)
 	manifest.AllowedPermissionTiers = normalizePermissionTierList(manifest.AllowedPermissionTiers)
@@ -126,6 +127,7 @@ func normalizeSessionGrant(grant SessionGrant) SessionGrant {
 	grant.ToolID = strings.TrimSpace(grant.ToolID)
 	grant.Effect = NormalizeEffect(grant.Effect)
 	grant.AssetType = normalizeAssetType(grant.AssetType)
+	grant.ExternalDestination = strings.ToLower(strings.TrimSpace(grant.ExternalDestination))
 	grant.Assets = normalizeAssets(grant.Assets)
 	for index := range grant.Assets {
 		if grant.Assets[index].Type == "" {

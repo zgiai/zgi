@@ -7,6 +7,7 @@ const messages = {
   cancel: 'Cancel',
   confirm: 'Confirm',
   close: 'Close',
+  switchLanguage: 'Switch language',
   save: 'Save',
   loading: 'Loading...',
   error: 'Error',

@@ -28,6 +28,7 @@ const (
 	ToolProviderTypeBuiltin      ToolProviderType = "builtin"       // Built-in tools provided by the system
 	ToolProviderTypePluginRunner ToolProviderType = "plugin_runner" // Compatibility value for marketplace tools
 	ToolProviderTypeRunner       ToolProviderType = "runner"        // Preferred public alias for marketplace tools
+	ToolProviderTypeConnector    ToolProviderType = "connector"     // External integration actions
 
 	// Not supported - reserved for future extension
 	// ToolProviderTypeAPI              ToolProviderType = "api"               // Custom OpenAPI tools - not supported
@@ -158,13 +159,29 @@ type ToolParameter struct {
 // Tool Entity
 // ============================================
 
+// ToolGovernanceMetadata contains the provider-authoritative governance
+// classification for a dynamically registered tool. Skill manifests still own
+// stable identity and policy fields, while these values must follow the action
+// selected by the provider.
+type ToolGovernanceMetadata struct {
+	ToolID               string `json:"tool_id,omitempty"`
+	Effect               string `json:"effect"`
+	RiskLevel            string `json:"risk_level"`
+	DataEgress           bool   `json:"data_egress"`
+	ExternalDestination  string `json:"external_destination,omitempty"`
+	SensitiveDataAllowed bool   `json:"sensitive_data_allowed"`
+}
+
 // ToolEntity represents the metadata of a tool
 type ToolEntity struct {
-	Identity    ToolIdentity    `json:"identity"`
-	Description ToolDescription `json:"description"`
-	Parameters  []ToolParameter `json:"parameters,omitempty"`
-	OutputType  string          `json:"output_type,omitempty"`
-	Tags        []string        `json:"tags,omitempty"`
+	Identity     ToolIdentity            `json:"identity"`
+	Description  ToolDescription         `json:"description"`
+	Parameters   []ToolParameter         `json:"parameters,omitempty"`
+	InputSchema  map[string]interface{}  `json:"input_schema,omitempty"`
+	OutputSchema map[string]interface{}  `json:"output_schema,omitempty"`
+	Governance   *ToolGovernanceMetadata `json:"governance,omitempty"`
+	OutputType   string                  `json:"output_type,omitempty"`
+	Tags         []string                `json:"tags,omitempty"`
 }
 
 // ============================================
@@ -174,6 +191,8 @@ type ToolEntity struct {
 // ToolRuntime represents the runtime configuration for a tool
 type ToolRuntime struct {
 	TenantID          string                 `json:"tenant_id"`
+	CredentialID      string                 `json:"credential_id,omitempty"`
+	ConnectionID      string                 `json:"connection_id,omitempty"`
 	Credentials       map[string]interface{} `json:"credentials,omitempty"`
 	RuntimeParameters map[string]interface{} `json:"runtime_parameters,omitempty"`
 	InvokeFrom        ToolInvokeFrom         `json:"invoke_from"`

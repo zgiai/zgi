@@ -24,6 +24,7 @@ type AgentsService interface {
 	ListAgentDatabaseCandidates(ctx context.Context, agentID, accountID string, req dto.AgentDatabaseCandidatesRequest) (*dto.AgentDatabaseCandidatesResponse, error)
 	ListAgentDatabaseTables(ctx context.Context, agentID, accountID string, req dto.AgentDatabaseTablesRequest) (*dto.AgentDatabaseTablesResponse, error)
 	ListAgentWorkflowBindingCandidates(ctx context.Context, agentID, accountID string, req dto.AgentWorkflowBindingCandidatesRequest) (*dto.AgentWorkflowBindingCandidatesResponse, error)
+	ListAgentIntegrationConnectionCandidates(ctx context.Context, agentID, accountID string, req dto.AgentIntegrationConnectionCandidatesRequest) (*dto.AgentIntegrationConnectionCandidatesResponse, error)
 	ListAgentMemorySlots(ctx context.Context, agentID, accountID string) ([]dto.AgentMemorySlotConfig, error)
 	ReplaceAgentMemorySlots(ctx context.Context, agentID, accountID string, slots []dto.AgentMemorySlotConfig) ([]dto.AgentMemorySlotConfig, error)
 	ListAgentMemoryValues(ctx context.Context, agentID, accountID string) (*dto.AgentMemoryValuesResponse, error)

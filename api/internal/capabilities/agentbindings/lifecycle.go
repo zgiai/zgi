@@ -280,6 +280,8 @@ func pruneAgentModeResource(raw *string, ref ResourceRef) (string, bool, error) 
 		mode["database_bindings"], changed = removeDatabaseTableBinding(mode["database_bindings"], ref.ParentResourceID, ref.ResourceID)
 	case BindingTypeWorkflow:
 		mode["workflow_bindings"], changed = removeWorkflowBinding(mode["workflow_bindings"], ref.ResourceID)
+	case BindingTypeIntegrationConnection:
+		mode["integration_bindings"], changed = removeIntegrationBinding(mode["integration_bindings"], ref.ParentResourceID, ref.ResourceID)
 	default:
 		return "", false, fmt.Errorf("unsupported binding type %q", ref.BindingType)
 	}
@@ -368,6 +370,23 @@ func removeWorkflowBinding(value interface{}, resourceID string) ([]interface{},
 	return out, changed
 }
 
+func removeIntegrationBinding(value interface{}, integrationID, connectionID string) ([]interface{}, bool) {
+	items, _ := value.([]interface{})
+	out := make([]interface{}, 0, len(items))
+	changed := false
+	for _, item := range items {
+		binding, _ := item.(map[string]interface{})
+		matchesConnection := strings.EqualFold(strings.TrimSpace(fmt.Sprint(binding["connection_id"])), strings.TrimSpace(connectionID))
+		matchesIntegration := strings.TrimSpace(integrationID) == "" || strings.EqualFold(strings.TrimSpace(fmt.Sprint(binding["integration_id"])), strings.TrimSpace(integrationID))
+		if matchesConnection && matchesIntegration {
+			changed = true
+			continue
+		}
+		out = append(out, item)
+	}
+	return out, changed
+}
+
 func bindingImpactRevision(bindings []Binding) string {
 	rows := make([]string, 0, len(bindings))
 	for _, binding := range bindings {
@@ -375,7 +394,11 @@ func bindingImpactRevision(bindings []Binding) string {
 		if binding.PublishedVersionUUID != nil {
 			version = binding.PublishedVersionUUID.String()
 		}
-		rows = append(rows, strings.Join([]string{binding.AgentID.String(), string(binding.BindingScope), version, string(binding.BindingType), binding.ResourceID, binding.ParentResourceID, binding.AccessMode}, "|"))
+		metadataRevision := ""
+		if binding.BindingType == BindingTypeIntegrationConnection {
+			metadataRevision = strings.Join(IntegrationAllowedActionIDs(binding), ",")
+		}
+		rows = append(rows, strings.Join([]string{binding.AgentID.String(), string(binding.BindingScope), version, string(binding.BindingType), binding.ResourceID, binding.ParentResourceID, binding.AccessMode, metadataRevision}, "|"))
 	}
 	sort.Strings(rows)
 	sum := sha256.Sum256([]byte(strings.Join(rows, "\n")))

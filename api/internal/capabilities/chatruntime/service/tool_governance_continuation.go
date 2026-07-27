@@ -114,6 +114,9 @@ func (s *service) beginToolGovernanceContinuation(ctx context.Context, scope Sco
 	if err != nil {
 		return nil, err
 	}
+	if err := ensureConversationWorkspaceScope(scope, conversation); err != nil {
+		return nil, err
+	}
 	message, err := s.repos.Message.GetScoped(ctx, messageID, scope.OrganizationID, scope.AccountID)
 	if err != nil {
 		return nil, mapRepoError(err)
@@ -191,7 +194,17 @@ func (s *service) prepareToolGovernanceContinuationChat(ctx context.Context, sco
 	if continuation == nil || continuation.Conversation == nil || continuation.Message == nil {
 		return nil, fmt.Errorf("%w: tool governance continuation is required", ErrInvalidInput)
 	}
+	if err := ensureConversationWorkspaceScope(scope, continuation.Conversation); err != nil {
+		return nil, err
+	}
 	message := continuation.Message
+	caller := Caller{Type: runtimemodel.ConversationCallerAIChat}
+	config, err := s.refreshAIChatIntegrationRunConfig(ctx, scope, caller, RunConfig{
+		BillingAppType: runtimemodel.MessageBillingReasonSourceAIChat,
+	})
+	if err != nil {
+		return nil, err
+	}
 	parts, err := normalizeRegenerateRequest(runtimedto.RegenerateMessageRequest{}, message)
 	if err != nil {
 		return nil, err
@@ -206,11 +219,11 @@ func (s *service) prepareToolGovernanceContinuationChat(ctx context.Context, sco
 	if configured, ok := stringSliceValue(message.Metadata["configured_skill_ids"]); ok && len(configured) > 0 {
 		parts.ConfiguredSkillIDs = configured
 	}
-	if err := s.applyModelCapabilities(ctx, scope, Caller{Type: runtimemodel.ConversationCallerAIChat}, parts); err != nil {
+	if err := s.applyModelCapabilities(ctx, scope, caller, parts); err != nil {
 		return nil, err
 	}
-	applyManagedUserMemoryPolicy(Caller{Type: runtimemodel.ConversationCallerAIChat}, parts)
-	if err := s.applySkillConfig(ctx, scope, Caller{Type: runtimemodel.ConversationCallerAIChat}, nil, parts); err != nil {
+	applyManagedUserMemoryPolicy(caller, parts)
+	if err := s.applySkillConfig(ctx, scope, caller, &config, parts); err != nil {
 		return nil, err
 	}
 	contextResult, err := s.buildUpstreamMessages(ctx, scope, message.ParentID, parts)
@@ -227,7 +240,8 @@ func (s *service) prepareToolGovernanceContinuationChat(ctx context.Context, sco
 		Message:                        message,
 		LLMRequest:                     llmRequest,
 		Scope:                          scope,
-		Caller:                         Caller{Type: runtimemodel.ConversationCallerAIChat},
+		Caller:                         caller,
+		RunConfig:                      config,
 		ParentID:                       message.ParentID,
 		Continuation:                   true,
 		SuppressInitialNaturalProgress: true,
@@ -359,6 +373,11 @@ func (s *service) runToolGovernanceApprovedFrozenContinuation(
 	if callID == "" {
 		callID = strings.TrimSpace(frozen.ID)
 	}
+	executionContext := s.skillExecutionContext(prepared)
+	executionContext.RuntimeParameters = skills.WithToolGovernanceCorrelationID(
+		executionContext.RuntimeParameters,
+		frozen.CorrelationID,
+	)
 	if err := timeline.RecordInvocationStart(frozen.SkillID, frozen.ToolName, args); err != nil {
 		return nil, true, finalizedRuntimePersistenceError(err)
 	}
@@ -368,7 +387,7 @@ func (s *service) runToolGovernanceApprovedFrozenContinuation(
 		frozen.SkillID,
 		frozen.ToolName,
 		args,
-		s.skillExecutionContext(prepared),
+		executionContext,
 		callID,
 	)
 	executionErr := err
@@ -376,7 +395,7 @@ func (s *service) runToolGovernanceApprovedFrozenContinuation(
 		if executionErr == nil {
 			executionErr = fmt.Errorf("%w: frozen skill tool returned no invocation result", ErrInvalidInput)
 		}
-		invocation = recoverableFrozenInvocationFailure(nil, frozen, args, callID, executionErr)
+		invocation = recoverableFrozenInvocationFailure(nil, frozen, args, callID, executionErr, resolved)
 		if err := timeline.RecordInvocationError(invocation.Trace); err != nil {
 			return nil, true, finalizedRuntimePersistenceError(err)
 		}
@@ -387,7 +406,7 @@ func (s *service) runToolGovernanceApprovedFrozenContinuation(
 			}
 		}
 		if executionErr != nil {
-			invocation = recoverableFrozenInvocationFailure(invocation, frozen, args, callID, executionErr)
+			invocation = recoverableFrozenInvocationFailure(invocation, frozen, args, callID, executionErr, resolved)
 			if err := timeline.RecordInvocationError(invocation.Trace); err != nil {
 				return nil, true, finalizedRuntimePersistenceError(err)
 			}
@@ -517,6 +536,7 @@ func recoverableFrozenInvocationFailure(
 	args map[string]interface{},
 	callID string,
 	err error,
+	resolved *skills.ResolvedSkills,
 ) *skills.ToolInvocationResult {
 	if invocation == nil {
 		invocation = &skills.ToolInvocationResult{}
@@ -536,7 +556,14 @@ func recoverableFrozenInvocationFailure(
 		trace.Error = err.Error()
 	}
 	if trace.Arguments == nil {
-		trace.Arguments = summarizeSkillToolArguments(trace.SkillID, trace.ToolName, args)
+		if skills.SkillToolUsesResolvedInputSchema(resolved, trace.SkillID, trace.ToolName) {
+			trace.Arguments = map[string]interface{}{
+				"schema_bound_arguments_redacted": true,
+				"argument_count":                  len(args),
+			}
+		} else {
+			trace.Arguments = summarizeSkillToolArguments(trace.SkillID, trace.ToolName, args)
+		}
 	}
 	invocation.Trace = trace
 	invocation.ToolMessage = skills.ToolResultMessage(callID, recoverableSkillToolErrorPayload(
@@ -544,6 +571,7 @@ func recoverableFrozenInvocationFailure(
 		"explain the approved operation failure and decide whether to ask the user for input, suggest a configuration fix, or offer an alternative. Do not claim the operation succeeded",
 		trace.SkillID,
 		trace.ToolName,
+		resolved,
 	))
 	return invocation
 }

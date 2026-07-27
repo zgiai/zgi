@@ -197,6 +197,9 @@ func (s *service) beginUserInputContinuation(
 	if err != nil {
 		return nil, err
 	}
+	if err := ensureConversationWorkspaceScope(scope, conversation); err != nil {
+		return nil, err
+	}
 	message, err := s.repos.Message.GetScoped(ctx, messageID, scope.OrganizationID, scope.AccountID)
 	if err != nil {
 		return nil, mapRepoError(err)
@@ -397,6 +400,14 @@ func (s *service) prepareUserInputContinuationChat(
 ) (*PreparedChat, error) {
 	if continuation == nil || continuation.Conversation == nil || continuation.Message == nil {
 		return nil, fmt.Errorf("%w: user input continuation is required", ErrInvalidInput)
+	}
+	if err := ensureConversationWorkspaceScope(scope, continuation.Conversation); err != nil {
+		return nil, err
+	}
+	var err error
+	config, err = s.refreshAIChatIntegrationRunConfig(ctx, scope, caller, config)
+	if err != nil {
+		return nil, err
 	}
 	message := continuation.Message
 	regenerateReq := applyRunConfigToRegenerateRequest(config, runtimedto.RegenerateMessageRequest{

@@ -440,17 +440,17 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 			callEvidence[runtimeStateAllowIntermediateAnswerKey] = !fileDeliveryRequiresArtifactOnly(req, callEvidence)
 			result := skillStepResult{}
 			if userInputPlanRevisionRequiredForTool(req, callSkillID, callToolName) {
-				result = pendingUserInputPlanRevisionStep(call.ID, callSkillID, callToolName, callToolArgs)
+				result = pendingUserInputPlanRevisionStep(call.ID, callSkillID, callToolName, callToolArgs, resolved)
 			}
 			if result.trace.Kind == "" && req.AuthorizeSkillStep != nil && strings.TrimSpace(callSkillID) != "" {
 				allowed, policyErr := req.AuthorizeSkillStep(ctx, callSkillID)
 				if policyErr != nil || !allowed {
-					result = unavailableSkillPolicyStep(call.ID, callSkillID, callToolName, callToolArgs, policyErr)
+					result = unavailableSkillPolicyStep(call.ID, callSkillID, callToolName, callToolArgs, policyErr, resolved)
 				}
 			}
 			if result.trace.Kind == "" && failedCallKey != "" {
 				if reason := failedToolCallReasons[failedCallKey]; strings.TrimSpace(reason) != "" {
-					result = repeatedFailedToolCallRecoverableStep(call.ID, callSkillID, callToolName, callToolArgs, reason)
+					result = repeatedFailedToolCallRecoverableStep(call.ID, callSkillID, callToolName, callToolArgs, reason, resolved)
 				}
 			}
 			if result.trace.Kind == "" {
@@ -1276,16 +1276,16 @@ func planRevisionRequiredForTool(skillID string, toolName string) bool {
 	return !isSkillMetaToolName(toolName)
 }
 
-func pendingUserInputPlanRevisionStep(callID string, skillID string, toolName string, args map[string]interface{}) skillStepResult {
+func pendingUserInputPlanRevisionStep(callID string, skillID string, toolName string, args map[string]interface{}, resolved ...*skills.ResolvedSkills) skillStepResult {
 	err := fmt.Errorf("%w: update the current plan before calling a business tool after user clarification", ErrInvalidInput)
 	trace := plannerFeedbackTrace(skillID, toolName, err)
-	trace.Arguments = summarizeSkillToolArguments(skillID, toolName, args)
+	trace.Arguments = summarizeSkillToolArgumentsForResolved(firstResolvedSkills(resolved), skillID, toolName, args)
 	trace.Arguments["next_step"] = skills.MetaToolUpdatePlan
 	nextAction := "Revise the pending plan phases from the user's clarification with update_plan, then choose the next business tool from the revised plan. Do not repeat this business call before the plan update succeeds."
-	return recoverableSkillStep(trace, skills.ToolResultMessage(callID, recoverableSkillToolErrorPayload(err, nextAction, skillID, toolName)), false, false)
+	return recoverableSkillStep(trace, skills.ToolResultMessage(callID, recoverableSkillToolErrorPayload(err, nextAction, skillID, toolName, resolved...)), false, false)
 }
 
-func unavailableSkillPolicyStep(callID string, skillID string, toolName string, args map[string]interface{}, policyErr error) skillStepResult {
+func unavailableSkillPolicyStep(callID string, skillID string, toolName string, args map[string]interface{}, policyErr error, resolved ...*skills.ResolvedSkills) skillStepResult {
 	message := "skill is no longer enabled by the current organization policy"
 	if policyErr != nil {
 		message = "skill availability could not be verified against the current organization policy"
@@ -1294,10 +1294,10 @@ func unavailableSkillPolicyStep(callID string, skillID string, toolName string, 
 	trace := failedSkillTrace("tool_call", toolName, err)
 	trace.SkillID = strings.ToLower(strings.TrimSpace(skillID))
 	trace.Status = "blocked"
-	trace.Arguments = summarizeSkillToolArguments(trace.SkillID, toolName, args)
+	trace.Arguments = summarizeSkillToolArgumentsForResolved(firstResolvedSkills(resolved), trace.SkillID, toolName, args)
 	trace.Arguments["reason_code"] = "organization_skill_unavailable"
 	nextAction := "Do not retry this skill in the current turn. Continue with another enabled skill, or answer truthfully that the requested operation was not executed."
-	return recoverableSkillStep(trace, skills.ToolResultMessage(callID, recoverableSkillToolErrorPayload(err, nextAction, trace.SkillID, toolName)), false, false)
+	return recoverableSkillStep(trace, skills.ToolResultMessage(callID, recoverableSkillToolErrorPayload(err, nextAction, trace.SkillID, toolName, resolved...)), false, false)
 }
 
 func currentMetadataForRun(req RunRequest) map[string]interface{} {
@@ -1498,7 +1498,7 @@ func copyStringIntMap(input map[string]int) map[string]interface{} {
 	return out
 }
 
-func repeatedFailedToolCallRecoverableStep(callID string, skillID string, toolName string, args map[string]interface{}, reason string) skillStepResult {
+func repeatedFailedToolCallRecoverableStep(callID string, skillID string, toolName string, args map[string]interface{}, reason string, resolved ...*skills.ResolvedSkills) skillStepResult {
 	message := "same tool call with the same arguments already failed in this turn"
 	if reason = strings.TrimSpace(reason); reason != "" {
 		message += ": " + reason
@@ -1509,7 +1509,7 @@ func repeatedFailedToolCallRecoverableStep(callID string, skillID string, toolNa
 		ToolName:          strings.TrimSpace(toolName),
 		ExpectedType:      "object",
 		ActualType:        "object",
-		ExpectedArguments: skills.ExpectedSkillToolArguments(skillID, toolName),
+		ExpectedArguments: skills.ExpectedSkillToolArgumentsForResolved(firstResolvedSkills(resolved), skillID, toolName),
 		RetryAction:       "stop retrying this business tool and explain the incomplete operation truthfully",
 		Cause:             fmt.Errorf("%w: %s", ErrInvalidInput, message),
 	}
@@ -1517,17 +1517,24 @@ func repeatedFailedToolCallRecoverableStep(callID string, skillID string, toolNa
 	trace.SkillID = strings.ToLower(strings.TrimSpace(skillID))
 	trace.Arguments = map[string]interface{}{}
 	if len(args) > 0 {
-		trace.Arguments = summarizeSkillToolArguments(skillID, toolName, args)
+		trace.Arguments = summarizeSkillToolArgumentsForResolved(firstResolvedSkills(resolved), skillID, toolName, args)
 	}
 	trace.Arguments["reason_code"] = skillToolRetryNoProgressCode
 	result := recoverableSkillStep(
 		trace,
-		skills.ToolResultMessage(callID, recoverableSkillToolErrorPayload(err, err.RetryAction, skillID, toolName)),
+		skills.ToolResultMessage(callID, recoverableSkillToolErrorPayload(err, err.RetryAction, skillID, toolName, resolved...)),
 		false,
 		false,
 	)
 	result.stopBusinessLoop = true
 	return result
+}
+
+func firstResolvedSkills(resolved []*skills.ResolvedSkills) *skills.ResolvedSkills {
+	if len(resolved) == 0 {
+		return nil
+	}
+	return resolved[0]
 }
 
 func validAdditionalSystemMessages(input []adapter.Message) []adapter.Message {

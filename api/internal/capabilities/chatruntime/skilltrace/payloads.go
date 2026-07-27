@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/zgiai/zgi/api/internal/capabilities/toolgovernance"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"github.com/zgiai/zgi/api/internal/modules/tools"
 )
@@ -52,6 +53,9 @@ func SkillCallEndPayload(ids PayloadIDs, trace skills.SkillTrace, includeKind bo
 	if trace.Governance != nil {
 		payload["governance"] = trace.Governance
 	}
+	if strings.TrimSpace(trace.ErrorCode) != "" {
+		payload["error_code"] = strings.TrimSpace(trace.ErrorCode)
+	}
 	enrichSkillCallPayloadSemantics(payload, trace)
 	return payload
 }
@@ -74,14 +78,51 @@ func ToolGovernanceDecisionPayload(ids PayloadIDs, trace skills.SkillTrace) map[
 		payload["risk_level"] = trace.Governance.Manifest.RiskLevel
 		payload["effect"] = trace.Governance.Manifest.Effect
 		payload["asset_type"] = trace.Governance.Manifest.AssetType
+		payload["approval_every_invocation"] = trace.Governance.Manifest.ApprovalEveryInvocation
 		if len(trace.Governance.AssetOperationAudit) > 0 {
 			payload["asset_operation_audit"] = trace.Governance.AssetOperationAudit
 		}
 		if trace.Governance.ApprovalEvent != nil {
 			payload["approval_event"] = trace.Governance.ApprovalEvent
 		}
+		enrichFrozenInvocationIdentity(payload, trace.Governance.FrozenInvocation)
 	}
 	return payload
+}
+
+// enrichFrozenInvocationIdentity exposes the provider-authoritative identity
+// needed to render an informed approval without copying action arguments out
+// of the signed frozen invocation. Dynamic connector facades keep their public
+// skill/tool names, while action_id and integration_id identify what will
+// actually run after approval.
+func enrichFrozenInvocationIdentity(payload map[string]interface{}, frozen *toolgovernance.FrozenInvocation) {
+	if payload == nil || frozen == nil {
+		return
+	}
+	if value := strings.TrimSpace(frozen.ToolID); value != "" {
+		payload["tool_id"] = value
+		payload["governed_tool_id"] = value
+	}
+	if value := strings.TrimSpace(frozen.ProviderType); value != "" {
+		payload["provider_type"] = value
+	}
+	if value := strings.TrimSpace(frozen.ProviderID); value != "" {
+		payload["provider_id"] = value
+	}
+	if value := strings.TrimSpace(frozen.ExternalDestination); value != "" {
+		payload["external_destination"] = value
+	}
+	for _, key := range []string{"integration_id", "action_id", "connection_name", "connection_display_name", "connection_selection"} {
+		value, _ := frozen.Arguments[key].(string)
+		if value = strings.TrimSpace(value); value != "" {
+			payload[key] = value
+		}
+	}
+	if _, exists := payload["action_id"]; !exists {
+		if value := strings.TrimSpace(frozen.ToolID); value != "" {
+			payload["action_id"] = value
+		}
+	}
 }
 
 // SkillCallErrorPayload builds the public skill_call_error event payload.
@@ -104,6 +145,9 @@ func SkillCallErrorPayload(ids PayloadIDs, trace skills.SkillTrace, status strin
 	}
 	if trace.Governance != nil {
 		payload["governance"] = trace.Governance
+	}
+	if strings.TrimSpace(trace.ErrorCode) != "" {
+		payload["error_code"] = strings.TrimSpace(trace.ErrorCode)
 	}
 	enrichSkillCallPayloadSemantics(payload, trace)
 	return payload

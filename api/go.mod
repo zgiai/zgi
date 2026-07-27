@@ -34,6 +34,7 @@ require (
 	github.com/redis/go-redis/v9 v9.8.0
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/samber/do/v2 v2.0.0
+	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2
 	github.com/segmentio/kafka-go v0.4.48
 	github.com/smartystreets/goconvey v1.8.1
 	github.com/spf13/cobra v1.10.2

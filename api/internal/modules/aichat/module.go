@@ -35,7 +35,7 @@ func NewModuleWithDependencies(
 	workspacePerms service.WorkspacePermissionService,
 	memoryService *memorymodule.Service,
 	agentMemoryService *agentmemory.Service,
-	skillRuntimes ...*skills.Runtime,
+	optionalServices ...interface{},
 ) *Module {
 	modelPrechecker, ok := llmClient.(llmclient.AppModelPrechecker)
 	if !ok {
@@ -47,8 +47,18 @@ func NewModuleWithDependencies(
 		titleGenerator = titlegen.NewService(llmClient, defaultModelSvc)
 	}
 	var skillRuntime *skills.Runtime
-	if len(skillRuntimes) > 0 {
-		skillRuntime = skillRuntimes[0]
+	var integrationPreferences service.AIChatIntegrationPreferenceResolver
+	for _, dependency := range optionalServices {
+		switch typed := dependency.(type) {
+		case *skills.Runtime:
+			if skillRuntime == nil {
+				skillRuntime = typed
+			}
+		case service.AIChatIntegrationPreferenceResolver:
+			if integrationPreferences == nil {
+				integrationPreferences = typed
+			}
+		}
 	}
 	if skillRuntime != nil {
 		if err := skillRuntime.ValidateCatalog(context.Background()); err != nil {
@@ -66,6 +76,7 @@ func NewModuleWithDependencies(
 		skillRuntime,
 		memoryService,
 		agentMemoryService,
+		integrationPreferences,
 	)
 	if _, err := svc.CleanupStaleActiveMessages(context.Background()); err != nil {
 		logger.Warn("failed to cleanup stale aichat messages", err)

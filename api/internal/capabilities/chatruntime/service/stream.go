@@ -304,6 +304,7 @@ func (s *service) StreamConversationEventsForCaller(ctx context.Context, scope S
 		for _, event := range events {
 			lastID = event.ID
 			event = hydrateStreamEventGeneratedFileURL(event)
+			event = publicExternalActionStreamEvent(event)
 			if err := onEvent(event); err != nil {
 				return err
 			}
@@ -659,14 +660,14 @@ func (s *service) deliverStreamEvent(ctx context.Context, messageID uuid.UUID, e
 	if suppressClientStreamEvent(event.EventType, event.Payload) {
 		return
 	}
-	event.hydratePayloadEnvelope()
+	publicEvent := publicExternalActionStreamEvent(*event)
 	if err := onEvent(StreamEvent{
-		ID:          event.ID,
-		EventType:   event.EventType,
-		Payload:     event.Payload,
-		CreatedAt:   event.CreatedAt,
-		CreatedAtMS: event.CreatedAtMS,
-		Sequence:    event.Sequence,
+		ID:          publicEvent.ID,
+		EventType:   publicEvent.EventType,
+		Payload:     publicEvent.Payload,
+		CreatedAt:   publicEvent.CreatedAt,
+		CreatedAtMS: publicEvent.CreatedAtMS,
+		Sequence:    publicEvent.Sequence,
 	}); err != nil {
 		logger.WarnContext(context.WithoutCancel(ctx), "failed to deliver aichat stream event to client", "message_id", messageID.String(), "event_type", event.EventType, err)
 	}
@@ -861,13 +862,14 @@ func (s *service) emitPreparedEvent(ctx context.Context, prepared *PreparedChat,
 			"content_len", timelineDebugTextLen(event.Payload["content"]),
 		)
 	}
+	publicEvent := publicExternalActionStreamEvent(*event)
 	if err := onEvent(StreamEvent{
-		ID:          event.ID,
-		EventType:   event.EventType,
-		Payload:     event.Payload,
-		CreatedAt:   event.CreatedAt,
-		CreatedAtMS: event.CreatedAtMS,
-		Sequence:    event.Sequence,
+		ID:          publicEvent.ID,
+		EventType:   publicEvent.EventType,
+		Payload:     publicEvent.Payload,
+		CreatedAt:   publicEvent.CreatedAt,
+		CreatedAtMS: publicEvent.CreatedAtMS,
+		Sequence:    publicEvent.Sequence,
 	}); err != nil {
 		logger.WarnContext(context.WithoutCancel(ctx), "failed to deliver aichat stream event to client", "message_id", prepared.Message.ID.String(), "event_type", eventType, err)
 	}

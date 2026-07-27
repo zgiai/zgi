@@ -257,6 +257,9 @@ func (s *service) beginClientActionContinuation(ctx context.Context, scope Scope
 	if err != nil {
 		return nil, err
 	}
+	if err := ensureConversationWorkspaceScope(scope, conversation); err != nil {
+		return nil, err
+	}
 	message, err := s.repos.Message.GetScoped(ctx, messageID, scope.OrganizationID, scope.AccountID)
 	if err != nil {
 		return nil, mapRepoError(err)
@@ -338,7 +341,17 @@ func (s *service) prepareClientActionContinuationChat(ctx context.Context, scope
 	if continuation == nil || continuation.Conversation == nil || continuation.Message == nil {
 		return nil, fmt.Errorf("%w: client action continuation is required", ErrInvalidInput)
 	}
+	if err := ensureConversationWorkspaceScope(scope, continuation.Conversation); err != nil {
+		return nil, err
+	}
 	message := continuation.Message
+	caller := Caller{Type: runtimemodel.ConversationCallerAIChat}
+	config, err := s.refreshAIChatIntegrationRunConfig(ctx, scope, caller, RunConfig{
+		BillingAppType: runtimemodel.MessageBillingReasonSourceAIChat,
+	})
+	if err != nil {
+		return nil, err
+	}
 	parts, err := normalizeRegenerateRequest(runtimedto.RegenerateMessageRequest{
 		Surface:          req.Surface,
 		RuntimeContext:   req.RuntimeContext,
@@ -359,17 +372,17 @@ func (s *service) prepareClientActionContinuationChat(ctx context.Context, scope
 	if configured, ok := stringSliceValue(message.Metadata["configured_skill_ids"]); ok && len(configured) > 0 {
 		parts.ConfiguredSkillIDs = configured
 	}
-	if err := s.applyModelCapabilities(ctx, scope, Caller{Type: runtimemodel.ConversationCallerAIChat}, parts); err != nil {
+	if err := s.applyModelCapabilities(ctx, scope, caller, parts); err != nil {
 		return nil, err
 	}
-	applyManagedUserMemoryPolicy(Caller{Type: runtimemodel.ConversationCallerAIChat}, parts)
-	if err := s.applySkillConfig(ctx, scope, Caller{Type: runtimemodel.ConversationCallerAIChat}, nil, parts); err != nil {
+	applyManagedUserMemoryPolicy(caller, parts)
+	if err := s.applySkillConfig(ctx, scope, caller, &config, parts); err != nil {
 		return nil, err
 	}
 	ensureClientActionContinuationSkill(parts, continuation.Event)
 	prepared := &PreparedChat{
 		Conversation: continuation.Conversation, Message: message, Scope: scope,
-		Caller: Caller{Type: runtimemodel.ConversationCallerAIChat}, ParentID: message.ParentID, parts: parts,
+		Caller: caller, RunConfig: config, ParentID: message.ParentID, parts: parts,
 		Continuation:                   true,
 		ContinuationType:               "client_action",
 		SuppressInitialNaturalProgress: true,

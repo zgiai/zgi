@@ -1,12 +1,23 @@
 'use client';
 
+import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { AlertCircle, CheckCircle2, Loader2, Trash2, Upload, Wrench } from 'lucide-react';
+import {
+  AlertCircle,
+  CheckCircle2,
+  ExternalLink,
+  Loader2,
+  PlugZap,
+  Trash2,
+  Upload,
+  Wrench,
+} from 'lucide-react';
 import { toast } from 'sonner';
 import { AIChatSkillIcon } from '@/components/chat/variants/aichat/skill-icon';
 import {
   getAIChatSkillDisplayInfo,
+  getSkillIntegrationRequirements,
   isSkillUserSelectable,
   type AIChatSkillDisplayInfo,
 } from '@/components/chat/variants/aichat/skill-display';
@@ -32,6 +43,7 @@ import { AgentResourceBoundDialog } from '@/components/common/agent-resource-bou
 import {
   AIChatSkillCatalogFilters,
   type SkillCapabilityFilter,
+  type SkillDependencyFilter,
   type SkillScenarioFilter,
   type SkillSourceFilter,
   type SkillStatusFilter,
@@ -45,20 +57,33 @@ import {
   usePreviewImportAIChatSkill,
   useUpdateAIChatSkillConfig,
 } from '@/hooks/aichat/use-aichat-skills';
+import {
+  integrationCatalogItems,
+  integrationConnectionItems,
+  useIntegrationCatalog,
+  useIntegrationConnections,
+} from '@/hooks';
 import { AICHAT_KEYS } from '@/hooks/query-keys';
 import { useLocale } from '@/hooks/use-locale';
 import { useT, type DashboardSuffix } from '@/i18n/translations';
 import { cn } from '@/lib/utils';
 import type {
   AIChatSkillMetadata,
+  AIChatSkillAvailabilityState,
   AIChatImportSkillPreview,
   AIChatSkillConfigUpdateResult,
   AIChatSkillRuntimeType,
   AIChatSkillSource,
 } from '@/services/types/aichat';
+import type { IntegrationCatalogItem, IntegrationConnection } from '@/services/types/integration';
 import type { AgentResourceBoundImpact } from '@/services/types/common';
 import { getAgentResourceBoundImpact } from '@/utils/agent-resource-bound';
 import { aichatService } from '@/services/aichat.service';
+import {
+  integrationCatalogID,
+  resolveProviderHealthState,
+} from '@/components/integrations/integration-utils';
+import { useIntegrationMetadata } from '@/components/integrations/metadata-i18n';
 
 const SKILL_CARD_GRID_CLASS = 'grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4';
 const SYSTEM_SKILL_NAME_CONFLICT_ERROR =
@@ -82,6 +107,22 @@ const SCRIPT_STATUS_LABEL_KEYS = {
   runnable: 'organization.aichatSkills.scriptStatus.runnable',
   unsupported: 'organization.aichatSkills.scriptStatus.unsupported',
 } as const satisfies Record<string, DashboardSuffix>;
+
+const AVAILABILITY_LABEL_KEYS = {
+  ready: 'organization.aichatSkills.availability.ready',
+  setup_required: 'organization.aichatSkills.availability.setupRequired',
+  no_access: 'organization.aichatSkills.availability.noAccess',
+  degraded: 'organization.aichatSkills.availability.degraded',
+  unavailable: 'organization.aichatSkills.availability.unavailable',
+} as const satisfies Record<AIChatSkillAvailabilityState, DashboardSuffix>;
+
+const AVAILABILITY_VARIANTS = {
+  ready: 'success',
+  setup_required: 'warning',
+  no_access: 'warning',
+  degraded: 'warning',
+  unavailable: 'destructive',
+} as const;
 
 const AUTO_SAVE_LABEL_KEYS = {
   idle: 'organization.aichatSkills.autoSave.ready',
@@ -141,10 +182,32 @@ function getFilterSearchText(
     display?.categoryLabel,
     ...(display?.scenarios ?? []),
     ...(display?.tags ?? []),
+    ...(display?.integrationRequirements ?? []),
   ]
     .filter(Boolean)
     .join(' ')
     .toLowerCase();
+}
+
+function resolveSkillAvailability(
+  skill: AIChatSkillMetadata,
+  catalog: IntegrationCatalogItem[],
+  connections: IntegrationConnection[]
+): AIChatSkillAvailabilityState {
+  if (skill.availability?.state) return skill.availability.state;
+  const requirements = getSkillIntegrationRequirements(skill);
+  if (requirements.length === 0) return 'ready';
+
+  let result: AIChatSkillAvailabilityState = 'ready';
+  for (const integrationId of requirements) {
+    const provider = catalog.find(item => integrationCatalogID(item) === integrationId);
+    if (!provider || !provider.enabled) return 'unavailable';
+    const providerState = resolveProviderHealthState(provider, connections);
+    if (providerState === 'unavailable' || providerState === 'unknown') return 'unavailable';
+    if (providerState === 'setup_required') result = 'setup_required';
+    if (providerState === 'degraded' && result === 'ready') result = 'degraded';
+  }
+  return result;
 }
 
 function filterSkills(
@@ -155,7 +218,8 @@ function filterSkills(
   scenarioFilter: SkillScenarioFilter,
   capabilityFilter: SkillCapabilityFilter,
   sourceFilter: SkillSourceFilter,
-  statusFilter: SkillStatusFilter
+  statusFilter: SkillStatusFilter,
+  dependencyFilter: SkillDependencyFilter
 ): AIChatSkillMetadata[] {
   const query = searchQuery.trim().toLowerCase();
   const enabledSet = new Set(enabledSkillIds);
@@ -165,6 +229,12 @@ function filterSkills(
     if (scenarioFilter !== 'all' && !display?.scenarios.includes(scenarioFilter)) return false;
     if (capabilityFilter !== 'all' && display?.category !== capabilityFilter) return false;
     if (sourceFilter !== 'all' && getSkillSource(skill) !== sourceFilter) return false;
+    if (
+      dependencyFilter !== 'all' &&
+      (display?.dependencyKind ?? 'standalone') !== dependencyFilter
+    ) {
+      return false;
+    }
 
     const enabled = enabledSet.has(skill.skill_id);
     const invalid = isInvalidSkill(skill);
@@ -215,6 +285,8 @@ function previewValidationErrors(
 interface AIChatSkillCardProps {
   skill: AIChatSkillMetadata;
   display: AIChatSkillDisplayInfo;
+  availability: AIChatSkillAvailabilityState;
+  integrationNames: string[];
   enabled: boolean;
   disabled: boolean;
   onToggle: (skillId: string, enabled: boolean) => void;
@@ -233,6 +305,8 @@ interface AIChatSkillCardProps {
 function AIChatSkillCard({
   skill,
   display,
+  availability,
+  integrationNames,
   enabled,
   disabled,
   onToggle,
@@ -242,6 +316,8 @@ function AIChatSkillCard({
   const isCustom = getSkillSource(skill) === 'custom';
   const invalid = isInvalidSkill(skill);
   const scriptStatusLabelKey = getScriptStatusLabelKey(skill);
+  const externalDependency = display.dependencyKind === 'external_integration';
+  const dependencyReady = availability === 'ready';
   const wasEnabledRef = useRef(enabled);
   const [showEnableTrace, setShowEnableTrace] = useState(false);
   const isStartingEnable = enabled && !wasEnabledRef.current;
@@ -291,7 +367,7 @@ function AIChatSkillCard({
             </div>
             <Switch
               checked={enabled}
-              disabled={disabled || invalid}
+              disabled={disabled || invalid || !dependencyReady}
               aria-label={t('organization.aichatSkills.toggleAria', { skill: display.label })}
               onCheckedChange={checked => onToggle(skill.skill_id, checked)}
             />
@@ -315,6 +391,18 @@ function AIChatSkillCard({
                 : STATUS_LABEL_KEYS.disabled
           )}
         </Badge>
+        <Badge variant={externalDependency ? 'info' : 'outline'} className="rounded-md font-normal">
+          {t(
+            externalDependency
+              ? 'organization.aichatSkills.dependency.external'
+              : 'organization.aichatSkills.dependency.standalone'
+          )}
+        </Badge>
+        {externalDependency ? (
+          <Badge variant={AVAILABILITY_VARIANTS[availability]} className="rounded-md font-normal">
+            {t(AVAILABILITY_LABEL_KEYS[availability])}
+          </Badge>
+        ) : null}
         {scriptStatusLabelKey ? (
           <Badge
             variant={skill.scripts_supported ? 'outline' : 'warning'}
@@ -342,6 +430,41 @@ function AIChatSkillCard({
               {tag}
             </Badge>
           ))}
+        </div>
+      ) : null}
+
+      {externalDependency ? (
+        <div className="mt-3 rounded-md border bg-muted/20 p-2.5">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <p className="flex items-center gap-1.5 text-xs font-medium">
+                <PlugZap className="size-3.5 text-primary" />
+                {t('organization.aichatSkills.dependency.usesExternal')}
+              </p>
+              <p className="mt-1 truncate text-xs text-muted-foreground">
+                {integrationNames.length > 0
+                  ? integrationNames.join(', ')
+                  : (display.integrationRequirements ?? []).join(', ')}
+              </p>
+            </div>
+            {display.integrationRequirements?.[0] ? (
+              <Button asChild variant="ghost" size="sm" className="h-7 shrink-0 px-2 text-xs">
+                <Link
+                  href={`/console/integrations?view=${dependencyReady ? 'connected' : 'available'}&integration_id=${encodeURIComponent(display.integrationRequirements[0])}`}
+                >
+                  {dependencyReady
+                    ? t('organization.aichatSkills.dependency.manage')
+                    : t('organization.aichatSkills.dependency.configure')}
+                  <ExternalLink className="size-3.5" />
+                </Link>
+              </Button>
+            ) : null}
+          </div>
+          {!dependencyReady ? (
+            <p className="mt-2 text-xs text-warning">
+              {t('organization.aichatSkills.availability.blockedDescription')}
+            </p>
+          ) : null}
         </div>
       ) : null}
 
@@ -404,10 +527,7 @@ interface UseAIChatSkillConfigPersistenceOptions {
     enabledSkillIds: string[],
     impact?: AgentResourceBoundImpact
   ) => Promise<AIChatSkillConfigUpdateResult>;
-  onConfirmationRequired: (
-    impact: AgentResourceBoundImpact,
-    requestedSkillIds: string[]
-  ) => void;
+  onConfirmationRequired: (impact: AgentResourceBoundImpact, requestedSkillIds: string[]) => void;
   onError: (error: unknown, requestedSkillIds: string[]) => boolean;
 }
 
@@ -636,9 +756,12 @@ export function AIChatSkillSettingsSection() {
   const t = useT('dashboard');
   const tCommon = useT('common');
   const { locale } = useLocale();
+  const integrationMetadata = useIntegrationMetadata();
   const queryClient = useQueryClient();
   const { data: skills = [], isLoading: isLoadingSkills, isError } = useAIChatSkills();
   const { data: config, isLoading: isLoadingConfig } = useAIChatSkillConfig();
+  const integrationCatalogQuery = useIntegrationCatalog(true, 'organization');
+  const integrationConnectionsQuery = useIntegrationConnections({ page: 1, limit: 100 });
   const updateConfig = useUpdateAIChatSkillConfig();
   const updateSkillConfig = updateConfig.mutateAsync;
   const previewImportSkill = usePreviewImportAIChatSkill();
@@ -650,6 +773,7 @@ export function AIChatSkillSettingsSection() {
   const [capabilityFilter, setCapabilityFilter] = useState<SkillCapabilityFilter>('all');
   const [sourceFilter, setSourceFilter] = useState<SkillSourceFilter>('all');
   const [statusFilter, setStatusFilter] = useState<SkillStatusFilter>('all');
+  const [dependencyFilter, setDependencyFilter] = useState<SkillDependencyFilter>('all');
   const [skillToDelete, setSkillToDelete] = useState<AIChatSkillMetadata | null>(null);
   const [bindingImpact, setBindingImpact] = useState<AgentResourceBoundImpact | null>(null);
   const [isCheckingDeleteImpact, setIsCheckingDeleteImpact] = useState(false);
@@ -665,6 +789,8 @@ export function AIChatSkillSettingsSection() {
     () => skills.filter(skill => isSkillUserSelectable(skill)),
     [skills]
   );
+  const integrationCatalog = integrationCatalogItems(integrationCatalogQuery.data?.data);
+  const integrationConnections = integrationConnectionItems(integrationConnectionsQuery.data?.data);
 
   const initialEnabledSkillIds = useMemo(
     () => getInitialEnabledSkillIds(manageableSkills, config?.enabled_skill_ids),
@@ -678,6 +804,24 @@ export function AIChatSkillSettingsSection() {
         return map;
       }, {}),
     [locale, manageableSkills]
+  );
+  const skillAvailability = useMemo(
+    () =>
+      manageableSkills.reduce<Record<string, AIChatSkillAvailabilityState>>((map, skill) => {
+        map[skill.skill_id] = resolveSkillAvailability(
+          skill,
+          integrationCatalog,
+          integrationConnections
+        );
+        return map;
+      }, {}),
+    [integrationCatalog, integrationConnections, manageableSkills]
+  );
+  const integrationNames = new Map(
+    integrationCatalog.map(item => [
+      integrationCatalogID(item),
+      integrationMetadata.providerName(item),
+    ])
   );
 
   const isLoading = isLoadingSkills || isLoadingConfig;
@@ -708,9 +852,7 @@ export function AIChatSkillSettingsSection() {
         setSkillConfigBindingConflict({ impact, requestedSkillIds });
         return true;
       }
-      toast.error(
-        error instanceof Error ? error.message : t('organization.aichatSkills.messages.saveFailed')
-      );
+      toast.error(t('organization.aichatSkills.messages.saveFailed'));
       return false;
     },
     [t]
@@ -721,14 +863,13 @@ export function AIChatSkillSettingsSection() {
     },
     []
   );
-  const { enabledSkillIds, saveStatus, saveEnabledSkillIds } =
-    useAIChatSkillConfigPersistence({
-      initialEnabledSkillIds,
-      isLoading,
-      save: saveSkillConfig,
-      onConfirmationRequired: handleSkillConfigConfirmationRequired,
-      onError: handleSkillConfigError,
-    });
+  const { enabledSkillIds, saveStatus, saveEnabledSkillIds } = useAIChatSkillConfigPersistence({
+    initialEnabledSkillIds,
+    isLoading,
+    save: saveSkillConfig,
+    onConfirmationRequired: handleSkillConfigConfirmationRequired,
+    onError: handleSkillConfigError,
+  });
   const isMutating =
     saveStatus === 'saving' ||
     updateConfig.isPending ||
@@ -764,7 +905,8 @@ export function AIChatSkillSettingsSection() {
     scenarioFilter !== 'all' ||
     capabilityFilter !== 'all' ||
     sourceFilter !== 'all' ||
-    statusFilter !== 'all';
+    statusFilter !== 'all' ||
+    dependencyFilter !== 'all';
   const filteredSkills = useMemo(
     () =>
       filterSkills(
@@ -775,10 +917,12 @@ export function AIChatSkillSettingsSection() {
         scenarioFilter,
         capabilityFilter,
         sourceFilter,
-        statusFilter
+        statusFilter,
+        dependencyFilter
       ),
     [
       capabilityFilter,
+      dependencyFilter,
       enabledSkillIds,
       manageableSkills,
       scenarioFilter,
@@ -837,6 +981,7 @@ export function AIChatSkillSettingsSection() {
     setCapabilityFilter('all');
     setSourceFilter('all');
     setStatusFilter('all');
+    setDependencyFilter('all');
   };
 
   const handleImportFile = async (file: File) => {
@@ -975,12 +1120,14 @@ export function AIChatSkillSettingsSection() {
             capability={capabilityFilter}
             source={sourceFilter}
             status={statusFilter}
+            dependency={dependencyFilter}
             searchQuery={searchQuery}
             hasActiveFilters={hasActiveFilters}
             onScenarioChange={handleScenarioChange}
             onCapabilityChange={setCapabilityFilter}
             onSourceChange={setSourceFilter}
             onStatusChange={setStatusFilter}
+            onDependencyChange={setDependencyFilter}
             onSearchQueryChange={setSearchQuery}
             onClearFilters={handleClearFilters}
           />
@@ -1008,6 +1155,17 @@ export function AIChatSkillSettingsSection() {
                   key={skill.skill_id}
                   skill={skill}
                   display={skillDisplays[skill.skill_id]}
+                  availability={skillAvailability[skill.skill_id] ?? 'unavailable'}
+                  integrationNames={(
+                    skillDisplays[skill.skill_id]?.integrationRequirements ?? []
+                  ).map(
+                    integrationId =>
+                      integrationNames.get(integrationId) ??
+                      integrationMetadata.providerName(
+                        integrationId,
+                        t('organization.aichatSkills.dependency.unknownExternalApp')
+                      )
+                  )}
                   enabled={enabledSkillIds.includes(skill.skill_id)}
                   disabled={isMutating}
                   onToggle={handleToggle}

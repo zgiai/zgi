@@ -22,6 +22,7 @@ export type SkillScenarioFilter = 'all' | SkillScenario;
 export type SkillCapabilityFilter = 'all' | SkillCapabilityCategory;
 export type SkillSourceFilter = 'all' | AIChatSkillSource;
 export type SkillStatusFilter = 'all' | 'enabled' | 'disabled' | 'invalid';
+export type SkillDependencyFilter = 'all' | 'standalone' | 'external_integration';
 
 interface AIChatSkillCatalogFiltersProps {
   locale: string;
@@ -31,12 +32,14 @@ interface AIChatSkillCatalogFiltersProps {
   capability: SkillCapabilityFilter;
   source: SkillSourceFilter;
   status: SkillStatusFilter;
+  dependency: SkillDependencyFilter;
   searchQuery: string;
   hasActiveFilters: boolean;
   onScenarioChange: (value: SkillScenarioFilter) => void;
   onCapabilityChange: (value: SkillCapabilityFilter) => void;
   onSourceChange: (value: SkillSourceFilter) => void;
   onStatusChange: (value: SkillStatusFilter) => void;
+  onDependencyChange: (value: SkillDependencyFilter) => void;
   onSearchQueryChange: (value: string) => void;
   onClearFilters: () => void;
 }
@@ -49,12 +52,14 @@ export function AIChatSkillCatalogFilters({
   capability,
   source,
   status,
+  dependency,
   searchQuery,
   hasActiveFilters,
   onScenarioChange,
   onCapabilityChange,
   onSourceChange,
   onStatusChange,
+  onDependencyChange,
   onSearchQueryChange,
   onClearFilters,
 }: AIChatSkillCatalogFiltersProps) {
@@ -132,7 +137,7 @@ export function AIChatSkillCatalogFilters({
           aria-label={t('organization.aichatSkills.filters.searchAria')}
           className="rounded-md lg:w-[360px]"
         />
-        <div className="grid gap-2 sm:grid-cols-2 lg:flex lg:shrink-0">
+        <div className="grid gap-2 sm:grid-cols-3 lg:flex lg:shrink-0">
           <Select
             value={source}
             onValueChange={value => onSourceChange(value as SkillSourceFilter)}
@@ -174,6 +179,29 @@ export function AIChatSkillCatalogFilters({
               </SelectItem>
               <SelectItem value="invalid">
                 {t('organization.aichatSkills.status.invalid')}
+              </SelectItem>
+            </SelectContent>
+          </Select>
+
+          <Select
+            value={dependency}
+            onValueChange={value => onDependencyChange(value as SkillDependencyFilter)}
+          >
+            <SelectTrigger
+              className="rounded-md bg-background lg:w-48"
+              aria-label={t('organization.aichatSkills.filters.dependencyAria')}
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">
+                {t('organization.aichatSkills.filters.allDependencies')}
+              </SelectItem>
+              <SelectItem value="standalone">
+                {t('organization.aichatSkills.dependency.standalone')}
+              </SelectItem>
+              <SelectItem value="external_integration">
+                {t('organization.aichatSkills.dependency.external')}
               </SelectItem>
             </SelectContent>
           </Select>
