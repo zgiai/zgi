@@ -6,14 +6,14 @@
 import type { FC } from 'react';
 import React, { useCallback } from 'react';
 import { cn } from '@/lib/utils';
-import { withBasePath, withBasePathIfInternal } from '@/lib/config';
+import { withBasePathIfInternal } from '@/lib/config';
 import { TableBody, TableCell, TableRow } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
-import { TrashIcon, Plus, Sparkles, FileUp, Table2, Eye } from 'lucide-react';
+import { TrashIcon, Plus, Sparkles, FileUp, Table2, Eye, Database } from 'lucide-react';
 import type { DbTableColumn, DbTableRecord } from '@/services/types/db';
 import { Type } from '@/services/types/db';
 import { EmptyElement } from '@/components/datasets/empty-element';
@@ -154,7 +154,7 @@ const Body: FC<TableDataBodyProps> = ({
         <TableRow>
           <TableCell
             colSpan={Math.max(columns.length + (isEditing || onOpenRow ? 1 : 0), 1)}
-            className="h-[400px] border-none p-0"
+            className="h-[300px] border-none p-0"
           >
             <div
               className="sticky left-0 flex items-center justify-center h-full"
@@ -169,11 +169,9 @@ const Body: FC<TableDataBodyProps> = ({
                   hasDataFields ? t('dbs.tableData.empty.desc') : t('dbs.tableData.noFields.desc')
                 }
                 illustration={
-                  <img
-                    src={withBasePath('/window.svg')}
-                    alt=""
-                    className="mx-auto h-20 w-auto opacity-80"
-                  />
+                  <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-muted">
+                    <Database className="h-6 w-6 text-muted-foreground" aria-hidden="true" />
+                  </div>
                 }
                 actions={(hasDataFields
                   ? [
@@ -195,7 +193,7 @@ const Body: FC<TableDataBodyProps> = ({
                         onClick: () => {
                           window.location.href = withBasePathIfInternal(smartIngestHref);
                         },
-                        highlight: true,
+                        variant: 'outline' as const,
                       },
                     ]
                   : [
@@ -213,7 +211,6 @@ const Body: FC<TableDataBodyProps> = ({
                         onClick: () => {
                           window.location.href = withBasePathIfInternal(smartCreateHref);
                         },
-                        highlight: true,
                       },
                     ]
                 ).filter((a): a is Exclude<typeof a, boolean | undefined> => !!a)}

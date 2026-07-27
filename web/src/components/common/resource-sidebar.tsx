@@ -30,7 +30,7 @@ interface ResourceSidebarProps {
   pathname?: string;
   isNavigationHidden?: boolean;
   expandedWidthClassName?: string;
-  children?: React.ReactNode;
+  children?: React.ReactNode | ((isCollapsed: boolean) => React.ReactNode);
 }
 
 interface ResourceSidebarHeaderProps {
@@ -44,6 +44,7 @@ interface ResourceSidebarHeaderProps {
   name?: string;
   description?: string;
   showIdentity?: boolean;
+  showExpandedIcon?: boolean;
   backHref?: string;
   backLabel?: string;
   onBackClick?: () => void;
@@ -105,10 +106,41 @@ export function ResourceSidebar({
   expandedWidthClassName = 'w-36',
   children,
 }: ResourceSidebarProps) {
-  const effectiveIsCollapsed = isCollapsed || temporarilyCollapsed;
+  const [isHoverExpanded, setIsHoverExpanded] = React.useState(false);
+  const hoverTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const layoutIsCollapsed = isCollapsed || temporarilyCollapsed;
+  const effectiveIsCollapsed = temporarilyCollapsed || (isCollapsed && !isHoverExpanded);
   const toggleLabel = effectiveIsCollapsed ? expandLabel : collapseLabel;
   const ToggleIcon = effectiveIsCollapsed ? PanelLeftOpen : PanelLeftClose;
   const [openGroups, setOpenGroups] = React.useState<Record<string, boolean>>({});
+
+  React.useEffect(() => {
+    if (!isCollapsed || temporarilyCollapsed) {
+      if (hoverTimerRef.current) {
+        clearTimeout(hoverTimerRef.current);
+        hoverTimerRef.current = null;
+      }
+      setIsHoverExpanded(false);
+    }
+  }, [isCollapsed, temporarilyCollapsed]);
+
+  React.useEffect(
+    () => () => {
+      if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
+    },
+    []
+  );
+
+  const scheduleHoverExpanded = React.useCallback((expanded: boolean) => {
+    if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
+    hoverTimerRef.current = setTimeout(
+      () => {
+        setIsHoverExpanded(expanded);
+        hoverTimerRef.current = null;
+      },
+      expanded ? 60 : 220
+    );
+  }, []);
 
   const toggleGroup = React.useCallback((key: string) => {
     setOpenGroups(prev => ({ ...prev, [key]: !(prev[key] ?? true) }));
@@ -116,154 +148,179 @@ export function ResourceSidebar({
 
   return (
     <aside
+      onPointerEnter={event => {
+        if (event.pointerType !== 'mouse') return;
+        if (isCollapsed && !temporarilyCollapsed) {
+          scheduleHoverExpanded(true);
+        }
+      }}
+      onPointerLeave={event => {
+        if (event.pointerType !== 'mouse') return;
+        scheduleHoverExpanded(false);
+      }}
       className={cn(
-        'relative hidden md:flex md:flex-col shrink-0 border-r border-border bg-background text-sidebar-foreground transition-[width] duration-300 ease-in-out',
-        effectiveIsCollapsed ? 'w-11' : expandedWidthClassName
+        'relative hidden shrink-0 md:block',
+        layoutIsCollapsed ? 'w-11' : expandedWidthClassName
       )}
     >
-      <ResourceSidebarChromeContext.Provider
-        value={{
-          isCollapsed: effectiveIsCollapsed,
-          isTemporarilyCollapsed: temporarilyCollapsed,
-          onToggleCollapse,
-          toggleLabel,
-          ToggleIcon,
-        }}
+      <div
+        className={cn(
+          'absolute inset-y-0 left-0 z-30 flex flex-col overflow-hidden border-r border-border bg-background text-sidebar-foreground',
+          'will-change-[width] transition-[width,box-shadow] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none',
+          effectiveIsCollapsed ? 'w-11' : expandedWidthClassName,
+          layoutIsCollapsed &&
+            !effectiveIsCollapsed &&
+            'shadow-[12px_0_28px_-18px_rgba(15,23,42,0.45)]'
+        )}
       >
-        {header}
-      </ResourceSidebarChromeContext.Provider>
+        <ResourceSidebarChromeContext.Provider
+          value={{
+            isCollapsed: effectiveIsCollapsed,
+            isTemporarilyCollapsed: temporarilyCollapsed,
+            onToggleCollapse,
+            toggleLabel,
+            ToggleIcon,
+          }}
+        >
+          {header}
+        </ResourceSidebarChromeContext.Provider>
 
-      {isNavigationHidden ? <div className="flex-1" /> : null}
+        {isNavigationHidden ? <div className="flex-1" /> : null}
 
-      {!isNavigationHidden && navItems.length > 0 ? (
-        <nav className="flex flex-1 flex-col gap-[3px] px-1 py-2 items-center">
-          {navItems.map(item => {
-            const Icon = item.icon;
-            const childItems = item.children ?? [];
-            const hasChildren = childItems.length > 0;
-            const isActive = item.isActive
-              ? item.isActive(pathname)
-              : pathname === item.href || pathname.startsWith(`${item.href}/`);
+        {!isNavigationHidden && navItems.length > 0 ? (
+          <nav className="flex flex-1 flex-col gap-[3px] px-1 py-2 items-center">
+            {navItems.map(item => {
+              const Icon = item.icon;
+              const childItems = item.children ?? [];
+              const hasChildren = childItems.length > 0;
+              const isActive = item.isActive
+                ? item.isActive(pathname)
+                : pathname === item.href || pathname.startsWith(`${item.href}/`);
 
-            if (effectiveIsCollapsed && hasChildren) {
-              return childItems.map(child => {
-                const ChildIcon = child.icon;
-                const isChildActive = child.isActive
-                  ? child.isActive(pathname)
-                  : pathname === child.href || pathname.startsWith(`${child.href}/`);
+              if (effectiveIsCollapsed && hasChildren) {
+                return childItems.map(child => {
+                  const ChildIcon = child.icon;
+                  const isChildActive = child.isActive
+                    ? child.isActive(pathname)
+                    : pathname === child.href || pathname.startsWith(`${child.href}/`);
 
-                return (
-                  <ResourceSidebarTooltip key={child.href} enabled label={child.title}>
-                    <Link
-                      href={child.href}
-                      className={cn(
-                        'relative flex items-center rounded-md py-1.5 text-xs font-medium transition-colors',
-                        isChildActive
-                          ? 'bg-background text-foreground shadow-sm ring-1 ring-border/70'
-                          : 'text-muted-foreground hover:bg-background/70 hover:text-foreground',
-                        'justify-center px-0 w-8'
-                      )}
-                    >
-                      <ChildIcon size={18} className="shrink-0" />
-                    </Link>
-                  </ResourceSidebarTooltip>
-                );
-              });
-            }
-
-            return (
-              <div key={item.href} className="w-full">
-                {hasChildren ? (
-                  <button
-                    type="button"
-                    onClick={() => toggleGroup(item.href)}
-                    className={cn(
-                      'flex w-full items-center justify-between rounded-md px-2 py-1 text-xs transition-colors',
-                      'text-muted-foreground hover:bg-background/70 hover:text-foreground'
-                    )}
-                  >
-                    <span className="flex min-w-0 items-center">
-                      <Icon size={16} className="shrink-0" />
-                      <span className="ml-1 truncate font-medium">{item.title}</span>
-                    </span>
-                    <ChevronDown
-                      className={cn(
-                        'h-3.5 w-3.5 shrink-0 transition-transform duration-200',
-                        !(openGroups[item.href] ?? true) && '-rotate-90'
-                      )}
-                    />
-                  </button>
-                ) : (
-                  <ResourceSidebarTooltip enabled={effectiveIsCollapsed} label={item.title}>
-                    <Link
-                      href={item.href}
-                      className={cn(
-                        'relative flex items-center rounded-md py-1.5 text-xs font-medium transition-colors',
-                        isActive
-                          ? 'bg-background text-foreground shadow-sm ring-1 ring-border/70'
-                          : 'text-muted-foreground hover:bg-background/70 hover:text-foreground',
-                        effectiveIsCollapsed ? 'justify-center px-0 w-8' : 'px-2 w-full'
-                      )}
-                    >
-                      {isActive && !effectiveIsCollapsed ? (
-                        <span
-                          className="absolute bottom-1.5 left-0 top-1.5 w-0.5 rounded-r-full bg-foreground/70"
-                          aria-hidden="true"
-                        />
-                      ) : null}
-                      <Icon size={18} className="shrink-0" />
-                      <span
+                  return (
+                    <ResourceSidebarTooltip key={child.href} enabled label={child.title}>
+                      <Link
+                        href={child.href}
                         className={cn(
-                          'truncate font-normal opacity-100 transition-all duration-300',
-                          effectiveIsCollapsed
-                            ? 'ml-0 w-0 overflow-hidden opacity-0'
-                            : 'ml-1 w-full'
+                          'relative flex items-center rounded-md py-1.5 text-xs font-medium transition-colors',
+                          isChildActive
+                            ? 'bg-background text-foreground shadow-sm ring-1 ring-border/70'
+                            : 'text-muted-foreground hover:bg-background/70 hover:text-foreground',
+                          'justify-center px-0 w-8'
                         )}
                       >
-                        {item.title}
-                      </span>
-                    </Link>
-                  </ResourceSidebarTooltip>
-                )}
-                {!effectiveIsCollapsed && hasChildren && (openGroups[item.href] ?? true) ? (
-                  <div className="mt-1 flex flex-col gap-[3px] pl-3">
-                    {childItems.map(child => {
-                      const ChildIcon = child.icon;
-                      const isChildActive = child.isActive
-                        ? child.isActive(pathname)
-                        : pathname === child.href || pathname.startsWith(`${child.href}/`);
+                        <ChildIcon size={18} className="shrink-0" />
+                      </Link>
+                    </ResourceSidebarTooltip>
+                  );
+                });
+              }
 
-                      return (
-                        <Link
-                          key={child.href}
-                          href={child.href}
+              return (
+                <div key={item.href} className="w-full">
+                  {hasChildren ? (
+                    <button
+                      type="button"
+                      onClick={() => toggleGroup(item.href)}
+                      className={cn(
+                        'flex w-full items-center justify-between rounded-md px-2 py-1 text-xs transition-colors',
+                        'text-muted-foreground hover:bg-background/70 hover:text-foreground'
+                      )}
+                    >
+                      <span className="flex min-w-0 items-center">
+                        <Icon size={16} className="shrink-0" />
+                        <span className="ml-1 truncate font-medium">{item.title}</span>
+                      </span>
+                      <ChevronDown
+                        className={cn(
+                          'h-3.5 w-3.5 shrink-0 transition-transform duration-200',
+                          !(openGroups[item.href] ?? true) && '-rotate-90'
+                        )}
+                      />
+                    </button>
+                  ) : (
+                    <ResourceSidebarTooltip enabled={effectiveIsCollapsed} label={item.title}>
+                      <Link
+                        href={item.href}
+                        className={cn(
+                          'relative flex items-center rounded-md py-1.5 text-xs font-medium transition-colors',
+                          isActive
+                            ? 'bg-background text-foreground shadow-sm ring-1 ring-border/70'
+                            : 'text-muted-foreground hover:bg-background/70 hover:text-foreground',
+                          effectiveIsCollapsed ? 'justify-center px-0 w-8' : 'px-2 w-full'
+                        )}
+                      >
+                        {isActive && !effectiveIsCollapsed ? (
+                          <span
+                            className="absolute bottom-1.5 left-0 top-1.5 w-0.5 rounded-r-full bg-foreground/70"
+                            aria-hidden="true"
+                          />
+                        ) : null}
+                        <Icon size={18} className="shrink-0" />
+                        <span
                           className={cn(
-                            'relative flex w-full items-center rounded-md px-2 py-1.5 text-xs transition-colors',
-                            isChildActive
-                              ? 'bg-background text-foreground shadow-sm ring-1 ring-border/70'
-                              : 'text-muted-foreground hover:bg-background/70 hover:text-foreground'
+                            'truncate font-normal opacity-100 transition-all duration-300',
+                            effectiveIsCollapsed
+                              ? 'ml-0 w-0 overflow-hidden opacity-0'
+                              : 'ml-1 w-full'
                           )}
                         >
-                          {isChildActive ? (
-                            <span
-                              className="absolute bottom-1.5 left-0 top-1.5 w-0.5 rounded-r-full bg-foreground/70"
-                              aria-hidden="true"
-                            />
-                          ) : null}
-                          <ChildIcon size={15} className="shrink-0" />
-                          <span className="ml-1 truncate font-normal">{child.title}</span>
-                        </Link>
-                      );
-                    })}
-                  </div>
-                ) : null}
-              </div>
-            );
-          })}
-        </nav>
-      ) : null}
+                          {item.title}
+                        </span>
+                      </Link>
+                    </ResourceSidebarTooltip>
+                  )}
+                  {!effectiveIsCollapsed && hasChildren && (openGroups[item.href] ?? true) ? (
+                    <div className="mt-1 flex flex-col gap-[3px] pl-3">
+                      {childItems.map(child => {
+                        const ChildIcon = child.icon;
+                        const isChildActive = child.isActive
+                          ? child.isActive(pathname)
+                          : pathname === child.href || pathname.startsWith(`${child.href}/`);
 
-      {!isNavigationHidden ? children : null}
+                        return (
+                          <Link
+                            key={child.href}
+                            href={child.href}
+                            className={cn(
+                              'relative flex w-full items-center rounded-md px-2 py-1.5 text-xs transition-colors',
+                              isChildActive
+                                ? 'bg-background text-foreground shadow-sm ring-1 ring-border/70'
+                                : 'text-muted-foreground hover:bg-background/70 hover:text-foreground'
+                            )}
+                          >
+                            {isChildActive ? (
+                              <span
+                                className="absolute bottom-1.5 left-0 top-1.5 w-0.5 rounded-r-full bg-foreground/70"
+                                aria-hidden="true"
+                              />
+                            ) : null}
+                            <ChildIcon size={15} className="shrink-0" />
+                            <span className="ml-1 truncate font-normal">{child.title}</span>
+                          </Link>
+                        );
+                      })}
+                    </div>
+                  ) : null}
+                </div>
+              );
+            })}
+          </nav>
+        ) : null}
+
+        {!isNavigationHidden
+          ? typeof children === 'function'
+            ? children(effectiveIsCollapsed)
+            : children
+          : null}
+      </div>
     </aside>
   );
 }
@@ -288,6 +345,7 @@ export function ResourceSidebarHeader({
   name,
   description,
   showIdentity = true,
+  showExpandedIcon = true,
   backHref,
   backLabel,
   onBackClick,
@@ -383,25 +441,27 @@ export function ResourceSidebarHeader({
           {showIdentity ? (
             <div className="flex min-w-0 items-start justify-between gap-2 px-0.5">
               <div className="min-w-0 flex-1">{titleBlock}</div>
-              <div className="flex shrink-0 items-start gap-1">
-                <div className="shrink-0">{iconPreview}</div>
-                <div className="flex shrink-0 items-center gap-1">
-                  {onIconClick ? (
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      isIcon
-                      size="sm"
-                      aria-label={iconActionLabel}
-                      title={iconActionLabel}
-                      onClick={onIconClick}
-                      className="h-7 w-7 rounded-md bg-transparent p-0 shadow-none transition-colors hover:bg-primary/5 hover:text-primary"
-                    >
-                      <Pencil size={16} className="shrink-0" />
-                    </Button>
-                  ) : null}
+              {showExpandedIcon ? (
+                <div className="flex shrink-0 items-start gap-1">
+                  <div className="shrink-0">{iconPreview}</div>
+                  <div className="flex shrink-0 items-center gap-1">
+                    {onIconClick ? (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        isIcon
+                        size="sm"
+                        aria-label={iconActionLabel}
+                        title={iconActionLabel}
+                        onClick={onIconClick}
+                        className="h-7 w-7 rounded-md bg-transparent p-0 shadow-none transition-colors hover:bg-primary/5 hover:text-primary"
+                      >
+                        <Pencil size={16} className="shrink-0" />
+                      </Button>
+                    ) : null}
+                  </div>
                 </div>
-              </div>
+              ) : null}
             </div>
           ) : null}
         </div>

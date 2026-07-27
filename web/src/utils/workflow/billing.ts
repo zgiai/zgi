@@ -353,7 +353,9 @@ export function getWorkflowBillingErrorMessage(
       title:
         scope === 'agents'
           ? t('agents.workflow.errors.executionFailed')
-          : t('webapp.chat.workflowRunFailed'),
+          : runtimeErrorKind
+            ? t(`webapp.chat.workflowErrorTitles.${runtimeErrorKind}`)
+            : t('webapp.chat.workflowRunFailed'),
       description: runtimeDescription,
     };
   }

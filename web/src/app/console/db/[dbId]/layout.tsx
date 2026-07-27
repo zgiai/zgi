@@ -99,6 +99,7 @@ export default function DbLayout({ children, params }: LayoutProps) {
   const router = useRouter();
 
   const [dbMenuOpen, setDbMenuOpen] = React.useState<boolean>(true);
+  const [tableQuery, setTableQuery] = React.useState('');
   const [isCollapsed, setIsCollapsed] = React.useState<boolean>(() =>
     getSidebarCollapsed('db', true)
   );
@@ -115,6 +116,15 @@ export default function DbLayout({ children, params }: LayoutProps) {
   const { tables, isLoading } = useDbTables(dbId, {
     enabled: canViewTableMetadata && !isMismatch,
   });
+  const visibleTables = React.useMemo(() => {
+    const query = tableQuery.trim().toLocaleLowerCase();
+    if (!query) return tables;
+
+    return tables.filter(table => {
+      const label = table.name || table.table_name || '';
+      return label.toLocaleLowerCase().includes(query);
+    });
+  }, [tableQuery, tables]);
   const deleteMutation = useDeleteDbTable(dbId);
 
   const deleteTable = async (impact?: AgentResourceBoundImpact) => {
@@ -214,6 +224,7 @@ export default function DbLayout({ children, params }: LayoutProps) {
             expandLabel={t('navigation.expand')}
             collapseLabel={t('navigation.collapse')}
             isNavigationHidden={isMismatch}
+            expandedWidthClassName="w-64"
             header={
               <ResourceSidebarHeader
                 isCollapsed={isCollapsed}
@@ -224,245 +235,297 @@ export default function DbLayout({ children, params }: LayoutProps) {
                 iconBackground={iconBackground}
                 name={db?.name || t('dbs.noName')}
                 description={db?.description || ''}
+                showExpandedIcon={false}
                 backHref="/console/db"
                 backLabel={t('dbs.backToDatabaseList')}
               />
             }
           >
-            <nav className="flex flex-1 flex-col gap-[3px] px-1 py-2 items-center">
-              {canViewTableMetadata && (
+            {sidebarIsCollapsed => (
+              <nav className="flex min-h-0 flex-1 flex-col px-2 py-2">
+                {canViewTableMetadata && (
+                  <div
+                    className={cn(
+                      'flex min-h-0 flex-1 flex-col',
+                      sidebarIsCollapsed && 'flex-none'
+                    )}
+                  >
+                    <div
+                      className={cn(
+                        'flex w-full items-center rounded-lg text-xs font-medium transition-colors',
+                        pathname === `/console/db/${dbId}` ||
+                          pathname.startsWith(`/console/db/${dbId}/table`)
+                          ? 'bg-primary/10 text-primary'
+                          : 'hover:bg-primary/5 hover:text-primary',
+                        sidebarIsCollapsed && 'justify-center'
+                      )}
+                    >
+                      <Link
+                        href={`/console/db/${dbId}`}
+                        className={cn(
+                          'flex min-w-0 grow items-center px-2.5 py-2',
+                          sidebarIsCollapsed && 'grow-0 justify-center px-0'
+                        )}
+                      >
+                        <Table className="h-4 w-4 shrink-0" />
+                        <span
+                          className={cn(
+                            'ml-2 min-w-0 grow truncate text-left transition-all duration-300',
+                            sidebarIsCollapsed && 'ml-0 w-0 grow-0 overflow-hidden opacity-0'
+                          )}
+                        >
+                          {t('dbs.tables')}
+                          {!isLoading && !sidebarIsCollapsed ? (
+                            <span className="ml-1.5 font-normal text-muted-foreground">
+                              {tables.length}
+                            </span>
+                          ) : null}
+                        </span>
+                      </Link>
+                      {!sidebarIsCollapsed && canManageSchema ? (
+                        <button
+                          type="button"
+                          onClick={onOpenCreate}
+                          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-primary/10 hover:text-primary"
+                          aria-label={t('dbs.createTable')}
+                          title={t('dbs.createTable')}
+                        >
+                          <Plus className="h-4 w-4" />
+                        </button>
+                      ) : null}
+                      {!sidebarIsCollapsed ? (
+                        <button
+                          type="button"
+                          onClick={() => setDbMenuOpen(prev => !prev)}
+                          className="mr-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-primary/10 hover:text-primary"
+                          aria-label={
+                            dbMenuOpen ? t('navigation.collapse') : t('navigation.expand')
+                          }
+                        >
+                          <ChevronDown
+                            className={cn(
+                              'h-4 w-4 transition-transform',
+                              dbMenuOpen ? 'rotate-0' : '-rotate-90'
+                            )}
+                          />
+                        </button>
+                      ) : null}
+                    </div>
+
+                    {dbMenuOpen && !sidebarIsCollapsed ? (
+                      <div className="mt-2 flex min-h-0 flex-1 flex-col">
+                        {tables.length > 5 ? (
+                          <label className="relative mb-2 block">
+                            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                            <input
+                              type="search"
+                              value={tableQuery}
+                              onChange={event => setTableQuery(event.target.value)}
+                              placeholder={t('dbs.tableNavigation.searchPlaceholder')}
+                              aria-label={t('dbs.tableNavigation.searchPlaceholder')}
+                              className="h-8 w-full rounded-md border border-border bg-background pl-8 pr-2 text-xs outline-none transition-colors placeholder:text-muted-foreground focus:border-primary/50 focus:ring-2 focus:ring-primary/10"
+                            />
+                          </label>
+                        ) : null}
+
+                        <div className="min-h-0 flex-1 space-y-1 overflow-y-auto pr-0.5">
+                          {isLoading ? (
+                            <>
+                              <Skeleton className="h-9 w-full" />
+                              <Skeleton className="h-9 w-full" />
+                              <Skeleton className="h-9 w-full" />
+                              <Skeleton className="h-9 w-full" />
+                            </>
+                          ) : null}
+                          {!isLoading && visibleTables.length === 0 ? (
+                            <div className="px-2 py-6 text-center text-xs text-muted-foreground">
+                              {tableQuery
+                                ? t('dbs.tableNavigation.noSearchResults')
+                                : t('dbs.tableNavigation.noTables')}
+                            </div>
+                          ) : null}
+                          {!isLoading &&
+                            visibleTables.map((table, index) => {
+                              const label = table.name || table.table_name;
+                              const tableId = String(table.id || '');
+                              const tableKey =
+                                tableId || `${table.table_name || label || 'table'}-${index}`;
+                              const tableRootHref = tableId
+                                ? `/console/db/${dbId}/table/${tableId}`
+                                : '';
+                              const href = canOpenRecords
+                                ? tableRootHref
+                                : canOpenSchema && tableRootHref
+                                  ? `${tableRootHref}/structure`
+                                  : '';
+                              const active =
+                                Boolean(tableRootHref) &&
+                                (itemActive(tableRootHref) ||
+                                  pathname.startsWith(tableRootHref + '/'));
+                              return (
+                                <div
+                                  key={tableKey}
+                                  className="group relative flex w-full min-w-0 items-center overflow-hidden"
+                                >
+                                  {href ? (
+                                    <Link
+                                      href={href}
+                                      className={cn(
+                                        'flex h-9 w-full min-w-0 items-center rounded-md px-2 pr-9 text-xs text-secondary-foreground transition-colors',
+                                        active
+                                          ? 'bg-primary/10 text-primary'
+                                          : 'hover:bg-primary/5 hover:text-primary'
+                                      )}
+                                      title={label}
+                                    >
+                                      <Table className="mr-2 h-3.5 w-3.5 shrink-0 opacity-70" />
+                                      <span className="min-w-0 flex-1 truncate text-left">
+                                        {label}
+                                      </span>
+                                    </Link>
+                                  ) : (
+                                    <span
+                                      className={cn(
+                                        'flex h-9 w-full min-w-0 items-center rounded-md px-2 pr-9 text-xs text-muted-foreground',
+                                        active && 'bg-primary/10 text-primary'
+                                      )}
+                                      title={label}
+                                    >
+                                      <Table className="mr-2 h-3.5 w-3.5 shrink-0 opacity-70" />
+                                      <span className="min-w-0 flex-1 truncate text-left">
+                                        {label}
+                                      </span>
+                                    </span>
+                                  )}
+                                  {canManageSchema && (
+                                    <DropdownMenu>
+                                      <DropdownMenuTrigger asChild>
+                                        <button
+                                          data-no-nav
+                                          className={cn(
+                                            'absolute right-1.5 top-1/2 inline-flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md transition-opacity',
+                                            'pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 data-[state=open]:pointer-events-auto data-[state=open]:opacity-100',
+                                            active && 'pointer-events-auto opacity-100',
+                                            active
+                                              ? 'text-primary hover:text-primary hover:bg-primary/10'
+                                              : 'text-muted-foreground hover:text-primary hover:bg-primary/5'
+                                          )}
+                                          onClick={e => {
+                                            e.preventDefault();
+                                            e.stopPropagation();
+                                          }}
+                                          aria-label={t('dbs.actions.more')}
+                                        >
+                                          <MoreHorizontal className="h-3.5 w-3.5" />
+                                        </button>
+                                      </DropdownMenuTrigger>
+                                      <DropdownMenuContent align="end">
+                                        <DropdownMenuItem inset onSelect={() => onOpenEdit(table)}>
+                                          <Pencil className="h-4 w-4" />
+                                          {t('dbs.actions.edit')}
+                                        </DropdownMenuItem>
+                                        <DropdownMenuItem
+                                          variant="destructive"
+                                          inset
+                                          disabled={isCheckingDeleteImpact}
+                                          onSelect={() =>
+                                            void requestDeleteTable({
+                                              id: String(table.id),
+                                              name: label,
+                                            })
+                                          }
+                                        >
+                                          <Trash2 className="h-4 w-4 text-destructive" />
+                                          {t('dbs.actions.delete')}
+                                        </DropdownMenuItem>
+                                      </DropdownMenuContent>
+                                    </DropdownMenu>
+                                  )}
+                                </div>
+                              );
+                            })}
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
+                )}
+
                 <div
                   className={cn(
-                    'flex w-full items-center rounded-md text-xs font-medium transition-colors',
-                    pathname === `/console/db/${dbId}` ||
-                      pathname.startsWith(`/console/db/${dbId}/table`)
-                      ? 'bg-primary/10 text-primary'
-                      : 'hover:bg-primary/5 hover:text-primary',
-                    isCollapsed && 'justify-center'
+                    'mt-2 flex flex-col gap-1 border-t border-border pt-2',
+                    sidebarIsCollapsed && 'mt-0 border-t-0 pt-0'
                   )}
                 >
-                  <Link
-                    href={`/console/db/${dbId}`}
-                    className={cn(
-                      'flex min-w-0 grow items-center px-2.5 py-1.5',
-                      isCollapsed && 'grow-0 justify-center px-0'
-                    )}
-                  >
-                    <Table className="h-4 w-4 shrink-0" />
-                    <span
+                  {canAiQuery && (
+                    <Link
+                      href={`/console/db/${dbId}/search`}
                       className={cn(
-                        'truncate ml-1.5 grow text-left transition-all duration-300',
-                        isCollapsed && 'ml-0 w-0 grow-0 overflow-hidden opacity-0'
+                        'flex w-full items-center rounded-md px-2.5 py-2 text-xs font-medium transition-colors',
+                        pathname === `/console/db/${dbId}/search` ||
+                          pathname.startsWith(`/console/db/${dbId}/search/`)
+                          ? 'bg-primary/10 text-primary'
+                          : 'hover:bg-primary/5 hover:text-primary',
+                        sidebarIsCollapsed && 'justify-center px-0'
                       )}
                     >
-                      {t('dbs.tables')}
-                    </span>
-                  </Link>
-                  {!isCollapsed && (
-                    <button
-                      type="button"
-                      onClick={() => setDbMenuOpen(prev => !prev)}
-                      className="mr-1 flex h-6 w-6 shrink-0 items-center justify-center rounded hover:bg-primary/10"
-                      aria-label={dbMenuOpen ? t('navigation.collapse') : t('navigation.expand')}
-                    >
-                      <ChevronDown
+                      <Search className="h-4 w-4 shrink-0" />
+                      <span
                         className={cn(
-                          'h-4 w-4 transition-transform',
-                          dbMenuOpen ? 'rotate-0' : 'rotate-90'
+                          'ml-2 truncate transition-all duration-300',
+                          sidebarIsCollapsed && 'ml-0 w-0 overflow-hidden opacity-0'
                         )}
-                      />
-                    </button>
+                      >
+                        {t('dbs.features.dataQuery')}
+                      </span>
+                    </Link>
                   )}
-                </div>
-              )}
-              {/* Table list */}
-              {canViewTableMetadata && dbMenuOpen && !isCollapsed && (
-                <div className="min-w-0 overflow-hidden pl-3 space-y-0.5">
-                  {/* Create table */}
-                  {canManageSchema && (
-                    <button
-                      type="button"
-                      onClick={e => {
-                        e.preventDefault();
-                        onOpenCreate();
-                      }}
+                  {canViewOperationLogs && (
+                    <Link
+                      href={`/console/db/${dbId}/record`}
                       className={cn(
-                        'flex items-center rounded-md h-7 px-2 text-xs transition-colors w-full text-secondary-foreground',
-                        'hover:bg-primary/5 hover:text-primary'
+                        'flex w-full items-center rounded-md px-2.5 py-2 text-xs font-medium transition-colors',
+                        pathname === `/console/db/${dbId}/record` ||
+                          pathname.startsWith(`/console/db/${dbId}/record/`)
+                          ? 'bg-primary/10 text-primary'
+                          : 'hover:bg-primary/5 hover:text-primary',
+                        sidebarIsCollapsed && 'justify-center px-0'
                       )}
                     >
-                      <Plus className="h-4 w-4" />
-                      <span className="ml-1 truncate">{t('dbs.createTable')}</span>
+                      <ScrollText className="h-4 w-4 shrink-0" />
+                      <span
+                        className={cn(
+                          'ml-2 truncate transition-all duration-300',
+                          sidebarIsCollapsed && 'ml-0 w-0 overflow-hidden opacity-0'
+                        )}
+                      >
+                        {t('dbs.features.logs')}
+                      </span>
+                    </Link>
+                  )}
+                  {canUpdateDatabase && !isMismatch && db && (
+                    <button
+                      type="button"
+                      onClick={() => setEditDbOpen(true)}
+                      className={cn(
+                        'flex w-full items-center rounded-md px-2.5 py-2 text-xs font-medium transition-colors hover:bg-primary/5 hover:text-primary',
+                        sidebarIsCollapsed && 'justify-center px-0'
+                      )}
+                      title={sidebarIsCollapsed ? t('dbs.databaseSettings') : undefined}
+                    >
+                      <Settings className="h-4 w-4 shrink-0" />
+                      <span
+                        className={cn(
+                          'ml-2 truncate transition-all duration-300',
+                          sidebarIsCollapsed && 'ml-0 w-0 overflow-hidden opacity-0'
+                        )}
+                      >
+                        {t('dbs.databaseSettings')}
+                      </span>
                     </button>
                   )}
-                  {isLoading && (
-                    <>
-                      <Skeleton className="h-7 w-full" />
-                      <Skeleton className="h-7 w-full" />
-                      <Skeleton className="h-7 w-full" />
-                      <Skeleton className="h-7 w-full" />
-                    </>
-                  )}
-                  {!isLoading &&
-                    tables.map((table, index) => {
-                      const label = table.name || table.table_name;
-                      const tableId = String(table.id || '');
-                      const tableKey =
-                        tableId || `${table.table_name || label || 'table'}-${index}`;
-                      const tableRootHref = tableId ? `/console/db/${dbId}/table/${tableId}` : '';
-                      const href = canOpenRecords
-                        ? tableRootHref
-                        : canOpenSchema && tableRootHref
-                          ? `${tableRootHref}/structure`
-                          : '';
-                      const active =
-                        Boolean(tableRootHref) &&
-                        (itemActive(tableRootHref) || pathname.startsWith(tableRootHref + '/'));
-                      return (
-                        <div
-                          key={tableKey}
-                          className="relative flex w-full min-w-0 items-center justify-center gap-1 overflow-hidden group"
-                        >
-                          {href ? (
-                            <Link
-                              href={href}
-                              className={cn(
-                                'block h-7 w-0 min-w-0 grow cursor-pointer truncate rounded-md pl-2 pr-6 text-ellipsis text-xs leading-7 text-secondary-foreground overflow-hidden',
-                                active
-                                  ? 'bg-primary/10 text-primary'
-                                  : 'hover:bg-primary/5 hover:text-primary'
-                              )}
-                              title={label}
-                            >
-                              {label}
-                            </Link>
-                          ) : (
-                            <span
-                              className={cn(
-                                'block h-7 w-0 min-w-0 grow cursor-default truncate rounded-md pl-2 pr-6 text-ellipsis text-xs leading-7 text-muted-foreground overflow-hidden',
-                                active && 'bg-primary/10 text-primary'
-                              )}
-                              title={label}
-                            >
-                              {label}
-                            </span>
-                          )}
-                          {/* Actions dropdown replacing edit button */}
-                          {canManageSchema && (
-                            <DropdownMenu>
-                              <DropdownMenuTrigger asChild>
-                                <button
-                                  data-no-nav
-                                  className={cn(
-                                    'absolute top-1/2 right-1 -translate-y-1/2',
-                                    'h-5 w-5 inline-flex items-center justify-center rounded-md transition-opacity pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 data-[state=open]:pointer-events-auto data-[state=open]:opacity-100',
-                                    active
-                                      ? 'text-primary hover:text-primary hover:bg-primary/10'
-                                      : 'text-muted-foreground hover:text-primary hover:bg-primary/5'
-                                  )}
-                                  onClick={e => {
-                                    e.preventDefault();
-                                    e.stopPropagation();
-                                  }}
-                                  aria-label={t('dbs.actions.more')}
-                                >
-                                  <MoreHorizontal className="h-3.5 w-3.5" />
-                                </button>
-                              </DropdownMenuTrigger>
-                              <DropdownMenuContent align="end">
-                                <DropdownMenuItem inset onSelect={() => onOpenEdit(table)}>
-                                  <Pencil className="h-4 w-4" />
-                                  {t('dbs.actions.edit')}
-                                </DropdownMenuItem>
-                                <DropdownMenuItem
-                                  variant="destructive"
-                                  inset
-                                  disabled={isCheckingDeleteImpact}
-                                  onSelect={() =>
-                                    void requestDeleteTable({ id: String(table.id), name: label })
-                                  }
-                                >
-                                  <Trash2 className="h-4 w-4 text-destructive" />
-                                  {t('dbs.actions.delete')}
-                                </DropdownMenuItem>
-                              </DropdownMenuContent>
-                            </DropdownMenu>
-                          )}
-                        </div>
-                      );
-                    })}
                 </div>
-              )}
-
-              {/* Features */}
-              {canAiQuery && (
-                <Link
-                  href={`/console/db/${dbId}/search`}
-                  className={cn(
-                    'flex w-full items-center rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors',
-                    pathname === `/console/db/${dbId}/search` ||
-                      pathname.startsWith(`/console/db/${dbId}/search/`)
-                      ? 'bg-primary/10 text-primary'
-                      : 'hover:bg-primary/5 hover:text-primary',
-                    isCollapsed && 'justify-center px-0'
-                  )}
-                >
-                  <Search className="h-4 w-4 shrink-0" />
-                  <span
-                    className={cn(
-                      'truncate ml-1.5 transition-all duration-300',
-                      isCollapsed && 'ml-0 w-0 overflow-hidden opacity-0'
-                    )}
-                  >
-                    {t('dbs.features.dataQuery')}
-                  </span>
-                </Link>
-              )}
-              {canViewOperationLogs && (
-                <Link
-                  href={`/console/db/${dbId}/record`}
-                  className={cn(
-                    'flex w-full items-center rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors',
-                    pathname === `/console/db/${dbId}/record` ||
-                      pathname.startsWith(`/console/db/${dbId}/record/`)
-                      ? 'bg-primary/10 text-primary'
-                      : 'hover:bg-primary/5 hover:text-primary',
-                    isCollapsed && 'justify-center px-0'
-                  )}
-                >
-                  <ScrollText className="h-4 w-4 shrink-0" />
-                  <span
-                    className={cn(
-                      'truncate ml-1.5 transition-all duration-300',
-                      isCollapsed && 'ml-0 w-0 overflow-hidden opacity-0'
-                    )}
-                  >
-                    {t('dbs.features.logs')}
-                  </span>
-                </Link>
-              )}
-              {canUpdateDatabase && !isMismatch && db && (
-                <button
-                  type="button"
-                  onClick={() => setEditDbOpen(true)}
-                  className={cn(
-                    'flex w-full items-center rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors hover:bg-primary/5 hover:text-primary',
-                    isCollapsed && 'justify-center px-0'
-                  )}
-                  title={isCollapsed ? t('dbs.databaseSettings') : undefined}
-                >
-                  <Settings className="h-4 w-4 shrink-0" />
-                  <span
-                    className={cn(
-                      'truncate ml-1.5 transition-all duration-300',
-                      isCollapsed && 'ml-0 w-0 overflow-hidden opacity-0'
-                    )}
-                  >
-                    {t('dbs.databaseSettings')}
-                  </span>
-                </button>
-              )}
-            </nav>
+              </nav>
+            )}
           </ResourceSidebar>
 
           {/* Content */}
