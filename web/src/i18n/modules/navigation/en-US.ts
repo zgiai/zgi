@@ -34,6 +34,7 @@ const messages = {
   logout: 'Logout',
   collapse: 'Collapse',
   expand: 'Expand',
+  openNavigation: 'Open navigation',
   current: 'Current',
   workspace: 'Workspace',
   defaultWorkspace: 'Default Workspace',

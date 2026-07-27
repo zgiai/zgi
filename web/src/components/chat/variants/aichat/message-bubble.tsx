@@ -1505,11 +1505,12 @@ export function AIChatMessageBubble({
           ) : null}
           {isStopped && answer ? (
             <span
-              className="inline-flex items-center"
+              className="inline-flex items-center gap-1 rounded-full bg-muted px-1.5 py-0.5 text-xs font-medium text-muted-foreground"
               title={t('consoleChat.stopped')}
               aria-label={t('consoleChat.stopped')}
             >
               <CircleStop className="size-3" />
+              <span>{t('consoleChat.stopped')}</span>
             </span>
           ) : null}
         </div>

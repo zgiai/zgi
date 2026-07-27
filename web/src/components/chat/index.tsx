@@ -160,6 +160,7 @@ interface AIChatVariantProps {
   }) => React.ReactNode;
   onSelectConversation?: (id: string) => void;
   onStartNewConversation?: () => void;
+  defaultSidebarOpen?: boolean;
   showAssistantModelMeta?: boolean;
   surface?: 'aichat' | 'agent-draft' | 'agent-webapp';
   runtimeSurface?: AIChatRuntimeSurface;

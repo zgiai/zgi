@@ -166,6 +166,7 @@ interface AIChatShellProps {
   }) => React.ReactNode;
   onSelectConversation?: (id: string) => void;
   onStartNewConversation?: () => void;
+  defaultSidebarOpen?: boolean;
   showAssistantModelMeta?: boolean;
   surface?: 'aichat' | 'agent-draft' | 'agent-webapp';
   runtimeSurface?: AIChatRuntimeSurface;
@@ -277,6 +278,7 @@ export function AIChatShell({
   renderEmbeddedConversationControls,
   onSelectConversation,
   onStartNewConversation,
+  defaultSidebarOpen = true,
   showAssistantModelMeta = true,
   surface = 'aichat',
   runtimeSurface = 'work_chat',
@@ -300,7 +302,7 @@ export function AIChatShell({
   const [input, setInput] = useState('');
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const [editingQuery, setEditingQuery] = useState('');
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = useState(defaultSidebarOpen);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [embeddedAssetAuditOpen, setEmbeddedAssetAuditOpen] = useState(false);
   const [externalControlsPortal, setExternalControlsPortal] = useState<HTMLElement | null>(null);
@@ -673,14 +675,30 @@ export function AIChatShell({
         .map(text => text.trim())
         .filter(Boolean)
         .slice(0, 6)
-        .map((text, index) => ({ text, key: `configured-${index}` }));
+        .map((text, index) => ({ text, prompt: text, key: `configured-${index}` }));
     }
 
     return [
-      { text: t('chat.suggestions.email'), key: 'email' },
-      { text: t('chat.suggestions.meeting'), key: 'meeting' },
-      { text: t('chat.suggestions.report'), key: 'report' },
-      { text: t('chat.suggestions.polish'), key: 'polish' },
+      {
+        text: t('chat.suggestions.email'),
+        prompt: t('chat.suggestionPrompts.email'),
+        key: 'email',
+      },
+      {
+        text: t('chat.suggestions.meeting'),
+        prompt: t('chat.suggestionPrompts.meeting'),
+        key: 'meeting',
+      },
+      {
+        text: t('chat.suggestions.report'),
+        prompt: t('chat.suggestionPrompts.report'),
+        key: 'report',
+      },
+      {
+        text: t('chat.suggestions.polish'),
+        prompt: t('chat.suggestionPrompts.polish'),
+        key: 'polish',
+      },
     ];
   }, [configuredSuggestions, t]);
 
@@ -1218,7 +1236,6 @@ export function AIChatShell({
         >
           {!isEmbedded ? (
             <AIChatHeader
-              isMobile={isMobile}
               isHome={isHome}
               title={activeConversation?.title || ''}
               onToggleSidebar={handleToggleSidebar}
@@ -1448,6 +1465,7 @@ export function AIChatShell({
               onRename={handleRenameConversation}
               backgroundImage={AICHAT_SIDEBAR_BG_IMAGE}
               onClose={() => setMobileSidebarOpen(false)}
+              alwaysShowHeader
               search={searchConversations}
               searchKey={conversationSearchKey}
               pagination={conversationPagination}

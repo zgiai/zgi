@@ -49,6 +49,12 @@ const messages: WebappMessages = {
       summarize: '总结文本',
       write: '撰写内容',
     },
+    suggestionPrompts: {
+      email: '帮我起草一封清晰、专业的邮件。如果缺少收件人、目的或语气，请先向我确认。',
+      meeting: '把我提供的会议记录整理成简洁摘要，并列出结论、负责人和下一步。',
+      report: '帮我起草一份周报，包含本周进展、结果、风险和下周重点。',
+      polish: '润色我提供的文字，保留原意、语气和关键信息。',
+    },
     loadingImageGen: '正在加载图像生成器...',
     markdownImage: {
       previewTitle: '图片预览',

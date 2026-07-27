@@ -13,6 +13,7 @@ import { useOrganizationStore } from '@/store/organization-store';
 import { cn } from '@/lib/utils';
 import { ContextualAIChatLauncher } from '@/components/aichat/contextual';
 import { getOrganizationDisplayName } from '@/utils/organization-display';
+import { ConsoleReadinessStatus } from './console-readiness-status';
 
 interface ConsoleHeaderProps {
   hidden?: boolean;
@@ -140,9 +141,10 @@ export function ConsoleHeader({ hidden, onToggleMobileSidebar }: ConsoleHeaderPr
           isIcon
           className="md:hidden"
           onClick={onToggleMobileSidebar}
+          aria-label={tNav('openNavigation')}
+          title={tNav('openNavigation')}
         >
           <Menu className="size-4" />
-          <span className="sr-only">Toggle sidebar</span>
         </Button>
 
         <div className="max-w-32 shrink-0">
@@ -172,7 +174,8 @@ export function ConsoleHeader({ hidden, onToggleMobileSidebar }: ConsoleHeaderPr
         </div>
       ) : null}
 
-      <div className="flex items-center gap-4 md:ml-auto">
+      <div className="ml-auto flex items-center gap-2 sm:gap-3">
+        {!isDashboardRoute ? <ConsoleReadinessStatus /> : null}
         {!isDashboardRoute ? <ContextualAIChatLauncher /> : null}
         {/* <QuickThemeToggle /> */}
         <UserMenu />

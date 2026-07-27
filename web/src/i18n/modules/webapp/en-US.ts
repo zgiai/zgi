@@ -47,6 +47,16 @@ const messages = {
       summarize: 'Summarize text',
       write: 'Write content',
     },
+    suggestionPrompts: {
+      email:
+        'Draft a clear, professional email. Ask me for the audience, goal, and tone if anything is missing.',
+      meeting:
+        'Turn my meeting notes into a concise summary with decisions, owners, and next steps.',
+      report:
+        'Help me draft a weekly report covering progress, outcomes, risks, and priorities for next week.',
+      polish:
+        'Polish the text I provide while preserving its meaning, tone, and key details.',
+    },
     loadingImageGen: 'Loading image generator...',
     markdownImage: {
       previewTitle: 'Image preview',

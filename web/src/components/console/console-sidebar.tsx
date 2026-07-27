@@ -5,7 +5,6 @@ import Link from 'next/link';
 import {
   Settings,
   ArrowRightToLine,
-  Home,
   Atom,
   Bot,
   BookText,
@@ -156,9 +155,11 @@ function filterConsoleNavGroups(
 export function ConsoleSidebar({
   hidden,
   temporarilyCollapsed = false,
+  autoCollapse = false,
 }: {
   hidden?: boolean;
   temporarilyCollapsed?: boolean;
+  autoCollapse?: boolean;
 }) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -175,7 +176,7 @@ export function ConsoleSidebar({
   // Collapsed state persisted via ui-local helpers
   const [persistedIsCollapsed, setIsCollapsed] = usePersistentSidebarCollapse(
     'console',
-    false,
+    autoCollapse,
     isDebugFocusMode || temporarilyCollapsed
   );
   const isTemporarilyCollapsed = isDebugFocusMode || temporarilyCollapsed;
@@ -183,6 +184,14 @@ export function ConsoleSidebar({
   const hoverTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const layoutIsCollapsed = isTemporarilyCollapsed || persistedIsCollapsed;
   const isCollapsed = layoutIsCollapsed && !isHoverExpanded;
+  const wasAutoCollapseActiveRef = React.useRef(false);
+
+  React.useEffect(() => {
+    if (autoCollapse && !wasAutoCollapseActiveRef.current && !persistedIsCollapsed) {
+      setIsCollapsed(true);
+    }
+    wasAutoCollapseActiveRef.current = autoCollapse;
+  }, [autoCollapse, persistedIsCollapsed, setIsCollapsed]);
 
   const toggleCollapse = () => setIsCollapsed(prev => !prev);
 
@@ -245,11 +254,6 @@ export function ConsoleSidebar({
         key: 'work',
         title: t('work'),
         items: [
-          {
-            title: t('chat'),
-            href: '/console/work/chat',
-            icon: MessageSquare,
-          },
           {
             title: t('image'),
             href: '/console/work/image',
@@ -367,17 +371,20 @@ export function ConsoleSidebar({
 
   const homeNavLink = (
     <Link
-      href="/console"
+      href="/console/work/chat"
       className={cn(
         'flex items-center gap-2 rounded-md py-1.5 text-[13px] transition-colors shrink-0 w-full',
         isCollapsed ? 'justify-center px-0 w-8' : 'justify-start px-2',
         'text-foreground/70 hover:bg-muted/70 hover:text-foreground',
-        pathname === '/console' && 'bg-muted/80 text-foreground'
+        pathname.startsWith('/console/work/chat') && 'bg-muted/80 text-foreground'
       )}
     >
-      <Home
+      <MessageSquare
         size={16}
-        className={cn('shrink-0 text-foreground/65', pathname === '/console' && 'text-foreground')}
+        className={cn(
+          'shrink-0 text-foreground/65',
+          pathname.startsWith('/console/work/chat') && 'text-foreground'
+        )}
       />
       <span
         className={cn(
@@ -385,7 +392,7 @@ export function ConsoleSidebar({
           isCollapsed && 'ml-0 opacity-0 w-0 hidden'
         )}
       >
-        {t('home')}
+        {t('chat')}
       </span>
     </Link>
   );
@@ -411,7 +418,7 @@ export function ConsoleSidebar({
         )}
       >
         {isCollapsed ? (
-          <CollapsedNavTooltip label={t('home')}>{homeNavLink}</CollapsedNavTooltip>
+          <CollapsedNavTooltip label={t('chat')}>{homeNavLink}</CollapsedNavTooltip>
         ) : (
           homeNavLink
         )}
@@ -647,11 +654,6 @@ export function ConsoleMobileSidebar({
         title: t('work'),
         items: [
           {
-            title: t('chat'),
-            href: '/console/work/chat',
-            icon: MessageSquare,
-          },
-          {
             title: t('image'),
             href: '/console/work/image',
             icon: ImageIcon,
@@ -748,7 +750,7 @@ export function ConsoleMobileSidebar({
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent side="left" className="w-[86vw] max-w-80 p-0">
-        <SheetTitle className="sr-only">{t('home')}</SheetTitle>
+        <SheetTitle className="sr-only">{t('chat')}</SheetTitle>
         <div className="flex h-full flex-col overflow-hidden bg-background">
           <div className="border-b border-border/60 px-4 py-3">
             <WorkspaceSwitcher isCollapsed={false} />
@@ -756,23 +758,23 @@ export function ConsoleMobileSidebar({
 
           <nav className="flex-1 space-y-3 overflow-y-auto px-3 py-3">
             <Link
-              href="/console"
+              href="/console/work/chat"
               onClick={closeSidebar}
               className={cn(
                 'flex items-center gap-2 rounded-md px-2 py-2 text-[13px] transition-colors',
-                pathname === '/console'
+                pathname.startsWith('/console/work/chat')
                   ? 'bg-muted/80 text-foreground'
                   : 'text-foreground/70 hover:bg-muted/70 hover:text-foreground'
               )}
             >
-              <Home
+              <MessageSquare
                 size={16}
                 className={cn(
                   'shrink-0 text-foreground/60',
-                  pathname === '/console' && 'text-foreground'
+                  pathname.startsWith('/console/work/chat') && 'text-foreground'
                 )}
               />
-              <span className="truncate font-medium">{t('home')}</span>
+              <span className="truncate font-medium">{t('chat')}</span>
             </Link>
 
             {navGroups.map(group => {

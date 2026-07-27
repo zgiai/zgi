@@ -243,6 +243,7 @@ function ChatPageContent() {
               homeTitle={t('consoleChat.homeTitle')}
               homeDescription={t('consoleChat.homeDescription')}
               inputPlaceholder={t('consoleChat.inputPlaceholder')}
+              defaultSidebarOpen={false}
               onSelectConversation={handleSelectConversation}
               onStartNewConversation={handleStartNewConversation}
             />
