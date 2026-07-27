@@ -11,13 +11,15 @@ import (
 )
 
 type AgentsFilter struct {
-	TenantID   string
-	Name       string
-	Keyword    string
-	AgentsType string
-	AgentTypes []string
-	CreatedBy  string
-	Internal   *bool
+	TenantID     string
+	Name         string
+	Keyword      string
+	AgentsType   string
+	AgentTypes   []string
+	CreatedBy    string
+	IsPublished  *bool
+	WebAppStatus string
+	Internal     *bool
 }
 
 type runnableWebAppItem struct {
@@ -369,6 +371,36 @@ func (r *agentsRepository) applyFiltersMultipleTenants(query *gorm.DB, filter Ag
 	}
 	if filter.CreatedBy != "" {
 		query = query.Where("created_by = ?", filter.CreatedBy)
+	}
+	if filter.IsPublished != nil {
+		publishedPredicate := `
+			(
+				agents.agent_type = ?
+				AND EXISTS (
+					SELECT 1
+					FROM agent_published_versions
+					WHERE agent_published_versions.agent_id = agents.id
+					  AND agent_published_versions.deleted_at IS NULL
+				)
+			)
+			OR (
+				agents.agent_type != ?
+				AND EXISTS (
+					SELECT 1
+					FROM workflows
+					WHERE workflows.agent_id = agents.id
+					  AND workflows.version != ?
+				)
+			)
+		`
+		if *filter.IsPublished {
+			query = query.Where(publishedPredicate, "AGENT", "AGENT", "draft")
+		} else {
+			query = query.Where("NOT ("+publishedPredicate+")", "AGENT", "AGENT", "draft")
+		}
+	}
+	if filter.WebAppStatus != "" {
+		query = query.Where("web_app_status = ?", filter.WebAppStatus)
 	}
 	if filter.Internal != nil {
 		query = query.Where("internal = ?", *filter.Internal)

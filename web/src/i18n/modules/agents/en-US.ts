@@ -65,6 +65,13 @@ const messages = {
   // Search and filters
   searchPlaceholder: 'Search agents...',
   workflowSearchPlaceholder: 'Search workflows...',
+  listFilters: {
+    publishStatus: 'Publication status',
+    allPublishStatuses: 'All statuses',
+    workflowType: 'Workflow type',
+    allWorkflowTypes: 'All types',
+    clear: 'Clear filters',
+  },
   filterAll: 'All',
   filterActive: 'Active',
   filterInactive: 'Inactive',

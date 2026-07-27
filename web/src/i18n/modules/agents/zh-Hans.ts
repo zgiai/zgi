@@ -68,6 +68,13 @@ const messages: AgentsMessages = {
   // Search and filters
   searchPlaceholder: '搜索智能体...',
   workflowSearchPlaceholder: '搜索工作流...',
+  listFilters: {
+    publishStatus: '发布状态',
+    allPublishStatuses: '全部状态',
+    workflowType: '工作流类型',
+    allWorkflowTypes: '全部类型',
+    clear: '清除筛选',
+  },
   filterAll: '全部',
   filterActive: '活跃',
   filterInactive: '未激活',

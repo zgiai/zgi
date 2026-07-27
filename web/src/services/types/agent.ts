@@ -140,6 +140,8 @@ export interface AgentListParams {
   workspace_id?: string;
   agent_type?: AgentType;
   asset_kind?: AgentAssetKind;
+  is_published?: boolean;
+  web_app_status?: WebAppStatus;
   sort?: string;
   order?: 'asc' | 'desc';
 }

@@ -56,6 +56,8 @@ type GetAgentsListRequest struct {
 	IsCreatedByMe bool   `form:"is_created_by_me" json:"is_created_by_me"`
 	AgentType     string `form:"agent_type" json:"agent_type"`
 	AssetKind     string `form:"asset_kind" json:"asset_kind"`
+	IsPublished   *bool  `form:"is_published" json:"is_published"`
+	WebAppStatus  string `form:"web_app_status" json:"web_app_status"`
 	Internal      *bool  `form:"internal" json:"internal"`
 }
 

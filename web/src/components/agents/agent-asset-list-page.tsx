@@ -7,6 +7,13 @@ import { useQueryClient, type InfiniteData } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import AgentCard from '@/components/agents/agent-card';
 import { AgentsAIChatContextRegistration } from '@/components/agents/aichat-context';
@@ -21,15 +28,23 @@ import { useAccountPermissions } from '@/hooks/organization/use-account-permissi
 import { useT } from '@/i18n';
 import { useCurrentWorkspace } from '@/store/workspace-store';
 import type { ApiResponseData } from '@/services/types/common';
-import { AgentType, type AgentAssetKind, type AgentList } from '@/services/types/agent';
+import {
+  AgentType,
+  type AgentAssetKind,
+  type AgentList,
+  type WebAppStatus,
+} from '@/services/types/agent';
 import {
   consumeAgentListRestoreIntent,
   markAgentListDetailEntry,
+  readAgentListInitialFilters,
   readAgentListInitialKeyword,
   readAgentListNavigationState,
   writeAgentListNavigationState,
+  type AgentListPublishFilter,
   type AgentListNavigationState,
   type AgentListScope,
+  type AgentListWorkflowTypeFilter,
 } from '@/utils/agent-list-state';
 import {
   AGENT_MANAGE_PERMISSION_CODES,
@@ -66,6 +81,12 @@ export function AgentAssetListPage({ assetKind }: AgentAssetListPageProps) {
   const [templateOpen, setTemplateOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [searchKeyword, setSearchKeyword] = useState(() => readAgentListInitialKeyword(listScope));
+  const [publishFilter, setPublishFilter] = useState<AgentListPublishFilter>(
+    () => readAgentListInitialFilters(listScope).publishFilter
+  );
+  const [workflowTypeFilter, setWorkflowTypeFilter] = useState<AgentListWorkflowTypeFilter>(
+    () => readAgentListInitialFilters(listScope).workflowTypeFilter
+  );
   const [queryKeywordOverride, setQueryKeywordOverride] = useState<string | null>(null);
   const [isRestoreChecked, setIsRestoreChecked] = useState(false);
   const [reloading, setReloading] = useState(false);
@@ -78,6 +99,11 @@ export function AgentAssetListPage({ assetKind }: AgentAssetListPageProps) {
 
   const debouncedSearchKeyword = useDebouncedValue(searchKeyword, 500);
   const effectiveSearchKeyword = queryKeywordOverride ?? debouncedSearchKeyword;
+  const isPublished = publishFilter === 'all' ? undefined : publishFilter !== 'draft';
+  const webAppStatus: WebAppStatus | undefined =
+    publishFilter === 'published' ? 'active' : publishFilter === 'offline' ? 'inactive' : undefined;
+  const filteredAgentType =
+    isWorkflowList && workflowTypeFilter !== 'all' ? (workflowTypeFilter as AgentType) : undefined;
   const templateFromQuery = isWorkflowList ? searchParams.get('template') : null;
   const agentListParams = useMemo(
     () => ({
@@ -85,8 +111,18 @@ export function AgentAssetListPage({ assetKind }: AgentAssetListPageProps) {
       keyword: effectiveSearchKeyword || undefined,
       workspace_id: currentWorkspace?.id,
       asset_kind: assetKind,
+      agent_type: filteredAgentType,
+      is_published: isPublished,
+      web_app_status: webAppStatus,
     }),
-    [assetKind, effectiveSearchKeyword, currentWorkspace?.id]
+    [
+      assetKind,
+      effectiveSearchKeyword,
+      filteredAgentType,
+      currentWorkspace?.id,
+      isPublished,
+      webAppStatus,
+    ]
   );
   const agentListQueryKey = useMemo(() => AGENT_KEYS.list(agentListParams), [agentListParams]);
   const title = isWorkflowList ? t('agents.workflowListTitle') : t('agents.title');
@@ -125,12 +161,16 @@ export function AgentAssetListPage({ assetKind }: AgentAssetListPageProps) {
       hasRestoredScrollRef.current = false;
       hasRefreshedRestoredPagesRef.current = false;
       setSearchKeyword('');
+      setPublishFilter('all');
+      setWorkflowTypeFilter('all');
       setQueryKeywordOverride('');
       setIsRestoreChecked(true);
       return;
     }
 
     setSearchKeyword(savedState.keyword);
+    setPublishFilter(savedState.publishFilter);
+    setWorkflowTypeFilter(isWorkflowList ? savedState.workflowTypeFilter : 'all');
     setQueryKeywordOverride(savedState.keyword);
     pendingRestoreRef.current = savedState;
 
@@ -139,6 +179,18 @@ export function AgentAssetListPage({ assetKind }: AgentAssetListPageProps) {
       keyword: savedState.keyword || undefined,
       workspace_id: currentWorkspace.id,
       asset_kind: assetKind,
+      agent_type:
+        isWorkflowList && savedState.workflowTypeFilter !== 'all'
+          ? (savedState.workflowTypeFilter as AgentType)
+          : undefined,
+      is_published:
+        savedState.publishFilter === 'all' ? undefined : savedState.publishFilter !== 'draft',
+      web_app_status:
+        savedState.publishFilter === 'published'
+          ? 'active'
+          : savedState.publishFilter === 'offline'
+            ? 'inactive'
+            : undefined,
     };
     const restoredQueryKey = AGENT_KEYS.list(restoredParams);
     const existingCachedPages =
@@ -154,7 +206,7 @@ export function AgentAssetListPage({ assetKind }: AgentAssetListPageProps) {
     }
 
     setIsRestoreChecked(true);
-  }, [assetKind, currentWorkspace?.id, listScope, queryClient]);
+  }, [assetKind, currentWorkspace?.id, isWorkflowList, listScope, queryClient]);
 
   const {
     pages,
@@ -182,6 +234,8 @@ export function AgentAssetListPage({ assetKind }: AgentAssetListPageProps) {
     writeAgentListNavigationState(
       {
         keyword: effectiveSearchKeyword,
+        publishFilter,
+        workflowTypeFilter: isWorkflowList ? workflowTypeFilter : 'all',
         loadedPageCount: pages.length,
         scrollTop: nextScrollTop ?? listScrollRef.current?.scrollTop ?? 0,
         workspaceId: currentWorkspace.id,
@@ -217,12 +271,22 @@ export function AgentAssetListPage({ assetKind }: AgentAssetListPageProps) {
     const frame = window.requestAnimationFrame(() => persistNavigationState(undefined, true));
     return () => window.cancelAnimationFrame(frame);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [agentListQueryKey, currentWorkspace?.id, effectiveSearchKeyword, isRestoreChecked, pages]);
+  }, [
+    agentListQueryKey,
+    currentWorkspace?.id,
+    effectiveSearchKeyword,
+    isRestoreChecked,
+    pages,
+    publishFilter,
+    workflowTypeFilter,
+  ]);
 
   useEffect(() => {
     const pendingRestore = pendingRestoreRef.current;
     if (!pendingRestore || !isRestoreChecked || !canView) return;
     if (pendingRestore.keyword !== effectiveSearchKeyword) return;
+    if (pendingRestore.publishFilter !== publishFilter) return;
+    if (isWorkflowList && pendingRestore.workflowTypeFilter !== workflowTypeFilter) return;
     if (pages.length >= pendingRestore.loadedPageCount || !hasNextPage || isFetchingNextPage) {
       return;
     }
@@ -235,13 +299,18 @@ export function AgentAssetListPage({ assetKind }: AgentAssetListPageProps) {
     hasNextPage,
     isFetchingNextPage,
     isRestoreChecked,
+    isWorkflowList,
     pages.length,
+    publishFilter,
+    workflowTypeFilter,
   ]);
 
   useEffect(() => {
     const pendingRestore = pendingRestoreRef.current;
     if (!pendingRestore || hasRestoredScrollRef.current || !isRestoreChecked) return;
     if (pendingRestore.keyword !== effectiveSearchKeyword) return;
+    if (pendingRestore.publishFilter !== publishFilter) return;
+    if (isWorkflowList && pendingRestore.workflowTypeFilter !== workflowTypeFilter) return;
     if (pages.length < pendingRestore.loadedPageCount && hasNextPage) return;
 
     const frame = window.requestAnimationFrame(() => {
@@ -253,17 +322,35 @@ export function AgentAssetListPage({ assetKind }: AgentAssetListPageProps) {
     });
 
     return () => window.cancelAnimationFrame(frame);
-  }, [effectiveSearchKeyword, hasNextPage, isRestoreChecked, pages.length]);
+  }, [
+    effectiveSearchKeyword,
+    hasNextPage,
+    isRestoreChecked,
+    isWorkflowList,
+    pages.length,
+    publishFilter,
+    workflowTypeFilter,
+  ]);
 
   useEffect(() => {
     const pendingRestore = pendingRestoreRef.current;
     if (!pendingRestore || hasRefreshedRestoredPagesRef.current || !isRestoreChecked) return;
     if (pendingRestore.keyword !== effectiveSearchKeyword) return;
+    if (pendingRestore.publishFilter !== publishFilter) return;
+    if (isWorkflowList && pendingRestore.workflowTypeFilter !== workflowTypeFilter) return;
     if (pages.length === 0) return;
 
     hasRefreshedRestoredPagesRef.current = true;
     void refetchFromPageAndAfter(0);
-  }, [effectiveSearchKeyword, isRestoreChecked, pages.length, refetchFromPageAndAfter]);
+  }, [
+    effectiveSearchKeyword,
+    isRestoreChecked,
+    isWorkflowList,
+    pages.length,
+    publishFilter,
+    refetchFromPageAndAfter,
+    workflowTypeFilter,
+  ]);
 
   useEffect(() => {
     if (!canView) return;
@@ -288,16 +375,42 @@ export function AgentAssetListPage({ assetKind }: AgentAssetListPageProps) {
     };
   }, [hasNextPage, isFetchingNextPage, fetchNextPage, canView]);
 
-  const handleSearchChange = (value: string) => {
+  const resetListPosition = () => {
     pendingRestoreRef.current = null;
     hasRestoredScrollRef.current = false;
     hasRefreshedRestoredPagesRef.current = false;
     if (listScrollRef.current) {
       listScrollRef.current.scrollTop = 0;
     }
+  };
+
+  const handleSearchChange = (value: string) => {
+    resetListPosition();
     setQueryKeywordOverride(null);
     setSearchKeyword(value);
   };
+
+  const handlePublishFilterChange = (value: AgentListPublishFilter) => {
+    resetListPosition();
+    setPublishFilter(value);
+  };
+
+  const handleWorkflowTypeFilterChange = (value: AgentListWorkflowTypeFilter) => {
+    resetListPosition();
+    setWorkflowTypeFilter(value);
+  };
+
+  const handleClearCriteria = () => {
+    resetListPosition();
+    setSearchKeyword('');
+    setQueryKeywordOverride('');
+    setPublishFilter('all');
+    setWorkflowTypeFilter('all');
+  };
+
+  const hasActiveFilters =
+    publishFilter !== 'all' || (isWorkflowList && workflowTypeFilter !== 'all');
+  const hasActiveCriteria = Boolean(effectiveSearchKeyword) || hasActiveFilters;
 
   const handleReload = () => {
     setReloading(true);
@@ -379,8 +492,49 @@ export function AgentAssetListPage({ assetKind }: AgentAssetListPageProps) {
             </Button>
           </div>
 
-          <div className="flex w-full flex-col gap-3 @3xl/console:w-auto @3xl/console:flex-row">
-            <div className="relative w-full @3xl/console:max-w-md">
+          <div className="flex w-full flex-col gap-3 @3xl/console:w-auto @3xl/console:flex-row @3xl/console:flex-wrap @3xl/console:justify-end">
+            <Select
+              value={publishFilter}
+              onValueChange={value => handlePublishFilterChange(value as AgentListPublishFilter)}
+            >
+              <SelectTrigger
+                className="w-full bg-background @3xl/console:w-36"
+                aria-label={t('agents.listFilters.publishStatus')}
+              >
+                <SelectValue placeholder={t('agents.listFilters.publishStatus')} />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">{t('agents.listFilters.allPublishStatuses')}</SelectItem>
+                <SelectItem value="published">{t('agents.status.published')}</SelectItem>
+                <SelectItem value="draft">{t('agents.status.draft')}</SelectItem>
+                <SelectItem value="offline">{t('agents.status.webappOffline')}</SelectItem>
+              </SelectContent>
+            </Select>
+            {isWorkflowList && (
+              <Select
+                value={workflowTypeFilter}
+                onValueChange={value =>
+                  handleWorkflowTypeFilterChange(value as AgentListWorkflowTypeFilter)
+                }
+              >
+                <SelectTrigger
+                  className="w-full bg-background @3xl/console:w-40"
+                  aria-label={t('agents.listFilters.workflowType')}
+                >
+                  <SelectValue placeholder={t('agents.listFilters.workflowType')} />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">{t('agents.listFilters.allWorkflowTypes')}</SelectItem>
+                  <SelectItem value={AgentType.CONVERSATIONAL_AGENT}>
+                    {t('agents.modes.chatWorkflow')}
+                  </SelectItem>
+                  <SelectItem value={AgentType.WORKFLOW}>
+                    {t('agents.modes.taskWorkflow')}
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            )}
+            <div className="relative w-full @3xl/console:w-64">
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 rounded-lg bg-background text-sm text-muted-foreground" />
               <Input
                 placeholder={searchPlaceholder}
@@ -422,18 +576,24 @@ export function AgentAssetListPage({ assetKind }: AgentAssetListPageProps) {
 
         {!isLoading &&
           agents.length === 0 &&
-          (effectiveSearchKeyword ? (
-            isWorkflowList ? (
+          (hasActiveCriteria ? (
+            isWorkflowList || hasActiveFilters ? (
               <AgentEmptyElement
                 type="search"
-                title={t('agents.workflowNoResultsDescription', {
-                  keyword: effectiveSearchKeyword,
-                })}
+                title={
+                  effectiveSearchKeyword && isWorkflowList
+                    ? t('agents.workflowNoResultsDescription', {
+                        keyword: effectiveSearchKeyword,
+                      })
+                    : t('agents.noResults')
+                }
                 description={t('agents.noResults')}
                 actions={[
                   {
-                    label: t('agents.clearSearch'),
-                    onClick: () => handleSearchChange(''),
+                    label: hasActiveFilters
+                      ? t('agents.listFilters.clear')
+                      : t('agents.clearSearch'),
+                    onClick: handleClearCriteria,
                     variant: 'outline' as const,
                   },
                 ]}
@@ -441,7 +601,7 @@ export function AgentAssetListPage({ assetKind }: AgentAssetListPageProps) {
             ) : (
               <AgentEmptySearchResults
                 query={effectiveSearchKeyword}
-                onClearSearch={() => handleSearchChange('')}
+                onClearSearch={handleClearCriteria}
               />
             )
           ) : (
