@@ -68,6 +68,7 @@ import {
 } from '@/components/chat/utils/message-tree';
 import { AIChatHeader } from '@/components/chat/variants/aichat/chat-header';
 import { AIChatHomeView } from '@/components/chat/variants/aichat/home-view';
+import { AIChatRuntimeErrorNotice } from '@/components/chat/variants/aichat/runtime-error-notice';
 import {
   AIChatAssetAuditButton,
   AIChatAssetAuditPanel,
@@ -578,20 +579,21 @@ export function AIChatShell({
       showAssetAuditControl,
     ]
   );
-
-  useEffect(() => {
-    if (!error) {
-      lastErrorToastRef.current = null;
-      return;
-    }
-
-    const matchingErrorMessage = [...activeMessages]
-      .reverse()
-      .find(message => message.status === 'error' && message.error === error);
-    const errorInput = matchingErrorMessage
-      ? getAIChatMessageErrorInput(matchingErrorMessage)
+  const matchingRuntimeErrorMessage = useMemo(
+    () =>
+      error
+        ? [...activeMessages]
+            .reverse()
+            .find(message => message.status === 'error' && message.error === error) ?? null
+        : null,
+    [activeMessages, error]
+  );
+  const resolvedRuntimeError = useMemo(() => {
+    if (!error) return null;
+    const errorInput = matchingRuntimeErrorMessage
+      ? getAIChatMessageErrorInput(matchingRuntimeErrorMessage)
       : { message: error };
-    const resolvedError = resolveAIChatErrorMessage(
+    return resolveAIChatErrorMessage(
       (key, values) => tGlobal(key as never, values),
       errorInput,
       {
@@ -599,27 +601,57 @@ export function AIChatShell({
         workspaceId: currentWorkspace?.id,
       }
     );
-    const toastKey = `${resolvedError.code ?? 'unknown'}:${error}`;
+  }, [
+    currentWorkspace?.id,
+    error,
+    isBillingAdmin,
+    matchingRuntimeErrorMessage,
+    tGlobal,
+  ]);
+  const showInlineRuntimeError =
+    resolvedRuntimeError?.kind === 'billing' ||
+    resolvedRuntimeError?.kind === 'server' ||
+    resolvedRuntimeError?.kind === 'provider';
+
+  useEffect(() => {
+    if (!error) {
+      lastErrorToastRef.current = null;
+      return;
+    }
+
+    if (!resolvedRuntimeError || showInlineRuntimeError) {
+      return;
+    }
+
+    const toastKey = `${resolvedRuntimeError.code ?? 'unknown'}:${error}`;
 
     if (lastErrorToastRef.current === toastKey) {
       return;
     }
 
     lastErrorToastRef.current = toastKey;
-    const toastFn = resolvedError.isBilling ? toast.warning : toast.error;
-    toastFn(resolvedError.title || resolvedError.description, {
-      id: resolvedError.code ? `aichat-billing-${resolvedError.code}` : undefined,
-      description: resolvedError.title ? resolvedError.description : undefined,
-      classNames: resolvedError.isBilling ? workflowBillingToastClassNames : undefined,
+    const toastFn = resolvedRuntimeError.isBilling ? toast.warning : toast.error;
+    toastFn(resolvedRuntimeError.title || resolvedRuntimeError.description, {
+      id: resolvedRuntimeError.code
+        ? `aichat-billing-${resolvedRuntimeError.code}`
+        : undefined,
+      description: resolvedRuntimeError.title ? resolvedRuntimeError.description : undefined,
+      classNames: resolvedRuntimeError.isBilling ? workflowBillingToastClassNames : undefined,
       action:
-        isBillingAdmin && resolvedError.href && resolvedError.actionLabel
+        isBillingAdmin && resolvedRuntimeError.href && resolvedRuntimeError.actionLabel
           ? createElement(WorkflowBillingToastAction, {
-              label: resolvedError.actionLabel,
-              onClick: () => router.push(resolvedError.href as string),
+              label: resolvedRuntimeError.actionLabel,
+              onClick: () => router.push(resolvedRuntimeError.href as string),
             })
           : undefined,
     });
-  }, [activeMessages, currentWorkspace?.id, error, isBillingAdmin, router, tGlobal]);
+  }, [
+    error,
+    isBillingAdmin,
+    resolvedRuntimeError,
+    router,
+    showInlineRuntimeError,
+  ]);
 
   useEffect(() => {
     if (!pendingUserMessage) return;
@@ -865,6 +897,33 @@ export function AIChatShell({
       toolGovernanceOperationContext,
     ]
   );
+
+  const handleRetryRuntimeError = useCallback(() => {
+    if (!matchingRuntimeErrorMessage) return;
+    void handleRegenerate(matchingRuntimeErrorMessage);
+  }, [handleRegenerate, matchingRuntimeErrorMessage]);
+  const runtimeErrorActionHref =
+    resolvedRuntimeError?.href || (isBillingAdmin ? '/dashboard/provider' : null);
+  const runtimeErrorNotice =
+    showInlineRuntimeError && resolvedRuntimeError ? (
+      <AIChatRuntimeErrorNotice
+        title={resolvedRuntimeError.title || resolvedRuntimeError.description}
+        description={resolvedRuntimeError.description}
+        retryLabel={t('chat.retry')}
+        configureLabel={
+          runtimeErrorActionHref
+            ? resolvedRuntimeError.actionLabel || t('consoleChat.configureModel')
+            : undefined
+        }
+        isBilling={resolvedRuntimeError.isBilling}
+        canRetry={Boolean(matchingRuntimeErrorMessage)}
+        onRetry={handleRetryRuntimeError}
+        onConfigure={
+          runtimeErrorActionHref ? () => router.push(runtimeErrorActionHref) : undefined
+        }
+      />
+    ) : null;
+  const composerTopAccessory = runtimeErrorNotice || inputTopNotice;
 
   const handleEditStart = useCallback(
     (message: AIChatMessage) => {
@@ -1402,7 +1461,7 @@ export function AIChatShell({
               null
             }
             activeToolGovernanceApprovalFallback={activeToolGovernanceApprovalFallback}
-            topAccessory={inputTopNotice}
+            topAccessory={composerTopAccessory}
           />
         </main>
       </ToolGovernancePendingApprovalScopeProvider>

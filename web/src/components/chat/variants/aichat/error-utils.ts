@@ -22,6 +22,7 @@ export interface AIChatErrorDisplayMessage {
   actionLabel?: string;
   href?: string | null;
   isBilling: boolean;
+  kind: 'billing' | 'server' | 'timeout' | 'network' | 'provider' | 'unknown';
 }
 
 function includesAny(value: string, candidates: string[]): boolean {
@@ -33,7 +34,7 @@ function resolveFriendlyRuntimeError(
   rawMessage: string | undefined,
   code: string | undefined,
   isAdmin: boolean
-): Pick<AIChatErrorDisplayMessage, 'title' | 'description'> | null {
+): Pick<AIChatErrorDisplayMessage, 'title' | 'description' | 'kind'> | null {
   const normalized = rawMessage?.toLowerCase() ?? '';
 
   if (
@@ -41,6 +42,7 @@ function resolveFriendlyRuntimeError(
     includesAny(normalized, ['internal server error', 'unknown error', 'status code 500'])
   ) {
     return {
+      kind: 'server',
       title: t('webapp.consoleChat.errors.server.title'),
       description: t(
         isAdmin
@@ -60,6 +62,7 @@ function resolveFriendlyRuntimeError(
     ])
   ) {
     return {
+      kind: 'timeout',
       title: t('webapp.consoleChat.errors.timeout.title'),
       description: t('webapp.consoleChat.errors.timeout.description'),
     };
@@ -77,6 +80,7 @@ function resolveFriendlyRuntimeError(
     ])
   ) {
     return {
+      kind: 'network',
       title: t('webapp.consoleChat.errors.network.title'),
       description: t('webapp.consoleChat.errors.network.description'),
     };
@@ -94,6 +98,7 @@ function resolveFriendlyRuntimeError(
     ])
   ) {
     return {
+      kind: 'provider',
       title: t('webapp.consoleChat.errors.provider.title'),
       description: t(
         isAdmin
@@ -117,6 +122,7 @@ export function resolveAIChatErrorMessage(
     return {
       description: fallbackDescription,
       isBilling: false,
+      kind: 'unknown',
     };
   }
 
@@ -138,15 +144,25 @@ export function resolveAIChatErrorMessage(
     code,
     Boolean(options.isAdmin)
   );
+  const isBilling = isWorkflowBillingErrorCode(billingCode);
 
   return {
     code,
-    title: billingMessage?.title || friendlyRuntimeError?.title,
+    title: isBilling
+      ? billingMessage?.title
+      : friendlyRuntimeError?.title || billingMessage?.title,
     description:
-      billingMessage?.description || friendlyRuntimeError?.description || fallbackDescription,
+      (isBilling
+        ? billingMessage?.description
+        : friendlyRuntimeError?.description || billingMessage?.description) || fallbackDescription,
     actionLabel: billingMessage?.actionLabel,
     href: billingMessage?.href,
-    isBilling: isWorkflowBillingErrorCode(billingCode),
+    isBilling,
+    kind: isBilling
+      ? 'billing'
+      : friendlyRuntimeError?.kind
+        ? friendlyRuntimeError.kind
+        : 'unknown',
   };
 }
 
