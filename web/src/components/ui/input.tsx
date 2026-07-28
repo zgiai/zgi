@@ -7,7 +7,7 @@ import { SearchIcon, EyeIcon, EyeOffIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 const inputVariants = cva(
-  'flex h-9 w-full rounded-lg px-3 py-1 text-sm shadow-xs transition-all file:inline-flex file:h-7 file:border-0 file:bg-transparent file:text-sm file:font-medium disabled:cursor-not-allowed disabled:opacity-50 placeholder:text-muted-foreground/50 input-depth focus-border',
+  'flex h-9 w-full rounded-lg px-3 py-1 text-sm leading-5 shadow-xs transition-all file:inline-flex file:h-7 file:border-0 file:bg-transparent file:text-sm file:font-medium disabled:cursor-not-allowed disabled:opacity-50 placeholder:text-muted-foreground/50 input-depth focus-border',
   {
     variants: {
       variant: {
@@ -72,8 +72,6 @@ const Input = React.forwardRef<HTMLInputElement, InputProps>(
         data-slot="input"
         className={cn(
           inputVariants({ variant, error: isError, className: !root ? className : undefined }),
-          // Preserve thin lower glyph strokes (for example "_") at fractional display scaling.
-          '[-webkit-text-stroke:0.1px_currentColor]',
           needsAdornmentLayer && 'w-full',
           leftIcon && 'pl-10',
           rightIcon && 'pr-10',

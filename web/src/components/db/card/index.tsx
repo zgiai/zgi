@@ -188,7 +188,7 @@ function DbCardBase({ db, onEdit, onDeleted, className }: DbCardProps) {
         itemNameLabel={common('confirmDialog.itemNameLabel')}
         confirmationLabel={common('confirmDialog.typeNameLabel')}
         confirmationPlaceholder={common('confirmDialog.typeNamePlaceholder')}
-        confirmationMismatchText={common('confirmDialog.typeNameMismatch')}
+        confirmationTooltipText={common('confirmDialog.typeNameTooltip')}
         confirmText={common('delete')}
         confirmingText={common('statusLabels.deleting')}
         cancelText={common('cancel')}

@@ -392,7 +392,7 @@ function AgentCard({ agent, onDeleted, onNavigate, pageIndex }: AgentCardProps) 
         itemNameLabel={tCommon('confirmDialog.itemNameLabel')}
         confirmationLabel={tCommon('confirmDialog.typeNameLabel')}
         confirmationPlaceholder={tCommon('confirmDialog.typeNamePlaceholder')}
-        confirmationMismatchText={tCommon('confirmDialog.typeNameMismatch')}
+        confirmationTooltipText={tCommon('confirmDialog.typeNameTooltip')}
         confirmText={tCommon('delete')}
         confirmingText={tCommon('statusLabels.deleting')}
         cancelText={tCommon('cancel')}

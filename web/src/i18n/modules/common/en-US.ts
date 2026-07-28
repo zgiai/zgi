@@ -341,7 +341,7 @@ const messages = {
     itemNameLabel: 'Resource to delete',
     typeNameLabel: 'Enter the full name shown above to confirm',
     typeNamePlaceholder: 'Enter the full name shown above',
-    typeNameMismatch: 'The name does not match. Enter the full name.',
+    typeNameTooltip: 'Enter the name of the resource to delete.',
     confirmButton: 'Confirm',
     cancelButton: 'Cancel',
   },

@@ -328,7 +328,7 @@ const messages: CommonMessages = {
     itemNameLabel: '待删除资源',
     typeNameLabel: '请输入上方完整名称以确认删除',
     typeNamePlaceholder: '输入上方完整名称',
-    typeNameMismatch: '名称不一致，请输入完整名称',
+    typeNameTooltip: '请输入要删除的资源名称',
     confirmButton: '确认',
     cancelButton: '取消',
   },

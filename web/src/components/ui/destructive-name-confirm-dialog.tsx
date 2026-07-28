@@ -14,6 +14,7 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 
 interface DestructiveNameConfirmDialogProps {
   open: boolean;
@@ -24,7 +25,7 @@ interface DestructiveNameConfirmDialogProps {
   itemNameLabel: string;
   confirmationLabel: string;
   confirmationPlaceholder: string;
-  confirmationMismatchText: string;
+  confirmationTooltipText: string;
   confirmText: string;
   confirmingText: string;
   cancelText: string;
@@ -41,7 +42,7 @@ export function DestructiveNameConfirmDialog({
   itemNameLabel,
   confirmationLabel,
   confirmationPlaceholder,
-  confirmationMismatchText,
+  confirmationTooltipText,
   confirmText,
   confirmingText,
   cancelText,
@@ -51,7 +52,6 @@ export function DestructiveNameConfirmDialog({
   const inputId = useId();
   const [confirmationValue, setConfirmationValue] = useState('');
   const isMatch = itemName.length > 0 && confirmationValue === itemName;
-  const showMismatch = confirmationValue.length > 0 && !isMatch;
 
   useEffect(() => {
     if (!open) {
@@ -110,14 +110,7 @@ export function DestructiveNameConfirmDialog({
                 placeholder={confirmationPlaceholder}
                 autoComplete="off"
                 autoFocus
-                aria-invalid={showMismatch}
-                aria-describedby={showMismatch ? `${inputId}-error` : undefined}
               />
-              {showMismatch && (
-                <p id={`${inputId}-error`} className="text-xs text-destructive" role="alert">
-                  {confirmationMismatchText}
-                </p>
-              )}
             </div>
           </DialogBody>
 
@@ -125,10 +118,29 @@ export function DestructiveNameConfirmDialog({
             <Button type="button" variant="outline" onClick={() => handleOpenChange(false)}>
               {cancelText}
             </Button>
-            <Button type="submit" variant="destructive" disabled={!isMatch || loading}>
-              {loading && <Loader2 className="h-4 w-4 animate-spin" />}
-              {loading ? confirmingText : confirmText}
-            </Button>
+            {!isMatch && !loading ? (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span
+                    className="inline-flex cursor-not-allowed"
+                    tabIndex={0}
+                    aria-label={confirmationTooltipText}
+                  >
+                    <Button type="submit" variant="destructive" disabled>
+                      {confirmText}
+                    </Button>
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent side="top" align="end" className="max-w-64 text-center">
+                  {confirmationTooltipText}
+                </TooltipContent>
+              </Tooltip>
+            ) : (
+              <Button type="submit" variant="destructive" disabled={loading}>
+                {loading && <Loader2 className="h-4 w-4 animate-spin" />}
+                {loading ? confirmingText : confirmText}
+              </Button>
+            )}
           </DialogFooter>
         </form>
       </DialogContent>

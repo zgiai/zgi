@@ -252,7 +252,7 @@ function DatasetCard({ dataset, onDeleted, pageIndex, currentFolderId }: Dataset
         itemNameLabel={tCommon('confirmDialog.itemNameLabel')}
         confirmationLabel={tCommon('confirmDialog.typeNameLabel')}
         confirmationPlaceholder={tCommon('confirmDialog.typeNamePlaceholder')}
-        confirmationMismatchText={tCommon('confirmDialog.typeNameMismatch')}
+        confirmationTooltipText={tCommon('confirmDialog.typeNameTooltip')}
         confirmText={tCommon('delete')}
         confirmingText={tCommon('statusLabels.deleting')}
         cancelText={tCommon('cancel')}
