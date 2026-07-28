@@ -14,7 +14,6 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { useT } from '@/i18n/translations';
 import { cn } from '@/lib/utils';
 import { isAIChatContinuationLikelyStarted } from '@/components/chat/variants/aichat/error-utils';
-import { localizeAIChatRuntimeMessage } from '@/components/chat/variants/aichat/timeline-display-i18n';
 
 export type ToolGovernanceDecisionAction = 'approve' | 'reject';
 
@@ -38,8 +37,6 @@ export interface ToolGovernancePendingApproval {
   toolLabel?: string | null;
   actionSentence: string;
   assets: ToolGovernanceDisplayAsset[];
-  summaryRows?: ToolGovernanceDisplayRow[];
-  details?: ToolGovernanceDisplayRow[];
   riskLabel?: string | null;
   permissionLabel?: string | null;
   canSubmit: boolean;
@@ -65,7 +62,9 @@ let pendingApprovalSequence = 0;
 const pendingApprovalSnapshots = new Map<string, ToolGovernancePendingApproval | null>();
 const dismissedPendingApprovalKeys = new Set<string>();
 const DEFAULT_PENDING_APPROVAL_SCOPE_ID = 'default';
-const ToolGovernancePendingApprovalScopeContext = createContext(DEFAULT_PENDING_APPROVAL_SCOPE_ID);
+const ToolGovernancePendingApprovalScopeContext = createContext(
+  DEFAULT_PENDING_APPROVAL_SCOPE_ID
+);
 
 function pendingApprovalEntryKey(scopeId: string, approvalId: string) {
   return `${scopeId}:${approvalId}`;
@@ -204,6 +203,7 @@ export function ToolGovernanceDecisionCard({
   onSubmitDecision,
 }: ToolGovernanceDecisionCardProps) {
   const t = useT('webapp');
+  void toolLabel;
   const [rememberForSession, setRememberForSession] = useState(false);
   const [submittingAction, setSubmittingAction] = useState<ToolGovernanceDecisionAction | null>(
     null
@@ -223,7 +223,10 @@ export function ToolGovernanceDecisionCard({
     effectiveNeedsApproval ||
     Boolean(effectiveApprovalStatus);
   const submitEnabled =
-    canSubmit && Boolean(onSubmitDecision) && !submittingAction && !effectiveApprovalStatus;
+    canSubmit &&
+    Boolean(onSubmitDecision) &&
+    !submittingAction &&
+    !effectiveApprovalStatus;
   const actionsUnavailable =
     effectiveNeedsApproval && !submittingAction && (!canSubmit || !onSubmitDecision)
       ? t('consoleChat.governance.actionsUnavailable')
@@ -254,12 +257,11 @@ export function ToolGovernanceDecisionCard({
         setResolvedAction(action);
         return;
       }
-      const message = localizeAIChatRuntimeMessage(
-        error instanceof Error ? error.message : null,
-        t,
-        t('consoleChat.governance.submitFailed')
-      );
-      setSubmitError(message ?? t('consoleChat.governance.submitFailed'));
+      const message =
+        error instanceof Error && error.message
+          ? error.message
+          : t('consoleChat.governance.submitFailed');
+      setSubmitError(message);
       setResolvedAction(null);
     } finally {
       setSubmittingAction(null);
@@ -300,12 +302,7 @@ export function ToolGovernanceDecisionCard({
             <CheckCircle2 className="size-3.5" />
           )}
         </span>
-        <span className="min-w-0 flex-1">
-          <span className="block truncate font-medium">{auditText}</span>
-          {toolLabel ? (
-            <span className="block truncate text-[10px] text-muted-foreground">{toolLabel}</span>
-          ) : null}
-        </span>
+        <span className="min-w-0 flex-1 truncate font-medium">{auditText}</span>
       </div>
     );
   }
@@ -339,14 +336,7 @@ export function ToolGovernanceDecisionCard({
         >
           {isAllowed ? <CheckCircle2 className="size-3.5" /> : <ShieldAlert className="size-3.5" />}
         </span>
-        <span className="min-w-0 flex-1">
-          <span className="block truncate font-medium">{title}</span>
-          {toolLabel ? (
-            <span className="block truncate text-[10px] font-normal text-muted-foreground">
-              {toolLabel}
-            </span>
-          ) : null}
-        </span>
+        <span className="min-w-0 flex-1 truncate font-medium">{title}</span>
         {canExpand ? (
           <ChevronDown
             className={cn('size-3.5 shrink-0 text-muted-foreground transition-transform', {
@@ -543,12 +533,11 @@ export function ToolGovernanceApprovalPanel({
         return;
       }
       restoreDismissedApproval?.();
-      const message = localizeAIChatRuntimeMessage(
-        error instanceof Error ? error.message : null,
-        t,
-        t('consoleChat.governance.submitFailed')
-      );
-      setSubmitError(message ?? t('consoleChat.governance.submitFailed'));
+      const message =
+        error instanceof Error && error.message
+          ? error.message
+          : t('consoleChat.governance.submitFailed');
+      setSubmitError(message);
       setResolvedAction(null);
     } finally {
       setSubmittingAction(null);
@@ -584,11 +573,6 @@ export function ToolGovernanceApprovalPanel({
           <div className="mt-1 break-words text-sm font-medium text-foreground">
             {approval.actionSentence}
           </div>
-          {approval.toolLabel ? (
-            <div className="mt-1 break-words font-mono text-[11px] text-muted-foreground">
-              {approval.toolLabel}
-            </div>
-          ) : null}
           {riskPermissionText ? (
             <div className="mt-1.5 text-[11px] text-muted-foreground">
               <span className="truncate">{riskPermissionText}</span>
@@ -624,30 +608,6 @@ export function ToolGovernanceApprovalPanel({
         </div>
       ) : null}
 
-      {approval.summaryRows && approval.summaryRows.length > 0 ? (
-        <dl className="mt-3 grid gap-1.5 rounded-md border bg-background/75 p-2 text-[11px] sm:grid-cols-2">
-          {approval.summaryRows.map(row => (
-            <div key={row.key} className="min-w-0">
-              <dt className="text-muted-foreground">{row.label}</dt>
-              <dd className="mt-0.5 break-words font-medium text-foreground">{row.value}</dd>
-            </div>
-          ))}
-        </dl>
-      ) : null}
-
-      {approval.details && approval.details.length > 0 ? (
-        <dl className="mt-3 grid gap-1 rounded-md border bg-background/75 p-2 text-[11px]">
-          {approval.details.map(row => (
-            <div key={row.key} className="grid grid-cols-[104px_minmax(0,1fr)] gap-2">
-              <dt className="text-muted-foreground">{row.label}</dt>
-              <dd className="min-w-0 max-h-40 overflow-auto whitespace-pre-wrap break-all font-mono text-foreground/80">
-                {row.value}
-              </dd>
-            </div>
-          ))}
-        </dl>
-      ) : null}
-
       <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
         <label className="flex min-w-0 items-center gap-2 text-[11px] text-muted-foreground">
           <Checkbox
@@ -667,7 +627,9 @@ export function ToolGovernanceApprovalPanel({
             disabled={!submitEnabled}
             onClick={() => void submitDecision('reject')}
           >
-            {submittingAction === 'reject' ? <Loader2 className="size-3.5 animate-spin" /> : null}
+            {submittingAction === 'reject' ? (
+              <Loader2 className="size-3.5 animate-spin" />
+            ) : null}
             {t('consoleChat.governance.approvalPanel.reject')}
           </Button>
           <Button
@@ -677,7 +639,9 @@ export function ToolGovernanceApprovalPanel({
             disabled={!submitEnabled}
             onClick={() => void submitDecision('approve')}
           >
-            {submittingAction === 'approve' ? <Loader2 className="size-3.5 animate-spin" /> : null}
+            {submittingAction === 'approve' ? (
+              <Loader2 className="size-3.5 animate-spin" />
+            ) : null}
             {t('consoleChat.governance.approvalPanel.approve')}
           </Button>
         </div>
