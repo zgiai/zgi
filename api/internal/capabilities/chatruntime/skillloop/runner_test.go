@@ -1233,6 +1233,83 @@ func TestRunnerSkipsEmptyIntermediateAnswerWithoutUserVisibleError(t *testing.T)
 	}
 }
 
+func TestRunnerRetriesInvalidIntermediateAnswerArgumentsWithoutUserVisibleError(t *testing.T) {
+	ctx := context.Background()
+	fakeLLM := &runnerTestLLMClient{
+		appChatResponses: []*adapter.ChatResponse{
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{
+						Role: "assistant",
+						ToolCalls: []adapter.ToolCall{{
+							ID:   "invalid-intermediate",
+							Type: "function",
+							Function: adapter.FunctionCall{
+								Name:      skills.MetaToolIntermediateAnswer,
+								Arguments: `{"content":"unfinished`,
+							},
+						}},
+					},
+				}},
+			},
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{Role: "assistant", Content: "Query completed after retry."},
+				}},
+			},
+		},
+	}
+	runtime := skills.NewRuntimeWithCatalog(nil, nil, "")
+	var traces []skills.SkillTrace
+	var events []Event
+	runner := &Runner{
+		LLMClient:    fakeLLM,
+		SkillRuntime: runtime,
+		AppContext:   &llmclient.AppContext{},
+		OnTrace: func(_ []skills.SkillTrace, trace skills.SkillTrace) {
+			traces = append(traces, trace)
+		},
+		OnEvent: func(event Event) error {
+			events = append(events, event)
+			return nil
+		},
+	}
+	prepared := NewPreparedChat("conv-invalid-intermediate", "msg-invalid-intermediate", "", "auto", &adapter.ChatRequest{
+		Messages: []adapter.Message{{Role: "user", Content: "prepare a draft"}},
+	})
+
+	answer, _, err := runner.Run(ctx, RunRequest{
+		Prepared: prepared,
+		Resolved: runnerTestResolvedSkills(),
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if answer != "Query completed after retry." {
+		t.Fatalf("answer = %q, want final answer after retry", answer)
+	}
+	if fakeLLM.appChatCalls != 2 {
+		t.Fatalf("AppChat calls = %d, want invalid call plus retry", fakeLLM.appChatCalls)
+	}
+	foundFeedback := false
+	for _, trace := range traces {
+		if trace.Kind == "planner_feedback" && trace.Arguments["code"] == "invalid_tool_arguments" {
+			foundFeedback = true
+		}
+		if trace.Kind == "meta_tool" {
+			t.Fatalf("trace = %#v, want invalid protocol arguments kept out of the visible tool timeline", trace)
+		}
+	}
+	if !foundFeedback {
+		t.Fatal("planner feedback for invalid tool arguments was not recorded")
+	}
+	for _, event := range events {
+		if event.Type == EventSkillCallError {
+			t.Fatalf("event = %#v, want invalid protocol arguments hidden while retrying", event)
+		}
+	}
+}
+
 func TestRunnerRecordsTurnStateWithoutUserVisibleEvent(t *testing.T) {
 	ctx := context.Background()
 	fakeLLM := &runnerTestLLMClient{
