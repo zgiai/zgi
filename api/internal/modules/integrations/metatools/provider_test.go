@@ -312,6 +312,10 @@ func TestSearchAndGuideExposeOnlyActionAuthorizedConnections(t *testing.T) {
 	if action["connection_name"] != fixture.connectionOne.Name || action["connection_selection"] != preferredSelector {
 		t.Fatalf("preferred connection = %#v", action)
 	}
+	if !reflect.DeepEqual(action["required_any_scopes"], []interface{}{"pulls:write", "repo:write"}) ||
+		!reflect.DeepEqual(action["preferred_scopes"], []interface{}{"repo:write"}) {
+		t.Fatalf("search action alternative scope contract = %#v", action)
+	}
 	assertScopeLabelsOutput(t, action["scope_labels_i18n"])
 	assertNoConnectionUUIDs(t, messages[0].Data, fixture.connectionOne.ID, fixture.connectionTwo.ID)
 	if err := tools.ValidateJSONSchemaValue(searchTool.GetEntity().OutputSchema, messages[0].Data); err != nil {
@@ -332,10 +336,55 @@ func TestSearchAndGuideExposeOnlyActionAuthorizedConnections(t *testing.T) {
 	if guide["connection_name"] != fixture.connectionOne.Name || guide["connection_selection"] != preferredSelector {
 		t.Fatalf("guide preferred connection = %#v", guide)
 	}
+	if !reflect.DeepEqual(guide["required_any_scopes"], []interface{}{"pulls:write", "repo:write"}) ||
+		!reflect.DeepEqual(guide["preferred_scopes"], []interface{}{"repo:write"}) {
+		t.Fatalf("guide alternative scope contract = %#v", guide)
+	}
 	assertScopeLabelsOutput(t, guide["scope_labels_i18n"])
 	assertNoConnectionUUIDs(t, guide, fixture.connectionOne.ID, fixture.connectionTwo.ID)
 	if err := tools.ValidateJSONSchemaValue(guideTool.GetEntity().OutputSchema, guide); err != nil {
 		t.Fatalf("get_action_guide output schema error = %v", err)
+	}
+}
+
+func TestSearchAndGuideReportScopeUpgradeBeforeExecution(t *testing.T) {
+	fixture := newMetaToolFixture(t)
+	fixture.connectionOne.AuthType = integrations.ConnectionAuthTypeOAuth2
+	fixture.connectionOne.GrantedScopes = []string{"profile:read"}
+	fixture.access.preferenceAllowed[fixture.connectionOne.ID] = true
+	fixture.access.actionAllowed[fixture.connectionOne.ID.String()+"/"+fixture.actionID] = true
+	runtimeParameters := map[string]interface{}{
+		"integration_selected_connection_ids": map[string][]string{
+			fixture.integrationID: {fixture.connectionOne.ID.String()},
+		},
+		"integration_connection_ids": map[string]string{fixture.integrationID: fixture.connectionOne.ID.String()},
+	}
+	searchTool := fixture.runtimeTool(t, ToolSearchActions, runtimeParameters)
+	messages, err := searchTool.Invoke(context.Background(), fixture.accountID.String(), map[string]interface{}{
+		"integration_id": fixture.integrationID, "limit": 5,
+	}, nil, nil, nil)
+	if err != nil || len(messages) != 1 {
+		t.Fatalf("search messages = %#v, err = %v", messages, err)
+	}
+	actions := messages[0].Data["actions"].([]interface{})
+	if len(actions) != 1 {
+		t.Fatalf("search actions = %#v", actions)
+	}
+	action := actions[0].(map[string]interface{})
+	if action["availability"] != actionAvailabilityScopeGap || action["can_execute"] != false ||
+		action["recovery_action"] != "upgrade_oauth_scope" {
+		t.Fatalf("search availability = %#v", action)
+	}
+	guideTool := fixture.runtimeTool(t, ToolGetActionGuide, runtimeParameters)
+	guideMessages, err := guideTool.Invoke(context.Background(), fixture.accountID.String(), map[string]interface{}{
+		"integration_id": fixture.integrationID, "action_id": fixture.actionID,
+	}, nil, nil, nil)
+	if err != nil || len(guideMessages) != 1 {
+		t.Fatalf("guide messages = %#v, err = %v", guideMessages, err)
+	}
+	if guideMessages[0].Data["availability"] != actionAvailabilityScopeGap ||
+		guideMessages[0].Data["can_execute"] != false {
+		t.Fatalf("guide availability = %#v", guideMessages[0].Data)
 	}
 }
 
@@ -396,7 +445,7 @@ func TestSearchGuideAndExecuteRejectActionIncompatibleWithPreferredConnectionAut
 	_, err = guideTool.Invoke(context.Background(), fixture.accountID.String(), map[string]interface{}{
 		"integration_id": fixture.integrationID, "action_id": fixture.actionID,
 	}, nil, nil, nil)
-	if integrations.ErrorCode(err) != integrations.ErrorCodeAccessDenied {
+	if integrations.ErrorCode(err) != integrations.ErrorCodeActionAuthMethod {
 		t.Fatalf("guide error = %v, code = %q", err, integrations.ErrorCode(err))
 	}
 
@@ -405,7 +454,7 @@ func TestSearchGuideAndExecuteRejectActionIncompatibleWithPreferredConnectionAut
 		"integration_id": fixture.integrationID, "action_id": fixture.actionID,
 		"arguments": map[string]interface{}{"title": "hello"},
 	}, nil, nil, nil)
-	if integrations.ErrorCode(err) != integrations.ErrorCodeAccessDenied {
+	if integrations.ErrorCode(err) != integrations.ErrorCodeActionAuthMethod {
 		t.Fatalf("execute error = %v, code = %q", err, integrations.ErrorCode(err))
 	}
 	if len(fixture.executor.requests) != 0 {
@@ -563,6 +612,37 @@ func TestExecuteActionPreservesPreferredClassificationAfterGovernanceEnrichment(
 		t.Fatalf("enriched preferred result = %#v", messages)
 	}
 	assertNoConnectionUUIDs(t, messages[0].Data, fixture.connectionOne.ID)
+}
+
+func TestExecuteActionGovernanceEnrichmentReturnsMissingScopeReason(t *testing.T) {
+	fixture := newMetaToolFixture(t)
+	fixture.connectionOne.AuthType = integrations.ConnectionAuthTypeOAuth2
+	fixture.connectionOne.GrantedScopes = []string{"profile:read"}
+	fixture.access.preferenceAllowed[fixture.connectionOne.ID] = true
+	fixture.access.actionAllowed[fixture.connectionOne.ID.String()+"/"+fixture.actionID] = true
+	tool := fixture.runtimeTool(t, ToolExecuteAction, map[string]interface{}{
+		"integration_selected_connection_ids": map[string][]string{fixture.integrationID: {fixture.connectionOne.ID.String()}},
+		"integration_connection_ids":          map[string]string{fixture.integrationID: fixture.connectionOne.ID.String()},
+	})
+	enricher, ok := tool.(tools.ToolGovernanceArgumentEnricherWithError)
+	if !ok {
+		t.Fatal("execute_action does not implement fail-closed governance enrichment")
+	}
+	enriched, err := enricher.EnrichGovernanceArgumentsWithError(
+		context.Background(),
+		fixture.accountID.String(),
+		map[string]interface{}{
+			"integration_id": fixture.integrationID,
+			"action_id":      fixture.actionID,
+			"arguments":      map[string]interface{}{"title": "hello"},
+		},
+	)
+	if integrations.ErrorCode(err) != integrations.ErrorCodeInsufficientScope {
+		t.Fatalf("error = %v (%s)", err, integrations.ErrorCode(err))
+	}
+	if _, exposed := enriched["connection_id"]; exposed {
+		t.Fatalf("failed enrichment exposed an internal connection id: %#v", enriched)
+	}
 }
 
 func TestModelVisibleConnectionLabelsCannotEchoInternalUUID(t *testing.T) {
@@ -1057,16 +1137,24 @@ func newMetaToolFixture(t *testing.T) *metaToolFixture {
 		}, "issue_id"),
 		Effect: toolgovernance.EffectCreate, RiskLevel: toolgovernance.RiskLevelHigh,
 		DataEgress: true, ExternalDestination: "api.github.com", Idempotent: false,
-		RequiredScopes: []string{"issues:write"},
+		RequiredScopes:    []string{"issues:write"},
+		RequiredAnyScopes: []string{"repo:write", "pulls:write"},
+		PreferredScopes:   []string{"repo:write"},
 		ScopeLabelsI18n: integrations.LocalizedLabelMap{
 			"issues:write": {
 				integrations.LocaleEnglishUS: "Write issues", integrations.LocaleSimplifiedChinese: "写入议题",
+			},
+			"repo:write": {
+				integrations.LocaleEnglishUS: "Write repositories", integrations.LocaleSimplifiedChinese: "写入仓库",
+			},
+			"pulls:write": {
+				integrations.LocaleEnglishUS: "Write pull requests", integrations.LocaleSimplifiedChinese: "写入合并请求",
 			},
 		},
 		DefaultPolicy: &integrations.DefaultActionPolicy{
 			Enabled: true, ApprovalPolicy: toolgovernance.ApprovalPolicyAlwaysAsk, DataEgressAllowed: true,
 		},
-		SupportedAuthMethodIDs: []string{"none"},
+		SupportedAuthMethodIDs: []string{"api_key"},
 		SupportedCallers:       []tools.ToolInvokeFrom{tools.ToolInvokeFromAIChat},
 	}
 	registry := integrations.NewRegistry()
@@ -1080,14 +1168,44 @@ func newMetaToolFixture(t *testing.T) *metaToolFixture {
 			integrations.LocaleEnglishUS: "GitHub test integration.", integrations.LocaleSimplifiedChinese: "GitHub 测试集成。",
 		},
 		AuthMethods: []integrations.AuthMethodDefinition{{
-			ID: "none", Type: integrations.AuthMethodTypeNone,
+			ID: "api_key", Type: integrations.AuthMethodTypeAPIKey,
 			CredentialSource: integrations.ConnectionCredentialSourceOrganization,
-			Label:            "No authentication",
+			Label:            "API key",
 			LabelI18n: integrations.LocalizedText{
-				integrations.LocaleEnglishUS: "No authentication", integrations.LocaleSimplifiedChinese: "\u65e0\u9700\u8eab\u4efd\u9a8c\u8bc1",
+				integrations.LocaleEnglishUS: "API key", integrations.LocaleSimplifiedChinese: "API 密钥",
 			},
 			Available: true,
+			Fields: []integrations.CredentialFieldDefinition{{
+				Key: "token", Label: "Token",
+				LabelI18n: integrations.LocalizedText{
+					integrations.LocaleEnglishUS: "Token", integrations.LocaleSimplifiedChinese: "令牌",
+				},
+				Input: integrations.CredentialFieldInputPassword, Required: true, Secret: true,
+			}},
 		}},
+		Scopes: []integrations.ProviderScopeDefinition{
+			{
+				ID: "issues:write", Label: "Write issues",
+				LabelI18n: integrations.LocalizedText{
+					integrations.LocaleEnglishUS: "Write issues", integrations.LocaleSimplifiedChinese: "写入议题",
+				},
+				Category: integrations.ProviderScopeCategoryProvider, Access: integrations.ProviderScopeAccessWrite,
+			},
+			{
+				ID: "repo:write", Label: "Write repositories",
+				LabelI18n: integrations.LocalizedText{
+					integrations.LocaleEnglishUS: "Write repositories", integrations.LocaleSimplifiedChinese: "写入仓库",
+				},
+				Category: integrations.ProviderScopeCategoryProvider, Access: integrations.ProviderScopeAccessWrite,
+			},
+			{
+				ID: "pulls:write", Label: "Write pull requests",
+				LabelI18n: integrations.LocalizedText{
+					integrations.LocaleEnglishUS: "Write pull requests", integrations.LocaleSimplifiedChinese: "写入合并请求",
+				},
+				Category: integrations.ProviderScopeCategoryProvider, Access: integrations.ProviderScopeAccessWrite,
+			},
+		},
 		Actions: []integrations.ActionDefinition{action},
 	}
 	if err := registry.Register(integrations.Registration{
@@ -1176,7 +1294,7 @@ func newAgentMetaToolFixture(
 		t.Fatalf("register Agent integration: %v", err)
 	}
 	connection := activeConnection(organizationID, integrationID, "gmail", "Team Gmail")
-	connection.AuthMethodID = "none"
+	connection.AuthMethodID = "api_key"
 	lookup := &fakeConnectionLookup{connections: map[uuid.UUID]*integrations.IntegrationConnection{connection.ID: connection}}
 	access := &fakeConnectionAccess{
 		preferenceAllowed:      map[uuid.UUID]bool{},
@@ -1226,7 +1344,7 @@ func activeConnection(organizationID uuid.UUID, integrationID, driverID, name st
 	return &integrations.IntegrationConnection{
 		ID: uuid.New(), OrganizationID: organizationID, IntegrationID: integrationID, DriverID: driverID, Name: name,
 		CredentialSource: integrations.ConnectionCredentialSourceOrganization, AuthType: integrations.ConnectionAuthTypeAPIKey,
-		AuthMethodID: "none",
+		AuthMethodID: "api_key",
 		Status:       integrations.ConnectionStatusActive, HealthStatus: integrations.ConnectionHealthHealthy,
 		AuthStatus: integrations.ConnectionAuthValid, ScopeStatus: integrations.ConnectionScopeVerified,
 	}

@@ -323,7 +323,9 @@ func manifestForIntegrationAction(base toolgovernance.Manifest, integrationID, c
 	manifest.SensitiveDataAllowed = action.SensitiveDataAllowed
 	manifest.ExternalSideEffect = action.Effect != toolgovernance.EffectRead && action.Effect != toolgovernance.EffectNone
 	manifest.AssetType = "integration_connection"
-	manifest.PermissionScopes = append([]string(nil), action.RequiredScopes...)
+	// Governance presents the complete scope contract. Runtime authorization
+	// retains the any-of semantics through ActionScopeRequirement.
+	manifest.PermissionScopes = ActionRequiredScopeIDs(action)
 	if len(manifest.PermissionScopes) == 0 {
 		manifest.PermissionScopes = []string{"integration:" + strings.TrimSpace(integrationID) + ":" + strings.TrimSpace(action.ID)}
 	}

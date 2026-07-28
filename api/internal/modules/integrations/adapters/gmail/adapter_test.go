@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"slices"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -33,7 +34,7 @@ func TestProviderDefinitionOAuthAndWriteDefaults(t *testing.T) {
 			method.LifecycleStrategy != integrations.AuthLifecycleStrategyOAuthRefresh ||
 			method.RequestAuthStrategy != integrations.RequestAuthStrategyBearerHeader ||
 			!method.OAuth.ConnectEnabled || len(method.OAuth.ClientFields) != 2 ||
-			!slices.Equal(method.OAuth.IdentityScopes, []string{ScopeOpenID, ScopeEmail}) ||
+			!slices.Equal(method.OAuth.IdentityScopes, []string{ScopeOpenID, ScopeEmail, ScopeProfile}) ||
 			!strings.HasPrefix(method.OAuth.ProviderSetupURL, "https://") {
 			t.Fatalf("OAuth method = %#v", method)
 		}
@@ -48,6 +49,7 @@ func TestProviderDefinitionOAuthAndWriteDefaults(t *testing.T) {
 			t.Fatalf("OAuth setup step actions = %#v", method.SetupGuide.Steps)
 		}
 	}
+	var account integrations.ActionDefinition
 	var send integrations.ActionDefinition
 	for _, action := range definition.Actions {
 		if !integrations.ActionSupportsAuthMethod(action, AccountOAuthAuthMethodID) ||
@@ -55,9 +57,16 @@ func TestProviderDefinitionOAuthAndWriteDefaults(t *testing.T) {
 			integrations.ActionSupportsAuthMethod(action, "future_service_account") {
 			t.Fatalf("action authentication compatibility = %#v", action)
 		}
+		if action.ID == ActionGetAccount {
+			account = action
+		}
 		if action.ID == ActionSendMail {
 			send = action
 		}
+	}
+	if !slices.Equal(account.RequiredScopes, []string{ScopeOpenID, ScopeEmail, ScopeProfile}) ||
+		account.ScopeLabelsI18n[ScopeProfile][integrations.LocaleEnglishUS] == "" {
+		t.Fatalf("account identity scopes = %#v", account)
 	}
 	if send.DefaultPolicy == nil || send.DefaultPolicy.Enabled ||
 		send.DefaultPolicy.ApprovalPolicy != toolgovernance.ApprovalPolicyAlwaysAsk ||
@@ -178,7 +187,7 @@ func TestSendDoesNotRetryAndErrorsDoNotExposeSecrets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = adapter.Execute(context.Background(), integrations.ActionRequest{
+	result, err := adapter.Execute(context.Background(), integrations.ActionRequest{
 		ActionID: ActionSendMail,
 		Connection: &integrations.ResolvedConnection{
 			IntegrationID: IntegrationID, DriverID: DriverID,
@@ -189,8 +198,135 @@ func TestSendDoesNotRetryAndErrorsDoNotExposeSecrets(t *testing.T) {
 	if err == nil || calls.Load() != 1 {
 		t.Fatalf("err = %v, calls = %d", err, calls.Load())
 	}
+	if result == nil || result.AttemptCount != 1 ||
+		result.ResultCount != 0 || result.Output != nil ||
+		result.ProviderDiagnostics.HTTPStatus != http.StatusServiceUnavailable {
+		t.Fatalf("failure result = %#v", result)
+	}
 	if strings.Contains(err.Error(), "access-secret") || strings.Contains(err.Error(), "client-secret") {
 		t.Fatalf("secret leaked: %v", err)
+	}
+}
+
+func TestGoogleErrorReasonsAreClassifiedAndBounded(t *testing.T) {
+	tests := []struct {
+		reason string
+		code   string
+	}{
+		{reason: "rateLimitExceeded", code: integrations.ErrorCodeRateLimited},
+		{reason: "userRateLimitExceeded", code: integrations.ErrorCodeRateLimited},
+		{reason: "dailyLimitExceeded", code: integrations.ErrorCodeBudgetExceeded},
+		{reason: "domainPolicy", code: integrations.ErrorCodeAccessDenied},
+		{reason: "insufficientPermissions", code: integrations.ErrorCodeAccessDenied},
+	}
+	for _, test := range tests {
+		t.Run(test.reason, func(t *testing.T) {
+			payload := []byte(`{"error":{"status":"PERMISSION_DENIED","message":"do not expose","errors":[{"reason":"` + test.reason + `","message":"do not expose"}]}}`)
+			err, diagnostics := mapGoogleStatus(http.StatusForbidden, http.Header{}, payload, "request-1")
+			if integrations.ErrorCode(err) != test.code {
+				t.Fatalf("error = %v, want %s", err, test.code)
+			}
+			if diagnostics.ErrorCode != test.reason || diagnostics.RequestID != "request-1" ||
+				diagnostics.HTTPStatus != http.StatusForbidden {
+				t.Fatalf("diagnostics = %#v", diagnostics)
+			}
+			if strings.Contains(err.Error(), "do not expose") {
+				t.Fatalf("provider message leaked: %v", err)
+			}
+		})
+	}
+}
+
+func TestGmailReadRetriesRateLimitReason(t *testing.T) {
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("X-Google-Request-ID", "request-"+strconv.Itoa(int(calls.Add(1))))
+		if calls.Load() == 1 {
+			writer.Header().Set("Retry-After", "0")
+			writer.WriteHeader(http.StatusForbidden)
+			_, _ = io.WriteString(writer, `{"error":{"errors":[{"reason":"rateLimitExceeded"}]}}`)
+			return
+		}
+		_, _ = io.WriteString(writer, `{"sub":"user-1","email":"owner@example.com","name":"Owner"}`)
+	}))
+	defer server.Close()
+	adapter, err := newForBaseURLs(server.Client(), server.URL, server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := adapter.Execute(context.Background(), integrations.ActionRequest{
+		ActionID: ActionGetAccount,
+		Connection: &integrations.ResolvedConnection{
+			IntegrationID: IntegrationID, DriverID: DriverID,
+			Credentials: map[string]string{"access_token": "access-secret"},
+		},
+	})
+	if err != nil || result == nil || calls.Load() != 2 || result.AttemptCount != 2 {
+		t.Fatalf("result = %#v, calls = %d, err = %v", result, calls.Load(), err)
+	}
+}
+
+func TestGmailReadRetriesGenericHTTP500(t *testing.T) {
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		call := calls.Add(1)
+		writer.Header().Set("X-Google-Request-ID", "gmail-500-"+strconv.Itoa(int(call)))
+		if call == 1 {
+			writer.WriteHeader(http.StatusInternalServerError)
+			_, _ = io.WriteString(writer, `{"error":{"message":"temporary"}}`)
+			return
+		}
+		_, _ = io.WriteString(writer, `{"sub":"user-1","email":"owner@example.com","name":"Owner"}`)
+	}))
+	defer server.Close()
+	adapter, err := newForBaseURLs(server.Client(), server.URL, server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := adapter.Execute(context.Background(), integrations.ActionRequest{
+		ActionID: ActionGetAccount,
+		Connection: &integrations.ResolvedConnection{
+			IntegrationID: IntegrationID, DriverID: DriverID,
+			Credentials: map[string]string{"access_token": "access-secret"},
+		},
+	})
+	if err != nil || calls.Load() != 2 || result == nil || result.AttemptCount != 2 ||
+		result.ProviderRequestID != "gmail-500-2" {
+		t.Fatalf("result = %#v, calls = %d, err = %v", result, calls.Load(), err)
+	}
+}
+
+func TestGmailRetryBackoffDeadlineReturnsTimeoutWithDiagnostics(t *testing.T) {
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		calls.Add(1)
+		writer.Header().Set("X-Google-Request-ID", "gmail-retry-deadline")
+		writer.Header().Set("Retry-After", "1")
+		writer.WriteHeader(http.StatusTooManyRequests)
+		_, _ = io.WriteString(writer, `{"error":{"errors":[{"reason":"rateLimitExceeded"}]}}`)
+	}))
+	defer server.Close()
+	adapter, err := newForBaseURLs(server.Client(), server.URL, server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	result, err := adapter.Execute(ctx, integrations.ActionRequest{
+		ActionID: ActionGetAccount,
+		Connection: &integrations.ResolvedConnection{
+			IntegrationID: IntegrationID, DriverID: DriverID,
+			Credentials: map[string]string{"access_token": "access-secret"},
+		},
+	})
+	if integrations.ErrorCode(err) != integrations.ErrorCodeTimeout {
+		t.Fatalf("error = %v (%s)", err, integrations.ErrorCode(err))
+	}
+	if calls.Load() != 1 || result == nil || result.AttemptCount != 1 ||
+		result.ProviderRequestID != "gmail-retry-deadline" ||
+		result.ProviderDiagnostics.ErrorCode != "rateLimitExceeded" ||
+		result.ProviderDiagnostics.HTTPStatus != http.StatusTooManyRequests {
+		t.Fatalf("result = %#v, calls = %d", result, calls.Load())
 	}
 }
 

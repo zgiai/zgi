@@ -106,7 +106,7 @@ func validateProviderLocalizationContract(definition ProviderDefinition) error {
 		if err := requireSupportedLocalizedText(actionPath+".description_i18n", action.DescriptionI18n); err != nil {
 			return err
 		}
-		if err := requireDeclaredLocalizedLabels(actionPath+".scope_labels_i18n", action.RequiredScopes, action.ScopeLabelsI18n); err != nil {
+		if err := requireDeclaredLocalizedLabels(actionPath+".scope_labels_i18n", ActionRequiredScopeIDs(action), action.ScopeLabelsI18n); err != nil {
 			return err
 		}
 		if err := validateActionInputSchemaLocalization(actionPath+".input_schema", action.InputSchema); err != nil {

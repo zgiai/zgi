@@ -43,13 +43,18 @@ func newClientForBaseURL(httpClient *http.Client, baseURL string) (*client, erro
 	if httpClient == nil {
 		httpClient = &http.Client{Timeout: defaultClientTimeout}
 	}
-	return &client{httpClient: httpClient, baseURL: parsed, maxAttempts: defaultMaxAttempts}, nil
+	httpClientCopy := *httpClient
+	httpClientCopy.CheckRedirect = func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}
+	return &client{httpClient: &httpClientCopy, baseURL: parsed, maxAttempts: defaultMaxAttempts}, nil
 }
 
 type responseMeta struct {
-	RequestID string
-	Scopes    []string
-	Attempts  int
+	RequestID   string
+	Scopes      []string
+	Attempts    int
+	Diagnostics integrations.ProviderDiagnostics
 }
 
 func (c *client) getJSON(ctx context.Context, token, path string, query url.Values, target interface{}) (responseMeta, error) {
@@ -79,8 +84,15 @@ func (c *client) getJSON(ctx context.Context, token, path string, query url.Valu
 				return responseMeta{Attempts: attempt}, integrations.NewError(integrations.ErrorCodeTimeout, "GitHub request timed out", ctx.Err())
 			}
 			lastErr = integrations.NewError(integrations.ErrorCodeUpstream, "GitHub is unavailable", err)
-			if attempt < c.maxAttempts && waitForRetry(ctx, retryDelay(nil, attempt)) {
-				continue
+			if attempt < c.maxAttempts {
+				if waitErr := waitForRetry(ctx, retryDelay(nil, attempt)); waitErr == nil {
+					continue
+				}
+				return responseMeta{Attempts: attempt}, integrations.NewError(
+					integrations.ErrorCodeTimeout,
+					"GitHub request timed out",
+					ctx.Err(),
+				)
 			}
 			return responseMeta{Attempts: attempt}, lastErr
 		}
@@ -89,59 +101,123 @@ func (c *client) getJSON(ctx context.Context, token, path string, query url.Valu
 			Scopes:    parseScopeHeader(response.Header.Get("X-OAuth-Scopes")),
 			Attempts:  attempt,
 		}
+		meta.Diagnostics = integrations.ProviderDiagnostics{
+			RequestID:  meta.RequestID,
+			HTTPStatus: response.StatusCode,
+		}
 		payload, readErr := io.ReadAll(io.LimitReader(response.Body, maxResponseBytes+1))
 		_ = response.Body.Close()
 		if readErr != nil {
-			return meta, integrations.NewError(integrations.ErrorCodeResponseInvalid, "GitHub response could not be read", readErr)
+			return meta, integrations.NewProviderError(
+				integrations.ErrorCodeResponseInvalid,
+				"GitHub response could not be read",
+				readErr,
+				meta.Diagnostics,
+			)
 		}
 		if len(payload) > maxResponseBytes {
-			return meta, integrations.NewError(integrations.ErrorCodeResponseInvalid, "GitHub response exceeded the platform limit", nil)
+			return meta, integrations.NewProviderError(
+				integrations.ErrorCodeResponseInvalid,
+				"GitHub response exceeded the platform limit",
+				nil,
+				meta.Diagnostics,
+			)
 		}
 		if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
-			mapped := mapGitHubStatus(response.StatusCode, response.Header)
-			if retryableGitHubStatus(response.StatusCode) && attempt < c.maxAttempts && waitForRetry(ctx, retryDelay(response.Header, attempt)) {
+			mapped, diagnostics := mapGitHubStatus(response.StatusCode, response.Header, payload, meta.RequestID)
+			meta.Diagnostics = diagnostics
+			if retryableGitHubError(response.StatusCode, mapped) && attempt < c.maxAttempts {
 				lastErr = mapped
-				continue
+				if waitErr := waitForRetry(ctx, retryDelay(response.Header, attempt)); waitErr == nil {
+					continue
+				}
+				return meta, integrations.NewProviderError(
+					integrations.ErrorCodeTimeout,
+					"GitHub request timed out",
+					ctx.Err(),
+					meta.Diagnostics,
+				)
 			}
 			return meta, mapped
 		}
 		if err := json.Unmarshal(payload, target); err != nil {
-			return meta, integrations.NewError(integrations.ErrorCodeResponseInvalid, "GitHub returned an invalid response", err)
+			return meta, integrations.NewProviderError(
+				integrations.ErrorCodeResponseInvalid,
+				"GitHub returned an invalid response",
+				err,
+				meta.Diagnostics,
+			)
 		}
 		return meta, nil
 	}
 	return responseMeta{Attempts: c.maxAttempts}, lastErr
 }
 
-func mapGitHubStatus(status int, header http.Header) error {
+func mapGitHubStatus(status int, header http.Header, payload []byte, requestID string) (error, integrations.ProviderDiagnostics) {
+	message := githubErrorMessage(payload)
+	secondaryRateLimit := status == http.StatusForbidden &&
+		(strings.TrimSpace(header.Get("Retry-After")) != "" ||
+			strings.Contains(strings.ToLower(message), "secondary rate limit") ||
+			strings.Contains(strings.ToLower(message), "abuse detection"))
+	primaryRateLimit := status == http.StatusForbidden &&
+		strings.TrimSpace(header.Get("X-RateLimit-Remaining")) == "0"
+	providerCode := fmt.Sprintf("http_%d", status)
+	if secondaryRateLimit {
+		providerCode = "secondary_rate_limit"
+	} else if primaryRateLimit {
+		providerCode = "primary_rate_limit"
+	}
+	diagnostics := integrations.ProviderDiagnostics{
+		ErrorCode:    providerCode,
+		RequestID:    requestID,
+		HTTPStatus:   status,
+		RetryAfterAt: githubRetryAfterAt(header),
+	}
+	code := ""
+	safeMessage := ""
 	switch status {
 	case http.StatusUnauthorized:
-		return integrations.NewError(integrations.ErrorCodeAuthInvalid, "GitHub credentials are invalid", nil)
+		code = integrations.ErrorCodeAuthInvalid
+		safeMessage = "GitHub credentials are invalid"
 	case http.StatusPaymentRequired:
-		return integrations.NewError(integrations.ErrorCodeBudgetExceeded, "GitHub billing prevents this request", nil)
+		code = integrations.ErrorCodeBudgetExceeded
+		safeMessage = "GitHub billing prevents this request"
 	case http.StatusForbidden:
-		if strings.TrimSpace(header.Get("X-RateLimit-Remaining")) == "0" {
-			return integrations.NewError(integrations.ErrorCodeRateLimited, "GitHub rate limit was reached", nil)
+		if primaryRateLimit || secondaryRateLimit {
+			code = integrations.ErrorCodeRateLimited
+			safeMessage = "GitHub rate limit was reached"
+		} else {
+			code = integrations.ErrorCodeAccessDenied
+			safeMessage = "GitHub denied access to this resource"
 		}
-		return integrations.NewError(integrations.ErrorCodeAccessDenied, "GitHub denied access to this resource", nil)
 	case http.StatusNotFound:
 		// GitHub intentionally uses 404 for some private resources that the token
 		// cannot access. Treat it as authorization, not as credential invalidity.
-		return integrations.NewError(integrations.ErrorCodeAccessDenied, "GitHub resource is unavailable to this connection", nil)
+		code = integrations.ErrorCodeAccessDenied
+		safeMessage = "GitHub resource is unavailable to this connection"
 	case http.StatusTooManyRequests:
-		return integrations.NewError(integrations.ErrorCodeRateLimited, "GitHub rate limit was reached", nil)
+		code = integrations.ErrorCodeRateLimited
+		safeMessage = "GitHub rate limit was reached"
 	case http.StatusUnprocessableEntity, http.StatusBadRequest:
-		return integrations.NewError(integrations.ErrorCodeInvalidInput, "GitHub rejected the request parameters", nil)
+		code = integrations.ErrorCodeInvalidInput
+		safeMessage = "GitHub rejected the request parameters"
 	default:
 		if status >= http.StatusInternalServerError {
-			return integrations.NewError(integrations.ErrorCodeUpstream, "GitHub is temporarily unavailable", nil)
+			code = integrations.ErrorCodeUpstream
+			safeMessage = "GitHub is temporarily unavailable"
+		} else {
+			code = integrations.ErrorCodeUpstream
+			safeMessage = "GitHub request failed"
 		}
-		return integrations.NewError(integrations.ErrorCodeUpstream, "GitHub request failed", nil)
 	}
+	return integrations.NewProviderError(code, safeMessage, nil, diagnostics), diagnostics
 }
 
-func retryableGitHubStatus(status int) bool {
-	return status == http.StatusTooManyRequests || status == http.StatusBadGateway || status == http.StatusServiceUnavailable || status == http.StatusGatewayTimeout
+func retryableGitHubError(status int, err error) bool {
+	return integrations.ErrorCode(err) == integrations.ErrorCodeRateLimited ||
+		status == http.StatusTooManyRequests || status == http.StatusInternalServerError ||
+		status == http.StatusBadGateway ||
+		status == http.StatusServiceUnavailable || status == http.StatusGatewayTimeout
 }
 
 func retryDelay(header http.Header, attempt int) time.Duration {
@@ -154,21 +230,60 @@ func retryDelay(header http.Header, attempt int) time.Duration {
 				return min(max(time.Until(when), 0), 5*time.Second)
 			}
 		}
+		if raw := strings.TrimSpace(header.Get("X-RateLimit-Reset")); raw != "" {
+			if epoch, err := strconv.ParseInt(raw, 10, 64); err == nil {
+				return min(max(time.Until(time.Unix(epoch, 0)), 0), 5*time.Second)
+			}
+		}
 	}
 	return time.Duration(attempt*attempt) * 100 * time.Millisecond
 }
 
-func waitForRetry(ctx context.Context, delay time.Duration) bool {
+func githubRetryAfterAt(header http.Header) *time.Time {
+	if raw := strings.TrimSpace(header.Get("Retry-After")); raw != "" {
+		if seconds, err := strconv.Atoi(raw); err == nil && seconds >= 0 {
+			value := time.Now().Add(time.Duration(seconds) * time.Second).UTC()
+			return &value
+		}
+		if value, err := http.ParseTime(raw); err == nil {
+			value = value.UTC()
+			return &value
+		}
+	}
+	if raw := strings.TrimSpace(header.Get("X-RateLimit-Reset")); raw != "" {
+		if epoch, err := strconv.ParseInt(raw, 10, 64); err == nil {
+			value := time.Unix(epoch, 0).UTC()
+			return &value
+		}
+	}
+	return nil
+}
+
+func githubErrorMessage(payload []byte) string {
+	var envelope struct {
+		Message string `json:"message"`
+	}
+	if len(payload) == 0 || json.Unmarshal(payload, &envelope) != nil {
+		return ""
+	}
+	message := strings.TrimSpace(envelope.Message)
+	if len(message) > 512 {
+		message = message[:512]
+	}
+	return message
+}
+
+func waitForRetry(ctx context.Context, delay time.Duration) error {
 	if delay <= 0 {
-		return ctx.Err() == nil
+		return ctx.Err()
 	}
 	timer := time.NewTimer(delay)
 	defer timer.Stop()
 	select {
 	case <-ctx.Done():
-		return false
+		return ctx.Err()
 	case <-timer.C:
-		return true
+		return nil
 	}
 }
 

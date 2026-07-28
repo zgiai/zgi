@@ -31,8 +31,9 @@ type client struct {
 }
 
 type responseMeta struct {
-	RequestID string
-	Attempts  int
+	RequestID   string
+	Attempts    int
+	Diagnostics integrations.ProviderDiagnostics
 }
 
 func newClient(httpClient *http.Client) (*client, error) {
@@ -133,8 +134,18 @@ func (c *client) doJSON(
 				return responseMeta{Attempts: attempt}, integrations.NewError(integrations.ErrorCodeTimeout, "Google request timed out", ctx.Err())
 			}
 			lastErr = integrations.NewError(integrations.ErrorCodeUpstream, "Google is unavailable", requestErr)
-			if retryable && attempt < attemptLimit && waitForRetry(ctx, time.Duration(attempt*attempt)*100*time.Millisecond) {
-				continue
+			if retryable && attempt < attemptLimit {
+				if waitErr := waitForRetry(ctx, time.Duration(attempt*attempt)*100*time.Millisecond); waitErr == nil {
+					continue
+				} else {
+					meta := responseMeta{Attempts: attempt}
+					return meta, integrations.NewProviderError(
+						integrations.ErrorCodeTimeout,
+						"Google request timed out",
+						waitErr,
+						meta.Diagnostics,
+					)
+				}
 			}
 			return responseMeta{Attempts: attempt}, lastErr
 		}
@@ -145,26 +156,54 @@ func (c *client) doJSON(
 			),
 			Attempts: attempt,
 		}
+		meta.Diagnostics = integrations.ProviderDiagnostics{
+			RequestID:  meta.RequestID,
+			HTTPStatus: response.StatusCode,
+		}
 		payload, readErr := io.ReadAll(io.LimitReader(response.Body, maxResponseBytes+1))
 		_ = response.Body.Close()
 		if readErr != nil {
-			return meta, integrations.NewError(integrations.ErrorCodeResponseInvalid, "Google response could not be read", readErr)
+			return meta, integrations.NewProviderError(
+				integrations.ErrorCodeResponseInvalid,
+				"Google response could not be read",
+				readErr,
+				meta.Diagnostics,
+			)
 		}
 		if len(payload) > maxResponseBytes {
-			return meta, integrations.NewError(integrations.ErrorCodeResponseInvalid, "Google response exceeded the platform limit", nil)
+			return meta, integrations.NewProviderError(
+				integrations.ErrorCodeResponseInvalid,
+				"Google response exceeded the platform limit",
+				nil,
+				meta.Diagnostics,
+			)
 		}
 		if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
-			mapped := mapGoogleStatus(response.StatusCode, response.Header)
-			if retryable && retryableGoogleStatus(response.StatusCode) && attempt < attemptLimit &&
-				waitForRetry(ctx, googleRetryDelay(response.Header, attempt)) {
+			mapped, diagnostics := mapGoogleStatus(response.StatusCode, response.Header, payload, meta.RequestID)
+			meta.Diagnostics = diagnostics
+			if retryable && retryableGoogleError(response.StatusCode, mapped) && attempt < attemptLimit {
 				lastErr = mapped
-				continue
+				if waitErr := waitForRetry(ctx, googleRetryDelay(response.Header, attempt)); waitErr == nil {
+					continue
+				} else {
+					return meta, integrations.NewProviderError(
+						integrations.ErrorCodeTimeout,
+						"Google request timed out",
+						waitErr,
+						meta.Diagnostics,
+					)
+				}
 			}
 			return meta, mapped
 		}
 		if target != nil && len(bytes.TrimSpace(payload)) > 0 {
 			if err := json.Unmarshal(payload, target); err != nil {
-				return meta, integrations.NewError(integrations.ErrorCodeResponseInvalid, "Google returned an invalid response", err)
+				return meta, integrations.NewProviderError(
+					integrations.ErrorCodeResponseInvalid,
+					"Google returned an invalid response",
+					err,
+					meta.Diagnostics,
+				)
 			}
 		}
 		return meta, nil
@@ -172,30 +211,105 @@ func (c *client) doJSON(
 	return responseMeta{Attempts: attemptLimit}, lastErr
 }
 
-func mapGoogleStatus(status int, header http.Header) error {
+func mapGoogleStatus(status int, header http.Header, payload []byte, requestID string) (error, integrations.ProviderDiagnostics) {
+	reason, providerStatus := googleErrorReason(payload)
+	diagnosticCode := reason
+	if diagnosticCode == "" {
+		diagnosticCode = providerStatus
+	}
+	diagnostics := integrations.ProviderDiagnostics{
+		ErrorCode:    diagnosticCode,
+		RequestID:    requestID,
+		HTTPStatus:   status,
+		RetryAfterAt: retryAfterAt(header),
+	}
+	code := ""
+	message := ""
+	switch reason {
+	case "rateLimitExceeded", "userRateLimitExceeded":
+		code = integrations.ErrorCodeRateLimited
+		message = "Google rate limit was reached"
+	case "dailyLimitExceeded":
+		code = integrations.ErrorCodeBudgetExceeded
+		message = "Google daily usage limit was reached"
+	case "domainPolicy", "insufficientPermissions":
+		code = integrations.ErrorCodeAccessDenied
+		message = "Google denied the requested operation or scope"
+	}
+	if code != "" {
+		return integrations.NewProviderError(code, message, nil, diagnostics), diagnostics
+	}
 	switch status {
 	case http.StatusUnauthorized:
-		return integrations.NewError(integrations.ErrorCodeAuthInvalid, "Google credentials are invalid or expired", nil)
+		code = integrations.ErrorCodeAuthInvalid
+		message = "Google credentials are invalid or expired"
 	case http.StatusForbidden:
-		return integrations.NewError(integrations.ErrorCodeAccessDenied, "Google denied the requested operation or scope", nil)
+		code = integrations.ErrorCodeAccessDenied
+		message = "Google denied the requested operation or scope"
 	case http.StatusNotFound:
-		return integrations.NewError(integrations.ErrorCodeAccessDenied, "Google resource is unavailable to this connection", nil)
+		code = integrations.ErrorCodeAccessDenied
+		message = "Google resource is unavailable to this connection"
 	case http.StatusTooManyRequests:
-		return integrations.NewError(integrations.ErrorCodeRateLimited, "Google rate limit was reached", nil)
+		code = integrations.ErrorCodeRateLimited
+		message = "Google rate limit was reached"
 	case http.StatusBadRequest, http.StatusUnprocessableEntity:
-		return integrations.NewError(integrations.ErrorCodeInvalidInput, "Google rejected the request parameters", nil)
+		code = integrations.ErrorCodeInvalidInput
+		message = "Google rejected the request parameters"
 	default:
 		if status >= http.StatusInternalServerError {
-			return integrations.NewError(integrations.ErrorCodeUpstream, "Google is temporarily unavailable", nil)
+			code = integrations.ErrorCodeUpstream
+			message = "Google is temporarily unavailable"
+		} else {
+			code = integrations.ErrorCodeUpstream
+			message = "Google request failed"
 		}
-		_ = header
-		return integrations.NewError(integrations.ErrorCodeUpstream, "Google request failed", nil)
 	}
+	return integrations.NewProviderError(code, message, nil, diagnostics), diagnostics
 }
 
-func retryableGoogleStatus(status int) bool {
-	return status == http.StatusTooManyRequests || status == http.StatusBadGateway ||
+func retryableGoogleError(status int, err error) bool {
+	return integrations.ErrorCode(err) == integrations.ErrorCodeRateLimited ||
+		status == http.StatusTooManyRequests || status == http.StatusInternalServerError ||
+		status == http.StatusBadGateway ||
 		status == http.StatusServiceUnavailable || status == http.StatusGatewayTimeout
+}
+
+func googleErrorReason(payload []byte) (string, string) {
+	var envelope struct {
+		Error struct {
+			Status string `json:"status"`
+			Errors []struct {
+				Reason string `json:"reason"`
+			} `json:"errors"`
+		} `json:"error"`
+	}
+	if len(bytes.TrimSpace(payload)) == 0 || json.Unmarshal(payload, &envelope) != nil {
+		return "", ""
+	}
+	status := strings.TrimSpace(envelope.Error.Status)
+	for _, item := range envelope.Error.Errors {
+		switch reason := strings.TrimSpace(item.Reason); reason {
+		case "rateLimitExceeded", "userRateLimitExceeded", "dailyLimitExceeded", "domainPolicy", "insufficientPermissions":
+			return reason, status
+		}
+	}
+	return "", status
+}
+
+func retryAfterAt(header http.Header) *time.Time {
+	raw := strings.TrimSpace(header.Get("Retry-After"))
+	if raw == "" {
+		return nil
+	}
+	if seconds, err := strconv.Atoi(raw); err == nil && seconds >= 0 {
+		value := time.Now().Add(time.Duration(seconds) * time.Second).UTC()
+		return &value
+	}
+	if value, err := http.ParseTime(raw); err == nil {
+		value = value.UTC()
+		return &value
+	}
+	return nil
 }
 
 func googleRetryDelay(header http.Header, attempt int) time.Duration {
@@ -210,13 +324,19 @@ func googleRetryDelay(header http.Header, attempt int) time.Duration {
 	return time.Duration(attempt*attempt) * 100 * time.Millisecond
 }
 
-func waitForRetry(ctx context.Context, delay time.Duration) bool {
+func waitForRetry(ctx context.Context, delay time.Duration) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if delay <= 0 {
+		return nil
+	}
 	timer := time.NewTimer(delay)
 	defer timer.Stop()
 	select {
 	case <-ctx.Done():
-		return false
+		return ctx.Err()
 	case <-timer.C:
-		return true
+		return ctx.Err()
 	}
 }

@@ -39,6 +39,7 @@ import {
 } from './display-utils';
 import { integrationCatalogID } from './integration-utils';
 import { useIntegrationMetadata } from './metadata-i18n';
+import { ProviderDiagnosticsDetails } from './provider-diagnostics-details';
 
 const PAGE_SIZE = 20;
 
@@ -124,7 +125,7 @@ export function IntegrationExecutionsPanel({ integrationId }: { integrationId?: 
       </div>
 
       <div className="overflow-x-auto rounded-lg border">
-        <Table className="min-w-[1180px]">
+        <Table className="min-w-[1240px]">
           <TableHeader>
             <TableRow>
               <TableHead>{t('executions.table.time')}</TableHead>
@@ -176,6 +177,21 @@ export function IntegrationExecutionsPanel({ integrationId }: { integrationId?: 
                   execution.provider_request_id
                 );
                 const errorCode = safeOptionalIntegrationDisplayText(execution.error_code);
+                const providerErrorCode = safeOptionalIntegrationDisplayText(
+                  execution.provider_error_code
+                );
+                const providerHTTPStatus =
+                  Number.isInteger(execution.provider_http_status) &&
+                  Number(execution.provider_http_status) >= 100 &&
+                  Number(execution.provider_http_status) <= 599
+                    ? Number(execution.provider_http_status)
+                    : null;
+                const retryAfter = execution.retry_after_at
+                  ? metadata.date(execution.retry_after_at, '')
+                  : '';
+                const hasProviderDiagnostics = Boolean(
+                  providerErrorCode || providerHTTPStatus || retryAfter
+                );
                 const connectionName = execution.connection_id
                   ? connectionNames.get(execution.connection_id)
                   : null;
@@ -237,13 +253,21 @@ export function IntegrationExecutionsPanel({ integrationId }: { integrationId?: 
                             : t('executions.noValue'))}
                       </code>
                     </TableCell>
-                    <TableCell>
-                      <span
-                        className="block max-w-40 truncate text-xs text-destructive"
-                        title={errorCode ? metadata.error(errorCode) : undefined}
-                      >
-                        {errorCode ? metadata.error(errorCode) : t('executions.noValue')}
-                      </span>
+                    <TableCell className="min-w-56">
+                      {errorCode ? (
+                        <span className="block text-xs text-destructive">
+                          {metadata.error(errorCode)}
+                        </span>
+                      ) : !hasProviderDiagnostics ? (
+                        t('executions.noValue')
+                      ) : null}
+                      <ProviderDiagnosticsDetails
+                        className={errorCode ? 'mt-1.5' : undefined}
+                        providerErrorCode={providerErrorCode}
+                        providerHTTPStatus={execution.provider_http_status}
+                        retryAfterAt={execution.retry_after_at}
+                        showRequestId={false}
+                      />
                     </TableCell>
                   </TableRow>
                 );

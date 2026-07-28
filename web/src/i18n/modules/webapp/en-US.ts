@@ -1006,12 +1006,15 @@ const messages = {
           rateLimited: 'The external service is receiving too many requests. Try again later.',
           timeout: 'The external service timed out. Try again later.',
           upstreamUnavailable: 'The external service is temporarily unavailable. Try again later.',
+          providerRejected:
+            'The external service rejected this request. Review the action requirements and connection setup.',
           responseInvalid: 'The external service returned an unrecognized response.',
           auditFailed: 'Audit recording failed, so the external request was safely stopped.',
           policyConflict: 'Your organization policy does not allow this action.',
           reconnectRequired: 'This connection needs to be authorized again.',
           connectionExpired: 'This connection has expired. Reconnect it to continue.',
           insufficientScope: 'This connection does not include the required permissions.',
+          actionAuthIncompatible: 'The selected connection method does not support this action.',
           connectionNotFound:
             'The selected connection could not be found and may have been deleted.',
           connectionInvalid: 'The selected connection is currently unavailable.',

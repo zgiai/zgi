@@ -225,8 +225,10 @@ func (e *Executor) Execute(ctx context.Context, req ActionRequest) (*ActionResul
 		if connection.ID != "" {
 			req.ConnectionID = connection.ID
 		}
-		if len(resolved.Definition.RequiredScopes) > 0 && (connection.AuthType == ConnectionAuthTypeOAuth2 || len(connection.GrantedScopes) > 0) {
-			if err := AuthorizeConnectionScopes(connection.GrantedScopes, ConnectionScopeRequirement{AllOf: resolved.Definition.RequiredScopes}); err != nil {
+		scopeRequirement := ActionScopeRequirement(resolved.Definition)
+		if (len(scopeRequirement.AllOf) > 0 || len(scopeRequirement.AnyOf) > 0) &&
+			(connection.AuthType == ConnectionAuthTypeOAuth2 || len(connection.GrantedScopes) > 0) {
+			if err := AuthorizeConnectionScopes(connection.GrantedScopes, scopeRequirement); err != nil {
 				return nil, err
 			}
 		}
@@ -328,24 +330,24 @@ func (e *Executor) publishConnectionHealthSignalBestEffort(ctx context.Context, 
 	if organizationErr != nil || connectionErr != nil || organizationID == uuid.Nil || connectionID == uuid.Nil {
 		return
 	}
-	providerRequestID := ""
-	if result != nil {
-		providerRequestID = result.ProviderRequestID
-	}
+	diagnostics := providerDiagnosticsForResult(result, callErr)
 	signalCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 250*time.Millisecond)
 	defer cancel()
 	err := e.healthSignals.PublishConnectionHealthSignal(signalCtx, ConnectionHealthSignal{
-		OrganizationID:    organizationID,
-		ConnectionID:      connectionID,
-		IntegrationID:     resolved.IntegrationID,
-		DriverID:          resolved.Adapter.DriverID(),
-		ActionID:          resolved.Definition.ID,
-		CredentialVersion: req.Connection.CredentialVersion,
-		ExecutionID:       executionID,
-		ProviderRequestID: providerRequestID,
-		DurationMS:        durationMS,
-		ErrorCode:         ErrorCode(callErr),
-		ObservedAt:        time.Now().UTC(),
+		OrganizationID:     organizationID,
+		ConnectionID:       connectionID,
+		IntegrationID:      resolved.IntegrationID,
+		DriverID:           resolved.Adapter.DriverID(),
+		ActionID:           resolved.Definition.ID,
+		CredentialVersion:  req.Connection.CredentialVersion,
+		ExecutionID:        executionID,
+		ProviderRequestID:  diagnostics.RequestID,
+		ProviderErrorCode:  diagnostics.ErrorCode,
+		ProviderHTTPStatus: providerHTTPStatusPointer(diagnostics.HTTPStatus),
+		RetryAfterAt:       cloneTimePointer(diagnostics.RetryAfterAt),
+		DurationMS:         durationMS,
+		ErrorCode:          ErrorCode(callErr),
+		ObservedAt:         time.Now().UTC(),
 	})
 	if err != nil {
 		logger.WarnContext(ctx, "failed to publish integration connection health signal", "execution_id", executionID.String(), "connection_id", connectionID.String())
@@ -526,11 +528,15 @@ func (e *Executor) newExecutionRecord(req ActionRequest, resolved ResolvedAction
 func completionForResult(result *ActionResult, durationMS int64, callErr error) ExecutionCompletion {
 	completion := ExecutionCompletion{Status: "succeeded", DurationMS: durationMS}
 	if result != nil {
-		completion.ProviderRequestID = strings.TrimSpace(result.ProviderRequestID)
 		completion.CostUSD = result.CostUSD
 		completion.ResultCount = result.ResultCount
 		completion.AttemptCount = result.AttemptCount
 	}
+	diagnostics := providerDiagnosticsForResult(result, callErr)
+	completion.ProviderRequestID = diagnostics.RequestID
+	completion.ProviderErrorCode = diagnostics.ErrorCode
+	completion.ProviderHTTPStatus = providerHTTPStatusPointer(diagnostics.HTTPStatus)
+	completion.RetryAfterAt = cloneTimePointer(diagnostics.RetryAfterAt)
 	if callErr != nil {
 		completion.ErrorCode = ErrorCode(callErr)
 		if completion.ErrorCode == ErrorCodeTimeout {
@@ -540,6 +546,17 @@ func completionForResult(result *ActionResult, durationMS int64, callErr error) 
 		}
 	}
 	return completion
+}
+
+func providerDiagnosticsForResult(result *ActionResult, callErr error) ProviderDiagnostics {
+	resultDiagnostics := ProviderDiagnostics{}
+	if result != nil {
+		resultDiagnostics = result.ProviderDiagnostics
+		if strings.TrimSpace(resultDiagnostics.RequestID) == "" {
+			resultDiagnostics.RequestID = result.ProviderRequestID
+		}
+	}
+	return mergeProviderDiagnostics(ProviderDiagnosticsFromError(callErr), resultDiagnostics)
 }
 
 func optionalUUID(raw string) *uuid.UUID {

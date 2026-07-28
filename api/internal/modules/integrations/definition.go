@@ -36,6 +36,12 @@ type ActionDefinition struct {
 	SensitiveDataAllowed bool                     `json:"sensitive_data_allowed"`
 	Idempotent           bool                     `json:"idempotent"`
 	RequiredScopes       []string                 `json:"required_scopes,omitempty"`
+	// RequiredAnyScopes is a single alternative group. Runtime authorization
+	// requires at least one member in addition to every RequiredScopes member.
+	RequiredAnyScopes []string `json:"required_any_scopes,omitempty"`
+	// PreferredScopes is the least-privilege concrete choice requested during
+	// OAuth authorization. It must be drawn from the required scope union.
+	PreferredScopes []string `json:"preferred_scopes,omitempty"`
 	// SupportedAuthMethodIDs restricts this action to provider auth methods
 	// that can actually execute it. An empty list keeps the legacy behavior of
 	// supporting every auth method declared by the provider.
@@ -72,9 +78,12 @@ type ActionRequest struct {
 type ActionResult struct {
 	Output            map[string]interface{}
 	ProviderRequestID string
-	CostUSD           *float64
-	ResultCount       int
-	AttemptCount      int
+	// ProviderDiagnostics is optional. ProviderRequestID remains supported for
+	// existing adapters and is used as the request-id fallback.
+	ProviderDiagnostics ProviderDiagnostics `json:"-"`
+	CostUSD             *float64
+	ResultCount         int
+	AttemptCount        int
 }
 
 type Adapter interface {
@@ -134,4 +143,27 @@ func ActionSupportsAuthMethod(action ActionDefinition, authMethodID string) bool
 		}
 	}
 	return false
+}
+
+// ActionScopeRequirement returns the runtime scope requirement for action.
+// RequiredScopes remains the all-of group for backwards compatibility.
+func ActionScopeRequirement(action ActionDefinition) ConnectionScopeRequirement {
+	return ConnectionScopeRequirement{
+		AllOf: append([]string(nil), action.RequiredScopes...),
+		AnyOf: append([]string(nil), action.RequiredAnyScopes...),
+	}
+}
+
+// ActionRequiredScopeIDs returns every scope named by the action contract. The
+// result is intended for catalog, governance, and diagnostic presentation; it
+// must not be interpreted as an all-of runtime requirement.
+func ActionRequiredScopeIDs(action ActionDefinition) []string {
+	return unionCatalogStrings(action.RequiredScopes, action.RequiredAnyScopes)
+}
+
+// ActionPreferredOAuthScopes returns the concrete least-privilege scopes that
+// OAuth should request for this action: every all-of scope plus the provider's
+// single preferred member of the alternative group.
+func ActionPreferredOAuthScopes(action ActionDefinition) []string {
+	return unionCatalogStrings(action.RequiredScopes, action.PreferredScopes)
 }

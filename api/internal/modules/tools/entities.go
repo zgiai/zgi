@@ -303,6 +303,18 @@ type ToolGovernanceArgumentEnricher interface {
 	EnrichGovernanceArguments(ctx context.Context, userID string, toolParameters map[string]interface{}) map[string]interface{}
 }
 
+// ToolGovernanceArgumentEnricherWithError is the fail-closed variant used by
+// tools whose server-owned target resolution can fail for a recoverable reason,
+// such as an OAuth scope upgrade being required. The engine checks this
+// interface before the compatibility interface above.
+type ToolGovernanceArgumentEnricherWithError interface {
+	EnrichGovernanceArgumentsWithError(
+		ctx context.Context,
+		userID string,
+		toolParameters map[string]interface{},
+	) (map[string]interface{}, error)
+}
+
 // ============================================
 // Tool Provider Interface
 // ============================================

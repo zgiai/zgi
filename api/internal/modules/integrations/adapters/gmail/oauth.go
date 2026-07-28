@@ -103,7 +103,13 @@ func (adapter *Adapter) RevokeToken(ctx context.Context, request integrations.OA
 		return integrations.NewError(integrations.ErrorCodeResponseInvalid, "Google OAuth revoke response could not be read", err)
 	}
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
-		return mapGoogleStatus(response.StatusCode, response.Header)
+		mapped, _ := mapGoogleStatus(
+			response.StatusCode,
+			response.Header,
+			nil,
+			firstNonEmpty(response.Header.Get("X-GUploader-UploadID"), response.Header.Get("X-Google-Request-ID")),
+		)
+		return mapped
 	}
 	return nil
 }

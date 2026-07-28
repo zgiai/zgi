@@ -240,7 +240,7 @@ func newConnectionView(connection *IntegrationConnection) ConnectionView {
 		Config:                cloneAnyMap(connection.Config),
 		AccountID:             cloneStringPointer(connection.AccountID),
 		DisplayName:           cloneStringPointer(connection.DisplayName),
-		GrantedScopes:         append([]string(nil), connection.GrantedScopes...),
+		GrantedScopes:         cloneStringSlice(connection.GrantedScopes),
 		Status:                connection.Status,
 		IsDefault:             connection.IsDefault,
 		CredentialVersion:     connection.CredentialVersion,
@@ -252,7 +252,7 @@ func newConnectionView(connection *IntegrationConnection) ConnectionView {
 		AuthStatus:            connection.AuthStatus,
 		ScopeStatus:           connection.ScopeStatus,
 		AttentionCode:         cloneStringPointer(connection.AttentionCode),
-		MissingRequiredScopes: append([]string(nil), connection.MissingRequiredScopes...),
+		MissingRequiredScopes: cloneStringSlice(connection.MissingRequiredScopes),
 		LastHealthCheckedAt:   cloneTimePointer(connection.LastHealthCheckedAt),
 		LastHealthyAt:         cloneTimePointer(connection.LastHealthyAt),
 		LastRuntimeSuccessAt:  cloneTimePointer(connection.LastRuntimeSuccessAt),
@@ -283,6 +283,13 @@ func cloneStringPointer(value *string) *string {
 	}
 	copyValue := *value
 	return &copyValue
+}
+
+func cloneStringSlice(value []string) []string {
+	if len(value) == 0 {
+		return []string{}
+	}
+	return append([]string{}, value...)
 }
 
 func cloneTimePointer(value *time.Time) *time.Time {

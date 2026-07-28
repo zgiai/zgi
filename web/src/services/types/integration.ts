@@ -290,6 +290,8 @@ export interface IntegrationActionDefinition {
   data_egress?: boolean;
   external_destination?: string;
   required_scopes?: string[];
+  required_any_scopes?: string[];
+  preferred_scopes?: string[];
   /**
    * Restricts an action to explicit provider authentication methods. Missing
    * or empty means the action is compatible with every method.
@@ -438,8 +440,12 @@ export interface IntegrationConnectionCapabilityPermission {
   description_i18n?: IntegrationLocalizedText;
   effect: string;
   risk_level: string;
+  availability?: 'ready' | 'scope_upgrade_required' | 'permission_missing';
+  can_upgrade?: boolean;
   scope_satisfied: boolean;
   required_scopes?: string[];
+  required_any_scopes?: string[];
+  preferred_scopes?: string[];
   missing_scope_ids?: string[];
 }
 
@@ -456,12 +462,12 @@ export interface IntegrationConnectionProviderPermission {
 }
 
 export interface IntegrationConnectionPermissionSummary {
-  adapted_capabilities: IntegrationConnectionCapabilityPermission[];
-  identity_permissions: IntegrationConnectionProviderPermission[];
-  lifecycle_permissions: IntegrationConnectionProviderPermission[];
-  provider_permissions: IntegrationConnectionProviderPermission[];
-  unknown_permissions: IntegrationConnectionProviderPermission[];
-  missing_permissions: IntegrationConnectionProviderPermission[];
+  adapted_capabilities: IntegrationConnectionCapabilityPermission[] | null;
+  identity_permissions: IntegrationConnectionProviderPermission[] | null;
+  lifecycle_permissions: IntegrationConnectionProviderPermission[] | null;
+  provider_permissions: IntegrationConnectionProviderPermission[] | null;
+  unknown_permissions: IntegrationConnectionProviderPermission[] | null;
+  missing_permissions: IntegrationConnectionProviderPermission[] | null;
   provider_scopes_reported: boolean;
   has_broad_permissions: boolean;
 }
@@ -489,12 +495,12 @@ export interface IntegrationConnection {
     | 'provider_incident'
     | 'admin_check_required'
     | null;
-  missing_required_scopes?: string[];
+  missing_required_scopes?: string[] | null;
   is_default: boolean;
   account_id?: string | null;
   display_name?: string | null;
-  granted_scopes?: string[];
-  permission_summary?: IntegrationConnectionPermissionSummary;
+  granted_scopes?: string[] | null;
+  permission_summary?: IntegrationConnectionPermissionSummary | null;
   credential_version?: number;
   revision?: number;
   last_tested_at?: string | null;
@@ -639,6 +645,7 @@ export interface IntegrationConnectionHealthEvent {
   execution_id?: string | null;
   actor_id?: string | null;
   provider_request_id?: string | null;
+  provider_error_code?: string | null;
   provider_http_status?: number | null;
   latency_ms: number;
   retry_after_at?: string | null;
@@ -741,6 +748,9 @@ export interface IntegrationExecution {
   invoke_from: string;
   status: IntegrationExecutionStatus;
   provider_request_id?: string | null;
+  provider_error_code?: string | null;
+  provider_http_status?: number | null;
+  retry_after_at?: string | null;
   duration_ms?: number;
   cost_usd?: number | null;
   result_count?: number;

@@ -186,12 +186,18 @@ func actionSummarySchema() map[string]interface{} {
 		"data_egress":             map[string]interface{}{"type": "boolean"},
 		"external_destination":    map[string]interface{}{"type": "string", "maxLength": 255},
 		"required_scopes":         map[string]interface{}{"type": "array", "maxItems": 128, "items": map[string]interface{}{"type": "string", "maxLength": 255}},
+		"required_any_scopes":     map[string]interface{}{"type": "array", "maxItems": 128, "items": map[string]interface{}{"type": "string", "maxLength": 255}},
+		"preferred_scopes":        map[string]interface{}{"type": "array", "maxItems": 128, "items": map[string]interface{}{"type": "string", "maxLength": 255}},
 		"scope_labels_i18n":       localizedLabelMapSchema(128, 128),
 		"schema_hash":             map[string]interface{}{"type": "string", "maxLength": 128},
 		"catalog_revision":        map[string]interface{}{"type": "string", "maxLength": 128},
 		"connection_name":         map[string]interface{}{"type": "string", "maxLength": 128},
 		"connection_display_name": map[string]interface{}{"type": "string", "maxLength": 255},
 		"connection_selection":    map[string]interface{}{"type": "string", "enum": []string{"preferred"}},
+		"availability":            map[string]interface{}{"type": "string", "enum": []string{"ready", "scope_upgrade_required"}},
+		"can_execute":             map[string]interface{}{"type": "boolean"},
+		"recovery_action":         map[string]interface{}{"type": "string", "enum": []string{"upgrade_oauth_scope"}},
+		"requires_approval":       map[string]interface{}{"type": "boolean"},
 	}, "integration_id", "action_id", "name", "description", "effect", "risk_level", "data_egress", "required_scopes", "schema_hash", "catalog_revision", "connection_name", "connection_selection")
 }
 

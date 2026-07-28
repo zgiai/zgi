@@ -654,6 +654,11 @@ export function IntegrationConnectionDialog({
             ) : null}
           </DialogBody>
           <DialogFooter className="border-t bg-muted/30">
+            {!oauthSelected ? (
+              <p className="mr-auto max-w-sm text-left text-xs leading-5 text-muted-foreground">
+                {t('dialog.testAfterSaveNotice')}
+              </p>
+            ) : null}
             <Button variant="ghost" onClick={() => handleOpenChange(false)} disabled={isSubmitting}>
               {t('dialog.cancel')}
             </Button>
@@ -667,10 +672,10 @@ export function IntegrationConnectionDialog({
                   })
                 : t(
                     editing
-                      ? 'dialog.save'
+                      ? 'dialog.saveAndTest'
                       : personal
-                        ? 'dialog.createPersonal'
-                        : 'dialog.createShared'
+                        ? 'dialog.createAndTestPersonal'
+                        : 'dialog.createAndTestShared'
                   )}
             </Button>
           </DialogFooter>

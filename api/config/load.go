@@ -374,11 +374,19 @@ func loadAppConfig(cfg *Config, source *envSource) error {
 
 func loadConsoleConfig(cfg *Config, source *envSource) {
 	cfg.Console = ConsoleConfig{
-		APIURL:         source.string("http://127.0.0.1:2679", envConsoleAPIURL),
+		APIURL:         source.string(defaultLocalConsoleAPIURL(cfg), envConsoleAPIURL),
 		GRPCAddr:       source.string("", envConsoleAPIGRPCAddr),
 		InternalAPIKey: source.string("", envConsoleInternalAPIKey),
 		WebURL:         source.string(cfg.Email.ConsoleWebURL, envEmailConsoleWebURL),
 	}
+}
+
+func defaultLocalConsoleAPIURL(cfg *Config) string {
+	port := defaultServerPort
+	if cfg != nil && cfg.Server.Port > 0 {
+		port = cfg.Server.Port
+	}
+	return fmt.Sprintf("http://127.0.0.1:%d", port)
 }
 
 func loadPlatformConfig(cfg *Config, source *envSource) {
@@ -1128,7 +1136,7 @@ func loadExternalIntegrationsConfig(cfg *Config, source *envSource) error {
 	}
 	oauthAPIBaseURL := strings.TrimRight(strings.TrimSpace(cfg.Console.APIURL), "/")
 	if oauthAPIBaseURL == "" {
-		oauthAPIBaseURL = "http://127.0.0.1:2679"
+		oauthAPIBaseURL = defaultLocalConsoleAPIURL(cfg)
 	}
 	oauthWebBaseURL := strings.TrimRight(strings.TrimSpace(cfg.Console.WebURL), "/")
 	if oauthWebBaseURL == "" {

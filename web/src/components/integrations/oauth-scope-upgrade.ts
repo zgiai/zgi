@@ -28,9 +28,14 @@ export function resolveOAuthScopeUpgradeActionIDs(
 
   const actionIDs = (provider?.actions ?? [])
     .filter(action => actionSupportsAuthMethod(action, connection.auth_method_id))
-    .filter(action =>
-      (action.required_scopes ?? []).some(scope => missingScopes.has(normalizeScope(scope)))
-    )
+    .filter(action => {
+      const relevantScopes = [
+        ...(action.required_scopes ?? []),
+        ...(action.required_any_scopes ?? []),
+        ...(action.preferred_scopes ?? []),
+      ];
+      return relevantScopes.some(scope => missingScopes.has(normalizeScope(scope)));
+    })
     .map(action => action.id.trim())
     .filter(Boolean);
 

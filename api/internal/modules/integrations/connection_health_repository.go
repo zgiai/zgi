@@ -149,7 +149,16 @@ func normalizeConnectionHealthObservation(observation ConnectionHealthObservatio
 	observation.IntegrationID = strings.ToLower(strings.TrimSpace(observation.IntegrationID))
 	observation.DriverID = strings.ToLower(strings.TrimSpace(observation.DriverID))
 	observation.ReasonCode = boundedHealthValue(observation.ReasonCode, 64)
-	observation.ProviderRequestID = boundedHealthValue(observation.ProviderRequestID, 128)
+	diagnostics := normalizeProviderDiagnostics(ProviderDiagnostics{
+		ErrorCode:    observation.ProviderErrorCode,
+		RequestID:    observation.ProviderRequestID,
+		HTTPStatus:   providerHTTPStatusValue(observation.ProviderHTTPStatus),
+		RetryAfterAt: observation.RetryAfterAt,
+	})
+	observation.ProviderRequestID = diagnostics.RequestID
+	observation.ProviderErrorCode = diagnostics.ErrorCode
+	observation.ProviderHTTPStatus = providerHTTPStatusPointer(diagnostics.HTTPStatus)
+	observation.RetryAfterAt = cloneTimePointer(diagnostics.RetryAfterAt)
 	observation.ErrorFingerprint = strings.ToLower(strings.TrimSpace(observation.ErrorFingerprint))
 	if len(observation.ErrorFingerprint) != 64 {
 		observation.ErrorFingerprint = ""
@@ -203,6 +212,9 @@ func connectionHealthEventFromObservation(connection IntegrationConnection, obse
 	}
 	if observation.ProviderRequestID != "" {
 		event.ProviderRequestID = &observation.ProviderRequestID
+	}
+	if observation.ProviderErrorCode != "" {
+		event.ProviderErrorCode = &observation.ProviderErrorCode
 	}
 	if observation.ErrorFingerprint != "" {
 		event.ErrorFingerprint = &observation.ErrorFingerprint
@@ -258,6 +270,17 @@ func applyConnectionHealthObservation(connection *IntegrationConnection, observa
 		connection.AttentionCode = stringPointer(ConnectionAttentionScopeUpdateRequired)
 		connection.MissingRequiredScopes = append([]string(nil), observation.MissingScopes...)
 	case ConnectionHealthClassificationAccessDenied:
+		// A passive Action failure can be caused by a single resource ACL or a
+		// deleted target while the underlying credential remains healthy. Keep
+		// the event and runtime-failure timestamp for diagnostics, but do not
+		// turn that ambiguous signal into a connection-wide health warning.
+		// Active connection tests and explicit missing-scope observations still
+		// update the summary below.
+		if observation.Source == ConnectionHealthSourceRuntime &&
+			observation.CheckKind == ConnectionHealthCheckPassive &&
+			len(observation.MissingScopes) == 0 {
+			break
+		}
 		connection.HealthStatus = ConnectionHealthDegraded
 		if len(observation.MissingScopes) > 0 {
 			connection.ScopeStatus = ConnectionScopeDrifted

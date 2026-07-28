@@ -85,8 +85,8 @@ func (s *service) RunPreparedStream(ctx context.Context, prepared *PreparedChat,
 			var pendingGovernance *skillloop.ToolGovernancePendingError
 			if errors.As(err, &pendingGovernance) {
 				metadata, persistErr := s.persistToolGovernanceApprovalPendingResult(persistCtx, prepared, pendingGovernance.Payload, usage)
-				if ownershipErr := finalizedRuntimeOwnershipError(persistErr); ownershipErr != nil {
-					return nil, ownershipErr
+				if persistErr != nil {
+					return nil, s.finalizeToolGovernanceApprovalPersistenceError(persistCtx, prepared, persistErr, eventCallback)
 				}
 				eventID := s.appendPreparedMessageEndEvent(persistCtx, prepared, messageEndPayloadWithStatus(prepared, metadata, runtimemodel.MessageStatusWaitingApproval))
 				return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, Status: runtimemodel.MessageStatusWaitingApproval, MessageEndEventID: eventID}, nil

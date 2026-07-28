@@ -2,6 +2,7 @@ package integrations
 
 import (
 	"context"
+	"slices"
 	"testing"
 
 	"github.com/google/uuid"
@@ -110,6 +111,8 @@ func TestGovernanceResolverMetaExecuteUsesRealHighRiskWriteAction(t *testing.T) 
 	action.RiskLevel = toolgovernance.RiskLevelHigh
 	action.ExternalDestination = "api.github.com"
 	action.RequiredScopes = []string{"issues:write"}
+	action.RequiredAnyScopes = []string{"repo:write", "pulls:write"}
+	action.PreferredScopes = []string{"repo:write"}
 	action.DefaultPolicy = &DefaultActionPolicy{
 		Enabled: true, ApprovalPolicy: toolgovernance.ApprovalPolicyAlwaysAsk, DataEgressAllowed: true,
 	}
@@ -159,8 +162,8 @@ func TestGovernanceResolverMetaExecuteUsesRealHighRiskWriteAction(t *testing.T) 
 	if manifest.DefaultApprovalPolicy != toolgovernance.ApprovalPolicyAlwaysAsk || !manifest.AuditRequired {
 		t.Fatalf("resolved manifest policy = %#v", manifest)
 	}
-	if len(manifest.PermissionScopes) == 0 || manifest.PermissionScopes[0] != resolvedAction.RequiredScopes[0] {
-		t.Fatalf("resolved manifest scopes = %#v, action = %#v", manifest.PermissionScopes, resolvedAction.RequiredScopes)
+	if !slices.Equal(manifest.PermissionScopes, ActionRequiredScopeIDs(resolvedAction)) {
+		t.Fatalf("resolved manifest scopes = %#v, action = %#v", manifest.PermissionScopes, resolvedAction)
 	}
 }
 

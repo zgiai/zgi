@@ -493,11 +493,12 @@ func integrationActionCapabilityAvailability(
 			!integrations.ActionSupportsAuthMethod(action, connection.AuthMethodID) {
 			continue
 		}
-		if len(action.RequiredScopes) > 0 &&
+		scopeRequirement := integrations.ActionScopeRequirement(action)
+		if (len(scopeRequirement.AllOf) > 0 || len(scopeRequirement.AnyOf) > 0) &&
 			(connection.AuthType == integrations.ConnectionAuthTypeOAuth2 || len(connection.GrantedScopes) > 0) {
 			if err := integrations.AuthorizeConnectionScopes(
 				connection.GrantedScopes,
-				integrations.ConnectionScopeRequirement{AllOf: action.RequiredScopes},
+				scopeRequirement,
 			); err != nil {
 				hasScopeGap = true
 				continue

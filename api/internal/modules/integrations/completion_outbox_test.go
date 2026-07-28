@@ -19,15 +19,21 @@ func TestRedisExecutionCompletionOutboxRoundTripHasNoTTL(t *testing.T) {
 	outbox := NewRedisExecutionCompletionOutbox(client)
 	executionID := uuid.New()
 	cost := 0.007
+	providerStatus := 429
+	retryAfter := time.Date(2026, 7, 20, 0, 5, 0, 0, time.UTC)
 	want := PendingExecutionCompletion{
 		ExecutionID: executionID,
 		Completion: ExecutionCompletion{
-			Status:            "succeeded",
-			ProviderRequestID: "exa-request",
-			DurationMS:        42,
-			CostUSD:           &cost,
-			ResultCount:       3,
-			AttemptCount:      2,
+			Status:             "failed",
+			ProviderRequestID:  "exa-request",
+			ProviderErrorCode:  "rate_limit_exceeded",
+			ProviderHTTPStatus: &providerStatus,
+			RetryAfterAt:       &retryAfter,
+			DurationMS:         42,
+			CostUSD:            &cost,
+			ResultCount:        3,
+			AttemptCount:       2,
+			ErrorCode:          ErrorCodeRateLimited,
 		},
 	}
 	if err := outbox.Enqueue(context.Background(), want); err != nil {
@@ -45,7 +51,17 @@ func TestRedisExecutionCompletionOutboxRoundTripHasNoTTL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Claim() error = %v", err)
 	}
-	if claim.ClaimedCount != 1 || len(claim.Items) != 1 || claim.Items[0].ExecutionID != executionID || claim.Items[0].Completion.ProviderRequestID != "exa-request" || claim.Items[0].Completion.CostUSD == nil || *claim.Items[0].Completion.CostUSD != cost {
+	if claim.ClaimedCount != 1 ||
+		len(claim.Items) != 1 ||
+		claim.Items[0].ExecutionID != executionID ||
+		claim.Items[0].Completion.ProviderRequestID != "exa-request" ||
+		claim.Items[0].Completion.ProviderErrorCode != "rate_limit_exceeded" ||
+		claim.Items[0].Completion.ProviderHTTPStatus == nil ||
+		*claim.Items[0].Completion.ProviderHTTPStatus != providerStatus ||
+		claim.Items[0].Completion.RetryAfterAt == nil ||
+		!claim.Items[0].Completion.RetryAfterAt.Equal(retryAfter) ||
+		claim.Items[0].Completion.CostUSD == nil ||
+		*claim.Items[0].Completion.CostUSD != cost {
 		t.Fatalf("Claim() = %#v", claim)
 	}
 	if err := outbox.Delete(context.Background(), executionID); err != nil {

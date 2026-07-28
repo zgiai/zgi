@@ -230,12 +230,22 @@ func gmailAccessToken(connection *integrations.ResolvedConnection) (string, erro
 }
 
 func gmailActionResult(output map[string]interface{}, meta responseMeta, count int) *integrations.ActionResult {
-	if output == nil {
+	if output == nil && meta.Attempts == 0 && meta.RequestID == "" &&
+		meta.Diagnostics == (integrations.ProviderDiagnostics{}) {
 		return nil
+	}
+	attempts := meta.Attempts
+	if output != nil && attempts == 0 {
+		attempts = 1
+	}
+	if output == nil {
+		count = 0
 	}
 	return &integrations.ActionResult{
 		Output: output, ProviderRequestID: bounded(meta.RequestID, 128),
-		ResultCount: count, AttemptCount: max(meta.Attempts, 1),
+		ProviderDiagnostics: meta.Diagnostics,
+		ResultCount:         count,
+		AttemptCount:        attempts,
 	}
 }
 

@@ -19,9 +19,13 @@ func TestRegistryCatalogIsDefinitionDrivenVersionedAndMutationSafe(t *testing.T)
 	action.Description = "List issues in a repository."
 	action.DescriptionI18n = LocalizedText{LocaleSimplifiedChinese: "列出仓库中的议题。"}
 	action.RequiredScopes = []string{" Issues:Read ", "issues:read"}
+	action.RequiredAnyScopes = []string{" Pulls:Read ", "contents:read", "pulls:read"}
+	action.PreferredScopes = []string{" Contents:Read "}
 	action.SupportedAuthMethodIDs = []string{" Personal_Access_Token ", "personal_access_token"}
 	action.ScopeLabelsI18n = LocalizedLabelMap{
-		" Issues:Read ": {LocaleEnglishUS: "Read issues", LocaleSimplifiedChinese: "议题读取权限"},
+		" Pulls:Read ":   {LocaleEnglishUS: "Read pull requests", LocaleSimplifiedChinese: "读取合并请求"},
+		" contents:read": {LocaleEnglishUS: "Read contents", LocaleSimplifiedChinese: "读取内容"},
+		" Issues:Read ":  {LocaleEnglishUS: "Read issues", LocaleSimplifiedChinese: "议题读取权限"},
 	}
 	action.DefaultPolicy = &DefaultActionPolicy{
 		Enabled: true, ApprovalPolicy: toolgovernance.ApprovalPolicyNeverAsk, DataEgressAllowed: true,
@@ -70,7 +74,20 @@ func TestRegistryCatalogIsDefinitionDrivenVersionedAndMutationSafe(t *testing.T)
 				}},
 			}},
 			HealthProbe: HealthProbeDefinition{Supported: true, Description: "Read the authenticated user.", DescriptionI18n: LocalizedText{LocaleSimplifiedChinese: "读取已认证用户。"}},
-			Actions:     []ActionDefinition{action},
+			Scopes: []ProviderScopeDefinition{{
+				ID: "issues:read", Label: "Read issues",
+				LabelI18n: LocalizedText{LocaleEnglishUS: "Read issues", LocaleSimplifiedChinese: "璁璇诲彇鏉冮檺"},
+				Category:  ProviderScopeCategoryProvider, Access: ProviderScopeAccessRead,
+			}, {
+				ID: "pulls:read", Label: "Read pull requests",
+				LabelI18n: LocalizedText{LocaleEnglishUS: "Read pull requests", LocaleSimplifiedChinese: "读取合并请求"},
+				Category:  ProviderScopeCategoryProvider, Access: ProviderScopeAccessRead,
+			}, {
+				ID: "contents:read", Label: "Read contents",
+				LabelI18n: LocalizedText{LocaleEnglishUS: "Read contents", LocaleSimplifiedChinese: "读取内容"},
+				Category:  ProviderScopeCategoryProvider, Access: ProviderScopeAccessRead,
+			}},
+			Actions: []ActionDefinition{action},
 		},
 		Adapter: &testAdapter{driverID: "github-rest"},
 	}
@@ -108,6 +125,8 @@ func TestRegistryCatalogIsDefinitionDrivenVersionedAndMutationSafe(t *testing.T)
 	}
 	if item.Actions[0].CatalogRevision != item.CatalogRevision || len(item.Actions[0].RequiredScopes) != 1 ||
 		item.Actions[0].RequiredScopes[0] != "issues:read" ||
+		!slices.Equal(item.Actions[0].RequiredAnyScopes, []string{"contents:read", "pulls:read"}) ||
+		!slices.Equal(item.Actions[0].PreferredScopes, []string{"contents:read"}) ||
 		!slices.Equal(item.Actions[0].SupportedAuthMethodIDs, []string{"personal_access_token"}) {
 		t.Fatalf("Catalog() action metadata = %#v", item.Actions[0])
 	}
@@ -144,6 +163,8 @@ func TestRegistryCatalogIsDefinitionDrivenVersionedAndMutationSafe(t *testing.T)
 	}
 	detail.InputSchema["type"] = "array"
 	detail.RequiredScopes[0] = "mutated"
+	detail.RequiredAnyScopes[0] = "mutated"
+	detail.PreferredScopes[0] = "mutated"
 	detail.SupportedAuthMethodIDs[0] = "mutated"
 	definition, ok := registry.ProviderDefinition("github")
 	if !ok {
@@ -162,6 +183,8 @@ func TestRegistryCatalogIsDefinitionDrivenVersionedAndMutationSafe(t *testing.T)
 	again, _ := registry.ActionDetail("github", "github.issue.list")
 	definitionAgain, _ := registry.ProviderDefinition("github")
 	if again.InputSchema["type"] != "object" || again.RequiredScopes[0] != "issues:read" ||
+		!slices.Equal(again.RequiredAnyScopes, []string{"contents:read", "pulls:read"}) ||
+		!slices.Equal(again.PreferredScopes, []string{"contents:read"}) ||
 		!slices.Equal(again.SupportedAuthMethodIDs, []string{"personal_access_token"}) ||
 		definitionAgain.AuthMethods[0].Fields[0].Label != "Token" || definitionAgain.AuthMethods[0].Fields[0].LabelI18n[LocaleSimplifiedChinese] != "令牌" || definitionAgain.NameI18n[LocaleEnglishUS] != "GitHub" || definitionAgain.DocumentationURLI18n[LocaleSimplifiedChinese] != "https://docs.github.com/zh/rest" || definitionAgain.TagLabelsI18n["code"][LocaleSimplifiedChinese] != "代码" || definitionAgain.CategoryLabelsI18n["development"][LocaleSimplifiedChinese] != "软件开发" || again.NameI18n[LocaleSimplifiedChinese] != "列出 GitHub 议题" || again.ScopeLabelsI18n["issues:read"][LocaleSimplifiedChinese] != "议题读取权限" {
 		t.Fatalf("registry state was mutated: action=%#v definition=%#v", again, definitionAgain)
@@ -235,6 +258,65 @@ func TestRegistryDoesNotInventProviderAuthorizationScopes(t *testing.T) {
 	}
 	if len(normalized.RequiredScopes) != 0 {
 		t.Fatalf("RequiredScopes = %#v, want provider-declared scopes only", normalized.RequiredScopes)
+	}
+}
+
+func TestRegistryValidatesAlternativeAndPreferredScopeContract(t *testing.T) {
+	tests := []struct {
+		name      string
+		configure func(*Registration)
+		wantError string
+	}{
+		{
+			name: "alternative group requires a preferred member",
+			configure: func(registration *Registration) {
+				registration.Definition.Actions[0].RequiredAnyScopes = []string{"messages:read", "messages:history"}
+				registration.Definition.Actions[0].PreferredScopes = nil
+				localizeTestAction(&registration.Definition.Actions[0])
+				addTestProviderScopeDefinitions(&registration.Definition)
+			},
+			wantError: "alternative scope group must declare exactly one preferred scope",
+		},
+		{
+			name: "alternative group rejects multiple preferred members",
+			configure: func(registration *Registration) {
+				registration.Definition.Actions[0].RequiredAnyScopes = []string{"messages:read", "messages:history"}
+				registration.Definition.Actions[0].PreferredScopes = []string{"messages:read", "messages:history"}
+				localizeTestAction(&registration.Definition.Actions[0])
+				addTestProviderScopeDefinitions(&registration.Definition)
+			},
+			wantError: "alternative scope group must declare exactly one preferred scope",
+		},
+		{
+			name: "preferred scope must belong to required union",
+			configure: func(registration *Registration) {
+				registration.Definition.Actions[0].RequiredAnyScopes = []string{"messages:read"}
+				registration.Definition.Actions[0].PreferredScopes = []string{"messages:write"}
+				localizeTestAction(&registration.Definition.Actions[0])
+				addTestProviderScopeDefinitions(&registration.Definition)
+			},
+			wantError: "preferred scope messages:write is not part of its required scope union",
+		},
+		{
+			name: "alternative scope must be provider declared",
+			configure: func(registration *Registration) {
+				registration.Definition.Actions[0].RequiredAnyScopes = []string{"messages:read"}
+				registration.Definition.Actions[0].PreferredScopes = []string{"messages:read"}
+				localizeTestAction(&registration.Definition.Actions[0])
+			},
+			wantError: "references undeclared scope messages:read",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			action := testAction("messages.list", "list_messages")
+			registration := localizedTestRegistration("chat", &testAdapter{driverID: "chat"}, []ActionDefinition{action})
+			test.configure(&registration)
+			err := NewRegistry().Register(registration)
+			if err == nil || !strings.Contains(err.Error(), test.wantError) {
+				t.Fatalf("Register() error = %v, want %q", err, test.wantError)
+			}
+		})
 	}
 }
 

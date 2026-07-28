@@ -28,9 +28,81 @@ func TestLoadExternalIntegrationsConfigUsesUnifiedDefaults(t *testing.T) {
 		t.Fatalf("unexpected OAuth defaults: %+v", got.OAuth)
 	}
 	if got.OAuth.FlowTTLSeconds != 600 ||
-		got.OAuth.CallbackURL != "http://127.0.0.1:2679/console/api/integrations/oauth/callback" ||
+		got.OAuth.CallbackURL != "http://127.0.0.1:2670/console/api/integrations/oauth/callback" ||
 		got.OAuth.ResultURL != "http://localhost:3000/console/integrations/oauth/result" {
 		t.Fatalf("unexpected OAuth flow defaults: %+v", got.OAuth)
+	}
+}
+
+func TestLoadConsoleAndOAuthDefaultsFollowServerListener(t *testing.T) {
+	cfg := &Config{
+		Server:     ServerConfig{Port: 4317},
+		Encryption: EncryptionConfig{APIKeyEncryptionKey: "01234567890123456789012345678901"},
+	}
+	source := externalIntegrationsEnvSource(nil)
+	loadConsoleConfig(cfg, source)
+	if cfg.Console.APIURL != "http://127.0.0.1:4317" {
+		t.Fatalf("Console API URL = %q, want server listener", cfg.Console.APIURL)
+	}
+	if err := loadExternalIntegrationsConfig(cfg, source); err != nil {
+		t.Fatalf("loadExternalIntegrationsConfig() error = %v", err)
+	}
+	if got := cfg.ExternalIntegrations.OAuth.CallbackURL; got != "http://127.0.0.1:4317/console/api/integrations/oauth/callback" {
+		t.Fatalf("OAuth callback URL = %q, want server listener", got)
+	}
+}
+
+func TestLoadConsoleAndOAuthHonorExplicitGatewayURL(t *testing.T) {
+	cfg := &Config{
+		Server:     ServerConfig{Port: 2670},
+		Encryption: EncryptionConfig{APIKeyEncryptionKey: "01234567890123456789012345678901"},
+	}
+	source := externalIntegrationsEnvSource(map[string]string{
+		envConsoleAPIURL: "http://localhost:2679",
+	})
+	loadConsoleConfig(cfg, source)
+	if err := loadExternalIntegrationsConfig(cfg, source); err != nil {
+		t.Fatalf("loadExternalIntegrationsConfig() error = %v", err)
+	}
+	if got := cfg.ExternalIntegrations.OAuth.CallbackURL; got != "http://localhost:2679/console/api/integrations/oauth/callback" {
+		t.Fatalf("OAuth callback URL = %q, want explicit gateway URL", got)
+	}
+}
+
+func TestProductionOAuthDeploymentRejectsLoopbackURLs(t *testing.T) {
+	cfg := &Config{
+		Server:               ServerConfig{Mode: "release", Environment: "production"},
+		ExternalIntegrations: enabledExternalIntegrationsConfig(),
+	}
+	cfg.ExternalIntegrations.OAuth.CallbackURL = "http://127.0.0.1:2670/console/api/integrations/oauth/callback"
+	cfg.ExternalIntegrations.OAuth.ResultURL = "https://app.example.com/console/integrations/oauth/result"
+	if err := validateExternalIntegrationOAuthDeployment(cfg); err == nil ||
+		!strings.Contains(err.Error(), envIntegrationOAuthCallbackURL) {
+		t.Fatalf("production callback validation error = %v", err)
+	}
+
+	cfg.ExternalIntegrations.OAuth.CallbackURL = "https://api.example.com/console/api/integrations/oauth/callback"
+	cfg.ExternalIntegrations.OAuth.ResultURL = "http://localhost:3000/console/integrations/oauth/result"
+	if err := validateExternalIntegrationOAuthDeployment(cfg); err == nil ||
+		!strings.Contains(err.Error(), envIntegrationOAuthResultURL) {
+		t.Fatalf("production result validation error = %v", err)
+	}
+
+	cfg.ExternalIntegrations.OAuth.ResultURL = "https://app.example.com/console/integrations/oauth/result"
+	if err := validateExternalIntegrationOAuthDeployment(cfg); err != nil {
+		t.Fatalf("production HTTPS OAuth URLs rejected: %v", err)
+	}
+}
+
+func TestDevelopmentOAuthDeploymentAllowsLoopbackURLs(t *testing.T) {
+	cfg := &Config{
+		Server:               ServerConfig{Mode: "debug", Environment: "local"},
+		ExternalIntegrations: enabledExternalIntegrationsConfig(),
+	}
+	cfg.ExternalIntegrations.OAuth.CallbackURL = "http://127.0.0.1:2670/console/api/integrations/oauth/callback"
+	cfg.ExternalIntegrations.OAuth.ResultURL = "http://localhost:3000/console/integrations/oauth/result"
+	if err := validateExternalIntegrationOAuthDeployment(cfg); err != nil {
+		t.Fatalf("development loopback OAuth URLs rejected: %v", err)
 	}
 }
 

@@ -66,18 +66,43 @@ func (c *client) post(ctx context.Context, apiKey, path string, input interface{
 
 		body, readErr := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize+1))
 		_ = resp.Body.Close()
+		diagnostics := integrations.ProviderDiagnostics{
+			RequestID:    requestID,
+			HTTPStatus:   resp.StatusCode,
+			RetryAfterAt: exaRetryAfterAt(resp.Header),
+		}
 		if readErr != nil {
 			if ctx.Err() != nil {
-				return attempt, requestID, integrations.NewError(integrations.ErrorCodeTimeout, "external integration request timed out", ctx.Err())
+				return attempt, requestID, integrations.NewProviderError(
+					integrations.ErrorCodeTimeout,
+					"external integration request timed out",
+					ctx.Err(),
+					diagnostics,
+				)
 			}
-			return attempt, requestID, integrations.NewError(integrations.ErrorCodeResponseInvalid, "integration response could not be read", readErr)
+			return attempt, requestID, integrations.NewProviderError(
+				integrations.ErrorCodeResponseInvalid,
+				"integration response could not be read",
+				readErr,
+				diagnostics,
+			)
 		}
 		if len(body) > maxResponseSize {
-			return attempt, requestID, integrations.NewError(integrations.ErrorCodeResponseInvalid, "integration response exceeded the platform limit", nil)
+			return attempt, requestID, integrations.NewProviderError(
+				integrations.ErrorCodeResponseInvalid,
+				"integration response exceeded the platform limit",
+				nil,
+				diagnostics,
+			)
 		}
 		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 			if err := json.Unmarshal(body, output); err != nil {
-				return attempt, requestID, integrations.NewError(integrations.ErrorCodeResponseInvalid, "integration returned malformed JSON", err)
+				return attempt, requestID, integrations.NewProviderError(
+					integrations.ErrorCodeResponseInvalid,
+					"integration returned malformed JSON",
+					err,
+					diagnostics,
+				)
 			}
 			requestID = responseRequestID(output)
 			return attempt, requestID, nil
@@ -88,13 +113,23 @@ func (c *client) post(ctx context.Context, apiKey, path string, input interface{
 		if strings.TrimSpace(upstreamError.RequestID) != "" {
 			requestID = boundedRequestID(upstreamError.RequestID)
 		}
+		diagnostics.RequestID = requestID
+		diagnostics.ErrorCode = boundedProviderCode(upstreamError.Tag)
+		if diagnostics.ErrorCode == "" {
+			diagnostics.ErrorCode = exaStatusErrorCode(upstreamError.Error)
+		}
 		if retryableStatus(resp.StatusCode) && attempt < 3 {
 			if err := waitForRetry(ctx, retryDelay(attempt, resp.Header.Get("Retry-After"))); err != nil {
-				return attempt, requestID, integrations.NewError(integrations.ErrorCodeTimeout, "external integration request timed out", err)
+				return attempt, requestID, integrations.NewProviderError(
+					integrations.ErrorCodeTimeout,
+					"external integration request timed out",
+					err,
+					diagnostics,
+				)
 			}
 			continue
 		}
-		return attempt, requestID, statusError(resp.StatusCode)
+		return attempt, requestID, statusError(resp.StatusCode, diagnostics)
 	}
 	return 3, requestID, integrations.NewError(integrations.ErrorCodeUpstream, "external integration is unavailable", nil)
 }
@@ -110,21 +145,30 @@ func retryableStatus(status int) bool {
 	return status == http.StatusTooManyRequests || status == http.StatusInternalServerError || status == http.StatusBadGateway || status == http.StatusServiceUnavailable
 }
 
-func statusError(status int) error {
+func statusError(status int, diagnostics integrations.ProviderDiagnostics) error {
+	code := ""
+	message := ""
 	switch status {
 	case http.StatusBadRequest, http.StatusUnprocessableEntity:
-		return integrations.NewError(integrations.ErrorCodeInvalidInput, "external integration rejected the request", nil)
+		code = integrations.ErrorCodeInvalidInput
+		message = "external integration rejected the request"
 	case http.StatusUnauthorized:
-		return integrations.NewError(integrations.ErrorCodeAuthInvalid, "external integration authentication is invalid", nil)
+		code = integrations.ErrorCodeAuthInvalid
+		message = "external integration authentication is invalid"
 	case http.StatusPaymentRequired:
-		return integrations.NewError(integrations.ErrorCodeBudgetExceeded, "external integration budget has been exhausted", nil)
+		code = integrations.ErrorCodeBudgetExceeded
+		message = "external integration budget has been exhausted"
 	case http.StatusForbidden:
-		return integrations.NewError(integrations.ErrorCodeAccessDenied, "external integration denied access", nil)
+		code = integrations.ErrorCodeAccessDenied
+		message = "external integration denied access"
 	case http.StatusTooManyRequests:
-		return integrations.NewError(integrations.ErrorCodeRateLimited, "external integration rate limit was reached", nil)
+		code = integrations.ErrorCodeRateLimited
+		message = "external integration rate limit was reached"
 	default:
-		return integrations.NewError(integrations.ErrorCodeUpstream, fmt.Sprintf("external integration returned HTTP %d", status), nil)
+		code = integrations.ErrorCodeUpstream
+		message = fmt.Sprintf("external integration returned HTTP %d", status)
 	}
+	return integrations.NewProviderError(code, message, nil, diagnostics)
 }
 
 func retryDelay(attempt int, retryAfter string) time.Duration {
@@ -144,6 +188,40 @@ func retryDelay(attempt int, retryAfter string) time.Duration {
 		}
 	}
 	return time.Duration(250*(1<<(attempt-1))) * time.Millisecond
+}
+
+func exaRetryAfterAt(header http.Header) *time.Time {
+	raw := strings.TrimSpace(header.Get("Retry-After"))
+	if raw == "" {
+		return nil
+	}
+	if seconds, err := strconv.Atoi(raw); err == nil && seconds >= 0 {
+		value := time.Now().Add(time.Duration(seconds) * time.Second).UTC()
+		return &value
+	}
+	if value, err := http.ParseTime(raw); err == nil {
+		value = value.UTC()
+		return &value
+	}
+	return nil
+}
+
+func boundedProviderCode(value string) string {
+	value = strings.TrimSpace(value)
+	var builder strings.Builder
+	for _, char := range value {
+		switch {
+		case char >= 'a' && char <= 'z', char >= 'A' && char <= 'Z', char >= '0' && char <= '9',
+			char == '.', char == '_', char == ':':
+			builder.WriteRune(char)
+		default:
+			builder.WriteByte('_')
+		}
+		if builder.Len() >= 128 {
+			break
+		}
+	}
+	return strings.Trim(builder.String(), "_")
 }
 
 func waitForRetry(ctx context.Context, delay time.Duration) error {

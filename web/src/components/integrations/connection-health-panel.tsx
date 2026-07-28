@@ -15,6 +15,7 @@ import type { IntegrationCatalogItem, IntegrationConnection } from '@/services/t
 import { IntegrationConnectionHealthBadge } from './health-badge';
 import { safeOptionalIntegrationDisplayText } from './display-utils';
 import { useIntegrationMetadata } from './metadata-i18n';
+import { ProviderDiagnosticsDetails } from './provider-diagnostics-details';
 
 const PAGE_SIZE = 10;
 
@@ -195,10 +196,14 @@ export function IntegrationConnectionHealthPanel({
                     {safeOptionalIntegrationDisplayText(event.reason_code) ? (
                       <span>{metadata.healthReason(event.reason_code)}</span>
                     ) : null}
-                    {event.provider_http_status ? (
-                      <span>HTTP {event.provider_http_status}</span>
-                    ) : null}
                   </div>
+                  <ProviderDiagnosticsDetails
+                    className="rounded-md bg-muted/30 px-2.5 py-2"
+                    providerErrorCode={event.provider_error_code}
+                    providerRequestId={event.provider_request_id}
+                    providerHTTPStatus={event.provider_http_status}
+                    retryAfterAt={event.retry_after_at}
+                  />
                   {event.missing_scopes?.length ? (
                     <p className="text-xs text-warning">
                       {t('connectionHealth.missingScopes', {

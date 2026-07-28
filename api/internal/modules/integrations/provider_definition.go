@@ -182,6 +182,8 @@ type ActionSummary struct {
 	DataEgress             bool                     `json:"data_egress"`
 	ExternalDestination    string                   `json:"external_destination,omitempty"`
 	RequiredScopes         []string                 `json:"required_scopes,omitempty"`
+	RequiredAnyScopes      []string                 `json:"required_any_scopes,omitempty"`
+	PreferredScopes        []string                 `json:"preferred_scopes,omitempty"`
 	SupportedAuthMethodIDs []string                 `json:"supported_auth_method_ids,omitempty"`
 	ScopeLabelsI18n        LocalizedLabelMap        `json:"scope_labels_i18n,omitempty"`
 	DefaultPolicy          DefaultActionPolicy      `json:"default_policy"`

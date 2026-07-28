@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { useLocale } from 'next-intl';
 import {
   AlertTriangle,
@@ -26,9 +26,11 @@ import { safeIntegrationDisplayText } from './display-utils';
 import { useIntegrationMetadata } from './metadata-i18n';
 
 interface IntegrationConnectionPermissionSummaryProps {
-  summary?: IntegrationConnectionPermissionSummaryData;
-  grantedScopes?: string[];
+  summary?: IntegrationConnectionPermissionSummaryData | null;
+  grantedScopes?: string[] | null;
   provider?: IntegrationCatalogItem;
+  upgradePending?: boolean;
+  onUpgradeAction?: (actionID: string) => void;
 }
 
 function localizedValue(
@@ -108,42 +110,46 @@ function PermissionGroup({
 
 export function IntegrationConnectionPermissionSummary({
   summary,
-  grantedScopes = [],
+  grantedScopes,
   provider,
+  upgradePending = false,
+  onUpgradeAction,
 }: IntegrationConnectionPermissionSummaryProps) {
   const t = useT('integrations');
   const locale = useLocale();
   const metadata = useIntegrationMetadata();
   const [detailsOpen, setDetailsOpen] = useState(false);
+  const grantedScopeItems = grantedScopes ?? [];
+  const identityPermissions = summary?.identity_permissions ?? [];
+  const lifecyclePermissions = summary?.lifecycle_permissions ?? [];
+  const providerPermissionItems = summary?.provider_permissions ?? [];
+  const unknownPermissions = summary?.unknown_permissions ?? [];
+  const missingPermissions = summary?.missing_permissions ?? [];
 
-  const legacyPermissions = useMemo<IntegrationConnectionProviderPermission[]>(
-    () =>
-      grantedScopes
-        .map(value => value.trim())
-        .filter(Boolean)
-        .map(id => ({
-          id,
-          label: metadata.scope(id, provider),
-          category: '' as const,
-          access: 'unknown' as const,
-          broad: false,
-          known: metadata.scope(id, provider) !== id,
-        })),
-    [grantedScopes, metadata, provider]
-  );
+  const legacyPermissions: IntegrationConnectionProviderPermission[] = grantedScopeItems
+    .map(value => value.trim())
+    .filter(Boolean)
+    .map(id => ({
+      id,
+      label: metadata.scope(id, provider),
+      category: '' as const,
+      access: 'unknown' as const,
+      broad: false,
+      known: metadata.scope(id, provider) !== id,
+    }));
 
   const capabilities = summary?.adapted_capabilities ?? [];
   const availableCapabilities = capabilities.filter(item => item.scope_satisfied);
   const blockedCapabilities = capabilities.filter(item => !item.scope_satisfied);
   const providerPermissions = summary
     ? [
-        ...summary.identity_permissions,
-        ...summary.lifecycle_permissions,
-        ...summary.provider_permissions,
-        ...summary.unknown_permissions,
+        ...identityPermissions,
+        ...lifecyclePermissions,
+        ...providerPermissionItems,
+        ...unknownPermissions,
       ]
     : legacyPermissions;
-  const providerScopesReported = summary?.provider_scopes_reported ?? grantedScopes.length > 0;
+  const providerScopesReported = summary?.provider_scopes_reported ?? grantedScopeItems.length > 0;
 
   return (
     <section className="space-y-3">
@@ -175,7 +181,7 @@ export function IntegrationConnectionPermissionSummary({
             {t('permissionSummary.needsAttention')}
           </div>
           <p className="mt-1.5 text-lg font-semibold">
-            {blockedCapabilities.length + (summary?.missing_permissions.length ?? 0)}
+            {blockedCapabilities.length + missingPermissions.length}
           </p>
         </div>
       </div>
@@ -202,6 +208,10 @@ export function IntegrationConnectionPermissionSummary({
                 localizedValue(capability.name_i18n, locale, capability.name),
                 capability.action_id
               );
+              const description = safeIntegrationDisplayText(
+                localizedValue(capability.description_i18n, locale, capability.description ?? ''),
+                ''
+              );
               return (
                 <div
                   key={capability.action_id}
@@ -222,6 +232,11 @@ export function IntegrationConnectionPermissionSummary({
                   </span>
                   <div className="min-w-0">
                     <p className="text-sm font-medium">{name}</p>
+                    {description ? (
+                      <p className="mt-0.5 line-clamp-2 text-xs leading-5 text-muted-foreground">
+                        {description}
+                      </p>
+                    ) : null}
                     <div className="mt-1 flex flex-wrap gap-1.5">
                       <Badge variant="outline">{metadata.effect(capability.effect)}</Badge>
                       <Badge variant="subtle">{metadata.risk(capability.risk_level)}</Badge>
@@ -229,6 +244,21 @@ export function IntegrationConnectionPermissionSummary({
                         <Badge variant="warning">{t('permissionSummary.missingAccess')}</Badge>
                       ) : null}
                     </div>
+                    {!capability.scope_satisfied && capability.can_upgrade && onUpgradeAction ? (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="mt-2"
+                        disabled={upgradePending}
+                        onClick={() => onUpgradeAction(capability.action_id)}
+                      >
+                        <RefreshCw
+                          className={upgradePending ? 'size-3.5 animate-spin' : 'size-3.5'}
+                        />
+                        {t('permissionSummary.upgradeAction')}
+                      </Button>
+                    ) : null}
                   </div>
                 </div>
               );
@@ -248,12 +278,12 @@ export function IntegrationConnectionPermissionSummary({
         </Alert>
       ) : null}
 
-      {(summary?.missing_permissions.length ?? 0) > 0 ? (
+      {missingPermissions.length > 0 ? (
         <Alert className="border-warning/40 bg-warning/5 text-warning">
           <RefreshCw className="size-4" />
           <AlertDescription>
             {t('permissionSummary.missingWarning', {
-              count: summary?.missing_permissions.length ?? 0,
+              count: missingPermissions.length,
             })}
           </AlertDescription>
         </Alert>
@@ -296,19 +326,19 @@ export function IntegrationConnectionPermissionSummary({
                   <PermissionGroup
                     title={t('permissionSummary.groups.identity')}
                     icon={<ShieldCheck className="size-3.5" />}
-                    permissions={summary?.identity_permissions ?? []}
+                    permissions={identityPermissions}
                   />
                   <PermissionGroup
                     title={t('permissionSummary.groups.lifecycle')}
                     icon={<RefreshCw className="size-3.5" />}
-                    permissions={summary?.lifecycle_permissions ?? []}
+                    permissions={lifecyclePermissions}
                   />
                   <PermissionGroup
                     title={t('permissionSummary.groups.provider')}
                     icon={<KeyRound className="size-3.5" />}
                     permissions={
                       summary
-                        ? [...summary.provider_permissions, ...summary.unknown_permissions]
+                        ? [...providerPermissionItems, ...unknownPermissions]
                         : providerPermissions
                     }
                   />

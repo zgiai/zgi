@@ -1,10 +1,13 @@
 package integrations_test
 
 import (
+	"reflect"
+	"slices"
 	"testing"
 
 	"github.com/zgiai/zgi/api/internal/modules/integrations"
 	"github.com/zgiai/zgi/api/internal/modules/integrations/adapters/exa"
+	"github.com/zgiai/zgi/api/internal/modules/integrations/adapters/feishu"
 	"github.com/zgiai/zgi/api/internal/modules/integrations/adapters/github"
 	"github.com/zgiai/zgi/api/internal/modules/integrations/adapters/gmail"
 )
@@ -98,5 +101,95 @@ func TestConnectionPermissionSummaryDoesNotClaimAPIKeyScopeList(t *testing.T) {
 		if !capability.ScopeSatisfied {
 			t.Fatalf("API key capability %s should be verified at action runtime", capability.ActionID)
 		}
+	}
+}
+
+func TestConnectionPermissionSummaryOffersLeastPrivilegeFeishuScopeUpgrade(t *testing.T) {
+	connection := &integrations.IntegrationConnection{
+		IntegrationID: feishu.IntegrationID,
+		AuthType:      integrations.ConnectionAuthTypeOAuth2,
+		AuthMethodID:  feishu.UserOAuthAuthMethodID,
+		GrantedScopes: []string{"auth:user.id:read", feishu.ScopeOfflineAccess},
+	}
+	summary := integrations.BuildConnectionPermissionSummary(connection, feishu.ProviderDefinition())
+	if summary == nil {
+		t.Fatal("summary is nil")
+	}
+	var account, send *integrations.ConnectionCapabilityPermission
+	for index := range summary.AdaptedCapabilities {
+		capability := &summary.AdaptedCapabilities[index]
+		switch capability.ActionID {
+		case feishu.ActionGetAccount:
+			account = capability
+		case feishu.ActionSendUserMessage:
+			send = capability
+		}
+	}
+	if account == nil || !account.ScopeSatisfied ||
+		account.Availability != integrations.CapabilityAvailabilityReady || account.CanUpgrade {
+		t.Fatalf("account capability = %#v", account)
+	}
+	if send == nil || send.ScopeSatisfied || !send.CanUpgrade ||
+		send.Availability != integrations.CapabilityAvailabilityScopeUpgradeRequired {
+		t.Fatalf("send capability = %#v", send)
+	}
+	if !slices.Equal(send.MissingScopeIDs, []string{feishu.ScopeMessage, feishu.ScopeSendAsUser}) {
+		t.Fatalf("send missing scopes = %#v", send.MissingScopeIDs)
+	}
+}
+
+func TestConnectionPermissionSummaryHandlesAlternativeScopes(t *testing.T) {
+	definition := integrations.ProviderDefinition{
+		ID: "chat",
+		AuthMethods: []integrations.AuthMethodDefinition{{
+			ID: "oauth", Type: integrations.AuthMethodTypeOAuth2,
+			OAuth: &integrations.OAuthMethodMetadata{ScopeUpgradeEnabled: true},
+		}},
+		Actions: []integrations.ActionDefinition{{
+			ID: "chat.message.list", Name: "List messages",
+			RequiredScopes:    []string{"chat:read"},
+			RequiredAnyScopes: []string{"messages:read", "messages:history"},
+			PreferredScopes:   []string{"messages:read"},
+		}},
+	}
+	tests := []struct {
+		name        string
+		granted     []string
+		satisfied   bool
+		wantMissing []string
+	}{
+		{
+			name:      "non-preferred alternative satisfies action",
+			granted:   []string{"chat:read", "messages:history"},
+			satisfied: true,
+		},
+		{
+			name:        "missing alternative recommends preferred scope only",
+			granted:     []string{"chat:read"},
+			wantMissing: []string{"messages:read"},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			connection := &integrations.IntegrationConnection{
+				IntegrationID: "chat", AuthType: integrations.ConnectionAuthTypeOAuth2,
+				AuthMethodID: "oauth", GrantedScopes: test.granted,
+			}
+			summary := integrations.BuildConnectionPermissionSummary(connection, definition)
+			if len(summary.AdaptedCapabilities) != 1 {
+				t.Fatalf("capabilities = %#v", summary.AdaptedCapabilities)
+			}
+			capability := summary.AdaptedCapabilities[0]
+			if capability.ScopeSatisfied != test.satisfied {
+				t.Fatalf("ScopeSatisfied = %v, want %v (%#v)", capability.ScopeSatisfied, test.satisfied, capability)
+			}
+			if !reflect.DeepEqual(capability.MissingScopeIDs, test.wantMissing) {
+				t.Fatalf("MissingScopeIDs = %#v, want %#v", capability.MissingScopeIDs, test.wantMissing)
+			}
+			if !reflect.DeepEqual(capability.RequiredAnyScopes, []string{"messages:read", "messages:history"}) ||
+				!reflect.DeepEqual(capability.PreferredScopes, []string{"messages:read"}) {
+				t.Fatalf("alternative scope contract was not propagated: %#v", capability)
+			}
+		})
 	}
 }

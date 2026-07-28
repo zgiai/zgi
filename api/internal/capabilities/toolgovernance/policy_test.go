@@ -863,6 +863,54 @@ func TestFrozenInvocationPreservesDataEgressScope(t *testing.T) {
 	}
 }
 
+func TestFrozenInvocationDetachesAssetMetadataBeforeHashing(t *testing.T) {
+	metadata := map[string]interface{}{
+		"integration_id": "feishu",
+		"action_id":      "feishu.message.send_user",
+		"constraints": map[string]interface{}{
+			"recipient_type": "self",
+		},
+	}
+	invocation := NewFrozenInvocation(FrozenInvocationRequest{
+		CorrelationID: "corr-feishu-send",
+		Manifest: Manifest{
+			ToolID:              "feishu.message.send_user",
+			SkillID:             "external-apps",
+			Effect:              EffectExternalSend,
+			RiskLevel:           RiskLevelHigh,
+			DataEgress:          true,
+			ExternalDestination: "open.feishu.cn",
+		},
+		ToolName: "execute_action",
+		Arguments: map[string]interface{}{
+			"integration_id": "feishu",
+			"action_id":      "feishu.message.send_user",
+			"arguments":      map[string]interface{}{"recipient_type": "self", "text": "你好"},
+		},
+		Assets: []AssetRef{{
+			ID:       "connection",
+			Type:     "integration_connection",
+			Name:     "yy",
+			Metadata: metadata,
+		}},
+	})
+
+	metadata["action_id"] = "feishu.message.send_message"
+	metadata["constraints"].(map[string]interface{})["recipient_type"] = "open_id"
+
+	got := invocation.Assets[0].Metadata
+	if got["action_id"] != "feishu.message.send_user" {
+		t.Fatalf("frozen action metadata = %#v, want detached original value", got["action_id"])
+	}
+	constraints, ok := got["constraints"].(map[string]interface{})
+	if !ok || constraints["recipient_type"] != "self" {
+		t.Fatalf("frozen nested metadata = %#v, want detached original value", got["constraints"])
+	}
+	if !FrozenInvocationHashMatches(invocation) {
+		t.Fatalf("detached frozen invocation hash %q should match", invocation.Hash)
+	}
+}
+
 func webDataEgressManifest() Manifest {
 	return Manifest{
 		ToolID:                 "web.search",

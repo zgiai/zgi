@@ -38,7 +38,7 @@ func (s *service) RunToolGovernanceDecisionStream(
 	if onEvent == nil {
 		return nil, fmt.Errorf("%w: event callback is required", ErrInvalidInput)
 	}
-	decision, err := s.SubmitToolGovernanceDecision(ctx, scope, conversationID, messageID, correlationID, req)
+	publicDecision, err := s.SubmitToolGovernanceDecision(ctx, scope, conversationID, messageID, correlationID, req)
 	if err != nil {
 		return nil, err
 	}
@@ -60,7 +60,15 @@ func (s *service) RunToolGovernanceDecisionStream(
 	}
 	continuation.Conversation = conversation
 	continuation.Message = message
-	continuation.Event = decision.Event
+	// SubmitToolGovernanceDecision returns a browser-safe projection whose
+	// Event intentionally omits internal Connection identifiers. Never use that
+	// projection for verification or execution; reload the authoritative event.
+	authoritativeEvent, err := authoritativeToolGovernanceContinuationEvent(message, correlationID, publicDecision.Action)
+	if err != nil {
+		s.failToolGovernanceContinuation(context.WithoutCancel(ctx), continuation, err, onEvent)
+		return nil, newFinalizedStreamError(err)
+	}
+	continuation.Event = authoritativeEvent
 
 	prepared, err := s.prepareToolGovernanceContinuationChat(ctx, scope, continuation)
 	if err != nil {
@@ -79,18 +87,46 @@ func (s *service) RunToolGovernanceDecisionStream(
 		return nil, finalizedRuntimePersistenceError(err)
 	}
 	timeline := newProcessTimelineRecorder(runCtx, persistCtx, s, prepared, onEvent)
-	if err := timeline.RecordEvent(streamEventToolGovernanceDecision, decision.Event); err != nil {
+	if err := timeline.RecordEvent(streamEventToolGovernanceDecision, authoritativeEvent); err != nil {
 		return nil, finalizedRuntimePersistenceError(err)
 	}
 
-	switch strings.TrimSpace(decision.Action) {
+	switch strings.TrimSpace(publicDecision.Action) {
 	case toolGovernanceActionReject:
-		return s.runToolGovernanceRejectionContinuation(runCtx, prepared, req, decision.Event, onEvent)
+		return s.runToolGovernanceRejectionContinuation(runCtx, prepared, req, authoritativeEvent, onEvent)
 	case toolGovernanceActionApprove:
-		return s.runToolGovernanceApprovedContinuation(runCtx, prepared, decision.Event, onEvent)
+		return s.runToolGovernanceApprovedContinuation(runCtx, prepared, authoritativeEvent, onEvent)
 	default:
 		return nil, fmt.Errorf("%w: action must be approve or reject", ErrInvalidInput)
 	}
+}
+
+func authoritativeToolGovernanceContinuationEvent(
+	message *runtimemodel.Message,
+	correlationID string,
+	action string,
+) (map[string]interface{}, error) {
+	if message == nil {
+		return nil, fmt.Errorf("%w: continuation message is required", ErrInvalidInput)
+	}
+	event, ok := toolGovernanceDecisionEventFromMetadata(message.Metadata, correlationID)
+	if !ok {
+		return nil, fmt.Errorf("%w: authoritative tool governance event not found", ErrNotFound)
+	}
+	event = copyStringAnyMap(event)
+	if strings.TrimSpace(action) != toolGovernanceActionApprove {
+		return event, nil
+	}
+	frozen, found, err := toolGovernanceFrozenInvocationFromEvent(event)
+	if err != nil {
+		return nil, fmt.Errorf("%w: read authoritative frozen invocation: %v", ErrInvalidInput, err)
+	}
+	if found {
+		if err := validateToolGovernanceFrozenInvocation(frozen, correlationID); err != nil {
+			return nil, err
+		}
+	}
+	return event, nil
 }
 
 func (s *service) failToolGovernanceContinuation(ctx context.Context, continuation *ToolGovernanceContinuation, cause error, onEvent func(StreamEvent) error) {
@@ -273,8 +309,8 @@ func (s *service) runToolGovernanceApprovedContinuation(ctx context.Context, pre
 		var pendingGovernance *skillloop.ToolGovernancePendingError
 		if errors.As(err, &pendingGovernance) {
 			metadata, persistErr := s.persistToolGovernanceApprovalPendingResult(persistCtx, prepared, pendingGovernance.Payload, usage)
-			if ownershipErr := finalizedRuntimeOwnershipError(persistErr); ownershipErr != nil {
-				return nil, ownershipErr
+			if persistErr != nil {
+				return nil, s.finalizeToolGovernanceApprovalPersistenceError(persistCtx, prepared, persistErr, onEvent)
 			}
 			s.emitPreparedEvent(persistCtx, prepared, streamEventMessageEnd, messageEndPayloadWithStatus(prepared, metadata, runtimemodel.MessageStatusWaitingApproval), onEvent)
 			return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, Status: runtimemodel.MessageStatusWaitingApproval}, nil
@@ -460,8 +496,8 @@ func (s *service) runToolGovernanceApprovedFrozenContinuation(
 		var pendingGovernance *skillloop.ToolGovernancePendingError
 		if errors.As(err, &pendingGovernance) {
 			metadata, persistErr := s.persistToolGovernanceApprovalPendingResult(persistCtx, prepared, pendingGovernance.Payload, usage)
-			if ownershipErr := finalizedRuntimeOwnershipError(persistErr); ownershipErr != nil {
-				return nil, true, ownershipErr
+			if persistErr != nil {
+				return nil, true, s.finalizeToolGovernanceApprovalPersistenceError(persistCtx, prepared, persistErr, onEvent)
 			}
 			s.emitPreparedEvent(persistCtx, prepared, streamEventMessageEnd, messageEndPayloadWithStatus(prepared, metadata, runtimemodel.MessageStatusWaitingApproval), onEvent)
 			return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, Status: runtimemodel.MessageStatusWaitingApproval}, true, nil

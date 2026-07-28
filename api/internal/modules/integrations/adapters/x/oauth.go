@@ -47,7 +47,7 @@ func (adapter *Adapter) ExchangeCode(ctx context.Context, request integrations.O
 		form.Get("redirect_uri") == "" || form.Get("code_verifier") == "" {
 		return integrations.OAuthTokenSet{}, integrations.NewError(integrations.ErrorCodeInvalidInput, "X OAuth code exchange is incomplete", nil)
 	}
-	return adapter.xTokenRequest(ctx, request.Client, form, normalizeScopes(request.Scopes), "")
+	return adapter.xTokenRequest(ctx, request.Client, form, withOfflineAccess(request.Scopes), "")
 }
 
 func (adapter *Adapter) RefreshToken(ctx context.Context, request integrations.OAuthRefreshRequest) (integrations.OAuthTokenSet, error) {
@@ -93,7 +93,13 @@ func (adapter *Adapter) RevokeToken(ctx context.Context, request integrations.OA
 		return integrations.NewError(integrations.ErrorCodeResponseInvalid, "X OAuth revoke response could not be read", err)
 	}
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
-		return mapXStatus(response.StatusCode)
+		mapped, _ := mapXProblem(
+			response.StatusCode,
+			response.Header,
+			firstNonEmpty(response.Header.Get("X-Transaction-Id"), response.Header.Get("X-Request-Id")),
+			xProblem{},
+		)
+		return mapped
 	}
 	return nil
 }

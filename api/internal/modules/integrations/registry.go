@@ -187,10 +187,15 @@ func normalizeProviderDefinition(definition ProviderDefinition) (ProviderDefinit
 	if err != nil {
 		return ProviderDefinition{}, err
 	}
+	declaredScopes := make(map[string]ProviderScopeDefinition, len(definition.Scopes))
+	for _, scope := range definition.Scopes {
+		declaredScopes[scope.ID] = scope
+	}
 	if len(definition.AuthMethods) == 0 {
 		return ProviderDefinition{}, fmt.Errorf("integration %s must declare at least one auth method", definition.ID)
 	}
 	seenAuthMethods := make(map[string]struct{}, len(definition.AuthMethods))
+	availableAuthMethods := make(map[string]struct{}, len(definition.AuthMethods))
 	for index := range definition.AuthMethods {
 		method, err := normalizeAuthMethod(definition.ID, definition.AuthMethods[index])
 		if err != nil {
@@ -200,6 +205,30 @@ func normalizeProviderDefinition(definition ProviderDefinition) (ProviderDefinit
 			return ProviderDefinition{}, fmt.Errorf("integration %s auth method %s is duplicated", definition.ID, method.ID)
 		}
 		seenAuthMethods[method.ID] = struct{}{}
+		if method.Available {
+			availableAuthMethods[method.ID] = struct{}{}
+		}
+		if method.OAuth != nil {
+			for _, scopeID := range method.OAuth.IdentityScopes {
+				scope, declared := declaredScopes[scopeID]
+				if !declared {
+					return ProviderDefinition{}, fmt.Errorf(
+						"integration %s OAuth method %s references undeclared identity scope %s",
+						definition.ID,
+						method.ID,
+						scopeID,
+					)
+				}
+				if scope.Category == ProviderScopeCategoryInternal {
+					return ProviderDefinition{}, fmt.Errorf(
+						"integration %s OAuth method %s cannot request internal identity scope %s",
+						definition.ID,
+						method.ID,
+						scopeID,
+					)
+				}
+			}
+		}
 		definition.AuthMethods[index] = method
 	}
 	sort.Slice(definition.AuthMethods, func(i, j int) bool { return definition.AuthMethods[i].ID < definition.AuthMethods[j].ID })
@@ -239,10 +268,28 @@ func normalizeProviderDefinition(definition ProviderDefinition) (ProviderDefinit
 				action.ID,
 			)
 		}
+		for _, scopeID := range ActionRequiredScopeIDs(action) {
+			if _, declared := declaredScopes[scopeID]; !declared {
+				return ProviderDefinition{}, fmt.Errorf(
+					"integration %s action %s references undeclared scope %s",
+					definition.ID,
+					action.ID,
+					scopeID,
+				)
+			}
+		}
 		for _, authMethodID := range action.SupportedAuthMethodIDs {
 			if _, exists := seenAuthMethods[authMethodID]; !exists {
 				return ProviderDefinition{}, fmt.Errorf(
 					"integration %s action %s references unknown auth method %s",
+					definition.ID,
+					action.ID,
+					authMethodID,
+				)
+			}
+			if _, available := availableAuthMethods[authMethodID]; !available {
+				return ProviderDefinition{}, fmt.Errorf(
+					"integration %s action %s references unavailable auth method %s",
 					definition.ID,
 					action.ID,
 					authMethodID,
@@ -776,8 +823,44 @@ func normalizeActionDefinition(integrationID string, action ActionDefinition) (A
 		return ActionDefinition{}, fmt.Errorf("integration %s action %s data-egress destination is required", integrationID, action.ID)
 	}
 	action.RequiredScopes = normalizeCatalogStringList(action.RequiredScopes, 128)
+	action.RequiredAnyScopes = normalizeCatalogStringList(action.RequiredAnyScopes, 128)
+	action.PreferredScopes = normalizeCatalogStringList(action.PreferredScopes, 128)
+	requiredScopeIDs := ActionRequiredScopeIDs(action)
+	requiredScopeSet := make(map[string]struct{}, len(requiredScopeIDs))
+	for _, scopeID := range requiredScopeIDs {
+		requiredScopeSet[scopeID] = struct{}{}
+	}
+	for _, scopeID := range action.PreferredScopes {
+		if _, required := requiredScopeSet[scopeID]; !required {
+			return ActionDefinition{}, fmt.Errorf(
+				"integration %s action %s preferred scope %s is not part of its required scope union",
+				integrationID,
+				action.ID,
+				scopeID,
+			)
+		}
+	}
+	if len(action.RequiredAnyScopes) > 0 {
+		alternativeSet := make(map[string]struct{}, len(action.RequiredAnyScopes))
+		for _, scopeID := range action.RequiredAnyScopes {
+			alternativeSet[scopeID] = struct{}{}
+		}
+		preferredAlternativeCount := 0
+		for _, scopeID := range action.PreferredScopes {
+			if _, alternative := alternativeSet[scopeID]; alternative {
+				preferredAlternativeCount++
+			}
+		}
+		if preferredAlternativeCount != 1 {
+			return ActionDefinition{}, fmt.Errorf(
+				"integration %s action %s alternative scope group must declare exactly one preferred scope",
+				integrationID,
+				action.ID,
+			)
+		}
+	}
 	action.SupportedAuthMethodIDs = normalizeCatalogStringList(action.SupportedAuthMethodIDs, 32)
-	action.ScopeLabelsI18n, err = normalizeLocalizedLabelMap(action.ScopeLabelsI18n, action.RequiredScopes, 128, 128)
+	action.ScopeLabelsI18n, err = normalizeLocalizedLabelMap(action.ScopeLabelsI18n, requiredScopeIDs, 128, 128)
 	if err != nil {
 		return ActionDefinition{}, fmt.Errorf("integration %s action %s localized scope labels: %w", integrationID, action.ID, err)
 	}
@@ -1006,7 +1089,10 @@ func (r *Registry) SearchActionSummaries(request ActionSearchRequest) []ActionSu
 			if query != "" {
 				searchValues := []string{
 					definition.ID, definition.Name, strings.Join(definition.Tags, " "), strings.Join(definition.Categories, " "),
-					action.ID, action.ToolName, action.Name, action.Description, strings.Join(action.RequiredScopes, " "),
+					action.ID, action.ToolName, action.Name, action.Description,
+					strings.Join(action.RequiredScopes, " "),
+					strings.Join(action.RequiredAnyScopes, " "),
+					strings.Join(action.PreferredScopes, " "),
 				}
 				searchValues = append(searchValues, localizedTextSearchValues(definition.NameI18n)...)
 				searchValues = append(searchValues, localizedTextSearchValues(definition.DescriptionI18n)...)
@@ -1161,6 +1247,11 @@ func enforceGovernanceBaseline(baseline, resolved ActionDefinition) (ActionDefin
 	}
 	resolved.SensitiveDataAllowed = baseline.SensitiveDataAllowed && resolved.SensitiveDataAllowed
 	resolved.RequiredScopes = unionCatalogStrings(baseline.RequiredScopes, resolved.RequiredScopes)
+	// A dynamic resolver may add all-of requirements, but it cannot safely
+	// broaden an any-of group or change the OAuth preference established by
+	// the signed provider catalog.
+	resolved.RequiredAnyScopes = append([]string(nil), baseline.RequiredAnyScopes...)
+	resolved.PreferredScopes = append([]string(nil), baseline.PreferredScopes...)
 	resolved.ScopeLabelsI18n = cloneLocalizedLabelMap(baseline.ScopeLabelsI18n)
 	if resolved.DefaultPolicy == nil {
 		policy := *baseline.DefaultPolicy
@@ -1216,6 +1307,8 @@ func actionSummary(definition ProviderDefinition, action ActionDefinition) Actio
 		Description: action.Description, DescriptionI18n: cloneLocalizedText(action.DescriptionI18n), Effect: action.Effect, RiskLevel: action.RiskLevel,
 		DataEgress: action.DataEgress, ExternalDestination: action.ExternalDestination,
 		RequiredScopes:         append([]string(nil), action.RequiredScopes...),
+		RequiredAnyScopes:      append([]string(nil), action.RequiredAnyScopes...),
+		PreferredScopes:        append([]string(nil), action.PreferredScopes...),
 		SupportedAuthMethodIDs: append([]string(nil), action.SupportedAuthMethodIDs...),
 		ScopeLabelsI18n:        cloneLocalizedLabelMap(action.ScopeLabelsI18n), DefaultPolicy: policy,
 		SchemaHash: action.SchemaHash, SchemaRevision: action.SchemaRevision, CatalogRevision: action.CatalogRevision,
@@ -1432,6 +1525,8 @@ func cloneAction(action ActionDefinition) ActionDefinition {
 	action.InputSchema = cloneJSONMap(action.InputSchema)
 	action.OutputSchema = cloneJSONMap(action.OutputSchema)
 	action.RequiredScopes = append([]string(nil), action.RequiredScopes...)
+	action.RequiredAnyScopes = append([]string(nil), action.RequiredAnyScopes...)
+	action.PreferredScopes = append([]string(nil), action.PreferredScopes...)
 	action.SupportedAuthMethodIDs = append([]string(nil), action.SupportedAuthMethodIDs...)
 	action.SupportedCallers = append([]tools.ToolInvokeFrom(nil), action.SupportedCallers...)
 	if action.DefaultPolicy != nil {

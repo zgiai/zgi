@@ -24,6 +24,8 @@ import {
   useCreateIntegrationConnection,
   useCreateMyIntegrationConnection,
   useIntegrationCatalog,
+  useTestIntegrationConnection,
+  useTestMyIntegrationConnection,
 } from '@/hooks';
 import { INTEGRATION_KEYS } from '@/hooks/query-keys';
 import { useT } from '@/i18n';
@@ -80,6 +82,8 @@ export function IntegrationProviderCatalog({
   const myConnectionsQuery = useAllMyIntegrationConnections(undefined, canManageShared);
   const createMutation = useCreateIntegrationConnection();
   const createMyMutation = useCreateMyIntegrationConnection();
+  const testMutation = useTestIntegrationConnection();
+  const testMyMutation = useTestMyIntegrationConnection();
   const [selectedProvider, setSelectedProvider] = useState<IntegrationCatalogItem | null>(null);
   const [selectedAuthMethod, setSelectedAuthMethod] = useState<IntegrationAuthDefinition | null>(
     null
@@ -326,8 +330,8 @@ export function IntegrationProviderCatalog({
                   </div>
                 </CardHeader>
 
-                <CardFooter className="mt-auto flex flex-col gap-1.5 border-t bg-muted/10 p-3">
-                  <div className="flex min-w-0 flex-1">
+                <CardFooter className="mt-auto flex flex-col items-stretch gap-1.5 border-t bg-muted/10 p-3">
+                  <div className="flex w-full min-w-0">
                     <Button
                       size="sm"
                       className={
@@ -431,7 +435,9 @@ export function IntegrationProviderCatalog({
         catalog={selectedProvider ? [selectedProvider] : catalog}
         context={dialogMode === 'shared' ? 'shared' : 'personal'}
         isSubmitting={
-          dialogMode === 'shared' ? createMutation.isPending : createMyMutation.isPending
+          (dialogMode === 'shared' ? createMutation.isPending : createMyMutation.isPending) ||
+          testMutation.isPending ||
+          testMyMutation.isPending
         }
         allowedCredentialSources={dialogMode === 'shared' ? ['organization'] : ['account']}
         availableAuthMethodsOnly
@@ -444,8 +450,21 @@ export function IntegrationProviderCatalog({
           }
         }}
         onCreate={async data => {
-          if (dialogMode === 'shared') await createMutation.mutateAsync(data);
-          else await createMyMutation.mutateAsync(data);
+          const response =
+            dialogMode === 'shared'
+              ? await createMutation.mutateAsync(data)
+              : await createMyMutation.mutateAsync(data);
+          const saved = response.data;
+          try {
+            if (saved.credential_source === 'account') {
+              await testMyMutation.mutateAsync(saved.id);
+            } else {
+              await testMutation.mutateAsync(saved.id);
+            }
+          } catch {
+            // The credential remains saved and its failed health state is
+            // reported by the test mutation.
+          }
         }}
         onUpdate={async () => undefined}
       />

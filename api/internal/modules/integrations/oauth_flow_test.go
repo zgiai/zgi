@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/url"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -115,6 +116,7 @@ type memoryOAuthFlowRepository struct {
 type memoryOAuthConnectionCommitter struct {
 	flows       *memoryOAuthFlowRepository
 	connections *memoryConnectionRepository
+	revocations []OAuthRecoveryTask
 }
 
 type blockingOAuthConnectionCommitter struct {
@@ -131,6 +133,7 @@ func (committer *blockingOAuthConnectionCommitter) CommitOAuthConnection(
 	create bool,
 	displayName string,
 	completedAt time.Time,
+	supersededRevocation *OAuthRecoveryTask,
 ) error {
 	committer.once.Do(func() { close(committer.entered) })
 	select {
@@ -138,7 +141,7 @@ func (committer *blockingOAuthConnectionCommitter) CommitOAuthConnection(
 	case <-ctx.Done():
 		return ctx.Err()
 	}
-	return committer.delegate.CommitOAuthConnection(ctx, flowID, connection, create, displayName, completedAt)
+	return committer.delegate.CommitOAuthConnection(ctx, flowID, connection, create, displayName, completedAt, supersededRevocation)
 }
 
 type ambiguousOAuthConnectionCommitter struct {
@@ -152,8 +155,9 @@ func (committer *ambiguousOAuthConnectionCommitter) CommitOAuthConnection(
 	create bool,
 	displayName string,
 	completedAt time.Time,
+	supersededRevocation *OAuthRecoveryTask,
 ) error {
-	if err := committer.delegate.CommitOAuthConnection(ctx, flowID, connection, create, displayName, completedAt); err != nil {
+	if err := committer.delegate.CommitOAuthConnection(ctx, flowID, connection, create, displayName, completedAt, supersededRevocation); err != nil {
 		return err
 	}
 	return errors.New("database driver returned an ambiguous commit result")
@@ -195,7 +199,15 @@ func (outbox *retainingDeadLetterOAuthOutbox) DeadLetter(_ context.Context, task
 	return nil
 }
 
-func (committer *memoryOAuthConnectionCommitter) CommitOAuthConnection(ctx context.Context, flowID uuid.UUID, connection *IntegrationConnection, create bool, displayName string, completedAt time.Time) error {
+func (committer *memoryOAuthConnectionCommitter) CommitOAuthConnection(
+	ctx context.Context,
+	flowID uuid.UUID,
+	connection *IntegrationConnection,
+	create bool,
+	displayName string,
+	completedAt time.Time,
+	supersededRevocation *OAuthRecoveryTask,
+) error {
 	var err error
 	if create {
 		err = committer.connections.Create(ctx, connection)
@@ -205,9 +217,15 @@ func (committer *memoryOAuthConnectionCommitter) CommitOAuthConnection(ctx conte
 	if err != nil {
 		return err
 	}
-	return committer.flows.Transition(ctx, flowID, OAuthFlowPending, OAuthFlowSucceeded, map[string]any{
+	if err := committer.flows.Transition(ctx, flowID, OAuthFlowPending, OAuthFlowSucceeded, map[string]any{
 		"completed_connection_id": connection.ID, "account_display_name": displayName, "completed_at": completedAt, "failure_code": nil,
-	})
+	}); err != nil {
+		return err
+	}
+	if supersededRevocation != nil {
+		committer.revocations = append(committer.revocations, *supersededRevocation)
+	}
+	return nil
 }
 
 func newMemoryOAuthFlowRepository() *memoryOAuthFlowRepository {
@@ -548,6 +566,114 @@ func TestOAuthFlowConnectUsesServerDerivedScopesAndPersistsEncryptedTokens(t *te
 		t.Fatalf("decrypted credentials keys = %#v", credentials)
 	}
 	destroyCredentialMap(credentials)
+}
+
+func TestPrepareOAuthConnectionQueuesOnlyDistinctSupersededCredential(t *testing.T) {
+	for _, testCase := range []struct {
+		name             string
+		replacementToken string
+		wantRevocation   bool
+	}{
+		{name: "rotated refresh token", replacementToken: "new-refresh-token", wantRevocation: true},
+		{name: "same refresh token", replacementToken: "old-refresh-token", wantRevocation: false},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			adapter := &fakeOAuthAdapter{}
+			registry := NewRegistry()
+			if err := registry.Register(oauthTestRegistration(adapter)); err != nil {
+				t.Fatal(err)
+			}
+			cipher, err := NewCredentialCipher("12345678901234567890123456789012")
+			if err != nil {
+				t.Fatal(err)
+			}
+			organizationID, accountID, connectionID := uuid.New(), uuid.New(), uuid.New()
+			currentCredentials := map[string]string{
+				"access_token":  "old-access-token",
+				"refresh_token": "old-refresh-token",
+				"token_type":    "Bearer",
+			}
+			envelope, err := cipher.EncryptCredentials(currentCredentials, CredentialAAD{
+				OrganizationID: organizationID, ConnectionID: connectionID,
+				IntegrationID: "fake", CredentialVersion: 1,
+			})
+			destroyCredentialMap(currentCredentials)
+			if err != nil {
+				t.Fatal(err)
+			}
+			connectionRepository := newMemoryConnectionRepository()
+			connection := &IntegrationConnection{
+				ID: connectionID, OrganizationID: organizationID,
+				IntegrationID: "fake", DriverID: "fake-oauth", Name: "Existing",
+				CredentialSource: ConnectionCredentialSourceAccount, OwnerAccountID: &accountID,
+				AuthType: ConnectionAuthTypeOAuth2, AuthMethodID: "user_oauth",
+				EncryptedCredentials: &envelope, CredentialVersion: 1, Revision: 1, HealthRevision: 1,
+				Status: ConnectionStatusActive, HealthStatus: ConnectionHealthHealthy,
+				AuthStatus: ConnectionAuthValid, ScopeStatus: ConnectionScopeVerified,
+			}
+			if err := connectionRepository.Create(context.Background(), connection); err != nil {
+				t.Fatal(err)
+			}
+			clientService := NewOAuthClientConfigService(nil, cipher, registry, []OAuthDeploymentClient{{
+				IntegrationID: "fake", DriverID: "fake-oauth", AuthMethodID: "user_oauth",
+				ClientID: "client-id", ClientSecret: "client-secret",
+			}})
+			service := NewOAuthFlowService(
+				newMemoryOAuthFlowRepository(),
+				NewOAuthStateService(&memoryOAuthStateRepository{}, cipher, time.Minute),
+				registry,
+				clientService,
+				connectionRepository,
+				cipher,
+			)
+			recovery := NewOAuthRecoveryService(
+				newMemoryDurableOAuthOutbox(&durableOAuthTaskStore{}),
+				connectionRepository,
+				NewOAuthConnectionRevoker(cipher, registry, clientService),
+				cipher,
+			).WithFlowRepository(service.flows)
+			service.WithOAuthRecovery(recovery)
+			flow := &IntegrationOAuthFlow{
+				OrganizationID: organizationID, AccountID: accountID, ConnectionID: &connectionID,
+				IntegrationID: "fake", DriverID: "fake-oauth", ConnectionName: "Existing",
+				CredentialSource: ConnectionCredentialSourceAccount, AuthMethodID: "user_oauth",
+			}
+			prepared, create, revocation, err := service.prepareOAuthConnection(
+				context.Background(),
+				flow,
+				OAuthTokenSet{
+					AccessToken: "new-access-token", RefreshToken: testCase.replacementToken,
+					TokenType: "Bearer", Scopes: []string{"identity.read", "account.read"},
+				},
+				OAuthProfile{AccountID: "provider-account", DisplayName: "Provider User"},
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if create || prepared.CredentialVersion != 2 {
+				t.Fatalf("prepared connection = %#v, create = %v", prepared, create)
+			}
+			if (revocation != nil) != testCase.wantRevocation {
+				t.Fatalf("revocation = %#v, want present = %v", revocation, testCase.wantRevocation)
+			}
+			if revocation != nil {
+				oldCredentials, decryptErr := cipher.DecryptCredentials(
+					revocation.EncryptedCredentials,
+					CredentialAAD{
+						OrganizationID: organizationID, ConnectionID: connectionID,
+						IntegrationID: "fake", CredentialVersion: 1,
+					},
+				)
+				if decryptErr != nil {
+					t.Fatal(decryptErr)
+				}
+				if oldCredentials["refresh_token"] != "old-refresh-token" {
+					t.Fatalf("revocation snapshot did not retain the old refresh token")
+				}
+				destroyCredentialMap(oldCredentials)
+			}
+		})
+	}
 }
 
 func TestOAuthFlowDurablyRevokesIssuedTokenWhenPostExchangePersistenceFails(t *testing.T) {
@@ -1087,6 +1213,33 @@ func TestDeriveOAuthScopesIncludesIdentityScopesForWriteOnlySelection(t *testing
 	if !reflect.DeepEqual(actionIDs, []string{"fake.message.send"}) ||
 		!reflect.DeepEqual(scopes, []string{"identity.read", "message.send"}) {
 		t.Fatalf("actions = %#v, scopes = %#v", actionIDs, scopes)
+	}
+}
+
+func TestDeriveOAuthScopesRequestsPreferredAlternativeOnly(t *testing.T) {
+	method := AuthMethodDefinition{
+		ID: "user_oauth", Type: AuthMethodTypeOAuth2,
+		OAuth: &OAuthMethodMetadata{IdentityScopes: []string{"identity.read"}},
+	}
+	action := testAction("fake.message.list", "list_fake_messages")
+	action.RequiredScopes = []string{"message.base"}
+	action.RequiredAnyScopes = []string{"message.read", "message.history"}
+	action.PreferredScopes = []string{"message.read"}
+
+	actionIDs, scopes, err := deriveOAuthScopes(
+		ProviderDefinition{Actions: []ActionDefinition{action}},
+		method,
+		[]string{action.ID},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(actionIDs, []string{action.ID}) ||
+		!reflect.DeepEqual(scopes, []string{"identity.read", "message.base", "message.read"}) {
+		t.Fatalf("actions = %#v, scopes = %#v", actionIDs, scopes)
+	}
+	if slices.Contains(scopes, "message.history") {
+		t.Fatalf("OAuth requested every alternative instead of the preferred scope: %#v", scopes)
 	}
 }
 

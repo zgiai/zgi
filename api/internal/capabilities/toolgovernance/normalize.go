@@ -109,6 +109,7 @@ func normalizeAssets(assets []AssetRef) []AssetRef {
 		asset.Name = strings.TrimSpace(asset.Name)
 		asset.WorkspaceID = strings.TrimSpace(asset.WorkspaceID)
 		asset.Source = strings.TrimSpace(asset.Source)
+		asset.Metadata = cloneStringAnyMap(asset.Metadata)
 		if asset.ID == "" && asset.Name == "" && asset.Type == "" {
 			continue
 		}
@@ -152,16 +153,6 @@ func normalizePreauthorization(preauthorization *Preauthorization) *Preauthoriza
 		normalized.AuthorizedAt = &authorizedAt
 	}
 	normalized.Resources = normalizeAssets(normalized.Resources)
-	for index := range normalized.Resources {
-		if len(normalized.Resources[index].Metadata) == 0 {
-			continue
-		}
-		metadata := make(map[string]interface{}, len(normalized.Resources[index].Metadata))
-		for key, value := range normalized.Resources[index].Metadata {
-			metadata[key] = value
-		}
-		normalized.Resources[index].Metadata = metadata
-	}
 	normalized.Code = strings.ToLower(strings.TrimSpace(normalized.Code))
 	normalized.Reason = strings.TrimSpace(normalized.Reason)
 	return &normalized

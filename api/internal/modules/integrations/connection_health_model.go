@@ -58,6 +58,7 @@ type ConnectionHealthEvent struct {
 	ExecutionID        *uuid.UUID                     `gorm:"type:uuid;index" json:"execution_id,omitempty"`
 	ActorID            *uuid.UUID                     `gorm:"type:uuid" json:"actor_id,omitempty"`
 	ProviderRequestID  *string                        `gorm:"size:128" json:"provider_request_id,omitempty"`
+	ProviderErrorCode  *string                        `gorm:"size:128" json:"provider_error_code,omitempty"`
 	ProviderHTTPStatus *int                           `json:"provider_http_status,omitempty"`
 	LatencyMS          int64                          `gorm:"not null;default:0" json:"latency_ms"`
 	RetryAfterAt       *time.Time                     `json:"retry_after_at,omitempty"`
@@ -87,6 +88,7 @@ type ConnectionHealthObservation struct {
 	ExecutionID            *uuid.UUID
 	ActorID                *uuid.UUID
 	ProviderRequestID      string
+	ProviderErrorCode      string
 	ProviderHTTPStatus     *int
 	LatencyMS              int64
 	RetryAfterAt           *time.Time
@@ -103,17 +105,20 @@ type ConnectionHealthObservation struct {
 }
 
 type ConnectionHealthSignal struct {
-	OrganizationID    uuid.UUID
-	ConnectionID      uuid.UUID
-	IntegrationID     string
-	DriverID          string
-	ActionID          string
-	CredentialVersion int
-	ExecutionID       uuid.UUID
-	ProviderRequestID string
-	DurationMS        int64
-	ErrorCode         string
-	ObservedAt        time.Time
+	OrganizationID     uuid.UUID
+	ConnectionID       uuid.UUID
+	IntegrationID      string
+	DriverID           string
+	ActionID           string
+	CredentialVersion  int
+	ExecutionID        uuid.UUID
+	ProviderRequestID  string
+	ProviderErrorCode  string
+	ProviderHTTPStatus *int
+	RetryAfterAt       *time.Time
+	DurationMS         int64
+	ErrorCode          string
+	ObservedAt         time.Time
 }
 
 type ConnectionHealthSignalSink interface {

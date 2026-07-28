@@ -55,6 +55,12 @@ func (r *GormExecutionRepository) Complete(ctx context.Context, id uuid.UUID, co
 	if r == nil || r.db == nil {
 		return fmt.Errorf("integration execution repository is unavailable")
 	}
+	diagnostics := normalizeProviderDiagnostics(ProviderDiagnostics{
+		ErrorCode:    completion.ProviderErrorCode,
+		RequestID:    completion.ProviderRequestID,
+		HTTPStatus:   providerHTTPStatusValue(completion.ProviderHTTPStatus),
+		RetryAfterAt: completion.RetryAfterAt,
+	})
 	updates := map[string]interface{}{
 		"status":        completion.Status,
 		"duration_ms":   completion.DurationMS,
@@ -63,8 +69,17 @@ func (r *GormExecutionRepository) Complete(ctx context.Context, id uuid.UUID, co
 		"attempt_count": completion.AttemptCount,
 		"updated_at":    gorm.Expr("CURRENT_TIMESTAMP"),
 	}
-	if completion.ProviderRequestID != "" {
-		updates["provider_request_id"] = completion.ProviderRequestID
+	if diagnostics.RequestID != "" {
+		updates["provider_request_id"] = diagnostics.RequestID
+	}
+	if diagnostics.ErrorCode != "" {
+		updates["provider_error_code"] = diagnostics.ErrorCode
+	}
+	if diagnostics.HTTPStatus != 0 {
+		updates["provider_http_status"] = diagnostics.HTTPStatus
+	}
+	if diagnostics.RetryAfterAt != nil {
+		updates["retry_after_at"] = diagnostics.RetryAfterAt
 	}
 	if completion.ErrorCode != "" {
 		updates["error_code"] = completion.ErrorCode

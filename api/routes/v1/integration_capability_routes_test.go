@@ -13,6 +13,8 @@ func TestIntegrationActionCapabilityAvailability(t *testing.T) {
 		Effect:                 toolgovernance.EffectRead,
 		DataEgress:             true,
 		RequiredScopes:         []string{"records:read"},
+		RequiredAnyScopes:      []string{"records:metadata", "records:history"},
+		PreferredScopes:        []string{"records:metadata"},
 		SupportedAuthMethodIDs: []string{"oauth"},
 	}
 	allowed := integrations.ActionPolicyDecision{
@@ -61,7 +63,7 @@ func TestIntegrationActionCapabilityAvailability(t *testing.T) {
 				AuthStatus:    integrations.ConnectionAuthValid,
 				AuthType:      integrations.ConnectionAuthTypeOAuth2,
 				AuthMethodID:  "oauth",
-				GrantedScopes: []string{"records:read"},
+				GrantedScopes: []string{"records:read", "records:history"},
 			}},
 			want:      integrationCapabilityAvailable,
 			wantCount: 1,

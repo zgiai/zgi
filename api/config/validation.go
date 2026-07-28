@@ -112,6 +112,9 @@ func validateConfig(cfg *Config) error {
 	if err := validateExternalIntegrationsConfig(cfg.ExternalIntegrations); err != nil {
 		return err
 	}
+	if err := validateExternalIntegrationOAuthDeployment(cfg); err != nil {
+		return err
+	}
 
 	return nil
 }
@@ -197,6 +200,37 @@ func validIntegrationOAuthURL(value string) bool {
 		return false
 	}
 	host := strings.ToLower(parsed.Hostname())
+	if host == "localhost" {
+		return true
+	}
+	address := net.ParseIP(host)
+	return address != nil && address.IsLoopback()
+}
+
+func validateExternalIntegrationOAuthDeployment(cfg *Config) error {
+	if cfg == nil || !cfg.ExternalIntegrations.Enabled || isDevelopmentMode(cfg) {
+		return nil
+	}
+	urls := []struct {
+		key   string
+		value string
+	}{
+		{envIntegrationOAuthCallbackURL, cfg.ExternalIntegrations.OAuth.CallbackURL},
+		{envIntegrationOAuthResultURL, cfg.ExternalIntegrations.OAuth.ResultURL},
+	}
+	for _, item := range urls {
+		parsed, err := url.ParseRequestURI(strings.TrimSpace(item.value))
+		if err != nil || parsed == nil ||
+			!strings.EqualFold(parsed.Scheme, "https") ||
+			isLoopbackIntegrationOAuthHost(parsed.Hostname()) {
+			return fmt.Errorf("%s must be an externally reachable HTTPS URL outside development", item.key)
+		}
+	}
+	return nil
+}
+
+func isLoopbackIntegrationOAuthHost(host string) bool {
+	host = strings.ToLower(strings.TrimSpace(host))
 	if host == "localhost" {
 		return true
 	}

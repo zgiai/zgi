@@ -3,9 +3,10 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { useT } from '@/i18n';
-import { AICHAT_KEYS, INTEGRATION_KEYS } from '@/hooks/query-keys';
+import { AGENT_KEYS, AICHAT_KEYS, INTEGRATION_KEYS } from '@/hooks/query-keys';
 import { integrationService } from '@/services/integration.service';
 import { integrationErrorTranslationKeyFromError } from '@/services/integration-error-i18n';
+import type { ApiResponseData } from '@/services/types/common';
 import type {
   AcknowledgeIntegrationOAuthRecoveryRequest,
   CreateIntegrationConnectionRequest,
@@ -332,8 +333,8 @@ export function useDeleteIntegrationOAuthClientConfig(
   });
 }
 
-function useConnectionMutation<TVariables>(
-  mutationFn: (variables: TVariables) => Promise<unknown>,
+function useConnectionMutation<TVariables, TData = unknown>(
+  mutationFn: (variables: TVariables) => Promise<TData>,
   successKey: 'created' | 'updated' | 'tested' | 'defaultSet' | 'deleted'
 ) {
   const queryClient = useQueryClient();
@@ -356,12 +357,19 @@ function useConnectionMutation<TVariables>(
     onError: error => {
       const key = integrationErrorTranslationKeyFromError(error, 'integrations');
       toast.error(key ? t(key) : t('messages.requestFailed'));
+      if (successKey === 'tested') {
+        void queryClient.invalidateQueries({ queryKey: INTEGRATION_KEYS.connections() });
+        void queryClient.invalidateQueries({
+          queryKey: [...INTEGRATION_KEYS.all, 'available-connections'],
+        });
+        void queryClient.invalidateQueries({ queryKey: INTEGRATION_KEYS.catalog() });
+      }
     },
   });
 }
 
-function useMyConnectionMutation<TVariables>(
-  mutationFn: (variables: TVariables) => Promise<unknown>,
+function useMyConnectionMutation<TVariables, TData = unknown>(
+  mutationFn: (variables: TVariables) => Promise<TData>,
   successKey: 'created' | 'updated' | 'tested' | 'deleted'
 ) {
   const queryClient = useQueryClient();
@@ -384,19 +392,34 @@ function useMyConnectionMutation<TVariables>(
     onError: error => {
       const key = integrationErrorTranslationKeyFromError(error, 'integrations');
       toast.error(key ? t(key) : t('messages.requestFailed'));
+      if (successKey === 'tested') {
+        void queryClient.invalidateQueries({
+          queryKey: [...INTEGRATION_KEYS.all, 'my-connections'],
+        });
+        void queryClient.invalidateQueries({
+          queryKey: [...INTEGRATION_KEYS.all, 'available-connections'],
+        });
+        void queryClient.invalidateQueries({ queryKey: INTEGRATION_KEYS.catalog() });
+      }
     },
   });
 }
 
 export function useCreateIntegrationConnection() {
-  return useConnectionMutation<CreateIntegrationConnectionRequest>(
+  return useConnectionMutation<
+    CreateIntegrationConnectionRequest,
+    ApiResponseData<IntegrationConnection>
+  >(
     data => integrationService.createConnection(data),
     'created'
   );
 }
 
 export function useCreateMyIntegrationConnection() {
-  return useMyConnectionMutation<CreateIntegrationConnectionRequest>(
+  return useMyConnectionMutation<
+    CreateIntegrationConnectionRequest,
+    ApiResponseData<IntegrationConnection>
+  >(
     data => integrationService.createMyConnection(data),
     'created'
   );
@@ -462,6 +485,11 @@ function useConnectionGrantMutation<TVariables>(
       void queryClient.invalidateQueries({
         queryKey: [...AICHAT_KEYS.all, 'integration-preferences'],
       });
+      void queryClient.invalidateQueries({
+        predicate: query =>
+          query.queryKey[0] === AGENT_KEYS.all[0] &&
+          query.queryKey.includes('integration-connections'),
+      });
     },
     onError: error => {
       const key = integrationErrorTranslationKeyFromError(error, 'integrations');
@@ -522,6 +550,22 @@ export function useUpdateIntegrationActionPolicies(integrationId: string) {
     onSuccess: () => {
       toast.success(t('messages.policiesSaved'));
       void queryClient.invalidateQueries({ queryKey: INTEGRATION_KEYS.policies(integrationId) });
+      void queryClient.invalidateQueries({
+        queryKey: INTEGRATION_KEYS.capabilities(integrationId, 'organization'),
+      });
+      void queryClient.invalidateQueries({ queryKey: INTEGRATION_KEYS.catalog() });
+      void queryClient.invalidateQueries({ queryKey: INTEGRATION_KEYS.connections() });
+      void queryClient.invalidateQueries({
+        queryKey: [...INTEGRATION_KEYS.all, 'available-connections'],
+      });
+      void queryClient.invalidateQueries({
+        queryKey: [...AICHAT_KEYS.all, 'integration-preferences'],
+      });
+      void queryClient.invalidateQueries({
+        predicate: query =>
+          query.queryKey[0] === AGENT_KEYS.all[0] &&
+          query.queryKey.includes('integration-connections'),
+      });
     },
     onError: error => {
       const key = integrationErrorTranslationKeyFromError(error, 'integrations');

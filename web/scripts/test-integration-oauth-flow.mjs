@@ -33,6 +33,13 @@ const actionAuthCompatibilityPath = path.join(
   'action-auth-compatibility.ts'
 );
 const integrationServicePath = path.join(root, 'src', 'services', 'integration.service.ts');
+const connectionsPanelPath = path.join(
+  root,
+  'src',
+  'components',
+  'integrations',
+  'connections-panel.tsx'
+);
 
 const stateSource = fs.readFileSync(statePath, 'utf8');
 const compiled = ts.transpileModule(stateSource, {
@@ -106,6 +113,7 @@ assert.equal(
 const hookSource = fs.readFileSync(hookPath, 'utf8');
 const resultSource = fs.readFileSync(resultPath, 'utf8');
 const integrationServiceSource = fs.readFileSync(integrationServicePath, 'utf8');
+const connectionsPanelSource = fs.readFileSync(connectionsPanelPath, 'utf8');
 assert.match(hookSource, /operationRef\.current !== operation/);
 assert.match(hookSource, /cancelOAuthFlowSilently\(createdFlowId\)/);
 assert.match(hookSource, /monitorPopup\(\);\s*dispatch\(\{ type: 'popup_reopened' \}\)/);
@@ -141,6 +149,29 @@ assert.match(
   integrationServiceSource,
   /startOAuthFlow[\s\S]*?['"]\/integrations\/oauth\/flows['"][\s\S]*?withCredentials:\s*true/,
   'OAuth flow start must accept the HttpOnly browser-binding cookie across Web/API origins'
+);
+const scopeUpgradeHandler = connectionsPanelSource.slice(
+  connectionsPanelSource.indexOf('const upgradeOAuthAction'),
+  connectionsPanelSource.indexOf('const openDelete')
+);
+assert.ok(scopeUpgradeHandler.length > 0, 'connection scope-upgrade handler must exist');
+assert.doesNotMatch(
+  scopeUpgradeHandler,
+  /setDetailConnection\(null\)/,
+  'starting or failing a scope upgrade must not close the connection details'
+);
+const detailDialogWiring = connectionsPanelSource.slice(
+  connectionsPanelSource.indexOf('{detailConnection && canManageConnection'),
+  connectionsPanelSource.indexOf(
+    '<ConfirmDialog',
+    connectionsPanelSource.indexOf('{detailConnection')
+  )
+);
+assert.ok(detailDialogWiring.length > 0, 'connection detail dialog wiring must exist');
+assert.doesNotMatch(
+  detailDialogWiring,
+  /onTest=\{connection => \{\s*setDetailConnection\(null\)/,
+  'testing a connection must keep its detail dialog mounted for refreshed results'
 );
 
 const clientFieldsSource = fs.readFileSync(clientFieldsPath, 'utf8');

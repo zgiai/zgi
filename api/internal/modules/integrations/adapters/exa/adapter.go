@@ -153,7 +153,11 @@ func (a *Adapter) search(ctx context.Context, apiKey string, input map[string]in
 	var upstream response
 	attempts, requestID, err := a.client.post(ctx, apiKey, "/search", request, &upstream)
 	if err != nil {
-		return &integrations.ActionResult{ProviderRequestID: requestID, AttemptCount: attempts}, err
+		return &integrations.ActionResult{
+			ProviderRequestID:   requestID,
+			ProviderDiagnostics: integrations.ProviderDiagnosticsFromError(err),
+			AttemptCount:        attempts,
+		}, err
 	}
 	resultLimit := minInt(len(upstream.Results), minInt(a.config.MaxResults, numResults))
 	results := make([]interface{}, 0, resultLimit)
@@ -231,7 +235,11 @@ func (a *Adapter) fetch(ctx context.Context, apiKey string, input map[string]int
 	var upstream response
 	attempts, requestID, err := a.client.post(ctx, apiKey, "/contents", request, &upstream)
 	if err != nil {
-		return &integrations.ActionResult{ProviderRequestID: requestID, AttemptCount: attempts}, err
+		return &integrations.ActionResult{
+			ProviderRequestID:   requestID,
+			ProviderDiagnostics: integrations.ProviderDiagnosticsFromError(err),
+			AttemptCount:        attempts,
+		}, err
 	}
 	requestedLimit := minInt(len(urls), a.config.MaxFetchURLs)
 	resultLimit := minInt(len(upstream.Results), requestedLimit)
@@ -290,7 +298,7 @@ func (a *Adapter) fetch(ctx context.Context, apiKey string, input map[string]int
 			continue
 		}
 		seenURLs[sourceURL] = struct{}{}
-		results = append(results, map[string]interface{}{
+		failedResult := map[string]interface{}{
 			"title":        "",
 			"url":          sourceURL,
 			"published_at": "",
@@ -298,7 +306,11 @@ func (a *Adapter) fetch(ctx context.Context, apiKey string, input map[string]int
 			"text":         "",
 			"highlights":   []interface{}{},
 			"status":       "failed",
-		})
+		}
+		if errorCode := exaStatusErrorCode(item.Error); errorCode != "" {
+			failedResult["error_code"] = errorCode
+		}
+		results = append(results, failedResult)
 	}
 	cost, costValue := parseCost(upstream.CostDollars)
 	output := map[string]interface{}{
@@ -309,6 +321,19 @@ func (a *Adapter) fetch(ctx context.Context, apiKey string, input map[string]int
 		"results":        results,
 	}
 	return &integrations.ActionResult{Output: output, ProviderRequestID: boundedRequestID(upstream.RequestID), CostUSD: cost, ResultCount: len(results), AttemptCount: attempts}, nil
+}
+
+func exaStatusErrorCode(raw json.RawMessage) string {
+	if len(raw) == 0 || string(raw) == "null" {
+		return ""
+	}
+	var envelope struct {
+		Tag string `json:"tag"`
+	}
+	if json.Unmarshal(raw, &envelope) != nil {
+		return ""
+	}
+	return boundedProviderCode(envelope.Tag)
 }
 
 func parseCost(raw json.RawMessage) (*float64, interface{}) {

@@ -348,6 +348,7 @@ func standardOutputSchema(version string, maxResults int, fetched bool) map[stri
 	if fetched {
 		resultProperties["text"] = map[string]interface{}{"type": "string", "maxLength": 20000}
 		resultProperties["status"] = map[string]interface{}{"type": "string", "enum": []string{"success", "failed"}}
+		resultProperties["error_code"] = map[string]interface{}{"type": "string", "maxLength": 128}
 		resultRequired = append(resultRequired, "text", "status")
 		properties["results"].(map[string]interface{})["items"].(map[string]interface{})["required"] = resultRequired
 	} else {

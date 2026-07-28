@@ -92,6 +92,88 @@ func TestToolGovernanceDecisionPayloadSurfacesDynamicActionIdentityWithoutDuplic
 	}
 }
 
+func TestToolGovernanceDecisionPayloadSealsDetachedFrozenInvocation(t *testing.T) {
+	frozen := toolgovernance.NewFrozenInvocation(toolgovernance.FrozenInvocationRequest{
+		CorrelationID: "corr-feishu-send",
+		Manifest: toolgovernance.Manifest{
+			ToolID:                  "feishu.message.send_user",
+			Effect:                  toolgovernance.EffectExternalSend,
+			RiskLevel:               toolgovernance.RiskLevelHigh,
+			DataEgress:              true,
+			ExternalDestination:     "open.feishu.cn",
+			ApprovalEveryInvocation: true,
+		},
+		SkillID:      "external-apps",
+		ToolName:     "execute_action",
+		ProviderType: "connector",
+		ProviderID:   "external-integrations",
+		Arguments: map[string]interface{}{
+			"integration_id": "feishu",
+			"action_id":      "feishu.message.send_user",
+			"arguments":      map[string]interface{}{"recipient_type": "self", "text": "你好"},
+		},
+	})
+	frozen.Arguments["connection_name"] = "yy"
+	decision := &toolgovernance.Decision{
+		Status:           toolgovernance.DecisionStatusNeedsApproval,
+		RequiresApproval: true,
+		CorrelationID:    "corr-feishu-send",
+		Manifest:         frozenManifest(frozen),
+		FrozenInvocation: &frozen,
+		ApprovalEvent:    &toolgovernance.ApprovalEvent{CorrelationID: "corr-feishu-send", FrozenInvocation: &frozen},
+	}
+
+	payload := ToolGovernanceDecisionPayload(PayloadIDs{}, skills.SkillTrace{
+		SkillID: "external-apps", ToolName: "execute_action", Governance: decision,
+	})
+	governance, ok := payload["governance"].(*toolgovernance.Decision)
+	if !ok || governance.FrozenInvocation == nil || governance.ApprovalEvent == nil ||
+		governance.ApprovalEvent.FrozenInvocation == nil {
+		t.Fatalf("sealed governance payload = %#v", payload["governance"])
+	}
+	if !toolgovernance.FrozenInvocationHashMatches(*governance.FrozenInvocation) ||
+		!toolgovernance.FrozenInvocationHashMatches(*governance.ApprovalEvent.FrozenInvocation) {
+		t.Fatal("payload frozen invocation must be sealed before approval persistence")
+	}
+	if governance.FrozenInvocation.Hash != governance.ApprovalEvent.FrozenInvocation.Hash {
+		t.Fatalf("decision hash %q != approval event hash %q",
+			governance.FrozenInvocation.Hash, governance.ApprovalEvent.FrozenInvocation.Hash)
+	}
+
+	governance.FrozenInvocation.Arguments["connection_name"] = "changed"
+	if governance.ApprovalEvent.FrozenInvocation.Arguments["connection_name"] != "yy" {
+		t.Fatal("decision and approval event frozen invocations must not share argument maps")
+	}
+	if decision.FrozenInvocation.Hash == governance.FrozenInvocation.Hash {
+		t.Fatal("transport sealing must not mutate or silently repair the runtime decision")
+	}
+}
+
+func TestToolGovernanceDecisionPayloadDoesNotResealAfterApproval(t *testing.T) {
+	frozen := toolgovernance.NewFrozenInvocation(toolgovernance.FrozenInvocationRequest{
+		CorrelationID: "corr-approved",
+		Manifest: toolgovernance.Manifest{
+			ToolID: "feishu.message.send_user", Effect: toolgovernance.EffectExternalSend,
+			RiskLevel: toolgovernance.RiskLevelHigh,
+		},
+		SkillID: "external-apps", ToolName: "execute_action",
+		Arguments: map[string]interface{}{"action_id": "feishu.message.send_user"},
+	})
+	frozen.Arguments["action_id"] = "feishu.message.send_message"
+	payload := ToolGovernanceDecisionPayload(PayloadIDs{}, skills.SkillTrace{
+		Governance: &toolgovernance.Decision{
+			Status:                  toolgovernance.DecisionStatusAllowed,
+			RequiresApproval:        false,
+			FrozenInvocation:        &frozen,
+			ApprovedByCorrelationID: "corr-approved",
+		},
+	})
+	governance := payload["governance"].(*toolgovernance.Decision)
+	if toolgovernance.FrozenInvocationHashMatches(*governance.FrozenInvocation) {
+		t.Fatal("an approved invocation must be verified, never silently resealed")
+	}
+}
+
 func frozenManifest(frozen toolgovernance.FrozenInvocation) toolgovernance.Manifest {
 	return toolgovernance.Manifest{
 		ToolID: frozen.ToolID, Effect: frozen.Effect, RiskLevel: frozen.RiskLevel,

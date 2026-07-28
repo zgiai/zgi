@@ -225,18 +225,30 @@ func githubToken(connection *integrations.ResolvedConnection) (string, error) {
 }
 
 func actionResult(output map[string]interface{}, meta responseMeta) *integrations.ActionResult {
-	if output == nil {
+	if output == nil && meta.Attempts == 0 && meta.RequestID == "" &&
+		meta.Diagnostics == (integrations.ProviderDiagnostics{}) {
 		return nil
 	}
-	count := 1
+	count := 0
+	if output != nil {
+		count = 1
+	}
 	if values, ok := output["repositories"].([]interface{}); ok {
 		count = len(values)
 	}
 	if values, ok := output["issues"].([]interface{}); ok {
 		count = len(values)
 	}
+	attempts := meta.Attempts
+	if output != nil && attempts == 0 {
+		attempts = 1
+	}
 	return &integrations.ActionResult{
-		Output: output, ProviderRequestID: meta.RequestID, ResultCount: count, AttemptCount: max(meta.Attempts, 1),
+		Output:              output,
+		ProviderRequestID:   meta.RequestID,
+		ProviderDiagnostics: meta.Diagnostics,
+		ResultCount:         count,
+		AttemptCount:        attempts,
 	}
 }
 

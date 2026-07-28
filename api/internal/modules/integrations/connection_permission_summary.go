@@ -8,17 +8,29 @@ import (
 )
 
 type ConnectionCapabilityPermission struct {
-	ActionID        string                   `json:"action_id"`
-	Name            string                   `json:"name"`
-	NameI18n        LocalizedText            `json:"name_i18n,omitempty"`
-	Description     string                   `json:"description,omitempty"`
-	DescriptionI18n LocalizedText            `json:"description_i18n,omitempty"`
-	Effect          toolgovernance.Effect    `json:"effect"`
-	RiskLevel       toolgovernance.RiskLevel `json:"risk_level"`
-	ScopeSatisfied  bool                     `json:"scope_satisfied"`
-	RequiredScopes  []string                 `json:"required_scopes,omitempty"`
-	MissingScopeIDs []string                 `json:"missing_scope_ids,omitempty"`
+	ActionID          string                   `json:"action_id"`
+	Name              string                   `json:"name"`
+	NameI18n          LocalizedText            `json:"name_i18n,omitempty"`
+	Description       string                   `json:"description,omitempty"`
+	DescriptionI18n   LocalizedText            `json:"description_i18n,omitempty"`
+	Effect            toolgovernance.Effect    `json:"effect"`
+	RiskLevel         toolgovernance.RiskLevel `json:"risk_level"`
+	Availability      CapabilityAvailability   `json:"availability"`
+	CanUpgrade        bool                     `json:"can_upgrade"`
+	ScopeSatisfied    bool                     `json:"scope_satisfied"`
+	RequiredScopes    []string                 `json:"required_scopes,omitempty"`
+	RequiredAnyScopes []string                 `json:"required_any_scopes,omitempty"`
+	PreferredScopes   []string                 `json:"preferred_scopes,omitempty"`
+	MissingScopeIDs   []string                 `json:"missing_scope_ids,omitempty"`
 }
+
+type CapabilityAvailability string
+
+const (
+	CapabilityAvailabilityReady                CapabilityAvailability = "ready"
+	CapabilityAvailabilityScopeUpgradeRequired CapabilityAvailability = "scope_upgrade_required"
+	CapabilityAvailabilityPermissionMissing    CapabilityAvailability = "permission_missing"
+)
 
 type ConnectionProviderPermission struct {
 	ID              string                `json:"id"`
@@ -79,18 +91,30 @@ func BuildConnectionPermissionSummary(connection *IntegrationConnection, definit
 		if !ActionSupportsAuthMethod(action, connection.AuthMethodID) {
 			continue
 		}
-		missing := missingConnectionScopes(connection, action.RequiredScopes, granted)
+		missing := missingConnectionActionScopes(connection, action, granted)
+		canUpgrade := len(missing) > 0 && connectionAuthMethodCanUpgradeScopes(connection, definition)
+		availability := CapabilityAvailabilityReady
+		if len(missing) > 0 {
+			availability = CapabilityAvailabilityPermissionMissing
+			if canUpgrade {
+				availability = CapabilityAvailabilityScopeUpgradeRequired
+			}
+		}
 		summary.AdaptedCapabilities = append(summary.AdaptedCapabilities, ConnectionCapabilityPermission{
-			ActionID:        action.ID,
-			Name:            action.Name,
-			NameI18n:        cloneLocalizedText(action.NameI18n),
-			Description:     action.Description,
-			DescriptionI18n: cloneLocalizedText(action.DescriptionI18n),
-			Effect:          action.Effect,
-			RiskLevel:       action.RiskLevel,
-			ScopeSatisfied:  len(missing) == 0,
-			RequiredScopes:  append([]string(nil), action.RequiredScopes...),
-			MissingScopeIDs: missing,
+			ActionID:          action.ID,
+			Name:              action.Name,
+			NameI18n:          cloneLocalizedText(action.NameI18n),
+			Description:       action.Description,
+			DescriptionI18n:   cloneLocalizedText(action.DescriptionI18n),
+			Effect:            action.Effect,
+			RiskLevel:         action.RiskLevel,
+			Availability:      availability,
+			CanUpgrade:        canUpgrade,
+			ScopeSatisfied:    len(missing) == 0,
+			RequiredScopes:    append([]string(nil), action.RequiredScopes...),
+			RequiredAnyScopes: append([]string(nil), action.RequiredAnyScopes...),
+			PreferredScopes:   append([]string(nil), action.PreferredScopes...),
+			MissingScopeIDs:   missing,
 		})
 	}
 
@@ -143,6 +167,19 @@ func BuildConnectionPermissionSummary(connection *IntegrationConnection, definit
 	return summary
 }
 
+func connectionAuthMethodCanUpgradeScopes(connection *IntegrationConnection, definition ProviderDefinition) bool {
+	if connection == nil || connection.AuthType != ConnectionAuthTypeOAuth2 {
+		return false
+	}
+	for _, method := range definition.AuthMethods {
+		if !strings.EqualFold(strings.TrimSpace(method.ID), strings.TrimSpace(connection.AuthMethodID)) {
+			continue
+		}
+		return method.OAuth != nil && method.OAuth.ScopeUpgradeEnabled
+	}
+	return false
+}
+
 func missingConnectionScopes(connection *IntegrationConnection, required []string, granted map[string]struct{}) []string {
 	if len(required) == 0 {
 		return nil
@@ -160,6 +197,48 @@ func missingConnectionScopes(connection *IntegrationConnection, required []strin
 		}
 	}
 	return missing
+}
+
+func missingConnectionActionScopes(
+	connection *IntegrationConnection,
+	action ActionDefinition,
+	granted map[string]struct{},
+) []string {
+	if len(action.RequiredScopes) == 0 && len(action.RequiredAnyScopes) == 0 {
+		return nil
+	}
+	// This matches Executor behavior: OAuth connections always enforce scopes,
+	// while static credentials without a provider scope report are verified by
+	// the actual action instead of being declared unavailable.
+	if connection.AuthType != ConnectionAuthTypeOAuth2 && len(granted) == 0 {
+		return nil
+	}
+	missing := missingConnectionScopes(connection, action.RequiredScopes, granted)
+	anyOf := normalizeScopeRequirement(action.RequiredAnyScopes)
+	if len(anyOf) == 0 {
+		return missing
+	}
+	for _, scopeID := range anyOf {
+		if _, exists := granted[scopeID]; exists {
+			return missing
+		}
+	}
+	preferredAnyOf := make([]string, 0, len(action.PreferredScopes))
+	alternatives := make(map[string]struct{}, len(anyOf))
+	for _, scopeID := range anyOf {
+		alternatives[scopeID] = struct{}{}
+	}
+	for _, scopeID := range normalizeScopeRequirement(action.PreferredScopes) {
+		if _, alternative := alternatives[scopeID]; alternative {
+			preferredAnyOf = append(preferredAnyOf, scopeID)
+		}
+	}
+	if len(preferredAnyOf) == 0 {
+		// Registered provider definitions cannot reach this fallback, but it
+		// keeps presentation fail-closed for direct test fixtures.
+		preferredAnyOf = anyOf
+	}
+	return normalizeScopeRequirement(append(missing, preferredAnyOf...))
 }
 
 func providerPermission(

@@ -402,6 +402,9 @@ func TestContentsPartialFailureIsRepresentedWithoutUpstreamErrorText(t *testing.
 	if len(items) != 2 || items[0].(map[string]interface{})["status"] != "success" || items[1].(map[string]interface{})["status"] != "failed" {
 		t.Fatalf("partial fetch output = %#v", items)
 	}
+	if got := items[1].(map[string]interface{})["error_code"]; got != "FETCH_DOCUMENT_ERROR" {
+		t.Fatalf("partial fetch error code = %#v", got)
+	}
 	encoded, _ := json.Marshal(result.Output)
 	if strings.Contains(string(encoded), upstreamError) {
 		t.Fatalf("partial fetch output leaked upstream diagnostic: %s", encoded)
@@ -611,6 +614,7 @@ func TestAdapterMapsAuthenticationAndBudgetStatusesWithoutLeakingAPIKey(t *testi
 				writeJSON(t, w, test.status, map[string]interface{}{
 					"requestId": "req-status",
 					"error":     "upstream echoed " + apiKey,
+					"tag":       "PROVIDER_STATUS_ERROR",
 				})
 			})
 			result, err := adapter.Execute(context.Background(), integrations.ActionRequest{
@@ -628,6 +632,11 @@ func TestAdapterMapsAuthenticationAndBudgetStatusesWithoutLeakingAPIKey(t *testi
 			}
 			if result == nil || result.ProviderRequestID != "req-status" || result.AttemptCount != 1 {
 				t.Fatalf("error result metadata = %+v", result)
+			}
+			if result.ProviderDiagnostics.ErrorCode != "PROVIDER_STATUS_ERROR" ||
+				result.ProviderDiagnostics.RequestID != "req-status" ||
+				result.ProviderDiagnostics.HTTPStatus != test.status {
+				t.Fatalf("provider diagnostics = %#v", result.ProviderDiagnostics)
 			}
 		})
 	}

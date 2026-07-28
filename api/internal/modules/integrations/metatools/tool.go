@@ -23,6 +23,8 @@ const (
 	maxArgumentDisplayFields    = 64
 	hiddenReferenceSentinel     = "__zgi_hidden_reference__"
 	resultCodeOutputTruncated   = "integration_result_truncated"
+	actionAvailabilityReady     = "ready"
+	actionAvailabilityScopeGap  = "scope_upgrade_required"
 )
 
 type Tool struct {
@@ -119,9 +121,18 @@ func (t *Tool) ForkToolRuntime(runtime *tools.ToolRuntime) tools.Tool {
 func (t *Tool) ValidateCredentials(context.Context, map[string]interface{}) error { return nil }
 
 func (t *Tool) EnrichGovernanceArguments(ctx context.Context, userID string, parameters map[string]interface{}) map[string]interface{} {
+	enriched, _ := t.EnrichGovernanceArgumentsWithError(ctx, userID, parameters)
+	return enriched
+}
+
+func (t *Tool) EnrichGovernanceArgumentsWithError(
+	ctx context.Context,
+	userID string,
+	parameters map[string]interface{},
+) (map[string]interface{}, error) {
 	out := cloneMap(parameters)
 	if t == nil || t.name != ToolExecuteAction || t.registry == nil {
-		return out
+		return out, nil
 	}
 	// Display metadata and connection labels are server-owned. Clear all
 	// caller-supplied values before attempting resolution so an invalid action
@@ -132,20 +143,25 @@ func (t *Tool) EnrichGovernanceArguments(ctx context.Context, userID string, par
 	definition, definitionOK := t.registry.ProviderDefinition(integrationID)
 	action, ok := t.registry.ActionDetail(integrationID, actionID)
 	if !definitionOK || !ok {
-		return out
+		return out, integrations.NewError(integrations.ErrorCodeInvalidInput, "unknown integration action", nil)
 	}
 	setExecuteActionDisplayMetadata(out, definition, action)
 	setExecuteActionArgumentDisplayMetadata(out, action)
-	if selected, selection, resolveErr := t.resolveExecutionConnection(ctx, userID, integrationID, action.ID, action.Effect, out); resolveErr == nil {
-		// Freeze the canonical UUID for governance, approval and execution. The
-		// public projection strips it and retains only the safe server labels.
-		out["connection_id"] = selected.record.ID.String()
-		delete(out, "connection_selector")
-		out["connection_name"] = safeConnectionName(selected.record)
-		out["connection_selection"] = selection
-		if displayName := safeConnectionDisplayName(selected.record); displayName != "" {
-			out["connection_display_name"] = displayName
-		}
+	selected, selection, resolveErr := t.resolveExecutionConnection(ctx, userID, integrationID, action.ID, action.Effect, out)
+	if resolveErr != nil {
+		return out, resolveErr
+	}
+	if scopeErr := authorizeSelectedConnectionScopes(selected.record, action); scopeErr != nil {
+		return out, scopeErr
+	}
+	// Freeze the canonical UUID for governance, approval and execution. The
+	// public projection strips it and retains only the safe server labels.
+	out["connection_id"] = selected.record.ID.String()
+	delete(out, "connection_selector")
+	out["connection_name"] = safeConnectionName(selected.record)
+	out["connection_selection"] = selection
+	if displayName := safeConnectionDisplayName(selected.record); displayName != "" {
+		out["connection_display_name"] = displayName
 	}
 	// Populate missing provider-owned revisions. Existing values are preserved
 	// so a resumed frozen invocation fails closed if the catalog changed after
@@ -153,7 +169,7 @@ func (t *Tool) EnrichGovernanceArguments(ctx context.Context, userID string, par
 	setRevisionIfMissing(out, "action_schema_hash", action.SchemaHash)
 	setRevisionIfMissing(out, "action_schema_revision", action.SchemaRevision)
 	setRevisionIfMissing(out, "catalog_revision", action.CatalogRevision)
-	return out
+	return out, nil
 }
 
 func (t *Tool) listConnections(ctx context.Context, userID string, parameters map[string]interface{}) (map[string]interface{}, error) {
@@ -509,7 +525,11 @@ func (t *Tool) resolveExplicitFromAvailable(
 	}
 	action, exists := t.registry.ActionDetail(integrationID, actionID)
 	if !exists || !integrations.ActionSupportsAuthMethod(action, selected.record.AuthMethodID) {
-		return selectedConnection{}, integrations.NewError(integrations.ErrorCodeAccessDenied, "integration action is not available for this connection authentication method", nil)
+		return selectedConnection{}, integrations.NewError(
+			integrations.ErrorCodeActionAuthMethod,
+			"integration action is not available for this connection authentication method",
+			nil,
+		)
 	}
 	if t.runtime.InvokeFrom == tools.ToolInvokeFromAgent && !agentActionExecutableWithoutInteraction(action) {
 		return selectedConnection{}, integrations.NewError(integrations.ErrorCodeAccessDenied, "integration action requires interactive approval or write access and is unavailable to Agents", nil)
@@ -898,6 +918,8 @@ func actionSummary(definition integrations.ProviderDefinition, action integratio
 		Description: action.Description, DescriptionI18n: cloneLocalizedText(action.DescriptionI18n), Effect: action.Effect, RiskLevel: action.RiskLevel,
 		DataEgress: action.DataEgress, ExternalDestination: action.ExternalDestination,
 		RequiredScopes:         append([]string(nil), action.RequiredScopes...),
+		RequiredAnyScopes:      append([]string(nil), action.RequiredAnyScopes...),
+		PreferredScopes:        append([]string(nil), action.PreferredScopes...),
 		SupportedAuthMethodIDs: append([]string(nil), action.SupportedAuthMethodIDs...),
 		ScopeLabelsI18n:        cloneLocalizedLabelMap(action.ScopeLabelsI18n), DefaultPolicy: policy,
 		SchemaHash: action.SchemaHash, SchemaRevision: action.SchemaRevision, CatalogRevision: action.CatalogRevision,
@@ -986,12 +1008,32 @@ func validateActionRevisions(parameters map[string]interface{}, action integrati
 }
 
 func actionSummaryOutput(action integrations.ActionSummary, connection *integrations.IntegrationConnection) map[string]interface{} {
+	availability := actionAvailabilityReady
+	canExecute := true
+	recoveryAction := ""
+	if authorizeSelectedConnectionScopes(connection, integrations.ActionDefinition{
+		RequiredScopes:    action.RequiredScopes,
+		RequiredAnyScopes: action.RequiredAnyScopes,
+		PreferredScopes:   action.PreferredScopes,
+	}) != nil {
+		availability = actionAvailabilityScopeGap
+		canExecute = false
+		recoveryAction = "upgrade_oauth_scope"
+	}
+	requiresApproval := action.DefaultPolicy.ApprovalPolicy == toolgovernance.ApprovalPolicyAlwaysAsk
 	output := map[string]interface{}{
 		"integration_id": action.IntegrationID, "action_id": action.ID, "name": boundedString(action.Name, 128),
 		"description": boundedString(action.Description, 1200), "effect": string(action.Effect), "risk_level": string(action.RiskLevel),
-		"data_egress": action.DataEgress, "required_scopes": stringInterfaces(action.RequiredScopes),
-		"schema_hash": action.SchemaHash, "catalog_revision": action.CatalogRevision,
+		"data_egress":         action.DataEgress,
+		"required_scopes":     stringInterfaces(action.RequiredScopes),
+		"required_any_scopes": stringInterfaces(action.RequiredAnyScopes),
+		"preferred_scopes":    stringInterfaces(action.PreferredScopes),
+		"schema_hash":         action.SchemaHash, "catalog_revision": action.CatalogRevision,
 		"connection_name": safeConnectionName(connection), "connection_selection": preferredSelector,
+		"availability": availability, "can_execute": canExecute, "requires_approval": requiresApproval,
+	}
+	if recoveryAction != "" {
+		output["recovery_action"] = recoveryAction
 	}
 	if displayName := safeConnectionDisplayName(connection); displayName != "" {
 		output["connection_display_name"] = displayName
@@ -1009,6 +1051,20 @@ func actionSummaryOutput(action integrations.ActionSummary, connection *integrat
 		output["external_destination"] = boundedString(destination, 255)
 	}
 	return output
+}
+
+func authorizeSelectedConnectionScopes(connection *integrations.IntegrationConnection, action integrations.ActionDefinition) error {
+	requirement := integrations.ActionScopeRequirement(action)
+	if connection == nil || (len(requirement.AllOf) == 0 && len(requirement.AnyOf) == 0) {
+		return nil
+	}
+	if connection.AuthType != integrations.ConnectionAuthTypeOAuth2 && len(connection.GrantedScopes) == 0 {
+		return nil
+	}
+	return integrations.AuthorizeConnectionScopes(
+		connection.GrantedScopes,
+		requirement,
+	)
 }
 
 func cloneLocalizedText(values integrations.LocalizedText) integrations.LocalizedText {

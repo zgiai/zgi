@@ -194,11 +194,79 @@ func TestExecutorRequiredScopesFailBeforeQuotaAuditAndProvider(t *testing.T) {
 	}
 }
 
+func TestExecutorRequiresAllScopesAndOneAlternative(t *testing.T) {
+	action := testAction(ActionWebSearch, "search_web")
+	action.RequiredScopes = []string{"repo:read"}
+	action.RequiredAnyScopes = []string{"issues:read", "pulls:read"}
+	action.PreferredScopes = []string{"issues:read"}
+
+	for _, test := range []struct {
+		name      string
+		granted   []string
+		wantCode  string
+		wantCalls int
+	}{
+		{name: "preferred alternative", granted: []string{"repo:read", "issues:read"}, wantCalls: 1},
+		{name: "non-preferred alternative", granted: []string{"repo:read", "pulls:read"}, wantCalls: 1},
+		{name: "missing all-of", granted: []string{"issues:read"}, wantCode: ErrorCodeInsufficientScope},
+		{name: "missing any-of", granted: []string{"repo:read"}, wantCode: ErrorCodeInsufficientScope},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			adapter := &testAdapter{driverID: "test-driver"}
+			registry := registerTestAction(t, action, adapter)
+			connection := &ResolvedConnection{
+				ID: testConnectionID, OrganizationID: testOrganizationID, IntegrationID: IntegrationWebSearch,
+				DriverID: "test-driver", AuthType: ConnectionAuthTypeOAuth2,
+				GrantedScopes: append([]string(nil), test.granted...), Credentials: map[string]string{"token": "secret"},
+			}
+			executor := NewExecutor(registry, &testAudit{}, &testQuota{}, nil, []byte("audit-key"), 0).
+				WithConnectionResolver(executorConnectionResolverFunc(func(context.Context, ConnectionResolveRequest) (*ResolvedConnection, error) {
+					return connection, nil
+				})).
+				WithConnectionAccessAuthorizer(allowExecutorConnectionAccess())
+
+			result, err := executor.Execute(context.Background(), validActionRequest("current events"))
+			if ErrorCode(err) != test.wantCode {
+				t.Fatalf("Execute() result=%#v error=%v code=%s, want %s", result, err, ErrorCode(err), test.wantCode)
+			}
+			if adapter.calls != test.wantCalls {
+				t.Fatalf("adapter calls = %d, want %d", adapter.calls, test.wantCalls)
+			}
+		})
+	}
+}
+
 func TestExecutorRejectsConnectionAuthMethodMismatchBeforeQuotaAuditAndProvider(t *testing.T) {
 	action := testAction(ActionWebSearch, "search_web")
-	action.SupportedAuthMethodIDs = []string{string(AuthMethodTypeNone)}
+	action.SupportedAuthMethodIDs = []string{"test_api_key"}
 	adapter := &testAdapter{driverID: "test-driver"}
-	registry := registerTestAction(t, action, adapter)
+	registration := localizedTestRegistration(IntegrationWebSearch, adapter, []ActionDefinition{action})
+	registration.Definition.AuthMethods = append(registration.Definition.AuthMethods, AuthMethodDefinition{
+		ID:               "test_api_key",
+		Type:             AuthMethodTypeAPIKey,
+		CredentialSource: ConnectionCredentialSourceOrganization,
+		Label:            "Test API key",
+		LabelI18n: LocalizedText{
+			LocaleEnglishUS:         "Test API key",
+			LocaleSimplifiedChinese: "测试 API 密钥",
+		},
+		Available: true,
+		Fields: []CredentialFieldDefinition{{
+			Key:   "api_key",
+			Label: "API key",
+			LabelI18n: LocalizedText{
+				LocaleEnglishUS:         "API key",
+				LocaleSimplifiedChinese: "API 密钥",
+			},
+			Input:    CredentialFieldInputPassword,
+			Required: true,
+			Secret:   true,
+		}},
+	})
+	registry := NewRegistry()
+	if err := registry.Register(registration); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
 	quota := &testQuota{}
 	audit := &testAudit{}
 	connection := &ResolvedConnection{

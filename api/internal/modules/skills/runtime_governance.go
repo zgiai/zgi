@@ -9,9 +9,14 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/tools"
 )
 
-func (r *Runtime) enrichToolGovernanceArguments(ctx context.Context, toolDef SkillToolDefinition, arguments map[string]interface{}, execCtx ExecutionContext) map[string]interface{} {
+func (r *Runtime) enrichToolGovernanceArguments(
+	ctx context.Context,
+	toolDef SkillToolDefinition,
+	arguments map[string]interface{},
+	execCtx ExecutionContext,
+) (map[string]interface{}, error) {
 	if r == nil || r.engine == nil {
-		return arguments
+		return arguments, nil
 	}
 	enriched, err := r.engine.EnrichGovernanceArguments(ctx, tools.InvokeRequest{
 		ProviderType:      toolDef.ProviderType,
@@ -26,10 +31,13 @@ func (r *Runtime) enrichToolGovernanceArguments(ctx context.Context, toolDef Ski
 		InvokeFrom:        normalizeToolInvokeFrom(execCtx.InvokeFrom),
 		RuntimeParameters: copyStringAnyMap(execCtx.RuntimeParameters),
 	})
-	if err != nil || enriched == nil {
-		return arguments
+	if err != nil {
+		return arguments, err
 	}
-	return enriched
+	if enriched == nil {
+		return arguments, nil
+	}
+	return enriched, nil
 }
 
 func appendGovernanceRewriteObservation(messages []tools.ToolInvokeMessage, decision toolgovernance.Decision, rewrite map[string]interface{}) []tools.ToolInvokeMessage {
@@ -128,9 +136,11 @@ func (r *Runtime) preflightToolGovernance(
 			ExpectedAssets: decision.ExpectedAssets,
 			Now:            start,
 		})
-		decision.FrozenInvocation = &frozen
+		decisionFrozen := toolgovernance.SealFrozenInvocation(frozen)
+		decision.FrozenInvocation = &decisionFrozen
 		if decision.ApprovalEvent != nil {
-			decision.ApprovalEvent.FrozenInvocation = &frozen
+			approvalFrozen := toolgovernance.SealFrozenInvocation(frozen)
+			decision.ApprovalEvent.FrozenInvocation = &approvalFrozen
 		}
 		trace.Governance = &decision
 		trace.Result = governanceTraceResult(decision)

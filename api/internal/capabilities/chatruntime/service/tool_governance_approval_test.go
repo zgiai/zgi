@@ -54,6 +54,47 @@ func TestToolGovernanceDecisionConversationForUpdateRejectsWorkspaceMismatch(t *
 	}
 }
 
+func TestPersistToolGovernanceApprovalPendingRejectsFrozenInvocationHashMismatch(t *testing.T) {
+	prepared := preparedTimelineTestChat()
+	frozen := toolgovernance.NewFrozenInvocation(toolgovernance.FrozenInvocationRequest{
+		CorrelationID: "corr-feishu-send",
+		Manifest: toolgovernance.Manifest{
+			ToolID:                  "feishu.message.send_user",
+			Effect:                  toolgovernance.EffectExternalSend,
+			RiskLevel:               toolgovernance.RiskLevelHigh,
+			DataEgress:              true,
+			ExternalDestination:     "open.feishu.cn",
+			ApprovalEveryInvocation: true,
+		},
+		SkillID:  "external-apps",
+		ToolName: "execute_action",
+		Arguments: map[string]interface{}{
+			"integration_id": "feishu",
+			"action_id":      "feishu.message.send_user",
+			"arguments":      map[string]interface{}{"recipient_type": "self", "text": "你好"},
+		},
+	})
+	frozen.Arguments["connection_name"] = "mutated-after-seal"
+
+	_, err := (&service{}).persistToolGovernanceApprovalPendingResult(
+		context.Background(),
+		prepared,
+		map[string]interface{}{
+			"correlation_id": "corr-feishu-send",
+			"skill_id":       "external-apps",
+			"tool_name":      "execute_action",
+			"approval_event": map[string]interface{}{
+				"correlation_id":    "corr-feishu-send",
+				"frozen_invocation": frozen,
+			},
+		},
+		nil,
+	)
+	if !errors.Is(err, ErrInvalidInput) || !strings.Contains(err.Error(), "frozen invocation hash mismatch") {
+		t.Fatalf("error = %v, want frozen invocation hash mismatch", err)
+	}
+}
+
 func TestMergeSkillInvocationMetadataKeepsToolGovernanceTrace(t *testing.T) {
 	metadata := mergeSkillInvocationMetadata(nil, []map[string]interface{}{
 		{

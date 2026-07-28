@@ -15,8 +15,9 @@ The current built-in providers are:
   citation behavior, and prompt-injection guidance.
 - Gmail: Google account identity and explicitly approved plain-text email
   sending through Google OAuth 2.0.
-- Feishu (China): delegated user identity, Drive and document reads, plus
-  explicitly approved user or tenant-app messages.
+- Feishu (China): delegated user identity, contact discovery, chat and calendar
+  listing, Drive and document reads, plus explicitly approved user or
+  tenant-app messages.
 - X API v2: account identity and own-post reads, with recent search and post
   creation disabled by default until an administrator enables them.
 
@@ -83,6 +84,27 @@ IDs and the existing `account` or `organization` Connection source.
 This catalog-only expansion does not require a database migration. Connections
 continue to persist the stable `auth_method_id`; credentials continue to use
 the encrypted Connection vault.
+
+## Action permission model
+
+Provider permissions are expressed with three separate fields:
+
+- `required_scopes`: an AllOf set; every listed permission must be present;
+- `required_any_scopes`: an AnyOf set; at least one listed alternative must be
+  present;
+- `preferred_scopes`: the least-privilege alternative ZGI requests during a
+  new OAuth consent or scope-upgrade flow.
+
+The runtime accepts an already-granted non-preferred alternative when it
+satisfies the AnyOf set. OAuth never requests every alternative merely because
+the provider offers both read-only and broader permissions. Registration fails
+when an Action references an undeclared scope, an AnyOf set has no preferred
+member, or a preferred scope is not one of its alternatives.
+
+This distinction is important for provider APIs that expose multiple valid
+permission names for the same read operation, while some writes require two
+permissions together. It prevents both false permission-denied errors and
+accidental requests for unnecessarily broad access.
 
 ## Deployment configuration
 
@@ -222,6 +244,16 @@ The callback and result URLs must be HTTPS in production. Loopback HTTP is
 accepted only for local development. The callback URL is server-owned and
 must not be derived from an inbound `Host` header.
 
+For direct source development, the default callback follows `SERVER_PORT`
+(normally `http://127.0.0.1:2670`). Docker explicitly routes callbacks through
+its public gateway (normally `http://localhost:2679`). Production deployments
+must set `INTEGRATION_OAUTH_CALLBACK_URL` and
+`INTEGRATION_OAUTH_RESULT_URL` to externally reachable HTTPS URLs; startup
+fails closed if a production environment still uses a loopback URL. After
+changing either URL, restart every API instance, update the provider's exact
+registered redirect URI, and begin a new OAuth flow because an existing flow
+retains its original callback URL.
+
 When the Web UI and API use separate origins, keep them on the same
 schemeful site (for example `app.example.com` and `api.example.com`), allow
 the exact Web origin in `WEB_API_CORS_ALLOW_ORIGINS`, and enable credentials
@@ -281,7 +313,10 @@ account.
 `invalid_grant`, revoked access, or missing scopes changes the Connection to a
 reconnect/attention state rather than silently falling back to another
 account. Reconnect and scope-upgrade flows update the existing Connection
-without exposing its internal identifier in the UI.
+without exposing its internal identifier in the UI. When a replacement issues
+a different revocation token, the old encrypted credential snapshot is queued
+in the same transaction as the Connection update and revoked asynchronously.
+An unchanged refresh or access token is never revoked as superseded.
 
 OAuth success has different next steps:
 
@@ -442,6 +477,10 @@ not return the token after creation. Available read-only Actions are:
 - `github.issue.list`
 
 Repository and issue responses are bounded before entering model context.
+GitHub primary and secondary rate limits are distinguished from authentication
+and repository-access failures. Safe retry metadata uses `Retry-After` or
+`X-RateLimit-Reset`; redirects are rejected so a credential-bearing request
+cannot be silently moved to another endpoint.
 
 GitHub remains PAT-based in this release. It does not reuse the Gmail, Feishu,
 or X OAuth application because provider tokens and authorization semantics are
@@ -463,6 +502,10 @@ Available Actions are:
 Email bodies and recipients are validated and bounded before network I/O.
 ZGI sends a plain-text RFC 2822 message through the official Gmail API and
 never asks for or stores the user's Google password.
+Google's structured error reasons distinguish quota, rate-limit, domain-policy,
+authentication, and missing-permission failures. Email sends are never
+automatically retried because a lost response could otherwise produce a
+duplicate message.
 
 ## Feishu authentication and Actions
 
@@ -473,12 +516,23 @@ This release registers the China-region Feishu provider only. It supports:
 - an organization-owned Feishu tenant app using write-only App ID and App
   Secret fields.
 
-Delegated user Actions are:
+Available read Actions are:
 
 - `feishu.account.get`;
 - `feishu.drive.list`;
 - `feishu.document.read`;
-- `feishu.message.send_user`.
+- `feishu.contact.search`;
+- `feishu.chat.list`;
+- `feishu.calendar.list`.
+
+`feishu.contact.search` is delegated-user only. Drive and document reads, plus
+chat and calendar listing, can use a delegated user or a tenant app when the
+selected authentication method has a valid corresponding permission. A tenant
+app can only see files and documents that are available to the application
+identity; enabling a provider permission does not bypass Feishu application
+availability or resource-level access. All list and search inputs, pagination
+tokens, returned records, and text fields are bounded before entering model
+context.
 
 Delegated OAuth code exchange and refresh use the current fixed Feishu OpenAPI
 endpoint `https://open.feishu.cn/open-apis/authen/v2/oauth/token`. The
@@ -489,13 +543,44 @@ in the authorization URL. The account identity Action therefore needs no
 explicit business permission. Long-lived connections request
 `offline_access`, which must be enabled and published in the Feishu app.
 
-Sending as a delegated user requests only `im:message.send_as_user`. Tenant-app
-messaging requests only `im:message:send_as_bot`; ZGI does not request the
-broader `im:message` permission merely to send a message.
+Sending as a delegated user requires both `im:message` and
+`im:message.send_as_user`. Tenant-app messaging accepts either the focused
+`im:message:send_as_bot` permission or the compatible broader `im:message`
+permission, and requests the focused permission by default.
+
+Connections begin with the minimum identity permissions. Connection health
+therefore proves that the credential and account identity work; it does not
+claim that every adapted Action is authorized. The Connection detail shows
+each Action as ready or requiring additional provider access. For delegated
+OAuth, **Grant access** starts a `scope_upgrade` flow for exactly the selected
+Action and updates the existing Connection after consent; users do not need to
+delete or duplicate the Connection.
+
+`feishu.message.send_user` accepts `recipient_type: self` for messages to the
+connected account. The server resolves the account's Open ID from the
+request-scoped Connection, while the model and approval UI see only “Myself”.
+Explicit `open_id`, `user_id`, `union_id`, and `chat_id` targets remain
+available through `recipient_id`. Tenant-app bot messages always require an
+explicit recipient.
 
 Tenant-app messaging uses `feishu.message.send_bot`. Both message Actions are
 disabled by default, high risk, non-idempotent, and require approval for every
 invocation. Reads remain bounded and use fixed `open.feishu.cn` endpoints.
+
+Before enabling either send Action, publish the current Feishu application
+version with the required permission and availability scope. For bot messages,
+enable bot capability and ensure that the bot is available to—and, for a group
+target, present in—the destination chat. Use `feishu.contact.search` or
+`feishu.chat.list` to discover a permitted target instead of asking the model
+to invent an Open ID or Chat ID. A connection health check proves the identity
+credential works; it does not prove that a particular recipient, group, or
+write Action is available.
+
+Message-history reading is intentionally not exposed yet. Feishu's required
+permission alternatives differ by user versus application identity and by
+one-to-one versus group chat. ZGI will add it only after the Action permission
+contract can express those input-dependent requirements without over-requesting
+access.
 
 Lark global is intentionally not presented as a region selector. Its endpoints,
 application registration, and governance destination differ; add it later as
@@ -547,7 +632,10 @@ Available Actions are:
   invocation requires explicit approval after an administrator enables it.
 
 X responses, pagination tokens, queries, and post text are bounded. All API
-traffic uses fixed official X API v2 endpoints.
+traffic uses fixed official X API v2 endpoints. RFC 7807 errors are normalized
+into stable platform errors. A nominal HTTP success that still contains X
+`errors` is treated as a failed response instead of exposing partial data as a
+successful Action.
 
 ## Adding another provider
 
@@ -613,6 +701,10 @@ Agent bindings, and then retire the old deployment secret.
 - Quota and initial audit creation fail closed.
 - Audit records store bounded operational metadata and an HMAC fingerprint,
   not raw prompts, credentials, webpage bodies, or upstream responses.
+- Failed executions and health events may store only bounded provider
+  diagnostics: provider error code, request ID, HTTP status, and retry-after
+  time. Provider messages, response bodies, headers, URLs, and request
+  arguments are never stored as diagnostics.
 - Completion updates use a durable Redis outbox so a paid successful call is
   not repeated when the database update temporarily fails.
 - Passive runtime outcomes and explicit manual tests update orthogonal health,
@@ -654,5 +746,14 @@ Agent bindings, and then retire the old deployment secret.
   revoked Connections are removed rather than silently retained.
 - Action denied: check the grant Action allowlist, read/write mode, provider
   scopes, and organization Action policy.
+- Provider rejected the request: inspect the safe provider error code, HTTP
+  status, request ID, and retry-after time in the execution or health view.
+  Access and provider business-rule failures are not reported as generic
+  upstream outages.
+- Feishu message denied: confirm the published app version contains the
+  Action's AllOf/AnyOf permissions, its availability scope includes the
+  account or chat, bot capability is enabled when applicable, and the bot is
+  present in the target group. Reconnect or use **Grant access** after changing
+  OAuth permissions.
 - Health is unknown: no successful probe or runtime signal has been recorded;
   “unknown” must not be interpreted as healthy.

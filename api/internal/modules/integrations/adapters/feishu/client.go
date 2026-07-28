@@ -31,8 +31,9 @@ type client struct {
 }
 
 type responseMeta struct {
-	RequestID string
-	Attempts  int
+	RequestID   string
+	Attempts    int
+	Diagnostics integrations.ProviderDiagnostics
 }
 
 type apiEnvelope struct {
@@ -87,6 +88,18 @@ func (c *client) getDocumentRawContent(ctx context.Context, region, accessToken,
 	return c.doEnvelope(ctx, region, http.MethodGet, path, nil, nil, accessToken, true, target)
 }
 
+func (c *client) searchUsers(ctx context.Context, region, accessToken string, query url.Values, target interface{}) (responseMeta, error) {
+	return c.doEnvelope(ctx, region, http.MethodGet, "/open-apis/search/v1/user", query, nil, accessToken, true, target)
+}
+
+func (c *client) listChats(ctx context.Context, region, accessToken string, query url.Values, target interface{}) (responseMeta, error) {
+	return c.doEnvelope(ctx, region, http.MethodGet, "/open-apis/im/v1/chats", query, nil, accessToken, true, target)
+}
+
+func (c *client) listCalendars(ctx context.Context, region, accessToken string, query url.Values, target interface{}) (responseMeta, error) {
+	return c.doEnvelope(ctx, region, http.MethodGet, "/open-apis/calendar/v4/calendars", query, nil, accessToken, true, target)
+}
+
 func (c *client) sendMessage(ctx context.Context, region, accessToken, receiveIDType string, body interface{}, target interface{}) (responseMeta, error) {
 	query := url.Values{"receive_id_type": []string{receiveIDType}}
 	// Sending a message is non-idempotent. Never retry it automatically.
@@ -107,7 +120,8 @@ func (c *client) tenantAccessToken(ctx context.Context, region, appID, appSecret
 		return "", meta, err
 	}
 	if response.Code != 0 {
-		return "", meta, mapFeishuBusinessCode(response.Code)
+		meta.Diagnostics.ErrorCode = strconv.Itoa(response.Code)
+		return "", meta, withFeishuDiagnostics(mapFeishuBusinessCode(response.Code), meta)
 	}
 	token := strings.TrimSpace(response.TenantAccessToken)
 	if token == "" {
@@ -135,11 +149,15 @@ func (c *client) doEnvelope(
 		return meta, err
 	}
 	if envelope.Code != 0 {
-		return meta, mapFeishuBusinessCode(envelope.Code)
+		meta.Diagnostics.ErrorCode = strconv.Itoa(envelope.Code)
+		return meta, withFeishuDiagnostics(mapFeishuBusinessCode(envelope.Code), meta)
 	}
 	if target != nil && len(bytes.TrimSpace(envelope.Data)) > 0 && string(envelope.Data) != "null" {
 		if err := json.Unmarshal(envelope.Data, target); err != nil {
-			return meta, integrations.NewError(integrations.ErrorCodeResponseInvalid, "Feishu returned an invalid response", err)
+			return meta, withFeishuDiagnostics(
+				integrations.NewError(integrations.ErrorCodeResponseInvalid, "Feishu returned an invalid response", err),
+				meta,
+			)
 		}
 	}
 	return meta, nil
@@ -198,48 +216,90 @@ func (c *client) doRawJSON(
 		response, requestErr := c.httpClient.Do(request)
 		if requestErr != nil {
 			if ctx.Err() != nil || errors.Is(requestErr, context.DeadlineExceeded) {
-				return responseMeta{Attempts: attempt}, integrations.NewError(integrations.ErrorCodeTimeout, "Feishu request timed out", ctx.Err())
+				meta := responseMeta{Attempts: attempt}
+				return meta, withFeishuDiagnostics(
+					integrations.NewError(integrations.ErrorCodeTimeout, "Feishu request timed out", ctx.Err()),
+					meta,
+				)
 			}
 			lastErr = integrations.NewError(integrations.ErrorCodeUpstream, "Feishu is unavailable", requestErr)
-			if retryable && attempt < attemptLimit && waitForRetry(ctx, time.Duration(attempt*attempt)*100*time.Millisecond) {
-				continue
+			if retryable && attempt < attemptLimit {
+				if waitErr := waitForRetry(ctx, time.Duration(attempt*attempt)*100*time.Millisecond); waitErr == nil {
+					continue
+				} else {
+					meta := responseMeta{Attempts: attempt}
+					return meta, withFeishuDiagnostics(
+						integrations.NewError(integrations.ErrorCodeTimeout, "Feishu request timed out", waitErr),
+						meta,
+					)
+				}
 			}
-			return responseMeta{Attempts: attempt}, lastErr
+			meta := responseMeta{Attempts: attempt}
+			return meta, withFeishuDiagnostics(lastErr, meta)
 		}
+		retryAfterAt := feishuRetryAfterAt(response.Header)
 		meta := responseMeta{
 			RequestID: firstNonEmpty(response.Header.Get("X-Tt-Logid"), response.Header.Get("X-Request-Id")),
 			Attempts:  attempt,
 		}
+		meta.Diagnostics = integrations.ProviderDiagnostics{
+			RequestID:    meta.RequestID,
+			HTTPStatus:   response.StatusCode,
+			RetryAfterAt: retryAfterAt,
+		}
 		payload, readErr := io.ReadAll(io.LimitReader(response.Body, maxResponseBytes+1))
 		_ = response.Body.Close()
 		if readErr != nil {
-			return meta, integrations.NewError(integrations.ErrorCodeResponseInvalid, "Feishu response could not be read", readErr)
+			return meta, withFeishuDiagnostics(
+				integrations.NewError(integrations.ErrorCodeResponseInvalid, "Feishu response could not be read", readErr),
+				meta,
+			)
 		}
 		if len(payload) > maxResponseBytes {
-			return meta, integrations.NewError(integrations.ErrorCodeResponseInvalid, "Feishu response exceeded the platform limit", nil)
+			return meta, withFeishuDiagnostics(
+				integrations.NewError(integrations.ErrorCodeResponseInvalid, "Feishu response exceeded the platform limit", nil),
+				meta,
+			)
 		}
 		businessCode, hasBusinessCode := parseFeishuBusinessCode(payload)
 		if hasBusinessCode && businessCode != 0 {
+			meta.Diagnostics.ErrorCode = strconv.Itoa(businessCode)
 			mapped := mapFeishuBusinessCode(businessCode)
-			if retryable && retryableFeishuBusinessCode(businessCode) && attempt < attemptLimit &&
-				waitForRetry(ctx, feishuRetryDelay(response.Header, attempt)) {
-				lastErr = mapped
-				continue
+			if retryable && retryableFeishuBusinessCode(businessCode) && attempt < attemptLimit {
+				lastErr = withFeishuDiagnostics(mapped, meta)
+				if waitErr := waitForRetry(ctx, feishuRetryDelay(response.Header, attempt)); waitErr == nil {
+					continue
+				} else {
+					return meta, withFeishuDiagnostics(
+						integrations.NewError(integrations.ErrorCodeTimeout, "Feishu request timed out", waitErr),
+						meta,
+					)
+				}
 			}
-			return meta, mapped
+			return meta, withFeishuDiagnostics(mapped, meta)
 		}
 		if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+			meta.Diagnostics.ErrorCode = "http_" + strconv.Itoa(response.StatusCode)
 			mapped := mapFeishuStatus(response.StatusCode)
-			if retryable && retryableFeishuStatus(response.StatusCode) && attempt < attemptLimit &&
-				waitForRetry(ctx, feishuRetryDelay(response.Header, attempt)) {
-				lastErr = mapped
-				continue
+			if retryable && retryableFeishuStatus(response.StatusCode) && attempt < attemptLimit {
+				lastErr = withFeishuDiagnostics(mapped, meta)
+				if waitErr := waitForRetry(ctx, feishuRetryDelay(response.Header, attempt)); waitErr == nil {
+					continue
+				} else {
+					return meta, withFeishuDiagnostics(
+						integrations.NewError(integrations.ErrorCodeTimeout, "Feishu request timed out", waitErr),
+						meta,
+					)
+				}
 			}
-			return meta, mapped
+			return meta, withFeishuDiagnostics(mapped, meta)
 		}
 		if target != nil {
 			if err := json.Unmarshal(payload, target); err != nil {
-				return meta, integrations.NewError(integrations.ErrorCodeResponseInvalid, "Feishu returned an invalid response", err)
+				return meta, withFeishuDiagnostics(
+					integrations.NewError(integrations.ErrorCodeResponseInvalid, "Feishu returned an invalid response", err),
+					meta,
+				)
 			}
 		}
 		return meta, nil
@@ -272,6 +332,9 @@ func mapFeishuStatus(status int) error {
 		if status >= http.StatusInternalServerError {
 			return integrations.NewError(integrations.ErrorCodeUpstream, "Feishu is temporarily unavailable", nil)
 		}
+		if status >= http.StatusBadRequest {
+			return integrations.NewError(integrations.ErrorCodeProviderRejected, "Feishu rejected the request", nil)
+		}
 		return integrations.NewError(integrations.ErrorCodeUpstream, "Feishu request failed", nil)
 	}
 }
@@ -282,10 +345,33 @@ func mapFeishuBusinessCode(code int) error {
 		return integrations.NewError(integrations.ErrorCodeAuthInvalid, "Feishu authorization is invalid or expired", nil)
 	case 20050, 20072:
 		return integrations.NewError(integrations.ErrorCodeUpstream, "Feishu authorization service is temporarily unavailable", nil)
-	case 230020:
+	case 230020, 232019:
 		return integrations.NewError(integrations.ErrorCodeRateLimited, "Feishu rate limit was reached", nil)
-	case 230027, 230035:
+	case 230001, 232006, 1061002, 1770001, 1770002, 1770003:
+		return integrations.NewError(integrations.ErrorCodeInvalidInput, "Feishu rejected the request parameters", nil)
+	case 230002, 230006, 230013, 230027, 230035, 230050,
+		232010, 232011, 232033, 232034, 1770032:
 		return integrations.NewError(integrations.ErrorCodeAccessDenied, "Feishu denied the requested scope or resource", nil)
+	case 232025, 190007:
+		return integrations.NewError(integrations.ErrorCodeInvalidInput, "Feishu application bot capability is not enabled", nil)
+	case 1770033:
+		return integrations.NewError(integrations.ErrorCodeResponseInvalid, "Feishu response exceeded the platform limit", nil)
+	case 1061001:
+		return integrations.NewError(integrations.ErrorCodeUpstream, "Feishu is temporarily unavailable", nil)
+	case 190002, 190008, 190009, 191001:
+		return integrations.NewError(integrations.ErrorCodeInvalidInput, "Feishu rejected the request parameters", nil)
+	case 190003:
+		return integrations.NewError(integrations.ErrorCodeUpstream, "Feishu is temporarily unavailable", nil)
+	case 190004, 190005, 190010:
+		return integrations.NewError(integrations.ErrorCodeRateLimited, "Feishu rate limit was reached", nil)
+	case 190006:
+		return integrations.NewError(integrations.ErrorCodeAuthInvalid, "Feishu tenant application credentials are invalid", nil)
+	case 191000, 191003, 191004:
+		return integrations.NewError(integrations.ErrorCodeInvalidInput, "Feishu calendar is missing, deleted, or incompatible with this action", nil)
+	case 191002:
+		return integrations.NewError(integrations.ErrorCodeAccessDenied, "Feishu denied the requested scope or resource", nil)
+	case 195100:
+		return integrations.NewError(integrations.ErrorCodeAccessDenied, "Feishu user is not available in the connected tenant", nil)
 	case 99991663, 99991664, 99991668:
 		return integrations.NewError(integrations.ErrorCodeAuthInvalid, "Feishu credentials are invalid or expired", nil)
 	case 99991661, 99991672:
@@ -293,7 +379,7 @@ func mapFeishuBusinessCode(code int) error {
 	case 99991400, 99991401:
 		return integrations.NewError(integrations.ErrorCodeRateLimited, "Feishu rate limit was reached", nil)
 	default:
-		return integrations.NewError(integrations.ErrorCodeUpstream, "Feishu rejected the request", nil)
+		return integrations.NewError(integrations.ErrorCodeProviderRejected, "Feishu rejected the request", nil)
 	}
 }
 
@@ -308,30 +394,69 @@ func parseFeishuBusinessCode(payload []byte) (int, bool) {
 }
 
 func retryableFeishuBusinessCode(code int) bool {
-	return code == 20050 || code == 20072 || code == 230020
+	return code == 20050 || code == 20072 || code == 230020 || code == 232019 ||
+		code == 1061001 || code == 190003 || code == 190004 || code == 190005 || code == 190010
 }
 
 func retryableFeishuStatus(status int) bool {
-	return status == http.StatusTooManyRequests || status == http.StatusBadGateway ||
+	return status == http.StatusTooManyRequests || status == http.StatusInternalServerError ||
+		status == http.StatusBadGateway ||
 		status == http.StatusServiceUnavailable || status == http.StatusGatewayTimeout
 }
 
 func feishuRetryDelay(header http.Header, attempt int) time.Duration {
 	if raw := strings.TrimSpace(header.Get("Retry-After")); raw != "" {
 		if seconds, err := strconv.Atoi(raw); err == nil && seconds >= 0 {
-			return min(time.Duration(seconds)*time.Second, 5*time.Second)
+			return time.Duration(seconds) * time.Second
+		}
+		if retryAt, err := http.ParseTime(raw); err == nil {
+			return max(time.Until(retryAt), 0)
 		}
 	}
 	return time.Duration(attempt*attempt) * 100 * time.Millisecond
 }
 
-func waitForRetry(ctx context.Context, delay time.Duration) bool {
+func feishuRetryAfterAt(header http.Header) *time.Time {
+	raw := strings.TrimSpace(header.Get("Retry-After"))
+	if raw == "" {
+		return nil
+	}
+	if seconds, err := strconv.Atoi(raw); err == nil && seconds >= 0 {
+		retryAt := time.Now().UTC().Add(time.Duration(seconds) * time.Second)
+		return &retryAt
+	}
+	if retryAt, err := http.ParseTime(raw); err == nil {
+		normalized := retryAt.UTC()
+		return &normalized
+	}
+	return nil
+}
+
+func withFeishuDiagnostics(err error, meta responseMeta) error {
+	if err == nil {
+		return nil
+	}
+	return integrations.NewProviderError(
+		integrations.ErrorCode(err),
+		err.Error(),
+		err,
+		meta.Diagnostics,
+	)
+}
+
+func waitForRetry(ctx context.Context, delay time.Duration) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if delay <= 0 {
+		return nil
+	}
 	timer := time.NewTimer(delay)
 	defer timer.Stop()
 	select {
 	case <-ctx.Done():
-		return false
+		return ctx.Err()
 	case <-timer.C:
-		return true
+		return ctx.Err()
 	}
 }

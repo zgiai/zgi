@@ -80,6 +80,10 @@ assert.equal(chinese.enums.invokeFrom.agent, '智能体');
 assert.equal(chinese.errors.integration_auth_invalid, '连接凭据无效');
 assert.equal(chinese.oauth.clientConfig.setupGuide.toggle, '获取指南');
 assert.equal(english.oauth.clientConfig.setupGuide.toggle, 'Credential guide');
+assert.equal(english.providerDiagnostics.errorCode, 'Provider error code');
+assert.equal(chinese.providerDiagnostics.errorCode, '服务商错误码');
+assert.equal(english.providerDiagnostics.retryAfter, 'Retry after');
+assert.equal(chinese.providerDiagnostics.retryAfter, '建议重试时间');
 
 const chineseSource = source('src/i18n/modules/integrations/zh-Hans.ts');
 assert.doesNotMatch(
@@ -148,6 +152,7 @@ assert.match(integrationErrorI18n, /integrationErrorTranslationKeyFromError/);
 const catalogComponent = source('src/components/integrations/provider-catalog.tsx');
 const detailPage = source('src/app/dashboard/organization/integrations/[integrationId]/page.tsx');
 const executionsPanel = source('src/components/integrations/executions-panel.tsx');
+const providerDiagnostics = source('src/components/integrations/provider-diagnostics-details.tsx');
 const connectionDetail = source('src/components/integrations/connection-detail-dialog.tsx');
 const connectionPermissionSummary = source(
   'src/components/integrations/connection-permission-summary.tsx'
@@ -164,6 +169,15 @@ assert.doesNotMatch(catalogComponent, /safeIntegrationDisplayText\(item\.driver_
 assert.doesNotMatch(detailPage, /safeIntegrationDisplayText\(provider\.driver_id/);
 assert.doesNotMatch(detailPage, /safeIntegrationDisplayText\(action\.id/);
 assert.match(executionsPanel, /metadata\.actionNameByID/);
+assert.match(executionsPanel, /ProviderDiagnosticsDetails/);
+assert.match(providerDiagnostics, /safeOptionalIntegrationDisplayText\(providerErrorCode\)/);
+assert.match(providerDiagnostics, /safeOptionalIntegrationDisplayText\(providerRequestId\)/);
+assert.match(providerDiagnostics, /containsOpaqueUUID\(providerRequestId\)/);
+assert.doesNotMatch(
+  providerDiagnostics,
+  /provider_(?:message|body|headers?|url)|arguments/i,
+  'provider diagnostics UI must not accept unsafe upstream payload fields'
+);
 assert.doesNotMatch(connectionDetail, /item\.driver_id/);
 assert.doesNotMatch(connectionGrants, /const actionCode/);
 assert.doesNotMatch(connectionGrants, /<code[\s>]/);
@@ -214,6 +228,20 @@ assert.match(detailPage, /redirect\(/);
 assert.match(detailPage, /\/console\/integrations\?view=available&integration_id=/);
 assert.match(connectionDetail, /IntegrationConnectionPermissionSummary/);
 assert.match(connectionPermissionSummary, /summary\?\.adapted_capabilities/);
+assert.match(connectionPermissionSummary, /const grantedScopeItems = grantedScopes \?\? \[\]/);
+for (const permissionCollection of [
+  'identity_permissions',
+  'lifecycle_permissions',
+  'provider_permissions',
+  'unknown_permissions',
+  'missing_permissions',
+]) {
+  assert.match(
+    connectionPermissionSummary,
+    new RegExp(`summary\\?\\.${permissionCollection} \\?\\? \\[\\]`),
+    `${permissionCollection} must tolerate null responses during rolling upgrades`
+  );
+}
 assert.match(connectionPermissionSummary, /metadata\.scope\(id, provider\)/);
 assert.match(connectionPermissionSummary, /permissionSummary\.providerDetailsTitle/);
 assert.match(connectionPermissionSummary, /permissionSummary\.providerNative/);
@@ -263,6 +291,7 @@ assert.doesNotMatch(policiesPanel, /safeIntegrationDisplayText\(policy\.action_i
 assert.match(policiesPanel, /metadata\.actionNameByID/);
 assert.match(healthPanel, /metadata\.healthReason\(event\.reason_code\)/);
 assert.match(healthPanel, /metadata\.scope\(scope, provider\)/);
+assert.match(healthPanel, /ProviderDiagnosticsDetails/);
 assert.doesNotMatch(healthPanel, /metadata\.error\(event\.reason_code\)/);
 
 const dialogComponent = source('src/components/ui/dialog.tsx');

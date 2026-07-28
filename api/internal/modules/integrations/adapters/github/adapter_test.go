@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/zgiai/zgi/api/internal/modules/integrations"
 	"github.com/zgiai/zgi/api/internal/modules/tools"
@@ -262,7 +264,7 @@ func TestClientRetriesTransientErrorsAndMapsPermanentErrors(t *testing.T) {
 	adapter := newTestAdapter(t, func(w http.ResponseWriter, _ *http.Request) {
 		if attempts.Add(1) == 1 {
 			w.Header().Set("Retry-After", "0")
-			writeJSON(t, w, http.StatusServiceUnavailable, map[string]string{"message": "do not expose this"})
+			writeJSON(t, w, http.StatusInternalServerError, map[string]string{"message": "do not expose this"})
 			return
 		}
 		writeJSON(t, w, http.StatusOK, map[string]interface{}{"login": "octocat", "html_url": "https://github.com/octocat"})
@@ -292,7 +294,7 @@ func TestClientRetriesTransientErrorsAndMapsPermanentErrors(t *testing.T) {
 			failing := newTestAdapter(t, func(w http.ResponseWriter, _ *http.Request) {
 				writeJSON(t, w, test.status, map[string]string{"message": secret})
 			})
-			_, err := failing.Execute(context.Background(), integrations.ActionRequest{
+			result, err := failing.Execute(context.Background(), integrations.ActionRequest{
 				IntegrationID: IntegrationID, ActionID: ActionGetAuthenticatedUser,
 				Connection: githubConnection(secret), Input: map[string]interface{}{},
 			})
@@ -302,7 +304,148 @@ func TestClientRetriesTransientErrorsAndMapsPermanentErrors(t *testing.T) {
 			if strings.Contains(err.Error(), secret) {
 				t.Fatal("credential leaked into error")
 			}
+			if result == nil || result.AttemptCount != 1 ||
+				result.ResultCount != 0 || result.Output != nil ||
+				result.ProviderDiagnostics.HTTPStatus != test.status {
+				t.Fatalf("failure result = %#v", result)
+			}
 		})
+	}
+}
+
+func TestClientRejectsRedirectWithoutLeakingAuthorization(t *testing.T) {
+	const token = "github_pat_redirect-secret"
+	var redirectTargetCalls atomic.Int32
+	var redirectTargetAuthorization atomic.Value
+	redirectTarget := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		redirectTargetCalls.Add(1)
+		redirectTargetAuthorization.Store(request.Header.Get("Authorization"))
+		writeJSON(t, w, http.StatusOK, map[string]interface{}{"login": "redirected"})
+	}))
+	defer redirectTarget.Close()
+
+	var originCalls atomic.Int32
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		originCalls.Add(1)
+		if got := request.Header.Get("Authorization"); got != "Bearer "+token {
+			t.Errorf("origin authorization = %q", got)
+		}
+		http.Redirect(w, request, redirectTarget.URL+"/credential-target", http.StatusFound)
+	}))
+	defer origin.Close()
+
+	callerClient := origin.Client()
+	adapter, err := newForBaseURL(callerClient, origin.URL)
+	if err != nil {
+		t.Fatalf("create GitHub adapter: %v", err)
+	}
+	if callerClient.CheckRedirect != nil {
+		t.Fatal("constructor mutated the caller-provided HTTP client")
+	}
+
+	result, err := adapter.Execute(context.Background(), integrations.ActionRequest{
+		IntegrationID: IntegrationID,
+		ActionID:      ActionGetAuthenticatedUser,
+		Connection:    githubConnection(token),
+		Input:         map[string]interface{}{},
+	})
+	if err == nil || integrations.ErrorCode(err) != integrations.ErrorCodeUpstream {
+		t.Fatalf("redirect error = %v", err)
+	}
+	if originCalls.Load() != 1 {
+		t.Fatalf("origin calls = %d, want 1", originCalls.Load())
+	}
+	if redirectTargetCalls.Load() != 0 {
+		t.Fatalf("redirect target was called %d times", redirectTargetCalls.Load())
+	}
+	if value := redirectTargetAuthorization.Load(); value != nil && value.(string) != "" {
+		t.Fatalf("authorization reached redirect target: %q", value)
+	}
+	if result == nil || result.AttemptCount != 1 ||
+		result.ProviderDiagnostics.HTTPStatus != http.StatusFound {
+		t.Fatalf("redirect result = %#v", result)
+	}
+}
+
+func TestClientBackoffDeadlineReturnsTimeoutWithDiagnostics(t *testing.T) {
+	var calls atomic.Int32
+	adapter := newTestAdapter(t, func(w http.ResponseWriter, _ *http.Request) {
+		calls.Add(1)
+		w.Header().Set("X-GitHub-Request-Id", "retry-timeout-request")
+		w.Header().Set("Retry-After", "5")
+		writeJSON(t, w, http.StatusServiceUnavailable, map[string]string{"message": "temporary"})
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	result, err := adapter.Execute(ctx, integrations.ActionRequest{
+		IntegrationID: IntegrationID,
+		ActionID:      ActionGetAuthenticatedUser,
+		Connection:    githubConnection("github_pat_timeout"),
+		Input:         map[string]interface{}{},
+	})
+	if err == nil || integrations.ErrorCode(err) != integrations.ErrorCodeTimeout {
+		t.Fatalf("backoff error = %v, want timeout", err)
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("calls = %d, want 1", calls.Load())
+	}
+	if result == nil || result.AttemptCount != 1 ||
+		result.ProviderRequestID != "retry-timeout-request" ||
+		result.ProviderDiagnostics.RequestID != "retry-timeout-request" ||
+		result.ProviderDiagnostics.HTTPStatus != http.StatusServiceUnavailable ||
+		result.ProviderDiagnostics.RetryAfterAt == nil {
+		t.Fatalf("timeout result = %#v", result)
+	}
+}
+
+func TestClientDetectsSecondaryRateLimitAndPreservesDiagnostics(t *testing.T) {
+	var calls atomic.Int32
+	adapter := newTestAdapter(t, func(w http.ResponseWriter, _ *http.Request) {
+		call := calls.Add(1)
+		w.Header().Set("X-GitHub-Request-Id", "secondary-"+strconv.Itoa(int(call)))
+		w.Header().Set("Retry-After", "0")
+		writeJSON(t, w, http.StatusForbidden, map[string]string{
+			"message": "You have exceeded a secondary rate limit. Please wait a few minutes before you try again.",
+		})
+	})
+	result, err := adapter.Execute(context.Background(), integrations.ActionRequest{
+		IntegrationID: IntegrationID, ActionID: ActionGetAuthenticatedUser,
+		Connection: githubConnection("github_pat_secondary"), Input: map[string]interface{}{},
+	})
+	if err == nil || integrations.ErrorCode(err) != integrations.ErrorCodeRateLimited {
+		t.Fatalf("error = %v", err)
+	}
+	if calls.Load() != 3 || result == nil || result.AttemptCount != 3 ||
+		result.ProviderRequestID != "secondary-3" ||
+		result.ProviderDiagnostics.ErrorCode != "secondary_rate_limit" ||
+		result.ProviderDiagnostics.HTTPStatus != http.StatusForbidden ||
+		result.ProviderDiagnostics.RetryAfterAt == nil {
+		t.Fatalf("result = %#v, calls = %d", result, calls.Load())
+	}
+}
+
+func TestGitHubRateLimitResetIsUsedAsRetryDeadline(t *testing.T) {
+	reset := time.Now().Add(time.Minute).Unix()
+	header := http.Header{
+		"X-Ratelimit-Reset":     []string{strconv.FormatInt(reset, 10)},
+		"X-Ratelimit-Remaining": []string{"0"},
+	}
+	delay := retryDelay(header, 1)
+	if delay <= 0 || delay > 5*time.Second {
+		t.Fatalf("delay = %v", delay)
+	}
+	err, diagnostics := mapGitHubStatus(
+		http.StatusForbidden,
+		header,
+		[]byte(`{"message":"API rate limit exceeded"}`),
+		"request-1",
+	)
+	if integrations.ErrorCode(err) != integrations.ErrorCodeRateLimited {
+		t.Fatalf("error = %v", err)
+	}
+	if diagnostics.RetryAfterAt == nil || diagnostics.RetryAfterAt.Unix() != reset {
+		t.Fatalf("diagnostics = %#v", diagnostics)
 	}
 }
 

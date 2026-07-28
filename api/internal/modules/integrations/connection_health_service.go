@@ -43,19 +43,22 @@ func (service *DefaultConnectionHealthService) PublishConnectionHealthSignal(ctx
 		return nil
 	}
 	_, err := service.RecordConnectionHealthObservation(ctx, ConnectionHealthObservation{
-		OrganizationID:    signal.OrganizationID,
-		ConnectionID:      signal.ConnectionID,
-		IntegrationID:     signal.IntegrationID,
-		DriverID:          signal.DriverID,
-		Source:            ConnectionHealthSourceRuntime,
-		CheckKind:         ConnectionHealthCheckPassive,
-		Classification:    classification,
-		ReasonCode:        reason,
-		CredentialVersion: signal.CredentialVersion,
-		ExecutionID:       optionalHealthUUID(signal.ExecutionID),
-		ProviderRequestID: signal.ProviderRequestID,
-		LatencyMS:         signal.DurationMS,
-		ObservedAt:        signal.ObservedAt,
+		OrganizationID:     signal.OrganizationID,
+		ConnectionID:       signal.ConnectionID,
+		IntegrationID:      signal.IntegrationID,
+		DriverID:           signal.DriverID,
+		Source:             ConnectionHealthSourceRuntime,
+		CheckKind:          ConnectionHealthCheckPassive,
+		Classification:     classification,
+		ReasonCode:         reason,
+		CredentialVersion:  signal.CredentialVersion,
+		ExecutionID:        optionalHealthUUID(signal.ExecutionID),
+		ProviderRequestID:  signal.ProviderRequestID,
+		ProviderErrorCode:  signal.ProviderErrorCode,
+		ProviderHTTPStatus: providerHTTPStatusPointer(providerHTTPStatusValue(signal.ProviderHTTPStatus)),
+		RetryAfterAt:       cloneTimePointer(signal.RetryAfterAt),
+		LatencyMS:          signal.DurationMS,
+		ObservedAt:         signal.ObservedAt,
 	})
 	return err
 }
@@ -67,10 +70,16 @@ func classifyRuntimeConnectionHealthSignal(errorCode string) (ConnectionHealthCl
 		return ConnectionHealthClassificationSuccess, "runtime_success"
 	case ErrorCodeAuthInvalid:
 		return ConnectionHealthClassificationAuthInvalid, ErrorCodeAuthInvalid
-	case ErrorCodeAccessDenied:
+	case ErrorCodeReconnectRequired, ErrorCodeConnectionInvalid:
+		return ConnectionHealthClassificationAuthInvalid, errorCode
+	case ErrorCodeConnectionExpired:
+		return ConnectionHealthClassificationOAuthExpired, ErrorCodeConnectionExpired
+	case ErrorCodeInsufficientScope:
+		return ConnectionHealthClassificationScopeDrift, ErrorCodeInsufficientScope
+	case ErrorCodeAccessDenied, ErrorCodeActionAuthMethod:
 		// A generic 403 is ambiguous: it can be an action scope or resource ACL
 		// failure. Never invalidate credentials without provider-owned evidence.
-		return ConnectionHealthClassificationAccessDenied, ErrorCodeAccessDenied
+		return ConnectionHealthClassificationAccessDenied, errorCode
 	case ErrorCodeBudgetExceeded:
 		return ConnectionHealthClassificationBudgetExhausted, ErrorCodeBudgetExceeded
 	case ErrorCodeRateLimited:
@@ -118,8 +127,15 @@ func recordConnectionTestHealth(ctx context.Context, recorder ConnectionHealthOb
 		LatencyMS:              time.Since(startedAt).Milliseconds(),
 		SummaryAlreadyApplied:  true,
 	}
+	diagnostics := ProviderDiagnosticsFromError(testErr)
+	observation.ProviderErrorCode = diagnostics.ErrorCode
+	observation.ProviderHTTPStatus = providerHTTPStatusPointer(diagnostics.HTTPStatus)
+	observation.RetryAfterAt = cloneTimePointer(diagnostics.RetryAfterAt)
+	observation.ProviderRequestID = diagnostics.RequestID
 	if profile != nil {
-		observation.ProviderRequestID = profile.ProviderRequestID
+		if requestID := normalizeProviderDiagnostics(ProviderDiagnostics{RequestID: profile.ProviderRequestID}).RequestID; requestID != "" {
+			observation.ProviderRequestID = requestID
+		}
 		observation.GrantedScopes = append([]string(nil), profile.GrantedScopes...)
 		observation.ScopeSnapshotObserved = profile.GrantedScopes != nil
 	}

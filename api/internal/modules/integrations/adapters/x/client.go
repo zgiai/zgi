@@ -29,8 +29,9 @@ type client struct {
 }
 
 type responseMeta struct {
-	RequestID string
-	Attempts  int
+	RequestID   string
+	Attempts    int
+	Diagnostics integrations.ProviderDiagnostics
 }
 
 func newClient(httpClient *http.Client) (*client, error) {
@@ -118,8 +119,18 @@ func (c *client) doJSON(
 				return responseMeta{Attempts: attempt}, integrations.NewError(integrations.ErrorCodeTimeout, "X request timed out", ctx.Err())
 			}
 			lastErr = integrations.NewError(integrations.ErrorCodeUpstream, "X is unavailable", requestErr)
-			if retryable && attempt < attemptLimit && waitForRetry(ctx, time.Duration(attempt*attempt)*100*time.Millisecond) {
-				continue
+			if retryable && attempt < attemptLimit {
+				if waitErr := waitForRetry(ctx, time.Duration(attempt*attempt)*100*time.Millisecond); waitErr == nil {
+					continue
+				} else {
+					meta := responseMeta{Attempts: attempt}
+					return meta, integrations.NewProviderError(
+						integrations.ErrorCodeTimeout,
+						"X request timed out",
+						waitErr,
+						meta.Diagnostics,
+					)
+				}
 			}
 			return responseMeta{Attempts: attempt}, lastErr
 		}
@@ -127,26 +138,60 @@ func (c *client) doJSON(
 			RequestID: firstNonEmpty(response.Header.Get("X-Transaction-Id"), response.Header.Get("X-Request-Id")),
 			Attempts:  attempt,
 		}
+		meta.Diagnostics = integrations.ProviderDiagnostics{
+			RequestID:  meta.RequestID,
+			HTTPStatus: response.StatusCode,
+		}
 		payload, readErr := io.ReadAll(io.LimitReader(response.Body, maxResponseBytes+1))
 		_ = response.Body.Close()
 		if readErr != nil {
-			return meta, integrations.NewError(integrations.ErrorCodeResponseInvalid, "X response could not be read", readErr)
+			return meta, integrations.NewProviderError(
+				integrations.ErrorCodeResponseInvalid,
+				"X response could not be read",
+				readErr,
+				meta.Diagnostics,
+			)
 		}
 		if len(payload) > maxResponseBytes {
-			return meta, integrations.NewError(integrations.ErrorCodeResponseInvalid, "X response exceeded the platform limit", nil)
+			return meta, integrations.NewProviderError(
+				integrations.ErrorCodeResponseInvalid,
+				"X response exceeded the platform limit",
+				nil,
+				meta.Diagnostics,
+			)
 		}
+		problem, hasProblem := parseXProblem(payload)
 		if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
-			mapped := mapXStatus(response.StatusCode)
-			if retryable && retryableXStatus(response.StatusCode) && attempt < attemptLimit &&
-				waitForRetry(ctx, xRetryDelay(response.Header, attempt)) {
+			mapped, diagnostics := mapXProblem(response.StatusCode, response.Header, meta.RequestID, problem)
+			meta.Diagnostics = diagnostics
+			if retryable && retryableXError(response.StatusCode, mapped) && attempt < attemptLimit {
 				lastErr = mapped
-				continue
+				if waitErr := waitForRetry(ctx, xRetryDelay(response.Header, attempt)); waitErr == nil {
+					continue
+				} else {
+					return meta, integrations.NewProviderError(
+						integrations.ErrorCodeTimeout,
+						"X request timed out",
+						waitErr,
+						meta.Diagnostics,
+					)
+				}
 			}
+			return meta, mapped
+		}
+		if hasProblem {
+			mapped, diagnostics := mapXProblem(response.StatusCode, response.Header, meta.RequestID, problem)
+			meta.Diagnostics = diagnostics
 			return meta, mapped
 		}
 		if target != nil && len(bytes.TrimSpace(payload)) > 0 {
 			if err := json.Unmarshal(payload, target); err != nil {
-				return meta, integrations.NewError(integrations.ErrorCodeResponseInvalid, "X returned an invalid response", err)
+				return meta, integrations.NewProviderError(
+					integrations.ErrorCodeResponseInvalid,
+					"X returned an invalid response",
+					err,
+					meta.Diagnostics,
+				)
 			}
 		}
 		return meta, nil
@@ -154,28 +199,78 @@ func (c *client) doJSON(
 	return responseMeta{Attempts: attemptLimit}, lastErr
 }
 
-func mapXStatus(status int) error {
+func mapXProblem(
+	status int,
+	header http.Header,
+	requestID string,
+	problem xProblem,
+) (error, integrations.ProviderDiagnostics) {
+	providerCode := xProviderErrorCode(problem)
+	if providerCode == "" {
+		providerCode = fmt.Sprintf("http_%d", status)
+	}
+	diagnostics := integrations.ProviderDiagnostics{
+		ErrorCode:    providerCode,
+		RequestID:    requestID,
+		HTTPStatus:   status,
+		RetryAfterAt: xRetryAfterAt(header),
+	}
+	problemKind := strings.ToLower(strings.Join([]string{problem.Type, problem.Title}, " "))
+	code := ""
+	message := ""
+	switch {
+	case strings.Contains(problemKind, "usage-capped"),
+		strings.Contains(problemKind, "usage cap"),
+		strings.Contains(problemKind, "usagecap"):
+		code = integrations.ErrorCodeBudgetExceeded
+		message = "X usage plan limit was reached"
+	case strings.Contains(problemKind, "rate-limit"),
+		strings.Contains(problemKind, "rate limit"),
+		strings.Contains(problemKind, "too many requests"):
+		code = integrations.ErrorCodeRateLimited
+		message = "X rate limit was reached"
+	case strings.Contains(problemKind, "invalid"):
+		code = integrations.ErrorCodeInvalidInput
+		message = "X rejected the request parameters"
+	case status >= http.StatusOK && status < http.StatusMultipleChoices:
+		code = integrations.ErrorCodeResponseInvalid
+		message = "X returned a partial response with errors"
+	}
+	if code != "" {
+		return integrations.NewProviderError(code, message, nil, diagnostics), diagnostics
+	}
 	switch status {
 	case http.StatusUnauthorized:
-		return integrations.NewError(integrations.ErrorCodeAuthInvalid, "X credentials are invalid or expired", nil)
+		code = integrations.ErrorCodeAuthInvalid
+		message = "X credentials are invalid or expired"
 	case http.StatusPaymentRequired:
-		return integrations.NewError(integrations.ErrorCodeBudgetExceeded, "X plan does not permit this operation", nil)
+		code = integrations.ErrorCodeBudgetExceeded
+		message = "X plan does not permit this operation"
 	case http.StatusForbidden, http.StatusNotFound:
-		return integrations.NewError(integrations.ErrorCodeAccessDenied, "X denied the requested operation or resource", nil)
+		code = integrations.ErrorCodeAccessDenied
+		message = "X denied the requested operation or resource"
 	case http.StatusTooManyRequests:
-		return integrations.NewError(integrations.ErrorCodeRateLimited, "X rate limit was reached", nil)
+		code = integrations.ErrorCodeRateLimited
+		message = "X rate limit was reached"
 	case http.StatusBadRequest, http.StatusUnprocessableEntity:
-		return integrations.NewError(integrations.ErrorCodeInvalidInput, "X rejected the request parameters", nil)
+		code = integrations.ErrorCodeInvalidInput
+		message = "X rejected the request parameters"
 	default:
 		if status >= http.StatusInternalServerError {
-			return integrations.NewError(integrations.ErrorCodeUpstream, "X is temporarily unavailable", nil)
+			code = integrations.ErrorCodeUpstream
+			message = "X is temporarily unavailable"
+		} else {
+			code = integrations.ErrorCodeUpstream
+			message = "X request failed"
 		}
-		return integrations.NewError(integrations.ErrorCodeUpstream, "X request failed", nil)
 	}
+	return integrations.NewProviderError(code, message, nil, diagnostics), diagnostics
 }
 
-func retryableXStatus(status int) bool {
-	return status == http.StatusTooManyRequests || status == http.StatusBadGateway ||
+func retryableXError(status int, err error) bool {
+	return integrations.ErrorCode(err) == integrations.ErrorCodeRateLimited ||
+		status == http.StatusTooManyRequests || status == http.StatusInternalServerError ||
+		status == http.StatusBadGateway ||
 		status == http.StatusServiceUnavailable || status == http.StatusGatewayTimeout
 }
 
@@ -193,13 +288,83 @@ func xRetryDelay(header http.Header, attempt int) time.Duration {
 	return time.Duration(attempt*attempt) * 100 * time.Millisecond
 }
 
-func waitForRetry(ctx context.Context, delay time.Duration) bool {
+func xRetryAfterAt(header http.Header) *time.Time {
+	if raw := strings.TrimSpace(header.Get("Retry-After")); raw != "" {
+		if seconds, err := strconv.Atoi(raw); err == nil && seconds >= 0 {
+			value := time.Now().Add(time.Duration(seconds) * time.Second).UTC()
+			return &value
+		}
+	}
+	if raw := strings.TrimSpace(header.Get("X-Rate-Limit-Reset")); raw != "" {
+		if epoch, err := strconv.ParseInt(raw, 10, 64); err == nil {
+			value := time.Unix(epoch, 0).UTC()
+			return &value
+		}
+	}
+	return nil
+}
+
+type xProblem struct {
+	Type      string
+	Title     string
+	HasErrors bool
+}
+
+func parseXProblem(payload []byte) (xProblem, bool) {
+	var envelope struct {
+		Type   string            `json:"type"`
+		Title  string            `json:"title"`
+		Errors []json.RawMessage `json:"errors"`
+	}
+	if len(bytes.TrimSpace(payload)) == 0 || json.Unmarshal(payload, &envelope) != nil {
+		return xProblem{}, false
+	}
+	problem := xProblem{
+		Type:      strings.TrimSpace(envelope.Type),
+		Title:     strings.TrimSpace(envelope.Title),
+		HasErrors: len(envelope.Errors) > 0,
+	}
+	return problem, problem.Type != "" || problem.Title != "" || problem.HasErrors
+}
+
+func xProviderErrorCode(problem xProblem) string {
+	// X problem titles are human-readable, provider-controlled strings and
+	// must never become persisted diagnostics. Map only documented problem
+	// families to fixed identifiers; unknown problems fall back to the HTTP
+	// status in mapXProblem.
+	problemKind := strings.ToLower(strings.Join([]string{problem.Type, problem.Title}, " "))
+	switch {
+	case strings.Contains(problemKind, "usage-capped"),
+		strings.Contains(problemKind, "usage cap"),
+		strings.Contains(problemKind, "usagecap"):
+		return "usage_capped"
+	case strings.Contains(problemKind, "rate-limit"),
+		strings.Contains(problemKind, "rate limit"),
+		strings.Contains(problemKind, "too many requests"):
+		return "rate_limit_exceeded"
+	case strings.Contains(problemKind, "client-forbidden"),
+		strings.Contains(problemKind, "client forbidden"):
+		return "client_forbidden"
+	case strings.Contains(problemKind, "invalid"):
+		return "invalid_request"
+	default:
+		return ""
+	}
+}
+
+func waitForRetry(ctx context.Context, delay time.Duration) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if delay <= 0 {
+		return nil
+	}
 	timer := time.NewTimer(delay)
 	defer timer.Stop()
 	select {
 	case <-ctx.Done():
-		return false
+		return ctx.Err()
 	case <-timer.C:
-		return true
+		return ctx.Err()
 	}
 }

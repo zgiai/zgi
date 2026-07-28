@@ -89,6 +89,14 @@ func NewFrozenInvocation(req FrozenInvocationRequest) FrozenInvocation {
 		CreatedAt:               &now,
 		ExpiresAt:               &expiresAt,
 	}
+	return SealFrozenInvocation(invocation)
+}
+
+// SealFrozenInvocation creates the immutable, canonical snapshot that may be
+// presented for approval. Callers must seal before exposing or persisting an
+// approval request. Approved invocations must only be verified, never resealed.
+func SealFrozenInvocation(invocation FrozenInvocation) FrozenInvocation {
+	invocation = NormalizeFrozenInvocation(invocation)
 	invocation.Hash = FrozenInvocationHash(invocation)
 	shortHash := shortFrozenInvocationHash(invocation.Hash)
 	if invocation.CorrelationID != "" {

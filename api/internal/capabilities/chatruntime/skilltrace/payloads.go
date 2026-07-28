@@ -70,24 +70,61 @@ func ToolGovernanceDecisionPayload(ids PayloadIDs, trace skills.SkillTrace) map[
 		"duration_ms":     trace.DurationMS,
 	})
 	if trace.Governance != nil {
-		payload["governance"] = trace.Governance
-		payload["correlation_id"] = trace.Governance.CorrelationID
-		payload["decision"] = trace.Governance.Status
-		payload["requires_approval"] = trace.Governance.RequiresApproval
-		payload["reason"] = trace.Governance.Reason
-		payload["risk_level"] = trace.Governance.Manifest.RiskLevel
-		payload["effect"] = trace.Governance.Manifest.Effect
-		payload["asset_type"] = trace.Governance.Manifest.AssetType
-		payload["approval_every_invocation"] = trace.Governance.Manifest.ApprovalEveryInvocation
-		if len(trace.Governance.AssetOperationAudit) > 0 {
-			payload["asset_operation_audit"] = trace.Governance.AssetOperationAudit
+		governance := sealedGovernanceDecisionSnapshot(trace.Governance)
+		payload["governance"] = governance
+		payload["correlation_id"] = governance.CorrelationID
+		payload["decision"] = governance.Status
+		payload["requires_approval"] = governance.RequiresApproval
+		payload["reason"] = governance.Reason
+		payload["risk_level"] = governance.Manifest.RiskLevel
+		payload["effect"] = governance.Manifest.Effect
+		payload["asset_type"] = governance.Manifest.AssetType
+		payload["approval_every_invocation"] = governance.Manifest.ApprovalEveryInvocation
+		if len(governance.AssetOperationAudit) > 0 {
+			payload["asset_operation_audit"] = governance.AssetOperationAudit
 		}
-		if trace.Governance.ApprovalEvent != nil {
-			payload["approval_event"] = trace.Governance.ApprovalEvent
+		if governance.ApprovalEvent != nil {
+			payload["approval_event"] = governance.ApprovalEvent
 		}
-		enrichFrozenInvocationIdentity(payload, trace.Governance.FrozenInvocation)
+		enrichFrozenInvocationIdentity(payload, governance.FrozenInvocation)
 	}
 	return payload
+}
+
+// sealedGovernanceDecisionSnapshot detaches the approval payload from runtime
+// governance state. This is the last point at which a frozen invocation may be
+// sealed; continuation code must only verify the stored hash.
+func sealedGovernanceDecisionSnapshot(source *toolgovernance.Decision) *toolgovernance.Decision {
+	if source == nil {
+		return nil
+	}
+	snapshot := *source
+	maySeal := source.Status == toolgovernance.DecisionStatusNeedsApproval && source.RequiresApproval
+	detachFrozen := func(invocation toolgovernance.FrozenInvocation) toolgovernance.FrozenInvocation {
+		if maySeal {
+			return toolgovernance.SealFrozenInvocation(invocation)
+		}
+		return toolgovernance.NormalizeFrozenInvocation(invocation)
+	}
+	var authoritative *toolgovernance.FrozenInvocation
+	if source.FrozenInvocation != nil {
+		detached := detachFrozen(*source.FrozenInvocation)
+		snapshot.FrozenInvocation = &detached
+		authoritative = &detached
+	}
+	if source.ApprovalEvent != nil {
+		approval := *source.ApprovalEvent
+		if authoritative != nil {
+			detached := detachFrozen(*authoritative)
+			approval.FrozenInvocation = &detached
+		} else if source.ApprovalEvent.FrozenInvocation != nil {
+			detached := detachFrozen(*source.ApprovalEvent.FrozenInvocation)
+			approval.FrozenInvocation = &detached
+			snapshot.FrozenInvocation = &detached
+		}
+		snapshot.ApprovalEvent = &approval
+	}
+	return &snapshot
 }
 
 // enrichFrozenInvocationIdentity exposes the provider-authoritative identity

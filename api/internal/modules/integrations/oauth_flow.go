@@ -252,7 +252,7 @@ func (repository *GormOAuthFlowRepository) CountPendingOAuthFlows(ctx context.Co
 }
 
 type OAuthConnectionCommitter interface {
-	CommitOAuthConnection(context.Context, uuid.UUID, *IntegrationConnection, bool, string, time.Time) error
+	CommitOAuthConnection(context.Context, uuid.UUID, *IntegrationConnection, bool, string, time.Time, *OAuthRecoveryTask) error
 }
 
 type GormOAuthConnectionCommitter struct{ db *gorm.DB }
@@ -261,9 +261,31 @@ func NewGormOAuthConnectionCommitter(db *gorm.DB) *GormOAuthConnectionCommitter 
 	return &GormOAuthConnectionCommitter{db: db}
 }
 
-func (committer *GormOAuthConnectionCommitter) CommitOAuthConnection(ctx context.Context, flowID uuid.UUID, connection *IntegrationConnection, create bool, displayName string, completedAt time.Time) error {
+func (committer *GormOAuthConnectionCommitter) CommitOAuthConnection(
+	ctx context.Context,
+	flowID uuid.UUID,
+	connection *IntegrationConnection,
+	create bool,
+	displayName string,
+	completedAt time.Time,
+	supersededRevocation *OAuthRecoveryTask,
+) error {
 	if committer == nil || committer.db == nil || connection == nil || flowID == uuid.Nil {
 		return fmt.Errorf("integration OAuth connection committer is unavailable")
+	}
+	if supersededRevocation != nil {
+		normalized := normalizeOAuthRecoveryTask(*supersededRevocation, completedAt.UTC())
+		if err := validateOAuthRecoveryTask(normalized); err != nil {
+			return err
+		}
+		if create ||
+			normalized.Kind != OAuthRecoveryRevoke ||
+			normalized.OrganizationID != connection.OrganizationID ||
+			normalized.ConnectionID != connection.ID ||
+			normalized.CredentialVersion != connection.CredentialVersion-1 {
+			return fmt.Errorf("integration OAuth superseded credential revocation is invalid")
+		}
+		supersededRevocation = &normalized
 	}
 	commit := func(tx *gorm.DB) error {
 		var flow IntegrationOAuthFlow
@@ -282,6 +304,15 @@ func (committer *GormOAuthConnectionCommitter) CommitOAuthConnection(ctx context
 		}
 		if err != nil {
 			return err
+		}
+		if supersededRevocation != nil {
+			record, recordErr := oauthRecoveryRecord(*supersededRevocation, completedAt.UTC())
+			if recordErr != nil {
+				return recordErr
+			}
+			if createErr := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(record).Error; createErr != nil {
+				return fmt.Errorf("record superseded integration OAuth credential revocation: %w", createErr)
+			}
 		}
 		result := tx.Model(&IntegrationOAuthFlow{}).Where("id = ? AND status = ?", flowID, OAuthFlowPending).
 			Updates(map[string]any{
@@ -786,7 +817,7 @@ func (service *OAuthFlowService) Callback(ctx context.Context, request OAuthCall
 		result.ErrorCode = ErrorCodeResponseInvalid
 		return result, NewError(ErrorCodeResponseInvalid, "integration OAuth account profile is unavailable", err)
 	}
-	connection, createConnection, err := service.prepareOAuthConnection(ctx, flow, tokens, profile)
+	connection, createConnection, supersededRevocation, err := service.prepareOAuthConnection(ctx, flow, tokens, profile)
 	if err != nil {
 		errorCode := oauthPublicErrorCode(err)
 		_ = service.failFlow(ctx, flow.ID, errorCode)
@@ -813,6 +844,7 @@ func (service *OAuthFlowService) Callback(ctx context.Context, request OAuthCall
 				createConnection,
 				displayName,
 				now,
+				supersededRevocation,
 			)
 		},
 	)
@@ -913,11 +945,16 @@ func (service *OAuthFlowService) validateFlowConnection(ctx context.Context, req
 	return connection.Name, cloneUUIDPointer(request.ConnectionID), nil
 }
 
-func (service *OAuthFlowService) prepareOAuthConnection(ctx context.Context, flow *IntegrationOAuthFlow, tokens OAuthTokenSet, profile OAuthProfile) (*IntegrationConnection, bool, error) {
+func (service *OAuthFlowService) prepareOAuthConnection(
+	ctx context.Context,
+	flow *IntegrationOAuthFlow,
+	tokens OAuthTokenSet,
+	profile OAuthProfile,
+) (*IntegrationConnection, bool, *OAuthRecoveryTask, error) {
 	credentials := tokens.credentialMap()
 	if strings.TrimSpace(credentials["access_token"]) == "" {
 		destroyCredentialMap(credentials)
-		return nil, false, NewError(ErrorCodeResponseInvalid, "integration OAuth token response is invalid", nil)
+		return nil, false, nil, NewError(ErrorCodeResponseInvalid, "integration OAuth token response is invalid", nil)
 	}
 	defer destroyCredentialMap(credentials)
 	now := time.Now().UTC()
@@ -942,25 +979,29 @@ func (service *OAuthFlowService) prepareOAuthConnection(ctx context.Context, flo
 			IntegrationID: connection.IntegrationID, CredentialVersion: connection.CredentialVersion,
 		})
 		if err != nil {
-			return nil, false, NewError(ErrorCodeConnectionInvalid, "integration OAuth credentials could not be protected", err)
+			return nil, false, nil, NewError(ErrorCodeConnectionInvalid, "integration OAuth credentials could not be protected", err)
 		}
 		connection.EncryptedCredentials = &envelope
-		return connection, true, nil
+		return connection, true, nil, nil
 	}
 	connection, err := service.connections.GetByID(ctx, flow.OrganizationID, *flow.ConnectionID)
 	if err != nil {
-		return nil, false, mapConnectionLookupError(err)
+		return nil, false, nil, mapConnectionLookupError(err)
 	}
 	if connection.AuthType != ConnectionAuthTypeOAuth2 ||
 		!strings.EqualFold(connection.IntegrationID, flow.IntegrationID) ||
 		!strings.EqualFold(connection.DriverID, flow.DriverID) ||
 		!strings.EqualFold(connection.AuthMethodID, flow.AuthMethodID) ||
 		connection.CredentialSource != flow.CredentialSource {
-		return nil, false, NewError(ErrorCodeConnectionConflict, "integration OAuth connection changed during authorization", nil)
+		return nil, false, nil, NewError(ErrorCodeConnectionConflict, "integration OAuth connection changed during authorization", nil)
 	}
 	if connection.CredentialSource == ConnectionCredentialSourceAccount &&
 		(connection.OwnerAccountID == nil || *connection.OwnerAccountID != flow.AccountID) {
-		return nil, false, NewError(ErrorCodeAccessDenied, "integration OAuth connection is not owned by the current account", nil)
+		return nil, false, nil, NewError(ErrorCodeAccessDenied, "integration OAuth connection is not owned by the current account", nil)
+	}
+	supersededRevocation, err := service.prepareSupersededOAuthRevocation(ctx, connection, credentials)
+	if err != nil {
+		return nil, false, nil, err
 	}
 	connection.CredentialVersion++
 	envelope, err := service.cipher.EncryptCredentials(credentials, CredentialAAD{
@@ -968,7 +1009,7 @@ func (service *OAuthFlowService) prepareOAuthConnection(ctx context.Context, flo
 		IntegrationID: connection.IntegrationID, CredentialVersion: connection.CredentialVersion,
 	})
 	if err != nil {
-		return nil, false, NewError(ErrorCodeConnectionInvalid, "integration OAuth credentials could not be protected", err)
+		return nil, false, nil, NewError(ErrorCodeConnectionInvalid, "integration OAuth credentials could not be protected", err)
 	}
 	connection.EncryptedCredentials = &envelope
 	connection.AccountID = optionalBoundedString(profile.AccountID, 255)
@@ -987,7 +1028,60 @@ func (service *OAuthFlowService) prepareOAuthConnection(ctx context.Context, flo
 	connection.RefreshTokenExpiresAt = cloneTimePointer(tokens.RefreshTokenExpiresAt)
 	connection.NextTokenRefreshAt = oauthNextRefreshAt(tokens.ExpiresAt, service.refreshWindow)
 	connection.UpdatedBy = cloneUUIDPointer(&flow.AccountID)
-	return connection, false, nil
+	return connection, false, supersededRevocation, nil
+}
+
+func (service *OAuthFlowService) prepareSupersededOAuthRevocation(
+	ctx context.Context,
+	connection *IntegrationConnection,
+	replacement map[string]string,
+) (*OAuthRecoveryTask, error) {
+	if service == nil || service.cipher == nil || service.recovery == nil ||
+		connection == nil || connection.EncryptedCredentials == nil {
+		return nil, NewError(
+			ErrorCodeConnectionInvalid,
+			"integration OAuth credential replacement cleanup is unavailable",
+			nil,
+		)
+	}
+	current, err := service.cipher.DecryptCredentials(*connection.EncryptedCredentials, CredentialAAD{
+		OrganizationID: connection.OrganizationID, ConnectionID: connection.ID,
+		IntegrationID: connection.IntegrationID, CredentialVersion: connection.CredentialVersion,
+	})
+	if err != nil {
+		return nil, NewError(
+			ErrorCodeConnectionInvalid,
+			"integration OAuth existing credentials could not be protected during replacement",
+			err,
+		)
+	}
+	defer destroyCredentialMap(current)
+	currentToken := oauthRevocationToken(current)
+	replacementToken := oauthRevocationToken(replacement)
+	if currentToken == "" {
+		return nil, nil
+	}
+	if replacementToken != "" &&
+		len(currentToken) == len(replacementToken) &&
+		subtle.ConstantTimeCompare([]byte(currentToken), []byte(replacementToken)) == 1 {
+		return nil, nil
+	}
+	task, err := service.recovery.PrepareRevocation(ctx, connection)
+	if err != nil {
+		return nil, NewError(
+			ErrorCodeConnectionInvalid,
+			"integration OAuth existing credential revocation could not be prepared",
+			err,
+		)
+	}
+	return &task, nil
+}
+
+func oauthRevocationToken(credentials map[string]string) string {
+	if token := strings.TrimSpace(credentials["refresh_token"]); token != "" {
+		return token
+	}
+	return strings.TrimSpace(credentials["access_token"])
 }
 
 func (service *OAuthFlowService) decryptFlowToken(flow *IntegrationOAuthFlow) (string, error) {
@@ -1037,7 +1131,7 @@ func deriveOAuthScopes(definition ProviderDefinition, method AuthMethodDefinitio
 		if !ActionSupportsAuthMethod(action, method.ID) {
 			return nil, nil, invalidInput("OAuth action selection is incompatible with the selected authentication method", nil)
 		}
-		scopes = append(scopes, action.RequiredScopes...)
+		scopes = append(scopes, ActionPreferredOAuthScopes(action)...)
 	}
 	scopes = normalizeScopes(scopes)
 	if len(scopes) == 0 {

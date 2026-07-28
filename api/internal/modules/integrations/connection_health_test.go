@@ -88,6 +88,54 @@ func TestActiveProbeSuccessCanRecoverReconnectRequired(t *testing.T) {
 	}
 }
 
+func TestPassiveResourceAccessDeniedDoesNotDegradeWholeConnection(t *testing.T) {
+	now := time.Now().UTC()
+	connection := &IntegrationConnection{
+		HealthStatus:   ConnectionHealthHealthy,
+		AuthStatus:     ConnectionAuthValid,
+		ScopeStatus:    ConnectionScopeVerified,
+		HealthRevision: 4,
+	}
+	applyConnectionHealthObservation(connection, ConnectionHealthObservation{
+		Source:         ConnectionHealthSourceRuntime,
+		CheckKind:      ConnectionHealthCheckPassive,
+		Classification: ConnectionHealthClassificationAccessDenied,
+		ObservedAt:     now,
+	}, &ConnectionHealthEvent{})
+	if connection.HealthStatus != ConnectionHealthHealthy ||
+		connection.AuthStatus != ConnectionAuthValid ||
+		connection.ScopeStatus != ConnectionScopeVerified ||
+		connection.AttentionCode != nil {
+		t.Fatalf("ambiguous resource access failure contaminated connection health: %#v", connection)
+	}
+	if connection.LastRuntimeFailureAt == nil || !connection.LastRuntimeFailureAt.Equal(now) {
+		t.Fatalf("runtime failure timestamp = %#v, want %s", connection.LastRuntimeFailureAt, now)
+	}
+	if connection.HealthRevision != 5 {
+		t.Fatalf("health revision = %d, want event revision 5", connection.HealthRevision)
+	}
+}
+
+func TestPassiveAccessDeniedWithExplicitMissingScopesStillDegradesConnection(t *testing.T) {
+	connection := &IntegrationConnection{
+		HealthStatus: ConnectionHealthHealthy, AuthStatus: ConnectionAuthValid,
+		ScopeStatus: ConnectionScopeVerified,
+	}
+	applyConnectionHealthObservation(connection, ConnectionHealthObservation{
+		Source:         ConnectionHealthSourceRuntime,
+		CheckKind:      ConnectionHealthCheckPassive,
+		Classification: ConnectionHealthClassificationAccessDenied,
+		MissingScopes:  []string{"messages:write"},
+		ObservedAt:     time.Now().UTC(),
+	}, &ConnectionHealthEvent{})
+	if connection.HealthStatus != ConnectionHealthDegraded ||
+		connection.ScopeStatus != ConnectionScopeDrifted ||
+		connection.AttentionCode == nil ||
+		*connection.AttentionCode != ConnectionAttentionScopeUpdateRequired {
+		t.Fatalf("explicit missing scopes did not degrade connection: %#v", connection)
+	}
+}
+
 func TestLateRuntimeSuccessIsStaleAfterNewerAuthFailure(t *testing.T) {
 	newer := time.Now().UTC()
 	older := newer.Add(-time.Minute)
@@ -130,6 +178,87 @@ func TestConnectionHealthServiceInjectsConfiguredFailureThreshold(t *testing.T) 
 	}
 }
 
+func TestConnectionHealthServicePersistsSafeRuntimeProviderDiagnostics(t *testing.T) {
+	repository := &capturingConnectionHealthRepository{}
+	service := NewConnectionHealthService(repository)
+	status := 403
+	retryAfter := time.Date(2026, 7, 28, 14, 0, 0, 0, time.UTC)
+	err := service.PublishConnectionHealthSignal(context.Background(), ConnectionHealthSignal{
+		OrganizationID:     uuid.New(),
+		ConnectionID:       uuid.New(),
+		IntegrationID:      "feishu",
+		DriverID:           "feishu",
+		CredentialVersion:  1,
+		ExecutionID:        uuid.New(),
+		ProviderRequestID:  "feishu-log-123",
+		ProviderErrorCode:  "99991672",
+		ProviderHTTPStatus: &status,
+		RetryAfterAt:       &retryAfter,
+		ErrorCode:          ErrorCodeAccessDenied,
+		ObservedAt:         time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := repository.observation
+	if got.ProviderErrorCode != "99991672" ||
+		got.ProviderRequestID != "feishu-log-123" ||
+		got.ProviderHTTPStatus == nil ||
+		*got.ProviderHTTPStatus != status ||
+		got.RetryAfterAt == nil ||
+		!got.RetryAfterAt.Equal(retryAfter) {
+		t.Fatalf("runtime observation = %#v", got)
+	}
+}
+
+func TestConnectionHealthEventNormalizesUnsafeProviderDiagnostics(t *testing.T) {
+	observation := normalizeConnectionHealthObservation(ConnectionHealthObservation{
+		ProviderErrorCode:  `{"message":"do not persist"}`,
+		ProviderRequestID:  "request id with spaces",
+		ProviderHTTPStatus: intPointerForHealthTest(42),
+	})
+	if observation.ProviderErrorCode != "" || observation.ProviderRequestID != "" || observation.ProviderHTTPStatus != nil {
+		t.Fatalf("unsafe observation diagnostics retained: %#v", observation)
+	}
+
+	safe := normalizeConnectionHealthObservation(ConnectionHealthObservation{
+		ProviderErrorCode:  "99991672",
+		ProviderRequestID:  "feishu-log-123",
+		ProviderHTTPStatus: intPointerForHealthTest(403),
+	})
+	event := connectionHealthEventFromObservation(IntegrationConnection{}, safe)
+	if event.ProviderErrorCode == nil ||
+		*event.ProviderErrorCode != "99991672" ||
+		event.ProviderRequestID == nil ||
+		*event.ProviderRequestID != "feishu-log-123" ||
+		event.ProviderHTTPStatus == nil ||
+		*event.ProviderHTTPStatus != 403 {
+		t.Fatalf("health event = %#v", event)
+	}
+}
+
+func TestClassifyRuntimeConnectionHealthSignalCoversAuthorizationLifecycle(t *testing.T) {
+	tests := []struct {
+		errorCode      string
+		classification ConnectionHealthClassification
+	}{
+		{ErrorCodeReconnectRequired, ConnectionHealthClassificationAuthInvalid},
+		{ErrorCodeConnectionInvalid, ConnectionHealthClassificationAuthInvalid},
+		{ErrorCodeConnectionExpired, ConnectionHealthClassificationOAuthExpired},
+		{ErrorCodeInsufficientScope, ConnectionHealthClassificationScopeDrift},
+		{ErrorCodeActionAuthMethod, ConnectionHealthClassificationAccessDenied},
+		{ErrorCodeProviderRejected, ConnectionHealthClassificationIgnored},
+	}
+	for _, test := range tests {
+		t.Run(test.errorCode, func(t *testing.T) {
+			classification, reason := classifyRuntimeConnectionHealthSignal(test.errorCode)
+			if classification != test.classification || reason != test.errorCode {
+				t.Fatalf("classification = %q, reason = %q", classification, reason)
+			}
+		})
+	}
+}
+
 func TestConnectionHealthSummarySerializesScopeArraysAsJSONB(t *testing.T) {
 	updates := connectionHealthSummaryUpdates(IntegrationConnection{
 		GrantedScopes:         []string{"repo:read"},
@@ -142,3 +271,5 @@ func TestConnectionHealthSummarySerializesScopeArraysAsJSONB(t *testing.T) {
 		}
 	}
 }
+
+func intPointerForHealthTest(value int) *int { return &value }

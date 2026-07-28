@@ -39,10 +39,12 @@ interface IntegrationConnectionDetailDialogProps {
   connection: IntegrationConnection | null;
   provider?: IntegrationCatalogItem;
   isTesting?: boolean;
+  isUpgrading?: boolean;
   canManage?: boolean;
   onOpenChange: (open: boolean) => void;
   onEdit: (connection: IntegrationConnection) => void;
   onTest: (connection: IntegrationConnection) => void;
+  onUpgradeAction?: (connection: IntegrationConnection, actionID: string) => void;
 }
 
 function DetailRow({ label, value }: { label: string; value: React.ReactNode }) {
@@ -59,10 +61,12 @@ export function IntegrationConnectionDetailDialog({
   connection,
   provider,
   isTesting = false,
+  isUpgrading = false,
   canManage = true,
   onOpenChange,
   onEdit,
   onTest,
+  onUpgradeAction,
 }: IntegrationConnectionDetailDialogProps) {
   const t = useT('integrations');
   const metadata = useIntegrationMetadata();
@@ -180,6 +184,10 @@ export function IntegrationConnectionDetailDialog({
                 summary={item.permission_summary}
                 grantedScopes={item.granted_scopes}
                 provider={provider}
+                upgradePending={isUpgrading}
+                onUpgradeAction={
+                  onUpgradeAction ? actionID => onUpgradeAction(item, actionID) : undefined
+                }
               />
 
               {item.credential_source === 'account' ? (

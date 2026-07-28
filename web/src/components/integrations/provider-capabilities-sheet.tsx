@@ -44,6 +44,10 @@ function isReadCapability(action: IntegrationActionDefinition): boolean {
   return action.effect === 'read' || action.effect === 'none';
 }
 
+function hasActionScopes(action: IntegrationActionDefinition): boolean {
+  return Boolean(action.required_scopes?.length || action.required_any_scopes?.length);
+}
+
 export function IntegrationProviderCapabilitiesSheet({
   provider,
   open,
@@ -214,12 +218,21 @@ export function IntegrationProviderCapabilitiesSheet({
                           {t('capabilities.requiredScopes')}
                         </p>
                         <div className="mt-2 flex flex-wrap gap-1.5">
-                          {(action.required_scopes ?? []).length > 0 ? (
-                            action.required_scopes?.map(scope => (
-                              <Badge key={scope} variant="subtle" className="font-normal">
-                                {metadata.scope(scope, provider ?? undefined)}
-                              </Badge>
-                            ))
+                          {hasActionScopes(action) ? (
+                            <>
+                              {action.required_scopes?.map(scope => (
+                                <Badge key={scope} variant="subtle" className="font-normal">
+                                  {metadata.scope(scope, provider ?? undefined)}
+                                </Badge>
+                              ))}
+                              {(action.required_any_scopes ?? []).length > 0 ? (
+                                <Badge variant="subtle" className="font-normal">
+                                  {action.required_any_scopes
+                                    ?.map(scope => metadata.scope(scope, provider ?? undefined))
+                                    .join(' / ')}
+                                </Badge>
+                              ) : null}
+                            </>
                           ) : (
                             <span className="text-muted-foreground">
                               {t('capabilities.noAdditionalScopes')}

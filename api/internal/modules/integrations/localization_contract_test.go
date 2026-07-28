@@ -279,6 +279,10 @@ func completeLocalizationContractRegistration() Registration {
 		CategoryLabelsI18n: LocalizedLabelMap{
 			"developer_tools": {LocaleEnglishUS: "Developer tools", LocaleSimplifiedChinese: "开发工具"},
 		},
+		Scopes: []ProviderScopeDefinition{{
+			ID: "records:read", Label: "Read records", LabelI18n: localizedTitle("Read records", "读取记录"),
+			Category: ProviderScopeCategoryProvider, Access: ProviderScopeAccessRead,
+		}},
 		AuthMethods: []AuthMethodDefinition{{
 			ID: "pat", Type: AuthMethodTypeAPIKey, CredentialSource: ConnectionCredentialSourceOrganization,
 			Label: "Personal access token", LabelI18n: localizedTitle("Personal access token", "个人访问令牌"),

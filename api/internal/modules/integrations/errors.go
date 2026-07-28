@@ -16,20 +16,23 @@ const (
 	ErrorCodeRateLimited       = "integration_rate_limited"
 	ErrorCodeTimeout           = "integration_timeout"
 	ErrorCodeUpstream          = "integration_upstream_unavailable"
+	ErrorCodeProviderRejected  = "integration_provider_rejected"
 	ErrorCodeResponseInvalid   = "integration_response_invalid"
 	ErrorCodeAuditFailed       = "integration_audit_failed"
 	ErrorCodePolicyConflict    = "integration_policy_conflict"
 	ErrorCodeReconnectRequired = "integration_reconnect_required"
 	ErrorCodeConnectionExpired = "integration_connection_expired"
 	ErrorCodeInsufficientScope = "integration_insufficient_scope"
+	ErrorCodeActionAuthMethod  = "integration_action_auth_incompatible"
 )
 
 var ErrQuotaExceeded = errors.New("integration daily quota exceeded")
 
 type Error struct {
-	Code    string
-	Message string
-	Err     error
+	Code                string
+	Message             string
+	Err                 error
+	ProviderDiagnostics ProviderDiagnostics `json:"-"`
 }
 
 func (e *Error) Error() string {
@@ -59,6 +62,19 @@ func (e *Error) PublicErrorCode() string {
 
 func NewError(code, message string, err error) error {
 	return &Error{Code: code, Message: message, Err: err}
+}
+
+// NewProviderError creates an integration error with bounded, structured
+// provider diagnostics. Provider response messages and bodies deliberately
+// have no field in this contract and must remain in the wrapped operator-only
+// error, if they are retained at all.
+func NewProviderError(code, message string, err error, diagnostics ProviderDiagnostics) error {
+	return &Error{
+		Code:                code,
+		Message:             message,
+		Err:                 err,
+		ProviderDiagnostics: normalizeProviderDiagnostics(diagnostics),
+	}
 }
 
 func ErrorCode(err error) string {

@@ -39,6 +39,10 @@ export const INTEGRATION_ERROR_TRANSLATION_KEYS = {
     integrations: 'errors.integration_upstream_unavailable',
     webapp: 'consoleChat.skills.trace.errors.upstreamUnavailable',
   },
+  integration_provider_rejected: {
+    integrations: 'errors.integration_provider_rejected',
+    webapp: 'consoleChat.skills.trace.errors.providerRejected',
+  },
   integration_response_invalid: {
     integrations: 'errors.integration_response_invalid',
     webapp: 'consoleChat.skills.trace.errors.responseInvalid',
@@ -62,6 +66,10 @@ export const INTEGRATION_ERROR_TRANSLATION_KEYS = {
   integration_insufficient_scope: {
     integrations: 'errors.integration_insufficient_scope',
     webapp: 'consoleChat.skills.trace.errors.insufficientScope',
+  },
+  integration_action_auth_incompatible: {
+    integrations: 'errors.integration_action_auth_incompatible',
+    webapp: 'consoleChat.skills.trace.errors.actionAuthIncompatible',
   },
   integration_connection_not_found: {
     integrations: 'errors.integration_connection_not_found',

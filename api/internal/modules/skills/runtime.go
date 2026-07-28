@@ -451,7 +451,19 @@ func (r *Runtime) CallSkillTool(
 		executionArguments = rewritten
 		governanceArgumentRewrite = rewriteSummary
 	}
-	executionArguments = r.enrichToolGovernanceArguments(ctx, toolDef, executionArguments, execCtx)
+	enrichedArguments, enrichErr := r.enrichToolGovernanceArguments(ctx, toolDef, executionArguments, execCtx)
+	if enrichErr != nil {
+		trace := SkillTrace{
+			Kind:      "tool_governance",
+			SkillID:   doc.Metadata.ID,
+			ToolName:  toolDef.Name,
+			Status:    "error",
+			Arguments: summarizeToolArguments(toolDef, executionArguments),
+			Error:     enrichErr.Error(),
+		}
+		return &ToolInvocationResult{Trace: trace}, enrichErr
+	}
+	executionArguments = enrichedArguments
 	if err := validateSkillToolArguments(doc.Metadata.ID, toolDef, executionArguments); err != nil {
 		traceArguments := summarizeToolArguments(toolDef, executionArguments)
 		if len(toolDef.InputSchema) > 0 {

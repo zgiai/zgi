@@ -1,5 +1,7 @@
 package integrations
 
+import "github.com/zgiai/zgi/api/internal/capabilities/toolgovernance"
+
 // localizedTestProviderDefinition keeps non-localization unit tests explicit
 // about the production catalog's supported-language contract. The Chinese
 // strings are deliberate test copy, not English values mirrored into another
@@ -9,7 +11,7 @@ func localizedTestProviderDefinition(integrationID, driverID string, actions []A
 	for index := range localizedActions {
 		localizeTestAction(&localizedActions[index])
 	}
-	return ProviderDefinition{
+	definition := ProviderDefinition{
 		ID:          integrationID,
 		DriverID:    driverID,
 		Name:        "Test external application",
@@ -29,6 +31,8 @@ func localizedTestProviderDefinition(integrationID, driverID string, actions []A
 		}},
 		Actions: localizedActions,
 	}
+	addTestProviderScopeDefinitions(&definition)
+	return definition
 }
 
 func localizedTestRegistration(integrationID string, adapter Adapter, actions []ActionDefinition) Registration {
@@ -101,6 +105,7 @@ func localizeTestProviderFixture(definition *ProviderDefinition) {
 	for index := range definition.Actions {
 		localizeTestAction(&definition.Actions[index])
 	}
+	addTestProviderScopeDefinitions(definition)
 }
 
 func localizeTestAction(action *ActionDefinition) {
@@ -115,10 +120,51 @@ func localizeTestAction(action *ActionDefinition) {
 		LocaleEnglishUS:         action.Description,
 		LocaleSimplifiedChinese: "执行集成测试操作。",
 	}
-	for _, scope := range action.RequiredScopes {
+	for _, scope := range ActionRequiredScopeIDs(*action) {
 		if action.ScopeLabelsI18n == nil {
 			action.ScopeLabelsI18n = LocalizedLabelMap{}
 		}
 		action.ScopeLabelsI18n[scope] = LocalizedText{LocaleEnglishUS: "Test scope", LocaleSimplifiedChinese: "测试权限"}
+	}
+}
+
+func addTestProviderScopeDefinitions(definition *ProviderDefinition) {
+	if definition == nil {
+		return
+	}
+	seen := make(map[string]struct{}, len(definition.Scopes))
+	for _, scope := range definition.Scopes {
+		seen[scope.ID] = struct{}{}
+	}
+	addScope := func(scopeID string, category ProviderScopeCategory, access ProviderScopeAccess) {
+		if scopeID == "" {
+			return
+		}
+		if _, exists := seen[scopeID]; exists {
+			return
+		}
+		seen[scopeID] = struct{}{}
+		definition.Scopes = append(definition.Scopes, ProviderScopeDefinition{
+			ID: scopeID, Label: scopeID,
+			LabelI18n: LocalizedText{LocaleEnglishUS: scopeID, LocaleSimplifiedChinese: "测试权限"},
+			Category:  category, Access: access,
+		})
+	}
+	for _, method := range definition.AuthMethods {
+		if method.OAuth == nil {
+			continue
+		}
+		for _, scopeID := range method.OAuth.IdentityScopes {
+			addScope(scopeID, ProviderScopeCategoryIdentity, ProviderScopeAccessIdentity)
+		}
+	}
+	for _, action := range definition.Actions {
+		access := ProviderScopeAccessRead
+		if action.Effect != toolgovernance.EffectRead && action.Effect != toolgovernance.EffectNone {
+			access = ProviderScopeAccessWrite
+		}
+		for _, scopeID := range ActionRequiredScopeIDs(action) {
+			addScope(scopeID, ProviderScopeCategoryProvider, access)
+		}
 	}
 }

@@ -8,9 +8,11 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"slices"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/zgiai/zgi/api/internal/capabilities/toolgovernance"
 	"github.com/zgiai/zgi/api/internal/modules/integrations"
@@ -164,7 +166,7 @@ func TestCreatePostUsesOneRequestAndNoRetry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = adapter.Execute(context.Background(), integrations.ActionRequest{
+	result, err := adapter.Execute(context.Background(), integrations.ActionRequest{
 		ActionID: ActionCreatePost,
 		Connection: &integrations.ResolvedConnection{
 			IntegrationID: IntegrationID, DriverID: DriverID,
@@ -174,6 +176,11 @@ func TestCreatePostUsesOneRequestAndNoRetry(t *testing.T) {
 	})
 	if err == nil || calls.Load() != 1 {
 		t.Fatalf("err = %v, calls = %d", err, calls.Load())
+	}
+	if result == nil || result.AttemptCount != 1 ||
+		result.ResultCount != 0 || result.Output != nil ||
+		result.ProviderDiagnostics.HTTPStatus != http.StatusServiceUnavailable {
+		t.Fatalf("failure result = %#v", result)
 	}
 	if strings.Contains(err.Error(), "access-token") {
 		t.Fatalf("secret leaked: %v", err)
@@ -467,7 +474,7 @@ func TestOAuthExchangePreservesRequestedScopesWhenResponseOmitsScope(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	expected := []string{ScopeUsersRead, ScopePostsWrite}
+	expected := []string{ScopeUsersRead, ScopePostsWrite, "offline.access"}
 	tokens, err := adapter.ExchangeCode(context.Background(), integrations.OAuthCodeExchangeRequest{
 		Client: integrations.OAuthClient{ClientID: "client-id", ClientSecret: "client-secret"},
 		Code:   "one-time-code", RedirectURI: "https://zgi.example/oauth/callback", CodeVerifier: "verifier",
@@ -478,6 +485,147 @@ func TestOAuthExchangePreservesRequestedScopesWhenResponseOmitsScope(t *testing.
 	}
 	if !slices.Equal(tokens.Scopes, expected) {
 		t.Fatalf("token scopes = %#v", tokens.Scopes)
+	}
+}
+
+func TestXProblemTypesAreClassifiedWithoutLeakingProviderDetail(t *testing.T) {
+	tests := []struct {
+		name       string
+		status     int
+		problem    xProblem
+		code       string
+		providerID string
+	}{
+		{
+			name: "usage cap", status: http.StatusForbidden,
+			problem: xProblem{Type: "https://api.x.com/2/problems/usage-capped", Title: "UsageCapExceeded"},
+			code:    integrations.ErrorCodeBudgetExceeded, providerID: "usage_capped",
+		},
+		{
+			name: "rate limit", status: http.StatusTooManyRequests,
+			problem: xProblem{Type: "https://api.x.com/2/problems/rate-limit-exceeded", Title: "Too Many Requests"},
+			code:    integrations.ErrorCodeRateLimited, providerID: "rate_limit_exceeded",
+		},
+		{
+			name: "forbidden", status: http.StatusForbidden,
+			problem: xProblem{Type: "https://api.x.com/2/problems/client-forbidden", Title: "Forbidden"},
+			code:    integrations.ErrorCodeAccessDenied, providerID: "client_forbidden",
+		},
+		{
+			name: "invalid", status: http.StatusBadRequest,
+			problem: xProblem{Type: "https://api.x.com/2/problems/invalid-request", Title: "Invalid Request"},
+			code:    integrations.ErrorCodeInvalidInput, providerID: "invalid_request",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err, diagnostics := mapXProblem(test.status, http.Header{}, "request-1", test.problem)
+			if integrations.ErrorCode(err) != test.code {
+				t.Fatalf("error = %v, want %s", err, test.code)
+			}
+			if diagnostics.ErrorCode != test.providerID || diagnostics.RequestID != "request-1" ||
+				diagnostics.HTTPStatus != test.status {
+				t.Fatalf("diagnostics = %#v", diagnostics)
+			}
+		})
+	}
+}
+
+func TestXPartialSuccessWithErrorsFailsClosed(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/2/users/me" {
+			http.NotFound(writer, request)
+			return
+		}
+		writer.Header().Set("X-Transaction-Id", "partial-request")
+		_, _ = io.WriteString(writer, `{
+			"data":{"id":"1","name":"Owner","username":"owner"},
+			"errors":[{"message":"a referenced resource was unavailable"}]
+		}`)
+	}))
+	defer server.Close()
+	adapter, err := newForBaseURL(server.Client(), server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := adapter.Execute(context.Background(), integrations.ActionRequest{
+		ActionID: ActionGetAccount,
+		Connection: &integrations.ResolvedConnection{
+			IntegrationID: IntegrationID, DriverID: DriverID,
+			Credentials: map[string]string{"access_token": "token"},
+		},
+	})
+	if err == nil || integrations.ErrorCode(err) != integrations.ErrorCodeResponseInvalid {
+		t.Fatalf("error = %v", err)
+	}
+	if result == nil || result.ProviderRequestID != "partial-request" ||
+		result.ProviderDiagnostics.ErrorCode != "http_200" ||
+		result.ProviderDiagnostics.HTTPStatus != http.StatusOK {
+		t.Fatalf("result = %#v", result)
+	}
+}
+
+func TestXReadRetriesGenericHTTP500(t *testing.T) {
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		call := calls.Add(1)
+		writer.Header().Set("X-Transaction-Id", "x-500-"+strconv.Itoa(int(call)))
+		if call == 1 {
+			writer.WriteHeader(http.StatusInternalServerError)
+			_, _ = io.WriteString(writer, `{"title":"Internal Server Error"}`)
+			return
+		}
+		_, _ = io.WriteString(writer, `{"data":{"id":"1","name":"Owner","username":"owner"}}`)
+	}))
+	defer server.Close()
+	adapter, err := newForBaseURL(server.Client(), server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := adapter.Execute(context.Background(), integrations.ActionRequest{
+		ActionID: ActionGetAccount,
+		Connection: &integrations.ResolvedConnection{
+			IntegrationID: IntegrationID, DriverID: DriverID,
+			Credentials: map[string]string{"access_token": "access-token"},
+		},
+	})
+	if err != nil || calls.Load() != 2 || result == nil || result.AttemptCount != 2 ||
+		result.ProviderRequestID != "x-500-2" {
+		t.Fatalf("result = %#v, calls = %d, err = %v", result, calls.Load(), err)
+	}
+}
+
+func TestXRetryBackoffDeadlineReturnsTimeoutWithDiagnostics(t *testing.T) {
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		calls.Add(1)
+		writer.Header().Set("X-Transaction-Id", "x-retry-deadline")
+		writer.Header().Set("Retry-After", "1")
+		writer.WriteHeader(http.StatusTooManyRequests)
+		_, _ = io.WriteString(writer, `{"type":"https://api.x.com/2/problems/usage-capped","title":"Too Many Requests"}`)
+	}))
+	defer server.Close()
+	adapter, err := newForBaseURL(server.Client(), server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	result, err := adapter.Execute(ctx, integrations.ActionRequest{
+		ActionID: ActionGetAccount,
+		Connection: &integrations.ResolvedConnection{
+			IntegrationID: IntegrationID, DriverID: DriverID,
+			Credentials: map[string]string{"access_token": "access-token"},
+		},
+	})
+	if integrations.ErrorCode(err) != integrations.ErrorCodeTimeout {
+		t.Fatalf("error = %v (%s)", err, integrations.ErrorCode(err))
+	}
+	if calls.Load() != 1 || result == nil || result.AttemptCount != 1 ||
+		result.ProviderRequestID != "x-retry-deadline" ||
+		result.ProviderDiagnostics.ErrorCode != "usage_capped" ||
+		result.ProviderDiagnostics.HTTPStatus != http.StatusTooManyRequests {
+		t.Fatalf("result = %#v, calls = %d", result, calls.Load())
 	}
 }
 
@@ -503,6 +651,17 @@ func TestAccountOutputIsBounded(t *testing.T) {
 	})
 	if err != nil || result.Output["provider"] != IntegrationID {
 		t.Fatalf("result = %#v, err = %v", result, err)
+	}
+}
+
+func TestXActionResultPreservesEmptyResultCount(t *testing.T) {
+	result := xActionResult(
+		map[string]interface{}{"posts": []interface{}{}},
+		responseMeta{Attempts: 1},
+		0,
+	)
+	if result == nil || result.ResultCount != 0 {
+		t.Fatalf("result = %#v, want result_count 0", result)
 	}
 }
 

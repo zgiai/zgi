@@ -18,6 +18,7 @@ const (
 
 	ScopeOpenID   = "openid"
 	ScopeEmail    = "email"
+	ScopeProfile  = "profile"
 	ScopeMailSend = "https://www.googleapis.com/auth/gmail.send"
 )
 
@@ -81,7 +82,7 @@ func ProviderDefinition() integrations.ProviderDefinition {
 				Category: integrations.ProviderScopeCategoryIdentity, Access: integrations.ProviderScopeAccessRead,
 			},
 			{
-				ID: "profile", Label: "Read basic Google profile",
+				ID: ScopeProfile, Label: "Read basic Google profile",
 				LabelI18n: integrations.LocalizedText{
 					integrations.LocaleEnglishUS: "Read basic Google profile", integrations.LocaleSimplifiedChinese: "读取基础 Google 资料",
 				},
@@ -124,7 +125,7 @@ func gmailOAuthMethod(id string, source integrations.ConnectionCredentialSource,
 			ConnectEnabled: true, ReconnectEnabled: true, ScopeUpgradeEnabled: true,
 			ClientConfigID:   IntegrationID,
 			ProviderSetupURL: "https://console.cloud.google.com/apis/credentials",
-			IdentityScopes:   []string{ScopeOpenID, ScopeEmail},
+			IdentityScopes:   []string{ScopeOpenID, ScopeEmail, ScopeProfile},
 			DefaultActionIDs: []string{ActionGetAccount},
 			ClientFields: []integrations.CredentialFieldDefinition{
 				{
@@ -265,10 +266,14 @@ func Actions() []integrations.ActionDefinition {
 			Effect: toolgovernance.EffectRead, RiskLevel: toolgovernance.RiskLevelLow,
 			DataEgress: true, ExternalDestination: "openidconnect.googleapis.com",
 			SensitiveDataAllowed: false, Idempotent: true,
-			RequiredScopes: []string{ScopeOpenID, ScopeEmail},
+			RequiredScopes: []string{ScopeOpenID, ScopeEmail, ScopeProfile},
 			ScopeLabelsI18n: integrations.LocalizedLabelMap{
 				ScopeOpenID: {integrations.LocaleEnglishUS: "Verify Google identity", integrations.LocaleSimplifiedChinese: "验证 Google 身份"},
 				ScopeEmail:  {integrations.LocaleEnglishUS: "Read account email address", integrations.LocaleSimplifiedChinese: "读取账号邮箱地址"},
+				ScopeProfile: {
+					integrations.LocaleEnglishUS:         "Read basic Google profile",
+					integrations.LocaleSimplifiedChinese: "读取基础 Google 资料",
+				},
 			},
 			DefaultPolicy: readOnlyPolicy(),
 			SupportedCallers: []tools.ToolInvokeFrom{

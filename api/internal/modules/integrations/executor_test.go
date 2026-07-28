@@ -67,6 +67,46 @@ func TestCompletionForResultUsesQueryableTimedOutStatus(t *testing.T) {
 	}
 }
 
+func TestCompletionForResultPersistsSafeDiagnosticsWithoutActionResult(t *testing.T) {
+	retryAfter := time.Date(2026, 7, 28, 21, 0, 0, 0, time.UTC)
+	callErr := NewProviderError(
+		ErrorCodeRateLimited,
+		"provider rate limited",
+		errors.New(`provider response body: {"message":"secret"}`),
+		ProviderDiagnostics{
+			ErrorCode:    "99991400",
+			RequestID:    "feishu-log-123",
+			HTTPStatus:   429,
+			RetryAfterAt: &retryAfter,
+		},
+	)
+	completion := completionForResult(nil, 25, callErr)
+	if completion.Status != "failed" ||
+		completion.ErrorCode != ErrorCodeRateLimited ||
+		completion.ProviderErrorCode != "99991400" ||
+		completion.ProviderRequestID != "feishu-log-123" ||
+		completion.ProviderHTTPStatus == nil ||
+		*completion.ProviderHTTPStatus != 429 ||
+		completion.RetryAfterAt == nil ||
+		!completion.RetryAfterAt.Equal(retryAfter) {
+		t.Fatalf("completion = %#v", completion)
+	}
+	encoded, err := json.Marshal(completion)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), "secret") || strings.Contains(string(encoded), "provider response body") {
+		t.Fatalf("completion leaked provider body: %s", encoded)
+	}
+}
+
+func TestCompletionForResultKeepsLegacyProviderRequestID(t *testing.T) {
+	completion := completionForResult(&ActionResult{ProviderRequestID: "legacy-request-id"}, 10, nil)
+	if completion.ProviderRequestID != "legacy-request-id" {
+		t.Fatalf("ProviderRequestID = %q", completion.ProviderRequestID)
+	}
+}
+
 func TestExecutorInvalidInputSchemaStopsAfterSafetyAndBeforeQuota(t *testing.T) {
 	adapter := &testAdapter{driverID: "test"}
 	registry := registerTestAction(t, testAction("web.search", "search_web"), adapter)

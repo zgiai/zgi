@@ -536,6 +536,105 @@ func TestRunToolGovernanceDecisionStreamApproveEveryInvocationExecutesFrozenCall
 	assertToolGovernanceApprovedStreamEvents(t, events)
 }
 
+func TestToolGovernanceContinuationUsesAuthoritativeConnectionEvent(t *testing.T) {
+	connectionID := uuid.New().String()
+	correlationID := "corr-feishu-send"
+	frozen := toolgovernance.NewFrozenInvocation(toolgovernance.FrozenInvocationRequest{
+		CorrelationID: correlationID,
+		Manifest: toolgovernance.Manifest{
+			ToolID:                  "feishu:feishu.message.send_user",
+			SkillID:                 "external-apps",
+			Effect:                  toolgovernance.EffectExternalSend,
+			AssetType:               "integration_connection",
+			RiskLevel:               toolgovernance.RiskLevelHigh,
+			DataEgress:              true,
+			ExternalDestination:     "open.feishu.cn",
+			ApprovalEveryInvocation: true,
+		},
+		SkillID:      "external-apps",
+		ToolName:     "execute_action",
+		ProviderType: "connector",
+		ProviderID:   "external-integrations",
+		Arguments: map[string]interface{}{
+			"integration_id":  "feishu",
+			"action_id":       "feishu.message.send_user",
+			"connection_id":   connectionID,
+			"connection_name": "yy",
+			"arguments": map[string]interface{}{
+				"recipient_type": "self",
+				"content":        "hello",
+			},
+		},
+		Assets: []toolgovernance.AssetRef{{
+			ID:     connectionID,
+			Type:   "integration_connection",
+			Name:   "yy",
+			Source: "tool_arguments",
+			Metadata: map[string]interface{}{
+				"integration_id": "feishu",
+				"action_id":      "feishu.message.send_user",
+			},
+		}},
+	})
+	approvalEvent := map[string]interface{}{
+		"correlation_id":    correlationID,
+		"tool_id":           "feishu:feishu.message.send_user",
+		"skill_id":          "external-apps",
+		"effect":            "external_send",
+		"asset_type":        "integration_connection",
+		"risk_level":        "high",
+		"frozen_invocation": frozen,
+	}
+	event := map[string]interface{}{
+		"correlation_id":    correlationID,
+		"status":            "approved",
+		"decision":          "approved",
+		"approval_status":   "approved",
+		"requires_approval": false,
+		"integration_id":    "feishu",
+		"action_id":         "feishu.message.send_user",
+		"approval_event":    approvalEvent,
+		"governance": map[string]interface{}{
+			"status":            "approved",
+			"approval_status":   "approved",
+			"requires_approval": false,
+			"approval_event":    approvalEvent,
+			"frozen_invocation": frozen,
+		},
+	}
+	message := &runtimemodel.Message{
+		Metadata: mergeToolGovernanceDecisionMetadata(nil, event),
+	}
+
+	publicResponse := toolGovernanceDecisionResponse(
+		uuid.New(), uuid.New(), correlationID, toolGovernanceActionApprove,
+		toolGovernanceApprovalStatusApproved, false, nil, event,
+	)
+	publicFrozen, found, err := toolGovernanceFrozenInvocationFromEvent(publicResponse.Event)
+	if err != nil || !found {
+		t.Fatalf("public frozen invocation = %#v found=%t error=%v", publicFrozen, found, err)
+	}
+	if toolgovernance.FrozenInvocationHashMatches(publicFrozen) {
+		t.Fatal("public projection should be detached and sanitized, not used for internal execution")
+	}
+	if publicFrozen.Arguments["connection_id"] != nil || publicFrozen.Assets[0].ID != "" {
+		t.Fatalf("public projection exposed internal connection identifiers: %#v", publicFrozen)
+	}
+
+	authoritative, err := authoritativeToolGovernanceContinuationEvent(message, correlationID, toolGovernanceActionApprove)
+	if err != nil {
+		t.Fatalf("authoritativeToolGovernanceContinuationEvent() error = %v", err)
+	}
+	internalFrozen, found, err := toolGovernanceFrozenInvocationFromEvent(authoritative)
+	if err != nil || !found || !toolgovernance.FrozenInvocationHashMatches(internalFrozen) {
+		t.Fatalf("authoritative frozen invocation = %#v found=%t error=%v", internalFrozen, found, err)
+	}
+	if internalFrozen.Arguments["connection_id"] != connectionID ||
+		len(internalFrozen.Assets) != 1 || internalFrozen.Assets[0].ID != connectionID {
+		t.Fatalf("authoritative connection identity was lost: %#v", internalFrozen)
+	}
+}
+
 func TestRunClientActionContinuationStreamAssetObservationUsesVerifierWithoutRepeatingTools(t *testing.T) {
 	ctx := context.Background()
 	organizationID := uuid.New()

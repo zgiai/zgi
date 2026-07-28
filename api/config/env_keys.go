@@ -168,7 +168,9 @@ const (
 // Console routing and product feature keys.
 const (
 	// Console endpoints and service-to-service credentials.
-	// envConsoleAPIURL sets the public base URL of the console API. Default: http://127.0.0.1:2679.
+	// envConsoleAPIURL sets the public base URL of the console API. By default,
+	// local source runs use the configured SERVER_PORT; gateways and production
+	// deployments must set their externally reachable URL explicitly.
 	envConsoleAPIURL = "CONSOLE_API_URL"
 	// envConsoleAPIGRPCAddr sets the console gRPC endpoint address. Default: empty.
 	envConsoleAPIGRPCAddr = "CONSOLE_API_GRPC_ADDR"

@@ -54,6 +54,11 @@ assert.doesNotMatch(executions, /\{execution\.provider_request_id\}/);
 assert.match(executions, /executions\.unknownConnection/);
 assert.match(executions, /executions\.hiddenReference/);
 
+const providerDiagnostics = source('src/components/integrations/provider-diagnostics-details.tsx');
+assert.match(providerDiagnostics, /safeOptionalIntegrationDisplayText\(providerRequestId\)/);
+assert.match(providerDiagnostics, /containsOpaqueUUID\(providerRequestId\)/);
+assert.doesNotMatch(providerDiagnostics, />\s*\{providerRequestId\}\s*</);
+
 const principalPicker = source('src/components/integrations/grant-principal-picker.tsx');
 assert.doesNotMatch(principalPicker, /member_name\s*\|\|[\s\S]{0,100}member\.id/);
 assert.doesNotMatch(principalPicker, /workspace\.name\s*\|\|\s*workspace\.id/);

@@ -60,7 +60,7 @@ import type {
   IntegrationConnectionGrant,
   StartIntegrationOAuthFlowRequest,
 } from '@/services/types/integration';
-import { actionIDsForAuthMethod } from './action-auth-compatibility';
+import { actionIDsForAuthMethod, actionSupportsAuthMethod } from './action-auth-compatibility';
 import { IntegrationConnectionDetailDialog } from './connection-detail-dialog';
 import { IntegrationConnectionDialog } from './connection-dialog';
 import { safeIntegrationDisplayText, safeOptionalIntegrationDisplayText } from './display-utils';
@@ -341,6 +341,14 @@ export function IntegrationConnectionsPanel({
     setExpandedProviders(new Set([groups[0].integrationId]));
   }, [groups]);
 
+  useEffect(() => {
+    if (!detailConnection) return;
+    const refreshed = connections.find(connection => connection.id === detailConnection.id);
+    if (refreshed && refreshed !== detailConnection) {
+      setDetailConnection(refreshed);
+    }
+  }, [connections, detailConnection]);
+
   const connectionMutationPending =
     createMutation.isPending ||
     createMyMutation.isPending ||
@@ -382,6 +390,40 @@ export function IntegrationConnectionsPanel({
     setOAuthConnectionName(
       safeIntegrationDisplayText(connection.name, t('common.unnamedConnection'))
     );
+    void oauthFlow.begin(request);
+  };
+
+  const upgradeOAuthAction = (connection: IntegrationConnection, actionID: string) => {
+    const provider = catalogProviders.get(connection.integration_id);
+    const action = provider?.actions.find(candidate => candidate.id === actionID);
+    if (
+      !provider ||
+      !action ||
+      !actionSupportsAuthMethod(action, connection.auth_method_id) ||
+      connection.auth_type !== 'oauth2'
+    ) {
+      toast.error(t('oauth.flow.scopeUpgradeUnavailable'));
+      return;
+    }
+    const request: StartIntegrationOAuthFlowRequest = {
+      integration_id: connection.integration_id,
+      auth_method_id: connection.auth_method_id,
+      credential_source:
+        connection.credential_source === 'organization' ? 'organization' : 'account',
+      intent: 'scope_upgrade',
+      requested_action_ids: [actionID],
+      connection_id: connection.id,
+      return_path: '/console/integrations?view=connected',
+    };
+    setLastOAuthRequest(request);
+    setOAuthProviderName(metadata.providerName(provider));
+    setOAuthConnectionName(
+      safeIntegrationDisplayText(connection.name, t('common.unnamedConnection'))
+    );
+    // Keep the connection details visible behind the OAuth progress dialog.
+    // When the flow succeeds, cache invalidation refreshes the permission
+    // summary in place; when it fails, the administrator can inspect the same
+    // connection and retry without reopening the details.
     void oauthFlow.begin(request);
   };
 
@@ -973,7 +1015,7 @@ export function IntegrationConnectionsPanel({
         open={Boolean(createProvider && connectionDialogMode)}
         catalog={createProvider ? [createProvider] : []}
         connection={editingConnection}
-        isSubmitting={connectionMutationPending}
+        isSubmitting={connectionMutationPending || testMutationPending}
         allowedCredentialSources={
           connectionDialogMode === 'shared' ? [...ORGANIZATION_CREDENTIAL_SOURCES] : ['account']
         }
@@ -986,14 +1028,37 @@ export function IntegrationConnectionsPanel({
           }
         }}
         onCreate={async data => {
-          if (connectionDialogMode === 'shared') await createMutation.mutateAsync(data);
-          else await createMyMutation.mutateAsync(data);
+          const response =
+            connectionDialogMode === 'shared'
+              ? await createMutation.mutateAsync(data)
+              : await createMyMutation.mutateAsync(data);
+          const saved = response.data;
+          try {
+            if (saved.credential_source === 'account') {
+              await testMyMutation.mutateAsync(saved.id);
+            } else {
+              await testMutation.mutateAsync(saved.id);
+            }
+          } catch {
+            // Saving and testing are separate outcomes. The test mutation
+            // reports the failure and refreshes the persisted health state.
+          }
         }}
         onUpdate={async (id, data) => {
           if (editingConnection?.credential_source === 'account') {
             await updateMyMutation.mutateAsync({ id, data });
           } else {
             await updateMutation.mutateAsync({ id, data });
+          }
+          if (!data.credentials || Object.keys(data.credentials).length === 0) return;
+          try {
+            if (editingConnection?.credential_source === 'account') {
+              await testMyMutation.mutateAsync(id);
+            } else {
+              await testMutation.mutateAsync(id);
+            }
+          } catch {
+            // Keep the saved credential and expose the failed health result.
           }
         }}
       />
@@ -1018,6 +1083,7 @@ export function IntegrationConnectionsPanel({
           connection={detailConnection}
           provider={catalogProviders.get(detailConnection?.integration_id ?? '')}
           isTesting={testMutationPending}
+          isUpgrading={oauthFlow.state.status !== 'idle'}
           canManage
           onOpenChange={open => {
             if (!open) setDetailConnection(null);
@@ -1027,9 +1093,9 @@ export function IntegrationConnectionsPanel({
             openEdit(connection);
           }}
           onTest={connection => {
-            setDetailConnection(null);
             setTestConnection(connection);
           }}
+          onUpgradeAction={upgradeOAuthAction}
         />
       ) : null}
 

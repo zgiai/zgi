@@ -40,6 +40,8 @@ type ResolvedConnection struct {
 	CredentialSource  ConnectionCredentialSource `json:"-"`
 	AuthType          ConnectionAuthType         `json:"-"`
 	AuthMethodID      string                     `json:"-"`
+	AccountID         string                     `json:"-"`
+	DisplayName       string                     `json:"-"`
 	Credentials       map[string]string          `json:"-"`
 	Config            map[string]any             `json:"-"`
 	GrantedScopes     []string                   `json:"-"`
@@ -56,6 +58,8 @@ func (connection *ResolvedConnection) Destroy() {
 		delete(connection.Config, key)
 	}
 	connection.Config = nil
+	connection.AccountID = ""
+	connection.DisplayName = ""
 	for index := range connection.GrantedScopes {
 		connection.GrantedScopes[index] = ""
 	}
@@ -172,11 +176,20 @@ func (resolver *DefaultConnectionResolver) resolveRecord(ctx context.Context, co
 		CredentialSource:  connection.CredentialSource,
 		AuthType:          connection.AuthType,
 		AuthMethodID:      connection.AuthMethodID,
+		AccountID:         connectionStringValue(connection.AccountID),
+		DisplayName:       connectionStringValue(connection.DisplayName),
 		Credentials:       credentials,
 		Config:            cloneAnyMap(connection.Config),
 		GrantedScopes:     append([]string(nil), connection.GrantedScopes...),
 		CredentialVersion: connection.CredentialVersion,
 	}, nil
+}
+
+func connectionStringValue(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return strings.TrimSpace(*value)
 }
 
 func resolvedConnectionDriverMismatch(connection *ResolvedConnection, driverID string) error {

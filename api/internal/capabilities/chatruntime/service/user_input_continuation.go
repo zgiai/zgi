@@ -125,8 +125,8 @@ func (s *service) finishUserInputContinuationPendingOrError(
 	var pendingGovernance *skillloop.ToolGovernancePendingError
 	if errors.As(cause, &pendingGovernance) {
 		metadata, persistErr := s.persistToolGovernanceApprovalPendingResult(persistCtx, prepared, pendingGovernance.Payload, usage)
-		if ownershipErr := finalizedRuntimeOwnershipError(persistErr); ownershipErr != nil {
-			return nil, ownershipErr
+		if persistErr != nil {
+			return nil, s.finalizeToolGovernanceApprovalPersistenceError(persistCtx, prepared, persistErr, onEvent)
 		}
 		s.emitPreparedEvent(persistCtx, prepared, streamEventMessageEnd, messageEndPayloadWithStatus(prepared, metadata, runtimemodel.MessageStatusWaitingApproval), onEvent)
 		return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, Status: runtimemodel.MessageStatusWaitingApproval}, nil

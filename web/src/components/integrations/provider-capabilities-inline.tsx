@@ -36,6 +36,10 @@ function isReadCapability(action: IntegrationActionDefinition): boolean {
   return action.effect === 'read' || action.effect === 'none';
 }
 
+function hasActionScopes(action: IntegrationActionDefinition): boolean {
+  return Boolean(action.required_scopes?.length || action.required_any_scopes?.length);
+}
+
 function actionDefaultPolicy(
   integrationId: string,
   action: IntegrationActionDefinition
@@ -239,6 +243,10 @@ export function IntegrationProviderCapabilitiesInline({
             const Icon = read ? Search : Pencil;
             const policy =
               policyByAction.get(action.id) ?? actionDefaultPolicy(integrationId, action);
+            const approvalLockedByProvider =
+              action.default_policy?.approval_policy === 'always_ask';
+            const egressLockedByProvider =
+              action.data_egress && action.default_policy?.data_egress_allowed === false;
             const supportedAuthMethodIDs = new Set(action.supported_auth_method_ids ?? []);
             const supportedAuthMethods =
               supportedAuthMethodIDs.size > 0
@@ -317,6 +325,18 @@ export function IntegrationProviderCapabilitiesInline({
                           {metadata.scope(scope, provider)}
                         </Badge>
                       ))}
+                      {(action.required_any_scopes ?? []).length > 0 ? (
+                        <Badge variant="subtle" className="font-normal">
+                          {action.required_any_scopes
+                            ?.map(scope => metadata.scope(scope, provider))
+                            .join(' / ')}
+                        </Badge>
+                      ) : null}
+                      {!hasActionScopes(action) ? (
+                        <span className="text-xs text-muted-foreground">
+                          {t('capabilities.noAdditionalScopes')}
+                        </span>
+                      ) : null}
                     </CapabilityDetail>
                     <CapabilityDetail
                       label={t('capabilities.surfaces')}
@@ -351,7 +371,7 @@ export function IntegrationProviderCapabilitiesInline({
                       {canManageShared ? (
                         <Select
                           value={policy.approval_policy}
-                          disabled={updateMutation.isPending}
+                          disabled={updateMutation.isPending || approvalLockedByProvider}
                           onValueChange={approvalPolicy =>
                             updatePolicy(action.id, {
                               approval_policy:
@@ -389,7 +409,11 @@ export function IntegrationProviderCapabilitiesInline({
                       {canManageShared ? (
                         <Switch
                           checked={policy.data_egress_allowed}
-                          disabled={updateMutation.isPending || !action.data_egress}
+                          disabled={
+                            updateMutation.isPending ||
+                            !action.data_egress ||
+                            egressLockedByProvider
+                          }
                           onCheckedChange={dataEgressAllowed =>
                             updatePolicy(action.id, {
                               data_egress_allowed: dataEgressAllowed,
@@ -404,6 +428,11 @@ export function IntegrationProviderCapabilitiesInline({
                         </Badge>
                       )}
                     </div>
+                    {approvalLockedByProvider || egressLockedByProvider ? (
+                      <p className="text-[11px] leading-5 text-muted-foreground">
+                        {t('policies.immutable')}
+                      </p>
+                    ) : null}
                   </div>
                 </div>
               </details>

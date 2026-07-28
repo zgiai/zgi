@@ -61,6 +61,10 @@ encryption key, or limits are invalid. Provider registration is independent of
 provider credentials; calls remain unavailable until a tested Connection is
 selected or bound.
 
+`WEB_SEARCH_ENABLED` is a retired compatibility variable and does not control
+provider registration. Use `EXTERNAL_INTEGRATIONS_ENABLED` as the single
+runtime switch.
+
 Example API environment:
 
 ```env
@@ -167,7 +171,10 @@ Web Search exposes two governed tools:
 Skill instructions require source links, distinguish publication dates from
 retrieval time, report conflicting sources, and treat all webpage content as
 untrusted data. Results are normalized and truncated before they enter model
-context; the raw Exa response is not forwarded as a tool result.
+context; the raw Exa response is not forwarded as a tool result. Failed
+requests retain only Exa's bounded safe error tag, request ID, HTTP status, and
+retry time. Batch webpage reads attach a safe error code to each failed URL
+without exposing the provider response body.
 
 This release intentionally does not include:
 

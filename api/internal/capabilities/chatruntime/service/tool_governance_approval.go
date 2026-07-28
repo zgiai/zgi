@@ -44,6 +44,13 @@ func (s *service) persistToolGovernanceApprovalPendingResult(ctx context.Context
 	}
 	pendingPayload["conversation_id"] = prepared.Conversation.ID.String()
 	pendingPayload["message_id"] = prepared.Message.ID.String()
+	if frozen, ok, err := toolGovernanceFrozenInvocationFromEvent(pendingPayload); err != nil {
+		return nil, fmt.Errorf("%w: read pending frozen invocation: %v", ErrInvalidInput, err)
+	} else if ok {
+		if err := validateToolGovernanceFrozenInvocation(frozen, toolGovernanceCorrelationID(pendingPayload)); err != nil {
+			return nil, fmt.Errorf("persist tool governance approval: %w", err)
+		}
+	}
 
 	metadata := mergeToolGovernanceDecisionMetadata(prepared.Message.Metadata, pendingPayload)
 	metadata = preparedResultMetadataForPrepared(prepared, metadata, usage)
@@ -73,6 +80,24 @@ func (s *service) persistToolGovernanceApprovalPendingResult(ctx context.Context
 		},
 	)
 	return metadata, err
+}
+
+func (s *service) finalizeToolGovernanceApprovalPersistenceError(
+	ctx context.Context,
+	prepared *PreparedChat,
+	err error,
+	onEvent func(StreamEvent) error,
+) error {
+	if err == nil {
+		return nil
+	}
+	if ownershipErr := finalizedRuntimeOwnershipError(err); ownershipErr != nil {
+		return ownershipErr
+	}
+	if finalizeErr := s.finalizePreparedError(ctx, prepared, err, onEvent); finalizeErr != nil {
+		return finalizedRuntimePersistenceError(finalizeErr)
+	}
+	return newFinalizedStreamError(err)
 }
 
 func (s *service) SubmitToolGovernanceDecision(
