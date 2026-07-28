@@ -104,6 +104,8 @@ export function InputArea({
                 value={modelSelectorValue}
                 onChange={onModelChange}
                 modelsOverride={imageRuntimeModelItems}
+                emptyStateTitle={t('chat.imageGenEmpty.title')}
+                emptyStateDescription={t('chat.imageGenEmpty.description')}
                 className="h-[26px] rounded-md border-border/50 bg-background px-2 text-xs font-medium hover:bg-muted/40 hover:border-border shadow-sm"
                 showCapabilities={false}
               />
@@ -126,7 +128,7 @@ export function InputArea({
                 : 'bg-muted text-muted-foreground'
             )}
             onClick={onSend}
-            disabled={!input.trim() || isSending}
+            disabled={!input.trim() || isSending || !modelSelectorValue?.model}
           >
             <ArrowUp className="h-4 w-4" />
           </Button>

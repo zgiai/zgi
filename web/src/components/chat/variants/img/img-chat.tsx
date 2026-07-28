@@ -161,7 +161,9 @@ export function ImgChat({
 
   const handleSendAction = React.useCallback(
     (prompt: string) => {
-      if (!prompt.trim() || isSending) return;
+      if (!prompt.trim() || isSending || !modelSelectorValue?.provider || !modelSelectorValue.model) {
+        return;
+      }
 
       // Optimistically mark as started to prevent home view flicker
       setHasStartedChat(true);
@@ -169,15 +171,11 @@ export function ImgChat({
       controller.send({
         query: prompt,
         inputs: {
-          ...(modelSelectorValue?.provider && modelSelectorValue?.model
-            ? {
-                model_config: {
-                  provider: modelSelectorValue.provider,
-                  model: modelSelectorValue.model,
-                  name: modelSelectorValue.model,
-                },
-              }
-            : {}),
+          model_config: {
+            provider: modelSelectorValue.provider,
+            model: modelSelectorValue.model,
+            name: modelSelectorValue.model,
+          },
           image_gen_config: {
             size: settings.size,
             count: settings.count,

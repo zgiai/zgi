@@ -57,6 +57,9 @@ export interface ModelSelectorProps {
   modelProps?: ModelSelectorModelProps | null;
   /** Optional model list supplied by a caller that owns the model source. */
   modelsOverride?: ModelItem[];
+  /** Optional copy for a caller-specific empty state. */
+  emptyStateTitle?: string;
+  emptyStateDescription?: string;
   /** Callback to notify full model props on selection change. */
   onModelPropsChange?: (props: ModelSelectorModelProps | null) => void;
   /** Filter models by capability requirements. Multiple capabilities can be required. */
@@ -115,6 +118,8 @@ export function ModelSelector({
   defaultValue,
   modelProps,
   modelsOverride,
+  emptyStateTitle,
+  emptyStateDescription,
   onModelPropsChange,
   capabilityFilter,
   hasError = false,
@@ -724,17 +729,24 @@ export function ModelSelector({
                 !isLoading && (
                   <EmptyState
                     searchQuery={searchQuery}
-                    noModelsTitle={t('models.selector.empty.noModelsTitle')}
+                    noModelsTitle={emptyStateTitle ?? t('models.selector.empty.noModelsTitle')}
                     noResultsText={t('models.selector.empty.noResults')}
-                    noModelsText={t('models.selector.empty.noModels', {
-                      type: t(`models.selector.usecases.${modelType}`),
-                    })}
+                    noModelsText={
+                      emptyStateDescription ??
+                      t('models.selector.empty.noModels', {
+                        type: t(`models.selector.usecases.${modelType}`),
+                      })
+                    }
                     isAdminOrOwner={canManageModelConfig}
                     contactAdminText={t('models.selector.empty.contactAdmin')}
                     configureText={t('models.selector.empty.configure')}
-                    configureDescription={t('models.selector.empty.configureDescription', {
-                      type: t(`models.selector.usecases.${modelType}`),
-                    })}
+                    configureDescription={
+                      emptyStateDescription
+                        ? undefined
+                        : t('models.selector.empty.configureDescription', {
+                            type: t(`models.selector.usecases.${modelType}`),
+                          })
+                    }
                     clearSearchText={t('models.selector.empty.clearSearch')}
                     onClearSearch={() => setSearchQuery('')}
                   />
