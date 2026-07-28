@@ -1415,8 +1415,9 @@ const messages = {
   close: 'Close',
   refresh: 'Refresh',
 
-  deleteConfirmTitle: 'Delete Dataset?',
-  deleteConfirmDescription: 'This action cannot be undone.',
+  deleteConfirmTitle: 'Delete knowledge base?',
+  deleteConfirmDescription:
+    'This action cannot be undone. The knowledge base, its documents, and configurations will be permanently deleted.',
   deleteFolderConfirmDescription: 'Deleting a folder will move its datasets to the root folder.',
   deleteSuccess: 'Dataset deleted successfully',
   deleteFailed: 'Failed to delete dataset',

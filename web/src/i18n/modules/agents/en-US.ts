@@ -306,9 +306,12 @@ const messages = {
   },
 
   // Confirmation dialog
-  deleteConfirmTitle: 'Delete agent "{name}"?',
+  deleteConfirmTitle: 'Delete agent?',
   deleteConfirmDescription:
     'This action cannot be undone. The agent and its configurations will be permanently deleted.',
+  deleteWorkflowConfirmTitle: 'Delete workflow?',
+  deleteWorkflowConfirmDescription:
+    'This action cannot be undone. The workflow and its configurations will be permanently deleted.',
   exportConfirmTitle: 'Export agent "{name}" as YAML?',
   exportConfirmDescription:
     'This will download the current agent flow configuration as a YAML file.',

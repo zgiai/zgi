@@ -64,6 +64,8 @@ const messages: DbsMessages = {
   failed: '操作失败',
   deleteConfirmTitle: '确定要删除{name}吗？',
   deleteConfirmDescription: '此操作无法撤销。',
+  deleteDatabaseConfirmTitle: '删除数据库？',
+  deleteDatabaseConfirmDescription: '该操作无法撤销。此数据库及其中的数据表和数据将被永久删除。',
   deleteTableConfirmDescription: '删除表格会导致全表数据丢失，请谨慎操作。',
   createModal: {
     title: '新建数据库',

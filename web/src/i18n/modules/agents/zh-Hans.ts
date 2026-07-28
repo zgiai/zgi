@@ -295,8 +295,10 @@ const messages: AgentsMessages = {
   },
 
   // Confirmation dialog
-  deleteConfirmTitle: '删除智能体 "{name}"？',
+  deleteConfirmTitle: '删除智能体？',
   deleteConfirmDescription: '该操作无法撤销。此智能体及其配置将被永久删除。',
+  deleteWorkflowConfirmTitle: '删除工作流？',
+  deleteWorkflowConfirmDescription: '该操作无法撤销。此工作流及其配置将被永久删除。',
   exportConfirmTitle: '导出智能体 "{name}" 为 YAML？',
   exportConfirmDescription: '将下载当前智能体流程配置的 YAML 文件。',
 

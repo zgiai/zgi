@@ -10,7 +10,7 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
 } from '@/components/ui/dropdown-menu';
-import { ConfirmDialog } from '@/components/ui/confirm-dialog';
+import { DestructiveNameConfirmDialog } from '@/components/ui/destructive-name-confirm-dialog';
 
 import { BookOpenIcon, MoreHorizontal, Trash2, FolderOpen, Pencil, MoveRight } from 'lucide-react';
 import { useT } from '@/i18n';
@@ -49,6 +49,9 @@ function DatasetCard({ dataset, onDeleted, pageIndex, currentFolderId }: Dataset
   const [moveOpen, setMoveOpen] = useState(false);
   const [workspaceMoveOpen, setWorkspaceMoveOpen] = useState(false);
   const [bindingImpact, setBindingImpact] = useState<AgentResourceBoundImpact | null>(null);
+  const [pendingDeleteImpact, setPendingDeleteImpact] = useState<AgentResourceBoundImpact | null>(
+    null
+  );
   const [isCheckingDeleteImpact, setIsCheckingDeleteImpact] = useState(false);
 
   // Permission checking - use new permission system
@@ -88,23 +91,25 @@ function DatasetCard({ dataset, onDeleted, pageIndex, currentFolderId }: Dataset
       });
       setConfirmOpen(false);
       setBindingImpact(null);
+      setPendingDeleteImpact(null);
       onDeleted?.(dataset.id, pageIndex);
     } catch (error) {
       const nextImpact = getAgentResourceBoundImpact(error);
       if (!nextImpact) return;
       setConfirmOpen(false);
+      setPendingDeleteImpact(null);
       setBindingImpact(nextImpact);
     }
   };
 
   const requestDeleteDataset = async () => {
     if (!canDeleteDataset || isCheckingDeleteImpact) return;
+    setPendingDeleteImpact(null);
     setIsCheckingDeleteImpact(true);
     try {
       const response = await datasetService.previewDatasetDeleteImpact(dataset.id);
       if (response.data) {
-        setBindingImpact(response.data);
-        return;
+        setPendingDeleteImpact(response.data);
       }
       setConfirmOpen(true);
     } catch {
@@ -112,6 +117,16 @@ function DatasetCard({ dataset, onDeleted, pageIndex, currentFolderId }: Dataset
     } finally {
       setIsCheckingDeleteImpact(false);
     }
+  };
+
+  const confirmDeleteDataset = () => {
+    if (pendingDeleteImpact) {
+      setConfirmOpen(false);
+      setBindingImpact(pendingDeleteImpact);
+      setPendingDeleteImpact(null);
+      return;
+    }
+    void deleteDataset();
   };
 
   const cardContent = (
@@ -225,15 +240,23 @@ function DatasetCard({ dataset, onDeleted, pageIndex, currentFolderId }: Dataset
         </div>
       )}
       {/* Delete confirmation dialog outside dropdown */}
-      <ConfirmDialog
-        variant="danger"
+      <DestructiveNameConfirmDialog
         open={confirmOpen}
-        onOpenChange={setConfirmOpen}
+        onOpenChange={open => {
+          setConfirmOpen(open);
+          if (!open) setPendingDeleteImpact(null);
+        }}
         title={t('deleteConfirmTitle', { name: dataset.name })}
         description={t('deleteConfirmDescription')}
-        confirmText={t('confirm')}
-        cancelText={t('close')}
-        onConfirm={() => void deleteDataset()}
+        itemName={dataset.name}
+        itemNameLabel={tCommon('confirmDialog.itemNameLabel')}
+        confirmationLabel={tCommon('confirmDialog.typeNameLabel')}
+        confirmationPlaceholder={tCommon('confirmDialog.typeNamePlaceholder')}
+        confirmationMismatchText={tCommon('confirmDialog.typeNameMismatch')}
+        confirmText={tCommon('delete')}
+        confirmingText={tCommon('statusLabels.deleting')}
+        cancelText={tCommon('cancel')}
+        onConfirm={confirmDeleteDataset}
         loading={deleteMutation.status === 'pending'}
       />
       <AgentResourceBoundDialog
