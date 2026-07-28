@@ -8,11 +8,11 @@ interface PromptCopy {
 const ZH_HANS_OFFICIAL_PROMPT_COPY_BY_ID: Record<string, PromptCopy> = {
   '9c6ff0a8-c53f-42b7-87c2-1d2f9f7f1d08': {
     name: '通用工作流助手模板',
-    description: '适用于任务型工作流执行节点的官方默认提示词。',
+    description: '适合用在工作流里的任务步骤，根据输入整理信息、生成结果或给出下一步建议。',
   },
   '2d35f08e-5c52-43ef-bf63-bca3d5ae86ab': {
     name: '通用工作流助手模板',
-    description: '适用于任务型工作流执行节点的官方默认提示词。',
+    description: '适合用在工作流里的任务步骤，根据输入整理信息、生成结果或给出下一步建议。',
   },
   '9fa2ec04-0672-4e4f-9af6-ac4630f542ff': {
     name: '企业助手回复模板',

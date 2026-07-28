@@ -20,7 +20,6 @@ import type { DbTableColumn } from '@/services/types/db';
 import Link from 'next/link';
 import { useT } from '@/i18n';
 import { toast } from 'sonner';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
@@ -40,6 +39,7 @@ export interface TableDataControlsProps {
   isUpdating: boolean;
   isDeleting: boolean;
   hasDataFields: boolean;
+  hasRows: boolean;
   onPageSizeChange: (value: string) => void;
   onSortKeyChange: (value: string) => void;
   onToggleSortDir: () => void;
@@ -71,6 +71,7 @@ const Controls: FC<TableDataControlsProps> = ({
   isUpdating,
   isDeleting,
   hasDataFields,
+  hasRows,
   onPageSizeChange,
   onSortKeyChange,
   onToggleSortDir,
@@ -119,8 +120,8 @@ const Controls: FC<TableDataControlsProps> = ({
   );
 
   return (
-    <div className="flex flex-wrap items-end justify-between gap-3">
-      <div className="flex flex-wrap items-end gap-2">
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center gap-2">
         {isEditing && (
           <Button
             onClick={onAddRow}
@@ -137,29 +138,29 @@ const Controls: FC<TableDataControlsProps> = ({
         )}
         {!isEditing && (
           <>
-            <div className="min-w-[220px]">
-              <span className="text-sm text-muted-foreground" title={t('dbs.tableData.search')}>
+            <div className="min-w-[240px] flex-1 sm:max-w-[320px]">
+              <span className="sr-only" title={t('dbs.tableData.search')}>
                 {t('dbs.tableData.search')}
               </span>
               <div className="relative">
-                <Search className="pointer-events-none absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                 <Input
                   value={pageSearch}
                   onChange={event => onPageSearchChange(event.target.value)}
                   placeholder={t('dbs.tableData.searchPlaceholder')}
-                  className="h-8 pl-8"
+                  className="h-9 rounded-md pl-9"
                 />
               </div>
             </div>
-            <div>
+            <div className="flex items-center gap-2">
               <span
-                className="text-sm text-muted-foreground"
+                className="whitespace-nowrap text-xs text-muted-foreground"
                 title={t('dbs.tableData.rowsPerPage')}
               >
-                {t('dbs.tableData.rowsPerPage')}
+                {t('dbs.tableData.perPage')}
               </span>
               <Select value={String(pageSize)} onValueChange={onPageSizeChange}>
-                <SelectTrigger className="h-8 w-24">
+                <SelectTrigger className="h-9 w-20 rounded-md">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -170,13 +171,16 @@ const Controls: FC<TableDataControlsProps> = ({
                 </SelectContent>
               </Select>
             </div>
-            <div>
-              <span className="text-sm text-muted-foreground" title={t('dbs.tableData.sortBy')}>
-                {t('dbs.tableData.sortBy')}
+            <div className="flex items-center gap-2">
+              <span
+                className="whitespace-nowrap text-xs text-muted-foreground"
+                title={t('dbs.tableData.sortBy')}
+              >
+                {t('dbs.tableData.sort')}
               </span>
-              <div className="flex items-center">
+              <div className="flex items-center gap-1.5">
                 <Select value={normalizedSortKey} onValueChange={onSortKeyChange}>
-                  <SelectTrigger className="h-8 w-48 rounded-r-none">
+                  <SelectTrigger className="h-9 w-40 rounded-md">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -191,16 +195,12 @@ const Controls: FC<TableDataControlsProps> = ({
                   variant="outline"
                   size="sm"
                   onClick={onToggleSortDir}
-                  className="rounded-l-none border-l-0"
+                  className="h-9 w-9 rounded-md px-0"
                   title={
-                    sortDir === 'ASC'
-                      ? t('dbs.tableData.descending')
-                      : t('dbs.tableData.ascending')
+                    sortDir === 'ASC' ? t('dbs.tableData.descending') : t('dbs.tableData.ascending')
                   }
                   aria-label={
-                    sortDir === 'ASC'
-                      ? t('dbs.tableData.descending')
-                      : t('dbs.tableData.ascending')
+                    sortDir === 'ASC' ? t('dbs.tableData.descending') : t('dbs.tableData.ascending')
                   }
                 >
                   <ArrowUp
@@ -215,6 +215,7 @@ const Controls: FC<TableDataControlsProps> = ({
             <Button
               variant="outline"
               size="sm"
+              className="h-9 rounded-md px-3"
               disabled={reloading}
               onClick={() => {
                 if (!onRefresh) return;
@@ -235,7 +236,12 @@ const Controls: FC<TableDataControlsProps> = ({
             </Button>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="outline" size="sm" title={t('dbs.tableData.columns.title')}>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-9 rounded-md px-3"
+                  title={t('dbs.tableData.columns.title')}
+                >
                   <Columns3 className="w-4 h-4" />
                   {t('dbs.tableData.columns.title')}
                 </Button>
@@ -271,7 +277,7 @@ const Controls: FC<TableDataControlsProps> = ({
         )}
       </div>
 
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center justify-end gap-2 border-t border-border/70 pt-3">
         {isEditing ? (
           <>
             <Button
@@ -297,20 +303,20 @@ const Controls: FC<TableDataControlsProps> = ({
         ) : (
           <>
             {canManage && (
-              <Button asChild variant="outline">
+              <Button asChild variant="outline" className="h-9 rounded-md">
                 <Link
                   href={`/console/db/${dbId}/table/${tableId}/structure`}
-                  title={t('dbs.actions.manageStructure')}
+                  title={t('dbs.tableData.fieldSettings')}
                 >
-                  {t('dbs.actions.manageStructure')}
+                  {t('dbs.tableData.fieldSettings')}
                 </Link>
               </Button>
             )}
 
-            {hasDataFields ? (
+            {hasRows && hasDataFields ? (
               <>
                 {canSmartIngest && (
-                  <Button asChild className="bg-highlight text-white hover:bg-highlight/90">
+                  <Button asChild variant="outline" className="h-9 rounded-md">
                     <Link
                       href={`/console/db/${dbId}/table/${tableId}/data`}
                       title={t('dbs.actions.smartIngest')}
@@ -321,13 +327,18 @@ const Controls: FC<TableDataControlsProps> = ({
                   </Button>
                 )}
                 {canEditData && (
-                  <Button onClick={onStartEdit} title={t('dbs.tableData.edit')}>
-                    {t('dbs.tableData.edit')}
+                  <Button
+                    onClick={onStartEdit}
+                    className="h-9 rounded-md"
+                    title={t('dbs.tableData.editData')}
+                  >
+                    {t('dbs.tableData.editData')}
                   </Button>
                 )}
                 {canBatchImport && (
                   <Button
                     variant="outline"
+                    className="h-9 rounded-md"
                     onClick={onBatchImport}
                     title={t('dbs.batchImport.title')}
                   >
@@ -336,26 +347,7 @@ const Controls: FC<TableDataControlsProps> = ({
                   </Button>
                 )}
               </>
-            ) : (
-              canEditData && (
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <span className="inline-flex">
-                      <Button
-                        onClick={onStartEdit}
-                        disabled
-                        title={t('dbs.tableData.noFields.editDisabledTip')}
-                      >
-                        {t('dbs.tableData.edit')}
-                      </Button>
-                    </span>
-                  </TooltipTrigger>
-                  <TooltipContent side="top" className="max-w-[280px]">
-                    <div className="text-xs">{t('dbs.tableData.noFields.editDisabledTip')}</div>
-                  </TooltipContent>
-                </Tooltip>
-              )
-            )}
+            ) : null}
           </>
         )}
       </div>

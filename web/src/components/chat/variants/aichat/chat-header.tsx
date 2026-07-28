@@ -1,13 +1,12 @@
 'use client';
 
 import type { ReactNode } from 'react';
-import { Menu, PanelLeft, Plus } from 'lucide-react';
+import { History, Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useT } from '@/i18n/translations';
 import { cn } from '@/lib/utils';
 
 interface AIChatHeaderProps {
-  isMobile: boolean;
   isHome: boolean;
   title: string;
   rightAction?: ReactNode;
@@ -22,10 +21,9 @@ interface AIChatHeaderProps {
  * @description Floating console chat header with sidebar and new-chat actions.
  * @usage Render at the top of AIChatShell main area
  * @example
- * <AIChatHeader isMobile={false} isHome={false} title="Chat" onToggleSidebar={toggle} onStartNew={start} />
+ * <AIChatHeader isHome={false} title="Chat" onToggleSidebar={toggle} onStartNew={start} />
  */
 export function AIChatHeader({
-  isMobile,
   isHome,
   title,
   rightAction,
@@ -42,9 +40,10 @@ export function AIChatHeader({
           isIcon
           className="size-8 text-muted-foreground"
           onClick={onToggleSidebar}
-          title={t('consoleChat.toggleSidebar')}
+          aria-label={t('chat.openConversations')}
+          title={t('chat.openConversations')}
         >
-          {isMobile ? <Menu className="size-4" /> : <PanelLeft className="size-4" />}
+          <History className="size-4" />
         </Button>
         {!isHome ? (
           <Button
@@ -60,11 +59,13 @@ export function AIChatHeader({
       </div>
       <div
         className={cn(
-          'min-w-0 px-3 text-center transition-opacity duration-300',
+          'pointer-events-none min-w-0 max-w-96 px-3 text-center transition-opacity duration-300',
           isHome ? 'opacity-0' : 'opacity-100'
         )}
       >
-        <h1 className="truncate text-sm font-semibold">{title}</h1>
+        <h1 className="truncate rounded-full bg-muted/60 px-3 py-1 text-xs font-medium text-muted-foreground">
+          {title}
+        </h1>
       </div>
       <div className="flex w-20 justify-end">{rightAction}</div>
     </header>

@@ -882,6 +882,8 @@ const messages = {
       model_invocation_failed: 'The model call failed. Please try again later.',
       agent_final_answer_unavailable:
         'The model could not generate a final response. An automatic retry was attempted; please regenerate or try again later.',
+      server_unavailable:
+        'The AI service is temporarily unavailable, possibly because a model channel or upstream service is down. Try again shortly; if this continues, ask an administrator to check the model and channel status.',
       loadRunsFailed: 'Failed to load agent runs',
       loadRunDetailFailed: 'Failed to load run detail',
       loadNodeExecutionsFailed: 'Failed to load node executions',

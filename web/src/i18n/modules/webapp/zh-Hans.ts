@@ -49,6 +49,12 @@ const messages: WebappMessages = {
       summarize: '总结文本',
       write: '撰写内容',
     },
+    suggestionPrompts: {
+      email: '帮我起草一封清晰、专业的邮件。如果缺少收件人、目的或语气，请先向我确认。',
+      meeting: '把我提供的会议记录整理成简洁摘要，并列出结论、负责人和下一步。',
+      report: '帮我起草一份周报，包含本周进展、结果、风险和下周重点。',
+      polish: '润色我提供的文字，保留原意、语气和关键信息。',
+    },
     loadingImageGen: '正在加载图像生成器...',
     markdownImage: {
       previewTitle: '图片预览',
@@ -84,6 +90,14 @@ const messages: WebappMessages = {
       model_service_timeout: '模型服务连接超时，请稍后重试。',
       model_service_unavailable: '模型服务暂时不可用，请稍后重试。',
       model_invocation_failed: '模型调用失败，请稍后重试。',
+      server_unavailable:
+        'AI 服务暂时异常，可能是模型渠道或上游服务不可用。请稍后重试；若持续失败，请联系管理员检查模型与渠道状态。',
+    },
+    workflowErrorTitles: {
+      model_service_timeout: '模型响应超时',
+      model_service_unavailable: '当前模型暂时不可用',
+      model_invocation_failed: '模型调用失败',
+      server_unavailable: '暂时无法生成回复',
     },
     conversationBusy: '当前会话仍在运行，请等待结束或切换到其他会话。',
     streamDisconnected: '实时连接已断开，任务可能仍在运行。',
@@ -316,6 +330,28 @@ const messages: WebappMessages = {
     },
     stopped: '已停止',
     streamError: '回复生成失败。',
+    errors: {
+      server: {
+        title: '暂时无法生成回复',
+        adminDescription:
+          'AI 服务暂时异常，可能是模型渠道或上游服务不可用。请稍后重试；若持续失败，请检查模型与渠道状态。',
+        memberDescription:
+          'AI 服务暂时异常，可能是模型渠道或上游服务不可用。请稍后重试；若持续失败，请联系管理员检查模型与渠道状态。',
+      },
+      timeout: {
+        title: '模型响应超时',
+        description: '模型长时间未返回结果，本次生成已停止。请重试或切换其他模型。',
+      },
+      network: {
+        title: '网络连接异常',
+        description: '与服务的连接已中断。请检查网络后重试，任务可能仍在后台运行。',
+      },
+      provider: {
+        title: '当前模型暂时不可用',
+        adminDescription: '模型渠道或上游服务异常。请切换模型，或前往模型与渠道检查可用状态。',
+        memberDescription: '模型渠道或上游服务异常。请切换其他模型，或联系管理员检查渠道。',
+      },
+    },
     send: '发送',
     stop: '停止生成',
     resumeAutoScroll: '继续跟随',

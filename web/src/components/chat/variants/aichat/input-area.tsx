@@ -1150,7 +1150,7 @@ export function AIChatInputArea({
           'pointer-events-none absolute inset-x-0 z-20 transition-[top,transform,padding,background-color,box-shadow] duration-300 ease-in-out',
           isEmbedded ? 'px-4' : 'px-4 sm:px-6 lg:px-8',
           isHome && !isLoadingMessages && surface === 'aichat'
-            ? 'top-[58%] -translate-y-1/2 pb-0 pt-0 sm:top-1/2'
+            ? 'top-[62%] -translate-y-1/2 pb-0 pt-0 sm:top-[56%]'
             : isEmbedded
               ? cn(
                   'top-full -translate-y-full pb-2 pt-2',
