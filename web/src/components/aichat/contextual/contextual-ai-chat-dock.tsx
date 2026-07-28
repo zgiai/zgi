@@ -27,9 +27,11 @@ import {
   WORKSPACE_KEYS,
 } from '@/hooks/query-keys';
 import { usePersistedAIChatModelSelection } from '@/hooks/model/use-persisted-ai-chat-model-selection';
+import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
 import { useT } from '@/i18n/translations';
 import { cn } from '@/lib/utils';
 import { useCurrentUser } from '@/store/auth-store';
+import { useWorkspaceStore } from '@/store/workspace-store';
 import { embeddedControlButtonClassName } from '@/components/chat/variants/aichat/embedded-conversation-controls';
 import { isDraftAIChatConversationId } from '@/components/chat/utils/aichat-message';
 import {
@@ -38,9 +40,11 @@ import {
 } from '@/components/chat/runtime/client-action-continuation';
 import {
   createContextualAIChatTransport,
+  getZGIConsoleNavigationAccess,
   normalizeZGIConsoleNavigationHref,
   type ContextualAIChatAssetOperation,
   type ContextualAIChatClientActionRequest,
+  type ZGIConsoleNavigationAccessContext,
 } from './context-envelope';
 import { useContextualAIChat } from './contextual-ai-chat-context';
 import type {
@@ -910,11 +914,29 @@ export function ContextualAIChatDock() {
   const pathname = usePathname();
   const queryClient = useQueryClient();
   const { isOpen, setOpen, items } = useContextualAIChat();
+  const contextStatus = useWorkspaceStore.use.contextStatus();
+  const {
+    permissions,
+    organizationRole,
+    workspaceRole,
+    isLoading: permissionsLoading,
+  } = useAccountPermissions();
+  const navigationAccessContext = useMemo<ZGIConsoleNavigationAccessContext>(
+    () => ({
+      workspaceStatus: contextStatus,
+      permissionsSettled: contextStatus !== 'ready' || !permissionsLoading,
+      organizationRole,
+      workspaceRole,
+      permissions,
+    }),
+    [contextStatus, organizationRole, permissions, permissionsLoading, workspaceRole]
+  );
   const isDesktopPanelViewport = useIsDesktopPanelViewport();
   const [desktopPanelWidth, setDesktopPanelWidth] = useState<number | null>(null);
   const [isPanelMounted, setIsPanelMounted] = useState(isOpen);
   const [isResizing, setIsResizing] = useState(false);
   const itemsRef = useRef(items);
+  const navigationAccessContextRef = useRef(navigationAccessContext);
   const assetOperationRefreshRef = useRef<Map<string, number>>(new Map());
   const pendingClientActionsRef = useRef<Map<string, PendingClientActionContinuation>>(new Map());
   const processedClientActionsRef = useRef<Map<string, number>>(new Map());
@@ -927,6 +949,10 @@ export function ContextualAIChatDock() {
   useEffect(() => {
     itemsRef.current = items;
   }, [items]);
+
+  useEffect(() => {
+    navigationAccessContextRef.current = navigationAccessContext;
+  }, [navigationAccessContext]);
 
   useEffect(() => {
     if (isOpen) {
@@ -1240,8 +1266,11 @@ export function ContextualAIChatDock() {
         });
         return;
       }
-      const href = normalizeZGIConsoleNavigationHref(request.href);
-      if (!href) {
+      const routeAccess = getZGIConsoleNavigationAccess(
+        request.href,
+        navigationAccessContextRef.current
+      );
+      if (routeAccess.status === 'unsupported' || !routeAccess.href) {
         failUnsupportedClientAction(request, {
           key,
           error: 'Route navigation target is unsupported.',
@@ -1263,12 +1292,59 @@ export function ContextualAIChatDock() {
               '/console/agents',
               '/console/agents/{agent_id}/agent',
               '/console/workflows',
+              '/console/workflows/{workflow_id}',
               '/console/db',
+              '/console/skills',
             ],
           },
         });
         return;
       }
+      if (!routeAccess.allowed) {
+        const accessStatus = routeAccess.status;
+        const accessMessages = {
+          workspace_required: {
+            error: 'Select a workspace before opening this page.',
+            hint: 'Ask the user to select a workspace, then retry only if the page is still needed.',
+          },
+          permissions_loading: {
+            error: 'Navigation permissions are still loading.',
+            hint: 'Wait for the current workspace permissions to finish loading before retrying.',
+          },
+          permission_denied: {
+            error: 'The current user does not have permission to open this page.',
+            hint: 'Do not retry this route unless the user switches workspace or their permissions change.',
+          },
+        } as const;
+        const accessMessage =
+          accessMessages[accessStatus as keyof typeof accessMessages] ??
+          accessMessages.permission_denied;
+        failUnsupportedClientAction(request, {
+          key,
+          error: accessMessage.error,
+          result: {
+            event_type: 'route_navigation_blocked',
+            action_type: request.actionType,
+            access_status: accessStatus,
+            requested_href: request.href ?? null,
+            href: routeAccess.href,
+            label: request.label,
+            label_key: request.labelKey,
+            route_kind: request.routeKind,
+            reason: request.reason,
+            required_permissions: [...routeAccess.requiredPermissions],
+            required_workspace_role: routeAccess.route?.workspaceManagerOnly
+              ? 'owner_or_admin'
+              : null,
+            observed_path: normalizeZGIConsoleNavigationHref(pathname ?? undefined),
+            recoverable: true,
+            target_completed: false,
+            next_step_hint: accessMessage.hint,
+          },
+        });
+        return;
+      }
+      const href = routeAccess.href;
       const routeKey = routeClientActionRequestKey(request, href);
       if (pendingClientActionsRef.current.has(routeKey)) return;
       const currentHref = normalizeZGIConsoleNavigationHref(pathname ?? undefined);
@@ -1382,6 +1458,7 @@ export function ContextualAIChatDock() {
   const transport = useMemo(
     () =>
       createContextualAIChatTransport(() => itemsRef.current, {
+        getNavigationAccessContext: () => navigationAccessContextRef.current,
         onAssetOperationSuccess: handleAssetOperationSuccess,
         onClientActionRequired: handleClientActionRequired,
       }),
