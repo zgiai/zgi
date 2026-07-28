@@ -22,6 +22,93 @@ export interface AIChatErrorDisplayMessage {
   actionLabel?: string;
   href?: string | null;
   isBilling: boolean;
+  kind: 'billing' | 'server' | 'timeout' | 'network' | 'provider' | 'unknown';
+}
+
+function includesAny(value: string, candidates: string[]): boolean {
+  return candidates.some(candidate => value.includes(candidate));
+}
+
+function resolveFriendlyRuntimeError(
+  t: WorkflowTranslator,
+  rawMessage: string | undefined,
+  code: string | undefined,
+  isAdmin: boolean
+): Pick<AIChatErrorDisplayMessage, 'title' | 'description' | 'kind'> | null {
+  const normalized = rawMessage?.toLowerCase() ?? '';
+
+  if (
+    code === '399001' ||
+    includesAny(normalized, ['internal server error', 'unknown error', 'status code 500'])
+  ) {
+    return {
+      kind: 'server',
+      title: t('webapp.consoleChat.errors.server.title'),
+      description: t(
+        isAdmin
+          ? 'webapp.consoleChat.errors.server.adminDescription'
+          : 'webapp.consoleChat.errors.server.memberDescription'
+      ),
+    };
+  }
+
+  if (
+    includesAny(normalized, [
+      'timeout',
+      'timed out',
+      'deadline exceeded',
+      '长时间未返回',
+      '响应超时',
+    ])
+  ) {
+    return {
+      kind: 'timeout',
+      title: t('webapp.consoleChat.errors.timeout.title'),
+      description: t('webapp.consoleChat.errors.timeout.description'),
+    };
+  }
+
+  if (
+    includesAny(normalized, [
+      'network error',
+      'failed to fetch',
+      'connection reset',
+      'connection refused',
+      'stream disconnected',
+      '网络',
+      '连接已断开',
+    ])
+  ) {
+    return {
+      kind: 'network',
+      title: t('webapp.consoleChat.errors.network.title'),
+      description: t('webapp.consoleChat.errors.network.description'),
+    };
+  }
+
+  if (
+    includesAny(normalized, [
+      'all providers failed',
+      'no available provider',
+      'provider unavailable',
+      'upstream service error',
+      'channel unavailable',
+      '渠道不可用',
+      '上游服务',
+    ])
+  ) {
+    return {
+      kind: 'provider',
+      title: t('webapp.consoleChat.errors.provider.title'),
+      description: t(
+        isAdmin
+          ? 'webapp.consoleChat.errors.provider.adminDescription'
+          : 'webapp.consoleChat.errors.provider.memberDescription'
+      ),
+    };
+  }
+
+  return null;
 }
 
 export function resolveAIChatErrorMessage(
@@ -35,6 +122,7 @@ export function resolveAIChatErrorMessage(
     return {
       description: fallbackDescription,
       isBilling: false,
+      kind: 'unknown',
     };
   }
 
@@ -44,15 +132,37 @@ export function resolveAIChatErrorMessage(
     params: input?.params,
   };
   const billingMessage = getWorkflowBillingErrorMessage(t, 'webapp', parsed, options);
-  const code = resolveWorkflowBillingErrorCode(parsed.code, parsed.message);
+  const billingCode = resolveWorkflowBillingErrorCode(parsed.code, parsed.message);
+  const code =
+    billingCode ??
+    (typeof parsed.code === 'string' || typeof parsed.code === 'number'
+      ? String(parsed.code).trim() || undefined
+      : undefined);
+  const friendlyRuntimeError = resolveFriendlyRuntimeError(
+    t,
+    rawMessage,
+    code,
+    Boolean(options.isAdmin)
+  );
+  const isBilling = isWorkflowBillingErrorCode(billingCode);
 
   return {
     code,
-    title: billingMessage?.title,
-    description: billingMessage?.description || fallbackDescription,
+    title: isBilling
+      ? billingMessage?.title
+      : friendlyRuntimeError?.title || billingMessage?.title,
+    description:
+      (isBilling
+        ? billingMessage?.description
+        : friendlyRuntimeError?.description || billingMessage?.description) || fallbackDescription,
     actionLabel: billingMessage?.actionLabel,
     href: billingMessage?.href,
-    isBilling: isWorkflowBillingErrorCode(code),
+    isBilling,
+    kind: isBilling
+      ? 'billing'
+      : friendlyRuntimeError?.kind
+        ? friendlyRuntimeError.kind
+        : 'unknown',
   };
 }
 

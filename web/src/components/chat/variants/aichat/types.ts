@@ -10,6 +10,7 @@ export interface AIChatModelValue extends ModelSelectorValue {
 export interface AIChatSuggestion {
   key: string;
   text: string;
+  prompt?: string;
 }
 
 export interface AIChatWorkflowApprovalRequest {

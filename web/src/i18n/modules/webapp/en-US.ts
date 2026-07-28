@@ -47,6 +47,16 @@ const messages = {
       summarize: 'Summarize text',
       write: 'Write content',
     },
+    suggestionPrompts: {
+      email:
+        'Draft a clear, professional email. Ask me for the audience, goal, and tone if anything is missing.',
+      meeting:
+        'Turn my meeting notes into a concise summary with decisions, owners, and next steps.',
+      report:
+        'Help me draft a weekly report covering progress, outcomes, risks, and priorities for next week.',
+      polish:
+        'Polish the text I provide while preserving its meaning, tone, and key details.',
+    },
     loadingImageGen: 'Loading image generator...',
     markdownImage: {
       previewTitle: 'Image preview',
@@ -88,6 +98,14 @@ const messages = {
       model_service_unavailable:
         'The model service is temporarily unavailable. Please try again later.',
       model_invocation_failed: 'The model call failed. Please try again later.',
+      server_unavailable:
+        'The AI service is temporarily unavailable, possibly because a model channel or upstream service is down. Try again shortly; if this continues, ask an administrator to check the model and channel status.',
+    },
+    workflowErrorTitles: {
+      model_service_timeout: 'The model took too long to respond',
+      model_service_unavailable: 'This model is temporarily unavailable',
+      model_invocation_failed: 'The model call failed',
+      server_unavailable: 'Unable to generate a response right now',
     },
     conversationBusy:
       'This conversation is still running. Wait for it to finish or switch conversations.',
@@ -265,8 +283,7 @@ const messages = {
         'The organization balance is low. Ask an organization administrator to add funds.',
       workspaceQuotaLow:
         'The workspace quota is low. Ask an organization administrator to adjust it.',
-      privateChannelBalanceLow:
-        'The channel quota for this model is low. Add quota when possible.',
+      privateChannelBalanceLow: 'The channel quota for this model is low. Add quota when possible.',
       privateChannelUpstreamBalanceLow:
         'Every available channel for this model has a low upstream balance. Ask an organization administrator to add funds.',
       privateChannelUpstreamBalanceExhausted:
@@ -341,6 +358,32 @@ const messages = {
     },
     stopped: 'Stopped',
     streamError: 'The response failed.',
+    errors: {
+      server: {
+        title: 'Unable to generate a response right now',
+        adminDescription:
+          'The AI service is temporarily unavailable, possibly because a model channel or upstream service is down. Try again shortly; if this continues, check the model and channel status.',
+        memberDescription:
+          'The AI service is temporarily unavailable, possibly because a model channel or upstream service is down. Try again shortly; if this continues, ask an administrator to check the model and channel status.',
+      },
+      timeout: {
+        title: 'The model took too long to respond',
+        description:
+          'This generation was stopped because the model did not return a result. Try again or select another model.',
+      },
+      network: {
+        title: 'Connection interrupted',
+        description:
+          'The connection to the service was lost. Check your network and try again; the task may still be running.',
+      },
+      provider: {
+        title: 'This model is temporarily unavailable',
+        adminDescription:
+          'The model channel or upstream service is unavailable. Select another model or review the model and channel status.',
+        memberDescription:
+          'The model channel or upstream service is unavailable. Select another model or ask an administrator to check the channel.',
+      },
+    },
     send: 'Send',
     stop: 'Stop generating',
     resumeAutoScroll: 'Continue following',

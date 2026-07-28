@@ -69,6 +69,7 @@ import {
 } from '@/components/chat/utils/message-tree';
 import { AIChatHeader } from '@/components/chat/variants/aichat/chat-header';
 import { AIChatHomeView } from '@/components/chat/variants/aichat/home-view';
+import { AIChatRuntimeErrorNotice } from '@/components/chat/variants/aichat/runtime-error-notice';
 import {
   AIChatAssetAuditButton,
   AIChatAssetAuditPanel,
@@ -171,6 +172,7 @@ interface AIChatShellProps {
   }) => React.ReactNode;
   onSelectConversation?: (id: string) => void;
   onStartNewConversation?: () => void;
+  defaultSidebarOpen?: boolean;
   showAssistantModelMeta?: boolean;
   surface?: 'aichat' | 'agent-draft' | 'agent-webapp';
   runtimeSurface?: AIChatRuntimeSurface;
@@ -282,6 +284,7 @@ export function AIChatShell({
   renderEmbeddedConversationControls,
   onSelectConversation,
   onStartNewConversation,
+  defaultSidebarOpen = true,
   showAssistantModelMeta = true,
   surface = 'aichat',
   runtimeSurface = 'work_chat',
@@ -305,7 +308,7 @@ export function AIChatShell({
   const [input, setInput] = useState('');
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const [editingQuery, setEditingQuery] = useState('');
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = useState(defaultSidebarOpen);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [embeddedAssetAuditOpen, setEmbeddedAssetAuditOpen] = useState(false);
   const [externalControlsPortal, setExternalControlsPortal] = useState<HTMLElement | null>(null);
@@ -589,20 +592,21 @@ export function AIChatShell({
       showAssetAuditControl,
     ]
   );
-
-  useEffect(() => {
-    if (!error) {
-      lastErrorToastRef.current = null;
-      return;
-    }
-
-    const matchingErrorMessage = [...activeMessages]
-      .reverse()
-      .find(message => message.status === 'error' && message.error === error);
-    const errorInput = matchingErrorMessage
-      ? getAIChatMessageErrorInput(matchingErrorMessage)
+  const matchingRuntimeErrorMessage = useMemo(
+    () =>
+      error
+        ? [...activeMessages]
+            .reverse()
+            .find(message => message.status === 'error' && message.error === error) ?? null
+        : null,
+    [activeMessages, error]
+  );
+  const resolvedRuntimeError = useMemo(() => {
+    if (!error) return null;
+    const errorInput = matchingRuntimeErrorMessage
+      ? getAIChatMessageErrorInput(matchingRuntimeErrorMessage)
       : { message: error };
-    const resolvedError = resolveAIChatErrorMessage(
+    return resolveAIChatErrorMessage(
       (key, values) => tGlobal(key as never, values),
       errorInput,
       {
@@ -610,27 +614,57 @@ export function AIChatShell({
         workspaceId: currentWorkspace?.id,
       }
     );
-    const toastKey = `${resolvedError.code ?? 'unknown'}:${error}`;
+  }, [
+    currentWorkspace?.id,
+    error,
+    isBillingAdmin,
+    matchingRuntimeErrorMessage,
+    tGlobal,
+  ]);
+  const showInlineRuntimeError =
+    resolvedRuntimeError?.kind === 'billing' ||
+    resolvedRuntimeError?.kind === 'server' ||
+    resolvedRuntimeError?.kind === 'provider';
+
+  useEffect(() => {
+    if (!error) {
+      lastErrorToastRef.current = null;
+      return;
+    }
+
+    if (!resolvedRuntimeError || showInlineRuntimeError) {
+      return;
+    }
+
+    const toastKey = `${resolvedRuntimeError.code ?? 'unknown'}:${error}`;
 
     if (lastErrorToastRef.current === toastKey) {
       return;
     }
 
     lastErrorToastRef.current = toastKey;
-    const toastFn = resolvedError.isBilling ? toast.warning : toast.error;
-    toastFn(resolvedError.title || resolvedError.description, {
-      id: resolvedError.code ? `aichat-billing-${resolvedError.code}` : undefined,
-      description: resolvedError.title ? resolvedError.description : undefined,
-      classNames: resolvedError.isBilling ? workflowBillingToastClassNames : undefined,
+    const toastFn = resolvedRuntimeError.isBilling ? toast.warning : toast.error;
+    toastFn(resolvedRuntimeError.title || resolvedRuntimeError.description, {
+      id: resolvedRuntimeError.code
+        ? `aichat-billing-${resolvedRuntimeError.code}`
+        : undefined,
+      description: resolvedRuntimeError.title ? resolvedRuntimeError.description : undefined,
+      classNames: resolvedRuntimeError.isBilling ? workflowBillingToastClassNames : undefined,
       action:
-        isBillingAdmin && resolvedError.href && resolvedError.actionLabel
+        isBillingAdmin && resolvedRuntimeError.href && resolvedRuntimeError.actionLabel
           ? createElement(WorkflowBillingToastAction, {
-              label: resolvedError.actionLabel,
-              onClick: () => router.push(resolvedError.href as string),
+              label: resolvedRuntimeError.actionLabel,
+              onClick: () => router.push(resolvedRuntimeError.href as string),
             })
           : undefined,
     });
-  }, [activeMessages, currentWorkspace?.id, error, isBillingAdmin, router, tGlobal]);
+  }, [
+    error,
+    isBillingAdmin,
+    resolvedRuntimeError,
+    router,
+    showInlineRuntimeError,
+  ]);
 
   useEffect(() => {
     if (!pendingUserMessage) return;
@@ -686,14 +720,30 @@ export function AIChatShell({
         .map(text => text.trim())
         .filter(Boolean)
         .slice(0, 6)
-        .map((text, index) => ({ text, key: `configured-${index}` }));
+        .map((text, index) => ({ text, prompt: text, key: `configured-${index}` }));
     }
 
     return [
-      { text: t('chat.suggestions.email'), key: 'email' },
-      { text: t('chat.suggestions.meeting'), key: 'meeting' },
-      { text: t('chat.suggestions.report'), key: 'report' },
-      { text: t('chat.suggestions.polish'), key: 'polish' },
+      {
+        text: t('chat.suggestions.email'),
+        prompt: t('chat.suggestionPrompts.email'),
+        key: 'email',
+      },
+      {
+        text: t('chat.suggestions.meeting'),
+        prompt: t('chat.suggestionPrompts.meeting'),
+        key: 'meeting',
+      },
+      {
+        text: t('chat.suggestions.report'),
+        prompt: t('chat.suggestionPrompts.report'),
+        key: 'report',
+      },
+      {
+        text: t('chat.suggestions.polish'),
+        prompt: t('chat.suggestionPrompts.polish'),
+        key: 'polish',
+      },
     ];
   }, [configuredSuggestions, t]);
 
@@ -822,12 +872,21 @@ export function AIChatShell({
     [activeUserInputMessage, controller, isSending, t, toolGovernanceOperationContext]
   );
 
-  const handleRegenerate = useCallback(
-    async (message: AIChatMessage) => {
+  const canRegenerateMessage = useCallback(
+    (message: AIChatMessage) => {
       const branchCount = branchNavigationByMessageId.get(message.id)?.total ?? 1;
       const canReplaceRoot = canReplaceRootMessage(message);
-      if (messageActionsLocked) return;
-      if (!canReplaceRoot && (!message.parent_id || branchCount >= MAX_AICHAT_BRANCHES)) return;
+      return (
+        !messageActionsLocked &&
+        (canReplaceRoot || (Boolean(message.parent_id) && branchCount < MAX_AICHAT_BRANCHES))
+      );
+    },
+    [branchNavigationByMessageId, canReplaceRootMessage, messageActionsLocked]
+  );
+
+  const handleRegenerate = useCallback(
+    async (message: AIChatMessage) => {
+      if (!canRegenerateMessage(message)) return;
       if (requireModel && !modelSelectorValue.model) {
         toast.error(t('consoleChat.modelRequired'));
         return;
@@ -848,11 +907,9 @@ export function AIChatShell({
       );
     },
     [
-      branchNavigationByMessageId,
       beforeSend,
-      canReplaceRootMessage,
+      canRegenerateMessage,
       controller,
-      messageActionsLocked,
       modelSelectorValue,
       requireModel,
       effectiveRuntimeSurface,
@@ -860,6 +917,37 @@ export function AIChatShell({
       toolGovernanceOperationContext,
     ]
   );
+
+  const handleRetryRuntimeError = useCallback(() => {
+    if (!matchingRuntimeErrorMessage) return;
+    void handleRegenerate(matchingRuntimeErrorMessage);
+  }, [handleRegenerate, matchingRuntimeErrorMessage]);
+  const canRetryRuntimeError = Boolean(
+    matchingRuntimeErrorMessage && canRegenerateMessage(matchingRuntimeErrorMessage)
+  );
+  const runtimeErrorActionHref = isBillingAdmin
+    ? resolvedRuntimeError?.href || '/dashboard/provider'
+    : null;
+  const runtimeErrorNotice =
+    showInlineRuntimeError && resolvedRuntimeError ? (
+      <AIChatRuntimeErrorNotice
+        title={resolvedRuntimeError.title || resolvedRuntimeError.description}
+        description={resolvedRuntimeError.description}
+        retryLabel={t('chat.retry')}
+        configureLabel={
+          runtimeErrorActionHref
+            ? resolvedRuntimeError.actionLabel || t('consoleChat.configureModel')
+            : undefined
+        }
+        isBilling={resolvedRuntimeError.isBilling}
+        canRetry={canRetryRuntimeError}
+        onRetry={handleRetryRuntimeError}
+        onConfigure={
+          runtimeErrorActionHref ? () => router.push(runtimeErrorActionHref) : undefined
+        }
+      />
+    ) : null;
+  const composerTopAccessory = runtimeErrorNotice || inputTopNotice;
 
   const handleEditStart = useCallback(
     (message: AIChatMessage) => {
@@ -1229,7 +1317,6 @@ export function AIChatShell({
         >
           {!isEmbedded ? (
             <AIChatHeader
-              isMobile={isMobile}
               isHome={isHome}
               title={activeConversation?.title || ''}
               onToggleSidebar={handleToggleSidebar}
@@ -1403,7 +1490,7 @@ export function AIChatShell({
               null
             }
             activeToolGovernanceApprovalFallback={activeToolGovernanceApprovalFallback}
-            topAccessory={inputTopNotice}
+            topAccessory={composerTopAccessory}
           />
         </main>
       </ToolGovernancePendingApprovalScopeProvider>
@@ -1466,6 +1553,7 @@ export function AIChatShell({
               onRename={handleRenameConversation}
               backgroundImage={AICHAT_SIDEBAR_BG_IMAGE}
               onClose={() => setMobileSidebarOpen(false)}
+              alwaysShowHeader
               search={searchConversations}
               searchKey={conversationSearchKey}
               pagination={conversationPagination}

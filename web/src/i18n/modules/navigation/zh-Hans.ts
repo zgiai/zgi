@@ -37,6 +37,7 @@ const messages: NavigationMessages = {
   logout: '退出登录',
   collapse: '收起',
   expand: '展开',
+  openNavigation: '打开导航',
   current: '当前',
   workspace: '工作空间',
   defaultWorkspace: '默认工作空间',

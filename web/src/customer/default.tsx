@@ -38,8 +38,15 @@ function ConsoleModelsPreloader() {
 }
 
 function ContextualConsoleSidebar({ hidden }: { hidden?: boolean }) {
+  const pathname = usePathname();
   const { isOpen } = useContextualAIChat();
-  return <ConsoleSidebar hidden={hidden} temporarilyCollapsed={isOpen} />;
+  return (
+    <ConsoleSidebar
+      hidden={hidden}
+      temporarilyCollapsed={isOpen}
+      autoCollapse={pathname.startsWith('/console/work/chat')}
+    />
+  );
 }
 
 function ContextualConsoleFrame({ children }: { children: React.ReactNode }) {

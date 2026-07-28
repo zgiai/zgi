@@ -47,7 +47,7 @@ export function AIChatHomeView({
   const composerHeightPx = Math.max(96, Math.ceil(composerHeight ?? 140));
   const anchorStyle = {
     '--aichat-home-composer-half': `${Math.round(composerHeightPx / 2)}px`,
-    '--aichat-home-title-gap': 'clamp(48px, 9vh, 96px)',
+    '--aichat-home-title-gap': 'clamp(20px, 3vh, 32px)',
     '--aichat-home-suggestions-gap': '8px',
   } as React.CSSProperties;
 
@@ -84,6 +84,8 @@ export function AIChatHomeView({
     );
   }
 
+  const brandMark = brand ? brand : isHydrated ? <AIChatBrandMark /> : null;
+
   return (
     <div
       className={cn(
@@ -94,49 +96,36 @@ export function AIChatHomeView({
     >
       <div
         className={cn(
-          'absolute inset-x-4 top-[58%] flex justify-center sm:top-1/2',
+          'absolute inset-x-4 top-[62%] flex justify-center sm:top-[56%]',
           'animate-in duration-500 fade-in zoom-in'
         )}
       >
         <div
-          className="flex w-full max-w-3xl flex-col items-center gap-4"
+          className="flex w-full max-w-3xl flex-col items-center gap-3"
           style={{
             transform:
               'translateY(calc(-100% - var(--aichat-home-composer-half) - var(--aichat-home-title-gap)))',
           }}
         >
-          {brand ? brand : isHydrated ? <AIChatBrandMark /> : null}
+          {brandMark ? <div className="[@media(max-height:620px)]:hidden">{brandMark}</div> : null}
           <h2 className="text-2xl font-bold text-foreground">
             {title || t('chat.startConversation')}
           </h2>
           {resolvedDescription ? (
             <p className="text-sm text-muted-foreground">{resolvedDescription}</p>
           ) : null}
-        </div>
-      </div>
-      <div
-        className={cn(
-          'absolute inset-x-4 top-[58%] flex justify-center sm:top-1/2',
-          'animate-in duration-500 fade-in zoom-in'
-        )}
-      >
-        <div
-          className="flex w-full max-w-3xl flex-wrap items-center justify-center gap-2"
-          style={{
-            transform:
-              'translateY(calc(var(--aichat-home-composer-half) + var(--aichat-home-suggestions-gap)))',
-          }}
-        >
-          {suggestions.map(suggestion => (
-            <Button
-              key={suggestion.key}
-              variant="outline"
-              className="h-8 rounded-full border-transparent bg-muted/30 text-xs font-normal transition-all hover:border-border/50 hover:bg-muted/50"
-              onClick={() => onSelectSuggestion(suggestion.text)}
-            >
-              {suggestion.text}
-            </Button>
-          ))}
+          <div className="flex flex-wrap items-center justify-center gap-2 pt-1">
+            {suggestions.map(suggestion => (
+              <Button
+                key={suggestion.key}
+                variant="outline"
+                className="h-8 rounded-full border-border/60 bg-background/80 text-xs font-normal shadow-xs transition-all hover:border-primary/30 hover:bg-muted/50"
+                onClick={() => onSelectSuggestion(suggestion.prompt ?? suggestion.text)}
+              >
+                {suggestion.text}
+              </Button>
+            ))}
+          </div>
         </div>
       </div>
     </div>
