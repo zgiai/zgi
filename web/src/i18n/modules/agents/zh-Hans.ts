@@ -843,6 +843,8 @@ const messages: AgentsMessages = {
       model_service_timeout: '模型服务连接超时，请稍后重试。',
       model_service_unavailable: '模型服务暂时不可用，请稍后重试。',
       model_invocation_failed: '模型调用失败，请稍后重试。',
+      agent_final_answer_unavailable:
+        '模型未能生成最终答复。系统已自动重试，请重新生成或稍后再试。',
       loadRunsFailed: '加载智能体运行记录失败',
       loadRunDetailFailed: '加载运行详情失败',
       loadNodeExecutionsFailed: '加载节点执行记录失败',

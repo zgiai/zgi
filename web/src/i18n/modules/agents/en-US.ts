@@ -880,6 +880,8 @@ const messages = {
       model_service_unavailable:
         'The model service is temporarily unavailable. Please try again later.',
       model_invocation_failed: 'The model call failed. Please try again later.',
+      agent_final_answer_unavailable:
+        'The model could not generate a final response. An automatic retry was attempted; please regenerate or try again later.',
       loadRunsFailed: 'Failed to load agent runs',
       loadRunDetailFailed: 'Failed to load run detail',
       loadNodeExecutionsFailed: 'Failed to load node executions',
