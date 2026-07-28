@@ -58,15 +58,42 @@ function getErrorDescription(error: unknown): string | undefined {
   return undefined;
 }
 
-function showErrorToast(title: string, error: unknown): void {
-  const description = getErrorDescription(error);
+function getErrorCode(error: unknown): string | undefined {
+  if (!error || typeof error !== 'object' || !('code' in error)) {
+    return undefined;
+  }
 
-  if (description) {
-    toast.error(title, { description });
+  const code = (error as { code?: unknown }).code;
+  return typeof code === 'string' ? code : undefined;
+}
+
+function isCanceledRequest(error: unknown): boolean {
+  if (!error || typeof error !== 'object') {
+    return false;
+  }
+
+  const name = 'name' in error ? (error as { name?: unknown }).name : undefined;
+  const code = getErrorCode(error);
+  return code === 'ERR_CANCELED' || name === 'CanceledError' || name === 'AbortError';
+}
+
+function isNetworkError(error: unknown): boolean {
+  return getErrorCode(error) === 'ERR_NETWORK' || getErrorDescription(error) === 'Network Error';
+}
+
+function showErrorToast(title: string, error: unknown, options?: { id?: string }): void {
+  if (isCanceledRequest(error)) {
     return;
   }
 
-  toast.error(title);
+  const description = getErrorDescription(error);
+
+  if (description) {
+    toast.error(title, { id: options?.id, description });
+    return;
+  }
+
+  toast.error(title, { id: options?.id });
 }
 
 // Non-paginated models list for a provider. Does not pass page/limit.
@@ -292,7 +319,9 @@ export function useAvailableModels(options?: { use_case?: AvailableModelUseCase 
     staleTime: Number.POSITIVE_INFINITY,
     gcTime: Number.POSITIVE_INFINITY,
     refetchOnWindowFocus: false,
-    retry: false,
+    retry: (failureCount, requestError) =>
+      isNetworkError(requestError) && failureCount < 1,
+    retryDelay: 500,
   });
 
   const wrappedRefetch = useCallback(async () => {
@@ -305,9 +334,11 @@ export function useAvailableModels(options?: { use_case?: AvailableModelUseCase 
 
   useEffect(() => {
     if (error) {
-      showErrorToast(t('messages.loadFailed'), error);
+      showErrorToast(t('messages.loadFailed'), error, {
+        id: `available-models-load-failed:${use_case}`,
+      });
     }
-  }, [error, t]);
+  }, [error, t, use_case]);
 
   return {
     models: (data?.data?.items ?? []).map(normalizeModel),
