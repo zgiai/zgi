@@ -901,7 +901,9 @@ func clientActionFailureModelFeedback(event map[string]interface{}, req runtimed
 			"/console/agents",
 			"/console/agents/{agent_id}/agent",
 			"/console/workflows",
+			"/console/workflows/{workflow_id}",
 			"/console/db",
+			"/console/skills",
 		}
 	}
 	return feedback
