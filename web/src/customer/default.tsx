@@ -14,7 +14,6 @@ import { WorkspaceRequiredState } from '@/components/common/workspace-required-s
 import { ConsoleHeader, ConsoleSidebar } from '@/components/console/console-shell-entry';
 import { ConsoleMobileSidebar } from '@/components/console/console-sidebar';
 import { DashboardMobileSidebar, DashboardSidebar } from '@/components/dashboard/sidebar';
-import { useAvailableModels } from '@/hooks/model/use-model';
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
 import { useAccountCapabilities } from '@/hooks/use-account-capabilities';
@@ -31,11 +30,6 @@ import type {
   CustomerDashboardShellProps,
   CustomerSessionBridgeProviderProps,
 } from './types';
-
-function ConsoleModelsPreloader() {
-  useAvailableModels();
-  return null;
-}
 
 function ContextualConsoleSidebar({ hidden }: { hidden?: boolean }) {
   const pathname = usePathname();
@@ -193,7 +187,6 @@ function DefaultConsoleShell({ children }: CustomerConsoleShellProps) {
           </main>
         </div>
         <ConsoleMobileSidebar open={mobileSidebarOpen} onOpenChange={setMobileSidebarOpen} />
-        <ConsoleModelsPreloader />
         <ConsolePageContextRegistration />
       </ContextualConsoleFrame>
     </ContextualAIChatProvider>
