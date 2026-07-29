@@ -22,6 +22,8 @@ var (
 	ErrGraphFlowDisabled               = errors.New("knowledge graph is not enabled")
 )
 
+const datasetPurgeInitialDelay = time.Minute
+
 type GraphEmbeddingStatus struct {
 	Mode          string `json:"mode"`
 	ModelProvider string `json:"model_provider"`
@@ -137,6 +139,42 @@ func (s *LifecycleService) StartCleanupInTx(ctx context.Context, tx *gorm.DB, re
 	}
 	request.Mode = graphmodel.GraphFlowRunModeCleanup
 	return s.enqueueTx(ctx, tx, request)
+}
+
+func (s *LifecycleService) StartDatasetPurgeInTx(
+	ctx context.Context,
+	tx *gorm.DB,
+	organizationID uuid.UUID,
+	workspaceID *uuid.UUID,
+	datasetID uuid.UUID,
+) error {
+	if tx == nil {
+		return fmt.Errorf("graph dataset purge transaction is required")
+	}
+	if organizationID == uuid.Nil || datasetID == uuid.Nil {
+		return fmt.Errorf("graph dataset purge scope is required")
+	}
+
+	if err := tx.WithContext(ctx).
+		Where("dataset_id = ?", datasetID).
+		Delete(&graphmodel.GraphOutboxEvent{}).Error; err != nil {
+		return err
+	}
+
+	event := &graphmodel.GraphOutboxEvent{
+		OrganizationID: organizationID,
+		WorkspaceID:    workspaceID,
+		DatasetID:      datasetID,
+		EventType:      graphmodel.GraphOutboxEventDatasetPurge,
+		AggregateKey:   fmt.Sprintf("dataset-purge:%s", datasetID),
+		Payload: map[string]any{
+			"dataset_id": datasetID.String(),
+		},
+		Status:      graphmodel.GraphOutboxStatusPending,
+		AvailableAt: time.Now().UTC().Add(datasetPurgeInitialDelay),
+	}
+	_, _, err := s.outboxRepo.WithTx(tx).CreateOrGet(ctx, event)
+	return err
 }
 
 func (s *LifecycleService) Enqueue(ctx context.Context, request LifecycleRunRequest) (*graphmodel.GraphFlowRun, bool, error) {

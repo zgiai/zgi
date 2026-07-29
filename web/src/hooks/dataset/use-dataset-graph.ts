@@ -38,19 +38,17 @@ export function useGraphRuntimeCapability() {
   });
 }
 
-export function useDatasetGraphStatus(datasetId: string, enabled = true) {
+export function useDatasetGraphStatus(
+  datasetId: string,
+  enabled = true,
+  refetchInterval: number | false = false
+) {
   return useQuery<ApiResponseData<GraphDatasetStatus>, Error>({
     queryKey: DATASET_KEYS.graphStatus(datasetId),
     queryFn: () => datasetService.getDatasetGraphStatus(datasetId),
     enabled: Boolean(datasetId) && enabled,
-    refetchInterval: query => {
-      const graphStatus = query.state.data?.data;
-      if (!graphStatus) return 2_000;
-      if (graphStatus.can_search) return false;
-      return ['empty', 'failed', 'disabled', 'unavailable'].includes(graphStatus.status)
-        ? false
-        : 2_000;
-    },
+    refetchInterval,
+    refetchIntervalInBackground: false,
     retry: false,
   });
 }

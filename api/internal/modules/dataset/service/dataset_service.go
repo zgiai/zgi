@@ -896,27 +896,14 @@ func (s *datasetService) DeleteDataset(ctx context.Context, datasetID, accountID
 				}
 				workspaceID = &parsedWorkspaceID
 			}
-			var graphDocumentIDs []string
-			if err := tx.WithContext(ctx).Model(&model.Document{}).
-				Where("dataset_id = ?", dataset.ID).
-				Pluck("id", &graphDocumentIDs).Error; err != nil {
-				return fmt.Errorf("list dataset graph documents: %w", err)
-			}
-			for _, graphDocumentID := range graphDocumentIDs {
-				parsedDocumentID, err := uuid.Parse(graphDocumentID)
-				if err != nil {
-					return fmt.Errorf("failed to parse document ID: %w", err)
-				}
-				if _, _, err := s.graphLifecycleService.StartCleanupInTx(ctx, tx, graphflow.LifecycleRunRequest{
-					OrganizationID: organizationID,
-					WorkspaceID:    workspaceID,
-					DatasetID:      parsedDatasetID,
-					DocumentID:     &parsedDocumentID,
-					Trigger:        "dataset_deleted",
-					IdempotencyKey: fmt.Sprintf("dataset-delete:%s:%s", parsedDatasetID, parsedDocumentID),
-				}); err != nil {
-					return fmt.Errorf("create dataset graph cleanup intent: %w", err)
-				}
+			if err := s.graphLifecycleService.StartDatasetPurgeInTx(
+				ctx,
+				tx,
+				organizationID,
+				workspaceID,
+				parsedDatasetID,
+			); err != nil {
+				return fmt.Errorf("create dataset graph purge intent: %w", err)
 			}
 		}
 

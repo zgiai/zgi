@@ -5,8 +5,9 @@ import { useT } from '@/i18n';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
-import { Network, ChevronDown } from 'lucide-react';
+import { Network, ChevronDown, CircleHelp } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import type { HitTestingResponse } from '../types';
 
 interface GraphExecutionDetailsProps {
@@ -42,8 +43,23 @@ export function GraphExecutionDetails({ execution }: GraphExecutionDetailsProps)
               </span>
               {debugInfo.chunks_count > 0 && (
                 <Badge variant="secondary" className="shrink-0 text-xs">
-                  {debugInfo.chunks_count} {t('hitTesting.chunks')}
+                  {debugInfo.chunks_count} {t('hitTesting.candidateChunks')}
                 </Badge>
+              )}
+              {debugInfo.chunks_count > 0 && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span
+                      className="inline-flex shrink-0 text-muted-foreground"
+                      aria-label={t('hitTesting.candidateChunksHelp')}
+                    >
+                      <CircleHelp className="h-4 w-4" />
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent side="top" className="max-w-72 leading-5">
+                    {t('hitTesting.candidateChunksHelp')}
+                  </TooltipContent>
+                </Tooltip>
               )}
             </div>
             <span className="inline-flex shrink-0 items-center gap-1.5 rounded-md border bg-background px-2.5 py-1.5 text-xs font-medium text-foreground shadow-sm">
@@ -89,7 +105,7 @@ export function GraphExecutionDetails({ execution }: GraphExecutionDetailsProps)
                     {debugInfo.chunks_count}
                   </div>
                   <div className="text-xs text-muted-foreground mt-1">
-                    {t('hitTesting.chunksCount')}
+                    {t('hitTesting.candidateChunksCount')}
                   </div>
                 </div>
                 <div className="text-center p-3 bg-purple-50 dark:bg-purple-950/20 rounded-md">

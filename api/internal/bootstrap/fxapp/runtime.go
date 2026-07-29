@@ -108,7 +108,7 @@ func registerRuntime(lc fx.Lifecycle, params runtimeParams) error {
 		params.GraphFlowService.DB,
 		graphflowworker.NewRunOutboxHandler(params.GraphFlowService, params.TaskManager),
 		graphflowworker.NewVisibilityHandler(params.GraphFlowService),
-		graphflowworker.NewRunOutboxHandler(params.GraphFlowService, params.TaskManager),
+		graphflowworker.NewDatasetPurgeHandler(params.GraphFlowService),
 	)
 
 	if params.Scheduler != nil {

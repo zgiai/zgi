@@ -542,6 +542,46 @@ func TestLifecycleServiceStartBuildIsIdempotent(t *testing.T) {
 	}
 }
 
+func TestLifecycleServiceCreatesDatasetPurgeWithoutRun(t *testing.T) {
+	db := openLifecycleTestDB(t)
+	datasetID := uuid.New()
+	organizationID := uuid.New()
+	workspaceID := uuid.New()
+	if err := db.Create(&lifecycleTestDataset{
+		ID:             datasetID.String(),
+		OrganizationID: organizationID.String(),
+		WorkspaceID:    workspaceID.String(),
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	service := NewLifecycleService(db)
+	startedAt := time.Now().UTC()
+
+	err := db.Transaction(func(tx *gorm.DB) error {
+		return service.StartDatasetPurgeInTx(
+			context.Background(),
+			tx,
+			organizationID,
+			&workspaceID,
+			datasetID,
+		)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var event graphmodel.GraphOutboxEvent
+	if err := db.Where("event_type = ?", graphmodel.GraphOutboxEventDatasetPurge).First(&event).Error; err != nil {
+		t.Fatal(err)
+	}
+	if event.RunID != nil || event.DatasetID != datasetID {
+		t.Fatalf("unexpected dataset purge event: %#v", event)
+	}
+	if event.AvailableAt.Before(startedAt.Add(datasetPurgeInitialDelay)) {
+		t.Fatalf("dataset purge scheduled too early: %s", event.AvailableAt)
+	}
+}
+
 func TestLifecycleServiceRejectsInvalidScopeAndKey(t *testing.T) {
 	db := openLifecycleTestDB(t)
 	datasetID := uuid.New()

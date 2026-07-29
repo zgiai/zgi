@@ -399,32 +399,7 @@ func (c *Neo4jClient) GetEntityContextMultiHop(ctx context.Context, kbID string,
 	// 1. Exclude 'Date'/'Time' type nodes from expansion path (prevent temporal noise)
 	// 2. Filter out Super Hubs (degree > 50) to avoid over-connection
 	// IMPROVED Multi-hop query:
-	cypher := fmt.Sprintf(`
-		// 1. O(1) Index Lookup for exact matched entities
-		MATCH (n:Entity)
-		WHERE n.kb_id = $kb_id AND coalesce(n.active_source_count, 0) > 0
-		  AND (n.name IN $names OR n.canonical_name IN $names)
-
-		// 2. Prune Hubs safely (Reduced to 50 to prevent timeout)
-		WITH n WHERE COUNT { (n)--() } <= 200
-
-		// 3. Multi-hop traversal (limit explosion)
-		MATCH (n)-[*1..%d]-(m)
-		WHERE m.kb_id = $kb_id
-		  AND all(node IN nodes(path) WHERE coalesce(node.active_source_count, 0) > 0)
-		  AND all(edge IN relationships(path) WHERE coalesce(edge.active_weight, 0) > 0)
-		  AND COUNT { (m)--() } <= 200
-
-		// 4. Force limitation BEFORE expanding full edge context
-		WITH DISTINCT m
-		LIMIT 200
-
-		// 5. Fetch local context
-		OPTIONAL MATCH (m)-[r]-(p)
-		WHERE p.kb_id = $kb_id AND coalesce(p.active_source_count, 0) > 0 AND coalesce(r.active_weight, 0) > 0
-		WITH m, r, p LIMIT 500
-		RETURN m, collect(DISTINCT {type: type(r), node: p, labels: labels(p)}) as neighbors
-	`, maxHops)
+	cypher := buildEntityContextMultiHopQuery(maxHops)
 
 	logger.Info(fmt.Sprintf("[RETRIEVAL_DEBUG] Executing Permissive Multi-Hop Search:\n%s\nParams: kb_id=%s, names=%v", cypher, kbID, searchNames))
 
@@ -527,6 +502,35 @@ func (c *Neo4jClient) GetEntityContextMultiHop(ctx context.Context, kbID string,
 	}
 
 	return results, entityNamesList, nil
+}
+
+func buildEntityContextMultiHopQuery(maxHops int) string {
+	return fmt.Sprintf(`
+		// 1. O(1) Index Lookup for exact matched entities
+		MATCH (n:Entity)
+		WHERE n.kb_id = $kb_id AND coalesce(n.active_source_count, 0) > 0
+		  AND (n.name IN $names OR n.canonical_name IN $names)
+
+		// 2. Prune Hubs safely (Reduced to 50 to prevent timeout)
+		WITH n WHERE COUNT { (n)--() } <= 200
+
+		// 3. Multi-hop traversal (limit explosion)
+		MATCH path = (n)-[*1..%d]-(m)
+		WHERE m.kb_id = $kb_id
+		  AND all(node IN nodes(path) WHERE coalesce(node.active_source_count, 0) > 0)
+		  AND all(edge IN relationships(path) WHERE coalesce(edge.active_weight, 0) > 0)
+		  AND COUNT { (m)--() } <= 200
+
+		// 4. Force limitation BEFORE expanding full edge context
+		WITH DISTINCT m
+		LIMIT 200
+
+		// 5. Fetch local context
+		OPTIONAL MATCH (m)-[r]-(p)
+		WHERE p.kb_id = $kb_id AND coalesce(p.active_source_count, 0) > 0 AND coalesce(r.active_weight, 0) > 0
+		WITH m, r, p LIMIT 500
+		RETURN m, collect(DISTINCT {type: type(r), node: p, labels: labels(p)}) as neighbors
+	`, maxHops)
 }
 
 // CreateVectorIndex creates a vector index on the embedding property of Entity nodes
@@ -821,6 +825,29 @@ func (c *Neo4jClient) DeleteRelationship(ctx context.Context, elementID string) 
 		return fmt.Errorf("failed to delete relationship: %w", err)
 	}
 
+	return nil
+}
+
+// DeleteDataset removes every graph node scoped to a dataset. DETACH DELETE also
+// removes relationships connected to those nodes and is safe to repeat.
+func (c *Neo4jClient) DeleteDataset(ctx context.Context, datasetID string) error {
+	if c == nil || c.driver == nil {
+		return fmt.Errorf("neo4j driver not initialized")
+	}
+	if strings.TrimSpace(datasetID) == "" {
+		return fmt.Errorf("neo4j dataset id is required")
+	}
+
+	session := c.newSession(ctx, neo4j.AccessModeWrite)
+	defer session.Close(ctx)
+	_, err := session.Run(ctx, `
+		MATCH (node)
+		WHERE node.kb_id = $dataset_id
+		DETACH DELETE node
+	`, map[string]interface{}{"dataset_id": datasetID})
+	if err != nil {
+		return fmt.Errorf("failed to delete dataset graph: %w", err)
+	}
 	return nil
 }
 

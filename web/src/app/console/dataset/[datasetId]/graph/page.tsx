@@ -106,7 +106,8 @@ export default function DatasetGraphPage() {
   const initializedRootRef = React.useRef<string | null>(null);
   const { data: graphStatusData, isLoading: isStatusLoading } = useDatasetGraphStatus(
     datasetId,
-    canViewGraph
+    canViewGraph,
+    2_000
   );
   const graphStatus = graphStatusData?.data;
   const canQueryGraph = canViewGraph && graphStatus?.can_search === true;

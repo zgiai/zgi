@@ -1469,8 +1469,12 @@ const messages = {
     batchRowFailed: 'This query failed. Review the graph status and retry.',
     elapsedTime: 'Elapsed time',
     chunks: 'chunks',
+    candidateChunks: 'candidate chunks',
+    candidateChunksHelp:
+      'Candidate chunks are relevant chunks found during graph execution. Final results are further filtered by deduplication, reranking, the score threshold, and Top-K.',
     entitiesCount: 'Entities',
     chunksCount: 'Chunks',
+    candidateChunksCount: 'Candidate chunks',
 
     // Entity Search
     entitySearch: {

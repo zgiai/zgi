@@ -44,7 +44,7 @@ const scenarios = [
   {
     name: 'graph visibility polling',
     file: 'src/hooks/dataset/use-dataset-graph.ts',
-    snippets: ['if (graphStatus.can_search) return false;', "'unavailable'"],
+    snippets: ['refetchInterval: number | false = false', 'refetchIntervalInBackground: false'],
   },
   {
     name: 'graph retrieval expected-error handling',
@@ -76,7 +76,8 @@ const scenarios = [
     name: 'scrollable graph execution results',
     file: 'src/components/datasets/hit-testing/components/results-panel.tsx',
     snippets: [
-      '<ScrollArea className="min-h-0 min-w-0 flex-1">',
+      '<ScrollArea',
+      'className="min-h-0 min-w-0 max-w-full flex-1"',
       '<GraphExecutionDetails execution={graphExecution} />',
       '{results.map((result, index)',
     ],
@@ -97,18 +98,14 @@ const scenarios = [
     snippets: ['queryClient.setQueryData(DATASET_KEYS.detail(datasetId), response)'],
   },
   {
-    name: 'inherited graph embedding',
+    name: 'graph extraction model',
     file: 'src/components/datasets/indexing-config/graph-model-settings.tsx',
-    snippets: ["t('graph.inheritedEmbeddingModel')", 'modelType="text-chat"'],
+    snippets: ['modelType="text-chat"'],
   },
   {
     name: 'simplified Chinese graph translations',
     file: 'src/i18n/modules/datasets/zh-Hans.ts',
-    snippets: [
-      "enableTitle: '启用知识图谱'",
-      "inheritedEmbeddingModel: '继承的嵌入模型'",
-      "knowledgeGraphTitle: '知识图谱'",
-    ],
+    snippets: ["enableTitle: '启用知识图谱'", "knowledgeGraphTitle: '知识图谱'"],
   },
   {
     name: 'graph rebuild confirmation',
@@ -129,7 +126,10 @@ const scenarios = [
     name: 'graph page query states',
     file: 'src/app/console/dataset/[datasetId]/graph/page.tsx',
     snippets: [
-      'next_cursor',
+      'useDatasetGraphStatus(',
+      '2_000',
+      'node_limit:',
+      'edge_limit:',
       'graph_query_limit_exceeded',
       'seed_node_id',
       "graphStatus?.status === 'waiting_content'",

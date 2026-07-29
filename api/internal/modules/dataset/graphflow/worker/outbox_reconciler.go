@@ -14,6 +14,7 @@ const (
 	defaultOutboxBatchSize = 100
 	outboxLeaseDuration    = time.Minute
 	outboxRetryDelay       = 5 * time.Second
+	datasetPurgeRetryDelay = 5 * time.Minute
 	maxOutboxAttempts      = 20
 )
 
@@ -29,7 +30,7 @@ type OutboxReconciler struct {
 	repository *repository.GraphOutboxRepository
 	run        OutboxEventProcessor
 	visibility OutboxEventProcessor
-	cleanup    OutboxEventProcessor
+	purge      OutboxEventProcessor
 	now        func() time.Time
 }
 
@@ -37,13 +38,13 @@ func NewOutboxReconciler(
 	db *gorm.DB,
 	run OutboxEventProcessor,
 	visibility OutboxEventProcessor,
-	cleanup OutboxEventProcessor,
+	purge OutboxEventProcessor,
 ) *OutboxReconciler {
 	return &OutboxReconciler{
 		repository: repository.NewGraphOutboxRepository(db),
 		run:        run,
 		visibility: visibility,
-		cleanup:    cleanup,
+		purge:      purge,
 		now:        func() time.Time { return time.Now().UTC() },
 	}
 }
@@ -70,6 +71,12 @@ func (r *OutboxReconciler) RunOnce(ctx context.Context) error {
 		if err != nil {
 			message := err.Error()
 			if event.AttemptCount >= maxOutboxAttempts {
+				if event.EventType == model.GraphOutboxEventDatasetPurge {
+					if retryErr := r.repository.Retry(ctx, event.ID, now.Add(datasetPurgeRetryDelay), message); retryErr != nil {
+						return retryErr
+					}
+					continue
+				}
 				if handler, ok := processor.(OutboxTerminalFailureHandler); ok {
 					if handleErr := handler.HandleTerminalFailure(ctx, event, err); handleErr != nil {
 						return handleErr
@@ -98,8 +105,8 @@ func (r *OutboxReconciler) processor(eventType string) OutboxEventProcessor {
 		return r.run
 	case model.GraphOutboxEventVisibility:
 		return r.visibility
-	case model.GraphOutboxEventCleanup:
-		return r.cleanup
+	case model.GraphOutboxEventDatasetPurge:
+		return r.purge
 	default:
 		return nil
 	}

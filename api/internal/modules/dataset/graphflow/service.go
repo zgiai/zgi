@@ -3,6 +3,7 @@ package graphflow
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -123,6 +124,24 @@ func NewService(
 	}
 
 	return svc
+}
+
+func (s *Service) DeleteDatasetProjection(ctx context.Context, datasetID uuid.UUID) error {
+	if s == nil || datasetID == uuid.Nil {
+		return fmt.Errorf("graph dataset projection scope is required")
+	}
+	var cleanupErrors []error
+	if s.Neo4jClient == nil {
+		cleanupErrors = append(cleanupErrors, fmt.Errorf("neo4j client not configured"))
+	} else if err := s.Neo4jClient.DeleteDataset(ctx, datasetID.String()); err != nil {
+		cleanupErrors = append(cleanupErrors, err)
+	}
+	if s.WeaviateClient != nil {
+		if err := s.WeaviateClient.DeleteClass(ctx, fmt.Sprintf("Entity_%s", datasetID)); err != nil {
+			cleanupErrors = append(cleanupErrors, err)
+		}
+	}
+	return errors.Join(cleanupErrors...)
 }
 
 // GetExtractor returns an extractor based on the strategy and custom model settings

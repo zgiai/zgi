@@ -1445,8 +1445,12 @@ const messages: DatasetMessages = {
     batchRowFailed: '本次查询失败，请检查图谱状态后重试。',
     elapsedTime: '耗时',
     chunks: '个切片',
+    candidateChunks: '个候选切片',
+    candidateChunksHelp:
+      '候选切片是图谱执行阶段找到的相关切片，最终召回结果还会经过去重、重排序、分数阈值和 Top-K 筛选。',
     entitiesCount: '实体数',
     chunksCount: '切片数',
+    candidateChunksCount: '候选切片数',
 
     // Entity Search
     entitySearch: {

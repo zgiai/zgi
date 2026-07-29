@@ -145,6 +145,59 @@ func TestOutboxReconcilerRetriesWithOriginalErrorBeforeMaximumAttempts(t *testin
 	}
 }
 
+func TestOutboxReconcilerDispatchesDatasetPurge(t *testing.T) {
+	db := openOutboxReconcilerTestDB(t)
+	event := &model.GraphOutboxEvent{
+		OrganizationID: uuid.New(),
+		DatasetID:      uuid.New(),
+		EventType:      model.GraphOutboxEventDatasetPurge,
+		AggregateKey:   "dataset-purge:test",
+		Status:         model.GraphOutboxStatusPending,
+	}
+	if err := db.Create(event).Error; err != nil {
+		t.Fatal(err)
+	}
+	purge := &outboxProcessorStub{}
+	if err := NewOutboxReconciler(db, nil, nil, purge).RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if purge.calls != 1 {
+		t.Fatalf("dataset purge calls = %d, want 1", purge.calls)
+	}
+}
+
+func TestOutboxReconcilerKeepsDatasetPurgeRetryable(t *testing.T) {
+	db := openOutboxReconcilerTestDB(t)
+	event := &model.GraphOutboxEvent{
+		OrganizationID: uuid.New(),
+		DatasetID:      uuid.New(),
+		EventType:      model.GraphOutboxEventDatasetPurge,
+		AggregateKey:   "dataset-purge:retry",
+		Status:         model.GraphOutboxStatusPending,
+		AttemptCount:   maxOutboxAttempts - 1,
+	}
+	if err := db.Create(event).Error; err != nil {
+		t.Fatal(err)
+	}
+	reconciler := NewOutboxReconciler(db, nil, nil, &outboxProcessorStub{err: fmt.Errorf("neo4j unavailable")})
+	now := time.Now().UTC()
+	reconciler.now = func() time.Time { return now }
+	if err := reconciler.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	var persisted model.GraphOutboxEvent
+	if err := db.First(&persisted, "id = ?", event.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if persisted.Status != model.GraphOutboxStatusPending {
+		t.Fatalf("dataset purge status = %q, want pending", persisted.Status)
+	}
+	if persisted.AvailableAt.Before(now.Add(datasetPurgeRetryDelay)) {
+		t.Fatalf("dataset purge retry scheduled at %s", persisted.AvailableAt)
+	}
+}
+
 func openOutboxReconcilerTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
 	dsn := fmt.Sprintf("file:outbox-reconciler-%d?mode=memory&cache=shared", time.Now().UnixNano())

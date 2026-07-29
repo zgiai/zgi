@@ -15,9 +15,10 @@ const (
 )
 
 const (
-	GraphOutboxEventRun        = "graph_run"
-	GraphOutboxEventVisibility = "graph_visibility"
-	GraphOutboxEventCleanup    = "graph_cleanup"
+	GraphOutboxEventRun          = "graph_run"
+	GraphOutboxEventVisibility   = "graph_visibility"
+	GraphOutboxEventCleanup      = "graph_cleanup"
+	GraphOutboxEventDatasetPurge = "dataset_purge"
 )
 
 type GraphOutboxEvent struct {
