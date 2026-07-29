@@ -43,6 +43,20 @@ const ActivateForm = () => {
     }).catch(() => setResult({ is_valid: false, status: 'invalid' })).finally(() => setLoading(false));
   }, [email, token, workspaceID]);
 
+  const selectInvitationDestination = async () => {
+    if (!result?.data?.organization_id) return true;
+    try {
+      await accountService.updateContext({
+        mode: 'organization',
+        current_organization_id: result.data.organization_id,
+        current_workspace_id: result.data.workspace_id || null,
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     if (!result?.data?.account_exists && password !== confirmPassword) {
@@ -54,15 +68,9 @@ const ActivateForm = () => {
     try {
       if (result?.data?.account_exists) {
         await authService.login({ email, password, invite_token: token });
-        if (result.data.organization_id) {
-          await accountService.updateContext({
-            mode: 'organization',
-            current_organization_id: result.data.organization_id,
-            current_workspace_id: result.data.workspace_id || null,
-          });
-        }
+        const destinationSelected = await selectInvitationDestination();
         await useAuthStore.getState().initializeAuth({ force: true });
-        router.replace('/console');
+        router.replace(destinationSelected ? '/console' : '/onboarding/organization');
         return;
       }
       await authService.activate({
@@ -74,15 +82,9 @@ const ActivateForm = () => {
         interface_language: navigator.language.startsWith('zh') ? 'zh-Hans' : 'en-US',
         timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
       });
-      if (result?.data?.organization_id) {
-        await accountService.updateContext({
-          mode: 'organization',
-          current_organization_id: result.data.organization_id,
-          current_workspace_id: result.data.workspace_id || null,
-        });
-      }
+      const destinationSelected = await selectInvitationDestination();
       await useAuthStore.getState().initializeAuth({ force: true });
-      router.replace('/console');
+      router.replace(destinationSelected ? '/console' : '/onboarding/organization');
     } catch (cause) {
       setError(getErrorMessage(cause));
     } finally {
