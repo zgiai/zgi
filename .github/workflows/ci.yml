@@ -112,6 +112,7 @@ jobs:
           go_root="$(go env GOROOT)"
           docker run --rm \
             --user "$(id -u):$(id -g)" \
+            --tmpfs /tmp:rw,exec,nosuid,size=4g \
             -e HOME=/tmp \
             -e CGO_ENABLED=1 \
             -e GOCACHE=/tmp/go-build \
