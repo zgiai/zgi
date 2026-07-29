@@ -282,7 +282,7 @@ const CreateLocalFileDialog = ({
             workspaceId={effectiveWorkspaceId}
             processingMode={selectedProcessingMode}
             parseProvider="auto"
-            showAllowedTypesHint
+            showAllowedTypesHint={false}
             useNativeAccept={false}
             onFilesChange={handleFilesChange}
             onQueueStateChange={state => setFailedUploadFilesCount(state.failedCount)}

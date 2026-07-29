@@ -707,12 +707,10 @@ const messages: DashboardMessages = {
       },
     },
     aichatSkills: {
-      pageTitle: 'Skill 管理',
-      pageSubtitle:
-        '统一管理可在对话、小 Z 和智能体中使用的 Skill，覆盖办公协作、文档处理、内容创作、数据分析、知识检索和任务自动化。',
-      title: 'Skill 管理',
-      description:
-        '统一管理可在对话、小 Z 和智能体中使用的 Skill，覆盖办公协作、文档处理、内容创作、数据分析、知识检索和任务自动化。',
+      pageTitle: 'Skills',
+      pageSubtitle: '管理组织可用的 Skill，按需启用或导入自定义能力。',
+      title: 'Skills',
+      description: '管理组织可用的 Skill，按需启用或导入自定义能力。',
       enabledCount: '已启用 {count} 个 Skill',
       sectionCount: '{count} 个 Skill',
       empty: '暂无可用 Skill。',
@@ -724,8 +722,10 @@ const messages: DashboardMessages = {
       },
       filters: {
         scenarioLabel: '使用场景',
-        allScenarios: '全部',
+        scenarioAria: '按使用场景筛选',
+        allScenarios: '全部场景',
         capabilityLabel: '能力用途',
+        capabilityAria: '按能力用途筛选',
         allCapabilities: '全部能力',
         searchPlaceholder: '搜索名称、描述或标签',
         searchAria: '搜索 Skill',
@@ -737,6 +737,16 @@ const messages: DashboardMessages = {
         allStatus: '全部状态',
         visibleCount: '显示 {count} 个 Skill',
         empty: '没有匹配当前筛选条件的 Skill。',
+      },
+      details: {
+        availability: '允许使用',
+        availabilityDescription: '启用后，对话、小 Z 和智能体可以调用此 Skill。',
+        description: '介绍',
+        whenToUse: '适用场景',
+        information: '基本信息',
+        source: '来源',
+        runtime: '运行方式',
+        tags: '标签',
       },
       sections: {
         system: {

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { AlertCircle, CheckCircle2, Loader2, Trash2, Upload, Wrench } from 'lucide-react';
+import { AlertCircle, CheckCircle2, Loader2, Trash2, Upload } from 'lucide-react';
 import { toast } from 'sonner';
 import { AIChatSkillIcon } from '@/components/chat/variants/aichat/skill-icon';
 import {
@@ -27,6 +27,13 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Skeleton } from '@/components/ui/skeleton';
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from '@/components/ui/sheet';
 import { Switch } from '@/components/ui/switch';
 import { AgentResourceBoundDialog } from '@/components/common/agent-resource-bound-dialog';
 import {
@@ -60,7 +67,7 @@ import type { AgentResourceBoundImpact } from '@/services/types/common';
 import { getAgentResourceBoundImpact } from '@/utils/agent-resource-bound';
 import { aichatService } from '@/services/aichat.service';
 
-const SKILL_CARD_GRID_CLASS = 'grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4';
+const SKILL_CARD_GRID_CLASS = 'grid gap-2 sm:grid-cols-2 lg:grid-cols-3';
 const SYSTEM_SKILL_NAME_CONFLICT_ERROR =
   'This skill name is reserved by a built-in system skill. Please rename your custom skill and try again.';
 
@@ -71,12 +78,6 @@ const RUNTIME_LABEL_KEYS: Record<AIChatSkillRuntimeType, DashboardSuffix> = {
   prompt: 'organization.aichatSkills.runtime.prompt',
   hybrid: 'organization.aichatSkills.runtime.hybrid',
 };
-
-const STATUS_LABEL_KEYS = {
-  enabled: 'organization.aichatSkills.status.enabled',
-  disabled: 'organization.aichatSkills.status.disabled',
-  invalid: 'organization.aichatSkills.status.invalid',
-} as const satisfies Record<string, DashboardSuffix>;
 
 const SCRIPT_STATUS_LABEL_KEYS = {
   runnable: 'organization.aichatSkills.scriptStatus.runnable',
@@ -218,7 +219,7 @@ interface AIChatSkillCardProps {
   enabled: boolean;
   disabled: boolean;
   onToggle: (skillId: string, enabled: boolean) => void;
-  onDelete: (skill: AIChatSkillMetadata) => void;
+  onSelect: (skill: AIChatSkillMetadata) => void;
 }
 
 /**
@@ -228,7 +229,7 @@ interface AIChatSkillCardProps {
  * @description Card item for scanning, enabling, and managing one AIChat Skill.
  * @usage Render within the organization AIChat Skill settings grid.
  * @example
- * <AIChatSkillCard skill={skill} display={display} enabled={true} disabled={false} onToggle={onToggle} onDelete={onDelete} />
+ * <AIChatSkillCard skill={skill} display={display} enabled={true} disabled={false} onToggle={onToggle} onSelect={onSelect} />
  */
 function AIChatSkillCard({
   skill,
@@ -236,46 +237,23 @@ function AIChatSkillCard({
   enabled,
   disabled,
   onToggle,
-  onDelete,
+  onSelect,
 }: AIChatSkillCardProps) {
   const t = useT('dashboard');
-  const isCustom = getSkillSource(skill) === 'custom';
   const invalid = isInvalidSkill(skill);
-  const scriptStatusLabelKey = getScriptStatusLabelKey(skill);
-  const wasEnabledRef = useRef(enabled);
-  const [showEnableTrace, setShowEnableTrace] = useState(false);
-  const isStartingEnable = enabled && !wasEnabledRef.current;
-  const isDrawingEnableBorder = isStartingEnable || showEnableTrace;
-
-  useEffect(() => {
-    const justEnabled = enabled && !wasEnabledRef.current;
-    wasEnabledRef.current = enabled;
-
-    if (!justEnabled) {
-      if (!enabled) setShowEnableTrace(false);
-      return;
-    }
-
-    setShowEnableTrace(true);
-    const timeout = window.setTimeout(() => setShowEnableTrace(false), 900);
-    return () => window.clearTimeout(timeout);
-  }, [enabled]);
 
   return (
     <article
       className={cn(
-        'relative isolate flex h-full flex-col rounded-md border border-border bg-card p-3.5 shadow-sm transition-[border-color,box-shadow,background-color,opacity]',
-        enabled && !invalid && !isDrawingEnableBorder ? 'zgi-skill-card-enabled' : '',
-        !enabled && !invalid ? 'hover:border-primary/25' : '',
+        'group flex min-h-[72px] items-center gap-2.5 rounded-md border border-border bg-card p-2.5 transition-[border-color,background-color,opacity] hover:border-primary/25 hover:bg-muted/20',
         disabled || invalid ? 'opacity-75' : ''
       )}
     >
-      {isDrawingEnableBorder ? (
-        <svg className="zgi-skill-card-enable-trace" aria-hidden="true">
-          <rect className="zgi-skill-card-enable-trace-line" pathLength="1" />
-        </svg>
-      ) : null}
-      <div className="flex items-start gap-3">
+      <button
+        type="button"
+        className="flex min-w-0 flex-1 items-center gap-2.5 rounded-md text-left outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+        onClick={() => onSelect(skill)}
+      >
         <div
           className={cn(
             'flex size-8 shrink-0 items-center justify-center rounded-md border bg-background text-muted-foreground transition-colors',
@@ -285,80 +263,25 @@ function AIChatSkillCard({
           <AIChatSkillIcon icon={display.icon} className="size-4" />
         </div>
         <div className="min-w-0 flex-1">
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              <h3 className="truncate text-sm font-semibold text-foreground">{display.label}</h3>
-            </div>
-            <Switch
-              checked={enabled}
-              disabled={disabled || invalid}
-              aria-label={t('organization.aichatSkills.toggleAria', { skill: display.label })}
-              onCheckedChange={checked => onToggle(skill.skill_id, checked)}
-            />
+          <div className="flex items-center gap-2">
+            <h3 className="truncate text-sm font-semibold text-foreground">{display.label}</h3>
+            {invalid ? (
+              <Badge variant="destructive" className="h-5 shrink-0 rounded-md px-1.5 font-normal">
+                {t('organization.aichatSkills.status.invalid')}
+              </Badge>
+            ) : null}
           </div>
+          <p className="mt-0.5 line-clamp-1 text-xs leading-5 text-muted-foreground">
+            {display.description}
+          </p>
         </div>
-      </div>
-
-      <div className="mt-3 flex flex-wrap gap-1.5">
-        <Badge variant="outline" className="rounded-md font-normal">
-          {display.categoryLabel}
-        </Badge>
-        <Badge
-          variant={invalid ? 'destructive' : enabled ? 'success' : 'subtle'}
-          className="rounded-md font-normal"
-        >
-          {t(
-            invalid
-              ? STATUS_LABEL_KEYS.invalid
-              : enabled
-                ? STATUS_LABEL_KEYS.enabled
-                : STATUS_LABEL_KEYS.disabled
-          )}
-        </Badge>
-        {scriptStatusLabelKey ? (
-          <Badge
-            variant={skill.scripts_supported ? 'outline' : 'warning'}
-            className="rounded-md font-normal"
-          >
-            {t(scriptStatusLabelKey)}
-          </Badge>
-        ) : null}
-      </div>
-
-      <p className="mt-2.5 line-clamp-3 min-h-[3.75rem] text-sm leading-5 text-muted-foreground">
-        {display.description}
-      </p>
-
-      {invalid && skill.validation_error ? (
-        <div className="mt-2.5 rounded-md border border-destructive/30 bg-destructive/10 p-2 text-xs leading-5 text-destructive">
-          {skill.validation_error}
-        </div>
-      ) : null}
-
-      {display.tags.length > 0 ? (
-        <div className="mt-2.5 flex flex-wrap gap-1.5">
-          {display.tags.map(tag => (
-            <Badge key={tag} variant="subtle" className="rounded-md font-normal">
-              {tag}
-            </Badge>
-          ))}
-        </div>
-      ) : null}
-
-      {isCustom ? (
-        <div className="mt-auto flex justify-end pt-3">
-          <Button
-            variant="ghost"
-            size="sm"
-            className="text-destructive hover:text-destructive"
-            disabled={disabled}
-            onClick={() => onDelete(skill)}
-          >
-            <Trash2 className="size-4" />
-            {t('organization.aichatSkills.actions.delete')}
-          </Button>
-        </div>
-      ) : null}
+      </button>
+      <Switch
+        checked={enabled}
+        disabled={disabled || invalid}
+        aria-label={t('organization.aichatSkills.toggleAria', { skill: display.label })}
+        onCheckedChange={checked => onToggle(skill.skill_id, checked)}
+      />
     </article>
   );
 }
@@ -385,10 +308,8 @@ function AutoSaveStatusIndicator({ status }: AutoSaveStatusIndicatorProps) {
   return (
     <span
       className={cn(
-        'inline-flex h-8 items-center gap-1.5 rounded-md border px-2.5 text-xs font-medium',
-        isError
-          ? 'border-destructive/30 bg-destructive/10 text-destructive'
-          : 'border-border bg-background text-muted-foreground'
+        'inline-flex h-7 items-center gap-1.5 text-xs',
+        isError ? 'font-medium text-destructive' : 'text-muted-foreground'
       )}
     >
       <Icon className={cn('size-3.5', isSaving ? 'animate-spin' : '')} />
@@ -404,10 +325,7 @@ interface UseAIChatSkillConfigPersistenceOptions {
     enabledSkillIds: string[],
     impact?: AgentResourceBoundImpact
   ) => Promise<AIChatSkillConfigUpdateResult>;
-  onConfirmationRequired: (
-    impact: AgentResourceBoundImpact,
-    requestedSkillIds: string[]
-  ) => void;
+  onConfirmationRequired: (impact: AgentResourceBoundImpact, requestedSkillIds: string[]) => void;
   onError: (error: unknown, requestedSkillIds: string[]) => boolean;
 }
 
@@ -650,6 +568,7 @@ export function AIChatSkillSettingsSection() {
   const [capabilityFilter, setCapabilityFilter] = useState<SkillCapabilityFilter>('all');
   const [sourceFilter, setSourceFilter] = useState<SkillSourceFilter>('all');
   const [statusFilter, setStatusFilter] = useState<SkillStatusFilter>('all');
+  const [selectedSkill, setSelectedSkill] = useState<AIChatSkillMetadata | null>(null);
   const [skillToDelete, setSkillToDelete] = useState<AIChatSkillMetadata | null>(null);
   const [bindingImpact, setBindingImpact] = useState<AgentResourceBoundImpact | null>(null);
   const [isCheckingDeleteImpact, setIsCheckingDeleteImpact] = useState(false);
@@ -721,14 +640,13 @@ export function AIChatSkillSettingsSection() {
     },
     []
   );
-  const { enabledSkillIds, saveStatus, saveEnabledSkillIds } =
-    useAIChatSkillConfigPersistence({
-      initialEnabledSkillIds,
-      isLoading,
-      save: saveSkillConfig,
-      onConfirmationRequired: handleSkillConfigConfirmationRequired,
-      onError: handleSkillConfigError,
-    });
+  const { enabledSkillIds, saveStatus, saveEnabledSkillIds } = useAIChatSkillConfigPersistence({
+    initialEnabledSkillIds,
+    isLoading,
+    save: saveSkillConfig,
+    onConfirmationRequired: handleSkillConfigConfirmationRequired,
+    onError: handleSkillConfigError,
+  });
   const isMutating =
     saveStatus === 'saving' ||
     updateConfig.isPending ||
@@ -901,6 +819,7 @@ export function AIChatSkillSettingsSection() {
           ? { agent_binding_action: 'unbind', impact_token: impact.impact_token }
           : undefined,
       });
+      if (selectedSkill?.skill_id === skillToDelete.skill_id) setSelectedSkill(null);
       setSkillToDelete(null);
       setBindingImpact(null);
     } catch (error) {
@@ -966,7 +885,7 @@ export function AIChatSkillSettingsSection() {
           {t('organization.aichatSkills.empty')}
         </div>
       ) : (
-        <div className="space-y-3">
+        <div className="space-y-2.5">
           <AIChatSkillCatalogFilters
             locale={locale}
             availableScenarios={availableScenarios}
@@ -986,16 +905,15 @@ export function AIChatSkillSettingsSection() {
           />
 
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex flex-wrap items-center gap-2">
-              <Badge variant="subtle" className="h-8 rounded-md">
+            <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+              <span>
                 {t('organization.aichatSkills.filters.visibleCount', {
                   count: filteredSkills.length,
                 })}
-              </Badge>
-              <Badge variant="secondary" className="h-8 rounded-md">
-                <Wrench className="size-4" />
-                {t('organization.aichatSkills.enabledCount', { count: enabledCount })}
-              </Badge>
+              </span>
+              <span aria-hidden="true">·</span>
+              <span>{t('organization.aichatSkills.enabledCount', { count: enabledCount })}</span>
+              <span aria-hidden="true">·</span>
               <AutoSaveStatusIndicator status={saveStatus} />
             </div>
             <div className="flex flex-wrap items-center gap-2 sm:justify-end">{importButtons}</div>
@@ -1011,7 +929,7 @@ export function AIChatSkillSettingsSection() {
                   enabled={enabledSkillIds.includes(skill.skill_id)}
                   disabled={isMutating}
                   onToggle={handleToggle}
-                  onDelete={skill => void handleRequestDelete(skill)}
+                  onSelect={setSelectedSkill}
                 />
               ))}
             </div>
@@ -1027,6 +945,148 @@ export function AIChatSkillSettingsSection() {
           )}
         </div>
       )}
+
+      <Sheet
+        open={Boolean(selectedSkill)}
+        onOpenChange={open => {
+          if (!open) setSelectedSkill(null);
+        }}
+      >
+        <SheetContent className="w-full overflow-y-auto p-0 sm:max-w-md">
+          {selectedSkill && skillDisplays[selectedSkill.skill_id] ? (
+            <>
+              <SheetHeader className="border-b px-6 py-5 pr-12 text-left">
+                <div className="flex items-start gap-3">
+                  <div className="flex size-11 shrink-0 items-center justify-center rounded-lg border bg-primary/10 text-primary">
+                    <AIChatSkillIcon
+                      icon={skillDisplays[selectedSkill.skill_id].icon}
+                      className="size-5"
+                    />
+                  </div>
+                  <div className="min-w-0">
+                    <SheetTitle className="truncate text-base">
+                      {skillDisplays[selectedSkill.skill_id].label}
+                    </SheetTitle>
+                    <SheetDescription className="mt-1">{selectedSkill.skill_id}</SheetDescription>
+                  </div>
+                </div>
+              </SheetHeader>
+
+              <div className="space-y-6 px-6 py-5">
+                <div className="flex items-center justify-between gap-4 rounded-lg border p-3">
+                  <div>
+                    <p className="text-sm font-medium">
+                      {t('organization.aichatSkills.details.availability')}
+                    </p>
+                    <p className="mt-0.5 text-xs text-muted-foreground">
+                      {t('organization.aichatSkills.details.availabilityDescription')}
+                    </p>
+                  </div>
+                  <Switch
+                    checked={enabledSkillIds.includes(selectedSkill.skill_id)}
+                    disabled={isMutating || isInvalidSkill(selectedSkill)}
+                    aria-label={t('organization.aichatSkills.toggleAria', {
+                      skill: skillDisplays[selectedSkill.skill_id].label,
+                    })}
+                    onCheckedChange={checked => handleToggle(selectedSkill.skill_id, checked)}
+                  />
+                </div>
+
+                <section>
+                  <h3 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                    {t('organization.aichatSkills.details.description')}
+                  </h3>
+                  <p className="mt-2 text-sm leading-6 text-foreground">
+                    {skillDisplays[selectedSkill.skill_id].description}
+                  </p>
+                </section>
+
+                {skillDisplays[selectedSkill.skill_id].whenToUse ? (
+                  <section>
+                    <h3 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                      {t('organization.aichatSkills.details.whenToUse')}
+                    </h3>
+                    <p className="mt-2 text-sm leading-6 text-foreground">
+                      {skillDisplays[selectedSkill.skill_id].whenToUse}
+                    </p>
+                  </section>
+                ) : null}
+
+                <section>
+                  <h3 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                    {t('organization.aichatSkills.details.information')}
+                  </h3>
+                  <dl className="mt-2 divide-y rounded-lg border">
+                    <div className="flex items-center justify-between gap-4 px-3 py-2.5 text-sm">
+                      <dt className="text-muted-foreground">
+                        {t('organization.aichatSkills.filters.capabilityLabel')}
+                      </dt>
+                      <dd className="text-right font-medium">
+                        {skillDisplays[selectedSkill.skill_id].categoryLabel}
+                      </dd>
+                    </div>
+                    <div className="flex items-center justify-between gap-4 px-3 py-2.5 text-sm">
+                      <dt className="text-muted-foreground">
+                        {t('organization.aichatSkills.details.source')}
+                      </dt>
+                      <dd className="text-right font-medium">
+                        {t(
+                          getSkillSource(selectedSkill) === 'custom'
+                            ? 'organization.aichatSkills.source.custom'
+                            : 'organization.aichatSkills.source.system'
+                        )}
+                      </dd>
+                    </div>
+                    <div className="flex items-center justify-between gap-4 px-3 py-2.5 text-sm">
+                      <dt className="text-muted-foreground">
+                        {t('organization.aichatSkills.details.runtime')}
+                      </dt>
+                      <dd className="text-right font-medium">
+                        {t(RUNTIME_LABEL_KEYS[selectedSkill.runtime_type])}
+                      </dd>
+                    </div>
+                  </dl>
+                </section>
+
+                {skillDisplays[selectedSkill.skill_id].tags.length > 0 ? (
+                  <section>
+                    <h3 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                      {t('organization.aichatSkills.details.tags')}
+                    </h3>
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      {skillDisplays[selectedSkill.skill_id].tags.map(tag => (
+                        <Badge key={tag} variant="subtle" className="rounded-md font-normal">
+                          {tag}
+                        </Badge>
+                      ))}
+                    </div>
+                  </section>
+                ) : null}
+
+                {isInvalidSkill(selectedSkill) && selectedSkill.validation_error ? (
+                  <div className="rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-sm leading-5 text-destructive">
+                    {selectedSkill.validation_error}
+                  </div>
+                ) : null}
+
+                {getSkillSource(selectedSkill) === 'custom' ? (
+                  <div className="border-t pt-4">
+                    <Button
+                      variant="ghost"
+                      className="text-destructive hover:text-destructive"
+                      disabled={isMutating}
+                      onClick={() => void handleRequestDelete(selectedSkill)}
+                    >
+                      <Trash2 className="size-4" />
+                      {t('organization.aichatSkills.actions.delete')}
+                    </Button>
+                  </div>
+                ) : null}
+              </div>
+            </>
+          ) : null}
+        </SheetContent>
+      </Sheet>
 
       <ConfirmDialog
         variant="danger"

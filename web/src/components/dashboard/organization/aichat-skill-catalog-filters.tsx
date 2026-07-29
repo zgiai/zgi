@@ -61,129 +61,97 @@ export function AIChatSkillCatalogFilters({
   const t = useT('dashboard');
 
   return (
-    <div className="space-y-3 rounded-lg border bg-card p-3.5 shadow-sm">
-      <div className="space-y-2">
-        <p className="text-xs font-medium text-muted-foreground">
-          {t('organization.aichatSkills.filters.scenarioLabel')}
-        </p>
-        <div className="flex gap-1.5 overflow-x-auto pb-1">
-          <Button
-            type="button"
-            variant={scenario === 'all' ? 'default' : 'ghost'}
-            size="sm"
-            className="shrink-0 rounded-md"
-            aria-pressed={scenario === 'all'}
-            onClick={() => onScenarioChange('all')}
+    <div className="flex flex-col gap-2 border-b border-border/70 pb-3 lg:flex-row lg:items-center">
+      <SearchInput
+        value={searchQuery}
+        onChange={event => onSearchQueryChange(event.target.value)}
+        placeholder={t('organization.aichatSkills.filters.searchPlaceholder')}
+        aria-label={t('organization.aichatSkills.filters.searchAria')}
+        className="h-8 rounded-md lg:min-w-[220px] lg:flex-1"
+      />
+
+      <div className="grid gap-2 sm:grid-cols-2 lg:flex lg:shrink-0">
+        <Select
+          value={scenario}
+          onValueChange={value => onScenarioChange(value as SkillScenarioFilter)}
+        >
+          <SelectTrigger
+            className="h-8 rounded-md bg-background lg:w-32"
+            aria-label={t('organization.aichatSkills.filters.scenarioAria')}
           >
-            {t('organization.aichatSkills.filters.allScenarios')}
-          </Button>
-          {availableScenarios.map(item => (
-            <Button
-              key={item}
-              type="button"
-              variant={scenario === item ? 'default' : 'ghost'}
-              size="sm"
-              className="shrink-0 rounded-md"
-              aria-pressed={scenario === item}
-              onClick={() => onScenarioChange(item)}
-            >
-              {getSkillScenarioLabel(item, locale)}
-            </Button>
-          ))}
-        </div>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">
+              {t('organization.aichatSkills.filters.allScenarios')}
+            </SelectItem>
+            {availableScenarios.map(item => (
+              <SelectItem key={item} value={item}>
+                {getSkillScenarioLabel(item, locale)}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+
+        <Select
+          value={capability}
+          onValueChange={value => onCapabilityChange(value as SkillCapabilityFilter)}
+        >
+          <SelectTrigger
+            className="h-8 rounded-md bg-background lg:w-32"
+            aria-label={t('organization.aichatSkills.filters.capabilityAria')}
+          >
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">
+              {t('organization.aichatSkills.filters.allCapabilities')}
+            </SelectItem>
+            {availableCapabilities.map(item => (
+              <SelectItem key={item} value={item}>
+                {getSkillCapabilityLabel(item, locale)}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+
+        <Select value={source} onValueChange={value => onSourceChange(value as SkillSourceFilter)}>
+          <SelectTrigger
+            className="h-8 rounded-md bg-background lg:w-28"
+            aria-label={t('organization.aichatSkills.filters.sourceAria')}
+          >
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">{t('organization.aichatSkills.filters.allSources')}</SelectItem>
+            <SelectItem value="system">{t('organization.aichatSkills.source.system')}</SelectItem>
+            <SelectItem value="custom">{t('organization.aichatSkills.source.custom')}</SelectItem>
+          </SelectContent>
+        </Select>
+
+        <Select value={status} onValueChange={value => onStatusChange(value as SkillStatusFilter)}>
+          <SelectTrigger
+            className="h-8 rounded-md bg-background lg:w-28"
+            aria-label={t('organization.aichatSkills.filters.statusAria')}
+          >
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">{t('organization.aichatSkills.filters.allStatus')}</SelectItem>
+            <SelectItem value="enabled">{t('organization.aichatSkills.status.enabled')}</SelectItem>
+            <SelectItem value="disabled">
+              {t('organization.aichatSkills.status.disabled')}
+            </SelectItem>
+            <SelectItem value="invalid">{t('organization.aichatSkills.status.invalid')}</SelectItem>
+          </SelectContent>
+        </Select>
       </div>
 
-      <div className="space-y-2">
-        <p className="text-xs font-medium text-muted-foreground">
-          {t('organization.aichatSkills.filters.capabilityLabel')}
-        </p>
-        <div className="flex flex-wrap gap-1.5">
-          <Button
-            type="button"
-            variant={capability === 'all' ? 'secondary' : 'outline'}
-            size="sm"
-            className="h-7 rounded-full px-3 text-xs"
-            aria-pressed={capability === 'all'}
-            onClick={() => onCapabilityChange('all')}
-          >
-            {t('organization.aichatSkills.filters.allCapabilities')}
-          </Button>
-          {availableCapabilities.map(item => (
-            <Button
-              key={item}
-              type="button"
-              variant={capability === item ? 'secondary' : 'outline'}
-              size="sm"
-              className="h-7 rounded-full px-3 text-xs"
-              aria-pressed={capability === item}
-              onClick={() => onCapabilityChange(item)}
-            >
-              {getSkillCapabilityLabel(item, locale)}
-            </Button>
-          ))}
-        </div>
-      </div>
-
-      <div className="flex flex-col gap-2 lg:flex-row lg:items-center">
-        <SearchInput
-          value={searchQuery}
-          onChange={event => onSearchQueryChange(event.target.value)}
-          placeholder={t('organization.aichatSkills.filters.searchPlaceholder')}
-          aria-label={t('organization.aichatSkills.filters.searchAria')}
-          className="rounded-md lg:w-[360px]"
-        />
-        <div className="grid gap-2 sm:grid-cols-2 lg:flex lg:shrink-0">
-          <Select
-            value={source}
-            onValueChange={value => onSourceChange(value as SkillSourceFilter)}
-          >
-            <SelectTrigger
-              className="rounded-md bg-background lg:w-40"
-              aria-label={t('organization.aichatSkills.filters.sourceAria')}
-            >
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">
-                {t('organization.aichatSkills.filters.allSources')}
-              </SelectItem>
-              <SelectItem value="system">{t('organization.aichatSkills.source.system')}</SelectItem>
-              <SelectItem value="custom">{t('organization.aichatSkills.source.custom')}</SelectItem>
-            </SelectContent>
-          </Select>
-
-          <Select
-            value={status}
-            onValueChange={value => onStatusChange(value as SkillStatusFilter)}
-          >
-            <SelectTrigger
-              className="rounded-md bg-background lg:w-40"
-              aria-label={t('organization.aichatSkills.filters.statusAria')}
-            >
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">
-                {t('organization.aichatSkills.filters.allStatus')}
-              </SelectItem>
-              <SelectItem value="enabled">
-                {t('organization.aichatSkills.status.enabled')}
-              </SelectItem>
-              <SelectItem value="disabled">
-                {t('organization.aichatSkills.status.disabled')}
-              </SelectItem>
-              <SelectItem value="invalid">
-                {t('organization.aichatSkills.status.invalid')}
-              </SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-        {hasActiveFilters ? (
-          <Button variant="ghost" size="sm" onClick={onClearFilters}>
-            {t('organization.aichatSkills.actions.clearFilters')}
-          </Button>
-        ) : null}
-      </div>
+      {hasActiveFilters ? (
+        <Button variant="ghost" size="sm" className="h-8 shrink-0" onClick={onClearFilters}>
+          {t('organization.aichatSkills.actions.clearFilters')}
+        </Button>
+      ) : null}
     </div>
   );
 }

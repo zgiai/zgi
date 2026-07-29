@@ -19,7 +19,7 @@ const messages = {
   datasets: 'Datasets',
   agents: 'Agents',
   workflows: 'Workflows',
-  workflowAgents: 'Workflow Agents',
+  workflowAgents: 'Workflows',
   prompts: 'Prompts',
   skills: 'Skills',
   dbs: 'Databases',
@@ -47,7 +47,7 @@ const messages = {
   image: 'Image',
   resources: 'Assets',
   developer: 'Developer',
-  tools: 'Authoring',
+  tools: 'Capabilities',
   fileRecognition: 'File recognition',
   management: 'Settings',
 };

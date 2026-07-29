@@ -733,12 +733,10 @@ const messages = {
       },
     },
     aichatSkills: {
-      pageTitle: 'Skill Management',
-      pageSubtitle:
-        'Manage the Skills available to conversations, Z Assistant, and agents for office collaboration, document processing, content creation, data analysis, knowledge retrieval, and task automation.',
-      title: 'Skill Management',
-      description:
-        'Manage the Skills available to conversations, Z Assistant, and agents for office collaboration, document processing, content creation, data analysis, knowledge retrieval, and task automation.',
+      pageTitle: 'Skills',
+      pageSubtitle: 'Manage organization Skills and import custom capabilities when needed.',
+      title: 'Skills',
+      description: 'Manage organization Skills and import custom capabilities when needed.',
       enabledCount: '{count} Skills enabled',
       sectionCount: '{count} Skills',
       empty: 'No Skills are available.',
@@ -750,8 +748,10 @@ const messages = {
       },
       filters: {
         scenarioLabel: 'Use case',
-        allScenarios: 'All',
+        scenarioAria: 'Filter by use case',
+        allScenarios: 'All use cases',
         capabilityLabel: 'Capability',
+        capabilityAria: 'Filter by capability',
         allCapabilities: 'All capabilities',
         searchPlaceholder: 'Search name, ID, description, or tags',
         searchAria: 'Search Skills',
@@ -763,6 +763,17 @@ const messages = {
         allStatus: 'All statuses',
         visibleCount: '{count} Skills shown',
         empty: 'No Skills match the current filters.',
+      },
+      details: {
+        availability: 'Available to use',
+        availabilityDescription:
+          'When enabled, this Skill can be used in conversations, Z Assistant, and agents.',
+        description: 'Description',
+        whenToUse: 'When to use',
+        information: 'Information',
+        source: 'Source',
+        runtime: 'Runtime',
+        tags: 'Tags',
       },
       sections: {
         system: {
