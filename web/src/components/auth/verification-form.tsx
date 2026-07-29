@@ -315,24 +315,30 @@ export function VerificationForm({ className }: VerificationFormProps) {
       }
 
       let result = false;
+      let verifiedRegistrationToken = '';
+      let verifiedResetToken = '';
 
       if (type === 'register') {
         const res = await verifyRegisterMutation.mutateAsync({ email: email || '', code, token });
-        result = res?.is_valid ?? false;
+        verifiedRegistrationToken = res?.token ?? '';
+        result = Boolean(res?.is_valid && verifiedRegistrationToken);
       } else {
         const res = await verifyForgotPasswordMutation.mutateAsync({
           email: email || '',
           code,
           token,
         });
-        result = res?.data?.is_valid ?? false;
+        verifiedResetToken = res?.data?.token ?? '';
+        result = Boolean(res?.data?.is_valid && verifiedResetToken);
       }
 
       if (result) {
         if (type === 'reset') {
-          router.push(`/reset-password?token=${token}&email=${encodeURIComponent(email || '')}`);
+          router.push(
+            `/reset-password?token=${encodeURIComponent(verifiedResetToken)}&email=${encodeURIComponent(email || '')}`
+          );
         } else {
-          let completeUrl = `/register/complete?token=${token}&email=${encodeURIComponent(email || '')}`;
+          let completeUrl = `/register/complete?token=${encodeURIComponent(verifiedRegistrationToken)}&email=${encodeURIComponent(email || '')}`;
           const redirect = searchParams.get('redirect');
           if (redirect) {
             completeUrl += `&redirect=${encodeURIComponent(redirect)}`;
@@ -389,9 +395,18 @@ export function VerificationForm({ className }: VerificationFormProps) {
         } else {
           response = await startRegisterMutation.mutateAsync({ email, language: locale });
         }
+        if (!response?.token) {
+          throw new Error('Resend response did not include a verification token');
+        }
+
         const nextCooldown = createCooldownSnapshotFromResponse(response);
-        writeResendCooldownSnapshot(resendCooldownKey, nextCooldown);
+        const nextCooldownKey = buildResendCooldownKey(email, response.token, type);
+        writeResendCooldownSnapshot(nextCooldownKey, nextCooldown);
         setResendCooldown(nextCooldown);
+
+        const params = new URLSearchParams(searchParams.toString());
+        params.set('token', response.token);
+        router.replace(`/verify?${params.toString()}`);
       }
 
       setCountdown(RESEND_COOLDOWN_SECONDS);

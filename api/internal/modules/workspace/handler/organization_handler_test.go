@@ -1681,6 +1681,77 @@ func TestDirectAddMemberAllowsMissingWorkspace(t *testing.T) {
 	require.NotContains(t, recorder.Body.String(), `"workspace"`)
 }
 
+func TestDirectAddMemberReportsEmailFailureAfterMemberWasCreated(t *testing.T) {
+	handler := &OrganizationHandler{
+		organizationService: fakeOrganizationService{
+			isOrganizationAdminOrOwnerFn: func(context.Context, string, string) (bool, error) {
+				return true, nil
+			},
+			directAddMemberFn: func(context.Context, *shared_dto.DirectAddOrganizationMemberRequest) (*shared_dto.DirectAddOrganizationMemberResponse, error) {
+				return &shared_dto.DirectAddOrganizationMemberResponse{
+					AccountID: "member-1",
+					Email:     "alice@example.com",
+					Name:      "Alice",
+				}, nil
+			},
+		},
+		accountService: fakeAccountService{
+			getAccountByIDFn: func(context.Context, string) (*auth_model.Account, error) {
+				return &auth_model.Account{ID: "member-1", Email: "alice@example.com"}, nil
+			},
+			sendDirectAddMemberEmailFn: func(context.Context, *auth_model.Account, string, string, string, string) error {
+				return errors.New("provider unavailable")
+			},
+		},
+	}
+
+	c, recorder := newOrganizationHandlerTestContext(http.MethodPost, "/organizations/org-1/members/direct-add")
+	c.Set("account_id", "owner-1")
+	c.Set("organization_id", "org-1")
+	c.Params = gin.Params{{Key: "organization_id", Value: "org-1"}}
+	c.Request.Body = io.NopCloser(bytes.NewBufferString(`{"name":"Alice","email":"alice@example.com","send_email":true}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	handler.DirectAddMember(c)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.Contains(t, recorder.Body.String(), `"account_id":"member-1"`)
+	require.Contains(t, recorder.Body.String(), `"email_delivery_status":"failed"`)
+	require.Contains(t, recorder.Body.String(), `"email_delivery_message":"member created but email delivery failed"`)
+}
+
+func TestDirectAddMemberChecksEmailRateLimitBeforeCreatingMember(t *testing.T) {
+	memberCreated := false
+	handler := &OrganizationHandler{
+		organizationService: fakeOrganizationService{
+			isOrganizationAdminOrOwnerFn: func(context.Context, string, string) (bool, error) {
+				return true, nil
+			},
+			directAddMemberFn: func(context.Context, *shared_dto.DirectAddOrganizationMemberRequest) (*shared_dto.DirectAddOrganizationMemberResponse, error) {
+				memberCreated = true
+				return nil, nil
+			},
+		},
+		accountService: fakeAccountService{
+			isEmailSendIPLimitFn: func(context.Context, string) (bool, error) {
+				return true, nil
+			},
+		},
+	}
+
+	c, recorder := newOrganizationHandlerTestContext(http.MethodPost, "/organizations/org-1/members/direct-add")
+	c.Set("account_id", "owner-1")
+	c.Set("organization_id", "org-1")
+	c.Params = gin.Params{{Key: "organization_id", Value: "org-1"}}
+	c.Request.Body = io.NopCloser(bytes.NewBufferString(`{"name":"Alice","email":"alice@example.com","send_email":true}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	handler.DirectAddMember(c)
+
+	require.Equal(t, http.StatusTooManyRequests, recorder.Code)
+	require.False(t, memberCreated)
+}
+
 func TestOrganizationRoutesRegisterCurrentMembersList(t *testing.T) {
 	t.Parallel()
 
