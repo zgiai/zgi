@@ -182,6 +182,37 @@ func TestEmailRegistrationKeepsVerifiedTokenWhenAutomaticLoginFails(t *testing.T
 	require.Equal(t, 1, accounts.registerCalls)
 }
 
+func TestEmailRegistrationRejectsShortPasswordAtServiceLayer(t *testing.T) {
+	service, _ := newTestEmailRegistrationService(t, EmailRegistrationOptions{AllowRegister: true})
+	_, err := service.Finish(t.Context(), EmailRegistrationFinishRequest{
+		Token: "unused", Name: "User", Password: "short", PasswordConfirm: "short",
+	}, "127.0.0.1")
+	require.ErrorIs(t, err, ErrEmailRegistrationPasswordTooShort)
+}
+
+func TestEmailRegistrationDoesNotHidePostCreateRegistrationFailure(t *testing.T) {
+	tokenManager := newTestEmailRegistrationTokenManager(t)
+	accounts := &fakeEmailRegistrationAccounts{
+		registerErr:               errors.New("initialize account workspace context: database unavailable"),
+		registerErrCreatesAccount: true,
+	}
+	sender := &fakeEmailRegistrationSender{}
+	service := NewEmailRegistrationService(accounts, tokenManager, sender, EmailRegistrationOptions{AllowRegister: true})
+
+	sent, err := service.SendCode(t.Context(), EmailRegistrationSendRequest{Email: "user@example.com"}, "127.0.0.1")
+	require.NoError(t, err)
+	verified, err := service.VerifyCode(t.Context(), EmailRegistrationVerifyRequest{
+		Email: "user@example.com", Code: sender.code, Token: sent.Token,
+	})
+	require.NoError(t, err)
+
+	_, err = service.Finish(t.Context(), EmailRegistrationFinishRequest{
+		Token: verified.Token, Name: "User", Password: "secret123", PasswordConfirm: "secret123",
+	}, "127.0.0.1")
+	require.ErrorContains(t, err, "initialize account workspace context")
+	require.Empty(t, accounts.loginIP)
+}
+
 func newTestEmailRegistrationService(t *testing.T, options EmailRegistrationOptions) (*EmailRegistrationService, *fakeEmailRegistrationSender) {
 	t.Helper()
 	sender := &fakeEmailRegistrationSender{}
@@ -225,14 +256,15 @@ func (f *fakeEmailRegistrationSender) SendRegistrationCode(
 }
 
 type fakeEmailRegistrationAccounts struct {
-	existingEmail   string
-	limited         bool
-	limitErr        error
-	registerCalls   int
-	registeredEmail string
-	loginIP         string
-	registerErr     error
-	loginErr        error
+	existingEmail             string
+	limited                   bool
+	limitErr                  error
+	registerCalls             int
+	registeredEmail           string
+	loginIP                   string
+	registerErr               error
+	registerErrCreatesAccount bool
+	loginErr                  error
 }
 
 func (f *fakeEmailRegistrationAccounts) ExistsByEmail(_ context.Context, email string) bool {
@@ -257,6 +289,9 @@ func (f *fakeEmailRegistrationAccounts) RegisterEx(
 ) (*auth_model.Account, error) {
 	f.registerCalls++
 	if f.registerErr != nil {
+		if f.registerErrCreatesAccount {
+			f.existingEmail = email
+		}
 		return nil, f.registerErr
 	}
 	f.registeredEmail = email

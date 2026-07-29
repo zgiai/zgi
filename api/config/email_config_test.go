@@ -108,6 +108,80 @@ func TestLoadEmailConfigUsesOfficialResendURLWhenBaseURLIsEmpty(t *testing.T) {
 	}
 }
 
+func TestLoadEmailConfigCanonicalSMTPDefaultsToStartTLS(t *testing.T) {
+	values := map[string]string{
+		envEmailProvider:   "smtp",
+		envEmailSMTPServer: "smtp.example.com",
+	}
+	source := &envSource{lookupEnv: func(key string) (string, bool) {
+		value, ok := values[key]
+		return value, ok
+	}}
+	cfg := &Config{}
+
+	requireNoError(t, loadEmailConfig(cfg, source))
+	if cfg.Email.SMTPSecurity != "starttls" || cfg.Email.SMTPUseTLS || !cfg.Email.SMTPOpportunisticTLS {
+		t.Fatalf("canonical SMTP did not default to STARTTLS: %+v", cfg.Email)
+	}
+}
+
+func TestLoadEmailConfigPreservesExplicitSMTPNone(t *testing.T) {
+	values := map[string]string{
+		envEmailProvider:     "smtp",
+		envEmailSMTPSecurity: "none",
+	}
+	source := &envSource{lookupEnv: func(key string) (string, bool) {
+		value, ok := values[key]
+		return value, ok
+	}}
+	cfg := &Config{}
+
+	requireNoError(t, loadEmailConfig(cfg, source))
+	if cfg.Email.SMTPSecurity != "none" || cfg.Email.SMTPUseTLS || cfg.Email.SMTPOpportunisticTLS {
+		t.Fatalf("explicit SMTP none was not preserved: %+v", cfg.Email)
+	}
+}
+
+func TestLoadEmailConfigPreservesLegacySMTPDefaultsAndFlags(t *testing.T) {
+	testCases := []struct {
+		name              string
+		values            map[string]string
+		wantSecurity      string
+		wantUseTLS        bool
+		wantOpportunistic bool
+	}{
+		{
+			name:         "legacy provider default",
+			values:       map[string]string{envEmailMailType: "smtp"},
+			wantSecurity: "",
+		},
+		{
+			name:       "legacy implicit TLS flag",
+			values:     map[string]string{envEmailProvider: "smtp", envEmailSMTPUseTLS: "true"},
+			wantUseTLS: true,
+		},
+		{
+			name:              "legacy opportunistic TLS flag",
+			values:            map[string]string{envEmailProvider: "smtp", envEmailSMTPOpportunisticTLS: "true"},
+			wantOpportunistic: true,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			source := &envSource{lookupEnv: func(key string) (string, bool) {
+				value, ok := tc.values[key]
+				return value, ok
+			}}
+			cfg := &Config{}
+			requireNoError(t, loadEmailConfig(cfg, source))
+			if cfg.Email.SMTPSecurity != tc.wantSecurity || cfg.Email.SMTPUseTLS != tc.wantUseTLS || cfg.Email.SMTPOpportunisticTLS != tc.wantOpportunistic {
+				t.Fatalf("legacy SMTP settings changed: %+v", cfg.Email)
+			}
+		})
+	}
+}
+
 func requireNoError(t *testing.T, err error) {
 	t.Helper()
 	if err != nil {
@@ -133,6 +207,30 @@ func TestValidateConfigRejectsUnknownEmailProvider(t *testing.T) {
 	}
 }
 
+func TestValidateConfigRejectsCleartextResendURLOutsideDevelopment(t *testing.T) {
+	cfg := developmentTestConfig()
+	cfg.Server = ServerConfig{Mode: "release", Environment: "production"}
+	cfg.JWT.Secret = "production-test-secret"
+	cfg.Encryption.APIKeyEncryptionKey = "production-test-encryption-key"
+	cfg.Email.MailType = "resend"
+	cfg.Email.ResendAPIURL = "http://mail.example.com/v1"
+
+	err := validateConfig(cfg)
+	if err == nil || !strings.Contains(err.Error(), "must use HTTPS") {
+		t.Fatalf("validateConfig() error = %v, want HTTPS requirement", err)
+	}
+}
+
+func TestValidateConfigAllowsCleartextResendURLInDevelopment(t *testing.T) {
+	cfg := developmentTestConfig()
+	cfg.Email.MailType = "resend"
+	cfg.Email.ResendAPIURL = "http://127.0.0.1:8080/v1"
+
+	if err := validateConfig(cfg); err != nil {
+		t.Fatalf("validateConfig() rejected local Resend proxy: %v", err)
+	}
+}
+
 func TestEmailConfigJSONDoesNotExposeCredentials(t *testing.T) {
 	payload, err := json.Marshal(EmailConfig{
 		ResendAPIKey: "resend-secret",
@@ -148,12 +246,16 @@ func TestEmailConfigJSONDoesNotExposeCredentials(t *testing.T) {
 
 func developmentTestConfig() *Config {
 	return &Config{
-		Server:              ServerConfig{Mode: "debug", Environment: "local"},
-		Email:               EmailConfig{MailType: "smtp", MailDefaultSendFrom: "noreply@example.com", SMTPServer: "localhost", SMTPPort: 587},
-		Database:            DatabaseConfig{MaxIdleConns: 1, MaxOpenConns: 1, ConnMaxLifetime: 1},
-		Redis:               RedisConfig{PoolSize: 1, MinIdleConns: 1},
-		TaskQueue:           TaskQueueConfig{Retention: 1},
-		Workflow:            WorkflowConfig{ExecutionTimeout: 1, LLMTimeout: 1, HeartbeatInterval: 1, CleanupTimeout: 1},
+		Server:    ServerConfig{Mode: "debug", Environment: "local"},
+		Email:     EmailConfig{MailType: "smtp", MailDefaultSendFrom: "noreply@example.com", SMTPServer: "localhost", SMTPPort: 587},
+		Database:  DatabaseConfig{MaxIdleConns: 1, MaxOpenConns: 1, ConnMaxLifetime: 1},
+		Redis:     RedisConfig{PoolSize: 1, MinIdleConns: 1},
+		TaskQueue: TaskQueueConfig{Retention: 1},
+		Workflow:  WorkflowConfig{ExecutionTimeout: 1, LLMTimeout: 1, HeartbeatInterval: 1, CleanupTimeout: 1},
+		WorkflowFileExtraction: WorkflowFileExtractionConfig{
+			MaxContentSize:    1,
+			ExtractionTimeout: 1,
+		},
 		AnswerNodeStreaming: AnswerNodeStreamingConfig{ChunkSize: 1},
 	}
 }

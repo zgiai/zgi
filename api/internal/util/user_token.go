@@ -56,6 +56,86 @@ var config = DefaultConfig()
 // TokenManager manages token operations
 type TokenManager struct{}
 
+type TokenCodeAction string
+
+const (
+	TokenCodeConsume TokenCodeAction = "consume"
+	TokenCodeReserve TokenCodeAction = "reserve"
+)
+
+type TokenCodeStatus int
+
+const (
+	TokenCodeInvalid TokenCodeStatus = iota
+	TokenCodeVerified
+	TokenCodeMismatch
+	TokenCodeRateLimited
+)
+
+var verifyTokenCodeScript = redis.NewScript(`
+local raw = redis.call('GET', KEYS[1])
+if not raw then
+  return {0, ''}
+end
+
+local data = cjson.decode(raw)
+local claim = data[ARGV[1]]
+if claim == nil or tostring(claim) ~= ARGV[2] then
+  return {0, ''}
+end
+
+if data['code_reserved'] == true then
+  return {0, ''}
+end
+
+local expected = data['code']
+local master_matches = ARGV[4] ~= '' and ARGV[3] == ARGV[4]
+if expected == nil or (tostring(expected) ~= ARGV[3] and not master_matches) then
+  local attempts = redis.call('INCR', KEYS[2])
+  if attempts == 1 then
+    redis.call('PEXPIRE', KEYS[2], ARGV[6])
+  end
+  if attempts >= tonumber(ARGV[5]) then
+    redis.call('DEL', KEYS[1])
+    return {3, tostring(attempts)}
+  end
+  return {2, tostring(attempts)}
+end
+
+redis.call('DEL', KEYS[2])
+if ARGV[7] == 'reserve' then
+  local ttl = redis.call('PTTL', KEYS[1])
+  data['code_reserved'] = true
+  local encoded = cjson.encode(data)
+  redis.call('SET', KEYS[1], encoded)
+  if ttl > 0 then
+    redis.call('PEXPIRE', KEYS[1], ttl)
+  end
+  return {1, encoded}
+end
+
+redis.call('DEL', KEYS[1])
+return {1, raw}
+`)
+
+var releaseTokenCodeReservationScript = redis.NewScript(`
+local raw = redis.call('GET', KEYS[1])
+if not raw then
+  return 0
+end
+local data = cjson.decode(raw)
+if data[ARGV[1]] == nil or tostring(data[ARGV[1]]) ~= ARGV[2] or data['code_reserved'] ~= true then
+  return 0
+end
+local ttl = redis.call('PTTL', KEYS[1])
+data['code_reserved'] = nil
+redis.call('SET', KEYS[1], cjson.encode(data))
+if ttl > 0 then
+  redis.call('PEXPIRE', KEYS[1], ttl)
+end
+return 1
+`)
+
 // TokenData represents token-related data
 type TokenData struct {
 	AccountID *string                `json:"account_id"`
@@ -303,6 +383,68 @@ func (tm *TokenManager) ConsumeTokenData(ctx context.Context, token, tokenType s
 		return nil, errors.New("token type mismatch")
 	}
 	return tokenData, nil
+}
+
+// VerifyTokenCode atomically checks a token-bound code, applies the failed
+// attempt limit, and either consumes the token or reserves it for a retryable
+// follow-up operation.
+func (tm *TokenManager) VerifyTokenCode(
+	ctx context.Context,
+	token, tokenType, claimKey, claimValue, providedCode, masterCode string,
+	maxAttempts int,
+	attemptWindow time.Duration,
+	action TokenCodeAction,
+) (*TokenData, TokenCodeStatus, error) {
+	if strings.TrimSpace(token) == "" || strings.TrimSpace(tokenType) == "" || claimKey == "" || maxAttempts <= 0 {
+		return nil, TokenCodeInvalid, errors.New("token verification arguments are invalid")
+	}
+	if action != TokenCodeConsume && action != TokenCodeReserve {
+		return nil, TokenCodeInvalid, errors.New("token code action is invalid")
+	}
+	if attemptWindow <= 0 {
+		attemptWindow = 5 * time.Minute
+	}
+
+	result, err := verifyTokenCodeScript.Run(ctx, redisUtil.GetClient(), []string{
+		tm.getTokenKey(token, tokenType),
+		tm.getTokenUsageKey(token, tokenType),
+	}, claimKey, claimValue, providedCode, strings.TrimSpace(masterCode), maxAttempts, attemptWindow.Milliseconds(), string(action)).Slice()
+	if err != nil {
+		return nil, TokenCodeInvalid, fmt.Errorf("verify token code: %w", err)
+	}
+	if len(result) != 2 {
+		return nil, TokenCodeInvalid, errors.New("verify token code returned an invalid result")
+	}
+	statusValue, ok := result[0].(int64)
+	if !ok {
+		return nil, TokenCodeInvalid, errors.New("verify token code returned an invalid status")
+	}
+	status := TokenCodeStatus(statusValue)
+	if status != TokenCodeVerified {
+		return nil, status, nil
+	}
+	raw, ok := result[1].(string)
+	if !ok || raw == "" {
+		return nil, TokenCodeInvalid, errors.New("verify token code returned invalid token data")
+	}
+	var rawData map[string]interface{}
+	if err := json.Unmarshal([]byte(raw), &rawData); err != nil {
+		return nil, TokenCodeInvalid, fmt.Errorf("decode verified token data: %w", err)
+	}
+	return tokenDataFromRaw(rawData), status, nil
+}
+
+func (tm *TokenManager) ReleaseTokenCodeReservation(ctx context.Context, token, tokenType, claimKey, claimValue string) error {
+	result, err := releaseTokenCodeReservationScript.Run(ctx, redisUtil.GetClient(), []string{
+		tm.getTokenKey(token, tokenType),
+	}, claimKey, claimValue).Int64()
+	if err != nil {
+		return fmt.Errorf("release token code reservation: %w", err)
+	}
+	if result != 1 {
+		return errors.New("token code reservation not found")
+	}
+	return nil
 }
 
 func tokenDataFromRaw(rawData map[string]interface{}) *TokenData {

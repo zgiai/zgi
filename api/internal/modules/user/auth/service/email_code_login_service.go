@@ -132,36 +132,49 @@ func (s *EmailCodeLoginService) VerifyAndLogin(ctx context.Context, req EmailCod
 		return nil, ErrEmailCodeLoginDisabled
 	}
 	emailAddress := normalizeEmailCodeLoginEmail(req.Email)
-	tokenData, err := s.tokenMgr.GetTokenData(req.Token, EmailCodeLoginTokenType)
-	if err != nil || tokenData == nil || tokenData.Email == nil || normalizeEmailCodeLoginEmail(*tokenData.Email) != emailAddress {
-		return nil, ErrEmailCodeLoginTokenInvalid
-	}
-
-	expectedCode, ok := tokenData.Extra["code"].(string)
 	masterCode := ""
 	if s.options.AllowMasterVerificationCode {
 		masterCode = strings.TrimSpace(s.options.MasterVerificationCode)
 	}
-	if !ok || (req.Code != expectedCode && (masterCode == "" || req.Code != masterCode)) {
-		attempts, incrementErr := s.tokenMgr.IncrementTokenUsage(ctx, req.Token, EmailCodeLoginTokenType, 5*time.Minute)
-		if incrementErr != nil {
-			return nil, fmt.Errorf("track email login verification attempt: %w", incrementErr)
-		}
-		if attempts >= int64(s.options.MaxCodeAttempts) {
-			_ = s.tokenMgr.RevokeToken(req.Token, EmailCodeLoginTokenType)
-			return nil, ErrEmailCodeLoginRateLimited
-		}
+	_, status, err := s.tokenMgr.VerifyTokenCode(
+		ctx,
+		req.Token,
+		EmailCodeLoginTokenType,
+		"email",
+		emailAddress,
+		req.Code,
+		masterCode,
+		s.options.MaxCodeAttempts,
+		5*time.Minute,
+		helper.TokenCodeReserve,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("verify email login code: %w", err)
+	}
+	switch status {
+	case helper.TokenCodeMismatch:
 		return nil, ErrEmailCodeLoginCodeInvalid
+	case helper.TokenCodeRateLimited:
+		return nil, ErrEmailCodeLoginRateLimited
+	case helper.TokenCodeVerified:
+	default:
+		return nil, ErrEmailCodeLoginTokenInvalid
+	}
+	releaseReservation := func() {
+		_ = s.tokenMgr.ReleaseTokenCodeReservation(ctx, req.Token, EmailCodeLoginTokenType, "email", emailAddress)
 	}
 	account, err := s.accounts.GetUserThroughEmail(ctx, emailAddress)
 	if err != nil || account == nil {
+		releaseReservation()
 		return nil, ErrEmailCodeLoginAccountMissing
 	}
 	if account.Status != auth_model.AccountStatusActive {
+		releaseReservation()
 		return nil, ErrEmailCodeLoginAccountBlocked
 	}
 	tokenPair, err := s.accounts.LoginCommon(account, ipAddress)
 	if err != nil {
+		releaseReservation()
 		return nil, fmt.Errorf("complete email code login: %w", err)
 	}
 	if _, err := s.tokenMgr.ConsumeTokenData(ctx, req.Token, EmailCodeLoginTokenType); err != nil {

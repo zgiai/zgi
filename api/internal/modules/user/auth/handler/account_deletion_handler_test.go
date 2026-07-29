@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"testing"
 
@@ -54,6 +55,24 @@ func TestAccountDeletionHandlerRequiresValidCodeBeforeDeleting(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, recorder.Code)
 	require.True(t, service.deleted)
+	require.True(t, service.completed)
+}
+
+func TestAccountDeletionHandlerReleasesVerificationWhenDeleteFails(t *testing.T) {
+	service := &accountDeletionHandlerService{valid: true, deleteErr: errors.New("database unavailable")}
+	handler := NewAccountHandler(service, nil)
+	c, recorder := newAccountContextHandlerTestContext(
+		http.MethodPost,
+		"/account/delete/confirm",
+		[]byte(`{"token":"deletion-token","code":"123456"}`),
+	)
+	c.Set("account_id", "account-1")
+
+	handler.ConfirmAccountDeletion(c)
+
+	require.Equal(t, http.StatusBadRequest, recorder.Code)
+	require.True(t, service.released)
+	require.False(t, service.completed)
 }
 
 type accountDeletionHandlerService struct {
@@ -64,6 +83,9 @@ type accountDeletionHandlerService struct {
 	valid             bool
 	emailSent         bool
 	deleted           bool
+	deleteErr         error
+	released          bool
+	completed         bool
 	verifiedAccountID string
 }
 
@@ -75,7 +97,7 @@ func (f *accountDeletionHandlerService) GenerateAccountDeletionVerificationCode(
 	return f.token, f.code, nil
 }
 
-func (f *accountDeletionHandlerService) SendAccountDeletionVerificationEmail(context.Context, *auth_model.Account, string) error {
+func (f *accountDeletionHandlerService) SendAccountDeletionVerificationEmail(context.Context, *auth_model.Account, string, string) error {
 	f.emailSent = true
 	return nil
 }
@@ -87,5 +109,15 @@ func (f *accountDeletionHandlerService) VerifyAccountDeletionCode(_ context.Cont
 
 func (f *accountDeletionHandlerService) DeleteAccount(context.Context, string) error {
 	f.deleted = true
+	return f.deleteErr
+}
+
+func (f *accountDeletionHandlerService) ReleaseAccountDeletionVerification(context.Context, string, string) error {
+	f.released = true
+	return nil
+}
+
+func (f *accountDeletionHandlerService) CompleteAccountDeletionVerification(context.Context, string, string) error {
+	f.completed = true
 	return nil
 }

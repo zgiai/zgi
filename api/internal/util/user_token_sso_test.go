@@ -2,6 +2,7 @@ package util
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -34,6 +35,55 @@ func TestTokenManagerIncrementTokenUsage(t *testing.T) {
 	ttl := server.TTL(tm.getTokenUsageKey("ticket-1", "sso_login_ticket"))
 	require.Positive(t, ttl)
 	require.LessOrEqual(t, ttl, time.Minute)
+}
+
+func TestTokenManagerVerifyTokenCodeEnforcesAttemptLimitAtomically(t *testing.T) {
+	server := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
+	t.Cleanup(func() {
+		_ = client.Close()
+		redisUtil.SetClient(nil)
+	})
+	redisUtil.SetClient(client)
+
+	tm := NewTokenManager()
+	token, err := tm.GenerateDataToken(t.Context(), "email_registration_challenge", map[string]interface{}{
+		"registration_email": "user@example.com",
+		"code":               "123456",
+	})
+	require.NoError(t, err)
+
+	const requestCount = 20
+	statuses := make(chan TokenCodeStatus, requestCount)
+	errorsSeen := make(chan error, requestCount)
+	var wg sync.WaitGroup
+	for i := 0; i < requestCount; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, status, verifyErr := tm.VerifyTokenCode(
+				t.Context(), token, "email_registration_challenge",
+				"registration_email", "user@example.com", "000000", "",
+				3, time.Minute, TokenCodeConsume,
+			)
+			statuses <- status
+			errorsSeen <- verifyErr
+		}()
+	}
+	wg.Wait()
+	close(statuses)
+	close(errorsSeen)
+
+	counts := map[TokenCodeStatus]int{}
+	for status := range statuses {
+		counts[status]++
+	}
+	for verifyErr := range errorsSeen {
+		require.NoError(t, verifyErr)
+	}
+	require.Equal(t, 2, counts[TokenCodeMismatch])
+	require.Equal(t, 1, counts[TokenCodeRateLimited])
+	require.Equal(t, requestCount-3, counts[TokenCodeInvalid])
 }
 
 func TestTokenManagerDecrementTokenUsageDeletesKeyAtZero(t *testing.T) {

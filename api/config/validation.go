@@ -39,6 +39,9 @@ func validateConfig(cfg *Config) error {
 		if err != nil || baseURL.Host == "" || (baseURL.Scheme != "http" && baseURL.Scheme != "https") {
 			return fmt.Errorf("%s must be an absolute HTTP(S) URL", envEmailResendBaseURL)
 		}
+		if baseURL.Scheme != "https" && !isDevelopmentMode(cfg) {
+			return fmt.Errorf("%s must use HTTPS outside development", envEmailResendBaseURL)
+		}
 	case "smtp":
 	default:
 		return fmt.Errorf("%s must be one of: resend, smtp", envEmailProvider)

@@ -105,6 +105,8 @@ func (h *EmailRegistrationHandler) respondError(c *gin.Context, err error) {
 		response.Fail(c, response.ErrEmailSendFailed)
 	case errors.Is(err, auth_service.ErrEmailRegistrationPasswordMismatch):
 		response.Fail(c, response.ErrPasswordMismatch)
+	case errors.Is(err, auth_service.ErrEmailRegistrationPasswordTooShort):
+		response.Fail(c, response.ErrInvalidParam)
 	case errors.Is(err, auth_service.ErrEmailRegistrationAccountFrozen):
 		response.Fail(c, response.ErrAccountFrozen)
 	default:

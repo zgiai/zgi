@@ -206,12 +206,20 @@ func (a *AccountServiceAdapter) GenerateAccountDeletionVerificationCode(ctx cont
 	return a.accountService.GenerateAccountDeletionVerificationCode(ctx, account)
 }
 
-func (a *AccountServiceAdapter) SendAccountDeletionVerificationEmail(ctx context.Context, account *auth_model.Account, code string) error {
-	return a.accountService.SendAccountDeletionVerificationEmail(ctx, account, code)
+func (a *AccountServiceAdapter) SendAccountDeletionVerificationEmail(ctx context.Context, account *auth_model.Account, token, code string) error {
+	return a.accountService.SendAccountDeletionVerificationEmail(ctx, account, token, code)
 }
 
 func (a *AccountServiceAdapter) VerifyAccountDeletionCode(ctx context.Context, accountID, token, code string) (bool, error) {
 	return a.accountService.VerifyAccountDeletionCode(ctx, accountID, token, code)
+}
+
+func (a *AccountServiceAdapter) ReleaseAccountDeletionVerification(ctx context.Context, accountID, token string) error {
+	return a.accountService.ReleaseAccountDeletionVerification(ctx, accountID, token)
+}
+
+func (a *AccountServiceAdapter) CompleteAccountDeletionVerification(ctx context.Context, accountID, token string) error {
+	return a.accountService.CompleteAccountDeletionVerification(ctx, accountID, token)
 }
 
 func (a *AccountServiceAdapter) LinkAccountIntegrate(ctx context.Context, provider auth_model.AccountIntegrateProvider, openID string, account *auth_model.Account) error {

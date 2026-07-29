@@ -419,7 +419,7 @@ func (h *AccountHandler) SendAccountDeletionCode(c *gin.Context) {
 		response.Fail(c, response.ErrSystemError)
 		return
 	}
-	if err := h.accountService.SendAccountDeletionVerificationEmail(c.Request.Context(), account, code); err != nil {
+	if err := h.accountService.SendAccountDeletionVerificationEmail(c.Request.Context(), account, token, code); err != nil {
 		response.Fail(c, response.ErrEmailSendFailed)
 		return
 	}
@@ -450,9 +450,11 @@ func (h *AccountHandler) ConfirmAccountDeletion(c *gin.Context) {
 		return
 	}
 	if err := h.accountService.DeleteAccount(c.Request.Context(), accountID); err != nil {
+		_ = h.accountService.ReleaseAccountDeletionVerification(c.Request.Context(), accountID, req.Token)
 		response.Fail(c, response.ErrAccountDeleteFailed)
 		return
 	}
+	_ = h.accountService.CompleteAccountDeletionVerification(c.Request.Context(), accountID, req.Token)
 	response.Success(c, nil)
 }
 

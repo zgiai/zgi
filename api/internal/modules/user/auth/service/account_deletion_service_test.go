@@ -38,7 +38,25 @@ func TestAccountDeletionCodeIsBoundToAuthenticatedAccount(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, valid)
 
+	// A verified challenge is reserved so concurrent confirmations cannot use it.
 	valid, err = service.VerifyAccountDeletionCode(t.Context(), account.ID, token, code)
 	require.Error(t, err)
 	require.False(t, valid)
+
+	require.NoError(t, service.ReleaseAccountDeletionVerification(t.Context(), account.ID, token))
+	valid, err = service.VerifyAccountDeletionCode(t.Context(), account.ID, token, code)
+	require.NoError(t, err)
+	require.True(t, valid)
+	require.NoError(t, service.CompleteAccountDeletionVerification(t.Context(), account.ID, token))
+
+	valid, err = service.VerifyAccountDeletionCode(t.Context(), account.ID, token, code)
+	require.Error(t, err)
+	require.False(t, valid)
+}
+
+func TestAccountDeletionEmailIdempotencyKeyIncludesChallengeToken(t *testing.T) {
+	first := accountDeletionEmailIdempotencyKey("account-1", "token-1")
+	second := accountDeletionEmailIdempotencyKey("account-1", "token-2")
+	require.NotEqual(t, first, second)
+	require.Equal(t, first, accountDeletionEmailIdempotencyKey("account-1", "token-1"))
 }

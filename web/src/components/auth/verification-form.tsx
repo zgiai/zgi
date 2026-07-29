@@ -391,9 +391,18 @@ export function VerificationForm({ className }: VerificationFormProps) {
         } else {
           response = await startRegisterMutation.mutateAsync({ email, language: locale });
         }
+        if (!response?.token) {
+          throw new Error('Resend response did not include a verification token');
+        }
+
         const nextCooldown = createCooldownSnapshotFromResponse(response);
-        writeResendCooldownSnapshot(resendCooldownKey, nextCooldown);
+        const nextCooldownKey = buildResendCooldownKey(email, response.token, type);
+        writeResendCooldownSnapshot(nextCooldownKey, nextCooldown);
         setResendCooldown(nextCooldown);
+
+        const params = new URLSearchParams(searchParams.toString());
+        params.set('token', response.token);
+        router.replace(`/verify?${params.toString()}`);
       }
 
       setCountdown(RESEND_COOLDOWN_SECONDS);

@@ -1793,8 +1793,8 @@ func (s *AccountService) GenerateAccountDeletionVerificationCode(ctx context.Con
 }
 
 // SendAccountDeletionVerificationEmail implements the SendAccountDeletionVerificationEmail method
-func (s *AccountService) SendAccountDeletionVerificationEmail(ctx context.Context, account *auth_model.Account, code string) error {
-	idempotencyKey := fmt.Sprintf("account-deletion:%s:%x", account.ID, sha256.Sum256([]byte(code)))
+func (s *AccountService) SendAccountDeletionVerificationEmail(ctx context.Context, account *auth_model.Account, token, code string) error {
+	idempotencyKey := accountDeletionEmailIdempotencyKey(account.ID, token)
 	language := "en-US"
 	if account.InterfaceLanguage != nil {
 		language = *account.InterfaceLanguage
@@ -1802,46 +1802,59 @@ func (s *AccountService) SendAccountDeletionVerificationEmail(ctx context.Contex
 	return email.SendAccountDeletionCodeMailTask(ctx, language, account.Email, code, idempotencyKey)
 }
 
+func accountDeletionEmailIdempotencyKey(accountID, token string) string {
+	return fmt.Sprintf("account-deletion:%s:%x", accountID, sha256.Sum256([]byte(token)))
+}
+
 // VerifyAccountDeletionCode implements the VerifyAccountDeletionCode method
 func (s *AccountService) VerifyAccountDeletionCode(ctx context.Context, accountID, token, code string) (bool, error) {
 	if strings.TrimSpace(accountID) == "" {
 		return false, errors.New("account id is required")
 	}
-	tokenData, err := s.tokenMgr.GetTokenData(token, "account_deletion")
-	if err != nil {
-		return false, err
-	}
-
-	if tokenData == nil || tokenData.AccountID == nil || *tokenData.AccountID != accountID {
-		return false, errors.New("invalid token")
-	}
-
-	storedCode, ok := tokenData.Extra["code"].(string)
 	// The master code is intentionally limited to development runtimes.
 	masterCode := ""
 	cfg := config.Current()
 	if cfg.Server.Mode == "debug" || cfg.Server.Environment == "local" || cfg.Server.Environment == "dev" {
 		masterCode = strings.TrimSpace(cfg.Auth.MasterVerificationCode)
 	}
-	if !ok || (storedCode != code && (masterCode == "" || code != masterCode)) {
-		attempts, incrementErr := s.tokenMgr.IncrementTokenUsage(ctx, token, "account_deletion", 5*time.Minute)
-		if incrementErr != nil {
-			return false, incrementErr
-		}
-		if attempts >= 5 {
-			_ = s.tokenMgr.RevokeToken(token, "account_deletion")
-		}
-		return false, nil
-	}
-	consumed, err := s.tokenMgr.ConsumeTokenData(ctx, token, "account_deletion")
+	_, status, err := s.tokenMgr.VerifyTokenCode(
+		ctx,
+		token,
+		"account_deletion",
+		"account_id",
+		accountID,
+		code,
+		masterCode,
+		5,
+		5*time.Minute,
+		helper.TokenCodeReserve,
+	)
 	if err != nil {
 		return false, err
 	}
-	if consumed.AccountID == nil || *consumed.AccountID != accountID {
+	switch status {
+	case helper.TokenCodeVerified:
+		return true, nil
+	case helper.TokenCodeMismatch, helper.TokenCodeRateLimited:
+		return false, nil
+	default:
 		return false, errors.New("invalid token")
 	}
+}
 
-	return true, nil
+func (s *AccountService) ReleaseAccountDeletionVerification(ctx context.Context, accountID, token string) error {
+	return s.tokenMgr.ReleaseTokenCodeReservation(ctx, token, "account_deletion", "account_id", accountID)
+}
+
+func (s *AccountService) CompleteAccountDeletionVerification(ctx context.Context, accountID, token string) error {
+	tokenData, err := s.tokenMgr.ConsumeTokenData(ctx, token, "account_deletion")
+	if err != nil {
+		return err
+	}
+	if tokenData.AccountID == nil || *tokenData.AccountID != accountID {
+		return errors.New("invalid token")
+	}
+	return nil
 }
 
 // func buildAccountExtensionFromJSONMap(extensions auth_model.JSONMap) *auth_model.AccountExtension {

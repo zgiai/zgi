@@ -22,6 +22,7 @@ const (
 
 	defaultEmailRegistrationMaxCodeAttempts = 5
 	defaultEmailRegistrationSendCooldown    = time.Minute
+	emailRegistrationMinimumPasswordLength  = 8
 )
 
 var (
@@ -32,6 +33,7 @@ var (
 	ErrEmailRegistrationRateLimited      = errors.New("email registration rate limit exceeded")
 	ErrEmailRegistrationSendFailed       = errors.New("email registration message could not be sent")
 	ErrEmailRegistrationPasswordMismatch = errors.New("email registration passwords do not match")
+	ErrEmailRegistrationPasswordTooShort = errors.New("email registration password is too short")
 	ErrEmailRegistrationAccountFrozen    = errors.New("email registration account is frozen")
 )
 
@@ -61,8 +63,8 @@ type EmailRegistrationFinishRequest struct {
 	Email           string `json:"email" binding:"omitempty,email"`
 	Token           string `json:"token" binding:"required"`
 	Name            string `json:"name" binding:"required"`
-	Password        string `json:"password" binding:"required"`
-	PasswordConfirm string `json:"password_confirm" binding:"required"`
+	Password        string `json:"password" binding:"required,min=8"`
+	PasswordConfirm string `json:"password_confirm" binding:"required,min=8"`
 }
 
 type EmailRegistrationAccountGateway interface {
@@ -219,37 +221,32 @@ func (s *EmailRegistrationService) VerifyCode(
 	}
 
 	normalizedEmail := normalizeRegistrationEmail(req.Email)
-	tokenData, err := s.tokenMgr.GetTokenData(req.Token, EmailRegistrationChallengeTokenType)
-	if err != nil || tokenData == nil {
-		return nil, ErrEmailRegistrationTokenInvalid
-	}
-	if tokenExtraString(tokenData.Extra, "registration_email") != normalizedEmail {
-		return nil, ErrEmailRegistrationTokenInvalid
-	}
-
-	expectedCode := tokenExtraString(tokenData.Extra, "code")
 	masterCode := ""
 	if s.options.AllowMasterVerificationCode {
 		masterCode = strings.TrimSpace(s.options.MasterVerificationCode)
 	}
-	if req.Code != expectedCode && (masterCode == "" || req.Code != masterCode) {
-		attempts, incrementErr := s.tokenMgr.IncrementTokenUsage(
-			ctx,
-			req.Token,
-			EmailRegistrationChallengeTokenType,
-			10*time.Minute,
-		)
-		if incrementErr != nil {
-			return nil, fmt.Errorf("track email registration verification attempt: %w", incrementErr)
-		}
-		if attempts >= int64(s.options.MaxCodeAttempts) {
-			_ = s.tokenMgr.RevokeToken(req.Token, EmailRegistrationChallengeTokenType)
-			return nil, ErrEmailRegistrationRateLimited
-		}
-		return nil, ErrEmailRegistrationCodeInvalid
+	consumedTokenData, status, err := s.tokenMgr.VerifyTokenCode(
+		ctx,
+		req.Token,
+		EmailRegistrationChallengeTokenType,
+		"registration_email",
+		normalizedEmail,
+		req.Code,
+		masterCode,
+		s.options.MaxCodeAttempts,
+		10*time.Minute,
+		helper.TokenCodeConsume,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("verify email registration code: %w", err)
 	}
-	consumedTokenData, err := s.tokenMgr.ConsumeTokenData(ctx, req.Token, EmailRegistrationChallengeTokenType)
-	if err != nil || tokenExtraString(consumedTokenData.Extra, "registration_email") != normalizedEmail {
+	switch status {
+	case helper.TokenCodeMismatch:
+		return nil, ErrEmailRegistrationCodeInvalid
+	case helper.TokenCodeRateLimited:
+		return nil, ErrEmailRegistrationRateLimited
+	case helper.TokenCodeVerified:
+	default:
 		return nil, ErrEmailRegistrationTokenInvalid
 	}
 
@@ -277,6 +274,9 @@ func (s *EmailRegistrationService) Finish(
 	}
 	if req.Password != req.PasswordConfirm {
 		return nil, ErrEmailRegistrationPasswordMismatch
+	}
+	if len(req.Password) < emailRegistrationMinimumPasswordLength {
+		return nil, ErrEmailRegistrationPasswordTooShort
 	}
 
 	tokenData, err := s.tokenMgr.GetTokenData(req.Token, EmailRegistrationVerifiedTokenType)
@@ -311,11 +311,7 @@ func (s *EmailRegistrationService) Finish(
 			if strings.Contains(normalizedError, "frozen") || strings.Contains(normalizedError, "freeze") {
 				return nil, fmt.Errorf("%w: %v", ErrEmailRegistrationAccountFrozen, err)
 			}
-			// A concurrent request may have created the same account. Let the
-			// password login below decide whether this request is a safe retry.
-			if !s.accounts.ExistsByEmail(ctx, emailAddress) {
-				return nil, fmt.Errorf("finish email registration: %w", err)
-			}
+			return nil, fmt.Errorf("finish email registration: %w", err)
 		}
 	}
 	loginReq := &shared_dto.LoginReq{

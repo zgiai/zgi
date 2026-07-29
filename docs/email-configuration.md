@@ -34,6 +34,7 @@ RESEND_BASE_URL=https://mail.example.com/v1
 ```
 
 `RESEND_BASE_URL` is a base URL, not the complete endpoint. ZGI normalizes the trailing slash and appends `/emails`. A compatible proxy must accept `Authorization: Bearer ...` and return a non-empty message `id` for a successful request.
+Production deployments must use HTTPS because the Resend API key is sent as a Bearer credential. Plain HTTP proxy URLs are accepted only in local or development mode.
 
 Optional branding and invitation-link settings:
 
@@ -58,6 +59,8 @@ EMAIL_SMTP_SECURITY=starttls
 ```
 
 For servers using TLS immediately on connection, commonly port 465, set `EMAIL_SMTP_SECURITY=implicit_tls`. Use `none` only on a trusted private network where the SMTP server intentionally has no TLS. With `starttls`, startup delivery fails if the server does not advertise STARTTLS.
+
+When SMTP is selected with the preferred `EMAIL_PROVIDER=smtp` key, omitted `EMAIL_SMTP_SECURITY` defaults to `starttls`. Existing deployments that select SMTP with a legacy provider key or set the legacy TLS flags keep their previous behavior; migrate them to an explicit `EMAIL_SMTP_SECURITY` value when practical.
 
 ## Compatibility keys
 

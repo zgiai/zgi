@@ -33,6 +33,7 @@ interface LoginFormProps {
 }
 
 const DEFAULT_PHONE_COUNTRY_CODE = 'CN';
+const EMAIL_CODE_RESEND_COOLDOWN_SECONDS = 60;
 const authThemeVars = {
   '--brand-primary': '#2563EB',
   '--brand-primary-hover': '#1D4ED8',
@@ -98,6 +99,7 @@ export function LoginForm({ className }: LoginFormProps) {
   const [emailCodeMode, setEmailCodeMode] = useState(false);
   const [emailCodeToken, setEmailCodeToken] = useState('');
   const [emailCode, setEmailCode] = useState('');
+  const [emailCodeResendCountdown, setEmailCodeResendCountdown] = useState(0);
 
   const loginMutation = useLogin();
   const phonePasswordLoginMutation = usePhonePasswordLogin();
@@ -194,10 +196,32 @@ export function LoginForm({ className }: LoginFormProps) {
     setMounted(true);
   }, []);
 
+  useEffect(() => {
+    if (!emailCodeToken || emailCodeResendCountdown <= 0) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      setEmailCodeResendCountdown(current => Math.max(0, current - 1));
+    }, 1000);
+
+    return () => window.clearTimeout(timer);
+  }, [emailCodeResendCountdown, emailCodeToken]);
+
   const navigateAfterLogin = () => {
     const urlParams = new URLSearchParams(window.location.search);
     const redirectUrl = withBasePathIfInternal(urlParams.get('redirect') || '/console');
     window.location.href = redirectUrl;
+  };
+
+  const sendEmailLoginCode = async (email: string) => {
+    const result = await sendEmailCodeMutation.mutateAsync({
+      email,
+      language: document.documentElement.lang.startsWith('zh') ? 'zh-Hans' : 'en-US',
+    });
+    setEmailCodeToken(result.data);
+    setEmailCode('');
+    setEmailCodeResendCountdown(EMAIL_CODE_RESEND_COOLDOWN_SECONDS);
   };
 
   const onSubmit = async (data: LoginFormData) => {
@@ -206,11 +230,7 @@ export function LoginForm({ className }: LoginFormProps) {
     try {
       if (emailCodeMode) {
         if (!emailCodeToken) {
-          const result = await sendEmailCodeMutation.mutateAsync({
-            email: account,
-            language: document.documentElement.lang.startsWith('zh') ? 'zh-Hans' : 'en-US',
-          });
-          setEmailCodeToken(result.data);
+          await sendEmailLoginCode(account);
           return;
         }
         if (!/^\d{6}$/.test(emailCode.trim())) {
@@ -268,6 +288,18 @@ export function LoginForm({ className }: LoginFormProps) {
   const onSsoLogin = () => {
     const redirectTarget = withBasePathIfInternal(redirect || '/console');
     window.location.href = buildSsoStartUrl('casdoor', redirectTarget);
+  };
+
+  const handleEmailCodeResend = async () => {
+    if (!emailCodeToken || emailCodeResendCountdown > 0 || !isEmailLike(accountValue)) {
+      return;
+    }
+
+    try {
+      await sendEmailLoginCode(accountValue);
+    } catch (err) {
+      console.error('Failed to resend email login code:', err);
+    }
   };
 
   const formLoading =
@@ -349,24 +381,42 @@ export function LoginForm({ className }: LoginFormProps) {
             </div>
 
             {emailCodeMode && emailCodeToken ? (
-              <div className="space-y-2">
-                <Label
-                  htmlFor="email-code"
-                  className="ml-1 text-sm font-semibold text-[var(--text-primary)]"
-                >
-                  {t('verificationCode')}
-                </Label>
-                <Input
-                  id="email-code"
-                  inputMode="numeric"
-                  autoComplete="one-time-code"
-                  maxLength={6}
-                  value={emailCode}
-                  onChange={event => setEmailCode(event.target.value.replace(/\D/g, ''))}
-                  placeholder={t('enterLoginCode')}
-                  disabled={formLoading}
-                  className={loginInputClassName}
-                />
+              <div className="space-y-3">
+                <div className="space-y-2">
+                  <Label
+                    htmlFor="email-code"
+                    className="ml-1 text-sm font-semibold text-[var(--text-primary)]"
+                  >
+                    {t('verificationCode')}
+                  </Label>
+                  <Input
+                    id="email-code"
+                    inputMode="numeric"
+                    autoComplete="one-time-code"
+                    maxLength={6}
+                    value={emailCode}
+                    onChange={event => setEmailCode(event.target.value.replace(/\D/g, ''))}
+                    placeholder={t('enterLoginCode')}
+                    disabled={formLoading}
+                    className={loginInputClassName}
+                  />
+                </div>
+                <div className="text-center text-sm text-[var(--text-secondary)]">
+                  {t('didntReceiveCode')}{' '}
+                  {emailCodeResendCountdown > 0 ? (
+                    <span>{t('resendCodeIn', { countdown: emailCodeResendCountdown })}</span>
+                  ) : (
+                    <Button
+                      type="button"
+                      variant="link"
+                      className="h-auto p-0 font-medium text-[var(--brand-primary)]"
+                      disabled={formLoading}
+                      onClick={handleEmailCodeResend}
+                    >
+                      {sendEmailCodeMutation.isPending ? t('resending') : t('resendCode')}
+                    </Button>
+                  )}
+                </div>
               </div>
             ) : null}
 
@@ -423,6 +473,7 @@ export function LoginForm({ className }: LoginFormProps) {
                   setEmailCodeMode(value => !value);
                   setEmailCodeToken('');
                   setEmailCode('');
+                  setEmailCodeResendCountdown(0);
                 }}
               >
                 {emailCodeMode ? t('usePassword') : t('useEmailCode')}

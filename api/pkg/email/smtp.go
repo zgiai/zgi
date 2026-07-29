@@ -15,7 +15,18 @@ import (
 	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
-func sendSMTPEmail(ctx context.Context, to []string, subject, body, bodyType string) error {
+func sendSMTPEmail(ctx context.Context, to []string, subject, body, bodyType string) (sendErr error) {
+	stage := "validate"
+	defer func() {
+		if sendErr != nil {
+			logger.Error("SMTP email delivery failed",
+				"provider", "smtp",
+				"stage", stage,
+				"error", sendErr,
+			)
+		}
+	}()
+
 	if strings.TrimSpace(Cfg.Email.SMTPServer) == "" {
 		return fmt.Errorf("EMAIL_SMTP_SERVER is required")
 	}
@@ -38,21 +49,26 @@ func sendSMTPEmail(ctx context.Context, to []string, subject, body, bodyType str
 	}
 
 	addr := net.JoinHostPort(Cfg.Email.SMTPServer, fmt.Sprintf("%d", Cfg.Email.SMTPPort))
+	stage = "connect"
 	client, err := newSMTPClient(ctx, addr)
 	if err != nil {
 		return err
 	}
 	defer client.Close()
 
+	stage = "start_tls"
 	if err := maybeStartTLS(client); err != nil {
 		return err
 	}
+	stage = "authenticate"
 	if err := maybeAuthSMTP(client); err != nil {
 		return err
 	}
+	stage = "send_message"
 	if err := writeSMTPMessage(client, fromAddress.Address, recipients, message); err != nil {
 		return err
 	}
+	stage = "quit"
 	if err := client.Quit(); err != nil {
 		return fmt.Errorf("failed to quit SMTP session: %w", err)
 	}
