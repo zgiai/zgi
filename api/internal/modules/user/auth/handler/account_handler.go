@@ -440,7 +440,7 @@ func (h *AccountHandler) ConfirmAccountDeletion(c *gin.Context) {
 		response.Fail(c, response.ErrInvalidParam)
 		return
 	}
-	valid, err := h.accountService.VerifyAccountDeletionCode(c.Request.Context(), req.Token, req.Code)
+	valid, err := h.accountService.VerifyAccountDeletionCode(c.Request.Context(), accountID, req.Token, req.Code)
 	if err != nil {
 		response.Fail(c, response.ErrTokenInvalid)
 		return

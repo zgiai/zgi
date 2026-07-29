@@ -134,6 +134,54 @@ func TestEmailRegistrationSendCooldown(t *testing.T) {
 	require.ErrorIs(t, err, ErrEmailRegistrationRateLimited)
 }
 
+func TestEmailRegistrationKeepsVerifiedTokenWhenRegistrationFails(t *testing.T) {
+	tokenManager := newTestEmailRegistrationTokenManager(t)
+	accounts := &fakeEmailRegistrationAccounts{registerErr: errors.New("database unavailable")}
+	sender := &fakeEmailRegistrationSender{}
+	service := NewEmailRegistrationService(accounts, tokenManager, sender, EmailRegistrationOptions{AllowRegister: true})
+
+	sent, err := service.SendCode(t.Context(), EmailRegistrationSendRequest{Email: "user@example.com"}, "127.0.0.1")
+	require.NoError(t, err)
+	verified, err := service.VerifyCode(t.Context(), EmailRegistrationVerifyRequest{
+		Email: "user@example.com", Code: sender.code, Token: sent.Token,
+	})
+	require.NoError(t, err)
+
+	request := EmailRegistrationFinishRequest{
+		Token: verified.Token, Name: "User", Password: "secret123", PasswordConfirm: "secret123",
+	}
+	_, err = service.Finish(t.Context(), request, "127.0.0.1")
+	require.ErrorContains(t, err, "database unavailable")
+
+	accounts.registerErr = nil
+	_, err = service.Finish(t.Context(), request, "127.0.0.1")
+	require.NoError(t, err)
+}
+
+func TestEmailRegistrationKeepsVerifiedTokenWhenAutomaticLoginFails(t *testing.T) {
+	tokenManager := newTestEmailRegistrationTokenManager(t)
+	accounts := &fakeEmailRegistrationAccounts{loginErr: errors.New("session unavailable")}
+	sender := &fakeEmailRegistrationSender{}
+	service := NewEmailRegistrationService(accounts, tokenManager, sender, EmailRegistrationOptions{AllowRegister: true})
+
+	sent, err := service.SendCode(t.Context(), EmailRegistrationSendRequest{Email: "user@example.com"}, "127.0.0.1")
+	require.NoError(t, err)
+	verified, err := service.VerifyCode(t.Context(), EmailRegistrationVerifyRequest{
+		Email: "user@example.com", Code: sender.code, Token: sent.Token,
+	})
+	require.NoError(t, err)
+	request := EmailRegistrationFinishRequest{
+		Token: verified.Token, Name: "User", Password: "secret123", PasswordConfirm: "secret123",
+	}
+
+	_, err = service.Finish(t.Context(), request, "127.0.0.1")
+	require.ErrorContains(t, err, "session unavailable")
+	accounts.loginErr = nil
+	_, err = service.Finish(t.Context(), request, "127.0.0.1")
+	require.NoError(t, err)
+	require.Equal(t, 1, accounts.registerCalls)
+}
+
 func newTestEmailRegistrationService(t *testing.T, options EmailRegistrationOptions) (*EmailRegistrationService, *fakeEmailRegistrationSender) {
 	t.Helper()
 	sender := &fakeEmailRegistrationSender{}
@@ -183,6 +231,8 @@ type fakeEmailRegistrationAccounts struct {
 	registerCalls   int
 	registeredEmail string
 	loginIP         string
+	registerErr     error
+	loginErr        error
 }
 
 func (f *fakeEmailRegistrationAccounts) ExistsByEmail(_ context.Context, email string) bool {
@@ -206,7 +256,11 @@ func (f *fakeEmailRegistrationAccounts) RegisterEx(
 	_ *bool,
 ) (*auth_model.Account, error) {
 	f.registerCalls++
+	if f.registerErr != nil {
+		return nil, f.registerErr
+	}
 	f.registeredEmail = email
+	f.existingEmail = email
 	return &auth_model.Account{ID: "account-1", Email: email, Name: name}, nil
 }
 
@@ -215,6 +269,9 @@ func (f *fakeEmailRegistrationAccounts) Login(
 	req *shared_dto.LoginReq,
 ) (*auth_model.TokenPair, error, shared_dto.LoginResponse, helper.ErrorResponse) {
 	f.loginIP = req.LastLoginIp
+	if f.loginErr != nil {
+		return nil, f.loginErr, shared_dto.LoginResponse{}, helper.ErrorResponse{}
+	}
 	return &auth_model.TokenPair{AccessToken: "access-token"}, nil, shared_dto.LoginResponse{
 		AccessToken: "access-token",
 	}, helper.ErrorResponse{}

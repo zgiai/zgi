@@ -210,8 +210,8 @@ func (a *AccountServiceAdapter) SendAccountDeletionVerificationEmail(ctx context
 	return a.accountService.SendAccountDeletionVerificationEmail(ctx, account, code)
 }
 
-func (a *AccountServiceAdapter) VerifyAccountDeletionCode(ctx context.Context, token, code string) (bool, error) {
-	return a.accountService.VerifyAccountDeletionCode(ctx, token, code)
+func (a *AccountServiceAdapter) VerifyAccountDeletionCode(ctx context.Context, accountID, token, code string) (bool, error) {
+	return a.accountService.VerifyAccountDeletionCode(ctx, accountID, token, code)
 }
 
 func (a *AccountServiceAdapter) LinkAccountIntegrate(ctx context.Context, provider auth_model.AccountIntegrateProvider, openID string, account *auth_model.Account) error {

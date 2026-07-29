@@ -110,6 +110,44 @@ func TestEmailCodeLoginDisabledMissingAccountAndSendFailure(t *testing.T) {
 	require.ErrorIs(t, err, ErrEmailCodeLoginSendFailed)
 }
 
+func TestEmailCodeLoginRejectsPendingAccount(t *testing.T) {
+	tokenMgr := newTestEmailCodeLoginTokenManager(t)
+	accounts := &fakeEmailCodeLoginAccounts{
+		tokenMgr: tokenMgr,
+		account: &auth_model.Account{
+			ID: "pending-account", Email: "invited@example.com", Status: auth_model.AccountStatusPending,
+		},
+	}
+	service := NewEmailCodeLoginService(accounts, tokenMgr, EmailCodeLoginOptions{Enabled: true})
+
+	_, err := service.SendCode(t.Context(), EmailCodeLoginSendRequest{Email: "invited@example.com"}, "127.0.0.1")
+	require.ErrorIs(t, err, ErrEmailCodeLoginAccountBlocked)
+	require.Empty(t, accounts.sentTo)
+}
+
+func TestEmailCodeLoginKeepsCodeWhenSessionCreationFails(t *testing.T) {
+	tokenMgr := newTestEmailCodeLoginTokenManager(t)
+	accounts := &fakeEmailCodeLoginAccounts{
+		tokenMgr: tokenMgr,
+		account:  &auth_model.Account{ID: "account-1", Email: "user@example.com", Status: auth_model.AccountStatusActive},
+		loginErr: errors.New("redis unavailable"),
+	}
+	service := NewEmailCodeLoginService(accounts, tokenMgr, EmailCodeLoginOptions{Enabled: true})
+	sent, err := service.SendCode(t.Context(), EmailCodeLoginSendRequest{Email: "user@example.com"}, "127.0.0.1")
+	require.NoError(t, err)
+
+	_, err = service.VerifyAndLogin(t.Context(), EmailCodeLoginVerifyRequest{
+		Email: "user@example.com", Code: accounts.code, Token: sent.Token,
+	}, "127.0.0.1")
+	require.ErrorContains(t, err, "complete email code login")
+
+	accounts.loginErr = nil
+	_, err = service.VerifyAndLogin(t.Context(), EmailCodeLoginVerifyRequest{
+		Email: "user@example.com", Code: accounts.code, Token: sent.Token,
+	}, "127.0.0.1")
+	require.NoError(t, err)
+}
+
 func newTestEmailCodeLoginTokenManager(t *testing.T) *helper.TokenManager {
 	t.Helper()
 	server := miniredis.RunT(t)
@@ -130,6 +168,7 @@ type fakeEmailCodeLoginAccounts struct {
 	code     string
 	sendErr  error
 	loginIP  string
+	loginErr error
 }
 
 func (f *fakeEmailCodeLoginAccounts) GetUserThroughEmail(_ context.Context, email string) (*auth_model.Account, error) {
@@ -155,5 +194,8 @@ func (f *fakeEmailCodeLoginAccounts) IsEmailSendIPLimit(context.Context, string)
 
 func (f *fakeEmailCodeLoginAccounts) LoginCommon(_ *auth_model.Account, ipAddress string) (*auth_model.TokenPair, error) {
 	f.loginIP = ipAddress
+	if f.loginErr != nil {
+		return nil, f.loginErr
+	}
 	return &auth_model.TokenPair{AccessToken: "access-token", RefreshToken: "refresh-token"}, nil
 }

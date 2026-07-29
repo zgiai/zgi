@@ -66,6 +66,55 @@ func TestLoadEmailConfigSupportsLegacyKeys(t *testing.T) {
 	}
 }
 
+func TestLoadEmailConfigSkipsEmptyCanonicalAliases(t *testing.T) {
+	values := map[string]string{
+		envEmailProvider:      "",
+		envEmailMailType:      "smtp",
+		envResendAPIKey:       "",
+		envEmailResendAPIKey:  "legacy-key",
+		envResendBaseURL:      "",
+		envEmailResendBaseURL: "https://legacy.example.com/v1",
+		envEmailSMTPServer:    "smtp.example.com",
+		envEmailSMTPPort:      "587",
+		envEmailSMTPSecurity:  "starttls",
+		envEmailFrom:          "Sender <sender@example.com>",
+	}
+	source := &envSource{lookupEnv: func(key string) (string, bool) {
+		value, ok := values[key]
+		return value, ok
+	}}
+	cfg := &Config{}
+
+	requireNoError(t, loadEmailConfig(cfg, source))
+	if cfg.Email.MailType != "smtp" || cfg.Email.ResendAPIKey != "legacy-key" || cfg.Email.ResendAPIURL != "https://legacy.example.com/v1" {
+		t.Fatalf("empty canonical aliases hid legacy values: %+v", cfg.Email)
+	}
+}
+
+func TestLoadEmailConfigUsesOfficialResendURLWhenBaseURLIsEmpty(t *testing.T) {
+	values := map[string]string{
+		envResendAPIKey:  "test-key",
+		envResendBaseURL: "",
+	}
+	source := &envSource{lookupEnv: func(key string) (string, bool) {
+		value, ok := values[key]
+		return value, ok
+	}}
+	cfg := &Config{}
+
+	requireNoError(t, loadEmailConfig(cfg, source))
+	if cfg.Email.ResendAPIURL != "https://api.resend.com" {
+		t.Fatalf("ResendAPIURL = %q, want official default", cfg.Email.ResendAPIURL)
+	}
+}
+
+func requireNoError(t *testing.T, err error) {
+	t.Helper()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestValidateConfigRejectsUnknownSMTPSecurity(t *testing.T) {
 	cfg := developmentTestConfig()
 	cfg.Email.SMTPSecurity = "tls_if_available"

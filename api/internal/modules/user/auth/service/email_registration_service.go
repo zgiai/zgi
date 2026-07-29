@@ -279,16 +279,13 @@ func (s *EmailRegistrationService) Finish(
 		return nil, ErrEmailRegistrationPasswordMismatch
 	}
 
-	tokenData, err := s.tokenMgr.ConsumeTokenData(ctx, req.Token, EmailRegistrationVerifiedTokenType)
+	tokenData, err := s.tokenMgr.GetTokenData(req.Token, EmailRegistrationVerifiedTokenType)
 	if err != nil || tokenData == nil {
 		return nil, ErrEmailRegistrationTokenInvalid
 	}
 	emailAddress := normalizeRegistrationEmail(tokenExtraString(tokenData.Extra, "registration_email"))
 	if emailAddress == "" || (req.Email != "" && normalizeRegistrationEmail(req.Email) != emailAddress) {
 		return nil, ErrEmailRegistrationTokenInvalid
-	}
-	if s.accounts.ExistsByEmail(ctx, emailAddress) {
-		return nil, ErrEmailRegistrationAccountExists
 	}
 
 	name := strings.TrimSpace(req.Name)
@@ -297,23 +294,29 @@ func (s *EmailRegistrationService) Finish(
 	}
 	language := normalizeRegistrationLanguage(tokenExtraString(tokenData.Extra, "language"))
 	createWorkspace := true
-	if _, err := s.accounts.RegisterEx(
-		ctx,
-		emailAddress,
-		name,
-		&req.Password,
-		nil,
-		nil,
-		&language,
-		nil,
-		nil,
-		&createWorkspace,
-	); err != nil {
-		normalizedError := strings.ToLower(err.Error())
-		if strings.Contains(normalizedError, "frozen") || strings.Contains(normalizedError, "freeze") {
-			return nil, fmt.Errorf("%w: %v", ErrEmailRegistrationAccountFrozen, err)
+	if !s.accounts.ExistsByEmail(ctx, emailAddress) {
+		if _, err := s.accounts.RegisterEx(
+			ctx,
+			emailAddress,
+			name,
+			&req.Password,
+			nil,
+			nil,
+			&language,
+			nil,
+			nil,
+			&createWorkspace,
+		); err != nil {
+			normalizedError := strings.ToLower(err.Error())
+			if strings.Contains(normalizedError, "frozen") || strings.Contains(normalizedError, "freeze") {
+				return nil, fmt.Errorf("%w: %v", ErrEmailRegistrationAccountFrozen, err)
+			}
+			// A concurrent request may have created the same account. Let the
+			// password login below decide whether this request is a safe retry.
+			if !s.accounts.ExistsByEmail(ctx, emailAddress) {
+				return nil, fmt.Errorf("finish email registration: %w", err)
+			}
 		}
-		return nil, fmt.Errorf("finish email registration: %w", err)
 	}
 	loginReq := &shared_dto.LoginReq{
 		Email:       emailAddress,
@@ -323,6 +326,12 @@ func (s *EmailRegistrationService) Finish(
 	_, loginErr, loginResp, _ := s.accounts.Login(ctx, loginReq)
 	if loginErr != nil {
 		return nil, fmt.Errorf("login after email registration: %w", loginErr)
+	}
+	if _, err := s.tokenMgr.ConsumeTokenData(ctx, req.Token, EmailRegistrationVerifiedTokenType); err != nil {
+		if loginResp.RefreshToken != "" {
+			_ = s.tokenMgr.RevokeToken(loginResp.RefreshToken, "refresh")
+		}
+		return nil, ErrEmailRegistrationTokenInvalid
 	}
 	return &loginResp, nil
 }

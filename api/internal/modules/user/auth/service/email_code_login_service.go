@@ -104,7 +104,7 @@ func (s *EmailCodeLoginService) SendCode(ctx context.Context, req EmailCodeLogin
 	if account == nil {
 		return nil, ErrEmailCodeLoginAccountMissing
 	}
-	if err := accountAccessStatusError(account.Status); err != nil {
+	if account.Status != auth_model.AccountStatusActive {
 		return nil, ErrEmailCodeLoginAccountBlocked
 	}
 
@@ -153,20 +153,22 @@ func (s *EmailCodeLoginService) VerifyAndLogin(ctx context.Context, req EmailCod
 		}
 		return nil, ErrEmailCodeLoginCodeInvalid
 	}
-	if _, err := s.tokenMgr.ConsumeTokenData(ctx, req.Token, EmailCodeLoginTokenType); err != nil {
-		return nil, ErrEmailCodeLoginTokenInvalid
-	}
-
 	account, err := s.accounts.GetUserThroughEmail(ctx, emailAddress)
 	if err != nil || account == nil {
 		return nil, ErrEmailCodeLoginAccountMissing
 	}
-	if err := accountAccessStatusError(account.Status); err != nil {
+	if account.Status != auth_model.AccountStatusActive {
 		return nil, ErrEmailCodeLoginAccountBlocked
 	}
 	tokenPair, err := s.accounts.LoginCommon(account, ipAddress)
 	if err != nil {
 		return nil, fmt.Errorf("complete email code login: %w", err)
+	}
+	if _, err := s.tokenMgr.ConsumeTokenData(ctx, req.Token, EmailCodeLoginTokenType); err != nil {
+		if tokenPair.RefreshToken != "" {
+			_ = s.tokenMgr.RevokeToken(tokenPair.RefreshToken, "refresh")
+		}
+		return nil, ErrEmailCodeLoginTokenInvalid
 	}
 	return &dto.LoginResponse{
 		AccessToken:  tokenPair.AccessToken,

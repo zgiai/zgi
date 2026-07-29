@@ -33,6 +33,7 @@ type RegisterServiceImpl struct {
 	tokenMgr                  *util.TokenManager
 	billingService            interfaces.BillingService
 	officialRouteBootstrapper interfaces.OfficialRouteBootstrapper
+	inviteEmailSender         func(language, to, token, inviterName, workspaceName string) error
 }
 
 func NewRegisterService(
@@ -479,14 +480,20 @@ func (s *RegisterServiceImpl) InviteMemberEx(ctx context.Context, tenantID, invi
 		}
 		// === End of enterprise group member addition ===
 
-		// Commit transaction
-		if err := tx.Commit().Error; err != nil {
-			return "", fmt.Errorf("failed to commit transaction: %w", err)
-		}
 	}
 
-	// Generate invitation token and store in Redis
-	inviteToken := s.generateInviteToken(tenant, account)
+	// Persist the invitation token before committing the database work. If
+	// Redis is unavailable, the deferred rollback prevents us from creating a
+	// pending member whose invitation can never be accepted.
+	inviteToken, err := s.generateInviteToken(tenant, account)
+	if err != nil {
+		return "", err
+	}
+
+	if err := tx.Commit().Error; err != nil {
+		_ = s.tokenMgr.RevokeInvitationToken("", "", inviteToken)
+		return "", fmt.Errorf("failed to commit transaction: %w", err)
+	}
 
 	committed = true
 
@@ -500,7 +507,10 @@ func (s *RegisterServiceImpl) InviteMemberEx(ctx context.Context, tenantID, invi
 
 		if err := s.sendInviteMemberMail(language, email, inviteToken, inviterName, workspaceName); err != nil {
 			logger.WarnContext(ctx, "failed to send invite email", "email", email, err)
-			return inviteToken, fmt.Errorf("send invite email: %w", err)
+			// Return the durable token with a typed partial-success error. HTTP
+			// callers can report that the invitation exists without pretending
+			// that delivery succeeded or retrying the database mutation.
+			return inviteToken, fmt.Errorf("%w: %v", usererrors.ErrInviteEmailDeliveryFailed, err)
 		}
 	}
 
@@ -575,17 +585,15 @@ func (s *RegisterServiceImpl) getInvitationByToken(token string) (*auth_model.In
 	}, nil
 }
 
-func (s *RegisterServiceImpl) generateInviteToken(tenant *workspace_model.Workspace, account *auth_model.Account) string {
+func (s *RegisterServiceImpl) generateInviteToken(tenant *workspace_model.Workspace, account *auth_model.Account) (string, error) {
 	token := uuid.New().String()
 
 	expiryHours := 72
-	err := s.tokenMgr.StoreInvitationToken(tenant.ID, account.Email, account.ID, token, expiryHours)
-	if err != nil {
-		// Fallback to simple token generation
-		return fmt.Sprintf("%s-%s-%d", tenant.ID, account.ID, time.Now().Unix())
+	if err := s.tokenMgr.StoreInvitationToken(tenant.ID, account.Email, account.ID, token, expiryHours); err != nil {
+		return "", fmt.Errorf("store invitation token: %w", err)
 	}
 
-	return token
+	return token, nil
 }
 
 func (s *RegisterServiceImpl) revokeToken(token string) error {
@@ -593,6 +601,9 @@ func (s *RegisterServiceImpl) revokeToken(token string) error {
 }
 
 func (s *RegisterServiceImpl) sendInviteMemberMail(language, to, token, inviterName, workspaceName string) error {
+	if s.inviteEmailSender != nil {
+		return s.inviteEmailSender(language, to, token, inviterName, workspaceName)
+	}
 	return email.SendInviteMemberMailTask(language, to, token, inviterName, workspaceName)
 }
 

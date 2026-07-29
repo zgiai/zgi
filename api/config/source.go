@@ -106,6 +106,18 @@ func (s *envSource) string(defaultValue string, keys ...string) string {
 	return defaultValue
 }
 
+// nonEmptyString returns the first configured, non-empty value. It is useful
+// for compatibility aliases where an empty canonical key in an example env
+// file must not hide a populated legacy key or the application default.
+func (s *envSource) nonEmptyString(defaultValue string, keys ...string) string {
+	for _, key := range keys {
+		if value, ok := s.lookup(key); ok && value != "" {
+			return value
+		}
+	}
+	return defaultValue
+}
+
 func (s *envSource) prefixedStrings(prefix string) map[string]string {
 	if s == nil || prefix == "" {
 		return nil

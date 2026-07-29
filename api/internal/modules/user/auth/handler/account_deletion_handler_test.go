@@ -41,6 +41,7 @@ func TestAccountDeletionHandlerRequiresValidCodeBeforeDeleting(t *testing.T) {
 
 	require.Equal(t, http.StatusBadRequest, recorder.Code)
 	require.False(t, service.deleted)
+	require.Equal(t, "account-1", service.verifiedAccountID)
 
 	service.valid = true
 	c, recorder = newAccountContextHandlerTestContext(
@@ -57,12 +58,13 @@ func TestAccountDeletionHandlerRequiresValidCodeBeforeDeleting(t *testing.T) {
 
 type accountDeletionHandlerService struct {
 	interfaces.AccountService
-	account   *auth_model.Account
-	token     string
-	code      string
-	valid     bool
-	emailSent bool
-	deleted   bool
+	account           *auth_model.Account
+	token             string
+	code              string
+	valid             bool
+	emailSent         bool
+	deleted           bool
+	verifiedAccountID string
 }
 
 func (f *accountDeletionHandlerService) LoadLoggedInAccount(context.Context, string) (*auth_model.Account, error) {
@@ -78,7 +80,8 @@ func (f *accountDeletionHandlerService) SendAccountDeletionVerificationEmail(con
 	return nil
 }
 
-func (f *accountDeletionHandlerService) VerifyAccountDeletionCode(context.Context, string, string) (bool, error) {
+func (f *accountDeletionHandlerService) VerifyAccountDeletionCode(_ context.Context, accountID, _, _ string) (bool, error) {
+	f.verifiedAccountID = accountID
 	return f.valid, nil
 }
 

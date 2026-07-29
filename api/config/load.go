@@ -355,10 +355,10 @@ func loadEmailConfig(cfg *Config, source *envSource) error {
 	}
 
 	cfg.Email = EmailConfig{
-		MailType:              source.string("resend", envEmailProvider, envEmailMailType, envMailType),
+		MailType:              source.nonEmptyString("resend", envEmailProvider, envEmailMailType, envMailType),
 		MailDefaultSendFrom:   defaultSendFrom,
-		ResendAPIKey:          source.string("", envResendAPIKey, envEmailResendAPIKey),
-		ResendAPIURL:          source.string("https://api.resend.com", envResendBaseURL, envEmailResendBaseURL, envEmailResendAPIURL),
+		ResendAPIKey:          source.nonEmptyString("", envResendAPIKey, envEmailResendAPIKey),
+		ResendAPIURL:          source.nonEmptyString("https://api.resend.com", envResendBaseURL, envEmailResendBaseURL, envEmailResendAPIURL),
 		MailTemplateLogoUrl:   source.string("", envEmailMailTemplateLogoURL),
 		MailTemplateBrandName: source.string("ZGI", envEmailMailTemplateBrandName),
 		ConsoleWebURL:         source.string("http://localhost:3000", envEmailConsoleWebURL),

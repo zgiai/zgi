@@ -46,7 +46,7 @@ type AccountService interface {
 	CreateAccountAndTenant(ctx context.Context, email, name, interfaceLanguage string, password *string) (*auth_model.Account, error)
 	GenerateAccountDeletionVerificationCode(ctx context.Context, account *auth_model.Account) (string, string, error)
 	SendAccountDeletionVerificationEmail(ctx context.Context, account *auth_model.Account, code string) error
-	VerifyAccountDeletionCode(ctx context.Context, token, code string) (bool, error)
+	VerifyAccountDeletionCode(ctx context.Context, accountID, token, code string) (bool, error)
 	LinkAccountIntegrate(ctx context.Context, provider auth_model.AccountIntegrateProvider, openID string, account *auth_model.Account) error
 	CloseAccount(ctx context.Context, account *auth_model.Account) error
 	UpdateLoginInfo(ctx context.Context, account *auth_model.Account, ipAddress string) error

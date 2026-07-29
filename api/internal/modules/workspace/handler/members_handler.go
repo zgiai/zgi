@@ -1037,7 +1037,14 @@ func (h *MembersHandler) InviteWorkspaceMemberByEmailEx(c *gin.Context) {
 	)
 
 	if err != nil {
-		if err == usererrors.ErrAccountAlreadyInWorkspace {
+		if errors.Is(err, usererrors.ErrInviteEmailDeliveryFailed) {
+			invitationResults = append(invitationResults, map[string]interface{}{
+				"status":  "created_email_failed",
+				"email":   req.Email,
+				"url":     h.consoleWebURL + "/activate?email=" + req.Email + "&token=" + token,
+				"message": usererrors.ErrInviteEmailDeliveryFailed.Error(),
+			})
+		} else if err == usererrors.ErrAccountAlreadyInWorkspace {
 			invitationResults = append(invitationResults, map[string]interface{}{
 				"status": "success",
 				"email":  req.Email,
@@ -1796,11 +1803,18 @@ func (h *MembersHandler) ReInviteMemberById(c *gin.Context) {
 			sendEmail,
 		)
 		if err != nil {
+			status := "failed"
+			message := err.Error()
+			if errors.Is(err, usererrors.ErrInviteEmailDeliveryFailed) {
+				status = "created_email_failed"
+				message = usererrors.ErrInviteEmailDeliveryFailed.Error()
+			}
 			results = append(results, map[string]interface{}{
-				"status":       "failed",
+				"status":       status,
 				"email":        member.Email,
 				"workspace_id": workspace.ID,
-				"message":      err.Error(),
+				"url":          h.consoleWebURL + "/activate?email=" + member.Email + "&token=" + token,
+				"message":      message,
 			})
 			continue
 		}
@@ -1961,7 +1975,14 @@ func (h *MembersHandler) InviteDefaultMemberByEmailEx(c *gin.Context) {
 	)
 
 	if err != nil {
-		if err == usererrors.ErrAccountAlreadyInWorkspace {
+		if errors.Is(err, usererrors.ErrInviteEmailDeliveryFailed) {
+			invitationResults = append(invitationResults, map[string]interface{}{
+				"status":  "created_email_failed",
+				"email":   req.Email,
+				"url":     h.consoleWebURL + "/activate?email=" + req.Email + "&token=" + token,
+				"message": usererrors.ErrInviteEmailDeliveryFailed.Error(),
+			})
+		} else if err == usererrors.ErrAccountAlreadyInWorkspace {
 			invitationResults = append(invitationResults, map[string]interface{}{
 				"status": "success",
 				"email":  req.Email,

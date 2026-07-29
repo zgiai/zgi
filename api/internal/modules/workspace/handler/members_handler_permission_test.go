@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
+	usererrors "github.com/zgiai/zgi/api/internal/errors"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	auth_model "github.com/zgiai/zgi/api/internal/modules/user/auth/model"
 	"github.com/zgiai/zgi/api/internal/modules/workspace/model"
@@ -371,6 +373,50 @@ func TestMembersHandlerDefaultInviteRequiresManageBeforeWorkspaceLookup(t *testi
 	require.Equal(t, model.WorkspacePermissionWorkspaceMemberManage, organizationSvc.lastPermissionCode)
 }
 
+func TestMembersHandlerInviteReportsEmailFailureAsPartialSuccess(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	workspaceID := "workspace-route"
+	accountID := "account-1"
+	accountSvc := &membersHandlerAccountService{
+		account:             &auth_model.Account{ID: accountID},
+		inviteMemberExToken: "durable-token",
+		inviteMemberExErr:   usererrors.ErrInviteEmailDeliveryFailed,
+	}
+	workspaceSvc := &membersHandlerWorkspaceManagementService{}
+	organizationSvc := &membersHandlerOrganizationService{
+		workspaceOrganizationID:         "org-1",
+		checkWorkspacePermissionAllowed: true,
+	}
+	handler := NewMembersHandler(workspaceSvc, accountSvc, organizationSvc, "https://console.example.com")
+
+	c, recorder := newMembersHandlerContext(http.MethodPost, "/workspaces/"+workspaceID+"/members/invite-email-ex", accountID)
+	c.Params = gin.Params{{Key: "workspace_id", Value: workspaceID}}
+	c.Request = httptest.NewRequest(
+		http.MethodPost,
+		"/workspaces/"+workspaceID+"/members/invite-email-ex",
+		strings.NewReader(`{"email":"alice@example.com","role":"normal"}`),
+	)
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Set("account_id", accountID)
+
+	handler.InviteWorkspaceMemberByEmailEx(c)
+
+	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+	var body struct {
+		Data struct {
+			Result            string                   `json:"result"`
+			InvitationResults []map[string]interface{} `json:"invitation_results"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &body))
+	require.Equal(t, "success", body.Data.Result)
+	require.Len(t, body.Data.InvitationResults, 1)
+	require.Equal(t, "created_email_failed", body.Data.InvitationResults[0]["status"])
+	require.Equal(t, "alice@example.com", body.Data.InvitationResults[0]["email"])
+	require.Equal(t, "https://console.example.com/activate?email=alice@example.com&token=durable-token", body.Data.InvitationResults[0]["url"])
+}
+
 func TestMembersHandlerCurrentUpdateRoleUsesCurrentWorkspaceForPermissionAndMutation(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -508,14 +554,17 @@ func (s *membersHandlerOrganizationService) CheckWorkspacePermission(_ context.C
 type membersHandlerAccountService struct {
 	interfaces.AccountService
 
+	account              *auth_model.Account
 	getAccountByIDCalled bool
 	inviteMemberCalled   bool
 	inviteMemberExCalled bool
+	inviteMemberExToken  string
+	inviteMemberExErr    error
 }
 
 func (s *membersHandlerAccountService) GetAccountByID(context.Context, string) (*auth_model.Account, error) {
 	s.getAccountByIDCalled = true
-	return nil, nil
+	return s.account, nil
 }
 
 func (s *membersHandlerAccountService) InviteMember(context.Context, string, string, string, model.WorkspaceMemberRole, string) (string, error) {
@@ -525,7 +574,7 @@ func (s *membersHandlerAccountService) InviteMember(context.Context, string, str
 
 func (s *membersHandlerAccountService) InviteMemberEx(context.Context, string, string, string, model.WorkspaceMemberRole, string, string, string, string, string, bool) (string, error) {
 	s.inviteMemberExCalled = true
-	return "", nil
+	return s.inviteMemberExToken, s.inviteMemberExErr
 }
 
 var _ interfaces.WorkspaceManagementService = (*membersHandlerWorkspaceManagementService)(nil)

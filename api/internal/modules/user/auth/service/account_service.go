@@ -1780,8 +1780,8 @@ func (s *AccountService) GenerateAccountDeletionVerificationCode(ctx context.Con
 	token, err := s.tokenMgr.GenerateToken(
 		ctx,
 		"account_deletion",
+		account,
 		nil,
-		&account.Email,
 		additionalData,
 	)
 
@@ -1803,13 +1803,16 @@ func (s *AccountService) SendAccountDeletionVerificationEmail(ctx context.Contex
 }
 
 // VerifyAccountDeletionCode implements the VerifyAccountDeletionCode method
-func (s *AccountService) VerifyAccountDeletionCode(ctx context.Context, token, code string) (bool, error) {
+func (s *AccountService) VerifyAccountDeletionCode(ctx context.Context, accountID, token, code string) (bool, error) {
+	if strings.TrimSpace(accountID) == "" {
+		return false, errors.New("account id is required")
+	}
 	tokenData, err := s.tokenMgr.GetTokenData(token, "account_deletion")
 	if err != nil {
 		return false, err
 	}
 
-	if tokenData == nil {
+	if tokenData == nil || tokenData.AccountID == nil || *tokenData.AccountID != accountID {
 		return false, errors.New("invalid token")
 	}
 
@@ -1830,8 +1833,12 @@ func (s *AccountService) VerifyAccountDeletionCode(ctx context.Context, token, c
 		}
 		return false, nil
 	}
-	if _, err := s.tokenMgr.ConsumeTokenData(ctx, token, "account_deletion"); err != nil {
+	consumed, err := s.tokenMgr.ConsumeTokenData(ctx, token, "account_deletion")
+	if err != nil {
 		return false, err
+	}
+	if consumed.AccountID == nil || *consumed.AccountID != accountID {
+		return false, errors.New("invalid token")
 	}
 
 	return true, nil
