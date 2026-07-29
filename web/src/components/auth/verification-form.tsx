@@ -315,10 +315,12 @@ export function VerificationForm({ className }: VerificationFormProps) {
       }
 
       let result = false;
+      let verifiedRegistrationToken = '';
 
       if (type === 'register') {
         const res = await verifyRegisterMutation.mutateAsync({ email: email || '', code, token });
-        result = res?.is_valid ?? false;
+        verifiedRegistrationToken = res?.token ?? '';
+        result = Boolean(res?.is_valid && verifiedRegistrationToken);
       } else {
         const res = await verifyForgotPasswordMutation.mutateAsync({
           email: email || '',
@@ -332,7 +334,7 @@ export function VerificationForm({ className }: VerificationFormProps) {
         if (type === 'reset') {
           router.push(`/reset-password?token=${token}&email=${encodeURIComponent(email || '')}`);
         } else {
-          let completeUrl = `/register/complete?token=${token}&email=${encodeURIComponent(email || '')}`;
+          let completeUrl = `/register/complete?token=${encodeURIComponent(verifiedRegistrationToken)}&email=${encodeURIComponent(email || '')}`;
           const redirect = searchParams.get('redirect');
           if (redirect) {
             completeUrl += `&redirect=${encodeURIComponent(redirect)}`;

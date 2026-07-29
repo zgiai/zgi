@@ -383,10 +383,13 @@ export class AuthenticationService extends BaseService {
   }
 
   // Verify registration code – handle wrapped or bare responses
-  async verifyRegister(data: RegisterVerifyRequest): Promise<{ is_valid: boolean; email: string }> {
+  async verifyRegister(
+    data: RegisterVerifyRequest
+  ): Promise<{ is_valid: boolean; email: string; token: string }> {
     interface VerifyPayload {
       email: string;
       is_valid: boolean;
+      token: string;
     }
 
     const response = await this.request<ApiResponseData<VerifyPayload>>(

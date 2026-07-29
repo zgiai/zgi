@@ -40,6 +40,33 @@ func TestRenderResetPasswordTemplateZhCNUsesChineseCopy(t *testing.T) {
 	}
 }
 
+func TestRenderRegistrationTemplateUsesRegistrationCopyAndEscapesValues(t *testing.T) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	moduleRoot := filepath.Join(cwd, "..", "..")
+	if err := os.Chdir(moduleRoot); err != nil {
+		t.Fatalf("chdir module root: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+
+	htmlContent, err := renderRegistrationTemplate("en-US", TemplateData{
+		To:        "user@example.com",
+		Code:      "123456",
+		BrandName: `<unsafe>`,
+	})
+	if err != nil {
+		t.Fatalf("renderRegistrationTemplate returned error: %v", err)
+	}
+	if !strings.Contains(htmlContent, "finish creating your account") {
+		t.Fatalf("expected registration-specific copy, got %q", htmlContent)
+	}
+	if strings.Contains(htmlContent, `<unsafe>`) || !strings.Contains(htmlContent, `&lt;unsafe&gt;`) {
+		t.Fatalf("expected escaped template value, got %q", htmlContent)
+	}
+}
+
 func TestChineseEmailTemplatesUseChineseCopy(t *testing.T) {
 	cwd, err := os.Getwd()
 	if err != nil {

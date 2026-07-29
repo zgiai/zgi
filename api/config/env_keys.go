@@ -117,6 +117,8 @@ const (
 // Mail and application URL keys.
 const (
 	// Email backend selection.
+	// envEmailProvider selects the email delivery provider. Preferred key. Default: resend.
+	envEmailProvider = "EMAIL_PROVIDER"
 	// envEmailMailType selects the email delivery backend. Default: resend.
 	envEmailMailType = "EMAIL_MAIL_TYPE"
 	// envMailType keeps the legacy email backend key working during migration. Default: resend.
@@ -127,11 +129,15 @@ const (
 	envEmailResendAPIKey = "EMAIL_RESEND_API_KEY"
 	// envEmailResendAPIURL sets the Resend API base URL. Default: https://api.resend.com.
 	envEmailResendAPIURL = "EMAIL_RESEND_API_URL"
+	// envEmailResendBaseURL is the preferred Resend-compatible base URL key.
+	envEmailResendBaseURL = "EMAIL_RESEND_BASE_URL"
 
 	// SMTP delivery settings.
 	// envEmailSMTPServer sets the SMTP server host. Default: smtp.gmail.com.
 	envEmailSMTPServer = "EMAIL_SMTP_SERVER"
-	// envEmailPort sets the SMTP port for email delivery. Default: 587.
+	// envEmailSMTPPort sets the SMTP port for email delivery. Preferred key. Default: 587.
+	envEmailSMTPPort = "EMAIL_SMTP_PORT"
+	// envEmailPort keeps the legacy SMTP port key working during migration.
 	envEmailPort = "EMAIL_PORT"
 	// envEmailSMTPUsername sets the SMTP username. Default: empty.
 	envEmailSMTPUsername = "EMAIL_SMTP_USERNAME"
@@ -141,10 +147,16 @@ const (
 	envEmailSMTPUseTLS = "EMAIL_SMTP_USE_TLS"
 	// envEmailSMTPOpportunisticTLS controls whether SMTP upgrades to TLS opportunistically. Default: false.
 	envEmailSMTPOpportunisticTLS = "EMAIL_SMTP_OPPORTUNISTIC_TLS"
+	// envEmailSMTPSecurity selects none, starttls, or implicit_tls.
+	envEmailSMTPSecurity = "EMAIL_SMTP_SECURITY"
 
 	// Email branding and links.
 	// envEmailMailDefaultSendFrom sets the default sender address for outgoing emails. Default: noreply@example.com.
 	envEmailMailDefaultSendFrom = "EMAIL_MAIL_DEFAULT_SEND_FROM"
+	// envEmailFromAddress sets the sender mailbox using the preferred split format.
+	envEmailFromAddress = "EMAIL_FROM_ADDRESS"
+	// envEmailFromName sets the optional display name for the sender mailbox.
+	envEmailFromName = "EMAIL_FROM_NAME"
 	// envEmailMailTemplateLogoURL sets the logo URL used in email templates. Default: empty.
 	envEmailMailTemplateLogoURL = "EMAIL_MAIL_TEMPLATE_LOGO_URL"
 	// envEmailMailTemplateBrandName sets the brand name shown in email templates. Default: ZGI.

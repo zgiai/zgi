@@ -3,6 +3,7 @@ package config
 import (
 	"encoding/base64"
 	"fmt"
+	"net/mail"
 	"runtime"
 	"strings"
 	"time"
@@ -322,7 +323,7 @@ func defaultLogLevel(cfg *Config) string {
 }
 
 func loadEmailConfig(cfg *Config, source *envSource) error {
-	port, err := source.int(587, envEmailPort)
+	port, err := source.int(587, envEmailSMTPPort, envEmailPort)
 	if err != nil {
 		return err
 	}
@@ -334,12 +335,26 @@ func loadEmailConfig(cfg *Config, source *envSource) error {
 	if err != nil {
 		return err
 	}
+	smtpSecurity := strings.ToLower(source.string("", envEmailSMTPSecurity))
+	if smtpSecurity != "" {
+		smtpUseTLS = smtpSecurity == "implicit_tls"
+		smtpOpportunisticTLS = smtpSecurity == "starttls"
+	}
+
+	defaultSendFrom := source.string("noreply@example.com", envEmailMailDefaultSendFrom)
+	fromAddress := source.string("", envEmailFromAddress)
+	if fromAddress != "" {
+		defaultSendFrom = (&mail.Address{
+			Name:    source.string("", envEmailFromName),
+			Address: fromAddress,
+		}).String()
+	}
 
 	cfg.Email = EmailConfig{
-		MailType:              source.string("resend", envEmailMailType, envMailType),
-		MailDefaultSendFrom:   source.string("noreply@example.com", envEmailMailDefaultSendFrom),
+		MailType:              source.string("resend", envEmailProvider, envEmailMailType, envMailType),
+		MailDefaultSendFrom:   defaultSendFrom,
 		ResendAPIKey:          source.string("", envEmailResendAPIKey),
-		ResendAPIURL:          source.string("https://api.resend.com", envEmailResendAPIURL),
+		ResendAPIURL:          source.string("https://api.resend.com", envEmailResendBaseURL, envEmailResendAPIURL),
 		MailTemplateLogoUrl:   source.string("", envEmailMailTemplateLogoURL),
 		MailTemplateBrandName: source.string("ZGI", envEmailMailTemplateBrandName),
 		ConsoleWebURL:         source.string("http://localhost:3000", envEmailConsoleWebURL),
@@ -347,6 +362,7 @@ func loadEmailConfig(cfg *Config, source *envSource) error {
 		SMTPPort:              port,
 		SMTPUsername:          source.string("", envEmailSMTPUsername),
 		SMTPPassword:          source.string("", envEmailSMTPPassword),
+		SMTPSecurity:          smtpSecurity,
 		SMTPUseTLS:            smtpUseTLS,
 		SMTPOpportunisticTLS:  smtpOpportunisticTLS,
 	}

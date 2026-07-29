@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/zgiai/zgi/api/internal/modules/user/auth/model"
@@ -28,17 +29,19 @@ type Config struct {
 func DefaultConfig() *Config {
 	return &Config{
 		TokenExpiryMinutes: map[string]int{
-			"access":           60,    // 1 hour
-			"refresh":          43200, // 30 days (30 * 24 * 60 minutes)
-			"reset_password":   30,    // 30 minutes
-			"activation":       1440,  // 24 hours
-			"email_code":       30,    // 30 minutes
-			"member_invite":    1440,  // 24 hours
-			"register":         1440,  // 24 hours
-			"sso_state":        5,     // 5 minutes
-			"sso_login_ticket": 5,     // 5 minutes
-			"phone_code":       5,     // 5 minutes
-			"phone_verified":   10,    // 10 minutes
+			"access":                       60,    // 1 hour
+			"refresh":                      43200, // 30 days (30 * 24 * 60 minutes)
+			"reset_password":               30,    // 30 minutes
+			"activation":                   1440,  // 24 hours
+			"email_code":                   30,    // 30 minutes
+			"member_invite":                1440,  // 24 hours
+			"register":                     1440,  // 24 hours
+			"sso_state":                    5,     // 5 minutes
+			"sso_login_ticket":             5,     // 5 minutes
+			"phone_code":                   5,     // 5 minutes
+			"phone_verified":               10,    // 10 minutes
+			"email_registration_challenge": 10,
+			"email_registration_verified":  10,
 		},
 		MaxLoginAttempts: 5,
 		MaxResetAttempts: 5,
@@ -270,12 +273,53 @@ func (tm *TokenManager) GetTokenData(token string, tokenType string) (*TokenData
 	}
 
 	// Add logging
-	logger.Info("Token data retrieved",
-		"token_type", tokenType,
-		"token", token,
-		"token_data", tokenData)
+	logger.Debug("Token data retrieved", "token_type", tokenType)
 
 	return &tokenData, nil
+}
+
+// ConsumeTokenData atomically retrieves and revokes a one-time token.
+func (tm *TokenManager) ConsumeTokenData(ctx context.Context, token, tokenType string) (*TokenData, error) {
+	if strings.TrimSpace(token) == "" || strings.TrimSpace(tokenType) == "" {
+		return nil, errors.New("token and token type are required")
+	}
+
+	tokenDataJSON, err := redisUtil.GetClient().GetDel(ctx, tm.getTokenKey(token, tokenType)).Result()
+	if err != nil {
+		if err == redis.Nil {
+			return nil, fmt.Errorf("token not found: %w", err)
+		}
+		return nil, fmt.Errorf("consume token data: %w", err)
+	}
+
+	var rawData map[string]interface{}
+	if err := json.Unmarshal([]byte(tokenDataJSON), &rawData); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal token data: %w", err)
+	}
+	tokenData := tokenDataFromRaw(rawData)
+	if tokenData.TokenType != tokenType {
+		return nil, errors.New("token type mismatch")
+	}
+	return tokenData, nil
+}
+
+func tokenDataFromRaw(rawData map[string]interface{}) *TokenData {
+	tokenData := &TokenData{Extra: make(map[string]interface{})}
+	if accountID, ok := rawData["account_id"].(string); ok && accountID != "" {
+		tokenData.AccountID = &accountID
+	}
+	if email, ok := rawData["email"].(string); ok && email != "" {
+		tokenData.Email = &email
+	}
+	if tokenType, ok := rawData["token_type"].(string); ok {
+		tokenData.TokenType = tokenType
+	}
+	for key, value := range rawData {
+		if key != "account_id" && key != "email" && key != "token_type" {
+			tokenData.Extra[key] = value
+		}
+	}
+	return tokenData
 }
 
 // getTokenForAccount gets the current token for an account

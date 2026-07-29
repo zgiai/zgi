@@ -2,6 +2,7 @@ package email
 
 import (
 	"bytes"
+	"context"
 	"crypto/tls"
 	"fmt"
 	"mime"
@@ -14,7 +15,7 @@ import (
 	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
-func sendSMTPEmail(to []string, subject, body, bodyType string) error {
+func sendSMTPEmail(ctx context.Context, to []string, subject, body, bodyType string) error {
 	if strings.TrimSpace(Cfg.Email.SMTPServer) == "" {
 		return fmt.Errorf("EMAIL_SMTP_SERVER is required")
 	}
@@ -23,7 +24,8 @@ func sendSMTPEmail(to []string, subject, body, bodyType string) error {
 	}
 
 	from := strings.TrimSpace(Cfg.Email.MailDefaultSendFrom)
-	if _, err := mail.ParseAddress(from); err != nil {
+	fromAddress, err := mail.ParseAddress(from)
+	if err != nil {
 		return fmt.Errorf("invalid sender address: %w", err)
 	}
 	recipients, err := normalizeRecipients(to)
@@ -36,7 +38,7 @@ func sendSMTPEmail(to []string, subject, body, bodyType string) error {
 	}
 
 	addr := net.JoinHostPort(Cfg.Email.SMTPServer, fmt.Sprintf("%d", Cfg.Email.SMTPPort))
-	client, err := newSMTPClient(addr)
+	client, err := newSMTPClient(ctx, addr)
 	if err != nil {
 		return err
 	}
@@ -48,7 +50,7 @@ func sendSMTPEmail(to []string, subject, body, bodyType string) error {
 	if err := maybeAuthSMTP(client); err != nil {
 		return err
 	}
-	if err := writeSMTPMessage(client, from, recipients, message); err != nil {
+	if err := writeSMTPMessage(client, fromAddress.Address, recipients, message); err != nil {
 		return err
 	}
 	if err := client.Quit(); err != nil {
@@ -59,18 +61,26 @@ func sendSMTPEmail(to []string, subject, body, bodyType string) error {
 	return nil
 }
 
-func newSMTPClient(addr string) (*smtp.Client, error) {
-	var conn net.Conn
-	var err error
-	if Cfg.Email.SMTPUseTLS {
-		conn, err = tls.DialWithDialer(&net.Dialer{Timeout: 10 * time.Second}, "tcp", addr, &tls.Config{
-			ServerName: Cfg.Email.SMTPServer,
-		})
-	} else {
-		conn, err = net.DialTimeout("tcp", addr, 10*time.Second)
-	}
+func newSMTPClient(ctx context.Context, addr string) (*smtp.Client, error) {
+	dialer := &net.Dialer{Timeout: 10 * time.Second}
+	conn, err := dialer.DialContext(ctx, "tcp", addr)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect SMTP server: %w", err)
+	}
+	if err := conn.SetDeadline(time.Now().Add(15 * time.Second)); err != nil {
+		_ = conn.Close()
+		return nil, fmt.Errorf("failed to set SMTP deadline: %w", err)
+	}
+	if Cfg.Email.SMTPSecurity == "implicit_tls" || (Cfg.Email.SMTPSecurity == "" && Cfg.Email.SMTPUseTLS) {
+		tlsConn := tls.Client(conn, &tls.Config{
+			MinVersion: tls.VersionTLS12,
+			ServerName: Cfg.Email.SMTPServer,
+		})
+		if err := tlsConn.HandshakeContext(ctx); err != nil {
+			_ = conn.Close()
+			return nil, fmt.Errorf("failed to negotiate SMTP TLS: %w", err)
+		}
+		conn = tlsConn
 	}
 
 	client, err := smtp.NewClient(conn, Cfg.Email.SMTPServer)
@@ -82,13 +92,18 @@ func newSMTPClient(addr string) (*smtp.Client, error) {
 }
 
 func maybeStartTLS(client *smtp.Client) error {
-	if !Cfg.Email.SMTPOpportunisticTLS {
+	requireStartTLS := Cfg.Email.SMTPSecurity == "starttls"
+	opportunisticStartTLS := Cfg.Email.SMTPSecurity == "" && Cfg.Email.SMTPOpportunisticTLS
+	if !requireStartTLS && !opportunisticStartTLS {
 		return nil
 	}
 	if ok, _ := client.Extension("STARTTLS"); !ok {
+		if requireStartTLS {
+			return fmt.Errorf("SMTP server does not support required STARTTLS")
+		}
 		return nil
 	}
-	if err := client.StartTLS(&tls.Config{ServerName: Cfg.Email.SMTPServer}); err != nil {
+	if err := client.StartTLS(&tls.Config{MinVersion: tls.VersionTLS12, ServerName: Cfg.Email.SMTPServer}); err != nil {
 		return fmt.Errorf("failed to start SMTP TLS: %w", err)
 	}
 	return nil

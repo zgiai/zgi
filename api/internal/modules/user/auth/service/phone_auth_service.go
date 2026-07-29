@@ -178,7 +178,10 @@ func (s *PhoneAuthService) SendCode(ctx context.Context, req PhoneCodeSendReques
 		return nil, ErrPhoneAccountNotFound
 	}
 
-	code := generate6DigitCode()
+	code, err := generate6DigitCode()
+	if err != nil {
+		return nil, fmt.Errorf("generate phone verification code: %w", err)
+	}
 	token, err := s.tokenMgr.GenerateDataToken(ctx, PhoneCodeTokenType, map[string]interface{}{
 		"phone_e164": phoneE164,
 		"scene":      req.Scene,

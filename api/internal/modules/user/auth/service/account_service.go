@@ -2,10 +2,11 @@ package service
 
 import (
 	"context"
+	cryptorand "crypto/rand"
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"math/rand"
+	"math/big"
 	"strconv"
 	"strings"
 	"sync"
@@ -235,7 +236,10 @@ func (s *AccountService) SendResetPasswordEmail(ctx context.Context, account *au
 		return "", errors.New("Too many password reset emails have been sent. Please try again in 1 minutes.")
 	}
 
-	code := generate6DigitCode()
+	code, err := generate6DigitCode()
+	if err != nil {
+		return "", fmt.Errorf("generate verification code: %w", err)
+	}
 
 	var tokenEmail string
 
@@ -294,13 +298,17 @@ func (s *AccountService) SendDirectAddMemberEmail(ctx context.Context, account *
 	return email.SendDirectAddMemberMail(language, account.Email, groupName, departmentName, activationURL)
 }
 
-func generate6DigitCode() string {
-	rand.Seed(time.Now().UnixNano())
-	codes := make([]string, 6)
-	for i := 0; i < 6; i++ {
-		codes[i] = strconv.Itoa(rand.Intn(10))
+func generate6DigitCode() (string, error) {
+	const codeLength = 6
+	digits := make([]byte, codeLength)
+	for i := range digits {
+		value, err := cryptorand.Int(cryptorand.Reader, big.NewInt(10))
+		if err != nil {
+			return "", err
+		}
+		digits[i] = byte('0' + value.Int64())
 	}
-	return strings.Join(codes, "")
+	return string(digits), nil
 }
 
 func (s *AccountService) incrementResetPasswordRateLimit(email string) {
@@ -3294,7 +3302,7 @@ func setAccountMobile(account *auth_model.Account, mobile *string) {
 // Helper functions
 func generateRandomCode(length int) string {
 	bytes := make([]byte, length/2)
-	rand.Read(bytes)
+	_, _ = cryptorand.Read(bytes)
 	return hex.EncodeToString(bytes)[:length]
 }
 

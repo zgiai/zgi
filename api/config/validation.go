@@ -2,6 +2,8 @@ package config
 
 import (
 	"fmt"
+	"net/mail"
+	"net/url"
 	"strings"
 )
 
@@ -26,6 +28,26 @@ func validateConfig(cfg *Config) error {
 
 	if cfg.Email.MailDefaultSendFrom == "" {
 		return fmt.Errorf("%s is required", envEmailMailDefaultSendFrom)
+	}
+	if _, err := mail.ParseAddress(cfg.Email.MailDefaultSendFrom); err != nil {
+		return fmt.Errorf("email sender address is invalid: %w", err)
+	}
+
+	switch strings.ToLower(strings.TrimSpace(cfg.Email.MailType)) {
+	case "resend":
+		baseURL, err := url.Parse(strings.TrimSpace(cfg.Email.ResendAPIURL))
+		if err != nil || baseURL.Host == "" || (baseURL.Scheme != "http" && baseURL.Scheme != "https") {
+			return fmt.Errorf("%s must be an absolute HTTP(S) URL", envEmailResendBaseURL)
+		}
+	case "smtp":
+	default:
+		return fmt.Errorf("%s must be one of: resend, smtp", envEmailProvider)
+	}
+
+	switch cfg.Email.SMTPSecurity {
+	case "", "none", "starttls", "implicit_tls":
+	default:
+		return fmt.Errorf("%s must be one of: none, starttls, implicit_tls", envEmailSMTPSecurity)
 	}
 
 	if requiresResendAPIKey(cfg) && cfg.Email.ResendAPIKey == "" {
