@@ -536,8 +536,8 @@ export class AuthenticationService extends BaseService {
   // Verify forgot password code
   async verifyForgotPassword(
     data: RegisterVerifyRequest
-  ): Promise<ApiResponseData<{ is_valid: boolean; email: string }>> {
-    return this.request<ApiResponseData<{ is_valid: boolean; email: string }>>(
+  ): Promise<ApiResponseData<{ is_valid: boolean; email: string; token: string }>> {
+    return this.request<ApiResponseData<{ is_valid: boolean; email: string; token: string }>>(
       'post',
       '/forgot-password/validity',
       data,

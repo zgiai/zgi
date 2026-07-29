@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html"
 	"io"
@@ -132,7 +133,10 @@ func sendResendEmail(ctx context.Context, to []string, subject, body, bodyType s
 		req.Header.Set("Idempotency-Key", idempotencyKey)
 	}
 
-	client := observability.HTTPClient(&http.Client{Timeout: 15 * time.Second})
+	client := observability.HTTPClient(&http.Client{
+		Timeout:       15 * time.Second,
+		CheckRedirect: resendRedirectPolicy,
+	})
 	resp, err := client.Do(req)
 	if err != nil {
 		logger.Error("Failed to send request", err)
@@ -182,6 +186,27 @@ func sendResendEmail(ctx context.Context, to []string, subject, body, bodyType s
 
 	logger.Info("Email sent successfully", fmt.Sprintf("ID: %s", emailResp.ID))
 	return nil
+}
+
+func resendRedirectPolicy(req *http.Request, via []*http.Request) error {
+	if !emailDevelopmentRuntime() && !strings.EqualFold(req.URL.Scheme, "https") {
+		return errors.New("email provider refused an insecure redirect")
+	}
+	if len(via) == 0 {
+		return nil
+	}
+	original := via[0].URL
+	if !strings.EqualFold(req.URL.Scheme, original.Scheme) || !strings.EqualFold(req.URL.Host, original.Host) {
+		return errors.New("email provider refused a cross-origin redirect")
+	}
+	return nil
+}
+
+func emailDevelopmentRuntime() bool {
+	if Cfg == nil {
+		return false
+	}
+	return Cfg.Server.Mode == "debug" || Cfg.Server.Environment == "local" || Cfg.Server.Environment == "dev"
 }
 
 func (e providerErrorResponse) message() string {

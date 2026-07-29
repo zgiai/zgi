@@ -170,3 +170,67 @@ func TestResendCompatibleProviderParsesProxyErrorShape(t *testing.T) {
 		t.Fatalf("SendEmail() error = %v, want proxy error message", err)
 	}
 }
+
+func TestResendRedirectPolicyRejectsHTTPSDowngradeInProduction(t *testing.T) {
+	destinationReached := false
+	destination := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		destinationReached = true
+	}))
+	defer destination.Close()
+
+	source := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, destination.URL, http.StatusTemporaryRedirect)
+	}))
+	defer source.Close()
+
+	previous := Cfg
+	Cfg = &config.Config{Server: config.ServerConfig{Mode: "release", Environment: "production"}}
+	t.Cleanup(func() { Cfg = previous })
+
+	client := source.Client()
+	client.CheckRedirect = resendRedirectPolicy
+	request, err := http.NewRequest(http.MethodGet, source.URL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Authorization", "Bearer must-not-leak")
+	_, err = client.Do(request)
+	if err == nil || !strings.Contains(err.Error(), "insecure redirect") {
+		t.Fatalf("redirect error = %v, want insecure redirect rejection", err)
+	}
+	if destinationReached {
+		t.Fatal("HTTPS downgrade destination was reached")
+	}
+}
+
+func TestResendRedirectPolicyRejectsCrossOriginWithoutForwardingAuthorization(t *testing.T) {
+	var destinationAuthorization string
+	destination := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		destinationAuthorization = r.Header.Get("Authorization")
+	}))
+	defer destination.Close()
+
+	source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, destination.URL, http.StatusTemporaryRedirect)
+	}))
+	defer source.Close()
+
+	previous := Cfg
+	Cfg = &config.Config{Server: config.ServerConfig{Mode: "debug", Environment: "local"}}
+	t.Cleanup(func() { Cfg = previous })
+
+	client := source.Client()
+	client.CheckRedirect = resendRedirectPolicy
+	request, err := http.NewRequest(http.MethodGet, source.URL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Authorization", "Bearer must-not-leak")
+	_, err = client.Do(request)
+	if err == nil || !strings.Contains(err.Error(), "cross-origin redirect") {
+		t.Fatalf("redirect error = %v, want cross-origin rejection", err)
+	}
+	if destinationAuthorization != "" {
+		t.Fatalf("cross-origin destination received Authorization: %q", destinationAuthorization)
+	}
+}

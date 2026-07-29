@@ -32,6 +32,7 @@ func DefaultConfig() *Config {
 			"access":                       60,    // 1 hour
 			"refresh":                      43200, // 30 days (30 * 24 * 60 minutes)
 			"reset_password":               30,    // 30 minutes
+			"reset_password_verified":      10,    // 10 minutes
 			"activation":                   1440,  // 24 hours
 			"email_code":                   30,    // 30 minutes
 			"member_invite":                1440,  // 24 hours
@@ -105,12 +106,13 @@ end
 redis.call('DEL', KEYS[2])
 if ARGV[7] == 'reserve' then
   local ttl = redis.call('PTTL', KEYS[1])
+  if ttl <= 0 then
+    redis.call('DEL', KEYS[1])
+    return {0, ''}
+  end
   data['code_reserved'] = true
   local encoded = cjson.encode(data)
-  redis.call('SET', KEYS[1], encoded)
-  if ttl > 0 then
-    redis.call('PEXPIRE', KEYS[1], ttl)
-  end
+  redis.call('SET', KEYS[1], encoded, 'PX', ttl)
   return {1, encoded}
 end
 
@@ -128,11 +130,12 @@ if data[ARGV[1]] == nil or tostring(data[ARGV[1]]) ~= ARGV[2] or data['code_rese
   return 0
 end
 local ttl = redis.call('PTTL', KEYS[1])
-data['code_reserved'] = nil
-redis.call('SET', KEYS[1], cjson.encode(data))
-if ttl > 0 then
-  redis.call('PEXPIRE', KEYS[1], ttl)
+if ttl <= 0 then
+  redis.call('DEL', KEYS[1])
+  return 0
 end
+data['code_reserved'] = nil
+redis.call('SET', KEYS[1], cjson.encode(data), 'PX', ttl)
 return 1
 `)
 
@@ -575,6 +578,241 @@ type InvitationData struct {
 	WorkspaceID string `json:"workspace_id"`
 }
 
+// InvitationReservation is an ownership handle for a globally reserved
+// invitation. The opaque ID prevents one request from releasing or consuming a
+// reservation held by another request.
+type InvitationReservation struct {
+	ID   string
+	Data InvitationData
+}
+
+var reserveInvitationScript = redis.NewScript(`
+local genericRaw = redis.call('GET', KEYS[1])
+local legacyRaw = redis.call('GET', KEYS[2])
+local genericTTL = 0
+local legacyTTL = 0
+if genericRaw then
+  genericTTL = redis.call('PTTL', KEYS[1])
+  if genericTTL <= 0 then
+    redis.call('DEL', KEYS[1])
+    genericRaw = false
+    genericTTL = 0
+  end
+end
+if legacyRaw then
+  legacyTTL = redis.call('PTTL', KEYS[2])
+  if legacyTTL <= 0 then
+    redis.call('DEL', KEYS[2])
+    legacyRaw = false
+    legacyTTL = 0
+  end
+end
+if not genericRaw and not legacyRaw then
+  return {0, ''}
+end
+
+local accountID = ''
+local email = ''
+local workspaceID = ''
+if genericRaw then
+  local generic = cjson.decode(genericRaw)
+  accountID = tostring(generic['account_id'] or '')
+  email = tostring(generic['email'] or '')
+  workspaceID = tostring(generic['workspace_id'] or '')
+end
+if legacyRaw then
+  local legacyAccountID = tostring(legacyRaw)
+  if accountID ~= '' and accountID ~= legacyAccountID then
+    return {-1, ''}
+  end
+  accountID = legacyAccountID
+  if email ~= '' and email ~= ARGV[2] then
+    return {-1, ''}
+  end
+  if workspaceID ~= '' and workspaceID ~= ARGV[1] then
+    return {-1, ''}
+  end
+  email = ARGV[2]
+  workspaceID = ARGV[1]
+end
+if accountID == '' then
+  return {-1, ''}
+end
+if ARGV[1] ~= '' and workspaceID ~= ARGV[1] then
+  return {-1, ''}
+end
+if ARGV[2] ~= '' and email ~= ARGV[2] then
+  return {-1, ''}
+end
+
+local ttl = math.max(genericTTL, legacyTTL)
+if ttl <= 0 then
+  return {0, ''}
+end
+local claim = cjson.encode({
+  reservation_id = ARGV[3],
+  account_id = accountID,
+  email = email,
+  workspace_id = workspaceID
+})
+local acquired = redis.call('SET', KEYS[3], claim, 'NX', 'PX', ttl)
+if not acquired then
+  return {0, ''}
+end
+return {1, claim}
+`)
+
+var releaseInvitationScript = redis.NewScript(`
+local raw = redis.call('GET', KEYS[1])
+if not raw then return 0 end
+local claim = cjson.decode(raw)
+if tostring(claim['reservation_id'] or '') ~= ARGV[1] then return 0 end
+return redis.call('DEL', KEYS[1])
+`)
+
+var consumeInvitationScript = redis.NewScript(`
+local raw = redis.call('GET', KEYS[3])
+if not raw then return 0 end
+local claim = cjson.decode(raw)
+if tostring(claim['reservation_id'] or '') ~= ARGV[1] then return 0 end
+redis.call('DEL', KEYS[1], KEYS[2], KEYS[3])
+return 1
+`)
+
+var revokeInvitationScript = redis.NewScript(`
+local deleted = 0
+local genericRaw = redis.call('GET', KEYS[1])
+if genericRaw then
+  if ARGV[1] == '' or ARGV[2] == '' then
+    deleted = deleted + redis.call('DEL', KEYS[1])
+  else
+    local generic = cjson.decode(genericRaw)
+    if tostring(generic['workspace_id'] or '') == ARGV[1] and tostring(generic['email'] or '') == ARGV[2] then
+      deleted = deleted + redis.call('DEL', KEYS[1])
+    end
+  end
+end
+if ARGV[1] ~= '' and ARGV[2] ~= '' then
+  deleted = deleted + redis.call('DEL', KEYS[2])
+end
+return deleted
+`)
+
+func (tm *TokenManager) invitationLegacyKey(workspaceID, email, token string) string {
+	emailHash := fmt.Sprintf("%x", sha256.Sum256([]byte(email)))
+	return fmt.Sprintf("member_invite_token:%s, %s:%s", workspaceID, emailHash, token)
+}
+
+func (tm *TokenManager) invitationClaimKey(token string) string {
+	return fmt.Sprintf("member_invite:claim:%s", token)
+}
+
+// ReserveInvitationToken atomically claims an invitation across both the
+// generic and legacy key formats. Neither source key is modified, so its TTL is
+// preserved while database work is in progress.
+func (tm *TokenManager) ReserveInvitationToken(ctx context.Context, token, workspaceID, email string) (*InvitationReservation, error) {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return nil, errors.New("invitation token is required")
+	}
+
+	// Generic invitations carry the legacy lookup fields in their payload. Read
+	// them before the atomic claim so callers that only have the token can still
+	// lock and later clean up both aliases.
+	genericKey := tm.getInvitationTokenKey(token)
+	if raw, err := redisUtil.GetClient().Get(ctx, genericKey).Result(); err == nil {
+		var generic InvitationData
+		if err := json.Unmarshal([]byte(raw), &generic); err != nil {
+			return nil, fmt.Errorf("decode generic invitation: %w", err)
+		}
+		if workspaceID == "" {
+			workspaceID = generic.WorkspaceID
+		}
+		if email == "" {
+			email = generic.Email
+		}
+	} else if err != redis.Nil {
+		return nil, fmt.Errorf("load generic invitation: %w", err)
+	}
+
+	legacyKey := fmt.Sprintf("member_invite:legacy-missing:%s", token)
+	if workspaceID != "" && email != "" {
+		legacyKey = tm.invitationLegacyKey(workspaceID, email, token)
+	}
+	reservationID := uuid.NewString()
+	result, err := reserveInvitationScript.Run(ctx, redisUtil.GetClient(), []string{
+		genericKey,
+		legacyKey,
+		tm.invitationClaimKey(token),
+	}, workspaceID, email, reservationID).Slice()
+	if err != nil {
+		return nil, fmt.Errorf("reserve invitation token: %w", err)
+	}
+	if len(result) != 2 {
+		return nil, errors.New("reserve invitation token returned an invalid result")
+	}
+	status, ok := result[0].(int64)
+	if !ok || status != 1 {
+		if status == -1 {
+			return nil, errors.New("invitation token payload does not match request")
+		}
+		return nil, errors.New("invitation token does not exist or is already reserved")
+	}
+	rawClaim, ok := result[1].(string)
+	if !ok || rawClaim == "" {
+		return nil, errors.New("invitation reservation data is invalid")
+	}
+	var claim struct {
+		ReservationID string `json:"reservation_id"`
+		InvitationData
+	}
+	if err := json.Unmarshal([]byte(rawClaim), &claim); err != nil {
+		return nil, fmt.Errorf("decode invitation reservation: %w", err)
+	}
+	if claim.ReservationID != reservationID || claim.AccountID == "" {
+		return nil, errors.New("invitation reservation data is invalid")
+	}
+	return &InvitationReservation{ID: reservationID, Data: claim.InvitationData}, nil
+}
+
+func (tm *TokenManager) ReleaseInvitationReservation(ctx context.Context, token string, reservation *InvitationReservation) error {
+	if reservation == nil || reservation.ID == "" {
+		return errors.New("invitation reservation is required")
+	}
+	result, err := releaseInvitationScript.Run(ctx, redisUtil.GetClient(), []string{
+		tm.invitationClaimKey(token),
+	}, reservation.ID).Int64()
+	if err != nil {
+		return fmt.Errorf("release invitation reservation: %w", err)
+	}
+	if result != 1 {
+		return errors.New("invitation reservation does not exist")
+	}
+	return nil
+}
+
+func (tm *TokenManager) ConsumeInvitationReservation(ctx context.Context, token string, reservation *InvitationReservation) error {
+	if reservation == nil || reservation.ID == "" {
+		return errors.New("invitation reservation is required")
+	}
+	legacyKey := fmt.Sprintf("member_invite:legacy-missing:%s", token)
+	if reservation.Data.WorkspaceID != "" && reservation.Data.Email != "" {
+		legacyKey = tm.invitationLegacyKey(reservation.Data.WorkspaceID, reservation.Data.Email, token)
+	}
+	result, err := consumeInvitationScript.Run(ctx, redisUtil.GetClient(), []string{
+		tm.getInvitationTokenKey(token),
+		legacyKey,
+		tm.invitationClaimKey(token),
+	}, reservation.ID).Int64()
+	if err != nil {
+		return fmt.Errorf("consume invitation reservation: %w", err)
+	}
+	if result != 1 {
+		return errors.New("invitation reservation does not exist")
+	}
+	return nil
+}
+
 // StoreInvitationToken store invitation token
 func (tm *TokenManager) StoreInvitationToken(workspaceID, email, accountID, token string, expiryHours int) error {
 	ctx := context.Background()
@@ -601,54 +839,65 @@ func (tm *TokenManager) GetInvitationByToken(token, workspaceID, email string) (
 
 	if workspaceID != "" && email != "" {
 		// Use the existing invite token key format.
-		emailHash := fmt.Sprintf("%x", sha256.Sum256([]byte(email)))
-		cacheKey := fmt.Sprintf("member_invite_token:%s, %s:%s", workspaceID, emailHash, token)
+		cacheKey := tm.invitationLegacyKey(workspaceID, email, token)
 
 		accountID, err := redisUtil.GetClient().Get(ctx, cacheKey).Result()
 		if err != nil {
-			if err == redis.Nil {
-				return nil, nil // token does not exist
+			if err != redis.Nil {
+				return nil, err
 			}
-			return nil, err
+			// Invitations created by newer versions use the generic key even when
+			// callers still send workspace/email. Fall through safely and validate
+			// the generic payload against both request bindings.
+		} else {
+			return &InvitationData{
+				AccountID:   accountID,
+				Email:       email,
+				WorkspaceID: workspaceID,
+			}, nil
 		}
-
-		return &InvitationData{
-			AccountID:   accountID,
-			Email:       email,
-			WorkspaceID: workspaceID,
-		}, nil
-	} else {
-		// Fallback: use generic token key
-		generalKey := tm.getInvitationTokenKey(token)
-		data, err := redisUtil.GetClient().Get(ctx, generalKey).Result()
-		if err != nil {
-			if err == redis.Nil {
-				return nil, nil
-			}
-			return nil, err
-		}
-
-		var invitation InvitationData
-		if err := json.Unmarshal([]byte(data), &invitation); err != nil {
-			return nil, err
-		}
-
-		return &invitation, nil
 	}
+
+	generalKey := tm.getInvitationTokenKey(token)
+	data, err := redisUtil.GetClient().Get(ctx, generalKey).Result()
+	if err != nil {
+		if err == redis.Nil {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	var invitation InvitationData
+	if err := json.Unmarshal([]byte(data), &invitation); err != nil {
+		return nil, err
+	}
+	if workspaceID != "" && invitation.WorkspaceID != workspaceID {
+		return nil, nil
+	}
+	if email != "" && invitation.Email != email {
+		return nil, nil
+	}
+	return &invitation, nil
 }
 
 // RevokeInvitationToken revoke invitation token
 func (tm *TokenManager) RevokeInvitationToken(workspaceID, email, token string) error {
 	ctx := context.Background()
 
+	legacyKey := fmt.Sprintf("member_invite:legacy-missing:%s", token)
 	if workspaceID != "" && email != "" {
-		emailHash := fmt.Sprintf("%x", sha256.Sum256([]byte(email)))
-		cacheKey := fmt.Sprintf("member_invite_token:%s, %s:%s", workspaceID, emailHash, token)
-		return redisUtil.GetClient().Del(ctx, cacheKey).Err()
-	} else {
-		generalKey := tm.getInvitationTokenKey(token)
-		return redisUtil.GetClient().Del(ctx, generalKey).Err()
+		legacyKey = tm.invitationLegacyKey(workspaceID, email, token)
 	}
+	deleted, err := revokeInvitationScript.Run(ctx, redisUtil.GetClient(), []string{
+		tm.getInvitationTokenKey(token), legacyKey,
+	}, workspaceID, email).Int64()
+	if err != nil {
+		return err
+	}
+	if deleted < 1 {
+		return errors.New("invitation token does not exist or was already consumed")
+	}
+	return nil
 }
 
 // getInvitationTokenKey get generic invitation token key

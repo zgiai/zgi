@@ -3,6 +3,10 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
+	"net"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -122,6 +126,56 @@ func TestEmailRegistrationDisabledAndSendFailure(t *testing.T) {
 	require.ErrorIs(t, err, ErrEmailRegistrationSendFailed)
 }
 
+func TestEmailRegistrationSendFailsClosedWhenAccountLookupFails(t *testing.T) {
+	accounts := &fakeEmailRegistrationAccounts{existsErr: errors.New("database unavailable")}
+	sender := &fakeEmailRegistrationSender{}
+	service := NewEmailRegistrationService(
+		accounts,
+		newTestEmailRegistrationTokenManager(t),
+		sender,
+		EmailRegistrationOptions{AllowRegister: true},
+	)
+
+	_, err := service.SendCode(
+		t.Context(),
+		EmailRegistrationSendRequest{Email: "user@example.com"},
+		"127.0.0.1",
+	)
+	require.ErrorContains(t, err, "check existing registration account")
+	require.Empty(t, sender.to)
+}
+
+func TestEmailRegistrationFinishFailsClosedWhenAccountLookupFails(t *testing.T) {
+	tokenManager := newTestEmailRegistrationTokenManager(t)
+	accounts := &fakeEmailRegistrationAccounts{existsErr: errors.New("database unavailable")}
+	service := NewEmailRegistrationService(
+		accounts,
+		tokenManager,
+		&fakeEmailRegistrationSender{},
+		EmailRegistrationOptions{AllowRegister: true},
+	)
+	verifiedToken, err := tokenManager.GenerateDataToken(
+		t.Context(),
+		EmailRegistrationVerifiedTokenType,
+		map[string]interface{}{
+			"registration_email": "user@example.com",
+			"language":           "en-US",
+			"code":               "verified",
+		},
+	)
+	require.NoError(t, err)
+
+	_, err = service.Finish(t.Context(), EmailRegistrationFinishRequest{
+		Token:           verifiedToken,
+		Name:            "User",
+		Password:        "secret123",
+		PasswordConfirm: "secret123",
+	}, "127.0.0.1")
+	require.ErrorContains(t, err, "check registration account before finish")
+	require.Zero(t, accounts.registerCalls)
+	require.Empty(t, accounts.loginIP)
+}
+
 func TestEmailRegistrationSendCooldown(t *testing.T) {
 	service, _ := newTestEmailRegistrationService(t, EmailRegistrationOptions{
 		AllowRegister: true,
@@ -180,6 +234,39 @@ func TestEmailRegistrationKeepsVerifiedTokenWhenAutomaticLoginFails(t *testing.T
 	_, err = service.Finish(t.Context(), request, "127.0.0.1")
 	require.NoError(t, err)
 	require.Equal(t, 1, accounts.registerCalls)
+}
+
+func TestEmailRegistrationReleasesChallengeWhenVerifiedTokenIssuanceFails(t *testing.T) {
+	server := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
+	ctx, cancel := context.WithCancel(context.Background())
+	client.AddHook(&failRedisCommandOnceHook{
+		command:   "setex",
+		keyPrefix: "token:" + EmailRegistrationVerifiedTokenType + ":",
+		onFailure: cancel,
+	})
+	redisUtil.SetClient(client)
+	t.Cleanup(func() {
+		_ = client.Close()
+		redisUtil.SetClient(nil)
+	})
+
+	tokenManager := helper.NewTokenManager()
+	accounts := &fakeEmailRegistrationAccounts{}
+	sender := &fakeEmailRegistrationSender{}
+	service := NewEmailRegistrationService(accounts, tokenManager, sender, EmailRegistrationOptions{AllowRegister: true})
+
+	sent, err := service.SendCode(t.Context(), EmailRegistrationSendRequest{Email: "user@example.com"}, "127.0.0.1")
+	require.NoError(t, err)
+	request := EmailRegistrationVerifyRequest{Email: "user@example.com", Code: sender.code, Token: sent.Token}
+
+	_, err = service.VerifyCode(ctx, request)
+	require.ErrorContains(t, err, "generate verified email registration token")
+	require.ErrorIs(t, ctx.Err(), context.Canceled)
+
+	verified, err := service.VerifyCode(t.Context(), request)
+	require.NoError(t, err)
+	require.NotEmpty(t, verified.Token)
 }
 
 func TestEmailRegistrationRejectsShortPasswordAtServiceLayer(t *testing.T) {
@@ -257,6 +344,7 @@ func (f *fakeEmailRegistrationSender) SendRegistrationCode(
 
 type fakeEmailRegistrationAccounts struct {
 	existingEmail             string
+	existsErr                 error
 	limited                   bool
 	limitErr                  error
 	registerCalls             int
@@ -267,8 +355,45 @@ type fakeEmailRegistrationAccounts struct {
 	loginErr                  error
 }
 
-func (f *fakeEmailRegistrationAccounts) ExistsByEmail(_ context.Context, email string) bool {
-	return f.existingEmail == email
+type failRedisCommandOnceHook struct {
+	command   string
+	keyPrefix string
+	onFailure func()
+	failed    atomic.Bool
+}
+
+func (h *failRedisCommandOnceHook) DialHook(next redis.DialHook) redis.DialHook {
+	return func(ctx context.Context, network, addr string) (net.Conn, error) {
+		return next(ctx, network, addr)
+	}
+}
+
+func (h *failRedisCommandOnceHook) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
+	return func(ctx context.Context, cmd redis.Cmder) error {
+		args := cmd.Args()
+		if cmd.Name() == h.command && len(args) > 1 &&
+			strings.HasPrefix(fmt.Sprint(args[1]), h.keyPrefix) &&
+			!h.failed.Swap(true) {
+			if h.onFailure != nil {
+				h.onFailure()
+			}
+			return errors.New("injected verified token write failure")
+		}
+		return next(ctx, cmd)
+	}
+}
+
+func (h *failRedisCommandOnceHook) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
+	return func(ctx context.Context, cmds []redis.Cmder) error {
+		return next(ctx, cmds)
+	}
+}
+
+func (f *fakeEmailRegistrationAccounts) ExistsByEmail(_ context.Context, email string) (bool, error) {
+	if f.existsErr != nil {
+		return false, f.existsErr
+	}
+	return f.existingEmail == email, nil
 }
 
 func (f *fakeEmailRegistrationAccounts) IsEmailSendIPLimit(_ context.Context, _ string) (bool, error) {

@@ -30,13 +30,13 @@ type AccountService interface {
 	ActivateCheck(ctx context.Context, workspaceID, email, token string) (map[string]interface{}, bool)
 	Activate(ctx context.Context, workspaceID, email, token, name, password, lang, timezone string) (interface{}, error)
 	CheckRegisterValidity(ctx context.Context, email, code, token string) (bool, error)
-	ValidateResetPasswordToken(token, email, code string) (bool, string, error)
+	ValidateResetPasswordToken(ctx context.Context, token, email, code string) (bool, string, string, error)
 	ResetPasswordWithAutoRegister(token, newPassword string) error
 	IsAllowRegister() bool
 	AddForgotPasswordErrorRateLimit(email string)
 	ResetForgotPasswordErrorRateLimit(email string)
 	IsForgotPasswordErrorRateLimit(email string) bool
-	ExistsByEmail(ctx context.Context, email string) bool
+	ExistsByEmail(ctx context.Context, email string) (bool, error)
 	LoadUser(ctx context.Context, userID string) (*auth_model.Account, error)
 	GetAccountJWTToken(ctx context.Context, account *auth_model.Account) (string, error)
 	Authenticate(ctx context.Context, email, password string, inviteToken string) (*auth_model.Account, error)

@@ -154,8 +154,8 @@ func (a *AccountServiceAdapter) CheckRegisterValidity(ctx context.Context, email
 	return a.accountService.CheckRegisterValidity(ctx, email, code, token)
 }
 
-func (a *AccountServiceAdapter) ValidateResetPasswordToken(token, email, code string) (bool, string, error) {
-	return a.accountService.ValidateResetPasswordToken(token, email, code)
+func (a *AccountServiceAdapter) ValidateResetPasswordToken(ctx context.Context, token, email, code string) (bool, string, string, error) {
+	return a.accountService.ValidateResetPasswordToken(ctx, token, email, code)
 }
 
 func (a *AccountServiceAdapter) ResetPasswordWithAutoRegister(token, newPassword string) error {
@@ -230,7 +230,7 @@ func (a *AccountServiceAdapter) CloseAccount(ctx context.Context, account *auth_
 	return a.accountService.CloseAccount(ctx, account)
 }
 
-func (a *AccountServiceAdapter) ExistsByEmail(ctx context.Context, email string) bool {
+func (a *AccountServiceAdapter) ExistsByEmail(ctx context.Context, email string) (bool, error) {
 	return a.accountService.ExistsByEmail(ctx, email)
 }
 

@@ -148,6 +148,60 @@ func TestEmailCodeLoginKeepsCodeWhenSessionCreationFails(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestEmailCodeLoginReleasesReservationAfterRequestCancellation(t *testing.T) {
+	tokenMgr := newTestEmailCodeLoginTokenManager(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	accounts := &fakeEmailCodeLoginAccounts{
+		tokenMgr: tokenMgr,
+		account:  &auth_model.Account{ID: "account-1", Email: "user@example.com", Status: auth_model.AccountStatusActive},
+		loginErr: errors.New("session unavailable"),
+		onLogin:  cancel,
+	}
+	service := NewEmailCodeLoginService(accounts, tokenMgr, EmailCodeLoginOptions{Enabled: true})
+	sent, err := service.SendCode(t.Context(), EmailCodeLoginSendRequest{Email: "user@example.com"}, "127.0.0.1")
+	require.NoError(t, err)
+	request := EmailCodeLoginVerifyRequest{Email: "user@example.com", Code: accounts.code, Token: sent.Token}
+
+	_, err = service.VerifyAndLogin(ctx, request, "127.0.0.1")
+	require.ErrorContains(t, err, "complete email code login")
+	require.ErrorIs(t, ctx.Err(), context.Canceled)
+
+	accounts.loginErr = nil
+	accounts.onLogin = nil
+	_, err = service.VerifyAndLogin(context.Background(), request, "127.0.0.1")
+	require.NoError(t, err)
+}
+
+func TestEmailCodeLoginReleasesReservationWhenConsumeFails(t *testing.T) {
+	server := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
+	client.AddHook(&failRedisCommandOnceHook{
+		command:   "getdel",
+		keyPrefix: "token:" + EmailCodeLoginTokenType + ":",
+	})
+	redisUtil.SetClient(client)
+	t.Cleanup(func() {
+		_ = client.Close()
+		redisUtil.SetClient(nil)
+	})
+
+	tokenMgr := helper.NewTokenManager()
+	accounts := &fakeEmailCodeLoginAccounts{
+		tokenMgr: tokenMgr,
+		account:  &auth_model.Account{ID: "account-1", Email: "user@example.com", Status: auth_model.AccountStatusActive},
+	}
+	service := NewEmailCodeLoginService(accounts, tokenMgr, EmailCodeLoginOptions{Enabled: true})
+	sent, err := service.SendCode(t.Context(), EmailCodeLoginSendRequest{Email: "user@example.com"}, "127.0.0.1")
+	require.NoError(t, err)
+	request := EmailCodeLoginVerifyRequest{Email: "user@example.com", Code: accounts.code, Token: sent.Token}
+
+	_, err = service.VerifyAndLogin(t.Context(), request, "127.0.0.1")
+	require.ErrorIs(t, err, ErrEmailCodeLoginTokenInvalid)
+
+	_, err = service.VerifyAndLogin(t.Context(), request, "127.0.0.1")
+	require.NoError(t, err)
+}
+
 func newTestEmailCodeLoginTokenManager(t *testing.T) *helper.TokenManager {
 	t.Helper()
 	server := miniredis.RunT(t)
@@ -169,6 +223,7 @@ type fakeEmailCodeLoginAccounts struct {
 	sendErr  error
 	loginIP  string
 	loginErr error
+	onLogin  func()
 }
 
 func (f *fakeEmailCodeLoginAccounts) GetUserThroughEmail(_ context.Context, email string) (*auth_model.Account, error) {
@@ -194,6 +249,9 @@ func (f *fakeEmailCodeLoginAccounts) IsEmailSendIPLimit(context.Context, string)
 
 func (f *fakeEmailCodeLoginAccounts) LoginCommon(_ *auth_model.Account, ipAddress string) (*auth_model.TokenPair, error) {
 	f.loginIP = ipAddress
+	if f.onLogin != nil {
+		f.onLogin()
+	}
 	if f.loginErr != nil {
 		return nil, f.loginErr
 	}

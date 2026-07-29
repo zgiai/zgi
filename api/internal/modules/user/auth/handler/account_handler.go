@@ -18,6 +18,7 @@ import (
 
 	helper "github.com/zgiai/zgi/api/internal/util"
 	"github.com/zgiai/zgi/api/middleware"
+	"github.com/zgiai/zgi/api/pkg/logger"
 	"github.com/zgiai/zgi/api/pkg/response"
 	"gorm.io/gorm"
 )
@@ -60,6 +61,8 @@ type LoginResult struct {
 }
 
 type accountContextMode string
+
+const accountDeletionCompensationTimeout = 2 * time.Second
 
 const (
 	accountContextModeNone         accountContextMode = "none"
@@ -305,7 +308,11 @@ func (h *AccountHandler) ResetPassword(c *gin.Context) {
 
 	err := h.accountService.ResetPassword(c.Request.Context(), req.Token, req.NewPassword)
 	if err != nil {
-		response.Fail(c, response.ErrTokenInvalid)
+		if errors.Is(err, auth_service.ErrResetPasswordTokenInvalid) {
+			response.Fail(c, response.ErrTokenInvalid)
+			return
+		}
+		response.Fail(c, response.ErrSystemError)
 		return
 	}
 
@@ -450,12 +457,28 @@ func (h *AccountHandler) ConfirmAccountDeletion(c *gin.Context) {
 		return
 	}
 	if err := h.accountService.DeleteAccount(c.Request.Context(), accountID); err != nil {
-		_ = h.accountService.ReleaseAccountDeletionVerification(c.Request.Context(), accountID, req.Token)
+		h.releaseAccountDeletionVerification(c.Request.Context(), accountID, req.Token)
 		response.Fail(c, response.ErrAccountDeleteFailed)
 		return
 	}
-	_ = h.accountService.CompleteAccountDeletionVerification(c.Request.Context(), accountID, req.Token)
+	h.completeAccountDeletionVerification(c.Request.Context(), accountID, req.Token)
 	response.Success(c, nil)
+}
+
+func (h *AccountHandler) releaseAccountDeletionVerification(ctx context.Context, accountID, token string) {
+	compensationCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), accountDeletionCompensationTimeout)
+	defer cancel()
+	if err := h.accountService.ReleaseAccountDeletionVerification(compensationCtx, accountID, token); err != nil {
+		logger.Warn("Failed to release account deletion verification reservation", "account_id", accountID, "error", err)
+	}
+}
+
+func (h *AccountHandler) completeAccountDeletionVerification(ctx context.Context, accountID, token string) {
+	compensationCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), accountDeletionCompensationTimeout)
+	defer cancel()
+	if err := h.accountService.CompleteAccountDeletionVerification(compensationCtx, accountID, token); err != nil {
+		logger.Warn("Failed to consume account deletion verification", "account_id", accountID, "error", err)
+	}
 }
 
 func (h *AccountHandler) DeleteAccount(c *gin.Context) {
@@ -572,7 +595,12 @@ func (h *AccountHandler) ForgotPasswordSendEmail(c *gin.Context) {
 		return
 	}
 
-	if !h.accountService.ExistsByEmail(c.Request.Context(), req.Email) {
+	exists, err := h.accountService.ExistsByEmail(c.Request.Context(), req.Email)
+	if err != nil {
+		response.Fail(c, response.ErrSystemError)
+		return
+	}
+	if !exists {
 		response.Fail(c, response.ErrAccountNotFound)
 		return
 	}
@@ -606,13 +634,13 @@ func (h *AccountHandler) ForgotPasswordCheck(c *gin.Context) {
 		return
 	}
 
-	isValid, email, err := h.accountService.ValidateResetPasswordToken(req.Token, req.Email, req.Code)
+	isValid, email, verifiedToken, err := h.accountService.ValidateResetPasswordToken(c.Request.Context(), req.Token, req.Email, req.Code)
 	if err != nil {
 		response.Fail(c, response.ErrTokenInvalid)
 		return
 	}
 
-	response.Success(c, gin.H{"is_valid": isValid, "email": email})
+	response.Success(c, gin.H{"is_valid": isValid, "email": email, "token": verifiedToken})
 }
 
 func (h *AccountHandler) ForgotPasswordReset(c *gin.Context) {
@@ -1103,7 +1131,12 @@ func (h *ForgotPasswordHandler) SendEmail(c *gin.Context) {
 		language = "en-US" // default language
 	}
 
-	if !h.accountService.ExistsByEmail(c.Request.Context(), req.Email) {
+	exists, err := h.accountService.ExistsByEmail(c.Request.Context(), req.Email)
+	if err != nil {
+		response.Fail(c, response.ErrSystemError)
+		return
+	}
+	if !exists {
 		response.Fail(c, response.ErrAccountNotFound)
 		return
 	}
@@ -1151,7 +1184,7 @@ func (h *ForgotPasswordHandler) Check(c *gin.Context) {
 	}
 
 	// Validate token and verification code
-	isValid, email, err := h.accountService.ValidateResetPasswordToken(req.Token, req.Email, req.Code)
+	isValid, email, verifiedToken, err := h.accountService.ValidateResetPasswordToken(c.Request.Context(), req.Token, req.Email, req.Code)
 	if err != nil {
 		response.Fail(c, response.ErrTokenInvalid)
 		return
@@ -1160,6 +1193,7 @@ func (h *ForgotPasswordHandler) Check(c *gin.Context) {
 	response.Success(c, gin.H{
 		"is_valid": isValid,
 		"email":    email,
+		"token":    verifiedToken,
 	})
 }
 
@@ -1181,10 +1215,14 @@ func (h *ForgotPasswordHandler) Reset(c *gin.Context) {
 	}
 
 	// Reset password
-	err := h.accountService.ResetPassword(context.Background(), req.Token, req.NewPassword)
+	err := h.accountService.ResetPassword(c.Request.Context(), req.Token, req.NewPassword)
 	if err != nil {
 		if err.Error() == "Account is frozen" {
 			response.Fail(c, response.ErrAccountFrozen)
+			return
+		}
+		if errors.Is(err, auth_service.ErrResetPasswordTokenInvalid) {
+			response.Fail(c, response.ErrTokenInvalid)
 			return
 		}
 		response.FailWithMessage(c, response.ErrSystemError, err.Error())
@@ -1447,7 +1485,11 @@ func (h *AuthHandler) CheckEmailRegistered(c *gin.Context) {
 		return
 	}
 
-	exists := h.accountService.ExistsByEmail(c.Request.Context(), req.Email)
+	exists, err := h.accountService.ExistsByEmail(c.Request.Context(), req.Email)
+	if err != nil {
+		response.Fail(c, response.ErrSystemError)
+		return
+	}
 
 	response.Success(c, gin.H{
 		"email":         req.Email,

@@ -75,6 +75,30 @@ func TestAccountDeletionHandlerReleasesVerificationWhenDeleteFails(t *testing.T)
 	require.False(t, service.completed)
 }
 
+func TestAccountDeletionHandlerCompensatesAfterRequestCancellation(t *testing.T) {
+	requestCtx, cancel := context.WithCancel(context.Background())
+	service := &accountDeletionHandlerService{
+		valid:     true,
+		deleteErr: errors.New("database unavailable"),
+		onDelete:  cancel,
+	}
+	handler := NewAccountHandler(service, nil)
+	c, recorder := newAccountContextHandlerTestContext(
+		http.MethodPost,
+		"/account/delete/confirm",
+		[]byte(`{"token":"deletion-token","code":"123456"}`),
+	)
+	c.Request = c.Request.WithContext(requestCtx)
+	c.Set("account_id", "account-1")
+
+	handler.ConfirmAccountDeletion(c)
+
+	require.Equal(t, http.StatusBadRequest, recorder.Code)
+	require.ErrorIs(t, requestCtx.Err(), context.Canceled)
+	require.True(t, service.released)
+	require.NoError(t, service.releaseContextErr)
+}
+
 type accountDeletionHandlerService struct {
 	interfaces.AccountService
 	account           *auth_model.Account
@@ -87,6 +111,8 @@ type accountDeletionHandlerService struct {
 	released          bool
 	completed         bool
 	verifiedAccountID string
+	onDelete          func()
+	releaseContextErr error
 }
 
 func (f *accountDeletionHandlerService) LoadLoggedInAccount(context.Context, string) (*auth_model.Account, error) {
@@ -109,11 +135,15 @@ func (f *accountDeletionHandlerService) VerifyAccountDeletionCode(_ context.Cont
 
 func (f *accountDeletionHandlerService) DeleteAccount(context.Context, string) error {
 	f.deleted = true
+	if f.onDelete != nil {
+		f.onDelete()
+	}
 	return f.deleteErr
 }
 
-func (f *accountDeletionHandlerService) ReleaseAccountDeletionVerification(context.Context, string, string) error {
+func (f *accountDeletionHandlerService) ReleaseAccountDeletionVerification(ctx context.Context, _ string, _ string) error {
 	f.released = true
+	f.releaseContextErr = ctx.Err()
 	return nil
 }
 

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"mime"
 	"net"
@@ -22,7 +23,6 @@ func sendSMTPEmail(ctx context.Context, to []string, subject, body, bodyType str
 			logger.Error("SMTP email delivery failed",
 				"provider", "smtp",
 				"stage", stage,
-				"error", sendErr,
 			)
 		}
 	}()
@@ -143,7 +143,7 @@ func writeSMTPMessage(client *smtp.Client, from string, recipients []string, mes
 	}
 	for _, recipient := range recipients {
 		if err := client.Rcpt(recipient); err != nil {
-			return fmt.Errorf("failed to set SMTP recipient %s: %w", recipient, err)
+			return errors.New("SMTP server rejected a recipient")
 		}
 	}
 
@@ -170,7 +170,7 @@ func normalizeRecipients(to []string) ([]string, error) {
 		}
 		addr, err := mail.ParseAddress(recipient)
 		if err != nil {
-			return nil, fmt.Errorf("invalid recipient address %q: %w", recipient, err)
+			return nil, errors.New("invalid recipient address")
 		}
 		recipients = append(recipients, addr.Address)
 	}

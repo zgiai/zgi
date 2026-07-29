@@ -13,6 +13,7 @@ import (
 	auth_model "github.com/zgiai/zgi/api/internal/modules/user/auth/model"
 	helper "github.com/zgiai/zgi/api/internal/util"
 	"github.com/zgiai/zgi/api/pkg/email"
+	"github.com/zgiai/zgi/api/pkg/logger"
 	redisUtil "github.com/zgiai/zgi/api/pkg/redis"
 )
 
@@ -23,6 +24,7 @@ const (
 	defaultEmailRegistrationMaxCodeAttempts = 5
 	defaultEmailRegistrationSendCooldown    = time.Minute
 	emailRegistrationMinimumPasswordLength  = 8
+	emailRegistrationCompensationTimeout    = 2 * time.Second
 )
 
 var (
@@ -68,7 +70,7 @@ type EmailRegistrationFinishRequest struct {
 }
 
 type EmailRegistrationAccountGateway interface {
-	ExistsByEmail(ctx context.Context, email string) bool
+	ExistsByEmail(ctx context.Context, email string) (bool, error)
 	IsEmailSendIPLimit(ctx context.Context, ipAddress string) (bool, error)
 	RegisterEx(
 		ctx context.Context,
@@ -142,7 +144,11 @@ func (s *EmailRegistrationService) SendCode(
 	if limited, err := s.accounts.IsEmailSendIPLimit(ctx, ipAddress); err != nil || limited {
 		return nil, ErrEmailRegistrationRateLimited
 	}
-	if s.accounts.ExistsByEmail(ctx, normalizedEmail) {
+	exists, err := s.accounts.ExistsByEmail(ctx, normalizedEmail)
+	if err != nil {
+		return nil, fmt.Errorf("check existing registration account: %w", err)
+	}
+	if exists {
 		return nil, ErrEmailRegistrationAccountExists
 	}
 	acquired, err := s.rateLimiter.Acquire(ctx, normalizedEmail)
@@ -225,7 +231,7 @@ func (s *EmailRegistrationService) VerifyCode(
 	if s.options.AllowMasterVerificationCode {
 		masterCode = strings.TrimSpace(s.options.MasterVerificationCode)
 	}
-	consumedTokenData, status, err := s.tokenMgr.VerifyTokenCode(
+	reservedTokenData, status, err := s.tokenMgr.VerifyTokenCode(
 		ctx,
 		req.Token,
 		EmailRegistrationChallengeTokenType,
@@ -235,7 +241,7 @@ func (s *EmailRegistrationService) VerifyCode(
 		masterCode,
 		s.options.MaxCodeAttempts,
 		10*time.Minute,
-		helper.TokenCodeConsume,
+		helper.TokenCodeReserve,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("verify email registration code: %w", err)
@@ -252,16 +258,38 @@ func (s *EmailRegistrationService) VerifyCode(
 
 	verifiedToken, err := s.tokenMgr.GenerateDataToken(ctx, EmailRegistrationVerifiedTokenType, map[string]interface{}{
 		"registration_email": normalizedEmail,
-		"language":           normalizeRegistrationLanguage(tokenExtraString(consumedTokenData.Extra, "language")),
+		"language":           normalizeRegistrationLanguage(tokenExtraString(reservedTokenData.Extra, "language")),
 	})
 	if err != nil {
+		s.releaseRegistrationChallenge(ctx, req.Token, normalizedEmail)
 		return nil, fmt.Errorf("generate verified email registration token: %w", err)
+	}
+	if _, err := s.tokenMgr.ConsumeTokenData(ctx, req.Token, EmailRegistrationChallengeTokenType); err != nil {
+		if revokeErr := s.tokenMgr.RevokeToken(verifiedToken, EmailRegistrationVerifiedTokenType); revokeErr != nil {
+			logger.Warn("Failed to revoke unusable verified registration token", "error", revokeErr)
+		}
+		s.releaseRegistrationChallenge(ctx, req.Token, normalizedEmail)
+		return nil, fmt.Errorf("consume verified email registration challenge: %w", err)
 	}
 	return &EmailRegistrationVerifyResponse{
 		IsValid: true,
 		Email:   normalizedEmail,
 		Token:   verifiedToken,
 	}, nil
+}
+
+func (s *EmailRegistrationService) releaseRegistrationChallenge(ctx context.Context, token, emailAddress string) {
+	releaseCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), emailRegistrationCompensationTimeout)
+	defer cancel()
+	if err := s.tokenMgr.ReleaseTokenCodeReservation(
+		releaseCtx,
+		token,
+		EmailRegistrationChallengeTokenType,
+		"registration_email",
+		emailAddress,
+	); err != nil {
+		logger.Warn("Failed to release email registration challenge reservation", "error", err)
+	}
 }
 
 func (s *EmailRegistrationService) Finish(
@@ -294,7 +322,11 @@ func (s *EmailRegistrationService) Finish(
 	}
 	language := normalizeRegistrationLanguage(tokenExtraString(tokenData.Extra, "language"))
 	createWorkspace := true
-	if !s.accounts.ExistsByEmail(ctx, emailAddress) {
+	exists, err := s.accounts.ExistsByEmail(ctx, emailAddress)
+	if err != nil {
+		return nil, fmt.Errorf("check registration account before finish: %w", err)
+	}
+	if !exists {
 		if _, err := s.accounts.RegisterEx(
 			ctx,
 			emailAddress,

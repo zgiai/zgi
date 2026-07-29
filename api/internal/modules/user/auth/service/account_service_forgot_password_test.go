@@ -21,10 +21,10 @@ func TestResetPasswordWithAutoRegisterDoesNotCreateMissingAccount(t *testing.T) 
 
 	token, err := service.tokenMgr.GenerateToken(
 		context.Background(),
-		TokenTypeResetPassword,
+		TokenTypeResetVerified,
 		nil,
 		ptrString("missing@example.com"),
-		map[string]interface{}{"code": "123456"},
+		map[string]interface{}{"code": "verified"},
 	)
 	if err != nil {
 		t.Fatalf("GenerateToken returned error: %v", err)

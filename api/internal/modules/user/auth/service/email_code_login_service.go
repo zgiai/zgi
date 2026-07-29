@@ -12,6 +12,7 @@ import (
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	auth_model "github.com/zgiai/zgi/api/internal/modules/user/auth/model"
 	helper "github.com/zgiai/zgi/api/internal/util"
+	"github.com/zgiai/zgi/api/pkg/logger"
 	redisUtil "github.com/zgiai/zgi/api/pkg/redis"
 	"gorm.io/gorm"
 )
@@ -19,8 +20,9 @@ import (
 const (
 	EmailCodeLoginTokenType = "email_code_login"
 
-	defaultEmailCodeLoginMaxAttempts = 5
-	defaultEmailCodeLoginCooldown    = time.Minute
+	defaultEmailCodeLoginMaxAttempts  = 5
+	defaultEmailCodeLoginCooldown     = time.Minute
+	emailCodeLoginCompensationTimeout = 2 * time.Second
 )
 
 var (
@@ -160,27 +162,25 @@ func (s *EmailCodeLoginService) VerifyAndLogin(ctx context.Context, req EmailCod
 	default:
 		return nil, ErrEmailCodeLoginTokenInvalid
 	}
-	releaseReservation := func() {
-		_ = s.tokenMgr.ReleaseTokenCodeReservation(ctx, req.Token, EmailCodeLoginTokenType, "email", emailAddress)
-	}
 	account, err := s.accounts.GetUserThroughEmail(ctx, emailAddress)
 	if err != nil || account == nil {
-		releaseReservation()
+		s.releaseEmailCodeLoginReservation(ctx, req.Token, emailAddress)
 		return nil, ErrEmailCodeLoginAccountMissing
 	}
 	if account.Status != auth_model.AccountStatusActive {
-		releaseReservation()
+		s.releaseEmailCodeLoginReservation(ctx, req.Token, emailAddress)
 		return nil, ErrEmailCodeLoginAccountBlocked
 	}
 	tokenPair, err := s.accounts.LoginCommon(account, ipAddress)
 	if err != nil {
-		releaseReservation()
+		s.releaseEmailCodeLoginReservation(ctx, req.Token, emailAddress)
 		return nil, fmt.Errorf("complete email code login: %w", err)
 	}
 	if _, err := s.tokenMgr.ConsumeTokenData(ctx, req.Token, EmailCodeLoginTokenType); err != nil {
 		if tokenPair.RefreshToken != "" {
 			_ = s.tokenMgr.RevokeToken(tokenPair.RefreshToken, "refresh")
 		}
+		s.releaseEmailCodeLoginReservation(ctx, req.Token, emailAddress)
 		return nil, ErrEmailCodeLoginTokenInvalid
 	}
 	return &dto.LoginResponse{
@@ -197,6 +197,20 @@ func (s *EmailCodeLoginService) VerifyAndLogin(ctx context.Context, req EmailCod
 			Extension:         account.Extensions,
 		},
 	}, nil
+}
+
+func (s *EmailCodeLoginService) releaseEmailCodeLoginReservation(ctx context.Context, token, emailAddress string) {
+	releaseCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), emailCodeLoginCompensationTimeout)
+	defer cancel()
+	if err := s.tokenMgr.ReleaseTokenCodeReservation(
+		releaseCtx,
+		token,
+		EmailCodeLoginTokenType,
+		"email",
+		emailAddress,
+	); err != nil {
+		logger.Warn("Failed to release email code login reservation", "error", err)
+	}
 }
 
 type RedisEmailCodeLoginRateLimiter struct {
