@@ -147,29 +147,28 @@ func TestUnavailableAccountCannotBeReactivatedByInvitation(t *testing.T) {
 	require.Equal(t, "account_unavailable", result["status"])
 }
 
-func TestActivateCheckReturnsExistingAccountInvitationDetails(t *testing.T) {
+func TestActivateCheckReturnsExistingAccountInvitationDetailsBeforeMembershipExists(t *testing.T) {
 	tokenMgr := newInvitationTestTokenManager(t)
 	const token = "detailed-existing-invitation"
 	account := auth_model.Account{ID: "existing-2", Email: "details@example.com", Name: "Invitee", Status: auth_model.AccountStatusActive}
-	member := &workspace_model.WorkspaceMember{ID: "member-2", WorkspaceID: "workspace-2", AccountID: account.ID, Role: workspace_model.WorkspaceRoleMember}
+	const workspaceID = "workspace-2"
 	require.NoError(t, tokenMgr.StoreInvitationTokenWithDetails(helper.InvitationData{
-		AccountID: account.ID, Email: account.Email, WorkspaceID: member.WorkspaceID, Role: string(member.Role),
+		AccountID: account.ID, Email: account.Email, WorkspaceID: workspaceID, Role: string(workspace_model.WorkspaceRoleMember),
 	}, token, 1))
 	service := &AccountService{
 		accountRepo: &invitationAcceptanceAccountRepository{account: account},
 		tokenMgr:    tokenMgr,
 		workspaceManagementService: &invitationWorkspaceService{
-			workspace: &workspace_model.Workspace{ID: member.WorkspaceID, Name: "Invited Workspace", Status: workspace_model.WorkspaceStatusNormal},
-			member:    member,
+			workspace: &workspace_model.Workspace{ID: workspaceID, Name: "Invited Workspace", Status: workspace_model.WorkspaceStatusNormal},
 		},
 	}
 
-	result, valid := service.ActivateCheck(t.Context(), member.WorkspaceID, account.Email, token)
+	result, valid := service.ActivateCheck(t.Context(), workspaceID, account.Email, token)
 	require.True(t, valid)
 	data, ok := result["data"].(map[string]interface{})
 	require.True(t, ok)
 	require.Equal(t, true, data["account_exists"])
-	require.Equal(t, string(member.Role), data["role"])
+	require.Equal(t, string(workspace_model.WorkspaceRoleMember), data["role"])
 	require.Equal(t, "Invited Workspace", data["workspace_name"])
 }
 

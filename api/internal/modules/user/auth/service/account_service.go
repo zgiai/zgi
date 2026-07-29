@@ -718,29 +718,26 @@ func (s *AccountService) ActivateCheck(ctx context.Context, workspaceID, email, 
 		}, false
 	}
 
-	invitationDataMap := map[string]string{
-		"email": invitationData.Email,
-	}
-	tenantAccount, err := s.accountRepo.SelectAccountAndTenantAccountJoin(ctx, invitationDataMap, *tenant)
-	if err != nil || tenantAccount == nil {
+	account, err := s.accountRepo.GetAccountByEmail(ctx, invitationData.Email)
+	if err != nil || account == nil {
 		return map[string]interface{}{
 			"is_valid": false,
 		}, false
 	}
 
-	if invitationData.AccountID != tenantAccount.Account.ID {
+	if invitationData.AccountID != account.ID {
 		return map[string]interface{}{
 			"is_valid": false,
 		}, false
 	}
-	if tenantAccount.Account.Status != auth_model.AccountStatusPending && tenantAccount.Account.Status != auth_model.AccountStatusActive {
+	if account.Status != auth_model.AccountStatusPending && account.Status != auth_model.AccountStatusActive {
 		return map[string]interface{}{"is_valid": false, "status": "account_unavailable"}, false
 	}
-	membership, membershipErr := s.workspaceManagementService.GetByWorkspaceAndMember(ctx, tenant.ID, tenantAccount.Account.ID)
+	membership, membershipErr := s.workspaceManagementService.GetByWorkspaceAndMember(ctx, tenant.ID, account.ID)
 	invitedRole := invitationData.Role
 	if membershipErr != nil || membership == nil {
 		role := workspace_model.WorkspaceMemberRole(invitationData.Role)
-		if tenantAccount.Account.Status != auth_model.AccountStatusActive || workspace_model.DefaultWorkspaceRoleID(role) == "" || role == workspace_model.WorkspaceRoleOwner {
+		if account.Status != auth_model.AccountStatusActive || workspace_model.DefaultWorkspaceRoleID(role) == "" || role == workspace_model.WorkspaceRoleOwner {
 			return map[string]interface{}{"is_valid": false, "status": "membership_unavailable"}, false
 		}
 	} else {
@@ -775,10 +772,10 @@ func (s *AccountService) ActivateCheck(ctx context.Context, workspaceID, email, 
 			"workspace_name":    tenant.Name,
 			"workspace_id":      tenant.ID,
 			"email":             invitationData.Email,
-			"user_name":         tenantAccount.Account.Name,
+			"user_name":         account.Name,
 			"organization_id":   organizationID,
 			"organization_name": organizationName,
-			"account_exists":    tenantAccount.Account.Status == auth_model.AccountStatusActive,
+			"account_exists":    account.Status == auth_model.AccountStatusActive,
 			"inviter_name":      inviterName,
 			"role":              invitedRole,
 			"expires_at":        invitationData.ExpiresAt,
