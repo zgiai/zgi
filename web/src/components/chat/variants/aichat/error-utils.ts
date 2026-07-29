@@ -128,7 +128,8 @@ function resolveAIChatRuntimeErrorCode(
   if (
     normalizedCode === 'model_service_timeout' ||
     normalizedCode === 'model_service_unavailable' ||
-    normalizedCode === 'model_invocation_failed'
+    normalizedCode === 'model_invocation_failed' ||
+    normalizedCode === 'server_unavailable'
   ) {
     return normalizedCode;
   }
@@ -157,7 +158,8 @@ function resolveAIChatRuntimeErrorCode(
 
 function resolveStructuredRuntimeError(
   t: WorkflowTranslator,
-  code: AIChatRuntimeErrorCode
+  code: AIChatRuntimeErrorCode,
+  isAdmin: boolean
 ): Pick<AIChatErrorDisplayMessage, 'title' | 'description' | 'kind'> {
   switch (code) {
     case 'model_service_timeout':
@@ -178,6 +180,16 @@ function resolveStructuredRuntimeError(
         kind: 'provider',
         title: t('webapp.consoleChat.errors.server.title'),
         description: t(`agents.workflow.errors.${code}`),
+      };
+    case 'server_unavailable':
+      return {
+        kind: 'server',
+        title: t('webapp.consoleChat.errors.server.title'),
+        description: t(
+          isAdmin
+            ? 'webapp.consoleChat.errors.server.adminDescription'
+            : 'webapp.consoleChat.errors.server.memberDescription'
+        ),
       };
     default:
       return {
@@ -219,7 +231,11 @@ export function resolveAIChatErrorMessage(
   if (!isBilling) {
     const runtimeErrorCode = resolveAIChatRuntimeErrorCode(input?.code, rawMessage);
     if (runtimeErrorCode) {
-      const runtimeError = resolveStructuredRuntimeError(t, runtimeErrorCode);
+      const runtimeError = resolveStructuredRuntimeError(
+        t,
+        runtimeErrorCode,
+        Boolean(options.isAdmin)
+      );
       return {
         code: runtimeErrorCode,
         title: runtimeError.title,
