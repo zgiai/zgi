@@ -14,6 +14,9 @@ func TestLoadEmailConfigPrefersCanonicalKeys(t *testing.T) {
 		envEmailFromName:      "ZGI Platform",
 		envEmailFromAddress:   "system@notify.example.com",
 		envEmailResendBaseURL: "https://mail.example.com/v1/",
+		envEmailFrom:          "Friendly Sender <friendly@example.com>",
+		envResendAPIKey:       "standard-key",
+		envResendBaseURL:      "https://proxy.example.com/v1",
 	}
 	source := &envSource{lookupEnv: func(key string) (string, bool) {
 		value, ok := values[key]
@@ -30,10 +33,10 @@ func TestLoadEmailConfigPrefersCanonicalKeys(t *testing.T) {
 	if cfg.Email.SMTPSecurity != "implicit_tls" || !cfg.Email.SMTPUseTLS || cfg.Email.SMTPOpportunisticTLS {
 		t.Fatalf("unexpected SMTP security config: %+v", cfg.Email)
 	}
-	if cfg.Email.MailDefaultSendFrom != `"ZGI Platform" <system@notify.example.com>` {
+	if cfg.Email.MailDefaultSendFrom != "Friendly Sender <friendly@example.com>" {
 		t.Fatalf("unexpected sender: %q", cfg.Email.MailDefaultSendFrom)
 	}
-	if cfg.Email.ResendAPIURL != "https://mail.example.com/v1/" {
+	if cfg.Email.ResendAPIKey != "standard-key" || cfg.Email.ResendAPIURL != "https://proxy.example.com/v1" {
 		t.Fatalf("unexpected resend base URL: %q", cfg.Email.ResendAPIURL)
 	}
 }

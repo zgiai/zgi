@@ -27,7 +27,7 @@ func validateConfig(cfg *Config) error {
 	}
 
 	if cfg.Email.MailDefaultSendFrom == "" {
-		return fmt.Errorf("%s is required", envEmailMailDefaultSendFrom)
+		return fmt.Errorf("%s is required", envEmailFrom)
 	}
 	if _, err := mail.ParseAddress(cfg.Email.MailDefaultSendFrom); err != nil {
 		return fmt.Errorf("email sender address is invalid: %w", err)
@@ -51,7 +51,7 @@ func validateConfig(cfg *Config) error {
 	}
 
 	if requiresResendAPIKey(cfg) && cfg.Email.ResendAPIKey == "" {
-		return fmt.Errorf("%s is required", envEmailResendAPIKey)
+		return fmt.Errorf("%s (or %s) is required", envResendAPIKey, envEmailResendAPIKey)
 	}
 
 	if strings.EqualFold(cfg.Email.MailType, "smtp") && cfg.Email.SMTPServer == "" {

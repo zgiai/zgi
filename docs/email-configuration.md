@@ -20,18 +20,28 @@ ALLOW_REGISTER=true
 
 ## Resend or a compatible API
 
+Official Resend only requires two values:
+
 ```dotenv
-EMAIL_PROVIDER=resend
-EMAIL_FROM_NAME=ZGI Platform
-EMAIL_FROM_ADDRESS=system@notify.example.com
-EMAIL_RESEND_API_KEY=replace-with-provider-key
-EMAIL_RESEND_BASE_URL=https://api.resend.com
+EMAIL_FROM="ZGI Platform <system@notify.example.com>"
+RESEND_API_KEY=replace-with-provider-key
+```
+
+For a Resend-compatible proxy, add its base URL:
+
+```dotenv
+RESEND_BASE_URL=https://mail.example.com/v1
+```
+
+`RESEND_BASE_URL` is a base URL, not the complete endpoint. ZGI normalizes the trailing slash and appends `/emails`. A compatible proxy must accept `Authorization: Bearer ...` and return a non-empty message `id` for a successful request.
+
+Optional branding and invitation-link settings:
+
+```dotenv
 EMAIL_MAIL_TEMPLATE_BRAND_NAME=ZGI
 EMAIL_MAIL_TEMPLATE_LOGO_URL=https://example.com/logo.png
 EMAIL_CONSOLE_WEB_URL=https://console.example.com
 ```
-
-`EMAIL_RESEND_BASE_URL` is a base URL, not the complete endpoint. ZGI normalizes the trailing slash and appends `/emails`. A compatible proxy must accept `Authorization: Bearer ...` and return a non-empty message `id` for a successful request.
 
 ## SMTP
 
@@ -39,8 +49,7 @@ STARTTLS on port 587 is the usual server configuration:
 
 ```dotenv
 EMAIL_PROVIDER=smtp
-EMAIL_FROM_NAME=ZGI Platform
-EMAIL_FROM_ADDRESS=system@notify.example.com
+EMAIL_FROM="ZGI Platform <system@notify.example.com>"
 EMAIL_SMTP_SERVER=smtp.example.com
 EMAIL_SMTP_PORT=587
 EMAIL_SMTP_USERNAME=system@notify.example.com
@@ -52,6 +61,6 @@ For servers using TLS immediately on connection, commonly port 465, set `EMAIL_S
 
 ## Compatibility keys
 
-Existing deployments can continue using `EMAIL_MAIL_TYPE`, `MAIL_TYPE`, `EMAIL_MAIL_DEFAULT_SEND_FROM`, `EMAIL_RESEND_API_URL`, `EMAIL_PORT`, `EMAIL_SMTP_USE_TLS`, and `EMAIL_SMTP_OPPORTUNISTIC_TLS`. New deployments should use the canonical keys above. Canonical keys take precedence when both forms are present.
+Existing deployments can continue using `EMAIL_FROM_NAME`, `EMAIL_FROM_ADDRESS`, `EMAIL_MAIL_DEFAULT_SEND_FROM`, `EMAIL_RESEND_API_KEY`, `EMAIL_RESEND_BASE_URL`, `EMAIL_RESEND_API_URL`, `EMAIL_MAIL_TYPE`, `MAIL_TYPE`, `EMAIL_PORT`, `EMAIL_SMTP_USE_TLS`, and `EMAIL_SMTP_OPPORTUNISTIC_TLS`. New Resend deployments should prefer `EMAIL_FROM`, `RESEND_API_KEY`, and—only for proxies—`RESEND_BASE_URL`. The shorter keys take precedence when both forms are present.
 
 Never commit provider keys or SMTP passwords. Put real values in the deployment secret manager or an ignored `.env` file.

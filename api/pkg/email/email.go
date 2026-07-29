@@ -22,7 +22,7 @@ var (
 	Cfg *config.Config
 )
 
-const resendAPIKeyEnv = "EMAIL_RESEND_API_KEY"
+const resendAPIKeyEnv = "RESEND_API_KEY (or EMAIL_RESEND_API_KEY)"
 
 func Init(c *config.Config) {
 	Cfg = c

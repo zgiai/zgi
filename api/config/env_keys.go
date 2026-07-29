@@ -125,11 +125,15 @@ const (
 	envMailType = "MAIL_TYPE"
 
 	// Resend delivery settings.
+	// envResendAPIKey follows the standard key used by the official Resend SDK.
+	envResendAPIKey = "RESEND_API_KEY"
 	// envEmailResendAPIKey sets the Resend API key. Default: empty.
 	envEmailResendAPIKey = "EMAIL_RESEND_API_KEY"
+	// envResendBaseURL selects a Resend-compatible proxy. Official Resend users can omit it.
+	envResendBaseURL = "RESEND_BASE_URL"
 	// envEmailResendAPIURL sets the Resend API base URL. Default: https://api.resend.com.
 	envEmailResendAPIURL = "EMAIL_RESEND_API_URL"
-	// envEmailResendBaseURL is the preferred Resend-compatible base URL key.
+	// envEmailResendBaseURL keeps the previous ZGI-prefixed Resend-compatible base URL key working.
 	envEmailResendBaseURL = "EMAIL_RESEND_BASE_URL"
 
 	// SMTP delivery settings.
@@ -151,11 +155,13 @@ const (
 	envEmailSMTPSecurity = "EMAIL_SMTP_SECURITY"
 
 	// Email branding and links.
+	// envEmailFrom is the preferred complete sender identity, for example ZGI <system@example.com>.
+	envEmailFrom = "EMAIL_FROM"
 	// envEmailMailDefaultSendFrom sets the default sender address for outgoing emails. Default: noreply@example.com.
 	envEmailMailDefaultSendFrom = "EMAIL_MAIL_DEFAULT_SEND_FROM"
-	// envEmailFromAddress sets the sender mailbox using the preferred split format.
+	// envEmailFromAddress keeps the split sender-address format working.
 	envEmailFromAddress = "EMAIL_FROM_ADDRESS"
-	// envEmailFromName sets the optional display name for the sender mailbox.
+	// envEmailFromName keeps the split sender-name format working.
 	envEmailFromName = "EMAIL_FROM_NAME"
 	// envEmailMailTemplateLogoURL sets the logo URL used in email templates. Default: empty.
 	envEmailMailTemplateLogoURL = "EMAIL_MAIL_TEMPLATE_LOGO_URL"

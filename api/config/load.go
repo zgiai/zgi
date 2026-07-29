@@ -341,20 +341,24 @@ func loadEmailConfig(cfg *Config, source *envSource) error {
 		smtpOpportunisticTLS = smtpSecurity == "starttls"
 	}
 
-	defaultSendFrom := source.string("noreply@example.com", envEmailMailDefaultSendFrom)
-	fromAddress := source.string("", envEmailFromAddress)
-	if fromAddress != "" {
-		defaultSendFrom = (&mail.Address{
-			Name:    source.string("", envEmailFromName),
-			Address: fromAddress,
-		}).String()
+	defaultSendFrom := source.string("", envEmailFrom)
+	if defaultSendFrom == "" {
+		fromAddress := source.string("", envEmailFromAddress)
+		if fromAddress != "" {
+			defaultSendFrom = (&mail.Address{
+				Name:    source.string("", envEmailFromName),
+				Address: fromAddress,
+			}).String()
+		} else {
+			defaultSendFrom = source.string("noreply@example.com", envEmailMailDefaultSendFrom)
+		}
 	}
 
 	cfg.Email = EmailConfig{
 		MailType:              source.string("resend", envEmailProvider, envEmailMailType, envMailType),
 		MailDefaultSendFrom:   defaultSendFrom,
-		ResendAPIKey:          source.string("", envEmailResendAPIKey),
-		ResendAPIURL:          source.string("https://api.resend.com", envEmailResendBaseURL, envEmailResendAPIURL),
+		ResendAPIKey:          source.string("", envResendAPIKey, envEmailResendAPIKey),
+		ResendAPIURL:          source.string("https://api.resend.com", envResendBaseURL, envEmailResendBaseURL, envEmailResendAPIURL),
 		MailTemplateLogoUrl:   source.string("", envEmailMailTemplateLogoURL),
 		MailTemplateBrandName: source.string("ZGI", envEmailMailTemplateBrandName),
 		ConsoleWebURL:         source.string("http://localhost:3000", envEmailConsoleWebURL),
