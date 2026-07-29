@@ -69,10 +69,9 @@ const messages: WebappMessages = {
       description: '当前无法读取绘图工作流配置，请检查后端服务或网络连接后重试。',
       detail: '排查项：/console/api/built-in-workflows 接口是否可用。',
     },
-    imageGenConfigMissing: {
-      title: '绘图工作流未配置',
-      description: '后端没有返回绘图所需的内置工作流，所以当前页面无法启动图像生成。',
-      detail: '排查项：内置工作流 imagegen_chat 是否已初始化并处于启用状态。',
+    imageGenEmpty: {
+      title: '暂无可用的图像生成模型',
+      description: '请配置支持 image-gen 的模型路由。',
     },
     retry: '重试',
     loadingGlobalChat: '正在加载全局聊天...',

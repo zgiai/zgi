@@ -17,14 +17,12 @@ import { AlertCircle, RefreshCw } from 'lucide-react';
 import { useT } from '@/i18n/translations';
 
 interface ImageInitializationErrorProps {
-  type: 'load-failed' | 'config-missing';
   isRetrying: boolean;
   onRetry: () => void;
 }
 
-function ImageInitializationError({ type, isRetrying, onRetry }: ImageInitializationErrorProps) {
+function ImageInitializationError({ isRetrying, onRetry }: ImageInitializationErrorProps) {
   const t = useT('webapp');
-  const isLoadFailed = type === 'load-failed';
 
   return (
     <div className="flex h-full w-full items-center justify-center bg-background p-6">
@@ -37,19 +35,13 @@ function ImageInitializationError({ type, isRetrying, onRetry }: ImageInitializa
         </div>
         <div className="min-w-0 flex-1">
           <h2 className="text-base font-semibold text-foreground">
-            {isLoadFailed
-              ? t('chat.imageGenLoadFailed.title')
-              : t('chat.imageGenConfigMissing.title')}
+            {t('chat.imageGenLoadFailed.title')}
           </h2>
           <p className="mt-2 text-sm leading-6 text-muted-foreground">
-            {isLoadFailed
-              ? t('chat.imageGenLoadFailed.description')
-              : t('chat.imageGenConfigMissing.description')}
+            {t('chat.imageGenLoadFailed.description')}
           </p>
           <p className="mt-3 rounded-[4px] bg-muted px-3 py-2 text-xs leading-5 text-muted-foreground">
-            {isLoadFailed
-              ? t('chat.imageGenLoadFailed.detail')
-              : t('chat.imageGenConfigMissing.detail')}
+            {t('chat.imageGenLoadFailed.detail')}
           </p>
           <Button
             type="button"
@@ -121,7 +113,15 @@ function ImagePageContent() {
     if (currentModelStillAvailable && modelSelectorValue.model) return;
 
     const fallback = imageRuntimeModels[0];
-    if (!fallback) return;
+    if (!fallback) {
+      if (!modelSelectorValue.provider && !modelSelectorValue.model) return;
+      setModelSelectorValue(prev => ({
+        ...prev,
+        provider: '',
+        model: '',
+      }));
+      return;
+    }
 
     setModelSelectorValue(prev => ({
       ...prev,
@@ -150,7 +150,7 @@ function ImagePageContent() {
   const controllerRef = React.useRef<SingleChatController | null>(null);
 
   const controller = React.useMemo(() => {
-    if (modelsError || imageRuntimeModels.length === 0) return null;
+    if (modelsError) return null;
 
     if (controllerRef.current) {
       return controllerRef.current;
@@ -159,7 +159,7 @@ function ImagePageContent() {
     const ctrl = new SingleChatController(transport);
     controllerRef.current = ctrl;
     return ctrl;
-  }, [imageRuntimeModels.length, modelsError, transport]);
+  }, [modelsError, transport]);
 
   // Effect to update transport when it changes
   React.useEffect(() => {
@@ -219,7 +219,6 @@ function ImagePageContent() {
   if (!controller) {
     return (
       <ImageInitializationError
-        type={modelsError ? 'load-failed' : 'config-missing'}
         isRetrying={isFetching}
         onRetry={() => {
           void refetchModels();
