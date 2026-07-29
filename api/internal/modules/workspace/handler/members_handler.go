@@ -1853,9 +1853,13 @@ func (h *MembersHandler) getWorkspaceJoinsForPendingMember(ctx context.Context, 
 	}
 
 	validJoins := []*model.WorkspaceMember{}
-	groupID := operatorWorkspace.WorkspaceID
+	operatorWorkspaceRecord, err := h.workspaceManagementService.GetWorkspaceByID(ctx, operatorWorkspace.WorkspaceID)
+	if err != nil || operatorWorkspaceRecord == nil || operatorWorkspaceRecord.OrganizationID == nil || strings.TrimSpace(*operatorWorkspaceRecord.OrganizationID) == "" {
+		return nil, fmt.Errorf("operator workspace organization not found")
+	}
+	organizationID := strings.TrimSpace(*operatorWorkspaceRecord.OrganizationID)
 	var limit int = 200
-	pagination, err := h.enterpriseService.GetManagedWorkspacesInOrganization(ctx, groupID, operatorWorkspace.AccountID, 1, limit)
+	pagination, err := h.enterpriseService.GetManagedWorkspacesInOrganization(ctx, organizationID, operatorWorkspace.AccountID, 1, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -1867,7 +1871,7 @@ func (h *MembersHandler) getWorkspaceJoinsForPendingMember(ctx context.Context, 
 	if pagination.Total > int64(limit) {
 		totalPage := int(math.Ceil(float64(pagination.Total) / float64(limit)))
 		for i := 2; i <= totalPage; i++ {
-			pagination, err := h.enterpriseService.GetManagedWorkspacesInOrganization(ctx, groupID, operatorWorkspace.AccountID, i, limit)
+			pagination, err := h.enterpriseService.GetManagedWorkspacesInOrganization(ctx, organizationID, operatorWorkspace.AccountID, i, limit)
 			if err != nil {
 				break
 			}

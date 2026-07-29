@@ -31,8 +31,9 @@ func newEnvSource(path string) (*envSource, error) {
 	}
 
 	return &envSource{
-		path: absPath,
-		v:    v,
+		path:      absPath,
+		v:         v,
+		lookupEnv: os.LookupEnv,
 	}, nil
 }
 
@@ -80,6 +81,16 @@ func (s *envSource) lookup(keys ...string) (string, bool) {
 			return "", false
 		}
 
+		// Process environment values take precedence over values loaded from a
+		// dotenv file. This matches container and orchestration expectations:
+		// operators can keep development defaults in .env while overriding
+		// secrets and deployment-specific settings at runtime.
+		if s.lookupEnv != nil {
+			if value, ok := s.lookupEnv(key); ok {
+				return strings.TrimSpace(value), true
+			}
+		}
+
 		if s.v != nil {
 			if !s.v.InConfig(key) {
 				continue
@@ -87,14 +98,6 @@ func (s *envSource) lookup(keys ...string) (string, bool) {
 			return strings.TrimSpace(s.v.GetString(key)), true
 		}
 
-		if s.lookupEnv == nil {
-			continue
-		}
-		value, ok := s.lookupEnv(key)
-		if !ok {
-			continue
-		}
-		return strings.TrimSpace(value), true
 	}
 	return "", false
 }
