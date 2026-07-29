@@ -84,6 +84,22 @@ jobs:
         working-directory: web
         run: pnpm install --frozen-lockfile
 
+      - name: Install SQLite test build dependencies
+        run: |
+          if command -v gcc >/dev/null 2>&1; then
+            exit 0
+          fi
+          if command -v sudo >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends gcc libc6-dev
+          elif [ "$(id -u)" -eq 0 ]; then
+            apt-get update
+            apt-get install -y --no-install-recommends gcc libc6-dev
+          else
+            echo "gcc is required for the SQLite-backed invitation tests" >&2
+            exit 1
+          fi
+
       - name: Run registration and invitation gate
         env:
           # Invitation transaction tests use go-sqlite3; some self-hosted runners
