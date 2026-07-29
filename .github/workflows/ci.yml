@@ -85,6 +85,10 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Run registration and invitation gate
+        env:
+          # Invitation transaction tests use go-sqlite3; some self-hosted runners
+          # default CGO_ENABLED to 0, which replaces the driver with its stub.
+          CGO_ENABLED: "1"
         run: make check-registration-auth
 
   sandbox:
