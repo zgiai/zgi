@@ -19,6 +19,14 @@ jobs:
     name: Open source hygiene
     runs-on: ${{ fromJSON(vars.CI_RUNNER_LABELS || '["ubuntu-latest"]') }}
     steps:
+      - name: Repair workspace ownership
+        working-directory: ${{ runner.temp }}
+        run: |
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE:/workspace" \
+            alpine:3.22 \
+            chown -R "$(id -u):$(id -g)" /workspace
+
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -38,6 +46,14 @@ jobs:
       run:
         working-directory: web
     steps:
+      - name: Repair workspace ownership
+        working-directory: ${{ runner.temp }}
+        run: |
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE:/workspace" \
+            alpine:3.22 \
+            chown -R "$(id -u):$(id -g)" /workspace
+
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -60,37 +76,30 @@ jobs:
   registration-auth:
     name: Registration and invitation gate
     runs-on: ${{ fromJSON(vars.CI_RUNNER_LABELS || '["ubuntu-latest"]') }}
-    container:
-      image: node:22-bookworm
     steps:
+      - name: Repair workspace ownership
+        working-directory: ${{ runner.temp }}
+        run: |
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE:/workspace" \
+            alpine:3.22 \
+            chown -R "$(id -u):$(id -g)" /workspace
+
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: api/go.mod
-          cache-dependency-path: api/go.sum
-
-      - name: Install SQLite test build dependencies
-        run: |
-          if command -v gcc >/dev/null 2>&1; then
-            exit 0
-          fi
-          if [ "$(id -u)" -eq 0 ]; then
-            apt-get update
-            apt-get install -y --no-install-recommends gcc libc6-dev
-          else
-            echo "gcc is required for the SQLite-backed invitation tests" >&2
-            exit 1
-          fi
-
       - name: Run registration and invitation gate
-        env:
-          # Invitation transaction tests use go-sqlite3; some CI environments
-          # default CGO_ENABLED to 0, which replaces the driver with its stub.
-          CGO_ENABLED: "1"
-        run: ./scripts/check-registration-auth.sh --backend-only
+        run: |
+          docker run --rm \
+            --user "$(id -u):$(id -g)" \
+            -e HOME=/tmp \
+            -e CGO_ENABLED=1 \
+            -e GOCACHE=/tmp/go-build \
+            -e GOPATH=/tmp/go \
+            -v "$GITHUB_WORKSPACE:/workspace" \
+            -w /workspace \
+            golang:1.26.2-bookworm \
+            ./scripts/check-registration-auth.sh --backend-only
 
   sandbox:
     name: Sandbox runtime tests
@@ -113,6 +122,14 @@ jobs:
       run:
         shell: bash
     steps:
+      - name: Repair workspace ownership
+        working-directory: ${{ runner.temp }}
+        run: |
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE:/workspace" \
+            alpine:3.22 \
+            chown -R "$(id -u):$(id -g)" /workspace
+
       - name: Checkout
         uses: actions/checkout@v4
 
