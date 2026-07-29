@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -26,6 +27,15 @@ type MembersHandler struct {
 	//registerService *auth.RegisterService
 	enterpriseService interfaces.OrganizationService
 	consoleWebURL     string
+}
+
+func memberActivationURL(consoleWebURL, email, token string) string {
+	return fmt.Sprintf(
+		"%s/activate?email=%s&token=%s",
+		strings.TrimRight(consoleWebURL, "/"),
+		url.QueryEscape(email),
+		url.QueryEscape(token),
+	)
 }
 
 func NewMembersHandler(workspaceManagementService interfaces.WorkspaceManagementService, accountService interfaces.AccountService, enterpriseService interfaces.OrganizationService, consoleWebURL string) *MembersHandler {
@@ -261,11 +271,10 @@ func (h *MembersHandler) InviteMemberByEmail(c *gin.Context) {
 			}
 		} else {
 			// encodedEmail := url.QueryEscape(email)
-			encodedEmail := email
 			invitationResults = append(invitationResults, map[string]interface{}{
 				"status": "success",
 				"email":  email,
-				"url":    h.consoleWebURL + "/activate?email=" + encodedEmail + "&token=" + token,
+				"url":    memberActivationURL(h.consoleWebURL, email, token),
 			})
 		}
 	}
@@ -923,8 +932,7 @@ func (h *MembersHandler) InviteWorkspaceMemberByEmail(c *gin.Context) {
 			}
 		} else {
 			// encodedInviteeEmail := url.QueryEscape(inviteeEmail)
-			encodedInviteeEmail := inviteeEmail
-			activationURL := fmt.Sprintf("%s/activate?email=%s&token=%s", h.consoleWebURL, encodedInviteeEmail, token)
+			activationURL := memberActivationURL(h.consoleWebURL, inviteeEmail, token)
 
 			invitationResults = append(invitationResults, map[string]interface{}{
 				"status": "success",
@@ -1041,7 +1049,7 @@ func (h *MembersHandler) InviteWorkspaceMemberByEmailEx(c *gin.Context) {
 			invitationResults = append(invitationResults, map[string]interface{}{
 				"status":  "created_email_failed",
 				"email":   req.Email,
-				"url":     h.consoleWebURL + "/activate?email=" + req.Email + "&token=" + token,
+				"url":     memberActivationURL(h.consoleWebURL, req.Email, token),
 				"message": usererrors.ErrInviteEmailDeliveryFailed.Error(),
 			})
 		} else if err == usererrors.ErrAccountAlreadyInWorkspace {
@@ -1059,11 +1067,10 @@ func (h *MembersHandler) InviteWorkspaceMemberByEmailEx(c *gin.Context) {
 		}
 	} else {
 		// encodedEmail := url.QueryEscape(req.Email)
-		encodedEmail := req.Email
 		invitationResults = append(invitationResults, map[string]interface{}{
 			"status": "success",
 			"email":  req.Email,
-			"url":    h.consoleWebURL + "/activate?email=" + encodedEmail + "&token=" + token,
+			"url":    memberActivationURL(h.consoleWebURL, req.Email, token),
 		})
 	}
 
@@ -1813,15 +1820,14 @@ func (h *MembersHandler) ReInviteMemberById(c *gin.Context) {
 				"status":       status,
 				"email":        member.Email,
 				"workspace_id": workspace.ID,
-				"url":          h.consoleWebURL + "/activate?email=" + member.Email + "&token=" + token,
+				"url":          memberActivationURL(h.consoleWebURL, member.Email, token),
 				"message":      message,
 			})
 			continue
 		}
 
 		// encodedEmail := url.QueryEscape(member.Email)
-		encodedEmail := member.Email
-		invitationURL := h.consoleWebURL + "/activate?email=" + encodedEmail + "&token=" + token
+		invitationURL := memberActivationURL(h.consoleWebURL, member.Email, token)
 
 		results = append(results, map[string]interface{}{
 			"status":       "success",
@@ -1983,7 +1989,7 @@ func (h *MembersHandler) InviteDefaultMemberByEmailEx(c *gin.Context) {
 			invitationResults = append(invitationResults, map[string]interface{}{
 				"status":  "created_email_failed",
 				"email":   req.Email,
-				"url":     h.consoleWebURL + "/activate?email=" + req.Email + "&token=" + token,
+				"url":     memberActivationURL(h.consoleWebURL, req.Email, token),
 				"message": usererrors.ErrInviteEmailDeliveryFailed.Error(),
 			})
 		} else if err == usererrors.ErrAccountAlreadyInWorkspace {
@@ -2001,11 +2007,10 @@ func (h *MembersHandler) InviteDefaultMemberByEmailEx(c *gin.Context) {
 		}
 	} else {
 		// encodedEmail := url.QueryEscape(req.Email)
-		encodedEmail := req.Email
 		invitationResults = append(invitationResults, map[string]interface{}{
 			"status": "success",
 			"email":  req.Email,
-			"url":    h.consoleWebURL + "/activate?email=" + encodedEmail + "&token=" + token,
+			"url":    memberActivationURL(h.consoleWebURL, req.Email, token),
 		})
 	}
 

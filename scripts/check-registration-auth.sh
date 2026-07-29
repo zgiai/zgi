@@ -12,7 +12,7 @@ echo "Running registration and invitation backend tests"
     -run 'Test(CurrentWorkspaceRequired|ShouldSkipTenantResolutionForOnboardingRoutes)' \
     -count=1
   go test ./internal/modules/workspace/handler \
-    -run 'Test(GetInvitationInfo|AcceptInvitation|OrganizationInvite|WorkspaceStatistics|UpdateWorkspace)' \
+    -run 'Test(GetInvitationInfo|AcceptInvitation|OrganizationInvite|MemberActivationURL|MembersHandlerInvite|WorkspaceStatistics|UpdateWorkspace)' \
     -count=1
   go test ./internal/modules/workspace/service \
     -run 'Test(InviteMemberDefaultsCreateUsableWorkspaceContext|WorkspaceMemberDefaultsNormalizeRoleID|DirectAddOrganizationMember|InviteCurrentOrganizationMember)' \

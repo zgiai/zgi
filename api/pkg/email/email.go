@@ -9,6 +9,7 @@ import (
 	"html"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -542,7 +543,7 @@ func SendInviteMemberMailTask(language, to, token, inviterName, workspaceName st
 	logoURL := Cfg.Email.MailTemplateLogoUrl
 	consoleWebURL := Cfg.Email.ConsoleWebURL
 
-	activationURL := fmt.Sprintf("%s/activate?email=%s&token=%s", consoleWebURL, to, token)
+	activationURL := buildInviteActivationURL(consoleWebURL, to, token)
 
 	templateData := InviteTemplateData{
 		To:            to,
@@ -583,6 +584,15 @@ func SendInviteMemberMailTask(language, to, token, inviterName, workspaceName st
 	logger.Info(fmt.Sprintf("Send invite member mail to %s succeeded: latency: %v", to, latency))
 
 	return nil
+}
+
+func buildInviteActivationURL(consoleWebURL, recipient, token string) string {
+	return fmt.Sprintf(
+		"%s/activate?email=%s&token=%s",
+		strings.TrimRight(consoleWebURL, "/"),
+		url.QueryEscape(recipient),
+		url.QueryEscape(token),
+	)
 }
 
 type InviteTemplateData struct {

@@ -415,7 +415,15 @@ func TestMembersHandlerInviteReportsEmailFailureAsPartialSuccess(t *testing.T) {
 	require.Len(t, body.Data.InvitationResults, 1)
 	require.Equal(t, "created_email_failed", body.Data.InvitationResults[0]["status"])
 	require.Equal(t, "alice@example.com", body.Data.InvitationResults[0]["email"])
-	require.Equal(t, "https://console.example.com/activate?email=alice@example.com&token=durable-token", body.Data.InvitationResults[0]["url"])
+	require.Equal(t, "https://console.example.com/activate?email=alice%40example.com&token=durable-token", body.Data.InvitationResults[0]["url"])
+}
+
+func TestMemberActivationURLPreservesPlusAddress(t *testing.T) {
+	require.Equal(
+		t,
+		"https://console.example.com/activate?email=alice%2Binvite%40example.com&token=durable-token",
+		memberActivationURL("https://console.example.com/", "alice+invite@example.com", "durable-token"),
+	)
 }
 
 func TestMembersHandlerReinviteUsesWorkspaceOrganizationID(t *testing.T) {
