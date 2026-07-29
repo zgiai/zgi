@@ -4,12 +4,10 @@ import React, { useState, useEffect } from 'react';
 import { useParams } from 'next/navigation';
 import { useQueryClient } from '@tanstack/react-query';
 import { useT } from '@/i18n';
-import { GitCompareArrows, Target, Sparkles } from 'lucide-react';
+import { Target, Sparkles } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Card, CardContent } from '@/components/ui/card';
 import { useDataset } from '@/hooks/dataset/use-datasets';
-import { Switch } from '@/components/ui/switch';
-import { Label } from '@/components/ui/label';
 // Removed mobile detection
 import { useHitTestingHistory } from '@/hooks/dataset/use-hit-testing-history';
 import {
@@ -137,26 +135,15 @@ export default function HitTestingPage() {
       : undefined;
   // Initialize retrieval config (defaults, then hydrate from dataset.retrieval_model_dict once)
   const [retrievalConfig, setRetrievalConfig] = useState<RetrievalConfig>({
-    search_method: 'hybrid_search',
+    search_method: 'graph_search',
     reranking_enable: true,
     top_k: 10,
     score_threshold_enabled: false,
     score_threshold: 0.35,
+    hop_depth: 3,
   });
-  const vectorPanelTitle = t('hitTesting.retrievalResults');
-  // Comparison mode: show both vector and graph results side by side
-  // Persist to localStorage
-  const COMPARISON_MODE_KEY = 'hit-testing-comparison-mode';
-  const [comparisonMode, setComparisonMode] = useState(() => {
-    if (typeof window === 'undefined') return true;
-    const stored = localStorage.getItem(COMPARISON_MODE_KEY);
-    return stored !== null ? stored === 'true' : true;
-  });
-
-  // Sync comparison mode to localStorage
-  useEffect(() => {
-    localStorage.setItem(COMPARISON_MODE_KEY, String(comparisonMode));
-  }, [comparisonMode]);
+  const vectorPanelTitle = t('hitTesting.hybridResults');
+  const isCombinedGraphSearch = retrievalConfig.search_method === 'graph_search' && graphConfigured;
 
   useEffect(() => {
     if (!graphStatus) return;
@@ -190,6 +177,7 @@ export default function HitTestingPage() {
       top_k: server.top_k ?? 4,
       score_threshold_enabled: !!server.score_threshold_enabled,
       score_threshold: typeof server.score_threshold === 'number' ? server.score_threshold : 0.5,
+      hop_depth: 3 as const,
     };
     setRetrievalConfig(hydrated);
   }, [dataset?.retrieval_config, dataset?.id, graphConfigured]);
@@ -224,6 +212,7 @@ export default function HitTestingPage() {
         retrievalConfig.search_method === 'graph_search'
           ? (retrievalConfig.fallback_policy ?? 'none')
           : retrievalConfig.fallback_policy,
+      hop_depth: 3 as const,
     };
 
     try {
@@ -250,21 +239,31 @@ export default function HitTestingPage() {
         return;
       }
 
-      // Internal dataset: check comparison mode and search method
-      if (comparisonMode && graphConfigured) {
-        // Comparison mode: parallel call both APIs
+      // Combined graph mode always shows hybrid text retrieval and graph retrieval together.
+      if (isCombinedGraphSearch) {
         setIsVectorSearching(true);
         setIsGraphSearching(supportsGraphFlow);
 
-        const requestData = {
+        const vectorRequestData = {
           query: queryText,
-          retrieval_model: retrievalModel,
+          retrieval_model: {
+            ...retrievalModel,
+            search_method: 'hybrid_search' as const,
+          },
+          record_history: recordHistory,
+        };
+        const graphRequestData = {
+          query: queryText,
+          retrieval_model: {
+            ...retrievalModel,
+            search_method: 'graph_search' as const,
+          },
           record_history: recordHistory,
         };
 
         const retrievals: Array<Promise<boolean>> = [
           vectorRetrieval
-            .mutateAsync(requestData)
+            .mutateAsync(vectorRequestData)
             .then(response => {
               setVectorResults(response.data);
               return true;
@@ -280,7 +279,7 @@ export default function HitTestingPage() {
         if (supportsGraphFlow) {
           retrievals.push(
             graphRetrieval
-              .mutateAsync(requestData)
+              .mutateAsync(graphRequestData)
               .then(response => {
                 setGraphResults(response.data);
                 return true;
@@ -306,21 +305,8 @@ export default function HitTestingPage() {
         if (retrievalResults.some(Boolean) && recordHistory) {
           await refreshHistory();
         }
-      } else if (retrievalConfig.search_method === 'graph_search' && graphConfigured) {
-        if (!supportsGraphFlow) return;
-        // Graph search mode: only call graph retrieval
-        setIsGraphSearching(true);
-        const result = await graphRetrieval.mutateAsync({
-          query: queryText,
-          retrieval_model: retrievalModel,
-          record_history: recordHistory,
-        });
-        setGraphResults(result.data);
-        if (recordHistory) {
-          await refreshHistory();
-        }
       } else {
-        // Semantic search mode (default): only call vector retrieval
+        // Hybrid text retrieval only.
         setIsVectorSearching(true);
         const result = await vectorRetrieval.mutateAsync({
           query: queryText,
@@ -372,6 +358,7 @@ export default function HitTestingPage() {
           config.search_method === 'graph_search'
             ? (config.fallback_policy ?? 'none')
             : config.fallback_policy,
+        hop_depth: 3 as const,
         reranking_enable: true,
         reranking_model: config.reranking_model,
       },
@@ -423,20 +410,6 @@ export default function HitTestingPage() {
               {t('hitTestingDescription')}
             </p>
           </div>
-
-          {graphConfigured && (
-            <div className="flex shrink-0 items-center gap-3 rounded-lg border bg-card px-3 py-2 shadow-sm">
-              <GitCompareArrows className="h-4 w-4 text-muted-foreground" />
-              <Label htmlFor="comparison-mode" className="text-sm font-medium text-foreground">
-                {t('hitTesting.comparisonMode')}
-              </Label>
-              <Switch
-                id="comparison-mode"
-                checked={comparisonMode}
-                onCheckedChange={setComparisonMode}
-              />
-            </div>
-          )}
         </div>
       </div>
 
@@ -476,8 +449,8 @@ export default function HitTestingPage() {
         <div className="flex min-h-0 min-w-0 flex-col bg-muted/20">
           {/* Results Content */}
           <div className="min-w-0 flex-1 overflow-hidden">
-            {comparisonMode && graphConfigured ? (
-              // Comparison mode: dual panel layout
+            {isCombinedGraphSearch ? (
+              // Combined mode: hybrid and graph results side by side.
               <div className="flex h-full min-w-0">
                 {/* Vector Results Panel */}
                 <div className="flex-1 min-w-0 border-r overflow-hidden">
@@ -557,19 +530,8 @@ export default function HitTestingPage() {
                   </div>
                 )}
               </div>
-            ) : retrievalConfig.search_method === 'graph_search' && graphConfigured ? (
-              // Graph search mode: show graph results only
-              <ResultsPanel
-                title={t('hitTesting.graphResults')}
-                results={graphResults?.records ?? undefined}
-                isSearching={isGraphSearching}
-                type="graph"
-                graphExecution={graphResults?.graph_execution}
-                elapsedTime={graphResults?.elapsed_time}
-                notice={graphPanelNotice}
-              />
             ) : (
-              // Semantic search mode (default): show vector results only
+              // Hybrid retrieval only.
               <ResultsPanel
                 title={vectorPanelTitle}
                 results={vectorResults?.records ?? undefined}

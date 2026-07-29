@@ -8,6 +8,8 @@ type GraphDataResponse struct {
 	NextCursor string          `json:"next_cursor,omitempty"`
 	NodeCount  int             `json:"node_count"`
 	EdgeCount  int             `json:"edge_count"`
+	TotalNodes int             `json:"total_node_count"`
+	TotalEdges int             `json:"total_edge_count"`
 }
 
 type GraphQuery struct {
@@ -16,6 +18,7 @@ type GraphQuery struct {
 	DocumentID string
 	SeedNodeID string
 	Cursor     string
+	Overview   bool
 	HopDepth   int
 	NodeLimit  int
 	EdgeLimit  int

@@ -157,8 +157,11 @@ export function ResultsPanel({
       {renderHeader(results.length)}
 
       {/* Execution details and results share one scroll container. */}
-      <ScrollArea className="min-h-0 min-w-0 flex-1">
-        <div className="space-y-4 pr-4">
+      <ScrollArea
+        className="min-h-0 min-w-0 max-w-full flex-1"
+        viewportProps={{ className: 'min-w-0 max-w-full overflow-x-hidden' }}
+      >
+        <div className="w-full min-w-0 max-w-full space-y-4 overflow-hidden pr-4">
           {type === 'graph' && graphExecution && (
             <GraphExecutionDetails execution={graphExecution} />
           )}

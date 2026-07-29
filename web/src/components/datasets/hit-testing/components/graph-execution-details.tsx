@@ -27,9 +27,13 @@ export function GraphExecutionDetails({ execution }: GraphExecutionDetailsProps)
   };
 
   return (
-    <Collapsible open={expanded} onOpenChange={setExpanded}>
-      <CollapsibleTrigger className="w-full">
-        <Card className="hover:bg-accent/50 transition-colors cursor-pointer">
+    <Collapsible
+      open={expanded}
+      onOpenChange={setExpanded}
+      className="w-full min-w-0 max-w-full overflow-hidden"
+    >
+      <CollapsibleTrigger className="block w-full min-w-0 max-w-full overflow-hidden text-left">
+        <Card className="w-full min-w-0 max-w-full cursor-pointer overflow-hidden transition-colors hover:bg-accent/50">
           <CardContent className="flex min-w-0 items-center justify-between gap-3 p-3">
             <div className="flex min-w-0 items-center gap-2">
               <Network className="h-4 w-4 text-purple-500" />
@@ -55,9 +59,9 @@ export function GraphExecutionDetails({ execution }: GraphExecutionDetailsProps)
         </Card>
       </CollapsibleTrigger>
 
-      <CollapsibleContent className="mt-2">
-        <Card>
-          <CardContent className="p-4 space-y-4">
+      <CollapsibleContent className="mt-2 w-full min-w-0 max-w-full overflow-hidden">
+        <Card className="w-full min-w-0 max-w-full overflow-hidden">
+          <CardContent className="min-w-0 max-w-full space-y-4 overflow-hidden p-4">
             {execution.fallback_reason && (
               <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
                 {execution.fallback_reason}
@@ -65,7 +69,7 @@ export function GraphExecutionDetails({ execution }: GraphExecutionDetailsProps)
             )}
 
             {/* Summary */}
-            <div className="rounded-md bg-muted/50 p-3 text-sm text-muted-foreground [overflow-wrap:anywhere]">
+            <div className="min-w-0 max-w-full whitespace-normal rounded-md bg-muted/50 p-3 text-sm text-muted-foreground [overflow-wrap:anywhere]">
               {execution.summary}
             </div>
 
@@ -112,7 +116,7 @@ export function GraphExecutionDetails({ execution }: GraphExecutionDetailsProps)
                       <Badge variant="outline" className="text-xs shrink-0">
                         {step.step}
                       </Badge>
-                      <div className="flex-1 space-y-1">
+                      <div className="min-w-0 flex-1 space-y-1">
                         <div className="font-medium [overflow-wrap:anywhere]">
                           {step.description}
                         </div>
@@ -133,11 +137,23 @@ export function GraphExecutionDetails({ execution }: GraphExecutionDetailsProps)
                   {execution.triples.map((triple, index) => (
                     <div
                       key={`${triple.subject}-${triple.predicate}-${triple.object}-${index}`}
-                      className="flex flex-wrap items-center gap-2 rounded-md border p-2 text-xs"
+                      className="flex min-w-0 max-w-full flex-wrap items-center gap-2 overflow-hidden rounded-md border p-2 text-xs"
                     >
-                      <Badge variant="secondary">{triple.subject}</Badge>
-                      <span className="text-muted-foreground">{triple.predicate}</span>
-                      <Badge variant="secondary">{triple.object}</Badge>
+                      <Badge
+                        variant="secondary"
+                        className="h-auto max-w-full whitespace-normal [overflow-wrap:anywhere]"
+                      >
+                        {triple.subject}
+                      </Badge>
+                      <span className="max-w-full [overflow-wrap:anywhere] text-muted-foreground">
+                        {triple.predicate}
+                      </span>
+                      <Badge
+                        variant="secondary"
+                        className="h-auto max-w-full whitespace-normal [overflow-wrap:anywhere]"
+                      >
+                        {triple.object}
+                      </Badge>
                     </div>
                   ))}
                 </div>

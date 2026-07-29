@@ -143,7 +143,10 @@ type RetrievalOptions struct {
 	FallbackPolicy        string
 }
 
-const hybridRecallCandidateLimit = 50
+const (
+	hybridRecallCandidateLimit    = 50
+	defaultGraphRetrievalHopDepth = 3
+)
 
 // Retrieve Main retrieval method
 func (s *RetrievalService) Retrieve(ctx context.Context, dataset *dataset_model.Dataset, query string, options *RetrievalOptions) ([]dto.HitTestingRecordResponse, *dto.GraphExecution, error) {
@@ -158,6 +161,7 @@ func (s *RetrievalService) Retrieve(ctx context.Context, dataset *dataset_model.
 	if options == nil {
 		options = &RetrievalOptions{}
 	}
+	options.HopDepth = defaultGraphRetrievalHopDepth
 	graphConfig, err := NormalizeGraphRetrievalConfig(options.SearchMethod, options.RetrievalMode, options.FallbackPolicy)
 	if err != nil {
 		return nil, nil, err
@@ -225,6 +229,9 @@ func (s *RetrievalService) Retrieve(ctx context.Context, dataset *dataset_model.
 	runGraph := graphConfig.ActualMode == RetrievalModeGraph || graphConfig.ActualMode == RetrievalModeHybrid || graphConfig.RequestedMethod == string(GraphSearch)
 
 	searchMethod := normalizeVectorSearchMethod(options.SearchMethod)
+	if searchMethod == string(GraphSearch) {
+		searchMethod = string(HybridSearch)
+	}
 	options.SearchMethod = searchMethod
 
 	// Retrieval threshold is applied only after child hits are aggregated back to parent records.
@@ -1963,19 +1970,7 @@ func (s *RetrievalService) graphSearch(ctx context.Context, dataset *dataset_mod
 		boundary = &graphflow_retrieval.Boundary{Type: graphflow_retrieval.BoundaryTypeGlobal}
 	}
 
-	// Adjust hop depth based on boundary precision
-	effectiveHopDepth := options.HopDepth
-	if boundary.Type == graphflow_retrieval.BoundaryTypeAnchored {
-		// For anchored queries (known relations), stay closer to maintain precision
-		if effectiveHopDepth > 2 {
-			effectiveHopDepth = 2
-		}
-	} else if boundary.Type == graphflow_retrieval.BoundaryTypeSingle {
-		// For single entity, allow more exploration but with pruning (handled in Neo4j)
-		if effectiveHopDepth < 2 {
-			effectiveHopDepth = 2
-		}
-	}
+	effectiveHopDepth := defaultGraphRetrievalHopDepth
 
 	logger.Info("[GRAPH_SEARCH] Detected boundary", map[string]interface{}{
 		"type":       boundary.Type,

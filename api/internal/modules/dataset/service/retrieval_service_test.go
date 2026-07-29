@@ -278,7 +278,7 @@ func TestHybridRecallCandidateLimit(t *testing.T) {
 	}
 }
 
-func TestGraphRetrievalConfigDefaultsToNoFallbackAndTwoHops(t *testing.T) {
+func TestGraphRetrievalConfigUsesExplicitGraphModeAndThreeHops(t *testing.T) {
 	config, err := NormalizeGraphRetrievalConfig("graph_search", "graph", "")
 	if err != nil {
 		t.Fatal(err)
@@ -289,11 +289,21 @@ func TestGraphRetrievalConfigDefaultsToNoFallbackAndTwoHops(t *testing.T) {
 	if config.FallbackPolicy != "none" {
 		t.Fatalf("fallback policy=%q", config.FallbackPolicy)
 	}
-	if config.MaxHops != 2 {
+	if config.MaxHops != 3 {
 		t.Fatalf("max hops=%d", config.MaxHops)
 	}
 	if !ShouldPropagateRetrievalError(config, true) {
 		t.Fatal("graph-only failure was silently downgraded")
+	}
+}
+
+func TestGraphRetrievalConfigDefaultsCombinedSearchToHybridMode(t *testing.T) {
+	config, err := NormalizeGraphRetrievalConfig("graph_search", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.ActualMode != RetrievalModeHybrid {
+		t.Fatalf("actual mode=%q, want %q", config.ActualMode, RetrievalModeHybrid)
 	}
 }
 

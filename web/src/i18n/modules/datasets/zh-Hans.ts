@@ -20,7 +20,6 @@ const messages: DatasetMessages = {
     enableTitle: '启用知识图谱',
     enableDescription: '使用知识库的嵌入模型构建图谱实体与关系。',
     enableSaveHint: '保存设置后，知识图谱入口将显示在侧边栏。',
-    inheritedEmbeddingModel: '继承的嵌入模型',
     statusTitle: '知识图谱状态',
     statusDescription: '当前状态：{status}。进度：{progress}%。',
     emptyStatusDescription: '当前状态：知识库为空，等待添加文档。',
@@ -102,6 +101,20 @@ const messages: DatasetMessages = {
     entityDetails: '实体详情',
     activeSources: '有效来源：{count}',
     expandNeighbors: '展开相邻实体',
+    expandingNeighbors: '正在展开...',
+    neighborsExpanded: '相邻实体已展开',
+    backToOverview: '返回全局概览',
+    visibleEntities: '当前展示 {visible} / 共 {total} 个实体',
+    decreaseOverviewEntities: '减少展示 100 个实体',
+    increaseOverviewEntities: '增加展示 100 个实体',
+    overviewHint: '概览优先展示关系紧密的实体；可通过搜索定位完整图谱中的任意实体。',
+    nodeWeightHint: '节点大小代表该实体在选中来源文档下的权重。',
+    sourceDocuments: '来源文档',
+    selectAllSources: '全选',
+    hideLegend: '隐藏',
+    showLegend: '显示图例',
+    visibleLimitReached: '当前视图已达到可读上限，请返回全局概览或搜索其他实体。',
+    searchResultsSummary: '显示 {visible} / 共 {total} 个匹配实体',
     description: '描述',
     relatedEntities: '相关实体（{count}）',
     noRelatedEntities: '暂无相关实体',
@@ -751,12 +764,14 @@ const messages: DatasetMessages = {
       embeddingModel: {
         title: '嵌入模型',
         placeholder: '选择嵌入模型',
-        lockedTooltip: '知识库创建后，嵌入模型不能修改。',
+        lockedTooltip:
+          '知识库创建后，嵌入模型不能修改。配置的嵌入模型会同时用于向量关键词混合检索和图谱检索。',
       },
 
       graphModel: {
-        title: '图谱模型',
-        placeholder: '选择图谱模型',
+        title: '图谱抽取模型',
+        placeholder: '选择图谱抽取模型',
+        help: '用于从文档中识别实体及实体之间的关系，并构建知识图谱。',
       },
 
       // Embedding configuration
@@ -775,7 +790,7 @@ const messages: DatasetMessages = {
         graphSearch: '图谱搜索',
         semanticSearch: '向量搜索',
         fullTextSearch: '全文搜索',
-        hybridSearch: '混合搜索',
+        hybridSearch: '向量关键词混合检索',
         topK: 'Top K',
         scoreThreshold: '置信阈值',
         reranking: '启用重排序',
@@ -839,10 +854,14 @@ const messages: DatasetMessages = {
       retrievalConfig: '检索配置',
       searchMethod: '搜索方式',
       searchMethodHelp:
-        '向量搜索适合语义相近但关键词不同的问题；全文搜索按关键词精确匹配；混合搜索同时结合语义和关键词，通常更稳妥。',
+        '“向量关键词混合检索＋图谱检索”会同时返回向量语义匹配、关键词匹配和实体关系结果；“向量关键词混合检索”仅检索文档内容，不包含图谱关系结果。',
+      graphHopDepth: '图谱召回跳数深度',
+      graphHopDepthHelp:
+        '控制图谱检索沿实体关系向外扩展的层数，可选 1 到 3 跳。跳数越大覆盖的关联实体越多，但耗时和噪声也可能增加。',
+      graphHopDepthValue: '{depth} 跳',
       semanticSearch: '向量搜索',
       fullTextSearch: '全文搜索',
-      hybridSearch: '混合搜索',
+      hybridSearch: '向量关键词混合检索',
       topK: 'Top K',
       topKHelp:
         '控制每次检索最多返回多少条候选内容。数值调高会召回更多内容，覆盖面更广，但可能带入不相关信息；数值调低结果更聚焦，但可能漏掉有用内容。',
@@ -852,7 +871,7 @@ const messages: DatasetMessages = {
       enableReranking: '启用重排序',
       changeRerankModel: '更改排序模型',
       rerankingHelp:
-        '开启后会用重排序模型对初步召回的内容重新排序，让更相关的内容排在前面。通常能提升答案质量，但会增加一点响应时间和模型调用成本。',
+        '重排序模型会对初步召回的内容重新排序，让更相关的内容排在前面。该能力默认启用且不可关闭，通常能提升答案质量，但会增加一点响应时间和模型调用成本。',
       rerankingDescription: '使用重排序模型来提升检索结果的质量',
       rerankModel: '重排序模型',
       selectRerankModel: '选择重排序模型',
@@ -881,16 +900,16 @@ const messages: DatasetMessages = {
       },
       // Search methods
       methods: {
-        graph_search: '图谱检索',
+        graph_search: '向量关键词混合检索＋图谱检索',
         semantic_search: '向量搜索',
         full_text_search: '全文搜索',
-        hybrid_search: '混合搜索',
+        hybrid_search: '向量关键词混合检索',
       },
       methodsDesc: {
-        graph_search: '基于图谱增强的检索',
+        graph_search: '同时执行向量关键词混合检索和图谱检索',
         semantic_search: '基于向量相似性的检索',
         full_text_search: '基于关键词匹配的检索',
-        hybrid_search: '向量搜索和全文搜索结合的情形',
+        hybrid_search: '结合向量语义匹配与关键词匹配的文档内容检索',
       },
       // History
       testHistory: '测试历史',
@@ -930,7 +949,7 @@ const messages: DatasetMessages = {
       advancedOptions: '高级选项',
       advancedDescription: '高级配置选项',
       advancedWarning: '高级选项可能影响检索性能，请谨慎修改',
-      hybridWeights: '权重',
+      hybridWeights: '向量与关键词权重',
       returnFullDoc: '全文引用',
       returnFullDocDescription: '返回全文档内容而不是切片',
       weightedScore: '权重得分',
@@ -960,8 +979,8 @@ const messages: DatasetMessages = {
     advancedSettingsLabel: '高级设置',
     embeddingModelLabel: '嵌入模型',
     embeddingModelPlaceholder: '请选择嵌入模型',
-    graphModelLabel: '图谱模型',
-    graphModelPlaceholder: '请选择图谱模型',
+    graphModelLabel: '图谱抽取模型',
+    graphModelPlaceholder: '请选择图谱抽取模型',
     graphModelDescription: '使用大语言模型抽取文档中的实体与关系',
     iconLabel: '知识库图标',
     retrievalConfigLabel: '检索设置',
@@ -1142,10 +1161,10 @@ const messages: DatasetMessages = {
     descriptionPlaceholder: '请输入知识库描述',
     graphFlowLabel: '启用知识图谱 (GraphFlow)',
     graphFlowEnabledLabel: '知识图谱已启用',
-    graphFlowEnabledDescription: '当前知识库已启用知识图谱，可调整图谱模型。',
-    graphFlowDescription: '开启后可为知识库配置图谱模型，用于抽取实体关系增强检索能力',
+    graphFlowEnabledDescription: '当前知识库已启用知识图谱，可调整图谱抽取模型。',
+    graphFlowDescription: '开启后可为知识库配置图谱抽取模型，用于抽取实体关系并增强检索能力',
     graphFlowLockedDescription:
-      '知识图谱启用后将永久生效，当前知识库只能调整图谱模型，不能关闭图谱',
+      '知识图谱启用后将永久生效，当前知识库只能调整图谱抽取模型，不能关闭图谱',
     documentCount: '文档数量',
     wordCount: '字数统计',
     dataSource: '数据源类型',
@@ -1180,7 +1199,7 @@ const messages: DatasetMessages = {
       required: '请选择嵌入模型',
     },
     graphModel: {
-      required: '启用知识图谱后请选择图谱模型',
+      required: '启用知识图谱后请选择图谱抽取模型',
     },
     workspace: {
       required: '未选择工作空间',
@@ -1256,16 +1275,16 @@ const messages: DatasetMessages = {
 
     // Search methods
     methods: {
-      graph_search: '图谱检索',
+      graph_search: '向量关键词混合检索＋图谱检索',
       semantic_search: '向量检索',
       full_text_search: '全文搜索',
-      hybrid_search: '混合检索',
+      hybrid_search: '向量关键词混合检索',
     },
     methodsDesc: {
-      graph_search: '基于图谱增强的检索',
+      graph_search: '同时展示向量关键词混合检索和图谱检索结果',
       semantic_search: '通过语义来检索知识库文本内容',
       full_text_search: '基于关键词匹配的检索',
-      hybrid_search: '通过语义及关键词来检索知识库文本内容',
+      hybrid_search: '通过向量语义匹配及关键词匹配检索知识库文本内容',
     },
 
     // History
@@ -1310,7 +1329,7 @@ const messages: DatasetMessages = {
     advancedOptions: '高级选项',
     advancedDescription: '高级配置选项',
     advancedWarning: '高级选项可能影响检索性能，请谨慎修改',
-    hybridWeights: '混合权重',
+    hybridWeights: '向量与关键词权重',
     returnFullDoc: '全文引用',
     returnFullDocDescription:
       '开启全文引用后，当文档中的切片被检索到时，切片所归属的全文内容将作为文本块被全部引用。注意，开启后将增加大量token消耗，请在必要场景下使用该功能',
@@ -1409,7 +1428,7 @@ const messages: DatasetMessages = {
 
     // Graph retrieval translations
     vectorResults: '向量召回',
-    hybridResults: '混合召回',
+    hybridResults: '向量关键词混合召回',
     bm25Results: 'BM25召回',
     graphResults: '图谱召回',
     score: '分数',

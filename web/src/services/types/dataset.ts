@@ -415,6 +415,7 @@ export interface CreateDatasetRequest {
       reranking_provider_name: string;
       reranking_model_name: string;
     };
+    hop_depth?: 1 | 2 | 3;
   };
 }
 
@@ -441,6 +442,7 @@ export interface UpdateDatasetRequest {
       reranking_provider_name: string;
       reranking_model_name: string;
     };
+    hop_depth?: 1 | 2 | 3;
   };
 }
 
@@ -973,6 +975,7 @@ export interface InternalRetrievalConfig {
   score_threshold_enabled: boolean;
   score_threshold: number;
   fallback_policy?: 'none' | 'vector';
+  hop_depth?: 1 | 2 | 3;
 }
 
 // Simplified config for API requests (matches backend expectations)
@@ -1258,6 +1261,8 @@ export interface DatasetGraph {
   next_cursor?: string;
   node_count: number;
   edge_count: number;
+  total_node_count: number;
+  total_edge_count: number;
 }
 
 export interface GraphQueryParams {
@@ -1266,6 +1271,7 @@ export interface GraphQueryParams {
   document_id?: string;
   seed_node_id?: string;
   cursor?: string;
+  overview?: boolean;
   hop_depth?: number;
   node_limit?: number;
   edge_limit?: number;

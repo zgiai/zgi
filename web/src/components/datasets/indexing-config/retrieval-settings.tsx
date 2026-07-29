@@ -37,7 +37,7 @@ export interface RetrievalSettingsRef {
 
 // Default values for initialization
 const DEFAULT_RETRIEVAL_CONFIG: RetrievalConfig = {
-  search_method: 'hybrid_search',
+  search_method: 'graph_search',
   top_k: 10,
   score_threshold_enabled: true,
   score_threshold: 0.35,
@@ -46,6 +46,7 @@ const DEFAULT_RETRIEVAL_CONFIG: RetrievalConfig = {
     reranking_provider_name: '',
     reranking_model_name: '',
   },
+  hop_depth: 3,
 };
 
 function SettingLabelWithTooltip({
@@ -109,6 +110,7 @@ export const RetrievalSettings = forwardRef<RetrievalSettingsRef, RetrievalSetti
         reranking_enable: true,
         reranking_model: retrieval.reranking_model ?? DEFAULT_RETRIEVAL_CONFIG.reranking_model,
         fallback_policy: retrieval.fallback_policy ?? 'none',
+        hop_depth: DEFAULT_RETRIEVAL_CONFIG.hop_depth,
       };
 
       return initialConfig;
@@ -128,6 +130,7 @@ export const RetrievalSettings = forwardRef<RetrievalSettingsRef, RetrievalSetti
         reranking_enable: true,
         reranking_model: retrieval.reranking_model ?? DEFAULT_RETRIEVAL_CONFIG.reranking_model,
         fallback_policy: retrieval.fallback_policy ?? 'none',
+        hop_depth: DEFAULT_RETRIEVAL_CONFIG.hop_depth,
       });
       setTopKInput(String(newTopK));
 
@@ -229,17 +232,11 @@ export const RetrievalSettings = forwardRef<RetrievalSettingsRef, RetrievalSetti
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="hybrid_search">
-                    {t('hitTesting.methods.hybrid_search')}
-                  </SelectItem>
-                  <SelectItem value="semantic_search">
-                    {t('hitTesting.methods.semantic_search')}
-                  </SelectItem>
-                  <SelectItem value="full_text_search">
-                    {t('hitTesting.methods.full_text_search')}
-                  </SelectItem>
                   <SelectItem value="graph_search" disabled={!isGraphEnabled}>
                     {t('hitTesting.methods.graph_search')}
+                  </SelectItem>
+                  <SelectItem value="hybrid_search">
+                    {t('hitTesting.methods.hybrid_search')}
                   </SelectItem>
                 </SelectContent>
               </Select>

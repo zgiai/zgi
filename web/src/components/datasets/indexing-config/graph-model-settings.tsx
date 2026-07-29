@@ -14,8 +14,8 @@ interface GraphModelSettingsProps {
   className?: string;
   title?: string;
   description?: string;
+  titleTooltip?: string;
   placeholder?: string;
-  embeddingModel?: ModelSelectorValue;
 }
 
 /**
@@ -37,8 +37,8 @@ export function GraphModelSettings({
   className,
   title,
   description,
+  titleTooltip,
   placeholder,
-  embeddingModel,
 }: GraphModelSettingsProps) {
   const t = useT('datasets');
 
@@ -49,6 +49,7 @@ export function GraphModelSettings({
         title={title || t('createWizard.processConfig.graphModel.title')}
         required={required}
         description={description}
+        titleTooltip={titleTooltip || t('createWizard.processConfig.graphModel.help')}
         errorMessage={errorMessage}
         className={className}
       >
@@ -69,16 +70,6 @@ export function GraphModelSettings({
           hasError={hasError}
         />
       </ModelFieldSection>
-      {embeddingModel ? (
-        <div className="rounded-md border border-border/70 bg-muted/30 px-3 py-2">
-          <div className="text-xs font-medium text-foreground">
-            {t('graph.inheritedEmbeddingModel')}
-          </div>
-          <div className="mt-1 text-xs text-muted-foreground">
-            {embeddingModel.provider} / {embeddingModel.model}
-          </div>
-        </div>
-      ) : null}
     </div>
   );
 }

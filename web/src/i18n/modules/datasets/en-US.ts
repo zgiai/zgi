@@ -19,7 +19,6 @@ const messages = {
     enableDescription:
       'Build graph entities and relationships with the knowledge base embedding model.',
     enableSaveHint: 'Save the settings to show the knowledge graph in the sidebar.',
-    inheritedEmbeddingModel: 'Inherited embedding model',
     statusTitle: 'Knowledge graph status',
     statusDescription: 'Current status: {status}. Progress: {progress}%.',
     emptyStatusDescription: 'Current status: The knowledge base is empty. Waiting for documents.',
@@ -103,6 +102,22 @@ const messages = {
     entityDetails: 'Entity details',
     activeSources: 'Active sources: {count}',
     expandNeighbors: 'Expand neighbors',
+    expandingNeighbors: 'Expanding...',
+    neighborsExpanded: 'Neighbors expanded',
+    backToOverview: 'Back to overview',
+    visibleEntities: 'Showing {visible} of {total} entities',
+    decreaseOverviewEntities: 'Show 100 fewer entities',
+    increaseOverviewEntities: 'Show 100 more entities',
+    overviewHint:
+      'The overview prioritizes strongly connected entities. Search to locate any entity in the full graph.',
+    nodeWeightHint: 'Node size represents the entity weight in the selected source documents.',
+    sourceDocuments: 'Source documents',
+    selectAllSources: 'Select all',
+    hideLegend: 'Hide',
+    showLegend: 'Show legend',
+    visibleLimitReached:
+      'This view has reached its readability limit. Return to the overview or search for another entity.',
+    searchResultsSummary: 'Showing {visible} of {total} matching entities',
     description: 'Description',
     relatedEntities: 'Related entities ({count})',
     noRelatedEntities: 'No related entities',
@@ -761,12 +776,14 @@ const messages = {
       embeddingModel: {
         title: 'Embedding Model',
         placeholder: 'Select Embedding Model',
-        lockedTooltip: 'The embedding model cannot be changed after the dataset is created.',
+        lockedTooltip:
+          'The embedding model cannot be changed after the dataset is created. It is used by both vector + keyword hybrid retrieval and graph retrieval.',
       },
 
       graphModel: {
-        title: 'Graph Model',
-        placeholder: 'Select graph model',
+        title: 'Graph Extraction Model',
+        placeholder: 'Select graph extraction model',
+        help: 'Identifies entities and their relationships in documents to build the knowledge graph.',
       },
 
       // Embedding configuration
@@ -785,7 +802,7 @@ const messages = {
         graphSearch: 'Graph Search',
         semanticSearch: 'Semantic Search',
         fullTextSearch: 'Full Text Search',
-        hybridSearch: 'Hybrid Search',
+        hybridSearch: 'Vector + Keyword Hybrid Retrieval',
         topK: 'Top K',
         scoreThreshold: 'Score Threshold',
         reranking: 'Enable Reranking',
@@ -851,10 +868,14 @@ const messages = {
       retrievalConfig: 'Retrieval Configuration',
       searchMethod: 'Search Method',
       searchMethodHelp:
-        'Semantic search matches meaning even when wording differs. Full-text search matches exact keywords. Hybrid search combines semantic and keyword matching and is usually the most balanced.',
+        '“Vector + Keyword Hybrid + Graph Retrieval” returns vector-semantic matches, keyword matches, and entity-relationship results. “Vector + Keyword Hybrid Retrieval” searches document content only and does not include graph relationships.',
+      graphHopDepth: 'Graph retrieval depth',
+      graphHopDepthHelp:
+        'Controls how many relationship hops graph retrieval traverses, from 1 to 3. A greater depth covers more related entities but may add latency and noise.',
+      graphHopDepthValue: '{depth} hop(s)',
       semanticSearch: 'Semantic Search',
       fullTextSearch: 'Full-text Search',
-      hybridSearch: 'Hybrid Search',
+      hybridSearch: 'Vector + Keyword Hybrid Retrieval',
       topK: 'Top K',
       topKHelp:
         'Controls the maximum number of candidate chunks returned for each retrieval. A higher value broadens coverage but may include less relevant content; a lower value keeps results focused but may miss useful context.',
@@ -864,7 +885,7 @@ const messages = {
       enableReranking: 'Enable Reranking',
       changeRerankModel: 'Change Rerank Model',
       rerankingHelp:
-        'Uses a reranking model to reorder initially retrieved content so the most relevant chunks appear first. This usually improves answer quality, with some added latency and model cost.',
+        'The rerank model reorders initially retrieved content so the most relevant chunks appear first. Reranking is always enabled and cannot be turned off. It usually improves answer quality, with some added latency and model cost.',
       rerankingDescription: 'Use reranking model to improve result quality',
       rerankModel: 'Rerank Model',
       selectRerankModel: 'Select rerank model',
@@ -893,16 +914,16 @@ const messages = {
       },
       // Search methods
       methods: {
-        graph_search: 'Graph Search',
+        graph_search: 'Vector + Keyword Hybrid + Graph Retrieval',
         semantic_search: 'Semantic Search',
         full_text_search: 'Full-text Search',
-        hybrid_search: 'Hybrid Search',
+        hybrid_search: 'Vector + Keyword Hybrid Retrieval',
       },
       methodsDesc: {
-        graph_search: 'Knowledge graph enhanced retrieval',
+        graph_search: 'Runs vector + keyword hybrid retrieval and graph retrieval together',
         semantic_search: 'Vector similarity based retrieval',
         full_text_search: 'Keyword matching based retrieval',
-        hybrid_search: 'Combined semantic and full-text search',
+        hybrid_search: 'Document retrieval combining vector-semantic and keyword matching',
       },
       // History
       testHistory: 'Test History',
@@ -942,7 +963,7 @@ const messages = {
       advancedOptions: 'Advanced Options',
       advancedDescription: 'Advanced configuration options',
       advancedWarning: 'Advanced options may affect retrieval performance, modify with caution',
-      hybridWeights: 'Weights',
+      hybridWeights: 'Vector and Keyword Weights',
       returnFullDoc: 'Return Full Document',
       returnFullDocDescription: 'Return full document content instead of segments',
       weightedScore: 'Weighted Score',
@@ -972,8 +993,8 @@ const messages = {
     advancedSettingsLabel: 'Advanced Settings',
     embeddingModelLabel: 'Embedding Model',
     embeddingModelPlaceholder: 'Please select embedding model',
-    graphModelLabel: 'Graph Model',
-    graphModelPlaceholder: 'Please select graph model',
+    graphModelLabel: 'Graph Extraction Model',
+    graphModelPlaceholder: 'Please select graph extraction model',
     graphModelDescription: 'Use a LLM to extract entities and relationships',
     iconLabel: 'Dataset Icon',
     retrievalConfigLabel: 'Retrieval Settings',
@@ -1162,11 +1183,11 @@ const messages = {
     graphFlowLabel: 'Enable Knowledge Graph (GraphFlow)',
     graphFlowEnabledLabel: 'Knowledge Graph enabled',
     graphFlowEnabledDescription:
-      'Knowledge graph is enabled for this dataset. You can adjust the graph model.',
+      'Knowledge graph is enabled for this dataset. You can adjust the graph extraction model.',
     graphFlowDescription:
-      'Enable a graph model for this dataset to extract entity relationships and enhance retrieval',
+      'Enable a graph extraction model for this dataset to extract entity relationships and enhance retrieval',
     graphFlowLockedDescription:
-      'Once GraphFlow is enabled it becomes permanent. You can still adjust the graph model, but you cannot turn GraphFlow off for this dataset.',
+      'Once GraphFlow is enabled it becomes permanent. You can still adjust the graph extraction model, but you cannot turn GraphFlow off for this dataset.',
     documentCount: 'Document Count',
     wordCount: 'Word Count',
     dataSource: 'Data Source Type',
@@ -1201,7 +1222,7 @@ const messages = {
       required: 'Please select an embedding model',
     },
     graphModel: {
-      required: 'Please select a graph model when GraphFlow is enabled',
+      required: 'Please select a graph extraction model when GraphFlow is enabled',
     },
     workspace: {
       required: 'No workspace selected',
@@ -1278,16 +1299,16 @@ const messages = {
 
     // Search methods
     methods: {
-      graph_search: 'Graph Search',
+      graph_search: 'Vector + Keyword Hybrid + Graph Retrieval',
       semantic_search: 'Semantic Search',
       full_text_search: 'Full-text Search',
-      hybrid_search: 'Hybrid Search',
+      hybrid_search: 'Vector + Keyword Hybrid Retrieval',
     },
     methodsDesc: {
-      graph_search: 'Knowledge graph enhanced retrieval',
+      graph_search: 'Shows vector + keyword hybrid retrieval and graph retrieval results together',
       semantic_search: 'Vector similarity based retrieval',
       full_text_search: 'Keyword matching based retrieval',
-      hybrid_search: 'Combined semantic and full-text search',
+      hybrid_search: 'Document retrieval combining vector-semantic and keyword matching',
     },
 
     // History
@@ -1332,7 +1353,7 @@ const messages = {
     advancedOptions: 'Advanced Options',
     advancedDescription: 'Advanced configuration options',
     advancedWarning: 'Advanced options may affect retrieval performance, modify with caution',
-    hybridWeights: 'Weights',
+    hybridWeights: 'Vector and Keyword Weights',
     returnFullDoc: 'Return Full Document',
     returnFullDocDescription: 'Return full document content instead of segments',
     weightedScore: 'Weighted Score',
@@ -1431,7 +1452,7 @@ const messages = {
 
     // Graph Retrieval
     vectorResults: 'Vector Results',
-    hybridResults: 'Hybrid Results',
+    hybridResults: 'Vector + Keyword Results',
     bm25Results: 'BM25 Results',
     graphResults: 'Graph Results',
     score: 'Score',

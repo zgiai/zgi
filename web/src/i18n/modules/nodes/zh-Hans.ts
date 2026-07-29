@@ -1270,7 +1270,7 @@ const messages: NodesMessages = {
       rerankingMode: '检索模式',
       rerankingModel: 'Rerank模型',
       weightedScore: '权重设置',
-      hybridWeights: '混合权重',
+      hybridWeights: '向量与关键词权重',
       keywordWeight: '关键词',
       vectorWeight: '向量',
     },

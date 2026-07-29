@@ -1,23 +1,21 @@
 import type { DatasetGraph, GraphNode } from '@/services/types/dataset';
+import type { EdgeConfig, NodeConfig } from '@antv/g6';
 
-const MAX_RENDER_NODES = 500;
-const MAX_RENDER_EDGES = 1500;
+export type G6Node = GraphNode &
+  NodeConfig & {
+    label: string;
+    baseLabel: string;
+    weight: number;
+    priority: number;
+    x?: number;
+    y?: number;
+  };
 
-export interface G6Node {
-  id: string;
-  label: string;
-  baseLabel: string;
-  category: string;
-  weight: number;
-  priority: number;
-  data: GraphNode['data'];
-}
-
-export interface G6Edge {
+export type G6Edge = EdgeConfig & {
   source: string;
   target: string;
   label: string;
-}
+};
 
 export interface G6Data {
   nodes: G6Node[];
@@ -27,7 +25,6 @@ export interface G6Data {
 export const transformToG6Data = (data: DatasetGraph, selectedSourceIds: string[]): G6Data => {
   const activeNodes = data.nodes
     .filter(node => node.data.active_source_count > 0)
-    .slice(0, MAX_RENDER_NODES)
     .map((node, index) => {
       const activeSources =
         node.data?.sources?.filter(source => selectedSourceIds.includes(source.doc.id)) || [];
@@ -49,7 +46,6 @@ export const transformToG6Data = (data: DatasetGraph, selectedSourceIds: string[
   const nodeIds = new Set(activeNodes.map(n => n.id));
   const edges = data.edges
     .filter(edge => edge.active_weight > 0 && nodeIds.has(edge.source) && nodeIds.has(edge.target))
-    .slice(0, MAX_RENDER_EDGES)
     .map(edge => ({
       source: edge.source,
       target: edge.target,

@@ -77,7 +77,7 @@ export default function BatchTesting(props: BatchTestingProps) {
   const [currentTaskId, setCurrentTaskId] = useState<string | null>(null);
   const autoStartTriggeredRef = useRef(false);
   const [shouldAutoStart, setShouldAutoStart] = useState(false);
-  const [searchMethod, setSearchMethod] = useState<SearchMethod>('hybrid_search');
+  const [searchMethod, setSearchMethod] = useState<SearchMethod>('graph_search');
 
   useEffect(() => {
     if (!dataset?.retrieval_config?.search_method) return;
@@ -278,9 +278,10 @@ export default function BatchTesting(props: BatchTestingProps) {
           top_k: retrievalConfig.top_k,
           score_threshold_enabled: retrievalConfig.score_threshold_enabled,
           score_threshold: retrievalConfig.score_threshold,
+          hop_depth: 3,
           fallback_policy: normalizedSearchMethod === 'graph_search' ? 'none' : undefined,
         },
-        retrieval_mode: normalizedSearchMethod === 'graph_search' ? 'graph' : undefined,
+        retrieval_mode: normalizedSearchMethod === 'graph_search' ? 'hybrid' : undefined,
         fallback_policy: normalizedSearchMethod === 'graph_search' ? 'none' : undefined,
       });
 
@@ -493,16 +494,10 @@ export default function BatchTesting(props: BatchTestingProps) {
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="hybrid_search">{t('hitTesting.methods.hybrid_search')}</SelectItem>
-              <SelectItem value="semantic_search">
-                {t('hitTesting.methods.semantic_search')}
-              </SelectItem>
-              <SelectItem value="full_text_search">
-                {t('hitTesting.methods.full_text_search')}
-              </SelectItem>
               <SelectItem value="graph_search" disabled={!graphSearchAvailable}>
                 {t('hitTesting.methods.graph_search')}
               </SelectItem>
+              <SelectItem value="hybrid_search">{t('hitTesting.methods.hybrid_search')}</SelectItem>
             </SelectContent>
           </Select>
           {!graphSearchAvailable && (

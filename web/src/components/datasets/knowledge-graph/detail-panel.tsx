@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useMemo } from 'react';
-import { Network, Info, FileText, ChevronRight, Expand } from 'lucide-react';
+import { Network, Info, FileText, ChevronRight, Expand, Loader2 } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -16,6 +16,9 @@ interface DetailPanelProps {
   categoryColorMap: Record<string, { fill: string; stroke: string; text: string }>;
   onNodeSelect: (nodeId: string) => void;
   onExpandNeighbors: (nodeId: string) => void;
+  isExpanding?: boolean;
+  isExpanded?: boolean;
+  expandDisabled?: boolean;
   className?: string;
 }
 
@@ -25,6 +28,9 @@ export const DetailPanel: React.FC<DetailPanelProps> = ({
   categoryColorMap,
   onNodeSelect,
   onExpandNeighbors,
+  isExpanding = false,
+  isExpanded = false,
+  expandDisabled = false,
   className,
 }) => {
   const t = useT('datasets.knowledgeGraph');
@@ -100,9 +106,18 @@ export const DetailPanel: React.FC<DetailPanelProps> = ({
                 variant="outline"
                 size="sm"
                 onClick={() => onExpandNeighbors(selectedNode.id)}
+                disabled={isExpanding || isExpanded || expandDisabled}
               >
-                <Expand className="mr-1 h-3.5 w-3.5" />
-                {t('expandNeighbors')}
+                {isExpanding ? (
+                  <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Expand className="mr-1 h-3.5 w-3.5" />
+                )}
+                {isExpanding
+                  ? t('expandingNeighbors')
+                  : isExpanded
+                    ? t('neighborsExpanded')
+                    : t('expandNeighbors')}
               </Button>
             </div>
           </div>

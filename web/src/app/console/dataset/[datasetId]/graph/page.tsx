@@ -9,12 +9,12 @@ import {
 } from '@/hooks/dataset/use-dataset-graph';
 import { useDataset } from '@/hooks/dataset/use-datasets';
 import { useT } from '@/i18n';
-import { AlertCircle, Loader2, Network, Search, X } from 'lucide-react';
+import { AlertCircle, Loader2, Minus, Network, Plus, RotateCcw, Search, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { KnowledgeGraph, DetailPanel } from '@/components/datasets/knowledge-graph';
 import { getCategoryColorMap } from '@/components/datasets/knowledge-graph/utils/color';
-import type { GraphNode } from '@/services/types/dataset';
+import type { DatasetGraph, GraphNode } from '@/services/types/dataset';
 import type { KnowledgeGraphHandle } from '@/components/datasets/knowledge-graph';
 import { cn } from '@/lib/utils';
 import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
@@ -27,6 +27,60 @@ import { Button } from '@/components/ui/button';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 
 const GRAPH_QUERY_LIMIT_ERROR = 'graph_query_limit_exceeded';
+const DEFAULT_OVERVIEW_NODE_LIMIT = 200;
+const MIN_OVERVIEW_NODE_LIMIT = 100;
+const OVERVIEW_NODE_STEP = 100;
+const EXPLORATION_NODE_LIMIT = 150;
+const EXPANSION_NODE_LIMIT = 50;
+const VISIBLE_NODE_LIMIT = 200;
+const VISIBLE_EDGE_LIMIT = 600;
+
+const graphEdgeKey = (edge: DatasetGraph['edges'][number]) =>
+  `${edge.source}\u0000${edge.target}\u0000${edge.label}`;
+
+const mergeGraphData = (
+  current: DatasetGraph,
+  incoming: DatasetGraph,
+  nodeLimit: number
+): DatasetGraph => {
+  const nodes = [...current.nodes];
+  const nodeIds = new Set(nodes.map(node => node.id));
+  for (const node of incoming.nodes) {
+    if (nodeIds.has(node.id) || nodes.length >= nodeLimit) continue;
+    nodeIds.add(node.id);
+    nodes.push(node);
+  }
+
+  const edges = [...current.edges];
+  const edgeKeys = new Set(edges.map(graphEdgeKey));
+  for (const edge of incoming.edges) {
+    const key = graphEdgeKey(edge);
+    if (
+      edgeKeys.has(key) ||
+      !nodeIds.has(edge.source) ||
+      !nodeIds.has(edge.target) ||
+      edges.length >= VISIBLE_EDGE_LIMIT
+    ) {
+      continue;
+    }
+    edgeKeys.add(key);
+    edges.push(edge);
+  }
+
+  const categoriesById = new Map(
+    [...current.categories, ...incoming.categories].map(category => [category.id, category])
+  );
+
+  return {
+    nodes,
+    edges,
+    categories: Array.from(categoriesById.values()),
+    node_count: nodes.length,
+    edge_count: edges.length,
+    total_node_count: current.total_node_count,
+    total_edge_count: current.total_edge_count,
+  };
+};
 
 export default function DatasetGraphPage() {
   const { datasetId } = useParams<{ datasetId: string }>();
@@ -42,63 +96,152 @@ export default function DatasetGraphPage() {
   });
   const t = useT('datasets');
   const [selectedNode, setSelectedNode] = React.useState<GraphNode | null>(null);
+  const [overviewNodeLimit, setOverviewNodeLimit] = React.useState(DEFAULT_OVERVIEW_NODE_LIMIT);
   const [searchQuery, setSearchQuery] = React.useState('');
   const [isSearchOpen, setIsSearchOpen] = React.useState(false);
-  const [cursor, setCursor] = React.useState<string | undefined>();
-  const [seedNodeId, setSeedNodeId] = React.useState<string | undefined>();
+  const [explorationRootId, setExplorationRootId] = React.useState<string | undefined>();
+  const [expansionNodeId, setExpansionNodeId] = React.useState<string | undefined>();
+  const [visibleGraph, setVisibleGraph] = React.useState<DatasetGraph | null>(null);
+  const [expandedNodeIds, setExpandedNodeIds] = React.useState<Set<string>>(() => new Set());
+  const initializedRootRef = React.useRef<string | null>(null);
   const { data: graphStatusData, isLoading: isStatusLoading } = useDatasetGraphStatus(
     datasetId,
     canViewGraph
   );
   const graphStatus = graphStatusData?.data;
-  const graphQuery = React.useMemo(
-    () => ({
-      keyword: searchQuery.trim() || undefined,
-      seed_node_id: seedNodeId,
-      cursor,
-      hop_depth: seedNodeId ? 1 : undefined,
-      node_limit: 300,
-      edge_limit: 900,
-    }),
-    [cursor, searchQuery, seedNodeId]
+  const canQueryGraph = canViewGraph && graphStatus?.can_search === true;
+  const trimmedSearchQuery = searchQuery.trim();
+
+  const overviewGraphQuery = useDatasetGraph(
+    datasetId,
+    {
+      overview: true,
+      node_limit: overviewNodeLimit,
+      edge_limit: overviewNodeLimit * 3,
+    },
+    { enabled: canQueryGraph }
   );
-  const {
-    data: graphData,
-    isLoading: isGraphLoading,
-    isError: isGraphError,
-    error: graphError,
-  } = useDatasetGraph(datasetId, graphQuery, {
-    enabled: canViewGraph && graphStatus?.can_search === true,
-  });
+  const explorationGraphQuery = useDatasetGraph(
+    datasetId,
+    {
+      seed_node_id: explorationRootId,
+      hop_depth: 1,
+      node_limit: EXPLORATION_NODE_LIMIT,
+      edge_limit: EXPLORATION_NODE_LIMIT * 3,
+    },
+    { enabled: canQueryGraph && Boolean(explorationRootId) }
+  );
+  const expansionGraphQuery = useDatasetGraph(
+    datasetId,
+    {
+      seed_node_id: expansionNodeId,
+      hop_depth: 1,
+      node_limit: EXPANSION_NODE_LIMIT,
+      edge_limit: EXPANSION_NODE_LIMIT * 3,
+    },
+    { enabled: canQueryGraph && Boolean(expansionNodeId) }
+  );
+  const searchGraphQuery = useDatasetGraph(
+    datasetId,
+    {
+      keyword: trimmedSearchQuery || undefined,
+      node_limit: 20,
+      edge_limit: 60,
+    },
+    { enabled: canQueryGraph && Boolean(trimmedSearchQuery) }
+  );
 
   const graphRef = React.useRef<KnowledgeGraphHandle>(null);
   const searchInputRef = React.useRef<HTMLInputElement>(null);
   const searchContainerRef = React.useRef<HTMLDivElement>(null);
 
   const _dataset = datasetData?.data;
-  const graph = graphData?.data;
+  const overviewGraph = overviewGraphQuery.data?.data;
+  const explorationGraph = explorationGraphQuery.data?.data;
+  const expansionGraph = expansionGraphQuery.data?.data;
+  const searchGraph = searchGraphQuery.data?.data;
+  const graph =
+    visibleGraph || (explorationRootId ? explorationGraph || overviewGraph : overviewGraph);
+  const activeGraphQuery = explorationRootId ? explorationGraphQuery : overviewGraphQuery;
+  const isGraphLoading = !graph && activeGraphQuery.isLoading;
+  const isGraphError = activeGraphQuery.isError;
+  const graphError = activeGraphQuery.error;
   const graphErrorMessage = graphError instanceof Error ? graphError.message : '';
   const graphLimitExceeded = graphErrorMessage.includes(GRAPH_QUERY_LIMIT_ERROR);
+  const totalNodeCount = overviewGraph?.total_node_count ?? graph?.total_node_count ?? 0;
+  const visibleNodeCount = graph?.nodes.length ?? 0;
+  const isVisibleLimitReached = visibleNodeCount >= VISIBLE_NODE_LIMIT;
+  const canDecreaseOverview =
+    !explorationRootId &&
+    totalNodeCount > MIN_OVERVIEW_NODE_LIMIT &&
+    overviewNodeLimit > MIN_OVERVIEW_NODE_LIMIT;
+  const canIncreaseOverview =
+    !explorationRootId && totalNodeCount > 0 && visibleNodeCount < totalNodeCount;
 
   // Check if dataset has completed documents (disabled for now)
   // const hasCompletedDocuments = (dataset?.available_document_count ?? 0) > 0;
 
   const categoryColorMap = React.useMemo(() => {
-    if (!graph?.categories) return {};
-    return getCategoryColorMap(graph.categories);
-  }, [graph?.categories]);
+    const categoriesById = new Map(
+      [
+        ...(overviewGraph?.categories || []),
+        ...(graph?.categories || []),
+        ...(searchGraph?.categories || []),
+      ].map(category => [category.id, category])
+    );
+    return getCategoryColorMap(Array.from(categoriesById.values()));
+  }, [graph?.categories, overviewGraph?.categories, searchGraph?.categories]);
 
-  // Filter entities based on search query
   const filteredEntities = React.useMemo(() => {
-    if (!graph?.nodes || !searchQuery.trim()) return [];
-    const query = searchQuery.toLowerCase().trim();
-    return graph.nodes.filter(node => node.label.toLowerCase().includes(query)).slice(0, 20); // Limit to 20 results for performance
-  }, [graph?.nodes, searchQuery]);
+    if (!searchGraph?.nodes || !trimmedSearchQuery) return [];
+    return searchGraph.nodes.slice(0, 20);
+  }, [searchGraph?.nodes, trimmedSearchQuery]);
 
-  // Handle entity selection from search results
+  React.useEffect(() => {
+    if (explorationRootId || !overviewGraph) return;
+    setVisibleGraph(overviewGraph);
+    setSelectedNode(current =>
+      current && !overviewGraph.nodes.some(node => node.id === current.id) ? null : current
+    );
+  }, [explorationRootId, overviewGraph]);
+
+  React.useEffect(() => {
+    if (
+      !explorationRootId ||
+      !explorationGraph ||
+      initializedRootRef.current === explorationRootId
+    ) {
+      return;
+    }
+    initializedRootRef.current = explorationRootId;
+    setVisibleGraph(explorationGraph);
+    setExpandedNodeIds(new Set([explorationRootId]));
+    setSelectedNode(
+      current => explorationGraph.nodes.find(node => node.id === explorationRootId) || current
+    );
+  }, [explorationGraph, explorationRootId]);
+
+  React.useEffect(() => {
+    if (!expansionNodeId || !expansionGraph) return;
+    setVisibleGraph(current =>
+      current ? mergeGraphData(current, expansionGraph, VISIBLE_NODE_LIMIT) : expansionGraph
+    );
+    setExpandedNodeIds(current => new Set(current).add(expansionNodeId));
+    setExpansionNodeId(undefined);
+  }, [expansionGraph, expansionNodeId]);
+
+  React.useEffect(() => {
+    if (expansionNodeId && expansionGraphQuery.isError) {
+      setExpansionNodeId(undefined);
+    }
+  }, [expansionGraphQuery.isError, expansionNodeId]);
+
   const handleEntitySelect = (node: GraphNode) => {
+    initializedRootRef.current = null;
+    setExplorationRootId(node.id);
+    setExpansionNodeId(undefined);
+    setExpandedNodeIds(new Set());
     setSelectedNode(node);
-    graphRef.current?.focusNode(node.id);
     setSearchQuery('');
     setIsSearchOpen(false);
   };
@@ -111,6 +254,39 @@ export default function DatasetGraphPage() {
         graphRef.current?.focusNode(nodeId);
       }
     }
+  };
+
+  const handleExpandNeighbors = (nodeId: string) => {
+    if (!explorationRootId) {
+      initializedRootRef.current = null;
+      setExplorationRootId(nodeId);
+      setExpansionNodeId(undefined);
+      setExpandedNodeIds(new Set());
+      return;
+    }
+    if (isVisibleLimitReached || expandedNodeIds.has(nodeId)) return;
+    setExpansionNodeId(nodeId);
+  };
+
+  const handleBackToOverview = () => {
+    initializedRootRef.current = null;
+    setExplorationRootId(undefined);
+    setExpansionNodeId(undefined);
+    setExpandedNodeIds(new Set());
+    setSelectedNode(null);
+    if (overviewGraph) {
+      setVisibleGraph(overviewGraph);
+    }
+  };
+
+  const handleDecreaseOverview = () => {
+    setOverviewNodeLimit(current =>
+      Math.max(MIN_OVERVIEW_NODE_LIMIT, current - OVERVIEW_NODE_STEP)
+    );
+  };
+
+  const handleIncreaseOverview = () => {
+    setOverviewNodeLimit(current => Math.min(totalNodeCount, current + OVERVIEW_NODE_STEP));
   };
 
   // Close dropdown when clicking outside
@@ -206,11 +382,7 @@ export default function DatasetGraphPage() {
               placeholder={t('hitTesting.entitySearch.placeholder')}
               className="pl-9 pr-8 h-9"
               value={searchQuery}
-              onChange={e => {
-                setSearchQuery(e.target.value);
-                setCursor(undefined);
-                setSeedNodeId(undefined);
-              }}
+              onChange={e => setSearchQuery(e.target.value)}
               onFocus={() => searchQuery.trim() && setIsSearchOpen(true)}
             />
             {searchQuery && (
@@ -218,8 +390,6 @@ export default function DatasetGraphPage() {
                 type="button"
                 onClick={() => {
                   setSearchQuery('');
-                  setCursor(undefined);
-                  setSeedNodeId(undefined);
                   setIsSearchOpen(false);
                   searchInputRef.current?.focus();
                 }}
@@ -232,11 +402,16 @@ export default function DatasetGraphPage() {
             {/* Search Results Dropdown */}
             {isSearchOpen && searchQuery.trim() && (
               <div className="absolute top-full left-0 right-0 mt-1 bg-popover border border-border rounded-lg shadow-lg z-50 max-h-80 overflow-auto">
-                {filteredEntities.length > 0 ? (
+                {searchGraphQuery.isFetching && filteredEntities.length === 0 ? (
+                  <div className="flex items-center justify-center px-3 py-4">
+                    <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                  </div>
+                ) : filteredEntities.length > 0 ? (
                   <>
                     <div className="px-3 py-2 text-xs text-muted-foreground border-b border-border">
-                      {t('hitTesting.entitySearch.resultsCount', {
-                        count: filteredEntities.length,
+                      {t('knowledgeGraph.searchResultsSummary', {
+                        visible: filteredEntities.length,
+                        total: searchGraph?.total_node_count ?? filteredEntities.length,
                       })}
                     </div>
                     <div className="py-1">
@@ -325,16 +500,85 @@ export default function DatasetGraphPage() {
                 data={graph}
                 onNodeClick={setSelectedNode}
                 categoryColorMap={categoryColorMap}
+                legendHint={t(
+                  explorationRootId
+                    ? 'knowledgeGraph.nodeWeightHint'
+                    : 'knowledgeGraph.overviewHint'
+                )}
                 className="w-full h-full"
               />
-              {graph.next_cursor && (
+              <div className="absolute right-4 top-4 z-20 flex items-center gap-2">
+                <Badge variant="secondary" className="bg-background/90 shadow-sm">
+                  {t('knowledgeGraph.visibleEntities', {
+                    visible: visibleNodeCount,
+                    total: totalNodeCount,
+                  })}
+                </Badge>
+                {!explorationRootId && (
+                  <div className="flex items-center overflow-hidden rounded-md border border-border bg-background/90 shadow-sm">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 w-8 rounded-none"
+                      onClick={handleDecreaseOverview}
+                      disabled={!canDecreaseOverview || overviewGraphQuery.isFetching}
+                      title={t('knowledgeGraph.decreaseOverviewEntities')}
+                      aria-label={t('knowledgeGraph.decreaseOverviewEntities')}
+                    >
+                      <Minus className="h-3.5 w-3.5" />
+                    </Button>
+                    <div className="h-4 w-px bg-border" />
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 w-8 rounded-none"
+                      onClick={handleIncreaseOverview}
+                      disabled={!canIncreaseOverview || overviewGraphQuery.isFetching}
+                      title={t('knowledgeGraph.increaseOverviewEntities')}
+                      aria-label={t('knowledgeGraph.increaseOverviewEntities')}
+                    >
+                      {overviewGraphQuery.isFetching ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <Plus className="h-3.5 w-3.5" />
+                      )}
+                    </Button>
+                  </div>
+                )}
+                {explorationRootId && (
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    onClick={handleBackToOverview}
+                  >
+                    <RotateCcw className="mr-1 h-3.5 w-3.5" />
+                    {t('knowledgeGraph.backToOverview')}
+                  </Button>
+                )}
+              </div>
+              {explorationRootId && isVisibleLimitReached && (
+                <div className="pointer-events-none absolute bottom-4 right-4 max-w-sm rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 shadow-sm">
+                  {t('knowledgeGraph.visibleLimitReached')}
+                </div>
+              )}
+              {explorationRootId && explorationGraphQuery.isFetching && (
+                <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-background/20">
+                  <Loader2 className="h-6 w-6 animate-spin text-primary" />
+                </div>
+              )}
+              {expansionGraphQuery.isFetching && (
                 <Button
                   type="button"
                   variant="secondary"
-                  className="absolute bottom-4 right-4"
-                  onClick={() => setCursor(graph.next_cursor)}
+                  size="sm"
+                  disabled
+                  className="absolute bottom-4 left-1/2 -translate-x-1/2"
                 >
-                  {t('loadMore')}
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  {t('knowledgeGraph.expandingNeighbors')}
                 </Button>
               )}
             </div>
@@ -352,10 +596,16 @@ export default function DatasetGraphPage() {
             graphData={graph || null}
             categoryColorMap={categoryColorMap}
             onNodeSelect={handleNodeSelect}
-            onExpandNeighbors={nodeId => {
-              setSeedNodeId(nodeId);
-              setCursor(undefined);
-            }}
+            onExpandNeighbors={handleExpandNeighbors}
+            isExpanding={
+              Boolean(selectedNode) &&
+              ((explorationGraphQuery.isFetching &&
+                explorationRootId === selectedNode?.id &&
+                initializedRootRef.current !== explorationRootId) ||
+                (expansionGraphQuery.isFetching && expansionNodeId === selectedNode?.id))
+            }
+            isExpanded={Boolean(selectedNode && expandedNodeIds.has(selectedNode.id))}
+            expandDisabled={Boolean(explorationRootId) && isVisibleLimitReached}
             className="flex-1"
           />
         </div>

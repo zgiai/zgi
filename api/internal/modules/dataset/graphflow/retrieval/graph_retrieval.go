@@ -89,7 +89,7 @@ func NewGraphRetrieval(
 }
 
 // Retrieve fetches graph context for given entity names
-// hopDepth: 1 = direct neighbors, 2 = neighbors of neighbors
+// hopDepth: 1 = direct neighbors, up to 3 = wider relationship traversal
 func (r *GraphRetrieval) Retrieve(ctx context.Context, kbID uuid.UUID, entityNames []string, hopDepth int) (*GraphContext, error) {
 	if len(entityNames) == 0 {
 		return &GraphContext{}, nil
@@ -99,8 +99,8 @@ func (r *GraphRetrieval) Retrieve(ctx context.Context, kbID uuid.UUID, entityNam
 	if hopDepth < 1 {
 		hopDepth = 1
 	}
-	if hopDepth > 2 {
-		hopDepth = 2
+	if hopDepth > 3 {
+		hopDepth = 3
 	}
 
 	// 1. Try Neo4j first if available

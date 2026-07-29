@@ -50,6 +50,74 @@ func TestApplyGraphQueryReturnsStableCursorAndEndpointClosedEdges(t *testing.T) 
 	require.Equal(t, []string{"ent:3", "ent:4"}, graphNodeIDs(second.Nodes))
 }
 
+func TestApplyGraphQueryOverviewPrioritizesStrongConnectedEntities(t *testing.T) {
+	graph := graphQueryFixture()
+	graph.Edges = append(graph.Edges,
+		model.GraphEdge{Source: "ent:3", Target: "ent:4", Label: "strong", ActiveWeight: 9},
+	)
+
+	result, err := applyGraphQuery(graph, model.GraphQuery{
+		Overview:  true,
+		NodeLimit: 2,
+		EdgeLimit: 10,
+	})
+	require.NoError(t, err)
+	require.Equal(t, []string{"ent:3", "ent:4"}, graphNodeIDs(result.Nodes))
+	require.Equal(t, 4, result.TotalNodes)
+	require.Equal(t, 3, result.TotalEdges)
+	require.Empty(t, result.NextCursor)
+	require.Equal(t, "strong", result.Edges[0].Label)
+}
+
+func TestApplyGraphQueryOverviewGrowsFromStablePrefix(t *testing.T) {
+	graph := graphQueryFixture()
+
+	smaller, err := applyGraphQuery(graph, model.GraphQuery{
+		Overview:  true,
+		NodeLimit: 2,
+		EdgeLimit: 10,
+	})
+	require.NoError(t, err)
+
+	larger, err := applyGraphQuery(graph, model.GraphQuery{
+		Overview:  true,
+		NodeLimit: 4,
+		EdgeLimit: 10,
+	})
+	require.NoError(t, err)
+	require.Equal(t, graphNodeIDs(smaller.Nodes), graphNodeIDs(larger.Nodes[:len(smaller.Nodes)]))
+}
+
+func TestApplyGraphQueryAllowsOverviewToReachFullGraphSize(t *testing.T) {
+	result, err := applyGraphQuery(graphQueryFixture(), model.GraphQuery{
+		Overview:  true,
+		NodeLimit: maxGraphNodeLimit + 1,
+		EdgeLimit: maxGraphEdgeLimit + 1,
+	})
+
+	require.NoError(t, err)
+	require.Len(t, result.Nodes, 4)
+}
+
+func TestApplyGraphQueryNeighborhoodAlwaysIncludesSeedAndStrongestNeighbor(t *testing.T) {
+	graph := graphQueryFixture()
+	graph.Edges = append(graph.Edges,
+		model.GraphEdge{Source: "ent:3", Target: "ent:4", Label: "strong", ActiveWeight: 9},
+	)
+
+	result, err := applyGraphQuery(graph, model.GraphQuery{
+		SeedNodeID: "ent:4",
+		HopDepth:   1,
+		NodeLimit:  2,
+		EdgeLimit:  10,
+	})
+	require.NoError(t, err)
+	require.Equal(t, []string{"ent:4", "ent:3"}, graphNodeIDs(result.Nodes))
+	require.Equal(t, 2, result.TotalNodes)
+	require.Equal(t, 1, result.TotalEdges)
+	require.Empty(t, result.NextCursor)
+}
+
 func graphQueryFixture() *model.GraphDataResponse {
 	return &model.GraphDataResponse{
 		Nodes: []model.GraphNode{

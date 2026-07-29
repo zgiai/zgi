@@ -1320,7 +1320,7 @@ const messages = {
       rerankingMode: 'Reranking Mode',
       rerankingModel: 'Reranking Model',
       weightedScore: 'Weighted Score',
-      hybridWeights: 'Hybrid Weights',
+      hybridWeights: 'Vector and Keyword Weights',
       keywordWeight: 'Keyword Weight',
       vectorWeight: 'Vector Weight',
     },

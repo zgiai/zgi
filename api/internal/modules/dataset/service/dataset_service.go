@@ -471,12 +471,13 @@ func (s *datasetService) CreateDataset(ctx context.Context, req *CreateDatasetRe
 	// Set default retrieval_config if not provided
 	if dataset.RetrievalConfig == nil {
 		dataset.RetrievalConfig = map[string]interface{}{
-			"search_method":           "hybrid_search",
+			"search_method":           "graph_search",
 			"reranking_enable":        true,
 			"reranking_model":         map[string]interface{}{"reranking_provider_name": "", "reranking_model_name": ""},
 			"top_k":                   10,
 			"score_threshold_enabled": true,
 			"score_threshold":         0.35,
+			"hop_depth":               3,
 		}
 	}
 

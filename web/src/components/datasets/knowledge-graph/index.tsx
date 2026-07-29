@@ -15,6 +15,7 @@ interface KnowledgeGraphProps {
   data: DatasetGraph;
   onNodeClick?: (node: GraphNode) => void;
   categoryColorMap: Record<string, { fill: string; stroke: string; text: string }>;
+  legendHint?: string;
   className?: string;
 }
 
@@ -23,7 +24,7 @@ export interface KnowledgeGraphHandle {
 }
 
 export const KnowledgeGraph = React.forwardRef<KnowledgeGraphHandle, KnowledgeGraphProps>(
-  ({ data, onNodeClick, categoryColorMap, className }, ref) => {
+  ({ data, onNodeClick, categoryColorMap, legendHint, className }, ref) => {
     const containerRef = useRef<HTMLDivElement>(null);
     const t = useT().datasets;
 
@@ -80,6 +81,7 @@ export const KnowledgeGraph = React.forwardRef<KnowledgeGraphHandle, KnowledgeGr
           sources={allSources}
           selectedSourceIds={selectedSourceIds}
           onSelectedSourcesChange={setSelectedSourceIds}
+          hint={legendHint}
         />
       </div>
     );

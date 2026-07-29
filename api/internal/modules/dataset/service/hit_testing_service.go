@@ -382,7 +382,7 @@ func normalizeGraphExecution(execution *dto.GraphExecution, dataset *dataset_mod
 func (s *hitTestingService) getRetrievalOptions(ctx context.Context, retrievalModel map[string]interface{}, dataset *dataset_model.Dataset) *RetrievalOptions {
 	options := &RetrievalOptions{
 		TopK:                  10, // Default retrieval limit
-		SearchMethod:          "hybrid_search",
+		SearchMethod:          "graph_search",
 		ScoreThreshold:        0.35,
 		ScoreThresholdEnabled: true,
 		RerankingEnable:       true,
@@ -436,9 +436,6 @@ func (s *hitTestingService) getRetrievalOptions(ctx context.Context, retrievalMo
 		if preQAExtension, ok := model["pre_qa_extension"].(bool); ok {
 			options.PreQAExtension = preQAExtension
 		}
-		if hd, ok := model["hop_depth"].(float64); ok {
-			options.HopDepth = int(hd)
-		}
 		if ahd, ok := model["anchored_hop_depth"].(float64); ok {
 			options.AnchoredHopDepth = int(ahd)
 		}
@@ -472,10 +469,11 @@ func (s *hitTestingService) getRetrievalOptions(ctx context.Context, retrievalMo
 	}
 
 	options.SearchMethod = normalizeVectorSearchMethod(options.SearchMethod)
+	options.HopDepth = 3
 
-	// Reranking is mandatory for vector/BM25 retrieval. Graph-only results are not
-	// doc-backed chunks and cannot be sent to the reranker.
-	options.RerankingEnable = options.SearchMethod != "graph_search"
+	// Reranking applies to the document-backed portion of combined retrieval.
+	// Graph-only records are separated before reranking.
+	options.RerankingEnable = true
 	if options.RerankingEnable && !isValidRerankingModelConfig(options.RerankingModel) {
 		resolvedModel, err := llmruntime.NewModelResolver(s.defaultModelSvc).ResolveDefault(ctx, dataset.OrganizationID, shared_model.ModelTypeRerank)
 		if err == nil && resolvedModel != nil {

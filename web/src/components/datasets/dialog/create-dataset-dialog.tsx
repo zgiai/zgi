@@ -48,12 +48,13 @@ interface CreateDatasetDialogProps {
 }
 
 const DEFAULT_CREATE_RETRIEVAL_CONFIG: RetrievalConfig = {
-  search_method: 'hybrid_search',
+  search_method: 'graph_search',
   top_k: 10,
   score_threshold_enabled: true,
   score_threshold: 0.35,
   reranking_enable: true,
   reranking_model: { reranking_provider_name: '', reranking_model_name: '' },
+  hop_depth: 3,
 };
 
 // CreateDatasetDialog component for creating datasets.
@@ -143,6 +144,7 @@ function CreateDatasetDialog({ open, onOpenChange, currentFolderId }: CreateData
           dataset.retrieval_config?.search_method,
           Boolean(dataset.enable_graph_flow)
         ),
+        hop_depth: 3,
       });
       setIconValue(initialIconValue);
     } else {
@@ -359,6 +361,7 @@ function CreateDatasetDialog({ open, onOpenChange, currentFolderId }: CreateData
             score_threshold_enabled: retrievalConfig.score_threshold_enabled,
             reranking_enable: true,
             reranking_model: retrievalConfig.reranking_model,
+            hop_depth: 3,
           },
         });
         onOpenChange(false);
@@ -508,10 +511,6 @@ function CreateDatasetDialog({ open, onOpenChange, currentFolderId }: CreateData
                             ? t('datasets.validation.graphModel.required')
                             : undefined
                         }
-                        embeddingModel={{
-                          provider: formData.embedding_model_provider || '',
-                          model: formData.embedding_model || '',
-                        }}
                       />
                     ) : null}
 

@@ -37,7 +37,7 @@ func NormalizeGraphRetrievalConfig(searchMethod string, retrievalMode string, fa
 	mode := strings.ToLower(strings.TrimSpace(retrievalMode))
 	if mode == "" {
 		if method == string(GraphSearch) {
-			mode = RetrievalModeGraph
+			mode = RetrievalModeHybrid
 		} else {
 			mode = RetrievalModeVector
 		}
@@ -56,7 +56,7 @@ func NormalizeGraphRetrievalConfig(searchMethod string, retrievalMode string, fa
 		RequestedMethod: method,
 		ActualMode:      mode,
 		FallbackPolicy:  policy,
-		MaxHops:         2,
+		MaxHops:         3,
 	}, nil
 }
 

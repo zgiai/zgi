@@ -66,12 +66,13 @@ func normalizeProviderAndModel(provider, model string) (string, string, bool) {
 
 func buildDefaultRetrievalModel() map[string]interface{} {
 	return map[string]interface{}{
-		"search_method":           "hybrid_search",
+		"search_method":           "graph_search",
 		"reranking_enable":        true,
 		"reranking_model":         map[string]interface{}{"reranking_provider_name": "", "reranking_model_name": ""},
 		"top_k":                   defaultRetrievalTopK,
 		"score_threshold_enabled": true,
 		"score_threshold":         defaultRetrievalScoreThreshold,
+		"hop_depth":               3,
 	}
 }
 

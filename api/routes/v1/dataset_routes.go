@@ -462,6 +462,7 @@ func parseDatasetGraphQuery(c *gin.Context) (graphflow_model.GraphQuery, error) 
 		DocumentID: strings.TrimSpace(c.Query("document_id")),
 		SeedNodeID: strings.TrimSpace(c.Query("seed_node_id")),
 		Cursor:     strings.TrimSpace(c.Query("cursor")),
+		Overview:   strings.EqualFold(strings.TrimSpace(c.Query("overview")), "true"),
 		NodeLimit:  300,
 		EdgeLimit:  900,
 	}
@@ -484,7 +485,14 @@ func parseDatasetGraphQuery(c *gin.Context) (graphflow_model.GraphQuery, error) 
 			return graphflow_model.GraphQuery{}, fmt.Errorf("hop_depth must be a non-negative integer")
 		}
 	}
-	if query.NodeLimit > 500 || query.EdgeLimit > 1500 || query.HopDepth > 2 {
+	isFullOverview := query.Overview &&
+		query.Keyword == "" &&
+		query.Category == "" &&
+		query.DocumentID == "" &&
+		query.SeedNodeID == "" &&
+		query.Cursor == ""
+	if query.HopDepth > 2 ||
+		(!isFullOverview && (query.NodeLimit > 500 || query.EdgeLimit > 1500)) {
 		return graphflow_model.GraphQuery{}, fmt.Errorf("graph query exceeds the supported bounds")
 	}
 	return query, nil

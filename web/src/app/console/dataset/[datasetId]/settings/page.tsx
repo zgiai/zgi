@@ -36,12 +36,7 @@ import { normalizeDatasetSearchMethod } from '@/utils/dataset/retrieval-config';
 import { toast } from 'sonner';
 import { KNOWLEDGE_BASE_PERMISSION_ACTIONS } from '@/constants/permissions';
 import { DATASET_NAME_VALIDATION_OPTIONS } from '@/constants/dataset';
-import {
-  useDatasetGraphStatus,
-  useGraphRuntimeCapability,
-  useRebuildDatasetGraph,
-  useRetryDocumentGraph,
-} from '@/hooks/dataset/use-dataset-graph';
+import { useGraphRuntimeCapability } from '@/hooks/dataset/use-dataset-graph';
 
 const GRAPH_MODEL_CHANGE_CONFIRMATION_ERROR = 'graph_model_change_confirmation_required';
 
@@ -81,7 +76,7 @@ export default function DatasetSettingsPage() {
     entityModel: null,
     entityModelProvider: null,
     retrievalConfig: {
-      search_method: 'hybrid_search',
+      search_method: 'graph_search',
       top_k: 10,
       score_threshold_enabled: true,
       score_threshold: 0.35,
@@ -90,15 +85,13 @@ export default function DatasetSettingsPage() {
         reranking_model_name: '',
         reranking_provider_name: '',
       },
+      hop_depth: 3,
     },
   });
 
   const dataset = data?.data;
   const isGraphFlowEnabled = Boolean(dataset?.enable_graph_flow);
   const graphCapability = useGraphRuntimeCapability();
-  const graphStatus = useDatasetGraphStatus(datasetId, isGraphFlowEnabled);
-  const rebuildGraph = useRebuildDatasetGraph(datasetId);
-  const retryDocumentGraph = useRetryDocumentGraph(datasetId);
   // const isExternalDataSource = !!dataset?.external_knowledge_info?.external_knowledge_id;
 
   // Initialize form data from dataset
@@ -146,6 +139,7 @@ export default function DatasetSettingsPage() {
                 reranking_provider_name:
                   dataset.retrieval_config.reranking_model?.reranking_provider_name || '',
               },
+              hop_depth: 3,
             }
           : null,
       });
@@ -248,6 +242,7 @@ export default function DatasetSettingsPage() {
             score_threshold: normalizedRetrievalConfig.score_threshold,
             reranking_enable: normalizedRetrievalConfig.reranking_enable,
             reranking_model: normalizedRetrievalConfig.reranking_model,
+            hop_depth: 3,
           }
         : undefined,
     };
@@ -446,60 +441,6 @@ export default function DatasetSettingsPage() {
               />
             </CardContent>
           </Card>
-
-          {isGraphFlowEnabled && graphStatus.data?.data ? (
-            <Card className="border-border/80 shadow-sm">
-              <CardHeader>
-                <CardTitle className="text-base">{t('datasets.graph.statusTitle')}</CardTitle>
-                <CardDescription>
-                  {t('datasets.graph.statusDescription', {
-                    status: t(`datasets.graph.statuses.${graphStatus.data.data.status}`),
-                    progress: graphStatus.data.data.progress,
-                  })}
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <Badge variant="secondary">
-                    {t(`datasets.graph.statuses.${graphStatus.data.data.status}`)}
-                  </Badge>
-                  {canManageGraph && graphStatus.data.data.can_rebuild ? (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      disabled={rebuildGraph.isPending}
-                      onClick={() => rebuildGraph.mutate()}
-                    >
-                      {t('datasets.graph.rebuild')}
-                    </Button>
-                  ) : null}
-                </div>
-                {graphStatus.data.data.documents.map(document => (
-                  <div
-                    key={document.document_id}
-                    className="flex items-center justify-between rounded-md border px-3 py-2 text-sm"
-                  >
-                    <span className="truncate">{document.document_id}</span>
-                    <div className="flex items-center gap-2">
-                      <Badge variant="outline">
-                        {t(`datasets.graph.documentStatuses.${document.status}`)}
-                      </Badge>
-                      {canManageGraph && document.status === 'failed' ? (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          disabled={retryDocumentGraph.isPending}
-                          onClick={() => retryDocumentGraph.mutate(document.document_id)}
-                        >
-                          {t('datasets.graph.retryDocument')}
-                        </Button>
-                      ) : null}
-                    </div>
-                  </div>
-                ))}
-              </CardContent>
-            </Card>
-          ) : null}
         </div>
       </div>
     </div>

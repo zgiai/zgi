@@ -200,7 +200,7 @@ func TestDatasetGraphHandlerPassesBoundedQueryAndCursor(t *testing.T) {
 		hasPermission: true,
 	})
 
-	target := "/datasets/11111111-1111-1111-1111-111111111111/graph?keyword=alice&category=Person&document_id=doc-1&seed_node_id=ent%3Aseed&hop_depth=2&node_limit=25&edge_limit=50&cursor=ent%3Acursor"
+	target := "/datasets/11111111-1111-1111-1111-111111111111/graph?keyword=alice&category=Person&document_id=doc-1&seed_node_id=ent%3Aseed&hop_depth=2&node_limit=25&edge_limit=50&cursor=ent%3Acursor&overview=true"
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, target, nil))
 
@@ -214,7 +214,24 @@ func TestDatasetGraphHandlerPassesBoundedQueryAndCursor(t *testing.T) {
 		NodeLimit:  25,
 		EdgeLimit:  50,
 		Cursor:     "ent:cursor",
+		Overview:   true,
 	}, graphService.query)
+}
+
+func TestDatasetGraphHandlerAllowsFullOverviewLimits(t *testing.T) {
+	router, _, graphService := newDatasetGraphTestRouter(datasetGraphTestOptions{
+		dataset:       readyDatasetGraphFixture(),
+		hasPermission: true,
+	})
+
+	target := "/datasets/11111111-1111-1111-1111-111111111111/graph?overview=true&node_limit=1266&edge_limit=3798"
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, target, nil))
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, 1266, graphService.query.NodeLimit)
+	require.Equal(t, 3798, graphService.query.EdgeLimit)
+	require.True(t, graphService.query.Overview)
 }
 
 func readyDatasetGraphFixture() *dataset_model.Dataset {

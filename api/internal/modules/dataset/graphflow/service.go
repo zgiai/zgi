@@ -543,6 +543,8 @@ func (s *Service) GetGraphData(ctx context.Context, datasetID string) (*model.Gr
 		Categories: categories,
 		NodeCount:  len(nodes),
 		EdgeCount:  len(edges),
+		TotalNodes: len(nodes),
+		TotalEdges: len(edges),
 	}, nil
 }
 
@@ -564,11 +566,22 @@ func (s *Service) QueryGraphData(ctx context.Context, datasetID string, query mo
 
 func applyGraphQuery(graph *model.GraphDataResponse, query model.GraphQuery) (*model.GraphDataResponse, error) {
 	query = normalizeGraphQuery(query)
-	if query.NodeLimit > maxGraphNodeLimit || query.EdgeLimit > maxGraphEdgeLimit || query.HopDepth > maxGraphHopDepth {
+	isFullOverview := query.Overview &&
+		strings.TrimSpace(query.Keyword) == "" &&
+		strings.TrimSpace(query.Category) == "" &&
+		strings.TrimSpace(query.DocumentID) == "" &&
+		strings.TrimSpace(query.SeedNodeID) == "" &&
+		strings.TrimSpace(query.Cursor) == ""
+	if query.HopDepth > maxGraphHopDepth ||
+		(!isFullOverview && (query.NodeLimit > maxGraphNodeLimit || query.EdgeLimit > maxGraphEdgeLimit)) {
 		return nil, fmt.Errorf("graph query limit exceeded")
 	}
 	if graph == nil {
-		return &model.GraphDataResponse{Nodes: []model.GraphNode{}, Edges: []model.GraphEdge{}, Categories: []model.GraphCategory{}}, nil
+		return &model.GraphDataResponse{
+			Nodes:      []model.GraphNode{},
+			Edges:      []model.GraphEdge{},
+			Categories: []model.GraphCategory{},
+		}, nil
 	}
 
 	nodesByID := make(map[string]model.GraphNode, len(graph.Nodes))
@@ -610,17 +623,57 @@ func applyGraphQuery(graph *model.GraphDataResponse, query model.GraphQuery) (*m
 		}
 	}
 
-	ids := make([]string, 0, len(nodesByID))
-	for nodeID := range nodesByID {
-		if query.Cursor == "" || nodeID > query.Cursor {
-			ids = append(ids, nodeID)
+	filteredEdges := make([]model.GraphEdge, 0, len(activeEdges))
+	for _, edge := range activeEdges {
+		if eligible[edge.Source] && eligible[edge.Target] {
+			filteredEdges = append(filteredEdges, edge)
 		}
 	}
-	sort.Strings(ids)
-	hasMore := len(ids) > query.NodeLimit
-	if hasMore {
-		ids = ids[:query.NodeLimit]
+
+	totalNodeCount := len(nodesByID)
+	totalEdgeCount := len(filteredEdges)
+	ids := make([]string, 0, min(totalNodeCount, query.NodeLimit))
+	hasMore := false
+	switch {
+	case query.Cursor != "":
+		for nodeID := range nodesByID {
+			if nodeID > query.Cursor {
+				ids = append(ids, nodeID)
+			}
+		}
+		sort.Strings(ids)
+		hasMore = len(ids) > query.NodeLimit
+		if hasMore {
+			ids = ids[:query.NodeLimit]
+		}
+	case query.SeedNodeID != "":
+		ids = selectNeighborhoodNodeIDs(
+			query.SeedNodeID,
+			nodesByID,
+			filteredEdges,
+			query.NodeLimit,
+		)
+		hasMore = len(ids) < totalNodeCount
+	case query.Overview:
+		ids = selectOverviewNodeIDs(nodesByID, filteredEdges, len(nodesByID))
+		if len(ids) > query.NodeLimit {
+			ids = ids[:query.NodeLimit]
+		}
+		hasMore = len(ids) < totalNodeCount
+	case keyword != "" || category != "" || documentID != "":
+		ids = selectRankedNodeIDs(nodesByID, filteredEdges, query.NodeLimit)
+		hasMore = len(ids) < totalNodeCount
+	default:
+		for nodeID := range nodesByID {
+			ids = append(ids, nodeID)
+		}
+		sort.Strings(ids)
+		hasMore = len(ids) > query.NodeLimit
+		if hasMore {
+			ids = ids[:query.NodeLimit]
+		}
 	}
+
 	pageSet := make(map[string]bool, len(ids))
 	nodes := make([]model.GraphNode, 0, len(ids))
 	for _, nodeID := range ids {
@@ -629,12 +682,17 @@ func applyGraphQuery(graph *model.GraphDataResponse, query model.GraphQuery) (*m
 	}
 
 	edges := make([]model.GraphEdge, 0)
-	for _, edge := range activeEdges {
+	for _, edge := range filteredEdges {
 		if pageSet[edge.Source] && pageSet[edge.Target] {
 			edges = append(edges, edge)
 		}
 	}
 	sort.Slice(edges, func(i, j int) bool {
+		if query.Overview || query.SeedNodeID != "" {
+			if edges[i].ActiveWeight != edges[j].ActiveWeight {
+				return edges[i].ActiveWeight > edges[j].ActiveWeight
+			}
+		}
 		left := edges[i].Source + "\x00" + edges[i].Target + "\x00" + edges[i].Label
 		right := edges[j].Source + "\x00" + edges[j].Target + "\x00" + edges[j].Label
 		return left < right
@@ -661,11 +719,160 @@ func applyGraphQuery(graph *model.GraphDataResponse, query model.GraphQuery) (*m
 		Categories: categories,
 		NodeCount:  len(nodes),
 		EdgeCount:  len(edges),
+		TotalNodes: totalNodeCount,
+		TotalEdges: totalEdgeCount,
 	}
-	if hasMore && len(ids) > 0 {
+	if hasMore && len(ids) > 0 && !query.Overview && query.SeedNodeID == "" && keyword == "" && category == "" && documentID == "" {
 		result.NextCursor = ids[len(ids)-1]
 	}
 	return result, nil
+}
+
+func selectOverviewNodeIDs(
+	nodesByID map[string]model.GraphNode,
+	edges []model.GraphEdge,
+	limit int,
+) []string {
+	if limit <= 0 || len(nodesByID) == 0 {
+		return []string{}
+	}
+	sortedEdges := append([]model.GraphEdge(nil), edges...)
+	sort.Slice(sortedEdges, func(i, j int) bool {
+		if sortedEdges[i].ActiveWeight != sortedEdges[j].ActiveWeight {
+			return sortedEdges[i].ActiveWeight > sortedEdges[j].ActiveWeight
+		}
+		leftEvidence := nodesByID[sortedEdges[i].Source].Data.ActiveSourceCount +
+			nodesByID[sortedEdges[i].Target].Data.ActiveSourceCount
+		rightEvidence := nodesByID[sortedEdges[j].Source].Data.ActiveSourceCount +
+			nodesByID[sortedEdges[j].Target].Data.ActiveSourceCount
+		if leftEvidence != rightEvidence {
+			return leftEvidence > rightEvidence
+		}
+		left := sortedEdges[i].Source + "\x00" + sortedEdges[i].Target + "\x00" + sortedEdges[i].Label
+		right := sortedEdges[j].Source + "\x00" + sortedEdges[j].Target + "\x00" + sortedEdges[j].Label
+		return left < right
+	})
+
+	selected := make(map[string]bool, min(len(nodesByID), limit))
+	ids := make([]string, 0, min(len(nodesByID), limit))
+	addNode := func(nodeID string) bool {
+		if selected[nodeID] || len(ids) >= limit {
+			return false
+		}
+		selected[nodeID] = true
+		ids = append(ids, nodeID)
+		return true
+	}
+	for _, edge := range sortedEdges {
+		missing := 0
+		if !selected[edge.Source] {
+			missing++
+		}
+		if !selected[edge.Target] {
+			missing++
+		}
+		if missing > limit-len(ids) {
+			continue
+		}
+		addNode(edge.Source)
+		addNode(edge.Target)
+		if len(ids) >= limit {
+			return ids
+		}
+	}
+
+	for _, nodeID := range selectRankedNodeIDs(nodesByID, edges, limit) {
+		addNode(nodeID)
+		if len(ids) >= limit {
+			break
+		}
+	}
+	return ids
+}
+
+func selectNeighborhoodNodeIDs(
+	seedNodeID string,
+	nodesByID map[string]model.GraphNode,
+	edges []model.GraphEdge,
+	limit int,
+) []string {
+	if limit <= 0 {
+		return []string{}
+	}
+	if _, exists := nodesByID[seedNodeID]; !exists {
+		return []string{}
+	}
+
+	selected := map[string]bool{seedNodeID: true}
+	ids := []string{seedNodeID}
+	for len(ids) < limit {
+		bestNodeID := ""
+		bestWeight := -1
+		bestEvidence := -1
+		for _, edge := range edges {
+			var candidate string
+			switch {
+			case selected[edge.Source] && !selected[edge.Target]:
+				candidate = edge.Target
+			case selected[edge.Target] && !selected[edge.Source]:
+				candidate = edge.Source
+			default:
+				continue
+			}
+			evidence := nodesByID[candidate].Data.ActiveSourceCount
+			if edge.ActiveWeight > bestWeight ||
+				(edge.ActiveWeight == bestWeight && evidence > bestEvidence) ||
+				(edge.ActiveWeight == bestWeight && evidence == bestEvidence &&
+					(bestNodeID == "" || candidate < bestNodeID)) {
+				bestNodeID = candidate
+				bestWeight = edge.ActiveWeight
+				bestEvidence = evidence
+			}
+		}
+		if bestNodeID == "" {
+			break
+		}
+		selected[bestNodeID] = true
+		ids = append(ids, bestNodeID)
+	}
+	return ids
+}
+
+func selectRankedNodeIDs(
+	nodesByID map[string]model.GraphNode,
+	edges []model.GraphEdge,
+	limit int,
+) []string {
+	if limit <= 0 {
+		return []string{}
+	}
+	degrees := make(map[string]int, len(nodesByID))
+	for _, edge := range edges {
+		degrees[edge.Source] += edge.ActiveWeight
+		degrees[edge.Target] += edge.ActiveWeight
+	}
+	ids := make([]string, 0, len(nodesByID))
+	for nodeID := range nodesByID {
+		ids = append(ids, nodeID)
+	}
+	sort.Slice(ids, func(i, j int) bool {
+		left := nodesByID[ids[i]]
+		right := nodesByID[ids[j]]
+		if left.Data.ActiveSourceCount != right.Data.ActiveSourceCount {
+			return left.Data.ActiveSourceCount > right.Data.ActiveSourceCount
+		}
+		if degrees[ids[i]] != degrees[ids[j]] {
+			return degrees[ids[i]] > degrees[ids[j]]
+		}
+		if left.Label != right.Label {
+			return left.Label < right.Label
+		}
+		return ids[i] < ids[j]
+	})
+	if len(ids) > limit {
+		ids = ids[:limit]
+	}
+	return ids
 }
 
 func normalizeGraphQuery(query model.GraphQuery) model.GraphQuery {
