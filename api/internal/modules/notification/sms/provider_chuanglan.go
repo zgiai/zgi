@@ -77,13 +77,21 @@ func (p *ChuanglanProvider) BuildPayload(req Request, template TemplateConfig) (
 	return &ChuanglanPayload{
 		Account:           p.config.Account,
 		Password:          p.config.Password,
-		PhoneNumbers:      NormalizePhoneNumbers(req.Phone),
+		PhoneNumbers:      normalizeChuanglanDomesticPhoneNumbers(req.Phone),
 		TemplateID:        providerTemplate.TemplateID,
 		TemplateParamJSON: string(paramJSON),
 		Signature:         p.config.Signature,
 		Report:            report,
 		Extend:            p.config.Extend,
 	}, nil
+}
+
+func normalizeChuanglanDomesticPhoneNumbers(phone string) string {
+	phones := splitPhoneNumbers(phone)
+	for index, item := range phones {
+		phones[index] = strings.TrimPrefix(item, "+86")
+	}
+	return strings.Join(phones, ",")
 }
 
 func (p *ChuanglanProvider) SendNotification(ctx context.Context, req Request, template TemplateConfig) (*Result, error) {
