@@ -187,6 +187,55 @@ func TestActivateCheckReportsBoundEmailMismatch(t *testing.T) {
 	require.Equal(t, "invited@example.com", data["email"])
 }
 
+func TestActivateCheckFailsClosedForUnavailableOrganization(t *testing.T) {
+	tokenMgr := newInvitationTestTokenManager(t)
+	const token = "organization-bound-invitation"
+	account := auth_model.Account{ID: "organization-invitee", Email: "org@example.com", Status: auth_model.AccountStatusPending}
+	require.NoError(t, tokenMgr.StoreInvitationTokenWithDetails(helper.InvitationData{
+		AccountID: account.ID, Email: account.Email, OrganizationID: "organization-1",
+	}, token, 1))
+	service := &AccountService{accountRepo: &invitationAcceptanceAccountRepository{account: account}, tokenMgr: tokenMgr}
+
+	result, valid := service.ActivateCheck(t.Context(), "", account.Email, token)
+	require.False(t, valid)
+	require.Equal(t, "organization_unavailable", result["status"])
+}
+
+func TestActivateCheckReportsMissingMembershipAndChangedRole(t *testing.T) {
+	for _, testCase := range []struct {
+		name       string
+		member     *workspace_model.WorkspaceMember
+		inviteRole workspace_model.WorkspaceMemberRole
+		wantStatus string
+	}{
+		{name: "pending membership removed", inviteRole: workspace_model.WorkspaceRoleMember, wantStatus: "membership_unavailable"},
+		{
+			name:       "invited role changed",
+			member:     &workspace_model.WorkspaceMember{ID: "member-role", WorkspaceID: "workspace-role", AccountID: "pending-role", Role: workspace_model.WorkspaceRoleMember},
+			inviteRole: workspace_model.WorkspaceRoleAdmin,
+			wantStatus: "role_unavailable",
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			tokenMgr := newInvitationTestTokenManager(t)
+			account := auth_model.Account{ID: "pending-role", Email: "role@example.com", Status: auth_model.AccountStatusPending}
+			workspace := &workspace_model.Workspace{ID: "workspace-role", Name: "Workspace", Status: workspace_model.WorkspaceStatusNormal}
+			const token = "role-invitation"
+			require.NoError(t, tokenMgr.StoreInvitationTokenWithDetails(helper.InvitationData{
+				AccountID: account.ID, Email: account.Email, WorkspaceID: workspace.ID, Role: string(testCase.inviteRole),
+			}, token, 1))
+			service := &AccountService{
+				accountRepo: &invitationAcceptanceAccountRepository{account: account}, tokenMgr: tokenMgr,
+				workspaceManagementService: &invitationWorkspaceService{workspace: workspace, member: testCase.member},
+			}
+
+			result, valid := service.ActivateCheck(t.Context(), workspace.ID, account.Email, token)
+			require.False(t, valid)
+			require.Equal(t, testCase.wantStatus, result["status"])
+		})
+	}
+}
+
 func TestExistingAccountInvitationCreatesMembershipOnlyAfterPasswordVerification(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(fmt.Sprintf("file:existing-invite-membership-%d?mode=memory&cache=shared", time.Now().UnixNano())), &gorm.Config{})
 	require.NoError(t, err)

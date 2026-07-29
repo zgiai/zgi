@@ -684,7 +684,10 @@ func (s *AccountService) ActivateCheck(ctx context.Context, workspaceID, email, 
 			return map[string]interface{}{"is_valid": false, "status": "account_unavailable"}, false
 		}
 		organizationName := ""
-		if invitationData.OrganizationID != "" && s.organizationService != nil {
+		if invitationData.OrganizationID != "" {
+			if s.organizationService == nil {
+				return map[string]interface{}{"is_valid": false, "status": "organization_unavailable"}, false
+			}
 			organization, organizationErr := s.organizationService.GetOrganizationByID(ctx, invitationData.OrganizationID)
 			if organizationErr != nil || organization == nil || !organization.IsActive() {
 				return map[string]interface{}{"is_valid": false, "status": "organization_unavailable"}, false
@@ -748,7 +751,10 @@ func (s *AccountService) ActivateCheck(ctx context.Context, workspaceID, email, 
 	}
 	organizationID := ""
 	organizationName := ""
-	if tenant.OrganizationID != nil && s.organizationService != nil {
+	if tenant.OrganizationID != nil {
+		if s.organizationService == nil {
+			return map[string]interface{}{"is_valid": false, "status": "organization_unavailable"}, false
+		}
 		organizationID = *tenant.OrganizationID
 		organization, organizationErr := s.organizationService.GetOrganizationByID(ctx, organizationID)
 		if organizationErr != nil || organization == nil || !organization.IsActive() {
