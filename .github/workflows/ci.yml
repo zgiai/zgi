@@ -73,9 +73,19 @@ jobs:
       - name: Run registration frontend and type checks
         run: ../scripts/check-registration-auth.sh --frontend-only
 
+      - name: Clean generated web files
+        if: always()
+        run: |
+          for path in node_modules .next; do
+            if [ -e "$path" ]; then
+              find "$path" -depth -delete
+            fi
+          done
+
   registration-auth:
     name: Registration and invitation gate
     runs-on: ${{ fromJSON(vars.CI_RUNNER_LABELS || '["ubuntu-latest"]') }}
+    needs: web
     steps:
       - name: Repair workspace ownership
         working-directory: ${{ runner.temp }}
@@ -87,6 +97,9 @@ jobs:
 
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Reclaim unused Docker data
+        run: docker system prune --force
 
       - name: Set up Go
         uses: actions/setup-go@v5
