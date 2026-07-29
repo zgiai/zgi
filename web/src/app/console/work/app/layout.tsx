@@ -19,6 +19,7 @@ import { getSidebarCollapsed, saveSidebarCollapsed } from '@/utils/ui-local';
 import type { RunnableWebAppResolvedItem } from '@/hooks/agent/use-runnable-webapps';
 import { Logo } from '@/components/logo';
 import { ICON_BG } from '@/lib/config';
+import { mergeCurrentWebApp } from './sidebar-items';
 
 const SIDEBAR_PAGE_SIZE = 20;
 const COLLAPSED_APP_LIMIT = 6;
@@ -103,6 +104,8 @@ export default function ConsoleWorkAppLayout({ children }: { children: React.Rea
   const showNavLoading = isLoading || isSearchPending || (isFetching && items.length === 0);
   const desktopScrollRef = useRef<HTMLDivElement>(null);
   const mobileScrollRef = useRef<HTMLDivElement>(null);
+  const desktopActiveAppRef = useRef<HTMLAnchorElement>(null);
+  const mobileActiveAppRef = useRef<HTMLAnchorElement>(null);
   const desktopLoadMoreRef = useInfiniteObserver({
     hasNextPage: hasMore && !isSearchPending,
     isFetchingNextPage,
@@ -133,8 +136,35 @@ export default function ConsoleWorkAppLayout({ children }: { children: React.Rea
     [currentItems, currentWebappId, items]
   );
 
-  const navItems = useMemo(() => items.map(toSidebarNavItem), [items]);
-  const collapsedNavItems = useMemo(() => collapsedItems.map(toSidebarNavItem), [collapsedItems]);
+  const sidebarItems = useMemo(
+    () =>
+      mergeCurrentWebApp(items, currentApp, {
+        includeCurrent: !queryKeyword,
+      }),
+    [currentApp, items, queryKeyword]
+  );
+  const collapsedSidebarItems = useMemo(
+    () =>
+      mergeCurrentWebApp(collapsedItems, currentApp, {
+        limit: COLLAPSED_APP_LIMIT,
+      }),
+    [collapsedItems, currentApp]
+  );
+  const navItems = useMemo(() => sidebarItems.map(toSidebarNavItem), [sidebarItems]);
+  const collapsedNavItems = useMemo(
+    () => collapsedSidebarItems.map(toSidebarNavItem),
+    [collapsedSidebarItems]
+  );
+
+  useEffect(() => {
+    if (!currentWebappId || queryKeyword) return;
+    desktopActiveAppRef.current?.scrollIntoView({ block: 'nearest' });
+  }, [collapsedNavItems, currentWebappId, isCollapsed, navItems, queryKeyword]);
+
+  useEffect(() => {
+    if (!mobileDrawerOpen || !currentWebappId || queryKeyword) return;
+    mobileActiveAppRef.current?.scrollIntoView({ block: 'nearest' });
+  }, [currentWebappId, mobileDrawerOpen, navItems, queryKeyword]);
 
   const currentAppPreview = useMemo(
     () => (currentApp ? toPreviewData(currentApp) : null),
@@ -151,6 +181,7 @@ export default function ConsoleWorkAppLayout({ children }: { children: React.Rea
     const appLink = (
       <Link
         key={item.id}
+        ref={isActive ? desktopActiveAppRef : undefined}
         href={`/console/work/app/${item.id}`}
         onClick={() => setMobileDrawerOpen(false)}
         aria-current={isActive ? 'page' : undefined}
@@ -466,6 +497,7 @@ export default function ConsoleWorkAppLayout({ children }: { children: React.Rea
                     return (
                       <Link
                         key={item.id}
+                        ref={isActive ? mobileActiveAppRef : undefined}
                         href={`/console/work/app/${item.id}`}
                         onClick={() => setMobileDrawerOpen(false)}
                         aria-current={isActive ? 'page' : undefined}

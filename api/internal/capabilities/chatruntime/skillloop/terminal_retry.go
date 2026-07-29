@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
+	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
@@ -19,7 +20,6 @@ func (r *Runner) runTerminalOnlyPlanningWithRetry(
 	round int,
 	onChunk func(string) error,
 	terminalProtocol bool,
-	terminalStreamingAllowed bool,
 	suppressNaturalProgress bool,
 ) (planningResult, error) {
 	retryReq := cloneChatRequest(planningReq)
@@ -35,11 +35,14 @@ func (r *Runner) runTerminalOnlyPlanningWithRetry(
 			round,
 			onChunk,
 			terminalProtocol,
-			terminalStreamingAllowed,
+			false,
 			suppressNaturalProgress || attempt > 0,
 		)
 		totalUsage = mergeUsage(totalUsage, result.usage)
 		result.usage = totalUsage
+		if accepted, ok := acceptedTerminalOnlyTruncation(result, err); ok {
+			return accepted, nil
+		}
 		lastResult = result
 		lastErr = terminalOnlyPlanningResultError(result, err)
 		if lastErr == nil {
@@ -63,6 +66,50 @@ func (r *Runner) runTerminalOnlyPlanningWithRetry(
 	}
 
 	return lastResult, terminalFinalAnswerUnavailableError(lastErr)
+}
+
+func acceptedTerminalOnlyTruncation(result planningResult, callErr error) (planningResult, bool) {
+	if !isPlanningOutputLimitError(callErr) {
+		return planningResult{}, false
+	}
+	answer := terminalOnlyAnswerCandidate(result.message)
+	if answer == "" {
+		return planningResult{}, false
+	}
+	result.message = adapter.Message{
+		Role:    "assistant",
+		Content: answer,
+	}
+	result.answerStreamed = false
+	result.naturalAnswerStreamed = false
+	return result, true
+}
+
+func isPlanningOutputLimitError(err error) bool {
+	var terminationErr *PlanningTerminationError
+	if !errors.As(err, &terminationErr) || terminationErr == nil {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(terminationErr.Reason)) {
+	case "length", "max_tokens":
+		return true
+	default:
+		return false
+	}
+}
+
+func terminalOnlyAnswerCandidate(message adapter.Message) string {
+	if answer := strings.TrimSpace(assistantMessageText(message)); answer != "" {
+		return answer
+	}
+	for _, call := range normalizeToolCalls(message.ToolCalls) {
+		if !strings.EqualFold(strings.TrimSpace(call.Function.Name), skills.MetaToolFinalAnswer) {
+			continue
+		}
+		answer, _ := partialJSONStringField(call.Function.Arguments, "answer")
+		return strings.TrimSpace(answer)
+	}
+	return ""
 }
 
 func terminalOnlyPlanningResultError(result planningResult, callErr error) error {

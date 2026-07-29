@@ -149,6 +149,7 @@ var exactConsoleRoutes = map[string]consoleRouteAccess{
 	"/console/db":                      {label: "Databases", requiresWorkspace: true, permissionCodes: databasePagePermissions},
 	"/console/files":                   {label: "Files", requiresWorkspace: true},
 	"/console/skills":                  {label: "Skills"},
+	"/console/integrations":            {label: "Integrations"},
 	"/console/prompts":                 {label: "Prompts", requiresWorkspace: true},
 	"/console/developer/content-parse": {label: "File Recognition", requiresWorkspace: true},
 	"/console/workspace":               {label: "Workspace", requiresWorkspace: true},

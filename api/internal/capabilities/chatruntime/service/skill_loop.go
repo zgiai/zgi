@@ -2553,6 +2553,7 @@ var consoleNavigationRouteHints = []consoleNavigationRouteHint{
 	{Href: "/console/db", Label: "数据库"},
 	{Href: "/console/files", Label: "文件管理"},
 	{Href: "/console/skills", Label: "Skill 管理"},
+	{Href: "/console/integrations", Label: "集成管理"},
 	{Href: "/console/prompts", Label: "提示词"},
 	{Href: "/console/developer/content-parse", Label: "文件识别"},
 	{Href: "/console/workspace", Label: "工作空间"},

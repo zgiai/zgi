@@ -420,7 +420,7 @@ func TestRunnerTerminalOnlyReturnsStructuredErrorAfterRetryExhaustion(t *testing
 	}
 }
 
-func TestRunnerTerminalOnlyRetriesTruncatedModelResponse(t *testing.T) {
+func TestRunnerTerminalOnlyAcceptsTruncatedModelResponse(t *testing.T) {
 	fakeLLM := &runnerTestLLMClient{appChatResponses: []*adapter.ChatResponse{
 		{
 			Choices: []adapter.Choice{{
@@ -448,11 +448,49 @@ func TestRunnerTerminalOnlyRetriesTruncatedModelResponse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if answer != "complete final answer" {
-		t.Fatalf("answer = %q, want complete retried answer", answer)
+	if answer != "partial" {
+		t.Fatalf("answer = %q, want the model's truncated answer", answer)
 	}
-	if fakeLLM.appChatCalls != 2 {
-		t.Fatalf("model calls = %d, want initial attempt plus one retry", fakeLLM.appChatCalls)
+	if fakeLLM.appChatCalls != 1 {
+		t.Fatalf("model calls = %d, want no retry for a usable truncated answer", fakeLLM.appChatCalls)
+	}
+}
+
+func TestRunnerTerminalOnlyAcceptsTruncatedFinalAnswerArguments(t *testing.T) {
+	fakeLLM := &runnerTestLLMClient{appChatResponses: []*adapter.ChatResponse{{
+		Choices: []adapter.Choice{{
+			FinishReason: "max_tokens",
+			Message: adapter.Message{
+				Role: "assistant",
+				ToolCalls: []adapter.ToolCall{{
+					ID:   "truncated-final-answer",
+					Type: "function",
+					Function: adapter.FunctionCall{
+						Name:      skills.MetaToolFinalAnswer,
+						Arguments: `{"answer":"partial final answer`,
+					},
+				}},
+			},
+		}},
+	}}}
+	runner := &Runner{LLMClient: fakeLLM, SkillRuntime: skills.NewRuntime(nil, nil), AppContext: &llmclient.AppContext{}}
+	prepared := NewPreparedChat("conv-terminal-json-length", "msg-terminal-json-length", "", "auto", &adapter.ChatRequest{
+		Messages: []adapter.Message{{Role: "user", Content: "finish once"}},
+	})
+
+	answer, _, err := runner.Run(context.Background(), RunRequest{
+		Prepared:     prepared,
+		Resolved:     &skills.ResolvedSkills{},
+		TerminalOnly: true,
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if answer != "partial final answer" {
+		t.Fatalf("answer = %q, want recovered truncated final answer", answer)
+	}
+	if fakeLLM.appChatCalls != 1 {
+		t.Fatalf("model calls = %d, want no retry for a recoverable final answer", fakeLLM.appChatCalls)
 	}
 }
 

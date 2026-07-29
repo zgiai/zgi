@@ -245,7 +245,6 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 				round,
 				req.OnChunk,
 				deferTerminalContent,
-				terminalSubmissionAllowed,
 				suppressNaturalProgress,
 			)
 		} else {
@@ -1626,7 +1625,7 @@ func (r *Runner) runSkillPlanning(ctx context.Context, prepared *PreparedChat, p
 		Error:              errorString(terminationErr),
 	})
 	if terminationErr != nil {
-		return planningResult{}, terminationErr
+		return planningResult{message: message, usage: usage}, terminationErr
 	}
 	return planningResult{message: message, usage: usage}, nil
 }
