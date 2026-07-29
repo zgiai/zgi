@@ -78,7 +78,7 @@ func ValidateRows(wb *ParsedWorkbook, req dto.ConfirmExcelImportRequest) (*RowVa
 		sourceByIndex[col.SourceColumnIndex] = col
 	}
 
-	result := &RowValidationResult{}
+	result := &RowValidationResult{Errors: []dto.ExcelImportFailedItem{}}
 	dataRows := sheet.Rows[req.Selection.StartRow-1:]
 	result.TotalRows = len(dataRows)
 	for rowOffset, row := range dataRows {

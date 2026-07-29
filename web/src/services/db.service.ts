@@ -42,6 +42,9 @@ import type {
   RecognizeExcelImportData,
   ExcelImportJob,
   ExcelImportErrorList,
+  AnalyzeExistingTableExcelImportData,
+  ExistingTableExcelImportDraftRequest,
+  ExistingTableExcelImportPreviewData,
 } from './types/db';
 
 /**
@@ -363,6 +366,46 @@ class DbService extends BaseService {
     data: ImportDbTableRecordsRequest
   ): Promise<ApiResponseData<ImportDbTableRecordsData>> {
     return this.request('post', `/data-dbs/${dbId}/tables/${tableId}/records/import`, data);
+  }
+
+  analyzeExistingTableExcelImport(
+    dbId: string,
+    tableId: string,
+    data: AnalyzeExcelImportRequest
+  ): Promise<ApiResponseData<AnalyzeExistingTableExcelImportData>> {
+    return this.request(
+      'post',
+      `/data-dbs/${dbId}/tables/${tableId}/import-jobs/analyze`,
+      data,
+      { timeout: 300000 }
+    );
+  }
+
+  previewExistingTableExcelImport(
+    dbId: string,
+    tableId: string,
+    jobId: string,
+    data: ExistingTableExcelImportDraftRequest
+  ): Promise<ApiResponseData<ExistingTableExcelImportPreviewData>> {
+    return this.request(
+      'put',
+      `/data-dbs/${dbId}/tables/${tableId}/import-jobs/${jobId}/preview`,
+      data,
+      { timeout: 300000 }
+    );
+  }
+
+  confirmExistingTableExcelImport(
+    dbId: string,
+    tableId: string,
+    jobId: string
+  ): Promise<ApiResponseData<ConfirmExcelImportData>> {
+    return this.request(
+      'post',
+      `/data-dbs/${dbId}/tables/${tableId}/import-jobs/${jobId}/confirm`,
+      undefined,
+      { timeout: 600000 }
+    );
   }
 
   /**

@@ -97,7 +97,6 @@ type GetTableColumnsResponse struct {
 type TableColumn struct {
 	ID               string  `json:"id"` // Column ID in the database
 	Name             string  `json:"name" binding:"required"`
-	DisplayName      *string `json:"display_name,omitempty"`
 	SourceColumnName *string `json:"source_column_name,omitempty"`
 	Description      *string `json:"description"`
 	Type             string  `json:"type" binding:"required"` // Data type (frontend-friendly names: int, float, double, varchar, etc.)

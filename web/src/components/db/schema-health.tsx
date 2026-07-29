@@ -53,7 +53,6 @@ const SOURCE_LABEL_MAP: ReadonlyArray<{
 function getSourceLabel(column: DbTableColumn): string {
   const raw =
     column.source_column_name ||
-    column.display_name ||
     column.description?.replace(/^Imported from\s+/i, '') ||
     '';
   return raw.trim();

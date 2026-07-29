@@ -52,10 +52,10 @@ const dialogContentVariants = cva(
 const DialogContent = React.forwardRef<
   React.ElementRef<typeof DialogPrimitive.Content>,
   React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content> &
-    VariantProps<typeof dialogContentVariants> & { showCloseButton?: boolean }
->(({ className, children, size, showCloseButton = true, ...props }, ref) => (
+    VariantProps<typeof dialogContentVariants> & { showCloseButton?: boolean; showOverlay?: boolean }
+>(({ className, children, size, showCloseButton = true, showOverlay = true, ...props }, ref) => (
   <DialogPortal>
-    <DialogOverlay />
+    {showOverlay && <DialogOverlay />}
     <DialogPrimitive.Content
       ref={ref}
       className={cn(dialogContentVariants({ size, className }))}

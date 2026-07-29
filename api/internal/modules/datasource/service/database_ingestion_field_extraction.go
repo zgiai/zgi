@@ -25,7 +25,6 @@ var (
 type fileConversionColumnSchema struct {
 	ColumnID         string `json:"column_id"`
 	FieldName        string `json:"field_name"`
-	DisplayName      string `json:"display_name,omitempty"`
 	SourceColumnName string `json:"source_column_name,omitempty"`
 	Type             string `json:"type"`
 	Description      string `json:"description,omitempty"`
@@ -57,10 +56,6 @@ func buildFileConversionColumnSchema(columns dto.GetTableColumnsResponse) (strin
 		if col.Description != nil {
 			description = strings.TrimSpace(*col.Description)
 		}
-		displayName := ""
-		if col.DisplayName != nil {
-			displayName = strings.TrimSpace(*col.DisplayName)
-		}
 		sourceColumnName := ""
 		if col.SourceColumnName != nil {
 			sourceColumnName = strings.TrimSpace(*col.SourceColumnName)
@@ -68,7 +63,6 @@ func buildFileConversionColumnSchema(columns dto.GetTableColumnsResponse) (strin
 		schema = append(schema, fileConversionColumnSchema{
 			ColumnID:         fileConversionColumnID(col),
 			FieldName:        col.Name,
-			DisplayName:      displayName,
 			SourceColumnName: sourceColumnName,
 			Type:             col.Type,
 			Description:      description,

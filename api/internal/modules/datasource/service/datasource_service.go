@@ -164,6 +164,9 @@ type DataSourceService interface {
 
 	// Excel import operations
 	AnalyzeExcelImport(ctx context.Context, organizationID, dataSourceID, accountID string, req dto.AnalyzeExcelImportRequest) (dto.AnalyzeExcelImportData, error)
+	AnalyzeExistingTableExcelImport(ctx context.Context, organizationID, dataSourceID, tableID, accountID string, req dto.AnalyzeExcelImportRequest) (dto.AnalyzeExistingTableExcelImportData, error)
+	PreviewExistingTableExcelImport(ctx context.Context, organizationID, dataSourceID, tableID, accountID, jobID string, req dto.ExistingTableExcelImportDraftRequest) (dto.ExistingTableExcelImportPreviewData, error)
+	ConfirmExistingTableExcelImport(ctx context.Context, organizationID, dataSourceID, tableID, accountID, jobID string) (dto.ConfirmExcelImportData, error)
 	RecognizeExcelImportFields(ctx context.Context, organizationID, dataSourceID, accountID, jobID string, req dto.RecognizeExcelImportRequest) (dto.RecognizeExcelImportData, error)
 	ConfirmExcelImport(ctx context.Context, organizationID, dataSourceID, accountID, jobID string, req dto.ConfirmExcelImportRequest) (dto.ConfirmExcelImportData, error)
 	GetExcelImportJob(ctx context.Context, organizationID, dataSourceID, jobID string) (*dto.ExcelImportJobResponse, error)
@@ -1418,6 +1421,16 @@ func (s *dataSourceService) UpdateTable(ctx context.Context, organizationID, dat
 	return table, nil
 }
 
+func isSQLMetaTableMissing(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := err.Error()
+	return strings.Contains(message, "sqlmeta: table not found") ||
+		strings.Contains(message, "failed to delete table: 404 Not Found") ||
+		strings.Contains(message, "failed to get table: 404 Not Found")
+}
+
 // UpdateTableColumns updates the columns of a specific table
 func (s *dataSourceService) UpdateTableColumns(ctx context.Context, organizationID, dataSourceID, tableID, accountID string, req dto.UpdateTableColumnsRequest) error {
 	// Find the data source
@@ -1438,6 +1451,9 @@ func (s *dataSourceService) UpdateTableColumns(ctx context.Context, organization
 	// Get existing columns by getting the table information
 	tableInfo, err := s.sqlBase.GetTable(ctx, tableMetadata.TableID)
 	if err != nil {
+		if isSQLMetaTableMissing(err) {
+			return fmt.Errorf("当前表对应的真实数据库表不存在，请删除该表后重新创建（表：%s，内部表ID：%d）", tableMetadata.Name, tableMetadata.TableID)
+		}
 		return fmt.Errorf("failed to get table: %w", err)
 	}
 
@@ -1687,7 +1703,73 @@ func (s *dataSourceService) UpdateTableColumns(ctx context.Context, organization
 	// s.logSQLOperation(ctx, organizationID, dataSourceID, tableID, dataSource.Name, tableMetadata.Name, accountID, string(model.OperationTypeUpdate),
 	// 	fmt.Sprintf("UPDATE data_source_tables SET updated_by = '%s', updated_at = NOW() WHERE id = '%s'", accountID, tableID))
 
+	if err := s.saveTableColumnSourceMetadata(ctx, organizationID, dataSourceID, tableID, accountID, tableMetadata, req.Columns); err != nil {
+		return err
+	}
+
 	return nil
+}
+
+func (s *dataSourceService) saveTableColumnSourceMetadata(ctx context.Context, organizationID, dataSourceID, tableID, accountID string, tableMetadata *model.Table, columns []dto.TableColumn) error {
+	if !hasExplicitSourceColumnMetadata(columns) {
+		return nil
+	}
+	schemaSnapshot := tableColumnSourceSchema(columns)
+	sourceFileName := "table-structure"
+	if tableMetadata != nil && tableMetadata.Name != "" {
+		sourceFileName = tableMetadata.Name
+	}
+	jobRepo := excelimportrepo.NewJobRepository(s.db)
+	job := &excelimportmodel.ImportJob{
+		OrganizationID: organizationID,
+		DataSourceID:   dataSourceID,
+		TableID:        &tableID,
+		SourceType:     "schema",
+		SourceFileName: sourceFileName,
+		Status:         string(dto.ExcelImportStatusCompleted),
+		SchemaSnapshot: mustJSON(schemaSnapshot),
+		CreatedBy:      accountID,
+		UpdatedBy:      accountID,
+	}
+	if err := jobRepo.Create(ctx, job); err != nil {
+		return fmt.Errorf("failed to save table column source metadata: %w", err)
+	}
+	return nil
+}
+
+func hasExplicitSourceColumnMetadata(columns []dto.TableColumn) bool {
+	for _, col := range columns {
+		if col.SourceColumnName != nil {
+			return true
+		}
+	}
+	return false
+}
+
+func tableColumnSourceSchema(columns []dto.TableColumn) []dto.InferredExcelColumn {
+	schema := make([]dto.InferredExcelColumn, 0, len(columns))
+	for index, col := range columns {
+		if col.SourceColumnName == nil {
+			continue
+		}
+		sourceColumn := strings.TrimSpace(*col.SourceColumnName)
+		if sourceColumn == "" || strings.TrimSpace(col.Name) == "" {
+			continue
+		}
+		description := ""
+		if col.Description != nil {
+			description = strings.TrimSpace(*col.Description)
+		}
+		schema = append(schema, dto.InferredExcelColumn{
+			SourceColumn:      sourceColumn,
+			SourceColumnIndex: index,
+			Name:              strings.TrimSpace(col.Name),
+			Type:              strings.TrimSpace(col.Type),
+			IsRequired:        col.IsRequired,
+			Description:       description,
+		})
+	}
+	return schema
 }
 
 // GetTableColumns retrieves the columns of a specific table
@@ -1710,7 +1792,7 @@ func (s *dataSourceService) GetTableColumns(ctx context.Context, organizationID,
 		return dto.GetTableColumnsResponse{}, fmt.Errorf("failed to get table: %w", err)
 	}
 
-	importColumnMetadata, err := s.getExcelImportColumnMetadata(ctx, organizationID, dataSourceID, tableID)
+	importColumnMetadata, err := s.getExcelImportColumnMetadata(ctx, organizationID, dataSourceID, tableID, tableMetadata.CreatedAt)
 	if err != nil {
 		return dto.GetTableColumnsResponse{}, err
 	}
@@ -1733,7 +1815,6 @@ func (s *dataSourceService) GetTableColumns(ctx context.Context, organizationID,
 			IsSystemField: isSystemField, // Mark system fields
 		}
 		if metadata, ok := importColumnMetadata[col.Name]; ok {
-			resultColumn.DisplayName = &metadata.DisplayName
 			resultColumn.SourceColumnName = &metadata.SourceColumnName
 		}
 		resultColumns = append(resultColumns, resultColumn)
@@ -1745,43 +1826,48 @@ func (s *dataSourceService) GetTableColumns(ctx context.Context, organizationID,
 }
 
 type excelImportColumnMetadata struct {
-	DisplayName      string
 	SourceColumnName string
 }
 
-func (s *dataSourceService) getExcelImportColumnMetadata(ctx context.Context, organizationID, dataSourceID, tableID string) (map[string]excelImportColumnMetadata, error) {
+func (s *dataSourceService) getExcelImportColumnMetadata(ctx context.Context, organizationID, dataSourceID, tableID string, tableCreatedAt time.Time) (map[string]excelImportColumnMetadata, error) {
 	jobRepo := excelimportrepo.NewJobRepository(s.db)
-	job, err := jobRepo.FindLatestByTableID(ctx, tableID)
+	job, err := jobRepo.FindLatestSchemaByTable(ctx, organizationID, dataSourceID, tableID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to find import job by table: %w", err)
+		return nil, fmt.Errorf("failed to find schema import job by table: %w", err)
 	}
-	if job == nil ||
-		job.OrganizationID != organizationID ||
-		job.DataSourceID != dataSourceID ||
-		job.Status == string(dto.ExcelImportStatusFailed) {
+	if job == nil && !tableCreatedAt.IsZero() {
+		job, err = jobRepo.FindLatestLegacySourceByTable(ctx, organizationID, dataSourceID, tableID, tableCreatedAt)
+		if err != nil {
+			return nil, fmt.Errorf("failed to find legacy import job by table: %w", err)
+		}
+	}
+	if job == nil {
 		return map[string]excelImportColumnMetadata{}, nil
 	}
+	return excelImportColumnMetadataFromSnapshot(job.SchemaSnapshot), nil
+}
 
+func excelImportColumnMetadataFromSnapshot(snapshot []byte) map[string]excelImportColumnMetadata {
+	metadata := make(map[string]excelImportColumnMetadata)
 	var inferredColumns []dto.InferredExcelColumn
-	if err := json.Unmarshal(job.SchemaSnapshot, &inferredColumns); err != nil {
-		return nil, fmt.Errorf("failed to parse import schema snapshot: %w", err)
-	}
-
-	metadata := make(map[string]excelImportColumnMetadata, len(inferredColumns))
-	for _, col := range inferredColumns {
-		if col.Name == "" || col.SourceColumn == "" {
-			continue
-		}
-		displayName := col.DisplayName
-		if displayName == "" {
-			displayName = col.SourceColumn
-		}
-		metadata[col.Name] = excelImportColumnMetadata{
-			DisplayName:      displayName,
-			SourceColumnName: col.SourceColumn,
+	if err := json.Unmarshal(snapshot, &inferredColumns); err == nil {
+		for _, col := range inferredColumns {
+			if strings.TrimSpace(col.Name) == "" || strings.TrimSpace(col.SourceColumn) == "" {
+				continue
+			}
+			metadata[col.Name] = excelImportColumnMetadata{SourceColumnName: strings.TrimSpace(col.SourceColumn)}
 		}
 	}
-	return metadata, nil
+	var tableColumns []dto.TableColumn
+	if err := json.Unmarshal(snapshot, &tableColumns); err == nil {
+		for _, col := range tableColumns {
+			if strings.TrimSpace(col.Name) == "" || col.SourceColumnName == nil || strings.TrimSpace(*col.SourceColumnName) == "" {
+				continue
+			}
+			metadata[col.Name] = excelImportColumnMetadata{SourceColumnName: strings.TrimSpace(*col.SourceColumnName)}
+		}
+	}
+	return metadata
 }
 
 // AddTableRecords adds records to a table
@@ -2428,13 +2514,24 @@ func (s *dataSourceService) AnalyzeFileForTable(ctx context.Context, dataSourceI
 	}
 
 	var content string
+	var sourceHeaders []string
 
 	// Only get file content if fileID is provided
 	if fileID != "" {
 		// Get file service to retrieve file content
-		_, err := s.fileService.GetFileByID(ctx, fileID)
+		fileInfo, err := s.fileService.GetFileByID(ctx, fileID)
 		if err != nil {
 			return dto.AnalyzeFileForTableResponse{}, fmt.Errorf("failed to get file: %w", err)
+		}
+		if isTableLikeFileName(fileInfo.Name) {
+			fileContent, err := s.fileService.DownloadFile(ctx, fileID)
+			if err != nil {
+				return dto.AnalyzeFileForTableResponse{}, fmt.Errorf("failed to download file: %w", err)
+			}
+			sourceHeaders, err = tableSourceHeaders(fileInfo.Name, fileContent)
+			if err != nil {
+				return dto.AnalyzeFileForTableResponse{}, fmt.Errorf("failed to read table headers: %w", err)
+			}
 		}
 
 		// Get file content with database ingestion extraction settings.
@@ -2450,11 +2547,91 @@ func (s *dataSourceService) AnalyzeFileForTable(ctx context.Context, dataSourceI
 	if err != nil {
 		return dto.AnalyzeFileForTableResponse{}, fmt.Errorf("failed to infer table structure: %w", err)
 	}
+	columns, err = withSourceColumnNames(columns, sourceHeaders)
+	if err != nil {
+		return dto.AnalyzeFileForTableResponse{}, err
+	}
 
 	return dto.AnalyzeFileForTableResponse{
 		Columns: columns,
 		Content: content,
 	}, nil
+}
+
+func isTableLikeFileName(fileName string) bool {
+	lowerName := strings.ToLower(strings.TrimSpace(fileName))
+	return strings.HasSuffix(lowerName, ".xlsx") ||
+		strings.HasSuffix(lowerName, ".xls") ||
+		strings.HasSuffix(lowerName, ".csv")
+}
+
+func tableSourceHeaders(fileName string, content []byte) ([]string, error) {
+	workbook, err := excelimportsvc.ParseWorkbook(fileName, content)
+	if err != nil {
+		return nil, err
+	}
+	analysis, err := excelimportsvc.AnalyzeWorkbook(workbook, excelimportsvc.AnalyzeOptions{})
+	if err != nil {
+		return nil, err
+	}
+	sheet, err := excelimportsvc.RecommendedSheet(workbook)
+	if err != nil {
+		return nil, err
+	}
+	headerRowIndex := analysis.Selection.HeaderRow - 1
+	if headerRowIndex < 0 || headerRowIndex >= len(sheet.Rows) {
+		return nil, fmt.Errorf("table file must contain a header row")
+	}
+	headers := make([]string, 0, len(sheet.Rows[headerRowIndex]))
+	for _, header := range sheet.Rows[headerRowIndex] {
+		headers = append(headers, strings.TrimSpace(header))
+	}
+	return headers, nil
+}
+
+func withSourceColumnNames(columns []dto.TableColumn, sourceHeaders []string) ([]dto.TableColumn, error) {
+	if len(sourceHeaders) == 0 {
+		return columns, nil
+	}
+	sourceHeaderCounts := make(map[string]int, len(sourceHeaders))
+	for _, header := range sourceHeaders {
+		header = strings.TrimSpace(header)
+		if header == "" {
+			continue
+		}
+		sourceHeaderCounts[header]++
+	}
+	out := make([]dto.TableColumn, len(columns))
+	copy(out, columns)
+	usedHeaders := make(map[string]string, len(out))
+	for i := range out {
+		sourceHeader, ok := matchingSourceHeader(out[i], sourceHeaderCounts)
+		if !ok {
+			return nil, fmt.Errorf("生成字段「%s」无法唯一匹配 Excel 原始表头，请重新识别或手动调整", strings.TrimSpace(out[i].Name))
+		}
+		if existingName, exists := usedHeaders[sourceHeader]; exists {
+			return nil, fmt.Errorf("Excel 表头「%s」同时匹配字段「%s」和「%s」，请调整表结构后重试", sourceHeader, existingName, strings.TrimSpace(out[i].Name))
+		}
+		usedHeaders[sourceHeader] = strings.TrimSpace(out[i].Name)
+		out[i].SourceColumnName = &sourceHeader
+	}
+	return out, nil
+}
+
+func matchingSourceHeader(column dto.TableColumn, sourceHeaderCounts map[string]int) (string, bool) {
+	candidates := make([]string, 0, 2)
+	if column.SourceColumnName != nil {
+		candidates = append(candidates, *column.SourceColumnName)
+	}
+	candidates = append(candidates, column.Name)
+	for _, candidate := range candidates {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "" || sourceHeaderCounts[candidate] != 1 {
+			continue
+		}
+		return candidate, true
+	}
+	return "", false
 }
 
 // inferTableStructureFromFile infers table structure from file content or user prompt
@@ -2525,13 +2702,6 @@ func (s *dataSourceService) inferTableStructureFromFile(ctx context.Context, ten
 		return nil, fmt.Errorf("failed to extract JSON from LLM response: %w", err)
 	}
 
-	type llmTableColumn struct {
-		Name        string `json:"Name"`
-		Type        string `json:"Type"`
-		IsRequired  bool   `json:"IsRequired"`
-		Description string `json:"Description"`
-	}
-
 	var llmColumns []llmTableColumn
 	if err := json.Unmarshal([]byte(cleanContent), &llmColumns); err != nil {
 		return nil, fmt.Errorf("failed to parse LLM response: %w", err)
@@ -2539,15 +2709,35 @@ func (s *dataSourceService) inferTableStructureFromFile(ctx context.Context, ten
 
 	for _, llmCol := range llmColumns {
 		description := llmCol.Description
-		columns = append(columns, dto.TableColumn{
+		column := dto.TableColumn{
 			Name:        llmCol.Name,
 			Type:        llmCol.Type,
 			IsRequired:  llmCol.IsRequired,
 			Description: &description,
-		})
+		}
+		if sourceColumnName := llmSourceColumnName(llmCol.SourceColumnName, llmCol.DisplayName); sourceColumnName != "" {
+			column.SourceColumnName = &sourceColumnName
+		}
+		columns = append(columns, column)
 	}
 
 	return columns, nil
+}
+
+type llmTableColumn struct {
+	Name             string `json:"Name"`
+	SourceColumnName string `json:"SourceColumnName"`
+	DisplayName      string `json:"DisplayName"`
+	Type             string `json:"Type"`
+	IsRequired       bool   `json:"IsRequired"`
+	Description      string `json:"Description"`
+}
+
+func llmSourceColumnName(sourceColumnName, displayName string) string {
+	if sourceColumnName = strings.TrimSpace(sourceColumnName); sourceColumnName != "" {
+		return sourceColumnName
+	}
+	return strings.TrimSpace(displayName)
 }
 
 // getModelSlug returns the model name from modelSpec
@@ -3966,7 +4156,7 @@ func (s *dataSourceService) ConfirmExcelImport(ctx context.Context, organization
 	importedRows := 0
 	batchSize := req.Options.BatchSize
 	if batchSize <= 0 {
-		batchSize = 500
+		batchSize = defaultExcelImportBatchSize
 	}
 	for start := 0; start < len(validation.Records); start += batchSize {
 		end := start + batchSize
@@ -4034,16 +4224,12 @@ func excelImportTableColumns(columns []dto.InferredExcelColumn) []dto.TableColum
 			continue
 		}
 		desc := strings.TrimSpace(col.Description)
-		displayName := strings.TrimSpace(col.DisplayName)
 		sourceColumn := strings.TrimSpace(col.SourceColumn)
 		tableColumn := dto.TableColumn{
 			Name:        strings.TrimSpace(col.Name),
 			Description: &desc,
 			Type:        strings.TrimSpace(col.Type),
 			IsRequired:  col.IsRequired,
-		}
-		if displayName != "" {
-			tableColumn.DisplayName = &displayName
 		}
 		if sourceColumn != "" {
 			tableColumn.SourceColumnName = &sourceColumn
@@ -4218,10 +4404,9 @@ func (s *dataSourceService) parseExcelFile(file io.Reader, fileName string, colu
 
 	// First row is header
 	header := rows[0]
-
-	columnMap := make(map[string]dto.TableColumn)
-	for _, col := range columns {
-		columnMap[col.Name] = col
+	columnMap, err := excelImportColumnMatches(columns)
+	if err != nil {
+		return nil, err
 	}
 
 	type matchedColumn struct {
@@ -4232,6 +4417,7 @@ func (s *dataSourceService) parseExcelFile(file io.Reader, fileName string, colu
 	matchedColumns := make([]matchedColumn, 0, len(header))
 	matchedColumnNames := make(map[string]struct{})
 	for colIndex, headerName := range header {
+		headerName = strings.TrimSpace(headerName)
 		columnInfo, exists := columnMap[headerName]
 		if !exists {
 			if skipUnmatchedColumns {
@@ -4239,8 +4425,11 @@ func (s *dataSourceService) parseExcelFile(file io.Reader, fileName string, colu
 			}
 			return nil, fmt.Errorf("column '%s' does not exist in table", headerName)
 		}
-		matchedColumns = append(matchedColumns, matchedColumn{index: colIndex, name: headerName, info: columnInfo})
-		matchedColumnNames[headerName] = struct{}{}
+		if _, exists := matchedColumnNames[columnInfo.Name]; exists {
+			return nil, fmt.Errorf("Excel 表头「%s」和其他表头同时匹配字段「%s」，请删除重复列后重试", headerName, columnInfo.Name)
+		}
+		matchedColumns = append(matchedColumns, matchedColumn{index: colIndex, name: columnInfo.Name, info: columnInfo})
+		matchedColumnNames[columnInfo.Name] = struct{}{}
 	}
 	if len(matchedColumns) == 0 {
 		return nil, fmt.Errorf("no matching columns found in Excel header")
@@ -4289,6 +4478,40 @@ func (s *dataSourceService) parseExcelFile(file io.Reader, fileName string, colu
 	return records, nil
 }
 
+func excelImportColumnMatches(columns []dto.TableColumn) (map[string]dto.TableColumn, error) {
+	columnMap := make(map[string]dto.TableColumn, len(columns)*2)
+	for _, col := range columns {
+		if err := addExcelImportColumnMatch(columnMap, col.Name, col); err != nil {
+			return nil, err
+		}
+		if col.SourceColumnName == nil {
+			continue
+		}
+		sourceColumnName := strings.TrimSpace(*col.SourceColumnName)
+		if sourceColumnName == "" {
+			continue
+		}
+		if err := addExcelImportColumnMatch(columnMap, sourceColumnName, col); err != nil {
+			return nil, err
+		}
+	}
+	return columnMap, nil
+}
+
+func addExcelImportColumnMatch(columnMap map[string]dto.TableColumn, headerName string, col dto.TableColumn) error {
+	if headerName == "" {
+		return nil
+	}
+	existing, exists := columnMap[headerName]
+	if !exists {
+		columnMap[headerName] = col
+		return nil
+	}
+	if existing.Name == col.Name {
+		return nil
+	}
+	return fmt.Errorf("Excel 表头「%s」匹配到多个字段，请调整表结构后重试", headerName)
+}
 func missingRequiredImportColumns(columns []dto.TableColumn, matchedColumnNames map[string]struct{}) []string {
 	missing := make([]string, 0)
 	for _, col := range columns {

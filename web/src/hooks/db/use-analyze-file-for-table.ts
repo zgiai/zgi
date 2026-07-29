@@ -108,6 +108,8 @@ export function useAnalyzeFileForTable(): UseAnalyzeFileForTableReturn {
     const columns = raw.map(col => ({
       id: String(col.id ?? ''),
       name: String(col.name ?? ''),
+      source_column_name:
+        typeof col.source_column_name === 'string' ? col.source_column_name : undefined,
       description: String(col.description ?? ''),
       type: normalizeType(String(col.type ?? 'text')),
       is_required: Boolean(col.is_required),
