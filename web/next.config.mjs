@@ -82,6 +82,7 @@ const nextConfig = {
     cpus: buildCpus,
     memoryBasedWorkersCount: false,
     staticGenerationMaxConcurrency,
+    turbopackFileSystemCacheForDev: false,
     turbopackMemoryLimit: turbopackMemoryLimitMb * 1024 * 1024,
     webpackMemoryOptimizations,
   },

@@ -435,6 +435,28 @@ func TestSplitRerankableSearchResultsPassesThroughGraphResults(t *testing.T) {
 	}
 }
 
+func TestGraphKnowledgeDocumentResponseUsesSourceDocument(t *testing.T) {
+	docType := "pdf"
+	document := &dataset_model.Document{
+		ID:             "document-1",
+		Name:           "南阳市第一人民医院资料.pdf",
+		DataSourceType: "upload_file",
+		DocType:        &docType,
+	}
+
+	got := graphKnowledgeDocumentResponse(
+		document.ID,
+		map[string]*dataset_model.Document{document.ID: document},
+	)
+
+	if got.ID != document.ID || got.Name != document.Name {
+		t.Fatalf("graph document = %#v, want source document", got)
+	}
+	if got.DataSourceType != "upload_file" || got.DocType != docType {
+		t.Fatalf("graph document metadata = %#v", got)
+	}
+}
+
 type mockGraphLLMClient struct {
 	lastOrganizationID string
 }

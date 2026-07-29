@@ -42,12 +42,15 @@ export function GraphExecutionDetails({ execution }: GraphExecutionDetailsProps)
                 </Badge>
               )}
             </div>
-            <ChevronDown
-              className={cn(
-                'h-4 w-4 transition-transform text-muted-foreground',
-                expanded && 'rotate-180'
-              )}
-            />
+            <span className="inline-flex shrink-0 items-center gap-1.5 rounded-md border bg-background px-2.5 py-1.5 text-xs font-medium text-foreground shadow-sm">
+              {expanded ? t('hitTesting.hideGraphDetails') : t('hitTesting.viewGraphDetails')}
+              <ChevronDown
+                className={cn(
+                  'h-3.5 w-3.5 transition-transform text-muted-foreground',
+                  expanded && 'rotate-180'
+                )}
+              />
+            </span>
           </CardContent>
         </Card>
       </CollapsibleTrigger>
@@ -55,34 +58,6 @@ export function GraphExecutionDetails({ execution }: GraphExecutionDetailsProps)
       <CollapsibleContent className="mt-2">
         <Card>
           <CardContent className="p-4 space-y-4">
-            <div className="flex flex-wrap gap-2">
-              {execution.requested_method && (
-                <Badge variant="outline">
-                  {t('hitTesting.requestedMethod')}: {execution.requested_method}
-                </Badge>
-              )}
-              {execution.actual_method && (
-                <Badge variant="outline">
-                  {t('hitTesting.actualMethod')}: {execution.actual_method}
-                </Badge>
-              )}
-              {execution.fallback_policy && (
-                <Badge variant="secondary">
-                  {t('hitTesting.fallbackPolicy')}: {execution.fallback_policy}
-                </Badge>
-              )}
-              {typeof execution.graph_revision === 'number' && (
-                <Badge variant="secondary">
-                  {t('hitTesting.graphRevision')}: {execution.graph_revision}
-                </Badge>
-              )}
-              {typeof execution.visibility_revision === 'number' && (
-                <Badge variant="secondary">
-                  {t('hitTesting.visibilityRevision')}: {execution.visibility_revision}
-                </Badge>
-              )}
-            </div>
-
             {execution.fallback_reason && (
               <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
                 {execution.fallback_reason}

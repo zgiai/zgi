@@ -2,7 +2,7 @@
 
 import React from 'react';
 import { useT } from '@/i18n';
-import { Search, Sparkles, Target } from 'lucide-react';
+import { RefreshCw, Search, Sparkles, Target } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -20,6 +20,10 @@ interface ResultsPanelProps {
   type: 'vector' | 'graph';
   graphExecution?: HitTestingResponse['graph_execution'];
   elapsedTime?: number;
+  notice?: {
+    title: string;
+    description: string;
+  };
 }
 
 const getResultKey = (result: HitTestingResult, index: number) => {
@@ -41,6 +45,7 @@ export function ResultsPanel({
   type,
   graphExecution,
   elapsedTime,
+  notice,
 }: ResultsPanelProps) {
   const t = useT('datasets');
 
@@ -59,6 +64,23 @@ export function ResultsPanel({
       )}
     </div>
   );
+
+  if (notice) {
+    return (
+      <div className="flex h-full min-w-0 flex-col p-6">
+        {renderHeader()}
+        <div className="flex flex-1 flex-col items-center justify-center px-6 text-center">
+          <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-primary/10">
+            <RefreshCw className="h-5 w-5 text-primary" />
+          </div>
+          <h3 className="text-sm font-semibold text-foreground">{notice.title}</h3>
+          <p className="mt-2 max-w-sm text-sm leading-6 text-muted-foreground">
+            {notice.description}
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   if (isSearching) {
     return (
@@ -130,16 +152,17 @@ export function ResultsPanel({
   }
 
   return (
-    <div className="flex h-full min-w-0 flex-col space-y-4 p-6">
+    <div className="flex h-full min-h-0 min-w-0 flex-col p-6">
       {/* Header */}
       {renderHeader(results.length)}
 
-      {/* Graph Execution Details (only for graph type) */}
-      {type === 'graph' && graphExecution && <GraphExecutionDetails execution={graphExecution} />}
-
-      {/* Results List */}
-      <ScrollArea className="h-0 min-w-0 grow">
+      {/* Execution details and results share one scroll container. */}
+      <ScrollArea className="min-h-0 min-w-0 flex-1">
         <div className="space-y-4 pr-4">
+          {type === 'graph' && graphExecution && (
+            <GraphExecutionDetails execution={graphExecution} />
+          )}
+
           {results.map((result, index) =>
             type === 'graph' ? (
               <GraphResultCard key={getResultKey(result, index)} result={result} index={index} />

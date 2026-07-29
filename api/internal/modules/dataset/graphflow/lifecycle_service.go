@@ -343,6 +343,26 @@ type graphRunTaskSummary struct {
 	DocumentIDs  []uuid.UUID
 }
 
+func (s *LifecycleService) FailRun(ctx context.Context, runID uuid.UUID, code, message string) error {
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var run graphmodel.GraphFlowRun
+		if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).
+			First(&run, "id = ?", runID).Error; err != nil {
+			return err
+		}
+		if graphRunIsTerminal(run.Status) {
+			return nil
+		}
+		if err := s.runRepo.WithTx(tx).MarkFailed(ctx, runID, code, message); err != nil {
+			return err
+		}
+		if err := updateGraphReferenceRunState(ctx, tx, &run, nil, graphmodel.GraphFlowRunStatusFailed); err != nil {
+			return err
+		}
+		return s.aggregateDatasetGraphState(ctx, tx, run.OrganizationID, run.DatasetID)
+	})
+}
+
 // ReconcileTask projects a task transition into its durable run and dataset state.
 func (s *LifecycleService) ReconcileTask(ctx context.Context, taskID uuid.UUID) error {
 	task, err := s.taskRepo.GetByID(ctx, taskID)
@@ -709,6 +729,7 @@ func (s *LifecycleService) aggregateDatasetGraphState(
 	total := len(refs)
 	ready := 0
 	failed := 0
+	queued := 0
 	processing := 0
 	progressTotal := 0
 	for _, ref := range refs {
@@ -720,8 +741,10 @@ func (s *LifecycleService) aggregateDatasetGraphState(
 					ready++
 				case graphmodel.GraphFlowRunStatusFailed:
 					failed++
-				default:
+				case graphmodel.GraphFlowRunStatusProcessing:
 					processing++
+				default:
+					queued++
 				}
 				continue
 			}
@@ -733,26 +756,45 @@ func (s *LifecycleService) aggregateDatasetGraphState(
 				progressTotal += 100
 			case "failed":
 				failed++
-			default:
+			case "processing":
 				processing++
+			default:
+				queued++
 			}
 		} else {
-			processing++
+			queued++
 		}
 	}
 
+	cleanupStatuses := []string{
+		graphmodel.GraphFlowRunStatusPending,
+		graphmodel.GraphFlowRunStatusProcessing,
+	}
+	cleanupQuery := tx.WithContext(ctx).
+		Where("organization_id = ? AND dataset_id = ? AND mode = ?", organizationID, datasetID, graphmodel.GraphFlowRunModeCleanup).
+		Where("status IN ?", cleanupStatuses)
+	if dataset.GraphCurrentRunID != nil {
+		cleanupQuery = tx.WithContext(ctx).
+			Where("organization_id = ? AND dataset_id = ? AND mode = ?", organizationID, datasetID, graphmodel.GraphFlowRunModeCleanup).
+			Where("(status IN ?) OR (id = ? AND status = ?)", cleanupStatuses, *dataset.GraphCurrentRunID, graphmodel.GraphFlowRunStatusFailed)
+	}
 	var cleanupRuns []graphmodel.GraphFlowRun
-	if err := tx.WithContext(ctx).
-		Where("organization_id = ? AND dataset_id = ? AND mode = ? AND status IN ?", organizationID, datasetID, graphmodel.GraphFlowRunModeCleanup, []string{
-			graphmodel.GraphFlowRunStatusPending,
-			graphmodel.GraphFlowRunStatusProcessing,
-		}).Find(&cleanupRuns).Error; err != nil {
+	if err := cleanupQuery.Find(&cleanupRuns).Error; err != nil {
 		return err
 	}
+	cleanupFailed := false
 	for _, run := range cleanupRuns {
 		total++
-		processing++
 		progressTotal += run.Progress
+		switch run.Status {
+		case graphmodel.GraphFlowRunStatusProcessing:
+			processing++
+		case graphmodel.GraphFlowRunStatusFailed:
+			failed++
+			cleanupFailed = true
+		default:
+			queued++
+		}
 	}
 
 	progress := 0
@@ -771,9 +813,12 @@ func (s *LifecycleService) aggregateDatasetGraphState(
 		status = "waiting_content"
 	case processing > 0:
 		status = "building"
-		if progress == 0 {
-			status = "queued"
-		}
+	case queued > 0:
+		status = "queued"
+	case cleanupFailed:
+		status = "failed"
+		updates["graph_error_code"] = graphTaskFailedErrorCode
+		updates["graph_error_message"] = "Graph cleanup failed."
 	case failed > 0 && ready > 0:
 		status = "partial"
 		updates["graph_error_code"] = graphTaskFailedErrorCode

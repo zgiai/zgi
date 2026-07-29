@@ -31,7 +31,25 @@ const scenarios = [
   {
     name: 'graph retrieval configuration',
     file: 'src/components/datasets/hit-testing/index.tsx',
-    snippets: ['graph_search', 'fallback_policy'],
+    snippets: [
+      'graph_search',
+      'fallback_policy',
+      'const retrievals: Array<Promise<boolean>>',
+      'setVectorResults(response.data)',
+      '.finally(() => setIsVectorSearching(false))',
+      'isGraphVisibilityNotReadyError',
+      'notice={graphPanelNotice}',
+    ],
+  },
+  {
+    name: 'graph visibility polling',
+    file: 'src/hooks/dataset/use-dataset-graph.ts',
+    snippets: ['if (graphStatus.can_search) return false;', "'unavailable'"],
+  },
+  {
+    name: 'graph retrieval expected-error handling',
+    file: 'src/services/dataset.service.ts',
+    snippets: ['retrieve/graph', 'skipErrorHandling: true'],
   },
   {
     name: 'batch graph retrieval configuration',
@@ -41,7 +59,32 @@ const scenarios = [
   {
     name: 'graph execution details',
     file: 'src/components/datasets/hit-testing/components/graph-execution-details.tsx',
-    snippets: ['requested_method', 'actual_method', 'visibility_revision'],
+    snippets: [
+      "t('hitTesting.viewGraphDetails')",
+      "t('hitTesting.hideGraphDetails')",
+      "t('hitTesting.executionSteps')",
+    ],
+    forbiddenSnippets: [
+      'execution.requested_method',
+      'execution.actual_method',
+      'execution.fallback_policy',
+      'execution.graph_revision',
+      'execution.visibility_revision',
+    ],
+  },
+  {
+    name: 'scrollable graph execution results',
+    file: 'src/components/datasets/hit-testing/components/results-panel.tsx',
+    snippets: [
+      '<ScrollArea className="min-h-0 min-w-0 flex-1">',
+      '<GraphExecutionDetails execution={graphExecution} />',
+      '{results.map((result, index)',
+    ],
+  },
+  {
+    name: 'graph result source document',
+    file: 'src/components/datasets/hit-testing/components/graph-result-card.tsx',
+    snippets: ['segment.document?.id', "t('hitTesting.sourceDocument')", 'segment.document.name'],
   },
   {
     name: 'graph visibility entry',
@@ -85,7 +128,13 @@ const scenarios = [
   {
     name: 'graph page query states',
     file: 'src/app/console/dataset/[datasetId]/graph/page.tsx',
-    snippets: ['next_cursor', 'graph_query_limit_exceeded', 'seed_node_id'],
+    snippets: [
+      'next_cursor',
+      'graph_query_limit_exceeded',
+      'seed_node_id',
+      "graphStatus?.status === 'waiting_content'",
+      "t('graph.emptyStatusDescription')",
+    ],
   },
   {
     name: 'graph detail expansion',
@@ -99,6 +148,11 @@ for (const scenario of scenarios) {
   for (const snippet of scenario.snippets) {
     if (!source.includes(snippet)) {
       throw new Error(`Missing ${scenario.name} snippet in ${scenario.file}: ${snippet}`);
+    }
+  }
+  for (const snippet of scenario.forbiddenSnippets ?? []) {
+    if (source.includes(snippet)) {
+      throw new Error(`Unexpected ${scenario.name} snippet in ${scenario.file}: ${snippet}`);
     }
   }
 }

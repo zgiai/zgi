@@ -926,7 +926,9 @@ class DatasetService extends BaseService {
     datasetId: string,
     data: HitTestingRequest
   ): Promise<ApiResponseData<HitTestingResponse>> {
-    return this.request('post', `/datasets/${datasetId}/retrieve/graph`, data);
+    return this.request('post', `/datasets/${datasetId}/retrieve/graph`, data, {
+      skipErrorHandling: true,
+    });
   }
 }
 

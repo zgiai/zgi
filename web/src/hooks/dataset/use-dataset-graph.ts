@@ -44,8 +44,12 @@ export function useDatasetGraphStatus(datasetId: string, enabled = true) {
     queryFn: () => datasetService.getDatasetGraphStatus(datasetId),
     enabled: Boolean(datasetId) && enabled,
     refetchInterval: query => {
-      const status = query.state.data?.data?.status;
-      return status && ['ready', 'empty', 'failed', 'disabled'].includes(status) ? false : 2_000;
+      const graphStatus = query.state.data?.data;
+      if (!graphStatus) return 2_000;
+      if (graphStatus.can_search) return false;
+      return ['empty', 'failed', 'disabled', 'unavailable'].includes(graphStatus.status)
+        ? false
+        : 2_000;
     },
     retry: false,
   });

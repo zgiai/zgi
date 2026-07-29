@@ -321,6 +321,158 @@ func TestLifecycleServiceReconcilesDocumentProgressAndPublishesDataset(t *testin
 	}
 }
 
+func TestLifecycleServiceDistinguishesQueuedFromZeroProgressBuilding(t *testing.T) {
+	db := openLifecycleTestDB(t, &lifecycleTestRef{})
+	ctx := context.Background()
+	datasetID := uuid.New()
+	organizationID := uuid.New()
+	documentID := uuid.New()
+	runID := uuid.New()
+	queuedStatus := "queued"
+
+	if err := db.Create(&lifecycleTestDataset{
+		ID:             datasetID.String(),
+		OrganizationID: organizationID.String(),
+		GraphStatus:    "queued",
+		GraphRevision:  1,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&lifecycleTestRef{
+		ID:                uuid.New(),
+		OrganizationID:    organizationID.String(),
+		DatasetID:         datasetID.String(),
+		AssetID:           uuid.New(),
+		DatasetDocumentID: &documentID,
+		Status:            datalibrarymodel.KnowledgeBaseAssetRefStatusActive,
+		RetrievalEnabled:  true,
+		GraphRunID:        &runID,
+		GraphSyncStatus:   &queuedStatus,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&graphmodel.GraphFlowRun{
+		ID:             runID,
+		OrganizationID: organizationID,
+		DatasetID:      datasetID,
+		DocumentID:     &documentID,
+		GraphRevision:  1,
+		Trigger:        "test",
+		Mode:           graphmodel.GraphFlowRunModeBuild,
+		Status:         graphmodel.GraphFlowRunStatusPending,
+		IdempotencyKey: "build:zero-progress",
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	service := NewLifecycleService(db)
+	if err := service.ReconcileRun(ctx, runID); err != nil {
+		t.Fatal(err)
+	}
+	var queued lifecycleTestDataset
+	if err := db.First(&queued, "id = ?", datasetID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if queued.GraphStatus != "queued" || queued.GraphProgress != 0 {
+		t.Fatalf("pending run status=%s progress=%d", queued.GraphStatus, queued.GraphProgress)
+	}
+
+	if err := db.Model(&graphmodel.GraphFlowRun{}).
+		Where("id = ?", runID).
+		Update("status", graphmodel.GraphFlowRunStatusProcessing).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&graphmodel.GraphFlowTask{
+		ID:         uuid.New(),
+		TenantID:   organizationID,
+		KBID:       datasetID,
+		DocumentID: documentID,
+		RunID:      &runID,
+		TaskType:   "extraction",
+		Status:     "processing",
+		Progress:   0,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := service.ReconcileRun(ctx, runID); err != nil {
+		t.Fatal(err)
+	}
+
+	var building lifecycleTestDataset
+	if err := db.First(&building, "id = ?", datasetID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if building.GraphStatus != "building" || building.GraphProgress != 0 {
+		t.Fatalf("processing run status=%s progress=%d", building.GraphStatus, building.GraphProgress)
+	}
+}
+
+func TestLifecycleServiceMarksCurrentCleanupFailureAsDatasetFailure(t *testing.T) {
+	db := openLifecycleTestDB(t, &lifecycleTestRef{})
+	ctx := context.Background()
+	datasetID := uuid.New()
+	organizationID := uuid.New()
+	documentID := uuid.New()
+	cleanupRunID := uuid.New()
+	currentRunID := cleanupRunID.String()
+	readyStatus := "ready"
+
+	if err := db.Create(&lifecycleTestDataset{
+		ID:                datasetID.String(),
+		OrganizationID:    organizationID.String(),
+		GraphStatus:       "building",
+		GraphRevision:     2,
+		GraphCurrentRunID: &currentRunID,
+		GraphProgress:     66,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&lifecycleTestRef{
+		ID:                uuid.New(),
+		OrganizationID:    organizationID.String(),
+		DatasetID:         datasetID.String(),
+		AssetID:           uuid.New(),
+		DatasetDocumentID: &documentID,
+		Status:            datalibrarymodel.KnowledgeBaseAssetRefStatusActive,
+		RetrievalEnabled:  true,
+		GraphSyncStatus:   &readyStatus,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&graphmodel.GraphFlowRun{
+		ID:             cleanupRunID,
+		OrganizationID: organizationID,
+		DatasetID:      datasetID,
+		DocumentID:     &documentID,
+		GraphRevision:  2,
+		Trigger:        "document_replaced",
+		Mode:           graphmodel.GraphFlowRunModeCleanup,
+		Status:         graphmodel.GraphFlowRunStatusProcessing,
+		IdempotencyKey: "cleanup:old-document",
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	if err := NewLifecycleService(db).FailRun(ctx, cleanupRunID, "graph_outbox_failed", "could not schedule cleanup"); err != nil {
+		t.Fatal(err)
+	}
+
+	var run graphmodel.GraphFlowRun
+	if err := db.First(&run, "id = ?", cleanupRunID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if run.Status != graphmodel.GraphFlowRunStatusFailed || run.ErrorCode == nil || *run.ErrorCode != "graph_outbox_failed" {
+		t.Fatalf("cleanup run status=%s error_code=%v", run.Status, run.ErrorCode)
+	}
+	var dataset lifecycleTestDataset
+	if err := db.First(&dataset, "id = ?", datasetID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if dataset.GraphStatus != "failed" {
+		t.Fatalf("dataset graph status=%s, want failed", dataset.GraphStatus)
+	}
+}
+
 func completedGraphDocumentTasks(
 	organizationID uuid.UUID,
 	datasetID uuid.UUID,

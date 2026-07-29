@@ -406,6 +406,7 @@ export function useBulkEnableDocuments(datasetId: string) {
       toast.success(t('messages.enableSuccess'));
       queryClient.invalidateQueries({ queryKey: DATASET_KEYS.documents(datasetId) });
       queryClient.invalidateQueries({ queryKey: DATASET_KEYS.detail(datasetId) });
+      queryClient.invalidateQueries({ queryKey: DATASET_KEYS.graphStatus(datasetId) });
     },
     onError: (error: unknown, _variables, context) => {
       if (context && context.previousLists) {
@@ -486,6 +487,7 @@ export function useBulkDisableDocuments(datasetId: string) {
       toast.success(t('messages.disableSuccess'));
       queryClient.invalidateQueries({ queryKey: DATASET_KEYS.documents(datasetId) });
       queryClient.invalidateQueries({ queryKey: DATASET_KEYS.detail(datasetId) });
+      queryClient.invalidateQueries({ queryKey: DATASET_KEYS.graphStatus(datasetId) });
     },
     onError: (error: unknown, _variables, context) => {
       if (context && context.previousLists) {

@@ -53,6 +53,7 @@ export function useDocumentActions({
     },
     onSuccess: () => {
       toast.success(t('messages.enableSuccess'));
+      queryClient.invalidateQueries({ queryKey: DATASET_KEYS.graphStatus(datasetId) });
       onDocumentChange?.();
     },
     onError: (_error, _vars, ctx) => {
@@ -88,6 +89,7 @@ export function useDocumentActions({
     },
     onSuccess: () => {
       toast.success(t('messages.disableSuccess'));
+      queryClient.invalidateQueries({ queryKey: DATASET_KEYS.graphStatus(datasetId) });
       onDocumentChange?.();
     },
     onError: (_error, _vars, ctx) => {

@@ -1250,6 +1250,20 @@ const messages: NodesMessages = {
     recall: {
       trigger: '召回设置',
       title: '召回设置',
+      method: '召回方式',
+      defaultLabel: '默认',
+      vector: {
+        label: '向量召回',
+        description:
+          '响应更快，适合事实查询和大多数日常问答。系统会按语义相似度匹配相关内容，在速度与准确性之间保持良好平衡。',
+      },
+      graph: {
+        label: '图谱召回',
+        description:
+          '沿实体关系进行多跳检索，更适合关系推理、因果链路等复杂问题。覆盖更深入，但通常需要更长的召回时间。',
+        requirement:
+          '所选知识库必须已启用知识图谱，并完成构建和可见性同步；否则该节点运行时将无法获得图谱结果。',
+      },
       topK: 'Top K',
       scoreThreshold: '得分阈值',
       enableReranking: '启用重排',
@@ -1262,6 +1276,7 @@ const messages: NodesMessages = {
     },
     validation: {
       mustSelectDataset: '知识检索节点必须选择知识库',
+      invalidDatasetSelection: '知识库配置已失效，请重新选择知识库',
       mustBindQueryVar: '知识检索节点必须配置查询变量',
       mustSelectRerankModel: '启用“模型重排”后必须选择重排模型',
     },

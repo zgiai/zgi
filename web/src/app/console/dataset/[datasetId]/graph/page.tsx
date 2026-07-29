@@ -293,6 +293,10 @@ export default function DatasetGraphPage() {
                 {graphStatus.error_message || t('graph.runtimeUnavailable')}
               </p>
             </div>
+          ) : graphStatus?.status === 'waiting_content' ? (
+            <div className="flex flex-1 items-center justify-center p-8 text-center text-muted-foreground">
+              <p>{t('graph.emptyStatusDescription')}</p>
+            </div>
           ) : graphStatus && !graphStatus.can_search ? (
             <div className="flex flex-1 flex-col items-center justify-center gap-3 p-8 text-center text-muted-foreground">
               <Loader2 className="h-8 w-8 animate-spin" />

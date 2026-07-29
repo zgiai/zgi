@@ -31,7 +31,10 @@ func (h *RunOutboxHandler) Process(ctx context.Context, event *graphmodel.GraphO
 	if err != nil {
 		return err
 	}
-	if run.Status == graphmodel.GraphFlowRunStatusReady || run.Status == graphmodel.GraphFlowRunStatusSuperseded || run.Status == graphmodel.GraphFlowRunStatusCancelled {
+	if run.Status == graphmodel.GraphFlowRunStatusReady ||
+		run.Status == graphmodel.GraphFlowRunStatusFailed ||
+		run.Status == graphmodel.GraphFlowRunStatusSuperseded ||
+		run.Status == graphmodel.GraphFlowRunStatusCancelled {
 		return nil
 	}
 	if run.Status == graphmodel.GraphFlowRunStatusPending {
@@ -79,28 +82,9 @@ func (h *RunOutboxHandler) enqueueDocumentTask(ctx context.Context, run *graphmo
 	if run.Mode == graphmodel.GraphFlowRunModeCleanup {
 		taskType = "cleanup"
 	}
-	task := &graphmodel.GraphFlowTask{
-		ID:         uuid.New(),
-		TenantID:   run.OrganizationID,
-		KBID:       run.DatasetID,
-		DocumentID: documentID,
-		RunID:      &run.ID,
-		TaskType:   taskType,
-		Status:     "pending",
-		Metadata: map[string]interface{}{
-			"graph_revision": run.GraphRevision,
-		},
-	}
-	result := h.service.DB.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).Create(task)
-	if result.Error != nil {
-		return result.Error
-	}
-	if result.RowsAffected == 0 {
-		if err := h.service.DB.WithContext(ctx).
-			Where("run_id = ? AND document_id = ? AND task_type = ?", run.ID, documentID, taskType).
-			First(task).Error; err != nil {
-			return err
-		}
+	task, err := h.createDocumentTask(ctx, run, documentID, taskType)
+	if err != nil {
+		return err
 	}
 	if run.Mode != graphmodel.GraphFlowRunModeCleanup {
 		if err := h.service.DB.WithContext(ctx).
@@ -128,4 +112,60 @@ func (h *RunOutboxHandler) enqueueDocumentTask(ctx context.Context, run *graphmo
 	}
 	_, err = h.taskManager.EnqueueTask(queued, asynq.Queue("graphflow"))
 	return err
+}
+
+func (h *RunOutboxHandler) createDocumentTask(
+	ctx context.Context,
+	run *graphmodel.GraphFlowRun,
+	documentID uuid.UUID,
+	taskType string,
+) (*graphmodel.GraphFlowTask, error) {
+	if run.Mode != graphmodel.GraphFlowRunModeCleanup {
+		var count int64
+		if err := h.service.DB.WithContext(ctx).
+			Table("documents").
+			Where("id = ? AND dataset_id = ? AND organization_id = ?", documentID, run.DatasetID, run.OrganizationID).
+			Count(&count).Error; err != nil {
+			return nil, err
+		}
+		if count == 0 {
+			return nil, fmt.Errorf("%w: document %s", graphflow.ErrStaleDocumentSnapshot, documentID)
+		}
+	}
+	task := &graphmodel.GraphFlowTask{
+		ID:         uuid.New(),
+		TenantID:   run.OrganizationID,
+		KBID:       run.DatasetID,
+		DocumentID: documentID,
+		RunID:      &run.ID,
+		TaskType:   taskType,
+		Status:     "pending",
+		Metadata: map[string]interface{}{
+			"graph_revision": run.GraphRevision,
+		},
+	}
+	result := h.service.DB.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).Create(task)
+	if result.Error != nil {
+		return nil, result.Error
+	}
+	if result.RowsAffected == 0 {
+		if err := h.service.DB.WithContext(ctx).
+			Where("run_id = ? AND document_id = ? AND task_type = ?", run.ID, documentID, taskType).
+			First(task).Error; err != nil {
+			return nil, err
+		}
+	}
+	return task, nil
+}
+
+func (h *RunOutboxHandler) HandleTerminalFailure(ctx context.Context, event *graphmodel.GraphOutboxEvent, _ error) error {
+	if h == nil || h.service == nil || h.service.Lifecycle == nil || event == nil || event.RunID == nil {
+		return nil
+	}
+	return h.service.Lifecycle.FailRun(
+		ctx,
+		*event.RunID,
+		"graph_outbox_failed",
+		"Graph task could not be scheduled after repeated attempts.",
+	)
 }

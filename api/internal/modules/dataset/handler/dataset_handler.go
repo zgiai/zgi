@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -876,40 +877,45 @@ func (h *DatasetHandler) handleHitTesting(c *gin.Context, forcedMode string) {
 		recordHistory,
 	)
 	if err != nil {
-		// Handle specific error types based on current implementation
-		errMsg := err.Error()
-		logger.Error("HitTesting failed", err)
-
-		switch {
-		case strings.Contains(errMsg, "index not initialized"):
-			response.Fail(c, response.ErrDatasetProcessing)
-			return
-		case strings.Contains(errMsg, "provider not initialized") || strings.Contains(errMsg, "no embedding model"):
-			response.Fail(c, response.ErrSystemError)
-			return
-		case strings.Contains(errMsg, "quota exceeded"):
-			response.Fail(c, response.ErrRateLimitExceeded)
-			return
-		case strings.Contains(errMsg, "model not supported"):
-			response.Fail(c, response.ErrInvalidParam)
-			return
-		case strings.Contains(errMsg, "dataset not found"):
-			response.Fail(c, response.ErrDatasetNotFound)
-			return
-		case strings.Contains(errMsg, "no permission"):
-			response.Fail(c, response.ErrDatasetPermissionDenied)
-			return
-		default:
-			logger.Warn("Unhandled hit testing error", map[string]interface{}{
-				"error_message": errMsg,
-			})
-			response.FailWithMessage(c, response.ErrSystemError, errMsg)
-			return
+		if !strings.Contains(err.Error(), "knowledge graph visibility is not ready") {
+			logger.Error("HitTesting failed", err)
 		}
+		respondHitTestingError(c, dataset, err)
+		return
 	}
 
 	// Return successful response
 	response.Success(c, result)
+}
+
+func respondHitTestingError(c *gin.Context, dataset *model.Dataset, err error) {
+	errMsg := err.Error()
+	switch {
+	case strings.Contains(errMsg, "knowledge graph visibility is not ready"):
+		c.JSON(http.StatusConflict, gin.H{
+			"code":                                "graph_visibility_not_ready",
+			"message":                             "Knowledge graph visibility is not ready.",
+			"graph_visibility_revision":           dataset.GraphVisibilityRevision,
+			"graph_projected_visibility_revision": dataset.GraphProjectedVisibilityRevision,
+		})
+	case strings.Contains(errMsg, "index not initialized"):
+		response.Fail(c, response.ErrDatasetProcessing)
+	case strings.Contains(errMsg, "provider not initialized") || strings.Contains(errMsg, "no embedding model"):
+		response.Fail(c, response.ErrSystemError)
+	case strings.Contains(errMsg, "quota exceeded"):
+		response.Fail(c, response.ErrRateLimitExceeded)
+	case strings.Contains(errMsg, "model not supported"):
+		response.Fail(c, response.ErrInvalidParam)
+	case strings.Contains(errMsg, "dataset not found"):
+		response.Fail(c, response.ErrDatasetNotFound)
+	case strings.Contains(errMsg, "no permission"):
+		response.Fail(c, response.ErrDatasetPermissionDenied)
+	default:
+		logger.Warn("Unhandled hit testing error", map[string]interface{}{
+			"error_message": errMsg,
+		})
+		response.FailWithMessage(c, response.ErrSystemError, errMsg)
+	}
 }
 
 // HitTesting handles POST /datasets/:dataset_id/hit-testing

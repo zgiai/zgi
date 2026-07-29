@@ -296,7 +296,7 @@ function CreateDatasetDialog({ open, onOpenChange, currentFolderId }: CreateData
 
     // Mark form as submitted to show validation errors
     setHasSubmitted(true);
-    if (!isEmbeddingModelValid) {
+    if (!isEmbeddingModelValid || !isGraphModelValid) {
       setShowAdvancedSettings(true);
     }
 
@@ -441,73 +441,6 @@ function CreateDatasetDialog({ open, onOpenChange, currentFolderId }: CreateData
                 />
               </div>
 
-              {!isEditMode ? (
-                <div className="flex items-center justify-between rounded-xl border border-border/50 bg-muted/20 p-4 transition-colors hover:bg-muted/30">
-                  <div className="space-y-0.5">
-                    <Label
-                      className="cursor-pointer text-sm font-semibold"
-                      htmlFor="enable-graph-flow"
-                    >
-                      {t('datasets.createModal.enableGraphFlowLabel')}
-                    </Label>
-                    <p className="max-w-[360px] text-xs text-muted-foreground">
-                      {t('datasets.createModal.enableGraphFlowDescription')}
-                    </p>
-                  </div>
-                  <Switch
-                    id="enable-graph-flow"
-                    checked={graphFlowEnabled}
-                    onCheckedChange={handleGraphFlowChange}
-                  />
-                </div>
-              ) : null}
-
-              {graphFlowEnabled ? (
-                <GraphModelSettings
-                  graphModel={{
-                    provider: formData.entity_model_provider || '',
-                    model: formData.entity_model || '',
-                  }}
-                  onChange={graphModel => {
-                    setFormData(prev => ({
-                      ...prev,
-                      entity_model_provider: graphModel.provider,
-                      entity_model: graphModel.model,
-                    }));
-                  }}
-                  required
-                  title={t('datasets.createModal.graphModelLabel')}
-                  description={t('datasets.createModal.graphModelDescription')}
-                  placeholder={t('datasets.createModal.graphModelPlaceholder')}
-                  hasError={hasSubmitted && !isGraphModelValid}
-                  errorMessage={
-                    hasSubmitted && !isGraphModelValid
-                      ? t('datasets.validation.graphModel.required')
-                      : undefined
-                  }
-                  embeddingModel={{
-                    provider: formData.embedding_model_provider || '',
-                    model: formData.embedding_model || '',
-                  }}
-                />
-              ) : null}
-
-              {isEditMode && graphFlowEnabled ? (
-                <div className="rounded-xl border border-border/50 bg-muted/20 p-4">
-                  <div className="flex items-center gap-2">
-                    <Badge variant="secondary" className="rounded-full px-2 py-0.5 text-[11px]">
-                      {t('datasets.graphFlowBadge')}
-                    </Badge>
-                    <span className="text-sm font-semibold">
-                      {t('datasets.settings.graphFlowEnabledLabel')}
-                    </span>
-                  </div>
-                  <p className="mt-2 text-xs text-muted-foreground">
-                    {t('datasets.settings.graphFlowEnabledDescription')}
-                  </p>
-                </div>
-              ) : null}
-
               {/* Advanced Settings */}
               <div className="space-y-3">
                 <button
@@ -527,10 +460,80 @@ function CreateDatasetDialog({ open, onOpenChange, currentFolderId }: CreateData
                 <div
                   className={cn(
                     'overflow-hidden transition-all duration-300 ease-in-out',
-                    showAdvancedSettings ? 'max-h-[800px] opacity-100 pt-1' : 'max-h-0 opacity-0'
+                    showAdvancedSettings ? 'max-h-[1200px] opacity-100 pt-1' : 'max-h-0 opacity-0'
                   )}
                 >
                   <div className="space-y-4">
+                    {!isEditMode ? (
+                      <div className="flex items-center justify-between rounded-xl border border-border/50 bg-muted/20 p-4 transition-colors hover:bg-muted/30">
+                        <div className="space-y-0.5">
+                          <Label
+                            className="cursor-pointer text-sm font-semibold"
+                            htmlFor="enable-graph-flow"
+                          >
+                            {t('datasets.createModal.enableGraphFlowLabel')}
+                          </Label>
+                          <p className="max-w-[360px] text-xs text-muted-foreground">
+                            {t('datasets.createModal.enableGraphFlowDescription')}
+                          </p>
+                        </div>
+                        <Switch
+                          id="enable-graph-flow"
+                          checked={graphFlowEnabled}
+                          onCheckedChange={handleGraphFlowChange}
+                        />
+                      </div>
+                    ) : null}
+
+                    {graphFlowEnabled ? (
+                      <GraphModelSettings
+                        graphModel={{
+                          provider: formData.entity_model_provider || '',
+                          model: formData.entity_model || '',
+                        }}
+                        onChange={graphModel => {
+                          setFormData(prev => ({
+                            ...prev,
+                            entity_model_provider: graphModel.provider,
+                            entity_model: graphModel.model,
+                          }));
+                        }}
+                        required
+                        title={t('datasets.createModal.graphModelLabel')}
+                        description={t('datasets.createModal.graphModelDescription')}
+                        placeholder={t('datasets.createModal.graphModelPlaceholder')}
+                        hasError={hasSubmitted && !isGraphModelValid}
+                        errorMessage={
+                          hasSubmitted && !isGraphModelValid
+                            ? t('datasets.validation.graphModel.required')
+                            : undefined
+                        }
+                        embeddingModel={{
+                          provider: formData.embedding_model_provider || '',
+                          model: formData.embedding_model || '',
+                        }}
+                      />
+                    ) : null}
+
+                    {isEditMode && graphFlowEnabled ? (
+                      <div className="rounded-xl border border-border/50 bg-muted/20 p-4">
+                        <div className="flex items-center gap-2">
+                          <Badge
+                            variant="secondary"
+                            className="rounded-full px-2 py-0.5 text-[11px]"
+                          >
+                            {t('datasets.graphFlowBadge')}
+                          </Badge>
+                          <span className="text-sm font-semibold">
+                            {t('datasets.settings.graphFlowEnabledLabel')}
+                          </span>
+                        </div>
+                        <p className="mt-2 text-xs text-muted-foreground">
+                          {t('datasets.settings.graphFlowEnabledDescription')}
+                        </p>
+                      </div>
+                    ) : null}
+
                     {/* Embedding Model Selector */}
                     {!isEditMode && (
                       <EmbeddingSettings

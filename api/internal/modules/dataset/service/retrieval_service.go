@@ -1151,6 +1151,8 @@ func (s *RetrievalService) convertSearchResultsToRecords(documents []retrieval.S
 	for i, doc := range documents {
 		// Handle Graph Knowledge - Special Case
 		if source, ok := doc.Metadata["source"].(string); ok && source == "graph_knowledge" {
+			documentID, _ := doc.Metadata["document_id"].(string)
+			documentResponse := graphKnowledgeDocumentResponse(documentID, datasetDocuments)
 			matchedEntitiesRaw, _ := doc.Metadata["matched_entities"].([]string)
 			matchedEntities := matchedEntitiesRaw
 			if matchedEntities == nil {
@@ -1169,17 +1171,14 @@ func (s *RetrievalService) convertSearchResultsToRecords(documents []retrieval.S
 			record := dto.HitTestingRecordResponse{
 				Segment: dto.SegmentResponse{
 					ID:          doc.ID,
+					DocumentID:  documentID,
 					Content:     doc.Content,
 					SignContent: doc.Content,
 					WordCount:   len(doc.Content),
 					Status:      "completed",
 					Enabled:     true,
-					Document: dto.HitTestingDocumentResponse{
-						ID:             "graph_knowledge",
-						Name:           "Graph Knowledge",
-						DataSourceType: "graph_knowledge",
-					},
-					Keywords: matchedEntities,
+					Document:    documentResponse,
+					Keywords:    matchedEntities,
 				},
 				Score:     doc.Score,
 				MatchType: dto.MatchTypeGraphKnowledge,
@@ -1747,6 +1746,31 @@ func (s *RetrievalService) convertSearchResultsToRecords(documents []retrieval.S
 	// Full document return logic removed as per requirement
 
 	return records
+}
+
+func graphKnowledgeDocumentResponse(
+	documentID string,
+	datasetDocuments map[string]*dataset_model.Document,
+) dto.HitTestingDocumentResponse {
+	if document, ok := datasetDocuments[documentID]; ok && document != nil {
+		docType := ""
+		if document.DocType != nil {
+			docType = *document.DocType
+		}
+		return dto.HitTestingDocumentResponse{
+			ID:             document.ID,
+			DataSourceType: document.DataSourceType,
+			Name:           document.Name,
+			DocType:        docType,
+			DocMetadata:    map[string]interface{}(document.DocMetadata),
+		}
+	}
+
+	return dto.HitTestingDocumentResponse{
+		ID:             "graph_knowledge",
+		Name:           "Graph Knowledge",
+		DataSourceType: "graph_knowledge",
+	}
 }
 
 // loadChildChunksForSegment Load child chunk information for a segment

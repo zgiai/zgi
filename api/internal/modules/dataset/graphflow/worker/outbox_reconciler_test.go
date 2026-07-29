@@ -13,13 +13,19 @@ import (
 )
 
 type outboxProcessorStub struct {
-	calls int
-	err   error
+	calls                int
+	terminalFailureCalls int
+	err                  error
 }
 
 func (s *outboxProcessorStub) Process(context.Context, *model.GraphOutboxEvent) error {
 	s.calls++
 	return s.err
+}
+
+func (s *outboxProcessorStub) HandleTerminalFailure(context.Context, *model.GraphOutboxEvent, error) error {
+	s.terminalFailureCalls++
+	return nil
 }
 
 func TestOutboxReconcilerRecoversStaleLeaseAndConfirmsDuplicateDelivery(t *testing.T) {
@@ -64,4 +70,90 @@ func TestOutboxReconcilerRecoversStaleLeaseAndConfirmsDuplicateDelivery(t *testi
 	if processor.calls != 1 {
 		t.Fatalf("confirmed event was delivered again: %d calls", processor.calls)
 	}
+}
+
+func TestOutboxReconcilerPreservesFailureAndStopsAfterMaximumAttempts(t *testing.T) {
+	db := openOutboxReconcilerTestDB(t)
+	event := &model.GraphOutboxEvent{
+		OrganizationID: uuid.New(),
+		DatasetID:      uuid.New(),
+		EventType:      model.GraphOutboxEventRun,
+		AggregateKey:   "run:permanent-failure",
+		Status:         model.GraphOutboxStatusPending,
+		AttemptCount:   maxOutboxAttempts - 1,
+	}
+	if err := db.Create(event).Error; err != nil {
+		t.Fatal(err)
+	}
+	processorErr := fmt.Errorf("document task insert failed")
+	processor := &outboxProcessorStub{err: processorErr}
+	reconciler := NewOutboxReconciler(db, processor, nil, nil)
+
+	if err := reconciler.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	var persisted model.GraphOutboxEvent
+	if err := db.First(&persisted, "id = ?", event.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if persisted.Status != model.GraphOutboxStatusFailed {
+		t.Fatalf("event status = %q, want failed", persisted.Status)
+	}
+	if persisted.ErrorMessage == nil || *persisted.ErrorMessage != processorErr.Error() {
+		t.Fatalf("event error = %v, want %q", persisted.ErrorMessage, processorErr.Error())
+	}
+	if processor.terminalFailureCalls != 1 {
+		t.Fatalf("terminal failure calls = %d, want 1", processor.terminalFailureCalls)
+	}
+	if err := reconciler.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if processor.calls != 1 {
+		t.Fatalf("failed event was delivered again: %d calls", processor.calls)
+	}
+}
+
+func TestOutboxReconcilerRetriesWithOriginalErrorBeforeMaximumAttempts(t *testing.T) {
+	db := openOutboxReconcilerTestDB(t)
+	event := &model.GraphOutboxEvent{
+		OrganizationID: uuid.New(),
+		DatasetID:      uuid.New(),
+		EventType:      model.GraphOutboxEventRun,
+		AggregateKey:   "run:retryable-failure",
+		Status:         model.GraphOutboxStatusPending,
+	}
+	if err := db.Create(event).Error; err != nil {
+		t.Fatal(err)
+	}
+	processorErr := fmt.Errorf("temporary queue failure")
+	reconciler := NewOutboxReconciler(db, &outboxProcessorStub{err: processorErr}, nil, nil)
+
+	if err := reconciler.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	var persisted model.GraphOutboxEvent
+	if err := db.First(&persisted, "id = ?", event.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if persisted.Status != model.GraphOutboxStatusPending {
+		t.Fatalf("event status = %q, want pending", persisted.Status)
+	}
+	if persisted.ErrorMessage == nil || *persisted.ErrorMessage != processorErr.Error() {
+		t.Fatalf("event error = %v, want %q", persisted.ErrorMessage, processorErr.Error())
+	}
+}
+
+func openOutboxReconcilerTestDB(t *testing.T) *gorm.DB {
+	t.Helper()
+	dsn := fmt.Sprintf("file:outbox-reconciler-%d?mode=memory&cache=shared", time.Now().UnixNano())
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&model.GraphOutboxEvent{}); err != nil {
+		t.Fatal(err)
+	}
+	return db
 }

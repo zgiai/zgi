@@ -22,6 +22,7 @@ const messages = {
     inheritedEmbeddingModel: 'Inherited embedding model',
     statusTitle: 'Knowledge graph status',
     statusDescription: 'Current status: {status}. Progress: {progress}%.',
+    emptyStatusDescription: 'Current status: The knowledge base is empty. Waiting for documents.',
     rebuild: 'Rebuild graph',
     retryDocument: 'Retry',
     modelChangeConfirmation:
@@ -1229,6 +1230,10 @@ const messages = {
     vectorRetrievalFailed: 'Vector retrieval failed',
     graphRetrievalFailed: 'Graph retrieval failed',
     hitTestingFailed: 'Hit testing failed, please retry',
+    graphVisibilitySyncTitle: 'Updating graph data',
+    graphVisibilitySyncDescription:
+      'Document availability has changed. The knowledge graph retrieval scope is being synchronized and graph retrieval will resume when it finishes.',
+    graphUnavailableTitle: 'Graph retrieval unavailable',
     noCompletedDocuments: 'No Completed Documents',
     noCompletedDocumentsDesc:
       'Please wait for documents to finish indexing before testing retrieval.',
@@ -1243,6 +1248,7 @@ const messages = {
     details: 'Details',
     fileDetails: 'File Details',
     fileName: 'Name',
+    sourceDocument: 'Source document',
     viewDocumentDetails: 'View Document Details',
     close: 'Close',
 
@@ -1429,13 +1435,10 @@ const messages = {
     matchedEntities: 'Matched Entities',
     noMatchedEntities: 'No matched entities',
     graphExecution: 'Graph Execution',
+    viewGraphDetails: 'View graph details',
+    hideGraphDetails: 'Hide graph details',
     graphNotEnabled: 'Enable the knowledge graph before selecting graph retrieval.',
     graphNotReady: 'Graph retrieval is unavailable until the current graph revision is ready.',
-    requestedMethod: 'Requested method',
-    actualMethod: 'Actual method',
-    fallbackPolicy: 'Fallback policy',
-    graphRevision: 'Graph revision',
-    visibilityRevision: 'Visibility revision',
     relationshipPaths: 'Relationship paths',
     activeSources: 'Active sources',
     batchRowFailed: 'This query failed. Review the graph status and retry.',

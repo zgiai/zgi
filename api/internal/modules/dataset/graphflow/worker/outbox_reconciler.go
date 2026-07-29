@@ -14,10 +14,15 @@ const (
 	defaultOutboxBatchSize = 100
 	outboxLeaseDuration    = time.Minute
 	outboxRetryDelay       = 5 * time.Second
+	maxOutboxAttempts      = 20
 )
 
 type OutboxEventProcessor interface {
 	Process(context.Context, *model.GraphOutboxEvent) error
+}
+
+type OutboxTerminalFailureHandler interface {
+	HandleTerminalFailure(context.Context, *model.GraphOutboxEvent, error) error
 }
 
 type OutboxReconciler struct {
@@ -63,7 +68,19 @@ func (r *OutboxReconciler) RunOnce(ctx context.Context) error {
 			err = processor.Process(ctx, event)
 		}
 		if err != nil {
-			if retryErr := r.repository.Retry(ctx, event.ID, now.Add(outboxRetryDelay), "Graph outbox processing failed."); retryErr != nil {
+			message := err.Error()
+			if event.AttemptCount >= maxOutboxAttempts {
+				if handler, ok := processor.(OutboxTerminalFailureHandler); ok {
+					if handleErr := handler.HandleTerminalFailure(ctx, event, err); handleErr != nil {
+						return handleErr
+					}
+				}
+				if failErr := r.repository.MarkFailed(ctx, event.ID, message); failErr != nil {
+					return failErr
+				}
+				continue
+			}
+			if retryErr := r.repository.Retry(ctx, event.ID, now.Add(outboxRetryDelay), message); retryErr != nil {
 				return retryErr
 			}
 			continue

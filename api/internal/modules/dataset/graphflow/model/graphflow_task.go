@@ -8,9 +8,10 @@ import (
 
 // GraphFlowTask tracks async tasks for GraphFlow
 type GraphFlowTask struct {
-	ID         uuid.UUID  `gorm:"type:uuid;primary_key;default:gen_random_uuid()" json:"id"`
-	TenantID   uuid.UUID  `gorm:"type:uuid;not null" json:"tenant_id"`
-	KBID       uuid.UUID  `gorm:"type:uuid;column:kb_id;not null" json:"kb_id"` // Maps to datasets(id)
+	ID       uuid.UUID `gorm:"type:uuid;primary_key;default:gen_random_uuid()" json:"id"`
+	TenantID uuid.UUID `gorm:"type:uuid;not null" json:"tenant_id"`
+	KBID     uuid.UUID `gorm:"type:uuid;column:kb_id;not null" json:"kb_id"` // Maps to datasets(id)
+	// DocumentID is a durable source identifier. Cleanup tasks may outlive the documents row.
 	DocumentID uuid.UUID  `gorm:"type:uuid;not null" json:"document_id"`
 	SegmentID  *uuid.UUID `gorm:"type:uuid" json:"segment_id,omitempty"`
 	RunID      *uuid.UUID `gorm:"type:uuid;index" json:"run_id,omitempty"`

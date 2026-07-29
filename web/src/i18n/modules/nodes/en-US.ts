@@ -1300,6 +1300,20 @@ const messages = {
     recall: {
       trigger: 'Recall Settings',
       title: 'Recall Settings',
+      method: 'Retrieval Method',
+      defaultLabel: 'Default',
+      vector: {
+        label: 'Vector Retrieval',
+        description:
+          'Returns results faster and works well for factual queries and most everyday questions. It matches content by semantic similarity for a strong balance of speed and accuracy.',
+      },
+      graph: {
+        label: 'Graph Retrieval',
+        description:
+          'Traverses entity relationships for multi-hop retrieval, making it better for relationship reasoning, causal chains, and other complex questions. It provides deeper coverage but usually takes longer.',
+        requirement:
+          'Every selected knowledge base must have its knowledge graph enabled, built, and visibility-synchronized. Otherwise this node cannot return graph results at runtime.',
+      },
       topK: 'Top K',
       scoreThreshold: 'Score Threshold',
       enableReranking: 'Enable Reranking',
@@ -1312,6 +1326,7 @@ const messages = {
     },
     validation: {
       mustSelectDataset: 'Knowledge Retrieval node must select a dataset',
+      invalidDatasetSelection: 'The dataset configuration is invalid. Select the dataset again.',
       mustBindQueryVar: 'Knowledge Retrieval node must bind a query variable',
       mustSelectRerankModel: 'Knowledge Retrieval node must select a reranking model',
     },
