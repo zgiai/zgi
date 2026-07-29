@@ -189,6 +189,7 @@ const messages: AuthMessages = {
     organizationUnavailable: '受邀组织已停用或不存在，请联系邀请人。',
     membershipUnavailable: '邀请对应的成员关系已失效，请联系邀请人重新邀请。',
     roleUnavailable: '邀请角色已失效，请联系邀请人重新分配角色。',
+    accountUnavailable: '该账号当前不可用，请联系系统管理员。',
     emailMismatch: '当前登录账号与受邀邮箱 {{email}} 不一致，请切换账号。',
     destination: '你将加入{{organization}}工作区：{{workspace}}',
     organizationPrefix: '组织「{{name}}」的',

@@ -222,6 +222,7 @@ export interface ActivationCheckResponse {
     | 'organization_unavailable'
     | 'membership_unavailable'
     | 'role_unavailable'
+    | 'account_unavailable'
     | 'email_mismatch';
   data?: ActivationCheckData;
 }

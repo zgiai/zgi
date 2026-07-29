@@ -680,6 +680,9 @@ func (s *AccountService) ActivateCheck(ctx context.Context, workspaceID, email, 
 				"is_valid": false,
 			}, false
 		}
+		if account.Status != auth_model.AccountStatusPending && account.Status != auth_model.AccountStatusActive {
+			return map[string]interface{}{"is_valid": false, "status": "account_unavailable"}, false
+		}
 		organizationName := ""
 		if invitationData.OrganizationID != "" && s.organizationService != nil {
 			organization, organizationErr := s.organizationService.GetOrganizationByID(ctx, invitationData.OrganizationID)
@@ -727,12 +730,21 @@ func (s *AccountService) ActivateCheck(ctx context.Context, workspaceID, email, 
 			"is_valid": false,
 		}, false
 	}
-	membership, membershipErr := s.workspaceManagementService.GetByWorkspaceAndMember(ctx, tenant.ID, tenantAccount.Account.ID)
-	if membershipErr != nil || membership == nil {
-		return map[string]interface{}{"is_valid": false, "status": "membership_unavailable"}, false
+	if tenantAccount.Account.Status != auth_model.AccountStatusPending && tenantAccount.Account.Status != auth_model.AccountStatusActive {
+		return map[string]interface{}{"is_valid": false, "status": "account_unavailable"}, false
 	}
-	if invitationData.Role != "" && string(membership.Role) != invitationData.Role {
-		return map[string]interface{}{"is_valid": false, "status": "role_unavailable"}, false
+	membership, membershipErr := s.workspaceManagementService.GetByWorkspaceAndMember(ctx, tenant.ID, tenantAccount.Account.ID)
+	invitedRole := invitationData.Role
+	if membershipErr != nil || membership == nil {
+		role := workspace_model.WorkspaceMemberRole(invitationData.Role)
+		if tenantAccount.Account.Status != auth_model.AccountStatusActive || workspace_model.DefaultWorkspaceRoleID(role) == "" || role == workspace_model.WorkspaceRoleOwner {
+			return map[string]interface{}{"is_valid": false, "status": "membership_unavailable"}, false
+		}
+	} else {
+		invitedRole = string(membership.Role)
+		if invitationData.Role != "" && invitedRole != invitationData.Role {
+			return map[string]interface{}{"is_valid": false, "status": "role_unavailable"}, false
+		}
 	}
 	organizationID := ""
 	organizationName := ""
@@ -762,7 +774,7 @@ func (s *AccountService) ActivateCheck(ctx context.Context, workspaceID, email, 
 			"organization_name": organizationName,
 			"account_exists":    tenantAccount.Account.Status == auth_model.AccountStatusActive,
 			"inviter_name":      inviterName,
-			"role":              string(membership.Role),
+			"role":              invitedRole,
 			"expires_at":        invitationData.ExpiresAt,
 		},
 	}, true
@@ -793,6 +805,9 @@ func (s *AccountService) Activate(ctx context.Context, workspaceID, email, token
 			return nil, errors.New("Auth Token is invalid or account already activated, please check again.")
 		}
 		if account.Email != invitationData.Email {
+			return nil, errors.New("Auth Token is invalid or account already activated, please check again.")
+		}
+		if account.Status != auth_model.AccountStatusPending {
 			return nil, errors.New("Auth Token is invalid or account already activated, please check again.")
 		}
 
@@ -852,6 +867,7 @@ func (s *AccountService) Authenticate(ctx context.Context, email, password, invi
 	if err := accountLoginStatusError(account.Status); err != nil {
 		return nil, err
 	}
+	wasPendingAccount := account.Status == auth_model.AccountStatusPending
 
 	var invitationReservation *helper.InvitationReservation
 	releaseInvitation := false
@@ -872,7 +888,7 @@ func (s *AccountService) Authenticate(ctx context.Context, email, password, invi
 	}
 
 	accountNeedsUpdate := false
-	if password != "" && len(inviteToken) != 0 && (account.Password == nil || account.Status == auth_model.AccountStatusPending) {
+	if password != "" && inviteToken != "" && account.Status == auth_model.AccountStatusPending {
 		hashedPassword, salt, err := helper.HashPasswordPBKDF2(password)
 		if err != nil {
 			return nil, fmt.Errorf("failed to hash password: %w", err)
@@ -896,6 +912,12 @@ func (s *AccountService) Authenticate(ctx context.Context, email, password, invi
 		accountNeedsUpdate = true
 	}
 
+	if inviteToken != "" && !wasPendingAccount && invitationReservation.Data.WorkspaceID != "" {
+		if err := s.acceptWorkspaceInvitation(ctx, account.ID, invitationReservation.Data); err != nil {
+			return nil, fmt.Errorf("failed to establish invited membership: %w", err)
+		}
+	}
+
 	if accountNeedsUpdate {
 		if err := s.accountRepo.UpdateAccount(ctx, account); err != nil {
 			return nil, fmt.Errorf("failed to activate invited account: %w", err)
@@ -912,6 +934,70 @@ func (s *AccountService) Authenticate(ctx context.Context, email, password, invi
 	}
 
 	return account, nil
+}
+
+func (s *AccountService) acceptWorkspaceInvitation(ctx context.Context, accountID string, invitation helper.InvitationData) error {
+	if s.workspaceManagementService == nil {
+		return errors.New("workspace invitation service is unavailable")
+	}
+	if existing, err := s.workspaceManagementService.GetByWorkspaceAndMember(ctx, invitation.WorkspaceID, accountID); err == nil && existing != nil {
+		return nil
+	}
+	if s.db == nil || s.organizationManagementService == nil {
+		return errors.New("invitation membership services are unavailable")
+	}
+	workspace, err := s.workspaceManagementService.GetWorkspaceByID(ctx, invitation.WorkspaceID)
+	if err != nil || workspace == nil || workspace.Status != workspace_model.WorkspaceStatusNormal {
+		return errors.New("invited workspace is unavailable")
+	}
+	organizationID := strings.TrimSpace(invitation.OrganizationID)
+	if organizationID == "" && workspace.OrganizationID != nil {
+		organizationID = strings.TrimSpace(*workspace.OrganizationID)
+	}
+	if organizationID != "" {
+		if s.organizationService == nil {
+			return errors.New("organization invitation service is unavailable")
+		}
+		organization, organizationErr := s.organizationService.GetOrganizationByID(ctx, organizationID)
+		if organizationErr != nil || organization == nil || !organization.IsActive() {
+			return errors.New("invited organization is unavailable")
+		}
+	}
+	role := workspace_model.WorkspaceMemberRole(invitation.Role)
+	if workspace_model.DefaultWorkspaceRoleID(role) == "" || role == workspace_model.WorkspaceRoleOwner {
+		return errors.New("invited workspace role is unavailable")
+	}
+
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		tenantService := s.workspaceManagementService.WithTx(tx)
+		if existing, lookupErr := tenantService.GetByWorkspaceAndMember(ctx, invitation.WorkspaceID, accountID); lookupErr == nil && existing != nil {
+			return nil
+		}
+		member := &workspace_model.WorkspaceMember{
+			ID: uuid.NewString(), WorkspaceID: invitation.WorkspaceID, AccountID: accountID,
+			Role: role, Current: false, Extensions: map[string]interface{}{},
+		}
+		if invitation.InviterID != "" {
+			member.InvitedBy = &invitation.InviterID
+		}
+		workspace_model.ApplyWorkspaceMemberDefaults(member)
+		if err := tx.Create(member).Error; err != nil {
+			return fmt.Errorf("create invited workspace membership: %w", err)
+		}
+		if organizationID == "" {
+			return nil
+		}
+		organizationService := s.organizationManagementService.WithTx(tx)
+		if err := organizationService.UpsertOrganizationRole(ctx, organizationID, accountID, workspace_model.OrganizationRoleNormal); err != nil {
+			return fmt.Errorf("create invited organization membership: %w", err)
+		}
+		if shadowMember, lookupErr := tenantService.GetByWorkspaceAndMember(ctx, organizationID, accountID); lookupErr == nil && shadowMember == nil {
+			if err := tenantService.CreateWorkspaceMember(ctx, organizationID, accountID, string(workspace_model.WorkspaceRoleNormal)); err != nil {
+				return fmt.Errorf("create invited organization workspace membership: %w", err)
+			}
+		}
+		return nil
+	})
 }
 
 func (s *AccountService) releaseInvitationReservation(ctx context.Context, token string, reservation *helper.InvitationReservation) {

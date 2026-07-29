@@ -625,11 +625,19 @@ end
 local accountID = ''
 local email = ''
 local workspaceID = ''
+local organizationID = ''
+local inviterID = ''
+local role = ''
+local expiresAt = 0
 if genericRaw then
   local generic = cjson.decode(genericRaw)
   accountID = tostring(generic['account_id'] or '')
   email = tostring(generic['email'] or '')
   workspaceID = tostring(generic['workspace_id'] or '')
+  organizationID = tostring(generic['organization_id'] or '')
+  inviterID = tostring(generic['inviter_id'] or '')
+  role = tostring(generic['role'] or '')
+  expiresAt = tonumber(generic['expires_at'] or 0)
 end
 if legacyRaw then
   local legacyAccountID = tostring(legacyRaw)
@@ -664,7 +672,11 @@ local claim = cjson.encode({
   reservation_id = ARGV[3],
   account_id = accountID,
   email = email,
-  workspace_id = workspaceID
+  workspace_id = workspaceID,
+  organization_id = organizationID,
+  inviter_id = inviterID,
+  role = role,
+  expires_at = expiresAt
 })
 local acquired = redis.call('SET', KEYS[3], claim, 'NX', 'PX', ttl)
 if not acquired then

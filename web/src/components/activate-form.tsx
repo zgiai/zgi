@@ -103,6 +103,7 @@ const ActivateForm = () => {
     organization_unavailable: t('invitationActivation.organizationUnavailable'),
     membership_unavailable: t('invitationActivation.membershipUnavailable'),
     role_unavailable: t('invitationActivation.roleUnavailable'),
+    account_unavailable: t('invitationActivation.accountUnavailable'),
     email_mismatch: t('invitationActivation.emailMismatch', { email: result?.data?.email || email }),
   };
   const statusMessage = statusMessages[effectiveStatus || 'invalid'];

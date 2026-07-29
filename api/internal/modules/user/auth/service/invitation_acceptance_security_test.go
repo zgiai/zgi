@@ -10,6 +10,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	shared_dto "github.com/zgiai/zgi/api/internal/dto"
+	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	auth_model "github.com/zgiai/zgi/api/internal/modules/user/auth/model"
 	auth_repo "github.com/zgiai/zgi/api/internal/modules/user/auth/repository"
 	workspace_model "github.com/zgiai/zgi/api/internal/modules/workspace/model"
@@ -74,7 +75,7 @@ func TestExistingAccountCanAuthenticateAndConsumeDirectedInvitation(t *testing.T
 		Password: &hash, PasswordSalt: &salt,
 	}}
 	require.NoError(t, tokenMgr.StoreInvitationTokenWithDetails(helper.InvitationData{
-		AccountID: repo.account.ID, Email: email, WorkspaceID: "workspace-1", Role: string(workspace_model.WorkspaceRoleMember),
+		AccountID: repo.account.ID, Email: email, Role: string(workspace_model.WorkspaceRoleMember),
 	}, token, 1))
 	service := &AccountService{accountRepo: repo, tokenMgr: tokenMgr}
 
@@ -84,6 +85,66 @@ func TestExistingAccountCanAuthenticateAndConsumeDirectedInvitation(t *testing.T
 	state, err := tokenMgr.GetInvitationTokenState(token)
 	require.NoError(t, err)
 	require.Equal(t, "used", state)
+}
+
+func TestActiveAccountCannotUseActivationEndpointToReplacePassword(t *testing.T) {
+	tokenMgr := newInvitationTestTokenManager(t)
+	const (
+		email       = "protected-existing@example.com"
+		token       = "protected-existing-invitation"
+		oldPassword = "ExistingPassword1"
+	)
+	hash, salt, err := helper.HashPasswordPBKDF2(oldPassword)
+	require.NoError(t, err)
+	repo := &invitationAcceptanceAccountRepository{account: auth_model.Account{
+		ID: "protected-existing-1", Email: email, Status: auth_model.AccountStatusActive,
+		Password: &hash, PasswordSalt: &salt,
+	}}
+	require.NoError(t, tokenMgr.StoreInvitationToken("", email, repo.account.ID, token, 1))
+	service := &AccountService{accountRepo: repo, tokenMgr: tokenMgr}
+
+	_, err = service.Activate(t.Context(), "", email, token, "Attacker", "ReplacedPassword2", "en-US", "UTC")
+	require.Error(t, err)
+	stored := repo.account
+	require.Equal(t, auth_model.AccountStatusActive, stored.Status)
+	matches, compareErr := helper.ComparePasswordPBKDF2(oldPassword, *stored.Password, *stored.PasswordSalt)
+	require.NoError(t, compareErr)
+	require.True(t, matches, "activation must not replace an active account password")
+	invitation, getErr := tokenMgr.GetInvitationByToken(token, "", "")
+	require.NoError(t, getErr)
+	require.NotNil(t, invitation, "rejected activation must leave the invitation available for password-authenticated login")
+}
+
+func TestActivePasswordlessAccountCannotSetPasswordThroughInvitationLogin(t *testing.T) {
+	tokenMgr := newInvitationTestTokenManager(t)
+	const (
+		email = "passwordless-existing@example.com"
+		token = "passwordless-existing-invitation"
+	)
+	repo := &invitationAcceptanceAccountRepository{account: auth_model.Account{
+		ID: "passwordless-existing-1", Email: email, Status: auth_model.AccountStatusActive,
+	}}
+	require.NoError(t, tokenMgr.StoreInvitationToken("", email, repo.account.ID, token, 1))
+	service := &AccountService{accountRepo: repo, tokenMgr: tokenMgr}
+
+	_, err := service.Authenticate(t.Context(), email, "InjectedPassword1", token)
+	require.ErrorContains(t, err, "password not set")
+	require.Nil(t, repo.account.Password)
+	invitation, getErr := tokenMgr.GetInvitationByToken(token, "", "")
+	require.NoError(t, getErr)
+	require.NotNil(t, invitation)
+}
+
+func TestUnavailableAccountCannotBeReactivatedByInvitation(t *testing.T) {
+	tokenMgr := newInvitationTestTokenManager(t)
+	const token = "disabled-account-invitation"
+	account := auth_model.Account{ID: "disabled-1", Email: "disabled@example.com", Status: auth_model.AccountStatusBanned}
+	require.NoError(t, tokenMgr.StoreInvitationToken("", account.Email, account.ID, token, 1))
+	service := &AccountService{accountRepo: &invitationAcceptanceAccountRepository{account: account}, tokenMgr: tokenMgr}
+
+	result, valid := service.ActivateCheck(t.Context(), "", account.Email, token)
+	require.False(t, valid)
+	require.Equal(t, "account_unavailable", result["status"])
 }
 
 func TestActivateCheckReturnsExistingAccountInvitationDetails(t *testing.T) {
@@ -124,6 +185,40 @@ func TestActivateCheckReportsBoundEmailMismatch(t *testing.T) {
 	data, ok := result["data"].(map[string]interface{})
 	require.True(t, ok)
 	require.Equal(t, "invited@example.com", data["email"])
+}
+
+func TestExistingAccountInvitationCreatesMembershipOnlyAfterPasswordVerification(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(fmt.Sprintf("file:existing-invite-membership-%d?mode=memory&cache=shared", time.Now().UnixNano())), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&workspace_model.WorkspaceMember{}))
+	workspace := &workspace_model.Workspace{ID: "workspace-deferred", Status: workspace_model.WorkspaceStatusNormal}
+	service := &AccountService{
+		db:                            db,
+		workspaceManagementService:    &invitationWorkspaceService{workspace: workspace},
+		organizationManagementService: invitationOrganizationManagementService{},
+	}
+	invitation := helper.InvitationData{
+		AccountID: "active-account", WorkspaceID: workspace.ID,
+		InviterID: "inviter-1", Role: string(workspace_model.WorkspaceRoleMember),
+	}
+
+	var before int64
+	require.NoError(t, db.Model(&workspace_model.WorkspaceMember{}).Count(&before).Error)
+	require.Zero(t, before)
+	require.NoError(t, service.acceptWorkspaceInvitation(t.Context(), invitation.AccountID, invitation))
+	var member workspace_model.WorkspaceMember
+	require.NoError(t, db.Where("workspace_id = ? AND account_id = ?", workspace.ID, invitation.AccountID).First(&member).Error)
+	require.Equal(t, workspace_model.WorkspaceRoleMember, member.Role)
+	require.NotNil(t, member.InvitedBy)
+	require.Equal(t, invitation.InviterID, *member.InvitedBy)
+}
+
+type invitationOrganizationManagementService struct {
+	interfaces.OrganizationManagementService
+}
+
+func (s invitationOrganizationManagementService) WithTx(*gorm.DB) interfaces.OrganizationManagementService {
+	return s
 }
 
 func TestAccountActivateDatabaseFailureReleasesGenericInvitation(t *testing.T) {

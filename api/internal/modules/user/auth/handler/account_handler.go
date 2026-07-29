@@ -1006,7 +1006,7 @@ func (h *ActivateHandler) Check(c *gin.Context) {
 	email := c.Query("email")
 	token := c.Query("token")
 
-	result, isValid := h.accountService.ActivateCheck(context.Background(), workspaceID, email, token)
+	result, isValid := h.accountService.ActivateCheck(c.Request.Context(), workspaceID, email, token)
 	if !isValid {
 		response.Success(c, result)
 		return
@@ -1032,7 +1032,7 @@ func (h *ActivateHandler) Activate(c *gin.Context) {
 	}
 
 	// Activate account
-	account, err := h.accountService.Activate(context.Background(), req.WorkspaceID, req.Email, req.Token, req.Name, req.Password, req.InterfaceLanguage, req.Timezone)
+	account, err := h.accountService.Activate(c.Request.Context(), req.WorkspaceID, req.Email, req.Token, req.Name, req.Password, req.InterfaceLanguage, req.Timezone)
 	if err != nil {
 		// Check for specific activation error
 		if err.Error() == "Auth Token is invalid or account already activated, please check again." {

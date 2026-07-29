@@ -135,6 +135,9 @@ func (s *RegisterServiceImpl) Activate(ctx context.Context, workspaceID, email, 
 	if invitationData.AccountID != account.ID {
 		return nil, errors.New("Auth Token is invalid or account already activated, please check again.")
 	}
+	if account.Status != auth_model.AccountStatusPending {
+		return nil, errors.New("Auth Token is invalid or account already activated, please check again.")
+	}
 
 	account.Name = name
 	if password != "" {
@@ -403,6 +406,7 @@ func (s *RegisterServiceImpl) InviteMemberEx(ctx context.Context, tenantID, invi
 	}
 
 	var ta *workspace_model.WorkspaceMember = nil
+	createMembershipNow := false
 
 	if account == nil {
 		// Create new account with extended info
@@ -425,7 +429,11 @@ func (s *RegisterServiceImpl) InviteMemberEx(ctx context.Context, tenantID, invi
 		if err := tx.Create(account).Error; err != nil {
 			return "", fmt.Errorf("failed to create account: %w", err)
 		}
+		createMembershipNow = true
 	} else {
+		if account.Status != auth_model.AccountStatusActive && account.Status != auth_model.AccountStatusPending {
+			return "", errors.New("invitee account is unavailable")
+		}
 		if err := s.tenantService.CheckMemberPermission(ctx, tenant, inviter, account, "add"); err != nil {
 			return "", err
 		}
@@ -434,9 +442,10 @@ func (s *RegisterServiceImpl) InviteMemberEx(ctx context.Context, tenantID, invi
 			// User already exists in tenant
 			return "", usererrors.ErrAccountAlreadyInWorkspace
 		}
+		createMembershipNow = account.Status == auth_model.AccountStatusPending
 	}
 
-	if ta == nil {
+	if ta == nil && createMembershipNow {
 		// Prepare extensions
 		extMap := make(map[string]interface{})
 		if position != "" {

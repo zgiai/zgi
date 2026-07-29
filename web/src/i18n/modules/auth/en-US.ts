@@ -200,6 +200,7 @@ const messages = {
     organizationUnavailable: 'The invited organization is unavailable. Contact the inviter.',
     membershipUnavailable: 'The invited membership is no longer available. Ask for a new invitation.',
     roleUnavailable: 'The invited role is no longer available. Ask the inviter to assign a new role.',
+    accountUnavailable: 'This account is currently unavailable. Contact an administrator.',
     emailMismatch: 'The signed-in account does not match the invited email {{email}}. Switch accounts to continue.',
     destination: 'You will join {{organization}}workspace: {{workspace}}',
     organizationPrefix: 'organization “{{name}}”, ',

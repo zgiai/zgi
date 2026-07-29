@@ -54,6 +54,39 @@ func TestInviteExistingPendingMemberCommitsTransactionAndKeepsDurableTokenOnEmai
 	require.Equal(t, invitee.ID, stored.AccountID)
 }
 
+func TestInviteExistingActiveAccountDefersMembershipUntilAcceptance(t *testing.T) {
+	db, _ := newInvitationTestDB(t)
+	tokenMgr := newInvitationTestTokenManager(t)
+	organizationID := "organization-1"
+	workspace := &workspace_model.Workspace{
+		ID: "workspace-active", Name: "Workspace", Status: workspace_model.WorkspaceStatusNormal,
+		OrganizationID: &organizationID,
+	}
+	invitee := &auth_model.Account{ID: "active-invitee-1", Email: "active@example.com", Status: auth_model.AccountStatusActive}
+	service := &RegisterServiceImpl{
+		db: db,
+		accountRepo: &invitationAccountRepository{
+			inviter: &auth_model.Account{ID: "inviter-1", Name: "Inviter", Status: auth_model.AccountStatusActive},
+			invitee: invitee,
+		},
+		tenantService: &invitationWorkspaceService{workspace: workspace},
+		tokenMgr:      tokenMgr,
+	}
+
+	token, err := service.InviteMemberEx(
+		t.Context(), workspace.ID, "inviter-1", invitee.Email, workspace_model.WorkspaceRoleMember,
+		"en-US", invitee.Name, "", "", "", false,
+	)
+	require.NoError(t, err, "inviting an active account must not require a membership write")
+	stored, err := tokenMgr.GetInvitationByToken(token, "", "")
+	require.NoError(t, err)
+	require.Equal(t, invitee.ID, stored.AccountID)
+	require.Equal(t, workspace.ID, stored.WorkspaceID)
+	require.Equal(t, organizationID, stored.OrganizationID)
+	require.Equal(t, "inviter-1", stored.InviterID)
+	require.Equal(t, string(workspace_model.WorkspaceRoleMember), stored.Role)
+}
+
 func TestGenerateInviteTokenReturnsRedisFailureInsteadOfFakeToken(t *testing.T) {
 	server := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
@@ -132,4 +165,8 @@ func (s *invitationWorkspaceService) CheckMemberPermission(context.Context, *wor
 
 func (s *invitationWorkspaceService) GetByWorkspaceAndMember(context.Context, string, string) (*workspace_model.WorkspaceMember, error) {
 	return s.member, nil
+}
+
+func (s *invitationWorkspaceService) WithTx(*gorm.DB) interfaces.WorkspaceManagementService {
+	return s
 }
