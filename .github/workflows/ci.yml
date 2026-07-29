@@ -54,8 +54,8 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Type check
-        run: pnpm type-check
+      - name: Run registration frontend and type checks
+        run: ../scripts/check-registration-auth.sh --frontend-only
 
   registration-auth:
     name: Registration and invitation gate
@@ -71,20 +71,6 @@ jobs:
         with:
           go-version-file: api/go.mod
           cache-dependency-path: api/go.sum
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-
-      - name: Set up pnpm
-        run: |
-          corepack enable
-          corepack prepare pnpm@10.12.1 --activate
-
-      - name: Install web dependencies
-        working-directory: web
-        run: pnpm install --frozen-lockfile
 
       - name: Install SQLite test build dependencies
         run: |
@@ -104,7 +90,7 @@ jobs:
           # Invitation transaction tests use go-sqlite3; some CI environments
           # default CGO_ENABLED to 0, which replaces the driver with its stub.
           CGO_ENABLED: "1"
-        run: make check-registration-auth
+        run: ./scripts/check-registration-auth.sh --backend-only
 
   sandbox:
     name: Sandbox runtime tests
