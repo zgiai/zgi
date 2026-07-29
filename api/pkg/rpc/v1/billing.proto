@@ -22,6 +22,9 @@ message PreDeductQuotaRequest {
   string provider_name = 6;
   string request_id = 7;
   string attempt_id = 8;
+  string resource_type = 9;
+  string resource_id = 10;
+  string resource_name = 11;
 }
 
 message PreDeductQuotaResponse {
@@ -60,6 +63,9 @@ message SettleQuotaRequest {
   bool is_streaming = 25;
   bool use_system_provider = 26;
   string attempt_id = 27;
+  string resource_type = 28;
+  string resource_id = 29;
+  string resource_name = 30;
 }
 
 message SettleQuotaResponse {

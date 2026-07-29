@@ -2,6 +2,7 @@ package billing
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/zgiai/zgi/api/internal/observability"
 	"github.com/zgiai/zgi/api/pkg/logger"
@@ -74,6 +75,9 @@ func (r *Remote) RecordUsage(ctx context.Context, organizationID string, usage U
 
 // PreDeduct pre-deducts estimated credits via gRPC.
 func (r *Remote) PreDeduct(ctx context.Context, req *PreDeductRequest) (*PreDeductResponse, error) {
+	if req == nil {
+		return nil, fmt.Errorf("billing pre-deduct request is required")
+	}
 	resp, err := r.client.PreDeductQuota(ctx, &pb.PreDeductQuotaRequest{
 		OrganizationId:   req.OrganizationID,
 		EstimatedCredits: req.EstimatedCredits,
@@ -82,6 +86,10 @@ func (r *Remote) PreDeduct(ctx context.Context, req *PreDeductRequest) (*PreDedu
 		ProviderId:       req.Provider,
 		ProviderName:     req.Provider,
 		RequestId:        req.RequestID,
+		AttemptId:        req.AttemptID,
+		ResourceType:     req.ResourceType,
+		ResourceId:       req.ResourceID,
+		ResourceName:     req.ResourceName,
 	})
 
 	if err != nil {
@@ -104,6 +112,9 @@ func (r *Remote) PreDeduct(ctx context.Context, req *PreDeductRequest) (*PreDedu
 		}
 		return nil, err
 	}
+	if resp == nil {
+		return nil, fmt.Errorf("billing pre-deduct returned an empty response")
+	}
 
 	return &PreDeductResponse{
 		Allowed:        resp.Success,
@@ -115,7 +126,10 @@ func (r *Remote) PreDeduct(ctx context.Context, req *PreDeductRequest) (*PreDedu
 
 // Settle settles the actual credits consumption via gRPC.
 func (r *Remote) Settle(ctx context.Context, req *SettleRequest) error {
-	_, err := r.client.SettleQuota(ctx, &pb.SettleQuotaRequest{
+	if req == nil {
+		return fmt.Errorf("billing settle request is required")
+	}
+	resp, err := r.client.SettleQuota(ctx, &pb.SettleQuotaRequest{
 		OrganizationId:   req.OrganizationID,
 		DeductionId:      req.DeductionID,
 		EstimatedCredits: req.EstimatedCredits,
@@ -130,6 +144,10 @@ func (r *Remote) Settle(ctx context.Context, req *SettleRequest) error {
 		Status:           req.Status,
 		ErrorMessage:     req.ErrorMessage,
 		RequestId:        req.RequestID,
+		AttemptId:        req.AttemptID,
+		ResourceType:     req.ResourceType,
+		ResourceId:       req.ResourceID,
+		ResourceName:     req.ResourceName,
 	})
 
 	if err != nil {
@@ -142,6 +160,12 @@ func (r *Remote) Settle(ctx context.Context, req *SettleRequest) error {
 			zap.Error(err),
 		)
 		return err
+	}
+	if resp == nil {
+		return fmt.Errorf("billing settlement returned an empty response")
+	}
+	if !resp.Success {
+		return fmt.Errorf("billing settlement failed: %s", resp.ErrorMessage)
 	}
 
 	return nil

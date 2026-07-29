@@ -21,6 +21,10 @@ type PreDeductRequest struct {
 	Model            string
 	Provider         string
 	RequestID        string
+	AttemptID        string
+	ResourceType     string
+	ResourceID       string
+	ResourceName     string
 }
 
 // PreDeductResponse represents the response from pre-deduct operation.
@@ -45,6 +49,10 @@ type SettleRequest struct {
 	Status           string
 	ErrorMessage     string
 	RequestID        string
+	AttemptID        string
+	ResourceType     string
+	ResourceID       string
+	ResourceName     string
 }
 
 // BillingProvider defines the interface for credit management and validation.
