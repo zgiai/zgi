@@ -58,6 +58,7 @@ export interface LoginRequest {
   email: string;
   password: string;
   remember?: boolean;
+  invite_token?: string;
 }
 
 export interface EmailCodeLoginSendRequest {
@@ -205,11 +206,23 @@ export interface ActivationCheckData {
   email: string;
   organization_id?: string;
   organization_name?: string;
+  account_exists?: boolean;
+  inviter_name?: string;
+  role?: string;
+  expires_at?: number;
 }
 
 export interface ActivationCheckResponse {
   is_valid: boolean;
-  status?: 'invalid_or_expired' | 'already_activated' | 'organization_unavailable';
+  status?:
+    | 'invalid'
+    | 'expired'
+    | 'revoked'
+    | 'used'
+    | 'organization_unavailable'
+    | 'membership_unavailable'
+    | 'role_unavailable'
+    | 'email_mismatch';
   data?: ActivationCheckData;
 }
 

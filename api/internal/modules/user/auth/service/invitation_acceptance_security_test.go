@@ -60,6 +60,72 @@ func TestInvitedAccountActivationFailureDoesNotAuthenticateAndKeepsTokenForRetry
 	require.NotNil(t, replay, "a consumed invitation must fail validation on replay")
 }
 
+func TestExistingAccountCanAuthenticateAndConsumeDirectedInvitation(t *testing.T) {
+	tokenMgr := newInvitationTestTokenManager(t)
+	const (
+		email    = "existing-invitee@example.com"
+		token    = "existing-account-invitation"
+		password = "ExistingPassword1"
+	)
+	hash, salt, err := helper.HashPasswordPBKDF2(password)
+	require.NoError(t, err)
+	repo := &invitationAcceptanceAccountRepository{account: auth_model.Account{
+		ID: "existing-1", Email: email, Status: auth_model.AccountStatusActive,
+		Password: &hash, PasswordSalt: &salt,
+	}}
+	require.NoError(t, tokenMgr.StoreInvitationTokenWithDetails(helper.InvitationData{
+		AccountID: repo.account.ID, Email: email, WorkspaceID: "workspace-1", Role: string(workspace_model.WorkspaceRoleMember),
+	}, token, 1))
+	service := &AccountService{accountRepo: repo, tokenMgr: tokenMgr}
+
+	account, err := service.Authenticate(t.Context(), email, password, token)
+	require.NoError(t, err)
+	require.Equal(t, repo.account.ID, account.ID)
+	state, err := tokenMgr.GetInvitationTokenState(token)
+	require.NoError(t, err)
+	require.Equal(t, "used", state)
+}
+
+func TestActivateCheckReturnsExistingAccountInvitationDetails(t *testing.T) {
+	tokenMgr := newInvitationTestTokenManager(t)
+	const token = "detailed-existing-invitation"
+	account := auth_model.Account{ID: "existing-2", Email: "details@example.com", Name: "Invitee", Status: auth_model.AccountStatusActive}
+	member := &workspace_model.WorkspaceMember{ID: "member-2", WorkspaceID: "workspace-2", AccountID: account.ID, Role: workspace_model.WorkspaceRoleMember}
+	require.NoError(t, tokenMgr.StoreInvitationTokenWithDetails(helper.InvitationData{
+		AccountID: account.ID, Email: account.Email, WorkspaceID: member.WorkspaceID, Role: string(member.Role),
+	}, token, 1))
+	service := &AccountService{
+		accountRepo: &invitationAcceptanceAccountRepository{account: account},
+		tokenMgr:    tokenMgr,
+		workspaceManagementService: &invitationWorkspaceService{
+			workspace: &workspace_model.Workspace{ID: member.WorkspaceID, Name: "Invited Workspace", Status: workspace_model.WorkspaceStatusNormal},
+			member:    member,
+		},
+	}
+
+	result, valid := service.ActivateCheck(t.Context(), member.WorkspaceID, account.Email, token)
+	require.True(t, valid)
+	data, ok := result["data"].(map[string]interface{})
+	require.True(t, ok)
+	require.Equal(t, true, data["account_exists"])
+	require.Equal(t, string(member.Role), data["role"])
+	require.Equal(t, "Invited Workspace", data["workspace_name"])
+}
+
+func TestActivateCheckReportsBoundEmailMismatch(t *testing.T) {
+	tokenMgr := newInvitationTestTokenManager(t)
+	const token = "email-bound-invitation"
+	require.NoError(t, tokenMgr.StoreInvitationToken("", "invited@example.com", "account-3", token, 1))
+	service := &AccountService{tokenMgr: tokenMgr}
+
+	result, valid := service.ActivateCheck(t.Context(), "", "attacker@example.com", token)
+	require.False(t, valid)
+	require.Equal(t, "email_mismatch", result["status"])
+	data, ok := result["data"].(map[string]interface{})
+	require.True(t, ok)
+	require.Equal(t, "invited@example.com", data["email"])
+}
+
 func TestAccountActivateDatabaseFailureReleasesGenericInvitation(t *testing.T) {
 	tokenMgr := newInvitationTestTokenManager(t)
 	const (

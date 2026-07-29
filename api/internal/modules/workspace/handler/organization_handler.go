@@ -1925,7 +1925,7 @@ func (h *OrganizationHandler) DirectAddMember(c *gin.Context) {
 			if organizationErr != nil || organization == nil {
 				emailDeliveryStatus = "failed"
 				emailDeliveryMessage = "member created but organization email context could not be loaded"
-			} else if sendErr := h.accountService.SendDirectAddMemberEmail(ctx, account, organizationID, organization.Name, respDeptName, language); sendErr != nil {
+			} else if sendErr := h.accountService.SendDirectAddMemberEmail(ctx, account, accountID, organizationID, organization.Name, respDeptName, language); sendErr != nil {
 				emailDeliveryStatus = "failed"
 				emailDeliveryMessage = "member created but email delivery failed"
 			}

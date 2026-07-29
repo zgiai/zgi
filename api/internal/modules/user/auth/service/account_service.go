@@ -274,7 +274,7 @@ func (s *AccountService) SendResetPasswordEmail(ctx context.Context, account *au
 	return token, nil
 }
 
-func (s *AccountService) SendDirectAddMemberEmail(ctx context.Context, account *auth_model.Account, groupID, groupName, departmentName, language string) error {
+func (s *AccountService) SendDirectAddMemberEmail(ctx context.Context, account *auth_model.Account, inviterID, groupID, groupName, departmentName, language string) error {
 	if account == nil {
 		return errors.New("account must be provided")
 	}
@@ -288,9 +288,14 @@ func (s *AccountService) SendDirectAddMemberEmail(ctx context.Context, account *
 	expiryHours := 72
 
 	if s.tokenMgr != nil {
-		if err := s.tokenMgr.StoreInvitationToken("", account.Email, account.ID, token, expiryHours); err != nil {
-			token = fmt.Sprintf("%s-%s-%d", groupID, account.ID, time.Now().Unix())
+		if err := s.tokenMgr.StoreInvitationTokenWithDetails(helper.InvitationData{
+			AccountID: account.ID, Email: account.Email, OrganizationID: groupID, InviterID: inviterID,
+			Role: string(workspace_model.OrganizationRoleNormal),
+		}, token, expiryHours); err != nil {
+			return fmt.Errorf("store direct member invitation: %w", err)
 		}
+	} else {
+		return errors.New("invitation token manager is unavailable")
 	}
 
 	targetURL := consoleURL
@@ -641,9 +646,25 @@ func (s *AccountService) UpdateAccountProfile(ctx context.Context, accountID str
 func (s *AccountService) ActivateCheck(ctx context.Context, workspaceID, email, token string) (map[string]interface{}, bool) {
 	invitationData, err := s.tokenMgr.GetInvitationByToken(token, workspaceID, email)
 	if err != nil || invitationData == nil {
+		status := "invalid"
+		if s.tokenMgr != nil {
+			if unboundData, unboundErr := s.tokenMgr.GetInvitationByToken(token, "", ""); unboundErr == nil && unboundData != nil && email != "" && !strings.EqualFold(unboundData.Email, email) {
+				return map[string]interface{}{
+					"is_valid": false,
+					"status":   "email_mismatch",
+					"data":     map[string]interface{}{"email": unboundData.Email},
+				}, false
+			}
+			if tokenStatus, statusErr := s.tokenMgr.GetInvitationTokenState(token); statusErr == nil {
+				status = tokenStatus
+			}
+		}
+		if status == "pending" {
+			status = "invalid"
+		}
 		return map[string]interface{}{
 			"is_valid": false,
-			"status":   "invalid_or_expired",
+			"status":   status,
 		}, false
 	}
 
@@ -659,17 +680,27 @@ func (s *AccountService) ActivateCheck(ctx context.Context, workspaceID, email, 
 				"is_valid": false,
 			}, false
 		}
-		if account.Status != auth_model.AccountStatusPending {
-			return map[string]interface{}{"is_valid": false, "status": "already_activated"}, false
+		organizationName := ""
+		if invitationData.OrganizationID != "" && s.organizationService != nil {
+			organization, organizationErr := s.organizationService.GetOrganizationByID(ctx, invitationData.OrganizationID)
+			if organizationErr != nil || organization == nil || !organization.IsActive() {
+				return map[string]interface{}{"is_valid": false, "status": "organization_unavailable"}, false
+			}
+			organizationName = organization.Name
 		}
 
 		return map[string]interface{}{
 			"is_valid": true,
 			"data": map[string]interface{}{
-				"workspace_name": "",
-				"workspace_id":   "",
-				"email":          invitationData.Email,
-				"user_name":      account.Name,
+				"workspace_name":    "",
+				"workspace_id":      "",
+				"email":             invitationData.Email,
+				"user_name":         account.Name,
+				"account_exists":    account.Status == auth_model.AccountStatusActive,
+				"organization_id":   invitationData.OrganizationID,
+				"organization_name": organizationName,
+				"role":              invitationData.Role,
+				"expires_at":        invitationData.ExpiresAt,
 			},
 		}, true
 	}
@@ -696,8 +727,12 @@ func (s *AccountService) ActivateCheck(ctx context.Context, workspaceID, email, 
 			"is_valid": false,
 		}, false
 	}
-	if tenantAccount.Account.Status != auth_model.AccountStatusPending {
-		return map[string]interface{}{"is_valid": false, "status": "already_activated"}, false
+	membership, membershipErr := s.workspaceManagementService.GetByWorkspaceAndMember(ctx, tenant.ID, tenantAccount.Account.ID)
+	if membershipErr != nil || membership == nil {
+		return map[string]interface{}{"is_valid": false, "status": "membership_unavailable"}, false
+	}
+	if invitationData.Role != "" && string(membership.Role) != invitationData.Role {
+		return map[string]interface{}{"is_valid": false, "status": "role_unavailable"}, false
 	}
 	organizationID := ""
 	organizationName := ""
@@ -709,6 +744,12 @@ func (s *AccountService) ActivateCheck(ctx context.Context, workspaceID, email, 
 		}
 		organizationName = organization.Name
 	}
+	inviterName := ""
+	if invitationData.InviterID != "" {
+		if inviter, inviterErr := s.accountRepo.GetAccount(ctx, invitationData.InviterID); inviterErr == nil && inviter != nil {
+			inviterName = inviter.Name
+		}
+	}
 
 	return map[string]interface{}{
 		"is_valid": true,
@@ -719,6 +760,10 @@ func (s *AccountService) ActivateCheck(ctx context.Context, workspaceID, email, 
 			"user_name":         tenantAccount.Account.Name,
 			"organization_id":   organizationID,
 			"organization_name": organizationName,
+			"account_exists":    tenantAccount.Account.Status == auth_model.AccountStatusActive,
+			"inviter_name":      inviterName,
+			"role":              string(membership.Role),
+			"expires_at":        invitationData.ExpiresAt,
 		},
 	}, true
 }

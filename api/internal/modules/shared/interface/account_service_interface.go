@@ -12,7 +12,7 @@ import (
 
 type AccountService interface {
 	SendResetPasswordEmail(ctx context.Context, account *auth_model.Account, email string, language string) (string, error)
-	SendDirectAddMemberEmail(ctx context.Context, account *auth_model.Account, groupID, groupName, departmentName, language string) error
+	SendDirectAddMemberEmail(ctx context.Context, account *auth_model.Account, inviterID, groupID, groupName, departmentName, language string) error
 	CreateAccount(ctx context.Context, req *dto.CreateAccountRequest) (*auth_model.Account, error)
 	GetAccountExtensionByID(ctx context.Context, id string) (auth_model.JSONMap, error)
 	GetAccountByEmail(ctx context.Context, email string) (*auth_model.Account, error)
