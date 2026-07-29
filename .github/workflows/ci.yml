@@ -60,6 +60,8 @@ jobs:
   registration-auth:
     name: Registration and invitation gate
     runs-on: ${{ fromJSON(vars.CI_RUNNER_LABELS || '["ubuntu-latest"]') }}
+    container:
+      image: node:22-bookworm
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -89,10 +91,7 @@ jobs:
           if command -v gcc >/dev/null 2>&1; then
             exit 0
           fi
-          if command -v sudo >/dev/null 2>&1; then
-            sudo apt-get update
-            sudo apt-get install -y --no-install-recommends gcc libc6-dev
-          elif [ "$(id -u)" -eq 0 ]; then
+          if [ "$(id -u)" -eq 0 ]; then
             apt-get update
             apt-get install -y --no-install-recommends gcc libc6-dev
           else
