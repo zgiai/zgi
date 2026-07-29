@@ -260,6 +260,35 @@ const messages = {
   authMethodPhone: 'Phone',
   signInWithPhoneDesc: 'Sign in with your phone number and password',
   phoneRegisterDesc: 'Create an account with your phone number',
+  organizationOnboarding: {
+    title: 'Choose how to get started',
+    description:
+      'Enter an organization you already belong to, create one, or join with an invitation.',
+    chooseTitle: 'Your organizations',
+    chooseDescription: 'Choose the organization you want to enter for this session.',
+    emptyDescription: 'You do not belong to an organization yet. Create one or use an invitation.',
+    enter: 'Enter organization',
+    enterFailed: 'Unable to enter this organization. Please try again.',
+    createTitle: 'Create an organization',
+    createDescription: 'Start a new organization and continue as its owner.',
+    organizationName: 'Organization name',
+    organizationNamePlaceholder: 'Acme Team',
+    create: 'Create and continue',
+    createFailed: 'Unable to create the organization. Please try another name.',
+    joinTitle: 'Join an organization',
+    joinDescription: 'Paste an invitation link or invitation code from an administrator.',
+    inviteLabel: 'Invitation link or code',
+    invitePlaceholder: 'https://example.com/invite/…',
+    join: 'Review invitation',
+    invalidInvite: 'Enter a valid invitation link or code.',
+    loadFailed: 'We could not load your organizations.',
+    retry: 'Try again',
+    role: {
+      owner: 'Owner',
+      admin: 'Administrator',
+      normal: 'Member',
+    },
+  },
 };
 
 export default messages;

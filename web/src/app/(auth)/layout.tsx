@@ -102,7 +102,9 @@ function AuthLayoutContent({ children }: PropsWithChildren) {
 
       sessionManager.syncRootCookiesForCurrentSession();
       const params = new URLSearchParams(window.location.search);
-      const redirectUrl = withBasePathIfInternal(params.get('redirect') || '/console');
+      const redirectUrl = withBasePathIfInternal(
+        params.get('redirect') || '/onboarding/organization'
+      );
       window.location.replace(redirectUrl);
     }
   }, [authInitialized, authLoading, isAuthenticated, isInitialized, isLoading, pathname, router]);

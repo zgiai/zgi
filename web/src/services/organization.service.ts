@@ -34,6 +34,7 @@ import type {
   WorkspaceAssetMoveRequest,
   WorkspaceAssetMoveResponse,
   OrganizationUpdateRequest,
+  OrganizationCreateRequest,
   OrganizationMemberRoleUpdateRequest,
 } from './types/organization';
 
@@ -58,6 +59,15 @@ class OrganizationService extends BaseService {
       '/organizations/',
       undefined,
       { params }
+    );
+    return response.data;
+  }
+
+  async createOrganization(data: OrganizationCreateRequest) {
+    const response = await this.request<ApiResponseData<Organization>>(
+      'post',
+      '/organizations/',
+      data
     );
     return response.data;
   }

@@ -454,7 +454,7 @@ func (s *AccountService) FindByPhone(ctx context.Context, phoneE164 string) (*au
 
 func (s *AccountService) RegisterByPhone(ctx context.Context, phoneE164 string, name string, password *string) (*auth_model.Account, error) {
 	language := "zh-Hans"
-	createWorkspace := true
+	createWorkspace := false
 	return s.registerExWithMobile(ctx, "", name, password, nil, nil, &language, nil, nil, &createWorkspace, phoneE164)
 }
 

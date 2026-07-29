@@ -842,7 +842,7 @@ func (h *OrganizationHandler) CreateOrganization(c *gin.Context) {
 	}
 
 	// Create organization (includes complete business logic)
-	_, err = h.organizationService.CreateOrganizationWithWorkspace(c.Request.Context(), &shared_dto.CreateOrganizationWithWorkspaceRequest{
+	organization, err := h.organizationService.CreateOrganizationWithWorkspace(c.Request.Context(), &shared_dto.CreateOrganizationWithWorkspaceRequest{
 		Name:      req.Name,
 		ShortName: req.ShortName,
 		CreatedBy: accountID,
@@ -851,8 +851,24 @@ func (h *OrganizationHandler) CreateOrganization(c *gin.Context) {
 		response.Fail(c, response.ErrSystemError)
 		return
 	}
+	usdToCNYRate, _ := organization.USDToCNYRate.Float64()
 
-	response.Success(c, gin.H{"message": "success"})
+	response.Success(c, &struct {
+		*shared_dto.OrganizationWithRoleResponse
+		Message string `json:"message"`
+	}{
+		OrganizationWithRoleResponse: &shared_dto.OrganizationWithRoleResponse{
+			ID:                     organization.ID,
+			Name:                   organization.Name,
+			ShortName:              organization.ShortName,
+			Status:                 organization.Status,
+			BillingDisplayCurrency: organization.BillingDisplayCurrency,
+			USDToCNYRate:           usdToCNYRate,
+			CreatedAt:              organization.CreatedAt.Unix(),
+			OrganizationRole:       model.OrganizationRoleOwner,
+		},
+		Message: "success",
+	})
 }
 
 func (h *OrganizationHandler) GetOrganizationDetails(c *gin.Context) {

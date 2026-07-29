@@ -96,3 +96,27 @@ func performCurrentWorkspaceRequest(t *testing.T, organizationID string, workspa
 	router.ServeHTTP(recorder, request)
 	return recorder
 }
+
+func TestShouldSkipTenantResolutionForOnboardingRoutes(t *testing.T) {
+	tests := []struct {
+		name   string
+		method string
+		path   string
+		want   bool
+	}{
+		{name: "list organizations", method: http.MethodGet, path: "/console/api/organizations/", want: true},
+		{name: "create organization", method: http.MethodPost, path: "/console/api/organizations/", want: true},
+		{name: "accept invite", method: http.MethodPost, path: "/console/api/public/invites/:token/accept", want: true},
+		{name: "update organization", method: http.MethodPut, path: "/console/api/organizations/", want: false},
+		{name: "organization member route", method: http.MethodGet, path: "/console/api/organizations/current/members", want: false},
+		{name: "invite info is public", method: http.MethodGet, path: "/console/api/public/invites/:token", want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := shouldSkipTenantResolution(tt.method, tt.path); got != tt.want {
+				t.Fatalf("shouldSkipTenantResolution(%q, %q) = %v, want %v", tt.method, tt.path, got, tt.want)
+			}
+		})
+	}
+}

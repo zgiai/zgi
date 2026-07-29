@@ -75,6 +75,8 @@ func TestEmailRegistrationRequiresVerifiedOneTimeToken(t *testing.T) {
 	require.Equal(t, "access-token", loginResponse.AccessToken)
 	require.Equal(t, 1, accounts.registerCalls)
 	require.Equal(t, "user@example.com", accounts.registeredEmail)
+	require.NotNil(t, accounts.createWorkspaceRequired)
+	require.False(t, *accounts.createWorkspaceRequired)
 	require.Equal(t, "127.0.0.1", accounts.loginIP)
 
 	_, err = service.Finish(t.Context(), EmailRegistrationFinishRequest{
@@ -353,6 +355,7 @@ type fakeEmailRegistrationAccounts struct {
 	registerErr               error
 	registerErrCreatesAccount bool
 	loginErr                  error
+	createWorkspaceRequired   *bool
 }
 
 type failRedisCommandOnceHook struct {
@@ -410,9 +413,13 @@ func (f *fakeEmailRegistrationAccounts) RegisterEx(
 	_ *string,
 	_ *auth_model.AccountStatus,
 	_ *bool,
-	_ *bool,
+	createWorkspaceRequired *bool,
 ) (*auth_model.Account, error) {
 	f.registerCalls++
+	if createWorkspaceRequired != nil {
+		value := *createWorkspaceRequired
+		f.createWorkspaceRequired = &value
+	}
 	if f.registerErr != nil {
 		if f.registerErrCreatesAccount {
 			f.existingEmail = email

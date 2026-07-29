@@ -3,6 +3,7 @@ package middleware
 import (
 	"context"
 	"errors"
+	"net/http"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -376,17 +377,17 @@ func needsTenantID(path string) bool {
 	return false
 }
 
-// shouldSkipTenantResolution returns true for routes that don't require a resolved tenant
-func shouldSkipTenantResolution(path string) bool {
-	skipPaths := []string{}
-
-	for _, skipPath := range skipPaths {
-		if strings.HasPrefix(path, skipPath) {
-			return true
-		}
+// shouldSkipTenantResolution returns true only for authenticated onboarding
+// routes that can operate before an account has selected or joined an organization.
+func shouldSkipTenantResolution(method, routePath string) bool {
+	switch {
+	case (method == http.MethodGet || method == http.MethodPost) && routePath == "/console/api/organizations/":
+		return true
+	case method == http.MethodPost && routePath == "/console/api/public/invites/:token/accept":
+		return true
+	default:
+		return false
 	}
-
-	return false
 }
 
 func JWTWithOrganizationAndService(accountService interfaces.AccountService) gin.HandlerFunc {
@@ -430,7 +431,11 @@ func JWTWithOrganizationAndService(accountService interfaces.AccountService) gin
 
 		tenantID := resolveTenantID(c)
 		if tenantID == "" {
-			if !shouldSkipTenantResolution(c.Request.URL.Path) {
+			routePath := c.FullPath()
+			if routePath == "" {
+				routePath = c.Request.URL.Path
+			}
+			if !shouldSkipTenantResolution(c.Request.Method, routePath) {
 				logger.Warn("auth: tenant resolve failed; account_id=%s path=%s", user_id, c.Request.URL.Path)
 				response.Fail(c, response.ErrWorkspaceNotFound)
 				c.Abort()

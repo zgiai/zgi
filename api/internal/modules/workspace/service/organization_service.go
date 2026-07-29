@@ -3109,6 +3109,14 @@ func (s *organizationService) CreateOrganizationWithWorkspace(ctx context.Contex
 			OwnerEmail:     currentAccount.Email,
 			CreatedAt:      organization.CreatedAt,
 		})
+		if strings.EqualFold(s.consoleProvider.GetMode(), "CLOUD") {
+			if _, err := s.consoleProvider.NotifyOfficialSignup(ctx, &console.NotifyOfficialSignupRequest{
+				OrganizationID: organization.ID,
+				AccountID:      req.CreatedBy,
+			}); err != nil {
+				logger.Warn("Failed to notify official signup after organization creation: %v", err)
+			}
+		}
 	}
 
 	s.invalidateOrganizationContext(ctx, organization.ID, req.CreatedBy)

@@ -967,10 +967,6 @@ func (s *AccountService) LoginRefactored(ctx context.Context, req *dto.LoginReq)
 		return result
 	}
 
-	if result := s.checkOrganizationLogin(ctx, account); result != nil {
-		return result
-	}
-
 	return s.generateTokenAndBuildResponseLogin(ctx, account, req.LastLoginIp, req.Email)
 }
 
@@ -994,48 +990,6 @@ func (s *AccountService) authenticateUserLogin(ctx context.Context, req *dto.Log
 		return nil, s.handleAuthenticationErrorLogin(ctx, err, req.Email, req.Language)
 	}
 	return account, nil
-}
-
-func (s *AccountService) checkOrganizationLogin(ctx context.Context, account *auth_model.Account) *LoginResult {
-	if isSelfHostedDeployment() {
-		return nil
-	}
-
-	// Ensure user has own organization when needed
-	hasOwnerGroup, err := s.hasOwnedEnterpriseGroup(ctx, account.ID)
-	if err != nil {
-		logger.CriticalContext(ctx, "failed to check organization ownership", "account_id", account.ID, err)
-		return NewBusinessErrorResult(helper.UnknownError)
-	}
-
-	if !hasOwnerGroup {
-		logger.Info("creating owned organization for account", "account_id", account.ID)
-
-		_, err := s.createWorkspaceForExistingAccount(ctx, account)
-		if err != nil {
-			logger.CriticalContext(ctx, "failed to create organization during login", "account_id", account.ID, err)
-			if strings.Contains(err.Error(), "frozen") || strings.Contains(err.Error(), "freeze") {
-				return NewBusinessErrorResult(helper.AccountInFreezeError)
-			}
-			return NewBusinessErrorResult(helper.UnknownError)
-		}
-		logger.Info("owned organization created for account", "account_id", account.ID)
-	}
-
-	return nil
-}
-
-func (s *AccountService) hasOwnedEnterpriseGroup(ctx context.Context, accountID string) (bool, error) {
-	ownedOrg, err := s.organizationService.GetFirstOwnedOrganization(ctx, accountID)
-	if err != nil {
-		logger.CriticalContext(ctx, "failed to get first owned organization", "account_id", accountID, err)
-		return false, err
-	}
-	if ownedOrg != nil {
-		return true, nil
-	}
-
-	return false, nil
 }
 
 func (s *AccountService) generateTokenAndBuildResponseLogin(ctx context.Context, account *auth_model.Account, ipAddress, email string) *LoginResult {
@@ -1136,8 +1090,6 @@ func (s *AccountService) registerExWithMobile(
 
 	err := s.accountRepo.ExecuteInTransaction(ctx, func(tx *gorm.DB) error {
 		accountRepository := s.accountRepo.WithTx(tx)
-		groupService := s.organizationManagementService.WithTx(tx)
-		tenantService := s.workspaceManagementService.WithTx(tx)
 
 		var hashedPassword, salt string
 		if password != nil {
@@ -1163,6 +1115,13 @@ func (s *AccountService) registerExWithMobile(
 		if err != nil {
 			return fmt.Errorf("failed to create account: %w", err)
 		}
+
+		createWorkspace := createWorkspaceRequired == nil || *createWorkspaceRequired
+		if !createWorkspace {
+			return nil
+		}
+		groupService := s.organizationManagementService.WithTx(tx)
+		tenantService := s.workspaceManagementService.WithTx(tx)
 
 		groupName, err := uniqueOwnedOrganizationName(ctx, groupService, account.Name, account.InterfaceLanguage)
 		if err != nil {
@@ -1218,7 +1177,9 @@ func (s *AccountService) registerExWithMobile(
 	}
 	s.bootstrapOfficialRoute(ctx, defaultOrganizationID)
 
-	s.notifyOfficialSignupRegistration(ctx, account)
+	if defaultOrganizationID != "" {
+		s.notifyOfficialSignupRegistration(ctx, account)
+	}
 
 	return account, nil
 }
