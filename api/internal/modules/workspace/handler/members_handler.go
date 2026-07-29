@@ -1795,6 +1795,15 @@ func (h *MembersHandler) ReInviteMemberById(c *gin.Context) {
 			"", // position
 			sendEmail,
 		)
+		if err != nil {
+			results = append(results, map[string]interface{}{
+				"status":       "failed",
+				"email":        member.Email,
+				"workspace_id": workspace.ID,
+				"message":      err.Error(),
+			})
+			continue
+		}
 
 		// encodedEmail := url.QueryEscape(member.Email)
 		encodedEmail := member.Email

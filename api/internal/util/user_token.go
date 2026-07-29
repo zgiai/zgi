@@ -40,6 +40,8 @@ func DefaultConfig() *Config {
 			"sso_login_ticket":             5,     // 5 minutes
 			"phone_code":                   5,     // 5 minutes
 			"phone_verified":               10,    // 10 minutes
+			"email_code_login":             5,     // 5 minutes
+			"account_deletion":             5,     // 5 minutes
 			"email_registration_challenge": 10,
 			"email_registration_verified":  10,
 		},

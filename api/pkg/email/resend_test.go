@@ -6,11 +6,73 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/zgiai/zgi/api/config"
 )
+
+func TestCodeMailTasksUseResendCompatibleContract(t *testing.T) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	moduleRoot := filepath.Join(cwd, "..", "..")
+	if err := os.Chdir(moduleRoot); err != nil {
+		t.Fatalf("chdir module root: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+
+	var requests []EmailRequest
+	var idempotencyKeys []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request EmailRequest
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Errorf("decode request: %v", err)
+		}
+		requests = append(requests, request)
+		idempotencyKeys = append(idempotencyKeys, r.Header.Get("Idempotency-Key"))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"message-1"}`))
+	}))
+	defer server.Close()
+
+	previous := Cfg
+	Cfg = &config.Config{Email: config.EmailConfig{
+		MailType:              "resend",
+		MailDefaultSendFrom:   "ZGI <system@example.com>",
+		MailTemplateBrandName: "ZGI",
+		MailTemplateLogoUrl:   "https://example.com/logo.png",
+		ResendAPIKey:          "test-key",
+		ResendAPIURL:          server.URL,
+	}}
+	t.Cleanup(func() { Cfg = previous })
+
+	requireNoError := func(name string, err error) {
+		t.Helper()
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+	}
+	requireNoError("email code en", SendEmailCodeLoginMailTask(t.Context(), "en-US", "user@example.com", "123456", "login-en"))
+	requireNoError("email code zh", SendEmailCodeLoginMailTask(t.Context(), "zh-Hans", "user@example.com", "123456", "login-zh"))
+	requireNoError("deletion en", SendAccountDeletionCodeMailTask(t.Context(), "en-US", "user@example.com", "123456", "delete-en"))
+	requireNoError("deletion zh", SendAccountDeletionCodeMailTask(t.Context(), "zh-Hans", "user@example.com", "123456", "delete-zh"))
+
+	if len(requests) != 4 {
+		t.Fatalf("request count = %d, want 4", len(requests))
+	}
+	for index, request := range requests {
+		if request.From != "ZGI <system@example.com>" || len(request.To) != 1 || request.To[0] != "user@example.com" {
+			t.Fatalf("request %d has wrong envelope: %#v", index, request)
+		}
+		if !strings.Contains(request.Html, "123456") || request.Subject == "" || idempotencyKeys[index] == "" {
+			t.Fatalf("request %d missing code, subject, or idempotency key", index)
+		}
+	}
+}
 
 func TestResendCompatibleProviderContract(t *testing.T) {
 	var gotPath string

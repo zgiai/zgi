@@ -85,6 +85,17 @@ func RegisterUserRoutes(v1 *gin.RouterGroup, deps UserRouteDeps) {
 		},
 	)
 	emailRegistrationHandler := authHandler.NewEmailRegistrationHandler(emailRegistrationService)
+	emailCodeLoginService := authService.NewEmailCodeLoginService(
+		deps.AccountService,
+		tokenMgr,
+		authService.EmailCodeLoginOptions{
+			Enabled:                     cfg.Feature.EnableEmailCodeLogin,
+			MasterVerificationCode:      cfg.Auth.MasterVerificationCode,
+			AllowMasterVerificationCode: isDevelopmentRuntime(cfg),
+			MaxCodeAttempts:             5,
+		},
+	)
+	emailCodeLoginHandler := authHandler.NewEmailCodeLoginHandler(emailCodeLoginService)
 	activateHandler := authHandler.NewActivateHandler(deps.AccountService)
 
 	membersHandler := workspaceHandler.NewMembersHandler(
@@ -108,6 +119,7 @@ func RegisterUserRoutes(v1 *gin.RouterGroup, deps UserRouteDeps) {
 	forgotPasswordHandler.RegisterRoutes(v1)
 	authHandlerInstance.RegisterAuthRoutes(v1)
 	emailRegistrationHandler.RegisterRoutes(v1)
+	emailCodeLoginHandler.RegisterRoutes(v1)
 	phoneAuthHandler.RegisterRoutes(v1)
 	activateHandler.RegisterRoutes(v1)
 	enterpriseHandler.RegisterRoutes(v1)

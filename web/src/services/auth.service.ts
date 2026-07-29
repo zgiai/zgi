@@ -25,6 +25,9 @@ import type {
   PhoneLoginRequest,
   PhonePasswordLoginRequest,
   PhoneResetPasswordRequest,
+  EmailCodeLoginSendRequest,
+  EmailCodeLoginVerifyRequest,
+  EmailCodeLoginSendResponse,
 } from './types/auth';
 import type { User, SystemFeatures, SetupStatus } from '@/services/types/auth';
 import type { ApiResponseData, BusinessError } from './types/common';
@@ -173,6 +176,51 @@ export class AuthenticationService extends BaseService {
       access_token,
       user: account,
     };
+  }
+
+  async sendEmailLoginCode(data: EmailCodeLoginSendRequest): Promise<EmailCodeLoginSendResponse> {
+    const response = await this.request<ApiResponseData<EmailCodeLoginSendResponse>>(
+      'post',
+      '/login/by-email',
+      data,
+      { skipAuth: true, retryAttemptsOverride: 0 }
+    );
+    if (response.code !== '0' || !response.data?.data) {
+      const error = new Error(response.message || 'Failed to send email login code');
+      (error as unknown as BusinessError).businessError = {
+        code: response.code || '',
+        message: response.message || '',
+      };
+      this.handleBusinessError(error, 'Email code login');
+    }
+    return response.data;
+  }
+
+  async loginByEmailCode(
+    data: EmailCodeLoginVerifyRequest
+  ): Promise<{ access_token: string; user: Account }> {
+    const response = await this.request<ApiResponseData<LoginResponse>>(
+      'post',
+      '/login/by-email/code',
+      data,
+      { skipAuth: true, retryAttemptsOverride: 0 }
+    );
+    if (response.code !== '0') {
+      const error = new Error(response.message || 'Email code login failed');
+      (error as unknown as BusinessError).businessError = {
+        code: response.code || '',
+        message: response.message || '',
+      };
+      this.handleBusinessError(error, 'Email code login');
+    }
+    const accessToken = response.data?.data?.access_token;
+    const refreshToken = response.data?.data?.refresh_token;
+    const account = response.data?.data?.account;
+    if (!accessToken || !account) {
+      throw new Error('Invalid email code login response structure');
+    }
+    this.persistTokens(accessToken, refreshToken);
+    return { access_token: accessToken, user: account };
   }
 
   async consumeCasdoorTicket(
@@ -844,6 +892,10 @@ export default authenticationService;
 export const authService = {
   // Core authentication methods
   login: (data: LoginRequest) => authenticationService.login(data),
+  sendEmailLoginCode: (data: EmailCodeLoginSendRequest) =>
+    authenticationService.sendEmailLoginCode(data),
+  loginByEmailCode: (data: EmailCodeLoginVerifyRequest) =>
+    authenticationService.loginByEmailCode(data),
   logout: () => authenticationService.logout(),
   refreshToken: () => authenticationService.refreshToken(),
   forgotPassword: (data: { email: string; language?: string }) =>

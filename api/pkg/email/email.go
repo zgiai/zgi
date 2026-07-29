@@ -341,6 +341,62 @@ func SendRegistrationMailTaskWithContext(ctx context.Context, language, to, code
 	return nil
 }
 
+// SendEmailCodeLoginMailTask sends a short-lived code for passwordless login.
+func SendEmailCodeLoginMailTask(ctx context.Context, language, to, code, idempotencyKey string) error {
+	if Cfg == nil {
+		return fmt.Errorf("email service not initialized")
+	}
+
+	templateLanguage := "en-US"
+	subject := fmt.Sprintf("%s login code", Cfg.Email.MailTemplateBrandName)
+	if language == "zh-Hans" || language == "zh-CN" {
+		templateLanguage = "zh-CN"
+		subject = fmt.Sprintf("%s 登录验证码", Cfg.Email.MailTemplateBrandName)
+	}
+
+	htmlContent, err := renderCodeTemplate("email_code_login_mail_template_"+templateLanguage+".html", TemplateData{
+		To:        to,
+		Code:      code,
+		LogoURL:   Cfg.Email.MailTemplateLogoUrl,
+		BrandName: Cfg.Email.MailTemplateBrandName,
+	})
+	if err != nil {
+		return fmt.Errorf("render email login code: %w", err)
+	}
+	if err := SendEmailWithOptions(ctx, []string{to}, subject, htmlContent, "text/html", SendOptions{IdempotencyKey: idempotencyKey}); err != nil {
+		return fmt.Errorf("send email login code: %w", err)
+	}
+	return nil
+}
+
+// SendAccountDeletionCodeMailTask sends the confirmation code required before
+// an authenticated account can be deleted.
+func SendAccountDeletionCodeMailTask(ctx context.Context, language, to, code, idempotencyKey string) error {
+	if Cfg == nil {
+		return fmt.Errorf("email service not initialized")
+	}
+
+	templateLanguage := "en-US"
+	subject := fmt.Sprintf("%s account deletion code", Cfg.Email.MailTemplateBrandName)
+	if language == "zh-Hans" || language == "zh-CN" {
+		templateLanguage = "zh-CN"
+		subject = fmt.Sprintf("%s 账号注销验证码", Cfg.Email.MailTemplateBrandName)
+	}
+	htmlContent, err := renderCodeTemplate("delete_account_code_email_template_"+templateLanguage+".html", TemplateData{
+		To:        to,
+		Code:      code,
+		LogoURL:   Cfg.Email.MailTemplateLogoUrl,
+		BrandName: Cfg.Email.MailTemplateBrandName,
+	})
+	if err != nil {
+		return fmt.Errorf("render account deletion code: %w", err)
+	}
+	if err := SendEmailWithOptions(ctx, []string{to}, subject, htmlContent, "text/html", SendOptions{IdempotencyKey: idempotencyKey}); err != nil {
+		return fmt.Errorf("send account deletion code: %w", err)
+	}
+	return nil
+}
+
 type TemplateData struct {
 	To        string
 	Code      string
@@ -418,6 +474,20 @@ func renderRegistrationTemplate(language string, data TemplateData) (string, err
 	if language == "zh-CN" {
 		templateFileName = "registration_code_mail_template_zh-CN.html"
 	}
+	templateContent, err := loadTemplateFile(templateFileName)
+	if err != nil {
+		return "", err
+	}
+
+	content := string(templateContent)
+	content = strings.ReplaceAll(content, "{{to}}", html.EscapeString(data.To))
+	content = strings.ReplaceAll(content, "{{code}}", html.EscapeString(data.Code))
+	content = strings.ReplaceAll(content, "{{logo_url}}", html.EscapeString(data.LogoURL))
+	content = strings.ReplaceAll(content, "{{brand_name}}", html.EscapeString(data.BrandName))
+	return content, nil
+}
+
+func renderCodeTemplate(templateFileName string, data TemplateData) (string, error) {
 	templateContent, err := loadTemplateFile(templateFileName)
 	if err != nil {
 		return "", err

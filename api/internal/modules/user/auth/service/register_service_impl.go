@@ -498,12 +498,10 @@ func (s *RegisterServiceImpl) InviteMemberEx(ctx context.Context, tenantID, invi
 			workspaceName = "ZGIAI Workspace"
 		}
 
-		// Send email asynchronously
-		go func() {
-			if err := s.sendInviteMemberMail(language, email, inviteToken, inviterName, workspaceName); err != nil {
-				logger.WarnContext(ctx, "failed to send invite email", "email", email, err)
-			}
-		}()
+		if err := s.sendInviteMemberMail(language, email, inviteToken, inviterName, workspaceName); err != nil {
+			logger.WarnContext(ctx, "failed to send invite email", "email", email, err)
+			return inviteToken, fmt.Errorf("send invite email: %w", err)
+		}
 	}
 
 	return inviteToken, nil

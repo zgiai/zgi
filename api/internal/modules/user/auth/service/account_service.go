@@ -3,7 +3,7 @@ package service
 import (
 	"context"
 	cryptorand "crypto/rand"
-	"encoding/hex"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"math/big"
@@ -1767,11 +1767,14 @@ func (s *AccountService) CreateAccountAndTenant(ctx context.Context, email, name
 
 // GenerateAccountDeletionVerificationCode implements the GenerateAccountDeletionVerificationCode method
 func (s *AccountService) GenerateAccountDeletionVerificationCode(ctx context.Context, account *auth_model.Account) (string, string, error) {
-	code := generateRandomCode(6)
+	code, err := generate6DigitCode()
+	if err != nil {
+		return "", "", fmt.Errorf("generate account deletion code: %w", err)
+	}
 
 	additionalData := map[string]interface{}{
 		"code": code,
-		"exp":  time.Now().Add(time.Hour).Unix(),
+		"exp":  time.Now().Add(5 * time.Minute).Unix(),
 	}
 
 	token, err := s.tokenMgr.GenerateToken(
@@ -1791,7 +1794,12 @@ func (s *AccountService) GenerateAccountDeletionVerificationCode(ctx context.Con
 
 // SendAccountDeletionVerificationEmail implements the SendAccountDeletionVerificationEmail method
 func (s *AccountService) SendAccountDeletionVerificationEmail(ctx context.Context, account *auth_model.Account, code string) error {
-	return nil
+	idempotencyKey := fmt.Sprintf("account-deletion:%s:%x", account.ID, sha256.Sum256([]byte(code)))
+	language := "en-US"
+	if account.InterfaceLanguage != nil {
+		language = *account.InterfaceLanguage
+	}
+	return email.SendAccountDeletionCodeMailTask(ctx, language, account.Email, code, idempotencyKey)
 }
 
 // VerifyAccountDeletionCode implements the VerifyAccountDeletionCode method
@@ -1806,10 +1814,24 @@ func (s *AccountService) VerifyAccountDeletionCode(ctx context.Context, token, c
 	}
 
 	storedCode, ok := tokenData.Extra["code"].(string)
-	// Master verification code for testing/development
-	masterCode := config.Current().Auth.MasterVerificationCode
+	// The master code is intentionally limited to development runtimes.
+	masterCode := ""
+	cfg := config.Current()
+	if cfg.Server.Mode == "debug" || cfg.Server.Environment == "local" || cfg.Server.Environment == "dev" {
+		masterCode = strings.TrimSpace(cfg.Auth.MasterVerificationCode)
+	}
 	if !ok || (storedCode != code && (masterCode == "" || code != masterCode)) {
+		attempts, incrementErr := s.tokenMgr.IncrementTokenUsage(ctx, token, "account_deletion", 5*time.Minute)
+		if incrementErr != nil {
+			return false, incrementErr
+		}
+		if attempts >= 5 {
+			_ = s.tokenMgr.RevokeToken(token, "account_deletion")
+		}
 		return false, nil
+	}
+	if _, err := s.tokenMgr.ConsumeTokenData(ctx, token, "account_deletion"); err != nil {
+		return false, err
 	}
 
 	return true, nil
@@ -3023,12 +3045,15 @@ func (s *AccountService) RevokeResetPasswordToken(ctx context.Context, token str
 }
 
 // SendEmailCodeLoginEmail implements the SendEmailCodeLoginEmail method
-func (s *AccountService) SendEmailCodeLoginEmail(ctx context.Context, account *auth_model.Account, email, language string) (string, error) {
-	code := generateRandomCode(6)
+func (s *AccountService) SendEmailCodeLoginEmail(ctx context.Context, account *auth_model.Account, emailAddress, language string) (string, error) {
+	code, err := generate6DigitCode()
+	if err != nil {
+		return "", fmt.Errorf("generate email login code: %w", err)
+	}
 
 	additionalData := map[string]interface{}{
 		"code": code,
-		"exp":  time.Now().Add(time.Minute * 10).Unix(),
+		"exp":  time.Now().Add(5 * time.Minute).Unix(),
 	}
 
 	token, err := s.tokenMgr.GenerateToken(
@@ -3040,6 +3065,12 @@ func (s *AccountService) SendEmailCodeLoginEmail(ctx context.Context, account *a
 	)
 
 	if err != nil {
+		return "", err
+	}
+
+	idempotencyKey := fmt.Sprintf("email-login:%s:%x", account.ID, sha256.Sum256([]byte(token)))
+	if err := email.SendEmailCodeLoginMailTask(ctx, language, emailAddress, code, idempotencyKey); err != nil {
+		_ = s.tokenMgr.RevokeToken(token, "email_code_login")
 		return "", err
 	}
 
@@ -3297,13 +3328,6 @@ func setAccountMobile(account *auth_model.Account, mobile *string) {
 
 	value := *mobile
 	account.MobileE164 = &value
-}
-
-// Helper functions
-func generateRandomCode(length int) string {
-	bytes := make([]byte, length/2)
-	_, _ = cryptorand.Read(bytes)
-	return hex.EncodeToString(bytes)[:length]
 }
 
 type PaginationResult struct {

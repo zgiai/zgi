@@ -376,6 +376,8 @@ func (h *AccountHandler) RegisterRoutes(router *gin.RouterGroup) {
 		accountAuth.GET("/profile", h.GetProfile)
 		accountAuth.PUT("/profile", h.UpdateProfile)
 		accountAuth.POST("/change-password", h.ChangePassword)
+		accountAuth.POST("/delete/verification-code", h.SendAccountDeletionCode)
+		accountAuth.POST("/delete/confirm", h.ConfirmAccountDeletion)
 		accountAuth.POST("/reset-password", h.ResetPassword)
 		accountAuth.GET("/list", h.GetAccountExList)     // GET account-ex/list
 		accountAuth.GET("/email", h.GetAccountExByEmail) // GET account-ex/email
@@ -399,6 +401,59 @@ func (h *AccountHandler) RegisterRoutes(router *gin.RouterGroup) {
 		accountEx.PUT("/id", h.UpdateAccountExByID)    // PUT account-ex/id
 		accountEx.POST("/id", h.UpdateAccountExByID)
 	}
+}
+
+func (h *AccountHandler) SendAccountDeletionCode(c *gin.Context) {
+	accountID := c.GetString("account_id")
+	if accountID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+	account, err := h.accountService.LoadLoggedInAccount(c.Request.Context(), accountID)
+	if err != nil || account == nil {
+		response.Fail(c, response.ErrAccountNotFound)
+		return
+	}
+	token, code, err := h.accountService.GenerateAccountDeletionVerificationCode(c.Request.Context(), account)
+	if err != nil {
+		response.Fail(c, response.ErrSystemError)
+		return
+	}
+	if err := h.accountService.SendAccountDeletionVerificationEmail(c.Request.Context(), account, code); err != nil {
+		response.Fail(c, response.ErrEmailSendFailed)
+		return
+	}
+	response.Success(c, gin.H{"result": "success", "data": token})
+}
+
+func (h *AccountHandler) ConfirmAccountDeletion(c *gin.Context) {
+	accountID := c.GetString("account_id")
+	if accountID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+	var req struct {
+		Token string `json:"token" binding:"required"`
+		Code  string `json:"code" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+	valid, err := h.accountService.VerifyAccountDeletionCode(c.Request.Context(), req.Token, req.Code)
+	if err != nil {
+		response.Fail(c, response.ErrTokenInvalid)
+		return
+	}
+	if !valid {
+		response.Fail(c, response.ErrInvalidCode)
+		return
+	}
+	if err := h.accountService.DeleteAccount(c.Request.Context(), accountID); err != nil {
+		response.Fail(c, response.ErrAccountDeleteFailed)
+		return
+	}
+	response.Success(c, nil)
 }
 
 func (h *AccountHandler) DeleteAccount(c *gin.Context) {
