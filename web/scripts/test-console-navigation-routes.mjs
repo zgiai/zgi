@@ -16,13 +16,30 @@ for (const href of ['/console/workflows', '/console/skills']) {
 for (const href of [
   '/console/workflows/workflow-1',
   '/console/workflows/workflow-1/logs',
-  '/console/workflows/workflow-1/api',
+  '/console/workflows/workflow-1/api/keys',
+  '/console/workflows/workflow-1/api/docs',
   '/console/workflows/workflow-1/batch-test',
 ]) {
   assert.equal(normalizeZGIConsoleNavigationHref(href), href, `${href} must be navigable`);
 }
 
-for (const href of ['/console/settings', '/console/db/database-1/table', '/console/files/file-1']) {
+for (const href of [
+  '/console/agents/agent-1/api',
+  '/console/workflows/workflow-1/api',
+]) {
+  assert.equal(
+    normalizeZGIConsoleNavigationHref(href),
+    `${href}/keys`,
+    `${href} must resolve to the API keys page`
+  );
+}
+
+for (const href of [
+  '/console/settings',
+  '/console/db/database-1/table',
+  '/console/files/file-1',
+  '/console/workflows/workflow-1/api/unknown',
+]) {
   assert.equal(normalizeZGIConsoleNavigationHref(href), null, `${href} must remain blocked`);
 }
 

@@ -267,7 +267,7 @@ const ZGI_CONSOLE_DYNAMIC_ROUTES: readonly ZGIConsoleDynamicRouteDefinition[] = 
     },
   },
   {
-    pattern: /^\/console\/agents\/[A-Za-z0-9_-]+\/api$/,
+    pattern: /^\/console\/agents\/[A-Za-z0-9_-]+\/api\/(keys|docs)$/,
     route: {
       label: 'Agent API',
       purpose: 'agent API access management',
@@ -312,7 +312,7 @@ const ZGI_CONSOLE_DYNAMIC_ROUTES: readonly ZGIConsoleDynamicRouteDefinition[] = 
     },
   },
   {
-    pattern: /^\/console\/workflows\/[A-Za-z0-9_-]+\/api$/,
+    pattern: /^\/console\/workflows\/[A-Za-z0-9_-]+\/api\/(keys|docs)$/,
     route: {
       label: 'Workflow API',
       purpose: 'workflow API access management',
@@ -424,11 +424,19 @@ function normalizeRoutePath(rawHref: string | undefined): string | null {
   return path;
 }
 
+function canonicalizeApiIndexRoute(href: string): string {
+  if (/^\/console\/(agents|workflows)\/[A-Za-z0-9_-]+\/api$/.test(href)) {
+    return `${href}/keys`;
+  }
+  return href;
+}
+
 export function resolveZGIConsoleNavigationRoute(
   rawHref: string | undefined
 ): ZGIConsoleRouteDefinition | null {
-  const href = normalizeRoutePath(rawHref);
-  if (!href) return null;
+  const normalizedHref = normalizeRoutePath(rawHref);
+  if (!normalizedHref) return null;
+  const href = canonicalizeApiIndexRoute(normalizedHref);
 
   const exactRoute = ZGI_CONSOLE_EXACT_ROUTES.get(href);
   if (exactRoute) return exactRoute;

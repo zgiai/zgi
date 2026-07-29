@@ -173,6 +173,32 @@ func TestNormalizeConsoleRouteCanonicalizesBareAgentDetailRoute(t *testing.T) {
 	}
 }
 
+func TestNormalizeConsoleRouteCanonicalizesAPIIndexRoutes(t *testing.T) {
+	for _, tt := range []struct {
+		href  string
+		label string
+	}{
+		{href: "/console/agents/agent-1/api", label: "Agent API"},
+		{href: "/console/workflows/workflow-1/api", label: "Workflow API"},
+	} {
+		normalized, label, err := normalizeConsoleRoute(tt.href)
+		if err != nil {
+			t.Fatalf("normalizeConsoleRoute(%q) returned error: %v", tt.href, err)
+		}
+		want := tt.href + "/keys"
+		if normalized != want || label != tt.label {
+			t.Fatalf(
+				"normalizeConsoleRoute(%q) = (%q, %q), want (%q, %q)",
+				tt.href,
+				normalized,
+				label,
+				want,
+				tt.label,
+			)
+		}
+	}
+}
+
 func TestNormalizeConsoleRouteAllowsWorkflowDetailRoutes(t *testing.T) {
 	for _, tt := range []struct {
 		href  string
@@ -180,7 +206,8 @@ func TestNormalizeConsoleRouteAllowsWorkflowDetailRoutes(t *testing.T) {
 	}{
 		{href: "/console/workflows/workflow-1", label: "Workflow Detail"},
 		{href: "/console/workflows/workflow-1/logs", label: "Workflow Logs"},
-		{href: "/console/workflows/workflow-1/api", label: "Workflow API"},
+		{href: "/console/workflows/workflow-1/api/keys", label: "Workflow API"},
+		{href: "/console/workflows/workflow-1/api/docs", label: "Workflow API"},
 		{href: "/console/workflows/workflow-1/batch-test", label: "Workflow Batch Test"},
 	} {
 		normalized, label, err := normalizeConsoleRoute(tt.href)
@@ -210,6 +237,7 @@ func TestNormalizeConsoleRouteRejectsExternalAndUnknownRoutes(t *testing.T) {
 		"/console/settings",
 		"/console/db/database-1/table",
 		"/console/files/file-1",
+		"/console/workflows/workflow-1/api/unknown",
 	} {
 		if _, _, err := normalizeConsoleRoute(href); err == nil {
 			t.Fatalf("normalizeConsoleRoute(%q) returned nil error, want rejection", href)

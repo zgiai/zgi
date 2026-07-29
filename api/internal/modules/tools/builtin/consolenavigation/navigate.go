@@ -168,12 +168,12 @@ var dynamicConsoleRoutePatterns = []struct {
 	access  consoleRouteAccess
 }{
 	{regexp.MustCompile(`^/console/agents/[A-Za-z0-9_-]+/logs$`), consoleRouteAccess{label: "Agent Logs", requiresWorkspace: true, permissionCodes: []workspacemodel.WorkspacePermissionCode{workspacemodel.WorkspacePermissionAgentLogsView, workspacemodel.WorkspacePermissionWorkflowLogsView}}},
-	{regexp.MustCompile(`^/console/agents/[A-Za-z0-9_-]+/api$`), consoleRouteAccess{label: "Agent API", requiresWorkspace: true, permissionCodes: []workspacemodel.WorkspacePermissionCode{workspacemodel.WorkspacePermissionAgentRuntimeAccessManage, workspacemodel.WorkspacePermissionWorkflowRuntimeAccessManage}}},
+	{regexp.MustCompile(`^/console/agents/[A-Za-z0-9_-]+/api/(keys|docs)$`), consoleRouteAccess{label: "Agent API", requiresWorkspace: true, permissionCodes: []workspacemodel.WorkspacePermissionCode{workspacemodel.WorkspacePermissionAgentRuntimeAccessManage, workspacemodel.WorkspacePermissionWorkflowRuntimeAccessManage}}},
 	{regexp.MustCompile(`^/console/agents/[A-Za-z0-9_-]+/batch-test$`), consoleRouteAccess{label: "Agent Batch Test", requiresWorkspace: true, permissionCodes: []workspacemodel.WorkspacePermissionCode{workspacemodel.WorkspacePermissionWorkflowView}}},
 	{regexp.MustCompile(`^/console/agents/[A-Za-z0-9_-]+/agent$`), consoleRouteAccess{label: "Agent Detail", requiresWorkspace: true, permissionCodes: agentEditorPermissions}},
 	{regexp.MustCompile(`^/console/agents/[A-Za-z0-9_-]+/workflow$`), consoleRouteAccess{label: "Workflow Detail", requiresWorkspace: true, permissionCodes: workflowEditorPermissions}},
 	{regexp.MustCompile(`^/console/workflows/[A-Za-z0-9_-]+/logs$`), consoleRouteAccess{label: "Workflow Logs", requiresWorkspace: true, permissionCodes: []workspacemodel.WorkspacePermissionCode{workspacemodel.WorkspacePermissionWorkflowLogsView}}},
-	{regexp.MustCompile(`^/console/workflows/[A-Za-z0-9_-]+/api$`), consoleRouteAccess{label: "Workflow API", requiresWorkspace: true, permissionCodes: []workspacemodel.WorkspacePermissionCode{workspacemodel.WorkspacePermissionWorkflowRuntimeAccessManage}}},
+	{regexp.MustCompile(`^/console/workflows/[A-Za-z0-9_-]+/api/(keys|docs)$`), consoleRouteAccess{label: "Workflow API", requiresWorkspace: true, permissionCodes: []workspacemodel.WorkspacePermissionCode{workspacemodel.WorkspacePermissionWorkflowRuntimeAccessManage}}},
 	{regexp.MustCompile(`^/console/workflows/[A-Za-z0-9_-]+/batch-test$`), consoleRouteAccess{label: "Workflow Batch Test", requiresWorkspace: true, permissionCodes: []workspacemodel.WorkspacePermissionCode{workspacemodel.WorkspacePermissionWorkflowView}}},
 	{regexp.MustCompile(`^/console/workflows/[A-Za-z0-9_-]+$`), consoleRouteAccess{label: "Workflow Detail", requiresWorkspace: true, permissionCodes: workflowEditorPermissions}},
 	{regexp.MustCompile(`^/console/dataset/[A-Za-z0-9_-]+(/(documents|graph|hit-testing|batch-testing|settings))?$`), consoleRouteAccess{label: "Knowledge Base Detail", requiresWorkspace: true, permissionCodes: knowledgeBasePagePermissions}},
@@ -186,7 +186,10 @@ var dynamicConsoleRoutePatterns = []struct {
 	{regexp.MustCompile(`^/console/work/app/[A-Za-z0-9_-]+$`), consoleRouteAccess{label: "App Detail"}},
 }
 
-var bareAgentDetailRoutePattern = regexp.MustCompile(`^/console/agents/[A-Za-z0-9_-]+$`)
+var (
+	bareAgentDetailRoutePattern = regexp.MustCompile(`^/console/agents/[A-Za-z0-9_-]+$`)
+	apiIndexRoutePattern        = regexp.MustCompile(`^/console/(agents|workflows)/[A-Za-z0-9_-]+/api$`)
+)
 
 // WithRouteAuthorizer returns a shallow copy of runtimeParameters containing a
 // server-owned route authorizer. The callback must never be sourced from client
@@ -362,6 +365,9 @@ func resolveConsoleRoute(rawHref string) (string, consoleRouteAccess, error) {
 	path = strings.TrimRight(path, "/")
 	if path == "" {
 		path = "/"
+	}
+	if apiIndexRoutePattern.MatchString(path) {
+		path += "/keys"
 	}
 
 	if access, ok := exactConsoleRoutes[path]; ok {

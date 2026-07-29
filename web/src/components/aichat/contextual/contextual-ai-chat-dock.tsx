@@ -454,18 +454,21 @@ function routeSpecificReadyContextItem(items: AIChatContextItem[], href: string)
     });
   }
 
-  if (href === '/console/agents') {
+  if (href === '/console/agents' || href === '/console/workflows') {
+    const isWorkflowList = href === '/console/workflows';
+    const pageID = isWorkflowList ? 'console.workflows' : 'console.agents';
+    const assetType = isWorkflowList ? 'workflow' : 'agent';
     return items.find(item => {
       const metadataPage = metadataText(item, 'page');
       const metadataRoute = normalizeZGIConsoleNavigationHref(metadataText(item, 'route'));
       return (
         item.type === 'page' &&
         agentsRouteContextItemReady(item) &&
-        (item.id === 'console.agents' ||
-          metadataPage === 'console.agents' ||
+        (item.id === pageID ||
+          metadataPage === pageID ||
           (metadataRoute === href &&
             item.hints?.handledAssetTypes?.some(
-              assetType => normalizeHintToken(assetType) === 'agent'
+              handledAssetType => normalizeHintToken(handledAssetType) === assetType
             )))
       );
     });
@@ -594,7 +597,9 @@ function routeRequiresPageContextReady(href: string) {
   return (
     href === '/console/files' ||
     href === '/console/agents' ||
-    /^\/console\/agents\/[A-Za-z0-9_-]+\/agent$/.test(href)
+    href === '/console/workflows' ||
+    /^\/console\/agents\/[A-Za-z0-9_-]+\/agent$/.test(href) ||
+    /^\/console\/workflows\/[A-Za-z0-9_-]+$/.test(href)
   );
 }
 
@@ -1319,6 +1324,7 @@ export function ContextualAIChatDock() {
         const accessMessage =
           accessMessages[accessStatus as keyof typeof accessMessages] ??
           accessMessages.permission_denied;
+        const recoverable = accessStatus !== 'permission_denied';
         failUnsupportedClientAction(request, {
           key,
           error: accessMessage.error,
@@ -1337,7 +1343,7 @@ export function ContextualAIChatDock() {
               ? 'owner_or_admin'
               : null,
             observed_path: normalizeZGIConsoleNavigationHref(pathname ?? undefined),
-            recoverable: true,
+            recoverable,
             target_completed: false,
             next_step_hint: accessMessage.hint,
           },
