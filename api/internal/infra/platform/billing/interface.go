@@ -30,6 +30,7 @@ type PreDeductRequest struct {
 // PreDeductResponse represents the response from pre-deduct operation.
 type PreDeductResponse struct {
 	Allowed        bool
+	ErrorCode      string
 	DeductionID    string
 	RemainingQuota int64
 	Reason         string

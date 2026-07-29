@@ -11,7 +11,7 @@ import (
 
 func TestRemotePreDeductPropagatesAttemptAndResourceIdentity(t *testing.T) {
 	client := &recordingBillingServiceClient{
-		preDeductResponse: &pb.PreDeductQuotaResponse{Success: true, DeductionId: "deduction-1"},
+		preDeductResponse: &pb.PreDeductQuotaResponse{Success: true, ErrorCode: "TEST_CODE", DeductionId: "deduction-1"},
 	}
 	remote := &Remote{client: client}
 
@@ -27,6 +27,7 @@ func TestRemotePreDeductPropagatesAttemptAndResourceIdentity(t *testing.T) {
 
 	require.NoError(t, err)
 	require.True(t, response.Allowed)
+	require.Equal(t, "TEST_CODE", response.ErrorCode)
 	require.Equal(t, "attempt-1", client.preDeductRequest.AttemptId)
 	require.Equal(t, "market_api", client.preDeductRequest.ResourceType)
 	require.Equal(t, "api-1", client.preDeductRequest.ResourceId)

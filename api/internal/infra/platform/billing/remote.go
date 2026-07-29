@@ -118,6 +118,7 @@ func (r *Remote) PreDeduct(ctx context.Context, req *PreDeductRequest) (*PreDedu
 
 	return &PreDeductResponse{
 		Allowed:        resp.Success,
+		ErrorCode:      resp.ErrorCode,
 		DeductionID:    resp.DeductionId,
 		RemainingQuota: resp.RemainingQuota,
 		Reason:         resp.ErrorMessage,
