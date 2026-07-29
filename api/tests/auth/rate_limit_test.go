@@ -51,10 +51,11 @@ func TestForgotPasswordErrorRateLimitClearsSameKeyOnSuccess(t *testing.T) {
 	token, err := helper.NewTokenManager().GenerateToken(ctx, "reset_password", nil, &email, map[string]interface{}{"code": code})
 	require.NoError(t, err)
 
-	valid, tokenEmail, err := service.ValidateResetPasswordToken(token, email, "000000")
+	valid, tokenEmail, verifiedToken, err := service.ValidateResetPasswordToken(ctx, token, email, "000000")
 	require.Error(t, err)
 	require.False(t, valid)
 	require.Equal(t, email, tokenEmail)
+	require.Empty(t, verifiedToken)
 
 	key := "forgot_password_error_rate_limit:user@example.com"
 	require.True(t, server.Exists(key))
@@ -63,10 +64,11 @@ func TestForgotPasswordErrorRateLimitClearsSameKeyOnSuccess(t *testing.T) {
 	require.Equal(t, "1", count)
 	require.Positive(t, server.TTL(key))
 
-	valid, tokenEmail, err = service.ValidateResetPasswordToken(token, email, code)
+	valid, tokenEmail, verifiedToken, err = service.ValidateResetPasswordToken(ctx, token, email, code)
 	require.NoError(t, err)
 	require.True(t, valid)
 	require.Equal(t, email, tokenEmail)
+	require.NotEmpty(t, verifiedToken)
 	require.False(t, server.Exists(key))
 }
 

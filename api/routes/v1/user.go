@@ -57,6 +57,7 @@ func RegisterUserRoutes(v1 *gin.RouterGroup, deps UserRouteDeps) {
 
 	tokenMgr := helper.NewTokenManager()
 	featureService := system_service.NewFeatureService()
+	cfg := config.Current()
 
 	// --- Handlers ---
 	accountHandler := authHandler.NewAccountHandler(deps.AccountService, deps.WorkspaceManagementService)
@@ -72,6 +73,29 @@ func RegisterUserRoutes(v1 *gin.RouterGroup, deps UserRouteDeps) {
 		},
 	)
 	phoneAuthHandler := authHandler.NewPhoneAuthHandler(phoneAuthService)
+	emailRegistrationService := authService.NewEmailRegistrationService(
+		deps.AccountService,
+		tokenMgr,
+		authService.NewPackageEmailRegistrationCodeSender(),
+		authService.EmailRegistrationOptions{
+			AllowRegister:               cfg.Feature.PublicDeploymentEnabled && cfg.Feature.AllowRegister,
+			MasterVerificationCode:      cfg.Auth.MasterVerificationCode,
+			AllowMasterVerificationCode: isDevelopmentRuntime(cfg),
+			MaxCodeAttempts:             5,
+		},
+	)
+	emailRegistrationHandler := authHandler.NewEmailRegistrationHandler(emailRegistrationService)
+	emailCodeLoginService := authService.NewEmailCodeLoginService(
+		deps.AccountService,
+		tokenMgr,
+		authService.EmailCodeLoginOptions{
+			Enabled:                     cfg.Feature.EnableEmailCodeLogin,
+			MasterVerificationCode:      cfg.Auth.MasterVerificationCode,
+			AllowMasterVerificationCode: isDevelopmentRuntime(cfg),
+			MaxCodeAttempts:             5,
+		},
+	)
+	emailCodeLoginHandler := authHandler.NewEmailCodeLoginHandler(emailCodeLoginService)
 	activateHandler := authHandler.NewActivateHandler(deps.AccountService)
 
 	membersHandler := workspaceHandler.NewMembersHandler(
@@ -94,8 +118,14 @@ func RegisterUserRoutes(v1 *gin.RouterGroup, deps UserRouteDeps) {
 	accountHandler.RegisterRoutes(v1)
 	forgotPasswordHandler.RegisterRoutes(v1)
 	authHandlerInstance.RegisterAuthRoutes(v1)
+	emailRegistrationHandler.RegisterRoutes(v1)
+	emailCodeLoginHandler.RegisterRoutes(v1)
 	phoneAuthHandler.RegisterRoutes(v1)
 	activateHandler.RegisterRoutes(v1)
 	enterpriseHandler.RegisterRoutes(v1)
 	membersHandler.RegisterRoutes(v1)
+}
+
+func isDevelopmentRuntime(cfg *config.Config) bool {
+	return cfg.Server.Mode == "debug" || cfg.Server.Environment == "local" || cfg.Server.Environment == "dev"
 }

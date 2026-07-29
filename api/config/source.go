@@ -31,8 +31,9 @@ func newEnvSource(path string) (*envSource, error) {
 	}
 
 	return &envSource{
-		path: absPath,
-		v:    v,
+		path:      absPath,
+		v:         v,
+		lookupEnv: os.LookupEnv,
 	}, nil
 }
 
@@ -75,28 +76,65 @@ func resolveDefaultEnvFile() (string, bool, error) {
 }
 
 func (s *envSource) lookup(keys ...string) (string, bool) {
-	for _, key := range keys {
-		if s == nil {
-			return "", false
-		}
+	if s == nil {
+		return "", false
+	}
 
-		if s.v != nil {
+	// Resolve the complete alias set from the process environment before
+	// consulting dotenv values. This lets an operator override a preferred key
+	// in a checked-in/local dotenv file with a legacy runtime alias during a
+	// rolling configuration migration.
+	if s.lookupEnv != nil {
+		for _, key := range keys {
+			if value, ok := s.lookupEnv(key); ok {
+				return strings.TrimSpace(value), true
+			}
+		}
+	}
+
+	if s.v != nil {
+		for _, key := range keys {
 			if !s.v.InConfig(key) {
 				continue
 			}
 			return strings.TrimSpace(s.v.GetString(key)), true
 		}
-
-		if s.lookupEnv == nil {
-			continue
-		}
-		value, ok := s.lookupEnv(key)
-		if !ok {
-			continue
-		}
-		return strings.TrimSpace(value), true
 	}
+
 	return "", false
+}
+
+// lookupNonEmpty follows lookup's source precedence while skipping empty
+// compatibility aliases. The returned key identifies the alias that won.
+func (s *envSource) lookupNonEmpty(keys ...string) (string, string, bool) {
+	if s == nil {
+		return "", "", false
+	}
+
+	if s.lookupEnv != nil {
+		for _, key := range keys {
+			if value, ok := s.lookupEnv(key); ok {
+				value = strings.TrimSpace(value)
+				if value != "" {
+					return value, key, true
+				}
+			}
+		}
+	}
+
+	if s.v != nil {
+		for _, key := range keys {
+			if !s.v.InConfig(key) {
+				continue
+			}
+			value := strings.TrimSpace(s.v.GetString(key))
+			if value != "" {
+				return value, key, true
+			}
+		}
+	}
+
+	return "", "", false
 }
 
 func (s *envSource) string(defaultValue string, keys ...string) string {
@@ -104,6 +142,28 @@ func (s *envSource) string(defaultValue string, keys ...string) string {
 		return value
 	}
 	return defaultValue
+}
+
+// nonEmptyString returns the first configured, non-empty value. It is useful
+// for compatibility aliases where an empty canonical key in an example env
+// file must not hide a populated legacy key or the application default.
+func (s *envSource) nonEmptyString(defaultValue string, keys ...string) string {
+	if value, _, ok := s.lookupNonEmpty(keys...); ok {
+		return value
+	}
+	return defaultValue
+}
+
+func (s *envSource) nonEmptyInt(defaultValue int, keys ...string) (int, error) {
+	value, _, ok := s.lookupNonEmpty(keys...)
+	if !ok {
+		return defaultValue, nil
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil {
+		return 0, fmt.Errorf("invalid %s: %v", keys[0], err)
+	}
+	return parsed, nil
 }
 
 func (s *envSource) prefixedStrings(prefix string) map[string]string {

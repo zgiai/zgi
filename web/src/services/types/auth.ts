@@ -60,6 +60,22 @@ export interface LoginRequest {
   remember?: boolean;
 }
 
+export interface EmailCodeLoginSendRequest {
+  email: string;
+  language?: string;
+}
+
+export interface EmailCodeLoginVerifyRequest {
+  email: string;
+  code: string;
+  token: string;
+}
+
+export interface EmailCodeLoginSendResponse {
+  result: string;
+  data: string;
+}
+
 export interface LoginResponse {
   data: {
     access_token: string;

@@ -924,7 +924,7 @@ func TestLoadWorkflowTestTaskBackend(t *testing.T) {
 	}
 }
 
-func TestLoadPrefersEnvFileOverEnvironment(t *testing.T) {
+func TestLoadPrefersEnvironmentOverEnvFile(t *testing.T) {
 	restoreGlobalConfig(t)
 
 	dir := t.TempDir()
@@ -952,11 +952,11 @@ func TestLoadPrefersEnvFileOverEnvironment(t *testing.T) {
 		t.Fatalf("config.Load() error = %v, want nil", err)
 	}
 
-	if got := cfg.Server.Port; got != 3200 {
-		t.Fatalf("cfg.Server.Port = %d, want %d", got, 3200)
+	if got := cfg.Server.Port; got != 3300 {
+		t.Fatalf("cfg.Server.Port = %d, want %d", got, 3300)
 	}
-	if got := cfg.JWT.Secret; got != "file-secret" {
-		t.Fatalf("cfg.JWT.Secret = %q, want %q", got, "file-secret")
+	if got := cfg.JWT.Secret; got != "env-secret" {
+		t.Fatalf("cfg.JWT.Secret = %q, want %q", got, "env-secret")
 	}
 }
 

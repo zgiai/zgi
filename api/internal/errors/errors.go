@@ -12,6 +12,7 @@ var (
 	ErrEmailFrozen               = errors.New("this email is frozen, please contact the administrator")
 	ErrNoWorkspace               = errors.New("no workspace found, please contact system admin to invite you to join in a workspace")
 	ErrAccountAlreadyInWorkspace = errors.New("account already in tenant")
+	ErrInviteEmailDeliveryFailed = errors.New("invitation created but email delivery failed")
 	// ... other common errors ...
 )
 

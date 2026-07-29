@@ -1037,7 +1037,14 @@ func (h *MembersHandler) InviteWorkspaceMemberByEmailEx(c *gin.Context) {
 	)
 
 	if err != nil {
-		if err == usererrors.ErrAccountAlreadyInWorkspace {
+		if errors.Is(err, usererrors.ErrInviteEmailDeliveryFailed) {
+			invitationResults = append(invitationResults, map[string]interface{}{
+				"status":  "created_email_failed",
+				"email":   req.Email,
+				"url":     h.consoleWebURL + "/activate?email=" + req.Email + "&token=" + token,
+				"message": usererrors.ErrInviteEmailDeliveryFailed.Error(),
+			})
+		} else if err == usererrors.ErrAccountAlreadyInWorkspace {
 			invitationResults = append(invitationResults, map[string]interface{}{
 				"status": "success",
 				"email":  req.Email,
@@ -1795,6 +1802,22 @@ func (h *MembersHandler) ReInviteMemberById(c *gin.Context) {
 			"", // position
 			sendEmail,
 		)
+		if err != nil {
+			status := "failed"
+			message := err.Error()
+			if errors.Is(err, usererrors.ErrInviteEmailDeliveryFailed) {
+				status = "created_email_failed"
+				message = usererrors.ErrInviteEmailDeliveryFailed.Error()
+			}
+			results = append(results, map[string]interface{}{
+				"status":       status,
+				"email":        member.Email,
+				"workspace_id": workspace.ID,
+				"url":          h.consoleWebURL + "/activate?email=" + member.Email + "&token=" + token,
+				"message":      message,
+			})
+			continue
+		}
 
 		// encodedEmail := url.QueryEscape(member.Email)
 		encodedEmail := member.Email
@@ -1830,9 +1853,13 @@ func (h *MembersHandler) getWorkspaceJoinsForPendingMember(ctx context.Context, 
 	}
 
 	validJoins := []*model.WorkspaceMember{}
-	groupID := operatorWorkspace.WorkspaceID
+	operatorWorkspaceRecord, err := h.workspaceManagementService.GetWorkspaceByID(ctx, operatorWorkspace.WorkspaceID)
+	if err != nil || operatorWorkspaceRecord == nil || operatorWorkspaceRecord.OrganizationID == nil || strings.TrimSpace(*operatorWorkspaceRecord.OrganizationID) == "" {
+		return nil, fmt.Errorf("operator workspace organization not found")
+	}
+	organizationID := strings.TrimSpace(*operatorWorkspaceRecord.OrganizationID)
 	var limit int = 200
-	pagination, err := h.enterpriseService.GetManagedWorkspacesInOrganization(ctx, groupID, operatorWorkspace.AccountID, 1, limit)
+	pagination, err := h.enterpriseService.GetManagedWorkspacesInOrganization(ctx, organizationID, operatorWorkspace.AccountID, 1, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -1844,7 +1871,7 @@ func (h *MembersHandler) getWorkspaceJoinsForPendingMember(ctx context.Context, 
 	if pagination.Total > int64(limit) {
 		totalPage := int(math.Ceil(float64(pagination.Total) / float64(limit)))
 		for i := 2; i <= totalPage; i++ {
-			pagination, err := h.enterpriseService.GetManagedWorkspacesInOrganization(ctx, groupID, operatorWorkspace.AccountID, i, limit)
+			pagination, err := h.enterpriseService.GetManagedWorkspacesInOrganization(ctx, organizationID, operatorWorkspace.AccountID, i, limit)
 			if err != nil {
 				break
 			}
@@ -1952,7 +1979,14 @@ func (h *MembersHandler) InviteDefaultMemberByEmailEx(c *gin.Context) {
 	)
 
 	if err != nil {
-		if err == usererrors.ErrAccountAlreadyInWorkspace {
+		if errors.Is(err, usererrors.ErrInviteEmailDeliveryFailed) {
+			invitationResults = append(invitationResults, map[string]interface{}{
+				"status":  "created_email_failed",
+				"email":   req.Email,
+				"url":     h.consoleWebURL + "/activate?email=" + req.Email + "&token=" + token,
+				"message": usererrors.ErrInviteEmailDeliveryFailed.Error(),
+			})
+		} else if err == usererrors.ErrAccountAlreadyInWorkspace {
 			invitationResults = append(invitationResults, map[string]interface{}{
 				"status": "success",
 				"email":  req.Email,

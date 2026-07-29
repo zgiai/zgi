@@ -1864,6 +1864,14 @@ func (h *OrganizationHandler) DirectAddMember(c *gin.Context) {
 	}
 
 	ctx := c.Request.Context()
+	sendEmail := req.SendEmail != nil && *req.SendEmail
+	if sendEmail {
+		limited, err := h.accountService.IsEmailSendIPLimit(ctx, c.ClientIP())
+		if err != nil || limited {
+			response.Fail(c, response.ErrRateLimitExceeded)
+			return
+		}
+	}
 
 	result, err := h.organizationService.DirectAddOrganizationMember(ctx, &shared_dto.DirectAddOrganizationMemberRequest{
 		OrganizationID:    organizationID,
@@ -1878,51 +1886,44 @@ func (h *OrganizationHandler) DirectAddMember(c *gin.Context) {
 		return
 	}
 
-	sendEmail := false
-	if req.SendEmail != nil {
-		sendEmail = *req.SendEmail
-	}
-
 	respDeptName := ""
 	if result.Department != nil {
 		respDeptName = result.Department.Name
 	}
 
+	emailDeliveryStatus := "not_requested"
+	emailDeliveryMessage := ""
 	if sendEmail {
-		ip := c.ClientIP()
-		limited, err := h.accountService.IsEmailSendIPLimit(ctx, ip)
-		if err != nil || limited {
-			response.Fail(c, response.ErrRateLimitExceeded)
-			return
-		}
-
+		emailDeliveryStatus = "sent"
 		account, err := h.accountService.GetAccountByID(ctx, result.AccountID)
 		if err != nil || account == nil {
-			response.Fail(c, response.ErrSystemError)
-			return
-		}
+			emailDeliveryStatus = "failed"
+			emailDeliveryMessage = "member created but email recipient could not be loaded"
+		} else {
+			language := "zh-Hans"
+			if account.InterfaceLanguage != nil && *account.InterfaceLanguage != "" {
+				language = *account.InterfaceLanguage
+			}
 
-		language := "zh-Hans"
-		if account.InterfaceLanguage != nil && *account.InterfaceLanguage != "" {
-			language = *account.InterfaceLanguage
-		}
-
-		organization, err := h.organizationService.GetByID(ctx, organizationID)
-		if err != nil || organization == nil {
-			response.Fail(c, response.ErrSystemError)
-			return
-		}
-
-		if err := h.accountService.SendDirectAddMemberEmail(ctx, account, organizationID, organization.Name, respDeptName, language); err != nil {
-			response.Fail(c, response.ErrEmailSendFailed)
-			return
+			organization, organizationErr := h.organizationService.GetByID(ctx, organizationID)
+			if organizationErr != nil || organization == nil {
+				emailDeliveryStatus = "failed"
+				emailDeliveryMessage = "member created but organization email context could not be loaded"
+			} else if sendErr := h.accountService.SendDirectAddMemberEmail(ctx, account, organizationID, organization.Name, respDeptName, language); sendErr != nil {
+				emailDeliveryStatus = "failed"
+				emailDeliveryMessage = "member created but email delivery failed"
+			}
 		}
 	}
 
 	payload := gin.H{
-		"account_id": result.AccountID,
-		"name":       result.Name,
-		"email":      result.Email,
+		"account_id":            result.AccountID,
+		"name":                  result.Name,
+		"email":                 result.Email,
+		"email_delivery_status": emailDeliveryStatus,
+	}
+	if emailDeliveryMessage != "" {
+		payload["email_delivery_message"] = emailDeliveryMessage
 	}
 	if result.Department != nil {
 		payload["department"] = gin.H{

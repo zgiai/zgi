@@ -2,8 +2,11 @@ package email
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"html"
 	"io"
 	"net/http"
 	"os"
@@ -20,7 +23,7 @@ var (
 	Cfg *config.Config
 )
 
-const resendAPIKeyEnv = "EMAIL_RESEND_API_KEY"
+const resendAPIKeyEnv = "RESEND_API_KEY (or EMAIL_RESEND_API_KEY)"
 
 func Init(c *config.Config) {
 	Cfg = c
@@ -42,26 +45,52 @@ type EmailResponse struct {
 	Error   string `json:"error"`
 }
 
+type providerErrorResponse struct {
+	Name       string          `json:"name"`
+	Message    string          `json:"message"`
+	StatusCode int             `json:"statusCode"`
+	Error      json.RawMessage `json:"error"`
+}
+
+type SendOptions struct {
+	IdempotencyKey string
+}
+
 func SendEmail(to []string, subject, htmlContent string) error {
 	return SendEmailWithBodyType(to, subject, htmlContent, "text/html")
 }
 
 func SendEmailWithBodyType(to []string, subject, body, bodyType string) error {
+	return SendEmailWithContext(context.Background(), to, subject, body, bodyType)
+}
+
+// SendEmailWithContext sends an email using the configured provider and bounds
+// network work to the caller's lifecycle.
+func SendEmailWithContext(ctx context.Context, to []string, subject, body, bodyType string) error {
+	return SendEmailWithOptions(ctx, to, subject, body, bodyType, SendOptions{})
+}
+
+func SendEmailWithOptions(
+	ctx context.Context,
+	to []string,
+	subject, body, bodyType string,
+	options SendOptions,
+) error {
 	if Cfg == nil {
 		return fmt.Errorf("email service not initialized")
 	}
 
 	switch strings.ToLower(strings.TrimSpace(Cfg.Email.MailType)) {
 	case "resend":
-		return sendResendEmail(to, subject, body, bodyType)
+		return sendResendEmail(ctx, to, subject, body, bodyType, options)
 	case "smtp":
-		return sendSMTPEmail(to, subject, body, bodyType)
+		return sendSMTPEmail(ctx, to, subject, body, bodyType)
 	default:
 		return fmt.Errorf("unsupported email mail type: %s", Cfg.Email.MailType)
 	}
 }
 
-func sendResendEmail(to []string, subject, body, bodyType string) error {
+func sendResendEmail(ctx context.Context, to []string, subject, body, bodyType string, options SendOptions) error {
 	if strings.TrimSpace(Cfg.Email.ResendAPIKey) == "" {
 		return fmt.Errorf("%s is required", resendAPIKeyEnv)
 	}
@@ -90,7 +119,8 @@ func sendResendEmail(to []string, subject, body, bodyType string) error {
 
 	logger.Debug("email request prepared", "payload_bytes", len(jsonData))
 
-	req, err := http.NewRequest("POST", Cfg.Email.ResendAPIURL+"/emails", bytes.NewBuffer(jsonData))
+	endpoint := strings.TrimRight(strings.TrimSpace(Cfg.Email.ResendAPIURL), "/") + "/emails"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewBuffer(jsonData))
 
 	if err != nil {
 		logger.Error("Failed to create request", err)
@@ -99,8 +129,14 @@ func sendResendEmail(to []string, subject, body, bodyType string) error {
 
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+Cfg.Email.ResendAPIKey)
+	if idempotencyKey := strings.TrimSpace(options.IdempotencyKey); idempotencyKey != "" {
+		req.Header.Set("Idempotency-Key", idempotencyKey)
+	}
 
-	client := observability.HTTPClient(&http.Client{})
+	client := observability.HTTPClient(&http.Client{
+		Timeout:       15 * time.Second,
+		CheckRedirect: resendRedirectPolicy,
+	})
 	resp, err := client.Do(req)
 	if err != nil {
 		logger.Error("Failed to send request", err)
@@ -116,30 +152,21 @@ func sendResendEmail(to []string, subject, body, bodyType string) error {
 
 	logger.Debug("email response received", "status_code", resp.StatusCode, "response_bytes", len(responseBody))
 
-	if resp.StatusCode == http.StatusForbidden {
-		var resendError struct {
-			Name       string `json:"name"`
-			Message    string `json:"message"`
-			StatusCode int    `json:"statusCode"`
-		}
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		var resendError providerErrorResponse
 		if err := json.Unmarshal(responseBody, &resendError); err != nil {
-			logger.Error("Failed to parse error response", err)
-			return fmt.Errorf("failed to unmarshal error response: %w", err)
+			return fmt.Errorf("email provider returned status %d", resp.StatusCode)
 		}
+		providerErrorMessage := resendError.message()
 		logger.Error("Resend API error", fmt.Errorf("%s: %s (status %d)",
 			resendError.Name,
-			resendError.Message,
-			resendError.StatusCode,
+			providerErrorMessage,
+			resp.StatusCode,
 		))
-		if resendError.Name == "validation_error" && strings.Contains(resendError.Message, "domain is not verified") {
+		if resendError.Name == "validation_error" && strings.Contains(strings.ToLower(providerErrorMessage), "domain is not verified") {
 			return fmt.Errorf("recipient domain not verified, please contact admin to add domain verification")
 		}
-		return fmt.Errorf("Resend API error: %s", resendError.Message)
-	}
-
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		logger.Error("Email sending failed", fmt.Errorf("status code %d, response: %s", resp.StatusCode, string(responseBody)))
-		return fmt.Errorf("failed to send email: status code %d, response: %s", resp.StatusCode, string(responseBody))
+		return fmt.Errorf("email provider error (status %d): %s", resp.StatusCode, providerErrorMessage)
 	}
 
 	var emailResp EmailResponse
@@ -153,9 +180,52 @@ func sendResendEmail(to []string, subject, body, bodyType string) error {
 		logger.Error("Email service error", err)
 		return err
 	}
+	if strings.TrimSpace(emailResp.ID) == "" {
+		return fmt.Errorf("email provider returned an empty message id")
+	}
 
 	logger.Info("Email sent successfully", fmt.Sprintf("ID: %s", emailResp.ID))
 	return nil
+}
+
+func resendRedirectPolicy(req *http.Request, via []*http.Request) error {
+	if !emailDevelopmentRuntime() && !strings.EqualFold(req.URL.Scheme, "https") {
+		return errors.New("email provider refused an insecure redirect")
+	}
+	if len(via) == 0 {
+		return nil
+	}
+	original := via[0].URL
+	if !strings.EqualFold(req.URL.Scheme, original.Scheme) || !strings.EqualFold(req.URL.Host, original.Host) {
+		return errors.New("email provider refused a cross-origin redirect")
+	}
+	return nil
+}
+
+func emailDevelopmentRuntime() bool {
+	if Cfg == nil {
+		return false
+	}
+	return Cfg.Server.Mode == "debug" || Cfg.Server.Environment == "local" || Cfg.Server.Environment == "dev"
+}
+
+func (e providerErrorResponse) message() string {
+	if strings.TrimSpace(e.Message) != "" {
+		return strings.TrimSpace(e.Message)
+	}
+	if len(e.Error) > 0 {
+		var message string
+		if json.Unmarshal(e.Error, &message) == nil && strings.TrimSpace(message) != "" {
+			return strings.TrimSpace(message)
+		}
+		var nested struct {
+			Message string `json:"message"`
+		}
+		if json.Unmarshal(e.Error, &nested) == nil && strings.TrimSpace(nested.Message) != "" {
+			return strings.TrimSpace(nested.Message)
+		}
+	}
+	return "request rejected"
 }
 
 func BuildEmailRequest(from string, to []string, subject, body, bodyType string) (*EmailRequest, error) {
@@ -262,6 +332,96 @@ func SendResetPasswordMailTask(language, to, code string) error {
 	return nil
 }
 
+// SendRegistrationMailTask sends a registration-specific verification email.
+func SendRegistrationMailTask(language, to, code string) error {
+	return SendRegistrationMailTaskWithContext(context.Background(), language, to, code, "")
+}
+
+func SendRegistrationMailTaskWithContext(ctx context.Context, language, to, code, idempotencyKey string) error {
+	if Cfg == nil {
+		return fmt.Errorf("email service not initialized")
+	}
+
+	templateLanguage := "en-US"
+	subject := fmt.Sprintf("%s registration code", Cfg.Email.MailTemplateBrandName)
+	if language == "zh-Hans" || language == "zh-CN" {
+		templateLanguage = "zh-CN"
+		subject = fmt.Sprintf("%s 注册验证码", Cfg.Email.MailTemplateBrandName)
+	}
+
+	htmlContent, err := renderRegistrationTemplate(templateLanguage, TemplateData{
+		To:        to,
+		Code:      code,
+		LogoURL:   Cfg.Email.MailTemplateLogoUrl,
+		BrandName: Cfg.Email.MailTemplateBrandName,
+	})
+	if err != nil {
+		return fmt.Errorf("render registration email: %w", err)
+	}
+	if err := SendEmailWithOptions(ctx, []string{to}, subject, htmlContent, "text/html", SendOptions{
+		IdempotencyKey: idempotencyKey,
+	}); err != nil {
+		return fmt.Errorf("send registration email: %w", err)
+	}
+	return nil
+}
+
+// SendEmailCodeLoginMailTask sends a short-lived code for passwordless login.
+func SendEmailCodeLoginMailTask(ctx context.Context, language, to, code, idempotencyKey string) error {
+	if Cfg == nil {
+		return fmt.Errorf("email service not initialized")
+	}
+
+	templateLanguage := "en-US"
+	subject := fmt.Sprintf("%s login code", Cfg.Email.MailTemplateBrandName)
+	if language == "zh-Hans" || language == "zh-CN" {
+		templateLanguage = "zh-CN"
+		subject = fmt.Sprintf("%s 登录验证码", Cfg.Email.MailTemplateBrandName)
+	}
+
+	htmlContent, err := renderCodeTemplate("email_code_login_mail_template_"+templateLanguage+".html", TemplateData{
+		To:        to,
+		Code:      code,
+		LogoURL:   Cfg.Email.MailTemplateLogoUrl,
+		BrandName: Cfg.Email.MailTemplateBrandName,
+	})
+	if err != nil {
+		return fmt.Errorf("render email login code: %w", err)
+	}
+	if err := SendEmailWithOptions(ctx, []string{to}, subject, htmlContent, "text/html", SendOptions{IdempotencyKey: idempotencyKey}); err != nil {
+		return fmt.Errorf("send email login code: %w", err)
+	}
+	return nil
+}
+
+// SendAccountDeletionCodeMailTask sends the confirmation code required before
+// an authenticated account can be deleted.
+func SendAccountDeletionCodeMailTask(ctx context.Context, language, to, code, idempotencyKey string) error {
+	if Cfg == nil {
+		return fmt.Errorf("email service not initialized")
+	}
+
+	templateLanguage := "en-US"
+	subject := fmt.Sprintf("%s account deletion code", Cfg.Email.MailTemplateBrandName)
+	if language == "zh-Hans" || language == "zh-CN" {
+		templateLanguage = "zh-CN"
+		subject = fmt.Sprintf("%s 账号注销验证码", Cfg.Email.MailTemplateBrandName)
+	}
+	htmlContent, err := renderCodeTemplate("delete_account_code_email_template_"+templateLanguage+".html", TemplateData{
+		To:        to,
+		Code:      code,
+		LogoURL:   Cfg.Email.MailTemplateLogoUrl,
+		BrandName: Cfg.Email.MailTemplateBrandName,
+	})
+	if err != nil {
+		return fmt.Errorf("render account deletion code: %w", err)
+	}
+	if err := SendEmailWithOptions(ctx, []string{to}, subject, htmlContent, "text/html", SendOptions{IdempotencyKey: idempotencyKey}); err != nil {
+		return fmt.Errorf("send account deletion code: %w", err)
+	}
+	return nil
+}
+
 type TemplateData struct {
 	To        string
 	Code      string
@@ -331,6 +491,38 @@ func renderResetPasswordTemplate(language string, data TemplateData) (string, er
 	content = strings.ReplaceAll(content, "{{logo_url}}", data.LogoURL)
 	content = strings.ReplaceAll(content, "{{brand_name}}", data.BrandName)
 
+	return content, nil
+}
+
+func renderRegistrationTemplate(language string, data TemplateData) (string, error) {
+	templateFileName := "registration_code_mail_template_en-US.html"
+	if language == "zh-CN" {
+		templateFileName = "registration_code_mail_template_zh-CN.html"
+	}
+	templateContent, err := loadTemplateFile(templateFileName)
+	if err != nil {
+		return "", err
+	}
+
+	content := string(templateContent)
+	content = strings.ReplaceAll(content, "{{to}}", html.EscapeString(data.To))
+	content = strings.ReplaceAll(content, "{{code}}", html.EscapeString(data.Code))
+	content = strings.ReplaceAll(content, "{{logo_url}}", html.EscapeString(data.LogoURL))
+	content = strings.ReplaceAll(content, "{{brand_name}}", html.EscapeString(data.BrandName))
+	return content, nil
+}
+
+func renderCodeTemplate(templateFileName string, data TemplateData) (string, error) {
+	templateContent, err := loadTemplateFile(templateFileName)
+	if err != nil {
+		return "", err
+	}
+
+	content := string(templateContent)
+	content = strings.ReplaceAll(content, "{{to}}", html.EscapeString(data.To))
+	content = strings.ReplaceAll(content, "{{code}}", html.EscapeString(data.Code))
+	content = strings.ReplaceAll(content, "{{logo_url}}", html.EscapeString(data.LogoURL))
+	content = strings.ReplaceAll(content, "{{brand_name}}", html.EscapeString(data.BrandName))
 	return content, nil
 }
 

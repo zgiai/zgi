@@ -2,10 +2,11 @@ package service
 
 import (
 	"context"
-	"encoding/hex"
+	cryptorand "crypto/rand"
+	"crypto/sha256"
 	"errors"
 	"fmt"
-	"math/rand"
+	"math/big"
 	"strconv"
 	"strings"
 	"sync"
@@ -41,11 +42,17 @@ const (
 	TokenTypeAccess        = "access"
 	TokenTypeRefresh       = "refresh"
 	TokenTypeResetPassword = "reset_password"
+	TokenTypeResetVerified = "reset_password_verified"
 
-	resetPasswordRateLimitKeyPrefix = "reset_password_rate_limit:"
+	resetPasswordRateLimitKeyPrefix  = "reset_password_rate_limit:"
+	resetPasswordCompensationTimeout = 2 * time.Second
+	invitationCompensationTimeout    = 2 * time.Second
 )
 
-var ErrCurrentPasswordMismatch = errors.New("current password is incorrect")
+var (
+	ErrCurrentPasswordMismatch   = errors.New("current password is incorrect")
+	ErrResetPasswordTokenInvalid = errors.New("invalid or expired reset token")
+)
 
 const (
 	accountCapabilityModeNone         = "none"
@@ -196,9 +203,8 @@ func (s *AccountService) GetAccountsByIDs(ctx context.Context, ids []string) (ma
 	return result, nil
 }
 
-func (s *AccountService) ExistsByEmail(ctx context.Context, email string) bool {
-	exists, _ := s.accountRepo.ExistsByEmail(ctx, email)
-	return exists
+func (s *AccountService) ExistsByEmail(ctx context.Context, email string) (bool, error) {
+	return s.accountRepo.ExistsByEmail(ctx, email)
 }
 
 func (s *AccountService) LoadUser(ctx context.Context, userID string) (*auth_model.Account, error) {
@@ -235,7 +241,10 @@ func (s *AccountService) SendResetPasswordEmail(ctx context.Context, account *au
 		return "", errors.New("Too many password reset emails have been sent. Please try again in 1 minutes.")
 	}
 
-	code := generate6DigitCode()
+	code, err := generate6DigitCode()
+	if err != nil {
+		return "", fmt.Errorf("generate verification code: %w", err)
+	}
 
 	var tokenEmail string
 
@@ -294,13 +303,17 @@ func (s *AccountService) SendDirectAddMemberEmail(ctx context.Context, account *
 	return email.SendDirectAddMemberMail(language, account.Email, groupName, departmentName, activationURL)
 }
 
-func generate6DigitCode() string {
-	rand.Seed(time.Now().UnixNano())
-	codes := make([]string, 6)
-	for i := 0; i < 6; i++ {
-		codes[i] = strconv.Itoa(rand.Intn(10))
+func generate6DigitCode() (string, error) {
+	const codeLength = 6
+	digits := make([]byte, codeLength)
+	for i := range digits {
+		value, err := cryptorand.Int(cryptorand.Reader, big.NewInt(10))
+		if err != nil {
+			return "", err
+		}
+		digits[i] = byte('0' + value.Int64())
 	}
-	return strings.Join(codes, "")
+	return string(digits), nil
 }
 
 func (s *AccountService) incrementResetPasswordRateLimit(email string) {
@@ -696,6 +709,19 @@ func (s *AccountService) Activate(ctx context.Context, workspaceID, email, token
 	}
 
 	if invitationData.WorkspaceID == "" {
+		reservation, err := s.tokenMgr.ReserveInvitationToken(ctx, token, "", invitationData.Email)
+		if err != nil || reservation.Data.AccountID != invitationData.AccountID {
+			if err == nil {
+				s.releaseInvitationReservation(ctx, token, reservation)
+			}
+			return nil, errors.New("Auth Token is invalid or account already activated, please check again.")
+		}
+		releaseReservation := true
+		defer func() {
+			if releaseReservation {
+				s.releaseInvitationReservation(ctx, token, reservation)
+			}
+		}()
 		account, err := s.accountRepo.GetAccount(ctx, invitationData.AccountID)
 		if err != nil || account == nil {
 			return nil, errors.New("Auth Token is invalid or account already activated, please check again.")
@@ -730,7 +756,10 @@ func (s *AccountService) Activate(ctx context.Context, workspaceID, email, token
 			return nil, fmt.Errorf("failed to update account: %w", err)
 		}
 
-		if err := s.tokenMgr.RevokeInvitationToken("", email, token); err != nil {
+		releaseReservation = false
+		consumeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), invitationCompensationTimeout)
+		defer cancel()
+		if err := s.tokenMgr.ConsumeInvitationReservation(consumeCtx, token, reservation); err != nil {
 			return nil, fmt.Errorf("failed to revoke token: %w", err)
 		}
 
@@ -758,6 +787,25 @@ func (s *AccountService) Authenticate(ctx context.Context, email, password, invi
 		return nil, err
 	}
 
+	var invitationReservation *helper.InvitationReservation
+	releaseInvitation := false
+	if inviteToken != "" {
+		invitationReservation, err = s.tokenMgr.ReserveInvitationToken(ctx, inviteToken, "", account.Email)
+		if err != nil || invitationReservation.Data.AccountID != account.ID {
+			if err == nil {
+				s.releaseInvitationReservation(ctx, inviteToken, invitationReservation)
+			}
+			return nil, errors.New("invalid invitation code")
+		}
+		releaseInvitation = true
+		defer func() {
+			if releaseInvitation {
+				s.releaseInvitationReservation(ctx, inviteToken, invitationReservation)
+			}
+		}()
+	}
+
+	accountNeedsUpdate := false
 	if password != "" && len(inviteToken) != 0 && (account.Password == nil || account.Status == auth_model.AccountStatusPending) {
 		hashedPassword, salt, err := helper.HashPasswordPBKDF2(password)
 		if err != nil {
@@ -765,10 +813,7 @@ func (s *AccountService) Authenticate(ctx context.Context, email, password, invi
 		}
 		account.Password = &hashedPassword
 		account.PasswordSalt = &salt
-
-		if err := s.accountRepo.UpdateAccount(ctx, account); err != nil {
-			return nil, fmt.Errorf("failed to update account password: %w", err)
-		}
+		accountNeedsUpdate = true
 	}
 
 	if account.Password == nil {
@@ -780,12 +825,35 @@ func (s *AccountService) Authenticate(ctx context.Context, email, password, invi
 		return nil, errors.New("invalid email or password")
 	}
 
-	if account.Status == auth_model.AccountStatusPending {
+	if account.Status == auth_model.AccountStatusPending && inviteToken != "" {
 		account.Status = auth_model.AccountStatusActive
-		s.accountRepo.UpdateAccount(ctx, account)
+		accountNeedsUpdate = true
+	}
+
+	if accountNeedsUpdate {
+		if err := s.accountRepo.UpdateAccount(ctx, account); err != nil {
+			return nil, fmt.Errorf("failed to activate invited account: %w", err)
+		}
+	}
+
+	if inviteToken != "" {
+		releaseInvitation = false
+		consumeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), invitationCompensationTimeout)
+		defer cancel()
+		if err := s.tokenMgr.ConsumeInvitationReservation(consumeCtx, inviteToken, invitationReservation); err != nil {
+			return nil, fmt.Errorf("failed to consume invitation token: %w", err)
+		}
 	}
 
 	return account, nil
+}
+
+func (s *AccountService) releaseInvitationReservation(ctx context.Context, token string, reservation *helper.InvitationReservation) {
+	releaseCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), invitationCompensationTimeout)
+	defer cancel()
+	if err := s.tokenMgr.ReleaseInvitationReservation(releaseCtx, token, reservation); err != nil {
+		logger.Warn("Failed to release invitation reservation", "error", err)
+	}
 }
 
 func (s *AccountService) IsEmailSendIPLimit(ctx context.Context, ipAddress string) (bool, error) {
@@ -1402,25 +1470,64 @@ func (s *AccountService) ChangePassword(ctx context.Context, id string, oldPassw
 }
 
 func (s *AccountService) ResetPassword(ctx context.Context, resetToken, newPassword string) error {
-	tokenData, err := s.tokenMgr.GetTokenData(resetToken, "reset_password")
+	tokenData, err := s.tokenMgr.GetTokenData(resetToken, TokenTypeResetVerified)
 	if err != nil || tokenData == nil || tokenData.Email == nil {
-		return errors.New("invalid or expired reset token")
+		return ErrResetPasswordTokenInvalid
 	}
+	email := *tokenData.Email
+	_, status, err := s.tokenMgr.VerifyTokenCode(
+		ctx,
+		resetToken,
+		TokenTypeResetVerified,
+		"email",
+		email,
+		"verified",
+		"",
+		1,
+		10*time.Minute,
+		helper.TokenCodeReserve,
+	)
+	if err != nil || status != helper.TokenCodeVerified {
+		return ErrResetPasswordTokenInvalid
+	}
+	releaseReservation := func() { s.releaseResetPasswordReservation(ctx, resetToken, TokenTypeResetVerified, email) }
 	account, err := s.accountRepo.GetAccountByEmail(ctx, *tokenData.Email)
 	if err != nil {
+		releaseReservation()
 		return fmt.Errorf("account not found: %w", err)
+	}
+	if err := accountAccessStatusError(account.Status); err != nil {
+		releaseReservation()
+		return err
 	}
 	hashedPassword, salt, err := helper.HashPasswordPBKDF2(newPassword)
 	if err != nil {
+		releaseReservation()
 		return fmt.Errorf("failed to hash password: %w", err)
 	}
 	account.Password = &hashedPassword
 	account.PasswordSalt = &salt
 	if err := s.accountRepo.UpdateAccount(ctx, account); err != nil {
+		releaseReservation()
 		return fmt.Errorf("failed to update password: %w", err)
 	}
-	_ = s.tokenMgr.RevokeToken(resetToken, "reset_password")
+	consumeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), resetPasswordCompensationTimeout)
+	defer cancel()
+	if _, err := s.tokenMgr.ConsumeTokenData(consumeCtx, resetToken, TokenTypeResetVerified); err != nil {
+		// The password update is already committed. The token remains reserved,
+		// so it cannot be replayed; report the successful business outcome and
+		// leave an observable signal for Redis recovery.
+		logger.Warn("Failed to consume verified password reset token", "error", err)
+	}
 	return nil
+}
+
+func (s *AccountService) releaseResetPasswordReservation(ctx context.Context, token, tokenType, email string) {
+	releaseCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), resetPasswordCompensationTimeout)
+	defer cancel()
+	if err := s.tokenMgr.ReleaseTokenCodeReservation(releaseCtx, token, tokenType, "email", email); err != nil {
+		logger.Warn("Failed to release password reset token reservation", "error", err)
+	}
 }
 
 func (s *AccountService) VerifyAccount(ctx context.Context, token string) error {
@@ -1630,68 +1737,61 @@ func (s *AccountService) CheckRegisterValidity(ctx context.Context, email, code,
 }
 
 // ValidateResetPasswordToken implements the ValidateResetPasswordToken method
-func (s *AccountService) ValidateResetPasswordToken(token, email, code string) (bool, string, error) {
+func (s *AccountService) ValidateResetPasswordToken(ctx context.Context, token, email, code string) (bool, string, string, error) {
 	if s.IsForgotPasswordErrorRateLimit(email) {
-		return false, "", errors.New("password reset limit reached")
+		return false, "", "", errors.New("password reset limit reached")
 	}
-
-	tokenData, err := s.tokenMgr.GetTokenData(token, TokenTypeResetPassword)
-	if err != nil || tokenData == nil || tokenData.Email == nil {
-		return false, "", errors.New("invalid or expired token")
+	masterCode := ""
+	cfg := config.Current()
+	if cfg.Server.Mode == "debug" || cfg.Server.Environment == "local" || cfg.Server.Environment == "dev" {
+		masterCode = strings.TrimSpace(cfg.Auth.MasterVerificationCode)
 	}
-
-	if email != *tokenData.Email {
-		return false, *tokenData.Email, errors.New("invalid email")
+	tokenData, status, err := s.tokenMgr.VerifyTokenCode(
+		ctx,
+		token,
+		TokenTypeResetPassword,
+		"email",
+		email,
+		code,
+		masterCode,
+		5,
+		30*time.Minute,
+		helper.TokenCodeReserve,
+	)
+	if err != nil {
+		return false, "", "", fmt.Errorf("verify password reset code: %w", err)
 	}
-
-	codeInToken := ""
-	if tokenData.Extra != nil {
-		if v, ok := tokenData.Extra["code"]; ok {
-			codeInToken, _ = v.(string)
+	if status != helper.TokenCodeVerified || tokenData == nil || tokenData.Email == nil {
+		if status == helper.TokenCodeMismatch {
+			s.AddForgotPasswordErrorRateLimit(email)
 		}
+		return false, email, "", errors.New("invalid code or expired token")
 	}
-
-	// Master verification code for testing/development
-	masterCode := config.Current().Auth.MasterVerificationCode
-	if code != codeInToken && (masterCode == "" || code != masterCode) {
-		s.AddForgotPasswordErrorRateLimit(email)
-		return false, *tokenData.Email, errors.New("invalid code")
+	releaseReservation := func() { s.releaseResetPasswordReservation(ctx, token, TokenTypeResetPassword, email) }
+	verifiedToken, err := s.tokenMgr.GenerateToken(
+		ctx,
+		TokenTypeResetVerified,
+		nil,
+		&email,
+		map[string]interface{}{"code": "verified"},
+	)
+	if err != nil {
+		releaseReservation()
+		return false, email, "", fmt.Errorf("generate verified reset token: %w", err)
+	}
+	if _, err := s.tokenMgr.ConsumeTokenData(ctx, token, TokenTypeResetPassword); err != nil {
+		_ = s.tokenMgr.RevokeToken(verifiedToken, TokenTypeResetVerified)
+		releaseReservation()
+		return false, email, "", fmt.Errorf("consume reset challenge token: %w", err)
 	}
 
 	s.ResetForgotPasswordErrorRateLimit(email)
-	return true, *tokenData.Email, nil
+	return true, *tokenData.Email, verifiedToken, nil
 }
 
 // ResetPasswordWithAutoRegister implements the ResetPasswordWithAutoRegister method
 func (s *AccountService) ResetPasswordWithAutoRegister(token, newPassword string) error {
-	tokenData, err := s.tokenMgr.GetTokenData(token, TokenTypeResetPassword)
-	if err != nil || tokenData == nil || tokenData.Email == nil {
-		return errors.New("invalid or expired token")
-	}
-
-	_ = s.tokenMgr.RevokeToken(token, TokenTypeResetPassword)
-
-	hashedPassword, salt, err := helper.HashPasswordPBKDF2(newPassword)
-	if err != nil {
-		return fmt.Errorf("failed to hash password: %w", err)
-	}
-
-	ctx := context.Background()
-	account, err := s.accountRepo.GetAccountByEmail(ctx, *tokenData.Email)
-	if err != nil {
-		return fmt.Errorf("account not found: %w", err)
-	}
-	if err := accountAccessStatusError(account.Status); err != nil {
-		return err
-	}
-
-	account.Password = &hashedPassword
-	account.PasswordSalt = &salt
-	if err := s.accountRepo.UpdateAccount(ctx, account); err != nil {
-		return fmt.Errorf("failed to update password: %w", err)
-	}
-
-	return nil
+	return s.ResetPassword(context.Background(), token, newPassword)
 }
 
 // UpdateAccountPassword implements the UpdateAccountPassword method
@@ -1759,18 +1859,21 @@ func (s *AccountService) CreateAccountAndTenant(ctx context.Context, email, name
 
 // GenerateAccountDeletionVerificationCode implements the GenerateAccountDeletionVerificationCode method
 func (s *AccountService) GenerateAccountDeletionVerificationCode(ctx context.Context, account *auth_model.Account) (string, string, error) {
-	code := generateRandomCode(6)
+	code, err := generate6DigitCode()
+	if err != nil {
+		return "", "", fmt.Errorf("generate account deletion code: %w", err)
+	}
 
 	additionalData := map[string]interface{}{
 		"code": code,
-		"exp":  time.Now().Add(time.Hour).Unix(),
+		"exp":  time.Now().Add(5 * time.Minute).Unix(),
 	}
 
 	token, err := s.tokenMgr.GenerateToken(
 		ctx,
 		"account_deletion",
+		account,
 		nil,
-		&account.Email,
 		additionalData,
 	)
 
@@ -1782,29 +1885,68 @@ func (s *AccountService) GenerateAccountDeletionVerificationCode(ctx context.Con
 }
 
 // SendAccountDeletionVerificationEmail implements the SendAccountDeletionVerificationEmail method
-func (s *AccountService) SendAccountDeletionVerificationEmail(ctx context.Context, account *auth_model.Account, code string) error {
-	return nil
+func (s *AccountService) SendAccountDeletionVerificationEmail(ctx context.Context, account *auth_model.Account, token, code string) error {
+	idempotencyKey := accountDeletionEmailIdempotencyKey(account.ID, token)
+	language := "en-US"
+	if account.InterfaceLanguage != nil {
+		language = *account.InterfaceLanguage
+	}
+	return email.SendAccountDeletionCodeMailTask(ctx, language, account.Email, code, idempotencyKey)
+}
+
+func accountDeletionEmailIdempotencyKey(accountID, token string) string {
+	return fmt.Sprintf("account-deletion:%s:%x", accountID, sha256.Sum256([]byte(token)))
 }
 
 // VerifyAccountDeletionCode implements the VerifyAccountDeletionCode method
-func (s *AccountService) VerifyAccountDeletionCode(ctx context.Context, token, code string) (bool, error) {
-	tokenData, err := s.tokenMgr.GetTokenData(token, "account_deletion")
+func (s *AccountService) VerifyAccountDeletionCode(ctx context.Context, accountID, token, code string) (bool, error) {
+	if strings.TrimSpace(accountID) == "" {
+		return false, errors.New("account id is required")
+	}
+	// The master code is intentionally limited to development runtimes.
+	masterCode := ""
+	cfg := config.Current()
+	if cfg.Server.Mode == "debug" || cfg.Server.Environment == "local" || cfg.Server.Environment == "dev" {
+		masterCode = strings.TrimSpace(cfg.Auth.MasterVerificationCode)
+	}
+	_, status, err := s.tokenMgr.VerifyTokenCode(
+		ctx,
+		token,
+		"account_deletion",
+		"account_id",
+		accountID,
+		code,
+		masterCode,
+		5,
+		5*time.Minute,
+		helper.TokenCodeReserve,
+	)
 	if err != nil {
 		return false, err
 	}
-
-	if tokenData == nil {
+	switch status {
+	case helper.TokenCodeVerified:
+		return true, nil
+	case helper.TokenCodeMismatch, helper.TokenCodeRateLimited:
+		return false, nil
+	default:
 		return false, errors.New("invalid token")
 	}
+}
 
-	storedCode, ok := tokenData.Extra["code"].(string)
-	// Master verification code for testing/development
-	masterCode := config.Current().Auth.MasterVerificationCode
-	if !ok || (storedCode != code && (masterCode == "" || code != masterCode)) {
-		return false, nil
+func (s *AccountService) ReleaseAccountDeletionVerification(ctx context.Context, accountID, token string) error {
+	return s.tokenMgr.ReleaseTokenCodeReservation(ctx, token, "account_deletion", "account_id", accountID)
+}
+
+func (s *AccountService) CompleteAccountDeletionVerification(ctx context.Context, accountID, token string) error {
+	tokenData, err := s.tokenMgr.ConsumeTokenData(ctx, token, "account_deletion")
+	if err != nil {
+		return err
 	}
-
-	return true, nil
+	if tokenData.AccountID == nil || *tokenData.AccountID != accountID {
+		return errors.New("invalid token")
+	}
+	return nil
 }
 
 // func buildAccountExtensionFromJSONMap(extensions auth_model.JSONMap) *auth_model.AccountExtension {
@@ -3015,12 +3157,15 @@ func (s *AccountService) RevokeResetPasswordToken(ctx context.Context, token str
 }
 
 // SendEmailCodeLoginEmail implements the SendEmailCodeLoginEmail method
-func (s *AccountService) SendEmailCodeLoginEmail(ctx context.Context, account *auth_model.Account, email, language string) (string, error) {
-	code := generateRandomCode(6)
+func (s *AccountService) SendEmailCodeLoginEmail(ctx context.Context, account *auth_model.Account, emailAddress, language string) (string, error) {
+	code, err := generate6DigitCode()
+	if err != nil {
+		return "", fmt.Errorf("generate email login code: %w", err)
+	}
 
 	additionalData := map[string]interface{}{
 		"code": code,
-		"exp":  time.Now().Add(time.Minute * 10).Unix(),
+		"exp":  time.Now().Add(5 * time.Minute).Unix(),
 	}
 
 	token, err := s.tokenMgr.GenerateToken(
@@ -3032,6 +3177,12 @@ func (s *AccountService) SendEmailCodeLoginEmail(ctx context.Context, account *a
 	)
 
 	if err != nil {
+		return "", err
+	}
+
+	idempotencyKey := fmt.Sprintf("email-login:%s:%x", account.ID, sha256.Sum256([]byte(token)))
+	if err := email.SendEmailCodeLoginMailTask(ctx, language, emailAddress, code, idempotencyKey); err != nil {
+		_ = s.tokenMgr.RevokeToken(token, "email_code_login")
 		return "", err
 	}
 
@@ -3289,13 +3440,6 @@ func setAccountMobile(account *auth_model.Account, mobile *string) {
 
 	value := *mobile
 	account.MobileE164 = &value
-}
-
-// Helper functions
-func generateRandomCode(length int) string {
-	bytes := make([]byte, length/2)
-	rand.Read(bytes)
-	return hex.EncodeToString(bytes)[:length]
 }
 
 type PaginationResult struct {
