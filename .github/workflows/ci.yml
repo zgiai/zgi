@@ -101,7 +101,7 @@ jobs:
 
       - name: Run registration and invitation gate
         env:
-          # Invitation transaction tests use go-sqlite3; some self-hosted runners
+          # Invitation transaction tests use go-sqlite3; some CI environments
           # default CGO_ENABLED to 0, which replaces the driver with its stub.
           CGO_ENABLED: "1"
         run: make check-registration-auth
