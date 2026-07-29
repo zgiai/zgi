@@ -6,18 +6,19 @@ import (
 )
 
 const (
-	FeatureNotificationSMS             = "notification_sms"
-	TemplatePendingActionNotification  = "pending_action_notification"
-	TemplateParamNotificationTitle     = "notification_title"
-	TemplateAuthPhoneRegisterCode      = "auth_phone_register_code"
-	TemplateAuthPhoneLoginCode         = "auth_phone_login_code"
-	TemplateAuthPhoneResetPasswordCode = "auth_phone_reset_password_code"
-	TemplateParamVerificationCode      = "code"
-	TemplateParamLinkCode              = "link_code"
-	ProviderAliyun                     = "aliyun"
-	ProviderChuanglan                  = "chuanglan"
-	ParamModeMap                       = "map"
-	ParamModeOrderedParam              = "ordered_param"
+	FeatureNotificationSMS                 = "notification_sms"
+	TemplatePendingActionNotification      = "pending_action_notification"
+	TemplateParamNotificationTitle         = "notification_title"
+	TemplateAuthPhoneRegisterCode          = "auth_phone_register_code"
+	TemplateAuthPhoneLoginCode             = "auth_phone_login_code"
+	TemplateAuthPhoneResetPasswordCode     = "auth_phone_reset_password_code"
+	TemplateParamVerificationCode          = "code"
+	TemplateParamLinkCode                  = "link_code"
+	ProviderAliyun                         = "aliyun"
+	ProviderChuanglan                      = "chuanglan"
+	chuanglanCredentialProfileVerification = "verification"
+	ParamModeMap                           = "map"
+	ParamModeOrderedParam                  = "ordered_param"
 )
 
 type Service interface {
@@ -119,13 +120,24 @@ type ChuanglanConfig struct {
 	Signature string
 	Extend    string
 	Report    bool
+	profiles  map[string]chuanglanCredentialConfig
+}
+
+type chuanglanCredentialConfig struct {
+	Account   string
+	Password  string
+	APIURL    string
+	Signature string
+	Extend    string
+	Report    bool
 }
 
 type ChuanglanTemplateConfig struct {
-	TemplateID   string   `json:"template_id"`
-	TemplateText string   `json:"template_text,omitempty"`
-	ParamMode    string   `json:"param_mode,omitempty"`
-	ParamOrder   []string `json:"param_order,omitempty"`
+	TemplateID        string   `json:"template_id"`
+	TemplateText      string   `json:"template_text,omitempty"`
+	ParamMode         string   `json:"param_mode,omitempty"`
+	ParamOrder        []string `json:"param_order,omitempty"`
+	CredentialProfile string   `json:"credential_profile,omitempty"`
 }
 
 func (c Config) Capability() CapabilityStatus {
@@ -149,16 +161,28 @@ func (c Config) Capability() CapabilityStatus {
 		}
 	}
 
-	if _, ok := allowed[ProviderAliyun]; ok && c.Aliyun.credentialsValid() && c.hasProviderTemplate(ProviderAliyun) {
+	if _, ok := allowed[ProviderAliyun]; ok && c.hasProviderTemplate(ProviderAliyun) {
 		status.Providers = append(status.Providers, ProviderAliyun)
 	}
-	if _, ok := allowed[ProviderChuanglan]; ok && c.Chuanglan.credentialsValid() && c.hasProviderTemplate(ProviderChuanglan) {
+	if _, ok := allowed[ProviderChuanglan]; ok && c.hasProviderTemplate(ProviderChuanglan) {
 		status.Providers = append(status.Providers, ProviderChuanglan)
 	}
 	for _, provider := range status.Providers {
 		if provider == status.DefaultProvider {
 			status.Templates = c.capabilityTemplates(provider)
-			status.Enabled = len(status.Templates) > 0
+			if len(status.Templates) == 0 {
+				return status
+			}
+			status.Enabled = true
+			selectedTemplate := status.Templates[0]
+			for _, template := range status.Templates {
+				if template.Key == defaultTemplate {
+					selectedTemplate = template
+					break
+				}
+			}
+			status.Template = selectedTemplate.Key
+			status.PreviewTemplate = strings.TrimSpace(selectedTemplate.PreviewTemplate)
 			return status
 		}
 	}
@@ -187,7 +211,7 @@ func (c Config) defaultTemplateKey() string {
 
 func (c Config) hasProviderTemplate(provider string) bool {
 	for _, template := range c.Templates {
-		if template.supportsProvider(provider) {
+		if c.templateProviderConfigured(template, provider) {
 			return true
 		}
 	}
@@ -197,7 +221,7 @@ func (c Config) hasProviderTemplate(provider string) bool {
 func (c Config) capabilityTemplates(provider string) []TemplateStatus {
 	templates := make([]TemplateStatus, 0, len(c.Templates))
 	for _, template := range c.Templates {
-		if !template.supportsProvider(provider) {
+		if !c.templateProviderConfigured(template, provider) {
 			continue
 		}
 		templates = append(templates, TemplateStatus{
@@ -208,6 +232,21 @@ func (c Config) capabilityTemplates(provider string) []TemplateStatus {
 		})
 	}
 	return templates
+}
+
+func (c Config) templateProviderConfigured(template TemplateConfig, provider string) bool {
+	if !template.supportsProvider(provider) {
+		return false
+	}
+	switch provider {
+	case ProviderAliyun:
+		return c.Aliyun.credentialsValid()
+	case ProviderChuanglan:
+		credentials, ok := c.Chuanglan.credentials(template.Chuanglan.CredentialProfile)
+		return ok && credentials.credentialsValid()
+	default:
+		return false
+	}
 }
 
 func (t TemplateConfig) supportsProvider(provider string) bool {
@@ -249,7 +288,28 @@ func (c AliyunTemplateConfig) valid(params []TemplateParamConfig) bool {
 	return true
 }
 
-func (c ChuanglanConfig) credentialsValid() bool {
+func (c ChuanglanConfig) credentials(profile string) (chuanglanCredentialConfig, bool) {
+	profile = strings.ToLower(strings.TrimSpace(profile))
+	if profile == "" {
+		credentials := c.defaultCredentials()
+		return credentials, credentials.credentialsValid()
+	}
+	credentials, ok := c.profiles[profile]
+	return credentials, ok && credentials.credentialsValid()
+}
+
+func (c ChuanglanConfig) defaultCredentials() chuanglanCredentialConfig {
+	return chuanglanCredentialConfig{
+		Account:   c.Account,
+		Password:  c.Password,
+		APIURL:    c.APIURL,
+		Signature: c.Signature,
+		Extend:    c.Extend,
+		Report:    c.Report,
+	}
+}
+
+func (c chuanglanCredentialConfig) credentialsValid() bool {
 	return strings.TrimSpace(c.Account) != "" &&
 		strings.TrimSpace(c.Password) != "" &&
 		strings.TrimSpace(c.APIURL) != ""

@@ -8,7 +8,10 @@ import (
 	"strings"
 )
 
-const envPrefix = "NOTIFICATION_SMS_"
+const (
+	envPrefix              = "NOTIFICATION_SMS_"
+	defaultChuanglanAPIURL = "https://smssh.253.com/msg/sms/v2/tpl/send"
+)
 
 type lookupFunc func(string) (string, bool)
 
@@ -24,10 +27,20 @@ func ConfigFromLookup(lookup lookupFunc) Config {
 	chuanglan := ChuanglanConfig{
 		Account:   lookupString(lookup, envPrefix+"CHUANGLAN_ACCOUNT", ""),
 		Password:  lookupString(lookup, envPrefix+"CHUANGLAN_PASSWORD", ""),
-		APIURL:    lookupString(lookup, envPrefix+"CHUANGLAN_API_URL", "https://smssh.253.com/msg/sms/v2/tpl/send"),
+		APIURL:    lookupString(lookup, envPrefix+"CHUANGLAN_API_URL", defaultChuanglanAPIURL),
 		Signature: lookupString(lookup, envPrefix+"CHUANGLAN_SIGNATURE", ""),
 		Extend:    lookupString(lookup, envPrefix+"CHUANGLAN_EXTEND", ""),
 		Report:    lookupBool(lookup, envPrefix+"CHUANGLAN_REPORT", false),
+	}
+	chuanglan.profiles = map[string]chuanglanCredentialConfig{
+		chuanglanCredentialProfileVerification: {
+			Account:   lookupString(lookup, envPrefix+"CHUANGLAN_VERIFICATION_ACCOUNT", ""),
+			Password:  lookupString(lookup, envPrefix+"CHUANGLAN_VERIFICATION_PASSWORD", ""),
+			APIURL:    lookupString(lookup, envPrefix+"CHUANGLAN_VERIFICATION_API_URL", defaultChuanglanAPIURL),
+			Signature: lookupString(lookup, envPrefix+"CHUANGLAN_VERIFICATION_SIGNATURE", ""),
+			Extend:    lookupString(lookup, envPrefix+"CHUANGLAN_VERIFICATION_EXTEND", ""),
+			Report:    lookupBool(lookup, envPrefix+"CHUANGLAN_VERIFICATION_REPORT", false),
+		},
 	}
 	templates, configError := lookupTemplates(lookup, enabled)
 	return Config{
@@ -157,6 +170,7 @@ func normalizeChuanglanTemplate(template ChuanglanTemplateConfig) ChuanglanTempl
 	template.TemplateText = strings.TrimSpace(template.TemplateText)
 	template.ParamMode = normalizedParamMode(template.ParamMode, ParamModeOrderedParam)
 	template.ParamOrder = trimStringSlice(template.ParamOrder)
+	template.CredentialProfile = strings.ToLower(strings.TrimSpace(template.CredentialProfile))
 	return template
 }
 

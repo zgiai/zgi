@@ -56,6 +56,180 @@ func TestConfigFromLookupReturnsConfiguredTemplates(t *testing.T) {
 	}
 }
 
+func TestConfigFromLookupRoutesChuanglanTemplatesByCredentialProfile(t *testing.T) {
+	env := map[string]string{
+		"NOTIFICATION_SMS_ENABLED":                         "true",
+		"NOTIFICATION_SMS_PROVIDERS":                       "chuanglan",
+		"NOTIFICATION_SMS_DEFAULT_PROVIDER":                "chuanglan",
+		"NOTIFICATION_SMS_CHUANGLAN_ACCOUNT":               "notification-account",
+		"NOTIFICATION_SMS_CHUANGLAN_PASSWORD":              "notification-password",
+		"NOTIFICATION_SMS_CHUANGLAN_VERIFICATION_ACCOUNT":  "verification-account",
+		"NOTIFICATION_SMS_CHUANGLAN_VERIFICATION_PASSWORD": "verification-password",
+		"NOTIFICATION_SMS_TEMPLATES_JSON": `[
+			{
+				"key":"pending_action_notification",
+				"params":[{"key":"title","required":true}],
+				"chuanglan":{
+					"template_id":"CL_NOTICE",
+					"template_text":"待办：{s}",
+					"param_order":["title"]
+				}
+			},
+			{
+				"key":"auth_phone_register_code",
+				"params":[{"key":"code","required":true}],
+				"chuanglan":{
+					"credential_profile":" Verification ",
+					"template_id":"CL_CODE",
+					"template_text":"验证码：{s}",
+					"param_order":["code"]
+				}
+			}
+		]`,
+	}
+
+	cfg := ConfigFromLookup(func(key string) (string, bool) {
+		value, ok := env[key]
+		return value, ok
+	})
+	if cfg.ConfigError != "" {
+		t.Fatalf("ConfigError = %q", cfg.ConfigError)
+	}
+	if got := cfg.Templates[1].Chuanglan.CredentialProfile; got != chuanglanCredentialProfileVerification {
+		t.Fatalf("CredentialProfile = %q, want %q", got, chuanglanCredentialProfileVerification)
+	}
+	verification, ok := cfg.Chuanglan.credentials(chuanglanCredentialProfileVerification)
+	if !ok {
+		t.Fatal("expected verification credential profile to be configured")
+	}
+	if verification.Account != "verification-account" {
+		t.Fatalf("verification Account = %q, want %q", verification.Account, "verification-account")
+	}
+	if got := len(cfg.Capability().Templates); got != 2 {
+		t.Fatalf("capability template count = %d, want 2", got)
+	}
+}
+
+func TestCapabilityExcludesChuanglanTemplateWithMissingCredentialProfile(t *testing.T) {
+	env := map[string]string{
+		"NOTIFICATION_SMS_ENABLED":            "true",
+		"NOTIFICATION_SMS_PROVIDERS":          "chuanglan",
+		"NOTIFICATION_SMS_DEFAULT_PROVIDER":   "chuanglan",
+		"NOTIFICATION_SMS_CHUANGLAN_ACCOUNT":  "notification-account",
+		"NOTIFICATION_SMS_CHUANGLAN_PASSWORD": "notification-password",
+		"NOTIFICATION_SMS_TEMPLATES_JSON": `[
+			{
+				"key":"auth_phone_register_code",
+				"params":[{"key":"code","required":true}],
+				"chuanglan":{
+					"credential_profile":"verification",
+					"template_id":"CL_CODE",
+					"template_text":"验证码：{s}",
+					"param_order":["code"]
+				}
+			}
+		]`,
+	}
+
+	cfg := ConfigFromLookup(func(key string) (string, bool) {
+		value, ok := env[key]
+		return value, ok
+	})
+	if cfg.ConfigError != "" {
+		t.Fatalf("ConfigError = %q", cfg.ConfigError)
+	}
+	if cfg.Capability().Enabled {
+		t.Fatal("expected capability to be disabled when the template credential profile is incomplete")
+	}
+}
+
+func TestCapabilityFallsBackFromUnavailableDefaultChuanglanTemplate(t *testing.T) {
+	env := map[string]string{
+		"NOTIFICATION_SMS_ENABLED":            "true",
+		"NOTIFICATION_SMS_PROVIDERS":          "chuanglan",
+		"NOTIFICATION_SMS_DEFAULT_PROVIDER":   "chuanglan",
+		"NOTIFICATION_SMS_TEMPLATE":           "auth_phone_register_code",
+		"NOTIFICATION_SMS_CHUANGLAN_ACCOUNT":  "notification-account",
+		"NOTIFICATION_SMS_CHUANGLAN_PASSWORD": "notification-password",
+		"NOTIFICATION_SMS_TEMPLATES_JSON": `[
+			{
+				"key":"pending_action_notification",
+				"preview_template":"待办：{{title}}",
+				"params":[{"key":"title","required":true}],
+				"chuanglan":{
+					"template_id":"CL_NOTICE",
+					"template_text":"待办：{s}",
+					"param_order":["title"]
+				}
+			},
+			{
+				"key":"auth_phone_register_code",
+				"preview_template":"验证码：{{code}}",
+				"params":[{"key":"code","required":true}],
+				"chuanglan":{
+					"credential_profile":"verification",
+					"template_id":"CL_CODE",
+					"template_text":"验证码：{s}",
+					"param_order":["code"]
+				}
+			}
+		]`,
+	}
+
+	cfg := ConfigFromLookup(func(key string) (string, bool) {
+		value, ok := env[key]
+		return value, ok
+	})
+	capability := cfg.Capability()
+
+	if !capability.Enabled {
+		t.Fatal("expected capability to remain enabled for the configured notification template")
+	}
+	if got, want := len(capability.Templates), 1; got != want {
+		t.Fatalf("template count = %d, want %d", got, want)
+	}
+	if got, want := capability.Template, TemplatePendingActionNotification; got != want {
+		t.Fatalf("default template = %q, want %q", got, want)
+	}
+	if got, want := capability.PreviewTemplate, "待办：{{title}}"; got != want {
+		t.Fatalf("preview template = %q, want %q", got, want)
+	}
+}
+
+func TestCapabilityAllowsChuanglanVerificationTemplateToUseDefaultAccount(t *testing.T) {
+	env := map[string]string{
+		"NOTIFICATION_SMS_ENABLED":            "true",
+		"NOTIFICATION_SMS_PROVIDERS":          "chuanglan",
+		"NOTIFICATION_SMS_DEFAULT_PROVIDER":   "chuanglan",
+		"NOTIFICATION_SMS_CHUANGLAN_ACCOUNT":  "shared-account",
+		"NOTIFICATION_SMS_CHUANGLAN_PASSWORD": "shared-password",
+		"NOTIFICATION_SMS_TEMPLATES_JSON": `[
+			{
+				"key":"auth_phone_register_code",
+				"params":[{"key":"code","required":true}],
+				"chuanglan":{
+					"template_id":"CL_CODE",
+					"template_text":"验证码：{s}",
+					"param_order":["code"]
+				}
+			}
+		]`,
+	}
+
+	cfg := ConfigFromLookup(func(key string) (string, bool) {
+		value, ok := env[key]
+		return value, ok
+	})
+	capability := cfg.Capability()
+
+	if !capability.Enabled {
+		t.Fatal("expected capability to support a shared Chuanglan account")
+	}
+	if got, want := capability.Template, TemplateAuthPhoneRegisterCode; got != want {
+		t.Fatalf("default template = %q, want %q", got, want)
+	}
+}
+
 func TestConfigFromLookupRequiresTemplateCatalogWhenEnabled(t *testing.T) {
 	cfg := ConfigFromLookup(func(key string) (string, bool) {
 		env := map[string]string{
