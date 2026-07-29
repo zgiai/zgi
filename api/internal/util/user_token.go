@@ -573,10 +573,21 @@ func (tm *TokenManager) DecrementTokenUsage(ctx context.Context, token, tokenTyp
 
 // InvitationData invitation data structure
 type InvitationData struct {
-	AccountID   string `json:"account_id"`
-	Email       string `json:"email"`
-	WorkspaceID string `json:"workspace_id"`
+	AccountID      string `json:"account_id"`
+	Email          string `json:"email"`
+	WorkspaceID    string `json:"workspace_id"`
+	OrganizationID string `json:"organization_id,omitempty"`
+	InviterID      string `json:"inviter_id,omitempty"`
+	Role           string `json:"role,omitempty"`
+	ExpiresAt      int64  `json:"expires_at,omitempty"`
 }
+
+type InvitationTokenState struct {
+	State     string `json:"state"`
+	ExpiresAt int64  `json:"expires_at,omitempty"`
+}
+
+const invitationStateRetention = 7 * 24 * time.Hour
 
 // InvitationReservation is an ownership handle for a globally reserved
 // invitation. The opaque ID prevents one request from releasing or consuming a
@@ -614,11 +625,19 @@ end
 local accountID = ''
 local email = ''
 local workspaceID = ''
+local organizationID = ''
+local inviterID = ''
+local role = ''
+local expiresAt = 0
 if genericRaw then
   local generic = cjson.decode(genericRaw)
   accountID = tostring(generic['account_id'] or '')
   email = tostring(generic['email'] or '')
   workspaceID = tostring(generic['workspace_id'] or '')
+  organizationID = tostring(generic['organization_id'] or '')
+  inviterID = tostring(generic['inviter_id'] or '')
+  role = tostring(generic['role'] or '')
+  expiresAt = tonumber(generic['expires_at'] or 0)
 end
 if legacyRaw then
   local legacyAccountID = tostring(legacyRaw)
@@ -653,7 +672,11 @@ local claim = cjson.encode({
   reservation_id = ARGV[3],
   account_id = accountID,
   email = email,
-  workspace_id = workspaceID
+  workspace_id = workspaceID,
+  organization_id = organizationID,
+  inviter_id = inviterID,
+  role = role,
+  expires_at = expiresAt
 })
 local acquired = redis.call('SET', KEYS[3], claim, 'NX', 'PX', ttl)
 if not acquired then
@@ -676,6 +699,7 @@ if not raw then return 0 end
 local claim = cjson.decode(raw)
 if tostring(claim['reservation_id'] or '') ~= ARGV[1] then return 0 end
 redis.call('DEL', KEYS[1], KEYS[2], KEYS[3])
+redis.call('SET', KEYS[4], ARGV[2], 'PX', ARGV[3])
 return 1
 `)
 
@@ -695,6 +719,9 @@ end
 if ARGV[1] ~= '' and ARGV[2] ~= '' then
   deleted = deleted + redis.call('DEL', KEYS[2])
 end
+if deleted > 0 then
+  redis.call('SET', KEYS[3], ARGV[3], 'PX', ARGV[4])
+end
 return deleted
 `)
 
@@ -705,6 +732,10 @@ func (tm *TokenManager) invitationLegacyKey(workspaceID, email, token string) st
 
 func (tm *TokenManager) invitationClaimKey(token string) string {
 	return fmt.Sprintf("member_invite:claim:%s", token)
+}
+
+func (tm *TokenManager) invitationStateKey(token string) string {
+	return fmt.Sprintf("member_invite:state:%s", token)
 }
 
 // ReserveInvitationToken atomically claims an invitation across both the
@@ -803,7 +834,8 @@ func (tm *TokenManager) ConsumeInvitationReservation(ctx context.Context, token 
 		tm.getInvitationTokenKey(token),
 		legacyKey,
 		tm.invitationClaimKey(token),
-	}, reservation.ID).Int64()
+		tm.invitationStateKey(token),
+	}, reservation.ID, `{"state":"used"}`, invitationStateRetention.Milliseconds()).Int64()
 	if err != nil {
 		return fmt.Errorf("consume invitation reservation: %w", err)
 	}
@@ -815,22 +847,54 @@ func (tm *TokenManager) ConsumeInvitationReservation(ctx context.Context, token 
 
 // StoreInvitationToken store invitation token
 func (tm *TokenManager) StoreInvitationToken(workspaceID, email, accountID, token string, expiryHours int) error {
-	ctx := context.Background()
+	return tm.StoreInvitationTokenWithDetails(InvitationData{
+		AccountID: accountID, Email: email, WorkspaceID: workspaceID,
+	}, token, expiryHours)
+}
 
-	generalKey := tm.getInvitationTokenKey(token)
-	invitationData := map[string]string{
-		"account_id":   accountID,
-		"email":        email,
-		"workspace_id": workspaceID,
-	}
+func (tm *TokenManager) StoreInvitationTokenWithDetails(invitationData InvitationData, token string, expiryHours int) error {
+	ctx := context.Background()
+	expiry := time.Duration(expiryHours) * time.Hour
+	invitationData.ExpiresAt = time.Now().Add(expiry).Unix()
 	invitationDataJSON, err := json.Marshal(invitationData)
 	if err != nil {
 		return fmt.Errorf("failed to marshal invitation data: %w", err)
 	}
 
-	// Store account_id as value
-	expiry := time.Duration(expiryHours) * time.Hour
-	return redisUtil.GetClient().SetEx(ctx, generalKey, invitationDataJSON, expiry).Err()
+	stateJSON, err := json.Marshal(InvitationTokenState{State: "pending", ExpiresAt: invitationData.ExpiresAt})
+	if err != nil {
+		return fmt.Errorf("failed to marshal invitation state: %w", err)
+	}
+	_, err = redisUtil.GetClient().TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+		pipe.SetEx(ctx, tm.getInvitationTokenKey(token), invitationDataJSON, expiry)
+		pipe.SetEx(ctx, tm.invitationStateKey(token), stateJSON, expiry+invitationStateRetention)
+		return nil
+	})
+	return err
+}
+
+func (tm *TokenManager) GetInvitationTokenState(token string) (string, error) {
+	ctx := context.Background()
+	if data, err := tm.GetInvitationByToken(token, "", ""); err != nil {
+		return "", err
+	} else if data != nil {
+		return "pending", nil
+	}
+	raw, err := redisUtil.GetClient().Get(ctx, tm.invitationStateKey(token)).Result()
+	if err == redis.Nil {
+		return "invalid", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	var state InvitationTokenState
+	if err := json.Unmarshal([]byte(raw), &state); err != nil {
+		return "", err
+	}
+	if state.State == "pending" {
+		return "expired", nil
+	}
+	return state.State, nil
 }
 
 // GetInvitationByToken get invitation data by token
@@ -889,8 +953,8 @@ func (tm *TokenManager) RevokeInvitationToken(workspaceID, email, token string) 
 		legacyKey = tm.invitationLegacyKey(workspaceID, email, token)
 	}
 	deleted, err := revokeInvitationScript.Run(ctx, redisUtil.GetClient(), []string{
-		tm.getInvitationTokenKey(token), legacyKey,
-	}, workspaceID, email).Int64()
+		tm.getInvitationTokenKey(token), legacyKey, tm.invitationStateKey(token),
+	}, workspaceID, email, `{"state":"revoked"}`, invitationStateRetention.Milliseconds()).Int64()
 	if err != nil {
 		return err
 	}

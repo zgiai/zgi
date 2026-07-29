@@ -321,7 +321,7 @@ func (s *EmailRegistrationService) Finish(
 		name = strings.Split(emailAddress, "@")[0]
 	}
 	language := normalizeRegistrationLanguage(tokenExtraString(tokenData.Extra, "language"))
-	createWorkspace := true
+	createWorkspace := false
 	exists, err := s.accounts.ExistsByEmail(ctx, emailAddress)
 	if err != nil {
 		return nil, fmt.Errorf("check registration account before finish: %w", err)

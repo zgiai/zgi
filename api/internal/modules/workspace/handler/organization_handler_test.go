@@ -340,7 +340,7 @@ func (f fakeAccountService) IsEmailSendIPLimit(ctx context.Context, ipAddress st
 	return false, nil
 }
 
-func (f fakeAccountService) SendDirectAddMemberEmail(ctx context.Context, account *auth_model.Account, groupID, groupName, departmentName, language string) error {
+func (f fakeAccountService) SendDirectAddMemberEmail(ctx context.Context, account *auth_model.Account, inviterID, groupID, groupName, departmentName, language string) error {
 	if f.sendDirectAddMemberEmailFn != nil {
 		return f.sendDirectAddMemberEmailFn(ctx, account, groupID, groupName, departmentName, language)
 	}

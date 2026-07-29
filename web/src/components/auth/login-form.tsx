@@ -210,7 +210,9 @@ export function LoginForm({ className }: LoginFormProps) {
 
   const navigateAfterLogin = () => {
     const urlParams = new URLSearchParams(window.location.search);
-    const redirectUrl = withBasePathIfInternal(urlParams.get('redirect') || '/console');
+    const redirectUrl = withBasePathIfInternal(
+      urlParams.get('redirect') || '/onboarding/organization'
+    );
     window.location.href = redirectUrl;
   };
 
@@ -286,7 +288,7 @@ export function LoginForm({ className }: LoginFormProps) {
   };
 
   const onSsoLogin = () => {
-    const redirectTarget = withBasePathIfInternal(redirect || '/console');
+    const redirectTarget = withBasePathIfInternal(redirect || '/onboarding/organization');
     window.location.href = buildSsoStartUrl('casdoor', redirectTarget);
   };
 

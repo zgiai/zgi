@@ -7,7 +7,7 @@ import { useConsumeCasdoorTicket } from '@/hooks/auth/use-consume-casdoor-ticket
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardTitle } from '@/components/ui/card';
 import { AlertCircle, ArrowRight, CheckCircle, Loader2 } from 'lucide-react';
-import { withBasePath } from '@/lib/config';
+import { withBasePathIfInternal } from '@/lib/config';
 import { buildSsoStartUrl } from '@/utils/auth-sso';
 
 type CallbackStatus = 'processing' | 'success' | 'error';
@@ -23,8 +23,10 @@ export function SSOCallbackHandler() {
 
   const ticket = (searchParams.get('ticket') || '').trim();
   const error = (searchParams.get('error') || '').trim();
-  const consoleUrl = withBasePath('/console');
-  const retryRedirectTarget = searchParams.get('redirect') || consoleUrl;
+  const destinationUrl = withBasePathIfInternal(
+    searchParams.get('redirect') || '/onboarding/organization'
+  );
+  const retryRedirectTarget = destinationUrl;
   const retryUrl = buildSsoStartUrl('casdoor', retryRedirectTarget);
   const logPrefix = '[SSO Callback]';
   const ticketSuccessKey = ticket ? `zgi:sso-ticket-success:${ticket}` : '';
@@ -49,7 +51,7 @@ export function SSOCallbackHandler() {
       href: window.location.href,
       ticketPresent: Boolean(ticket),
       error,
-      consoleUrl,
+      destinationUrl,
       mutationStatus: consumeTicketMutation.status,
     });
 
@@ -67,11 +69,11 @@ export function SSOCallbackHandler() {
     ) {
       console.info(logPrefix, 'ticket already consumed successfully, redirect immediately', {
         ticketSuccessKey,
-        redirectTarget: consoleUrl,
+        redirectTarget: destinationUrl,
       });
       setStatus('success');
       setMessage(t('ssoRedirectingToConsole'));
-      window.location.replace(consoleUrl);
+      window.location.replace(destinationUrl);
       return () => {
         cancelled = true;
       };
@@ -117,9 +119,9 @@ export function SSOCallbackHandler() {
         setMessage(t('ssoRedirectingToConsole'));
         console.info(logPrefix, 'executing immediate window.location.replace', {
           from: window.location.href,
-          to: consoleUrl,
+          to: destinationUrl,
         });
-        window.location.replace(consoleUrl);
+        window.location.replace(destinationUrl);
       })
       .catch(caughtError => {
         if (cancelled) {
@@ -145,7 +147,7 @@ export function SSOCallbackHandler() {
       cancelled = true;
       console.info(logPrefix, 'effect cleanup');
     };
-  }, [consoleUrl, error, mutateAsync, ssoErrorMessageMap, t, ticket, ticketSuccessKey]);
+  }, [destinationUrl, error, mutateAsync, ssoErrorMessageMap, t, ticket, ticketSuccessKey]);
 
   const isProcessing = status === 'processing';
   const isSuccess = status === 'success';
@@ -200,8 +202,8 @@ export function SSOCallbackHandler() {
               className="w-full"
               size="xl"
               onClick={() => {
-                console.info(logPrefix, 'manual go-to-console click', { to: consoleUrl });
-                window.location.replace(consoleUrl);
+                console.info(logPrefix, 'manual post-login navigation', { to: destinationUrl });
+                window.location.replace(destinationUrl);
               }}
             >
               {t('goToConsole')}

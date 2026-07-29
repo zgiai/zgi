@@ -135,8 +135,19 @@ func (s *RegisterServiceImpl) Activate(ctx context.Context, workspaceID, email, 
 	if invitationData.AccountID != account.ID {
 		return nil, errors.New("Auth Token is invalid or account already activated, please check again.")
 	}
+	if account.Status != auth_model.AccountStatusPending {
+		return nil, errors.New("Auth Token is invalid or account already activated, please check again.")
+	}
 
 	account.Name = name
+	if password != "" {
+		hashedPassword, salt, err := util.HashPasswordPBKDF2(password)
+		if err != nil {
+			return nil, fmt.Errorf("failed to hash password: %w", err)
+		}
+		account.Password = &hashedPassword
+		account.PasswordSalt = &salt
+	}
 	if lang != "" {
 		account.InterfaceLanguage = &lang
 	}
@@ -161,14 +172,6 @@ func (s *RegisterServiceImpl) Activate(ctx context.Context, workspaceID, email, 
 	defer cancel()
 	if err := s.tokenMgr.ConsumeInvitationReservation(consumeCtx, token, reservation); err != nil {
 		return nil, fmt.Errorf("failed to revoke token: %w", err)
-	}
-
-	// For public deployment, create user's own group and related data (similar to registration)
-	if s.isPublicDeployment() {
-		if err := s.initializeUserOwnGroup(ctx, account); err != nil {
-			// Log warning but don't fail activation
-			logger.Warn("Failed to initialize user's own group during activation: %v", err)
-		}
 	}
 
 	return account, nil
@@ -403,6 +406,7 @@ func (s *RegisterServiceImpl) InviteMemberEx(ctx context.Context, tenantID, invi
 	}
 
 	var ta *workspace_model.WorkspaceMember = nil
+	createMembershipNow := false
 
 	if account == nil {
 		// Create new account with extended info
@@ -425,7 +429,11 @@ func (s *RegisterServiceImpl) InviteMemberEx(ctx context.Context, tenantID, invi
 		if err := tx.Create(account).Error; err != nil {
 			return "", fmt.Errorf("failed to create account: %w", err)
 		}
+		createMembershipNow = true
 	} else {
+		if account.Status != auth_model.AccountStatusActive && account.Status != auth_model.AccountStatusPending {
+			return "", errors.New("invitee account is unavailable")
+		}
 		if err := s.tenantService.CheckMemberPermission(ctx, tenant, inviter, account, "add"); err != nil {
 			return "", err
 		}
@@ -434,9 +442,10 @@ func (s *RegisterServiceImpl) InviteMemberEx(ctx context.Context, tenantID, invi
 			// User already exists in tenant
 			return "", usererrors.ErrAccountAlreadyInWorkspace
 		}
+		createMembershipNow = account.Status == auth_model.AccountStatusPending
 	}
 
-	if ta == nil {
+	if ta == nil && createMembershipNow {
 		// Prepare extensions
 		extMap := make(map[string]interface{})
 		if position != "" {
@@ -494,7 +503,7 @@ func (s *RegisterServiceImpl) InviteMemberEx(ctx context.Context, tenantID, invi
 	// Persist the invitation token before committing the database work. If
 	// Redis is unavailable, the deferred rollback prevents us from creating a
 	// pending member whose invitation can never be accepted.
-	inviteToken, err := s.generateInviteToken(tenant, account)
+	inviteToken, err := s.generateInviteTokenWithDetails(tenant, account, inviterID, role)
 	if err != nil {
 		return "", err
 	}
@@ -620,10 +629,21 @@ func (s *RegisterServiceImpl) getInvitationByToken(token string) (*auth_model.In
 }
 
 func (s *RegisterServiceImpl) generateInviteToken(tenant *workspace_model.Workspace, account *auth_model.Account) (string, error) {
+	return s.generateInviteTokenWithDetails(tenant, account, "", "")
+}
+
+func (s *RegisterServiceImpl) generateInviteTokenWithDetails(tenant *workspace_model.Workspace, account *auth_model.Account, inviterID string, role workspace_model.WorkspaceMemberRole) (string, error) {
 	token := uuid.New().String()
 
 	expiryHours := 72
-	if err := s.tokenMgr.StoreInvitationToken(tenant.ID, account.Email, account.ID, token, expiryHours); err != nil {
+	organizationID := ""
+	if tenant.OrganizationID != nil {
+		organizationID = *tenant.OrganizationID
+	}
+	if err := s.tokenMgr.StoreInvitationTokenWithDetails(util.InvitationData{
+		AccountID: account.ID, Email: account.Email, WorkspaceID: tenant.ID,
+		OrganizationID: organizationID, InviterID: inviterID, Role: string(role),
+	}, token, expiryHours); err != nil {
 		return "", fmt.Errorf("store invitation token: %w", err)
 	}
 

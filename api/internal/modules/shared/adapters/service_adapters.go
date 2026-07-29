@@ -711,8 +711,8 @@ func (a *AccountServiceAdapter) IsEmailSendIPLimit(ctx context.Context, ipAddres
 	return a.accountService.IsEmailSendIPLimit(ctx, ipAddress)
 }
 
-func (a *AccountServiceAdapter) SendDirectAddMemberEmail(ctx context.Context, account *auth_model.Account, groupID, groupName, departmentName, language string) error {
-	return a.accountService.SendDirectAddMemberEmail(ctx, account, groupID, groupName, departmentName, language)
+func (a *AccountServiceAdapter) SendDirectAddMemberEmail(ctx context.Context, account *auth_model.Account, inviterID, groupID, groupName, departmentName, language string) error {
+	return a.accountService.SendDirectAddMemberEmail(ctx, account, inviterID, groupID, groupName, departmentName, language)
 }
 
 // RefreshToken implements shared.AccountService interface

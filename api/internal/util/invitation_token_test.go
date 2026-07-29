@@ -52,7 +52,12 @@ func TestInvitationReservationSupportsGenericLegacyAndDualKeys(t *testing.T) {
 			}
 			data, err := tm.GetInvitationByToken(token, lookupWorkspace, lookupEmail)
 			require.NoError(t, err)
-			require.Equal(t, &InvitationData{AccountID: accountID, Email: email, WorkspaceID: workspaceID}, data)
+			require.Equal(t, accountID, data.AccountID)
+			require.Equal(t, email, data.Email)
+			require.Equal(t, workspaceID, data.WorkspaceID)
+			if testCase.generic && !testCase.legacy {
+				require.Greater(t, data.ExpiresAt, time.Now().Unix())
+			}
 
 			genericTTLBefore := server.TTL(tm.getInvitationTokenKey(token))
 			legacyTTLBefore := server.TTL(legacyKey)
@@ -75,6 +80,38 @@ func TestInvitationReservationSupportsGenericLegacyAndDualKeys(t *testing.T) {
 			require.Error(t, err)
 		})
 	}
+}
+
+func TestInvitationTokenStateDistinguishesExpiredUsedAndRevoked(t *testing.T) {
+	server := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
+	previousClient := redisUtil.GetClient()
+	redisUtil.SetClient(client)
+	t.Cleanup(func() {
+		_ = client.Close()
+		redisUtil.SetClient(previousClient)
+	})
+
+	tm := NewTokenManager()
+	require.NoError(t, tm.StoreInvitationToken("workspace-1", "used@example.com", "account-1", "used-token", 1))
+	reservation, err := tm.ReserveInvitationToken(t.Context(), "used-token", "", "")
+	require.NoError(t, err)
+	require.NoError(t, tm.ConsumeInvitationReservation(t.Context(), "used-token", reservation))
+	state, err := tm.GetInvitationTokenState("used-token")
+	require.NoError(t, err)
+	require.Equal(t, "used", state)
+
+	require.NoError(t, tm.StoreInvitationToken("workspace-1", "revoked@example.com", "account-2", "revoked-token", 1))
+	require.NoError(t, tm.RevokeInvitationToken("", "", "revoked-token"))
+	state, err = tm.GetInvitationTokenState("revoked-token")
+	require.NoError(t, err)
+	require.Equal(t, "revoked", state)
+
+	require.NoError(t, tm.StoreInvitationToken("workspace-1", "expired@example.com", "account-3", "expired-token", 1))
+	server.FastForward(time.Hour + time.Second)
+	state, err = tm.GetInvitationTokenState("expired-token")
+	require.NoError(t, err)
+	require.Equal(t, "expired", state)
 }
 
 func TestInvitationReservationReleaseAllowsRetryAndPreservesTTL(t *testing.T) {

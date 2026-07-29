@@ -152,3 +152,16 @@ func TestChineseEmailTemplatesUseChineseCopy(t *testing.T) {
 		})
 	}
 }
+
+func TestInviteActivationURLPreservesPlusAddress(t *testing.T) {
+	activationURL := buildInviteActivationURL(
+		"https://console.example.com/",
+		"invitee+registration@example.com",
+		"token with spaces",
+	)
+
+	const expected = "https://console.example.com/activate?email=invitee%2Bregistration%40example.com&token=token+with+spaces"
+	if activationURL != expected {
+		t.Fatalf("activation URL = %q, want %q", activationURL, expected)
+	}
+}

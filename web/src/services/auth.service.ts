@@ -9,6 +9,7 @@ import type {
   VerifyRequest,
   SetupRequest,
   ActivationCheckResponse,
+  ActivationResponse,
   CompleteRegistrationResponse,
   ForgotPasswordInitResponse,
   ResetPasswordResponse,
@@ -643,10 +644,15 @@ export class AuthenticationService extends BaseService {
   async activate(data: {
     token: string;
     name: string;
+    email: string;
+    workspace_id?: string;
+    password: string;
     interface_language: string;
     timezone: string;
-  }): Promise<void> {
-    return this.request('post', '/activate', data, { skipAuth: true });
+  }): Promise<ActivationResponse> {
+    const response = await this.request<ApiResponseData<ActivationResponse>>('post', '/activate', data, { skipAuth: true });
+    this.persistTokens(response.data.data.access_token, response.data.data.refresh_token);
+    return response.data;
   }
 
   // Verify email/phone
@@ -926,7 +932,15 @@ export const authService = {
   // Activation methods
   checkActivate: (params: { email: string; token: string; workspace_id?: string }) =>
     authenticationService.checkActivate(params),
-  activate: (data: { token: string; name: string; interface_language: string; timezone: string }) =>
+  activate: (data: {
+    token: string;
+    name: string;
+    email: string;
+    workspace_id?: string;
+    password: string;
+    interface_language: string;
+    timezone: string;
+  }) =>
     authenticationService.activate(data),
 
   // New methods

@@ -2,7 +2,7 @@
 
 import { toast } from 'sonner';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, type FormEvent } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import { useT } from '@/i18n';
 import Link from 'next/link';
@@ -85,10 +85,9 @@ export default function InvitePage() {
       {
         onSuccess: () => {
           toast.success(t('auth.joinedSuccessfully'));
-          router.push('/console');
+          window.location.href = '/console';
         },
-        onError: (err: any) => {
-          console.error('Failed to accept invite:', err);
+        onError: () => {
           toast.error(t('auth.failedToJoin'));
           setIsProcessing(false);
         },
@@ -117,7 +116,7 @@ export default function InvitePage() {
         }
         router.push(`/register?redirect=${encodeURIComponent(`/invite/${token}`)}`);
       }
-    } catch (error: any) {
+    } catch {
       toast.error(t('common.error'));
     } finally {
       setCheckingEmail(false);
@@ -138,7 +137,7 @@ export default function InvitePage() {
       toast.success(t('auth.loginSuccess'));
 
       handleAcceptInvite(data.member_name);
-    } catch (error: any) {
+    } catch {
       setIsProcessing(false);
       toast.error(t('auth.loginFailed'));
     }
@@ -218,10 +217,12 @@ export default function InvitePage() {
           ) : !emailChecked ? (
             // Step 1: Check email
             <form
-              onSubmit={e => {
+              onSubmit={(e: FormEvent<HTMLFormElement>) => {
                 e.preventDefault();
-                const email = (e.target as any).email.value;
-                handleCheckEmail(email);
+                const input = e.currentTarget.elements.namedItem('email');
+                if (input instanceof HTMLInputElement) {
+                  void handleCheckEmail(input.value);
+                }
               }}
               className="space-y-4"
             >
