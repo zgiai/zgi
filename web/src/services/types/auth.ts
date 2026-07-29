@@ -202,11 +202,24 @@ export interface ActivationCheckData {
   workspace_id?: string;
   user_name?: string;
   is_setup?: boolean;
+  email: string;
+  organization_id?: string;
+  organization_name?: string;
 }
 
 export interface ActivationCheckResponse {
   is_valid: boolean;
+  status?: 'invalid_or_expired' | 'already_activated' | 'organization_unavailable';
   data?: ActivationCheckData;
+}
+
+export interface ActivationResponse {
+  result: string;
+  data: {
+    access_token: string;
+    refresh_token?: string;
+    account: Account;
+  };
 }
 
 export interface CompleteRegistrationResponse {

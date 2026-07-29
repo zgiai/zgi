@@ -643,6 +643,7 @@ func (s *AccountService) ActivateCheck(ctx context.Context, workspaceID, email, 
 	if err != nil || invitationData == nil {
 		return map[string]interface{}{
 			"is_valid": false,
+			"status":   "invalid_or_expired",
 		}, false
 	}
 
@@ -658,6 +659,9 @@ func (s *AccountService) ActivateCheck(ctx context.Context, workspaceID, email, 
 				"is_valid": false,
 			}, false
 		}
+		if account.Status != auth_model.AccountStatusPending {
+			return map[string]interface{}{"is_valid": false, "status": "already_activated"}, false
+		}
 
 		return map[string]interface{}{
 			"is_valid": true,
@@ -665,6 +669,7 @@ func (s *AccountService) ActivateCheck(ctx context.Context, workspaceID, email, 
 				"workspace_name": "",
 				"workspace_id":   "",
 				"email":          invitationData.Email,
+				"user_name":      account.Name,
 			},
 		}, true
 	}
@@ -691,13 +696,29 @@ func (s *AccountService) ActivateCheck(ctx context.Context, workspaceID, email, 
 			"is_valid": false,
 		}, false
 	}
+	if tenantAccount.Account.Status != auth_model.AccountStatusPending {
+		return map[string]interface{}{"is_valid": false, "status": "already_activated"}, false
+	}
+	organizationID := ""
+	organizationName := ""
+	if tenant.OrganizationID != nil && s.organizationService != nil {
+		organizationID = *tenant.OrganizationID
+		organization, organizationErr := s.organizationService.GetOrganizationByID(ctx, organizationID)
+		if organizationErr != nil || organization == nil || !organization.IsActive() {
+			return map[string]interface{}{"is_valid": false, "status": "organization_unavailable"}, false
+		}
+		organizationName = organization.Name
+	}
 
 	return map[string]interface{}{
 		"is_valid": true,
 		"data": map[string]interface{}{
-			"workspace_name": tenant.Name,
-			"workspace_id":   tenant.ID,
-			"email":          invitationData.Email,
+			"workspace_name":    tenant.Name,
+			"workspace_id":      tenant.ID,
+			"email":             invitationData.Email,
+			"user_name":         tenantAccount.Account.Name,
+			"organization_id":   organizationID,
+			"organization_name": organizationName,
 		},
 	}, true
 }

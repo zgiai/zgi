@@ -137,6 +137,14 @@ func (s *RegisterServiceImpl) Activate(ctx context.Context, workspaceID, email, 
 	}
 
 	account.Name = name
+	if password != "" {
+		hashedPassword, salt, err := util.HashPasswordPBKDF2(password)
+		if err != nil {
+			return nil, fmt.Errorf("failed to hash password: %w", err)
+		}
+		account.Password = &hashedPassword
+		account.PasswordSalt = &salt
+	}
 	if lang != "" {
 		account.InterfaceLanguage = &lang
 	}
@@ -161,14 +169,6 @@ func (s *RegisterServiceImpl) Activate(ctx context.Context, workspaceID, email, 
 	defer cancel()
 	if err := s.tokenMgr.ConsumeInvitationReservation(consumeCtx, token, reservation); err != nil {
 		return nil, fmt.Errorf("failed to revoke token: %w", err)
-	}
-
-	// For public deployment, create user's own group and related data (similar to registration)
-	if s.isPublicDeployment() {
-		if err := s.initializeUserOwnGroup(ctx, account); err != nil {
-			// Log warning but don't fail activation
-			logger.Warn("Failed to initialize user's own group during activation: %v", err)
-		}
 	}
 
 	return account, nil
