@@ -24,6 +24,10 @@ const messages = {
     statusDescription: 'Current status: {status}. Progress: {progress}%.',
     emptyStatusDescription: 'Current status: The knowledge base is empty. Waiting for documents.',
     rebuild: 'Rebuild graph',
+    rebuildConfirmationTitle: 'Rebuild the knowledge graph?',
+    rebuildConfirmationDescription:
+      'The system will reprocess all active documents and regenerate graph entities and relationships. Graph browsing and graph retrieval may be temporarily unavailable while rebuilding. Your source documents will not be changed.',
+    confirmRebuild: 'Confirm rebuild',
     retryDocument: 'Retry',
     modelChangeConfirmation:
       'Changing the extraction model rebuilds the graph for all current documents. Continue?',

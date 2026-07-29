@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import type { IG6GraphEvent, IShape } from '@antv/g6';
 import { DEFAULT_GRAPH_CONFIG } from '../constants';
 import { registerAutoAdaptLabel } from '../behaviors/auto-adapt-label';
 import type { G6Data } from '../utils/data-adapter';
@@ -47,7 +48,6 @@ export const useGraphInstance = ({
             'drag-canvas',
             'zoom-canvas',
             { type: 'drag-node', enableDelegate: false },
-            'activate-relations',
             'custom-auto-adapt-label',
           ],
         },
@@ -85,6 +85,7 @@ export const useGraphInstance = ({
       activeGraph.on('node:click', (e: any) => {
         const clickedItem = e.item;
         const model = clickedItem.getModel();
+        activeGraph.set('selectedLabelNodeId', clickedItem.getID());
         onNodeClick?.(model);
 
         // Visual focus logic
@@ -99,6 +100,9 @@ export const useGraphInstance = ({
           const label = group.find((ele: any) => ele.get('name') === 'text-shape');
           if (label) {
             label.attr('opacity', isFocus ? 1 : 0.1);
+            if (id === clickedNodeId) {
+              label.show();
+            }
           }
           activeGraph.updateItem(node, {
             style: { opacity: isFocus ? 1 : 0.2 },
@@ -116,7 +120,36 @@ export const useGraphInstance = ({
         });
       });
 
+      const labelVisibilityBeforeHover = new Map<string, boolean>();
+
+      activeGraph.on('node:mouseenter', (e: IG6GraphEvent) => {
+        if (!e.item) return;
+
+        const nodeId = e.item.getID();
+        const group = e.item.getContainer();
+        const label = group.find((ele: IShape) => ele.get('name') === 'text-shape');
+        if (!label) return;
+
+        labelVisibilityBeforeHover.set(nodeId, label.get('visible') !== false);
+        label.show();
+      });
+
+      activeGraph.on('node:mouseleave', (e: IG6GraphEvent) => {
+        if (!e.item) return;
+
+        const nodeId = e.item.getID();
+        const wasVisible = labelVisibilityBeforeHover.get(nodeId);
+        labelVisibilityBeforeHover.delete(nodeId);
+
+        if (wasVisible !== false || activeGraph.get('selectedLabelNodeId') === nodeId) return;
+
+        const group = e.item.getContainer();
+        const label = group.find((ele: IShape) => ele.get('name') === 'text-shape');
+        label?.hide();
+      });
+
       activeGraph.on('canvas:click', () => {
+        activeGraph.set('selectedLabelNodeId', undefined);
         activeGraph.getNodes().forEach((node: any) => {
           const group = node.getContainer();
           const label = group.find((ele: any) => ele.get('name') === 'text-shape');

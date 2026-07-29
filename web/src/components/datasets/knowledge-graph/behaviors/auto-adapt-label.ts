@@ -8,42 +8,55 @@ export const registerAutoAdaptLabel = (G6: any) => {
         viewportchange: 'handleAutoAdapt',
         'node:dragend': 'handleAutoAdapt',
         'canvas:dragend': 'handleAutoAdapt',
-        'node:mouseenter': 'handleAutoAdapt',
-        'node:mouseleave': 'handleAutoAdapt',
-        'node:statechange': 'handleAutoAdapt',
         afterupdate: 'handleAutoAdapt',
       };
     },
     handleAutoAdapt() {
-      // Use requestAnimationFrame to ensure we run AFTER G6's internal style resets
-      // which often happen synchronously during state changes.
-      requestAnimationFrame(() => {
+      // Collapse bursts of layout and viewport events into one deterministic pass.
+      // Pointer movement must not recalculate the visibility of every label.
+      if (this.adaptFrame) {
+        cancelAnimationFrame(this.adaptFrame);
+      }
+
+      this.adaptFrame = requestAnimationFrame(() => {
+        this.adaptFrame = null;
         if (this.destroyed) return;
         const graph = this.graph;
         if (!graph || graph.destroyed) return;
 
-        const zoom = graph.getZoom();
+        const zoom = Math.max(graph.getZoom(), 0.01);
         const nodes = graph.getNodes();
+        const selectedNodeId = graph.get('selectedLabelNodeId');
 
-        // Sort nodes by priority (highest first)
+        // Keep the selected entity visible, then retain higher-priority labels.
         const sortedNodes = [...nodes].sort((a, b) => {
+          const selectedA = a.getID() === selectedNodeId ? 1 : 0;
+          const selectedB = b.getID() === selectedNodeId ? 1 : 0;
+          if (selectedA !== selectedB) return selectedB - selectedA;
+
           const priorityA = a.getModel().priority || 0;
           const priorityB = b.getModel().priority || 0;
           return priorityB - priorityA;
         });
 
         const occupiedBoxes: any[] = [];
+        const labelEntries = sortedNodes
+          .map(node => {
+            const group = node.getContainer();
+            const label = group.find((ele: any) => ele.get('name') === 'text-shape');
+            if (!label) return null;
 
-        sortedNodes.forEach(node => {
-          const group = node.getContainer();
-          const label = group.find((ele: any) => ele.get('name') === 'text-shape');
-          if (!label) return;
+            // Measure every label from the same visible state. Measuring a previously
+            // hidden shape can otherwise produce a stale or empty bounding box.
+            label.show();
+            label.attr('fontSize', 12 / zoom);
 
-          // Ensure label size is constant 12px visually
-          label.attr('fontSize', 12 / zoom);
+            return { label, bbox: label.getCanvasBBox() };
+          })
+          .filter((entry): entry is NonNullable<typeof entry> => entry !== null);
 
-          // Get actual bounding box in canvas coordinates
-          const bbox = label.getCanvasBBox();
+        labelEntries.forEach(entry => {
+          const { label, bbox } = entry;
 
           // Add some padding to the bbox for better clearance
           const padding = 4;

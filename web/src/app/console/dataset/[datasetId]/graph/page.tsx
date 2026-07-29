@@ -24,6 +24,7 @@ import {
 } from '@/components/common/permission-gate-state';
 import { KNOWLEDGE_BASE_PERMISSION_ACTIONS } from '@/constants/permissions';
 import { Button } from '@/components/ui/button';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 
 const GRAPH_QUERY_LIMIT_ERROR = 'graph_query_limit_exceeded';
 
@@ -182,15 +183,20 @@ export default function DatasetGraphPage() {
         </div>
         <div className="flex items-center gap-3">
           {canManageGraph && (
-            <Button
-              type="button"
-              variant="outline"
-              disabled={rebuildGraph.isPending}
-              onClick={() => rebuildGraph.mutate()}
-            >
-              {rebuildGraph.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              {t('graph.rebuild')}
-            </Button>
+            <ConfirmDialog
+              trigger={
+                <Button type="button" variant="outline" disabled={rebuildGraph.isPending}>
+                  {rebuildGraph.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                  {t('graph.rebuild')}
+                </Button>
+              }
+              title={t('graph.rebuildConfirmationTitle')}
+              description={t('graph.rebuildConfirmationDescription')}
+              confirmText={t('graph.confirmRebuild')}
+              cancelText={t('actions.cancel')}
+              onConfirm={() => rebuildGraph.mutate()}
+              loading={rebuildGraph.isPending}
+            />
           )}
           {/* Entity Search with Dropdown */}
           <div ref={searchContainerRef} className="relative w-72">
