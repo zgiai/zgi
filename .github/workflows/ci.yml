@@ -88,17 +88,26 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: api/go.mod
+          cache: false
+
       - name: Run registration and invitation gate
         run: |
+          go_root="$(go env GOROOT)"
           docker run --rm \
             --user "$(id -u):$(id -g)" \
             -e HOME=/tmp \
             -e CGO_ENABLED=1 \
             -e GOCACHE=/tmp/go-build \
             -e GOPATH=/tmp/go \
+            -e PATH=/opt/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+            -v "$go_root:/opt/go:ro" \
             -v "$GITHUB_WORKSPACE:/workspace" \
             -w /workspace \
-            golang:1.26.2-bookworm \
+            node:22-bookworm \
             ./scripts/check-registration-auth.sh --backend-only
 
   sandbox:
