@@ -382,7 +382,7 @@ func normalizeGraphExecution(execution *dto.GraphExecution, dataset *dataset_mod
 func (s *hitTestingService) getRetrievalOptions(ctx context.Context, retrievalModel map[string]interface{}, dataset *dataset_model.Dataset) *RetrievalOptions {
 	options := &RetrievalOptions{
 		TopK:                  10, // Default retrieval limit
-		SearchMethod:          "graph_search",
+		SearchMethod:          defaultDatasetSearchMethod(dataset.EnableGraphFlow),
 		ScoreThreshold:        0.35,
 		ScoreThresholdEnabled: true,
 		RerankingEnable:       true,

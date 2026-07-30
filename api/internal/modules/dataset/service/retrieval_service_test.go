@@ -278,6 +278,15 @@ func TestHybridRecallCandidateLimit(t *testing.T) {
 	}
 }
 
+func TestDefaultDatasetSearchMethodDependsOnGraphAvailability(t *testing.T) {
+	if got := defaultDatasetSearchMethod(false); got != string(HybridSearch) {
+		t.Fatalf("non-graph default = %q, want %q", got, HybridSearch)
+	}
+	if got := defaultDatasetSearchMethod(true); got != string(GraphSearch) {
+		t.Fatalf("graph default = %q, want %q", got, GraphSearch)
+	}
+}
+
 func TestGraphRetrievalConfigUsesExplicitGraphModeAndThreeHops(t *testing.T) {
 	config, err := NormalizeGraphRetrievalConfig("graph_search", "graph", "")
 	if err != nil {

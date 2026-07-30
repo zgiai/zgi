@@ -25,6 +25,13 @@ const (
 	FallbackPolicyVector = "vector"
 )
 
+func defaultDatasetSearchMethod(graphEnabled bool) string {
+	if graphEnabled {
+		return string(GraphSearch)
+	}
+	return string(HybridSearch)
+}
+
 type GraphRetrievalConfig struct {
 	RequestedMethod string `json:"requested_method"`
 	ActualMode      string `json:"actual_mode"`

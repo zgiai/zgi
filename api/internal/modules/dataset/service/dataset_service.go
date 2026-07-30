@@ -471,7 +471,7 @@ func (s *datasetService) CreateDataset(ctx context.Context, req *CreateDatasetRe
 	// Set default retrieval_config if not provided
 	if dataset.RetrievalConfig == nil {
 		dataset.RetrievalConfig = map[string]interface{}{
-			"search_method":           "graph_search",
+			"search_method":           defaultDatasetSearchMethod(req.EnableGraphFlow),
 			"reranking_enable":        true,
 			"reranking_model":         map[string]interface{}{"reranking_provider_name": "", "reranking_model_name": ""},
 			"top_k":                   10,
