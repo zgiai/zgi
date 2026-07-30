@@ -12,7 +12,7 @@ import (
 
 type AccountService interface {
 	SendResetPasswordEmail(ctx context.Context, account *auth_model.Account, email string, language string) (string, error)
-	SendDirectAddMemberEmail(ctx context.Context, account *auth_model.Account, groupID, groupName, departmentName, language string) error
+	SendDirectAddMemberEmail(ctx context.Context, account *auth_model.Account, inviterID, groupID, groupName, departmentName, language string) error
 	CreateAccount(ctx context.Context, req *dto.CreateAccountRequest) (*auth_model.Account, error)
 	GetAccountExtensionByID(ctx context.Context, id string) (auth_model.JSONMap, error)
 	GetAccountByEmail(ctx context.Context, email string) (*auth_model.Account, error)
@@ -30,13 +30,13 @@ type AccountService interface {
 	ActivateCheck(ctx context.Context, workspaceID, email, token string) (map[string]interface{}, bool)
 	Activate(ctx context.Context, workspaceID, email, token, name, password, lang, timezone string) (interface{}, error)
 	CheckRegisterValidity(ctx context.Context, email, code, token string) (bool, error)
-	ValidateResetPasswordToken(token, email, code string) (bool, string, error)
+	ValidateResetPasswordToken(ctx context.Context, token, email, code string) (bool, string, string, error)
 	ResetPasswordWithAutoRegister(token, newPassword string) error
 	IsAllowRegister() bool
 	AddForgotPasswordErrorRateLimit(email string)
 	ResetForgotPasswordErrorRateLimit(email string)
 	IsForgotPasswordErrorRateLimit(email string) bool
-	ExistsByEmail(ctx context.Context, email string) bool
+	ExistsByEmail(ctx context.Context, email string) (bool, error)
 	LoadUser(ctx context.Context, userID string) (*auth_model.Account, error)
 	GetAccountJWTToken(ctx context.Context, account *auth_model.Account) (string, error)
 	Authenticate(ctx context.Context, email, password string, inviteToken string) (*auth_model.Account, error)
@@ -45,8 +45,10 @@ type AccountService interface {
 
 	CreateAccountAndTenant(ctx context.Context, email, name, interfaceLanguage string, password *string) (*auth_model.Account, error)
 	GenerateAccountDeletionVerificationCode(ctx context.Context, account *auth_model.Account) (string, string, error)
-	SendAccountDeletionVerificationEmail(ctx context.Context, account *auth_model.Account, code string) error
-	VerifyAccountDeletionCode(ctx context.Context, token, code string) (bool, error)
+	SendAccountDeletionVerificationEmail(ctx context.Context, account *auth_model.Account, token, code string) error
+	VerifyAccountDeletionCode(ctx context.Context, accountID, token, code string) (bool, error)
+	ReleaseAccountDeletionVerification(ctx context.Context, accountID, token string) error
+	CompleteAccountDeletionVerification(ctx context.Context, accountID, token string) error
 	LinkAccountIntegrate(ctx context.Context, provider auth_model.AccountIntegrateProvider, openID string, account *auth_model.Account) error
 	CloseAccount(ctx context.Context, account *auth_model.Account) error
 	UpdateLoginInfo(ctx context.Context, account *auth_model.Account, ipAddress string) error

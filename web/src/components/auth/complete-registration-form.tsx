@@ -148,7 +148,9 @@ export function CompleteRegistrationForm({ className }: CompleteRegistrationForm
 
       setIsSuccess(true);
       setTimeout(() => {
-        const redirectUrl = withBasePathIfInternal(searchParams.get('redirect') || '/console');
+        const redirectUrl = withBasePathIfInternal(
+          searchParams.get('redirect') || '/onboarding/organization'
+        );
         window.location.href = redirectUrl;
       }, 2000);
     } catch (err) {

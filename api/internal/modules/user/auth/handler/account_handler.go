@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/zgiai/zgi/api/config"
 	shared_dto "github.com/zgiai/zgi/api/internal/dto"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	auth_service "github.com/zgiai/zgi/api/internal/modules/user/auth/service"
@@ -62,6 +61,8 @@ type LoginResult struct {
 }
 
 type accountContextMode string
+
+const accountDeletionCompensationTimeout = 2 * time.Second
 
 const (
 	accountContextModeNone         accountContextMode = "none"
@@ -307,7 +308,11 @@ func (h *AccountHandler) ResetPassword(c *gin.Context) {
 
 	err := h.accountService.ResetPassword(c.Request.Context(), req.Token, req.NewPassword)
 	if err != nil {
-		response.Fail(c, response.ErrTokenInvalid)
+		if errors.Is(err, auth_service.ErrResetPasswordTokenInvalid) {
+			response.Fail(c, response.ErrTokenInvalid)
+			return
+		}
+		response.Fail(c, response.ErrSystemError)
 		return
 	}
 
@@ -378,6 +383,8 @@ func (h *AccountHandler) RegisterRoutes(router *gin.RouterGroup) {
 		accountAuth.GET("/profile", h.GetProfile)
 		accountAuth.PUT("/profile", h.UpdateProfile)
 		accountAuth.POST("/change-password", h.ChangePassword)
+		accountAuth.POST("/delete/verification-code", h.SendAccountDeletionCode)
+		accountAuth.POST("/delete/confirm", h.ConfirmAccountDeletion)
 		accountAuth.POST("/reset-password", h.ResetPassword)
 		accountAuth.GET("/list", h.GetAccountExList)     // GET account-ex/list
 		accountAuth.GET("/email", h.GetAccountExByEmail) // GET account-ex/email
@@ -400,6 +407,77 @@ func (h *AccountHandler) RegisterRoutes(router *gin.RouterGroup) {
 		accountEx.GET("/id", h.GetAccountExByID)       // GET account-ex/id
 		accountEx.PUT("/id", h.UpdateAccountExByID)    // PUT account-ex/id
 		accountEx.POST("/id", h.UpdateAccountExByID)
+	}
+}
+
+func (h *AccountHandler) SendAccountDeletionCode(c *gin.Context) {
+	accountID := c.GetString("account_id")
+	if accountID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+	account, err := h.accountService.LoadLoggedInAccount(c.Request.Context(), accountID)
+	if err != nil || account == nil {
+		response.Fail(c, response.ErrAccountNotFound)
+		return
+	}
+	token, code, err := h.accountService.GenerateAccountDeletionVerificationCode(c.Request.Context(), account)
+	if err != nil {
+		response.Fail(c, response.ErrSystemError)
+		return
+	}
+	if err := h.accountService.SendAccountDeletionVerificationEmail(c.Request.Context(), account, token, code); err != nil {
+		response.Fail(c, response.ErrEmailSendFailed)
+		return
+	}
+	response.Success(c, gin.H{"result": "success", "data": token})
+}
+
+func (h *AccountHandler) ConfirmAccountDeletion(c *gin.Context) {
+	accountID := c.GetString("account_id")
+	if accountID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+	var req struct {
+		Token string `json:"token" binding:"required"`
+		Code  string `json:"code" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+	valid, err := h.accountService.VerifyAccountDeletionCode(c.Request.Context(), accountID, req.Token, req.Code)
+	if err != nil {
+		response.Fail(c, response.ErrTokenInvalid)
+		return
+	}
+	if !valid {
+		response.Fail(c, response.ErrInvalidCode)
+		return
+	}
+	if err := h.accountService.DeleteAccount(c.Request.Context(), accountID); err != nil {
+		h.releaseAccountDeletionVerification(c.Request.Context(), accountID, req.Token)
+		response.Fail(c, response.ErrAccountDeleteFailed)
+		return
+	}
+	h.completeAccountDeletionVerification(c.Request.Context(), accountID, req.Token)
+	response.Success(c, nil)
+}
+
+func (h *AccountHandler) releaseAccountDeletionVerification(ctx context.Context, accountID, token string) {
+	compensationCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), accountDeletionCompensationTimeout)
+	defer cancel()
+	if err := h.accountService.ReleaseAccountDeletionVerification(compensationCtx, accountID, token); err != nil {
+		logger.Warn("Failed to release account deletion verification reservation", "account_id", accountID, "error", err)
+	}
+}
+
+func (h *AccountHandler) completeAccountDeletionVerification(ctx context.Context, accountID, token string) {
+	compensationCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), accountDeletionCompensationTimeout)
+	defer cancel()
+	if err := h.accountService.CompleteAccountDeletionVerification(compensationCtx, accountID, token); err != nil {
+		logger.Warn("Failed to consume account deletion verification", "account_id", accountID, "error", err)
 	}
 }
 
@@ -517,7 +595,12 @@ func (h *AccountHandler) ForgotPasswordSendEmail(c *gin.Context) {
 		return
 	}
 
-	if !h.accountService.ExistsByEmail(c.Request.Context(), req.Email) {
+	exists, err := h.accountService.ExistsByEmail(c.Request.Context(), req.Email)
+	if err != nil {
+		response.Fail(c, response.ErrSystemError)
+		return
+	}
+	if !exists {
 		response.Fail(c, response.ErrAccountNotFound)
 		return
 	}
@@ -551,13 +634,13 @@ func (h *AccountHandler) ForgotPasswordCheck(c *gin.Context) {
 		return
 	}
 
-	isValid, email, err := h.accountService.ValidateResetPasswordToken(req.Token, req.Email, req.Code)
+	isValid, email, verifiedToken, err := h.accountService.ValidateResetPasswordToken(c.Request.Context(), req.Token, req.Email, req.Code)
 	if err != nil {
 		response.Fail(c, response.ErrTokenInvalid)
 		return
 	}
 
-	response.Success(c, gin.H{"is_valid": isValid, "email": email})
+	response.Success(c, gin.H{"is_valid": isValid, "email": email, "token": verifiedToken})
 }
 
 func (h *AccountHandler) ForgotPasswordReset(c *gin.Context) {
@@ -923,11 +1006,9 @@ func (h *ActivateHandler) Check(c *gin.Context) {
 	email := c.Query("email")
 	token := c.Query("token")
 
-	result, isValid := h.accountService.ActivateCheck(context.Background(), workspaceID, email, token)
+	result, isValid := h.accountService.ActivateCheck(c.Request.Context(), workspaceID, email, token)
 	if !isValid {
-		response.Success(c, gin.H{
-			"is_valid": false,
-		})
+		response.Success(c, result)
 		return
 	}
 
@@ -940,6 +1021,7 @@ func (h *ActivateHandler) Activate(c *gin.Context) {
 		Email             string `json:"email" binding:"omitempty,email"`
 		Token             string `json:"token" binding:"required"`
 		Name              string `json:"name" binding:"required,max=30"`
+		Password          string `json:"password" binding:"required,min=8,max=128"`
 		InterfaceLanguage string `json:"interface_language" binding:"required"`
 		Timezone          string `json:"timezone" binding:"required"`
 	}
@@ -950,7 +1032,7 @@ func (h *ActivateHandler) Activate(c *gin.Context) {
 	}
 
 	// Activate account
-	account, err := h.accountService.Activate(context.Background(), req.WorkspaceID, req.Email, req.Token, req.Name, "", req.InterfaceLanguage, req.Timezone)
+	account, err := h.accountService.Activate(c.Request.Context(), req.WorkspaceID, req.Email, req.Token, req.Name, req.Password, req.InterfaceLanguage, req.Timezone)
 	if err != nil {
 		// Check for specific activation error
 		if err.Error() == "Auth Token is invalid or account already activated, please check again." {
@@ -1048,7 +1130,12 @@ func (h *ForgotPasswordHandler) SendEmail(c *gin.Context) {
 		language = "en-US" // default language
 	}
 
-	if !h.accountService.ExistsByEmail(c.Request.Context(), req.Email) {
+	exists, err := h.accountService.ExistsByEmail(c.Request.Context(), req.Email)
+	if err != nil {
+		response.Fail(c, response.ErrSystemError)
+		return
+	}
+	if !exists {
 		response.Fail(c, response.ErrAccountNotFound)
 		return
 	}
@@ -1096,7 +1183,7 @@ func (h *ForgotPasswordHandler) Check(c *gin.Context) {
 	}
 
 	// Validate token and verification code
-	isValid, email, err := h.accountService.ValidateResetPasswordToken(req.Token, req.Email, req.Code)
+	isValid, email, verifiedToken, err := h.accountService.ValidateResetPasswordToken(c.Request.Context(), req.Token, req.Email, req.Code)
 	if err != nil {
 		response.Fail(c, response.ErrTokenInvalid)
 		return
@@ -1105,6 +1192,7 @@ func (h *ForgotPasswordHandler) Check(c *gin.Context) {
 	response.Success(c, gin.H{
 		"is_valid": isValid,
 		"email":    email,
+		"token":    verifiedToken,
 	})
 }
 
@@ -1126,10 +1214,14 @@ func (h *ForgotPasswordHandler) Reset(c *gin.Context) {
 	}
 
 	// Reset password
-	err := h.accountService.ResetPassword(context.Background(), req.Token, req.NewPassword)
+	err := h.accountService.ResetPassword(c.Request.Context(), req.Token, req.NewPassword)
 	if err != nil {
 		if err.Error() == "Account is frozen" {
 			response.Fail(c, response.ErrAccountFrozen)
+			return
+		}
+		if errors.Is(err, auth_service.ErrResetPasswordTokenInvalid) {
+			response.Fail(c, response.ErrTokenInvalid)
 			return
 		}
 		response.FailWithMessage(c, response.ErrSystemError, err.Error())
@@ -1392,186 +1484,15 @@ func (h *AuthHandler) CheckEmailRegistered(c *gin.Context) {
 		return
 	}
 
-	exists := h.accountService.ExistsByEmail(c.Request.Context(), req.Email)
+	exists, err := h.accountService.ExistsByEmail(c.Request.Context(), req.Email)
+	if err != nil {
+		response.Fail(c, response.ErrSystemError)
+		return
+	}
 
 	response.Success(c, gin.H{
 		"email":         req.Email,
 		"is_registered": exists,
-	})
-}
-
-func (h *AuthHandler) RegisterSendEmail(c *gin.Context) {
-	var req struct {
-		Email    string `json:"email" binding:"required,email"`
-		Language string `json:"language"`
-	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.Fail(c, response.ErrInvalidParam)
-		return
-	}
-
-	_, err := h.featureService.GetSystemFeatures(c)
-	if err != nil {
-		response.Fail(c, response.ErrSystemError)
-		return
-	}
-
-	if !h.featureService.IsPublicDeployment() {
-		response.Fail(c, response.ErrRegisterNotAllowed)
-		return
-	}
-
-	ipAddress := c.ClientIP()
-	if limit, err := h.accountService.IsEmailSendIPLimit(context.Background(), ipAddress); err != nil || limit {
-		response.Fail(c, response.ErrRateLimitExceeded)
-		return
-	}
-
-	language := "en-US"
-	if req.Language == "zh-Hans" {
-		language = "zh-Hans"
-	}
-
-	if h.accountService.ExistsByEmail(c.Request.Context(), req.Email) {
-		response.Fail(c, response.ErrUserExists)
-		return
-	}
-
-	token, err := h.accountService.SendResetPasswordEmail(context.Background(), nil, req.Email, language)
-	if err != nil {
-		if isResetPasswordEmailRateLimitError(err) {
-			response.Fail(c, response.ErrRateLimitExceeded)
-			return
-		}
-		response.Fail(c, response.ErrEmailSendFailed)
-		return
-	}
-
-	response.Success(c, gin.H{
-		"result": "success",
-		"data":   token,
-	})
-}
-
-func (h *AuthHandler) RegisterCheck(c *gin.Context) {
-	var req struct {
-		Email string `json:"email" binding:"required"`
-		Code  string `json:"code" binding:"required"`
-		Token string `json:"token" binding:"required"`
-	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.Fail(c, response.ErrInvalidParam)
-		return
-	}
-
-	// Get token data
-	tokenData, err := h.accountService.GetResetPasswordData(context.Background(), req.Token)
-	if err != nil || tokenData == nil {
-		response.Fail(c, response.ErrTokenInvalid)
-		return
-	}
-
-	// Validate email
-	tokenEmail, _ := tokenData["email"].(string)
-	if req.Email != tokenEmail {
-		response.Fail(c, response.ErrEmailFormat)
-		return
-	}
-
-	// Validate verification code
-	tokenCode, _ := tokenData["code"].(string)
-	masterCode := config.Current().Auth.MasterVerificationCode
-	if req.Code != tokenCode && (masterCode == "" || req.Code != masterCode) {
-		response.Fail(c, response.ErrInvalidCode)
-		return
-	}
-
-	response.Success(c, gin.H{
-		"is_valid": true,
-		"email":    tokenEmail,
-	})
-}
-
-func (h *AuthHandler) RegisterFinish(c *gin.Context) {
-	var req struct {
-		Token           string `json:"token" binding:"required"`
-		Name            string `json:"name" binding:"required"`
-		Password        string `json:"password" binding:"required"`
-		PasswordConfirm string `json:"password_confirm" binding:"required"`
-	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		logger.Info("RegisterFinish: 参数校验失败, token=%s, err=%v", req.Token, err)
-		response.Fail(c, response.ErrInvalidParam)
-		return
-	}
-
-	if strings.TrimSpace(req.Password) != strings.TrimSpace(req.PasswordConfirm) {
-		logger.Info("RegisterFinish: 两次密码不一致, token=%s, email=%s", req.Token, req.Name)
-		response.Fail(c, response.ErrPasswordMismatch)
-		return
-	}
-
-	registerData, err := h.accountService.GetResetPasswordData(context.Background(), req.Token)
-	if err != nil || registerData == nil {
-		logger.Info("RegisterFinish: token 校验失败, token=%s, err=%v", req.Token, err)
-		response.Fail(c, response.ErrTokenInvalid)
-		return
-	}
-
-	email, _ := registerData["email"].(string)
-	if email == "" {
-		logger.Info("RegisterFinish: token 中 email 为空, token=%s", req.Token)
-		response.Fail(c, response.ErrTokenInvalid)
-		return
-	}
-
-	if h.accountService.ExistsByEmail(c.Request.Context(), email) {
-		logger.Info("RegisterFinish: 邮箱已注册, token=%s, email=%s", req.Token, email)
-		response.Fail(c, response.ErrUserExists)
-		return
-	}
-
-	name := req.Name
-	if strings.TrimSpace(name) == "" {
-		name = strings.Split(email, "@")[0]
-	}
-
-	language := "en-US"
-	createWorkspace := true
-	_, err = h.accountService.RegisterEx(context.Background(), email, name, &req.Password, nil, nil, &language, nil, nil, &createWorkspace)
-	if err != nil {
-		if strings.Contains(err.Error(), "frozen") || strings.Contains(err.Error(), "freeze") {
-			logger.Info("RegisterFinish: 账号被冻结, token=%s, email=%s, err=%v", req.Token, email, err)
-			response.Fail(c, response.ErrAccountFrozen)
-			return
-		}
-		logger.Info("RegisterFinish: 注册服务报错, token=%s, email=%s, err=%v", req.Token, email, err)
-		response.Fail(c, response.ErrSystemError)
-		return
-	}
-
-	loginReq := &shared_dto.LoginReq{
-		Email:       email,
-		Password:    req.Password,
-		LastLoginIp: c.ClientIP(),
-	}
-
-	_, err, loginResp, _ := h.accountService.Login(c.Request.Context(), loginReq)
-	if err != nil {
-		logger.Info("RegisterFinish: 自动登录失败, token=%s, email=%s, err=%v", req.Token, email, err)
-		response.Fail(c, response.ErrSystemError)
-		return
-	}
-
-	h.accountService.RevokeResetPasswordToken(context.Background(), req.Token)
-
-	response.Success(c, gin.H{
-		"result": "success",
-		"data": gin.H{
-			"access_token":  loginResp.AccessToken,
-			"refresh_token": loginResp.RefreshToken,
-			"account":       loginResp.Account,
-		},
 	})
 }
 
@@ -1626,9 +1547,4 @@ func (h *AuthHandler) RegisterAuthRoutes(v1 *gin.RouterGroup) {
 	v1.GET("/sso/casdoor/start", h.StartCasdoorSSO)
 	v1.GET("/sso/casdoor/callback", h.HandleCasdoorCallback)
 	v1.POST("/sso/casdoor/consume-ticket", h.ConsumeSSOLoginTicket)
-
-	// Three registration-related interfaces
-	v1.POST("/register", h.RegisterSendEmail)      // Corresponds to RegisterSendEmailApi
-	v1.POST("/register/validity", h.RegisterCheck) // Corresponds to RegisterCheckApi
-	v1.POST("/register/finish", h.RegisterFinish)  // Corresponds to RegisterFinishApi
 }

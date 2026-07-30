@@ -22,6 +22,7 @@ import {
   Users,
   Info,
   Upload,
+  FolderPlus,
   PanelLeft,
   X,
 } from 'lucide-react';
@@ -1248,13 +1249,7 @@ const FileManagementContent = ({
       goToPage(1);
     }
     resetFolderDeleteState();
-  }, [
-    activeCategory,
-    folderToDelete,
-    goToPage,
-    isFolderWithinDeletedTree,
-    resetFolderDeleteState,
-  ]);
+  }, [activeCategory, folderToDelete, goToPage, isFolderWithinDeletedTree, resetFolderDeleteState]);
 
   const handleDeleteConfirm = useCallback(async () => {
     if (!folderToDelete) return;
@@ -1295,9 +1290,9 @@ const FileManagementContent = ({
     <FileSidebar
       activeItemId={activeCategory}
       onItemClick={handleCategoryChange}
-      onNewFolder={canCreateInActiveFolder ? handleNewFolder : undefined}
+      onNewFolder={selectionMode && canCreateInActiveFolder ? handleNewFolder : undefined}
       onCreateTextFile={canCreateTextFile ? handleCreateTextFile : undefined}
-      onUpload={canUpload ? handleUpload : undefined}
+      onUpload={selectionMode && canUpload ? handleUpload : undefined}
       onFolderCreateChild={canCreateFolder ? handleCreateChildFolder : undefined}
       onFolderRename={canManageFolder ? handleFolderRename : undefined}
       onFolderDelete={canManageFolder ? handleFolderDelete : undefined}
@@ -1468,6 +1463,8 @@ const FileManagementContent = ({
         isMovingFiles={isMovingFiles}
         activeCategory={activeCategory}
         folderNoticeName={activeFolderName}
+        emptyActionLabel={!selectionMode && canUpload ? t('files.sidebar.uploadFile') : undefined}
+        onEmptyAction={!selectionMode && canUpload ? handleUpload : undefined}
         mobileEmptyActionLabel={mobilePrimaryActionLabel}
         mobileEmptyDescription={mobileEmptyDescription}
         onMobileEmptyAction={() => {
@@ -1650,20 +1647,44 @@ const FileManagementContent = ({
                   </p>
                 </div>
 
-                <div className="relative w-full @4xl/console:w-[300px] @4xl/console:max-w-none">
-                  <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                  <Input
-                    placeholder={t('files.search.placeholder')}
-                    value={searchValue}
-                    onChange={e => setSearchValue(e.target.value)}
-                    className="h-10 rounded-lg bg-background pl-9 pr-10 text-sm shadow-sm"
-                  />
-                  {searchValue ? (
-                    <ClearSearchButton
-                      onClick={() => setSearchValue('')}
-                      label={t('common.clear')}
+                <div className="flex w-full flex-col gap-2 @4xl/console:w-auto @4xl/console:flex-row @4xl/console:items-center">
+                  <div className="relative w-full @4xl/console:w-[280px]">
+                    <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                    <Input
+                      placeholder={t('files.search.placeholder')}
+                      value={searchValue}
+                      onChange={e => setSearchValue(e.target.value)}
+                      className="h-9 rounded-lg bg-background pl-9 pr-10 text-sm shadow-none"
                     />
-                  ) : null}
+                    {searchValue ? (
+                      <ClearSearchButton
+                        onClick={() => setSearchValue('')}
+                        label={t('common.clear')}
+                      />
+                    ) : null}
+                  </div>
+
+                  <div className="flex shrink-0 items-center gap-2">
+                    {canCreateInActiveFolder ? (
+                      <Button
+                        variant="outline"
+                        className="h-9 gap-2 rounded-lg px-3 shadow-none"
+                        onClick={handleNewFolder}
+                      >
+                        <FolderPlus className="h-4 w-4" />
+                        {t('files.sidebar.newFolder')}
+                      </Button>
+                    ) : null}
+                    {canUpload ? (
+                      <Button
+                        className="h-9 gap-2 rounded-lg px-3 shadow-none"
+                        onClick={handleUpload}
+                      >
+                        <Upload className="h-4 w-4" />
+                        {t('files.sidebar.uploadFile')}
+                      </Button>
+                    ) : null}
+                  </div>
                 </div>
               </div>
             </div>

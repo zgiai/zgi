@@ -990,6 +990,18 @@ func (s *excelImportPermissionDataSourceService) AnalyzeExcelImport(_ context.Co
 	return dto.AnalyzeExcelImportData{}, nil
 }
 
+func (s *excelImportPermissionDataSourceService) AnalyzeExistingTableExcelImport(_ context.Context, _, _, _, _ string, _ dto.AnalyzeExcelImportRequest) (dto.AnalyzeExistingTableExcelImportData, error) {
+	return dto.AnalyzeExistingTableExcelImportData{}, nil
+}
+
+func (s *excelImportPermissionDataSourceService) PreviewExistingTableExcelImport(_ context.Context, _, _, _, _, _ string, _ dto.ExistingTableExcelImportDraftRequest) (dto.ExistingTableExcelImportPreviewData, error) {
+	return dto.ExistingTableExcelImportPreviewData{}, nil
+}
+
+func (s *excelImportPermissionDataSourceService) ConfirmExistingTableExcelImport(_ context.Context, _, _, _, _, _ string) (dto.ConfirmExcelImportData, error) {
+	return dto.ConfirmExcelImportData{}, nil
+}
+
 func (s *excelImportPermissionDataSourceService) AnalyzeFileForTable(_ context.Context, _, _, _ string, _ *string, _ *dto.ModelSpec) (dto.AnalyzeFileForTableResponse, error) {
 	s.analyzeFileForTableCalls++
 	return dto.AnalyzeFileForTableResponse{}, nil

@@ -35,17 +35,26 @@ func (p *ChuanglanProvider) Provider() string {
 }
 
 func (p *ChuanglanProvider) BuildPayload(req Request, template TemplateConfig) (*ChuanglanPayload, error) {
+	payload, _, err := p.buildPayload(req, template)
+	return payload, err
+}
+
+func (p *ChuanglanProvider) buildPayload(req Request, template TemplateConfig) (*ChuanglanPayload, chuanglanCredentialConfig, error) {
 	if err := validateRequest(req, template); err != nil {
-		return nil, err
+		return nil, chuanglanCredentialConfig{}, err
 	}
 	providerTemplate := template.Chuanglan
 	if normalizedParamMode(providerTemplate.ParamMode, ParamModeOrderedParam) != ParamModeOrderedParam {
-		return nil, fmt.Errorf("unsupported chuanglan param mode: %s", providerTemplate.ParamMode)
+		return nil, chuanglanCredentialConfig{}, fmt.Errorf("unsupported chuanglan param mode: %s", providerTemplate.ParamMode)
+	}
+	credentials, ok := p.config.credentials(providerTemplate.CredentialProfile)
+	if !ok {
+		return nil, chuanglanCredentialConfig{}, fmt.Errorf("chuanglan credential profile %q is not configured", providerTemplate.CredentialProfile)
 	}
 
 	placeholderCount := strings.Count(providerTemplate.TemplateText, "{s}")
 	if placeholderCount != len(providerTemplate.ParamOrder) {
-		return nil, fmt.Errorf("chuanglan template placeholder count %d does not match param order count %d", placeholderCount, len(providerTemplate.ParamOrder))
+		return nil, chuanglanCredentialConfig{}, fmt.Errorf("chuanglan template placeholder count %d does not match param order count %d", placeholderCount, len(providerTemplate.ParamOrder))
 	}
 
 	templateParams := templateParamConfigs(template.Params)
@@ -53,12 +62,12 @@ func (p *ChuanglanProvider) BuildPayload(req Request, template TemplateConfig) (
 	for index, internalName := range providerTemplate.ParamOrder {
 		param, ok := templateParams[internalName]
 		if !ok {
-			return nil, fmt.Errorf("chuanglan param order key %s is not defined by template", internalName)
+			return nil, chuanglanCredentialConfig{}, fmt.Errorf("chuanglan param order key %s is not defined by template", internalName)
 		}
 		value := strings.TrimSpace(req.TemplateParams[internalName])
 		if value == "" {
 			if param.IsRequired() {
-				return nil, fmt.Errorf("chuanglan param order key %s is empty", internalName)
+				return nil, chuanglanCredentialConfig{}, fmt.Errorf("chuanglan param order key %s is empty", internalName)
 			}
 			continue
 		}
@@ -67,27 +76,36 @@ func (p *ChuanglanProvider) BuildPayload(req Request, template TemplateConfig) (
 
 	paramJSON, err := json.Marshal([]map[string]string{ordered})
 	if err != nil {
-		return nil, fmt.Errorf("marshal chuanglan template params: %w", err)
+		return nil, chuanglanCredentialConfig{}, fmt.Errorf("marshal chuanglan template params: %w", err)
 	}
 	report := "false"
-	if p.config.Report {
+	if credentials.Report {
 		report = "true"
 	}
 
-	return &ChuanglanPayload{
-		Account:           p.config.Account,
-		Password:          p.config.Password,
-		PhoneNumbers:      NormalizePhoneNumbers(req.Phone),
+	payload := &ChuanglanPayload{
+		Account:           credentials.Account,
+		Password:          credentials.Password,
+		PhoneNumbers:      normalizeChuanglanDomesticPhoneNumbers(req.Phone),
 		TemplateID:        providerTemplate.TemplateID,
 		TemplateParamJSON: string(paramJSON),
-		Signature:         p.config.Signature,
+		Signature:         credentials.Signature,
 		Report:            report,
-		Extend:            p.config.Extend,
-	}, nil
+		Extend:            credentials.Extend,
+	}
+	return payload, credentials, nil
+}
+
+func normalizeChuanglanDomesticPhoneNumbers(phone string) string {
+	phones := splitPhoneNumbers(phone)
+	for index, item := range phones {
+		phones[index] = strings.TrimPrefix(item, "+86")
+	}
+	return strings.Join(phones, ",")
 }
 
 func (p *ChuanglanProvider) SendNotification(ctx context.Context, req Request, template TemplateConfig) (*Result, error) {
-	payload, err := p.BuildPayload(req, template)
+	payload, credentials, err := p.buildPayload(req, template)
 	if err != nil {
 		return nil, err
 	}
@@ -96,7 +114,7 @@ func (p *ChuanglanProvider) SendNotification(ctx context.Context, req Request, t
 		return nil, fmt.Errorf("marshal chuanglan request: %w", err)
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, p.config.APIURL, bytes.NewReader(body))
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, credentials.APIURL, bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("create chuanglan request: %w", err)
 	}

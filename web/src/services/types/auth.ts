@@ -58,6 +58,23 @@ export interface LoginRequest {
   email: string;
   password: string;
   remember?: boolean;
+  invite_token?: string;
+}
+
+export interface EmailCodeLoginSendRequest {
+  email: string;
+  language?: string;
+}
+
+export interface EmailCodeLoginVerifyRequest {
+  email: string;
+  code: string;
+  token: string;
+}
+
+export interface EmailCodeLoginSendResponse {
+  result: string;
+  data: string;
 }
 
 export interface LoginResponse {
@@ -187,11 +204,37 @@ export interface ActivationCheckData {
   workspace_id?: string;
   user_name?: string;
   is_setup?: boolean;
+  email: string;
+  organization_id?: string;
+  organization_name?: string;
+  account_exists?: boolean;
+  inviter_name?: string;
+  role?: string;
+  expires_at?: number;
 }
 
 export interface ActivationCheckResponse {
   is_valid: boolean;
+  status?:
+    | 'invalid'
+    | 'expired'
+    | 'revoked'
+    | 'used'
+    | 'organization_unavailable'
+    | 'membership_unavailable'
+    | 'role_unavailable'
+    | 'account_unavailable'
+    | 'email_mismatch';
   data?: ActivationCheckData;
+}
+
+export interface ActivationResponse {
+  result: string;
+  data: {
+    access_token: string;
+    refresh_token?: string;
+    account: Account;
+  };
 }
 
 export interface CompleteRegistrationResponse {

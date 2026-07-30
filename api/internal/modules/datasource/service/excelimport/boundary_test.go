@@ -203,6 +203,30 @@ func TestValidateRowsSkipsInvalidRowsAndKeepsValidRows(t *testing.T) {
 	}
 }
 
+func TestValidateRowsReturnsEmptyErrorsForValidRows(t *testing.T) {
+	wb := &ParsedWorkbook{Sheets: []ParsedSheet{{
+		Name:        "Sheet1",
+		Rows:        [][]string{{"Name"}, {"Alice"}},
+		RowCount:    2,
+		ColumnCount: 1,
+	}}}
+	req := emptyConfirmRequest()
+	req.Columns = []dto.InferredExcelColumn{{
+		SourceColumnIndex: 0,
+		Name:              "name",
+		Type:              "text",
+		IsRequired:        true,
+	}}
+
+	result, err := ValidateRows(wb, req)
+	if err != nil {
+		t.Fatalf("ValidateRows returned error: %v", err)
+	}
+	if result.Errors == nil {
+		t.Fatal("errors = nil, want empty slice for JSON array contract")
+	}
+}
+
 func TestValidateRowsEmptyRowPolicyError(t *testing.T) {
 	wb := &ParsedWorkbook{
 		SourceType: "excel",

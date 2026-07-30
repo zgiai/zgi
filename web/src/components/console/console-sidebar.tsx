@@ -9,7 +9,6 @@ import {
   Bot,
   BookText,
   FileText,
-  FileSearch,
   Database,
   BookOpen,
   Users,
@@ -292,6 +291,11 @@ export function ConsoleSidebar({
             permissions: WORKFLOW_VISIBLE_PERMISSION_CODES,
           },
           {
+            title: t('prompts'),
+            href: '/console/prompts',
+            icon: BookText,
+          },
+          {
             title: t('files'),
             href: '/console/files',
             icon: FileText,
@@ -328,16 +332,6 @@ export function ConsoleSidebar({
             title: t('skills'),
             href: '/console/skills',
             icon: Bot,
-          },
-          {
-            title: t('prompts'),
-            href: '/console/prompts',
-            icon: BookText,
-          },
-          {
-            title: t('fileRecognition'),
-            href: '/console/developer/content-parse',
-            icon: FileSearch,
           },
         ],
       },
@@ -702,6 +696,11 @@ export function ConsoleMobileSidebar({
             permissions: WORKFLOW_VISIBLE_PERMISSION_CODES,
           },
           {
+            title: t('prompts'),
+            href: '/console/prompts',
+            icon: BookText,
+          },
+          {
             title: t('files'),
             href: '/console/files',
             icon: FileText,
@@ -738,16 +737,6 @@ export function ConsoleMobileSidebar({
             title: t('skills'),
             href: '/console/skills',
             icon: Bot,
-          },
-          {
-            title: t('prompts'),
-            href: '/console/prompts',
-            icon: BookText,
-          },
-          {
-            title: t('fileRecognition'),
-            href: '/console/developer/content-parse',
-            icon: FileSearch,
           },
         ],
       },

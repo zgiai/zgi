@@ -94,9 +94,43 @@ func TestSystemVLMAdapterUsesDefaultVisionModel(t *testing.T) {
 	if content[1].ImageURL == nil || !strings.HasPrefix(content[1].ImageURL.URL, "data:image/png;base64,") {
 		t.Fatalf("image content = %#v, want PNG data URI", content[1])
 	}
+	if content[1].ImageURL.Detail != "auto" {
+		t.Fatalf("image detail = %q, want auto", content[1].ImageURL.Detail)
+	}
 	prompt := content[0].Text
 	if !strings.Contains(prompt, "directly as Markdown") || !strings.Contains(prompt, "Flowchart or process diagram") {
 		t.Fatalf("unexpected image understanding prompt: %q", prompt)
+	}
+}
+
+func TestToMessageContentPartsNormalizesImageDetail(t *testing.T) {
+	tests := []struct {
+		name   string
+		detail any
+		want   string
+	}{
+		{name: "missing", want: "auto"},
+		{name: "nil", detail: nil, want: "auto"},
+		{name: "blank", detail: "  ", want: "auto"},
+		{name: "explicit", detail: " high ", want: "high"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			imageURL := map[string]any{"url": "https://example.com/image.png"}
+			if tt.name != "missing" {
+				imageURL["detail"] = tt.detail
+			}
+			parts := toMessageContentParts([]map[string]any{
+				{"type": "image_url", "image_url": imageURL},
+			})
+			if len(parts) != 1 || parts[0].ImageURL == nil {
+				t.Fatalf("parts = %#v, want one image part", parts)
+			}
+			if got := parts[0].ImageURL.Detail; got != tt.want {
+				t.Fatalf("detail = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
 

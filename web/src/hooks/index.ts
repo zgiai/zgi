@@ -114,6 +114,7 @@ export { useProfile, useUpdateProfile } from './use-profile';
 export { useAccountCapabilities } from './use-account-capabilities';
 // Auth hooks
 export { useLogin } from './auth/use-login';
+export { useEmailCodeLogin, useSendEmailLoginCode } from './auth/use-email-code-login';
 export { useLogout } from './auth/use-logout';
 export { useStartRegister } from './auth/use-start-register';
 export { useVerifyRegister } from './auth/use-verify-register';

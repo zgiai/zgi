@@ -22,8 +22,8 @@ func TestGenerateTableTemplateExcelOnlyIncludesHeaderRow(t *testing.T) {
 	)
 	workspaceID := "workspace-1"
 	db, mock := newTemplateMockDB(t)
-	mock.ExpectQuery(`SELECT \* FROM "data_source_import_jobs" WHERE table_id = \$1 ORDER BY created_at DESC,"data_source_import_jobs"\."id" LIMIT \$2`).
-		WithArgs(tableID, 1).
+	mock.ExpectQuery(`SELECT \* FROM "data_source_import_jobs" WHERE organization_id = \$1 AND data_source_id = \$2 AND table_id = \$3 AND source_type = \$4 AND status = \$5 ORDER BY created_at DESC,"data_source_import_jobs"\."id" LIMIT \$6`).
+		WithArgs(organizationID, dataSourceID, tableID, "schema", "completed", 1).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}))
 
 	svc := &dataSourceService{

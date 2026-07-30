@@ -91,7 +91,8 @@ func (a *AccountServiceAdapter) LoadUser(ctx context.Context, userID string) (*a
 }
 
 func (a *AccountServiceAdapter) ExistsByEmail(ctx context.Context, email string) bool {
-	return a.accountService.ExistsByEmail(ctx, email)
+	exists, err := a.accountService.ExistsByEmail(ctx, email)
+	return err == nil && exists
 }
 
 func (a *AccountServiceAdapter) LoadLoggedInAccount(ctx context.Context, accountID string) (*auth_model.Account, error) {

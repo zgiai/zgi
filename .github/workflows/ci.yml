@@ -19,6 +19,14 @@ jobs:
     name: Open source hygiene
     runs-on: ${{ fromJSON(vars.CI_RUNNER_LABELS || '["ubuntu-latest"]') }}
     steps:
+      - name: Repair workspace ownership
+        working-directory: ${{ runner.temp }}
+        run: |
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE:/workspace" \
+            alpine:3.22 \
+            chown -R "$(id -u):$(id -g)" /workspace
+
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -38,6 +46,14 @@ jobs:
       run:
         working-directory: web
     steps:
+      - name: Repair workspace ownership
+        working-directory: ${{ runner.temp }}
+        run: |
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE:/workspace" \
+            alpine:3.22 \
+            chown -R "$(id -u):$(id -g)" /workspace
+
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -54,8 +70,59 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Type check
-        run: pnpm type-check
+      - name: Run registration frontend and type checks
+        run: ../scripts/check-registration-auth.sh --frontend-only
+
+      - name: Clean generated web files
+        if: always()
+        run: |
+          for path in node_modules .next; do
+            if [ -e "$path" ]; then
+              find "$path" -depth -delete
+            fi
+          done
+
+  registration-auth:
+    name: Registration and invitation gate
+    runs-on: ${{ fromJSON(vars.CI_RUNNER_LABELS || '["ubuntu-latest"]') }}
+    needs: web
+    steps:
+      - name: Repair workspace ownership
+        working-directory: ${{ runner.temp }}
+        run: |
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE:/workspace" \
+            alpine:3.22 \
+            chown -R "$(id -u):$(id -g)" /workspace
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Reclaim unused Docker data
+        run: docker system prune --force
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: api/go.mod
+          cache: false
+
+      - name: Run registration and invitation gate
+        run: |
+          go_root="$(go env GOROOT)"
+          docker run --rm \
+            --user "$(id -u):$(id -g)" \
+            --tmpfs /tmp:rw,exec,nosuid,size=4g \
+            -e HOME=/tmp \
+            -e CGO_ENABLED=1 \
+            -e GOCACHE=/tmp/go-build \
+            -e GOPATH=/tmp/go \
+            -e PATH=/opt/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+            -v "$go_root:/opt/go:ro" \
+            -v "$GITHUB_WORKSPACE:/workspace" \
+            -w /workspace \
+            node:22-bookworm \
+            ./scripts/check-registration-auth.sh --backend-only
 
   sandbox:
     name: Sandbox runtime tests
@@ -78,6 +145,14 @@ jobs:
       run:
         shell: bash
     steps:
+      - name: Repair workspace ownership
+        working-directory: ${{ runner.temp }}
+        run: |
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE:/workspace" \
+            alpine:3.22 \
+            chown -R "$(id -u):$(id -g)" /workspace
+
       - name: Checkout
         uses: actions/checkout@v4
 

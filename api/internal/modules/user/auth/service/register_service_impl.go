@@ -33,6 +33,7 @@ type RegisterServiceImpl struct {
 	tokenMgr                  *util.TokenManager
 	billingService            interfaces.BillingService
 	officialRouteBootstrapper interfaces.OfficialRouteBootstrapper
+	inviteEmailSender         func(language, to, token, inviterName, workspaceName string) error
 }
 
 func NewRegisterService(
@@ -101,11 +102,17 @@ func (s *RegisterServiceImpl) ActivateCheck(ctx context.Context, workspaceID, em
 }
 
 func (s *RegisterServiceImpl) Activate(ctx context.Context, workspaceID, email, token, name, password, lang, timezone string) (interface{}, error) {
-	// Validate invitation token
-	invitationData, err := s.tokenMgr.GetInvitationByToken(token, workspaceID, email)
-	if err != nil || invitationData == nil {
+	reservation, err := s.tokenMgr.ReserveInvitationToken(ctx, token, workspaceID, email)
+	if err != nil {
 		return nil, errors.New("Auth Token is invalid or account already activated, please check again.")
 	}
+	releaseReservation := true
+	defer func() {
+		if releaseReservation {
+			s.releaseInvitationReservation(ctx, token, reservation)
+		}
+	}()
+	invitationData := &reservation.Data
 
 	// Validate tenant status
 	tenant, err := s.tenantService.GetWorkspaceByID(ctx, invitationData.WorkspaceID)
@@ -128,12 +135,19 @@ func (s *RegisterServiceImpl) Activate(ctx context.Context, workspaceID, email, 
 	if invitationData.AccountID != account.ID {
 		return nil, errors.New("Auth Token is invalid or account already activated, please check again.")
 	}
-
-	if err := s.tokenMgr.RevokeInvitationToken(workspaceID, email, token); err != nil {
-		return nil, fmt.Errorf("failed to revoke token: %w", err)
+	if account.Status != auth_model.AccountStatusPending {
+		return nil, errors.New("Auth Token is invalid or account already activated, please check again.")
 	}
 
 	account.Name = name
+	if password != "" {
+		hashedPassword, salt, err := util.HashPasswordPBKDF2(password)
+		if err != nil {
+			return nil, fmt.Errorf("failed to hash password: %w", err)
+		}
+		account.Password = &hashedPassword
+		account.PasswordSalt = &salt
+	}
 	if lang != "" {
 		account.InterfaceLanguage = &lang
 	}
@@ -153,12 +167,11 @@ func (s *RegisterServiceImpl) Activate(ctx context.Context, workspaceID, email, 
 		return nil, fmt.Errorf("failed to update account: %w", err)
 	}
 
-	// For public deployment, create user's own group and related data (similar to registration)
-	if s.isPublicDeployment() {
-		if err := s.initializeUserOwnGroup(ctx, account); err != nil {
-			// Log warning but don't fail activation
-			logger.Warn("Failed to initialize user's own group during activation: %v", err)
-		}
+	releaseReservation = false
+	consumeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), invitationCompensationTimeout)
+	defer cancel()
+	if err := s.tokenMgr.ConsumeInvitationReservation(consumeCtx, token, reservation); err != nil {
+		return nil, fmt.Errorf("failed to revoke token: %w", err)
 	}
 
 	return account, nil
@@ -393,6 +406,7 @@ func (s *RegisterServiceImpl) InviteMemberEx(ctx context.Context, tenantID, invi
 	}
 
 	var ta *workspace_model.WorkspaceMember = nil
+	createMembershipNow := false
 
 	if account == nil {
 		// Create new account with extended info
@@ -415,7 +429,11 @@ func (s *RegisterServiceImpl) InviteMemberEx(ctx context.Context, tenantID, invi
 		if err := tx.Create(account).Error; err != nil {
 			return "", fmt.Errorf("failed to create account: %w", err)
 		}
+		createMembershipNow = true
 	} else {
+		if account.Status != auth_model.AccountStatusActive && account.Status != auth_model.AccountStatusPending {
+			return "", errors.New("invitee account is unavailable")
+		}
 		if err := s.tenantService.CheckMemberPermission(ctx, tenant, inviter, account, "add"); err != nil {
 			return "", err
 		}
@@ -424,9 +442,10 @@ func (s *RegisterServiceImpl) InviteMemberEx(ctx context.Context, tenantID, invi
 			// User already exists in tenant
 			return "", usererrors.ErrAccountAlreadyInWorkspace
 		}
+		createMembershipNow = account.Status == auth_model.AccountStatusPending
 	}
 
-	if ta == nil {
+	if ta == nil && createMembershipNow {
 		// Prepare extensions
 		extMap := make(map[string]interface{})
 		if position != "" {
@@ -479,14 +498,20 @@ func (s *RegisterServiceImpl) InviteMemberEx(ctx context.Context, tenantID, invi
 		}
 		// === End of enterprise group member addition ===
 
-		// Commit transaction
-		if err := tx.Commit().Error; err != nil {
-			return "", fmt.Errorf("failed to commit transaction: %w", err)
-		}
 	}
 
-	// Generate invitation token and store in Redis
-	inviteToken := s.generateInviteToken(tenant, account)
+	// Persist the invitation token before committing the database work. If
+	// Redis is unavailable, the deferred rollback prevents us from creating a
+	// pending member whose invitation can never be accepted.
+	inviteToken, err := s.generateInviteTokenWithDetails(tenant, account, inviterID, role)
+	if err != nil {
+		return "", err
+	}
+
+	if err := tx.Commit().Error; err != nil {
+		_ = s.tokenMgr.RevokeInvitationToken("", "", inviteToken)
+		return "", fmt.Errorf("failed to commit transaction: %w", err)
+	}
 
 	committed = true
 
@@ -498,18 +523,40 @@ func (s *RegisterServiceImpl) InviteMemberEx(ctx context.Context, tenantID, invi
 			workspaceName = "ZGIAI Workspace"
 		}
 
-		// Send email asynchronously
-		go func() {
-			if err := s.sendInviteMemberMail(language, email, inviteToken, inviterName, workspaceName); err != nil {
-				logger.WarnContext(ctx, "failed to send invite email", "email", email, err)
-			}
-		}()
+		if err := s.sendInviteMemberMail(language, email, inviteToken, inviterName, workspaceName); err != nil {
+			logger.WarnContext(ctx, "failed to send invite email", "email", email, err)
+			// Return the durable token with a typed partial-success error. HTTP
+			// callers can report that the invitation exists without pretending
+			// that delivery succeeded or retrying the database mutation.
+			return inviteToken, fmt.Errorf("%w: %v", usererrors.ErrInviteEmailDeliveryFailed, err)
+		}
 	}
 
 	return inviteToken, nil
 }
 
 func (s *RegisterServiceImpl) JoinByInvitation(ctx context.Context, accountID, inviteToken string) (*workspace_model.Workspace, error) {
+	reservation, err := s.tokenMgr.ReserveInvitationToken(ctx, inviteToken, "", "")
+	if err != nil {
+		return nil, fmt.Errorf("invalid invitation code: %w", err)
+	}
+	releaseReservation := true
+	defer func() {
+		if releaseReservation {
+			s.releaseInvitationReservation(ctx, inviteToken, reservation)
+		}
+	}()
+	invitation := &auth_model.Invitation{
+		TenantID:  reservation.Data.WorkspaceID,
+		AccountID: reservation.Data.AccountID,
+	}
+	if invitation.TenantID == "" || invitation.AccountID == "" {
+		return nil, errors.New("invalid invitation code")
+	}
+	if invitation.AccountID != accountID {
+		return nil, errors.New("invitation does not belong to account")
+	}
+
 	// Begin transaction
 	tx := s.db.Begin()
 	if tx.Error != nil {
@@ -527,11 +574,6 @@ func (s *RegisterServiceImpl) JoinByInvitation(ctx context.Context, accountID, i
 		}
 	}()
 
-	invitation, err := s.getInvitationByToken(inviteToken)
-	if err != nil {
-		return nil, fmt.Errorf("invalid invitation code: %w", err)
-	}
-
 	_, err = s.accountRepo.GetAccount(ctx, accountID)
 	if err != nil {
 		return nil, fmt.Errorf("account not found: %w", err)
@@ -548,16 +590,14 @@ func (s *RegisterServiceImpl) JoinByInvitation(ctx context.Context, accountID, i
 		return nil, fmt.Errorf("failed to check tenant member: %w", err)
 	}
 
-	if tenantMember != nil {
-		// Update current status
-		tenantMember.Current = true
-		if err := tx.Save(tenantMember).Error; err != nil {
-			return nil, fmt.Errorf("failed to update tenant member: %w", err)
-		}
+	if tenantMember == nil {
+		return nil, errors.New("invited workspace membership not found")
 	}
-
-	// Revoke invitation token
-	s.revokeToken(inviteToken)
+	// Update current status
+	tenantMember.Current = true
+	if err := tx.Save(tenantMember).Error; err != nil {
+		return nil, fmt.Errorf("failed to update tenant member: %w", err)
+	}
 
 	// Commit transaction
 	if err := tx.Commit().Error; err != nil {
@@ -565,36 +605,67 @@ func (s *RegisterServiceImpl) JoinByInvitation(ctx context.Context, accountID, i
 	}
 
 	committed = true
+	releaseReservation = false
+	consumeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), invitationCompensationTimeout)
+	defer cancel()
+	if err := s.tokenMgr.ConsumeInvitationReservation(consumeCtx, inviteToken, reservation); err != nil {
+		return nil, fmt.Errorf("failed to revoke invitation token: %w", err)
+	}
 	return tenant, nil
 }
 
 func (s *RegisterServiceImpl) getInvitationByToken(token string) (*auth_model.Invitation, error) {
-	// Should actually get from Redis or database
-	// Simple simulation here
+	invitationData, err := s.tokenMgr.GetInvitationByToken(token, "", "")
+	if err != nil {
+		return nil, err
+	}
+	if invitationData == nil || invitationData.AccountID == "" || invitationData.WorkspaceID == "" {
+		return nil, errors.New("invitation token not found")
+	}
 	return &auth_model.Invitation{
-		TenantID: "tenant-id",
-		Role:     workspace_model.WorkspaceRoleOwner,
+		TenantID:  invitationData.WorkspaceID,
+		AccountID: invitationData.AccountID,
 	}, nil
 }
 
-func (s *RegisterServiceImpl) generateInviteToken(tenant *workspace_model.Workspace, account *auth_model.Account) string {
+func (s *RegisterServiceImpl) generateInviteToken(tenant *workspace_model.Workspace, account *auth_model.Account) (string, error) {
+	return s.generateInviteTokenWithDetails(tenant, account, "", "")
+}
+
+func (s *RegisterServiceImpl) generateInviteTokenWithDetails(tenant *workspace_model.Workspace, account *auth_model.Account, inviterID string, role workspace_model.WorkspaceMemberRole) (string, error) {
 	token := uuid.New().String()
 
 	expiryHours := 72
-	err := s.tokenMgr.StoreInvitationToken(tenant.ID, account.Email, account.ID, token, expiryHours)
-	if err != nil {
-		// Fallback to simple token generation
-		return fmt.Sprintf("%s-%s-%d", tenant.ID, account.ID, time.Now().Unix())
+	organizationID := ""
+	if tenant.OrganizationID != nil {
+		organizationID = *tenant.OrganizationID
+	}
+	if err := s.tokenMgr.StoreInvitationTokenWithDetails(util.InvitationData{
+		AccountID: account.ID, Email: account.Email, WorkspaceID: tenant.ID,
+		OrganizationID: organizationID, InviterID: inviterID, Role: string(role),
+	}, token, expiryHours); err != nil {
+		return "", fmt.Errorf("store invitation token: %w", err)
 	}
 
-	return token
+	return token, nil
 }
 
 func (s *RegisterServiceImpl) revokeToken(token string) error {
-	return nil
+	return s.tokenMgr.RevokeInvitationToken("", "", token)
+}
+
+func (s *RegisterServiceImpl) releaseInvitationReservation(ctx context.Context, token string, reservation *util.InvitationReservation) {
+	releaseCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), invitationCompensationTimeout)
+	defer cancel()
+	if err := s.tokenMgr.ReleaseInvitationReservation(releaseCtx, token, reservation); err != nil {
+		logger.Warn("Failed to release invitation reservation", "error", err)
+	}
 }
 
 func (s *RegisterServiceImpl) sendInviteMemberMail(language, to, token, inviterName, workspaceName string) error {
+	if s.inviteEmailSender != nil {
+		return s.inviteEmailSender(language, to, token, inviterName, workspaceName)
+	}
 	return email.SendInviteMemberMailTask(language, to, token, inviterName, workspaceName)
 }
 
@@ -610,6 +681,9 @@ func (s *RegisterServiceImpl) GetInvitationData(ctx context.Context, token strin
 	invitationData, err := s.tokenMgr.GetInvitationByToken(token, "", "")
 	if err != nil {
 		return nil, fmt.Errorf("invalid invitation token: %w", err)
+	}
+	if invitationData == nil {
+		return nil, errors.New("invalid invitation token")
 	}
 
 	result := make(map[string]interface{})

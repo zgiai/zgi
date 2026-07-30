@@ -65,7 +65,7 @@ type AccountProfileResponse struct {
 	OrganizationRole      string             `json:"organization_role"`
 	IsSuperAdmin          *bool              `json:"is_super_admin,omitempty"`
 	Extension             auth_model.JSONMap `json:"extension"`
-	CurrentOrganizationID *string            `json:"current_organization_id,omitempty"`
+	CurrentOrganizationID *string            `json:"current_organization_id"`
 	CurrentWorkspaceID    *string            `json:"current_workspace_id"`
 }
 

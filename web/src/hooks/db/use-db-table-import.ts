@@ -13,6 +13,11 @@ import type {
   ImportDbTableRecordsData,
   GetDbTableRecordsParams,
   ImportDbTableRecordsRequest,
+  AnalyzeExcelImportRequest,
+  AnalyzeExistingTableExcelImportData,
+  ExistingTableExcelImportDraftRequest,
+  ExistingTableExcelImportPreviewData,
+  ConfirmExcelImportData,
 } from '@/services/types/db';
 import type { FileItem } from '@/services/types/file';
 import { DB_KEYS } from '@/hooks/query-keys';
@@ -29,6 +34,36 @@ export interface UseDownloadDbTableTemplateReturn {
   downloadTemplate: () => Promise<void>;
   isDownloading: boolean;
   error: string | null;
+}
+
+export function useExistingTableExcelImport(dbId: string, tableId: string) {
+  const queryClient = useQueryClient();
+  const analyze = useMutation<
+    ApiResponseData<AnalyzeExistingTableExcelImportData>,
+    Error,
+    AnalyzeExcelImportRequest
+  >({
+    mutationFn: payload => dbService.analyzeExistingTableExcelImport(dbId, tableId, payload),
+  });
+  const preview = useMutation<
+    ApiResponseData<ExistingTableExcelImportPreviewData>,
+    Error,
+    { jobId: string; draft: ExistingTableExcelImportDraftRequest }
+  >({
+    mutationFn: ({ jobId, draft }) =>
+      dbService.previewExistingTableExcelImport(dbId, tableId, jobId, draft),
+  });
+  const confirm = useMutation<
+    ApiResponseData<ConfirmExcelImportData>,
+    Error,
+    { jobId: string }
+  >({
+    mutationFn: ({ jobId }) => dbService.confirmExistingTableExcelImport(dbId, tableId, jobId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: getDbTableRecordsKey(dbId, tableId) });
+    },
+  });
+  return { analyze, preview, confirm };
 }
 
 export function useDownloadDbTableTemplate(

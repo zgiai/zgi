@@ -123,7 +123,7 @@ type LogConfig struct {
 type EmailConfig struct {
 	MailType              string `json:"mail_type,omitempty"`
 	MailDefaultSendFrom   string `json:"mail_default_send_from,omitempty"`
-	ResendAPIKey          string `json:"resend_api_key,omitempty"`
+	ResendAPIKey          string `json:"-"`
 	ResendAPIURL          string `json:"resend_api_url,omitempty"`
 	MailTemplateLogoUrl   string `json:"mail_template_logo_url,omitempty"`
 	MailTemplateBrandName string `json:"mail_template_brand_name,omitempty"`
@@ -132,6 +132,7 @@ type EmailConfig struct {
 	SMTPPort              int    `json:"smtp_port,omitempty"`
 	SMTPUsername          string `json:"smtp_username,omitempty"`
 	SMTPPassword          string `json:"-"`
+	SMTPSecurity          string `json:"smtp_security,omitempty"`
 	SMTPUseTLS            bool   `json:"smtp_use_tls,omitempty"`
 	SMTPOpportunisticTLS  bool   `json:"smtp_opportunistic_tls,omitempty"`
 }

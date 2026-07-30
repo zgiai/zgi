@@ -9,6 +9,7 @@ import type {
   VerifyRequest,
   SetupRequest,
   ActivationCheckResponse,
+  ActivationResponse,
   CompleteRegistrationResponse,
   ForgotPasswordInitResponse,
   ResetPasswordResponse,
@@ -25,6 +26,9 @@ import type {
   PhoneLoginRequest,
   PhonePasswordLoginRequest,
   PhoneResetPasswordRequest,
+  EmailCodeLoginSendRequest,
+  EmailCodeLoginVerifyRequest,
+  EmailCodeLoginSendResponse,
 } from './types/auth';
 import type { User, SystemFeatures, SetupStatus } from '@/services/types/auth';
 import type { ApiResponseData, BusinessError } from './types/common';
@@ -173,6 +177,51 @@ export class AuthenticationService extends BaseService {
       access_token,
       user: account,
     };
+  }
+
+  async sendEmailLoginCode(data: EmailCodeLoginSendRequest): Promise<EmailCodeLoginSendResponse> {
+    const response = await this.request<ApiResponseData<EmailCodeLoginSendResponse>>(
+      'post',
+      '/login/by-email',
+      data,
+      { skipAuth: true, retryAttemptsOverride: 0 }
+    );
+    if (response.code !== '0' || !response.data?.data) {
+      const error = new Error(response.message || 'Failed to send email login code');
+      (error as unknown as BusinessError).businessError = {
+        code: response.code || '',
+        message: response.message || '',
+      };
+      this.handleBusinessError(error, 'Email code login');
+    }
+    return response.data;
+  }
+
+  async loginByEmailCode(
+    data: EmailCodeLoginVerifyRequest
+  ): Promise<{ access_token: string; user: Account }> {
+    const response = await this.request<ApiResponseData<LoginResponse>>(
+      'post',
+      '/login/by-email/code',
+      data,
+      { skipAuth: true, retryAttemptsOverride: 0 }
+    );
+    if (response.code !== '0') {
+      const error = new Error(response.message || 'Email code login failed');
+      (error as unknown as BusinessError).businessError = {
+        code: response.code || '',
+        message: response.message || '',
+      };
+      this.handleBusinessError(error, 'Email code login');
+    }
+    const accessToken = response.data?.data?.access_token;
+    const refreshToken = response.data?.data?.refresh_token;
+    const account = response.data?.data?.account;
+    if (!accessToken || !account) {
+      throw new Error('Invalid email code login response structure');
+    }
+    this.persistTokens(accessToken, refreshToken);
+    return { access_token: accessToken, user: account };
   }
 
   async consumeCasdoorTicket(
@@ -383,10 +432,13 @@ export class AuthenticationService extends BaseService {
   }
 
   // Verify registration code – handle wrapped or bare responses
-  async verifyRegister(data: RegisterVerifyRequest): Promise<{ is_valid: boolean; email: string }> {
+  async verifyRegister(
+    data: RegisterVerifyRequest
+  ): Promise<{ is_valid: boolean; email: string; token: string }> {
     interface VerifyPayload {
       email: string;
       is_valid: boolean;
+      token: string;
     }
 
     const response = await this.request<ApiResponseData<VerifyPayload>>(
@@ -485,8 +537,8 @@ export class AuthenticationService extends BaseService {
   // Verify forgot password code
   async verifyForgotPassword(
     data: RegisterVerifyRequest
-  ): Promise<ApiResponseData<{ is_valid: boolean; email: string }>> {
-    return this.request<ApiResponseData<{ is_valid: boolean; email: string }>>(
+  ): Promise<ApiResponseData<{ is_valid: boolean; email: string; token: string }>> {
+    return this.request<ApiResponseData<{ is_valid: boolean; email: string; token: string }>>(
       'post',
       '/forgot-password/validity',
       data,
@@ -592,10 +644,15 @@ export class AuthenticationService extends BaseService {
   async activate(data: {
     token: string;
     name: string;
+    email: string;
+    workspace_id?: string;
+    password: string;
     interface_language: string;
     timezone: string;
-  }): Promise<void> {
-    return this.request('post', '/activate', data, { skipAuth: true });
+  }): Promise<ActivationResponse> {
+    const response = await this.request<ApiResponseData<ActivationResponse>>('post', '/activate', data, { skipAuth: true });
+    this.persistTokens(response.data.data.access_token, response.data.data.refresh_token);
+    return response.data;
   }
 
   // Verify email/phone
@@ -841,6 +898,10 @@ export default authenticationService;
 export const authService = {
   // Core authentication methods
   login: (data: LoginRequest) => authenticationService.login(data),
+  sendEmailLoginCode: (data: EmailCodeLoginSendRequest) =>
+    authenticationService.sendEmailLoginCode(data),
+  loginByEmailCode: (data: EmailCodeLoginVerifyRequest) =>
+    authenticationService.loginByEmailCode(data),
   logout: () => authenticationService.logout(),
   refreshToken: () => authenticationService.refreshToken(),
   forgotPassword: (data: { email: string; language?: string }) =>
@@ -871,7 +932,15 @@ export const authService = {
   // Activation methods
   checkActivate: (params: { email: string; token: string; workspace_id?: string }) =>
     authenticationService.checkActivate(params),
-  activate: (data: { token: string; name: string; interface_language: string; timezone: string }) =>
+  activate: (data: {
+    token: string;
+    name: string;
+    email: string;
+    workspace_id?: string;
+    password: string;
+    interface_language: string;
+    timezone: string;
+  }) =>
     authenticationService.activate(data),
 
   // New methods

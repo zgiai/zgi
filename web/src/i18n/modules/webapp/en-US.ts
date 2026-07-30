@@ -73,11 +73,9 @@ const messages = {
         'The image workflow configuration could not be loaded. Check the backend service or network connection, then retry.',
       detail: 'Check: whether /console/api/built-in-workflows is available.',
     },
-    imageGenConfigMissing: {
-      title: 'Image workflow is not configured',
-      description:
-        'The backend did not return the built-in workflow required for image generation, so this page cannot start.',
-      detail: 'Check: whether the built-in workflow imagegen_chat is initialized and active.',
+    imageGenEmpty: {
+      title: 'No image generation models available',
+      description: 'Configure a model route that supports image-gen.',
     },
     retry: 'Retry',
     loadingGlobalChat: 'Loading global chat...',

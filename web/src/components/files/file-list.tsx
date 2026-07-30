@@ -205,6 +205,8 @@ export interface FileListProps {
   activeCategory?: string;
   /** Folder name to show when browsing inside a specific folder. */
   folderNoticeName?: string;
+  emptyActionLabel?: string;
+  onEmptyAction?: () => void;
   mobileEmptyActionLabel?: string;
   onMobileEmptyAction?: () => void;
   mobileEmptyDescription?: string;
@@ -229,6 +231,8 @@ function FileListBase({
   isLoading = false,
   selectionMode = false,
   folderNoticeName,
+  emptyActionLabel,
+  onEmptyAction,
   mobileEmptyActionLabel,
   onMobileEmptyAction,
   mobileEmptyDescription,
@@ -261,11 +265,7 @@ function FileListBase({
   const canViewDetail = !selectionMode;
   const canRequestProcessing = !selectionMode && canUpdateFile;
   const hasAnyAction =
-    canViewDetail ||
-    canRequestProcessing ||
-    canDownload ||
-    canMoveFile ||
-    canDeleteFilePermission;
+    canViewDetail || canRequestProcessing || canDownload || canMoveFile || canDeleteFilePermission;
   const emptyDescription = mobileEmptyDescription
     ? mobileEmptyDescription
     : canUpload
@@ -801,7 +801,6 @@ function FileListBase({
             void handleStartParse(file);
           }}
         />
-
       </div>
     );
   }
@@ -1001,6 +1000,15 @@ function FileListBase({
                     <p className="max-w-[460px] text-sm leading-7 text-muted-foreground">
                       {emptyDescription}
                     </p>
+                    {emptyActionLabel && onEmptyAction ? (
+                      <Button
+                        className="mt-5 h-9 gap-2 rounded-lg px-4 shadow-none"
+                        onClick={onEmptyAction}
+                      >
+                        <FileUp className="h-4 w-4" />
+                        {emptyActionLabel}
+                      </Button>
+                    ) : null}
                   </div>
                 </div>
               </TableCell>

@@ -154,8 +154,8 @@ func (a *AccountServiceAdapter) CheckRegisterValidity(ctx context.Context, email
 	return a.accountService.CheckRegisterValidity(ctx, email, code, token)
 }
 
-func (a *AccountServiceAdapter) ValidateResetPasswordToken(token, email, code string) (bool, string, error) {
-	return a.accountService.ValidateResetPasswordToken(token, email, code)
+func (a *AccountServiceAdapter) ValidateResetPasswordToken(ctx context.Context, token, email, code string) (bool, string, string, error) {
+	return a.accountService.ValidateResetPasswordToken(ctx, token, email, code)
 }
 
 func (a *AccountServiceAdapter) ResetPasswordWithAutoRegister(token, newPassword string) error {
@@ -206,12 +206,20 @@ func (a *AccountServiceAdapter) GenerateAccountDeletionVerificationCode(ctx cont
 	return a.accountService.GenerateAccountDeletionVerificationCode(ctx, account)
 }
 
-func (a *AccountServiceAdapter) SendAccountDeletionVerificationEmail(ctx context.Context, account *auth_model.Account, code string) error {
-	return a.accountService.SendAccountDeletionVerificationEmail(ctx, account, code)
+func (a *AccountServiceAdapter) SendAccountDeletionVerificationEmail(ctx context.Context, account *auth_model.Account, token, code string) error {
+	return a.accountService.SendAccountDeletionVerificationEmail(ctx, account, token, code)
 }
 
-func (a *AccountServiceAdapter) VerifyAccountDeletionCode(ctx context.Context, token, code string) (bool, error) {
-	return a.accountService.VerifyAccountDeletionCode(ctx, token, code)
+func (a *AccountServiceAdapter) VerifyAccountDeletionCode(ctx context.Context, accountID, token, code string) (bool, error) {
+	return a.accountService.VerifyAccountDeletionCode(ctx, accountID, token, code)
+}
+
+func (a *AccountServiceAdapter) ReleaseAccountDeletionVerification(ctx context.Context, accountID, token string) error {
+	return a.accountService.ReleaseAccountDeletionVerification(ctx, accountID, token)
+}
+
+func (a *AccountServiceAdapter) CompleteAccountDeletionVerification(ctx context.Context, accountID, token string) error {
+	return a.accountService.CompleteAccountDeletionVerification(ctx, accountID, token)
 }
 
 func (a *AccountServiceAdapter) LinkAccountIntegrate(ctx context.Context, provider auth_model.AccountIntegrateProvider, openID string, account *auth_model.Account) error {
@@ -222,7 +230,7 @@ func (a *AccountServiceAdapter) CloseAccount(ctx context.Context, account *auth_
 	return a.accountService.CloseAccount(ctx, account)
 }
 
-func (a *AccountServiceAdapter) ExistsByEmail(ctx context.Context, email string) bool {
+func (a *AccountServiceAdapter) ExistsByEmail(ctx context.Context, email string) (bool, error) {
 	return a.accountService.ExistsByEmail(ctx, email)
 }
 
@@ -703,8 +711,8 @@ func (a *AccountServiceAdapter) IsEmailSendIPLimit(ctx context.Context, ipAddres
 	return a.accountService.IsEmailSendIPLimit(ctx, ipAddress)
 }
 
-func (a *AccountServiceAdapter) SendDirectAddMemberEmail(ctx context.Context, account *auth_model.Account, groupID, groupName, departmentName, language string) error {
-	return a.accountService.SendDirectAddMemberEmail(ctx, account, groupID, groupName, departmentName, language)
+func (a *AccountServiceAdapter) SendDirectAddMemberEmail(ctx context.Context, account *auth_model.Account, inviterID, groupID, groupName, departmentName, language string) error {
+	return a.accountService.SendDirectAddMemberEmail(ctx, account, inviterID, groupID, groupName, departmentName, language)
 }
 
 // RefreshToken implements shared.AccountService interface

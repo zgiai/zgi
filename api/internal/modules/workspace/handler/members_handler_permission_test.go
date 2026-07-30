@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -9,6 +10,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
+	shared_dto "github.com/zgiai/zgi/api/internal/dto"
+	usererrors "github.com/zgiai/zgi/api/internal/errors"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	auth_model "github.com/zgiai/zgi/api/internal/modules/user/auth/model"
 	"github.com/zgiai/zgi/api/internal/modules/workspace/model"
@@ -371,6 +374,89 @@ func TestMembersHandlerDefaultInviteRequiresManageBeforeWorkspaceLookup(t *testi
 	require.Equal(t, model.WorkspacePermissionWorkspaceMemberManage, organizationSvc.lastPermissionCode)
 }
 
+func TestMembersHandlerInviteReportsEmailFailureAsPartialSuccess(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	workspaceID := "workspace-route"
+	accountID := "account-1"
+	accountSvc := &membersHandlerAccountService{
+		account:             &auth_model.Account{ID: accountID},
+		inviteMemberExToken: "durable-token",
+		inviteMemberExErr:   usererrors.ErrInviteEmailDeliveryFailed,
+	}
+	workspaceSvc := &membersHandlerWorkspaceManagementService{}
+	organizationSvc := &membersHandlerOrganizationService{
+		workspaceOrganizationID:         "org-1",
+		checkWorkspacePermissionAllowed: true,
+	}
+	handler := NewMembersHandler(workspaceSvc, accountSvc, organizationSvc, "https://console.example.com")
+
+	c, recorder := newMembersHandlerContext(http.MethodPost, "/workspaces/"+workspaceID+"/members/invite-email-ex", accountID)
+	c.Params = gin.Params{{Key: "workspace_id", Value: workspaceID}}
+	c.Request = httptest.NewRequest(
+		http.MethodPost,
+		"/workspaces/"+workspaceID+"/members/invite-email-ex",
+		strings.NewReader(`{"email":"alice@example.com","role":"normal"}`),
+	)
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Set("account_id", accountID)
+
+	handler.InviteWorkspaceMemberByEmailEx(c)
+
+	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+	var body struct {
+		Data struct {
+			Result            string                   `json:"result"`
+			InvitationResults []map[string]interface{} `json:"invitation_results"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &body))
+	require.Equal(t, "success", body.Data.Result)
+	require.Len(t, body.Data.InvitationResults, 1)
+	require.Equal(t, "created_email_failed", body.Data.InvitationResults[0]["status"])
+	require.Equal(t, "alice@example.com", body.Data.InvitationResults[0]["email"])
+	require.Equal(t, "https://console.example.com/activate?email=alice%40example.com&token=durable-token", body.Data.InvitationResults[0]["url"])
+}
+
+func TestMemberActivationURLPreservesPlusAddress(t *testing.T) {
+	require.Equal(
+		t,
+		"https://console.example.com/activate?email=alice%2Binvite%40example.com&token=durable-token",
+		memberActivationURL("https://console.example.com/", "alice+invite@example.com", "durable-token"),
+	)
+}
+
+func TestMembersHandlerReinviteUsesWorkspaceOrganizationID(t *testing.T) {
+	organizationID := "organization-1"
+	workspaceID := "workspace-1"
+	memberID := "pending-member"
+	workspaceSvc := &membersHandlerWorkspaceManagementService{
+		workspaceByID: &model.Workspace{
+			ID: workspaceID, OrganizationID: &organizationID, Status: model.WorkspaceStatusNormal,
+		},
+		accountWorkspaces: []*model.Workspace{{ID: workspaceID, Status: model.WorkspaceStatusNormal}},
+	}
+	accountSvc := &membersHandlerAccountService{
+		account: &auth_model.Account{ID: memberID, Status: auth_model.AccountStatusPending},
+	}
+	organizationSvc := &membersHandlerOrganizationService{
+		managedWorkspaces: &shared_dto.WorkspacePaginationResponse{
+			Data: []*model.Workspace{{ID: workspaceID}}, Total: 1,
+		},
+	}
+	handler := NewMembersHandler(workspaceSvc, accountSvc, organizationSvc, "")
+
+	joins, err := handler.getWorkspaceJoinsForPendingMember(t.Context(), memberID, &model.WorkspaceMember{
+		WorkspaceID: workspaceID,
+		AccountID:   "operator-1",
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, organizationID, organizationSvc.lastManagedOrganizationID)
+	require.Len(t, joins, 1)
+	require.Equal(t, workspaceID, joins[0].WorkspaceID)
+}
+
 func TestMembersHandlerCurrentUpdateRoleUsesCurrentWorkspaceForPermissionAndMutation(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -434,6 +520,8 @@ type membersHandlerWorkspaceManagementService struct {
 	removeMemberFromWorkspaceCalled bool
 	updateMemberRoleCalled          bool
 	lastUpdateMemberRoleRequest     *interfaces.UpdateMemberRoleRequest
+	workspaceByID                   *model.Workspace
+	accountWorkspaces               []*model.Workspace
 }
 
 func (s *membersHandlerWorkspaceManagementService) GetCurrentWorkspace(context.Context, string) (*model.WorkspaceMember, error) {
@@ -463,7 +551,14 @@ func (s *membersHandlerWorkspaceManagementService) GetDatasetOperatorMembers(con
 
 func (s *membersHandlerWorkspaceManagementService) GetWorkspaceByID(_ context.Context, workspaceID string) (*model.Workspace, error) {
 	s.getWorkspaceByIDCalled = true
+	if s.workspaceByID != nil {
+		return s.workspaceByID, nil
+	}
 	return &model.Workspace{ID: workspaceID}, nil
+}
+
+func (s *membersHandlerWorkspaceManagementService) GetAccountWorkspaces(context.Context, string) ([]*model.Workspace, error) {
+	return s.accountWorkspaces, nil
 }
 
 func (s *membersHandlerWorkspaceManagementService) RemoveMemberFromWorkspace(context.Context, *model.Workspace, *auth_model.Account, *auth_model.Account) error {
@@ -487,6 +582,8 @@ type membersHandlerOrganizationService struct {
 	lastPermissionWorkspaceID       string
 	lastPermissionAccountID         string
 	lastPermissionCode              model.WorkspacePermissionCode
+	managedWorkspaces               *shared_dto.WorkspacePaginationResponse
+	lastManagedOrganizationID       string
 }
 
 func (s *membersHandlerOrganizationService) GetOrganizationByWorkspaceID(_ context.Context, workspaceID string) (*model.Organization, error) {
@@ -505,17 +602,28 @@ func (s *membersHandlerOrganizationService) CheckWorkspacePermission(_ context.C
 	return s.checkWorkspacePermissionAllowed, nil
 }
 
+func (s *membersHandlerOrganizationService) GetManagedWorkspacesInOrganization(_ context.Context, organizationID, _ string, _, _ int) (*shared_dto.WorkspacePaginationResponse, error) {
+	s.lastManagedOrganizationID = organizationID
+	if s.managedWorkspaces == nil {
+		return &shared_dto.WorkspacePaginationResponse{}, nil
+	}
+	return s.managedWorkspaces, nil
+}
+
 type membersHandlerAccountService struct {
 	interfaces.AccountService
 
+	account              *auth_model.Account
 	getAccountByIDCalled bool
 	inviteMemberCalled   bool
 	inviteMemberExCalled bool
+	inviteMemberExToken  string
+	inviteMemberExErr    error
 }
 
 func (s *membersHandlerAccountService) GetAccountByID(context.Context, string) (*auth_model.Account, error) {
 	s.getAccountByIDCalled = true
-	return nil, nil
+	return s.account, nil
 }
 
 func (s *membersHandlerAccountService) InviteMember(context.Context, string, string, string, model.WorkspaceMemberRole, string) (string, error) {
@@ -525,7 +633,7 @@ func (s *membersHandlerAccountService) InviteMember(context.Context, string, str
 
 func (s *membersHandlerAccountService) InviteMemberEx(context.Context, string, string, string, model.WorkspaceMemberRole, string, string, string, string, string, bool) (string, error) {
 	s.inviteMemberExCalled = true
-	return "", nil
+	return s.inviteMemberExToken, s.inviteMemberExErr
 }
 
 var _ interfaces.WorkspaceManagementService = (*membersHandlerWorkspaceManagementService)(nil)

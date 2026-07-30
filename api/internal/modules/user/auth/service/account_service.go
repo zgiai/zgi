@@ -2,10 +2,11 @@ package service
 
 import (
 	"context"
-	"encoding/hex"
+	cryptorand "crypto/rand"
+	"crypto/sha256"
 	"errors"
 	"fmt"
-	"math/rand"
+	"math/big"
 	"strconv"
 	"strings"
 	"sync"
@@ -41,11 +42,17 @@ const (
 	TokenTypeAccess        = "access"
 	TokenTypeRefresh       = "refresh"
 	TokenTypeResetPassword = "reset_password"
+	TokenTypeResetVerified = "reset_password_verified"
 
-	resetPasswordRateLimitKeyPrefix = "reset_password_rate_limit:"
+	resetPasswordRateLimitKeyPrefix  = "reset_password_rate_limit:"
+	resetPasswordCompensationTimeout = 2 * time.Second
+	invitationCompensationTimeout    = 2 * time.Second
 )
 
-var ErrCurrentPasswordMismatch = errors.New("current password is incorrect")
+var (
+	ErrCurrentPasswordMismatch   = errors.New("current password is incorrect")
+	ErrResetPasswordTokenInvalid = errors.New("invalid or expired reset token")
+)
 
 const (
 	accountCapabilityModeNone         = "none"
@@ -196,9 +203,8 @@ func (s *AccountService) GetAccountsByIDs(ctx context.Context, ids []string) (ma
 	return result, nil
 }
 
-func (s *AccountService) ExistsByEmail(ctx context.Context, email string) bool {
-	exists, _ := s.accountRepo.ExistsByEmail(ctx, email)
-	return exists
+func (s *AccountService) ExistsByEmail(ctx context.Context, email string) (bool, error) {
+	return s.accountRepo.ExistsByEmail(ctx, email)
 }
 
 func (s *AccountService) LoadUser(ctx context.Context, userID string) (*auth_model.Account, error) {
@@ -235,7 +241,10 @@ func (s *AccountService) SendResetPasswordEmail(ctx context.Context, account *au
 		return "", errors.New("Too many password reset emails have been sent. Please try again in 1 minutes.")
 	}
 
-	code := generate6DigitCode()
+	code, err := generate6DigitCode()
+	if err != nil {
+		return "", fmt.Errorf("generate verification code: %w", err)
+	}
 
 	var tokenEmail string
 
@@ -265,7 +274,7 @@ func (s *AccountService) SendResetPasswordEmail(ctx context.Context, account *au
 	return token, nil
 }
 
-func (s *AccountService) SendDirectAddMemberEmail(ctx context.Context, account *auth_model.Account, groupID, groupName, departmentName, language string) error {
+func (s *AccountService) SendDirectAddMemberEmail(ctx context.Context, account *auth_model.Account, inviterID, groupID, groupName, departmentName, language string) error {
 	if account == nil {
 		return errors.New("account must be provided")
 	}
@@ -279,9 +288,14 @@ func (s *AccountService) SendDirectAddMemberEmail(ctx context.Context, account *
 	expiryHours := 72
 
 	if s.tokenMgr != nil {
-		if err := s.tokenMgr.StoreInvitationToken("", account.Email, account.ID, token, expiryHours); err != nil {
-			token = fmt.Sprintf("%s-%s-%d", groupID, account.ID, time.Now().Unix())
+		if err := s.tokenMgr.StoreInvitationTokenWithDetails(helper.InvitationData{
+			AccountID: account.ID, Email: account.Email, OrganizationID: groupID, InviterID: inviterID,
+			Role: string(workspace_model.OrganizationRoleNormal),
+		}, token, expiryHours); err != nil {
+			return fmt.Errorf("store direct member invitation: %w", err)
 		}
+	} else {
+		return errors.New("invitation token manager is unavailable")
 	}
 
 	targetURL := consoleURL
@@ -294,13 +308,17 @@ func (s *AccountService) SendDirectAddMemberEmail(ctx context.Context, account *
 	return email.SendDirectAddMemberMail(language, account.Email, groupName, departmentName, activationURL)
 }
 
-func generate6DigitCode() string {
-	rand.Seed(time.Now().UnixNano())
-	codes := make([]string, 6)
-	for i := 0; i < 6; i++ {
-		codes[i] = strconv.Itoa(rand.Intn(10))
+func generate6DigitCode() (string, error) {
+	const codeLength = 6
+	digits := make([]byte, codeLength)
+	for i := range digits {
+		value, err := cryptorand.Int(cryptorand.Reader, big.NewInt(10))
+		if err != nil {
+			return "", err
+		}
+		digits[i] = byte('0' + value.Int64())
 	}
-	return strings.Join(codes, "")
+	return string(digits), nil
 }
 
 func (s *AccountService) incrementResetPasswordRateLimit(email string) {
@@ -628,8 +646,25 @@ func (s *AccountService) UpdateAccountProfile(ctx context.Context, accountID str
 func (s *AccountService) ActivateCheck(ctx context.Context, workspaceID, email, token string) (map[string]interface{}, bool) {
 	invitationData, err := s.tokenMgr.GetInvitationByToken(token, workspaceID, email)
 	if err != nil || invitationData == nil {
+		status := "invalid"
+		if s.tokenMgr != nil {
+			if unboundData, unboundErr := s.tokenMgr.GetInvitationByToken(token, "", ""); unboundErr == nil && unboundData != nil && email != "" && !strings.EqualFold(unboundData.Email, email) {
+				return map[string]interface{}{
+					"is_valid": false,
+					"status":   "email_mismatch",
+					"data":     map[string]interface{}{"email": unboundData.Email},
+				}, false
+			}
+			if tokenStatus, statusErr := s.tokenMgr.GetInvitationTokenState(token); statusErr == nil {
+				status = tokenStatus
+			}
+		}
+		if status == "pending" {
+			status = "invalid"
+		}
 		return map[string]interface{}{
 			"is_valid": false,
+			"status":   status,
 		}, false
 	}
 
@@ -645,13 +680,33 @@ func (s *AccountService) ActivateCheck(ctx context.Context, workspaceID, email, 
 				"is_valid": false,
 			}, false
 		}
+		if account.Status != auth_model.AccountStatusPending && account.Status != auth_model.AccountStatusActive {
+			return map[string]interface{}{"is_valid": false, "status": "account_unavailable"}, false
+		}
+		organizationName := ""
+		if invitationData.OrganizationID != "" {
+			if s.organizationService == nil {
+				return map[string]interface{}{"is_valid": false, "status": "organization_unavailable"}, false
+			}
+			organization, organizationErr := s.organizationService.GetOrganizationByID(ctx, invitationData.OrganizationID)
+			if organizationErr != nil || organization == nil || !organization.IsActive() {
+				return map[string]interface{}{"is_valid": false, "status": "organization_unavailable"}, false
+			}
+			organizationName = organization.Name
+		}
 
 		return map[string]interface{}{
 			"is_valid": true,
 			"data": map[string]interface{}{
-				"workspace_name": "",
-				"workspace_id":   "",
-				"email":          invitationData.Email,
+				"workspace_name":    "",
+				"workspace_id":      "",
+				"email":             invitationData.Email,
+				"user_name":         account.Name,
+				"account_exists":    account.Status == auth_model.AccountStatusActive,
+				"organization_id":   invitationData.OrganizationID,
+				"organization_name": organizationName,
+				"role":              invitationData.Role,
+				"expires_at":        invitationData.ExpiresAt,
 			},
 		}, true
 	}
@@ -663,28 +718,67 @@ func (s *AccountService) ActivateCheck(ctx context.Context, workspaceID, email, 
 		}, false
 	}
 
-	invitationDataMap := map[string]string{
-		"email": invitationData.Email,
-	}
-	tenantAccount, err := s.accountRepo.SelectAccountAndTenantAccountJoin(ctx, invitationDataMap, *tenant)
-	if err != nil || tenantAccount == nil {
+	account, err := s.accountRepo.GetAccountByEmail(ctx, invitationData.Email)
+	if err != nil || account == nil {
 		return map[string]interface{}{
 			"is_valid": false,
 		}, false
 	}
 
-	if invitationData.AccountID != tenantAccount.Account.ID {
+	if invitationData.AccountID != account.ID {
 		return map[string]interface{}{
 			"is_valid": false,
 		}, false
+	}
+	if account.Status != auth_model.AccountStatusPending && account.Status != auth_model.AccountStatusActive {
+		return map[string]interface{}{"is_valid": false, "status": "account_unavailable"}, false
+	}
+	membership, membershipErr := s.workspaceManagementService.GetByWorkspaceAndMember(ctx, tenant.ID, account.ID)
+	invitedRole := invitationData.Role
+	if membershipErr != nil || membership == nil {
+		role := workspace_model.WorkspaceMemberRole(invitationData.Role)
+		if account.Status != auth_model.AccountStatusActive || workspace_model.DefaultWorkspaceRoleID(role) == "" || role == workspace_model.WorkspaceRoleOwner {
+			return map[string]interface{}{"is_valid": false, "status": "membership_unavailable"}, false
+		}
+	} else {
+		invitedRole = string(membership.Role)
+		if invitationData.Role != "" && invitedRole != invitationData.Role {
+			return map[string]interface{}{"is_valid": false, "status": "role_unavailable"}, false
+		}
+	}
+	organizationID := ""
+	organizationName := ""
+	if tenant.OrganizationID != nil {
+		if s.organizationService == nil {
+			return map[string]interface{}{"is_valid": false, "status": "organization_unavailable"}, false
+		}
+		organizationID = *tenant.OrganizationID
+		organization, organizationErr := s.organizationService.GetOrganizationByID(ctx, organizationID)
+		if organizationErr != nil || organization == nil || !organization.IsActive() {
+			return map[string]interface{}{"is_valid": false, "status": "organization_unavailable"}, false
+		}
+		organizationName = organization.Name
+	}
+	inviterName := ""
+	if invitationData.InviterID != "" {
+		if inviter, inviterErr := s.accountRepo.GetAccount(ctx, invitationData.InviterID); inviterErr == nil && inviter != nil {
+			inviterName = inviter.Name
+		}
 	}
 
 	return map[string]interface{}{
 		"is_valid": true,
 		"data": map[string]interface{}{
-			"workspace_name": tenant.Name,
-			"workspace_id":   tenant.ID,
-			"email":          invitationData.Email,
+			"workspace_name":    tenant.Name,
+			"workspace_id":      tenant.ID,
+			"email":             invitationData.Email,
+			"user_name":         account.Name,
+			"organization_id":   organizationID,
+			"organization_name": organizationName,
+			"account_exists":    account.Status == auth_model.AccountStatusActive,
+			"inviter_name":      inviterName,
+			"role":              invitedRole,
+			"expires_at":        invitationData.ExpiresAt,
 		},
 	}, true
 }
@@ -696,11 +790,27 @@ func (s *AccountService) Activate(ctx context.Context, workspaceID, email, token
 	}
 
 	if invitationData.WorkspaceID == "" {
+		reservation, err := s.tokenMgr.ReserveInvitationToken(ctx, token, "", invitationData.Email)
+		if err != nil || reservation.Data.AccountID != invitationData.AccountID {
+			if err == nil {
+				s.releaseInvitationReservation(ctx, token, reservation)
+			}
+			return nil, errors.New("Auth Token is invalid or account already activated, please check again.")
+		}
+		releaseReservation := true
+		defer func() {
+			if releaseReservation {
+				s.releaseInvitationReservation(ctx, token, reservation)
+			}
+		}()
 		account, err := s.accountRepo.GetAccount(ctx, invitationData.AccountID)
 		if err != nil || account == nil {
 			return nil, errors.New("Auth Token is invalid or account already activated, please check again.")
 		}
 		if account.Email != invitationData.Email {
+			return nil, errors.New("Auth Token is invalid or account already activated, please check again.")
+		}
+		if account.Status != auth_model.AccountStatusPending {
 			return nil, errors.New("Auth Token is invalid or account already activated, please check again.")
 		}
 
@@ -730,7 +840,10 @@ func (s *AccountService) Activate(ctx context.Context, workspaceID, email, token
 			return nil, fmt.Errorf("failed to update account: %w", err)
 		}
 
-		if err := s.tokenMgr.RevokeInvitationToken("", email, token); err != nil {
+		releaseReservation = false
+		consumeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), invitationCompensationTimeout)
+		defer cancel()
+		if err := s.tokenMgr.ConsumeInvitationReservation(consumeCtx, token, reservation); err != nil {
 			return nil, fmt.Errorf("failed to revoke token: %w", err)
 		}
 
@@ -757,18 +870,35 @@ func (s *AccountService) Authenticate(ctx context.Context, email, password, invi
 	if err := accountLoginStatusError(account.Status); err != nil {
 		return nil, err
 	}
+	wasPendingAccount := account.Status == auth_model.AccountStatusPending
 
-	if password != "" && len(inviteToken) != 0 && (account.Password == nil || account.Status == auth_model.AccountStatusPending) {
+	var invitationReservation *helper.InvitationReservation
+	releaseInvitation := false
+	if inviteToken != "" {
+		invitationReservation, err = s.tokenMgr.ReserveInvitationToken(ctx, inviteToken, "", account.Email)
+		if err != nil || invitationReservation.Data.AccountID != account.ID {
+			if err == nil {
+				s.releaseInvitationReservation(ctx, inviteToken, invitationReservation)
+			}
+			return nil, errors.New("invalid invitation code")
+		}
+		releaseInvitation = true
+		defer func() {
+			if releaseInvitation {
+				s.releaseInvitationReservation(ctx, inviteToken, invitationReservation)
+			}
+		}()
+	}
+
+	accountNeedsUpdate := false
+	if password != "" && inviteToken != "" && account.Status == auth_model.AccountStatusPending {
 		hashedPassword, salt, err := helper.HashPasswordPBKDF2(password)
 		if err != nil {
 			return nil, fmt.Errorf("failed to hash password: %w", err)
 		}
 		account.Password = &hashedPassword
 		account.PasswordSalt = &salt
-
-		if err := s.accountRepo.UpdateAccount(ctx, account); err != nil {
-			return nil, fmt.Errorf("failed to update account password: %w", err)
-		}
+		accountNeedsUpdate = true
 	}
 
 	if account.Password == nil {
@@ -780,12 +910,105 @@ func (s *AccountService) Authenticate(ctx context.Context, email, password, invi
 		return nil, errors.New("invalid email or password")
 	}
 
-	if account.Status == auth_model.AccountStatusPending {
+	if account.Status == auth_model.AccountStatusPending && inviteToken != "" {
 		account.Status = auth_model.AccountStatusActive
-		s.accountRepo.UpdateAccount(ctx, account)
+		accountNeedsUpdate = true
+	}
+
+	if inviteToken != "" && !wasPendingAccount && invitationReservation.Data.WorkspaceID != "" {
+		if err := s.acceptWorkspaceInvitation(ctx, account.ID, invitationReservation.Data); err != nil {
+			return nil, fmt.Errorf("failed to establish invited membership: %w", err)
+		}
+	}
+
+	if accountNeedsUpdate {
+		if err := s.accountRepo.UpdateAccount(ctx, account); err != nil {
+			return nil, fmt.Errorf("failed to activate invited account: %w", err)
+		}
+	}
+
+	if inviteToken != "" {
+		releaseInvitation = false
+		consumeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), invitationCompensationTimeout)
+		defer cancel()
+		if err := s.tokenMgr.ConsumeInvitationReservation(consumeCtx, inviteToken, invitationReservation); err != nil {
+			return nil, fmt.Errorf("failed to consume invitation token: %w", err)
+		}
 	}
 
 	return account, nil
+}
+
+func (s *AccountService) acceptWorkspaceInvitation(ctx context.Context, accountID string, invitation helper.InvitationData) error {
+	if s.workspaceManagementService == nil {
+		return errors.New("workspace invitation service is unavailable")
+	}
+	if existing, err := s.workspaceManagementService.GetByWorkspaceAndMember(ctx, invitation.WorkspaceID, accountID); err == nil && existing != nil {
+		return nil
+	}
+	if s.db == nil || s.organizationManagementService == nil {
+		return errors.New("invitation membership services are unavailable")
+	}
+	workspace, err := s.workspaceManagementService.GetWorkspaceByID(ctx, invitation.WorkspaceID)
+	if err != nil || workspace == nil || workspace.Status != workspace_model.WorkspaceStatusNormal {
+		return errors.New("invited workspace is unavailable")
+	}
+	organizationID := strings.TrimSpace(invitation.OrganizationID)
+	if organizationID == "" && workspace.OrganizationID != nil {
+		organizationID = strings.TrimSpace(*workspace.OrganizationID)
+	}
+	if organizationID != "" {
+		if s.organizationService == nil {
+			return errors.New("organization invitation service is unavailable")
+		}
+		organization, organizationErr := s.organizationService.GetOrganizationByID(ctx, organizationID)
+		if organizationErr != nil || organization == nil || !organization.IsActive() {
+			return errors.New("invited organization is unavailable")
+		}
+	}
+	role := workspace_model.WorkspaceMemberRole(invitation.Role)
+	if workspace_model.DefaultWorkspaceRoleID(role) == "" || role == workspace_model.WorkspaceRoleOwner {
+		return errors.New("invited workspace role is unavailable")
+	}
+
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		tenantService := s.workspaceManagementService.WithTx(tx)
+		if existing, lookupErr := tenantService.GetByWorkspaceAndMember(ctx, invitation.WorkspaceID, accountID); lookupErr == nil && existing != nil {
+			return nil
+		}
+		member := &workspace_model.WorkspaceMember{
+			ID: uuid.NewString(), WorkspaceID: invitation.WorkspaceID, AccountID: accountID,
+			Role: role, Current: false, Extensions: map[string]interface{}{},
+		}
+		if invitation.InviterID != "" {
+			member.InvitedBy = &invitation.InviterID
+		}
+		workspace_model.ApplyWorkspaceMemberDefaults(member)
+		if err := tx.Create(member).Error; err != nil {
+			return fmt.Errorf("create invited workspace membership: %w", err)
+		}
+		if organizationID == "" {
+			return nil
+		}
+		organizationService := s.organizationManagementService.WithTx(tx)
+		if err := organizationService.UpsertOrganizationRole(ctx, organizationID, accountID, workspace_model.OrganizationRoleNormal); err != nil {
+			return fmt.Errorf("create invited organization membership: %w", err)
+		}
+		if shadowMember, lookupErr := tenantService.GetByWorkspaceAndMember(ctx, organizationID, accountID); lookupErr == nil && shadowMember == nil {
+			if err := tenantService.CreateWorkspaceMember(ctx, organizationID, accountID, string(workspace_model.WorkspaceRoleNormal)); err != nil {
+				return fmt.Errorf("create invited organization workspace membership: %w", err)
+			}
+		}
+		return nil
+	})
+}
+
+func (s *AccountService) releaseInvitationReservation(ctx context.Context, token string, reservation *helper.InvitationReservation) {
+	releaseCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), invitationCompensationTimeout)
+	defer cancel()
+	if err := s.tokenMgr.ReleaseInvitationReservation(releaseCtx, token, reservation); err != nil {
+		logger.Warn("Failed to release invitation reservation", "error", err)
+	}
 }
 
 func (s *AccountService) IsEmailSendIPLimit(ctx context.Context, ipAddress string) (bool, error) {
@@ -899,10 +1122,6 @@ func (s *AccountService) LoginRefactored(ctx context.Context, req *dto.LoginReq)
 		return result
 	}
 
-	if result := s.checkOrganizationLogin(ctx, account); result != nil {
-		return result
-	}
-
 	return s.generateTokenAndBuildResponseLogin(ctx, account, req.LastLoginIp, req.Email)
 }
 
@@ -926,48 +1145,6 @@ func (s *AccountService) authenticateUserLogin(ctx context.Context, req *dto.Log
 		return nil, s.handleAuthenticationErrorLogin(ctx, err, req.Email, req.Language)
 	}
 	return account, nil
-}
-
-func (s *AccountService) checkOrganizationLogin(ctx context.Context, account *auth_model.Account) *LoginResult {
-	if isSelfHostedDeployment() {
-		return nil
-	}
-
-	// Ensure user has own organization when needed
-	hasOwnerGroup, err := s.hasOwnedEnterpriseGroup(ctx, account.ID)
-	if err != nil {
-		logger.CriticalContext(ctx, "failed to check organization ownership", "account_id", account.ID, err)
-		return NewBusinessErrorResult(helper.UnknownError)
-	}
-
-	if !hasOwnerGroup {
-		logger.Info("creating owned organization for account", "account_id", account.ID)
-
-		_, err := s.createWorkspaceForExistingAccount(ctx, account)
-		if err != nil {
-			logger.CriticalContext(ctx, "failed to create organization during login", "account_id", account.ID, err)
-			if strings.Contains(err.Error(), "frozen") || strings.Contains(err.Error(), "freeze") {
-				return NewBusinessErrorResult(helper.AccountInFreezeError)
-			}
-			return NewBusinessErrorResult(helper.UnknownError)
-		}
-		logger.Info("owned organization created for account", "account_id", account.ID)
-	}
-
-	return nil
-}
-
-func (s *AccountService) hasOwnedEnterpriseGroup(ctx context.Context, accountID string) (bool, error) {
-	ownedOrg, err := s.organizationService.GetFirstOwnedOrganization(ctx, accountID)
-	if err != nil {
-		logger.CriticalContext(ctx, "failed to get first owned organization", "account_id", accountID, err)
-		return false, err
-	}
-	if ownedOrg != nil {
-		return true, nil
-	}
-
-	return false, nil
 }
 
 func (s *AccountService) generateTokenAndBuildResponseLogin(ctx context.Context, account *auth_model.Account, ipAddress, email string) *LoginResult {
@@ -1068,8 +1245,6 @@ func (s *AccountService) registerExWithMobile(
 
 	err := s.accountRepo.ExecuteInTransaction(ctx, func(tx *gorm.DB) error {
 		accountRepository := s.accountRepo.WithTx(tx)
-		groupService := s.organizationManagementService.WithTx(tx)
-		tenantService := s.workspaceManagementService.WithTx(tx)
 
 		var hashedPassword, salt string
 		if password != nil {
@@ -1095,6 +1270,13 @@ func (s *AccountService) registerExWithMobile(
 		if err != nil {
 			return fmt.Errorf("failed to create account: %w", err)
 		}
+
+		createWorkspace := createWorkspaceRequired == nil || *createWorkspaceRequired
+		if !createWorkspace {
+			return nil
+		}
+		groupService := s.organizationManagementService.WithTx(tx)
+		tenantService := s.workspaceManagementService.WithTx(tx)
 
 		groupName, err := uniqueOwnedOrganizationName(ctx, groupService, account.Name, account.InterfaceLanguage)
 		if err != nil {
@@ -1150,7 +1332,9 @@ func (s *AccountService) registerExWithMobile(
 	}
 	s.bootstrapOfficialRoute(ctx, defaultOrganizationID)
 
-	s.notifyOfficialSignupRegistration(ctx, account)
+	if defaultOrganizationID != "" {
+		s.notifyOfficialSignupRegistration(ctx, account)
+	}
 
 	return account, nil
 }
@@ -1402,25 +1586,64 @@ func (s *AccountService) ChangePassword(ctx context.Context, id string, oldPassw
 }
 
 func (s *AccountService) ResetPassword(ctx context.Context, resetToken, newPassword string) error {
-	tokenData, err := s.tokenMgr.GetTokenData(resetToken, "reset_password")
+	tokenData, err := s.tokenMgr.GetTokenData(resetToken, TokenTypeResetVerified)
 	if err != nil || tokenData == nil || tokenData.Email == nil {
-		return errors.New("invalid or expired reset token")
+		return ErrResetPasswordTokenInvalid
 	}
+	email := *tokenData.Email
+	_, status, err := s.tokenMgr.VerifyTokenCode(
+		ctx,
+		resetToken,
+		TokenTypeResetVerified,
+		"email",
+		email,
+		"verified",
+		"",
+		1,
+		10*time.Minute,
+		helper.TokenCodeReserve,
+	)
+	if err != nil || status != helper.TokenCodeVerified {
+		return ErrResetPasswordTokenInvalid
+	}
+	releaseReservation := func() { s.releaseResetPasswordReservation(ctx, resetToken, TokenTypeResetVerified, email) }
 	account, err := s.accountRepo.GetAccountByEmail(ctx, *tokenData.Email)
 	if err != nil {
+		releaseReservation()
 		return fmt.Errorf("account not found: %w", err)
+	}
+	if err := accountAccessStatusError(account.Status); err != nil {
+		releaseReservation()
+		return err
 	}
 	hashedPassword, salt, err := helper.HashPasswordPBKDF2(newPassword)
 	if err != nil {
+		releaseReservation()
 		return fmt.Errorf("failed to hash password: %w", err)
 	}
 	account.Password = &hashedPassword
 	account.PasswordSalt = &salt
 	if err := s.accountRepo.UpdateAccount(ctx, account); err != nil {
+		releaseReservation()
 		return fmt.Errorf("failed to update password: %w", err)
 	}
-	_ = s.tokenMgr.RevokeToken(resetToken, "reset_password")
+	consumeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), resetPasswordCompensationTimeout)
+	defer cancel()
+	if _, err := s.tokenMgr.ConsumeTokenData(consumeCtx, resetToken, TokenTypeResetVerified); err != nil {
+		// The password update is already committed. The token remains reserved,
+		// so it cannot be replayed; report the successful business outcome and
+		// leave an observable signal for Redis recovery.
+		logger.Warn("Failed to consume verified password reset token", "error", err)
+	}
 	return nil
+}
+
+func (s *AccountService) releaseResetPasswordReservation(ctx context.Context, token, tokenType, email string) {
+	releaseCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), resetPasswordCompensationTimeout)
+	defer cancel()
+	if err := s.tokenMgr.ReleaseTokenCodeReservation(releaseCtx, token, tokenType, "email", email); err != nil {
+		logger.Warn("Failed to release password reset token reservation", "error", err)
+	}
 }
 
 func (s *AccountService) VerifyAccount(ctx context.Context, token string) error {
@@ -1630,68 +1853,61 @@ func (s *AccountService) CheckRegisterValidity(ctx context.Context, email, code,
 }
 
 // ValidateResetPasswordToken implements the ValidateResetPasswordToken method
-func (s *AccountService) ValidateResetPasswordToken(token, email, code string) (bool, string, error) {
+func (s *AccountService) ValidateResetPasswordToken(ctx context.Context, token, email, code string) (bool, string, string, error) {
 	if s.IsForgotPasswordErrorRateLimit(email) {
-		return false, "", errors.New("password reset limit reached")
+		return false, "", "", errors.New("password reset limit reached")
 	}
-
-	tokenData, err := s.tokenMgr.GetTokenData(token, TokenTypeResetPassword)
-	if err != nil || tokenData == nil || tokenData.Email == nil {
-		return false, "", errors.New("invalid or expired token")
+	masterCode := ""
+	cfg := config.Current()
+	if cfg.Server.Mode == "debug" || cfg.Server.Environment == "local" || cfg.Server.Environment == "dev" {
+		masterCode = strings.TrimSpace(cfg.Auth.MasterVerificationCode)
 	}
-
-	if email != *tokenData.Email {
-		return false, *tokenData.Email, errors.New("invalid email")
+	tokenData, status, err := s.tokenMgr.VerifyTokenCode(
+		ctx,
+		token,
+		TokenTypeResetPassword,
+		"email",
+		email,
+		code,
+		masterCode,
+		5,
+		30*time.Minute,
+		helper.TokenCodeReserve,
+	)
+	if err != nil {
+		return false, "", "", fmt.Errorf("verify password reset code: %w", err)
 	}
-
-	codeInToken := ""
-	if tokenData.Extra != nil {
-		if v, ok := tokenData.Extra["code"]; ok {
-			codeInToken, _ = v.(string)
+	if status != helper.TokenCodeVerified || tokenData == nil || tokenData.Email == nil {
+		if status == helper.TokenCodeMismatch {
+			s.AddForgotPasswordErrorRateLimit(email)
 		}
+		return false, email, "", errors.New("invalid code or expired token")
 	}
-
-	// Master verification code for testing/development
-	masterCode := config.Current().Auth.MasterVerificationCode
-	if code != codeInToken && (masterCode == "" || code != masterCode) {
-		s.AddForgotPasswordErrorRateLimit(email)
-		return false, *tokenData.Email, errors.New("invalid code")
+	releaseReservation := func() { s.releaseResetPasswordReservation(ctx, token, TokenTypeResetPassword, email) }
+	verifiedToken, err := s.tokenMgr.GenerateToken(
+		ctx,
+		TokenTypeResetVerified,
+		nil,
+		&email,
+		map[string]interface{}{"code": "verified"},
+	)
+	if err != nil {
+		releaseReservation()
+		return false, email, "", fmt.Errorf("generate verified reset token: %w", err)
+	}
+	if _, err := s.tokenMgr.ConsumeTokenData(ctx, token, TokenTypeResetPassword); err != nil {
+		_ = s.tokenMgr.RevokeToken(verifiedToken, TokenTypeResetVerified)
+		releaseReservation()
+		return false, email, "", fmt.Errorf("consume reset challenge token: %w", err)
 	}
 
 	s.ResetForgotPasswordErrorRateLimit(email)
-	return true, *tokenData.Email, nil
+	return true, *tokenData.Email, verifiedToken, nil
 }
 
 // ResetPasswordWithAutoRegister implements the ResetPasswordWithAutoRegister method
 func (s *AccountService) ResetPasswordWithAutoRegister(token, newPassword string) error {
-	tokenData, err := s.tokenMgr.GetTokenData(token, TokenTypeResetPassword)
-	if err != nil || tokenData == nil || tokenData.Email == nil {
-		return errors.New("invalid or expired token")
-	}
-
-	_ = s.tokenMgr.RevokeToken(token, TokenTypeResetPassword)
-
-	hashedPassword, salt, err := helper.HashPasswordPBKDF2(newPassword)
-	if err != nil {
-		return fmt.Errorf("failed to hash password: %w", err)
-	}
-
-	ctx := context.Background()
-	account, err := s.accountRepo.GetAccountByEmail(ctx, *tokenData.Email)
-	if err != nil {
-		return fmt.Errorf("account not found: %w", err)
-	}
-	if err := accountAccessStatusError(account.Status); err != nil {
-		return err
-	}
-
-	account.Password = &hashedPassword
-	account.PasswordSalt = &salt
-	if err := s.accountRepo.UpdateAccount(ctx, account); err != nil {
-		return fmt.Errorf("failed to update password: %w", err)
-	}
-
-	return nil
+	return s.ResetPassword(context.Background(), token, newPassword)
 }
 
 // UpdateAccountPassword implements the UpdateAccountPassword method
@@ -1759,18 +1975,21 @@ func (s *AccountService) CreateAccountAndTenant(ctx context.Context, email, name
 
 // GenerateAccountDeletionVerificationCode implements the GenerateAccountDeletionVerificationCode method
 func (s *AccountService) GenerateAccountDeletionVerificationCode(ctx context.Context, account *auth_model.Account) (string, string, error) {
-	code := generateRandomCode(6)
+	code, err := generate6DigitCode()
+	if err != nil {
+		return "", "", fmt.Errorf("generate account deletion code: %w", err)
+	}
 
 	additionalData := map[string]interface{}{
 		"code": code,
-		"exp":  time.Now().Add(time.Hour).Unix(),
+		"exp":  time.Now().Add(5 * time.Minute).Unix(),
 	}
 
 	token, err := s.tokenMgr.GenerateToken(
 		ctx,
 		"account_deletion",
+		account,
 		nil,
-		&account.Email,
 		additionalData,
 	)
 
@@ -1782,29 +2001,68 @@ func (s *AccountService) GenerateAccountDeletionVerificationCode(ctx context.Con
 }
 
 // SendAccountDeletionVerificationEmail implements the SendAccountDeletionVerificationEmail method
-func (s *AccountService) SendAccountDeletionVerificationEmail(ctx context.Context, account *auth_model.Account, code string) error {
-	return nil
+func (s *AccountService) SendAccountDeletionVerificationEmail(ctx context.Context, account *auth_model.Account, token, code string) error {
+	idempotencyKey := accountDeletionEmailIdempotencyKey(account.ID, token)
+	language := "en-US"
+	if account.InterfaceLanguage != nil {
+		language = *account.InterfaceLanguage
+	}
+	return email.SendAccountDeletionCodeMailTask(ctx, language, account.Email, code, idempotencyKey)
+}
+
+func accountDeletionEmailIdempotencyKey(accountID, token string) string {
+	return fmt.Sprintf("account-deletion:%s:%x", accountID, sha256.Sum256([]byte(token)))
 }
 
 // VerifyAccountDeletionCode implements the VerifyAccountDeletionCode method
-func (s *AccountService) VerifyAccountDeletionCode(ctx context.Context, token, code string) (bool, error) {
-	tokenData, err := s.tokenMgr.GetTokenData(token, "account_deletion")
+func (s *AccountService) VerifyAccountDeletionCode(ctx context.Context, accountID, token, code string) (bool, error) {
+	if strings.TrimSpace(accountID) == "" {
+		return false, errors.New("account id is required")
+	}
+	// The master code is intentionally limited to development runtimes.
+	masterCode := ""
+	cfg := config.Current()
+	if cfg.Server.Mode == "debug" || cfg.Server.Environment == "local" || cfg.Server.Environment == "dev" {
+		masterCode = strings.TrimSpace(cfg.Auth.MasterVerificationCode)
+	}
+	_, status, err := s.tokenMgr.VerifyTokenCode(
+		ctx,
+		token,
+		"account_deletion",
+		"account_id",
+		accountID,
+		code,
+		masterCode,
+		5,
+		5*time.Minute,
+		helper.TokenCodeReserve,
+	)
 	if err != nil {
 		return false, err
 	}
-
-	if tokenData == nil {
+	switch status {
+	case helper.TokenCodeVerified:
+		return true, nil
+	case helper.TokenCodeMismatch, helper.TokenCodeRateLimited:
+		return false, nil
+	default:
 		return false, errors.New("invalid token")
 	}
+}
 
-	storedCode, ok := tokenData.Extra["code"].(string)
-	// Master verification code for testing/development
-	masterCode := config.Current().Auth.MasterVerificationCode
-	if !ok || (storedCode != code && (masterCode == "" || code != masterCode)) {
-		return false, nil
+func (s *AccountService) ReleaseAccountDeletionVerification(ctx context.Context, accountID, token string) error {
+	return s.tokenMgr.ReleaseTokenCodeReservation(ctx, token, "account_deletion", "account_id", accountID)
+}
+
+func (s *AccountService) CompleteAccountDeletionVerification(ctx context.Context, accountID, token string) error {
+	tokenData, err := s.tokenMgr.ConsumeTokenData(ctx, token, "account_deletion")
+	if err != nil {
+		return err
 	}
-
-	return true, nil
+	if tokenData.AccountID == nil || *tokenData.AccountID != accountID {
+		return errors.New("invalid token")
+	}
+	return nil
 }
 
 // func buildAccountExtensionFromJSONMap(extensions auth_model.JSONMap) *auth_model.AccountExtension {
@@ -3015,12 +3273,15 @@ func (s *AccountService) RevokeResetPasswordToken(ctx context.Context, token str
 }
 
 // SendEmailCodeLoginEmail implements the SendEmailCodeLoginEmail method
-func (s *AccountService) SendEmailCodeLoginEmail(ctx context.Context, account *auth_model.Account, email, language string) (string, error) {
-	code := generateRandomCode(6)
+func (s *AccountService) SendEmailCodeLoginEmail(ctx context.Context, account *auth_model.Account, emailAddress, language string) (string, error) {
+	code, err := generate6DigitCode()
+	if err != nil {
+		return "", fmt.Errorf("generate email login code: %w", err)
+	}
 
 	additionalData := map[string]interface{}{
 		"code": code,
-		"exp":  time.Now().Add(time.Minute * 10).Unix(),
+		"exp":  time.Now().Add(5 * time.Minute).Unix(),
 	}
 
 	token, err := s.tokenMgr.GenerateToken(
@@ -3032,6 +3293,12 @@ func (s *AccountService) SendEmailCodeLoginEmail(ctx context.Context, account *a
 	)
 
 	if err != nil {
+		return "", err
+	}
+
+	idempotencyKey := fmt.Sprintf("email-login:%s:%x", account.ID, sha256.Sum256([]byte(token)))
+	if err := email.SendEmailCodeLoginMailTask(ctx, language, emailAddress, code, idempotencyKey); err != nil {
+		_ = s.tokenMgr.RevokeToken(token, "email_code_login")
 		return "", err
 	}
 
@@ -3289,13 +3556,6 @@ func setAccountMobile(account *auth_model.Account, mobile *string) {
 
 	value := *mobile
 	account.MobileE164 = &value
-}
-
-// Helper functions
-func generateRandomCode(length int) string {
-	bytes := make([]byte, length/2)
-	rand.Read(bytes)
-	return hex.EncodeToString(bytes)[:length]
 }
 
 type PaginationResult struct {

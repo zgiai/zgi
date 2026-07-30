@@ -178,7 +178,10 @@ func (s *PhoneAuthService) SendCode(ctx context.Context, req PhoneCodeSendReques
 		return nil, ErrPhoneAccountNotFound
 	}
 
-	code := generate6DigitCode()
+	code, err := generate6DigitCode()
+	if err != nil {
+		return nil, fmt.Errorf("generate phone verification code: %w", err)
+	}
 	token, err := s.tokenMgr.GenerateDataToken(ctx, PhoneCodeTokenType, map[string]interface{}{
 		"phone_e164": phoneE164,
 		"scene":      req.Scene,
@@ -451,7 +454,7 @@ func (s *AccountService) FindByPhone(ctx context.Context, phoneE164 string) (*au
 
 func (s *AccountService) RegisterByPhone(ctx context.Context, phoneE164 string, name string, password *string) (*auth_model.Account, error) {
 	language := "zh-Hans"
-	createWorkspace := true
+	createWorkspace := false
 	return s.registerExWithMobile(ctx, "", name, password, nil, nil, &language, nil, nil, &createWorkspace, phoneE164)
 }
 

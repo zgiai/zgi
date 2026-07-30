@@ -6,6 +6,7 @@ Current checks:
 
 - Repository hygiene checks from `./scripts/check-open-source.sh --worktree`
 - Web TypeScript checks
+- Registration and invitation gate: focused Go regression tests, scoped frontend ESLint, and frontend type checking
 - Sandbox Go tests from `cd sandbox && go test ./...`
 - Sandbox Kest black-box flows from `make test-sandbox-kest`
 
@@ -20,3 +21,8 @@ Release workflows:
 - Manual dispatch can publish `sha-xxxxxxx` only, or an explicit version with optional `latest`.
 
 Keep CI focused on checks that are stable for external contributors. Add heavier integration tests behind explicit jobs or service-specific workflows.
+
+The `Registration and invitation gate` check is intentionally independent from known
+repository-wide test and lint baseline failures. Configure branch protection to require
+this named check for changes that can reach `dev` or `main`; do not replace it with a
+manual review of the full-suite output.

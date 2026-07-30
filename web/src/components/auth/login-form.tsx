@@ -19,7 +19,13 @@ import { Input, PasswordInput } from '@/components/ui/input';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Icons } from '@/components/ui/icons';
 import { Label } from '@/components/ui/label';
-import { useLogin, usePhonePasswordLogin, useSystemFeatures } from '@/hooks';
+import {
+  useEmailCodeLogin,
+  useLogin,
+  usePhonePasswordLogin,
+  useSendEmailLoginCode,
+  useSystemFeatures,
+} from '@/hooks';
 import { isPhoneAuthEnabled, isPhonePasswordResetEnabled } from '@/lib/features/notification-sms';
 
 interface LoginFormProps {
@@ -27,6 +33,7 @@ interface LoginFormProps {
 }
 
 const DEFAULT_PHONE_COUNTRY_CODE = 'CN';
+const EMAIL_CODE_RESEND_COOLDOWN_SECONDS = 60;
 const authThemeVars = {
   '--brand-primary': '#2563EB',
   '--brand-primary-hover': '#1D4ED8',
@@ -89,9 +96,15 @@ export function LoginForm({ className }: LoginFormProps) {
     : '/register';
 
   const [mounted, setMounted] = useState(false);
+  const [emailCodeMode, setEmailCodeMode] = useState(false);
+  const [emailCodeToken, setEmailCodeToken] = useState('');
+  const [emailCode, setEmailCode] = useState('');
+  const [emailCodeResendCountdown, setEmailCodeResendCountdown] = useState(0);
 
   const loginMutation = useLogin();
   const phonePasswordLoginMutation = usePhonePasswordLogin();
+  const sendEmailCodeMutation = useSendEmailLoginCode();
+  const emailCodeLoginMutation = useEmailCodeLogin();
   const { data: systemFeatures } = useSystemFeatures();
 
   const canRegister = Boolean(systemFeatures?.is_allow_register);
@@ -100,14 +113,34 @@ export function LoginForm({ className }: LoginFormProps) {
   const phoneAuthEnabled = isPhoneAuthEnabled(systemFeatures);
   const phoneAuthKnownDisabled = systemFeaturesLoaded && !phoneAuthEnabled;
   const phoneResetEnabled = isPhonePasswordResetEnabled(systemFeatures);
+  const emailCodeLoginEnabled = Boolean(
+    systemFeatures?.enable_email_code_login && systemFeatures?.is_email_setup && !inviteToken
+  );
 
   const loginSchema = z
     .object({
       account: z.string().min(1, t('accountRequired')),
-      password: z.string().min(8, t('passwordTooShort')).max(100, t('passwordTooLong')),
+      password: z.string().max(100, t('passwordTooLong')),
       invite_token: z.string().optional(),
     })
     .superRefine((data, ctx) => {
+      if (emailCodeMode) {
+        if (!isEmailLike(data.account)) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['account'],
+            message: t('invalidEmail'),
+          });
+        }
+        return;
+      }
+      if (data.password.length < 8) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['password'],
+          message: t('passwordTooShort'),
+        });
+      }
       if (inviteToken) {
         if (!isEmailLike(data.account)) {
           ctx.addIssue({
@@ -163,16 +196,56 @@ export function LoginForm({ className }: LoginFormProps) {
     setMounted(true);
   }, []);
 
+  useEffect(() => {
+    if (!emailCodeToken || emailCodeResendCountdown <= 0) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      setEmailCodeResendCountdown(current => Math.max(0, current - 1));
+    }, 1000);
+
+    return () => window.clearTimeout(timer);
+  }, [emailCodeResendCountdown, emailCodeToken]);
+
   const navigateAfterLogin = () => {
     const urlParams = new URLSearchParams(window.location.search);
-    const redirectUrl = withBasePathIfInternal(urlParams.get('redirect') || '/console');
+    const redirectUrl = withBasePathIfInternal(
+      urlParams.get('redirect') || '/onboarding/organization'
+    );
     window.location.href = redirectUrl;
+  };
+
+  const sendEmailLoginCode = async (email: string) => {
+    const result = await sendEmailCodeMutation.mutateAsync({
+      email,
+      language: document.documentElement.lang.startsWith('zh') ? 'zh-Hans' : 'en-US',
+    });
+    setEmailCodeToken(result.data);
+    setEmailCode('');
+    setEmailCodeResendCountdown(EMAIL_CODE_RESEND_COOLDOWN_SECONDS);
   };
 
   const onSubmit = async (data: LoginFormData) => {
     const account = data.account.trim();
     const phoneAccount = normalizePhoneAccount(account);
     try {
+      if (emailCodeMode) {
+        if (!emailCodeToken) {
+          await sendEmailLoginCode(account);
+          return;
+        }
+        if (!/^\d{6}$/.test(emailCode.trim())) {
+          return;
+        }
+        await emailCodeLoginMutation.mutateAsync({
+          email: account,
+          code: emailCode.trim(),
+          token: emailCodeToken,
+        });
+        navigateAfterLogin();
+        return;
+      }
       if (phoneAuthEnabled && !inviteToken && !isEmailLike(account) && phoneAccount) {
         await phonePasswordLoginMutation.mutateAsync({
           country_code: DEFAULT_PHONE_COUNTRY_CODE,
@@ -215,13 +288,27 @@ export function LoginForm({ className }: LoginFormProps) {
   };
 
   const onSsoLogin = () => {
-    const redirectTarget = withBasePathIfInternal(redirect || '/console');
+    const redirectTarget = withBasePathIfInternal(redirect || '/onboarding/organization');
     window.location.href = buildSsoStartUrl('casdoor', redirectTarget);
+  };
+
+  const handleEmailCodeResend = async () => {
+    if (!emailCodeToken || emailCodeResendCountdown > 0 || !isEmailLike(accountValue)) {
+      return;
+    }
+
+    try {
+      await sendEmailLoginCode(accountValue);
+    } catch (err) {
+      console.error('Failed to resend email login code:', err);
+    }
   };
 
   const formLoading =
     loginMutation.isPending ||
     phonePasswordLoginMutation.isPending ||
+    sendEmailCodeMutation.isPending ||
+    emailCodeLoginMutation.isPending ||
     loginForm.formState.isSubmitting;
   const authRichT = t as typeof t & {
     rich: (
@@ -282,10 +369,12 @@ export function LoginForm({ className }: LoginFormProps) {
                 type="text"
                 leftIcon={<Mail />}
                 placeholder={
-                  inviteToken || phoneAuthKnownDisabled ? t('enterEmail') : t('enterEmailOrPhone')
+                  emailCodeMode || inviteToken || phoneAuthKnownDisabled
+                    ? t('enterEmail')
+                    : t('enterEmailOrPhone')
                 }
                 autoComplete="username"
-                disabled={formLoading || Boolean(inviteToken)}
+                disabled={formLoading || Boolean(inviteToken) || Boolean(emailCodeToken)}
                 {...loginForm.register('account')}
                 aria-invalid={loginForm.formState.errors.account ? 'true' : 'false'}
                 errorText={loginForm.formState.errors.account?.message}
@@ -293,43 +382,105 @@ export function LoginForm({ className }: LoginFormProps) {
               />
             </div>
 
-            <div className="space-y-2">
-              <div className="ml-1 flex items-center justify-between">
-                <Label
-                  htmlFor="password"
-                  className="text-sm font-semibold text-[var(--text-primary)]"
-                >
-                  {t('password')}
-                </Label>
-                <Link
-                  href={forgotPasswordHref}
-                  className="text-sm font-medium text-[var(--brand-primary)] transition-colors hover:text-[var(--brand-primary-hover)]"
-                  tabIndex={-1}
-                >
-                  {t('forgotPasswordLink')}
-                </Link>
+            {emailCodeMode && emailCodeToken ? (
+              <div className="space-y-3">
+                <div className="space-y-2">
+                  <Label
+                    htmlFor="email-code"
+                    className="ml-1 text-sm font-semibold text-[var(--text-primary)]"
+                  >
+                    {t('verificationCode')}
+                  </Label>
+                  <Input
+                    id="email-code"
+                    inputMode="numeric"
+                    autoComplete="one-time-code"
+                    maxLength={6}
+                    value={emailCode}
+                    onChange={event => setEmailCode(event.target.value.replace(/\D/g, ''))}
+                    placeholder={t('enterLoginCode')}
+                    disabled={formLoading}
+                    className={loginInputClassName}
+                  />
+                </div>
+                <div className="text-center text-sm text-[var(--text-secondary)]">
+                  {t('didntReceiveCode')}{' '}
+                  {emailCodeResendCountdown > 0 ? (
+                    <span>{t('resendCodeIn', { countdown: emailCodeResendCountdown })}</span>
+                  ) : (
+                    <Button
+                      type="button"
+                      variant="link"
+                      className="h-auto p-0 font-medium text-[var(--brand-primary)]"
+                      disabled={formLoading}
+                      onClick={handleEmailCodeResend}
+                    >
+                      {sendEmailCodeMutation.isPending ? t('resending') : t('resendCode')}
+                    </Button>
+                  )}
+                </div>
               </div>
-              <PasswordInput
-                id="password"
-                leftIcon={<KeyRound />}
-                placeholder={t('enterPassword')}
-                autoComplete="current-password"
-                disabled={formLoading}
-                {...loginForm.register('password')}
-                errorText={loginForm.formState.errors.password?.message}
-                className={loginInputClassName}
-              />
-            </div>
+            ) : null}
+
+            {!emailCodeMode ? (
+              <div className="space-y-2">
+                <div className="ml-1 flex items-center justify-between">
+                  <Label
+                    htmlFor="password"
+                    className="text-sm font-semibold text-[var(--text-primary)]"
+                  >
+                    {t('password')}
+                  </Label>
+                  <Link
+                    href={forgotPasswordHref}
+                    className="text-sm font-medium text-[var(--brand-primary)] transition-colors hover:text-[var(--brand-primary-hover)]"
+                    tabIndex={-1}
+                  >
+                    {t('forgotPasswordLink')}
+                  </Link>
+                </div>
+                <PasswordInput
+                  id="password"
+                  leftIcon={<KeyRound />}
+                  placeholder={t('enterPassword')}
+                  autoComplete="current-password"
+                  disabled={formLoading}
+                  {...loginForm.register('password')}
+                  errorText={loginForm.formState.errors.password?.message}
+                  className={loginInputClassName}
+                />
+              </div>
+            ) : null}
 
             <Button
               type="submit"
               size="xl"
               className={loginPrimaryButtonClassName}
               loading={formLoading}
+              disabled={
+                formLoading || (emailCodeMode && Boolean(emailCodeToken) && emailCode.length !== 6)
+              }
               interactive
             >
-              {t('signIn')}
+              {emailCodeMode && !emailCodeToken ? t('sendCode') : t('signIn')}
             </Button>
+
+            {emailCodeLoginEnabled ? (
+              <Button
+                type="button"
+                variant="ghost"
+                className="w-full text-[var(--brand-primary)]"
+                disabled={formLoading}
+                onClick={() => {
+                  setEmailCodeMode(value => !value);
+                  setEmailCodeToken('');
+                  setEmailCode('');
+                  setEmailCodeResendCountdown(0);
+                }}
+              >
+                {emailCodeMode ? t('usePassword') : t('useEmailCode')}
+              </Button>
+            ) : null}
           </form>
 
           {hasSocialLogin ? (

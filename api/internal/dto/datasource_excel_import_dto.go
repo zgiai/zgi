@@ -13,6 +13,22 @@ const (
 	ExcelImportStatusPartialFailed ExcelImportStatus = "partial_failed"
 )
 
+type ExcelImportMatchStatus string
+
+const (
+	ExcelImportMatchExact     ExcelImportMatchStatus = "exact"
+	ExcelImportMatchPossible  ExcelImportMatchStatus = "possible"
+	ExcelImportMatchUnmatched ExcelImportMatchStatus = "unmatched"
+)
+
+type ExcelImportMappingAction string
+
+const (
+	ExcelImportMappingMap   ExcelImportMappingAction = "map"
+	ExcelImportMappingFixed ExcelImportMappingAction = "fixed"
+	ExcelImportMappingSkip  ExcelImportMappingAction = "skip"
+)
+
 type AnalyzeExcelImportRequest struct {
 	UploadFileID string  `json:"upload_file_id" binding:"required"`
 	SheetName    *string `json:"sheet_name,omitempty"`
@@ -52,6 +68,66 @@ type InferredExcelColumn struct {
 type ExcelImportPreviewRow struct {
 	RowIndex int                    `json:"row_index"`
 	Values   map[string]interface{} `json:"values"`
+}
+
+type ExistingTableExcelImportMapping struct {
+	SourceColumn      *string                  `json:"source_column,omitempty"`
+	SourceColumnIndex *int                     `json:"source_column_index,omitempty"`
+	SampleValues      []string                 `json:"sample_values,omitempty"`
+	TargetColumnID    string                   `json:"target_column_id"`
+	TargetColumnName  string                   `json:"target_column_name"`
+	TargetDisplayName string                   `json:"target_display_name"`
+	TargetType        string                   `json:"target_type"`
+	TargetRequired    bool                     `json:"target_required"`
+	Confidence        float64                  `json:"confidence"`
+	Status            ExcelImportMatchStatus   `json:"status"`
+	Reason            string                   `json:"reason"`
+	Action            ExcelImportMappingAction `json:"action"`
+	FixedValue        *string                  `json:"fixed_value,omitempty"`
+	Confirmed         bool                     `json:"confirmed"`
+}
+
+type AnalyzeExistingTableExcelImportData struct {
+	JobID            string                            `json:"job_id"`
+	Source           AnalyzeExcelImportData            `json:"source"`
+	TargetColumns    []TableColumn                     `json:"target_columns"`
+	Mappings         []ExistingTableExcelImportMapping `json:"mappings"`
+	OverallMatchRate float64                           `json:"overall_match_rate"`
+	LowMatch         bool                              `json:"low_match"`
+}
+
+type ExistingTableExcelImportDraftRequest struct {
+	Mappings    []ExistingTableExcelImportMapping `json:"mappings" binding:"required,min=1"`
+	RowChanges  map[int]map[string]string         `json:"row_changes,omitempty"`
+	SkippedRows []int                             `json:"skipped_rows,omitempty"`
+	Limit       int                               `json:"limit,omitempty"`
+	Offset      int                               `json:"offset,omitempty"`
+}
+
+type ExistingTableExcelImportPreviewCell struct {
+	OriginalValue    string  `json:"original_value"`
+	TransformedValue any     `json:"transformed_value"`
+	ErrorCode        *string `json:"error_code,omitempty"`
+	ErrorMessage     *string `json:"error_message,omitempty"`
+}
+
+type ExistingTableExcelImportPreviewRow struct {
+	RowIndex int                                            `json:"row_index"`
+	Original map[string]string                              `json:"original"`
+	Cells    map[string]ExistingTableExcelImportPreviewCell `json:"cells"`
+	Status   string                                         `json:"status"`
+}
+
+type ExistingTableExcelImportPreviewData struct {
+	JobID       string                               `json:"job_id"`
+	Rows        []ExistingTableExcelImportPreviewRow `json:"rows"`
+	TotalRows   int                                  `json:"total_rows"`
+	ValidRows   int                                  `json:"valid_rows"`
+	FailedRows  int                                  `json:"failed_rows"`
+	SkippedRows int                                  `json:"skipped_rows"`
+	HasMore     bool                                 `json:"has_more"`
+	Limit       int                                  `json:"limit"`
+	Offset      int                                  `json:"offset"`
 }
 
 type AnalyzeExcelImportData struct {
@@ -127,6 +203,7 @@ type ConfirmExcelImportData struct {
 	TotalRows    int                     `json:"total_rows"`
 	ImportedRows int                     `json:"imported_rows"`
 	FailedRows   int                     `json:"failed_rows"`
+	SkippedRows  int                     `json:"skipped_rows"`
 	FailedItems  []ExcelImportFailedItem `json:"failed_items"`
 }
 

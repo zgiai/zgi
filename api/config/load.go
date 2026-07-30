@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"net/mail"
 	"runtime"
 	"strings"
 	"time"
@@ -325,7 +326,7 @@ func defaultLogLevel(cfg *Config) string {
 }
 
 func loadEmailConfig(cfg *Config, source *envSource) error {
-	port, err := source.int(587, envEmailPort)
+	port, err := source.nonEmptyInt(587, envEmailSMTPPort, envEmailPort)
 	if err != nil {
 		return err
 	}
@@ -337,12 +338,44 @@ func loadEmailConfig(cfg *Config, source *envSource) error {
 	if err != nil {
 		return err
 	}
+	mailType, mailTypeKey, _ := source.lookupNonEmpty(envEmailProvider, envEmailMailType, envMailType)
+	if mailType == "" {
+		mailType = "resend"
+	}
+
+	smtpSecurity := strings.ToLower(source.string("", envEmailSMTPSecurity))
+	if smtpSecurity != "" {
+		smtpUseTLS = smtpSecurity == "implicit_tls"
+		smtpOpportunisticTLS = smtpSecurity == "starttls"
+	} else if strings.EqualFold(mailType, "smtp") && mailTypeKey == envEmailProvider {
+		// New canonical SMTP configurations are secure by default. Deployments
+		// using legacy provider/TLS keys retain their established behavior.
+		if _, useTLSConfigured := source.lookup(envEmailSMTPUseTLS); !useTLSConfigured {
+			if _, opportunisticConfigured := source.lookup(envEmailSMTPOpportunisticTLS); !opportunisticConfigured {
+				smtpSecurity = "starttls"
+				smtpOpportunisticTLS = true
+			}
+		}
+	}
+
+	defaultSendFrom := source.string("", envEmailFrom)
+	if defaultSendFrom == "" {
+		fromAddress := source.string("", envEmailFromAddress)
+		if fromAddress != "" {
+			defaultSendFrom = (&mail.Address{
+				Name:    source.string("", envEmailFromName),
+				Address: fromAddress,
+			}).String()
+		} else {
+			defaultSendFrom = source.string("noreply@example.com", envEmailMailDefaultSendFrom)
+		}
+	}
 
 	cfg.Email = EmailConfig{
-		MailType:              source.string("resend", envEmailMailType, envMailType),
-		MailDefaultSendFrom:   source.string("noreply@example.com", envEmailMailDefaultSendFrom),
-		ResendAPIKey:          source.string("", envEmailResendAPIKey),
-		ResendAPIURL:          source.string("https://api.resend.com", envEmailResendAPIURL),
+		MailType:              mailType,
+		MailDefaultSendFrom:   defaultSendFrom,
+		ResendAPIKey:          source.nonEmptyString("", envResendAPIKey, envEmailResendAPIKey),
+		ResendAPIURL:          source.nonEmptyString("https://api.resend.com", envResendBaseURL, envEmailResendBaseURL, envEmailResendAPIURL),
 		MailTemplateLogoUrl:   source.string("", envEmailMailTemplateLogoURL),
 		MailTemplateBrandName: source.string("ZGI", envEmailMailTemplateBrandName),
 		ConsoleWebURL:         source.string("http://localhost:3000", envEmailConsoleWebURL),
@@ -350,6 +383,7 @@ func loadEmailConfig(cfg *Config, source *envSource) error {
 		SMTPPort:              port,
 		SMTPUsername:          source.string("", envEmailSMTPUsername),
 		SMTPPassword:          source.string("", envEmailSMTPPassword),
+		SMTPSecurity:          smtpSecurity,
 		SMTPUseTLS:            smtpUseTLS,
 		SMTPOpportunisticTLS:  smtpOpportunisticTLS,
 	}

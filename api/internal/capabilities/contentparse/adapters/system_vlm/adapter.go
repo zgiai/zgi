@@ -12,6 +12,7 @@ import (
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
 	llmdefaultservice "github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/service"
 	llmmodelmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
+	llmmultimodal "github.com/zgiai/zgi/api/internal/modules/llm/multimodal"
 	llmadapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 )
 
@@ -155,13 +156,8 @@ func toMessageContentParts(input []map[string]any) []llmadapter.MessageContentPa
 			if url == "" {
 				continue
 			}
-			out = append(out, llmadapter.MessageContentPart{
-				Type: "image_url",
-				ImageURL: &llmadapter.ImageURL{
-					URL:    url,
-					Detail: strings.TrimSpace(fmt.Sprint(imageURL["detail"])),
-				},
-			})
+			detail, _ := imageURL["detail"].(string)
+			out = append(out, llmmultimodal.BuildImageURLPart(url, detail))
 		}
 	}
 	return out

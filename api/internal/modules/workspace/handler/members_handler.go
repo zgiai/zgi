@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -26,6 +27,15 @@ type MembersHandler struct {
 	//registerService *auth.RegisterService
 	enterpriseService interfaces.OrganizationService
 	consoleWebURL     string
+}
+
+func memberActivationURL(consoleWebURL, email, token string) string {
+	return fmt.Sprintf(
+		"%s/activate?email=%s&token=%s",
+		strings.TrimRight(consoleWebURL, "/"),
+		url.QueryEscape(email),
+		url.QueryEscape(token),
+	)
 }
 
 func NewMembersHandler(workspaceManagementService interfaces.WorkspaceManagementService, accountService interfaces.AccountService, enterpriseService interfaces.OrganizationService, consoleWebURL string) *MembersHandler {
@@ -261,11 +271,10 @@ func (h *MembersHandler) InviteMemberByEmail(c *gin.Context) {
 			}
 		} else {
 			// encodedEmail := url.QueryEscape(email)
-			encodedEmail := email
 			invitationResults = append(invitationResults, map[string]interface{}{
 				"status": "success",
 				"email":  email,
-				"url":    h.consoleWebURL + "/activate?email=" + encodedEmail + "&token=" + token,
+				"url":    memberActivationURL(h.consoleWebURL, email, token),
 			})
 		}
 	}
@@ -923,8 +932,7 @@ func (h *MembersHandler) InviteWorkspaceMemberByEmail(c *gin.Context) {
 			}
 		} else {
 			// encodedInviteeEmail := url.QueryEscape(inviteeEmail)
-			encodedInviteeEmail := inviteeEmail
-			activationURL := fmt.Sprintf("%s/activate?email=%s&token=%s", h.consoleWebURL, encodedInviteeEmail, token)
+			activationURL := memberActivationURL(h.consoleWebURL, inviteeEmail, token)
 
 			invitationResults = append(invitationResults, map[string]interface{}{
 				"status": "success",
@@ -1037,7 +1045,14 @@ func (h *MembersHandler) InviteWorkspaceMemberByEmailEx(c *gin.Context) {
 	)
 
 	if err != nil {
-		if err == usererrors.ErrAccountAlreadyInWorkspace {
+		if errors.Is(err, usererrors.ErrInviteEmailDeliveryFailed) {
+			invitationResults = append(invitationResults, map[string]interface{}{
+				"status":  "created_email_failed",
+				"email":   req.Email,
+				"url":     memberActivationURL(h.consoleWebURL, req.Email, token),
+				"message": usererrors.ErrInviteEmailDeliveryFailed.Error(),
+			})
+		} else if err == usererrors.ErrAccountAlreadyInWorkspace {
 			invitationResults = append(invitationResults, map[string]interface{}{
 				"status": "success",
 				"email":  req.Email,
@@ -1052,11 +1067,10 @@ func (h *MembersHandler) InviteWorkspaceMemberByEmailEx(c *gin.Context) {
 		}
 	} else {
 		// encodedEmail := url.QueryEscape(req.Email)
-		encodedEmail := req.Email
 		invitationResults = append(invitationResults, map[string]interface{}{
 			"status": "success",
 			"email":  req.Email,
-			"url":    h.consoleWebURL + "/activate?email=" + encodedEmail + "&token=" + token,
+			"url":    memberActivationURL(h.consoleWebURL, req.Email, token),
 		})
 	}
 
@@ -1795,10 +1809,25 @@ func (h *MembersHandler) ReInviteMemberById(c *gin.Context) {
 			"", // position
 			sendEmail,
 		)
+		if err != nil {
+			status := "failed"
+			message := err.Error()
+			if errors.Is(err, usererrors.ErrInviteEmailDeliveryFailed) {
+				status = "created_email_failed"
+				message = usererrors.ErrInviteEmailDeliveryFailed.Error()
+			}
+			results = append(results, map[string]interface{}{
+				"status":       status,
+				"email":        member.Email,
+				"workspace_id": workspace.ID,
+				"url":          memberActivationURL(h.consoleWebURL, member.Email, token),
+				"message":      message,
+			})
+			continue
+		}
 
 		// encodedEmail := url.QueryEscape(member.Email)
-		encodedEmail := member.Email
-		invitationURL := h.consoleWebURL + "/activate?email=" + encodedEmail + "&token=" + token
+		invitationURL := memberActivationURL(h.consoleWebURL, member.Email, token)
 
 		results = append(results, map[string]interface{}{
 			"status":       "success",
@@ -1830,9 +1859,13 @@ func (h *MembersHandler) getWorkspaceJoinsForPendingMember(ctx context.Context, 
 	}
 
 	validJoins := []*model.WorkspaceMember{}
-	groupID := operatorWorkspace.WorkspaceID
+	operatorWorkspaceRecord, err := h.workspaceManagementService.GetWorkspaceByID(ctx, operatorWorkspace.WorkspaceID)
+	if err != nil || operatorWorkspaceRecord == nil || operatorWorkspaceRecord.OrganizationID == nil || strings.TrimSpace(*operatorWorkspaceRecord.OrganizationID) == "" {
+		return nil, fmt.Errorf("operator workspace organization not found")
+	}
+	organizationID := strings.TrimSpace(*operatorWorkspaceRecord.OrganizationID)
 	var limit int = 200
-	pagination, err := h.enterpriseService.GetManagedWorkspacesInOrganization(ctx, groupID, operatorWorkspace.AccountID, 1, limit)
+	pagination, err := h.enterpriseService.GetManagedWorkspacesInOrganization(ctx, organizationID, operatorWorkspace.AccountID, 1, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -1844,7 +1877,7 @@ func (h *MembersHandler) getWorkspaceJoinsForPendingMember(ctx context.Context, 
 	if pagination.Total > int64(limit) {
 		totalPage := int(math.Ceil(float64(pagination.Total) / float64(limit)))
 		for i := 2; i <= totalPage; i++ {
-			pagination, err := h.enterpriseService.GetManagedWorkspacesInOrganization(ctx, groupID, operatorWorkspace.AccountID, i, limit)
+			pagination, err := h.enterpriseService.GetManagedWorkspacesInOrganization(ctx, organizationID, operatorWorkspace.AccountID, i, limit)
 			if err != nil {
 				break
 			}
@@ -1952,7 +1985,14 @@ func (h *MembersHandler) InviteDefaultMemberByEmailEx(c *gin.Context) {
 	)
 
 	if err != nil {
-		if err == usererrors.ErrAccountAlreadyInWorkspace {
+		if errors.Is(err, usererrors.ErrInviteEmailDeliveryFailed) {
+			invitationResults = append(invitationResults, map[string]interface{}{
+				"status":  "created_email_failed",
+				"email":   req.Email,
+				"url":     memberActivationURL(h.consoleWebURL, req.Email, token),
+				"message": usererrors.ErrInviteEmailDeliveryFailed.Error(),
+			})
+		} else if err == usererrors.ErrAccountAlreadyInWorkspace {
 			invitationResults = append(invitationResults, map[string]interface{}{
 				"status": "success",
 				"email":  req.Email,
@@ -1967,11 +2007,10 @@ func (h *MembersHandler) InviteDefaultMemberByEmailEx(c *gin.Context) {
 		}
 	} else {
 		// encodedEmail := url.QueryEscape(req.Email)
-		encodedEmail := req.Email
 		invitationResults = append(invitationResults, map[string]interface{}{
 			"status": "success",
 			"email":  req.Email,
-			"url":    h.consoleWebURL + "/activate?email=" + encodedEmail + "&token=" + token,
+			"url":    memberActivationURL(h.consoleWebURL, req.Email, token),
 		})
 	}
 
