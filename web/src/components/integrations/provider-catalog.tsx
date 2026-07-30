@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { toast } from 'sonner';
 import {
   ArrowRight,
   CheckCircle2,
@@ -50,6 +51,7 @@ import {
 } from './integration-utils';
 import { useIntegrationMetadata } from './metadata-i18n';
 import { IntegrationOAuthClientConfigDialog } from './oauth-client-config-dialog';
+import { resolveConfiguredOAuthContinuation } from './oauth-config-continuation';
 import { IntegrationProviderIcon } from './provider-icon';
 import { IntegrationProviderCapabilitiesSheet } from './provider-capabilities-sheet';
 
@@ -508,17 +510,20 @@ export function IntegrationProviderCatalog({
         }
         onConfigured={
           continueAfterOAuthConfig && oauthClientProvider && oauthClientAuth
-            ? () => {
-                beginConnection(oauthClientProvider, {
-                  ...oauthClientAuth,
-                  oauth: oauthClientAuth.oauth
-                    ? {
-                        ...oauthClientAuth.oauth,
-                        client_configured: true,
-                        client_config_source: 'organization',
-                      }
-                    : oauthClientAuth.oauth,
-                });
+            ? async () => {
+                const integrationId = integrationCatalogID(oauthClientProvider);
+                const authMethodId = oauthClientAuth.id;
+                const refreshed = await catalogQuery.refetch();
+                const continuation = resolveConfiguredOAuthContinuation(
+                  integrationCatalogItems(refreshed.data?.data),
+                  integrationId,
+                  authMethodId
+                );
+                if (refreshed.isError || !continuation) {
+                  toast.error(t('oauth.clientConfig.continueRefreshFailed'));
+                  throw refreshed.error ?? new Error('OAuth catalog refresh did not become ready');
+                }
+                beginConnection(continuation.provider, continuation.auth);
               }
             : undefined
         }

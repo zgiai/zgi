@@ -464,6 +464,8 @@ const messages = {
       removeBlocked: 'Remove connected accounts and finish pending authorizations first.',
       required: 'Complete the required OAuth application fields.',
       loadFailed: 'OAuth application configuration could not be loaded.',
+      continueRefreshFailed:
+        'The OAuth application was saved, but connection readiness could not be refreshed. Reload and try connecting again.',
       retry: 'Reload',
       configureAction: 'Configure OAuth application',
       manageAction: 'OAuth application settings',

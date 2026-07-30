@@ -101,6 +101,7 @@ export function IntegrationOAuthClientConfigDialog({
   const [invalidFieldNames, setInvalidFieldNames] = useState<string[]>([]);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [editMode, setEditMode] = useState<EditMode>(null);
+  const [isCompletingSave, setIsCompletingSave] = useState(false);
   const fields = useMemo(() => resolveOAuthClientFields(auth), [auth]);
 
   useEffect(() => {
@@ -168,6 +169,7 @@ export function IntegrationOAuthClientConfigDialog({
       else if (value?.trim()) requestConfig[field.name] = value.trim();
     }
 
+    setIsCompletingSave(true);
     try {
       await updateMutation.mutateAsync({
         revision: config?.revision,
@@ -190,6 +192,7 @@ export function IntegrationOAuthClientConfigDialog({
       // rejected promises and component state.
     } finally {
       clearSecrets();
+      setIsCompletingSave(false);
     }
   };
 
@@ -678,10 +681,13 @@ export function IntegrationOAuthClientConfigDialog({
                   configQuery.isLoading ||
                   configQuery.isError ||
                   !config ||
-                  updateMutation.isPending
+                  updateMutation.isPending ||
+                  isCompletingSave
                 }
               >
-                {updateMutation.isPending ? <Loader2 className="size-4 animate-spin" /> : null}
+                {updateMutation.isPending || isCompletingSave ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : null}
                 {onConfigured && !configured
                   ? t('oauth.clientConfig.saveAndContinue')
                   : t('oauth.clientConfig.saveChanges')}

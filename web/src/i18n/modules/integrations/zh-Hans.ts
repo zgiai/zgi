@@ -437,6 +437,7 @@ const messages: IntegrationMessages = {
       removeBlocked: '请先移除关联账号并结束进行中的授权。',
       required: '请完成必填的 OAuth 应用字段。',
       loadFailed: '无法读取 OAuth 应用配置。',
+      continueRefreshFailed: 'OAuth 应用已保存，但连接信息同步失败。请重新加载后继续连接。',
       retry: '重新加载',
       configureAction: '配置 OAuth 应用',
       manageAction: 'OAuth 应用设置',

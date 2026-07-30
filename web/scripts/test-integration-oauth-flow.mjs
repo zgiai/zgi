@@ -18,6 +18,20 @@ const clientFieldsPath = path.join(
   'integrations',
   'oauth-client-fields.ts'
 );
+const oauthConfigContinuationPath = path.join(
+  root,
+  'src',
+  'components',
+  'integrations',
+  'oauth-config-continuation.ts'
+);
+const providerCatalogPath = path.join(
+  root,
+  'src',
+  'components',
+  'integrations',
+  'provider-catalog.tsx'
+);
 const scopeUpgradePath = path.join(
   root,
   'src',
@@ -210,6 +224,114 @@ assert.deepEqual(
     ['client_secret', 'password', 'credentials'],
   ],
   'provider client_fields must normalize their key/input contract before rendering'
+);
+
+const oauthConfigContinuationSource = fs.readFileSync(oauthConfigContinuationPath, 'utf8');
+const oauthConfigContinuationCompiled = ts.transpileModule(oauthConfigContinuationSource, {
+  compilerOptions: {
+    module: ts.ModuleKind.CommonJS,
+    target: ts.ScriptTarget.ES2022,
+  },
+}).outputText;
+const oauthConfigContinuationModule = { exports: {} };
+vm.runInNewContext(oauthConfigContinuationCompiled, {
+  module: oauthConfigContinuationModule,
+  exports: oauthConfigContinuationModule.exports,
+  require: specifier => {
+    if (specifier === './integration-utils') {
+      return {
+        integrationCatalogID: item => item.integration_id ?? item.id,
+        resolveIntegrationAuthDefinitions: item => item.auth ?? [],
+      };
+    }
+    if (specifier === './auth-method-selection') {
+      return {
+        isOAuthAuthMethod: auth =>
+          auth.acquisition_strategy === 'browser_redirect' ||
+          auth.type === 'oauth' ||
+          auth.type === 'oauth2',
+      };
+    }
+    return require(specifier);
+  },
+});
+const { resolveConfiguredOAuthContinuation } = oauthConfigContinuationModule.exports;
+for (const integrationId of ['feishu', 'gmail', 'x']) {
+  const authMethodId = `${integrationId}_account_oauth`;
+  const provider = {
+    id: integrationId,
+    integration_id: integrationId,
+    enabled: true,
+    auth: [
+      {
+        id: authMethodId,
+        type: 'oauth2',
+        available: true,
+        acquisition_strategy: 'browser_redirect',
+        oauth: {
+          connect_enabled: true,
+          client_configured: true,
+        },
+      },
+    ],
+  };
+  const resolved = resolveConfiguredOAuthContinuation([provider], integrationId, authMethodId);
+  assert.equal(
+    resolved?.provider,
+    provider,
+    `${integrationId} must continue with the freshly fetched provider`
+  );
+  assert.equal(
+    resolved?.auth,
+    provider.auth[0],
+    `${integrationId} must continue with the freshly fetched OAuth method`
+  );
+  assert.equal(
+    resolveConfiguredOAuthContinuation(
+      [
+        {
+          ...provider,
+          auth: [
+            {
+              ...provider.auth[0],
+              oauth: { ...provider.auth[0].oauth, client_configured: false },
+            },
+          ],
+        },
+      ],
+      integrationId,
+      authMethodId
+    ),
+    null,
+    `${integrationId} must not continue from stale unconfigured catalog data`
+  );
+}
+
+const providerCatalogSource = fs.readFileSync(providerCatalogPath, 'utf8');
+const configuredContinuationStart = providerCatalogSource.indexOf('onConfigured={');
+const configuredContinuationEnd = providerCatalogSource.indexOf(
+  'onOpenChange={nextOpen',
+  configuredContinuationStart
+);
+const configuredContinuationHandler = providerCatalogSource.slice(
+  configuredContinuationStart,
+  configuredContinuationEnd
+);
+assert.ok(configuredContinuationStart >= 0, 'catalog OAuth save continuation must exist');
+assert.match(
+  configuredContinuationHandler,
+  /await catalogQuery\.refetch\(\)/,
+  'OAuth save continuation must wait for a fresh catalog response'
+);
+assert.match(
+  configuredContinuationHandler,
+  /resolveConfiguredOAuthContinuation/,
+  'OAuth save continuation must resolve the provider and auth method from the fresh catalog'
+);
+assert.doesNotMatch(
+  configuredContinuationHandler,
+  /client_configured:\s*true/,
+  'OAuth save continuation must not patch the stale auth snapshot locally'
 );
 
 const scopeUpgradeSource = fs.readFileSync(scopeUpgradePath, 'utf8');
