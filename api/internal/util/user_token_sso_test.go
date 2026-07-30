@@ -152,6 +152,78 @@ func TestTokenManagerReservationPreservesPositiveTTL(t *testing.T) {
 	require.Positive(t, server.TTL(key))
 }
 
+func TestTokenManagerConsumeTokenDataAtomicallyDeletesToken(t *testing.T) {
+	server := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
+	t.Cleanup(func() {
+		_ = client.Close()
+		redisUtil.SetClient(nil)
+	})
+	redisUtil.SetClient(client)
+
+	tm := NewTokenManager()
+	token, err := tm.GenerateDataToken(t.Context(), "email_registration_verified", map[string]interface{}{
+		"registration_email": "user@example.com",
+	})
+	require.NoError(t, err)
+
+	data, err := tm.ConsumeTokenData(t.Context(), token, "email_registration_verified")
+	require.NoError(t, err)
+	require.Equal(t, "email_registration_verified", data.TokenType)
+	require.Equal(t, "user@example.com", data.Extra["registration_email"])
+	require.False(t, server.Exists(tm.getTokenKey(token, "email_registration_verified")))
+
+	_, err = tm.ConsumeTokenData(t.Context(), token, "email_registration_verified")
+	require.ErrorContains(t, err, "token not found")
+}
+
+func TestTokenManagerConsumeTokenDataAllowsOnlyOneConcurrentConsumer(t *testing.T) {
+	server := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
+	t.Cleanup(func() {
+		_ = client.Close()
+		redisUtil.SetClient(nil)
+	})
+	redisUtil.SetClient(client)
+
+	tm := NewTokenManager()
+	token, err := tm.GenerateDataToken(t.Context(), "email_registration_verified", map[string]interface{}{
+		"registration_email": "user@example.com",
+	})
+	require.NoError(t, err)
+
+	const consumerCount = 8
+	results := make(chan error, consumerCount)
+	var wg sync.WaitGroup
+	for range consumerCount {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, consumeErr := tm.ConsumeTokenData(
+				t.Context(),
+				token,
+				"email_registration_verified",
+			)
+			results <- consumeErr
+		}()
+	}
+	wg.Wait()
+	close(results)
+
+	successes := 0
+	notFound := 0
+	for consumeErr := range results {
+		if consumeErr == nil {
+			successes++
+			continue
+		}
+		require.ErrorContains(t, consumeErr, "token not found")
+		notFound++
+	}
+	require.Equal(t, 1, successes)
+	require.Equal(t, consumerCount-1, notFound)
+}
+
 func TestTokenManagerDecrementTokenUsageDeletesKeyAtZero(t *testing.T) {
 	server := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: server.Addr()})

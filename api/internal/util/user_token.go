@@ -139,6 +139,17 @@ redis.call('SET', KEYS[1], cjson.encode(data), 'PX', ttl)
 return 1
 `)
 
+// consumeTokenDataScript implements GETDEL atomically without requiring the
+// Redis 6.2 GETDEL command. Production deployments still support Redis 6.0.
+var consumeTokenDataScript = redis.NewScript(`
+local raw = redis.call('GET', KEYS[1])
+if not raw then
+  return nil
+end
+redis.call('DEL', KEYS[1])
+return raw
+`)
+
 // TokenData represents token-related data
 type TokenData struct {
 	AccountID *string                `json:"account_id"`
@@ -369,7 +380,11 @@ func (tm *TokenManager) ConsumeTokenData(ctx context.Context, token, tokenType s
 		return nil, errors.New("token and token type are required")
 	}
 
-	tokenDataJSON, err := redisUtil.GetClient().GetDel(ctx, tm.getTokenKey(token, tokenType)).Result()
+	tokenDataJSON, err := consumeTokenDataScript.Run(
+		ctx,
+		redisUtil.GetClient(),
+		[]string{tm.getTokenKey(token, tokenType)},
+	).Text()
 	if err != nil {
 		if err == redis.Nil {
 			return nil, fmt.Errorf("token not found: %w", err)
