@@ -15,7 +15,8 @@ const messages: UiMessages = {
   },
   /** FileUpload component */
   fileUpload: {
-    dropHere: '拖拽文件到此或点击上传',
+    dropHere:
+      '上传方式：1. 拖拽文件至此；2. 点击“选择文件”上传一个或多个文件；3. 点击“选择文件夹”上传文件夹内的全部文件',
     fileName: '文件名',
     size: '大小',
     status: '状态',
@@ -42,7 +43,11 @@ const messages: UiMessages = {
     disallowedBySettings: '部分文件不符合当前设置',
     selectFromSystem: '从系统选择',
     selectLocalFiles: '选择本地文件',
-    clickUpload: '点击上传',
+    clickUpload: '选择文件',
+    selectFolder: '选择文件夹',
+    folderUploadAria: '上传文件夹中的全部文件',
+    emptyFolder: '所选文件夹中没有可上传的文件',
+    folderSelectionFailed: '无法读取所选文件夹，请重试',
     uploadFilesLabel: '上传文件',
     selectedFilesTitle: '已选择 {count} 个文件',
     selectedFilesPendingSummary: '已选择 {count} 个文件，等待上传。',

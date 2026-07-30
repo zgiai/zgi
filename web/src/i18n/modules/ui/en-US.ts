@@ -13,7 +13,8 @@ const messages = {
   },
   /** FileUpload component */
   fileUpload: {
-    dropHere: 'Drag & drop files here or click to upload',
+    dropHere:
+      'Upload options: 1. Drag files here; 2. Select one or more files; 3. Select a folder to upload all files inside it',
     fileName: 'File Name',
     size: 'Size',
     status: 'Status',
@@ -40,7 +41,11 @@ const messages = {
     disallowedBySettings: 'Some files are not allowed by current settings',
     selectFromSystem: 'Select from System',
     selectLocalFiles: 'Choose local files',
-    clickUpload: 'Click to upload',
+    clickUpload: 'Select files',
+    selectFolder: 'Select folder',
+    folderUploadAria: 'Upload all files in a folder',
+    emptyFolder: 'The selected folder contains no files to upload',
+    folderSelectionFailed: 'Unable to read the selected folder. Please try again.',
     uploadFilesLabel: 'Upload Files',
     selectedFilesTitle: '{count} file(s) selected',
     selectedFilesPendingSummary: '{count} file(s) selected, waiting to upload.',

@@ -555,6 +555,8 @@ func loadVectorStoreConfig(cfg *Config, source *envSource) error {
 }
 
 func loadUploadConfig(cfg *Config, source *envSource) error {
+	const minimumUploadQueueLimit = 200
+
 	fileSizeLimit, err := source.int(15, envUploadFileSizeLimit)
 	if err != nil {
 		return err
@@ -562,6 +564,13 @@ func loadUploadConfig(cfg *Config, source *envSource) error {
 	fileBatchLimit, err := source.int(5, envUploadFileBatchLimit)
 	if err != nil {
 		return err
+	}
+	uploadQueueLimit, err := source.int(minimumUploadQueueLimit, envUploadQueueLimit)
+	if err != nil {
+		return err
+	}
+	if uploadQueueLimit < minimumUploadQueueLimit {
+		uploadQueueLimit = minimumUploadQueueLimit
 	}
 	imageSizeLimit, err := source.int(10, envUploadImageFileSizeLimit)
 	if err != nil {
@@ -591,6 +600,7 @@ func loadUploadConfig(cfg *Config, source *envSource) error {
 	cfg.Upload = UploadConfig{
 		FileSizeLimit:          fileSizeLimit,
 		FileBatchLimit:         fileBatchLimit,
+		UploadQueueLimit:       uploadQueueLimit,
 		ImageSizeLimit:         imageSizeLimit,
 		VideoSizeLimit:         videoSizeLimit,
 		AudioSizeLimit:         audioSizeLimit,
