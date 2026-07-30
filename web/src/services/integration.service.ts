@@ -1,4 +1,5 @@
 import { BaseService } from '@/lib/http/services';
+import { withBasePath } from '@/lib/config';
 import type { ApiResponseData } from '@/services/types/common';
 import type {
   AIChatIntegrationPreferenceListResponse,
@@ -186,26 +187,38 @@ class IntegrationService extends BaseService {
     return this.request('put', '/integrations/aichat/preferences', data);
   }
 
+  private oauthProxyURL(path: string): string {
+    const proxyPath = withBasePath(`/console/api/integrations/oauth${path}`);
+    if (typeof window === 'undefined') return proxyPath;
+    return new URL(proxyPath, window.location.origin).toString();
+  }
+
   startOAuthFlow(
     data: StartIntegrationOAuthFlowRequest
   ): Promise<ApiResponseData<IntegrationOAuthFlowStartResponse>> {
     // The start response installs an HttpOnly browser-binding cookie that is
-    // consumed by the provider callback. Web and API commonly run on
-    // different subdomains (and on different ports during local
-    // development), so this one request must opt into credential handling.
-    return this.request('post', '/integrations/oauth/flows', data, {
+    // consumed by the provider callback. Keep the whole OAuth flow on the
+    // browser-visible Web origin so a Web-only production domain can proxy
+    // it to the private API without weakening the browser binding.
+    return this.client.post(this.oauthProxyURL('/flows'), data, {
       withCredentials: true,
     });
   }
 
   getOAuthFlow(flowId: string): Promise<ApiResponseData<IntegrationOAuthFlow>> {
-    return this.request('get', `/integrations/oauth/flows/${encodeURIComponent(flowId)}`);
+    return this.client.get(this.oauthProxyURL(`/flows/${encodeURIComponent(flowId)}`), {
+      withCredentials: true,
+    });
   }
 
   cancelOAuthFlow(
     flowId: string
   ): Promise<ApiResponseData<{ status: Extract<IntegrationOAuthFlowStatus, 'cancelled'> }>> {
-    return this.request('post', `/integrations/oauth/flows/${encodeURIComponent(flowId)}/cancel`);
+    return this.client.post(
+      this.oauthProxyURL(`/flows/${encodeURIComponent(flowId)}/cancel`),
+      undefined,
+      { withCredentials: true }
+    );
   }
 
   getOAuthClientConfig(

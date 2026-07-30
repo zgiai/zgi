@@ -161,8 +161,8 @@ assert.match(resultSource, /pollingRef\.current/);
 assert.match(resultSource, /role="status"/);
 assert.match(
   integrationServiceSource,
-  /startOAuthFlow[\s\S]*?['"]\/integrations\/oauth\/flows['"][\s\S]*?withCredentials:\s*true/,
-  'OAuth flow start must accept the HttpOnly browser-binding cookie across Web/API origins'
+  /startOAuthFlow[\s\S]*?oauthProxyURL\(['"]\/flows['"]\)[\s\S]*?withCredentials:\s*true/,
+  'OAuth flow start must use the same-origin proxy that owns the HttpOnly browser-binding cookie'
 );
 const scopeUpgradeHandler = connectionsPanelSource.slice(
   connectionsPanelSource.indexOf('const upgradeOAuthAction'),
