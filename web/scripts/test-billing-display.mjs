@@ -67,6 +67,12 @@ assert.equal(
 );
 
 assert.equal(
+  formatBillingDisplayAmountFromNormalizedCredits(0.01, cnySettings, { locale: 'zh-CN' }),
+  '<¥0.0001',
+  'a non-zero CNY amount below the display threshold should use only the less-than marker'
+);
+
+assert.equal(
   formatBillingDisplayAmountFromNormalizedCredits(0.05, usdSettings, { locale: 'en-US' }),
   '<$0.0001',
   'non-zero usage must not be rounded down to a visible zero'

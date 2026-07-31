@@ -82,7 +82,7 @@ export function formatBillingDisplayAmountFromNormalizedCredits(
   const estimatePrefix = settings.currency === 'CNY' ? '≈' : '';
 
   if (displayAmount > 0 && displayAmount < 0.0001) {
-    return `${estimatePrefix}<${symbol}0.0001`;
+    return `<${symbol}0.0001`;
   }
 
   const maximumFractionDigits = displayAmount > 0 && displayAmount < 1 ? 4 : 2;
