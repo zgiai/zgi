@@ -451,7 +451,9 @@ function ChartView({
               onClick={() => setShowAll(prev => !prev)}
               className="text-xs font-medium text-primary transition-colors hover:text-primary/80"
             >
-              {showAll ? '收起' : `查看全部 ${activeChart.data.length} 个模型`}
+              {showAll
+                ? t('usage.modelDetails.collapse')
+                : t('usage.modelDetails.showAllModels', { count: activeChart.data.length })}
             </button>
           ) : null}
         </div>
