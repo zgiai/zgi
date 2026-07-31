@@ -145,7 +145,7 @@ export default function UsageOverviewPage() {
               <div>
                 <SectionEyebrow>{tCommon('filter')}</SectionEyebrow>
                 <CardTitle className="text-base">{t('usage.filters.appType')}</CardTitle>
-                <CardDescription>选择时间范围、应用类型和模型后查看对应数据。</CardDescription>
+                <CardDescription>{t('usage.filters.description')}</CardDescription>
               </div>
               <div className="flex items-center gap-2 self-start">
                 {hasActiveFilters ? (
