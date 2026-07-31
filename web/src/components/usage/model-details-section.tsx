@@ -366,7 +366,7 @@ function ChartView({
   ]);
 
   const rankedItems = useMemo(() => {
-    const items = [...activeChart.data];
+    const items = [...activeChart.data].sort((a, b) => b.value - a.value);
     if (showAll || items.length <= 5) {
       return items;
     }
