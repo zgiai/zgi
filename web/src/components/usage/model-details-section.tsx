@@ -9,7 +9,7 @@ import { useT } from '@/i18n';
 import { Card, CardContent } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { useCustomProviders, useProviders } from '@/hooks/provider/use-provider';
+import { useProviders } from '@/hooks/provider/use-provider';
 import { useProviderI18n } from '@/hooks/provider/use-provider-i18n';
 import type { ProviderItem } from '@/services/types/provider';
 import type { ModelUsageByModelItem } from '@/services/types/statistics';
@@ -198,15 +198,10 @@ function TableView({
   const formatCost = (value: number) =>
     formatBillingDisplayAmountFromNormalizedCredits(value, billingDisplay, { locale });
   const getProviderName = useProviderI18n();
-  const { items: officialProviders } = useProviders({ limit: 200, refetchOnWindowFocus: false });
-  const { items: customProviders } = useCustomProviders({ limit: 200, refetchOnWindowFocus: false });
+  const { items: providers } = useProviders({ limit: 200, refetchOnWindowFocus: false });
   const columnCount = showSourceBreakdown ? 9 : 7;
   const centeredHeadClassName = 'px-3 text-center';
   const centeredCellClassName = 'px-3 text-center';
-  const providers = useMemo(
-    () => [...officialProviders, ...customProviders],
-    [customProviders, officialProviders]
-  );
   const providerIdentifierLookup = useMemo(() => {
     const lookup = new Map<string, (typeof providers)[number]>();
 

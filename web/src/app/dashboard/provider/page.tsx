@@ -5,7 +5,6 @@ import Link from 'next/link';
 import { useT } from '@/i18n';
 import {
   useProviders,
-  useCustomProviders,
   useCreateCustomProvider,
   useUpdateCustomProvider,
   useDeleteCustomProvider,
@@ -49,6 +48,7 @@ import { IS_CLOUD } from '@/lib/config';
 import { ProviderSyncButton } from '@/components/providers/provider-sync-button';
 import { useProviderI18n } from '@/hooks/provider/use-provider-i18n';
 import { useProviderAvailableCounts } from '@/hooks/provider/use-provider-available-counts';
+import { partitionProviders } from '@/utils/provider-list';
 import { getProviderRuntimeState } from '@/utils/provider-runtime-state';
 
 function SummaryCard({
@@ -307,8 +307,7 @@ function CustomProviderRow({
 export default function ProviderPage() {
   const t = useT('aiProviders');
   const getProviderName = useProviderI18n();
-  const { items: officialItems, isLoading: isOfficialLoading } = useProviders();
-  const { items: customItems, isLoading: isCustomLoading } = useCustomProviders();
+  const { items: allProviders, isLoading } = useProviders();
   const { createCustomProvider, isCreating } = useCreateCustomProvider();
   const { updateCustomProvider, isUpdating } = useUpdateCustomProvider();
   const { deleteCustomProvider, isDeleting } = useDeleteCustomProvider();
@@ -319,7 +318,10 @@ export default function ProviderPage() {
     undefined
   );
 
-  const isLoading = isOfficialLoading || isCustomLoading;
+  const { officialProviders: officialItems, customProviders: customItems } = React.useMemo(
+    () => partitionProviders(allProviders),
+    [allProviders]
+  );
 
   const customProviders = React.useMemo(
     () => [...customItems].sort((a, b) => Number(b.is_enabled) - Number(a.is_enabled)),
@@ -328,10 +330,6 @@ export default function ProviderPage() {
   const officialProviders = React.useMemo(
     () => [...officialItems].sort((a, b) => Number(b.is_enabled) - Number(a.is_enabled)),
     [officialItems]
-  );
-  const allProviders = React.useMemo(
-    () => [...officialProviders, ...customProviders],
-    [customProviders, officialProviders]
   );
   const { counts: availableCounts, isLoading: isLoadingAvailableCounts } =
     useProviderAvailableCounts(allProviders);
