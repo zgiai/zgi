@@ -224,6 +224,7 @@ const messages: DashboardMessages = {
       sourcePrivate: '私有',
       startDate: '开始日期',
       endDate: '结束日期',
+      dateRangeInvalid: '结束日期不能早于开始日期',
     },
     cards: {
       attemptCount: '调用数',
