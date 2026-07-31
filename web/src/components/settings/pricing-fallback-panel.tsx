@@ -34,6 +34,13 @@ import type {
   PricingFallbackRule,
   PricingFallbackSource,
 } from '@/services/types/model';
+import { useOrganizationStore } from '@/store/organization-store';
+import type { BillingDisplaySettings } from '@/utils/billing-display';
+import {
+  billingDisplayInputToUSD,
+  billingDisplayInputValueFromUSD,
+  getBillingDisplaySettings,
+} from '@/utils/billing-display';
 
 const TOKEN_OPERATIONS: PricingFallbackOperation[] = ['chat', 'embedding', 'rerank'];
 
@@ -253,10 +260,37 @@ function pricingSourceCount(rules: PricingFallbackRule[], source: PricingFallbac
   return rules.filter(rule => rule.pricing_source === source).length;
 }
 
-function formatTokenPrice(rule: PricingFallbackRule | undefined, t: (key: SettingsKey) => string) {
-  return rule?.price_usd_per_1m_tokens
-    ? `${rule.price_usd_per_1m_tokens} ${t('settings.pricingFallback.usdPerMillionShort')}`
-    : '-';
+function tokenPriceDisplayValue(
+  rule: PricingFallbackRule | undefined,
+  billingDisplay: BillingDisplaySettings
+) {
+  const price = cleanText(rule?.price_usd_per_1m_tokens);
+  if (!price) return '';
+
+  const priceUSD = Number(price);
+  if (!Number.isFinite(priceUSD)) return '';
+
+  return billingDisplayInputValueFromUSD(priceUSD, true, billingDisplay);
+}
+
+function tokenPriceUnit(
+  billingDisplay: BillingDisplaySettings,
+  t: (key: SettingsKey) => string
+) {
+  return t(
+    billingDisplay.currency === 'CNY'
+      ? 'settings.pricingFallback.cnyPerMillionShort'
+      : 'settings.pricingFallback.usdPerMillionShort'
+  );
+}
+
+function formatTokenPrice(
+  rule: PricingFallbackRule | undefined,
+  billingDisplay: BillingDisplaySettings,
+  t: (key: SettingsKey) => string
+) {
+  const price = tokenPriceDisplayValue(rule, billingDisplay);
+  return price ? `${price} ${tokenPriceUnit(billingDisplay, t)}` : '-';
 }
 
 function formatImageConditions(rule: PricingFallbackRule, t: (key: SettingsKey) => string) {
@@ -275,6 +309,11 @@ function displayImageProvider(rule: PricingFallbackRule, t: (key: SettingsKey) =
 
 export function PricingFallbackPanel() {
   const t = useT();
+  const currentOrganization = useOrganizationStore.use.currentOrganization();
+  const billingDisplay = useMemo(
+    () => getBillingDisplaySettings(currentOrganization),
+    [currentOrganization]
+  );
   const [pricingFallback, setPricingFallback] = useState<PricingFallbackConfig | null>(null);
   const [overrideRules, setOverrideRules] = useState<PricingFallbackRule[]>([]);
   const [fallbackEnabled, setFallbackEnabled] = useState(true);
@@ -452,6 +491,7 @@ export function PricingFallbackPanel() {
           <RuleSummaryBoard
             rules={effectiveRules}
             emptyText={t('settings.pricingFallback.emptyEffectiveRules')}
+            billingDisplay={billingDisplay}
             editable
             disabled={isBusy}
             getEditableRule={getEditableRule}
@@ -488,6 +528,7 @@ export function PricingFallbackPanel() {
               <RuleSummaryBoard
                 rules={defaultRules}
                 emptyText={t('settings.pricingFallback.emptyDefaultRules')}
+                billingDisplay={billingDisplay}
               />
             )}
           </div>
@@ -569,6 +610,7 @@ function LoadingBlock() {
 function RuleSummaryBoard({
   rules,
   emptyText,
+  billingDisplay,
   editable = false,
   disabled = false,
   getEditableRule,
@@ -578,6 +620,7 @@ function RuleSummaryBoard({
 }: {
   rules: PricingFallbackRule[];
   emptyText: string;
+  billingDisplay: BillingDisplaySettings;
   editable?: boolean;
   disabled?: boolean;
   getEditableRule?: (rule: PricingFallbackRule) => PricingFallbackRule;
@@ -654,6 +697,7 @@ function RuleSummaryBoard({
                         <TokenPriceCell
                           baseRule={group.input}
                           displayRule={inputRule}
+                          billingDisplay={billingDisplay}
                           editable={editable}
                           disabled={disabled}
                           onRuleChange={onRuleChange}
@@ -663,6 +707,7 @@ function RuleSummaryBoard({
                         <TokenPriceCell
                           baseRule={group.output}
                           displayRule={outputRule}
+                          billingDisplay={billingDisplay}
                           editable={editable}
                           disabled={disabled}
                           onRuleChange={onRuleChange}
@@ -789,21 +834,32 @@ function RuleSummaryBoard({
 function TokenPriceCell({
   baseRule,
   displayRule,
+  billingDisplay,
   editable,
   disabled,
   onRuleChange,
 }: {
   baseRule?: PricingFallbackRule;
   displayRule?: PricingFallbackRule;
+  billingDisplay: BillingDisplaySettings;
   editable: boolean;
   disabled: boolean;
   onRuleChange?: (rule: PricingFallbackRule, patch: Partial<PricingFallbackRule>) => void;
 }) {
   const t = useT();
+  const displayValue = tokenPriceDisplayValue(displayRule, billingDisplay);
+  const [draftValue, setDraftValue] = useState(displayValue);
+  const [isEditing, setIsEditing] = useState(false);
+
+  useEffect(() => {
+    if (!isEditing) {
+      setDraftValue(displayValue);
+    }
+  }, [displayValue, isEditing]);
 
   if (!baseRule || !displayRule) return <span className="text-muted-foreground">-</span>;
 
-  if (!editable) return <>{formatTokenPrice(displayRule, t)}</>;
+  if (!editable) return <>{formatTokenPrice(displayRule, billingDisplay, t)}</>;
 
   return (
     <div className="flex items-center gap-2">
@@ -812,14 +868,23 @@ function TokenPriceCell({
         min="0"
         step="0.0001"
         className="h-8 w-28"
-        value={displayRule.price_usd_per_1m_tokens ?? ''}
-        onChange={event =>
-          onRuleChange?.(baseRule, { price_usd_per_1m_tokens: event.target.value })
-        }
+        value={draftValue}
+        onFocus={() => setIsEditing(true)}
+        onBlur={() => setIsEditing(false)}
+        onChange={event => {
+          const nextDisplayValue = event.target.value;
+          setDraftValue(nextDisplayValue);
+          onRuleChange?.(baseRule, {
+            price_usd_per_1m_tokens: billingDisplayInputToUSD(
+              nextDisplayValue,
+              billingDisplay
+            ),
+          });
+        }}
         disabled={disabled}
       />
       <span className="text-xs text-muted-foreground">
-        {t('settings.pricingFallback.usdPerMillionShort')}
+        {tokenPriceUnit(billingDisplay, t)}
       </span>
     </div>
   );

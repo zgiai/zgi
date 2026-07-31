@@ -113,6 +113,7 @@ const messages: SettingsMessages = {
     creditsPerImage: '点数 / 张',
     usdPerMillionTokens: '美元 / 100 万 token',
     usdPerMillionShort: '美元 / 100 万 token',
+    cnyPerMillionShort: '人民币 / 100 万 token',
     sourceUpstream: '上游价格',
     sourceAdmin: '管理端覆盖',
     sourceCode: '系统默认',

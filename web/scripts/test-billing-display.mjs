@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+import { URL } from 'node:url';
 
 import {
   DEFAULT_BILLING_DISPLAY,
+  billingDisplayInputToUSD,
+  billingDisplayInputValueFromUSD,
   formatBillingDisplayAmountFromNormalizedCredits,
   getBillingDisplaySettings,
   normalizedAiCreditsToUSD,
@@ -38,6 +42,27 @@ assert.deepEqual(
   }),
   { currency: 'CNY', usdToCnyRate: 7 },
   'invalid organization exchange rates must fall back to the documented default'
+);
+
+assert.equal(
+  billingDisplayInputValueFromUSD(1, true, cnySettings),
+  '7',
+  'USD token prices must use the organization exchange rate for CNY inputs'
+);
+assert.equal(
+  billingDisplayInputToUSD('7', cnySettings),
+  '1',
+  'CNY token price inputs must be converted back to canonical USD before saving'
+);
+assert.equal(
+  billingDisplayInputValueFromUSD(0, true, cnySettings),
+  '0',
+  'configured zero token prices must remain visible in CNY mode'
+);
+assert.equal(
+  billingDisplayInputToUSD('', cnySettings),
+  '',
+  'empty token price inputs must stay empty so validation can reject them'
 );
 
 assert.equal(
@@ -232,6 +257,60 @@ assert.deepEqual(
     total: '≈¥3,111.50',
   },
   'raw API points must become the expected CNY usage amounts without a double conversion'
+);
+
+const pricingFallbackSource = await readFile(
+  new URL('../src/components/settings/pricing-fallback-panel.tsx', import.meta.url),
+  'utf8'
+);
+const [enSettingsSource, zhHansSettingsSource] = await Promise.all([
+  readFile(new URL('../src/i18n/modules/settings/en-US.ts', import.meta.url), 'utf8'),
+  readFile(new URL('../src/i18n/modules/settings/zh-Hans.ts', import.meta.url), 'utf8'),
+]);
+const tokenPriceCellSource = pricingFallbackSource.slice(
+  pricingFallbackSource.indexOf('function TokenPriceCell'),
+  pricingFallbackSource.indexOf('function ImagePriceCell')
+);
+
+assert.match(
+  pricingFallbackSource,
+  /useOrganizationStore\.use\.currentOrganization\(\)/,
+  'pricing fallback rules must use the current organization display settings'
+);
+assert.match(
+  pricingFallbackSource,
+  /billingDisplayInputValueFromUSD/,
+  'pricing fallback rules must convert canonical USD prices into display input values'
+);
+assert.match(
+  tokenPriceCellSource,
+  /tokenPriceDisplayValue/,
+  'token price cells must consume the converted display input value'
+);
+assert.match(
+  tokenPriceCellSource,
+  /billingDisplayInputToUSD/,
+  'token price cells must convert display input values back to canonical USD'
+);
+assert.doesNotMatch(
+  tokenPriceCellSource,
+  /value=\{displayRule\.price_usd_per_1m_tokens \?\? ''\}/,
+  'token price inputs must not bind directly to canonical USD values'
+);
+assert.match(
+  pricingFallbackSource,
+  /settings\.pricingFallback\.cnyPerMillionShort/,
+  'pricing fallback token units must support CNY display mode'
+);
+assert.match(
+  zhHansSettingsSource,
+  /cnyPerMillionShort: '人民币 \/ 100 万 token'/,
+  'the Chinese token price unit must follow CNY display mode'
+);
+assert.match(
+  enSettingsSource,
+  /cnyPerMillionShort: 'CNY \/ 1M tokens'/,
+  'the English token price unit must follow CNY display mode'
 );
 
 console.log('Billing display checks passed.');
