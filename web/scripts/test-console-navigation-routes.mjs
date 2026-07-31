@@ -38,6 +38,7 @@ for (const href of [
   '/console/settings',
   '/console/db/database-1/table',
   '/console/files/file-1',
+  '/console/integrations',
   '/console/workflows/workflow-1/api/unknown',
 ]) {
   assert.equal(normalizeZGIConsoleNavigationHref(href), null, `${href} must remain blocked`);

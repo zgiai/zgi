@@ -30,7 +30,6 @@ func TestNavigateToolAllowsWhitelistedConsoleRoute(t *testing.T) {
 		{name: "files", href: "/console/files", label: "Files"},
 		{name: "workflows", href: "/console/workflows", label: "Workflows"},
 		{name: "skills", href: "/console/skills", label: "Skills"},
-		{name: "integrations", href: "/console/integrations", label: "Integrations"},
 	}
 
 	for _, tt := range tests {
@@ -124,15 +123,13 @@ func TestNavigateToolRequiresTrustedWorkspaceAuthorization(t *testing.T) {
 }
 
 func TestNavigateToolAllowsOrganizationRouteWithoutWorkspace(t *testing.T) {
-	for _, href := range []string{"/console/skills", "/console/integrations"} {
-		tool := NewNavigateTool("").ForkToolRuntime(&tools.ToolRuntime{
-			InvokeFrom: tools.ToolInvokeFromAIChat,
-		})
-		if _, err := tool.Invoke(t.Context(), "user-1", map[string]interface{}{
-			"href": href,
-		}, nil, nil, nil); err != nil {
-			t.Fatalf("Invoke(%q) returned error: %v", href, err)
-		}
+	tool := NewNavigateTool("").ForkToolRuntime(&tools.ToolRuntime{
+		InvokeFrom: tools.ToolInvokeFromAIChat,
+	})
+	if _, err := tool.Invoke(t.Context(), "user-1", map[string]interface{}{
+		"href": "/console/skills",
+	}, nil, nil, nil); err != nil {
+		t.Fatalf("Invoke returned error: %v", err)
 	}
 }
 
@@ -240,6 +237,7 @@ func TestNormalizeConsoleRouteRejectsExternalAndUnknownRoutes(t *testing.T) {
 		"/console/settings",
 		"/console/db/database-1/table",
 		"/console/files/file-1",
+		"/console/integrations",
 		"/console/workflows/workflow-1/api/unknown",
 	} {
 		if _, _, err := normalizeConsoleRoute(href); err == nil {
