@@ -21,6 +21,7 @@ import { IS_CLOUD } from '@/lib/config';
 import { cn } from '@/lib/utils';
 import type { ModelUsageAppType, ModelUsageSummary } from '@/services/types/statistics';
 import { getBillingDisplaySettings } from '@/utils/billing-display';
+import { isCustomDateRangeValid } from '@/utils/usage-date-range';
 
 type DateRangeKey = 'last7Days' | 'last30Days' | 'last90Days' | 'custom';
 type AppTypeFilter = 'all' | ModelUsageAppType;
@@ -45,19 +46,8 @@ const EMPTY_SUMMARY: ModelUsageSummary = {
   total_points: 0,
 };
 
-function clampDateString(value: string, min?: string, max?: string): string {
-  if (!value) return '';
-  let nextValue = value;
-
-  if (min && nextValue < min) {
-    nextValue = min;
-  }
-
-  if (max && nextValue > max) {
-    nextValue = max;
-  }
-
-  return nextValue;
+function clampDateToToday(value: string, today: string): string {
+  return value && value > today ? today : value;
 }
 
 function SectionEyebrow({ children }: { children: React.ReactNode }) {
@@ -82,24 +72,16 @@ export default function UsageOverviewPage() {
   const todayString = format(new Date(), 'yyyy-MM-dd');
 
   const isCustomRange = dateRange === 'custom';
-  const isCustomRangeValid = !isCustomRange || Boolean(customStartDate && customEndDate);
+  const isCustomRangeValid =
+    !isCustomRange || isCustomDateRangeValid(customStartDate, customEndDate);
+  const isCustomRangeReversed =
+    isCustomRange && Boolean(customStartDate && customEndDate) && !isCustomRangeValid;
   const showSourceBreakdown = IS_CLOUD && sourceFilter === 'all';
-  const customStartMaxDate = customEndDate ? clampDateString(customEndDate, undefined, todayString) : todayString;
   const hasActiveFilters =
     dateRange !== 'last7Days' ||
     appType !== 'all' ||
     sourceFilter !== 'all' ||
     Boolean(modelNameInput.trim());
-
-  const handleCustomStartDateChange = (value: string) => {
-    const nextStartDate = clampDateString(value, undefined, customStartMaxDate);
-    setCustomStartDate(nextStartDate);
-  };
-
-  const handleCustomEndDateChange = (value: string) => {
-    const nextEndDate = clampDateString(value, customStartDate || undefined, todayString);
-    setCustomEndDate(nextEndDate);
-  };
 
   const params = useMemo(() => {
     let startDate = new Date(0);
@@ -250,8 +232,10 @@ export default function UsageOverviewPage() {
                   <Input
                     type="date"
                     value={customStartDate}
-                    onChange={event => handleCustomStartDateChange(event.target.value)}
-                    max={customStartMaxDate}
+                    onChange={event =>
+                      setCustomStartDate(clampDateToToday(event.target.value, todayString))
+                    }
+                    max={todayString}
                   />
                 </label>
                 <label className="flex flex-col gap-1.5">
@@ -261,9 +245,16 @@ export default function UsageOverviewPage() {
                   <Input
                     type="date"
                     value={customEndDate}
-                    onChange={event => handleCustomEndDateChange(event.target.value)}
+                    onChange={event =>
+                      setCustomEndDate(clampDateToToday(event.target.value, todayString))
+                    }
                     min={customStartDate || undefined}
                     max={todayString}
+                    aria-invalid={isCustomRangeReversed}
+                    error={isCustomRangeReversed}
+                    errorText={
+                      isCustomRangeReversed ? t('usage.filters.dateRangeInvalid') : undefined
+                    }
                   />
                 </label>
               </div>

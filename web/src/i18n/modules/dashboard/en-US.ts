@@ -67,6 +67,7 @@ const messages = {
       sourcePrivate: 'Private',
       startDate: 'Start Date',
       endDate: 'End Date',
+      dateRangeInvalid: 'End date cannot be earlier than start date',
     },
     cards: {
       attemptCount: 'Call Count',
