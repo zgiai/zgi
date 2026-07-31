@@ -6,6 +6,7 @@ import { agentService } from '@/services';
 import { toast } from 'sonner';
 import type {
   AgentAssetKind,
+  AgentType,
   AgentList,
   CreateAgentRequest,
   UpdateAgentRequest,
@@ -40,6 +41,9 @@ export interface UseAgentsParams {
   keyword?: string;
   workspace_id?: string;
   asset_kind?: AgentAssetKind;
+  agent_type?: AgentType;
+  is_published?: boolean;
+  web_app_status?: WebAppStatus;
 }
 
 export interface UseAgentsOptions {
@@ -85,8 +89,19 @@ export function useAgents(
       keyword: params.keyword,
       workspace_id: params.workspace_id,
       asset_kind: params.asset_kind,
+      agent_type: params.agent_type,
+      is_published: params.is_published,
+      web_app_status: params.web_app_status,
     }),
-    [params.limit, params.keyword, params.workspace_id, params.asset_kind]
+    [
+      params.limit,
+      params.keyword,
+      params.workspace_id,
+      params.asset_kind,
+      params.agent_type,
+      params.is_published,
+      params.web_app_status,
+    ]
   );
 
   const {

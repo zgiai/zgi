@@ -28,6 +28,20 @@ import type {
   AIChatOperationResource,
 } from './types';
 import { sanitizeAIChatContextText } from '../page-context/sanitize';
+import {
+  ZGI_CONSOLE_SITE_MAP,
+  getAccessibleZGIConsoleSiteMap,
+  normalizeZGIConsoleNavigationHref,
+  type ZGIConsoleNavigationAccessContext,
+  type ZGIConsoleRouteDefinition,
+} from '@/routes/console-navigation';
+
+export {
+  ZGI_CONSOLE_SITE_MAP,
+  getZGIConsoleNavigationAccess,
+  normalizeZGIConsoleNavigationHref,
+  type ZGIConsoleNavigationAccessContext,
+} from '@/routes/console-navigation';
 
 const MAX_CONTEXT_ITEMS = 8;
 const MAX_METADATA_KEYS = 8;
@@ -74,6 +88,7 @@ export interface ContextualAIChatTransportOptions {
   onAssetOperationSuccess?: (operation: ContextualAIChatAssetOperation) => void;
   onPageNavigationRequested?: (request: ContextualAIChatPageNavigationRequest) => void;
   onClientActionRequired?: (request: ContextualAIChatClientActionRequest) => void;
+  getNavigationAccessContext?: () => ZGIConsoleNavigationAccessContext;
 }
 
 export type ContextualAIChatAssetOperationEffect =
@@ -122,98 +137,66 @@ export interface ContextualAIChatClientActionRequest {
   payload: AIChatClientActionRequiredEventData;
 }
 
-export const ZGI_CONSOLE_SITE_MAP = [
-  { href: '/console', label: 'Home', purpose: 'workspace overview and entry point' },
-  { href: '/console/work/chat', label: 'Conversations', purpose: 'chat workbench' },
-  { href: '/console/work/image', label: 'Images', purpose: 'image/drawing workbench' },
-  { href: '/console/work/app', label: 'Apps', purpose: 'web app workbench' },
-  { href: '/console/work/task', label: 'Scheduled Tasks', purpose: 'scheduled task management' },
-  {
-    href: '/console/agents',
-    label: 'Agents',
-    purpose: 'create, configure, debug, and publish agents',
-  },
-  {
-    href: '/console/dataset',
-    label: 'Knowledge Bases',
-    purpose: 'knowledge base and document assets',
-  },
-  { href: '/console/db', label: 'Databases', purpose: 'database sources and table records' },
-  { href: '/console/files', label: 'Files', purpose: 'uploaded files and managed workspace files' },
-  { href: '/console/prompts', label: 'Prompts', purpose: 'prompt library' },
-  {
-    href: '/console/developer/content-parse',
-    label: 'File Recognition',
-    purpose: 'content parsing and recognition tools',
-  },
-  { href: '/console/workspace', label: 'Workspace', purpose: 'workspace administration' },
-  {
-    href: '/console/workspace/members',
-    label: 'Workspace Members',
-    purpose: 'workspace member management',
-  },
-  {
-    href: '/console/workspace/settings',
-    label: 'Workspace Settings',
-    purpose: 'workspace configuration',
-  },
-  { href: '/console/settings', label: 'System Settings', purpose: 'account and system settings' },
-] as const;
-
-const ZGI_CONSOLE_EXACT_ROUTES: ReadonlySet<string> = new Set(
-  ZGI_CONSOLE_SITE_MAP.map(route => route.href)
-);
-const ZGI_CONSOLE_DYNAMIC_ROUTES = [
-  /^\/console\/agents\/[A-Za-z0-9_-]+\/(agent|workflow|logs|api|batch-test)$/,
-  /^\/console\/dataset\/[A-Za-z0-9_-]+(\/(documents|graph|hit-testing|batch-testing|settings))?$/,
-  /^\/console\/db\/[A-Za-z0-9_-]+(\/(record|search|table|import-excel))?$/,
-  /^\/console\/db\/[A-Za-z0-9_-]+\/table\/[A-Za-z0-9_-]+$/,
-  /^\/console\/prompts\/[A-Za-z0-9_-]+$/,
-  /^\/console\/work\/app\/[A-Za-z0-9_-]+$/,
-];
-
 const PLATFORM_OPERATION_ASSISTANT_CONTEXT_ITEM_ID = 'assistant.platform_operation';
 const LEGACY_SYSTEM_CONTEXT_ITEM_ID = 'zgi.system_assistant';
-const ZGI_SITE_MAP_SUMMARY = ZGI_CONSOLE_SITE_MAP.map(
-  route => `${route.label}=${route.href}(${route.purpose})`
-).join('; ');
 
-const PLATFORM_OPERATION_ASSISTANT_CONTEXT_ITEM: AIChatContextItem = {
-  id: PLATFORM_OPERATION_ASSISTANT_CONTEXT_ITEM_ID,
-  type: 'custom',
-  title: 'Platform operation assistant',
-  description:
-    'The platform operation assistant can explain the current page, answer from registered page context, navigate to whitelisted internal console routes, and use enabled low-risk skills. High-risk asset mutations require supported governed tools and user approval and must not be promised when unavailable.',
-  source: 'system',
-  status: 'available',
-  risk: 'low',
-  capabilities: [
-    {
-      id: 'page.navigate',
-      title: 'Navigate inside the console',
-      description:
-        'Switch the visible console page to a whitelisted internal route through console-navigator / navigate.',
-      risk: 'low',
-      status: 'available',
-      permissions: ['console:navigate'],
+function buildZGIConsoleSiteMapSummary(routes: readonly ZGIConsoleRouteDefinition[]) {
+  return routes.map(route => `${route.label}=${route.href}(${route.purpose})`).join('; ');
+}
+
+function buildPlatformOperationAssistantContextItem(
+  accessContext?: ZGIConsoleNavigationAccessContext
+): AIChatContextItem {
+  const accessibleRoutes = accessContext
+    ? getAccessibleZGIConsoleSiteMap(accessContext)
+    : ZGI_CONSOLE_SITE_MAP;
+  return {
+    id: PLATFORM_OPERATION_ASSISTANT_CONTEXT_ITEM_ID,
+    type: 'custom',
+    title: 'Platform operation assistant',
+    description:
+      'The platform operation assistant can explain the current page, answer from registered page context, navigate to current-user-accessible internal console routes, and use enabled low-risk skills. High-risk asset mutations require supported governed tools and user approval and must not be promised when unavailable.',
+    source: 'system',
+    status: 'available',
+    risk: 'low',
+    capabilities: [
+      {
+        id: 'page.navigate',
+        title: 'Navigate inside the console',
+        description:
+          'Switch the visible console page to a current-user-accessible internal route through console-navigator / navigate.',
+        risk: 'low',
+        status: 'available',
+        permissions: ['console:navigate'],
+      },
+      {
+        id: 'assistant.self_describe',
+        title: 'Explain the platform operation assistant role and limits',
+        description:
+          'Describe the assistant as a platform operation assistant, including current page help, console navigation, enabled skills, and high-risk operation limits.',
+        risk: 'low',
+        status: 'available',
+      },
+    ],
+    metadata: {
+      site_map: buildZGIConsoleSiteMapSummary(accessibleRoutes),
+      accessible_routes: accessibleRoutes.map(route => route.href).join(','),
+      navigation_access_scope: accessContext ? 'current_user' : 'unfiltered_fallback',
+      routing_tool: 'console-navigator / navigate',
+      memory_boundary: 'Account-level assistant memory and Agent memory are separate',
+      high_risk_limit:
+        'Do not claim asset creation, deletion, publishing, workflow execution, scheduling, or agent mutation unless a supported governed tool result proves it.',
     },
-    {
-      id: 'assistant.self_describe',
-      title: 'Explain the platform operation assistant role and limits',
-      description:
-        'Describe the assistant as a platform operation assistant, including current page help, console navigation, enabled skills, and high-risk operation limits.',
-      risk: 'low',
-      status: 'available',
-    },
-  ],
-  metadata: {
-    site_map: ZGI_SITE_MAP_SUMMARY,
-    routing_tool: 'console-navigator / navigate',
-    memory_boundary: 'Account-level assistant memory and Agent memory are separate',
-    high_risk_limit:
-      'Do not claim asset creation, deletion, publishing, workflow execution, scheduling, or agent mutation unless a supported governed tool result proves it.',
-  },
-};
+  };
+}
+
+function siteMapSummaryFromContextItems(items: AIChatContextItem[]) {
+  const platformItem = items.find(item => item.id === PLATFORM_OPERATION_ASSISTANT_CONTEXT_ITEM_ID);
+  const siteMap = platformItem?.metadata?.site_map;
+  return typeof siteMap === 'string'
+    ? siteMap
+    : buildZGIConsoleSiteMapSummary(ZGI_CONSOLE_SITE_MAP);
+}
 
 const RISK_RANK: Record<AIChatCapabilityRisk, number> = {
   low: 1,
@@ -226,7 +209,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function compactText(value: string | undefined, limit = MAX_FIELD_LENGTH): string {
-  const text = sanitizeAIChatContextText(value ?? '').replace(/\s+/g, ' ').trim();
+  const text = sanitizeAIChatContextText(value ?? '')
+    .replace(/\s+/g, ' ')
+    .trim();
   if (text.length <= limit) return text;
   return `${text.slice(0, limit).trim()}...`;
 }
@@ -443,7 +428,7 @@ export function buildAIChatContextEnvelope(items: AIChatContextItem[]): string {
 
   const lines = [
     'Assistant role: platform operation assistant for helping users operate the current console, not a generic chat-only bot.',
-    `Console site map: ${ZGI_SITE_MAP_SUMMARY}.`,
+    `Current-user-accessible console site map: ${siteMapSummaryFromContextItems(items)}.`,
     'Navigation ability: for user-requested page switches, use console-navigator / navigate with a whitelisted internal /console route; do not navigate to external URLs.',
     'Execution boundary: do not claim high-risk asset operations such as delete, publish, workflow run, scheduling, or agent mutation unless a supported governed tool result proves it in this turn.',
     'Current console page context. Use it only to interpret this turn; do not save it as memory unless the user explicitly asks.',
@@ -627,32 +612,12 @@ function recordValue(value: unknown): Record<string, unknown> | undefined {
   return isRecord(value) ? value : undefined;
 }
 
-export function normalizeZGIConsoleNavigationHref(rawHref: string | undefined): string | null {
-  const text = rawHref?.trim();
-  if (!text || text.includes('..') || /^https?:\/\//i.test(text) || text.startsWith('//')) {
-    return null;
-  }
-
-  const [rawPath] = text.split(/[?#]/, 1);
-  const path = `/${rawPath.replace(/^\/+/, '')}`.replace(/\/+$/, '') || '/';
-  let normalizedPath = path === '' ? '/' : path;
-  const agentDetailWithoutTabMatch = normalizedPath.match(/^\/console\/agents\/([A-Za-z0-9_-]+)$/);
-  if (agentDetailWithoutTabMatch) {
-    normalizedPath = `${normalizedPath}/agent`;
-  }
-
-  if (ZGI_CONSOLE_EXACT_ROUTES.has(normalizedPath)) {
-    return normalizedPath;
-  }
-  if (ZGI_CONSOLE_DYNAMIC_ROUTES.some(pattern => pattern.test(normalizedPath))) {
-    return normalizedPath;
-  }
-  return null;
-}
-
-function withZGISystemContextItems(items: AIChatContextItem[]): AIChatContextItem[] {
+function withZGISystemContextItems(
+  items: AIChatContextItem[],
+  accessContext?: ZGIConsoleNavigationAccessContext
+): AIChatContextItem[] {
   return [
-    PLATFORM_OPERATION_ASSISTANT_CONTEXT_ITEM,
+    buildPlatformOperationAssistantContextItem(accessContext),
     ...items.filter(
       item =>
         item.id !== PLATFORM_OPERATION_ASSISTANT_CONTEXT_ITEM_ID &&
@@ -1116,7 +1081,10 @@ export function createContextualAIChatTransport(
       callbacks: AIChatStreamCallbacks,
       abortSignal?: AbortSignal
     ) {
-      const contextItems = withZGISystemContextItems(getContextItems());
+      const contextItems = withZGISystemContextItems(
+        getContextItems(),
+        options?.getNavigationAccessContext?.()
+      );
       const envelope = buildAIChatContextEnvelope(contextItems);
       const operationContext = buildAIChatOperationContext(contextItems);
       const mergedOperationContext = mergeAIChatOperationContext(
@@ -1141,7 +1109,10 @@ export function createContextualAIChatTransport(
       callbacks: AIChatStreamCallbacks,
       abortSignal?: AbortSignal
     ) {
-      const contextItems = withZGISystemContextItems(getContextItems());
+      const contextItems = withZGISystemContextItems(
+        getContextItems(),
+        options?.getNavigationAccessContext?.()
+      );
       const envelope = buildAIChatContextEnvelope(contextItems);
       const operationContext = buildAIChatOperationContext(contextItems);
       const mergedOperationContext = mergeAIChatOperationContext(
@@ -1198,7 +1169,10 @@ export function createContextualAIChatTransport(
       callbacks: AIChatStreamCallbacks,
       abortSignal?: AbortSignal
     ) {
-      const contextItems = withZGISystemContextItems(getContextItems());
+      const contextItems = withZGISystemContextItems(
+        getContextItems(),
+        options?.getNavigationAccessContext?.()
+      );
       const envelope = buildAIChatContextEnvelope(contextItems);
       const operationContext = buildAIChatOperationContext(contextItems);
       const mergedOperationContext = mergeAIChatOperationContext(
@@ -1226,7 +1200,10 @@ export function createContextualAIChatTransport(
       callbacks: AIChatStreamCallbacks,
       abortSignal?: AbortSignal
     ) {
-      const contextItems = withZGISystemContextItems(getContextItems());
+      const contextItems = withZGISystemContextItems(
+        getContextItems(),
+        options?.getNavigationAccessContext?.()
+      );
       const envelope = buildAIChatContextEnvelope(contextItems);
       const operationContext = buildAIChatOperationContext(contextItems);
       const mergedOperationContext = mergeAIChatOperationContext(

@@ -65,6 +65,13 @@ const messages = {
   // Search and filters
   searchPlaceholder: 'Search agents...',
   workflowSearchPlaceholder: 'Search workflows...',
+  listFilters: {
+    publishStatus: 'Publication status',
+    allPublishStatuses: 'All statuses',
+    workflowType: 'Workflow type',
+    allWorkflowTypes: 'All types',
+    clear: 'Clear filters',
+  },
   filterAll: 'All',
   filterActive: 'Active',
   filterInactive: 'Inactive',
@@ -299,9 +306,12 @@ const messages = {
   },
 
   // Confirmation dialog
-  deleteConfirmTitle: 'Delete agent "{name}"?',
+  deleteConfirmTitle: 'Delete agent?',
   deleteConfirmDescription:
     'This action cannot be undone. The agent and its configurations will be permanently deleted.',
+  deleteWorkflowConfirmTitle: 'Delete workflow?',
+  deleteWorkflowConfirmDescription:
+    'This action cannot be undone. The workflow and its configurations will be permanently deleted.',
   exportConfirmTitle: 'Export agent "{name}" as YAML?',
   exportConfirmDescription:
     'This will download the current agent flow configuration as a YAML file.',
@@ -870,6 +880,8 @@ const messages = {
       model_service_unavailable:
         'The model service is temporarily unavailable. Please try again later.',
       model_invocation_failed: 'The model call failed. Please try again later.',
+      agent_final_answer_unavailable:
+        'The model could not generate a final response. An automatic retry was attempted; please regenerate or try again later.',
       server_unavailable:
         'The AI service is temporarily unavailable, possibly because a model channel or upstream service is down. Try again shortly; if this continues, ask an administrator to check the model and channel status.',
       loadRunsFailed: 'Failed to load agent runs',

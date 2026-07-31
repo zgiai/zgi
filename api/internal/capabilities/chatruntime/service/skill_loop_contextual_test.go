@@ -1875,6 +1875,54 @@ func TestSkillLoopAdditionalSystemMessagesAddsConsoleNavigationGuidance(t *testi
 	}
 }
 
+func TestSkillLoopConsoleNavigationGuidanceUsesAccessibleRouteSnapshot(t *testing.T) {
+	operationContext := map[string]interface{}{
+		"resources": []interface{}{
+			map[string]interface{}{
+				"resource_id": "assistant.platform_operation",
+				"metadata": map[string]interface{}{
+					"navigation_access_scope": "current_user",
+					"accessible_routes":       "/console,/console/files,/console/skills",
+				},
+			},
+		},
+	}
+	prepared := &PreparedChat{
+		parts: &chatRequestParts{
+			SkillIDs:            []string{skills.SkillConsoleNavigator},
+			RawOperationContext: operationContext,
+			OperationContext:    operationContext,
+		},
+	}
+
+	message, ok := contextualConsoleNavigationSkillMessageForResolved(prepared, nil)
+	if !ok {
+		t.Fatal("contextualConsoleNavigationSkillMessageForResolved() ok = false, want guidance")
+	}
+	content := messageContentText(message.Content)
+	for _, want := range []string{
+		`"href":"/console"`,
+		`"href":"/console/files"`,
+		`"href":"/console/skills"`,
+		"current user's accessible pages",
+		"trusted server-side workspace permissions",
+	} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("permission-aware navigation guidance missing %q in:\n%s", want, content)
+		}
+	}
+	for _, denied := range []string{
+		`"href":"/console/agents"`,
+		`"href":"/console/workflows"`,
+		`"href":"/console/dataset"`,
+		`"href":"/console/db"`,
+	} {
+		if strings.Contains(content, denied) {
+			t.Fatalf("permission-aware navigation guidance exposed denied route %q:\n%s", denied, content)
+		}
+	}
+}
+
 func TestConsoleNavigationStrategyDoesNotScriptCompletedRouteSequence(t *testing.T) {
 	parts := &chatRequestParts{
 		Query:     "\u8bf7\u4f9d\u6b21\u6253\u5f00\u6587\u4ef6\u7ba1\u7406\u3001\u667a\u80fd\u4f53\u3001\u6570\u636e\u5e93\u3001\u6587\u4ef6\u7ba1\u7406",

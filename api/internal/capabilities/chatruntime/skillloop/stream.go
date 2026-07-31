@@ -214,7 +214,12 @@ streamDone:
 	}
 	r.recordModelInvocation(trace)
 	if terminationErr != nil {
-		return planningResult{usage: usage}, true, wrapStreamedFinalAnswerError(terminationErr, streamedFinalAnswerFromStates(toolCallsByIndex, toolCallOrder))
+		return planningResult{
+			message:               message,
+			usage:                 usage,
+			answerStreamed:        answerStreamed && (terminalProtocol || len(toolCalls) == 0),
+			naturalAnswerStreamed: naturalAnswerStreamed && len(toolCalls) > 0,
+		}, true, wrapStreamedFinalAnswerError(terminationErr, streamedFinalAnswerFromStates(toolCallsByIndex, toolCallOrder))
 	}
 
 	return planningResult{

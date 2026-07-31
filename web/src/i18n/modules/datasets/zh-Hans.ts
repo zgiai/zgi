@@ -1395,8 +1395,8 @@ const messages: DatasetMessages = {
   close: '关闭',
   refresh: '刷新',
 
-  deleteConfirmTitle: '确定要删除{name}吗？',
-  deleteConfirmDescription: '此操作无法撤销。',
+  deleteConfirmTitle: '删除知识库？',
+  deleteConfirmDescription: '该操作无法撤销。此知识库及其中的文档和配置将被永久删除。',
   deleteFolderConfirmDescription: '删除文件夹后，文件夹中的知识库将转移至根目录。',
   deleteSuccess: '知识库删除成功',
   deleteFailed: '知识库删除失败',

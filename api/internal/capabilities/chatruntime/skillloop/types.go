@@ -42,8 +42,9 @@ const (
 )
 
 var (
-	ErrInvalidInput     = errors.New("invalid input")
-	ErrModelIdleTimeout = errors.New("model idle timeout")
+	ErrInvalidInput           = errors.New("invalid input")
+	ErrModelIdleTimeout       = errors.New("model idle timeout")
+	ErrFinalAnswerUnavailable = errors.New("final answer unavailable")
 )
 
 type WorkflowApprovalPendingError struct {

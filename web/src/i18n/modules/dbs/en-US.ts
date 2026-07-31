@@ -70,6 +70,9 @@ const messages = {
   failed: 'Operation failed',
   deleteConfirmTitle: 'Delete {name}?',
   deleteConfirmDescription: 'This action cannot be undone.',
+  deleteDatabaseConfirmTitle: 'Delete database?',
+  deleteDatabaseConfirmDescription:
+    'This action cannot be undone. The database, its tables, and data will be permanently deleted.',
   deleteTableConfirmDescription:
     'Deleting this table will remove all its data. Proceed with caution.',
 

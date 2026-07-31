@@ -8,7 +8,6 @@ export interface ConsoleRouteAccess {
 export const ORGANIZATION_SCOPED_CONSOLE_ROUTES = [
   '/console',
   '/console/skills',
-  '/console/settings',
   '/console/work',
   '/console/work/chat',
   '/console/work/image',

@@ -21,7 +21,10 @@ const (
 	agentListAssetKindWorkflow agentListAssetKind = "workflow"
 )
 
-var errInvalidAgentListAssetKind = errors.New("invalid agent asset_kind")
+var (
+	errInvalidAgentListAssetKind    = errors.New("invalid agent asset_kind")
+	errInvalidAgentListWebAppStatus = errors.New("invalid agent web_app_status")
+)
 
 func resolveAgentListAssetKind(req dto.GetAgentsListRequest) (agentListAssetKind, error) {
 	switch strings.ToLower(strings.TrimSpace(req.AssetKind)) {
@@ -170,6 +173,14 @@ func (s *agentsService) GetAgentsListWithPermissions(
 	if req.IsCreatedByMe {
 		filter.CreatedBy = accountID
 	}
+	filter.IsPublished = req.IsPublished
+	if req.WebAppStatus != "" {
+		webAppStatus := AgentWebAppStatus(strings.ToLower(strings.TrimSpace(req.WebAppStatus)))
+		if !IsValidAgentWebAppStatus(webAppStatus) {
+			return nil, errInvalidAgentListWebAppStatus
+		}
+		filter.WebAppStatus = string(webAppStatus)
+	}
 
 	// Log filter details for debugging
 	// Requirement 11.5: Add structured logging with context
@@ -189,6 +200,8 @@ func (s *agentsService) GetAgentsListWithPermissions(
 		"agent_type":      filter.AgentsType,
 		"asset_kind":      assetKind,
 		"created_by":      filter.CreatedBy,
+		"is_published":    filter.IsPublished,
+		"web_app_status":  filter.WebAppStatus,
 		"internal":        internalStr,
 		"page":            page,
 		"limit":           limit,
