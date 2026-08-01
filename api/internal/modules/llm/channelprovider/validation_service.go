@@ -47,8 +47,9 @@ type cachedModelCapability struct {
 }
 
 type modelCapability struct {
-	Model   string
-	UseCase string
+	Model             string
+	UseCase           string
+	SupportsStreaming bool
 }
 
 type validationFailure struct {
@@ -233,7 +234,8 @@ func modelExistsInUpstreamSet(upstreamSet map[string]struct{}, modelName string)
 }
 
 // TestModel validates a single model using the model library as the source of truth.
-func (v *Validator) TestModel(ctx context.Context, organizationID uuid.UUID, channelProvider, apiKey, apiBaseURL, modelName, testMethod string, stream bool) (*TestResult, error) {
+// A nil stream override selects the chat mode from model metadata.
+func (v *Validator) TestModel(ctx context.Context, organizationID uuid.UUID, channelProvider, apiKey, apiBaseURL, modelName, testMethod string, stream *bool) (*TestResult, error) {
 	spec, err := Resolve(channelProvider)
 	if err != nil {
 		return nil, err
@@ -278,7 +280,12 @@ func (v *Validator) TestModel(ctx context.Context, organizationID uuid.UUID, cha
 		}, nil
 	}
 
-	return v.probeModel(ctx, adapterInstance, capabilities[0], stream), nil
+	effectiveStream := capabilities[0].SupportsStreaming
+	if stream != nil {
+		effectiveStream = *stream
+	}
+
+	return v.probeModel(ctx, adapterInstance, capabilities[0], effectiveStream), nil
 }
 
 func (v *Validator) validateWithModelListing(
@@ -390,7 +397,7 @@ func (v *Validator) probeModels(ctx context.Context, adapterInstance adapter.LLM
 	failures := make([]validationFailure, 0)
 
 	for _, capability := range capabilities {
-		result := v.probeModel(ctx, adapterInstance, capability, false)
+		result := v.probeModel(ctx, adapterInstance, capability, capability.SupportsStreaming)
 		items = append(items, map[string]any{
 			keyModel:          capability.Model,
 			keyUseCase:        capability.UseCase,
@@ -531,8 +538,9 @@ func (v *Validator) resolveModelCapabilities(ctx context.Context, organizationID
 				}
 
 				capability := modelCapability{
-					Model:   record.Model,
-					UseCase: useCase,
+					Model:             record.Model,
+					UseCase:           useCase,
+					SupportsStreaming: record.SupportsStreaming,
 				}
 				capabilityMap[record.Model] = capability
 				v.cache[capabilityCacheKey(organizationID, cacheScope, record.Model)] = cachedModelCapability{
@@ -588,8 +596,9 @@ func (v *Validator) addPrivateCapabilities(
 		}
 
 		capability := modelCapability{
-			Model:   record.Name,
-			UseCase: useCase,
+			Model:             record.Name,
+			UseCase:           useCase,
+			SupportsStreaming: record.SupportsStreaming,
 		}
 		capabilityMap[record.Name] = capability
 		v.cache[capabilityCacheKey(organizationID, cacheScope, record.Name)] = cachedModelCapability{
@@ -620,11 +629,17 @@ func (v *Validator) addProtocolPrivateCapabilities(
 			return err
 		}
 		capability := modelCapability{
-			Model:   record.Name,
-			UseCase: useCase,
+			Model:             record.Name,
+			UseCase:           useCase,
+			SupportsStreaming: record.SupportsStreaming,
 		}
-		if existing, ok := collapsed[record.Name]; ok && existing.UseCase != capability.UseCase {
-			return fmt.Errorf("private model %q has conflicting use cases across custom providers", record.Name)
+		if existing, ok := collapsed[record.Name]; ok {
+			if existing.UseCase != capability.UseCase {
+				return fmt.Errorf("private model %q has conflicting use cases across custom providers", record.Name)
+			}
+			if existing.SupportsStreaming != capability.SupportsStreaming {
+				return fmt.Errorf("private model %q has conflicting streaming support across custom providers", record.Name)
+			}
 		}
 		collapsed[record.Name] = capability
 	}

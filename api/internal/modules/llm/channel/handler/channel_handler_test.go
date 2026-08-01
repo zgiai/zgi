@@ -276,6 +276,24 @@ func TestParseDraftTestChannelModelRequestAcceptsValidPayload(t *testing.T) {
 	if req.APIBaseURL != "https://proxy.example.com/v1" {
 		t.Fatalf("expected api_base_url to round-trip, got %q", req.APIBaseURL)
 	}
+	if req.Stream != nil {
+		t.Fatalf("expected omitted stream to select automatic mode, got %v", *req.Stream)
+	}
+}
+
+func TestParseDraftTestChannelModelRequestPreservesExplicitBlockingMode(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	body := `{"channel_provider":"openai-compatible","api_key":"sk-test","api_base_url":"https://proxy.example.com/v1","model":"gpt-4o","stream":false}`
+	c, _ := newJSONContext(body)
+
+	req, ok := parseDraftTestChannelModelRequest(c)
+	if !ok {
+		t.Fatalf("expected parser to accept valid payload")
+	}
+	if req.Stream == nil || *req.Stream {
+		t.Fatalf("expected explicit stream=false to be preserved, got %v", req.Stream)
+	}
 }
 
 func TestParseDraftTestChannelModelRequestAcceptsOllamaWithoutAPIKey(t *testing.T) {
