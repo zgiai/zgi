@@ -626,7 +626,9 @@ available through `recipient_id`. Tenant-app bot messages always require an
 explicit recipient.
 
 Tenant-app messaging uses `feishu.message.send_bot`. Both message Actions are
-disabled by default, high risk, non-idempotent, and require approval for every
+disabled by default, high risk, and non-idempotent. The first invocation
+requires approval. A remembered approval is limited to the exact Connection
+and recipient; an organization policy may still require approval for every
 invocation. `feishu.calendar.event.create` is also disabled by default and
 requires approval before creating an event in a writable calendar. Reads remain
 bounded and use fixed `open.feishu.cn` endpoints.
@@ -783,6 +785,61 @@ Agent bindings, and then retire the old deployment secret.
   arguments are never stored as diagnostics.
 - Completion updates use a durable Redis outbox so a paid successful call is
   not repeated when the database update temporarily fails.
+- Guarded non-idempotent Actions use durable operation receipts. A confirmed
+  success is replayed without another provider call when the model repeats the
+  same Action for the same target within one originating user message. A new
+  user message or a different target remains a new operation. Definite input,
+  authentication, and provider-rejection failures release the claim and may be
+  retried; a timeout or ambiguous network failure is recorded as
+  `outcome_unknown` and must be verified before another send.
+- A request that intentionally performs the same Action more than once is
+  frozen as a batch before approval. Every item receives a distinct
+  `operation_item_id`, receipt, and operation key, even when all items use the
+  same Connection, Action, and target. The operation identity is:
+
+  ```text
+  HMAC(
+    organization_id,
+    user_message_id,
+    connection_id,
+    action_id,
+    target_identity,
+    operation_item_id
+  )
+  ```
+
+  `batch_id`, `operation_item_id`, `item_index`, `item_count`, and the
+  server-derived `frozen_input_hmac` are stored with the receipt. Raw message
+  bodies are not stored. The database uniqueness boundary remains
+  `(organization_id, operation_key)`.
+- Batch approval binds the exact Connection, Action, target set, item count,
+  and frozen item digest. Changing a recipient, item body, or item count makes
+  the previous approval invalid. The approval's public copy shows a bounded,
+  credential-redacted summary; internal batch/item IDs and digests remain
+  server-only.
+
+  ```text
+  approval binding = (
+    batch_id,
+    connection_id,
+    action_id,
+    target_identity,
+    item_count,
+    frozen_items_digest
+  )
+  ```
+
+- Batch retries are item-scoped. Confirmed successes are replayed and never
+  sent again. Only definite `failed_safe` items may be attempted again.
+  `outcome_unknown` items are never retried automatically, including after a
+  process restart. A new explicit user message such as "send again" creates a
+  new batch and is allowed. One message containing ten content entries is one
+  operation; ten separately requested messages are ten operation items.
+- Batch results aggregate to `pending`, `executing`, `partially_succeeded`,
+  `succeeded`, `failed`, or `outcome_unknown`, and report the planned, safely
+  failed, confirmed-success, and unknown counts. Retrying a partial batch
+  replays confirmed items locally and calls the provider only for
+  `failed_safe` items.
 - Passive runtime outcomes and explicit manual tests update orthogonal health,
   auth, and scope states with bounded history. No periodic provider request is
   issued for health monitoring.
@@ -790,7 +847,9 @@ Agent bindings, and then retire the old deployment secret.
   Action, Connection, external destination, and a credential-redacted summary
   of the data that will be sent—not merely the generic meta-tool name.
 - Remembered approvals for dynamic Actions are scoped to the provider Action
-  and exact Connection; approval for one Connection cannot authorize another.
+  and exact Connection. Guarded side effects such as sending a message are
+  additionally scoped to the external target, so approval for one recipient
+  cannot authorize another.
 
 ## Troubleshooting
 

@@ -40,6 +40,16 @@ type ActionPreparationHint struct {
 	DescriptionI18n LocalizedText             `json:"description_i18n,omitempty"`
 }
 
+// SuccessDeduplicationDefinition opts a non-idempotent action into durable,
+// success-only replay protection. The operation identity is scoped to the
+// originating user message, selected connection, action, the declared target
+// arguments, and a frozen operation item ID. Input content that is not part of
+// the target is deliberately excluded from the operation key; its HMAC is
+// retained on the receipt and the approval signature freezes the exact input.
+type SuccessDeduplicationDefinition struct {
+	TargetArgumentPaths []string `json:"target_argument_paths"`
+}
+
 type ActionDefinition struct {
 	ID                   string                   `json:"id"`
 	ToolName             string                   `json:"tool_name"`
@@ -65,29 +75,34 @@ type ActionDefinition struct {
 	// SupportedAuthMethodIDs restricts this action to provider auth methods
 	// that can actually execute it. An empty list keeps the legacy behavior of
 	// supporting every auth method declared by the provider.
-	SupportedAuthMethodIDs []string                `json:"supported_auth_method_ids,omitempty"`
-	ScopeLabelsI18n        LocalizedLabelMap       `json:"scope_labels_i18n,omitempty"`
-	DefaultPolicy          *DefaultActionPolicy    `json:"default_policy"`
-	SchemaHash             string                  `json:"schema_hash"`
-	SchemaRevision         string                  `json:"schema_revision"`
-	CatalogRevision        string                  `json:"catalog_revision"`
-	SupportedCallers       []tools.ToolInvokeFrom  `json:"supported_callers,omitempty"`
-	PreparationHints       []ActionPreparationHint `json:"preparation_hints,omitempty"`
+	SupportedAuthMethodIDs []string                        `json:"supported_auth_method_ids,omitempty"`
+	ScopeLabelsI18n        LocalizedLabelMap               `json:"scope_labels_i18n,omitempty"`
+	DefaultPolicy          *DefaultActionPolicy            `json:"default_policy"`
+	SchemaHash             string                          `json:"schema_hash"`
+	SchemaRevision         string                          `json:"schema_revision"`
+	CatalogRevision        string                          `json:"catalog_revision"`
+	SupportedCallers       []tools.ToolInvokeFrom          `json:"supported_callers,omitempty"`
+	PreparationHints       []ActionPreparationHint         `json:"preparation_hints,omitempty"`
+	SuccessDeduplication   *SuccessDeduplicationDefinition `json:"success_deduplication,omitempty"`
 }
 
 type ActionRequest struct {
-	OrganizationID string
-	WorkspaceID    string
-	UserID         string
-	AgentID        string
-	ConversationID string
-	AppID          string
-	MessageID      string
-	ConnectionID   string
-	InvokeFrom     tools.ToolInvokeFrom
-	IntegrationID  string
-	ActionID       string
-	Input          map[string]interface{}
+	OrganizationID  string
+	WorkspaceID     string
+	UserID          string
+	AgentID         string
+	ConversationID  string
+	AppID           string
+	MessageID       string
+	ConnectionID    string
+	BatchID         string
+	OperationItemID string
+	ItemIndex       int
+	ItemCount       int
+	InvokeFrom      tools.ToolInvokeFrom
+	IntegrationID   string
+	ActionID        string
+	Input           map[string]interface{}
 	// Connection is populated by Executor after organization-scoped resolution.
 	// Callers must never provide credentials directly.
 	Connection *ResolvedConnection
@@ -105,6 +120,9 @@ type ActionResult struct {
 	CostUSD             *float64
 	ResultCount         int
 	AttemptCount        int
+	// Replayed is internal execution metadata. It is true when Executor returned
+	// a previously confirmed, schema-valid result without calling the provider.
+	Replayed bool `json:"-"`
 }
 
 type Adapter interface {

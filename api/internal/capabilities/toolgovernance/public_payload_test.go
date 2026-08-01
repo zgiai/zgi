@@ -104,6 +104,41 @@ func TestSanitizeExternalActionPublicValueHandlesFrozenInvocationStruct(t *testi
 	}
 }
 
+func TestSanitizeExternalActionPublicValueRedactsBatchItemsAndHidesBatchIdentity(t *testing.T) {
+	original := map[string]interface{}{
+		"skill_id": "external-apps", "tool_name": "execute_action",
+		"arguments": map[string]interface{}{
+			"integration_id": "feishu", "action_id": "feishu.message.send_user",
+			"batch_items": []interface{}{
+				map[string]interface{}{"recipient_id": "ou_safe", "text": "hello"},
+				map[string]interface{}{"recipient_id": "ou_safe", "text": "Bearer secret-value-1234567890"},
+			},
+			"operation_batch": map[string]interface{}{
+				"batch_id":           "batch-0123456789abcdef01234567",
+				"operation_item_ids": []interface{}{"item-001-0123456789abcdef", "item-002-fedcba9876543210"},
+				"item_count":         2, "frozen_items_digest": strings.Repeat("a", 64),
+			},
+		},
+	}
+	sanitized := SanitizeExternalActionPublicValue(original)
+	raw, err := json.Marshal(sanitized)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded := string(raw)
+	for _, forbidden := range []string{"secret-value", "operation_batch", "batch-0123", "item-001"} {
+		if strings.Contains(encoded, forbidden) {
+			t.Fatalf("public batch payload contains %q: %s", forbidden, encoded)
+		}
+	}
+	if !strings.Contains(encoded, "ou_safe") || !strings.Contains(encoded, publicExternalArgumentRedacted) {
+		t.Fatalf("public batch payload lost safe summary or redaction marker: %s", encoded)
+	}
+	if _, exists := original["arguments"].(map[string]interface{})["operation_batch"]; !exists {
+		t.Fatal("sanitizer mutated authoritative batch identity")
+	}
+}
+
 func TestSanitizeExternalActionPublicValueDoesNotPromoteBusinessArgumentAsConnectionLabel(t *testing.T) {
 	connectionID := "33333333-3333-3333-3333-333333333333"
 	sanitized := SanitizeExternalActionPublicValue(map[string]interface{}{

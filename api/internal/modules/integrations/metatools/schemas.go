@@ -1,5 +1,7 @@
 package metatools
 
+import "github.com/zgiai/zgi/api/internal/modules/integrations"
+
 func strictObject(properties map[string]interface{}, required ...string) map[string]interface{} {
 	schema := map[string]interface{}{
 		"type":                 "object",
@@ -126,6 +128,33 @@ func executeActionInputSchema() map[string]interface{} {
 			"type": "object", "description": "Arguments that satisfy the input_schema returned by get_action_guide.",
 			"additionalProperties": true,
 		},
+		"batch_items": map[string]interface{}{
+			"type": "array", "minItems": 2, "maxItems": integrations.MaxOperationBatchItems,
+			"description": "Two or more frozen action argument objects to execute as one approved batch. Use this only when get_action_guide reports supports_batch=true; use arguments for one operation.",
+			"items":       map[string]interface{}{"type": "object", "additionalProperties": true},
+		},
+		"operation_batch": map[string]interface{}{
+			"type": "object", "readOnly": true, "additionalProperties": false,
+			"properties": map[string]interface{}{
+				"batch_id": map[string]interface{}{"type": "string", "pattern": "^batch-[a-f0-9]{24}$"},
+				"operation_item_ids": map[string]interface{}{
+					"type": "array", "minItems": 2, "maxItems": integrations.MaxOperationBatchItems,
+					"items": map[string]interface{}{"type": "string", "pattern": "^item-[0-9]{3}-[a-f0-9]{16}$"},
+				},
+				"item_count":          map[string]interface{}{"type": "integer", "minimum": 2, "maximum": integrations.MaxOperationBatchItems},
+				"frozen_items_digest": map[string]interface{}{"type": "string", "pattern": "^[a-f0-9]{64}$"},
+			},
+			"required": []string{"batch_id", "operation_item_ids", "item_count", "frozen_items_digest"},
+		},
+		"batch_summary": map[string]interface{}{
+			"type": "object", "readOnly": true, "additionalProperties": false,
+			"properties": map[string]interface{}{
+				"item_count":   map[string]interface{}{"type": "integer", "minimum": 2, "maximum": integrations.MaxOperationBatchItems},
+				"target_count": map[string]interface{}{"type": "integer", "minimum": 0, "maximum": integrations.MaxOperationBatchItems},
+				"target":       map[string]interface{}{"type": "object", "additionalProperties": true},
+			},
+			"required": []string{"item_count"},
+		},
 		// These annotations are populated by the provider when absent before
 		// governance freezes an invocation. Any supplied value must still match
 		// the current catalog, so a stale frozen call fails closed.
@@ -138,13 +167,17 @@ func executeActionInputSchema() map[string]interface{} {
 		"catalog_revision": map[string]interface{}{
 			"type": "string", "maxLength": 128, "readOnly": true,
 		},
-	}, "integration_id", "action_id", "arguments")
+	}, "integration_id", "action_id")
 	// An explicit UUID and a server-side selector are mutually exclusive. Both
 	// may be omitted because the server then applies the preferred selector.
 	schema["allOf"] = []interface{}{
 		map[string]interface{}{
 			"not": map[string]interface{}{"required": []string{"connection_id", "connection_selector"}},
 		},
+	}
+	schema["oneOf"] = []interface{}{
+		map[string]interface{}{"required": []string{"arguments"}, "not": map[string]interface{}{"required": []string{"batch_items"}}},
+		map[string]interface{}{"required": []string{"batch_items"}, "not": map[string]interface{}{"required": []string{"arguments"}}},
 	}
 	return schema
 }
@@ -213,6 +246,7 @@ func actionSummarySchema() map[string]interface{} {
 		"can_execute":             map[string]interface{}{"type": "boolean"},
 		"recovery_action":         map[string]interface{}{"type": "string", "enum": []string{"upgrade_oauth_scope"}},
 		"requires_approval":       map[string]interface{}{"type": "boolean"},
+		"supports_batch":          map[string]interface{}{"type": "boolean"},
 		"required_arguments": map[string]interface{}{
 			"type": "array", "maxItems": 64, "items": compactArgumentSchema,
 		},
@@ -221,7 +255,7 @@ func actionSummarySchema() map[string]interface{} {
 		},
 		"guide_recommended": map[string]interface{}{"type": "boolean"},
 		"preparation_hints": map[string]interface{}{"type": "array", "maxItems": 8, "items": preparationHintSchema},
-	}, "integration_id", "action_id", "name", "description", "effect", "risk_level", "data_egress", "required_scopes", "schema_hash", "catalog_revision", "connection_name", "connection_selection")
+	}, "integration_id", "action_id", "name", "description", "effect", "risk_level", "data_egress", "required_scopes", "schema_hash", "catalog_revision", "connection_name", "connection_selection", "supports_batch")
 }
 
 func localizedTextSchema(maxLength int) map[string]interface{} {
@@ -260,11 +294,32 @@ func actionGuideOutputSchema() map[string]interface{} {
 	copyProperties["schema_revision"] = map[string]interface{}{"type": "string", "maxLength": 128}
 	return strictObject(copyProperties,
 		"integration_id", "action_id", "name", "description", "effect", "risk_level", "data_egress",
-		"required_scopes", "schema_hash", "schema_revision", "catalog_revision", "connection_name", "connection_selection", "input_schema", "output_schema",
+		"required_scopes", "schema_hash", "schema_revision", "catalog_revision", "connection_name", "connection_selection", "supports_batch", "input_schema", "output_schema",
 	)
 }
 
 func executeActionOutputSchema() map[string]interface{} {
+	batchItemSchema := strictObject(map[string]interface{}{
+		"item_index": map[string]interface{}{"type": "integer", "minimum": 1, "maximum": integrations.MaxOperationBatchItems},
+		"status": map[string]interface{}{
+			"type": "string", "enum": []string{"executing", "succeeded", "failed_safe", "outcome_unknown"},
+		},
+		"error_code": map[string]interface{}{"type": "string", "maxLength": 128},
+		"retry_safe": map[string]interface{}{"type": "boolean"},
+		"replayed":   map[string]interface{}{"type": "boolean"},
+		"result":     map[string]interface{}{"type": "object", "additionalProperties": true},
+	}, "item_index", "status")
+	batchSchema := strictObject(map[string]interface{}{
+		"status":                map[string]interface{}{"type": "string", "enum": []string{"pending", "executing", "partially_succeeded", "succeeded", "failed", "outcome_unknown"}},
+		"item_count":            map[string]interface{}{"type": "integer", "minimum": 2, "maximum": integrations.MaxOperationBatchItems},
+		"succeeded_count":       map[string]interface{}{"type": "integer", "minimum": 0, "maximum": integrations.MaxOperationBatchItems},
+		"failed_safe_count":     map[string]interface{}{"type": "integer", "minimum": 0, "maximum": integrations.MaxOperationBatchItems},
+		"outcome_unknown_count": map[string]interface{}{"type": "integer", "minimum": 0, "maximum": integrations.MaxOperationBatchItems},
+		"executing_count":       map[string]interface{}{"type": "integer", "minimum": 0, "maximum": integrations.MaxOperationBatchItems},
+		"items": map[string]interface{}{
+			"type": "array", "minItems": 2, "maxItems": integrations.MaxOperationBatchItems, "items": batchItemSchema,
+		},
+	}, "status", "item_count", "succeeded_count", "failed_safe_count", "outcome_unknown_count", "executing_count", "items")
 	return strictObject(map[string]interface{}{
 		"integration_id":          identifierSchema("Integration ID."),
 		"integration_name":        map[string]interface{}{"type": "string", "maxLength": 128},
@@ -282,8 +337,14 @@ func executeActionOutputSchema() map[string]interface{} {
 		"cost_usd":                map[string]interface{}{"type": "number", "minimum": 0},
 		"result_count":            map[string]interface{}{"type": "integer", "minimum": 0},
 		"attempt_count":           map[string]interface{}{"type": "integer", "minimum": 0},
-		"result_truncated":        map[string]interface{}{"type": "boolean"},
-		"result":                  map[string]interface{}{"type": "object", "additionalProperties": true},
+		"operation_status": map[string]interface{}{
+			"type": "string", "enum": []string{"completed", "already_completed", "executing", "failed_safe", "partially_succeeded", "succeeded", "failed", "outcome_unknown"},
+		},
+		"error_code":       map[string]interface{}{"type": "string", "maxLength": 128},
+		"retry_safe":       map[string]interface{}{"type": "boolean"},
+		"batch":            batchSchema,
+		"result_truncated": map[string]interface{}{"type": "boolean"},
+		"result":           map[string]interface{}{"type": "object", "additionalProperties": true},
 	},
 		"integration_id", "integration_name", "integration_name_i18n",
 		"action_id", "action_name", "action_name_i18n",

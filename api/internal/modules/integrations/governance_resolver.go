@@ -2,6 +2,7 @@ package integrations
 
 import (
 	"context"
+	"reflect"
 	"strings"
 
 	"github.com/google/uuid"
@@ -49,6 +50,8 @@ func (resolver *GovernanceManifestResolver) ResolveToolGovernanceManifest(ctx co
 		return manifest, NewError(ErrorCodeAccessDenied, "integration action policy is unavailable", nil)
 	}
 	var action *ActionDefinition
+	var actionInputs []map[string]interface{}
+	batchApprovalScope := ""
 	if integrationID == MetaProviderExternalIntegrations {
 		if req.ExecutionContext.InvokeFrom != tools.ToolInvokeFromAIChat &&
 			req.ExecutionContext.InvokeFrom != tools.ToolInvokeFromAgent {
@@ -85,22 +88,57 @@ func (resolver *GovernanceManifestResolver) ResolveToolGovernanceManifest(ctx co
 		if !metaConnectionSelected(req.ExecutionContext.RuntimeParameters, integrationID, connectionID) {
 			return req.Manifest, NewError(ErrorCodeAccessDenied, "integration connection is not selected for this chat", nil)
 		}
-		resolved, resolveErr := resolver.registry.ResolveDynamicActionGovernance(ctx, ActionGovernanceRequest{
-			OrganizationID: req.ExecutionContext.OrganizationID,
-			UserID:         req.ExecutionContext.UserID,
-			IntegrationID:  integrationID,
-			ActionID:       actionID,
-			InvokeFrom:     req.ExecutionContext.InvokeFrom,
-			Input:          nestedActionArguments(req.Arguments),
-		})
-		if resolveErr != nil {
-			return req.Manifest, resolveErr
+		items, batched, batchErr := OperationBatchItems(req.Arguments)
+		if batchErr != nil {
+			return req.Manifest, batchErr
+		}
+		if batched {
+			actionInputs = items
+		} else {
+			actionInputs = []map[string]interface{}{nestedActionArguments(req.Arguments)}
+		}
+		var resolved ActionDefinition
+		for index, input := range actionInputs {
+			candidate, resolveErr := resolver.registry.ResolveDynamicActionGovernance(ctx, ActionGovernanceRequest{
+				OrganizationID: req.ExecutionContext.OrganizationID,
+				UserID:         req.ExecutionContext.UserID,
+				IntegrationID:  integrationID,
+				ActionID:       actionID,
+				InvokeFrom:     req.ExecutionContext.InvokeFrom,
+				Input:          cloneJSONMap(input),
+			})
+			if resolveErr != nil {
+				return req.Manifest, resolveErr
+			}
+			if index > 0 && !reflect.DeepEqual(resolved, candidate) {
+				return req.Manifest, NewError(ErrorCodePolicyConflict, "batch items require different action governance; split them into separate executions", nil)
+			}
+			resolved = candidate
 		}
 		if err := validateMetaActionRevisionArguments(req.Arguments, resolved); err != nil {
 			return req.Manifest, err
 		}
 		action = &resolved
-		manifest = manifestForIntegrationAction(req.Manifest, integrationID, connectionID, resolved)
+		if batched {
+			if resolved.SuccessDeduplication == nil {
+				return req.Manifest, invalidInput("batch execution is unavailable for this action", nil)
+			}
+			batch, batchErr := EnsureOperationBatchMetadata(
+				req.Arguments,
+				req.ExecutionContext.MessageID,
+				connectionID,
+				integrationID,
+				actionID,
+			)
+			if batchErr != nil {
+				return req.Manifest, batchErr
+			}
+			batchApprovalScope = batch.FrozenItemsDigest
+			req.Arguments["batch_summary"] = OperationBatchApprovalSummary(items, resolved.SuccessDeduplication)
+		} else {
+			delete(req.Arguments, "batch_summary")
+		}
+		manifest = manifestForIntegrationAction(req.Manifest, integrationID, connectionID, resolved, actionInputs[0], batchApprovalScope)
 	} else {
 		for _, candidate := range resolver.registry.Actions(integrationID) {
 			if strings.EqualFold(candidate.ToolName, req.ToolName) {
@@ -124,16 +162,22 @@ func (resolver *GovernanceManifestResolver) ResolveToolGovernanceManifest(ctx co
 	}
 	actionInput := req.Arguments
 	if strings.EqualFold(strings.TrimSpace(req.ProviderID), MetaProviderExternalIntegrations) {
-		actionInput = nestedActionArguments(req.Arguments)
+		if len(actionInputs) == 0 {
+			actionInputs = []map[string]interface{}{nestedActionArguments(req.Arguments)}
+		}
+		actionInput = actionInputs[0]
+	} else {
+		actionInputs = []map[string]interface{}{actionInput}
 	}
-	if err := resolver.safety.Check(ctx, *action, actionInput); err != nil {
-		return manifest, err
-	}
-	// Validate the selected provider Action before an approval card is created
-	// and before the invocation is frozen. Executor repeats this validation as a
-	// defense-in-depth check for non-chat callers and catalog races.
-	if err := ValidateActionInput(integrationID, *action, actionInput); err != nil {
-		return manifest, err
+	for _, candidateInput := range actionInputs {
+		if err := resolver.safety.Check(ctx, *action, candidateInput); err != nil {
+			return manifest, err
+		}
+		// Validate every frozen provider Action item before an approval card is
+		// created. Executor repeats this for each item as defense in depth.
+		if err := ValidateActionInput(integrationID, *action, candidateInput); err != nil {
+			return manifest, err
+		}
 	}
 	if action.DefaultPolicy != nil {
 		if action.DataEgress && !action.DefaultPolicy.DataEgressAllowed {
@@ -292,7 +336,7 @@ func nestedActionArguments(arguments map[string]interface{}) map[string]interfac
 	return map[string]interface{}{}
 }
 
-func manifestForIntegrationAction(base toolgovernance.Manifest, integrationID, connectionID string, action ActionDefinition) toolgovernance.Manifest {
+func manifestForIntegrationAction(base toolgovernance.Manifest, integrationID, connectionID string, action ActionDefinition, input map[string]interface{}, batchApprovalScope string) toolgovernance.Manifest {
 	manifest := base
 	integrationID = strings.ToLower(strings.TrimSpace(integrationID))
 	connectionID = strings.ToLower(strings.TrimSpace(connectionID))
@@ -310,6 +354,14 @@ func manifestForIntegrationAction(base toolgovernance.Manifest, integrationID, c
 	}
 	if boundIdentity {
 		manifest.ToolID = integrationID + ":" + actionID
+		if batchApprovalScope = strings.TrimSpace(batchApprovalScope); batchApprovalScope != "" {
+			manifest.ToolID += ":batch:" + batchApprovalScope[:min(len(batchApprovalScope), 32)]
+		} else if targetDigest := operationTargetDigest(input, action.SuccessDeduplication); targetDigest != "" {
+			// Session grants for guarded side effects are scoped to the concrete
+			// external target. Remembering approval for one recipient therefore
+			// cannot authorize another recipient or chat.
+			manifest.ToolID += ":target:" + targetDigest
+		}
 		manifest.RequiresAssetResolution = true
 	} else {
 		// A connector side effect must never receive a reusable approval when a

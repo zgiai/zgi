@@ -583,6 +583,24 @@ func TestRegistryDispatchesRegistrationOwnedCapabilities(t *testing.T) {
 	}
 }
 
+func TestEnforceGovernanceBaselinePreservesSuccessDeduplication(t *testing.T) {
+	baseline := guardedTestAction()
+	baseline.DefaultPolicy = &DefaultActionPolicy{
+		Enabled: true, ApprovalPolicy: toolgovernance.ApprovalPolicyAutoByPermissionTier, DataEgressAllowed: true,
+	}
+	resolved := baseline
+	resolved.SuccessDeduplication = nil
+
+	enforced, err := enforceGovernanceBaseline(baseline, resolved)
+	if err != nil {
+		t.Fatalf("enforceGovernanceBaseline() error = %v", err)
+	}
+	if enforced.SuccessDeduplication == nil ||
+		!slices.Equal(enforced.SuccessDeduplication.TargetArgumentPaths, baseline.SuccessDeduplication.TargetArgumentPaths) {
+		t.Fatalf("success deduplication was weakened: baseline=%#v enforced=%#v", baseline.SuccessDeduplication, enforced.SuccessDeduplication)
+	}
+}
+
 func TestRegistryRejectsInvalidProviderDefinitions(t *testing.T) {
 	validRegistration := func() Registration {
 		action := testAction("github.issue.list", "list_github_issues")

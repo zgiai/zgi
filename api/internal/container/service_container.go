@@ -225,6 +225,7 @@ type ServiceContainer struct {
 	integrationRegistry             *integrations.Registry
 	integrationExecutor             *integrations.Executor
 	integrationExecutionRepo        *integrations.GormExecutionRepository
+	integrationOperationReceiptRepo *integrations.GormOperationReceiptRepository
 	integrationConnectionRepo       *integrations.GormConnectionRepository
 	integrationCredentialCipher     integrations.CredentialCipher
 	integrationConnectionResolver   *integrations.DefaultConnectionResolver
@@ -1192,6 +1193,13 @@ func (c *ServiceContainer) GetIntegrationExecutionRepository() *integrations.Gor
 	return c.integrationExecutionRepo
 }
 
+func (c *ServiceContainer) GetIntegrationOperationReceiptRepository() *integrations.GormOperationReceiptRepository {
+	if c.integrationOperationReceiptRepo == nil {
+		c.integrationOperationReceiptRepo = integrations.NewGormOperationReceiptRepository(c.db)
+	}
+	return c.integrationOperationReceiptRepo
+}
+
 func (c *ServiceContainer) GetIntegrationConnectionRepository() *integrations.GormConnectionRepository {
 	if c.integrationConnectionRepo == nil {
 		c.integrationConnectionRepo = integrations.NewGormConnectionRepository(c.db)
@@ -1499,6 +1507,7 @@ func (c *ServiceContainer) GetIntegrationExecutor() *integrations.Executor {
 			integrations.DeriveAuditHMACKey(masterKey),
 			timeout,
 		).
+			WithOperationReceiptRepository(c.GetIntegrationOperationReceiptRepository()).
 			WithCompletionOutbox(integrations.NewRedisExecutionCompletionOutbox(redisPkg.GetClient())).
 			WithConnectionResolver(c.GetIntegrationRuntimeConnectionResolver()).
 			WithActionPolicyResolver(c.GetIntegrationActionPolicyService()).

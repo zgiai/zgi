@@ -905,8 +905,11 @@ func sendAction(
 		DataEgress: true, ExternalDestination: "open.feishu.cn", SensitiveDataAllowed: false,
 		Idempotent: false, RequiredScopes: scopes,
 		ScopeLabelsI18n: scopeLabels,
+		SuccessDeduplication: &integrations.SuccessDeduplicationDefinition{
+			TargetArgumentPaths: []string{"recipient_id", "recipient_type"},
+		},
 		DefaultPolicy: &integrations.DefaultActionPolicy{
-			Enabled: false, ApprovalPolicy: toolgovernance.ApprovalPolicyAlwaysAsk, DataEgressAllowed: true,
+			Enabled: false, ApprovalPolicy: toolgovernance.ApprovalPolicyAutoByPermissionTier, DataEgressAllowed: true,
 		},
 		SupportedCallers: []tools.ToolInvokeFrom{tools.ToolInvokeFromAIChat},
 	}

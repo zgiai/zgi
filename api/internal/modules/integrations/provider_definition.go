@@ -191,6 +191,7 @@ type ActionSummary struct {
 	SchemaRevision         string                   `json:"schema_revision"`
 	CatalogRevision        string                   `json:"catalog_revision"`
 	SupportedCallers       []tools.ToolInvokeFrom   `json:"supported_callers,omitempty"`
+	SupportsBatch          bool                     `json:"supports_batch"`
 }
 
 type ActionSearchRequest struct {

@@ -135,6 +135,8 @@ func (t *Tool) EnrichGovernanceArgumentsWithError(
 	if t == nil || t.name != ToolExecuteAction || t.registry == nil {
 		return out, nil
 	}
+	delete(out, "operation_batch")
+	delete(out, "batch_summary")
 	// Display metadata and connection labels are server-owned. Clear all
 	// caller-supplied values before attempting resolution so an invalid action
 	// cannot leave spoofed metadata in an approval payload.
@@ -298,6 +300,14 @@ func (t *Tool) executeAction(ctx context.Context, userID string, parameters map[
 	if err != nil {
 		return nil, err
 	}
+	if batchItems, batched, batchErr := integrations.OperationBatchItems(parameters); batchErr != nil {
+		return nil, batchErr
+	} else if batched {
+		return t.executeActionBatch(
+			ctx, parameters, batchItems, definition, action, selected, selection,
+			organizationID, accountID, workspaceID, conversationID, appID, messageID,
+		)
+	}
 	actionArguments, ok := parameters["arguments"].(map[string]interface{})
 	if !ok || actionArguments == nil {
 		return nil, integrations.NewError(integrations.ErrorCodeInvalidInput, "execute_action arguments must be an object", nil)
@@ -327,6 +337,22 @@ func (t *Tool) executeAction(ctx context.Context, userID string, parameters map[
 	}
 	result, err := t.executor.Execute(ctx, request)
 	if err != nil {
+		if action.SuccessDeduplication != nil {
+			if status, retrySafe, handled := integrations.GuardedOperationErrorStatus(err); handled {
+				output := map[string]interface{}{
+					"integration_id": integrationID, "action_id": action.ID,
+					"connection_name": safeConnectionName(selected.record), "connection_selection": selection,
+					"action_schema_hash": action.SchemaHash, "schema_revision": action.SchemaRevision, "catalog_revision": action.CatalogRevision,
+					"result_count": 0, "attempt_count": 0, "result": map[string]interface{}{},
+					"operation_status": status, "error_code": integrations.ErrorCode(err), "retry_safe": retrySafe,
+				}
+				setExecuteActionDisplayMetadata(output, definition, action)
+				if displayName := safeConnectionDisplayName(selected.record); displayName != "" {
+					output["connection_display_name"] = displayName
+				}
+				return output, nil
+			}
+		}
 		return nil, err
 	}
 	if result == nil || result.Output == nil {
@@ -341,6 +367,11 @@ func (t *Tool) executeAction(ctx context.Context, userID string, parameters map[
 		"connection_name": safeConnectionName(selected.record), "connection_selection": selection,
 		"action_schema_hash": action.SchemaHash, "schema_revision": action.SchemaRevision, "catalog_revision": action.CatalogRevision,
 		"result_count": max(result.ResultCount, 0), "attempt_count": max(result.AttemptCount, 0), "result": safeResult,
+	}
+	if result.Replayed {
+		output["operation_status"] = "already_completed"
+	} else if action.SuccessDeduplication != nil {
+		output["operation_status"] = "completed"
 	}
 	setExecuteActionDisplayMetadata(output, definition, action)
 	if displayName := safeConnectionDisplayName(selected.record); displayName != "" {
@@ -367,6 +398,183 @@ func (t *Tool) executeAction(ctx context.Context, userID string, parameters map[
 		output["result_truncated"] = true
 	}
 	return output, nil
+}
+
+func (t *Tool) executeActionBatch(
+	ctx context.Context,
+	parameters map[string]interface{},
+	items []map[string]interface{},
+	definition integrations.ProviderDefinition,
+	action integrations.ActionDefinition,
+	selected selectedConnection,
+	selection string,
+	organizationID uuid.UUID,
+	accountID uuid.UUID,
+	workspaceID *uuid.UUID,
+	conversationID, appID, messageID *string,
+) (map[string]interface{}, error) {
+	if action.SuccessDeduplication == nil {
+		return nil, integrations.NewError(integrations.ErrorCodeInvalidInput, "batch execution is unavailable for this action", nil)
+	}
+	canonical := cloneMap(parameters)
+	batch, err := integrations.EnsureOperationBatchMetadata(
+		canonical,
+		optionalString(messageID),
+		selected.record.ID.String(),
+		actionIntegrationID(definition, selected.record),
+		action.ID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	frozen, ok := integrations.ReadOperationBatchMetadata(parameters)
+	if !ok || frozen.BatchID != batch.BatchID || frozen.FrozenItemsDigest != batch.FrozenItemsDigest ||
+		frozen.ItemCount != batch.ItemCount || !equalStrings(frozen.ItemIDs, batch.ItemIDs) {
+		return nil, integrations.NewError(integrations.ErrorCodePolicyConflict, "batch plan changed after governance approval", nil)
+	}
+
+	type itemOutcome struct {
+		index       int
+		itemID      string
+		status      string
+		result      map[string]interface{}
+		errorCode   string
+		replayed    bool
+		attempts    int
+		resultCount int
+	}
+	outcomes := make([]itemOutcome, 0, len(items))
+	totalAttempts := 0
+	totalResults := 0
+	succeeded := 0
+	failedSafe := 0
+	unknown := 0
+	executing := 0
+	for index, item := range items {
+		request := integrations.ActionRequest{
+			OrganizationID: organizationID.String(), WorkspaceID: optionalUUIDString(workspaceID), UserID: accountID.String(),
+			AgentID:        runtimeString(t.runtime.RuntimeParameters, "agent_id"),
+			ConversationID: optionalString(conversationID), AppID: optionalString(appID), MessageID: optionalString(messageID),
+			ConnectionID: selected.record.ID.String(), InvokeFrom: t.runtime.InvokeFrom,
+			IntegrationID: selected.record.IntegrationID, ActionID: action.ID, Input: cloneMap(item),
+			BatchID: batch.BatchID, OperationItemID: batch.ItemIDs[index], ItemIndex: index + 1, ItemCount: len(items),
+		}
+		result, executeErr := t.executor.Execute(ctx, request)
+		outcome := itemOutcome{index: index + 1, itemID: batch.ItemIDs[index]}
+		if executeErr != nil {
+			outcome.errorCode = integrations.ErrorCode(executeErr)
+			status, _, handled := integrations.GuardedOperationErrorStatus(executeErr)
+			switch {
+			case handled && status == integrations.OperationReceiptStatusOutcomeUnknown:
+				outcome.status = integrations.OperationReceiptStatusOutcomeUnknown
+				unknown++
+			case handled && status == integrations.OperationReceiptStatusExecuting:
+				outcome.status = integrations.OperationReceiptStatusExecuting
+				executing++
+			default:
+				outcome.status = "failed_safe"
+				failedSafe++
+			}
+		} else if result == nil || result.Output == nil {
+			outcome.status = "outcome_unknown"
+			outcome.errorCode = integrations.ErrorCodeResponseInvalid
+			unknown++
+		} else {
+			safeResult, safe := redactInternalConnectionID(result.Output, selected.record.ID.String()).(map[string]interface{})
+			if !safe || safeResult == nil {
+				outcome.status = "outcome_unknown"
+				outcome.errorCode = integrations.ErrorCodeResponseInvalid
+				unknown++
+			} else {
+				outcome.status = "succeeded"
+				outcome.result = safeResult
+				outcome.replayed = result.Replayed
+				outcome.attempts = max(result.AttemptCount, 0)
+				outcome.resultCount = max(result.ResultCount, 0)
+				totalAttempts += outcome.attempts
+				totalResults += outcome.resultCount
+				succeeded++
+			}
+		}
+		outcomes = append(outcomes, outcome)
+	}
+
+	batchStatus := "succeeded"
+	switch {
+	case unknown > 0:
+		batchStatus = "outcome_unknown"
+	case executing > 0:
+		batchStatus = "executing"
+	case succeeded == 0 && failedSafe > 0:
+		batchStatus = "failed"
+	case succeeded < len(items):
+		batchStatus = "partially_succeeded"
+	}
+	itemViews := make([]interface{}, 0, len(outcomes))
+	for _, outcome := range outcomes {
+		view := map[string]interface{}{
+			"item_index": outcome.index, "status": outcome.status,
+		}
+		if outcome.result != nil {
+			view["result"] = outcome.result
+		}
+		if outcome.errorCode != "" {
+			view["error_code"] = outcome.errorCode
+		}
+		if outcome.status == "failed_safe" {
+			view["retry_safe"] = true
+		}
+		if outcome.replayed {
+			view["replayed"] = true
+		}
+		itemViews = append(itemViews, view)
+	}
+	output := map[string]interface{}{
+		"integration_id": selected.record.IntegrationID, "action_id": action.ID,
+		"connection_name": safeConnectionName(selected.record), "connection_selection": selection,
+		"action_schema_hash": action.SchemaHash, "schema_revision": action.SchemaRevision, "catalog_revision": action.CatalogRevision,
+		"result_count": totalResults, "attempt_count": totalAttempts, "result": map[string]interface{}{},
+		"operation_status": batchStatus,
+		"retry_safe":       failedSafe > 0 && unknown == 0 && executing == 0,
+		"batch": map[string]interface{}{
+			"status": batchStatus, "item_count": len(items),
+			"succeeded_count": succeeded, "failed_safe_count": failedSafe, "outcome_unknown_count": unknown,
+			"executing_count": executing,
+			"items":           itemViews,
+		},
+	}
+	setExecuteActionDisplayMetadata(output, definition, action)
+	if displayName := safeConnectionDisplayName(selected.record); displayName != "" {
+		output["connection_display_name"] = displayName
+	}
+	if encoded, marshalErr := json.Marshal(output); marshalErr != nil || len(encoded) > maxExecuteActionOutputBytes {
+		for _, raw := range itemViews {
+			if view, ok := raw.(map[string]interface{}); ok {
+				delete(view, "result")
+			}
+		}
+		output["result_truncated"] = true
+	}
+	return output, nil
+}
+
+func actionIntegrationID(definition integrations.ProviderDefinition, connection *integrations.IntegrationConnection) string {
+	if connection != nil && strings.TrimSpace(connection.IntegrationID) != "" {
+		return connection.IntegrationID
+	}
+	return definition.ID
+}
+
+func equalStrings(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index] != right[index] {
+			return false
+		}
+	}
+	return true
 }
 
 func (t *Tool) availableConnections(ctx context.Context, userID string) ([]selectedConnection, error) {
@@ -1055,6 +1263,7 @@ func actionSummaryOutput(action integrations.ActionSummary, connection *integrat
 		"schema_hash":         action.SchemaHash, "catalog_revision": action.CatalogRevision,
 		"connection_name": safeConnectionName(connection), "connection_selection": preferredSelector,
 		"availability": availability, "can_execute": canExecute, "requires_approval": requiresApproval,
+		"supports_batch": action.SupportsBatch,
 	}
 	if recoveryAction != "" {
 		output["recovery_action"] = recoveryAction
@@ -1562,7 +1771,7 @@ func validateTopLevelParameters(toolName string, parameters map[string]interface
 			"action_id": {}, "action_name": {}, "action_name_i18n": {},
 			"argument_labels_i18n": {}, "argument_value_labels_i18n": {},
 			"connection_id": {}, "connection_selector": {},
-			"connection_name": {}, "connection_display_name": {}, "connection_selection": {}, "arguments": {},
+			"connection_name": {}, "connection_display_name": {}, "connection_selection": {}, "arguments": {}, "batch_items": {}, "operation_batch": {}, "batch_summary": {},
 			"action_schema_hash": {}, "action_schema_revision": {}, "catalog_revision": {},
 		},
 	}[toolName]

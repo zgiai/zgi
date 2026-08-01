@@ -99,7 +99,9 @@ func TestProviderDefinitionSeparatesUserOAuthAndTenantApp(t *testing.T) {
 		}
 		if action.Effect == toolgovernance.EffectExternalSend {
 			if action.DefaultPolicy == nil || action.DefaultPolicy.Enabled ||
-				action.DefaultPolicy.ApprovalPolicy != toolgovernance.ApprovalPolicyAlwaysAsk || action.Idempotent {
+				action.DefaultPolicy.ApprovalPolicy != toolgovernance.ApprovalPolicyAutoByPermissionTier || action.Idempotent ||
+				action.SuccessDeduplication == nil ||
+				!slices.Equal(action.SuccessDeduplication.TargetArgumentPaths, []string{"recipient_id", "recipient_type"}) {
 				t.Fatalf("unsafe send defaults = %#v", action)
 			}
 			if !slices.Equal(action.SupportedCallers, []tools.ToolInvokeFrom{tools.ToolInvokeFromAIChat}) {

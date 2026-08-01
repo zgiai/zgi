@@ -126,11 +126,18 @@ func sanitizeExternalActionEnvelope(value map[string]interface{}) {
 	if !ok {
 		return
 	}
-	actionArguments, exists := arguments["arguments"]
-	if !exists {
-		return
+	if actionArguments, exists := arguments["arguments"]; exists {
+		arguments["arguments"] = sanitizeExternalApprovalArgument(actionArguments, 0)
 	}
-	arguments["arguments"] = sanitizeExternalApprovalArgument(actionArguments, 0)
+	if batchItems, exists := arguments["batch_items"]; exists {
+		arguments["batch_items"] = sanitizeExternalApprovalArgument(batchItems, 0)
+	}
+	if batchSummary, exists := arguments["batch_summary"]; exists {
+		arguments["batch_summary"] = sanitizeExternalApprovalArgument(batchSummary, 0)
+	}
+	// Batch IDs, item IDs and digests are internal replay and approval-binding
+	// material. Keep them in the sealed invocation, not the public event copy.
+	delete(arguments, "operation_batch")
 }
 
 func sanitizeExternalConnectionPublicMap(value map[string]interface{}, connectionID string) map[string]interface{} {

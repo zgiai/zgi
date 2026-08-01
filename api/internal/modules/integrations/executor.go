@@ -23,18 +23,26 @@ const (
 )
 
 type Executor struct {
-	registry         *Registry
-	audit            ExecutionRepository
-	quota            DailyQuota
-	safety           SafetyChecker
-	hmacKey          []byte
-	timeout          time.Duration
-	outbox           ExecutionCompletionOutbox
-	connections      ConnectionResolver
-	actionPolicies   ActionPolicyResolver
-	agentAuthorizer  AgentConnectionAuthorizer
-	accessAuthorizer ConnectionAccessAuthorizer
-	healthSignals    ConnectionHealthSignalSink
+	registry          *Registry
+	audit             ExecutionRepository
+	quota             DailyQuota
+	safety            SafetyChecker
+	hmacKey           []byte
+	timeout           time.Duration
+	outbox            ExecutionCompletionOutbox
+	connections       ConnectionResolver
+	actionPolicies    ActionPolicyResolver
+	agentAuthorizer   AgentConnectionAuthorizer
+	accessAuthorizer  ConnectionAccessAuthorizer
+	healthSignals     ConnectionHealthSignalSink
+	operationReceipts OperationReceiptRepository
+}
+
+func (e *Executor) WithOperationReceiptRepository(repository OperationReceiptRepository) *Executor {
+	if e != nil {
+		e.operationReceipts = repository
+	}
+	return e
 }
 
 func (e *Executor) WithConnectionAccessAuthorizer(authorizer ConnectionAccessAuthorizer) *Executor {
@@ -233,25 +241,79 @@ func (e *Executor) Execute(ctx context.Context, req ActionRequest) (*ActionResul
 			}
 		}
 	}
+	var operationReceipt *OperationReceipt
+	if resolved.Definition.SuccessDeduplication != nil {
+		if e.operationReceipts == nil || len(e.hmacKey) == 0 {
+			return nil, NewError(ErrorCodeAuditFailed, "external operation replay protection is unavailable", nil)
+		}
+		identity, identityErr := deriveOperationIdentity(e.hmacKey, req, resolved)
+		if identityErr != nil {
+			return nil, NewError(ErrorCodeInvalidInput, "external operation identity could not be established", identityErr)
+		}
+		candidate, candidateErr := newOperationReceipt(req, resolved, identity)
+		if candidateErr != nil {
+			return nil, NewError(ErrorCodeInvalidInput, "external operation identity could not be established", candidateErr)
+		}
+		claim, claimErr := e.operationReceipts.Claim(operationCtx, candidate)
+		if claimErr != nil {
+			return nil, NewError(ErrorCodeAuditFailed, "external operation replay protection is unavailable", claimErr)
+		}
+		if !claim.Claimed {
+			switch {
+			case claim.Receipt == nil:
+				return nil, NewError(ErrorCodeAuditFailed, "external operation replay protection returned an invalid claim", nil)
+			case claim.Receipt.Status == OperationReceiptStatusSucceeded:
+				return replayOperationResult(claim.Receipt, resolved.Definition.OutputSchema)
+			case claim.Receipt.Status == OperationReceiptStatusExecuting:
+				return nil, NewError(ErrorCodeOperationInProgress, "the same external operation is already in progress", nil)
+			default:
+				return nil, NewError(ErrorCodeOperationOutcomeUnknown, "the provider outcome for this external operation is unknown; verify it before sending again", nil)
+			}
+		}
+		operationReceipt = claim.Receipt
+	}
+	releaseOperationClaim := func() error {
+		if operationReceipt == nil {
+			return nil
+		}
+		releaseCtx, releaseCancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+		defer releaseCancel()
+		return e.operationReceipts.Release(releaseCtx, operationReceipt.ID, operationReceipt.ClaimToken)
+	}
 	if e.quota == nil {
+		_ = releaseOperationClaim()
 		return nil, NewError(ErrorCodeQuotaExceeded, "external integration quota service is unavailable", nil)
 	}
 	if err := e.quota.Acquire(operationCtx, req.OrganizationID); err != nil {
+		_ = releaseOperationClaim()
 		if errors.Is(err, ErrQuotaExceeded) {
 			return nil, NewError(ErrorCodeQuotaExceeded, "organization external integration daily limit has been reached", err)
 		}
 		return nil, NewError(ErrorCodeQuotaExceeded, "external integration quota service is unavailable", err)
 	}
 	if e.audit == nil || len(e.hmacKey) == 0 {
+		_ = releaseOperationClaim()
 		return nil, NewError(ErrorCodeAuditFailed, "external integration audit service is unavailable", nil)
 	}
 
 	record, err := e.newExecutionRecord(req, resolved)
 	if err != nil {
+		_ = releaseOperationClaim()
 		return nil, NewError(ErrorCodeAuditFailed, "external integration execution could not be audited", err)
 	}
 	if err := e.audit.Create(operationCtx, record); err != nil {
+		_ = releaseOperationClaim()
 		return nil, NewError(ErrorCodeAuditFailed, "external integration execution could not be audited", err)
+	}
+	if operationReceipt != nil {
+		if err := e.operationReceipts.MarkProviderStarted(operationCtx, operationReceipt.ID, operationReceipt.ClaimToken, record.ID); err != nil {
+			_ = releaseOperationClaim()
+			completion := completionForResult(nil, 0, NewError(ErrorCodeAuditFailed, "external operation start could not be recorded", err))
+			finalizeCtx, finalizeCancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+			_ = e.audit.Complete(finalizeCtx, record.ID, completion)
+			finalizeCancel()
+			return nil, NewError(ErrorCodeAuditFailed, "external operation start could not be recorded", err)
+		}
 	}
 
 	startedAt := time.Now()
@@ -263,6 +325,22 @@ func (e *Executor) Execute(ctx context.Context, req ActionRequest) (*ActionResul
 		} else if err := tools.ValidateJSONSchemaValue(resolved.Definition.OutputSchema, result.Output); err != nil {
 			callErr = NewError(ErrorCodeResponseInvalid, "integration returned an invalid response", err)
 		}
+	}
+	if operationReceipt != nil {
+		receiptCtx, receiptCancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
+		if callErr == nil {
+			if err := e.operationReceipts.CompleteSuccess(receiptCtx, operationReceipt.ID, operationReceipt.ClaimToken, result); err != nil {
+				_ = e.operationReceipts.MarkOutcomeUnknown(receiptCtx, operationReceipt.ID, operationReceipt.ClaimToken, record.ID)
+				callErr = NewError(ErrorCodeAuditFailed, "external operation succeeded but its replay receipt could not be completed", err)
+			}
+		} else if shouldReleaseOperationClaim(callErr) {
+			if err := e.operationReceipts.Release(receiptCtx, operationReceipt.ID, operationReceipt.ClaimToken); err != nil {
+				callErr = NewError(ErrorCodeAuditFailed, "external operation failure could not release its replay claim", errors.Join(callErr, err))
+			}
+		} else if err := e.operationReceipts.MarkOutcomeUnknown(receiptCtx, operationReceipt.ID, operationReceipt.ClaimToken, record.ID); err != nil {
+			callErr = NewError(ErrorCodeAuditFailed, "external operation outcome could not be recorded safely", errors.Join(callErr, err))
+		}
+		receiptCancel()
 	}
 	completion := completionForResult(result, durationMS, callErr)
 	finalizeCtx, finalizeCancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)

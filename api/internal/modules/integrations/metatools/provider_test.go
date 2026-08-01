@@ -67,7 +67,7 @@ func TestProviderPublishesStrictBoundedSchemas(t *testing.T) {
 		"integration_name", "integration_name_i18n", "action_name", "action_name_i18n",
 		"argument_labels_i18n", "argument_value_labels_i18n",
 		"connection_id", "connection_name", "connection_display_name", "connection_selection",
-		"action_schema_hash", "action_schema_revision", "catalog_revision",
+		"action_schema_hash", "action_schema_revision", "catalog_revision", "operation_batch", "batch_summary",
 	} {
 		if strings.Contains(string(modelSchemaJSON), forbidden) {
 			t.Fatalf("model-visible execute schema contains %q: %s", forbidden, modelSchemaJSON)
@@ -670,6 +670,109 @@ func TestExecuteActionResolvesAndAuthorizesPreferredConnection(t *testing.T) {
 			}
 			assertNoConnectionUUIDs(t, messages[0].Data, fixture.connectionOne.ID, fixture.connectionTwo.ID)
 		})
+	}
+}
+
+func TestExecuteActionLabelsReplayedOperationForTheModel(t *testing.T) {
+	fixture := newMetaToolFixture(t)
+	fixture.executor.result.Replayed = true
+	fixture.access.preferenceAllowed[fixture.connectionOne.ID] = true
+	fixture.access.actionAllowed[fixture.connectionOne.ID.String()+"/"+fixture.actionID] = true
+	tool := fixture.runtimeTool(t, ToolExecuteAction, map[string]interface{}{
+		"integration_selected_connection_ids": map[string][]string{fixture.integrationID: {fixture.connectionOne.ID.String()}},
+		"integration_connection_ids":          map[string]string{fixture.integrationID: fixture.connectionOne.ID.String()},
+	})
+	messages, err := tool.Invoke(context.Background(), fixture.accountID.String(), map[string]interface{}{
+		"integration_id": fixture.integrationID, "action_id": fixture.actionID,
+		"arguments": map[string]interface{}{"title": "hello"},
+	}, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Invoke() error = %v", err)
+	}
+	if len(messages) != 1 || messages[0].Data["operation_status"] != "already_completed" {
+		t.Fatalf("replayed execution result = %#v", messages)
+	}
+}
+
+func TestExecuteActionBatchUsesDistinctFrozenItemsAndReturnsAggregateStatus(t *testing.T) {
+	fixture := newMetaToolFixture(t)
+	enableFixtureSuccessGuard(t, fixture, "title")
+	fixture.access.preferenceAllowed[fixture.connectionOne.ID] = true
+	fixture.access.actionAllowed[fixture.connectionOne.ID.String()+"/"+fixture.actionID] = true
+	tool := fixture.runtimeTool(t, ToolExecuteAction, map[string]interface{}{
+		"integration_selected_connection_ids": map[string][]string{fixture.integrationID: {fixture.connectionOne.ID.String()}},
+		"integration_connection_ids":          map[string]string{fixture.integrationID: fixture.connectionOne.ID.String()},
+	})
+	messageID := uuid.NewString()
+	parameters := map[string]interface{}{
+		"integration_id": fixture.integrationID,
+		"action_id":      fixture.actionID,
+		"connection_id":  fixture.connectionOne.ID.String(),
+		"batch_items": []interface{}{
+			map[string]interface{}{"title": "first"},
+			map[string]interface{}{"title": "second"},
+		},
+	}
+	if _, err := integrations.EnsureOperationBatchMetadata(
+		parameters, messageID, fixture.connectionOne.ID.String(), fixture.integrationID, fixture.actionID,
+	); err != nil {
+		t.Fatalf("EnsureOperationBatchMetadata() error = %v", err)
+	}
+	if err := tools.ValidateJSONSchemaValue(tool.GetEntity().InputSchema, parameters); err != nil {
+		t.Fatalf("batch input schema error = %v, parameters = %#v", err, parameters)
+	}
+	messages, err := tool.Invoke(context.Background(), fixture.accountID.String(), parameters, nil, nil, &messageID)
+	if err != nil {
+		t.Fatalf("batch Invoke() error = %v", err)
+	}
+	if len(fixture.executor.requests) != 2 {
+		t.Fatalf("batch requests = %#v", fixture.executor.requests)
+	}
+	if fixture.executor.requests[0].OperationItemID == fixture.executor.requests[1].OperationItemID ||
+		fixture.executor.requests[0].BatchID == "" ||
+		fixture.executor.requests[0].BatchID != fixture.executor.requests[1].BatchID {
+		t.Fatalf("batch request identities = %#v", fixture.executor.requests)
+	}
+	if len(messages) != 1 || messages[0].Data["operation_status"] != "succeeded" {
+		t.Fatalf("batch messages = %#v", messages)
+	}
+	batch, ok := messages[0].Data["batch"].(map[string]interface{})
+	if !ok || batch["item_count"] != 2 || batch["succeeded_count"] != 2 || batch["status"] != "succeeded" {
+		t.Fatalf("batch output = %#v", messages[0].Data["batch"])
+	}
+	encoded, marshalErr := json.Marshal(messages[0].Data)
+	if marshalErr != nil {
+		t.Fatal(marshalErr)
+	}
+	if strings.Contains(string(encoded), "batch-") || strings.Contains(string(encoded), "operation_item_id") {
+		t.Fatalf("public batch output exposed internal identities: %s", encoded)
+	}
+	if err := tools.ValidateJSONSchemaValue(tool.GetEntity().OutputSchema, messages[0].Data); err != nil {
+		t.Fatalf("batch output schema error = %v", err)
+	}
+}
+
+func TestExecuteActionReturnsStructuredRetryStateForGuardedDefiniteFailure(t *testing.T) {
+	fixture := newMetaToolFixture(t)
+	enableFixtureSuccessGuard(t, fixture, "title")
+	fixture.executor.err = integrations.NewError(integrations.ErrorCodeProviderRejected, "rejected", nil)
+	fixture.access.preferenceAllowed[fixture.connectionOne.ID] = true
+	fixture.access.actionAllowed[fixture.connectionOne.ID.String()+"/"+fixture.actionID] = true
+	tool := fixture.runtimeTool(t, ToolExecuteAction, map[string]interface{}{
+		"integration_selected_connection_ids": map[string][]string{fixture.integrationID: {fixture.connectionOne.ID.String()}},
+		"integration_connection_ids":          map[string]string{fixture.integrationID: fixture.connectionOne.ID.String()},
+	})
+	messageID := uuid.NewString()
+	messages, err := tool.Invoke(context.Background(), fixture.accountID.String(), map[string]interface{}{
+		"integration_id": fixture.integrationID, "action_id": fixture.actionID,
+		"arguments": map[string]interface{}{"title": "retry me"},
+	}, nil, nil, &messageID)
+	if err != nil {
+		t.Fatalf("guarded failure must be returned as a structured retry state: %v", err)
+	}
+	if len(messages) != 1 || messages[0].Data["operation_status"] != "failed_safe" ||
+		messages[0].Data["retry_safe"] != true || messages[0].Data["error_code"] != integrations.ErrorCodeProviderRejected {
+		t.Fatalf("guarded failure output = %#v", messages)
 	}
 }
 
@@ -1355,6 +1458,30 @@ func newMetaToolFixture(t *testing.T) *metaToolFixture {
 		connectionOne: connectionOne, connectionTwo: connectionTwo,
 		registry: registry, lookup: lookup, access: access, policies: policies, executor: executor, provider: provider,
 	}
+}
+
+func enableFixtureSuccessGuard(t *testing.T, fixture *metaToolFixture, targetPaths ...string) {
+	t.Helper()
+	definition, _ := fixture.registry.ProviderDefinition(fixture.integrationID)
+	action, _ := fixture.registry.ActionDetail(fixture.integrationID, fixture.actionID)
+	action.SuccessDeduplication = &integrations.SuccessDeduplicationDefinition{
+		TargetArgumentPaths: append([]string(nil), targetPaths...),
+	}
+	definition.CatalogRevision = ""
+	action.CatalogRevision = ""
+	definition.Actions = []integrations.ActionDefinition{action}
+	registry := integrations.NewRegistry()
+	if err := registry.Register(integrations.Registration{
+		Definition: definition, Adapter: fakeRegistryAdapter{driverID: definition.DriverID},
+	}); err != nil {
+		t.Fatalf("register guarded action: %v", err)
+	}
+	provider, err := NewProvider(registry, fixture.executor, fixture.lookup, fixture.access, fixture.policies)
+	if err != nil {
+		t.Fatalf("NewProvider() error = %v", err)
+	}
+	fixture.registry = registry
+	fixture.provider = provider
 }
 
 func newAgentMetaToolFixture(

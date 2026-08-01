@@ -3,6 +3,7 @@ package integrations
 import (
 	"context"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -425,13 +426,159 @@ func TestManifestForIntegrationActionFallsBackToPerInvocationApprovalWithoutConn
 	action.DefaultPolicy = &DefaultActionPolicy{
 		Enabled: true, ApprovalPolicy: toolgovernance.ApprovalPolicyNeverAsk, DataEgressAllowed: true,
 	}
-	manifest := manifestForIntegrationAction(toolgovernance.Manifest{}, "provider-a", "", action)
+	manifest := manifestForIntegrationAction(toolgovernance.Manifest{}, "provider-a", "", action, nil, "")
 	if !manifest.ApprovalEveryInvocation || manifest.DefaultApprovalPolicy != toolgovernance.ApprovalPolicyAlwaysAsk {
 		t.Fatalf("unbound action did not fail closed: %#v", manifest)
 	}
 	if manifest.RequiresAssetResolution {
 		t.Fatalf("unbound action claimed a resolvable connection asset: %#v", manifest)
 	}
+}
+
+func TestManifestForGuardedActionScopesSessionGrantToExternalTarget(t *testing.T) {
+	action := testAction("message.send", "send_message")
+	action.Effect = toolgovernance.EffectExternalSend
+	action.RiskLevel = toolgovernance.RiskLevelHigh
+	action.Idempotent = false
+	action.SuccessDeduplication = &SuccessDeduplicationDefinition{TargetArgumentPaths: []string{"recipient_id", "recipient_type"}}
+	action.DefaultPolicy = &DefaultActionPolicy{
+		Enabled: true, ApprovalPolicy: toolgovernance.ApprovalPolicyAutoByPermissionTier, DataEgressAllowed: true,
+	}
+	first := manifestForIntegrationAction(toolgovernance.Manifest{}, "provider-a", testConnectionID, action, map[string]interface{}{
+		"recipient_id": "recipient-a", "recipient_type": "open_id", "text": "first wording",
+	}, "")
+	rephrased := manifestForIntegrationAction(toolgovernance.Manifest{}, "provider-a", testConnectionID, action, map[string]interface{}{
+		"recipient_id": "recipient-a", "recipient_type": "open_id", "text": "second wording",
+	}, "")
+	different := manifestForIntegrationAction(toolgovernance.Manifest{}, "provider-a", testConnectionID, action, map[string]interface{}{
+		"recipient_id": "recipient-b", "recipient_type": "open_id", "text": "first wording",
+	}, "")
+	if first.ToolID == "" || first.ToolID != rephrased.ToolID || first.ToolID == different.ToolID {
+		t.Fatalf("target-scoped tool ids first=%q rephrased=%q different=%q", first.ToolID, rephrased.ToolID, different.ToolID)
+	}
+	if first.ApprovalEveryInvocation || first.DefaultApprovalPolicy != toolgovernance.ApprovalPolicyAutoByPermissionTier {
+		t.Fatalf("guarded action must allow a target-scoped session grant after the first approval: %#v", first)
+	}
+}
+
+func TestGovernanceResolverBindsBatchApprovalToFrozenItems(t *testing.T) {
+	action := guardedTestAction()
+	registry := registerTestAction(t, action, &testAdapter{driverID: "test"})
+	resolver := NewGovernanceManifestResolver(registry, executorPolicyResolverFunc(
+		func(context.Context, string, string, ActionDefinition) (ActionPolicyDecision, error) {
+			return ActionPolicyDecision{
+				Enabled: true, ApprovalPolicy: IntegrationApprovalPolicyInherit, DataEgressAllowed: true,
+			}, nil
+		},
+	))
+	resolve := func(items []interface{}) (toolgovernance.Manifest, map[string]interface{}, error) {
+		arguments := map[string]interface{}{
+			"integration_id": IntegrationWebSearch, "action_id": action.ID, "connection_id": testConnectionID,
+			"batch_items": items,
+		}
+		manifest, err := resolver.ResolveToolGovernanceManifest(context.Background(), skills.ToolGovernanceRequest{
+			Manifest:     toolgovernance.Manifest{ToolID: "integration.execute_dynamic"},
+			ProviderType: tools.ToolProviderTypeConnector,
+			ProviderID:   MetaProviderExternalIntegrations,
+			ToolName:     "execute_action",
+			Arguments:    arguments,
+			ExecutionContext: skills.ExecutionContext{
+				OrganizationID: testOrganizationID, UserID: testUserID, MessageID: testMessageID,
+				InvokeFrom: tools.ToolInvokeFromAIChat,
+				RuntimeParameters: map[string]interface{}{
+					"integration_selected_connection_ids": map[string][]string{IntegrationWebSearch: {testConnectionID}},
+				},
+			},
+		})
+		return manifest, arguments, err
+	}
+	firstItems := []interface{}{
+		map[string]interface{}{"recipient_id": "recipient-a", "recipient_type": "open_id", "text": "one"},
+		map[string]interface{}{"recipient_id": "recipient-a", "recipient_type": "open_id", "text": "two"},
+	}
+	first, enriched, err := resolve(firstItems)
+	if err != nil {
+		t.Fatalf("first batch governance error = %v", err)
+	}
+	if _, ok := ReadOperationBatchMetadata(enriched); !ok || !strings.Contains(first.ToolID, ":batch:") {
+		t.Fatalf("first batch governance = %#v, arguments = %#v", first, enriched)
+	}
+	summary, ok := enriched["batch_summary"].(map[string]interface{})
+	if !ok || summary["item_count"] != 2 || summary["target_count"] != 1 {
+		t.Fatalf("batch approval summary = %#v", enriched["batch_summary"])
+	}
+	changedItems := append([]interface{}(nil), firstItems...)
+	changedItems[1] = map[string]interface{}{"recipient_id": "recipient-b", "recipient_type": "open_id", "text": "two"}
+	changed, _, err := resolve(changedItems)
+	if err != nil {
+		t.Fatalf("changed batch governance error = %v", err)
+	}
+	if changed.ToolID == first.ToolID {
+		t.Fatalf("changed target/items reused approval scope %q", first.ToolID)
+	}
+	shorter, _, err := resolve(firstItems[:1])
+	if ErrorCode(err) != ErrorCodeInvalidInput || shorter.ToolID != "integration.execute_dynamic" {
+		t.Fatalf("changed item count error = %v, manifest = %#v", err, shorter)
+	}
+}
+
+func TestGovernanceResolverRequiresConsistentDynamicGovernanceAcrossBatch(t *testing.T) {
+	action := guardedTestAction()
+	dynamic := &batchInputGovernanceResolver{}
+	registration := localizedTestRegistration(IntegrationWebSearch, &testAdapter{driverID: "test"}, []ActionDefinition{action})
+	registration.GovernanceResolver = dynamic
+	registry := NewRegistry()
+	if err := registry.Register(registration); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+	resolver := NewGovernanceManifestResolver(registry, executorPolicyResolverFunc(
+		func(context.Context, string, string, ActionDefinition) (ActionPolicyDecision, error) {
+			return ActionPolicyDecision{Enabled: true, DataEgressAllowed: true}, nil
+		},
+	))
+
+	_, err := resolver.ResolveToolGovernanceManifest(context.Background(), skills.ToolGovernanceRequest{
+		Manifest:     toolgovernance.Manifest{ToolID: "integration.execute_dynamic"},
+		ProviderType: tools.ToolProviderTypeConnector,
+		ProviderID:   MetaProviderExternalIntegrations,
+		ToolName:     "execute_action",
+		Arguments: map[string]interface{}{
+			"integration_id": IntegrationWebSearch, "action_id": action.ID, "connection_id": testConnectionID,
+			"batch_items": []interface{}{
+				map[string]interface{}{"recipient_id": "recipient-a", "recipient_type": "open_id", "text": "one"},
+				map[string]interface{}{"recipient_id": "recipient-b", "recipient_type": "open_id", "text": "two"},
+			},
+		},
+		ExecutionContext: skills.ExecutionContext{
+			OrganizationID: testOrganizationID, UserID: testUserID, MessageID: testMessageID,
+			InvokeFrom: tools.ToolInvokeFromAIChat,
+			RuntimeParameters: map[string]interface{}{
+				"integration_selected_connection_ids": map[string][]string{IntegrationWebSearch: {testConnectionID}},
+			},
+		},
+	})
+	if ErrorCode(err) != ErrorCodePolicyConflict {
+		t.Fatalf("batch dynamic governance error = %v, code = %q", err, ErrorCode(err))
+	}
+	if !slices.Equal(dynamic.recipients, []string{"recipient-a", "recipient-b"}) {
+		t.Fatalf("dynamic governance inputs = %#v", dynamic.recipients)
+	}
+}
+
+type batchInputGovernanceResolver struct {
+	recipients []string
+}
+
+func (resolver *batchInputGovernanceResolver) ResolveActionGovernance(_ context.Context, request ActionGovernanceRequest) (ActionDefinition, error) {
+	recipient, _ := request.Input["recipient_id"].(string)
+	resolver.recipients = append(resolver.recipients, recipient)
+	resolved := request.Baseline
+	if recipient == "recipient-b" {
+		policy := *resolved.DefaultPolicy
+		policy.ApprovalPolicy = toolgovernance.ApprovalPolicyAlwaysAsk
+		resolved.DefaultPolicy = &policy
+	}
+	return resolved, nil
 }
 
 func TestGovernanceResolverMetaExecuteFailsClosedForUnknownOrUnselectedAction(t *testing.T) {

@@ -912,6 +912,26 @@ func normalizeActionDefinition(integrationID string, action ActionDefinition) (A
 	if err != nil {
 		return ActionDefinition{}, err
 	}
+	if action.SuccessDeduplication != nil {
+		if action.Idempotent || action.Effect == toolgovernance.EffectRead || action.Effect == toolgovernance.EffectNone {
+			return ActionDefinition{}, fmt.Errorf("integration %s action %s success deduplication requires a non-idempotent side effect", integrationID, action.ID)
+		}
+		paths := normalizeCatalogStringList(action.SuccessDeduplication.TargetArgumentPaths, 16)
+		if len(paths) == 0 {
+			return ActionDefinition{}, fmt.Errorf("integration %s action %s success deduplication requires target argument paths", integrationID, action.ID)
+		}
+		for _, path := range paths {
+			for _, segment := range strings.Split(path, ".") {
+				if !integrationIdentifierPattern.MatchString(segment) {
+					return ActionDefinition{}, fmt.Errorf("integration %s action %s success deduplication target path %s is invalid", integrationID, action.ID, path)
+				}
+			}
+			if !actionPreparationResultPathExists(action.InputSchema, path) {
+				return ActionDefinition{}, fmt.Errorf("integration %s action %s success deduplication target path %s must exist in the input schema", integrationID, action.ID, path)
+			}
+		}
+		action.SuccessDeduplication = &SuccessDeduplicationDefinition{TargetArgumentPaths: paths}
+	}
 	if action.DefaultPolicy == nil {
 		action.DefaultPolicy = &DefaultActionPolicy{
 			Enabled: true, ApprovalPolicy: toolgovernance.ApprovalPolicyAutoByPermissionTier, DataEgressAllowed: true,
@@ -1378,6 +1398,12 @@ func enforceGovernanceBaseline(baseline, resolved ActionDefinition) (ActionDefin
 	resolved.SupportedCallers = append([]tools.ToolInvokeFrom(nil), baseline.SupportedCallers...)
 	resolved.SupportedAuthMethodIDs = append([]string(nil), baseline.SupportedAuthMethodIDs...)
 	resolved.Idempotent = baseline.Idempotent
+	resolved.SuccessDeduplication = nil
+	if baseline.SuccessDeduplication != nil {
+		guard := *baseline.SuccessDeduplication
+		guard.TargetArgumentPaths = append([]string(nil), baseline.SuccessDeduplication.TargetArgumentPaths...)
+		resolved.SuccessDeduplication = &guard
+	}
 	if resolved.Effect == "" {
 		resolved.Effect = baseline.Effect
 	}
@@ -1467,6 +1493,7 @@ func actionSummary(definition ProviderDefinition, action ActionDefinition) Actio
 		ScopeLabelsI18n:        cloneLocalizedLabelMap(action.ScopeLabelsI18n), DefaultPolicy: policy,
 		SchemaHash: action.SchemaHash, SchemaRevision: action.SchemaRevision, CatalogRevision: action.CatalogRevision,
 		SupportedCallers: append([]tools.ToolInvokeFrom(nil), action.SupportedCallers...),
+		SupportsBatch:    action.SuccessDeduplication != nil,
 	}
 }
 
@@ -1692,6 +1719,11 @@ func cloneAction(action ActionDefinition) ActionDefinition {
 	if action.DefaultPolicy != nil {
 		policy := *action.DefaultPolicy
 		action.DefaultPolicy = &policy
+	}
+	if action.SuccessDeduplication != nil {
+		guard := *action.SuccessDeduplication
+		guard.TargetArgumentPaths = append([]string(nil), action.SuccessDeduplication.TargetArgumentPaths...)
+		action.SuccessDeduplication = &guard
 	}
 	return action
 }
