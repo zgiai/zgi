@@ -33,6 +33,49 @@ func TestNormalizeToolCallsRepairsBareQuotesInArguments(t *testing.T) {
 	}
 }
 
+func TestNormalizeToolCallsRepairsLongTextJSONIssues(t *testing.T) {
+	raw := `{"title":"Draft","content":"First line
+Use \draft and call it "alpha", then continue.	Done."}`
+	calls := normalizeToolCalls([]adapter.ToolCall{{
+		Function: adapter.FunctionCall{
+			Name:      "submit_intermediate_answer",
+			Arguments: raw,
+		},
+	}})
+
+	var args map[string]interface{}
+	if err := json.Unmarshal([]byte(calls[0].Function.Arguments), &args); err != nil {
+		t.Fatalf("normalized arguments are not JSON: %v\n%s", err, calls[0].Function.Arguments)
+	}
+	want := "First line\nUse \\draft and call it \"alpha\", then continue.\tDone."
+	if got := args["content"]; got != want {
+		t.Fatalf("content = %#v, want %#v", got, want)
+	}
+	if got := args["_invalid_tool_arguments"]; got != nil {
+		t.Fatalf("_invalid_tool_arguments = %#v, want nil", got)
+	}
+}
+
+func TestNormalizeToolCallsClosesCompleteIntermediateAnswerObject(t *testing.T) {
+	calls := normalizeToolCalls([]adapter.ToolCall{{
+		Function: adapter.FunctionCall{
+			Name:      "submit_intermediate_answer",
+			Arguments: `{"title":"Draft","content":"Complete body"`,
+		},
+	}})
+
+	var args map[string]interface{}
+	if err := json.Unmarshal([]byte(calls[0].Function.Arguments), &args); err != nil {
+		t.Fatalf("normalized arguments are not JSON: %v\n%s", err, calls[0].Function.Arguments)
+	}
+	if got := args["content"]; got != "Complete body" {
+		t.Fatalf("content = %#v, want Complete body", got)
+	}
+	if got := args["_invalid_tool_arguments"]; got != nil {
+		t.Fatalf("_invalid_tool_arguments = %#v, want nil", got)
+	}
+}
+
 func TestNormalizeToolCallsReplacesUnrepairableArgumentsWithJSONFeedback(t *testing.T) {
 	calls := normalizeToolCalls([]adapter.ToolCall{{
 		Function: adapter.FunctionCall{

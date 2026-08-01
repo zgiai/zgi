@@ -31,13 +31,12 @@ func (r *Runner) handleProgressiveSkillCall(
 ) skillStepResult {
 	args, err := skills.ParseArguments(call.Function.Arguments)
 	if err != nil {
-		trace := failedSkillTrace("meta_tool", call.Function.Name, err)
+		trace := invalidToolArgumentsFeedbackTrace(call.Function.Name, err, nil)
 		return recoverableSkillStep(trace, skills.ToolResultMessage(call.ID, recoverableErrorPayload(err, "fix the JSON arguments and retry the same tool call")), false, false)
 	}
 	if boolArg(args, "_invalid_tool_arguments") {
 		err := fmt.Errorf("%w: tool arguments were not valid JSON", ErrInvalidInput)
-		trace := failedSkillTrace("meta_tool", call.Function.Name, err)
-		trace.Arguments = copyStringAnyMap(args)
+		trace := invalidToolArgumentsFeedbackTrace(call.Function.Name, err, args)
 		return recoverableSkillStep(trace, skills.ToolResultMessage(call.ID, recoverableErrorPayload(err, stringArg(args, "next_action"))), false, false)
 	}
 	if normalizedCall, normalizedArgs, ok := normalizeDirectLoadedSkillToolCall(resolved, loadedSkills, call, args); ok {
@@ -145,6 +144,17 @@ func (r *Runner) handleProgressiveSkillCall(
 		trace := failedSkillTrace("meta_tool", call.Function.Name, err)
 		return recoverableSkillStep(trace, skills.ToolResultMessage(call.ID, recoverableErrorPayload(err, "use one of load_skill, request_user_input, read_skill_reference, call_skill_tool, submit_turn_state, update_plan, submit_intermediate_answer, or submit_final_answer")), false, false)
 	}
+}
+
+func invalidToolArgumentsFeedbackTrace(toolName string, err error, args map[string]interface{}) skills.SkillTrace {
+	trace := plannerFeedbackTrace("", toolName, err)
+	trace.Arguments["code"] = "invalid_tool_arguments"
+	trace.Arguments["failure_category"] = "arguments"
+	trace.Arguments["next_step"] = "retry_same_tool_with_valid_json"
+	if preview := strings.TrimSpace(stringArg(args, "raw_preview")); preview != "" {
+		trace.Arguments["raw_preview"] = preview
+	}
+	return trace
 }
 
 func runtimeControlToolAllowed(runtimeState map[string]interface{}, key string) bool {

@@ -124,6 +124,7 @@ const messages = {
     creditsPerImage: 'credits / image',
     usdPerMillionTokens: 'USD / 1M tokens',
     usdPerMillionShort: 'USD / 1M tokens',
+    cnyPerMillionShort: 'CNY / 1M tokens',
     sourceUpstream: 'Upstream price',
     sourceAdmin: 'Admin override',
     sourceCode: 'System default',

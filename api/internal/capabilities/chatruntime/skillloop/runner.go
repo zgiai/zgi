@@ -238,7 +238,15 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 		planningResult := planningResult{}
 		var err error
 		if req.TerminalOnly {
-			planningResult, err = r.runSkillPlanning(ctx, prepared, planningReq, round, req.OnChunk, deferTerminalContent, terminalSubmissionAllowed, suppressNaturalProgress)
+			planningResult, err = r.runTerminalOnlyPlanningWithRetry(
+				ctx,
+				prepared,
+				planningReq,
+				round,
+				req.OnChunk,
+				deferTerminalContent,
+				suppressNaturalProgress,
+			)
 		} else {
 			planningResult, err = r.runSkillPlanningWithRetry(ctx, prepared, planningReq, round, req.OnChunk, deferTerminalContent, terminalSubmissionAllowed, suppressNaturalProgress, req.PlanningOutputTokenLimit)
 		}
@@ -247,12 +255,6 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 			return answerBuilder.String(), usage, eventErr
 		}
 		if err != nil {
-			if req.TerminalOnly {
-				if fallback, ok := r.emitTerminalOnlyFallback(ctx, req, prepared, traces, roundRuntimeState, "model_error"); ok {
-					appendAnswerText(&answerBuilder, fallback)
-					return answerBuilder.String(), usage, nil
-				}
-			}
 			var streamedErr *streamedFinalAnswerError
 			if errors.As(err, &streamedErr) {
 				appendAnswerText(&answerBuilder, strings.TrimSpace(streamedErr.answer))
@@ -263,18 +265,16 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 		toolCalls := normalizeToolCalls(planningMessage.ToolCalls)
 		text := assistantMessageText(planningMessage)
 		if req.TerminalOnly && len(toolCalls) > 0 {
-			if fallback, ok := r.emitTerminalOnlyFallback(ctx, req, prepared, traces, roundRuntimeState, "unexpected_tool_call"); ok {
-				appendAnswerText(&answerBuilder, fallback)
-				return answerBuilder.String(), usage, nil
-			}
-			return answerBuilder.String(), usage, fmt.Errorf("%w: terminal-only model returned an unexpected tool call", ErrInvalidInput)
+			return answerBuilder.String(), usage, errors.Join(
+				ErrFinalAnswerUnavailable,
+				errors.New("terminal-only model returned an unexpected tool call after retry"),
+			)
 		}
 		if req.TerminalOnly && strings.TrimSpace(text) == "" {
-			if fallback, ok := r.emitTerminalOnlyFallback(ctx, req, prepared, traces, roundRuntimeState, "empty_response"); ok {
-				appendAnswerText(&answerBuilder, fallback)
-				return answerBuilder.String(), usage, nil
-			}
-			return answerBuilder.String(), usage, fmt.Errorf("%w: terminal-only model returned no final answer", ErrInvalidInput)
+			return answerBuilder.String(), usage, errors.Join(
+				ErrFinalAnswerUnavailable,
+				errors.New("terminal-only model returned no final answer after retry"),
+			)
 		}
 		if text != "" && len(toolCalls) > 0 && !suppressNaturalProgress {
 			if !planningResult.naturalAnswerStreamed &&
@@ -286,7 +286,10 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 		if len(toolCalls) == 0 && terminalStateGuardConfigured {
 			if strings.TrimSpace(text) == "" {
 				if req.TerminalOnly {
-					return answerBuilder.String(), usage, fmt.Errorf("%w: terminal-only model returned no final answer", ErrInvalidInput)
+					return answerBuilder.String(), usage, errors.Join(
+						ErrFinalAnswerUnavailable,
+						errors.New("terminal-only model returned no final answer after retry"),
+					)
 				}
 				emptyFinalAnswerRetryCount++
 				if emptyFinalAnswerRetryCount <= 1 {
@@ -676,7 +679,10 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 			consecutiveRecoverableFailureRounds = 0
 		}
 		if req.TerminalOnly {
-			return answerBuilder.String(), usage, fmt.Errorf("%w: terminal-only model did not submit a final answer", ErrInvalidInput)
+			return answerBuilder.String(), usage, errors.Join(
+				ErrFinalAnswerUnavailable,
+				errors.New("terminal-only model did not submit a final answer after retry"),
+			)
 		}
 	}
 
@@ -712,57 +718,6 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 		return answerBuilder.String(), usage, explanationErr
 	}
 	return answer, usage, nil
-}
-
-func (r *Runner) emitTerminalOnlyFallback(
-	ctx context.Context,
-	req RunRequest,
-	prepared *PreparedChat,
-	traces []skills.SkillTrace,
-	runtimeState map[string]interface{},
-	reason string,
-) (string, bool) {
-	answer, ok := terminalOnlyFallbackAnswer(prepared, currentMetadataForRun(req), runtimeState)
-	if !ok || strings.TrimSpace(answer) == "" {
-		return "", false
-	}
-	trace := skills.SkillTrace{
-		Kind:    "final_answer",
-		Title:   "Final answer",
-		Message: answer,
-		Status:  "success",
-		Arguments: map[string]interface{}{
-			"fallback":        true,
-			"fallback_reason": strings.TrimSpace(reason),
-		},
-		Result: map[string]interface{}{
-			"source": "runtime_evidence",
-		},
-	}
-	traces = append(traces, trace)
-	r.recordTrace(traces, trace)
-	r.logSkillTrace(ctx, prepared, trace)
-	r.emitAnswerChunk(ctx, prepared, answer, nil)
-
-	decision := terminalStateGuardDecision{
-		Path:        terminalStateGuardAccepted,
-		Reason:      "completed runtime evidence supplied a deterministic terminal fallback",
-		FinalAnswer: answer,
-	}
-	terminalStateGuardRecord(req, decision)
-	if req.OnTerminalCompletion != nil {
-		req.OnTerminalCompletion(TerminalCompletionResult{
-			Status: "pass",
-			Source: "runtime_evidence_fallback",
-			Reason: decision.Reason,
-		})
-	}
-	logger.WarnContext(ctx, "aichat terminal model degraded to completed runtime evidence",
-		"conversation_id", prepared.Conversation.ID.String(),
-		"message_id", prepared.Message.ID.String(),
-		"fallback_reason", strings.TrimSpace(reason),
-	)
-	return answer, true
 }
 
 func operationPlanModelRevisionRequired(req RunRequest, runtimeState map[string]interface{}) bool {
@@ -1688,7 +1643,7 @@ func (r *Runner) runSkillPlanning(ctx context.Context, prepared *PreparedChat, p
 		Error:              errorString(terminationErr),
 	})
 	if terminationErr != nil {
-		return planningResult{}, terminationErr
+		return planningResult{message: message, usage: usage}, terminationErr
 	}
 	return planningResult{message: message, usage: usage}, nil
 }

@@ -21,6 +21,8 @@ import { IS_CLOUD } from '@/lib/config';
 import { cn } from '@/lib/utils';
 import type { ModelUsageAppType, ModelUsageSummary } from '@/services/types/statistics';
 import { getBillingDisplaySettings } from '@/utils/billing-display';
+import { MODEL_USAGE_APP_TYPES } from '@/utils/model-usage-app-type';
+import { isCustomDateRangeValid } from '@/utils/usage-date-range';
 
 type DateRangeKey = 'last7Days' | 'last30Days' | 'last90Days' | 'custom';
 type AppTypeFilter = 'all' | ModelUsageAppType;
@@ -45,19 +47,8 @@ const EMPTY_SUMMARY: ModelUsageSummary = {
   total_points: 0,
 };
 
-function clampDateString(value: string, min?: string, max?: string): string {
-  if (!value) return '';
-  let nextValue = value;
-
-  if (min && nextValue < min) {
-    nextValue = min;
-  }
-
-  if (max && nextValue > max) {
-    nextValue = max;
-  }
-
-  return nextValue;
+function clampDateToToday(value: string, today: string): string {
+  return value && value > today ? today : value;
 }
 
 function SectionEyebrow({ children }: { children: React.ReactNode }) {
@@ -82,24 +73,16 @@ export default function UsageOverviewPage() {
   const todayString = format(new Date(), 'yyyy-MM-dd');
 
   const isCustomRange = dateRange === 'custom';
-  const isCustomRangeValid = !isCustomRange || Boolean(customStartDate && customEndDate);
+  const isCustomRangeValid =
+    !isCustomRange || isCustomDateRangeValid(customStartDate, customEndDate);
+  const isCustomRangeReversed =
+    isCustomRange && Boolean(customStartDate && customEndDate) && !isCustomRangeValid;
   const showSourceBreakdown = IS_CLOUD && sourceFilter === 'all';
-  const customStartMaxDate = customEndDate ? clampDateString(customEndDate, undefined, todayString) : todayString;
   const hasActiveFilters =
     dateRange !== 'last7Days' ||
     appType !== 'all' ||
     sourceFilter !== 'all' ||
     Boolean(modelNameInput.trim());
-
-  const handleCustomStartDateChange = (value: string) => {
-    const nextStartDate = clampDateString(value, undefined, customStartMaxDate);
-    setCustomStartDate(nextStartDate);
-  };
-
-  const handleCustomEndDateChange = (value: string) => {
-    const nextEndDate = clampDateString(value, customStartDate || undefined, todayString);
-    setCustomEndDate(nextEndDate);
-  };
 
   const params = useMemo(() => {
     let startDate = new Date(0);
@@ -162,7 +145,7 @@ export default function UsageOverviewPage() {
               <div>
                 <SectionEyebrow>{tCommon('filter')}</SectionEyebrow>
                 <CardTitle className="text-base">{t('usage.filters.appType')}</CardTitle>
-                <CardDescription>选择时间范围、应用类型和模型后查看对应数据。</CardDescription>
+                <CardDescription>{t('usage.filters.description')}</CardDescription>
               </div>
               <div className="flex items-center gap-2 self-start">
                 {hasActiveFilters ? (
@@ -204,11 +187,11 @@ export default function UsageOverviewPage() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">{t('usage.filters.appTypePlaceholder')}</SelectItem>
-                  <SelectItem value="workflow">{t('usage.appTypes.workflow')}</SelectItem>
-                  <SelectItem value="dataset">{t('usage.appTypes.dataset')}</SelectItem>
-                  <SelectItem value="agent">{t('usage.appTypes.agent')}</SelectItem>
-                  <SelectItem value="aichat">{t('usage.appTypes.aichat')}</SelectItem>
-                  <SelectItem value="unknown">{t('usage.appTypes.unknown')}</SelectItem>
+                  {MODEL_USAGE_APP_TYPES.map(appType => (
+                    <SelectItem key={appType} value={appType}>
+                      {t(`usage.appTypes.${appType}`)}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
 
@@ -250,8 +233,10 @@ export default function UsageOverviewPage() {
                   <Input
                     type="date"
                     value={customStartDate}
-                    onChange={event => handleCustomStartDateChange(event.target.value)}
-                    max={customStartMaxDate}
+                    onChange={event =>
+                      setCustomStartDate(clampDateToToday(event.target.value, todayString))
+                    }
+                    max={todayString}
                   />
                 </label>
                 <label className="flex flex-col gap-1.5">
@@ -261,9 +246,16 @@ export default function UsageOverviewPage() {
                   <Input
                     type="date"
                     value={customEndDate}
-                    onChange={event => handleCustomEndDateChange(event.target.value)}
+                    onChange={event =>
+                      setCustomEndDate(clampDateToToday(event.target.value, todayString))
+                    }
                     min={customStartDate || undefined}
                     max={todayString}
+                    aria-invalid={isCustomRangeReversed}
+                    error={isCustomRangeReversed}
+                    errorText={
+                      isCustomRangeReversed ? t('usage.filters.dateRangeInvalid') : undefined
+                    }
                   />
                 </label>
               </div>

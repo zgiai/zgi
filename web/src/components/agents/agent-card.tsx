@@ -10,6 +10,7 @@ import {
   DropdownMenuItem,
 } from '@/components/ui/dropdown-menu';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
+import { DestructiveNameConfirmDialog } from '@/components/ui/destructive-name-confirm-dialog';
 
 import {
   Workflow,
@@ -65,6 +66,9 @@ function AgentCard({ agent, onDeleted, onNavigate, pageIndex }: AgentCardProps) 
   const [editOpen, setEditOpen] = useState(false);
   const [moveOpen, setMoveOpen] = useState(false);
   const [bindingImpact, setBindingImpact] = useState<AgentResourceBoundImpact | null>(null);
+  const [pendingDeleteImpact, setPendingDeleteImpact] = useState<AgentResourceBoundImpact | null>(
+    null
+  );
   const [isCheckingDeleteImpact, setIsCheckingDeleteImpact] = useState(false);
   const queryClient = useQueryClient();
   const { exportWorkflow, isExporting } = useExportWorkflow();
@@ -180,23 +184,25 @@ function AgentCard({ agent, onDeleted, onNavigate, pageIndex }: AgentCardProps) 
       });
       setConfirmOpen(false);
       setBindingImpact(null);
+      setPendingDeleteImpact(null);
       onDeleted?.(agent.id, pageIndex);
     } catch (error) {
       const nextImpact = getAgentResourceBoundImpact(error);
       if (!nextImpact) return;
       setConfirmOpen(false);
+      setPendingDeleteImpact(null);
       setBindingImpact(nextImpact);
     }
   };
 
   const requestDeleteRuntime = async () => {
     if (!canDeleteRuntime || isCheckingDeleteImpact) return;
+    setPendingDeleteImpact(null);
     setIsCheckingDeleteImpact(true);
     try {
       const response = await agentService.previewAgentDeleteImpact(agent.id);
       if (response.data) {
-        setBindingImpact(response.data);
-        return;
+        setPendingDeleteImpact(response.data);
       }
       setConfirmOpen(true);
     } catch {
@@ -204,6 +210,16 @@ function AgentCard({ agent, onDeleted, onNavigate, pageIndex }: AgentCardProps) 
     } finally {
       setIsCheckingDeleteImpact(false);
     }
+  };
+
+  const confirmDeleteRuntime = () => {
+    if (pendingDeleteImpact) {
+      setConfirmOpen(false);
+      setBindingImpact(pendingDeleteImpact);
+      setPendingDeleteImpact(null);
+      return;
+    }
+    void deleteRuntime();
   };
 
   const cardContent = (
@@ -360,15 +376,27 @@ function AgentCard({ agent, onDeleted, onNavigate, pageIndex }: AgentCardProps) 
         loading={isExporting}
       />
       {/* Delete confirmation dialog outside dropdown */}
-      <ConfirmDialog
-        variant="danger"
+      <DestructiveNameConfirmDialog
         open={confirmOpen}
-        onOpenChange={setConfirmOpen}
-        title={t('deleteConfirmTitle', { name: agent.name })}
-        description={t('deleteConfirmDescription')}
-        confirmText={tCommon('confirm')}
-        cancelText={tCommon('close')}
-        onConfirm={() => void deleteRuntime()}
+        onOpenChange={open => {
+          setConfirmOpen(open);
+          if (!open) setPendingDeleteImpact(null);
+        }}
+        title={t(isWorkflowRuntime ? 'deleteWorkflowConfirmTitle' : 'deleteConfirmTitle', {
+          name: agent.name,
+        })}
+        description={t(
+          isWorkflowRuntime ? 'deleteWorkflowConfirmDescription' : 'deleteConfirmDescription'
+        )}
+        itemName={agent.name}
+        itemNameLabel={tCommon('confirmDialog.itemNameLabel')}
+        confirmationLabel={tCommon('confirmDialog.typeNameLabel')}
+        confirmationPlaceholder={tCommon('confirmDialog.typeNamePlaceholder')}
+        confirmationTooltipText={tCommon('confirmDialog.typeNameTooltip')}
+        confirmText={tCommon('delete')}
+        confirmingText={tCommon('statusLabels.deleting')}
+        cancelText={tCommon('cancel')}
+        onConfirm={confirmDeleteRuntime}
         loading={deleteMutation.isPending}
       />
       <AgentResourceBoundDialog

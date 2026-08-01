@@ -249,10 +249,18 @@ func TestRunnerTerminalOnlyUsesOneFinalAnswerModelCall(t *testing.T) {
 	}
 }
 
-func TestRunnerTerminalOnlyFallsBackFromEmptyModelResponseWhenOperationCompleted(t *testing.T) {
-	fakeLLM := &runnerTestLLMClient{appChatResponses: []*adapter.ChatResponse{{
-		Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant"}}},
-	}}}
+func TestRunnerTerminalOnlyRetriesEmptyModelResponse(t *testing.T) {
+	fakeLLM := &runnerTestLLMClient{appChatResponses: []*adapter.ChatResponse{
+		{
+			Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant"}}},
+		},
+		{
+			Choices: []adapter.Choice{{Message: adapter.Message{
+				Role:    "assistant",
+				Content: "The approved operation was completed.",
+			}}},
+		},
+	}}
 	runner := &Runner{
 		LLMClient:    fakeLLM,
 		SkillRuntime: skills.NewRuntime(nil, nil),
@@ -274,33 +282,71 @@ func TestRunnerTerminalOnlyFallsBackFromEmptyModelResponseWhenOperationCompleted
 	if err != nil {
 		t.Fatal(err)
 	}
-	if answer != "The operation was completed." {
-		t.Fatalf("answer = %q, want deterministic completed-operation fallback", answer)
+	if answer != "The approved operation was completed." {
+		t.Fatalf("answer = %q, want retried model answer", answer)
 	}
-	if fakeLLM.appChatCalls != 1 {
-		t.Fatalf("model calls = %d, want 1", fakeLLM.appChatCalls)
+	if fakeLLM.appChatCalls != 2 {
+		t.Fatalf("model calls = %d, want initial attempt plus one retry", fakeLLM.appChatCalls)
 	}
 }
 
-func TestRunnerTerminalOnlyFallsBackFromInventedToolAfterCompletedOperation(t *testing.T) {
-	fakeLLM := &runnerTestLLMClient{appChatResponses: []*adapter.ChatResponse{{
-		Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", ToolCalls: []adapter.ToolCall{{
-			ID:   "invented-file-list",
-			Type: "function",
-			Function: adapter.FunctionCall{
-				Name:      "file_list",
-				Arguments: `{}`,
+func TestRunnerTerminalOnlyRetriesTransientModelError(t *testing.T) {
+	fakeLLM := &runnerTestLLMClient{
+		appChatErrors: []error{errors.New("temporary upstream failure"), nil},
+		appChatResponses: []*adapter.ChatResponse{
+			nil,
+			{
+				Choices: []adapter.Choice{{Message: adapter.Message{
+					Role:    "assistant",
+					Content: "The final response came from the model retry.",
+				}}},
 			},
-		}}}}},
-	}}}
-	var traces []skills.SkillTrace
+		},
+	}
+	runner := &Runner{LLMClient: fakeLLM, SkillRuntime: skills.NewRuntime(nil, nil), AppContext: &llmclient.AppContext{}}
+	prepared := NewPreparedChat("conv-terminal-provider-retry", "msg-terminal-provider-retry", "", "auto", &adapter.ChatRequest{
+		Messages: []adapter.Message{{Role: "user", Content: "finish"}},
+	})
+
+	answer, _, err := runner.Run(context.Background(), RunRequest{
+		Prepared:     prepared,
+		Resolved:     &skills.ResolvedSkills{},
+		TerminalOnly: true,
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if answer != "The final response came from the model retry." {
+		t.Fatalf("answer = %q, want retried model answer", answer)
+	}
+	if fakeLLM.appChatCalls != 2 {
+		t.Fatalf("model calls = %d, want initial attempt plus one retry", fakeLLM.appChatCalls)
+	}
+}
+
+func TestRunnerTerminalOnlyRetriesUnexpectedToolCall(t *testing.T) {
+	fakeLLM := &runnerTestLLMClient{appChatResponses: []*adapter.ChatResponse{
+		{
+			Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", ToolCalls: []adapter.ToolCall{{
+				ID:   "invented-file-list",
+				Type: "function",
+				Function: adapter.FunctionCall{
+					Name:      "file_list",
+					Arguments: `{}`,
+				},
+			}}}}},
+		},
+		{
+			Choices: []adapter.Choice{{Message: adapter.Message{
+				Role:    "assistant",
+				Content: "第十一章文件已生成，并已更新智能体提示词。",
+			}}},
+		},
+	}}
 	runner := &Runner{
 		LLMClient:    fakeLLM,
 		SkillRuntime: skills.NewRuntime(nil, nil),
 		AppContext:   &llmclient.AppContext{},
-		OnTrace: func(_ []skills.SkillTrace, trace skills.SkillTrace) {
-			traces = append(traces, trace)
-		},
 	}
 	prepared := NewPreparedChat("conv-terminal-tool", "msg-terminal-tool", "", "auto", &adapter.ChatRequest{
 		Messages: []adapter.Message{{Role: "user", Content: "生成第十一章文件并更新智能体提示词"}},
@@ -334,38 +380,138 @@ func TestRunnerTerminalOnlyFallsBackFromInventedToolAfterCompletedOperation(t *t
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "文件「第十一章.md」已生成并保存；智能体「灵澜学院说书人」的系统提示词已更新。"
+	want := "第十一章文件已生成，并已更新智能体提示词。"
 	if answer != want {
-		t.Fatalf("answer = %q, want %q", answer, want)
+		t.Fatalf("answer = %q, want retried model answer %q", answer, want)
 	}
-	if len(fakeLLM.appChatRequests) != 1 || len(fakeLLM.appChatRequests[0].Tools) != 0 {
-		t.Fatalf("requests = %#v, want one tool-free terminal request", fakeLLM.appChatRequests)
+	if len(fakeLLM.appChatRequests) != 2 {
+		t.Fatalf("requests = %d, want initial attempt plus one retry", len(fakeLLM.appChatRequests))
 	}
-	foundFallback := false
-	for _, trace := range traces {
-		if trace.Kind == "final_answer" && trace.Status == "success" && trace.Arguments["fallback"] == true {
-			foundFallback = true
-			if trace.Arguments["fallback_reason"] != "unexpected_tool_call" {
-				t.Fatalf("fallback trace = %#v, want unexpected_tool_call reason", trace)
-			}
+	for _, request := range fakeLLM.appChatRequests {
+		if len(request.Tools) != 0 {
+			t.Fatalf("request tools = %#v, want both terminal attempts to remain tool-free", request.Tools)
 		}
-	}
-	if !foundFallback {
-		t.Fatalf("traces = %#v, want successful fallback final_answer trace", traces)
 	}
 }
 
-func TestRunnerTerminalOnlyDoesNotRetryTruncatedModelResponse(t *testing.T) {
-	fakeLLM := &runnerTestLLMClient{appChatResponses: []*adapter.ChatResponse{}}
-	fakeLLM.appChatResponses = append(fakeLLM.appChatResponses, &adapter.ChatResponse{
-		Choices: []adapter.Choice{{
-			FinishReason: "length",
-			Message:      adapter.Message{Role: "assistant", Content: "partial"},
-		}},
+func TestRunnerTerminalOnlyReturnsStructuredErrorAfterRetryExhaustion(t *testing.T) {
+	fakeLLM := &runnerTestLLMClient{appChatResponses: []*adapter.ChatResponse{
+		{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant"}}}},
+		{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant"}}}},
+	}}
+	runner := &Runner{LLMClient: fakeLLM, SkillRuntime: skills.NewRuntime(nil, nil), AppContext: &llmclient.AppContext{}}
+	prepared := NewPreparedChat("conv-terminal-empty-error", "msg-terminal-empty-error", "", "auto", &adapter.ChatRequest{
+		Messages: []adapter.Message{{Role: "user", Content: "finish"}},
 	})
+
+	answer, _, err := runner.Run(context.Background(), RunRequest{
+		Prepared:     prepared,
+		Resolved:     &skills.ResolvedSkills{},
+		TerminalOnly: true,
+	})
+	if !errors.Is(err, ErrFinalAnswerUnavailable) {
+		t.Fatalf("error = %v, want ErrFinalAnswerUnavailable", err)
+	}
+	if answer != "" {
+		t.Fatalf("answer = %q, want no runtime-authored fallback answer", answer)
+	}
+	if fakeLLM.appChatCalls != 2 {
+		t.Fatalf("model calls = %d, want exactly two attempts", fakeLLM.appChatCalls)
+	}
+}
+
+func TestRunnerTerminalOnlyAcceptsTruncatedModelResponse(t *testing.T) {
+	fakeLLM := &runnerTestLLMClient{appChatResponses: []*adapter.ChatResponse{
+		{
+			Choices: []adapter.Choice{{
+				FinishReason: "length",
+				Message:      adapter.Message{Role: "assistant", Content: "partial"},
+			}},
+		},
+		{
+			Choices: []adapter.Choice{{Message: adapter.Message{
+				Role:    "assistant",
+				Content: "complete final answer",
+			}}},
+		},
+	}}
 	runner := &Runner{LLMClient: fakeLLM, SkillRuntime: skills.NewRuntime(nil, nil), AppContext: &llmclient.AppContext{}}
 	prepared := NewPreparedChat("conv-terminal-length", "msg-terminal-length", "", "auto", &adapter.ChatRequest{
 		Messages: []adapter.Message{{Role: "user", Content: "finish once"}},
+	})
+
+	answer, _, err := runner.Run(context.Background(), RunRequest{
+		Prepared:     prepared,
+		Resolved:     &skills.ResolvedSkills{},
+		TerminalOnly: true,
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if answer != "partial" {
+		t.Fatalf("answer = %q, want the model's truncated answer", answer)
+	}
+	if fakeLLM.appChatCalls != 1 {
+		t.Fatalf("model calls = %d, want no retry for a usable truncated answer", fakeLLM.appChatCalls)
+	}
+}
+
+func TestRunnerTerminalOnlyAcceptsTruncatedFinalAnswerArguments(t *testing.T) {
+	fakeLLM := &runnerTestLLMClient{appChatResponses: []*adapter.ChatResponse{{
+		Choices: []adapter.Choice{{
+			FinishReason: "max_tokens",
+			Message: adapter.Message{
+				Role: "assistant",
+				ToolCalls: []adapter.ToolCall{{
+					ID:   "truncated-final-answer",
+					Type: "function",
+					Function: adapter.FunctionCall{
+						Name:      skills.MetaToolFinalAnswer,
+						Arguments: `{"answer":"partial final answer`,
+					},
+				}},
+			},
+		}},
+	}}}
+	runner := &Runner{LLMClient: fakeLLM, SkillRuntime: skills.NewRuntime(nil, nil), AppContext: &llmclient.AppContext{}}
+	prepared := NewPreparedChat("conv-terminal-json-length", "msg-terminal-json-length", "", "auto", &adapter.ChatRequest{
+		Messages: []adapter.Message{{Role: "user", Content: "finish once"}},
+	})
+
+	answer, _, err := runner.Run(context.Background(), RunRequest{
+		Prepared:     prepared,
+		Resolved:     &skills.ResolvedSkills{},
+		TerminalOnly: true,
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if answer != "partial final answer" {
+		t.Fatalf("answer = %q, want recovered truncated final answer", answer)
+	}
+	if fakeLLM.appChatCalls != 1 {
+		t.Fatalf("model calls = %d, want no retry for a recoverable final answer", fakeLLM.appChatCalls)
+	}
+}
+
+func TestRunnerTerminalOnlyDoesNotRetryContentFilterTermination(t *testing.T) {
+	fakeLLM := &runnerTestLLMClient{appChatResponses: []*adapter.ChatResponse{
+		{
+			Choices: []adapter.Choice{{
+				FinishReason: "content_filter",
+				Message:      adapter.Message{Role: "assistant"},
+			}},
+		},
+		{
+			Choices: []adapter.Choice{{Message: adapter.Message{
+				Role:    "assistant",
+				Content: "must not be used",
+			}}},
+		},
+	}}
+	runner := &Runner{LLMClient: fakeLLM, SkillRuntime: skills.NewRuntime(nil, nil), AppContext: &llmclient.AppContext{}}
+	prepared := NewPreparedChat("conv-terminal-content-filter", "msg-terminal-content-filter", "", "auto", &adapter.ChatRequest{
+		Messages: []adapter.Message{{Role: "user", Content: "finish"}},
 	})
 
 	_, _, err := runner.Run(context.Background(), RunRequest{
@@ -373,11 +519,15 @@ func TestRunnerTerminalOnlyDoesNotRetryTruncatedModelResponse(t *testing.T) {
 		Resolved:     &skills.ResolvedSkills{},
 		TerminalOnly: true,
 	})
-	if err == nil || !strings.Contains(err.Error(), "length") {
-		t.Fatalf("error = %v, want terminal length error", err)
+	var terminationErr *PlanningTerminationError
+	if !errors.As(err, &terminationErr) || terminationErr == nil || terminationErr.Reason != "content_filter" {
+		t.Fatalf("error = %v, want content_filter PlanningTerminationError", err)
+	}
+	if errors.Is(err, ErrFinalAnswerUnavailable) {
+		t.Fatalf("error = %v, want the original non-retryable error", err)
 	}
 	if fakeLLM.appChatCalls != 1 {
-		t.Fatalf("model calls = %d, want exactly one terminal call", fakeLLM.appChatCalls)
+		t.Fatalf("model calls = %d, want no retry for content filtering", fakeLLM.appChatCalls)
 	}
 }
 
@@ -1229,6 +1379,83 @@ func TestRunnerSkipsEmptyIntermediateAnswerWithoutUserVisibleError(t *testing.T)
 	for _, event := range events {
 		if event.Type == EventSkillCallError || event.Type == EventIntermediateAnswer {
 			t.Fatalf("event = %#v, want no user-visible error/intermediate event for empty intermediate answer", event)
+		}
+	}
+}
+
+func TestRunnerRetriesInvalidIntermediateAnswerArgumentsWithoutUserVisibleError(t *testing.T) {
+	ctx := context.Background()
+	fakeLLM := &runnerTestLLMClient{
+		appChatResponses: []*adapter.ChatResponse{
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{
+						Role: "assistant",
+						ToolCalls: []adapter.ToolCall{{
+							ID:   "invalid-intermediate",
+							Type: "function",
+							Function: adapter.FunctionCall{
+								Name:      skills.MetaToolIntermediateAnswer,
+								Arguments: `{"content":"unfinished`,
+							},
+						}},
+					},
+				}},
+			},
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{Role: "assistant", Content: "Query completed after retry."},
+				}},
+			},
+		},
+	}
+	runtime := skills.NewRuntimeWithCatalog(nil, nil, "")
+	var traces []skills.SkillTrace
+	var events []Event
+	runner := &Runner{
+		LLMClient:    fakeLLM,
+		SkillRuntime: runtime,
+		AppContext:   &llmclient.AppContext{},
+		OnTrace: func(_ []skills.SkillTrace, trace skills.SkillTrace) {
+			traces = append(traces, trace)
+		},
+		OnEvent: func(event Event) error {
+			events = append(events, event)
+			return nil
+		},
+	}
+	prepared := NewPreparedChat("conv-invalid-intermediate", "msg-invalid-intermediate", "", "auto", &adapter.ChatRequest{
+		Messages: []adapter.Message{{Role: "user", Content: "prepare a draft"}},
+	})
+
+	answer, _, err := runner.Run(ctx, RunRequest{
+		Prepared: prepared,
+		Resolved: runnerTestResolvedSkills(),
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if answer != "Query completed after retry." {
+		t.Fatalf("answer = %q, want final answer after retry", answer)
+	}
+	if fakeLLM.appChatCalls != 2 {
+		t.Fatalf("AppChat calls = %d, want invalid call plus retry", fakeLLM.appChatCalls)
+	}
+	foundFeedback := false
+	for _, trace := range traces {
+		if trace.Kind == "planner_feedback" && trace.Arguments["code"] == "invalid_tool_arguments" {
+			foundFeedback = true
+		}
+		if trace.Kind == "meta_tool" {
+			t.Fatalf("trace = %#v, want invalid protocol arguments kept out of the visible tool timeline", trace)
+		}
+	}
+	if !foundFeedback {
+		t.Fatal("planner feedback for invalid tool arguments was not recorded")
+	}
+	for _, event := range events {
+		if event.Type == EventSkillCallError {
+			t.Fatalf("event = %#v, want invalid protocol arguments hidden while retrying", event)
 		}
 	}
 }

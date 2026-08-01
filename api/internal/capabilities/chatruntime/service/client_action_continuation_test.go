@@ -266,8 +266,54 @@ func TestClientActionContinuationRouteFailureFeedbackIsRecoverable(t *testing.T)
 		"route_navigation_failed",
 		"the target page is not open",
 		"/console/agents/{agent_id}/agent",
-		"retry with a corrected supported route",
+		"retry only when it is true",
 		"first model response after this continuation",
+	} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("continuation message missing %q in:\n%s", want, content)
+		}
+	}
+}
+
+func TestClientActionContinuationPermissionDeniedFeedbackIsNotRecoverable(t *testing.T) {
+	event := map[string]interface{}{
+		"action_id":   "route_navigation:workflow-detail",
+		"action_type": "route_navigation",
+		"status":      clientActionStatusWaiting,
+		"skill_id":    skills.SkillConsoleNavigator,
+		"tool_name":   "navigate",
+		"href":        "/console/workflows/workflow-1",
+	}
+	req := runtimedto.ClientActionResultRequest{
+		Status: clientActionStatusFailed,
+		Error:  "The current user does not have permission to open this page.",
+		Result: map[string]interface{}{
+			"event_type":     "route_navigation_blocked",
+			"action_type":    "route_navigation",
+			"access_status":  "permission_denied",
+			"requested_href": "/console/workflows/workflow-1",
+			"recoverable":    false,
+			"next_step_hint": "Do not retry this route unless the user's permissions change.",
+		},
+	}
+
+	record := clientActionObservationRecord(event, req)
+	feedback := mapFromOperationContext(record["model_feedback"])
+	if feedback["recoverable"] != false ||
+		feedback["access_status"] != "permission_denied" ||
+		feedback["next_step_hint"] != req.Result["next_step_hint"] {
+		t.Fatalf("model_feedback = %#v, want non-recoverable permission denial", feedback)
+	}
+
+	msg := clientActionContinuationMessage(&runtimemodel.Message{
+		Query:    "Open the workflow detail page.",
+		Metadata: map[string]interface{}{},
+	}, event, req)
+	content := strings.TrimSpace(fmt.Sprint(msg.Content))
+	for _, want := range []string{
+		`"recoverable":false`,
+		`"access_status":"permission_denied"`,
+		"when it is false, do not retry the same route",
 	} {
 		if !strings.Contains(content, want) {
 			t.Fatalf("continuation message missing %q in:\n%s", want, content)

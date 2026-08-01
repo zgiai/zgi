@@ -9,9 +9,18 @@ const AGENT_LIST_STATE_MAX_AGE_MS = 30 * 60 * 1000;
 const AGENT_LIST_MAX_SNAPSHOT_PAGES = 5;
 
 export type AgentListScope = 'agents' | 'workflows';
+export type AgentListPublishFilter = 'all' | 'published' | 'draft' | 'offline';
+export type AgentListWorkflowTypeFilter = 'all' | 'CONVERSATIONAL_WORKFLOW' | 'WORKFLOW';
+
+export interface AgentListFilters {
+  publishFilter: AgentListPublishFilter;
+  workflowTypeFilter: AgentListWorkflowTypeFilter;
+}
 
 export interface AgentListNavigationState {
   keyword: string;
+  publishFilter: AgentListPublishFilter;
+  workflowTypeFilter: AgentListWorkflowTypeFilter;
   loadedPageCount: number;
   scrollTop: number;
   workspaceId?: string;
@@ -31,6 +40,8 @@ interface AgentListDetailEntry {
 
 interface AgentListPagesSnapshot {
   keyword: string;
+  publishFilter: AgentListPublishFilter;
+  workflowTypeFilter: AgentListWorkflowTypeFilter;
   workspaceId?: string;
   pages: Array<ApiResponseData<AgentList>>;
   updatedAt: number;
@@ -42,6 +53,14 @@ interface WriteAgentListNavigationStateOptions {
 
 function getScopedKey(key: string, scope: AgentListScope = 'agents') {
   return scope === 'agents' ? key : `${key}:${scope}`;
+}
+
+function normalizePublishFilter(value: unknown): AgentListPublishFilter {
+  return value === 'published' || value === 'draft' || value === 'offline' ? value : 'all';
+}
+
+function normalizeWorkflowTypeFilter(value: unknown): AgentListWorkflowTypeFilter {
+  return value === 'CONVERSATIONAL_WORKFLOW' || value === 'WORKFLOW' ? value : 'all';
 }
 
 function getSessionStorage(): Storage | null {
@@ -71,6 +90,8 @@ function normalizeState(
 
   return {
     keyword: typeof candidate.keyword === 'string' ? candidate.keyword : '',
+    publishFilter: normalizePublishFilter(candidate.publishFilter),
+    workflowTypeFilter: normalizeWorkflowTypeFilter(candidate.workflowTypeFilter),
     loadedPageCount,
     scrollTop,
     workspaceId: typeof candidate.workspaceId === 'string' ? candidate.workspaceId : undefined,
@@ -99,6 +120,18 @@ export function readAgentListInitialKeyword(scope: AgentListScope = 'agents'): s
   return readAgentListNavigationState(scope)?.keyword ?? '';
 }
 
+export function readAgentListInitialFilters(scope: AgentListScope = 'agents'): AgentListFilters {
+  if (!hasAgentListRestoreIntent(scope)) {
+    return { publishFilter: 'all', workflowTypeFilter: 'all' };
+  }
+
+  const state = readAgentListNavigationState(scope);
+  return {
+    publishFilter: state?.publishFilter ?? 'all',
+    workflowTypeFilter: state?.workflowTypeFilter ?? 'all',
+  };
+}
+
 export function markAgentListRestoreIntent(scope: AgentListScope = 'agents'): void {
   const storage = getSessionStorage();
   if (!storage) return;
@@ -113,10 +146,7 @@ export function markAgentListRestoreIntent(scope: AgentListScope = 'agents'): vo
   }
 }
 
-export function markAgentListDetailEntry(
-  agentId: string,
-  scope: AgentListScope = 'agents'
-): void {
+export function markAgentListDetailEntry(agentId: string, scope: AgentListScope = 'agents'): void {
   const storage = getSessionStorage();
   if (!storage || !agentId) return;
 
@@ -156,7 +186,9 @@ function hasAgentListRestoreIntent(scope: AgentListScope = 'agents'): boolean {
   if (!storage) return false;
 
   try {
-    return isFreshRestoreIntent(storage.getItem(getScopedKey(AGENT_LIST_RESTORE_INTENT_KEY, scope)));
+    return isFreshRestoreIntent(
+      storage.getItem(getScopedKey(AGENT_LIST_RESTORE_INTENT_KEY, scope))
+    );
   } catch {
     return false;
   }
@@ -220,11 +252,15 @@ function readAgentListPagesSnapshot(
     const snapshot = JSON.parse(raw) as Partial<AgentListPagesSnapshot>;
     const updatedAt = Number(snapshot.updatedAt);
     const stateKeyword = typeof state.keyword === 'string' ? state.keyword : '';
+    const statePublishFilter = normalizePublishFilter(state.publishFilter);
+    const stateWorkflowTypeFilter = normalizeWorkflowTypeFilter(state.workflowTypeFilter);
     const stateWorkspaceId = typeof state.workspaceId === 'string' ? state.workspaceId : undefined;
     if (
       !Number.isFinite(updatedAt) ||
       Date.now() - updatedAt > AGENT_LIST_STATE_MAX_AGE_MS ||
       snapshot.keyword !== stateKeyword ||
+      normalizePublishFilter(snapshot.publishFilter) !== statePublishFilter ||
+      normalizeWorkflowTypeFilter(snapshot.workflowTypeFilter) !== stateWorkflowTypeFilter ||
       snapshot.workspaceId !== stateWorkspaceId ||
       !Array.isArray(snapshot.pages)
     ) {
@@ -252,6 +288,8 @@ export function writeAgentListNavigationState(
       getScopedKey(AGENT_LIST_STATE_KEY, scope),
       JSON.stringify({
         keyword: state.keyword,
+        publishFilter: state.publishFilter,
+        workflowTypeFilter: state.workflowTypeFilter,
         loadedPageCount: Math.max(0, state.loadedPageCount),
         scrollTop: Math.max(0, state.scrollTop),
         workspaceId: state.workspaceId,
@@ -264,6 +302,8 @@ export function writeAgentListNavigationState(
         getScopedKey(AGENT_LIST_PAGES_KEY, scope),
         JSON.stringify({
           keyword: state.keyword,
+          publishFilter: state.publishFilter,
+          workflowTypeFilter: state.workflowTypeFilter,
           workspaceId: state.workspaceId,
           pages: state.pages.slice(0, AGENT_LIST_MAX_SNAPSHOT_PAGES),
           updatedAt,

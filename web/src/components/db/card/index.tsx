@@ -9,7 +9,7 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
 } from '@/components/ui/dropdown-menu';
-import { ConfirmDialog } from '@/components/ui/confirm-dialog';
+import { DestructiveNameConfirmDialog } from '@/components/ui/destructive-name-confirm-dialog';
 import { Pencil, Trash2, Database as DatabaseIcon, MoreHorizontal, MoveRight } from 'lucide-react';
 import type { Db } from '@/services/types/db';
 import { IconPreview } from '@/components/common/icon-input/icon-preview';
@@ -39,6 +39,9 @@ function DbCardBase({ db, onEdit, onDeleted, className }: DbCardProps) {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [workspaceMoveOpen, setWorkspaceMoveOpen] = useState(false);
   const [bindingImpact, setBindingImpact] = useState<AgentResourceBoundImpact | null>(null);
+  const [pendingDeleteImpact, setPendingDeleteImpact] = useState<AgentResourceBoundImpact | null>(
+    null
+  );
   const [isCheckingDeleteImpact, setIsCheckingDeleteImpact] = useState(false);
   const router = useRouter();
 
@@ -60,23 +63,25 @@ function DbCardBase({ db, onEdit, onDeleted, className }: DbCardProps) {
       });
       setConfirmOpen(false);
       setBindingImpact(null);
+      setPendingDeleteImpact(null);
       onDeleted?.(db.id);
     } catch (error) {
       const nextImpact = getAgentResourceBoundImpact(error);
       if (!nextImpact) return;
       setConfirmOpen(false);
+      setPendingDeleteImpact(null);
       setBindingImpact(nextImpact);
     }
   };
 
   const requestDeleteDatabase = async () => {
     if (!canDeleteDatabase || isCheckingDeleteImpact) return;
+    setPendingDeleteImpact(null);
     setIsCheckingDeleteImpact(true);
     try {
       const response = await dbService.previewDbDeleteImpact(db.id);
       if (response.data) {
-        setBindingImpact(response.data);
-        return;
+        setPendingDeleteImpact(response.data);
       }
       setConfirmOpen(true);
     } catch {
@@ -84,6 +89,16 @@ function DbCardBase({ db, onEdit, onDeleted, className }: DbCardProps) {
     } finally {
       setIsCheckingDeleteImpact(false);
     }
+  };
+
+  const confirmDeleteDatabase = () => {
+    if (pendingDeleteImpact) {
+      setConfirmOpen(false);
+      setBindingImpact(pendingDeleteImpact);
+      setPendingDeleteImpact(null);
+      return;
+    }
+    void deleteDatabase();
   };
 
   return (
@@ -161,14 +176,23 @@ function DbCardBase({ db, onEdit, onDeleted, className }: DbCardProps) {
         </div>
       )}
 
-      <ConfirmDialog
-        variant="danger"
+      <DestructiveNameConfirmDialog
         open={confirmOpen}
-        onOpenChange={setConfirmOpen}
-        title={t('deleteConfirmTitle', { name: db.name })}
-        confirmText={common('confirm')}
-        cancelText={common('close')}
-        onConfirm={() => void deleteDatabase()}
+        onOpenChange={open => {
+          setConfirmOpen(open);
+          if (!open) setPendingDeleteImpact(null);
+        }}
+        title={t('deleteDatabaseConfirmTitle', { name: db.name })}
+        description={t('deleteDatabaseConfirmDescription')}
+        itemName={db.name}
+        itemNameLabel={common('confirmDialog.itemNameLabel')}
+        confirmationLabel={common('confirmDialog.typeNameLabel')}
+        confirmationPlaceholder={common('confirmDialog.typeNamePlaceholder')}
+        confirmationTooltipText={common('confirmDialog.typeNameTooltip')}
+        confirmText={common('delete')}
+        confirmingText={common('statusLabels.deleting')}
+        cancelText={common('cancel')}
+        onConfirm={confirmDeleteDatabase}
         loading={deleteMutation.isPending}
       />
       <AgentResourceBoundDialog

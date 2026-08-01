@@ -17,6 +17,8 @@ import (
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"github.com/zgiai/zgi/api/internal/modules/tools"
+	"github.com/zgiai/zgi/api/internal/modules/tools/builtin/consolenavigation"
+	workspacemodel "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
@@ -1302,6 +1304,9 @@ func (s *service) skillExecutionContext(prepared *PreparedChat) skills.Execution
 	if verifier := s.currentAgentBindingVerifier(prepared); verifier != nil {
 		runtimeParameters = skills.WithAgentBindingVerifier(runtimeParameters, verifier)
 	}
+	if authorizer := s.consoleNavigationRouteAuthorizer(prepared); authorizer != nil {
+		runtimeParameters = consolenavigation.WithRouteAuthorizer(runtimeParameters, authorizer)
+	}
 	return skills.ExecutionContext{
 		OrganizationID:    prepared.Scope.OrganizationID.String(),
 		UserID:            prepared.Scope.AccountID.String(),
@@ -1310,6 +1315,52 @@ func (s *service) skillExecutionContext(prepared *PreparedChat) skills.Execution
 		MessageID:         prepared.Message.ID.String(),
 		InvokeFrom:        invokeFrom,
 		RuntimeParameters: runtimeParameters,
+	}
+}
+
+func (s *service) consoleNavigationRouteAuthorizer(prepared *PreparedChat) consolenavigation.RouteAuthorizer {
+	if s == nil || prepared == nil {
+		return nil
+	}
+	workspaceID := preparedSkillWorkspaceID(prepared)
+	if workspaceID == "" {
+		return nil
+	}
+	organizationID := prepared.Scope.OrganizationID.String()
+	accountID := prepared.Scope.AccountID.String()
+	return func(ctx context.Context, request consolenavigation.RouteAuthorizationRequest) error {
+		if strings.TrimSpace(request.WorkspaceID) != workspaceID {
+			return fmt.Errorf("%w: navigation workspace does not match the active workspace", ErrPermissionDenied)
+		}
+		if s.workspacePerms == nil {
+			return fmt.Errorf("%w: workspace permission service is unavailable", ErrPermissionDenied)
+		}
+		permissionCodes := request.PermissionCodes
+		if len(permissionCodes) == 0 {
+			permissionCodes = []workspacemodel.WorkspacePermissionCode{
+				workspacemodel.WorkspacePermissionWorkspaceView,
+			}
+		}
+		for _, permissionCode := range permissionCodes {
+			allowed, err := s.workspacePerms.CheckWorkspacePermission(
+				ctx,
+				organizationID,
+				workspaceID,
+				accountID,
+				permissionCode,
+			)
+			if err != nil {
+				return fmt.Errorf("check workspace navigation permission %q: %w", permissionCode, err)
+			}
+			if allowed {
+				return nil
+			}
+		}
+		return fmt.Errorf(
+			"%w: account lacks every required permission for %s",
+			ErrPermissionDenied,
+			request.Href,
+		)
 	}
 }
 
@@ -2513,10 +2564,10 @@ var consoleNavigationRouteHints = []consoleNavigationRouteHint{
 	{Href: "/console/dataset", Label: "知识库"},
 	{Href: "/console/db", Label: "数据库"},
 	{Href: "/console/files", Label: "文件管理"},
+	{Href: "/console/skills", Label: "Skill 管理"},
 	{Href: "/console/prompts", Label: "提示词"},
 	{Href: "/console/developer/content-parse", Label: "文件识别"},
 	{Href: "/console/workspace", Label: "工作空间"},
-	{Href: "/console/settings", Label: "系统设置"},
 }
 
 func contextualConsoleNavigationSkillMessageForResolved(prepared *PreparedChat, resolved *skills.ResolvedSkills) (adapter.Message, bool) {
@@ -2527,9 +2578,15 @@ func contextualConsoleNavigationSkillMessageForResolved(prepared *PreparedChat, 
 		return adapter.Message{}, false
 	}
 
+	accessibleRoutes, hasAccessibleRouteSnapshot := consoleNavigationAccessibleRouteSnapshot(prepared)
 	routes := make([]map[string]string, 0, len(consoleNavigationRouteHints))
 	seen := map[string]struct{}{}
 	for _, route := range consoleNavigationRouteHints {
+		if hasAccessibleRouteSnapshot {
+			if _, allowed := accessibleRoutes[route.Href]; !allowed {
+				continue
+			}
+		}
 		key := route.Href + "\x00" + route.Label
 		if _, ok := seen[key]; ok {
 			continue
@@ -2556,11 +2613,45 @@ func contextualConsoleNavigationSkillMessageForResolved(prepared *PreparedChat, 
 		"When the user explicitly asks to save, upload, import, or write a file into File Management from another console page, navigate to /console/files only if the current page context is not already Files and the File Management page context is still needed for the save.",
 		"If current page evidence already satisfies the target, or a low-risk observe/read/list step is needed to complete the user's goal, continue from that evidence instead of forcing a redundant navigate call.",
 		"Choose the destination from the route catalog and current page evidence; do not ask the user to repeat the page name when the request is already clear.",
+		"The route catalog is reduced to the current user's accessible pages when that snapshot is available. The navigate tool independently enforces trusted server-side workspace permissions.",
+		"If navigation is denied, do not retry the same route unless the workspace or the user's permissions have changed.",
 		"Do not say a different page has been opened unless console-navigator/navigate succeeded in this turn or the current page context already matches the requested target. If the navigate tool fails, report that failure plainly.",
 		"Navigation does not mutate user assets and must use only whitelisted internal /console routes.",
 		"Console navigation JSON: " + string(encoded),
 	}, "\n")
 	return adapter.Message{Role: "system", Content: content}, true
+}
+
+func consoleNavigationAccessibleRouteSnapshot(prepared *PreparedChat) (map[string]struct{}, bool) {
+	if prepared == nil || prepared.parts == nil {
+		return nil, false
+	}
+	// This client-provided list only reduces prompt choices. It is never an
+	// authorization source; NavigateTool performs the trusted server-side check.
+	for _, source := range []map[string]interface{}{
+		prepared.parts.RawOperationContext,
+		prepared.parts.OperationContext,
+	} {
+		for _, item := range operationItemsFromValue(source["resources"]) {
+			resource := mapFromOperationContext(item)
+			if stringMetadataValue(resource["resource_id"]) != "assistant.platform_operation" {
+				continue
+			}
+			metadata := mapFromOperationContext(resource["metadata"])
+			if stringMetadataValue(metadata["navigation_access_scope"]) != "current_user" {
+				continue
+			}
+			routes := make(map[string]struct{})
+			for _, href := range strings.Split(stringMetadataValue(metadata["accessible_routes"]), ",") {
+				href = strings.TrimSpace(href)
+				if href != "" {
+					routes[href] = struct{}{}
+				}
+			}
+			return routes, true
+		}
+	}
+	return nil, false
 }
 
 func contextualConsoleAgentsSkillMessage(prepared *PreparedChat) (adapter.Message, bool) {

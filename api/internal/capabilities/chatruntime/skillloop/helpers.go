@@ -217,8 +217,14 @@ func normalizeToolCallArguments(raw string) string {
 	if normalized, ok := normalizeJSONObjectString(raw); ok {
 		return normalized
 	}
-	if repaired, changed := repairBareQuotesInJSONString(raw); changed {
+	repaired, changed := repairCommonJSONStringIssues(raw)
+	if changed {
 		if normalized, ok := normalizeJSONObjectString(repaired); ok {
+			return normalized
+		}
+	}
+	if closed, ok := closeOpenJSONContainers(repaired); ok {
+		if normalized, normalizedOK := normalizeJSONObjectString(closed); normalizedOK {
 			return normalized
 		}
 	}
@@ -247,7 +253,7 @@ func normalizeJSONObjectString(raw string) (string, bool) {
 	return string(encoded), true
 }
 
-func repairBareQuotesInJSONString(raw string) (string, bool) {
+func repairCommonJSONStringIssues(raw string) (string, bool) {
 	var builder strings.Builder
 	builder.Grow(len(raw) + 8)
 	inString := false
@@ -268,8 +274,13 @@ func repairBareQuotesInJSONString(raw string) (string, bool) {
 			continue
 		}
 		if ch == '\\' {
-			builder.WriteByte(ch)
-			escaped = true
+			if validJSONEscapeAt(raw, idx) {
+				builder.WriteByte(ch)
+				escaped = true
+			} else {
+				builder.WriteString(`\\`)
+				changed = true
+			}
 			continue
 		}
 		if ch == '"' {
@@ -283,6 +294,28 @@ func repairBareQuotesInJSONString(raw string) (string, bool) {
 			changed = true
 			continue
 		}
+		switch ch {
+		case '\n':
+			builder.WriteString(`\n`)
+			changed = true
+			continue
+		case '\r':
+			builder.WriteString(`\r`)
+			changed = true
+			continue
+		case '\t':
+			builder.WriteString(`\t`)
+			changed = true
+			continue
+		}
+		if ch < 0x20 {
+			const hex = "0123456789abcdef"
+			builder.WriteString(`\u00`)
+			builder.WriteByte(hex[ch>>4])
+			builder.WriteByte(hex[ch&0x0f])
+			changed = true
+			continue
+		}
 		builder.WriteByte(ch)
 	}
 	if !changed {
@@ -292,17 +325,144 @@ func repairBareQuotesInJSONString(raw string) (string, bool) {
 }
 
 func quoteLooksLikeJSONStringTerminator(raw string, quoteIndex int) bool {
-	for idx := quoteIndex + 1; idx < len(raw); idx++ {
-		switch raw[idx] {
+	next := nextNonJSONWhitespace(raw, quoteIndex+1)
+	if next >= len(raw) {
+		return true
+	}
+	switch raw[next] {
+	case '}', ']':
+		return true
+	case ':', ',':
+		valueStart := nextNonJSONWhitespace(raw, next+1)
+		return valueStart >= len(raw) || jsonValueCanStart(raw, valueStart)
+	default:
+		return false
+	}
+}
+
+func nextNonJSONWhitespace(raw string, start int) int {
+	for start < len(raw) {
+		switch raw[start] {
 		case ' ', '\t', '\r', '\n':
-			continue
-		case ':', ',', '}', ']':
-			return true
+			start++
 		default:
-			return false
+			return start
 		}
 	}
-	return true
+	return start
+}
+
+func jsonValueCanStart(raw string, start int) bool {
+	if start < 0 || start >= len(raw) {
+		return false
+	}
+	switch raw[start] {
+	case '"', '{', '[', '-':
+		return true
+	case 't':
+		return validJSONLiteralAt(raw, start, "true")
+	case 'f':
+		return validJSONLiteralAt(raw, start, "false")
+	case 'n':
+		return validJSONLiteralAt(raw, start, "null")
+	default:
+		return raw[start] >= '0' && raw[start] <= '9'
+	}
+}
+
+func validJSONLiteralAt(raw string, start int, literal string) bool {
+	end := start + len(literal)
+	if end > len(raw) || raw[start:end] != literal {
+		return false
+	}
+	if end == len(raw) {
+		return true
+	}
+	switch raw[end] {
+	case ' ', '\t', '\r', '\n', ',', '}', ']':
+		return true
+	default:
+		return false
+	}
+}
+
+func validJSONEscapeAt(raw string, slashIndex int) bool {
+	if slashIndex+1 >= len(raw) {
+		return false
+	}
+	switch raw[slashIndex+1] {
+	case '"', '\\', '/', 'b', 'f', 'n', 'r', 't':
+		return true
+	case 'u':
+		if slashIndex+6 > len(raw) {
+			return false
+		}
+		for idx := slashIndex + 2; idx < slashIndex+6; idx++ {
+			if !isJSONHexDigit(raw[idx]) {
+				return false
+			}
+		}
+		return true
+	default:
+		return false
+	}
+}
+
+func isJSONHexDigit(ch byte) bool {
+	return ch >= '0' && ch <= '9' ||
+		ch >= 'a' && ch <= 'f' ||
+		ch >= 'A' && ch <= 'F'
+}
+
+func closeOpenJSONContainers(raw string) (string, bool) {
+	stack := make([]byte, 0, 4)
+	inString := false
+	escaped := false
+	for idx := 0; idx < len(raw); idx++ {
+		ch := raw[idx]
+		if inString {
+			if escaped {
+				escaped = false
+				continue
+			}
+			switch ch {
+			case '\\':
+				escaped = true
+			case '"':
+				inString = false
+			}
+			continue
+		}
+		switch ch {
+		case '"':
+			inString = true
+		case '{', '[':
+			stack = append(stack, ch)
+		case '}', ']':
+			if len(stack) == 0 || !jsonContainerMatches(stack[len(stack)-1], ch) {
+				return raw, false
+			}
+			stack = stack[:len(stack)-1]
+		}
+	}
+	if inString || escaped || len(stack) == 0 {
+		return raw, false
+	}
+	var builder strings.Builder
+	builder.Grow(len(raw) + len(stack))
+	builder.WriteString(raw)
+	for idx := len(stack) - 1; idx >= 0; idx-- {
+		if stack[idx] == '{' {
+			builder.WriteByte('}')
+		} else {
+			builder.WriteByte(']')
+		}
+	}
+	return builder.String(), true
+}
+
+func jsonContainerMatches(open byte, close byte) bool {
+	return open == '{' && close == '}' || open == '[' && close == ']'
 }
 
 func truncateRunesForHelper(text string, maxRunes int) string {

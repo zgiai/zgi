@@ -23,7 +23,6 @@ export const ROUTES = {
   // Console (Admin) routes
   CONSOLE: {
     HOME: '/console',
-    SETTINGS: '/console/settings',
   },
 } as const;
 
