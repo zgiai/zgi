@@ -90,9 +90,29 @@ const ACTION_TRANSLATIONS = {
     name: 'metadata.actions.githubRepositoryList.name',
     description: 'metadata.actions.githubRepositoryList.description',
   },
+  'github.repository.search': {
+    name: 'metadata.actions.githubRepositorySearch.name',
+    description: 'metadata.actions.githubRepositorySearch.description',
+  },
   'github.issue.list': {
     name: 'metadata.actions.githubIssueList.name',
     description: 'metadata.actions.githubIssueList.description',
+  },
+  'github.issue.get': {
+    name: 'metadata.actions.githubIssueGet.name',
+    description: 'metadata.actions.githubIssueGet.description',
+  },
+  'github.issue.comment.list': {
+    name: 'metadata.actions.githubIssueCommentList.name',
+    description: 'metadata.actions.githubIssueCommentList.description',
+  },
+  'github.issue.create': {
+    name: 'metadata.actions.githubIssueCreate.name',
+    description: 'metadata.actions.githubIssueCreate.description',
+  },
+  'github.issue.comment.create': {
+    name: 'metadata.actions.githubIssueCommentCreate.name',
+    description: 'metadata.actions.githubIssueCommentCreate.description',
   },
   'gmail.account.get': {
     name: 'metadata.actions.gmailAccountGet.name',
@@ -101,6 +121,22 @@ const ACTION_TRANSLATIONS = {
   'gmail.mail.send': {
     name: 'metadata.actions.gmailMailSend.name',
     description: 'metadata.actions.gmailMailSend.description',
+  },
+  'gmail.mail.search': {
+    name: 'metadata.actions.gmailMailSearch.name',
+    description: 'metadata.actions.gmailMailSearch.description',
+  },
+  'gmail.mail.get': {
+    name: 'metadata.actions.gmailMailGet.name',
+    description: 'metadata.actions.gmailMailGet.description',
+  },
+  'gmail.mail.reply': {
+    name: 'metadata.actions.gmailMailReply.name',
+    description: 'metadata.actions.gmailMailReply.description',
+  },
+  'gmail.draft.create': {
+    name: 'metadata.actions.gmailDraftCreate.name',
+    description: 'metadata.actions.gmailDraftCreate.description',
   },
   'feishu.account.get': {
     name: 'metadata.actions.feishuAccountGet.name',
@@ -122,6 +158,18 @@ const ACTION_TRANSLATIONS = {
     name: 'metadata.actions.feishuMessageSendBot.name',
     description: 'metadata.actions.feishuMessageSendBot.description',
   },
+  'feishu.message.list': {
+    name: 'metadata.actions.feishuMessageList.name',
+    description: 'metadata.actions.feishuMessageList.description',
+  },
+  'feishu.calendar.event.list': {
+    name: 'metadata.actions.feishuCalendarEventList.name',
+    description: 'metadata.actions.feishuCalendarEventList.description',
+  },
+  'feishu.calendar.event.create': {
+    name: 'metadata.actions.feishuCalendarEventCreate.name',
+    description: 'metadata.actions.feishuCalendarEventCreate.description',
+  },
   'x.account.get': {
     name: 'metadata.actions.xAccountGet.name',
     description: 'metadata.actions.xAccountGet.description',
@@ -137,6 +185,14 @@ const ACTION_TRANSLATIONS = {
   'x.post.create': {
     name: 'metadata.actions.xPostCreate.name',
     description: 'metadata.actions.xPostCreate.description',
+  },
+  'x.user.get_by_username': {
+    name: 'metadata.actions.xUserGetByUsername.name',
+    description: 'metadata.actions.xUserGetByUsername.description',
+  },
+  'x.post.list_by_user': {
+    name: 'metadata.actions.xPostListByUser.name',
+    description: 'metadata.actions.xPostListByUser.description',
   },
   'web.search': {
     name: 'metadata.actions.webSearch.name',

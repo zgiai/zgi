@@ -204,12 +204,29 @@ const messages = {
       available: 'Available',
       needs_connection: 'Connection required',
       needs_scope: 'More access required',
+      needs_permission: 'Usage permission required',
       disabled_by_policy: 'Disabled by usage rules',
       data_egress_blocked: 'Data sharing disabled',
+      checking: 'Checking availability',
+      status_unavailable: 'Live status unavailable',
+    },
+    availableConnections: '{count} compatible connections can run this action',
+    remediation: {
+      needs_connection: 'Connect an account that supports this action.',
+      needs_scope: 'Reconnect the account and approve the additional provider permissions.',
+      needs_permission:
+        'This audience is not allowed to use the action. Ask an administrator to update its usage rules.',
+      disabled_by_policy:
+        'This action is disabled by the current usage rules. Ask an administrator to enable it.',
+      data_egress_blocked:
+        'This action sends data to the provider. Ask an administrator to allow data sharing.',
+      checking: 'This action is not marked available until the check completes.',
+      status_unavailable:
+        'Current executability cannot be confirmed, so this action is not marked available.',
     },
     loadFailed: 'App capabilities could not be loaded. Try again shortly.',
     liveStatusUnavailable:
-      'Live availability is temporarily unavailable. Adapted capabilities are shown below.',
+      'Live availability is temporarily unavailable. The adapted capabilities below do not imply that the current account can run them.',
     empty: 'No adapted actions match this filter.',
     requiredScopes: 'Required permissions',
     noAdditionalScopes: 'No additional permissions',
@@ -217,6 +234,9 @@ const messages = {
     approval: 'Confirmation: {approval}',
     approvalAlways: 'Confirm every time',
     approvalInherit: 'Use default setting',
+    currentPolicy: 'Current usage rules',
+    currentPolicySummary: '{approval} · {egress}',
+    currentPolicyUnavailable: 'Current usage rules cannot be confirmed',
     authentication: 'Authentication and permissions',
     noAuthenticationMethods: 'No specific connection method declared',
     surfaces: 'Available surfaces',
@@ -239,6 +259,7 @@ const messages = {
     noExternalDestination: 'This feature does not send data to an external service',
     dataEgressAllowed: 'Allowed',
     dataEgressBlocked: 'Blocked',
+    dataEgressNotRequired: 'No external data sharing',
     documentation: 'View developer docs',
     connect: 'Connect {provider}',
   },
@@ -527,10 +548,32 @@ const messages = {
         name: 'List GitHub repositories',
         description: 'Lists repositories available to the authenticated GitHub user.',
       },
+      githubRepositorySearch: {
+        name: 'Search GitHub repositories',
+        description: 'Searches GitHub repositories and returns bounded repository metadata.',
+      },
       githubIssueList: {
         name: 'List GitHub repository issues',
         description:
           'Lists issue metadata for one repository. GitHub may also return pull requests from this endpoint.',
+      },
+      githubIssueGet: {
+        name: 'Get GitHub issue',
+        description: 'Reads one GitHub issue or pull request with a bounded body and metadata.',
+      },
+      githubIssueCommentList: {
+        name: 'List GitHub issue comments',
+        description: 'Lists a bounded page of comments for one GitHub issue or pull request.',
+      },
+      githubIssueCreate: {
+        name: 'Create GitHub issue',
+        description:
+          'Creates an issue in one repository. This write is disabled by default and requires approval when enabled.',
+      },
+      githubIssueCommentCreate: {
+        name: 'Create GitHub issue comment',
+        description:
+          'Sends a comment to an issue or pull request. This write is disabled by default and requires approval when enabled.',
       },
       gmailAccountGet: {
         name: 'Get Gmail account',
@@ -539,6 +582,23 @@ const messages = {
       gmailMailSend: {
         name: 'Send Gmail message',
         description: 'Sends an email from the connected Gmail account after explicit approval.',
+      },
+      gmailMailSearch: {
+        name: 'Search Gmail messages',
+        description: 'Searches the connected mailbox and returns bounded message summaries.',
+      },
+      gmailMailGet: {
+        name: 'Read Gmail message',
+        description: 'Safely decodes one Gmail message and returns a bounded plain-text body.',
+      },
+      gmailMailReply: {
+        name: 'Reply to Gmail message',
+        description: 'Replies in the original mail thread after explicit approval.',
+      },
+      gmailDraftCreate: {
+        name: 'Create Gmail draft',
+        description:
+          'Creates a plain-text Gmail draft without sending it, after explicit approval.',
       },
       feishuAccountGet: {
         name: 'Get Feishu account',
@@ -560,6 +620,19 @@ const messages = {
         name: 'Send Feishu bot message',
         description: 'Sends a bot message through an authorized tenant application.',
       },
+      feishuMessageList: {
+        name: 'Read Feishu messages',
+        description: 'Reads a bounded page of recent messages from one visible Feishu chat.',
+      },
+      feishuCalendarEventList: {
+        name: 'List Feishu calendar events',
+        description: 'Lists a bounded page of events in one calendar and an explicit time range.',
+      },
+      feishuCalendarEventCreate: {
+        name: 'Create Feishu calendar event',
+        description:
+          'Creates an event in a writable Feishu calendar. This write is disabled by default and requires approval when enabled.',
+      },
       xAccountGet: {
         name: 'Get X account',
         description: 'Returns limited identity data for the connected X account.',
@@ -576,6 +649,14 @@ const messages = {
       xPostCreate: {
         name: 'Publish an X post',
         description: 'Publishes a post from the connected X account after explicit approval.',
+      },
+      xUserGetByUsername: {
+        name: 'Get X user by username',
+        description: 'Looks up one public X user by username and accepts an optional leading @.',
+      },
+      xPostListByUser: {
+        name: 'List X posts by user',
+        description: 'Lists a bounded page of public posts for one X user ID.',
       },
       webSearch: {
         name: 'Search the web',

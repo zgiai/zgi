@@ -14,16 +14,22 @@ import {
 } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
-import { useIntegrationActionPolicies, useUpdateIntegrationActionPolicies } from '@/hooks';
+import {
+  useIntegrationActionPolicies,
+  useIntegrationProviderCapabilities,
+  useUpdateIntegrationActionPolicies,
+} from '@/hooks';
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
 import type {
   IntegrationActionDefinition,
+  IntegrationActionCapability,
   IntegrationActionPolicy,
   IntegrationCatalogItem,
 } from '@/services/types/integration';
 import { integrationCatalogID, resolveIntegrationAuthDefinitions } from './integration-utils';
 import { useIntegrationMetadata } from './metadata-i18n';
+import { ProviderCapabilityAvailability } from './provider-capability-availability';
 
 type CapabilityFilter = 'all' | 'read' | 'write';
 
@@ -65,12 +71,27 @@ export function IntegrationProviderCapabilitiesInline({
   const [filter, setFilter] = useState<CapabilityFilter>('all');
   const integrationId = integrationCatalogID(provider);
   const actions = useMemo(() => provider.actions ?? [], [provider.actions]);
+  const capabilityQuery = useIntegrationProviderCapabilities(
+    integrationId,
+    canManageShared ? 'organization' : 'account'
+  );
   const policyQuery = useIntegrationActionPolicies(canManageShared ? integrationId : '');
   const updateMutation = useUpdateIntegrationActionPolicies(integrationId);
   const [draft, setDraft] = useState<IntegrationActionPolicy[]>([]);
   const [baseline, setBaseline] = useState<IntegrationActionPolicy[]>([]);
   const [revision, setRevision] = useState('');
   const isDirty = JSON.stringify(draft) !== JSON.stringify(baseline);
+  const liveCapabilities =
+    capabilityQuery.isSuccess && !capabilityQuery.isFetching
+      ? capabilityQuery.data?.data
+      : undefined;
+  const liveCapabilityByAction = useMemo(
+    () =>
+      new Map<string, IntegrationActionCapability>(
+        (liveCapabilities?.actions ?? []).map(action => [action.id, action])
+      ),
+    [liveCapabilities?.actions]
+  );
 
   useEffect(() => {
     if (!canManageShared) return;
@@ -105,10 +126,20 @@ export function IntegrationProviderCapabilitiesInline({
       new Map(
         (canManageShared
           ? draft
-          : actions.map(action => actionDefaultPolicy(integrationId, action))
+          : actions.map(action => {
+              const live = liveCapabilityByAction.get(action.id);
+              if (!live) return actionDefaultPolicy(integrationId, action);
+              return {
+                integration_id: integrationId,
+                action_id: action.id,
+                enabled: live.enabled,
+                approval_policy: live.approval_policy,
+                data_egress_allowed: live.data_egress_allowed,
+              } satisfies IntegrationActionPolicy;
+            })
         ).map(policy => [policy.action_id, policy])
       ),
-    [actions, canManageShared, draft, integrationId]
+    [actions, canManageShared, draft, integrationId, liveCapabilityByAction]
   );
   const summary = useMemo(
     () => ({
@@ -144,11 +175,17 @@ export function IntegrationProviderCapabilitiesInline({
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0">
           <p className="text-sm font-medium">
-            {t('capabilities.catalogSummary', {
-              total: summary.total,
-              read: summary.read,
-              write: summary.write,
-            })}
+            {liveCapabilities
+              ? t('capabilities.connectedSummary', {
+                  total: liveCapabilities.summary.total,
+                  available: liveCapabilities.summary.available,
+                  attention: liveCapabilities.summary.needs_attention,
+                })
+              : t('capabilities.catalogSummary', {
+                  total: summary.total,
+                  read: summary.read,
+                  write: summary.write,
+                })}
           </p>
           <p className="mt-1 text-xs text-muted-foreground">{t('capabilities.catalogNotice')}</p>
         </div>
@@ -222,15 +259,24 @@ export function IntegrationProviderCapabilitiesInline({
         </div>
       </div>
 
+      {capabilityQuery.isError ? (
+        <div className="rounded-lg border border-warning/30 bg-warning/5 p-4 text-sm text-warning">
+          <p className="font-medium">{t('capabilities.loadFailed')}</p>
+          <p className="mt-1 text-xs leading-5">{t('capabilities.liveStatusUnavailable')}</p>
+        </div>
+      ) : null}
+
+      {canManageShared && policyQuery.isError ? (
+        <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
+          {t('policies.loadFailed')}
+        </div>
+      ) : null}
+
       {canManageShared && policyQuery.isLoading && actions.length > 0 ? (
         <div className="space-y-2">
           {Array.from({ length: Math.min(actions.length, 3) }).map((_, index) => (
             <Skeleton key={index} className="h-20 rounded-lg" />
           ))}
-        </div>
-      ) : canManageShared && policyQuery.isError ? (
-        <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
-          {t('policies.loadFailed')}
         </div>
       ) : filteredActions.length === 0 ? (
         <div className="rounded-lg border border-dashed bg-background p-8 text-center text-sm text-muted-foreground">
@@ -243,6 +289,16 @@ export function IntegrationProviderCapabilitiesInline({
             const Icon = read ? Search : Pencil;
             const policy =
               policyByAction.get(action.id) ?? actionDefaultPolicy(integrationId, action);
+            const liveCapability = liveCapabilityByAction.get(action.id);
+            const currentPolicyKnown = canManageShared
+              ? policyQuery.isSuccess
+              : Boolean(liveCapability);
+            const availabilityState =
+              capabilityQuery.isLoading || capabilityQuery.isFetching
+                ? 'checking'
+                : capabilityQuery.isError || !liveCapability
+                  ? 'status_unavailable'
+                  : liveCapability.availability;
             const approvalLockedByProvider =
               action.default_policy?.approval_policy === 'always_ask';
             const egressLockedByProvider =
@@ -254,7 +310,7 @@ export function IntegrationProviderCapabilitiesInline({
                 : authenticationMethods;
             return (
               <details key={action.id} className={cn('group', index > 0 && 'border-t')}>
-                <summary className="grid cursor-pointer list-none gap-3 p-4 marker:hidden hover:bg-muted/20 @[900px]/connections:grid-cols-[minmax(190px,.9fr)_minmax(260px,1.5fr)_minmax(90px,.4fr)_minmax(100px,.45fr)_minmax(150px,.65fr)_20px] @[900px]/connections:items-center">
+                <summary className="grid cursor-pointer list-none gap-3 p-4 marker:hidden hover:bg-muted/20 @[1050px]/connections:grid-cols-[minmax(180px,.85fr)_minmax(230px,1.35fr)_minmax(80px,.35fr)_minmax(90px,.4fr)_minmax(150px,.65fr)_minmax(150px,.7fr)_20px] @[1050px]/connections:items-center">
                   <div className="flex min-w-0 items-start gap-3">
                     <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary/5 text-primary">
                       <Icon className="size-4" />
@@ -270,7 +326,7 @@ export function IntegrationProviderCapabilitiesInline({
                     {metadata.actionDescription(action)}
                   </p>
                   <div>
-                    <span className="mb-1 block text-[11px] font-medium text-muted-foreground @[900px]/connections:hidden">
+                    <span className="mb-1 block text-[11px] font-medium text-muted-foreground @[1050px]/connections:hidden">
                       {t('capabilities.columns.effect')}
                     </span>
                     <Badge
@@ -284,7 +340,7 @@ export function IntegrationProviderCapabilitiesInline({
                     </Badge>
                   </div>
                   <div>
-                    <span className="mb-1 block text-[11px] font-medium text-muted-foreground @[900px]/connections:hidden">
+                    <span className="mb-1 block text-[11px] font-medium text-muted-foreground @[1050px]/connections:hidden">
                       {t('capabilities.columns.risk')}
                     </span>
                     <span className="text-xs text-muted-foreground">
@@ -292,13 +348,24 @@ export function IntegrationProviderCapabilitiesInline({
                     </span>
                   </div>
                   <div>
-                    <span className="mb-1 block text-[11px] font-medium text-muted-foreground @[900px]/connections:hidden">
+                    <span className="mb-1 block text-[11px] font-medium text-muted-foreground @[1050px]/connections:hidden">
+                      {t('capabilities.columns.availability')}
+                    </span>
+                    <ProviderCapabilityAvailability
+                      state={availabilityState}
+                      compatibleConnectionCount={liveCapability?.compatible_connection_count}
+                    />
+                  </div>
+                  <div>
+                    <span className="mb-1 block text-[11px] font-medium text-muted-foreground @[1050px]/connections:hidden">
                       {t('capabilities.columns.execution')}
                     </span>
                     <span className="text-xs text-muted-foreground">
-                      {policy.approval_policy === 'always_ask'
-                        ? t('capabilities.approvalAlways')
-                        : t('capabilities.approvalInherit')}
+                      {currentPolicyKnown
+                        ? policy.approval_policy === 'always_ask'
+                          ? t('capabilities.approvalAlways')
+                          : t('capabilities.approvalInherit')
+                        : t('capabilities.currentPolicyUnavailable')}
                     </span>
                   </div>
                   <ChevronDown className="size-4 text-muted-foreground transition-transform group-open:rotate-180" />
@@ -371,7 +438,12 @@ export function IntegrationProviderCapabilitiesInline({
                       {canManageShared ? (
                         <Select
                           value={policy.approval_policy}
-                          disabled={updateMutation.isPending || approvalLockedByProvider}
+                          disabled={
+                            policyQuery.isLoading ||
+                            policyQuery.isError ||
+                            updateMutation.isPending ||
+                            approvalLockedByProvider
+                          }
                           onValueChange={approvalPolicy =>
                             updatePolicy(action.id, {
                               approval_policy:
@@ -389,9 +461,11 @@ export function IntegrationProviderCapabilitiesInline({
                         </Select>
                       ) : (
                         <p className="text-xs text-muted-foreground">
-                          {policy.approval_policy === 'always_ask'
-                            ? t('capabilities.approvalAlways')
-                            : t('capabilities.approvalInherit')}
+                          {currentPolicyKnown
+                            ? policy.approval_policy === 'always_ask'
+                              ? t('capabilities.approvalAlways')
+                              : t('capabilities.approvalInherit')
+                            : t('capabilities.currentPolicyUnavailable')}
                         </p>
                       )}
                     </div>
@@ -411,6 +485,8 @@ export function IntegrationProviderCapabilitiesInline({
                           checked={policy.data_egress_allowed}
                           disabled={
                             updateMutation.isPending ||
+                            policyQuery.isLoading ||
+                            policyQuery.isError ||
                             !action.data_egress ||
                             egressLockedByProvider
                           }
@@ -422,9 +498,13 @@ export function IntegrationProviderCapabilitiesInline({
                         />
                       ) : (
                         <Badge variant="outline">
-                          {policy.data_egress_allowed
-                            ? t('capabilities.dataEgressAllowed')
-                            : t('capabilities.dataEgressBlocked')}
+                          {!currentPolicyKnown
+                            ? t('capabilities.currentPolicyUnavailable')
+                            : !action.data_egress
+                              ? t('capabilities.dataEgressNotRequired')
+                              : policy.data_egress_allowed
+                                ? t('capabilities.dataEgressAllowed')
+                                : t('capabilities.dataEgressBlocked')}
                         </Badge>
                       )}
                     </div>

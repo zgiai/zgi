@@ -108,6 +108,7 @@ const (
 	integrationCapabilityAvailable         integrationCapabilityAvailability = "available"
 	integrationCapabilityNeedsConnection   integrationCapabilityAvailability = "needs_connection"
 	integrationCapabilityNeedsScope        integrationCapabilityAvailability = "needs_scope"
+	integrationCapabilityNeedsPermission   integrationCapabilityAvailability = "needs_permission"
 	integrationCapabilityDisabledByPolicy  integrationCapabilityAvailability = "disabled_by_policy"
 	integrationCapabilityDataEgressBlocked integrationCapabilityAvailability = "data_egress_blocked"
 )
@@ -445,11 +446,45 @@ func (handler *integrationHandler) providerCapabilities(c *gin.Context) {
 			integrationRouteError(c, err)
 			return
 		}
-		availability, compatibleCount := integrationActionCapabilityAvailability(
+		authorize := func(connection integrations.ConnectionView) error {
+			if audience == "organization" {
+				// The organization view represents shared use. Reuse the same
+				// organization/workspace grant check used when an Agent selects an
+				// action, rather than treating every administrator-visible
+				// connection as executable.
+				return handler.deps.Access.AuthorizeAgentConnectionActionPreference(
+					c.Request.Context(),
+					organizationID,
+					workspaceID,
+					connection.ID,
+					integrationID,
+					action.ID,
+					action.Effect,
+				)
+			}
+			return handler.deps.Access.AuthorizeConnectionUse(
+				c.Request.Context(),
+				integrations.ConnectionAccessRequest{
+					OrganizationID: organizationID,
+					WorkspaceID:    workspaceID,
+					AccountID:      accountID,
+					ConnectionID:   connection.ID,
+					IntegrationID:  integrationID,
+					ActionID:       action.ID,
+					Effect:         action.Effect,
+				},
+			)
+		}
+		availability, compatibleCount, err := integrationActionCapabilityAvailability(
 			action,
 			decision,
 			visible,
+			authorize,
 		)
+		if err != nil {
+			integrationRouteError(c, err)
+			return
+		}
 		result.Summary.Total++
 		if action.Effect == toolgovernance.EffectRead || action.Effect == toolgovernance.EffectNone {
 			result.Summary.Read++
@@ -477,19 +512,26 @@ func integrationActionCapabilityAvailability(
 	action integrations.ActionDefinition,
 	decision integrations.ActionPolicyDecision,
 	connections []integrations.ConnectionView,
-) (integrationCapabilityAvailability, int) {
+	authorize func(integrations.ConnectionView) error,
+) (integrationCapabilityAvailability, int, error) {
 	if !decision.Enabled {
-		return integrationCapabilityDisabledByPolicy, 0
+		return integrationCapabilityDisabledByPolicy, 0, nil
 	}
 	if action.DataEgress && !decision.DataEgressAllowed {
-		return integrationCapabilityDataEgressBlocked, 0
+		return integrationCapabilityDataEgressBlocked, 0, nil
 	}
 	compatibleCount := 0
 	hasScopeGap := false
+	hasPermissionGap := false
+	now := time.Now().UTC()
 	for _, connection := range connections {
 		if connection.Status != integrations.ConnectionStatusActive ||
+			connection.HealthStatus == integrations.ConnectionHealthUnhealthy ||
 			connection.AuthStatus == integrations.ConnectionAuthExpired ||
 			connection.AuthStatus == integrations.ConnectionAuthReconnectRequired ||
+			(connection.ExpiresAt != nil && !connection.ExpiresAt.After(now)) ||
+			(connection.TokenExpiresAt != nil && !connection.TokenExpiresAt.After(now)) ||
+			(connection.RefreshTokenExpiresAt != nil && !connection.RefreshTokenExpiresAt.After(now)) ||
 			!integrations.ActionSupportsAuthMethod(action, connection.AuthMethodID) {
 			continue
 		}
@@ -504,15 +546,27 @@ func integrationActionCapabilityAvailability(
 				continue
 			}
 		}
+		if authorize != nil {
+			if err := authorize(connection); err != nil {
+				if integrations.ErrorCode(err) == integrations.ErrorCodeAccessDenied {
+					hasPermissionGap = true
+					continue
+				}
+				return "", 0, err
+			}
+		}
 		compatibleCount++
 	}
 	if compatibleCount > 0 {
-		return integrationCapabilityAvailable, compatibleCount
+		return integrationCapabilityAvailable, compatibleCount, nil
+	}
+	if hasPermissionGap {
+		return integrationCapabilityNeedsPermission, 0, nil
 	}
 	if hasScopeGap {
-		return integrationCapabilityNeedsScope, 0
+		return integrationCapabilityNeedsScope, 0, nil
 	}
-	return integrationCapabilityNeedsConnection, 0
+	return integrationCapabilityNeedsConnection, 0, nil
 }
 
 func (handler *integrationHandler) listAvailableConnections(c *gin.Context) {

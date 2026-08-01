@@ -127,7 +127,7 @@ func TestMetaToolsRejectNonAIChatCallers(t *testing.T) {
 }
 
 func TestAgentMetaToolsUseOnlyExplicitSharedReadBinding(t *testing.T) {
-	fixture := newAgentMetaToolFixture(t, toolgovernance.EffectRead, toolgovernance.ApprovalPolicyNeverAsk)
+	fixture := newAgentMetaToolFixture(t, toolgovernance.EffectRead, toolgovernance.ApprovalPolicyNeverAsk, true)
 	fixture.access.agentPreferenceAllowed[fixture.connectionOne.ID] = true
 	fixture.access.agentActionAllowed[fixture.connectionOne.ID.String()+"/"+fixture.actionID] = true
 	agentID := uuid.New()
@@ -203,14 +203,15 @@ func TestAgentMetaToolsFailClosedForPersonalWriteAndAlwaysAskConnections(t *test
 		effect           toolgovernance.Effect
 		approval         toolgovernance.ApprovalPolicy
 		credentialSource integrations.ConnectionCredentialSource
+		wantCode         string
 	}{
-		{name: "personal read", effect: toolgovernance.EffectRead, approval: toolgovernance.ApprovalPolicyNeverAsk, credentialSource: integrations.ConnectionCredentialSourceAccount},
-		{name: "shared write", effect: toolgovernance.EffectCreate, approval: toolgovernance.ApprovalPolicyNeverAsk, credentialSource: integrations.ConnectionCredentialSourceOrganization},
-		{name: "shared always ask", effect: toolgovernance.EffectRead, approval: toolgovernance.ApprovalPolicyAlwaysAsk, credentialSource: integrations.ConnectionCredentialSourceOrganization},
+		{name: "personal read", effect: toolgovernance.EffectRead, approval: toolgovernance.ApprovalPolicyNeverAsk, credentialSource: integrations.ConnectionCredentialSourceAccount, wantCode: integrations.ErrorCodeAccessDenied},
+		{name: "shared write", effect: toolgovernance.EffectCreate, approval: toolgovernance.ApprovalPolicyNeverAsk, credentialSource: integrations.ConnectionCredentialSourceOrganization, wantCode: integrations.ErrorCodeInvalidInput},
+		{name: "shared always ask", effect: toolgovernance.EffectRead, approval: toolgovernance.ApprovalPolicyAlwaysAsk, credentialSource: integrations.ConnectionCredentialSourceOrganization, wantCode: integrations.ErrorCodeAccessDenied},
 	}
 	for _, testCase := range tests {
 		t.Run(testCase.name, func(t *testing.T) {
-			fixture := newAgentMetaToolFixture(t, testCase.effect, testCase.approval)
+			fixture := newAgentMetaToolFixture(t, testCase.effect, testCase.approval, true)
 			fixture.connectionOne.CredentialSource = testCase.credentialSource
 			if testCase.credentialSource == integrations.ConnectionCredentialSourceAccount {
 				owner := fixture.accountID
@@ -242,13 +243,106 @@ func TestAgentMetaToolsFailClosedForPersonalWriteAndAlwaysAskConnections(t *test
 				"action_id":      fixture.actionID,
 				"arguments":      map[string]interface{}{},
 			}, nil, nil, nil)
-			if integrations.ErrorCode(err) != integrations.ErrorCodeAccessDenied {
-				t.Fatalf("error=%v code=%q, want access denied", err, integrations.ErrorCode(err))
+			if integrations.ErrorCode(err) != testCase.wantCode {
+				t.Fatalf("error=%v code=%q, want %q", err, integrations.ErrorCode(err), testCase.wantCode)
 			}
 			if len(fixture.executor.requests) != 0 {
 				t.Fatalf("provider executor ran for denied Agent action: %#v", fixture.executor.requests)
 			}
 		})
+	}
+}
+
+func TestPreparationHintsExposeOnlyExecutableReadActions(t *testing.T) {
+	fixture := newAgentMetaToolFixture(t, toolgovernance.EffectRead, toolgovernance.ApprovalPolicyNeverAsk, true)
+	fixture.access.agentActionAllowed[fixture.connectionOne.ID.String()+"/"+fixture.actionID] = true
+	params := map[string]interface{}{
+		"agent_id": uuid.NewString(),
+		"integration_connection_ids": map[string]string{
+			fixture.integrationID: fixture.connectionOne.ID.String(),
+		},
+		"integration_selected_connection_ids": map[string][]string{
+			fixture.integrationID: {fixture.connectionOne.ID.String()},
+		},
+		tools.AgentBindingAuthorizationsParameter: []tools.AgentBindingAuthorization{{
+			BindingType: "integration_connection", ResourceID: fixture.connectionOne.ID.String(),
+			ParentResourceID: fixture.integrationID, AccessMode: "read",
+			AllowedActionIDs: []string{fixture.actionID}, BoundByAccountID: fixture.accountID.String(), BoundAtUnix: 123,
+		}},
+	}
+	params = skills.WithAgentBindingVerifier(params, func(context.Context, skills.AgentBindingCheck) (bool, error) {
+		return true, nil
+	})
+	runtimeTool := fixture.agentRuntimeTool(t, ToolGetActionGuide, params)
+	tool, ok := runtimeTool.(*Tool)
+	if !ok {
+		t.Fatalf("runtime tool type = %T, want *Tool", runtimeTool)
+	}
+	target := integrations.ActionDefinition{PreparationHints: []integrations.ActionPreparationHint{{
+		ActionID:        fixture.actionID,
+		Relation:        integrations.ActionPreparationResolveTarget,
+		TargetArguments: []string{"recipient_id"},
+		ResultPaths:     []string{"results[].id"},
+		Description:     "Resolve the recipient before executing the target action.",
+		DescriptionI18n: integrations.LocalizedText{
+			integrations.LocaleEnglishUS:         "Resolve the recipient before executing the target action.",
+			integrations.LocaleSimplifiedChinese: "执行目标操作前先解析接收人。",
+		},
+	}}}
+	hints := tool.preparationHintsOutput(context.Background(), fixture.accountID.String(), target, fixture.connectionOne)
+	if len(hints) != 1 {
+		t.Fatalf("preparation hints = %#v, want one executable read hint", hints)
+	}
+	hint, _ := hints[0].(map[string]interface{})
+	if hint["action_id"] != fixture.actionID || hint["relation"] != string(integrations.ActionPreparationResolveTarget) {
+		t.Fatalf("preparation hint = %#v", hint)
+	}
+
+	fixture.access.agentActionAllowed[fixture.connectionOne.ID.String()+"/"+fixture.actionID] = false
+	if hints := tool.preparationHintsOutput(context.Background(), fixture.accountID.String(), target, fixture.connectionOne); len(hints) != 0 {
+		t.Fatalf("unauthorized preparation hints = %#v, want none", hints)
+	}
+	fixture.access.agentActionAllowed[fixture.connectionOne.ID.String()+"/"+fixture.actionID] = true
+
+	policyKey := fixture.integrationID + "/" + fixture.actionID
+	fixture.policies.decisions[policyKey] = integrations.ActionPolicyDecision{
+		Enabled: false, ApprovalPolicy: integrations.IntegrationApprovalPolicyInherit, DataEgressAllowed: true,
+	}
+	if hints := tool.preparationHintsOutput(context.Background(), fixture.accountID.String(), target, fixture.connectionOne); len(hints) != 0 {
+		t.Fatalf("policy-disabled preparation hints = %#v, want none", hints)
+	}
+	delete(fixture.policies.decisions, policyKey)
+
+	target.PreparationHints[0].ActionID = "gmail.missing"
+	if hints := tool.preparationHintsOutput(context.Background(), fixture.accountID.String(), target, fixture.connectionOne); len(hints) != 0 {
+		t.Fatalf("unknown preparation hints = %#v, want none", hints)
+	}
+}
+
+func TestAgentReadActionUsesEffectiveOrganizationPolicy(t *testing.T) {
+	fixture := newAgentMetaToolFixture(t, toolgovernance.EffectRead, toolgovernance.ApprovalPolicyNeverAsk, false)
+	action, ok := fixture.registry.ActionDetail(fixture.integrationID, fixture.actionID)
+	if !ok {
+		t.Fatal("Agent action is not registered")
+	}
+	tool, ok := fixture.agentRuntimeTool(t, ToolSearchActions, map[string]interface{}{}).(*Tool)
+	if !ok {
+		t.Fatal("Agent meta tool has an unexpected type")
+	}
+	if tool.agentActionExecutableWithoutInteraction(context.Background(), fixture.organizationID, fixture.integrationID, action) {
+		t.Fatal("default-disabled Agent action should not be executable without an organization override")
+	}
+	fixture.policies.decisions[fixture.integrationID+"/"+fixture.actionID] = integrations.ActionPolicyDecision{
+		Enabled: true, ApprovalPolicy: integrations.IntegrationApprovalPolicyInherit, DataEgressAllowed: true,
+	}
+	if !tool.agentActionExecutableWithoutInteraction(context.Background(), fixture.organizationID, fixture.integrationID, action) {
+		t.Fatal("organization-enabled read action should be executable by an explicitly authorized Agent")
+	}
+	fixture.policies.decisions[fixture.integrationID+"/"+fixture.actionID] = integrations.ActionPolicyDecision{
+		Enabled: true, ApprovalPolicy: integrations.IntegrationApprovalPolicyAlwaysAsk, DataEgressAllowed: true,
+	}
+	if tool.agentActionExecutableWithoutInteraction(context.Background(), fixture.organizationID, fixture.integrationID, action) {
+		t.Fatal("Agent action requiring interactive approval must remain unavailable")
 	}
 }
 
@@ -316,6 +410,16 @@ func TestSearchAndGuideExposeOnlyActionAuthorizedConnections(t *testing.T) {
 		!reflect.DeepEqual(action["preferred_scopes"], []interface{}{"repo:write"}) {
 		t.Fatalf("search action alternative scope contract = %#v", action)
 	}
+	if !reflect.DeepEqual(action["required_arguments"], []interface{}{
+		map[string]interface{}{"name": "title", "type": "string"},
+	}) || !reflect.DeepEqual(action["optional_arguments"], []interface{}{
+		map[string]interface{}{"name": "state", "type": "string"},
+	}) {
+		t.Fatalf("search action compact input contract = %#v", action)
+	}
+	if action["guide_recommended"] != true {
+		t.Fatalf("search action guide_recommended = %#v, want true for an enum-constrained argument", action["guide_recommended"])
+	}
 	assertScopeLabelsOutput(t, action["scope_labels_i18n"])
 	assertNoConnectionUUIDs(t, messages[0].Data, fixture.connectionOne.ID, fixture.connectionTwo.ID)
 	if err := tools.ValidateJSONSchemaValue(searchTool.GetEntity().OutputSchema, messages[0].Data); err != nil {
@@ -344,6 +448,24 @@ func TestSearchAndGuideExposeOnlyActionAuthorizedConnections(t *testing.T) {
 	assertNoConnectionUUIDs(t, guide, fixture.connectionOne.ID, fixture.connectionTwo.ID)
 	if err := tools.ValidateJSONSchemaValue(guideTool.GetEntity().OutputSchema, guide); err != nil {
 		t.Fatalf("get_action_guide output schema error = %v", err)
+	}
+}
+
+func TestCompactActionInputContractRecommendsGuideOnlyForNonTrivialSchemas(t *testing.T) {
+	simple := compactActionInputContract(strictObject(map[string]interface{}{
+		"query":     map[string]interface{}{"type": "string", "minLength": 1},
+		"page_size": map[string]interface{}{"type": "integer", "minimum": 1, "maximum": 50},
+	}, "query"))
+	if simple["guide_recommended"] != false {
+		t.Fatalf("simple guide recommendation = %#v, want false", simple)
+	}
+
+	constrained := compactActionInputContract(strictObject(map[string]interface{}{
+		"recipient_type": map[string]interface{}{"type": "string", "enum": []interface{}{"self", "open_id"}},
+		"payload":        strictObject(map[string]interface{}{"text": map[string]interface{}{"type": "string"}}, "text"),
+	}, "recipient_type", "payload"))
+	if constrained["guide_recommended"] != true {
+		t.Fatalf("constrained guide recommendation = %#v, want true", constrained)
 	}
 }
 
@@ -1094,6 +1216,7 @@ type metaToolFixture struct {
 	registry       *integrations.Registry
 	lookup         *fakeConnectionLookup
 	access         *fakeConnectionAccess
+	policies       *fakeActionPolicyResolver
 	executor       *fakeActionExecutor
 	provider       *Provider
 }
@@ -1222,14 +1345,15 @@ func newMetaToolFixture(t *testing.T) *metaToolFixture {
 	executor := &fakeActionExecutor{result: &integrations.ActionResult{
 		Output: map[string]interface{}{"issue_id": "I_1"}, ProviderRequestID: "request-1", ResultCount: 1, AttemptCount: 1,
 	}}
-	provider, err := NewProvider(registry, executor, lookup, access)
+	policies := &fakeActionPolicyResolver{decisions: map[string]integrations.ActionPolicyDecision{}}
+	provider, err := NewProvider(registry, executor, lookup, access, policies)
 	if err != nil {
 		t.Fatalf("NewProvider() error = %v", err)
 	}
 	return &metaToolFixture{
 		organizationID: organizationID, accountID: accountID, integrationID: integrationID, actionID: actionID,
 		connectionOne: connectionOne, connectionTwo: connectionTwo,
-		registry: registry, lookup: lookup, access: access, executor: executor, provider: provider,
+		registry: registry, lookup: lookup, access: access, policies: policies, executor: executor, provider: provider,
 	}
 }
 
@@ -1237,6 +1361,7 @@ func newAgentMetaToolFixture(
 	t *testing.T,
 	effect toolgovernance.Effect,
 	approval toolgovernance.ApprovalPolicy,
+	defaultEnabled bool,
 ) *metaToolFixture {
 	t.Helper()
 	organizationID := uuid.New()
@@ -1261,9 +1386,12 @@ func newAgentMetaToolFixture(
 		Effect: effect, RiskLevel: toolgovernance.RiskLevelLow,
 		DataEgress: true, ExternalDestination: "gmail.googleapis.com", Idempotent: true,
 		DefaultPolicy: &integrations.DefaultActionPolicy{
-			Enabled: true, ApprovalPolicy: approval, DataEgressAllowed: true,
+			Enabled: defaultEnabled, ApprovalPolicy: approval, DataEgressAllowed: true,
 		},
-		SupportedCallers: []tools.ToolInvokeFrom{tools.ToolInvokeFromAIChat, tools.ToolInvokeFromAgent},
+		SupportedCallers: []tools.ToolInvokeFrom{tools.ToolInvokeFromAIChat},
+	}
+	if effect == toolgovernance.EffectRead {
+		action.SupportedCallers = append(action.SupportedCallers, tools.ToolInvokeFromAgent)
 	}
 	registry := integrations.NewRegistry()
 	if err := registry.Register(integrations.Registration{
@@ -1306,7 +1434,8 @@ func newAgentMetaToolFixture(
 		Output:      map[string]interface{}{"messages": []interface{}{"message-1"}},
 		ResultCount: 1, AttemptCount: 1,
 	}}
-	provider, err := NewProvider(registry, executor, lookup, access)
+	policies := &fakeActionPolicyResolver{decisions: map[string]integrations.ActionPolicyDecision{}}
+	provider, err := NewProvider(registry, executor, lookup, access, policies)
 	if err != nil {
 		t.Fatalf("NewProvider() error = %v", err)
 	}
@@ -1314,7 +1443,7 @@ func newAgentMetaToolFixture(
 		organizationID: organizationID, accountID: accountID,
 		integrationID: integrationID, actionID: actionID,
 		connectionOne: connection,
-		registry:      registry, lookup: lookup, access: access, executor: executor, provider: provider,
+		registry:      registry, lookup: lookup, access: access, policies: policies, executor: executor, provider: provider,
 	}
 }
 
@@ -1376,6 +1505,36 @@ type fakeConnectionAccess struct {
 	actionAllowed          map[string]bool
 	agentPreferenceAllowed map[uuid.UUID]bool
 	agentActionAllowed     map[string]bool
+}
+
+type fakeActionPolicyResolver struct {
+	decisions map[string]integrations.ActionPolicyDecision
+	err       error
+}
+
+func (resolver *fakeActionPolicyResolver) Resolve(
+	_ context.Context,
+	_ string,
+	integrationID string,
+	action integrations.ActionDefinition,
+) (integrations.ActionPolicyDecision, error) {
+	if resolver.err != nil {
+		return integrations.ActionPolicyDecision{}, resolver.err
+	}
+	if decision, exists := resolver.decisions[integrationID+"/"+action.ID]; exists {
+		return decision, nil
+	}
+	decision := integrations.ActionPolicyDecision{
+		Enabled: true, ApprovalPolicy: integrations.IntegrationApprovalPolicyInherit, DataEgressAllowed: true,
+	}
+	if action.DefaultPolicy != nil {
+		decision.Enabled = action.DefaultPolicy.Enabled
+		decision.DataEgressAllowed = !action.DataEgress || action.DefaultPolicy.DataEgressAllowed
+		if action.DefaultPolicy.ApprovalPolicy == toolgovernance.ApprovalPolicyAlwaysAsk {
+			decision.ApprovalPolicy = integrations.IntegrationApprovalPolicyAlwaysAsk
+		}
+	}
+	return decision, nil
 }
 
 func (access *fakeConnectionAccess) AuthorizeConnectionPreference(_ context.Context, _, _ uuid.UUID, _ *uuid.UUID, connectionID uuid.UUID) error {

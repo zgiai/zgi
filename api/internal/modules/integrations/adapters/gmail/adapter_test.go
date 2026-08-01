@@ -17,6 +17,7 @@ import (
 
 	"github.com/zgiai/zgi/api/internal/capabilities/toolgovernance"
 	"github.com/zgiai/zgi/api/internal/modules/integrations"
+	"github.com/zgiai/zgi/api/internal/modules/tools"
 )
 
 func TestProviderDefinitionOAuthAndWriteDefaults(t *testing.T) {
@@ -73,6 +74,10 @@ func TestProviderDefinitionOAuthAndWriteDefaults(t *testing.T) {
 		send.Idempotent || send.Effect != toolgovernance.EffectExternalSend {
 		t.Fatalf("send action governance = %#v", send)
 	}
+	if !slices.Equal(account.SupportedCallers, []tools.ToolInvokeFrom{tools.ToolInvokeFromAIChat, tools.ToolInvokeFromAgent}) ||
+		!slices.Equal(send.SupportedCallers, []tools.ToolInvokeFrom{tools.ToolInvokeFromAIChat}) {
+		t.Fatalf("action callers: account=%#v send=%#v", account.SupportedCallers, send.SupportedCallers)
+	}
 }
 
 func TestProviderDefinitionRegisters(t *testing.T) {
@@ -86,6 +91,54 @@ func TestProviderDefinitionRegisters(t *testing.T) {
 	}
 	if _, ok := registry.OAuthProvider(IntegrationID, DriverID); !ok {
 		t.Fatal("OAuth provider was not registered")
+	}
+}
+
+func TestCoreMailActionsHaveStrictScopesAndGovernance(t *testing.T) {
+	actions := map[string]integrations.ActionDefinition{}
+	for _, action := range Actions() {
+		actions[action.ID] = action
+	}
+	if len(actions) != 6 {
+		t.Fatalf("actions = %#v", actions)
+	}
+	for _, actionID := range []string{ActionSearchMail, ActionGetMail, ActionReplyMail, ActionCreateDraft} {
+		action, ok := actions[actionID]
+		if !ok || action.InputSchema["$schema"] != "https://json-schema.org/draft/2020-12/schema" ||
+			action.InputSchema["additionalProperties"] != false || action.OutputSchema["additionalProperties"] != false {
+			t.Fatalf("strict action %s = %#v", actionID, action)
+		}
+	}
+	for _, actionID := range []string{ActionSearchMail, ActionGetMail} {
+		action := actions[actionID]
+		if action.DefaultPolicy == nil || !action.DefaultPolicy.Enabled ||
+			action.DefaultPolicy.ApprovalPolicy != toolgovernance.ApprovalPolicyNeverAsk ||
+			!action.Idempotent || action.Effect != toolgovernance.EffectRead ||
+			!slices.Equal(action.RequiredScopes, []string{ScopeMailReadonly}) ||
+			!slices.Equal(action.SupportedCallers, []tools.ToolInvokeFrom{tools.ToolInvokeFromAIChat, tools.ToolInvokeFromAgent}) {
+			t.Fatalf("read action %s = %#v", actionID, action)
+		}
+	}
+	reply := actions[ActionReplyMail]
+	if reply.DefaultPolicy == nil || reply.DefaultPolicy.Enabled ||
+		reply.DefaultPolicy.ApprovalPolicy != toolgovernance.ApprovalPolicyAlwaysAsk || reply.Idempotent ||
+		reply.Effect != toolgovernance.EffectExternalSend ||
+		!slices.Equal(reply.RequiredScopes, []string{ScopeMailReadonly, ScopeMailSend}) ||
+		!slices.Equal(reply.SupportedCallers, []tools.ToolInvokeFrom{tools.ToolInvokeFromAIChat}) {
+		t.Fatalf("reply action = %#v", reply)
+	}
+	draft := actions[ActionCreateDraft]
+	if draft.DefaultPolicy == nil || draft.DefaultPolicy.Enabled ||
+		draft.DefaultPolicy.ApprovalPolicy != toolgovernance.ApprovalPolicyAlwaysAsk || draft.Idempotent ||
+		draft.Effect != toolgovernance.EffectCreate ||
+		!slices.Equal(draft.RequiredScopes, []string{ScopeMailCompose}) ||
+		!slices.Equal(draft.SupportedCallers, []tools.ToolInvokeFrom{tools.ToolInvokeFromAIChat}) {
+		t.Fatalf("draft action = %#v", draft)
+	}
+	searchProperties, _ := actions[ActionSearchMail].InputSchema["properties"].(map[string]interface{})
+	querySchema, _ := searchProperties["query"].(map[string]interface{})
+	if querySchema["pattern"] != `\S` {
+		t.Fatalf("query schema = %#v", querySchema)
 	}
 }
 
@@ -172,6 +225,239 @@ func TestAdapterAccountAndSendContracts(t *testing.T) {
 	})
 	if err != nil || sent.ResultCount != 1 || sendCalls.Load() != 1 {
 		t.Fatalf("sent = %#v, calls = %d, err = %v", sent, sendCalls.Load(), err)
+	}
+}
+
+func TestSearchMailReturnsBoundedSummariesAndPagination(t *testing.T) {
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		calls.Add(1)
+		writer.Header().Set("X-Google-Request-ID", "gmail-search")
+		switch request.URL.Path {
+		case "/gmail/v1/users/me/messages":
+			if request.URL.Query().Get("q") != "from:alerts@example.com" ||
+				request.URL.Query().Get("maxResults") != "2" || request.URL.Query().Get("pageToken") != "page-1" ||
+				request.URL.Query().Get("includeSpamTrash") != "true" {
+				t.Errorf("search query = %s", request.URL.RawQuery)
+			}
+			_, _ = io.WriteString(writer, `{"messages":[{"id":"message-1","threadId":"thread-1"},{"id":"message-2","threadId":"thread-2"}],"nextPageToken":"page-2","resultSizeEstimate":42}`)
+		case "/gmail/v1/users/me/messages/message-1":
+			if request.URL.Query().Get("format") != "metadata" || len(request.URL.Query()["metadataHeaders"]) == 0 {
+				t.Errorf("metadata query = %s", request.URL.RawQuery)
+			}
+			_, _ = io.WriteString(writer, `{"id":"message-1","threadId":"thread-1","labelIds":["INBOX"],"snippet":"first snippet","payload":{"headers":[{"name":"Subject","value":"=?UTF-8?Q?Status_=E2=9C=93?="},{"name":"From","value":"Alerts <alerts@example.com>"},{"name":"To","value":"Owner <owner@example.com>"},{"name":"Date","value":"Wed, 1 Aug 2026 12:00:00 +0000"}]}}`)
+		case "/gmail/v1/users/me/messages/message-2":
+			_, _ = io.WriteString(writer, `{"id":"message-2","threadId":"thread-2","labelIds":["IMPORTANT"],"snippet":"second snippet","payload":{"headers":[{"name":"Subject","value":"Second"},{"name":"From","value":"alerts@example.com"},{"name":"To","value":"owner@example.com"},{"name":"Date","value":"Wed, 1 Aug 2026 13:00:00 +0000"}]}}`)
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+	adapter, err := newForBaseURLs(server.Client(), server.URL, server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := adapter.Execute(context.Background(), integrations.ActionRequest{
+		ActionID: ActionSearchMail, Connection: gmailTestConnection(),
+		Input: map[string]interface{}{
+			"query": "from:alerts@example.com", "max_results": 2, "page_token": "page-1", "include_spam_trash": true,
+		},
+	})
+	if err != nil || result == nil || result.ResultCount != 2 || result.AttemptCount != 3 || calls.Load() != 3 {
+		t.Fatalf("result = %#v, calls = %d, err = %v", result, calls.Load(), err)
+	}
+	messages, ok := result.Output["messages"].([]interface{})
+	if !ok || len(messages) != 2 || result.Output["next_page_token"] != "page-2" || result.Output["result_size_estimate"] != 42 {
+		t.Fatalf("output = %#v", result.Output)
+	}
+	first, _ := messages[0].(map[string]interface{})
+	if first["subject"] != "Status ✓" || first["snippet"] != "first snippet" || first["thread_id"] != "thread-1" {
+		t.Fatalf("first summary = %#v", first)
+	}
+}
+
+func TestGetMailSafelyParsesMIMEAndTruncates(t *testing.T) {
+	body := strings.Repeat("a", 1100)
+	encodedBody := base64.RawURLEncoding.EncodeToString([]byte(body))
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/gmail/v1/users/me/messages/message-1" || request.URL.Query().Get("format") != "full" {
+			http.NotFound(writer, request)
+			return
+		}
+		_, _ = io.WriteString(writer, `{"id":"message-1","threadId":"thread-1","labelIds":["INBOX"],"snippet":"bounded","payload":{"mimeType":"multipart/alternative","headers":[{"name":"Subject","value":"Long body"},{"name":"From","value":"from@example.com"},{"name":"To","value":"to@example.com"}],"parts":[{"mimeType":"text/plain","headers":[{"name":"Content-Type","value":"text/plain; charset=UTF-8"}],"body":{"data":"`+encodedBody+`"}},{"mimeType":"text/html","body":{"data":"`+base64.RawURLEncoding.EncodeToString([]byte(`<script>secret()</script><p>fallback</p>`))+`"}}]}}`)
+	}))
+	defer server.Close()
+	adapter, err := newForBaseURLs(server.Client(), server.URL, server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := adapter.Execute(context.Background(), integrations.ActionRequest{
+		ActionID: ActionGetMail, Connection: gmailTestConnection(),
+		Input: map[string]interface{}{"message_id": "message-1", "max_body_characters": 1000},
+	})
+	if err != nil || result == nil {
+		t.Fatalf("result = %#v, err = %v", result, err)
+	}
+	message, _ := result.Output["message"].(map[string]interface{})
+	if len([]rune(message["body_text"].(string))) != 1000 || message["body_truncated"] != true || message["mime_type"] != "text/plain" {
+		t.Fatalf("message = %#v", message)
+	}
+	htmlText, mimeType, truncated, err := gmailMessageText(gmailMessagePart{
+		MimeType: "text/html", Body: gmailMessageBody{Data: base64.RawURLEncoding.EncodeToString([]byte(`<style>.x{}</style><p>Hello <b>world</b></p>`))},
+	}, 1000)
+	if err != nil || htmlText != "Hello world" || mimeType != "text/html" || truncated {
+		t.Fatalf("html body = %q, mime = %q, truncated = %v, err = %v", htmlText, mimeType, truncated, err)
+	}
+}
+
+func TestReplyMailPreservesThreadHeadersAndDoesNotRetry(t *testing.T) {
+	var getCalls atomic.Int32
+	var sendCalls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/gmail/v1/users/me/messages/message-1":
+			getCalls.Add(1)
+			_, _ = io.WriteString(writer, `{"id":"message-1","threadId":"thread-1","payload":{"headers":[{"name":"Reply-To","value":"Support <reply@example.com>"},{"name":"From","value":"sender@example.com"},{"name":"Subject","value":"Ticket"},{"name":"Message-ID","value":"<source@example.com>"},{"name":"References","value":"<prior@example.com>"}]}}`)
+		case "/gmail/v1/users/me/messages/send":
+			sendCalls.Add(1)
+			var payload struct {
+				Raw      string `json:"raw"`
+				ThreadID string `json:"threadId"`
+			}
+			if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
+				t.Errorf("decode reply: %v", err)
+			}
+			raw, err := base64.RawURLEncoding.DecodeString(payload.Raw)
+			if err != nil || payload.ThreadID != "thread-1" ||
+				!strings.Contains(string(raw), "<reply@example.com>") ||
+				!strings.Contains(string(raw), "In-Reply-To: <source@example.com>") ||
+				!strings.Contains(string(raw), "References: <prior@example.com> <source@example.com>") ||
+				!strings.Contains(string(raw), "Subject: Re: Ticket") {
+				t.Errorf("reply payload = %#v raw=%q err=%v", payload, raw, err)
+			}
+			_, _ = io.WriteString(writer, `{"id":"reply-1","threadId":"thread-1","labelIds":["SENT"]}`)
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+	adapter, err := newForBaseURLs(server.Client(), server.URL, server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := adapter.Execute(context.Background(), integrations.ActionRequest{
+		ActionID: ActionReplyMail, Connection: gmailTestConnection(),
+		Input: map[string]interface{}{"message_id": "message-1", "body_text": "Thanks"},
+	})
+	if err != nil || result == nil || getCalls.Load() != 1 || sendCalls.Load() != 1 || result.AttemptCount != 2 {
+		t.Fatalf("result=%#v get=%d send=%d err=%v", result, getCalls.Load(), sendCalls.Load(), err)
+	}
+}
+
+func TestReplyAndDraftWritesNeverRetry(t *testing.T) {
+	for _, actionID := range []string{ActionReplyMail, ActionCreateDraft} {
+		t.Run(actionID, func(t *testing.T) {
+			var writeCalls atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				if actionID == ActionReplyMail && request.Method == http.MethodGet {
+					_, _ = io.WriteString(writer, `{"id":"message-1","threadId":"thread-1","payload":{"headers":[{"name":"From","value":"sender@example.com"},{"name":"Subject","value":"Subject"},{"name":"Message-ID","value":"<source@example.com>"}]}}`)
+					return
+				}
+				writeCalls.Add(1)
+				writer.WriteHeader(http.StatusServiceUnavailable)
+				_, _ = io.WriteString(writer, `{"error":{"message":"temporary"}}`)
+			}))
+			defer server.Close()
+			adapter, err := newForBaseURLs(server.Client(), server.URL, server.URL)
+			if err != nil {
+				t.Fatal(err)
+			}
+			input := map[string]interface{}{"message_id": "message-1", "body_text": "Reply"}
+			if actionID == ActionCreateDraft {
+				input = map[string]interface{}{"to": "to@example.com", "subject": "Subject", "body_text": "Draft"}
+			}
+			_, err = adapter.Execute(context.Background(), integrations.ActionRequest{
+				ActionID: actionID, Connection: gmailTestConnection(), Input: input,
+			})
+			if err == nil || writeCalls.Load() != 1 {
+				t.Fatalf("err=%v write calls=%d", err, writeCalls.Load())
+			}
+		})
+	}
+}
+
+func TestCreateDraftUsesGmailDraftEndpoint(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/gmail/v1/users/me/drafts" || request.Method != http.MethodPost {
+			http.NotFound(writer, request)
+			return
+		}
+		var payload struct {
+			Message struct {
+				Raw string `json:"raw"`
+			} `json:"message"`
+		}
+		if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
+			t.Errorf("decode draft: %v", err)
+		}
+		raw, err := base64.RawURLEncoding.DecodeString(payload.Message.Raw)
+		if err != nil || !strings.Contains(string(raw), "Subject: Draft subject") || !strings.Contains(string(raw), "to@example.com") {
+			t.Errorf("draft raw=%q err=%v", raw, err)
+		}
+		_, _ = io.WriteString(writer, `{"id":"draft-1","message":{"id":"message-1","threadId":"thread-1","labelIds":["DRAFT"]}}`)
+	}))
+	defer server.Close()
+	adapter, err := newForBaseURLs(server.Client(), server.URL, server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := adapter.Execute(context.Background(), integrations.ActionRequest{
+		ActionID: ActionCreateDraft, Connection: gmailTestConnection(),
+		Input: map[string]interface{}{"to": "to@example.com", "subject": "Draft subject", "body_text": "Body"},
+	})
+	if err != nil || result == nil || result.ResultCount != 1 {
+		t.Fatalf("result=%#v err=%v", result, err)
+	}
+}
+
+func TestCoreMailActionsRejectInvalidInputBeforeNetwork(t *testing.T) {
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { calls.Add(1) }))
+	defer server.Close()
+	adapter, err := newForBaseURLs(server.Client(), server.URL, server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		actionID string
+		input    map[string]interface{}
+	}{
+		{ActionSearchMail, map[string]interface{}{"query": "   "}},
+		{ActionSearchMail, map[string]interface{}{"query": "in:inbox", "max_results": 21}},
+		{ActionGetMail, map[string]interface{}{"message_id": "   "}},
+		{ActionReplyMail, map[string]interface{}{"message_id": "message-1", "body_text": "\t"}},
+		{ActionCreateDraft, map[string]interface{}{"to": "to@example.com", "subject": " ", "body_text": "body"}},
+	}
+	for _, test := range tests {
+		_, err := adapter.Execute(context.Background(), integrations.ActionRequest{
+			ActionID: test.actionID, Connection: gmailTestConnection(), Input: test.input,
+		})
+		if integrations.ErrorCode(err) != integrations.ErrorCodeInvalidInput {
+			t.Fatalf("%s err=%v", test.actionID, err)
+		}
+	}
+	if calls.Load() != 0 {
+		t.Fatalf("invalid input reached Gmail %d time(s)", calls.Load())
+	}
+}
+
+func gmailTestConnection() *integrations.ResolvedConnection {
+	return &integrations.ResolvedConnection{
+		IntegrationID: IntegrationID, DriverID: DriverID,
+		Credentials: map[string]string{"access_token": "access-secret"},
+		GrantedScopes: []string{
+			ScopeOpenID, ScopeEmail, ScopeProfile, ScopeMailReadonly, ScopeMailSend, ScopeMailCompose,
+		},
 	}
 }
 

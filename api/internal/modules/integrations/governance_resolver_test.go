@@ -25,8 +25,9 @@ func TestGovernanceResolverAlwaysAskRequiresEveryInvocationApproval(t *testing.T
 		ProviderType: tools.ToolProviderTypeConnector,
 		ProviderID:   IntegrationWebSearch,
 		ToolName:     "search_web",
+		Arguments:    map[string]interface{}{"query": "test"},
 		ExecutionContext: skills.ExecutionContext{
-			OrganizationID: testOrganizationID,
+			OrganizationID: testOrganizationID, InvokeFrom: tools.ToolInvokeFromAIChat,
 		},
 	})
 	if err != nil {
@@ -37,9 +38,45 @@ func TestGovernanceResolverAlwaysAskRequiresEveryInvocationApproval(t *testing.T
 	}
 }
 
+func TestGovernanceResolverRejectsInvalidActionArgumentsBeforePolicyAndApproval(t *testing.T) {
+	action := testAction(ActionWebSearch, "search_web")
+	registry := registerTestAction(t, action, &testAdapter{driverID: DriverExa})
+	policyCalled := false
+	resolver := NewGovernanceManifestResolver(registry, executorPolicyResolverFunc(
+		func(context.Context, string, string, ActionDefinition) (ActionPolicyDecision, error) {
+			policyCalled = true
+			return ActionPolicyDecision{
+				Enabled: true, ApprovalPolicy: IntegrationApprovalPolicyAlwaysAsk, DataEgressAllowed: true,
+			}, nil
+		},
+	))
+
+	_, err := resolver.ResolveToolGovernanceManifest(context.Background(), skills.ToolGovernanceRequest{
+		Manifest:     toolgovernance.Manifest{ToolID: "web.search"},
+		ProviderType: tools.ToolProviderTypeConnector,
+		ProviderID:   IntegrationWebSearch,
+		ToolName:     "search_web",
+		Arguments:    map[string]interface{}{},
+		ExecutionContext: skills.ExecutionContext{
+			OrganizationID: testOrganizationID, InvokeFrom: tools.ToolInvokeFromAIChat,
+		},
+	})
+	if ErrorCode(err) != ErrorCodeInvalidInput {
+		t.Fatalf("ResolveToolGovernanceManifest() error = %v code = %q, want invalid input", err, ErrorCode(err))
+	}
+	if policyCalled {
+		t.Fatal("organization policy was evaluated before invalid Action arguments were rejected")
+	}
+	feedback := ActionInputValidationFeedback(err)
+	if feedback["reason_code"] != ActionValidationReasonSchemaMismatch || feedback["provider_request_sent"] != false {
+		t.Fatalf("validation feedback = %#v", feedback)
+	}
+}
+
 func TestGovernanceResolverAllowsOrganizationToEnableDefaultDisabledAction(t *testing.T) {
 	action := testAction("mail.send", "send_mail")
 	action.Effect = toolgovernance.EffectCreate
+	action.SupportedCallers = []tools.ToolInvokeFrom{tools.ToolInvokeFromAIChat}
 	action.DefaultPolicy = &DefaultActionPolicy{
 		Enabled: false, ApprovalPolicy: toolgovernance.ApprovalPolicyAlwaysAsk, DataEgressAllowed: true,
 	}
@@ -57,9 +94,9 @@ func TestGovernanceResolverAllowsOrganizationToEnableDefaultDisabledAction(t *te
 		ProviderType: tools.ToolProviderTypeConnector,
 		ProviderID:   IntegrationWebSearch,
 		ToolName:     action.ToolName,
-		Arguments:    map[string]interface{}{"message": "hello"},
+		Arguments:    map[string]interface{}{"query": "hello"},
 		ExecutionContext: skills.ExecutionContext{
-			OrganizationID: testOrganizationID,
+			OrganizationID: testOrganizationID, InvokeFrom: tools.ToolInvokeFromAIChat,
 		},
 	})
 	if err != nil {
@@ -73,6 +110,7 @@ func TestGovernanceResolverAllowsOrganizationToEnableDefaultDisabledAction(t *te
 func TestGovernanceResolverPreservesProviderAlwaysAskWhenOrganizationEnablesAction(t *testing.T) {
 	action := testAction("mail.send", "send_mail")
 	action.Effect = toolgovernance.EffectExternalSend
+	action.SupportedCallers = []tools.ToolInvokeFrom{tools.ToolInvokeFromAIChat}
 	action.DefaultPolicy = &DefaultActionPolicy{
 		Enabled: false, ApprovalPolicy: toolgovernance.ApprovalPolicyAlwaysAsk, DataEgressAllowed: true,
 	}
@@ -94,7 +132,7 @@ func TestGovernanceResolverPreservesProviderAlwaysAskWhenOrganizationEnablesActi
 		ToolName:     action.ToolName,
 		Arguments:    map[string]interface{}{"query": "hello"},
 		ExecutionContext: skills.ExecutionContext{
-			OrganizationID: testOrganizationID,
+			OrganizationID: testOrganizationID, InvokeFrom: tools.ToolInvokeFromAIChat,
 		},
 	})
 	if err != nil {
@@ -108,6 +146,7 @@ func TestGovernanceResolverPreservesProviderAlwaysAskWhenOrganizationEnablesActi
 func TestGovernanceResolverMetaExecuteUsesRealHighRiskWriteAction(t *testing.T) {
 	action := testAction("issue.create", "create_issue")
 	action.Effect = toolgovernance.EffectCreate
+	action.SupportedCallers = []tools.ToolInvokeFrom{tools.ToolInvokeFromAIChat}
 	action.RiskLevel = toolgovernance.RiskLevelHigh
 	action.ExternalDestination = "api.github.com"
 	action.RequiredScopes = []string{"issues:write"}
@@ -220,6 +259,7 @@ func TestGovernanceResolverAgentMetaExecuteAllowsOnlyNonInteractiveReadActions(t
 	writeAction.ID = "mail.message.send"
 	writeAction.ToolName = "send_message"
 	writeAction.Effect = toolgovernance.EffectExternalSend
+	writeAction.SupportedCallers = []tools.ToolInvokeFrom{tools.ToolInvokeFromAIChat}
 	writeAction.DefaultPolicy = &DefaultActionPolicy{
 		Enabled: true, ApprovalPolicy: toolgovernance.ApprovalPolicyNeverAsk, DataEgressAllowed: true,
 	}
@@ -233,7 +273,7 @@ func TestGovernanceResolverAgentMetaExecuteAllowsOnlyNonInteractiveReadActions(t
 		},
 	))
 	request.Arguments["action_id"] = writeAction.ID
-	if _, err := writeResolver.ResolveToolGovernanceManifest(context.Background(), request); ErrorCode(err) != ErrorCodeAccessDenied {
+	if _, err := writeResolver.ResolveToolGovernanceManifest(context.Background(), request); ErrorCode(err) != ErrorCodeInvalidInput {
 		t.Fatalf("Agent write error=%v code=%q", err, ErrorCode(err))
 	}
 }
@@ -278,6 +318,7 @@ func TestGovernanceResolverMetaExecuteFailsClosedUntilPreferredConnectionIsCanon
 func TestGovernanceResolverSessionGrantIsScopedToIntegrationAndConnection(t *testing.T) {
 	action := testAction("record.create", "create_record")
 	action.Effect = toolgovernance.EffectCreate
+	action.SupportedCallers = []tools.ToolInvokeFrom{tools.ToolInvokeFromAIChat}
 	action.RiskLevel = toolgovernance.RiskLevelMedium
 	action.ExternalDestination = "shared-api.example.com"
 	action.DefaultPolicy = &DefaultActionPolicy{

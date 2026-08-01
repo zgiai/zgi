@@ -45,16 +45,23 @@ type Provider struct {
 	executor    ActionExecutor
 	connections ConnectionLookup
 	access      ConnectionAuthorizer
+	policies    integrations.ActionPolicyResolver
 	entity      tools.ToolProviderEntity
 	tools       map[string]*Tool
 }
 
-func NewProvider(registry *integrations.Registry, executor ActionExecutor, connections ConnectionLookup, access ConnectionAuthorizer) (*Provider, error) {
-	if registry == nil || executor == nil || connections == nil || access == nil {
-		return nil, fmt.Errorf("external integration meta tools require registry, executor, connection lookup, and access authorizer")
+func NewProvider(
+	registry *integrations.Registry,
+	executor ActionExecutor,
+	connections ConnectionLookup,
+	access ConnectionAuthorizer,
+	policies integrations.ActionPolicyResolver,
+) (*Provider, error) {
+	if registry == nil || executor == nil || connections == nil || access == nil || policies == nil {
+		return nil, fmt.Errorf("external integration meta tools require registry, executor, connection lookup, access authorizer, and action policy resolver")
 	}
 	provider := &Provider{
-		registry: registry, executor: executor, connections: connections, access: access,
+		registry: registry, executor: executor, connections: connections, access: access, policies: policies,
 		tools: make(map[string]*Tool, 4),
 		entity: tools.ToolProviderEntity{
 			Identity: tools.ToolProviderIdentity{
@@ -71,7 +78,7 @@ func NewProvider(registry *integrations.Registry, executor ActionExecutor, conne
 	for _, spec := range toolSpecs() {
 		tool := &Tool{
 			name: spec.name, entity: spec.entity,
-			registry: registry, executor: executor, connections: connections, access: access,
+			registry: registry, executor: executor, connections: connections, access: access, policies: policies,
 		}
 		provider.tools[spec.name] = tool
 		provider.entity.Tools = append(provider.entity.Tools, spec.entity)

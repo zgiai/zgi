@@ -17,14 +17,14 @@ func TestConnectionPermissionSummarySeparatesGitHubCapabilitiesAndProviderScopes
 		IntegrationID: github.IntegrationID,
 		AuthType:      integrations.ConnectionAuthTypeAPIKey,
 		AuthMethodID:  github.AccountPATAuthMethodID,
-		GrantedScopes: []string{"repo", "read:org", "metadata:read", "issues:read"},
+		GrantedScopes: []string{"repo", "read:org", "metadata:read", "issues:read", "issues:write"},
 	}
 	summary := integrations.BuildConnectionPermissionSummary(connection, github.ProviderDefinition())
 	if summary == nil {
 		t.Fatal("summary is nil")
 	}
-	if len(summary.AdaptedCapabilities) != 3 {
-		t.Fatalf("adapted capabilities = %d, want 3", len(summary.AdaptedCapabilities))
+	if len(summary.AdaptedCapabilities) != 8 {
+		t.Fatalf("adapted capabilities = %d, want 8", len(summary.AdaptedCapabilities))
 	}
 	for _, capability := range summary.AdaptedCapabilities {
 		if !capability.ScopeSatisfied {
@@ -38,7 +38,7 @@ func TestConnectionPermissionSummarySeparatesGitHubCapabilitiesAndProviderScopes
 		t.Fatalf("provider permissions = %#v, want repo and read:org only", summary.ProviderPermissions)
 	}
 	for _, permission := range summary.ProviderPermissions {
-		if permission.ID == "metadata:read" || permission.ID == "issues:read" {
+		if permission.ID == "metadata:read" || permission.ID == "issues:read" || permission.ID == "issues:write" {
 			t.Fatalf("internal derived scope leaked into provider permissions: %#v", permission)
 		}
 	}

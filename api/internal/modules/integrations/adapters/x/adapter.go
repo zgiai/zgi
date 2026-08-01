@@ -34,7 +34,7 @@ func newForBaseURL(httpClient *http.Client, baseURL string) (*Adapter, error) {
 func (adapter *Adapter) DriverID() string { return DriverID }
 
 func (adapter *Adapter) Execute(ctx context.Context, request integrations.ActionRequest) (*integrations.ActionResult, error) {
-	if isAppBearerConnection(request.Connection) && request.ActionID != ActionSearchRecentPosts {
+	if isAppBearerConnection(request.Connection) && !supportsAppBearerAction(request.ActionID) {
 		return nil, integrations.NewError(
 			integrations.ErrorCodeAccessDenied,
 			"X app-only credentials cannot perform this action",
@@ -49,8 +49,14 @@ func (adapter *Adapter) Execute(ctx context.Context, request integrations.Action
 	case ActionGetAccount:
 		output, meta, err := adapter.getAccount(ctx, accessToken)
 		return xActionResult(output, meta, 1), err
+	case ActionGetUserByUsername:
+		output, meta, err := adapter.getUserByUsername(ctx, accessToken, request.Input)
+		return xActionResult(output, meta, 1), err
 	case ActionListOwnPosts:
 		output, meta, err := adapter.listOwnPosts(ctx, accessToken, request.Input)
+		return xActionResult(output, meta, outputCount(output, "posts")), err
+	case ActionListPostsByUser:
+		output, meta, err := adapter.listPostsByUser(ctx, accessToken, request.Input)
 		return xActionResult(output, meta, outputCount(output, "posts")), err
 	case ActionSearchRecentPosts:
 		output, meta, err := adapter.searchRecentPosts(ctx, accessToken, request.Input)
@@ -143,6 +149,28 @@ func (adapter *Adapter) getAccount(ctx context.Context, accessToken string) (map
 	}, meta, nil
 }
 
+func (adapter *Adapter) getUserByUsername(ctx context.Context, accessToken string, input map[string]interface{}) (map[string]interface{}, responseMeta, error) {
+	username, err := normalizedXUsername(input)
+	if err != nil {
+		return nil, responseMeta{}, err
+	}
+	query := url.Values{
+		"user.fields": []string{"id,name,username,description,created_at,profile_image_url,verified,public_metrics,url"},
+	}
+	var response xUserResponse
+	meta, err := adapter.client.getJSON(ctx, accessToken, "/2/users/by/username/"+url.PathEscape(username), query, &response)
+	if err != nil {
+		return nil, meta, err
+	}
+	if strings.TrimSpace(response.Data.ID) == "" || strings.TrimSpace(response.Data.Username) == "" {
+		return nil, meta, integrations.NewError(integrations.ErrorCodeResponseInvalid, "X user response is incomplete", nil)
+	}
+	return map[string]interface{}{
+		"provider": IntegrationID, "request_id": bounded(meta.RequestID, 128),
+		"user": safeUser(response.Data),
+	}, meta, nil
+}
+
 func (adapter *Adapter) fetchCurrentUser(ctx context.Context, accessToken string) (xUser, responseMeta, error) {
 	query := url.Values{"user.fields": []string{"id,name,username,description,created_at,profile_image_url,verified,public_metrics,url"}}
 	var response xUserResponse
@@ -188,6 +216,34 @@ func (adapter *Adapter) listOwnPosts(ctx context.Context, accessToken string, in
 	if meta.RequestID == "" {
 		meta.RequestID = userMeta.RequestID
 	}
+	if err != nil {
+		return nil, meta, err
+	}
+	return postsOutput(meta, response, maxResults), meta, nil
+}
+
+func (adapter *Adapter) listPostsByUser(ctx context.Context, accessToken string, input map[string]interface{}) (map[string]interface{}, responseMeta, error) {
+	userID, err := requiredXUserID(input)
+	if err != nil {
+		return nil, responseMeta{}, err
+	}
+	maxResults, err := optionalXInteger(input, "max_results", 20, 5, 100)
+	if err != nil {
+		return nil, responseMeta{}, err
+	}
+	query := url.Values{
+		"max_results":  []string{strconv.Itoa(maxResults)},
+		"tweet.fields": []string{"id,text,created_at,lang,conversation_id,possibly_sensitive,public_metrics"},
+	}
+	paginationToken, err := optionalXToken(input, "pagination_token")
+	if err != nil {
+		return nil, responseMeta{}, err
+	}
+	if paginationToken != "" {
+		query.Set("pagination_token", paginationToken)
+	}
+	var response xPostsResponse
+	meta, err := adapter.client.getJSON(ctx, accessToken, "/2/users/"+url.PathEscape(userID)+"/tweets", query, &response)
 	if err != nil {
 		return nil, meta, err
 	}
@@ -299,6 +355,15 @@ func xAccessToken(connection *integrations.ResolvedConnection) (string, error) {
 
 func isAppBearerConnection(connection *integrations.ResolvedConnection) bool {
 	return connection != nil && strings.EqualFold(strings.TrimSpace(connection.AuthMethodID), AppBearerAuthMethodID)
+}
+
+func supportsAppBearerAction(actionID string) bool {
+	switch actionID {
+	case ActionGetUserByUsername, ActionListPostsByUser, ActionSearchRecentPosts:
+		return true
+	default:
+		return false
+	}
 }
 
 func xHealthCheckCode(connection *integrations.ResolvedConnection) string {
@@ -434,6 +499,85 @@ func inputInteger(input map[string]interface{}, key string, fallback, minimum, m
 		}
 	}
 	return min(max(value, minimum), maximum)
+}
+
+func normalizedXUsername(input map[string]interface{}) (string, error) {
+	raw, ok := input["username"].(string)
+	if !ok || raw == "" || raw != strings.TrimSpace(raw) {
+		return "", integrations.NewError(integrations.ErrorCodeInvalidInput, "X username is invalid", nil)
+	}
+	username := strings.TrimPrefix(raw, "@")
+	if username == "" || len(username) > 15 {
+		return "", integrations.NewError(integrations.ErrorCodeInvalidInput, "X username is invalid", nil)
+	}
+	for _, char := range username {
+		if (char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') ||
+			(char >= '0' && char <= '9') || char == '_' {
+			continue
+		}
+		return "", integrations.NewError(integrations.ErrorCodeInvalidInput, "X username is invalid", nil)
+	}
+	return username, nil
+}
+
+func requiredXUserID(input map[string]interface{}) (string, error) {
+	value, ok := input["user_id"].(string)
+	if !ok || value == "" || value != strings.TrimSpace(value) || len(value) > 32 {
+		return "", integrations.NewError(integrations.ErrorCodeInvalidInput, "X user ID is invalid", nil)
+	}
+	for _, char := range value {
+		if char < '0' || char > '9' {
+			return "", integrations.NewError(integrations.ErrorCodeInvalidInput, "X user ID is invalid", nil)
+		}
+	}
+	return value, nil
+}
+
+func optionalXInteger(input map[string]interface{}, key string, fallback, minimum, maximum int) (int, error) {
+	raw, exists := input[key]
+	if !exists {
+		return fallback, nil
+	}
+	value := 0
+	valid := true
+	switch typed := raw.(type) {
+	case int:
+		value = typed
+	case int64:
+		if typed < int64(minimum) || typed > int64(maximum) {
+			valid = false
+		} else {
+			value = int(typed)
+		}
+	case float64:
+		if typed < float64(minimum) || typed > float64(maximum) || typed != float64(int(typed)) {
+			valid = false
+		} else {
+			value = int(typed)
+		}
+	case json.Number:
+		parsed, err := strconv.Atoi(string(typed))
+		valid = err == nil
+		value = parsed
+	default:
+		valid = false
+	}
+	if !valid || value < minimum || value > maximum {
+		return 0, integrations.NewError(integrations.ErrorCodeInvalidInput, "X "+key+" is outside the allowed range", nil)
+	}
+	return value, nil
+}
+
+func optionalXToken(input map[string]interface{}, key string) (string, error) {
+	raw, exists := input[key]
+	if !exists {
+		return "", nil
+	}
+	value, ok := raw.(string)
+	if !ok || value == "" || value != strings.TrimSpace(value) || len([]rune(value)) > 1024 {
+		return "", integrations.NewError(integrations.ErrorCodeInvalidInput, "X "+key+" is invalid", nil)
+	}
+	return value, nil
 }
 
 func firstNonEmpty(values ...string) string {

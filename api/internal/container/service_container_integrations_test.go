@@ -25,7 +25,7 @@ func TestIntegrationRegistryRegistersGitHubWithExternalIntegrations(t *testing.T
 	if !found {
 		t.Fatal("GitHub provider was not registered")
 	}
-	if definition.DriverID != github.DriverID || len(definition.Actions) != 3 {
+	if definition.DriverID != github.DriverID || len(definition.Actions) != len(github.Actions()) {
 		t.Fatalf("GitHub definition = %#v", definition)
 	}
 	if len(definition.AuthMethods) != 2 || definition.AuthMethods[0].CredentialSource == definition.AuthMethods[1].CredentialSource {

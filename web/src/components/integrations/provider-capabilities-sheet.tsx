@@ -21,14 +21,17 @@ import {
   SheetHeader,
   SheetTitle,
 } from '@/components/ui/sheet';
+import { useIntegrationProviderCapabilities } from '@/hooks';
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
 import type {
   IntegrationActionDefinition,
+  IntegrationActionCapability,
   IntegrationCatalogItem,
 } from '@/services/types/integration';
 import { integrationCatalogID, resolveIntegrationAuthDefinitions } from './integration-utils';
 import { useIntegrationMetadata } from './metadata-i18n';
+import { ProviderCapabilityAvailability } from './provider-capability-availability';
 import { IntegrationProviderIcon } from './provider-icon';
 
 type CapabilityFilter = 'all' | 'read' | 'write';
@@ -38,6 +41,7 @@ interface IntegrationProviderCapabilitiesSheetProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onConnect: (provider: IntegrationCatalogItem) => void;
+  audience?: 'account' | 'organization';
 }
 
 function isReadCapability(action: IntegrationActionDefinition): boolean {
@@ -53,11 +57,24 @@ export function IntegrationProviderCapabilitiesSheet({
   open,
   onOpenChange,
   onConnect,
+  audience = 'account',
 }: IntegrationProviderCapabilitiesSheetProps) {
   const t = useT('integrations');
   const metadata = useIntegrationMetadata();
   const [filter, setFilter] = useState<CapabilityFilter>('all');
   const integrationId = provider ? integrationCatalogID(provider) : '';
+  const capabilityQuery = useIntegrationProviderCapabilities(integrationId, audience, open);
+  const liveCapabilities =
+    capabilityQuery.isSuccess && !capabilityQuery.isFetching
+      ? capabilityQuery.data?.data
+      : undefined;
+  const liveCapabilityByAction = useMemo(
+    () =>
+      new Map<string, IntegrationActionCapability>(
+        (liveCapabilities?.actions ?? []).map(action => [action.id, action])
+      ),
+    [liveCapabilities?.actions]
+  );
   const actions = useMemo(() => provider?.actions ?? [], [provider?.actions]);
   const summary = useMemo(
     () => ({
@@ -115,13 +132,19 @@ export function IntegrationProviderCapabilitiesSheet({
                   {metadata.providerDescription(provider)}
                 </p>
                 <p className="mt-2 text-sm font-medium text-foreground">
-                  {t('capabilities.summary', {
-                    count: summary.total,
-                    access:
-                      summary.write > 0
-                        ? t('capabilities.access.readWrite')
-                        : t('capabilities.access.readOnly'),
-                  })}
+                  {liveCapabilities
+                    ? t('capabilities.connectedSummary', {
+                        total: liveCapabilities.summary.total,
+                        available: liveCapabilities.summary.available,
+                        attention: liveCapabilities.summary.needs_attention,
+                      })
+                    : t('capabilities.summary', {
+                        count: summary.total,
+                        access:
+                          summary.write > 0
+                            ? t('capabilities.access.readWrite')
+                            : t('capabilities.access.readOnly'),
+                      })}
                 </p>
               </div>
             </div>
@@ -160,110 +183,161 @@ export function IntegrationProviderCapabilitiesSheet({
           </div>
 
           <div className="space-y-6 px-6 py-5">
+            {capabilityQuery.isError ? (
+              <div className="rounded-lg border border-warning/30 bg-warning/5 p-4 text-sm text-warning">
+                <p className="font-medium">{t('capabilities.loadFailed')}</p>
+                <p className="mt-1 text-xs leading-5">{t('capabilities.liveStatusUnavailable')}</p>
+              </div>
+            ) : null}
             {filteredActions.length === 0 ? (
               <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
                 {t('capabilities.empty')}
               </div>
             ) : (
               <div className="overflow-hidden rounded-lg border">
-                {filteredActions.map((action, index) => (
-                  <details key={action.id} className="group border-b last:border-b-0">
-                    <summary className="flex cursor-pointer list-none items-start gap-3 px-4 py-4 marker:hidden hover:bg-muted/20">
-                      <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-primary/5 text-xs font-semibold text-primary">
-                        {index + 1}
-                      </span>
-                      <span className="min-w-0 flex-1">
-                        <span className="flex flex-wrap items-center gap-2">
-                          <span className="font-medium text-foreground">
-                            {metadata.actionName(action)}
-                          </span>
-                          <Badge variant="outline" className="text-[11px]">
-                            {isReadCapability(action)
-                              ? t('capabilities.access.read')
-                              : t('capabilities.access.write')}
-                          </Badge>
+                {filteredActions.map((action, index) => {
+                  const liveCapability = liveCapabilityByAction.get(action.id);
+                  const availabilityState =
+                    capabilityQuery.isLoading || capabilityQuery.isFetching
+                      ? 'checking'
+                      : capabilityQuery.isError || !liveCapability
+                        ? 'status_unavailable'
+                        : liveCapability.availability;
+                  return (
+                    <details key={action.id} className="group border-b last:border-b-0">
+                      <summary className="flex cursor-pointer list-none items-start gap-3 px-4 py-4 marker:hidden hover:bg-muted/20">
+                        <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-primary/5 text-xs font-semibold text-primary">
+                          {index + 1}
                         </span>
-                        <span className="mt-1 block font-mono text-[11px] text-muted-foreground">
-                          {action.id}
-                        </span>
-                        <span className="mt-1.5 line-clamp-2 block text-sm leading-5 text-muted-foreground">
-                          {metadata.actionDescription(action)}
-                        </span>
-                      </span>
-                      <ChevronDown className="mt-1 size-4 shrink-0 text-muted-foreground transition-transform group-open:rotate-180" />
-                    </summary>
-                    <div className="space-y-3 border-t bg-muted/10 px-4 py-4 pl-[3.25rem] text-xs">
-                      <div>
-                        <p className="font-medium text-foreground">
-                          {t('capabilities.authentication')}
-                        </p>
-                        <div className="mt-2 flex flex-wrap gap-1.5">
-                          {provider
-                            ? resolveIntegrationAuthDefinitions(provider)
-                                .filter(
-                                  method =>
-                                    !action.supported_auth_method_ids?.length ||
-                                    action.supported_auth_method_ids.includes(method.id)
-                                )
-                                .map(method => (
-                                  <Badge key={method.id} variant="outline" className="font-normal">
-                                    {metadata.authMethodLabel(integrationId, method)}
-                                  </Badge>
-                                ))
-                            : null}
-                        </div>
-                      </div>
-                      <div>
-                        <p className="font-medium text-foreground">
-                          {t('capabilities.requiredScopes')}
-                        </p>
-                        <div className="mt-2 flex flex-wrap gap-1.5">
-                          {hasActionScopes(action) ? (
-                            <>
-                              {action.required_scopes?.map(scope => (
-                                <Badge key={scope} variant="subtle" className="font-normal">
-                                  {metadata.scope(scope, provider ?? undefined)}
-                                </Badge>
-                              ))}
-                              {(action.required_any_scopes ?? []).length > 0 ? (
-                                <Badge variant="subtle" className="font-normal">
-                                  {action.required_any_scopes
-                                    ?.map(scope => metadata.scope(scope, provider ?? undefined))
-                                    .join(' / ')}
-                                </Badge>
-                              ) : null}
-                            </>
-                          ) : (
-                            <span className="text-muted-foreground">
-                              {t('capabilities.noAdditionalScopes')}
+                        <span className="min-w-0 flex-1">
+                          <span className="flex flex-wrap items-center gap-2">
+                            <span className="font-medium text-foreground">
+                              {metadata.actionName(action)}
                             </span>
-                          )}
+                            <Badge variant="outline" className="text-[11px]">
+                              {isReadCapability(action)
+                                ? t('capabilities.access.read')
+                                : t('capabilities.access.write')}
+                            </Badge>
+                          </span>
+                          <span className="mt-1 block font-mono text-[11px] text-muted-foreground">
+                            {action.id}
+                          </span>
+                          <span className="mt-1.5 line-clamp-2 block text-sm leading-5 text-muted-foreground">
+                            {metadata.actionDescription(action)}
+                          </span>
+                          <ProviderCapabilityAvailability
+                            className="mt-2"
+                            state={availabilityState}
+                            compatibleConnectionCount={liveCapability?.compatible_connection_count}
+                            showGuidance={false}
+                          />
+                        </span>
+                        <ChevronDown className="mt-1 size-4 shrink-0 text-muted-foreground transition-transform group-open:rotate-180" />
+                      </summary>
+                      <div className="space-y-3 border-t bg-muted/10 px-4 py-4 pl-[3.25rem] text-xs">
+                        <ProviderCapabilityAvailability
+                          state={availabilityState}
+                          compatibleConnectionCount={liveCapability?.compatible_connection_count}
+                        />
+                        <div>
+                          <p className="font-medium text-foreground">
+                            {t('capabilities.currentPolicy')}
+                          </p>
+                          <p className="mt-1.5 text-muted-foreground">
+                            {liveCapability
+                              ? t('capabilities.currentPolicySummary', {
+                                  approval:
+                                    liveCapability.approval_policy === 'always_ask'
+                                      ? t('capabilities.approvalAlways')
+                                      : t('capabilities.approvalInherit'),
+                                  egress: !action.data_egress
+                                    ? t('capabilities.dataEgressNotRequired')
+                                    : liveCapability.data_egress_allowed
+                                      ? t('capabilities.dataEgressAllowed')
+                                      : t('capabilities.dataEgressBlocked'),
+                                })
+                              : t('capabilities.currentPolicyUnavailable')}
+                          </p>
                         </div>
+                        <div>
+                          <p className="font-medium text-foreground">
+                            {t('capabilities.authentication')}
+                          </p>
+                          <div className="mt-2 flex flex-wrap gap-1.5">
+                            {provider
+                              ? resolveIntegrationAuthDefinitions(provider)
+                                  .filter(
+                                    method =>
+                                      !action.supported_auth_method_ids?.length ||
+                                      action.supported_auth_method_ids.includes(method.id)
+                                  )
+                                  .map(method => (
+                                    <Badge
+                                      key={method.id}
+                                      variant="outline"
+                                      className="font-normal"
+                                    >
+                                      {metadata.authMethodLabel(integrationId, method)}
+                                    </Badge>
+                                  ))
+                              : null}
+                          </div>
+                        </div>
+                        <div>
+                          <p className="font-medium text-foreground">
+                            {t('capabilities.requiredScopes')}
+                          </p>
+                          <div className="mt-2 flex flex-wrap gap-1.5">
+                            {hasActionScopes(action) ? (
+                              <>
+                                {action.required_scopes?.map(scope => (
+                                  <Badge key={scope} variant="subtle" className="font-normal">
+                                    {metadata.scope(scope, provider ?? undefined)}
+                                  </Badge>
+                                ))}
+                                {(action.required_any_scopes ?? []).length > 0 ? (
+                                  <Badge variant="subtle" className="font-normal">
+                                    {action.required_any_scopes
+                                      ?.map(scope => metadata.scope(scope, provider ?? undefined))
+                                      .join(' / ')}
+                                  </Badge>
+                                ) : null}
+                              </>
+                            ) : (
+                              <span className="text-muted-foreground">
+                                {t('capabilities.noAdditionalScopes')}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                        <div className="grid gap-2 sm:grid-cols-2">
+                          <span className="text-muted-foreground">
+                            {t('capabilities.risk', { risk: metadata.risk(action.risk_level) })}
+                          </span>
+                          <span className="text-muted-foreground">
+                            {t('capabilities.approval', {
+                              approval:
+                                liveCapability?.approval_policy === 'always_ask'
+                                  ? t('capabilities.approvalAlways')
+                                  : liveCapability
+                                    ? t('capabilities.approvalInherit')
+                                    : t('capabilities.currentPolicyUnavailable'),
+                            })}
+                          </span>
+                        </div>
+                        {action.data_egress ? (
+                          <p className="text-muted-foreground">
+                            {t('capabilities.externalDestination', {
+                              destination:
+                                action.external_destination ?? t('capabilities.unknownDestination'),
+                            })}
+                          </p>
+                        ) : null}
                       </div>
-                      <div className="grid gap-2 sm:grid-cols-2">
-                        <span className="text-muted-foreground">
-                          {t('capabilities.risk', { risk: metadata.risk(action.risk_level) })}
-                        </span>
-                        <span className="text-muted-foreground">
-                          {t('capabilities.approval', {
-                            approval:
-                              action.default_policy?.approval_policy === 'always_ask'
-                                ? t('capabilities.approvalAlways')
-                                : t('capabilities.approvalInherit'),
-                          })}
-                        </span>
-                      </div>
-                      {action.data_egress ? (
-                        <p className="text-muted-foreground">
-                          {t('capabilities.externalDestination', {
-                            destination:
-                              action.external_destination ?? t('capabilities.unknownDestination'),
-                          })}
-                        </p>
-                      ) : null}
-                    </div>
-                  </details>
-                ))}
+                    </details>
+                  );
+                })}
               </div>
             )}
 

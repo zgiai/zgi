@@ -19,6 +19,13 @@ type toolFailureExplanationEvidence struct {
 	FailedOperation     toolFailureOperation   `json:"failed_operation"`
 	CompletedOperations []toolFailureOperation `json:"completed_operations,omitempty"`
 	MissingFields       []string               `json:"missing_fields,omitempty"`
+	FailureStage        string                 `json:"failure_stage,omitempty"`
+	ReasonCode          string                 `json:"reason_code,omitempty"`
+	IntegrationID       string                 `json:"integration_id,omitempty"`
+	ActionID            string                 `json:"action_id,omitempty"`
+	ProviderRequestSent *bool                  `json:"provider_request_sent,omitempty"`
+	Recoverable         bool                   `json:"recoverable,omitempty"`
+	RecoveryAction      string                 `json:"recovery_action,omitempty"`
 	InternalError       string                 `json:"internal_error,omitempty"`
 }
 
@@ -103,6 +110,8 @@ func (r *Runner) runToolFailureExplanation(
 			"Write the final user-facing answer now, using only the user request and the internal evidence below.",
 			"State truthfully that the operation did not complete; never claim that a file, asset, update, or other side effect succeeded.",
 			"Explain the reason in language the user can understand and suggest a practical next step, such as retrying, choosing another format, or supplying required information.",
+			"When the evidence names an integration action, that action exists. Never claim that the integration lacks the capability merely because its arguments failed validation.",
+			"When provider_request_sent is false, say that validation failed before any request was sent to the external provider.",
 			"Do not expose schemas, call IDs, stack traces, raw internal errors, credentials, or implementation details.",
 			"Do not call or propose calling tools in this response. Return natural-language answer text only.",
 			"Internal evidence (not for verbatim disclosure): " + string(encodedEvidence),
@@ -208,6 +217,15 @@ func buildToolFailureExplanationEvidence(
 		},
 		InternalError: truncateFailureEvidence(failure.Error, 1600),
 	}
+	evidence.FailureStage = strings.TrimSpace(evidenceStringFromAny(failure.Arguments["failure_stage"]))
+	evidence.ReasonCode = strings.TrimSpace(evidenceStringFromAny(failure.Arguments["reason_code"]))
+	evidence.IntegrationID = strings.TrimSpace(evidenceStringFromAny(failure.Arguments["integration_id"]))
+	evidence.ActionID = strings.TrimSpace(evidenceStringFromAny(failure.Arguments["action_id"]))
+	if providerRequestSent, ok := failure.Arguments["provider_request_sent"].(bool); ok {
+		evidence.ProviderRequestSent = &providerRequestSent
+	}
+	evidence.Recoverable, _ = failure.Arguments["recoverable"].(bool)
+	evidence.RecoveryAction = strings.TrimSpace(evidenceStringFromAny(failure.Arguments["recovery_action"]))
 	evidence.MissingFields = evidenceStringSliceFromAny(failure.Arguments["missing_fields"])
 	for _, call := range successfulToolCalls {
 		evidence.CompletedOperations = append(evidence.CompletedOperations, toolFailureOperation{

@@ -163,6 +163,9 @@ const connectionDialog = source('src/components/integrations/connection-dialog.t
 const connectionsPanel = source('src/components/integrations/connections-panel.tsx');
 const capabilitiesSheet = source('src/components/integrations/provider-capabilities-sheet.tsx');
 const capabilitiesInline = source('src/components/integrations/provider-capabilities-inline.tsx');
+const capabilityAvailability = source(
+  'src/components/integrations/provider-capability-availability.tsx'
+);
 const authSetupGuide = source('src/components/integrations/auth-setup-guide.tsx');
 const oauthClientConfig = source('src/components/integrations/oauth-client-config-dialog.tsx');
 assert.doesNotMatch(catalogComponent, /safeIntegrationDisplayText\(item\.driver_id/);
@@ -194,13 +197,19 @@ assert.doesNotMatch(
 );
 assert.match(catalogComponent, /IntegrationProviderCapabilitiesSheet/);
 assert.doesNotMatch(catalogComponent, /title=\{t\('authMethodPicker\.otherMethods'\)\}/);
-assert.doesNotMatch(capabilitiesSheet, /useIntegrationProviderCapabilities/);
+assert.match(capabilitiesSheet, /useIntegrationProviderCapabilities/);
+assert.match(capabilitiesSheet, /audience\?: 'account' \| 'organization'/);
 assert.match(capabilitiesSheet, /provider\?\.actions \?\? \[\]/);
 assert.match(capabilitiesInline, /useIntegrationActionPolicies/);
 assert.match(capabilitiesInline, /useUpdateIntegrationActionPolicies/);
 assert.match(capabilitiesInline, /approval_policy/);
 assert.match(capabilitiesInline, /data_egress_allowed/);
-assert.doesNotMatch(capabilitiesInline, /useIntegrationProviderCapabilities/);
+assert.match(capabilitiesInline, /useIntegrationProviderCapabilities/);
+assert.match(capabilitiesInline, /canManageShared \? 'organization' : 'account'/);
+assert.match(capabilityAvailability, /status_unavailable/);
+assert.match(capabilityAvailability, /compatibleConnectionCount/);
+assert.equal(chinese.capabilities.availability.needs_permission, '缺少使用权限');
+assert.equal(english.capabilities.availability.needs_permission, 'Usage permission required');
 assert.match(authSetupGuide, /guide\?\.steps/);
 assert.match(authSetupGuide, /copy_callback_url/);
 assert.match(authSetupGuide, /rel="noreferrer noopener"/);

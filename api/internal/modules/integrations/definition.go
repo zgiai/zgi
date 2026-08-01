@@ -20,6 +20,26 @@ const (
 	ActionWebFetch  = "web.fetch"
 )
 
+type ActionPreparationRelation string
+
+const (
+	ActionPreparationResolveTarget ActionPreparationRelation = "resolve_target"
+	ActionPreparationInspect       ActionPreparationRelation = "inspect"
+)
+
+// ActionPreparationHint describes a safe read Action that can provide
+// identifiers or context required by another Action. It is advisory metadata:
+// callers must still invoke the preparation Action normally and may never
+// synthesize identifiers or bypass authorization and approval.
+type ActionPreparationHint struct {
+	ActionID        string                    `json:"action_id"`
+	Relation        ActionPreparationRelation `json:"relation"`
+	TargetArguments []string                  `json:"target_arguments,omitempty"`
+	ResultPaths     []string                  `json:"result_paths,omitempty"`
+	Description     string                    `json:"description"`
+	DescriptionI18n LocalizedText             `json:"description_i18n,omitempty"`
+}
+
 type ActionDefinition struct {
 	ID                   string                   `json:"id"`
 	ToolName             string                   `json:"tool_name"`
@@ -45,13 +65,14 @@ type ActionDefinition struct {
 	// SupportedAuthMethodIDs restricts this action to provider auth methods
 	// that can actually execute it. An empty list keeps the legacy behavior of
 	// supporting every auth method declared by the provider.
-	SupportedAuthMethodIDs []string               `json:"supported_auth_method_ids,omitempty"`
-	ScopeLabelsI18n        LocalizedLabelMap      `json:"scope_labels_i18n,omitempty"`
-	DefaultPolicy          *DefaultActionPolicy   `json:"default_policy"`
-	SchemaHash             string                 `json:"schema_hash"`
-	SchemaRevision         string                 `json:"schema_revision"`
-	CatalogRevision        string                 `json:"catalog_revision"`
-	SupportedCallers       []tools.ToolInvokeFrom `json:"supported_callers,omitempty"`
+	SupportedAuthMethodIDs []string                `json:"supported_auth_method_ids,omitempty"`
+	ScopeLabelsI18n        LocalizedLabelMap       `json:"scope_labels_i18n,omitempty"`
+	DefaultPolicy          *DefaultActionPolicy    `json:"default_policy"`
+	SchemaHash             string                  `json:"schema_hash"`
+	SchemaRevision         string                  `json:"schema_revision"`
+	CatalogRevision        string                  `json:"catalog_revision"`
+	SupportedCallers       []tools.ToolInvokeFrom  `json:"supported_callers,omitempty"`
+	PreparationHints       []ActionPreparationHint `json:"preparation_hints,omitempty"`
 }
 
 type ActionRequest struct {

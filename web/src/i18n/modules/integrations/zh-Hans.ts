@@ -194,11 +194,25 @@ const messages: IntegrationMessages = {
       available: '当前可用',
       needs_connection: '需要连接',
       needs_scope: '需要增权',
+      needs_permission: '缺少使用权限',
       disabled_by_policy: '使用规则已关闭',
       data_egress_blocked: '数据出站已关闭',
+      checking: '正在检查可用性',
+      status_unavailable: '实时状态不可用',
+    },
+    availableConnections: '{count} 个兼容连接可执行此操作',
+    remediation: {
+      needs_connection: '请先连接一个支持此操作的账号。',
+      needs_scope: '请重新连接账号，并同意服务商要求的新增权限。',
+      needs_permission: '当前使用对象未获准执行此操作，请联系管理员调整使用规则。',
+      disabled_by_policy: '此操作已被当前使用规则关闭，请由管理员启用。',
+      data_egress_blocked: '此操作需要向服务商发送数据，请由管理员允许数据发送。',
+      checking: '结果返回前不会将此操作标记为可用。',
+      status_unavailable: '无法确认当前是否可执行；为保证安全，暂不标记为可用。',
     },
     loadFailed: '无法读取应用能力，请稍后重试。',
-    liveStatusUnavailable: '暂时无法获取实时可用状态，当前展示应用已经适配的能力。',
+    liveStatusUnavailable:
+      '暂时无法获取实时可用状态。下方仅展示应用已经适配的能力，不代表当前账号可以执行。',
     empty: '当前筛选条件下没有已适配操作。',
     requiredScopes: '所需权限',
     noAdditionalScopes: '无需额外权限',
@@ -206,6 +220,9 @@ const messages: IntegrationMessages = {
     approval: '确认方式：{approval}',
     approvalAlways: '每次确认',
     approvalInherit: '使用默认设置',
+    currentPolicy: '当前使用规则',
+    currentPolicySummary: '{approval} · {egress}',
+    currentPolicyUnavailable: '当前使用规则无法确认',
     authentication: '认证与权限',
     noAuthenticationMethods: '未声明特定连接方式',
     surfaces: '可用场景',
@@ -227,6 +244,7 @@ const messages: IntegrationMessages = {
     noExternalDestination: '该功能不会向外部服务发送数据',
     dataEgressAllowed: '允许发送',
     dataEgressBlocked: '禁止发送',
+    dataEgressNotRequired: '无需对外发送数据',
     documentation: '查看开发文档',
     connect: '连接 {provider}',
   },
@@ -499,9 +517,29 @@ const messages: IntegrationMessages = {
         name: '列出 GitHub 代码仓库',
         description: '列出当前 GitHub 账号有权访问的代码仓库。',
       },
+      githubRepositorySearch: {
+        name: '搜索 GitHub 仓库',
+        description: '使用受限查询搜索 GitHub 仓库，并返回长度和数量受限的仓库元数据。',
+      },
       githubIssueList: {
         name: '列出 GitHub 仓库议题',
         description: '列出指定仓库的议题信息；GitHub 的此接口也可能返回拉取请求。',
+      },
+      githubIssueGet: {
+        name: '获取 GitHub 议题',
+        description: '读取一个 GitHub 议题或拉取请求，正文和元数据均受平台限制。',
+      },
+      githubIssueCommentList: {
+        name: '列出 GitHub 议题评论',
+        description: '分页列出一个 GitHub 议题或拉取请求的受限评论内容。',
+      },
+      githubIssueCreate: {
+        name: '创建 GitHub 议题',
+        description: '在指定仓库创建议题；该写操作默认关闭，启用后每次执行都需要确认。',
+      },
+      githubIssueCommentCreate: {
+        name: '创建 GitHub 议题评论',
+        description: '向议题或拉取请求发送评论；该写操作默认关闭，启用后每次执行都需要确认。',
       },
       gmailAccountGet: {
         name: '获取 Gmail 账号',
@@ -510,6 +548,22 @@ const messages: IntegrationMessages = {
       gmailMailSend: {
         name: '发送 Gmail 邮件',
         description: '在明确确认后，使用已连接的 Gmail 账号发送邮件。',
+      },
+      gmailMailSearch: {
+        name: '搜索 Gmail 邮件',
+        description: '使用 Gmail 搜索语法检索已连接邮箱，并返回数量和长度受限的邮件摘要。',
+      },
+      gmailMailGet: {
+        name: '读取 Gmail 邮件',
+        description: '安全解析一封 Gmail 邮件的 MIME 内容，并返回长度受限的纯文本正文。',
+      },
+      gmailMailReply: {
+        name: '回复 Gmail 邮件',
+        description: '在原邮件会话中回复；每次执行都必须明确确认。',
+      },
+      gmailDraftCreate: {
+        name: '创建 Gmail 草稿',
+        description: '创建一封纯文本 Gmail 草稿但不发送；每次执行都必须明确确认。',
       },
       feishuAccountGet: {
         name: '获取飞书账号',
@@ -531,6 +585,18 @@ const messages: IntegrationMessages = {
         name: '发送飞书机器人消息',
         description: '使用已授权的企业应用身份发送飞书机器人消息。',
       },
+      feishuMessageList: {
+        name: '读取飞书消息',
+        description: '读取一个当前账号可见群聊中的一页近期消息，返回内容受数量和长度限制。',
+      },
+      feishuCalendarEventList: {
+        name: '列出飞书日程',
+        description: '列出指定日历和明确时间范围内的一页日程，结果受数量和长度限制。',
+      },
+      feishuCalendarEventCreate: {
+        name: '创建飞书日程',
+        description: '在可写飞书日历中创建日程；该写操作默认关闭，启用后每次执行都需要确认。',
+      },
       xAccountGet: {
         name: '获取 X 账号',
         description: '返回已连接 X 账号的有限身份信息。',
@@ -546,6 +612,14 @@ const messages: IntegrationMessages = {
       xPostCreate: {
         name: '发布 X 帖子',
         description: '在明确确认后，使用已连接的 X 账号发布帖子。',
+      },
+      xUserGetByUsername: {
+        name: '按用户名获取 X 用户',
+        description: '按用户名查询一个公开 X 用户，开头的 @ 会由服务端自动规范化。',
+      },
+      xPostListByUser: {
+        name: '列出指定 X 用户的帖子',
+        description: '按 X 用户 ID 分页列出数量和长度受限的公开帖子。',
       },
       webSearch: {
         name: '搜索网页',

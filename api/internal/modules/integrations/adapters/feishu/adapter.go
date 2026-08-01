@@ -2,6 +2,8 @@ package feishu
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"net/url"
@@ -77,6 +79,14 @@ func (adapter *Adapter) Execute(ctx context.Context, request integrations.Action
 		output, meta, actionErr := adapter.listChats(ctx, region, token, request.Input)
 		meta.Attempts += tokenMeta.Attempts
 		return feishuActionResult(output, meta, outputCount(output, "chats")), actionErr
+	case ActionListMessages:
+		token, tokenMeta, tokenErr := adapter.connectionAccessToken(ctx, request.Connection, region)
+		if tokenErr != nil {
+			return feishuActionResult(nil, tokenMeta, 0), tokenErr
+		}
+		output, meta, actionErr := adapter.listMessages(ctx, region, token, request.Input)
+		meta.Attempts += tokenMeta.Attempts
+		return feishuActionResult(output, meta, outputCount(output, "messages")), actionErr
 	case ActionListCalendars:
 		token, tokenMeta, tokenErr := adapter.connectionAccessToken(ctx, request.Connection, region)
 		if tokenErr != nil {
@@ -85,6 +95,22 @@ func (adapter *Adapter) Execute(ctx context.Context, request integrations.Action
 		output, meta, actionErr := adapter.listCalendars(ctx, region, token, request.Input)
 		meta.Attempts += tokenMeta.Attempts
 		return feishuActionResult(output, meta, outputCount(output, "calendars")), actionErr
+	case ActionListEvents:
+		token, tokenMeta, tokenErr := adapter.connectionAccessToken(ctx, request.Connection, region)
+		if tokenErr != nil {
+			return feishuActionResult(nil, tokenMeta, 0), tokenErr
+		}
+		output, meta, actionErr := adapter.listCalendarEvents(ctx, region, token, request.Input)
+		meta.Attempts += tokenMeta.Attempts
+		return feishuActionResult(output, meta, outputCount(output, "events")), actionErr
+	case ActionCreateEvent:
+		token, tokenMeta, tokenErr := adapter.connectionAccessToken(ctx, request.Connection, region)
+		if tokenErr != nil {
+			return feishuActionResult(nil, tokenMeta, 0), tokenErr
+		}
+		output, meta, actionErr := adapter.createCalendarEvent(ctx, region, token, request)
+		meta.Attempts += tokenMeta.Attempts
+		return feishuActionResult(output, meta, 1), actionErr
 	case ActionSendUserMessage:
 		token, tokenErr := feishuUserAccessToken(request.Connection)
 		if tokenErr != nil {
@@ -305,6 +331,81 @@ func (adapter *Adapter) listChats(ctx context.Context, region, token string, inp
 	}, meta, nil
 }
 
+func (adapter *Adapter) listMessages(ctx context.Context, region, token string, input map[string]interface{}) (map[string]interface{}, responseMeta, error) {
+	chatID := strings.TrimSpace(inputString(input, "chat_id"))
+	if !validFeishuToken(chatID) {
+		return nil, responseMeta{}, integrations.NewError(integrations.ErrorCodeInvalidInput, "Feishu chat id is invalid", nil)
+	}
+	pageSize, err := strictInputInteger(input, "page_size", 20, 1, 50)
+	if err != nil {
+		return nil, responseMeta{}, err
+	}
+	query := url.Values{
+		"container_id_type": []string{"chat"},
+		"container_id":      []string{chatID},
+		"page_size":         []string{strconv.Itoa(pageSize)},
+	}
+	pageToken := strings.TrimSpace(inputString(input, "page_token"))
+	if len([]rune(pageToken)) > 1024 {
+		return nil, responseMeta{}, integrations.NewError(integrations.ErrorCodeInvalidInput, "Feishu page token is invalid", nil)
+	}
+	if pageToken != "" {
+		query.Set("page_token", pageToken)
+	}
+	sortType := strings.TrimSpace(inputString(input, "sort_type"))
+	switch sortType {
+	case "", "newest_first":
+		query.Set("sort_type", "ByCreateTimeDesc")
+	case "oldest_first":
+		query.Set("sort_type", "ByCreateTimeAsc")
+	default:
+		return nil, responseMeta{}, integrations.NewError(integrations.ErrorCodeInvalidInput, "Feishu message sort order is invalid", nil)
+	}
+	startTime, hasStart, err := optionalInputUnixSeconds(input, "start_time")
+	if err != nil {
+		return nil, responseMeta{}, err
+	}
+	endTime, hasEnd, err := optionalInputUnixSeconds(input, "end_time")
+	if err != nil {
+		return nil, responseMeta{}, err
+	}
+	if hasStart != hasEnd || (hasStart && (endTime <= startTime || endTime-startTime > 7*24*60*60)) {
+		return nil, responseMeta{}, integrations.NewError(
+			integrations.ErrorCodeInvalidInput,
+			"Feishu message time range must include start and end and cannot exceed seven days",
+			nil,
+		)
+	}
+	if hasStart {
+		query.Set("start_time", strconv.FormatInt(startTime, 10))
+		query.Set("end_time", strconv.FormatInt(endTime, 10))
+	}
+	var data feishuMessagesData
+	meta, err := adapter.client.listMessages(ctx, region, token, query, &data)
+	if err != nil {
+		return nil, meta, err
+	}
+	messages := make([]interface{}, 0, min(len(data.Items), pageSize))
+	for index, message := range data.Items {
+		if index >= pageSize {
+			break
+		}
+		messages = append(messages, map[string]interface{}{
+			"message_id": bounded(message.MessageID, 255), "root_id": bounded(message.RootID, 255),
+			"parent_id": bounded(message.ParentID, 255), "thread_id": bounded(message.ThreadID, 255),
+			"chat_id": bounded(message.ChatID, 255), "message_type": bounded(message.MsgType, 64),
+			"text":      normalizedMessageText(message.MsgType, message.Body.Content),
+			"sender_id": bounded(message.Sender.ID, 128), "sender_type": bounded(message.Sender.SenderType, 64),
+			"create_time": bounded(message.CreateTime, 64), "update_time": bounded(message.UpdateTime, 64),
+			"deleted": message.Deleted, "updated": message.Updated,
+		})
+	}
+	return map[string]interface{}{
+		"provider": IntegrationID, "request_id": bounded(meta.RequestID, 128),
+		"messages": messages, "next_page_token": bounded(data.PageToken, 1024), "has_more": data.HasMore,
+	}, meta, nil
+}
+
 func (adapter *Adapter) listCalendars(ctx context.Context, region, token string, input map[string]interface{}) (map[string]interface{}, responseMeta, error) {
 	const pageSize = 50
 	query := url.Values{"page_size": []string{strconv.Itoa(pageSize)}}
@@ -348,6 +449,138 @@ func (adapter *Adapter) listCalendars(ctx context.Context, region, token string,
 		"provider": IntegrationID, "request_id": bounded(meta.RequestID, 128),
 		"calendars": calendars, "next_page_token": bounded(data.PageToken, 1024),
 		"sync_token": bounded(data.SyncToken, 1024), "has_more": data.HasMore,
+	}, meta, nil
+}
+
+func (adapter *Adapter) listCalendarEvents(ctx context.Context, region, token string, input map[string]interface{}) (map[string]interface{}, responseMeta, error) {
+	calendarID := strings.TrimSpace(inputString(input, "calendar_id"))
+	if !validFeishuCalendarID(calendarID) {
+		return nil, responseMeta{}, integrations.NewError(integrations.ErrorCodeInvalidInput, "Feishu calendar id is invalid", nil)
+	}
+	startTime, err := requiredInputUnixSeconds(input, "start_time")
+	if err != nil {
+		return nil, responseMeta{}, err
+	}
+	endTime, err := requiredInputUnixSeconds(input, "end_time")
+	if err != nil {
+		return nil, responseMeta{}, err
+	}
+	if endTime <= startTime || endTime-startTime > 40*24*60*60 {
+		return nil, responseMeta{}, integrations.NewError(
+			integrations.ErrorCodeInvalidInput,
+			"Feishu calendar event time range must be positive and cannot exceed forty days",
+			nil,
+		)
+	}
+	pageSize, err := strictInputInteger(input, "page_size", 20, 1, 50)
+	if err != nil {
+		return nil, responseMeta{}, err
+	}
+	query := url.Values{
+		"start_time": []string{strconv.FormatInt(startTime, 10)},
+		"end_time":   []string{strconv.FormatInt(endTime, 10)},
+		"page_size":  []string{strconv.Itoa(pageSize)},
+	}
+	pageToken := strings.TrimSpace(inputString(input, "page_token"))
+	if len([]rune(pageToken)) > 1024 {
+		return nil, responseMeta{}, integrations.NewError(integrations.ErrorCodeInvalidInput, "Feishu page token is invalid", nil)
+	}
+	if pageToken != "" {
+		query.Set("page_token", pageToken)
+	}
+	var data feishuCalendarEventsData
+	meta, err := adapter.client.listCalendarEvents(ctx, region, token, calendarID, query, &data)
+	if err != nil {
+		return nil, meta, err
+	}
+	events := make([]interface{}, 0, min(len(data.Items), pageSize))
+	for index, event := range data.Items {
+		if index >= pageSize {
+			break
+		}
+		events = append(events, normalizedCalendarEvent(event))
+	}
+	return map[string]interface{}{
+		"provider": IntegrationID, "request_id": bounded(meta.RequestID, 128),
+		"events": events, "next_page_token": bounded(data.PageToken, 1024), "has_more": data.HasMore,
+	}, meta, nil
+}
+
+func (adapter *Adapter) createCalendarEvent(ctx context.Context, region, token string, request integrations.ActionRequest) (map[string]interface{}, responseMeta, error) {
+	calendarID := strings.TrimSpace(inputString(request.Input, "calendar_id"))
+	if !validFeishuCalendarID(calendarID) {
+		return nil, responseMeta{}, integrations.NewError(integrations.ErrorCodeInvalidInput, "Feishu calendar id is invalid", nil)
+	}
+	summary := strings.TrimSpace(inputString(request.Input, "summary"))
+	description := strings.TrimSpace(inputString(request.Input, "description"))
+	if summary == "" || len([]rune(summary)) > 1000 || len([]rune(description)) > 40960 {
+		return nil, responseMeta{}, integrations.NewError(integrations.ErrorCodeInvalidInput, "Feishu calendar event title or description is invalid", nil)
+	}
+	startTime, err := requiredInputUnixSeconds(request.Input, "start_time")
+	if err != nil {
+		return nil, responseMeta{}, err
+	}
+	endTime, err := requiredInputUnixSeconds(request.Input, "end_time")
+	if err != nil {
+		return nil, responseMeta{}, err
+	}
+	if endTime <= startTime || endTime-startTime > 366*24*60*60 {
+		return nil, responseMeta{}, integrations.NewError(
+			integrations.ErrorCodeInvalidInput,
+			"Feishu calendar event time range must be positive and cannot exceed 366 days",
+			nil,
+		)
+	}
+	timezone := strings.TrimSpace(inputString(request.Input, "timezone"))
+	if timezone == "" {
+		timezone = "Asia/Shanghai"
+	}
+	if !validIANATimezone(timezone) {
+		return nil, responseMeta{}, integrations.NewError(integrations.ErrorCodeInvalidInput, "Feishu calendar event timezone is invalid", nil)
+	}
+	idempotencyKey, err := calendarEventIdempotencyKey(request)
+	if err != nil {
+		return nil, responseMeta{}, err
+	}
+	visibility, err := strictInputEnum(request.Input, "visibility", "default", "default", "public", "private")
+	if err != nil {
+		return nil, responseMeta{}, err
+	}
+	freeBusyStatus, err := strictInputEnum(request.Input, "free_busy_status", "busy", "busy", "free")
+	if err != nil {
+		return nil, responseMeta{}, err
+	}
+	needNotification, err := strictInputBoolean(request.Input, "need_notification", true)
+	if err != nil {
+		return nil, responseMeta{}, err
+	}
+	body := map[string]interface{}{
+		"summary": summary, "description": description,
+		"need_notification": needNotification,
+		"start_time":        map[string]string{"timestamp": strconv.FormatInt(startTime, 10), "timezone": timezone},
+		"end_time":          map[string]string{"timestamp": strconv.FormatInt(endTime, 10), "timezone": timezone},
+		"visibility":        visibility,
+		"free_busy_status":  freeBusyStatus,
+	}
+	locationName := strings.TrimSpace(inputString(request.Input, "location_name"))
+	locationAddress := strings.TrimSpace(inputString(request.Input, "location_address"))
+	if len([]rune(locationName)) > 512 || len([]rune(locationAddress)) > 1000 {
+		return nil, responseMeta{}, integrations.NewError(integrations.ErrorCodeInvalidInput, "Feishu calendar event location is invalid", nil)
+	}
+	if locationName != "" || locationAddress != "" {
+		body["location"] = map[string]string{"name": locationName, "address": locationAddress}
+	}
+	var data feishuCalendarEventCreateData
+	meta, err := adapter.client.createCalendarEvent(ctx, region, token, calendarID, idempotencyKey, body, &data)
+	if err != nil {
+		return nil, meta, err
+	}
+	if strings.TrimSpace(data.Event.EventID) == "" {
+		return nil, meta, integrations.NewError(integrations.ErrorCodeResponseInvalid, "Feishu calendar event response is incomplete", nil)
+	}
+	return map[string]interface{}{
+		"provider": IntegrationID, "request_id": bounded(meta.RequestID, 128),
+		"event": normalizedCalendarEvent(data.Event),
 	}, meta, nil
 }
 
@@ -457,6 +690,92 @@ func validFeishuToken(value string) bool {
 	return true
 }
 
+func validFeishuCalendarID(value string) bool {
+	if value == "" || len(value) > 512 {
+		return false
+	}
+	for _, char := range value {
+		if (char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') ||
+			(char >= '0' && char <= '9') || char == '_' || char == '-' || char == '.' || char == '@' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func validIANATimezone(value string) bool {
+	if value == "" || len(value) > 64 || strings.HasPrefix(value, "/") || strings.HasSuffix(value, "/") {
+		return false
+	}
+	segments := strings.Split(value, "/")
+	for index, segment := range segments {
+		if segment == "" {
+			return false
+		}
+		for _, char := range segment {
+			if (char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') || char == '_' ||
+				(index > 0 && ((char >= '0' && char <= '9') || char == '-' || char == '+' || char == '.')) {
+				continue
+			}
+			return false
+		}
+	}
+	return true
+}
+
+func normalizedMessageText(messageType, raw string) string {
+	if !strings.EqualFold(strings.TrimSpace(messageType), "text") {
+		return ""
+	}
+	var content struct {
+		Text string `json:"text"`
+	}
+	if err := json.Unmarshal([]byte(raw), &content); err != nil {
+		return ""
+	}
+	return bounded(content.Text, 4000)
+}
+
+func normalizedCalendarEvent(event feishuCalendarEvent) map[string]interface{} {
+	return map[string]interface{}{
+		"event_id": bounded(event.EventID, 255), "organizer_calendar_id": bounded(event.OrganizerCalendarID, 512),
+		"summary": bounded(event.Summary, 1000), "description": bounded(event.Description, 4000),
+		"start_time": normalizedCalendarTime(event.StartTime), "end_time": normalizedCalendarTime(event.EndTime),
+		"status": bounded(event.Status, 64), "visibility": bounded(event.Visibility, 32),
+		"free_busy_status": bounded(event.FreeBusyStatus, 32),
+		"location_name":    bounded(event.Location.Name, 512), "location_address": bounded(event.Location.Address, 1000),
+		"app_link": safeFeishuURL(event.AppLink), "recurrence": bounded(event.Recurrence, 2000),
+		"is_exception": event.IsException,
+	}
+}
+
+func normalizedCalendarTime(info feishuCalendarTimeInfo) map[string]interface{} {
+	return map[string]interface{}{
+		"timestamp": bounded(info.Timestamp, 32), "date": bounded(info.Date, 32), "timezone": bounded(info.Timezone, 64),
+	}
+}
+
+func calendarEventIdempotencyKey(request integrations.ActionRequest) (string, error) {
+	messageID := strings.TrimSpace(request.MessageID)
+	if messageID == "" {
+		return "", integrations.NewError(
+			integrations.ErrorCodeInvalidInput,
+			"Feishu calendar event creation requires a request idempotency marker",
+			nil,
+		)
+	}
+	encodedInput, err := json.Marshal(request.Input)
+	if err != nil {
+		return "", integrations.NewError(integrations.ErrorCodeInvalidInput, "Feishu calendar event input could not be encoded", err)
+	}
+	digest := sha256.Sum256([]byte(strings.Join([]string{
+		strings.TrimSpace(request.OrganizationID), strings.TrimSpace(request.ConnectionID),
+		messageID, ActionCreateEvent, string(encodedInput),
+	}, "\x00")))
+	return hex.EncodeToString(digest[:]), nil
+}
+
 func feishuActionResult(output map[string]interface{}, meta responseMeta, count int) *integrations.ActionResult {
 	diagnostics := meta.Diagnostics
 	if diagnostics.RequestID == "" {
@@ -537,11 +856,73 @@ type feishuChatsData struct {
 	HasMore   bool         `json:"has_more"`
 }
 
+type feishuMessagesData struct {
+	Items     []feishuMessage `json:"items"`
+	PageToken string          `json:"page_token"`
+	HasMore   bool            `json:"has_more"`
+}
+
+type feishuMessage struct {
+	MessageID  string `json:"message_id"`
+	RootID     string `json:"root_id"`
+	ParentID   string `json:"parent_id"`
+	ThreadID   string `json:"thread_id"`
+	ChatID     string `json:"chat_id"`
+	MsgType    string `json:"msg_type"`
+	CreateTime string `json:"create_time"`
+	UpdateTime string `json:"update_time"`
+	Deleted    bool   `json:"deleted"`
+	Updated    bool   `json:"updated"`
+	Sender     struct {
+		ID         string `json:"id"`
+		IDType     string `json:"id_type"`
+		SenderType string `json:"sender_type"`
+	} `json:"sender"`
+	Body struct {
+		Content string `json:"content"`
+	} `json:"body"`
+}
+
 type feishuCalendarsData struct {
 	CalendarList []feishuCalendar `json:"calendar_list"`
 	PageToken    string           `json:"page_token"`
 	SyncToken    string           `json:"sync_token"`
 	HasMore      bool             `json:"has_more"`
+}
+
+type feishuCalendarEventsData struct {
+	Items     []feishuCalendarEvent `json:"items"`
+	PageToken string                `json:"page_token"`
+	HasMore   bool                  `json:"has_more"`
+}
+
+type feishuCalendarEventCreateData struct {
+	Event feishuCalendarEvent `json:"event"`
+}
+
+type feishuCalendarEvent struct {
+	EventID             string                 `json:"event_id"`
+	OrganizerCalendarID string                 `json:"organizer_calendar_id"`
+	Summary             string                 `json:"summary"`
+	Description         string                 `json:"description"`
+	StartTime           feishuCalendarTimeInfo `json:"start_time"`
+	EndTime             feishuCalendarTimeInfo `json:"end_time"`
+	Status              string                 `json:"status"`
+	Visibility          string                 `json:"visibility"`
+	FreeBusyStatus      string                 `json:"free_busy_status"`
+	Recurrence          string                 `json:"recurrence"`
+	AppLink             string                 `json:"app_link"`
+	IsException         bool                   `json:"is_exception"`
+	Location            struct {
+		Name    string `json:"name"`
+		Address string `json:"address"`
+	} `json:"location"`
+}
+
+type feishuCalendarTimeInfo struct {
+	Timestamp string `json:"timestamp"`
+	Date      string `json:"date"`
+	Timezone  string `json:"timezone"`
 }
 
 type feishuCalendar struct {
@@ -650,6 +1031,60 @@ func inputInteger(input map[string]interface{}, key string, fallback, minimum, m
 	return min(max(value, minimum), maximum)
 }
 
+func strictInputInteger(input map[string]interface{}, key string, fallback, minimum, maximum int) (int, error) {
+	raw, ok := input[key]
+	if !ok || raw == nil {
+		return fallback, nil
+	}
+	value, ok := integerValue(raw)
+	if !ok || value < int64(minimum) || value > int64(maximum) {
+		return 0, integrations.NewError(integrations.ErrorCodeInvalidInput, "Feishu integer input is invalid", nil)
+	}
+	return int(value), nil
+}
+
+func optionalInputUnixSeconds(input map[string]interface{}, key string) (int64, bool, error) {
+	raw, ok := input[key]
+	if !ok || raw == nil {
+		return 0, false, nil
+	}
+	value, ok := integerValue(raw)
+	if !ok || value < 1 || value > 4_102_444_800 {
+		return 0, false, integrations.NewError(integrations.ErrorCodeInvalidInput, "Feishu Unix timestamp is invalid", nil)
+	}
+	return value, true, nil
+}
+
+func requiredInputUnixSeconds(input map[string]interface{}, key string) (int64, error) {
+	value, found, err := optionalInputUnixSeconds(input, key)
+	if err != nil {
+		return 0, err
+	}
+	if !found {
+		return 0, integrations.NewError(integrations.ErrorCodeInvalidInput, "Feishu Unix timestamp is required", nil)
+	}
+	return value, nil
+}
+
+func integerValue(raw interface{}) (int64, bool) {
+	switch typed := raw.(type) {
+	case int:
+		return int64(typed), true
+	case int32:
+		return int64(typed), true
+	case int64:
+		return typed, true
+	case float64:
+		if typed == float64(int64(typed)) {
+			return int64(typed), true
+		}
+	case json.Number:
+		parsed, err := strconv.ParseInt(string(typed), 10, 64)
+		return parsed, err == nil
+	}
+	return 0, false
+}
+
 func inputEnum(input map[string]interface{}, key, fallback string, allowed ...string) string {
 	value := strings.ToLower(strings.TrimSpace(inputString(input, key)))
 	for _, candidate := range allowed {
@@ -658,6 +1093,36 @@ func inputEnum(input map[string]interface{}, key, fallback string, allowed ...st
 		}
 	}
 	return fallback
+}
+
+func strictInputEnum(input map[string]interface{}, key, fallback string, allowed ...string) (string, error) {
+	raw, found := input[key]
+	if !found || raw == nil {
+		return fallback, nil
+	}
+	value, ok := raw.(string)
+	if !ok {
+		return "", integrations.NewError(integrations.ErrorCodeInvalidInput, "Feishu enum input is invalid", nil)
+	}
+	value = strings.ToLower(strings.TrimSpace(value))
+	for _, candidate := range allowed {
+		if value == candidate {
+			return value, nil
+		}
+	}
+	return "", integrations.NewError(integrations.ErrorCodeInvalidInput, "Feishu enum input is invalid", nil)
+}
+
+func strictInputBoolean(input map[string]interface{}, key string, fallback bool) (bool, error) {
+	raw, found := input[key]
+	if !found || raw == nil {
+		return fallback, nil
+	}
+	value, ok := raw.(bool)
+	if !ok {
+		return false, integrations.NewError(integrations.ErrorCodeInvalidInput, "Feishu boolean input is invalid", nil)
+	}
+	return value, nil
 }
 
 func firstNonEmpty(values ...string) string {

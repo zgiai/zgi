@@ -101,6 +101,7 @@ function skillTraceDebugRows(
         ).length,
       }
     : invocation.arguments;
+  const reasonCode = invocation.arguments?.reason_code;
   return [
     ['kind', getAIChatInvocationKindLabel(invocation.kind, t)],
     ['skillId', isExternalApp ? null : invocation.skill_id],
@@ -110,9 +111,24 @@ function skillTraceDebugRows(
     ['arguments', formatAIChatTimelineArgumentSummary(argumentSummary, t)],
     [
       'message',
-      localizeAIChatRuntimeMessage(invocation.message, t, undefined, invocation.error_code),
+      localizeAIChatRuntimeMessage(
+        invocation.message,
+        t,
+        undefined,
+        invocation.error_code,
+        reasonCode
+      ),
     ],
-    ['error', localizeAIChatRuntimeMessage(invocation.error, t, undefined, invocation.error_code)],
+    [
+      'error',
+      localizeAIChatRuntimeMessage(
+        invocation.error,
+        t,
+        undefined,
+        invocation.error_code,
+        reasonCode
+      ),
+    ],
   ] as const satisfies ReadonlyArray<readonly [SkillTraceDebugLabel, unknown]>;
 }
 
@@ -152,6 +168,7 @@ export function AIChatSkillTracePanel({
           fallbackToolName;
         const tone = getInvocationTone(invocation);
         const resultDetail = getAIChatSkillResultDisplay(invocation, locale);
+        const reasonCode = invocation.arguments?.reason_code;
 
         if (invocation.kind === 'skill_load') {
           return {
@@ -170,9 +187,16 @@ export function AIChatSkillTracePanel({
                 invocation.message,
                 t,
                 undefined,
-                invocation.error_code
+                invocation.error_code,
+                reasonCode
               ) ||
-              localizeAIChatRuntimeMessage(invocation.error, t, undefined, invocation.error_code) ||
+              localizeAIChatRuntimeMessage(
+                invocation.error,
+                t,
+                undefined,
+                invocation.error_code,
+                reasonCode
+              ) ||
               undefined,
           };
         }
@@ -194,9 +218,16 @@ export function AIChatSkillTracePanel({
                 invocation.message,
                 t,
                 undefined,
-                invocation.error_code
+                invocation.error_code,
+                reasonCode
               ) ||
-              localizeAIChatRuntimeMessage(invocation.error, t, undefined, invocation.error_code) ||
+              localizeAIChatRuntimeMessage(
+                invocation.error,
+                t,
+                undefined,
+                invocation.error_code,
+                reasonCode
+              ) ||
               undefined,
           };
         }
@@ -219,8 +250,20 @@ export function AIChatSkillTracePanel({
                   }),
           detail:
             resultDetail ||
-            localizeAIChatRuntimeMessage(invocation.message, t, undefined, invocation.error_code) ||
-            localizeAIChatRuntimeMessage(invocation.error, t, undefined, invocation.error_code) ||
+            localizeAIChatRuntimeMessage(
+              invocation.message,
+              t,
+              undefined,
+              invocation.error_code,
+              reasonCode
+            ) ||
+            localizeAIChatRuntimeMessage(
+              invocation.error,
+              t,
+              undefined,
+              invocation.error_code,
+              reasonCode
+            ) ||
             undefined,
         };
       }),

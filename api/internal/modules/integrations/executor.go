@@ -189,8 +189,8 @@ func (e *Executor) Execute(ctx context.Context, req ActionRequest) (*ActionResul
 	if operationCtx.Err() != nil {
 		return nil, NewError(ErrorCodeTimeout, "external integration preflight timed out", operationCtx.Err())
 	}
-	if err := tools.ValidateJSONSchemaValue(resolved.Definition.InputSchema, req.Input); err != nil {
-		return nil, invalidInput("arguments do not match the action schema", err)
+	if err := ValidateActionInput(resolved.IntegrationID, resolved.Definition, req.Input); err != nil {
+		return nil, err
 	}
 	// Resolve and decrypt credentials only after authorization, organization
 	// policy, sensitive-data checks, and schema validation have all succeeded.
@@ -238,7 +238,7 @@ func (e *Executor) Execute(ctx context.Context, req ActionRequest) (*ActionResul
 	}
 	if err := e.quota.Acquire(operationCtx, req.OrganizationID); err != nil {
 		if errors.Is(err, ErrQuotaExceeded) {
-			return nil, NewError(ErrorCodeQuotaExceeded, "organization web search daily limit has been reached", err)
+			return nil, NewError(ErrorCodeQuotaExceeded, "organization external integration daily limit has been reached", err)
 		}
 		return nil, NewError(ErrorCodeQuotaExceeded, "external integration quota service is unavailable", err)
 	}

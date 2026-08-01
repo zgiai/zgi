@@ -522,6 +522,7 @@ func TestRegistryDispatchesRegistrationOwnedCapabilities(t *testing.T) {
 	action := testAction("github.issue.create", "create_github_issue")
 	action.Effect = toolgovernance.EffectCreate
 	action.RiskLevel = toolgovernance.RiskLevelHigh
+	action.SupportedCallers = []tools.ToolInvokeFrom{tools.ToolInvokeFromAIChat}
 	action.DefaultPolicy = &DefaultActionPolicy{
 		Enabled: true, ApprovalPolicy: toolgovernance.ApprovalPolicyAlwaysAsk, DataEgressAllowed: true,
 	}
@@ -865,6 +866,76 @@ func testAction(id, toolName string) ActionDefinition {
 			},
 			"required": []string{"ok"},
 		},
+	}
+}
+
+func TestRegistryRejectsNonReadAgentAction(t *testing.T) {
+	action := testAction("message.send", "send_message")
+	action.Effect = toolgovernance.EffectExternalSend
+	action.SupportedCallers = []tools.ToolInvokeFrom{tools.ToolInvokeFromAIChat, tools.ToolInvokeFromAgent}
+	registry := NewRegistry()
+	err := registry.Register(localizedTestRegistration("messaging", &testAdapter{driverID: "messaging"}, []ActionDefinition{action}))
+	if err == nil || !strings.Contains(err.Error(), "cannot advertise non-read execution") {
+		t.Fatalf("Register() error = %v, want non-interactive Agent contract rejection", err)
+	}
+}
+
+func TestRegistryValidatesPreparationHints(t *testing.T) {
+	readAction := testAction("contact.search", "search_contacts")
+	readAction.SupportedCallers = []tools.ToolInvokeFrom{tools.ToolInvokeFromAIChat, tools.ToolInvokeFromAgent}
+	readAction.OutputSchema = map[string]interface{}{
+		"type": "object", "additionalProperties": false,
+		"properties": map[string]interface{}{
+			"results": map[string]interface{}{
+				"type": "array",
+				"items": map[string]interface{}{
+					"type": "object", "additionalProperties": false,
+					"properties": map[string]interface{}{"open_id": map[string]interface{}{"type": "string"}},
+					"required":   []string{"open_id"},
+				},
+			},
+		},
+		"required": []string{"results"},
+	}
+	writeAction := testAction("message.send", "send_message")
+	writeAction.Effect = toolgovernance.EffectExternalSend
+	writeAction.SupportedCallers = []tools.ToolInvokeFrom{tools.ToolInvokeFromAIChat}
+	writeAction.PreparationHints = []ActionPreparationHint{{
+		ActionID:        readAction.ID,
+		Relation:        ActionPreparationResolveTarget,
+		TargetArguments: []string{"query"},
+		ResultPaths:     []string{"results[].open_id"},
+		Description:     "Resolve a recipient before sending.",
+		DescriptionI18n: LocalizedText{
+			LocaleEnglishUS:         "Resolve a recipient before sending.",
+			LocaleSimplifiedChinese: "发送前先解析收件人。",
+		},
+	}}
+	registry := NewRegistry()
+	if err := registry.Register(localizedTestRegistration("messaging", &testAdapter{driverID: "messaging"}, []ActionDefinition{readAction, writeAction})); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+	registered, ok := registry.ActionDetail("messaging", writeAction.ID)
+	if !ok || len(registered.PreparationHints) != 1 || registered.PreparationHints[0].ActionID != readAction.ID {
+		t.Fatalf("registered preparation hints = %#v", registered.PreparationHints)
+	}
+
+	invalid := writeAction
+	invalid.PreparationHints = append([]ActionPreparationHint(nil), writeAction.PreparationHints...)
+	invalid.PreparationHints[0].ActionID = "message.missing"
+	invalidRegistry := NewRegistry()
+	err := invalidRegistry.Register(localizedTestRegistration("invalid-messaging", &testAdapter{driverID: "messaging"}, []ActionDefinition{readAction, invalid}))
+	if err == nil || !strings.Contains(err.Error(), "references unknown preparation action") {
+		t.Fatalf("Register() error = %v, want unknown preparation action rejection", err)
+	}
+
+	invalidPath := writeAction
+	invalidPath.PreparationHints = append([]ActionPreparationHint(nil), writeAction.PreparationHints...)
+	invalidPath.PreparationHints[0].ResultPaths = []string{"results[].missing_id"}
+	invalidPathRegistry := NewRegistry()
+	err = invalidPathRegistry.Register(localizedTestRegistration("invalid-path-messaging", &testAdapter{driverID: "messaging"}, []ActionDefinition{readAction, invalidPath}))
+	if err == nil || !strings.Contains(err.Error(), "has no output at results[].missing_id") {
+		t.Fatalf("Register() error = %v, want unknown preparation result path rejection", err)
 	}
 }
 

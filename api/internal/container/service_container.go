@@ -980,6 +980,7 @@ func (c *ServiceContainer) GetToolManager() *tools.ToolManager {
 				c.GetIntegrationExecutor(),
 				c.GetIntegrationConnectionRepository(),
 				c.GetIntegrationConnectionAccessService(),
+				c.GetIntegrationActionPolicyService(),
 			)
 			if err != nil {
 				panic(fmt.Sprintf("initialize external integration meta tools: %v", err))

@@ -124,6 +124,10 @@ func TestExecutorInvalidInputSchemaStopsAfterSafetyAndBeforeQuota(t *testing.T) 
 	if safety.calls != 1 || quota.calls != 0 || audit.createCalls != 0 || adapter.calls != 0 {
 		t.Fatalf("calls after schema failure: safety=%d quota=%d audit=%d adapter=%d", safety.calls, quota.calls, audit.createCalls, adapter.calls)
 	}
+	feedback := ActionInputValidationFeedback(err)
+	if feedback["reason_code"] != ActionValidationReasonSchemaMismatch || feedback["failure_stage"] != ActionValidationStagePreflight || feedback["provider_request_sent"] != false {
+		t.Fatalf("schema failure feedback = %#v", feedback)
+	}
 }
 
 func TestExecutorRejectsInvalidAuditContextBeforePipeline(t *testing.T) {
@@ -278,6 +282,9 @@ func TestExecutorQuotaExceededStopsBeforeAuditAndOutbound(t *testing.T) {
 	result, err := executor.Execute(context.Background(), validActionRequest("current events"))
 	if result != nil || ErrorCode(err) != ErrorCodeQuotaExceeded {
 		t.Fatalf("Execute() result = %#v, error = %v, code = %q", result, err, ErrorCode(err))
+	}
+	if !strings.Contains(err.Error(), "external integration daily limit") || strings.Contains(err.Error(), "web search") {
+		t.Fatalf("quota error = %q", err.Error())
 	}
 	if quota.calls != 1 || audit.createCalls != 0 || adapter.calls != 0 {
 		t.Fatalf("calls after quota rejection: quota=%d audit=%d adapter=%d", quota.calls, audit.createCalls, adapter.calls)

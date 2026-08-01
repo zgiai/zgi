@@ -299,11 +299,21 @@ export interface IntegrationActionDefinition {
   supported_auth_method_ids?: string[];
   scope_labels_i18n?: IntegrationLocalizedLabelMap;
   supported_callers?: Array<'aichat' | 'agent' | 'workflow' | 'api' | (string & {})>;
+  preparation_hints?: IntegrationActionPreparationHint[];
   default_policy?: {
     enabled: boolean;
     approval_policy?: IntegrationApprovalPolicy | string;
     data_egress_allowed: boolean;
   };
+}
+
+export interface IntegrationActionPreparationHint {
+  action_id: string;
+  relation: 'resolve_target' | 'inspect' | (string & {});
+  target_arguments?: string[];
+  result_paths?: string[];
+  description: string;
+  description_i18n?: IntegrationLocalizedText;
 }
 
 export type IntegrationProviderScopeCategory = 'identity' | 'lifecycle' | 'provider' | 'internal';
@@ -330,6 +340,7 @@ export type IntegrationCapabilityAvailability =
   | 'available'
   | 'needs_connection'
   | 'needs_scope'
+  | 'needs_permission'
   | 'disabled_by_policy'
   | 'data_egress_blocked';
 

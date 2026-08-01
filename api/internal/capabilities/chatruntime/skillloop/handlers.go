@@ -664,6 +664,7 @@ func (r *Runner) handleCallSkillTool(
 		if completionIntent != "" {
 			invocation.Trace.Arguments["completion_intent"] = completionIntent
 		}
+		applyPublicToolErrorRecoveryTrace(&invocation.Trace, err)
 		if invocation.Trace.Governance != nil {
 			r.emitEvent(prepared, EventToolGovernanceDecision, toolGovernanceDecisionPayload(prepared, invocation.Trace))
 		}

@@ -54,8 +54,7 @@ const messages = {
         'Turn my meeting notes into a concise summary with decisions, owners, and next steps.',
       report:
         'Help me draft a weekly report covering progress, outcomes, risks, and priorities for next week.',
-      polish:
-        'Polish the text I provide while preserving its meaning, tone, and key details.',
+      polish: 'Polish the text I provide while preserving its meaning, tone, and key details.',
     },
     loadingImageGen: 'Loading image generator...',
     markdownImage: {
@@ -867,7 +866,21 @@ const messages = {
       actions: {
         githubUserGet: 'Get authenticated GitHub user',
         githubRepositoryList: 'List GitHub repositories',
+        githubRepositorySearch: 'Search GitHub repositories',
         githubIssueList: 'List GitHub repository issues',
+        githubIssueGet: 'Get GitHub issue',
+        githubIssueCommentList: 'List GitHub issue comments',
+        githubIssueCreate: 'Create GitHub issue',
+        githubIssueCommentCreate: 'Create GitHub issue comment',
+        gmailMailSearch: 'Search Gmail messages',
+        gmailMailGet: 'Read Gmail message',
+        gmailMailReply: 'Reply to Gmail message',
+        gmailDraftCreate: 'Create Gmail draft',
+        feishuMessageList: 'Read Feishu messages',
+        feishuCalendarEventList: 'List Feishu calendar events',
+        feishuCalendarEventCreate: 'Create Feishu calendar event',
+        xUserGetByUsername: 'Get X user by username',
+        xPostListByUser: 'List X posts by user',
         webSearch: 'Search the web',
         webFetch: 'Read webpage',
         generic: 'External action',

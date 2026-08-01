@@ -47,6 +47,18 @@ func (adapter *Adapter) Execute(ctx context.Context, request integrations.Action
 	case ActionSendMail:
 		output, meta, err := adapter.sendMail(ctx, accessToken, request.Input)
 		return gmailActionResult(output, meta, 1), err
+	case ActionSearchMail:
+		output, meta, count, err := adapter.searchMail(ctx, accessToken, request.Input)
+		return gmailActionResult(output, meta, count), err
+	case ActionGetMail:
+		output, meta, err := adapter.getMail(ctx, accessToken, request.Input)
+		return gmailActionResult(output, meta, 1), err
+	case ActionReplyMail:
+		output, meta, err := adapter.replyMail(ctx, accessToken, request.Input)
+		return gmailActionResult(output, meta, 1), err
+	case ActionCreateDraft:
+		output, meta, err := adapter.createDraft(ctx, accessToken, request.Input)
+		return gmailActionResult(output, meta, 1), err
 	default:
 		return nil, integrations.NewError(integrations.ErrorCodeInvalidInput, "Gmail action is not supported", nil)
 	}
@@ -133,18 +145,10 @@ func (adapter *Adapter) sendMail(ctx context.Context, accessToken string, input 
 	if strings.TrimSpace(sent.ID) == "" {
 		return nil, meta, integrations.NewError(integrations.ErrorCodeResponseInvalid, "Gmail send response is incomplete", nil)
 	}
-	labels := make([]interface{}, 0, min(len(sent.LabelIDs), 20))
-	for _, label := range sent.LabelIDs {
-		if value := bounded(label, 100); value != "" && len(labels) < 20 {
-			labels = append(labels, value)
-		}
-	}
 	return map[string]interface{}{
 		"provider":   IntegrationID,
 		"request_id": bounded(meta.RequestID, 128),
-		"message": map[string]interface{}{
-			"id": bounded(sent.ID, 255), "thread_id": bounded(sent.ThreadID, 255), "label_ids": labels,
-		},
+		"message":    gmailSentMessage(sent),
 	}, meta, nil
 }
 
@@ -162,7 +166,7 @@ func buildRFC2822Message(input map[string]interface{}) ([]byte, error) {
 	if subject == "" || len([]rune(subject)) > 998 || containsHeaderBreak(subject) {
 		return nil, integrations.NewError(integrations.ErrorCodeInvalidInput, "Gmail subject is invalid", nil)
 	}
-	if body == "" || len([]rune(body)) > 100_000 {
+	if strings.TrimSpace(body) == "" || len([]rune(body)) > 100_000 {
 		return nil, integrations.NewError(integrations.ErrorCodeInvalidInput, "Gmail message body is invalid", nil)
 	}
 	var builder strings.Builder

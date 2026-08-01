@@ -592,6 +592,24 @@ func recoverableErrorPayload(err error, nextAction string) map[string]interface{
 
 func recoverableSkillToolErrorPayload(err error, nextAction string, skillID string, toolName string, resolvedSkills ...*skills.ResolvedSkills) map[string]interface{} {
 	payload := recoverableErrorPayload(err, nextAction)
+	var surfaceExpected map[string]interface{}
+	if len(resolvedSkills) > 0 && resolvedSkills[0] != nil {
+		surfaceExpected = skills.ExpectedSkillToolArgumentsForResolved(resolvedSkills[0], skillID, toolName)
+	} else {
+		surfaceExpected = skills.ExpectedSkillToolArguments(skillID, toolName)
+	}
+	if recovery := skills.PublicToolErrorRecoveryForInvocation(err, skillID, toolName, surfaceExpected); len(recovery) > 0 {
+		for key, value := range recovery {
+			payload[key] = value
+		}
+		if code := strings.TrimSpace(evidenceStringFromAny(recovery["error_code"])); code != "" {
+			payload["error"] = code
+		}
+		if retryAction := strings.TrimSpace(evidenceStringFromAny(recovery["retry_action"])); retryAction != "" {
+			payload["next_action"] = retryAction
+		}
+		return payload
+	}
 	var argumentErr *skillToolArgumentsError
 	hasArgumentErr := errors.As(err, &argumentErr)
 	var expected map[string]interface{}
@@ -627,6 +645,35 @@ func recoverableSkillToolErrorPayload(err error, nextAction string, skillID stri
 		payload["argument_errors"] = issues
 	}
 	return payload
+}
+
+func applyPublicToolErrorRecoveryTrace(trace *skills.SkillTrace, err error) {
+	if trace == nil {
+		return
+	}
+	recovery := skills.PublicToolErrorRecovery(err)
+	if len(recovery) == 0 {
+		return
+	}
+	if trace.Arguments == nil {
+		trace.Arguments = map[string]interface{}{}
+	}
+	for _, key := range []string{
+		"reason_code",
+		"recovery_kind",
+		"failure_stage",
+		"integration_id",
+		"action_id",
+		"provider_request_sent",
+		"recoverable",
+		"recovery_action",
+		"schema_revision",
+		"argument_errors",
+	} {
+		if value, ok := recovery[key]; ok {
+			trace.Arguments[key] = value
+		}
+	}
 }
 
 func plannerFeedbackAdvisoryPayload(message string, nextAction string, skillID string, toolName string) map[string]interface{} {

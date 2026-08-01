@@ -10,16 +10,22 @@ const (
 	IntegrationID = "gmail"
 	DriverID      = "gmail-api"
 
-	ActionGetAccount = "gmail.account.get"
-	ActionSendMail   = "gmail.mail.send"
+	ActionGetAccount  = "gmail.account.get"
+	ActionSendMail    = "gmail.mail.send"
+	ActionSearchMail  = "gmail.mail.search"
+	ActionGetMail     = "gmail.mail.get"
+	ActionReplyMail   = "gmail.mail.reply"
+	ActionCreateDraft = "gmail.draft.create"
 
 	AccountOAuthAuthMethodID      = "google_oauth"
 	OrganizationOAuthAuthMethodID = "organization_google_oauth"
 
-	ScopeOpenID   = "openid"
-	ScopeEmail    = "email"
-	ScopeProfile  = "profile"
-	ScopeMailSend = "https://www.googleapis.com/auth/gmail.send"
+	ScopeOpenID       = "openid"
+	ScopeEmail        = "email"
+	ScopeProfile      = "profile"
+	ScopeMailReadonly = "https://www.googleapis.com/auth/gmail.readonly"
+	ScopeMailSend     = "https://www.googleapis.com/auth/gmail.send"
+	ScopeMailCompose  = "https://www.googleapis.com/auth/gmail.compose"
 )
 
 func ProviderDefinition() integrations.ProviderDefinition {
@@ -31,10 +37,10 @@ func ProviderDefinition() integrations.ProviderDefinition {
 			integrations.LocaleEnglishUS:         "Gmail",
 			integrations.LocaleSimplifiedChinese: "谷歌邮箱",
 		},
-		Description: "Connect a Google account to inspect its identity and send Gmail messages with explicit approval.",
+		Description: "Connect a Google account to search and read Gmail, create drafts, and send or reply with explicit approval.",
 		DescriptionI18n: integrations.LocalizedText{
-			integrations.LocaleEnglishUS:         "Connect a Google account to inspect its identity and send Gmail messages with explicit approval.",
-			integrations.LocaleSimplifiedChinese: "连接 Google 账号以读取账号身份，并在明确确认后发送 Gmail 邮件。",
+			integrations.LocaleEnglishUS:         "Connect a Google account to search and read Gmail, create drafts, and send or reply with explicit approval.",
+			integrations.LocaleSimplifiedChinese: "连接 Google 账号以搜索和读取 Gmail、创建草稿，并在明确确认后发送或回复邮件。",
 		},
 		Author: "ZGI",
 		Icon:   "mail",
@@ -89,9 +95,23 @@ func ProviderDefinition() integrations.ProviderDefinition {
 				Category: integrations.ProviderScopeCategoryIdentity, Access: integrations.ProviderScopeAccessRead,
 			},
 			{
+				ID: ScopeMailReadonly, Label: "Read Gmail messages",
+				LabelI18n: integrations.LocalizedText{
+					integrations.LocaleEnglishUS: "Read Gmail messages", integrations.LocaleSimplifiedChinese: "读取 Gmail 邮件",
+				},
+				Category: integrations.ProviderScopeCategoryProvider, Access: integrations.ProviderScopeAccessRead, Broad: true,
+			},
+			{
 				ID: ScopeMailSend, Label: "Send email on your behalf",
 				LabelI18n: integrations.LocalizedText{
 					integrations.LocaleEnglishUS: "Send email on your behalf", integrations.LocaleSimplifiedChinese: "代表你发送电子邮件",
+				},
+				Category: integrations.ProviderScopeCategoryProvider, Access: integrations.ProviderScopeAccessWrite, Broad: true,
+			},
+			{
+				ID: ScopeMailCompose, Label: "Create and manage Gmail drafts",
+				LabelI18n: integrations.LocalizedText{
+					integrations.LocaleEnglishUS: "Create and manage Gmail drafts", integrations.LocaleSimplifiedChinese: "创建和管理 Gmail 草稿",
 				},
 				Category: integrations.ProviderScopeCategoryProvider, Access: integrations.ProviderScopeAccessWrite, Broad: true,
 			},
@@ -294,10 +314,10 @@ func Actions() []integrations.ActionDefinition {
 				integrations.LocaleSimplifiedChinese: "使用已连接的 Gmail 账号发送一封纯文本邮件，每次调用都必须明确确认。",
 			},
 			InputSchema: strictObjectSchema(map[string]interface{}{
-				"to":        localizedSchema(map[string]interface{}{"type": "string", "minLength": 3, "maxLength": 4000}, "Recipients", "收件人"),
+				"to":        localizedSchema(nonBlankStringSchema(3, 4000), "Recipients", "收件人"),
 				"cc":        localizedSchema(map[string]interface{}{"type": "string", "maxLength": 4000}, "CC recipients", "抄送人"),
-				"subject":   localizedSchema(map[string]interface{}{"type": "string", "minLength": 1, "maxLength": 998}, "Subject", "主题"),
-				"body_text": localizedSchema(map[string]interface{}{"type": "string", "minLength": 1, "maxLength": 100000}, "Plain-text body", "纯文本正文"),
+				"subject":   localizedSchema(nonBlankStringSchema(1, 998), "Subject", "主题"),
+				"body_text": localizedSchema(nonBlankStringSchema(1, 100000), "Plain-text body", "纯文本正文"),
 			}, []string{"to", "subject", "body_text"}),
 			OutputSchema: strictObjectSchema(map[string]interface{}{
 				"provider": map[string]interface{}{"const": IntegrationID}, "request_id": boundedStringSchema(128),
@@ -315,14 +335,207 @@ func Actions() []integrations.ActionDefinition {
 			},
 			DefaultPolicy: alwaysAskPolicy(),
 			SupportedCallers: []tools.ToolInvokeFrom{
+				tools.ToolInvokeFromAIChat,
+			},
+		},
+		{
+			ID:       ActionSearchMail,
+			ToolName: "search_gmail_messages",
+			Name:     "Search Gmail messages",
+			NameI18n: integrations.LocalizedText{
+				integrations.LocaleEnglishUS:         "Search Gmail messages",
+				integrations.LocaleSimplifiedChinese: "搜索 Gmail 邮件",
+			},
+			Description: "Search the connected mailbox with Gmail search syntax and return bounded message summaries.",
+			DescriptionI18n: integrations.LocalizedText{
+				integrations.LocaleEnglishUS:         "Search the connected mailbox with Gmail search syntax and return bounded message summaries.",
+				integrations.LocaleSimplifiedChinese: "使用 Gmail 搜索语法检索已连接邮箱，并返回受限的邮件摘要。",
+			},
+			InputSchema: strictObjectSchema(map[string]interface{}{
+				"query": localizedSchema(nonBlankStringSchema(1, 2048), "Gmail search query", "Gmail 搜索条件"),
+				"max_results": localizedSchema(map[string]interface{}{
+					"type": "integer", "minimum": 1, "maximum": 20, "default": 10,
+				}, "Maximum results", "最大结果数"),
+				"page_token": localizedSchema(nonBlankStringSchema(1, 2048), "Next-page token", "下一页令牌"),
+				"include_spam_trash": localizedSchema(map[string]interface{}{
+					"type": "boolean", "default": false,
+				}, "Include spam and trash", "包含垃圾邮件和回收站"),
+			}, []string{"query"}),
+			OutputSchema: strictObjectSchema(map[string]interface{}{
+				"provider": map[string]interface{}{"const": IntegrationID}, "request_id": boundedStringSchema(128),
+				"messages": map[string]interface{}{
+					"type": "array", "maxItems": 20, "items": gmailMessageSummarySchema(),
+				},
+				"next_page_token":      boundedStringSchema(2048),
+				"result_size_estimate": map[string]interface{}{"type": "integer", "minimum": 0},
+			}, []string{"provider", "request_id", "messages", "next_page_token", "result_size_estimate"}),
+			Effect: toolgovernance.EffectRead, RiskLevel: toolgovernance.RiskLevelLow,
+			DataEgress: true, ExternalDestination: "gmail.googleapis.com",
+			SensitiveDataAllowed: false, Idempotent: true,
+			RequiredScopes: []string{ScopeMailReadonly},
+			ScopeLabelsI18n: integrations.LocalizedLabelMap{
+				ScopeMailReadonly: {
+					integrations.LocaleEnglishUS:         "Read Gmail messages",
+					integrations.LocaleSimplifiedChinese: "读取 Gmail 邮件",
+				},
+			},
+			DefaultPolicy: readOnlyPolicy(),
+			SupportedCallers: []tools.ToolInvokeFrom{
 				tools.ToolInvokeFromAIChat, tools.ToolInvokeFromAgent,
+			},
+		},
+		{
+			ID:       ActionGetMail,
+			ToolName: "get_gmail_message",
+			Name:     "Read Gmail message",
+			NameI18n: integrations.LocalizedText{
+				integrations.LocaleEnglishUS:         "Read Gmail message",
+				integrations.LocaleSimplifiedChinese: "读取 Gmail 邮件",
+			},
+			Description: "Read one Gmail message, safely decode its MIME content, and return a bounded plain-text body.",
+			DescriptionI18n: integrations.LocalizedText{
+				integrations.LocaleEnglishUS:         "Read one Gmail message, safely decode its MIME content, and return a bounded plain-text body.",
+				integrations.LocaleSimplifiedChinese: "读取一封 Gmail 邮件，安全解析 MIME 内容，并返回长度受限的纯文本正文。",
+			},
+			InputSchema: strictObjectSchema(map[string]interface{}{
+				"message_id": localizedSchema(nonBlankStringSchema(1, 255), "Message ID", "邮件 ID"),
+				"max_body_characters": localizedSchema(map[string]interface{}{
+					"type": "integer", "minimum": 1000, "maximum": 50000, "default": 20000,
+				}, "Maximum body characters", "最大正文字符数"),
+			}, []string{"message_id"}),
+			OutputSchema: strictObjectSchema(map[string]interface{}{
+				"provider": map[string]interface{}{"const": IntegrationID}, "request_id": boundedStringSchema(128),
+				"message": gmailMessageDetailSchema(),
+			}, []string{"provider", "request_id", "message"}),
+			Effect: toolgovernance.EffectRead, RiskLevel: toolgovernance.RiskLevelLow,
+			DataEgress: true, ExternalDestination: "gmail.googleapis.com",
+			SensitiveDataAllowed: false, Idempotent: true,
+			RequiredScopes: []string{ScopeMailReadonly},
+			ScopeLabelsI18n: integrations.LocalizedLabelMap{
+				ScopeMailReadonly: {
+					integrations.LocaleEnglishUS:         "Read Gmail messages",
+					integrations.LocaleSimplifiedChinese: "读取 Gmail 邮件",
+				},
+			},
+			DefaultPolicy: readOnlyPolicy(),
+			SupportedCallers: []tools.ToolInvokeFrom{
+				tools.ToolInvokeFromAIChat, tools.ToolInvokeFromAgent,
+			},
+		},
+		{
+			ID:       ActionReplyMail,
+			ToolName: "reply_gmail_message",
+			Name:     "Reply to Gmail message",
+			NameI18n: integrations.LocalizedText{
+				integrations.LocaleEnglishUS:         "Reply to Gmail message",
+				integrations.LocaleSimplifiedChinese: "回复 Gmail 邮件",
+			},
+			Description: "Reply in the original Gmail thread. The server derives recipients and reply headers from the source message; every invocation requires explicit approval.",
+			DescriptionI18n: integrations.LocalizedText{
+				integrations.LocaleEnglishUS:         "Reply in the original Gmail thread. The server derives recipients and reply headers from the source message; every invocation requires explicit approval.",
+				integrations.LocaleSimplifiedChinese: "在原 Gmail 会话中回复。服务端从原邮件推导收件人与回复头；每次调用都必须明确确认。",
+			},
+			InputSchema: strictObjectSchema(map[string]interface{}{
+				"message_id": localizedSchema(nonBlankStringSchema(1, 255), "Message ID to reply to", "要回复的邮件 ID"),
+				"body_text":  localizedSchema(nonBlankStringSchema(1, 100000), "Plain-text reply", "纯文本回复正文"),
+			}, []string{"message_id", "body_text"}),
+			OutputSchema: strictObjectSchema(map[string]interface{}{
+				"provider": map[string]interface{}{"const": IntegrationID}, "request_id": boundedStringSchema(128),
+				"message": gmailSentMessageSchema(),
+			}, []string{"provider", "request_id", "message"}),
+			Effect: toolgovernance.EffectExternalSend, RiskLevel: toolgovernance.RiskLevelHigh,
+			DataEgress: true, ExternalDestination: "gmail.googleapis.com",
+			SensitiveDataAllowed: false, Idempotent: false,
+			RequiredScopes: []string{ScopeMailReadonly, ScopeMailSend},
+			ScopeLabelsI18n: integrations.LocalizedLabelMap{
+				ScopeMailReadonly: {
+					integrations.LocaleEnglishUS:         "Read Gmail messages",
+					integrations.LocaleSimplifiedChinese: "读取 Gmail 邮件",
+				},
+				ScopeMailSend: {
+					integrations.LocaleEnglishUS:         "Send email on your behalf",
+					integrations.LocaleSimplifiedChinese: "代表你发送电子邮件",
+				},
+			},
+			DefaultPolicy: alwaysAskPolicy(),
+			SupportedCallers: []tools.ToolInvokeFrom{
+				tools.ToolInvokeFromAIChat,
+			},
+		},
+		{
+			ID:       ActionCreateDraft,
+			ToolName: "create_gmail_draft",
+			Name:     "Create Gmail draft",
+			NameI18n: integrations.LocalizedText{
+				integrations.LocaleEnglishUS:         "Create Gmail draft",
+				integrations.LocaleSimplifiedChinese: "创建 Gmail 草稿",
+			},
+			Description: "Create one plain-text Gmail draft without sending it. Every invocation requires explicit approval.",
+			DescriptionI18n: integrations.LocalizedText{
+				integrations.LocaleEnglishUS:         "Create one plain-text Gmail draft without sending it. Every invocation requires explicit approval.",
+				integrations.LocaleSimplifiedChinese: "创建一封纯文本 Gmail 草稿但不发送；每次调用都必须明确确认。",
+			},
+			InputSchema: strictObjectSchema(map[string]interface{}{
+				"to":        localizedSchema(nonBlankStringSchema(3, 4000), "Recipients", "收件人"),
+				"cc":        localizedSchema(map[string]interface{}{"type": "string", "maxLength": 4000}, "CC recipients", "抄送人"),
+				"subject":   localizedSchema(nonBlankStringSchema(1, 998), "Subject", "主题"),
+				"body_text": localizedSchema(nonBlankStringSchema(1, 100000), "Plain-text body", "纯文本正文"),
+			}, []string{"to", "subject", "body_text"}),
+			OutputSchema: strictObjectSchema(map[string]interface{}{
+				"provider": map[string]interface{}{"const": IntegrationID}, "request_id": boundedStringSchema(128),
+				"draft": strictObjectSchema(map[string]interface{}{
+					"id": boundedStringSchema(255), "message": gmailSentMessageSchema(),
+				}, []string{"id", "message"}),
+			}, []string{"provider", "request_id", "draft"}),
+			Effect: toolgovernance.EffectCreate, RiskLevel: toolgovernance.RiskLevelHigh,
+			DataEgress: true, ExternalDestination: "gmail.googleapis.com",
+			SensitiveDataAllowed: false, Idempotent: false,
+			RequiredScopes: []string{ScopeMailCompose},
+			ScopeLabelsI18n: integrations.LocalizedLabelMap{
+				ScopeMailCompose: {
+					integrations.LocaleEnglishUS:         "Create and manage Gmail drafts",
+					integrations.LocaleSimplifiedChinese: "创建和管理 Gmail 草稿",
+				},
+			},
+			DefaultPolicy: alwaysAskPolicy(),
+			SupportedCallers: []tools.ToolInvokeFrom{
+				tools.ToolInvokeFromAIChat,
 			},
 		},
 	}
 	for index := range actions {
 		actions[index].SupportedAuthMethodIDs = []string{AccountOAuthAuthMethodID, OrganizationOAuthAuthMethodID}
+		switch actions[index].ID {
+		case ActionGetMail:
+			actions[index].PreparationHints = gmailMessageTargetPreparationHints()
+		case ActionReplyMail:
+			actions[index].PreparationHints = append(
+				gmailMessageTargetPreparationHints(),
+				integrations.ActionPreparationHint{
+					ActionID: ActionGetMail, Relation: integrations.ActionPreparationInspect,
+					TargetArguments: []string{"message_id"}, ResultPaths: []string{"message.id", "message.thread_id"},
+					Description: "Read the confirmed source message before replying when its contents or thread context must be verified.",
+					DescriptionI18n: integrations.LocalizedText{
+						integrations.LocaleEnglishUS:         "Read the confirmed source message before replying when its contents or thread context must be verified.",
+						integrations.LocaleSimplifiedChinese: "回复前如需核对正文或会话上下文，请先读取已确认的源邮件。",
+					},
+				},
+			)
+		}
 	}
 	return actions
+}
+
+func gmailMessageTargetPreparationHints() []integrations.ActionPreparationHint {
+	return []integrations.ActionPreparationHint{{
+		ActionID: ActionSearchMail, Relation: integrations.ActionPreparationResolveTarget,
+		TargetArguments: []string{"message_id"}, ResultPaths: []string{"messages[].id"},
+		Description: "Search the mailbox when the source message ID is unknown, then use one confirmed message ID.",
+		DescriptionI18n: integrations.LocalizedText{
+			integrations.LocaleEnglishUS:         "Search the mailbox when the source message ID is unknown, then use one confirmed message ID.",
+			integrations.LocaleSimplifiedChinese: "当源邮件 ID 未知时，先搜索邮箱，再使用一封已确认邮件的 ID。",
+		},
+	}}
 }
 
 func readOnlyPolicy() *integrations.DefaultActionPolicy {
@@ -350,6 +563,50 @@ func strictObjectSchema(properties map[string]interface{}, required []string) ma
 
 func boundedStringSchema(maxLength int) map[string]interface{} {
 	return map[string]interface{}{"type": "string", "maxLength": maxLength}
+}
+
+func nonBlankStringSchema(minLength, maxLength int) map[string]interface{} {
+	return map[string]interface{}{
+		"type": "string", "minLength": minLength, "maxLength": maxLength, "pattern": `\S`,
+	}
+}
+
+func gmailMessageSummarySchema() map[string]interface{} {
+	return strictObjectSchema(map[string]interface{}{
+		"id": boundedStringSchema(255), "thread_id": boundedStringSchema(255),
+		"subject": boundedStringSchema(998), "from": boundedStringSchema(4000),
+		"to": boundedStringSchema(4000), "date": boundedStringSchema(255),
+		"snippet": boundedStringSchema(1000),
+		"label_ids": map[string]interface{}{
+			"type": "array", "maxItems": 50, "items": boundedStringSchema(100),
+		},
+	}, []string{"id", "thread_id", "subject", "from", "to", "date", "snippet", "label_ids"})
+}
+
+func gmailMessageDetailSchema() map[string]interface{} {
+	return strictObjectSchema(map[string]interface{}{
+		"id": boundedStringSchema(255), "thread_id": boundedStringSchema(255),
+		"subject": boundedStringSchema(998), "from": boundedStringSchema(4000),
+		"to": boundedStringSchema(4000), "cc": boundedStringSchema(4000),
+		"date": boundedStringSchema(255), "snippet": boundedStringSchema(1000),
+		"label_ids": map[string]interface{}{
+			"type": "array", "maxItems": 50, "items": boundedStringSchema(100),
+		},
+		"mime_type": boundedStringSchema(255), "body_text": boundedStringSchema(50000),
+		"body_truncated": map[string]interface{}{"type": "boolean"},
+	}, []string{
+		"id", "thread_id", "subject", "from", "to", "cc", "date", "snippet",
+		"label_ids", "mime_type", "body_text", "body_truncated",
+	})
+}
+
+func gmailSentMessageSchema() map[string]interface{} {
+	return strictObjectSchema(map[string]interface{}{
+		"id": boundedStringSchema(255), "thread_id": boundedStringSchema(255),
+		"label_ids": map[string]interface{}{
+			"type": "array", "maxItems": 20, "items": boundedStringSchema(100),
+		},
+	}, []string{"id", "thread_id", "label_ids"})
 }
 
 func localizedSchema(schema map[string]interface{}, english, chinese string) map[string]interface{} {

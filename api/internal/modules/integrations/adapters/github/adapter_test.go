@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/zgiai/zgi/api/internal/capabilities/toolgovernance"
 	"github.com/zgiai/zgi/api/internal/modules/integrations"
 	"github.com/zgiai/zgi/api/internal/modules/tools"
 )
@@ -90,14 +91,45 @@ func TestProviderDefinitionAndActionSchemas(t *testing.T) {
 		if !action.DataEgress || action.ExternalDestination != "api.github.com" {
 			t.Errorf("action %s egress = %v/%q", action.ID, action.DataEgress, action.ExternalDestination)
 		}
-		if action.DefaultPolicy == nil || !action.DefaultPolicy.Enabled || !action.DefaultPolicy.DataEgressAllowed {
+		if action.DefaultPolicy == nil || !action.DefaultPolicy.DataEgressAllowed {
 			t.Errorf("action %s default policy = %#v", action.ID, action.DefaultPolicy)
 		}
+		if action.Effect == "read" && !action.DefaultPolicy.Enabled {
+			t.Errorf("read action %s must be enabled by default", action.ID)
+		}
+		if action.Effect != "read" && (action.DefaultPolicy.Enabled || action.DefaultPolicy.ApprovalPolicy != "always_ask") {
+			t.Errorf("write action %s must be disabled and always ask by default: %#v", action.ID, action.DefaultPolicy)
+		}
+		switch action.ID {
+		case ActionCreateIssue:
+			assertGitHubWriteAction(t, action, toolgovernance.EffectCreate)
+		case ActionCreateIssueComment:
+			assertGitHubWriteAction(t, action, toolgovernance.EffectExternalSend)
+		default:
+			if action.Effect != toolgovernance.EffectRead || action.RiskLevel != toolgovernance.RiskLevelLow ||
+				!action.Idempotent || action.DefaultPolicy.ApprovalPolicy != toolgovernance.ApprovalPolicyNeverAsk {
+				t.Errorf("read action %s governance = %#v", action.ID, action)
+			}
+		}
 	}
-	for _, id := range []string{ActionGetAuthenticatedUser, ActionListRepositories, ActionListIssues} {
+	for _, id := range []string{
+		ActionGetAuthenticatedUser, ActionListRepositories, ActionSearchRepositories, ActionListIssues,
+		ActionGetIssue, ActionListIssueComments, ActionCreateIssue, ActionCreateIssueComment,
+	} {
 		if !seen[id] {
 			t.Errorf("missing action %s", id)
 		}
+	}
+}
+
+func assertGitHubWriteAction(t *testing.T, action integrations.ActionDefinition, effect toolgovernance.Effect) {
+	t.Helper()
+	if action.Effect != effect || action.RiskLevel != toolgovernance.RiskLevelHigh || action.Idempotent ||
+		action.DefaultPolicy == nil || action.DefaultPolicy.Enabled ||
+		action.DefaultPolicy.ApprovalPolicy != toolgovernance.ApprovalPolicyAlwaysAsk ||
+		len(action.SupportedCallers) != 1 || action.SupportedCallers[0] != tools.ToolInvokeFromAIChat ||
+		len(action.RequiredScopes) != 1 || action.RequiredScopes[0] != "issues:write" {
+		t.Errorf("write action %s governance = %#v", action.ID, action)
 	}
 }
 
@@ -256,6 +288,222 @@ func TestListIssuesFiltersPullRequestsAndForwardsFilters(t *testing.T) {
 	}
 	if calls.Load() != 2 {
 		t.Fatalf("request count = %d", calls.Load())
+	}
+}
+
+func TestSearchRepositoriesBuildsBoundedRequestAndOutput(t *testing.T) {
+	var calls atomic.Int32
+	adapter := newTestAdapter(t, func(w http.ResponseWriter, request *http.Request) {
+		calls.Add(1)
+		if request.Method != http.MethodGet || request.URL.Path != "/search/repositories" {
+			t.Errorf("request = %s %s", request.Method, request.URL.Path)
+		}
+		if got := request.URL.Query().Get("q"); got != "language:go stars:>100" {
+			t.Errorf("query = %q", got)
+		}
+		if got := request.URL.Query().Get("sort"); got != "stars" || request.URL.Query().Get("order") != "asc" || request.URL.Query().Get("page") != "2" || request.URL.Query().Get("per_page") != "1" {
+			t.Errorf("search parameters = %s", request.URL.RawQuery)
+		}
+		writeJSON(t, w, http.StatusOK, map[string]interface{}{
+			"total_count": 25, "incomplete_results": false,
+			"items": []map[string]interface{}{
+				{"full_name": "zgiai/zgi", "html_url": "https://github.com/zgiai/zgi", "description": strings.Repeat("d", 1200), "visibility": "public", "default_branch": "main", "language": "Go"},
+				{"full_name": "ignored/repository", "html_url": "https://github.com/ignored/repository"},
+			},
+		})
+	})
+	result, err := adapter.Execute(context.Background(), integrations.ActionRequest{
+		IntegrationID: IntegrationID, ActionID: ActionSearchRepositories,
+		Connection: githubConnection("github_pat_search"),
+		Input: map[string]interface{}{
+			"query": " language:go stars:>100 ", "sort": "stars", "order": "asc", "page": 2, "per_page": 1,
+		},
+	})
+	if err != nil {
+		t.Fatalf("search repositories: %v", err)
+	}
+	repositories := result.Output["repositories"].([]interface{})
+	if calls.Load() != 1 || len(repositories) != 1 || result.ResultCount != 1 {
+		t.Fatalf("search result = %#v, calls = %d", result, calls.Load())
+	}
+	if got := len([]rune(repositories[0].(map[string]interface{})["description"].(string))); got != 1000 {
+		t.Fatalf("description length = %d", got)
+	}
+	assertGitHubOutputSchema(t, ActionSearchRepositories, result.Output)
+}
+
+func TestGetIssueAndListCommentsUseBoundedEndpoints(t *testing.T) {
+	adapter := newTestAdapter(t, func(w http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/repos/zgiai/zgi/issues/42":
+			writeJSON(t, w, http.StatusOK, map[string]interface{}{
+				"number": 42, "title": "Issue", "state": "open", "body": strings.Repeat("b", 22000),
+				"html_url": "https://github.com/zgiai/zgi/issues/42", "user": map[string]interface{}{"login": "alice"},
+				"labels": []map[string]interface{}{{"name": "bug"}}, "comments": 1, "locked": false,
+				"created_at": "2026-08-01T00:00:00Z", "updated_at": "2026-08-01T01:00:00Z",
+			})
+		case "/repos/zgiai/zgi/issues/42/comments":
+			if request.URL.Query().Get("page") != "3" || request.URL.Query().Get("per_page") != "1" || request.URL.Query().Get("since") != "2026-08-01T00:00:00Z" {
+				t.Errorf("comment query = %s", request.URL.RawQuery)
+			}
+			writeJSON(t, w, http.StatusOK, []map[string]interface{}{
+				{"id": 9, "body": strings.Repeat("c", 22000), "html_url": "https://github.com/zgiai/zgi/issues/42#issuecomment-9", "user": map[string]interface{}{"login": "bob"}, "created_at": "2026-08-01T02:00:00Z", "updated_at": "2026-08-01T02:00:00Z"},
+				{"id": 10, "body": "ignored"},
+			})
+		default:
+			t.Errorf("unexpected path = %s", request.URL.Path)
+		}
+	})
+	coordinates := map[string]interface{}{"owner": "zgiai", "repo": "zgi", "issue_number": 42}
+	issueResult, err := adapter.Execute(context.Background(), integrations.ActionRequest{
+		IntegrationID: IntegrationID, ActionID: ActionGetIssue,
+		Connection: githubConnection("github_pat_issue"), Input: coordinates,
+	})
+	if err != nil {
+		t.Fatalf("get issue: %v", err)
+	}
+	issue := issueResult.Output["issue"].(map[string]interface{})
+	if len([]rune(issue["body"].(string))) != 20000 {
+		t.Fatalf("issue body was not bounded")
+	}
+	assertGitHubOutputSchema(t, ActionGetIssue, issueResult.Output)
+
+	commentInput := map[string]interface{}{
+		"owner": "zgiai", "repo": "zgi", "issue_number": 42,
+		"page": 3, "per_page": 1, "since": "2026-08-01T00:00:00Z",
+	}
+	commentResult, err := adapter.Execute(context.Background(), integrations.ActionRequest{
+		IntegrationID: IntegrationID, ActionID: ActionListIssueComments,
+		Connection: githubConnection("github_pat_comments"), Input: commentInput,
+	})
+	if err != nil {
+		t.Fatalf("list comments: %v", err)
+	}
+	comments := commentResult.Output["comments"].([]interface{})
+	if len(comments) != 1 || len([]rune(comments[0].(map[string]interface{})["body"].(string))) != 20000 {
+		t.Fatalf("bounded comments = %#v", comments)
+	}
+	assertGitHubOutputSchema(t, ActionListIssueComments, commentResult.Output)
+}
+
+func TestCreateIssueAndCommentUseSingleBoundedPOST(t *testing.T) {
+	var calls atomic.Int32
+	adapter := newTestAdapter(t, func(w http.ResponseWriter, request *http.Request) {
+		calls.Add(1)
+		if request.Method != http.MethodPost || request.Header.Get("Content-Type") != "application/json" {
+			t.Errorf("write request = %s, content-type %q", request.Method, request.Header.Get("Content-Type"))
+		}
+		var payload map[string]interface{}
+		if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
+			t.Errorf("decode request: %v", err)
+		}
+		switch request.URL.Path {
+		case "/repos/zgiai/zgi/issues":
+			if payload["title"] != "Release regression" || len(payload["labels"].([]interface{})) != 2 || len(payload["assignees"].([]interface{})) != 1 {
+				t.Errorf("issue payload = %#v", payload)
+			}
+			writeJSON(t, w, http.StatusCreated, map[string]interface{}{
+				"number": 51, "title": strings.Repeat("t", 600), "state": "open", "body": strings.Repeat("b", 22000),
+				"html_url": "https://github.com/zgiai/zgi/issues/51", "user": map[string]interface{}{"login": "octocat"},
+				"labels": []map[string]interface{}{}, "comments": 0, "locked": false,
+			})
+		case "/repos/zgiai/zgi/issues/51/comments":
+			if payload["body"] != "Confirmed in production" {
+				t.Errorf("comment payload = %#v", payload)
+			}
+			writeJSON(t, w, http.StatusCreated, map[string]interface{}{
+				"id": 901, "body": strings.Repeat("c", 22000), "html_url": "https://github.com/zgiai/zgi/issues/51#issuecomment-901",
+				"user": map[string]interface{}{"login": "octocat"}, "created_at": "2026-08-01T00:00:00Z", "updated_at": "2026-08-01T00:00:00Z",
+			})
+		default:
+			t.Errorf("unexpected write path = %s", request.URL.Path)
+		}
+	})
+	issueResult, err := adapter.Execute(context.Background(), integrations.ActionRequest{
+		IntegrationID: IntegrationID, ActionID: ActionCreateIssue, Connection: githubConnection("github_pat_write"),
+		Input: map[string]interface{}{
+			"owner": "zgiai", "repo": "zgi", "title": " Release regression ", "body": "Details",
+			"labels": []interface{}{"bug", "urgent"}, "assignees": []interface{}{"octocat"}, "milestone": 7,
+		},
+	})
+	if err != nil {
+		t.Fatalf("create issue: %v", err)
+	}
+	if issueResult.AttemptCount != 1 || len([]rune(issueResult.Output["issue"].(map[string]interface{})["body"].(string))) != 20000 {
+		t.Fatalf("created issue = %#v", issueResult)
+	}
+	assertGitHubOutputSchema(t, ActionCreateIssue, issueResult.Output)
+
+	commentResult, err := adapter.Execute(context.Background(), integrations.ActionRequest{
+		IntegrationID: IntegrationID, ActionID: ActionCreateIssueComment, Connection: githubConnection("github_pat_write"),
+		Input: map[string]interface{}{"owner": "zgiai", "repo": "zgi", "issue_number": 51, "body": " Confirmed in production "},
+	})
+	if err != nil {
+		t.Fatalf("create comment: %v", err)
+	}
+	if calls.Load() != 2 || commentResult.AttemptCount != 1 || len([]rune(commentResult.Output["comment"].(map[string]interface{})["body"].(string))) != 20000 {
+		t.Fatalf("created comment = %#v, calls = %d", commentResult, calls.Load())
+	}
+	assertGitHubOutputSchema(t, ActionCreateIssueComment, commentResult.Output)
+}
+
+func TestNewActionsRejectInvalidInputBeforeExternalRequest(t *testing.T) {
+	var calls atomic.Int32
+	adapter := newTestAdapter(t, func(w http.ResponseWriter, _ *http.Request) {
+		calls.Add(1)
+		writeJSON(t, w, http.StatusOK, map[string]interface{}{})
+	})
+	tests := []struct {
+		action string
+		input  map[string]interface{}
+	}{
+		{ActionSearchRepositories, map[string]interface{}{"query": "  "}},
+		{ActionGetIssue, map[string]interface{}{"owner": "bad/owner", "repo": "zgi", "issue_number": 1}},
+		{ActionListIssueComments, map[string]interface{}{"owner": "zgiai", "repo": "zgi", "issue_number": 0}},
+		{ActionCreateIssue, map[string]interface{}{"owner": "zgiai", "repo": "zgi", "title": "\t"}},
+		{ActionCreateIssueComment, map[string]interface{}{"owner": "zgiai", "repo": "zgi", "issue_number": 1, "body": "\n"}},
+	}
+	for _, test := range tests {
+		_, err := adapter.Execute(context.Background(), integrations.ActionRequest{
+			IntegrationID: IntegrationID, ActionID: test.action,
+			Connection: githubConnection("github_pat_invalid"), Input: test.input,
+		})
+		if err == nil || integrations.ErrorCode(err) != integrations.ErrorCodeInvalidInput {
+			t.Errorf("action %s error = %v", test.action, err)
+		}
+	}
+	if calls.Load() != 0 {
+		t.Fatalf("invalid inputs sent %d external requests", calls.Load())
+	}
+}
+
+func TestGitHubWritesNeverRetry(t *testing.T) {
+	tests := []struct {
+		action string
+		input  map[string]interface{}
+	}{
+		{ActionCreateIssue, map[string]interface{}{"owner": "zgiai", "repo": "zgi", "title": "One attempt only"}},
+		{ActionCreateIssueComment, map[string]interface{}{"owner": "zgiai", "repo": "zgi", "issue_number": 1, "body": "One attempt only"}},
+	}
+	for _, test := range tests {
+		t.Run(test.action, func(t *testing.T) {
+			var calls atomic.Int32
+			adapter := newTestAdapter(t, func(w http.ResponseWriter, _ *http.Request) {
+				calls.Add(1)
+				w.Header().Set("Retry-After", "0")
+				writeJSON(t, w, http.StatusServiceUnavailable, map[string]string{"message": "temporary"})
+			})
+			result, err := adapter.Execute(context.Background(), integrations.ActionRequest{
+				IntegrationID: IntegrationID, ActionID: test.action,
+				Connection: githubConnection("github_pat_no_retry"), Input: test.input,
+			})
+			if err == nil || integrations.ErrorCode(err) != integrations.ErrorCodeUpstream {
+				t.Fatalf("write error = %v", err)
+			}
+			if calls.Load() != 1 || result == nil || result.AttemptCount != 1 {
+				t.Fatalf("write attempts = server %d/result %#v", calls.Load(), result)
+			}
+		})
 	}
 }
 
@@ -463,7 +711,7 @@ func TestValidateAndProbeConnectionReturnSecretFreeProfile(t *testing.T) {
 	if profile.AccountID != "octocat" || profile.DisplayName != "The Octocat" || profile.ProviderRequestID != "health-request" {
 		t.Fatalf("profile = %#v", profile)
 	}
-	if strings.Join(profile.GrantedScopes, ",") != "issues:read,metadata:read,read:org,repo" {
+	if strings.Join(profile.GrantedScopes, ",") != "issues:read,issues:write,metadata:read,read:org,repo" {
 		t.Fatalf("scopes = %#v", profile.GrantedScopes)
 	}
 	report, err := adapter.ProbeConnection(context.Background(), connection)

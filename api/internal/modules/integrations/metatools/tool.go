@@ -34,6 +34,7 @@ type Tool struct {
 	executor    ActionExecutor
 	connections ConnectionLookup
 	access      ConnectionAuthorizer
+	policies    integrations.ActionPolicyResolver
 	runtime     *tools.ToolRuntime
 }
 
@@ -220,7 +221,17 @@ func (t *Tool) searchActions(ctx context.Context, userID string, parameters map[
 			if resolveErr != nil {
 				continue
 			}
-			items = append(items, actionSummaryOutput(action, preferred.record))
+			item := actionSummaryOutput(action, preferred.record)
+			if detail, detailOK := t.registry.ActionDetail(integrationID, action.ID); detailOK {
+				for key, value := range compactActionInputContract(detail.InputSchema) {
+					item[key] = value
+				}
+				if hints := t.preparationHintsOutput(ctx, userID, detail, preferred.record); len(hints) > 0 {
+					item["preparation_hints"] = hints
+					item["guide_recommended"] = true
+				}
+			}
+			items = append(items, item)
 			if len(items) >= limit {
 				return map[string]interface{}{"actions": items, "count": len(items)}, nil
 			}
@@ -255,6 +266,9 @@ func (t *Tool) getActionGuide(ctx context.Context, userID string, parameters map
 	output["input_schema"] = cloneMap(action.InputSchema)
 	output["output_schema"] = cloneMap(action.OutputSchema)
 	output["schema_revision"] = action.SchemaRevision
+	if hints := t.preparationHintsOutput(ctx, userID, action, preferred.record); len(hints) > 0 {
+		output["preparation_hints"] = hints
+	}
 	encoded, marshalErr := json.Marshal(output)
 	if marshalErr != nil || len(encoded) > maxActionGuideBytes {
 		return nil, integrations.NewError(integrations.ErrorCodeResponseInvalid, "integration action guide exceeds the safe response limit", marshalErr)
@@ -531,14 +545,14 @@ func (t *Tool) resolveExplicitFromAvailable(
 			nil,
 		)
 	}
-	if t.runtime.InvokeFrom == tools.ToolInvokeFromAgent && !agentActionExecutableWithoutInteraction(action) {
-		return selectedConnection{}, integrations.NewError(integrations.ErrorCodeAccessDenied, "integration action requires interactive approval or write access and is unavailable to Agents", nil)
-	}
 	organizationID, accountID, workspaceID, err := t.authorizationContext(userID)
 	if err != nil {
 		return selectedConnection{}, err
 	}
 	if t.runtime.InvokeFrom == tools.ToolInvokeFromAgent {
+		if !t.agentActionExecutableWithoutInteraction(ctx, organizationID, integrationID, action) {
+			return selectedConnection{}, integrations.NewError(integrations.ErrorCodeAccessDenied, "integration action requires interactive approval or write access and is unavailable to Agents", nil)
+		}
 		authorization, authorized := t.agentBindingAuthorization(selected.record, action)
 		verifier := skills.AgentBindingVerifierFromRuntimeParameters(t.runtime.RuntimeParameters)
 		agentAccess, accessOK := t.access.(agentConnectionPreferenceAuthorizer)
@@ -591,7 +605,7 @@ func (t *Tool) agentConnectionHasReadableAction(
 		return false
 	}
 	for _, action := range t.registry.Actions(connection.IntegrationID) {
-		if !agentActionExecutableWithoutInteraction(action) ||
+		if !t.agentActionExecutableWithoutInteraction(ctx, organizationID, connection.IntegrationID, action) ||
 			!integrations.ActionSupportsAuthMethod(action, connection.AuthMethodID) {
 			continue
 		}
@@ -628,7 +642,8 @@ func (t *Tool) agentBindingAuthorization(
 	connection *integrations.IntegrationConnection,
 	action integrations.ActionDefinition,
 ) (tools.AgentBindingAuthorization, bool) {
-	if t == nil || t.runtime == nil || connection == nil || !agentActionExecutableWithoutInteraction(action) {
+	if t == nil || t.runtime == nil || connection == nil || action.Effect != toolgovernance.EffectRead ||
+		!supportsCaller(action, tools.ToolInvokeFromAgent) {
 		return tools.AgentBindingAuthorization{}, false
 	}
 	authorization, ok := tools.AgentBindingAuthorizationFor(
@@ -644,15 +659,24 @@ func (t *Tool) agentBindingAuthorization(
 	return authorization, true
 }
 
-func agentActionExecutableWithoutInteraction(action integrations.ActionDefinition) bool {
+func (t *Tool) agentActionExecutableWithoutInteraction(
+	ctx context.Context,
+	organizationID uuid.UUID,
+	integrationID string,
+	action integrations.ActionDefinition,
+) bool {
 	if action.Effect != toolgovernance.EffectRead || !supportsCaller(action, tools.ToolInvokeFromAgent) {
 		return false
 	}
-	if action.DefaultPolicy == nil {
+	if t == nil || t.policies == nil || organizationID == uuid.Nil {
 		return false
 	}
-	return action.DefaultPolicy.Enabled &&
-		toolgovernance.NormalizeApprovalPolicy(action.DefaultPolicy.ApprovalPolicy) != toolgovernance.ApprovalPolicyAlwaysAsk
+	decision, err := t.policies.Resolve(ctx, organizationID.String(), integrationID, action)
+	if err != nil {
+		return false
+	}
+	return decision.Enabled && decision.DataEgressAllowed &&
+		decision.ApprovalPolicy != integrations.IntegrationApprovalPolicyAlwaysAsk
 }
 
 func (t *Tool) authorizationContext(userID string) (uuid.UUID, uuid.UUID, *uuid.UUID, error) {
@@ -1051,6 +1075,152 @@ func actionSummaryOutput(action integrations.ActionSummary, connection *integrat
 		output["external_destination"] = boundedString(destination, 255)
 	}
 	return output
+}
+
+func (t *Tool) preparationHintsOutput(
+	ctx context.Context,
+	userID string,
+	action integrations.ActionDefinition,
+	connection *integrations.IntegrationConnection,
+) []interface{} {
+	if t == nil || t.registry == nil || t.runtime == nil || t.policies == nil || connection == nil || len(action.PreparationHints) == 0 {
+		return nil
+	}
+	organizationID, _, _, err := t.authorizationContext(userID)
+	if err != nil {
+		return nil
+	}
+	out := make([]interface{}, 0, len(action.PreparationHints))
+	for _, hint := range action.PreparationHints {
+		preparation, ok := t.registry.ActionDetail(connection.IntegrationID, hint.ActionID)
+		if !ok || preparation.Effect != toolgovernance.EffectRead || !supportsCaller(preparation, t.runtime.InvokeFrom) ||
+			!integrations.ActionSupportsAuthMethod(preparation, connection.AuthMethodID) ||
+			authorizeSelectedConnectionScopes(connection, preparation) != nil {
+			continue
+		}
+		if _, resolveErr := t.resolveExplicitFromAvailable(
+			ctx,
+			userID,
+			connection.IntegrationID,
+			preparation.ID,
+			preparation.Effect,
+			connection.ID,
+			[]selectedConnection{{record: connection}},
+		); resolveErr != nil {
+			continue
+		}
+		decision, policyErr := t.policies.Resolve(ctx, organizationID.String(), connection.IntegrationID, preparation)
+		if policyErr != nil || !decision.Enabled || !decision.DataEgressAllowed ||
+			(t.runtime.InvokeFrom == tools.ToolInvokeFromAgent && decision.ApprovalPolicy == integrations.IntegrationApprovalPolicyAlwaysAsk) {
+			continue
+		}
+		item := map[string]interface{}{
+			"action_id": hint.ActionID, "relation": string(hint.Relation),
+			"target_arguments": stringInterfaces(hint.TargetArguments),
+			"result_paths":     stringInterfaces(hint.ResultPaths),
+			"description":      boundedString(hint.Description, 1000),
+		}
+		if localized := localizedTextOutput(hint.DescriptionI18n, 1000); len(localized) > 0 {
+			item["description_i18n"] = localized
+		}
+		out = append(out, item)
+	}
+	return out
+}
+
+func compactActionInputContract(schema map[string]interface{}) map[string]interface{} {
+	safe := tools.SafeJSONSchemaForFeedback(schema)
+	properties, _ := safe["properties"].(map[string]interface{})
+	if len(properties) == 0 {
+		return nil
+	}
+	requiredSet := make(map[string]struct{})
+	switch required := safe["required"].(type) {
+	case []interface{}:
+		for _, value := range required {
+			if name, ok := value.(string); ok {
+				requiredSet[name] = struct{}{}
+			}
+		}
+	case []string:
+		for _, name := range required {
+			requiredSet[name] = struct{}{}
+		}
+	}
+	names := make([]string, 0, len(properties))
+	for name := range properties {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	requiredArguments := make([]interface{}, 0, len(requiredSet))
+	optionalArguments := make([]interface{}, 0, len(properties)-len(requiredSet))
+	for _, name := range names {
+		definition, _ := properties[name].(map[string]interface{})
+		argument := map[string]interface{}{"name": name, "type": compactSchemaType(definition["type"])}
+		if _, required := requiredSet[name]; required {
+			requiredArguments = append(requiredArguments, argument)
+		} else {
+			optionalArguments = append(optionalArguments, argument)
+		}
+	}
+	return map[string]interface{}{
+		"required_arguments": requiredArguments,
+		"optional_arguments": optionalArguments,
+		"guide_recommended":  schemaNeedsActionGuide(safe),
+	}
+}
+
+func compactSchemaType(value interface{}) interface{} {
+	switch typed := value.(type) {
+	case string:
+		return typed
+	case []interface{}:
+		out := make([]interface{}, 0, len(typed))
+		for _, item := range typed {
+			if name, ok := item.(string); ok {
+				out = append(out, name)
+			}
+		}
+		return out
+	case []string:
+		return append([]string(nil), typed...)
+	default:
+		return "value"
+	}
+}
+
+func schemaNeedsActionGuide(schema map[string]interface{}) bool {
+	return schemaNeedsActionGuideAtDepth(schema, 0)
+}
+
+func schemaNeedsActionGuideAtDepth(schema map[string]interface{}, depth int) bool {
+	if len(schema) == 0 || depth > 8 {
+		return false
+	}
+	for _, keyword := range []string{
+		"oneOf", "anyOf", "allOf", "if", "then", "else", "dependentRequired",
+		"enum", "const", "format", "pattern",
+	} {
+		if _, ok := schema[keyword]; ok {
+			return true
+		}
+	}
+	if depth > 0 {
+		if schemaType, _ := schema["type"].(string); schemaType == "object" || schemaType == "array" {
+			return true
+		}
+	}
+	if properties, ok := schema["properties"].(map[string]interface{}); ok {
+		for _, raw := range properties {
+			if child, ok := raw.(map[string]interface{}); ok && schemaNeedsActionGuideAtDepth(child, depth+1) {
+				return true
+			}
+		}
+	}
+	if items, ok := schema["items"].(map[string]interface{}); ok && schemaNeedsActionGuideAtDepth(items, depth+1) {
+		return true
+	}
+	return false
 }
 
 func authorizeSelectedConnectionScopes(connection *integrations.IntegrationConnection, action integrations.ActionDefinition) error {

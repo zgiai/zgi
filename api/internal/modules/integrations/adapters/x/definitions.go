@@ -11,7 +11,9 @@ const (
 	DriverID      = "x-api-v2"
 
 	ActionGetAccount        = "x.account.get"
+	ActionGetUserByUsername = "x.user.get_by_username"
 	ActionListOwnPosts      = "x.post.list_own"
+	ActionListPostsByUser   = "x.post.list_by_user"
 	ActionSearchRecentPosts = "x.post.search_recent"
 	ActionCreatePost        = "x.post.create"
 
@@ -458,14 +460,88 @@ func Actions() []integrations.ActionDefinition {
 			DefaultPolicy: &integrations.DefaultActionPolicy{
 				Enabled: false, ApprovalPolicy: toolgovernance.ApprovalPolicyAlwaysAsk, DataEgressAllowed: true,
 			},
-			SupportedCallers: []tools.ToolInvokeFrom{tools.ToolInvokeFromAIChat, tools.ToolInvokeFromAgent},
+			SupportedCallers: []tools.ToolInvokeFrom{tools.ToolInvokeFromAIChat},
 		},
 	}
+	actions = append(actions,
+		integrations.ActionDefinition{
+			ID: ActionGetUserByUsername, ToolName: "get_x_user_by_username", Name: "Get X user by username",
+			NameI18n: integrations.LocalizedText{
+				integrations.LocaleEnglishUS: "Get X user by username", integrations.LocaleSimplifiedChinese: "按用户名获取 X 用户",
+			},
+			Description: "Look up one public X user by username. A leading @ is accepted and normalized by the service.",
+			DescriptionI18n: integrations.LocalizedText{
+				integrations.LocaleEnglishUS:         "Look up one public X user by username. A leading @ is accepted and normalized by the service.",
+				integrations.LocaleSimplifiedChinese: "按用户名查询一个公开 X 用户；允许输入开头的 @，服务端会自动规范化。",
+			},
+			InputSchema: strictObjectSchema(map[string]interface{}{
+				"username": localizedSchema(map[string]interface{}{
+					"type": "string", "minLength": 1, "maxLength": 16, "pattern": `^@?[A-Za-z0-9_]{1,15}$`,
+				}, "X username", "X 用户名"),
+			}, []string{"username"}),
+			OutputSchema: strictObjectSchema(map[string]interface{}{
+				"provider": map[string]interface{}{"const": IntegrationID}, "request_id": boundedStringSchema(128),
+				"user": userOutputSchema(),
+			}, []string{"provider", "request_id", "user"}),
+			Effect: toolgovernance.EffectRead, RiskLevel: toolgovernance.RiskLevelLow,
+			DataEgress: true, ExternalDestination: "api.x.com", SensitiveDataAllowed: false,
+			Idempotent: true, RequiredScopes: []string{ScopeUsersRead, ScopePostsRead},
+			ScopeLabelsI18n: integrations.LocalizedLabelMap{
+				ScopeUsersRead: {integrations.LocaleEnglishUS: "Read account profile", integrations.LocaleSimplifiedChinese: "读取账号资料"},
+				ScopePostsRead: {integrations.LocaleEnglishUS: "Read posts", integrations.LocaleSimplifiedChinese: "读取帖子"},
+			},
+			DefaultPolicy:    readPolicy(true),
+			SupportedCallers: []tools.ToolInvokeFrom{tools.ToolInvokeFromAIChat, tools.ToolInvokeFromAgent},
+		},
+		integrations.ActionDefinition{
+			ID: ActionListPostsByUser, ToolName: "list_x_posts_by_user", Name: "List X posts by user",
+			NameI18n: integrations.LocalizedText{
+				integrations.LocaleEnglishUS: "List X posts by user", integrations.LocaleSimplifiedChinese: "列出指定 X 用户的帖子",
+			},
+			Description: "List a bounded page of public posts for one X user ID.",
+			DescriptionI18n: integrations.LocalizedText{
+				integrations.LocaleEnglishUS:         "List a bounded page of public posts for one X user ID.",
+				integrations.LocaleSimplifiedChinese: "按 X 用户 ID 分页列出受限数量的公开帖子。",
+			},
+			InputSchema: strictObjectSchema(map[string]interface{}{
+				"user_id": localizedSchema(map[string]interface{}{
+					"type": "string", "minLength": 1, "maxLength": 32, "pattern": `^[0-9]{1,32}$`,
+				}, "X user ID", "X 用户 ID"),
+				"max_results": localizedSchema(map[string]interface{}{
+					"type": "integer", "minimum": 5, "maximum": 100, "default": 20,
+				}, "Maximum results", "最大结果数"),
+				"pagination_token": localizedSchema(map[string]interface{}{
+					"type": "string", "minLength": 1, "maxLength": 1024, "pattern": `.*\S.*`,
+				}, "Pagination token", "分页 Token"),
+			}, []string{"user_id"}),
+			OutputSchema: postsOutputSchema(),
+			Effect:       toolgovernance.EffectRead, RiskLevel: toolgovernance.RiskLevelLow,
+			DataEgress: true, ExternalDestination: "api.x.com", SensitiveDataAllowed: false,
+			Idempotent: true, RequiredScopes: []string{ScopeUsersRead, ScopePostsRead},
+			ScopeLabelsI18n: integrations.LocalizedLabelMap{
+				ScopeUsersRead: {integrations.LocaleEnglishUS: "Read account profile", integrations.LocaleSimplifiedChinese: "读取账号资料"},
+				ScopePostsRead: {integrations.LocaleEnglishUS: "Read posts", integrations.LocaleSimplifiedChinese: "读取帖子"},
+			},
+			DefaultPolicy:    readPolicy(true),
+			SupportedCallers: []tools.ToolInvokeFrom{tools.ToolInvokeFromAIChat, tools.ToolInvokeFromAgent},
+		},
+	)
 	userOAuthMethods := []string{AccountOAuthAuthMethodID, OrganizationOAuthAuthMethodID}
 	for index := range actions {
 		switch actions[index].ID {
-		case ActionSearchRecentPosts:
+		case ActionGetUserByUsername, ActionListPostsByUser, ActionSearchRecentPosts:
 			actions[index].SupportedAuthMethodIDs = append(append([]string(nil), userOAuthMethods...), AppBearerAuthMethodID)
+			if actions[index].ID == ActionListPostsByUser {
+				actions[index].PreparationHints = []integrations.ActionPreparationHint{{
+					ActionID: ActionGetUserByUsername, Relation: integrations.ActionPreparationResolveTarget,
+					TargetArguments: []string{"user_id"}, ResultPaths: []string{"user.id"},
+					Description: "Look up the public user by username when the numeric user ID is unknown, then use the confirmed returned ID.",
+					DescriptionI18n: integrations.LocalizedText{
+						integrations.LocaleEnglishUS:         "Look up the public user by username when the numeric user ID is unknown, then use the confirmed returned ID.",
+						integrations.LocaleSimplifiedChinese: "当数字用户 ID 未知时，先按用户名查询公开用户，再使用已确认的返回 ID。",
+					},
+				}}
+			}
 		default:
 			actions[index].SupportedAuthMethodIDs = append([]string(nil), userOAuthMethods...)
 		}

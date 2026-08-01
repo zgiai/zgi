@@ -1,6 +1,7 @@
 package github
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -58,6 +59,28 @@ type responseMeta struct {
 }
 
 func (c *client) getJSON(ctx context.Context, token, path string, query url.Values, target interface{}) (responseMeta, error) {
+	return c.requestJSON(ctx, http.MethodGet, token, path, query, nil, target, true)
+}
+
+// postJSON deliberately never retries. GitHub issue and comment creation APIs
+// do not accept an idempotency key, so retrying a response-loss or transient
+// failure could create a duplicate external side effect.
+func (c *client) postJSON(ctx context.Context, token, path string, body, target interface{}) (responseMeta, error) {
+	payload, err := json.Marshal(body)
+	if err != nil {
+		return responseMeta{}, integrations.NewError(integrations.ErrorCodeInvalidInput, "GitHub request could not be encoded", err)
+	}
+	return c.requestJSON(ctx, http.MethodPost, token, path, nil, payload, target, false)
+}
+
+func (c *client) requestJSON(
+	ctx context.Context,
+	method, token, path string,
+	query url.Values,
+	body []byte,
+	target interface{},
+	allowRetry bool,
+) (responseMeta, error) {
 	if c == nil || c.httpClient == nil || c.baseURL == nil {
 		return responseMeta{}, integrations.NewError(integrations.ErrorCodeUpstream, "GitHub client is unavailable", nil)
 	}
@@ -69,8 +92,12 @@ func (c *client) getJSON(ctx context.Context, token, path string, query url.Valu
 	endpoint.Path = strings.TrimRight(endpoint.Path, "/") + "/" + strings.TrimLeft(path, "/")
 	endpoint.RawQuery = query.Encode()
 	var lastErr error
-	for attempt := 1; attempt <= c.maxAttempts; attempt++ {
-		request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.String(), nil)
+	maxAttempts := c.maxAttempts
+	if !allowRetry {
+		maxAttempts = 1
+	}
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		request, err := http.NewRequestWithContext(ctx, method, endpoint.String(), bytes.NewReader(body))
 		if err != nil {
 			return responseMeta{}, integrations.NewError(integrations.ErrorCodeInvalidInput, "GitHub request could not be created", err)
 		}
@@ -78,13 +105,16 @@ func (c *client) getJSON(ctx context.Context, token, path string, query url.Valu
 		request.Header.Set("Authorization", "Bearer "+token)
 		request.Header.Set("X-GitHub-Api-Version", githubAPIVersion)
 		request.Header.Set("User-Agent", "ZGI-External-Integrations")
+		if len(body) > 0 {
+			request.Header.Set("Content-Type", "application/json")
+		}
 		response, err := c.httpClient.Do(request)
 		if err != nil {
 			if ctx.Err() != nil || errors.Is(err, context.DeadlineExceeded) {
 				return responseMeta{Attempts: attempt}, integrations.NewError(integrations.ErrorCodeTimeout, "GitHub request timed out", ctx.Err())
 			}
 			lastErr = integrations.NewError(integrations.ErrorCodeUpstream, "GitHub is unavailable", err)
-			if attempt < c.maxAttempts {
+			if allowRetry && attempt < maxAttempts {
 				if waitErr := waitForRetry(ctx, retryDelay(nil, attempt)); waitErr == nil {
 					continue
 				}
@@ -126,7 +156,7 @@ func (c *client) getJSON(ctx context.Context, token, path string, query url.Valu
 		if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
 			mapped, diagnostics := mapGitHubStatus(response.StatusCode, response.Header, payload, meta.RequestID)
 			meta.Diagnostics = diagnostics
-			if retryableGitHubError(response.StatusCode, mapped) && attempt < c.maxAttempts {
+			if allowRetry && retryableGitHubError(response.StatusCode, mapped) && attempt < maxAttempts {
 				lastErr = mapped
 				if waitErr := waitForRetry(ctx, retryDelay(response.Header, attempt)); waitErr == nil {
 					continue
@@ -150,7 +180,7 @@ func (c *client) getJSON(ctx context.Context, token, path string, query url.Valu
 		}
 		return meta, nil
 	}
-	return responseMeta{Attempts: c.maxAttempts}, lastErr
+	return responseMeta{Attempts: maxAttempts}, lastErr
 }
 
 func mapGitHubStatus(status int, header http.Header, payload []byte, requestID string) (error, integrations.ProviderDiagnostics) {

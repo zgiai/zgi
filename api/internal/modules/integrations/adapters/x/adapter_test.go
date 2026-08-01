@@ -16,6 +16,7 @@ import (
 
 	"github.com/zgiai/zgi/api/internal/capabilities/toolgovernance"
 	"github.com/zgiai/zgi/api/internal/modules/integrations"
+	"github.com/zgiai/zgi/api/internal/modules/tools"
 )
 
 func TestProviderDefinitionGatesSearchAndWrite(t *testing.T) {
@@ -71,18 +72,25 @@ func TestProviderDefinitionGatesSearchAndWrite(t *testing.T) {
 	}
 	expectedScopes := map[string][]string{
 		ActionGetAccount:        {ScopeUsersRead, ScopePostsRead},
+		ActionGetUserByUsername: {ScopeUsersRead, ScopePostsRead},
 		ActionListOwnPosts:      {ScopeUsersRead, ScopePostsRead},
+		ActionListPostsByUser:   {ScopeUsersRead, ScopePostsRead},
 		ActionSearchRecentPosts: {ScopeUsersRead, ScopePostsRead},
 		ActionCreatePost:        {ScopeUsersRead, ScopePostsRead, ScopePostsWrite},
 	}
+	defaultAppBearerReads := 0
 	for _, action := range definition.Actions {
 		if !integrations.ActionSupportsAuthMethod(action, AccountOAuthAuthMethodID) ||
 			!integrations.ActionSupportsAuthMethod(action, OrganizationOAuthAuthMethodID) {
 			t.Fatalf("action authentication compatibility = %#v", action)
 		}
 		appBearerSupported := integrations.ActionSupportsAuthMethod(action, AppBearerAuthMethodID)
-		if appBearerSupported != (action.ID == ActionSearchRecentPosts) {
+		if appBearerSupported != supportsAppBearerAction(action.ID) {
 			t.Fatalf("app Bearer compatibility for %s = %v", action.ID, appBearerSupported)
+		}
+		if appBearerSupported && action.Effect == toolgovernance.EffectRead &&
+			action.DefaultPolicy != nil && action.DefaultPolicy.Enabled {
+			defaultAppBearerReads++
 		}
 		if !slices.Equal(action.RequiredScopes, expectedScopes[action.ID]) {
 			t.Fatalf("%s scopes = %#v, want %#v", action.ID, action.RequiredScopes, expectedScopes[action.ID])
@@ -92,13 +100,26 @@ func TestProviderDefinitionGatesSearchAndWrite(t *testing.T) {
 			if action.DefaultPolicy == nil || action.DefaultPolicy.Enabled {
 				t.Fatalf("recent search must be plan-gated: %#v", action)
 			}
+			if !slices.Equal(action.SupportedCallers, []tools.ToolInvokeFrom{tools.ToolInvokeFromAIChat, tools.ToolInvokeFromAgent}) {
+				t.Fatalf("search action callers = %#v", action.SupportedCallers)
+			}
 		case ActionCreatePost:
 			if action.DefaultPolicy == nil || action.DefaultPolicy.Enabled ||
 				action.DefaultPolicy.ApprovalPolicy != toolgovernance.ApprovalPolicyAlwaysAsk ||
 				action.Idempotent || action.Effect != toolgovernance.EffectExternalSend {
 				t.Fatalf("unsafe create defaults = %#v", action)
 			}
+			if !slices.Equal(action.SupportedCallers, []tools.ToolInvokeFrom{tools.ToolInvokeFromAIChat}) {
+				t.Fatalf("create action callers = %#v", action.SupportedCallers)
+			}
+		default:
+			if !slices.Equal(action.SupportedCallers, []tools.ToolInvokeFrom{tools.ToolInvokeFromAIChat, tools.ToolInvokeFromAgent}) {
+				t.Fatalf("read action callers = %#v", action.SupportedCallers)
+			}
 		}
+	}
+	if defaultAppBearerReads == 0 {
+		t.Fatal("X app Bearer has no compatible read action enabled by default")
 	}
 }
 
@@ -114,6 +135,158 @@ func TestProviderDefinitionRegisters(t *testing.T) {
 	if _, ok := registry.OAuthProvider(IntegrationID, DriverID); !ok {
 		t.Fatal("OAuth provider was not registered")
 	}
+}
+
+func TestGetUserByUsernameNormalizesAtAndBoundsOutput(t *testing.T) {
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		calls.Add(1)
+		if request.Method != http.MethodGet || request.URL.Path != "/2/users/by/username/XDevelopers" {
+			t.Errorf("request = %s %s", request.Method, request.URL.Path)
+		}
+		if got := request.URL.Query().Get("user.fields"); !strings.Contains(got, "public_metrics") || !strings.Contains(got, "profile_image_url") {
+			t.Errorf("user.fields = %q", got)
+		}
+		writer.Header().Set("X-Transaction-Id", "user-lookup-request")
+		_ = json.NewEncoder(writer).Encode(map[string]interface{}{
+			"data": map[string]interface{}{
+				"id": "2244994945", "name": strings.Repeat("n", 300), "username": "XDevelopers",
+				"description": strings.Repeat("d", 1200), "created_at": "2026-08-01T00:00:00Z",
+				"profile_image_url": "https://pbs.twimg.com/avatar.jpg", "url": "https://x.com/XDevelopers#discard",
+				"verified": true, "public_metrics": map[string]interface{}{"followers_count": 10},
+			},
+		})
+	}))
+	defer server.Close()
+	adapter, err := newForBaseURL(server.Client(), server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := adapter.Execute(context.Background(), integrations.ActionRequest{
+		ActionID: ActionGetUserByUsername, Connection: appBearerConnection("app-token"),
+		Input: map[string]interface{}{"username": "@XDevelopers"},
+	})
+	if err != nil {
+		t.Fatalf("get user: %v", err)
+	}
+	user := result.Output["user"].(map[string]interface{})
+	if calls.Load() != 1 || result.ProviderRequestID != "user-lookup-request" || result.ResultCount != 1 ||
+		len([]rune(user["name"].(string))) != 255 || len([]rune(user["description"].(string))) != 1000 ||
+		user["url"] != "https://x.com/XDevelopers" {
+		t.Fatalf("bounded user result = %#v, calls = %d", result, calls.Load())
+	}
+	assertXOutputSchema(t, ActionGetUserByUsername, result.Output)
+}
+
+func TestListPostsByUserForwardsPaginationAndBoundsOutput(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodGet || request.URL.Path != "/2/users/2244994945/tweets" {
+			t.Errorf("request = %s %s", request.Method, request.URL.Path)
+		}
+		if request.URL.Query().Get("max_results") != "5" || request.URL.Query().Get("pagination_token") != "page+/=token" {
+			t.Errorf("pagination query = %s", request.URL.RawQuery)
+		}
+		posts := make([]map[string]interface{}, 0, 7)
+		for index := 0; index < 7; index++ {
+			posts = append(posts, map[string]interface{}{
+				"id": strconv.Itoa(index + 1), "text": strings.Repeat("p", 1200),
+				"created_at": "2026-08-01T00:00:00Z", "lang": "en", "conversation_id": "1",
+				"possibly_sensitive": false, "public_metrics": map[string]interface{}{"like_count": index},
+			})
+		}
+		_ = json.NewEncoder(writer).Encode(map[string]interface{}{
+			"data": posts, "meta": map[string]interface{}{"next_token": "next-token", "result_count": 7},
+		})
+	}))
+	defer server.Close()
+	adapter, err := newForBaseURL(server.Client(), server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := adapter.Execute(context.Background(), integrations.ActionRequest{
+		ActionID: ActionListPostsByUser, Connection: appBearerConnection("app-token"),
+		Input: map[string]interface{}{
+			"user_id": "2244994945", "max_results": 5, "pagination_token": "page+/=token",
+		},
+	})
+	if err != nil {
+		t.Fatalf("list posts by user: %v", err)
+	}
+	posts := result.Output["posts"].([]interface{})
+	if len(posts) != 5 || result.ResultCount != 5 || len([]rune(posts[0].(map[string]interface{})["text"].(string))) != 1000 ||
+		result.Output["next_token"] != "next-token" {
+		t.Fatalf("bounded posts result = %#v", result)
+	}
+	assertXOutputSchema(t, ActionListPostsByUser, result.Output)
+}
+
+func TestPublicLookupActionsRejectInvalidInputBeforeCallingX(t *testing.T) {
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		calls.Add(1)
+		_, _ = io.WriteString(writer, `{}`)
+	}))
+	defer server.Close()
+	adapter, err := newForBaseURL(server.Client(), server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		action string
+		input  map[string]interface{}
+	}{
+		{ActionGetUserByUsername, map[string]interface{}{"username": "  "}},
+		{ActionGetUserByUsername, map[string]interface{}{"username": "@bad/name"}},
+		{ActionGetUserByUsername, map[string]interface{}{"username": " user"}},
+		{ActionListPostsByUser, map[string]interface{}{"user_id": "not-numeric"}},
+		{ActionListPostsByUser, map[string]interface{}{"user_id": "2244994945", "max_results": 4}},
+		{ActionListPostsByUser, map[string]interface{}{"user_id": "2244994945", "pagination_token": " token "}},
+	}
+	for _, test := range tests {
+		_, err := adapter.Execute(context.Background(), integrations.ActionRequest{
+			ActionID: test.action, Connection: appBearerConnection("app-token"), Input: test.input,
+		})
+		if integrations.ErrorCode(err) != integrations.ErrorCodeInvalidInput {
+			t.Errorf("%s input %#v error = %v", test.action, test.input, err)
+		}
+	}
+	if calls.Load() != 0 {
+		t.Fatalf("invalid inputs made %d X requests", calls.Load())
+	}
+}
+
+func TestGetUserByUsernameMapsProviderError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.WriteHeader(http.StatusNotFound)
+		_, _ = io.WriteString(writer, `{"title":"Not Found","type":"https://api.x.com/2/problems/resource-not-found"}`)
+	}))
+	defer server.Close()
+	adapter, err := newForBaseURL(server.Client(), server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := adapter.Execute(context.Background(), integrations.ActionRequest{
+		ActionID: ActionGetUserByUsername, Connection: appBearerConnection("must-not-leak"),
+		Input: map[string]interface{}{"username": "missing_user"},
+	})
+	if integrations.ErrorCode(err) != integrations.ErrorCodeAccessDenied || result == nil || result.AttemptCount != 1 ||
+		result.ProviderDiagnostics.HTTPStatus != http.StatusNotFound || strings.Contains(err.Error(), "must-not-leak") {
+		t.Fatalf("mapped result = %#v, error = %v", result, err)
+	}
+}
+
+func assertXOutputSchema(t *testing.T, actionID string, output map[string]interface{}) {
+	t.Helper()
+	for _, action := range Actions() {
+		if action.ID != actionID {
+			continue
+		}
+		if err := tools.ValidateJSONSchemaValue(action.OutputSchema, output); err != nil {
+			t.Fatalf("%s output schema: %v\noutput=%#v", actionID, err, output)
+		}
+		return
+	}
+	t.Fatalf("action %s was not defined", actionID)
 }
 
 func TestAuthorizationURLUsesPKCEAndOfflineAccess(t *testing.T) {

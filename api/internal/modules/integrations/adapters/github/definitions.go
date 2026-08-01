@@ -12,7 +12,12 @@ const (
 
 	ActionGetAuthenticatedUser = "github.user.get"
 	ActionListRepositories     = "github.repository.list"
+	ActionSearchRepositories   = "github.repository.search"
 	ActionListIssues           = "github.issue.list"
+	ActionGetIssue             = "github.issue.get"
+	ActionListIssueComments    = "github.issue.comment.list"
+	ActionCreateIssue          = "github.issue.create"
+	ActionCreateIssueComment   = "github.issue.comment.create"
 
 	AccountPATAuthMethodID      = "personal_access_token"
 	OrganizationPATAuthMethodID = "organization_personal_access_token"
@@ -24,10 +29,10 @@ func ProviderDefinition() integrations.ProviderDefinition {
 		DriverID:    DriverID,
 		Name:        "GitHub",
 		NameI18n:    integrations.LocalizedText{integrations.LocaleEnglishUS: "GitHub", integrations.LocaleSimplifiedChinese: "GitHub"},
-		Description: "Read repositories and issues through the GitHub REST API.",
+		Description: "Search repositories and read or create issues and comments through the GitHub REST API.",
 		DescriptionI18n: integrations.LocalizedText{
-			integrations.LocaleEnglishUS:         "Read repositories and issues through the GitHub REST API.",
-			integrations.LocaleSimplifiedChinese: "通过 GitHub REST API 读取仓库和议题。",
+			integrations.LocaleEnglishUS:         "Search repositories and read or create issues and comments through the GitHub REST API.",
+			integrations.LocaleSimplifiedChinese: "通过 GitHub REST API 搜索仓库，并读取或创建议题与评论。",
 		},
 		Author: "ZGI",
 		Icon:   "github",
@@ -110,6 +115,14 @@ func githubProviderScopes() []integrations.ProviderScopeDefinition {
 		scope("delete_repo", "Delete repositories", "删除仓库", integrations.ProviderScopeAccessManage, true),
 		internal("metadata:read", "Read repository metadata", "读取仓库元数据"),
 		internal("issues:read", "Read issues", "读取议题"),
+		{
+			ID: "issues:write", Label: "Write issues",
+			LabelI18n: integrations.LocalizedText{
+				integrations.LocaleEnglishUS: "Write issues", integrations.LocaleSimplifiedChinese: "写入议题",
+			},
+			Category: integrations.ProviderScopeCategoryInternal,
+			Access:   integrations.ProviderScopeAccessWrite,
+		},
 	}
 }
 
@@ -194,10 +207,10 @@ func githubPATSetupGuide() *integrations.AuthSetupGuideDefinition {
 					integrations.LocaleEnglishUS:         "Grant the minimum permissions",
 					integrations.LocaleSimplifiedChinese: "仅授予最小必要权限",
 				},
-				Description: "Metadata read access is sufficient for repository discovery. Add Issues read access only when issue listing is needed.",
+				Description: "Grant Metadata read for repository discovery, Issues read for issue details and comments, and Issues write only if issue or comment creation will be enabled.",
 				DescriptionI18n: integrations.LocalizedText{
-					integrations.LocaleEnglishUS:         "Metadata read access is sufficient for repository discovery. Add Issues read access only when issue listing is needed.",
-					integrations.LocaleSimplifiedChinese: "发现仓库只需要 Metadata 读取权限；仅在需要列出 Issue 时增加 Issues 读取权限。",
+					integrations.LocaleEnglishUS:         "Grant Metadata read for repository discovery, Issues read for issue details and comments, and Issues write only if issue or comment creation will be enabled.",
+					integrations.LocaleSimplifiedChinese: "发现仓库授予 Metadata 读取权限；读取议题和评论授予 Issues 读取权限；仅在启用创建议题或评论时授予 Issues 写入权限。",
 				},
 				Action: integrations.AuthSetupStepActionOpenDocumentation,
 			},
@@ -352,19 +365,235 @@ func Actions() []integrations.ActionDefinition {
 			SupportedCallers: []tools.ToolInvokeFrom{tools.ToolInvokeFromAIChat, tools.ToolInvokeFromAgent},
 		},
 	}
+	actions = append(actions,
+		integrations.ActionDefinition{
+			ID: ActionSearchRepositories, ToolName: "search_github_repositories",
+			Name: "Search GitHub repositories",
+			NameI18n: integrations.LocalizedText{
+				integrations.LocaleEnglishUS: "Search GitHub repositories", integrations.LocaleSimplifiedChinese: "搜索 GitHub 仓库",
+			},
+			Description: "Search GitHub repositories with a bounded query and bounded repository metadata.",
+			DescriptionI18n: integrations.LocalizedText{
+				integrations.LocaleEnglishUS:         "Search GitHub repositories with a bounded query and bounded repository metadata.",
+				integrations.LocaleSimplifiedChinese: "使用受限查询搜索 GitHub 仓库，并返回受限仓库元数据。",
+			},
+			InputSchema: strictObjectSchema(map[string]interface{}{
+				"query": localizedInputSchema(nonBlankStringSchema(256), "Search query", "搜索条件"),
+				"sort": localizedInputSchema(enumStringSchema([]string{"best_match", "stars", "forks", "help-wanted-issues", "updated"}, "best_match"), "Sort by", "排序字段",
+					map[string]string{"best_match": "Best match", "stars": "Stars", "forks": "Forks", "help-wanted-issues": "Help wanted issues", "updated": "Updated time"},
+					map[string]string{"best_match": "最佳匹配", "stars": "星标数", "forks": "复刻数", "help-wanted-issues": "待帮助议题数", "updated": "更新时间"}),
+				"order": localizedInputSchema(enumStringSchema([]string{"asc", "desc"}, "desc"), "Sort direction", "排序方向",
+					map[string]string{"asc": "Ascending", "desc": "Descending"}, map[string]string{"asc": "升序", "desc": "降序"}),
+				"per_page": localizedInputSchema(boundedIntegerSchema(1, 50, 20), "Results per page", "每页数量"),
+				"page":     localizedInputSchema(boundedIntegerSchema(1, 20, 1), "Page", "页码"),
+			}, []string{"query"}),
+			OutputSchema: strictObjectSchema(map[string]interface{}{
+				"provider": map[string]interface{}{"const": IntegrationID}, "request_id": boundedStringSchema(128),
+				"query": boundedStringSchema(256), "page": boundedIntegerSchema(1, 20, 1),
+				"total_count":        map[string]interface{}{"type": "integer", "minimum": 0},
+				"incomplete_results": map[string]interface{}{"type": "boolean"},
+				"repositories":       map[string]interface{}{"type": "array", "maxItems": 50, "items": repositoryOutputSchema()},
+			}, []string{"provider", "request_id", "query", "page", "total_count", "incomplete_results", "repositories"}),
+			Effect: toolgovernance.EffectRead, RiskLevel: toolgovernance.RiskLevelLow,
+			DataEgress: true, ExternalDestination: "api.github.com", SensitiveDataAllowed: false,
+			Idempotent: true, RequiredScopes: []string{"metadata:read"},
+			ScopeLabelsI18n:  githubScopeLabels("metadata:read", "Read repository metadata", "读取仓库元数据"),
+			DefaultPolicy:    readOnlyDefaultPolicy(),
+			SupportedCallers: []tools.ToolInvokeFrom{tools.ToolInvokeFromAIChat, tools.ToolInvokeFromAgent},
+		},
+		integrations.ActionDefinition{
+			ID: ActionGetIssue, ToolName: "get_github_issue",
+			Name: "Get GitHub issue",
+			NameI18n: integrations.LocalizedText{
+				integrations.LocaleEnglishUS: "Get GitHub issue", integrations.LocaleSimplifiedChinese: "获取 GitHub 议题",
+			},
+			Description: "Read one GitHub issue or pull request with a bounded body and metadata.",
+			DescriptionI18n: integrations.LocalizedText{
+				integrations.LocaleEnglishUS:         "Read one GitHub issue or pull request with a bounded body and metadata.",
+				integrations.LocaleSimplifiedChinese: "读取一个 GitHub 议题或拉取请求，正文和元数据均受平台限制。",
+			},
+			InputSchema:  issueCoordinatesInputSchema(),
+			OutputSchema: issueEnvelopeOutputSchema(),
+			Effect:       toolgovernance.EffectRead, RiskLevel: toolgovernance.RiskLevelLow,
+			DataEgress: true, ExternalDestination: "api.github.com", SensitiveDataAllowed: false,
+			Idempotent: true, RequiredScopes: []string{"issues:read"},
+			ScopeLabelsI18n:  githubScopeLabels("issues:read", "Read issues", "读取议题"),
+			DefaultPolicy:    readOnlyDefaultPolicy(),
+			SupportedCallers: []tools.ToolInvokeFrom{tools.ToolInvokeFromAIChat, tools.ToolInvokeFromAgent},
+		},
+		integrations.ActionDefinition{
+			ID: ActionListIssueComments, ToolName: "list_github_issue_comments",
+			Name: "List GitHub issue comments",
+			NameI18n: integrations.LocalizedText{
+				integrations.LocaleEnglishUS: "List GitHub issue comments", integrations.LocaleSimplifiedChinese: "列出 GitHub 议题评论",
+			},
+			Description: "List a bounded page of comments for one GitHub issue or pull request.",
+			DescriptionI18n: integrations.LocalizedText{
+				integrations.LocaleEnglishUS:         "List a bounded page of comments for one GitHub issue or pull request.",
+				integrations.LocaleSimplifiedChinese: "分页列出一个 GitHub 议题或拉取请求的受限评论内容。",
+			},
+			InputSchema: issueCommentsListInputSchema(),
+			OutputSchema: strictObjectSchema(map[string]interface{}{
+				"provider": map[string]interface{}{"const": IntegrationID}, "request_id": boundedStringSchema(128),
+				"repository": boundedStringSchema(300), "issue_number": positiveIntegerSchema(),
+				"page":     boundedIntegerSchema(1, 1000, 1),
+				"comments": map[string]interface{}{"type": "array", "maxItems": 50, "items": issueCommentOutputSchema()},
+			}, []string{"provider", "request_id", "repository", "issue_number", "page", "comments"}),
+			Effect: toolgovernance.EffectRead, RiskLevel: toolgovernance.RiskLevelLow,
+			DataEgress: true, ExternalDestination: "api.github.com", SensitiveDataAllowed: false,
+			Idempotent: true, RequiredScopes: []string{"issues:read"},
+			ScopeLabelsI18n:  githubScopeLabels("issues:read", "Read issues", "读取议题"),
+			DefaultPolicy:    readOnlyDefaultPolicy(),
+			SupportedCallers: []tools.ToolInvokeFrom{tools.ToolInvokeFromAIChat, tools.ToolInvokeFromAgent},
+		},
+		integrations.ActionDefinition{
+			ID: ActionCreateIssue, ToolName: "create_github_issue",
+			Name: "Create GitHub issue",
+			NameI18n: integrations.LocalizedText{
+				integrations.LocaleEnglishUS: "Create GitHub issue", integrations.LocaleSimplifiedChinese: "创建 GitHub 议题",
+			},
+			Description: "Create an issue in one repository. This external write is disabled by default and always requires approval when enabled.",
+			DescriptionI18n: integrations.LocalizedText{
+				integrations.LocaleEnglishUS:         "Create an issue in one repository. This external write is disabled by default and always requires approval when enabled.",
+				integrations.LocaleSimplifiedChinese: "在指定仓库创建议题。该外部写操作默认关闭，启用后每次执行都需要确认。",
+			},
+			InputSchema: createIssueInputSchema(), OutputSchema: issueEnvelopeOutputSchema(),
+			Effect: toolgovernance.EffectCreate, RiskLevel: toolgovernance.RiskLevelHigh,
+			DataEgress: true, ExternalDestination: "api.github.com", SensitiveDataAllowed: false,
+			Idempotent: false, RequiredScopes: []string{"issues:write"},
+			ScopeLabelsI18n: githubScopeLabels("issues:write", "Write issues", "写入议题"),
+			DefaultPolicy:   writeDefaultPolicy(), SupportedCallers: []tools.ToolInvokeFrom{tools.ToolInvokeFromAIChat},
+		},
+		integrations.ActionDefinition{
+			ID: ActionCreateIssueComment, ToolName: "create_github_issue_comment",
+			Name: "Create GitHub issue comment",
+			NameI18n: integrations.LocalizedText{
+				integrations.LocaleEnglishUS: "Create GitHub issue comment", integrations.LocaleSimplifiedChinese: "创建 GitHub 议题评论",
+			},
+			Description: "Send a comment to one GitHub issue or pull request. This external send is disabled by default and always requires approval when enabled.",
+			DescriptionI18n: integrations.LocalizedText{
+				integrations.LocaleEnglishUS:         "Send a comment to one GitHub issue or pull request. This external send is disabled by default and always requires approval when enabled.",
+				integrations.LocaleSimplifiedChinese: "向一个 GitHub 议题或拉取请求发送评论。该外发操作默认关闭，启用后每次执行都需要确认。",
+			},
+			InputSchema: createIssueCommentInputSchema(),
+			OutputSchema: strictObjectSchema(map[string]interface{}{
+				"provider": map[string]interface{}{"const": IntegrationID}, "request_id": boundedStringSchema(128),
+				"repository": boundedStringSchema(300), "issue_number": positiveIntegerSchema(), "comment": issueCommentOutputSchema(),
+			}, []string{"provider", "request_id", "repository", "issue_number", "comment"}),
+			Effect: toolgovernance.EffectExternalSend, RiskLevel: toolgovernance.RiskLevelHigh,
+			DataEgress: true, ExternalDestination: "api.github.com", SensitiveDataAllowed: false,
+			Idempotent: false, RequiredScopes: []string{"issues:write"},
+			ScopeLabelsI18n: githubScopeLabels("issues:write", "Write issues", "写入议题"),
+			DefaultPolicy:   writeDefaultPolicy(), SupportedCallers: []tools.ToolInvokeFrom{tools.ToolInvokeFromAIChat},
+		},
+	)
 	for index := range actions {
 		actions[index].SupportedAuthMethodIDs = []string{
 			AccountPATAuthMethodID,
 			OrganizationPATAuthMethodID,
 		}
+		switch actions[index].ID {
+		case ActionListIssues, ActionCreateIssue:
+			actions[index].PreparationHints = githubRepositoryPreparationHints()
+		case ActionGetIssue, ActionListIssueComments, ActionCreateIssueComment:
+			actions[index].PreparationHints = append(
+				githubRepositoryPreparationHints(),
+				githubIssuePreparationHint(),
+			)
+		}
 	}
 	return actions
+}
+
+func githubRepositoryPreparationHints() []integrations.ActionPreparationHint {
+	return []integrations.ActionPreparationHint{{
+		ActionID: ActionSearchRepositories, Relation: integrations.ActionPreparationResolveTarget,
+		TargetArguments: []string{"owner", "repo"}, ResultPaths: []string{"repositories[].full_name"},
+		Description: "Search repositories when the owner or repository name is ambiguous, then split one confirmed full_name into the owner and repo arguments.",
+		DescriptionI18n: integrations.LocalizedText{
+			integrations.LocaleEnglishUS:         "Search repositories when the owner or repository name is ambiguous, then split one confirmed full_name into the owner and repo arguments.",
+			integrations.LocaleSimplifiedChinese: "当仓库所有者或仓库名称不明确时，先搜索仓库，再将确认后的 full_name 拆分为 owner 和 repo 参数。",
+		},
+	}}
+}
+
+func githubIssuePreparationHint() integrations.ActionPreparationHint {
+	return integrations.ActionPreparationHint{
+		ActionID: ActionListIssues, Relation: integrations.ActionPreparationResolveTarget,
+		TargetArguments: []string{"issue_number"}, ResultPaths: []string{"issues[].number"},
+		Description: "List repository issues when the issue number is unknown, then use one confirmed issue number.",
+		DescriptionI18n: integrations.LocalizedText{
+			integrations.LocaleEnglishUS:         "List repository issues when the issue number is unknown, then use one confirmed issue number.",
+			integrations.LocaleSimplifiedChinese: "当议题编号未知时，先列出仓库议题，再使用确认后的议题编号。",
+		},
+	}
 }
 
 func readOnlyDefaultPolicy() *integrations.DefaultActionPolicy {
 	return &integrations.DefaultActionPolicy{
 		Enabled: true, ApprovalPolicy: toolgovernance.ApprovalPolicyNeverAsk, DataEgressAllowed: true,
 	}
+}
+
+func writeDefaultPolicy() *integrations.DefaultActionPolicy {
+	return &integrations.DefaultActionPolicy{
+		Enabled: false, ApprovalPolicy: toolgovernance.ApprovalPolicyAlwaysAsk, DataEgressAllowed: true,
+	}
+}
+
+func githubScopeLabels(id, english, chinese string) integrations.LocalizedLabelMap {
+	return integrations.LocalizedLabelMap{
+		id: {integrations.LocaleEnglishUS: english, integrations.LocaleSimplifiedChinese: chinese},
+	}
+}
+
+func issueCoordinatesInputSchema() map[string]interface{} {
+	return strictObjectSchema(map[string]interface{}{
+		"owner":        localizedInputSchema(identifierSchema("Repository owner."), "Repository owner", "仓库所有者"),
+		"repo":         localizedInputSchema(identifierSchema("Repository name without .git."), "Repository name", "仓库名称"),
+		"issue_number": localizedInputSchema(positiveIntegerSchema(), "Issue number", "议题编号"),
+	}, []string{"owner", "repo", "issue_number"})
+}
+
+func issueCommentsListInputSchema() map[string]interface{} {
+	return strictObjectSchema(map[string]interface{}{
+		"owner":        localizedInputSchema(identifierSchema("Repository owner."), "Repository owner", "仓库所有者"),
+		"repo":         localizedInputSchema(identifierSchema("Repository name without .git."), "Repository name", "仓库名称"),
+		"issue_number": localizedInputSchema(positiveIntegerSchema(), "Issue number", "议题编号"),
+		"since":        localizedInputSchema(map[string]interface{}{"type": "string", "format": "date-time"}, "Updated since", "起始更新时间"),
+		"per_page":     localizedInputSchema(boundedIntegerSchema(1, 50, 20), "Results per page", "每页数量"),
+		"page":         localizedInputSchema(boundedIntegerSchema(1, 1000, 1), "Page", "页码"),
+	}, []string{"owner", "repo", "issue_number"})
+}
+
+func createIssueInputSchema() map[string]interface{} {
+	return strictObjectSchema(map[string]interface{}{
+		"owner":  localizedInputSchema(identifierSchema("Repository owner."), "Repository owner", "仓库所有者"),
+		"repo":   localizedInputSchema(identifierSchema("Repository name without .git."), "Repository name", "仓库名称"),
+		"title":  localizedInputSchema(nonBlankStringSchema(256), "Issue title", "议题标题"),
+		"body":   localizedInputSchema(boundedStringSchema(20000), "Issue body", "议题正文"),
+		"labels": localizedInputSchema(boundedNonBlankStringArraySchema(10, 100), "Labels", "标签"),
+		"assignees": localizedInputSchema(map[string]interface{}{
+			"type": "array", "maxItems": 10, "uniqueItems": true, "items": identifierSchema("GitHub login."),
+		}, "Assignees", "经办人"),
+		"milestone": localizedInputSchema(map[string]interface{}{"type": "integer", "minimum": 1, "maximum": 1000000000}, "Milestone number", "里程碑编号"),
+	}, []string{"owner", "repo", "title"})
+}
+
+func createIssueCommentInputSchema() map[string]interface{} {
+	return strictObjectSchema(map[string]interface{}{
+		"owner":        localizedInputSchema(identifierSchema("Repository owner."), "Repository owner", "仓库所有者"),
+		"repo":         localizedInputSchema(identifierSchema("Repository name without .git."), "Repository name", "仓库名称"),
+		"issue_number": localizedInputSchema(positiveIntegerSchema(), "Issue number", "议题编号"),
+		"body":         localizedInputSchema(nonBlankStringSchema(20000), "Comment body", "评论内容"),
+	}, []string{"owner", "repo", "issue_number", "body"})
+}
+
+func issueEnvelopeOutputSchema() map[string]interface{} {
+	return strictObjectSchema(map[string]interface{}{
+		"provider": map[string]interface{}{"const": IntegrationID}, "request_id": boundedStringSchema(128),
+		"repository": boundedStringSchema(300), "issue": issueDetailOutputSchema(),
+	}, []string{"provider", "request_id", "repository", "issue"})
 }
 
 func strictObjectSchema(properties map[string]interface{}, required []string) map[string]interface{} {
@@ -380,6 +609,23 @@ func strictObjectSchema(properties map[string]interface{}, required []string) ma
 
 func boundedStringSchema(maxLength int) map[string]interface{} {
 	return map[string]interface{}{"type": "string", "maxLength": maxLength}
+}
+
+func nonBlankStringSchema(maxLength int) map[string]interface{} {
+	return map[string]interface{}{
+		"type": "string", "minLength": 1, "maxLength": maxLength, "pattern": `.*\S.*`,
+	}
+}
+
+func boundedNonBlankStringArraySchema(maxItems, maxLength int) map[string]interface{} {
+	return map[string]interface{}{
+		"type": "array", "maxItems": maxItems, "uniqueItems": true,
+		"items": nonBlankStringSchema(maxLength),
+	}
+}
+
+func positiveIntegerSchema() map[string]interface{} {
+	return map[string]interface{}{"type": "integer", "minimum": 1, "maximum": 1000000000}
 }
 
 func identifierSchema(description string) map[string]interface{} {
@@ -430,4 +676,22 @@ func issueOutputSchema() map[string]interface{} {
 		"comments":   map[string]interface{}{"type": "integer", "minimum": 0},
 		"created_at": boundedStringSchema(64), "updated_at": boundedStringSchema(64),
 	}, []string{"number", "title", "state", "kind", "html_url", "author", "labels", "comments", "created_at", "updated_at"})
+}
+
+func issueDetailOutputSchema() map[string]interface{} {
+	schema := issueOutputSchema()
+	properties := schema["properties"].(map[string]interface{})
+	properties["body"] = boundedStringSchema(20000)
+	properties["locked"] = map[string]interface{}{"type": "boolean"}
+	required := schema["required"].([]string)
+	schema["required"] = append(required, "body", "locked")
+	return schema
+}
+
+func issueCommentOutputSchema() map[string]interface{} {
+	return strictObjectSchema(map[string]interface{}{
+		"id": map[string]interface{}{"type": "integer", "minimum": 1}, "body": boundedStringSchema(20000),
+		"html_url": boundedStringSchema(2048), "author": boundedStringSchema(128),
+		"created_at": boundedStringSchema(64), "updated_at": boundedStringSchema(64),
+	}, []string{"id", "body", "html_url", "author", "created_at", "updated_at"})
 }

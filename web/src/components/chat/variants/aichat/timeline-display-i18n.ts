@@ -157,8 +157,15 @@ export function localizeAIChatRuntimeMessage(
   value: unknown,
   t: WebappTranslator,
   fallback?: string,
-  errorCode?: unknown
+  errorCode?: unknown,
+  reasonCode?: unknown
 ): string | null {
+  if (
+    typeof reasonCode === 'string' &&
+    reasonCode.trim().toLowerCase() === 'action_arguments_schema_mismatch'
+  ) {
+    return t('consoleChat.skills.trace.errors.invalidArguments');
+  }
   const localizedErrorCode = localizeAIChatRuntimeErrorCode(errorCode, t);
   if (localizedErrorCode) return localizedErrorCode;
   if (typeof value !== 'string' || !value.trim()) return fallback ?? null;

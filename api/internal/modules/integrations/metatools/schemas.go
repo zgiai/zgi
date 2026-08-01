@@ -174,6 +174,21 @@ func listConnectionsOutputSchema() map[string]interface{} {
 }
 
 func actionSummarySchema() map[string]interface{} {
+	compactArgumentSchema := strictObject(map[string]interface{}{
+		"name": map[string]interface{}{"type": "string", "minLength": 1, "maxLength": 64},
+		"type": map[string]interface{}{
+			"type":  []string{"string", "array"},
+			"items": map[string]interface{}{"type": "string", "maxLength": 32},
+		},
+	}, "name", "type")
+	preparationHintSchema := strictObject(map[string]interface{}{
+		"action_id":        identifierSchema("Preparation action ID."),
+		"relation":         map[string]interface{}{"type": "string", "enum": []string{"resolve_target", "inspect"}},
+		"target_arguments": map[string]interface{}{"type": "array", "maxItems": 8, "items": map[string]interface{}{"type": "string", "minLength": 1, "maxLength": 128}},
+		"result_paths":     map[string]interface{}{"type": "array", "maxItems": 16, "items": map[string]interface{}{"type": "string", "minLength": 1, "maxLength": 256}},
+		"description":      map[string]interface{}{"type": "string", "minLength": 1, "maxLength": 1000},
+		"description_i18n": localizedTextSchema(1000),
+	}, "action_id", "relation", "target_arguments", "result_paths", "description")
 	return strictObject(map[string]interface{}{
 		"integration_id":          identifierSchema("Integration ID."),
 		"action_id":               identifierSchema("Stable action ID."),
@@ -198,6 +213,14 @@ func actionSummarySchema() map[string]interface{} {
 		"can_execute":             map[string]interface{}{"type": "boolean"},
 		"recovery_action":         map[string]interface{}{"type": "string", "enum": []string{"upgrade_oauth_scope"}},
 		"requires_approval":       map[string]interface{}{"type": "boolean"},
+		"required_arguments": map[string]interface{}{
+			"type": "array", "maxItems": 64, "items": compactArgumentSchema,
+		},
+		"optional_arguments": map[string]interface{}{
+			"type": "array", "maxItems": 64, "items": compactArgumentSchema,
+		},
+		"guide_recommended": map[string]interface{}{"type": "boolean"},
+		"preparation_hints": map[string]interface{}{"type": "array", "maxItems": 8, "items": preparationHintSchema},
 	}, "integration_id", "action_id", "name", "description", "effect", "risk_level", "data_egress", "required_scopes", "schema_hash", "catalog_revision", "connection_name", "connection_selection")
 }
 

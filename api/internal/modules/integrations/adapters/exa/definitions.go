@@ -115,6 +115,17 @@ func Actions(defaultSearchType ...string) []integrations.ActionDefinition {
 			AccountAPIKeyAuthMethodID,
 			OrganizationAPIKeyAuthMethodID,
 		}
+		if actions[index].ID == integrations.ActionWebFetch {
+			actions[index].PreparationHints = []integrations.ActionPreparationHint{{
+				ActionID: integrations.ActionWebSearch, Relation: integrations.ActionPreparationResolveTarget,
+				TargetArguments: []string{"urls"}, ResultPaths: []string{"results[].url"},
+				Description: "Search the public web when the target page URLs are unknown, then fetch only the confirmed relevant result URLs.",
+				DescriptionI18n: integrations.LocalizedText{
+					integrations.LocaleEnglishUS:         "Search the public web when the target page URLs are unknown, then fetch only the confirmed relevant result URLs.",
+					integrations.LocaleSimplifiedChinese: "当目标网页地址未知时，先搜索公开网络，再只读取已确认且相关的结果网址。",
+				},
+			}}
+		}
 	}
 	return actions
 }

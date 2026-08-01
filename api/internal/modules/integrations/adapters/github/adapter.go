@@ -47,8 +47,23 @@ func (adapter *Adapter) Execute(ctx context.Context, request integrations.Action
 	case ActionListRepositories:
 		output, meta, err := adapter.listRepositories(ctx, token, request.Input)
 		return actionResult(output, meta), err
+	case ActionSearchRepositories:
+		output, meta, err := adapter.searchRepositories(ctx, token, request.Input)
+		return actionResult(output, meta), err
 	case ActionListIssues:
 		output, meta, err := adapter.listIssues(ctx, token, request.Input)
+		return actionResult(output, meta), err
+	case ActionGetIssue:
+		output, meta, err := adapter.getIssue(ctx, token, request.Input)
+		return actionResult(output, meta), err
+	case ActionListIssueComments:
+		output, meta, err := adapter.listIssueComments(ctx, token, request.Input)
+		return actionResult(output, meta), err
+	case ActionCreateIssue:
+		output, meta, err := adapter.createIssue(ctx, token, request.Input)
+		return actionResult(output, meta), err
+	case ActionCreateIssueComment:
+		output, meta, err := adapter.createIssueComment(ctx, token, request.Input)
 		return actionResult(output, meta), err
 	default:
 		return nil, integrations.NewError(integrations.ErrorCodeInvalidInput, "GitHub action is not supported", nil)
@@ -148,6 +163,56 @@ func (adapter *Adapter) listRepositories(ctx context.Context, token string, inpu
 	}, meta, nil
 }
 
+func (adapter *Adapter) searchRepositories(ctx context.Context, token string, input map[string]interface{}) (map[string]interface{}, responseMeta, error) {
+	searchQuery, err := requiredText(input, "query", 256, "GitHub repository search query")
+	if err != nil {
+		return nil, responseMeta{}, err
+	}
+	page, err := optionalInteger(input, "page", 1, 1, 20)
+	if err != nil {
+		return nil, responseMeta{}, err
+	}
+	perPage, err := optionalInteger(input, "per_page", 20, 1, 50)
+	if err != nil {
+		return nil, responseMeta{}, err
+	}
+	sortBy, err := optionalEnum(input, "sort", "best_match", "best_match", "stars", "forks", "help-wanted-issues", "updated")
+	if err != nil {
+		return nil, responseMeta{}, err
+	}
+	order, err := optionalEnum(input, "order", "desc", "asc", "desc")
+	if err != nil {
+		return nil, responseMeta{}, err
+	}
+	query := url.Values{
+		"q":        []string{searchQuery},
+		"per_page": []string{strconv.Itoa(perPage)},
+		"page":     []string{strconv.Itoa(page)},
+	}
+	if sortBy != "best_match" {
+		query.Set("sort", sortBy)
+		query.Set("order", order)
+	}
+	var raw githubRepositorySearchResponse
+	meta, err := adapter.client.getJSON(ctx, token, "/search/repositories", query, &raw)
+	if err != nil {
+		return nil, meta, err
+	}
+	items := make([]interface{}, 0, min(len(raw.Items), perPage))
+	for index, repository := range raw.Items {
+		if index >= perPage {
+			break
+		}
+		items = append(items, githubRepositoryOutput(repository))
+	}
+	return map[string]interface{}{
+		"provider": IntegrationID, "request_id": bounded(userSafe(meta.RequestID), 128),
+		"query": bounded(searchQuery, 256), "page": page,
+		"total_count": max(raw.TotalCount, 0), "incomplete_results": raw.IncompleteResults,
+		"repositories": items,
+	}, meta, nil
+}
+
 func (adapter *Adapter) listIssues(ctx context.Context, token string, input map[string]interface{}) (map[string]interface{}, responseMeta, error) {
 	owner := strings.TrimSpace(inputString(input, "owner"))
 	repository := strings.TrimSpace(inputString(input, "repo"))
@@ -213,6 +278,144 @@ func (adapter *Adapter) listIssues(ctx context.Context, token string, input map[
 	}, meta, nil
 }
 
+func (adapter *Adapter) getIssue(ctx context.Context, token string, input map[string]interface{}) (map[string]interface{}, responseMeta, error) {
+	owner, repository, issueNumber, err := issueCoordinates(input)
+	if err != nil {
+		return nil, responseMeta{}, err
+	}
+	path := issuePath(owner, repository, issueNumber)
+	var issue githubIssueResponse
+	meta, err := adapter.client.getJSON(ctx, token, path, nil, &issue)
+	if err != nil {
+		return nil, meta, err
+	}
+	return map[string]interface{}{
+		"provider": IntegrationID, "request_id": bounded(userSafe(meta.RequestID), 128),
+		"repository": bounded(owner+"/"+repository, 300), "issue": githubIssueOutput(issue, true),
+	}, meta, nil
+}
+
+func (adapter *Adapter) listIssueComments(ctx context.Context, token string, input map[string]interface{}) (map[string]interface{}, responseMeta, error) {
+	owner, repository, issueNumber, err := issueCoordinates(input)
+	if err != nil {
+		return nil, responseMeta{}, err
+	}
+	page, err := optionalInteger(input, "page", 1, 1, 1000)
+	if err != nil {
+		return nil, responseMeta{}, err
+	}
+	perPage, err := optionalInteger(input, "per_page", 20, 1, 50)
+	if err != nil {
+		return nil, responseMeta{}, err
+	}
+	query := url.Values{"page": []string{strconv.Itoa(page)}, "per_page": []string{strconv.Itoa(perPage)}}
+	since, err := optionalTextStrict(input, "since", 64)
+	if err != nil {
+		return nil, responseMeta{}, err
+	}
+	if since != "" {
+		if _, parseErr := time.Parse(time.RFC3339, since); parseErr != nil {
+			return nil, responseMeta{}, integrations.NewError(integrations.ErrorCodeInvalidInput, "GitHub issue comment since must be RFC 3339", parseErr)
+		}
+		query.Set("since", since)
+	}
+	var raw []githubIssueCommentResponse
+	meta, err := adapter.client.getJSON(ctx, token, issuePath(owner, repository, issueNumber)+"/comments", query, &raw)
+	if err != nil {
+		return nil, meta, err
+	}
+	comments := make([]interface{}, 0, min(len(raw), perPage))
+	for index, comment := range raw {
+		if index >= perPage {
+			break
+		}
+		comments = append(comments, githubIssueCommentOutput(comment))
+	}
+	return map[string]interface{}{
+		"provider": IntegrationID, "request_id": bounded(userSafe(meta.RequestID), 128),
+		"repository": bounded(owner+"/"+repository, 300), "issue_number": issueNumber,
+		"page": page, "comments": comments,
+	}, meta, nil
+}
+
+func (adapter *Adapter) createIssue(ctx context.Context, token string, input map[string]interface{}) (map[string]interface{}, responseMeta, error) {
+	owner, err := requiredIdentifier(input, "owner", "GitHub repository owner")
+	if err != nil {
+		return nil, responseMeta{}, err
+	}
+	repository, err := requiredIdentifier(input, "repo", "GitHub repository name")
+	if err != nil {
+		return nil, responseMeta{}, err
+	}
+	title, err := requiredText(input, "title", 256, "GitHub issue title")
+	if err != nil {
+		return nil, responseMeta{}, err
+	}
+	body, err := optionalTextStrict(input, "body", 20000)
+	if err != nil {
+		return nil, responseMeta{}, err
+	}
+	labels, err := optionalStringList(input, "labels", 10, 100)
+	if err != nil {
+		return nil, responseMeta{}, err
+	}
+	assignees, err := optionalIdentifierList(input, "assignees", 10)
+	if err != nil {
+		return nil, responseMeta{}, err
+	}
+	payload := map[string]interface{}{"title": title}
+	if body != "" {
+		payload["body"] = body
+	}
+	if len(labels) > 0 {
+		payload["labels"] = labels
+	}
+	if len(assignees) > 0 {
+		payload["assignees"] = assignees
+	}
+	if _, exists := input["milestone"]; exists {
+		milestone, milestoneErr := optionalInteger(input, "milestone", 0, 1, 1000000000)
+		if milestoneErr != nil {
+			return nil, responseMeta{}, milestoneErr
+		}
+		payload["milestone"] = milestone
+	}
+	var issue githubIssueResponse
+	path := "/repos/" + url.PathEscape(owner) + "/" + url.PathEscape(repository) + "/issues"
+	meta, err := adapter.client.postJSON(ctx, token, path, payload, &issue)
+	if err != nil {
+		return nil, meta, err
+	}
+	return map[string]interface{}{
+		"provider": IntegrationID, "request_id": bounded(userSafe(meta.RequestID), 128),
+		"repository": bounded(owner+"/"+repository, 300), "issue": githubIssueOutput(issue, true),
+	}, meta, nil
+}
+
+func (adapter *Adapter) createIssueComment(ctx context.Context, token string, input map[string]interface{}) (map[string]interface{}, responseMeta, error) {
+	owner, repository, issueNumber, err := issueCoordinates(input)
+	if err != nil {
+		return nil, responseMeta{}, err
+	}
+	body, err := requiredText(input, "body", 20000, "GitHub issue comment body")
+	if err != nil {
+		return nil, responseMeta{}, err
+	}
+	var comment githubIssueCommentResponse
+	meta, err := adapter.client.postJSON(
+		ctx, token, issuePath(owner, repository, issueNumber)+"/comments",
+		map[string]interface{}{"body": body}, &comment,
+	)
+	if err != nil {
+		return nil, meta, err
+	}
+	return map[string]interface{}{
+		"provider": IntegrationID, "request_id": bounded(userSafe(meta.RequestID), 128),
+		"repository": bounded(owner+"/"+repository, 300), "issue_number": issueNumber,
+		"comment": githubIssueCommentOutput(comment),
+	}, meta, nil
+}
+
 func githubToken(connection *integrations.ResolvedConnection) (string, error) {
 	if connection == nil || !strings.EqualFold(connection.IntegrationID, IntegrationID) || !strings.EqualFold(connection.DriverID, DriverID) {
 		return "", integrations.NewError(integrations.ErrorCodeConnectionInvalid, "GitHub connection is invalid", nil)
@@ -237,6 +440,9 @@ func actionResult(output map[string]interface{}, meta responseMeta) *integration
 		count = len(values)
 	}
 	if values, ok := output["issues"].([]interface{}); ok {
+		count = len(values)
+	}
+	if values, ok := output["comments"].([]interface{}); ok {
 		count = len(values)
 	}
 	attempts := meta.Attempts
@@ -274,6 +480,12 @@ type githubRepositoryResponse struct {
 	OpenIssuesCount int    `json:"open_issues_count"`
 }
 
+type githubRepositorySearchResponse struct {
+	TotalCount        int                        `json:"total_count"`
+	IncompleteResults bool                       `json:"incomplete_results"`
+	Items             []githubRepositoryResponse `json:"items"`
+}
+
 type githubIssueResponse struct {
 	Number      int                `json:"number"`
 	Title       string             `json:"title"`
@@ -284,6 +496,8 @@ type githubIssueResponse struct {
 	Comments    int                `json:"comments"`
 	CreatedAt   string             `json:"created_at"`
 	UpdatedAt   string             `json:"updated_at"`
+	Body        string             `json:"body"`
+	Locked      bool               `json:"locked"`
 	PullRequest *struct{}          `json:"pull_request"`
 }
 
@@ -292,6 +506,232 @@ type githubIssueUser struct {
 }
 type githubIssueLabel struct {
 	Name string `json:"name"`
+}
+
+type githubIssueCommentResponse struct {
+	ID        int64           `json:"id"`
+	Body      string          `json:"body"`
+	HTMLURL   string          `json:"html_url"`
+	User      githubIssueUser `json:"user"`
+	CreatedAt string          `json:"created_at"`
+	UpdatedAt string          `json:"updated_at"`
+}
+
+func githubRepositoryOutput(repository githubRepositoryResponse) map[string]interface{} {
+	visibility := strings.ToLower(strings.TrimSpace(repository.Visibility))
+	if visibility == "" {
+		if repository.Private {
+			visibility = "private"
+		} else {
+			visibility = "public"
+		}
+	}
+	return map[string]interface{}{
+		"full_name": bounded(repository.FullName, 300), "html_url": safeGitHubURL(repository.HTMLURL),
+		"description": bounded(repository.Description, 1000), "visibility": bounded(visibility, 32),
+		"private": repository.Private, "archived": repository.Archived,
+		"default_branch": bounded(repository.DefaultBranch, 255), "language": bounded(repository.Language, 100),
+		"updated_at": bounded(repository.UpdatedAt, 64), "pushed_at": bounded(repository.PushedAt, 64),
+		"open_issues_count": max(repository.OpenIssuesCount, 0),
+	}
+}
+
+func githubIssueOutput(issue githubIssueResponse, includeBody bool) map[string]interface{} {
+	labels := make([]interface{}, 0, min(len(issue.Labels), 20))
+	for index, label := range issue.Labels {
+		if index >= 20 {
+			break
+		}
+		if value := bounded(label.Name, 100); value != "" {
+			labels = append(labels, value)
+		}
+	}
+	kind := "issue"
+	if issue.PullRequest != nil {
+		kind = "pull_request"
+	}
+	output := map[string]interface{}{
+		"number": max(issue.Number, 1), "title": bounded(issue.Title, 500), "state": bounded(issue.State, 32),
+		"kind": kind, "html_url": safeGitHubURL(issue.HTMLURL), "author": bounded(issue.User.Login, 128),
+		"labels": labels, "comments": max(issue.Comments, 0), "locked": issue.Locked,
+		"created_at": bounded(issue.CreatedAt, 64), "updated_at": bounded(issue.UpdatedAt, 64),
+	}
+	if includeBody {
+		output["body"] = bounded(issue.Body, 20000)
+	}
+	return output
+}
+
+func githubIssueCommentOutput(comment githubIssueCommentResponse) map[string]interface{} {
+	return map[string]interface{}{
+		"id": max(comment.ID, int64(1)), "body": bounded(comment.Body, 20000),
+		"html_url": safeGitHubURL(comment.HTMLURL), "author": bounded(comment.User.Login, 128),
+		"created_at": bounded(comment.CreatedAt, 64), "updated_at": bounded(comment.UpdatedAt, 64),
+	}
+}
+
+func issueCoordinates(input map[string]interface{}) (string, string, int, error) {
+	owner, err := requiredIdentifier(input, "owner", "GitHub repository owner")
+	if err != nil {
+		return "", "", 0, err
+	}
+	repository, err := requiredIdentifier(input, "repo", "GitHub repository name")
+	if err != nil {
+		return "", "", 0, err
+	}
+	issueNumber, err := requiredInteger(input, "issue_number", 1, 1000000000)
+	if err != nil {
+		return "", "", 0, err
+	}
+	return owner, repository, issueNumber, nil
+}
+
+func issuePath(owner, repository string, issueNumber int) string {
+	return "/repos/" + url.PathEscape(owner) + "/" + url.PathEscape(repository) + "/issues/" + strconv.Itoa(issueNumber)
+}
+
+func requiredIdentifier(input map[string]interface{}, key, label string) (string, error) {
+	value, err := requiredText(input, key, 100, label)
+	if err != nil {
+		return "", err
+	}
+	for _, char := range value {
+		if (char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') ||
+			(char >= '0' && char <= '9') || char == '_' || char == '.' || char == '-' {
+			continue
+		}
+		return "", integrations.NewError(integrations.ErrorCodeInvalidInput, label+" is invalid", nil)
+	}
+	return value, nil
+}
+
+func requiredText(input map[string]interface{}, key string, maximum int, label string) (string, error) {
+	value, ok := input[key].(string)
+	value = strings.TrimSpace(value)
+	if !ok || value == "" || len([]rune(value)) > maximum {
+		return "", integrations.NewError(integrations.ErrorCodeInvalidInput, label+" is required and must be within the platform limit", nil)
+	}
+	return value, nil
+}
+
+func optionalTextStrict(input map[string]interface{}, key string, maximum int) (string, error) {
+	raw, exists := input[key]
+	if !exists {
+		return "", nil
+	}
+	value, ok := raw.(string)
+	if !ok || len([]rune(value)) > maximum {
+		return "", integrations.NewError(integrations.ErrorCodeInvalidInput, "GitHub "+key+" is invalid", nil)
+	}
+	return strings.TrimSpace(value), nil
+}
+
+func requiredInteger(input map[string]interface{}, key string, minimum, maximum int) (int, error) {
+	if _, exists := input[key]; !exists {
+		return 0, integrations.NewError(integrations.ErrorCodeInvalidInput, "GitHub "+key+" is required", nil)
+	}
+	return optionalInteger(input, key, 0, minimum, maximum)
+}
+
+func optionalInteger(input map[string]interface{}, key string, fallback, minimum, maximum int) (int, error) {
+	raw, exists := input[key]
+	if !exists {
+		return fallback, nil
+	}
+	value := 0
+	valid := true
+	switch typed := raw.(type) {
+	case int:
+		value = typed
+	case int64:
+		if typed > int64(maximum) || typed < int64(minimum) {
+			valid = false
+		} else {
+			value = int(typed)
+		}
+	case float64:
+		if typed != float64(int(typed)) {
+			valid = false
+		} else {
+			value = int(typed)
+		}
+	case json.Number:
+		parsed, err := strconv.Atoi(string(typed))
+		valid = err == nil
+		value = parsed
+	default:
+		valid = false
+	}
+	if !valid || value < minimum || value > maximum {
+		return 0, integrations.NewError(integrations.ErrorCodeInvalidInput, "GitHub "+key+" is outside the allowed range", nil)
+	}
+	return value, nil
+}
+
+func optionalEnum(input map[string]interface{}, key, fallback string, allowed ...string) (string, error) {
+	raw, exists := input[key]
+	if !exists {
+		return fallback, nil
+	}
+	value, ok := raw.(string)
+	value = strings.ToLower(strings.TrimSpace(value))
+	if ok {
+		for _, candidate := range allowed {
+			if value == candidate {
+				return value, nil
+			}
+		}
+	}
+	return "", integrations.NewError(integrations.ErrorCodeInvalidInput, "GitHub "+key+" is invalid", nil)
+}
+
+func optionalStringList(input map[string]interface{}, key string, maxItems, maxLength int) ([]string, error) {
+	raw, exists := input[key]
+	if !exists {
+		return nil, nil
+	}
+	values, ok := raw.([]interface{})
+	if !ok {
+		if stringsValue, stringsOK := raw.([]string); stringsOK {
+			values = make([]interface{}, len(stringsValue))
+			for index := range stringsValue {
+				values[index] = stringsValue[index]
+			}
+		} else {
+			return nil, integrations.NewError(integrations.ErrorCodeInvalidInput, "GitHub "+key+" must be a string array", nil)
+		}
+	}
+	if len(values) > maxItems {
+		return nil, integrations.NewError(integrations.ErrorCodeInvalidInput, "GitHub "+key+" has too many items", nil)
+	}
+	result := make([]string, 0, len(values))
+	seen := map[string]struct{}{}
+	for _, rawValue := range values {
+		value, ok := rawValue.(string)
+		value = strings.TrimSpace(value)
+		if !ok || value == "" || len([]rune(value)) > maxLength {
+			return nil, integrations.NewError(integrations.ErrorCodeInvalidInput, "GitHub "+key+" contains an invalid value", nil)
+		}
+		if _, duplicate := seen[value]; duplicate {
+			continue
+		}
+		seen[value] = struct{}{}
+		result = append(result, value)
+	}
+	return result, nil
+}
+
+func optionalIdentifierList(input map[string]interface{}, key string, maxItems int) ([]string, error) {
+	values, err := optionalStringList(input, key, maxItems, 100)
+	if err != nil {
+		return nil, err
+	}
+	for _, value := range values {
+		if _, err := requiredIdentifier(map[string]interface{}{"value": value}, "value", "GitHub "+key+" value"); err != nil {
+			return nil, err
+		}
+	}
+	return values, nil
 }
 
 func bounded(value string, limit int) string {
@@ -414,10 +854,12 @@ func githubScopeSnapshot(scopes []string) []string {
 	if _, granted := seen["repo"]; granted {
 		seen["metadata:read"] = struct{}{}
 		seen["issues:read"] = struct{}{}
+		seen["issues:write"] = struct{}{}
 	}
 	if _, granted := seen["public_repo"]; granted {
 		seen["metadata:read"] = struct{}{}
 		seen["issues:read"] = struct{}{}
+		seen["issues:write"] = struct{}{}
 	}
 	result := make([]string, 0, len(seen))
 	for scope := range seen {

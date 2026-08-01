@@ -233,6 +233,8 @@ function isSuccessfulToolInvocation(invocation: TimelineSkillInvocationLike): bo
 function isRecoverableInvalidArgumentsInvocation(invocation: TimelineSkillInvocationLike): boolean {
   const status = invocation.status?.trim().toLowerCase() ?? '';
   if (!['error', 'failed', 'blocked'].includes(status)) return false;
+  const reasonCode = objectStringField(invocation.arguments, 'reason_code');
+  if (reasonCode === 'action_arguments_schema_mismatch') return true;
   const message = [invocation.message, invocation.error].filter(Boolean).join(' ');
   return INVALID_ARGUMENTS_PATTERN.test(message);
 }

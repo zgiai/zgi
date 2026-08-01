@@ -172,6 +172,19 @@ func recoverableErrorPayload(err error, nextAction string) map[string]interface{
 
 func recoverableSkillToolErrorPayload(err error, nextAction string, skillID string, toolName string) map[string]interface{} {
 	payload := recoverableErrorPayload(err, nextAction)
+	expected := skills.ExpectedSkillToolArguments(skillID, toolName)
+	if recovery := skills.PublicToolErrorRecoveryForInvocation(err, skillID, toolName, expected); len(recovery) > 0 {
+		for key, value := range recovery {
+			payload[key] = value
+		}
+		if code, ok := recovery["error_code"].(string); ok && strings.TrimSpace(code) != "" {
+			payload["error"] = strings.TrimSpace(code)
+		}
+		if retryAction, ok := recovery["retry_action"].(string); ok && strings.TrimSpace(retryAction) != "" {
+			payload["next_action"] = strings.TrimSpace(retryAction)
+		}
+		return payload
+	}
 	if expected := skills.ExpectedSkillToolArguments(skillID, toolName); expected != nil {
 		payload["expected_arguments"] = expected
 		payload["next_action"] = strings.TrimSpace(nextAction + ". Retry call_skill_tool with arguments matching expected_arguments.schema")

@@ -129,6 +129,12 @@ func (resolver *GovernanceManifestResolver) ResolveToolGovernanceManifest(ctx co
 	if err := resolver.safety.Check(ctx, *action, actionInput); err != nil {
 		return manifest, err
 	}
+	// Validate the selected provider Action before an approval card is created
+	// and before the invocation is frozen. Executor repeats this validation as a
+	// defense-in-depth check for non-chat callers and catalog races.
+	if err := ValidateActionInput(integrationID, *action, actionInput); err != nil {
+		return manifest, err
+	}
 	if action.DefaultPolicy != nil {
 		if action.DataEgress && !action.DefaultPolicy.DataEgressAllowed {
 			return manifest, NewError(ErrorCodeAccessDenied, "provider policy blocks data egress for this integration action", nil)

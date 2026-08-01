@@ -3631,6 +3631,18 @@ Use the calculator tool.
 					},
 				}},
 			},
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{
+						Role: "assistant",
+						ToolCalls: []adapter.ToolCall{
+							runnerTestSkillToolCall("call_bad_3", "limited-calculator", "evaluate_expression", map[string]interface{}{
+								"expression": "1/",
+							}),
+						},
+					},
+				}},
+			},
 			{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: "I cannot evaluate that expression without corrected input."}}}},
 		},
 	}
@@ -3692,8 +3704,11 @@ Use the calculator tool.
 			trace.ToolName == "evaluate_expression" &&
 			trace.Arguments["reason_code"] == skillToolRetryNoProgressCode &&
 			strings.Contains(trace.Error, "same tool call with the same arguments already failed") {
-			if trace.Arguments["retry_count"] != 2 {
-				t.Fatalf("no-progress retry_count = %#v, want 2", trace.Arguments["retry_count"])
+			if trace.Arguments["termination_reason"] == nil {
+				continue
+			}
+			if trace.Arguments["retry_count"] != 3 {
+				t.Fatalf("no-progress retry_count = %#v, want 3", trace.Arguments["retry_count"])
 			}
 			if trace.Arguments["termination_reason"] != "retry_no_progress" {
 				t.Fatalf("no-progress termination_reason = %#v, want retry_no_progress", trace.Arguments["termination_reason"])
@@ -3708,8 +3723,8 @@ Use the calculator tool.
 	if !foundNoProgress {
 		t.Fatalf("traces = %#v, want repeated failed tool call no-progress evidence", traces)
 	}
-	if fakeLLM.appChatCalls != 4 {
-		t.Fatalf("AppChat calls = %d, want load, first failure, blocked retry, final answer", fakeLLM.appChatCalls)
+	if fakeLLM.appChatCalls != 5 {
+		t.Fatalf("AppChat calls = %d, want load, first failure, warning retry, blocked retry, final answer", fakeLLM.appChatCalls)
 	}
 	lastRequest := fakeLLM.appChatRequests[len(fakeLLM.appChatRequests)-1]
 	if len(lastRequest.Tools) != 0 || lastRequest.ToolChoice != nil {
@@ -4320,6 +4335,21 @@ Use the calculator tool.
 				},
 			}},
 		},
+		{
+			Choices: []adapter.Choice{{
+				Message: adapter.Message{
+					Role: "assistant",
+					ToolCalls: []adapter.ToolCall{
+						runnerTestSkillToolCall(
+							"call_bad_2",
+							"limited-calculator",
+							"evaluate_expression",
+							map[string]interface{}{"expression": "1/"},
+						),
+					},
+				},
+			}},
+		},
 		responses[1],
 	}...)
 	fakeLLM := &runnerTestLLMClient{appChatResponses: responses}
@@ -4365,8 +4395,8 @@ Use the calculator tool.
 	if findRunnerTestEvent(events, EventSkillCallError) == nil {
 		t.Fatalf("events = %#v, want skill error event for failed tool evidence", events)
 	}
-	if fakeLLM.appChatCalls != 4 {
-		t.Fatalf("AppChat calls = %d, want load, first failure, no-progress retry, and explanation", fakeLLM.appChatCalls)
+	if fakeLLM.appChatCalls != 5 {
+		t.Fatalf("AppChat calls = %d, want load, first failure, corrective retry, blocked retry, and explanation", fakeLLM.appChatCalls)
 	}
 	lastRequest := fakeLLM.appChatRequests[len(fakeLLM.appChatRequests)-1]
 	if len(lastRequest.Tools) != 0 || lastRequest.ToolChoice != nil {

@@ -85,7 +85,8 @@ func TestProviderDefinitionSeparatesUserOAuthAndTenantApp(t *testing.T) {
 			if !userOAuthSupported || tenantAppSupported {
 				t.Fatalf("user OAuth action authentication compatibility = %#v", action)
 			}
-		case ActionListDriveFiles, ActionReadDocument, ActionListChats, ActionListCalendars:
+		case ActionListDriveFiles, ActionReadDocument, ActionListChats, ActionListMessages,
+			ActionListCalendars, ActionListEvents, ActionCreateEvent:
 			if !userOAuthSupported || !tenantAppSupported {
 				t.Fatalf("shared user/application action authentication compatibility = %#v", action)
 			}
@@ -101,6 +102,18 @@ func TestProviderDefinitionSeparatesUserOAuthAndTenantApp(t *testing.T) {
 				action.DefaultPolicy.ApprovalPolicy != toolgovernance.ApprovalPolicyAlwaysAsk || action.Idempotent {
 				t.Fatalf("unsafe send defaults = %#v", action)
 			}
+			if !slices.Equal(action.SupportedCallers, []tools.ToolInvokeFrom{tools.ToolInvokeFromAIChat}) {
+				t.Fatalf("send action callers = %#v", action.SupportedCallers)
+			}
+		} else if action.ID == ActionCreateEvent {
+			if action.Effect != toolgovernance.EffectCreate || action.RiskLevel != toolgovernance.RiskLevelHigh ||
+				action.DefaultPolicy == nil || action.DefaultPolicy.Enabled ||
+				action.DefaultPolicy.ApprovalPolicy != toolgovernance.ApprovalPolicyAlwaysAsk || !action.Idempotent ||
+				!slices.Equal(action.SupportedCallers, []tools.ToolInvokeFrom{tools.ToolInvokeFromAIChat}) {
+				t.Fatalf("unsafe calendar create defaults = %#v", action)
+			}
+		} else if !slices.Equal(action.SupportedCallers, []tools.ToolInvokeFrom{tools.ToolInvokeFromAIChat, tools.ToolInvokeFromAgent}) {
+			t.Fatalf("read action callers = %#v", action.SupportedCallers)
 		}
 		if action.ID == ActionGetAccount && len(action.RequiredScopes) != 0 {
 			t.Fatalf("account action requested implicit scopes: %#v", action.RequiredScopes)
@@ -145,6 +158,24 @@ func TestProviderDefinitionSeparatesUserOAuthAndTenantApp(t *testing.T) {
 				!slices.Equal(action.RequiredAnyScopes, []string{ScopeCalendarRead, ScopeCalendarRO, ScopeCalendarWrite}) ||
 				!slices.Equal(action.PreferredScopes, []string{ScopeCalendarRead}) {
 				t.Fatalf("calendar scope alternatives = %#v", action)
+			}
+		case ActionListMessages:
+			if len(action.RequiredScopes) != 0 ||
+				!slices.Equal(action.RequiredAnyScopes, []string{ScopeMessageRead, ScopeMessageLegacy, ScopeMessage}) ||
+				!slices.Equal(action.PreferredScopes, []string{ScopeMessageRead}) {
+				t.Fatalf("message-read scope alternatives = %#v", action)
+			}
+		case ActionListEvents:
+			if len(action.RequiredScopes) != 0 ||
+				!slices.Equal(action.RequiredAnyScopes, []string{ScopeEventRead, ScopeCalendarRO, ScopeCalendarWrite}) ||
+				!slices.Equal(action.PreferredScopes, []string{ScopeEventRead}) {
+				t.Fatalf("event-read scope alternatives = %#v", action)
+			}
+		case ActionCreateEvent:
+			if len(action.RequiredScopes) != 0 ||
+				!slices.Equal(action.RequiredAnyScopes, []string{ScopeEventCreate, ScopeCalendarWrite}) ||
+				!slices.Equal(action.PreferredScopes, []string{ScopeEventCreate}) {
+				t.Fatalf("event-create scope alternatives = %#v", action)
 			}
 		case ActionSendBotMessage:
 			if len(action.RequiredScopes) != 0 ||

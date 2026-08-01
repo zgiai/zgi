@@ -24,6 +24,8 @@ const (
 	ScopeDocumentRead  = "docx:document:readonly"
 	ScopeDocumentWrite = "docx:document"
 	ScopeMessage       = "im:message"
+	ScopeMessageRead   = "im:message:readonly"
+	ScopeMessageLegacy = "im:message.history:readonly"
 	ScopeSendAsUser    = "im:message.send_as_user"
 	ScopeSendAsBot     = "im:message:send_as_bot"
 	ScopeContactSearch = "contact:user:search"
@@ -33,6 +35,8 @@ const (
 	ScopeCalendarRead  = "calendar:calendar:read"
 	ScopeCalendarRO    = "calendar:calendar:readonly"
 	ScopeCalendarWrite = "calendar:calendar"
+	ScopeEventRead     = "calendar:calendar.event:read"
+	ScopeEventCreate   = "calendar:calendar.event:create"
 
 	ActionGetAccount      = "feishu.account.get"
 	ActionListDriveFiles  = "feishu.drive.list"
@@ -40,6 +44,9 @@ const (
 	ActionSearchContacts  = "feishu.contact.search"
 	ActionListChats       = "feishu.chat.list"
 	ActionListCalendars   = "feishu.calendar.list"
+	ActionListMessages    = "feishu.message.list"
+	ActionListEvents      = "feishu.calendar.event.list"
+	ActionCreateEvent     = "feishu.calendar.event.create"
 	ActionSendUserMessage = "feishu.message.send_user"
 	ActionSendBotMessage  = "feishu.message.send_bot"
 )
@@ -156,6 +163,20 @@ func ProviderDefinition() integrations.ProviderDefinition {
 				Category: integrations.ProviderScopeCategoryProvider, Access: integrations.ProviderScopeAccessWrite, Broad: true,
 			},
 			{
+				ID: ScopeMessageRead, Label: "Read message history",
+				LabelI18n: integrations.LocalizedText{
+					integrations.LocaleEnglishUS: "Read message history", integrations.LocaleSimplifiedChinese: "读取消息历史",
+				},
+				Category: integrations.ProviderScopeCategoryProvider, Access: integrations.ProviderScopeAccessRead,
+			},
+			{
+				ID: ScopeMessageLegacy, Label: "Read message history (legacy)",
+				LabelI18n: integrations.LocalizedText{
+					integrations.LocaleEnglishUS: "Read message history (legacy)", integrations.LocaleSimplifiedChinese: "读取消息历史（兼容权限）",
+				},
+				Category: integrations.ProviderScopeCategoryProvider, Access: integrations.ProviderScopeAccessRead, Broad: true,
+			},
+			{
 				ID: ScopeSendAsUser, Label: "Send messages as the user",
 				LabelI18n: integrations.LocalizedText{
 					integrations.LocaleEnglishUS: "Send messages as the user", integrations.LocaleSimplifiedChinese: "以用户身份发送消息",
@@ -217,6 +238,20 @@ func ProviderDefinition() integrations.ProviderDefinition {
 					integrations.LocaleEnglishUS: "Read and manage calendars and events", integrations.LocaleSimplifiedChinese: "读取和管理日历及日程",
 				},
 				Category: integrations.ProviderScopeCategoryProvider, Access: integrations.ProviderScopeAccessWrite, Broad: true,
+			},
+			{
+				ID: ScopeEventRead, Label: "Read calendar events",
+				LabelI18n: integrations.LocalizedText{
+					integrations.LocaleEnglishUS: "Read calendar events", integrations.LocaleSimplifiedChinese: "读取日程",
+				},
+				Category: integrations.ProviderScopeCategoryProvider, Access: integrations.ProviderScopeAccessRead,
+			},
+			{
+				ID: ScopeEventCreate, Label: "Create calendar events",
+				LabelI18n: integrations.LocalizedText{
+					integrations.LocaleEnglishUS: "Create calendar events", integrations.LocaleSimplifiedChinese: "创建日程",
+				},
+				Category: integrations.ProviderScopeCategoryProvider, Access: integrations.ProviderScopeAccessWrite,
 			},
 		},
 		Actions: Actions(),
@@ -625,6 +660,19 @@ func Actions() []integrations.ActionDefinition {
 			},
 		),
 		readAction(
+			ActionListMessages, "list_feishu_messages", "List Feishu messages", "读取飞书消息",
+			"Read a bounded page of recent messages from one visible Feishu chat.",
+			"读取一个当前账号可见群聊中的一页近期消息，返回内容受数量和长度限制。",
+			messageListInputSchema(),
+			messageListOutputSchema(),
+			[]string{ScopeMessageRead},
+			integrations.LocalizedLabelMap{
+				ScopeMessageRead:   {integrations.LocaleEnglishUS: "Read message history", integrations.LocaleSimplifiedChinese: "读取消息历史"},
+				ScopeMessageLegacy: {integrations.LocaleEnglishUS: "Read message history (legacy)", integrations.LocaleSimplifiedChinese: "读取消息历史（兼容权限）"},
+				ScopeMessage:       {integrations.LocaleEnglishUS: "Read and send messages", integrations.LocaleSimplifiedChinese: "读取与发送消息"},
+			},
+		),
+		readAction(
 			ActionListCalendars, "list_feishu_calendars", "List Feishu calendars", "列出飞书日历",
 			"List calendars visible to the connected user or tenant application.",
 			"列出当前用户或企业应用可见的日历。",
@@ -654,6 +702,16 @@ func Actions() []integrations.ActionDefinition {
 				ScopeCalendarWrite: {integrations.LocaleEnglishUS: "Read and manage calendars and events", integrations.LocaleSimplifiedChinese: "读取和管理日历及日程"},
 			},
 		),
+		readAction(
+			ActionListEvents, "list_feishu_calendar_events", "List Feishu calendar events", "列出飞书日程",
+			"List a bounded page of events in one calendar and an explicit time range.",
+			"列出指定日历和明确时间范围内的一页日程，结果受数量和长度限制。",
+			calendarEventListInputSchema(),
+			calendarEventListOutputSchema(),
+			[]string{ScopeEventRead},
+			calendarEventReadScopeLabels(),
+		),
+		calendarEventCreateAction(),
 		sendAction(
 			ActionSendUserMessage, "send_feishu_user_message", "Send Feishu message as user", "以用户身份发送飞书消息",
 			"Send one text message using delegated user authorization.", "使用用户委托授权发送一条文本消息。",
@@ -703,6 +761,7 @@ func Actions() []integrations.ActionDefinition {
 			actions[index].RequiredAnyScopes = []string{ScopeDocumentRead, ScopeDocumentWrite}
 			actions[index].PreferredScopes = []string{ScopeDocumentRead}
 			actions[index].SupportedAuthMethodIDs = append([]string(nil), userOrTenantAppMethods...)
+			actions[index].PreparationHints = []integrations.ActionPreparationHint{feishuDriveDocumentPreparationHint()}
 		case ActionListChats:
 			actions[index].RequiredScopes = nil
 			actions[index].RequiredAnyScopes = []string{ScopeChatRead, ScopeChatReadOnly, ScopeChat}
@@ -713,16 +772,97 @@ func Actions() []integrations.ActionDefinition {
 			actions[index].RequiredAnyScopes = []string{ScopeCalendarRead, ScopeCalendarRO, ScopeCalendarWrite}
 			actions[index].PreferredScopes = []string{ScopeCalendarRead}
 			actions[index].SupportedAuthMethodIDs = append([]string(nil), userOrTenantAppMethods...)
+		case ActionListMessages:
+			actions[index].RequiredScopes = nil
+			actions[index].RequiredAnyScopes = []string{ScopeMessageRead, ScopeMessageLegacy, ScopeMessage}
+			actions[index].PreferredScopes = []string{ScopeMessageRead}
+			actions[index].SupportedAuthMethodIDs = append([]string(nil), userOrTenantAppMethods...)
+			actions[index].PreparationHints = []integrations.ActionPreparationHint{feishuChatPreparationHint("chat_id")}
+		case ActionListEvents:
+			actions[index].RequiredScopes = nil
+			actions[index].RequiredAnyScopes = []string{ScopeEventRead, ScopeCalendarRO, ScopeCalendarWrite}
+			actions[index].PreferredScopes = []string{ScopeEventRead}
+			actions[index].SupportedAuthMethodIDs = append([]string(nil), userOrTenantAppMethods...)
+			actions[index].PreparationHints = []integrations.ActionPreparationHint{feishuCalendarPreparationHint()}
+		case ActionCreateEvent:
+			actions[index].RequiredScopes = nil
+			actions[index].RequiredAnyScopes = []string{ScopeEventCreate, ScopeCalendarWrite}
+			actions[index].PreferredScopes = []string{ScopeEventCreate}
+			actions[index].SupportedAuthMethodIDs = append([]string(nil), userOrTenantAppMethods...)
+			actions[index].PreparationHints = []integrations.ActionPreparationHint{feishuCalendarPreparationHint()}
 		case ActionSendBotMessage:
 			actions[index].RequiredScopes = nil
 			actions[index].RequiredAnyScopes = []string{ScopeSendAsBot, ScopeMessage}
 			actions[index].PreferredScopes = []string{ScopeSendAsBot}
 			actions[index].SupportedAuthMethodIDs = []string{TenantAppAuthMethodID}
+			actions[index].PreparationHints = feishuMessagePreparationHints(false)
 		case ActionGetAccount, ActionSearchContacts, ActionSendUserMessage:
 			actions[index].SupportedAuthMethodIDs = append([]string(nil), userOAuthMethods...)
+			if actions[index].ID == ActionSendUserMessage {
+				actions[index].PreparationHints = feishuMessagePreparationHints(true)
+			}
 		}
 	}
 	return actions
+}
+
+func feishuMessagePreparationHints(includeContactSearch bool) []integrations.ActionPreparationHint {
+	hints := []integrations.ActionPreparationHint{
+		feishuChatPreparationHint("recipient_id"),
+	}
+	if includeContactSearch {
+		hints = append(hints, integrations.ActionPreparationHint{
+			ActionID: ActionSearchContacts, Relation: integrations.ActionPreparationResolveTarget,
+			TargetArguments: []string{"recipient_id"}, ResultPaths: []string{"users[].open_id", "users[].user_id"},
+			Description: "Search visible Feishu users when the user provides a person's name, then use one confirmed returned identifier as recipient_id with the matching recipient_type.",
+			DescriptionI18n: integrations.LocalizedText{
+				integrations.LocaleEnglishUS:         "Search visible Feishu users when the user provides a person's name, then use one confirmed returned identifier as recipient_id with the matching recipient_type.",
+				integrations.LocaleSimplifiedChinese: "当用户提供人员姓名时，先搜索当前账号可见的飞书用户，再将确认后的返回标识作为 recipient_id，并使用匹配的 recipient_type。",
+			},
+		})
+	}
+	return hints
+}
+
+func feishuChatPreparationHint(targetArgument string) integrations.ActionPreparationHint {
+	description := "List visible chats when the user names a group or conversation, then use one confirmed chat_id."
+	chineseDescription := "当用户使用群聊或会话名称时，先列出可见群聊，再使用一个已确认的 chat_id。"
+	if targetArgument == "recipient_id" {
+		description = "List visible chats when the user names a group or conversation, then use the returned chat_id as recipient_id with recipient_type chat_id."
+		chineseDescription = "当用户使用群聊或会话名称时，先列出可见群聊，再将返回的 chat_id 作为 recipient_id，并将 recipient_type 设为 chat_id。"
+	}
+	return integrations.ActionPreparationHint{
+		ActionID: ActionListChats, Relation: integrations.ActionPreparationResolveTarget,
+		TargetArguments: []string{targetArgument}, ResultPaths: []string{"chats[].chat_id"},
+		Description: description,
+		DescriptionI18n: integrations.LocalizedText{
+			integrations.LocaleEnglishUS: description, integrations.LocaleSimplifiedChinese: chineseDescription,
+		},
+	}
+}
+
+func feishuCalendarPreparationHint() integrations.ActionPreparationHint {
+	return integrations.ActionPreparationHint{
+		ActionID: ActionListCalendars, Relation: integrations.ActionPreparationResolveTarget,
+		TargetArguments: []string{"calendar_id"}, ResultPaths: []string{"calendars[].calendar_id"},
+		Description: "List visible calendars when the calendar ID is unknown, then use one confirmed writable or readable calendar as required by the target action.",
+		DescriptionI18n: integrations.LocalizedText{
+			integrations.LocaleEnglishUS:         "List visible calendars when the calendar ID is unknown, then use one confirmed writable or readable calendar as required by the target action.",
+			integrations.LocaleSimplifiedChinese: "当日历 ID 未知时，先列出可见日历，再根据目标操作选择一个已确认且具备相应读写权限的日历。",
+		},
+	}
+}
+
+func feishuDriveDocumentPreparationHint() integrations.ActionPreparationHint {
+	return integrations.ActionPreparationHint{
+		ActionID: ActionListDriveFiles, Relation: integrations.ActionPreparationResolveTarget,
+		TargetArguments: []string{"document_id"}, ResultPaths: []string{"files[].token", "files[].type"},
+		Description: "List Drive files when the document ID is unknown, confirm that the selected file type is a supported Feishu document, then use its token as document_id.",
+		DescriptionI18n: integrations.LocalizedText{
+			integrations.LocaleEnglishUS:         "List Drive files when the document ID is unknown, confirm that the selected file type is a supported Feishu document, then use its token as document_id.",
+			integrations.LocaleSimplifiedChinese: "当文档 ID 未知时，先列出云盘文件，确认所选文件属于支持的飞书文档类型，再将其 token 作为 document_id。",
+		},
+	}
 }
 
 func readAction(id, toolName, name, chineseName, description, chineseDescription string, input, output map[string]interface{}, scopes []string, labels integrations.LocalizedLabelMap) integrations.ActionDefinition {
@@ -768,8 +908,213 @@ func sendAction(
 		DefaultPolicy: &integrations.DefaultActionPolicy{
 			Enabled: false, ApprovalPolicy: toolgovernance.ApprovalPolicyAlwaysAsk, DataEgressAllowed: true,
 		},
-		SupportedCallers: []tools.ToolInvokeFrom{tools.ToolInvokeFromAIChat, tools.ToolInvokeFromAgent},
+		SupportedCallers: []tools.ToolInvokeFrom{tools.ToolInvokeFromAIChat},
 	}
+}
+
+func calendarEventCreateAction() integrations.ActionDefinition {
+	return integrations.ActionDefinition{
+		ID: ActionCreateEvent, ToolName: "create_feishu_calendar_event",
+		Name: "Create Feishu calendar event",
+		NameI18n: integrations.LocalizedText{
+			integrations.LocaleEnglishUS: "Create Feishu calendar event", integrations.LocaleSimplifiedChinese: "创建飞书日程",
+		},
+		Description: "Create one event in a writable Feishu calendar with a request-scoped idempotency marker.",
+		DescriptionI18n: integrations.LocalizedText{
+			integrations.LocaleEnglishUS:         "Create one event in a writable Feishu calendar with a request-scoped idempotency marker.",
+			integrations.LocaleSimplifiedChinese: "在一个可写飞书日历中创建一条日程，并使用当前请求的幂等标识防止重复创建。",
+		},
+		InputSchema: calendarEventCreateInputSchema(), OutputSchema: calendarEventCreateOutputSchema(),
+		Effect: toolgovernance.EffectCreate, RiskLevel: toolgovernance.RiskLevelHigh,
+		DataEgress: true, ExternalDestination: "open.feishu.cn", SensitiveDataAllowed: false,
+		Idempotent: true, RequiredScopes: []string{ScopeEventCreate}, ScopeLabelsI18n: calendarEventCreateScopeLabels(),
+		DefaultPolicy: &integrations.DefaultActionPolicy{
+			Enabled: false, ApprovalPolicy: toolgovernance.ApprovalPolicyAlwaysAsk, DataEgressAllowed: true,
+		},
+		SupportedCallers: []tools.ToolInvokeFrom{tools.ToolInvokeFromAIChat},
+	}
+}
+
+func calendarEventReadScopeLabels() integrations.LocalizedLabelMap {
+	return integrations.LocalizedLabelMap{
+		ScopeEventRead:     {integrations.LocaleEnglishUS: "Read calendar events", integrations.LocaleSimplifiedChinese: "读取日程"},
+		ScopeCalendarRO:    {integrations.LocaleEnglishUS: "Read calendars, events, and availability", integrations.LocaleSimplifiedChinese: "读取日历、日程与忙闲信息"},
+		ScopeCalendarWrite: {integrations.LocaleEnglishUS: "Read and manage calendars and events", integrations.LocaleSimplifiedChinese: "读取和管理日历及日程"},
+	}
+}
+
+func calendarEventCreateScopeLabels() integrations.LocalizedLabelMap {
+	return integrations.LocalizedLabelMap{
+		ScopeEventCreate:   {integrations.LocaleEnglishUS: "Create calendar events", integrations.LocaleSimplifiedChinese: "创建日程"},
+		ScopeCalendarWrite: {integrations.LocaleEnglishUS: "Read and manage calendars and events", integrations.LocaleSimplifiedChinese: "读取和管理日历及日程"},
+	}
+}
+
+func messageListInputSchema() map[string]interface{} {
+	schema := strictObjectSchema(map[string]interface{}{
+		"chat_id": localizedSchema(
+			map[string]interface{}{"type": "string", "minLength": 1, "maxLength": 255, "pattern": `^[A-Za-z0-9_-]+$`},
+			"Chat ID", "群聊 ID",
+		),
+		"start_time": localizedSchema(
+			map[string]interface{}{"type": "integer", "minimum": 1, "maximum": 4102444800},
+			"Start time (Unix seconds)", "开始时间（Unix 秒）",
+		),
+		"end_time": localizedSchema(
+			map[string]interface{}{"type": "integer", "minimum": 1, "maximum": 4102444800},
+			"End time (Unix seconds)", "结束时间（Unix 秒）",
+		),
+		"sort_type": localizedEnumSchema(
+			map[string]interface{}{"type": "string", "enum": []string{"newest_first", "oldest_first"}, "default": "newest_first"},
+			"Sort order", "排序方式",
+			map[string]string{"newest_first": "Newest first", "oldest_first": "Oldest first"},
+			map[string]string{"newest_first": "最新优先", "oldest_first": "最早优先"},
+		),
+		"page_size": localizedSchema(
+			map[string]interface{}{"type": "integer", "minimum": 1, "maximum": 50, "default": 20},
+			"Results per page", "每页数量",
+		),
+		"page_token": localizedSchema(
+			map[string]interface{}{"type": "string", "maxLength": 1024}, "Next page token", "下一页 Token",
+		),
+	}, []string{"chat_id"})
+	schema["allOf"] = []interface{}{
+		map[string]interface{}{
+			"if":   map[string]interface{}{"required": []string{"start_time"}},
+			"then": map[string]interface{}{"required": []string{"end_time"}},
+		},
+		map[string]interface{}{
+			"if":   map[string]interface{}{"required": []string{"end_time"}},
+			"then": map[string]interface{}{"required": []string{"start_time"}},
+		},
+	}
+	return schema
+}
+
+func messageListOutputSchema() map[string]interface{} {
+	return strictObjectSchema(map[string]interface{}{
+		"provider": map[string]interface{}{"const": IntegrationID}, "request_id": boundedStringSchema(128),
+		"messages": map[string]interface{}{
+			"type": "array", "maxItems": 50,
+			"items": strictObjectSchema(map[string]interface{}{
+				"message_id": boundedStringSchema(255), "root_id": boundedStringSchema(255),
+				"parent_id": boundedStringSchema(255), "thread_id": boundedStringSchema(255),
+				"chat_id": boundedStringSchema(255), "message_type": boundedStringSchema(64),
+				"text": boundedStringSchema(4000), "sender_id": boundedStringSchema(128),
+				"sender_type": boundedStringSchema(64), "create_time": boundedStringSchema(64),
+				"update_time": boundedStringSchema(64), "deleted": map[string]interface{}{"type": "boolean"},
+				"updated": map[string]interface{}{"type": "boolean"},
+			}, []string{
+				"message_id", "root_id", "parent_id", "thread_id", "chat_id", "message_type", "text",
+				"sender_id", "sender_type", "create_time", "update_time", "deleted", "updated",
+			}),
+		},
+		"next_page_token": boundedStringSchema(1024), "has_more": map[string]interface{}{"type": "boolean"},
+	}, []string{"provider", "request_id", "messages", "next_page_token", "has_more"})
+}
+
+func calendarEventListInputSchema() map[string]interface{} {
+	return strictObjectSchema(map[string]interface{}{
+		"calendar_id": localizedSchema(
+			map[string]interface{}{"type": "string", "minLength": 1, "maxLength": 512, "pattern": `^[A-Za-z0-9_.@-]+$`},
+			"Calendar ID", "日历 ID",
+		),
+		"start_time": localizedSchema(
+			map[string]interface{}{"type": "integer", "minimum": 1, "maximum": 4102444800},
+			"Start time (Unix seconds)", "开始时间（Unix 秒）",
+		),
+		"end_time": localizedSchema(
+			map[string]interface{}{"type": "integer", "minimum": 1, "maximum": 4102444800},
+			"End time (Unix seconds, at most 40 days after start)", "结束时间（Unix 秒，最多晚于开始时间 40 天）",
+		),
+		"page_size": localizedSchema(
+			map[string]interface{}{"type": "integer", "minimum": 1, "maximum": 50, "default": 20},
+			"Results per page", "每页数量",
+		),
+		"page_token": localizedSchema(
+			map[string]interface{}{"type": "string", "maxLength": 1024}, "Next page token", "下一页 Token",
+		),
+	}, []string{"calendar_id", "start_time", "end_time"})
+}
+
+func calendarEventCreateInputSchema() map[string]interface{} {
+	return strictObjectSchema(map[string]interface{}{
+		"calendar_id": localizedSchema(
+			map[string]interface{}{"type": "string", "minLength": 1, "maxLength": 512, "pattern": `^[A-Za-z0-9_.@-]+$`},
+			"Writable calendar ID", "可写日历 ID",
+		),
+		"summary": localizedSchema(
+			map[string]interface{}{"type": "string", "minLength": 1, "maxLength": 1000}, "Event title", "日程标题",
+		),
+		"description": localizedSchema(
+			map[string]interface{}{"type": "string", "maxLength": 40960}, "Event description", "日程描述",
+		),
+		"start_time": localizedSchema(
+			map[string]interface{}{"type": "integer", "minimum": 1, "maximum": 4102444800},
+			"Start time (Unix seconds)", "开始时间（Unix 秒）",
+		),
+		"end_time": localizedSchema(
+			map[string]interface{}{"type": "integer", "minimum": 1, "maximum": 4102444800},
+			"End time (Unix seconds)", "结束时间（Unix 秒）",
+		),
+		"timezone": localizedSchema(
+			map[string]interface{}{"type": "string", "minLength": 1, "maxLength": 64, "pattern": `^[A-Za-z_]+(?:/[A-Za-z0-9_+.-]+)*$`, "default": "Asia/Shanghai"},
+			"IANA time zone", "IANA 时区",
+		),
+		"visibility": localizedEnumSchema(
+			map[string]interface{}{"type": "string", "enum": []string{"default", "public", "private"}, "default": "default"},
+			"Visibility", "公开范围",
+			map[string]string{"default": "Follow calendar", "public": "Public", "private": "Private"},
+			map[string]string{"default": "跟随日历", "public": "公开", "private": "私密"},
+		),
+		"free_busy_status": localizedEnumSchema(
+			map[string]interface{}{"type": "string", "enum": []string{"busy", "free"}, "default": "busy"},
+			"Availability", "忙闲状态",
+			map[string]string{"busy": "Busy", "free": "Free"}, map[string]string{"busy": "忙碌", "free": "空闲"},
+		),
+		"need_notification": localizedSchema(
+			map[string]interface{}{"type": "boolean", "default": true}, "Notify attendees", "通知参与人",
+		),
+		"location_name": localizedSchema(
+			map[string]interface{}{"type": "string", "maxLength": 512}, "Location name", "地点名称",
+		),
+		"location_address": localizedSchema(
+			map[string]interface{}{"type": "string", "maxLength": 1000}, "Location address", "地点地址",
+		),
+	}, []string{"calendar_id", "summary", "start_time", "end_time"})
+}
+
+func calendarEventListOutputSchema() map[string]interface{} {
+	return strictObjectSchema(map[string]interface{}{
+		"provider": map[string]interface{}{"const": IntegrationID}, "request_id": boundedStringSchema(128),
+		"events":          map[string]interface{}{"type": "array", "maxItems": 50, "items": calendarEventSchema()},
+		"next_page_token": boundedStringSchema(1024), "has_more": map[string]interface{}{"type": "boolean"},
+	}, []string{"provider", "request_id", "events", "next_page_token", "has_more"})
+}
+
+func calendarEventCreateOutputSchema() map[string]interface{} {
+	return strictObjectSchema(map[string]interface{}{
+		"provider": map[string]interface{}{"const": IntegrationID}, "request_id": boundedStringSchema(128),
+		"event": calendarEventSchema(),
+	}, []string{"provider", "request_id", "event"})
+}
+
+func calendarEventSchema() map[string]interface{} {
+	timeInfo := strictObjectSchema(map[string]interface{}{
+		"timestamp": boundedStringSchema(32), "date": boundedStringSchema(32), "timezone": boundedStringSchema(64),
+	}, []string{"timestamp", "date", "timezone"})
+	return strictObjectSchema(map[string]interface{}{
+		"event_id": boundedStringSchema(255), "organizer_calendar_id": boundedStringSchema(512),
+		"summary": boundedStringSchema(1000), "description": boundedStringSchema(4000),
+		"start_time": timeInfo, "end_time": timeInfo, "status": boundedStringSchema(64),
+		"visibility": boundedStringSchema(32), "free_busy_status": boundedStringSchema(32),
+		"location_name": boundedStringSchema(512), "location_address": boundedStringSchema(1000),
+		"app_link": boundedStringSchema(2048), "recurrence": boundedStringSchema(2000),
+		"is_exception": map[string]interface{}{"type": "boolean"},
+	}, []string{
+		"event_id", "organizer_calendar_id", "summary", "description", "start_time", "end_time", "status",
+		"visibility", "free_busy_status", "location_name", "location_address", "app_link", "recurrence", "is_exception",
+	})
 }
 
 func messageInputSchema(allowSelf bool) map[string]interface{} {

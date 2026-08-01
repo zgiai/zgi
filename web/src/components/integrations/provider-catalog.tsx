@@ -538,6 +538,7 @@ export function IntegrationProviderCatalog({
 
       <IntegrationProviderCapabilitiesSheet
         provider={capabilityProvider}
+        audience={canManageShared ? 'organization' : 'account'}
         open={Boolean(capabilityProvider)}
         onOpenChange={nextOpen => {
           if (!nextOpen) setCapabilityProvider(null);

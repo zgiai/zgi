@@ -74,8 +74,59 @@ func (c *client) getIdentity(ctx context.Context, accessToken string, target int
 }
 
 func (c *client) sendMessage(ctx context.Context, accessToken, rawMessage string, target interface{}) (responseMeta, error) {
+	return c.sendMessageInThread(ctx, accessToken, rawMessage, "", target)
+}
+
+func (c *client) listMessages(
+	ctx context.Context,
+	accessToken, searchQuery, pageToken string,
+	maxResults int,
+	includeSpamTrash bool,
+	target interface{},
+) (responseMeta, error) {
+	query := url.Values{}
+	query.Set("q", searchQuery)
+	query.Set("maxResults", strconv.Itoa(maxResults))
+	query.Set("includeSpamTrash", strconv.FormatBool(includeSpamTrash))
+	if pageToken != "" {
+		query.Set("pageToken", pageToken)
+	}
+	return c.doJSON(ctx, c.apiBaseURL, http.MethodGet, "/gmail/v1/users/me/messages", query, nil, accessToken, true, target)
+}
+
+func (c *client) getMessage(
+	ctx context.Context,
+	accessToken, messageID, format string,
+	metadataHeaders []string,
+	retryable bool,
+	target interface{},
+) (responseMeta, error) {
+	query := url.Values{}
+	query.Set("format", format)
+	for _, header := range metadataHeaders {
+		query.Add("metadataHeaders", header)
+	}
+	path := "/gmail/v1/users/me/messages/" + url.PathEscape(messageID)
+	return c.doJSON(ctx, c.apiBaseURL, http.MethodGet, path, query, nil, accessToken, retryable, target)
+}
+
+func (c *client) sendMessageInThread(
+	ctx context.Context,
+	accessToken, rawMessage, threadID string,
+	target interface{},
+) (responseMeta, error) {
 	body := map[string]string{"raw": rawMessage}
+	if threadID != "" {
+		body["threadId"] = threadID
+	}
 	return c.doJSON(ctx, c.apiBaseURL, http.MethodPost, "/gmail/v1/users/me/messages/send", nil, body, accessToken, false, target)
+}
+
+func (c *client) createDraft(ctx context.Context, accessToken, rawMessage string, target interface{}) (responseMeta, error) {
+	body := map[string]interface{}{
+		"message": map[string]string{"raw": rawMessage},
+	}
+	return c.doJSON(ctx, c.apiBaseURL, http.MethodPost, "/gmail/v1/users/me/drafts", nil, body, accessToken, false, target)
 }
 
 func (c *client) doJSON(

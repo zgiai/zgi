@@ -96,8 +96,29 @@ func (c *client) listChats(ctx context.Context, region, accessToken string, quer
 	return c.doEnvelope(ctx, region, http.MethodGet, "/open-apis/im/v1/chats", query, nil, accessToken, true, target)
 }
 
+func (c *client) listMessages(ctx context.Context, region, accessToken string, query url.Values, target interface{}) (responseMeta, error) {
+	return c.doEnvelope(ctx, region, http.MethodGet, "/open-apis/im/v1/messages", query, nil, accessToken, true, target)
+}
+
 func (c *client) listCalendars(ctx context.Context, region, accessToken string, query url.Values, target interface{}) (responseMeta, error) {
 	return c.doEnvelope(ctx, region, http.MethodGet, "/open-apis/calendar/v4/calendars", query, nil, accessToken, true, target)
+}
+
+func (c *client) listCalendarEvents(ctx context.Context, region, accessToken, calendarID string, query url.Values, target interface{}) (responseMeta, error) {
+	path := "/open-apis/calendar/v4/calendars/" + url.PathEscape(calendarID) + "/events"
+	return c.doEnvelope(ctx, region, http.MethodGet, path, query, nil, accessToken, true, target)
+}
+
+func (c *client) createCalendarEvent(ctx context.Context, region, accessToken, calendarID, idempotencyKey string, body interface{}, target interface{}) (responseMeta, error) {
+	path := "/open-apis/calendar/v4/calendars/" + url.PathEscape(calendarID) + "/events"
+	query := url.Values{
+		"idempotency_key": []string{idempotencyKey},
+		"user_id_type":    []string{"open_id"},
+	}
+	// Retrying a write is enabled only because every request carries Feishu's
+	// provider-enforced idempotency key. Callers reject a missing marker before
+	// reaching this method, so an unmarked event creation is never retried.
+	return c.doEnvelope(ctx, region, http.MethodPost, path, query, body, accessToken, true, target)
 }
 
 func (c *client) sendMessage(ctx context.Context, region, accessToken, receiveIDType string, body interface{}, target interface{}) (responseMeta, error) {

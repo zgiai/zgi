@@ -9,22 +9,38 @@ Skill per application.
 
 The current built-in providers are:
 
-- GitHub REST: authenticated user, repository listing, and issue listing.
+- GitHub REST: account identity, repository list/search, issue and comment
+  reads, plus approval-gated issue and comment creation.
 - Exa Web Search: public web search and bounded webpage retrieval. Web Search
   also has a curated Skill because it contains search-specific instructions,
   citation behavior, and prompt-injection guidance.
-- Gmail: Google account identity and explicitly approved plain-text email
-  sending through Google OAuth 2.0.
+- Gmail: Google account identity, mail search/read, draft creation, and
+  approval-gated send/reply through Google OAuth 2.0.
 - Feishu (China): delegated user identity, contact discovery, chat and calendar
-  listing, Drive and document reads, plus explicitly approved user or
-  tenant-app messages.
-- X API v2: account identity and own-post reads, with recent search and post
-  creation disabled by default until an administrator enables them.
+  listing, message and calendar-event reads, Drive and document reads, plus
+  approval-gated message and calendar-event creation.
+- X API v2: account and public-user lookup, own-user and selected-user post
+  reads, with recent search and post creation disabled by default until an
+  administrator enables them.
 
 OAuth 2.0 browser connection, token refresh, reconnect, and scope upgrade are
 included for Gmail, delegated Feishu accounts, and X. Workflow integration
 nodes, MCP transport, dynamic OpenAPI imports, and the global Lark provider are
 not part of this release.
+
+## Capability coverage and roadmap
+
+The current built-in catalog contains 5 Providers and 33 Provider Actions. It
+implements the basic progression from identity, through search/list and detail
+reads, to narrowly scoped writes protected by connection grants, provider
+scopes, organization policy, and approval. Provider definitions and their live
+Action metadata remain the authoritative source if this snapshot changes.
+
+The next P1 capability layer is intentionally not implemented yet: GitHub pull
+requests and code reads, Gmail labels and attachments, Feishu group/member and
+document search, and X conversation and engagement reads. P2 is event-driven
+execution through triggers, webhooks, and Workflow integration. Those items are
+roadmap directions, not currently available Actions.
 
 ## Runtime model
 
@@ -457,6 +473,32 @@ can list the selected Connections, search their allowed Actions, request an
 Action guide, and execute the exact Action. All final calls still pass through
 the Executor and current usage, policy, and permission checks.
 
+Action search results include a compact list of required and optional argument
+names. If a dynamic Action call does not match the provider schema, ZGI rejects
+it before approval, quota use, credential resolution, audit creation, or an
+external request. The runtime returns bounded, value-free field diagnostics and
+the current safe input schema so the model can read the Action guide, change the
+arguments, and retry once. Repeating the same invalid call is stopped; the final
+answer must not claim that the provider lacks an Action that was merely called
+with invalid arguments.
+
+Provider validation errors contain only provider-neutral structural facts. The
+calling surface adds its own recovery protocol: Connected Apps may recommend
+`get_action_guide` and `execute_action`, while a direct Skill tool retries the
+current `call_skill_tool` contract. This separation prevents a Web Search or
+future direct tool from receiving instructions for meta tools that it cannot
+call.
+
+Actions that require a target identifier may declare bounded preparation hints.
+For example, a message Action can point to a read-only contact or chat search,
+and an issue write Action can point to repository or issue lookup. AIChat only
+receives a hint when that preparation Action is available for the same
+Connection, authentication method, caller, current provider scopes, usage
+rules, Agent binding, and effective organization policy. Declared result paths
+must exist in the preparation Action output schema or provider registration
+fails. The provider definition remains authoritative; the generic Skill does
+not hardcode Feishu-, GitHub-, or future provider-specific orchestration.
+
 Select the Web Search Skill when you want its curated search/citation behavior.
 Its Connection is managed on the same integrations page, but the visible Skill
 contains domain instructions that generic Action discovery cannot replace.
@@ -470,11 +512,20 @@ GitHub supports two PAT-based methods in this release:
   Connection that still uses a GitHub PAT but is governed by ZGI grants.
 
 Fine-grained PATs with the minimum repository access are recommended. ZGI does
-not return the token after creation. Available read-only Actions are:
+not return the token after creation. Available read Actions are:
 
 - `github.user.get`
 - `github.repository.list`
+- `github.repository.search`
 - `github.issue.list`
+- `github.issue.get`
+- `github.issue.comment.list`
+
+The following write Actions are disabled by default and require explicit
+approval whenever enabled:
+
+- `github.issue.create`
+- `github.issue.comment.create`
 
 Repository and issue responses are bounded before entering model context.
 GitHub primary and secondary rate limits are distinguished from authentication
@@ -490,14 +541,23 @@ kept provider-specific.
 
 Gmail offers personal and organization-owned delegated Google OAuth methods.
 The default consent request asks only for OpenID identity and email scopes.
-Selecting the send Action during connection or scope upgrade additionally
-requests `https://www.googleapis.com/auth/gmail.send`.
+Search and read request `gmail.readonly`; send requests `gmail.send`; reply
+requires both read and send so the server can preserve the original thread and
+reply headers; draft creation requests `gmail.compose`.
 
 Available Actions are:
 
 - `gmail.account.get`: enabled by default, read-only;
+- `gmail.mail.search`: enabled by default, read-only, and returns bounded
+  message summaries;
+- `gmail.mail.get`: enabled by default, read-only, safely parses MIME, and
+  returns a bounded plain-text body;
 - `gmail.mail.send`: disabled by default, high risk, non-idempotent, and every
-  invocation requires explicit approval after an administrator enables it.
+  invocation requires explicit approval after an administrator enables it;
+- `gmail.mail.reply`: disabled by default, high risk, non-idempotent, preserves
+  `threadId`, `References`, and `In-Reply-To`, and always requires approval;
+- `gmail.draft.create`: disabled by default and always requires approval. It
+  creates a draft without sending it.
 
 Email bodies and recipients are validated and bounded before network I/O.
 ZGI sends a plain-text RFC 2822 message through the official Gmail API and
@@ -505,7 +565,7 @@ never asks for or stores the user's Google password.
 Google's structured error reasons distinguish quota, rate-limit, domain-policy,
 authentication, and missing-permission failures. Email sends are never
 automatically retried because a lost response could otherwise produce a
-duplicate message.
+duplicate message. Reply and draft creation are also not automatically retried.
 
 ## Feishu authentication and Actions
 
@@ -523,7 +583,9 @@ Available read Actions are:
 - `feishu.document.read`;
 - `feishu.contact.search`;
 - `feishu.chat.list`;
-- `feishu.calendar.list`.
+- `feishu.calendar.list`;
+- `feishu.message.list`;
+- `feishu.calendar.event.list`.
 
 `feishu.contact.search` is delegated-user only. Drive and document reads, plus
 chat and calendar listing, can use a delegated user or a tenant app when the
@@ -565,7 +627,9 @@ explicit recipient.
 
 Tenant-app messaging uses `feishu.message.send_bot`. Both message Actions are
 disabled by default, high risk, non-idempotent, and require approval for every
-invocation. Reads remain bounded and use fixed `open.feishu.cn` endpoints.
+invocation. `feishu.calendar.event.create` is also disabled by default and
+requires approval before creating an event in a writable calendar. Reads remain
+bounded and use fixed `open.feishu.cn` endpoints.
 
 Before enabling either send Action, publish the current Feishu application
 version with the required permission and availability scope. For bot messages,
@@ -576,11 +640,10 @@ to invent an Open ID or Chat ID. A connection health check proves the identity
 credential works; it does not prove that a particular recipient, group, or
 write Action is available.
 
-Message-history reading is intentionally not exposed yet. Feishu's required
-permission alternatives differ by user versus application identity and by
-one-to-one versus group chat. ZGI will add it only after the Action permission
-contract can express those input-dependent requirements without over-requesting
-access.
+Message-history reads are bounded and require a visible chat plus one of the
+supported read-permission alternatives for the selected authentication method.
+Calendar-event reads require an explicit calendar and time range. Neither
+capability bypasses Feishu application availability or resource-level access.
 
 Lark global is intentionally not presented as a region selector. Its endpoints,
 application registration, and governance destination differ; add it later as
@@ -612,8 +675,8 @@ X supports two intentionally separate authentication identities:
 
 - delegated user OAuth 2.0 Authorization Code with PKCE, requesting
   `offline.access` so an eligible application can issue refresh tokens;
-- an organization-managed, manually entered X app Bearer Token for public,
-  read-only recent search.
+- an organization-managed, manually entered X app Bearer Token for supported
+  public, read-only user lookup, user-post listing, and recent search.
 
 The app Bearer Token never represents a user. It cannot read the current
 account, list that account's posts, or publish a post. Those Actions remain
@@ -624,7 +687,10 @@ header to the official X API.
 Available Actions are:
 
 - `x.account.get`: enabled by default, read-only;
+- `x.user.get_by_username`: enabled by default, read-only public-user lookup;
 - `x.post.list_own`: enabled by default, read-only;
+- `x.post.list_by_user`: enabled by default, read-only public-post listing for
+  one confirmed user ID;
 - `x.post.search_recent`: disabled by default because availability and cost
   depend on the connected X developer plan; it supports delegated OAuth and
   the app-only Bearer method;
@@ -658,17 +724,27 @@ not a new Skill:
    technical identifiers into a Chinese interface.
 4. Give every Action strict Draft 2020-12 input/output schemas, caller support,
    required scopes, effect, risk, data-egress destination, idempotency, and a
-   conservative default policy.
-5. Implement `Adapter.Execute`; optionally implement connection validation,
+   conservative default policy. The non-interactive Agent runtime may only be
+   advertised for read-only Actions that do not require interactive approval;
+   Registry validation rejects a non-read Action that declares Agent support.
+   AIChat may expose write Actions, but the Executor still enforces usage rules,
+   current provider scopes, organization policy, and approval.
+5. When an Action needs a stable identifier that users normally describe by
+   name, add `preparation_hints` that reference an existing read-only Action.
+   Declare the target argument names and safe result paths instead of adding
+   provider names or special cases to the generic Connected Apps prompt.
+6. Implement `Adapter.Execute`; optionally implement connection validation,
    health probing, credential validation, and dynamic governance. For OAuth
    methods also implement the provider OAuth contract for authorization URL,
    code exchange, profile resolution, refresh, and revocation. Keep base URLs
    fixed or allowlisted and normalize provider output.
-6. Register the provider in the service container only when the external
+7. Register the provider in the service container only when the external
    integrations subsystem is enabled.
-7. Test authentication headers, request mapping, pagination/limits, retries,
+8. Test authentication headers, request mapping, pagination/limits, retries,
    safe errors, output bounds, scope drift, health mapping, and secret
-   non-disclosure. Also test both supported locales, nested input-property
+   non-disclosure. Every built-in Action must reject unknown arguments before
+   an external request, return value-free diagnostics, and satisfy the shared
+   caller contract. Also test both supported locales, nested input-property
    labels, and every enum label. Add a container registration test and an
    AIChat meta-tool execution test.
 

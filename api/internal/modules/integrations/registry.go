@@ -305,6 +305,38 @@ func normalizeProviderDefinition(definition ProviderDefinition) (ProviderDefinit
 	for _, action := range definition.Actions {
 		actionsByID[action.ID] = action
 	}
+	for _, action := range definition.Actions {
+		for _, hint := range action.PreparationHints {
+			preparation, exists := actionsByID[hint.ActionID]
+			if !exists {
+				return ProviderDefinition{}, fmt.Errorf(
+					"integration %s action %s references unknown preparation action %s",
+					definition.ID,
+					action.ID,
+					hint.ActionID,
+				)
+			}
+			if preparation.Effect != toolgovernance.EffectRead {
+				return ProviderDefinition{}, fmt.Errorf(
+					"integration %s action %s preparation action %s must be read-only",
+					definition.ID,
+					action.ID,
+					hint.ActionID,
+				)
+			}
+			for _, resultPath := range hint.ResultPaths {
+				if !actionPreparationResultPathExists(preparation.OutputSchema, resultPath) {
+					return ProviderDefinition{}, fmt.Errorf(
+						"integration %s action %s preparation action %s has no output at %s",
+						definition.ID,
+						action.ID,
+						hint.ActionID,
+						resultPath,
+					)
+				}
+			}
+		}
+	}
 	for _, method := range definition.AuthMethods {
 		if method.OAuth == nil {
 			continue
@@ -869,6 +901,17 @@ func normalizeActionDefinition(integrationID string, action ActionDefinition) (A
 		return ActionDefinition{}, fmt.Errorf("integration %s action %s: %w", integrationID, action.ID, err)
 	}
 	action.SupportedCallers = callers
+	if action.Effect != toolgovernance.EffectRead && actionSupportsCaller(action, tools.ToolInvokeFromAgent) {
+		return ActionDefinition{}, fmt.Errorf(
+			"integration %s action %s cannot advertise non-read execution to the non-interactive Agent runtime",
+			integrationID,
+			action.ID,
+		)
+	}
+	action.PreparationHints, err = normalizeActionPreparationHints(integrationID, action)
+	if err != nil {
+		return ActionDefinition{}, err
+	}
 	if action.DefaultPolicy == nil {
 		action.DefaultPolicy = &DefaultActionPolicy{
 			Enabled: true, ApprovalPolicy: toolgovernance.ApprovalPolicyAutoByPermissionTier, DataEgressAllowed: true,
@@ -932,6 +975,117 @@ func normalizeActionCallers(callers []tools.ToolInvokeFrom) ([]tools.ToolInvokeF
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
 	return out, nil
+}
+
+func normalizeActionPreparationHints(integrationID string, action ActionDefinition) ([]ActionPreparationHint, error) {
+	if len(action.PreparationHints) == 0 {
+		return nil, nil
+	}
+	if len(action.PreparationHints) > 8 {
+		return nil, fmt.Errorf("integration %s action %s declares too many preparation hints", integrationID, action.ID)
+	}
+	properties, _ := action.InputSchema["properties"].(map[string]interface{})
+	seen := make(map[string]struct{}, len(action.PreparationHints))
+	out := make([]ActionPreparationHint, 0, len(action.PreparationHints))
+	for _, raw := range action.PreparationHints {
+		hint := raw
+		hint.ActionID = strings.ToLower(strings.TrimSpace(hint.ActionID))
+		hint.Relation = ActionPreparationRelation(strings.ToLower(strings.TrimSpace(string(hint.Relation))))
+		hint.Description = strings.TrimSpace(hint.Description)
+		if !integrationIdentifierPattern.MatchString(hint.ActionID) || hint.ActionID == action.ID {
+			return nil, fmt.Errorf("integration %s action %s preparation action is invalid", integrationID, action.ID)
+		}
+		switch hint.Relation {
+		case ActionPreparationResolveTarget, ActionPreparationInspect:
+		default:
+			return nil, fmt.Errorf("integration %s action %s preparation relation is invalid", integrationID, action.ID)
+		}
+		if hint.Description == "" || len([]rune(hint.Description)) > 1000 {
+			return nil, fmt.Errorf("integration %s action %s preparation description is required and bounded", integrationID, action.ID)
+		}
+		var err error
+		hint.DescriptionI18n, err = normalizeLocalizedText(hint.DescriptionI18n, hint.Description, 1000)
+		if err != nil {
+			return nil, fmt.Errorf("integration %s action %s preparation description: %w", integrationID, action.ID, err)
+		}
+		hint.TargetArguments = normalizeCatalogStringList(hint.TargetArguments, 8)
+		for _, argument := range hint.TargetArguments {
+			if _, exists := properties[argument]; !exists {
+				return nil, fmt.Errorf("integration %s action %s preparation references unknown argument %s", integrationID, action.ID, argument)
+			}
+		}
+		if len(hint.ResultPaths) > 16 {
+			return nil, fmt.Errorf("integration %s action %s preparation exposes too many result paths", integrationID, action.ID)
+		}
+		paths := make([]string, 0, len(hint.ResultPaths))
+		pathSeen := make(map[string]struct{}, len(hint.ResultPaths))
+		for _, rawPath := range hint.ResultPaths {
+			path := strings.TrimSpace(rawPath)
+			if path == "" || len([]rune(path)) > 256 || strings.ContainsAny(path, " \r\n\t") {
+				return nil, fmt.Errorf("integration %s action %s preparation result path is invalid", integrationID, action.ID)
+			}
+			if _, exists := pathSeen[path]; exists {
+				continue
+			}
+			pathSeen[path] = struct{}{}
+			paths = append(paths, path)
+		}
+		sort.Strings(paths)
+		hint.ResultPaths = paths
+		key := string(hint.Relation) + "\x00" + hint.ActionID + "\x00" + strings.Join(hint.TargetArguments, "\x00")
+		if _, duplicated := seen[key]; duplicated {
+			return nil, fmt.Errorf("integration %s action %s preparation hint is duplicated", integrationID, action.ID)
+		}
+		seen[key] = struct{}{}
+		out = append(out, hint)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].ActionID == out[j].ActionID {
+			return out[i].Relation < out[j].Relation
+		}
+		return out[i].ActionID < out[j].ActionID
+	})
+	return out, nil
+}
+
+func actionPreparationResultPathExists(schema map[string]interface{}, path string) bool {
+	current := schema
+	segments := strings.Split(strings.TrimSpace(path), ".")
+	if len(segments) == 0 {
+		return false
+	}
+	for _, rawSegment := range segments {
+		segment := strings.TrimSpace(rawSegment)
+		if segment == "" {
+			return false
+		}
+		arrayElement := strings.HasSuffix(segment, "[]")
+		if arrayElement {
+			segment = strings.TrimSuffix(segment, "[]")
+			if segment == "" {
+				return false
+			}
+		}
+		properties, ok := current["properties"].(map[string]interface{})
+		if !ok {
+			return false
+		}
+		next, ok := properties[segment].(map[string]interface{})
+		if !ok {
+			return false
+		}
+		if arrayElement {
+			if next["type"] != "array" {
+				return false
+			}
+			next, ok = next["items"].(map[string]interface{})
+			if !ok {
+				return false
+			}
+		}
+		current = next
+	}
+	return true
 }
 
 func (r *Registry) Resolve(integrationID, actionID string) (ResolvedAction, error) {
@@ -1529,6 +1683,12 @@ func cloneAction(action ActionDefinition) ActionDefinition {
 	action.PreferredScopes = append([]string(nil), action.PreferredScopes...)
 	action.SupportedAuthMethodIDs = append([]string(nil), action.SupportedAuthMethodIDs...)
 	action.SupportedCallers = append([]tools.ToolInvokeFrom(nil), action.SupportedCallers...)
+	action.PreparationHints = append([]ActionPreparationHint(nil), action.PreparationHints...)
+	for index := range action.PreparationHints {
+		action.PreparationHints[index].TargetArguments = append([]string(nil), action.PreparationHints[index].TargetArguments...)
+		action.PreparationHints[index].ResultPaths = append([]string(nil), action.PreparationHints[index].ResultPaths...)
+		action.PreparationHints[index].DescriptionI18n = cloneLocalizedText(action.PreparationHints[index].DescriptionI18n)
+	}
 	if action.DefaultPolicy != nil {
 		policy := *action.DefaultPolicy
 		action.DefaultPolicy = &policy

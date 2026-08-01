@@ -450,7 +450,8 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 			}
 			if result.trace.Kind == "" && failedCallKey != "" {
 				if reason := failedToolCallReasons[failedCallKey]; strings.TrimSpace(reason) != "" {
-					result = repeatedFailedToolCallRecoverableStep(call.ID, callSkillID, callToolName, callToolArgs, reason, resolved)
+					stopAfterWarning := failedToolCallAttemptCounts[failedCallKey] >= 2
+					result = repeatedFailedToolCallRecoverableStep(call.ID, callSkillID, callToolName, callToolArgs, reason, stopAfterWarning, resolved)
 				}
 			}
 			if result.trace.Kind == "" {
@@ -494,9 +495,11 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 				failedCallKey != "" &&
 				strings.EqualFold(strings.TrimSpace(result.trace.Kind), "tool_call") &&
 				shouldRememberFailedToolCall(result.trace) {
-				failedToolCallReasons[failedCallKey] = strings.TrimSpace(result.trace.Error)
-				if failedToolCallReasons[failedCallKey] == "" {
-					failedToolCallReasons[failedCallKey] = "previous tool call with the same arguments failed"
+				if _, alreadyRemembered := failedToolCallReasons[failedCallKey]; !alreadyRemembered {
+					failedToolCallReasons[failedCallKey] = strings.TrimSpace(result.trace.Error)
+					if failedToolCallReasons[failedCallKey] == "" {
+						failedToolCallReasons[failedCallKey] = "previous tool call with the same arguments failed"
+					}
 				}
 			}
 			if result.recoverable {
@@ -1345,7 +1348,8 @@ func recoverableSkillFailureCategory(trace skills.SkillTrace) string {
 		return category
 	}
 	reasonCode := strings.ToLower(strings.TrimSpace(evidenceStringFromAny(trace.Arguments["reason_code"])))
-	if strings.HasPrefix(reasonCode, "skill_tool_arguments_") {
+	if strings.HasPrefix(reasonCode, "skill_tool_arguments_") ||
+		strings.HasPrefix(reasonCode, "action_arguments_") {
 		return "arguments"
 	}
 	if strings.Contains(reasonCode, "permission") ||
@@ -1498,10 +1502,17 @@ func copyStringIntMap(input map[string]int) map[string]interface{} {
 	return out
 }
 
-func repeatedFailedToolCallRecoverableStep(callID string, skillID string, toolName string, args map[string]interface{}, reason string, resolved ...*skills.ResolvedSkills) skillStepResult {
+func repeatedFailedToolCallRecoverableStep(callID string, skillID string, toolName string, args map[string]interface{}, reason string, stopBusinessLoop bool, resolved ...*skills.ResolvedSkills) skillStepResult {
 	message := "same tool call with the same arguments already failed in this turn"
 	if reason = strings.TrimSpace(reason); reason != "" {
 		message += ": " + reason
+	}
+	retryAction := "Do not repeat the identical call. Change the arguments using the validation feedback before retrying."
+	if strings.EqualFold(strings.TrimSpace(skillID), "external-apps") && strings.EqualFold(strings.TrimSpace(toolName), "execute_action") {
+		retryAction = "Call get_action_guide for the selected integration and action, then retry execute_action once with corrected arguments."
+	}
+	if stopBusinessLoop {
+		retryAction = "stop retrying this business tool and explain the incomplete operation truthfully"
 	}
 	err := &skillToolArgumentsError{
 		Code:              skillToolRetryNoProgressCode,
@@ -1510,7 +1521,7 @@ func repeatedFailedToolCallRecoverableStep(callID string, skillID string, toolNa
 		ExpectedType:      "object",
 		ActualType:        "object",
 		ExpectedArguments: skills.ExpectedSkillToolArgumentsForResolved(firstResolvedSkills(resolved), skillID, toolName),
-		RetryAction:       "stop retrying this business tool and explain the incomplete operation truthfully",
+		RetryAction:       retryAction,
 		Cause:             fmt.Errorf("%w: %s", ErrInvalidInput, message),
 	}
 	trace := failedSkillTrace("tool_call", toolName, err)
@@ -1526,7 +1537,7 @@ func repeatedFailedToolCallRecoverableStep(callID string, skillID string, toolNa
 		false,
 		false,
 	)
-	result.stopBusinessLoop = true
+	result.stopBusinessLoop = stopBusinessLoop
 	return result
 }
 
