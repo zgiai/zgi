@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/zgiai/zgi/api/internal/capabilities/toolgovernance"
 	"github.com/zgiai/zgi/api/internal/modules/integrations"
+	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"github.com/zgiai/zgi/api/internal/modules/tools"
 )
 
@@ -110,7 +112,9 @@ func TestProviderDefinitionSeparatesUserOAuthAndTenantApp(t *testing.T) {
 		} else if action.ID == ActionCreateEvent {
 			if action.Effect != toolgovernance.EffectCreate || action.RiskLevel != toolgovernance.RiskLevelHigh ||
 				action.DefaultPolicy == nil || action.DefaultPolicy.Enabled ||
-				action.DefaultPolicy.ApprovalPolicy != toolgovernance.ApprovalPolicyAlwaysAsk || !action.Idempotent ||
+				action.DefaultPolicy.ApprovalPolicy != toolgovernance.ApprovalPolicyAlwaysAsk || action.Idempotent ||
+				action.SuccessDeduplication == nil ||
+				!slices.Equal(action.SuccessDeduplication.TargetArgumentPaths, []string{"calendar_id"}) ||
 				!slices.Equal(action.SupportedCallers, []tools.ToolInvokeFrom{tools.ToolInvokeFromAIChat}) {
 				t.Fatalf("unsafe calendar create defaults = %#v", action)
 			}
@@ -186,6 +190,53 @@ func TestProviderDefinitionSeparatesUserOAuthAndTenantApp(t *testing.T) {
 				t.Fatalf("send-bot scope alternatives = %#v", action)
 			}
 		}
+	}
+}
+
+func TestCalendarEventIdempotencyKeyIgnoresCorrectedContentWithinOneOperation(t *testing.T) {
+	base := integrations.ActionRequest{
+		OrganizationID: "organization-1",
+		ConnectionID:   "connection-1",
+		MessageID:      "message-1",
+		Input: map[string]interface{}{
+			"calendar_id": "primary", "summary": "回家", "start_time": int64(100), "end_time": int64(200),
+		},
+	}
+	first, err := calendarEventIdempotencyKey(base)
+	if err != nil {
+		t.Fatalf("calendarEventIdempotencyKey() error = %v", err)
+	}
+	corrected := base
+	corrected.Input = map[string]interface{}{
+		"calendar_id": "primary", "summary": "回家（已修正）", "start_time": int64(300), "end_time": int64(400),
+	}
+	second, err := calendarEventIdempotencyKey(corrected)
+	if err != nil {
+		t.Fatalf("calendarEventIdempotencyKey(corrected) error = %v", err)
+	}
+	if first == "" || first != second {
+		t.Fatalf("same operation idempotency keys first=%q second=%q", first, second)
+	}
+}
+
+func TestCalendarEventIdempotencyKeyDistinguishesBatchItemsAndNewMessages(t *testing.T) {
+	base := integrations.ActionRequest{
+		OrganizationID: "organization-1", ConnectionID: "connection-1", MessageID: "message-1",
+		BatchID: "batch-1", OperationItemID: "item-001", Input: map[string]interface{}{"calendar_id": "primary"},
+	}
+	first, err := calendarEventIdempotencyKey(base)
+	if err != nil {
+		t.Fatalf("calendarEventIdempotencyKey() error = %v", err)
+	}
+	secondItem := base
+	secondItem.OperationItemID = "item-002"
+	second, _ := calendarEventIdempotencyKey(secondItem)
+	newMessage := base
+	newMessage.MessageID = "message-2"
+	newMessage.BatchID = "batch-2"
+	third, _ := calendarEventIdempotencyKey(newMessage)
+	if first == second || first == third {
+		t.Fatalf("idempotency key did not distinguish item/message: first=%q second=%q third=%q", first, second, third)
 	}
 }
 
@@ -831,6 +882,44 @@ func TestOpenAPIBusinessCodeWinsOverHTTPStatus(t *testing.T) {
 	}
 }
 
+func TestFeishuFieldValidationReturnsSafeStructuralRecovery(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.WriteHeader(http.StatusBadRequest)
+		_, _ = io.WriteString(writer, `{"code":99992402,"msg":"field validation failed: secret-value","error":{"log_id":"field-log-1","field_violations":[{"field":"page_size","description":"must be at least 50; received secret-value"},{"field":"unsafe field value","description":"must not escape"}]}}`)
+	}))
+	defer server.Close()
+	adapter, err := newForBaseURLs(server.Client(), server.URL, server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = adapter.Execute(context.Background(), integrations.ActionRequest{
+		ActionID: ActionGetAccount,
+		Connection: &integrations.ResolvedConnection{
+			IntegrationID: IntegrationID, DriverID: DriverID, AuthMethodID: UserOAuthAuthMethodID,
+			Credentials: map[string]string{"access_token": "access-token"},
+			Config:      map[string]interface{}{"region": RegionCN},
+		},
+	})
+	if integrations.ErrorCode(err) != integrations.ErrorCodeInvalidInput {
+		t.Fatalf("error = %v (%s)", err, integrations.ErrorCode(err))
+	}
+	diagnostics := integrations.ProviderDiagnosticsFromError(err)
+	if diagnostics.ErrorCode != "99992402" || diagnostics.RequestID != "field-log-1" ||
+		diagnostics.HTTPStatus != http.StatusBadRequest || diagnostics.InvalidField != "page_size" {
+		t.Fatalf("diagnostics = %#v", diagnostics)
+	}
+	recovery := skills.PublicToolErrorRecovery(err)
+	if recovery["recovery_kind"] != "provider_validation" ||
+		recovery["provider_error_code"] != "99992402" ||
+		!reflect.DeepEqual(recovery["invalid_fields"], []string{"page_size"}) {
+		t.Fatalf("recovery = %#v", recovery)
+	}
+	encoded, marshalErr := json.Marshal(recovery)
+	if marshalErr != nil || strings.Contains(string(encoded), "secret-value") || strings.Contains(string(encoded), "description") {
+		t.Fatalf("unsafe recovery = %s, err = %v", encoded, marshalErr)
+	}
+}
+
 func TestFeishuReadRetriesGenericHTTP500(t *testing.T) {
 	var calls atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
@@ -928,6 +1017,7 @@ func TestFeishuBusinessCodeMapping(t *testing.T) {
 		{1770002, integrations.ErrorCodeInvalidInput},
 		{1770003, integrations.ErrorCodeInvalidInput},
 		{1770033, integrations.ErrorCodeResponseInvalid},
+		{99992402, integrations.ErrorCodeInvalidInput},
 		{1061001, integrations.ErrorCodeUpstream},
 		{190007, integrations.ErrorCodeInvalidInput},
 		{191000, integrations.ErrorCodeInvalidInput},

@@ -665,6 +665,8 @@ func applyPublicToolErrorRecoveryTrace(trace *skills.SkillTrace, err error) {
 		"integration_id",
 		"action_id",
 		"provider_request_sent",
+		"provider_error_code",
+		"invalid_fields",
 		"recoverable",
 		"recovery_action",
 		"schema_revision",

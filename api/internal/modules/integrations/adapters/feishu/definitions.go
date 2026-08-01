@@ -930,7 +930,10 @@ func calendarEventCreateAction() integrations.ActionDefinition {
 		InputSchema: calendarEventCreateInputSchema(), OutputSchema: calendarEventCreateOutputSchema(),
 		Effect: toolgovernance.EffectCreate, RiskLevel: toolgovernance.RiskLevelHigh,
 		DataEgress: true, ExternalDestination: "open.feishu.cn", SensitiveDataAllowed: false,
-		Idempotent: true, RequiredScopes: []string{ScopeEventCreate}, ScopeLabelsI18n: calendarEventCreateScopeLabels(),
+		Idempotent: false, RequiredScopes: []string{ScopeEventCreate}, ScopeLabelsI18n: calendarEventCreateScopeLabels(),
+		SuccessDeduplication: &integrations.SuccessDeduplicationDefinition{
+			TargetArgumentPaths: []string{"calendar_id"},
+		},
 		DefaultPolicy: &integrations.DefaultActionPolicy{
 			Enabled: false, ApprovalPolicy: toolgovernance.ApprovalPolicyAlwaysAsk, DataEgressAllowed: true,
 		},
@@ -1031,7 +1034,7 @@ func calendarEventListInputSchema() map[string]interface{} {
 			"End time (Unix seconds, at most 40 days after start)", "结束时间（Unix 秒，最多晚于开始时间 40 天）",
 		),
 		"page_size": localizedSchema(
-			map[string]interface{}{"type": "integer", "minimum": 1, "maximum": 50, "default": 20},
+			map[string]interface{}{"type": "integer", "minimum": 50, "maximum": 50, "default": 50},
 			"Results per page", "每页数量",
 		),
 		"page_token": localizedSchema(

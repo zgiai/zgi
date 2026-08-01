@@ -53,8 +53,8 @@ function actionDefaultPolicy(
   return {
     integration_id: integrationId,
     action_id: action.id,
-    // The existing safety default remains enforced by the backend. This page
-    // intentionally does not present organization allow/deny as app capability.
+    // Provider defaults seed missing organization policy rows; persisted
+    // organization policy overrides are merged into the editable draft below.
     enabled: action.default_policy?.enabled ?? true,
     approval_policy:
       action.default_policy?.approval_policy === 'always_ask' ? 'always_ask' : 'inherit',
@@ -71,10 +71,10 @@ export function IntegrationProviderCapabilitiesInline({
   const [filter, setFilter] = useState<CapabilityFilter>('all');
   const integrationId = integrationCatalogID(provider);
   const actions = useMemo(() => provider.actions ?? [], [provider.actions]);
-  const capabilityQuery = useIntegrationProviderCapabilities(
-    integrationId,
-    canManageShared ? 'organization' : 'account'
-  );
+  // This connected view describes what the current signed-in account can use.
+  // Administrators may edit shared policies here, but that must not hide their
+  // personal connections from the live capability calculation.
+  const capabilityQuery = useIntegrationProviderCapabilities(integrationId, 'account');
   const policyQuery = useIntegrationActionPolicies(canManageShared ? integrationId : '');
   const updateMutation = useUpdateIntegrationActionPolicies(integrationId);
   const [draft, setDraft] = useState<IntegrationActionPolicy[]>([]);
@@ -431,6 +431,32 @@ export function IntegrationProviderCapabilitiesInline({
                     <p className="text-xs font-medium text-foreground">
                       {t('capabilities.executionSettings')}
                     </p>
+                    <div className="flex items-center justify-between gap-4 rounded-md border bg-background p-3">
+                      <div>
+                        <p className="text-xs font-medium">{t('capabilities.actionStatus')}</p>
+                        <p className="mt-1 text-[11px] text-muted-foreground">
+                          {t('capabilities.actionStatusDescription')}
+                        </p>
+                      </div>
+                      {canManageShared ? (
+                        <Switch
+                          checked={policy.enabled}
+                          disabled={
+                            updateMutation.isPending || policyQuery.isLoading || policyQuery.isError
+                          }
+                          aria-label={t('capabilities.actionStatus')}
+                          onCheckedChange={enabled => updatePolicy(action.id, { enabled })}
+                        />
+                      ) : (
+                        <Badge variant="outline">
+                          {currentPolicyKnown
+                            ? policy.enabled
+                              ? t('capabilities.actionEnabled')
+                              : t('capabilities.actionDisabled')
+                            : t('capabilities.currentPolicyUnavailable')}
+                        </Badge>
+                      )}
+                    </div>
                     <div className="space-y-1">
                       <span className="text-[11px] text-muted-foreground">
                         {t('policies.approval')}
@@ -442,6 +468,7 @@ export function IntegrationProviderCapabilitiesInline({
                             policyQuery.isLoading ||
                             policyQuery.isError ||
                             updateMutation.isPending ||
+                            !policy.enabled ||
                             approvalLockedByProvider
                           }
                           onValueChange={approvalPolicy =>
@@ -487,6 +514,7 @@ export function IntegrationProviderCapabilitiesInline({
                             updateMutation.isPending ||
                             policyQuery.isLoading ||
                             policyQuery.isError ||
+                            !policy.enabled ||
                             !action.data_egress ||
                             egressLockedByProvider
                           }

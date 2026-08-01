@@ -1321,3 +1321,33 @@ func TestSummarizeToolResultCompactsVisibleFilesPayload(t *testing.T) {
 		t.Fatalf("content_preview should not be included in compact trace file: %#v", files[0])
 	}
 }
+
+func TestSummarizeToolResultPreservesConfirmedExternalActionFacts(t *testing.T) {
+	result := SummarizeToolResult(skills.SkillExternalApps, "execute_action", []tools.ToolInvokeMessage{{
+		Type: tools.ToolInvokeMessageTypeJSON,
+		Data: map[string]interface{}{
+			"integration_id": "feishu", "action_id": "feishu.calendar.event.create",
+			"connection_name": "我的飞书", "operation_status": "completed",
+			"result_count": 1, "attempt_count": 1, "provider_request_id": "request-1",
+			"result": map[string]interface{}{
+				"provider": "feishu", "request_id": "request-1",
+				"event": map[string]interface{}{
+					"event_id": "event-1", "summary": "回家",
+					"start_time": map[string]interface{}{"timestamp": "1785687600", "timezone": "Asia/Shanghai"},
+					"end_time":   map[string]interface{}{"timestamp": "1785691200", "timezone": "Asia/Shanghai"},
+				},
+			},
+		},
+	}})
+	if result["action_id"] != "feishu.calendar.event.create" || result["provider_success_confirmed"] != true {
+		t.Fatalf("external action summary = %#v", result)
+	}
+	providerResult := recordFromAny(result["provider_result"])
+	event := recordFromAny(providerResult["event"])
+	if event["event_id"] != "event-1" || event["summary"] != "回家" {
+		t.Fatalf("provider event summary = %#v", providerResult)
+	}
+	if _, leaked := result["result"]; leaked {
+		t.Fatalf("raw provider result leaked into trace summary: %#v", result)
+	}
+}

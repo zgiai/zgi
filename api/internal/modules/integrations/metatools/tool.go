@@ -225,6 +225,9 @@ func (t *Tool) searchActions(ctx context.Context, userID string, parameters map[
 			}
 			item := actionSummaryOutput(action, preferred.record)
 			if detail, detailOK := t.registry.ActionDetail(integrationID, action.ID); detailOK {
+				if policyErr := t.applyActionPolicyStatus(ctx, userID, integrationID, detail, item); policyErr != nil {
+					return nil, policyErr
+				}
 				for key, value := range compactActionInputContract(detail.InputSchema) {
 					item[key] = value
 				}
@@ -265,6 +268,9 @@ func (t *Tool) getActionGuide(ctx context.Context, userID string, parameters map
 	}
 	definition, _ := t.registry.ProviderDefinition(integrationID)
 	output := actionSummaryOutput(actionSummary(definition, action), preferred.record)
+	if policyErr := t.applyActionPolicyStatus(ctx, userID, integrationID, action, output); policyErr != nil {
+		return nil, policyErr
+	}
 	output["input_schema"] = cloneMap(action.InputSchema)
 	output["output_schema"] = cloneMap(action.OutputSchema)
 	output["schema_revision"] = action.SchemaRevision
@@ -308,9 +314,13 @@ func (t *Tool) executeAction(ctx context.Context, userID string, parameters map[
 			organizationID, accountID, workspaceID, conversationID, appID, messageID,
 		)
 	}
-	actionArguments, ok := parameters["arguments"].(map[string]interface{})
-	if !ok || actionArguments == nil {
-		return nil, integrations.NewError(integrations.ErrorCodeInvalidInput, "execute_action arguments must be an object", nil)
+	actionArguments := map[string]interface{}{}
+	if rawArguments, exists := parameters["arguments"]; exists {
+		var ok bool
+		actionArguments, ok = rawArguments.(map[string]interface{})
+		if !ok || actionArguments == nil {
+			return nil, integrations.NewError(integrations.ErrorCodeInvalidInput, "execute_action arguments must be an object", nil)
+		}
 	}
 	request := integrations.ActionRequest{
 		OrganizationID: organizationID.String(), WorkspaceID: optionalUUIDString(workspaceID), UserID: accountID.String(),
@@ -1284,6 +1294,45 @@ func actionSummaryOutput(action integrations.ActionSummary, connection *integrat
 		output["external_destination"] = boundedString(destination, 255)
 	}
 	return output
+}
+
+func (t *Tool) applyActionPolicyStatus(
+	ctx context.Context,
+	userID string,
+	integrationID string,
+	action integrations.ActionDefinition,
+	output map[string]interface{},
+) error {
+	if t == nil || t.policies == nil || output == nil {
+		return nil
+	}
+	organizationID, _, _, err := t.authorizationContext(userID)
+	if err != nil {
+		return err
+	}
+	decision, err := t.policies.Resolve(ctx, organizationID.String(), integrationID, action)
+	if err != nil {
+		return integrations.NewError(
+			integrations.ErrorCodeAccessDenied,
+			"integration action policy could not be resolved",
+			err,
+		)
+	}
+	output["enabled"] = decision.Enabled
+	output["data_egress_allowed"] = decision.DataEgressAllowed
+	output["requires_approval"] = decision.ApprovalPolicy == integrations.IntegrationApprovalPolicyAlwaysAsk
+	if !decision.Enabled {
+		output["availability"] = "disabled_by_policy"
+		output["can_execute"] = false
+		output["recovery_action"] = "enable_action_in_connection_center"
+		return nil
+	}
+	if action.DataEgress && !decision.DataEgressAllowed {
+		output["availability"] = "data_egress_blocked"
+		output["can_execute"] = false
+		output["recovery_action"] = "allow_data_egress_in_connection_center"
+	}
+	return nil
 }
 
 func (t *Tool) preparationHintsOutput(

@@ -86,6 +86,17 @@ func TestProviderPublishesStrictBoundedSchemas(t *testing.T) {
 	if err := tools.ValidateJSONSchemaValue(execute.GetEntity().InputSchema, base); err != nil {
 		t.Fatalf("execute_action rejected implicit preferred selection: %v", err)
 	}
+	withoutArguments := map[string]interface{}{
+		"integration_id": fixture.integrationID, "action_id": fixture.actionID,
+	}
+	if err := tools.ValidateJSONSchemaValue(execute.GetEntity().InputSchema, withoutArguments); err != nil {
+		t.Fatalf("execute_action rejected omitted arguments: %v", err)
+	}
+	withArgumentsAndBatch := cloneMap(base)
+	withArgumentsAndBatch["batch_items"] = []interface{}{map[string]interface{}{}, map[string]interface{}{}}
+	if err := tools.ValidateJSONSchemaValue(execute.GetEntity().InputSchema, withArgumentsAndBatch); err == nil {
+		t.Fatal("execute_action accepted both arguments and batch_items")
+	}
 	withExplicitConnection := cloneMap(base)
 	withExplicitConnection["connection_id"] = fixture.connectionOne.ID.String()
 	if err := tools.ValidateJSONSchemaValue(execute.GetEntity().InputSchema, withExplicitConnection); err != nil {
@@ -448,6 +459,57 @@ func TestSearchAndGuideExposeOnlyActionAuthorizedConnections(t *testing.T) {
 	assertNoConnectionUUIDs(t, guide, fixture.connectionOne.ID, fixture.connectionTwo.ID)
 	if err := tools.ValidateJSONSchemaValue(guideTool.GetEntity().OutputSchema, guide); err != nil {
 		t.Fatalf("get_action_guide output schema error = %v", err)
+	}
+}
+
+func TestSearchAndGuideExposeEffectiveDisabledPolicyBeforeExecution(t *testing.T) {
+	fixture := newMetaToolFixture(t)
+	fixture.access.preferenceAllowed[fixture.connectionOne.ID] = true
+	fixture.access.actionAllowed[fixture.connectionOne.ID.String()+"/"+fixture.actionID] = true
+	fixture.policies.decisions[fixture.integrationID+"/"+fixture.actionID] = integrations.ActionPolicyDecision{
+		Enabled: false, ApprovalPolicy: integrations.IntegrationApprovalPolicyAlwaysAsk, DataEgressAllowed: true,
+	}
+	runtimeParameters := map[string]interface{}{
+		"integration_selected_connection_ids": map[string][]string{
+			fixture.integrationID: {fixture.connectionOne.ID.String()},
+		},
+		"integration_connection_ids": map[string]string{fixture.integrationID: fixture.connectionOne.ID.String()},
+	}
+
+	searchTool := fixture.runtimeTool(t, ToolSearchActions, runtimeParameters)
+	messages, err := searchTool.Invoke(context.Background(), fixture.accountID.String(), map[string]interface{}{
+		"integration_id": fixture.integrationID, "limit": 5,
+	}, nil, nil, nil)
+	if err != nil || len(messages) != 1 {
+		t.Fatalf("search messages = %#v, err = %v", messages, err)
+	}
+	actions := messages[0].Data["actions"].([]interface{})
+	if len(actions) != 1 {
+		t.Fatalf("search actions = %#v", actions)
+	}
+	action := actions[0].(map[string]interface{})
+	if action["availability"] != "disabled_by_policy" || action["can_execute"] != false ||
+		action["enabled"] != false || action["recovery_action"] != "enable_action_in_connection_center" {
+		t.Fatalf("search policy state = %#v", action)
+	}
+	if err := tools.ValidateJSONSchemaValue(searchTool.GetEntity().OutputSchema, messages[0].Data); err != nil {
+		t.Fatalf("search output schema error = %v", err)
+	}
+
+	guideTool := fixture.runtimeTool(t, ToolGetActionGuide, runtimeParameters)
+	guideMessages, err := guideTool.Invoke(context.Background(), fixture.accountID.String(), map[string]interface{}{
+		"integration_id": fixture.integrationID, "action_id": fixture.actionID,
+	}, nil, nil, nil)
+	if err != nil || len(guideMessages) != 1 {
+		t.Fatalf("guide messages = %#v, err = %v", guideMessages, err)
+	}
+	guide := guideMessages[0].Data
+	if guide["availability"] != "disabled_by_policy" || guide["can_execute"] != false ||
+		guide["enabled"] != false || guide["recovery_action"] != "enable_action_in_connection_center" {
+		t.Fatalf("guide policy state = %#v", guide)
+	}
+	if err := tools.ValidateJSONSchemaValue(guideTool.GetEntity().OutputSchema, guide); err != nil {
+		t.Fatalf("guide output schema error = %v", err)
 	}
 }
 

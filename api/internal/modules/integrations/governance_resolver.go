@@ -189,7 +189,12 @@ func (resolver *GovernanceManifestResolver) ResolveToolGovernanceManifest(ctx co
 		return manifest, err
 	}
 	if !decision.Enabled {
-		return manifest, NewError(ErrorCodeDisabled, "integration action is disabled by organization policy", nil)
+		return manifest, NewErrorWithReason(
+			ErrorCodeDisabled,
+			"action_disabled_by_policy",
+			"integration action is disabled by usage policy",
+			nil,
+		)
 	}
 	if action.DataEgress && !decision.DataEgressAllowed {
 		return manifest, NewError(ErrorCodeAccessDenied, "organization policy blocks data egress for this integration action", nil)

@@ -476,8 +476,22 @@ func (s *service) runToolGovernanceApprovedFrozenContinuation(
 	if invocation != nil {
 		prepared.Message.Metadata = preparedOperationEvidenceMetadata(prepared.Message.Metadata)
 	}
+	if executionErr != nil && approvedFrozenExternalAction(frozen) {
+		result, err := s.completeApprovedFrozenExternalActionFailure(
+			persistCtx,
+			prepared,
+			frozen,
+			onEvent,
+		)
+		return result, true, err
+	}
 	if executionErr == nil {
 		metadata, terminalOnly := completeBoundGovernedInvocationOperationPlan(prepared.Message.Metadata, frozen)
+		if approvedFrozenExternalActionProviderSuccess(frozen, invocation) {
+			var confirmedTerminal bool
+			metadata, confirmedTerminal = completeApprovedFrozenExternalActionSuccess(metadata, frozen, invocation)
+			terminalOnly = terminalOnly || confirmedTerminal
+		}
 		prepared.Message.Metadata = metadata
 		prepared.TerminalOnly = terminalOnly
 		if terminalOnly {
@@ -528,6 +542,218 @@ func (s *service) runToolGovernanceApprovedFrozenContinuation(
 	}
 	s.emitPreparedEvent(persistCtx, prepared, streamEventMessageEnd, messageEndPayload(prepared, metadata), onEvent)
 	return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, Status: runtimemodel.MessageStatusCompleted}, true, nil
+}
+
+func approvedFrozenExternalAction(frozen toolgovernance.FrozenInvocation) bool {
+	return strings.EqualFold(strings.TrimSpace(frozen.SkillID), skills.SkillExternalApps) &&
+		strings.EqualFold(strings.TrimSpace(frozen.ToolName), "execute_action")
+}
+
+func approvedFrozenExternalActionProviderSuccess(frozen toolgovernance.FrozenInvocation, invocation *skills.ToolInvocationResult) bool {
+	if !approvedFrozenExternalAction(frozen) || invocation == nil ||
+		!strings.EqualFold(strings.TrimSpace(invocation.Trace.Status), "success") {
+		return false
+	}
+	result := mapFromOperationContext(invocation.Trace.Result)
+	if confirmed, ok := result["provider_success_confirmed"].(bool); ok && confirmed {
+		return true
+	}
+	switch strings.ToLower(strings.TrimSpace(stringFromAny(result["operation_status"]))) {
+	case "completed", "already_completed", "succeeded":
+		return true
+	default:
+		return false
+	}
+}
+
+func completeApprovedFrozenExternalActionSuccess(
+	metadata map[string]interface{},
+	frozen toolgovernance.FrozenInvocation,
+	invocation *skills.ToolInvocationResult,
+) (map[string]interface{}, bool) {
+	next := copyStringAnyMap(metadata)
+	if next == nil {
+		next = map[string]interface{}{}
+	}
+	result := map[string]interface{}{}
+	if invocation != nil {
+		result = copyStringAnyMap(invocation.Trace.Result)
+	}
+	actionID := strings.TrimSpace(firstNonEmptyString(result["action_id"], frozen.Arguments["action_id"]))
+	operationStatus := strings.TrimSpace(firstNonEmptyString(result["operation_status"], "completed"))
+
+	summary := copyStringAnyMap(mapFromOperationContext(next["operation_result_summary"]))
+	if summary == nil {
+		summary = map[string]interface{}{}
+	}
+	summary["status"] = operationPlanStatusCompleted
+	summary["provider_success_confirmed"] = true
+	summary["operation_status"] = operationStatus
+	summary["success_count"] = max(1, intValueFromAny(result["result_count"]))
+	summary["failed_count"] = 0
+	summary["pending_next_action"] = "none"
+	summary["updated_at"] = time.Now().UTC().Format(time.RFC3339)
+	if actionID != "" {
+		summary["operation"] = actionID
+		summary["action_id"] = actionID
+	}
+	if len(result) > 0 {
+		summary["latest_tool_result"] = result
+	}
+	next["operation_result_summary"] = summary
+	next["completion_reason"] = "external_operation_provider_confirmed"
+
+	terminal := !approvedExternalActionHasExplicitRemainingWork(next, frozen)
+	if !terminal {
+		return next, false
+	}
+	markApprovedExternalActionPlanCompleted(next, frozen)
+	return next, true
+}
+
+func approvedExternalActionHasExplicitRemainingWork(metadata map[string]interface{}, frozen toolgovernance.FrozenInvocation) bool {
+	plan := mapFromOperationContext(metadata["operation_plan"])
+	if len(plan) == 0 {
+		return false
+	}
+	openOutcomes := 0
+	for _, outcome := range mapSliceFromAny(plan[operationPlanOutcomesKey]) {
+		if operationPlanPhaseOpen(outcome) {
+			openOutcomes++
+		}
+	}
+	if openOutcomes > 1 {
+		return true
+	}
+	phases := mapSliceFromAny(plan["phases"])
+	openPhases := 0
+	for _, phase := range phases {
+		if operationPlanPhaseOpen(phase) {
+			openPhases++
+		}
+	}
+	for _, phase := range phases {
+		if !operationPlanPhaseOpen(phase) {
+			continue
+		}
+		if governedInvocationPlanBindingMatches(mapFromOperationContext(phase[operationPlanRuntimeBindingKey]), frozen) ||
+			governedInvocationExpectedActionMatches(mapFromOperationContext(phase["expected_action"]), frozen) ||
+			strings.EqualFold(strings.TrimSpace(stringFromAny(phase["verification_mode"])), "model_reconciliation") {
+			continue
+		}
+		if len(mapFromOperationContext(phase["expected_action"])) > 0 {
+			return true
+		}
+		// A single unbound phase commonly represents the just-approved action.
+		// Multiple unbound phases are genuine remaining work and must not be
+		// silently completed just because one provider call succeeded.
+		if openPhases > 1 {
+			return true
+		}
+	}
+	return false
+}
+
+func markApprovedExternalActionPlanCompleted(metadata map[string]interface{}, frozen toolgovernance.FrozenInvocation) {
+	plan := copyStringAnyMap(mapFromOperationContext(metadata["operation_plan"]))
+	if len(plan) == 0 {
+		return
+	}
+	completedAt := time.Now().UTC().Format(time.RFC3339)
+	evidenceRef := operationPlanToolEvidenceKey(frozen.SkillID, frozen.ToolName)
+	phases := mapSliceFromAny(plan["phases"])
+	for _, phase := range phases {
+		if !operationPlanPhaseOpen(phase) {
+			continue
+		}
+		phase["status"] = operationPlanStepStatusCompleted
+		phase["completed_at"] = completedAt
+		phase["completion_source"] = "external_operation_provider_receipt"
+		phase["evidence_refs"] = appendUniqueStrings(stringSliceFromAny(phase["evidence_refs"]), evidenceRef)
+	}
+	if len(phases) > 0 {
+		plan["phases"] = mapsToInterfaceSlice(phases)
+	}
+	outcomes := mapSliceFromAny(plan[operationPlanOutcomesKey])
+	for _, outcome := range outcomes {
+		if !operationPlanPhaseOpen(outcome) {
+			continue
+		}
+		outcome["status"] = operationPlanStepStatusCompleted
+		outcome["completed_at"] = completedAt
+		outcome["completion_source"] = "external_operation_provider_receipt"
+		outcome["effect_refs"] = appendUniqueStrings(stringSliceFromAny(outcome["effect_refs"]), evidenceRef)
+	}
+	if len(outcomes) > 0 {
+		plan[operationPlanOutcomesKey] = mapsToInterfaceSlice(outcomes)
+	}
+	plan["status"] = operationPlanStatusCompleted
+	plan["pending_next_action"] = "none"
+	plan["completion_verification"] = map[string]interface{}{
+		"status": "pass", "source": "external_operation_provider_receipt",
+		"reason": "the approved external operation returned a confirmed provider success receipt",
+	}
+	operationPlanMarkEvidenceCurrent(plan)
+	operationPlanSyncStrategyState(plan)
+	metadata["operation_plan"] = plan
+	syncOperationPlanCompletionMetadata(metadata)
+}
+
+func (s *service) completeApprovedFrozenExternalActionFailure(
+	persistCtx context.Context,
+	prepared *PreparedChat,
+	frozen toolgovernance.FrozenInvocation,
+	onEvent func(StreamEvent) error,
+) (*ChatResult, error) {
+	metadata := preparedOperationEvidenceMetadata(prepared.Message.Metadata)
+	metadata["completion_reason"] = "external_operation_failed"
+	applyOperationPlanTerminalCompletionResultWithSource(
+		metadata,
+		"failed",
+		"external_operation_runtime",
+		"the approved external operation did not produce a successful provider receipt",
+		[]string{"external_operation_not_confirmed"},
+		nil,
+		"",
+	)
+	metadata = refreshOperationResultSummaryMetadata(metadata)
+	summary := copyStringAnyMap(mapFromOperationContext(metadata["operation_result_summary"]))
+	if summary == nil {
+		summary = map[string]interface{}{}
+	}
+	summary["status"] = "failed"
+	summary["success_count"] = 0
+	summary["failed_count"] = 1
+	summary["provider_success_confirmed"] = false
+	if actionID := strings.TrimSpace(stringFromAny(frozen.Arguments["action_id"])); actionID != "" {
+		summary["operation"] = actionID
+	}
+	metadata["operation_result_summary"] = summary
+	prepared.Message.Metadata = metadata
+
+	answer := approvedFrozenExternalActionFailureAnswer(prepared, frozen)
+	if err := s.completePreparedChat(persistCtx, prepared, answer, metadata); err != nil {
+		return nil, finalizedRuntimePersistenceError(err)
+	}
+	s.emitPreparedEvent(persistCtx, prepared, streamEventMessageEnd, messageEndPayload(prepared, metadata), onEvent)
+	return &ChatResult{Answer: answer, Metadata: metadata, Status: runtimemodel.MessageStatusCompleted}, nil
+}
+
+func approvedFrozenExternalActionFailureAnswer(prepared *PreparedChat, frozen toolgovernance.FrozenInvocation) string {
+	query := ""
+	if prepared != nil {
+		if prepared.parts != nil {
+			query = strings.TrimSpace(prepared.parts.Query)
+		}
+		if query == "" && prepared.Message != nil {
+			query = strings.TrimSpace(prepared.Message.Query)
+		}
+	}
+	scope := skillloop.ExternalActionFailureOperation
+	if frozen.Effect == toolgovernance.EffectExternalSend {
+		scope = skillloop.ExternalActionFailureSend
+	}
+	return skillloop.LocalizedExternalActionFailureAnswer(query, scope)
 }
 
 func preparedOperationEvidenceMetadata(source map[string]interface{}) map[string]interface{} {

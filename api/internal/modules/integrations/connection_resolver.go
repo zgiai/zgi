@@ -46,6 +46,7 @@ type ResolvedConnection struct {
 	Config            map[string]any             `json:"-"`
 	GrantedScopes     []string                   `json:"-"`
 	CredentialVersion int                        `json:"-"`
+	Revision          int                        `json:"-"`
 }
 
 func (connection *ResolvedConnection) Destroy() {
@@ -182,6 +183,7 @@ func (resolver *DefaultConnectionResolver) resolveRecord(ctx context.Context, co
 		Config:            cloneAnyMap(connection.Config),
 		GrantedScopes:     append([]string(nil), connection.GrantedScopes...),
 		CredentialVersion: connection.CredentialVersion,
+		Revision:          connection.Revision,
 	}, nil
 }
 

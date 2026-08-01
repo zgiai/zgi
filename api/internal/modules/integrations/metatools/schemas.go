@@ -174,10 +174,9 @@ func executeActionInputSchema() map[string]interface{} {
 		map[string]interface{}{
 			"not": map[string]interface{}{"required": []string{"connection_id", "connection_selector"}},
 		},
-	}
-	schema["oneOf"] = []interface{}{
-		map[string]interface{}{"required": []string{"arguments"}, "not": map[string]interface{}{"required": []string{"batch_items"}}},
-		map[string]interface{}{"required": []string{"batch_items"}, "not": map[string]interface{}{"required": []string{"arguments"}}},
+		map[string]interface{}{
+			"not": map[string]interface{}{"required": []string{"arguments", "batch_items"}},
+		},
 	}
 	return schema
 }
@@ -242,11 +241,19 @@ func actionSummarySchema() map[string]interface{} {
 		"connection_name":         map[string]interface{}{"type": "string", "maxLength": 128},
 		"connection_display_name": map[string]interface{}{"type": "string", "maxLength": 255},
 		"connection_selection":    map[string]interface{}{"type": "string", "enum": []string{"preferred"}},
-		"availability":            map[string]interface{}{"type": "string", "enum": []string{"ready", "scope_upgrade_required"}},
-		"can_execute":             map[string]interface{}{"type": "boolean"},
-		"recovery_action":         map[string]interface{}{"type": "string", "enum": []string{"upgrade_oauth_scope"}},
-		"requires_approval":       map[string]interface{}{"type": "boolean"},
-		"supports_batch":          map[string]interface{}{"type": "boolean"},
+		"availability": map[string]interface{}{
+			"type": "string",
+			"enum": []string{"ready", "scope_upgrade_required", "disabled_by_policy", "data_egress_blocked"},
+		},
+		"can_execute":         map[string]interface{}{"type": "boolean"},
+		"enabled":             map[string]interface{}{"type": "boolean"},
+		"data_egress_allowed": map[string]interface{}{"type": "boolean"},
+		"recovery_action": map[string]interface{}{
+			"type": "string",
+			"enum": []string{"upgrade_oauth_scope", "enable_action_in_connection_center", "allow_data_egress_in_connection_center"},
+		},
+		"requires_approval": map[string]interface{}{"type": "boolean"},
+		"supports_batch":    map[string]interface{}{"type": "boolean"},
 		"required_arguments": map[string]interface{}{
 			"type": "array", "maxItems": 64, "items": compactArgumentSchema,
 		},

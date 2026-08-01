@@ -487,8 +487,14 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 					failedToolCallAttemptCounts,
 					result.stopBusinessLoop,
 				)
-				if recoverableSkillFailureMadeProgress(latestRecoverableTrace, result.trace) {
+				madeProgress := recoverableSkillFailureMadeProgress(latestRecoverableTrace, result.trace)
+				if madeProgress {
 					roundMadeFailureProgress = true
+				} else if repeatedProviderValidationFailure(latestRecoverableTrace, result.trace) {
+					// Permit one corrected retry after provider field-validation
+					// feedback. If the provider reports the same structural failure
+					// again, further argument variation is not evidence of progress.
+					result.stopBusinessLoop = true
 				}
 			}
 			traces = append(traces, result.trace)
@@ -603,6 +609,13 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 			messages = append(messages, roundDeferredSystemMessages...)
 		}
 		if stopBusinessLoop && !roundHadSuccess && !roundMadeFailureProgress {
+			failureReason := "the model repeated the same failed business-tool call without changing its arguments"
+			if strings.EqualFold(
+				strings.TrimSpace(evidenceStringFromAny(stopBusinessLoopTrace.Arguments["recovery_kind"])),
+				"provider_validation",
+			) {
+				failureReason = "the provider rejected the corrected request with the same field-validation error"
+			}
 			answer, explanationUsage, explanationErr := r.completeBusinessToolFailure(
 				ctx,
 				req,
@@ -610,7 +623,7 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 				traces,
 				stopBusinessLoopTrace,
 				successfulToolCalls,
-				"the model repeated the same failed business-tool call without changing its arguments",
+				failureReason,
 				round,
 			)
 			usage = mergeUsage(usage, explanationUsage)
@@ -1386,6 +1399,8 @@ func recoverableSkillFailureFingerprint(trace skills.SkillTrace, argumentFingerp
 		"tool_name":            strings.ToLower(strings.TrimSpace(trace.ToolName)),
 		"reason_code":          strings.ToLower(strings.TrimSpace(evidenceStringFromAny(trace.Arguments["reason_code"]))),
 		"missing_fields":       evidenceStringSliceFromAny(trace.Arguments["missing_fields"]),
+		"provider_error_code":  strings.ToLower(strings.TrimSpace(evidenceStringFromAny(trace.Arguments["provider_error_code"]))),
+		"invalid_fields":       evidenceStringSliceFromAny(trace.Arguments["invalid_fields"]),
 		"argument_fingerprint": strings.TrimSpace(argumentFingerprint),
 	}
 	encoded, err := json.Marshal(payload)
@@ -1411,6 +1426,9 @@ func recoverableSkillFailureMadeProgress(previous skills.SkillTrace, current ski
 	if previousSkillID != currentSkillID || previousToolName != currentToolName {
 		return currentSkillID != "" || currentToolName != ""
 	}
+	if repeatedProviderValidationFailure(previous, current) {
+		return false
+	}
 
 	previousArgumentFingerprint := strings.TrimSpace(evidenceStringFromAny(previous.Arguments["argument_fingerprint"]))
 	currentArgumentFingerprint := strings.TrimSpace(evidenceStringFromAny(current.Arguments["argument_fingerprint"]))
@@ -1431,6 +1449,34 @@ func recoverableSkillFailureMadeProgress(previous skills.SkillTrace, current ski
 	return previousActualType != "" &&
 		previousActualType != "object" &&
 		currentActualType == "object"
+}
+
+func repeatedProviderValidationFailure(previous skills.SkillTrace, current skills.SkillTrace) bool {
+	if !strings.EqualFold(
+		strings.TrimSpace(evidenceStringFromAny(previous.Arguments["recovery_kind"])),
+		"provider_validation",
+	) || !strings.EqualFold(
+		strings.TrimSpace(evidenceStringFromAny(current.Arguments["recovery_kind"])),
+		"provider_validation",
+	) {
+		return false
+	}
+	previousCode := strings.ToLower(strings.TrimSpace(evidenceStringFromAny(previous.Arguments["provider_error_code"])))
+	currentCode := strings.ToLower(strings.TrimSpace(evidenceStringFromAny(current.Arguments["provider_error_code"])))
+	if previousCode == "" || previousCode != currentCode {
+		return false
+	}
+	previousFields := evidenceStringSliceFromAny(previous.Arguments["invalid_fields"])
+	currentFields := evidenceStringSliceFromAny(current.Arguments["invalid_fields"])
+	if len(previousFields) != len(currentFields) {
+		return false
+	}
+	for index := range previousFields {
+		if !strings.EqualFold(strings.TrimSpace(previousFields[index]), strings.TrimSpace(currentFields[index])) {
+			return false
+		}
+	}
+	return true
 }
 
 func digestDiagnosticValue(value string) string {

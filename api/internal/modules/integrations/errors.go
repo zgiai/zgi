@@ -32,6 +32,7 @@ var ErrQuotaExceeded = errors.New("integration daily quota exceeded")
 
 type Error struct {
 	Code                string
+	ReasonCode          string `json:"-"`
 	Message             string
 	Err                 error
 	ProviderDiagnostics ProviderDiagnostics `json:"-"`
@@ -62,8 +63,59 @@ func (e *Error) PublicErrorCode() string {
 	return e.Code
 }
 
+// PublicErrorRecovery exposes only stable, structural provider diagnostics.
+// Provider messages, descriptions, values, payloads, URLs, credentials, and
+// connection identifiers never enter this contract.
+func (e *Error) PublicErrorRecovery() map[string]interface{} {
+	if e == nil {
+		return nil
+	}
+	if e.Code == ErrorCodeDisabled && e.ReasonCode == "action_disabled_by_policy" {
+		return map[string]interface{}{
+			"error_code":            ErrorCodeDisabled,
+			"reason_code":           e.ReasonCode,
+			"recovery_kind":         "action_policy",
+			"failure_stage":         "policy",
+			"provider_request_sent": false,
+			"recoverable":           false,
+			"recovery_action":       "enable_action_in_connection_center",
+			"retry_action":          "Do not retry this action. Explain that the action is disabled by usage rules and must be enabled in Connection Center before retrying.",
+		}
+	}
+	if e.Code != ErrorCodeInvalidInput {
+		return nil
+	}
+	diagnostics := normalizeProviderDiagnostics(e.ProviderDiagnostics)
+	if diagnostics.ErrorCode == "" && diagnostics.InvalidField == "" {
+		return nil
+	}
+	feedback := map[string]interface{}{
+		"error_code":            ErrorCodeInvalidInput,
+		"reason_code":           "provider_field_validation_failed",
+		"recovery_kind":         "provider_validation",
+		"failure_stage":         "provider",
+		"provider_request_sent": diagnostics.HTTPStatus != 0,
+		"recoverable":           true,
+		"recovery_action":       "get_action_guide",
+		"retry_action":          "Call get_action_guide, then retry the same action once after correcting only the invalid fields.",
+	}
+	if diagnostics.ErrorCode != "" {
+		feedback["provider_error_code"] = diagnostics.ErrorCode
+	}
+	if diagnostics.InvalidField != "" {
+		feedback["invalid_fields"] = []string{diagnostics.InvalidField}
+	}
+	return feedback
+}
+
 func NewError(code, message string, err error) error {
 	return &Error{Code: code, Message: message, Err: err}
+}
+
+// NewErrorWithReason attaches a stable, non-sensitive reason code that can be
+// surfaced to models and UIs without exposing internal messages or identities.
+func NewErrorWithReason(code, reasonCode, message string, err error) error {
+	return &Error{Code: code, ReasonCode: reasonCode, Message: message, Err: err}
 }
 
 // NewProviderError creates an integration error with bounded, structured

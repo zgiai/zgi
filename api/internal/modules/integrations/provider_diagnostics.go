@@ -9,11 +9,13 @@ import (
 const (
 	maxProviderErrorCodeLength = 128
 	maxProviderRequestIDLength = 128
+	maxProviderFieldLength     = 128
 )
 
 var (
 	safeProviderErrorCodePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]*$`)
 	safeProviderRequestIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:/=+-]*$`)
+	safeProviderFieldPattern     = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_.\[\]-]*$`)
 )
 
 // ProviderDiagnostics is the complete provider-owned metadata that may cross
@@ -25,6 +27,7 @@ type ProviderDiagnostics struct {
 	RequestID    string
 	HTTPStatus   int
 	RetryAfterAt *time.Time
+	InvalidField string
 }
 
 // ProviderDiagnosticsFromError returns normalized, non-sensitive provider
@@ -75,7 +78,19 @@ func normalizeProviderDiagnostics(diagnostics ProviderDiagnostics) ProviderDiagn
 			diagnostics.RetryAfterAt = &normalized
 		}
 	}
+	diagnostics.InvalidField = normalizeProviderDiagnosticValue(
+		diagnostics.InvalidField,
+		maxProviderFieldLength,
+		safeProviderFieldPattern,
+	)
 	return diagnostics
+}
+
+// NormalizeProviderDiagnostics returns a bounded copy safe to attach to an
+// adapter result. It is exported so adapters can normalize provider-owned
+// structural metadata before it reaches either success or error plumbing.
+func NormalizeProviderDiagnostics(diagnostics ProviderDiagnostics) ProviderDiagnostics {
+	return normalizeProviderDiagnostics(diagnostics)
 }
 
 func mergeProviderDiagnostics(primary, fallback ProviderDiagnostics) ProviderDiagnostics {
@@ -92,6 +107,9 @@ func mergeProviderDiagnostics(primary, fallback ProviderDiagnostics) ProviderDia
 	}
 	if primary.RetryAfterAt == nil {
 		primary.RetryAfterAt = cloneTimePointer(fallback.RetryAfterAt)
+	}
+	if primary.InvalidField == "" {
+		primary.InvalidField = fallback.InvalidField
 	}
 	return primary
 }

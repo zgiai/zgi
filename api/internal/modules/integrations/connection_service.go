@@ -384,7 +384,7 @@ func (service *DefaultConnectionService) Test(ctx context.Context, organizationI
 	if !ok {
 		return service.connectionView(connection), nil, NewError(ErrorCodeConnectionInvalid, "integration connection test resolver is unavailable", nil)
 	}
-	resolved, err := testResolver.ResolveRecordForTest(ctx, connection)
+	resolved, connection, err := service.resolveConnectionSnapshotForTest(ctx, testResolver, connection, actorID)
 	if err != nil {
 		return service.connectionView(connection), nil, err
 	}
@@ -457,6 +457,68 @@ func (service *DefaultConnectionService) Test(ctx context.Context, organizationI
 		return service.connectionView(connection), profile, testErr
 	}
 	return service.connectionView(connection), profile, nil
+}
+
+// resolveConnectionSnapshotForTest returns a resolved credential snapshot and
+// the exact repository revision from which it was produced. OAuth resolution
+// may refresh and persist a token before the provider test starts; reloading
+// here prevents that expected self-update from being mistaken for an
+// ambiguous connection or a concurrent user edit. A bounded retry also absorbs
+// metadata updates that finish before the provider request, while the final
+// repository CAS still protects changes made during the request itself.
+func (service *DefaultConnectionService) resolveConnectionSnapshotForTest(
+	ctx context.Context,
+	resolver interface {
+		ResolveRecordForTest(context.Context, *IntegrationConnection) (*ResolvedConnection, error)
+	},
+	connection *IntegrationConnection,
+	actorID *uuid.UUID,
+) (*ResolvedConnection, *IntegrationConnection, error) {
+	const maxAttempts = 3
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		resolved, err := resolver.ResolveRecordForTest(ctx, connection)
+		if err != nil {
+			return nil, connection, err
+		}
+		latest, err := service.repository.GetByID(ctx, connection.OrganizationID, connection.ID)
+		if err != nil {
+			resolved.Destroy()
+			return nil, connection, mapConnectionLookupError(err)
+		}
+		if err := rejectLegacyPlatformConnection(latest); err != nil {
+			resolved.Destroy()
+			return nil, latest, err
+		}
+		if err := authorizePersonalConnectionOwner(latest, actorID); err != nil {
+			resolved.Destroy()
+			return nil, latest, err
+		}
+		if latest.Status == ConnectionStatusDisabled {
+			resolved.Destroy()
+			return nil, latest, NewError(ErrorCodeConnectionConflict, "integration connection changed during test setup; retry", ErrConnectionChanged)
+		}
+		if resolvedConnectionMatchesRecord(resolved, latest) {
+			return resolved, latest, nil
+		}
+		resolved.Destroy()
+		connection = latest
+	}
+	return nil, connection, NewError(ErrorCodeConnectionConflict, "integration connection kept changing during test setup; retry", ErrConnectionChanged)
+}
+
+func resolvedConnectionMatchesRecord(resolved *ResolvedConnection, connection *IntegrationConnection) bool {
+	if resolved == nil || connection == nil {
+		return false
+	}
+	return resolved.ID == connection.ID.String() &&
+		resolved.OrganizationID == connection.OrganizationID.String() &&
+		strings.EqualFold(resolved.IntegrationID, connection.IntegrationID) &&
+		strings.EqualFold(resolved.DriverID, connection.DriverID) &&
+		resolved.CredentialSource == connection.CredentialSource &&
+		resolved.AuthType == connection.AuthType &&
+		strings.EqualFold(resolved.AuthMethodID, connection.AuthMethodID) &&
+		resolved.CredentialVersion == connection.CredentialVersion &&
+		resolved.Revision == connection.Revision
 }
 
 func applyConnectionTestFailureSummary(connection *IntegrationConnection, code string, failureThreshold int) {

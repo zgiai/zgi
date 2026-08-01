@@ -168,7 +168,12 @@ func (e *Executor) Execute(ctx context.Context, req ActionRequest) (*ActionResul
 		return nil, NewError(ErrorCodeAccessDenied, "integration action policy could not be resolved", policyErr)
 	}
 	if !decision.Enabled {
-		return nil, NewError(ErrorCodeDisabled, "integration action is disabled by organization policy", nil)
+		return nil, NewErrorWithReason(
+			ErrorCodeDisabled,
+			"action_disabled_by_policy",
+			"integration action is disabled by usage policy",
+			nil,
+		)
 	}
 	if resolved.Definition.DataEgress && !decision.DataEgressAllowed {
 		return nil, NewError(ErrorCodeAccessDenied, "organization policy blocks data egress for this integration action", nil)

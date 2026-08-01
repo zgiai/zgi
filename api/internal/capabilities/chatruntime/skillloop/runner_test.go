@@ -604,6 +604,10 @@ func TestTerminalProjectionCompactValuePrioritizesStableKeysDeterministically(t 
 	input := map[string]interface{}{
 		"status": "success", "code": "ok", "message": "done", "summary": "stable",
 		"agent_id": "agent-1", "file_id": "file-1", "system_prompt_digest": "sha256:prompt",
+		"operation_status": "completed", "provider_success_confirmed": true,
+		"provider_result": map[string]interface{}{
+			"event": map[string]interface{}{"event_id": "event-1", "summary": "未来七天日程"},
+		},
 		"updated_fields": []interface{}{"system_prompt", "description"},
 	}
 	for index := 0; index < 40; index++ {
@@ -619,6 +623,12 @@ func TestTerminalProjectionCompactValuePrioritizesStableKeysDeterministically(t 
 	for _, key := range []string{"status", "code", "message", "summary", "agent_id", "file_id", "system_prompt_digest", "updated_fields"} {
 		if _, ok := projected[key]; !ok {
 			t.Fatalf("projection omitted priority key %q: %#v", key, projected)
+		}
+	}
+	stable := terminalProjectionStableSummary(input)
+	for _, key := range []string{"operation_status", "provider_success_confirmed", "provider_result"} {
+		if _, ok := stable[key]; !ok {
+			t.Fatalf("stable projection omitted provider key %q: %#v", key, stable)
 		}
 	}
 }
@@ -4106,6 +4116,13 @@ func TestRecoverableSkillFailureMadeProgress(t *testing.T) {
 			},
 		}
 	}
+	providerFailure := func(argumentFingerprint string) skills.SkillTrace {
+		value := trace("external-apps", "execute_action", "arguments", argumentFingerprint, "object")
+		value.Arguments["recovery_kind"] = "provider_validation"
+		value.Arguments["provider_error_code"] = "99992402"
+		value.Arguments["invalid_fields"] = []string{"page_size"}
+		return value
+	}
 
 	tests := []struct {
 		name     string
@@ -4147,6 +4164,11 @@ func TestRecoverableSkillFailureMadeProgress(t *testing.T) {
 			previous: trace("file-generator", "generate_file", "transient", "sha256:before", "object"),
 			current:  trace("file-generator", "generate_file", "transient", "sha256:after", "object"),
 		},
+		{
+			name:     "same provider validation is not progress despite changed arguments",
+			previous: providerFailure("sha256:before"),
+			current:  providerFailure("sha256:after"),
+		},
 	}
 
 	for _, test := range tests {
@@ -4155,6 +4177,27 @@ func TestRecoverableSkillFailureMadeProgress(t *testing.T) {
 				t.Fatalf("recoverableSkillFailureMadeProgress() = %v, want %v", got, test.want)
 			}
 		})
+	}
+}
+
+func TestRepeatedProviderValidationFailureRequiresSameCodeAndFields(t *testing.T) {
+	trace := func(code string, fields []string) skills.SkillTrace {
+		return skills.SkillTrace{
+			Kind: "tool_call", SkillID: "external-apps", ToolName: "execute_action", Status: "error",
+			Arguments: map[string]interface{}{
+				"recovery_kind": "provider_validation", "provider_error_code": code, "invalid_fields": fields,
+			},
+		}
+	}
+	previous := trace("99992402", []string{"page_size"})
+	if !repeatedProviderValidationFailure(previous, trace("99992402", []string{"page_size"})) {
+		t.Fatal("identical provider validation failure was not detected")
+	}
+	if repeatedProviderValidationFailure(previous, trace("99992402", []string{"start_time"})) {
+		t.Fatal("different invalid field was treated as an identical provider failure")
+	}
+	if repeatedProviderValidationFailure(previous, trace("other", []string{"page_size"})) {
+		t.Fatal("different provider error code was treated as identical")
 	}
 }
 

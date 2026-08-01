@@ -111,7 +111,7 @@ func TestListCalendarEventsUsesTimeRangeAndClipsOutput(t *testing.T) {
 		}
 		query := request.URL.Query()
 		if query.Get("start_time") != "1700000000" || query.Get("end_time") != "1700086400" ||
-			query.Get("page_size") != "1" || query.Get("page_token") != "page-in" {
+			query.Get("page_size") != "50" || query.Get("page_token") != "page-in" {
 			t.Errorf("query = %s", request.URL.RawQuery)
 		}
 		writer.Header().Set("X-Tt-Logid", "events-log")
@@ -123,16 +123,34 @@ func TestListCalendarEventsUsesTimeRangeAndClipsOutput(t *testing.T) {
 		ActionID: ActionListEvents, Connection: testUserConnection(),
 		Input: map[string]interface{}{
 			"calendar_id": calendarID, "start_time": int64(1_700_000_000), "end_time": int64(1_700_086_400),
-			"page_size": 1, "page_token": "page-in",
+			"page_token": "page-in",
 		},
 	})
-	if err != nil || result == nil || result.ProviderRequestID != "events-log" || result.ResultCount != 1 {
+	if err != nil || result == nil || result.ProviderRequestID != "events-log" || result.ResultCount != 2 {
 		t.Fatalf("result = %#v, err = %v", result, err)
 	}
 	events := result.Output["events"].([]interface{})
 	event := events[0].(map[string]interface{})
 	if len([]rune(event["description"].(string))) != 4000 || event["app_link"] == "" || result.Output["next_page_token"] != "page-out" {
 		t.Fatalf("output = %#v", result.Output)
+	}
+}
+
+func TestListCalendarEventsRejectsProviderInvalidPageSizeBeforeNetwork(t *testing.T) {
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { calls.Add(1) }))
+	defer server.Close()
+	adapter := newTestAdapter(t, server)
+	_, err := adapter.Execute(context.Background(), integrations.ActionRequest{
+		ActionID: ActionListEvents, Connection: testUserConnection(),
+		Input: map[string]interface{}{
+			"calendar_id": "feishu.cn_team@group.calendar.feishu.cn",
+			"start_time":  int64(1_700_000_000), "end_time": int64(1_700_086_400),
+			"page_size": 20,
+		},
+	})
+	if integrations.ErrorCode(err) != integrations.ErrorCodeInvalidInput || calls.Load() != 0 {
+		t.Fatalf("err = %v, calls = %d", err, calls.Load())
 	}
 }
 

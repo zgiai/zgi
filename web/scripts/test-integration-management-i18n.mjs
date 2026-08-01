@@ -205,7 +205,11 @@ assert.match(capabilitiesInline, /useUpdateIntegrationActionPolicies/);
 assert.match(capabilitiesInline, /approval_policy/);
 assert.match(capabilitiesInline, /data_egress_allowed/);
 assert.match(capabilitiesInline, /useIntegrationProviderCapabilities/);
-assert.match(capabilitiesInline, /canManageShared \? 'organization' : 'account'/);
+assert.match(
+  capabilitiesInline,
+  /useIntegrationProviderCapabilities\(integrationId,\s*'account'\)/,
+  'the connected capability view must include the current account connections even for administrators'
+);
 assert.match(capabilityAvailability, /status_unavailable/);
 assert.match(capabilityAvailability, /compatibleConnectionCount/);
 assert.equal(chinese.capabilities.availability.needs_permission, '缺少使用权限');

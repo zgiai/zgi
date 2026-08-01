@@ -472,7 +472,11 @@ func (adapter *Adapter) listCalendarEvents(ctx context.Context, region, token st
 			nil,
 		)
 	}
-	pageSize, err := strictInputInteger(input, "page_size", 20, 1, 50)
+	// Feishu calendar event pagination currently accepts page_size in the
+	// provider range [50, 1000]. ZGI deliberately fixes the public Action to
+	// 50 so one tool result remains bounded while omitted arguments still
+	// produce a provider-valid request.
+	pageSize, err := strictInputInteger(input, "page_size", 50, 50, 50)
 	if err != nil {
 		return nil, responseMeta{}, err
 	}
@@ -765,13 +769,21 @@ func calendarEventIdempotencyKey(request integrations.ActionRequest) (string, er
 			nil,
 		)
 	}
-	encodedInput, err := json.Marshal(request.Input)
-	if err != nil {
-		return "", integrations.NewError(integrations.ErrorCodeInvalidInput, "Feishu calendar event input could not be encoded", err)
+	calendarID := strings.TrimSpace(inputString(request.Input, "calendar_id"))
+	if calendarID == "" {
+		return "", integrations.NewError(integrations.ErrorCodeInvalidInput, "Feishu calendar event calendar id is required", nil)
+	}
+	batchID := strings.TrimSpace(request.BatchID)
+	operationItemID := strings.TrimSpace(request.OperationItemID)
+	if batchID == "" {
+		batchID = "single-" + messageID
+	}
+	if operationItemID == "" {
+		operationItemID = "single"
 	}
 	digest := sha256.Sum256([]byte(strings.Join([]string{
 		strings.TrimSpace(request.OrganizationID), strings.TrimSpace(request.ConnectionID),
-		messageID, ActionCreateEvent, string(encodedInput),
+		messageID, ActionCreateEvent, calendarID, batchID, operationItemID,
 	}, "\x00")))
 	return hex.EncodeToString(digest[:]), nil
 }

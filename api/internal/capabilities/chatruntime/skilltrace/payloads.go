@@ -327,8 +327,64 @@ var resultSummaryBuilders = map[string]resultSummaryBuilder{
 	skills.SkillAgentDatabase:     summarizeDatabaseResult,
 	skills.SkillAgentWorkflow:     summarizeWorkflowResult,
 	skills.SkillAgentManagement:   summarizeAgentManagementResult,
+	skills.SkillExternalApps:      summarizeExternalAppsResult,
 	skills.SkillFileManager:       summarizeFileReaderResult,
 	skills.SkillFileReader:        summarizeFileReaderResult,
+}
+
+func summarizeExternalAppsResult(toolName string, payload map[string]interface{}) map[string]interface{} {
+	if len(payload) == 0 {
+		return nil
+	}
+	switch strings.TrimSpace(toolName) {
+	case "execute_action":
+		result := compactFields(payload,
+			"integration_id", "action_id", "integration_name", "action_name",
+			"connection_name", "connection_display_name", "connection_selection",
+			"operation_status", "result_count", "attempt_count", "provider_request_id",
+			"retry_safe", "result_truncated",
+		)
+		operationStatus := strings.ToLower(strings.TrimSpace(firstNonEmptyString(payload["operation_status"])))
+		switch operationStatus {
+		case "completed", "already_completed", "succeeded":
+			result["provider_success_confirmed"] = true
+		}
+		if providerResult := compactExternalAppsProviderResult(recordFromAny(payload["result"])); len(providerResult) > 0 {
+			result["provider_result"] = providerResult
+		}
+		if batch := recordFromAny(payload["batch"]); len(batch) > 0 {
+			result["batch"] = compactFields(batch,
+				"status", "item_count", "succeeded_count", "failed_safe_count",
+				"outcome_unknown_count", "executing_count",
+			)
+		}
+		return result
+	case "list_connections":
+		return map[string]interface{}{"connections_count": collectionLen(payload["connections"])}
+	case "search_actions":
+		return compactFields(payload, "count", "query", "integration_id")
+	case "get_action_guide":
+		return compactFields(payload, "integration_id", "action_id", "name", "effect", "risk_level", "supports_batch")
+	default:
+		return nil
+	}
+}
+
+func compactExternalAppsProviderResult(payload map[string]interface{}) map[string]interface{} {
+	if len(payload) == 0 {
+		return nil
+	}
+	result := compactFields(payload, "status", "provider", "request_id", "result_code", "content_truncated")
+	if event := recordFromAny(payload["event"]); len(event) > 0 {
+		result["event"] = compactFields(event,
+			"event_id", "organizer_calendar_id", "summary", "start_time", "end_time",
+			"status", "visibility", "free_busy_status", "location_name", "app_link",
+		)
+	}
+	if message := recordFromAny(payload["message"]); len(message) > 0 {
+		result["message"] = compactFields(message, "message_id", "root_id", "parent_id", "create_time")
+	}
+	return result
 }
 
 // SummarizeToolResult returns the compact trace-visible result for known skill tools.

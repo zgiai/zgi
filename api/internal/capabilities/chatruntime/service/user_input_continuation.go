@@ -329,6 +329,7 @@ func resolveUserInputContinuationMetadata(source map[string]interface{}, message
 		responses = responses[len(responses)-maxUserInputResponses:]
 	}
 	metadata["user_input_responses"] = mapsToInterfaceSlice(responses)
+	metadata["task_facts"] = userInputTaskFactsFromResponses(responses)
 	existingContinuation := mapFromOperationContext(metadata["user_input_continuation"])
 	metadata["user_input_continuation"] = compactSkillInvocation(map[string]interface{}{
 		"status":          userInputContinuationStatusAnswered,
@@ -388,6 +389,72 @@ func userInputResponseRecorded(metadata map[string]interface{}, requestID string
 		}
 	}
 	return false
+}
+
+func userInputTaskFactsFromResponses(responses []map[string]interface{}) map[string]interface{} {
+	clarifications := compactUserInputClarificationHistory(responses, 12)
+	if len(clarifications) == 0 {
+		return nil
+	}
+	return map[string]interface{}{
+		"clarifications": mapsToInterfaceSlice(clarifications),
+		"fact_count":     clarificationAnswerCount(clarifications),
+		"source":         "persisted_user_input_responses",
+	}
+}
+
+func compactUserInputClarificationHistory(responses []map[string]interface{}, limit int) []map[string]interface{} {
+	if limit <= 0 || len(responses) == 0 {
+		return nil
+	}
+	if len(responses) > limit {
+		responses = responses[len(responses)-limit:]
+	}
+	out := make([]map[string]interface{}, 0, len(responses))
+	for _, response := range responses {
+		answers := mapSliceFromAny(response["answers"])
+		compactAnswers := make([]map[string]interface{}, 0, len(answers))
+		for _, answer := range answers {
+			value := strings.TrimSpace(stringFromAny(answer["value"]))
+			if value == "" {
+				continue
+			}
+			item := map[string]interface{}{"value": truncateRunes(value, maxUserInputAnswerRunes)}
+			if questionID := strings.TrimSpace(stringFromAny(answer["question_id"])); questionID != "" {
+				item["question_id"] = truncateRunes(questionID, 120)
+			}
+			if question := strings.TrimSpace(stringFromAny(answer["question"])); question != "" {
+				item["question"] = truncateRunes(question, 500)
+			}
+			compactAnswers = append(compactAnswers, item)
+		}
+		if len(compactAnswers) == 0 {
+			continue
+		}
+		item := map[string]interface{}{
+			"answers":      mapsToInterfaceSlice(compactAnswers),
+			"answer_count": len(compactAnswers),
+		}
+		if requestID := strings.TrimSpace(stringFromAny(response["request_id"])); requestID != "" {
+			item["request_id"] = truncateRunes(requestID, 120)
+		}
+		if message := strings.TrimSpace(stringFromAny(response["message"])); message != "" {
+			item["request_message"] = truncateRunes(message, 500)
+		}
+		if answeredAt, ok := response["answered_at"]; ok && answeredAt != nil {
+			item["answered_at"] = answeredAt
+		}
+		out = append(out, item)
+	}
+	return out
+}
+
+func clarificationAnswerCount(clarifications []map[string]interface{}) int {
+	total := 0
+	for _, clarification := range clarifications {
+		total += len(mapSliceFromAny(clarification["answers"]))
+	}
+	return total
 }
 
 func (s *service) prepareUserInputContinuationChat(
@@ -475,6 +542,9 @@ func userInputContinuationMessage(message *runtimemodel.Message, request map[str
 	}
 	if message != nil {
 		payload["original_request"] = strings.TrimSpace(message.Query)
+		if history := compactUserInputClarificationHistory(mapSliceFromAny(message.Metadata["user_input_responses"]), 12); len(history) > 0 {
+			payload["clarification_history"] = mapsToInterfaceSlice(history)
+		}
 	}
 	return adapter.Message{
 		Role: "user",
@@ -483,6 +553,7 @@ func userInputContinuationMessage(message *runtimemodel.Message, request map[str
 			"Continue the unfinished task from the authoritative same-turn state. Do not restart completed work and do not ask the same question again.",
 			"Before calling any remaining business tool, revise the current plan with update_plan so it reflects this clarification. You may call update_plan first and the next business tool in the same assistant response.",
 			"Preserve completed phases and their evidence_refs. Change only the pending or ambiguous phases affected by the clarification.",
+			"The clarification_history is cumulative and authoritative. Preserve every earlier answer exactly unless the user explicitly corrected that same fact later. Never replace an earlier date, time, title, target, quantity, or duration with a guess.",
 			"Treat the clarification as user-provided context, not as a new conversation turn.",
 			"User clarification JSON:\n" + compactJSONForPrompt(payload, 12000),
 		}, "\n"),

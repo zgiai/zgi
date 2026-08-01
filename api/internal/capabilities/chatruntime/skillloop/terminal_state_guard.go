@@ -35,11 +35,80 @@ func terminalStateGuardEvaluate(evidence map[string]interface{}, candidateAnswer
 			Blockers: []string{blocker},
 		}
 	}
+	if terminalStateGuardLatestExternalActionFailed(evidence) {
+		return terminalStateGuardDecision{
+			Path:        terminalStateGuardAccepted,
+			Reason:      "replaced terminal answer because the latest external operation has no successful execution evidence",
+			FinalAnswer: terminalStateGuardExternalActionFailureAnswer(evidence, candidateAnswer),
+		}
+	}
 	return terminalStateGuardDecision{
 		Path:        terminalStateGuardAccepted,
 		Reason:      "main model submitted a terminal answer with no active runtime protocol blocker",
 		FinalAnswer: candidateAnswer,
 	}
+}
+
+func terminalStateGuardLatestExternalActionFailed(evidence map[string]interface{}) bool {
+	for _, source := range terminalStateGuardEvidenceSources(evidence) {
+		latestStatus := ""
+		for _, record := range evidenceMapsFromAny(source["skill_invocations"]) {
+			if !strings.EqualFold(strings.TrimSpace(evidenceStringFromAny(record["skill_id"])), "external-apps") ||
+				!strings.EqualFold(strings.TrimSpace(evidenceStringFromAny(record["tool_name"])), "execute_action") {
+				continue
+			}
+			latestStatus = terminalStateGuardExternalActionStatus(record)
+		}
+		if latestStatus != "" {
+			return terminalStateGuardFailureStatus(latestStatus)
+		}
+	}
+	return false
+}
+
+func terminalStateGuardExternalActionStatus(record map[string]interface{}) string {
+	recordStatus := terminalStateGuardStatusFromMap(record)
+	if terminalStateGuardFailureStatus(recordStatus) {
+		return recordStatus
+	}
+	for _, source := range []map[string]interface{}{
+		evidenceMapFromAny(record["result"]),
+		evidenceMapFromAny(record["result_summary"]),
+	} {
+		if status := terminalStateGuardStatusFromMap(source); status != "" {
+			return status
+		}
+	}
+	if recordStatus != "" {
+		return recordStatus
+	}
+	if strings.TrimSpace(evidenceStringFromAny(record["error"])) != "" {
+		return "error"
+	}
+	return ""
+}
+
+func terminalStateGuardStatusFromMap(source map[string]interface{}) string {
+	for _, key := range []string{"status", "result_status", "outcome"} {
+		if status := strings.ToLower(strings.TrimSpace(evidenceStringFromAny(source[key]))); status != "" {
+			return status
+		}
+	}
+	return ""
+}
+
+func terminalStateGuardFailureStatus(status string) bool {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "error", "failed", "failure", "partial_failed", "partially_failed", "partially_succeeded", "outcome_unknown":
+		return true
+	default:
+		return false
+	}
+}
+
+func terminalStateGuardExternalActionFailureAnswer(evidence map[string]interface{}, candidateAnswer string) string {
+	text := strings.TrimSpace(evidenceStringFromAny(evidence["user_request"])) + candidateAnswer
+	return LocalizedExternalActionFailureAnswer(text, ExternalActionFailureSendOrOperation)
 }
 
 func terminalStateGuardCanStream(evidence map[string]interface{}) bool {

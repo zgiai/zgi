@@ -282,9 +282,14 @@ func (c *client) doRawJSON(
 				meta,
 			)
 		}
-		businessCode, hasBusinessCode := parseFeishuBusinessCode(payload)
+		businessCode, hasBusinessCode, providerRequestID, invalidField := parseFeishuErrorDiagnostics(payload)
 		if hasBusinessCode && businessCode != 0 {
 			meta.Diagnostics.ErrorCode = strconv.Itoa(businessCode)
+			meta.Diagnostics.InvalidField = invalidField
+			if meta.RequestID == "" && providerRequestID != "" {
+				meta.RequestID = providerRequestID
+				meta.Diagnostics.RequestID = providerRequestID
+			}
 			mapped := mapFeishuBusinessCode(businessCode)
 			if retryable && retryableFeishuBusinessCode(businessCode) && attempt < attemptLimit {
 				lastErr = withFeishuDiagnostics(mapped, meta)
@@ -368,7 +373,7 @@ func mapFeishuBusinessCode(code int) error {
 		return integrations.NewError(integrations.ErrorCodeUpstream, "Feishu authorization service is temporarily unavailable", nil)
 	case 230020, 232019:
 		return integrations.NewError(integrations.ErrorCodeRateLimited, "Feishu rate limit was reached", nil)
-	case 230001, 232006, 1061002, 1770001, 1770002, 1770003:
+	case 230001, 232006, 1061002, 1770001, 1770002, 1770003, 99992402:
 		return integrations.NewError(integrations.ErrorCodeInvalidInput, "Feishu rejected the request parameters", nil)
 	case 230002, 230006, 230013, 230027, 230035, 230050,
 		232010, 232011, 232033, 232034, 1770032:
@@ -404,14 +409,34 @@ func mapFeishuBusinessCode(code int) error {
 	}
 }
 
-func parseFeishuBusinessCode(payload []byte) (int, bool) {
+func parseFeishuErrorDiagnostics(payload []byte) (int, bool, string, string) {
 	var envelope struct {
-		Code *int `json:"code"`
+		Code  *int `json:"code"`
+		Error struct {
+			LogID           string `json:"log_id"`
+			FieldViolations []struct {
+				Field string `json:"field"`
+			} `json:"field_violations"`
+		} `json:"error"`
 	}
 	if err := json.Unmarshal(payload, &envelope); err != nil || envelope.Code == nil {
-		return 0, false
+		return 0, false, "", ""
 	}
-	return *envelope.Code, true
+	invalidField := ""
+	for _, violation := range envelope.Error.FieldViolations {
+		normalized := integrations.NormalizeProviderDiagnostics(integrations.ProviderDiagnostics{
+			InvalidField: violation.Field,
+		})
+		if normalized.InvalidField != "" {
+			invalidField = normalized.InvalidField
+			break
+		}
+	}
+	diagnostics := integrations.NormalizeProviderDiagnostics(integrations.ProviderDiagnostics{
+		RequestID:    envelope.Error.LogID,
+		InvalidField: invalidField,
+	})
+	return *envelope.Code, true, diagnostics.RequestID, diagnostics.InvalidField
 }
 
 func retryableFeishuBusinessCode(code int) bool {

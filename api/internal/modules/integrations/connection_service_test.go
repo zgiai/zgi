@@ -18,6 +18,31 @@ type recordingConnectionTester struct {
 	before  func()
 }
 
+type refreshingConnectionTestResolver struct {
+	base       *DefaultConnectionResolver
+	repository *memoryConnectionRepository
+	before     func()
+	refreshed  bool
+}
+
+func (resolver *refreshingConnectionTestResolver) Resolve(ctx context.Context, request ConnectionResolveRequest) (*ResolvedConnection, error) {
+	return resolver.base.Resolve(ctx, request)
+}
+
+func (resolver *refreshingConnectionTestResolver) ResolveRecordForTest(ctx context.Context, connection *IntegrationConnection) (*ResolvedConnection, error) {
+	if !resolver.refreshed {
+		resolver.refreshed = true
+		if resolver.before != nil {
+			resolver.before()
+		}
+	}
+	latest, err := resolver.repository.GetByID(ctx, connection.OrganizationID, connection.ID)
+	if err != nil {
+		return nil, err
+	}
+	return resolver.base.ResolveRecordForTest(ctx, latest)
+}
+
 type recordingConnectionRevoker struct {
 	calls  int
 	err    error
@@ -404,6 +429,44 @@ func TestConnectionServiceTestCannotOverwriteConcurrentCredentialRotation(t *tes
 		t.Fatalf("rotated credential = %#v, %v", credentials, decryptErr)
 	}
 	destroyCredentialMap(credentials)
+}
+
+func TestConnectionServiceTestAcceptsCredentialRefreshCompletedDuringResolution(t *testing.T) {
+	repository := newMemoryConnectionRepository()
+	tester := &recordingConnectionTester{profile: &ConnectionProfile{AccountID: "provider-account"}}
+	service, cipher := newConnectionServiceForTest(t, repository, tester)
+	organizationID := uuid.New()
+	view, err := service.Create(context.Background(), CreateConnectionInput{
+		OrganizationID: organizationID, IntegrationID: IntegrationWebSearch, DriverID: DriverExa, Name: "Refreshing",
+		Credentials: map[string]string{"api_key": "first-key"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var refreshErr error
+	service.resolver = &refreshingConnectionTestResolver{
+		base:       NewConnectionResolver(repository, cipher),
+		repository: repository,
+		before: func() {
+			_, refreshErr = service.Update(context.Background(), UpdateConnectionInput{
+				OrganizationID: organizationID, ConnectionID: view.ID,
+				Credentials: map[string]string{"api_key": "refreshed-key"},
+			})
+		},
+	}
+	tested, _, err := service.Test(context.Background(), organizationID, view.ID, nil)
+	if refreshErr != nil {
+		t.Fatalf("credential refresh error = %v", refreshErr)
+	}
+	if err != nil {
+		t.Fatalf("Test() error = %v", err)
+	}
+	if tester.apiKey != "refreshed-key" {
+		t.Fatalf("tester api key = %q, want refreshed credential", tester.apiKey)
+	}
+	if tested.Status != ConnectionStatusActive || tested.CredentialVersion != 2 {
+		t.Fatalf("tested connection = %#v", tested)
+	}
 }
 
 func TestConnectionServiceTestCannotReactivateConcurrentlyDisabledConnection(t *testing.T) {
