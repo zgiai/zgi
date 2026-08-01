@@ -38,7 +38,7 @@ interface AddMemberDialogProps {
   defaultDepartmentId?: string | null;
 }
 
-const SHOW_INVITE_LINK_TAB = false;
+const SHOW_INVITE_LINK_TAB = true;
 
 export function AddMemberDialog({
   open,
