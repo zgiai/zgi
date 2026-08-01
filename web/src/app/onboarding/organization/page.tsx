@@ -129,19 +129,15 @@ export default function OrganizationOnboardingPage() {
           </Card>
         ) : (
           <div className="grid gap-5 md:grid-cols-2">
-            <Card className="md:col-span-2">
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2 text-lg">
-                  <Building2 className="size-5" />
-                  {t('organizationOnboarding.chooseTitle')}
-                </CardTitle>
-                <CardDescription>
-                  {organizations.length > 0
-                    ? t('organizationOnboarding.chooseDescription')
-                    : t('organizationOnboarding.emptyDescription')}
-                </CardDescription>
-              </CardHeader>
-              {organizations.length > 0 && (
+            {organizations.length > 0 && (
+              <Card className="md:col-span-2">
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2 text-lg">
+                    <Building2 className="size-5" />
+                    {t('organizationOnboarding.chooseTitle')}
+                  </CardTitle>
+                  <CardDescription>{t('organizationOnboarding.chooseDescription')}</CardDescription>
+                </CardHeader>
                 <CardContent className="space-y-4">
                   <div className="grid gap-2 sm:grid-cols-2">
                     {organizations.map(organization => (
@@ -174,8 +170,8 @@ export default function OrganizationOnboardingPage() {
                     {!entering && <ArrowRight className="ml-2 size-4" />}
                   </Button>
                 </CardContent>
-              )}
-            </Card>
+              </Card>
+            )}
 
             <Card>
               <CardHeader>
