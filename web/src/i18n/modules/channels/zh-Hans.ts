@@ -76,7 +76,6 @@ const messages: ChannelsMessages = {
     title: '模型测试',
     description:
       '测试当前渠道已配置模型的真实调用结果；生图模型不参与本次批量测试，请到绘图工作区真实验证。',
-    stream: '流式测试',
     testing: '测试进行中...',
     completed: '测试完成',
     summary: '共 {total} 项，成功 {success}，失败 {failure}，跳过 {skipped}',

@@ -76,7 +76,6 @@ const messages = {
     title: 'Model Test',
     description:
       'Test real calls for configured channel models. Image generation models are skipped here and should be verified in the image workspace.',
-    stream: 'Streaming test',
     testing: 'Testing...',
     completed: 'Test Completed',
     summary: '{total} total, {success} success, {failure} failed, {skipped} skipped',
