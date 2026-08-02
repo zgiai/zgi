@@ -54,6 +54,7 @@ const messages: UiMessages = {
     selectedFilesValidationSummary: '已选择 {count} 个文件，{failedCount} 个无法上传，请移除后继续。',
     selectedFilesResultSummary: '已上传 {successCount} 个文件，{failedCount} 个上传失败。',
     removeInvalidBeforeUpload: '请先移除无法上传的文件，再继续上传。',
+    clearUnsupportedFiles: '清除不支持的文件',
     loginRequiredTitle: '需要登录',
     loginRequiredDescription: '请先登录后再选择系统文件。',
     loginRequiredForUploadDescription: '请先登录后再上传文件。',

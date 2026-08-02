@@ -72,6 +72,8 @@ export interface ManualFileUploadProps {
   onUploadComplete?: (files: UploadedFile[]) => void;
   /** Translation namespace for the selected-file queue summary */
   queueSummaryNamespace?: 'files' | 'ui';
+  /** Whether to show an action that removes all files that cannot be uploaded */
+  showClearFailedAction?: boolean;
   /** Folder ID to upload files to */
   folderId?: string;
   /** Workspace id */
@@ -133,6 +135,7 @@ export const ManualFileUpload = forwardRef<ManualFileUploadRef, ManualFileUpload
       onQueueStateChange,
       onUploadComplete,
       queueSummaryNamespace,
+      showClearFailedAction = false,
       folderId,
       workspaceId,
       processingMode,
@@ -465,6 +468,10 @@ export const ManualFileUpload = forwardRef<ManualFileUploadRef, ManualFileUpload
       });
     };
 
+    const clearFailedItems = () => {
+      setItems(prev => prev.filter(it => it.status !== 'error'));
+    };
+
     const retryItem = (id: string) => {
       const target = items.find(it => it.id === id);
       if (target) {
@@ -623,6 +630,7 @@ export const ManualFileUpload = forwardRef<ManualFileUploadRef, ManualFileUpload
             }))}
             onRetry={retryItem}
             onRemove={removeItem}
+            onClearFailed={showClearFailedAction ? clearFailedItems : undefined}
             queueSummaryNamespace={queueSummaryNamespace}
             tableWrapperClassName={tableWrapperClassName}
           />

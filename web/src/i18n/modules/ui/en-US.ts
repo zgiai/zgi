@@ -53,6 +53,7 @@ const messages = {
       '{count} file(s) selected, {failedCount} cannot upload. Remove them to continue.',
     selectedFilesResultSummary: '{successCount} uploaded, {failedCount} failed.',
     removeInvalidBeforeUpload: 'Remove files that cannot upload before continuing.',
+    clearUnsupportedFiles: 'Remove unsupported files',
     loginRequiredTitle: 'Login Required',
     loginRequiredDescription: 'Please sign in to select system files.',
     loginRequiredForUploadDescription: 'Please sign in to upload files.',

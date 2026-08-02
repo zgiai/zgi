@@ -296,6 +296,7 @@ const CreateLocalFileDialog = ({
             onFilesChange={handleFilesChange}
             onQueueStateChange={state => setFailedUploadFilesCount(state.failedCount)}
             queueSummaryNamespace="files"
+            showClearFailedAction
           />
 
           {isOrganizationMode ? (
