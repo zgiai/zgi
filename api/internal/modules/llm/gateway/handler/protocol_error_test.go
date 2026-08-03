@@ -54,6 +54,13 @@ func TestClassifyProtocolError(t *testing.T) {
 			wantAnthropicType: "invalid_request_error",
 		},
 		{
+			name:              "provider quota exhausted",
+			err:               adapter.NewAdapterError("insufficient_quota", "insufficient API quota", http.StatusTooManyRequests, adapter.ErrQuotaExhausted),
+			wantStatus:        http.StatusTooManyRequests,
+			wantCode:          "insufficient_quota",
+			wantAnthropicType: "billing_error",
+		},
+		{
 			name:              "provider resource unavailable",
 			err:               llmerrors.DomainErrChannelNotFound,
 			wantStatus:        http.StatusServiceUnavailable,

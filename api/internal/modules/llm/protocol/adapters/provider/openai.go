@@ -754,6 +754,13 @@ func (a *OpenAIAdapter) handleError(statusCode int, body []byte) error {
 	return handleOpenAICompatibleError(statusCode, body)
 }
 
+const (
+	openAIErrorCodeInsufficientQuota       = "insufficient_quota"
+	openAIErrorCodeRateLimitExceeded       = "rate_limit_exceeded"
+	openAIErrorCodeBillingHardLimitReached = "billing_hard_limit_reached"
+	openAIErrorCodeContentPolicyViolation  = "content_policy_violation"
+)
+
 func handleOpenAICompatibleError(statusCode int, body []byte) error {
 	var errResp struct {
 		Error struct {
@@ -766,31 +773,49 @@ func handleOpenAICompatibleError(statusCode int, body []byte) error {
 	if err := json.Unmarshal(body, &errResp); err != nil {
 		return adapter.HandleNonJSONError(statusCode, body)
 	}
-	platformErrorCode := errResp.Error.Code
-	if platformErrorCode == "" && errResp.Error.Type == adapter.ErrorCodePlatformChannelUnavailable {
-		platformErrorCode = errResp.Error.Type
-	}
-	if platformErrorCode == adapter.ErrorCodePlatformChannelUnavailable {
-		return adapter.NewAdapterError(platformErrorCode, errResp.Error.Message, statusCode, adapter.ErrPlatformChannelUnavailable)
+
+	providerErrorCode := openAICompatibleErrorCode(errResp.Error.Code, errResp.Error.Type)
+	switch providerErrorCode {
+	case adapter.ErrorCodePlatformChannelUnavailable:
+		return adapter.NewAdapterError(providerErrorCode, errResp.Error.Message, statusCode, adapter.ErrPlatformChannelUnavailable)
+	case openAIErrorCodeInsufficientQuota:
+		return adapter.NewAdapterError(providerErrorCode, errResp.Error.Message, statusCode, adapter.ErrQuotaExhausted)
+	case openAIErrorCodeRateLimitExceeded:
+		return adapter.NewAdapterError(providerErrorCode, errResp.Error.Message, statusCode, adapter.ErrRateLimited)
+	case openAIErrorCodeBillingHardLimitReached:
+		return adapter.NewAdapterError(providerErrorCode, errResp.Error.Message, statusCode, adapter.ErrInsufficientBalance)
+	case openAIErrorCodeContentPolicyViolation:
+		return adapter.NewAdapterError(providerErrorCode, errResp.Error.Message, statusCode, adapter.ErrContentPolicyViolation)
 	}
 
 	switch statusCode {
 	case 401:
-		return adapter.NewAdapterError(errResp.Error.Code, errResp.Error.Message, statusCode, adapter.ErrAuthFailed)
+		return adapter.NewAdapterError(providerErrorCode, errResp.Error.Message, statusCode, adapter.ErrAuthFailed)
 	case 429:
-		return adapter.NewAdapterError(errResp.Error.Code, errResp.Error.Message, statusCode, adapter.ErrRateLimited)
+		return adapter.NewAdapterError(providerErrorCode, errResp.Error.Message, statusCode, adapter.ErrRateLimited)
 	case 404:
-		return adapter.NewAdapterError(errResp.Error.Code, errResp.Error.Message, statusCode, adapter.ErrModelNotFound)
+		return adapter.NewAdapterError(providerErrorCode, errResp.Error.Message, statusCode, adapter.ErrModelNotFound)
 	case 400:
-		if errResp.Error.Code == "content_policy_violation" {
-			return adapter.NewAdapterError(errResp.Error.Code, errResp.Error.Message, statusCode, adapter.ErrContentPolicyViolation)
-		}
-		if errResp.Error.Code == "billing_hard_limit_reached" {
-			return adapter.NewAdapterError(errResp.Error.Code, errResp.Error.Message, statusCode, adapter.ErrInsufficientBalance)
-		}
-		return adapter.NewAdapterError(errResp.Error.Code, errResp.Error.Message, statusCode, adapter.ErrInvalidRequest)
+		return adapter.NewAdapterError(providerErrorCode, errResp.Error.Message, statusCode, adapter.ErrInvalidRequest)
 	default:
-		return adapter.NewAdapterError(errResp.Error.Code, errResp.Error.Message, statusCode, adapter.ErrUpstreamError)
+		return adapter.NewAdapterError(providerErrorCode, errResp.Error.Message, statusCode, adapter.ErrUpstreamError)
+	}
+}
+
+func openAICompatibleErrorCode(providerErrorCode, errorType string) string {
+	if providerErrorCode != "" {
+		return providerErrorCode
+	}
+
+	switch errorType {
+	case adapter.ErrorCodePlatformChannelUnavailable,
+		openAIErrorCodeInsufficientQuota,
+		openAIErrorCodeRateLimitExceeded,
+		openAIErrorCodeBillingHardLimitReached,
+		openAIErrorCodeContentPolicyViolation:
+		return errorType
+	default:
+		return ""
 	}
 }
 
