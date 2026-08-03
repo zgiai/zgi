@@ -126,15 +126,9 @@ func (a *OpenAIAdapter) ChatCompletion(ctx context.Context, request *adapter.Cha
 		return nil, a.handleError(statusCode, respBody)
 	}
 
-	// Some proxies (like agicto) return 200 OK but with an error body
-	// We check for "error" field even on 200 OK to be robust
-	if strings.Contains(string(respBody), "\"error\":") {
-		var errorCheck struct {
-			Error interface{} `json:"error"`
-		}
-		if err := json.Unmarshal(respBody, &errorCheck); err == nil && errorCheck.Error != nil {
-			return nil, a.handleError(statusCode, respBody)
-		}
+	// Some proxies return 200 OK with an OpenAI error body.
+	if hasOpenAICompatibleError(respBody) {
+		return nil, a.handleError(statusCode, respBody)
 	}
 
 	var response adapter.ChatResponse
@@ -206,9 +200,18 @@ func (a *OpenAIAdapter) ChatCompletionStream(ctx context.Context, request *adapt
 					}
 					return
 				}
+				payload := []byte(data)
+				if hasOpenAICompatibleError(payload) {
+					respChan <- adapter.StreamResponse{
+						Error: a.handleError(resp.StatusCode, payload),
+						Done:  true,
+						Usage: lastUsage,
+					}
+					return
+				}
 
 				var streamResp adapter.StreamResponse
-				if err := json.Unmarshal([]byte(data), &streamResp); err != nil {
+				if err := json.Unmarshal(payload, &streamResp); err != nil {
 					respChan <- adapter.StreamResponse{
 						Error: fmt.Errorf("failed to parse stream data: %w", err),
 						Done:  true,
@@ -228,6 +231,16 @@ func (a *OpenAIAdapter) ChatCompletionStream(ctx context.Context, request *adapt
 	}()
 
 	return respChan, nil
+}
+
+func hasOpenAICompatibleError(body []byte) bool {
+	var response struct {
+		Error json.RawMessage `json:"error"`
+	}
+	if err := json.Unmarshal(body, &response); err != nil {
+		return false
+	}
+	return len(response.Error) > 0 && strings.TrimSpace(string(response.Error)) != "null"
 }
 
 // CreateResponse executes response creation request

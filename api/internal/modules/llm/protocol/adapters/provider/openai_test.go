@@ -50,6 +50,50 @@ func TestOpenAIAdapterChatCompletionStreamParsesPlatformChannelError(t *testing.
 	}
 }
 
+func TestOpenAIAdapterChatCompletionStreamReturnsSSEError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = fmt.Fprint(w, "data: {\"error\":{\"message\":\"insufficient API quota\",\"type\":\"insufficient_quota\",\"code\":\"insufficient_quota\"}}\n\ndata: [DONE]\n\n")
+	}))
+	defer server.Close()
+
+	a, err := NewOpenAIAdapter(&adapter.AdapterConfig{
+		APIKey:  "test-key",
+		BaseURL: server.URL + "/v1",
+	})
+	if err != nil {
+		t.Fatalf("NewOpenAIAdapter() error = %v", err)
+	}
+
+	stream, err := a.ChatCompletionStream(context.Background(), &adapter.ChatRequest{
+		Model: "gpt-5.5",
+		Messages: []adapter.Message{
+			{Role: "user", Content: "hello"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("ChatCompletionStream() error = %v", err)
+	}
+
+	var streamErr error
+	for response := range stream {
+		if response.Error != nil {
+			streamErr = response.Error
+		}
+	}
+	if streamErr == nil {
+		t.Fatal("stream error = nil, want upstream insufficient quota error")
+	}
+
+	var adapterErr *adapter.AdapterError
+	if !errors.As(streamErr, &adapterErr) {
+		t.Fatalf("stream error = %T %v, want AdapterError", streamErr, streamErr)
+	}
+	if adapterErr.Code != "insufficient_quota" || adapterErr.Message != "insufficient API quota" {
+		t.Fatalf("stream error = %+v, want code insufficient_quota and provider message", adapterErr)
+	}
+}
+
 func TestOpenAIAdapterCreateResponseRaw_UsesResponsesEndpointAndRawBody(t *testing.T) {
 	t.Helper()
 
