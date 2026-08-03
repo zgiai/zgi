@@ -15,6 +15,12 @@ export interface InviteInfo {
   valid: boolean;
 }
 
+export type InviteAcceptStatus = 'pending' | 'approved' | 'rejected' | 'expired';
+
+export interface InviteAcceptResult {
+  status: InviteAcceptStatus;
+}
+
 class InviteService extends BaseService {
   constructor() {
     super({
@@ -34,7 +40,7 @@ class InviteService extends BaseService {
 
   // Accept invite
   async acceptInvite(token: string, member_name?: string) {
-    const response = await this.request<ApiResponseData<{ success: boolean }>>(
+    const response = await this.request<ApiResponseData<InviteAcceptResult>>(
       'post',
       `/public/invites/${token}/accept`,
       { member_name }
