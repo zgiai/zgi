@@ -12,6 +12,7 @@ import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import { useT } from '@/i18n';
 import { uploadService } from '@/services';
+import { directoryOpen } from 'browser-fs-access';
 import { UploadCloudIcon } from 'lucide-react';
 import type { UploadedFile } from '@/services/types/dataset';
 import type { FileParseProviderKey, FileUploadProcessingMode } from '@/services/types/file';
@@ -29,6 +30,7 @@ import {
   getFileFallbackKey,
   hasAnyFileKey,
 } from './file-dedup';
+import { runUploadPool } from './upload-pool';
 
 /* -------------------------------------------------------------------------- */
 /* Types                                                                      */
@@ -37,6 +39,10 @@ import {
 export interface ManualFileUploadProps {
   /** Maximum number of files allowed in total */
   maxCount?: number;
+  /** Maximum number of uploads that may run at the same time */
+  concurrencyLimit?: number;
+  /** Whether to show a folder picker that adds all files under the selected folder */
+  allowFolderSelection?: boolean;
   /** Max single file size (MB) */
   maxSizeMB?: number;
   /** Allowed extensions like ['.jpg', '.png'] (case-insensitive) */
@@ -66,6 +72,8 @@ export interface ManualFileUploadProps {
   onUploadComplete?: (files: UploadedFile[]) => void;
   /** Translation namespace for the selected-file queue summary */
   queueSummaryNamespace?: 'files' | 'ui';
+  /** Whether to show an action that removes all files that cannot be uploaded */
+  showClearFailedAction?: boolean;
   /** Folder ID to upload files to */
   folderId?: string;
   /** Workspace id */
@@ -113,6 +121,8 @@ export const ManualFileUpload = forwardRef<ManualFileUploadRef, ManualFileUpload
   (
     {
       maxCount = 5,
+      concurrencyLimit = 5,
+      allowFolderSelection = false,
       maxSizeMB = 15,
       acceptExt = [],
       showAllowedTypesHint = true,
@@ -125,6 +135,7 @@ export const ManualFileUpload = forwardRef<ManualFileUploadRef, ManualFileUpload
       onQueueStateChange,
       onUploadComplete,
       queueSummaryNamespace,
+      showClearFailedAction = false,
       folderId,
       workspaceId,
       processingMode,
@@ -138,7 +149,9 @@ export const ManualFileUpload = forwardRef<ManualFileUploadRef, ManualFileUpload
     const [items, setItems] = useState<UploadItem[]>([]);
     const [isUploading, setIsUploading] = useState(false);
     const uploadControllersRef = useRef<Map<string, AbortController>>(new Map());
+    const cancelRequestedRef = useRef(false);
     const isFull = items.length >= maxCount;
+    const isSelectionDisabled = isFull || isUploading;
     const inputAccept = useNativeAccept ? buildFileInputAcceptAttribute(acceptExt) : undefined;
 
     // Keep latest callbacks in ref to avoid effect dependency loop
@@ -184,80 +197,89 @@ export const ManualFileUpload = forwardRef<ManualFileUploadRef, ManualFileUpload
           }
 
           setIsUploading(true);
+          cancelRequestedRef.current = false;
 
           try {
-            // Start upload for all pending items
-            const uploadPromises = pendingItems.map(item => {
-              return new Promise<UploadedFile | null>(resolve => {
-                const controller = new AbortController();
-                uploadControllersRef.current.set(item.id, controller);
-                setItems(prev =>
-                  prev.map(it => (it.id === item.id ? { ...it, status: 'uploading' as const } : it))
-                );
-
-                uploadService
-                  .uploadSingle(item.file, {
-                    folder_id: folderId,
-                    workspace_id: workspaceId,
-                    processing_mode: processingMode,
-                    parse_provider: parseProvider,
-                    signal: controller.signal,
-                    onProgress: p =>
-                      setItems(prev =>
-                        prev.map(it => (it.id === item.id ? { ...it, progress: p } : it))
-                      ),
-                  })
-                  .then(response => {
-                    const uploaded: UploadedFile = {
-                      id: response.id,
-                      name: response.name,
-                      size: response.size,
-                      extension: response.extension,
-                      mime_type: response.mime_type,
-                      hash: response.hash || '',
-                      created_by: response.created_by,
-                      created_at: response.created_at,
-                      url: response.url || '',
-                    };
-
-                    setItems(prev =>
-                      prev.map(it =>
-                        it.id === item.id
-                          ? ({
-                              ...it,
-                              progress: 100,
-                              status: 'success',
-                              serverFile: uploaded,
-                            } as UploadItem)
-                          : it
-                      )
-                    );
-
-                    resolve(uploaded);
-                  })
-                  .catch((err: Error) => {
-                    if (controller.signal.aborted) {
-                      resolve(null);
-                      return;
-                    }
-
-                    setItems(prev =>
-                      prev.map(it =>
-                        it.id === item.id
-                          ? { ...it, progress: 100, status: 'error', errorMsg: err.message }
-                          : it
-                      )
-                    );
+            const results = await runUploadPool<UploadItem, UploadedFile | null>(
+              pendingItems,
+              concurrencyLimit,
+              item =>
+                new Promise<UploadedFile | null>(resolve => {
+                  if (cancelRequestedRef.current) {
                     resolve(null);
-                  })
-                  .finally(() => {
-                    uploadControllersRef.current.delete(item.id);
-                  });
-              });
-            });
+                    return;
+                  }
 
-            const results = await Promise.all(uploadPromises);
-            const successfulFiles = results.filter((file): file is UploadedFile => file !== null);
+                  const controller = new AbortController();
+                  uploadControllersRef.current.set(item.id, controller);
+                  setItems(prev =>
+                    prev.map(it =>
+                      it.id === item.id ? { ...it, status: 'uploading' as const } : it
+                    )
+                  );
+
+                  uploadService
+                    .uploadSingle(item.file, {
+                      folder_id: folderId,
+                      workspace_id: workspaceId,
+                      processing_mode: processingMode,
+                      parse_provider: parseProvider,
+                      signal: controller.signal,
+                      onProgress: p =>
+                        setItems(prev =>
+                          prev.map(it => (it.id === item.id ? { ...it, progress: p } : it))
+                        ),
+                    })
+                    .then(response => {
+                      const uploaded: UploadedFile = {
+                        id: response.id,
+                        name: response.name,
+                        size: response.size,
+                        extension: response.extension,
+                        mime_type: response.mime_type,
+                        hash: response.hash || '',
+                        created_by: response.created_by,
+                        created_at: response.created_at,
+                        url: response.url || '',
+                      };
+
+                      setItems(prev =>
+                        prev.map(it =>
+                          it.id === item.id
+                            ? ({
+                                ...it,
+                                progress: 100,
+                                status: 'success',
+                                serverFile: uploaded,
+                              } as UploadItem)
+                            : it
+                        )
+                      );
+
+                      resolve(uploaded);
+                    })
+                    .catch((err: Error) => {
+                      if (controller.signal.aborted) {
+                        resolve(null);
+                        return;
+                      }
+
+                      setItems(prev =>
+                        prev.map(it =>
+                          it.id === item.id
+                            ? { ...it, progress: 100, status: 'error', errorMsg: err.message }
+                            : it
+                        )
+                      );
+                      resolve(null);
+                    })
+                    .finally(() => {
+                      uploadControllersRef.current.delete(item.id);
+                    });
+                }),
+              () => !cancelRequestedRef.current
+            );
+            const successfulFiles = results.filter((file): file is UploadedFile => file != null);
 
             // Notify parent of successful uploads
             if (onUploadCompleteRef.current && successfulFiles.length > 0) {
@@ -286,12 +308,14 @@ export const ManualFileUpload = forwardRef<ManualFileUploadRef, ManualFileUpload
         },
 
         clearAll: () => {
+          cancelRequestedRef.current = true;
           uploadControllersRef.current.forEach(controller => controller.abort());
           uploadControllersRef.current.clear();
           setItems([]);
         },
 
         cancelUploading: () => {
+          cancelRequestedRef.current = true;
           uploadControllersRef.current.forEach(controller => controller.abort());
           uploadControllersRef.current.clear();
           setItems(prev => prev.filter(it => it.status !== 'uploading'));
@@ -301,7 +325,7 @@ export const ManualFileUpload = forwardRef<ManualFileUploadRef, ManualFileUpload
           return isUploading || items.some(it => it.status === 'uploading');
         },
       }),
-      [items, folderId, workspaceId, processingMode, parseProvider, isUploading]
+      [items, concurrencyLimit, folderId, workspaceId, processingMode, parseProvider, isUploading]
     );
 
     const inputRef = useRef<HTMLInputElement>(null);
@@ -413,6 +437,28 @@ export const ManualFileUpload = forwardRef<ManualFileUploadRef, ManualFileUpload
       [items, maxCount, validateFile, t]
     );
 
+    const openFolderPicker = useCallback(async () => {
+      if (!allowFolderSelection || isSelectionDisabled) return;
+
+      try {
+        const entries = await directoryOpen({
+          id: 'zgi-file-management-upload',
+          recursive: true,
+        });
+        const files = entries.filter((entry): entry is File => entry instanceof File);
+
+        if (files.length === 0) {
+          toast.info(t('fileUpload.emptyFolder'));
+          return;
+        }
+
+        await enqueueFiles(files);
+      } catch (error) {
+        if (error instanceof DOMException && error.name === 'AbortError') return;
+        toast.error(t('fileUpload.folderSelectionFailed'));
+      }
+    }, [allowFolderSelection, enqueueFiles, isSelectionDisabled, t]);
+
     const removeItem = (id: string) => {
       uploadControllersRef.current.get(id)?.abort();
       uploadControllersRef.current.delete(id);
@@ -420,6 +466,10 @@ export const ManualFileUpload = forwardRef<ManualFileUploadRef, ManualFileUpload
         const next = prev.filter(it => it.id !== id);
         return next as UploadItem[];
       });
+    };
+
+    const clearFailedItems = () => {
+      setItems(prev => prev.filter(it => it.status !== 'error'));
     };
 
     const retryItem = (id: string) => {
@@ -438,9 +488,7 @@ export const ManualFileUpload = forwardRef<ManualFileUploadRef, ManualFileUpload
           );
           // Update with new validation error
           setItems(prev =>
-            prev.map(it =>
-              it.id === id ? { ...it, status: 'error', errorMsg } : it
-            )
+            prev.map(it => (it.id === id ? { ...it, status: 'error', errorMsg } : it))
           );
           return;
         }
@@ -461,7 +509,7 @@ export const ManualFileUpload = forwardRef<ManualFileUploadRef, ManualFileUpload
     const handleDrag = (e: React.DragEvent<HTMLDivElement>) => {
       e.preventDefault();
       e.stopPropagation();
-      if (isFull) return;
+      if (isSelectionDisabled) return;
       if (e.type === 'dragenter' || e.type === 'dragover') {
         setDragActive(true);
       } else if (e.type === 'dragleave') {
@@ -473,7 +521,7 @@ export const ManualFileUpload = forwardRef<ManualFileUploadRef, ManualFileUpload
       e.preventDefault();
       e.stopPropagation();
       setDragActive(false);
-      if (isFull) return;
+      if (isSelectionDisabled) return;
       if (e.dataTransfer.files && e.dataTransfer.files.length) {
         enqueueFiles(e.dataTransfer.files);
       }
@@ -491,10 +539,10 @@ export const ManualFileUpload = forwardRef<ManualFileUploadRef, ManualFileUpload
             'flex flex-col items-center justify-center border-2 border-dashed rounded-md px-6 py-4 text-center transition-colors',
             dragActive ? 'border-primary bg-primary/5' : 'border-border',
             dropZoneClassName,
-            isFull ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'
+            isSelectionDisabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'
           )}
           onClick={() => {
-            if (!isFull) inputRef.current?.click();
+            if (!isSelectionDisabled) inputRef.current?.click();
           }}
         >
           <input
@@ -503,7 +551,7 @@ export const ManualFileUpload = forwardRef<ManualFileUploadRef, ManualFileUpload
             multiple
             hidden
             accept={inputAccept}
-            disabled={isFull}
+            disabled={isSelectionDisabled}
             aria-label={t('fileUpload.uploadAria')}
             data-testid="local-file-input"
             onChange={e => {
@@ -517,18 +565,34 @@ export const ManualFileUpload = forwardRef<ManualFileUploadRef, ManualFileUpload
             <div className="text-center select-none flex flex-col items-center">
               <UploadCloudIcon className="w-9 h-9 text-primary mb-2" />
               <p className="text-base text-muted-foreground">{t('fileUpload.dropHere')}</p>
-              <Button
-                type="button"
-                className="mt-3 px-6"
-                disabled={isFull}
-                onClick={event => {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  if (!isFull) inputRef.current?.click();
-                }}
-              >
-                {t('fileUpload.clickUpload')}
-              </Button>
+              <div className="mt-3 flex flex-wrap justify-center gap-2">
+                <Button
+                  type="button"
+                  className="px-6"
+                  disabled={isSelectionDisabled}
+                  onClick={event => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    if (!isSelectionDisabled) inputRef.current?.click();
+                  }}
+                >
+                  {t('fileUpload.clickUpload')}
+                </Button>
+                {allowFolderSelection && (
+                  <Button
+                    type="button"
+                    className="px-6"
+                    disabled={isSelectionDisabled}
+                    onClick={event => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      openFolderPicker();
+                    }}
+                  >
+                    {t('fileUpload.selectFolder')}
+                  </Button>
+                )}
+              </div>
               {showAllowedTypesHint && acceptExt.length > 0 && (
                 <p className="text-sm text-muted-foreground mt-1">
                   {t('fileUpload.allowedTypesLabel')}
@@ -566,6 +630,7 @@ export const ManualFileUpload = forwardRef<ManualFileUploadRef, ManualFileUpload
             }))}
             onRetry={retryItem}
             onRemove={removeItem}
+            onClearFailed={showClearFailedAction ? clearFailedItems : undefined}
             queueSummaryNamespace={queueSummaryNamespace}
             tableWrapperClassName={tableWrapperClassName}
           />

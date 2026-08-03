@@ -19,6 +19,7 @@ export interface UploadResponse {
 export interface UploadConfig {
   file_size_limit: number;
   batch_count_limit: number;
+  upload_queue_limit: number;
   image_file_size_limit: number;
   video_file_size_limit: number;
   audio_file_size_limit: number;

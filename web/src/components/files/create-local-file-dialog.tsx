@@ -38,6 +38,7 @@ import {
   getFileFolderAncestorIds,
   getFileFolderAncestorIdsByRequest,
 } from './file-folder-levels';
+import { FILE_MANAGEMENT_UPLOAD_MAX_SIZE_MB } from './file-upload-policy';
 
 export interface CreateLocalFileDialogProps {
   open: boolean;
@@ -95,8 +96,12 @@ const CreateLocalFileDialog = ({
     staleTime: 60_000,
     retry: false,
   });
-  const maxSizeMB = uploadConfig?.file_size_limit ?? 15;
-  const maxCount = uploadConfig?.batch_count_limit ?? 100;
+  const maxSizeMB = Math.min(
+    uploadConfig?.file_size_limit ?? FILE_MANAGEMENT_UPLOAD_MAX_SIZE_MB,
+    FILE_MANAGEMENT_UPLOAD_MAX_SIZE_MB
+  );
+  const maxCount = uploadConfig?.upload_queue_limit ?? 200;
+  const uploadConcurrency = uploadConfig?.batch_count_limit ?? 5;
   const hasAvailableThirdPartyParser = (parserSettingsData?.data.items ?? []).some(
     item =>
       (item.provider_key === 'reducto' || item.provider_key === 'mineru') &&
@@ -276,6 +281,10 @@ const CreateLocalFileDialog = ({
             ref={fileUploadRef}
             autoUpload={false}
             maxCount={maxCount}
+            // UPLOAD_FILE_BATCH_LIMIT remains the file-space upload pool size.
+            // Chat and workflow continue to use batch_count_limit as their count limit.
+            concurrencyLimit={uploadConcurrency}
+            allowFolderSelection
             maxSizeMB={maxSizeMB}
             acceptExt={acceptExt}
             folderId={selectedFolderId}
@@ -287,6 +296,7 @@ const CreateLocalFileDialog = ({
             onFilesChange={handleFilesChange}
             onQueueStateChange={state => setFailedUploadFilesCount(state.failedCount)}
             queueSummaryNamespace="files"
+            showClearFailedAction
           />
 
           {isOrganizationMode ? (

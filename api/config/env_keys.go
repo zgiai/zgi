@@ -294,8 +294,10 @@ const (
 	// Upload limits.
 	// envUploadFileSizeLimit sets the maximum upload size for general files in megabytes. Default: 15.
 	envUploadFileSizeLimit = "UPLOAD_FILE_SIZE_LIMIT"
-	// envUploadFileBatchLimit sets how many files can be uploaded in one batch. Default: 5.
+	// envUploadFileBatchLimit sets file-management upload concurrency. Other upload surfaces may still use it as a file-count limit. Default: 5.
 	envUploadFileBatchLimit = "UPLOAD_FILE_BATCH_LIMIT"
+	// envUploadQueueLimit sets how many files can wait in the file-management upload queue. Default and minimum: 200.
+	envUploadQueueLimit = "UPLOAD_QUEUE_LIMIT"
 	// envUploadImageFileSizeLimit sets the maximum upload size for image files in megabytes. Default: 10.
 	envUploadImageFileSizeLimit = "UPLOAD_IMAGE_FILE_SIZE_LIMIT"
 	// envUploadVideoFileSizeLimit sets the maximum upload size for video files in megabytes. Default: 100.

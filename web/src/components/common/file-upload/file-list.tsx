@@ -30,6 +30,7 @@ interface FileListProps {
   items: FileListItem[];
   onRetry?: (id: string) => void;
   onRemove?: (id: string) => void;
+  onClearFailed?: () => void;
   className?: string;
   queueSummaryNamespace?: 'files' | 'ui';
   showRetryAction?: boolean;
@@ -40,6 +41,7 @@ export const FileList: React.FC<FileListProps> = ({
   items,
   onRetry,
   onRemove,
+  onClearFailed,
   queueSummaryNamespace = 'ui',
   showRetryAction = false,
   tableWrapperClassName,
@@ -81,10 +83,21 @@ export const FileList: React.FC<FileListProps> = ({
           ) : null}
         </div>
         {failedCount > 0 ? (
-          <p className="flex items-center gap-1.5 text-xs text-destructive" role="status">
-            <AlertCircle className="size-3.5" />
-            {tQueue('removeInvalidBeforeUpload')}
-          </p>
+          <div
+            className="flex flex-wrap items-center justify-between gap-2 text-xs text-destructive"
+            role="status"
+          >
+            <span className="flex items-center gap-1.5">
+              <AlertCircle className="size-3.5" />
+              {tQueue('removeInvalidBeforeUpload')}
+            </span>
+            {onClearFailed ? (
+              <Button type="button" variant="outline" size="sm" onClick={onClearFailed}>
+                <Trash2 className="mr-1.5 size-3.5" />
+                {tQueue('clearUnsupportedFiles')}
+              </Button>
+            ) : null}
+          </div>
         ) : null}
       </div>
       <Table containerClassName="overflow-x-auto">

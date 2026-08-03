@@ -1,6 +1,10 @@
 package service
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/zgiai/zgi/api/config"
+)
 
 func TestIsAssetProcessableExtension(t *testing.T) {
 	tests := []struct {
@@ -22,5 +26,26 @@ func TestIsAssetProcessableExtension(t *testing.T) {
 				t.Fatalf("processable=%v want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestGetUploadConfigIncludesQueueAndConcurrencyLimits(t *testing.T) {
+	previous := config.GlobalConfig
+	config.GlobalConfig = &config.Config{
+		Upload: config.UploadConfig{
+			FileBatchLimit:   5,
+			UploadQueueLimit: 200,
+		},
+	}
+	t.Cleanup(func() {
+		config.GlobalConfig = previous
+	})
+
+	got := (&fileService{}).GetUploadConfig()
+	if got.BatchCountLimit != 5 {
+		t.Fatalf("BatchCountLimit = %d, want 5", got.BatchCountLimit)
+	}
+	if got.UploadQueueLimit != 200 {
+		t.Fatalf("UploadQueueLimit = %d, want 200", got.UploadQueueLimit)
 	}
 }

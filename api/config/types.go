@@ -199,6 +199,7 @@ type VectorStoreConfig struct {
 type UploadConfig struct {
 	FileSizeLimit          int   `json:"file_size_limit"`
 	FileBatchLimit         int   `json:"file_batch_limit"`
+	UploadQueueLimit       int   `json:"upload_queue_limit"`
 	ImageSizeLimit         int   `json:"image_size_limit"`
 	VideoSizeLimit         int   `json:"video_size_limit"`
 	AudioSizeLimit         int   `json:"audio_size_limit"`
