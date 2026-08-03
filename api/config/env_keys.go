@@ -616,7 +616,7 @@ const (
 	envKnowledgeRateLimitMax = "KNOWLEDGE_RATE_LIMIT_MAX"
 
 	// GraphFlow sync throughput.
-	// envGraphFlowVectorSyncBatchSize sets the GraphFlow vector sync batch size. Default: 50.
+	// envGraphFlowVectorSyncBatchSize sets the GraphFlow vector sync batch size. Default: 10.
 	envGraphFlowVectorSyncBatchSize = "GRAPHFLOW_VECTOR_SYNC_BATCH_SIZE"
 	// envGraphFlowVectorSyncConcurrency sets how many GraphFlow vector sync jobs run in parallel. Default: 10.
 	envGraphFlowVectorSyncConcurrency = "GRAPHFLOW_VECTOR_SYNC_CONCURRENCY"

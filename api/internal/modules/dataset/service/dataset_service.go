@@ -491,12 +491,13 @@ func (s *datasetService) CreateDataset(ctx context.Context, req *CreateDatasetRe
 				},
 				"segmentation": map[string]interface{}{
 					"separator":     "\n\n",
-					"max_tokens":    500,
-					"chunk_overlap": 50,
+					"max_tokens":    indexing.DefaultParagraphParentMaxChars,
+					"chunk_overlap": indexing.DefaultParagraphParentOverlapChars,
 				},
 				"subchunk_segmentation": map[string]interface{}{
-					"separator":  "\n",
-					"max_tokens": 50,
+					"separator":     "\n",
+					"max_tokens":    indexing.DefaultParagraphChildMaxChars,
+					"chunk_overlap": indexing.DefaultParagraphChildOverlapChars,
 				},
 			},
 		}
@@ -579,8 +580,8 @@ func (s *datasetService) CreateDataset(ctx context.Context, req *CreateDatasetRe
 					},
 					"segmentation": model.JSONMap{
 						"separator":     "\n\n",
-						"max_tokens":    1024,
-						"chunk_overlap": 0,
+						"max_tokens":    indexing.DefaultParagraphParentMaxChars,
+						"chunk_overlap": indexing.DefaultParagraphParentOverlapChars,
 					},
 					"parent_mode":           "element_group",
 					"parent_min_chars":      1000,
@@ -593,8 +594,8 @@ func (s *datasetService) CreateDataset(ctx context.Context, req *CreateDatasetRe
 					"table_child_max_chars": 256,
 					"subchunk_segmentation": model.JSONMap{
 						"separator":     "\n",
-						"max_tokens":    220,
-						"chunk_overlap": 30,
+						"max_tokens":    indexing.DefaultParagraphChildMaxChars,
+						"chunk_overlap": indexing.DefaultParagraphChildOverlapChars,
 					},
 				},
 				CreatedBy: req.CreatedBy,

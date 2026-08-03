@@ -89,6 +89,22 @@ func TestRunOutboxHandlerRejectsBuildForDeletedDocument(t *testing.T) {
 	}
 }
 
+func TestNextPendingDocumentTaskKeepsVectorSyncBehindGraphSync(t *testing.T) {
+	graphTask := graphmodel.GraphFlowTask{ID: uuid.New(), TaskType: "graph_sync", Status: "pending"}
+	vectorTask := graphmodel.GraphFlowTask{ID: uuid.New(), TaskType: "vector_sync", Status: "pending"}
+
+	task, queueType, ok := nextPendingDocumentTask([]graphmodel.GraphFlowTask{vectorTask, graphTask})
+	if !ok || task.ID != graphTask.ID || queueType != TypeGraphFlowSync {
+		t.Fatalf("next task = (%s, %s, %t), want pending graph sync", task.ID, queueType, ok)
+	}
+
+	graphTask.Status = "completed"
+	task, queueType, ok = nextPendingDocumentTask([]graphmodel.GraphFlowTask{vectorTask, graphTask})
+	if !ok || task.ID != vectorTask.ID || queueType != TypeGraphFlowVectorSync {
+		t.Fatalf("next task = (%s, %s, %t), want pending vector sync", task.ID, queueType, ok)
+	}
+}
+
 func openRunOutboxHandlerTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
 	dsn := fmt.Sprintf("file:run-outbox-handler-%d?mode=memory&cache=shared", time.Now().UnixNano())

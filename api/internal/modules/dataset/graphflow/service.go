@@ -28,6 +28,8 @@ import (
 	"gorm.io/gorm"
 )
 
+const queryEntityExtractionTimeout = 5 * time.Second
+
 // Service provides GraphFlow functionality
 type Service struct {
 	// Configuration
@@ -170,8 +172,10 @@ func (s *Service) ExtractQueryEntities(ctx context.Context, organizationID strin
 	msgs := []adapter.Message{
 		{Role: "user", Content: promptText},
 	}
-	// Use a low temperature for extraction
-	temp := 0.1
+	// Keep query entity extraction deterministic and tightly bounded. This call is
+	// on the retrieval critical path and should only return a small JSON object.
+	temp := 0.0
+	maxTokens := 128
 	resolvedModel, err := llmruntime.NewModelResolver(s.DefaultModelSvc).ResolveFromPointers(ctx, organizationID, provider, model, shared_model.ModelTypeLLM)
 	if err != nil {
 		return nil, fmt.Errorf("failed to resolve text model: %w", err)
@@ -185,13 +189,19 @@ func (s *Service) ExtractQueryEntities(ctx context.Context, organizationID strin
 		Model:       strings.TrimSpace(resolvedModel.Model),
 		Messages:    msgs,
 		Temperature: &temp,
+		MaxTokens:   &maxTokens,
 		ResponseFormat: &adapter.ResponseFormat{
 			Type: "json_object",
 		},
 	}
+	if (strings.EqualFold(req.Provider, "qwen") || strings.EqualFold(req.Provider, "dashscope")) &&
+		strings.HasPrefix(strings.ToLower(req.Model), "qwen3.6-") {
+		// Qwen 3.6 enables thinking by default. Entity extraction is a simple
+		// constrained task, so reasoning only adds tokens and critical-path latency.
+		req.AdditionalParameters = map[string]interface{}{"enable_thinking": false}
+	}
 
-	// 2. Call LLM with a 120s timeout to avoid blocking retrieval (increased from 10s)
-	ctx, cancel := context.WithTimeout(ctx, 120*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, queryEntityExtractionTimeout)
 	defer cancel()
 
 	resp, err := s.llmClient.Chat(ctx, organizationID, &req)

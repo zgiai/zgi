@@ -613,3 +613,72 @@ func TestLifecycleServiceRejectsInvalidScopeAndKey(t *testing.T) {
 		t.Fatalf("unexpected cross-tenant runs: %d", runCount)
 	}
 }
+
+func TestLifecycleServiceRetryRequeuesFailedTasks(t *testing.T) {
+	db := openLifecycleTestDB(t, &lifecycleTestRef{})
+	ctx := context.Background()
+	datasetID := uuid.New()
+	organizationID := uuid.New()
+	documentID := uuid.New()
+	runID := uuid.New()
+
+	if err := db.Create(&lifecycleTestDataset{
+		ID:             datasetID.String(),
+		OrganizationID: organizationID.String(),
+		GraphStatus:    "failed",
+		GraphRevision:  1,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	run := graphmodel.GraphFlowRun{
+		ID:             runID,
+		OrganizationID: organizationID,
+		DatasetID:      datasetID,
+		DocumentID:     &documentID,
+		GraphRevision:  1,
+		Trigger:        "test",
+		Mode:           graphmodel.GraphFlowRunModeBuild,
+		Status:         graphmodel.GraphFlowRunStatusFailed,
+		IdempotencyKey: "retry:failed-vector-sync",
+	}
+	if err := db.Create(&run).Error; err != nil {
+		t.Fatal(err)
+	}
+	task := lifecycleTestTask{
+		ID:           uuid.New(),
+		TenantID:     organizationID,
+		KBID:         datasetID,
+		DocumentID:   documentID,
+		RunID:        &runID,
+		TaskType:     "vector_sync",
+		Status:       "failed",
+		Progress:     80,
+		ErrorMessage: "embedding generation failed",
+	}
+	if err := db.Create(&task).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	if err := NewLifecycleService(db).Retry(ctx, runID); err != nil {
+		t.Fatal(err)
+	}
+
+	var storedRun graphmodel.GraphFlowRun
+	if err := db.First(&storedRun, "id = ?", runID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if storedRun.Status != graphmodel.GraphFlowRunStatusPending {
+		t.Fatalf("run status = %q, want pending", storedRun.Status)
+	}
+	var storedTask lifecycleTestTask
+	if err := db.First(&storedTask, "id = ?", task.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if storedTask.Status != "pending" || storedTask.Progress != 0 || storedTask.ErrorMessage != "" {
+		t.Fatalf("task was not reset: %#v", storedTask)
+	}
+	var event graphmodel.GraphOutboxEvent
+	if err := db.Where("run_id = ? AND status = ?", runID, graphmodel.GraphOutboxStatusPending).First(&event).Error; err != nil {
+		t.Fatalf("pending retry event not found: %v", err)
+	}
+}

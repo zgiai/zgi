@@ -78,6 +78,14 @@ func (h *RunOutboxHandler) runDocuments(ctx context.Context, run *graphmodel.Gra
 }
 
 func (h *RunOutboxHandler) enqueueDocumentTask(ctx context.Context, run *graphmodel.GraphFlowRun, documentID uuid.UUID) error {
+	resumed, err := h.enqueuePendingDocumentTasks(ctx, run, documentID)
+	if err != nil {
+		return err
+	}
+	if resumed {
+		return nil
+	}
+
 	taskType := "extraction"
 	if run.Mode == graphmodel.GraphFlowRunModeCleanup {
 		taskType = "cleanup"
@@ -112,6 +120,53 @@ func (h *RunOutboxHandler) enqueueDocumentTask(ctx context.Context, run *graphmo
 	}
 	_, err = h.taskManager.EnqueueTask(queued, asynq.Queue("graphflow"))
 	return err
+}
+
+func (h *RunOutboxHandler) enqueuePendingDocumentTasks(ctx context.Context, run *graphmodel.GraphFlowRun, documentID uuid.UUID) (bool, error) {
+	var tasks []graphmodel.GraphFlowTask
+	if err := h.service.DB.WithContext(ctx).
+		Where("run_id = ? AND document_id = ?", run.ID, documentID).
+		Find(&tasks).Error; err != nil {
+		return false, err
+	}
+	if len(tasks) == 0 {
+		return false, nil
+	}
+
+	enqueue := func(task graphmodel.GraphFlowTask, queueType string) error {
+		queued, err := NewGraphFlowTask(queueType, task.ID.String(), h.taskManager)
+		if err != nil {
+			return err
+		}
+		_, err = h.taskManager.EnqueueTask(queued, asynq.Queue("graphflow"))
+		return err
+	}
+
+	if task, queueType, ok := nextPendingDocumentTask(tasks); ok {
+		return true, enqueue(task, queueType)
+	}
+	return false, nil
+}
+
+func nextPendingDocumentTask(tasks []graphmodel.GraphFlowTask) (graphmodel.GraphFlowTask, string, bool) {
+	byType := make(map[string]graphmodel.GraphFlowTask, len(tasks))
+	for _, task := range tasks {
+		byType[task.TaskType] = task
+	}
+	for _, stage := range []struct {
+		taskType  string
+		queueType string
+	}{
+		{taskType: "extraction", queueType: TypeGraphFlowExtraction},
+		{taskType: "alignment", queueType: TypeGraphFlowAlignment},
+		{taskType: "graph_sync", queueType: TypeGraphFlowSync},
+		{taskType: "vector_sync", queueType: TypeGraphFlowVectorSync},
+	} {
+		if task, ok := byType[stage.taskType]; ok && task.Status != "completed" {
+			return task, stage.queueType, true
+		}
+	}
+	return graphmodel.GraphFlowTask{}, "", false
 }
 
 func (h *RunOutboxHandler) createDocumentTask(

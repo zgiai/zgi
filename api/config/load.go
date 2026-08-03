@@ -1122,7 +1122,7 @@ func loadKnowledgeConfig(cfg *Config, source *envSource) {
 
 func loadGraphFlowConfig(cfg *Config, source *envSource) {
 	cfg.GraphFlow = GraphFlowConfig{
-		VectorSyncBatchSize:   mustInt(source.int(50, envGraphFlowVectorSyncBatchSize)),
+		VectorSyncBatchSize:   mustInt(source.int(10, envGraphFlowVectorSyncBatchSize)),
 		VectorSyncConcurrency: mustInt(source.int(10, envGraphFlowVectorSyncConcurrency)),
 	}
 }

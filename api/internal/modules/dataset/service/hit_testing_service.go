@@ -1012,14 +1012,16 @@ func (s *hitTestingService) ExternalRetrieve(ctx context.Context, dataset *datas
 	return response, nil
 }
 
+const maxHitTestingQueryLength = 1000
+
 // HitTestingArgsCheck validates hit testing arguments
 func (s *hitTestingService) HitTestingArgsCheck(args *dto.HitTestingRequest) error {
 	if args.Query == "" {
 		return errors.NewBadRequestError("Query is required")
 	}
 
-	if utf8.RuneCountInString(args.Query) > 250 {
-		return errors.NewBadRequestError("Query cannot exceed 250 characters")
+	if utf8.RuneCountInString(args.Query) > maxHitTestingQueryLength {
+		return errors.NewBadRequestError(fmt.Sprintf("Query cannot exceed %d characters", maxHitTestingQueryLength))
 	}
 
 	return nil

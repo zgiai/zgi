@@ -86,11 +86,13 @@ func (r *EntityRepository) IncrementSourceCount(ctx context.Context, entityID uu
 		UpdateColumn("source_count", gorm.Expr("source_count + 1")).Error
 }
 
-// FindPendingVectorSync retrieves entities that need vector embeddings
+// FindPendingVectorSync retrieves graph-projected entities that need vector
+// embeddings. Failed entities are included so a later graph rebuild can repair
+// transient provider failures instead of permanently starving vector retrieval.
 func (r *EntityRepository) FindPendingVectorSync(ctx context.Context, kbID uuid.UUID) ([]*model.Entity, error) {
 	var results []*model.Entity
 	err := r.db.WithContext(ctx).
-		Where("kb_id = ? AND vector_state = ? AND is_deleted = ?", kbID, "pending", false).
+		Where("kb_id = ? AND vector_state IN ? AND graph_state = ? AND is_deleted = ?", kbID, []string{"pending", "failed"}, "synced", false).
 		Find(&results).Error
 	return results, err
 }

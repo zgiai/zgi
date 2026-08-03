@@ -3,6 +3,7 @@ package worker
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -17,12 +18,46 @@ import (
 	"github.com/zgiai/zgi/api/pkg/ratelimit"
 )
 
+const maxVectorSyncBatchSize = 10
+
+func retryVectorSyncBatchByHalving(
+	ctx context.Context,
+	batch []*model.Entity,
+	cause error,
+	process func([]*model.Entity) error,
+	markFailed func([]*model.Entity, error) error,
+) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	if len(batch) <= 1 {
+		return markFailed(batch, cause)
+	}
+
+	mid := len(batch) / 2
+	logger.Warn("Retrying GraphFlow embedding with smaller batches", map[string]interface{}{
+		"failed_batch_size": len(batch),
+		"left_batch_size":   mid,
+		"right_batch_size":  len(batch) - mid,
+	})
+	leftErr := process(batch[:mid])
+	rightErr := process(batch[mid:])
+	return errors.Join(leftErr, rightErr)
+}
+
 // getVectorSyncBatchSize reads the batch size from the loaded .env configuration.
 func getVectorSyncBatchSize(defaultVal int) int {
-	if n := config.Current().GraphFlow.VectorSyncBatchSize; n > 0 {
-		return n
+	n := config.Current().GraphFlow.VectorSyncBatchSize
+	if n <= 0 {
+		n = defaultVal
 	}
-	return defaultVal
+	if n <= 0 {
+		n = maxVectorSyncBatchSize
+	}
+	if n > maxVectorSyncBatchSize {
+		return maxVectorSyncBatchSize
+	}
+	return n
 }
 
 // getVectorSyncConcurrency reads the concurrency from the loaded .env configuration.
@@ -48,7 +83,7 @@ func NewVectorSyncHandler(svc *graphflow.Service, taskManager *queue.TaskManager
 		}
 
 		// Read tunable parameters from centralized configuration.
-		batchSize := getVectorSyncBatchSize(50)
+		batchSize := getVectorSyncBatchSize(maxVectorSyncBatchSize)
 		concurrency := getVectorSyncConcurrency(10)
 
 		logger.Info("Starting GraphFlow vector sync", map[string]interface{}{
@@ -118,10 +153,9 @@ func NewVectorSyncHandler(svc *graphflow.Service, taskManager *queue.TaskManager
 
 		// Check if LLM client is available for embeddings
 		if svc.GetLLMClient() == nil {
-			logger.Warn("LLM client not configured, skipping vector sync", nil)
-			svc.TaskRepo.UpdateTaskCompleted(ctx, taskID)
-			checkAndUpdateDocumentStatus(ctx, svc, graphFlowTask)
-			return nil
+			err := errors.New("LLM client not configured for vector sync")
+			_ = svc.TaskRepo.UpdateTaskFailed(ctx, taskID, err.Error())
+			return fmt.Errorf("%w: %w", err, asynq.SkipRetry)
 		}
 
 		// Get pending entities for vector sync
@@ -183,10 +217,16 @@ func NewVectorSyncHandler(svc *graphflow.Service, taskManager *queue.TaskManager
 
 		wg.Wait()
 
-		// If a fatal error occurred (e.g. Neo4j batch update failure), propagate it
+		// Any failed batch makes the projection incomplete. Do not publish the task
+		// as completed or the dataset may incorrectly become graph-ready.
 		if firstErr != nil {
-			svc.TaskRepo.UpdateTaskFailed(ctx, taskID, fmt.Sprintf("vector sync failed: %v", firstErr))
-			return fmt.Errorf("vector sync failed: %w", firstErr)
+			_ = svc.TaskRepo.UpdateTaskFailed(ctx, taskID, fmt.Sprintf("vector sync failed: %v", firstErr))
+			return fmt.Errorf("vector sync failed: %v: %w", firstErr, asynq.SkipRetry)
+		}
+		if failed := atomic.LoadInt32(&entitiesFailed); failed > 0 {
+			err := fmt.Errorf("vector sync left %d entities unsynced", failed)
+			_ = svc.TaskRepo.UpdateTaskFailed(ctx, taskID, err.Error())
+			return fmt.Errorf("%v: %w", err, asynq.SkipRetry)
 		}
 
 		// Update current task status to completed
@@ -223,6 +263,37 @@ func processVectorSyncBatch(
 	entitiesSynced *int32,
 	entitiesFailed *int32,
 ) error {
+	if len(batch) == 0 {
+		return nil
+	}
+	markBatchFailed := func(message string) error {
+		ids := make([]uuid.UUID, 0, len(batch))
+		for _, entity := range batch {
+			ids = append(ids, entity.ID)
+		}
+		if err := svc.EntityRepo.UpdateVectorStateFailureBatch(ctx, ids, "failed", message); err != nil {
+			return fmt.Errorf("failed to persist vector failure state: %w", err)
+		}
+		atomic.AddInt32(entitiesFailed, int32(len(batch)))
+		return nil
+	}
+	retryWithSmallerBatches := func(cause error, message string) error {
+		return retryVectorSyncBatchByHalving(
+			ctx,
+			batch,
+			cause,
+			func(subBatch []*model.Entity) error {
+				return processVectorSyncBatch(ctx, svc, taskID, tenantIDStr, graphFlowTask, graphRun, subBatch, entitiesSynced, entitiesFailed)
+			},
+			func(_ []*model.Entity, terminalErr error) error {
+				if stateErr := markBatchFailed(message); stateErr != nil {
+					return errors.Join(terminalErr, stateErr)
+				}
+				return terminalErr
+			},
+		)
+	}
+
 	// Prepare texts for embedding
 	texts := make([]string, len(batch))
 	for j, entity := range batch {
@@ -236,23 +307,20 @@ func processVectorSyncBatch(
 	embedSvc, err := svc.GetEmbeddingService(ctx, batch[0].KBID.String())
 	if err != nil {
 		logger.Error("Failed to resolve embedding service for vector sync", err)
-		for _, entity := range batch {
-			svc.EntityRepo.UpdateVectorState(ctx, entity.ID, "failed", "", "embedding service resolution failed")
+		if stateErr := markBatchFailed("embedding service resolution failed"); stateErr != nil {
+			return errors.Join(fmt.Errorf("failed to resolve embedding service: %w", err), stateErr)
 		}
-		atomic.AddInt32(entitiesFailed, int32(len(batch)))
-		return nil
+		return fmt.Errorf("failed to resolve embedding service: %w", err)
 	}
 
 	// Generate embeddings using the appropriate service
 	vecs, err := embedSvc.EmbedTexts(ctx, texts)
 	if err != nil {
-		logger.Error("Failed to generate embeddings via embedding service", err)
-		// Mark entities as failed
-		for _, entity := range batch {
-			svc.EntityRepo.UpdateVectorState(ctx, entity.ID, "failed", "", "embedding generation failed")
-		}
-		atomic.AddInt32(entitiesFailed, int32(len(batch)))
-		return nil // non-fatal: skip this batch and continue
+		return retryWithSmallerBatches(fmt.Errorf("failed to generate embeddings: %w", err), "embedding generation failed")
+	}
+	if len(vecs) != len(batch) {
+		err := fmt.Errorf("embedding response count mismatch: got %d vectors for %d entities", len(vecs), len(batch))
+		return retryWithSmallerBatches(err, "embedding response count mismatch")
 	}
 	actualDimension := embedSvc.GetDimension()
 	if len(vecs) > 0 {
@@ -331,6 +399,7 @@ func processVectorSyncBatch(
 		); err != nil {
 			logger.Error("Failed to batch update entity vector state in PG", err)
 			atomic.AddInt32(entitiesFailed, int32(len(syncedIDs)))
+			return fmt.Errorf("failed to persist synced entity vector state: %w", err)
 		} else {
 			atomic.AddInt32(entitiesSynced, int32(len(syncedIDs)))
 		}

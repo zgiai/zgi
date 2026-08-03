@@ -12,6 +12,7 @@ import (
 	"github.com/zgiai/zgi/api/config"
 	"github.com/zgiai/zgi/api/internal/dto"
 	"github.com/zgiai/zgi/api/internal/modules/dataset/graphflow"
+	"github.com/zgiai/zgi/api/internal/modules/dataset/indexing"
 	"github.com/zgiai/zgi/api/internal/modules/dataset/task"
 	"github.com/zgiai/zgi/api/internal/modules/file_process/service/extractor"
 
@@ -883,13 +884,13 @@ func (s *DocumentServiceImpl) GetDefaultRules() map[string]interface{} {
 			"table_child_max_chars": 256,
 			"segmentation": map[string]interface{}{
 				"separator":     "\n\n",
-				"max_tokens":    500,
-				"chunk_overlap": 50,
+				"max_tokens":    indexing.DefaultParagraphParentMaxChars,
+				"chunk_overlap": indexing.DefaultParagraphParentOverlapChars,
 			},
 			"subchunk_segmentation": map[string]interface{}{
 				"separator":     "\n",
-				"max_tokens":    220,
-				"chunk_overlap": 30,
+				"max_tokens":    indexing.DefaultParagraphChildMaxChars,
+				"chunk_overlap": indexing.DefaultParagraphChildOverlapChars,
 			},
 		},
 		"limits": map[string]interface{}{
@@ -989,13 +990,13 @@ func defaultDocumentProcessRules() map[string]interface{} {
 		},
 		"segmentation": map[string]interface{}{
 			"separator":     "\n",
-			"max_tokens":    500,
-			"chunk_overlap": 50,
+			"max_tokens":    indexing.DefaultParagraphParentMaxChars,
+			"chunk_overlap": indexing.DefaultParagraphParentOverlapChars,
 		},
 		"subchunk_segmentation": map[string]interface{}{
 			"separator":     "\n",
-			"max_tokens":    100,
-			"chunk_overlap": 20,
+			"max_tokens":    indexing.DefaultParagraphChildMaxChars,
+			"chunk_overlap": indexing.DefaultParagraphChildOverlapChars,
 		},
 	}
 }

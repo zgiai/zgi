@@ -46,6 +46,17 @@ type GraphExecution struct {
 	Summary            string                 `json:"summary,omitempty"`    // Human-readable summary of graph reasoning
 	Thinking           string                 `json:"thinking,omitempty"`   // Internal thinking/reasoning
 	DebugInfo          map[string]interface{} `json:"debug_info,omitempty"` // Internal debug information
+	Degraded           bool                   `json:"degraded,omitempty"`
+	Paths              []GraphPathExecution   `json:"paths,omitempty"`
+}
+
+// GraphPathExecution reports the outcome of one graph retrieval path.
+type GraphPathExecution struct {
+	Path         string `json:"path"`
+	Status       string `json:"status"` // success, timeout, or error
+	ElapsedMs    int64  `json:"elapsed_ms"`
+	ResultCount  int    `json:"result_count"`
+	ErrorMessage string `json:"error_message,omitempty"`
 }
 
 // GraphExecutionStep represents a step in the graph retrieval process

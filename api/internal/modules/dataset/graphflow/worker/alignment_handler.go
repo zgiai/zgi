@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/hibiken/asynq"
@@ -393,10 +392,9 @@ func NewAlignmentHandler(svc *graphflow.Service, taskManager *queue.TaskManager,
 	}
 }
 
-// enqueueNextSyncTasks creates both sync tasks (graph_sync and vector_sync) and enqueues them in parallel
+// enqueueNextSyncTasks creates both sync tasks, but only starts graph_sync.
+// vector_sync is chained by the graph sync handler after Neo4j nodes exist.
 func enqueueNextSyncTasks(ctx context.Context, svc *graphflow.Service, taskManager *queue.TaskManager, currentTask *model.GraphFlowTask) error {
-	_ = time.Now() // Preserve time import for potential future use
-
 	// Create graph_sync task
 	graphSyncTask := &model.GraphFlowTask{
 		TenantID:           currentTask.TenantID,
@@ -414,26 +412,6 @@ func enqueueNextSyncTasks(ctx context.Context, svc *graphflow.Service, taskManag
 	if err != nil {
 		return fmt.Errorf("failed to create graph_sync task: %w", err)
 	}
-
-	// Create and enqueue graph_sync task using asynq
-	task, err := NewGraphFlowTask(TypeGraphFlowSync, graphSyncTaskID.String(), taskManager)
-	if err != nil {
-		svc.TaskRepo.UpdateTaskFailed(ctx, graphSyncTaskID, fmt.Sprintf("failed to create task: %v", err))
-		logger.Error("Failed to create graph_sync task", err)
-		return fmt.Errorf("failed to create graph_sync task: %w", err)
-	}
-
-	_, err = taskManager.EnqueueTask(task, asynq.Queue("graphflow"))
-	if err != nil {
-		svc.TaskRepo.UpdateTaskFailed(ctx, graphSyncTaskID, fmt.Sprintf("failed to enqueue: %v", err))
-		logger.Error("Failed to enqueue graph_sync task", err)
-		return fmt.Errorf("failed to enqueue graph_sync task: %w", err)
-	}
-
-	logger.Info("Graph sync task created and enqueued", map[string]interface{}{
-		"task_id":     graphSyncTaskID.String(),
-		"document_id": currentTask.DocumentID.String(),
-	})
 
 	// Create vector_sync task
 	vectorSyncTask := &model.GraphFlowTask{
@@ -453,24 +431,26 @@ func enqueueNextSyncTasks(ctx context.Context, svc *graphflow.Service, taskManag
 		return fmt.Errorf("failed to create vector_sync task: %w", err)
 	}
 
-	// Create and enqueue vector_sync task using asynq
-	vectorTask, err := NewGraphFlowTask(TypeGraphFlowVectorSync, vectorSyncTaskID.String(), taskManager)
+	// Enqueue graph_sync only after both task records exist. This avoids a fast
+	// graph_sync completion racing ahead of vector_sync task creation.
+	task, err := NewGraphFlowTask(TypeGraphFlowSync, graphSyncTaskID.String(), taskManager)
 	if err != nil {
-		svc.TaskRepo.UpdateTaskFailed(ctx, vectorSyncTaskID, fmt.Sprintf("failed to create task: %v", err))
-		logger.Error("Failed to create vector_sync task", err)
-		return fmt.Errorf("failed to create vector_sync task: %w", err)
+		svc.TaskRepo.UpdateTaskFailed(ctx, graphSyncTaskID, fmt.Sprintf("failed to create task: %v", err))
+		logger.Error("Failed to create graph_sync task", err)
+		return fmt.Errorf("failed to create graph_sync task: %w", err)
 	}
 
-	_, err = taskManager.EnqueueTask(vectorTask, asynq.Queue("graphflow"))
+	_, err = taskManager.EnqueueTask(task, asynq.Queue("graphflow"))
 	if err != nil {
-		svc.TaskRepo.UpdateTaskFailed(ctx, vectorSyncTaskID, fmt.Sprintf("failed to enqueue: %v", err))
-		logger.Error("Failed to enqueue vector_sync task", err)
-		return fmt.Errorf("failed to enqueue vector_sync task: %w", err)
+		svc.TaskRepo.UpdateTaskFailed(ctx, graphSyncTaskID, fmt.Sprintf("failed to enqueue: %v", err))
+		logger.Error("Failed to enqueue graph_sync task", err)
+		return fmt.Errorf("failed to enqueue graph_sync task: %w", err)
 	}
 
-	logger.Info("Vector sync task created and enqueued", map[string]interface{}{
-		"task_id":     vectorSyncTaskID.String(),
-		"document_id": currentTask.DocumentID.String(),
+	logger.Info("Graph sync task enqueued; vector sync task is waiting", map[string]interface{}{
+		"graph_task_id":  graphSyncTaskID.String(),
+		"vector_task_id": vectorSyncTaskID.String(),
+		"document_id":    currentTask.DocumentID.String(),
 	})
 
 	return nil

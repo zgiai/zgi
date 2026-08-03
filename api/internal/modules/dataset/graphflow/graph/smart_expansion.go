@@ -8,7 +8,6 @@ import (
 	"sync"
 
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
-	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
 // ScoredNode represents a node with its relevance score and context edges
@@ -239,6 +238,9 @@ func (c *Neo4jClient) findAnchors(ctx context.Context, kbID string, keywords []s
 			Name:   rName,
 		})
 	}
+	if err := result.Err(); err != nil {
+		return nil, fmt.Errorf("failed while reading anchor results: %w", err)
+	}
 
 	return anchors, nil
 }
@@ -263,6 +265,7 @@ func (c *Neo4jClient) expandNode(ctx context.Context, kbID string, nodeID int64,
 		  AND COUNT { (m)--() } <= 100
 
 		WITH DISTINCT m
+		ORDER BY coalesce(m.name, ''), m.id
 		LIMIT 100
 
 		WITH m, COUNT { (m)--() } as degree
@@ -270,7 +273,9 @@ func (c *Neo4jClient) expandNode(ctx context.Context, kbID string, nodeID int64,
 		// Extract local environment edges of dest m
 		OPTIONAL MATCH (m)-[r]-(p:Entity)
 		WHERE p.kb_id = $kb_id AND id(p) <> id(m) AND coalesce(p.active_source_count, 0) > 0 AND coalesce(r.active_weight, 0) > 0
-		WITH m, degree, r, p LIMIT 500
+		WITH m, degree, r, p
+		ORDER BY degree DESC, coalesce(m.name, ''), type(r), coalesce(p.name, ''), p.id
+		LIMIT 500
 
 		WITH m, degree, collect(DISTINCT {
 			head: m.name,
@@ -279,7 +284,7 @@ func (c *Neo4jClient) expandNode(ctx context.Context, kbID string, nodeID int64,
 		}) as edges
 
 		RETURN id(m) as id, labels(m) as labels, properties(m) as props, degree, edges
-		ORDER BY degree DESC
+		ORDER BY degree DESC, coalesce(m.name, ''), id(m)
 		LIMIT $limit
 	`, hopsStr)
 
@@ -332,17 +337,6 @@ func (c *Neo4jClient) expandNode(ctx context.Context, kbID string, nodeID int64,
 			}
 		}
 
-		// Log labels and props for deep diagnosis
-		var nodeLabels []string
-		if l, ok := labelsVal.([]interface{}); ok {
-			for _, lab := range l {
-				if s, ok := lab.(string); ok {
-					nodeLabels = append(nodeLabels, s)
-				}
-			}
-		}
-		logger.Debug(fmt.Sprintf("expandNode FOUND: node_id=%d, labels=%v, edges_count=%d", nodeID, nodeLabels, len(edges)))
-
 		neighbors = append(neighbors, &ScoredNode{
 			Node: &Node{
 				ID:     nodeID,
@@ -353,6 +347,9 @@ func (c *Neo4jClient) expandNode(ctx context.Context, kbID string, nodeID int64,
 			},
 			Edges: edges,
 		})
+	}
+	if err := result.Err(); err != nil {
+		return nil, fmt.Errorf("failed while reading expansion results: %w", err)
 	}
 
 	return neighbors, nil

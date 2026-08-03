@@ -225,9 +225,29 @@ func (s *LifecycleService) Retry(ctx context.Context, runID uuid.UUID) error {
 		if err != nil {
 			return err
 		}
+		if err := tx.WithContext(ctx).Model(&graphmodel.GraphFlowTask{}).
+			Where("run_id = ? AND status = ?", runID, "failed").
+			Updates(map[string]any{
+				"status":           "pending",
+				"progress":         0,
+				"started_at":       nil,
+				"completed_at":     nil,
+				"error_message":    "",
+				"error_code":       "",
+				"lease_expires_at": nil,
+				"heartbeat_at":     nil,
+				"updated_at":       time.Now().UTC(),
+			}).Error; err != nil {
+			return err
+		}
+		if err := updateGraphReferenceRunState(ctx, tx, run, nil, graphmodel.GraphFlowRunStatusPending); err != nil {
+			return err
+		}
 		event := newRunOutboxEvent(run)
-		_, _, err = s.outboxRepo.WithTx(tx).CreateOrGet(ctx, event)
-		return err
+		if _, _, err = s.outboxRepo.WithTx(tx).CreateOrGet(ctx, event); err != nil {
+			return err
+		}
+		return s.aggregateDatasetGraphState(ctx, tx, run.OrganizationID, run.DatasetID)
 	})
 }
 

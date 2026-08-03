@@ -95,6 +95,93 @@ func TestParentChildTextModesUseConfiguredSlidingWindowOverlap(t *testing.T) {
 	}
 }
 
+func TestParentChildParagraphUsesConfiguredParentSlidingWindow(t *testing.T) {
+	processor := &ParentChildIndexProcessor{
+		BaseIndexProcessorImpl: NewBaseIndexProcessorImpl(nil, nil, nil, ""),
+	}
+	output := &dto.ExtractOutput{Elements: []dto.ExtractElement{{Type: "text", Content: "abcdefghijklmnopqrstuvwxyz"}}}
+	options := &ProcessOptions{ProcessRule: map[string]interface{}{
+		"parent_mode": "paragraph",
+		"segmentation": map[string]interface{}{
+			"separator":     "",
+			"max_tokens":    10,
+			"chunk_overlap": 3,
+		},
+		"subchunk_segmentation": map[string]interface{}{
+			"separator":     "",
+			"max_tokens":    50,
+			"chunk_overlap": 0,
+		},
+	}}
+
+	got, err := processor.Transform(context.Background(), output, options)
+	if err != nil {
+		t.Fatalf("Transform returned error: %v", err)
+	}
+	if len(got) < 2 {
+		t.Fatalf("got = %#v, want multiple parent windows", got)
+	}
+	for i, chunk := range got {
+		if size := len([]rune(chunk.Content)); size > 10 {
+			t.Fatalf("parent %d size = %d, want <= 10: %q", i, size, chunk.Content)
+		}
+		if i == 0 {
+			continue
+		}
+		previous := []rune(got[i-1].Content)
+		current := []rune(chunk.Content)
+		if len(previous) < 3 || len(current) < 3 || string(previous[len(previous)-3:]) != string(current[:3]) {
+			t.Fatalf("parents %d/%d do not overlap by 3 runes: %q / %q", i-1, i, got[i-1].Content, chunk.Content)
+		}
+	}
+}
+
+func TestParentChildParagraphUsesDefaultCharacterWindows(t *testing.T) {
+	processor := &ParentChildIndexProcessor{
+		BaseIndexProcessorImpl: NewBaseIndexProcessorImpl(nil, nil, nil, ""),
+	}
+	runes := make([]rune, 3200)
+	for i := range runes {
+		runes[i] = rune(0x4e00 + i)
+	}
+	output := &dto.ExtractOutput{Elements: []dto.ExtractElement{{Type: "text", Content: string(runes)}}}
+	options := &ProcessOptions{ProcessRule: map[string]interface{}{
+		"parent_mode": "paragraph",
+	}}
+
+	got, err := processor.Transform(context.Background(), output, options)
+	if err != nil {
+		t.Fatalf("Transform returned error: %v", err)
+	}
+	if len(got) < 2 {
+		t.Fatalf("got %d parents, want multiple parent windows", len(got))
+	}
+	for i, parent := range got {
+		parentRunes := []rune(parent.Content)
+		if len(parentRunes) > DefaultParagraphParentMaxChars {
+			t.Fatalf("parent %d size = %d, want <= %d", i, len(parentRunes), DefaultParagraphParentMaxChars)
+		}
+		if i > 0 {
+			previousRunes := []rune(got[i-1].Content)
+			if string(previousRunes[len(previousRunes)-DefaultParagraphParentOverlapChars:]) != string(parentRunes[:DefaultParagraphParentOverlapChars]) {
+				t.Fatalf("parents %d/%d do not overlap by %d characters", i-1, i, DefaultParagraphParentOverlapChars)
+			}
+		}
+		for childIndex, child := range parent.Children {
+			childRunes := []rune(child.Content)
+			if len(childRunes) > DefaultParagraphChildMaxChars {
+				t.Fatalf("parent %d child %d size = %d, want <= %d", i, childIndex, len(childRunes), DefaultParagraphChildMaxChars)
+			}
+			if childIndex > 0 {
+				previousChildRunes := []rune(parent.Children[childIndex-1].Content)
+				if string(previousChildRunes[len(previousChildRunes)-DefaultParagraphChildOverlapChars:]) != string(childRunes[:DefaultParagraphChildOverlapChars]) {
+					t.Fatalf("parent %d children %d/%d do not overlap by %d characters", i, childIndex-1, childIndex, DefaultParagraphChildOverlapChars)
+				}
+			}
+		}
+	}
+}
+
 func TestParentChildElementGroupBuildsSizedParentGroups(t *testing.T) {
 	processor := &ParentChildIndexProcessor{
 		BaseIndexProcessorImpl: NewBaseIndexProcessorImpl(nil, nil, nil, ""),
@@ -709,5 +796,18 @@ func TestSlidingWindowPrefersConfiguredSeparatorNearTarget(t *testing.T) {
 	}
 	if got[0] != "aaaa.bbbbb|" {
 		t.Fatalf("first chunk = %q, want configured separator boundary", got[0])
+	}
+}
+
+func TestSlidingWindowTrailingChunkNeverExceedsMaximum(t *testing.T) {
+	got := splitSlidingWindowText("abcdefghijklmnopqr", 10, 5, 10, 3, "")
+
+	if len(got) < 2 {
+		t.Fatalf("chunks = %#v, want multiple chunks", got)
+	}
+	for i, chunk := range got {
+		if size := len([]rune(chunk)); size > 10 {
+			t.Fatalf("chunk %d size = %d, want <= 10: %q", i, size, chunk)
+		}
 	}
 }

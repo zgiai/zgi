@@ -11,7 +11,7 @@ func TestLoadNeo4jConfigAllowsUnconfiguredRuntime(t *testing.T) {
 	}
 
 	loadGraphFlowConfig(cfg, source)
-	if cfg.GraphFlow.VectorSyncBatchSize != 50 || cfg.GraphFlow.VectorSyncConcurrency != 10 {
+	if cfg.GraphFlow.VectorSyncBatchSize != 10 || cfg.GraphFlow.VectorSyncConcurrency != 10 {
 		t.Fatalf("unexpected GraphFlow defaults: %#v", cfg.GraphFlow)
 	}
 }

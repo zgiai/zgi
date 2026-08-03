@@ -436,8 +436,6 @@ func handleConcurrentExtraction(
 
 			normalizeExtractionResult(result, documentTitle)
 
-			logger.Info(fmt.Sprintf("[DEBUG EXTRACTION] Segment %s extracted %d entities, %d relationships", seg.ID, len(result.Entities), len(result.Relationships)), nil)
-
 			if updateErr := svc.DocumentRepo.UpdateSegmentGraphIndexingStatus(ctx, seg.ID, "extracted"); updateErr != nil {
 				logger.ErrorContext(segmentCtx, "failed to update segment graph indexing status to extracted", updateErr)
 			}

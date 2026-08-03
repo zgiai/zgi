@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"sort"
@@ -146,6 +147,11 @@ type RetrievalOptions struct {
 const (
 	hybridRecallCandidateLimit    = 50
 	defaultGraphRetrievalHopDepth = 3
+	graphSearchTimeout            = 8 * time.Second
+	graphEntityExtractionTimeout  = 3 * time.Second
+	graphEmbeddingTimeout         = 2 * time.Second
+	graphPathTimeout              = 2 * time.Second
+	maxGraphExecutionTriples      = 500
 )
 
 // Retrieve Main retrieval method
@@ -300,8 +306,7 @@ func (s *RetrievalService) Retrieve(ctx context.Context, dataset *dataset_model.
 		go func() {
 			logger.DebugContext(logCtx, "starting graph retrieval")
 
-			// Create a 120s timeout for the graph search specifically (increased from 15s)
-			graphCtx, cancel := context.WithTimeout(ctx, 120*time.Second)
+			graphCtx, cancel := context.WithTimeout(ctx, graphSearchTimeout)
 			defer cancel()
 
 			documents, execution, err := s.graphSearch(graphCtx, dataset, query, options)
@@ -446,7 +451,7 @@ func (s *RetrievalService) Retrieve(ctx context.Context, dataset *dataset_model.
 	s.updateRecordHitCount(ctx, records)
 
 	logger.Info("Retrieval results summary", map[string]interface{}{
-		"query":             query,
+		"query_length":      len(query),
 		"semantic_docs":     len(semanticDocuments),
 		"graph_docs":        len(graphDocuments),
 		"final_docs_count":  len(records),
@@ -1919,8 +1924,7 @@ func (s *RetrievalService) graphSearch(ctx context.Context, dataset *dataset_mod
 	}
 
 	// 1. Extract entities from query
-	// Use 120s timeout for LLM extraction because the gateway is currently very slow
-	extractCtx, cancel := context.WithTimeout(ctx, 120*time.Second)
+	extractCtx, cancel := context.WithTimeout(ctx, graphEntityExtractionTimeout)
 	defer cancel()
 
 	entities, err := s.graphFlowService.ExtractQueryEntities(extractCtx, dataset.OrganizationID, query, dataset.EntityModel, dataset.EntityModelProvider)
@@ -1945,9 +1949,9 @@ func (s *RetrievalService) graphSearch(ctx context.Context, dataset *dataset_mod
 	}
 	entities = cleanEntities
 
-	logger.Info("Extracted and cleaned entities for graph search", map[string]interface{}{
-		"query":    query,
-		"entities": entities,
+	logger.Debug("Extracted and cleaned entities for graph search", map[string]interface{}{
+		"query_length":   len(query),
+		"entities_count": len(entities),
 	})
 
 	// Start Step 1
@@ -1990,9 +1994,11 @@ func (s *RetrievalService) graphSearch(ctx context.Context, dataset *dataset_mod
 	queryEmbeddingChan := make(chan []float64, 2)
 	go func() {
 		var qEmb []float64
-		embeddingService := s.getEmbeddingService(ctx, dataset)
+		embeddingCtx, cancel := context.WithTimeout(ctx, graphEmbeddingTimeout)
+		defer cancel()
+		embeddingService := s.getEmbeddingService(embeddingCtx, dataset)
 		if embeddingService != nil {
-			if emb, err := embeddingService.EmbedText(ctx, query); err == nil && len(emb) > 0 {
+			if emb, err := embeddingService.EmbedText(embeddingCtx, query); err == nil && len(emb) > 0 {
 				qEmb = emb
 			} else {
 				logger.Warn("[GRAPH_SEARCH] Failed to extract query embedding", map[string]interface{}{"error": err})
@@ -2011,10 +2017,12 @@ func (s *RetrievalService) graphSearch(ctx context.Context, dataset *dataset_mod
 		qEmb := <-queryEmbeddingChan
 
 		if len(qEmb) > 0 && s.vectorRetrieval != nil && s.vectorClient != nil {
+			vectorCtx, cancel := context.WithTimeout(ctx, graphEmbeddingTimeout)
+			defer cancel()
 			className := dataset_model.GenCollectionNameByID(dataset.ID)
 
 			// Use a reasonably high top-k for candidate chunks
-			results, err := s.vectorClient.SearchVectors(ctx, className, qEmb, 100)
+			results, err := s.vectorClient.SearchVectors(vectorCtx, className, qEmb, 100)
 			if err == nil {
 				minScore := options.SemanticMinScore
 				if minScore <= 0 {
@@ -2068,6 +2076,7 @@ func (s *RetrievalService) graphSearch(ctx context.Context, dataset *dataset_mod
 		entities []string
 		source   string
 		err      error
+		elapsed  time.Duration
 	}
 	resultChan := make(chan graphPathResult, 3)
 
@@ -2085,11 +2094,6 @@ func (s *RetrievalService) graphSearch(ctx context.Context, dataset *dataset_mod
 			}
 
 			if key != "" {
-				logger.DebugContext(graphLogCtx, "processing graph entity retrieval result",
-					zap.String("source", source),
-					zap.String("entity_key", key),
-					zap.Int("neighbors_count", len(res.Neighbors)),
-				)
 				if !seenResultEntities[key] {
 					seenResultEntities[key] = true
 					finalContextResults = append(finalContextResults, res)
@@ -2162,17 +2166,23 @@ func (s *RetrievalService) graphSearch(ctx context.Context, dataset *dataset_mod
 
 	// Path A: Multi-hop exact match traversal
 	go func() {
-		results, entities, err := s.graphFlowService.Neo4jClient.GetEntityContextMultiHop(ctx, dataset.ID, entities, effectiveHopDepth)
-		resultChan <- graphPathResult{cResults: results, entities: entities, source: "multi_hop", err: err}
+		startedAt := time.Now()
+		pathCtx, cancel := context.WithTimeout(ctx, graphPathTimeout)
+		defer cancel()
+		pathResults, pathEntities, pathErr := s.graphFlowService.Neo4jClient.GetEntityContextMultiHop(pathCtx, dataset.ID, entities, effectiveHopDepth)
+		resultChan <- graphPathResult{cResults: pathResults, entities: pathEntities, source: "multi_hop", err: pathErr, elapsed: time.Since(startedAt)}
 	}()
 
 	// Path B: Vector similarity expansion
 	go func() {
+		startedAt := time.Now()
 		qEmb := <-queryEmbeddingChan
 		if len(qEmb) == 0 {
-			resultChan <- graphPathResult{source: "vector", err: fmt.Errorf("no query embedding")}
+			resultChan <- graphPathResult{source: "vector", err: fmt.Errorf("query embedding unavailable"), elapsed: time.Since(startedAt)}
 			return
 		}
+		pathCtx, cancel := context.WithTimeout(ctx, graphPathTimeout)
+		defer cancel()
 		// Convert []float64 to []float32 for Neo4j
 		qEmb32 := make([]float32, len(qEmb))
 		for i, v := range qEmb {
@@ -2202,20 +2212,19 @@ func (s *RetrievalService) graphSearch(ctx context.Context, dataset *dataset_mod
 			topicKeywords = entities[1:]
 		}
 
-		cRes, gEnts, err := s.graphFlowService.Neo4jClient.GetEntityContextByVector(ctx, dataset.ID, qEmb32, 10, effectiveHopDepth, anchorIDs, minScore, topicKeywords)
-		if err != nil {
-			logger.Warn("[GRAPH_SEARCH] Vector search failed", map[string]interface{}{"error": err})
-		}
-
-		resultChan <- graphPathResult{cRes, gEnts, "vector", err}
+		cRes, gEnts, err := s.graphFlowService.Neo4jClient.GetEntityContextByVector(pathCtx, dataset.ID, qEmb32, 10, effectiveHopDepth, anchorIDs, minScore, topicKeywords)
+		resultChan <- graphPathResult{cResults: cRes, entities: gEnts, source: "vector", err: err, elapsed: time.Since(startedAt)}
 	}()
 
 	// Path B: Smart Expansion (Anchor-based + Adaptive Pruning)
 	go func() {
+		startedAt := time.Now()
+		pathCtx, cancel := context.WithTimeout(ctx, graphPathTimeout)
+		defer cancel()
 		// Use Smart Expansion to retrieve enriched context
-		scoredNodes, err := s.graphFlowService.Neo4jClient.RetrieveEnrichedContext(ctx, dataset.ID, entities)
+		scoredNodes, err := s.graphFlowService.Neo4jClient.RetrieveEnrichedContext(pathCtx, dataset.ID, entities)
 		if err != nil {
-			resultChan <- graphPathResult{nil, nil, "smart_expansion", err}
+			resultChan <- graphPathResult{source: "smart_expansion", err: err, elapsed: time.Since(startedAt)}
 			return
 		}
 
@@ -2290,17 +2299,43 @@ func (s *RetrievalService) graphSearch(ctx context.Context, dataset *dataset_mod
 			})
 		}
 
-		resultChan <- graphPathResult{cRes, nil, "smart_expansion", nil}
+		resultChan <- graphPathResult{cResults: cRes, source: "smart_expansion", elapsed: time.Since(startedAt)}
 	}()
 
 	// Wait for all 3 paths
+	pathStatuses := make(map[string]dto.GraphPathExecution, 3)
+	var pathErrors []error
 	for i := 0; i < 3; i++ {
 		res := <-resultChan
+		status := "success"
+		errorMessage := ""
 		if res.err != nil {
+			status = "error"
+			errorMessage = "graph path failed"
+			if errors.Is(res.err, context.DeadlineExceeded) || errors.Is(res.err, context.Canceled) {
+				status = "timeout"
+				errorMessage = "graph path timed out"
+			}
+			pathErrors = append(pathErrors, fmt.Errorf("%s: %w", res.source, res.err))
 			logger.Warn(fmt.Sprintf("Graph path %s failed", res.source), map[string]interface{}{"error": res.err.Error()})
 		} else if len(res.cResults) > 0 || len(res.entities) > 0 {
 			addResultsLocked(res.cResults, res.source, res.entities)
 		}
+		pathStatuses[res.source] = dto.GraphPathExecution{
+			Path:         res.source,
+			Status:       status,
+			ElapsedMs:    res.elapsed.Milliseconds(),
+			ResultCount:  len(res.cResults),
+			ErrorMessage: errorMessage,
+		}
+	}
+	for _, path := range []string{"multi_hop", "vector", "smart_expansion"} {
+		execution.Paths = append(execution.Paths, pathStatuses[path])
+	}
+	execution.Degraded = len(pathErrors) > 0
+	if len(pathErrors) == 3 {
+		execution.Summary = "All graph retrieval paths failed."
+		return nil, execution, fmt.Errorf("all graph retrieval paths failed: %w", errors.Join(pathErrors...))
 	}
 
 	// If MultiHop failed or found nothing, ensure original extracted entities are still in allGraphEntities
@@ -2325,6 +2360,7 @@ func (s *RetrievalService) graphSearch(ctx context.Context, dataset *dataset_mod
 
 	// Collect triples and matched entities from graph results
 	triples := make([]dto.TripleResponse, 0)
+	seenTriples := make(map[string]struct{})
 	matchedEntities := make([]string, 0)
 
 	for _, res := range contextResults {
@@ -2351,6 +2387,15 @@ func (s *RetrievalService) graphSearch(ctx context.Context, dataset *dataset_mod
 			}
 
 			if object != "" && subject != "" {
+				left, right := subject, object
+				if right < left {
+					left, right = right, left
+				}
+				key := left + "\x00" + neighbor.RelationshipType + "\x00" + right
+				if _, exists := seenTriples[key]; exists || len(triples) >= maxGraphExecutionTriples {
+					continue
+				}
+				seenTriples[key] = struct{}{}
 				triples = append(triples, dto.TripleResponse{
 					Subject:   subject,
 					Predicate: neighbor.RelationshipType,
@@ -2499,17 +2544,17 @@ func (s *RetrievalService) graphSearch(ctx context.Context, dataset *dataset_mod
 			}
 
 			graphScore := maxScore * penaltyFactor
-			logger.Debug("Coverage penalty", map[string]interface{}{
+			logger.Debug("Graph coverage score calculated", map[string]interface{}{
 				"max_score":      maxScore,
 				"graphScore":     graphScore,
 				"penalty_factor": penaltyFactor,
-				"details":        details,
 			})
 			mentionCount := len(details.MatchedEntities)
 			if mentionCount > 1 {
-				// Use Logarithmic Saturation to prevent "entity-stuffing" from unfairly dominating semantic scores.
-				// This ensures segments with specific, unique matches outrank those with many common labels.
-				graphScore = graphScore * (1.0 + options.MentionBoost*math.Log2(float64(mentionCount)))
+				// Reward multiple mentions within the remaining distance to 1 so
+				// normalized scores do not collapse into a saturated 1.0 band.
+				boost := 1 - math.Exp(-options.MentionBoost*math.Log2(float64(mentionCount)))
+				graphScore += (1 - graphScore) * boost
 			}
 
 			finalSegmentScore := graphScore
@@ -2543,16 +2588,6 @@ func (s *RetrievalService) graphSearch(ctx context.Context, dataset *dataset_mod
 				},
 			}
 
-			logger.Debug("Graph Knowledge Coverage penalty", map[string]interface{}{
-				"source":           "graph_knowledge",
-				"matched_entities": details.MatchedEntities,
-				"penalty_applied":  penaltyFactor < 1.0,
-				"semantic_score":   semanticScore,
-				"graph_score":      graphScore,
-				"mention_count":    mentionCount,
-				"document_id":      details.DocumentID,
-				"position":         details.Position,
-			})
 		}
 
 		// Convert map to slice
@@ -2580,24 +2615,10 @@ func (s *RetrievalService) graphSearch(ctx context.Context, dataset *dataset_mod
 		execution.Summary = "未在知识图谱中找到与查询相关的实体信息。"
 	}
 
-	// Deduplicate final entities list
-	finalEntitiesSet := make(map[string]bool)
-	var finalEntities []string
-	for _, e := range append(entities, matchedEntities...) {
-		if e != "" && !finalEntitiesSet[e] {
-			finalEntitiesSet[e] = true
-			finalEntities = append(finalEntities, e)
-		}
-	}
-
-	execution.Entities = finalEntities
-	execution.DebugInfo = map[string]interface{}{
-		"seeds":          entities,
-		"triples_count":  len(triples),
-		"entities_count": len(finalEntities),
-		"chunks_count":   len(results),
-		"hop_depth":      effectiveHopDepth,
-	}
+	// execution.Entities describes entities extracted from the user query. Graph
+	// expansion entities are represented by triples and must not inflate the API
+	// response with the full traversal result set.
+	execution.Entities = entities
 
 	// Sort results by score descending, with ID fallback to ensure absolute stable ordering across identical scores
 	sort.SliceStable(results, func(i, j int) bool {
@@ -2607,10 +2628,6 @@ func (s *RetrievalService) graphSearch(ctx context.Context, dataset *dataset_mod
 			return results[i].ID > results[j].ID // Fallback to ID for true stability
 		}
 		return results[i].Score > results[j].Score
-	})
-
-	logger.Debug("Sort results by score descending to ensure stable ordering", map[string]interface{}{
-		"source": results,
 	})
 
 	// Clamp scores to a maximum of 1.0 to preserve true absolute differences for final display

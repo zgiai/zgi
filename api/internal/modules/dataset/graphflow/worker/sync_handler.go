@@ -353,14 +353,53 @@ func NewSyncHandler(svc *graphflow.Service, taskManager *queue.TaskManager, limi
 			"mentions_synced": mentionsSynced,
 		})
 
-		// 6. Check if both sync tasks are completed and update document status
-		checkAndUpdateDocumentStatus(ctx, svc, graphFlowTask)
+		// 6. Start vector sync only after all Neo4j nodes have been written.
+		if err := enqueueVectorSyncTask(ctx, svc, taskManager, graphFlowTask); err != nil {
+			return err
+		}
 
-		// Preserve taskManager for potential future use (chained tasks)
-		_ = taskManager
+		// 7. Check if both sync tasks are completed and update document status
+		checkAndUpdateDocumentStatus(ctx, svc, graphFlowTask)
 
 		return nil
 	}
+}
+
+func enqueueVectorSyncTask(ctx context.Context, svc *graphflow.Service, taskManager *queue.TaskManager, graphSyncTask *model.GraphFlowTask) error {
+	if taskManager == nil {
+		return fmt.Errorf("task manager is not configured")
+	}
+
+	var vectorTask model.GraphFlowTask
+	query := svc.DB.WithContext(ctx).
+		Where("document_id = ? AND task_type = ?", graphSyncTask.DocumentID, "vector_sync")
+	if graphSyncTask.RunID != nil {
+		query = query.Where("run_id = ?", *graphSyncTask.RunID)
+	} else {
+		query = query.Where("run_id IS NULL")
+	}
+	if err := query.Order("created_at DESC").First(&vectorTask).Error; err != nil {
+		return fmt.Errorf("find vector_sync task after graph sync: %w", err)
+	}
+	if vectorTask.Status == "completed" {
+		return nil
+	}
+
+	queued, err := NewGraphFlowTask(TypeGraphFlowVectorSync, vectorTask.ID.String(), taskManager)
+	if err != nil {
+		svc.TaskRepo.UpdateTaskFailed(ctx, vectorTask.ID, fmt.Sprintf("failed to create task: %v", err))
+		return fmt.Errorf("create vector_sync task: %w", err)
+	}
+	if _, err := taskManager.EnqueueTask(queued, asynq.Queue("graphflow")); err != nil {
+		svc.TaskRepo.UpdateTaskFailed(ctx, vectorTask.ID, fmt.Sprintf("failed to enqueue: %v", err))
+		return fmt.Errorf("enqueue vector_sync task: %w", err)
+	}
+
+	logger.Info("Vector sync task enqueued after graph sync", map[string]interface{}{
+		"task_id":     vectorTask.ID.String(),
+		"document_id": graphSyncTask.DocumentID.String(),
+	})
+	return nil
 }
 
 // checkAndUpdateDocumentStatus checks if both sync tasks are completed and updates document status
