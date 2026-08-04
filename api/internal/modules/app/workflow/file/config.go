@@ -15,7 +15,7 @@ import (
 // It is used to validate files before they are processed by workflows.
 //
 // Fields:
-//   - MaxFileSize: Maximum allowed file size in bytes (default: 15MB)
+//   - MaxFileSize: Maximum allowed file size in bytes (default: 50MB)
 //   - MaxFilesPerRun: Maximum number of files per workflow run (default: 10)
 //   - AllowedExtensions: List of permitted file extensions without dots (e.g., "pdf", "docx")
 //   - AllowedMimeTypes: List of permitted MIME types (e.g., "application/pdf")
@@ -27,7 +27,7 @@ import (
 // Example Configuration (config.yaml):
 //
 //	upload:
-//	  file_size_limit: 15  # MB
+//	  file_size_limit: 50  # MB
 //	  workflow_file_limit: 10
 type WorkflowFileConfig struct {
 	MaxFileSize       int64    `json:"max_file_size"`      // Maximum file size in bytes

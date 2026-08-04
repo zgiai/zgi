@@ -38,8 +38,8 @@ if (JSON.stringify(actual) !== JSON.stringify(expected)) {
     `Unexpected file management upload extensions.\nActual: ${actual.join(',')}\nExpected: ${expected.join(',')}`
   );
 }
-if (!policySource.includes('FILE_MANAGEMENT_UPLOAD_MAX_SIZE_MB = 15')) {
-  throw new Error('File management uploads should have a hard 15 MB per-file limit.');
+if (!policySource.includes('FILE_MANAGEMENT_UPLOAD_MAX_SIZE_MB = 50')) {
+  throw new Error('File management uploads should have a 50 MB minimum per-file limit.');
 }
 
 const fileManagementSource = read('src/components/files/file-management-content.tsx');
@@ -60,11 +60,11 @@ if (!createLocalDialogSource.includes('useNativeAccept={false}')) {
 if (!createLocalDialogSource.includes('uploadConfig?.upload_queue_limit ?? 200')) {
   throw new Error('File management upload queue should use the configured queue limit.');
 }
-if (!createLocalDialogSource.includes('Math.min(')) {
-  throw new Error('File management upload size should be clamped to its hard limit.');
+if (!createLocalDialogSource.includes('Math.max(')) {
+  throw new Error('File management upload size should be clamped to its minimum limit.');
 }
 if (!createLocalDialogSource.includes('FILE_MANAGEMENT_UPLOAD_MAX_SIZE_MB')) {
-  throw new Error('File management upload should use the fixed 15 MB size limit.');
+  throw new Error('File management upload should use the 50 MB minimum size limit.');
 }
 if (!createLocalDialogSource.includes('concurrencyLimit={uploadConcurrency}')) {
   throw new Error('File management upload should use the configured upload pool size.');

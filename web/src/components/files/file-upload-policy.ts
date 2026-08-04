@@ -16,6 +16,6 @@ export const FILE_MANAGEMENT_UPLOAD_ACCEPT_EXT = [
   'ppt',
 ] as const;
 
-export const FILE_MANAGEMENT_UPLOAD_MAX_SIZE_MB = 15;
+export const FILE_MANAGEMENT_UPLOAD_MAX_SIZE_MB = 50;
 
 export type FileManagementUploadAcceptExt = (typeof FILE_MANAGEMENT_UPLOAD_ACCEPT_EXT)[number];
