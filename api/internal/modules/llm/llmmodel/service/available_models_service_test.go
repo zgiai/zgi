@@ -299,6 +299,37 @@ func TestAvailableModels_ListAvailableDoesNotBootstrapOfficialRoute(t *testing.T
 	}
 }
 
+func TestAvailableModels_ReturnsMusicGenerationCapability(t *testing.T) {
+	organizationID := uuid.New()
+	modelRepo := &availableModelRepoFake{models: []*llmmodel.LLMModel{{
+		ID:              uuid.New(),
+		Provider:        "minimax",
+		Model:           "music-3.0",
+		ModelName:       "Music 3.0",
+		IsActive:        true,
+		MusicGeneration: true,
+		UseCases:        types.StringArray{string(llmmodel.UseCaseMusicGen)},
+	}}}
+	routeRepo := &availableRouteRepoFake{routes: []*channelmodel.LLMRoute{{
+		Type:                   shared.RouteTypeZGICloud,
+		IsOfficial:             true,
+		Models:                 []string{"music-3.0"},
+		OfficialProviderModels: []channelmodel.ProviderModel{{Provider: "minimax", Model: "music-3.0"}},
+	}}}
+	svc := NewAvailableModelsService(modelRepo, &availableConfigRepoFake{}, &availableCustomRepoFake{}, routeRepo)
+
+	models, err := svc.ListAvailable(t.Context(), organizationID, "minimax", string(llmmodel.UseCaseMusicGen))
+	if err != nil {
+		t.Fatalf("ListAvailable() error = %v", err)
+	}
+	if len(models) != 1 {
+		t.Fatalf("models length = %d, want 1", len(models))
+	}
+	if !models[0].Endpoints.MusicGeneration {
+		t.Fatal("Endpoints.MusicGeneration = false, want true")
+	}
+}
+
 func TestAvailableModels_AgentRequiresCatalogTagOnPlatformRoute(t *testing.T) {
 	organizationID := uuid.New()
 	modelRepo := &availableModelRepoFake{models: []*llmmodel.LLMModel{

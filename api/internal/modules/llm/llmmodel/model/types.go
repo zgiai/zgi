@@ -54,6 +54,7 @@ const (
 	UseCaseTextToSpeech  UseCase = "text-to-speech"   // Speech synthesis
 	UseCaseRealtimeAudio UseCase = "realtime-audio"   // Real-time audio
 	UseCaseVideoGen      UseCase = "video-gen"        // Video generation
+	UseCaseMusicGen      UseCase = "music-gen"        // Music generation
 	UseCaseModeration    UseCase = "moderation"       // Content moderation
 	UseCaseReasoning     UseCase = "reasoning"        // Deep reasoning
 	UseCaseFuncCalling   UseCase = "function-calling" // Function calling
@@ -65,7 +66,7 @@ func ValidUseCases() []UseCase {
 	return []UseCase{
 		UseCaseTextChat, UseCaseVision, UseCaseImageGen, UseCaseEmbedding,
 		UseCaseRerank, UseCaseSpeechToText, UseCaseTextToSpeech, UseCaseRealtimeAudio,
-		UseCaseVideoGen, UseCaseModeration, UseCaseReasoning, UseCaseFuncCalling,
+		UseCaseVideoGen, UseCaseMusicGen, UseCaseModeration, UseCaseReasoning, UseCaseFuncCalling,
 		UseCaseAgent,
 	}
 }

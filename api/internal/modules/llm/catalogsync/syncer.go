@@ -319,6 +319,7 @@ func publishedModelEndpoints(source *pb.CatalogModelEndpoints) *llmmodel.ModelEn
 		Moderation:       source.GetModeration(),
 		Videos:           source.GetVideos(),
 		ImageEdit:        source.GetImageEdit(),
+		MusicGeneration:  source.GetMusicGeneration(),
 	}
 }
 

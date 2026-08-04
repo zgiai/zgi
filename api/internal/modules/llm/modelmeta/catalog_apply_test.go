@@ -31,6 +31,52 @@ func TestFeatureColumnsForPublishedModelIncludesAttachment(t *testing.T) {
 	require.True(t, values["attachment"])
 }
 
+func TestEndpointColumnsForPublishedModelIncludesMusicGeneration(t *testing.T) {
+	values := endpointColumnsForPublishedModel(
+		[]string{string(llmmodel.UseCaseMusicGen)},
+		&llmmodel.ModelEndpoints{MusicGeneration: true},
+		true,
+	)
+
+	require.True(t, values["music_generation"])
+}
+
+func TestApplyPublishedCatalogStoresMusicGenerationEndpoint(t *testing.T) {
+	db := newCatalogApplyTestDB(t)
+	svc := NewService(db)
+
+	err := svc.ApplyPublishedCatalog(t.Context(), PublishedCatalog{
+		Version:     1,
+		PublishedAt: time.Now().UTC(),
+		Providers: []PublishedProvider{{
+			Provider:        "minimax",
+			ProviderName:    "MiniMax",
+			Status:          "active",
+			IsActive:        true,
+			IsSystemEnabled: true,
+		}},
+		Models: []PublishedModel{{
+			Provider:               "minimax",
+			Model:                  "music-3.0",
+			ModelName:              "Music 3.0",
+			Status:                 "active",
+			IsActive:               true,
+			IsSystemEnabled:        true,
+			UseCases:               []string{string(llmmodel.UseCaseMusicGen)},
+			Endpoints:              &llmmodel.ModelEndpoints{MusicGeneration: true},
+			EndpointsAuthoritative: true,
+		}},
+	})
+	require.NoError(t, err)
+
+	var musicGeneration bool
+	require.NoError(t, db.Table("llm_models").
+		Select("music_generation").
+		Where("provider = ? AND name = ?", "minimax", "music-3.0").
+		Scan(&musicGeneration).Error)
+	require.True(t, musicGeneration)
+}
+
 func openCatalogApplyTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
@@ -563,6 +609,7 @@ func newCatalogApplyTestDB(t *testing.T) *gorm.DB {
 			output_price NUMERIC,
 			cached_input_price NUMERIC,
 			pricing TEXT,
+			music_generation BOOLEAN DEFAULT false,
 			is_active BOOLEAN DEFAULT true,
 			is_system_enabled BOOLEAN DEFAULT true,
 			deleted_at DATETIME,

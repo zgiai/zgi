@@ -18,6 +18,7 @@ func TestModelCachePreservesInternalCapabilities(t *testing.T) {
 		Model:             "gpt-5",
 		Responses:         true,
 		ChatCompletions:   true,
+		MusicGeneration:   true,
 		SupportsStreaming: true,
 		SupportsToolCall:  true,
 		SystemPrompt:      true,
@@ -37,6 +38,9 @@ func TestModelCachePreservesInternalCapabilities(t *testing.T) {
 	}
 	if !got.ChatCompletions {
 		t.Fatal("ChatCompletions = false, want true")
+	}
+	if !got.MusicGeneration {
+		t.Fatal("MusicGeneration = false, want true")
 	}
 	if !got.SupportsStreaming {
 		t.Fatal("SupportsStreaming = false, want true")

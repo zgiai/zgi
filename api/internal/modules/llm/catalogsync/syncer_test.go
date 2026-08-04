@@ -28,6 +28,7 @@ func TestPublishedModelCapabilityMapping(t *testing.T) {
 			Moderation:       true,
 			Videos:           true,
 			ImageEdit:        true,
+			MusicGeneration:  true,
 		}, publishedModelEndpoints(&pb.CatalogModelEndpoints{
 			ChatCompletions:  true,
 			Responses:        true,
@@ -44,6 +45,7 @@ func TestPublishedModelCapabilityMapping(t *testing.T) {
 			Moderation:       true,
 			Videos:           true,
 			ImageEdit:        true,
+			MusicGeneration:  true,
 		}))
 	})
 
