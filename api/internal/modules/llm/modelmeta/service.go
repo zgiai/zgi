@@ -25,6 +25,7 @@ const (
 	modelMetaAPIVersion     = "v1"
 	defaultModelMetaAPIBase = "https://models.zgi.ai"
 	priceScale              = 6
+	defaultCNYPerUSD        = 7
 )
 
 var errModelMetaAPIURLNotConfigured = errors.New("MODELMETA_API_URL is not configured")
@@ -40,6 +41,7 @@ type Service struct {
 	db         *gorm.DB
 	httpClient *http.Client
 	apiBaseURL string
+	cnyPerUSD  float64
 }
 
 // NewService creates a new model metadata service
@@ -47,10 +49,19 @@ func NewService(db *gorm.DB) *Service {
 	return &Service{
 		db:         db,
 		apiBaseURL: resolveModelMetaAPIBase(),
+		cnyPerUSD:  resolveModelMetaCNYPerUSD(),
 		httpClient: observability.HTTPClient(&http.Client{
 			Timeout: 30 * time.Second,
 		}),
 	}
+}
+
+func resolveModelMetaCNYPerUSD() float64 {
+	cfg := appconfig.GlobalConfig
+	if cfg == nil || cfg.ModelMeta.CNYPerUSD <= 0 {
+		return defaultCNYPerUSD
+	}
+	return cfg.ModelMeta.CNYPerUSD
 }
 
 func resolveModelMetaAPIBase() string {
@@ -581,6 +592,9 @@ func (s *Service) fetchProviderModels(provider string) ([]ModelMetaData, error) 
 			return nil, fmt.Errorf("failed to parse response: %w", err)
 		}
 
+		for i := range pageResp.Data {
+			s.normalizeCatalogPriceCurrency(&pageResp.Data[i])
+		}
 		allModels = append(allModels, pageResp.Data...)
 
 		// Stop if we've fetched all pages
@@ -605,6 +619,46 @@ func (s *Service) fetchProviderModels(provider string) ([]ModelMetaData, error) 
 	}
 
 	return deduped, nil
+}
+
+func (s *Service) normalizeCatalogPriceCurrency(model *ModelMetaData) {
+	if model == nil || !strings.EqualFold(strings.TrimSpace(model.Currency), "CNY") {
+		return
+	}
+
+	rate := s.cnyPerUSD
+	if rate <= 0 {
+		rate = defaultCNYPerUSD
+	}
+	if model.InputPrice != nil {
+		value := *model.InputPrice / rate
+		model.InputPrice = &value
+	}
+	if model.OutputPrice != nil {
+		value := *model.OutputPrice / rate
+		model.OutputPrice = &value
+	}
+	model.CachedInputPrice /= rate
+	model.Currency = "USD"
+	model.Pricing = annotateSourcePricingCurrency(model.Pricing, rate)
+}
+
+func annotateSourcePricingCurrency(raw json.RawMessage, cnyPerUSD float64) json.RawMessage {
+	pricing := map[string]interface{}{}
+	trimmed := strings.TrimSpace(string(raw))
+	if trimmed != "" && trimmed != "null" {
+		if err := json.Unmarshal(raw, &pricing); err != nil {
+			return raw
+		}
+	}
+	pricing["source_currency"] = "CNY"
+	pricing["billing_currency"] = "USD"
+	pricing["cny_per_usd"] = cnyPerUSD
+	encoded, err := json.Marshal(pricing)
+	if err != nil {
+		return raw
+	}
+	return encoded
 }
 
 // syncModel syncs a single model to the database

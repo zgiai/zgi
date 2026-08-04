@@ -29,6 +29,12 @@ make dev-docker
 make docker-down
 ```
 
+## Local AI UI Testing
+
+- Use the dedicated local test account from `ZGI_E2E_EMAIL` for browser-based AI regression tests.
+- Read its password from `ZGI_E2E_PASSWORD`; never hardcode or commit the password.
+- Local-only values may be kept in an ignored `.env.test.local` file.
+
 ## Change Guidelines
 
 - Keep changes scoped to the requested area.
