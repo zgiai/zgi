@@ -313,8 +313,7 @@ type OpenTelemetryConfig struct {
 }
 
 type ModelMetaConfig struct {
-	APIURL    string  `json:"api_url"`
-	CNYPerUSD float64 `json:"cny_per_usd"`
+	APIURL string `json:"api_url"`
 }
 
 type Neo4jConfig struct {

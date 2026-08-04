@@ -25,7 +25,6 @@ const (
 	modelMetaAPIVersion     = "v1"
 	defaultModelMetaAPIBase = "https://models.zgi.ai"
 	priceScale              = 6
-	defaultCNYPerUSD        = 7
 )
 
 var errModelMetaAPIURLNotConfigured = errors.New("MODELMETA_API_URL is not configured")
@@ -41,7 +40,6 @@ type Service struct {
 	db         *gorm.DB
 	httpClient *http.Client
 	apiBaseURL string
-	cnyPerUSD  float64
 }
 
 // NewService creates a new model metadata service
@@ -49,19 +47,10 @@ func NewService(db *gorm.DB) *Service {
 	return &Service{
 		db:         db,
 		apiBaseURL: resolveModelMetaAPIBase(),
-		cnyPerUSD:  resolveModelMetaCNYPerUSD(),
 		httpClient: observability.HTTPClient(&http.Client{
 			Timeout: 30 * time.Second,
 		}),
 	}
-}
-
-func resolveModelMetaCNYPerUSD() float64 {
-	cfg := appconfig.GlobalConfig
-	if cfg == nil || cfg.ModelMeta.CNYPerUSD <= 0 {
-		return defaultCNYPerUSD
-	}
-	return cfg.ModelMeta.CNYPerUSD
 }
 
 func resolveModelMetaAPIBase() string {
@@ -148,6 +137,7 @@ type ModelMetaData struct {
 	OutputPrice      *float64               `json:"output_price"`
 	CachedInputPrice float64                `json:"cached_input_price"`
 	Pricing          json.RawMessage        `json:"pricing"`
+	BillingPricing   *ModelMetaBillingPrice `json:"billing_pricing,omitempty"`
 	IsFlagship       bool                   `json:"is_flagship"`
 	IsRecommended    bool                   `json:"is_recommended"`
 	IsFeatured       bool                   `json:"is_featured"`
@@ -166,6 +156,18 @@ type ModelMetaData struct {
 	LastUpdated      int64                  `json:"last_updated"`
 	CreatedAt        int64                  `json:"created_at"`
 	UpdatedAt        int64                  `json:"updated_at"`
+}
+
+// ModelMetaBillingPrice is the catalog's canonical price for ZGI billing.
+// Provider-native prices remain in Currency/InputPrice/OutputPrice. The
+// catalog must supply conversion provenance instead of asking each ZGI
+// deployment to guess exchange rates.
+type ModelMetaBillingPrice struct {
+	Currency         string          `json:"currency"`
+	InputPrice       *float64        `json:"input_price"`
+	OutputPrice      *float64        `json:"output_price"`
+	CachedInputPrice *float64        `json:"cached_input_price"`
+	Conversion       json.RawMessage `json:"conversion,omitempty"`
 }
 
 // SyncResult represents the result of a sync operation
@@ -593,7 +595,7 @@ func (s *Service) fetchProviderModels(provider string) ([]ModelMetaData, error) 
 		}
 
 		for i := range pageResp.Data {
-			s.normalizeCatalogPriceCurrency(&pageResp.Data[i])
+			normalizeCatalogBillingPrice(&pageResp.Data[i])
 		}
 		allModels = append(allModels, pageResp.Data...)
 
@@ -621,42 +623,81 @@ func (s *Service) fetchProviderModels(provider string) ([]ModelMetaData, error) 
 	return deduped, nil
 }
 
-func (s *Service) normalizeCatalogPriceCurrency(model *ModelMetaData) {
-	if model == nil || !strings.EqualFold(strings.TrimSpace(model.Currency), "CNY") {
+func normalizeCatalogBillingPrice(model *ModelMetaData) {
+	if model == nil {
 		return
 	}
 
-	rate := s.cnyPerUSD
-	if rate <= 0 {
-		rate = defaultCNYPerUSD
-	}
-	if model.InputPrice != nil {
-		value := *model.InputPrice / rate
-		model.InputPrice = &value
-	}
-	if model.OutputPrice != nil {
-		value := *model.OutputPrice / rate
-		model.OutputPrice = &value
-	}
-	model.CachedInputPrice /= rate
-	model.Currency = "USD"
-	model.Pricing = annotateSourcePricingCurrency(model.Pricing, rate)
-}
-
-func annotateSourcePricingCurrency(raw json.RawMessage, cnyPerUSD float64) json.RawMessage {
-	pricing := map[string]interface{}{}
-	trimmed := strings.TrimSpace(string(raw))
-	if trimmed != "" && trimmed != "null" {
-		if err := json.Unmarshal(raw, &pricing); err != nil {
-			return raw
+	sourceCurrency := strings.ToUpper(strings.TrimSpace(model.Currency))
+	if model.BillingPricing != nil {
+		billingCurrency := strings.ToUpper(strings.TrimSpace(model.BillingPricing.Currency))
+		if billingCurrency == "USD" && (sourceCurrency == "USD" || hasConversionProvenance(model.BillingPricing.Conversion)) {
+			model.Pricing = annotateNativeAndBillingPricing(model)
+			model.Currency = billingCurrency
+			model.InputPrice = cloneOptionalPrice(model.BillingPricing.InputPrice)
+			model.OutputPrice = cloneOptionalPrice(model.BillingPricing.OutputPrice)
+			model.CachedInputPrice = optionalPriceValue(model.BillingPricing.CachedInputPrice)
+			return
 		}
 	}
-	pricing["source_currency"] = "CNY"
-	pricing["billing_currency"] = "USD"
-	pricing["cny_per_usd"] = cnyPerUSD
+
+	if sourceCurrency == "USD" {
+		return
+	}
+
+	// The billing engine is USD-based today. Preserve non-USD provider prices
+	// for display/audit, but do not mark them configured without a catalog-
+	// supplied canonical conversion and provenance.
+	model.Pricing = annotateNativeAndBillingPricing(model)
+	model.InputPrice = nil
+	model.OutputPrice = nil
+	model.CachedInputPrice = 0
+}
+
+func hasConversionProvenance(raw json.RawMessage) bool {
+	var conversion map[string]interface{}
+	if err := json.Unmarshal(raw, &conversion); err != nil {
+		return false
+	}
+	source, ok := conversion["source"].(string)
+	return ok && strings.TrimSpace(source) != ""
+}
+
+func cloneOptionalPrice(value *float64) *float64 {
+	if value == nil {
+		return nil
+	}
+	cloned := *value
+	return &cloned
+}
+
+func optionalPriceValue(value *float64) float64 {
+	if value == nil {
+		return 0
+	}
+	return *value
+}
+
+func annotateNativeAndBillingPricing(model *ModelMetaData) json.RawMessage {
+	pricing := map[string]interface{}{}
+	trimmed := strings.TrimSpace(string(model.Pricing))
+	if trimmed != "" && trimmed != "null" {
+		if err := json.Unmarshal(model.Pricing, &pricing); err != nil {
+			pricing["catalog_pricing_raw"] = string(model.Pricing)
+		}
+	}
+	pricing["native_price"] = map[string]interface{}{
+		"currency":           strings.ToUpper(strings.TrimSpace(model.Currency)),
+		"input_price":        model.InputPrice,
+		"output_price":       model.OutputPrice,
+		"cached_input_price": model.CachedInputPrice,
+	}
+	if model.BillingPricing != nil {
+		pricing["billing_price"] = model.BillingPricing
+	}
 	encoded, err := json.Marshal(pricing)
 	if err != nil {
-		return raw
+		return model.Pricing
 	}
 	return encoded
 }

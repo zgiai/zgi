@@ -98,4 +98,3 @@ workflow:
 
 modelmeta:
   api_url: "https://models.zgi.ai"  # ZGI appends /v1 internally.
-  cny_per_usd: 7  # Catalog prices are normalized to the USD billing base on sync.
