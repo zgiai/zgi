@@ -15,6 +15,7 @@ import (
 	datalibraryservice "github.com/zgiai/zgi/api/internal/modules/datalibrary/service"
 	filemodel "github.com/zgiai/zgi/api/internal/modules/file_process/model"
 	filerepository "github.com/zgiai/zgi/api/internal/modules/file_process/repository"
+	"github.com/zgiai/zgi/api/pkg/logger"
 	"github.com/zgiai/zgi/api/pkg/storage"
 )
 
@@ -376,6 +377,14 @@ func (r *FileProcessRunner) executeRoutePlan(ctx context.Context, req contracts.
 		attemptReq.ProviderRuntime = contentparsecap.RuntimeConfigForCandidate(catalog, candidate)
 		artifact, err := r.contentParseOrchestrator.ParseWithAdapter(ctx, adapterName, attemptReq)
 		if err != nil {
+			logger.WarnContext(ctx, "content parse provider attempt failed",
+				"provider", providerKey,
+				"adapter", adapterName,
+				"engine", candidate.EngineName,
+				"attempt_index", index,
+				"file_name", req.FileName,
+				"error", err,
+			)
 			lastErr = err
 			continue
 		}

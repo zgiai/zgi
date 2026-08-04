@@ -27,6 +27,8 @@ const (
 	defaultOfficialBaseURL = "https://mineru.net"
 	defaultTimeout         = 800 * time.Second
 	defaultPollInterval    = 3 * time.Second
+	officialZipMaxAttempts = 3
+	officialZipRetryDelay  = time.Second
 	bboxScale              = 1000.0
 )
 
@@ -607,24 +609,59 @@ func officialJSON(ctx context.Context, client *http.Client, method, url, token s
 }
 
 func officialDownloadAndReadZip(ctx context.Context, client *http.Client, zipURL string) (*officialZipArtifacts, error) {
+	var lastErr error
+	attempts := 0
+	for attempt := 1; attempt <= officialZipMaxAttempts; attempt++ {
+		attempts = attempt
+		artifacts, retryable, err := officialDownloadAndReadZipOnce(ctx, client, zipURL)
+		if err == nil {
+			return artifacts, nil
+		}
+		lastErr = err
+		if !retryable || attempt == officialZipMaxAttempts {
+			break
+		}
+
+		delay := time.Duration(attempt) * officialZipRetryDelay
+		select {
+		case <-ctx.Done():
+			return nil, fmt.Errorf("mineru official: download result zip: %w", ctx.Err())
+		case <-time.After(delay):
+		}
+	}
+	return nil, fmt.Errorf("%w (after %d attempt(s))", lastErr, attempts)
+}
+
+func officialDownloadAndReadZipOnce(ctx context.Context, client *http.Client, zipURL string) (*officialZipArtifacts, bool, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, zipURL, nil)
 	if err != nil {
-		return nil, fmt.Errorf("mineru official: new zip request: %w", err)
+		return nil, false, fmt.Errorf("mineru official: new zip request: %w", err)
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("mineru official: download result zip: %w", err)
+		return nil, ctx.Err() == nil, fmt.Errorf("mineru official: download result zip: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		snippet, _ := readSnippet(resp.Body)
-		return nil, fmt.Errorf("mineru official: zip HTTP %d: %s", resp.StatusCode, snippet)
+		return nil, officialZipStatusRetryable(resp.StatusCode), fmt.Errorf("mineru official: zip HTTP %d: %s", resp.StatusCode, snippet)
 	}
 	data, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("mineru official: read result zip: %w", err)
+		return nil, true, fmt.Errorf("mineru official: read result zip: %w", err)
 	}
-	return officialReadZipArtifacts(data)
+	artifacts, err := officialReadZipArtifacts(data)
+	if err != nil {
+		return nil, true, err
+	}
+	return artifacts, false, nil
+}
+
+func officialZipStatusRetryable(statusCode int) bool {
+	return statusCode == http.StatusRequestTimeout ||
+		statusCode == http.StatusTooEarly ||
+		statusCode == http.StatusTooManyRequests ||
+		statusCode >= http.StatusInternalServerError
 }
 
 func officialReadZipArtifacts(data []byte) (*officialZipArtifacts, error) {

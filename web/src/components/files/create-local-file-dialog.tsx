@@ -96,7 +96,7 @@ const CreateLocalFileDialog = ({
     staleTime: 60_000,
     retry: false,
   });
-  const maxSizeMB = Math.min(
+  const maxSizeMB = Math.max(
     uploadConfig?.file_size_limit ?? FILE_MANAGEMENT_UPLOAD_MAX_SIZE_MB,
     FILE_MANAGEMENT_UPLOAD_MAX_SIZE_MB
   );

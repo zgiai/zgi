@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"image"
 	"image/color"
 	"image/png"
@@ -13,16 +14,22 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	extractcommon "github.com/zgiai/zgi/api/internal/capabilities/contentparse/engines/hyperparse/pkg/providers/common"
 	"github.com/zgiai/zgi/api/internal/contracts"
 )
 
 type fakeFigureSummaryEnhancer struct {
-	output string
-	err    error
-	calls  []string
+	mu        sync.Mutex
+	output    string
+	err       error
+	calls     []string
+	delay     time.Duration
+	active    int
+	maxActive int
 }
 
 func (f *fakeFigureSummaryEnhancer) LocalizeReductoFigureSummary(ctx context.Context, organizationID, text string) (string, error) {
@@ -34,7 +41,26 @@ func (f *fakeFigureSummaryEnhancer) LocalizeReductoFigureSummary(ctx context.Con
 }
 
 func (f *fakeFigureSummaryEnhancer) SummarizeMineruFigureImage(ctx context.Context, organizationID, imageURL string) (string, error) {
+	f.mu.Lock()
 	f.calls = append(f.calls, organizationID+"|"+imageURL)
+	f.active++
+	if f.active > f.maxActive {
+		f.maxActive = f.active
+	}
+	delay := f.delay
+	f.mu.Unlock()
+	defer func() {
+		f.mu.Lock()
+		f.active--
+		f.mu.Unlock()
+	}()
+	if delay > 0 {
+		select {
+		case <-time.After(delay):
+		case <-ctx.Done():
+			return "", ctx.Err()
+		}
+	}
 	if f.err != nil {
 		return "", f.err
 	}
@@ -361,6 +387,126 @@ func TestMapDocumentResultKeepsMineruFigureWhenSummaryFails(t *testing.T) {
 	payload := artifact.Elements[0].Metadata["payload"].(map[string]any)
 	if _, ok := payload["mineru_visual_summary"]; ok {
 		t.Fatalf("failed summary should not add mineru summary payload: %#v", payload)
+	}
+}
+
+func TestMapDocumentResultBoundsAndParallelizesMineruFigureSummariesForChatContext(t *testing.T) {
+	t.Setenv(envChatContextImageSummaryMax, "8")
+	t.Setenv(envMineruImageSummaryConcurrency, "4")
+	localizer := &fakeFigureSummaryEnhancer{output: "图片摘要", delay: 10 * time.Millisecond}
+	elements := make([]extractcommon.ExtractElement, 10)
+	for index := range elements {
+		elements[index] = extractcommon.ExtractElement{
+			ID:      fmt.Sprintf("figure-%d", index),
+			Type:    "figure",
+			Content: "[figure]",
+			Metadata: map[string]any{
+				"payload": map[string]any{
+					"mineru_type": "figure",
+					"image_url":   fmt.Sprintf("https://example.com/%d.png", index),
+				},
+			},
+		}
+	}
+
+	artifact := mapDocumentResultWithOptions(contracts.ParseRequest{
+		SourceType: contracts.ParseSourceTypeBytes,
+		FileName:   "sample.pdf",
+		Intent:     contracts.ParseIntentChatContext,
+		Metadata:   map[string]any{"organization_id": "org-1"},
+	}, extractcommon.EngineMineru, &extractcommon.DocumentResult{
+		DocID: "doc-mineru-chat",
+		ExtractOutput: &extractcommon.ExtractOutput{
+			Metadata: map[string]any{},
+			Elements: elements,
+		},
+	}, mapDocumentOptions{figureSummaryEnhancer: localizer})
+
+	localizer.mu.Lock()
+	callCount, maxActive := len(localizer.calls), localizer.maxActive
+	localizer.mu.Unlock()
+	if callCount != 8 {
+		t.Fatalf("summary calls = %d, want 8", callCount)
+	}
+	if maxActive != 4 {
+		t.Fatalf("maximum summary concurrency = %d, want 4", maxActive)
+	}
+	for index, element := range artifact.Elements {
+		if index < 8 && element.Content != "图片摘要" {
+			t.Fatalf("element %d content = %q, want visual summary", index, element.Content)
+		}
+		if index >= 8 && element.Content != "[figure]" {
+			t.Fatalf("element %d content = %q, want unchanged figure", index, element.Content)
+		}
+	}
+	stats, ok := artifact.Metadata["mineru_visual_summary"].(map[string]any)
+	if !ok || stats["requested"] != 10 || stats["attempted"] != 8 || stats["skipped"] != 2 || stats["concurrency"] != 4 {
+		t.Fatalf("summary stats = %#v", artifact.Metadata["mineru_visual_summary"])
+	}
+}
+
+func TestMapDocumentResultParallelizesAllMineruFigureSummariesForDatasetIndex(t *testing.T) {
+	t.Setenv(envMineruImageSummaryConcurrency, "4")
+	localizer := &fakeFigureSummaryEnhancer{output: "图片摘要", delay: 10 * time.Millisecond}
+	elements := make([]extractcommon.ExtractElement, 10)
+	for index := range elements {
+		elements[index] = extractcommon.ExtractElement{
+			ID:      fmt.Sprintf("figure-%d", index),
+			Type:    "figure",
+			Content: "[figure]",
+			Metadata: map[string]any{
+				"payload": map[string]any{
+					"mineru_type": "figure",
+					"image_url":   fmt.Sprintf("https://example.com/%d.png", index),
+				},
+			},
+		}
+	}
+
+	artifact := mapDocumentResultWithOptions(contracts.ParseRequest{
+		SourceType: contracts.ParseSourceTypeBytes,
+		FileName:   "sample.pdf",
+		Intent:     contracts.ParseIntentDatasetIndex,
+		Metadata:   map[string]any{"organization_id": "org-1"},
+	}, extractcommon.EngineMineru, &extractcommon.DocumentResult{
+		DocID: "doc-mineru-dataset",
+		ExtractOutput: &extractcommon.ExtractOutput{
+			Metadata: map[string]any{},
+			Elements: elements,
+		},
+	}, mapDocumentOptions{figureSummaryEnhancer: localizer})
+
+	localizer.mu.Lock()
+	callCount, maxActive := len(localizer.calls), localizer.maxActive
+	localizer.mu.Unlock()
+	if callCount != 10 {
+		t.Fatalf("summary calls = %d, want 10", callCount)
+	}
+	if maxActive != 4 {
+		t.Fatalf("maximum summary concurrency = %d, want 4", maxActive)
+	}
+	stats, ok := artifact.Metadata["mineru_visual_summary"].(map[string]any)
+	if !ok || stats["requested"] != 10 || stats["attempted"] != 10 || stats["skipped"] != 0 || stats["concurrency"] != 4 {
+		t.Fatalf("summary stats = %#v", artifact.Metadata["mineru_visual_summary"])
+	}
+}
+
+func TestShouldDisableThinkingForFigureSummary(t *testing.T) {
+	for _, testCase := range []struct {
+		name     string
+		provider string
+		model    string
+		want     bool
+	}{
+		{name: "qwen provider", provider: "qwen", model: "custom-vision", want: true},
+		{name: "qwen model", provider: "zgi-cloud", model: "qwen3-vl-plus", want: true},
+		{name: "other provider", provider: "openai", model: "gpt-4.1-mini", want: false},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			if got := shouldDisableThinkingForFigureSummary(testCase.provider, testCase.model); got != testCase.want {
+				t.Fatalf("shouldDisableThinkingForFigureSummary(%q, %q) = %t, want %t", testCase.provider, testCase.model, got, testCase.want)
+			}
+		})
 	}
 }
 

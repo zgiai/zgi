@@ -292,7 +292,7 @@ const (
 // Upload, ETL, and code execution keys.
 const (
 	// Upload limits.
-	// envUploadFileSizeLimit sets the maximum upload size for general files in megabytes. Default: 15.
+	// envUploadFileSizeLimit sets the maximum upload size for general files in megabytes. Default and minimum: 50.
 	envUploadFileSizeLimit = "UPLOAD_FILE_SIZE_LIMIT"
 	// envUploadFileBatchLimit sets file-management upload concurrency. Other upload surfaces may still use it as a file-count limit. Default: 5.
 	envUploadFileBatchLimit = "UPLOAD_FILE_BATCH_LIMIT"
@@ -389,7 +389,7 @@ const (
 	envWorkflowFileExtractionEnabled = "WORKFLOW_FILE_EXTRACTION_ENABLED"
 	// envWorkflowFileExtractionMaxContentSize sets the maximum extracted workflow file content size in bytes. Default: 1048576.
 	envWorkflowFileExtractionMaxContentSize = "WORKFLOW_FILE_EXTRACTION_MAX_CONTENT_SIZE"
-	// envWorkflowFileExtractionTimeout sets the workflow file extraction timeout in seconds. Default: 120.
+	// envWorkflowFileExtractionTimeout sets the workflow file extraction timeout in seconds. Default: 900.
 	envWorkflowFileExtractionTimeout = "WORKFLOW_FILE_EXTRACTION_TIMEOUT"
 	// envWorkflowFileExtractionCacheEnabled controls whether workflow file extraction results are cached. Default: true.
 	envWorkflowFileExtractionCacheEnabled = "WORKFLOW_FILE_EXTRACTION_CACHE_ENABLED"

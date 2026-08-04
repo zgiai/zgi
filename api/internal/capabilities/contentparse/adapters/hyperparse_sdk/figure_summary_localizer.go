@@ -59,7 +59,6 @@ func (l *DefaultChatFigureSummaryLocalizer) LocalizeReductoFigureSummary(ctx con
 		Temperature: &temperature,
 		MaxTokens:   &maxTokens,
 	}
-
 	resp, err := l.llmClient.Chat(ctx, organizationID, req)
 	if err != nil {
 		return "", fmt.Errorf("localize figure summary: %w", err)
@@ -123,6 +122,9 @@ Use only information visible in the image. Do not invent, infer unsupported deta
 		Temperature: &temperature,
 		MaxTokens:   &maxTokens,
 	}
+	if shouldDisableThinkingForFigureSummary(resolved.Provider, resolved.Model) {
+		req.AdditionalParameters = map[string]interface{}{"enable_thinking": false}
+	}
 
 	resp, err := l.llmClient.Chat(ctx, organizationID, req)
 	if err != nil {
@@ -136,6 +138,12 @@ Use only information visible in the image. Do not invent, infer unsupported deta
 		return "", fmt.Errorf("summarize mineru figure image returned empty content")
 	}
 	return output, nil
+}
+
+func shouldDisableThinkingForFigureSummary(provider, model string) bool {
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	model = strings.ToLower(strings.TrimSpace(model))
+	return provider == "qwen" || provider == "dashscope" || strings.HasPrefix(model, "qwen")
 }
 
 func chatContentText(content any) string {
