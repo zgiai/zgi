@@ -325,6 +325,50 @@ func (c *HTTPClient) DoRequestDetailed(ctx context.Context, method, url string, 
 	return &HTTPResponse{Body: lastBody, StatusCode: lastStatusCode, Header: lastHeader}, fmt.Errorf("request failed after %d retries", c.maxRetries)
 }
 
+// DoRawRequestDetailed sends one non-replayable request without retrying.
+// Callers retain responsibility for choosing a content type appropriate to the body.
+func (c *HTTPClient) DoRawRequestDetailed(
+	ctx context.Context,
+	method string,
+	targetURL string,
+	headers map[string]string,
+	body io.Reader,
+) (*HTTPResponse, error) {
+	if c == nil || c.client == nil {
+		return nil, fmt.Errorf("http client is not initialized")
+	}
+
+	req, err := http.NewRequestWithContext(ctx, method, targetURL, body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	if err := c.validateOutboundURL(ctx, req.URL); err != nil {
+		return nil, err
+	}
+	for key, value := range headers {
+		req.Header.Set(key, value)
+	}
+	if c.authHook != nil {
+		c.authHook(req)
+	}
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to execute request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	responseBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response body: %w", err)
+	}
+	return &HTTPResponse{
+		Body:       responseBody,
+		StatusCode: resp.StatusCode,
+		Header:     resp.Header.Clone(),
+	}, nil
+}
+
 func isTerminalPlatformChannelResponse(statusCode int, body []byte) bool {
 	if statusCode < http.StatusInternalServerError {
 		return false
