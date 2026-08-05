@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/zgiai/zgi/api/config"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 )
@@ -38,8 +39,37 @@ func TestRestoreExecutionModeKeepsLegacyContinuationOnAgentLoop(t *testing.T) {
 	}
 }
 
+func TestNativeExecutionModePersistsForContinuation(t *testing.T) {
+	parts := &chatRequestParts{ExecutionMode: executionModeNativeAgentLoop}
+	metadata := streamingMessageMetadata(parts)
+	if got := stringMetadataValue(metadata["execution_mode"]); got != executionModeNativeAgentLoop {
+		t.Fatalf("execution_mode = %q, want %q", got, executionModeNativeAgentLoop)
+	}
+	restored := &chatRequestParts{}
+	restoreExecutionModeFromMetadata(restored, metadata)
+	if restored.ExecutionMode != executionModeNativeAgentLoop {
+		t.Fatalf("restored mode = %q, want %q", restored.ExecutionMode, executionModeNativeAgentLoop)
+	}
+}
+
+func TestNativeAgentLoopRollbackSwitch(t *testing.T) {
+	previous := config.GlobalConfig
+	t.Cleanup(func() { config.GlobalConfig = previous })
+	parts := &chatRequestParts{ModelSupportsFunctionCalling: true}
+	caller := Caller{Type: runtimemodel.ConversationCallerAgent}
+
+	config.GlobalConfig = &config.Config{ChatRuntime: config.ChatRuntimeConfig{NativeAgentLoopEnabled: false}}
+	if got := executionModeForModel(caller, parts); got != executionModeAgentLoop {
+		t.Fatalf("disabled mode = %q, want %q", got, executionModeAgentLoop)
+	}
+	config.GlobalConfig.ChatRuntime.NativeAgentLoopEnabled = true
+	if got := executionModeForModel(caller, parts); got != executionModeNativeAgentLoop {
+		t.Fatalf("enabled mode = %q, want %q", got, executionModeNativeAgentLoop)
+	}
+}
+
 func TestApplyRootRegenerationModelCapabilitiesKeepsPersistedModeForSameModel(t *testing.T) {
-	for _, mode := range []string{executionModeLegacyToolChat, executionModeDirectChat} {
+	for _, mode := range []string{executionModeNativeAgentLoop, executionModeLegacyToolChat, executionModeDirectChat} {
 		t.Run(mode, func(t *testing.T) {
 			provider := "private"
 			message := &runtimemodel.Message{

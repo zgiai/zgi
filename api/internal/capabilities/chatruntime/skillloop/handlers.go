@@ -142,7 +142,11 @@ func (r *Runner) handleProgressiveSkillCall(
 		}
 		err := fmt.Errorf("%w: unsupported skill meta tool %s", ErrInvalidInput, call.Function.Name)
 		trace := failedSkillTrace("meta_tool", call.Function.Name, err)
-		return recoverableSkillStep(trace, skills.ToolResultMessage(call.ID, recoverableErrorPayload(err, "use one of load_skill, request_user_input, read_skill_reference, call_skill_tool, submit_turn_state, update_plan, submit_intermediate_answer, or submit_final_answer")), false, false)
+		nextAction := "use one of load_skill, request_user_input, read_skill_reference, call_skill_tool, submit_turn_state, update_plan, submit_intermediate_answer, or submit_final_answer"
+		if native, _ := runtimeState[runtimeStateNativeAgentLoopKey].(bool); native {
+			nextAction = "call one of the business functions exposed in this request directly, use an available control tool, or provide the final answer as ordinary assistant content"
+		}
+		return recoverableSkillStep(trace, skills.ToolResultMessage(call.ID, recoverableErrorPayload(err, nextAction)), false, false)
 	}
 }
 

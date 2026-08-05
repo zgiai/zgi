@@ -82,7 +82,12 @@ func loadChatRuntimeConfig(cfg *Config, source *envSource) {
 	if timeout <= 0 {
 		timeout = 300
 	}
-	cfg.ChatRuntime = ChatRuntimeConfig{ModelIdleTimeoutSeconds: timeout}
+	cfg.ChatRuntime = ChatRuntimeConfig{
+		ModelIdleTimeoutSeconds:                 timeout,
+		NativeAgentLoopEnabled:                  mustBool(source.bool(true, envChatRuntimeNativeAgentLoopEnabled)),
+		NativeSkillProgressiveDisclosureEnabled: mustBool(source.bool(true, envChatRuntimeNativeSkillProgressiveDisclosureEnabled)),
+		NativeModelProgressEnabled:              mustBool(source.bool(true, envChatRuntimeNativeModelProgressEnabled)),
+	}
 }
 
 func loadInfrastructureConfig(cfg *Config, source *envSource) error {

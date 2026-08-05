@@ -412,6 +412,8 @@ func streamingMessageMetadataWithTaskID(parts *chatRequestParts, taskID string) 
 
 func normalizeExecutionMode(value string) string {
 	switch strings.TrimSpace(value) {
+	case executionModeNativeAgentLoop:
+		return executionModeNativeAgentLoop
 	case executionModeAgentLoop:
 		return executionModeAgentLoop
 	case executionModeLegacyToolChat:

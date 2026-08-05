@@ -61,7 +61,10 @@ type Config struct {
 }
 
 type ChatRuntimeConfig struct {
-	ModelIdleTimeoutSeconds int `json:"model_idle_timeout_seconds"`
+	ModelIdleTimeoutSeconds                 int  `json:"model_idle_timeout_seconds"`
+	NativeAgentLoopEnabled                  bool `json:"native_agent_loop_enabled"`
+	NativeSkillProgressiveDisclosureEnabled bool `json:"native_skill_progressive_disclosure_enabled"`
+	NativeModelProgressEnabled              bool `json:"native_model_progress_enabled"`
 }
 
 type ServerConfig struct {

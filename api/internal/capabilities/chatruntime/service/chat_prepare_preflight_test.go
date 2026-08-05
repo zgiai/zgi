@@ -139,7 +139,7 @@ func TestApplyModelCapabilitiesSelectsWorkChatExecutionMode(t *testing.T) {
 	}
 }
 
-func TestApplyModelCapabilitiesKeepsAgentCallerOnAgentLoop(t *testing.T) {
+func TestApplyModelCapabilitiesUsesNativeLoopForNewAgentCaller(t *testing.T) {
 	svc := &service{modelSpecResolver: modelSpecResolverFunc(func(context.Context, uuid.UUID, string, string) (ModelSpec, bool, error) {
 		return ModelSpec{UseCases: []string{"text-chat"}, SupportsToolCall: true}, true, nil
 	})}
@@ -148,8 +148,8 @@ func TestApplyModelCapabilitiesKeepsAgentCallerOnAgentLoop(t *testing.T) {
 	if err := svc.applyModelCapabilities(context.Background(), Scope{OrganizationID: uuid.New()}, caller, parts); err != nil {
 		t.Fatalf("applyModelCapabilities() error = %v", err)
 	}
-	if parts.ExecutionMode != executionModeAgentLoop {
-		t.Fatalf("ExecutionMode = %q, want %q", parts.ExecutionMode, executionModeAgentLoop)
+	if parts.ExecutionMode != executionModeNativeAgentLoop {
+		t.Fatalf("ExecutionMode = %q, want %q", parts.ExecutionMode, executionModeNativeAgentLoop)
 	}
 }
 

@@ -126,6 +126,79 @@ func TestFinalPlanningRequestBudgetRejectsUncompressibleRequest(t *testing.T) {
 	}
 }
 
+func TestFinalPlanningRequestBudgetUsesInitialReserveInsteadOfRetryCeiling(t *testing.T) {
+	request := &adapter.ChatRequest{
+		Model:    "qwen3.7-plus",
+		Messages: []adapter.Message{{Role: "user", Content: "current goal"}},
+	}
+	runner := &Runner{requestBudget: planningRequestBudget{
+		safeContextLimit:    900000,
+		promptBudget:        883616,
+		initialOutputTokens: 16384,
+		outputTokenLimit:    64000,
+	}}
+
+	if err := runner.applyFinalPlanningRequestBudget(request, request.Messages); err != nil {
+		t.Fatalf("applyFinalPlanningRequestBudget() error = %v", err)
+	}
+	if request.MaxTokens == nil || *request.MaxTokens != 16384 {
+		t.Fatalf("MaxTokens = %#v, want initial reserve 16384", request.MaxTokens)
+	}
+}
+
+func TestFinalPlanningRequestBudgetLeavesNativeOutputLimitToProvider(t *testing.T) {
+	metadata := map[string]interface{}{
+		"context_control": map[string]interface{}{
+			"safe_context_limit":     900000,
+			"prompt_budget":          883616,
+			"reserved_output_tokens": 16384,
+		},
+	}
+	request := &adapter.ChatRequest{
+		Model:    "deepseek-chat",
+		Messages: []adapter.Message{{Role: "user", Content: "current goal"}},
+	}
+	runRequest := RunRequest{
+		Prepared:        NewPreparedChat("conversation", "message", "openai", "auto", request),
+		NativeAgentLoop: true,
+		CurrentMetadata: func() map[string]interface{} { return metadata },
+	}
+	runner := &Runner{requestBudget: planningRequestBudgetForRun(runRequest)}
+
+	if err := runner.applyFinalPlanningRequestBudget(request, request.Messages); err != nil {
+		t.Fatalf("applyFinalPlanningRequestBudget() error = %v", err)
+	}
+	if request.MaxTokens != nil {
+		t.Fatalf("MaxTokens = %#v, want provider-managed nil limit", request.MaxTokens)
+	}
+	if runner.diagnostics.requestBudget.effectiveMaxTokens != 0 {
+		t.Fatalf("effective max tokens = %d, want 0", runner.diagnostics.requestBudget.effectiveMaxTokens)
+	}
+}
+
+func TestFinalPlanningRequestBudgetPreservesExplicitNativeOutputLimit(t *testing.T) {
+	maxTokens := 12000
+	request := &adapter.ChatRequest{
+		Model:     "deepseek-chat",
+		Messages:  []adapter.Message{{Role: "user", Content: "current goal"}},
+		MaxTokens: &maxTokens,
+	}
+	runner := &Runner{requestBudget: planningRequestBudget{
+		safeContextLimit:      900000,
+		promptBudget:          883616,
+		initialOutputTokens:   16384,
+		outputTokenLimit:      64000,
+		providerManagedOutput: true,
+	}}
+
+	if err := runner.applyFinalPlanningRequestBudget(request, request.Messages); err != nil {
+		t.Fatalf("applyFinalPlanningRequestBudget() error = %v", err)
+	}
+	if request.MaxTokens == nil || *request.MaxTokens != maxTokens {
+		t.Fatalf("MaxTokens = %#v, want explicit limit %d", request.MaxTokens, maxTokens)
+	}
+}
+
 func TestPlanningRequestBudgetUsesOnlyMatchingVersionedCalibration(t *testing.T) {
 	metadata := map[string]interface{}{
 		"context_control": map[string]interface{}{

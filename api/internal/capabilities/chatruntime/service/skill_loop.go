@@ -107,16 +107,82 @@ func (s *service) runPreparedToolLoop(
 	loopPrepared.Query = strings.TrimSpace(prepared.parts.Query)
 	loopPrepared.CurrentRoute = contextualTurnCurrentPage(prepared.parts)
 	loopPrepared.Surface = normalizeAIChatSurface(prepared.parts.Surface)
-	preferExplicitFinalAnswer := skillLoopPrefersExplicitFinalAnswer(prepared) && !prepared.TerminalOnly
+	nativeAgentLoop := prepared.parts.ExecutionMode == executionModeNativeAgentLoop
+	preferExplicitFinalAnswer := !nativeAgentLoop && skillLoopPrefersExplicitFinalAnswer(prepared) && !prepared.TerminalOnly
 	if prepared.Message.Metadata == nil {
 		prepared.Message.Metadata = map[string]interface{}{}
 	}
-	if prepared.TerminalOnly {
+	if nativeAgentLoop {
+		prepared.Message.Metadata["final_answer_protocol"] = "assistant_content"
+	} else if prepared.TerminalOnly {
 		prepared.Message.Metadata["final_answer_protocol"] = "terminal_assistant_content"
 	} else if preferExplicitFinalAnswer {
 		prepared.Message.Metadata["final_answer_protocol"] = skills.MetaToolFinalAnswer + "_preferred"
 	} else {
 		prepared.Message.Metadata["final_answer_protocol"] = "assistant_content"
+	}
+	authorizeSkillStep := s.currentAgentSkillStepAuthorizer(prepared)
+	additionalSystemMessages := skillLoopAdditionalSystemMessagesForResolved(prepared, resolved)
+	var nativeToolSet *skills.NativeToolSet
+	var nativeSkillSession *skills.NativeSkillSession
+	if nativeAgentLoop {
+		budgetTokens, budgetChars, estimateNativeTokens := s.nativeSkillProjectionBudget(prepared, resolved, additionalSystemMessages)
+		toolSetOptions := skills.NativeToolSetOptions{
+			TenantID:         prepared.Scope.OrganizationID.String(),
+			BudgetChars:      budgetChars,
+			BudgetTokens:     budgetTokens,
+			PrioritySkillIDs: nativeSkillPriorityIDs(prepared, resolved),
+			AuthorizeSkill:   authorizeSkillStep,
+			EstimateTokens:   estimateNativeTokens,
+		}
+		protocol := nativeSkillProtocolForPrepared(prepared)
+		prepared.Message.Metadata["native_skill_protocol"] = protocol
+		if protocol == skills.NativeSkillProtocolProgressiveV1 {
+			initialSkillIDs := nativeInitialActiveSkillIDs(prepared, resolved)
+			prioritySkillIDs := skills.RankNativeSkillIDs(resolved, nativeSkillSelectionText(prepared), initialSkillIDs)
+			// Initial skills already receive their full instructions and schemas. Rank
+			// the remaining skills first so deterministic activation does not consume
+			// the compact candidate directory's Top-K slots.
+			prioritySkillIDs = nativeSkillIDsWithout(prioritySkillIDs, initialSkillIDs)
+			catalog := skills.BuildNativeSkillCatalog(
+				resolved,
+				prioritySkillIDs,
+				skills.DefaultNativeSkillCatalogBudgetChars,
+				nativeSkillCatalogTokenBudget(prepared),
+				func(message adapter.Message) int { return estimateNativeTokens([]adapter.Message{message}, nil) },
+			)
+			if toolSetOptions.BudgetTokens > 0 {
+				toolSetOptions.BudgetTokens = max(1, toolSetOptions.BudgetTokens-catalog.MetadataTokens)
+			}
+			if content := strings.TrimSpace(stringFromAny(catalog.Message.Content)); content != "" && toolSetOptions.BudgetChars > 0 {
+				toolSetOptions.BudgetChars = max(1, toolSetOptions.BudgetChars-len([]rune(content)))
+			}
+			nativeSkillSession = skills.NewNativeSkillSession(s.skillRuntime, resolved, catalog, toolSetOptions)
+			nativeSkillSession.Activate(ctx, initialSkillIDs, "runtime_preload")
+			projected := nativeSkillSession.ToolSet()
+			nativeToolSet = &projected
+			prepared.Message.Metadata["native_skill_diagnostics"] = nativeSkillSessionDiagnostics(nativeSkillSession, prepared.Message.Metadata)
+		} else {
+			projected := s.skillRuntime.BuildNativeToolSet(ctx, resolved, toolSetOptions)
+			nativeToolSet = &projected
+			prepared.Message.Metadata["native_skill_diagnostics"] = nativeSkillDiagnostics(projected)
+		}
+		logger.DebugContext(ctx, "chat runtime native skills projected",
+			"message_id", prepared.Message.ID.String(),
+			"native_skill_protocol", protocol,
+			"candidate_skill_ids", nativeSkillSessionCandidateIDs(nativeSkillSession),
+			"exposed_candidate_skill_ids", nativeSkillSessionExposedIDs(nativeSkillSession),
+			"omitted_candidate_count", nativeSkillSessionOmittedCount(nativeSkillSession),
+			"active_skill_ids", nativeToolSet.ActiveSkillIDs,
+			"provider_tool_count", len(nativeToolSet.ProviderTools),
+			"skipped_skills", nativeToolSet.SkippedSkills,
+			"instruction_chars", nativeToolSet.InstructionChars,
+			"schema_chars", nativeToolSet.SchemaChars,
+			"budget_chars", nativeToolSet.BudgetChars,
+			"instruction_tokens", nativeToolSet.InstructionTokens,
+			"schema_tokens", nativeToolSet.SchemaTokens,
+			"budget_tokens", nativeToolSet.BudgetTokens,
+		)
 	}
 	runtimeStateSnapshot := skillLoopRuntimeStateSnapshot(prepared)
 	onTerminalStateGuardDecision := skillLoopTerminalStateGuardDecision(prepared)
@@ -131,21 +197,28 @@ func (s *service) runPreparedToolLoop(
 		Resolved:                       resolved,
 		ProtocolToolsOnly:              len(resolved.Skills) == 0,
 		LegacyToolChat:                 prepared.parts.ExecutionMode == executionModeLegacyToolChat,
+		NativeAgentLoop:                nativeAgentLoop,
+		NativeModelProgressEnabled:     nativeAgentLoop && nativeModelProgressEnabled(),
+		NativeToolSet:                  nativeToolSet,
+		NativeSkillSession:             nativeSkillSession,
 		ExecutionContext:               s.skillExecutionContext(prepared),
 		PreferExplicitFinalAnswer:      preferExplicitFinalAnswer,
 		SuppressInitialNaturalProgress: prepared.SuppressInitialNaturalProgress,
-		AdditionalSystemMessages:       skillLoopAdditionalSystemMessagesForResolved(prepared, resolved),
+		AdditionalSystemMessages:       additionalSystemMessages,
 		RuntimeStateSnapshot:           runtimeStateSnapshot,
 		CurrentMetadata:                skillLoopCurrentMetadata(prepared),
 		OnTerminalStateGuardDecision:   onTerminalStateGuardDecision,
 		OnTerminalCompletion:           onTerminalCompletion,
 		OnChunk:                        onChunk,
 		PlanningOutputTokenLimit:       planningOutputTokenLimit(prepared),
-		AuthorizeSkillStep:             s.currentAgentSkillStepAuthorizer(prepared),
+		AuthorizeSkillStep:             authorizeSkillStep,
 		PreferredRestoredSkillID:       prepared.PreferredRestoredSkillID,
 		ContinuationType:               prepared.ContinuationType,
 		TerminalOnly:                   prepared.TerminalOnly,
 	})
+	if nativeSkillSession != nil {
+		prepared.Message.Metadata["native_skill_diagnostics"] = nativeSkillSessionDiagnostics(nativeSkillSession, prepared.Message.Metadata)
+	}
 	presentationErr := timeline.FinalizePresentation(err)
 	timeline.FlushPendingIntermediateAnswers(err)
 	if err == nil && presentationErr != nil {
@@ -155,6 +228,394 @@ func (s *service) runPreparedToolLoop(
 		s.persistPartialSkillLoopAnswerBestEffort(persistCtx, prepared, answer, usage)
 	}
 	return answer, usage, err
+}
+
+func nativeSkillSessionCandidateIDs(session *skills.NativeSkillSession) []string {
+	if session == nil {
+		return nil
+	}
+	return session.CandidateSkillIDs()
+}
+
+func nativeSkillSessionExposedIDs(session *skills.NativeSkillSession) []string {
+	if session == nil {
+		return nil
+	}
+	return session.ExposedSkillIDs()
+}
+
+func nativeSkillSessionOmittedCount(session *skills.NativeSkillSession) int {
+	if session == nil {
+		return 0
+	}
+	return session.OmittedCandidateCount()
+}
+
+func nativeSkillProjectionBudgetChars(prepared *PreparedChat, resolved *skills.ResolvedSkills, additional []adapter.Message) int {
+	const fallbackBudgetChars = 64000
+	overheadChars := nativeSkillProjectionOverheadChars(resolved, additional)
+	if prepared == nil || prepared.parts == nil {
+		return max(1, fallbackBudgetChars-overheadChars)
+	}
+	control := prepared.parts.ContextControl
+	promptBudget, _ := operationPlanEvidenceIntFromAny(control["prompt_budget"])
+	estimatedPrompt, _ := operationPlanEvidenceIntFromAny(control["estimated_prompt_tokens"])
+	availableTokens := promptBudget - estimatedPrompt
+	if promptBudget <= 0 {
+		safeLimit, _ := operationPlanEvidenceIntFromAny(control["safe_context_limit"])
+		reservedOutput, _ := operationPlanEvidenceIntFromAny(control["reserved_output_tokens"])
+		availableTokens = safeLimit - reservedOutput - estimatedPrompt
+		if safeLimit <= 0 {
+			return max(1, fallbackBudgetChars-overheadChars)
+		}
+	}
+	if availableTokens <= 0 {
+		return 1
+	}
+	budget := availableTokens*3 - overheadChars
+	if budget < 1 {
+		return 1
+	}
+	return budget
+}
+
+func (s *service) nativeSkillProjectionBudget(
+	prepared *PreparedChat,
+	resolved *skills.ResolvedSkills,
+	additional []adapter.Message,
+) (int, int, func([]adapter.Message, []adapter.Tool) int) {
+	estimator := s.tokenEstimator
+	if estimator == nil {
+		estimator = newTokenEstimator()
+	}
+	model := ""
+	if prepared != nil && prepared.parts != nil {
+		model = prepared.parts.ModelName
+	}
+	estimate := func(messages []adapter.Message, tools []adapter.Tool) int {
+		request := &adapter.ChatRequest{Model: model, Messages: messages, Tools: tools}
+		return estimator.EstimateChatRequest(request).Tokens
+	}
+	charBudget := nativeSkillProjectionBudgetChars(prepared, resolved, additional)
+	if prepared == nil || prepared.parts == nil {
+		return 0, charBudget, estimate
+	}
+	control := prepared.parts.ContextControl
+	promptBudget, _ := operationPlanEvidenceIntFromAny(control["prompt_budget"])
+	estimatedPrompt, _ := operationPlanEvidenceIntFromAny(control["estimated_prompt_tokens"])
+	availableTokens := promptBudget - estimatedPrompt
+	if promptBudget <= 0 {
+		safeLimit, _ := operationPlanEvidenceIntFromAny(control["safe_context_limit"])
+		reservedOutput, _ := operationPlanEvidenceIntFromAny(control["reserved_output_tokens"])
+		if safeLimit <= 0 {
+			return 0, charBudget, estimate
+		}
+		availableTokens = safeLimit - reservedOutput - estimatedPrompt
+	}
+	controlTools := nativeSkillBudgetControlTools(resolved)
+	overheadMessages := append([]adapter.Message(nil), additional...)
+	overheadMessages = append(overheadMessages, skillloop.NativeAgentLoopSystemMessage())
+	overheadTokens := estimate(overheadMessages, controlTools)
+	remainingTokens := availableTokens - overheadTokens
+	if remainingTokens <= 0 {
+		return 0, 1, estimate
+	}
+	return remainingTokens, charBudget, estimate
+}
+
+func nativeSkillProjectionOverheadChars(resolved *skills.ResolvedSkills, additional []adapter.Message) int {
+	// Reserve the native loop instruction itself plus the exact control schemas
+	// and request-specific system messages that are appended after context
+	// selection. The remaining budget belongs exclusively to atomic skills.
+	overhead := 4000
+	controlTools := nativeSkillBudgetControlTools(resolved)
+	if encoded, err := json.Marshal(controlTools); err == nil {
+		overhead += len(encoded)
+	}
+	for _, message := range additional {
+		overhead += len([]rune(stringFromAny(message.Content)))
+	}
+	return overhead
+}
+
+func nativeSkillBudgetControlTools(resolved *skills.ResolvedSkills) []adapter.Tool {
+	ids := resolvedSkillIDs(resolved)
+	exposed := append([]string(nil), ids...)
+	if len(exposed) > skills.MaxNativeSkillSearchLimit {
+		exposed = exposed[:skills.DefaultNativeSkillSearchLimit]
+	}
+	return skills.NativeControlToolsForSession(resolved, nil, exposed, len(exposed) < len(ids))
+}
+
+func resolvedSkillIDs(resolved *skills.ResolvedSkills) []string {
+	if resolved == nil {
+		return nil
+	}
+	return resolved.SkillIDs()
+}
+
+func nativeSkillPriorityIDs(prepared *PreparedChat, resolved *skills.ResolvedSkills) []string {
+	priority := make([]string, 0)
+	seen := map[string]struct{}{}
+	appendID := func(value string) {
+		value = strings.ToLower(strings.TrimSpace(value))
+		if value == "" {
+			return
+		}
+		if _, exists := seen[value]; exists {
+			return
+		}
+		seen[value] = struct{}{}
+		priority = append(priority, value)
+	}
+	if prepared != nil {
+		appendID(prepared.PreferredRestoredSkillID)
+		if prepared.Message != nil {
+			plan := mapFromOperationContext(prepared.Message.Metadata["operation_plan"])
+			for _, phase := range mapSliceFromAny(plan["phases"]) {
+				expected := mapFromOperationContext(phase["expected_action"])
+				appendID(stringFromAny(expected["skill_id"]))
+			}
+			invocations := skillInvocationMaps(prepared.Message.Metadata)
+			for index := len(invocations) - 1; index >= 0; index-- {
+				appendID(stringFromAny(invocations[index]["skill_id"]))
+			}
+		}
+		if prepared.parts != nil {
+			for _, skillID := range prepared.parts.SkillIDs {
+				appendID(skillID)
+			}
+		}
+	}
+	if resolved != nil {
+		for _, skillID := range resolved.SkillIDs() {
+			appendID(skillID)
+		}
+	}
+	return priority
+}
+
+func nativeSkillProtocolForPrepared(prepared *PreparedChat) string {
+	if prepared != nil && prepared.Message != nil {
+		if protocol := strings.TrimSpace(stringFromAny(prepared.Message.Metadata["native_skill_protocol"])); protocol != "" {
+			return protocol
+		}
+		if prepared.Continuation || prepared.ReplaceRoot {
+			return skills.NativeSkillProtocolPreloadV1
+		}
+	}
+	if nativeSkillProgressiveDisclosureEnabled() {
+		return skills.NativeSkillProtocolProgressiveV1
+	}
+	return skills.NativeSkillProtocolPreloadV1
+}
+
+func nativeInitialActiveSkillIDs(prepared *PreparedChat, resolved *skills.ResolvedSkills) []string {
+	out := make([]string, 0)
+	seen := map[string]struct{}{}
+	appendID := func(value string) {
+		value = strings.ToLower(strings.TrimSpace(value))
+		if value == "" {
+			return
+		}
+		if _, exists := seen[value]; exists {
+			return
+		}
+		if resolved != nil {
+			if _, ok := resolved.Get(value); !ok {
+				return
+			}
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	if prepared == nil {
+		return out
+	}
+	appendID(prepared.PreferredRestoredSkillID)
+	if prepared.Message != nil {
+		plan := mapFromOperationContext(prepared.Message.Metadata["operation_plan"])
+		for _, phase := range mapSliceFromAny(plan["phases"]) {
+			expected := mapFromOperationContext(phase["expected_action"])
+			appendID(stringFromAny(expected["skill_id"]))
+		}
+		for _, invocation := range skillInvocationMaps(prepared.Message.Metadata) {
+			status := strings.ToLower(strings.TrimSpace(stringFromAny(invocation["status"])))
+			kind := strings.ToLower(strings.TrimSpace(stringFromAny(invocation["kind"])))
+			if (status == "success" || status == "loaded") && (kind == "tool_call" || kind == "skill_load") {
+				appendID(stringFromAny(invocation["skill_id"]))
+			}
+		}
+		for _, key := range []string{"active_skill_ids", "initial_active_skill_ids", "activated_skill_ids"} {
+			for _, skillID := range stringSliceFromAny(mapFromOperationContext(prepared.Message.Metadata["native_skill_diagnostics"])[key]) {
+				appendID(skillID)
+			}
+		}
+	}
+	if prepared.parts != nil {
+		if strategy := contextualAIChatTurnStrategyFromParts(prepared.parts); strategy != nil {
+			for _, planned := range strategy.PlannedTools {
+				appendID(planned.SkillID)
+			}
+		}
+		query := strings.ToLower(strings.TrimSpace(prepared.parts.Query))
+		if query != "" && resolved != nil {
+			nameCounts := make(map[string]int, len(resolved.Skills))
+			for _, doc := range resolved.Skills {
+				if name := strings.ToLower(strings.TrimSpace(doc.Metadata.Name)); name != "" {
+					nameCounts[name]++
+				}
+			}
+			for _, doc := range resolved.Skills {
+				skillID := strings.ToLower(strings.TrimSpace(doc.Metadata.ID))
+				if len([]rune(skillID)) >= 3 && strings.Contains(query, skillID) {
+					appendID(doc.Metadata.ID)
+					continue
+				}
+				name := strings.ToLower(strings.TrimSpace(doc.Metadata.Name))
+				if nameCounts[name] == 1 && len([]rune(name)) >= 3 && strings.Contains(query, name) {
+					appendID(doc.Metadata.ID)
+				}
+			}
+		}
+	}
+	return out
+}
+
+func nativeSkillIDsWithout(values []string, excluded []string) []string {
+	blocked := make(map[string]struct{}, len(excluded))
+	for _, value := range excluded {
+		if value = strings.ToLower(strings.TrimSpace(value)); value != "" {
+			blocked[value] = struct{}{}
+		}
+	}
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		normalized := strings.ToLower(strings.TrimSpace(value))
+		if normalized == "" {
+			continue
+		}
+		if _, skip := blocked[normalized]; skip {
+			continue
+		}
+		out = append(out, normalized)
+	}
+	return out
+}
+
+func nativeSkillSelectionText(prepared *PreparedChat) string {
+	if prepared == nil || prepared.parts == nil {
+		return ""
+	}
+	parts := []string{strings.TrimSpace(prepared.parts.Query)}
+	if prepared.parts.Attachments != nil {
+		for _, file := range prepared.parts.Attachments.Files {
+			parts = append(parts, file.Name, file.Extension, file.MimeType)
+		}
+	}
+	if prompt := strings.TrimSpace(prepared.parts.SystemPrompt); prompt != "" {
+		parts = append(parts, truncateRunes(prompt, 2000))
+	}
+	return strings.Join(parts, " ")
+}
+
+func nativeSkillCatalogTokenBudget(prepared *PreparedChat) int {
+	if prepared == nil || prepared.parts == nil {
+		return 0
+	}
+	control := prepared.parts.ContextControl
+	safeLimit, _ := operationPlanEvidenceIntFromAny(control["safe_context_limit"])
+	if safeLimit <= 0 {
+		safeLimit, _ = operationPlanEvidenceIntFromAny(control["prompt_budget"])
+	}
+	if safeLimit <= 0 {
+		return 0
+	}
+	return max(1, safeLimit*2/100)
+}
+
+func nativeSkillSessionDiagnostics(session *skills.NativeSkillSession, metadata map[string]interface{}) map[string]interface{} {
+	if session == nil {
+		return map[string]interface{}{}
+	}
+	toolSet := session.ToolSet()
+	diagnostics := nativeSkillDiagnostics(toolSet)
+	diagnostics["candidate_skill_ids"] = session.CandidateSkillIDs()
+	diagnostics["exposed_candidate_skill_ids"] = session.ExposedSkillIDs()
+	diagnostics["omitted_candidate_count"] = session.OmittedCandidateCount()
+	diagnostics["metadata_tokens"] = session.MetadataTokens()
+	diagnostics["remaining_context_budget"] = map[string]interface{}{
+		"chars":  session.RemainingBudgetChars(),
+		"tokens": session.RemainingBudgetTokens(),
+	}
+	attempts := session.ActivationAttempts()
+	encodedAttempts := make([]interface{}, 0, len(attempts))
+	initialActive := make([]string, 0)
+	for _, attempt := range attempts {
+		encodedAttempts = append(encodedAttempts, map[string]interface{}{
+			"skill_id": attempt.SkillID,
+			"source":   attempt.Source,
+			"outcome":  attempt.Outcome,
+			"reason":   attempt.Reason,
+			"detail":   attempt.Detail,
+		})
+		if attempt.Source == "runtime_preload" && (attempt.Outcome == "activated" || attempt.Outcome == "already_active") {
+			initialActive = appendUniqueStrings(initialActive, attempt.SkillID)
+		}
+	}
+	diagnostics["initial_active_skill_ids"] = initialActive
+	diagnostics["activated_skill_ids"] = session.ActiveSkillIDs()
+	diagnostics["activation_attempts"] = encodedAttempts
+	used := map[string]struct{}{}
+	for _, invocation := range skillInvocationMaps(metadata) {
+		if strings.EqualFold(strings.TrimSpace(stringFromAny(invocation["kind"])), "tool_call") &&
+			strings.EqualFold(strings.TrimSpace(stringFromAny(invocation["status"])), "success") {
+			used[strings.ToLower(strings.TrimSpace(stringFromAny(invocation["skill_id"])))] = struct{}{}
+		}
+	}
+	unused := make([]string, 0)
+	for _, skillID := range session.ActiveSkillIDs() {
+		if _, ok := used[strings.ToLower(strings.TrimSpace(skillID))]; !ok {
+			unused = append(unused, skillID)
+		}
+	}
+	diagnostics["unused_active_skill_ids"] = unused
+	return diagnostics
+}
+
+func nativeSkillDiagnostics(toolSet skills.NativeToolSet) map[string]interface{} {
+	bindings := make(map[string]interface{}, len(toolSet.ToolBindings))
+	for name, binding := range toolSet.ToolBindings {
+		bindings[name] = map[string]interface{}{
+			"skill_id":  binding.SkillID,
+			"tool_name": binding.ToolName,
+		}
+	}
+	skipped := make([]interface{}, 0, len(toolSet.SkippedSkills))
+	for _, item := range toolSet.SkippedSkills {
+		skipped = append(skipped, map[string]interface{}{
+			"skill_id":        item.SkillID,
+			"reason":          item.Reason,
+			"detail":          item.Detail,
+			"tool_name":       item.ToolName,
+			"budget":          item.Budget,
+			"required":        item.Required,
+			"budget_tokens":   item.BudgetTokens,
+			"required_tokens": item.RequiredTokens,
+		})
+	}
+	return map[string]interface{}{
+		"active_skill_ids":   append([]string(nil), toolSet.ActiveSkillIDs...),
+		"skipped_skills":     skipped,
+		"tool_count":         len(toolSet.ProviderTools),
+		"tool_bindings":      bindings,
+		"instruction_chars":  toolSet.InstructionChars,
+		"schema_chars":       toolSet.SchemaChars,
+		"budget_chars":       toolSet.BudgetChars,
+		"instruction_tokens": toolSet.InstructionTokens,
+		"schema_tokens":      toolSet.SchemaTokens,
+		"budget_tokens":      toolSet.BudgetTokens,
+	}
 }
 
 func (s *service) currentOrganizationSkillStepAuthorizer(organizationID uuid.UUID) func(context.Context, string) (bool, error) {
@@ -212,18 +673,12 @@ func planningOutputTokenLimit(prepared *PreparedChat) int {
 	safeLimit, _ := operationPlanEvidenceIntFromAny(control["safe_context_limit"])
 	promptTokens, _ := operationPlanEvidenceIntFromAny(control["estimated_prompt_tokens"])
 	available := safeLimit - promptTokens
-	limit := reservedOutput
-	if limit <= 0 {
-		limit = available
-	}
-	if limit <= 0 {
+	limit := available
+	if modelLimit > 0 && (limit <= 0 || limit > modelLimit) {
 		limit = modelLimit
 	}
-	if available > 0 && limit > available {
-		limit = available
-	}
-	if modelLimit > 0 && limit > modelLimit {
-		limit = modelLimit
+	if limit <= 0 {
+		limit = reservedOutput
 	}
 	return limit
 }

@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+	"github.com/zgiai/zgi/api/config"
 	runtimedto "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/dto"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/repository"
@@ -535,6 +536,10 @@ func (s *service) applyExistingConversationSurfaceForChat(ctx context.Context, s
 }
 
 func executionModeForModel(caller Caller, parts *chatRequestParts) string {
+	if parts != nil && normalizeCallerType(caller.Type) == runtimemodel.ConversationCallerAgent &&
+		parts.ModelSupportsFunctionCalling && nativeAgentLoopEnabled() {
+		return executionModeNativeAgentLoop
+	}
 	if parts == nil || normalizeCallerType(caller.Type) != runtimemodel.ConversationCallerAIChat ||
 		normalizeAIChatSurface(parts.Surface) != aiChatSurfaceWorkChat {
 		return executionModeAgentLoop
@@ -546,6 +551,27 @@ func executionModeForModel(caller Caller, parts *chatRequestParts) string {
 		return executionModeLegacyToolChat
 	}
 	return executionModeDirectChat
+}
+
+func nativeAgentLoopEnabled() bool {
+	if config.GlobalConfig == nil {
+		return true
+	}
+	return config.GlobalConfig.ChatRuntime.NativeAgentLoopEnabled
+}
+
+func nativeSkillProgressiveDisclosureEnabled() bool {
+	if config.GlobalConfig == nil {
+		return true
+	}
+	return config.GlobalConfig.ChatRuntime.NativeSkillProgressiveDisclosureEnabled
+}
+
+func nativeModelProgressEnabled() bool {
+	if config.GlobalConfig == nil {
+		return true
+	}
+	return config.GlobalConfig.ChatRuntime.NativeModelProgressEnabled
 }
 
 func executionModeRequiresFunctionCalling(mode string) bool {

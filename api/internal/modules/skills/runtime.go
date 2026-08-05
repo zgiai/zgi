@@ -30,6 +30,8 @@ const (
 	MetaToolUpdatePlan         = "update_plan"
 	MetaToolRequestUserInput   = "request_user_input"
 	MetaToolFinalAnswer        = "submit_final_answer"
+	MetaToolActivateSkills     = "activate_skills"
+	MetaToolSearchSkills       = "search_skills"
 )
 
 var ErrSkillNotFound = errors.New("skill not found")

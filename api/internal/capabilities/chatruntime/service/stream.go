@@ -33,10 +33,14 @@ const (
 	aichatErrorCodeModelServiceTimeout     = "model_service_timeout"
 	aichatErrorCodeModelServiceUnavailable = "model_service_unavailable"
 	aichatErrorCodeModelInvocationFailed   = "model_invocation_failed"
+	aichatErrorCodePlanningOutputTruncated = "planning_output_truncated"
+	aichatErrorCodeAgentOutputTruncated    = "agent_output_truncated"
 	aichatErrorCodeFinalAnswerUnavailable  = "agent_final_answer_unavailable"
 	aichatModelServiceTimeoutMessage       = "The model did not respond before the task timed out."
 	aichatModelServiceUnavailableMessage   = "The model service is temporarily unavailable."
 	aichatModelInvocationFailedMessage     = "The model could not complete the requested response."
+	aichatPlanningOutputTruncatedMessage   = "The agent planning output reached its limit before completing a valid action. Shorten the agent instructions or reduce the task scope, then try again."
+	aichatAgentOutputTruncatedMessage      = "The agent response reached the model output limit before completing this turn. No automatic retry was made."
 	aichatFinalAnswerUnavailableMessage    = "The model could not generate a usable final response after retrying."
 )
 
@@ -524,7 +528,7 @@ func preparedModelUseCase(prepared *PreparedChat) string {
 		mode = normalizeExecutionMode(stringMetadataValue(prepared.Message.Metadata["execution_mode"]))
 	}
 	switch mode {
-	case executionModeAgentLoop:
+	case executionModeAgentLoop, executionModeNativeAgentLoop:
 		return "agent"
 	case executionModeLegacyToolChat, executionModeDirectChat:
 		return "text-chat"
@@ -1036,6 +1040,9 @@ func publicAichatErrorCodeAndMessage(err error) (int, string, bool) {
 }
 
 func publicAichatRuntimeErrorCodeAndMessage(err error) (string, string, bool) {
+	if errors.Is(err, skillloop.ErrAgentOutputTruncated) {
+		return aichatErrorCodeAgentOutputTruncated, aichatAgentOutputTruncatedMessage, true
+	}
 	if errors.Is(err, ErrModelIdleTimeout) ||
 		errors.Is(err, skillloop.ErrModelIdleTimeout) ||
 		errors.Is(err, adapter.ErrTimeout) {
@@ -1050,8 +1057,15 @@ func publicAichatRuntimeErrorCodeAndMessage(err error) (string, string, bool) {
 		return aichatErrorCodeFinalAnswerUnavailable, aichatFinalAnswerUnavailableMessage, true
 	}
 	var terminationErr *skillloop.PlanningTerminationError
-	if errors.As(err, &terminationErr) ||
-		errors.Is(err, adapter.ErrRateLimited) ||
+	if errors.As(err, &terminationErr) {
+		switch strings.ToLower(strings.TrimSpace(terminationErr.Reason)) {
+		case "length", "max_tokens":
+			return aichatErrorCodePlanningOutputTruncated, aichatPlanningOutputTruncatedMessage, true
+		default:
+			return aichatErrorCodeModelInvocationFailed, aichatModelInvocationFailedMessage, true
+		}
+	}
+	if errors.Is(err, adapter.ErrRateLimited) ||
 		errors.Is(err, adapter.ErrContentPolicyViolation) {
 		return aichatErrorCodeModelInvocationFailed, aichatModelInvocationFailedMessage, true
 	}

@@ -61,9 +61,10 @@ const (
 	skillModeAuto     = "auto"
 	skillModeRequired = "required"
 
-	executionModeAgentLoop      = "agent_loop"
-	executionModeLegacyToolChat = "legacy_tool_chat"
-	executionModeDirectChat     = "direct_chat"
+	executionModeAgentLoop       = "agent_loop"
+	executionModeNativeAgentLoop = "native_agent_loop"
+	executionModeLegacyToolChat  = "legacy_tool_chat"
+	executionModeDirectChat      = "direct_chat"
 
 	userMemoryContextBudgetChars  = 4000
 	agentMemoryContextBudgetChars = 4000
