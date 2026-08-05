@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"time"
 
@@ -22,14 +23,14 @@ func isUnsetOrganizationID(organizationID string) bool {
 	return strings.TrimSpace(organizationID) == "" || strings.TrimSpace(organizationID) == uuid.Nil.String()
 }
 
-// llmClientImpl implements the LLMClient interface
+// llmClientImpl implements model calls and manages their system API keys.
 type llmClientImpl struct {
 	gateway    gateway.LLMGatewayService
 	apiKeyRepo apikeyrepo.APIKeyRepository
 	db         *gorm.DB
 }
 
-// New creates a new LLMClient instance
+// New creates a model client.
 func New(
 	gateway gateway.LLMGatewayService,
 	apiKeyRepo apikeyrepo.APIKeyRepository,
@@ -40,6 +41,35 @@ func New(
 		apiKeyRepo: apiKeyRepo,
 		db:         db,
 	}
+}
+
+// GenerateMusic calls the model gateway with an organization-owned
+// system key. The caller owns the stable request ID and destination lifecycle.
+func (c *llmClientImpl) GenerateMusic(ctx context.Context, organizationID string, req *adapter.MusicRequest, dst io.Writer) error {
+	if req == nil {
+		return fmt.Errorf("%w: music request is required", adapter.ErrInvalidRequest)
+	}
+	apiKey, err := c.getOrCreateSystemKey(ctx, organizationID)
+	if err != nil {
+		return fmt.Errorf("failed to get system API key: %w", err)
+	}
+	return c.gateway.GenerateMusic(ctx, apiKey, &gateway.MusicRequest{
+		RequestID:      req.RequestID,
+		Model:          req.Model,
+		Mode:           req.Mode,
+		Prompt:         req.Prompt,
+		Lyrics:         req.Lyrics,
+		ResponseFormat: req.ResponseFormat,
+	}, dst)
+}
+
+// CompensateMusicDelivery resolves one request without rerunning model selection.
+func (c *llmClientImpl) CompensateMusicDelivery(ctx context.Context, organizationID, requestID string) error {
+	apiKey, err := c.getOrCreateSystemKey(ctx, organizationID)
+	if err != nil {
+		return fmt.Errorf("failed to get system API key: %w", err)
+	}
+	return c.gateway.CompensateMusicDelivery(ctx, apiKey, requestID)
 }
 
 // Chat performs a non-streaming chat completion request

@@ -92,6 +92,12 @@ type LLMGatewayService interface {
 	// GenerateSpeech converts complete text into a streamed MP3 response.
 	GenerateSpeech(ctx context.Context, apiKey *apikeymodel.TenantAPIKey, req *SpeechRequest, dst io.Writer) error
 
+	// GenerateMusic creates one complete MP3 track.
+	GenerateMusic(ctx context.Context, apiKey *apikeymodel.TenantAPIKey, req *MusicRequest, dst io.Writer) error
+
+	// CompensateMusicDelivery resolves billing after a generated track cannot be delivered.
+	CompensateMusicDelivery(ctx context.Context, apiKey *apikeymodel.TenantAPIKey, requestID string) error
+
 	// ListAvailableModels lists available models for the API key
 	ListAvailableModels(ctx context.Context, apiKey *apikeymodel.TenantAPIKey) ([]adapter.Model, error)
 
