@@ -46,6 +46,39 @@ func TestNormalizeCatalogBillingPriceUsesCatalogCanonicalUSD(t *testing.T) {
 	require.Contains(t, pricing, "billing_price")
 }
 
+func TestNormalizeCatalogBillingPriceDoesNotRelabelStructuredCNYAmountsAsUSD(t *testing.T) {
+	nativeInput := 2.0
+	billingInput := 0.285714
+	model := &ModelMetaData{
+		Currency:   "CNY",
+		InputPrice: &nativeInput,
+		Pricing: json.RawMessage(`{
+			"token_tiers":[{"up_to":1000000,"input_price":2}],
+			"image_price":0.2
+		}`),
+		BillingPricing: &ModelMetaBillingPrice{
+			Currency:   "USD",
+			InputPrice: &billingInput,
+			Conversion: json.RawMessage(`{"source":"catalog-fx","as_of":"2026-08-05"}`),
+		},
+	}
+
+	normalizeCatalogBillingPrice(model)
+
+	require.Equal(t, "USD", model.Currency)
+	var pricing map[string]interface{}
+	require.NoError(t, json.Unmarshal(model.Pricing, &pricing))
+	require.NotContains(t, pricing, "token_tiers")
+	require.NotContains(t, pricing, "image_price")
+	nativePrice := pricing["native_price"].(map[string]interface{})
+	require.Equal(t, "CNY", nativePrice["currency"])
+	details := nativePrice["details"].(map[string]interface{})
+	require.Contains(t, details, "token_tiers")
+	require.Equal(t, 0.2, details["image_price"])
+	billingPrice := pricing["billing_price"].(map[string]interface{})
+	require.Equal(t, "USD", billingPrice["currency"])
+}
+
 func TestNormalizeCatalogBillingPriceDoesNotGuessForeignExchangeRate(t *testing.T) {
 	input := 2.0
 	output := 8.0

@@ -679,19 +679,26 @@ func optionalPriceValue(value *float64) float64 {
 }
 
 func annotateNativeAndBillingPricing(model *ModelMetaData) json.RawMessage {
-	pricing := map[string]interface{}{}
-	trimmed := strings.TrimSpace(string(model.Pricing))
-	if trimmed != "" && trimmed != "null" {
-		if err := json.Unmarshal(model.Pricing, &pricing); err != nil {
-			pricing["catalog_pricing_raw"] = string(model.Pricing)
-		}
-	}
-	pricing["native_price"] = map[string]interface{}{
+	nativePrice := map[string]interface{}{
 		"currency":           strings.ToUpper(strings.TrimSpace(model.Currency)),
 		"input_price":        model.InputPrice,
 		"output_price":       model.OutputPrice,
 		"cached_input_price": model.CachedInputPrice,
 	}
+	trimmed := strings.TrimSpace(string(model.Pricing))
+	if trimmed != "" && trimmed != "null" {
+		var nativeDetails interface{}
+		if err := json.Unmarshal(model.Pricing, &nativeDetails); err != nil {
+			nativePrice["catalog_pricing_raw"] = string(model.Pricing)
+		} else {
+			nativePrice["details"] = nativeDetails
+		}
+	}
+
+	// Never merge provider-native structured amounts into the billing envelope:
+	// after Currency is switched to USD, callers must not mistake native CNY
+	// tiers or image prices for USD values.
+	pricing := map[string]interface{}{"native_price": nativePrice}
 	if model.BillingPricing != nil {
 		pricing["billing_price"] = model.BillingPricing
 	}

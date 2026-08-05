@@ -109,6 +109,9 @@ func (a *Adapter) openAICompatibleAdapter() (CompatibleClient, error) {
 // ChatCompletion uses Model Studio's OpenAI-compatible API. A single chat
 // protocol avoids routing individual stable and snapshot model names.
 func (a *Adapter) ChatCompletion(ctx context.Context, request *adapter.ChatRequest) (*adapter.ChatResponse, error) {
+	if err := validateQwenCompatibleImageReferences(request); err != nil {
+		return nil, err
+	}
 	compatible, err := a.openAICompatibleAdapter()
 	if err != nil {
 		return nil, err
@@ -120,12 +123,65 @@ func (a *Adapter) ChatCompletion(ctx context.Context, request *adapter.ChatReque
 // ChatCompletionStream uses the same compatible endpoint as non-streaming
 // chat, including vision inputs and tool calls.
 func (a *Adapter) ChatCompletionStream(ctx context.Context, request *adapter.ChatRequest) (<-chan adapter.StreamResponse, error) {
+	if err := validateQwenCompatibleImageReferences(request); err != nil {
+		return nil, err
+	}
 	compatible, err := a.openAICompatibleAdapter()
 	if err != nil {
 		return nil, err
 	}
 	stream, err := compatible.ChatCompletionStream(ctx, request)
 	return stream, normalizeQwenCompatibleError(err)
+}
+
+// validateQwenCompatibleImageReferences preserves the public-image boundary
+// when chat is delegated to the shared OpenAI-compatible client. The native
+// payload builder performs the same validation while converting image parts.
+func validateQwenCompatibleImageReferences(request *adapter.ChatRequest) error {
+	if request == nil {
+		return fmt.Errorf("%w: qwen chat request is required", adapter.ErrInvalidRequest)
+	}
+	for _, message := range request.Messages {
+		switch content := message.Content.(type) {
+		case []adapter.MessageContentPart:
+			for _, part := range content {
+				if part.Type != "image_url" {
+					continue
+				}
+				if part.ImageURL == nil {
+					return fmt.Errorf("%w: qwen image_url content requires url", adapter.ErrInvalidRequest)
+				}
+				if _, err := normalizeAliyunImageReference(part.ImageURL.URL); err != nil {
+					return err
+				}
+			}
+		case []interface{}:
+			for _, item := range content {
+				part, ok := item.(map[string]interface{})
+				if !ok {
+					continue
+				}
+				if image, ok := part["image"].(string); ok {
+					if _, err := normalizeAliyunImageReference(image); err != nil {
+						return err
+					}
+				}
+				partType, _ := part["type"].(string)
+				if partType != "image_url" {
+					continue
+				}
+				imageURL, ok := part["image_url"].(map[string]interface{})
+				if !ok {
+					return fmt.Errorf("%w: qwen image_url content requires image_url object", adapter.ErrInvalidRequest)
+				}
+				rawURL, _ := imageURL["url"].(string)
+				if _, err := normalizeAliyunImageReference(rawURL); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	return nil
 }
 
 // chatCompletionNative keeps the native wire implementation isolated for

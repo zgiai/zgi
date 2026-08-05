@@ -92,6 +92,47 @@ func TestAliyunAdapterChatCompatibleEndpointPreservesVisionAndTools(t *testing.T
 	}
 }
 
+func TestAliyunAdapterCompatibleChatRejectsPrivateImageURLBeforeUpstream(t *testing.T) {
+	var upstreamCalls int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		upstreamCalls++
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	a, err := NewAliyunAdapter(&adapter.AdapterConfig{APIKey: "test-key", BaseURL: server.URL + "/api/v1"})
+	if err != nil {
+		t.Fatalf("NewAliyunAdapter() error = %v", err)
+	}
+	request := &adapter.ChatRequest{
+		Model: "qwen3.7-plus",
+		Messages: []adapter.Message{{Role: "user", Content: []adapter.MessageContentPart{
+			{Type: "image_url", ImageURL: &adapter.ImageURL{URL: "http://127.0.0.1/private.png"}},
+		}}},
+	}
+
+	if _, err := a.ChatCompletion(context.Background(), request); !errors.Is(err, adapter.ErrInvalidRequest) {
+		t.Fatalf("ChatCompletion() error = %v, want invalid request", err)
+	}
+
+	// Public JSON binding stores interface-typed content as []interface{}.
+	var decodedRequest adapter.ChatRequest
+	if err := json.Unmarshal([]byte(`{
+		"model":"qwen3.7-plus",
+		"messages":[{"role":"user","content":[
+			{"type":"image_url","image_url":{"url":"http://localhost/private.png"}}
+		]}]
+	}`), &decodedRequest); err != nil {
+		t.Fatalf("decode public request: %v", err)
+	}
+	if _, err := a.ChatCompletionStream(context.Background(), &decodedRequest); !errors.Is(err, adapter.ErrInvalidRequest) {
+		t.Fatalf("ChatCompletionStream() error = %v, want invalid request", err)
+	}
+	if upstreamCalls != 0 {
+		t.Fatalf("upstream calls = %d, want 0", upstreamCalls)
+	}
+}
+
 func TestAliyunAdapterChatStreamUsesCompatibleEndpointAndPreservesBillingCode(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/compatible-mode/v1/chat/completions" {
