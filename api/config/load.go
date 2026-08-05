@@ -566,13 +566,28 @@ func loadVectorStoreConfig(cfg *Config, source *envSource) error {
 }
 
 func loadUploadConfig(cfg *Config, source *envSource) error {
-	fileSizeLimit, err := source.int(15, envUploadFileSizeLimit)
+	const (
+		minimumUploadFileSizeLimit = 50
+		minimumUploadQueueLimit    = 200
+	)
+
+	fileSizeLimit, err := source.int(minimumUploadFileSizeLimit, envUploadFileSizeLimit)
 	if err != nil {
 		return err
+	}
+	if fileSizeLimit < minimumUploadFileSizeLimit {
+		fileSizeLimit = minimumUploadFileSizeLimit
 	}
 	fileBatchLimit, err := source.int(5, envUploadFileBatchLimit)
 	if err != nil {
 		return err
+	}
+	uploadQueueLimit, err := source.int(minimumUploadQueueLimit, envUploadQueueLimit)
+	if err != nil {
+		return err
+	}
+	if uploadQueueLimit < minimumUploadQueueLimit {
+		uploadQueueLimit = minimumUploadQueueLimit
 	}
 	imageSizeLimit, err := source.int(10, envUploadImageFileSizeLimit)
 	if err != nil {
@@ -602,6 +617,7 @@ func loadUploadConfig(cfg *Config, source *envSource) error {
 	cfg.Upload = UploadConfig{
 		FileSizeLimit:          fileSizeLimit,
 		FileBatchLimit:         fileBatchLimit,
+		UploadQueueLimit:       uploadQueueLimit,
 		ImageSizeLimit:         imageSizeLimit,
 		VideoSizeLimit:         videoSizeLimit,
 		AudioSizeLimit:         audioSizeLimit,
@@ -774,7 +790,10 @@ func loadWorkflowFileExtractionConfig(cfg *Config, source *envSource) error {
 	if err != nil {
 		return err
 	}
-	extractionTimeout, err := source.int(120, envWorkflowFileExtractionTimeout)
+	// MinerU may legitimately run for up to 800 seconds. Keep the parent
+	// workflow timeout above that provider limit so it does not cancel a
+	// healthy parse before the provider can return.
+	extractionTimeout, err := source.int(900, envWorkflowFileExtractionTimeout)
 	if err != nil {
 		return err
 	}

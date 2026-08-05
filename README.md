@@ -1,7 +1,14 @@
 # ZGI
 
 <p align="center">
-  <em>An Agent Runtime workspace with source code available for building, running, and operating AI agents, workflows, skills, knowledge, and model routes.</em>
+  English &middot;
+  <a href="README.zh-CN.md">简体中文</a> &middot;
+  <a href="README.ja-JP.md">日本語</a> &middot;
+  <a href="README.ko-KR.md">한국어</a>
+</p>
+
+<p align="center">
+  <em>A source-available Agent Runtime workspace for building, connecting, publishing, and operating AI agents and executable workflows.</em>
 </p>
 
 <p align="center">
@@ -15,7 +22,8 @@
 <p align="center">
   <sub>
     <a href="#why-zgi">Why ZGI</a> &middot;
-    <a href="#platform">Platform</a> &middot;
+    <a href="#from-build-to-runtime">How it works</a> &middot;
+    <a href="#core-capabilities">Capabilities</a> &middot;
     <a href="#quick-start">Quick Start</a> &middot;
     <a href="#development">Development</a> &middot;
     <a href="#documentation">Docs</a> &middot;
@@ -24,28 +32,45 @@
   </sub>
 </p>
 
+![ZGI visual workflow editor](docs/assets/zgi-workflow-editor-api-enrichment.png)
+
 ## Why ZGI
 
 ZGI is an Agent Runtime platform with source code available for teams that need
-AI apps to do real work, not just answer in a chat box. It combines agent
-applications, visual workflow orchestration, model routing, workspace knowledge,
-database access, memory, reusable skills, and sandboxed tool execution in one
-self-hostable workspace.
+AI applications to execute real work, not just answer in a chat box. It brings
+agent configuration, visual workflow orchestration, advanced retrieval,
+structured data, model routing, reusable skills, and sandboxed execution into
+one self-hostable workspace.
 
-Use it to build internal AI tools, publish agent experiences, bind agents to
-approved knowledge, databases, and workflows, run skill-powered tasks such as
-file generation, charts, reports, scheduling, and calculations, and keep runtime
-control close to your own systems.
+Build an agent once, bind it to approved knowledge, databases, skills, and
+workflows, then make it available through a WebApp, the internal app center, an
+API, or scheduled and internal calls. Permissions, runtime logs, and batch tests
+keep the application observable and governable after it is published.
 
-## Platform
+## From Build to Runtime
 
-| Area | What you can build |
+```text
+Build agents and workflows
+        ↓
+Connect models, knowledge, databases, files, and skills
+        ↓
+Execute tools, code, retrieval, and human-in-the-loop steps
+        ↓
+Publish through WebApp, App Center, API, or internal invocation
+        ↓
+Operate with permissions, logs, and batch testing
+```
+
+## Core Capabilities
+
+| Area | What ZGI provides |
 | --- | --- |
-| **Agent apps** | Publish assistants with instructions, model settings, memory, knowledge, file upload, and skills. |
-| **Workflow automation** | Build multi-step processes with LLM calls, branches, loops, approvals, code execution, notifications, and retrieval. |
-| **Runtime skills** | Give agents reusable capabilities for files, charts, reports, scheduling, calculations, databases, and workflow calls. |
-| **Knowledge and data** | Bind agents to approved knowledge bases and database tables instead of exposing broad workspace access. |
-| **Model routing** | Manage providers, model defaults, credentials, policies, and pricing metadata in one place. |
+| **Agent applications** | Configure instructions, models, memory, knowledge, file inputs, skills, and workflow bindings, then publish a usable agent experience. |
+| **Executable workflows** | Orchestrate LLM calls, branches, loops, approvals, user questions, HTTP requests, database operations, code, documents, notifications, and scheduled tasks on a visual canvas. |
+| **Advanced retrieval** | Combine semantic, full-text, hybrid, and knowledge-graph retrieval with reranking, while keeping agents scoped to approved knowledge and data. |
+| **Skills and sandboxed tools** | Package reusable capabilities for files, charts, reports, calculations, databases, and workflow calls, and execute them in an isolated runtime. |
+| **Model gateway** | Manage providers, channels, credentials, defaults, routing policies, quotas, and pricing metadata in one place. |
+| **Publishing and governance** | Expose agents through WebApp, App Center, API keys, or internal calls, with workspace permissions, runtime logs, and reusable batch tests. |
 | **Self-hosted runtime** | Run the console, API, sandbox, runner, PostgreSQL, and Redis locally or in your own infrastructure. |
 
 ## Quick Start

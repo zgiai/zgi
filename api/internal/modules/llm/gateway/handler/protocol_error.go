@@ -38,7 +38,7 @@ func classifyProtocolError(err error) protocolError {
 		return invalidRequestProtocolError("Invalid request")
 	case errors.Is(err, gateway.ErrInvalidAPIKey), errors.Is(err, gateway.ErrAPIKeyExpired), errors.Is(err, gateway.ErrAPIKeyInactive), errors.Is(err, gateway.ErrAPIKeyNotFound), errors.Is(err, llmerrors.DomainErrInvalidAPIKey), errors.Is(err, llmerrors.DomainErrAPIKeyDisabled):
 		return invalidAPIKeyProtocolError("Invalid API key")
-	case errors.Is(err, gateway.ErrInsufficientQuota), errors.Is(err, gateway.ErrInsufficientBalance), errors.Is(err, llmerrors.DomainErrInsufficientBalance), errors.Is(err, adapter.ErrInsufficientBalance):
+	case errors.Is(err, gateway.ErrInsufficientQuota), errors.Is(err, gateway.ErrInsufficientBalance), errors.Is(err, llmerrors.DomainErrInsufficientBalance), errors.Is(err, adapter.ErrInsufficientBalance), errors.Is(err, adapter.ErrQuotaExhausted):
 		return quotaProtocolError()
 	case errors.Is(err, llmerrors.DomainErrRateLimitExceeded), errors.Is(err, adapter.ErrRateLimited):
 		return newProtocolError(http.StatusTooManyRequests, "rate_limit_error", "rate_limit_exceeded", "rate_limit_error", "Rate limit exceeded")

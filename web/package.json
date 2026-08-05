@@ -26,6 +26,7 @@
     "test:model-selector-restrictions": "node scripts/test-model-selector-restrictions.mjs",
     "test:console-model-loading-policy": "node scripts/test-console-model-loading-policy.mjs",
     "test:file-management-upload-policy": "node scripts/test-file-management-upload-policy.mjs",
+    "test:file-upload-pool": "node --experimental-strip-types --disable-warning=ExperimentalWarning --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-file-upload-pool.mjs",
     "test:file-upload-close-confirmation": "node scripts/test-file-upload-close-confirmation.mjs",
     "test:chat-upload-extension-policy": "node --experimental-strip-types --disable-warning=ExperimentalWarning --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-chat-upload-extension-policy.mjs",
     "test:opening-statement-draft-preservation": "node scripts/test-opening-statement-draft-preservation.mjs",

@@ -25,6 +25,7 @@ import {
 import { useUploadConfig } from '@/hooks/use-upload';
 import type { FileItem, FileUploadProcessingMode } from '@/services/types/file';
 import { cn } from '@/lib/utils';
+import { FILE_MANAGEMENT_UPLOAD_MAX_SIZE_MB } from './file-upload-policy';
 
 interface ReplaceDocumentDialogProps {
   open: boolean;
@@ -51,7 +52,10 @@ export function ReplaceDocumentDialog({
   const [replacementFile, setReplacementFile] = useState<File | null>(null);
   const [processingMode, setProcessingMode] = useState<FileUploadProcessingMode>('process_now');
 
-  const maxSizeMB = uploadConfig?.file_size_limit ?? 15;
+  const maxSizeMB = Math.max(
+    uploadConfig?.file_size_limit ?? FILE_MANAGEMENT_UPLOAD_MAX_SIZE_MB,
+    FILE_MANAGEMENT_UPLOAD_MAX_SIZE_MB
+  );
 
   useEffect(() => {
     if (!open) return;
