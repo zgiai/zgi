@@ -137,7 +137,6 @@ type ModelMetaData struct {
 	OutputPrice      *float64               `json:"output_price"`
 	CachedInputPrice float64                `json:"cached_input_price"`
 	Pricing          json.RawMessage        `json:"pricing"`
-	BillingPricing   *ModelMetaBillingPrice `json:"billing_pricing,omitempty"`
 	IsFlagship       bool                   `json:"is_flagship"`
 	IsRecommended    bool                   `json:"is_recommended"`
 	IsFeatured       bool                   `json:"is_featured"`
@@ -156,18 +155,6 @@ type ModelMetaData struct {
 	LastUpdated      int64                  `json:"last_updated"`
 	CreatedAt        int64                  `json:"created_at"`
 	UpdatedAt        int64                  `json:"updated_at"`
-}
-
-// ModelMetaBillingPrice is the catalog's canonical price for ZGI billing.
-// Provider-native prices remain in Currency/InputPrice/OutputPrice. The
-// catalog must supply conversion provenance instead of asking each ZGI
-// deployment to guess exchange rates.
-type ModelMetaBillingPrice struct {
-	Currency         string          `json:"currency"`
-	InputPrice       *float64        `json:"input_price"`
-	OutputPrice      *float64        `json:"output_price"`
-	CachedInputPrice *float64        `json:"cached_input_price"`
-	Conversion       json.RawMessage `json:"conversion,omitempty"`
 }
 
 // SyncResult represents the result of a sync operation
@@ -594,9 +581,6 @@ func (s *Service) fetchProviderModels(provider string) ([]ModelMetaData, error) 
 			return nil, fmt.Errorf("failed to parse response: %w", err)
 		}
 
-		for i := range pageResp.Data {
-			normalizeCatalogBillingPrice(&pageResp.Data[i])
-		}
 		allModels = append(allModels, pageResp.Data...)
 
 		// Stop if we've fetched all pages
@@ -621,92 +605,6 @@ func (s *Service) fetchProviderModels(provider string) ([]ModelMetaData, error) 
 	}
 
 	return deduped, nil
-}
-
-func normalizeCatalogBillingPrice(model *ModelMetaData) {
-	if model == nil {
-		return
-	}
-
-	sourceCurrency := strings.ToUpper(strings.TrimSpace(model.Currency))
-	if model.BillingPricing != nil {
-		billingCurrency := strings.ToUpper(strings.TrimSpace(model.BillingPricing.Currency))
-		if billingCurrency == "USD" && (sourceCurrency == "USD" || hasConversionProvenance(model.BillingPricing.Conversion)) {
-			model.Pricing = annotateNativeAndBillingPricing(model)
-			model.Currency = billingCurrency
-			model.InputPrice = cloneOptionalPrice(model.BillingPricing.InputPrice)
-			model.OutputPrice = cloneOptionalPrice(model.BillingPricing.OutputPrice)
-			model.CachedInputPrice = optionalPriceValue(model.BillingPricing.CachedInputPrice)
-			return
-		}
-	}
-
-	if sourceCurrency == "USD" {
-		return
-	}
-
-	// The billing engine is USD-based today. Preserve non-USD provider prices
-	// for display/audit, but do not mark them configured without a catalog-
-	// supplied canonical conversion and provenance.
-	model.Pricing = annotateNativeAndBillingPricing(model)
-	model.InputPrice = nil
-	model.OutputPrice = nil
-	model.CachedInputPrice = 0
-}
-
-func hasConversionProvenance(raw json.RawMessage) bool {
-	var conversion map[string]interface{}
-	if err := json.Unmarshal(raw, &conversion); err != nil {
-		return false
-	}
-	source, ok := conversion["source"].(string)
-	return ok && strings.TrimSpace(source) != ""
-}
-
-func cloneOptionalPrice(value *float64) *float64 {
-	if value == nil {
-		return nil
-	}
-	cloned := *value
-	return &cloned
-}
-
-func optionalPriceValue(value *float64) float64 {
-	if value == nil {
-		return 0
-	}
-	return *value
-}
-
-func annotateNativeAndBillingPricing(model *ModelMetaData) json.RawMessage {
-	nativePrice := map[string]interface{}{
-		"currency":           strings.ToUpper(strings.TrimSpace(model.Currency)),
-		"input_price":        model.InputPrice,
-		"output_price":       model.OutputPrice,
-		"cached_input_price": model.CachedInputPrice,
-	}
-	trimmed := strings.TrimSpace(string(model.Pricing))
-	if trimmed != "" && trimmed != "null" {
-		var nativeDetails interface{}
-		if err := json.Unmarshal(model.Pricing, &nativeDetails); err != nil {
-			nativePrice["catalog_pricing_raw"] = string(model.Pricing)
-		} else {
-			nativePrice["details"] = nativeDetails
-		}
-	}
-
-	// Never merge provider-native structured amounts into the billing envelope:
-	// after Currency is switched to USD, callers must not mistake native CNY
-	// tiers or image prices for USD values.
-	pricing := map[string]interface{}{"native_price": nativePrice}
-	if model.BillingPricing != nil {
-		pricing["billing_price"] = model.BillingPricing
-	}
-	encoded, err := json.Marshal(pricing)
-	if err != nil {
-		return model.Pricing
-	}
-	return encoded
 }
 
 // syncModel syncs a single model to the database
