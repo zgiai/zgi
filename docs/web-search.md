@@ -129,10 +129,11 @@ For a source deployment, restart the API process after the migration and
 configuration changes. Changing `EXTERNAL_INTEGRATIONS_ENABLED` without
 restarting does not add or remove providers from a running process.
 
-## Configure a Connection and Enable the Skill
+## Configure and Select a Connection
 
-Deployment configuration makes the Web Search Skill and Integration catalog
-available but does not enable the Skill for organizations automatically.
+Deployment configuration makes the Web Search provider and its Actions
+available in Connection Center. Web Search is not a Skill and has no separate
+organization or user Skill switch.
 
 1. Sign in as an organization administrator.
 2. Open `/console/integrations` from **Authoring tools → Connection Center**.
@@ -142,12 +143,12 @@ available but does not enable the Skill for organizations automatically.
    organization daily-quota unit, and can incur the provider's normal cost.
 4. Grant a shared Connection to the required organization, workspace, or
    member scope.
-5. Open `/dashboard/organization/aichat-skills` and enable **Web Search**.
-6. AIChat users explicitly select the Connection under **Connected Apps**, then select Web
-   Search in their Skill preferences when they want the curated search and
-   citation behavior.
-7. To use it in an Agent, add Web Search and select an Integration Connection
-   plus permitted Action IDs in the Agent editor, then save and publish.
+5. AIChat users explicitly select the Exa Connection under **Connected Apps**.
+   The hidden external-apps runtime discovers `web.search` and `web.fetch` and
+   obtains their current Action guides before execution.
+6. To use it in an Agent, select an Integration Connection plus the permitted
+   `web.search` and/or `web.fetch` Action IDs in the Agent editor, then save and
+   publish. No Web Search Skill needs to be added.
 
 AIChat resolves only a Connection explicitly selected in Connected Apps. Agent
 execution requires an explicit organization Connection binding and at least
@@ -155,12 +156,12 @@ one permitted Action ID. Invocation is limited to that exact Connection and
 its Action allowlist; a missing, invalid, expired, or unauthorized Connection
 never falls back to another credential.
 
-The current Skill supports only `aichat` and `agent` callers. It is not a
-Workflow tool.
+The current Actions support only `aichat` and `agent` callers. They are not
+Workflow tools.
 
 ## Capabilities and Current Boundaries
 
-Web Search exposes two governed tools:
+Web Search exposes two governed external Actions:
 
 - `search_web` searches public sources with `auto`, `fast`, or `instant`
   search and returns bounded titles, URLs, publication dates, authors, and
@@ -168,10 +169,11 @@ Web Search exposes two governed tools:
 - `fetch_webpage` reads bounded text or highlights from up to five selected
   public HTTP or HTTPS URLs.
 
-Skill instructions require source links, distinguish publication dates from
-retrieval time, report conflicting sources, and treat all webpage content as
-untrusted data. Results are normalized and truncated before they enter model
-context; the raw Exa response is not forwarded as a tool result. Failed
+The Action guides require source links, distinguish publication dates from
+retrieval time, report conflicting sources, keep queries public and minimal,
+and treat all webpage content as untrusted data. Results are normalized and
+truncated before they enter model context; the raw Exa response is not
+forwarded as a tool result. Failed
 requests retain only Exa's bounded safe error tag, request ID, HTTP status, and
 retry time. Batch webpage reads attach a safe error code to each failed URL
 without exposing the provider response body.
@@ -227,16 +229,17 @@ response. The encrypted Connection secret remains server-side and is not
 included in normalized tool output. The Redis recovery record contains only the same bounded
 operational metadata, never the query or webpage body.
 
-Webpage content remains untrusted after retrieval. The Skill instructs the
-model to ignore embedded commands, credential requests, policy-bypass text,
-and other prompt-injection attempts.
+Webpage content remains untrusted after retrieval. The `web.fetch` Action guide
+instructs the model to ignore embedded commands, credential requests,
+policy-bypass text, and other prompt-injection attempts.
 
 ## Troubleshooting
 
-- **Web Search is missing from the organization Skill catalog:** confirm that
+- **Web Search is missing from Connection Center:** confirm that
   `EXTERNAL_INTEGRATIONS_ENABLED=true` and that the API restarted successfully.
-- **Web Search is missing from an AIChat or Agent Skill picker:** confirm that
-  an organization administrator enabled the Skill first.
+- **Web Search is absent from AIChat:** create and test an Exa Connection, grant
+  access if it is shared, and select it under **Connected Apps**. Web Search is
+  intentionally absent from every Skill picker.
 - **The API fails during startup:** check `WEB_SEARCH_PROVIDER`, positive
   numeric limits, and the exact length of `API_KEY_ENCRYPTION_KEY`.
 - **Calls report that a Connection is required:** create and test an

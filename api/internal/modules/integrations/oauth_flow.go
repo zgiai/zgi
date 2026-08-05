@@ -386,12 +386,15 @@ type OAuthFlowView struct {
 	Status             OAuthFlowStatus            `json:"status"`
 	CredentialSource   ConnectionCredentialSource `json:"credential_source"`
 	UsageRulesRequired bool                       `json:"usage_rules_required"`
-	AIChatAvailable    bool                       `json:"ai_chat_available"`
 	ConnectionName     string                     `json:"connection_name,omitempty"`
 	AccountDisplayName string                     `json:"account_display_name,omitempty"`
 	ErrorCode          string                     `json:"error_code,omitempty"`
 	ExpiresAt          time.Time                  `json:"expires_at"`
 	CompletedAt        *time.Time                 `json:"completed_at,omitempty"`
+	// CompletedConnectionID is an internal client reference used only to
+	// continue the setup flow after OAuth. User-facing surfaces must render the
+	// connection name or provider identity instead of this identifier.
+	CompletedConnectionID *uuid.UUID `json:"completed_connection_id,omitempty"`
 }
 
 type OAuthCallbackRequest struct {
@@ -1148,7 +1151,7 @@ func flowPublicView(rawFlowID string, flow *IntegrationOAuthFlow) OAuthFlowView 
 	}
 	if flow.Status == OAuthFlowSucceeded {
 		view.UsageRulesRequired = flow.CredentialSource == ConnectionCredentialSourceOrganization
-		view.AIChatAvailable = flow.CredentialSource == ConnectionCredentialSourceAccount
+		view.CompletedConnectionID = cloneUUIDPointer(flow.CompletedConnectionID)
 	}
 	if flow.AccountDisplayName != nil {
 		view.AccountDisplayName = *flow.AccountDisplayName

@@ -34,10 +34,13 @@ import (
 	file_service "github.com/zgiai/zgi/api/internal/modules/file_process/service"
 	"github.com/zgiai/zgi/api/internal/modules/file_process/service/extractor"
 	"github.com/zgiai/zgi/api/internal/modules/integrations"
+	dingtalk_integration "github.com/zgiai/zgi/api/internal/modules/integrations/adapters/dingtalk"
 	exa_integration "github.com/zgiai/zgi/api/internal/modules/integrations/adapters/exa"
 	feishu_integration "github.com/zgiai/zgi/api/internal/modules/integrations/adapters/feishu"
 	github_integration "github.com/zgiai/zgi/api/internal/modules/integrations/adapters/github"
 	gmail_integration "github.com/zgiai/zgi/api/internal/modules/integrations/adapters/gmail"
+	mail_integration "github.com/zgiai/zgi/api/internal/modules/integrations/adapters/mail"
+	wecom_integration "github.com/zgiai/zgi/api/internal/modules/integrations/adapters/wecom"
 	x_integration "github.com/zgiai/zgi/api/internal/modules/integrations/adapters/x"
 	integration_metatools "github.com/zgiai/zgi/api/internal/modules/integrations/metatools"
 	integration_tools "github.com/zgiai/zgi/api/internal/modules/integrations/toolprovider"
@@ -1070,6 +1073,44 @@ func (c *ServiceContainer) GetIntegrationRegistry() *integrations.Registry {
 			OAuth2Provider:   xAdapter,
 		}); err != nil {
 			panic(fmt.Sprintf("register X integration: %v", err))
+		}
+		mailAdapter := mail_integration.New()
+		for _, definition := range mail_integration.ProviderDefinitions() {
+			if err := registry.Register(integrations.Registration{
+				Definition:          definition,
+				Adapter:             mailAdapter,
+				ConnectionTester:    mailAdapter,
+				CredentialValidator: mailAdapter,
+				HealthProbe:         mailAdapter,
+			}); err != nil {
+				panic(fmt.Sprintf("register %s mail integration: %v", definition.ID, err))
+			}
+		}
+		wecomAdapter, err := wecom_integration.New(nil)
+		if err != nil {
+			panic(fmt.Sprintf("initialize WeCom adapter: %v", err))
+		}
+		if err := registry.Register(integrations.Registration{
+			Definition:          wecom_integration.ProviderDefinition(),
+			Adapter:             wecomAdapter,
+			ConnectionTester:    wecomAdapter,
+			CredentialValidator: wecomAdapter,
+			HealthProbe:         wecomAdapter,
+		}); err != nil {
+			panic(fmt.Sprintf("register WeCom integration: %v", err))
+		}
+		dingtalkAdapter, err := dingtalk_integration.New(nil)
+		if err != nil {
+			panic(fmt.Sprintf("initialize DingTalk adapter: %v", err))
+		}
+		if err := registry.Register(integrations.Registration{
+			Definition:          dingtalk_integration.ProviderDefinition(),
+			Adapter:             dingtalkAdapter,
+			ConnectionTester:    dingtalkAdapter,
+			CredentialValidator: dingtalkAdapter,
+			HealthProbe:         dingtalkAdapter,
+		}); err != nil {
+			panic(fmt.Sprintf("register DingTalk integration: %v", err))
 		}
 	}
 	c.integrationRegistry = registry

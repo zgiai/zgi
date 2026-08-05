@@ -61,6 +61,7 @@
     "test:integration-management-i18n": "node scripts/test-integration-management-i18n.mjs",
     "test:integration-oauth-flow": "node scripts/test-integration-oauth-flow.mjs",
     "test:integration-oauth-proxy": "node --experimental-strip-types --disable-warning=ExperimentalWarning --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-integration-oauth-proxy.mjs",
+    "test:integration-connection-setup-lifecycle": "node --experimental-strip-types --disable-warning=ExperimentalWarning --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-integration-connection-setup-lifecycle.mjs",
     "type-check": "node scripts/customer/prepare.mjs && node scripts/generate-sensitive-word-filter.mjs && node scripts/check-i18n-route-modules.mjs && tsc --noEmit",
     "check:i18n-routes": "node scripts/check-i18n-route-modules.mjs",
     "validate:agent-templates": "node scripts/validate-agent-templates.mjs",

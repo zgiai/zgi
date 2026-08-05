@@ -212,6 +212,9 @@ func (repository *GormConnectionRepository) Update(ctx context.Context, connecti
 		"token_expires_at":         connection.TokenExpiresAt,
 		"refresh_token_expires_at": connection.RefreshTokenExpiresAt,
 		"next_token_refresh_at":    connection.NextTokenRefreshAt,
+		"setup_version":            connection.SetupVersion,
+		"setup_completed_at":       connection.SetupCompletedAt,
+		"setup_completed_by":       connection.SetupCompletedBy,
 		"updated_by":               connection.UpdatedBy,
 		"updated_at":               gorm.Expr("CURRENT_TIMESTAMP"),
 	}

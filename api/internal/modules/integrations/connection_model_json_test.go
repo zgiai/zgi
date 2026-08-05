@@ -3,6 +3,8 @@ package integrations
 import (
 	"encoding/json"
 	"testing"
+
+	"github.com/google/uuid"
 )
 
 func TestConnectionViewSerializesEmptyCollectionsAsArrays(t *testing.T) {
@@ -22,6 +24,26 @@ func TestConnectionViewSerializesEmptyCollectionsAsArrays(t *testing.T) {
 			t.Fatalf("%s = %s, want []", field, got)
 		}
 	}
+}
+
+func TestConnectionViewDoesNotExposeSetupActorID(t *testing.T) {
+	actorID := uuid.New()
+	payload, err := json.Marshal(newConnectionView(&IntegrationConnection{SetupCompletedBy: &actorID}))
+	if err != nil {
+		t.Fatalf("marshal connection view: %v", err)
+	}
+	if string(payload) == "" || containsJSONField(payload, "setup_completed_by") {
+		t.Fatalf("connection view exposed the internal setup actor: %s", payload)
+	}
+}
+
+func containsJSONField(payload []byte, field string) bool {
+	var document map[string]json.RawMessage
+	if err := json.Unmarshal(payload, &document); err != nil {
+		return true
+	}
+	_, exists := document[field]
+	return exists
 }
 
 func TestConnectionPermissionSummarySerializesEmptyCollectionsAsArrays(t *testing.T) {

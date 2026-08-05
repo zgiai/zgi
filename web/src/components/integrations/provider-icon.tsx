@@ -36,9 +36,15 @@ export function IntegrationProviderIcon({
 
   const Icon = identity.includes('github')
     ? Github
-    : identity.includes('gmail') || identity.includes('google-mail')
+    : identity.includes('gmail') ||
+        identity.includes('google-mail') ||
+        identity.includes('standard-mail') ||
+        identity.includes('imap-smtp')
       ? Mail
-      : identity.includes('feishu') || identity.includes('lark')
+      : identity.includes('feishu') ||
+          identity.includes('lark') ||
+          identity.includes('wecom') ||
+          identity.includes('dingtalk')
         ? MessageSquareText
         : identity.includes('web-search') || identity.includes('exa')
           ? Globe2

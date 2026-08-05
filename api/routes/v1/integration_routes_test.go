@@ -24,6 +24,35 @@ import (
 
 type integrationRouteAdapter struct{ driverID string }
 
+func TestIntegrationRouteErrorReturnsSafeProviderDiagnostics(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+	integrationRouteError(context, integrations.NewProviderError(
+		integrations.ErrorCodeProviderRejected,
+		"provider rejected validation",
+		nil,
+		integrations.ProviderDiagnostics{ErrorCode: "60020", RequestID: "request-1", HTTPStatus: 200},
+	))
+	if recorder.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	var payload struct {
+		Code string `json:"code"`
+		Data struct {
+			ProviderErrorCode  string `json:"provider_error_code"`
+			ProviderRequestID  string `json:"provider_request_id"`
+			ProviderHTTPStatus int    `json:"provider_http_status"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Code != integrations.ErrorCodeProviderRejected || payload.Data.ProviderErrorCode != "60020" || payload.Data.ProviderRequestID != "request-1" || payload.Data.ProviderHTTPStatus != 200 {
+		t.Fatalf("payload = %#v", payload)
+	}
+}
+
 type integrationCatalogAccountService struct {
 	interfaces.AccountService
 	admin bool

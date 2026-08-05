@@ -40,7 +40,7 @@ func (r *Runtime) skillLocations(custom []CustomSkillCatalogEntry) (map[string]s
 	}
 	for _, entry := range custom {
 		id := normalizeSkillID(entry.SkillID)
-		if id == "" {
+		if id == "" || isRetiredSkillID(id) {
 			continue
 		}
 		if !isValidSkillName(id) {
@@ -82,7 +82,7 @@ func (r *Runtime) systemSkillLocationsFromEntries(bestEffort bool) (map[string]s
 			continue
 		}
 		id := normalizeSkillID(entry.Name())
-		if id == "" {
+		if id == "" || isRetiredSkillID(id) {
 			continue
 		}
 		if !isValidSkillName(id) {

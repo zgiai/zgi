@@ -209,6 +209,7 @@ func RegisterIntegrationRoutes(router *gin.RouterGroup, deps IntegrationRouteDep
 	group.POST("/my-connections", handler.createMyConnection)
 	group.PATCH("/my-connections/:id", handler.updateMyConnection)
 	group.POST("/my-connections/:id/test", handler.testMyConnection)
+	group.POST("/my-connections/:id/complete-setup", handler.completeMyConnectionSetup)
 	group.DELETE("/my-connections/:id", handler.deleteMyConnection)
 	group.POST("/oauth/flows", handler.startOAuthFlow)
 	group.GET("/oauth/flows/:flow_id", handler.pollOAuthFlow)
@@ -221,6 +222,7 @@ func RegisterIntegrationRoutes(router *gin.RouterGroup, deps IntegrationRouteDep
 	management.POST("/connections", handler.createConnection)
 	management.PATCH("/connections/:id", handler.updateConnection)
 	management.POST("/connections/:id/test", handler.testConnection)
+	management.POST("/connections/:id/complete-setup", handler.completeConnectionSetup)
 	management.POST("/connections/:id/default", handler.setDefaultConnection)
 	management.GET("/connections/:id/grants", handler.listConnectionGrants)
 	management.POST("/connections/:id/grants", handler.createConnectionGrant)
@@ -745,6 +747,27 @@ func (handler *integrationHandler) testMyConnection(c *gin.Context) {
 	response.Success(c, map[string]interface{}{"connection": connection, "profile": profile, "may_incur_cost": mayIncurCost})
 }
 
+func (handler *integrationHandler) completeMyConnectionSetup(c *gin.Context) {
+	organizationID, connectionID, actorID, ok := handler.integrationOwnedConnection(c)
+	if !ok {
+		return
+	}
+	connection, err := handler.deps.Connections.Get(c.Request.Context(), organizationID, connectionID)
+	if err != nil {
+		integrationRouteError(c, err)
+		return
+	}
+	if !handler.completeConnectionSetupRequest(c, organizationID, actorID, connection, true) {
+		return
+	}
+	item, err := handler.deps.Connections.Get(c.Request.Context(), organizationID, connectionID)
+	if err != nil {
+		integrationRouteError(c, err)
+		return
+	}
+	response.Success(c, item)
+}
+
 func (handler *integrationHandler) deleteMyConnection(c *gin.Context) {
 	organizationID, connectionID, actorID, ok := handler.integrationOwnedConnection(c)
 	if !ok {
@@ -907,6 +930,79 @@ func (handler *integrationHandler) testConnection(c *gin.Context) {
 		mayIncurCost = definition.HealthProbe.MayIncurCost
 	}
 	response.Success(c, map[string]interface{}{"connection": connection, "profile": profile, "may_incur_cost": mayIncurCost})
+}
+
+func (handler *integrationHandler) completeConnectionSetup(c *gin.Context) {
+	organizationID, _, connection, ok := handler.integrationManagedConnection(c)
+	if !ok {
+		return
+	}
+	_, actorID, ok := integrationActor(c)
+	if !ok {
+		return
+	}
+	if !handler.completeConnectionSetupRequest(c, organizationID, actorID, connection, false) {
+		return
+	}
+	item, err := handler.deps.Connections.Get(c.Request.Context(), organizationID, connection.ID)
+	if err != nil {
+		integrationRouteError(c, err)
+		return
+	}
+	response.Success(c, item)
+}
+
+func (handler *integrationHandler) completeConnectionSetupRequest(
+	c *gin.Context,
+	organizationID, actorID uuid.UUID,
+	connection integrations.ConnectionView,
+	personal bool,
+) bool {
+	definition, found := handler.deps.Registry.ProviderDefinition(connection.IntegrationID)
+	if !found {
+		integrationRouteError(c, integrations.NewError(integrations.ErrorCodeConnectionInvalid, "integration provider is unavailable", nil))
+		return false
+	}
+	actionsByID := make(map[string]integrations.ActionDefinition, len(definition.Actions))
+	for _, action := range definition.Actions {
+		actionsByID[action.ID] = action
+	}
+	usableActionIDs := make([]string, 0)
+	if connection.PermissionSummary != nil {
+		for _, capability := range connection.PermissionSummary.AdaptedCapabilities {
+			if !capability.ScopeSatisfied {
+				continue
+			}
+			action, exists := actionsByID[capability.ActionID]
+			if !exists {
+				continue
+			}
+			decision, resolveErr := handler.deps.Policies.Resolve(
+				c.Request.Context(),
+				organizationID.String(),
+				connection.IntegrationID,
+				action,
+			)
+			if resolveErr != nil {
+				integrationRouteError(c, resolveErr)
+				return false
+			}
+			if decision.Enabled && (!action.DataEgress || decision.DataEgressAllowed) {
+				usableActionIDs = append(usableActionIDs, capability.ActionID)
+			}
+		}
+	}
+	if err := integrations.CompleteConnectionSetup(c.Request.Context(), handler.deps.ConnectionRepo, handler.deps.Grants, integrations.CompleteConnectionSetupInput{
+		OrganizationID:  organizationID,
+		ConnectionID:    connection.ID,
+		ActorID:         actorID,
+		Personal:        personal,
+		UsableActionIDs: usableActionIDs,
+	}); err != nil {
+		integrationRouteError(c, err)
+		return false
+	}
+	return true
 }
 
 func (handler *integrationHandler) setDefaultConnection(c *gin.Context) {
@@ -1446,18 +1542,24 @@ func integrationRouteError(c *gin.Context, err error) {
 	code := integrations.ErrorCode(err)
 	switch code {
 	case integrations.ErrorCodeInvalidInput, integrations.ErrorCodeConnectionInvalid,
-		integrations.ErrorCodeAuthInvalid, integrations.ErrorCodeResponseInvalid,
+		integrations.ErrorCodeResponseInvalid,
 		integrations.ErrorCodeSensitiveInput:
 		c.JSON(http.StatusBadRequest, response.Response{Code: code, Message: err.Error()})
+	case integrations.ErrorCodeAuthInvalid:
+		c.JSON(http.StatusBadRequest, response.Response{Code: code, Message: err.Error(), Data: integrationProviderDiagnostics(err)})
 	case integrations.ErrorCodeConnectionNotFound:
 		c.JSON(http.StatusNotFound, response.Response{Code: code, Message: err.Error()})
-	case integrations.ErrorCodeAccessDenied, integrations.ErrorCodeDisabled, integrations.ErrorCodeInsufficientScope,
+	case integrations.ErrorCodeAccessDenied, integrations.ErrorCodeInsufficientScope:
+		c.JSON(http.StatusForbidden, response.Response{Code: code, Message: err.Error(), Data: integrationProviderDiagnostics(err)})
+	case integrations.ErrorCodeDisabled,
 		integrations.ErrorCodeReconnectRequired, integrations.ErrorCodeConnectionExpired:
 		c.JSON(http.StatusForbidden, response.Response{Code: code, Message: err.Error()})
 	case integrations.ErrorCodeBudgetExceeded:
 		c.JSON(http.StatusPaymentRequired, response.Response{Code: code, Message: err.Error()})
 	case integrations.ErrorCodeQuotaExceeded, integrations.ErrorCodeRateLimited:
 		c.JSON(http.StatusTooManyRequests, response.Response{Code: code, Message: err.Error()})
+	case integrations.ErrorCodeProviderRejected:
+		c.JSON(http.StatusUnprocessableEntity, response.Response{Code: code, Message: err.Error(), Data: integrationProviderDiagnostics(err)})
 	case integrations.ErrorCodeTimeout:
 		c.JSON(http.StatusGatewayTimeout, response.Response{Code: code, Message: err.Error()})
 	case integrations.ErrorCodeUpstream, integrations.ErrorCodeAuditFailed:
@@ -1473,6 +1575,24 @@ func integrationRouteError(c *gin.Context, err error) {
 		}
 		response.FailWithMessage(c, response.ErrSystemError, err.Error())
 	}
+}
+
+func integrationProviderDiagnostics(err error) interface{} {
+	diagnostics := integrations.ProviderDiagnosticsFromError(err)
+	data := map[string]interface{}{}
+	if diagnostics.ErrorCode != "" {
+		data["provider_error_code"] = diagnostics.ErrorCode
+	}
+	if diagnostics.RequestID != "" {
+		data["provider_request_id"] = diagnostics.RequestID
+	}
+	if diagnostics.HTTPStatus != 0 {
+		data["provider_http_status"] = diagnostics.HTTPStatus
+	}
+	if len(data) == 0 {
+		return nil
+	}
+	return data
 }
 
 func parsePositiveInt(value string, fallback int) int {

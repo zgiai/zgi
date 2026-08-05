@@ -21,17 +21,16 @@ import {
   SheetHeader,
   SheetTitle,
 } from '@/components/ui/sheet';
-import { useIntegrationProviderCapabilities } from '@/hooks';
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
-import type {
-  IntegrationActionDefinition,
-  IntegrationActionCapability,
-  IntegrationCatalogItem,
-} from '@/services/types/integration';
-import { integrationCatalogID, resolveIntegrationAuthDefinitions } from './integration-utils';
+import type { IntegrationCatalogItem } from '@/services/types/integration';
 import { useIntegrationMetadata } from './metadata-i18n';
 import { ProviderCapabilityAvailability } from './provider-capability-availability';
+import {
+  hasActionScopes,
+  isReadCapability,
+  useCurrentAccountProviderCapabilityView,
+} from './provider-capability-view';
 import { IntegrationProviderIcon } from './provider-icon';
 
 type CapabilityFilter = 'all' | 'read' | 'write';
@@ -41,15 +40,7 @@ interface IntegrationProviderCapabilitiesSheetProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onConnect: (provider: IntegrationCatalogItem) => void;
-  audience?: 'account' | 'organization';
-}
-
-function isReadCapability(action: IntegrationActionDefinition): boolean {
-  return action.effect === 'read' || action.effect === 'none';
-}
-
-function hasActionScopes(action: IntegrationActionDefinition): boolean {
-  return Boolean(action.required_scopes?.length || action.required_any_scopes?.length);
+  hasExistingConnection?: boolean;
 }
 
 export function IntegrationProviderCapabilitiesSheet({
@@ -57,33 +48,21 @@ export function IntegrationProviderCapabilitiesSheet({
   open,
   onOpenChange,
   onConnect,
-  audience = 'account',
+  hasExistingConnection = false,
 }: IntegrationProviderCapabilitiesSheetProps) {
   const t = useT('integrations');
   const metadata = useIntegrationMetadata();
   const [filter, setFilter] = useState<CapabilityFilter>('all');
-  const integrationId = provider ? integrationCatalogID(provider) : '';
-  const capabilityQuery = useIntegrationProviderCapabilities(integrationId, audience, open);
-  const liveCapabilities =
-    capabilityQuery.isSuccess && !capabilityQuery.isFetching
-      ? capabilityQuery.data?.data
-      : undefined;
-  const liveCapabilityByAction = useMemo(
-    () =>
-      new Map<string, IntegrationActionCapability>(
-        (liveCapabilities?.actions ?? []).map(action => [action.id, action])
-      ),
-    [liveCapabilities?.actions]
-  );
-  const actions = useMemo(() => provider?.actions ?? [], [provider?.actions]);
-  const summary = useMemo(
-    () => ({
-      total: actions.length,
-      read: actions.filter(isReadCapability).length,
-      write: actions.filter(action => !isReadCapability(action)).length,
-    }),
-    [actions]
-  );
+  const {
+    integrationId,
+    capabilityQuery,
+    actions,
+    liveCapabilities,
+    liveCapabilityByAction,
+    summary,
+    supportedCallers,
+    authenticationMethods,
+  } = useCurrentAccountProviderCapabilityView(provider, open);
   const filteredActions = useMemo(
     () =>
       actions.filter(action => {
@@ -92,10 +71,6 @@ export function IntegrationProviderCapabilitiesSheet({
         return true;
       }),
     [actions, filter]
-  );
-  const supportedCallers = useMemo(
-    () => new Set(actions.flatMap(action => action.supported_callers ?? [])),
-    [actions]
   );
   const documentationURL = provider ? metadata.documentationURL(provider) : null;
 
@@ -131,20 +106,28 @@ export function IntegrationProviderCapabilitiesSheet({
                 <p className="line-clamp-2 text-sm leading-5 text-muted-foreground">
                   {metadata.providerDescription(provider)}
                 </p>
-                <p className="mt-2 text-sm font-medium text-foreground">
-                  {liveCapabilities
-                    ? t('capabilities.connectedSummary', {
-                        total: liveCapabilities.summary.total,
-                        available: liveCapabilities.summary.available,
-                        attention: liveCapabilities.summary.needs_attention,
-                      })
-                    : t('capabilities.summary', {
-                        count: summary.total,
-                        access:
-                          summary.write > 0
-                            ? t('capabilities.access.readWrite')
-                            : t('capabilities.access.readOnly'),
-                      })}
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <Badge variant="outline" className="font-normal">
+                    {t('capabilities.scope.currentAccount')}
+                  </Badge>
+                  <p className="text-sm font-medium text-foreground">
+                    {liveCapabilities
+                      ? t('capabilities.connectedSummary', {
+                          total: liveCapabilities.summary.total,
+                          available: liveCapabilities.summary.available,
+                          attention: liveCapabilities.summary.needs_attention,
+                        })
+                      : t('capabilities.summary', {
+                          count: summary.total,
+                          access:
+                            summary.write > 0
+                              ? t('capabilities.access.readWrite')
+                              : t('capabilities.access.readOnly'),
+                        })}
+                  </p>
+                </div>
+                <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                  {t('capabilities.scope.currentAccountDescription')}
                 </p>
               </div>
             </div>
@@ -219,6 +202,9 @@ export function IntegrationProviderCapabilitiesSheet({
                                 ? t('capabilities.access.read')
                                 : t('capabilities.access.write')}
                             </Badge>
+                            <Badge variant="subtle" className="text-[11px] font-normal">
+                              {metadata.risk(action.risk_level)}
+                            </Badge>
                           </span>
                           <span className="mt-1 block font-mono text-[11px] text-muted-foreground">
                             {action.id}
@@ -266,7 +252,7 @@ export function IntegrationProviderCapabilitiesSheet({
                           </p>
                           <div className="mt-2 flex flex-wrap gap-1.5">
                             {provider
-                              ? resolveIntegrationAuthDefinitions(provider)
+                              ? authenticationMethods
                                   .filter(
                                     method =>
                                       !action.supported_auth_method_ids?.length ||
@@ -311,6 +297,33 @@ export function IntegrationProviderCapabilitiesSheet({
                             )}
                           </div>
                         </div>
+                        <div>
+                          <p className="font-medium text-foreground">
+                            {t('capabilities.surfaces')}
+                          </p>
+                          <div className="mt-2 flex flex-wrap gap-1.5">
+                            {(action.supported_callers ?? []).map(caller => (
+                              <Badge key={caller} variant="outline" className="gap-1 font-normal">
+                                {caller === 'aichat' ? <Sparkles className="size-3" /> : null}
+                                {caller === 'agent' ? <Bot className="size-3" /> : null}
+                                {caller === 'aichat'
+                                  ? t('capabilities.surface.aichat')
+                                  : caller === 'agent'
+                                    ? t('capabilities.surface.agent')
+                                    : caller === 'workflow'
+                                      ? t('capabilities.surface.workflow')
+                                      : caller === 'api'
+                                        ? t('capabilities.surface.api')
+                                        : t('capabilities.surface.other')}
+                              </Badge>
+                            ))}
+                            {(action.supported_callers ?? []).length === 0 ? (
+                              <span className="text-muted-foreground">
+                                {t('capabilities.noSupportedSurfaces')}
+                              </span>
+                            ) : null}
+                          </div>
+                        </div>
                         <div className="grid gap-2 sm:grid-cols-2">
                           <span className="text-muted-foreground">
                             {t('capabilities.risk', { risk: metadata.risk(action.risk_level) })}
@@ -348,7 +361,7 @@ export function IntegrationProviderCapabilitiesSheet({
               </div>
               <div className="flex flex-wrap gap-2">
                 {provider
-                  ? resolveIntegrationAuthDefinitions(provider).map(auth => (
+                  ? authenticationMethods.map(auth => (
                       <Badge key={auth.id} variant="outline" className="font-normal">
                         {metadata.authMethodLabel(integrationId, auth)}
                       </Badge>
@@ -410,7 +423,7 @@ export function IntegrationProviderCapabilitiesSheet({
             }}
             disabled={!provider}
           >
-            {t('capabilities.connect', {
+            {t(hasExistingConnection ? 'capabilities.connectAnother' : 'capabilities.connect', {
               provider: provider ? metadata.providerName(provider) : '',
             })}
             <ArrowRight className="size-4" />

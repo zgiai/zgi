@@ -49,6 +49,32 @@ func TestKnowledgeSystemSkillsExposeExpectedTools(t *testing.T) {
 	}
 }
 
+func TestWebSearchIsNotExposedAsASystemSkill(t *testing.T) {
+	runtime := NewRuntimeWithCatalog(nil, nil, "catalog")
+	if runtime.SystemSkillExists("web-search") {
+		t.Fatal("web-search must be exposed only as an external integration Action")
+	}
+	metadata, err := runtime.ListSystemSkillsBestEffort(context.Background())
+	if err != nil {
+		t.Fatalf("ListSystemSkillsBestEffort() error = %v", err)
+	}
+	for _, item := range metadata {
+		if item.ID == "web-search" {
+			t.Fatal("retired web-search Skill is still present in the system catalog")
+		}
+	}
+	if IsUserSelectableSystemSkill("web-search") {
+		t.Fatal("historical web-search config must not remain user selectable")
+	}
+	_, err = runtime.ResolveEnabledSkillsWithCustom(context.Background(), []string{"web-search"}, []CustomSkillCatalogEntry{{
+		SkillID: "web-search",
+		Root:    t.TempDir(),
+	}})
+	if !errors.Is(err, ErrSkillNotFound) {
+		t.Fatalf("retired custom web-search resolution error = %v, want ErrSkillNotFound", err)
+	}
+}
+
 func TestDatabaseSystemSkillsExposeExpectedTools(t *testing.T) {
 	runtime := NewRuntimeWithCatalog(nil, nil, "catalog")
 	resolved, err := runtime.ResolveEnabledSkills(context.Background(), []string{SkillInternalDatabase, SkillAgentDatabase})

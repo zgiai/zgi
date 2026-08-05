@@ -2,10 +2,8 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQueries, useQuery } from '@tanstack/react-query';
-import Link from 'next/link';
 import { toast } from 'sonner';
 import {
-  Bot,
   CheckCircle2,
   ChevronDown,
   Ellipsis,
@@ -20,6 +18,7 @@ import {
   Trash2,
   Unlink,
   UserRound,
+  Workflow,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -61,8 +60,11 @@ import type {
   StartIntegrationOAuthFlowRequest,
 } from '@/services/types/integration';
 import { actionIDsForAuthMethod, actionSupportsAuthMethod } from './action-auth-compatibility';
+import { isConnectableProviderVisible } from './catalog-visibility';
 import { IntegrationConnectionDetailDialog } from './connection-detail-dialog';
 import { IntegrationConnectionDialog } from './connection-dialog';
+import { IntegrationConnectionSetupDialog } from './connection-setup-dialog';
+import { connectionNeedsSetup } from './connection-setup-lifecycle';
 import { safeIntegrationDisplayText, safeOptionalIntegrationDisplayText } from './display-utils';
 import { IntegrationConnectionHealthBadge } from './health-badge';
 import {
@@ -194,6 +196,8 @@ export function IntegrationConnectionsPanel({
   );
   const [editingConnection, setEditingConnection] = useState<IntegrationConnection | null>(null);
   const [detailConnection, setDetailConnection] = useState<IntegrationConnection | null>(null);
+  const [setupConnection, setSetupConnection] = useState<IntegrationConnection | null>(null);
+  const [setupInitialStep, setSetupInitialStep] = useState(0);
   const [testConnection, setTestConnection] = useState<IntegrationConnection | null>(null);
   const [deleteConnection, setDeleteConnection] = useState<IntegrationConnection | null>(null);
   const [deleteImpact, setDeleteImpact] = useState<IntegrationConnectionDeleteImpact | null>(null);
@@ -581,18 +585,6 @@ export function IntegrationConnectionsPanel({
             const healthyConnections = group.connections.filter(
               connection => resolveConnectionHealthState(connection) === 'ready'
             ).length;
-            const connected = group.connections.length > 0;
-            const healthyAvailableConnections = group.connections.filter(
-              connection =>
-                availableConnectionIDs.has(connection.id) &&
-                resolveConnectionHealthState(connection) === 'ready'
-            ).length;
-            const selectedConnections = group.connections.filter(
-              connection =>
-                selectedConnectionIDs.has(connection.id) &&
-                availableConnectionIDs.has(connection.id) &&
-                resolveConnectionHealthState(connection) === 'ready'
-            ).length;
             const usageConfiguredConnections = group.connections.filter(connection => {
               if (connection.credential_source === 'account') return true;
               if (!canManageShared) return availableConnectionIDs.has(connection.id);
@@ -616,8 +608,17 @@ export function IntegrationConnectionsPanel({
               !usageRulesLoading &&
               !usageRulesError &&
               usageConfiguredConnections === group.connections.length;
-            const readyForAIChat = selectedConnections > 0;
-            const canUseInAIChat = healthyAvailableConnections > 0;
+            const selectedAIChatConnections = group.connections.filter(connection =>
+              selectedConnectionIDs.has(connection.id)
+            ).length;
+            const availableAIChatConnections = group.connections.filter(
+              connection =>
+                availableConnectionIDs.has(connection.id) &&
+                resolveConnectionHealthState(connection) === 'ready'
+            ).length;
+            const providerSupportsAgent = (group.provider.actions ?? []).some(action =>
+              (action.supported_callers ?? []).includes('agent')
+            );
             const canAddPersonalConnection = resolveIntegrationAuthDefinitions(group.provider).some(
               auth => auth.available && integrationAuthCredentialSource(auth) === 'account'
             );
@@ -677,41 +678,22 @@ export function IntegrationConnectionsPanel({
                     ) : (
                       <Badge variant="outline">{t('health.provider.degraded')}</Badge>
                     )}
-                    {canUseInAIChat ? (
-                      <Button asChild size="sm" variant={readyForAIChat ? 'secondary' : 'outline'}>
-                        <Link href="/console/work/chat">
-                          <Bot className="size-4" />
-                          {t(
-                            readyForAIChat
-                              ? 'connectionCenter.connected.openAIChat'
-                              : 'connectionCenter.connected.enableAIChat'
-                          )}
-                        </Link>
-                      </Button>
-                    ) : (
-                      <span
-                        role="status"
-                        className="inline-flex min-h-8 items-center gap-1.5 rounded-md border border-dashed px-2.5 text-xs text-muted-foreground"
-                        aria-label={t('connectionCenter.connected.aiChatUnavailableHint')}
-                      >
-                        <Bot className="size-4" />
-                        {t('connectionCenter.connected.aiChatUnavailable')}
-                      </span>
-                    )}
-                    <AddConnectionButton
-                      canAddPersonal={canAddPersonalConnection}
-                      canAddShared={canAddSharedConnection}
-                      onAddPersonal={() => {
-                        setEditingConnection(null);
-                        setCreateProvider(group.provider);
-                        setConnectionDialogMode('personal');
-                      }}
-                      onAddShared={() => {
-                        setEditingConnection(null);
-                        setCreateProvider(group.provider);
-                        setConnectionDialogMode('shared');
-                      }}
-                    />
+                    {isConnectableProviderVisible(group.provider) ? (
+                      <AddConnectionButton
+                        canAddPersonal={canAddPersonalConnection}
+                        canAddShared={canAddSharedConnection}
+                        onAddPersonal={() => {
+                          setEditingConnection(null);
+                          setCreateProvider(group.provider);
+                          setConnectionDialogMode('personal');
+                        }}
+                        onAddShared={() => {
+                          setEditingConnection(null);
+                          setCreateProvider(group.provider);
+                          setConnectionDialogMode('shared');
+                        }}
+                      />
+                    ) : null}
                     <CollapsibleTrigger asChild>
                       <Button
                         type="button"
@@ -737,11 +719,11 @@ export function IntegrationConnectionsPanel({
                 </div>
 
                 <CollapsibleContent>
-                  <div className="border-t bg-muted/[0.08] p-3 sm:p-4">
+                  <div className="border-t bg-muted/[0.08] p-2.5 sm:p-3">
                     <div
                       role="tablist"
                       aria-label={t('connectionCenter.connected.views.label')}
-                      className="mb-3 flex min-w-0 items-end gap-5 border-b"
+                      className="mb-2 flex min-w-0 items-end gap-4 border-b"
                     >
                       {detailViews.map(view => {
                         const count =
@@ -789,62 +771,26 @@ export function IntegrationConnectionsPanel({
 
                     {detailView === 'connections' ? (
                       <div id={`provider-${group.integrationId}-connections-panel`} role="tabpanel">
-                        <ConnectionJourney
-                          steps={[
-                            {
-                              icon: CheckCircle2,
-                              state: connected ? 'completed' : 'current',
-                              title: t('connectionCenter.connected.journey.connected.title'),
-                              description: t(
-                                'connectionCenter.connected.journey.connected.summary',
-                                {
-                                  healthy: healthyConnections,
-                                  total: group.connections.length,
-                                }
-                              ),
-                            },
-                            {
-                              icon: ShieldCheck,
-                              state: allUsageRulesConfigured
-                                ? 'completed'
-                                : connected
-                                  ? 'current'
-                                  : 'pending',
-                              title: t('connectionCenter.connected.journey.authorized.title'),
-                              description: usageRulesLoading
-                                ? t('connectionCenter.connected.journey.authorized.loading')
-                                : usageRulesError
-                                  ? t('connectionCenter.connected.usageRules.loadFailed')
-                                  : t('connectionCenter.connected.journey.authorized.summary', {
-                                      count: usageConfiguredConnections,
-                                      total: group.connections.length,
-                                    }),
-                            },
-                            {
-                              icon: Bot,
-                              state: readyForAIChat
-                                ? 'completed'
-                                : canUseInAIChat
-                                  ? 'current'
-                                  : 'pending',
-                              title: t('connectionCenter.connected.journey.ready.title'),
-                              description: preferencesQuery.isLoading
-                                ? t('connectionCenter.connected.journey.ready.loading')
-                                : preferencesQuery.isError
-                                  ? t('connectionCenter.connected.journey.ready.loadFailed')
-                                  : t('connectionCenter.connected.journey.ready.summary', {
-                                      count: selectedConnections,
-                                    }),
-                            },
-                          ]}
+                        <ConnectionOverviewStrip
+                          healthy={healthyConnections}
+                          total={group.connections.length}
+                          rulesConfigured={usageConfiguredConnections}
+                          allRulesConfigured={allUsageRulesConfigured}
+                          rulesLoading={usageRulesLoading}
+                          rulesError={usageRulesError}
+                          aiChatSelected={selectedAIChatConnections}
+                          aiChatAvailable={availableAIChatConnections}
+                          aiChatLoading={preferencesQuery.isLoading}
+                          aiChatError={preferencesQuery.isError}
+                          supportsAgent={providerSupportsAgent}
                         />
 
                         <div className="overflow-hidden rounded-lg border bg-background">
-                          <div className="hidden grid-cols-[minmax(0,1.05fr)_minmax(0,.75fr)_minmax(0,1fr)_minmax(0,.8fr)_minmax(176px,max-content)] gap-4 border-b bg-muted/25 px-4 py-2 text-[11px] font-medium text-muted-foreground @[1040px]/connections:grid">
+                          <div className="hidden grid-cols-[minmax(160px,1fr)_minmax(140px,.75fr)_minmax(215px,1fr)_minmax(275px,1.2fr)_minmax(176px,max-content)] gap-3 border-b bg-muted/25 px-3 py-2 text-[11px] font-medium text-muted-foreground @[1120px]/connections:grid">
                             <span>{t('connectionCenter.connected.columns.account')}</span>
                             <span>{t('connectionCenter.connected.columns.health')}</span>
                             <span>{t('connectionCenter.connected.columns.usageRules')}</span>
-                            <span>{t('connectionCenter.connected.columns.aiChat')}</span>
+                            <span>{t('connectionCenter.connected.columns.usageTargets')}</span>
                             <span className="text-right">
                               {t('connectionCenter.connected.columns.actions')}
                             </span>
@@ -862,6 +808,9 @@ export function IntegrationConnectionsPanel({
                               t('connectionDetail.notReported');
                             const currentUserCanUse = availableConnectionIDs.has(connection.id);
                             const selectedInAIChat = selectedConnectionIDs.has(connection.id);
+                            const supportsAgent = (group.provider.actions ?? []).some(action =>
+                              (action.supported_callers ?? []).includes('agent')
+                            );
                             const usageRuleSummary: ConnectionUsageRuleSummary =
                               connection.credential_source === 'account'
                                 ? { state: 'personal', ruleCount: 0, actionCount: 0 }
@@ -876,16 +825,21 @@ export function IntegrationConnectionsPanel({
                                       ruleCount: 0,
                                       actionCount: 0,
                                     };
+                            const primaryActionNeedsSetup =
+                              connectionNeedsSetup(connection) ||
+                              healthState !== 'ready' ||
+                              (connection.credential_source === 'organization' &&
+                                usageRuleSummary.state !== 'configured');
 
                             return (
                               <article
                                 key={connection.id}
-                                className={`grid gap-4 p-4 @[1040px]/connections:grid-cols-[minmax(0,1.05fr)_minmax(0,.75fr)_minmax(0,1fr)_minmax(0,.8fr)_minmax(176px,max-content)] @[1040px]/connections:items-center ${
+                                className={`grid gap-2.5 px-3 py-2.5 @[1120px]/connections:grid-cols-[minmax(160px,1fr)_minmax(140px,.75fr)_minmax(215px,1fr)_minmax(275px,1.2fr)_minmax(176px,max-content)] @[1120px]/connections:items-center @[1120px]/connections:gap-3 ${
                                   index > 0 ? 'border-t' : ''
                                 }`}
                               >
-                                <div className="flex min-w-0 items-center gap-3">
-                                  <div className="flex size-9 shrink-0 items-center justify-center rounded-full bg-primary/8 text-primary">
+                                <div className="flex min-w-0 items-center gap-2.5">
+                                  <div className="flex size-8 shrink-0 items-center justify-center rounded-full bg-primary/8 text-primary">
                                     <UserRound className="size-4" />
                                   </div>
                                   <div className="min-w-0">
@@ -901,7 +855,7 @@ export function IntegrationConnectionsPanel({
                                 </div>
 
                                 <div className="min-w-0">
-                                  <p className="mb-1 text-[11px] font-medium text-muted-foreground @[1040px]/connections:hidden">
+                                  <p className="mb-1 text-[11px] font-medium text-muted-foreground @[1120px]/connections:hidden">
                                     {t('connectionCenter.connected.columns.health')}
                                   </p>
                                   <IntegrationConnectionHealthBadge connection={connection} />
@@ -922,20 +876,27 @@ export function IntegrationConnectionsPanel({
                                   currentUserCanUse={currentUserCanUse}
                                 />
 
-                                <ConnectionAIChatStatus
+                                <ConnectionAvailableToolsStatus
                                   selected={selectedInAIChat}
                                   available={currentUserCanUse && healthState === 'ready'}
                                   loading={preferencesQuery.isLoading}
                                   error={preferencesQuery.isError}
+                                  personal={connection.credential_source === 'account'}
+                                  supportsAgent={supportsAgent}
                                 />
 
-                                <div className="flex items-center justify-end gap-2">
-                                  {canManageShared &&
-                                  connection.credential_source === 'organization' ? (
-                                    <ConnectionUsageRulesAction
-                                      summary={usageRuleSummary}
-                                      connectionName={displayName}
-                                      onManage={() => setDetailConnection(connection)}
+                                <div className="flex items-center justify-end gap-1.5">
+                                  {canManageConnection(connection) ? (
+                                    <ConnectionPrimaryAction
+                                      needsSetup={primaryActionNeedsSetup}
+                                      onContinueSetup={() => {
+                                        setSetupInitialStep(0);
+                                        setSetupConnection(connection);
+                                      }}
+                                      onConfigureTools={() => {
+                                        setSetupInitialStep(3);
+                                        setSetupConnection(connection);
+                                      }}
                                     />
                                   ) : null}
                                   {canManageConnection(connection) ? (
@@ -1032,17 +993,8 @@ export function IntegrationConnectionsPanel({
             connectionDialogMode === 'shared'
               ? await createMutation.mutateAsync(data)
               : await createMyMutation.mutateAsync(data);
-          const saved = response.data;
-          try {
-            if (saved.credential_source === 'account') {
-              await testMyMutation.mutateAsync(saved.id);
-            } else {
-              await testMutation.mutateAsync(saved.id);
-            }
-          } catch {
-            // Saving and testing are separate outcomes. The test mutation
-            // reports the failure and refreshes the persisted health state.
-          }
+          setSetupInitialStep(0);
+          setSetupConnection(response.data);
         }}
         onUpdate={async (id, data) => {
           if (editingConnection?.credential_source === 'account') {
@@ -1051,15 +1003,57 @@ export function IntegrationConnectionsPanel({
             await updateMutation.mutateAsync({ id, data });
           }
           if (!data.credentials || Object.keys(data.credentials).length === 0) return;
+          const saved =
+            editingConnection?.credential_source === 'account'
+              ? integrationConnectionItems(
+                  (await integrationService.getAllMyConnections()).data
+                ).find(connection => connection.id === id)
+              : (await integrationService.getConnection(id)).data;
+          if (!saved) return;
+          setSetupInitialStep(0);
+          setSetupConnection(saved);
+        }}
+        onOAuthCompleted={async connectionId => {
           try {
-            if (editingConnection?.credential_source === 'account') {
-              await testMyMutation.mutateAsync(id);
+            const personalResponse = await integrationService.getAllMyConnections();
+            const personalConnection = integrationConnectionItems(personalResponse.data).find(
+              item => item.id === connectionId
+            );
+            if (personalConnection) {
+              setSetupConnection(personalConnection);
+              setSetupInitialStep(0);
+            } else if (canManageShared) {
+              const response = await integrationService.getConnection(connectionId);
+              setSetupConnection(response.data);
+              setSetupInitialStep(0);
             } else {
-              await testMutation.mutateAsync(id);
+              toast.error(t('setup.resumeFailed'));
             }
           } catch {
-            // Keep the saved credential and expose the failed health result.
+            toast.error(t('setup.resumeFailed'));
           }
+        }}
+      />
+
+      <IntegrationConnectionSetupDialog
+        open={Boolean(setupConnection)}
+        connection={setupConnection}
+        provider={
+          setupConnection ? catalogProviders.get(setupConnection.integration_id) : undefined
+        }
+        onOpenChange={nextOpen => {
+          if (!nextOpen) setSetupConnection(null);
+        }}
+        canManageShared={canManageShared}
+        initialStep={setupInitialStep}
+        onCompleted={setSetupConnection}
+        onEdit={connection => {
+          setSetupConnection(null);
+          setCreateProvider(catalogProviders.get(connection.integration_id) ?? null);
+          setEditingConnection(connection);
+          setConnectionDialogMode(
+            connection.credential_source === 'account' ? 'personal' : 'shared'
+          );
         }}
       />
 
@@ -1154,61 +1148,134 @@ export function IntegrationConnectionsPanel({
   );
 }
 
-interface ConnectionJourneyStepData {
-  icon: typeof CheckCircle2;
-  title: string;
-  description: string;
-  state: 'completed' | 'current' | 'pending';
-}
-
-function ConnectionJourney({ steps }: { steps: ConnectionJourneyStepData[] }) {
+function ConnectionOverviewStrip({
+  healthy,
+  total,
+  rulesConfigured,
+  allRulesConfigured,
+  rulesLoading,
+  rulesError,
+  aiChatSelected,
+  aiChatAvailable,
+  aiChatLoading,
+  aiChatError,
+  supportsAgent,
+}: {
+  healthy: number;
+  total: number;
+  rulesConfigured: number;
+  allRulesConfigured: boolean;
+  rulesLoading: boolean;
+  rulesError: boolean;
+  aiChatSelected: number;
+  aiChatAvailable: number;
+  aiChatLoading: boolean;
+  aiChatError: boolean;
+  supportsAgent: boolean;
+}) {
   const t = useT('integrations');
+
+  const aiChatKey = aiChatError
+    ? 'connectionCenter.connected.availableTools.aiChatUnknown'
+    : aiChatSelected > 0
+      ? 'connectionCenter.connected.availableTools.aiChatEnabled'
+      : aiChatAvailable > 0
+        ? 'connectionCenter.connected.availableTools.aiChatAvailable'
+        : 'connectionCenter.connected.availableTools.aiChatUnsupported';
+
   return (
-    <ol className="mb-3 grid gap-0 rounded-lg border bg-background px-4 py-4 md:grid-cols-3">
-      {steps.map((step, index) => {
-        const Icon = step.icon;
-        const nextStep = steps[index + 1];
-        return (
-          <li
-            key={step.title}
-            className="relative flex min-w-0 items-start gap-3 pb-5 last:pb-0 md:block md:px-3 md:pb-0 md:text-center"
-          >
-            {nextStep ? (
-              <span
-                aria-hidden
-                className={cn(
-                  'absolute left-3.5 top-7 h-[calc(100%-1.75rem)] w-px md:left-[calc(50%+0.875rem)] md:right-[calc(-50%+0.875rem)] md:top-3.5 md:h-px md:w-auto',
-                  nextStep.state === 'pending' ? 'bg-border' : 'bg-success/55'
-                )}
-              />
-            ) : null}
-            <div
-              className={`relative z-10 flex size-7 shrink-0 items-center justify-center rounded-full border md:mx-auto ${
-                step.state === 'completed'
-                  ? 'border-success/30 bg-success/12 text-success'
-                  : step.state === 'current'
-                    ? 'border-primary/30 bg-primary/10 text-primary'
-                    : 'border-border bg-background text-muted-foreground'
-              }`}
+    <section
+      aria-label={t('connectionCenter.connected.overview.label')}
+      className="mb-2 grid overflow-hidden rounded-lg border bg-background md:grid-cols-3"
+    >
+      <div className="flex min-w-0 items-center gap-2.5 px-3 py-2.5 md:border-r">
+        <div className="flex size-7 shrink-0 items-center justify-center rounded-full bg-success/10 text-success">
+          <CheckCircle2 className="size-4" />
+        </div>
+        <div className="min-w-0">
+          <p className="text-xs font-medium text-muted-foreground">
+            {t('connectionCenter.connected.columns.health')}
+          </p>
+          <p className="mt-0.5 whitespace-nowrap text-sm font-semibold text-success">
+            {t('connectionCenter.connected.healthySummary', { healthy, total })}
+          </p>
+        </div>
+      </div>
+
+      <div className="flex min-w-0 items-center gap-2.5 border-t px-3 py-2.5 md:border-r md:border-t-0">
+        <div
+          className={cn(
+            'flex size-7 shrink-0 items-center justify-center rounded-full',
+            rulesError || !allRulesConfigured
+              ? 'bg-warning/10 text-warning'
+              : 'bg-primary/8 text-primary'
+          )}
+        >
+          <ShieldCheck className="size-4" />
+        </div>
+        <div className="min-w-0">
+          <p className="text-xs font-medium text-muted-foreground">
+            {t('connectionCenter.connected.columns.usageRules')}
+          </p>
+          {rulesLoading ? (
+            <Skeleton className="mt-1 h-4 w-24" />
+          ) : (
+            <p
+              className={cn(
+                'mt-0.5 whitespace-nowrap text-sm font-semibold',
+                rulesError || !allRulesConfigured ? 'text-warning' : 'text-foreground'
+              )}
             >
-              <Icon className="size-4" />
+              {rulesError
+                ? t('connectionCenter.connected.overview.rulesUnknown')
+                : t('connectionCenter.connected.overview.rulesSummary', {
+                    count: rulesConfigured,
+                    total,
+                  })}
+            </p>
+          )}
+        </div>
+      </div>
+
+      <div className="flex min-w-0 items-center gap-2.5 border-t px-3 py-2.5 md:border-t-0">
+        <div className="flex size-7 shrink-0 items-center justify-center rounded-full bg-info/10 text-info">
+          <Workflow className="size-4" />
+        </div>
+        <div className="min-w-0">
+          <p className="text-xs font-medium text-muted-foreground">
+            {t('connectionCenter.connected.columns.usageTargets')}
+          </p>
+          {aiChatLoading ? (
+            <Skeleton className="mt-1 h-5 w-48" />
+          ) : (
+            <div className="mt-1 flex flex-wrap gap-1.5">
+              <Badge
+                variant={
+                  aiChatError
+                    ? 'warning'
+                    : aiChatSelected > 0
+                      ? 'success'
+                      : aiChatAvailable > 0
+                        ? 'info'
+                        : 'subtle'
+                }
+                className="whitespace-nowrap"
+              >
+                {t(aiChatKey)}
+              </Badge>
+              {supportsAgent ? (
+                <Badge variant="outline" className="whitespace-nowrap">
+                  {t('connectionCenter.connected.availableTools.agentConfigurable')}
+                </Badge>
+              ) : null}
+              <Badge variant="subtle" className="whitespace-nowrap">
+                {t('connectionCenter.connected.availableTools.workflowComingSoon')}
+              </Badge>
             </div>
-            <div className="min-w-0 md:mt-2">
-              <p className="text-xs font-semibold">
-                {step.title}
-                <span className="sr-only">
-                  {' '}
-                  {t(`connectionCenter.connected.journey.state.${step.state}`)}
-                </span>
-              </p>
-              <p className="mt-0.5 text-[11px] leading-4 text-muted-foreground">
-                {step.description}
-              </p>
-            </div>
-          </li>
-        );
-      })}
-    </ol>
+          )}
+        </div>
+      </div>
+    </section>
   );
 }
 
@@ -1225,7 +1292,7 @@ function ConnectionUsageRulesStatus({
   if (summary.state === 'loading') {
     return (
       <div className="min-w-0">
-        <p className="mb-1 text-[11px] font-medium text-muted-foreground @[1040px]/connections:hidden">
+        <p className="mb-1 text-[11px] font-medium text-muted-foreground @[1120px]/connections:hidden">
           {label}
         </p>
         <Skeleton className="h-5 w-28" />
@@ -1280,69 +1347,71 @@ function ConnectionUsageRulesStatus({
 
   return (
     <div className="min-w-0">
-      <p className="mb-1 text-[11px] font-medium text-muted-foreground @[1040px]/connections:hidden">
+      <p className="mb-1 text-[11px] font-medium text-muted-foreground @[1120px]/connections:hidden">
         {label}
       </p>
       <div className="flex flex-wrap items-center gap-1.5">
-        <Badge variant={stateContent.variant}>{stateContent.title}</Badge>
+        <Badge variant={stateContent.variant} className="whitespace-nowrap">
+          {stateContent.title}
+        </Badge>
         {summary.state === 'configured' && currentUserCanUse ? (
-          <Badge variant="outline">
+          <Badge variant="outline" className="whitespace-nowrap">
             {t('connectionCenter.connected.usageRules.currentUserAvailable')}
           </Badge>
         ) : null}
       </div>
-      <p className="mt-1 text-xs leading-5 text-muted-foreground">{stateContent.description}</p>
+      <p className="mt-1 line-clamp-2 text-xs leading-4 text-muted-foreground">
+        {stateContent.description}
+      </p>
     </div>
   );
 }
 
-function ConnectionUsageRulesAction({
-  summary,
-  connectionName,
-  onManage,
+function ConnectionPrimaryAction({
+  needsSetup,
+  onContinueSetup,
+  onConfigureTools,
 }: {
-  summary: ConnectionUsageRuleSummary;
-  connectionName: string;
-  onManage: () => void;
+  needsSetup: boolean;
+  onContinueSetup: () => void;
+  onConfigureTools: () => void;
 }) {
   const t = useT('integrations');
-  const needsConfiguration = summary.state === 'not_configured';
-  const loading = summary.state === 'loading';
 
   return (
     <Button
       type="button"
-      variant={needsConfiguration ? 'default' : 'secondary'}
+      variant={needsSetup ? 'outline' : 'default'}
       size="sm"
-      className="min-w-0 flex-1 gap-1.5 px-3 text-xs font-medium @[1040px]/connections:flex-none"
-      onClick={onManage}
-      disabled={loading}
-      aria-label={t('connectionCenter.connected.usageRules.manageFor', {
-        name: connectionName,
-      })}
+      className={cn(
+        'h-8 w-[136px] flex-none justify-center gap-1.5 px-2.5 text-xs font-medium',
+        needsSetup &&
+          'border-warning/50 text-warning hover:border-warning/70 hover:bg-warning/5 hover:text-warning'
+      )}
+      onClick={needsSetup ? onContinueSetup : onConfigureTools}
     >
       <ShieldCheck className="size-3.5 shrink-0" />
-      <span className="truncate">
-        {t(
-          needsConfiguration
-            ? 'connectionCenter.connected.usageRules.configure'
-            : 'connectionCenter.connected.usageRules.manage'
-        )}
+      <span className="whitespace-nowrap">
+        {t(needsSetup ? 'setup.continue' : 'connectionCenter.connected.availableTools.configure')}
       </span>
     </Button>
   );
 }
 
-function ConnectionAIChatStatus({
+function ConnectionAvailableToolsStatus({
   selected,
   available,
   loading,
   error,
+  personal,
+  supportsAgent,
 }: {
   selected: boolean;
   available: boolean;
   loading: boolean;
   error: boolean;
+  personal: boolean;
+  supportsAgent: boolean;
 }) {
   const t = useT('integrations');
   const enabled = selected && available;
@@ -1351,8 +1420,8 @@ function ConnectionAIChatStatus({
   if (loading) {
     return (
       <div className="min-w-0">
-        <p className="mb-1 text-[11px] font-medium text-muted-foreground @[1040px]/connections:hidden">
-          {t('connectionCenter.connected.columns.aiChat')}
+        <p className="mb-1 text-[11px] font-medium text-muted-foreground @[1120px]/connections:hidden">
+          {t('connectionCenter.connected.columns.usageTargets')}
         </p>
         <Skeleton className="h-5 w-28" />
         <Skeleton className="mt-2 h-3 w-36" />
@@ -1362,45 +1431,56 @@ function ConnectionAIChatStatus({
 
   return (
     <div className="min-w-0">
-      <p className="mb-1 text-[11px] font-medium text-muted-foreground @[1040px]/connections:hidden">
-        {t('connectionCenter.connected.columns.aiChat')}
+      <p className="mb-1 text-[11px] font-medium text-muted-foreground @[1120px]/connections:hidden">
+        {t('connectionCenter.connected.columns.usageTargets')}
       </p>
-      <Badge
-        variant={
-          error
-            ? 'warning'
-            : enabled
-              ? 'success'
-              : selectedButUnavailable
-                ? 'warning'
-                : available
-                  ? 'info'
-                  : 'subtle'
-        }
-      >
+      <div className="flex flex-wrap gap-1.5">
+        <Badge
+          variant={
+            error
+              ? 'warning'
+              : enabled
+                ? 'success'
+                : selectedButUnavailable
+                  ? 'warning'
+                  : available
+                    ? 'info'
+                    : 'subtle'
+          }
+          className="whitespace-nowrap"
+        >
+          {t(
+            error
+              ? 'connectionCenter.connected.availableTools.aiChatUnknown'
+              : enabled
+                ? 'connectionCenter.connected.availableTools.aiChatEnabled'
+                : selectedButUnavailable
+                  ? 'connectionCenter.connected.availableTools.aiChatUnavailable'
+                  : available
+                    ? 'connectionCenter.connected.availableTools.aiChatAvailable'
+                    : 'connectionCenter.connected.availableTools.aiChatUnsupported'
+          )}
+        </Badge>
+        {!personal && supportsAgent ? (
+          <Badge variant="outline" className="whitespace-nowrap">
+            {t('connectionCenter.connected.availableTools.agentConfigurable')}
+          </Badge>
+        ) : null}
+        <Badge variant="subtle" className="whitespace-nowrap">
+          {t('connectionCenter.connected.availableTools.workflowComingSoon')}
+        </Badge>
+      </div>
+      <p className="mt-1 line-clamp-2 text-xs leading-4 text-muted-foreground">
         {t(
           error
-            ? 'connectionCenter.connected.aiChat.unknown'
+            ? 'connectionCenter.connected.availableTools.loadFailed'
             : enabled
-              ? 'connectionCenter.connected.aiChat.selected'
+              ? 'connectionCenter.connected.availableTools.configuredDescription'
               : selectedButUnavailable
-                ? 'connectionCenter.connected.aiChat.selectedButUnavailable'
+                ? 'connectionCenter.connected.availableTools.needsAttentionDescription'
                 : available
-                  ? 'connectionCenter.connected.aiChat.available'
-                  : 'connectionCenter.connected.aiChat.unavailable'
-        )}
-      </Badge>
-      <p className="mt-1 text-xs leading-5 text-muted-foreground">
-        {t(
-          error
-            ? 'connectionCenter.connected.aiChat.loadFailed'
-            : enabled
-              ? 'connectionCenter.connected.aiChat.selectedDescription'
-              : selectedButUnavailable
-                ? 'connectionCenter.connected.aiChat.selectedButUnavailableDescription'
-                : available
-                  ? 'connectionCenter.connected.aiChat.availableDescription'
-                  : 'connectionCenter.connected.aiChat.unavailableDescription'
+                  ? 'connectionCenter.connected.availableTools.availableDescription'
+                  : 'connectionCenter.connected.availableTools.unavailableDescription'
         )}
       </p>
     </div>

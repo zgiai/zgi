@@ -143,10 +143,11 @@ type AuthSetupNoticeDefinition struct {
 // method. Keeping it on AuthMethodDefinition lets OAuth, service-account, and
 // token-based methods share the same UI without provider-specific branching.
 type AuthSetupGuideDefinition struct {
-	ConsoleURL       string                      `json:"console_url,omitempty"`
-	DocumentationURL string                      `json:"documentation_url,omitempty"`
-	Steps            []AuthSetupStepDefinition   `json:"steps,omitempty"`
-	Notices          []AuthSetupNoticeDefinition `json:"notices,omitempty"`
+	ConsoleURL        string                      `json:"console_url,omitempty"`
+	DocumentationURL  string                      `json:"documentation_url,omitempty"`
+	ExpandedByDefault bool                        `json:"expanded_by_default,omitempty"`
+	Steps             []AuthSetupStepDefinition   `json:"steps,omitempty"`
+	Notices           []AuthSetupNoticeDefinition `json:"notices,omitempty"`
 }
 
 // OAuthMethodMetadata is safe to expose through the provider catalog.

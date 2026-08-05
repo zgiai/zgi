@@ -115,6 +115,9 @@ type IntegrationConnection struct {
 	TokenExpiresAt          *time.Time                 `json:"token_expires_at,omitempty"`
 	RefreshTokenExpiresAt   *time.Time                 `json:"refresh_token_expires_at,omitempty"`
 	NextTokenRefreshAt      *time.Time                 `json:"next_token_refresh_at,omitempty"`
+	SetupVersion            int                        `gorm:"not null;default:1" json:"setup_version"`
+	SetupCompletedAt        *time.Time                 `json:"setup_completed_at,omitempty"`
+	SetupCompletedBy        *uuid.UUID                 `gorm:"type:uuid" json:"-"`
 	CreatedBy               *uuid.UUID                 `gorm:"type:uuid" json:"created_by,omitempty"`
 	UpdatedBy               *uuid.UUID                 `gorm:"type:uuid" json:"updated_by,omitempty"`
 	CreatedAt               time.Time                  `json:"created_at"`
@@ -139,6 +142,9 @@ func (connection *IntegrationConnection) BeforeCreate(_ *gorm.DB) error {
 	}
 	if connection.HealthRevision < 1 {
 		connection.HealthRevision = 1
+	}
+	if connection.SetupVersion < 1 {
+		connection.SetupVersion = 1
 	}
 	if connection.HealthStatus == "" {
 		connection.HealthStatus = ConnectionHealthUnknown
@@ -218,6 +224,8 @@ type ConnectionView struct {
 	TokenExpiresAt        *time.Time                   `json:"token_expires_at,omitempty"`
 	RefreshTokenExpiresAt *time.Time                   `json:"refresh_token_expires_at,omitempty"`
 	NextTokenRefreshAt    *time.Time                   `json:"next_token_refresh_at,omitempty"`
+	SetupVersion          int                          `json:"setup_version"`
+	SetupCompletedAt      *time.Time                   `json:"setup_completed_at,omitempty"`
 	CreatedAt             time.Time                    `json:"created_at"`
 	UpdatedAt             time.Time                    `json:"updated_at"`
 }
@@ -263,6 +271,8 @@ func newConnectionView(connection *IntegrationConnection) ConnectionView {
 		TokenExpiresAt:        cloneTimePointer(connection.TokenExpiresAt),
 		RefreshTokenExpiresAt: cloneTimePointer(connection.RefreshTokenExpiresAt),
 		NextTokenRefreshAt:    cloneTimePointer(connection.NextTokenRefreshAt),
+		SetupVersion:          connection.SetupVersion,
+		SetupCompletedAt:      cloneTimePointer(connection.SetupCompletedAt),
 		CreatedAt:             connection.CreatedAt,
 		UpdatedAt:             connection.UpdatedAt,
 	}

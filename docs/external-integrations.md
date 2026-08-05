@@ -1,24 +1,32 @@
 # External integrations
 
-ZGI external integrations let AIChat use approved third-party applications
-through organization or personal connections. Providers describe their
-authentication methods, actions, schemas, health probe, and governance
-metadata. AIChat discovers those actions through one hidden Connected Apps
-runtime capability, so adding a provider does not require adding one visible
-Skill per application.
+ZGI external integrations let AIChat, Agents, and future Workflow connector
+nodes use approved third-party applications through organization or personal
+connections. Providers describe their authentication methods, actions,
+schemas, health probe, and governance metadata. Each product surface selects a
+Connection through its own tool-specific selection. AIChat discovers those actions
+through one hidden Connected Apps runtime capability, so adding a provider does
+not require adding one visible Skill per application.
 
 The current built-in providers are:
 
 - GitHub REST: account identity, repository list/search, issue and comment
   reads, plus approval-gated issue and comment creation.
-- Exa Web Search: public web search and bounded webpage retrieval. Web Search
-  also has a curated Skill because it contains search-specific instructions,
-  citation behavior, and prompt-injection guidance.
+- Exa Web Search: public web search and bounded webpage retrieval. Search,
+  citation, data-egress, and prompt-injection guidance is published by its
+  Actions through the same Connected Apps runtime as every other provider.
 - Gmail: Google account identity, mail search/read, draft creation, and
   approval-gated send/reply through Google OAuth 2.0.
 - Feishu (China): delegated user identity, contact discovery, chat and calendar
   listing, message and calendar-event reads, Drive and document reads, plus
   approval-gated message and calendar-event creation.
+- WeCom: organization custom-application identity, department and member
+  discovery, member reads, and approval-gated application messages.
+- DingTalk: organization internal-application department, member, and role
+  discovery; bounded attendance reads; approval-gated member or department
+  work notifications; and delivery-result checks.
+- Standard Mail: provider-neutral IMAP folder/search/read and approval-gated
+  SMTP send/reply over validated TLS endpoints.
 - X API v2: account and public-user lookup, own-user and selected-user post
   reads, with recent search and post creation disabled by default until an
   administrator enables them.
@@ -30,11 +38,11 @@ not part of this release.
 
 ## Capability coverage and roadmap
 
-The current built-in catalog contains 5 Providers and 33 Provider Actions. It
-implements the basic progression from identity, through search/list and detail
-reads, to narrowly scoped writes protected by connection grants, provider
-scopes, organization policy, and approval. Provider definitions and their live
-Action metadata remain the authoritative source if this snapshot changes.
+The built-in catalog implements the basic progression from identity, through
+search/list and detail reads, to narrowly scoped writes protected by connection
+grants, provider scopes, organization policy, and approval. Provider
+definitions and their live Action metadata are the authoritative source for
+the current Provider and Action counts.
 
 The next P1 capability layer is intentionally not implemented yet: GitHub pull
 requests and code reads, Gmail labels and attachments, Feishu group/member and
@@ -50,8 +58,8 @@ The main runtime boundary is:
 ProviderDefinition
   -> Connection (encrypted credential and non-secret configuration)
   -> Connection grant and organization Action policy
-  -> AIChat connection preference
-  -> Connected Apps meta tools
+  -> tool-specific selection (AIChat preference, Agent binding, future Workflow node)
+  -> target-specific runtime discovery
   -> Integration Executor
   -> Provider Adapter
   -> execution audit and health signal
@@ -64,9 +72,11 @@ grant, Action allowlist, provider scopes, policy, and health/auth state before
 decrypting a request-scoped credential. Resolved secrets are destroyed after
 the adapter call.
 
-AIChat preferences are selections, not authorization. Revoking a grant,
-disabling a Connection, changing an Action policy, or invalidating a token
-takes effect on the next call even when the conversation was already open.
+Tool-specific selections are not authorization. AIChat preferences and
+Agent resource bindings remain separate because they have different ownership,
+versioning, and runtime semantics. Revoking a grant, disabling a Connection,
+changing an Action policy, or invalidating a token takes effect on the next call
+even when the target already selected the Connection.
 
 ## Authentication method model
 
@@ -365,7 +375,27 @@ The page deliberately separates two tasks:
 - **Available** discovers providers and starts a personal or organization-owned
   connection with the authentication methods that provider supports.
 - **Connected** groups existing Connections by provider and shows credential
-  health, usage-rule coverage, AIChat selection, and management actions.
+  health, usage-rule coverage, available tools, and management actions.
+
+Creating a Connection now continues into a resumable required-setup flow. The
+flow verifies the credential, shows the provider capabilities covered by the
+granted scopes, requires at least one explicit usage rule for a shared
+Connection, and then presents available tools as a separate step. AIChat can be
+selected for the explicitly named current workspace. Agent bindings remain in a
+specific Agent draft/version, and Workflow bindings will remain in a specific
+Workflow node once connector nodes are available. No target is required to mark
+the Connection itself ready. Closing the flow does not discard the Connection;
+incomplete Connections show **Continue setup** in **Connected**. After the
+required connection steps are complete, **Connected** remains the place to
+maintain credentials, health, and usage rules, and to review or enter the
+configuration boundary for each supported tool.
+
+Gmail and X remain registered adapters so existing Connections, encrypted
+credentials, execution authorization, and audit history continue to work.
+They are temporarily hidden from the **Available** discovery catalog, so new
+Connections, including the **Add another connection** action on an existing
+provider group, are not offered through the UI until those product surfaces
+are ready to be enabled again.
 
 Every organization member can manage personal Connections and view shared
 Connections they are authorized to use. Organization owners and administrators
@@ -426,7 +456,7 @@ deliberately. If a previously enabled Action is removed from the provider, the
 management interface marks it as unavailable and requires the administrator to
 remove it before saving other changes.
 
-Usage targets mean:
+Usage-rule scopes mean:
 
 - **Entire organization** applies to organization members. Agents still need
   an explicit binding to the exact Connection and Action.
@@ -483,11 +513,9 @@ answer must not claim that the provider lacks an Action that was merely called
 with invalid arguments.
 
 Provider validation errors contain only provider-neutral structural facts. The
-calling surface adds its own recovery protocol: Connected Apps may recommend
-`get_action_guide` and `execute_action`, while a direct Skill tool retries the
-current `call_skill_tool` contract. This separation prevents a Web Search or
-future direct tool from receiving instructions for meta tools that it cannot
-call.
+Connected Apps surface may recommend `get_action_guide` and `execute_action`,
+while a direct non-integration Skill tool retries the current
+`call_skill_tool` contract. Provider Actions never depend on a visible Skill.
 
 Actions that require a target identifier may declare bounded preparation hints.
 For example, a message Action can point to a read-only contact or chat search,
@@ -499,9 +527,10 @@ must exist in the preparation Action output schema or provider registration
 fails. The provider definition remains authoritative; the generic Skill does
 not hardcode Feishu-, GitHub-, or future provider-specific orchestration.
 
-Select the Web Search Skill when you want its curated search/citation behavior.
-Its Connection is managed on the same integrations page, but the visible Skill
-contains domain instructions that generic Action discovery cannot replace.
+Web Search is selected and invoked exactly like any other connected
+application. Its `web.search` and `web.fetch` Action guides carry the search,
+citation, minimal-query, source-selection, and untrusted-content rules; there
+is no separate Web Search Skill or Skill preference.
 
 ## GitHub authentication and Actions
 
@@ -750,10 +779,10 @@ not a new Skill:
    labels, and every enum label. Add a container registration test and an
    AIChat meta-tool execution test.
 
-Add a visible Skill only when the application needs reusable domain
-instructions or a multi-step workflow, such as citation rules, mandatory
-confirmation, or a specialized task playbook. Do not create a Skill merely to
-make a provider's Actions callable.
+Do not add a visible Skill for an external application. Put provider-specific
+instructions, preparation hints, approval requirements, and schemas in its
+Action definitions. Skills remain available for reusable non-integration task
+playbooks, but they are not an application-connection mechanism.
 
 ## Legacy platform-credential compatibility
 
@@ -850,6 +879,113 @@ Agent bindings, and then retire the old deployment secret.
   and exact Connection. Guarded side effects such as sending a message are
   additionally scoped to the external target, so approval for one recipient
   cannot authorize another.
+
+## WeCom, DingTalk, and standard mail connectors
+
+The enterprise connector batch includes WeCom, DingTalk, and one
+provider-neutral standard mail connector. QQ Mail and NetEase Mail remain
+connection methods of Standard Mail rather than separate Providers. Their
+server endpoints, TLS modes, and ports are selected on the server, so users
+only enter the mailbox address and the provider-generated authorization code.
+Other standards-compliant services remain available through the advanced
+custom IMAP/SMTP method. These connectors are available whenever
+`EXTERNAL_INTEGRATIONS_ENABLED=true`; no provider-specific deployment
+environment variable or database migration is required.
+
+- WeCom uses an organization-owned custom application. Administrators enter
+  its Corp ID, Agent ID, and Secret. The connection can inspect the application,
+  list departments, resolve visible members, read a resolved member, and send
+  one plain-text application message after approval. The application visible
+  range remains the provider-side security boundary.
+- DingTalk uses an organization-owned internal application. Administrators
+  enter its AppKey, AppSecret, and AgentId, configure the application's contact
+  visibility, and grant only the contact, attendance, and work-notification
+  permissions needed by enabled Actions. The connector provides 12 Actions:
+  department list/search/detail/member listing, member search/detail, role and
+  role-member listing, bounded attendance records, member and department work
+  notifications, and delivery-result checks. Department, role, member, and
+  notification references are bound to the exact Connection. Attendance is
+  limited to one resolved member and seven days per call and omits exact
+  coordinates, addresses, photos, and remarks. Notification Actions are
+  disabled by default and require explicit approval; submission is reported as
+  `pending`, never as confirmed delivery. Department delivery queries report
+  partial success separately from full success or failure.
+
+### WeCom connection checklist
+
+1. In the WeCom administration console, create an organization-owned custom
+   application under **Applications**. A group robot webhook is not compatible.
+2. Copy the **Corp ID** from **My Enterprise > Enterprise Information**.
+3. From that same custom application, copy its numeric **AgentID** and
+   **Secret**. Do not use a contacts Secret, callback Token, or EncodingAESKey.
+4. Configure the application visibility range to include every department or
+   member ZGI must resolve.
+5. When trusted-IP protection is enabled, add the public egress IP of the
+   server running the ZGI API. The provider sees the backend server egress IP,
+   not the browser address or `localhost`. WeCom error `60020` normally means
+   this IP is missing from the trusted list.
+6. Save the Connection. ZGI automatically obtains an application token and
+   reads the application profile; this check never sends a message.
+
+The Corp ID, AgentID, and Secret must identify one application in one
+enterprise. A successful token request with a failed application-profile check
+usually indicates an AgentID mismatch or an application visibility/trusted-IP
+restriction rather than a ZGI credential-storage failure.
+
+### DingTalk connection checklist
+
+1. Select the correct organization in the DingTalk developer console and
+   create an **enterprise internal application**. A group robot webhook is not
+   compatible.
+2. Copy **AppKey**, **AppSecret**, and the numeric **AgentId** from that same
+   application.
+3. Before testing, grant department and organization-contact read access. The
+   ZGI connection check obtains an application token and reads the root
+   department list, so this minimum read access is required even when the
+   eventual goal is only to send a notification.
+4. Configure the application's availability/visibility range, create and
+   publish an application version, and confirm the application is enabled in
+   the selected organization.
+5. Add attendance permissions only for attendance Actions, and work-notification
+   send/status permissions only for notification Actions.
+6. If the DingTalk security settings enable a source-IP allowlist, add the
+   public egress IP of the ZGI API server.
+7. Save the Connection. ZGI automatically tests token exchange and the root
+   department query; it does not send a notification.
+
+When either enterprise connector fails validation, Connection Center records
+the provider error code, bounded request ID, and HTTP status without exposing
+the Secret or raw provider response. Use those diagnostics to distinguish
+wrong credentials, missing provider permissions, an unpublished application,
+and an IP allowlist rejection.
+- Standard Mail offers three guided connection methods: QQ Mail, NetEase Mail
+  (`163.com`, `126.com`, and `yeah.net`), and Other mailbox (advanced). QQ and
+  NetEase users enable IMAP/SMTP in their provider settings and paste a
+  dedicated authorization code, never the normal mailbox password. NetEase
+  sessions also send the provider-required IMAP client identity. Advanced
+  connections accept validated public DNS endpoints: IMAP uses implicit TLS on
+  port 993, while SMTP uses TLS on port 465 or STARTTLS on port 587. All
+  resolved addresses are checked and the connection is pinned to a validated
+  public address to close DNS-rebinding gaps. Existing advanced Connections
+  remain compatible and require no migration.
+- The connection-completion flow now includes an explicit Action review before
+  AIChat selection. Administrators can enable the required organization Action
+  policies without leaving the flow, and shared Connections still require a
+  matching usage rule. Mail send and reply are available by default for new
+  organizations but remain high-risk, AIChat-only Actions that require explicit
+  confirmation on every execution. Connections completed by the earlier setup
+  contract are prompted once to review these settings; no credential or schema
+  migration is required.
+- Standard Mail supports account inspection, folder listing, bounded
+  search/read, plain-text send, and reply. Creating a Connection tests both
+  IMAP and SMTP authentication but never sends a test message.
+- Send and reply Actions are disabled by default, AIChat-only, high-risk, and
+  require explicit approval. They use durable success-only operation receipts.
+  Once SMTP enters the DATA phase, an interrupted or ambiguous response is
+  recorded as `outcome_unknown` and is never retried automatically.
+- SMTP acceptance means the provider accepted the message for delivery; it is
+  not proof that the destination mailbox ultimately received it. The connector
+  returns a generated RFC Message-ID and the accepted envelope recipients.
 
 ## Troubleshooting
 

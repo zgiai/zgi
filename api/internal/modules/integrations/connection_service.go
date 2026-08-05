@@ -530,13 +530,20 @@ func applyConnectionTestFailureSummary(connection *IntegrationConnection, code s
 	}
 	switch code {
 	case ErrorCodeAuthInvalid:
+		markPendingConnectionInvalid(connection)
 		connection.HealthStatus = ConnectionHealthUnhealthy
 		connection.AuthStatus = ConnectionAuthReconnectRequired
 		connection.AttentionCode = stringPointer(ConnectionAttentionReconnectRequired)
 		connection.ConsecutiveFailures++
 	case ErrorCodeAccessDenied:
+		markPendingConnectionInvalid(connection)
 		connection.HealthStatus = ConnectionHealthDegraded
 		connection.AttentionCode = stringPointer(ConnectionAttentionAdminCheckRequired)
+	case ErrorCodeProviderRejected:
+		markPendingConnectionInvalid(connection)
+		connection.HealthStatus = ConnectionHealthUnhealthy
+		connection.AttentionCode = stringPointer(ConnectionAttentionAdminCheckRequired)
+		connection.ConsecutiveFailures++
 	case ErrorCodeBudgetExceeded:
 		connection.HealthStatus = ConnectionHealthDegraded
 		connection.AttentionCode = stringPointer(ConnectionAttentionBillingRequired)
@@ -548,6 +555,12 @@ func applyConnectionTestFailureSummary(connection *IntegrationConnection, code s
 		if connection.ConsecutiveFailures >= failureThreshold {
 			connection.HealthStatus = ConnectionHealthDegraded
 		}
+	}
+}
+
+func markPendingConnectionInvalid(connection *IntegrationConnection) {
+	if connection != nil && connection.Status == ConnectionStatusPending {
+		connection.Status = ConnectionStatusInvalid
 	}
 }
 

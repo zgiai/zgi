@@ -41,7 +41,6 @@ const (
 	SkillAgentWorkflow          = "agent-workflow"
 	SkillAgentMemory            = "agent-memory"
 	SkillUserMemory             = "user-memory"
-	SkillWebSearch              = "web-search"
 	SkillExternalApps           = "external-apps"
 
 	SkillSourceSystem = "system"
@@ -63,8 +62,16 @@ const (
 	SkillRequiredConfigAgentKnowledge = "agent_knowledge"
 	SkillRequiredConfigAgentDatabase  = "agent_database"
 	SkillRequiredConfigAgentWorkflow  = "agent_workflow"
-	SkillRequiredConfigWebSearch      = "web_search"
 )
+
+// retiredWebSearchSkillID is retained only to discard historical Agent and
+// cached client configuration. Web search is exposed exclusively through the
+// external-apps runtime and is no longer a Skill.
+const retiredWebSearchSkillID = "web-search"
+
+func isRetiredSkillID(skillID string) bool {
+	return normalizeSkillID(skillID) == retiredWebSearchSkillID
+}
 
 const (
 	SkillExposureGeneral         = "general"
@@ -191,6 +198,15 @@ func SystemSkillExposureProfile(skillID string) SkillExposureProfile {
 			SystemAsset:         false,
 			PageContextRequired: false,
 			GovernanceRisk:      SkillGovernanceRiskMixed,
+		}
+	case retiredWebSearchSkillID:
+		return SkillExposureProfile{
+			Category:            SkillExposureHiddenRuntime,
+			UserSelectable:      false,
+			RuntimeManaged:      false,
+			SystemAsset:         false,
+			PageContextRequired: false,
+			GovernanceRisk:      SkillGovernanceRiskNone,
 		}
 	default:
 		return SkillExposureProfile{

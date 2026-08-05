@@ -36,6 +36,7 @@ const AGENT_DATABASE_SKILL_ID = 'agent-database';
 const AGENT_WORKFLOW_SKILL_ID = 'agent-workflow';
 const AGENT_MANAGEMENT_SKILL_ID = 'agent-management';
 const EXTERNAL_APPS_SKILL_ID = 'external-apps';
+const RETIRED_WEB_SEARCH_SKILL_ID = 'web-search';
 
 function normalizeSkillId(skillId: string): string {
   return skillId.trim().toLowerCase();
@@ -59,11 +60,6 @@ export function getSkillIntegrationRequirements(skill: AIChatSkillMetadata): str
     explicit.push(skill.provider_id.trim().toLowerCase());
   }
 
-  // Compatibility for the initial Web Search metadata. New integrations should
-  // expose `integration_requirements` instead of adding frontend mappings.
-  if (skill.required_config?.some(value => value.trim().toLowerCase() === 'web_search')) {
-    explicit.push('web-search');
-  }
   return Array.from(new Set(explicit));
 }
 
@@ -80,7 +76,8 @@ export function isHiddenSystemSkill(skillId: string): boolean {
     normalized === AGENT_DATABASE_SKILL_ID ||
     normalized === AGENT_WORKFLOW_SKILL_ID ||
     normalized === AGENT_MANAGEMENT_SKILL_ID ||
-    normalized === EXTERNAL_APPS_SKILL_ID
+    normalized === EXTERNAL_APPS_SKILL_ID ||
+    normalized === RETIRED_WEB_SEARCH_SKILL_ID
   );
 }
 

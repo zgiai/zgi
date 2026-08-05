@@ -5,6 +5,7 @@ import type {
   AIChatIntegrationPreferenceListResponse,
   AcknowledgeIntegrationOAuthRecoveryRequest,
   AcknowledgeIntegrationOAuthRecoveryResponse,
+  CompleteIntegrationConnectionSetupRequest,
   CreateIntegrationConnectionRequest,
   GetIntegrationExecutionsParams,
   IntegrationActionPolicyResponse,
@@ -314,6 +315,20 @@ class IntegrationService extends BaseService {
 
   testMyConnection(id: string): Promise<ApiResponseData<IntegrationConnectionTestResult>> {
     return this.request('post', `/integrations/my-connections/${id}/test`);
+  }
+
+  completeConnectionSetup(
+    id: string,
+    data: CompleteIntegrationConnectionSetupRequest
+  ): Promise<ApiResponseData<IntegrationConnection>> {
+    return this.request('post', `/integrations/connections/${id}/complete-setup`, data);
+  }
+
+  completeMyConnectionSetup(
+    id: string,
+    data: CompleteIntegrationConnectionSetupRequest
+  ): Promise<ApiResponseData<IntegrationConnection>> {
+    return this.request('post', `/integrations/my-connections/${id}/complete-setup`, data);
   }
 
   setDefaultConnection(id: string): Promise<ApiResponseData<IntegrationConnection>> {

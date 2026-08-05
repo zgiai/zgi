@@ -110,6 +110,12 @@ func recordConnectionTestHealth(ctx context.Context, recorder ConnectionHealthOb
 	classification, reason := classifyRuntimeConnectionHealthSignal(ErrorCode(testErr))
 	if testErr == nil {
 		classification, reason = ConnectionHealthClassificationSuccess, "connection_test_succeeded"
+	} else if ErrorCode(testErr) == ErrorCodeProviderRejected {
+		// A provider business-rule rejection during a normal Action says
+		// nothing about connection health. During the dedicated full
+		// connection probe, however, it means the saved app configuration
+		// itself could not be verified and must be surfaced to the admin.
+		classification, reason = ConnectionHealthClassificationAccessDenied, ErrorCodeProviderRejected
 	}
 	observation := ConnectionHealthObservation{
 		OrganizationID:         connection.OrganizationID,

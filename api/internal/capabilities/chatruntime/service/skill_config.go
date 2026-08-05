@@ -29,9 +29,6 @@ func (s *service) catalogSkillMetadata(ctx context.Context, organizationID uuid.
 				logger.WarnContext(ctx, "aichat system skill catalog has invalid entries", err)
 			}
 		}
-		if !s.skillRuntime.ToolProviderConfigured(ctx, tools.ToolProviderTypeConnector, skills.SkillWebSearch) {
-			systemMetadata = excludeSkillMetadata(systemMetadata, skills.SkillWebSearch)
-		}
 		if !s.skillRuntime.ToolProviderConfigured(ctx, tools.ToolProviderTypeConnector, integrations.MetaProviderExternalIntegrations) {
 			systemMetadata = excludeSkillMetadata(systemMetadata, skills.SkillExternalApps)
 		}

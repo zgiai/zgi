@@ -244,17 +244,3 @@ func TestValidateIntegrationBindingGrantRejectsWriteActionForReadOnlyBinding(t *
 		t.Fatalf("read-only binding write action error = %v", err)
 	}
 }
-
-func TestWebSearchAgentConfigRequiresExplicitIntegrationConnection(t *testing.T) {
-	config := dto.AgentConfigRequest{EnabledSkillIDs: []string{"web-search"}}
-	if err := validateRequiredAgentIntegrationBindings(config); err == nil {
-		t.Fatal("Web Search Agent config without a Connection binding should fail")
-	}
-	config.IntegrationBindings = []dto.AgentIntegrationBinding{{
-		ConnectionID: "33333333-3333-3333-3333-333333333333", IntegrationID: "web-search",
-		AccessMode: "read", AllowedActionIDs: []string{"web.search"},
-	}}
-	if err := validateRequiredAgentIntegrationBindings(config); err != nil {
-		t.Fatalf("bound Web Search Agent config error = %v", err)
-	}
-}

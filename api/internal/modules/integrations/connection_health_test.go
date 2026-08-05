@@ -211,6 +211,38 @@ func TestConnectionHealthServicePersistsSafeRuntimeProviderDiagnostics(t *testin
 	}
 }
 
+func TestConnectionTestRecordsProviderRejectionAsActionableConfigurationFailure(t *testing.T) {
+	repository := &capturingConnectionHealthRepository{}
+	service := NewConnectionHealthService(repository)
+	connection := &IntegrationConnection{
+		ID: uuid.New(), OrganizationID: uuid.New(), IntegrationID: "wecom", DriverID: "wecom-open-api",
+		CredentialVersion: 1, HealthRevision: 2,
+	}
+	testErr := NewProviderError(
+		ErrorCodeProviderRejected,
+		"provider rejected validation",
+		nil,
+		ProviderDiagnostics{ErrorCode: "60020", RequestID: "req-1", HTTPStatus: 200},
+	)
+	recordConnectionTestHealth(
+		context.Background(),
+		service,
+		connection,
+		nil,
+		testErr,
+		ConnectionHealthSourceManual,
+		nil,
+		time.Now().Add(-time.Millisecond),
+	)
+	got := repository.observation
+	if got.Classification != ConnectionHealthClassificationAccessDenied || got.ReasonCode != ErrorCodeProviderRejected || got.ProviderErrorCode != "60020" || got.ProviderRequestID != "req-1" {
+		t.Fatalf("connection-test observation = %#v", got)
+	}
+	if got.CheckKind != ConnectionHealthCheckFull {
+		t.Fatalf("check kind = %q", got.CheckKind)
+	}
+}
+
 func TestConnectionHealthEventNormalizesUnsafeProviderDiagnostics(t *testing.T) {
 	observation := normalizeConnectionHealthObservation(ConnectionHealthObservation{
 		ProviderErrorCode:  `{"message":"do not persist"}`,

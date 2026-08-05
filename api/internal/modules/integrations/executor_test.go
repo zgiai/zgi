@@ -350,6 +350,63 @@ func TestExecutorInvalidOutputSchemaFinalizesAudit(t *testing.T) {
 	}
 }
 
+func TestExecutorNormalizesTypedAdapterOutputBeforeSchemaValidation(t *testing.T) {
+	action := testAction("folder.list", "list_folders")
+	action.OutputSchema = map[string]interface{}{
+		"type":                 "object",
+		"additionalProperties": false,
+		"properties": map[string]interface{}{
+			"folders": map[string]interface{}{
+				"type": "array",
+				"items": map[string]interface{}{
+					"type":                 "object",
+					"additionalProperties": false,
+					"properties": map[string]interface{}{
+						"name":       map[string]interface{}{"type": "string"},
+						"attributes": map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
+						"ids":        map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "integer"}},
+					},
+					"required": []string{"name", "attributes", "ids"},
+				},
+			},
+		},
+		"required": []string{"folders"},
+	}
+	adapter := &testAdapter{
+		driverID: "test",
+		execute: func(context.Context, ActionRequest) (*ActionResult, error) {
+			return &ActionResult{Output: map[string]interface{}{
+				"folders": []map[string]interface{}{{
+					"name": "INBOX", "attributes": []string{"\\HasNoChildren"}, "ids": []int{1, 2},
+				}},
+			}}, nil
+		},
+	}
+	registry := registerTestAction(t, action, adapter)
+	executor := NewExecutor(registry, &testAudit{}, &testQuota{}, nil, []byte("audit-key"), 0)
+	req := validActionRequest("current events")
+	req.ActionID = action.ID
+
+	result, err := executor.Execute(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	folders, ok := result.Output["folders"].([]interface{})
+	if !ok || len(folders) != 1 {
+		t.Fatalf("folders = %T %#v", result.Output["folders"], result.Output["folders"])
+	}
+	folder, ok := folders[0].(map[string]interface{})
+	if !ok {
+		t.Fatalf("folder = %T %#v", folders[0], folders[0])
+	}
+	if _, ok := folder["attributes"].([]interface{}); !ok {
+		t.Fatalf("attributes = %T %#v", folder["attributes"], folder["attributes"])
+	}
+	if _, ok := folder["ids"].([]interface{}); !ok {
+		t.Fatalf("ids = %T %#v", folder["ids"], folder["ids"])
+	}
+}
+
 func TestExecutorAuditCompleteFailureDoesNotDiscardSuccessfulRead(t *testing.T) {
 	adapter := &testAdapter{driverID: "test"}
 	registry := registerTestAction(t, testAction("web.search", "search_web"), adapter)

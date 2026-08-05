@@ -30,7 +30,7 @@ const messages = {
     connected: {
       title: 'Connected apps',
       description:
-        'Review connection health, usage rules, and AIChat enablement for the current workspace.',
+        'Review connection health, usage rules, and available tools such as AIChat, Agents, and Workflows.',
       connectionCount: '{count, plural, one {# connection} other {# connections}}',
       addAccount: 'Add another connection',
       addPersonalAccount: 'Add personal connection',
@@ -46,44 +46,24 @@ const messages = {
       },
       emptyTitle: 'No connected apps yet',
       emptyDescription:
-        'After connecting an app, personal connections can be selected in AIChat; shared connections also require usage rules.',
+        'After connecting an app, choose available tools such as AIChat, Agents, and Workflows as needed. Shared connections also require usage rules.',
       emptyAction: 'Browse available apps',
-      journey: {
-        state: {
-          completed: 'Completed',
-          current: 'Current step',
-          pending: 'Pending',
-        },
-        connected: {
-          title: 'Connected',
-          description: 'Credentials verified',
-          summary: 'Healthy connections: {healthy}/{total}',
-        },
-        authorized: {
-          title: 'Usage rules',
-          description: 'Who can use it and the available actions are configured',
-          summary: 'Rules configured: {count}/{total}',
-          loading: 'Loading usage rules',
-        },
-        ready: {
-          title: 'Enable in AIChat',
-          description: 'The current user selected it in this workspace',
-          summary:
-            '{count, plural, one {# connection is} other {# connections are}} enabled in this workspace',
-          loading: 'Loading AIChat selection status',
-          loadFailed: 'AIChat selection status could not be loaded',
-        },
+      overview: {
+        label: 'Connection overview',
+        rulesSummary: '{count}/{total} configured',
+        rulesUnknown: 'Rule status unknown',
       },
       columns: {
         account: 'Connection',
         health: 'Connection status',
         usageRules: 'Usage rules',
-        aiChat: 'AIChat',
+        usageTargets: 'Available tools',
         actions: 'Actions',
       },
       usageRules: {
         personal: 'Personal · Only you',
-        personalDescription: 'Available only to your AIChat and not to agents.',
+        personalDescription:
+          'Available only to you; each tool decides whether it supports personal connections.',
         configured: 'Usage rules configured',
         configuredSummary:
           '{rules, plural, one {# rule} other {# rules}} · {actions, plural, one {# available action} other {# available actions}}',
@@ -94,7 +74,7 @@ const messages = {
         notConfiguredDescription: 'Members and agents cannot use this shared connection yet.',
         availableToMe: 'Available in this workspace',
         managedByOrganization:
-          'Usage targets and available actions are managed by an administrator.',
+          'Who can use this connection and its available actions are managed by an administrator.',
         currentUserAvailable: 'Available to you',
         unknown: 'Usage status unknown',
         loadFailed: 'Usage rules could not be loaded.',
@@ -115,6 +95,25 @@ const messages = {
         unavailable: 'Not available in AIChat',
         unavailableDescription: 'Repair the connection or configure its usage rules first.',
       },
+      availableTools: {
+        aiChatEnabled: 'AIChat selected',
+        aiChatAvailable: 'Available to AIChat',
+        aiChatUnavailable: 'AIChat needs attention',
+        aiChatUnsupported: 'AIChat unavailable',
+        aiChatUnknown: 'AIChat status unknown',
+        agentConfigurable: 'Agent configurable',
+        workflowComingSoon: 'Workflow pending',
+        configuredDescription:
+          'Used by AIChat in the current workspace. Other tools remain independently configured.',
+        needsAttentionDescription:
+          'The selection remains, but connection health or usage rules have changed.',
+        availableDescription:
+          'Configure AIChat below. Agents and Workflows keep their own bindings.',
+        unavailableDescription:
+          'Repair the connection or usage rules before configuring a specific tool.',
+        loadFailed: 'Available tool status could not be loaded for the current workspace.',
+        configure: 'Configure available tools',
+      },
       lastChecked: 'Last checked {date}',
       neverChecked: 'Not tested yet',
       openAIChat: 'Open AIChat',
@@ -125,7 +124,7 @@ const messages = {
       permissions: 'Usage rules',
       reconnect: 'Reconnect',
       securityNote:
-        'Credentials stay encrypted. Connecting an organization account does not share it until an administrator configures usage targets and available actions.',
+        'Credentials stay encrypted. Connecting an organization account does not share it until an administrator configures who can use it and which actions are available.',
     },
     oauthRecovery: {
       title: 'Provider access cleanup needs attention',
@@ -173,6 +172,12 @@ const messages = {
     catalogSummary: '{total} features adapted · {read} read · {write} write',
     catalogNotice:
       'This view only describes adapted features. Manage account health and provider access under Connections.',
+    scope: {
+      currentAccount: 'Current account and workspace',
+      currentAccountDescription:
+        'Availability includes personal and shared connections you can use in the current workspace.',
+      organizationPolicy: 'Organization execution rules',
+    },
     statusFilterLabel: 'Filter app capabilities by availability',
     statusFilters: {
       all: 'All',
@@ -266,6 +271,7 @@ const messages = {
     dataEgressNotRequired: 'No external data sharing',
     documentation: 'View developer docs',
     connect: 'Connect {provider}',
+    connectAnother: 'Connect another {provider} account',
   },
   authMethodPicker: {
     title: 'Connect {provider}',
@@ -354,6 +360,7 @@ const messages = {
       close: 'Close',
       tryAgain: 'Try again',
       done: 'Done',
+      continueSetup: 'Continue setup',
       success: {
         verified: 'Verified',
         verifiedDescription: 'The provider identity and credential were validated.',
@@ -368,6 +375,9 @@ const messages = {
         aiChatPending: 'AIChat selection pending',
         aiChatPendingDescription:
           'Finish usage rules when required, then select the connection in AIChat.',
+        usageTargetsPending: 'Available tools pending',
+        usageTargetsPendingDescription:
+          'Continue setup to choose which tools, such as AIChat and Agents, use this connection.',
       },
     },
     result: {
@@ -1122,7 +1132,7 @@ const messages = {
     title: 'Usage rules',
     description: 'Choose who may use this connection and which provider actions are available.',
     add: 'Add usage rule',
-    empty: 'No usage targets or available actions are configured yet.',
+    empty: 'No usage scope or available actions are configured yet.',
     loadFailed: 'Usage rules could not be loaded.',
     organizationPrincipal: 'Current organization',
     principal: {
@@ -1143,9 +1153,9 @@ const messages = {
     editTitle: 'Edit usage rule',
     editorDescription:
       'Choose who may use this shared connection. Organization Action policies are enforced as a separate gate.',
-    principalLabel: 'Usage target',
-    principalId: 'Usage target',
-    principalIdHint: 'Choose a usage target that belongs to the current organization.',
+    principalLabel: 'Usage scope',
+    principalId: 'Usage scope',
+    principalIdHint: 'Choose a usage scope that belongs to the current organization.',
     principalPlaceholder: {
       workspace: 'Select a workspace',
       account: 'Select a member',
@@ -1347,6 +1357,151 @@ const messages = {
       'This provider request runs only after you confirm and may incur a small charge. ZGI does not test connections periodically. No credential value is returned or logged. Success does not enable or call the connection in AIChat: a shared connection still needs usage rules, then selection under External Apps in AIChat.',
     cancel: 'Cancel',
     confirm: 'Run test',
+  },
+  setup: {
+    title: 'Complete connection setup',
+    description:
+      'Finish the required setup for “{connection}” in {provider}. You can safely close and resume later.',
+    usageTargetsSavedTitle: 'Available tools updated',
+    usageTargetsSavedDescription: 'Available tool settings for “{connection}” have been updated.',
+    progress: 'Connection setup progress',
+    continue: 'Continue setup',
+    saveAndClose: 'Save and close',
+    previous: 'Previous',
+    next: 'Continue',
+    complete: 'Save configuration',
+    done: 'Done',
+    completeFailed: 'Setup could not be completed. Review the current step and try again.',
+    resumeFailed:
+      'The connection was saved, but setup could not be opened. Resume it from Connected apps.',
+    completedTitle: 'Connection is ready',
+    completedDescription: 'Required setup for “{connection}” is complete.',
+    steps: {
+      verify: 'Verify',
+      capabilities: 'Capabilities',
+      personalAccess: 'Access',
+      usageRules: 'Usage rules',
+      executionRules: 'Enable actions',
+      usageTargets: 'Available tools',
+    },
+    verify: {
+      title: 'Verify the connection',
+      description: 'Confirm that the credential, provider identity, and API are available.',
+      required: 'Run a successful connection test before continuing.',
+      test: 'Test connection',
+      testAgain: 'Test again',
+      testingTitle: 'Verifying the connection automatically',
+      testingDescription:
+        'Checking the credential, provider identity, and API. No action is needed.',
+      testing: 'Verifying',
+      passedTitle: 'Connection verified',
+      passedDescription: 'The connection is ready. Setup will continue automatically.',
+      failedTitle: 'Automatic verification failed',
+      failedDescription: 'The connection settings were preserved, but the provider check failed.',
+      failed: 'Verification failed',
+      retryHint:
+        'The provider received the request, but at least one credential, app status, permission, or network allowlist requirement is not satisfied. Review the connection guide, then retry.',
+      wecomTrustedIPHint:
+        'WeCom rejected access from the ZGI API server. Add the backend server public egress IP to the custom application trusted IP list, then retry verification.',
+      dingtalkConfigurationHint:
+        'Confirm AppKey, AppSecret, and AgentId belong to the same internal app; grant department/contact read access; configure visibility; publish and enable the app; and allow the ZGI API server public egress IP if an IP allowlist is enabled.',
+      editConnection: 'Review and edit settings',
+      retry: 'Retry verification',
+    },
+    capabilities: {
+      title: 'Review available capabilities',
+      description: 'Only capabilities covered by the provider authorization can be used.',
+      available: '{count} available',
+    },
+    executionRules: {
+      title: 'Configure actions allowed for this app',
+      description:
+        'The current account’s provider permissions determine which actions can be enabled. These switches are organization-wide execution settings and apply to every compatible connection for this app. Send, create, and other write actions still ask for confirmation before execution.',
+      required:
+        'Enable at least one action already covered by this account’s provider permissions before continuing.',
+    },
+    actions: {
+      summaryTitle: 'Current account and app execution settings',
+      summary: '{supported} supported by this account, {enabled} enabled by the organization',
+      count: '{count}',
+      recommendedPreset: 'Enable available',
+      readOnlyPreset: 'Read only',
+      confirmEveryTime: 'Confirm before running',
+      scopeMissing: 'This account is missing provider permission; reconnect to grant it',
+      enabled: 'Enabled for this connection',
+      disabled: 'This action is not enabled',
+      policyDisabled: 'An administrator has not enabled this action',
+      toggle: 'Configure “{action}” for this app',
+      unsaved: 'Changes will be saved when you continue',
+      saving: 'Saving action settings',
+      saveFailed: 'Action settings could not be saved. Try again.',
+      groups: {
+        read: {
+          title: 'Read actions',
+          description: 'View and search provider content',
+        },
+        write: {
+          title: 'Write actions',
+          description: 'Create, send, or change external content',
+        },
+      },
+    },
+    personal: {
+      title: 'Personal access is ready',
+      description:
+        'This connection belongs only to you and can be used by tools that support personal connections. It is not shared with organization members or organization Agents.',
+    },
+    rules: {
+      title: 'Choose who can use this connection',
+      description:
+        'Shared connections require an explicit audience and allowed actions. Personal connections skip this step.',
+      required:
+        'Add at least one usage rule and explicitly choose the allowed actions before continuing.',
+      ready:
+        'At least one valid usage rule is configured. You can maintain additional rules later from Connected apps.',
+    },
+    usageTargets: {
+      dialogTitle: 'Configure available tools',
+      dialogDescription:
+        'Choose which tools can use “{connection}” in {provider}. Each tool is configured independently without changing connection permissions.',
+      title: 'Choose which tools use this connection',
+      description:
+        'Connections, usage rules, and tool bindings are independent. Configure AIChat for the current workspace here; Agents and Workflows keep their own configuration boundaries.',
+      configureSeparately: 'Configure separately',
+      personalUnsupported: 'No personal connections',
+      unsupported: 'Not supported',
+      comingSoon: 'Pending integration',
+      noWorkspace: 'No workspace selected',
+      aiChat: {
+        title: 'AIChat',
+        workspace: 'Current workspace: {workspace}',
+        description:
+          'When enabled, this connection becomes an AIChat candidate and the preferred connection for this app in the current workspace. Runtime permissions are still checked.',
+        toggle: 'Use this connection in AIChat for the current workspace',
+        notAvailable:
+          'This connection is not currently available to AIChat. Repair it or configure a matching usage rule first.',
+      },
+      agent: {
+        title: 'Agent',
+        description:
+          'Choose the connection and allowed actions in a specific Agent editor. This page does not create a global Agent binding.',
+        personalDescription:
+          'Personal connections cannot be bound to organization Agents. Use a shared connection.',
+        unsupportedDescription: 'This app does not currently declare Agent support.',
+      },
+      workflow: {
+        title: 'Workflow',
+        description:
+          'Connector workflow nodes are not available yet. Once released, each Workflow will choose its own connection.',
+      },
+    },
+    summary: {
+      ready: 'Required setup completed',
+      withAIChat:
+        'The connection and required usage rules are complete, and AIChat selected it for the current workspace. Other tools remain independently configured.',
+      withoutUsageTarget:
+        'The connection and required usage rules are complete. AIChat remains unselected in this workspace, while other tools keep their independent configuration.',
+    },
   },
   delete: {
     title: 'Delete connection?',

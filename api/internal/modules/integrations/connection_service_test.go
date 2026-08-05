@@ -312,7 +312,33 @@ func TestConnectionServiceAuthFailureRequiresReconnectWithoutDisablingConnection
 	if err == nil || ErrorCode(err) != ErrorCodeAuthInvalid {
 		t.Fatalf("Test() error = %v", err)
 	}
-	if failed.Status != ConnectionStatusPending || failed.HealthStatus != ConnectionHealthUnhealthy || failed.AuthStatus != ConnectionAuthReconnectRequired || failed.LastErrorCode == nil || *failed.LastErrorCode != ErrorCodeAuthInvalid {
+	if failed.Status != ConnectionStatusInvalid || failed.HealthStatus != ConnectionHealthUnhealthy || failed.AuthStatus != ConnectionAuthReconnectRequired || failed.LastErrorCode == nil || *failed.LastErrorCode != ErrorCodeAuthInvalid {
+		t.Fatalf("failed connection = %#v", failed)
+	}
+}
+
+func TestConnectionServiceProviderRejectedMarksUnverifiedConnectionInvalid(t *testing.T) {
+	repository := newMemoryConnectionRepository()
+	tester := &recordingConnectionTester{err: NewProviderError(
+		ErrorCodeProviderRejected,
+		"provider rejected validation",
+		nil,
+		ProviderDiagnostics{ErrorCode: "provider-code", RequestID: "request-1", HTTPStatus: 200},
+	)}
+	service, _ := newConnectionServiceForTest(t, repository, tester)
+	organizationID := uuid.New()
+	view, err := service.Create(context.Background(), CreateConnectionInput{
+		OrganizationID: organizationID, IntegrationID: IntegrationWebSearch, DriverID: DriverExa, Name: "Rejected",
+		Credentials: map[string]string{"api_key": "invalid-key"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	failed, _, err := service.Test(context.Background(), organizationID, view.ID, nil)
+	if ErrorCode(err) != ErrorCodeProviderRejected {
+		t.Fatalf("Test() error = %v", err)
+	}
+	if failed.Status != ConnectionStatusInvalid || failed.HealthStatus != ConnectionHealthUnhealthy || failed.AttentionCode == nil || *failed.AttentionCode != ConnectionAttentionAdminCheckRequired {
 		t.Fatalf("failed connection = %#v", failed)
 	}
 }

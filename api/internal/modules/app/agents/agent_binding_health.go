@@ -620,9 +620,6 @@ func (s *agentsService) validateIncrementalAgentBindingChanges(
 	if ag == nil || previous == nil {
 		return fmt.Errorf("agent and previous config are required")
 	}
-	if err := validateRequiredAgentIntegrationBindings(next); err != nil {
-		return err
-	}
 	workspaceID := ag.TenantID.String()
 	organizationID := s.organizationIDForAgentWorkspace(ctx, workspaceID)
 
@@ -673,29 +670,6 @@ func (s *agentsService) validateIncrementalAgentBindingChanges(
 		}
 	}
 	return nil
-}
-
-func validateRequiredAgentIntegrationBindings(config dto.AgentConfigRequest) error {
-	enabledSkills := stringSet(normalizeAgentEnabledSkillIDs(config.EnabledSkillIDs))
-	if _, enabled := enabledSkills[skills.SkillWebSearch]; !enabled {
-		return nil
-	}
-	bindings := integrationBindingsByID(config.IntegrationBindings)
-	if _, bound := bindings[skills.SkillWebSearch]; !bound {
-		return &agentBindingAPIError{
-			Code:    agentBindingsInvalidCode,
-			Message: "Web Search requires an explicit Integration Connection binding for Agent execution",
-		}
-	}
-	return nil
-}
-
-func integrationBindingsByID(bindings []dto.AgentIntegrationBinding) map[string]dto.AgentIntegrationBinding {
-	result := make(map[string]dto.AgentIntegrationBinding, len(bindings))
-	for _, binding := range normalizeAgentIntegrationBindings(bindings) {
-		result[binding.IntegrationID] = binding
-	}
-	return result
 }
 
 func (s *agentsService) validateIntegrationBindingGrant(ctx context.Context, organizationID, workspaceID, accountID string, binding dto.AgentIntegrationBinding) error {

@@ -14,36 +14,27 @@ import {
 } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
-import {
-  useIntegrationActionPolicies,
-  useIntegrationProviderCapabilities,
-  useUpdateIntegrationActionPolicies,
-} from '@/hooks';
+import { useIntegrationActionPolicies, useUpdateIntegrationActionPolicies } from '@/hooks';
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
 import type {
   IntegrationActionDefinition,
-  IntegrationActionCapability,
   IntegrationActionPolicy,
   IntegrationCatalogItem,
 } from '@/services/types/integration';
-import { integrationCatalogID, resolveIntegrationAuthDefinitions } from './integration-utils';
 import { useIntegrationMetadata } from './metadata-i18n';
 import { ProviderCapabilityAvailability } from './provider-capability-availability';
+import {
+  hasActionScopes,
+  isReadCapability,
+  useCurrentAccountProviderCapabilityView,
+} from './provider-capability-view';
 
 type CapabilityFilter = 'all' | 'read' | 'write';
 
 interface IntegrationProviderCapabilitiesInlineProps {
   provider: IntegrationCatalogItem;
   canManageShared?: boolean;
-}
-
-function isReadCapability(action: IntegrationActionDefinition): boolean {
-  return action.effect === 'read' || action.effect === 'none';
-}
-
-function hasActionScopes(action: IntegrationActionDefinition): boolean {
-  return Boolean(action.required_scopes?.length || action.required_any_scopes?.length);
 }
 
 function actionDefaultPolicy(
@@ -69,29 +60,21 @@ export function IntegrationProviderCapabilitiesInline({
   const t = useT('integrations');
   const metadata = useIntegrationMetadata();
   const [filter, setFilter] = useState<CapabilityFilter>('all');
-  const integrationId = integrationCatalogID(provider);
-  const actions = useMemo(() => provider.actions ?? [], [provider.actions]);
-  // This connected view describes what the current signed-in account can use.
-  // Administrators may edit shared policies here, but that must not hide their
-  // personal connections from the live capability calculation.
-  const capabilityQuery = useIntegrationProviderCapabilities(integrationId, 'account');
+  const {
+    integrationId,
+    capabilityQuery,
+    actions,
+    liveCapabilities,
+    liveCapabilityByAction,
+    summary,
+    authenticationMethods,
+  } = useCurrentAccountProviderCapabilityView(provider);
   const policyQuery = useIntegrationActionPolicies(canManageShared ? integrationId : '');
   const updateMutation = useUpdateIntegrationActionPolicies(integrationId);
   const [draft, setDraft] = useState<IntegrationActionPolicy[]>([]);
   const [baseline, setBaseline] = useState<IntegrationActionPolicy[]>([]);
   const [revision, setRevision] = useState('');
   const isDirty = JSON.stringify(draft) !== JSON.stringify(baseline);
-  const liveCapabilities =
-    capabilityQuery.isSuccess && !capabilityQuery.isFetching
-      ? capabilityQuery.data?.data
-      : undefined;
-  const liveCapabilityByAction = useMemo(
-    () =>
-      new Map<string, IntegrationActionCapability>(
-        (liveCapabilities?.actions ?? []).map(action => [action.id, action])
-      ),
-    [liveCapabilities?.actions]
-  );
 
   useEffect(() => {
     if (!canManageShared) return;
@@ -141,14 +124,6 @@ export function IntegrationProviderCapabilitiesInline({
       ),
     [actions, canManageShared, draft, integrationId, liveCapabilityByAction]
   );
-  const summary = useMemo(
-    () => ({
-      total: actions.length,
-      read: actions.filter(isReadCapability).length,
-      write: actions.filter(action => !isReadCapability(action)).length,
-    }),
-    [actions]
-  );
   const filteredActions = useMemo(
     () =>
       actions.filter(action => {
@@ -157,10 +132,6 @@ export function IntegrationProviderCapabilitiesInline({
         return true;
       }),
     [actions, filter]
-  );
-  const authenticationMethods = useMemo(
-    () => resolveIntegrationAuthDefinitions(provider),
-    [provider]
   );
   const documentationURL = metadata.documentationURL(provider);
 
@@ -174,20 +145,27 @@ export function IntegrationProviderCapabilitiesInline({
     <section aria-label={t('capabilities.connectedViewLabel')} className="space-y-4">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0">
-          <p className="text-sm font-medium">
-            {liveCapabilities
-              ? t('capabilities.connectedSummary', {
-                  total: liveCapabilities.summary.total,
-                  available: liveCapabilities.summary.available,
-                  attention: liveCapabilities.summary.needs_attention,
-                })
-              : t('capabilities.catalogSummary', {
-                  total: summary.total,
-                  read: summary.read,
-                  write: summary.write,
-                })}
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge variant="outline" className="font-normal">
+              {t('capabilities.scope.currentAccount')}
+            </Badge>
+            <p className="text-sm font-medium">
+              {liveCapabilities
+                ? t('capabilities.connectedSummary', {
+                    total: liveCapabilities.summary.total,
+                    available: liveCapabilities.summary.available,
+                    attention: liveCapabilities.summary.needs_attention,
+                  })
+                : t('capabilities.catalogSummary', {
+                    total: summary.total,
+                    read: summary.read,
+                    write: summary.write,
+                  })}
+            </p>
+          </div>
+          <p className="mt-1 text-xs leading-5 text-muted-foreground">
+            {t('capabilities.scope.currentAccountDescription')}
           </p>
-          <p className="mt-1 text-xs text-muted-foreground">{t('capabilities.catalogNotice')}</p>
         </div>
         <div className="flex shrink-0 flex-wrap items-center gap-2">
           <div
@@ -229,32 +207,37 @@ export function IntegrationProviderCapabilitiesInline({
             </Button>
           ) : null}
           {canManageShared ? (
-            <Button
-              size="xs"
-              disabled={
-                revision.length !== 64 ||
-                !isDirty ||
-                policyQuery.isFetching ||
-                policyQuery.isError ||
-                updateMutation.isPending
-              }
-              onClick={() =>
-                updateMutation.mutate(
-                  { revision, policies: draft },
-                  {
-                    onSuccess: response => {
-                      const saved = response.data.items ?? response.data.policies ?? [];
-                      setDraft(saved);
-                      setBaseline(saved);
-                      setRevision(response.data.revision);
-                    },
-                  }
-                )
-              }
-            >
-              <Save className="size-3.5" />
-              {t('capabilities.saveExecutionSettings')}
-            </Button>
+            <div className="flex items-center gap-2 rounded-md border bg-muted/20 p-1 pl-2">
+              <span className="text-[11px] text-muted-foreground">
+                {t('capabilities.scope.organizationPolicy')}
+              </span>
+              <Button
+                size="xs"
+                disabled={
+                  revision.length !== 64 ||
+                  !isDirty ||
+                  policyQuery.isFetching ||
+                  policyQuery.isError ||
+                  updateMutation.isPending
+                }
+                onClick={() =>
+                  updateMutation.mutate(
+                    { revision, policies: draft },
+                    {
+                      onSuccess: response => {
+                        const saved = response.data.items ?? response.data.policies ?? [];
+                        setDraft(saved);
+                        setBaseline(saved);
+                        setRevision(response.data.revision);
+                      },
+                    }
+                  )
+                }
+              >
+                <Save className="size-3.5" />
+                {t('capabilities.saveExecutionSettings')}
+              </Button>
+            </div>
           ) : null}
         </div>
       </div>

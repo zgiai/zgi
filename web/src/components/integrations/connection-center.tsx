@@ -30,6 +30,7 @@ import { useOrganizations } from '@/hooks/organization/use-organizations';
 import { useT } from '@/i18n';
 import { integrationService } from '@/services/integration.service';
 import { useIntegrationMetadata } from './metadata-i18n';
+import { isConnectableProviderVisible } from './catalog-visibility';
 
 export type IntegrationConnectionCenterView = 'available' | 'connected' | 'policies' | 'executions';
 
@@ -80,6 +81,7 @@ export function IntegrationConnectionCenter({
   const oauthRecoveryQuery = useIntegrationOAuthRecovery(enabled && canManageShared);
   const oauthRecovery = oauthRecoveryQuery.data?.data;
   const catalog = integrationCatalogItems(catalogQuery.data?.data);
+  const connectableCatalog = useMemo(() => catalog.filter(isConnectableProviderVisible), [catalog]);
   const managedConnections = useMemo(() => {
     const source = canManageShared
       ? [
@@ -110,14 +112,14 @@ export function IntegrationConnectionCenter({
 
   const categories = useMemo(() => {
     const values = new Map<string, { value: string; label: string }>();
-    for (const provider of catalog) {
+    for (const provider of connectableCatalog) {
       for (const value of provider.categories ?? (provider.category ? [provider.category] : [])) {
         if (!value || values.has(value)) continue;
         values.set(value, { value, label: metadata.category(value, provider) });
       }
     }
     return [...values.values()];
-  }, [catalog, metadata]);
+  }, [connectableCatalog, metadata]);
 
   const connectedProviderCount = useMemo(
     () =>
@@ -234,7 +236,7 @@ export function IntegrationConnectionCenter({
                     >
                       {t('connectionCenter.tabs.available')}
                       <span className="rounded-full bg-muted px-2 py-0.5 text-xs tabular-nums">
-                        {catalog.length}
+                        {connectableCatalog.length}
                       </span>
                     </TabsTrigger>
                     <TabsTrigger

@@ -46,6 +46,43 @@ func TestExecutorReplaysConfirmedGuardedSuccessWithoutCallingProviderAgain(t *te
 	}
 }
 
+func TestExecutorPersistsCanonicalTypedOutputBeforeReplayingGuardedSuccess(t *testing.T) {
+	action := guardedTestAction()
+	action.OutputSchema = map[string]interface{}{
+		"type":                 "object",
+		"additionalProperties": false,
+		"properties": map[string]interface{}{
+			"accepted_recipients": map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
+		},
+		"required": []string{"accepted_recipients"},
+	}
+	adapter := &testAdapter{driverID: "test", execute: func(context.Context, ActionRequest) (*ActionResult, error) {
+		return &ActionResult{Output: map[string]interface{}{"accepted_recipients": []string{"recipient-a"}}}, nil
+	}}
+	receipts := newMemoryOperationReceiptRepository()
+	executor := NewExecutor(registerTestAction(t, action, adapter), &testAudit{}, &testQuota{}, nil, []byte("operation-test-key"), 0).
+		WithOperationReceiptRepository(receipts)
+	req := guardedActionRequest(testMessageID, "recipient-a", "hello")
+
+	first, err := executor.Execute(context.Background(), req)
+	if err != nil {
+		t.Fatalf("first Execute() error = %v", err)
+	}
+	replayed, err := executor.Execute(context.Background(), req)
+	if err != nil {
+		t.Fatalf("replayed Execute() error = %v", err)
+	}
+	if adapter.calls != 1 || first == nil || replayed == nil || !replayed.Replayed {
+		t.Fatalf("adapter calls=%d first=%#v replayed=%#v", adapter.calls, first, replayed)
+	}
+	if _, ok := first.Output["accepted_recipients"].([]interface{}); !ok {
+		t.Fatalf("first output was not canonical JSON: %T %#v", first.Output["accepted_recipients"], first.Output)
+	}
+	if _, ok := replayed.Output["accepted_recipients"].([]interface{}); !ok {
+		t.Fatalf("replayed output was not canonical JSON: %T %#v", replayed.Output["accepted_recipients"], replayed.Output)
+	}
+}
+
 func TestExecutorGuardAllowsRetryAfterDefiniteFailure(t *testing.T) {
 	calls := 0
 	adapter := &testAdapter{driverID: "test", execute: func(context.Context, ActionRequest) (*ActionResult, error) {

@@ -42,14 +42,14 @@ func TestPublicToolErrorRecoveryForExternalAppsAddsMetaToolInstructions(t *testi
 
 func TestPublicToolErrorRecoveryForDirectToolStaysOnCurrentSurface(t *testing.T) {
 	directExpected := map[string]interface{}{
-		"skill_id":  "web-search",
-		"tool_name": "search_web",
+		"skill_id":  "file-reader",
+		"tool_name": "read_file",
 		"schema":    map[string]interface{}{"type": "object"},
 	}
 	recovery := PublicToolErrorRecoveryForInvocation(
 		recoverableActionSchemaError{},
-		"web-search",
-		"search_web",
+		"file-reader",
+		"read_file",
 		directExpected,
 	)
 	if recovery["recovery_action"] != "retry_current_tool" {
@@ -60,7 +60,7 @@ func TestPublicToolErrorRecoveryForDirectToolStaysOnCurrentSurface(t *testing.T)
 		t.Fatalf("direct-tool retry instruction = %q", retryInstruction)
 	}
 	expected, _ := recovery["expected_arguments"].(map[string]interface{})
-	if expected["skill_id"] != "web-search" || expected["tool_name"] != "search_web" {
+	if expected["skill_id"] != "file-reader" || expected["tool_name"] != "read_file" {
 		t.Fatalf("direct-tool expected arguments = %#v", expected)
 	}
 }

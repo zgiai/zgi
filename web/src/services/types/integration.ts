@@ -118,6 +118,7 @@ export interface IntegrationAuthSetupNotice {
 export interface IntegrationAuthSetupGuide {
   console_url?: string;
   documentation_url?: string;
+  expanded_by_default?: boolean;
   steps?: IntegrationAuthSetupStep[];
   notices?: IntegrationAuthSetupNotice[];
 }
@@ -208,7 +209,8 @@ export interface IntegrationOAuthFlow {
   retryable?: boolean;
   connection_name?: string | null;
   usage_rules_required?: boolean;
-  ai_chat_available?: boolean;
+  /** Internal continuation reference. Never render this value to users. */
+  completed_connection_id?: string;
 }
 
 export interface IntegrationOAuthFlowStartResponse extends IntegrationOAuthFlow {
@@ -525,11 +527,15 @@ export interface IntegrationConnection {
   token_expires_at?: string | null;
   refresh_token_expires_at?: string | null;
   next_token_refresh_at?: string | null;
+  setup_version?: number;
+  setup_completed_at?: string | null;
   last_error_code?: string | null;
   expires_at?: string | null;
   created_at?: string;
   updated_at?: string;
 }
+
+export type CompleteIntegrationConnectionSetupRequest = Record<string, never>;
 
 export interface IntegrationConnectionListResponse {
   data?: IntegrationConnection[];

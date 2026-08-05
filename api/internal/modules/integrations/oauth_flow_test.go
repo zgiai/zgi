@@ -544,8 +544,11 @@ func TestOAuthFlowConnectUsesServerDerivedScopesAndPersistsEncryptedTokens(t *te
 	if err != nil || view.Status != OAuthFlowSucceeded || view.AccountDisplayName != "Provider User" {
 		t.Fatalf("Poll() = %#v, %v", view, err)
 	}
-	if view.CredentialSource != ConnectionCredentialSourceAccount || view.UsageRulesRequired || !view.AIChatAvailable {
+	if view.CredentialSource != ConnectionCredentialSourceAccount || view.UsageRulesRequired {
 		t.Fatalf("Poll() safe readiness fields = %#v", view)
+	}
+	if view.CompletedConnectionID == nil || *view.CompletedConnectionID == uuid.Nil {
+		t.Fatalf("Poll() did not return the internal setup continuation reference: %#v", view)
 	}
 	connections, _ := connectionRepository.List(context.Background(), organizationID, ConnectionListFilter{})
 	if len(connections) != 1 || connections[0].EncryptedCredentials == nil || strings.Contains(*connections[0].EncryptedCredentials, "access-token") {
@@ -1495,7 +1498,7 @@ func TestOAuthFlowOrganizationSuccessRequiresUsageRules(t *testing.T) {
 		ExpiresAt: time.Now().UTC().Add(time.Minute),
 	}
 	view := flowPublicView("opaque-flow-id-that-is-long-enough", flow)
-	if !view.UsageRulesRequired || view.AIChatAvailable {
+	if !view.UsageRulesRequired {
 		t.Fatalf("organization OAuth readiness = %#v", view)
 	}
 }

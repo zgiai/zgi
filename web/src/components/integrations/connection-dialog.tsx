@@ -61,6 +61,7 @@ interface IntegrationConnectionDialogProps {
   onOpenChange: (open: boolean) => void;
   onCreate: (data: CreateIntegrationConnectionRequest) => Promise<void>;
   onUpdate: (id: string, data: UpdateIntegrationConnectionRequest) => Promise<void>;
+  onOAuthCompleted?: (connectionId: string) => void | Promise<void>;
 }
 
 type CredentialValue = string | boolean;
@@ -102,6 +103,7 @@ export function IntegrationConnectionDialog({
   onOpenChange,
   onCreate,
   onUpdate,
+  onOAuthCompleted,
 }: IntegrationConnectionDialogProps) {
   const t = useT('integrations');
   const metadata = useIntegrationMetadata();
@@ -535,9 +537,11 @@ export function IntegrationConnectionDialog({
               <AuthSetupGuide
                 key={`${integrationId}:${selectedAuth.id}:${editing ? 'edit' : 'create'}`}
                 providerName={
-                  selectedIntegration
-                    ? metadata.providerName(selectedIntegration)
-                    : t('common.unknownExternalApp')
+                  selectedAuth
+                    ? metadata.authMethodLabel(integrationId, selectedAuth)
+                    : selectedIntegration
+                      ? metadata.providerName(selectedIntegration)
+                      : t('common.unknownExternalApp')
                 }
                 guide={selectedAuth.setup_guide}
               />
@@ -688,6 +692,15 @@ export function IntegrationConnectionDialog({
         connectionName={oauthConnectionName}
         onCancel={oauthFlow.cancel}
         onDone={oauthFlow.reset}
+        onContinue={
+          oauthFlow.state.flow?.completed_connection_id && onOAuthCompleted
+            ? () => {
+                const connectionId = oauthFlow.state.flow?.completed_connection_id;
+                oauthFlow.reset();
+                if (connectionId) void onOAuthCompleted(connectionId);
+              }
+            : undefined
+        }
         onRefresh={() => void oauthFlow.refresh()}
         onOpenFullPage={oauthFlow.openFullPage}
         onReopenPopup={oauthFlow.reopenPopup}

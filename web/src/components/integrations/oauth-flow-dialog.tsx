@@ -30,6 +30,7 @@ interface IntegrationOAuthFlowDialogProps {
   connectionName: string;
   onCancel: () => void | Promise<void>;
   onDone: () => void;
+  onContinue?: () => void;
   onRetry: () => void;
   onRefresh: () => void;
   onOpenFullPage: () => void;
@@ -46,6 +47,7 @@ export function IntegrationOAuthFlowDialog({
   connectionName,
   onCancel,
   onDone,
+  onContinue,
   onRetry,
   onRefresh,
   onOpenFullPage,
@@ -160,17 +162,9 @@ export function IntegrationOAuthFlowDialog({
               />
               <OAuthSuccessStep
                 icon={<CheckCircle2 className="size-4" />}
-                title={
-                  state.flow?.ai_chat_available
-                    ? t('oauth.flow.success.aiChatAvailable')
-                    : t('oauth.flow.success.aiChatPending')
-                }
-                description={
-                  state.flow?.ai_chat_available
-                    ? t('oauth.flow.success.aiChatAvailableDescription')
-                    : t('oauth.flow.success.aiChatPendingDescription')
-                }
-                complete={Boolean(state.flow?.ai_chat_available)}
+                title={t('oauth.flow.success.usageTargetsPending')}
+                description={t('oauth.flow.success.usageTargetsPendingDescription')}
+                complete={false}
               />
             </div>
           ) : null}
@@ -198,7 +192,9 @@ export function IntegrationOAuthFlowDialog({
               </Button>
             </>
           ) : (
-            <Button onClick={onDone}>{t('oauth.flow.done')}</Button>
+            <Button onClick={onContinue ?? onDone}>
+              {t(onContinue ? 'oauth.flow.continueSetup' : 'oauth.flow.done')}
+            </Button>
           )}
         </DialogFooter>
       </DialogContent>

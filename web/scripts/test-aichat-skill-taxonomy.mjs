@@ -31,6 +31,7 @@ const {
 const {
   buildAIChatSkillDisplayMap,
   getAIChatSkillDisplayInfo,
+  isHiddenSystemSkill,
 } = require('../src/components/chat/variants/aichat/skill-display.ts');
 const {
   AI_CHAT_SKILL_ICON_BY_KEY,
@@ -100,7 +101,8 @@ const catalogIcons = fs
     return icon;
   });
 
-assert.equal(catalogIcons.length, 32);
-assert.equal(new Set(catalogIcons).size, 32, 'built-in Skills should use distinct icons');
+assert.equal(catalogIcons.length, 31);
+assert.equal(new Set(catalogIcons).size, 31, 'built-in Skills should use distinct icons');
+assert.equal(isHiddenSystemSkill('web-search'), true, 'retired Web Search metadata must stay hidden');
 
 console.log('AIChat Skill taxonomy checks passed.');

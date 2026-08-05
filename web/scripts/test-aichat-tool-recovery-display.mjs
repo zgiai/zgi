@@ -514,7 +514,7 @@ assert.match(resultSummarySource, /action_name_i18n/);
 assert.match(resultSummarySource, /values\.returned/);
 assert.doesNotMatch(resultSummarySource, /formatJSON\(result\.result\)/);
 assert.match(resultSummarySource, /normalizedSkillId === 'external-apps'/);
-assert.match(resultSummarySource, /normalizedSkillId === 'web-search'/);
+assert.doesNotMatch(resultSummarySource, /normalizedSkillId === 'web-search'/);
 assert.match(resultSummarySource, /case 'list_connections'/);
 assert.match(resultSummarySource, /case 'search_actions'/);
 assert.match(resultSummarySource, /case 'get_action_guide'/);

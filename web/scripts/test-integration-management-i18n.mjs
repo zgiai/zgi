@@ -49,8 +49,10 @@ assert.equal(english.connectionCenter.tabs.connected, 'Connected');
 assert.equal(chinese.connectionCenter.tabs.connected, '已连接');
 assert.equal(english.connectionCenter.quickConnect.connect, 'Connect');
 assert.equal(chinese.connectionCenter.quickConnect.connect, '连接');
-assert.equal(english.connectionCenter.connected.journey.authorized.title, 'Usage rules');
-assert.equal(chinese.connectionCenter.connected.journey.authorized.title, '使用规则');
+assert.equal(english.connectionCenter.connected.overview.label, 'Connection overview');
+assert.equal(chinese.connectionCenter.connected.overview.label, '连接概览');
+assert.equal(english.connectionCenter.connected.columns.usageTargets, 'Available tools');
+assert.equal(chinese.connectionCenter.connected.columns.usageTargets, '可用工具');
 assert.equal(english.connectionCenter.connected.enableAIChat, 'Choose in AIChat');
 assert.equal(chinese.connectionCenter.connected.enableAIChat, '前往 AIChat 选择');
 assert.equal(english.connectionCenter.connected.expandProvider, 'Expand {provider} connections');
@@ -163,9 +165,12 @@ const connectionDialog = source('src/components/integrations/connection-dialog.t
 const connectionsPanel = source('src/components/integrations/connections-panel.tsx');
 const capabilitiesSheet = source('src/components/integrations/provider-capabilities-sheet.tsx');
 const capabilitiesInline = source('src/components/integrations/provider-capabilities-inline.tsx');
+const capabilityView = source('src/components/integrations/provider-capability-view.ts');
 const capabilityAvailability = source(
   'src/components/integrations/provider-capability-availability.tsx'
 );
+const integrationHooks = source('src/hooks/integrations/use-integrations.ts');
+const integrationQueryKeys = source('src/hooks/query-keys.ts');
 const authSetupGuide = source('src/components/integrations/auth-setup-guide.tsx');
 const oauthClientConfig = source('src/components/integrations/oauth-client-config-dialog.tsx');
 assert.doesNotMatch(catalogComponent, /safeIntegrationDisplayText\(item\.driver_id/);
@@ -196,19 +201,29 @@ assert.doesNotMatch(
   /<span className="truncate">[\s\S]*connectionCenter\.quickConnect/
 );
 assert.match(catalogComponent, /IntegrationProviderCapabilitiesSheet/);
+assert.doesNotMatch(catalogComponent, /audience=\{canManageShared/);
+assert.match(catalogComponent, /hasExistingConnection/);
 assert.doesNotMatch(catalogComponent, /title=\{t\('authMethodPicker\.otherMethods'\)\}/);
-assert.match(capabilitiesSheet, /useIntegrationProviderCapabilities/);
-assert.match(capabilitiesSheet, /audience\?: 'account' \| 'organization'/);
-assert.match(capabilitiesSheet, /provider\?\.actions \?\? \[\]/);
+assert.match(capabilitiesSheet, /useCurrentAccountProviderCapabilityView/);
+assert.doesNotMatch(capabilitiesSheet, /audience\?: 'account' \| 'organization'/);
+assert.match(capabilitiesSheet, /hasExistingConnection/);
 assert.match(capabilitiesInline, /useIntegrationActionPolicies/);
 assert.match(capabilitiesInline, /useUpdateIntegrationActionPolicies/);
 assert.match(capabilitiesInline, /approval_policy/);
 assert.match(capabilitiesInline, /data_egress_allowed/);
-assert.match(capabilitiesInline, /useIntegrationProviderCapabilities/);
+assert.match(capabilitiesInline, /useCurrentAccountProviderCapabilityView/);
 assert.match(
-  capabilitiesInline,
-  /useIntegrationProviderCapabilities\(integrationId,\s*'account'\)/,
-  'the connected capability view must include the current account connections even for administrators'
+  capabilityView,
+  /useIntegrationProviderCapabilities\(integrationId,\s*'account',\s*enabled\)/,
+  'all user-facing capability views must include current-account connections even for administrators'
+);
+assert.match(capabilityView, /liveCapabilityByAction/);
+assert.match(capabilityView, /authenticationMethods/);
+assert.match(integrationQueryKeys, /capabilityLists/);
+assert.match(
+  integrationHooks,
+  /useConnectionGrantMutation[\s\S]*INTEGRATION_KEYS\.capabilityLists\(\)/,
+  'usage-rule changes must immediately invalidate capability availability'
 );
 assert.match(capabilityAvailability, /status_unavailable/);
 assert.match(capabilityAvailability, /compatibleConnectionCount/);
@@ -228,7 +243,12 @@ assert.match(oauthClientConfig, /guide=\{auth\?\.setup_guide\}/);
 assert.match(connectionDialog, /<AuthSetupGuide/);
 assert.match(connectionDialog, /guide=\{selectedAuth\.setup_guide\}/);
 assert.match(connectionDialog, /!oauthSelected && selectedAuth\?\.setup_guide/);
-assert.doesNotMatch(authSetupGuide, /defaultOpen/);
+assert.match(
+  authSetupGuide,
+  /defaultOpen=\{guide\?\.expanded_by_default\}/,
+  'setup guides may only default open when provider metadata explicitly requests it'
+);
+assert.doesNotMatch(authSetupGuide, /defaultOpen(?:=\{true\}|\s)/);
 assert.doesNotMatch(oauthClientConfig, /defaultOpen/);
 assert.doesNotMatch(connectionDialog, /defaultOpen/);
 assert.doesNotMatch(connectionCenter, /IntegrationActionPoliciesPanel/);
@@ -270,8 +290,14 @@ assert.match(
   /selectedConnectionIDs\.has\(connection\.id\)[\s\S]*availableConnectionIDs/
 );
 assert.match(connectionsPanel, /@container\/connections/);
-assert.match(connectionsPanel, /@\[1040px\]\/connections:grid/);
-assert.match(connectionsPanel, /<ol className=/);
+assert.match(connectionsPanel, /@\[1120px\]\/connections:grid/);
+assert.match(connectionsPanel, /function ConnectionOverviewStrip/);
+assert.doesNotMatch(connectionsPanel, /function ConnectionJourney/);
+assert.match(
+  connectionsPanel,
+  /aria-label=\{t\('connectionCenter\.connected\.overview\.label'\)\}/
+);
+assert.doesNotMatch(connectionsPanel, /md:right-\[calc\(-50%\+0\.875rem\)\]/);
 assert.match(connectionsPanel, /initializedExpandedProvider = useRef\(false\)/);
 assert.match(
   connectionsPanel,
@@ -285,13 +311,28 @@ assert.match(
   connectionsPanel.slice(collapseTriggerIndex, collapseTriggerIndex + 1_500),
   /type="button"[\s\S]*isIcon[\s\S]*size-9[\s\S]*collapseProvider/
 );
-assert.doesNotMatch(connectionsPanel, /function ConnectionUsageRulesAction[\s\S]*variant="link"/);
+const primaryActionStart = connectionsPanel.indexOf('function ConnectionPrimaryAction');
+const availableToolsStatusStart = connectionsPanel.indexOf(
+  'function ConnectionAvailableToolsStatus',
+  primaryActionStart
+);
+assert.ok(primaryActionStart >= 0 && availableToolsStatusStart > primaryActionStart);
+assert.doesNotMatch(connectionsPanel, /function ConnectionUsageRulesAction/);
+assert.doesNotMatch(
+  connectionsPanel.slice(
+    availableToolsStatusStart,
+    connectionsPanel.indexOf('function AddConnectionButton')
+  ),
+  /<Button/
+);
 assert.match(
   connectionsPanel,
-  /function ConnectionUsageRulesAction[\s\S]*variant=\{needsConfiguration \? 'default' : 'secondary'\}[\s\S]*onClick=\{onManage\}[\s\S]*<ShieldCheck/
+  /function ConnectionPrimaryAction[\s\S]*variant=\{needsSetup \? 'outline' : 'default'\}[\s\S]*onClick=\{needsSetup \? onContinueSetup : onConfigureTools\}[\s\S]*<ShieldCheck/
 );
+assert.equal((connectionsPanel.match(/<ConnectionPrimaryAction/g) ?? []).length, 1);
+assert.match(connectionsPanel, /primaryActionNeedsSetup/);
 assert.match(connectionsPanel, /connectionCenter\.connected\.usageRules/);
-assert.match(connectionsPanel, /connectionCenter\.connected\.aiChat/);
+assert.match(connectionsPanel, /connectionCenter\.connected\.availableTools/);
 assert.match(connectionsPanel, /connections\.actions\.disconnectAccount/);
 assert.match(connectionsPanel, /disconnect\.description/);
 assert.match(connectionsPanel, /confirmDisabled=\{deleteBlocked\}/);

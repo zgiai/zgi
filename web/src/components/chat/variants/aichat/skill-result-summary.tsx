@@ -384,12 +384,6 @@ function buildResultRows(
         return buildSafeDeliveryRows(result, [], t);
     }
   }
-  if (
-    normalizedSkillId === 'web-search' &&
-    (normalizedToolName === 'search_web' || normalizedToolName === 'fetch_webpage')
-  ) {
-    return buildSafeDeliveryRows(result, ['results'], t);
-  }
   const hasKnowledgeFields = KNOWLEDGE_RESULT_KEYS.some(key => result[key] !== undefined);
   if (hasKnowledgeFields) {
     const rows = buildKnowledgeRows(result, t);

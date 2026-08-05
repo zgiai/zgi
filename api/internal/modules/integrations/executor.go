@@ -327,8 +327,18 @@ func (e *Executor) Execute(ctx context.Context, req ActionRequest) (*ActionResul
 	if callErr == nil {
 		if result == nil || result.Output == nil {
 			callErr = NewError(ErrorCodeResponseInvalid, "integration returned an invalid response", nil)
-		} else if err := tools.ValidateJSONSchemaValue(resolved.Definition.OutputSchema, result.Output); err != nil {
+		} else if normalized, err := tools.NormalizeJSONValue(result.Output); err != nil {
 			callErr = NewError(ErrorCodeResponseInvalid, "integration returned an invalid response", err)
+		} else if output, ok := normalized.(map[string]interface{}); !ok {
+			callErr = NewError(ErrorCodeResponseInvalid, "integration returned an invalid response", nil)
+		} else {
+			// Keep the canonical JSON representation for every downstream
+			// consumer: schema validation, operation receipts, audit completion,
+			// tool messages, and model-visible results.
+			result.Output = output
+			if err := tools.ValidateJSONSchemaValue(resolved.Definition.OutputSchema, result.Output); err != nil {
+				callErr = NewError(ErrorCodeResponseInvalid, "integration returned an invalid response", err)
+			}
 		}
 	}
 	if operationReceipt != nil {

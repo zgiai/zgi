@@ -79,10 +79,10 @@ async function invalidateOAuthCompletionCaches(
     queryClient.invalidateQueries({ queryKey: INTEGRATION_KEYS.catalog() }),
     queryClient.invalidateQueries({ queryKey: INTEGRATION_KEYS.connections() }),
     queryClient.invalidateQueries({
-      queryKey: [...INTEGRATION_KEYS.all, 'my-connections'],
+      queryKey: INTEGRATION_KEYS.myConnectionLists(),
     }),
     queryClient.invalidateQueries({
-      queryKey: [...INTEGRATION_KEYS.all, 'available-connections'],
+      queryKey: INTEGRATION_KEYS.availableConnectionLists(),
     }),
     queryClient.invalidateQueries({
       queryKey: [...AICHAT_KEYS.all, 'integration-preferences'],

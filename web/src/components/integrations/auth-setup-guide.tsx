@@ -79,7 +79,10 @@ export function AuthSetupGuide({ providerName, guide, callbackURL }: AuthSetupGu
   };
 
   return (
-    <Collapsible className="overflow-hidden rounded-xl border">
+    <Collapsible
+      defaultOpen={guide?.expanded_by_default}
+      className="overflow-hidden rounded-xl border"
+    >
       <CollapsibleTrigger asChild>
         <button
           type="button"

@@ -95,13 +95,16 @@ export const AGENT_KEYS = {
 export const INTEGRATION_KEYS = {
   all: ['integrations'] as const,
   catalog: () => [...INTEGRATION_KEYS.all, 'catalog'] as const,
+  capabilityLists: () => [...INTEGRATION_KEYS.all, 'capabilities'] as const,
   capabilities: (integrationId: string, audience: 'account' | 'organization') =>
-    [...INTEGRATION_KEYS.catalog(), integrationId, 'capabilities', audience] as const,
+    [...INTEGRATION_KEYS.capabilityLists(), integrationId, audience] as const,
   connections: () => [...INTEGRATION_KEYS.all, 'connections'] as const,
   connectionList: (params?: unknown) => [...INTEGRATION_KEYS.connections(), params] as const,
-  myConnections: (params?: unknown) => [...INTEGRATION_KEYS.all, 'my-connections', params] as const,
+  myConnectionLists: () => [...INTEGRATION_KEYS.all, 'my-connections'] as const,
+  myConnections: (params?: unknown) => [...INTEGRATION_KEYS.myConnectionLists(), params] as const,
+  availableConnectionLists: () => [...INTEGRATION_KEYS.all, 'available-connections'] as const,
   availableConnections: (params?: unknown) =>
-    [...INTEGRATION_KEYS.all, 'available-connections', params] as const,
+    [...INTEGRATION_KEYS.availableConnectionLists(), params] as const,
   oauthFlows: () => [...INTEGRATION_KEYS.all, 'oauth-flows'] as const,
   oauthFlow: (flowId: string) => [...INTEGRATION_KEYS.oauthFlows(), flowId] as const,
   oauthClientConfig: (integrationId: string, authMethodId: string) =>

@@ -25,8 +25,6 @@ import {
   useCreateIntegrationConnection,
   useCreateMyIntegrationConnection,
   useIntegrationCatalog,
-  useTestIntegrationConnection,
-  useTestMyIntegrationConnection,
 } from '@/hooks';
 import { INTEGRATION_KEYS } from '@/hooks/query-keys';
 import { useT } from '@/i18n';
@@ -34,14 +32,18 @@ import { integrationService } from '@/services/integration.service';
 import type {
   IntegrationAuthDefinition,
   IntegrationCatalogItem,
+  IntegrationConnection,
 } from '@/services/types/integration';
 import { IntegrationAuthMethodPickerDialog } from './auth-method-picker-dialog';
+import { isConnectableProviderVisible } from './catalog-visibility';
 import {
   authMethodsSharingOAuthClient,
   isOAuthAuthMethod,
+  resolveAuthMethodPresentation,
   selectPrimaryAuthMethod,
 } from './auth-method-selection';
 import { IntegrationConnectionDialog } from './connection-dialog';
+import { IntegrationConnectionSetupDialog } from './connection-setup-dialog';
 import { IntegrationProviderHealthBadge } from './health-badge';
 import {
   integrationAuthCredentialSource,
@@ -84,8 +86,6 @@ export function IntegrationProviderCatalog({
   const myConnectionsQuery = useAllMyIntegrationConnections(undefined, canManageShared);
   const createMutation = useCreateIntegrationConnection();
   const createMyMutation = useCreateMyIntegrationConnection();
-  const testMutation = useTestIntegrationConnection();
-  const testMyMutation = useTestMyIntegrationConnection();
   const [selectedProvider, setSelectedProvider] = useState<IntegrationCatalogItem | null>(null);
   const [selectedAuthMethod, setSelectedAuthMethod] = useState<IntegrationAuthDefinition | null>(
     null
@@ -100,7 +100,10 @@ export function IntegrationProviderCatalog({
     null
   );
   const [continueAfterOAuthConfig, setContinueAfterOAuthConfig] = useState(false);
-  const catalog = integrationCatalogItems(catalogQuery.data?.data).filter(item => item.enabled);
+  const [setupConnection, setSetupConnection] = useState<IntegrationConnection | null>(null);
+  const catalog = integrationCatalogItems(catalogQuery.data?.data).filter(
+    item => item.enabled && isConnectableProviderVisible(item)
+  );
   const connections = useMemo(() => {
     const source = canManageShared
       ? [
@@ -282,6 +285,12 @@ export function IntegrationProviderCatalog({
               );
             });
             const primaryAuth = selectPrimaryAuthMethod(authDefinitions, canManageShared);
+            const requiresExplicitMethodSelection =
+              authDefinitions.length > 1 &&
+              authDefinitions.every(
+                method =>
+                  resolveAuthMethodPresentation(method).acquisitionStrategy === 'manual_form'
+              );
             const oauthClientMissing =
               Boolean(primaryAuth && isOAuthAuthMethod(primaryAuth)) &&
               !primaryAuth?.oauth?.client_configured;
@@ -337,11 +346,19 @@ export function IntegrationProviderCatalog({
                     <Button
                       size="sm"
                       className={
-                        authDefinitions.length > 1 ? 'min-w-0 flex-1 rounded-r-none' : 'w-full'
+                        authDefinitions.length > 1 && !requiresExplicitMethodSelection
+                          ? 'min-w-0 flex-1 rounded-r-none'
+                          : 'w-full'
                       }
                       variant={oauthClientMissing ? 'outline' : 'default'}
                       onClick={() => {
-                        if (primaryAuth) openAuthMethod(provider, primaryAuth);
+                        if (requiresExplicitMethodSelection) {
+                          setAuthPickerProvider(provider);
+                          setAuthPickerMethods(authDefinitions);
+                          setAuthPickerRecommendedId('');
+                        } else if (primaryAuth) {
+                          openAuthMethod(provider, primaryAuth);
+                        }
                       }}
                       disabled={!primaryAuth || (oauthClientMissing && !canManageShared)}
                     >
@@ -366,7 +383,7 @@ export function IntegrationProviderCatalog({
                             )}
                       </span>
                     </Button>
-                    {authDefinitions.length > 1 ? (
+                    {authDefinitions.length > 1 && !requiresExplicitMethodSelection ? (
                       <Button
                         type="button"
                         size="sm"
@@ -437,9 +454,7 @@ export function IntegrationProviderCatalog({
         catalog={selectedProvider ? [selectedProvider] : catalog}
         context={dialogMode === 'shared' ? 'shared' : 'personal'}
         isSubmitting={
-          (dialogMode === 'shared' ? createMutation.isPending : createMyMutation.isPending) ||
-          testMutation.isPending ||
-          testMyMutation.isPending
+          dialogMode === 'shared' ? createMutation.isPending : createMyMutation.isPending
         }
         allowedCredentialSources={dialogMode === 'shared' ? ['organization'] : ['account']}
         availableAuthMethodsOnly
@@ -456,19 +471,42 @@ export function IntegrationProviderCatalog({
             dialogMode === 'shared'
               ? await createMutation.mutateAsync(data)
               : await createMyMutation.mutateAsync(data);
-          const saved = response.data;
-          try {
-            if (saved.credential_source === 'account') {
-              await testMyMutation.mutateAsync(saved.id);
-            } else {
-              await testMutation.mutateAsync(saved.id);
-            }
-          } catch {
-            // The credential remains saved and its failed health state is
-            // reported by the test mutation.
-          }
+          setSetupConnection(response.data);
         }}
         onUpdate={async () => undefined}
+        onOAuthCompleted={async connectionId => {
+          try {
+            const personalResponse = await integrationService.getAllMyConnections();
+            const personalConnection = integrationConnectionItems(personalResponse.data).find(
+              item => item.id === connectionId
+            );
+            if (personalConnection) {
+              setSetupConnection(personalConnection);
+            } else if (canManageShared) {
+              const response = await integrationService.getConnection(connectionId);
+              setSetupConnection(response.data);
+            } else {
+              toast.error(t('setup.resumeFailed'));
+            }
+          } catch {
+            toast.error(t('setup.resumeFailed'));
+          }
+        }}
+      />
+
+      <IntegrationConnectionSetupDialog
+        open={Boolean(setupConnection)}
+        connection={setupConnection}
+        provider={
+          setupConnection
+            ? catalog.find(item => integrationCatalogID(item) === setupConnection.integration_id)
+            : undefined
+        }
+        onOpenChange={nextOpen => {
+          if (!nextOpen) setSetupConnection(null);
+        }}
+        canManageShared={canManageShared}
+        onCompleted={setSetupConnection}
       />
 
       <IntegrationAuthMethodPickerDialog
@@ -538,7 +576,14 @@ export function IntegrationProviderCatalog({
 
       <IntegrationProviderCapabilitiesSheet
         provider={capabilityProvider}
-        audience={canManageShared ? 'organization' : 'account'}
+        hasExistingConnection={Boolean(
+          capabilityProvider &&
+            connections.some(
+              connection =>
+                connection.integration_id === integrationCatalogID(capabilityProvider) &&
+                connection.status !== 'disabled'
+            )
+        )}
         open={Boolean(capabilityProvider)}
         onOpenChange={nextOpen => {
           if (!nextOpen) setCapabilityProvider(null);

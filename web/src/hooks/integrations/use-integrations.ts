@@ -16,6 +16,7 @@ import type {
   IntegrationConnection,
   IntegrationConnectionGrant,
   IntegrationConnectionHealthEvent,
+  IntegrationConnectionTestResult,
   IntegrationExecution,
   SaveIntegrationConnectionGrantRequest,
   UpdateIntegrationOAuthClientConfigRequest,
@@ -346,12 +347,13 @@ function useConnectionMutation<TVariables, TData = unknown>(
       void queryClient.invalidateQueries({ queryKey: INTEGRATION_KEYS.connections() });
       void queryClient.invalidateQueries({ queryKey: INTEGRATION_KEYS.myConnections() });
       void queryClient.invalidateQueries({
-        queryKey: [...INTEGRATION_KEYS.all, 'available-connections'],
+        queryKey: INTEGRATION_KEYS.availableConnectionLists(),
       });
       void queryClient.invalidateQueries({
         queryKey: [...AICHAT_KEYS.all, 'integration-preferences'],
       });
       void queryClient.invalidateQueries({ queryKey: INTEGRATION_KEYS.catalog() });
+      void queryClient.invalidateQueries({ queryKey: INTEGRATION_KEYS.capabilityLists() });
       void queryClient.invalidateQueries({ queryKey: INTEGRATION_KEYS.executions() });
     },
     onError: error => {
@@ -360,9 +362,10 @@ function useConnectionMutation<TVariables, TData = unknown>(
       if (successKey === 'tested') {
         void queryClient.invalidateQueries({ queryKey: INTEGRATION_KEYS.connections() });
         void queryClient.invalidateQueries({
-          queryKey: [...INTEGRATION_KEYS.all, 'available-connections'],
+          queryKey: INTEGRATION_KEYS.availableConnectionLists(),
         });
         void queryClient.invalidateQueries({ queryKey: INTEGRATION_KEYS.catalog() });
+        void queryClient.invalidateQueries({ queryKey: INTEGRATION_KEYS.capabilityLists() });
       }
     },
   });
@@ -379,27 +382,29 @@ function useMyConnectionMutation<TVariables, TData = unknown>(
     onSuccess: () => {
       toast.success(t(`messages.${successKey}`));
       void queryClient.invalidateQueries({
-        queryKey: [...INTEGRATION_KEYS.all, 'my-connections'],
+        queryKey: INTEGRATION_KEYS.myConnectionLists(),
       });
       void queryClient.invalidateQueries({
-        queryKey: [...INTEGRATION_KEYS.all, 'available-connections'],
+        queryKey: INTEGRATION_KEYS.availableConnectionLists(),
       });
       void queryClient.invalidateQueries({
         queryKey: [...AICHAT_KEYS.all, 'integration-preferences'],
       });
       void queryClient.invalidateQueries({ queryKey: INTEGRATION_KEYS.catalog() });
+      void queryClient.invalidateQueries({ queryKey: INTEGRATION_KEYS.capabilityLists() });
     },
     onError: error => {
       const key = integrationErrorTranslationKeyFromError(error, 'integrations');
       toast.error(key ? t(key) : t('messages.requestFailed'));
       if (successKey === 'tested') {
         void queryClient.invalidateQueries({
-          queryKey: [...INTEGRATION_KEYS.all, 'my-connections'],
+          queryKey: INTEGRATION_KEYS.myConnectionLists(),
         });
         void queryClient.invalidateQueries({
-          queryKey: [...INTEGRATION_KEYS.all, 'available-connections'],
+          queryKey: INTEGRATION_KEYS.availableConnectionLists(),
         });
         void queryClient.invalidateQueries({ queryKey: INTEGRATION_KEYS.catalog() });
+        void queryClient.invalidateQueries({ queryKey: INTEGRATION_KEYS.capabilityLists() });
       }
     },
   });
@@ -409,20 +414,14 @@ export function useCreateIntegrationConnection() {
   return useConnectionMutation<
     CreateIntegrationConnectionRequest,
     ApiResponseData<IntegrationConnection>
-  >(
-    data => integrationService.createConnection(data),
-    'created'
-  );
+  >(data => integrationService.createConnection(data), 'created');
 }
 
 export function useCreateMyIntegrationConnection() {
   return useMyConnectionMutation<
     CreateIntegrationConnectionRequest,
     ApiResponseData<IntegrationConnection>
-  >(
-    data => integrationService.createMyConnection(data),
-    'created'
-  );
+  >(data => integrationService.createMyConnection(data), 'created');
 }
 
 export function useUpdateIntegrationConnection() {
@@ -440,11 +439,17 @@ export function useUpdateMyIntegrationConnection() {
 }
 
 export function useTestIntegrationConnection() {
-  return useConnectionMutation<string>(id => integrationService.testConnection(id), 'tested');
+  return useConnectionMutation<string, ApiResponseData<IntegrationConnectionTestResult>>(
+    id => integrationService.testConnection(id),
+    'tested'
+  );
 }
 
 export function useTestMyIntegrationConnection() {
-  return useMyConnectionMutation<string>(id => integrationService.testMyConnection(id), 'tested');
+  return useMyConnectionMutation<string, ApiResponseData<IntegrationConnectionTestResult>>(
+    id => integrationService.testMyConnection(id),
+    'tested'
+  );
 }
 
 export function useSetDefaultIntegrationConnection() {
@@ -479,8 +484,9 @@ function useConnectionGrantMutation<TVariables>(
       void queryClient.invalidateQueries({ queryKey: INTEGRATION_KEYS.grants(connectionId) });
       void queryClient.invalidateQueries({ queryKey: INTEGRATION_KEYS.myConnections() });
       void queryClient.invalidateQueries({ queryKey: INTEGRATION_KEYS.connections() });
+      void queryClient.invalidateQueries({ queryKey: INTEGRATION_KEYS.capabilityLists() });
       void queryClient.invalidateQueries({
-        queryKey: [...INTEGRATION_KEYS.all, 'available-connections'],
+        queryKey: INTEGRATION_KEYS.availableConnectionLists(),
       });
       void queryClient.invalidateQueries({
         queryKey: [...AICHAT_KEYS.all, 'integration-preferences'],
@@ -550,13 +556,11 @@ export function useUpdateIntegrationActionPolicies(integrationId: string) {
     onSuccess: () => {
       toast.success(t('messages.policiesSaved'));
       void queryClient.invalidateQueries({ queryKey: INTEGRATION_KEYS.policies(integrationId) });
-      void queryClient.invalidateQueries({
-        queryKey: INTEGRATION_KEYS.capabilities(integrationId, 'organization'),
-      });
+      void queryClient.invalidateQueries({ queryKey: INTEGRATION_KEYS.capabilityLists() });
       void queryClient.invalidateQueries({ queryKey: INTEGRATION_KEYS.catalog() });
       void queryClient.invalidateQueries({ queryKey: INTEGRATION_KEYS.connections() });
       void queryClient.invalidateQueries({
-        queryKey: [...INTEGRATION_KEYS.all, 'available-connections'],
+        queryKey: INTEGRATION_KEYS.availableConnectionLists(),
       });
       void queryClient.invalidateQueries({
         queryKey: [...AICHAT_KEYS.all, 'integration-preferences'],
