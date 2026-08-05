@@ -2,7 +2,7 @@
 
 Read this before preparing a `file-generator/generate_pptx` handoff payload.
 
-The final `presentation` argument must be a strict JSON string accepted by `file-generator/generate_pptx`.
+The final `presentation` argument must be a structured object accepted by `file-generator/generate_pptx`. Pass it directly; do not stringify it.
 
 ## Supported PPTX JSON
 
@@ -88,40 +88,32 @@ Before preparing the handoff payload:
 
 ## JSON Serialization Requirements
 
-The `presentation` argument must be strict JSON produced from one complete presentation object.
+The `presentation` argument must be one complete structured object.
 
 Before handoff, verify all of these are true:
 
-- The string starts with `{` and ends with `}`.
-- There is no Markdown fence such as ```json or ```.
-- There are no comments, trailing commas, ellipses, or explanatory sentences inside the JSON.
-- Every object key is double-quoted.
-- Every string value is double-quoted.
-- Chinese and English visible text appear only inside quoted string values.
-- Literal line breaks inside visible text are encoded as `\n`, not raw multi-line string content.
-- Double quotes inside visible text are escaped as `\"`, or replaced with Chinese quotes.
-- Do not concatenate JSON fragments by hand. Build one object and serialize it.
+- The value is an object, not a JSON string, Markdown block, or prose wrapper.
+- It contains a complete top-level `slides` array.
+- Every slide and element is a complete object using only fields supported by this contract.
+- Visible text remains in the relevant string fields rather than being mixed into the object structure.
+- Build one object directly; do not concatenate serialized fragments by hand.
 
-If any field value is uncertain, put an empty string or concise placeholder string inside quotes; never leave unquoted notes in the JSON.
+If any field value is uncertain, use an empty string or concise placeholder in the appropriate field; never mix planning notes into the presentation object.
 
 ## Completeness and Size Requirements
 
-`unexpected EOF` means the JSON was truncated or not fully closed. Prevent this before handoff.
-
 Before handoff:
 
-- Verify braces and brackets are balanced outside quoted strings: every `{` has `}`, every `[` has `]`.
-- Verify the `slides` array is closed and the final non-space character is `}`.
-- Verify the JSON contains a complete top-level object with `slides`, not a partial object ending inside `elements`, `style`, `rows`, or a text value.
+- Verify the object contains a complete top-level `slides` array, not a partial slide, element, style, row, or text value.
 - Keep the serialized `presentation` compact. Prefer under 10,000 characters for normal decks.
-- For long source material, create fewer slides with concise bullets first. Do not produce a very large JSON payload in one tool call.
+- For long source material, create fewer slides with concise bullets first. Do not produce a very large object in one tool call.
 - Prefer no more than 8 slides per generated deck unless the user explicitly requires more.
 - Prefer no more than 10 elements per slide. Merge decorative shapes and remove nonessential labels before expanding payload size.
 - Keep text concise: normal body slides should use 3 to 5 bullets, not paragraphs.
 
 If the payload is likely to exceed the size budget, reduce slide count, shorten text, simplify styles, and remove optional decorative elements before handoff.
 
-If downstream file generation returns `unexpected EOF`, do not resend the same payload and do not just append closing braces. Rebuild the complete presentation JSON from the slide plan with fewer slides/elements and validate closure again.
+If downstream file generation rejects an incomplete presentation, do not resend the same payload. Rebuild a complete object from the slide plan with fewer slides or elements and validate it against this contract.
 
 ## Minimal Valid Shape
 
@@ -191,10 +183,9 @@ If downstream file generation returns `unexpected EOF`, do not resend the same p
 This skill does not call tools directly. When PPTX output is required, hand this payload to the `file-generator` skill, which calls:
 
 - `tool_name`: `generate_pptx`
-- `arguments.presentation`: strict JSON string, not a Markdown code block.
+- `arguments.presentation`: structured object, not a JSON string or Markdown code block.
 - `arguments.filename`: short ASCII filename.
-- `arguments.title`: deck title.
-- `arguments.lifecycle`: `persistent` unless temporary output was requested.
+- `arguments.lifecycle`: `temporary` unless the user or calling workflow explicitly requests persistent output.
 
 Do not pass Markdown, HTML, raw outline text, or the slide plan object directly as `presentation`.
-Do not pass a partially generated object with prose mixed into it. If the JSON cannot be validated mentally as strict JSON, repair it before handoff.
+Do not pass a partially generated object with prose mixed into it. Validate that the complete object matches the presentation contract before handoff.

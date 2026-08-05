@@ -8,7 +8,7 @@ Use this reference when `format` is `xlsx` or `excel`.
 - `format`: Use `xlsx`.
 - `filename`: Optional display filename without path separators. The `.xlsx` extension is added automatically.
 - `title`: Optional visible workbook title. When provided, it is rendered as a merged title row above the table.
-- `lifecycle`: Optional `persistent` or `temporary`. Defaults to `persistent`.
+- `lifecycle`: Optional `persistent` or `temporary`. Defaults to `temporary`.
 
 ## Content Rules
 

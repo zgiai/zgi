@@ -8,7 +8,7 @@ Use this reference when `format` is `csv`.
 - `format`: Use `csv`.
 - `filename`: Optional display filename without path separators. The `.csv` extension is added automatically.
 - `title`: Ignored for CSV.
-- `lifecycle`: Optional `persistent` or `temporary`. Defaults to `persistent`.
+- `lifecycle`: Optional `persistent` or `temporary`. Defaults to `temporary`.
 
 ## Content Rules
 

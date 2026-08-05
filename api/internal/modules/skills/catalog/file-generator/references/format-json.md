@@ -8,7 +8,7 @@ Use this reference when `format` is `json`.
 - `format`: Use `json`.
 - `filename`: Optional display filename without path separators. The `.json` extension is added automatically.
 - `title`: Ignored for JSON.
-- `lifecycle`: Optional `persistent` or `temporary`. Defaults to `persistent`.
+- `lifecycle`: Optional `persistent` or `temporary`. Defaults to `temporary`.
 
 ## Content Rules
 

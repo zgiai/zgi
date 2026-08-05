@@ -8,7 +8,7 @@ Use this reference when `format` is `docx` or `word`.
 - `format`: Use `docx`.
 - `filename`: Optional display filename without path separators. The `.docx` extension is added automatically.
 - `title`: Ignored for DOCX.
-- `lifecycle`: Optional `persistent` or `temporary`. Defaults to `persistent`.
+- `lifecycle`: Optional `persistent` or `temporary`. Defaults to `temporary`.
 
 ## Content Rules
 

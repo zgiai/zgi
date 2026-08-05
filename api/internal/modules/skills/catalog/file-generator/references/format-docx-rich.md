@@ -4,12 +4,12 @@ Use this reference when the user asks for a Word document with styling, layout, 
 
 ## Tool Parameters
 
-- `document`: JSON string describing the DOCX document.
+- `document`: Structured object describing the DOCX document. Pass the object directly; do not stringify it.
 - `filename`: Optional display filename without path separators. The `.docx` extension is added automatically.
 - `title`: Optional title metadata. Visible title text must still be included in `document.blocks`.
-- `lifecycle`: Optional `persistent` or `temporary`. Defaults to `persistent`.
+- `lifecycle`: Optional `persistent` or `temporary`. Defaults to `temporary`.
 
-## Document JSON
+## Document Object
 
 The JSON root object supports:
 
@@ -59,9 +59,19 @@ Example:
     },
     {
       "type": "table",
-      "headers": ["Item", "Quantity", "Unit Price", "Amount"],
+      "headers": [
+        { "text": "Item" },
+        { "text": "Quantity" },
+        { "text": "Unit Price" },
+        { "text": "Amount" }
+      ],
       "rows": [
-        ["Electricity", "123.33", "0.92", "113.47"]
+        [
+          { "text": "Electricity" },
+          { "text": "123.33" },
+          { "text": "0.92" },
+          { "text": "113.47" }
+        ]
       ],
       "style": {
         "alignment": "center"
@@ -86,7 +96,7 @@ Text and run styles:
 - `font_size`
 - `bold`
 - `italic`
-- `underline`: boolean or underline style such as `single`, `double`, or `wave`
+- `underline`: underline style such as `none`, `single`, `double`, or `wave`
 - `color`: `RRGGBB` or `#RRGGBB`
 - `highlight`: Word highlight color such as `yellow`, `green`, or `cyan`
 
@@ -119,7 +129,7 @@ Table blocks may use:
 ## Constraints
 
 - This creates a new DOCX file. It does not edit an existing DOCX or preserve a user-uploaded template.
-- Do not use Markdown or HTML as `document`; pass JSON.
+- Do not use Markdown or HTML as `document`; pass the structured object directly.
 - Every item in a `runs` array must include non-empty `text`. Omit empty runs instead of using `{"text":""}`.
 - Use a paragraph with visible `text` for blank-line labels or separators; do not create heading or paragraph blocks that contain only empty runs.
 - Tables are simple rectangular tables. Do not promise complex merged cells, formulas, charts, images, headers, footers, comments, revisions, or automatic table of contents.

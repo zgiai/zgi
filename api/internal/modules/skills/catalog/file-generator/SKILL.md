@@ -146,16 +146,17 @@ This skill creates new workflow files; it does not edit an existing uploaded fil
 5. Use `generate_docx` when a Word document needs headings, fonts, font sizes, alignment, spacing, page margins, page breaks, colored/bold/underlined text, or simple tables.
 6. Use `generate_pdf` when a PDF needs richer layout, print CSS, tables, colors, page margins, page breaks, or business-report formatting.
 7. Use `generate_pptx` when the user needs an editable static PowerPoint deck.
-8. For PPTX, plan the slide layout before writing JSON. Use non-overlapping boxes for titles, text, and tables. Split dense content into more slides instead of shrinking text or stacking elements.
+8. For PPTX, plan the slide layout before building the structured presentation object. Use non-overlapping boxes for titles, text, and tables. Split dense content into more slides instead of shrinking text or stacking elements.
 9. For PPTX with Chinese or other dense text, treat "more text" as more slides, not denser text boxes. Keep body paragraphs short; use bullets, columns, or additional slides before exceeding the readable capacity of a box.
 10. Before calling `generate_pptx`, self-check that each slide's readable content fits within the slide bounds, does not overlap, uses explicit `x`, `y`, `w`, and `h` when the layout matters, and avoids long unbroken lines.
 11. Always create a temporary downloadable artifact. This skill does not write generated output into File Management.
 12. If the user explicitly asks to save, create, upload, add, or import the generated result into File Management or the current Files page, first generate the artifact here, then use `file-manager/save_file_to_management` with the returned `tool_file_id`/`file_id` and destination filename.
 13. For file-first requests, put the complete body directly in the generation tool call. Do not first emit the same complete body through `submit_intermediate_answer`. Only show the complete body in chat as well when the user explicitly asks to see both the chat text and the file.
-14. In the final answer, briefly mention the generated filename and format.
-15. Do not invent, rewrite, shorten, or manually format download links. The system UI displays generated file download controls from structured artifact events.
-16. A generic request for a "file" or "document" does not imply Word. When the content is structured prose and no format is specified, use `generate_file` with `md`; use `txt` only when formatting is unnecessary.
-17. If a generation call fails schema validation, correct the selected tool's arguments and retry it at most once. Do not switch to another format-specific tool merely to bypass a missing required argument.
+14. After the required format reference is read and the source material is sufficient, call the selected generation tool immediately. On that tool-calling turn, leave ordinary assistant content empty; do not first draft or duplicate the report, analysis, or document body outside the tool arguments.
+15. In the final answer, briefly mention the generated filename and format.
+16. Do not invent, rewrite, shorten, or manually format download links. The system UI displays generated file download controls from structured artifact events.
+17. A generic request for a "file" or "document" does not imply Word. When the content is structured prose and no format is specified, use `generate_file` with `md`; use `txt` only when formatting is unnecessary.
+18. If a generation call fails schema validation, correct the selected tool's arguments and retry it at most once. Do not switch to another format-specific tool merely to bypass a missing required argument.
 
 ## References
 
@@ -181,10 +182,10 @@ Read exactly one reference after choosing a complex target format. References fo
 - The skill creates new files only. It does not edit existing uploaded files or preserve an existing template.
 - Do not call `generate_docx`, `generate_pdf`, `generate_pptx`, or complex `generate_file` formats (XLSX or SVG) until the selected format reference has been read. MD, TXT, JSON, CSV, and HTML generation may proceed directly from the core skill and tool schema.
 - `generate_file` accepts only its documented simple parameters. Do not invent format-specific parameters such as `sheets`, `styles`, `pages`, `columns`, `headers`, or `metadata`. XLSX output applies the default table styling documented in `format-xlsx.md`; the caller cannot customize those styles through `generate_file`.
-- `generate_docx` accepts a JSON string document specification. Do not pass raw Markdown or HTML as `document`.
+- `generate_docx` accepts a structured document object. Do not stringify it, and do not pass raw Markdown or HTML as `document`.
 - Do not call `generate_docx` unless the user explicitly requested Word/DOCX, an editable Word document, or Word-specific rich formatting. A generic request to "write this as a file/document" should use `generate_file` with `md` (or `txt` for plain text).
 - `generate_pdf` accepts self-contained HTML and optional inline CSS. Do not pass JSON document specs.
-- `generate_pptx` accepts a JSON string presentation specification. Do not pass HTML or Markdown as `presentation`.
+- `generate_pptx` accepts a structured presentation object. Do not stringify it, and do not pass HTML or Markdown as `presentation`.
 - PPTX readable content should not use negative coordinates. Negative `x` or `y` is only appropriate for decorative shapes that intentionally bleed off an edge.
 - Generated file content must fit within the backend file size limit.
 - Do not include filesystem paths in filenames.
@@ -206,9 +207,8 @@ Read exactly one reference after choosing a complex target format. References fo
 
 `generate_docx` accepts:
 
-- `document`: JSON string describing the styled DOCX document.
+- `document`: structured object describing the styled DOCX document.
 - `filename`: optional display filename. The `.docx` extension is added automatically.
-- `title`: optional title hint. Visible content must be in `document.blocks`.
 - `lifecycle`: optional temporary artifact lifecycle, `persistent` or `temporary`. Defaults to `temporary`.
 
 `generate_pdf` accepts:
@@ -221,7 +221,6 @@ Read exactly one reference after choosing a complex target format. References fo
 
 `generate_pptx` accepts:
 
-- `presentation`: JSON string describing the editable static PPTX deck.
+- `presentation`: structured object describing the editable static PPTX deck.
 - `filename`: optional display filename. The `.pptx` extension is added automatically.
-- `title`: optional title hint. Visible content must be in `presentation.slides`.
 - `lifecycle`: optional temporary artifact lifecycle, `persistent` or `temporary`. Defaults to `temporary`.

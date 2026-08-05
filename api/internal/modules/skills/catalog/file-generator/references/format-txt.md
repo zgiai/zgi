@@ -8,7 +8,7 @@ Use this reference when `format` is `txt` or `text`.
 - `format`: Use `txt`.
 - `filename`: Optional display filename without path separators. The `.txt` extension is added automatically.
 - `title`: Ignored for TXT.
-- `lifecycle`: Optional `persistent` or `temporary`. Defaults to `persistent`.
+- `lifecycle`: Optional `persistent` or `temporary`. Defaults to `temporary`.
 
 ## Content Rules
 

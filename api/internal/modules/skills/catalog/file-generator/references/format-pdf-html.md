@@ -8,7 +8,7 @@ Use this reference when the user asks for a PDF with rich visual layout, tables,
 - `css`: Optional inline CSS appended to the document.
 - `filename`: Optional display filename without path separators. The `.pdf` extension is added automatically.
 - `title`: Optional title used when wrapping an HTML fragment. Visible title text must still be included in `html`.
-- `lifecycle`: Optional `persistent` or `temporary`. Defaults to `persistent`.
+- `lifecycle`: Optional `persistent` or `temporary`. Defaults to `temporary`.
 
 ## HTML Rules
 
