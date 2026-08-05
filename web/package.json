@@ -55,6 +55,7 @@
     "test:billing-display": "node --experimental-strip-types --disable-warning=ExperimentalWarning --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-billing-display.mjs && node --experimental-strip-types --disable-warning=ExperimentalWarning --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-usage-fiat-display.mjs",
     "test:work-layout-request-lifecycle": "node scripts/test-work-layout-request-lifecycle.mjs",
     "test:skill-load-timeline-filter": "node scripts/test-skill-load-timeline-filter.mjs",
+    "test:native-model-processing": "node --experimental-strip-types --disable-warning=ExperimentalWarning --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-native-model-processing.mjs",
     "type-check": "node scripts/customer/prepare.mjs && node scripts/generate-sensitive-word-filter.mjs && node scripts/check-i18n-route-modules.mjs && tsc --noEmit",
     "check:i18n-routes": "node scripts/check-i18n-route-modules.mjs",
     "validate:agent-templates": "node scripts/validate-agent-templates.mjs",

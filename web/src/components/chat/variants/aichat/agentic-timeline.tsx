@@ -3277,14 +3277,6 @@ function isRoutineSkillLoadTimelineItem(item: AIChatAgenticTimelineItem): boolea
   return isRoutineSkillLoadInvocation(item.invocation);
 }
 
-function isInternalReferenceReadSkillEvent(item: AIChatAgenticTimelineItem): boolean {
-  return (
-    item.type === 'skill_event' &&
-    item.invocation.kind === 'reference_read' &&
-    getInvocationTone(item.invocation) !== 'error'
-  );
-}
-
 function governedSkillInvocationCorrelationId(invocation: AIChatSkillInvocation): string | null {
   const modelFeedback = governanceRecord(invocation.governance?.model_feedback);
   return (
@@ -3561,7 +3553,6 @@ function filterTimelineForRendering(
         !isSupersededToolGovernanceSkillEvent(item, terminalGovernedToolCorrelationIds) &&
         !isSupersededByClientActionSkillEvent(item, completedClientActionKeys) &&
         !isAssetObservationClientActionTimelineItem(item) &&
-        !isInternalReferenceReadSkillEvent(item) &&
         !isRoutineSkillLoadTimelineItem(item) &&
         !isRedundantAgentWorkflowToolEvent(item, workflowRunIds, workflowInvocationIds) &&
         !(

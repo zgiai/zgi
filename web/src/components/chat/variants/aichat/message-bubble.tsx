@@ -47,7 +47,10 @@ import {
   resolveAIChatErrorMessage,
 } from '@/components/chat/variants/aichat/error-utils';
 import type { AIChatSkillDisplayMap } from '@/components/chat/variants/aichat/skill-display';
-import type { AIChatAgenticTimelineItem } from '@/components/chat/controllers/aichat';
+import type {
+  AIChatAgenticTimelineItem,
+  AIChatStreamingMessageState,
+} from '@/components/chat/controllers/aichat';
 import {
   dedupeTimelineItems,
   mergeRuntimeTimelineWithMessageTimeline,
@@ -68,6 +71,7 @@ interface AIChatMessageBubbleProps {
   message: AIChatMessage;
   isSending?: boolean;
   timeline?: AIChatAgenticTimelineItem[];
+  modelProcessing?: AIChatStreamingMessageState['modelProcessing'];
   presentationItems?: AIChatPresentationItem[];
   answerBeforeTimelineLength?: number;
   skillDisplayById: AIChatSkillDisplayMap;
@@ -1145,6 +1149,7 @@ export function AIChatMessageBubble({
   message,
   isSending = false,
   timeline = [],
+  modelProcessing,
   presentationItems,
   answerBeforeTimelineLength,
   skillDisplayById,
@@ -1302,8 +1307,54 @@ export function AIChatMessageBubble({
         : null,
     [streamingStatus, t]
   );
+  const modelProcessingLabel = useMemo(() => {
+    if (!isStreaming || !modelProcessing) return null;
+    const stage = modelProcessing.stage;
+    switch (modelProcessing.activity) {
+      case 'reasoning':
+        if (stage === 'long_running') {
+          return t('consoleChat.operationStatus.modelProcessing.reasoning.longRunning');
+        }
+        if (stage === 'extended') {
+          return t('consoleChat.operationStatus.modelProcessing.reasoning.extended');
+        }
+        return t('consoleChat.operationStatus.modelProcessing.reasoning.initial');
+      case 'preparing_action':
+        if (stage === 'long_running') {
+          return t('consoleChat.operationStatus.modelProcessing.preparingAction.longRunning');
+        }
+        if (stage === 'extended') {
+          return t('consoleChat.operationStatus.modelProcessing.preparingAction.extended');
+        }
+        return t('consoleChat.operationStatus.modelProcessing.preparingAction.initial');
+      case 'reviewing_tool_result':
+        if (stage === 'long_running') {
+          return t('consoleChat.operationStatus.modelProcessing.reviewingToolResult.longRunning');
+        }
+        if (stage === 'extended') {
+          return t('consoleChat.operationStatus.modelProcessing.reviewingToolResult.extended');
+        }
+        return t('consoleChat.operationStatus.modelProcessing.reviewingToolResult.initial');
+      case 'awaiting_response':
+      default:
+        break;
+    }
+    switch (modelProcessing.stage) {
+      case 'extended':
+        return t('consoleChat.operationStatus.modelProcessing.extended');
+      case 'long_running':
+        return t('consoleChat.operationStatus.modelProcessing.longRunning');
+      case 'initial':
+      default:
+        if ((modelProcessing.round ?? 1) > 1) {
+          return t('consoleChat.operationStatus.modelProcessing.continuing');
+        }
+        return t('consoleChat.operationStatus.modelProcessing.initial');
+    }
+  }, [isStreaming, modelProcessing, t]);
   const showInitialPlanningStatus =
     isStreaming &&
+    !modelProcessingLabel &&
     !streamingStatusLabel &&
     !userInputRequest &&
     !hasGeneratedImagePreviews &&
@@ -1534,7 +1585,20 @@ export function AIChatMessageBubble({
           />
         ) : null}
 
-        {streamingStatusLabel ? (
+        {modelProcessingLabel ? (
+          <div
+            className="mb-3 border-l-2 border-muted-foreground/20 pl-3 text-sm leading-7 text-muted-foreground"
+            role="status"
+            aria-live="polite"
+          >
+            <span className="inline-flex min-w-0 items-center gap-2">
+              <Loader2 className="size-3.5 shrink-0 animate-spin" />
+              <span className="min-w-0 break-words">{modelProcessingLabel}</span>
+            </span>
+          </div>
+        ) : null}
+
+        {!modelProcessingLabel && streamingStatusLabel ? (
           <div className="mb-3 flex min-w-0 items-center gap-2 rounded-md border border-muted-foreground/15 bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
             <Loader2 className="size-3.5 shrink-0 animate-spin" />
             <span className="min-w-0 break-words">{streamingStatusLabel}</span>

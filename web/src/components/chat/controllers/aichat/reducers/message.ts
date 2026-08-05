@@ -175,7 +175,8 @@ export function applyIntermediateAnswerState(
       message: nextContent,
       created_at: payload.created_at,
     },
-    presentationPositionFromPayload(payload)
+    presentationPositionFromPayload(payload),
+    true
   );
 }
 
@@ -248,6 +249,7 @@ export function applyUserInputRequestedState(
           [payload.message_id]: {
             ...previousStreaming,
             answer_before_timeline_length: answerBeforeTimelineLength,
+            modelProcessing: undefined,
             last_event_id: eventId ?? previousStreaming.last_event_id,
           },
         }
@@ -600,6 +602,7 @@ export function applyMessageChunkState(
               [presentationItem.segment_id]: presentationItem,
             }
           : previousStreaming?.segmentsById,
+        modelProcessing: undefined,
         answer_before_timeline_length: nextAnswerBeforeTimelineLength,
         last_event_id: eventId ?? previousStreaming?.last_event_id,
         replay_base_answer: replayBaseAnswer,
@@ -658,13 +661,16 @@ function mergeRuntimeTimelineMetadata(
   runtimeTimeline: AIChatAgenticTimelineItem[] | undefined
 ): AIChatMessageMetadata | undefined {
   const runtimeSkillInvocations = skillInvocationsFromRuntimeTimeline(runtimeTimeline);
+  let mergedMetadata: AIChatMessageMetadata | undefined;
   if (runtimeSkillInvocations.length === 0) {
-    return mergeMessageMetadata(messageMetadata, payloadMetadata);
+    mergedMetadata = mergeMessageMetadata(messageMetadata, payloadMetadata);
+  } else {
+    mergedMetadata = mergeMessageMetadata(
+      mergeMessageMetadata(messageMetadata, { skill_invocations: runtimeSkillInvocations }),
+      payloadMetadata
+    );
   }
-  return mergeMessageMetadata(
-    mergeMessageMetadata(messageMetadata, { skill_invocations: runtimeSkillInvocations }),
-    payloadMetadata
-  );
+  return mergedMetadata;
 }
 
 export function applyMessageRetractState(
@@ -711,6 +717,7 @@ export function applyMessageRetractState(
                 ...(previousStreaming.segmentsById ?? {}),
                 [processItem.segment_id]: processItem,
               },
+              modelProcessing: undefined,
               last_event_id: eventId ?? previousStreaming.last_event_id,
             },
           }
@@ -738,6 +745,7 @@ export function applyMessageRetractState(
           [payload.message_id]: {
             ...previousStreaming,
             answer: removeRetractedSuffix(previousStreaming.answer, content, payload.length),
+            modelProcessing: undefined,
             answer_before_timeline_length:
               typeof previousStreaming.answer_before_timeline_length === 'number'
                 ? Math.min(
@@ -828,6 +836,7 @@ export function applyMessageEndState(
       ...previousStreaming,
       ...endedPresentationState,
       timeline: nextTimeline,
+      modelProcessing: undefined,
       status: terminalStatus,
       last_event_id: eventId ?? previousStreaming.last_event_id,
     };

@@ -129,6 +129,8 @@ function resolveAIChatRuntimeErrorCode(
     normalizedCode === 'model_service_timeout' ||
     normalizedCode === 'model_service_unavailable' ||
     normalizedCode === 'model_invocation_failed' ||
+    normalizedCode === 'planning_output_truncated' ||
+    normalizedCode === 'agent_output_truncated' ||
     normalizedCode === 'server_unavailable'
   ) {
     return normalizedCode;
@@ -180,6 +182,18 @@ function resolveStructuredRuntimeError(
         kind: 'provider',
         title: t('webapp.consoleChat.errors.server.title'),
         description: t(`agents.workflow.errors.${code}`),
+      };
+    case 'planning_output_truncated':
+      return {
+        kind: 'server',
+        title: t('webapp.chat.workflowErrorTitles.planning_output_truncated'),
+        description: t('agents.workflow.errors.planning_output_truncated'),
+      };
+    case 'agent_output_truncated':
+      return {
+        kind: 'server',
+        title: t('webapp.chat.workflowErrorTitles.agent_output_truncated'),
+        description: t('agents.workflow.errors.agent_output_truncated'),
       };
     case 'server_unavailable':
       return {

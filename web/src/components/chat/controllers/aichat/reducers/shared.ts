@@ -224,16 +224,15 @@ function visibleSkillInvocations(
     const status = String(invocation.status ?? '').toLowerCase();
     const record = invocation as unknown as Record<string, unknown>;
     const result =
-      invocation.result && typeof invocation.result === 'object' && !Array.isArray(invocation.result)
+      invocation.result &&
+      typeof invocation.result === 'object' &&
+      !Array.isArray(invocation.result)
         ? (invocation.result as Record<string, unknown>)
         : {};
     const actionType =
       invocation.action_type ||
       (typeof result.action_type === 'string' ? result.action_type : undefined);
-    if (
-      invocation.kind === 'skill_load' &&
-      invocation.skill_id === 'console-navigator'
-    ) {
+    if (invocation.kind === 'skill_load' && invocation.skill_id === 'console-navigator') {
       return false;
     }
     if (
@@ -245,7 +244,7 @@ function visibleSkillInvocations(
     }
     if (
       invocation.kind === 'client_action' &&
-      (actionType === 'route_navigation') &&
+      actionType === 'route_navigation' &&
       (status === 'success' || status === 'succeeded' || status === 'completed')
     ) {
       return false;
@@ -315,7 +314,10 @@ function generatedFileIdentity(file: AIChatGeneratedFile, index: number): string
   );
 }
 
-function workflowRunIdentity(run: { workflow_run_id?: string; task_id?: string; id?: string }, index: number): string {
+function workflowRunIdentity(
+  run: { workflow_run_id?: string; task_id?: string; id?: string },
+  index: number
+): string {
   return run.workflow_run_id || run.task_id || run.id || `workflow:${index}`;
 }
 
@@ -416,13 +418,7 @@ function assetOperationSemanticIdentity(input: AssetOperationSemanticIdentityInp
     invocationString(invocationRecord(audit.matched_grant).approval_correlation_id) ||
     invocationString(invocationRecord(result.matched_grant).approval_correlation_id);
   if (approvedByCorrelationId) {
-    return [
-      'asset_operation',
-      'approved_by',
-      approvedByCorrelationId,
-      assetType,
-      effect,
-    ].join(':');
+    return ['asset_operation', 'approved_by', approvedByCorrelationId, assetType, effect].join(':');
   }
 
   const correlationId =
@@ -438,12 +434,7 @@ function assetOperationSemanticIdentity(input: AssetOperationSemanticIdentityInp
     normalizeAssetOperationActionId(args.action_id);
   if (actionId) return `asset_operation:${actionId}`;
 
-  return [
-    'asset_operation',
-    assetType,
-    effect,
-    stableMetadataValue(operationTarget),
-  ].join(':');
+  return ['asset_operation', assetType, effect, stableMetadataValue(operationTarget)].join(':');
 }
 
 function observedAssetOperationTarget(
@@ -455,7 +446,7 @@ function observedAssetOperationTarget(
   const type = (invocationString(first.type) || invocationString(result.asset_type)).toLowerCase();
   const matchedContextId = invocationString(first.matched_context_item_id);
   const rawID = invocationString(first.id) || matchedContextId;
-  const id = rawID.includes(':') ? rawID.split(':').pop()?.trim() ?? '' : rawID;
+  const id = rawID.includes(':') ? (rawID.split(':').pop()?.trim() ?? '') : rawID;
   const name = invocationString(first.name) || invocationString(first.matched_context_title);
   if (!id && !name) return undefined;
   if (type === 'agent') {
@@ -617,9 +608,7 @@ export function skillInvocationSemanticIdentity(invocation: AIChatSkillInvocatio
   if (invocation.kind === 'client_action') {
     const record = invocation as unknown as Record<string, unknown>;
     const result = invocationRecord(invocation.result);
-    const actionType =
-      invocation.action_type ||
-      invocationString(result.action_type);
+    const actionType = invocation.action_type || invocationString(result.action_type);
     if (actionType === 'route_navigation') {
       const href = skillInvocationNavigationTarget(invocation);
       if (href) return `navigation:route:${href.toLowerCase()}`;

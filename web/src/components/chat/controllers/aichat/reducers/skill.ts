@@ -27,6 +27,7 @@ import {
   captureAnswerTimelineBoundary,
   presentationPositionFromPayload,
 } from '../presentation-order';
+import { modelProcessingStateFromEvent } from '../model-processing';
 
 function preserveLegacyAnswerBoundary(
   previousStreaming: AIChatControllerState['streamingByMessageId'][string]
@@ -595,7 +596,8 @@ export function updateSkillInvocationMetadata(
   messageId: string,
   eventId: string | null | undefined,
   invocation: AIChatSkillInvocation,
-  presentationPosition?: AIChatPresentationPosition
+  presentationPosition?: AIChatPresentationPosition,
+  clearModelProcessing = false
 ): AIChatControllerState {
   if (!isVisibleSkillInvocation(invocation)) {
     return current;
@@ -679,6 +681,7 @@ export function updateSkillInvocationMetadata(
               presentationPosition
             ),
             answer_before_timeline_length: preserveLegacyAnswerBoundary(previousStreaming),
+            modelProcessing: clearModelProcessing ? undefined : previousStreaming.modelProcessing,
             last_event_id: eventId ?? previousStreaming.last_event_id,
           },
         }
@@ -720,7 +723,33 @@ export function applyAgentProgressState(
     return current;
   }
 
+  if (payload.phase === 'model_processing') {
+    const modelProcessing = modelProcessingStateFromEvent(
+      previousStreaming.modelProcessing,
+      payload,
+      eventId
+    );
+    if (modelProcessing === previousStreaming.modelProcessing) {
+      return current;
+    }
+    return {
+      ...current,
+      streamingByMessageId: {
+        ...current.streamingByMessageId,
+        [payload.message_id]: {
+          ...previousStreaming,
+          modelProcessing,
+          last_event_id: eventId ?? previousStreaming.last_event_id,
+        },
+      },
+    };
+  }
+
   const timeline = previousStreaming.timeline ?? [];
+  const clearsModelProcessing =
+    payload.phase === 'tool_planning' ||
+    payload.phase === 'client_action' ||
+    payload.phase === 'client_action_result';
   const hasSameEvent = Boolean(
     eventId && timeline.some(item => 'event_id' in item && item.event_id === eventId)
   );
@@ -745,6 +774,7 @@ export function applyAgentProgressState(
         ...current.streamingByMessageId,
         [payload.message_id]: {
           ...previousStreaming,
+          modelProcessing: clearsModelProcessing ? undefined : previousStreaming.modelProcessing,
           last_event_id: eventId ?? previousStreaming.last_event_id,
         },
       },
@@ -789,6 +819,7 @@ export function applyAgentProgressState(
       [payload.message_id]: {
         ...previousStreaming,
         timeline: nextTimeline,
+        modelProcessing: clearsModelProcessing ? undefined : previousStreaming.modelProcessing,
         answer_before_timeline_length:
           transient || previousStreaming.presentationVersion === 2
             ? previousStreaming.answer_before_timeline_length
@@ -910,6 +941,7 @@ export function applyToolGovernanceDecisionState(
           ...current.streamingByMessageId,
           [payload.message_id]: {
             ...previousStreaming,
+            modelProcessing: undefined,
             timeline: upsertToolGovernanceTimelineItem(
               previousStreaming.timeline,
               payload,
@@ -990,7 +1022,8 @@ export function applySkillCallStartState(
       arguments: payload.arguments_summary ?? payload.arguments,
       created_at: payload.created_at,
     },
-    presentationPositionFromPayload(payload)
+    presentationPositionFromPayload(payload),
+    true
   );
 }
 
@@ -1024,7 +1057,8 @@ export function applySkillCallEndState(
       asset_operation_audit: payload.asset_operation_audit,
       created_at: payload.created_at,
     },
-    presentationPositionFromPayload(payload)
+    presentationPositionFromPayload(payload),
+    true
   );
   if (!payload.governance) {
     return next;
@@ -1066,7 +1100,8 @@ export function applySkillCallErrorState(
       asset_operation_audit: payload.asset_operation_audit,
       created_at: payload.created_at,
     },
-    presentationPositionFromPayload(payload)
+    presentationPositionFromPayload(payload),
+    true
   );
   if (!payload.governance) {
     return next;

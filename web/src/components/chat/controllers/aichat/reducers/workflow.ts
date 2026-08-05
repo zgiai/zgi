@@ -583,6 +583,7 @@ function applyWorkflowTimelineState(
       ...current.streamingByMessageId,
       [payload.message_id]: {
         ...previousStreaming,
+        modelProcessing: undefined,
         timeline: upsertWorkflowTimelineItem(
           previousStreaming.timeline,
           payload,

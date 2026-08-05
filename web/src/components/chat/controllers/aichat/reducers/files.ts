@@ -233,6 +233,7 @@ export function applySkillArtifactCreatedState(
           ...current.streamingByMessageId,
           [payload.message_id]: {
             ...previousStreaming,
+            modelProcessing: undefined,
             last_event_id: eventId ?? previousStreaming.last_event_id,
           },
         }

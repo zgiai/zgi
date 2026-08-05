@@ -998,7 +998,18 @@ export interface AIChatAgentProgressEventData {
   conversation_id: string;
   message_id: string;
   content?: string;
-  phase?: 'planning' | 'tool_planning' | 'client_action' | 'client_action_result';
+  phase?:
+    | 'planning'
+    | 'tool_planning'
+    | 'model_processing'
+    | 'client_action'
+    | 'client_action_result';
+  progress_id?: string;
+  stage?: 'initial' | 'extended' | 'long_running';
+  activity?: 'awaiting_response' | 'reasoning' | 'preparing_action' | 'reviewing_tool_result';
+  source?: 'runtime' | 'provider_signal';
+  round?: number;
+  elapsed_ms?: number;
   meta_tool_name?: string;
   skill_id?: string;
   tool_name?: string;
