@@ -10,7 +10,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 )
@@ -97,6 +99,188 @@ func TestZGICloudAdapterTranscribeDoesNotRetryProviderFailure(t *testing.T) {
 	}
 	if requestCount != 1 {
 		t.Fatalf("request count = %d, want one non-retryable attempt", requestCount)
+	}
+}
+
+func TestZGICloudAdapterGenerateSpeechStreamsMP3Once(t *testing.T) {
+	requestCount := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestCount++
+		if got, want := r.URL.Path, "/v1/internal/audio/speech"; got != want {
+			t.Errorf("path = %q, want %q", got, want)
+		}
+		if got, want := r.Header.Get("X-ZGI-Request-ID"), "11111111-1111-1111-1111-111111111111"; got != want {
+			t.Errorf("X-ZGI-Request-ID = %q, want %q", got, want)
+		}
+		if got, want := r.Header.Get("X-ZGI-Model-Name"), "seed-tts-2.0"; got != want {
+			t.Errorf("X-ZGI-Model-Name = %q, want %q", got, want)
+		}
+		if got, want := r.Header.Get("Accept"), "audio/mpeg"; got != want {
+			t.Errorf("Accept = %q, want %q", got, want)
+		}
+		var request adapter.SpeechRequest
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Errorf("decode request: %v", err)
+		}
+		if request.RequestID != "" || request.Model != "seed-tts-2.0" || request.Input != "你好。" || request.Voice != "verified-voice" || request.ResponseFormat != "mp3" {
+			t.Errorf("request = %#v", request)
+		}
+
+		w.Header().Set("Content-Type", "audio/mpeg")
+		_, _ = w.Write([]byte("MP3-A"))
+		w.(http.Flusher).Flush()
+		_, _ = w.Write([]byte("MP3-B"))
+	}))
+	defer server.Close()
+
+	a, err := NewZGICloudAdapter(&adapter.AdapterConfig{
+		BaseURL:    server.URL + "/v1/internal",
+		AuthHook:   func(*http.Request) {},
+		MaxRetries: 3,
+	})
+	if err != nil {
+		t.Fatalf("NewZGICloudAdapter() error = %v", err)
+	}
+
+	var audio bytes.Buffer
+	err = a.GenerateSpeech(t.Context(), &adapter.SpeechRequest{
+		RequestID:      "11111111-1111-1111-1111-111111111111",
+		Model:          "seed-tts-2.0",
+		Input:          "你好。",
+		Voice:          "verified-voice",
+		ResponseFormat: "mp3",
+	}, &audio)
+	if err != nil {
+		t.Fatalf("GenerateSpeech() error = %v", err)
+	}
+	if got, want := audio.String(), "MP3-AMP3-B"; got != want {
+		t.Fatalf("GenerateSpeech() audio = %q, want %q", got, want)
+	}
+	if got, want := requestCount, 1; got != want {
+		t.Fatalf("request count = %d, want %d", got, want)
+	}
+}
+
+func TestZGICloudAdapterGenerateSpeechDoesNotRetryProviderFailure(t *testing.T) {
+	requestCount := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requestCount++
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = fmt.Fprint(w, `{"code":503,"message":"speech model is unavailable"}`)
+	}))
+	defer server.Close()
+
+	a, err := NewZGICloudAdapter(&adapter.AdapterConfig{
+		BaseURL:    server.URL + "/v1/internal",
+		AuthHook:   func(*http.Request) {},
+		MaxRetries: 3,
+	})
+	if err != nil {
+		t.Fatalf("NewZGICloudAdapter() error = %v", err)
+	}
+
+	err = a.GenerateSpeech(t.Context(), &adapter.SpeechRequest{
+		RequestID:      "11111111-1111-1111-1111-111111111111",
+		Model:          "seed-tts-2.0",
+		Input:          "text",
+		Voice:          "verified-voice",
+		ResponseFormat: "mp3",
+	}, io.Discard)
+	if !errors.Is(err, adapter.ErrPlatformChannelUnavailable) {
+		t.Fatalf("GenerateSpeech() error = %v, want ErrPlatformChannelUnavailable", err)
+	}
+	if got, want := requestCount, 1; got != want {
+		t.Fatalf("request count = %d, want %d", got, want)
+	}
+}
+
+func TestZGICloudAdapterGenerateSpeechPropagatesCancellationAfterDispatch(t *testing.T) {
+	started := make(chan struct{})
+	var requestCount atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		requestCount.Add(1)
+		_, _ = io.Copy(io.Discard, r.Body)
+		close(started)
+		<-r.Context().Done()
+	}))
+	defer server.Close()
+
+	a, err := NewZGICloudAdapter(&adapter.AdapterConfig{
+		BaseURL:  server.URL + "/v1/internal",
+		AuthHook: func(*http.Request) {},
+	})
+	if err != nil {
+		t.Fatalf("NewZGICloudAdapter() error = %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(t.Context())
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- a.GenerateSpeech(ctx, &adapter.SpeechRequest{
+			RequestID:      "11111111-1111-1111-1111-111111111111",
+			Model:          "seed-tts-2.0",
+			Input:          "text",
+			Voice:          "verified-voice",
+			ResponseFormat: "mp3",
+		}, io.Discard)
+	}()
+
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("speech request was not dispatched")
+	}
+	cancel()
+	select {
+	case err := <-errCh:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("GenerateSpeech() error = %v, want context canceled", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("GenerateSpeech() did not stop after cancellation")
+	}
+	if got, want := requestCount.Load(), int32(1); got != want {
+		t.Fatalf("request count = %d, want %d", got, want)
+	}
+}
+
+func TestZGICloudAdapterGenerateSpeechDoesNotRetryInterruptedStream(t *testing.T) {
+	var requestCount atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requestCount.Add(1)
+		w.Header().Set("Content-Type", "audio/mpeg")
+		w.Header().Set("Content-Length", "20")
+		_, _ = w.Write([]byte("partial"))
+		w.(http.Flusher).Flush()
+	}))
+	defer server.Close()
+
+	a, err := NewZGICloudAdapter(&adapter.AdapterConfig{
+		BaseURL:    server.URL + "/v1/internal",
+		AuthHook:   func(*http.Request) {},
+		MaxRetries: 3,
+	})
+	if err != nil {
+		t.Fatalf("NewZGICloudAdapter() error = %v", err)
+	}
+
+	var audio bytes.Buffer
+	err = a.GenerateSpeech(t.Context(), &adapter.SpeechRequest{
+		RequestID:      "11111111-1111-1111-1111-111111111111",
+		Model:          "seed-tts-2.0",
+		Input:          "text",
+		Voice:          "verified-voice",
+		ResponseFormat: "mp3",
+	}, &audio)
+	if err == nil {
+		t.Fatal("GenerateSpeech() error = nil, want interrupted stream error")
+	}
+	if got, want := audio.String(), "partial"; got != want {
+		t.Fatalf("GenerateSpeech() audio = %q, want %q", got, want)
+	}
+	if got, want := requestCount.Load(), int32(1); got != want {
+		t.Fatalf("request count = %d, want %d", got, want)
 	}
 }
 

@@ -10,6 +10,11 @@ type TranscriptionCapable interface {
 	Transcribe(ctx context.Context, request *TranscriptionRequest) (*TranscriptionResponse, error)
 }
 
+// SpeechCapable defines text-to-speech capability.
+type SpeechCapable interface {
+	GenerateSpeech(ctx context.Context, request *SpeechRequest, dst io.Writer) error
+}
+
 // TranscriptionRequest carries a single PCM stream. The adapter consumes Audio
 // synchronously and must not retry after dispatch because the stream is not replayable.
 type TranscriptionRequest struct {
@@ -22,4 +27,13 @@ type TranscriptionRequest struct {
 type TranscriptionResponse struct {
 	RequestID string `json:"request_id"`
 	Text      string `json:"text"`
+}
+
+// SpeechRequest carries one complete text input for an MP3 response stream.
+type SpeechRequest struct {
+	RequestID      string `json:"-"`
+	Model          string `json:"model"`
+	Input          string `json:"input"`
+	Voice          string `json:"voice"`
+	ResponseFormat string `json:"response_format"`
 }
