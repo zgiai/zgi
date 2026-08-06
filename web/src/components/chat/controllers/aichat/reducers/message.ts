@@ -47,6 +47,7 @@ import {
   presentationPositionFromPayload,
   presentationStateFromMetadata,
   processTextPresentationItem,
+  removePresentationSegment,
   upsertPresentationItem,
   withPresentationItems,
 } from '../presentation-order';
@@ -687,6 +688,53 @@ export function applyMessageRetractState(
   const previousStreaming = current.streamingByMessageId[payload.message_id];
   if (isStaleAIChatStreamEvent(eventId, previousStreaming?.last_event_id)) {
     return current;
+  }
+  if (payload.presentation_disposition === 'discard') {
+    const nextMessages = messages.map(message =>
+      message.id === payload.message_id
+        ? {
+            ...message,
+            answer: removeRetractedSuffix(message.answer, content, payload.length),
+          }
+        : message
+    );
+    const nextSegmentsById = { ...(previousStreaming?.segmentsById ?? {}) };
+    if (payload.segment_id) {
+      delete nextSegmentsById[payload.segment_id];
+    }
+    const nextStreamingAnswer = previousStreaming
+      ? removeRetractedSuffix(previousStreaming.answer, content, payload.length)
+      : '';
+    return {
+      ...current,
+      messagesByConversation: {
+        ...current.messagesByConversation,
+        [payload.conversation_id]: nextMessages,
+      },
+      streamingByMessageId: previousStreaming
+        ? {
+            ...current.streamingByMessageId,
+            [payload.message_id]: {
+              ...previousStreaming,
+              answer: nextStreamingAnswer,
+              presentationItems: removePresentationSegment(
+                previousStreaming.presentationItems,
+                payload.segment_id
+              ),
+              segmentsById: nextSegmentsById,
+              modelProcessing: undefined,
+              answer_before_timeline_length:
+                typeof previousStreaming.answer_before_timeline_length === 'number'
+                  ? Math.min(
+                      previousStreaming.answer_before_timeline_length,
+                      nextStreamingAnswer.length
+                    )
+                  : undefined,
+              last_event_id: eventId ?? previousStreaming.last_event_id,
+            },
+          }
+        : current.streamingByMessageId,
+    };
   }
   const presentationItem = processTextPresentationItem(
     payload as unknown as Record<string, unknown>,

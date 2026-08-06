@@ -3942,7 +3942,7 @@ export function AIChatAgenticTimeline({
             />
             {isOpen
               ? t('consoleChat.skills.agentic.hideProcess')
-              : t('consoleChat.skills.agentic.showProcess')}
+              : t('consoleChat.skills.agentic.processTitle')}
           </CollapsibleTrigger>
         </Button>
         <span className="text-[11px] text-muted-foreground">

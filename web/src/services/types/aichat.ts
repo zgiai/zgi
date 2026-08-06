@@ -606,6 +606,7 @@ export interface AIChatMessageRetractEventData extends AIChatPresentationPositio
   message_id: string;
   content?: string;
   length?: number;
+  presentation_disposition?: 'process' | 'discard';
   segment_id?: string;
   segment_content?: string;
   content_phase?: AIChatPresentationContentPhase;

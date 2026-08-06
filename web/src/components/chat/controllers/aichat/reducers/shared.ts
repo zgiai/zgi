@@ -775,6 +775,9 @@ export function clearRuntimeMessageMetadata(
   if (!metadata) return undefined;
   const next = { ...metadata };
   delete next.sensitiveOutputBlocked;
+  delete next.answer_before_timeline_length;
+  delete next.presentation_version;
+  delete next.presentation;
   delete next.has_trace;
   delete next.skill_invocations;
   delete next.selected_skill_ids;

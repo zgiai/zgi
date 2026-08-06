@@ -80,6 +80,9 @@ export function clearStreamingRuntimeMessageMetadata(message: AIChatMessage): AI
   }
 
   const metadata = { ...message.metadata };
+  delete metadata.answer_before_timeline_length;
+  delete metadata.presentation_version;
+  delete metadata.presentation;
   delete metadata.has_trace;
   delete metadata.skill_invocations;
   delete metadata.selected_skill_ids;

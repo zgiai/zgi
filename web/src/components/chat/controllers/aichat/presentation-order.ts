@@ -96,6 +96,16 @@ export function upsertPresentationItem(
   );
 }
 
+export function removePresentationSegment(
+  items: AIChatPresentationItem[] | undefined,
+  segmentId: string | undefined
+): AIChatPresentationItem[] {
+  if (!segmentId) return [...(items ?? [])];
+  return (items ?? []).filter(
+    item => item.kind !== 'text' || item.segment_id !== segmentId
+  );
+}
+
 export function mergePresentationItems(
   base: AIChatPresentationItem[] | undefined,
   incoming: AIChatPresentationItem[] | undefined

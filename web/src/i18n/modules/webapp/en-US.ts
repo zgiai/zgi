@@ -868,6 +868,7 @@ const messages = {
       agentic: {
         showProcess: 'Show process',
         hideProcess: 'Hide process',
+        processTitle: 'Process',
         loadingSkill: 'Loading {skill}',
         loadedSkill: '{skill} loaded',
         loadFailed: '{skill} load failed',

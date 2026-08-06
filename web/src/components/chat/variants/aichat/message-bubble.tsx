@@ -1361,25 +1361,7 @@ export function AIChatMessageBubble({
     !hasTimeline &&
     !resolvedPresentationItems?.length &&
     !answer;
-  const shouldOpenTimelineByDefault =
-    isActiveMessage ||
-    orderedDisplayTimeline.some(
-      item =>
-        item.type === 'user_input_request' ||
-        item.type === 'user_input_response' ||
-        (item.type === 'skill_event' &&
-          item.invocation.kind !== 'guardrail' &&
-          (item.invocation.status === 'error' || item.invocation.status === 'blocked')) ||
-        (item.type === 'tool_governance_decision' &&
-          ['rejected'].includes(
-            String(
-              item.event.approval_status ??
-                item.event.governance?.approval_status ??
-                item.event.governance?.approval_result?.approval_status ??
-                ''
-            ).toLowerCase()
-          ))
-    );
+  const shouldOpenTimelineByDefault = isActiveMessage;
   const errorDisplay = useMemo(
     () =>
       isError

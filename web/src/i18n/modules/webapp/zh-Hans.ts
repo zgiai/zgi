@@ -833,6 +833,7 @@ const messages: WebappMessages = {
       agentic: {
         showProcess: '显示过程',
         hideProcess: '隐藏过程',
+        processTitle: '处理过程',
         loadingSkill: '加载 {skill}',
         loadedSkill: '{skill} 已加载',
         loadFailed: '{skill} 加载失败',
