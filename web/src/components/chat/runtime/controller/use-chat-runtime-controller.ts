@@ -166,7 +166,6 @@ export function useChatRuntimeController(options?: {
     migrateLatestSelectionTarget,
     clearRecoveryRetry,
     refreshConversationSilently,
-    refreshMessagesSilently,
   });
 
   const recoverStreamingConversation = useChatRuntimeStreamRecovery({

@@ -833,18 +833,18 @@ export function applyMessageEndState(
             sensitiveOutputBlocked: true,
           }
         : mergeRuntimeTimelineMetadata(message.metadata, payload.metadata, nextTimeline);
-    const hasAuthoritativeAnswer = typeof payload.answer === 'string';
     const terminalPresentationState = presentationStateFromMetadata(baseMergedMetadata);
-    const mergedPresentationItems = hasAuthoritativeAnswer
-      ? (terminalPresentationState.presentationItems ?? [])
-      : mergePresentationItems(
-          previousStreaming?.presentationItems,
-          terminalPresentationState.presentationItems
-        );
-    const mergedMetadata =
-      !hasAuthoritativeAnswer && mergedPresentationItems.length
-        ? withPresentationItems(baseMergedMetadata, mergedPresentationItems)
-        : baseMergedMetadata;
+    // The event stream is the visual authority for the current page. Backend
+    // terminal metadata may omit runtime-only process narration or arrive with
+    // a differently compacted projection, so merge it into the live projection
+    // instead of replacing what the user has already seen.
+    const mergedPresentationItems = mergePresentationItems(
+      previousStreaming?.presentationItems,
+      terminalPresentationState.presentationItems
+    );
+    const mergedMetadata = mergedPresentationItems.length
+      ? withPresentationItems(baseMergedMetadata, mergedPresentationItems)
+      : baseMergedMetadata;
     const presentationState = presentationStateFromMetadata(mergedMetadata);
     endedPresentationState = presentationState;
     const presentationAnswer = finalPresentationAnswer(presentationState.presentationItems);
@@ -853,13 +853,13 @@ export function applyMessageEndState(
       (typeof message.metadata?.answer_before_timeline_length === 'number'
         ? message.metadata.answer_before_timeline_length
         : undefined);
+    const liveAnswer =
+      presentationState.presentationVersion === 2
+        ? presentationAnswer
+        : message.answer || previousStreaming?.answer || undefined;
     return {
       ...message,
-      answer:
-        payload.answer ??
-        (presentationState.presentationVersion === 2
-          ? (presentationAnswer ?? message.answer)
-          : message.answer),
+      answer: liveAnswer ?? payload.answer ?? message.answer,
       status: normalizeAIChatStatus(payload.status),
       metadata:
         typeof answerBeforeTimelineLength === 'number'
@@ -873,19 +873,19 @@ export function applyMessageEndState(
   });
   const nextStreamingByMessageId = { ...current.streamingByMessageId };
   const terminalStatus = normalizeAIChatStatus(payload.status);
-  if (
-    previousStreaming &&
-    nextTimeline.length &&
-    (terminalStatus === 'waiting_approval' ||
-      terminalStatus === 'waiting_client_action' ||
-      terminalStatus === 'waiting_question')
-  ) {
+  const terminalStreamingStatus = terminalStatus === 'pending' ? 'streaming' : terminalStatus;
+  const hasLivePresentation = Boolean(endedPresentationState.presentationItems?.length);
+  if (previousStreaming && (nextTimeline.length > 0 || hasLivePresentation)) {
+    // Keep the exact event/presentation snapshot that was already rendered on
+    // this page. A terminal message payload may contain a compacted durable
+    // projection, but completion must not make finished operations jump to a
+    // new position. The snapshot is cleared by refresh or the next run.
     nextStreamingByMessageId[payload.message_id] = {
       ...previousStreaming,
       ...endedPresentationState,
       timeline: nextTimeline,
       modelProcessing: undefined,
-      status: terminalStatus,
+      status: terminalStreamingStatus,
       last_event_id: eventId ?? previousStreaming.last_event_id,
     };
   } else {

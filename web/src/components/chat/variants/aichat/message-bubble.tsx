@@ -53,7 +53,6 @@ import type {
 } from '@/components/chat/controllers/aichat';
 import {
   dedupeTimelineItems,
-  mergeRuntimeTimelineWithMessageTimeline,
   timelineFromAIChatMessage,
 } from '@/components/chat/controllers/aichat/selectors';
 import {
@@ -1227,16 +1226,11 @@ export function AIChatMessageBubble({
     [message]
   );
   const runtimeTimeline = timeline;
-  const shouldPreferPersistedTimeline =
-    !isActiveMessage && historicalTimeline.length > 0 && runtimeTimeline.length > 0;
-  const displayTimeline = useMemo(() => {
-    if (shouldPreferPersistedTimeline) {
-      return dedupeTimelineItems(historicalTimeline);
-    }
-    return dedupeTimelineItems(
-      mergeRuntimeTimelineWithMessageTimeline(historicalTimeline, runtimeTimeline)
-    );
-  }, [historicalTimeline, runtimeTimeline, shouldPreferPersistedTimeline]);
+  const displayTimeline = useMemo(
+    () =>
+      dedupeTimelineItems(runtimeTimeline.length > 0 ? runtimeTimeline : historicalTimeline),
+    [historicalTimeline, runtimeTimeline]
+  );
   useEffect(() => {
     debugAIChatTimeline('render:message_bubble', {
       message_id: message.id,
