@@ -6,11 +6,13 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/dto"
+	"github.com/zgiai/zgi/api/internal/modules/app/conversation"
 	workflowpause "github.com/zgiai/zgi/api/internal/modules/app/workflow/pause"
 	"github.com/zgiai/zgi/api/pkg/database"
 	"gorm.io/driver/postgres"
@@ -42,7 +44,7 @@ func TestWorkflowRunNeedsRuntimeCancellation(t *testing.T) {
 
 func TestUpdateWorkflowRunLogStatusUsesTransactionalV2Finalizer(t *testing.T) {
 	db := openWorkflowStopV2TestDB(t)
-	if err := db.AutoMigrate(&workflowStopTestRun{}, &workflowStopTestMessage{}, &workflowpause.RunPause{}, &workflowpause.RunEvent{}); err != nil {
+	if err := migrateWorkflowStopV2TestTables(db); err != nil {
 		t.Fatalf("migrate runtime tables: %v", err)
 	}
 	oldDB := database.GetDB()
@@ -89,7 +91,7 @@ func TestUpdateWorkflowRunLogStatusUsesTransactionalV2Finalizer(t *testing.T) {
 
 func TestFinalizeWorkflowRunCommitsAnswerAndTerminalEventsTogether(t *testing.T) {
 	db := openWorkflowStopV2TestDB(t)
-	if err := db.AutoMigrate(&workflowStopTestRun{}, &workflowStopTestMessage{}, &workflowpause.RunPause{}, &workflowpause.RunEvent{}); err != nil {
+	if err := migrateWorkflowStopV2TestTables(db); err != nil {
 		t.Fatalf("migrate runtime tables: %v", err)
 	}
 	oldDB := database.GetDB()
@@ -149,7 +151,7 @@ func TestFinalizeWorkflowRunCommitsAnswerAndTerminalEventsTogether(t *testing.T)
 
 func TestPersistApprovalResumeCompletionSkipsHostOwnedMessageProjectionV2(t *testing.T) {
 	db := openWorkflowStopV2TestDB(t)
-	if err := db.AutoMigrate(&workflowStopTestRun{}, &workflowStopTestMessage{}, &workflowpause.RunPause{}, &workflowpause.RunEvent{}); err != nil {
+	if err := migrateWorkflowStopV2TestTables(db); err != nil {
 		t.Fatalf("migrate runtime tables: %v", err)
 	}
 	oldDB := database.GetDB()
@@ -236,7 +238,7 @@ func TestResolveWorkflowConversationProjectionKeepsWorkflowOwnedMessage(t *testi
 
 func TestFinalizeWorkflowRunRollsBackProjectionWhenTerminalEventFails(t *testing.T) {
 	db := openWorkflowStopV2TestDB(t)
-	if err := db.AutoMigrate(&workflowStopTestRun{}, &workflowStopTestMessage{}, &workflowpause.RunPause{}, &workflowpause.RunEvent{}); err != nil {
+	if err := migrateWorkflowStopV2TestTables(db); err != nil {
 		t.Fatalf("migrate runtime tables: %v", err)
 	}
 	oldDB := database.GetDB()
@@ -297,7 +299,7 @@ func TestFinalizeWorkflowRunRollsBackProjectionWhenTerminalEventFails(t *testing
 
 func TestFinalizeStoppedWorkflowRunV2RevokesExecutionOwner(t *testing.T) {
 	db := openWorkflowStopV2TestDB(t)
-	if err := db.AutoMigrate(&workflowStopTestRun{}, &workflowStopTestMessage{}, &workflowpause.RunPause{}, &workflowpause.RunEvent{}); err != nil {
+	if err := migrateWorkflowStopV2TestTables(db); err != nil {
 		t.Fatalf("migrate runtime tables: %v", err)
 	}
 	oldDB := database.GetDB()
@@ -344,7 +346,7 @@ func TestFinalizeStoppedWorkflowRunV2RevokesExecutionOwner(t *testing.T) {
 
 func TestFinalizeStoppedWorkflowRunV2ClosesPausedRunWithoutOwner(t *testing.T) {
 	db := openWorkflowStopV2TestDB(t)
-	if err := db.AutoMigrate(&workflowStopTestRun{}, &workflowStopTestMessage{}, &workflowpause.RunPause{}, &workflowpause.RunEvent{}); err != nil {
+	if err := migrateWorkflowStopV2TestTables(db); err != nil {
 		t.Fatalf("migrate runtime tables: %v", err)
 	}
 	oldDB := database.GetDB()
@@ -388,6 +390,318 @@ func TestFinalizeStoppedWorkflowRunV2ClosesPausedRunWithoutOwner(t *testing.T) {
 	}
 }
 
+func TestFinalizeStoppedWorkflowRunV2FencesResumeAndClosesRuntimeState(t *testing.T) {
+	db := openWorkflowStopV2TestDB(t)
+	if err := migrateWorkflowStopV2TestTables(db); err != nil {
+		t.Fatalf("migrate runtime tables: %v", err)
+	}
+	oldDB := database.GetDB()
+	database.SetDB(db)
+	t.Cleanup(func() { database.SetDB(oldDB) })
+
+	executionID := "00000000-0000-0000-0000-000000000071"
+	conversationID := "00000000-0000-0000-0000-000000000871"
+	run := workflowStopTestRun{
+		ID: "00000000-0000-0000-0000-000000000171", TenantID: "00000000-0000-0000-0000-000000000271",
+		AgentID: "00000000-0000-0000-0000-000000000371", WorkflowID: "00000000-0000-0000-0000-000000000471",
+		Status: "running", RuntimeProtocolVersion: 2, ExecutionGeneration: 3,
+		ActiveExecutionID: &executionID, ConversationID: &conversationID, CreatedAt: time.Now(),
+	}
+	if err := db.Create(&run).Error; err != nil {
+		t.Fatalf("create workflow run: %v", err)
+	}
+	activeRunID := uuid.MustParse(run.ID)
+	conversationRecord := workflowStopTestConversation{
+		ID: uuid.MustParse(conversationID), RuntimeStatus: "running", ActiveWorkflowRunID: &activeRunID,
+	}
+	if err := db.Create(&conversationRecord).Error; err != nil {
+		t.Fatalf("create workflow conversation: %v", err)
+	}
+	leaseExpiresAt := time.Now().Add(time.Minute)
+	pauseRecord := workflowpause.RunPause{
+		ID: "00000000-0000-0000-0000-000000000571", TenantID: run.TenantID, AppID: run.AgentID,
+		WorkflowRunID: run.ID, NodeID: "loop-node", Reason: workflowpause.ReasonTypeApprovalRequired,
+		StateJSON: `{"version":"2"}`, Generation: 1, Status: workflowpause.RunPauseStatusResuming,
+		Revision: 2, ResumeExecutionID: &executionID, LeaseExpiresAt: &leaseExpiresAt,
+	}
+	if err := db.Create(&pauseRecord).Error; err != nil {
+		t.Fatalf("create resuming pause: %v", err)
+	}
+	outbox := workflowpause.RuntimeOutbox{
+		ID: "00000000-0000-0000-0000-000000000671", TenantID: run.TenantID, WorkflowRunID: run.ID,
+		PauseID: &pauseRecord.ID, Kind: workflowpause.RuntimeOutboxKindResume,
+		IdempotencyKey: "workflow-resume:" + pauseRecord.ID + ":1", PayloadJSON: `{}`,
+		Status: workflowpause.RuntimeOutboxPublished, NextAttemptAt: time.Now(), CreatedAt: time.Now(), UpdatedAt: time.Now(),
+	}
+	if err := db.Create(&outbox).Error; err != nil {
+		t.Fatalf("create resume outbox: %v", err)
+	}
+	nodeExecutionID := "loop-execution-1"
+	node := workflowStopTestNode{
+		ID: "00000000-0000-0000-0000-000000000771", WorkflowRunID: &run.ID,
+		NodeExecutionID: &nodeExecutionID, NodeID: "loop-node", NodeType: "loop", Title: "Loop",
+		Status: "running", CreatedAt: time.Now(),
+	}
+	if err := db.Create(&node).Error; err != nil {
+		t.Fatalf("create running node: %v", err)
+	}
+
+	service := &WorkflowService{workflowRunLogRepo: NewWorkflowRunLogRepository(db)}
+	if err := service.finalizeStoppedWorkflowRunV2(t.Context(), &WorkflowRunLog{ID: run.ID}, time.Now()); err != nil {
+		t.Fatalf("finalize stopped workflow: %v", err)
+	}
+
+	var persistedRun workflowStopTestRun
+	if err := db.First(&persistedRun, "id = ?", run.ID).Error; err != nil {
+		t.Fatalf("load stopped run: %v", err)
+	}
+	if persistedRun.Status != "stopped" || persistedRun.ActiveExecutionID != nil || persistedRun.ExecutionGeneration != 4 {
+		t.Fatalf("stopped run = %+v, want status stopped, no owner, generation 4", persistedRun)
+	}
+	var persistedPause workflowpause.RunPause
+	if err := db.First(&persistedPause, "id = ?", pauseRecord.ID).Error; err != nil {
+		t.Fatalf("load closed pause: %v", err)
+	}
+	if persistedPause.Status != workflowpause.RunPauseStatusClosed || persistedPause.ResumeExecutionID != nil || persistedPause.LeaseExpiresAt != nil {
+		t.Fatalf("closed pause = %+v", persistedPause)
+	}
+	var persistedOutbox workflowpause.RuntimeOutbox
+	if err := db.First(&persistedOutbox, "id = ?", outbox.ID).Error; err != nil {
+		t.Fatalf("load obsolete outbox: %v", err)
+	}
+	if persistedOutbox.Status != workflowpause.RuntimeOutboxObsolete {
+		t.Fatalf("outbox status = %q, want %q", persistedOutbox.Status, workflowpause.RuntimeOutboxObsolete)
+	}
+	var persistedNode workflowStopTestNode
+	if err := db.First(&persistedNode, "id = ?", node.ID).Error; err != nil {
+		t.Fatalf("load stopped node: %v", err)
+	}
+	if persistedNode.Status != "stopped" || persistedNode.FinishedAt == nil {
+		t.Fatalf("stopped node = %+v", persistedNode)
+	}
+	var events []workflowpause.RunEvent
+	if err := db.Where("workflow_run_id = ?", run.ID).Order("sequence ASC").Find(&events).Error; err != nil {
+		t.Fatalf("load stop events: %v", err)
+	}
+	if len(events) != 2 || events[0].EventType != workflowpause.EventNodeFinished || events[1].EventType != workflowpause.EventWorkflowFinished {
+		t.Fatalf("stop event order = %#v", events)
+	}
+	if _, err := workflowpause.NewService(db).ClaimResume(t.Context(), run.ID, pauseRecord.ID, time.Minute); !errors.Is(err, workflowpause.ErrPauseNotResumeReady) {
+		t.Fatalf("ClaimResume() error = %v, want pause not resume ready", err)
+	}
+	if err := service.finalizeStoppedWorkflowRunV2(t.Context(), &WorkflowRunLog{ID: run.ID}, time.Now()); err != nil {
+		t.Fatalf("repeat stop: %v", err)
+	}
+	var eventCount int64
+	if err := db.Model(&workflowpause.RunEvent{}).Where("workflow_run_id = ?", run.ID).Count(&eventCount).Error; err != nil {
+		t.Fatalf("count stop events: %v", err)
+	}
+	if eventCount != 2 {
+		t.Fatalf("stop event count after repeat = %d, want 2", eventCount)
+	}
+	var persistedConversation workflowStopTestConversation
+	if err := db.First(&persistedConversation, "id = ?", conversationRecord.ID).Error; err != nil {
+		t.Fatalf("load released workflow conversation: %v", err)
+	}
+	if persistedConversation.RuntimeStatus != "idle" || persistedConversation.ActiveWorkflowRunID != nil || persistedConversation.RuntimeRevision != 1 {
+		t.Fatalf("released workflow conversation = %+v", persistedConversation)
+	}
+}
+
+func TestPostgresStopBarrierWinsAgainstConcurrentResumeClaim(t *testing.T) {
+	if strings.TrimSpace(os.Getenv("TEST_POSTGRES_DSN")) == "" {
+		t.Skip("TEST_POSTGRES_DSN is not configured")
+	}
+	db := openWorkflowStopV2TestDB(t)
+	if err := migrateWorkflowStopV2TestTables(db); err != nil {
+		t.Fatalf("migrate runtime tables: %v", err)
+	}
+	oldDB := database.GetDB()
+	database.SetDB(db)
+	t.Cleanup(func() { database.SetDB(oldDB) })
+
+	run := workflowStopTestRun{
+		ID: "00000000-0000-0000-0000-000000000181", TenantID: "00000000-0000-0000-0000-000000000281",
+		AgentID: "00000000-0000-0000-0000-000000000381", WorkflowID: "00000000-0000-0000-0000-000000000481",
+		Status: "paused", RuntimeProtocolVersion: 2, ExecutionGeneration: 7, CreatedAt: time.Now(),
+	}
+	if err := db.Create(&run).Error; err != nil {
+		t.Fatalf("create paused workflow run: %v", err)
+	}
+	pauseRecord := workflowpause.RunPause{
+		ID: "00000000-0000-0000-0000-000000000581", TenantID: run.TenantID, AppID: run.AgentID,
+		WorkflowRunID: run.ID, NodeID: "approval", Reason: workflowpause.ReasonTypeApprovalRequired,
+		StateJSON: `{"version":"2"}`, Generation: 1, Status: workflowpause.RunPauseStatusResumeReady,
+	}
+	if err := db.Create(&pauseRecord).Error; err != nil {
+		t.Fatalf("create resume-ready pause: %v", err)
+	}
+	outbox := workflowpause.RuntimeOutbox{
+		ID: "00000000-0000-0000-0000-000000000681", TenantID: run.TenantID, WorkflowRunID: run.ID,
+		PauseID: &pauseRecord.ID, Kind: workflowpause.RuntimeOutboxKindResume,
+		IdempotencyKey: "workflow-resume:" + pauseRecord.ID + ":1", PayloadJSON: `{}`,
+		Status: workflowpause.RuntimeOutboxPending, NextAttemptAt: time.Now(), CreatedAt: time.Now(), UpdatedAt: time.Now(),
+	}
+	if err := db.Create(&outbox).Error; err != nil {
+		t.Fatalf("create pending resume outbox: %v", err)
+	}
+
+	start := make(chan struct{})
+	result := make(chan error, 2)
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		<-start
+		result <- (&WorkflowService{}).finalizeStoppedWorkflowRunV2(t.Context(), &WorkflowRunLog{ID: run.ID}, time.Now())
+	}()
+	go func() {
+		defer wg.Done()
+		<-start
+		_, err := workflowpause.NewService(db).ClaimResume(t.Context(), run.ID, pauseRecord.ID, time.Minute)
+		if err != nil && !errors.Is(err, workflowpause.ErrPauseNotFound) && !errors.Is(err, workflowpause.ErrPauseNotResumeReady) {
+			result <- err
+			return
+		}
+		result <- nil
+	}()
+	close(start)
+	wg.Wait()
+	close(result)
+	for err := range result {
+		if err != nil {
+			t.Fatalf("concurrent stop/resume: %v", err)
+		}
+	}
+
+	var persistedRun workflowStopTestRun
+	if err := db.First(&persistedRun, "id = ?", run.ID).Error; err != nil {
+		t.Fatalf("load stopped run: %v", err)
+	}
+	if persistedRun.Status != "stopped" || persistedRun.FinishedAt == nil || persistedRun.ActiveExecutionID != nil {
+		t.Fatalf("run after concurrent stop/resume = %+v", persistedRun)
+	}
+	var persistedPause workflowpause.RunPause
+	if err := db.First(&persistedPause, "id = ?", pauseRecord.ID).Error; err != nil {
+		t.Fatalf("load closed pause: %v", err)
+	}
+	if persistedPause.Status != workflowpause.RunPauseStatusClosed || persistedPause.ResumeExecutionID != nil || persistedPause.LeaseExpiresAt != nil {
+		t.Fatalf("pause after concurrent stop/resume = %+v", persistedPause)
+	}
+	var persistedOutbox workflowpause.RuntimeOutbox
+	if err := db.First(&persistedOutbox, "id = ?", outbox.ID).Error; err != nil {
+		t.Fatalf("load obsolete outbox: %v", err)
+	}
+	if persistedOutbox.Status != workflowpause.RuntimeOutboxObsolete {
+		t.Fatalf("outbox status = %q, want obsolete", persistedOutbox.Status)
+	}
+	var events []workflowpause.RunEvent
+	if err := db.Where("workflow_run_id = ?", run.ID).Order("sequence ASC").Find(&events).Error; err != nil {
+		t.Fatalf("load workflow events: %v", err)
+	}
+	finishedSequence := 0
+	for _, event := range events {
+		if event.EventType == workflowpause.EventWorkflowFinished {
+			finishedSequence = event.Sequence
+		}
+		if finishedSequence > 0 && event.EventType == workflowpause.EventWorkflowResumed {
+			t.Fatalf("workflow_resumed appeared after terminal sequence: %#v", events)
+		}
+	}
+	if finishedSequence == 0 {
+		t.Fatalf("workflow_finished event missing: %#v", events)
+	}
+	if _, err := workflowpause.NewService(db).ClaimResume(t.Context(), run.ID, pauseRecord.ID, time.Minute); !errors.Is(err, workflowpause.ErrPauseNotResumeReady) {
+		t.Fatalf("post-stop ClaimResume() error = %v, want pause not resume ready", err)
+	}
+}
+
+func TestPostgresStoppedAnswerProjectionAcceptsOnlyImmediatelyRevokedGeneration(t *testing.T) {
+	if strings.TrimSpace(os.Getenv("TEST_POSTGRES_DSN")) == "" {
+		t.Skip("TEST_POSTGRES_DSN is not configured")
+	}
+	db := openWorkflowStopV2TestDB(t)
+	if err := db.AutoMigrate(&conversation.AgentConversation{}, &conversation.AgentMessage{}, &WorkflowRunLog{}); err != nil {
+		t.Fatalf("migrate stopped projection tables: %v", err)
+	}
+	oldDB := database.GetDB()
+	database.SetDB(db)
+	t.Cleanup(func() { database.SetDB(oldDB) })
+
+	agentID := uuid.New()
+	accountID := uuid.New()
+	conversationID := uuid.New()
+	runID := uuid.New()
+	executionID := uuid.NewString()
+	finishedAt := time.Now()
+	if err := db.Create(&conversation.AgentConversation{
+		ID: conversationID, AgentID: agentID, Mode: "chat", Name: "stopped projection",
+		Inputs: "{}", Status: "normal", FromSource: "account", RuntimeStatus: conversation.ConversationRuntimeIdle,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&WorkflowRunLog{
+		ID: runID.String(), TenantID: uuid.NewString(), AgentID: agentID.String(), WorkflowID: uuid.NewString(),
+		Type: dto.WorkflowTypeChat, TriggeredFrom: "debugging", Version: "draft",
+		Status: dto.WorkflowRunStatusRunning, CreatedByRole: CreatedByRoleAccount, CreatedBy: accountID.String(),
+		RuntimeProtocolVersion: workflowRuntimeProtocolVersionV2, ExecutionGeneration: 4, ActiveExecutionID: &executionID,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&WorkflowRunLog{}).Where("id = ?", runID).Updates(map[string]interface{}{
+		"status": dto.WorkflowRunStatusStopped, "finished_at": finishedAt,
+		"active_execution_id": nil, "execution_lease_expires_at": nil, "execution_generation": 5,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	handler := &WorkflowHandler{advancedChatHandler: &AdvancedChatWorkflowHandler{}}
+	systemInputs := map[string]interface{}{
+		"sys.conversation_id": conversationID.String(), "sys.user_id": accountID.String(), "sys.query": "continue",
+	}
+	owner := workflowExecutionOwner{WorkflowRunID: runID.String(), ExecutionID: executionID, Generation: 4}
+	answer := "七零八落\n一心一意\n"
+	if err := handler.persistStoppedWorkflowConversationAnswer(
+		t.Context(), owner, runID.String(), agentID.String(), accountID.String(), systemInputs, nil, "debugging", answer,
+	); err != nil {
+		t.Fatal(err)
+	}
+	var message conversation.AgentMessage
+	if err := db.Where("workflow_run_id = ?", runID).First(&message).Error; err != nil {
+		t.Fatal(err)
+	}
+	if message.Answer != answer || message.Status != conversation.AgentMessageStatusStopped || message.ExecutionGeneration != owner.Generation {
+		t.Fatalf("stopped projection answer=%q status=%q generation=%d", message.Answer, message.Status, message.ExecutionGeneration)
+	}
+
+	staleOwner := owner
+	staleOwner.Generation--
+	err := handler.persistStoppedWorkflowConversationAnswer(
+		t.Context(), staleOwner, runID.String(), agentID.String(), accountID.String(), systemInputs, nil, "debugging", "stale",
+	)
+	if !errors.Is(err, workflowpause.ErrExecutionOwnershipLost) {
+		t.Fatalf("stale owner error = %v, want ownership lost", err)
+	}
+	if err := db.First(&message, "id = ?", message.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if message.Answer != answer {
+		t.Fatalf("stale owner overwrote stopped answer: %q", message.Answer)
+	}
+}
+
+func migrateWorkflowStopV2TestTables(db *gorm.DB) error {
+	return db.AutoMigrate(
+		&workflowStopTestRun{},
+		&workflowStopTestMessage{},
+		&workflowStopTestNode{},
+		&workflowStopTestConversation{},
+		&workflowpause.RunPause{},
+		&workflowpause.RunEvent{},
+		&workflowpause.RuntimeOutbox{},
+	)
+}
+
 type workflowStopTestRun struct {
 	ID                      string `gorm:"type:uuid;primaryKey"`
 	TenantID                string `gorm:"type:uuid"`
@@ -409,6 +723,7 @@ type workflowStopTestRun struct {
 	ActiveExecutionID       *string
 	ExecutionLeaseExpiresAt *time.Time
 	StateRevision           int64
+	ConversationID          *string
 }
 
 func (workflowStopTestRun) TableName() string { return "workflow_run_logs" }
@@ -427,6 +742,33 @@ type workflowStopTestMessage struct {
 }
 
 func (workflowStopTestMessage) TableName() string { return "agents_messages" }
+
+type workflowStopTestNode struct {
+	ID              string  `gorm:"type:uuid;primaryKey"`
+	WorkflowRunID   *string `gorm:"type:uuid"`
+	NodeExecutionID *string
+	NodeID          string
+	NodeType        string
+	Title           string
+	Index           int
+	Status          string
+	ElapsedTime     float64
+	CreatedAt       time.Time
+	FinishedAt      *time.Time
+	DeletedAt       *time.Time
+}
+
+func (workflowStopTestNode) TableName() string { return "workflow_node_runtime_logs" }
+
+type workflowStopTestConversation struct {
+	ID                  uuid.UUID `gorm:"type:uuid;primaryKey"`
+	RuntimeStatus       string
+	ActiveWorkflowRunID *uuid.UUID `gorm:"type:uuid"`
+	RuntimeRevision     int64
+	UpdatedAt           time.Time
+}
+
+func (workflowStopTestConversation) TableName() string { return "agents_conversations" }
 
 func openWorkflowStopV2TestDB(t *testing.T) *gorm.DB {
 	t.Helper()

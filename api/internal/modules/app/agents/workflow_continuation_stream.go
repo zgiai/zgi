@@ -47,6 +47,17 @@ func (h *AgentsHandler) streamWorkflowApprovalContinuationDirect(c *gin.Context,
 			h.streamWorkflowApprovalContinuation(c, scope, continuation, observeAfter, nil)
 			return true
 		}
+		// The stop endpoint commits the workflow terminal state before it
+		// cancels the resume worker. Prefer that durable state over the stale
+		// worker's context-canceled/ownership-lost error, otherwise the stopped
+		// message is incorrectly finalized again as failed and the optimistic
+		// update surfaces as "record not found".
+		terminalCtx, cancelTerminal := context.WithTimeout(context.WithoutCancel(workCtx), 5*time.Second)
+		if h.finishAgentWorkflowContinuationIfRunTerminal(terminalCtx, scope, continuation, state.WorkflowMessageText, state.HasWorkflowMessage, emit) {
+			cancelTerminal()
+			return true
+		}
+		cancelTerminal()
 		h.failAgentWorkflowContinuation(context.WithoutCancel(c.Request.Context()), continuation, err, emit)
 		return true
 	}
@@ -405,6 +416,24 @@ func (h *AgentsHandler) finishAgentWorkflowContinuation(ctx context.Context, sco
 	}
 	outputs := run.OutputsMap()
 	finalPassthroughAnswer, hasFinalPassthroughAnswer := agentWorkflowContinuationFinalPassthroughAnswer(outputs, passthroughAnswer, hasPassthroughAnswer)
+	if strings.EqualFold(strings.TrimSpace(run.Status), "stopped") {
+		answer := ""
+		if hasFinalPassthroughAnswer {
+			answer = finalPassthroughAnswer
+		}
+		metadata, stopErr := h.chatRuntimeService.CompleteWorkflowApprovalContinuation(ctx, continuation, answer, runtimemodel.MessageStatusStopped)
+		if stopErr != nil {
+			logger.WarnContext(ctx, "failed to stop workflow continuation message", "workflow_run_id", continuation.WorkflowRunID, stopErr)
+			return
+		}
+		h.emitAgentWorkflowContinuationStreamEvent(ctx, continuation, "message_end", gin.H{
+			"conversation_id": continuation.ConversationID.String(),
+			"message_id":      continuation.MessageID.String(),
+			"status":          runtimemodel.MessageStatusStopped,
+			"metadata":        metadata,
+		}, emit)
+		return
+	}
 	if hasFinalPassthroughAnswer && agentWorkflowContinuationMode(continuation) == "agent_conversation_delegate" {
 		if hasPassthroughAnswer && finalPassthroughAnswer != passthroughAnswer {
 			h.emitAgentWorkflowContinuationStreamEvent(ctx, continuation, "message_retract", gin.H{

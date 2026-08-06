@@ -430,10 +430,17 @@ func (h *WorkflowHandler) executeWorkflowStream(ctx context.Context, workspaceID
 
 				// Update workflow node runtime log with stopped status
 				if nodeLogID != "" && workflowService != nil {
-					updateErr := workflowService.UpdateWorkflowNodeRuntimeLog(ctx, nodeLogID, status, outputs, nil, nil, elapsedTime, errMsg)
-					if updateErr != nil {
-						logger.ErrorContext(ctx, "failed to update workflow node runtime log", "node_id", currentNodeID, "node_type", nodeType, updateErr)
+					persistCtx, cancelPersist := context.WithTimeout(context.WithoutCancel(ctx), workflowRunFinalizePersistTimeout)
+					updateErr := workflowService.UpdateWorkflowNodeRuntimeLog(persistCtx, nodeLogID, status, outputs, nil, nil, elapsedTime, errMsg)
+					if errors.Is(updateErr, workflowpause.ErrExecutionOwnershipLost) {
+						// The V2 stop barrier already terminalized this node and revoked
+						// the worker generation. A stale cancellation cleanup is expected
+						// to lose ownership and must not be reported as a runtime failure.
+						logger.DebugContext(persistCtx, "skipped stale canceled node update after workflow stop", "node_id", currentNodeID, "node_type", nodeType)
+					} else if updateErr != nil {
+						logger.ErrorContext(persistCtx, "failed to update workflow node runtime log", "node_id", currentNodeID, "node_type", nodeType, updateErr)
 					}
+					cancelPersist()
 				}
 				workflowElapsedTracker.recordNodeElapsed(nodeLogID, elapsedTime)
 

@@ -524,17 +524,34 @@ func (h *AgentsHandler) stopRuntimeConversation(c *gin.Context, runtimeCtx agent
 	if !ok {
 		return
 	}
-	result, err := h.chatRuntimeService.StopConversationByCaller(c.Request.Context(), runtimeCtx.Scope, runtimeCtx.Caller, conversationID)
+	conversation, err := h.chatRuntimeService.GetConversationByCaller(c.Request.Context(), runtimeCtx.Scope, runtimeCtx.Caller, conversationID)
 	if err != nil {
 		h.failRuntime(c, err)
 		return
 	}
-	if result != nil && result.Message != nil && h.workflowContinuationRunner != nil {
-		if workflowRunID := agentWorkflowContinuationRunIDFromMetadata(result.Message.Metadata); workflowRunID != "" {
-			if err := h.workflowContinuationRunner.StopWorkflowContinuation(c.Request.Context(), workflowRunID, runtimeCtx.Scope.AccountID.String()); err != nil {
-				logger.WarnContext(c.Request.Context(), "failed to stop agent workflow continuation", "workflow_run_id", workflowRunID, err)
+	var targetMessageID *uuid.UUID
+	if conversation.ActiveMessageID != nil {
+		targetMessageID = conversation.ActiveMessageID
+	} else if conversation.CurrentLeafMessageID != nil {
+		targetMessageID = conversation.CurrentLeafMessageID
+	}
+	if targetMessageID != nil && h.workflowContinuationRunner != nil {
+		message, _, loadErr := h.chatRuntimeService.GetMessageByCaller(c.Request.Context(), runtimeCtx.Scope, runtimeCtx.Caller, *targetMessageID)
+		if loadErr != nil {
+			h.failRuntime(c, loadErr)
+			return
+		}
+		if workflowRunID := agentWorkflowContinuationRunIDFromMetadata(message.Metadata); workflowRunID != "" {
+			if stopErr := h.workflowContinuationRunner.StopWorkflowContinuation(c.Request.Context(), workflowRunID, runtimeCtx.Scope.AccountID.String()); stopErr != nil {
+				h.failRuntime(c, stopErr)
+				return
 			}
 		}
+	}
+	result, err := h.chatRuntimeService.StopConversationByCaller(c.Request.Context(), runtimeCtx.Scope, runtimeCtx.Caller, conversationID)
+	if err != nil {
+		h.failRuntime(c, err)
+		return
 	}
 	response.Success(c, runtimeStopConversationResponse(result))
 }

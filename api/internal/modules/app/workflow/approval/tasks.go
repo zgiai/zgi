@@ -87,12 +87,18 @@ func DispatchResumeOutbox(ctx context.Context, service *Service, taskManager *qu
 	if service == nil || taskManager == nil || ref == nil {
 		return fmt.Errorf("workflow resume outbox dispatcher is not configured")
 	}
+	dispatchable, err := service.runtimeOutboxDispatchable(ctx, ref.ID)
+	if err != nil {
+		return err
+	}
+	if !dispatchable {
+		return nil
+	}
 	var payload workflowpause.RuntimeOutboxPayload
 	if err := json.Unmarshal([]byte(ref.PayloadJSON), &payload); err != nil {
 		return fmt.Errorf("decode workflow resume outbox: %w", err)
 	}
 	var task *asynq.Task
-	var err error
 	if payload.InteractionType == workflowpause.ReasonTypeQuestionAnswerRequired {
 		task, err = NewQuestionResumeTask(QuestionResumeTaskPayload{
 			WorkflowRunID: payload.WorkflowRunID,
@@ -153,7 +159,7 @@ func NewResumeTaskHandler(service *Service, onSubmit ResumeCallback) func(contex
 		}
 		if onSubmit != nil {
 			if err := onSubmit(ctx, form); err != nil {
-				if errors.Is(err, workflowpause.ErrPauseNotFound) {
+				if errors.Is(err, workflowpause.ErrPauseNotFound) || errors.Is(err, workflowpause.ErrPauseNotResumeReady) {
 					return nil
 				}
 				return err
@@ -178,7 +184,7 @@ func NewQuestionResumeTaskHandler(onResume QuestionResumeCallback) func(context.
 			return fmt.Errorf("question resume task payload missing workflow_run_id: %w", asynq.SkipRetry)
 		}
 		if err := onResume(ctx, payload.WorkflowRunID, payload.Inputs); err != nil {
-			if errors.Is(err, workflowpause.ErrPauseNotFound) {
+			if errors.Is(err, workflowpause.ErrPauseNotFound) || errors.Is(err, workflowpause.ErrPauseNotResumeReady) {
 				return nil
 			}
 			return err

@@ -8,6 +8,8 @@ import (
 
 	"github.com/google/uuid"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
+	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/repository"
+	"gorm.io/gorm"
 )
 
 func TestWorkflowSummaryLLMRequestUsesOriginalMessageModelAndWorkflowOutputs(t *testing.T) {
@@ -225,4 +227,180 @@ func TestWorkflowNoDisplayableOutputAnswer(t *testing.T) {
 	if !strings.Contains(got, "工作流已运行，但未返回可展示输出") || !strings.Contains(got, "run-empty") {
 		t.Fatalf("workflowNoDisplayableOutputAnswer() = %q", got)
 	}
+}
+
+func TestWorkflowContinuationCheckpointsAndStopsPartialAnswer(t *testing.T) {
+	messageRepo := &workflowContinuationCheckpointMessageRepo{}
+	conversationRepo := &workflowContinuationCheckpointConversationRepo{}
+	svc := &service{repos: &repository.Repositories{Message: messageRepo, Conversation: conversationRepo}}
+	continuation := &WorkflowApprovalContinuation{
+		ConversationID: uuid.New(), MessageID: uuid.New(), WorkflowRunID: "workflow-run-checkpoint",
+		Metadata: map[string]interface{}{
+			"agent_workflow_continuation": map[string]interface{}{"workflow_run_id": "workflow-run-checkpoint"},
+		},
+	}
+
+	if _, err := svc.RecordWorkflowApprovalContinuationEvent(t.Context(), continuation, "text_chunk", map[string]interface{}{"text": "first"}); err != nil {
+		t.Fatalf("record first chunk: %v", err)
+	}
+	if messageRepo.partialAnswer != "first" || messageRepo.partialUpdates != 1 {
+		t.Fatalf("first checkpoint answer=%q updates=%d", messageRepo.partialAnswer, messageRepo.partialUpdates)
+	}
+	if _, err := svc.RecordWorkflowApprovalContinuationEvent(t.Context(), continuation, "text_chunk", map[string]interface{}{"text": " second"}); err != nil {
+		t.Fatalf("record second chunk: %v", err)
+	}
+	if messageRepo.partialUpdates != 1 {
+		t.Fatalf("throttled checkpoint updates=%d, want 1", messageRepo.partialUpdates)
+	}
+	if _, err := svc.RecordWorkflowApprovalContinuationEvent(t.Context(), continuation, "node_finished", map[string]interface{}{"text": "technical node text"}); err != nil {
+		t.Fatalf("record technical workflow event: %v", err)
+	}
+	if messageRepo.partialUpdates != 1 {
+		t.Fatalf("technical events must not enter the answer checkpoint; updates=%d", messageRepo.partialUpdates)
+	}
+	if _, err := svc.RecordWorkflowApprovalContinuationEvent(t.Context(), continuation, "workflow_finished", map[string]interface{}{"status": "stopped"}); err != nil {
+		t.Fatalf("record terminal event: %v", err)
+	}
+	if messageRepo.partialAnswer != "first second" || messageRepo.partialUpdates != 2 {
+		t.Fatalf("forced checkpoint answer=%q updates=%d", messageRepo.partialAnswer, messageRepo.partialUpdates)
+	}
+	metadata, err := svc.CompleteWorkflowApprovalContinuation(t.Context(), continuation, "first second", runtimemodel.MessageStatusStopped)
+	if err != nil {
+		t.Fatalf("stop continuation: %v", err)
+	}
+	if messageRepo.stoppedAnswer != "first second" || messageRepo.completedUpdates != 0 {
+		t.Fatalf("stopped answer=%q completed updates=%d", messageRepo.stoppedAnswer, messageRepo.completedUpdates)
+	}
+	if !conversationRepo.finished {
+		t.Fatal("stopped continuation did not release the active message")
+	}
+	conversationRepo.finishErr = gorm.ErrRecordNotFound
+	if _, err := svc.CompleteWorkflowApprovalContinuation(t.Context(), continuation, "", runtimemodel.MessageStatusStopped); err != nil {
+		t.Fatalf("idempotent stop after active message was already cleared: %v", err)
+	}
+	if messageRepo.stoppedAnswer != "first second" {
+		t.Fatalf("idempotent stop erased partial answer: %q", messageRepo.stoppedAnswer)
+	}
+	state := workflowRecordFromAny(metadata["agent_workflow_continuation"])
+	if status := firstNonEmptyString(state["status"]); status != runtimemodel.MessageStatusStopped {
+		t.Fatalf("continuation status = %q, want stopped", status)
+	}
+}
+
+func TestWorkflowContinuationStoppedAnswerUsesObservedEventText(t *testing.T) {
+	messageRepo := &workflowContinuationCheckpointMessageRepo{}
+	conversationRepo := &workflowContinuationCheckpointConversationRepo{}
+	svc := &service{repos: &repository.Repositories{Message: messageRepo, Conversation: conversationRepo}}
+	continuation := &WorkflowApprovalContinuation{
+		ConversationID: uuid.New(), MessageID: uuid.New(), WorkflowRunID: "workflow-run-tail",
+		Metadata: map[string]interface{}{
+			"agent_workflow_continuation": map[string]interface{}{"workflow_run_id": "workflow-run-tail"},
+		},
+	}
+
+	for _, chunk := range []string{"七", "零八", "落", "\n", "一心", "一", "意", "\n"} {
+		if _, err := svc.RecordWorkflowApprovalContinuationEvent(t.Context(), continuation, "text_chunk", map[string]interface{}{"text": chunk}); err != nil {
+			t.Fatalf("record chunk %q: %v", chunk, err)
+		}
+	}
+	if _, err := svc.CompleteWorkflowApprovalContinuation(t.Context(), continuation, "七零八落\n一心", runtimemodel.MessageStatusStopped); err != nil {
+		t.Fatalf("complete stopped continuation: %v", err)
+	}
+	if got, want := messageRepo.stoppedAnswer, "七零八落\n一心一意\n"; got != want {
+		t.Fatalf("stopped answer = %q, want %q", got, want)
+	}
+}
+
+func TestWorkflowContinuationTextReplaceMayShortenOrClearAnswer(t *testing.T) {
+	messageRepo := &workflowContinuationCheckpointMessageRepo{}
+	svc := &service{repos: &repository.Repositories{
+		Message:      messageRepo,
+		Conversation: &workflowContinuationCheckpointConversationRepo{},
+	}}
+	continuation := &WorkflowApprovalContinuation{ConversationID: uuid.New(), MessageID: uuid.New()}
+
+	if err := svc.checkpointWorkflowContinuationAnswer(t.Context(), continuation, "text_chunk", map[string]interface{}{"text": "a much longer draft"}, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.checkpointWorkflowContinuationAnswer(t.Context(), continuation, "text_replace", map[string]interface{}{"text": "short"}, true); err != nil {
+		t.Fatal(err)
+	}
+	if got := continuation.answer; got != "short" {
+		t.Fatalf("short replacement = %q, want short", got)
+	}
+	if err := svc.checkpointWorkflowContinuationAnswer(t.Context(), continuation, "text_replace", map[string]interface{}{"text": ""}, true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.CompleteWorkflowApprovalContinuation(t.Context(), continuation, "stale", runtimemodel.MessageStatusStopped); err != nil {
+		t.Fatal(err)
+	}
+	if got := messageRepo.stoppedAnswer; got != "" {
+		t.Fatalf("cleared stopped answer = %q, want empty", got)
+	}
+}
+
+func TestWorkflowContinuationWithoutObservedTextPreservesDatabaseAnswer(t *testing.T) {
+	messageRepo := &workflowContinuationCheckpointMessageRepo{}
+	svc := &service{repos: &repository.Repositories{
+		Message:      messageRepo,
+		Conversation: &workflowContinuationCheckpointConversationRepo{},
+	}}
+	continuation := &WorkflowApprovalContinuation{ConversationID: uuid.New(), MessageID: uuid.New()}
+
+	if _, err := svc.CompleteWorkflowApprovalContinuation(t.Context(), continuation, "", runtimemodel.MessageStatusStopped); err != nil {
+		t.Fatal(err)
+	}
+	if messageRepo.preserveStoppedUpdates != 1 {
+		t.Fatalf("preserve stopped updates = %d, want 1", messageRepo.preserveStoppedUpdates)
+	}
+	if messageRepo.stoppedAnswerUpdates != 0 {
+		t.Fatalf("stopped answer writes = %d, want 0", messageRepo.stoppedAnswerUpdates)
+	}
+}
+
+type workflowContinuationCheckpointMessageRepo struct {
+	repository.MessageRepository
+	partialAnswer          string
+	stoppedAnswer          string
+	partialUpdates         int
+	completedUpdates       int
+	stoppedAnswerUpdates   int
+	preserveStoppedUpdates int
+}
+
+func (r *workflowContinuationCheckpointMessageRepo) UpdatePartialAnswer(_ context.Context, _ uuid.UUID, answer string, _ map[string]interface{}) error {
+	r.partialAnswer = answer
+	r.partialUpdates++
+	return nil
+}
+
+func (r *workflowContinuationCheckpointMessageRepo) UpdateStoppedAnswer(_ context.Context, _ uuid.UUID, answer string, _ map[string]interface{}) error {
+	r.stoppedAnswer = answer
+	r.stoppedAnswerUpdates++
+	return nil
+}
+
+func (r *workflowContinuationCheckpointMessageRepo) UpdateStoppedPreservingAnswer(context.Context, uuid.UUID, map[string]interface{}) error {
+	r.preserveStoppedUpdates++
+	return nil
+}
+
+func (r *workflowContinuationCheckpointMessageRepo) UpdateCompleted(context.Context, uuid.UUID, string, map[string]interface{}) error {
+	r.completedUpdates++
+	return nil
+}
+
+func (r *workflowContinuationCheckpointMessageRepo) UpdateMetadata(context.Context, uuid.UUID, map[string]interface{}) error {
+	return nil
+}
+
+type workflowContinuationCheckpointConversationRepo struct {
+	repository.ConversationRepository
+	finished  bool
+	finishErr error
+}
+
+func (r *workflowContinuationCheckpointConversationRepo) FinishContinuationMessage(context.Context, uuid.UUID, uuid.UUID) error {
+	r.finished = true
+	return r.finishErr
 }

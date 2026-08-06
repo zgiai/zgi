@@ -1291,54 +1291,30 @@ func (s *WorkflowService) StopWorkflowTask(ctx context.Context, tenantID, agentI
 		return fmt.Errorf("workflow run not found or access denied")
 	}
 
-	cancelledLocally := false
-	if workflowRunNeedsRuntimeCancellation(run) {
-		// Only an actively owned execution can have in-memory answer and event
-		// buffers to flush. Paused V2 runs have already released their owner and
-		// engine, so probing both registries only creates misleading warnings.
-		cancelledLocally = s.CancelRunningWorkflow(taskID)
-		if cancelledLocally {
-			logger.Info("Successfully cancelled running workflow context for run: %s", taskID)
-		} else {
-			logger.Debug("No local running workflow context found for run: %s", taskID)
-		}
-
-		if s.executor != nil {
-			if stopErr := s.executor.StopWorkflow(taskID); stopErr != nil {
-				logger.Debug("No local workflow engine stopped for run %s: %v", taskID, stopErr)
-			} else {
-				logger.Info("Successfully stopped workflow engine for run: %s", taskID)
-			}
-		}
-	}
-
 	now := time.Now()
-	shouldStopNodeLogs := true
+	needsRuntimeCancellation := workflowRunNeedsRuntimeCancellation(run)
 	if run.RuntimeProtocolVersion >= workflowRuntimeProtocolVersionV2 {
 		persistCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), workflowRunFinalizePersistTimeout)
 		defer cancel()
-		if cancelledLocally {
-			run = s.waitForLocalWorkflowStopFinalization(persistCtx, run)
-		}
 		if err := s.finalizeStoppedWorkflowRunV2(persistCtx, run, now); err != nil {
 			return fmt.Errorf("failed to durably stop workflow run: %w", err)
 		}
-		if current, loadErr := s.workflowRunLogRepo.GetByID(persistCtx, run.ID); loadErr == nil && current != nil {
-			run = current
-			shouldStopNodeLogs = string(current.Status) == string(dto.WorkflowRunStatusStopped)
+	} else {
+		cancelWorkflowRuntime(s, taskID, needsRuntimeCancellation)
+		if err := s.stopLegacyWorkflowRun(ctx, run.ID, now); err != nil {
+			return err
 		}
-	} else if err := s.stopLegacyWorkflowRun(ctx, run.ID, now); err != nil {
-		return err
-	}
-
-	// Stop any running node logs for this run
-	nodeLogs, err := s.workflowNodeRuntimeLogRepo.GetByWorkflowRunID(ctx, run.ID)
-	if err == nil && shouldStopNodeLogs {
-		for _, nl := range nodeLogs {
-			if string(nl.Status) == string(dto.NodeStatusRunning) {
-				_ = s.workflowNodeRuntimeLogRepo.UpdateStatus(ctx, nl.ID, string(dto.WorkflowRunStatusStopped), &now)
+		nodeLogs, loadErr := s.workflowNodeRuntimeLogRepo.GetByWorkflowRunID(ctx, run.ID)
+		if loadErr == nil {
+			for _, nl := range nodeLogs {
+				if string(nl.Status) == string(dto.NodeStatusRunning) {
+					_ = s.workflowNodeRuntimeLogRepo.UpdateStatus(ctx, nl.ID, string(dto.WorkflowRunStatusStopped), &now)
+				}
 			}
 		}
+	}
+	if run.RuntimeProtocolVersion >= workflowRuntimeProtocolVersionV2 {
+		cancelWorkflowRuntime(s, taskID, needsRuntimeCancellation)
 	}
 
 	s.cleanupWorkflowReusableSessionsWithTimeout(run.ID)
@@ -1350,6 +1326,25 @@ func (s *WorkflowService) StopWorkflowTask(ctx context.Context, tenantID, agentI
 	s.UnregisterRunningWorkflow(taskID)
 
 	return nil
+}
+
+func cancelWorkflowRuntime(s *WorkflowService, runID string, shouldCancel bool) {
+	if s == nil || !shouldCancel {
+		return
+	}
+	if s.CancelRunningWorkflow(runID) {
+		logger.Info("Successfully cancelled running workflow context for run: %s", runID)
+	} else {
+		logger.Debug("No local running workflow context found for run: %s", runID)
+	}
+	if s.executor == nil {
+		return
+	}
+	if err := s.executor.StopWorkflow(runID); err != nil {
+		logger.Debug("No local workflow engine stopped for run %s: %v", runID, err)
+		return
+	}
+	logger.Info("Successfully stopped workflow engine for run: %s", runID)
 }
 
 func workflowRunNeedsRuntimeCancellation(run *WorkflowRunLog) bool {
