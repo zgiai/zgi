@@ -146,10 +146,8 @@ export function ConsoleSidebar({
     isDebugFocusMode || temporarilyCollapsed
   );
   const isTemporarilyCollapsed = isDebugFocusMode || temporarilyCollapsed;
-  const [isHoverExpanded, setIsHoverExpanded] = React.useState(false);
-  const hoverTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const layoutIsCollapsed = isTemporarilyCollapsed || persistedIsCollapsed;
-  const isCollapsed = layoutIsCollapsed && !isHoverExpanded;
+  const isCollapsed = layoutIsCollapsed;
   const wasAutoCollapseActiveRef = React.useRef(false);
 
   React.useEffect(() => {
@@ -160,34 +158,6 @@ export function ConsoleSidebar({
   }, [autoCollapse, persistedIsCollapsed, setIsCollapsed]);
 
   const toggleCollapse = () => setIsCollapsed(prev => !prev);
-
-  React.useEffect(() => {
-    if (!layoutIsCollapsed) {
-      if (hoverTimerRef.current) {
-        clearTimeout(hoverTimerRef.current);
-        hoverTimerRef.current = null;
-      }
-      setIsHoverExpanded(false);
-    }
-  }, [layoutIsCollapsed]);
-
-  React.useEffect(
-    () => () => {
-      if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
-    },
-    []
-  );
-
-  const scheduleHoverExpanded = React.useCallback((expanded: boolean) => {
-    if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
-    hoverTimerRef.current = setTimeout(
-      () => {
-        setIsHoverExpanded(expanded);
-        hoverTimerRef.current = null;
-      },
-      expanded ? 60 : 220
-    );
-  }, []);
 
   // Group open state
   const [openGroups, setOpenGroups] = React.useState<Record<string, boolean>>(() => {
@@ -518,24 +488,13 @@ export function ConsoleSidebar({
   }
   return (
     <aside
-      onPointerEnter={event => {
-        if (event.pointerType !== 'mouse') return;
-        if (layoutIsCollapsed) {
-          scheduleHoverExpanded(true);
-        }
-      }}
-      onPointerLeave={event => {
-        if (event.pointerType !== 'mouse') return;
-        scheduleHoverExpanded(false);
-      }}
       className={cn('relative hidden shrink-0 md:block', layoutIsCollapsed ? 'w-12' : 'w-44')}
     >
       <div
         className={cn(
           'absolute inset-y-0 left-0 z-40 flex flex-col overflow-hidden border-r border-border/60 bg-background text-sidebar-foreground',
           'will-change-[width] transition-[width,box-shadow] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none',
-          isCollapsed ? 'w-12' : 'w-44',
-          layoutIsCollapsed && !isCollapsed && 'shadow-[12px_0_28px_-18px_rgba(15,23,42,0.45)]'
+          isCollapsed ? 'w-12' : 'w-44'
         )}
       >
         {sidebarContent}
