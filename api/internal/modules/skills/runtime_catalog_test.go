@@ -114,6 +114,13 @@ func TestAgentWorkflowSystemSkillExposeExpectedTools(t *testing.T) {
 		t.Fatal("run_agent_workflow contract missing")
 	}
 	schema := got["schema"].(map[string]interface{})
+	required := schema["required"].([]string)
+	if !sameStrings(required, []string{"binding_id"}) {
+		t.Fatalf("run_agent_workflow required = %#v, want [binding_id]", required)
+	}
+	if example := got["example"].(map[string]interface{}); example["inputs"] != nil {
+		t.Fatalf("zero-input workflow example should omit inputs: %#v", example)
+	}
 	inputs := schema["properties"].(map[string]interface{})["inputs"].(map[string]interface{})
 	if properties := inputs["properties"].(map[string]interface{}); len(properties) != 0 {
 		t.Fatalf("generic workflow inputs properties = %#v, want binding-specific empty schema", properties)

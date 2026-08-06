@@ -107,20 +107,20 @@ func workflowRunContract() SkillToolArgumentContract {
 	return SkillToolArgumentContract{
 		SkillID:     SkillAgentWorkflow,
 		ToolName:    "run_agent_workflow",
-		Description: "Run an Agent-bound workflow by binding_id. Do not pass workflow_id directly. For task workflows, follow the binding's declared input schema and use an empty inputs object when it has no start inputs. Only conversational workflows use inputs.query for the user's current request. After a succeeded run, final answers must use primary_output or outputs and must not invent workflow output.",
+		Description: "Run an Agent-bound workflow by binding_id. Do not pass workflow_id directly. For task workflows, follow the binding's declared input schema; omit inputs when it has no start inputs. Only conversational workflows use inputs.query for the user's current request. After a succeeded run, final answers must use primary_output or outputs and must not invent workflow output.",
 		Schema: objectSchema(
 			map[string]interface{}{
 				"binding_id": stringValueSchema("Workflow binding ID from injected available_workflows, or from list_agent_workflows if the injected list is missing or ambiguous."),
 				"inputs": map[string]interface{}{
 					"type":                 "object",
-					"description":          "Workflow input object. For task workflows, pass only declared start inputs; use an empty object when none are declared. For conversational workflows, pass the user's current request as query.",
+					"description":          "Optional workflow input object. For task workflows, pass only declared start inputs and omit this field when none are declared. For conversational workflows, pass the user's current request as query.",
 					"additionalProperties": true,
 					"properties":           map[string]interface{}{},
 				},
 			},
-			[]string{"binding_id", "inputs"},
+			[]string{"binding_id"},
 		),
-		Example: map[string]interface{}{"binding_id": "approval-flow", "inputs": map[string]interface{}{}},
+		Example: map[string]interface{}{"binding_id": "approval-flow"},
 	}
 }
 
