@@ -12,6 +12,7 @@ import (
 	contentmodel "github.com/zgiai/zgi/api/internal/modules/contentparse/model"
 	contentsvc "github.com/zgiai/zgi/api/internal/modules/contentparse/service"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
+	authmodel "github.com/zgiai/zgi/api/internal/modules/user/auth/model"
 )
 
 type fakeProviderAdminService struct{}
@@ -150,6 +151,7 @@ type providerSettingsAccountService struct {
 	authorizationCalled bool
 	lastOrganizationID  string
 	lastAccountID       string
+	accountContext      *authmodel.AccountContext
 }
 
 func (s *providerSettingsAccountService) IsOrganizationAdminOrOwner(_ context.Context, organizationID, accountID string) (bool, error) {
@@ -157,6 +159,10 @@ func (s *providerSettingsAccountService) IsOrganizationAdminOrOwner(_ context.Co
 	s.lastOrganizationID = organizationID
 	s.lastAccountID = accountID
 	return s.allowed, nil
+}
+
+func (s *providerSettingsAccountService) GetAccountContext(context.Context, string) (*authmodel.AccountContext, error) {
+	return s.accountContext, nil
 }
 
 func TestRegisterInternalRoutes_RegisterExpectedPaths(t *testing.T) {
@@ -227,10 +233,17 @@ func TestProviderSettingsRoutesAllowReadWithoutOrganizationAdminOrOwner(t *testi
 	}
 }
 
-func TestProviderSettingsRoutesRequireOrganizationAdminOrOwnerForWrites(t *testing.T) {
+func TestProviderSettingsRoutesRequireOrganizationAdminOrOwnerForWorkspaceWrites(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	organizationID := uuid.NewString()
-	accountSvc := &providerSettingsAccountService{allowed: false}
+	workspaceID := uuid.NewString()
+	accountSvc := &providerSettingsAccountService{
+		allowed: false,
+		accountContext: &authmodel.AccountContext{
+			CurrentOrganizationID: &organizationID,
+			CurrentWorkspaceID:    &workspaceID,
+		},
+	}
 	settingsSvc := &fakeProviderSettingsService{}
 
 	router := newProviderSettingsRouteTestRouter(organizationID, accountSvc, settingsSvc)
@@ -254,6 +267,118 @@ func TestProviderSettingsRoutesRequireOrganizationAdminOrOwnerForWrites(t *testi
 	}
 	if settingsSvc.upsertCalled {
 		t.Fatal("provider settings service should not be called for non-admin write request")
+	}
+}
+
+func TestProviderSettingsRoutesAllowPersonalWorkbenchWrites(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	organizationID := uuid.NewString()
+	accountSvc := &providerSettingsAccountService{
+		allowed: false,
+		accountContext: &authmodel.AccountContext{
+			CurrentOrganizationID: &organizationID,
+		},
+	}
+	for _, tc := range []struct {
+		name   string
+		method string
+		path   string
+		body   string
+		called func(*fakeProviderSettingsService) bool
+	}{
+		{
+			name:   "save settings",
+			method: http.MethodPut,
+			path:   "/content-parse/provider-settings/reducto",
+			body:   `{"enabled":true}`,
+			called: func(s *fakeProviderSettingsService) bool { return s.upsertCalled },
+		},
+		{
+			name:   "check settings",
+			method: http.MethodPost,
+			path:   "/content-parse/provider-settings/reducto/check",
+			called: func(s *fakeProviderSettingsService) bool { return s.checkCalled },
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			settingsSvc := &fakeProviderSettingsService{}
+			router := newProviderSettingsRouteTestRouter(organizationID, accountSvc, settingsSvc)
+			req := httptest.NewRequest(tc.method, tc.path, strings.NewReader(tc.body))
+			if tc.body != "" {
+				req.Header.Set("Content-Type", "application/json")
+			}
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
+
+			if w.Code != http.StatusOK {
+				t.Fatalf("expected status 200 for personal workbench provider settings write, got %d, body=%s", w.Code, w.Body.String())
+			}
+			if !tc.called(settingsSvc) {
+				t.Fatal("provider settings service should be called for a personal workbench write")
+			}
+		})
+	}
+}
+
+func TestProviderSettingsRoutesDoNotInheritPlaygroundWorkspaceGuard(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	organizationID := uuid.NewString()
+	accountSvc := &providerSettingsAccountService{
+		allowed: false,
+		accountContext: &authmodel.AccountContext{
+			CurrentOrganizationID: &organizationID,
+		},
+	}
+	settingsSvc := &fakeProviderSettingsService{}
+
+	router := gin.New()
+	group := router.Group("/content-parse")
+	group.Use(func(c *gin.Context) {
+		c.Set("account_id", "acc-1")
+		c.Set("organization_id", organizationID)
+		c.Set("tenant_id", organizationID)
+		c.Set("account_service", accountSvc)
+		c.Next()
+	})
+	(&PlaygroundHandler{}).RegisterRoutes(group)
+	NewProviderSettingsHandler(settingsSvc).RegisterRoutes(group)
+
+	req := httptest.NewRequest(http.MethodPut, "/content-parse/provider-settings/reducto", strings.NewReader(`{"enabled":true}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200 when playground and provider settings share a parent group, got %d, body=%s", w.Code, w.Body.String())
+	}
+	if !settingsSvc.upsertCalled {
+		t.Fatal("provider settings service should be called after the playground routes are registered")
+	}
+}
+
+func TestProviderSettingsRoutesRejectPersonalWorkbenchForAnotherOrganization(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	organizationID := uuid.NewString()
+	otherOrganizationID := uuid.NewString()
+	accountSvc := &providerSettingsAccountService{
+		allowed: false,
+		accountContext: &authmodel.AccountContext{
+			CurrentOrganizationID: &otherOrganizationID,
+		},
+	}
+	settingsSvc := &fakeProviderSettingsService{}
+
+	router := newProviderSettingsRouteTestRouter(organizationID, accountSvc, settingsSvc)
+	req := httptest.NewRequest(http.MethodPut, "/content-parse/provider-settings/reducto", strings.NewReader(`{"enabled":true}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("expected status 403 for another organization, got %d, body=%s", w.Code, w.Body.String())
+	}
+	if settingsSvc.upsertCalled {
+		t.Fatal("provider settings service should not be called for another organization")
 	}
 }
 
