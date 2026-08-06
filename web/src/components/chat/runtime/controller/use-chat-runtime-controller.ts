@@ -199,7 +199,6 @@ export function useChatRuntimeController(options?: {
       markSelectionTarget,
       isLatestSelection,
       refreshList,
-      refreshConversationSilently,
       recoverStreamingConversation,
     });
   const {

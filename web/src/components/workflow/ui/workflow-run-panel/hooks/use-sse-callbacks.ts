@@ -36,6 +36,26 @@ interface RecordLike {
   [key: string]: unknown;
 }
 
+function terminalizeWorkflowRunItems(
+  items: WorkflowRunNodeListItem[],
+  status: 'stopped' | 'failed'
+): WorkflowRunNodeListItem[] {
+  return items.map(item => {
+    const terminalizeRounds = (rounds: WorkflowRunNodeListItem['iterationRounds']) =>
+      rounds?.map(round => ({
+        ...round,
+        nodes: terminalizeWorkflowRunItems(round.nodes, status),
+      }));
+    return {
+      ...item,
+      status:
+        item.status === 'running' || item.status === 'paused' ? status : item.status,
+      iterationRounds: terminalizeRounds(item.iterationRounds),
+      loopRounds: terminalizeRounds(item.loopRounds),
+    };
+  });
+}
+
 interface UseSseCallbacksParams {
   rf: ReactFlowInstance;
   viewport: Viewport;
@@ -1043,6 +1063,12 @@ export function useSseCallbacks(params: UseSseCallbacksParams): WorkflowRunSseCa
         try {
           const d = getSseData(payload);
           if (!d) return;
+          const finalStatus = pickString(d, 'status')?.toLowerCase();
+          if (finalStatus === 'stopped' || finalStatus === 'failed' || finalStatus === 'error') {
+            setRunItems(items =>
+              terminalizeWorkflowRunItems(items, finalStatus === 'stopped' ? 'stopped' : 'failed')
+            );
+          }
           const tokenUsage = pickRecord(d, 'token_usage');
           const errorObj = pickRecord(d, 'error');
           setRunSummary(prev => {
