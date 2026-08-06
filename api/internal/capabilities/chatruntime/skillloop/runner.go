@@ -58,6 +58,9 @@ type planningResult struct {
 	usage                 *adapter.Usage
 	answerStreamed        bool
 	naturalAnswerStreamed bool
+	provisionalContent    string
+	provisionalStreamed   bool
+	reasoningObserved     bool
 }
 
 type modelToolRoundCallResult struct {
@@ -242,6 +245,10 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 	planRevisionRequired := userInputPlanRevisionPending(req)
 	var answerBuilder strings.Builder
 	var usage *adapter.Usage
+	var nativeCommentary *nativeCommentaryState
+	if req.NativeAgentLoop {
+		nativeCommentary = newNativeCommentaryState(prepared.LLMRequest.Model, currentMetadataForRun(req))
+	}
 	r.diagnostics = modelInvocationDiagnostics{
 		activeSkillIDs:   activeSkillIDsForDiagnostics(resolved, loadedSkills),
 		loadedSkillIDs:   activeSkillIDsForDiagnostics(resolved, loadedSkills),
@@ -293,7 +300,7 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 		planningResult := planningResult{}
 		var err error
 		if req.NativeAgentLoop {
-			planningResult, err = r.runNativeAgentRound(ctx, prepared, planningReq, round, req.OnChunk, deferTerminalContent, terminalSubmissionAllowed, suppressNaturalProgress, req.NativeModelProgressEnabled)
+			planningResult, err = r.runNativeAgentRound(ctx, prepared, planningReq, round, req.OnChunk, deferTerminalContent, terminalSubmissionAllowed, suppressNaturalProgress)
 			err = nativeAgentOutputError(err)
 		} else if req.TerminalOnly {
 			planningResult, err = r.runTerminalOnlyPlanningWithRetry(
@@ -323,13 +330,21 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 		toolCalls := normalizeToolCalls(planningMessage.ToolCalls)
 		text := assistantMessageText(planningMessage)
 		if req.NativeAgentLoop && len(toolCalls) > 0 && strings.TrimSpace(text) != "" {
-			logger.WarnContext(ctx, "aichat native tool turn discarded assistant content",
-				"conversation_id", prepared.Conversation.ID.String(),
-				"message_id", prepared.Message.ID.String(),
-				"round", round,
-				"content_chars", len([]rune(text)),
-				"tool_call_count", len(toolCalls),
-			)
+			candidate := planningResult.provisionalContent
+			candidateStreamed := planningResult.provisionalStreamed
+			if strings.TrimSpace(candidate) == "" && !suppressNaturalProgress && !deferTerminalContent {
+				candidate = text
+				r.emitAnswerChunk(ctx, prepared, candidate, nil)
+				candidateStreamed = true
+			}
+			if candidateStreamed && strings.TrimSpace(candidate) != "" {
+				decision := nativeCommentary.classify(candidate, toolCalls, nativeToolSet)
+				r.emitAnswerRetractWithDisposition(ctx, prepared, candidate, decision.disposition)
+				r.logNativeCommentaryDecision(ctx, prepared, round, decision, planningResult.reasoningObserved)
+				if eventErr := prepared.presentationEventError(); eventErr != nil {
+					return answerBuilder.String(), usage, eventErr
+				}
+			}
 		}
 		if req.NativeAgentLoop && len(toolCalls) == 0 && strings.TrimSpace(text) == "" {
 			return answerBuilder.String(), usage, fmt.Errorf("%w: model returned neither a tool call nor assistant content", ErrAgentOutputTruncated)
@@ -1665,14 +1680,14 @@ func appendAnswerText(builder *strings.Builder, text string) {
 }
 
 func (r *Runner) runSkillPlanning(ctx context.Context, prepared *PreparedChat, planningReq *adapter.ChatRequest, round int, onChunk func(string) error, terminalProtocol bool, terminalStreamingAllowed bool, suppressNaturalProgress bool) (planningResult, error) {
-	return r.runModelToolRound(ctx, prepared, planningReq, round, onChunk, terminalProtocol, terminalStreamingAllowed, suppressNaturalProgress, "skill_planning", false)
+	return r.runModelToolRound(ctx, prepared, planningReq, round, onChunk, terminalProtocol, terminalStreamingAllowed, suppressNaturalProgress, "skill_planning")
 }
 
-func (r *Runner) runNativeAgentRound(ctx context.Context, prepared *PreparedChat, planningReq *adapter.ChatRequest, round int, onChunk func(string) error, terminalProtocol bool, terminalStreamingAllowed bool, suppressNaturalProgress bool, nativeModelProgressEnabled bool) (planningResult, error) {
-	return r.runModelToolRound(ctx, prepared, planningReq, round, onChunk, terminalProtocol, terminalStreamingAllowed, suppressNaturalProgress, "agent_tool_loop", nativeModelProgressEnabled)
+func (r *Runner) runNativeAgentRound(ctx context.Context, prepared *PreparedChat, planningReq *adapter.ChatRequest, round int, onChunk func(string) error, terminalProtocol bool, terminalStreamingAllowed bool, suppressNaturalProgress bool) (planningResult, error) {
+	return r.runModelToolRound(ctx, prepared, planningReq, round, onChunk, terminalProtocol, terminalStreamingAllowed, suppressNaturalProgress, "agent_tool_loop")
 }
 
-func (r *Runner) runModelToolRound(ctx context.Context, prepared *PreparedChat, planningReq *adapter.ChatRequest, round int, onChunk func(string) error, terminalProtocol bool, terminalStreamingAllowed bool, suppressNaturalProgress bool, phase string, nativeModelProgressEnabled bool) (planningResult, error) {
+func (r *Runner) runModelToolRound(ctx context.Context, prepared *PreparedChat, planningReq *adapter.ChatRequest, round int, onChunk func(string) error, terminalProtocol bool, terminalStreamingAllowed bool, suppressNaturalProgress bool, phase string) (planningResult, error) {
 	planningReq = cloneChatRequest(planningReq)
 	sourceMessages := cloneMessagesForProvider(planningReq.Messages)
 	planningReq.Messages = adapter.NormalizeSystemMessages(sourceMessages)
@@ -1686,7 +1701,10 @@ func (r *Runner) runModelToolRound(ctx context.Context, prepared *PreparedChat, 
 		})
 		return planningResult{}, err
 	}
-	progress := r.startModelProgressTracker(ctx, prepared, round, planningReq.Model, planningReq.Messages, phase == "agent_tool_loop" && nativeModelProgressEnabled)
+	var progress *modelProgressTracker
+	if phase == "agent_tool_loop" {
+		progress = r.startModelProgressTracker(ctx, prepared, round, planningReq.Model, planningReq.Messages)
+	}
 	defer progress.Stop()
 	if shouldStreamSkillPlanning(prepared) {
 		result, ok, err := r.runModelToolRoundStream(ctx, prepared, planningReq, round, nil, terminalProtocol, terminalStreamingAllowed, suppressNaturalProgress, phase, progress)
@@ -1749,9 +1767,17 @@ func (r *Runner) runModelToolRound(ctx context.Context, prepared *PreparedChat, 
 		Error:              errorString(terminationErr),
 	})
 	if terminationErr != nil {
-		return planningResult{message: message, usage: usage}, terminationErr
+		return planningResult{
+			message:           message,
+			usage:             usage,
+			reasoningObserved: strings.TrimSpace(message.ReasoningContent) != "",
+		}, terminationErr
 	}
-	return planningResult{message: message, usage: usage}, nil
+	return planningResult{
+		message:           message,
+		usage:             usage,
+		reasoningObserved: strings.TrimSpace(message.ReasoningContent) != "",
+	}, nil
 }
 
 func (r *Runner) runSkillPlanningWithRetry(
@@ -1864,16 +1890,24 @@ func (r *Runner) emitAnswerChunk(ctx context.Context, prepared *PreparedChat, te
 }
 
 func (r *Runner) emitAnswerRetract(ctx context.Context, prepared *PreparedChat, text string) {
+	r.emitAnswerRetractWithDisposition(ctx, prepared, text, "")
+}
+
+func (r *Runner) emitAnswerRetractWithDisposition(ctx context.Context, prepared *PreparedChat, text string, disposition string) {
 	if text == "" {
 		return
 	}
-	r.emitEvent(prepared, EventMessageRetract, map[string]interface{}{
+	payload := map[string]interface{}{
 		"conversation_id": prepared.Conversation.ID.String(),
 		"message_id":      prepared.Message.ID.String(),
 		"content":         text,
 		"length":          utf16CodeUnitLength(text),
 		"created_at":      time.Now().Unix(),
-	})
+	}
+	if disposition = strings.TrimSpace(disposition); disposition != "" {
+		payload["presentation_disposition"] = disposition
+	}
+	r.emitEvent(prepared, EventMessageRetract, payload)
 }
 
 func utf16CodeUnitLength(text string) int {

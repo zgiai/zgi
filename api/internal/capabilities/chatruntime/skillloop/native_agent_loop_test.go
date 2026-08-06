@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -69,11 +70,10 @@ func TestRunnerNativeAgentLoopCallsBusinessToolDirectly(t *testing.T) {
 	})
 
 	answer, usage, err := runner.Run(context.Background(), RunRequest{
-		Prepared:                   prepared,
-		Resolved:                   resolved,
-		NativeAgentLoop:            true,
-		NativeModelProgressEnabled: true,
-		NativeToolSet:              &toolSet,
+		Prepared:        prepared,
+		Resolved:        resolved,
+		NativeAgentLoop: true,
+		NativeToolSet:   &toolSet,
 		ExecutionContext: skills.ExecutionContext{
 			OrganizationID: "org-1",
 			UserID:         "user-1",
@@ -89,8 +89,8 @@ func TestRunnerNativeAgentLoopCallsBusinessToolDirectly(t *testing.T) {
 		t.Fatalf("AppChat calls = %d, want 2", fakeLLM.appChatCalls)
 	}
 	first := fakeLLM.appChatRequests[0]
-	if !runnerTestMessagesContain(first.Messages, "Every assistant turn that calls any tool must contain tool calls only") {
-		t.Fatalf("first request messages = %#v, want native tool-only assistant content policy", first.Messages)
+	if !runnerTestMessagesContain(first.Messages, "before the first business stage include one brief user-visible process note") {
+		t.Fatalf("first request messages = %#v, want native semantic process-note policy", first.Messages)
 	}
 	for _, excluded := range []string{
 		skills.MetaToolLoadSkill,
@@ -113,6 +113,93 @@ func TestRunnerNativeAgentLoopCallsBusinessToolDirectly(t *testing.T) {
 	assertNativeCallEventsWithoutLoadEvents(t, events)
 	assertNoNativeActionProgress(t, events)
 	assertModelProgressBeforeSkillCall(t, events)
+	assertNativeProcessCommentaryBeforeSkillCall(t, events)
+}
+
+func TestRunnerNativeStreamConvertsProcessCommentaryBeforeBusinessTool(t *testing.T) {
+	manager := tools.NewToolManager(nil)
+	if err := manager.RegisterProvider(calculator.NewProvider()); err != nil {
+		t.Fatalf("register calculator: %v", err)
+	}
+	runtime := skills.NewRuntime(tools.NewToolEngine(manager), manager)
+	resolved := nativeCalculatorResolvedSkills()
+	toolSet := runtime.BuildNativeToolSet(context.Background(), resolved, skills.NativeToolSetOptions{BudgetChars: 10000})
+	index := 0
+	client := &runnerTestLLMClient{appChatStreams: [][]adapter.StreamResponse{
+		{
+			{Choices: []adapter.StreamChoice{{Delta: adapter.Message{ReasoningContent: "private reasoning"}}}},
+			{Choices: []adapter.StreamChoice{{Delta: adapter.Message{Content: "The relevant values are available; "}}}},
+			{Choices: []adapter.StreamChoice{{Delta: adapter.Message{Content: "the next step will produce the exact result."}}}},
+			{Choices: []adapter.StreamChoice{{Delta: adapter.Message{ToolCalls: []adapter.ToolCall{{
+				Index: &index,
+				ID:    "business-stream-1",
+				Type:  "function",
+				Function: adapter.FunctionCall{
+					Name:      "calculate",
+					Arguments: `{"operation":"multiply","left":6,"right":7}`,
+				},
+			}}}}}},
+			{Choices: []adapter.StreamChoice{{FinishReason: "tool_calls"}}, Done: true},
+		},
+		{
+			{Choices: []adapter.StreamChoice{{Delta: adapter.Message{Content: "4"}}}},
+			{Choices: []adapter.StreamChoice{{Delta: adapter.Message{Content: "2"}}}},
+			{Choices: []adapter.StreamChoice{{FinishReason: "stop"}}, Done: true},
+		},
+	}}
+	events := make([]Event, 0)
+	runner := &Runner{
+		LLMClient:    client,
+		SkillRuntime: runtime,
+		AppContext:   &llmclient.AppContext{},
+		OnEvent: func(event Event) error {
+			events = append(events, event)
+			return nil
+		},
+	}
+	prepared := NewPreparedChat("conv-native-stream-run", "msg-native-stream-run", "qwen", "auto", &adapter.ChatRequest{
+		Model:    "qwen-plus",
+		Messages: []adapter.Message{{Role: "user", Content: "What is 6 times 7?"}},
+	})
+
+	answer, _, err := runner.Run(context.Background(), RunRequest{
+		Prepared:        prepared,
+		Resolved:        resolved,
+		NativeAgentLoop: true,
+		NativeToolSet:   &toolSet,
+		ExecutionContext: skills.ExecutionContext{
+			OrganizationID: "org-1",
+			UserID:         "user-1",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if answer != "42" || client.appChatStreamCalls != 2 || client.appChatCalls != 0 {
+		t.Fatalf("Run() = %q with stream=%d nonstream=%d, want 42 with two stream calls", answer, client.appChatStreamCalls, client.appChatCalls)
+	}
+	assertNativeProcessCommentaryBeforeSkillCall(t, events)
+	for _, event := range events {
+		if event.Type == EventMessage && strings.Contains(stringFromInterface(event.Payload["answer"]), "private reasoning") {
+			t.Fatalf("reasoning leaked into message events: %#v", events)
+		}
+	}
+	if len(client.appChatStreamRequests) < 2 {
+		t.Fatalf("stream requests = %d, want follow-up request", len(client.appChatStreamRequests))
+	}
+	toolTurnFound := false
+	for _, message := range client.appChatStreamRequests[1].Messages {
+		if len(message.ToolCalls) == 0 {
+			continue
+		}
+		toolTurnFound = true
+		if strings.TrimSpace(messageContent(message.Content)) != "" || strings.TrimSpace(message.ReasoningContent) != "" {
+			t.Fatalf("tool turn carried presentation-only content into next request: %#v", message)
+		}
+	}
+	if !toolTurnFound {
+		t.Fatalf("follow-up messages = %#v, want prior tool turn", client.appChatStreamRequests[1].Messages)
+	}
 }
 
 func TestNativeReferenceReadContinuationSystemMessage(t *testing.T) {
@@ -126,7 +213,7 @@ func TestNativeReferenceReadContinuationSystemMessage(t *testing.T) {
 	content := messageContent(message.Content)
 	for _, required := range []string{
 		"call the relevant business function now",
-		"leave ordinary assistant content empty",
+		"brief process note is allowed",
 		"complete artifact body only in the function arguments",
 	} {
 		if !strings.Contains(content, required) {
@@ -157,7 +244,7 @@ func TestRunnerNativeAgentLoopActivatesSkillBeforeDirectBusinessCall(t *testing.
 	calculateArguments, _ := json.Marshal(map[string]interface{}{"operation": "multiply", "left": 6, "right": 7})
 	fakeLLM := &runnerTestLLMClient{appChatResponses: []*adapter.ChatResponse{
 		{Choices: []adapter.Choice{{
-			Message: adapter.Message{Role: "assistant", Content: "I will load the calculator skill.", ToolCalls: []adapter.ToolCall{{
+			Message: adapter.Message{Role: "assistant", Content: "I will prepare the exact calculation first, then return the verified result.", ToolCalls: []adapter.ToolCall{{
 				ID: "activate-1", Type: "function", Function: adapter.FunctionCall{Name: skills.MetaToolActivateSkills, Arguments: string(activateArguments)},
 			}}},
 			FinishReason: "tool_calls",
@@ -214,9 +301,7 @@ func TestRunnerNativeAgentLoopActivatesSkillBeforeDirectBusinessCall(t *testing.
 	if !runnerTestMessagesContain(second.Messages, "Use the calculator for exact arithmetic.") {
 		t.Fatalf("second request messages = %#v, want complete calculator instructions", second.Messages)
 	}
-	if runnerTestEventsContainText(events, "load the calculator skill") {
-		t.Fatalf("activation narration leaked into events: %#v", events)
-	}
+	assertNativeProcessCommentaryBeforeSkillCall(t, events)
 	assertNativeCallEventsWithoutLoadEvents(t, events)
 	assertNoNativeActionProgress(t, events)
 }
@@ -276,6 +361,7 @@ func TestRunnerNativeToolNarrationDoesNotBlockBusinessTool(t *testing.T) {
 	}
 	assertNativeCallEventsWithoutLoadEvents(t, events)
 	assertNoNativeActionProgress(t, events)
+	assertNativeDiscardedCommentary(t, events, "intentionally overlong action update")
 }
 
 func TestRunnerNativeAgentLoopDoesNotRetryLengthTermination(t *testing.T) {
@@ -328,7 +414,7 @@ func TestNativeSessionActivationAttemptTraceIsDiagnosticOnly(t *testing.T) {
 	}
 }
 
-func TestNativeAgentStreamSuppressesActivationNarration(t *testing.T) {
+func TestNativeAgentStreamKeepsActivationNarrationProvisionalForRunnerClassification(t *testing.T) {
 	index := 0
 	client := &runnerTestLLMClient{
 		appChatStreams: [][]adapter.StreamResponse{{
@@ -360,17 +446,24 @@ func TestNativeAgentStreamSuppressesActivationNarration(t *testing.T) {
 	if !ok || len(result.message.ToolCalls) != 1 {
 		t.Fatalf("stream result = %#v ok=%v, want activation call", result, ok)
 	}
+	messageCount := 0
 	for _, event := range events {
-		if event.Type == EventMessage || event.Type == EventMessageRetract {
-			t.Fatalf("activation narration leaked as message event: %#v", events)
+		if event.Type == EventMessage {
+			messageCount++
+		}
+		if event.Type == EventMessageRetract {
+			t.Fatalf("stream layer classified activation narration before the complete tool turn: %#v", events)
 		}
 		if event.Type == EventAgentProgress && event.Payload["meta_tool_name"] == skills.MetaToolActivateSkills {
 			t.Fatalf("activation leaked as tool planning progress: %#v", events)
 		}
 	}
+	if messageCount != 1 || !result.provisionalStreamed || result.provisionalContent != "I am loading a skill." {
+		t.Fatalf("provisional activation narration = %#v, want one provisional candidate", result)
+	}
 }
 
-func TestNativeAgentStreamKeepsBusinessNarrationHidden(t *testing.T) {
+func TestNativeAgentStreamExposesBusinessNarrationProvisionally(t *testing.T) {
 	index := 0
 	client := &runnerTestLLMClient{appChatStreams: [][]adapter.StreamResponse{{
 		{Choices: []adapter.StreamChoice{{Delta: adapter.Message{
@@ -403,7 +496,7 @@ func TestNativeAgentStreamKeepsBusinessNarrationHidden(t *testing.T) {
 		},
 	}
 	prepared := NewPreparedChat("conv-native-business-stream", "msg-native-business-stream", "qwen", "auto", &adapter.ChatRequest{Model: "qwen-plus"})
-	progress := runner.startModelProgressTracker(context.Background(), prepared, 0, "qwen-plus", nil, true)
+	progress := runner.startModelProgressTracker(context.Background(), prepared, 0, "qwen-plus", nil)
 
 	result, ok, err := runner.runModelToolRoundStream(context.Background(), prepared, prepared.LLMRequest, 0, nil, false, true, false, "agent_tool_loop", progress)
 	progress.Stop()
@@ -413,20 +506,28 @@ func TestNativeAgentStreamKeepsBusinessNarrationHidden(t *testing.T) {
 	if !ok || len(result.message.ToolCalls) != 1 || strings.TrimSpace(messageContent(result.message.Content)) == "" {
 		t.Fatalf("stream result = %#v ok=%v, want retained narration and business call", result, ok)
 	}
+	messageCount := 0
 	for _, event := range events {
-		if event.Type == EventMessage || event.Type == EventMessageRetract {
-			t.Fatalf("business narration leaked through ordinary message events: %#v", events)
+		if event.Type == EventMessage {
+			messageCount++
+		}
+		if event.Type == EventMessageRetract {
+			t.Fatalf("stream layer classified business narration before the complete tool turn: %#v", events)
 		}
 		if event.Type == EventAgentProgress && event.Payload["phase"] == "tool_planning" {
 			t.Fatalf("native tool_planning progress was not suppressed: %#v", events)
 		}
+	}
+	if messageCount != 1 || !result.provisionalStreamed {
+		t.Fatalf("provisional business narration = %#v, want one provisional candidate", result)
 	}
 	assertModelProgressActivity(t, events, modelProgressActivityPreparingAction, modelProgressSourceProviderSignal)
 }
 
 func TestNativeAgentStreamStillEmitsOrdinaryFinalContent(t *testing.T) {
 	client := &runnerTestLLMClient{appChatStreams: [][]adapter.StreamResponse{{
-		{Choices: []adapter.StreamChoice{{Delta: adapter.Message{Content: "completed"}}}},
+		{Choices: []adapter.StreamChoice{{Delta: adapter.Message{Content: "com"}}}},
+		{Choices: []adapter.StreamChoice{{Delta: adapter.Message{Content: "pleted"}}}},
 		{Choices: []adapter.StreamChoice{{FinishReason: "stop"}}, Done: true},
 	}}}
 	events := make([]Event, 0)
@@ -443,8 +544,69 @@ func TestNativeAgentStreamStillEmitsOrdinaryFinalContent(t *testing.T) {
 	if !ok || !result.answerStreamed {
 		t.Fatalf("stream result = %#v ok=%v, want streamed final content", result, ok)
 	}
-	if !runnerTestEventsContainText(events, "completed") {
-		t.Fatalf("ordinary final content missing from events: %#v", events)
+	chunks := make([]string, 0)
+	for _, event := range events {
+		if event.Type == EventMessage {
+			chunks = append(chunks, stringFromInterface(event.Payload["answer"]))
+		}
+	}
+	if got, want := chunks, []string{"com", "pleted"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("streamed answer chunks = %#v, want %#v", got, want)
+	}
+	if got := messageContent(result.message.Content); got != "completed" {
+		t.Fatalf("completed message content = %q, want completed", got)
+	}
+}
+
+func TestNativeAgentStreamDefersCandidateDispositionUntilToolCallsAreComplete(t *testing.T) {
+	index := 0
+	client := &runnerTestLLMClient{appChatStreams: [][]adapter.StreamResponse{{
+		{Choices: []adapter.StreamChoice{{Delta: adapter.Message{Content: "I will check the current values."}}}},
+		{Choices: []adapter.StreamChoice{{Delta: adapter.Message{ToolCalls: []adapter.ToolCall{{
+			Index: &index,
+			ID:    "calculate-after-content",
+			Type:  "function",
+			Function: adapter.FunctionCall{
+				Name:      "calculate",
+				Arguments: `{"operation":"multiply","left":6,"right":7}`,
+			},
+		}}}}}},
+		{Choices: []adapter.StreamChoice{{Delta: adapter.Message{Content: "This tool-turn text stays hidden."}}}},
+		{Choices: []adapter.StreamChoice{{FinishReason: "tool_calls"}}, Done: true},
+	}}}
+	events := make([]Event, 0)
+	runner := &Runner{LLMClient: client, OnEvent: func(event Event) error {
+		events = append(events, event)
+		return nil
+	}}
+	prepared := NewPreparedChat("conv-native-retract", "msg-native-retract", "qwen", "auto", &adapter.ChatRequest{Model: "qwen-plus"})
+
+	result, ok, err := runner.runModelToolRoundStream(context.Background(), prepared, prepared.LLMRequest, 0, nil, false, true, false, "agent_tool_loop", nil)
+	if err != nil {
+		t.Fatalf("runModelToolRoundStream() error = %v", err)
+	}
+	if !ok || len(result.message.ToolCalls) != 1 {
+		t.Fatalf("stream result = %#v ok=%v, want one tool call", result, ok)
+	}
+	if result.answerStreamed {
+		t.Fatal("retracted candidate answer was marked as a final streamed answer")
+	}
+
+	answer := ""
+	for _, event := range events {
+		switch event.Type {
+		case EventMessage:
+			answer += stringFromInterface(event.Payload["answer"])
+		case EventMessageRetract:
+			t.Fatalf("candidate was retracted before runner classification: %#v", events)
+		}
+	}
+	const candidate = "I will check the current values."
+	if answer != candidate {
+		t.Fatalf("streamed candidate answer = %q, want %q", answer, candidate)
+	}
+	if !result.provisionalStreamed || result.provisionalContent != candidate {
+		t.Fatalf("provisional result = %#v, want %q", result, candidate)
 	}
 }
 
@@ -511,6 +673,64 @@ func assertNativeCallEventsWithoutLoadEvents(t *testing.T, events []Event) {
 		if !found {
 			t.Fatalf("events = %#v, missing %s", events, eventType)
 		}
+	}
+}
+
+func assertNativeProcessCommentaryBeforeSkillCall(t *testing.T, events []Event) {
+	t.Helper()
+	messageIndex := -1
+	retractIndex := -1
+	skillCallIndex := -1
+	processRetracts := 0
+	for index, event := range events {
+		switch event.Type {
+		case EventMessage:
+			if messageIndex < 0 {
+				messageIndex = index
+			}
+		case EventMessageRetract:
+			if stringFromInterface(event.Payload["presentation_disposition"]) == nativeCommentaryDispositionProcess {
+				processRetracts++
+				if retractIndex < 0 {
+					retractIndex = index
+				}
+			}
+		case EventSkillCallStart:
+			if skillCallIndex < 0 {
+				skillCallIndex = index
+			}
+		}
+	}
+	if processRetracts != 1 || messageIndex < 0 || retractIndex <= messageIndex || skillCallIndex <= retractIndex {
+		t.Fatalf("events = %#v, want one message -> process retract -> skill call sequence", events)
+	}
+}
+
+func assertNativeDiscardedCommentary(t *testing.T, events []Event, text string) {
+	t.Helper()
+	messageFound := false
+	discardFound := false
+	processFound := false
+	for _, event := range events {
+		switch event.Type {
+		case EventMessage:
+			if strings.Contains(stringFromInterface(event.Payload["answer"]), text) {
+				messageFound = true
+			}
+		case EventMessageRetract:
+			if !strings.Contains(stringFromInterface(event.Payload["content"]), text) {
+				continue
+			}
+			switch stringFromInterface(event.Payload["presentation_disposition"]) {
+			case nativeCommentaryDispositionDiscard:
+				discardFound = true
+			case nativeCommentaryDispositionProcess:
+				processFound = true
+			}
+		}
+	}
+	if !messageFound || !discardFound || processFound {
+		t.Fatalf("events = %#v, want provisional text retracted with discard only", events)
 	}
 }
 

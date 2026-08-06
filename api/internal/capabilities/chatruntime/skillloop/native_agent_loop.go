@@ -35,12 +35,18 @@ func nativeAgentToolsForRun(resolved *skills.ResolvedSkills, toolSet *skills.Nat
 func nativeAgentLoopSystemMessage() adapter.Message {
 	return adapter.Message{Role: "system", Content: strings.Join([]string{
 		"Only active skills have complete instructions and visible business functions. Candidate skills are lightweight metadata until activated.",
+		"Answer knowledge questions, explanations, translations, rewrites, summaries, and tasks fully supported by the current conversation context directly without activating a skill.",
+		"Activate or search for skills only when the user outcome genuinely requires an external read, generation, mutation, governed action, or page operation. Never activate, search, update a plan, or submit state merely to inspect capabilities or prepare an answer.",
 		"If a candidate skill is needed, call activate_skills with the smallest relevant set before doing the business work. Use search_skills only when the compact candidate directory omitted the needed capability.",
-		"Skill discovery and activation are internal. Do not narrate, summarize, or expose them to the user.",
+		"Skill discovery and activation are internal. Do not name, narrate, summarize, or expose that mechanism to the user. A useful user-facing process note may accompany the same turn when it describes the actual task stage rather than the internal preparation.",
 		"When a business action is needed, call the exposed business function directly. Never call or invent load_skill, call_skill_tool, submit_intermediate_answer, or submit_final_answer.",
-		"Every assistant turn that calls any tool must contain tool calls only: leave ordinary assistant content empty. Do not draft, analyze, narrate, or reproduce the requested deliverable beside or before a tool call. Put content needed by the tool only in its arguments.",
+		"For complex or multi-step work, before the first business stage include one brief user-visible process note in ordinary assistant content before the business function call. Add another note only after important evidence arrives, when the work changes stage, when the approach changes, or when recovering from an error.",
+		"A process note must use the language of the user's latest request and state the current judgment or evidence plus the result the next action will produce. Do not merely repeat the request.",
+		"Keep each process note concise, normally one to four short sentences and about 60 to 180 estimated tokens. Never exceed 384 estimated tokens for one note. Across one user task, produce at most eight notes and about 1920 estimated tokens total.",
+		"Do not add a process note for one fast business call, repeated calls of the same kind, or an ordinary direct answer. Internal control work alone is not worth announcing, but when the same stage has a useful task-level update, describe only the user-visible work and outcome without naming the control operation.",
+		"Process notes must not reveal hidden reasoning, skill names, function or tool names, parameters, IDs, JSON, protocols, or hidden plans. Put artifact bodies and all content required by a function only in its arguments.",
 		"If an active skill document mentions those legacy wrapper functions, this native-loop instruction overrides that wording; preserve the skill's business rules and call its exposed function instead.",
-		"When no more tool calls are needed, provide the complete user-facing final answer as ordinary assistant content.",
+		"When no more tool calls are needed, provide the complete user-facing final answer as ordinary assistant content. For complex work, briefly state the completed result, the key basis for the work, and any material limitation or unfinished item.",
 		"Use update_plan only for short outcome or step status changes, never for detailed reasoning. Use submit_turn_state when exact working state must survive approval, navigation, refresh, user input, or another continuation boundary.",
 		"Use read_skill_reference only when an active skill's instructions require a reference. Use request_user_input only when missing information blocks reliable progress.",
 		"All user-visible progress, questions, and final answers must use the language of the user's latest request. Never expose internal protocol details, hidden reasoning, tool aliases, IDs, or bookkeeping.",
@@ -57,7 +63,7 @@ func nativeReferenceReadContinuationSystemMessage(trace skills.SkillTrace) (adap
 	return adapter.Message{Role: "system", Content: strings.Join([]string{
 		"The requested skill reference is now available in the immediately preceding tool result.",
 		"If the user request and source data are sufficient, call the relevant business function now instead of drafting the deliverable in ordinary assistant content.",
-		"For a tool-calling turn, leave ordinary assistant content empty and place the complete artifact body only in the function arguments.",
+		"Keep the complete artifact body only in the function arguments. A brief process note is allowed only when the shared native-loop process-note policy calls for one.",
 	}, "\n")}, true
 }
 

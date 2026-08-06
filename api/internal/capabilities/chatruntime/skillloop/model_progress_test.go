@@ -39,11 +39,10 @@ func TestNativeModelProgressNonStreamingEmitsAllStages(t *testing.T) {
 	})
 
 	answer, _, err := runner.Run(context.Background(), RunRequest{
-		Prepared:                   prepared,
-		Resolved:                   &skills.ResolvedSkills{},
-		ProtocolToolsOnly:          true,
-		NativeAgentLoop:            true,
-		NativeModelProgressEnabled: true,
+		Prepared:          prepared,
+		Resolved:          &skills.ResolvedSkills{},
+		ProtocolToolsOnly: true,
+		NativeAgentLoop:   true,
 	})
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
@@ -77,44 +76,6 @@ func TestNativeModelProgressShortCallDoesNotFlicker(t *testing.T) {
 		OnEvent: onEvent,
 	}
 	prepared := NewPreparedChat("short-conversation", "short-message", "", "auto", &adapter.ChatRequest{
-		Model:    "non-stream-model",
-		Messages: []adapter.Message{{Role: "user", Content: "work"}},
-	})
-
-	_, _, err := runner.Run(context.Background(), RunRequest{
-		Prepared:                   prepared,
-		Resolved:                   &skills.ResolvedSkills{},
-		ProtocolToolsOnly:          true,
-		NativeAgentLoop:            true,
-		NativeModelProgressEnabled: true,
-	})
-	if err != nil {
-		t.Fatalf("Run() error = %v", err)
-	}
-	assertModelProgressStages(t, events(), nil)
-}
-
-func TestNativeModelProgressCanBeDisabled(t *testing.T) {
-	client := &runnerTestLLMClient{
-		appChatDelays: []time.Duration{40 * time.Millisecond},
-		appChatResponses: []*adapter.ChatResponse{{Choices: []adapter.Choice{{
-			Message:      adapter.Message{Role: "assistant", Content: "done"},
-			FinishReason: "stop",
-		}}}},
-	}
-	events, onEvent := modelProgressEventCollector()
-	runner := &Runner{
-		LLMClient:    client,
-		SkillRuntime: skills.NewRuntime(nil, nil),
-		AppContext:   &llmclient.AppContext{},
-		ModelProgressSchedule: ModelProgressSchedule{
-			Initial:     5 * time.Millisecond,
-			Extended:    10 * time.Millisecond,
-			LongRunning: 20 * time.Millisecond,
-		},
-		OnEvent: onEvent,
-	}
-	prepared := NewPreparedChat("disabled-conversation", "disabled-message", "", "auto", &adapter.ChatRequest{
 		Model:    "non-stream-model",
 		Messages: []adapter.Message{{Role: "user", Content: "work"}},
 	})
@@ -164,11 +125,10 @@ func TestNativeModelProgressStreamIncludesOpenWaitAndTracksReasoningDelta(t *tes
 	})
 
 	answer, _, err := runner.Run(context.Background(), RunRequest{
-		Prepared:                   prepared,
-		Resolved:                   &skills.ResolvedSkills{},
-		ProtocolToolsOnly:          true,
-		NativeAgentLoop:            true,
-		NativeModelProgressEnabled: true,
+		Prepared:          prepared,
+		Resolved:          &skills.ResolvedSkills{},
+		ProtocolToolsOnly: true,
+		NativeAgentLoop:   true,
 	})
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
@@ -264,11 +224,10 @@ func TestNativeModelProgressStopsOnTimeout(t *testing.T) {
 	})
 
 	_, _, err := runner.Run(context.Background(), RunRequest{
-		Prepared:                   prepared,
-		Resolved:                   &skills.ResolvedSkills{},
-		ProtocolToolsOnly:          true,
-		NativeAgentLoop:            true,
-		NativeModelProgressEnabled: true,
+		Prepared:          prepared,
+		Resolved:          &skills.ResolvedSkills{},
+		ProtocolToolsOnly: true,
+		NativeAgentLoop:   true,
 	})
 	if !errors.Is(err, ErrModelIdleTimeout) {
 		t.Fatalf("Run() error = %v, want model idle timeout", err)
@@ -306,11 +265,10 @@ func TestNativeModelProgressStopsOnCancellation(t *testing.T) {
 	time.AfterFunc(20*time.Millisecond, cancel)
 
 	_, _, err := runner.Run(ctx, RunRequest{
-		Prepared:                   prepared,
-		Resolved:                   &skills.ResolvedSkills{},
-		ProtocolToolsOnly:          true,
-		NativeAgentLoop:            true,
-		NativeModelProgressEnabled: true,
+		Prepared:          prepared,
+		Resolved:          &skills.ResolvedSkills{},
+		ProtocolToolsOnly: true,
+		NativeAgentLoop:   true,
 	})
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("Run() error = %v, want context canceled", err)

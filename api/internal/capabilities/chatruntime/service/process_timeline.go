@@ -76,6 +76,21 @@ func (r *processTimelineRecorder) RecordEvent(eventType string, payload map[stri
 	}
 	if eventType == streamEventMessageRetract {
 		segmentID := r.activeSegmentID
+		disposition := strings.ToLower(strings.TrimSpace(payloadString(payload, "presentation_disposition")))
+		if disposition == presentationDispositionDiscard {
+			if item := r.presentation.itemByID(segmentID); len(item) > 0 {
+				payload["segment_id"] = item["segment_id"]
+			}
+			payload["presentation_disposition"] = presentationDispositionDiscard
+			r.presentation.removeByID(segmentID)
+			r.activeSegmentID = ""
+			r.applyPresentationMetadata()
+			if err := r.persistPresentation(nil); err != nil {
+				return err
+			}
+			return r.Emit(eventType, payload)
+		}
+		payload["presentation_disposition"] = presentationDispositionProcess
 		r.transitionActivePresentationSegment(presentationPhaseProcess)
 		if item := r.presentation.itemByID(segmentID); len(item) > 0 {
 			annotatePresentationPayload(payload, item)

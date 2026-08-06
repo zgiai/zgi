@@ -32,15 +32,6 @@ const (
 	// envChatRuntimeModelIdleTimeoutSeconds stops one model call after this many
 	// seconds without any upstream response. Default: 300.
 	envChatRuntimeModelIdleTimeoutSeconds = "CHAT_RUNTIME_MODEL_IDLE_TIMEOUT_SECONDS"
-	// envChatRuntimeNativeAgentLoopEnabled makes new function-calling Agent
-	// requests use provider-native business tools. Default: true.
-	envChatRuntimeNativeAgentLoopEnabled = "CHAT_RUNTIME_NATIVE_AGENT_LOOP_ENABLED"
-	// envChatRuntimeNativeSkillProgressiveDisclosureEnabled enables compact
-	// candidate metadata and model-driven native skill activation. Default: true.
-	envChatRuntimeNativeSkillProgressiveDisclosureEnabled = "CHAT_RUNTIME_NATIVE_SKILL_PROGRESSIVE_DISCLOSURE_ENABLED"
-	// envChatRuntimeNativeModelProgressEnabled exposes runtime-driven waiting
-	// states while a native Agent model call is still processing. Default: true.
-	envChatRuntimeNativeModelProgressEnabled = "CHAT_RUNTIME_NATIVE_MODEL_PROGRESS_ENABLED"
 )
 
 // Database and cache keys.

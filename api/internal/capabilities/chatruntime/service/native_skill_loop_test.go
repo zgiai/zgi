@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/zgiai/zgi/api/config"
+	"github.com/google/uuid"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 )
@@ -80,18 +80,24 @@ func TestNativeSkillProtocolKeepsPersistedModeAndProtectsLegacyContinuation(t *t
 	}
 }
 
-func TestNativeSkillProgressiveDisclosureRollbackSwitch(t *testing.T) {
-	previous := config.GlobalConfig
-	defer func() { config.GlobalConfig = previous }()
+func TestNativeSkillProtocolDefaultsToProgressiveDisclosure(t *testing.T) {
 	prepared := &PreparedChat{Message: &runtimemodel.Message{Metadata: map[string]interface{}{}}}
-
-	config.GlobalConfig = &config.Config{ChatRuntime: config.ChatRuntimeConfig{NativeSkillProgressiveDisclosureEnabled: false}}
-	if got := nativeSkillProtocolForPrepared(prepared); got != skills.NativeSkillProtocolPreloadV1 {
-		t.Fatalf("disabled protocol = %q, want native_preload_v1", got)
-	}
-	config.GlobalConfig.ChatRuntime.NativeSkillProgressiveDisclosureEnabled = true
 	if got := nativeSkillProtocolForPrepared(prepared); got != skills.NativeSkillProtocolProgressiveV1 {
-		t.Fatalf("enabled protocol = %q, want progressive_v1", got)
+		t.Fatalf("protocol = %q, want progressive_v1", got)
+	}
+}
+
+func TestReplacementRootKeepsPersistedNativeSkillProtocol(t *testing.T) {
+	source := &runtimemodel.Message{
+		ID:             uuid.New(),
+		ConversationID: uuid.New(),
+		Metadata: map[string]interface{}{
+			"native_skill_protocol": skills.NativeSkillProtocolProgressiveV1,
+		},
+	}
+	replacement := replacementRootMessage(source, &chatRequestParts{ExecutionMode: executionModeNativeToolLoop})
+	if got := stringFromAny(replacement.Metadata["native_skill_protocol"]); got != skills.NativeSkillProtocolProgressiveV1 {
+		t.Fatalf("native_skill_protocol = %q, want progressive_v1", got)
 	}
 }
 

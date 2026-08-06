@@ -67,12 +67,36 @@ func (r *Runner) runModelToolRoundStream(
 	sawChunk := false
 	answerStreamed := false
 	naturalAnswerStreamed := false
+	// A native stream does not declare whether content is a final answer or
+	// tool-turn narration until a tool delta arrives. Stream leading content as
+	// a candidate answer, then retract it if the response becomes a tool turn.
+	nativeToolCallSeen := false
+	nativeCandidateStreamed := false
+	nativeCandidateRetracted := false
+	var nativeStreamedContent strings.Builder
 	toolPlanningProgressStreamed := false
 	finishReason := ""
 	streamDoneReceived := false
 	terminatedBy := ""
 	var fallbackTimer *time.Timer
 	var fallbackTimerC <-chan time.Time
+	streamedAnswerOnError := func() string {
+		if nativeToolCallSeen {
+			return ""
+		}
+		if nativeCandidateStreamed && !nativeCandidateRetracted {
+			return nativeStreamedContent.String()
+		}
+		return streamedFinalAnswerFromStates(toolCallsByIndex, toolCallOrder)
+	}
+	discardNativeToolCandidate := func() {
+		if !nativeToolCallSeen || !nativeCandidateStreamed || nativeCandidateRetracted {
+			return
+		}
+		r.emitAnswerRetractWithDisposition(ctx, prepared, nativeStreamedContent.String(), nativeCommentaryDispositionDiscard)
+		nativeCandidateRetracted = true
+		answerStreamed = false
+	}
 	if phase != "agent_tool_loop" {
 		fallbackTimer = time.NewTimer(r.fallbackDelay())
 		fallbackTimerC = fallbackTimer.C
@@ -85,6 +109,7 @@ func (r *Runner) runModelToolRoundStream(
 		select {
 		case <-idleTimer.C:
 			err := ErrModelIdleTimeout
+			discardNativeToolCandidate()
 			r.recordModelInvocation(ModelInvocationTrace{
 				Phase:      phase,
 				Round:      round,
@@ -101,7 +126,7 @@ func (r *Runner) runModelToolRoundStream(
 				"model", streamReq.Model,
 				"phase", phase+"_stream",
 			)
-			return planningResult{usage: usage}, true, wrapStreamedFinalAnswerError(err, streamedFinalAnswerFromStates(toolCallsByIndex, toolCallOrder))
+			return planningResult{usage: usage}, true, wrapStreamedFinalAnswerError(err, streamedAnswerOnError())
 		case <-fallbackTimerC:
 			if !answerStreamed && !naturalAnswerStreamed && !toolPlanningProgressStreamed && !fallbackProgressStreamed {
 				fallbackProgressStreamed = r.emitPlanningFallbackProgress(ctx, prepared, onEvent)
@@ -116,6 +141,7 @@ func (r *Runner) runModelToolRoundStream(
 
 			usage = mergeStreamUsageSnapshot(usage, response.Usage)
 			if response.Error != nil {
+				discardNativeToolCandidate()
 				r.recordModelInvocation(ModelInvocationTrace{
 					Phase:      phase,
 					Round:      round,
@@ -126,7 +152,7 @@ func (r *Runner) runModelToolRoundStream(
 					Usage:      usage,
 					Error:      response.Error.Error(),
 				})
-				return planningResult{usage: usage}, true, wrapStreamedFinalAnswerError(response.Error, streamedFinalAnswerFromStates(toolCallsByIndex, toolCallOrder))
+				return planningResult{usage: usage}, true, wrapStreamedFinalAnswerError(response.Error, streamedAnswerOnError())
 			}
 			if len(response.Choices) == 0 {
 				if response.Done {
@@ -148,16 +174,26 @@ func (r *Runner) runModelToolRoundStream(
 					reasoningBuilder.WriteString(reasoning)
 					modelProgress.ObserveReasoningDelta()
 				}
+				hasToolCallDelta := len(choice.Delta.ToolCalls) > 0
 				if text := streamChoiceText(choice); text != "" {
 					contentBuilder.WriteString(text)
-					if !terminalProtocol && !suppressNaturalProgress && phase != "agent_tool_loop" {
+					if phase == "agent_tool_loop" && !terminalProtocol && !suppressNaturalProgress && !nativeToolCallSeen {
+						modelProgress.Stop()
+						r.emitAnswerChunk(ctx, prepared, text, onEvent)
+						nativeStreamedContent.WriteString(text)
+						nativeCandidateStreamed = true
+						answerStreamed = true
+					} else if !terminalProtocol && !suppressNaturalProgress && phase != "agent_tool_loop" {
 						r.emitAnswerChunk(ctx, prepared, text, onEvent)
 						answerStreamed = true
 						naturalAnswerStreamed = true
 					}
 				}
-				if len(choice.Delta.ToolCalls) > 0 {
+				if hasToolCallDelta {
 					modelProgress.ObserveToolCallDelta()
+					if phase == "agent_tool_loop" {
+						nativeToolCallSeen = true
+					}
 				}
 				for _, delta := range choice.Delta.ToolCalls {
 					state := mergeStreamingToolCall(toolCallsByIndex, &toolCallOrder, delta)
@@ -227,7 +263,7 @@ streamDone:
 		toolCalls = append(toolCalls, call)
 	}
 	if phase == "agent_tool_loop" && !terminalProtocol && !suppressNaturalProgress && len(toolCalls) == 0 {
-		if content := contentBuilder.String(); content != "" {
+		if content := contentBuilder.String(); content != "" && !answerStreamed {
 			modelProgress.Stop()
 			r.emitAnswerChunk(ctx, prepared, content, onEvent)
 			answerStreamed = true
@@ -264,12 +300,16 @@ streamDone:
 	}
 	r.recordModelInvocation(trace)
 	if terminationErr != nil {
+		discardNativeToolCandidate()
 		return planningResult{
 			message:               message,
 			usage:                 usage,
 			answerStreamed:        answerStreamed && (terminalProtocol || len(toolCalls) == 0),
 			naturalAnswerStreamed: naturalAnswerStreamed && len(toolCalls) > 0,
-		}, true, wrapStreamedFinalAnswerError(terminationErr, streamedFinalAnswerFromStates(toolCallsByIndex, toolCallOrder))
+			provisionalContent:    nativeStreamedContent.String(),
+			provisionalStreamed:   nativeCandidateStreamed,
+			reasoningObserved:     reasoningBuilder.Len() > 0,
+		}, true, wrapStreamedFinalAnswerError(terminationErr, streamedAnswerOnError())
 	}
 
 	return planningResult{
@@ -277,6 +317,9 @@ streamDone:
 		usage:                 usage,
 		answerStreamed:        answerStreamed && (terminalProtocol || len(toolCalls) == 0),
 		naturalAnswerStreamed: naturalAnswerStreamed && len(toolCalls) > 0,
+		provisionalContent:    nativeStreamedContent.String(),
+		provisionalStreamed:   nativeCandidateStreamed,
+		reasoningObserved:     reasoningBuilder.Len() > 0,
 	}, true, nil
 }
 

@@ -83,10 +83,7 @@ func loadChatRuntimeConfig(cfg *Config, source *envSource) {
 		timeout = 300
 	}
 	cfg.ChatRuntime = ChatRuntimeConfig{
-		ModelIdleTimeoutSeconds:                 timeout,
-		NativeAgentLoopEnabled:                  mustBool(source.bool(true, envChatRuntimeNativeAgentLoopEnabled)),
-		NativeSkillProgressiveDisclosureEnabled: mustBool(source.bool(true, envChatRuntimeNativeSkillProgressiveDisclosureEnabled)),
-		NativeModelProgressEnabled:              mustBool(source.bool(true, envChatRuntimeNativeModelProgressEnabled)),
+		ModelIdleTimeoutSeconds: timeout,
 	}
 }
 

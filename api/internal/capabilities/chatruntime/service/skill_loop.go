@@ -76,10 +76,11 @@ func (s *service) runPreparedToolLoop(
 
 	timeline := newProcessTimelineRecorder(ctx, persistCtx, s, prepared, onEvent)
 	runner := &skillloop.Runner{
-		LLMClient:        s.llmClient,
-		SkillRuntime:     s.skillRuntime,
-		AppContext:       newBillingAppContext(prepared),
-		ModelIdleTimeout: s.modelIdleTimeoutValue(),
+		LLMClient:             s.llmClient,
+		SkillRuntime:          s.skillRuntime,
+		AppContext:            newBillingAppContext(prepared),
+		ModelIdleTimeout:      s.modelIdleTimeoutValue(),
+		ModelProgressSchedule: s.modelProgressSchedule,
 		OnEvent: func(event skillloop.Event) error {
 			if event.Type == skillloop.EventUserInputRequested {
 				s.persistUserInputRequestBestEffort(persistCtx, prepared, event.Payload)
@@ -107,12 +108,12 @@ func (s *service) runPreparedToolLoop(
 	loopPrepared.Query = strings.TrimSpace(prepared.parts.Query)
 	loopPrepared.CurrentRoute = contextualTurnCurrentPage(prepared.parts)
 	loopPrepared.Surface = normalizeAIChatSurface(prepared.parts.Surface)
-	nativeAgentLoop := prepared.parts.ExecutionMode == executionModeNativeAgentLoop
-	preferExplicitFinalAnswer := !nativeAgentLoop && skillLoopPrefersExplicitFinalAnswer(prepared) && !prepared.TerminalOnly
+	nativeLoop := isNativeExecutionMode(prepared.parts.ExecutionMode)
+	preferExplicitFinalAnswer := !nativeLoop && skillLoopPrefersExplicitFinalAnswer(prepared) && !prepared.TerminalOnly
 	if prepared.Message.Metadata == nil {
 		prepared.Message.Metadata = map[string]interface{}{}
 	}
-	if nativeAgentLoop {
+	if nativeLoop {
 		prepared.Message.Metadata["final_answer_protocol"] = "assistant_content"
 	} else if prepared.TerminalOnly {
 		prepared.Message.Metadata["final_answer_protocol"] = "terminal_assistant_content"
@@ -125,7 +126,7 @@ func (s *service) runPreparedToolLoop(
 	additionalSystemMessages := skillLoopAdditionalSystemMessagesForResolved(prepared, resolved)
 	var nativeToolSet *skills.NativeToolSet
 	var nativeSkillSession *skills.NativeSkillSession
-	if nativeAgentLoop {
+	if nativeLoop {
 		budgetTokens, budgetChars, estimateNativeTokens := s.nativeSkillProjectionBudget(prepared, resolved, additionalSystemMessages)
 		toolSetOptions := skills.NativeToolSetOptions{
 			TenantID:         prepared.Scope.OrganizationID.String(),
@@ -197,8 +198,7 @@ func (s *service) runPreparedToolLoop(
 		Resolved:                       resolved,
 		ProtocolToolsOnly:              len(resolved.Skills) == 0,
 		LegacyToolChat:                 prepared.parts.ExecutionMode == executionModeLegacyToolChat,
-		NativeAgentLoop:                nativeAgentLoop,
-		NativeModelProgressEnabled:     nativeAgentLoop && nativeModelProgressEnabled(),
+		NativeAgentLoop:                nativeLoop,
 		NativeToolSet:                  nativeToolSet,
 		NativeSkillSession:             nativeSkillSession,
 		ExecutionContext:               s.skillExecutionContext(prepared),
@@ -404,10 +404,7 @@ func nativeSkillProtocolForPrepared(prepared *PreparedChat) string {
 			return skills.NativeSkillProtocolPreloadV1
 		}
 	}
-	if nativeSkillProgressiveDisclosureEnabled() {
-		return skills.NativeSkillProtocolProgressiveV1
-	}
-	return skills.NativeSkillProtocolPreloadV1
+	return skills.NativeSkillProtocolProgressiveV1
 }
 
 func nativeInitialActiveSkillIDs(prepared *PreparedChat, resolved *skills.ResolvedSkills) []string {

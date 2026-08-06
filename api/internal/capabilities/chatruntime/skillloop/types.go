@@ -166,7 +166,6 @@ type RunRequest struct {
 	ProtocolToolsOnly              bool
 	LegacyToolChat                 bool
 	NativeAgentLoop                bool
-	NativeModelProgressEnabled     bool
 	NativeToolSet                  *skills.NativeToolSet
 	NativeSkillSession             *skills.NativeSkillSession
 	ExecutionContext               skills.ExecutionContext

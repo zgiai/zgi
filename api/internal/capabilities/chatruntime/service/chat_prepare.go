@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
-	"github.com/zgiai/zgi/api/config"
 	runtimedto "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/dto"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/repository"
@@ -53,6 +52,10 @@ func (s *service) PrepareConfiguredChat(ctx context.Context, scope Scope, caller
 	if err := s.applySkillConfig(ctx, scope, caller, &config, parts); err != nil {
 		return nil, err
 	}
+	if err := finalizeExecutionMode(caller, parts); err != nil {
+		return nil, err
+	}
+	logExecutionRoute(ctx, caller, parts)
 	conversation, err := s.resolveChatConversation(ctx, scope, caller, req, parts)
 	if err != nil {
 		return nil, err
@@ -146,16 +149,10 @@ func (s *service) prepareRootRegeneration(ctx context.Context, scope Scope, call
 	if err := s.applySkillConfig(ctx, scope, caller, &config, parts); err != nil {
 		return nil, err
 	}
-	contextResult, err := s.buildUpstreamMessages(ctx, scope, nil, parts)
-	if err != nil {
+	if err := finalizeExecutionMode(caller, parts); err != nil {
 		return nil, err
 	}
-	parts.ContextControl = contextResult.Metadata
-	llmRequest := newLLMChatRequest(parts, contextResult.Messages)
-	preflight, err := s.runContextualPreparePreflights(ctx, scope, conversation, config, parts, llmRequest)
-	if err != nil {
-		return nil, err
-	}
+	logExecutionRoute(ctx, caller, parts)
 	replacement := replacementRootMessage(message, parts)
 	if err := s.repos.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		txRepos := repository.NewRepositories(tx)
@@ -189,23 +186,12 @@ func (s *service) prepareRootRegeneration(ctx context.Context, scope Scope, call
 	return &PreparedChat{
 		Conversation: conversation,
 		Message:      replacement,
-		LLMRequest:   llmRequest,
 		ReplaceRoot:  true,
 		Scope:        scope,
 		Caller:       caller,
 		RunConfig:    config,
 		parts:        parts,
-
-		UserMemoryPreflightDone:  preflight != nil && preflight.UserMemoryDone,
-		UserMemoryPreflightUsage: contextualPreflightUserMemoryUsage(preflight),
 	}, nil
-}
-
-func contextualPreflightUserMemoryUsage(preflight *contextualPreparePreflightResult) *adapter.Usage {
-	if preflight == nil {
-		return nil
-	}
-	return preflight.UserMemoryUsage
 }
 
 func (s *service) ensureMember(ctx context.Context, scope Scope) error {
@@ -484,10 +470,7 @@ func (s *service) applyModelCapabilities(ctx context.Context, scope Scope, calle
 	parts.FunctionCallingAssumed = false
 	parts.ModelCapabilityStatus = "resolved"
 	parts.ModelCapabilityError = ""
-	if strings.TrimSpace(parts.ExecutionMode) == "" {
-		parts.ExecutionMode = executionModeForModel(caller, parts)
-	}
-	if executionModeRequiresFunctionCalling(parts.ExecutionMode) && !spec.SupportsFunctionCalling() {
+	if strings.TrimSpace(parts.ExecutionMode) != "" && executionModeRequiresFunctionCalling(parts.ExecutionMode) && !spec.SupportsFunctionCalling() {
 		return fmt.Errorf("resolve AI Chat model capabilities: model %s/%s does not support function calling", parts.Provider, parts.ModelName)
 	}
 	return nil
@@ -500,10 +483,25 @@ func (s *service) applyRootRegenerationModelCapabilities(
 	message *runtimemodel.Message,
 	parts *chatRequestParts,
 ) error {
-	if regenerationKeepsPersistedModel(message, parts) {
+	if regenerationKeepsPersistedModel(message, parts) && executionModeCanResumeOnRegeneration(message) {
 		restoreExecutionModeFromMetadata(parts, message.Metadata)
 	}
 	return s.applyModelCapabilities(ctx, scope, caller, parts)
+}
+
+func executionModeCanResumeOnRegeneration(message *runtimemodel.Message) bool {
+	if message == nil {
+		return false
+	}
+	switch normalizeExecutionMode(stringMetadataValue(message.Metadata["execution_mode"])) {
+	case executionModeNativeAgentLoop, executionModeNativeToolLoop, executionModeDirectChat:
+		return true
+	default:
+		// The legacy Agent and tool-chat protocols remain available only for
+		// continuations that are already waiting on an external action. A manual
+		// regeneration starts a fresh run and must use the current execution route.
+		return false
+	}
 }
 
 func regenerationKeepsPersistedModel(message *runtimemodel.Message, parts *chatRequestParts) bool {
@@ -536,42 +534,55 @@ func (s *service) applyExistingConversationSurfaceForChat(ctx context.Context, s
 }
 
 func executionModeForModel(caller Caller, parts *chatRequestParts) string {
-	if parts != nil && normalizeCallerType(caller.Type) == runtimemodel.ConversationCallerAgent &&
-		parts.ModelSupportsFunctionCalling && nativeAgentLoopEnabled() {
+	if normalizeCallerType(caller.Type) == runtimemodel.ConversationCallerAgent {
 		return executionModeNativeAgentLoop
 	}
-	if parts == nil || normalizeCallerType(caller.Type) != runtimemodel.ConversationCallerAIChat ||
-		normalizeAIChatSurface(parts.Surface) != aiChatSurfaceWorkChat {
-		return executionModeAgentLoop
+	if parts == nil || !parts.ModelSupportsFunctionCalling || len(parts.SkillIDs) == 0 {
+		return executionModeDirectChat
 	}
-	if parts.ModelSupportsAgent {
-		return executionModeAgentLoop
-	}
-	if parts.ModelSupportsFunctionCalling {
-		return executionModeLegacyToolChat
-	}
-	return executionModeDirectChat
+	return executionModeNativeToolLoop
 }
 
-func nativeAgentLoopEnabled() bool {
-	if config.GlobalConfig == nil {
-		return true
+func finalizeExecutionMode(caller Caller, parts *chatRequestParts) error {
+	if parts == nil {
+		return nil
 	}
-	return config.GlobalConfig.ChatRuntime.NativeAgentLoopEnabled
+	if normalizeExecutionMode(parts.ExecutionMode) != "" {
+		parts.ExecutionRouteReason = executionRoutePersistedMode
+	} else {
+		parts.ExecutionMode = executionModeForModel(caller, parts)
+		switch parts.ExecutionMode {
+		case executionModeNativeAgentLoop:
+			parts.ExecutionRouteReason = executionRouteNativeAgent
+		case executionModeNativeToolLoop:
+			parts.ExecutionRouteReason = executionRouteNativeSkillsAvailable
+		case executionModeDirectChat:
+			if !parts.ModelSupportsFunctionCalling {
+				parts.ExecutionRouteReason = executionRouteFunctionCallingUnavailable
+			} else {
+				parts.ExecutionRouteReason = executionRouteNoUsableSkills
+			}
+		}
+	}
+	if executionModeRequiresFunctionCalling(parts.ExecutionMode) && !parts.ModelSupportsFunctionCalling {
+		return fmt.Errorf("resolve AI Chat model capabilities: model %s/%s does not support function calling", parts.Provider, parts.ModelName)
+	}
+	return nil
 }
 
-func nativeSkillProgressiveDisclosureEnabled() bool {
-	if config.GlobalConfig == nil {
-		return true
+func logExecutionRoute(ctx context.Context, caller Caller, parts *chatRequestParts) {
+	if parts == nil {
+		return
 	}
-	return config.GlobalConfig.ChatRuntime.NativeSkillProgressiveDisclosureEnabled
-}
-
-func nativeModelProgressEnabled() bool {
-	if config.GlobalConfig == nil {
-		return true
-	}
-	return config.GlobalConfig.ChatRuntime.NativeModelProgressEnabled
+	logger.InfoContext(ctx, "chat runtime execution route selected",
+		"caller_type", normalizeCallerType(caller.Type),
+		"surface", normalizeAIChatSurface(parts.Surface),
+		"execution_mode", normalizeExecutionMode(parts.ExecutionMode),
+		"execution_route_reason", strings.TrimSpace(parts.ExecutionRouteReason),
+		"model_use_case", executionModeModelUseCase(parts.ExecutionMode),
+		"function_calling_supported", parts.ModelSupportsFunctionCalling,
+		"effective_skill_count", len(parts.SkillIDs),
+	)
 }
 
 func executionModeRequiresFunctionCalling(mode string) bool {
@@ -583,15 +594,15 @@ func executionModeRequiresFunctionCalling(mode string) bool {
 	}
 }
 
-func applyManagedUserMemoryPolicy(caller Caller, parts *chatRequestParts) {
+func applyManagedUserMemoryPolicy(_ Caller, parts *chatRequestParts) {
 	if parts == nil {
 		return
 	}
-	if normalizeCallerType(caller.Type) == runtimemodel.ConversationCallerAgent {
-		parts.UseMemory = false
-		return
-	}
-	parts.UseMemory = parts.FunctionCallingKnown && parts.ModelSupportsFunctionCalling
+	// Account-scoped user memory is temporarily disabled for AIChat surfaces.
+	// Keep the policy centralized so new turns, regenerations, and continuations
+	// cannot re-enable the synchronous memory planner through persisted metadata
+	// or request/config overrides. Agent memory is managed independently.
+	parts.UseMemory = false
 }
 
 func applyProtocolToolsPolicy(caller Caller, parts *chatRequestParts) {

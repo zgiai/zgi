@@ -6,15 +6,15 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/zgiai/zgi/api/config"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 )
 
 func TestStreamingMessageMetadataPersistsExecutionMode(t *testing.T) {
 	parts := &chatRequestParts{
-		Surface:       aiChatSurfaceWorkChat,
-		ExecutionMode: executionModeLegacyToolChat,
+		Surface:              aiChatSurfaceWorkChat,
+		ExecutionMode:        executionModeLegacyToolChat,
+		ExecutionRouteReason: executionRoutePersistedMode,
 	}
 	metadata := streamingMessageMetadata(parts)
 	if got := stringMetadataValue(metadata["execution_mode"]); got != executionModeLegacyToolChat {
@@ -22,6 +22,9 @@ func TestStreamingMessageMetadataPersistsExecutionMode(t *testing.T) {
 	}
 	if got := stringMetadataValue(metadata["model_use_case"]); got != "text-chat" {
 		t.Fatalf("model_use_case = %q, want text-chat", got)
+	}
+	if got := stringMetadataValue(metadata["execution_route_reason"]); got != executionRoutePersistedMode {
+		t.Fatalf("execution_route_reason = %q, want %q", got, executionRoutePersistedMode)
 	}
 
 	restored := &chatRequestParts{}
@@ -40,36 +43,54 @@ func TestRestoreExecutionModeKeepsLegacyContinuationOnAgentLoop(t *testing.T) {
 }
 
 func TestNativeExecutionModePersistsForContinuation(t *testing.T) {
-	parts := &chatRequestParts{ExecutionMode: executionModeNativeAgentLoop}
-	metadata := streamingMessageMetadata(parts)
-	if got := stringMetadataValue(metadata["execution_mode"]); got != executionModeNativeAgentLoop {
-		t.Fatalf("execution_mode = %q, want %q", got, executionModeNativeAgentLoop)
-	}
-	restored := &chatRequestParts{}
-	restoreExecutionModeFromMetadata(restored, metadata)
-	if restored.ExecutionMode != executionModeNativeAgentLoop {
-		t.Fatalf("restored mode = %q, want %q", restored.ExecutionMode, executionModeNativeAgentLoop)
+	for _, mode := range []string{executionModeNativeAgentLoop, executionModeNativeToolLoop} {
+		parts := &chatRequestParts{ExecutionMode: mode}
+		metadata := streamingMessageMetadata(parts)
+		if got := stringMetadataValue(metadata["execution_mode"]); got != mode {
+			t.Fatalf("execution_mode = %q, want %q", got, mode)
+		}
+		restored := &chatRequestParts{}
+		restoreExecutionModeFromMetadata(restored, metadata)
+		if restored.ExecutionMode != mode {
+			t.Fatalf("restored mode = %q, want %q", restored.ExecutionMode, mode)
+		}
+		if restored.ExecutionRouteReason != executionRoutePersistedMode {
+			t.Fatalf("route reason = %q, want %q", restored.ExecutionRouteReason, executionRoutePersistedMode)
+		}
 	}
 }
 
-func TestNativeAgentLoopRollbackSwitch(t *testing.T) {
-	previous := config.GlobalConfig
-	t.Cleanup(func() { config.GlobalConfig = previous })
-	parts := &chatRequestParts{ModelSupportsFunctionCalling: true}
-	caller := Caller{Type: runtimemodel.ConversationCallerAgent}
-
-	config.GlobalConfig = &config.Config{ChatRuntime: config.ChatRuntimeConfig{NativeAgentLoopEnabled: false}}
-	if got := executionModeForModel(caller, parts); got != executionModeAgentLoop {
-		t.Fatalf("disabled mode = %q, want %q", got, executionModeAgentLoop)
+func TestExecutionModeForNewRequests(t *testing.T) {
+	tests := []struct {
+		name   string
+		caller Caller
+		parts  *chatRequestParts
+		want   string
+	}{
+		{name: "agent", caller: Caller{Type: runtimemodel.ConversationCallerAgent}, parts: &chatRequestParts{ModelSupportsFunctionCalling: true}, want: executionModeNativeAgentLoop},
+		{name: "work chat with skills", parts: &chatRequestParts{ModelSupportsFunctionCalling: true, SkillIDs: []string{"calculator"}}, want: executionModeNativeToolLoop},
+		{name: "work chat without skills", parts: &chatRequestParts{ModelSupportsFunctionCalling: true}, want: executionModeDirectChat},
+		{name: "work chat without function calling", parts: &chatRequestParts{}, want: executionModeDirectChat},
 	}
-	config.GlobalConfig.ChatRuntime.NativeAgentLoopEnabled = true
-	if got := executionModeForModel(caller, parts); got != executionModeNativeAgentLoop {
-		t.Fatalf("enabled mode = %q, want %q", got, executionModeNativeAgentLoop)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := executionModeForModel(tt.caller, tt.parts); got != tt.want {
+				t.Fatalf("executionModeForModel() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestFinalizeExecutionModeRejectsAgentWithoutFunctionCalling(t *testing.T) {
+	parts := &chatRequestParts{Provider: "private", ModelName: "text-only"}
+	err := finalizeExecutionMode(Caller{Type: runtimemodel.ConversationCallerAgent}, parts)
+	if err == nil || !strings.Contains(err.Error(), "does not support function calling") {
+		t.Fatalf("finalizeExecutionMode() error = %v, want function-calling error", err)
 	}
 }
 
 func TestApplyRootRegenerationModelCapabilitiesKeepsPersistedModeForSameModel(t *testing.T) {
-	for _, mode := range []string{executionModeNativeAgentLoop, executionModeLegacyToolChat, executionModeDirectChat} {
+	for _, mode := range []string{executionModeNativeAgentLoop, executionModeNativeToolLoop, executionModeDirectChat} {
 		t.Run(mode, func(t *testing.T) {
 			provider := "private"
 			message := &runtimemodel.Message{
@@ -93,6 +114,69 @@ func TestApplyRootRegenerationModelCapabilitiesKeepsPersistedModeForSameModel(t 
 			}
 			if parts.ExecutionMode != mode {
 				t.Fatalf("ExecutionMode = %q, want %q", parts.ExecutionMode, mode)
+			}
+		})
+	}
+}
+
+func TestApplyRootRegenerationModelCapabilitiesRetiresLegacyExecutionModes(t *testing.T) {
+	for _, tt := range []struct {
+		name          string
+		persistedMode string
+		caller        Caller
+		skillIDs      []string
+		wantMode      string
+	}{
+		{
+			name:          "agent loop",
+			persistedMode: executionModeAgentLoop,
+			caller:        Caller{Type: runtimemodel.ConversationCallerAgent},
+			wantMode:      executionModeNativeAgentLoop,
+		},
+		{
+			name:          "legacy tool chat",
+			persistedMode: executionModeLegacyToolChat,
+			caller:        Caller{Type: runtimemodel.ConversationCallerAIChat},
+			skillIDs:      []string{"calculator"},
+			wantMode:      executionModeNativeToolLoop,
+		},
+		{
+			name:     "message without persisted mode",
+			caller:   Caller{Type: runtimemodel.ConversationCallerAgent},
+			wantMode: executionModeNativeAgentLoop,
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			provider := "private"
+			message := &runtimemodel.Message{
+				ModelProvider: &provider,
+				ModelName:     "model",
+				Metadata:      map[string]interface{}{},
+			}
+			if tt.persistedMode != "" {
+				message.Metadata["execution_mode"] = tt.persistedMode
+			}
+			parts := &chatRequestParts{
+				Provider:  provider,
+				ModelName: message.ModelName,
+				Surface:   aiChatSurfaceWorkChat,
+				SkillIDs:  tt.skillIDs,
+			}
+			svc := &service{modelSpecResolver: modelSpecResolverFunc(func(context.Context, uuid.UUID, string, string) (ModelSpec, bool, error) {
+				return ModelSpec{UseCases: []string{"text-chat", "agent"}, SupportsToolCall: true}, true, nil
+			})}
+
+			if err := svc.applyRootRegenerationModelCapabilities(t.Context(), Scope{OrganizationID: uuid.New()}, tt.caller, message, parts); err != nil {
+				t.Fatalf("applyRootRegenerationModelCapabilities() error = %v", err)
+			}
+			if parts.ExecutionMode != "" {
+				t.Fatalf("ExecutionMode before finalization = %q, want empty", parts.ExecutionMode)
+			}
+			if err := finalizeExecutionMode(tt.caller, parts); err != nil {
+				t.Fatalf("finalizeExecutionMode() error = %v", err)
+			}
+			if parts.ExecutionMode != tt.wantMode {
+				t.Fatalf("ExecutionMode = %q, want %q", parts.ExecutionMode, tt.wantMode)
 			}
 		})
 	}
@@ -128,6 +212,9 @@ func TestApplyRootRegenerationModelCapabilitiesRecomputesModeForChangedModelIden
 			if err := svc.applyRootRegenerationModelCapabilities(t.Context(), Scope{OrganizationID: uuid.New()}, Caller{}, message, parts); err != nil {
 				t.Fatalf("applyRootRegenerationModelCapabilities() error = %v", err)
 			}
+			if err := finalizeExecutionMode(Caller{}, parts); err != nil {
+				t.Fatalf("finalizeExecutionMode() error = %v", err)
+			}
 			if parts.ExecutionMode != executionModeDirectChat {
 				t.Fatalf("ExecutionMode = %q, want %q", parts.ExecutionMode, executionModeDirectChat)
 			}
@@ -135,7 +222,7 @@ func TestApplyRootRegenerationModelCapabilitiesRecomputesModeForChangedModelIden
 	}
 }
 
-func TestApplyRootRegenerationModelCapabilitiesRejectsLostRequiredCapability(t *testing.T) {
+func TestRetiredAgentLoopRegenerationRejectsLostRequiredCapability(t *testing.T) {
 	provider := "private"
 	message := &runtimemodel.Message{
 		ModelProvider: &provider,
@@ -153,8 +240,12 @@ func TestApplyRootRegenerationModelCapabilitiesRejectsLostRequiredCapability(t *
 		return ModelSpec{UseCases: []string{"text-chat"}}, true, nil
 	})}
 
-	if err := svc.applyRootRegenerationModelCapabilities(t.Context(), Scope{OrganizationID: uuid.New()}, Caller{}, message, parts); err == nil {
-		t.Fatal("applyRootRegenerationModelCapabilities() error = nil, want function-calling error")
+	caller := Caller{Type: runtimemodel.ConversationCallerAgent}
+	if err := svc.applyRootRegenerationModelCapabilities(t.Context(), Scope{OrganizationID: uuid.New()}, caller, message, parts); err != nil {
+		t.Fatalf("applyRootRegenerationModelCapabilities() error = %v", err)
+	}
+	if err := finalizeExecutionMode(caller, parts); err == nil {
+		t.Fatal("finalizeExecutionMode() error = nil, want function-calling error")
 	}
 }
 
@@ -184,6 +275,11 @@ func TestPreparedModelUseCaseUsesPersistedExecutionMode(t *testing.T) {
 	if got := preparedModelUseCase(prepared); got != "agent" {
 		t.Fatalf("preparedModelUseCase() = %q, want agent", got)
 	}
+
+	prepared.parts = &chatRequestParts{ExecutionMode: executionModeNativeToolLoop}
+	if got := preparedModelUseCase(prepared); got != "text-chat" {
+		t.Fatalf("preparedModelUseCase() = %q, want text-chat", got)
+	}
 }
 
 func TestDirectChatNeverEnablesToolLoop(t *testing.T) {
@@ -195,6 +291,21 @@ func TestDirectChatNeverEnablesToolLoop(t *testing.T) {
 	}
 	if chatPartsToolLoopEnabled(parts) {
 		t.Fatal("chatPartsToolLoopEnabled() = true for direct chat")
+	}
+}
+
+func TestNativeToolLoopUsesSkillLoopAndTextChatRouting(t *testing.T) {
+	parts := &chatRequestParts{
+		ExecutionMode: executionModeNativeToolLoop,
+		SkillMode:     skillModeAuto,
+		SkillIDs:      []string{"prompt-only"},
+	}
+	if !chatPartsToolLoopEnabled(parts) {
+		t.Fatal("chatPartsToolLoopEnabled() = false, want prompt-only native tool loop")
+	}
+	prepared := &PreparedChat{parts: parts}
+	if got := preparedModelUseCase(prepared); got != "text-chat" {
+		t.Fatalf("preparedModelUseCase() = %q, want text-chat", got)
 	}
 }
 
