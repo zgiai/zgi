@@ -15,6 +15,37 @@ import { organizationService } from '@/services/organization.service';
 import type { Organization } from '@/services/types/organization';
 import { useAuthStore } from '@/store/auth-store';
 import { cn } from '@/lib/utils';
+import { getErrorMessage } from '@/utils/error-notifications';
+
+const CREATE_ORGANIZATION_ERROR_KEYS = {
+  '199001': 'organizationOnboarding.invalidCreateParams',
+  '205003': 'organizationOnboarding.duplicateName',
+  '399001': 'organizationOnboarding.createSystemError',
+  '401001': 'organizationOnboarding.createUnauthorized',
+} as const;
+
+type CreateOrganizationErrorKey =
+  (typeof CREATE_ORGANIZATION_ERROR_KEYS)[keyof typeof CREATE_ORGANIZATION_ERROR_KEYS];
+
+function getBusinessErrorCode(error: unknown): string | undefined {
+  if (!error || typeof error !== 'object') return undefined;
+
+  const businessError = (error as { businessError?: { code?: string } }).businessError;
+  if (businessError?.code) return businessError.code;
+
+  const responseData = (error as { response?: { data?: { code?: string; errorCode?: string } } })
+    .response?.data;
+  return responseData?.code ?? responseData?.errorCode;
+}
+
+function getCreateOrganizationErrorKey(error: unknown): CreateOrganizationErrorKey | null {
+  const code = getBusinessErrorCode(error);
+  const key = code
+    ? CREATE_ORGANIZATION_ERROR_KEYS[code as keyof typeof CREATE_ORGANIZATION_ERROR_KEYS]
+    : undefined;
+
+  return key ?? null;
+}
 
 function extractInviteToken(value: string): string {
   const trimmed = value.trim();
@@ -79,8 +110,13 @@ export default function OrganizationOnboardingPage() {
     try {
       const organization = await organizationService.createOrganization({ name });
       await enterOrganization(organization);
-    } catch {
-      toast.error(t('organizationOnboarding.createFailed'));
+    } catch (error) {
+      const errorKey = getCreateOrganizationErrorKey(error);
+      const message =
+        (errorKey ? t(errorKey) : null) ||
+        getErrorMessage(error) ||
+        t('organizationOnboarding.createFailed');
+      toast.error(message);
     } finally {
       setCreating(false);
     }

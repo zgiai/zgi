@@ -14,6 +14,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Button } from '@/components/ui/button';
 import { Input, PasswordInput } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Pagination } from '@/components/ui/pagination';
 import { Link2, Copy, Check, ChevronsUpDown, X } from 'lucide-react';
@@ -85,6 +86,8 @@ export function AddMemberDialog({
   const [inviteLinkDepartmentId, setInviteLinkDepartmentId] = useState<string>('');
   const [inviteLinkSelectOpen, setInviteLinkSelectOpen] = useState(false);
   const [inviteLinkExpandedIds, setInviteLinkExpandedIds] = useState<Set<string>>(new Set());
+  const [rejectingRequestId, setRejectingRequestId] = useState<string | null>(null);
+  const [rejectReason, setRejectReason] = useState('');
 
   // Fetch invite link (only when department is selected and invite-link tab is active)
   const { inviteLink, isLoading: isLoadingInviteLink } = useInviteLink(
@@ -280,9 +283,26 @@ export function AddMemberDialog({
   };
 
   // Handle reject application
-  const handleReject = async (requestId: string) => {
+  const handleReject = (requestId: string) => {
+    setRejectingRequestId(requestId);
+    setRejectReason('');
+  };
+
+  const handleRejectDialogOpenChange = (nextOpen: boolean) => {
+    if (nextOpen) return;
+    setRejectingRequestId(null);
+    setRejectReason('');
+  };
+
+  const handleConfirmReject = async () => {
+    if (!rejectingRequestId) return;
+
     try {
-      await rejectJoinRequest(requestId);
+      await rejectJoinRequest({
+        requestId: rejectingRequestId,
+        reason: rejectReason,
+      });
+      handleRejectDialogOpenChange(false);
       // Reset to page 1 if current page becomes empty
       if (pendingApplications.length === 1 && pendingPage > 1) {
         setPendingPage(1);
@@ -326,101 +346,300 @@ export function AddMemberDialog({
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl p-0 overflow-hidden flex flex-col">
-        <DialogHeader>
-          <DialogTitle className="text-xl font-bold tracking-tight">
-            {t('organization.contacts.addMember.title')}
-          </DialogTitle>
-        </DialogHeader>
+    <>
+      <Dialog open={open} onOpenChange={onOpenChange}>
+        <DialogContent className="max-w-2xl p-0 overflow-hidden flex flex-col">
+          <DialogHeader>
+            <DialogTitle className="text-xl font-bold tracking-tight">
+              {t('organization.contacts.addMember.title')}
+            </DialogTitle>
+          </DialogHeader>
 
-        <DialogBody className="p-0 flex flex-col overflow-visible">
-          <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col">
-            {IS_CLOUD && (
-              <div className="px-6 pt-4">
-                <TabsList
-                  className={cn(
-                    'grid w-full bg-muted/50 p-1 rounded-xl h-12',
-                    SHOW_INVITE_LINK_TAB ? 'grid-cols-3' : 'grid-cols-2'
-                  )}
-                >
-                  {SHOW_INVITE_LINK_TAB && (
+          <DialogBody className="p-0 flex flex-col overflow-visible">
+            <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col">
+              {IS_CLOUD && (
+                <div className="px-6 pt-4">
+                  <TabsList
+                    className={cn(
+                      'grid w-full bg-muted/50 p-1 rounded-xl h-12',
+                      SHOW_INVITE_LINK_TAB ? 'grid-cols-3' : 'grid-cols-2'
+                    )}
+                  >
+                    {SHOW_INVITE_LINK_TAB && (
+                      <TabsTrigger
+                        value="invite-link"
+                        className="rounded-lg data-[state=active]:bg-card data-[state=active]:shadow-sm font-bold transition-all"
+                      >
+                        {t('organization.contacts.addMember.inviteLink')}
+                      </TabsTrigger>
+                    )}
                     <TabsTrigger
-                      value="invite-link"
-                      className="rounded-lg data-[state=active]:bg-card data-[state=active]:shadow-sm font-bold transition-all"
+                      value="direct-add"
+                      className="rounded-lg data-[state=active]:bg-white data-[state=active]:shadow-sm font-bold transition-all"
                     >
-                      {t('organization.contacts.addMember.inviteLink')}
+                      {t('organization.contacts.addMember.directAdd')}
                     </TabsTrigger>
-                  )}
-                  <TabsTrigger
-                    value="direct-add"
-                    className="rounded-lg data-[state=active]:bg-white data-[state=active]:shadow-sm font-bold transition-all"
-                  >
-                    {t('organization.contacts.addMember.directAdd')}
-                  </TabsTrigger>
-                  <TabsTrigger
-                    value="pending"
-                    className="rounded-lg data-[state=active]:bg-white data-[state=active]:shadow-sm font-bold transition-all relative"
-                  >
-                    {t('organization.contacts.addMember.pending')}
-                  </TabsTrigger>
-                </TabsList>
-              </div>
-            )}
+                    <TabsTrigger
+                      value="pending"
+                      className="rounded-lg data-[state=active]:bg-white data-[state=active]:shadow-sm font-bold transition-all relative"
+                    >
+                      {t('organization.contacts.addMember.pending')}
+                    </TabsTrigger>
+                  </TabsList>
+                </div>
+              )}
 
-            <div className="flex-1 overflow-y-visible px-6 py-6">
-              {/* Tab 1: Invite Link */}
-              {SHOW_INVITE_LINK_TAB && (
+              <div className="flex-1 overflow-y-visible px-6 py-6">
+                {/* Tab 1: Invite Link */}
+                {SHOW_INVITE_LINK_TAB && (
+                  <TabsContent
+                    value="invite-link"
+                    className="mt-0 space-y-6 animate-in fade-in duration-300"
+                  >
+                    <div className="flex items-start gap-4 p-5 bg-brand-subtle/50 rounded-2xl border border-brand-main/20">
+                      <div className="p-2 bg-brand-main/20 rounded-xl text-brand-main">
+                        <Link2 className="h-5 w-5" />
+                      </div>
+                      <div className="flex-1">
+                        <h4 className="font-bold text-brand-strong mb-1">
+                          {t('organization.contacts.addMember.useInviteLink')}
+                        </h4>
+                        <p className="text-sm text-brand-strong/70 font-medium leading-relaxed">
+                          {t('organization.contacts.addMember.inviteLinkDescription')}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label
+                        htmlFor="invite-link-department"
+                        className="text-sm font-bold text-foreground ml-1"
+                      >
+                        {t('organization.contacts.addMember.memberDepartment')}
+                      </Label>
+                      <div className="relative">
+                        <button
+                          type="button"
+                          id="invite-link-department"
+                          onClick={() => handleInviteLinkSelectOpen(!inviteLinkSelectOpen)}
+                          className={cn(
+                            'flex h-12 w-full items-center justify-between rounded-xl border bg-card px-4 py-2 text-sm font-medium transition-all duration-200',
+                            inviteLinkSelectOpen
+                              ? 'border-brand-main ring-2 ring-brand-main/10'
+                              : 'border hover:border-strong hover:bg-muted'
+                          )}
+                        >
+                          <span className="truncate">
+                            {inviteLinkDepartmentId
+                              ? getDepartmentName(inviteLinkDepartmentId) ||
+                                t('organization.contacts.addMember.selectDepartment')
+                              : t('organization.contacts.addMember.selectDepartment')}
+                          </span>
+                          <ChevronsUpDown className="h-4 w-4 opacity-40 shrink-0" />
+                        </button>
+                        {inviteLinkSelectOpen && (
+                          <>
+                            <div
+                              className="fixed inset-0 z-40"
+                              onClick={() => handleInviteLinkSelectOpen(false)}
+                            />
+                            <div className="absolute z-50 mt-2 w-full max-h-[300px] overflow-y-auto rounded-xl border bg-popover shadow-premium animate-in fade-in slide-in-from-top-2 duration-200">
+                              <div className="p-2">
+                                {departments.map(dept => (
+                                  <DepartmentTreeItemDropdown
+                                    key={dept.id}
+                                    department={dept}
+                                    level={0}
+                                    selectedId={inviteLinkDepartmentId}
+                                    onSelect={handleInviteLinkSelect}
+                                    expandedIds={inviteLinkExpandedIds}
+                                    onToggleExpand={handleInviteLinkToggleExpand}
+                                    showCheckIcon
+                                  />
+                                ))}
+                              </div>
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label className="text-sm font-bold text-foreground ml-1">
+                        {t('organization.contacts.addMember.inviteLinkLabel')}
+                      </Label>
+                      <div className="flex gap-3 grow">
+                        <Input
+                          value={
+                            isLoadingInviteLink
+                              ? t('organization.contacts.addMember.loading')
+                              : inviteLink
+                          }
+                          readOnly
+                          root
+                          className="flex-1 h-full rounded-xl border font-medium"
+                          disabled={isLoadingInviteLink || !inviteLinkDepartmentId}
+                          placeholder={
+                            !inviteLinkDepartmentId
+                              ? t('organization.contacts.addMember.selectDepartment')
+                              : ''
+                          }
+                        />
+                        <Button
+                          onClick={handleCopyLink}
+                          variant="outline"
+                          className="shrink-0 rounded-xl px-6 font-bold border hover:bg-muted transition-all active:scale-95"
+                          disabled={isLoadingInviteLink || !inviteLink}
+                        >
+                          {copied ? (
+                            <>
+                              <Check className="h-4 w-4 text-success" />
+                              {t('organization.contacts.addMember.copied')}
+                            </>
+                          ) : (
+                            <>
+                              <Copy className="h-4 w-4" />
+                              {t('organization.contacts.addMember.copy')}
+                            </>
+                          )}
+                        </Button>
+                      </div>
+                    </div>
+                  </TabsContent>
+                )}
+
+                {/* Tab 2: Direct Add */}
                 <TabsContent
-                  value="invite-link"
+                  value="direct-add"
                   className="mt-0 space-y-6 animate-in fade-in duration-300"
                 >
-                  <div className="flex items-start gap-4 p-5 bg-brand-subtle/50 rounded-2xl border border-brand-main/20">
-                    <div className="p-2 bg-brand-main/20 rounded-xl text-brand-main">
-                      <Link2 className="h-5 w-5" />
-                    </div>
-                    <div className="flex-1">
-                      <h4 className="font-bold text-brand-strong mb-1">
-                        {t('organization.contacts.addMember.useInviteLink')}
-                      </h4>
-                      <p className="text-sm text-brand-strong/70 font-medium leading-relaxed">
-                        {t('organization.contacts.addMember.inviteLinkDescription')}
-                      </p>
-                    </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="member-name" className="text-sm font-bold text-foreground ml-1">
+                      {t('organization.contacts.addMember.memberName')}
+                    </Label>
+                    <Input
+                      id="member-name"
+                      placeholder={t('organization.contacts.addMember.memberNamePlaceholder')}
+                      value={memberName}
+                      onChange={e => {
+                        setMemberName(e.target.value);
+                        if (nameError) setNameError('');
+                      }}
+                      maxLength={50}
+                      errorText={nameError}
+                      className="h-12 rounded-xl"
+                    />
                   </div>
 
                   <div className="space-y-2">
                     <Label
-                      htmlFor="invite-link-department"
+                      htmlFor="member-email"
                       className="text-sm font-bold text-foreground ml-1"
                     >
-                      {t('organization.contacts.addMember.memberDepartment')}
+                      {t('organization.contacts.addMember.memberEmail')}
+                    </Label>
+                    <Input
+                      id="member-email"
+                      type="email"
+                      placeholder={t('organization.contacts.addMember.memberEmailPlaceholder')}
+                      value={memberEmail}
+                      onChange={e => {
+                        setMemberEmail(e.target.value);
+                        if (emailError) setEmailError('');
+                      }}
+                      maxLength={100}
+                      errorText={emailError}
+                      className="h-12 rounded-xl"
+                    />
+                  </div>
+
+                  {!IS_CLOUD && (
+                    <div className="space-y-2">
+                      <Label
+                        htmlFor="member-password"
+                        className="text-sm font-bold text-foreground ml-1"
+                      >
+                        {t('organization.contacts.addMember.memberPassword')}
+                      </Label>
+                      <PasswordInput
+                        id="member-password"
+                        placeholder={t('organization.contacts.addMember.memberPasswordPlaceholder')}
+                        value={memberPassword}
+                        onChange={e => setMemberPassword(e.target.value)}
+                        autoComplete="new-password"
+                        className="h-12 rounded-xl"
+                      />
+                      <p className="text-xs font-medium text-muted-foreground ml-1">
+                        {t('organization.contacts.addMember.defaultPasswordHint')}
+                      </p>
+                    </div>
+                  )}
+
+                  <div className="space-y-2">
+                    <Label className="text-sm font-bold text-foreground ml-1">
+                      {t('organization.contacts.addMember.memberWorkspaceOptional')}
+                    </Label>
+                    <div className="flex gap-2">
+                      <WorkspaceSelector
+                        value={selectedWorkspace}
+                        onChange={setSelectedWorkspace}
+                        placeholder={t(
+                          'organization.contacts.addMember.workspaceOptionalPlaceholder'
+                        )}
+                        className="h-12 rounded-xl"
+                      />
+                      {selectedWorkspace ? (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          isIcon
+                          onClick={() => setSelectedWorkspace(undefined)}
+                          className="h-12 w-12 shrink-0 rounded-xl"
+                          aria-label={t('organization.contacts.addMember.clearWorkspace')}
+                        >
+                          <X className="h-4 w-4" />
+                        </Button>
+                      ) : null}
+                    </div>
+                    <p className="ml-1 text-xs font-medium text-muted-foreground">
+                      {t('organization.contacts.addMember.workspaceOptionalHint')}
+                    </p>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label
+                      htmlFor="member-department"
+                      className="text-sm font-bold text-foreground ml-1"
+                    >
+                      {IS_CLOUD
+                        ? t('organization.contacts.addMember.memberDepartment')
+                        : t('organization.contacts.addMember.memberDepartmentOptional')}
                     </Label>
                     <div className="relative">
                       <button
                         type="button"
-                        id="invite-link-department"
-                        onClick={() => handleInviteLinkSelectOpen(!inviteLinkSelectOpen)}
+                        id="member-department"
+                        onClick={() => handleDirectAddSelectOpen(!directAddSelectOpen)}
                         className={cn(
                           'flex h-12 w-full items-center justify-between rounded-xl border bg-card px-4 py-2 text-sm font-medium transition-all duration-200',
-                          inviteLinkSelectOpen
+                          directAddSelectOpen
                             ? 'border-brand-main ring-2 ring-brand-main/10'
                             : 'border hover:border-strong hover:bg-muted'
                         )}
                       >
                         <span className="truncate">
-                          {inviteLinkDepartmentId
-                            ? getDepartmentName(inviteLinkDepartmentId) ||
+                          {selectedDepartment
+                            ? getDepartmentName(selectedDepartment) ||
                               t('organization.contacts.addMember.selectDepartment')
                             : t('organization.contacts.addMember.selectDepartment')}
                         </span>
                         <ChevronsUpDown className="h-4 w-4 opacity-40 shrink-0" />
                       </button>
-                      {inviteLinkSelectOpen && (
+                      {directAddSelectOpen && (
                         <>
                           <div
                             className="fixed inset-0 z-40"
-                            onClick={() => handleInviteLinkSelectOpen(false)}
+                            onClick={() => handleDirectAddSelectOpen(false)}
                           />
                           <div className="absolute z-50 mt-2 w-full max-h-[300px] overflow-y-auto rounded-xl border bg-popover shadow-premium animate-in fade-in slide-in-from-top-2 duration-200">
                             <div className="p-2">
@@ -429,10 +648,10 @@ export function AddMemberDialog({
                                   key={dept.id}
                                   department={dept}
                                   level={0}
-                                  selectedId={inviteLinkDepartmentId}
-                                  onSelect={handleInviteLinkSelect}
-                                  expandedIds={inviteLinkExpandedIds}
-                                  onToggleExpand={handleInviteLinkToggleExpand}
+                                  selectedId={selectedDepartment}
+                                  onSelect={handleDirectAddSelect}
+                                  expandedIds={directAddExpandedIds}
+                                  onToggleExpand={handleDirectAddToggleExpand}
                                   showCheckIcon
                                 />
                               ))}
@@ -443,338 +662,168 @@ export function AddMemberDialog({
                     </div>
                   </div>
 
-                  <div className="space-y-2">
-                    <Label className="text-sm font-bold text-foreground ml-1">
-                      {t('organization.contacts.addMember.inviteLinkLabel')}
-                    </Label>
-                    <div className="flex gap-3 grow">
-                      <Input
-                        value={
-                          isLoadingInviteLink
-                            ? t('organization.contacts.addMember.loading')
-                            : inviteLink
-                        }
-                        readOnly
-                        root
-                        className="flex-1 h-full rounded-xl border font-medium"
-                        disabled={isLoadingInviteLink || !inviteLinkDepartmentId}
-                        placeholder={
-                          !inviteLinkDepartmentId
-                            ? t('organization.contacts.addMember.selectDepartment')
-                            : ''
-                        }
+                  {IS_CLOUD && (
+                    <div className="flex items-center space-x-3 p-4 bg-muted rounded-2xl border transition-colors hover:bg-accent cursor-pointer group">
+                      <Checkbox
+                        id="send-notification"
+                        checked={sendNotification}
+                        onCheckedChange={checked => setSendNotification(checked as boolean)}
+                        className="h-5 w-5 rounded-md border-muted-foreground data-[state=checked]:bg-primary data-[state=checked]:border-primary"
                       />
-                      <Button
-                        onClick={handleCopyLink}
-                        variant="outline"
-                        className="shrink-0 rounded-xl px-6 font-bold border hover:bg-muted transition-all active:scale-95"
-                        disabled={isLoadingInviteLink || !inviteLink}
+                      <Label
+                        htmlFor="send-notification"
+                        className="text-sm font-bold text-muted-foreground cursor-pointer select-none grow"
                       >
-                        {copied ? (
-                          <>
-                            <Check className="h-4 w-4 text-success" />
-                            {t('organization.contacts.addMember.copied')}
-                          </>
-                        ) : (
-                          <>
-                            <Copy className="h-4 w-4" />
-                            {t('organization.contacts.addMember.copy')}
-                          </>
-                        )}
-                      </Button>
-                    </div>
-                  </div>
-                </TabsContent>
-              )}
-
-              {/* Tab 2: Direct Add */}
-              <TabsContent
-                value="direct-add"
-                className="mt-0 space-y-6 animate-in fade-in duration-300"
-              >
-                <div className="space-y-2">
-                  <Label htmlFor="member-name" className="text-sm font-bold text-foreground ml-1">
-                    {t('organization.contacts.addMember.memberName')}
-                  </Label>
-                  <Input
-                    id="member-name"
-                    placeholder={t('organization.contacts.addMember.memberNamePlaceholder')}
-                    value={memberName}
-                    onChange={e => {
-                      setMemberName(e.target.value);
-                      if (nameError) setNameError('');
-                    }}
-                    maxLength={50}
-                    errorText={nameError}
-                    className="h-12 rounded-xl"
-                  />
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="member-email" className="text-sm font-bold text-foreground ml-1">
-                    {t('organization.contacts.addMember.memberEmail')}
-                  </Label>
-                  <Input
-                    id="member-email"
-                    type="email"
-                    placeholder={t('organization.contacts.addMember.memberEmailPlaceholder')}
-                    value={memberEmail}
-                    onChange={e => {
-                      setMemberEmail(e.target.value);
-                      if (emailError) setEmailError('');
-                    }}
-                    maxLength={100}
-                    errorText={emailError}
-                    className="h-12 rounded-xl"
-                  />
-                </div>
-
-                {!IS_CLOUD && (
-                  <div className="space-y-2">
-                    <Label
-                      htmlFor="member-password"
-                      className="text-sm font-bold text-foreground ml-1"
-                    >
-                      {t('organization.contacts.addMember.memberPassword')}
-                    </Label>
-                    <PasswordInput
-                      id="member-password"
-                      placeholder={t('organization.contacts.addMember.memberPasswordPlaceholder')}
-                      value={memberPassword}
-                      onChange={e => setMemberPassword(e.target.value)}
-                      autoComplete="new-password"
-                      className="h-12 rounded-xl"
-                    />
-                    <p className="text-xs font-medium text-muted-foreground ml-1">
-                      {t('organization.contacts.addMember.defaultPasswordHint')}
-                    </p>
-                  </div>
-                )}
-
-                <div className="space-y-2">
-                  <Label className="text-sm font-bold text-foreground ml-1">
-                    {t('organization.contacts.addMember.memberWorkspaceOptional')}
-                  </Label>
-                  <div className="flex gap-2">
-                    <WorkspaceSelector
-                      value={selectedWorkspace}
-                      onChange={setSelectedWorkspace}
-                      placeholder={t('organization.contacts.addMember.workspaceOptionalPlaceholder')}
-                      className="h-12 rounded-xl"
-                    />
-                    {selectedWorkspace ? (
-                      <Button
-                        type="button"
-                        variant="outline"
-                        isIcon
-                        onClick={() => setSelectedWorkspace(undefined)}
-                        className="h-12 w-12 shrink-0 rounded-xl"
-                        aria-label={t('organization.contacts.addMember.clearWorkspace')}
-                      >
-                        <X className="h-4 w-4" />
-                      </Button>
-                    ) : null}
-                  </div>
-                  <p className="ml-1 text-xs font-medium text-muted-foreground">
-                    {t('organization.contacts.addMember.workspaceOptionalHint')}
-                  </p>
-                </div>
-
-                <div className="space-y-2">
-                  <Label
-                    htmlFor="member-department"
-                    className="text-sm font-bold text-foreground ml-1"
-                  >
-                    {IS_CLOUD
-                      ? t('organization.contacts.addMember.memberDepartment')
-                      : t('organization.contacts.addMember.memberDepartmentOptional')}
-                  </Label>
-                  <div className="relative">
-                    <button
-                      type="button"
-                      id="member-department"
-                      onClick={() => handleDirectAddSelectOpen(!directAddSelectOpen)}
-                      className={cn(
-                        'flex h-12 w-full items-center justify-between rounded-xl border bg-card px-4 py-2 text-sm font-medium transition-all duration-200',
-                        directAddSelectOpen
-                          ? 'border-brand-main ring-2 ring-brand-main/10'
-                          : 'border hover:border-strong hover:bg-muted'
-                      )}
-                    >
-                      <span className="truncate">
-                        {selectedDepartment
-                          ? getDepartmentName(selectedDepartment) ||
-                            t('organization.contacts.addMember.selectDepartment')
-                          : t('organization.contacts.addMember.selectDepartment')}
-                      </span>
-                      <ChevronsUpDown className="h-4 w-4 opacity-40 shrink-0" />
-                    </button>
-                    {directAddSelectOpen && (
-                      <>
-                        <div
-                          className="fixed inset-0 z-40"
-                          onClick={() => handleDirectAddSelectOpen(false)}
-                        />
-                        <div className="absolute z-50 mt-2 w-full max-h-[300px] overflow-y-auto rounded-xl border bg-popover shadow-premium animate-in fade-in slide-in-from-top-2 duration-200">
-                          <div className="p-2">
-                            {departments.map(dept => (
-                              <DepartmentTreeItemDropdown
-                                key={dept.id}
-                                department={dept}
-                                level={0}
-                                selectedId={selectedDepartment}
-                                onSelect={handleDirectAddSelect}
-                                expandedIds={directAddExpandedIds}
-                                onToggleExpand={handleDirectAddToggleExpand}
-                                showCheckIcon
-                              />
-                            ))}
-                          </div>
-                        </div>
-                      </>
-                    )}
-                  </div>
-                </div>
-
-                {IS_CLOUD && (
-                  <div className="flex items-center space-x-3 p-4 bg-muted rounded-2xl border transition-colors hover:bg-accent cursor-pointer group">
-                    <Checkbox
-                      id="send-notification"
-                      checked={sendNotification}
-                      onCheckedChange={checked => setSendNotification(checked as boolean)}
-                      className="h-5 w-5 rounded-md border-muted-foreground data-[state=checked]:bg-primary data-[state=checked]:border-primary"
-                    />
-                    <Label
-                      htmlFor="send-notification"
-                      className="text-sm font-bold text-muted-foreground cursor-pointer select-none grow"
-                    >
-                      {t('organization.contacts.addMember.sendNotification')}
-                    </Label>
-                  </div>
-                )}
-              </TabsContent>
-
-              {/* Tab 3: Pending Applications */}
-              {IS_CLOUD && (
-                <TabsContent
-                  value="pending"
-                  className="mt-0 h-full animate-in fade-in duration-300"
-                >
-                  {loadingPending ? (
-                    <div className="space-y-4">
-                      {[...Array(3)].map((_, i) => (
-                        <div
-                          key={i}
-                          className="flex items-center justify-between p-5 border rounded-2xl bg-card"
-                        >
-                          <div className="flex items-center gap-4 flex-1">
-                            <Skeleton className="h-10 w-10 rounded-xl" />
-                            <div className="flex-1 space-y-2">
-                              <Skeleton className="h-4 w-32" />
-                              <Skeleton className="h-3 w-48" />
-                            </div>
-                          </div>
-                          <Skeleton className="h-9 w-24 rounded-lg" />
-                        </div>
-                      ))}
-                    </div>
-                  ) : pendingApplications.length === 0 ? (
-                    <div className="flex flex-col items-center justify-center py-20 text-center">
-                      <div className="p-4 bg-muted rounded-full mb-4">
-                        <Check className="size-8 text-muted-foreground/50" />
-                      </div>
-                      <p className="text-sm font-bold text-muted-foreground max-w-[200px]">
-                        {t('organization.contacts.addMember.noPendingApplications')}
-                      </p>
-                    </div>
-                  ) : (
-                    <div className="flex flex-col h-full space-y-6">
-                      <div className="flex-1 space-y-4">
-                        {pendingApplications.map(application => {
-                          const isPending = application.status === 'pending';
-                          return (
-                            <div
-                              key={application.id}
-                              className="flex items-center justify-between p-5 border rounded-2xl bg-card hover:border-brand-main/20 hover:shadow-sm transition-all duration-200"
-                            >
-                              <div className="flex items-center gap-4">
-                                <div className="h-10 w-10 rounded-xl bg-muted flex items-center justify-center font-bold text-muted-foreground uppercase">
-                                  {application.account_name.charAt(0)}
-                                </div>
-                                <div>
-                                  <p className="font-bold text-foreground">
-                                    {application.account_name}
-                                  </p>
-                                  <p className="text-xs font-medium text-muted-foreground mt-0.5">
-                                    {application.account_email} • {application.department_name}
-                                  </p>
-                                </div>
-                              </div>
-                              <div className="flex items-center gap-2">
-                                {isPending ? (
-                                  <div className="flex gap-2">
-                                    <Button
-                                      variant="ghost"
-                                      size="sm"
-                                      onClick={() => handleReject(application.id)}
-                                      disabled={isRejectingRequest || isApprovingRequest}
-                                      className="rounded-lg h-9 px-4 font-bold text-muted-foreground hover:text-destructive hover:bg-destructive/5"
-                                    >
-                                      {t('organization.contacts.addMember.reject')}
-                                    </Button>
-                                    <Button
-                                      size="sm"
-                                      onClick={() => handleApprove(application.id)}
-                                      disabled={isRejectingRequest || isApprovingRequest}
-                                      className="h-9 rounded-lg px-4 font-bold shadow-sm disabled:cursor-not-allowed disabled:bg-muted disabled:text-muted-foreground disabled:opacity-100 disabled:shadow-none"
-                                    >
-                                      {t('organization.contacts.addMember.approve')}
-                                    </Button>
-                                  </div>
-                                ) : (
-                                  <span className="text-[10px] font-bold uppercase tracking-wider bg-muted text-muted-foreground px-2 py-1 rounded-md">
-                                    {getStatusText(application.status)}
-                                  </span>
-                                )}
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-
-                      {/* Pagination */}
-                      {totalPending > pendingPageSize && (
-                        <div className="pt-4 border-t border-dashed">
-                          <Pagination
-                            currentPage={pendingPage}
-                            totalPages={Math.ceil(totalPending / pendingPageSize)}
-                            total={totalPending}
-                            pageSize={pendingPageSize}
-                            onPageChange={setPendingPage}
-                            showInfo
-                            showJump={false}
-                          />
-                        </div>
-                      )}
+                        {t('organization.contacts.addMember.sendNotification')}
+                      </Label>
                     </div>
                   )}
                 </TabsContent>
-              )}
-            </div>
-          </Tabs>
-        </DialogBody>
 
-        <DialogFooter className="bg-muted/50 pt-4 pb-6 px-6 border-t gap-3">
-          {activeTab === 'pending' ? (
-            <div className="flex w-full justify-between items-center">
-              <span className="text-sm font-medium text-muted-foreground italic">
-                {totalPending > 0
-                  ? t('organization.contacts.addMember.pendingApplicationsFound', {
-                      total: totalPending,
-                    })
-                  : t('organization.contacts.addMember.noPendingApplicationsFooter')}
-              </span>
-              <div className="flex gap-2">
+                {/* Tab 3: Pending Applications */}
+                {IS_CLOUD && (
+                  <TabsContent
+                    value="pending"
+                    className="mt-0 h-full animate-in fade-in duration-300"
+                  >
+                    {loadingPending ? (
+                      <div className="space-y-4">
+                        {[...Array(3)].map((_, i) => (
+                          <div
+                            key={i}
+                            className="flex items-center justify-between p-5 border rounded-2xl bg-card"
+                          >
+                            <div className="flex items-center gap-4 flex-1">
+                              <Skeleton className="h-10 w-10 rounded-xl" />
+                              <div className="flex-1 space-y-2">
+                                <Skeleton className="h-4 w-32" />
+                                <Skeleton className="h-3 w-48" />
+                              </div>
+                            </div>
+                            <Skeleton className="h-9 w-24 rounded-lg" />
+                          </div>
+                        ))}
+                      </div>
+                    ) : pendingApplications.length === 0 ? (
+                      <div className="flex flex-col items-center justify-center py-20 text-center">
+                        <div className="p-4 bg-muted rounded-full mb-4">
+                          <Check className="size-8 text-muted-foreground/50" />
+                        </div>
+                        <p className="text-sm font-bold text-muted-foreground max-w-[200px]">
+                          {t('organization.contacts.addMember.noPendingApplications')}
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="flex flex-col h-full space-y-6">
+                        <div className="flex-1 space-y-4">
+                          {pendingApplications.map(application => {
+                            const isPending = application.status === 'pending';
+                            return (
+                              <div
+                                key={application.id}
+                                className="flex items-center justify-between p-5 border rounded-2xl bg-card hover:border-brand-main/20 hover:shadow-sm transition-all duration-200"
+                              >
+                                <div className="flex items-center gap-4">
+                                  <div className="h-10 w-10 rounded-xl bg-muted flex items-center justify-center font-bold text-muted-foreground uppercase">
+                                    {application.account_name.charAt(0)}
+                                  </div>
+                                  <div>
+                                    <p className="font-bold text-foreground">
+                                      {application.account_name}
+                                    </p>
+                                    <p className="text-xs font-medium text-muted-foreground mt-0.5">
+                                      {application.account_email} • {application.department_name}
+                                    </p>
+                                  </div>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  {isPending ? (
+                                    <div className="flex gap-2">
+                                      <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        onClick={() => handleReject(application.id)}
+                                        disabled={isRejectingRequest || isApprovingRequest}
+                                        className="rounded-lg h-9 px-4 font-bold text-muted-foreground hover:text-destructive hover:bg-destructive/5"
+                                      >
+                                        {t('organization.contacts.addMember.reject')}
+                                      </Button>
+                                      <Button
+                                        size="sm"
+                                        onClick={() => handleApprove(application.id)}
+                                        disabled={isRejectingRequest || isApprovingRequest}
+                                        className="h-9 rounded-lg px-4 font-bold shadow-sm disabled:cursor-not-allowed disabled:bg-muted disabled:text-muted-foreground disabled:opacity-100 disabled:shadow-none"
+                                      >
+                                        {t('organization.contacts.addMember.approve')}
+                                      </Button>
+                                    </div>
+                                  ) : (
+                                    <span className="text-[10px] font-bold uppercase tracking-wider bg-muted text-muted-foreground px-2 py-1 rounded-md">
+                                      {getStatusText(application.status)}
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+
+                        {/* Pagination */}
+                        {totalPending > pendingPageSize && (
+                          <div className="pt-4 border-t border-dashed">
+                            <Pagination
+                              currentPage={pendingPage}
+                              totalPages={Math.ceil(totalPending / pendingPageSize)}
+                              total={totalPending}
+                              pageSize={pendingPageSize}
+                              onPageChange={setPendingPage}
+                              showInfo
+                              showJump={false}
+                            />
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </TabsContent>
+                )}
+              </div>
+            </Tabs>
+          </DialogBody>
+
+          <DialogFooter className="bg-muted/50 pt-4 pb-6 px-6 border-t gap-3">
+            {activeTab === 'pending' ? (
+              <div className="flex w-full justify-between items-center">
+                <span className="text-sm font-medium text-muted-foreground italic">
+                  {totalPending > 0
+                    ? t('organization.contacts.addMember.pendingApplicationsFound', {
+                        total: totalPending,
+                      })
+                    : t('organization.contacts.addMember.noPendingApplicationsFooter')}
+                </span>
+                <div className="flex gap-2">
+                  <Button
+                    variant="ghost"
+                    size="xl"
+                    onClick={() => onOpenChange(false)}
+                    className="px-6 font-semibold"
+                  >
+                    {t('organization.contacts.addMember.cancel')}
+                  </Button>
+                  <Button
+                    size="xl"
+                    onClick={handleBatchApprove}
+                    className="px-6 font-semibold disabled:cursor-not-allowed disabled:bg-muted disabled:text-muted-foreground disabled:opacity-100 disabled:shadow-none"
+                    disabled={
+                      isApprovingRequest ||
+                      pendingApplications.filter(app => app.status === 'pending').length === 0
+                    }
+                  >
+                    {t('organization.contacts.addMember.batchApprove')}
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <div className="flex gap-2 w-full justify-end">
                 <Button
                   variant="ghost"
                   size="xl"
@@ -785,51 +834,76 @@ export function AddMemberDialog({
                 </Button>
                 <Button
                   size="xl"
-                  onClick={handleBatchApprove}
-                  className="px-6 font-semibold disabled:cursor-not-allowed disabled:bg-muted disabled:text-muted-foreground disabled:opacity-100 disabled:shadow-none"
+                  onClick={handleDirectAdd}
                   disabled={
-                    isApprovingRequest ||
-                    pendingApplications.filter(app => app.status === 'pending').length === 0
+                    activeTab === 'direct-add' &&
+                    (!memberName ||
+                      !memberEmail ||
+                      (IS_CLOUD && !selectedDepartment) ||
+                      isAddingMember ||
+                      isAdminRegisteringMember)
                   }
+                  className={cn(
+                    'px-8 font-semibold shadow-premium transition-all active:scale-95 disabled:cursor-not-allowed disabled:bg-muted disabled:text-muted-foreground disabled:opacity-100 disabled:shadow-none',
+                    activeTab === 'invite-link' && 'hidden'
+                  )}
                 >
-                  {t('organization.contacts.addMember.batchApprove')}
+                  {isAddingMember || isAdminRegisteringMember
+                    ? t('organization.contacts.addMember.adding')
+                    : t('organization.contacts.addMember.confirmAdd')}
                 </Button>
               </div>
+            )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!rejectingRequestId} onOpenChange={handleRejectDialogOpenChange}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>{t('organization.contacts.addMember.rejectDialogTitle')}</DialogTitle>
+          </DialogHeader>
+          <DialogBody className="space-y-3 px-0">
+            <p className="text-sm text-muted-foreground">
+              {t('organization.contacts.addMember.rejectDialogDescription')}
+            </p>
+            <div className="space-y-2">
+              <Label htmlFor="reject-reason">
+                {t('organization.contacts.addMember.rejectReason')}
+              </Label>
+              <Textarea
+                id="reject-reason"
+                value={rejectReason}
+                onChange={event => setRejectReason(event.target.value)}
+                placeholder={t('organization.contacts.addMember.rejectReasonPlaceholder')}
+                maxLength={500}
+                showCharacterCount
+                className="min-h-28 resize-none"
+              />
             </div>
-          ) : (
-            <div className="flex gap-2 w-full justify-end">
-              <Button
-                variant="ghost"
-                size="xl"
-                onClick={() => onOpenChange(false)}
-                className="px-6 font-semibold"
-              >
-                {t('organization.contacts.addMember.cancel')}
-              </Button>
-              <Button
-                size="xl"
-                onClick={handleDirectAdd}
-                disabled={
-                  activeTab === 'direct-add' &&
-                  (!memberName ||
-                    !memberEmail ||
-                    (IS_CLOUD && !selectedDepartment) ||
-                    isAddingMember ||
-                    isAdminRegisteringMember)
-                }
-                className={cn(
-                  'px-8 font-semibold shadow-premium transition-all active:scale-95 disabled:cursor-not-allowed disabled:bg-muted disabled:text-muted-foreground disabled:opacity-100 disabled:shadow-none',
-                  activeTab === 'invite-link' && 'hidden'
-                )}
-              >
-                {isAddingMember || isAdminRegisteringMember
-                  ? t('organization.contacts.addMember.adding')
-                  : t('organization.contacts.addMember.confirmAdd')}
-              </Button>
-            </div>
-          )}
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+          </DialogBody>
+          <DialogFooter className="gap-2 px-0 pb-0">
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => handleRejectDialogOpenChange(false)}
+              disabled={isRejectingRequest}
+            >
+              {t('organization.contacts.addMember.cancel')}
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              onClick={handleConfirmReject}
+              disabled={isRejectingRequest}
+            >
+              {isRejectingRequest
+                ? t('organization.contacts.addMember.rejecting')
+                : t('organization.contacts.addMember.confirmReject')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }

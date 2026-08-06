@@ -14,6 +14,11 @@ import type {
   ResetCurrentOrgMemberPasswordRequest,
 } from '@/services/types/organization';
 
+interface RejectJoinRequestVariables {
+  requestId: string;
+  reason?: string;
+}
+
 /**
  * Hook for member actions (status update, etc.)
  */
@@ -154,7 +159,10 @@ export function useMemberActions() {
           queryKey: WORKSPACE_KEYS.members(currentOrganization?.id || null, data.workspace.id),
         });
         queryClient.invalidateQueries({
-          queryKey: WORKSPACE_KEYS.availableMembers(currentOrganization?.id || null, data.workspace.id),
+          queryKey: WORKSPACE_KEYS.availableMembers(
+            currentOrganization?.id || null,
+            data.workspace.id
+          ),
         });
       }
       queryClient.invalidateQueries({
@@ -202,11 +210,13 @@ export function useMemberActions() {
 
   // Reject join request mutation
   const rejectJoinRequestMutation = useMutation({
-    mutationFn: async (requestId: string) => {
+    mutationFn: async ({ requestId, reason }: RejectJoinRequestVariables) => {
       if (!currentOrganization?.id) {
         throw new Error('No organization selected');
       }
-      return await organizationService.rejectJoinRequest(currentOrganization.id, requestId);
+      return await organizationService.rejectJoinRequest(currentOrganization.id, requestId, {
+        reason: reason?.trim() ?? '',
+      });
     },
     onSuccess: () => {
       toast.success(t('organization.contacts.addMember.rejectSuccess'));

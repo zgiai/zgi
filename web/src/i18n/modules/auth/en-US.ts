@@ -198,10 +198,13 @@ const messages = {
     revoked: 'This invitation has been revoked. Contact the inviter for details.',
     used: 'This invitation has already been used.',
     organizationUnavailable: 'The invited organization is unavailable. Contact the inviter.',
-    membershipUnavailable: 'The invited membership is no longer available. Ask for a new invitation.',
-    roleUnavailable: 'The invited role is no longer available. Ask the inviter to assign a new role.',
+    membershipUnavailable:
+      'The invited membership is no longer available. Ask for a new invitation.',
+    roleUnavailable:
+      'The invited role is no longer available. Ask the inviter to assign a new role.',
     accountUnavailable: 'This account is currently unavailable. Contact an administrator.',
-    emailMismatch: 'The signed-in account does not match the invited email {email}. Switch accounts to continue.',
+    emailMismatch:
+      'The signed-in account does not match the invited email {email}. Switch accounts to continue.',
     destination: 'You will join {organization}workspace: {workspace}',
     organizationPrefix: 'organization “{name}”, ',
     invitationDetails: 'Invitation details',
@@ -314,6 +317,10 @@ const messages = {
     organizationNamePlaceholder: 'Acme Team',
     create: 'Create and continue',
     createFailed: 'Unable to create the organization. Please try another name.',
+    duplicateName: 'Organization name already exists. Please try another name.',
+    invalidCreateParams: 'Organization name is empty or invalid. Please check and try again.',
+    createUnauthorized: 'Please sign in before creating an organization.',
+    createSystemError: 'The service is temporarily unavailable. Please try again later.',
     joinTitle: 'Join an organization',
     joinDescription: 'Paste an invitation link or invitation code from an administrator.',
     inviteLabel: 'Invitation link or code',
