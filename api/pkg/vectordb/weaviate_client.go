@@ -9,11 +9,14 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/zgiai/zgi/api/config"
 	"github.com/zgiai/zgi/api/internal/observability"
 	"github.com/zgiai/zgi/api/pkg/logger"
+	"golang.org/x/sync/errgroup"
 )
 
 // WeaviateClient represents a Weaviate vector database client
@@ -22,6 +25,11 @@ type WeaviateClient struct {
 	apiKey     string
 	httpClient *http.Client
 	batchSize  int
+}
+
+type ObjectPropertyUpdate struct {
+	ID         string
+	Properties map[string]interface{}
 }
 
 // NewWeaviateClient creates a new Weaviate client using configuration
@@ -162,6 +170,50 @@ func (c *WeaviateClient) UpdateObjectProperties(ctx context.Context, id, classNa
 		return fmt.Errorf("weaviate property update returned status code: %d, response: %s", resp.StatusCode, string(body))
 	}
 	return nil
+}
+
+// UpdateObjectPropertiesBatch applies independent PATCH operations with
+// bounded concurrency. Weaviate's object batch endpoint is intended for object
+// creation/upsert and can replace vector data, so visibility-only updates keep
+// using PATCH while avoiding one fully sequential network round trip per
+// entity.
+func (c *WeaviateClient) UpdateObjectPropertiesBatch(
+	ctx context.Context,
+	className string,
+	updates []ObjectPropertyUpdate,
+	concurrency int,
+	progress func(completed, total int),
+) error {
+	if len(updates) == 0 {
+		return nil
+	}
+	if concurrency < 1 {
+		concurrency = 1
+	}
+	if concurrency > 32 {
+		concurrency = 32
+	}
+
+	group, groupContext := errgroup.WithContext(ctx)
+	group.SetLimit(concurrency)
+	var completed atomic.Int64
+	var progressMu sync.Mutex
+	for i := range updates {
+		update := updates[i]
+		group.Go(func() error {
+			if err := c.UpdateObjectProperties(groupContext, update.ID, className, update.Properties); err != nil {
+				return err
+			}
+			count := int(completed.Add(1))
+			if progress != nil && (count%100 == 0 || count == len(updates)) {
+				progressMu.Lock()
+				progress(count, len(updates))
+				progressMu.Unlock()
+			}
+			return nil
+		})
+	}
+	return group.Wait()
 }
 
 // StoreVectors stores vectors with metadata in Weaviate using the batch objects API.

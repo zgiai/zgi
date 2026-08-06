@@ -84,6 +84,7 @@ func createKnowledgeBaseAssetRefRelationTables(t *testing.T, db *gorm.DB) {
 			sync_status text,
 			synced_generation_no integer,
 			sync_run_id text,
+			sync_batch_id text,
 			retrieval_enabled boolean,
 			graph_run_id text,
 			graph_sync_status text,

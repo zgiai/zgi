@@ -187,6 +187,14 @@ func (r *EntityRepository) FindPendingDelete(ctx context.Context, limit int) ([]
 	return results, err
 }
 
+func (r *EntityRepository) FindPendingDeleteByKBID(ctx context.Context, kbID uuid.UUID) ([]*model.Entity, error) {
+	var results []*model.Entity
+	err := r.db.WithContext(ctx).
+		Where("kb_id = ? AND graph_state = ?", kbID, "pending_delete").
+		Find(&results).Error
+	return results, err
+}
+
 // FindByNameOrAlias finds an entity by its name or canonical name within a KB
 func (r *EntityRepository) FindByNameOrAlias(ctx context.Context, kbID uuid.UUID, name string) ([]*model.Entity, error) {
 	var results []*model.Entity

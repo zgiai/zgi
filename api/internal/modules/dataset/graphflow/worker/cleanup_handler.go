@@ -121,12 +121,14 @@ func NewCleanupHandler(svc *graphflow.Service, taskManager *queue.TaskManager) f
 			} else {
 				if err := svc.TaskRepo.UpdateTaskCompleted(ctx, taskID); err != nil {
 					logger.Error("Failed to update task status to completed", err)
+				} else if graphFlowTask, loadErr := svc.TaskRepo.GetByID(ctx, taskID); loadErr != nil {
+					logger.Error("Failed to reload completed cleanup task", loadErr)
+				} else if err := advanceBatchPipelineAfterItemTask(ctx, svc, taskManager, graphFlowTask); err != nil {
+					logger.Error("Failed to advance batched graph run after cleanup", err)
+					return err
 				}
 			}
 		}
-
-		// Preserve taskManager for potential future use
-		_ = taskManager
 
 		return nil
 	}

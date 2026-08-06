@@ -63,6 +63,11 @@ type datasetRefSyncGraphLifecycle interface {
 	ReplaceDocument(ctx context.Context, build graphflow.LifecycleRunRequest, cleanup graphflow.LifecycleRunRequest) (*graphmodel.GraphFlowRun, *graphmodel.GraphFlowRun, error)
 }
 
+type datasetRefSyncBatchGraphLifecycle interface {
+	RegisterSyncBatchDocument(ctx context.Context, request graphflow.SyncBatchDocumentRequest) (*graphmodel.GraphFlowRun, error)
+	TryStartSyncBatch(ctx context.Context, organizationID, datasetID, syncBatchID uuid.UUID) error
+}
+
 type DatasetRefSyncRunnerDeps struct {
 	Refs       datasetRefSyncRefStore
 	Assets     datasetRefSyncAssetStore
@@ -132,6 +137,7 @@ func (r *DatasetRefSyncRunner) Run(ctx context.Context, payload DatasetRefSyncPa
 		_, markErr := r.refs.MarkFailed(ctx, ref.OrganizationID, ref.ID, syncRunID, "ref_payload_mismatch", "sync task payload does not match ref")
 		return markErr
 	}
+	defer r.tryStartGraphSyncBatch(ctx, ref, syncRunID)
 
 	asset, err := r.assets.GetAssetByID(ctx, assetID)
 	if err != nil {
@@ -272,6 +278,37 @@ func (r *DatasetRefSyncRunner) enqueueGraphReplacement(
 		workspaceID = &parsedWorkspaceID
 	}
 	generationNo := asset.GenerationNo
+	syncBatchID := syncRunID
+	if ref.SyncBatchID != nil && *ref.SyncBatchID != uuid.Nil {
+		syncBatchID = *ref.SyncBatchID
+	}
+	var cleanupDocumentID *uuid.UUID
+	if oldDocumentID != "" && oldDocumentID != documentID.String() {
+		parsedOldDocumentID, err := uuid.Parse(oldDocumentID)
+		if err != nil {
+			return fmt.Errorf("parse old graph document id: %w", err)
+		}
+		cleanupDocumentID = &parsedOldDocumentID
+	}
+	if batchLifecycle, ok := r.graph.(datasetRefSyncBatchGraphLifecycle); ok {
+		if _, err := batchLifecycle.RegisterSyncBatchDocument(ctx, graphflow.SyncBatchDocumentRequest{
+			OrganizationID:     organizationID,
+			WorkspaceID:        workspaceID,
+			DatasetID:          datasetID,
+			SyncBatchID:        syncBatchID,
+			SourceRefID:        ref.ID,
+			SyncRunID:          syncRunID,
+			DocumentID:         documentID,
+			CleanupDocumentID:  cleanupDocumentID,
+			AssetGenerationNo:  &generationNo,
+			EmbeddingProvider:  stringPtrValue(dataset.EmbeddingModelProvider),
+			EmbeddingModel:     stringPtrValue(dataset.EmbeddingModel),
+			EmbeddingDimension: intPtrValue(asset.EmbeddingDimension),
+		}); err != nil {
+			return fmt.Errorf("register graph sync batch document: %w", err)
+		}
+		return nil
+	}
 	build := graphflow.LifecycleRunRequest{
 		OrganizationID:     organizationID,
 		WorkspaceID:        workspaceID,
@@ -311,6 +348,23 @@ func (r *DatasetRefSyncRunner) enqueueGraphReplacement(
 		return fmt.Errorf("enqueue graph replacement: %w", err)
 	}
 	return nil
+}
+
+func (r *DatasetRefSyncRunner) tryStartGraphSyncBatch(ctx context.Context, ref *datalibModel.KnowledgeBaseAssetRef, syncRunID uuid.UUID) {
+	batchLifecycle, ok := r.graph.(datasetRefSyncBatchGraphLifecycle)
+	if !ok || ref == nil {
+		return
+	}
+	organizationID, orgErr := uuid.Parse(ref.OrganizationID)
+	datasetID, datasetErr := uuid.Parse(ref.DatasetID)
+	if orgErr != nil || datasetErr != nil {
+		return
+	}
+	syncBatchID := syncRunID
+	if ref.SyncBatchID != nil && *ref.SyncBatchID != uuid.Nil {
+		syncBatchID = *ref.SyncBatchID
+	}
+	_ = batchLifecycle.TryStartSyncBatch(ctx, organizationID, datasetID, syncBatchID)
 }
 
 func (r *DatasetRefSyncRunner) createDatasetDocument(ctx context.Context, ref *datalibModel.KnowledgeBaseAssetRef, asset *datalibModel.DocumentAsset, chunks []*datalibModel.DocumentChunk, embeddingProvider string, embeddingModel string) (*datasetModel.Document, error) {

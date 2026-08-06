@@ -114,6 +114,11 @@ func NewExtractionHandler(svc *graphflow.Service, taskManager *queue.TaskManager
 			return fmt.Errorf("graphflow task not found: %s: %w", taskID, asynq.SkipRetry)
 		}
 		var sourceRefID *uuid.UUID
+		if graphFlowTask.SourceRefID != nil {
+			value := *graphFlowTask.SourceRefID
+			sourceRefID = &value
+		}
+		batchRun := false
 		if graphFlowTask.RunID != nil {
 			run, runErr := svc.RunRepo.FindByID(ctx, *graphFlowTask.RunID)
 			if runErr != nil {
@@ -126,7 +131,8 @@ func NewExtractionHandler(svc *graphflow.Service, taskManager *queue.TaskManager
 			if snapshotErr := validateExtractionRunSnapshot(graphFlowTask, run, dataset, run.EmbeddingDimension); snapshotErr != nil {
 				return fmt.Errorf("graph flow run snapshot rejected: %v: %w", snapshotErr, asynq.SkipRetry)
 			}
-			if run.SourceRefID != nil {
+			batchRun = usesBatchPipeline(run)
+			if sourceRefID == nil && run.SourceRefID != nil {
 				value := *run.SourceRefID
 				sourceRefID = &value
 			}
@@ -138,6 +144,9 @@ func NewExtractionHandler(svc *graphflow.Service, taskManager *queue.TaskManager
 				"task_id": taskID.String(),
 				"status":  graphFlowTask.Status,
 			})
+			if graphFlowTask.Status == "completed" && batchRun {
+				return advanceBatchPipelineAfterItemTask(ctx, svc, taskManager, graphFlowTask)
+			}
 			return nil
 		}
 
@@ -190,7 +199,12 @@ func NewExtractionHandler(svc *graphflow.Service, taskManager *queue.TaskManager
 				logger.ErrorContext(ctx, "failed to update task completed status", err)
 			}
 
-			if err := enqueueNextAlignmentTask(ctx, svc, taskManager, graphFlowTask); err != nil {
+			if batchRun {
+				if err := advanceBatchPipelineAfterItemTask(ctx, svc, taskManager, graphFlowTask); err != nil {
+					logger.CriticalContext(ctx, "failed to advance batched graph run", err)
+					return err
+				}
+			} else if err := enqueueNextAlignmentTask(ctx, svc, taskManager, graphFlowTask); err != nil {
 				logger.CriticalContext(ctx, "failed to enqueue alignment task", err)
 			}
 
@@ -280,7 +294,7 @@ func NewExtractionHandler(svc *graphflow.Service, taskManager *queue.TaskManager
 		segments = completedSegments
 
 		// 4. Process all completed segments with in-task concurrency
-		return handleConcurrentExtraction(ctx, svc, taskManager, graphFlowTask, segments, taskID, sourceRefID)
+		return handleConcurrentExtraction(ctx, svc, taskManager, graphFlowTask, segments, taskID, sourceRefID, batchRun)
 	}
 }
 
@@ -293,6 +307,7 @@ func handleConcurrentExtraction(
 	segments []*dataset_model.DocumentSegment,
 	taskID uuid.UUID,
 	sourceRefID *uuid.UUID,
+	batchRun bool,
 ) error {
 
 	totalSegments := len(segments)
@@ -570,6 +585,23 @@ func handleConcurrentExtraction(
 				"count":   len(typeDefinitions),
 			})
 		}
+	}
+
+	if batchRun {
+		if err := svc.TaskRepo.UpdateTaskCompleted(ctx, taskID); err != nil {
+			logger.ErrorContext(ctx, "failed to update task status to completed", err)
+			return err
+		}
+		if err := advanceBatchPipelineAfterItemTask(ctx, svc, taskManager, graphFlowTask); err != nil {
+			logger.CriticalContext(ctx, "failed to advance batched graph run", err)
+			return fmt.Errorf("failed to advance batched graph run: %w", err)
+		}
+		logger.Info("GraphFlow batch extraction completed", map[string]interface{}{
+			"task_id":         taskID.String(),
+			"entity_mentions": len(allEntityMentions),
+			"triple_mentions": len(allTripleMentions),
+		})
+		return nil
 	}
 
 	// Enqueue alignment task first (Reliability Fix)

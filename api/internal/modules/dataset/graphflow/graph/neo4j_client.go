@@ -12,6 +12,35 @@ import (
 
 const equivalentSchemaRuleAlreadyExistsCode = "Neo.ClientError.Schema.EquivalentSchemaRuleAlreadyExists"
 
+const visibilityProjectionBatchSize = 500
+
+const entityVisibilityProjectionQuery = `
+	UNWIND $updates AS update
+	MATCH (n:Entity {kb_id: $dataset_id, id: update.id})
+	SET n.source_count = update.source_count,
+		n.active_source_count = update.active_source_count,
+		n.content_revision = update.content_revision,
+		n.visibility_revision = update.visibility_revision
+`
+
+// Relationship properties cannot be indexed across arbitrary dynamic
+// relationship types in Neo4j. Resolve both endpoint nodes through the
+// (kb_id, id) entity constraint first, then inspect only the relationships
+// between that exact pair instead of scanning every relationship in the KB for
+// every update.
+const relationshipVisibilityProjectionQuery = `
+	UNWIND $updates AS update
+	MATCH (head:Entity {kb_id: $dataset_id, id: update.head_id})
+	MATCH (tail:Entity {kb_id: $dataset_id, id: update.tail_id})
+	MATCH (head)-[r]->(tail)
+	WHERE r.id = update.id
+	SET r.kb_id = $dataset_id,
+		r.weight = update.weight,
+		r.active_weight = update.active_weight,
+		r.content_revision = update.content_revision,
+		r.visibility_revision = update.visibility_revision
+`
+
 // Neo4jClient provides methods to interact with Neo4j
 type Neo4jClient struct {
 	driver   neo4j.DriverWithContext
@@ -516,6 +545,33 @@ func buildEntityContextMultiHopQuery(maxHops int) string {
 }
 
 // CreateVectorIndex creates a vector index on the embedding property of Entity nodes
+func (c *Neo4jClient) EnsureProjectionSchema(ctx context.Context) error {
+	if c.driver == nil {
+		return fmt.Errorf("neo4j driver not initialized")
+	}
+
+	session := c.newSession(ctx, neo4j.AccessModeWrite)
+	defer session.Close(ctx)
+
+	for _, statement := range []string{
+		"CREATE CONSTRAINT entity_dataset_id_unique IF NOT EXISTS FOR (n:Entity) REQUIRE (n.kb_id, n.id) IS UNIQUE",
+		"CREATE INDEX entity_dataset_name IF NOT EXISTS FOR (n:Entity) ON (n.kb_id, n.name)",
+		"CREATE INDEX entity_dataset_canonical_name IF NOT EXISTS FOR (n:Entity) ON (n.kb_id, n.canonical_name)",
+	} {
+		result, err := session.Run(ctx, statement, nil)
+		if err != nil {
+			if isEquivalentSchemaRuleAlreadyExists(err) {
+				continue
+			}
+			return fmt.Errorf("ensure Neo4j projection schema: %w", err)
+		}
+		if _, err := result.Consume(ctx); err != nil {
+			return fmt.Errorf("confirm Neo4j projection schema: %w", err)
+		}
+	}
+	return nil
+}
+
 func (c *Neo4jClient) EnsureDatasetSchema(ctx context.Context, datasetID string, dimensions int) error {
 	if c.driver == nil {
 		return fmt.Errorf("neo4j driver not initialized")
@@ -523,23 +579,12 @@ func (c *Neo4jClient) EnsureDatasetSchema(ctx context.Context, datasetID string,
 	if datasetID == "" || dimensions <= 0 {
 		return fmt.Errorf("dataset ID and embedding dimension are required")
 	}
+	if err := c.EnsureProjectionSchema(ctx); err != nil {
+		return err
+	}
 
 	session := c.newSession(ctx, neo4j.AccessModeWrite)
 	defer session.Close(ctx)
-
-	// Ensure uniqueness constraint for upsert operations
-	_, err := session.Run(ctx, "CREATE CONSTRAINT entity_dataset_id_unique IF NOT EXISTS FOR (n:Entity) REQUIRE (n.kb_id, n.id) IS UNIQUE", nil)
-	if err != nil {
-		logger.Warn("Failed to create Neo4j entity uniqueness constraint", err)
-	}
-	for _, statement := range []string{
-		"CREATE INDEX entity_dataset_name IF NOT EXISTS FOR (n:Entity) ON (n.kb_id, n.name)",
-		"CREATE INDEX entity_dataset_canonical_name IF NOT EXISTS FOR (n:Entity) ON (n.kb_id, n.canonical_name)",
-	} {
-		if _, indexErr := session.Run(ctx, statement, nil); indexErr != nil && !isEquivalentSchemaRuleAlreadyExists(indexErr) {
-			return fmt.Errorf("failed to create entity lookup index: %w", indexErr)
-		}
-	}
 
 	indexName := datasetVectorIndexName(datasetID)
 	label := datasetEntityLabel(datasetID)
@@ -552,9 +597,14 @@ func (c *Neo4jClient) EnsureDatasetSchema(ctx context.Context, datasetID string,
 		}}
 	`, indexName, label, dimensions)
 
-	_, err = session.Run(ctx, cypher, nil)
+	result, err := session.Run(ctx, cypher, nil)
 	if err != nil && !isEquivalentSchemaRuleAlreadyExists(err) {
 		return fmt.Errorf("failed to create vector index: %w", err)
+	}
+	if err == nil {
+		if _, err := result.Consume(ctx); err != nil {
+			return fmt.Errorf("confirm vector index creation: %w", err)
+		}
 	}
 
 	return nil
@@ -981,38 +1031,70 @@ func (c *Neo4jClient) UpdateVisibilityProjection(
 	datasetID string,
 	entityUpdates []map[string]interface{},
 	relationshipUpdates []map[string]interface{},
+	progressCallbacks ...func(completed, total int),
 ) error {
 	if c.driver == nil {
 		return fmt.Errorf("neo4j driver not initialized")
 	}
+	if err := c.EnsureProjectionSchema(ctx); err != nil {
+		return err
+	}
+	var progress func(completed, total int)
+	if len(progressCallbacks) > 0 {
+		progress = progressCallbacks[0]
+	}
+	total := len(entityUpdates) + len(relationshipUpdates)
+	completed := 0
 	session := c.newSession(ctx, neo4j.AccessModeWrite)
 	defer session.Close(ctx)
-	if len(entityUpdates) > 0 {
-		_, err := session.Run(ctx, `
-			UNWIND $updates AS update
-			MATCH (n:Entity {kb_id: $dataset_id, id: update.id})
-			SET n.source_count = update.source_count,
-				n.active_source_count = update.active_source_count,
-				n.content_revision = update.content_revision,
-				n.visibility_revision = update.visibility_revision
-		`, map[string]interface{}{"dataset_id": datasetID, "updates": entityUpdates})
-		if err != nil {
-			return fmt.Errorf("failed to update neo4j entity visibility: %w", err)
+	if err := c.updateVisibilityProjectionBatches(ctx, session, datasetID, entityVisibilityProjectionQuery, entityUpdates, func(count int) {
+		completed += count
+		if progress != nil {
+			progress(completed, total)
 		}
+	}); err != nil {
+		return fmt.Errorf("failed to update neo4j entity visibility: %w", err)
 	}
-	if len(relationshipUpdates) > 0 {
-		_, err := session.Run(ctx, `
-			UNWIND $updates AS update
-			MATCH (head:Entity {kb_id: $dataset_id})-[r]->(tail:Entity {kb_id: $dataset_id})
-			WHERE r.id = update.id
-			SET r.kb_id = $dataset_id,
-				r.weight = update.weight,
-				r.active_weight = update.active_weight,
-				r.content_revision = update.content_revision,
-				r.visibility_revision = update.visibility_revision
-		`, map[string]interface{}{"dataset_id": datasetID, "updates": relationshipUpdates})
-		if err != nil {
-			return fmt.Errorf("failed to update neo4j relationship visibility: %w", err)
+	if err := c.updateVisibilityProjectionBatches(ctx, session, datasetID, relationshipVisibilityProjectionQuery, relationshipUpdates, func(count int) {
+		completed += count
+		if progress != nil {
+			progress(completed, total)
+		}
+	}); err != nil {
+		return fmt.Errorf("failed to update neo4j relationship visibility: %w", err)
+	}
+	return nil
+}
+
+func (c *Neo4jClient) updateVisibilityProjectionBatches(
+	ctx context.Context,
+	session neo4j.SessionWithContext,
+	datasetID string,
+	query string,
+	updates []map[string]interface{},
+	onBatchCompleted func(int),
+) error {
+	for start := 0; start < len(updates); start += visibilityProjectionBatchSize {
+		end := start + visibilityProjectionBatchSize
+		if end > len(updates) {
+			end = len(updates)
+		}
+		batch := updates[start:end]
+		if _, err := session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
+			result, err := tx.Run(ctx, query, map[string]interface{}{
+				"dataset_id": datasetID,
+				"updates":    batch,
+			})
+			if err != nil {
+				return nil, err
+			}
+			_, err = result.Consume(ctx)
+			return nil, err
+		}); err != nil {
+			return err
+		}
+		if onBatchCompleted != nil {
+			onBatchCompleted(len(batch))
 		}
 	}
 	return nil

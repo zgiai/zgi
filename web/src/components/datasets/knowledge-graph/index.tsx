@@ -10,6 +10,7 @@ import { transformToG6Data } from './utils/data-adapter';
 import { useGraphInstance } from './hooks/use-graph-instance';
 
 export * from './detail-panel';
+export * from './graph-build-progress';
 
 interface KnowledgeGraphProps {
   data: DatasetGraph;

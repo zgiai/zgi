@@ -129,12 +129,12 @@ python run_zgi_eval.py \
 Outputs:
 
 ```text
-middle/rag-data_qa_pairs.zgi.ragas.dataset.json
-result/rag-data_qa_pairs.zgi.ragas.results.json
-result/rag-data_qa_pairs.zgi.ragas.results.csv
+middle/rag-data_qa_pairs.zgi.hybrid.ragas.dataset.json
+result/rag-data_qa_pairs.zgi.hybrid.ragas.results.json
+result/rag-data_qa_pairs.zgi.hybrid.ragas.results.csv
 ```
 
-`run_ragas_eval.py` remains available as a legacy ZGI command, but the comparison workflow should use `run_zgi_eval.py` so result names include the `.zgi` platform suffix.
+`run_ragas_eval.py` remains available as a legacy ZGI command, but the comparison workflow should use `run_zgi_eval.py` so result names include both the `.zgi` platform suffix and the selected retrieval mode, such as `.zgi.vector` or `.zgi.graph`.
 
 ### Stage 3: Generate the Comparison
 
@@ -142,7 +142,8 @@ This command only reads files produced by stages 1 and 2. It does not call Dify,
 
 ```bash
 python compare_rag_eval.py \
-  --input input/rag-data_qa_pairs.xlsx
+  --input input/rag-data_qa_pairs.xlsx \
+  --zgi-retrieval-mode hybrid
 ```
 
 Outputs:
@@ -184,7 +185,7 @@ The backend retrieval parameters are passed to the RAG evaluation API:
 |---|---|---|
 | `--top-k` | `ZGI_RAG_EVAL_TOP_K` or prompt | Number of final retrieved contexts requested from backend |
 | `--score-threshold` | `ZGI_RAG_EVAL_SCORE_THRESHOLD` or prompt | Backend confidence threshold |
-| `--retrieval-mode` | `hybrid` | One of `hybrid`, `vector`, `graph` |
+| `--retrieval-mode` | Interactive prompt | One of `vector` (vector + BM25), `graph`, or `hybrid`; an explicit CLI value skips the prompt |
 | `--model` | empty | Optional backend generation model |
 
 If `top_k` and threshold are not passed:
@@ -226,9 +227,9 @@ The three-stage workflow writes:
 middle/rag-data_qa_pairs.dify.ragas.dataset.json
 result/rag-data_qa_pairs.dify.ragas.results.json
 result/rag-data_qa_pairs.dify.ragas.results.csv
-middle/rag-data_qa_pairs.zgi.ragas.dataset.json
-result/rag-data_qa_pairs.zgi.ragas.results.json
-result/rag-data_qa_pairs.zgi.ragas.results.csv
+middle/rag-data_qa_pairs.zgi.hybrid.ragas.dataset.json
+result/rag-data_qa_pairs.zgi.hybrid.ragas.results.json
+result/rag-data_qa_pairs.zgi.hybrid.ragas.results.csv
 result/rag-data_qa_pairs.comparison.csv
 result/rag-data_qa_pairs.comparison.json
 result/rag-data_qa_pairs.comparison.md

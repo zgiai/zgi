@@ -2,6 +2,7 @@ package worker
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -9,8 +10,10 @@ import (
 	"github.com/hibiken/asynq"
 	"github.com/zgiai/zgi/api/internal/modules/datalibrary/model"
 	"github.com/zgiai/zgi/api/internal/modules/dataset/graphflow"
+	"github.com/zgiai/zgi/api/internal/modules/dataset/graphflow/extractor"
 	graphmodel "github.com/zgiai/zgi/api/internal/modules/dataset/graphflow/model"
 	"github.com/zgiai/zgi/api/pkg/queue"
+	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
 
@@ -38,10 +41,21 @@ func (h *RunOutboxHandler) Process(ctx context.Context, event *graphmodel.GraphO
 		return nil
 	}
 	if run.Status == graphmodel.GraphFlowRunStatusPending {
-		run, err = h.service.RunRepo.Claim(ctx, run.ID, 10*time.Minute)
-		if err != nil {
+		// Only the lifecycle promoter may claim a queued run. A stale outbox
+		// event must be retried until promotion; acknowledging it could race
+		// with promotion and leave the processing run without a dispatch event.
+		return fmt.Errorf("graph run %s is still waiting for serial promotion", run.ID)
+	}
+	if run.Status != graphmodel.GraphFlowRunStatusProcessing {
+		return fmt.Errorf("graph run %s is not dispatchable in status %s", run.ID, run.Status)
+	}
+	if isFullDatasetRebuild(run) {
+		if err := h.snapshotFullRebuildItems(ctx, run); err != nil {
 			return err
 		}
+	}
+	if usesBatchPipeline(run) {
+		return h.enqueueBatchExtractionTasks(ctx, run)
 	}
 	documents, err := h.runDocuments(ctx, run)
 	if err != nil {
@@ -53,6 +67,130 @@ func (h *RunOutboxHandler) Process(ctx context.Context, event *graphmodel.GraphO
 		}
 	}
 	return nil
+}
+
+func (h *RunOutboxHandler) snapshotFullRebuildItems(ctx context.Context, run *graphmodel.GraphFlowRun) error {
+	if !isFullDatasetRebuild(run) {
+		return nil
+	}
+	return h.service.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var existingItems int64
+		if err := tx.WithContext(ctx).Model(&graphmodel.GraphFlowRunItem{}).
+			Where("run_id = ?", run.ID).Count(&existingItems).Error; err != nil {
+			return err
+		}
+		// Once the snapshot exists, retries must reuse it instead of pulling in
+		// documents that belong to a later graph revision.
+		if existingItems > 0 {
+			return nil
+		}
+
+		var refs []model.KnowledgeBaseAssetRef
+		query := tx.WithContext(ctx).
+			Where("organization_id = ? AND dataset_id = ? AND dataset_document_id IS NOT NULL AND deleted_at IS NULL", run.OrganizationID, run.DatasetID).
+			Order("created_at ASC")
+		if run.WorkspaceID != nil {
+			query = query.Where("workspace_id = ?", run.WorkspaceID.String())
+		}
+		if err := query.Find(&refs).Error; err != nil {
+			return err
+		}
+		if len(refs) == 0 {
+			return fmt.Errorf("full graph rebuild %s has no current documents", run.ID)
+		}
+
+		refIDs := make([]uuid.UUID, 0, len(refs))
+		for i := range refs {
+			ref := &refs[i]
+			item := &graphmodel.GraphFlowRunItem{
+				RunID:             run.ID,
+				OrganizationID:    run.OrganizationID,
+				DatasetID:         run.DatasetID,
+				SourceRefID:       &ref.ID,
+				SyncRunID:         ref.SyncRunID,
+				SyncBatchID:       run.ID,
+				Operation:         graphmodel.GraphFlowRunItemOperationAdd,
+				DocumentID:        *ref.DatasetDocumentID,
+				AssetGenerationNo: ref.SyncedGenerationNo,
+			}
+			if err := tx.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).Create(item).Error; err != nil {
+				return err
+			}
+			refIDs = append(refIDs, ref.ID)
+		}
+		return tx.WithContext(ctx).Model(&model.KnowledgeBaseAssetRef{}).
+			Where("id IN ?", refIDs).
+			Updates(map[string]any{
+				"graph_run_id":      run.ID,
+				"graph_sync_status": "queued",
+				"updated_at":        time.Now().UTC(),
+			}).Error
+	})
+}
+
+func (h *RunOutboxHandler) enqueueBatchExtractionTasks(ctx context.Context, run *graphmodel.GraphFlowRun) error {
+	var items []graphmodel.GraphFlowRunItem
+	if err := h.service.DB.WithContext(ctx).
+		Where("run_id = ? AND operation = ?", run.ID, graphmodel.GraphFlowRunItemOperationAdd).
+		Order("created_at ASC").Find(&items).Error; err != nil {
+		return err
+	}
+	if len(items) == 0 {
+		return fmt.Errorf("batched graph run %s has no add items", run.ID)
+	}
+	for i := range items {
+		item := &items[i]
+		task, err := h.createRunItemTask(ctx, run, item, "extraction")
+		if err != nil {
+			return err
+		}
+		queued, err := CreateGraphFlowExtractionTask(task.ID.String(), h.taskManager)
+		if err != nil {
+			return err
+		}
+		if _, err = h.taskManager.EnqueueTask(queued, asynq.Queue("graphflow")); err != nil && !errors.Is(err, asynq.ErrTaskIDConflict) {
+			return err
+		}
+	}
+	return nil
+}
+
+func (h *RunOutboxHandler) createRunItemTask(
+	ctx context.Context,
+	run *graphmodel.GraphFlowRun,
+	item *graphmodel.GraphFlowRunItem,
+	taskType string,
+) (*graphmodel.GraphFlowTask, error) {
+	if item == nil {
+		return nil, fmt.Errorf("graph run item is required")
+	}
+	task := &graphmodel.GraphFlowTask{
+		ID:                 uuid.New(),
+		TenantID:           run.OrganizationID,
+		KBID:               run.DatasetID,
+		DocumentID:         item.DocumentID,
+		RunID:              &run.ID,
+		RunItemID:          &item.ID,
+		SourceRefID:        item.SourceRefID,
+		TaskType:           taskType,
+		ExtractionStrategy: extractor.StrategyLLM,
+		Status:             "pending",
+		Metadata: map[string]interface{}{
+			"graph_revision": run.GraphRevision,
+		},
+	}
+	result := h.service.DB.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).Create(task)
+	if result.Error != nil {
+		return nil, result.Error
+	}
+	if result.RowsAffected == 0 {
+		if err := h.service.DB.WithContext(ctx).
+			Where("run_id = ? AND document_id = ? AND task_type = ?", run.ID, item.DocumentID, taskType).
+			First(task).Error; err != nil {
+			return nil, err
+		}
+	}
+	return task, nil
 }
 
 func (h *RunOutboxHandler) runDocuments(ctx context.Context, run *graphmodel.GraphFlowRun) ([]uuid.UUID, error) {
@@ -188,13 +326,14 @@ func (h *RunOutboxHandler) createDocumentTask(
 		}
 	}
 	task := &graphmodel.GraphFlowTask{
-		ID:         uuid.New(),
-		TenantID:   run.OrganizationID,
-		KBID:       run.DatasetID,
-		DocumentID: documentID,
-		RunID:      &run.ID,
-		TaskType:   taskType,
-		Status:     "pending",
+		ID:                 uuid.New(),
+		TenantID:           run.OrganizationID,
+		KBID:               run.DatasetID,
+		DocumentID:         documentID,
+		RunID:              &run.ID,
+		TaskType:           taskType,
+		ExtractionStrategy: extractor.StrategyLLM,
+		Status:             "pending",
 		Metadata: map[string]interface{}{
 			"graph_revision": run.GraphRevision,
 		},

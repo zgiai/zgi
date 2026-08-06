@@ -31,6 +31,7 @@ type KnowledgeBaseAssetRef struct {
 	SyncStatus         string         `gorm:"type:varchar(32);not null;default:'pending';index:idx_data_library_kb_asset_refs_sync_status;column:sync_status" json:"sync_status"`
 	SyncedGenerationNo *int64         `gorm:"column:synced_generation_no" json:"synced_generation_no,omitempty"`
 	SyncRunID          *uuid.UUID     `gorm:"type:uuid;index:idx_data_library_kb_asset_refs_sync_run;column:sync_run_id" json:"sync_run_id,omitempty"`
+	SyncBatchID        *uuid.UUID     `gorm:"type:uuid;index:idx_data_library_kb_asset_refs_sync_batch;column:sync_batch_id" json:"sync_batch_id,omitempty"`
 	RetrievalEnabled   bool           `gorm:"not null;default:true;column:retrieval_enabled" json:"retrieval_enabled"`
 	GraphRunID         *uuid.UUID     `gorm:"type:uuid;index:idx_data_library_kb_asset_refs_graph_run;column:graph_run_id" json:"graph_run_id,omitempty"`
 	GraphSyncStatus    *string        `gorm:"type:varchar(32);index:idx_data_library_kb_asset_refs_graph_status;column:graph_sync_status" json:"graph_sync_status,omitempty"`

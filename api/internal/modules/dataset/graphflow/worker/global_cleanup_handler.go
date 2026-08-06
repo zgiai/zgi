@@ -151,7 +151,7 @@ func (h *GlobalCleanupHandler) cleanEntities(ctx context.Context, limit int) err
 		// 2. Delete from Weaviate (if linked)
 		if h.svc.WeaviateClient != nil {
 			kbidStr := entity.KBID.String()
-			className := fmt.Sprintf("Dataset_%s", kbidStr)
+			className := fmt.Sprintf("Entity_%s", kbidStr)
 
 			if err := h.svc.WeaviateClient.DeleteObjectByID(ctx, className, entity.ID.String()); err != nil {
 				logger.Warn("Failed to delete object from Weaviate", map[string]interface{}{

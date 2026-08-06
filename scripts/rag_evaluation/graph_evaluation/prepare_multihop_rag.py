@@ -230,15 +230,49 @@ def normalize_title(value: Any) -> str:
 
 def write_qa_pairs(path: Path, selected_questions: Iterable[dict[str, Any]]) -> None:
     with path.open("w", encoding="utf-8-sig", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=["question", "reference"])
+        writer = csv.DictWriter(handle, fieldnames=["question", "reference", "enhanced_answer"])
         writer.writeheader()
         for question in selected_questions:
+            reference = clean_text(question.get("answer"))
             writer.writerow(
                 {
                     "question": str(question.get("query") or "").strip(),
-                    "reference": str(question.get("answer") or "").strip(),
+                    "reference": reference,
+                    "enhanced_answer": build_explanatory_reference(question),
                 }
             )
+
+
+def build_explanatory_reference(question: dict[str, Any]) -> str:
+    """Build an enhanced English answer from MultiHopRAG's gold evidence facts.
+
+    The short benchmark answer is retained as the RAGAS ``reference``. Keeping the
+    evidence in the evaluation-only QA file avoids leaking it into the Markdown
+    source documents imported into the knowledge base.
+    """
+
+    original_answer = clean_text(question.get("answer"))
+    if not original_answer:
+        raise ValueError("question is missing its original answer")
+
+    parts = [f"Answer: {original_answer.capitalize()}.", "Evidence:"]
+    evidence_list = question.get("evidence_list") or []
+    if not evidence_list:
+        raise ValueError("question is missing gold evidence")
+
+    for index, evidence in enumerate(evidence_list, start=1):
+        evidence = evidence or {}
+        source = clean_text(evidence.get("source")) or "Unknown source"
+        title = clean_text(evidence.get("title")) or "untitled article"
+        published_at = clean_text(evidence.get("published_at"))
+        published = f" ({published_at[:10]})" if published_at else ""
+        fact = clean_text(evidence.get("fact"))
+        if not fact:
+            raise ValueError(f"gold evidence {index} is missing its fact")
+        parts.append(f"{index}. {source}, \"{title}\"{published}: {fact}")
+
+    parts.append("Together, these source facts support the answer above.")
+    return "\n".join(parts)
 
 
 def write_documents(

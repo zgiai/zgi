@@ -66,3 +66,22 @@ func TestIsEquivalentSchemaRuleAlreadyExists(t *testing.T) {
 		})
 	}
 }
+
+func TestRelationshipVisibilityProjectionUsesIndexedEndpoints(t *testing.T) {
+	for _, snippet := range []string{
+		"MATCH (head:Entity {kb_id: $dataset_id, id: update.head_id})",
+		"MATCH (tail:Entity {kb_id: $dataset_id, id: update.tail_id})",
+		"MATCH (head)-[r]->(tail)",
+		"WHERE r.id = update.id",
+	} {
+		if !strings.Contains(relationshipVisibilityProjectionQuery, snippet) {
+			t.Fatalf("relationship visibility query missing %q:\n%s", snippet, relationshipVisibilityProjectionQuery)
+		}
+	}
+	if strings.Contains(relationshipVisibilityProjectionQuery, "MATCH (head:Entity {kb_id: $dataset_id})-[r]") {
+		t.Fatalf("relationship visibility query regressed to a KB-wide relationship scan:\n%s", relationshipVisibilityProjectionQuery)
+	}
+	if visibilityProjectionBatchSize > 1000 {
+		t.Fatalf("visibility projection batch size=%d, want at most 1000", visibilityProjectionBatchSize)
+	}
+}

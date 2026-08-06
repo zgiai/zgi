@@ -585,6 +585,16 @@ export interface GraphRunStatus {
   updated_at: string;
 }
 
+export type GraphBuildStageKey = 'extraction' | 'alignment' | 'graph_sync' | 'vector_sync';
+
+export type GraphBuildStageStatusValue = 'pending' | 'processing' | 'completed' | 'failed';
+
+export interface GraphBuildStageStatus {
+  key: GraphBuildStageKey;
+  status: GraphBuildStageStatusValue;
+  progress: number;
+}
+
 export interface GraphDocumentStatus {
   document_id: string;
   ref_id: string;
@@ -604,6 +614,8 @@ export interface GraphDatasetStatus {
   graph_projected_visibility_revision: number;
   available_revision?: number;
   current_run?: GraphRunStatus;
+  current_stage?: GraphBuildStageKey;
+  stages: GraphBuildStageStatus[];
   summary: {
     documents_total: number;
     documents_ready: number;

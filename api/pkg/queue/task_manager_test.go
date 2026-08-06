@@ -15,6 +15,10 @@ func TestNewTaskManager(t *testing.T) {
 			Password: "",
 			DB:       0,
 		},
+		TaskQueue: config.TaskQueueConfig{
+			Concurrency:          8,
+			GraphFlowConcurrency: 4,
+		},
 	}
 
 	tm, err := NewTaskManager(cfg)
@@ -26,12 +30,36 @@ func TestNewTaskManager(t *testing.T) {
 	assert.NotNil(t, tm)
 	assert.NotNil(t, tm.GetClient())
 	assert.NotNil(t, tm.GetServer())
+	assert.NotNil(t, tm.GetGraphFlowServer())
+}
+
+func TestWorkerQueuesAreIsolated(t *testing.T) {
+	cfg := &config.Config{TaskQueue: config.TaskQueueConfig{
+		Concurrency:          8,
+		GraphFlowConcurrency: 4,
+	}}
+
+	mainConfig := mainWorkerConfig(cfg)
+	assert.Equal(t, 8, mainConfig.Concurrency)
+	assert.NotContains(t, mainConfig.Queues, "graphflow")
+	assert.Contains(t, mainConfig.Queues, "default")
+
+	graphConfig := graphFlowWorkerConfig(cfg)
+	assert.Equal(t, 4, graphConfig.Concurrency)
+	assert.Equal(t, map[string]int{"graphflow": 1}, graphConfig.Queues)
+
+	cfg.TaskQueue.GraphFlowConcurrency = 99
+	assert.Equal(t, 4, graphFlowWorkerConfig(cfg).Concurrency)
 }
 
 func TestGetTaskTypeWithPrefix(t *testing.T) {
 	cfg := &config.Config{
 		Redis: config.RedisConfig{
 			DB: 0,
+		},
+		TaskQueue: config.TaskQueueConfig{
+			Concurrency:          8,
+			GraphFlowConcurrency: 4,
 		},
 	}
 	tm, _ := NewTaskManager(cfg)

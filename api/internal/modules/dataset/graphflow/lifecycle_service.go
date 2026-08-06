@@ -57,6 +57,12 @@ type GraphStatusSummary struct {
 	DocumentsFailed     int `json:"documents_failed"`
 }
 
+type GraphStageStatus struct {
+	Key      string `json:"key"`
+	Status   string `json:"status"`
+	Progress int    `json:"progress"`
+}
+
 type DatasetGraphStatus struct {
 	DatasetID                        uuid.UUID             `json:"dataset_id"`
 	Enabled                          bool                  `json:"enabled"`
@@ -67,6 +73,8 @@ type DatasetGraphStatus struct {
 	GraphProjectedVisibilityRevision int64                 `json:"graph_projected_visibility_revision"`
 	AvailableRevision                *int64                `json:"available_revision,omitempty"`
 	CurrentRun                       *GraphRunStatus       `json:"current_run,omitempty"`
+	CurrentStage                     string                `json:"current_stage,omitempty"`
+	Stages                           []GraphStageStatus    `json:"stages"`
 	Summary                          GraphStatusSummary    `json:"summary"`
 	Documents                        []GraphDocumentStatus `json:"documents"`
 	ErrorCode                        *string               `json:"error_code,omitempty"`
@@ -84,10 +92,30 @@ type LifecycleRunRequest struct {
 	DocumentID           *uuid.UUID
 	SourceRefID          *uuid.UUID
 	SyncRunID            *uuid.UUID
+	SyncBatchID          *uuid.UUID
 	AssetGenerationNo    *int64
 	Trigger              string
 	Mode                 string
 	IdempotencyKey       string
+	EmbeddingProvider    string
+	EmbeddingModel       string
+	EmbeddingDimension   int
+	EmbeddingFingerprint string
+}
+
+// SyncBatchDocumentRequest registers the graph operations caused by one
+// successful file-reference sync. A replacement contributes an ADD item for
+// the new document and a CLEANUP item for the old document to the same run.
+type SyncBatchDocumentRequest struct {
+	OrganizationID       uuid.UUID
+	WorkspaceID          *uuid.UUID
+	DatasetID            uuid.UUID
+	SyncBatchID          uuid.UUID
+	SourceRefID          uuid.UUID
+	SyncRunID            uuid.UUID
+	DocumentID           uuid.UUID
+	CleanupDocumentID    *uuid.UUID
+	AssetGenerationNo    *int64
 	EmbeddingProvider    string
 	EmbeddingModel       string
 	EmbeddingDimension   int
@@ -215,6 +243,280 @@ func (s *LifecycleService) ReplaceDocument(
 	return buildRun, cleanupRun, err
 }
 
+// RegisterSyncBatchDocument creates (or reuses) the single parent run for a
+// dataset sync batch and records this ref's document operations. It deliberately
+// does not publish the run outbox event; TryStartSyncBatch does that only after
+// every ref in the batch has reached a terminal sync state.
+func (s *LifecycleService) RegisterSyncBatchDocument(ctx context.Context, request SyncBatchDocumentRequest) (*graphmodel.GraphFlowRun, error) {
+	if request.OrganizationID == uuid.Nil || request.DatasetID == uuid.Nil || request.SyncBatchID == uuid.Nil ||
+		request.SourceRefID == uuid.Nil || request.SyncRunID == uuid.Nil || request.DocumentID == uuid.Nil {
+		return nil, fmt.Errorf("graph sync batch scope is required")
+	}
+	var run *graphmodel.GraphFlowRun
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var dataset datasetmodel.Dataset
+		if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).
+			First(&dataset, "id = ?", request.DatasetID).Error; err != nil {
+			return err
+		}
+		if dataset.OrganizationID != request.OrganizationID.String() ||
+			(request.WorkspaceID != nil && dataset.WorkspaceID != request.WorkspaceID.String()) {
+			return ErrGraphFlowTenantScopeMismatch
+		}
+
+		var existing graphmodel.GraphFlowRun
+		err := tx.WithContext(ctx).
+			Where("dataset_id = ? AND sync_batch_id = ?", request.DatasetID, request.SyncBatchID).
+			First(&existing).Error
+		switch {
+		case err == nil:
+			run = &existing
+		case !errors.Is(err, gorm.ErrRecordNotFound):
+			return err
+		default:
+			revision := dataset.GraphRevision + 1
+			run = &graphmodel.GraphFlowRun{
+				OrganizationID:       request.OrganizationID,
+				WorkspaceID:          request.WorkspaceID,
+				DatasetID:            request.DatasetID,
+				SyncBatchID:          &request.SyncBatchID,
+				GraphRevision:        revision,
+				EmbeddingProvider:    request.EmbeddingProvider,
+				EmbeddingModel:       request.EmbeddingModel,
+				EmbeddingDimension:   request.EmbeddingDimension,
+				EmbeddingFingerprint: request.EmbeddingFingerprint,
+				Trigger:              "document_sync_batch",
+				Mode:                 graphmodel.GraphFlowRunModeBuild,
+				Status:               graphmodel.GraphFlowRunStatusPending,
+				IdempotencyKey:       fmt.Sprintf("ref-sync-batch:%s", request.SyncBatchID),
+			}
+			if err := tx.WithContext(ctx).Create(run).Error; err != nil {
+				return err
+			}
+			now := time.Now().UTC()
+			datasetUpdates := map[string]any{
+				"graph_revision":   revision,
+				"graph_updated_at": now,
+			}
+			if dataset.GraphCurrentRunID == nil && dataset.GraphStatus != "failed" && dataset.GraphStatus != "partial" {
+				datasetUpdates["graph_status"] = "waiting_content"
+				datasetUpdates["graph_progress"] = 0
+			}
+			if dataset.GraphStatus != "failed" && dataset.GraphStatus != "partial" {
+				datasetUpdates["graph_error_code"] = nil
+				datasetUpdates["graph_error_message"] = nil
+			}
+			if err := tx.WithContext(ctx).Model(&datasetmodel.Dataset{}).
+				Where("id = ?", request.DatasetID).
+				Updates(datasetUpdates).Error; err != nil {
+				return err
+			}
+		}
+
+		add := &graphmodel.GraphFlowRunItem{
+			RunID:             run.ID,
+			OrganizationID:    request.OrganizationID,
+			DatasetID:         request.DatasetID,
+			SourceRefID:       &request.SourceRefID,
+			SyncRunID:         &request.SyncRunID,
+			SyncBatchID:       request.SyncBatchID,
+			Operation:         graphmodel.GraphFlowRunItemOperationAdd,
+			DocumentID:        request.DocumentID,
+			PairedDocumentID:  request.CleanupDocumentID,
+			AssetGenerationNo: request.AssetGenerationNo,
+		}
+		if err := tx.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).Create(add).Error; err != nil {
+			return err
+		}
+		if request.CleanupDocumentID != nil && *request.CleanupDocumentID != uuid.Nil && *request.CleanupDocumentID != request.DocumentID {
+			cleanup := &graphmodel.GraphFlowRunItem{
+				RunID:             run.ID,
+				OrganizationID:    request.OrganizationID,
+				DatasetID:         request.DatasetID,
+				SourceRefID:       &request.SourceRefID,
+				SyncRunID:         &request.SyncRunID,
+				SyncBatchID:       request.SyncBatchID,
+				Operation:         graphmodel.GraphFlowRunItemOperationCleanup,
+				DocumentID:        *request.CleanupDocumentID,
+				PairedDocumentID:  &request.DocumentID,
+				AssetGenerationNo: request.AssetGenerationNo,
+			}
+			if err := tx.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).Create(cleanup).Error; err != nil {
+				return err
+			}
+		}
+		return tx.WithContext(ctx).Model(&datalibrarymodel.KnowledgeBaseAssetRef{}).
+			Where("id = ? AND organization_id = ? AND dataset_id = ? AND sync_run_id = ? AND deleted_at IS NULL", request.SourceRefID, request.OrganizationID, request.DatasetID, request.SyncRunID).
+			Updates(map[string]any{
+				"graph_run_id":      run.ID,
+				"graph_sync_status": "waiting",
+				"updated_at":        time.Now().UTC(),
+			}).Error
+	})
+	return run, err
+}
+
+// TryStartSyncBatch publishes a registered batch exactly once after every ref
+// sharing sync_batch_id is either synced or failed and every synced ref has an
+// ADD run item. Calls made before that point are harmless no-ops.
+func (s *LifecycleService) TryStartSyncBatch(ctx context.Context, organizationID, datasetID, syncBatchID uuid.UUID) error {
+	if organizationID == uuid.Nil || datasetID == uuid.Nil || syncBatchID == uuid.Nil {
+		return nil
+	}
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		_, err := s.promoteNextRunTx(ctx, tx, organizationID, datasetID)
+		return err
+	})
+}
+
+// promoteNextRunTx is the only path that moves a run from pending to
+// processing. The dataset row lock and the partial unique index together make
+// run execution strictly serial for each knowledge base.
+func (s *LifecycleService) promoteNextRunTx(
+	ctx context.Context,
+	tx *gorm.DB,
+	organizationID uuid.UUID,
+	datasetID uuid.UUID,
+) (*graphmodel.GraphFlowRun, error) {
+	var dataset datasetmodel.Dataset
+	if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).
+		First(&dataset, "id = ? AND organization_id = ?", datasetID, organizationID).Error; err != nil {
+		return nil, err
+	}
+
+	var active graphmodel.GraphFlowRun
+	err := tx.WithContext(ctx).
+		Where("organization_id = ? AND dataset_id = ? AND status = ?", organizationID, datasetID, graphmodel.GraphFlowRunStatusProcessing).
+		Order("graph_revision ASC, created_at ASC").First(&active).Error
+	if err == nil {
+		if dataset.GraphCurrentRunID == nil || *dataset.GraphCurrentRunID != active.ID.String() {
+			if err := tx.WithContext(ctx).Model(&datasetmodel.Dataset{}).
+				Where("id = ?", datasetID).
+				Updates(map[string]any{
+					"graph_current_run_id": active.ID,
+					"graph_status":         "building",
+					"graph_updated_at":     time.Now().UTC(),
+				}).Error; err != nil {
+				return nil, err
+			}
+		}
+		return nil, nil
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, err
+	}
+
+	var candidate graphmodel.GraphFlowRun
+	if err := tx.WithContext(ctx).
+		Where("organization_id = ? AND dataset_id = ? AND status = ?", organizationID, datasetID, graphmodel.GraphFlowRunStatusPending).
+		Order("graph_revision ASC, created_at ASC, id ASC").First(&candidate).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	// Incremental runs must preserve revision continuity, so an unpublished
+	// failed predecessor blocks them. A full rebuild is a new complete graph
+	// snapshot and can safely recover past historical failed revisions.
+	if candidate.Mode != graphmodel.GraphFlowRunModeRebuild {
+		availableRevision := int64(0)
+		if dataset.GraphAvailableRevision != nil {
+			availableRevision = *dataset.GraphAvailableRevision
+		}
+		var failedPredecessors int64
+		if err := tx.WithContext(ctx).Model(&graphmodel.GraphFlowRun{}).
+			Where("organization_id = ? AND dataset_id = ? AND status = ? AND graph_revision > ? AND graph_revision < ?", organizationID, datasetID, graphmodel.GraphFlowRunStatusFailed, availableRevision, candidate.GraphRevision).
+			Count(&failedPredecessors).Error; err != nil {
+			return nil, err
+		}
+		if failedPredecessors > 0 {
+			return nil, nil
+		}
+	}
+
+	ready, err := s.runDispatchReadyTx(ctx, tx, &candidate)
+	if err != nil || !ready {
+		return nil, err
+	}
+
+	now := time.Now().UTC()
+	result := tx.WithContext(ctx).Model(&graphmodel.GraphFlowRun{}).
+		Where("id = ? AND status = ?", candidate.ID, graphmodel.GraphFlowRunStatusPending).
+		Updates(map[string]any{
+			"status":           graphmodel.GraphFlowRunStatusProcessing,
+			"attempt_count":    gorm.Expr("attempt_count + 1"),
+			"started_at":       gorm.Expr("COALESCE(started_at, ?)", now),
+			"heartbeat_at":     now,
+			"lease_expires_at": now.Add(10 * time.Minute),
+			"updated_at":       now,
+		})
+	if result.Error != nil {
+		return nil, result.Error
+	}
+	if result.RowsAffected != 1 {
+		return nil, nil
+	}
+	candidate.Status = graphmodel.GraphFlowRunStatusProcessing
+	candidate.AttemptCount++
+	candidate.HeartbeatAt = &now
+	leaseExpiresAt := now.Add(10 * time.Minute)
+	candidate.LeaseExpiresAt = &leaseExpiresAt
+	if candidate.StartedAt == nil {
+		candidate.StartedAt = &now
+	}
+
+	if _, _, err := s.outboxRepo.WithTx(tx).CreateOrGet(ctx, newRunOutboxEvent(&candidate)); err != nil {
+		return nil, err
+	}
+	if err := updateGraphReferenceRunState(ctx, tx, &candidate, nil, graphmodel.GraphFlowRunStatusPending); err != nil {
+		return nil, err
+	}
+	if err := tx.WithContext(ctx).Model(&datasetmodel.Dataset{}).
+		Where("id = ? AND organization_id = ?", datasetID, organizationID).
+		Updates(map[string]any{
+			"graph_current_run_id": candidate.ID,
+			"graph_status":         "queued",
+			"graph_progress":       candidate.Progress,
+			"graph_error_code":     nil,
+			"graph_error_message":  nil,
+			"graph_updated_at":     now,
+		}).Error; err != nil {
+		return nil, err
+	}
+	return &candidate, nil
+}
+
+func (s *LifecycleService) runDispatchReadyTx(ctx context.Context, tx *gorm.DB, run *graphmodel.GraphFlowRun) (bool, error) {
+	if run == nil || run.SyncBatchID == nil {
+		return true, nil
+	}
+	var totalRefs int64
+	refScope := tx.WithContext(ctx).Model(&datalibrarymodel.KnowledgeBaseAssetRef{}).
+		Where("organization_id = ? AND dataset_id = ? AND sync_batch_id = ? AND deleted_at IS NULL", run.OrganizationID, run.DatasetID, *run.SyncBatchID)
+	if err := refScope.Count(&totalRefs).Error; err != nil || totalRefs == 0 {
+		return false, err
+	}
+	var inFlight int64
+	if err := refScope.Where("sync_status IN ?", []string{
+		datalibrarymodel.KnowledgeBaseAssetRefSyncStatusPending,
+		datalibrarymodel.KnowledgeBaseAssetRefSyncStatusSyncing,
+	}).Count(&inFlight).Error; err != nil || inFlight > 0 {
+		return false, err
+	}
+	var syncedRefs int64
+	if err := refScope.Where("sync_status = ?", datalibrarymodel.KnowledgeBaseAssetRefSyncStatusSynced).Count(&syncedRefs).Error; err != nil {
+		return false, err
+	}
+	var addItems int64
+	if err := tx.WithContext(ctx).Model(&graphmodel.GraphFlowRunItem{}).
+		Where("run_id = ? AND operation = ?", run.ID, graphmodel.GraphFlowRunItemOperationAdd).
+		Count(&addItems).Error; err != nil {
+		return false, err
+	}
+	return addItems > 0 && addItems >= syncedRefs, nil
+}
+
 func (s *LifecycleService) Retry(ctx context.Context, runID uuid.UUID) error {
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		runRepo := s.runRepo.WithTx(tx)
@@ -243,8 +545,7 @@ func (s *LifecycleService) Retry(ctx context.Context, runID uuid.UUID) error {
 		if err := updateGraphReferenceRunState(ctx, tx, run, nil, graphmodel.GraphFlowRunStatusPending); err != nil {
 			return err
 		}
-		event := newRunOutboxEvent(run)
-		if _, _, err = s.outboxRepo.WithTx(tx).CreateOrGet(ctx, event); err != nil {
+		if _, err = s.promoteNextRunTx(ctx, tx, run.OrganizationID, run.DatasetID); err != nil {
 			return err
 		}
 		return s.aggregateDatasetGraphState(ctx, tx, run.OrganizationID, run.DatasetID)
@@ -278,6 +579,7 @@ func (s *LifecycleService) GetStatus(
 		CanRetry:                         dataset.GraphStatus == "failed" || dataset.GraphStatus == "partial",
 		CanRebuild:                       dataset.EnableGraphFlow,
 		Documents:                        []GraphDocumentStatus{},
+		Stages:                           defaultGraphStageStatuses(dataset.GraphStatus == "ready"),
 		GraphEmbedding: GraphEmbeddingStatus{
 			Mode:          "inherit",
 			ModelProvider: pointerValue(dataset.EmbeddingModelProvider),
@@ -301,8 +603,16 @@ func (s *LifecycleService) GetStatus(
 				}
 				status.GraphEmbedding.Dimension = run.EmbeddingDimension
 				status.GraphEmbedding.Verified = run.EmbeddingDimension > 0
+				var tasks []graphmodel.GraphFlowTask
+				if err := s.db.WithContext(ctx).Where("run_id = ?", run.ID).Find(&tasks).Error; err != nil {
+					return nil, err
+				}
+				status.Stages, status.CurrentStage = summarizeGraphStageStatuses(tasks)
 			}
 		}
+	}
+	if status.CurrentStage == "" && (dataset.GraphStatus == "queued" || dataset.GraphStatus == "building") {
+		status.CurrentStage = "extraction"
 	}
 
 	var refs []datalibrarymodel.KnowledgeBaseAssetRef
@@ -417,6 +727,9 @@ func (s *LifecycleService) FailRun(ctx context.Context, runID uuid.UUID, code, m
 		if err := updateGraphReferenceRunState(ctx, tx, &run, nil, graphmodel.GraphFlowRunStatusFailed); err != nil {
 			return err
 		}
+		if err := s.clearCurrentRunTx(ctx, tx, &run); err != nil {
+			return err
+		}
 		return s.aggregateDatasetGraphState(ctx, tx, run.OrganizationID, run.DatasetID)
 	})
 }
@@ -432,18 +745,38 @@ func (s *LifecycleService) ReconcileTask(ctx context.Context, taskID uuid.UUID) 
 
 // ReconcileActiveRuns repairs progress and terminal state after restarts or lost callbacks.
 func (s *LifecycleService) ReconcileActiveRuns(ctx context.Context) error {
-	var runIDs []uuid.UUID
-	if err := s.db.WithContext(ctx).Model(&graphmodel.GraphFlowRun{}).
-		Where("status IN ?", []string{
-			graphmodel.GraphFlowRunStatusPending,
-			graphmodel.GraphFlowRunStatusProcessing,
-		}).
-		Order("created_at ASC").
-		Pluck("id", &runIDs).Error; err != nil {
+	var runs []graphmodel.GraphFlowRun
+	if err := s.db.WithContext(ctx).
+		Where("status = ?", graphmodel.GraphFlowRunStatusProcessing).
+		Order("graph_revision ASC, created_at ASC").
+		Find(&runs).Error; err != nil {
 		return err
 	}
-	for _, runID := range runIDs {
-		if err := s.ReconcileRun(ctx, runID); err != nil {
+	for _, run := range runs {
+		if err := s.ReconcileRun(ctx, run.ID); err != nil {
+			return err
+		}
+	}
+
+	// A restart can leave a dataset with queued work but no active run. Repair
+	// those queues through the same promotion path used by normal completion;
+	// never reconcile a pending run directly because that would bypass ordering.
+	type queuedDataset struct {
+		OrganizationID uuid.UUID `gorm:"column:organization_id"`
+		DatasetID      uuid.UUID `gorm:"column:dataset_id"`
+	}
+	var datasets []queuedDataset
+	if err := s.db.WithContext(ctx).Model(&graphmodel.GraphFlowRun{}).
+		Distinct("organization_id", "dataset_id").
+		Where("status = ?", graphmodel.GraphFlowRunStatusPending).
+		Scan(&datasets).Error; err != nil {
+		return err
+	}
+	for _, dataset := range datasets {
+		if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			_, err := s.promoteNextRunTx(ctx, tx, dataset.OrganizationID, dataset.DatasetID)
+			return err
+		}); err != nil {
 			return err
 		}
 	}
@@ -461,6 +794,11 @@ func (s *LifecycleService) ReconcileRun(ctx context.Context, runID uuid.UUID) er
 		if graphRunIsTerminal(run.Status) {
 			return nil
 		}
+		// Pending runs are queue entries. Only promoteNextRunTx may move one to
+		// processing, so task reconciliation must never start a queued version.
+		if run.Status == graphmodel.GraphFlowRunStatusPending {
+			return nil
+		}
 		if run.Mode != graphmodel.GraphFlowRunModeCleanup {
 			current, err := graphRunMatchesCurrentRef(ctx, tx, &run)
 			if err != nil {
@@ -470,7 +808,14 @@ func (s *LifecycleService) ReconcileRun(ctx context.Context, runID uuid.UUID) er
 				if err := repository.NewGraphFlowRunRepository(tx).Supersede(ctx, runID); err != nil {
 					return err
 				}
-				return s.aggregateDatasetGraphState(ctx, tx, run.OrganizationID, run.DatasetID)
+				if err := s.clearCurrentRunTx(ctx, tx, &run); err != nil {
+					return err
+				}
+				if err := s.aggregateDatasetGraphState(ctx, tx, run.OrganizationID, run.DatasetID); err != nil {
+					return err
+				}
+				_, err = s.promoteNextRunTx(ctx, tx, run.OrganizationID, run.DatasetID)
+				return err
 			}
 		}
 
@@ -478,11 +823,20 @@ func (s *LifecycleService) ReconcileRun(ctx context.Context, runID uuid.UUID) er
 		if err := tx.WithContext(ctx).Where("run_id = ?", runID).Order("created_at ASC").Find(&tasks).Error; err != nil {
 			return err
 		}
-		tasks, err := attachLegacyGraphRunTasks(ctx, tx, &run, tasks)
-		if err != nil {
-			return err
+		var summary graphRunTaskSummary
+		if graphRunUsesBatchPipeline(&run) {
+			var items []graphmodel.GraphFlowRunItem
+			if err := tx.WithContext(ctx).Where("run_id = ?", run.ID).Order("created_at ASC").Find(&items).Error; err != nil {
+				return err
+			}
+			summary = summarizeSyncBatchRunTasks(items, tasks)
+		} else {
+			attachedTasks, attachErr := attachLegacyGraphRunTasks(ctx, tx, &run, tasks)
+			if attachErr != nil {
+				return attachErr
+			}
+			summary = summarizeGraphRunTasks(run.Mode, attachedTasks)
 		}
-		summary := summarizeGraphRunTasks(run.Mode, tasks)
 		progress := summary.Progress
 		if progress < run.Progress {
 			progress = run.Progress
@@ -523,8 +877,57 @@ func (s *LifecycleService) ReconcileRun(ctx context.Context, runID uuid.UUID) er
 		if err := updateGraphReferenceRunState(ctx, tx, &run, summary.DocumentIDs, refStatus); err != nil {
 			return err
 		}
-		return s.aggregateDatasetGraphState(ctx, tx, run.OrganizationID, run.DatasetID)
+		if summary.Complete || summary.Failed {
+			if err := s.clearCurrentRunTx(ctx, tx, &run); err != nil {
+				return err
+			}
+		}
+		if summary.Complete {
+			if err := s.publishRunRevisionTx(ctx, tx, &run); err != nil {
+				return err
+			}
+		}
+		if err := s.aggregateDatasetGraphState(ctx, tx, run.OrganizationID, run.DatasetID); err != nil {
+			return err
+		}
+		if summary.Complete {
+			_, err := s.promoteNextRunTx(ctx, tx, run.OrganizationID, run.DatasetID)
+			return err
+		}
+		return nil
 	})
+}
+
+func graphRunUsesBatchPipeline(run *graphmodel.GraphFlowRun) bool {
+	return run != nil && (run.SyncBatchID != nil ||
+		(run.Mode == graphmodel.GraphFlowRunModeRebuild && run.DocumentID == nil))
+}
+
+func (s *LifecycleService) clearCurrentRunTx(ctx context.Context, tx *gorm.DB, run *graphmodel.GraphFlowRun) error {
+	if run == nil {
+		return nil
+	}
+	return tx.WithContext(ctx).Model(&datasetmodel.Dataset{}).
+		Where("id = ? AND organization_id = ? AND graph_current_run_id = ?", run.DatasetID, run.OrganizationID, run.ID).
+		Updates(map[string]any{
+			"graph_current_run_id": nil,
+			"graph_updated_at":     time.Now().UTC(),
+		}).Error
+}
+
+func (s *LifecycleService) publishRunRevisionTx(ctx context.Context, tx *gorm.DB, run *graphmodel.GraphFlowRun) error {
+	if run == nil {
+		return nil
+	}
+	now := time.Now().UTC()
+	return tx.WithContext(ctx).Model(&datasetmodel.Dataset{}).
+		Where("id = ? AND organization_id = ?", run.DatasetID, run.OrganizationID).
+		Updates(map[string]any{
+			"graph_available_revision": run.GraphRevision,
+			"graph_projected_revision": run.GraphRevision,
+			"graph_ready_at":           now,
+			"graph_updated_at":         now,
+		}).Error
 }
 
 func attachLegacyGraphRunTasks(
@@ -600,7 +1003,14 @@ func (s *LifecycleService) publishRun(ctx context.Context, runID uuid.UUID) erro
 				return err
 			}
 			if !current {
-				return repository.NewGraphFlowRunRepository(tx).Supersede(ctx, runID)
+				if err := repository.NewGraphFlowRunRepository(tx).Supersede(ctx, runID); err != nil {
+					return err
+				}
+				if err := s.clearCurrentRunTx(ctx, tx, &run); err != nil {
+					return err
+				}
+				_, err := s.promoteNextRunTx(ctx, tx, run.OrganizationID, run.DatasetID)
+				return err
 			}
 		}
 		now := time.Now().UTC()
@@ -619,7 +1029,17 @@ func (s *LifecycleService) publishRun(ctx context.Context, runID uuid.UUID) erro
 		if err := updateGraphReferenceRunState(ctx, tx, &run, nil, graphmodel.GraphFlowRunStatusReady); err != nil {
 			return err
 		}
-		return s.aggregateDatasetGraphState(ctx, tx, run.OrganizationID, run.DatasetID)
+		if err := s.clearCurrentRunTx(ctx, tx, &run); err != nil {
+			return err
+		}
+		if err := s.publishRunRevisionTx(ctx, tx, &run); err != nil {
+			return err
+		}
+		if err := s.aggregateDatasetGraphState(ctx, tx, run.OrganizationID, run.DatasetID); err != nil {
+			return err
+		}
+		_, err := s.promoteNextRunTx(ctx, tx, run.OrganizationID, run.DatasetID)
+		return err
 	})
 }
 
@@ -628,6 +1048,71 @@ func graphRunIsTerminal(status string) bool {
 		status == graphmodel.GraphFlowRunStatusFailed ||
 		status == graphmodel.GraphFlowRunStatusCancelled ||
 		status == graphmodel.GraphFlowRunStatusSuperseded
+}
+
+var graphStageKeys = []string{"extraction", "alignment", "graph_sync", "vector_sync"}
+
+func defaultGraphStageStatuses(completed bool) []GraphStageStatus {
+	stages := make([]GraphStageStatus, 0, len(graphStageKeys))
+	for _, key := range graphStageKeys {
+		stage := GraphStageStatus{Key: key, Status: "pending"}
+		if completed {
+			stage.Status = "completed"
+			stage.Progress = 100
+		}
+		stages = append(stages, stage)
+	}
+	return stages
+}
+
+func summarizeGraphStageStatuses(tasks []graphmodel.GraphFlowTask) ([]GraphStageStatus, string) {
+	byType := make(map[string][]graphmodel.GraphFlowTask, len(graphStageKeys))
+	for _, task := range tasks {
+		byType[task.TaskType] = append(byType[task.TaskType], task)
+	}
+
+	stages := make([]GraphStageStatus, 0, len(graphStageKeys))
+	currentStage := ""
+	for _, key := range graphStageKeys {
+		stage := GraphStageStatus{Key: key, Status: "pending"}
+		stageTasks := byType[key]
+		if len(stageTasks) > 0 {
+			allCompleted := true
+			failed := false
+			started := false
+			progressTotal := 0
+			for _, task := range stageTasks {
+				progress := clampGraphTaskProgress(task.Progress)
+				if task.Status == "completed" {
+					progress = 100
+				} else {
+					allCompleted = false
+				}
+				if task.Status == "failed" {
+					failed = true
+				}
+				if task.Status == "processing" || progress > 0 {
+					started = true
+				}
+				progressTotal += progress
+			}
+			stage.Progress = progressTotal / len(stageTasks)
+			switch {
+			case failed:
+				stage.Status = "failed"
+			case allCompleted:
+				stage.Status = "completed"
+				stage.Progress = 100
+			case started:
+				stage.Status = "processing"
+			}
+		}
+		if currentStage == "" && stage.Status != "completed" {
+			currentStage = key
+		}
+		stages = append(stages, stage)
+	}
+	return stages, currentStage
 }
 
 func summarizeGraphRunTasks(mode string, tasks []graphmodel.GraphFlowTask) graphRunTaskSummary {
@@ -658,6 +1143,85 @@ func summarizeGraphRunTasks(mode string, tasks []graphmodel.GraphFlowTask) graph
 	summary.Progress = totalProgress / len(byDocument)
 	summary.Complete = allComplete && !summary.Failed
 	return summary
+}
+
+func summarizeSyncBatchRunTasks(items []graphmodel.GraphFlowRunItem, tasks []graphmodel.GraphFlowTask) graphRunTaskSummary {
+	summary := graphRunTaskSummary{}
+	if len(items) == 0 {
+		return summary
+	}
+	byItemAndType := make(map[string]graphmodel.GraphFlowTask, len(tasks))
+	globalByType := make(map[string]graphmodel.GraphFlowTask, 3)
+	for _, task := range tasks {
+		if task.Status == "failed" && !summary.Failed {
+			summary.Failed = true
+			summary.ErrorMessage = task.ErrorMessage
+			if summary.ErrorMessage == "" {
+				summary.ErrorMessage = "Graph task failed."
+			}
+		}
+		if task.RunItemID != nil {
+			byItemAndType[task.RunItemID.String()+":"+task.TaskType] = task
+		}
+		if task.TaskType == "alignment" || task.TaskType == "graph_sync" || task.TaskType == "vector_sync" {
+			globalByType[task.TaskType] = task
+		}
+	}
+
+	itemProgress := 0
+	itemsComplete := true
+	for _, item := range items {
+		taskType := "extraction"
+		if item.Operation == graphmodel.GraphFlowRunItemOperationCleanup {
+			taskType = "cleanup"
+		} else {
+			summary.DocumentIDs = append(summary.DocumentIDs, item.DocumentID)
+		}
+		task, ok := byItemAndType[item.ID.String()+":"+taskType]
+		if !ok {
+			itemsComplete = false
+			continue
+		}
+		progress := task.Progress
+		if task.Status == "completed" {
+			progress = 100
+		} else {
+			itemsComplete = false
+		}
+		itemProgress += clampGraphTaskProgress(progress)
+	}
+	summary.Progress = (itemProgress / len(items)) * 60 / 100
+
+	globalComplete := true
+	for _, stage := range []struct {
+		name   string
+		weight int
+	}{{"alignment", 20}, {"graph_sync", 10}, {"vector_sync", 10}} {
+		task, ok := globalByType[stage.name]
+		if !ok {
+			globalComplete = false
+			continue
+		}
+		progress := task.Progress
+		if task.Status == "completed" {
+			progress = 100
+		} else {
+			globalComplete = false
+		}
+		summary.Progress += stage.weight * clampGraphTaskProgress(progress) / 100
+	}
+	summary.Complete = itemsComplete && globalComplete && !summary.Failed
+	return summary
+}
+
+func clampGraphTaskProgress(progress int) int {
+	if progress < 0 {
+		return 0
+	}
+	if progress > 100 {
+		return 100
+	}
+	return progress
 }
 
 func summarizeGraphDocumentTasks(mode string, tasks map[string]graphmodel.GraphFlowTask) (int, bool, bool, string) {
@@ -828,14 +1392,13 @@ func (s *LifecycleService) aggregateDatasetGraphState(
 		graphmodel.GraphFlowRunStatusPending,
 		graphmodel.GraphFlowRunStatusProcessing,
 	}
+	availableRevision := int64(0)
+	if dataset.GraphAvailableRevision != nil {
+		availableRevision = *dataset.GraphAvailableRevision
+	}
 	cleanupQuery := tx.WithContext(ctx).
 		Where("organization_id = ? AND dataset_id = ? AND mode = ?", organizationID, datasetID, graphmodel.GraphFlowRunModeCleanup).
-		Where("status IN ?", cleanupStatuses)
-	if dataset.GraphCurrentRunID != nil {
-		cleanupQuery = tx.WithContext(ctx).
-			Where("organization_id = ? AND dataset_id = ? AND mode = ?", organizationID, datasetID, graphmodel.GraphFlowRunModeCleanup).
-			Where("(status IN ?) OR (id = ? AND status = ?)", cleanupStatuses, *dataset.GraphCurrentRunID, graphmodel.GraphFlowRunStatusFailed)
-	}
+		Where("(status IN ?) OR (status = ? AND graph_revision > ?)", cleanupStatuses, graphmodel.GraphFlowRunStatusFailed, availableRevision)
 	var cleanupRuns []graphmodel.GraphFlowRun
 	if err := cleanupQuery.Find(&cleanupRuns).Error; err != nil {
 		return err
@@ -871,8 +1434,6 @@ func (s *LifecycleService) aggregateDatasetGraphState(
 		status = "waiting_content"
 	case processing > 0:
 		status = "building"
-	case queued > 0:
-		status = "queued"
 	case cleanupFailed:
 		status = "failed"
 		updates["graph_error_code"] = graphTaskFailedErrorCode
@@ -881,18 +1442,15 @@ func (s *LifecycleService) aggregateDatasetGraphState(
 		status = "partial"
 		updates["graph_error_code"] = graphTaskFailedErrorCode
 		updates["graph_error_message"] = "One or more graph document runs failed."
-		updates["graph_available_revision"] = dataset.GraphRevision
-		updates["graph_projected_revision"] = dataset.GraphRevision
 	case failed > 0:
 		status = "failed"
 		updates["graph_error_code"] = graphTaskFailedErrorCode
 		updates["graph_error_message"] = "All graph document runs failed."
+	case queued > 0:
+		status = "queued"
 	case ready == len(refs):
 		status = "ready"
 		updates["graph_progress"] = 100
-		updates["graph_available_revision"] = dataset.GraphRevision
-		updates["graph_projected_revision"] = dataset.GraphRevision
-		updates["graph_ready_at"] = time.Now().UTC()
 	}
 	updates["graph_status"] = status
 	return tx.WithContext(ctx).Model(&datasetmodel.Dataset{}).
@@ -1001,6 +1559,7 @@ func (s *LifecycleService) enqueueTx(
 		DocumentID:           request.DocumentID,
 		SourceRefID:          request.SourceRefID,
 		SyncRunID:            request.SyncRunID,
+		SyncBatchID:          request.SyncBatchID,
 		AssetGenerationNo:    request.AssetGenerationNo,
 		GraphRevision:        revision,
 		EmbeddingProvider:    request.EmbeddingProvider,
@@ -1013,38 +1572,36 @@ func (s *LifecycleService) enqueueTx(
 		IdempotencyKey:       request.IdempotencyKey,
 	}
 	persisted, created, err := s.runRepo.WithTx(tx).CreateOrGet(ctx, run)
-	if err != nil || !created {
+	if err != nil {
 		return persisted, created, err
 	}
-
-	event := newRunOutboxEvent(persisted)
-	if _, _, err := s.outboxRepo.WithTx(tx).CreateOrGet(ctx, event); err != nil {
+	if created {
+		now := time.Now().UTC()
+		updates := map[string]any{
+			"graph_revision":   revision,
+			"graph_updated_at": now,
+		}
+		if dataset.GraphCurrentRunID == nil && dataset.GraphStatus != "failed" && dataset.GraphStatus != "partial" {
+			updates["graph_status"] = "queued"
+			updates["graph_progress"] = 0
+		}
+		if dataset.GraphStatus != "failed" && dataset.GraphStatus != "partial" {
+			updates["graph_error_code"] = nil
+			updates["graph_error_message"] = nil
+		}
+		if err := tx.WithContext(ctx).Model(&datasetmodel.Dataset{}).
+			Where("id = ?", request.DatasetID).
+			Updates(updates).Error; err != nil {
+			return nil, false, err
+		}
+	}
+	if _, err := s.promoteNextRunTx(ctx, tx, request.OrganizationID, request.DatasetID); err != nil {
 		return nil, false, err
 	}
-	if err := updateGraphReferenceRunState(
-		ctx,
-		tx,
-		persisted,
-		nil,
-		graphmodel.GraphFlowRunStatusPending,
-	); err != nil {
+	if err := tx.WithContext(ctx).First(persisted, "id = ?", persisted.ID).Error; err != nil {
 		return nil, false, err
 	}
-	now := time.Now().UTC()
-	if err := tx.WithContext(ctx).Model(&datasetmodel.Dataset{}).
-		Where("id = ?", request.DatasetID).
-		Updates(map[string]any{
-			"graph_status":         "queued",
-			"graph_revision":       revision,
-			"graph_current_run_id": persisted.ID,
-			"graph_progress":       0,
-			"graph_error_code":     nil,
-			"graph_error_message":  nil,
-			"graph_updated_at":     now,
-		}).Error; err != nil {
-		return nil, false, err
-	}
-	return persisted, true, nil
+	return persisted, created, nil
 }
 
 func newRunOutboxEvent(run *graphmodel.GraphFlowRun) *graphmodel.GraphOutboxEvent {
@@ -1059,6 +1616,9 @@ func newRunOutboxEvent(run *graphmodel.GraphFlowRun) *graphmodel.GraphOutboxEven
 	}
 	if run.SourceRefID != nil {
 		payload["source_ref_id"] = run.SourceRefID.String()
+	}
+	if run.SyncBatchID != nil {
+		payload["sync_batch_id"] = run.SyncBatchID.String()
 	}
 	return &graphmodel.GraphOutboxEvent{
 		OrganizationID: run.OrganizationID,

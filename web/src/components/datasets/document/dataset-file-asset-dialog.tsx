@@ -153,16 +153,24 @@ export function DatasetFileAssetDialog({
     autoAddPendingAssetIds.size > 0;
   const createRefsMutation = useCreateDatasetFileRefs(datasetId);
   const generateEmbeddingsMutation = useGenerateDatasetFileCandidateEmbeddings(datasetId);
-  const { candidates, total, keyword, setKeyword, isLoading, isFetching, refetch } =
-    useDatasetFileCandidates(
-      datasetId,
-      { filter: 'all', limit: 100 },
-      {
-        enabled: open,
-        debounceDelay: 300,
-        refetchInterval: hasQueuedEmbeddingGeneration ? 3000 : false,
-      }
-    );
+  const {
+    candidates,
+    total,
+    keyword,
+    setKeyword,
+    isLoading,
+    isFetching,
+    isCandidateListComplete,
+    refetch,
+  } = useDatasetFileCandidates(
+    datasetId,
+    { filter: 'all', limit: 100 },
+    {
+      enabled: open,
+      debounceDelay: 300,
+      refetchInterval: hasQueuedEmbeddingGeneration ? 3000 : false,
+    }
+  );
   const embeddingTaskRefs = useMemo(
     () =>
       Array.from(queuedEmbeddingTasks.entries()).map(([assetId, requestId]) => ({
@@ -704,7 +712,7 @@ export function DatasetFileAssetDialog({
                     <TableHead className="px-3">
                       <Checkbox
                         checked={allVisibleSelectableSelected}
-                        disabled={visibleSelectableIds.length === 0}
+                        disabled={!isCandidateListComplete || visibleSelectableIds.length === 0}
                         onCheckedChange={checked => toggleAllVisible(checked === true)}
                         aria-label={t('documents.fileAssets.selectAll')}
                       />
@@ -931,7 +939,9 @@ export function DatasetFileAssetDialog({
           <Button
             onClick={handleAddSelected}
             loading={isSelectionProcessing || createRefsMutation.isPending}
-            disabled={selectedAssetIds.length === 0 || isSelectionProcessing}
+            disabled={
+              selectedAssetIds.length === 0 || isSelectionProcessing || !isCandidateListComplete
+            }
           >
             {t('documents.fileAssets.addSelected', { count: selectedAssetIds.length })}
           </Button>

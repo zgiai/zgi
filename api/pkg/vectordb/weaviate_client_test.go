@@ -3,14 +3,78 @@ package vectordb
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/zgiai/zgi/api/config"
 )
+
+func TestUpdateObjectPropertiesBatchUsesBoundedConcurrencyAndReportsProgress(t *testing.T) {
+	var active atomic.Int64
+	var maxActive atomic.Int64
+	var requests atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPatch {
+			t.Errorf("method = %q, want PATCH", r.Method)
+		}
+		current := active.Add(1)
+		defer active.Add(-1)
+		requests.Add(1)
+		for {
+			maximum := maxActive.Load()
+			if current <= maximum || maxActive.CompareAndSwap(maximum, current) {
+				break
+			}
+		}
+		time.Sleep(5 * time.Millisecond)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	client := NewWeaviateClient(&config.VectorStoreConfig{WeaviateEndpoint: server.URL})
+	updates := make([]ObjectPropertyUpdate, 205)
+	for i := range updates {
+		updates[i] = ObjectPropertyUpdate{
+			ID:         fmt.Sprintf("entity-%d", i),
+			Properties: map[string]interface{}{"active_source_count": 1},
+		}
+	}
+	lastProgress := 0
+	var progressRegressed atomic.Bool
+	var wrongProgressTotal atomic.Bool
+	if err := client.UpdateObjectPropertiesBatch(context.Background(), "Dataset_1", updates, 4, func(completed, total int) {
+		if completed < lastProgress {
+			progressRegressed.Store(true)
+		}
+		if total != len(updates) {
+			wrongProgressTotal.Store(true)
+		}
+		lastProgress = completed
+	}); err != nil {
+		t.Fatalf("UpdateObjectPropertiesBatch returned error: %v", err)
+	}
+	if requests.Load() != int64(len(updates)) {
+		t.Fatalf("requests=%d, want %d", requests.Load(), len(updates))
+	}
+	if maxActive.Load() > 4 || maxActive.Load() < 2 {
+		t.Fatalf("max concurrency=%d, want between 2 and 4", maxActive.Load())
+	}
+	if lastProgress != len(updates) {
+		t.Fatalf("last progress=%d, want %d", lastProgress, len(updates))
+	}
+	if progressRegressed.Load() {
+		t.Fatal("batch property update progress regressed")
+	}
+	if wrongProgressTotal.Load() {
+		t.Fatal("batch property update reported an incorrect total")
+	}
+}
 
 func TestWeaviateDeleteVector(t *testing.T) {
 	var gotMethod, gotPath, gotAuth string

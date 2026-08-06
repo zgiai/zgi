@@ -375,6 +375,47 @@ func TestKnowledgeBaseFileRefServiceCreatesPendingRefs(t *testing.T) {
 	}
 }
 
+func TestKnowledgeBaseFileRefServiceSharesBatchButNotRunAcrossBulkCreate(t *testing.T) {
+	firstAssetID := uuid.New()
+	secondAssetID := uuid.New()
+	provider := "openai"
+	embeddingModel := "text-embedding-3-small"
+	deps := &fakeKnowledgeBaseFileRefDeps{
+		dataset: &datasetModel.Dataset{
+			ID:                     "dataset-1",
+			OrganizationID:         "org-1",
+			EmbeddingModelProvider: &provider,
+			EmbeddingModel:         &embeddingModel,
+		},
+		assets: []*datalibModel.DocumentAsset{
+			{ID: firstAssetID, OrganizationID: "org-1", SourceFileID: "file-1", ProductStatus: datalibModel.DocumentAssetProductStatusReady, VectorStatus: datalibModel.DocumentAssetVectorStatusReady, GenerationNo: 1, EmbeddingProvider: &provider, EmbeddingModel: &embeddingModel},
+			{ID: secondAssetID, OrganizationID: "org-1", SourceFileID: "file-2", ProductStatus: datalibModel.DocumentAssetProductStatusReady, VectorStatus: datalibModel.DocumentAssetVectorStatusReady, GenerationNo: 1, EmbeddingProvider: &provider, EmbeddingModel: &embeddingModel},
+		},
+		chunkCount:     1,
+		embeddingCount: 1,
+	}
+	svc := newKnowledgeBaseFileRefTestService(deps)
+	result, err := svc.CreateRefs(context.Background(), KnowledgeBaseFileRefCreateRequest{
+		OrganizationID: "org-1",
+		DatasetID:      "dataset-1",
+		AssetIDs:       []uuid.UUID{firstAssetID, secondAssetID},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Items) != 2 || len(deps.createdRefs) != 2 {
+		t.Fatalf("items=%d created=%d", len(result.Items), len(deps.createdRefs))
+	}
+	first := deps.createdRefs[0]
+	second := deps.createdRefs[1]
+	if first.SyncBatchID == nil || second.SyncBatchID == nil || *first.SyncBatchID == uuid.Nil || *first.SyncBatchID != *second.SyncBatchID {
+		t.Fatalf("batch IDs differ: first=%v second=%v", first.SyncBatchID, second.SyncBatchID)
+	}
+	if first.SyncRunID == nil || second.SyncRunID == nil || *first.SyncRunID == *second.SyncRunID {
+		t.Fatalf("sync run IDs must remain independent: first=%v second=%v", first.SyncRunID, second.SyncRunID)
+	}
+}
+
 func TestKnowledgeBaseFileRefServiceRejectsCreateWhenAssetWorkspaceDiffersFromDataset(t *testing.T) {
 	assetID := uuid.New()
 	workspaceID := "workspace-1"
@@ -660,6 +701,7 @@ type fakeKnowledgeBaseFileRefDeps struct {
 	targetEmbeddingCount *int64
 	chunks               []*datalibModel.DocumentChunk
 	created              *datalibModel.KnowledgeBaseAssetRef
+	createdRefs          []*datalibModel.KnowledgeBaseAssetRef
 	lastRefFilter        datalibRepo.KnowledgeBaseAssetRefListFilter
 	pendingSyncRunID     uuid.UUID
 	failedSyncRunID      uuid.UUID
@@ -729,6 +771,7 @@ func (f *fakeKnowledgeBaseFileRefDeps) CountReadyByAssetGenerationModel(ctx cont
 
 func (f *fakeKnowledgeBaseFileRefDeps) Create(ctx context.Context, item *datalibModel.KnowledgeBaseAssetRef) error {
 	f.created = item
+	f.createdRefs = append(f.createdRefs, item)
 	return nil
 }
 
@@ -773,6 +816,7 @@ type fakeKnowledgeBaseFileRefStore struct {
 
 func (f fakeKnowledgeBaseFileRefStore) Create(ctx context.Context, item *datalibModel.KnowledgeBaseAssetRef) error {
 	f.deps.created = item
+	f.deps.createdRefs = append(f.deps.createdRefs, item)
 	return nil
 }
 

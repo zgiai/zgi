@@ -36,6 +36,25 @@ const messages = {
     overrideNotAllowed: 'A separate graph embedding model is not supported.',
     graph_model_change_confirmation_required: 'Confirm the full graph rebuild to continue.',
     graph_disable_not_supported: 'An existing knowledge graph cannot be disabled.',
+    buildProgress: {
+      title: 'Building knowledge graph',
+      overall: 'Overall progress',
+      currentStage: 'Current stage: {stage}',
+      documentSummary: '{total} documents · {processing} currently processing',
+      runRevision: 'Graph revision {revision}',
+      stages: {
+        extraction: 'Entity extraction',
+        alignment: 'Entity alignment',
+        graph_sync: 'Graph projection',
+        vector_sync: 'Vector indexing',
+      },
+      stageStatuses: {
+        pending: 'Waiting',
+        processing: 'In progress',
+        completed: 'Completed',
+        failed: 'Failed',
+      },
+    },
     statuses: {
       disabled: 'Disabled',
       unavailable: 'Unavailable',

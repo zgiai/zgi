@@ -76,5 +76,5 @@ func NewGraphFlowCleanupTask(taskID, documentID, kbID string, taskManager *queue
 		taskType = taskManager.GetTaskTypeWithPrefix(taskType)
 	}
 
-	return asynq.NewTask(taskType, payloadBytes, asynq.MaxRetry(3)), nil
+	return asynq.NewTask(taskType, payloadBytes, asynq.TaskID(taskID), asynq.MaxRetry(3)), nil
 }

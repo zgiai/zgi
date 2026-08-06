@@ -487,9 +487,10 @@ func (s *knowledgeBaseFileRefService) CreateRefs(ctx context.Context, req Knowle
 		return nil, ErrDatasetNotFound
 	}
 	result := &KnowledgeBaseFileRefCreateResult{Items: make([]*KnowledgeBaseFileRefCreateItem, 0, len(req.AssetIDs))}
+	syncBatchID := uuid.New()
 	for _, assetID := range req.AssetIDs {
 		item := &KnowledgeBaseFileRefCreateItem{AssetID: assetID}
-		ref, syncRunID, generationNo, reason, err := s.createOneRef(ctx, dataset, req, assetID)
+		ref, syncRunID, generationNo, reason, err := s.createOneRef(ctx, dataset, req, assetID, syncBatchID)
 		if err != nil {
 			return nil, err
 		}
@@ -754,7 +755,7 @@ func (s *knowledgeBaseFileRefService) getScopedRef(ctx context.Context, req Know
 	return ref, nil
 }
 
-func (s *knowledgeBaseFileRefService) createOneRef(ctx context.Context, dataset *datasetModel.Dataset, req KnowledgeBaseFileRefCreateRequest, assetID uuid.UUID) (*datalibModel.KnowledgeBaseAssetRef, uuid.UUID, int64, string, error) {
+func (s *knowledgeBaseFileRefService) createOneRef(ctx context.Context, dataset *datasetModel.Dataset, req KnowledgeBaseFileRefCreateRequest, assetID uuid.UUID, syncBatchID uuid.UUID) (*datalibModel.KnowledgeBaseAssetRef, uuid.UUID, int64, string, error) {
 	if assetID == uuid.Nil {
 		return nil, uuid.Nil, 0, FileCandidateReasonNotReady, nil
 	}
@@ -783,6 +784,7 @@ func (s *knowledgeBaseFileRefService) createOneRef(ctx context.Context, dataset 
 		AssetID:        asset.ID,
 		SyncStatus:     datalibModel.KnowledgeBaseAssetRefSyncStatusPending,
 		SyncRunID:      &syncRunID,
+		SyncBatchID:    &syncBatchID,
 		CreatedBy:      req.CreatedBy,
 		MetadataJSON: map[string]any{
 			"source":        "file_asset_sync",

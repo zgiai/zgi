@@ -50,6 +50,7 @@ type KnowledgeBaseAssetRefView struct {
 	SyncStatus         string         `json:"sync_status"`
 	SyncedGenerationNo *int64         `json:"synced_generation_no,omitempty"`
 	SyncRunID          *uuid.UUID     `json:"sync_run_id,omitempty"`
+	SyncBatchID        *uuid.UUID     `json:"sync_batch_id,omitempty"`
 	RetrievalEnabled   bool           `json:"retrieval_enabled"`
 	GraphRunID         *uuid.UUID     `json:"graph_run_id,omitempty"`
 	GraphSyncStatus    *string        `json:"graph_sync_status,omitempty"`
@@ -378,6 +379,7 @@ func newKnowledgeBaseAssetRefView(item *model.KnowledgeBaseAssetRef) *KnowledgeB
 		SyncStatus:         item.SyncStatus,
 		SyncedGenerationNo: item.SyncedGenerationNo,
 		SyncRunID:          item.SyncRunID,
+		SyncBatchID:        item.SyncBatchID,
 		RetrievalEnabled:   item.RetrievalEnabled,
 		GraphRunID:         item.GraphRunID,
 		GraphSyncStatus:    item.GraphSyncStatus,

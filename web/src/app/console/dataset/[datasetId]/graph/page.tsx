@@ -12,7 +12,11 @@ import { useT } from '@/i18n';
 import { AlertCircle, Loader2, Minus, Network, Plus, RotateCcw, Search, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
-import { KnowledgeGraph, DetailPanel } from '@/components/datasets/knowledge-graph';
+import {
+  KnowledgeGraph,
+  DetailPanel,
+  GraphBuildProgress,
+} from '@/components/datasets/knowledge-graph';
 import { getCategoryColorMap } from '@/components/datasets/knowledge-graph/utils/color';
 import type { DatasetGraph, GraphNode } from '@/services/types/dataset';
 import type { KnowledgeGraphHandle } from '@/components/datasets/knowledge-graph';
@@ -480,15 +484,7 @@ export default function DatasetGraphPage() {
               <p>{t('graph.emptyStatusDescription')}</p>
             </div>
           ) : graphStatus && !graphStatus.can_search ? (
-            <div className="flex flex-1 flex-col items-center justify-center gap-3 p-8 text-center text-muted-foreground">
-              <Loader2 className="h-8 w-8 animate-spin" />
-              <p>
-                {t('graph.statusDescription', {
-                  status: t(`graph.statuses.${graphStatus.status}`),
-                  progress: graphStatus.progress,
-                })}
-              </p>
-            </div>
+            <GraphBuildProgress status={graphStatus} />
           ) : isGraphError ? (
             <div className="flex flex-1 flex-col items-center justify-center gap-3 p-8 text-center">
               <AlertCircle className="h-10 w-10 text-destructive" />

@@ -20,6 +20,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/contracts"
 	"github.com/zgiai/zgi/api/internal/dto"
 	contentparsesvc "github.com/zgiai/zgi/api/internal/modules/contentparse/service"
+	graphflow_extractor "github.com/zgiai/zgi/api/internal/modules/dataset/graphflow/extractor"
 	graphflow_model "github.com/zgiai/zgi/api/internal/modules/dataset/graphflow/model"
 	graphflow_repo "github.com/zgiai/zgi/api/internal/modules/dataset/graphflow/repository"
 	graphflow_worker "github.com/zgiai/zgi/api/internal/modules/dataset/graphflow/worker"
@@ -762,13 +763,9 @@ func (ir *IndexingRunner) Run(ctx context.Context, datasetDocument *model.Docume
 		docID, _ := uuid.Parse(datasetDocument.ID)
 		tenantID, _ := uuid.Parse(dataset.OrganizationID)
 
-		// Determine extraction strategy from process rules
-		strategy := "llm"
-		if selectedProcessRule != nil && selectedProcessRule.Rules != nil {
-			if s, ok := selectedProcessRule.Rules["extraction_strategy"].(string); ok && s != "" {
-				strategy = s
-			}
-		}
+		// GraphFlow entity and relationship extraction always uses the LLM
+		// strategy. Document parsing strategies such as MinerU are unrelated.
+		strategy := graphflow_extractor.StrategyLLM
 
 		// Create GraphFlow task
 		graphFlowTask := &graphflow_model.GraphFlowTask{

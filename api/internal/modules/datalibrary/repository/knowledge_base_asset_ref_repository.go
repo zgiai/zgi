@@ -204,6 +204,7 @@ func (r *knowledgeBaseAssetRefRepository) MarkPending(ctx context.Context, organ
 	updates := map[string]any{
 		"sync_status":        model.KnowledgeBaseAssetRefSyncStatusPending,
 		"sync_run_id":        syncRunID,
+		"sync_batch_id":      syncRunID,
 		"sync_error_code":    errorCode,
 		"sync_error_message": errorMessage,
 	}

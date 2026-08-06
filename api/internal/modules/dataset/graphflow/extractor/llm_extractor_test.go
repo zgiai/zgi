@@ -18,7 +18,7 @@ import (
 type extractorPromptDefaultModelService struct{}
 
 func (s *extractorPromptDefaultModelService) ResolveModelType(ctx context.Context, organizationID string, explicitProvider, explicitModel *string, modelType shared_model.ModelType) (*llmdefaultservice.ResolvedModel, error) {
-	return &llmdefaultservice.ResolvedModel{UseCase: string(llmmodelmodel.UseCaseTextChat), Provider: "openai", Model: "test-model", Params: llmsharedtypes.JSONObject{}, Source: llmdefaultservice.SourceExplicit}, nil
+	return &llmdefaultservice.ResolvedModel{UseCase: string(llmmodelmodel.UseCaseTextChat), Provider: "qwen", Model: "qwen3.6-flash", Params: llmsharedtypes.JSONObject{}, Source: llmdefaultservice.SourceExplicit}, nil
 }
 
 func (s *extractorPromptDefaultModelService) ResolveUseCase(ctx context.Context, organizationID string, useCase llmmodelmodel.UseCase, explicitProvider, explicitModel *string) (*llmdefaultservice.ResolvedModel, error) {
@@ -38,8 +38,11 @@ func (s *extractorPromptDefaultModelService) Delete(ctx context.Context, organiz
 }
 
 type extractorPromptLLMClient struct {
-	lastPrompt string
-	response   string
+	lastPrompt               string
+	lastMaxTokens            *int
+	lastAdditionalParameters map[string]interface{}
+	hadDeadline              bool
+	response                 string
 }
 
 func (m *extractorPromptLLMClient) Chat(ctx context.Context, organizationID string, req *llmadapter.ChatRequest) (*llmadapter.ChatResponse, error) {
@@ -48,6 +51,9 @@ func (m *extractorPromptLLMClient) Chat(ctx context.Context, organizationID stri
 			m.lastPrompt = content
 		}
 	}
+	m.lastMaxTokens = req.MaxTokens
+	m.lastAdditionalParameters = req.AdditionalParameters
+	_, m.hadDeadline = ctx.Deadline()
 	return &llmadapter.ChatResponse{Choices: []llmadapter.Choice{{Message: llmadapter.Message{Content: m.response}}}}, nil
 }
 
@@ -102,6 +108,7 @@ func TestGenerateGlobalEntitiesUsesGoTemplate(t *testing.T) {
 	if strings.Contains(llmClient.lastPrompt, "{{") {
 		t.Fatalf("prompt still contains raw template markers: %q", llmClient.lastPrompt)
 	}
+	assertExtractionRequestLimits(t, llmClient, globalEntityExtractionMaxTokens)
 }
 
 func TestExtractUsesGoTemplate(t *testing.T) {
@@ -122,5 +129,19 @@ func TestExtractUsesGoTemplate(t *testing.T) {
 	}
 	if strings.Contains(llmClient.lastPrompt, "{{") {
 		t.Fatalf("prompt still contains raw template markers: %q", llmClient.lastPrompt)
+	}
+	assertExtractionRequestLimits(t, llmClient, segmentExtractionMaxTokens)
+}
+
+func assertExtractionRequestLimits(t *testing.T, llmClient *extractorPromptLLMClient, wantMaxTokens int) {
+	t.Helper()
+	if llmClient.lastMaxTokens == nil || *llmClient.lastMaxTokens != wantMaxTokens {
+		t.Fatalf("max tokens = %v, want %d", llmClient.lastMaxTokens, wantMaxTokens)
+	}
+	if enabled, ok := llmClient.lastAdditionalParameters["enable_thinking"].(bool); !ok || enabled {
+		t.Fatalf("enable_thinking = %v, want false", llmClient.lastAdditionalParameters["enable_thinking"])
+	}
+	if !llmClient.hadDeadline {
+		t.Fatal("LLM request context has no timeout deadline")
 	}
 }

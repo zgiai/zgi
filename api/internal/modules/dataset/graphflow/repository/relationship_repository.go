@@ -101,6 +101,14 @@ func (r *RelationshipRepository) FindPendingDelete(ctx context.Context, limit in
 	return results, err
 }
 
+func (r *RelationshipRepository) FindPendingDeleteByKBID(ctx context.Context, kbID uuid.UUID) ([]*model.Relationship, error) {
+	var results []*model.Relationship
+	err := r.db.WithContext(ctx).
+		Where("kb_id = ? AND graph_state = ?", kbID, "pending_delete").
+		Find(&results).Error
+	return results, err
+}
+
 // FindByEntityIDs finds relationships where both entities are in the provided list
 func (r *RelationshipRepository) FindByEntityIDs(ctx context.Context, kbID uuid.UUID, entityIDs []uuid.UUID) ([]*model.Relationship, error) {
 	if len(entityIDs) < 2 {

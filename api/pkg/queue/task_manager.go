@@ -10,20 +10,23 @@ import (
 
 // TaskManager manages asynq tasks
 type TaskManager struct {
-	client *asynq.Client
-	server *asynq.Server
-	config *config.Config
+	client          *asynq.Client
+	server          *asynq.Server
+	graphFlowServer *asynq.Server
+	config          *config.Config
 }
 
 // NewTaskManager creates a new task manager
 func NewTaskManager(cfg *config.Config) (*TaskManager, error) {
 	client := NewAsynqClient(cfg)
 	server := NewAsynqServer(cfg)
+	graphFlowServer := NewGraphFlowAsynqServer(cfg)
 
 	return &TaskManager{
-		client: client,
-		server: server,
-		config: cfg,
+		client:          client,
+		server:          server,
+		graphFlowServer: graphFlowServer,
+		config:          cfg,
 	}, nil
 }
 
@@ -58,16 +61,32 @@ func (tm *TaskManager) GetServer() *asynq.Server {
 	return tm.server
 }
 
+// GetGraphFlowServer returns the dedicated GraphFlow worker server.
+func (tm *TaskManager) GetGraphFlowServer() *asynq.Server {
+	return tm.graphFlowServer
+}
+
 // StartServer starts the asynq server with given mux
 func (tm *TaskManager) StartServer(mux *asynq.ServeMux) error {
-	logger.Info("Starting asynq server")
-	return tm.server.Run(mux)
+	logger.Info("Starting asynq worker servers", map[string]interface{}{
+		"main_concurrency":      tm.config.TaskQueue.Concurrency,
+		"graphflow_concurrency": graphFlowWorkerConcurrency(tm.config),
+	})
+	errCh := make(chan error, 2)
+	go func() {
+		errCh <- tm.server.Run(mux)
+	}()
+	go func() {
+		errCh <- tm.graphFlowServer.Run(mux)
+	}()
+	return <-errCh
 }
 
 // StopServer stops the asynq server
 func (tm *TaskManager) StopServer() {
-	logger.Info("Stopping asynq server")
+	logger.Info("Stopping asynq worker servers")
 	tm.server.Shutdown()
+	tm.graphFlowServer.Shutdown()
 }
 
 // Close closes the task manager connections

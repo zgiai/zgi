@@ -12,12 +12,14 @@ type GraphFlowTask struct {
 	TenantID uuid.UUID `gorm:"type:uuid;not null" json:"tenant_id"`
 	KBID     uuid.UUID `gorm:"type:uuid;column:kb_id;not null" json:"kb_id"` // Maps to datasets(id)
 	// DocumentID is a durable source identifier. Cleanup tasks may outlive the documents row.
-	DocumentID uuid.UUID  `gorm:"type:uuid;not null" json:"document_id"`
-	SegmentID  *uuid.UUID `gorm:"type:uuid" json:"segment_id,omitempty"`
-	RunID      *uuid.UUID `gorm:"type:uuid;index" json:"run_id,omitempty"`
+	DocumentID  uuid.UUID  `gorm:"type:uuid;not null" json:"document_id"`
+	SegmentID   *uuid.UUID `gorm:"type:uuid" json:"segment_id,omitempty"`
+	RunID       *uuid.UUID `gorm:"type:uuid;index" json:"run_id,omitempty"`
+	RunItemID   *uuid.UUID `gorm:"type:uuid;index" json:"run_item_id,omitempty"`
+	SourceRefID *uuid.UUID `gorm:"type:uuid;index" json:"source_ref_id,omitempty"`
 
 	TaskType           string `gorm:"type:varchar(50);not null" json:"task_type"`                // 'extraction', 'alignment', 'graph_sync', etc.
-	ExtractionStrategy string `gorm:"type:varchar(20);default:'llm'" json:"extraction_strategy"` // 'llm' | 'openie'
+	ExtractionStrategy string `gorm:"type:varchar(20);default:'llm'" json:"extraction_strategy"` // GraphFlow uses 'llm'.
 	Status             string `gorm:"type:varchar(50);not null;default:'pending'" json:"status"`
 	Progress           int    `gorm:"default:0" json:"progress"`
 

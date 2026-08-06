@@ -30,6 +30,65 @@ func TestParseArtifactChunkTransformServiceTransformsWithoutSideEffects(t *testi
 	}
 }
 
+func TestParseArtifactChunkTransformServiceUsesParentChildSlidingWindowFallback(t *testing.T) {
+	svc := NewParseArtifactChunkTransformService(nil, nil, nil, nil)
+	runes := make([]rune, 3200)
+	for i := range runes {
+		runes[i] = rune(0x4e00 + i)
+	}
+	result, err := svc.TransformAuto(context.Background(), ParseArtifactAutoChunkTransformInput{
+		TenantID: "org-1",
+		FileName: "article.md",
+		Artifact: &contracts.ParseArtifact{
+			FileName: "article.md",
+			Elements: []contracts.ParsedElement{{Type: "text", Content: string(runes), Ordinal: 1}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("TransformAuto: %v", err)
+	}
+	if result.IndexType != datasetindexing.ParentChildIndex {
+		t.Fatalf("index type = %q, want parent-child", result.IndexType)
+	}
+	if result.ProcessOptions.Mode != "hierarchical" || result.ProcessOptions.ProcessRule["parent_mode"] != "paragraph" {
+		t.Fatalf("process options = %#v", result.ProcessOptions)
+	}
+	if result.Routing["matched"] != false {
+		t.Fatalf("routing = %#v, want fallback route", result.Routing)
+	}
+	if len(result.Chunks) < 2 {
+		t.Fatalf("got %d parent chunks, want multiple sliding windows", len(result.Chunks))
+	}
+
+	for parentIndex, parent := range result.Chunks {
+		parentRunes := []rune(parent.Content)
+		if len(parentRunes) > datasetindexing.DefaultParagraphParentMaxChars {
+			t.Fatalf("parent %d size = %d, want <= %d", parentIndex, len(parentRunes), datasetindexing.DefaultParagraphParentMaxChars)
+		}
+		if parentIndex > 0 {
+			previousRunes := []rune(result.Chunks[parentIndex-1].Content)
+			if string(previousRunes[len(previousRunes)-datasetindexing.DefaultParagraphParentOverlapChars:]) != string(parentRunes[:datasetindexing.DefaultParagraphParentOverlapChars]) {
+				t.Fatalf("parents %d/%d do not overlap by %d characters", parentIndex-1, parentIndex, datasetindexing.DefaultParagraphParentOverlapChars)
+			}
+		}
+		if len(parent.Children) == 0 {
+			t.Fatalf("parent %d has no child chunks", parentIndex)
+		}
+		for childIndex, child := range parent.Children {
+			childRunes := []rune(child.Content)
+			if len(childRunes) > datasetindexing.DefaultParagraphChildMaxChars {
+				t.Fatalf("parent %d child %d size = %d, want <= %d", parentIndex, childIndex, len(childRunes), datasetindexing.DefaultParagraphChildMaxChars)
+			}
+			if childIndex > 0 {
+				previousChildRunes := []rune(parent.Children[childIndex-1].Content)
+				if string(previousChildRunes[len(previousChildRunes)-datasetindexing.DefaultParagraphChildOverlapChars:]) != string(childRunes[:datasetindexing.DefaultParagraphChildOverlapChars]) {
+					t.Fatalf("parent %d children %d/%d do not overlap by %d characters", parentIndex, childIndex-1, childIndex, datasetindexing.DefaultParagraphChildOverlapChars)
+				}
+			}
+		}
+	}
+}
+
 func TestParseArtifactChunkTransformServiceRoutesVisionImagesToFullDoc(t *testing.T) {
 	svc := NewParseArtifactChunkTransformService(nil, nil, nil, nil)
 	markdown := "# 医院楼层导览\n\n## 8F\n\n- 儿科一病区\n\n## 7F\n\n- 急诊医学科病区"

@@ -36,6 +36,25 @@ const messages: DatasetMessages = {
     overrideNotAllowed: '不支持为知识图谱单独配置嵌入模型。',
     graph_model_change_confirmation_required: '请确认完整重建图谱后继续。',
     graph_disable_not_supported: '已启用的知识图谱不能关闭。',
+    buildProgress: {
+      title: '正在构建知识图谱',
+      overall: '总体进度',
+      currentStage: '当前阶段：{stage}',
+      documentSummary: '共 {total} 份文档 · {processing} 份正在处理',
+      runRevision: '图谱版本 {revision}',
+      stages: {
+        extraction: '实体关系抽取',
+        alignment: '实体对齐',
+        graph_sync: '图谱写入',
+        vector_sync: '向量索引',
+      },
+      stageStatuses: {
+        pending: '等待中',
+        processing: '进行中',
+        completed: '已完成',
+        failed: '失败',
+      },
+    },
     statuses: {
       disabled: '未启用',
       unavailable: '不可用',

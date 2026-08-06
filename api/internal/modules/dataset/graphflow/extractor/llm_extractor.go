@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/zgiai/zgi/api/internal/modules/llm/client"
 	llmdefaultservice "github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/service"
@@ -13,6 +14,13 @@ import (
 	shared_model "github.com/zgiai/zgi/api/internal/modules/shared/model"
 	"github.com/zgiai/zgi/api/pkg/logger"
 	"go.uber.org/zap"
+)
+
+const (
+	globalEntityExtractionMaxTokens = 1024
+	segmentExtractionMaxTokens      = 4096
+	globalEntityExtractionTimeout   = 30 * time.Second
+	segmentExtractionTimeout        = 45 * time.Second
 )
 
 type LLMExtractor struct {
@@ -44,6 +52,7 @@ func (e *LLMExtractor) GenerateGlobalEntities(ctx context.Context, tenantID stri
 	}
 
 	temp := 0.1
+	maxTokens := globalEntityExtractionMaxTokens
 	resolvedModel, err := resolveTextChatModel(ctx, tenantID, e.defaultModelSvc, e.provider, e.model)
 	if err != nil {
 		return nil, err
@@ -56,12 +65,17 @@ func (e *LLMExtractor) GenerateGlobalEntities(ctx context.Context, tenantID stri
 			{Role: "user", Content: promptText},
 		},
 		Temperature: &temp,
+		MaxTokens:   &maxTokens,
 		ResponseFormat: &adapter.ResponseFormat{
 			Type: "json_object",
 		},
 	}
+	disableQwen36Thinking(req)
 
-	resp, err := e.client.Chat(ctx, tenantID, req)
+	requestCtx, cancel := context.WithTimeout(ctx, globalEntityExtractionTimeout)
+	defer cancel()
+
+	resp, err := e.client.Chat(requestCtx, tenantID, req)
 	if err != nil {
 		return nil, fmt.Errorf("llm global entity extraction failed: %w", err)
 	}
@@ -110,6 +124,7 @@ func (e *LLMExtractor) Extract(ctx context.Context, tenantID string, text string
 	}
 
 	temp := 0.1
+	maxTokens := segmentExtractionMaxTokens
 	resolvedModel, err := resolveTextChatModel(ctx, tenantID, e.defaultModelSvc, e.provider, e.model)
 	if err != nil {
 		return nil, err
@@ -125,12 +140,17 @@ func (e *LLMExtractor) Extract(ctx context.Context, tenantID string, text string
 			},
 		},
 		Temperature: &temp,
+		MaxTokens:   &maxTokens,
 		ResponseFormat: &adapter.ResponseFormat{
 			Type: "json_object",
 		},
 	}
+	disableQwen36Thinking(req)
 
-	resp, err := e.client.Chat(ctx, tenantID, req)
+	requestCtx, cancel := context.WithTimeout(ctx, segmentExtractionTimeout)
+	defer cancel()
+
+	resp, err := e.client.Chat(requestCtx, tenantID, req)
 	if err != nil {
 		return nil, fmt.Errorf("llm extraction failed: %w", err)
 	}
@@ -165,6 +185,16 @@ func (e *LLMExtractor) Extract(ctx context.Context, tenantID string, text string
 	)
 
 	return &result, nil
+}
+
+func disableQwen36Thinking(req *adapter.ChatRequest) {
+	if req == nil {
+		return
+	}
+	if (strings.EqualFold(req.Provider, "qwen") || strings.EqualFold(req.Provider, "dashscope")) &&
+		strings.HasPrefix(strings.ToLower(req.Model), "qwen3.6-") {
+		req.AdditionalParameters = map[string]interface{}{"enable_thinking": false}
+	}
 }
 
 func resolveTextChatModel(ctx context.Context, organizationID string, defaultModelSvc llmdefaultservice.DefaultModelService, explicitProvider, explicitModel *string) (*llmdefaultservice.ResolvedModel, error) {

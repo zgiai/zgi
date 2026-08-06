@@ -4,14 +4,17 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/hibiken/asynq"
 	"github.com/zgiai/zgi/api/internal/modules/dataset/graphflow"
 	"github.com/zgiai/zgi/api/internal/modules/dataset/graphflow/model"
+	"github.com/zgiai/zgi/api/pkg/lock"
 	"github.com/zgiai/zgi/api/pkg/logger"
 	"github.com/zgiai/zgi/api/pkg/queue"
 	"github.com/zgiai/zgi/api/pkg/ratelimit"
+	pkgredis "github.com/zgiai/zgi/api/pkg/redis"
 )
 
 // NewSyncHandler creates a handler for Neo4j sync tasks
@@ -33,7 +36,9 @@ func NewSyncHandler(svc *graphflow.Service, taskManager *queue.TaskManager, limi
 			if r := recover(); r != nil {
 				err := fmt.Errorf("sync worker panicked: %v", r)
 				logger.Error("Sync panic recovery", err)
-				svc.TaskRepo.UpdateTaskFailed(ctx, taskID, err.Error())
+				failureContext, cancelFailure := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancelFailure()
+				svc.TaskRepo.UpdateTaskFailed(failureContext, taskID, err.Error())
 			}
 		}()
 
@@ -65,6 +70,22 @@ func NewSyncHandler(svc *graphflow.Service, taskManager *queue.TaskManager, limi
 		if err := svc.TaskRepo.UpdateTaskProcessing(ctx, taskID); err != nil {
 			logger.Error("Failed to update task status to processing", err)
 		}
+		lastReportedProgress := 0
+		reportProgress := func(progress int) {
+			if progress <= lastReportedProgress || progress >= 100 {
+				return
+			}
+			if err := svc.TaskRepo.UpdateTaskProgress(ctx, taskID, progress); err != nil {
+				logger.Warn("Failed to update graph sync progress", map[string]interface{}{
+					"task_id":  taskID.String(),
+					"progress": progress,
+					"error":    err.Error(),
+				})
+				return
+			}
+			lastReportedProgress = progress
+		}
+		reportProgress(1)
 
 		// Apply Rate Limiting
 		kbID := graphFlowTask.KBID
@@ -76,12 +97,69 @@ func NewSyncHandler(svc *graphflow.Service, taskManager *queue.TaskManager, limi
 			return fmt.Errorf("rate limit exceeded for KB %s, retrying later", kbIDStr)
 		}
 		defer func() {
-			if err := limiter.Release(ctx, kbIDStr); err != nil {
+			releaseContext, cancelRelease := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancelRelease()
+			if err := limiter.Release(releaseContext, kbIDStr); err != nil {
 				logger.Error("Failed to release rate limit token", err)
 			}
 		}()
 
 		kbID = graphFlowTask.KBID
+
+		// A run is serialized at the database level, but graph_sync mutates the
+		// shared Neo4j projection and can also be retried independently. Keep a
+		// KB-scoped distributed mutex as a final safety boundary so two workers
+		// can never project the same knowledge base concurrently.
+		redisClient := pkgredis.GetClient()
+		if redisClient == nil {
+			return fmt.Errorf("redis client is not configured for graph sync lock")
+		}
+		lockKey := lock.GraphFlowLockKey(kbIDStr, lock.LockOpSync)
+		kbLock := lock.NewRedisLock(redisClient, lockKey, lock.DefaultLockTTL)
+		acquired, err := kbLock.Acquire(ctx)
+		if err != nil {
+			return fmt.Errorf("acquire graph sync lock for KB %s: %w", kbIDStr, err)
+		}
+		if !acquired {
+			return fmt.Errorf("graph sync lock for KB %s is held by another worker", kbIDStr)
+		}
+
+		workContext, cancelWork := context.WithCancel(ctx)
+		ctx = workContext
+		heartbeatContext, stopHeartbeat := context.WithCancel(context.Background())
+		heartbeatDone := make(chan struct{})
+		go func() {
+			defer close(heartbeatDone)
+			ticker := time.NewTicker(lock.DefaultLockTTL / 3)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-heartbeatContext.Done():
+					return
+				case <-ticker.C:
+					extended, extendErr := kbLock.Extend(heartbeatContext, lock.DefaultLockTTL)
+					if extendErr != nil || !extended {
+						if extendErr != nil {
+							logger.Error("Failed to extend graph sync lock", extendErr)
+						} else {
+							logger.Error("Failed to extend graph sync lock", lock.ErrLockNotHeld)
+						}
+						cancelWork()
+						return
+					}
+				}
+			}
+		}()
+		defer func() {
+			stopHeartbeat()
+			<-heartbeatDone
+			cancelWork()
+			releaseContext, cancelRelease := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancelRelease()
+			if err := kbLock.Release(releaseContext); err != nil && err != lock.ErrLockNotHeld {
+				logger.Error("Failed to release graph sync lock", err)
+			}
+		}()
 
 		// Check if Neo4j client is configured
 		if svc.Neo4jClient == nil {
@@ -90,6 +168,20 @@ func NewSyncHandler(svc *graphflow.Service, taskManager *queue.TaskManager, limi
 			checkAndUpdateDocumentStatus(ctx, svc, graphFlowTask)
 			return nil
 		}
+		if err := svc.Neo4jClient.EnsureProjectionSchema(ctx); err != nil {
+			svc.TaskRepo.UpdateTaskFailed(ctx, taskID, fmt.Sprintf("failed to ensure Neo4j projection schema: %v", err))
+			return fmt.Errorf("failed to ensure Neo4j projection schema: %w", err)
+		}
+		reportProgress(3)
+
+		// Apply cleanup items from this batch before publishing new/updated
+		// projections. This keeps run completion aligned with the externally
+		// visible graph instead of waiting for the periodic garbage collector.
+		if err := cleanupPendingBatchProjections(ctx, svc, kbID); err != nil {
+			svc.TaskRepo.UpdateTaskFailed(ctx, taskID, err.Error())
+			return fmt.Errorf("failed to clean stale graph projections: %w", err)
+		}
+		reportProgress(5)
 
 		// 3. Sync pending entities in batches
 		nodesSynced := 0
@@ -221,8 +313,10 @@ func NewSyncHandler(svc *graphflow.Service, taskManager *queue.TaskManager, limi
 					logger.Error("Failed to update entity batch graph state", err)
 				}
 				nodesSynced += len(syncedIDs)
+				reportProgress(5 + 20*end/len(pendingEntities))
 			}
 		}
+		reportProgress(25)
 
 		// 4. Sync pending relationships in batches
 		pendingRelationships, err := svc.RelationshipRepo.FindPendingSync(ctx, kbID)
@@ -274,15 +368,18 @@ func NewSyncHandler(svc *graphflow.Service, taskManager *queue.TaskManager, limi
 					logger.Error("Failed to update relationship batch graph state", err)
 				}
 				edgesSynced += len(syncedIDs)
+				reportProgress(25 + 20*end/len(pendingRelationships))
 			}
 
 		}
+		reportProgress(45)
 
 		// 4.5 Sync Aligned Mentions (creating provenance links)
 		// Fetch mentions that are 'aligned' but not yet 'synced'
 		// Note: We use a limit to batch processing if there are too many, but here we try to do a reasonable chunk
 		// Since we want to clear the queue, we loop until empty or hit a safety limit.
 		mentionsSynced := 0
+		reportProgress(50)
 		for {
 			pendingMentions, err := svc.EntityMentionRepo.FindAlignedSync(ctx, kbID, 500) // Batch 500
 			if err != nil {
@@ -329,14 +426,22 @@ func NewSyncHandler(svc *graphflow.Service, taskManager *queue.TaskManager, limi
 			}
 
 			mentionsSynced += len(pendingMentions)
+			reportProgress(55)
 
 			// Safety break if too many? For now just rely on loop.
 			if len(pendingMentions) < 500 {
 				break
 			}
 		}
+		reportProgress(60)
 
-		if err := svc.RefreshVisibilityProjection(ctx, kbID); err != nil {
+		if err := svc.ProjectVisibilityProjection(ctx, kbID, func(completed, total int) {
+			if total <= 0 {
+				reportProgress(95)
+				return
+			}
+			reportProgress(60 + 35*completed/total)
+		}); err != nil {
 			svc.TaskRepo.UpdateTaskFailed(ctx, taskID, fmt.Sprintf("failed to refresh graph visibility projection: %v", err))
 			return fmt.Errorf("failed to refresh graph visibility projection: %w", err)
 		}
@@ -363,6 +468,48 @@ func NewSyncHandler(svc *graphflow.Service, taskManager *queue.TaskManager, limi
 
 		return nil
 	}
+}
+
+func cleanupPendingBatchProjections(ctx context.Context, svc *graphflow.Service, kbID uuid.UUID) error {
+	relationships, err := svc.RelationshipRepo.FindPendingDeleteByKBID(ctx, kbID)
+	if err != nil {
+		return err
+	}
+	for _, relationship := range relationships {
+		if svc.Neo4jClient != nil {
+			if err := svc.Neo4jClient.DeleteRelationship(ctx, relationship.ID.String()); err != nil {
+				return err
+			}
+		}
+		if err := svc.RelationshipRepo.UpdateGraphState(ctx, relationship.ID, "deleted"); err != nil {
+			return err
+		}
+	}
+
+	entities, err := svc.EntityRepo.FindPendingDeleteByKBID(ctx, kbID)
+	if err != nil {
+		return err
+	}
+	for _, entity := range entities {
+		if svc.Neo4jClient != nil {
+			if err := svc.Neo4jClient.DeleteNode(ctx, entity.ID.String()); err != nil {
+				return err
+			}
+		}
+		if svc.WeaviateClient != nil {
+			className := fmt.Sprintf("Entity_%s", kbID.String())
+			if err := svc.WeaviateClient.DeleteObjectByID(ctx, className, entity.ID.String()); err != nil {
+				return err
+			}
+		}
+		if err := svc.EntityRepo.UpdateGraphState(ctx, entity.ID, "deleted", ""); err != nil {
+			return err
+		}
+		if err := svc.EntityRepo.UpdateVectorState(ctx, entity.ID, "deleted", "", ""); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func enqueueVectorSyncTask(ctx context.Context, svc *graphflow.Service, taskManager *queue.TaskManager, graphSyncTask *model.GraphFlowTask) error {
