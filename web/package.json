@@ -56,6 +56,7 @@
     "test:work-layout-request-lifecycle": "node scripts/test-work-layout-request-lifecycle.mjs",
     "test:skill-load-timeline-filter": "node scripts/test-skill-load-timeline-filter.mjs",
     "test:native-model-processing": "node --experimental-strip-types --disable-warning=ExperimentalWarning --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-native-model-processing.mjs",
+    "test:native-process-commentary": "node scripts/test-native-process-commentary.mjs",
     "type-check": "node scripts/customer/prepare.mjs && node scripts/generate-sensitive-word-filter.mjs && node scripts/check-i18n-route-modules.mjs && tsc --noEmit",
     "check:i18n-routes": "node scripts/check-i18n-route-modules.mjs",
     "validate:agent-templates": "node scripts/validate-agent-templates.mjs",
