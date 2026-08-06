@@ -891,7 +891,7 @@ func loadOpenTelemetryConfig(cfg *Config, source *envSource) {
 		InstrumentRedis:       mustBool(source.bool(false, envOTELInstrumentRedis)),
 		InstrumentGRPC:        mustBool(source.bool(false, envOTELInstrumentGRPC)),
 		LLMLangfuseAttributes: mustBool(source.bool(true, envOTELLLMLangfuseAttributes)),
-		LLMCaptureContent:     source.string("summary", envOTELLLMCaptureContent),
+		LLMCaptureContent:     source.string("none", envOTELLLMCaptureContent),
 		LLMCaptureMaxChars:    mustInt(source.int(65536, envOTELLLMCaptureMaxChars)),
 	}
 }
