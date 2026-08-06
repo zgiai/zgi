@@ -25,6 +25,7 @@ import {
   getErrorMessage,
   isAbortError,
   isRecoverableStreamTransportError,
+  messageFilesForReplay,
 } from '@/components/chat/runtime/controller/chat-runtime-controller-utils';
 import { useWorkflowContinuationActions } from './use-chat-runtime-message-actions/continuation';
 import type { UseChatRuntimeMessageActionsArgs } from './use-chat-runtime-message-actions/types';
@@ -1100,6 +1101,7 @@ export function useChatRuntimeMessageActions({
       await send({
         query: source.query,
         model,
+        files: messageFilesForReplay(source),
         parentId: source.parent_id,
         useMemory: Boolean(source.metadata?.use_memory),
         forceAdvanceLeaf: source.status === 'error' || source.status === 'stopped',

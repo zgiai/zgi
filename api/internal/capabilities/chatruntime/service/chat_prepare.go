@@ -140,7 +140,11 @@ func (s *service) prepareRootRegeneration(ctx context.Context, scope Scope, call
 	applyRunConfigToParts(config, parts)
 	applyCallerRuntimeSurfacePolicy(caller, parts)
 	applyPersistedConversationSurface(conversation, parts)
-	parts.Attachments = attachmentBundleFromMessageMetadata(message.Metadata)
+	attachments, err := s.resolveChatAttachmentReferences(ctx, scope, attachmentFileIDsFromMessageMetadata(message.Metadata))
+	if err != nil {
+		return nil, err
+	}
+	parts.Attachments = attachments
 	if err := s.applyRootRegenerationModelCapabilities(ctx, scope, caller, message, parts); err != nil {
 		return nil, err
 	}

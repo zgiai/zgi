@@ -125,6 +125,7 @@ import type {
   AIChatToolGovernancePermissionTier,
 } from '@/components/aichat/contextual/types';
 import type { ModelUseCase } from '@/services/types/model';
+import { messageFilesForReplay } from '@/components/chat/runtime/controller/chat-runtime-controller-utils';
 
 export { AIChatMessageBubble } from '@/components/chat/variants/aichat/message-bubble';
 export type { AIChatModelValue } from '@/components/chat/variants/aichat/types';
@@ -989,6 +990,7 @@ export function AIChatShell({
 
       void controller.send({
         query,
+        files: messageFilesForReplay(message),
         parentId: message.parent_id,
         model: {
           provider: modelSelectorValue.provider,
