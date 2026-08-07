@@ -13,6 +13,7 @@ function message({
   status = 'completed',
   phase = 'completed',
   nodes = [],
+  generatedImages,
 } = {}) {
   return {
     messageId,
@@ -27,6 +28,7 @@ function message({
       ...(messageId ? { message_id: messageId } : {}),
       ...(workflowRunId ? { workflow_run_id: workflowRunId } : {}),
     },
+    ...(generatedImages ? { generatedImages } : {}),
   };
 }
 
@@ -126,6 +128,77 @@ for (const terminalStatus of ['stopped', 'error', 'expired']) {
   assert.equal(result[0].clientState.status, terminalStatus);
   assert.equal(result[0].answer, `${terminalStatus} persisted answer`);
 }
+
+for (const terminalStatus of ['completed', 'stopped', 'error', 'expired']) {
+  const stalePersisted = message({
+    messageId: 'message-local-terminal',
+    workflowRunId: 'run-local-terminal',
+    answer: 'stale persisted partial answer',
+    status: 'running',
+    phase: 'streaming',
+  });
+  const localTerminal = message({
+    messageId: 'message-local-terminal',
+    workflowRunId: 'run-local-terminal',
+    tempKey: 'local-terminal-key',
+    answer: `${terminalStatus} local final answer`,
+    status: terminalStatus,
+    nodes: [{ nodeId: 'local-terminal-node', status: 'success' }],
+  });
+  const result = reconcileConversationMessages([stalePersisted], [localTerminal]);
+  assert.equal(result[0].WorkflowRunInfo.status, terminalStatus);
+  assert.equal(result[0].clientState.status, terminalStatus);
+  assert.equal(result[0].clientState.phase, 'completed');
+  assert.equal(result[0].answer, `${terminalStatus} local final answer`);
+  assert.equal(result[0].messageData.tempKey, 'local-terminal-key');
+  assert.equal(result[0].WorkflowRunInfo.runNodeInfo[0].nodeId, 'local-terminal-node');
+}
+
+const stoppedPersistedWithoutImages = message({
+  messageId: 'message-stopped-images',
+  workflowRunId: 'run-stopped-images',
+  answer: '',
+  status: 'stopped',
+});
+const stoppedLocalWithImageSkeleton = message({
+  messageId: 'message-stopped-images',
+  workflowRunId: 'run-stopped-images',
+  answer: '',
+  status: 'stopped',
+  generatedImages: [{ url: '', alt: 'pending image', isLoading: true }],
+});
+const stoppedImageResult = reconcileConversationMessages(
+  [stoppedPersistedWithoutImages],
+  [stoppedLocalWithImageSkeleton]
+);
+assert.deepEqual(
+  stoppedImageResult[0].generatedImages ?? [],
+  [],
+  'terminal reconciliation must discard image loading placeholders'
+);
+
+const stoppedLocalWithCompletedImage = message({
+  messageId: 'message-stopped-completed-image',
+  workflowRunId: 'run-stopped-completed-image',
+  status: 'stopped',
+  generatedImages: [
+    { url: '', alt: 'pending image', isLoading: true },
+    { url: '/generated/result.png', alt: 'completed image', isLoading: false },
+  ],
+});
+const stoppedCompletedImageResult = reconcileConversationMessages(
+  [
+    message({
+      messageId: 'message-stopped-completed-image',
+      workflowRunId: 'run-stopped-completed-image',
+      status: 'stopped',
+    }),
+  ],
+  [stoppedLocalWithCompletedImage]
+);
+assert.deepEqual(stoppedCompletedImageResult[0].generatedImages, [
+  { url: '/generated/result.png', alt: 'completed image', isLoading: false },
+]);
 
 const thirdPersisted = message({
   messageId: 'message-3',

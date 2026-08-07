@@ -57,54 +57,73 @@ function terminalMessageStatus(message: Message): TerminalMessageStatus | null {
   return null;
 }
 
+function completedGeneratedImages(
+  primary: Message['generatedImages'],
+  fallback: Message['generatedImages']
+): Message['generatedImages'] {
+  const primaryCompleted = primary?.filter(image => !image.isLoading) ?? [];
+  if (primaryCompleted.length > 0) return primaryCompleted;
+
+  const fallbackCompleted = fallback?.filter(image => !image.isLoading) ?? [];
+  return fallbackCompleted.length > 0 ? fallbackCompleted : undefined;
+}
+
 function mergeTerminalMessage(
   persisted: Message,
   local: Message,
-  persistedStatus: TerminalMessageStatus
+  terminalStatus: TerminalMessageStatus,
+  terminalOwner: 'persisted' | 'local'
 ): Message {
   const persistedRun = persisted.WorkflowRunInfo;
   const localRun = local.WorkflowRunInfo;
-  const persistedNodes = persistedRun?.runNodeInfo ?? [];
-  const localNodes = localRun?.runNodeInfo ?? [];
   const localTempKey = stringValue(local.messageData?.tempKey);
+  const localOwnsTerminal = terminalOwner === 'local';
+  const primary = localOwnsTerminal ? local : persisted;
+  const fallback = localOwnsTerminal ? persisted : local;
+  const primaryRun = primary.WorkflowRunInfo;
+  const fallbackRun = fallback.WorkflowRunInfo;
+  const primaryNodes = primaryRun?.runNodeInfo ?? [];
+  const fallbackNodes = fallbackRun?.runNodeInfo ?? [];
 
   return {
-    ...local,
-    ...persisted,
+    ...fallback,
+    ...primary,
     messageId: persisted.messageId || local.messageId,
-    query: persisted.query || local.query,
+    query: primary.query || fallback.query,
     WorkflowRunInfo:
       persistedRun || localRun
         ? {
-            ...(localRun ?? { id: '', status: persistedStatus, runNodeInfo: [] }),
-            ...persistedRun,
+            ...(fallbackRun ?? { id: '', status: terminalStatus, runNodeInfo: [] }),
+            ...primaryRun,
             id: persistedRun?.id || localRun?.id || '',
-            status: persistedStatus,
-            runNodeInfo: persistedNodes.length > 0 ? persistedNodes : localNodes,
+            status: terminalStatus,
+            runNodeInfo: primaryNodes.length > 0 ? primaryNodes : fallbackNodes,
           }
         : undefined,
     clientState: {
-      ...(local.clientState ?? { phase: 'completed' }),
-      ...persisted.clientState,
+      ...(fallback.clientState ?? { phase: 'completed' }),
+      ...primary.clientState,
       phase: 'completed',
-      status: persistedStatus,
+      status: terminalStatus,
     },
     messageData: {
-      ...local.messageData,
-      ...persisted.messageData,
+      ...fallback.messageData,
+      ...primary.messageData,
       ...(localTempKey ? { tempKey: localTempKey } : {}),
     },
-    generatedImages:
-      persisted.generatedImages && persisted.generatedImages.length > 0
-        ? persisted.generatedImages
-        : local.generatedImages,
+    generatedImages: completedGeneratedImages(primary.generatedImages, fallback.generatedImages),
   };
 }
 
 function mergeMessages(persisted: Message, local: Message): Message {
   const persistedTerminalStatus = terminalMessageStatus(persisted);
   if (persistedTerminalStatus) {
-    return mergeTerminalMessage(persisted, local, persistedTerminalStatus);
+    return mergeTerminalMessage(persisted, local, persistedTerminalStatus, 'persisted');
+  }
+
+  const localTerminalStatus = terminalMessageStatus(local);
+  if (localTerminalStatus) {
+    return mergeTerminalMessage(persisted, local, localTerminalStatus, 'local');
   }
 
   if (!isLiveMessage(local)) {
