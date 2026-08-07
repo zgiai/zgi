@@ -78,12 +78,13 @@ func (e *WorkflowEngine) consumeNodeEvents(
 				}
 			}
 			if event.Error != nil {
-				if shared.IsContextCancellation(ctx, event.Error) {
+				eventErr := shared.ResolveContextError(ctx, event.Error)
+				if shared.IsContextCancellation(ctx, eventErr) {
 					logger.Info("RunFailed event canceled for nodeID: %s", nodeID)
 				} else {
-					logger.Error(fmt.Sprintf("Got error from RunFailed event for nodeID: %s, error: %v", nodeID, event.Error), event.Error)
+					logger.Error(fmt.Sprintf("Got error from RunFailed event for nodeID: %s, error: %v", nodeID, eventErr), eventErr)
 				}
-				*execErr = event.Error
+				*execErr = eventErr
 			} else {
 				logger.Warn("RunFailed event has no error for nodeID: %s", nodeID)
 			}

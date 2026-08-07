@@ -76,9 +76,13 @@ func (e *WorkflowEngine) Execute(ctx context.Context) (err error) {
 	// Sync node states to runtimeState.NodeRunState for subgraph event emission
 	e.syncNodeStatesToRuntimeState()
 
-	if errors.Is(ctx.Err(), context.Canceled) {
-		logger.Info("Workflow execution canceled")
-		return context.Canceled
+	if ctxErr := shared.ResolveContextError(ctx, ctx.Err()); ctxErr != nil {
+		if shared.IsContextCancellation(ctx, ctxErr) {
+			logger.Info("Workflow execution canceled")
+		} else {
+			logger.Error("Workflow execution stopped by context failure: %v", ctxErr)
+		}
+		return ctxErr
 	}
 	result := e.getExecutionResult()
 	if result != nil {

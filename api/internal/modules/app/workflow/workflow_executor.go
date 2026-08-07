@@ -358,7 +358,7 @@ func (e *WorkflowExecutor) ExecuteSimpleWorkflowWithRunIDAndCallbacks(ctx contex
 
 	// 9. Execute workflow
 	startTime := time.Now()
-	err = engine.Execute(ctx)
+	err = shared.ResolveContextError(ctx, engine.Execute(ctx))
 	executionTime := time.Since(startTime)
 
 	// 10. Save conversation variables if conversation ID is present

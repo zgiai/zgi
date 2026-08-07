@@ -71,6 +71,7 @@ func (e *WorkflowEngine) executeNode(ctx context.Context, nodeID string, state *
 		}
 
 		if err != nil {
+			err = shared.ResolveContextError(ctx, err)
 			if result != nil && result.Status != "" {
 				state.Status = result.Status
 			} else {
@@ -167,6 +168,7 @@ func (e *WorkflowEngine) executeNode(ctx context.Context, nodeID string, state *
 		logger.Info("Running node runner for nodeID: %s", nodeID)
 		runnerResult, runnerErr := e.nodeRunner.RunNode(ctx, req, eventChan)
 		if runnerErr != nil {
+			runnerErr = shared.ResolveContextError(ctx, runnerErr)
 			if shared.IsContextCancellation(ctx, runnerErr) {
 				logger.Info("Node runner canceled for nodeID: %s", nodeID)
 			} else {

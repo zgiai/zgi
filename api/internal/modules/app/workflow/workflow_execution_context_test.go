@@ -7,6 +7,7 @@ import (
 	"time"
 
 	workflowpause "github.com/zgiai/zgi/api/internal/modules/app/workflow/pause"
+	workflowshared "github.com/zgiai/zgi/api/internal/modules/app/workflow/shared"
 )
 
 type ownershipLostLeaseRenewer struct{}
@@ -55,6 +56,12 @@ func TestWorkflowExecutionLeaseOwnershipLossCancelsOwnerContext(t *testing.T) {
 	case <-executionCtx.Done():
 		if !errors.Is(context.Cause(executionCtx), workflowpause.ErrExecutionOwnershipLost) {
 			t.Fatalf("unexpected cancellation cause: %v", context.Cause(executionCtx))
+		}
+		if workflowshared.IsContextCancellation(executionCtx, context.Canceled) {
+			t.Fatal("ownership loss must not be classified as user cancellation")
+		}
+		if got := workflowshared.ResolveContextError(executionCtx, context.Canceled); !errors.Is(got, workflowpause.ErrExecutionOwnershipLost) {
+			t.Fatalf("resolved execution error = %v, want ownership loss", got)
 		}
 	case <-time.After(time.Second):
 		t.Fatal("ownership loss did not cancel execution context")

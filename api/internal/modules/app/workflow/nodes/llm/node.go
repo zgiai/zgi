@@ -147,12 +147,13 @@ func (n *Node) Run(ctx context.Context, eventChan chan *shared.NodeEventCh) erro
 		Timestamp: time.Now(),
 	}:
 	case <-ctx.Done():
-		return ctx.Err()
+		return shared.ResolveContextError(ctx, ctx.Err())
 	}
 
 	// Execute the LLM logic
 	result, err := n.executeRun(ctx, eventChan)
 	if err != nil {
+		err = shared.ResolveContextError(ctx, err)
 		if shared.IsContextCancellation(ctx, err) {
 			logger.InfoContext(n.logContext(ctx), "LLM node execution canceled")
 			return context.Canceled
@@ -167,7 +168,7 @@ func (n *Node) Run(ctx context.Context, eventChan chan *shared.NodeEventCh) erro
 			Timestamp: time.Now(),
 		}:
 		case <-ctx.Done():
-			return ctx.Err()
+			return shared.ResolveContextError(ctx, ctx.Err())
 		}
 		return err
 	}
@@ -181,7 +182,7 @@ func (n *Node) Run(ctx context.Context, eventChan chan *shared.NodeEventCh) erro
 		Timestamp: time.Now(),
 	}:
 	case <-ctx.Done():
-		return ctx.Err()
+		return shared.ResolveContextError(ctx, ctx.Err())
 	}
 
 	return nil
@@ -407,6 +408,7 @@ func (n *Node) executeRun(ctx context.Context, eventChan chan *shared.NodeEventC
 		eventChan,
 	)
 	if err != nil {
+		err = shared.ResolveContextError(ctx, err)
 		if shared.IsContextCancellation(ctx, err) {
 			logger.InfoContext(logCtx, "LLM invocation canceled")
 			return nil, context.Canceled

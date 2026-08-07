@@ -14,6 +14,7 @@ import (
 	approvalruntime "github.com/zgiai/zgi/api/internal/modules/app/workflow/approval"
 	graph_entities "github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine/entities"
 	workflowpause "github.com/zgiai/zgi/api/internal/modules/app/workflow/pause"
+	workflowshared "github.com/zgiai/zgi/api/internal/modules/app/workflow/shared"
 	"github.com/zgiai/zgi/api/pkg/database"
 	"github.com/zgiai/zgi/api/pkg/logger"
 )
@@ -536,11 +537,11 @@ func (h *WorkflowHandler) drainApprovalResumeStream(ctx context.Context, pauseSe
 			if workflowResumeRunIsDurablyStopped(ctx, workflowService, run) {
 				return persistStoppedWorkflowAnswerAfterResume(ctx, answerSnapshots, conversationAnswer.String())
 			}
-			err := ctx.Err()
+			err := workflowshared.ResolveContextError(ctx, ctx.Err())
 			if err != nil {
 				h.persistApprovalResumeError(ctx, pauseService, workflowService, run, err, resumeStartedAt, eventDispatcher, conversationAnswer.String())
 			}
-			return ctx.Err()
+			return err
 		case workflowStreamSelectionHeartbeat:
 			continue
 		default:

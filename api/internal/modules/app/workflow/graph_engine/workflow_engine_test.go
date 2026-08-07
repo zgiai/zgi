@@ -52,6 +52,43 @@ func TestExecuteReturnsContextCanceledWhenActiveNodeIsCanceled(t *testing.T) {
 	}
 }
 
+func TestExecutePreservesFailureCancellationCause(t *testing.T) {
+	runner := &blockingNodeRunner{
+		started: make(chan string, 1),
+		release: make(chan struct{}),
+	}
+	engine := NewWorkflowEngine(1)
+	engine.SetNodeRunner(runner)
+	engine.SetRuntimeState(entities.NewGraphRuntimeState(entities.NewVariablePool()), &entities.Graph{Config: map[string]any{}})
+	engine.AddNode("llm", shared.LLM, map[string]any{"id": "llm"})
+
+	leaseErr := errors.New("renew execution lease")
+	ctx, cancel := context.WithCancelCause(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- engine.Execute(ctx)
+	}()
+
+	select {
+	case <-runner.started:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for node to start")
+	}
+	cancel(leaseErr)
+
+	select {
+	case err := <-done:
+		if !errors.Is(err, leaseErr) {
+			t.Fatalf("Execute() error = %v, want lease error", err)
+		}
+		if errors.Is(err, context.Canceled) {
+			t.Fatalf("Execute() error = %v, must not be context.Canceled", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for failed workflow")
+	}
+}
+
 func (r *blockingNodeRunner) RunNode(ctx context.Context, req NodeRunRequest, eventChan chan<- *shared.NodeEventCh) (*shared.NodeRunResult, error) {
 	select {
 	case r.started <- req.NodeID:
