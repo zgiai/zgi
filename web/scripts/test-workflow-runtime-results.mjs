@@ -444,6 +444,11 @@ assert.match(
 );
 assert.match(
   chatMessageItem,
+  /isEmptyStoppedWorkflow\s*=\s*!hasAi\s*&&\s*!hasImages\s*&&\s*!hasAddon\s*&&\s*!hasQuestionAnswerTranscript/,
+  'the empty stopped state must not claim there is no result when another result surface exists'
+);
+assert.match(
+  chatMessageItem,
   /role="status"[\s\S]*?aria-live="polite"/,
   'the workflow pause state must be exposed to assistive technology'
 );

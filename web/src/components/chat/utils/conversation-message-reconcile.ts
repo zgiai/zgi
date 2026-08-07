@@ -1,5 +1,7 @@
 import type { Message, RunStatus } from '@/components/chat/types';
 
+type TerminalMessageStatus = Extract<RunStatus, 'completed' | 'error' | 'stopped' | 'expired'>;
+
 function stringValue(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
 }
@@ -40,7 +42,71 @@ function isLiveMessage(message: Message): boolean {
   );
 }
 
+function terminalMessageStatus(message: Message): TerminalMessageStatus | null {
+  const statuses = [message.WorkflowRunInfo?.status, message.clientState?.status];
+  for (const status of statuses) {
+    if (
+      status === 'completed' ||
+      status === 'error' ||
+      status === 'stopped' ||
+      status === 'expired'
+    ) {
+      return status;
+    }
+  }
+  return null;
+}
+
+function mergeTerminalMessage(
+  persisted: Message,
+  local: Message,
+  persistedStatus: TerminalMessageStatus
+): Message {
+  const persistedRun = persisted.WorkflowRunInfo;
+  const localRun = local.WorkflowRunInfo;
+  const persistedNodes = persistedRun?.runNodeInfo ?? [];
+  const localNodes = localRun?.runNodeInfo ?? [];
+  const localTempKey = stringValue(local.messageData?.tempKey);
+
+  return {
+    ...local,
+    ...persisted,
+    messageId: persisted.messageId || local.messageId,
+    query: persisted.query || local.query,
+    WorkflowRunInfo:
+      persistedRun || localRun
+        ? {
+            ...(localRun ?? { id: '', status: persistedStatus, runNodeInfo: [] }),
+            ...persistedRun,
+            id: persistedRun?.id || localRun?.id || '',
+            status: persistedStatus,
+            runNodeInfo: persistedNodes.length > 0 ? persistedNodes : localNodes,
+          }
+        : undefined,
+    clientState: {
+      ...(local.clientState ?? { phase: 'completed' }),
+      ...persisted.clientState,
+      phase: 'completed',
+      status: persistedStatus,
+    },
+    messageData: {
+      ...local.messageData,
+      ...persisted.messageData,
+      ...(localTempKey ? { tempKey: localTempKey } : {}),
+    },
+    generatedImages:
+      persisted.generatedImages && persisted.generatedImages.length > 0
+        ? persisted.generatedImages
+        : local.generatedImages,
+  };
+}
+
 function mergeMessages(persisted: Message, local: Message): Message {
+  const persistedTerminalStatus = terminalMessageStatus(persisted);
+  if (persistedTerminalStatus) {
+    return mergeTerminalMessage(persisted, local, persistedTerminalStatus);
+  }
+
   if (!isLiveMessage(local)) {
     return {
       ...local,
@@ -82,18 +148,48 @@ export function reconcileConversationMessages(
   if (persistedMessages.length === 0) return localMessages;
 
   const matchedLocalIndexes = new Set<number>();
-  const reconciled = persistedMessages.map(persisted => {
+  const persistedMatchIndexes = persistedMessages.map(persisted => {
     const localIndex = localMessages.findIndex(
       (local, index) => !matchedLocalIndexes.has(index) && messagesShareIdentity(persisted, local)
     );
-    if (localIndex < 0) return persisted;
-
-    matchedLocalIndexes.add(localIndex);
-    return mergeMessages(persisted, localMessages[localIndex]);
+    if (localIndex >= 0) matchedLocalIndexes.add(localIndex);
+    return localIndex;
   });
 
-  localMessages.forEach((local, index) => {
-    if (!matchedLocalIndexes.has(index)) reconciled.push(local);
+  if (matchedLocalIndexes.size === 0) {
+    return [...persistedMessages, ...localMessages];
+  }
+
+  const persistedByLocalIndex = new Map<number, Message>();
+  const persistedBeforeLocalIndex = new Map<number, Message[]>();
+  const persistedTail: Message[] = [];
+
+  persistedMessages.forEach((persisted, persistedIndex) => {
+    const localIndex = persistedMatchIndexes[persistedIndex];
+    if (localIndex >= 0) {
+      persistedByLocalIndex.set(localIndex, persisted);
+      return;
+    }
+
+    const nextMatchedLocalIndex = persistedMatchIndexes
+      .slice(persistedIndex + 1)
+      .find(index => index >= 0);
+    if (nextMatchedLocalIndex === undefined) {
+      persistedTail.push(persisted);
+      return;
+    }
+
+    const bucket = persistedBeforeLocalIndex.get(nextMatchedLocalIndex) ?? [];
+    bucket.push(persisted);
+    persistedBeforeLocalIndex.set(nextMatchedLocalIndex, bucket);
   });
+
+  const reconciled: Message[] = [];
+  localMessages.forEach((local, localIndex) => {
+    reconciled.push(...(persistedBeforeLocalIndex.get(localIndex) ?? []));
+    const persisted = persistedByLocalIndex.get(localIndex);
+    reconciled.push(persisted ? mergeMessages(persisted, local) : local);
+  });
+  reconciled.push(...persistedTail);
   return reconciled;
 }

@@ -90,6 +90,65 @@ const completedPersisted = message({
 const reconciledCompleted = reconcileConversationMessages([completedPersisted], [completedLocal]);
 assert.equal(reconciledCompleted[0].answer, '数据库中的最终结果');
 
+const stalePendingLocal = message({
+  messageId: 'message-terminal',
+  workflowRunId: 'run-terminal',
+  tempKey: 'live-terminal',
+  query: 'terminal turn',
+  answer: 'partial local answer',
+  status: 'pending_approval',
+  phase: 'streaming',
+  nodes: [{ nodeId: 'local-node', status: 'paused' }],
+});
+const completedTerminal = message({
+  messageId: 'message-terminal',
+  workflowRunId: 'run-terminal',
+  query: 'terminal turn',
+  answer: 'authoritative persisted answer',
+  status: 'completed',
+});
+const terminalResult = reconcileConversationMessages([completedTerminal], [stalePendingLocal]);
+assert.equal(terminalResult[0].WorkflowRunInfo.status, 'completed');
+assert.equal(terminalResult[0].clientState.status, 'completed');
+assert.equal(terminalResult[0].clientState.phase, 'completed');
+assert.equal(terminalResult[0].answer, 'authoritative persisted answer');
+assert.equal(terminalResult[0].messageData.tempKey, 'live-terminal');
+assert.equal(terminalResult[0].WorkflowRunInfo.runNodeInfo[0].nodeId, 'local-node');
+for (const terminalStatus of ['stopped', 'error', 'expired']) {
+  const persistedTerminal = message({
+    messageId: 'message-terminal',
+    workflowRunId: 'run-terminal',
+    answer: `${terminalStatus} persisted answer`,
+    status: terminalStatus,
+  });
+  const result = reconcileConversationMessages([persistedTerminal], [stalePendingLocal]);
+  assert.equal(result[0].WorkflowRunInfo.status, terminalStatus);
+  assert.equal(result[0].clientState.status, terminalStatus);
+  assert.equal(result[0].answer, `${terminalStatus} persisted answer`);
+}
+
+const thirdPersisted = message({
+  messageId: 'message-3',
+  workflowRunId: 'run-3',
+  query: 'third turn',
+});
+const middleLocal = message({
+  workflowRunId: 'run-2',
+  tempKey: 'live-middle',
+  query: 'second pending turn',
+  status: 'pending_approval',
+  phase: 'streaming',
+});
+const orderedResult = reconcileConversationMessages(
+  [firstPersisted, thirdPersisted],
+  [firstPersisted, middleLocal, thirdPersisted]
+);
+assert.deepEqual(
+  orderedResult.map(item => item.query),
+  [firstPersisted.query, 'second pending turn', 'third turn'],
+  'an unprojected local message must remain between its persisted neighbors'
+);
+
 const controllerSource = await readFile(
   new URL('../src/components/chat/controllers/single-chat-controller.ts', import.meta.url),
   'utf8'

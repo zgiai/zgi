@@ -127,6 +127,9 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
         : null;
   const isEmptyStoppedWorkflow =
     !hasAi &&
+    !hasImages &&
+    !hasAddon &&
+    !hasQuestionAnswerTranscript &&
     (message.WorkflowRunInfo?.status === 'stopped' || message.clientState?.status === 'stopped');
   const nodeItems = useMemo(() => {
     const nodes = message.WorkflowRunInfo?.runNodeInfo ?? [];
