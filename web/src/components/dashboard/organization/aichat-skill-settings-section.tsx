@@ -4,6 +4,10 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } f
 import { useQueryClient } from '@tanstack/react-query';
 import { AlertCircle, CheckCircle2, Loader2, Trash2, Upload } from 'lucide-react';
 import { toast } from 'sonner';
+import {
+  usePageContextRegistration,
+  type AIChatPageContextItem,
+} from '@/components/aichat/page-context';
 import { AIChatSkillIcon } from '@/components/chat/variants/aichat/skill-icon';
 import {
   getAIChatSkillDisplayInfo,
@@ -706,6 +710,82 @@ export function AIChatSkillSettingsSection() {
       statusFilter,
     ]
   );
+  const skillPageContextItems = useMemo<AIChatPageContextItem[]>(() => {
+    const enabledSet = new Set(enabledSkillIds);
+    const invalidCount = manageableSkills.filter(isInvalidSkill).length;
+    const dependencyUnavailableCount = manageableSkills.filter(
+      skill => skillAvailability[skill.skill_id] !== 'ready'
+    ).length;
+    const selectedAvailability = selectedSkill
+      ? (skillAvailability[selectedSkill.skill_id] ?? 'unavailable')
+      : null;
+    const selectedStatus = selectedSkill
+      ? isInvalidSkill(selectedSkill)
+        ? 'invalid'
+        : enabledSet.has(selectedSkill.skill_id)
+          ? 'enabled'
+          : 'disabled'
+      : null;
+
+    return [
+      {
+        id: 'console.skills',
+        type: 'page',
+        title: t('organization.aichatSkills.title'),
+        description: t('organization.aichatSkills.description'),
+        href: '/console/skills',
+        source: 'console-skills',
+        status: isError ? 'error' : isLoading ? 'loading' : 'available',
+        metadata: {
+          page: 'console.skills',
+          route: '/console/skills',
+          resource_kind: 'page',
+          context_ready: !isLoading && !isError,
+          manageable_skill_count: manageableSkills.length,
+          visible_skill_count: filteredSkills.length,
+          enabled_skill_count: enabledSkillIds.length,
+          disabled_skill_count: manageableSkills.filter(
+            skill => !isInvalidSkill(skill) && !enabledSet.has(skill.skill_id)
+          ).length,
+          invalid_skill_count: invalidCount,
+          dependency_unavailable_count: dependencyUnavailableCount,
+          search: searchQuery.trim(),
+          scenario_filter: scenarioFilter,
+          capability_filter: capabilityFilter,
+          source_filter: sourceFilter,
+          status_filter: statusFilter,
+          dependency_filter: dependencyFilter,
+          auto_save_status: saveStatus,
+          selected_skill_name: selectedSkill?.name ?? null,
+          selected_skill_status: selectedStatus,
+          selected_skill_dependency_availability: selectedAvailability,
+        },
+      },
+    ];
+  }, [
+    capabilityFilter,
+    dependencyFilter,
+    enabledSkillIds,
+    filteredSkills.length,
+    isError,
+    isLoading,
+    manageableSkills,
+    saveStatus,
+    scenarioFilter,
+    searchQuery,
+    selectedSkill,
+    skillAvailability,
+    sourceFilter,
+    statusFilter,
+    t,
+  ]);
+
+  usePageContextRegistration(skillPageContextItems, {
+    scopeId: 'console-skills',
+    replace: true,
+    priority: 80,
+    visibility: 'current',
+  });
 
   useEffect(() => {
     if (capabilityFilter !== 'all' && !availableCapabilities.includes(capabilityFilter)) {

@@ -145,7 +145,9 @@ export function ModelSelector({
 
   // Track open state
   const [open, setOpen] = useState(false);
-  const [internalSelected, setInternalSelected] = useState<ModelSelectorValue | null>(null);
+  const [internalSelected, setInternalSelected] = useState<ModelSelectorValue | null>(
+    () => defaultValue ?? null
+  );
 
   const { canManageModelConfig } = useAccountCapabilities();
 
@@ -514,11 +516,13 @@ export function ModelSelector({
     return undefined;
   }, [isControlledByValue, isControlledByModelProps, value, modelProps]);
 
-  const uncontrolledDefaultValue = useMemo(() => {
-    if (isControlledByValue || isControlledByModelProps) return undefined;
-    if (defaultValue && defaultValue.model) return serializeValue(defaultValue);
-    return undefined;
-  }, [isControlledByValue, isControlledByModelProps, defaultValue]);
+  const selectValue = useMemo(() => {
+    if (isControlledByValue || isControlledByModelProps) {
+      return controlledValue ?? '';
+    }
+    if (!internalSelected?.model) return '';
+    return serializeValue(internalSelected);
+  }, [controlledValue, internalSelected, isControlledByModelProps, isControlledByValue]);
 
   useEffect(() => {
     if (!onModelPropsChange) return;
@@ -585,8 +589,7 @@ export function ModelSelector({
   return (
     <div className="relative">
       <Select
-        value={controlledValue}
-        defaultValue={uncontrolledDefaultValue}
+        value={selectValue}
         onValueChange={handleModelSelect}
         disabled={disabled || isLoading}
         onOpenChange={handleOpenChange}
