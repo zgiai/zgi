@@ -42,3 +42,37 @@ func TestProvideGinEngine_AllowsSSEConnectionHeaderPreflight(t *testing.T) {
 		t.Fatalf("Access-Control-Allow-Headers = %q, want connection", allowHeaders)
 	}
 }
+
+func TestProvideGinEngine_ExposesAgentSSEIdentityHeaders(t *testing.T) {
+	previousConfig := config.GlobalConfig
+	defer func() {
+		config.GlobalConfig = previousConfig
+	}()
+
+	const origin = "https://c-cloud.zgi.im"
+	config.GlobalConfig = &config.Config{
+		Server: config.ServerConfig{
+			Mode:             gin.TestMode,
+			CORSAllowOrigins: []string{origin},
+		},
+	}
+
+	engine := provideGinEngine(config.GlobalConfig, observability.NewZGIReporter(), &OpenTelemetryResource{})
+	engine.GET("/stream", func(c *gin.Context) {
+		c.Header("X-ZGI-Conversation-ID", "conversation-id")
+		c.Header("X-ZGI-Message-ID", "message-id")
+		c.Status(http.StatusOK)
+	})
+	req := httptest.NewRequest(http.MethodGet, "/stream", nil)
+	req.Header.Set("Origin", origin)
+
+	recorder := httptest.NewRecorder()
+	engine.ServeHTTP(recorder, req)
+
+	exposed := strings.ToLower(recorder.Header().Get("Access-Control-Expose-Headers"))
+	for _, header := range []string{"x-zgi-conversation-id", "x-zgi-message-id"} {
+		if !strings.Contains(exposed, header) {
+			t.Fatalf("Access-Control-Expose-Headers = %q, want %q", exposed, header)
+		}
+	}
+}

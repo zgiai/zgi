@@ -128,7 +128,7 @@ func (h *AgentsHandler) ChatAPIKeyAgent(c *gin.Context) {
 		return
 	}
 
-	setupAgentSSE(c)
+	setupPreparedAgentSSE(c, prepared)
 	_ = writeAgentSSE(c, "message_start", gin.H{
 		"conversation_id": prepared.Conversation.ID.String(),
 		"message_id":      prepared.Message.ID.String(),

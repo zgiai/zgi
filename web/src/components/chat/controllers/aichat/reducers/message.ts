@@ -329,7 +329,13 @@ export function applyMessageStartState(
         updated_at: createdAt,
       }
     : createdMessage;
-  const previousStreaming = current.streamingByMessageId[payload.message_id];
+  const previousStreaming =
+    current.streamingByMessageId[payload.message_id] ??
+    (context.previousConversationId
+      ? Object.values(current.streamingByMessageId).find(
+          streaming => streaming.conversation_id === context.previousConversationId
+        )
+      : undefined);
   if (isStaleAIChatStreamEvent(eventId, previousStreaming?.last_event_id)) {
     return current;
   }
@@ -353,6 +359,9 @@ export function applyMessageStartState(
   const nextStoppingByConversation = {
     ...current.stoppingByConversation,
   };
+  const nextConnectionByConversation = {
+    ...current.connectionByConversation,
+  };
   const nextStreamingByMessageId = {
     ...current.streamingByMessageId,
   };
@@ -373,6 +382,7 @@ export function applyMessageStartState(
     delete nextLoadingOlderByConversation[context.previousConversationId];
     delete nextRecoveringByConversation[context.previousConversationId];
     delete nextStoppingByConversation[context.previousConversationId];
+    delete nextConnectionByConversation[context.previousConversationId];
     Object.values(current.streamingByMessageId).forEach(streaming => {
       if (streaming.conversation_id === context.previousConversationId) {
         delete nextStreamingByMessageId[streaming.message_id];
@@ -435,6 +445,11 @@ export function applyMessageStartState(
     loadingOlderByConversation: nextLoadingOlderByConversation,
     recoveringByConversation: nextRecoveringByConversation,
     stoppingByConversation: nextStoppingByConversation,
+    connectionByConversation: {
+      ...nextConnectionByConversation,
+      [payload.conversation_id]:
+        nextConnectionByConversation[payload.conversation_id] ?? 'connected',
+    },
     streamingByMessageId: nextStreamingByMessageId,
   };
 }
