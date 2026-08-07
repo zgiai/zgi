@@ -2,7 +2,6 @@ package graph_engine
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"time"
 
@@ -18,8 +17,8 @@ func (e *WorkflowEngine) executeNode(ctx context.Context, nodeID string, state *
 	if e.IsStopped() {
 		logger.Info("Workflow stopped, skipping node execution: %s", nodeID)
 		state.mu.Lock()
-		state.Status = shared.FAILED
-		state.Error = errors.New("workflow stopped by user")
+		state.Status = shared.SKIPPED
+		state.Error = nil
 		state.EndTime = time.Now()
 		state.mu.Unlock()
 		return
@@ -61,6 +60,7 @@ func (e *WorkflowEngine) executeNode(ctx context.Context, nodeID string, state *
 		state.mu.Lock()
 		state.EndTime = time.Now()
 		executionDuration := state.EndTime.Sub(state.StartTime)
+		canceledByUser := false
 
 		if result != nil {
 			state.Inputs = result.Inputs
@@ -72,15 +72,18 @@ func (e *WorkflowEngine) executeNode(ctx context.Context, nodeID string, state *
 
 		if err != nil {
 			err = shared.ResolveContextError(ctx, err)
-			if result != nil && result.Status != "" {
-				state.Status = result.Status
-			} else {
-				state.Status = shared.FAILED
-			}
-			state.Error = err
 			if shared.IsContextCancellation(ctx, err) {
+				state.Status = shared.SKIPPED
+				state.Error = nil
+				canceledByUser = true
 				logger.Info("Node execution canceled for nodeID: %s, nodeType: %s, duration: %v", nodeID, state.NodeType, executionDuration)
 			} else {
+				if result != nil && result.Status != "" {
+					state.Status = result.Status
+				} else {
+					state.Status = shared.FAILED
+				}
+				state.Error = err
 				logger.Error(fmt.Sprintf("Node execution failed for nodeID: %s, nodeType: %s, duration: %v", nodeID, state.NodeType, executionDuration), err)
 			}
 		} else {
@@ -115,6 +118,13 @@ func (e *WorkflowEngine) executeNode(ctx context.Context, nodeID string, state *
 			}
 		}
 		state.mu.Unlock()
+		if canceledByUser {
+			// The durable workflow stop barrier owns the public stopped node event.
+			// Suppress this local callback so it cannot append a late failed event or
+			// trigger failure diagnostics after the workflow has already stopped.
+			e.signalStatusChange()
+			return
+		}
 
 		// Invoke onNodeFinished callback for real-time event streaming (used by iteration subgraphs)
 		if e.onNodeFinished != nil {

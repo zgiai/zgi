@@ -458,13 +458,14 @@ func TestProcessTimelineRecorderReusesPendingGovernedToolCallRuntimeID(t *testin
 	}
 	recorder := newProcessTimelineRecorder(context.Background(), context.Background(), &service{}, prepared, nil)
 
-	recorder.RecordInvocationStart(skills.SkillAgentManagement, "delete_agent", map[string]interface{}{"agent_id": "agent-1"})
+	recorder.RecordInvocationStart("call-delete-agent-1", skills.SkillAgentManagement, "delete_agent", map[string]interface{}{"agent_id": "agent-1"})
 	recorder.RecordInvocationError(skills.SkillTrace{
-		Kind:     "tool_call",
-		SkillID:  skills.SkillAgentManagement,
-		ToolName: "delete_agent",
-		Status:   "error",
-		Error:    "agent not found",
+		Kind:         "tool_call",
+		InvocationID: "call-delete-agent-1",
+		SkillID:      skills.SkillAgentManagement,
+		ToolName:     "delete_agent",
+		Status:       "error",
+		Error:        "agent not found",
 	})
 
 	invocations := skillInvocationsFromMetadata(message.Metadata["skill_invocations"])
@@ -480,6 +481,9 @@ func TestProcessTimelineRecorderReusesPendingGovernedToolCallRuntimeID(t *testin
 	}
 	if got := stringFromAny(invocation["error"]); got != "agent not found" {
 		t.Fatalf("error = %q, want agent not found; invocation=%#v", got, invocation)
+	}
+	if got := stringFromAny(invocation["invocation_id"]); got != "call-delete-agent-1" {
+		t.Fatalf("invocation_id = %q, want call-delete-agent-1; invocation=%#v", got, invocation)
 	}
 	if governance := governanceMapFromAny(invocation["governance"]); len(governance) == 0 {
 		t.Fatalf("governance metadata was dropped: %#v", invocation)
@@ -759,13 +763,14 @@ func TestProcessTimelineRecorderReusesMatchingGovernedToolCallRuntimeID(t *testi
 	}
 	recorder := newProcessTimelineRecorder(context.Background(), context.Background(), &service{}, prepared, nil)
 
-	recorder.RecordInvocationStart(skills.SkillAgentManagement, "delete_agent", map[string]interface{}{"agent_id": "agent-target"})
+	recorder.RecordInvocationStart("call-delete-agent-target", skills.SkillAgentManagement, "delete_agent", map[string]interface{}{"agent_id": "agent-target"})
 	recorder.RecordInvocationEnd(skills.SkillTrace{
-		Kind:     "tool_call",
-		SkillID:  skills.SkillAgentManagement,
-		ToolName: "delete_agent",
-		Status:   "success",
-		Result:   map[string]interface{}{"deleted_count": 1},
+		Kind:         "tool_call",
+		InvocationID: "call-delete-agent-target",
+		SkillID:      skills.SkillAgentManagement,
+		ToolName:     "delete_agent",
+		Status:       "success",
+		Result:       map[string]interface{}{"deleted_count": 1},
 	})
 
 	invocations := skillInvocationsFromMetadata(message.Metadata["skill_invocations"])
@@ -777,6 +782,9 @@ func TestProcessTimelineRecorderReusesMatchingGovernedToolCallRuntimeID(t *testi
 	}
 	if got := stringFromAny(invocations[0]["status"]); got != "success" {
 		t.Fatalf("target status = %q, want success; invocations=%#v", got, invocations)
+	}
+	if got := stringFromAny(invocations[0]["invocation_id"]); got != "call-delete-agent-target" {
+		t.Fatalf("target invocation_id = %q, want call-delete-agent-target; invocations=%#v", got, invocations)
 	}
 	if got := stringFromAny(invocations[1]["runtime_id"]); got != otherRuntimeID {
 		t.Fatalf("other runtime_id = %q, want %q; invocations=%#v", got, otherRuntimeID, invocations)

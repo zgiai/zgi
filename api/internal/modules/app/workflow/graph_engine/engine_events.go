@@ -2,7 +2,6 @@ package graph_engine
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"reflect"
 	"time"
@@ -23,11 +22,7 @@ func (e *WorkflowEngine) consumeNodeEvents(
 	for event := range eventChan {
 		if e.IsStopped() {
 			logger.Info("Workflow stopped during node event processing: %s", nodeID)
-			state.mu.Lock()
-			state.Status = shared.FAILED
-			state.Error = errors.New("workflow stopped by user")
-			state.EndTime = time.Now()
-			state.mu.Unlock()
+			*execErr = context.Canceled
 			return false
 		}
 

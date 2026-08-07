@@ -28,6 +28,14 @@ func TestExecuteReturnsContextCanceledWhenActiveNodeIsCanceled(t *testing.T) {
 	engine.SetNodeRunner(runner)
 	engine.SetRuntimeState(entities.NewGraphRuntimeState(entities.NewVariablePool()), &entities.Graph{Config: map[string]any{}})
 	engine.AddNode("llm", shared.LLM, map[string]any{"id": "llm"})
+	finished := make(chan string, 1)
+	detailedFinished := make(chan NodeFinishedEvent, 1)
+	engine.SetNodeEventCallbacks(nil, func(nodeID string, _ string, _ string, _ map[string]any, _ string, _ error) {
+		finished <- nodeID
+	})
+	engine.SetDetailedNodeFinishedCallback(func(event NodeFinishedEvent) {
+		detailedFinished <- event
+	})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
@@ -49,6 +57,26 @@ func TestExecuteReturnsContextCanceledWhenActiveNodeIsCanceled(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("timed out waiting for canceled workflow")
+	}
+
+	select {
+	case nodeID := <-finished:
+		t.Fatalf("onNodeFinished called for canceled node %q", nodeID)
+	default:
+	}
+	select {
+	case event := <-detailedFinished:
+		t.Fatalf("onNodeFinishedDetailed called for canceled node %#v", event)
+	default:
+	}
+	state, ok := engine.GetNodeStatus("llm")
+	if !ok {
+		t.Fatal("canceled node state was not found")
+	}
+	state.mu.RLock()
+	defer state.mu.RUnlock()
+	if state.Status != shared.SKIPPED || state.Error != nil {
+		t.Fatalf("canceled node status/error = %q/%v, want skipped/nil", state.Status, state.Error)
 	}
 }
 

@@ -306,15 +306,16 @@ func nonVisibleTraceCarriesMetadata(trace skills.SkillTrace) bool {
 	}
 }
 
-func (r *processTimelineRecorder) RecordInvocationStart(skillID string, toolName string, arguments map[string]interface{}) error {
+func (r *processTimelineRecorder) RecordInvocationStart(invocationID string, skillID string, toolName string, arguments map[string]interface{}) error {
 	if r == nil || r.service == nil || r.prepared == nil || r.prepared.Message == nil {
 		return nil
 	}
 	invocation := newSkillInvocation("tool_call", skillID, toolName, "running", map[string]interface{}{
-		"arguments": arguments,
+		"invocation_id": strings.TrimSpace(invocationID),
+		"arguments":     arguments,
 	})
 	invocation["runtime_id"] = r.runtimeIDForStart(invocation)
-	payload := skillCallStartPayload(r.prepared, stringFromAny(invocation["runtime_id"]), skillID, toolName, arguments)
+	payload := skillCallStartPayload(r.prepared, invocationID, skillID, toolName, arguments)
 	copyInvocationRuntimeFields(payload, invocation)
 	return r.recordInvocationEvent(streamEventSkillCallStart, payload, invocation)
 }
