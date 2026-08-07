@@ -433,6 +433,21 @@ assert.match(
   'chat answers must preserve workflow round separators'
 );
 assert.match(
+  chatMessageItem,
+  /workflowPauseStatus[\s\S]*?workflowRunMonitor\.pendingApprovalTitle[\s\S]*?workflowRunMonitor\.pendingQuestionTitle/,
+  'empty paused workflow messages must render an explicit user-facing pause state'
+);
+assert.match(
+  chatMessageItem,
+  /isEmptyStoppedWorkflow[\s\S]*?workflowRunMonitor\.stoppedTitle[\s\S]*?workflowRunMonitor\.stoppedDescription/,
+  'an empty stopped workflow message must render a clear stopped state instead of a placeholder'
+);
+assert.match(
+  chatMessageItem,
+  /role="status"[\s\S]*?aria-live="polite"/,
+  'the workflow pause state must be exposed to assistive technology'
+);
+assert.match(
   workflowRunResults,
   /<MarkdownViewer[\s\S]*?preserveSoftBreaks/,
   'workflow run results must preserve authored soft line breaks'

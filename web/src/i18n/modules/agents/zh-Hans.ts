@@ -29,6 +29,12 @@ const messages: AgentsMessages = {
   },
   workflowRunMonitor: {
     title: '工作流',
+    pendingApprovalTitle: '等待你的确认',
+    pendingApprovalDescription: '工作流已暂停。完成当前审批后，将从暂停位置继续执行。',
+    pendingQuestionTitle: '等待你补充信息',
+    pendingQuestionDescription: '工作流已暂停。补充所需信息后，将从暂停位置继续执行。',
+    stoppedTitle: '已停止生成',
+    stoppedDescription: '本轮任务已停止，没有生成可展示的结果。',
   },
 
   // Status indicators

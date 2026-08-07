@@ -27,6 +27,14 @@ const messages = {
   },
   workflowRunMonitor: {
     title: 'Workflow',
+    pendingApprovalTitle: 'Waiting for confirmation',
+    pendingApprovalDescription:
+      'This workflow is paused. Complete the pending approval to continue from here.',
+    pendingQuestionTitle: 'Waiting for your response',
+    pendingQuestionDescription:
+      'This workflow is paused. Provide the requested information to continue from here.',
+    stoppedTitle: 'Generation stopped',
+    stoppedDescription: 'This run was stopped before it produced a result to display.',
   },
   // Status indicators
   status: {
