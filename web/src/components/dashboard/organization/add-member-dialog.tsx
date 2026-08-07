@@ -859,16 +859,16 @@ export function AddMemberDialog({
       </Dialog>
 
       <Dialog open={!!rejectingRequestId} onOpenChange={handleRejectDialogOpenChange}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
+        <DialogContent className="max-w-md overflow-hidden p-0">
+          <DialogHeader className="px-6 pb-3 pt-6">
             <DialogTitle>{t('organization.contacts.addMember.rejectDialogTitle')}</DialogTitle>
           </DialogHeader>
-          <DialogBody className="space-y-3 px-0">
+          <DialogBody className="space-y-4 px-6 pb-5 pt-0">
             <p className="text-sm text-muted-foreground">
               {t('organization.contacts.addMember.rejectDialogDescription')}
             </p>
             <div className="space-y-2">
-              <Label htmlFor="reject-reason">
+              <Label htmlFor="reject-reason" className="text-sm font-medium">
                 {t('organization.contacts.addMember.rejectReason')}
               </Label>
               <Textarea
@@ -878,11 +878,11 @@ export function AddMemberDialog({
                 placeholder={t('organization.contacts.addMember.rejectReasonPlaceholder')}
                 maxLength={500}
                 showCharacterCount
-                className="min-h-28 resize-none"
+                className="min-h-28 resize-none rounded-md"
               />
             </div>
           </DialogBody>
-          <DialogFooter className="gap-2 px-0 pb-0">
+          <DialogFooter className="border-t bg-muted/40 px-6 py-4">
             <Button
               type="button"
               variant="ghost"
@@ -896,6 +896,7 @@ export function AddMemberDialog({
               variant="destructive"
               onClick={handleConfirmReject}
               disabled={isRejectingRequest}
+              className="min-w-24"
             >
               {isRejectingRequest
                 ? t('organization.contacts.addMember.rejecting')
