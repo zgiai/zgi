@@ -1082,16 +1082,19 @@ func (c *WeaviateClient) deleteObjectsByFieldBatch(ctx context.Context, payload 
 }
 
 func isWeaviateMissingClassResponse(statusCode int, body []byte) bool {
-	if statusCode < http.StatusBadRequest || statusCode >= http.StatusInternalServerError {
+	if statusCode < http.StatusBadRequest {
 		return false
 	}
 
 	message := strings.ToLower(string(body))
-	return strings.Contains(message, "class") &&
-		(strings.Contains(message, "not found") ||
-			strings.Contains(message, "not exist") ||
-			strings.Contains(message, "does not exist") ||
-			strings.Contains(message, "could not find"))
+	if strings.Contains(message, "non-existing index") {
+		return true
+	}
+	missing := strings.Contains(message, "not found") ||
+		strings.Contains(message, "not exist") ||
+		strings.Contains(message, "does not exist") ||
+		strings.Contains(message, "could not find")
+	return missing && (strings.Contains(message, "class") || strings.Contains(message, "index"))
 }
 
 // DeleteObjectByID deletes a single object by its ID
@@ -1129,6 +1132,14 @@ func (c *WeaviateClient) DeleteObjectByID(ctx context.Context, className, object
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
 		// Read response body for detailed error information
 		body, _ := io.ReadAll(resp.Body)
+		if isWeaviateMissingClassResponse(resp.StatusCode, body) {
+			logger.Info("Weaviate class missing during object deletion, treating as already clean", map[string]interface{}{
+				"class":       className,
+				"object_id":   objectID,
+				"status_code": resp.StatusCode,
+			})
+			return nil
+		}
 		return fmt.Errorf("weaviate returned status code: %d, response: %s", resp.StatusCode, string(body))
 	}
 

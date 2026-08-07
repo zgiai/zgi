@@ -256,6 +256,34 @@ func TestWeaviateDeleteObjectsByFieldDoesNotTreatEndpointNotFoundAsMissingClass(
 	}
 }
 
+func TestWeaviateDeleteObjectByIDTreatsMissingIndexAsSuccess(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"error":[{"message":"delete from non-existing index for Entity_1"}]}`))
+	}))
+	defer server.Close()
+
+	client := NewWeaviateClient(&config.VectorStoreConfig{WeaviateEndpoint: server.URL})
+
+	if err := client.DeleteObjectByID(context.Background(), "Entity_1", "entity-1"); err != nil {
+		t.Fatalf("DeleteObjectByID should treat a missing index as already clean: %v", err)
+	}
+}
+
+func TestWeaviateDeleteObjectByIDDoesNotHideUnrelatedServerError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"error":[{"message":"storage unavailable"}]}`))
+	}))
+	defer server.Close()
+
+	client := NewWeaviateClient(&config.VectorStoreConfig{WeaviateEndpoint: server.URL})
+
+	if err := client.DeleteObjectByID(context.Background(), "Entity_1", "entity-1"); err == nil {
+		t.Fatal("DeleteObjectByID should return unrelated server errors")
+	}
+}
+
 func TestWeaviateSearchByFullTextRequestsBM25Score(t *testing.T) {
 	var graphQLBody string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -29,6 +29,7 @@ import {
 import { KNOWLEDGE_BASE_PERMISSION_ACTIONS } from '@/constants/permissions';
 import { Button } from '@/components/ui/button';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 
 const GRAPH_QUERY_LIMIT_ERROR = 'graph_query_limit_exceeded';
 const DEFAULT_OVERVIEW_NODE_LIMIT = 200;
@@ -114,7 +115,11 @@ export default function DatasetGraphPage() {
     2_000
   );
   const graphStatus = graphStatusData?.data;
-  const isGraphRepair = graphStatus?.status === 'failed';
+  const hasGraphSyncFailure =
+    (graphStatus?.status === 'failed' || graphStatus?.status === 'partial') &&
+    Boolean(graphStatus.error_code);
+  const isPartialGraphFailure = graphStatus?.status === 'partial' && hasGraphSyncFailure;
+  const isGraphRepair = graphStatus?.status === 'failed' || isPartialGraphFailure;
   const canQueryGraph = canViewGraph && graphStatus?.can_search === true;
   const trimmedSearchQuery = searchQuery.trim();
 
@@ -470,6 +475,14 @@ export default function DatasetGraphPage() {
           </div>
         </div>
       </div>
+
+      {isPartialGraphFailure && (
+        <Alert variant="destructive">
+          <AlertCircle className="h-4 w-4" />
+          <AlertTitle>{t('graph.partialFailureTitle')}</AlertTitle>
+          <AlertDescription>{t('graph.partialFailureDescription')}</AlertDescription>
+        </Alert>
+      )}
 
       {/* Main Content Area */}
       <div className="flex-1 flex gap-6 min-h-0">

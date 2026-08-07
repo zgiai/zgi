@@ -2,11 +2,9 @@ package worker
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
 	"github.com/google/uuid"
-	"github.com/hibiken/asynq"
 	"github.com/zgiai/zgi/api/internal/modules/dataset/graphflow"
 	graphmodel "github.com/zgiai/zgi/api/internal/modules/dataset/graphflow/model"
 	"github.com/zgiai/zgi/api/pkg/queue"
@@ -87,7 +85,7 @@ func advanceBatchPipelineAfterItemTask(
 		if err != nil {
 			return err
 		}
-		if _, err := taskManager.EnqueueTask(queued, asynq.Queue("graphflow")); err != nil && !errors.Is(err, asynq.ErrTaskIDConflict) {
+		if err := enqueueOrReactivateGraphFlowTask(taskManager, queued, taskID.String()); err != nil {
 			return err
 		}
 	}
@@ -122,7 +120,7 @@ func advanceBatchPipelineAfterItemTask(
 	if err != nil {
 		return err
 	}
-	if _, err := taskManager.EnqueueTask(queued, asynq.Queue("graphflow")); err != nil && !errors.Is(err, asynq.ErrTaskIDConflict) {
+	if err := enqueueOrReactivateGraphFlowTask(taskManager, queued, taskID.String()); err != nil {
 		return err
 	}
 	return nil

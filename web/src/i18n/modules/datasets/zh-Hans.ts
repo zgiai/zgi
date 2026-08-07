@@ -35,6 +35,9 @@ const messages: DatasetMessages = {
     confirmRepair: '确认修复',
     failedRepairHint:
       '图谱同步在重试 3 次后仍未成功。请点击“修复图谱”，从失败阶段继续执行并恢复图谱与知识库的一致性。',
+    partialFailureTitle: '知识图谱同步异常，需要修复',
+    partialFailureDescription:
+      '当前图谱仍可查看，但可能与知识库不完全一致。请点击“修复图谱”，从失败阶段继续执行并恢复一致性。',
     retryDocument: '重试',
     modelChangeConfirmation: '更改抽取模型会为当前全部文档重建图谱。是否继续？',
     runtimeUnavailable: '知识图谱运行环境不可用。',

@@ -2,7 +2,6 @@ package worker
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"time"
 
@@ -157,7 +156,7 @@ func (h *RunOutboxHandler) enqueueBatchExtractionTasks(ctx context.Context, run 
 		if err != nil {
 			return err
 		}
-		if _, err = h.taskManager.EnqueueTask(queued, asynq.Queue("graphflow")); err != nil && !errors.Is(err, asynq.ErrTaskIDConflict) {
+		if err = enqueueOrReactivateGraphFlowTask(h.taskManager, queued, task.ID.String()); err != nil {
 			return err
 		}
 	}
@@ -195,11 +194,7 @@ func (h *RunOutboxHandler) resumeBatchAfterCompletedExtraction(
 		if err != nil {
 			return err
 		}
-		_, err = h.taskManager.EnqueueTask(queued, asynq.Queue("graphflow"))
-		if errors.Is(err, asynq.ErrTaskIDConflict) {
-			return nil
-		}
-		return err
+		return enqueueOrReactivateGraphFlowTask(h.taskManager, queued, task.ID.String())
 	}
 
 	for _, stage := range []struct {
@@ -265,11 +260,13 @@ func (h *RunOutboxHandler) createRunItemTask(
 		return nil, result.Error
 	}
 	if result.RowsAffected == 0 {
+		var existing graphmodel.GraphFlowTask
 		if err := h.service.DB.WithContext(ctx).
 			Where("run_id = ? AND document_id = ? AND task_type = ?", run.ID, item.DocumentID, taskType).
-			First(task).Error; err != nil {
+			First(&existing).Error; err != nil {
 			return nil, err
 		}
+		return &existing, nil
 	}
 	return task, nil
 }
@@ -330,15 +327,13 @@ func (h *RunOutboxHandler) enqueueDocumentTask(ctx context.Context, run *graphmo
 		if err != nil {
 			return err
 		}
-		_, err = h.taskManager.EnqueueTask(queued, asynq.Queue("graphflow"))
-		return err
+		return enqueueOrReactivateGraphFlowTask(h.taskManager, queued, task.ID.String())
 	}
 	queued, err := CreateGraphFlowExtractionTask(task.ID.String(), h.taskManager)
 	if err != nil {
 		return err
 	}
-	_, err = h.taskManager.EnqueueTask(queued, asynq.Queue("graphflow"))
-	return err
+	return enqueueOrReactivateGraphFlowTask(h.taskManager, queued, task.ID.String())
 }
 
 func (h *RunOutboxHandler) enqueuePendingDocumentTasks(ctx context.Context, run *graphmodel.GraphFlowRun, documentID uuid.UUID) (bool, error) {
@@ -357,8 +352,7 @@ func (h *RunOutboxHandler) enqueuePendingDocumentTasks(ctx context.Context, run 
 		if err != nil {
 			return err
 		}
-		_, err = h.taskManager.EnqueueTask(queued, asynq.Queue("graphflow"))
-		return err
+		return enqueueOrReactivateGraphFlowTask(h.taskManager, queued, task.ID.String())
 	}
 
 	if task, queueType, ok := nextPendingDocumentTask(tasks); ok {

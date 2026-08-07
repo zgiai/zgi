@@ -177,13 +177,9 @@ func NewSyncHandler(svc *graphflow.Service, taskManager *queue.TaskManager, limi
 		}
 		reportProgress(3)
 
-		// Apply cleanup items from this batch before publishing new/updated
-		// projections. This keeps run completion aligned with the externally
-		// visible graph instead of waiting for the periodic garbage collector.
-		if err := cleanupPendingBatchProjections(ctx, svc, kbID); err != nil {
-			svc.TaskRepo.UpdateTaskFailed(ctx, taskID, err.Error())
-			return fmt.Errorf("failed to clean stale graph projections: %w", err)
-		}
+		// Cleanup tasks own the projections produced by their document. Graph
+		// sync must not sweep knowledge-base-wide pending deletes: doing so lets
+		// an unrelated add run inherit old cleanup failures and blocks the run.
 		reportProgress(5)
 
 		// 3. Sync pending entities in batches
@@ -484,48 +480,6 @@ func NewSyncHandler(svc *graphflow.Service, taskManager *queue.TaskManager, limi
 	}
 }
 
-func cleanupPendingBatchProjections(ctx context.Context, svc *graphflow.Service, kbID uuid.UUID) error {
-	relationships, err := svc.RelationshipRepo.FindPendingDeleteByKBID(ctx, kbID)
-	if err != nil {
-		return err
-	}
-	for _, relationship := range relationships {
-		if svc.Neo4jClient != nil {
-			if err := svc.Neo4jClient.DeleteRelationship(ctx, relationship.ID.String()); err != nil {
-				return err
-			}
-		}
-		if err := svc.RelationshipRepo.UpdateGraphState(ctx, relationship.ID, "deleted"); err != nil {
-			return err
-		}
-	}
-
-	entities, err := svc.EntityRepo.FindPendingDeleteByKBID(ctx, kbID)
-	if err != nil {
-		return err
-	}
-	for _, entity := range entities {
-		if svc.Neo4jClient != nil {
-			if err := svc.Neo4jClient.DeleteNode(ctx, entity.ID.String()); err != nil {
-				return err
-			}
-		}
-		if svc.WeaviateClient != nil {
-			className := fmt.Sprintf("Entity_%s", kbID.String())
-			if err := svc.WeaviateClient.DeleteObjectByID(ctx, className, entity.ID.String()); err != nil {
-				return err
-			}
-		}
-		if err := svc.EntityRepo.UpdateGraphState(ctx, entity.ID, "deleted", ""); err != nil {
-			return err
-		}
-		if err := svc.EntityRepo.UpdateVectorState(ctx, entity.ID, "deleted", "", ""); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 func enqueueVectorSyncTask(ctx context.Context, svc *graphflow.Service, taskManager *queue.TaskManager, graphSyncTask *model.GraphFlowTask) error {
 	if taskManager == nil {
 		return fmt.Errorf("task manager is not configured")
@@ -551,7 +505,7 @@ func enqueueVectorSyncTask(ctx context.Context, svc *graphflow.Service, taskMana
 		svc.TaskRepo.UpdateTaskFailed(ctx, vectorTask.ID, fmt.Sprintf("failed to create task: %v", err))
 		return fmt.Errorf("create vector_sync task: %w", err)
 	}
-	if _, err := taskManager.EnqueueTask(queued, asynq.Queue("graphflow")); err != nil {
+	if err := enqueueOrReactivateGraphFlowTask(taskManager, queued, vectorTask.ID.String()); err != nil {
 		svc.TaskRepo.UpdateTaskFailed(ctx, vectorTask.ID, fmt.Sprintf("failed to enqueue: %v", err))
 		return fmt.Errorf("enqueue vector_sync task: %w", err)
 	}

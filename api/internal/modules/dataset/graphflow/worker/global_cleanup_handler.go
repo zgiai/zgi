@@ -149,7 +149,7 @@ func (h *GlobalCleanupHandler) cleanEntities(ctx context.Context, limit int) err
 		}
 
 		// 2. Delete from Weaviate (if linked)
-		if h.svc.WeaviateClient != nil {
+		if h.svc.WeaviateClient != nil && entity.EmbeddingID != "" {
 			kbidStr := entity.KBID.String()
 			className := fmt.Sprintf("Entity_%s", kbidStr)
 

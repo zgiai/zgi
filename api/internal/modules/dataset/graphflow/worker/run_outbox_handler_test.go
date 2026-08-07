@@ -87,6 +87,32 @@ func TestRunOutboxHandlerAllowsCleanupForDeletedDocument(t *testing.T) {
 	}
 }
 
+func TestCreateRunItemTaskReturnsExistingTaskAfterConflict(t *testing.T) {
+	db := openRunOutboxHandlerTestDB(t)
+	run := runOutboxHandlerTestRun(graphmodel.GraphFlowRunModeBuild)
+	item := &graphmodel.GraphFlowRunItem{
+		ID:             uuid.New(),
+		RunID:          run.ID,
+		OrganizationID: run.OrganizationID,
+		DatasetID:      run.DatasetID,
+		Operation:      graphmodel.GraphFlowRunItemOperationAdd,
+		DocumentID:     *run.DocumentID,
+	}
+	handler := &RunOutboxHandler{service: &graphflow.Service{DB: db}}
+
+	created, err := handler.createRunItemTask(context.Background(), run, item, "extraction")
+	if err != nil {
+		t.Fatalf("create run item task: %v", err)
+	}
+	existing, err := handler.createRunItemTask(context.Background(), run, item, "extraction")
+	if err != nil {
+		t.Fatalf("load existing run item task: %v", err)
+	}
+	if existing.ID != created.ID {
+		t.Fatalf("existing task id=%s, want %s", existing.ID, created.ID)
+	}
+}
+
 func TestRunOutboxHandlerRejectsBuildForDeletedDocument(t *testing.T) {
 	db := openRunOutboxHandlerTestDB(t)
 	run := runOutboxHandlerTestRun(graphmodel.GraphFlowRunModeBuild)

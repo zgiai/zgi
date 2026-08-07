@@ -454,8 +454,7 @@ func enqueueNextSyncTasks(ctx context.Context, svc *graphflow.Service, taskManag
 		return fmt.Errorf("failed to create graph_sync task: %w", err)
 	}
 
-	_, err = taskManager.EnqueueTask(task, asynq.Queue("graphflow"))
-	if err != nil {
+	if err = enqueueOrReactivateGraphFlowTask(taskManager, task, graphSyncTaskID.String()); err != nil {
 		svc.TaskRepo.UpdateTaskFailed(ctx, graphSyncTaskID, fmt.Sprintf("failed to enqueue: %v", err))
 		logger.Error("Failed to enqueue graph_sync task", err)
 		return fmt.Errorf("failed to enqueue graph_sync task: %w", err)

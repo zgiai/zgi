@@ -744,8 +744,7 @@ func enqueueNextAlignmentTask(ctx context.Context, svc *graphflow.Service, taskM
 		return fmt.Errorf("failed to create alignment task: %w", err)
 	}
 
-	_, err = taskManager.EnqueueTask(task, asynq.Queue("graphflow"))
-	if err != nil {
+	if err = enqueueOrReactivateGraphFlowTask(taskManager, task, newTaskID.String()); err != nil {
 		svc.TaskRepo.UpdateTaskFailed(ctx, newTaskID, fmt.Sprintf("failed to enqueue: %v", err))
 		return fmt.Errorf("failed to enqueue alignment task: %w", err)
 	}

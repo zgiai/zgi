@@ -34,6 +34,9 @@ const messages = {
     confirmRepair: 'Confirm repair',
     failedRepairHint:
       'Graph synchronization stopped after three retries. Repair the graph to resume from the failed stage and restore consistency with the knowledge base.',
+    partialFailureTitle: 'Knowledge graph synchronization needs repair',
+    partialFailureDescription:
+      'The current graph remains available, but it may not fully match the knowledge base. Repair the graph to resume from the failed stage and restore consistency.',
     retryDocument: 'Retry',
     modelChangeConfirmation:
       'Changing the extraction model rebuilds the graph for all current documents. Continue?',
