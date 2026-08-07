@@ -124,6 +124,13 @@ function isInvalidSkill(skill: AIChatSkillMetadata): boolean {
   return skill.status === 'invalid';
 }
 
+function getSkillDependencyAvailability(
+  skill: AIChatSkillMetadata
+): 'ready' | 'unavailable' | 'unknown' {
+  if (!isInvalidSkill(skill)) return 'ready';
+  return /dependency|依赖/i.test(skill.validation_error ?? '') ? 'unavailable' : 'unknown';
+}
+
 function getScriptStatusLabelKey(skill: AIChatSkillMetadata): DashboardSuffix | null {
   if (!skill.has_scripts) return null;
   return skill.scripts_supported
@@ -714,10 +721,10 @@ export function AIChatSkillSettingsSection() {
     const enabledSet = new Set(enabledSkillIds);
     const invalidCount = manageableSkills.filter(isInvalidSkill).length;
     const dependencyUnavailableCount = manageableSkills.filter(
-      skill => skillAvailability[skill.skill_id] !== 'ready'
+      skill => getSkillDependencyAvailability(skill) === 'unavailable'
     ).length;
     const selectedAvailability = selectedSkill
-      ? (skillAvailability[selectedSkill.skill_id] ?? 'unavailable')
+      ? getSkillDependencyAvailability(selectedSkill)
       : null;
     const selectedStatus = selectedSkill
       ? isInvalidSkill(selectedSkill)
@@ -754,7 +761,7 @@ export function AIChatSkillSettingsSection() {
           capability_filter: capabilityFilter,
           source_filter: sourceFilter,
           status_filter: statusFilter,
-          dependency_filter: dependencyFilter,
+          dependency_filter: 'all',
           auto_save_status: saveStatus,
           selected_skill_name: selectedSkill?.name ?? null,
           selected_skill_status: selectedStatus,
@@ -764,7 +771,6 @@ export function AIChatSkillSettingsSection() {
     ];
   }, [
     capabilityFilter,
-    dependencyFilter,
     enabledSkillIds,
     filteredSkills.length,
     isError,
@@ -774,7 +780,6 @@ export function AIChatSkillSettingsSection() {
     scenarioFilter,
     searchQuery,
     selectedSkill,
-    skillAvailability,
     sourceFilter,
     statusFilter,
     t,
