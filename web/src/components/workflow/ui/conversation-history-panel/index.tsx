@@ -404,7 +404,6 @@ export function ConversationHistoryPanel({
                         <div className="max-w-[92%] rounded-2xl border bg-background px-4 py-3 text-sm shadow-sm">
                           <div className="prose prose-sm max-w-none dark:prose-invert">
                             <MarkdownViewer
-                              preserveSoftBreaks
                               content={
                                 isSensitiveOutputBlockedValue(message.answer)
                                   ? tCommon('sensitiveOutput.blocked')

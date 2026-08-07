@@ -83,7 +83,7 @@ export function ConversationContext({
         </div>
         <div className="text-sm leading-6">
           {activeMessage.answer ? (
-            <MarkdownViewer preserveSoftBreaks content={activeMessage.answer} />
+            <MarkdownViewer content={activeMessage.answer} />
           ) : (
             <div className="text-muted-foreground">{t('appLogs.noAnswerYet')}</div>
           )}

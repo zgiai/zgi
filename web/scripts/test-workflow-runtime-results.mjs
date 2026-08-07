@@ -76,9 +76,6 @@ const workflowRunHistoryContent = read(
 const workflowNodePanel = read('src/components/workflow/ui/node-floating-panel.tsx');
 const workflowCanvasPanels = read('src/components/workflow/ui/workflow-canvas-panels.tsx');
 const workflowCanvasWithDnd = read('src/components/workflow/canvas-with-dnd.tsx');
-const workflowRunResults = read(
-  'src/components/workflow/ui/workflow-run-panel/components/results.tsx'
-);
 const workflowRunHistory = read(
   'src/components/workflow/ui/workflow-run-panel/utils/history-view-data.ts'
 );
@@ -422,15 +419,15 @@ assert.match(
   /runtime_status: 'idle',[\s\S]*active_workflow_run_id: undefined/,
   'terminal callbacks must release the active run in the conversation summary projection'
 );
-assert.match(
+assert.doesNotMatch(
   markdownViewer,
-  /preserveSoftBreaks\s*&&\s*'whitespace-pre-wrap'/,
-  'MarkdownViewer must be able to render workflow-authored soft line breaks'
+  /whitespace-pre-wrap/,
+  'MarkdownViewer must not preserve structural whitespace between Markdown blocks'
 );
 assert.match(
-  chatMessageItem,
-  /<MarkdownViewer[\s\S]*?preserveSoftBreaks/,
-  'chat answers must preserve workflow round separators'
+  markdownViewer,
+  /const remarkPluginsList:[^\n]*\[[^\]]*remarkSoftBreaks/,
+  'MarkdownViewer must preserve authored soft line breaks through Markdown AST break nodes'
 );
 assert.match(
   chatMessageItem,
@@ -451,16 +448,6 @@ assert.match(
   chatMessageItem,
   /role="status"[\s\S]*?aria-live="polite"/,
   'the workflow pause state must be exposed to assistive technology'
-);
-assert.match(
-  workflowRunResults,
-  /<MarkdownViewer[\s\S]*?preserveSoftBreaks/,
-  'workflow run results must preserve authored soft line breaks'
-);
-assert.match(
-  workflowConversationHistory,
-  /<MarkdownViewer[\s\S]*?preserveSoftBreaks/,
-  'workflow history must render the same line breaks as live output'
 );
 assert.match(workflowConversationHistory, /id: 'conversation-history',[\s\S]*?order: 1/);
 assert.doesNotMatch(workflowConversationHistory, /<RunStatusBadge status=\{inspectorSummary\.status\}/);

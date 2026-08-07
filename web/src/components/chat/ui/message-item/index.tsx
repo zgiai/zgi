@@ -233,7 +233,6 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
               <MarkdownViewer
                 className="md-viewer break-words"
                 content={displayAnswer}
-                preserveSoftBreaks
                 isStreaming={isClientLoading}
                 renderIdentity={message.messageId}
               />
