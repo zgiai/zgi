@@ -169,6 +169,29 @@ func TestFetchLangfuseLiveObservation(t *testing.T) {
 	}
 }
 
+func TestLiveValuePresent(t *testing.T) {
+	tests := []struct {
+		name  string
+		value interface{}
+		want  bool
+	}{
+		{name: "nil", value: nil, want: false},
+		{name: "empty string", value: "", want: false},
+		{name: "json null", value: "null", want: false},
+		{name: "empty object", value: map[string]interface{}{}, want: false},
+		{name: "empty array", value: []interface{}{}, want: false},
+		{name: "non-empty object", value: map[string]interface{}{"temperature": 0.2}, want: true},
+		{name: "content", value: "protected", want: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := liveValuePresent(test.value); got != test.want {
+				t.Fatalf("liveValuePresent(%v) = %t, want %t", test.value, got, test.want)
+			}
+		})
+	}
+}
+
 func langfuseLiveTraceEndpoint(baseURL string) string {
 	baseURL = langfuseLiveHostURL(baseURL)
 	if strings.HasSuffix(baseURL, "/api/public/otel") {
@@ -186,6 +209,7 @@ type langfuseLiveObservation struct {
 	TraceName         string                 `json:"traceName"`
 	UserID            string                 `json:"userId"`
 	SessionID         string                 `json:"sessionId"`
+	Model             string                 `json:"model"`
 	ProvidedModelName string                 `json:"providedModelName"`
 	Input             interface{}            `json:"input"`
 	Output            interface{}            `json:"output"`
@@ -333,8 +357,12 @@ func auditLangfuseLiveObservation(
 	if observation.TraceName != "llm.chat" {
 		t.Fatalf("Langfuse trace name = %q, want llm.chat", observation.TraceName)
 	}
-	if observation.ProvidedModelName != "gpt-test" {
-		t.Fatalf("Langfuse model = %q, want gpt-test", observation.ProvidedModelName)
+	modelName := observation.Model
+	if modelName == "" {
+		modelName = observation.ProvidedModelName
+	}
+	if modelName != "gpt-test" {
+		t.Fatalf("Langfuse model = %q, want gpt-test", modelName)
 	}
 	if observation.ProjectID == "" {
 		t.Fatal("Langfuse readback omitted projectId")
@@ -354,12 +382,15 @@ func auditLangfuseLiveObservation(
 		t.Fatal("controlled Gateway path did not expose settled billing context")
 	}
 	assertLangfuseLiveString(t, observation.Metadata, "organization_id", billing.OrganizationID)
-	attributes, ok := observation.Metadata["attributes"].(map[string]interface{})
-	if !ok {
-		t.Fatalf("Langfuse metadata.attributes = %T, want object", observation.Metadata["attributes"])
+	assertLangfuseLiveNumber(
+		t,
+		langfuseLiveAttribute(observation.Metadata, "zgi.actual_credits"),
+		"metadata.attributes.zgi.actual_credits",
+		"18",
+	)
+	if got := fmt.Sprint(langfuseLiveAttribute(observation.Metadata, "zgi.status")); got != "success" {
+		t.Fatalf("Langfuse metadata attribute zgi.status = %q, want success", got)
 	}
-	assertLangfuseLiveString(t, attributes, "zgi.status", "success")
-	assertLangfuseLiveNumber(t, attributes["zgi.actual_credits"], "metadata.attributes.zgi.actual_credits", "18")
 	if liveValuePresent(observation.Input) || liveValuePresent(observation.Output) || liveValuePresent(observation.ModelParameters) {
 		t.Fatalf(
 			"capture=none produced protected fields: id=%q input_present=%t output_present=%t model_parameters_present=%t",
@@ -399,15 +430,30 @@ func assertLangfuseLiveNumber(t *testing.T, value interface{}, field string, wan
 	}
 }
 
+func langfuseLiveAttribute(metadata map[string]interface{}, key string) interface{} {
+	if attributes, ok := metadata["attributes"].(map[string]interface{}); ok {
+		if value, exists := attributes[key]; exists {
+			return value
+		}
+	}
+	return metadata["attributes."+key]
+}
+
 func liveValuePresent(value interface{}) bool {
 	if value == nil {
 		return false
 	}
-	if text, ok := value.(string); ok {
-		text = strings.TrimSpace(text)
+	switch typed := value.(type) {
+	case string:
+		text := strings.TrimSpace(typed)
 		return text != "" && text != "null"
+	case map[string]interface{}:
+		return len(typed) > 0
+	case []interface{}:
+		return len(typed) > 0
+	default:
+		return true
 	}
-	return true
 }
 
 func langfuseLiveTraceURL(baseURL string, projectID string, traceID string) string {
