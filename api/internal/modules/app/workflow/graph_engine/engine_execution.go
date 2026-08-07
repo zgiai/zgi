@@ -48,6 +48,11 @@ func (e *WorkflowEngine) executeNode(ctx context.Context, nodeID string, state *
 		status := state.Status
 		state.mu.RUnlock()
 
+		if shared.IsContextCancellation(ctx, spanErr) {
+			span.SetAttributes(attribute.String("zgi.workflow_node_status", "stopped"))
+			observability.EndSpan(span, nil)
+			return
+		}
 		span.SetAttributes(attribute.String("zgi.workflow_node_status", string(status)))
 		observability.EndSpan(span, spanErr)
 	}()
@@ -72,7 +77,11 @@ func (e *WorkflowEngine) executeNode(ctx context.Context, nodeID string, state *
 				state.Status = shared.FAILED
 			}
 			state.Error = err
-			logger.Error(fmt.Sprintf("Node execution failed for nodeID: %s, nodeType: %s, duration: %v", nodeID, state.NodeType, executionDuration), err)
+			if shared.IsContextCancellation(ctx, err) {
+				logger.Info("Node execution canceled for nodeID: %s, nodeType: %s, duration: %v", nodeID, state.NodeType, executionDuration)
+			} else {
+				logger.Error(fmt.Sprintf("Node execution failed for nodeID: %s, nodeType: %s, duration: %v", nodeID, state.NodeType, executionDuration), err)
+			}
 		} else {
 			if result != nil {
 				state.Status = result.Status
@@ -158,7 +167,11 @@ func (e *WorkflowEngine) executeNode(ctx context.Context, nodeID string, state *
 		logger.Info("Running node runner for nodeID: %s", nodeID)
 		runnerResult, runnerErr := e.nodeRunner.RunNode(ctx, req, eventChan)
 		if runnerErr != nil {
-			logger.Error(fmt.Sprintf("Node.Run returned error for nodeID: %s, error: %v", nodeID, runnerErr), runnerErr)
+			if shared.IsContextCancellation(ctx, runnerErr) {
+				logger.Info("Node runner canceled for nodeID: %s", nodeID)
+			} else {
+				logger.Error(fmt.Sprintf("Node.Run returned error for nodeID: %s, error: %v", nodeID, runnerErr), runnerErr)
+			}
 		} else {
 			logger.Info("Node runner completed without error for nodeID: %s", nodeID)
 		}
@@ -166,7 +179,7 @@ func (e *WorkflowEngine) executeNode(ctx context.Context, nodeID string, state *
 		nodeErr = runnerErr
 	}()
 
-	if !e.consumeNodeEvents(nodeID, state, eventChan, &result, &err) {
+	if !e.consumeNodeEvents(ctx, nodeID, state, eventChan, &result, &err) {
 		return
 	}
 	if result == nil && nodeResult != nil {

@@ -358,7 +358,9 @@ export function useRunWebAppWorkflowStream(
   const stop = useCallback(async () => {
     const taskId = taskIdRef.current;
     if (!taskId || !agentId) {
-      return;
+      const error = new Error('workflow stop is unavailable');
+      toast.error(t('workflow.stopFailed'));
+      throw error;
     }
     setIsStopping(true);
     try {

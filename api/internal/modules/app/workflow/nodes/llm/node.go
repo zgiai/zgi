@@ -153,6 +153,10 @@ func (n *Node) Run(ctx context.Context, eventChan chan *shared.NodeEventCh) erro
 	// Execute the LLM logic
 	result, err := n.executeRun(ctx, eventChan)
 	if err != nil {
+		if shared.IsContextCancellation(ctx, err) {
+			logger.InfoContext(n.logContext(ctx), "LLM node execution canceled")
+			return context.Canceled
+		}
 		// Send failure event
 		select {
 		case eventChan <- &shared.NodeEventCh{
@@ -403,6 +407,10 @@ func (n *Node) executeRun(ctx context.Context, eventChan chan *shared.NodeEventC
 		eventChan,
 	)
 	if err != nil {
+		if shared.IsContextCancellation(ctx, err) {
+			logger.InfoContext(logCtx, "LLM invocation canceled")
+			return nil, context.Canceled
+		}
 		logger.CriticalContext(logCtx, "failed to invoke LLM from workflow node", err)
 		failedErr := fmt.Errorf("failed to invoke LLM: %w", err)
 		processData := n.buildLLMProcessData(

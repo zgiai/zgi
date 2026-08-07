@@ -19,6 +19,10 @@ func (e *WorkflowEngine) Execute(ctx context.Context) (err error) {
 	ctx, span := observability.StartWorkflowRunSpan(ctx, e.workflowRunSpanAttributes()...)
 	defer func() {
 		span.SetAttributes(attribute.String("zgi.workflow_status", workflowErrorStatus(err)))
+		if errors.Is(err, context.Canceled) {
+			observability.EndSpan(span, nil)
+			return
+		}
 		observability.EndSpan(span, err)
 	}()
 
@@ -72,6 +76,10 @@ func (e *WorkflowEngine) Execute(ctx context.Context) (err error) {
 	// Sync node states to runtimeState.NodeRunState for subgraph event emission
 	e.syncNodeStatesToRuntimeState()
 
+	if errors.Is(ctx.Err(), context.Canceled) {
+		logger.Info("Workflow execution canceled")
+		return context.Canceled
+	}
 	result := e.getExecutionResult()
 	if result != nil {
 		logger.Error("Workflow execution failed: %v", result)
@@ -82,6 +90,9 @@ func (e *WorkflowEngine) Execute(ctx context.Context) (err error) {
 }
 
 func workflowErrorStatus(err error) string {
+	if errors.Is(err, context.Canceled) {
+		return "stopped"
+	}
 	if err != nil {
 		return "failed"
 	}

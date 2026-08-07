@@ -1,6 +1,7 @@
 package graph_engine
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"reflect"
@@ -11,6 +12,7 @@ import (
 )
 
 func (e *WorkflowEngine) consumeNodeEvents(
+	ctx context.Context,
 	nodeID string,
 	state *NodeState,
 	eventChan <-chan *shared.NodeEventCh,
@@ -76,7 +78,11 @@ func (e *WorkflowEngine) consumeNodeEvents(
 				}
 			}
 			if event.Error != nil {
-				logger.Error(fmt.Sprintf("Got error from RunFailed event for nodeID: %s, error: %v", nodeID, event.Error), event.Error)
+				if shared.IsContextCancellation(ctx, event.Error) {
+					logger.Info("RunFailed event canceled for nodeID: %s", nodeID)
+				} else {
+					logger.Error(fmt.Sprintf("Got error from RunFailed event for nodeID: %s, error: %v", nodeID, event.Error), event.Error)
+				}
 				*execErr = event.Error
 			} else {
 				logger.Warn("RunFailed event has no error for nodeID: %s", nodeID)
