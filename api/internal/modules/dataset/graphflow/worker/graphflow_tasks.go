@@ -16,6 +16,11 @@ const (
 	TypeGraphFlowCleanup    = "graphflow:cleanup"
 )
 
+// GraphFlowTaskMaxRetries is the number of retries after the initial attempt.
+// Keep handler-side eventual-consistency checks aligned with this value so a
+// task can always publish a durable terminal state before Asynq archives it.
+const GraphFlowTaskMaxRetries = 3
+
 // Concurrency configuration
 const (
 	ExtractionConcurrency = 10 // Number of segments processed concurrently within a single extraction task
@@ -55,7 +60,7 @@ func NewGraphFlowTask(taskType string, taskID string, taskManager *queue.TaskMan
 		taskType = taskManager.GetTaskTypeWithPrefix(taskType)
 	}
 
-	return asynq.NewTask(taskType, payloadBytes, asynq.TaskID(taskID), asynq.MaxRetry(3)), nil
+	return asynq.NewTask(taskType, payloadBytes, asynq.TaskID(taskID), asynq.MaxRetry(GraphFlowTaskMaxRetries)), nil
 }
 
 // NewGraphFlowCleanupTask creates a new asynq task for GraphFlow cleanup operations
@@ -76,5 +81,5 @@ func NewGraphFlowCleanupTask(taskID, documentID, kbID string, taskManager *queue
 		taskType = taskManager.GetTaskTypeWithPrefix(taskType)
 	}
 
-	return asynq.NewTask(taskType, payloadBytes, asynq.TaskID(taskID), asynq.MaxRetry(3)), nil
+	return asynq.NewTask(taskType, payloadBytes, asynq.TaskID(taskID), asynq.MaxRetry(GraphFlowTaskMaxRetries)), nil
 }

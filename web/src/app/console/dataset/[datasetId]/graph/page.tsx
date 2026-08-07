@@ -114,6 +114,7 @@ export default function DatasetGraphPage() {
     2_000
   );
   const graphStatus = graphStatusData?.data;
+  const isGraphRepair = graphStatus?.status === 'failed';
   const canQueryGraph = canViewGraph && graphStatus?.can_search === true;
   const trimmedSearchQuery = searchQuery.trim();
 
@@ -368,12 +369,18 @@ export default function DatasetGraphPage() {
               trigger={
                 <Button type="button" variant="outline" disabled={rebuildGraph.isPending}>
                   {rebuildGraph.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                  {t('graph.rebuild')}
+                  {t(isGraphRepair ? 'graph.repair' : 'graph.rebuild')}
                 </Button>
               }
-              title={t('graph.rebuildConfirmationTitle')}
-              description={t('graph.rebuildConfirmationDescription')}
-              confirmText={t('graph.confirmRebuild')}
+              title={t(
+                isGraphRepair ? 'graph.repairConfirmationTitle' : 'graph.rebuildConfirmationTitle'
+              )}
+              description={t(
+                isGraphRepair
+                  ? 'graph.repairConfirmationDescription'
+                  : 'graph.rebuildConfirmationDescription'
+              )}
+              confirmText={t(isGraphRepair ? 'graph.confirmRepair' : 'graph.confirmRebuild')}
               cancelText={t('actions.cancel')}
               onConfirm={() => rebuildGraph.mutate()}
               loading={rebuildGraph.isPending}
@@ -478,6 +485,11 @@ export default function DatasetGraphPage() {
               <p className="font-medium">
                 {graphStatus.error_message || t('graph.runtimeUnavailable')}
               </p>
+              {graphStatus.status === 'failed' && (
+                <p className="max-w-lg text-sm text-muted-foreground">
+                  {t('graph.failedRepairHint')}
+                </p>
+              )}
             </div>
           ) : graphStatus?.status === 'waiting_content' ? (
             <div className="flex flex-1 items-center justify-center p-8 text-center text-muted-foreground">

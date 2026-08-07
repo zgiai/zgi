@@ -98,6 +98,7 @@ func NewVectorSyncHandler(svc *graphflow.Service, taskManager *queue.TaskManager
 				err := fmt.Errorf("vector sync worker panicked: %v", r)
 				logger.Error("Vector sync panic recovery", err)
 				svc.TaskRepo.UpdateTaskFailed(ctx, taskID, err.Error())
+				panic(r)
 			}
 		}()
 
@@ -126,6 +127,9 @@ func NewVectorSyncHandler(svc *graphflow.Service, taskManager *queue.TaskManager
 				"status":  graphFlowTask.Status,
 			})
 			return nil
+		}
+		if err := validateActiveRunTask(ctx, svc, graphFlowTask); err != nil {
+			return fmt.Errorf("vector sync task belongs to an inactive run: %v: %w", err, asynq.SkipRetry)
 		}
 
 		// 2. Update task status to processing

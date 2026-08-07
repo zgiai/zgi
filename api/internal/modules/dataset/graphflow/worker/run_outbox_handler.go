@@ -138,12 +138,21 @@ func (h *RunOutboxHandler) enqueueBatchExtractionTasks(ctx context.Context, run 
 	if len(items) == 0 {
 		return fmt.Errorf("batched graph run %s has no add items", run.ID)
 	}
+	pendingExtraction := false
+	var coordinator *graphmodel.GraphFlowTask
 	for i := range items {
 		item := &items[i]
 		task, err := h.createRunItemTask(ctx, run, item, "extraction")
 		if err != nil {
 			return err
 		}
+		if coordinator == nil {
+			coordinator = task
+		}
+		if task.Status == "completed" {
+			continue
+		}
+		pendingExtraction = true
 		queued, err := CreateGraphFlowExtractionTask(task.ID.String(), h.taskManager)
 		if err != nil {
 			return err
@@ -152,7 +161,79 @@ func (h *RunOutboxHandler) enqueueBatchExtractionTasks(ctx context.Context, run 
 			return err
 		}
 	}
-	return nil
+	if pendingExtraction {
+		return nil
+	}
+	return h.resumeBatchAfterCompletedExtraction(ctx, run, coordinator)
+}
+
+// resumeBatchAfterCompletedExtraction resumes the earliest unfinished stage of
+// a repaired batch run. Completed extraction/alignment tasks are deliberately
+// not replayed, so a graph write failure can be repaired without another LLM
+// pass over every document.
+func (h *RunOutboxHandler) resumeBatchAfterCompletedExtraction(
+	ctx context.Context,
+	run *graphmodel.GraphFlowRun,
+	coordinator *graphmodel.GraphFlowTask,
+) error {
+	var tasks []graphmodel.GraphFlowTask
+	if err := h.service.DB.WithContext(ctx).
+		Where("run_id = ?", run.ID).
+		Order("created_at ASC").
+		Find(&tasks).Error; err != nil {
+		return err
+	}
+
+	enqueue := func(task *graphmodel.GraphFlowTask, queueType string) error {
+		var queued *asynq.Task
+		var err error
+		if task.TaskType == "cleanup" {
+			queued, err = CreateGraphFlowCleanupTask(task.ID.String(), task.DocumentID.String(), run.DatasetID.String(), h.taskManager)
+		} else {
+			queued, err = NewGraphFlowTask(queueType, task.ID.String(), h.taskManager)
+		}
+		if err != nil {
+			return err
+		}
+		_, err = h.taskManager.EnqueueTask(queued, asynq.Queue("graphflow"))
+		if errors.Is(err, asynq.ErrTaskIDConflict) {
+			return nil
+		}
+		return err
+	}
+
+	for _, stage := range []struct {
+		taskType  string
+		queueType string
+		multiple  bool
+	}{
+		{taskType: "cleanup", queueType: TypeGraphFlowCleanup, multiple: true},
+		{taskType: "alignment", queueType: TypeGraphFlowAlignment},
+		{taskType: "graph_sync", queueType: TypeGraphFlowSync},
+		{taskType: "vector_sync", queueType: TypeGraphFlowVectorSync},
+	} {
+		found := false
+		for i := range tasks {
+			task := &tasks[i]
+			if task.TaskType != stage.taskType || task.Status == "completed" {
+				continue
+			}
+			found = true
+			if err := enqueue(task, stage.queueType); err != nil {
+				return err
+			}
+			if !stage.multiple {
+				break
+			}
+		}
+		if found {
+			return nil
+		}
+	}
+
+	// No downstream task has been created yet. Continue through the normal
+	// batch coordinator, which creates cleanup/alignment exactly once.
+	return advanceBatchPipelineAfterItemTask(ctx, h.service, h.taskManager, coordinator)
 }
 
 func (h *RunOutboxHandler) createRunItemTask(

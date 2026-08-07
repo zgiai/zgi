@@ -25,6 +25,19 @@ type datasetRefSyncRefStore interface {
 	MarkFailed(ctx context.Context, organizationID string, id uuid.UUID, syncRunID uuid.UUID, errorCode, errorMessage string) (*datalibModel.KnowledgeBaseAssetRef, error)
 }
 
+type datasetRefSyncRefRollbackStore interface {
+	RestoreSyncedDocumentSnapshot(
+		ctx context.Context,
+		organizationID string,
+		id uuid.UUID,
+		syncRunID uuid.UUID,
+		currentDocumentID uuid.UUID,
+		previousDocumentID *uuid.UUID,
+		previousGenerationNo *int64,
+		previousSyncedAt *time.Time,
+	) error
+}
+
 type datasetRefSyncAssetStore interface {
 	GetAssetByID(ctx context.Context, id uuid.UUID) (*datalibModel.DocumentAsset, error)
 }
@@ -241,6 +254,23 @@ func (r *DatasetRefSyncRunner) copyAssetToDataset(ctx context.Context, ref *data
 	}
 	if dataset.EnableGraphFlow && r.graph != nil {
 		if err := r.enqueueGraphReplacement(ctx, dataset, ref, documentID, oldDocumentID, syncRunID, asset); err != nil {
+			rollback, ok := r.refs.(datasetRefSyncRefRollbackStore)
+			if !ok {
+				return fmt.Errorf("%w; ref store does not support document snapshot rollback", err)
+			}
+			if rollbackErr := rollback.RestoreSyncedDocumentSnapshot(
+				ctx,
+				ref.OrganizationID,
+				ref.ID,
+				syncRunID,
+				documentID,
+				ref.DatasetDocumentID,
+				ref.SyncedGenerationNo,
+				ref.LastSyncedAt,
+			); rollbackErr != nil {
+				return fmt.Errorf("%w; restore previous document snapshot: %v", err, rollbackErr)
+			}
+			_ = r.deleteDatasetDocumentTree(ctx, document.ID)
 			return err
 		}
 	}

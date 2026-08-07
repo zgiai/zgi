@@ -41,6 +41,7 @@ func NewAlignmentHandler(svc *graphflow.Service, taskManager *queue.TaskManager,
 				err := fmt.Errorf("alignment worker panicked: %v", r)
 				logger.Error("Alignment panic recovery", err)
 				svc.TaskRepo.UpdateTaskFailed(ctx, taskID, err.Error())
+				panic(r)
 			}
 		}()
 
@@ -66,6 +67,9 @@ func NewAlignmentHandler(svc *graphflow.Service, taskManager *queue.TaskManager,
 				"status":  graphFlowTask.Status,
 			})
 			return nil
+		}
+		if err := validateActiveRunTask(ctx, svc, graphFlowTask); err != nil {
+			return fmt.Errorf("alignment task belongs to an inactive run: %v: %w", err, asynq.SkipRetry)
 		}
 
 		// Apply Rate Limiting
@@ -367,6 +371,12 @@ func NewAlignmentHandler(svc *graphflow.Service, taskManager *queue.TaskManager,
 		if err := svc.RelationshipRepo.RecalculateSourceCounts(ctx, kbID); err != nil {
 			svc.TaskRepo.UpdateTaskFailed(ctx, taskID, fmt.Sprintf("failed to recalculate relationship source counts: %v", err))
 			return fmt.Errorf("failed to recalculate relationship source counts: %w", err)
+		}
+
+		// A ref update may supersede this run while alignment is executing. Do not
+		// publish another stage from an obsolete graph version.
+		if err := validateActiveRunTask(ctx, svc, graphFlowTask); err != nil {
+			return fmt.Errorf("alignment run became inactive: %v: %w", err, asynq.SkipRetry)
 		}
 
 		// 8. Create and enqueue sync tasks (parallel: graph_sync and vector_sync) - Moved before completion

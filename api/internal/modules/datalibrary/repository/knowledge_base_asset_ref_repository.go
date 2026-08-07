@@ -230,6 +230,29 @@ func (r *knowledgeBaseAssetRefRepository) MarkSynced(ctx context.Context, organi
 	return r.updateByIDAndSyncRun(ctx, organizationID, id, syncRunID, updates)
 }
 
+// RestoreSyncedDocumentSnapshot compensates the ref swap when the following
+// graph-run registration fails. The compare-and-swap guard prevents an older
+// sync attempt from rolling back a newer successful document version.
+func (r *knowledgeBaseAssetRefRepository) RestoreSyncedDocumentSnapshot(
+	ctx context.Context,
+	organizationID string,
+	id uuid.UUID,
+	syncRunID uuid.UUID,
+	currentDocumentID uuid.UUID,
+	previousDocumentID *uuid.UUID,
+	previousGenerationNo *int64,
+	previousSyncedAt *time.Time,
+) error {
+	updates := map[string]any{
+		"dataset_document_id":  previousDocumentID,
+		"synced_generation_no": previousGenerationNo,
+		"last_synced_at":       previousSyncedAt,
+	}
+	return r.db.WithContext(ctx).Model(&model.KnowledgeBaseAssetRef{}).
+		Where("organization_id = ? AND id = ? AND sync_run_id = ? AND dataset_document_id = ?", organizationID, id, syncRunID, currentDocumentID).
+		Updates(updates).Error
+}
+
 func (r *knowledgeBaseAssetRefRepository) MarkFailed(ctx context.Context, organizationID string, id uuid.UUID, syncRunID uuid.UUID, errorCode, errorMessage string) (*model.KnowledgeBaseAssetRef, error) {
 	updates := map[string]any{
 		"sync_status":        model.KnowledgeBaseAssetRefSyncStatusFailed,

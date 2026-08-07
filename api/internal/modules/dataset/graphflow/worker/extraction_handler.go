@@ -98,6 +98,7 @@ func NewExtractionHandler(svc *graphflow.Service, taskManager *queue.TaskManager
 				err := fmt.Errorf("extraction worker panicked: %v", r)
 				logger.CriticalContext(ctx, "extraction worker panicked", err)
 				svc.TaskRepo.UpdateTaskFailed(ctx, taskID, err.Error())
+				panic(r)
 			}
 		}()
 
@@ -179,7 +180,7 @@ func NewExtractionHandler(svc *graphflow.Service, taskManager *queue.TaskManager
 		// Check for eventual consistency: if segments are not found yet, trigger retry
 		if len(segments) == 0 {
 			retryCount, _ := asynq.GetRetryCount(ctx)
-			maxRetry := 10 // Increase retry count for eventual consistency
+			maxRetry := GraphFlowTaskMaxRetries
 
 			if retryCount < maxRetry {
 				logger.Warn("No segments found for document, triggering retry", map[string]interface{}{
@@ -190,31 +191,20 @@ func NewExtractionHandler(svc *graphflow.Service, taskManager *queue.TaskManager
 				return fmt.Errorf("no segments found for document %s, waiting for consistency (retry %d/%d)", graphFlowTask.DocumentID, retryCount, maxRetry)
 			}
 
-			logger.Warn("No segments found after retries, proceeding to empty alignment (assuming empty document)", map[string]interface{}{
+			errMsg := fmt.Sprintf("no segments found for document %s after %d retries", graphFlowTask.DocumentID, maxRetry)
+			logger.ErrorContext(ctx, errMsg, map[string]interface{}{
 				"document_id": graphFlowTask.DocumentID.String(),
 			})
-
-			// Mark extraction as completed even if no segments (empty document case)
-			if err := svc.TaskRepo.UpdateTaskCompleted(ctx, taskID); err != nil {
-				logger.ErrorContext(ctx, "failed to update task completed status", err)
+			if err := svc.TaskRepo.UpdateTaskFailed(ctx, taskID, errMsg); err != nil {
+				logger.ErrorContext(ctx, "failed to update task failed status", err)
 			}
-
-			if batchRun {
-				if err := advanceBatchPipelineAfterItemTask(ctx, svc, taskManager, graphFlowTask); err != nil {
-					logger.CriticalContext(ctx, "failed to advance batched graph run", err)
-					return err
-				}
-			} else if err := enqueueNextAlignmentTask(ctx, svc, taskManager, graphFlowTask); err != nil {
-				logger.CriticalContext(ctx, "failed to enqueue alignment task", err)
-			}
-
-			return nil
+			return fmt.Errorf("%s: %w", errMsg, asynq.SkipRetry)
 		}
 
 		// Race condition fix: Check if we have all expected segments
 		if payload.ExpectedSegments > 0 && len(segments) < payload.ExpectedSegments {
 			retryCount, _ := asynq.GetRetryCount(ctx)
-			maxRetry := 20 // Allow more retries for segment replication lag
+			maxRetry := GraphFlowTaskMaxRetries
 
 			if retryCount < maxRetry {
 				logger.Warn("Segments mismatch (replication lag), triggering retry", map[string]interface{}{
@@ -236,9 +226,7 @@ func NewExtractionHandler(svc *graphflow.Service, taskManager *queue.TaskManager
 				logger.ErrorContext(ctx, "failed to update task failed status", err)
 			}
 
-			// We return nil here to consume the task from queue as failed,
-			// instead of returning error which would cause infinite retries (since we exhausted our custom maxRetry)
-			return nil
+			return fmt.Errorf("%s: %w", errMsg, asynq.SkipRetry)
 		}
 
 		// Check if all segments are completed (vectorization finished)
@@ -263,7 +251,7 @@ func NewExtractionHandler(svc *graphflow.Service, taskManager *queue.TaskManager
 		// If some segments are still indexing, wait for them
 		if indexingSegments > 0 {
 			retryCount, _ := asynq.GetRetryCount(ctx)
-			maxRetry := 10
+			maxRetry := GraphFlowTaskMaxRetries
 
 			if retryCount < maxRetry {
 				logger.Warn("Some segments are still indexing, triggering retry", map[string]interface{}{
@@ -276,11 +264,16 @@ func NewExtractionHandler(svc *graphflow.Service, taskManager *queue.TaskManager
 				return fmt.Errorf("waiting for %d segments to complete indexing", indexingSegments)
 			}
 
-			logger.Warn("Segments still indexing after max retries, proceeding with completed segments only", map[string]interface{}{
+			errMsg := fmt.Sprintf("%d document segments are still indexing after %d retries", indexingSegments, maxRetry)
+			logger.ErrorContext(ctx, errMsg, map[string]interface{}{
 				"document_id":        graphFlowTask.DocumentID.String(),
 				"indexing_segments":  indexingSegments,
 				"completed_segments": len(completedSegments),
 			})
+			if err := svc.TaskRepo.UpdateTaskFailed(ctx, taskID, errMsg); err != nil {
+				logger.ErrorContext(ctx, "failed to update task failed status", err)
+			}
+			return fmt.Errorf("%s: %w", errMsg, asynq.SkipRetry)
 		}
 
 		// If all segments have errors, mark task as failed

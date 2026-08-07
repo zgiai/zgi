@@ -23,10 +23,17 @@ const messages = {
     statusDescription: 'Current status: {status}. Progress: {progress}%.',
     emptyStatusDescription: 'Current status: The knowledge base is empty. Waiting for documents.',
     rebuild: 'Rebuild graph',
+    repair: 'Repair graph',
     rebuildConfirmationTitle: 'Rebuild the knowledge graph?',
     rebuildConfirmationDescription:
       'The system will reprocess all active documents and regenerate graph entities and relationships. Graph browsing and graph retrieval may be temporarily unavailable while rebuilding. Your source documents will not be changed.',
     confirmRebuild: 'Confirm rebuild',
+    repairConfirmationTitle: 'Repair the knowledge graph?',
+    repairConfirmationDescription:
+      'The failed run will resume from its earliest unfinished stage. Completed entity extraction and alignment results will be reused, so source documents are not processed by the model again unless extraction itself failed.',
+    confirmRepair: 'Confirm repair',
+    failedRepairHint:
+      'Graph synchronization stopped after three retries. Repair the graph to resume from the failed stage and restore consistency with the knowledge base.',
     retryDocument: 'Retry',
     modelChangeConfirmation:
       'Changing the extraction model rebuilds the graph for all current documents. Continue?',

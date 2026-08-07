@@ -70,7 +70,7 @@ func (e *LLMExtractor) GenerateGlobalEntities(ctx context.Context, tenantID stri
 			Type: "json_object",
 		},
 	}
-	disableQwen36Thinking(req)
+	disableQwenThinking(req)
 
 	requestCtx, cancel := context.WithTimeout(ctx, globalEntityExtractionTimeout)
 	defer cancel()
@@ -145,7 +145,7 @@ func (e *LLMExtractor) Extract(ctx context.Context, tenantID string, text string
 			Type: "json_object",
 		},
 	}
-	disableQwen36Thinking(req)
+	disableQwenThinking(req)
 
 	requestCtx, cancel := context.WithTimeout(ctx, segmentExtractionTimeout)
 	defer cancel()
@@ -187,13 +187,15 @@ func (e *LLMExtractor) Extract(ctx context.Context, tenantID string, text string
 	return &result, nil
 }
 
-func disableQwen36Thinking(req *adapter.ChatRequest) {
+func disableQwenThinking(req *adapter.ChatRequest) {
 	if req == nil {
 		return
 	}
-	if (strings.EqualFold(req.Provider, "qwen") || strings.EqualFold(req.Provider, "dashscope")) &&
-		strings.HasPrefix(strings.ToLower(req.Model), "qwen3.6-") {
-		req.AdditionalParameters = map[string]interface{}{"enable_thinking": false}
+	if strings.EqualFold(req.Provider, "qwen") || strings.EqualFold(req.Provider, "dashscope") {
+		if req.AdditionalParameters == nil {
+			req.AdditionalParameters = make(map[string]interface{})
+		}
+		req.AdditionalParameters["enable_thinking"] = false
 	}
 }
 

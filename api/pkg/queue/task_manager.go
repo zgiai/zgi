@@ -1,7 +1,10 @@
 package queue
 
 import (
+	"errors"
 	"fmt"
+	"sync"
+	"sync/atomic"
 
 	"github.com/hibiken/asynq"
 	"github.com/zgiai/zgi/api/config"
@@ -14,6 +17,8 @@ type TaskManager struct {
 	server          *asynq.Server
 	graphFlowServer *asynq.Server
 	config          *config.Config
+	stopping        atomic.Bool
+	stopOnce        sync.Once
 }
 
 // NewTaskManager creates a new task manager
@@ -68,25 +73,54 @@ func (tm *TaskManager) GetGraphFlowServer() *asynq.Server {
 
 // StartServer starts the asynq server with given mux
 func (tm *TaskManager) StartServer(mux *asynq.ServeMux) error {
+	tm.stopping.Store(false)
+	tm.stopOnce = sync.Once{}
 	logger.Info("Starting asynq worker servers", map[string]interface{}{
 		"main_concurrency":      tm.config.TaskQueue.Concurrency,
 		"graphflow_concurrency": graphFlowWorkerConcurrency(tm.config),
 	})
-	errCh := make(chan error, 2)
+	type workerResult struct {
+		name string
+		err  error
+	}
+	resultCh := make(chan workerResult, 2)
 	go func() {
-		errCh <- tm.server.Run(mux)
+		resultCh <- workerResult{name: "main", err: tm.server.Run(mux)}
 	}()
 	go func() {
-		errCh <- tm.graphFlowServer.Run(mux)
+		resultCh <- workerResult{name: "graphflow", err: tm.graphFlowServer.Run(mux)}
 	}()
-	return <-errCh
+
+	first := <-resultCh
+	intentionalStop := tm.stopping.Load()
+	// The two servers form one worker subsystem. If either exits, stop its
+	// sibling as well instead of leaving the API with a silently missing queue.
+	tm.StopServer()
+	second := <-resultCh
+	if intentionalStop {
+		return nil
+	}
+	return errors.Join(
+		workerExitError(first.name, first.err),
+		workerExitError(second.name, second.err),
+	)
+}
+
+func workerExitError(name string, err error) error {
+	if err == nil {
+		return fmt.Errorf("%s task worker stopped unexpectedly", name)
+	}
+	return fmt.Errorf("%s task worker stopped: %w", name, err)
 }
 
 // StopServer stops the asynq server
 func (tm *TaskManager) StopServer() {
-	logger.Info("Stopping asynq worker servers")
-	tm.server.Shutdown()
-	tm.graphFlowServer.Shutdown()
+	tm.stopping.Store(true)
+	tm.stopOnce.Do(func() {
+		logger.Info("Stopping asynq worker servers")
+		tm.server.Shutdown()
+		tm.graphFlowServer.Shutdown()
+	})
 }
 
 // Close closes the task manager connections

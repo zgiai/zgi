@@ -10,6 +10,7 @@ import (
 	"github.com/hibiken/asynq"
 	"github.com/zgiai/zgi/api/internal/modules/dataset/graphflow"
 	"github.com/zgiai/zgi/api/internal/modules/dataset/graphflow/model"
+	datasetmodel "github.com/zgiai/zgi/api/internal/modules/dataset/model"
 	"github.com/zgiai/zgi/api/pkg/lock"
 	"github.com/zgiai/zgi/api/pkg/logger"
 	"github.com/zgiai/zgi/api/pkg/queue"
@@ -36,9 +37,8 @@ func NewSyncHandler(svc *graphflow.Service, taskManager *queue.TaskManager, limi
 			if r := recover(); r != nil {
 				err := fmt.Errorf("sync worker panicked: %v", r)
 				logger.Error("Sync panic recovery", err)
-				failureContext, cancelFailure := context.WithTimeout(context.Background(), 5*time.Second)
-				defer cancelFailure()
-				svc.TaskRepo.UpdateTaskFailed(failureContext, taskID, err.Error())
+				svc.TaskRepo.UpdateTaskFailed(ctx, taskID, err.Error())
+				panic(r)
 			}
 		}()
 
@@ -64,6 +64,9 @@ func NewSyncHandler(svc *graphflow.Service, taskManager *queue.TaskManager, limi
 				"status":  graphFlowTask.Status,
 			})
 			return nil
+		}
+		if err := validateActiveRunTask(ctx, svc, graphFlowTask); err != nil {
+			return fmt.Errorf("graph sync task belongs to an inactive run: %v: %w", err, asynq.SkipRetry)
 		}
 
 		// 2. Update task status to processing
@@ -435,7 +438,18 @@ func NewSyncHandler(svc *graphflow.Service, taskManager *queue.TaskManager, limi
 		}
 		reportProgress(60)
 
-		if err := svc.ProjectVisibilityProjection(ctx, kbID, func(completed, total int) {
+		var visibilityDataset datasetmodel.Dataset
+		if err := svc.DB.WithContext(ctx).First(&visibilityDataset, "id = ?", kbID).Error; err != nil {
+			svc.TaskRepo.UpdateTaskFailed(ctx, taskID, fmt.Sprintf("failed to load graph visibility revision: %v", err))
+			return fmt.Errorf("failed to load graph visibility revision: %w", err)
+		}
+		project := func(progress func(completed, total int)) error {
+			if graphFlowTask.RunID != nil {
+				return svc.ProjectVisibilityProjectionForRun(ctx, kbID, visibilityDataset.GraphVisibilityRevision, *graphFlowTask.RunID, progress)
+			}
+			return svc.ProjectVisibilityProjection(ctx, kbID, visibilityDataset.GraphVisibilityRevision, progress)
+		}
+		if err := project(func(completed, total int) {
 			if total <= 0 {
 				reportProgress(95)
 				return

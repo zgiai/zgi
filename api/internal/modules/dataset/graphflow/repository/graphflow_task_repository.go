@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/hibiken/asynq"
 	"github.com/zgiai/zgi/api/internal/modules/dataset/graphflow/model"
 	"gorm.io/gorm"
 )
@@ -138,8 +139,21 @@ func (r *GraphFlowTaskRepository) UpdateTaskCompleted(ctx context.Context, taskI
 	return r.notifyChange(ctx, taskID)
 }
 
-// UpdateTaskFailed marks a task as failed with error message
+// UpdateTaskFailed records an attempt error while Asynq still has retries
+// available, and only publishes the durable failed state on the terminal
+// attempt. This keeps transient provider/store failures from failing the whole
+// run before its configured retry budget is exhausted.
 func (r *GraphFlowTaskRepository) UpdateTaskFailed(ctx context.Context, taskID uuid.UUID, errorMessage string) error {
+	if retryCount, retryOK := asynq.GetRetryCount(ctx); retryOK {
+		if maxRetry, maxOK := asynq.GetMaxRetry(ctx); maxOK && retryCount < maxRetry {
+			return r.db.WithContext(ctx).Model(&model.GraphFlowTask{}).
+				Where("id = ?", taskID).
+				Updates(map[string]any{
+					"error_message": errorMessage,
+					"updated_at":    time.Now().UTC(),
+				}).Error
+		}
+	}
 	now := time.Now()
 
 	// Get the task to find the related document_id, then update its segments

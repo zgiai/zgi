@@ -663,6 +663,30 @@ func (s *LifecycleService) RebuildDataset(
 	if !dataset.EnableGraphFlow {
 		return nil, false, ErrGraphFlowDisabled
 	}
+
+	// A failed incremental run already owns durable extraction/alignment
+	// results. Resume that run first so the repair only repeats the failed and
+	// subsequent serving stages. Starting a new rebuild here would needlessly
+	// call the extraction model for every document again.
+	availableRevision := int64(0)
+	if dataset.GraphAvailableRevision != nil {
+		availableRevision = *dataset.GraphAvailableRevision
+	}
+	var failedRun graphmodel.GraphFlowRun
+	err = s.db.WithContext(ctx).
+		Where("organization_id = ? AND dataset_id = ? AND status = ? AND graph_revision > ?", organizationID, datasetID, graphmodel.GraphFlowRunStatusFailed, availableRevision).
+		Order("graph_revision ASC, created_at ASC, id ASC").
+		First(&failedRun).Error
+	if err == nil {
+		if err := s.Retry(ctx, failedRun.ID); err != nil {
+			return nil, false, err
+		}
+		resumed, findErr := s.runRepo.FindByID(ctx, failedRun.ID)
+		return resumed, false, findErr
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, false, err
+	}
 	return s.StartRebuild(ctx, lifecycleRequestFromDataset(dataset, idempotencyKey, "manual_rebuild"))
 }
 

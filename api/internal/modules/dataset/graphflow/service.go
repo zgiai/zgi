@@ -194,10 +194,10 @@ func (s *Service) ExtractQueryEntities(ctx context.Context, organizationID strin
 			Type: "json_object",
 		},
 	}
-	if (strings.EqualFold(req.Provider, "qwen") || strings.EqualFold(req.Provider, "dashscope")) &&
-		strings.HasPrefix(strings.ToLower(req.Model), "qwen3.6-") {
-		// Qwen 3.6 enables thinking by default. Entity extraction is a simple
-		// constrained task, so reasoning only adds tokens and critical-path latency.
+	if strings.EqualFold(req.Provider, "qwen") || strings.EqualFold(req.Provider, "dashscope") {
+		// Query entity extraction is a small constrained task. Disable optional
+		// reasoning for all Qwen chat models so a model upgrade cannot silently
+		// add large critical-path latency and token usage.
 		req.AdditionalParameters = map[string]interface{}{"enable_thinking": false}
 	}
 

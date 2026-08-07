@@ -18,7 +18,7 @@ import (
 type extractorPromptDefaultModelService struct{}
 
 func (s *extractorPromptDefaultModelService) ResolveModelType(ctx context.Context, organizationID string, explicitProvider, explicitModel *string, modelType shared_model.ModelType) (*llmdefaultservice.ResolvedModel, error) {
-	return &llmdefaultservice.ResolvedModel{UseCase: string(llmmodelmodel.UseCaseTextChat), Provider: "qwen", Model: "qwen3.6-flash", Params: llmsharedtypes.JSONObject{}, Source: llmdefaultservice.SourceExplicit}, nil
+	return &llmdefaultservice.ResolvedModel{UseCase: string(llmmodelmodel.UseCaseTextChat), Provider: "qwen", Model: "qwen3.7-max", Params: llmsharedtypes.JSONObject{}, Source: llmdefaultservice.SourceExplicit}, nil
 }
 
 func (s *extractorPromptDefaultModelService) ResolveUseCase(ctx context.Context, organizationID string, useCase llmmodelmodel.UseCase, explicitProvider, explicitModel *string) (*llmdefaultservice.ResolvedModel, error) {

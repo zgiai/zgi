@@ -48,6 +48,19 @@ func NewCleanupHandler(svc *graphflow.Service, taskManager *queue.TaskManager) f
 				return fmt.Errorf("failed to parse task_id: %v: %w", err, asynq.SkipRetry)
 			}
 			hasTaskID = true
+			graphFlowTask, loadErr := svc.TaskRepo.GetByID(ctx, taskID)
+			if loadErr != nil {
+				return fmt.Errorf("failed to load cleanup task: %v: %w", loadErr, asynq.SkipRetry)
+			}
+			if graphFlowTask == nil {
+				return fmt.Errorf("cleanup task not found: %s: %w", taskID, asynq.SkipRetry)
+			}
+			if graphFlowTask.Status == "completed" || graphFlowTask.Status == "failed" {
+				return nil
+			}
+			if err := validateActiveRunTask(ctx, svc, graphFlowTask); err != nil {
+				return fmt.Errorf("cleanup task belongs to an inactive run: %v: %w", err, asynq.SkipRetry)
+			}
 
 			// Update task status to processing
 			if err := svc.TaskRepo.UpdateTaskProcessing(ctx, taskID); err != nil {
@@ -118,6 +131,7 @@ func NewCleanupHandler(svc *graphflow.Service, taskManager *queue.TaskManager) f
 				if err := svc.TaskRepo.UpdateTaskFailed(ctx, taskID, errorMsg); err != nil {
 					logger.Error("Failed to update task status to failed", err)
 				}
+				return fmt.Errorf("%s", errorMsg)
 			} else {
 				if err := svc.TaskRepo.UpdateTaskCompleted(ctx, taskID); err != nil {
 					logger.Error("Failed to update task status to completed", err)

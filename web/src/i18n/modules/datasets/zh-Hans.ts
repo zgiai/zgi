@@ -24,10 +24,17 @@ const messages: DatasetMessages = {
     statusDescription: '当前状态：{status}。进度：{progress}%。',
     emptyStatusDescription: '当前状态：知识库为空，等待添加文档。',
     rebuild: '重建图谱',
+    repair: '修复图谱',
     rebuildConfirmationTitle: '确认重建知识图谱？',
     rebuildConfirmationDescription:
       '系统将重新处理全部有效文档，并重新生成图谱实体和关系。重建期间，图谱浏览和图谱检索可能暂时不可用；知识库中的原始文档不会被修改。',
     confirmRebuild: '确认重建',
+    repairConfirmationTitle: '确认修复知识图谱？',
+    repairConfirmationDescription:
+      '系统将从失败 run 最早未完成的阶段继续执行，并复用已经完成的实体抽取和对齐结果；除非抽取阶段本身失败，否则不会再次调用模型处理原始文档。',
+    confirmRepair: '确认修复',
+    failedRepairHint:
+      '图谱同步在重试 3 次后仍未成功。请点击“修复图谱”，从失败阶段继续执行并恢复图谱与知识库的一致性。',
     retryDocument: '重试',
     modelChangeConfirmation: '更改抽取模型会为当前全部文档重建图谱。是否继续？',
     runtimeUnavailable: '知识图谱运行环境不可用。',

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/modules/dataset/graphflow"
 	"github.com/zgiai/zgi/api/internal/modules/dataset/graphflow/model"
 	datasetmodel "github.com/zgiai/zgi/api/internal/modules/dataset/model"
@@ -40,11 +41,51 @@ func (h *VisibilityHandler) Process(ctx context.Context, event *model.GraphOutbo
 		return graphflow.ErrGraphFlowTenantScopeMismatch
 	}
 	revision := dataset.GraphVisibilityRevision
+	if payloadRevision, ok := visibilityEventRevision(event.Payload); ok {
+		if payloadRevision < revision {
+			// A newer visibility event owns the projection. Acknowledging the
+			// superseded event avoids repeating a KB-wide projection with stale
+			// source counts.
+			return nil
+		}
+		if payloadRevision != revision {
+			return graphflow.ErrStaleVisibilityRevision
+		}
+	}
 	if dataset.GraphProjectedVisibilityRevision >= revision {
 		return nil
 	}
 	if err := h.visibility.Recalculate(ctx, event.DatasetID, revision); err != nil {
 		return err
 	}
-	return h.service.ProjectVisibilityProjection(ctx, event.DatasetID)
+	if sourceRefID, ok := visibilityEventSourceRefID(event.Payload); ok {
+		return h.service.ProjectVisibilityProjectionForSourceRef(ctx, event.DatasetID, revision, sourceRefID)
+	}
+	return h.service.ProjectVisibilityProjection(ctx, event.DatasetID, revision)
+}
+
+func visibilityEventRevision(payload map[string]any) (int64, bool) {
+	value, ok := payload["revision"]
+	if !ok {
+		return 0, false
+	}
+	switch revision := value.(type) {
+	case int64:
+		return revision, true
+	case int:
+		return int64(revision), true
+	case float64:
+		return int64(revision), true
+	default:
+		return 0, false
+	}
+}
+
+func visibilityEventSourceRefID(payload map[string]any) (uuid.UUID, bool) {
+	value, ok := payload["source_ref_id"].(string)
+	if !ok {
+		return uuid.Nil, false
+	}
+	id, err := uuid.Parse(value)
+	return id, err == nil && id != uuid.Nil
 }

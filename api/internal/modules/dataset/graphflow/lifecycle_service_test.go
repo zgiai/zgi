@@ -31,6 +31,7 @@ type lifecycleTestDataset struct {
 	GraphUpdatedAt                   *time.Time
 	GraphReadyAt                     *time.Time
 	UpdatedAt                        time.Time
+	EnableGraphFlow                  bool
 }
 
 type lifecycleTestRef struct {
@@ -946,6 +947,63 @@ func TestLifecycleServiceFailedRunBlocksLaterRevisionUntilRetry(t *testing.T) {
 	}
 	if first.Status != graphmodel.GraphFlowRunStatusProcessing || second.Status != graphmodel.GraphFlowRunStatusPending {
 		t.Fatalf("retry statuses first=%s second=%s", first.Status, second.Status)
+	}
+}
+
+func TestLifecycleServiceRebuildResumesFailedRunWithoutRepeatingCompletedStages(t *testing.T) {
+	db := openLifecycleTestDB(t, &lifecycleTestRef{})
+	ctx := context.Background()
+	datasetID := uuid.New()
+	organizationID := uuid.New()
+	if err := db.Create(&lifecycleTestDataset{
+		ID:              datasetID.String(),
+		OrganizationID:  organizationID.String(),
+		EnableGraphFlow: true,
+		GraphStatus:     "failed",
+		GraphRevision:   1,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	run := &graphmodel.GraphFlowRun{
+		OrganizationID: organizationID,
+		DatasetID:      datasetID,
+		GraphRevision:  1,
+		Trigger:        "document_sync",
+		Mode:           graphmodel.GraphFlowRunModeBuild,
+		Status:         graphmodel.GraphFlowRunStatusFailed,
+		IdempotencyKey: "repair:failed-run",
+	}
+	if err := db.Create(run).Error; err != nil {
+		t.Fatal(err)
+	}
+	for _, task := range []*lifecycleTestTask{
+		{ID: uuid.New(), TenantID: organizationID, KBID: datasetID, RunID: &run.ID, TaskType: "extraction", Status: "completed", Progress: 100},
+		{ID: uuid.New(), TenantID: organizationID, KBID: datasetID, RunID: &run.ID, TaskType: "alignment", Status: "completed", Progress: 100},
+		{ID: uuid.New(), TenantID: organizationID, KBID: datasetID, RunID: &run.ID, TaskType: "graph_sync", Status: "failed", ErrorMessage: "neo4j unavailable"},
+	} {
+		if err := db.Create(task).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	resumed, created, err := NewLifecycleService(db).RebuildDataset(ctx, organizationID, datasetID, "manual-repair")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created || resumed.ID != run.ID {
+		t.Fatalf("repair created=%v run=%s, want existing run %s", created, resumed.ID, run.ID)
+	}
+
+	var tasks []lifecycleTestTask
+	if err := db.Where("run_id = ?", run.ID).Order("task_type ASC").Find(&tasks).Error; err != nil {
+		t.Fatal(err)
+	}
+	statuses := make(map[string]string, len(tasks))
+	for _, task := range tasks {
+		statuses[task.TaskType] = task.Status
+	}
+	if statuses["extraction"] != "completed" || statuses["alignment"] != "completed" || statuses["graph_sync"] != "pending" {
+		t.Fatalf("repair task statuses=%v", statuses)
 	}
 }
 

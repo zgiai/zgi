@@ -121,7 +121,7 @@ func (s *Service) RefreshVisibilityProjection(ctx context.Context, datasetID uui
 	if err := visibility.Recalculate(ctx, datasetID, dataset.GraphVisibilityRevision); err != nil {
 		return err
 	}
-	return s.ProjectVisibilityProjection(ctx, datasetID)
+	return s.ProjectVisibilityProjection(ctx, datasetID, dataset.GraphVisibilityRevision)
 }
 
 // ProjectVisibilityProjection copies already calculated visibility counts to
@@ -132,6 +132,58 @@ func (s *Service) RefreshVisibilityProjection(ctx context.Context, datasetID uui
 func (s *Service) ProjectVisibilityProjection(
 	ctx context.Context,
 	datasetID uuid.UUID,
+	expectedRevision int64,
+	progressCallbacks ...func(completed, total int),
+) error {
+	return s.projectVisibilityProjection(ctx, datasetID, expectedRevision, nil, progressCallbacks...)
+}
+
+// ProjectVisibilityProjectionForRun projects only canonical rows whose
+// evidence belongs to source refs changed by this run. Full rebuilds naturally
+// cover all refs; normal incremental runs avoid rewriting the entire graph.
+func (s *Service) ProjectVisibilityProjectionForRun(
+	ctx context.Context,
+	datasetID uuid.UUID,
+	expectedRevision int64,
+	runID uuid.UUID,
+	progressCallbacks ...func(completed, total int),
+) error {
+	var sourceRefIDs []uuid.UUID
+	if err := s.DB.WithContext(ctx).Model(&graphmodel.GraphFlowRunItem{}).
+		Distinct("source_ref_id").
+		Where("run_id = ? AND source_ref_id IS NOT NULL", runID).
+		Pluck("source_ref_id", &sourceRefIDs).Error; err != nil {
+		return err
+	}
+	if len(sourceRefIDs) == 0 {
+		var run graphmodel.GraphFlowRun
+		if err := s.DB.WithContext(ctx).Select("source_ref_id").First(&run, "id = ?", runID).Error; err != nil {
+			return err
+		}
+		if run.SourceRefID == nil {
+			return s.ProjectVisibilityProjection(ctx, datasetID, expectedRevision, progressCallbacks...)
+		}
+		sourceRefIDs = append(sourceRefIDs, *run.SourceRefID)
+	}
+	return s.projectVisibilityProjection(ctx, datasetID, expectedRevision, sourceRefIDs, progressCallbacks...)
+}
+
+// ProjectVisibilityProjectionForSourceRef is used by retrieval visibility
+// toggles, where exactly one stable source ref is affected.
+func (s *Service) ProjectVisibilityProjectionForSourceRef(
+	ctx context.Context,
+	datasetID uuid.UUID,
+	expectedRevision int64,
+	sourceRefID uuid.UUID,
+) error {
+	return s.projectVisibilityProjection(ctx, datasetID, expectedRevision, []uuid.UUID{sourceRefID})
+}
+
+func (s *Service) projectVisibilityProjection(
+	ctx context.Context,
+	datasetID uuid.UUID,
+	expectedRevision int64,
+	sourceRefIDs []uuid.UUID,
 	progressCallbacks ...func(completed, total int),
 ) error {
 	if s == nil || s.DB == nil {
@@ -141,18 +193,43 @@ func (s *Service) ProjectVisibilityProjection(
 	if err := s.DB.WithContext(ctx).First(&dataset, "id = ?", datasetID).Error; err != nil {
 		return err
 	}
+	if dataset.GraphVisibilityRevision != expectedRevision {
+		return ErrStaleVisibilityRevision
+	}
 	var progress func(completed, total int)
 	if len(progressCallbacks) > 0 {
 		progress = progressCallbacks[0]
 	}
 
-	entities, err := s.EntityRepo.FindByKBID(ctx, datasetID)
-	if err != nil {
-		return err
-	}
-	relationships, err := s.RelationshipRepo.FindByKBID(ctx, datasetID)
-	if err != nil {
-		return err
+	var entities []*graphmodel.Entity
+	var relationships []*graphmodel.Relationship
+	if len(sourceRefIDs) == 0 {
+		var err error
+		entities, err = s.EntityRepo.FindByKBID(ctx, datasetID)
+		if err != nil {
+			return err
+		}
+		relationships, err = s.RelationshipRepo.FindByKBID(ctx, datasetID)
+		if err != nil {
+			return err
+		}
+	} else {
+		if err := s.DB.WithContext(ctx).
+			Where("kb_id = ? AND is_deleted = false AND id IN (?)", datasetID,
+				s.DB.WithContext(ctx).Model(&graphmodel.EntityMention{}).
+					Select("DISTINCT entity_id").
+					Where("kb_id = ? AND source_ref_id IN ? AND entity_id IS NOT NULL", datasetID, sourceRefIDs)).
+			Find(&entities).Error; err != nil {
+			return err
+		}
+		if err := s.DB.WithContext(ctx).
+			Where("kb_id = ? AND id IN (?)", datasetID,
+				s.DB.WithContext(ctx).Model(&graphmodel.TripleMention{}).
+					Select("DISTINCT relationship_id").
+					Where("kb_id = ? AND source_ref_id IN ? AND relationship_id IS NOT NULL", datasetID, sourceRefIDs)).
+			Find(&relationships).Error; err != nil {
+			return err
+		}
 	}
 	entityUpdates := make([]map[string]interface{}, 0, len(entities))
 	for _, entity := range entities {
@@ -161,7 +238,7 @@ func (s *Service) ProjectVisibilityProjection(
 			"source_count":        entity.SourceCount,
 			"active_source_count": entity.ActiveSourceCount,
 			"content_revision":    entity.ContentRevision,
-			"visibility_revision": dataset.GraphVisibilityRevision,
+			"visibility_revision": expectedRevision,
 		})
 	}
 	relationshipUpdates := make([]map[string]interface{}, 0, len(relationships))
@@ -176,7 +253,7 @@ func (s *Service) ProjectVisibilityProjection(
 			"weight":              relationship.Weight,
 			"active_weight":       relationship.ActiveWeight,
 			"content_revision":    relationship.ContentRevision,
-			"visibility_revision": dataset.GraphVisibilityRevision,
+			"visibility_revision": expectedRevision,
 		})
 	}
 	if s.Neo4jClient == nil {
@@ -195,7 +272,7 @@ func (s *Service) ProjectVisibilityProjection(
 					"source_count":        entity.SourceCount,
 					"active_source_count": entity.ActiveSourceCount,
 					"content_revision":    entity.ContentRevision,
-					"visibility_revision": dataset.GraphVisibilityRevision,
+					"visibility_revision": expectedRevision,
 				},
 			})
 		}
@@ -221,5 +298,5 @@ func (s *Service) ProjectVisibilityProjection(
 	if progress != nil {
 		progress(total, total)
 	}
-	return NewVisibilityService(s.DB).ConfirmProjection(ctx, datasetID, dataset.GraphVisibilityRevision)
+	return NewVisibilityService(s.DB).ConfirmProjection(ctx, datasetID, expectedRevision)
 }
