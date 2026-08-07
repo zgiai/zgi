@@ -210,6 +210,7 @@ export interface AIChatExistingSkill {
 
 export interface AIChatSkillInvocation {
   kind?: AIChatSkillInvocationKind;
+  invocation_id?: string;
   runtime_id?: string;
   answer_id?: string;
   action_id?: string;
@@ -332,6 +333,7 @@ export interface AIChatMessageFile {
 export interface AIChatGeneratedFile {
   artifact_id?: string;
   artifact_type: 'file';
+  invocation_id?: string;
   skill_id: string;
   tool_name: string;
   file_id: string;
@@ -659,6 +661,7 @@ export interface AIChatSkillCallStartEventData {
   conversation_id: string;
   message_id: string;
   kind?: AIChatSkillInvocationKind;
+  invocation_id?: string;
   runtime_id?: string;
   skill_id: string;
   tool_name: string;
@@ -671,6 +674,7 @@ export interface AIChatSkillCallEndEventData {
   conversation_id: string;
   message_id: string;
   kind?: AIChatSkillInvocationKind;
+  invocation_id?: string;
   runtime_id?: string;
   action_id?: string;
   action_type?: string;
@@ -694,6 +698,7 @@ export interface AIChatSkillCallErrorEventData {
   conversation_id: string;
   message_id: string;
   kind?: AIChatSkillInvocationKind;
+  invocation_id?: string;
   runtime_id?: string;
   action_id?: string;
   action_type?: string;
@@ -741,6 +746,7 @@ export interface AIChatSkillArtifactFile {
 export interface AIChatSkillArtifactCreatedEventData extends Partial<AIChatGeneratedFile> {
   conversation_id: string;
   message_id: string;
+  invocation_id?: string;
   skill_id: string;
   tool_name: string;
   file?: AIChatSkillArtifactFile;

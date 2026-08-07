@@ -44,10 +44,25 @@ function upsertSkillInvocation(
   invocations: AIChatSkillInvocation[],
   incoming: AIChatSkillInvocation
 ): AIChatSkillInvocation[] {
+  if (incoming.invocation_id) {
+    const index = invocations.findIndex(
+      invocation => invocation.invocation_id === incoming.invocation_id
+    );
+    if (index >= 0) {
+      const next = invocations.slice();
+      next[index] = mergeSkillInvocationByStatus(next[index], incoming);
+      return next;
+    }
+  }
+
   const semanticIdentity = skillInvocationSemanticIdentity(incoming);
   if (semanticIdentity) {
     const index = invocations.findIndex(
-      invocation => skillInvocationSemanticIdentity(invocation) === semanticIdentity
+      invocation =>
+        (!incoming.invocation_id ||
+          !invocation.invocation_id ||
+          invocation.invocation_id === incoming.invocation_id) &&
+        skillInvocationSemanticIdentity(invocation) === semanticIdentity
     );
     if (index >= 0) {
       const next = invocations.slice();
@@ -58,7 +73,11 @@ function upsertSkillInvocation(
 
   if (incoming.runtime_id) {
     const index = invocations.findIndex(
-      invocation => invocation.runtime_id === incoming.runtime_id
+      invocation =>
+        (!incoming.invocation_id ||
+          !invocation.invocation_id ||
+          invocation.invocation_id === incoming.invocation_id) &&
+        invocation.runtime_id === incoming.runtime_id
     );
     if (index >= 0) {
       const next = invocations.slice();
@@ -105,6 +124,13 @@ function upsertSkillInvocation(
   const incomingToolName = incoming.tool_name ?? '';
   const incomingPath = incoming.path ?? '';
   const index = [...next].reverse().findIndex(invocation => {
+    if (
+      incoming.invocation_id &&
+      invocation.invocation_id &&
+      invocation.invocation_id !== incoming.invocation_id
+    ) {
+      return false;
+    }
     const invocationKind = invocation.kind ?? 'tool_call';
     const sameIdentity =
       invocationKind === incomingKind &&
@@ -128,6 +154,9 @@ function upsertSkillInvocation(
 }
 
 function getSkillInvocationIdentity(invocation: AIChatSkillInvocation): string {
+  if (invocation.invocation_id) {
+    return `invocation:${invocation.invocation_id}`;
+  }
   const semanticIdentity = skillInvocationSemanticIdentity(invocation);
   if (semanticIdentity) {
     return semanticIdentity;
@@ -151,6 +180,10 @@ function skillInvocationsMatch(
   existing: AIChatSkillInvocation,
   incoming: AIChatSkillInvocation
 ): boolean {
+  if (existing.invocation_id && incoming.invocation_id) {
+    return existing.invocation_id === incoming.invocation_id;
+  }
+
   const existingRuntimeIdentity = skillInvocationRuntimeIdentity(existing);
   const incomingRuntimeIdentity = skillInvocationRuntimeIdentity(incoming);
   if (
@@ -1015,6 +1048,7 @@ export function applySkillCallStartState(
     eventId,
     {
       kind: payload.kind ?? 'tool_call',
+      invocation_id: payload.invocation_id,
       runtime_id: payload.runtime_id,
       skill_id: payload.skill_id,
       tool_name: payload.tool_name,
@@ -1039,6 +1073,7 @@ export function applySkillCallEndState(
     eventId,
     {
       kind: payload.kind ?? 'tool_call',
+      invocation_id: payload.invocation_id,
       runtime_id: payload.runtime_id,
       action_id: payload.action_id,
       action_type: payload.action_type,
@@ -1082,6 +1117,7 @@ export function applySkillCallErrorState(
     eventId,
     {
       kind: payload.kind ?? (payload.tool_name ? 'tool_call' : 'skill_load'),
+      invocation_id: payload.invocation_id,
       runtime_id: payload.runtime_id,
       action_id: payload.action_id,
       action_type: payload.action_type,

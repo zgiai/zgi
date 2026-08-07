@@ -607,7 +607,7 @@ func (r *Runner) handleCallSkillTool(
 	if completionIntent != "" {
 		argumentSummary["completion_intent"] = completionIntent
 	}
-	r.emitEvent(prepared, EventSkillCallStart, skillCallStartPayload(prepared, skillID, toolName, argumentSummary))
+	r.emitEvent(prepared, EventSkillCallStart, skillCallStartPayload(prepared, callID, skillID, toolName, argumentSummary))
 	if isAgentWorkflowRunTool(skillID, toolName) {
 		execCtx.RuntimeParameters = copyStringAnyMap(execCtx.RuntimeParameters)
 		if execCtx.RuntimeParameters == nil {
@@ -661,6 +661,7 @@ func (r *Runner) handleCallSkillTool(
 			err = fmt.Errorf("%w: skill tool returned no invocation result", ErrInvalidInput)
 		}
 		trace := failedSkillTrace("tool_call", toolName, err)
+		trace.InvocationID = strings.TrimSpace(callID)
 		trace.SkillID = skillID
 		trace.Arguments = argumentSummary
 		return recoverableSkillStep(trace, skills.ToolResultMessage(callID, recoverableSkillToolErrorPayload(err, "fix the tool_name or arguments and retry", skillID, toolName)), true, false)

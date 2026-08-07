@@ -412,7 +412,13 @@ func (r *Runtime) CallSkillTool(
 	arguments map[string]interface{},
 	execCtx ExecutionContext,
 	callID string,
-) (*ToolInvocationResult, error) {
+) (invocation *ToolInvocationResult, returnErr error) {
+	invocationID := strings.TrimSpace(callID)
+	defer func() {
+		if invocation != nil {
+			invocation.Trace.InvocationID = invocationID
+		}
+	}()
 	if r == nil {
 		return nil, fmt.Errorf("skill runtime is not configured")
 	}

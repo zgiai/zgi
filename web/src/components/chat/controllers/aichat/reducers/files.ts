@@ -161,6 +161,7 @@ function normalizeSkillArtifactFile(
       payload.artifact_id ??
       `${isManagedFile ? 'managed_file' : 'tool_file'}:${fileId}`,
     artifact_type: 'file',
+    invocation_id: payload.invocation_id,
     skill_id: payload.skill_id,
     tool_name: payload.tool_name,
     file_id: fileId,

@@ -314,7 +314,7 @@ func (r *processTimelineRecorder) RecordInvocationStart(skillID string, toolName
 		"arguments": arguments,
 	})
 	invocation["runtime_id"] = r.runtimeIDForStart(invocation)
-	payload := skillCallStartPayload(r.prepared, skillID, toolName, arguments)
+	payload := skillCallStartPayload(r.prepared, stringFromAny(invocation["runtime_id"]), skillID, toolName, arguments)
 	copyInvocationRuntimeFields(payload, invocation)
 	return r.recordInvocationEvent(streamEventSkillCallStart, payload, invocation)
 }
@@ -875,6 +875,9 @@ func invocationTimelineFields(payload map[string]interface{}, values map[string]
 	if _, exists := values["created_at_ms"]; !exists {
 		values["created_at_ms"] = payload["created_at_ms"]
 	}
+	if _, exists := values["invocation_id"]; !exists {
+		values["invocation_id"] = payload["invocation_id"]
+	}
 	return values
 }
 
@@ -887,6 +890,9 @@ func fillInvocationTimelineFromPayload(invocation map[string]interface{}, payloa
 	}
 	if _, ok := invocation["created_at_ms"]; !ok {
 		invocation["created_at_ms"] = payload["created_at_ms"]
+	}
+	if _, ok := invocation["invocation_id"]; !ok {
+		invocation["invocation_id"] = payload["invocation_id"]
 	}
 	normalizeSkillInvocationTimelineFields(invocation)
 }
@@ -927,7 +933,7 @@ func copyInvocationRuntimeFields(payload map[string]interface{}, invocation map[
 	if len(payload) == 0 || len(invocation) == 0 {
 		return
 	}
-	for _, key := range []string{"kind", "runtime_id", "path", "answer_id", "created_at", "created_at_ms"} {
+	for _, key := range []string{"kind", "invocation_id", "runtime_id", "path", "answer_id", "created_at", "created_at_ms"} {
 		if value, ok := invocation[key]; ok && value != nil {
 			payload[key] = value
 		}

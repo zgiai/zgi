@@ -13,8 +13,8 @@ import (
 	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
-func skillCallStartPayload(prepared *PreparedChat, skillID string, toolName string, argumentsSummary map[string]interface{}) map[string]interface{} {
-	return skilltrace.SkillCallStartPayload(skillTracePayloadIDs(prepared), skillID, toolName, argumentsSummary)
+func skillCallStartPayload(prepared *PreparedChat, invocationID string, skillID string, toolName string, argumentsSummary map[string]interface{}) map[string]interface{} {
+	return skilltrace.SkillCallStartPayload(skillTracePayloadIDs(prepared), invocationID, skillID, toolName, argumentsSummary)
 }
 
 func skillCallEndPayload(prepared *PreparedChat, trace skills.SkillTrace) map[string]interface{} {
