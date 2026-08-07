@@ -2,10 +2,12 @@ package handler
 
 import (
 	"errors"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/modules/contentparse/service"
+	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	"github.com/zgiai/zgi/api/middleware"
 	"github.com/zgiai/zgi/api/pkg/response"
 )
@@ -21,10 +23,50 @@ func NewProviderSettingsHandler(service service.ProviderSettingsService) *Provid
 func (h *ProviderSettingsHandler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.GET("/provider-settings", h.List)
 
-	admin := rg.Group("/provider-settings")
-	admin.Use(middleware.EnterpriseAdminOrOwnerRequired())
-	admin.PUT("/:provider_key", h.Upsert)
-	admin.POST("/:provider_key/check", h.Check)
+	writes := rg.Group("/provider-settings")
+	writes.Use(parserSettingsWriteRequired())
+	writes.PUT("/:provider_key", h.Upsert)
+	writes.POST("/:provider_key/check", h.Check)
+}
+
+// parserSettingsWriteRequired permits organization owners and administrators to
+// manage shared provider settings. It also permits the account that is currently
+// in the personal workbench to finish parser setup without first selecting an
+// unrelated workspace.
+func parserSettingsWriteRequired() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if middleware.IsOrganizationAdminOrOwner(c) || isPersonalWorkbenchParserSettingsRequest(c) {
+			c.Next()
+			return
+		}
+		response.Fail(c, response.ErrPermissionDenied)
+		c.Abort()
+	}
+}
+
+func isPersonalWorkbenchParserSettingsRequest(c *gin.Context) bool {
+	organizationID, ok := parserSettingsOrganizationID(c)
+	if !ok {
+		return false
+	}
+	accountID := strings.TrimSpace(c.GetString("account_id"))
+	if accountID == "" {
+		return false
+	}
+	accountServiceRaw, exists := c.Get("account_service")
+	if !exists {
+		return false
+	}
+	accountService, ok := accountServiceRaw.(interfaces.AccountService)
+	if !ok {
+		return false
+	}
+	accountContext, err := accountService.GetAccountContext(c.Request.Context(), accountID)
+	if err != nil || accountContext == nil || accountContext.CurrentOrganizationID == nil {
+		return false
+	}
+	return accountContext.CurrentWorkspaceID == nil &&
+		strings.TrimSpace(*accountContext.CurrentOrganizationID) == organizationID.String()
 }
 
 func (h *ProviderSettingsHandler) List(c *gin.Context) {
