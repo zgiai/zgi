@@ -916,6 +916,14 @@ const messages: WebappMessages = {
       imageVisionRequired: '只有具备视觉能力的模型支持图片上传。',
       imageModelLocked:
         '由于您已经上传了图片，只能切换具备视觉能力的模型。如果您希望切换到不具备视觉能力的模型，请先移除输入区域的已上传图片。',
+      visionReplayWarning: {
+        title: '当前模型无法理解原消息中的图片',
+        description:
+          '这条消息包含 {count} 张图片。继续后，当前模型只能读取文字内容，图片不会参与回答，结果可能不完整或与原问题不符。',
+        recommendation: '如果图片是问题的重要依据，建议返回并切换到具备图像理解能力的模型。',
+        cancel: '返回切换模型',
+        confirm: '忽略图片并继续',
+      },
       uploadDocumentTooltip: '最多可附加 {count} 个文件，每个 {size} MB。支持：{types}。',
       uploadImageTooltip:
         '图片需要搭配具备视觉能力的模型使用。最多可附加 {count} 个文件，每个 {size} MB。支持：{types}。',

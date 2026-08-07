@@ -954,6 +954,15 @@ const messages = {
       imageVisionRequired: 'Only models with vision capability support image upload.',
       imageModelLocked:
         'You have uploaded an image, so you can only switch to models with vision capability. Remove the uploaded image first if you want to switch to a non-vision model.',
+      visionReplayWarning: {
+        title: 'The selected model cannot understand the images in this message',
+        description:
+          'This message contains {count} image(s). If you continue, the selected model will only receive the text. The images will not be used, so the response may be incomplete or inaccurate.',
+        recommendation:
+          'Go back and switch to a vision-capable model if the images are important to the request.',
+        cancel: 'Go back and switch model',
+        confirm: 'Continue without images',
+      },
       uploadDocumentTooltip: 'Attach up to {count} files, {size} MB each. Supported: {types}.',
       uploadImageTooltip:
         'Attach images with a vision-capable model. Up to {count} files, {size} MB each. Supported: {types}.',

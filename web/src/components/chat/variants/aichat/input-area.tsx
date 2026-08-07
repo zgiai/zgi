@@ -219,6 +219,7 @@ interface AIChatInputAreaProps {
   ) => void;
   onStop: () => void;
   onModelChange: (value: ModelSelectorValue) => void;
+  onModelPropsChange?: (model: ModelSelectorModelProps | null) => void;
   onHeightChange?: (height: number) => void;
   showModelSelector?: boolean;
   modelUseCase?: ModelUseCase;
@@ -301,6 +302,7 @@ export function AIChatInputArea({
   onWorkflowApprovalSubmit,
   onStop,
   onModelChange,
+  onModelPropsChange,
   onHeightChange,
   showModelSelector = true,
   modelUseCase = 'agent',
@@ -349,6 +351,14 @@ export function AIChatInputArea({
   const [activeToolGovernanceApproval, setActiveToolGovernanceApproval] =
     useState<ToolGovernancePendingApproval | null>(null);
   const toolGovernancePendingApprovalScopeId = useToolGovernancePendingApprovalScope();
+
+  const handleModelPropsChange = useCallback(
+    (nextModel: ModelSelectorModelProps | null) => {
+      setSelectedModelProps(nextModel);
+      onModelPropsChange?.(nextModel);
+    },
+    [onModelPropsChange]
+  );
   const canSubmitWorkflowApprovalInline = activeWorkflowApprovalRequest?.canSubmitInline === true;
   const activeApprovalForm = canSubmitWorkflowApprovalInline
     ? (activeWorkflowApprovalRequest?.approvalForm ?? null)
@@ -1440,7 +1450,7 @@ export function AIChatInputArea({
                 skillManagementLabel={skillManagementLabel}
                 surface={surface}
                 onModelChange={onModelChange}
-                onModelPropsChange={setSelectedModelProps}
+                onModelPropsChange={handleModelPropsChange}
                 onUploadDocument={() => fileInputRef.current?.click()}
                 onUploadImage={handleImageUpload}
                 onSelectFromFiles={() => setIsFileSelectorOpen(true)}
