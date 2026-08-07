@@ -135,6 +135,7 @@ export class SingleChatController implements ChatController {
   private transport: ConversationTransport;
   public store: StoreApi<SingleChatControllerStore>;
   private titleRefreshTimers = new Set<ReturnType<typeof setTimeout>>();
+  private detailRequestSequence = 0;
 
   readonly mode = 'singleChat' as const;
 
@@ -334,15 +335,17 @@ export class SingleChatController implements ChatController {
     // Check if already in list
     const existing = this.store.getState().conversations.find(c => c.id === conversationId);
     if (existing) {
-      this.select(conversationId);
+      await this.select(conversationId);
       return;
     }
 
+    const requestSequence = ++this.detailRequestSequence;
     this.store.getState().setIsLoadingDetail(true);
     try {
       // We assume conversationId is a server ID here.
       // If transport supports get(), we can fetch detail directly.
       const detail = await this.transport.get(conversationId);
+      if (requestSequence !== this.detailRequestSequence) return;
 
       // Add to list if not present
       const summary: ConversationSummary = detail.summary;
@@ -366,11 +369,14 @@ export class SingleChatController implements ChatController {
 
       this.store.getState().setActiveDetail(detail);
     } catch (err) {
+      if (requestSequence !== this.detailRequestSequence) return;
       console.error(`[SingleChatController] Failed to load conversation ${conversationId}:`, err);
       // Fallback: clear activeId (return to home view) and do NOT show toast
       this.store.getState().setActiveId(null);
     } finally {
-      this.store.getState().setIsLoadingDetail(false);
+      if (requestSequence === this.detailRequestSequence) {
+        this.store.getState().setIsLoadingDetail(false);
+      }
     }
   }
 
@@ -420,10 +426,14 @@ export class SingleChatController implements ChatController {
   }
 
   async select(id: string): Promise<void> {
+    const requestSequence = ++this.detailRequestSequence;
     this.store.getState().setActiveId(id);
 
     const conv = this.store.getState().conversations.find(c => c.id === id);
-    if (!conv) return;
+    if (!conv) {
+      this.store.getState().setIsLoadingDetail(false);
+      return;
+    }
 
     // If conversation has no backend id, it's a draft, skip loading detail
     if (!conv.conversationId || conv.conversationId.trim().length === 0) {
@@ -435,6 +445,7 @@ export class SingleChatController implements ChatController {
         loaded: true,
         loading: false,
       });
+      this.store.getState().setIsLoadingDetail(false);
       return;
     }
 
@@ -450,7 +461,12 @@ export class SingleChatController implements ChatController {
         retry: false,
       });
 
-      if (this.store.getState().activeId !== id) return;
+      if (
+        requestSequence !== this.detailRequestSequence ||
+        this.store.getState().activeId !== id
+      ) {
+        return;
+      }
 
       const localMessages = useChatStore.getState().conversations[id]?.messages ?? [];
       const messages = reconcileConversationMessages(detail.messages, localMessages);
@@ -466,10 +482,13 @@ export class SingleChatController implements ChatController {
 
       this.store.getState().setActiveDetail(reconciledDetail);
     } catch (err) {
+      if (requestSequence !== this.detailRequestSequence) return;
       // Error toast handled in transport hook
       console.error('[SingleChatController] Failed to load detail:', err);
     } finally {
-      this.store.getState().setIsLoadingDetail(false);
+      if (requestSequence === this.detailRequestSequence) {
+        this.store.getState().setIsLoadingDetail(false);
+      }
     }
   }
 

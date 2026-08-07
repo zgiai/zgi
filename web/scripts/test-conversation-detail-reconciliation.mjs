@@ -241,5 +241,24 @@ assert.match(
   /onPaused:[\s\S]*?invalidateConversationDetail\(currentId\)/,
   'a paused workflow must invalidate its cached conversation detail'
 );
+assert.match(
+  controllerSource,
+  /private detailRequestSequence = 0/,
+  'conversation detail loading must track the latest request independently of the active id'
+);
+assert.match(
+  controllerSource,
+  /requestSequence !== this\.detailRequestSequence \|\|[\s\S]*?activeId !== id/,
+  'an obsolete conversation selection must discard its result'
+);
+assert.equal(
+  (
+    controllerSource.match(
+      /if \(requestSequence === this\.detailRequestSequence\) \{\s*this\.store\.getState\(\)\.setIsLoadingDetail\(false\);\s*\}/g
+    ) ?? []
+  ).length,
+  2,
+  'only the latest select or loadAndSelect request may clear the shared detail loading state'
+);
 
 console.log('conversation detail reconciliation regression checks passed');
