@@ -1362,6 +1362,13 @@ const messages = {
         reject: 'Reject',
         approve: 'Approve',
         batchApprove: 'Batch Approve',
+        rejectDialogTitle: 'Reject join request',
+        rejectDialogDescription:
+          'Add a rejection reason so the applicant can understand the review result.',
+        rejectReason: 'Rejection reason',
+        rejectReasonPlaceholder: 'Enter a rejection reason (optional)',
+        confirmReject: 'Confirm reject',
+        rejecting: 'Rejecting...',
         approveSuccess: 'Application approved',
         approveError: 'Failed to approve application',
         rejectSuccess: 'Application rejected',
