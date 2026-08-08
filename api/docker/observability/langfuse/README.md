@@ -42,7 +42,7 @@ LANGFUSE_PUBLIC_KEY=pk-lf-...
 LANGFUSE_SECRET_KEY=sk-lf-...
 LANGFUSE_BASE_URL=https://cloud.langfuse.com
 OTEL_LLM_LANGFUSE_ATTRIBUTES=true
-OTEL_LLM_CAPTURE_CONTENT=summary
+OTEL_LLM_CAPTURE_CONTENT=none
 OTEL_LLM_CAPTURE_MAX_CHARS=65536
 ```
 
@@ -59,13 +59,15 @@ OTEL_COLLECTOR_CONFIG=./docker/otel-collector.external-langfuse.yaml
 LANGFUSE_OTEL_ENDPOINT=http://host.docker.internal:3000/api/public/otel
 LANGFUSE_AUTH_STRING=<base64-public-key-colon-secret-key>
 OTEL_LLM_LANGFUSE_ATTRIBUTES=true
-OTEL_LLM_CAPTURE_CONTENT=summary
+OTEL_LLM_CAPTURE_CONTENT=none
 OTEL_LLM_CAPTURE_MAX_CHARS=65536
 ```
 
 Use `docker/otel-collector.external-jaeger-langfuse.yaml` instead when exporting to both Jaeger and Langfuse.
 
-Set `OTEL_LLM_CAPTURE_CONTENT=full` only when you intentionally want prompt and output content sent to Langfuse. Keep `summary` for shared or production environments unless data policy allows full content capture.
+The default `none` mode sends no prompt, output, or model-parameter attributes. Use `summary` only when count, shape, and allowlisted parameter metadata is useful, and set `full` only when you intentionally want prompt and output content sent to Langfuse and your data policy allows it.
+
+Upgrade note: older releases defaulted to `summary`. Deployments that intentionally rely on those count and shape attributes must now set `OTEL_LLM_CAPTURE_CONTENT=summary` explicitly.
 
 Generate the auth value:
 

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
-	"sort"
 	"strings"
 	"time"
 
@@ -20,6 +19,7 @@ import (
 
 const (
 	llmGatewayTracerName         = "zgi.llm.gateway"
+	llmTraceSchemaVersion        = "v1"
 	defaultOTELPayloadCharacters = 65536
 	maxRerankTraceResults        = 5
 
@@ -60,6 +60,9 @@ func (s *llmGatewayServiceImpl) traceChatCompletion(
 	billingCtx *BillingContext,
 	err error,
 ) {
+	if !llmTraceRecordingEnabled(ctx) {
+		return
+	}
 	traceLLMOperation(ctx, llmTracePayload{
 		Name:            "llm.chat",
 		Operation:       "chat",
@@ -196,7 +199,7 @@ func (s *llmGatewayServiceImpl) traceImageGeneration(
 }
 
 func traceLLMOperation(ctx context.Context, payload llmTracePayload) {
-	if payload.Billing == nil {
+	if payload.Billing == nil || !llmTraceRecordingEnabled(ctx) {
 		return
 	}
 	if payload.StartTime.IsZero() {
@@ -214,6 +217,9 @@ func traceLLMOperation(ctx context.Context, payload llmTracePayload) {
 		oteltrace.WithSpanKind(oteltrace.SpanKindClient),
 	)
 	defer span.End(oteltrace.WithTimestamp(payload.EndTime))
+	if !span.IsRecording() {
+		return
+	}
 
 	span.SetAttributes(observability.SanitizeAttributes(baseLLMAttributes(payload))...)
 	span.SetAttributes(observability.SanitizeAttributes(payloadAttributes(payload))...)
@@ -248,6 +254,8 @@ func traceLLMOperation(ctx context.Context, payload llmTracePayload) {
 func baseLLMAttributes(payload llmTracePayload) []attribute.KeyValue {
 	bc := payload.Billing
 	attrs := []attribute.KeyValue{
+		attribute.String("zgi.llm.schema_version", llmTraceSchemaVersion),
+		attribute.String("zgi.invocation_id", bc.RequestID),
 		attribute.String("gen_ai.operation.name", payload.Operation),
 		attribute.String("gen_ai.system", bc.ProviderName),
 		attribute.String("gen_ai.request.model", bc.ModelName),
@@ -265,6 +273,7 @@ func baseLLMAttributes(payload llmTracePayload) []attribute.KeyValue {
 		attribute.Int64("zgi.response_time_ms", bc.ResponseTime),
 		attribute.Int64("zgi.estimated_credits", bc.EstimatedCredits),
 		attribute.Int64("zgi.actual_credits", bc.ActualCredits),
+		attribute.String("zgi.status", bc.Status),
 	}
 
 	if llmLangfuseAttributesEnabled() {
@@ -319,10 +328,28 @@ func baseLLMAttributes(payload llmTracePayload) []attribute.KeyValue {
 }
 
 func withLLMLangfuseTraceContext(ctx context.Context, bc *BillingContext, traceName string) context.Context {
-	if bc == nil {
+	if bc == nil || !llmLangfuseAttributesEnabled() || !llmTraceRecordingEnabled(ctx) {
 		return ctx
 	}
 	return observability.WithLangfuseTraceAttributes(ctx, llmLangfuseAttributes(bc, traceName)...)
+}
+
+func llmTraceRecordingEnabled(ctx context.Context) bool {
+	cfg := otelConfig()
+	if !cfg.Enabled || cfg.TraceSampleRate <= 0 {
+		return false
+	}
+	// Fractional production sampling is parent-based. A local non-recording
+	// parent therefore guarantees this child will not record, so avoid building
+	// payload attributes. Remote parents and AlwaysSample remain SDK decisions.
+	if ctx != nil && cfg.TraceSampleRate < 1 {
+		span := oteltrace.SpanFromContext(ctx)
+		spanContext := span.SpanContext()
+		if spanContext.IsValid() && !spanContext.IsRemote() && !span.IsRecording() {
+			return false
+		}
+	}
+	return true
 }
 
 func llmLangfuseAttributes(bc *BillingContext, traceName string) []attribute.KeyValue {
@@ -334,6 +361,8 @@ func llmLangfuseAttributes(bc *BillingContext, traceName string) []attribute.Key
 	attrs = append(attrs,
 		attribute.String("langfuse.trace.name", traceName),
 		attribute.String("langfuse.user.id", traceUserID(bc)),
+		attribute.String("langfuse.trace.metadata.schema_version", llmTraceSchemaVersion),
+		attribute.String("langfuse.trace.metadata.invocation_id", bc.RequestID),
 		attribute.String("langfuse.trace.metadata.request_id", bc.RequestID),
 		attribute.String("langfuse.trace.metadata.attempt_id", bc.AttemptID),
 		attribute.String("langfuse.trace.metadata.api_key_id", bc.APIKeyID),
@@ -423,8 +452,10 @@ func payloadAttributes(payload llmTracePayload) []attribute.KeyValue {
 	if output := traceContentJSONString(payload.Output); output != "" {
 		attrs = append(attrs, attribute.String("langfuse.observation.output", output))
 	}
-	if params := safeJSONString(payload.ModelParameters); params != "" {
-		attrs = append(attrs, attribute.String("langfuse.observation.model.parameters", params))
+	if llmCaptureContentMode() != otelLLMCaptureNone {
+		if params := safeJSONString(payload.ModelParameters); params != "" {
+			attrs = append(attrs, attribute.String("langfuse.observation.model.parameters", params))
+		}
 	}
 	if details := usageDetails(usage); details != "" {
 		attrs = append(attrs, attribute.String("langfuse.observation.usage_details", details))
@@ -518,7 +549,7 @@ func llmCaptureContentMode() string {
 	case otelLLMCaptureNone, otelLLMCaptureSummary, otelLLMCaptureFull:
 		return mode
 	default:
-		return otelLLMCaptureSummary
+		return otelLLMCaptureNone
 	}
 }
 
@@ -656,15 +687,6 @@ func estimatedJSONLength(value interface{}) int {
 	return len(data)
 }
 
-func sortedMapKeys(values map[string]string) []string {
-	keys := make([]string, 0, len(values))
-	for key := range values {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	return keys
-}
-
 func chatCompletionOutput(resp *adapter.ChatResponse) interface{} {
 	if resp == nil || len(resp.Choices) == 0 {
 		return nil
@@ -705,16 +727,16 @@ func chatModelParameters(req *adapter.ChatRequest) map[string]interface{} {
 		params["function_count"] = len(req.Functions)
 	}
 	if req.FunctionCall != nil {
-		params["function_call"] = req.FunctionCall
+		params["function_call_configured"] = true
 	}
 	if len(req.Tools) > 0 {
 		params["tool_count"] = len(req.Tools)
 	}
 	if req.ToolChoice != nil {
-		params["tool_choice"] = req.ToolChoice
+		params["tool_choice_configured"] = true
 	}
 	if req.ResponseFormat != nil {
-		params["response_format"] = req.ResponseFormat
+		params["response_format_configured"] = true
 	}
 	if req.Seed != nil {
 		params["seed"] = *req.Seed
@@ -726,7 +748,7 @@ func chatModelParameters(req *adapter.ChatRequest) map[string]interface{} {
 		params["logit_bias_count"] = len(req.LogitBias)
 	}
 	if len(req.AdditionalParameters) > 0 {
-		params["additional_parameters"] = req.AdditionalParameters
+		params["additional_parameter_count"] = len(req.AdditionalParameters)
 	}
 	return params
 }
@@ -777,19 +799,19 @@ func responseModelParameters(req *adapter.CreateResponseRequest) map[string]inte
 		params["tool_count"] = len(req.Tools)
 	}
 	if req.ToolChoice != nil {
-		params["tool_choice"] = req.ToolChoice
+		params["tool_choice_configured"] = true
 	}
 	if req.ResponseFormat != nil {
-		params["response_format"] = req.ResponseFormat
+		params["response_format_configured"] = true
 	}
 	if len(req.Metadata) > 0 {
-		params["metadata_keys"] = sortedMapKeys(req.Metadata)
+		params["metadata_key_count"] = len(req.Metadata)
 	}
 	if len(req.Modalities) > 0 {
-		params["modalities"] = req.Modalities
+		params["modality_count"] = len(req.Modalities)
 	}
 	if len(req.AdditionalParameters) > 0 {
-		params["additional_parameters"] = req.AdditionalParameters
+		params["additional_parameter_count"] = len(req.AdditionalParameters)
 	}
 	return params
 }
@@ -894,7 +916,7 @@ func rerankModelParameters(req *adapter.RerankRequest) map[string]interface{} {
 		params["return_documents"] = *req.ReturnDocuments
 	}
 	if len(req.RankFields) > 0 {
-		params["rank_fields"] = req.RankFields
+		params["rank_field_count"] = len(req.RankFields)
 	}
 	return params
 }

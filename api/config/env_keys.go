@@ -452,7 +452,7 @@ const (
 	envOTELInstrumentGRPC = "OTEL_INSTRUMENT_GRPC"
 	// envOTELLLMLangfuseAttributes controls Langfuse-specific LLM trace attributes. Default: true.
 	envOTELLLMLangfuseAttributes = "OTEL_LLM_LANGFUSE_ATTRIBUTES"
-	// envOTELLLMCaptureContent controls LLM input/output capture: none, summary, or full. Default: summary.
+	// envOTELLLMCaptureContent controls LLM content/model-parameter capture: none, summary, or full. Default: none.
 	envOTELLLMCaptureContent = "OTEL_LLM_CAPTURE_CONTENT"
 	// envOTELLLMCaptureMaxChars caps serialized LLM input/output attributes. Default: 65536.
 	envOTELLLMCaptureMaxChars = "OTEL_LLM_CAPTURE_MAX_CHARS"
