@@ -40,6 +40,95 @@ func TestTraceNativeLLMOperationDisabledProducesNoSpanOrAllocations(t *testing.T
 	}
 }
 
+func TestTraceNativeLLMStreamOperationWithoutBillingProducesNoSpanOrAllocations(t *testing.T) {
+	restoreConfig := setGatewayOTELConfig(t, enabledGatewayOTELConfig())
+	defer restoreConfig()
+
+	recorder := tracetest.NewSpanRecorder()
+	provider := trace.NewTracerProvider(trace.WithSpanProcessor(recorder))
+	restoreTracer := setGatewayTracerProvider(t, provider)
+	defer restoreTracer()
+
+	service := &llmGatewayServiceImpl{}
+	requestBody := json.RawMessage(`{"input":"protected"}`)
+	start := time.Unix(1_700_000_000, 0)
+	allocations := testing.AllocsPerRun(1000, func() {
+		service.traceNativeLLMStreamOperation(
+			context.Background(),
+			"llm.responses.stream",
+			"responses",
+			requestBody,
+			"protected",
+			nil,
+			start,
+			time.Time{},
+			nil,
+			nil,
+		)
+	})
+	if allocations != 0 {
+		t.Fatalf("billing-free native stream trace allocations = %v, want 0", allocations)
+	}
+	if got := len(recorder.Ended()); got != 0 {
+		t.Fatalf("billing-free native stream trace ended spans = %d, want 0", got)
+	}
+}
+
+func TestGatewayLLMTraceHelpersDisabledProduceNoSpansOrAllocations(t *testing.T) {
+	restoreConfig := setGatewayOTELConfig(t, config.OpenTelemetryConfig{})
+	defer restoreConfig()
+
+	recorder := tracetest.NewSpanRecorder()
+	provider := trace.NewTracerProvider(trace.WithSpanProcessor(recorder))
+	restoreTracer := setGatewayTracerProvider(t, provider)
+	defer restoreTracer()
+
+	service := &llmGatewayServiceImpl{}
+	requestBody := json.RawMessage(`{"input":"protected"}`)
+	responseBody := json.RawMessage(`{"output":"protected"}`)
+	_, _, billing := successfulChatTraceFixture()
+	start := time.Unix(1_700_000_000, 0)
+	end := start.Add(time.Millisecond)
+	tests := []struct {
+		name string
+		emit func()
+	}{
+		{name: "chat stream", emit: func() {
+			service.traceStreamingChatCompletion(context.Background(), nil, "protected", start, end, billing, 11, 7, nil)
+		}},
+		{name: "responses", emit: func() {
+			service.traceCreateResponse(context.Background(), nil, nil, start, end, billing, nil)
+		}},
+		{name: "native responses", emit: func() {
+			service.traceNativeLLMOperation(context.Background(), "llm.responses", "responses", requestBody, responseBody, nil, start, end, billing, nil)
+		}},
+		{name: "native responses stream", emit: func() {
+			service.traceNativeLLMStreamOperation(context.Background(), "llm.responses.stream", "responses", requestBody, "protected", nil, start, end, billing, nil)
+		}},
+		{name: "embeddings", emit: func() {
+			service.traceEmbeddings(context.Background(), nil, nil, start, end, billing, nil)
+		}},
+		{name: "rerank", emit: func() {
+			service.traceRerank(context.Background(), nil, nil, start, end, billing, nil)
+		}},
+		{name: "images", emit: func() {
+			service.traceImageGeneration(context.Background(), nil, nil, start, end, billing, nil)
+		}},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			allocations := testing.AllocsPerRun(1000, test.emit)
+			if allocations != 0 {
+				t.Fatalf("disabled trace allocations = %v, want 0", allocations)
+			}
+		})
+	}
+	if got := len(recorder.Ended()); got != 0 {
+		t.Fatalf("disabled trace ended spans = %d, want 0", got)
+	}
+}
+
 func TestGatewayLLMOperationTraceContract(t *testing.T) {
 	otelConfig := enabledGatewayOTELConfig()
 	otelConfig.LLMCaptureContent = otelLLMCaptureNone
