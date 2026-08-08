@@ -13,6 +13,7 @@ import {
   Users,
   MessageSquare,
   Image as ImageIcon,
+  Video,
   AppWindow,
   Clock3,
   ChevronDown,
@@ -224,6 +225,11 @@ export function ConsoleSidebar({
             title: t('image'),
             href: '/console/work/image',
             icon: ImageIcon,
+          },
+          {
+            title: t('video'),
+            href: '/console/work/video',
+            icon: Video,
           },
           {
             title: t('app'),
@@ -607,6 +613,11 @@ export function ConsoleMobileSidebar({
             title: t('image'),
             href: '/console/work/image',
             icon: ImageIcon,
+          },
+          {
+            title: t('video'),
+            href: '/console/work/video',
+            icon: Video,
           },
           {
             title: t('app'),
