@@ -23,7 +23,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { useInvocationLog } from '@/hooks/statistics';
+import { useInvocationContent, useInvocationLog } from '@/hooks/statistics';
 import type {
   InvocationSource,
   InvocationStatus,
@@ -46,6 +46,7 @@ interface InvocationLogSectionProps {
   enabled: boolean;
   billingDisplay: BillingDisplaySettings;
   refreshToken?: number;
+  canViewContent?: boolean;
 }
 
 const sourceFilters: SourceFilter[] = ['all', 'api', 'product'];
@@ -70,6 +71,7 @@ export function InvocationLogSection({
   enabled,
   billingDisplay,
   refreshToken = 0,
+  canViewContent = false,
 }: InvocationLogSectionProps) {
   const t = useT('dashboard');
   const locale = useLocale();
@@ -270,6 +272,7 @@ export function InvocationLogSection({
       <InvocationDetailSheet
         item={selectedInvocation}
         billingDisplay={billingDisplay}
+        canViewContent={canViewContent}
         onOpenChange={open => {
           if (!open) setSelectedInvocation(null);
         }}
@@ -282,10 +285,12 @@ function InvocationDetailSheet({
   item,
   billingDisplay,
   onOpenChange,
+  canViewContent,
 }: {
   item: InvocationLogItem | null;
   billingDisplay: BillingDisplaySettings;
   onOpenChange: (open: boolean) => void;
+  canViewContent: boolean;
 }) {
   const t = useT('dashboard');
   const locale = useLocale();
@@ -364,28 +369,92 @@ function InvocationDetailSheet({
           ) : null}
 
           <DetailSection title={t('usage.invocations.details.content')}>
-            {item.input !== undefined || item.output !== undefined ? (
-              <div className="grid gap-3">
-                <ContentSnapshot label={t('usage.invocations.details.input')} value={item.input} />
-                <ContentSnapshot
-                  label={t('usage.invocations.details.output')}
-                  value={item.output}
-                />
-              </div>
-            ) : (
-              <div className="rounded-lg border border-dashed p-4">
-                <div className="text-sm font-medium">
-                  {t('usage.invocations.details.contentUnavailableTitle')}
-                </div>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  {t('usage.invocations.details.contentUnavailableDescription')}
-                </p>
-              </div>
-            )}
+            <InvocationContentPanel
+              key={item.invocation_id}
+              invocationId={item.invocation_id}
+              canViewContent={canViewContent}
+            />
           </DetailSection>
         </div>
       </SheetContent>
     </Sheet>
+  );
+}
+
+function InvocationContentPanel({
+  invocationId,
+  canViewContent,
+}: {
+  invocationId: string;
+  canViewContent: boolean;
+}) {
+  const t = useT('dashboard');
+  const locale = useLocale();
+  const [requested, setRequested] = useState(false);
+  const query = useInvocationContent(invocationId, canViewContent && requested);
+  const content = query.data?.data;
+
+  if (!canViewContent) {
+    return (
+      <div className="rounded-lg border border-dashed p-4">
+        <div className="text-sm font-medium">{t('usage.invocations.details.contentRestricted')}</div>
+        <p className="mt-1 text-sm text-muted-foreground">
+          {t('usage.invocations.details.contentRestrictedDescription')}
+        </p>
+      </div>
+    );
+  }
+
+  if (!requested) {
+    return (
+      <div className="rounded-lg border border-dashed p-4">
+        <div className="text-sm font-medium">{t('usage.invocations.details.sensitiveTitle')}</div>
+        <p className="mt-1 text-sm text-muted-foreground">
+          {t('usage.invocations.details.sensitiveDescription')}
+        </p>
+        <Button className="mt-3" size="sm" variant="outline" onClick={() => setRequested(true)}>
+          {t('usage.invocations.details.loadContent')}
+        </Button>
+      </div>
+    );
+  }
+
+  if (query.isLoading) return <Skeleton className="h-32 w-full rounded-lg" />;
+  if (query.isError || !content) {
+    return (
+      <div className="rounded-lg border border-dashed p-4">
+        <div className="text-sm font-medium">
+          {t('usage.invocations.details.contentUnavailableTitle')}
+        </div>
+        <p className="mt-1 text-sm text-muted-foreground">
+          {t('usage.invocations.details.contentUnavailableDescription')}
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      <ContentSnapshot label={t('usage.invocations.details.userQuestion')} value={content.input_text} />
+      <ContentSnapshot label={t('usage.invocations.details.aiAnswer')} value={content.output_text} />
+      {(content.input_truncated || content.output_truncated) && (
+        <p className="text-xs text-warning">{t('usage.invocations.details.contentTruncated')}</p>
+      )}
+      <p className="text-xs text-muted-foreground">
+        {t('usage.invocations.details.contentExpiresAt', {
+          time: new Date(content.expires_at).toLocaleString(locale),
+        })}
+      </p>
+      <details className="rounded-lg border p-3">
+        <summary className="cursor-pointer text-sm font-medium">
+          {t('usage.invocations.details.advancedContent')}
+        </summary>
+        <div className="mt-3 grid gap-3">
+          <ContentSnapshot label={t('usage.invocations.details.rawInput')} value={content.input_json} />
+          <ContentSnapshot label={t('usage.invocations.details.rawOutput')} value={content.output_json} />
+        </div>
+      </details>
+    </div>
   );
 }
 

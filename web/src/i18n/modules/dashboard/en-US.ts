@@ -147,6 +147,14 @@ const messages = {
       unknownHint: '{count} historical calls predate reliable source attribution.',
       historicalExplanation:
         'Historical calls were created before source attribution was introduced. Model, token, cost, and duration data remain available, but API versus in-product origin cannot be reconstructed reliably.',
+      contentSettings: {
+        title: 'Input/output content audit',
+        description: 'When enabled, new calls are redacted and stored asynchronously, up to {size} KB per field for {days} days.',
+        deploymentDisabled: 'Content capture is disabled for this deployment. Set LLM_INVOCATION_CONTENT_AVAILABLE=true first.',
+        enabled: 'Input/output content audit enabled',
+        disabled: 'Input/output content audit disabled',
+        updateFailed: 'Failed to update content audit settings',
+      },
       details: {
         action: 'View details',
         title: 'Invocation details',
@@ -175,6 +183,18 @@ const messages = {
         content: 'Input and output',
         input: 'Input',
         output: 'Output',
+        userQuestion: 'User question',
+        aiAnswer: 'AI answer',
+        sensitiveTitle: 'This is sensitive content',
+        sensitiveDescription: 'Viewing creates an audit record. Secrets are redacted and long content may be truncated.',
+        loadContent: 'View input and output',
+        contentRestricted: 'Only administrators can view input and output',
+        contentRestrictedDescription: 'Invocation metadata, tokens, and cost remain available.',
+        contentTruncated: 'Some content exceeded the storage limit and was truncated.',
+        contentExpiresAt: 'This content will expire at {time}.',
+        advancedContent: 'Advanced view: raw JSON',
+        rawInput: 'Raw input JSON',
+        rawOutput: 'Raw output JSON',
         contentUnavailableTitle: 'No content snapshot is available for this call',
         contentUnavailableDescription:
           'This list currently comes from lightweight billing records, and earlier versions did not store input or output by default. New calls will appear here after content capture is enabled; historical content cannot be backfilled.',

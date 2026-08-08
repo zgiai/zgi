@@ -303,6 +303,14 @@ const messages: DashboardMessages = {
       unknownHint: '其中 {count} 条为升级前的历史调用，暂无可靠来源分类。',
       historicalExplanation:
         '“历史数据”是日志来源分类上线前已产生的调用。它仍保留模型、Token、费用和耗时，但当时没有记录 API 或产品内来源，因此无法准确补齐。',
+      contentSettings: {
+        title: '输入输出内容审计',
+        description: '开启后，新调用会脱敏并异步保存输入输出，每项最多 {size} KB，默认保留 {days} 天。',
+        deploymentDisabled: '当前部署未允许内容采集。请先设置 LLM_INVOCATION_CONTENT_AVAILABLE=true。',
+        enabled: '已开启输入输出内容审计',
+        disabled: '已关闭输入输出内容审计',
+        updateFailed: '更新内容审计设置失败',
+      },
       details: {
         action: '查看详情',
         title: '调用详情',
@@ -330,6 +338,18 @@ const messages: DashboardMessages = {
         content: '输入与输出',
         input: '输入',
         output: '输出',
+        userQuestion: '用户问题',
+        aiAnswer: 'AI 回答',
+        sensitiveTitle: '这是敏感内容',
+        sensitiveDescription: '查看后会留下审计记录。内容已经过密钥脱敏，并可能因长度限制被截断。',
+        loadContent: '查看输入输出',
+        contentRestricted: '仅管理员可以查看输入输出',
+        contentRestrictedDescription: '调用元数据、Token 和费用仍可正常查看。',
+        contentTruncated: '部分内容超过保存上限，已截断。',
+        contentExpiresAt: '内容将在 {time} 到期清理。',
+        advancedContent: '高级视图：原始 JSON',
+        rawInput: '原始输入 JSON',
+        rawOutput: '原始输出 JSON',
         contentUnavailableTitle: '本条调用没有内容快照',
         contentUnavailableDescription:
           '当前列表来自轻量计费流水，早期版本默认不保存输入输出。后续开启内容采集后，新调用才会在这里显示；历史内容无法补录。',

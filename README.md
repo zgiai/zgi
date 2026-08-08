@@ -135,6 +135,8 @@ make dev-web
 
 ## Documentation
 
+- [LLM invocation content audit](docs/llm-invocation-content-audit.md)
+
 Read the product documentation at [`docs.zgi.ai`](https://docs.zgi.ai).
 
 Repository-local README files are kept for development and contribution notes.

@@ -7,6 +7,8 @@ import type {
   WorkspaceQuotaData,
   GetInvocationLogParams,
   InvocationLogData,
+  InvocationContentSettings,
+  InvocationContentDetail,
 } from './types/statistics';
 
 /**
@@ -30,6 +32,22 @@ class StatisticsService extends BaseService {
 
   getInvocationLog(params: GetInvocationLogParams): Promise<ApiResponseData<InvocationLogData>> {
     return this.request('get', '/invocations', undefined, { params });
+  }
+
+  getInvocationContentSettings(): Promise<ApiResponseData<InvocationContentSettings>> {
+    return this.request('get', '/invocation-content/settings');
+  }
+
+  updateInvocationContentSettings(
+    enabled: boolean
+  ): Promise<ApiResponseData<InvocationContentSettings>> {
+    return this.request('put', '/invocation-content/settings', { enabled });
+  }
+
+  getInvocationContent(
+    invocationId: string
+  ): Promise<ApiResponseData<InvocationContentDetail>> {
+    return this.request('get', `/invocations/${encodeURIComponent(invocationId)}/content`);
   }
 
   /**

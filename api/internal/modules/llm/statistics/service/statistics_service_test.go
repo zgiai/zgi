@@ -4,11 +4,13 @@ import (
 	"context"
 	"testing"
 
+	appconfig "github.com/zgiai/zgi/api/config"
 	"github.com/zgiai/zgi/api/internal/modules/llm/statistics/dto"
 )
 
 type fakeStatisticsRepository struct {
-	modelUsageReq *dto.ModelUsageRequest
+	modelUsageReq  *dto.ModelUsageRequest
+	contentEnabled bool
 }
 
 func (f *fakeStatisticsRepository) GetModelUsage(_ context.Context, _ string, req *dto.ModelUsageRequest) (*dto.ModelUsageResponse, error) {
@@ -20,6 +22,36 @@ func (f *fakeStatisticsRepository) GetModelUsage(_ context.Context, _ string, re
 
 func (f *fakeStatisticsRepository) GetInvocationLog(context.Context, string, *dto.InvocationLogRequest) (*dto.InvocationLogResponse, error) {
 	return &dto.InvocationLogResponse{}, nil
+}
+
+func (f *fakeStatisticsRepository) GetInvocationContentSettings(context.Context, string) (bool, error) {
+	return f.contentEnabled, nil
+}
+
+func (f *fakeStatisticsRepository) UpdateInvocationContentSettings(context.Context, string, bool) error {
+	f.contentEnabled = true
+	return nil
+}
+
+func TestInvocationContentSettingsRequireDeploymentGate(t *testing.T) {
+	previous := appconfig.GlobalConfig
+	t.Cleanup(func() { appconfig.GlobalConfig = previous })
+	appconfig.GlobalConfig = &appconfig.Config{LLMInvocationContent: appconfig.LLMInvocationContentConfig{
+		Available: false, MaxBytes: 65536, RetentionDays: 14,
+	}}
+	repo := &fakeStatisticsRepository{}
+	svc := NewStatisticsService(repo)
+	if _, err := svc.UpdateInvocationContentSettings(context.Background(), "org-1", &dto.UpdateInvocationContentSettingsRequest{Enabled: true}); err != ErrInvocationContentUnavailable {
+		t.Fatalf("enable error=%v, want %v", err, ErrInvocationContentUnavailable)
+	}
+	settings, err := svc.GetInvocationContentSettings(context.Background(), "org-1")
+	if err != nil || settings.Available || settings.Enabled {
+		t.Fatalf("unexpected settings=%#v err=%v", settings, err)
+	}
+}
+
+func (f *fakeStatisticsRepository) GetInvocationContent(context.Context, string, string, string) (*dto.InvocationContentDetail, error) {
+	return &dto.InvocationContentDetail{}, nil
 }
 
 func (f *fakeStatisticsRepository) GetWorkspaceQuota(context.Context, string, *dto.WorkspaceQuotaRequest) (*dto.WorkspaceQuotaResponse, error) {
