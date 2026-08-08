@@ -66,6 +66,7 @@ type Tracker struct {
 	firstDelay        time.Duration
 	reasoningSeen     bool
 	toolCallDeltaSeen bool
+	stopped           bool
 }
 
 // Start creates and starts one progress tracker. Invalid options disable it.
@@ -152,12 +153,18 @@ func (t *Tracker) emitStage(stage string) {
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	if t.stopped {
+		return
+	}
 	t.stage = stage
 	t.stagesSent++
 	t.emitLocked()
 }
 
 func (t *Tracker) emitLocked() {
+	if t.stopped {
+		return
+	}
 	elapsed := time.Since(t.startedAt)
 	if t.eventsSent == 0 {
 		t.firstDelay = elapsed
@@ -185,6 +192,9 @@ func (t *Tracker) ObserveReasoningDelta() {
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	if t.stopped {
+		return
+	}
 	t.reasoningSeen = true
 	t.updateActivityLocked(ActivityReasoning)
 }
@@ -196,11 +206,17 @@ func (t *Tracker) ObserveToolCallDelta() {
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	if t.stopped {
+		return
+	}
 	t.toolCallDeltaSeen = true
 	t.updateActivityLocked(ActivityPreparingAction)
 }
 
 func (t *Tracker) updateActivityLocked(activity string) {
+	if t.stopped {
+		return
+	}
 	if activityRank(activity) <= activityRank(t.activity) {
 		return
 	}
@@ -232,6 +248,9 @@ func (t *Tracker) Stop() {
 		return
 	}
 	t.stopOnce.Do(func() {
+		t.mu.Lock()
+		t.stopped = true
+		t.mu.Unlock()
 		t.cancel()
 		<-t.done
 		t.mu.Lock()

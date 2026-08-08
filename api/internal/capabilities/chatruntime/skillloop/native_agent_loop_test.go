@@ -507,9 +507,12 @@ func TestNativeAgentStreamExposesBusinessNarrationProvisionally(t *testing.T) {
 		t.Fatalf("stream result = %#v ok=%v, want retained narration and business call", result, ok)
 	}
 	messageCount := 0
+	messageSeen := false
+	progressBeforeMessage := false
 	for _, event := range events {
 		if event.Type == EventMessage {
 			messageCount++
+			messageSeen = true
 		}
 		if event.Type == EventMessageRetract {
 			t.Fatalf("stream layer classified business narration before the complete tool turn: %#v", events)
@@ -517,11 +520,16 @@ func TestNativeAgentStreamExposesBusinessNarrationProvisionally(t *testing.T) {
 		if event.Type == EventAgentProgress && event.Payload["phase"] == "tool_planning" {
 			t.Fatalf("native tool_planning progress was not suppressed: %#v", events)
 		}
+		if event.Type == EventAgentProgress && event.Payload["phase"] == modelProgressPhase {
+			if messageSeen {
+				t.Fatalf("model progress resumed after visible narration: %#v", events)
+			}
+			progressBeforeMessage = true
+		}
 	}
-	if messageCount != 1 || !result.provisionalStreamed {
-		t.Fatalf("provisional business narration = %#v, want one provisional candidate", result)
+	if messageCount != 1 || !progressBeforeMessage || !result.provisionalStreamed {
+		t.Fatalf("provisional business narration = %#v progress_before_message=%v, want one provisional candidate after progress", result, progressBeforeMessage)
 	}
-	assertModelProgressActivity(t, events, modelProgressActivityPreparingAction, modelProgressSourceProviderSignal)
 }
 
 func TestNativeAgentStreamStillEmitsOrdinaryFinalContent(t *testing.T) {
