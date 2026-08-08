@@ -24,6 +24,8 @@ const (
 	maxRerankTraceResults        = 5
 
 	otelObservationGeneration = "generation"
+	otelObservationEmbedding  = "embedding"
+	otelObservationRetriever  = "retriever"
 	otelObservationDefault    = "DEFAULT"
 	otelObservationError      = "ERROR"
 
@@ -35,6 +37,7 @@ const (
 type llmTracePayload struct {
 	Name            string
 	Operation       string
+	ObservationType string
 	Input           interface{}
 	Output          interface{}
 	ModelParameters interface{}
@@ -60,7 +63,7 @@ func (s *llmGatewayServiceImpl) traceChatCompletion(
 	billingCtx *BillingContext,
 	err error,
 ) {
-	if !llmTraceRecordingEnabled(ctx) {
+	if billingCtx == nil || !llmTraceRecordingEnabled(ctx) {
 		return
 	}
 	traceLLMOperation(ctx, llmTracePayload{
@@ -144,6 +147,7 @@ func (s *llmGatewayServiceImpl) traceEmbeddings(
 	traceLLMOperation(ctx, llmTracePayload{
 		Name:            "llm.embeddings",
 		Operation:       "embeddings",
+		ObservationType: otelObservationEmbedding,
 		Input:           embeddingInputSummary(req),
 		Output:          embeddingOutputSummary(resp),
 		ModelParameters: embeddingModelParameters(req),
@@ -152,6 +156,83 @@ func (s *llmGatewayServiceImpl) traceEmbeddings(
 		Billing:         billingCtx,
 		Err:             err,
 	})
+}
+
+func (s *llmGatewayServiceImpl) traceNativeLLMOperation(
+	ctx context.Context,
+	traceName string,
+	operation string,
+	requestBody json.RawMessage,
+	responseBody json.RawMessage,
+	usage *adapter.Usage,
+	startTime time.Time,
+	endTime time.Time,
+	billingCtx *BillingContext,
+	err error,
+) {
+	if billingCtx == nil || !llmTraceRecordingEnabled(ctx) {
+		return
+	}
+	var input, output interface{}
+	if llmLangfuseAttributesEnabled() && llmCaptureContentMode() != otelLLMCaptureNone {
+		input = nativeTraceJSON(requestBody)
+		output = nativeTraceJSON(responseBody)
+	}
+	traceLLMOperation(ctx, llmTracePayload{
+		Name:      traceName,
+		Operation: operation,
+		Input:     input,
+		Output:    output,
+		StartTime: startTime,
+		EndTime:   endTime,
+		Billing:   billingCtx,
+		Usage:     traceUsageFromAdapter(usage),
+		Err:       err,
+	})
+}
+
+func (s *llmGatewayServiceImpl) traceNativeLLMStreamOperation(
+	ctx context.Context,
+	traceName string,
+	operation string,
+	requestBody json.RawMessage,
+	output string,
+	usage *adapter.Usage,
+	startTime time.Time,
+	endTime time.Time,
+	billingCtx *BillingContext,
+	err error,
+) {
+	if !llmTraceRecordingEnabled(ctx) {
+		return
+	}
+	var input, traceOutput interface{}
+	if llmLangfuseAttributesEnabled() && llmCaptureContentMode() != otelLLMCaptureNone {
+		input = nativeTraceJSON(requestBody)
+		traceOutput = output
+	}
+	traceLLMOperation(ctx, llmTracePayload{
+		Name:      traceName,
+		Operation: operation,
+		Input:     input,
+		Output:    traceOutput,
+		StartTime: startTime,
+		EndTime:   endTime,
+		Billing:   billingCtx,
+		Usage:     traceUsageFromAdapter(usage),
+		Err:       err,
+	})
+}
+
+func nativeTraceOperation(traceName string) string {
+	switch traceName {
+	case "llm.responses", "llm.responses.stream":
+		return "responses"
+	case "llm.anthropic.messages", "llm.anthropic.messages.stream":
+		return "messages"
+	default:
+		return strings.TrimPrefix(traceName, "llm.")
+	}
 }
 
 func (s *llmGatewayServiceImpl) traceRerank(
@@ -166,6 +247,7 @@ func (s *llmGatewayServiceImpl) traceRerank(
 	traceLLMOperation(ctx, llmTracePayload{
 		Name:            "llm.rerank",
 		Operation:       "rerank",
+		ObservationType: otelObservationRetriever,
 		Input:           rerankInputSummary(req),
 		Output:          rerankOutputSummary(resp),
 		ModelParameters: rerankModelParameters(req),
@@ -277,9 +359,13 @@ func baseLLMAttributes(payload llmTracePayload) []attribute.KeyValue {
 	}
 
 	if llmLangfuseAttributesEnabled() {
+		observationType := payload.ObservationType
+		if observationType == "" {
+			observationType = otelObservationGeneration
+		}
 		attrs = append(attrs, llmLangfuseAttributes(bc, payload.Name)...)
 		attrs = append(attrs,
-			attribute.String("langfuse.observation.type", otelObservationGeneration),
+			attribute.String("langfuse.observation.type", observationType),
 			attribute.String("langfuse.observation.model.name", bc.ModelName),
 		)
 	}
@@ -476,6 +562,45 @@ func traceUsage(payload llmTracePayload) llmTraceUsage {
 		CompletionTokens: payload.Billing.CompletionTokens,
 		TotalTokens:      payload.Billing.TotalTokens,
 	}
+}
+
+func traceUsageFromAdapter(usage *adapter.Usage) *llmTraceUsage {
+	if usage == nil {
+		return nil
+	}
+	return &llmTraceUsage{
+		PromptTokens:     usage.PromptTokens,
+		CompletionTokens: usage.CompletionTokens,
+		TotalTokens:      usage.TotalTokens,
+	}
+}
+
+func nativeTraceJSON(raw json.RawMessage) interface{} {
+	if len(raw) == 0 {
+		return nil
+	}
+	var value interface{}
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return map[string]interface{}{
+			"type":       "invalid_json",
+			"json_chars": len(raw),
+		}
+	}
+	return value
+}
+
+func nativeRawResponseOutput(response *adapter.RawResponse) json.RawMessage {
+	if response == nil {
+		return nil
+	}
+	return response.Body
+}
+
+func nativeRawResponseUsage(response *adapter.RawResponse) *adapter.Usage {
+	if response == nil {
+		return nil
+	}
+	return response.Usage
 }
 
 func traceUserID(bc *BillingContext) string {

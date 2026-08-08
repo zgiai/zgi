@@ -102,6 +102,7 @@ func TestTraceChatCompletionLangfuseLive(t *testing.T) {
 		publicKey,
 		secretKey,
 		traceID,
+		"llm.chat",
 		testStartedAt,
 	)
 	if err != nil {
@@ -114,6 +115,59 @@ func TestTraceChatCompletionLangfuseLive(t *testing.T) {
 	t.Logf("LANGFUSE_OBSERVATION_ID=%s", observation.ID)
 	if traceURL := langfuseLiveTraceURL(baseURL, observation.ProjectID, traceID); traceURL != "" {
 		t.Logf("LANGFUSE_TRACE_URL=%s", traceURL)
+	}
+
+	nativeStartedAt := time.Now().UTC()
+	nativeRunID := "zgi-gateway-native-" + uuid.NewString()
+	_, _, nativeBilling := successfulChatTraceFixture()
+	nativeBilling.RequestID = nativeRunID
+	nativeBilling.AttemptID = nativeRunID + ":1"
+	(&llmGatewayServiceImpl{}).traceNativeLLMOperation(
+		context.Background(),
+		"llm.responses",
+		"responses",
+		json.RawMessage(`{"input":"do-not-export-native-input"}`),
+		json.RawMessage(`{"output":"do-not-export-native-output"}`),
+		nil,
+		nativeStartedAt,
+		time.Time{},
+		nativeBilling,
+		nil,
+	)
+	nativeFlushContext, cancelNativeFlush := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancelNativeFlush()
+	if err := tp.ForceFlush(nativeFlushContext); err != nil {
+		t.Fatalf("flush native Langfuse trace: %v", err)
+	}
+
+	ended = recorder.Ended()
+	if len(ended) != 2 {
+		t.Fatalf("ended spans after native trace = %d, want exactly 2 total generations", len(ended))
+	}
+	nativeSpan := ended[1]
+	if nativeSpan.Name() != "llm.responses" {
+		t.Fatalf("native span name = %q, want llm.responses", nativeSpan.Name())
+	}
+	nativeTraceID := nativeSpan.SpanContext().TraceID().String()
+	nativeReadbackContext, cancelNativeReadback := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancelNativeReadback()
+	nativeObservation, err := waitForLangfuseLiveObservation(
+		nativeReadbackContext,
+		baseURL,
+		publicKey,
+		secretKey,
+		nativeTraceID,
+		"llm.responses",
+		nativeStartedAt,
+	)
+	if err != nil {
+		t.Fatalf("read back native Langfuse generation: %v", err)
+	}
+	auditNativeLangfuseLiveObservation(t, nativeObservation, nativeTraceID, nativeRunID)
+	t.Logf("LANGFUSE_NATIVE_TEST_RUN_ID=%s", nativeRunID)
+	t.Logf("LANGFUSE_NATIVE_TRACE_ID=%s", nativeTraceID)
+	if traceURL := langfuseLiveTraceURL(baseURL, nativeObservation.ProjectID, nativeTraceID); traceURL != "" {
+		t.Logf("LANGFUSE_NATIVE_TRACE_URL=%s", traceURL)
 	}
 }
 
@@ -159,6 +213,7 @@ func TestFetchLangfuseLiveObservation(t *testing.T) {
 		"public-test",
 		"secret-test",
 		"trace-test",
+		"llm.chat",
 		time.Now().Add(-time.Minute),
 	)
 	if err != nil {
@@ -231,6 +286,7 @@ func waitForLangfuseLiveObservation(
 	publicKey string,
 	secretKey string,
 	traceID string,
+	observationName string,
 	startedAt time.Time,
 ) (langfuseLiveObservation, error) {
 	client := &http.Client{Timeout: 5 * time.Second}
@@ -243,6 +299,7 @@ func waitForLangfuseLiveObservation(
 			publicKey,
 			secretKey,
 			traceID,
+			observationName,
 			startedAt,
 		)
 		if err == nil && found {
@@ -276,6 +333,7 @@ func fetchLangfuseLiveObservation(
 	publicKey string,
 	secretKey string,
 	traceID string,
+	observationName string,
 	startedAt time.Time,
 ) (langfuseLiveObservation, bool, error) {
 	endpoint, err := url.Parse(langfuseLiveHostURL(baseURL) + "/api/public/v2/observations")
@@ -285,7 +343,7 @@ func fetchLangfuseLiveObservation(
 	query := endpoint.Query()
 	query.Set("fields", "core,basic,io,metadata,model,usage,trace_context")
 	query.Set("traceId", traceID)
-	query.Set("name", "llm.chat")
+	query.Set("name", observationName)
 	query.Set("type", "GENERATION")
 	query.Set("limit", "10")
 	query.Set("fromStartTime", startedAt.Add(-time.Minute).UTC().Format(time.RFC3339Nano))
@@ -316,12 +374,12 @@ func fetchLangfuseLiveObservation(
 	}
 	matches := make([]langfuseLiveObservation, 0, 1)
 	for _, observation := range payload.Data {
-		if observation.TraceID == traceID && observation.Name == "llm.chat" && strings.EqualFold(observation.Type, "generation") {
+		if observation.TraceID == traceID && observation.Name == observationName && strings.EqualFold(observation.Type, "generation") {
 			matches = append(matches, observation)
 		}
 	}
 	if len(matches) > 1 {
-		return langfuseLiveObservation{}, false, fmt.Errorf("Langfuse returned %d llm.chat generations for trace %s", len(matches), traceID)
+		return langfuseLiveObservation{}, false, fmt.Errorf("Langfuse returned %d %s generations for trace %s", len(matches), observationName, traceID)
 	}
 	if len(matches) == 1 {
 		return matches[0], true, nil
@@ -407,6 +465,49 @@ func auditLangfuseLiveObservation(
 	for _, sentinel := range sensitiveTraceSentinels() {
 		if strings.Contains(string(encoded), sentinel) {
 			t.Fatalf("Langfuse readback leaked sensitive sentinel %q", sentinel)
+		}
+	}
+}
+
+func auditNativeLangfuseLiveObservation(
+	t *testing.T,
+	observation langfuseLiveObservation,
+	traceID string,
+	testRunID string,
+) {
+	t.Helper()
+	if observation.TraceID != traceID || observation.Name != "llm.responses" || !strings.EqualFold(observation.Type, "generation") {
+		t.Fatalf(
+			"native Langfuse observation identity mismatch: id=%q traceId=%q name=%q type=%q",
+			observation.ID,
+			observation.TraceID,
+			observation.Name,
+			observation.Type,
+		)
+	}
+	if observation.TraceName != "llm.responses" {
+		t.Fatalf("native Langfuse trace name = %q, want llm.responses", observation.TraceName)
+	}
+	assertLangfuseLiveString(t, observation.Metadata, "invocation_id", testRunID)
+	assertLangfuseLiveNumber(t, observation.UsageDetails["input"], "native usage.input", "11")
+	assertLangfuseLiveNumber(t, observation.UsageDetails["output"], "native usage.output", "7")
+	assertLangfuseLiveNumber(t, observation.UsageDetails["total"], "native usage.total", "18")
+	if liveValuePresent(observation.Input) || liveValuePresent(observation.Output) || liveValuePresent(observation.ModelParameters) {
+		t.Fatalf(
+			"capture=none produced protected native fields: id=%q input_present=%t output_present=%t model_parameters_present=%t",
+			observation.ID,
+			liveValuePresent(observation.Input),
+			liveValuePresent(observation.Output),
+			liveValuePresent(observation.ModelParameters),
+		)
+	}
+	encoded, err := json.Marshal(observation)
+	if err != nil {
+		t.Fatalf("encode native Langfuse readback for content audit: %v", err)
+	}
+	for _, sentinel := range []string{"do-not-export-native-input", "do-not-export-native-output"} {
+		if strings.Contains(string(encoded), sentinel) {
+			t.Fatalf("native Langfuse readback leaked sensitive sentinel %q", sentinel)
 		}
 	}
 }
