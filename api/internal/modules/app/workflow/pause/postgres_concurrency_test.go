@@ -16,6 +16,76 @@ import (
 	"gorm.io/gorm"
 )
 
+func TestPostgresRuntimeOutboxDispatchableSupportsVarcharPauseRunID(t *testing.T) {
+	dsn := strings.TrimSpace(os.Getenv("TEST_POSTGRES_DSN"))
+	if dsn == "" {
+		t.Skip("TEST_POSTGRES_DSN is not configured")
+	}
+	admin, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open postgres admin connection: %v", err)
+	}
+	schema := "workflow_outbox_" + strings.ReplaceAll(uuid.NewString(), "-", "")
+	if err := admin.Exec("CREATE SCHEMA " + schema).Error; err != nil {
+		t.Fatalf("create test schema: %v", err)
+	}
+	defer admin.Exec("DROP SCHEMA " + schema + " CASCADE")
+
+	scopedDSN, err := postgresDSNWithSearchPath(dsn, schema)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db, err := gorm.Open(postgres.Open(scopedDSN), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open scoped postgres connection: %v", err)
+	}
+	if err := db.AutoMigrate(&pauseTestWorkflowRun{}, &RunPause{}, &RuntimeOutbox{}); err != nil {
+		t.Fatalf("migrate scoped tables: %v", err)
+	}
+
+	runID := uuid.NewString()
+	pauseID := uuid.NewString()
+	outboxID := uuid.NewString()
+	if err := db.Create(&pauseTestWorkflowRun{
+		ID: runID, RuntimeProtocolVersion: 2, ExecutionGeneration: 1, Status: "paused",
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&RunPause{
+		ID: pauseID, TenantID: uuid.NewString(), AppID: uuid.NewString(), WorkflowRunID: runID,
+		NodeID: "approval", Reason: ReasonTypeApprovalRequired, StateJSON: `{"version":"2"}`,
+		Generation: 1, Status: RunPauseStatusResumeReady,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&RuntimeOutbox{
+		ID: outboxID, TenantID: uuid.NewString(), WorkflowRunID: runID, PauseID: &pauseID,
+		Kind: RuntimeOutboxKindResume, IdempotencyKey: "dispatchable:" + outboxID,
+		PayloadJSON: `{}`, Status: RuntimeOutboxPending, NextAttemptAt: time.Now(),
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	service := NewService(db)
+	dispatchable, err := service.RuntimeOutboxDispatchable(t.Context(), outboxID)
+	if err != nil {
+		t.Fatalf("dispatchability query with varchar pause id and uuid outbox id: %v", err)
+	}
+	if !dispatchable {
+		t.Fatal("pending resume outbox should be dispatchable")
+	}
+	if err := db.Model(&RuntimeOutbox{}).Where("id = ?", outboxID).Update("status", RuntimeOutboxObsolete).Error; err != nil {
+		t.Fatal(err)
+	}
+	dispatchable, err = service.RuntimeOutboxDispatchable(t.Context(), outboxID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dispatchable {
+		t.Fatal("obsolete resume outbox must not be dispatchable")
+	}
+}
+
 func TestPostgresV2ConcurrentSequenceAndResumeClaim(t *testing.T) {
 	dsn := strings.TrimSpace(os.Getenv("TEST_POSTGRES_DSN"))
 	if dsn == "" {

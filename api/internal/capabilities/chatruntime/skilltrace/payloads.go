@@ -19,8 +19,8 @@ type PayloadIDs struct {
 }
 
 // SkillCallStartPayload builds the public skill_call_start event payload.
-func SkillCallStartPayload(ids PayloadIDs, skillID string, toolName string, argumentsSummary map[string]interface{}) map[string]interface{} {
-	return withPayloadTimestamp(map[string]interface{}{
+func SkillCallStartPayload(ids PayloadIDs, invocationID string, skillID string, toolName string, argumentsSummary map[string]interface{}) map[string]interface{} {
+	payload := withPayloadTimestamp(map[string]interface{}{
 		"conversation_id":   ids.ConversationID,
 		"message_id":        ids.MessageID,
 		"skill_id":          skillID,
@@ -28,6 +28,10 @@ func SkillCallStartPayload(ids PayloadIDs, skillID string, toolName string, argu
 		"arguments":         argumentsSummary,
 		"arguments_summary": argumentsSummary,
 	})
+	if invocationID = strings.TrimSpace(invocationID); invocationID != "" {
+		payload["invocation_id"] = invocationID
+	}
+	return payload
 }
 
 // SkillCallEndPayload builds the public skill_call_end event payload.
@@ -42,6 +46,9 @@ func SkillCallEndPayload(ids PayloadIDs, trace skills.SkillTrace, includeKind bo
 	})
 	if includeKind {
 		payload["kind"] = trace.Kind
+	}
+	if invocationID := strings.TrimSpace(trace.InvocationID); invocationID != "" {
+		payload["invocation_id"] = invocationID
 	}
 	if trace.Message != "" {
 		payload["message"] = trace.Message
@@ -101,6 +108,9 @@ func SkillCallErrorPayload(ids PayloadIDs, trace skills.SkillTrace, status strin
 	})
 	if includeKind {
 		payload["kind"] = trace.Kind
+	}
+	if invocationID := strings.TrimSpace(trace.InvocationID); invocationID != "" {
+		payload["invocation_id"] = invocationID
 	}
 	if trace.Governance != nil {
 		payload["governance"] = trace.Governance
@@ -1292,6 +1302,9 @@ func skillArtifactFromToolFile(ids PayloadIDs, trace skills.SkillTrace, message 
 		"download_url":    downloadURL,
 		"transfer_method": stringFromAny(file["transfer_method"]),
 	})
+	if invocationID := strings.TrimSpace(trace.InvocationID); invocationID != "" {
+		artifact["invocation_id"] = invocationID
+	}
 	if lifecycle := firstNonEmptyString(file["lifecycle"]); lifecycle != "" {
 		artifact["lifecycle"] = lifecycle
 	}

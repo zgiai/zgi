@@ -20,6 +20,7 @@ import {
   sortWorkflowRunRounds,
 } from '@/utils/workflow/run-events';
 import { isStaleAIChatStreamEvent, removeTransientProgressItems } from './shared';
+import { terminalizeWorkflowNodes } from '../workflow-terminal-state';
 import {
   captureAnswerTimelineBoundary,
   presentationPositionFromPayload,
@@ -525,9 +526,12 @@ function upsertWorkflowTimelineItem(
     status: nextStatus,
     elapsedTime: workflowElapsedMs(payload.elapsed_time) ?? previous.elapsedTime,
     error: workflowString(payload.error) ?? previous.error,
-    nodes: node
-      ? upsertWorkflowNodeWithContainers(previous.nodes, payload, node, nodeFinished)
-      : previous.nodes,
+    nodes: terminalizeWorkflowNodes(
+      node
+        ? upsertWorkflowNodeWithContainers(previous.nodes, payload, node, nodeFinished)
+        : previous.nodes,
+      nextStatus
+    ),
     approval: resumed
       ? undefined
       : approval
@@ -583,6 +587,7 @@ function applyWorkflowTimelineState(
       ...current.streamingByMessageId,
       [payload.message_id]: {
         ...previousStreaming,
+        modelProcessing: undefined,
         timeline: upsertWorkflowTimelineItem(
           previousStreaming.timeline,
           payload,

@@ -403,6 +403,61 @@ func TestRenderRichDocxGeneratesStyledDocument(t *testing.T) {
 	requireZipEntryContains(t, data, "word/document.xml", `w:pgSz w:w="16838" w:h="11906"`)
 }
 
+func TestParseDocxDocumentSpecAcceptsObjectStringAndRawMessage(t *testing.T) {
+	document := map[string]interface{}{
+		"page": map[string]interface{}{"size": "a4", "orientation": "portrait"},
+		"default_style": map[string]interface{}{
+			"font_family": "SimSun",
+			"font_size":   12,
+		},
+		"blocks": []interface{}{
+			map[string]interface{}{"type": "heading", "level": 1, "text": "Structured Report"},
+			map[string]interface{}{
+				"type": "paragraph",
+				"runs": []interface{}{
+					map[string]interface{}{"text": "Total: "},
+					map[string]interface{}{"text": "113.47", "bold": true, "underline": "single"},
+				},
+			},
+			map[string]interface{}{
+				"type":    "table",
+				"headers": []interface{}{map[string]interface{}{"text": "Item"}, map[string]interface{}{"text": "Amount"}},
+				"rows": []interface{}{
+					[]interface{}{map[string]interface{}{"text": "Electricity"}, map[string]interface{}{"text": "113.47", "background_color": "FFF2CC"}},
+				},
+			},
+			map[string]interface{}{"type": "page_break"},
+		},
+	}
+	encoded, err := json.Marshal(document)
+	require.NoError(t, err)
+
+	fromObject, err := parseDocxDocumentSpecValue(document)
+	require.NoError(t, err)
+	fromString, err := parseDocxDocumentSpec(string(encoded))
+	require.NoError(t, err)
+	fromRawMessage, err := parseDocxDocumentSpecValue(json.RawMessage(encoded))
+	require.NoError(t, err)
+	require.Equal(t, fromString, fromObject)
+	require.Equal(t, fromString, fromRawMessage)
+
+	data, err := renderRichDocx(fromObject)
+	require.NoError(t, err)
+	requireZipEntryContains(t, data, "word/document.xml", "Structured Report")
+	requireZipEntryContains(t, data, "word/document.xml", "113.47")
+}
+
+func TestParseDocxDocumentSpecValueReportsInputShapeErrors(t *testing.T) {
+	_, err := parseDocxDocumentSpecValue(nil)
+	require.EqualError(t, err, "document is required")
+
+	_, err = parseDocxDocumentSpecValue([]interface{}{})
+	require.ErrorContains(t, err, "document must be an object or JSON object string")
+
+	_, err = parseDocxDocumentSpec(`{"blocks":[{"type":"paragraph","text":"first"}]} {"blocks":[{"type":"paragraph","text":"second"}]}`)
+	require.ErrorContains(t, err, "document must contain exactly one JSON object")
+}
+
 func TestParseDocxDocumentSpecCompactsEmptyRuns(t *testing.T) {
 	raw := `{
   "blocks": [
@@ -502,6 +557,82 @@ func TestParsePPTXDocumentSpecNormalizesAndRejectsInvalidInput(t *testing.T) {
 			_, _, err := parsePPTXDocumentSpec(tt.raw)
 			require.Error(t, err)
 			require.Contains(t, err.Error(), tt.want)
+		})
+	}
+}
+
+func TestParsePPTXDocumentSpecAcceptsObjectStringAndRawMessage(t *testing.T) {
+	presentation := map[string]interface{}{
+		"layout":   "wide",
+		"language": "zh-CN",
+		"slides": []interface{}{
+			map[string]interface{}{
+				"background_color": "FFFFFF",
+				"elements": []interface{}{
+					map[string]interface{}{"type": "title", "text": "Structured Deck", "style": map[string]interface{}{"font_size": 28, "bold": true}},
+					map[string]interface{}{"type": "text", "text": "Summary", "style": map[string]interface{}{"font_size": 18}},
+				},
+			},
+		},
+	}
+	encoded, err := json.Marshal(presentation)
+	require.NoError(t, err)
+
+	fromObject, objectNormalized, err := parsePPTXDocumentSpecValue(presentation)
+	require.NoError(t, err)
+	fromString, stringNormalized, err := parsePPTXDocumentSpec(string(encoded))
+	require.NoError(t, err)
+	fromRawMessage, rawNormalized, err := parsePPTXDocumentSpecValue(json.RawMessage(encoded))
+	require.NoError(t, err)
+	require.Equal(t, fromString, fromObject)
+	require.Equal(t, fromString, fromRawMessage)
+	require.JSONEq(t, stringNormalized, objectNormalized)
+	require.JSONEq(t, stringNormalized, rawNormalized)
+}
+
+func TestParsePPTXDocumentSpecValueReportsInputShapeAndSizeErrors(t *testing.T) {
+	_, _, err := parsePPTXDocumentSpecValue(nil)
+	require.EqualError(t, err, "presentation is required")
+
+	_, _, err = parsePPTXDocumentSpecValue(true)
+	require.ErrorContains(t, err, "presentation must be an object or JSON object string")
+
+	_, _, err = parsePPTXDocumentSpec(`{"slides":[{"elements":[{"type":"text","text":"first"}]}]} {"slides":[]}`)
+	require.ErrorContains(t, err, "presentation must contain exactly one JSON object")
+
+	oversized := map[string]interface{}{
+		"slides": []interface{}{
+			map[string]interface{}{
+				"elements": []interface{}{
+					map[string]interface{}{"type": "text", "text": strings.Repeat("x", pptxMaxSpecBytes)},
+				},
+			},
+		},
+	}
+	_, _, err = parsePPTXDocumentSpecValue(oversized)
+	require.ErrorContains(t, err, "presentation exceeds")
+}
+
+func TestStructuredDocumentToolParametersRemainWorkflowStringCompatible(t *testing.T) {
+	tests := []struct {
+		name       string
+		parameters []tools.ToolParameter
+		key        string
+	}{
+		{name: "docx", parameters: NewGenerateDocxTool("").GetEntity().Parameters, key: "document"},
+		{name: "pptx", parameters: NewGeneratePPTXTool("").GetEntity().Parameters, key: "presentation"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			for _, parameter := range tt.parameters {
+				if parameter.Name != tt.key {
+					continue
+				}
+				require.Equal(t, tools.ToolParameterTypeString, parameter.Type)
+				require.Contains(t, parameter.LLMDescription, "object")
+				return
+			}
+			t.Fatalf("parameter %q not found", tt.key)
 		})
 	}
 }
@@ -828,6 +959,10 @@ func TestGenerateDocxToolReturnsDownloadableRichDocxMetadata(t *testing.T) {
 	mock.ExpectExec(`INSERT INTO "tool_files"`).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
+	mock.ExpectBegin()
+	mock.ExpectExec(`INSERT INTO "tool_files"`).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
 
 	oldManager := workflowtoolfile.GlobalToolFileManager
 	oldSignature := workflowtoolfile.GlobalFileSignature
@@ -850,7 +985,11 @@ func TestGenerateDocxToolReturnsDownloadableRichDocxMetadata(t *testing.T) {
 		context.Background(),
 		"user-1",
 		map[string]interface{}{
-			"document": `{"blocks":[{"type":"heading","text":"Report","style":{"font_size":18,"bold":true,"alignment":"center"}}]}`,
+			"document": map[string]interface{}{
+				"blocks": []interface{}{
+					map[string]interface{}{"type": "heading", "text": "Report", "style": map[string]interface{}{"font_size": 18, "bold": true, "alignment": "center"}},
+				},
+			},
 			"filename": "styled-report",
 		},
 		nil,
@@ -871,6 +1010,22 @@ func TestGenerateDocxToolReturnsDownloadableRichDocxMetadata(t *testing.T) {
 	data := fileStorage.onlyFileData(t)
 	requireZipEntryContains(t, data, "word/document.xml", "Report")
 	requireZipEntryContains(t, data, "word/document.xml", `w:sz w:val="36"`)
+
+	legacyStorage := newMemoryStorage()
+	workflowtoolfile.GlobalToolFileManager = workflowtoolfile.NewToolFileManager(db, legacyStorage)
+	_, err = NewGenerateDocxTool("tenant-1").Invoke(
+		context.Background(),
+		"user-1",
+		map[string]interface{}{
+			"document": `{"blocks":[{"type":"heading","text":"Report","style":{"font_size":18,"bold":true,"alignment":"center"}}]}`,
+			"filename": "legacy-report",
+		},
+		nil,
+		nil,
+		nil,
+	)
+	require.NoError(t, err)
+	requireZipEntryContains(t, legacyStorage.onlyFileData(t), "word/document.xml", "Report")
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
@@ -937,6 +1092,10 @@ func TestGeneratePPTXToolReturnsDownloadablePresentationMetadata(t *testing.T) {
 	mock.ExpectExec(`INSERT INTO "tool_files"`).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
+	mock.ExpectBegin()
+	mock.ExpectExec(`INSERT INTO "tool_files"`).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
 
 	oldManager := workflowtoolfile.GlobalToolFileManager
 	oldSignature := workflowtoolfile.GlobalFileSignature
@@ -959,8 +1118,16 @@ func TestGeneratePPTXToolReturnsDownloadablePresentationMetadata(t *testing.T) {
 		context.Background(),
 		"user-1",
 		map[string]interface{}{
-			"presentation": `{"slides":[{"elements":[{"type":"title","text":"Deck","style":{"align":"center","font_size":30}}]}]}`,
-			"filename":     "styled-deck",
+			"presentation": map[string]interface{}{
+				"slides": []interface{}{
+					map[string]interface{}{
+						"elements": []interface{}{
+							map[string]interface{}{"type": "title", "text": "Deck", "style": map[string]interface{}{"align": "center", "font_size": 30}},
+						},
+					},
+				},
+			},
+			"filename": "styled-deck",
 		},
 		nil,
 		nil,
@@ -979,6 +1146,22 @@ func TestGeneratePPTXToolReturnsDownloadablePresentationMetadata(t *testing.T) {
 
 	data := fileStorage.onlyFileData(t)
 	requireZipEntries(t, data, "[Content_Types].xml", "_rels/.rels", "ppt/presentation.xml")
+
+	legacyStorage := newMemoryStorage()
+	workflowtoolfile.GlobalToolFileManager = workflowtoolfile.NewToolFileManager(db, legacyStorage)
+	_, err = NewGeneratePPTXTool("tenant-1").Invoke(
+		context.Background(),
+		"user-1",
+		map[string]interface{}{
+			"presentation": `{"slides":[{"elements":[{"type":"title","text":"Deck","style":{"align":"center","font_size":30}}]}]}`,
+			"filename":     "legacy-deck",
+		},
+		nil,
+		nil,
+		nil,
+	)
+	require.NoError(t, err)
+	requireZipEntries(t, legacyStorage.onlyFileData(t), "[Content_Types].xml", "_rels/.rels", "ppt/presentation.xml")
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 

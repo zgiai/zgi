@@ -872,7 +872,7 @@ func (h *AgentsHandler) ChatAgent(c *gin.Context) {
 		response.SpecialFail(c, gin.H{"code": "399001", "message": err.Error()})
 		return
 	}
-	setupAgentSSE(c)
+	setupPreparedAgentSSE(c, prepared)
 	_ = writeAgentSSE(c, "message_start", gin.H{
 		"conversation_id": prepared.Conversation.ID.String(),
 		"message_id":      prepared.Message.ID.String(),
@@ -1275,7 +1275,7 @@ func (h *AgentsHandler) ChatWebAppAgent(c *gin.Context) {
 		response.SpecialFail(c, gin.H{"code": "399001", "message": err.Error()})
 		return
 	}
-	setupAgentSSE(c)
+	setupPreparedAgentSSE(c, prepared)
 	_ = writeAgentSSE(c, "message_start", gin.H{
 		"conversation_id": prepared.Conversation.ID.String(),
 		"message_id":      prepared.Message.ID.String(),
@@ -1319,6 +1319,21 @@ func setupAgentSSE(c *gin.Context) {
 	writer := newAgentSSEWriter(c)
 	c.Set(agentSSEWriterContextKey, writer)
 	writer.StartHeartbeat(c.Request.Context())
+}
+
+const (
+	agentSSEConversationIDHeader = "X-ZGI-Conversation-ID"
+	agentSSEMessageIDHeader      = "X-ZGI-Message-ID"
+)
+
+func setupPreparedAgentSSE(c *gin.Context, prepared *runtimeservice.PreparedChat) {
+	if prepared != nil && prepared.Conversation != nil {
+		c.Header(agentSSEConversationIDHeader, prepared.Conversation.ID.String())
+	}
+	if prepared != nil && prepared.Message != nil {
+		c.Header(agentSSEMessageIDHeader, prepared.Message.ID.String())
+	}
+	setupAgentSSE(c)
 }
 
 func writeAgentSSE(c *gin.Context, event string, data interface{}) error {

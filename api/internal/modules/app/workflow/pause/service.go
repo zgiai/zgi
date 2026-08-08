@@ -527,11 +527,12 @@ func (s *Service) LoadResumePayload(ctx context.Context, workflowRunID, pauseID 
 	var outbox RuntimeOutbox
 	if err := s.db.WithContext(ctx).
 		Where(
-			"workflow_run_id = ? AND pause_id = ? AND kind = ? AND idempotency_key = ?",
+			"workflow_run_id = ? AND pause_id = ? AND kind = ? AND idempotency_key = ? AND status IN ?",
 			workflowRunID,
 			pauseID,
 			RuntimeOutboxKindResume,
 			idempotencyKey,
+			[]string{RuntimeOutboxPending, RuntimeOutboxPublished},
 		).
 		First(&outbox).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -1087,17 +1088,19 @@ func (s *Service) ClaimResume(ctx context.Context, workflowRunID, pauseID string
 	claim := &ExecutionClaim{}
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var run struct {
-			RuntimeProtocolVersion int     `gorm:"column:runtime_protocol_version"`
-			ExecutionGeneration    int64   `gorm:"column:execution_generation"`
-			NextEventSequence      int     `gorm:"column:next_event_sequence"`
-			ConversationID         *string `gorm:"column:conversation_id"`
+			RuntimeProtocolVersion int        `gorm:"column:runtime_protocol_version"`
+			ExecutionGeneration    int64      `gorm:"column:execution_generation"`
+			NextEventSequence      int        `gorm:"column:next_event_sequence"`
+			ConversationID         *string    `gorm:"column:conversation_id"`
+			Status                 string     `gorm:"column:status"`
+			FinishedAt             *time.Time `gorm:"column:finished_at"`
 		}
 		if err := tx.Table("workflow_run_logs").Clauses(clause.Locking{Strength: "UPDATE"}).
-			Select("runtime_protocol_version, execution_generation, next_event_sequence, conversation_id").
+			Select("runtime_protocol_version, execution_generation, next_event_sequence, conversation_id, status, finished_at").
 			Where("id = ? AND deleted_at IS NULL", workflowRunID).Take(&run).Error; err != nil {
 			return fmt.Errorf("lock workflow run for resume claim: %w", err)
 		}
-		if run.RuntimeProtocolVersion < 2 {
+		if run.RuntimeProtocolVersion < 2 || run.FinishedAt != nil || workflowRunStatusTerminal(run.Status) {
 			return ErrPauseNotResumeReady
 		}
 		var pause RunPause
@@ -1141,7 +1144,8 @@ func (s *Service) ClaimResume(ctx context.Context, workflowRunID, pauseID string
 			recordResumeClaimConflict(ctx, "pause_cas")
 			return ErrResumeAlreadyRunning
 		}
-		runResult := tx.Table("workflow_run_logs").Where("id = ? AND execution_generation = ?", workflowRunID, run.ExecutionGeneration).
+		runResult := tx.Table("workflow_run_logs").
+			Where("id = ? AND execution_generation = ? AND finished_at IS NULL AND status NOT IN ?", workflowRunID, run.ExecutionGeneration, terminalWorkflowRunStatuses()).
 			Updates(map[string]interface{}{
 				"status":                     "running",
 				"execution_generation":       generation,
@@ -1226,6 +1230,19 @@ func (s *Service) ClaimResume(ctx context.Context, workflowRunID, pauseID string
 		return nil, err
 	}
 	return claim, nil
+}
+
+func workflowRunStatusTerminal(status string) bool {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "succeeded", "failed", "stopped", "expired", "partial-succeeded":
+		return true
+	default:
+		return false
+	}
+}
+
+func terminalWorkflowRunStatuses() []string {
+	return []string{"succeeded", "failed", "stopped", "expired", "partial-succeeded"}
 }
 
 func (s *Service) RenewExecutionLease(ctx context.Context, claim ExecutionClaim, leaseDuration time.Duration) (time.Time, error) {
@@ -1506,6 +1523,33 @@ func (s *Service) ListPendingOutbox(ctx context.Context, limit int) ([]RuntimeOu
 		return nil, fmt.Errorf("list workflow runtime outbox: %w", err)
 	}
 	return items, nil
+}
+
+func (s *Service) RuntimeOutboxDispatchable(ctx context.Context, id string) (bool, error) {
+	if s == nil || s.db == nil {
+		return false, fmt.Errorf("workflow pause service is not initialized")
+	}
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return false, nil
+	}
+	pauseRunJoin := "pause.workflow_run_id = outbox.workflow_run_id::text"
+	if s.db.Dialector.Name() != "postgres" {
+		pauseRunJoin = "pause.workflow_run_id = CAST(outbox.workflow_run_id AS text)"
+	}
+	var count int64
+	err := s.db.WithContext(ctx).
+		Table("workflow_runtime_outbox AS outbox").
+		Joins("JOIN workflow_run_logs AS run ON run.id = outbox.workflow_run_id AND run.deleted_at IS NULL").
+		Joins("JOIN workflow_run_pauses AS pause ON pause.id = outbox.pause_id AND "+pauseRunJoin).
+		Where("outbox.id = ? AND outbox.kind = ? AND outbox.status = ?", id, RuntimeOutboxKindResume, RuntimeOutboxPending).
+		Where("run.finished_at IS NULL AND run.status NOT IN ?", terminalWorkflowRunStatuses()).
+		Where("pause.resumed_at IS NULL AND pause.status IN ?", []string{RunPauseStatusResumeReady, RunPauseStatusResuming}).
+		Count(&count).Error
+	if err != nil {
+		return false, fmt.Errorf("check workflow runtime outbox dispatchability: %w", err)
+	}
+	return count == 1, nil
 }
 
 func (s *Service) MarkOutboxPublished(ctx context.Context, id string) error {

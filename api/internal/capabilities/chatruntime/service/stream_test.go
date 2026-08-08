@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
+	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/modelprogress"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 )
 
@@ -54,6 +56,72 @@ func TestRuntimeCollectStreamAnswerPreservesReasoningContent(t *testing.T) {
 	}
 	if !reasoningEventSeen {
 		t.Fatalf("events = %#v, want reasoning_content message event", events)
+	}
+}
+
+func TestDirectChatModelProgressTracksReasoningAndStopsBeforeVisibleAnswer(t *testing.T) {
+	svc := &service{
+		streams: newStreamRegistry(),
+		modelProgressSchedule: modelprogress.Schedule{
+			Initial:     5 * time.Millisecond,
+			Extended:    80 * time.Millisecond,
+			LongRunning: 160 * time.Millisecond,
+		},
+	}
+	prepared := runtimeStreamTestPreparedChat()
+	prepared.LLMRequest = &adapter.ChatRequest{
+		Model:    "reasoning-model",
+		Messages: []adapter.Message{{Role: "user", Content: "analyze"}},
+	}
+	stream := make(chan adapter.StreamResponse)
+	go func() {
+		defer close(stream)
+		time.Sleep(15 * time.Millisecond)
+		stream <- adapter.StreamResponse{Choices: []adapter.StreamChoice{{Delta: adapter.Message{ReasoningContent: "hidden"}}}}
+		time.Sleep(15 * time.Millisecond)
+		stream <- adapter.StreamResponse{Choices: []adapter.StreamChoice{{Delta: adapter.Message{Content: "answer"}}}}
+		stream <- adapter.StreamResponse{Done: true}
+	}()
+
+	var mu sync.Mutex
+	var events []StreamEvent
+	onEvent := func(event StreamEvent) error {
+		mu.Lock()
+		defer mu.Unlock()
+		events = append(events, event)
+		return nil
+	}
+	progress := svc.startPreparedModelProgress(t.Context(), prepared, 0, prepared.LLMRequest.Messages, onEvent)
+	answer, _, err := svc.collectStreamAnswerWithEventsAndProgress(t.Context(), prepared, stream, onEvent, nil, progress)
+	progress.Stop()
+	if err != nil {
+		t.Fatalf("collectStreamAnswerWithEventsAndProgress() error = %v", err)
+	}
+	if answer != "answer" {
+		t.Fatalf("answer = %q, want answer", answer)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	firstAnswerIndex := -1
+	progressCount := 0
+	reasoningProgressSeen := false
+	for index, event := range events {
+		if event.EventType == streamEventAgentProgress && event.Payload["phase"] == modelprogress.Phase {
+			progressCount++
+			if event.Payload["activity"] == modelprogress.ActivityReasoning {
+				reasoningProgressSeen = true
+			}
+			if firstAnswerIndex >= 0 {
+				t.Fatalf("model progress emitted after visible answer: %#v", events)
+			}
+		}
+		if event.EventType == streamEventMessage && event.Payload["answer"] == "answer" {
+			firstAnswerIndex = index
+		}
+	}
+	if progressCount == 0 || !reasoningProgressSeen || firstAnswerIndex < 0 {
+		t.Fatalf("events = %#v, want reasoning progress before visible answer", events)
 	}
 }
 
@@ -186,6 +254,6 @@ func runtimeStreamTestPreparedChat() *PreparedChat {
 			ModelName: "test-model",
 			Metadata:  map[string]interface{}{},
 		},
-		parts: &chatRequestParts{Provider: "test-provider"},
+		parts: &chatRequestParts{Provider: "test-provider", ExecutionMode: executionModeDirectChat},
 	}
 }

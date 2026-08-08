@@ -15,6 +15,9 @@ const (
 	presentationPhaseProvisional = "provisional"
 	presentationPhaseProcess     = "process"
 	presentationPhaseFinal       = "final"
+
+	presentationDispositionProcess = "process"
+	presentationDispositionDiscard = "discard"
 )
 
 type presentationProjection struct {
@@ -88,6 +91,20 @@ func (p *presentationProjection) itemByID(id string) map[string]interface{} {
 	return nil
 }
 
+func (p *presentationProjection) removeByID(id string) {
+	id = strings.TrimSpace(id)
+	if p == nil || id == "" {
+		return
+	}
+	for index := range p.Items {
+		if strings.TrimSpace(stringFromAny(p.Items[index]["presentation_id"])) != id {
+			continue
+		}
+		p.Items = append(p.Items[:index], p.Items[index+1:]...)
+		return
+	}
+}
+
 func (p *presentationProjection) eventItemByReference(reference string) map[string]interface{} {
 	reference = strings.TrimSpace(reference)
 	if p == nil || reference == "" {
@@ -107,6 +124,14 @@ func (p *presentationProjection) eventItemByReference(reference string) map[stri
 func (p presentationProjection) metadataValue() map[string]interface{} {
 	items := make([]map[string]interface{}, 0, len(p.Items))
 	for _, item := range p.Items {
+		// Ordinary process narration is a live presentation concern. Keep it in
+		// the recorder projection so SSE events remain ordered, but do not write
+		// it into message history. Final answer text and durable runtime events
+		// (including explicit intermediate results) remain persisted.
+		if strings.EqualFold(strings.TrimSpace(stringFromAny(item["kind"])), presentationKindText) &&
+			!strings.EqualFold(strings.TrimSpace(stringFromAny(item["content_phase"])), presentationPhaseFinal) {
+			continue
+		}
 		items = append(items, copyStringAnyMap(item))
 	}
 	return map[string]interface{}{

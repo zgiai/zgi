@@ -1046,21 +1046,21 @@ func TestApplyRunConfigToPartsDisablesAccountMemoryForAgentCaller(t *testing.T) 
 	}
 }
 
-func TestApplyManagedUserMemoryPolicyUsesModelToolCallingCapability(t *testing.T) {
-	parts := &chatRequestParts{
-		FunctionCallingKnown:         true,
-		ModelSupportsFunctionCalling: true,
-	}
+func TestApplyManagedUserMemoryPolicyDisablesAccountMemoryForAIChatSurfaces(t *testing.T) {
+	for _, surface := range []string{aiChatSurfaceWorkChat, aiChatSurfaceContextualSidebar} {
+		t.Run(surface, func(t *testing.T) {
+			parts := &chatRequestParts{
+				Surface:                      surface,
+				FunctionCallingKnown:         true,
+				ModelSupportsFunctionCalling: true,
+				UseMemory:                    true,
+			}
 
-	applyManagedUserMemoryPolicy(Caller{Type: runtimemodel.ConversationCallerAIChat}, parts)
-	if !parts.UseMemory {
-		t.Fatal("applyManagedUserMemoryPolicy() disabled memory for a tool-capable AIChat model")
-	}
-
-	parts.ModelSupportsFunctionCalling = false
-	applyManagedUserMemoryPolicy(Caller{Type: runtimemodel.ConversationCallerAIChat}, parts)
-	if parts.UseMemory {
-		t.Fatal("applyManagedUserMemoryPolicy() enabled memory for a model without tool calling")
+			applyManagedUserMemoryPolicy(Caller{Type: runtimemodel.ConversationCallerAIChat}, parts)
+			if parts.UseMemory {
+				t.Fatal("applyManagedUserMemoryPolicy() left account memory enabled, want disabled")
+			}
+		})
 	}
 }
 

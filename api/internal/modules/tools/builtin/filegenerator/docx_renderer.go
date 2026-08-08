@@ -133,16 +133,23 @@ func (c *DocxTableCellSpec) UnmarshalJSON(data []byte) error {
 }
 
 func parseDocxDocumentSpec(raw string) (*DocxDocumentSpec, error) {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return nil, fmt.Errorf("document is required")
+	return parseDocxDocumentSpecValue(raw)
+}
+
+func parseDocxDocumentSpecValue(raw interface{}) (*DocxDocumentSpec, error) {
+	data, err := structuredObjectJSON(raw, "document", 0)
+	if err != nil {
+		return nil, err
 	}
-	decoder := json.NewDecoder(strings.NewReader(raw))
+	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
 	decoder.UseNumber()
 	var spec DocxDocumentSpec
 	if err := decoder.Decode(&spec); err != nil {
 		return nil, fmt.Errorf("document must be valid DOCX JSON: %w", err)
+	}
+	if err := requireJSONDecoderEOF(decoder, "document"); err != nil {
+		return nil, err
 	}
 	if err := normalizeAndValidateDocxSpec(&spec); err != nil {
 		return nil, err

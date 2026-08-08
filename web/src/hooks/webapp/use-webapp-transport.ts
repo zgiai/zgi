@@ -44,6 +44,7 @@ import {
 import { parseWorkflowPausedEvent } from '@/components/workflow/runtime/pause-events';
 import { normalizeQuestionAnswerTranscript } from '@/components/workflow/question-answer/question-answer-transcript';
 import { getWorkflowPrecheckWarnings } from '@/utils/workflow/billing';
+import { resolveWorkflowRunId } from '@/utils/workflow/run-identity.js';
 import { emitWebAppOffline, isWebAppOfflineError } from '@/utils/webapp/errors';
 import { createWorkflowRunNodeAccumulator } from '@/utils/webapp/workflow-run-node-accumulator';
 import type {
@@ -277,9 +278,7 @@ export function useWebappConversationTransport(
     (payload: unknown, callbacks: ChatRunCallbacks) => {
       const parsed = parseWorkflowPausedEvent(payload);
       const data = unwrap(payload) as Record<string, unknown>;
-      const workflowRunId =
-        (typeof data.id === 'string' ? data.id : '') ||
-        (typeof data.workflow_run_id === 'string' ? data.workflow_run_id : '');
+      const workflowRunId = resolveWorkflowRunId(payload, { allowLegacyId: true });
       if (parsed.hasApproval) {
         dispatchApprovalRuntimeEvent('workflow_paused', payload);
         callbacks.onPaused?.({
@@ -364,18 +363,14 @@ export function useWebappConversationTransport(
             (typeof inputs?.['sys.conversation_id'] === 'string'
               ? (inputs['sys.conversation_id'] as string)
               : '');
+          const workflowRunId = resolveWorkflowRunId(payload, { allowLegacyId: true });
           setLatestTaskId(
-            (typeof data.task_id === 'string' ? data.task_id : null) ??
-              (typeof data.id === 'string' ? data.id : null) ??
-              (typeof data.workflow_run_id === 'string' ? data.workflow_run_id : null)
+            (typeof data.task_id === 'string' ? data.task_id : null) ?? (workflowRunId || null)
           );
           callbacks.onStarted({
             conversationId,
             messageId: typeof data.message_id === 'string' ? data.message_id : undefined,
-            workflowRunId:
-              (typeof data.id === 'string' ? data.id : '') ||
-              (typeof data.workflow_run_id === 'string' ? data.workflow_run_id : '') ||
-              undefined,
+            workflowRunId: workflowRunId || undefined,
           });
           break;
         }
@@ -413,9 +408,7 @@ export function useWebappConversationTransport(
             elapsedTime: typeof data.elapsed_time === 'number' ? data.elapsed_time : undefined,
             messageId: typeof data.message_id === 'string' ? data.message_id : undefined,
             workflowRunId:
-              (typeof data.id === 'string' ? data.id : '') ||
-              (typeof data.workflow_run_id === 'string' ? data.workflow_run_id : '') ||
-              undefined,
+              resolveWorkflowRunId(payload, { allowLegacyId: true }) || undefined,
             model: null,
           });
           break;
@@ -469,9 +462,7 @@ export function useWebappConversationTransport(
             elapsedTime: typeof data.elapsed_time === 'number' ? data.elapsed_time : undefined,
             messageId: typeof data.message_id === 'string' ? data.message_id : undefined,
             workflowRunId:
-              (typeof data.id === 'string' ? data.id : '') ||
-              (typeof data.workflow_run_id === 'string' ? data.workflow_run_id : '') ||
-              undefined,
+              resolveWorkflowRunId(payload, { allowLegacyId: true }) || undefined,
             model: null,
           });
           if (
@@ -882,17 +873,17 @@ export function useWebappConversationTransport(
                   const conversationId =
                     data.conversation_id || data.inputs?.['sys.conversation_id'] || '';
                   durableConversationId = conversationId || durableConversationId;
+                  const workflowRunId = resolveWorkflowRunId(ctx, { allowLegacyId: true });
                   if (conversationId) {
                     runCallbacksByConversationRef.current.set(conversationId, callbacks);
-                    const workflowRunId = data.id ?? data.workflow_run_id ?? data.task_id;
                     if (workflowRunId) attachRun(conversationId, workflowRunId);
                   }
-                  setLatestTaskId(data.task_id ?? data.id ?? data.workflow_run_id ?? null);
+                  setLatestTaskId(data.task_id ?? (workflowRunId || null));
 
                   callbacks.onStarted({
                     conversationId,
                     messageId: data.message_id,
-                    workflowRunId: data.id ?? data.workflow_run_id ?? data.task_id,
+                    workflowRunId: workflowRunId || undefined,
                     tempKey: data.tempKey,
                   });
                 },
@@ -951,11 +942,7 @@ export function useWebappConversationTransport(
                     messageId:
                       typeof data.message_id === 'string' ? (data.message_id as string) : undefined,
                     workflowRunId:
-                      (typeof data.id === 'string' ? data.id : '') ||
-                      (typeof data.workflow_run_id === 'string'
-                        ? (data.workflow_run_id as string)
-                        : '') ||
-                      undefined,
+                      resolveWorkflowRunId(payload, { allowLegacyId: true }) || undefined,
                     model: null,
                   });
                   setLatestTaskId(null);
@@ -999,9 +986,7 @@ export function useWebappConversationTransport(
                     elapsedTime: data.elapsed_time,
                     messageId: data.message_id,
                     workflowRunId:
-                      (typeof data.id === 'string' ? data.id : '') ||
-                      (typeof data.workflow_run_id === 'string' ? data.workflow_run_id : '') ||
-                      undefined,
+                      resolveWorkflowRunId(ctx, { allowLegacyId: true }) || undefined,
                     model: null,
                   });
 

@@ -21,6 +21,7 @@ import type {
 } from '@/components/chat/types';
 import { SENSITIVE_OUTPUT_BLOCKED_TOKEN } from '@/utils/model-output-filter';
 import { resolveAnswerMergeMode } from '@/components/chat/utils/answer-merge';
+import { reconcileConversationMessages } from '@/components/chat/utils/conversation-message-reconcile';
 import { toast } from 'sonner';
 
 interface SingleChatControllerState {
@@ -56,6 +57,10 @@ interface SingleChatControllerStore extends SingleChatControllerState {
 }
 
 const FIRST_INPUT_TITLE_MAX_RUNES = 50;
+const conversationDetailQueryKey = (conversationId: string) => [
+  'conversation-detail',
+  conversationId,
+];
 
 function conversationTitleFromFirstInput(query: string): string {
   const normalized = query.trim().replace(/\s+/g, ' ');
@@ -130,6 +135,7 @@ export class SingleChatController implements ChatController {
   private transport: ConversationTransport;
   public store: StoreApi<SingleChatControllerStore>;
   private titleRefreshTimers = new Set<ReturnType<typeof setTimeout>>();
+  private detailRequestSequence = 0;
 
   readonly mode = 'singleChat' as const;
 
@@ -147,6 +153,15 @@ export class SingleChatController implements ChatController {
   updateTransport(transport: ConversationTransport): void {
     this.transport = transport;
     this.store.getState().setTransport(transport);
+  }
+
+  private invalidateConversationDetail(conversationId: string): void {
+    if (!conversationId || conversationId.startsWith('draft-')) return;
+    void queryClient.invalidateQueries({
+      queryKey: conversationDetailQueryKey(conversationId),
+      exact: true,
+      refetchType: 'none',
+    });
   }
 
   private conversationTitleNeedsRefresh(title?: string): boolean {
@@ -181,6 +196,12 @@ export class SingleChatController implements ChatController {
             : c
         )
       : [summary, ...conversations];
+    const conversationStoreId = current?.id ?? summary.id;
+    const localMessages =
+      useChatStore.getState().conversations[conversationStoreId]?.messages ?? [];
+    const reconciledMessages = options.replaceMessages
+      ? reconcileConversationMessages(detail.messages, localMessages)
+      : undefined;
 
     this.store
       .getState()
@@ -193,7 +214,7 @@ export class SingleChatController implements ChatController {
     ) {
       this.store.getState().setActiveDetail({
         ...activeDetail,
-        ...(options.replaceMessages ? { messages: detail.messages } : {}),
+        ...(reconciledMessages ? { messages: reconciledMessages } : {}),
         summary: {
           ...activeDetail.summary,
           ...summary,
@@ -204,10 +225,10 @@ export class SingleChatController implements ChatController {
     }
 
     useChatStore.getState().initSingle({
-      id: current?.id ?? summary.id,
+      id: conversationStoreId,
       conversationId: summary.conversationId,
       title: summary.title,
-      ...(options.replaceMessages ? { messages: detail.messages } : {}),
+      ...(reconciledMessages ? { messages: reconciledMessages } : {}),
     });
 
     return { needsRefresh: this.conversationTitleNeedsRefresh(summary.title) };
@@ -314,15 +335,17 @@ export class SingleChatController implements ChatController {
     // Check if already in list
     const existing = this.store.getState().conversations.find(c => c.id === conversationId);
     if (existing) {
-      this.select(conversationId);
+      await this.select(conversationId);
       return;
     }
 
+    const requestSequence = ++this.detailRequestSequence;
     this.store.getState().setIsLoadingDetail(true);
     try {
       // We assume conversationId is a server ID here.
       // If transport supports get(), we can fetch detail directly.
       const detail = await this.transport.get(conversationId);
+      if (requestSequence !== this.detailRequestSequence) return;
 
       // Add to list if not present
       const summary: ConversationSummary = detail.summary;
@@ -346,11 +369,14 @@ export class SingleChatController implements ChatController {
 
       this.store.getState().setActiveDetail(detail);
     } catch (err) {
+      if (requestSequence !== this.detailRequestSequence) return;
       console.error(`[SingleChatController] Failed to load conversation ${conversationId}:`, err);
       // Fallback: clear activeId (return to home view) and do NOT show toast
       this.store.getState().setActiveId(null);
     } finally {
-      this.store.getState().setIsLoadingDetail(false);
+      if (requestSequence === this.detailRequestSequence) {
+        this.store.getState().setIsLoadingDetail(false);
+      }
     }
   }
 
@@ -400,10 +426,14 @@ export class SingleChatController implements ChatController {
   }
 
   async select(id: string): Promise<void> {
+    const requestSequence = ++this.detailRequestSequence;
     this.store.getState().setActiveId(id);
 
     const conv = this.store.getState().conversations.find(c => c.id === id);
-    if (!conv) return;
+    if (!conv) {
+      this.store.getState().setIsLoadingDetail(false);
+      return;
+    }
 
     // If conversation has no backend id, it's a draft, skip loading detail
     if (!conv.conversationId || conv.conversationId.trim().length === 0) {
@@ -415,6 +445,7 @@ export class SingleChatController implements ChatController {
         loaded: true,
         loading: false,
       });
+      this.store.getState().setIsLoadingDetail(false);
       return;
     }
 
@@ -422,27 +453,42 @@ export class SingleChatController implements ChatController {
     this.store.getState().setIsLoadingDetail(true);
     try {
       const detail = await queryClient.fetchQuery({
-        queryKey: ['conversation-detail', conv.conversationId],
+        queryKey: conversationDetailQueryKey(conv.conversationId),
         queryFn: () => this.transport.get(conv.conversationId),
-        staleTime: 30 * 1000,
+        // Explicit conversation switches must observe newly persisted paused/running messages.
+        staleTime: 0,
         gcTime: 5 * 60 * 1000,
         retry: false,
       });
+
+      if (
+        requestSequence !== this.detailRequestSequence ||
+        this.store.getState().activeId !== id
+      ) {
+        return;
+      }
+
+      const localMessages = useChatStore.getState().conversations[id]?.messages ?? [];
+      const messages = reconcileConversationMessages(detail.messages, localMessages);
+      const reconciledDetail = { ...detail, messages };
 
       // Initialize chat store with loaded messages
       useChatStore.getState().initSingle({
         id: detail.summary.id,
         conversationId: detail.summary.conversationId,
         title: detail.summary.title,
-        messages: detail.messages,
+        messages,
       });
 
-      this.store.getState().setActiveDetail(detail);
+      this.store.getState().setActiveDetail(reconciledDetail);
     } catch (err) {
+      if (requestSequence !== this.detailRequestSequence) return;
       // Error toast handled in transport hook
       console.error('[SingleChatController] Failed to load detail:', err);
     } finally {
-      this.store.getState().setIsLoadingDetail(false);
+      if (requestSequence === this.detailRequestSequence) {
+        this.store.getState().setIsLoadingDetail(false);
+      }
     }
   }
 
@@ -568,6 +614,7 @@ export class SingleChatController implements ChatController {
         : '';
     const requestConversationId =
       payload.conversationId ?? (conv.conversationId || resumeConversationId);
+    this.invalidateConversationDetail(requestConversationId);
     const existingTempKey =
       typeof latestMessage?.messageData?.tempKey === 'string'
         ? (latestMessage.messageData.tempKey as string)
@@ -616,6 +663,7 @@ export class SingleChatController implements ChatController {
           this.adoptServerConversationId(currentId, ctx.conversationId);
           currentId = ctx.conversationId;
         }
+        this.invalidateConversationDetail(ctx.conversationId || currentId);
 
         // Ensure AI message exists
         useChatStore.getState().ensureAiMessage(currentId, tempKey);
@@ -726,6 +774,7 @@ export class SingleChatController implements ChatController {
             metadata,
           });
         }
+        this.invalidateConversationDetail(currentId);
       },
       mergeMessageData: (data: Record<string, unknown>) => {
         useChatStore.getState().mergeAiMessage(currentId, tempKey, { messageData: data });
@@ -761,6 +810,7 @@ export class SingleChatController implements ChatController {
         });
         this.store.getState().setIsPaused(true);
         this.store.getState().setIsSending(false);
+        this.invalidateConversationDetail(currentId);
       },
       onFinished: (meta: {
         status: TerminalRunStatus;
@@ -776,6 +826,7 @@ export class SingleChatController implements ChatController {
         useChatStore.getState().finalizeAiMessage(currentId, tempKey, meta);
         this.store.getState().setIsPaused(false);
         this.store.getState().setIsSending(false);
+        this.invalidateConversationDetail(currentId);
 
         // Refresh list to update dialogue count and timestamp
         const now = Date.now();
@@ -878,6 +929,7 @@ export class SingleChatController implements ChatController {
         });
         this.store.getState().setIsPaused(false);
         this.store.getState().setIsSending(false);
+        this.invalidateConversationDetail(currentId);
       },
     };
 

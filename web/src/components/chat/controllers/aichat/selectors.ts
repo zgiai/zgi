@@ -446,7 +446,7 @@ export function timelineFromAIChatMessage(message: AIChatMessage): AIChatAgentic
     return !correlationId || !terminalGovernedToolCorrelationIds.has(correlationId);
   });
   const governanceCorrelationIds = new Set(
-    invocations
+    normalizedInvocations
       .filter(invocation => invocation.kind === 'tool_governance')
       .map(governanceCorrelationIdFromInvocation)
       .filter((correlationId): correlationId is string => Boolean(correlationId))

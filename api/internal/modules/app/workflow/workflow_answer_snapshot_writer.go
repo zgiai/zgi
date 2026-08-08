@@ -48,10 +48,16 @@ type answerSnapshotWriter struct {
 	latest        *answerSnapshot
 	closed        bool
 
-	lastPersistedAnswer string
-	lastRevision        int64
-	lastError           error
-	persistCheckpoint   func(context.Context, string, string, string) (int64, error)
+	lastPersistedAnswer   string
+	lastOfferedAnswer     string
+	answerOffered         bool
+	lastRevision          int64
+	lastError             error
+	executionOwner        workflowExecutionOwner
+	hasExecutionOwner     bool
+	stoppedFinalPersisted bool
+	persistCheckpoint     func(context.Context, string, string, string) (int64, error)
+	persistStoppedFinal   func(context.Context, workflowExecutionOwner, string) error
 }
 
 func newAnswerSnapshotWriter(handler *WorkflowHandler, workflowRunID, agentID, accountID string, systemInputs map[string]interface{}, requestInputs map[string]interface{}, triggeredFrom string) *answerSnapshotWriter {
@@ -82,6 +88,19 @@ func newAnswerSnapshotWriter(handler *WorkflowHandler, workflowRunID, agentID, a
 			previousAnswer,
 			answer,
 			status,
+		)
+	}
+	w.persistStoppedFinal = func(ctx context.Context, owner workflowExecutionOwner, answer string) error {
+		return handler.persistStoppedWorkflowConversationAnswer(
+			ctx,
+			owner,
+			workflowRunID,
+			agentID,
+			accountID,
+			systemInputs,
+			requestInputs,
+			triggeredFrom,
+			answer,
 		)
 	}
 	go w.run()
@@ -143,6 +162,60 @@ func (w *answerSnapshotWriter) PersistFinal(ctx context.Context, answer string, 
 	return err
 }
 
+// PersistStoppedFinal transfers the last visible answer across the stop
+// barrier. It deliberately bypasses the normal checkpoint path: the stop
+// transaction has revoked the execution owner and already emitted the final
+// workflow event, so this write may only repair the stopped message projection.
+func (w *answerSnapshotWriter) PersistStoppedFinal(ctx context.Context, answer string) error {
+	if w == nil {
+		return nil
+	}
+	owner, hasOwner := workflowExecutionOwnerFromContext(ctx)
+	w.mu.Lock()
+	if !hasOwner && w.hasExecutionOwner {
+		owner = w.executionOwner
+		hasOwner = true
+	}
+	if w.stoppedFinalPersisted {
+		w.mu.Unlock()
+		return nil
+	}
+	if w.answerOffered {
+		answer = w.lastOfferedAnswer
+	}
+	wasClosed := w.closed
+	if !w.closed {
+		w.latest = nil
+		w.closed = true
+		close(w.stop)
+	}
+	w.mu.Unlock()
+
+	if !wasClosed {
+		select {
+		case <-w.done:
+		case <-time.After(time.Second):
+		}
+	}
+	if !hasOwner {
+		return workflowpause.ErrExecutionOwnershipLost
+	}
+	if w.persistStoppedFinal == nil {
+		return fmt.Errorf("stopped workflow answer persistence is not configured")
+	}
+	persistCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), answerSnapshotPersistTimeout)
+	defer cancel()
+	if err := w.persistStoppedFinal(persistCtx, owner, answer); err != nil {
+		return err
+	}
+	w.mu.Lock()
+	w.stoppedFinalPersisted = true
+	w.lastPersistedAnswer = answer
+	w.lastError = nil
+	w.mu.Unlock()
+	return nil
+}
+
 // SeedPersistedAnswer establishes the durable answer that existed before this
 // writer took ownership. Continuations need this baseline so their first
 // checkpoint contains only newly produced text instead of replaying the whole
@@ -165,12 +238,117 @@ func (w *answerSnapshotWriter) offer(ctx context.Context, answer string, status 
 	if w.closed {
 		return false
 	}
+	if owner, ok := workflowExecutionOwnerFromContext(ctx); ok {
+		w.executionOwner = owner
+		w.hasExecutionOwner = true
+	}
+	w.lastOfferedAnswer = answer
+	w.answerOffered = true
 	previousLength := len(w.lastPersistedAnswer)
 	if w.latest != nil && len(w.latest.answer) > previousLength {
 		previousLength = len(w.latest.answer)
 	}
 	w.latest = &answerSnapshot{answer: answer, status: status, force: force, ctx: context.WithoutCancel(ctx)}
 	return force || len(answer)-previousLength >= answerSnapshotFlushBytes
+}
+
+func (h *WorkflowHandler) persistStoppedWorkflowConversationAnswer(
+	ctx context.Context,
+	owner workflowExecutionOwner,
+	workflowRunID, agentID, accountID string,
+	systemInputs map[string]interface{},
+	requestInputs map[string]interface{},
+	triggeredFrom, answer string,
+) error {
+	if h == nil || h.advancedChatHandler == nil || strings.TrimSpace(workflowRunID) == "" {
+		return fmt.Errorf("workflow answer persistence is not configured")
+	}
+	if owner.ExecutionID == "" || owner.Generation <= 0 || (owner.WorkflowRunID != "" && owner.WorkflowRunID != workflowRunID) {
+		return workflowpause.ErrExecutionOwnershipLost
+	}
+	conversationID := workflowConversationID(systemInputs, requestInputs)
+	if conversationID == "" {
+		return fmt.Errorf("workflow conversation id is empty")
+	}
+	messageData, err := buildApprovalPauseConversationMessageData(workflowRunID, agentID, accountID, conversationID, systemInputs, requestInputs, triggeredFrom, answer)
+	if err != nil {
+		return err
+	}
+	messageData.Status = conversation.AgentMessageStatusStopped
+
+	db := database.GetDB()
+	finishTransactionMetric := beginWorkflowDBTransaction(ctx, "stopped_answer_projection")
+	err = db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var runScope struct {
+			Status              string     `gorm:"column:status"`
+			ExecutionGeneration int64      `gorm:"column:execution_generation"`
+			ActiveExecutionID   *string    `gorm:"column:active_execution_id"`
+			FinishedAt          *time.Time `gorm:"column:finished_at"`
+		}
+		if err := tx.Table("workflow_run_logs").Clauses(clause.Locking{Strength: "UPDATE"}).
+			Select("status, execution_generation, active_execution_id, finished_at").
+			Where("id = ? AND deleted_at IS NULL", workflowRunID).
+			Take(&runScope).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return workflowpause.ErrExecutionOwnershipLost
+			}
+			return fmt.Errorf("verify stopped workflow answer owner: %w", err)
+		}
+		if !strings.EqualFold(strings.TrimSpace(runScope.Status), "stopped") ||
+			runScope.FinishedAt == nil || runScope.ActiveExecutionID != nil ||
+			runScope.ExecutionGeneration != owner.Generation+1 {
+			return fmt.Errorf(
+				"%w: stopped run status=%q finished=%t active=%t generation=%d expected=%d",
+				workflowpause.ErrExecutionOwnershipLost,
+				runScope.Status,
+				runScope.FinishedAt != nil,
+				runScope.ActiveExecutionID != nil,
+				runScope.ExecutionGeneration,
+				owner.Generation+1,
+			)
+		}
+
+		message, err := workflowConversationMessageFromData(messageData, owner.Generation)
+		if err != nil {
+			return err
+		}
+		updates := workflowConversationMessageUpdates(message, owner.Generation)
+		updates["status"] = conversation.AgentMessageStatusStopped
+		result := tx.Model(&conversation.AgentMessage{}).
+			Where("workflow_run_id = ? AND deleted_at IS NULL AND execution_generation <= ?", messageData.WorkflowRunID, owner.Generation).
+			Updates(updates)
+		if result.Error != nil {
+			return fmt.Errorf("update stopped workflow answer projection: %w", result.Error)
+		}
+		if result.RowsAffected == 1 {
+			return nil
+		}
+
+		var existingCount int64
+		if err := tx.Model(&conversation.AgentMessage{}).
+			Where("workflow_run_id = ? AND deleted_at IS NULL", messageData.WorkflowRunID).
+			Count(&existingCount).Error; err != nil {
+			return fmt.Errorf("check stopped workflow answer projection: %w", err)
+		}
+		if existingCount > 0 {
+			return workflowpause.ErrExecutionOwnershipLost
+		}
+		message.ProjectionRevision = 1
+		if err := tx.Create(message).Error; err != nil {
+			return fmt.Errorf("create stopped workflow answer projection: %w", err)
+		}
+		if err := tx.Model(&conversation.AgentConversation{}).
+			Where("id = ?", message.ConversationID).
+			UpdateColumn("dialogue_count", gorm.Expr("dialogue_count + 1")).Error; err != nil {
+			return fmt.Errorf("increment stopped workflow conversation dialogue count: %w", err)
+		}
+		return nil
+	})
+	finishTransactionMetric()
+	if errors.Is(err, workflowpause.ErrExecutionOwnershipLost) {
+		recordWorkflowProjectionConflict(ctx, "stopped_answer_ownership_lost")
+	}
+	return err
 }
 
 func (w *answerSnapshotWriter) flushLatest() error {

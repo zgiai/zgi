@@ -2,6 +2,7 @@ package llm
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"reflect"
 	"strings"
@@ -27,6 +28,8 @@ type stubFileDownloader struct {
 }
 
 type stubLLMInvoker struct{}
+
+type canceledLLMInvoker struct{}
 
 func (s *stubFileDownloader) DownloadFile(ctx context.Context, fileID string) ([]byte, error) {
 	if s.downloadFn != nil {
@@ -56,6 +59,10 @@ func (s *stubLLMInvoker) InvokeStream(ctx context.Context, accountID, appID, app
 	}()
 
 	return resultCh, errCh, nil
+}
+
+func (*canceledLLMInvoker) InvokeStream(context.Context, string, string, string, *LLMInvokeRequest) (<-chan *ResultChunk, <-chan error, error) {
+	return nil, nil, context.Canceled
 }
 
 func setTestFileURLConfig(t *testing.T, filesURL string, serverMode string) {
@@ -235,6 +242,44 @@ ForLoop:
 	}
 	if !hasRunCompleted {
 		t.Errorf("missing EventTypeRunCompleted")
+	}
+}
+
+func TestLLMNodeRunDoesNotEmitFailureEventForCancellation(t *testing.T) {
+	vpool := entities.NewVariablePool()
+	node := &Node{
+		NodeStruct: base.NodeStruct{
+			InstanceID:        "inst-canceled",
+			NodeID:            "llm-canceled",
+			TenantID:          "tenant-1",
+			APPID:             "app-1",
+			GraphRuntimeState: entities.NewGraphRuntimeState(vpool),
+		},
+		nodeData: NodeData{
+			NodeData: base.NodeData{},
+			Model: ModelConfig{
+				Provider: "deepseek",
+				Name:     "deepseek-chat",
+				Mode:     ModeChat,
+			},
+			PromptTemplate: []NodeChatModelMessage{
+				{Role: PromptMessageRoleUser, Text: "Hello", EditionType: "basic"},
+			},
+		},
+		invoker: &canceledLLMInvoker{},
+	}
+	eventChan := make(chan *shared.NodeEventCh, 8)
+
+	err := node.Run(context.Background(), eventChan)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run() error = %v, want context.Canceled", err)
+	}
+
+	close(eventChan)
+	for event := range eventChan {
+		if event != nil && event.Type == shared.EventTypeRunFailed {
+			t.Fatalf("Run() emitted failure event for cancellation: %#v", event)
+		}
 	}
 }
 

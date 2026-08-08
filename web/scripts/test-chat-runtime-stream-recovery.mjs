@@ -8,12 +8,14 @@ const read = relativePath => readFileSync(path.join(root, relativePath), 'utf8')
 
 const sseTypes = read('src/lib/http/types.ts');
 assert.match(sseTypes, /idleTimeoutMs\?: number/);
+assert.match(sseTypes, /onOpen\?: \(response: Response\) => void/);
 
 const sseClient = read('src/lib/http/sse-client.ts');
 assert.match(sseClient, /export const SSE_IDLE_TIMEOUT_MS = 45_000/);
 assert.match(sseClient, /if \(idleTimeoutMs === null\) return reader\.read\(\)/);
 assert.match(sseClient, /SSE stream ended before a terminal event/);
 assert.match(sseClient, /controller\.signal\.aborted/);
+assert.match(sseClient, /options\.onOpen\?\.\(response\)/);
 
 const modelOutputFilter = read('src/utils/model-output-filter.ts');
 assert.match(
@@ -64,10 +66,29 @@ assert.match(chat, /controller\.recoverStreamingConversation/);
 const messageActions = read(
   'src/components/chat/runtime/controller/use-chat-runtime-message-actions.ts'
 );
+assert.match(
+  messageActions,
+  /isPersistedAIChatRuntimeId\(streamConversationId\)/,
+  'stream recovery must reject draft conversation ids before requesting the events endpoint'
+);
+assert.match(
+  messageActions,
+  /isPersistedAIChatRuntimeId\(preparedConversationId\)[\s\S]*isPersistedAIChatRuntimeId\(preparedMessageId\)[\s\S]*applyMessageStart/,
+  'the response-header handshake must migrate the draft before the first SSE message event'
+);
 assert.equal(
   messageActions.match(/surface: runtimeSurface/g)?.length,
   1,
   'only new-message chat requests may send the runtime surface; root regeneration must use the persisted conversation surface'
+);
+
+const agentRuntimeTransport = read('src/components/chat/transports/agent-runtime-transport.ts');
+assert.match(agentRuntimeTransport, /X-ZGI-Conversation-ID/);
+assert.match(agentRuntimeTransport, /X-ZGI-Message-ID/);
+assert.equal(
+  agentRuntimeTransport.match(/notifyAgentRuntimeStreamOpen\(response, callbacks\)/g)?.length,
+  6,
+  'all Agent runtime SSE entry points must expose the prepared identity during onOpen'
 );
 
 const contextualTransport = read('src/components/aichat/contextual/context-envelope.ts');

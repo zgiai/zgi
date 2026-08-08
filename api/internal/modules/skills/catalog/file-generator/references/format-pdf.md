@@ -8,7 +8,7 @@ Use this reference when `format` is `pdf`.
 - `format`: Use `pdf`.
 - `filename`: Optional display filename without path separators. The `.pdf` extension is added automatically.
 - `title`: Optional PDF title heading. Use a short meaningful title when available.
-- `lifecycle`: Optional `persistent` or `temporary`. Defaults to `persistent`.
+- `lifecycle`: Optional `persistent` or `temporary`. Defaults to `temporary`.
 
 ## Content Rules
 

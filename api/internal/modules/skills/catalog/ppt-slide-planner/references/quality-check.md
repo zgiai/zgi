@@ -11,7 +11,7 @@ Run this check before preparing the payload for the `file-generator` skill.
 - Font, title hierarchy, colors, and spacing are consistent.
 - User-provided brand rules are applied, or neutral defaults are used with a stated assumption.
 - No unsupported features are promised.
-- The final `presentation` argument is strict JSON, not Markdown, prose, JSON5, or a partial object.
+- The final `presentation` argument is one complete structured object, not a JSON string, Markdown, prose, or a partial object.
 
 ## Slide-Level Checks
 
@@ -29,18 +29,14 @@ For every slide:
 - Every title/text element has safety headroom; do not size text boxes to the exact estimated height.
 - No single body text element carries a full section, long paragraph, or source-summary dump.
 
-## JSON Payload Checks
+## Presentation Object Checks
 
 Before handing off to `file-generator`:
 
-- `presentation` starts with `{` and ends with `}`.
-- No Markdown code fence is included.
-- No explanatory prose appears before, after, or inside the JSON.
-- No comments, trailing commas, single-quoted strings, or unquoted Chinese/English text appear in the JSON.
-- Any intended line break inside visible text is encoded as `\n`.
-- Any double quote inside visible text is escaped as `\"` or replaced with Chinese quotes.
-- Braces and brackets are balanced outside quoted strings.
-- The `slides` array is closed and the final non-space character is `}`.
+- `presentation` is an object rather than a serialized JSON string.
+- No Markdown code fence or explanatory prose is mixed into the object.
+- The `slides` array and every slide, element, style, and table row are complete.
+- Visible text appears only in the relevant string fields.
 - The serialized `presentation` is preferably under 10,000 characters for normal decks.
 - The deck uses no more than 8 slides unless the user explicitly requires more.
 
@@ -105,8 +101,8 @@ If a slide fails the check:
 - If the failed element is a large body box such as `h=5.0` or `h=5.3`, split the body into two slides; do not increase `h`.
 - If the failed element is a local text box such as a two-column body, comparison card, visual-placeholder summary, or sidebar, split the text or change layout; do not only increase `h` inside the same local box.
 - When downstream file generation reports `slides[i].elements[j].text does not fit`, locate that exact slide and element, halve its text, move the remainder to a continuation slide, and prepare a new payload.
-- Repair invalid JSON before retrying; do not send the same `presentation` string again.
-- For `unexpected EOF`, rebuild a complete shorter payload from the slide plan; do not only append missing closing characters.
+- Repair an invalid presentation object before retrying; do not send the same rejected value again.
+- For an incomplete presentation, rebuild a complete shorter object from the slide plan.
 - Reduce the number of elements.
 - Convert paragraphs into concise bullets.
 - Move placeholders to a dedicated visual slide.

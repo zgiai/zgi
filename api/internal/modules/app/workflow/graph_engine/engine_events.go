@@ -1,7 +1,7 @@
 package graph_engine
 
 import (
-	"errors"
+	"context"
 	"fmt"
 	"reflect"
 	"time"
@@ -11,6 +11,7 @@ import (
 )
 
 func (e *WorkflowEngine) consumeNodeEvents(
+	ctx context.Context,
 	nodeID string,
 	state *NodeState,
 	eventChan <-chan *shared.NodeEventCh,
@@ -21,11 +22,7 @@ func (e *WorkflowEngine) consumeNodeEvents(
 	for event := range eventChan {
 		if e.IsStopped() {
 			logger.Info("Workflow stopped during node event processing: %s", nodeID)
-			state.mu.Lock()
-			state.Status = shared.FAILED
-			state.Error = errors.New("workflow stopped by user")
-			state.EndTime = time.Now()
-			state.mu.Unlock()
+			*execErr = context.Canceled
 			return false
 		}
 
@@ -76,8 +73,13 @@ func (e *WorkflowEngine) consumeNodeEvents(
 				}
 			}
 			if event.Error != nil {
-				logger.Error(fmt.Sprintf("Got error from RunFailed event for nodeID: %s, error: %v", nodeID, event.Error), event.Error)
-				*execErr = event.Error
+				eventErr := shared.ResolveContextError(ctx, event.Error)
+				if shared.IsContextCancellation(ctx, eventErr) {
+					logger.Info("RunFailed event canceled for nodeID: %s", nodeID)
+				} else {
+					logger.Error(fmt.Sprintf("Got error from RunFailed event for nodeID: %s, error: %v", nodeID, eventErr), eventErr)
+				}
+				*execErr = eventErr
 			} else {
 				logger.Warn("RunFailed event has no error for nodeID: %s", nodeID)
 			}

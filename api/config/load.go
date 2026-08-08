@@ -82,7 +82,9 @@ func loadChatRuntimeConfig(cfg *Config, source *envSource) {
 	if timeout <= 0 {
 		timeout = 300
 	}
-	cfg.ChatRuntime = ChatRuntimeConfig{ModelIdleTimeoutSeconds: timeout}
+	cfg.ChatRuntime = ChatRuntimeConfig{
+		ModelIdleTimeoutSeconds: timeout,
+	}
 }
 
 func loadInfrastructureConfig(cfg *Config, source *envSource) error {

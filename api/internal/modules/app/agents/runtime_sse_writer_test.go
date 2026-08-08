@@ -1,11 +1,15 @@
 package agents
 
 import (
+	"context"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
+	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
+	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
 )
 
 func TestAgentSSEWriterHeartbeatIsTransportOnly(t *testing.T) {
@@ -33,5 +37,31 @@ func TestAgentSSEWriterHeartbeatIsTransportOnly(t *testing.T) {
 		if !strings.Contains(body, expected) {
 			t.Fatalf("stream body = %q, want %q", body, expected)
 		}
+	}
+}
+
+func TestSetupPreparedAgentSSESendsRuntimeIdentityBeforeBody(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	ginContext, _ := gin.CreateTestContext(recorder)
+	requestContext, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ginContext.Request = httptest.NewRequest("GET", "/stream", nil).WithContext(requestContext)
+	conversationID := uuid.New()
+	messageID := uuid.New()
+
+	setupPreparedAgentSSE(ginContext, &runtimeservice.PreparedChat{
+		Conversation: &runtimemodel.Conversation{ID: conversationID},
+		Message:      &runtimemodel.Message{ID: messageID},
+	})
+
+	if got := recorder.Header().Get(agentSSEConversationIDHeader); got != conversationID.String() {
+		t.Fatalf("%s = %q, want %q", agentSSEConversationIDHeader, got, conversationID.String())
+	}
+	if got := recorder.Header().Get(agentSSEMessageIDHeader); got != messageID.String() {
+		t.Fatalf("%s = %q, want %q", agentSSEMessageIDHeader, got, messageID.String())
+	}
+	if recorder.Code != 200 {
+		t.Fatalf("status = %d, want 200", recorder.Code)
 	}
 }

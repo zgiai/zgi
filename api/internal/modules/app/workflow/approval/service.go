@@ -552,6 +552,10 @@ func (s *Service) markRuntimeOutboxRetry(ctx context.Context, id string, dispatc
 	return workflowpause.NewService(s.db).MarkOutboxRetry(ctx, id, dispatchErr)
 }
 
+func (s *Service) runtimeOutboxDispatchable(ctx context.Context, id string) (bool, error) {
+	return workflowpause.NewService(s.db).RuntimeOutboxDispatchable(ctx, id)
+}
+
 func (s *Service) finalizeExpiredWorkflowExecutions(ctx context.Context, cutoff time.Time, limit int) ([]string, error) {
 	if s == nil || s.db == nil {
 		return nil, nil

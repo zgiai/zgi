@@ -42,6 +42,7 @@ const (
 	RuntimeOutboxKindResume = "resume"
 	RuntimeOutboxPending    = "pending"
 	RuntimeOutboxPublished  = "published"
+	RuntimeOutboxObsolete   = "obsolete"
 )
 
 type State struct {
