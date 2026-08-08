@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -17,13 +18,17 @@ import (
 )
 
 const (
-	workflowContinuationStatusWaitingApproval = "waiting_approval"
-	workflowContinuationStatusWaitingQuestion = "waiting_question"
-	workflowContinuationStatusContinuing      = "continuing"
-	workflowContinuationStatusSummarizing     = "summarizing"
-	workflowContinuationStatusDirectOutput    = "direct_output"
-	workflowContinuationStatusCompleted       = "completed"
-	workflowContinuationStatusFailed          = "failed"
+	workflowContinuationStatusWaitingApproval  = "waiting_approval"
+	workflowContinuationStatusWaitingQuestion  = "waiting_question"
+	workflowContinuationStatusContinuing       = "continuing"
+	workflowContinuationStatusSummarizing      = "summarizing"
+	workflowContinuationStatusDirectOutput     = "direct_output"
+	workflowContinuationStatusCompleted        = "completed"
+	workflowContinuationStatusFailed           = "failed"
+	workflowContinuationStatusStopped          = "stopped"
+	workflowContinuationCheckpointInterval     = 750 * time.Millisecond
+	workflowContinuationCheckpointBytes        = 4 * 1024
+	workflowContinuationTerminalPersistTimeout = 10 * time.Second
 )
 
 type WorkflowApprovalContinuation struct {
@@ -42,6 +47,12 @@ type WorkflowApprovalContinuation struct {
 	Metadata                  map[string]interface{}
 	Caller                    Caller
 	RunConfig                 RunConfig
+
+	answerMu             sync.Mutex
+	answer               string
+	answerObserved       bool
+	lastCheckpointAnswer string
+	lastCheckpointAt     time.Time
 }
 
 type WorkflowContinuationSummaryRequest struct {
@@ -74,6 +85,8 @@ func (s *service) BeginWorkflowApprovalContinuation(ctx context.Context, scope S
 	state.MessageID = message.ID
 	state.OriginalQuery = message.Query
 	state.Metadata = copyStringAnyMap(message.Metadata)
+	state.answer = message.Answer
+	state.lastCheckpointAnswer = message.Answer
 	state.Caller = caller
 	state.RunConfig = config
 	if message.Status == runtimemodel.MessageStatusCompleted {
@@ -149,6 +162,9 @@ func (s *service) RecordWorkflowApprovalContinuationEvent(ctx context.Context, c
 	if _, ok := eventPayload["workflow_run_id"]; !ok && continuation.WorkflowRunID != "" {
 		eventPayload["workflow_run_id"] = continuation.WorkflowRunID
 	}
+	if err := s.checkpointWorkflowContinuationAnswer(ctx, continuation, eventType, eventPayload, workflowContinuationEventForcesAnswerCheckpoint(eventType)); err != nil {
+		return nil, err
+	}
 	if !shouldPersistWorkflowRunMetadataEvent(eventType) {
 		return s.AppendWorkflowApprovalContinuationStreamEvent(ctx, continuation, eventType, eventPayload)
 	}
@@ -216,6 +232,9 @@ func (s *service) UpdateWorkflowApprovalContinuationStatus(ctx context.Context, 
 func (s *service) PauseWorkflowApprovalContinuation(ctx context.Context, continuation *WorkflowApprovalContinuation, status string) (map[string]interface{}, error) {
 	if continuation == nil || continuation.MessageID == uuid.Nil || continuation.ConversationID == uuid.Nil {
 		return nil, fmt.Errorf("%w: workflow continuation is required", ErrInvalidInput)
+	}
+	if err := s.checkpointWorkflowContinuationAnswer(ctx, continuation, "workflow_paused", nil, true); err != nil {
+		return nil, err
 	}
 	status = strings.TrimSpace(status)
 	if status == "" {
@@ -345,6 +364,29 @@ func (s *service) CompleteWorkflowApprovalContinuation(ctx context.Context, cont
 	metadata = workflowContinuationMetadataWithoutUserInputRequest(metadata)
 	metadata = workflowContinuationMetadataWithStatus(metadata, status)
 	continuation.Metadata = metadata
+	if status == runtimemodel.MessageStatusStopped || status == workflowContinuationStatusStopped {
+		continuation.answerMu.Lock()
+		answerObserved := continuation.answerObserved
+		if answerObserved {
+			answer = continuation.answer
+		}
+		continuation.answerMu.Unlock()
+		persistCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), workflowContinuationTerminalPersistTimeout)
+		defer cancel()
+		var err error
+		if answerObserved || answer != "" {
+			err = s.repos.Message.UpdateStoppedAnswer(persistCtx, continuation.MessageID, answer, metadata)
+		} else {
+			err = updateStoppedContinuationPreservingAnswer(persistCtx, s.repos, continuation.MessageID, metadata)
+		}
+		if err != nil {
+			return nil, err
+		}
+		if err := s.repos.Conversation.FinishContinuationMessage(persistCtx, continuation.ConversationID, continuation.MessageID); err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, err
+		}
+		return metadata, nil
+	}
 	if err := s.repos.Message.UpdateCompleted(ctx, continuation.MessageID, answer, metadata); err != nil {
 		return nil, err
 	}
@@ -354,9 +396,96 @@ func (s *service) CompleteWorkflowApprovalContinuation(ctx context.Context, cont
 	return metadata, nil
 }
 
+type stoppedAnswerPreservingMessageRepository interface {
+	UpdateStoppedPreservingAnswer(context.Context, uuid.UUID, map[string]interface{}) error
+}
+
+func updateStoppedContinuationPreservingAnswer(ctx context.Context, repos *repository.Repositories, messageID uuid.UUID, metadata map[string]interface{}) error {
+	if repos == nil {
+		return fmt.Errorf("workflow continuation repositories are not configured")
+	}
+	if messageRepo, ok := repos.Message.(stoppedAnswerPreservingMessageRepository); ok {
+		return messageRepo.UpdateStoppedPreservingAnswer(ctx, messageID, metadata)
+	}
+	if repos.DB == nil {
+		return fmt.Errorf("workflow continuation stopped answer persistence is not configured")
+	}
+	return repository.UpdateMessageStoppedPreservingAnswer(ctx, repos.DB, messageID, metadata)
+}
+
+func (s *service) checkpointWorkflowContinuationAnswer(ctx context.Context, continuation *WorkflowApprovalContinuation, eventType string, payload map[string]interface{}, force bool) error {
+	if continuation == nil || continuation.MessageID == uuid.Nil {
+		return nil
+	}
+	chunk, observed := workflowContinuationAnswerChunk(eventType, payload)
+	continuation.answerMu.Lock()
+	defer continuation.answerMu.Unlock()
+	if observed {
+		continuation.answerObserved = true
+		if strings.TrimSpace(eventType) == "text_replace" {
+			continuation.answer = chunk
+		} else {
+			continuation.answer += chunk
+		}
+	}
+	if continuation.answer == continuation.lastCheckpointAnswer {
+		return nil
+	}
+	now := time.Now()
+	answerGrowth := len(continuation.answer) - len(continuation.lastCheckpointAnswer)
+	if answerGrowth < 0 {
+		answerGrowth = -answerGrowth
+	}
+	if !force && !continuation.lastCheckpointAt.IsZero() && now.Sub(continuation.lastCheckpointAt) < workflowContinuationCheckpointInterval && answerGrowth < workflowContinuationCheckpointBytes {
+		return nil
+	}
+	metadata := copyStringAnyMap(continuation.Metadata)
+	if err := s.repos.Message.UpdatePartialAnswer(ctx, continuation.MessageID, continuation.answer, metadata); err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil
+		}
+		return fmt.Errorf("checkpoint workflow continuation answer: %w", err)
+	}
+	continuation.lastCheckpointAnswer = continuation.answer
+	continuation.lastCheckpointAt = now
+	return nil
+}
+
+func workflowContinuationAnswerChunk(eventType string, payload map[string]interface{}) (string, bool) {
+	switch strings.TrimSpace(eventType) {
+	case streamEventMessage, "text_chunk", "text_replace":
+	default:
+		return "", false
+	}
+	if payload == nil {
+		return "", false
+	}
+	for _, key := range []string{"answer", "text", "answer_delta"} {
+		if value, ok := payload[key].(string); ok {
+			return value, true
+		}
+	}
+	if data, ok := payload["data"].(map[string]interface{}); ok {
+		return workflowContinuationAnswerChunk(eventType, data)
+	}
+	return "", false
+}
+
+func workflowContinuationEventForcesAnswerCheckpoint(eventType string) bool {
+	switch strings.TrimSpace(eventType) {
+	case "text_replace", "workflow_finished", "workflow_failed", "workflow_stopped", "workflow_paused", "approval_requested", "question_answer_requested", streamEventMessageEnd:
+		return true
+	default:
+		return false
+	}
+}
+
 func (s *service) FailWorkflowApprovalContinuation(ctx context.Context, continuation *WorkflowApprovalContinuation, message string) (map[string]interface{}, error) {
 	if continuation == nil || continuation.MessageID == uuid.Nil || continuation.ConversationID == uuid.Nil {
 		return nil, fmt.Errorf("%w: workflow continuation is required", ErrInvalidInput)
+	}
+	if err := s.checkpointWorkflowContinuationAnswer(ctx, continuation, "workflow_failed", nil, true); err != nil {
+		return nil, err
 	}
 	message = strings.TrimSpace(message)
 	if message == "" {

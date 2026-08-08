@@ -27,6 +27,7 @@ const (
 	streamedFinalAnswerArg                        = "_aichat_streamed_final_answer"
 	runtimeStateAllowPlanUpdateKey                = "_skill_loop_allow_plan_update"
 	runtimeStateAllowIntermediateAnswerKey        = "_skill_loop_allow_intermediate_answer"
+	runtimeStateNativeAgentLoopKey                = "_native_agent_loop"
 	userInputContinuationAnswered                 = "answered"
 	userInputContinuationReplan                   = "replan_after_user_input"
 	restoredSkillInstructionsTotalBudgetChars     = 16000
@@ -57,6 +58,14 @@ type planningResult struct {
 	usage                 *adapter.Usage
 	answerStreamed        bool
 	naturalAnswerStreamed bool
+	provisionalContent    string
+	provisionalStreamed   bool
+	reasoningObserved     bool
+}
+
+type modelToolRoundCallResult struct {
+	response *adapter.ChatResponse
+	err      error
 }
 
 type streamingToolCallState struct {
@@ -131,8 +140,17 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 		return "", nil, fmt.Errorf("%w: skill runtime is not configured", ErrInvalidInput)
 	}
 	preferExplicitFinalAnswer := req.PreferExplicitFinalAnswer && !req.TerminalOnly
+	nativeToolSet := req.NativeToolSet
+	if req.NativeSkillSession != nil {
+		current := req.NativeSkillSession.ToolSet()
+		nativeToolSet = &current
+	}
 	historicalLoadedSkills, restoreValidationTraces := validatedHistoricalLoadedSkillsForRun(ctx, req, resolved)
 	restoredSkillState := restoredLoadedSkillInstructionStateForRun(resolved, historicalLoadedSkills, req.PreferredRestoredSkillID)
+	if req.NativeAgentLoop {
+		restoreValidationTraces = nil
+		restoredSkillState = restoredSkillInstructionState{activeLoaded: map[string]struct{}{}}
+	}
 	if req.TerminalOnly {
 		restoredSkillState = restoredSkillInstructionState{activeLoaded: map[string]struct{}{}}
 	} else {
@@ -148,6 +166,17 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 	if req.TerminalOnly {
 		messages = terminalOnlyProjectedMessages(prepared, currentMetadataForRun(req))
 		messages = append([]adapter.Message{terminalOnlySystemMessage()}, messages...)
+	} else if req.NativeAgentLoop {
+		if req.NativeSkillSession != nil {
+			if candidateMessage := req.NativeSkillSession.CatalogMessage(); strings.TrimSpace(messageContent(candidateMessage.Content)) != "" {
+				messages = append(messages, candidateMessage)
+			}
+		}
+		if nativeToolSet != nil {
+			messages = append(messages, nativeToolSet.InstructionMessages...)
+		}
+		messages = append(messages, validAdditionalSystemMessages(req.AdditionalSystemMessages)...)
+		messages = append(messages, nativeAgentLoopSystemMessage())
 	} else {
 		messages = append(messages, metadataMessage)
 		if restoredSkillState.message != nil {
@@ -167,15 +196,36 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 		traces = append(traces, trace)
 		r.recordTrace(traces, trace)
 	}
-	metadataTrace := metadataExposedTrace(resolved.SkillIDs(), metadataStats)
-	traces = append(traces, metadataTrace)
-	r.recordTrace(traces, metadataTrace)
-	logger.DebugContext(ctx, "aichat skill metadata exposed",
-		"conversation_id", prepared.Conversation.ID.String(),
-		"message_id", prepared.Message.ID.String(),
-		"skill_ids", resolved.SkillIDs(),
-		"skill_mode", prepared.parts.SkillMode,
-	)
+	if req.NativeAgentLoop {
+		if req.NativeSkillSession != nil {
+			loadedSkills = map[string]struct{}{}
+			for _, skillID := range req.NativeSkillSession.ActiveSkillIDs() {
+				loadedSkills[strings.ToLower(strings.TrimSpace(skillID))] = struct{}{}
+			}
+			for _, attempt := range req.NativeSkillSession.ActivationAttempts() {
+				trace := nativeSessionActivationAttemptTrace(attempt)
+				traces = append(traces, trace)
+				r.recordTrace(traces, trace)
+				r.logSkillTrace(ctx, prepared, trace)
+			}
+		} else {
+			var preloadErr error
+			loadedSkills, preloadErr = r.preloadNativeSkills(ctx, prepared, resolved, nativeToolSet, &traces)
+			if preloadErr != nil {
+				return "", nil, preloadErr
+			}
+		}
+	} else {
+		metadataTrace := metadataExposedTrace(resolved.SkillIDs(), metadataStats)
+		traces = append(traces, metadataTrace)
+		r.recordTrace(traces, metadataTrace)
+		logger.DebugContext(ctx, "aichat skill metadata exposed",
+			"conversation_id", prepared.Conversation.ID.String(),
+			"message_id", prepared.Message.ID.String(),
+			"skill_ids", resolved.SkillIDs(),
+			"skill_mode", prepared.parts.SkillMode,
+		)
+	}
 
 	stepCount := 0
 	toolCallCount := 0
@@ -189,13 +239,19 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 	successfulToolCalls := []SkillToolCallRef{}
 	failedToolCallReasons := map[string]string{}
 	var latestRecoverableTrace skills.SkillTrace
-	skillUsed := false
+	skillUsed := req.NativeAgentLoop && len(loadedSkills) > 0
 	maxSkillSteps := maxSkillStepsForTurn(resolved)
 	terminalStateGuardConfigured := req.RuntimeStateSnapshot != nil
 	planRevisionRequired := userInputPlanRevisionPending(req)
 	var answerBuilder strings.Builder
 	var usage *adapter.Usage
+	var nativeCommentary *nativeCommentaryState
+	if req.NativeAgentLoop {
+		nativeCommentary = newNativeCommentaryState(prepared.LLMRequest.Model, currentMetadataForRun(req))
+	}
 	r.diagnostics = modelInvocationDiagnostics{
+		activeSkillIDs:   activeSkillIDsForDiagnostics(resolved, loadedSkills),
+		loadedSkillIDs:   activeSkillIDsForDiagnostics(resolved, loadedSkills),
 		restoredSkillIDs: append([]string(nil), restoredSkillState.restored...),
 		continuationType: strings.TrimSpace(req.ContinuationType),
 		terminalOnly:     req.TerminalOnly,
@@ -213,14 +269,20 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 		planningReq := cloneChatRequest(prepared.LLMRequest)
 		planningReq.Messages = messages
 		planningReq.Stream = false
-		planningReq.Tools = metaToolsForRun(resolved, loadedSkills, preferExplicitFinalAnswer, false)
+		if req.NativeAgentLoop {
+			planningReq.Tools = nativeAgentToolsForRun(resolved, nativeToolSet, req.NativeSkillSession)
+		} else {
+			planningReq.Tools = metaToolsForRun(resolved, loadedSkills, preferExplicitFinalAnswer, false)
+		}
 		allowPlanUpdate := planRevisionRequired || operationPlanModelRevisionRequired(req, roundRuntimeState)
 		allowIntermediateAnswer := !fileDeliveryRequiresArtifactOnly(req, roundRuntimeState)
-		planningReq.Tools = controlToolsForRound(
-			planningReq.Tools,
-			allowPlanUpdate,
-			allowIntermediateAnswer,
-		)
+		if !req.NativeAgentLoop {
+			planningReq.Tools = controlToolsForRound(
+				planningReq.Tools,
+				allowPlanUpdate,
+				allowIntermediateAnswer,
+			)
+		}
 		if req.LegacyToolChat {
 			planningReq.Tools = legacyToolChatTools(planningReq.Tools, len(restoredSkillState.reloadRequired) > 0)
 		}
@@ -237,8 +299,19 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 		deferTerminalContent := preferExplicitFinalAnswer || req.TerminalOnly || !terminalSubmissionAllowed
 		planningResult := planningResult{}
 		var err error
-		if req.TerminalOnly {
-			planningResult, err = r.runSkillPlanning(ctx, prepared, planningReq, round, req.OnChunk, deferTerminalContent, terminalSubmissionAllowed, suppressNaturalProgress)
+		if req.NativeAgentLoop {
+			planningResult, err = r.runNativeAgentRound(ctx, prepared, planningReq, round, req.OnChunk, deferTerminalContent, terminalSubmissionAllowed, suppressNaturalProgress)
+			err = nativeAgentOutputError(err)
+		} else if req.TerminalOnly {
+			planningResult, err = r.runTerminalOnlyPlanningWithRetry(
+				ctx,
+				prepared,
+				planningReq,
+				round,
+				req.OnChunk,
+				deferTerminalContent,
+				suppressNaturalProgress,
+			)
 		} else {
 			planningResult, err = r.runSkillPlanningWithRetry(ctx, prepared, planningReq, round, req.OnChunk, deferTerminalContent, terminalSubmissionAllowed, suppressNaturalProgress, req.PlanningOutputTokenLimit)
 		}
@@ -247,12 +320,6 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 			return answerBuilder.String(), usage, eventErr
 		}
 		if err != nil {
-			if req.TerminalOnly {
-				if fallback, ok := r.emitTerminalOnlyFallback(ctx, req, prepared, traces, roundRuntimeState, "model_error"); ok {
-					appendAnswerText(&answerBuilder, fallback)
-					return answerBuilder.String(), usage, nil
-				}
-			}
 			var streamedErr *streamedFinalAnswerError
 			if errors.As(err, &streamedErr) {
 				appendAnswerText(&answerBuilder, strings.TrimSpace(streamedErr.answer))
@@ -262,23 +329,42 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 		planningMessage := planningResult.message
 		toolCalls := normalizeToolCalls(planningMessage.ToolCalls)
 		text := assistantMessageText(planningMessage)
-		if req.TerminalOnly && len(toolCalls) > 0 {
-			if fallback, ok := r.emitTerminalOnlyFallback(ctx, req, prepared, traces, roundRuntimeState, "unexpected_tool_call"); ok {
-				appendAnswerText(&answerBuilder, fallback)
-				return answerBuilder.String(), usage, nil
+		if req.NativeAgentLoop && len(toolCalls) > 0 && strings.TrimSpace(text) != "" {
+			candidate := planningResult.provisionalContent
+			candidateStreamed := planningResult.provisionalStreamed
+			if strings.TrimSpace(candidate) == "" && !suppressNaturalProgress && !deferTerminalContent {
+				candidate = text
+				r.emitAnswerChunk(ctx, prepared, candidate, nil)
+				candidateStreamed = true
 			}
-			return answerBuilder.String(), usage, fmt.Errorf("%w: terminal-only model returned an unexpected tool call", ErrInvalidInput)
+			if candidateStreamed && strings.TrimSpace(candidate) != "" {
+				decision := nativeCommentary.classify(candidate, toolCalls, nativeToolSet)
+				r.emitAnswerRetractWithDisposition(ctx, prepared, candidate, decision.disposition)
+				r.logNativeCommentaryDecision(ctx, prepared, round, decision, planningResult.reasoningObserved)
+				if eventErr := prepared.presentationEventError(); eventErr != nil {
+					return answerBuilder.String(), usage, eventErr
+				}
+			}
+		}
+		if req.NativeAgentLoop && len(toolCalls) == 0 && strings.TrimSpace(text) == "" {
+			return answerBuilder.String(), usage, fmt.Errorf("%w: model returned neither a tool call nor assistant content", ErrAgentOutputTruncated)
+		}
+		if req.TerminalOnly && len(toolCalls) > 0 {
+			return answerBuilder.String(), usage, errors.Join(
+				ErrFinalAnswerUnavailable,
+				errors.New("terminal-only model returned an unexpected tool call after retry"),
+			)
 		}
 		if req.TerminalOnly && strings.TrimSpace(text) == "" {
-			if fallback, ok := r.emitTerminalOnlyFallback(ctx, req, prepared, traces, roundRuntimeState, "empty_response"); ok {
-				appendAnswerText(&answerBuilder, fallback)
-				return answerBuilder.String(), usage, nil
-			}
-			return answerBuilder.String(), usage, fmt.Errorf("%w: terminal-only model returned no final answer", ErrInvalidInput)
+			return answerBuilder.String(), usage, errors.Join(
+				ErrFinalAnswerUnavailable,
+				errors.New("terminal-only model returned no final answer after retry"),
+			)
 		}
-		if text != "" && len(toolCalls) > 0 && !suppressNaturalProgress {
+		if text != "" && len(toolCalls) > 0 && !suppressNaturalProgress && !req.NativeAgentLoop {
 			if !planningResult.naturalAnswerStreamed &&
-				shouldEmitNaturalProgressForToolCalls(resolved, loadedSkills, toolCalls) {
+				!nativeSessionControlCallsOnly(toolCalls) &&
+				shouldEmitNaturalProgressForToolCalls(resolved, loadedSkills, nativeExecutionCalls(toolCalls, nativeToolSet)) {
 				r.emitAnswerChunk(ctx, prepared, text, nil)
 				r.emitAnswerRetract(ctx, prepared, text)
 			}
@@ -286,7 +372,10 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 		if len(toolCalls) == 0 && terminalStateGuardConfigured {
 			if strings.TrimSpace(text) == "" {
 				if req.TerminalOnly {
-					return answerBuilder.String(), usage, fmt.Errorf("%w: terminal-only model returned no final answer", ErrInvalidInput)
+					return answerBuilder.String(), usage, errors.Join(
+						ErrFinalAnswerUnavailable,
+						errors.New("terminal-only model returned no final answer after retry"),
+					)
 				}
 				emptyFinalAnswerRetryCount++
 				if emptyFinalAnswerRetryCount <= 1 {
@@ -418,8 +507,8 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 		planningMessage.Role = "assistant"
 		planningMessage.ToolCalls = toolCalls
 		if len(toolCalls) > 0 {
-			// Tool-turn narration is persisted in the presentation projection.
-			// It is not part of the final answer or the next model request.
+			// Tool-turn narration is presentation-only. It is never part of the
+			// final answer or the next model request.
 			planningMessage.Content = ""
 			planningMessage.ReasoningContent = ""
 		}
@@ -434,27 +523,49 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 		roundDeferredSystemMessages := []adapter.Message{}
 		for _, call := range toolCalls {
 			stepCount++
-			callSkillID, callToolName, callToolArgs, failedCallKey := skillToolCallIdentityForCall(resolved, loadedSkills, call)
+			executionCall := call
+			if req.NativeAgentLoop {
+				executionCall = nativeExecutionCall(call, nativeToolSet)
+			}
+			callSkillID, callToolName, callToolArgs, failedCallKey := skillToolCallIdentityForCall(resolved, loadedSkills, executionCall)
 			callEvidence := runtimeStateWithSuccessfulToolCalls(req, successfulToolCalls)
-			callEvidence[runtimeStateAllowPlanUpdateKey] = planRevisionRequired || operationPlanModelRevisionRequired(req, callEvidence)
+			callEvidence[runtimeStateAllowPlanUpdateKey] = req.NativeAgentLoop || planRevisionRequired || operationPlanModelRevisionRequired(req, callEvidence)
 			callEvidence[runtimeStateAllowIntermediateAnswerKey] = !fileDeliveryRequiresArtifactOnly(req, callEvidence)
+			callEvidence[runtimeStateNativeAgentLoopKey] = req.NativeAgentLoop
 			result := skillStepResult{}
-			if userInputPlanRevisionRequiredForTool(req, callSkillID, callToolName) {
-				result = pendingUserInputPlanRevisionStep(call.ID, callSkillID, callToolName, callToolArgs)
+			if req.NativeAgentLoop && req.NativeSkillSession != nil {
+				if control, handled := r.handleNativeSessionControlCall(ctx, call, req.NativeSkillSession); handled {
+					result = control.step
+					if len(control.instructions) > 0 {
+						roundDeferredSystemMessages = append(roundDeferredSystemMessages, control.instructions...)
+					}
+					current := req.NativeSkillSession.ToolSet()
+					nativeToolSet = &current
+					for _, skillID := range current.ActiveSkillIDs {
+						loadedSkills[strings.ToLower(strings.TrimSpace(skillID))] = struct{}{}
+					}
+					r.diagnostics.loadedSkillIDs = append([]string(nil), current.ActiveSkillIDs...)
+				}
+			}
+			if req.NativeAgentLoop && nativeForbiddenProtocolTool(call.Function.Name) {
+				result = nativeForbiddenProtocolToolStep(call.ID, call.Function.Name)
+			}
+			if result.trace.Kind == "" && userInputPlanRevisionRequiredForTool(req, callSkillID, callToolName) {
+				result = pendingUserInputPlanRevisionStep(executionCall.ID, callSkillID, callToolName, callToolArgs)
 			}
 			if result.trace.Kind == "" && req.AuthorizeSkillStep != nil && strings.TrimSpace(callSkillID) != "" {
 				allowed, policyErr := req.AuthorizeSkillStep(ctx, callSkillID)
 				if policyErr != nil || !allowed {
-					result = unavailableSkillPolicyStep(call.ID, callSkillID, callToolName, callToolArgs, policyErr)
+					result = unavailableSkillPolicyStep(executionCall.ID, callSkillID, callToolName, callToolArgs, policyErr)
 				}
 			}
 			if result.trace.Kind == "" && failedCallKey != "" {
 				if reason := failedToolCallReasons[failedCallKey]; strings.TrimSpace(reason) != "" {
-					result = repeatedFailedToolCallRecoverableStep(call.ID, callSkillID, callToolName, callToolArgs, reason)
+					result = repeatedFailedToolCallRecoverableStep(executionCall.ID, callSkillID, callToolName, callToolArgs, reason)
 				}
 			}
 			if result.trace.Kind == "" {
-				result = r.handleProgressiveSkillCall(ctx, prepared, resolved, call, req.ExecutionContext, toolCallCount, skillToolCallCounts, loadedSkills, callEvidence, round+1, nil)
+				result = r.handleProgressiveSkillCall(ctx, prepared, resolved, executionCall, req.ExecutionContext, toolCallCount, skillToolCallCounts, loadedSkills, callEvidence, round+1, nil)
 			}
 			if eventErr := prepared.presentationEventError(); eventErr != nil {
 				return answerBuilder.String(), usage, eventErr
@@ -588,6 +699,11 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 			if message, ok := governedReadFileTargetSystemMessage(result.trace); ok {
 				roundDeferredSystemMessages = append(roundDeferredSystemMessages, message)
 			}
+			if req.NativeAgentLoop {
+				if message, ok := nativeReferenceReadContinuationSystemMessage(result.trace); ok {
+					roundDeferredSystemMessages = append(roundDeferredSystemMessages, message)
+				}
+			}
 			if result.stopBusinessLoop {
 				stopBusinessLoop = true
 				stopBusinessLoopTrace = result.trace
@@ -673,7 +789,10 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 			consecutiveRecoverableFailureRounds = 0
 		}
 		if req.TerminalOnly {
-			return answerBuilder.String(), usage, fmt.Errorf("%w: terminal-only model did not submit a final answer", ErrInvalidInput)
+			return answerBuilder.String(), usage, errors.Join(
+				ErrFinalAnswerUnavailable,
+				errors.New("terminal-only model did not submit a final answer after retry"),
+			)
 		}
 	}
 
@@ -709,57 +828,6 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 		return answerBuilder.String(), usage, explanationErr
 	}
 	return answer, usage, nil
-}
-
-func (r *Runner) emitTerminalOnlyFallback(
-	ctx context.Context,
-	req RunRequest,
-	prepared *PreparedChat,
-	traces []skills.SkillTrace,
-	runtimeState map[string]interface{},
-	reason string,
-) (string, bool) {
-	answer, ok := terminalOnlyFallbackAnswer(prepared, currentMetadataForRun(req), runtimeState)
-	if !ok || strings.TrimSpace(answer) == "" {
-		return "", false
-	}
-	trace := skills.SkillTrace{
-		Kind:    "final_answer",
-		Title:   "Final answer",
-		Message: answer,
-		Status:  "success",
-		Arguments: map[string]interface{}{
-			"fallback":        true,
-			"fallback_reason": strings.TrimSpace(reason),
-		},
-		Result: map[string]interface{}{
-			"source": "runtime_evidence",
-		},
-	}
-	traces = append(traces, trace)
-	r.recordTrace(traces, trace)
-	r.logSkillTrace(ctx, prepared, trace)
-	r.emitAnswerChunk(ctx, prepared, answer, nil)
-
-	decision := terminalStateGuardDecision{
-		Path:        terminalStateGuardAccepted,
-		Reason:      "completed runtime evidence supplied a deterministic terminal fallback",
-		FinalAnswer: answer,
-	}
-	terminalStateGuardRecord(req, decision)
-	if req.OnTerminalCompletion != nil {
-		req.OnTerminalCompletion(TerminalCompletionResult{
-			Status: "pass",
-			Source: "runtime_evidence_fallback",
-			Reason: decision.Reason,
-		})
-	}
-	logger.WarnContext(ctx, "aichat terminal model degraded to completed runtime evidence",
-		"conversation_id", prepared.Conversation.ID.String(),
-		"message_id", prepared.Message.ID.String(),
-		"fallback_reason", strings.TrimSpace(reason),
-	)
-	return answer, true
 }
 
 func operationPlanModelRevisionRequired(req RunRequest, runtimeState map[string]interface{}) bool {
@@ -1112,10 +1180,15 @@ func activeSkillIDsForDiagnostics(resolved *skills.ResolvedSkills, loaded map[st
 }
 
 func shouldEmitNaturalProgressForToolCalls(resolved *skills.ResolvedSkills, loadedSkills map[string]struct{}, calls []adapter.ToolCall) bool {
+	return businessToolCallCountForCalls(resolved, loadedSkills, calls) > 0
+}
+
+func businessToolCallCountForCalls(resolved *skills.ResolvedSkills, loadedSkills map[string]struct{}, calls []adapter.ToolCall) int {
 	active := make(map[string]struct{}, len(loadedSkills))
 	for skillID := range loadedSkills {
 		active[skillID] = struct{}{}
 	}
+	count := 0
 	for _, call := range calls {
 		name := strings.TrimSpace(call.Function.Name)
 		switch name {
@@ -1138,7 +1211,7 @@ func shouldEmitNaturalProgressForToolCalls(resolved *skills.ResolvedSkills, load
 				continue
 			}
 			if _, ok := active[skillID]; ok && resolvedSkillProvidesTool(resolved, skillID, toolName) {
-				return true
+				count++
 			}
 		case skills.MetaToolReadSkillReference,
 			skills.MetaToolRequestUserInput,
@@ -1149,11 +1222,11 @@ func shouldEmitNaturalProgressForToolCalls(resolved *skills.ResolvedSkills, load
 			continue
 		default:
 			if _, ok := uniqueLoadedSkillForToolName(resolved, active, name); ok {
-				return true
+				count++
 			}
 		}
 	}
-	return false
+	return count
 }
 
 func terminalMetaCallsOnly(calls []adapter.ToolCall) bool {
@@ -1607,12 +1680,20 @@ func appendAnswerText(builder *strings.Builder, text string) {
 }
 
 func (r *Runner) runSkillPlanning(ctx context.Context, prepared *PreparedChat, planningReq *adapter.ChatRequest, round int, onChunk func(string) error, terminalProtocol bool, terminalStreamingAllowed bool, suppressNaturalProgress bool) (planningResult, error) {
+	return r.runModelToolRound(ctx, prepared, planningReq, round, onChunk, terminalProtocol, terminalStreamingAllowed, suppressNaturalProgress, "skill_planning")
+}
+
+func (r *Runner) runNativeAgentRound(ctx context.Context, prepared *PreparedChat, planningReq *adapter.ChatRequest, round int, onChunk func(string) error, terminalProtocol bool, terminalStreamingAllowed bool, suppressNaturalProgress bool) (planningResult, error) {
+	return r.runModelToolRound(ctx, prepared, planningReq, round, onChunk, terminalProtocol, terminalStreamingAllowed, suppressNaturalProgress, "agent_tool_loop")
+}
+
+func (r *Runner) runModelToolRound(ctx context.Context, prepared *PreparedChat, planningReq *adapter.ChatRequest, round int, onChunk func(string) error, terminalProtocol bool, terminalStreamingAllowed bool, suppressNaturalProgress bool, phase string) (planningResult, error) {
 	planningReq = cloneChatRequest(planningReq)
 	sourceMessages := cloneMessagesForProvider(planningReq.Messages)
 	planningReq.Messages = adapter.NormalizeSystemMessages(sourceMessages)
 	if err := r.applyFinalPlanningRequestBudget(planningReq, sourceMessages); err != nil {
 		r.recordModelInvocation(ModelInvocationTrace{
-			Phase:     "skill_planning",
+			Phase:     phase,
 			Round:     round,
 			Request:   planningReq,
 			StartedAt: time.Now(),
@@ -1620,8 +1701,13 @@ func (r *Runner) runSkillPlanning(ctx context.Context, prepared *PreparedChat, p
 		})
 		return planningResult{}, err
 	}
+	var progress *modelProgressTracker
+	if phase == "agent_tool_loop" {
+		progress = r.startModelProgressTracker(ctx, prepared, round, planningReq.Model, planningReq.Messages)
+	}
+	defer progress.Stop()
 	if shouldStreamSkillPlanning(prepared) {
-		result, ok, err := r.runSkillPlanningStream(ctx, prepared, planningReq, round, nil, terminalProtocol, terminalStreamingAllowed, suppressNaturalProgress)
+		result, ok, err := r.runModelToolRoundStream(ctx, prepared, planningReq, round, nil, terminalProtocol, terminalStreamingAllowed, suppressNaturalProgress, phase, progress)
 		if err != nil {
 			return result, err
 		}
@@ -1633,15 +1719,26 @@ func (r *Runner) runSkillPlanning(ctx context.Context, prepared *PreparedChat, p
 	planningReq.Stream = false
 	startedAt := time.Now()
 	callCtx, cancel := context.WithTimeout(ctx, r.modelIdleTimeout())
-	planningResp, err := r.LLMClient.AppChat(callCtx, r.AppContext, planningReq)
+	resultCh := make(chan modelToolRoundCallResult, 1)
+	go func() {
+		response, err := r.LLMClient.AppChat(callCtx, r.AppContext, planningReq)
+		resultCh <- modelToolRoundCallResult{response: response, err: err}
+	}()
+	var callResult modelToolRoundCallResult
+	select {
+	case callResult = <-resultCh:
+	case <-callCtx.Done():
+		callResult.err = callCtx.Err()
+	}
 	callErr := callCtx.Err()
 	cancel()
+	planningResp, err := callResult.response, callResult.err
 	if err != nil {
 		if errors.Is(callErr, context.DeadlineExceeded) {
 			err = ErrModelIdleTimeout
 		}
 		r.recordModelInvocation(ModelInvocationTrace{
-			Phase:      "skill_planning",
+			Phase:      phase,
 			Round:      round,
 			Streaming:  false,
 			StartedAt:  startedAt,
@@ -1656,7 +1753,7 @@ func (r *Runner) runSkillPlanning(ctx context.Context, prepared *PreparedChat, p
 	finishReason := planningResponseFinishReason(planningResp)
 	terminationErr := nonStreamingPlanningTerminationError(finishReason)
 	r.recordModelInvocation(ModelInvocationTrace{
-		Phase:              "skill_planning",
+		Phase:              phase,
 		Round:              round,
 		Streaming:          false,
 		StartedAt:          startedAt,
@@ -1670,9 +1767,17 @@ func (r *Runner) runSkillPlanning(ctx context.Context, prepared *PreparedChat, p
 		Error:              errorString(terminationErr),
 	})
 	if terminationErr != nil {
-		return planningResult{}, terminationErr
+		return planningResult{
+			message:           message,
+			usage:             usage,
+			reasoningObserved: strings.TrimSpace(message.ReasoningContent) != "",
+		}, terminationErr
 	}
-	return planningResult{message: message, usage: usage}, nil
+	return planningResult{
+		message:           message,
+		usage:             usage,
+		reasoningObserved: strings.TrimSpace(message.ReasoningContent) != "",
+	}, nil
 }
 
 func (r *Runner) runSkillPlanningWithRetry(
@@ -1699,12 +1804,17 @@ func (r *Runner) runSkillPlanningWithRetry(
 		return result, err
 	}
 
+	currentMaxTokens := planningReq.MaxTokens
+	if effectiveMaxTokens := r.diagnostics.requestBudget.effectiveMaxTokens; effectiveMaxTokens > 0 {
+		currentMaxTokens = &effectiveMaxTokens
+	}
+	retryMaxTokens := planningRetryMaxTokens(currentMaxTokens, outputTokenLimit)
+
 	retryReq := cloneChatRequest(planningReq)
 	retryReq.Messages = append(append([]adapter.Message{}, planningReq.Messages...), adapter.Message{
 		Role:    "system",
 		Content: "The previous planning response was truncated by its output limit. Retry once with exactly one complete protocol tool call or one concise final answer. Do not repeat completed operations or add long process narration.",
 	})
-	retryMaxTokens := planningRetryMaxTokens(planningReq.MaxTokens, outputTokenLimit)
 	retryReq.MaxTokens = &retryMaxTokens
 	logger.WarnContext(ctx, "chat runtime planning length retry",
 		"message_id", prepared.Message.ID.String(),
@@ -1780,16 +1890,24 @@ func (r *Runner) emitAnswerChunk(ctx context.Context, prepared *PreparedChat, te
 }
 
 func (r *Runner) emitAnswerRetract(ctx context.Context, prepared *PreparedChat, text string) {
+	r.emitAnswerRetractWithDisposition(ctx, prepared, text, "")
+}
+
+func (r *Runner) emitAnswerRetractWithDisposition(ctx context.Context, prepared *PreparedChat, text string, disposition string) {
 	if text == "" {
 		return
 	}
-	r.emitEvent(prepared, EventMessageRetract, map[string]interface{}{
+	payload := map[string]interface{}{
 		"conversation_id": prepared.Conversation.ID.String(),
 		"message_id":      prepared.Message.ID.String(),
 		"content":         text,
 		"length":          utf16CodeUnitLength(text),
 		"created_at":      time.Now().Unix(),
-	})
+	}
+	if disposition = strings.TrimSpace(disposition); disposition != "" {
+		payload["presentation_disposition"] = disposition
+	}
+	r.emitEvent(prepared, EventMessageRetract, payload)
 }
 
 func utf16CodeUnitLength(text string) int {

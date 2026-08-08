@@ -1,4 +1,4 @@
-package provider
+package qwen
 
 import (
 	"context"
@@ -17,15 +17,33 @@ import (
 	"go.uber.org/zap"
 )
 
-// AliyunAdapter Aliyun DashScope adapter
-type AliyunAdapter struct {
-	config     *adapter.AdapterConfig
-	httpClient *adapter.HTTPClient
-	baseURL    string
+// Adapter implements Qwen capabilities exposed by Alibaba Cloud Model Studio.
+type Adapter struct {
+	config            *adapter.AdapterConfig
+	httpClient        *adapter.HTTPClient
+	baseURL           string
+	profile           EndpointProfile
+	compatibleFactory CompatibleFactory
 }
 
-// NewAliyunAdapter creates an Aliyun adapter
-func NewAliyunAdapter(config *adapter.AdapterConfig) (*AliyunAdapter, error) {
+// CompatibleClient is the shared OpenAI-compatible surface used by Model Studio.
+// The concrete implementation is injected by the parent provider package so this
+// package remains independent and does not import its parent.
+type CompatibleClient interface {
+	adapter.ChatCapable
+	adapter.ResponseCapable
+}
+
+// CompatibleFactory creates the shared OpenAI-compatible client for one endpoint.
+type CompatibleFactory func(config *adapter.AdapterConfig, baseURL string) (CompatibleClient, error)
+
+// Dependencies contains protocol implementations shared with other providers.
+type Dependencies struct {
+	NewCompatibleClient CompatibleFactory
+}
+
+// NewAdapter creates the isolated Qwen / Alibaba Model Studio adapter.
+func NewAdapter(config *adapter.AdapterConfig, deps Dependencies) (*Adapter, error) {
 	if config == nil {
 		return nil, adapter.ErrInvalidConfig
 	}
@@ -45,78 +63,130 @@ func NewAliyunAdapter(config *adapter.AdapterConfig) (*AliyunAdapter, error) {
 		timeout = 120 * time.Second // Longer timeout for image generation
 	}
 
-	return &AliyunAdapter{
-		config:     config,
-		httpClient: adapter.NewHTTPClientFromConfig(config, timeout, 3),
-		baseURL:    baseURL,
+	return &Adapter{
+		config:            config,
+		httpClient:        adapter.NewHTTPClientFromConfig(config, timeout, 3),
+		baseURL:           baseURL,
+		profile:           ResolveEndpointProfile(baseURL),
+		compatibleFactory: deps.NewCompatibleClient,
 	}, nil
 }
 
-func (a *AliyunAdapter) openAICompatibleBaseURL() string {
-	baseURL := a.baseURL
-	if strings.Contains(baseURL, "/compatible-mode/v1") {
-		return baseURL
-	}
-	if strings.Contains(baseURL, "/compatible-api/v1") {
-		return strings.Replace(baseURL, "/compatible-api/v1", "/compatible-mode/v1", 1)
-	}
-	if strings.Contains(baseURL, "/api/v1") {
-		return strings.Replace(baseURL, "/api/v1", "/compatible-mode/v1", 1)
-	}
-	if strings.Contains(baseURL, "/api/") && strings.Contains(baseURL, "dashscope.aliyuncs.com") {
-		return strings.Replace(baseURL, "/api/", "/compatible-mode/", 1)
-	}
-	return baseURL
+func (a *Adapter) openAICompatibleBaseURL() string {
+	return a.profile.OpenAICompatibleBaseURL
 }
 
-func (a *AliyunAdapter) nativeBaseURL() string {
-	baseURL := a.baseURL
-	if strings.Contains(baseURL, "/compatible-mode/v1") {
-		return strings.Replace(baseURL, "/compatible-mode/v1", "/api/v1", 1)
-	}
-	if strings.Contains(baseURL, "/compatible-api/v1") {
-		return strings.Replace(baseURL, "/compatible-api/v1", "/api/v1", 1)
-	}
-	return baseURL
+// OpenAICompatibleBaseURL returns the resolved compatible endpoint for the
+// transitional parent-package raw protocol bridge.
+func (a *Adapter) OpenAICompatibleBaseURL() string {
+	return a.openAICompatibleBaseURL()
 }
 
-func (a *AliyunAdapter) anthropicMessagesBaseURL() string {
-	baseURL := a.baseURL
-	if strings.Contains(baseURL, "/apps/anthropic/v1") {
-		return baseURL
-	}
-	if strings.Contains(baseURL, "/compatible-mode/v1") {
-		return strings.Replace(baseURL, "/compatible-mode/v1", "/apps/anthropic/v1", 1)
-	}
-	if strings.Contains(baseURL, "/compatible-api/v1") {
-		return strings.Replace(baseURL, "/compatible-api/v1", "/apps/anthropic/v1", 1)
-	}
-	if strings.Contains(baseURL, "/api/v1") {
-		return strings.Replace(baseURL, "/api/v1", "/apps/anthropic/v1", 1)
-	}
-	return baseURL
+func (a *Adapter) nativeBaseURL() string {
+	return a.profile.NativeBaseURL
 }
 
-func (a *AliyunAdapter) compatibleRerankBaseURL() string {
-	baseURL := a.baseURL
-	if strings.Contains(baseURL, "/compatible-api/v1") {
-		return baseURL
-	}
-	if strings.Contains(baseURL, "/compatible-mode/v1") {
-		return strings.Replace(baseURL, "/compatible-mode/v1", "/compatible-api/v1", 1)
-	}
-	if strings.Contains(baseURL, "/api/v1") {
-		return strings.Replace(baseURL, "/api/v1", "/compatible-api/v1", 1)
-	}
-	return baseURL
+func (a *Adapter) anthropicMessagesBaseURL() string {
+	return a.profile.AnthropicMessagesBaseURL
 }
 
-func (a *AliyunAdapter) openAICompatibleAdapter() (*OpenAIAdapter, error) {
-	return newOpenAIAdapterWithOverrides(a.config, a.openAICompatibleBaseURL())
+// AnthropicMessagesBaseURL returns the resolved Anthropic-compatible endpoint.
+func (a *Adapter) AnthropicMessagesBaseURL() string {
+	return a.anthropicMessagesBaseURL()
 }
 
-// ChatCompletion executes chat completion request.
-func (a *AliyunAdapter) ChatCompletion(ctx context.Context, request *adapter.ChatRequest) (*adapter.ChatResponse, error) {
+func (a *Adapter) compatibleRerankBaseURL() string {
+	return a.profile.CompatibleRerankBaseURL
+}
+
+func (a *Adapter) openAICompatibleAdapter() (CompatibleClient, error) {
+	if a.compatibleFactory == nil {
+		return nil, fmt.Errorf("%w: OpenAI-compatible client factory is required", adapter.ErrInvalidConfig)
+	}
+	return a.compatibleFactory(a.config, a.openAICompatibleBaseURL())
+}
+
+// ChatCompletion uses Model Studio's OpenAI-compatible API. A single chat
+// protocol avoids routing individual stable and snapshot model names.
+func (a *Adapter) ChatCompletion(ctx context.Context, request *adapter.ChatRequest) (*adapter.ChatResponse, error) {
+	if err := validateQwenCompatibleImageReferences(request); err != nil {
+		return nil, err
+	}
+	compatible, err := a.openAICompatibleAdapter()
+	if err != nil {
+		return nil, err
+	}
+	response, err := compatible.ChatCompletion(ctx, request)
+	return response, normalizeQwenCompatibleError(err)
+}
+
+// ChatCompletionStream uses the same compatible endpoint as non-streaming
+// chat, including vision inputs and tool calls.
+func (a *Adapter) ChatCompletionStream(ctx context.Context, request *adapter.ChatRequest) (<-chan adapter.StreamResponse, error) {
+	if err := validateQwenCompatibleImageReferences(request); err != nil {
+		return nil, err
+	}
+	compatible, err := a.openAICompatibleAdapter()
+	if err != nil {
+		return nil, err
+	}
+	stream, err := compatible.ChatCompletionStream(ctx, request)
+	return stream, normalizeQwenCompatibleError(err)
+}
+
+// validateQwenCompatibleImageReferences preserves the public-image boundary
+// when chat is delegated to the shared OpenAI-compatible client. The native
+// payload builder performs the same validation while converting image parts.
+func validateQwenCompatibleImageReferences(request *adapter.ChatRequest) error {
+	if request == nil {
+		return fmt.Errorf("%w: qwen chat request is required", adapter.ErrInvalidRequest)
+	}
+	for _, message := range request.Messages {
+		switch content := message.Content.(type) {
+		case []adapter.MessageContentPart:
+			for _, part := range content {
+				if part.Type != "image_url" {
+					continue
+				}
+				if part.ImageURL == nil {
+					return fmt.Errorf("%w: qwen image_url content requires url", adapter.ErrInvalidRequest)
+				}
+				if _, err := normalizeAliyunImageReference(part.ImageURL.URL); err != nil {
+					return err
+				}
+			}
+		case []interface{}:
+			for _, item := range content {
+				part, ok := item.(map[string]interface{})
+				if !ok {
+					continue
+				}
+				if image, ok := part["image"].(string); ok {
+					if _, err := normalizeAliyunImageReference(image); err != nil {
+						return err
+					}
+				}
+				partType, _ := part["type"].(string)
+				if partType != "image_url" {
+					continue
+				}
+				imageURL, ok := part["image_url"].(map[string]interface{})
+				if !ok {
+					return fmt.Errorf("%w: qwen image_url content requires image_url object", adapter.ErrInvalidRequest)
+				}
+				rawURL, _ := imageURL["url"].(string)
+				if _, err := normalizeAliyunImageReference(rawURL); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// chatCompletionNative keeps the native wire implementation isolated for
+// protocol regression tests. Production chat always uses the compatible API.
+func (a *Adapter) chatCompletionNative(ctx context.Context, request *adapter.ChatRequest) (*adapter.ChatResponse, error) {
 	payload, endpoint, err := a.buildAliyunChatPayload(request, false)
 	if err != nil {
 		return nil, err
@@ -133,8 +203,7 @@ func (a *AliyunAdapter) ChatCompletion(ctx context.Context, request *adapter.Cha
 	return parseAliyunChatResponse(respBody, request.Model)
 }
 
-// ChatCompletionStream executes streaming chat completion request.
-func (a *AliyunAdapter) ChatCompletionStream(ctx context.Context, request *adapter.ChatRequest) (<-chan adapter.StreamResponse, error) {
+func (a *Adapter) chatCompletionStreamNative(ctx context.Context, request *adapter.ChatRequest) (<-chan adapter.StreamResponse, error) {
 	payload, endpoint, err := a.buildAliyunChatPayload(request, true)
 	if err != nil {
 		return nil, err
@@ -163,14 +232,13 @@ func (a *AliyunAdapter) ChatCompletionStream(ctx context.Context, request *adapt
 	respChan := make(chan adapter.StreamResponse, 10)
 	dataChan := make(chan string, 10)
 	errChan := make(chan error, 1)
-
 	go adapter.ParseSSE(resp.Body, dataChan, errChan)
 
 	go func() {
 		defer close(respChan)
 		defer func() {
-			io.Copy(io.Discard, resp.Body)
-			resp.Body.Close()
+			_, _ = io.Copy(io.Discard, resp.Body)
+			_ = resp.Body.Close()
 		}()
 
 		var lastUsage *adapter.Usage
@@ -182,28 +250,19 @@ func (a *AliyunAdapter) ChatCompletionStream(ctx context.Context, request *adapt
 				return
 			case err := <-errChan:
 				if err != nil {
-					if aliyunStreamDebugEnabled() {
-						logger.WarnContext(ctx, "aliyun stream parser error", zap.Error(err))
-					}
 					respChan <- adapter.StreamResponse{Error: err, Done: true, Usage: lastUsage}
 				}
 				return
 			case data, ok := <-dataChan:
 				if !ok {
-					if aliyunStreamDebugEnabled() {
-						logger.InfoContext(ctx, "aliyun stream data channel closed", zap.String("model", request.Model), zap.Int("chunk_count", chunkIndex), zap.Bool("has_usage", lastUsage != nil))
-					}
 					respChan <- adapter.StreamResponse{Done: true, Usage: lastUsage}
 					return
 				}
 
 				chunkIndex++
-				if aliyunStreamDebugEnabled() {
-					logger.InfoContext(ctx, "aliyun stream raw data", zap.String("model", request.Model), zap.Int("chunk_index", chunkIndex), zap.String("data", aliyunDebugSnippet(data, 1000)))
-				}
-				streamResp, err := parseAliyunChatStreamResponse([]byte(data), request.Model)
-				if err != nil {
-					respChan <- adapter.StreamResponse{Error: err, Done: true, Usage: lastUsage}
+				streamResp, parseErr := parseAliyunChatStreamResponse([]byte(data), request.Model)
+				if parseErr != nil {
+					respChan <- adapter.StreamResponse{Error: parseErr, Done: true, Usage: lastUsage}
 					return
 				}
 				if streamResp.Usage != nil {
@@ -226,7 +285,7 @@ func (a *AliyunAdapter) ChatCompletionStream(ctx context.Context, request *adapt
 	return respChan, nil
 }
 
-func (a *AliyunAdapter) aliyunJSONHeaders() map[string]string {
+func (a *Adapter) aliyunJSONHeaders() map[string]string {
 	headers := make(map[string]string, len(a.config.Headers)+3)
 	for k, v := range a.config.Headers {
 		headers[k] = v
@@ -238,7 +297,7 @@ func (a *AliyunAdapter) aliyunJSONHeaders() map[string]string {
 	return headers
 }
 
-func (a *AliyunAdapter) aliyunSSEHeaders() map[string]string {
+func (a *Adapter) aliyunSSEHeaders() map[string]string {
 	headers := a.aliyunJSONHeaders()
 	headers["Accept"] = "text/event-stream"
 	headers["X-DashScope-SSE"] = "enable"
@@ -293,7 +352,7 @@ func aliyunPayloadImageSummary(payload map[string]interface{}) (int, int) {
 	}
 	return imageCount, dataURLImageCount
 }
-func (a *AliyunAdapter) buildAliyunChatPayload(request *adapter.ChatRequest, stream bool) (map[string]interface{}, string, error) {
+func (a *Adapter) buildAliyunChatPayload(request *adapter.ChatRequest, stream bool) (map[string]interface{}, string, error) {
 	if request == nil {
 		return nil, "", fmt.Errorf("%w: request is required", adapter.ErrInvalidRequest)
 	}
@@ -949,40 +1008,36 @@ func parseAliyunEmbeddingsResponse(body []byte, model string) (*adapter.Embeddin
 }
 
 // CreateResponse executes response creation request
-func (a *AliyunAdapter) CreateResponse(ctx context.Context, request *adapter.CreateResponseRequest) (*adapter.CreateResponseResponse, error) {
-	return nil, fmt.Errorf("CreateResponse not implemented for Aliyun adapter")
-}
-
-func (a *AliyunAdapter) CreateResponseRaw(ctx context.Context, request *adapter.RawResponseRequest) (*adapter.RawResponse, error) {
-	openaiAdapter, err := a.openAICompatibleAdapter()
+func (a *Adapter) CreateResponse(ctx context.Context, request *adapter.CreateResponseRequest) (*adapter.CreateResponseResponse, error) {
+	compatible, err := a.openAICompatibleAdapter()
 	if err != nil {
 		return nil, err
 	}
-	return rawOpenAIResponseRequest(ctx, a.httpClient, a.openAICompatibleBaseURL(), openaiAdapter.buildHeaders(), request, a.handleError)
+	response, err := compatible.CreateResponse(ctx, request)
+	return response, normalizeQwenCompatibleError(err)
 }
 
-func (a *AliyunAdapter) CreateResponseStream(ctx context.Context, request *adapter.RawResponseRequest) (<-chan adapter.RawStreamEvent, error) {
-	openaiAdapter, err := a.openAICompatibleAdapter()
-	if err != nil {
-		return nil, err
+func normalizeQwenCompatibleError(err error) error {
+	if err == nil {
+		return nil
 	}
-	return rawOpenAIResponseStream(ctx, a.httpClient, a.openAICompatibleBaseURL(), openaiAdapter.buildHeaders(), request, a.handleError)
-}
-
-func (a *AliyunAdapter) CreateAnthropicMessage(ctx context.Context, request *adapter.AnthropicMessageRequest) (*adapter.RawResponse, error) {
-	openaiAdapter, err := a.openAICompatibleAdapter()
-	if err != nil {
-		return nil, err
+	var adapterErr *adapter.AdapterError
+	if !errors.As(err, &adapterErr) {
+		return err
 	}
-	return rawAnthropicMessageRequest(ctx, a.httpClient, a.anthropicMessagesBaseURL(), buildAnthropicRawHeaders(a.config, request.Headers), request, openaiAdapter.handleError)
-}
 
-func (a *AliyunAdapter) CreateAnthropicMessageStream(ctx context.Context, request *adapter.AnthropicMessageRequest) (<-chan adapter.RawStreamEvent, error) {
-	return rawAnthropicMessageStream(ctx, a.httpClient, a.anthropicMessagesBaseURL(), buildAnthropicRawHeaders(a.config, request.Headers), request, a.handleError)
+	switch strings.ToLower(strings.TrimSpace(adapterErr.Code)) {
+	case "arrearage", "prepaidbilloverdue", "postpaidbilloverdue":
+		return adapter.NewAdapterError(adapterErr.Code, "provider billing is unavailable", adapterErr.StatusCode, adapter.ErrBillingUnavailable)
+	case "allocationquota.freetieronly":
+		return adapter.NewAdapterError(adapterErr.Code, "provider quota is exhausted", adapterErr.StatusCode, adapter.ErrQuotaExhausted)
+	default:
+		return err
+	}
 }
 
 // CreateEmbeddings executes embeddings creation request.
-func (a *AliyunAdapter) CreateEmbeddings(ctx context.Context, request *adapter.EmbeddingsRequest) (*adapter.EmbeddingsResponse, error) {
+func (a *Adapter) CreateEmbeddings(ctx context.Context, request *adapter.EmbeddingsRequest) (*adapter.EmbeddingsResponse, error) {
 	payload, err := buildAliyunEmbeddingsPayload(request)
 	if err != nil {
 		return nil, err
@@ -1005,7 +1060,7 @@ func (a *AliyunAdapter) CreateEmbeddings(ctx context.Context, request *adapter.E
 }
 
 // CreateImage executes image generation request (Wanx)
-func (a *AliyunAdapter) CreateImage(ctx context.Context, request *adapter.ImageRequest) (*adapter.ImageResponse, error) {
+func (a *Adapter) CreateImage(ctx context.Context, request *adapter.ImageRequest) (*adapter.ImageResponse, error) {
 	// Handle URL compatibility: if user configured OpenAI-compatible URL, switch to native API URL for image generation
 	// https://dashscope.aliyuncs.com/compatible-mode/v1 -> https://dashscope.aliyuncs.com/api/v1
 	baseURL := a.nativeBaseURL()
@@ -1137,7 +1192,7 @@ type aliyunTaskResult struct {
 }
 
 // checkTaskStatus checks the status of an asynchronous task
-func (a *AliyunAdapter) checkTaskStatus(ctx context.Context, taskID string) (*aliyunTaskResult, error) {
+func (a *Adapter) checkTaskStatus(ctx context.Context, taskID string) (*aliyunTaskResult, error) {
 	url := fmt.Sprintf("%s/tasks/%s", a.nativeBaseURL(), taskID)
 	headers := map[string]string{
 		"Authorization": fmt.Sprintf("Bearer %s", a.config.APIKey),
@@ -1160,7 +1215,7 @@ func (a *AliyunAdapter) checkTaskStatus(ctx context.Context, taskID string) (*al
 }
 
 // handleError parses Aliyun API errors
-func (a *AliyunAdapter) handleError(statusCode int, body []byte) error {
+func (a *Adapter) handleError(statusCode int, body []byte) error {
 	if len(body) == 0 {
 		return fmt.Errorf("upstream service returned status %d with empty body", statusCode)
 	}
@@ -1209,8 +1264,14 @@ func (a *AliyunAdapter) handleError(statusCode int, body []byte) error {
 	return adapter.HandleNonJSONError(statusCode, body)
 }
 
+// HandleError exposes Qwen's normalized, redacted upstream error mapping to the
+// transitional parent-package raw protocol bridge.
+func (a *Adapter) HandleError(statusCode int, body []byte) error {
+	return a.handleError(statusCode, body)
+}
+
 // createQwenImage handles image generation for Qwen Image models (qwen-image-*, wan2.*)
-func (a *AliyunAdapter) createQwenImage(ctx context.Context, baseURL string, request *adapter.ImageRequest) (*adapter.ImageResponse, error) {
+func (a *Adapter) createQwenImage(ctx context.Context, baseURL string, request *adapter.ImageRequest) (*adapter.ImageResponse, error) {
 	url := fmt.Sprintf("%s/services/aigc/multimodal-generation/generation", baseURL)
 	headers := map[string]string{
 		"Authorization": fmt.Sprintf("Bearer %s", a.config.APIKey),
@@ -1317,7 +1378,7 @@ func (a *AliyunAdapter) createQwenImage(ctx context.Context, baseURL string, req
 	return response, nil
 }
 
-func (a *AliyunAdapter) convertToImageResponse(res *aliyunTaskResult) (*adapter.ImageResponse, error) {
+func (a *Adapter) convertToImageResponse(res *aliyunTaskResult) (*adapter.ImageResponse, error) {
 	response := &adapter.ImageResponse{
 		Created: time.Now().Unix(),
 		Data:    make([]adapter.ImageItem, 0, len(res.Output.Results)),
@@ -1333,7 +1394,7 @@ func (a *AliyunAdapter) convertToImageResponse(res *aliyunTaskResult) (*adapter.
 }
 
 // Rerank executes rerank request
-func (a *AliyunAdapter) Rerank(ctx context.Context, request *adapter.RerankRequest) (*adapter.RerankResponse, error) {
+func (a *Adapter) Rerank(ctx context.Context, request *adapter.RerankRequest) (*adapter.RerankResponse, error) {
 	if request == nil {
 		return nil, fmt.Errorf("%w: request is required", adapter.ErrInvalidRequest)
 	}
@@ -1413,7 +1474,7 @@ func (a *AliyunAdapter) Rerank(ctx context.Context, request *adapter.RerankReque
 }
 
 // ListModels gets available model list
-func (a *AliyunAdapter) ListModels(ctx context.Context, apiKey string) ([]adapter.Model, error) {
+func (a *Adapter) ListModels(ctx context.Context, apiKey string) ([]adapter.Model, error) {
 	if strings.TrimSpace(apiKey) == "" {
 		apiKey = a.config.APIKey
 	}
@@ -1432,7 +1493,7 @@ func (a *AliyunAdapter) ListModels(ctx context.Context, apiKey string) ([]adapte
 	switch statusCode {
 	case 200:
 	case 404, 405, 501:
-		return aliyunDocumentedModelCatalog(), nil
+		return nil, fmt.Errorf("%w: Qwen model listing endpoint returned HTTP %d", adapter.ErrCapabilityUnsupported, statusCode)
 	default:
 		return nil, a.handleError(statusCode, respBody)
 	}
@@ -1450,19 +1511,28 @@ func (a *AliyunAdapter) ListModels(ctx context.Context, apiKey string) ([]adapte
 
 	models := make([]adapter.Model, 0, len(response.Data))
 	for _, model := range response.Data {
-		models = append(models, aliyunModelFromID(model.ID, model.Created, model.OwnedBy))
+		ownedBy := model.OwnedBy
+		if ownedBy == "" {
+			ownedBy = "dashscope"
+		}
+		models = append(models, adapter.Model{
+			ID:      model.ID,
+			Name:    model.ID,
+			Created: model.Created,
+			OwnedBy: ownedBy,
+		})
 	}
 
 	return models, nil
 }
 
 // GetBalance queries API Key balance
-func (a *AliyunAdapter) GetBalance(ctx context.Context, apiKey string) (*adapter.Balance, error) {
+func (a *Adapter) GetBalance(ctx context.Context, apiKey string) (*adapter.Balance, error) {
 	return nil, fmt.Errorf("GetBalance not implemented for Aliyun adapter")
 }
 
 // ValidateConfig validates configuration
-func (a *AliyunAdapter) ValidateConfig(config *adapter.AdapterConfig) error {
+func (a *Adapter) ValidateConfig(config *adapter.AdapterConfig) error {
 	if config.APIKey == "" {
 		return fmt.Errorf("api key is required for Aliyun adapter")
 	}
@@ -1470,7 +1540,7 @@ func (a *AliyunAdapter) ValidateConfig(config *adapter.AdapterConfig) error {
 }
 
 // GetProviderInfo gets provider metadata
-func (a *AliyunAdapter) GetProviderInfo() *adapter.ProviderInfo {
+func (a *Adapter) GetProviderInfo() *adapter.ProviderInfo {
 	return &adapter.ProviderInfo{
 		Name:         "dashscope",
 		Type:         "aliyun",
@@ -1500,14 +1570,14 @@ type aliyunRerankResult struct {
 	Document       interface{} `json:"document"`
 }
 
-func (a *AliyunAdapter) aliyunRerankURL(model string) string {
+func (a *Adapter) aliyunRerankURL(model string) string {
 	if strings.EqualFold(strings.TrimSpace(model), "qwen3-rerank") {
 		return fmt.Sprintf("%s/reranks", a.compatibleRerankBaseURL())
 	}
 	return fmt.Sprintf("%s/services/rerank/text-rerank/text-rerank", a.nativeBaseURL())
 }
 
-func (a *AliyunAdapter) buildAliyunRerankPayload(request *adapter.RerankRequest) (map[string]interface{}, error) {
+func (a *Adapter) buildAliyunRerankPayload(request *adapter.RerankRequest) (map[string]interface{}, error) {
 	documents, err := normalizeAliyunRerankDocuments(request.Documents)
 	if err != nil {
 		return nil, err
@@ -1561,100 +1631,5 @@ func normalizeAliyunRerankDocuments(documents interface{}) (interface{}, error) 
 		return items, nil
 	default:
 		return nil, fmt.Errorf("%w: invalid documents type %T", adapter.ErrInvalidRequest, documents)
-	}
-}
-
-func aliyunDocumentedModelCatalog() []adapter.Model {
-	ids := []string{
-		"qwen-max",
-		"qwen-plus",
-		"qwen-turbo",
-		"qwen-long",
-		"qwen-vl-max",
-		"qwen-vl-plus",
-		"qvq-max",
-		"qwq-plus",
-		"qwq-32b",
-		"qwen-omni-turbo",
-		"qwen-coder-plus",
-		"qwen-coder-turbo",
-		"qwen-image-2.0-pro",
-		"qwen-image-2.0",
-		"qwen-image-max",
-		"qwen-image-plus",
-		"qwen-image-edit-max",
-		"qwen-image-edit-plus",
-		"qwen-image-edit",
-		"wanx2.1-t2i-plus",
-		"wanx2.1-t2i-turbo",
-		"wanx2.0-t2i-turbo",
-		"wanx-v1",
-		"wanx2.1-imageedit",
-		"text-embedding-v4",
-		"text-embedding-v3",
-		"text-embedding-v2",
-		"text-embedding-v1",
-		"qwen3-vl-embedding",
-		"qwen2.5-vl-embedding",
-		"tongyi-embedding-vision-plus",
-		"tongyi-embedding-vision-flash",
-		"multimodal-embedding-v1",
-		"qwen3-rerank",
-		"gte-rerank-v2",
-		"qwen3-vl-rerank",
-	}
-
-	models := make([]adapter.Model, 0, len(ids))
-	for _, id := range ids {
-		models = append(models, aliyunModelFromID(id, 0, "dashscope"))
-	}
-	return models
-}
-
-func aliyunModelFromID(id string, created int64, ownedBy string) adapter.Model {
-	capabilities := aliyunCapabilitiesForModel(id)
-	modelType := ""
-	if len(capabilities) > 0 {
-		modelType = capabilities[0]
-		if modelType == "stream" && len(capabilities) > 1 {
-			modelType = capabilities[1]
-		}
-	}
-
-	if ownedBy == "" {
-		ownedBy = "dashscope"
-	}
-
-	return adapter.Model{
-		ID:           id,
-		Name:         id,
-		Type:         modelType,
-		Created:      created,
-		OwnedBy:      ownedBy,
-		Capabilities: capabilities,
-	}
-}
-
-func aliyunCapabilitiesForModel(id string) []string {
-	modelID := strings.ToLower(strings.TrimSpace(id))
-	if modelID == "" {
-		return nil
-	}
-
-	switch {
-	case strings.Contains(modelID, "rerank"):
-		return []string{"rerank"}
-	case strings.Contains(modelID, "embedding"):
-		return []string{"embedding"}
-	case strings.HasPrefix(modelID, "qwen-image"),
-		strings.HasPrefix(modelID, "wanx"),
-		strings.Contains(modelID, "imageedit"):
-		return []string{"image"}
-	case strings.HasPrefix(modelID, "qwen"),
-		strings.HasPrefix(modelID, "qwq"),
-		strings.HasPrefix(modelID, "qvq"):
-		return []string{"chat", "stream"}
-	default:
-		return nil
 	}
 }

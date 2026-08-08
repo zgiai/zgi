@@ -885,37 +885,45 @@ func (s *service) StopMessage(ctx context.Context, scope Scope, id uuid.UUID) (*
 	if err := s.ensureMember(ctx, scope); err != nil {
 		return nil, err
 	}
-	message, err := s.repos.Message.GetScoped(ctx, id, scope.OrganizationID, scope.AccountID)
-	if err != nil {
-		return nil, mapRepoError(err)
-	}
-	if !isStoppableMessageStatus(message.Status) {
-		hydrateMessageGeneratedFileState(ctx, message)
-		return message, nil
-	}
-
 	s.streams.StopCurrent(id)
-	metadata := workflowContinuationMetadataWithoutUserInputRequest(message.Metadata)
-	if continuation := workflowApprovalContinuationFromMetadata(metadata); continuation.WorkflowRunID != "" {
-		metadata = mergeWorkflowRunMetadata(metadata, "workflow_stopped", map[string]interface{}{
-			"workflow_run_id": continuation.WorkflowRunID,
-			"status":          runtimemodel.MessageStatusStopped,
-			"created_at":      time.Now().Unix(),
-		})
-		metadata = workflowContinuationMetadataWithStatus(metadata, workflowContinuationStatusFailed)
-	}
-	if err := s.repos.Message.UpdateStoppedAnswer(ctx, id, message.Answer, metadata); err != nil {
-		latest, loadErr := s.repos.Message.GetScoped(ctx, id, scope.OrganizationID, scope.AccountID)
-		if loadErr == nil && !isStoppableMessageStatus(latest.Status) {
-			hydrateMessageGeneratedFileState(ctx, latest)
-			return latest, nil
+	var stopped *runtimemodel.Message
+	err := s.repos.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		txRepos := repository.NewRepositories(tx)
+		message, err := repository.GetMessageScopedForUpdate(ctx, tx, id, scope.OrganizationID, scope.AccountID)
+		if err != nil {
+			return err
 		}
-		return nil, mapRepoError(err)
-	}
-	if err := s.repos.Conversation.ClearActiveMessage(ctx, message.ConversationID, id); err != nil {
-		return nil, mapRepoError(err)
-	}
-	stopped, err := s.repos.Message.GetScoped(ctx, id, scope.OrganizationID, scope.AccountID)
+		if !isStoppableMessageStatus(message.Status) {
+			stopped = message
+			return nil
+		}
+
+		metadata := workflowContinuationMetadataWithoutUserInputRequest(message.Metadata)
+		continuation := workflowApprovalContinuationFromMetadata(metadata)
+		isWorkflowContinuation := continuation.WorkflowRunID != ""
+		if isWorkflowContinuation {
+			metadata = mergeWorkflowRunMetadata(metadata, "workflow_stopped", map[string]interface{}{
+				"workflow_run_id": continuation.WorkflowRunID,
+				"status":          runtimemodel.MessageStatusStopped,
+				"created_at":      time.Now().Unix(),
+			})
+			metadata = workflowContinuationMetadataWithStatus(metadata, workflowContinuationStatusStopped)
+		}
+
+		if isWorkflowContinuation {
+			err = repository.UpdateMessageStoppedPreservingAnswer(ctx, tx, id, metadata)
+		} else {
+			err = txRepos.Message.UpdateStoppedAnswer(ctx, id, message.Answer, metadata)
+		}
+		if err != nil {
+			return err
+		}
+		if err := txRepos.Conversation.ClearActiveMessage(ctx, message.ConversationID, id); err != nil {
+			return err
+		}
+		stopped, err = txRepos.Message.GetScoped(ctx, id, scope.OrganizationID, scope.AccountID)
+		return err
+	})
 	if err != nil {
 		return nil, mapRepoError(err)
 	}

@@ -3,12 +3,21 @@ package mineru
 import (
 	"archive/zip"
 	"bytes"
+	"context"
+	"io"
+	"net/http"
 	"strings"
 	"testing"
 
 	extractcommon "github.com/zgiai/zgi/api/internal/capabilities/contentparse/engines/hyperparse/pkg/providers/common"
 	"github.com/zgiai/zgi/api/internal/capabilities/contentparse/envconfig"
 )
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
 
 func TestMineruToDocumentResult_Shape(t *testing.T) {
 	resp := &parseResponse{
@@ -278,6 +287,75 @@ func TestOfficialReadZipArtifacts(t *testing.T) {
 			t.Fatalf("image asset %q mismatch: %q", name, artifacts.Images[name])
 		}
 	}
+}
+
+func TestOfficialDownloadAndReadZipRetriesTransportError(t *testing.T) {
+	zipData := officialTestZip(t)
+	attempts := 0
+	client := &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+		attempts++
+		if attempts == 1 {
+			return nil, io.EOF
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(bytes.NewReader(zipData)),
+			Header:     make(http.Header),
+		}, nil
+	})}
+
+	artifacts, err := officialDownloadAndReadZip(context.Background(), client, "https://cdn.example/result.zip")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if attempts != 2 {
+		t.Fatalf("expected 2 attempts, got %d", attempts)
+	}
+	if artifacts.Markdown != "# Title" || artifacts.ContentList == "" {
+		t.Fatalf("unexpected artifacts: %#v", artifacts)
+	}
+}
+
+func TestOfficialDownloadAndReadZipDoesNotRetryNonRetryableHTTPStatus(t *testing.T) {
+	attempts := 0
+	client := &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+		attempts++
+		return &http.Response{
+			StatusCode: http.StatusForbidden,
+			Body:       io.NopCloser(strings.NewReader("forbidden")),
+			Header:     make(http.Header),
+		}, nil
+	})}
+
+	_, err := officialDownloadAndReadZip(context.Background(), client, "https://cdn.example/result.zip")
+	if err == nil || !strings.Contains(err.Error(), "zip HTTP 403") {
+		t.Fatalf("expected HTTP 403 error, got %v", err)
+	}
+	if attempts != 1 {
+		t.Fatalf("expected 1 attempt, got %d", attempts)
+	}
+}
+
+func officialTestZip(t *testing.T) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	for name, body := range map[string]string{
+		"sample/full.md":                  "# Title",
+		"sample/sample_content_list.json": `[{"type":"text","text":"Title"}]`,
+	} {
+		w, err := zw.Create(name)
+		if err != nil {
+			t.Fatalf("create zip entry: %v", err)
+		}
+		if _, err := w.Write([]byte(body)); err != nil {
+			t.Fatalf("write zip entry: %v", err)
+		}
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatalf("close zip: %v", err)
+	}
+	return buf.Bytes()
 }
 
 func TestDecodeContentItemsV2(t *testing.T) {

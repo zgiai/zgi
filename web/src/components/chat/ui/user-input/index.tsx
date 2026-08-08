@@ -248,7 +248,7 @@ const UserInput: React.FC<UserInputProps> = ({
   const { data: uploadConfig } = useUploadConfig({
     enabled: enableUpload === true && !isUploadLoginRequired,
   });
-  const maxSizeMB = uploadConfig?.file_size_limit ?? 15;
+  const maxSizeMB = Math.max(uploadConfig?.file_size_limit ?? 50, 50);
   const supportedExtensionsFromServer = useMemo<string[]>(
     () =>
       Array.isArray(supportedTypes.allowed_extensions) ? supportedTypes.allowed_extensions : [],

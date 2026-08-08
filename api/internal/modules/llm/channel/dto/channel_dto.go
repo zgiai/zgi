@@ -222,7 +222,8 @@ type DraftTestChannelModelRequest struct {
 	APIBaseURL      string `json:"api_base_url"`
 	Model           string `json:"model" binding:"required"`
 	TestMethod      string `json:"test_method"`
-	Stream          bool   `json:"stream"`
+	// Stream overrides metadata-based mode selection when provided.
+	Stream *bool `json:"stream"`
 }
 
 type DiscoverDraftChannelModelsRequest struct {
@@ -305,13 +306,15 @@ type AdjustChannelWalletResponse struct {
 type TestChannelModelRequest struct {
 	Model      string `json:"model" binding:"required"`
 	TestMethod string `json:"test_method"` // chat, embedding, image-gen, rerank
-	Stream     bool   `json:"stream"`
+	// Stream overrides metadata-based mode selection when provided.
+	Stream *bool `json:"stream"`
 }
 
 type BatchTestChannelModelsRequest struct {
 	Models     []string `json:"models" binding:"required"`
 	TestMethod string   `json:"test_method"`
-	Stream     bool     `json:"stream"`
+	// Stream overrides metadata-based mode selection when provided.
+	Stream *bool `json:"stream"`
 }
 
 type BatchTestChannelModelsStreamResponse struct {

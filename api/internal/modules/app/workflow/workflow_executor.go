@@ -3,6 +3,7 @@ package workflow
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -357,7 +358,7 @@ func (e *WorkflowExecutor) ExecuteSimpleWorkflowWithRunIDAndCallbacks(ctx contex
 
 	// 9. Execute workflow
 	startTime := time.Now()
-	err = engine.Execute(ctx)
+	err = shared.ResolveContextError(ctx, engine.Execute(ctx))
 	executionTime := time.Since(startTime)
 
 	// 10. Save conversation variables if conversation ID is present
@@ -891,6 +892,9 @@ func (e *WorkflowExecutor) createVariablePoolWithVarsScoped(ctx context.Context,
 
 // getWorkflowStatus gets workflow status
 func (e *WorkflowExecutor) getWorkflowStatus(err error) string {
+	if errors.Is(err, context.Canceled) {
+		return "stopped"
+	}
 	if err != nil {
 		return "failed"
 	}
@@ -984,6 +988,10 @@ func (e *WorkflowExecutor) ExecuteWorkflowNodeWithVariablePool(ctx context.Conte
 		"nodeType": nodeType,
 	})
 	if err := engine.Execute(ctx); err != nil {
+		if shared.IsContextCancellation(ctx, err) {
+			logger.Info("Engine execution canceled for nodeID: %s, nodeType: %s", nodeID, nodeType)
+			return nil, context.Canceled
+		}
 		logger.Error(fmt.Sprintf("Engine execution failed for nodeID: %s, nodeType: %s", nodeID, nodeType), err)
 		// Get detailed node state for debugging
 		if nodeState, exists := engine.GetNodeStatus(nodeID); exists {
@@ -1158,6 +1166,13 @@ func (e *WorkflowExecutor) ExecuteWorkflowNodeWithAllCallbacks(
 		"nodeType": nodeType,
 	})
 	if err := engine.Execute(ctx); err != nil {
+		if shared.IsContextCancellation(ctx, err) {
+			logger.Info("Engine execution canceled for nodeID: %s, nodeType: %s", nodeID, nodeType)
+			if nodeState, exists := engine.GetNodeStatus(nodeID); exists {
+				return buildNodeRunResultFromState(nodeState), context.Canceled
+			}
+			return nil, context.Canceled
+		}
 		logger.Error(fmt.Sprintf("Engine execution failed for nodeID: %s, nodeType: %s", nodeID, nodeType), err)
 		// Get detailed node state for debugging
 		if nodeState, exists := engine.GetNodeStatus(nodeID); exists {

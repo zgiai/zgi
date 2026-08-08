@@ -11,8 +11,15 @@ import {
   getWorkflowRunExecutionId,
   isVisibleWorkflowRunExecutionStatus,
 } from '../src/utils/workflow/run-events.ts';
-import { parseApprovalPausedEvent } from '../src/components/workflow/approval/runtime-events.ts';
+import {
+  createWorkflowSnapshotPauseEvent,
+  parseApprovalPausedEvent,
+} from '../src/components/workflow/approval/runtime-events.ts';
 import { parseQuestionAnswerPausedEvent } from '../src/components/workflow/question-answer/runtime-events.ts';
+import {
+  pinWorkflowRunId,
+  resolveWorkflowRunId,
+} from '../src/utils/workflow/run-identity.js';
 
 const root = process.cwd();
 const read = relativePath => readFileSync(path.join(root, relativePath), 'utf8');
@@ -69,9 +76,6 @@ const workflowRunHistoryContent = read(
 const workflowNodePanel = read('src/components/workflow/ui/node-floating-panel.tsx');
 const workflowCanvasPanels = read('src/components/workflow/ui/workflow-canvas-panels.tsx');
 const workflowCanvasWithDnd = read('src/components/workflow/canvas-with-dnd.tsx');
-const workflowRunResults = read(
-  'src/components/workflow/ui/workflow-run-panel/components/results.tsx'
-);
 const workflowRunHistory = read(
   'src/components/workflow/ui/workflow-run-panel/utils/history-view-data.ts'
 );
@@ -415,25 +419,35 @@ assert.match(
   /runtime_status: 'idle',[\s\S]*active_workflow_run_id: undefined/,
   'terminal callbacks must release the active run in the conversation summary projection'
 );
+assert.doesNotMatch(
+  markdownViewer,
+  /whitespace-pre-wrap/,
+  'MarkdownViewer must not preserve structural whitespace between Markdown blocks'
+);
 assert.match(
   markdownViewer,
-  /preserveSoftBreaks\s*&&\s*'whitespace-pre-wrap'/,
-  'MarkdownViewer must be able to render workflow-authored soft line breaks'
+  /const remarkPluginsList:[^\n]*\[[^\]]*remarkSoftBreaks/,
+  'MarkdownViewer must preserve authored soft line breaks through Markdown AST break nodes'
 );
 assert.match(
   chatMessageItem,
-  /<MarkdownViewer[\s\S]*?preserveSoftBreaks/,
-  'chat answers must preserve workflow round separators'
+  /workflowPauseStatus[\s\S]*?workflowRunMonitor\.pendingApprovalTitle[\s\S]*?workflowRunMonitor\.pendingQuestionTitle/,
+  'empty paused workflow messages must render an explicit user-facing pause state'
 );
 assert.match(
-  workflowRunResults,
-  /<MarkdownViewer[\s\S]*?preserveSoftBreaks/,
-  'workflow run results must preserve authored soft line breaks'
+  chatMessageItem,
+  /isEmptyStoppedWorkflow[\s\S]*?workflowRunMonitor\.stoppedTitle[\s\S]*?workflowRunMonitor\.stoppedDescription/,
+  'an empty stopped workflow message must render a clear stopped state instead of a placeholder'
 );
 assert.match(
-  workflowConversationHistory,
-  /<MarkdownViewer[\s\S]*?preserveSoftBreaks/,
-  'workflow history must render the same line breaks as live output'
+  chatMessageItem,
+  /isEmptyStoppedWorkflow\s*=\s*!hasAi\s*&&\s*!hasImages\s*&&\s*!hasAddon\s*&&\s*!hasQuestionAnswerTranscript/,
+  'the empty stopped state must not claim there is no result when another result surface exists'
+);
+assert.match(
+  chatMessageItem,
+  /role="status"[\s\S]*?aria-live="polite"/,
+  'the workflow pause state must be exposed to assistive technology'
 );
 assert.match(workflowConversationHistory, /id: 'conversation-history',[\s\S]*?order: 1/);
 assert.doesNotMatch(workflowConversationHistory, /<RunStatusBadge status=\{inspectorSummary\.status\}/);
@@ -538,6 +552,55 @@ assert.equal(mixedApproval.isApproval, true);
 assert.equal(mixedQuestion.isQuestionAnswer, true);
 assert.deepEqual(mixedApproval.nodeIds, ['approval-1']);
 assert.deepEqual(mixedQuestion.nodeIds, ['question-1']);
+
+const approvalSnapshot = {
+  event: 'workflow_snapshot',
+  data: {
+    last_sequence: 5,
+    active_pause: {
+      pause: {
+        id: 'pause-snapshot-1',
+        workflow_run_id: 'run-snapshot-1',
+        status: 'pending',
+      },
+      reasons: [
+        {
+          type: 'approval_required',
+          node_id: 'approval-snapshot-1',
+          form_id: 'approval-form-snapshot-1',
+          status: 'pending',
+        },
+      ],
+    },
+  },
+};
+const reconstructedApprovalPause = createWorkflowSnapshotPauseEvent(approvalSnapshot);
+assert.ok(reconstructedApprovalPause);
+assert.equal(reconstructedApprovalPause.data.id, 'pause-snapshot-1');
+assert.equal(reconstructedApprovalPause.data.workflow_run_id, 'run-snapshot-1');
+const reconstructedQuestion = parseQuestionAnswerPausedEvent(reconstructedApprovalPause);
+assert.equal(reconstructedQuestion.isQuestionAnswer, false);
+assert.equal(
+  reconstructedQuestion.workflowRunId,
+  'run-snapshot-1',
+  'a pause record id must never replace its explicit workflow_run_id'
+);
+assert.equal(
+  resolveWorkflowRunId(reconstructedApprovalPause, {
+    fallback: 'run-already-pinned',
+    allowLegacyId: true,
+  }),
+  'run-snapshot-1'
+);
+assert.equal(
+  pinWorkflowRunId(
+    'run-already-pinned',
+    { data: { id: 'node-execution-1', correlation_id: 'run-other' } },
+    { allowLegacyId: true }
+  ),
+  'run-already-pinned',
+  'node and pause events must not overwrite a pinned workflow run id'
+);
 assert.match(
   workflowPauseEvents,
   /hasQuestionAnswer\s*\?\s*'pending_question'/,

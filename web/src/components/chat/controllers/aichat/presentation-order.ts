@@ -96,6 +96,16 @@ export function upsertPresentationItem(
   );
 }
 
+export function removePresentationSegment(
+  items: AIChatPresentationItem[] | undefined,
+  segmentId: string | undefined
+): AIChatPresentationItem[] {
+  if (!segmentId) return [...(items ?? [])];
+  return (items ?? []).filter(
+    item => item.kind !== 'text' || item.segment_id !== segmentId
+  );
+}
+
 export function mergePresentationItems(
   base: AIChatPresentationItem[] | undefined,
   incoming: AIChatPresentationItem[] | undefined
@@ -195,9 +205,14 @@ function timelineReferences(item: AIChatAgenticTimelineItem): string[] {
         ? [`user_input_response:${item.request_id}`, item.request_id]
         : [];
     case 'tool_governance_decision':
-      return [item.event.correlation_id, item.event.request_id, item.event.approval_id].filter(
-        (value): value is string => Boolean(value)
-      );
+      return [
+        item.event.correlation_id,
+        item.event.correlation_id
+          ? `tool_governance:${item.event.correlation_id}`
+          : undefined,
+        item.event.request_id,
+        item.event.approval_id,
+      ].filter((value): value is string => Boolean(value));
     case 'workflow_run':
       return [item.workflowRunId, item.invocationId].filter((value): value is string =>
         Boolean(value)

@@ -1353,7 +1353,6 @@ const {
 const organizationRoutes = [
   '/console',
   '/console/skills',
-  '/console/settings',
   '/console/work',
   '/console/work/chat',
   '/console/work/image',
@@ -1365,7 +1364,6 @@ const workRouteRoot = path.join(rootDir, 'src', 'app', 'console', 'work');
 const consoleRouteRoot = path.join(rootDir, 'src', 'app', 'console');
 const expectedOrganizationConsolePageRoutes = [
   '/console',
-  '/console/settings',
   '/console/skills',
   '/console/work',
   '/console/work/app',
@@ -1442,7 +1440,7 @@ assert.deepEqual(
 assert.deepEqual(
   actualConsolePageRoutes.filter(route => isOrganizationScopedConsoleRoute(route)).sort(),
   expectedOrganizationConsolePageRoutes,
-  'console organization routes should include the personal workbench, settings, and product work surfaces'
+  'console organization routes should include the personal workbench and product work surfaces'
 );
 assert.deepEqual(
   actualConsolePageRoutes.filter(route => !isOrganizationScopedConsoleRoute(route)).sort(),
@@ -1483,13 +1481,12 @@ assert.deepEqual(
   [
     '/console',
     '/console/skills',
-    '/console/settings',
     '/console/work',
     '/console/work/chat',
     '/console/work/image',
     '/console/work/app',
   ],
-  'console organization-scoped exact route metadata should include the personal workbench, settings, and product routes'
+  'console organization-scoped exact route metadata should include the personal workbench and product routes'
 );
 assert.deepEqual(
   [...ORGANIZATION_SCOPED_CONSOLE_ROUTE_PREFIXES],
@@ -1506,12 +1503,6 @@ assert.deepEqual(
   ['/console/work/app/'],
   'work layout organization-scoped prefix metadata should include app detail routes'
 );
-assert.equal(
-  ORGANIZATION_SCOPED_WORK_ROUTES.includes('/console/settings'),
-  false,
-  'settings should be organization-scoped at the console shell, not inside the work layout'
-);
-
 for (const route of organizationRoutes) {
   assert.equal(
     isOrganizationScopedConsoleRoute(route),
@@ -2201,8 +2192,13 @@ assert.match(
 );
 assert.match(
   contentParseProviderSettingsHandlerSource,
-  /admin := rg\.Group\("\/provider-settings"\)[\s\S]*admin\.Use\(middleware\.EnterpriseAdminOrOwnerRequired\(\)\)[\s\S]*admin\.GET\("", h\.List\)[\s\S]*admin\.PUT\("\/:provider_key", h\.Upsert\)/,
-  'content-parse provider settings read/write should stay behind organization owner/admin middleware'
+  /rg\.GET\("\/provider-settings", h\.List\)[\s\S]*writes := rg\.Group\("\/provider-settings"\)[\s\S]*writes\.Use\(parserSettingsWriteRequired\(\)\)[\s\S]*writes\.PUT\("\/:provider_key", h\.Upsert\)[\s\S]*writes\.POST\("\/:provider_key\/check", h\.Check\)/,
+  'content-parse provider settings should keep writes behind their scoped authorization middleware'
+);
+assert.match(
+  contentParseProviderSettingsHandlerSource,
+  /middleware\.IsOrganizationAdminOrOwner\(c\) \|\| isPersonalWorkbenchParserSettingsRequest\(c\)[\s\S]*accountContext\.CurrentWorkspaceID == nil[\s\S]*CurrentOrganizationID\) == organizationID\.String\(\)/,
+  'content-parse provider settings should allow personal-workbench writes only for the active organization'
 );
 assert.match(
   llmRouterSource,

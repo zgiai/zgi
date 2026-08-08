@@ -112,7 +112,7 @@ const ActivateForm = () => {
   const hasInvitationDestination = Boolean(invitation?.organization_name || invitation?.workspace_name);
 
   return (
-    <div className="flex w-full grow items-center justify-center">
+    <div className="flex w-full grow items-center justify-center px-6 md:px-[108px]">
       <Card className="w-full max-w-md">
         <CardHeader><CardTitle className="text-center text-2xl">{t('invitationActivation.title')}</CardTitle></CardHeader>
         <CardContent className="space-y-5">

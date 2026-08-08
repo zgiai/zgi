@@ -24,6 +24,6 @@ func NewModule(availableModels llmmodelsvc.AvailableModelsService, routes images
 	}
 }
 
-func (m *Module) RegisterRoutes(router *gin.RouterGroup, generateMiddleware gin.HandlerFunc) {
-	m.Handler.RegisterRoutes(router, generateMiddleware)
+func (m *Module) RegisterRoutes(router *gin.RouterGroup) {
+	m.Handler.RegisterRoutes(router)
 }

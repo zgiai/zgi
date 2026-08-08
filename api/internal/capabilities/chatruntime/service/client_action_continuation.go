@@ -694,12 +694,12 @@ func clientActionContinuationMessage(message *runtimemodel.Message, event map[st
 		"Use operation plan evidence_ledger result_facts as authoritative completed tool facts when later steps depend on earlier tool output. If a file read fact contains content_value_preview, use that exact value for derived names or configuration values instead of placeholder words such as file content, 文件内容, or 读取到的内容.",
 		"For event_type=route_loaded, phrase route success from the user's point of view, for example that the target page has been opened or switched to.",
 		"For event_type=route_already_loaded, say the requested page is already current only when useful, then continue the user's real task from the current page context.",
-		"Client action failure feedback is authoritative. If a route_navigation client action failed, the target page is not open. Do not claim that navigation succeeded; retry with a corrected supported route, choose another available tool, or clearly explain the limitation only after recovery is not possible.",
+		"Client action failure feedback is authoritative. If a route_navigation client action failed, the target page is not open. Do not claim that navigation succeeded. Follow its recoverable flag: retry only when it is true; when it is false, do not retry the same route and clearly explain the blocker.",
 		"If the client action status is succeeded and observed a resource mutation, use the observation result and updated page context to confirm whether the changed resource is visible; do not repeat the same side-effecting tool only to verify it.",
 		"If a current-turn tool result is provided, treat it as authoritative evidence for the current user request. If it completed the requested mutation, summarize that result as completed in this request and do not describe it as a previous round, previous conversation, last turn, earlier request, 上一轮, 上次, 之前, or 先前 unless the user explicitly asks about history.",
 		"If Current-turn agent creation progress is present and missing_targets is non-empty, do not give a final completion answer yet. Continue by calling agent-management/create_agent for each exact missing target name. Do not treat a similar visible Agent with a different exact name as satisfying the missing target.",
 		"Continue the user's original task from the new page context.",
-		"If the client action failed or timed out, treat that as recoverable feedback and decide whether to retry, choose another route, or explain the limitation.",
+		"If the client action failed or timed out, retry only when its failure feedback says recoverable=true. Otherwise choose an allowed alternative only when it still satisfies the task, or explain the limitation.",
 		"Do not expose internal action ids, message ids, UUIDs, or raw JSON field names in the final user-visible answer.",
 	}, " ")
 	return adapter.Message{Role: "system", Content: system + "\n\n" + content}
@@ -869,17 +869,24 @@ func clientActionFailureModelFeedback(event map[string]interface{}, req runtimed
 		result["action_type"],
 	))
 	errorText := strings.TrimSpace(firstNonEmptyString(req.Error, result["error"], event["error"]))
+	recoverable, hasRecoverable := firstOperationBool(result["recoverable"])
+	if !hasRecoverable {
+		recoverable = true
+	}
 	feedback := map[string]interface{}{
 		"status":           clientActionStatusFailed,
 		"action_type":      actionType,
 		"target_completed": false,
-		"recoverable":      true,
+		"recoverable":      recoverable,
 	}
 	if errorText != "" {
 		feedback["error"] = errorText
 	}
 	if eventType := strings.TrimSpace(stringFromAny(result["event_type"])); eventType != "" {
 		feedback["event_type"] = eventType
+	}
+	if accessStatus := strings.TrimSpace(stringFromAny(result["access_status"])); accessStatus != "" {
+		feedback["access_status"] = accessStatus
 	}
 	if observedPath := normalizeConsoleNavigationGuardHref(firstNonEmptyString(result["observed_path"], result["current_href"])); observedPath != "" {
 		feedback["observed_path"] = observedPath
@@ -895,13 +902,21 @@ func clientActionFailureModelFeedback(event map[string]interface{}, req runtimed
 	}
 	if strings.EqualFold(actionType, "route_navigation") || isConsoleNavigatorNavigateTool(stringFromAny(event["skill_id"]), stringFromAny(event["tool_name"])) {
 		feedback["failure_kind"] = "route_navigation_failed"
-		feedback["next_step_hint"] = "The requested route was not loaded. Correct the href to a supported console route and retry navigation if the user task still needs that page; otherwise continue with a backend tool or explain why recovery is not possible."
+		if nextStepHint := strings.TrimSpace(stringFromAny(result["next_step_hint"])); nextStepHint != "" {
+			feedback["next_step_hint"] = nextStepHint
+		} else if recoverable {
+			feedback["next_step_hint"] = "The requested route was not loaded. Correct the href to a supported console route and retry navigation if the user task still needs that page; otherwise continue with a backend tool or explain why recovery is not possible."
+		} else {
+			feedback["next_step_hint"] = "Do not retry the same route unless the user's workspace or permissions change. Explain the access limitation or continue with an allowed alternative."
+		}
 		feedback["supported_route_examples"] = []string{
 			"/console/files",
 			"/console/agents",
 			"/console/agents/{agent_id}/agent",
 			"/console/workflows",
+			"/console/workflows/{workflow_id}",
 			"/console/db",
+			"/console/skills",
 		}
 	}
 	return feedback

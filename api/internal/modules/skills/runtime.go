@@ -30,6 +30,8 @@ const (
 	MetaToolUpdatePlan         = "update_plan"
 	MetaToolRequestUserInput   = "request_user_input"
 	MetaToolFinalAnswer        = "submit_final_answer"
+	MetaToolActivateSkills     = "activate_skills"
+	MetaToolSearchSkills       = "search_skills"
 )
 
 var ErrSkillNotFound = errors.New("skill not found")
@@ -410,7 +412,13 @@ func (r *Runtime) CallSkillTool(
 	arguments map[string]interface{},
 	execCtx ExecutionContext,
 	callID string,
-) (*ToolInvocationResult, error) {
+) (invocation *ToolInvocationResult, returnErr error) {
+	invocationID := strings.TrimSpace(callID)
+	defer func() {
+		if invocation != nil {
+			invocation.Trace.InvocationID = invocationID
+		}
+	}()
 	if r == nil {
 		return nil, fmt.Errorf("skill runtime is not configured")
 	}

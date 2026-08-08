@@ -6,10 +6,12 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/dto"
 	"github.com/zgiai/zgi/api/internal/modules/app/conversation"
+	workflowpause "github.com/zgiai/zgi/api/internal/modules/app/workflow/pause"
 	"github.com/zgiai/zgi/api/pkg/database"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -118,5 +120,76 @@ func TestConversationWorkflowAllowsOnlyOneActiveRun(t *testing.T) {
 	}
 	if err := service.createWorkflowRunLogWithConversationClaim(context.Background(), second); err != nil {
 		t.Fatalf("claim second run after release: %v", err)
+	}
+}
+
+func TestStoppedWorkflowConversationAnswerPersistsOnlyRevokedGenerationTail(t *testing.T) {
+	db := openWorkflowConversationRuntimeTestDB(t)
+	previousDB := database.GetDB()
+	database.SetDB(db)
+	t.Cleanup(func() { database.SetDB(previousDB) })
+
+	agentID := uuid.New()
+	accountID := uuid.New()
+	conversationID := uuid.New()
+	runID := uuid.New()
+	executionID := uuid.NewString()
+	finishedAt := time.Now()
+	if err := db.Create(&conversation.AgentConversation{
+		ID: conversationID, AgentID: agentID, Mode: "chat", Name: "stopped tail",
+		Inputs: "{}", Status: "normal", FromSource: "account",
+		RuntimeStatus: conversation.ConversationRuntimeIdle,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&WorkflowRunLog{
+		ID: runID.String(), TenantID: uuid.NewString(), AgentID: agentID.String(), WorkflowID: uuid.NewString(),
+		Type: dto.WorkflowTypeChat, TriggeredFrom: "debugging", Version: "draft",
+		Status: dto.WorkflowRunStatusRunning, CreatedByRole: CreatedByRoleAccount, CreatedBy: accountID.String(),
+		RuntimeProtocolVersion: workflowRuntimeProtocolVersionV2, ExecutionGeneration: 4, ActiveExecutionID: &executionID,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&WorkflowRunLog{}).Where("id = ?", runID).Updates(map[string]interface{}{
+		"status": dto.WorkflowRunStatusStopped, "finished_at": finishedAt,
+		"active_execution_id": nil, "execution_lease_expires_at": nil, "execution_generation": 5,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	handler := &WorkflowHandler{advancedChatHandler: &AdvancedChatWorkflowHandler{}}
+	systemInputs := map[string]interface{}{
+		"sys.conversation_id": conversationID.String(),
+		"sys.user_id":         accountID.String(),
+		"sys.query":           "continue",
+	}
+	owner := workflowExecutionOwner{WorkflowRunID: runID.String(), ExecutionID: executionID, Generation: 4}
+	answer := "七零八落\n一心一意\n"
+	if err := handler.persistStoppedWorkflowConversationAnswer(
+		t.Context(), owner, runID.String(), agentID.String(), accountID.String(), systemInputs, nil, "debugging", answer,
+	); err != nil {
+		t.Fatal(err)
+	}
+	var message conversation.AgentMessage
+	if err := db.Where("workflow_run_id = ?", runID).First(&message).Error; err != nil {
+		t.Fatal(err)
+	}
+	if message.Answer != answer || message.Status != conversation.AgentMessageStatusStopped || message.ExecutionGeneration != owner.Generation {
+		t.Fatalf("stopped projection answer=%q status=%q generation=%d", message.Answer, message.Status, message.ExecutionGeneration)
+	}
+
+	staleOwner := owner
+	staleOwner.Generation = 3
+	err := handler.persistStoppedWorkflowConversationAnswer(
+		t.Context(), staleOwner, runID.String(), agentID.String(), accountID.String(), systemInputs, nil, "debugging", "stale",
+	)
+	if !errors.Is(err, workflowpause.ErrExecutionOwnershipLost) {
+		t.Fatalf("stale owner error = %v, want ownership lost", err)
+	}
+	if err := db.First(&message, "id = ?", message.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if message.Answer != answer {
+		t.Fatalf("stale owner overwrote answer: %q", message.Answer)
 	}
 }

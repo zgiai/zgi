@@ -49,10 +49,10 @@ Use this skill only to request safe internal console navigation. It does not cre
 - Knowledge bases: `/console/dataset`
 - Databases: `/console/db`
 - Files: `/console/files`
+- Skills: `/console/skills`
 - Prompts: `/console/prompts`
 - File recognition: `/console/developer/content-parse`
 - Workspace: `/console/workspace`, `/console/workspace/members`, `/console/workspace/settings`
-- System settings: `/console/settings`
 
 ## Workflow
 
@@ -60,12 +60,13 @@ Use this skill only to request safe internal console navigation. It does not cre
 2. If the user only asks what the assistant can do or what a module is for, answer directly from the site map instead of navigating.
 3. If the requested destination is ambiguous, ask one concise clarification.
 4. Do not navigate to external URLs or non-console paths.
-5. If the current page context already matches the requested route, do not call `navigate` just to create proof. Continue from the current page context and visible resources.
-6. After navigation, pause for the frontend client action result. The sidebar will switch routes, wait for supported target page context, and continue this same assistant turn with the updated page context when available.
-7. Navigation is usually a substep, not the user's final goal. After the loaded-route/page-context evidence arrives, continue the remaining requested operation from the new page context instead of ending the turn just because navigation succeeded.
-8. If a previous tool result or page fact will be needed after navigation, record it with `submit_turn_state` before calling `navigate`. Use the stored fact after the continuation instead of re-reading or guessing.
-9. Never claim that navigation performed an asset operation. If the user asks to delete, publish, run, schedule, create, or modify assets, explain that those actions need a supported governed tool and user approval when available.
-10. Agent and Workflow assets are separate console surfaces. Use `/console/agents` for Agent management and `/console/workflows` for Workflow management or inspection. Do not route Workflow requests to the Agents list unless the user explicitly asks for Agents.
+5. Treat the route catalog supplied for the current turn as the current user's accessible route snapshot. Do not propose routes omitted from that snapshot.
+6. If the current page context already matches the requested route, do not call `navigate` just to create proof. Continue from the current page context and visible resources.
+7. After navigation, pause for the frontend client action result. The sidebar will switch routes, wait for supported target page context, and continue this same assistant turn with the updated page context when available.
+8. Navigation is usually a substep, not the user's final goal. After the loaded-route/page-context evidence arrives, continue the remaining requested operation from the new page context instead of ending the turn just because navigation succeeded.
+9. If a previous tool result or page fact will be needed after navigation, record it with `submit_turn_state` before calling `navigate`. Use the stored fact after the continuation instead of re-reading or guessing.
+10. Never claim that navigation performed an asset operation. If the user asks to delete, publish, run, schedule, create, or modify assets, explain that those actions need a supported governed tool and user approval when available.
+11. Agent and Workflow assets are separate console surfaces. Use `/console/agents` for Agent management and `/console/workflows` for Workflow management or inspection. Do not route Workflow requests to the Agents list unless the user explicitly asks for Agents.
 
 ## Tool Usage
 
@@ -74,7 +75,7 @@ Use this skill only to request safe internal console navigation. It does not cre
 - `href`: required whitelisted internal console route.
 - `reason`: optional short reason for why that route is relevant.
 
-The tool returns a `page_navigation_requested` event for the sidebar frontend. The frontend performs a second whitelist check before calling Next Router.
+The tool returns a `page_navigation_requested` event for the sidebar frontend. The backend checks the trusted current workspace and any required permissions before emitting the event; the frontend then performs its own route and current-user permission check before calling Next Router.
 
 ## Success Evidence
 
@@ -86,4 +87,5 @@ The tool returns a `page_navigation_requested` event for the sidebar frontend. T
 
 - Treat client-action route evidence as authoritative for what page is currently visible.
 - If navigation fails, is blocked, or does not produce matching loaded-route evidence, do not claim the page is open. Report the actual navigation state.
+- If navigation is permission-denied, do not retry the same route unless the user changes workspace or their permissions change.
 - Retry at most once with a corrected whitelisted `href` when the route error is recoverable. Do not repeat the same navigation request with identical arguments after a failure.

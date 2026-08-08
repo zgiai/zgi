@@ -170,6 +170,7 @@ func (s *llmGatewayServiceImpl) createResponseInternal(
 		}
 
 		if err := s.settleChatSuccess(ctx, billingCtx, providerSelection, channelID, responseUsage, nil, responseTime); err != nil {
+			s.traceCreateResponse(ctx, req, response, startTime, time.Now(), billingCtx, err)
 			return nil, err
 		}
 
@@ -298,6 +299,7 @@ func (s *llmGatewayServiceImpl) createEmbeddingsInternal(
 		}
 
 		if err := s.settleEmbeddingsSuccess(ctx, billingCtx, providerSelection, channelID, actualTokens, response.Settlement, responseTime); err != nil {
+			s.traceEmbeddings(ctx, req, response, startTime, time.Now(), billingCtx, err)
 			return nil, err
 		}
 
@@ -426,6 +428,7 @@ func (s *llmGatewayServiceImpl) rerankInternal(
 		}
 
 		if err := s.settleEmbeddingsSuccess(ctx, billingCtx, providerSelection, channelID, actualTokens, response.Settlement, responseTime); err != nil {
+			s.traceRerank(ctx, req, response, startTime, time.Now(), billingCtx, err)
 			return nil, err
 		}
 

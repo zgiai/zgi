@@ -47,6 +47,7 @@ import {
   presentationPositionFromPayload,
   presentationStateFromMetadata,
   processTextPresentationItem,
+  removePresentationSegment,
   upsertPresentationItem,
   withPresentationItems,
 } from '../presentation-order';
@@ -175,7 +176,8 @@ export function applyIntermediateAnswerState(
       message: nextContent,
       created_at: payload.created_at,
     },
-    presentationPositionFromPayload(payload)
+    presentationPositionFromPayload(payload),
+    true
   );
 }
 
@@ -248,6 +250,7 @@ export function applyUserInputRequestedState(
           [payload.message_id]: {
             ...previousStreaming,
             answer_before_timeline_length: answerBeforeTimelineLength,
+            modelProcessing: undefined,
             last_event_id: eventId ?? previousStreaming.last_event_id,
           },
         }
@@ -326,7 +329,13 @@ export function applyMessageStartState(
         updated_at: createdAt,
       }
     : createdMessage;
-  const previousStreaming = current.streamingByMessageId[payload.message_id];
+  const previousStreaming =
+    current.streamingByMessageId[payload.message_id] ??
+    (context.previousConversationId
+      ? Object.values(current.streamingByMessageId).find(
+          streaming => streaming.conversation_id === context.previousConversationId
+        )
+      : undefined);
   if (isStaleAIChatStreamEvent(eventId, previousStreaming?.last_event_id)) {
     return current;
   }
@@ -350,6 +359,9 @@ export function applyMessageStartState(
   const nextStoppingByConversation = {
     ...current.stoppingByConversation,
   };
+  const nextConnectionByConversation = {
+    ...current.connectionByConversation,
+  };
   const nextStreamingByMessageId = {
     ...current.streamingByMessageId,
   };
@@ -370,6 +382,7 @@ export function applyMessageStartState(
     delete nextLoadingOlderByConversation[context.previousConversationId];
     delete nextRecoveringByConversation[context.previousConversationId];
     delete nextStoppingByConversation[context.previousConversationId];
+    delete nextConnectionByConversation[context.previousConversationId];
     Object.values(current.streamingByMessageId).forEach(streaming => {
       if (streaming.conversation_id === context.previousConversationId) {
         delete nextStreamingByMessageId[streaming.message_id];
@@ -432,6 +445,11 @@ export function applyMessageStartState(
     loadingOlderByConversation: nextLoadingOlderByConversation,
     recoveringByConversation: nextRecoveringByConversation,
     stoppingByConversation: nextStoppingByConversation,
+    connectionByConversation: {
+      ...nextConnectionByConversation,
+      [payload.conversation_id]:
+        nextConnectionByConversation[payload.conversation_id] ?? 'connected',
+    },
     streamingByMessageId: nextStreamingByMessageId,
   };
 }
@@ -600,6 +618,7 @@ export function applyMessageChunkState(
               [presentationItem.segment_id]: presentationItem,
             }
           : previousStreaming?.segmentsById,
+        modelProcessing: undefined,
         answer_before_timeline_length: nextAnswerBeforeTimelineLength,
         last_event_id: eventId ?? previousStreaming?.last_event_id,
         replay_base_answer: replayBaseAnswer,
@@ -658,13 +677,16 @@ function mergeRuntimeTimelineMetadata(
   runtimeTimeline: AIChatAgenticTimelineItem[] | undefined
 ): AIChatMessageMetadata | undefined {
   const runtimeSkillInvocations = skillInvocationsFromRuntimeTimeline(runtimeTimeline);
+  let mergedMetadata: AIChatMessageMetadata | undefined;
   if (runtimeSkillInvocations.length === 0) {
-    return mergeMessageMetadata(messageMetadata, payloadMetadata);
+    mergedMetadata = mergeMessageMetadata(messageMetadata, payloadMetadata);
+  } else {
+    mergedMetadata = mergeMessageMetadata(
+      mergeMessageMetadata(messageMetadata, { skill_invocations: runtimeSkillInvocations }),
+      payloadMetadata
+    );
   }
-  return mergeMessageMetadata(
-    mergeMessageMetadata(messageMetadata, { skill_invocations: runtimeSkillInvocations }),
-    payloadMetadata
-  );
+  return mergedMetadata;
 }
 
 export function applyMessageRetractState(
@@ -681,6 +703,53 @@ export function applyMessageRetractState(
   const previousStreaming = current.streamingByMessageId[payload.message_id];
   if (isStaleAIChatStreamEvent(eventId, previousStreaming?.last_event_id)) {
     return current;
+  }
+  if (payload.presentation_disposition === 'discard') {
+    const nextMessages = messages.map(message =>
+      message.id === payload.message_id
+        ? {
+            ...message,
+            answer: removeRetractedSuffix(message.answer, content, payload.length),
+          }
+        : message
+    );
+    const nextSegmentsById = { ...(previousStreaming?.segmentsById ?? {}) };
+    if (payload.segment_id) {
+      delete nextSegmentsById[payload.segment_id];
+    }
+    const nextStreamingAnswer = previousStreaming
+      ? removeRetractedSuffix(previousStreaming.answer, content, payload.length)
+      : '';
+    return {
+      ...current,
+      messagesByConversation: {
+        ...current.messagesByConversation,
+        [payload.conversation_id]: nextMessages,
+      },
+      streamingByMessageId: previousStreaming
+        ? {
+            ...current.streamingByMessageId,
+            [payload.message_id]: {
+              ...previousStreaming,
+              answer: nextStreamingAnswer,
+              presentationItems: removePresentationSegment(
+                previousStreaming.presentationItems,
+                payload.segment_id
+              ),
+              segmentsById: nextSegmentsById,
+              modelProcessing: undefined,
+              answer_before_timeline_length:
+                typeof previousStreaming.answer_before_timeline_length === 'number'
+                  ? Math.min(
+                      previousStreaming.answer_before_timeline_length,
+                      nextStreamingAnswer.length
+                    )
+                  : undefined,
+              last_event_id: eventId ?? previousStreaming.last_event_id,
+            },
+          }
+        : current.streamingByMessageId,
+    };
   }
   const presentationItem = processTextPresentationItem(
     payload as unknown as Record<string, unknown>,
@@ -711,6 +780,7 @@ export function applyMessageRetractState(
                 ...(previousStreaming.segmentsById ?? {}),
                 [processItem.segment_id]: processItem,
               },
+              modelProcessing: undefined,
               last_event_id: eventId ?? previousStreaming.last_event_id,
             },
           }
@@ -738,6 +808,7 @@ export function applyMessageRetractState(
           [payload.message_id]: {
             ...previousStreaming,
             answer: removeRetractedSuffix(previousStreaming.answer, content, payload.length),
+            modelProcessing: undefined,
             answer_before_timeline_length:
               typeof previousStreaming.answer_before_timeline_length === 'number'
                 ? Math.min(
@@ -777,18 +848,18 @@ export function applyMessageEndState(
             sensitiveOutputBlocked: true,
           }
         : mergeRuntimeTimelineMetadata(message.metadata, payload.metadata, nextTimeline);
-    const hasAuthoritativeAnswer = typeof payload.answer === 'string';
     const terminalPresentationState = presentationStateFromMetadata(baseMergedMetadata);
-    const mergedPresentationItems = hasAuthoritativeAnswer
-      ? (terminalPresentationState.presentationItems ?? [])
-      : mergePresentationItems(
-          previousStreaming?.presentationItems,
-          terminalPresentationState.presentationItems
-        );
-    const mergedMetadata =
-      !hasAuthoritativeAnswer && mergedPresentationItems.length
-        ? withPresentationItems(baseMergedMetadata, mergedPresentationItems)
-        : baseMergedMetadata;
+    // The event stream is the visual authority for the current page. Backend
+    // terminal metadata may omit runtime-only process narration or arrive with
+    // a differently compacted projection, so merge it into the live projection
+    // instead of replacing what the user has already seen.
+    const mergedPresentationItems = mergePresentationItems(
+      previousStreaming?.presentationItems,
+      terminalPresentationState.presentationItems
+    );
+    const mergedMetadata = mergedPresentationItems.length
+      ? withPresentationItems(baseMergedMetadata, mergedPresentationItems)
+      : baseMergedMetadata;
     const presentationState = presentationStateFromMetadata(mergedMetadata);
     endedPresentationState = presentationState;
     const presentationAnswer = finalPresentationAnswer(presentationState.presentationItems);
@@ -797,13 +868,13 @@ export function applyMessageEndState(
       (typeof message.metadata?.answer_before_timeline_length === 'number'
         ? message.metadata.answer_before_timeline_length
         : undefined);
+    const liveAnswer =
+      presentationState.presentationVersion === 2
+        ? presentationAnswer
+        : message.answer || previousStreaming?.answer || undefined;
     return {
       ...message,
-      answer:
-        payload.answer ??
-        (presentationState.presentationVersion === 2
-          ? (presentationAnswer ?? message.answer)
-          : message.answer),
+      answer: liveAnswer ?? payload.answer ?? message.answer,
       status: normalizeAIChatStatus(payload.status),
       metadata:
         typeof answerBeforeTimelineLength === 'number'
@@ -817,18 +888,19 @@ export function applyMessageEndState(
   });
   const nextStreamingByMessageId = { ...current.streamingByMessageId };
   const terminalStatus = normalizeAIChatStatus(payload.status);
-  if (
-    previousStreaming &&
-    nextTimeline.length &&
-    (terminalStatus === 'waiting_approval' ||
-      terminalStatus === 'waiting_client_action' ||
-      terminalStatus === 'waiting_question')
-  ) {
+  const terminalStreamingStatus = terminalStatus === 'pending' ? 'streaming' : terminalStatus;
+  const hasLivePresentation = Boolean(endedPresentationState.presentationItems?.length);
+  if (previousStreaming && (nextTimeline.length > 0 || hasLivePresentation)) {
+    // Keep the exact event/presentation snapshot that was already rendered on
+    // this page. A terminal message payload may contain a compacted durable
+    // projection, but completion must not make finished operations jump to a
+    // new position. The snapshot is cleared by refresh or the next run.
     nextStreamingByMessageId[payload.message_id] = {
       ...previousStreaming,
       ...endedPresentationState,
       timeline: nextTimeline,
-      status: terminalStatus,
+      modelProcessing: undefined,
+      status: terminalStreamingStatus,
       last_event_id: eventId ?? previousStreaming.last_event_id,
     };
   } else {

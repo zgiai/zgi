@@ -135,6 +135,23 @@ func (h *AgentsHandler) GetAgentsList(c *gin.Context) {
 			return
 		}
 	}
+	if publishedStr := c.Query("is_published"); publishedStr != "" {
+		switch publishedStr {
+		case "true":
+			published := true
+			req.IsPublished = &published
+		case "false":
+			published := false
+			req.IsPublished = &published
+		default:
+			logger.Warn("GetAgentsList: invalid is_published parameter value", map[string]interface{}{
+				"account_id": accountID,
+				"value":      publishedStr,
+			})
+			response.Fail(c, response.ErrInvalidParam)
+			return
+		}
+	}
 
 	// 4. Validate and normalize pagination parameters
 	if req.Page <= 0 {
@@ -161,14 +178,16 @@ func (h *AgentsHandler) GetAgentsList(c *gin.Context) {
 	// 5. Call new service method with permission-based filtering
 	// Requirement 11.5: Add structured logging with context (account_id, org_id, dept_ids)
 	logger.Info("GetAgentsList: calling GetAgentsListWithPermissions", map[string]interface{}{
-		"account_id": accountID,
-		"page":       req.Page,
-		"limit":      req.Limit,
-		"name":       req.Name,
-		"keyword":    req.Keyword,
-		"agent_type": req.AgentType,
-		"asset_kind": req.AssetKind,
-		"internal":   req.Internal,
+		"account_id":     accountID,
+		"page":           req.Page,
+		"limit":          req.Limit,
+		"name":           req.Name,
+		"keyword":        req.Keyword,
+		"agent_type":     req.AgentType,
+		"asset_kind":     req.AssetKind,
+		"is_published":   req.IsPublished,
+		"web_app_status": req.WebAppStatus,
+		"internal":       req.Internal,
 	})
 
 	// Requirement 11.2, 11.3, 11.4: Handle service errors and map to HTTP responses
@@ -183,7 +202,8 @@ func (h *AgentsHandler) GetAgentsList(c *gin.Context) {
 			return
 		}
 
-		if errors.Is(err, errInvalidAgentListAssetKind) {
+		if errors.Is(err, errInvalidAgentListAssetKind) ||
+			errors.Is(err, errInvalidAgentListWebAppStatus) {
 			response.Fail(c, response.ErrInvalidParam)
 			return
 		}
@@ -852,7 +872,7 @@ func (h *AgentsHandler) ChatAgent(c *gin.Context) {
 		response.SpecialFail(c, gin.H{"code": "399001", "message": err.Error()})
 		return
 	}
-	setupAgentSSE(c)
+	setupPreparedAgentSSE(c, prepared)
 	_ = writeAgentSSE(c, "message_start", gin.H{
 		"conversation_id": prepared.Conversation.ID.String(),
 		"message_id":      prepared.Message.ID.String(),
@@ -1255,7 +1275,7 @@ func (h *AgentsHandler) ChatWebAppAgent(c *gin.Context) {
 		response.SpecialFail(c, gin.H{"code": "399001", "message": err.Error()})
 		return
 	}
-	setupAgentSSE(c)
+	setupPreparedAgentSSE(c, prepared)
 	_ = writeAgentSSE(c, "message_start", gin.H{
 		"conversation_id": prepared.Conversation.ID.String(),
 		"message_id":      prepared.Message.ID.String(),
@@ -1299,6 +1319,21 @@ func setupAgentSSE(c *gin.Context) {
 	writer := newAgentSSEWriter(c)
 	c.Set(agentSSEWriterContextKey, writer)
 	writer.StartHeartbeat(c.Request.Context())
+}
+
+const (
+	agentSSEConversationIDHeader = "X-ZGI-Conversation-ID"
+	agentSSEMessageIDHeader      = "X-ZGI-Message-ID"
+)
+
+func setupPreparedAgentSSE(c *gin.Context, prepared *runtimeservice.PreparedChat) {
+	if prepared != nil && prepared.Conversation != nil {
+		c.Header(agentSSEConversationIDHeader, prepared.Conversation.ID.String())
+	}
+	if prepared != nil && prepared.Message != nil {
+		c.Header(agentSSEMessageIDHeader, prepared.Message.ID.String())
+	}
+	setupAgentSSE(c)
 }
 
 func writeAgentSSE(c *gin.Context, event string, data interface{}) error {

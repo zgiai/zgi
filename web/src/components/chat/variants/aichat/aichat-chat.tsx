@@ -41,6 +41,7 @@ import {
 import { Sidebar } from '@/components/chat/variants/common/sidebar';
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from '@/components/ui/sheet';
 import { Button } from '@/components/ui/button';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import {
   useAIChatSkillPreference,
   useAIChatSkills,
@@ -125,6 +126,11 @@ import type {
   AIChatToolGovernancePermissionTier,
 } from '@/components/aichat/contextual/types';
 import type { ModelUseCase } from '@/services/types/model';
+import { messageFilesForReplay } from '@/components/chat/runtime/controller/chat-runtime-controller-utils';
+import {
+  isImageExtension,
+  isVisionModel,
+} from '@/components/chat/variants/aichat/input-area-utils';
 
 export { AIChatMessageBubble } from '@/components/chat/variants/aichat/message-bubble';
 export type { AIChatModelValue } from '@/components/chat/variants/aichat/types';
@@ -185,6 +191,24 @@ const CHAT_THEME_PRIMARY: Record<string, string> = {
 };
 const AGENT_WORKFLOW_QUESTION_SOURCE = 'agent_workflow_question_answer';
 const TOOL_GOVERNANCE_PERMISSION_TIER_STORAGE_KEY = 'zgi:aichat:tool-governance-permission-tier';
+
+type PendingVisionReplayAction =
+  | { type: 'regenerate'; message: AIChatMessage }
+  | { type: 'edit'; message: AIChatMessage; query: string };
+
+function isReplayImage(file: AIChatMessageFile): boolean {
+  return (
+    file.kind === 'image' ||
+    file.filtered_reason === 'model_without_vision' ||
+    file.mime_type?.toLowerCase().startsWith('image/') === true ||
+    isImageExtension(file.extension) ||
+    isImageExtension(file.name.split('.').pop())
+  );
+}
+
+function getReplayImageCount(message: AIChatMessage): number {
+  return messageFilesForReplay(message).filter(isReplayImage).length;
+}
 
 function normalizeToolGovernancePermissionTier(value: unknown): AIChatToolGovernancePermissionTier {
   return value === 'advanced' || value === 'full' ? value : 'basic';
@@ -303,6 +327,10 @@ export function AIChatShell({
   const [input, setInput] = useState('');
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const [editingQuery, setEditingQuery] = useState('');
+  const [selectedModelProps, setSelectedModelProps] =
+    useState<ModelSelectorModelProps | null>(null);
+  const [pendingVisionReplayAction, setPendingVisionReplayAction] =
+    useState<PendingVisionReplayAction | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(defaultSidebarOpen);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [embeddedAssetAuditOpen, setEmbeddedAssetAuditOpen] = useState(false);
@@ -346,6 +374,24 @@ export function AIChatShell({
     surface === 'aichat' && (!isEmbedded || runtimeSurface === 'contextual_sidebar');
   const effectiveRuntimeSurface: AIChatRuntimeSurface =
     surface === 'agent-draft' || surface === 'agent-webapp' ? 'external_page_chat' : runtimeSurface;
+  const matchingModelProps = useMemo(() => {
+    const matchesSelection = (candidate: ModelSelectorModelProps | null | undefined) =>
+      Boolean(
+        candidate &&
+          candidate.provider === modelSelectorValue.provider &&
+          candidate.model === modelSelectorValue.model
+      );
+
+    if (matchesSelection(modelProps)) return modelProps ?? null;
+    if (matchesSelection(selectedModelProps)) return selectedModelProps;
+    return null;
+  }, [modelProps, modelSelectorValue.model, modelSelectorValue.provider, selectedModelProps]);
+  const selectedModelSupportsVision =
+    typeof supportsVisionOverride === 'boolean'
+      ? supportsVisionOverride
+      : matchingModelProps
+        ? isVisionModel(matchingModelProps)
+        : null;
   const { data: availableSkills = [] } = useAIChatSkills({ enabled: enableAIChatSkillPreference });
   const { data: skillPreference, isLoading: isLoadingSkillPreference } = useAIChatSkillPreference({
     enabled: enableAIChatSkillPreference,
@@ -871,13 +917,8 @@ export function AIChatShell({
     [branchNavigationByMessageId, canReplaceRootMessage, messageActionsLocked]
   );
 
-  const handleRegenerate = useCallback(
+  const executeRegenerate = useCallback(
     async (message: AIChatMessage) => {
-      if (!canRegenerateMessage(message)) return;
-      if (requireModel && !modelSelectorValue.model) {
-        toast.error(t('consoleChat.modelRequired'));
-        return;
-      }
       if (beforeSend && !(await beforeSend())) return;
 
       void controller.regenerate(
@@ -895,13 +936,34 @@ export function AIChatShell({
     },
     [
       beforeSend,
-      canRegenerateMessage,
       controller,
       modelSelectorValue,
-      requireModel,
       effectiveRuntimeSurface,
-      t,
       toolGovernanceOperationContext,
+    ]
+  );
+
+  const handleRegenerate = useCallback(
+    async (message: AIChatMessage) => {
+      if (!canRegenerateMessage(message)) return;
+      if (requireModel && !modelSelectorValue.model) {
+        toast.error(t('consoleChat.modelRequired'));
+        return;
+      }
+      if (selectedModelSupportsVision === false && getReplayImageCount(message) > 0) {
+        setPendingVisionReplayAction({ type: 'regenerate', message });
+        return;
+      }
+
+      await executeRegenerate(message);
+    },
+    [
+      canRegenerateMessage,
+      executeRegenerate,
+      modelSelectorValue.model,
+      requireModel,
+      selectedModelSupportsVision,
+      t,
     ]
   );
 
@@ -953,24 +1015,9 @@ export function AIChatShell({
     setEditingQuery('');
   }, []);
 
-  const handleEditSubmit = useCallback(
-    (message: AIChatMessage) => {
-      const query = editingQuery.trim();
-      const branchCount = branchNavigationByMessageId.get(message.id)?.total ?? 1;
+  const executeEdit = useCallback(
+    (message: AIChatMessage, query: string) => {
       const canReplaceRoot = canReplaceRootMessage(message);
-      if (messageActionsLocked) return;
-      if (
-        !query ||
-        isSending ||
-        (!canReplaceRoot && (!message.parent_id || branchCount >= MAX_AICHAT_BRANCHES))
-      ) {
-        return;
-      }
-      if (requireModel && !modelSelectorValue.model) {
-        toast.error(t('consoleChat.modelRequired'));
-        return;
-      }
-
       setEditingMessageId(null);
       setEditingQuery('');
       if (canReplaceRoot) {
@@ -989,6 +1036,7 @@ export function AIChatShell({
 
       void controller.send({
         query,
+        files: messageFilesForReplay(message),
         parentId: message.parent_id,
         model: {
           provider: modelSelectorValue.provider,
@@ -1002,19 +1050,63 @@ export function AIChatShell({
       });
     },
     [
-      branchNavigationByMessageId,
       canReplaceRootMessage,
       controller,
-      editingQuery,
-      isSending,
-      messageActionsLocked,
       modelSelectorValue,
-      requireModel,
       effectiveRuntimeSurface,
-      t,
       toolGovernanceOperationContext,
     ]
   );
+
+  const handleEditSubmit = useCallback(
+    (message: AIChatMessage) => {
+      const query = editingQuery.trim();
+      const branchCount = branchNavigationByMessageId.get(message.id)?.total ?? 1;
+      const canReplaceRoot = canReplaceRootMessage(message);
+      if (messageActionsLocked) return;
+      if (
+        !query ||
+        isSending ||
+        (!canReplaceRoot && (!message.parent_id || branchCount >= MAX_AICHAT_BRANCHES))
+      ) {
+        return;
+      }
+      if (requireModel && !modelSelectorValue.model) {
+        toast.error(t('consoleChat.modelRequired'));
+        return;
+      }
+      if (selectedModelSupportsVision === false && getReplayImageCount(message) > 0) {
+        setPendingVisionReplayAction({ type: 'edit', message, query });
+        return;
+      }
+
+      executeEdit(message, query);
+    },
+    [
+      branchNavigationByMessageId,
+      canReplaceRootMessage,
+      editingQuery,
+      executeEdit,
+      isSending,
+      messageActionsLocked,
+      modelSelectorValue.model,
+      requireModel,
+      selectedModelSupportsVision,
+      t,
+    ]
+  );
+
+  const handleConfirmVisionReplay = useCallback(() => {
+    const action = pendingVisionReplayAction;
+    if (!action) return;
+
+    setPendingVisionReplayAction(null);
+    if (action.type === 'regenerate') {
+      void executeRegenerate(action.message);
+      return;
+    }
+    executeEdit(action.message, action.query);
+  }, [executeEdit, executeRegenerate, pendingVisionReplayAction]);
 
   const handleSwitchBranch = useCallback(
     (messageId: string) => {
@@ -1447,6 +1539,7 @@ export function AIChatShell({
             onWorkflowApprovalSubmit={handleWorkflowApprovalSubmit}
             onStop={controller.stop}
             onModelChange={onModelChange}
+            onModelPropsChange={setSelectedModelProps}
             onHeightChange={setInputAreaHeight}
             showModelSelector={showModelSelector}
             modelUseCase={modelUseCase}
@@ -1561,6 +1654,31 @@ export function AIChatShell({
           onSave={handleSaveSkillPreference}
         />
       ) : null}
+
+      <ConfirmDialog
+        open={pendingVisionReplayAction !== null}
+        onOpenChange={open => {
+          if (!open) setPendingVisionReplayAction(null);
+        }}
+        title={t('consoleChat.attachments.visionReplayWarning.title')}
+        description={
+          <div className="space-y-3">
+            <p>
+              {t('consoleChat.attachments.visionReplayWarning.description', {
+                count: pendingVisionReplayAction
+                  ? getReplayImageCount(pendingVisionReplayAction.message)
+                  : 0,
+              })}
+            </p>
+            <p>
+              {t('consoleChat.attachments.visionReplayWarning.recommendation')}
+            </p>
+          </div>
+        }
+        cancelText={t('consoleChat.attachments.visionReplayWarning.cancel')}
+        confirmText={t('consoleChat.attachments.visionReplayWarning.confirm')}
+        onConfirm={handleConfirmVisionReplay}
+      />
     </div>
   );
 }

@@ -27,6 +27,14 @@ const messages = {
   },
   workflowRunMonitor: {
     title: 'Workflow',
+    pendingApprovalTitle: 'Waiting for confirmation',
+    pendingApprovalDescription:
+      'This workflow is paused. Complete the pending approval to continue from here.',
+    pendingQuestionTitle: 'Waiting for your response',
+    pendingQuestionDescription:
+      'This workflow is paused. Provide the requested information to continue from here.',
+    stoppedTitle: 'Generation stopped',
+    stoppedDescription: 'This run was stopped before it produced a result to display.',
   },
   // Status indicators
   status: {
@@ -65,6 +73,13 @@ const messages = {
   // Search and filters
   searchPlaceholder: 'Search agents...',
   workflowSearchPlaceholder: 'Search workflows...',
+  listFilters: {
+    publishStatus: 'Publication status',
+    allPublishStatuses: 'All statuses',
+    workflowType: 'Workflow type',
+    allWorkflowTypes: 'All types',
+    clear: 'Clear filters',
+  },
   filterAll: 'All',
   filterActive: 'Active',
   filterInactive: 'Inactive',
@@ -299,9 +314,12 @@ const messages = {
   },
 
   // Confirmation dialog
-  deleteConfirmTitle: 'Delete agent "{name}"?',
+  deleteConfirmTitle: 'Delete agent?',
   deleteConfirmDescription:
     'This action cannot be undone. The agent and its configurations will be permanently deleted.',
+  deleteWorkflowConfirmTitle: 'Delete workflow?',
+  deleteWorkflowConfirmDescription:
+    'This action cannot be undone. The workflow and its configurations will be permanently deleted.',
   exportConfirmTitle: 'Export agent "{name}" as YAML?',
   exportConfirmDescription:
     'This will download the current agent flow configuration as a YAML file.',
@@ -870,6 +888,12 @@ const messages = {
       model_service_unavailable:
         'The model service is temporarily unavailable. Please try again later.',
       model_invocation_failed: 'The model call failed. Please try again later.',
+      planning_output_truncated:
+        'The agent planning output reached its length limit before completing an action. Shorten the agent instructions or reduce the task scope, then try again.',
+      agent_final_answer_unavailable:
+        'The model could not generate a final response. An automatic retry was attempted; please regenerate or try again later.',
+      agent_output_truncated:
+        'The agent response reached the model output limit before completing this turn. It was stopped without an automatic retry to avoid duplicate cost.',
       server_unavailable:
         'The AI service is temporarily unavailable, possibly because a model channel or upstream service is down. Try again shortly; if this continues, ask an administrator to check the model and channel status.',
       loadRunsFailed: 'Failed to load agent runs',

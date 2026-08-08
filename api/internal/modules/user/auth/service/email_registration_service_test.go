@@ -361,6 +361,7 @@ type fakeEmailRegistrationAccounts struct {
 type failRedisCommandOnceHook struct {
 	command   string
 	keyPrefix string
+	numKeys   int
 	onFailure func()
 	failed    atomic.Bool
 }
@@ -374,9 +375,16 @@ func (h *failRedisCommandOnceHook) DialHook(next redis.DialHook) redis.DialHook 
 func (h *failRedisCommandOnceHook) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
 	return func(ctx context.Context, cmd redis.Cmder) error {
 		args := cmd.Args()
-		if cmd.Name() == h.command && len(args) > 1 &&
-			strings.HasPrefix(fmt.Sprint(args[1]), h.keyPrefix) &&
-			!h.failed.Swap(true) {
+		keyMatches := false
+		for _, arg := range args[1:] {
+			if strings.HasPrefix(fmt.Sprint(arg), h.keyPrefix) {
+				keyMatches = true
+				break
+			}
+		}
+		numKeysMatches := h.numKeys == 0 ||
+			(len(args) > 2 && fmt.Sprint(args[2]) == fmt.Sprint(h.numKeys))
+		if cmd.Name() == h.command && keyMatches && numKeysMatches && !h.failed.Swap(true) {
 			if h.onFailure != nil {
 				h.onFailure()
 			}

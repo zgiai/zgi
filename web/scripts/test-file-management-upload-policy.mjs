@@ -38,6 +38,9 @@ if (JSON.stringify(actual) !== JSON.stringify(expected)) {
     `Unexpected file management upload extensions.\nActual: ${actual.join(',')}\nExpected: ${expected.join(',')}`
   );
 }
+if (!policySource.includes('FILE_MANAGEMENT_UPLOAD_MAX_SIZE_MB = 50')) {
+  throw new Error('File management uploads should have a 50 MB minimum per-file limit.');
+}
 
 const fileManagementSource = read('src/components/files/file-management-content.tsx');
 if (!fileManagementSource.includes('FILE_MANAGEMENT_UPLOAD_ACCEPT_EXT')) {
@@ -53,6 +56,35 @@ if (!createLocalDialogSource.includes('showAllowedTypesHint={false}')) {
 }
 if (!createLocalDialogSource.includes('useNativeAccept={false}')) {
   throw new Error('File management upload dialog should not set the native input accept attribute.');
+}
+if (!createLocalDialogSource.includes('uploadConfig?.upload_queue_limit ?? 200')) {
+  throw new Error('File management upload queue should use the configured queue limit.');
+}
+if (!createLocalDialogSource.includes('Math.max(')) {
+  throw new Error('File management upload size should be clamped to its minimum limit.');
+}
+if (!createLocalDialogSource.includes('FILE_MANAGEMENT_UPLOAD_MAX_SIZE_MB')) {
+  throw new Error('File management upload should use the 50 MB minimum size limit.');
+}
+if (!createLocalDialogSource.includes('concurrencyLimit={uploadConcurrency}')) {
+  throw new Error('File management upload should use the configured upload pool size.');
+}
+if (!createLocalDialogSource.includes('allowFolderSelection')) {
+  throw new Error('File management upload should allow selecting a local folder.');
+}
+
+const manualUploadSource = read('src/components/common/file-upload/manual-file-upload.tsx');
+if (!manualUploadSource.includes('runUploadPool<UploadItem, UploadedFile | null>')) {
+  throw new Error('Manual file upload should execute pending files through the upload pool.');
+}
+if (!manualUploadSource.includes("import { directoryOpen } from 'browser-fs-access'")) {
+  throw new Error('Manual file upload should use the browser directory picker.');
+}
+if (!manualUploadSource.includes('const entries = await directoryOpen({')) {
+  throw new Error('The folder button should open a directory instead of a regular file chooser.');
+}
+if (!manualUploadSource.includes('recursive: true')) {
+  throw new Error('Directory selection should include files from nested folders.');
 }
 
 const zhUiSource = read('src/i18n/modules/ui/zh-Hans.ts');

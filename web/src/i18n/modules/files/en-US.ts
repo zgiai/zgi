@@ -714,6 +714,7 @@ const messages = {
       '{count} file(s) selected, {failedCount} cannot upload. Remove them to continue.',
     selectedFilesResultSummary: '{successCount} uploaded, {failedCount} failed.',
     removeInvalidBeforeUpload: 'Remove files that cannot upload before continuing.',
+    clearUnsupportedFiles: 'Remove unsupported files',
     cannotUpload: 'Cannot upload',
     confirmUpload: 'Confirm Upload',
     cancelUpload: 'Cancel Upload',

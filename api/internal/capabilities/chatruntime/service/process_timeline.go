@@ -76,6 +76,21 @@ func (r *processTimelineRecorder) RecordEvent(eventType string, payload map[stri
 	}
 	if eventType == streamEventMessageRetract {
 		segmentID := r.activeSegmentID
+		disposition := strings.ToLower(strings.TrimSpace(payloadString(payload, "presentation_disposition")))
+		if disposition == presentationDispositionDiscard {
+			if item := r.presentation.itemByID(segmentID); len(item) > 0 {
+				payload["segment_id"] = item["segment_id"]
+			}
+			payload["presentation_disposition"] = presentationDispositionDiscard
+			r.presentation.removeByID(segmentID)
+			r.activeSegmentID = ""
+			r.applyPresentationMetadata()
+			if err := r.persistPresentation(nil); err != nil {
+				return err
+			}
+			return r.Emit(eventType, payload)
+		}
+		payload["presentation_disposition"] = presentationDispositionProcess
 		r.transitionActivePresentationSegment(presentationPhaseProcess)
 		if item := r.presentation.itemByID(segmentID); len(item) > 0 {
 			annotatePresentationPayload(payload, item)
@@ -291,15 +306,16 @@ func nonVisibleTraceCarriesMetadata(trace skills.SkillTrace) bool {
 	}
 }
 
-func (r *processTimelineRecorder) RecordInvocationStart(skillID string, toolName string, arguments map[string]interface{}) error {
+func (r *processTimelineRecorder) RecordInvocationStart(invocationID string, skillID string, toolName string, arguments map[string]interface{}) error {
 	if r == nil || r.service == nil || r.prepared == nil || r.prepared.Message == nil {
 		return nil
 	}
 	invocation := newSkillInvocation("tool_call", skillID, toolName, "running", map[string]interface{}{
-		"arguments": arguments,
+		"invocation_id": strings.TrimSpace(invocationID),
+		"arguments":     arguments,
 	})
 	invocation["runtime_id"] = r.runtimeIDForStart(invocation)
-	payload := skillCallStartPayload(r.prepared, skillID, toolName, arguments)
+	payload := skillCallStartPayload(r.prepared, invocationID, skillID, toolName, arguments)
 	copyInvocationRuntimeFields(payload, invocation)
 	return r.recordInvocationEvent(streamEventSkillCallStart, payload, invocation)
 }
@@ -860,6 +876,9 @@ func invocationTimelineFields(payload map[string]interface{}, values map[string]
 	if _, exists := values["created_at_ms"]; !exists {
 		values["created_at_ms"] = payload["created_at_ms"]
 	}
+	if _, exists := values["invocation_id"]; !exists {
+		values["invocation_id"] = payload["invocation_id"]
+	}
 	return values
 }
 
@@ -872,6 +891,9 @@ func fillInvocationTimelineFromPayload(invocation map[string]interface{}, payloa
 	}
 	if _, ok := invocation["created_at_ms"]; !ok {
 		invocation["created_at_ms"] = payload["created_at_ms"]
+	}
+	if _, ok := invocation["invocation_id"]; !ok {
+		invocation["invocation_id"] = payload["invocation_id"]
 	}
 	normalizeSkillInvocationTimelineFields(invocation)
 }
@@ -912,7 +934,7 @@ func copyInvocationRuntimeFields(payload map[string]interface{}, invocation map[
 	if len(payload) == 0 || len(invocation) == 0 {
 		return
 	}
-	for _, key := range []string{"kind", "runtime_id", "path", "answer_id", "created_at", "created_at_ms"} {
+	for _, key := range []string{"kind", "invocation_id", "runtime_id", "path", "answer_id", "created_at", "created_at_ms"} {
 		if value, ok := invocation[key]; ok && value != nil {
 			payload[key] = value
 		}

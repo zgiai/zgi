@@ -147,6 +147,85 @@ func TestAgentsService_GetAgentsListWithPermissions_FiltersWorkflowAssetKind(t *
 	)
 }
 
+func TestAgentsService_GetAgentsListWithPermissions_PropagatesWorkflowFilters(t *testing.T) {
+	ctx := t.Context()
+	isPublished := true
+
+	repo := &stubAgentsListRepository{}
+	tenantService := &stubWorkspaceManagementServiceForAgentsList{
+		currentOrganization: &workspace_model.OrganizationMember{
+			OrganizationID: "org-1",
+			AccountID:      "account-1",
+			Role:           workspace_model.OrganizationRoleNormal,
+		},
+		workspaceIDsByOrganization: []string{"ws-alpha"},
+	}
+	orgService := &stubOrganizationServiceForAgentsList{
+		workspaces: []*workspace_model.Workspace{
+			{ID: "ws-alpha", Status: workspace_model.WorkspaceStatusNormal},
+		},
+		permissionsByWorkspaceID: map[string]bool{
+			"ws-alpha": true,
+		},
+	}
+
+	service := &agentsService{
+		agentsRepo:                repo,
+		tenantService:             tenantService,
+		enterpriseService:         orgService,
+		resourcePermissionService: &stubResourcePermissionService{},
+	}
+
+	resp, err := service.GetAgentsListWithPermissions(ctx, "account-1", dto.GetAgentsListRequest{
+		Page:         1,
+		Limit:        20,
+		AssetKind:    "workflow",
+		AgentType:    "WORKFLOW",
+		IsPublished:  &isPublished,
+		WebAppStatus: "active",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	require.True(t, repo.getPaginatedAgentsMultipleTenantsCalled)
+	require.Equal(t, "WORKFLOW", repo.lastFilter.AgentsType)
+	require.Equal(
+		t,
+		[]string{"WORKFLOW", "CONVERSATIONAL_WORKFLOW", "CONVERSATIONAL_AGENT"},
+		repo.lastFilter.AgentTypes,
+	)
+	require.NotNil(t, repo.lastFilter.IsPublished)
+	require.True(t, *repo.lastFilter.IsPublished)
+	require.Equal(t, "active", repo.lastFilter.WebAppStatus)
+}
+
+func TestAgentsService_GetAgentsListWithPermissions_RejectsInvalidWebAppStatus(t *testing.T) {
+	ctx := t.Context()
+	repo := &stubAgentsListRepository{}
+	tenantService := &stubWorkspaceManagementServiceForAgentsList{
+		currentOrganization: &workspace_model.OrganizationMember{
+			OrganizationID: "org-1",
+			AccountID:      "account-1",
+			Role:           workspace_model.OrganizationRoleNormal,
+		},
+	}
+
+	service := &agentsService{
+		agentsRepo:                repo,
+		tenantService:             tenantService,
+		resourcePermissionService: &stubResourcePermissionService{},
+	}
+
+	resp, err := service.GetAgentsListWithPermissions(ctx, "account-1", dto.GetAgentsListRequest{
+		Page:         1,
+		Limit:        20,
+		AssetKind:    "agent",
+		WebAppStatus: "archived",
+	})
+	require.ErrorIs(t, err, errInvalidAgentListWebAppStatus)
+	require.Nil(t, resp)
+	require.False(t, repo.getPaginatedAgentsMultipleTenantsCalled)
+}
+
 func TestAgentsService_GetAgentsListWithPermissions_RejectsInvalidAssetKind(t *testing.T) {
 	ctx := t.Context()
 

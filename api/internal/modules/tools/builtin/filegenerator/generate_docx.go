@@ -32,14 +32,14 @@ func NewGenerateDocxTool(tenantID string) *GenerateDocxTool {
 				"en_US":   "Generate a styled DOCX file from a structured document specification.",
 				"zh_Hans": "根据结构化文档规格生成带样式的 DOCX 文件。",
 			},
-			LLM: "Generate a styled DOCX temporary artifact from a JSON document specification. This tool does not write to File Management. When the user asks to save the result into File Management, generate the artifact first and then use file-manager/save_file_to_management. Use this instead of generate_file when the Word document needs headings, fonts, font sizes, bold or colored text, paragraph alignment, spacing, page margins, page breaks, or simple tables. Every runs item must include non-empty text; omit empty runs.",
+			LLM: "Generate a styled DOCX temporary artifact from a structured document specification. This tool does not write to File Management. When the user asks to save the result into File Management, generate the artifact first and then use file-manager/save_file_to_management. Use this instead of generate_file when the Word document needs headings, fonts, font sizes, bold or colored text, paragraph alignment, spacing, page margins, page breaks, or simple tables. Every runs item must include non-empty text; omit empty runs.",
 		},
 		Parameters: []tools.ToolParameter{
 			{
 				Name:             "document",
 				Label:            tools.I18nText{"en_US": "Document", "zh_Hans": "文档规格"},
-				HumanDescription: tools.I18nText{"en_US": "DOCX document specification as JSON.", "zh_Hans": "JSON 格式的 DOCX 文档规格。"},
-				LLMDescription:   "JSON string describing the DOCX document. Include blocks with type heading, paragraph, table, or page_break. Do not include runs entries with empty text.",
+				HumanDescription: tools.I18nText{"en_US": "DOCX document specification. Native callers may pass an object; Workflow JSON editors may pass an equivalent JSON object string.", "zh_Hans": "DOCX 文档规格。原生调用可传对象，工作流 JSON 编辑器可传等价的 JSON 对象字符串。"},
+				LLMDescription:   "Structured DOCX document object or an equivalent JSON object string. Include blocks with type heading, paragraph, table, or page_break. Do not include runs entries with empty text.",
 				Type:             tools.ToolParameterTypeString,
 				Form:             tools.ToolParameterFormLLM,
 				Required:         true,
@@ -115,7 +115,7 @@ func (t *GenerateDocxTool) Invoke(
 	if err := enforceRuntimeFilePolicy(t.runtime, "docx"); err != nil {
 		return nil, err
 	}
-	spec, err := parseDocxDocumentSpec(rawStringParam(toolParameters, "document"))
+	spec, err := parseDocxDocumentSpecValue(toolParameters["document"])
 	if err != nil {
 		return nil, err
 	}

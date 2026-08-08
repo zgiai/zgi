@@ -31,13 +31,12 @@ func (r *Runner) handleProgressiveSkillCall(
 ) skillStepResult {
 	args, err := skills.ParseArguments(call.Function.Arguments)
 	if err != nil {
-		trace := failedSkillTrace("meta_tool", call.Function.Name, err)
+		trace := invalidToolArgumentsFeedbackTrace(call.Function.Name, err, nil)
 		return recoverableSkillStep(trace, skills.ToolResultMessage(call.ID, recoverableErrorPayload(err, "fix the JSON arguments and retry the same tool call")), false, false)
 	}
 	if boolArg(args, "_invalid_tool_arguments") {
 		err := fmt.Errorf("%w: tool arguments were not valid JSON", ErrInvalidInput)
-		trace := failedSkillTrace("meta_tool", call.Function.Name, err)
-		trace.Arguments = copyStringAnyMap(args)
+		trace := invalidToolArgumentsFeedbackTrace(call.Function.Name, err, args)
 		return recoverableSkillStep(trace, skills.ToolResultMessage(call.ID, recoverableErrorPayload(err, stringArg(args, "next_action"))), false, false)
 	}
 	if normalizedCall, normalizedArgs, ok := normalizeDirectLoadedSkillToolCall(resolved, loadedSkills, call, args); ok {
@@ -143,8 +142,23 @@ func (r *Runner) handleProgressiveSkillCall(
 		}
 		err := fmt.Errorf("%w: unsupported skill meta tool %s", ErrInvalidInput, call.Function.Name)
 		trace := failedSkillTrace("meta_tool", call.Function.Name, err)
-		return recoverableSkillStep(trace, skills.ToolResultMessage(call.ID, recoverableErrorPayload(err, "use one of load_skill, request_user_input, read_skill_reference, call_skill_tool, submit_turn_state, update_plan, submit_intermediate_answer, or submit_final_answer")), false, false)
+		nextAction := "use one of load_skill, request_user_input, read_skill_reference, call_skill_tool, submit_turn_state, update_plan, submit_intermediate_answer, or submit_final_answer"
+		if native, _ := runtimeState[runtimeStateNativeAgentLoopKey].(bool); native {
+			nextAction = "call one of the business functions exposed in this request directly, use an available control tool, or provide the final answer as ordinary assistant content"
+		}
+		return recoverableSkillStep(trace, skills.ToolResultMessage(call.ID, recoverableErrorPayload(err, nextAction)), false, false)
 	}
+}
+
+func invalidToolArgumentsFeedbackTrace(toolName string, err error, args map[string]interface{}) skills.SkillTrace {
+	trace := plannerFeedbackTrace("", toolName, err)
+	trace.Arguments["code"] = "invalid_tool_arguments"
+	trace.Arguments["failure_category"] = "arguments"
+	trace.Arguments["next_step"] = "retry_same_tool_with_valid_json"
+	if preview := strings.TrimSpace(stringArg(args, "raw_preview")); preview != "" {
+		trace.Arguments["raw_preview"] = preview
+	}
+	return trace
 }
 
 func runtimeControlToolAllowed(runtimeState map[string]interface{}, key string) bool {
@@ -593,7 +607,7 @@ func (r *Runner) handleCallSkillTool(
 	if completionIntent != "" {
 		argumentSummary["completion_intent"] = completionIntent
 	}
-	r.emitEvent(prepared, EventSkillCallStart, skillCallStartPayload(prepared, skillID, toolName, argumentSummary))
+	r.emitEvent(prepared, EventSkillCallStart, skillCallStartPayload(prepared, callID, skillID, toolName, argumentSummary))
 	if isAgentWorkflowRunTool(skillID, toolName) {
 		execCtx.RuntimeParameters = copyStringAnyMap(execCtx.RuntimeParameters)
 		if execCtx.RuntimeParameters == nil {
@@ -647,6 +661,7 @@ func (r *Runner) handleCallSkillTool(
 			err = fmt.Errorf("%w: skill tool returned no invocation result", ErrInvalidInput)
 		}
 		trace := failedSkillTrace("tool_call", toolName, err)
+		trace.InvocationID = strings.TrimSpace(callID)
 		trace.SkillID = skillID
 		trace.Arguments = argumentSummary
 		return recoverableSkillStep(trace, skills.ToolResultMessage(callID, recoverableSkillToolErrorPayload(err, "fix the tool_name or arguments and retry", skillID, toolName)), true, false)

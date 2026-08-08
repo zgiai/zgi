@@ -297,7 +297,8 @@ type fakeChannelValidator struct {
 	lastTestBaseURL    string
 	lastTestModel      string
 	lastTestMethod     string
-	lastTestStream     bool
+	lastTestStream     *bool
+	testStreams        []*bool
 	createCalls        int
 	validateCalls      int
 	report             map[string]interface{}
@@ -366,7 +367,7 @@ func (f *fakeChannelValidator) ValidateModelsForCreation(_ context.Context, orga
 	}, nil
 }
 
-func (f *fakeChannelValidator) TestModel(_ context.Context, organizationID uuid.UUID, channelProvider, apiKey string, apiBaseURL, modelName, testMethod string, stream bool) (*channelprovider.TestResult, error) {
+func (f *fakeChannelValidator) TestModel(_ context.Context, organizationID uuid.UUID, channelProvider, apiKey string, apiBaseURL, modelName, testMethod string, stream *bool) (*channelprovider.TestResult, error) {
 	f.testCalls++
 	f.lastOrganizationID = organizationID
 	f.lastTestProvider = channelProvider
@@ -375,6 +376,7 @@ func (f *fakeChannelValidator) TestModel(_ context.Context, organizationID uuid.
 	f.lastTestModel = modelName
 	f.lastTestMethod = testMethod
 	f.lastTestStream = stream
+	f.testStreams = append(f.testStreams, stream)
 	if f.testErr != nil {
 		return nil, f.testErr
 	}
@@ -1433,6 +1435,7 @@ func TestDraftTestChannelModel_UsesValidatorAndReturnsNormalizedResult(t *testin
 	require.Equal(t, "chat", result.UseCase)
 	require.Equal(t, "chat", result.TestMethod)
 	require.Equal(t, int64(34), result.ResponseTimeMs)
+	require.Nil(t, validator.lastTestStream)
 }
 
 func TestDraftTestChannelModel_OllamaAllowsEmptyAPIKey(t *testing.T) {
@@ -1592,7 +1595,8 @@ func TestTestChannelModel_ReusesValidatorResultShape(t *testing.T) {
 		modelRepo:         &fakeModelRepo{},
 	}
 
-	result, err := svc.TestChannelModel(context.Background(), routeID, repo.routeByID.OrganizationID, "gpt-4o", "", true)
+	stream := true
+	result, err := svc.TestChannelModel(context.Background(), routeID, repo.routeByID.OrganizationID, "gpt-4o", "", &stream)
 
 	require.NoError(t, err)
 	require.Equal(t, true, result.Success)
@@ -1602,7 +1606,8 @@ func TestTestChannelModel_ReusesValidatorResultShape(t *testing.T) {
 	require.Equal(t, "chat", result.TestMethod)
 	require.Equal(t, int64(56), result.ResponseTimeMs)
 	require.Equal(t, "openai-compatible", validator.lastTestProvider)
-	require.True(t, validator.lastTestStream)
+	require.NotNil(t, validator.lastTestStream)
+	require.True(t, *validator.lastTestStream)
 }
 
 func TestTestChannelModel_RecordsInvalidProviderKey(t *testing.T) {
@@ -1647,7 +1652,8 @@ func TestTestChannelModel_RecordsInvalidProviderKey(t *testing.T) {
 		upstreamState:     upstreamService,
 	}
 
-	result, err := svc.TestChannelModel(context.Background(), routeID, organizationID, "deepseek-chat", "", false)
+	stream := false
+	result, err := svc.TestChannelModel(context.Background(), routeID, organizationID, "deepseek-chat", "", &stream)
 
 	require.NoError(t, err)
 	require.False(t, result.Success)
@@ -1728,7 +1734,8 @@ func TestTestChannelModel_SkipsUnpricedModelBeforeValidator(t *testing.T) {
 		db: db,
 	}
 
-	result, err := svc.TestChannelModel(context.Background(), routeID, orgID, "qwen-image-2.0", "", false)
+	stream := false
+	result, err := svc.TestChannelModel(context.Background(), routeID, orgID, "qwen-image-2.0", "", &stream)
 
 	require.NoError(t, err)
 	require.False(t, result.Success)
@@ -1743,7 +1750,7 @@ func TestTestChannelModel_SkipsUnpricedModelBeforeValidator(t *testing.T) {
 	require.Equal(t, 0, validator.testCalls)
 
 	resultChan := make(chan *channeldto.BatchTestChannelModelsStreamResponse, 2)
-	svc.BatchTestChannelModels(context.Background(), routeID, orgID, []string{"qwen-image-2.0"}, "", false, resultChan)
+	svc.BatchTestChannelModels(context.Background(), routeID, orgID, []string{"qwen-image-2.0"}, "", &stream, resultChan)
 	results := make([]*channeldto.BatchTestChannelModelsStreamResponse, 0, 2)
 	for item := range resultChan {
 		results = append(results, item)
@@ -1797,7 +1804,8 @@ func TestTestChannelModel_AllowsModelWithOrganizationPriceOverride(t *testing.T)
 		db: db,
 	}
 
-	result, err := svc.TestChannelModel(context.Background(), routeID, orgID, "qwen-image-2.0", "", false)
+	stream := false
+	result, err := svc.TestChannelModel(context.Background(), routeID, orgID, "qwen-image-2.0", "", &stream)
 
 	require.NoError(t, err)
 	require.True(t, result.Success)
@@ -1842,7 +1850,8 @@ func TestTestChannelModel_DirectProviderDoesNotUseCrossProviderPricingPrecheck(t
 		db: db,
 	}
 
-	result, err := svc.TestChannelModel(context.Background(), routeID, orgID, "gpt-4o", "", false)
+	stream := false
+	result, err := svc.TestChannelModel(context.Background(), routeID, orgID, "gpt-4o", "", &stream)
 
 	require.NoError(t, err)
 	require.True(t, result.Success)
@@ -1887,7 +1896,8 @@ func TestTestChannelModel_OpenAICompatibleAllowsCrossProviderPricingPrecheck(t *
 		db: db,
 	}
 
-	result, err := svc.TestChannelModel(context.Background(), routeID, orgID, "qwen-plus", "", false)
+	stream := false
+	result, err := svc.TestChannelModel(context.Background(), routeID, orgID, "qwen-plus", "", &stream)
 
 	require.NoError(t, err)
 	require.False(t, result.Success)
@@ -1949,7 +1959,7 @@ func TestBatchTestChannelModels_CountsSkippedImageModelsSeparately(t *testing.T)
 	}
 	resultChan := make(chan *channeldto.BatchTestChannelModelsStreamResponse, 4)
 
-	svc.BatchTestChannelModels(context.Background(), routeID, orgID, []string{"qwen-plus", "qwen-bad", "qwen-image"}, "", false, resultChan)
+	svc.BatchTestChannelModels(context.Background(), routeID, orgID, []string{"qwen-plus", "qwen-bad", "qwen-image"}, "", nil, resultChan)
 
 	results := make([]*channeldto.BatchTestChannelModelsStreamResponse, 0, 4)
 	for result := range resultChan {
@@ -1963,4 +1973,8 @@ func TestBatchTestChannelModels_CountsSkippedImageModelsSeparately(t *testing.T)
 	require.Equal(t, 1, results[3].SuccessCount)
 	require.Equal(t, 1, results[3].FailureCount)
 	require.Equal(t, 1, results[3].SkippedCount)
+	require.Len(t, validator.testStreams, 3)
+	for _, requestedStream := range validator.testStreams {
+		require.Nil(t, requestedStream)
+	}
 }

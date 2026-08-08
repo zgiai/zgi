@@ -28,7 +28,7 @@ func (h *AgentsHandler) regenerateRuntimeMessage(c *gin.Context, runtimeCtx agen
 }
 
 func (h *AgentsHandler) runPreparedAgentStream(c *gin.Context, prepared *runtimeservice.PreparedChat) {
-	setupAgentSSE(c)
+	setupPreparedAgentSSE(c, prepared)
 	_ = writeAgentSSE(c, "message_start", gin.H{
 		"conversation_id": prepared.Conversation.ID.String(),
 		"message_id":      prepared.Message.ID.String(),

@@ -29,6 +29,12 @@ const messages: AgentsMessages = {
   },
   workflowRunMonitor: {
     title: '工作流',
+    pendingApprovalTitle: '等待你的确认',
+    pendingApprovalDescription: '工作流已暂停。完成当前审批后，将从暂停位置继续执行。',
+    pendingQuestionTitle: '等待你补充信息',
+    pendingQuestionDescription: '工作流已暂停。补充所需信息后，将从暂停位置继续执行。',
+    stoppedTitle: '已停止生成',
+    stoppedDescription: '本轮任务已停止，没有生成可展示的结果。',
   },
 
   // Status indicators
@@ -68,6 +74,13 @@ const messages: AgentsMessages = {
   // Search and filters
   searchPlaceholder: '搜索智能体...',
   workflowSearchPlaceholder: '搜索工作流...',
+  listFilters: {
+    publishStatus: '发布状态',
+    allPublishStatuses: '全部状态',
+    workflowType: '工作流类型',
+    allWorkflowTypes: '全部类型',
+    clear: '清除筛选',
+  },
   filterAll: '全部',
   filterActive: '活跃',
   filterInactive: '未激活',
@@ -288,8 +301,10 @@ const messages: AgentsMessages = {
   },
 
   // Confirmation dialog
-  deleteConfirmTitle: '删除智能体 "{name}"？',
+  deleteConfirmTitle: '删除智能体？',
   deleteConfirmDescription: '该操作无法撤销。此智能体及其配置将被永久删除。',
+  deleteWorkflowConfirmTitle: '删除工作流？',
+  deleteWorkflowConfirmDescription: '该操作无法撤销。此工作流及其配置将被永久删除。',
   exportConfirmTitle: '导出智能体 "{name}" 为 YAML？',
   exportConfirmDescription: '将下载当前智能体流程配置的 YAML 文件。',
 
@@ -834,6 +849,12 @@ const messages: AgentsMessages = {
       model_service_timeout: '模型服务连接超时，请稍后重试。',
       model_service_unavailable: '模型服务暂时不可用，请稍后重试。',
       model_invocation_failed: '模型调用失败，请稍后重试。',
+      planning_output_truncated:
+        '智能体规划输出达到长度上限，未能形成完整操作。请精简智能体指令或缩小单次任务范围后再试。',
+      agent_output_truncated:
+        '智能体回复达到模型输出长度上限，本轮未能完整结束。系统没有自动重试，以避免重复消耗。',
+      agent_final_answer_unavailable:
+        '模型未能生成最终答复。系统已自动重试，请重新生成或稍后再试。',
       server_unavailable:
         'AI 服务暂时异常，可能是模型渠道或上游服务不可用。请稍后重试；若持续失败，请联系管理员检查模型与渠道状态。',
       loadRunsFailed: '加载智能体运行记录失败',

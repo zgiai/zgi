@@ -253,6 +253,7 @@ func (s *llmGatewayServiceImpl) tryChatCompletion(
 	// Success - settle billing
 	tSettle := time.Now()
 	if err := s.settleChatSuccess(ctx, billingCtx, providerSelection, channelID, response.Usage, response.Settlement, responseTime); err != nil {
+		s.traceChatCompletion(ctx, traceReq, response, startTime, time.Now(), billingCtx, err)
 		return nil, err
 	}
 	logger.DebugContext(ctx, "llm gateway timing", "step", "settle_billing", "latency_ms", time.Since(tSettle).Milliseconds(), "attempt", attemptIdx+1)
@@ -485,6 +486,7 @@ func (s *llmGatewayServiceImpl) tryChatCompletionStream(
 	streamChan, err := providerAdapter.ChatCompletionStream(ctx, normalizedReq)
 	if err != nil {
 		if rollbackErr := s.rollbackPreDeduction(ctx, billingCtx); rollbackErr != nil {
+			s.traceStreamingChatCompletion(ctx, traceReq, "", startTime, time.Now(), billingCtx, 0, 0, rollbackErr)
 			return nil, rollbackErr
 		}
 		s.logProviderError(ctx, attemptIdx, providerSelection, err, "stream_call_failed")
@@ -508,6 +510,7 @@ func (s *llmGatewayServiceImpl) tryChatCompletionStream(
 			s.healthTracker.RecordFailure(ctx, *channelID, autoBan)
 		}
 
+		s.traceStreamingChatCompletion(ctx, traceReq, "", startTime, time.Now(), billingCtx, 0, 0, err)
 		return nil, fmt.Errorf("provider stream call failed: %w", err)
 	}
 

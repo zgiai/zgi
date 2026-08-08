@@ -31,6 +31,9 @@ type PreDeductQuotaRequest struct {
 	ProviderName     string                 `protobuf:"bytes,6,opt,name=provider_name,json=providerName,proto3" json:"provider_name,omitempty"`
 	RequestId        string                 `protobuf:"bytes,7,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
 	AttemptId        string                 `protobuf:"bytes,8,opt,name=attempt_id,json=attemptId,proto3" json:"attempt_id,omitempty"`
+	ResourceType     string                 `protobuf:"bytes,9,opt,name=resource_type,json=resourceType,proto3" json:"resource_type,omitempty"`
+	ResourceId       string                 `protobuf:"bytes,10,opt,name=resource_id,json=resourceId,proto3" json:"resource_id,omitempty"`
+	ResourceName     string                 `protobuf:"bytes,11,opt,name=resource_name,json=resourceName,proto3" json:"resource_name,omitempty"`
 	unknownFields    protoimpl.UnknownFields
 	sizeCache        protoimpl.SizeCache
 }
@@ -117,6 +120,27 @@ func (x *PreDeductQuotaRequest) GetRequestId() string {
 func (x *PreDeductQuotaRequest) GetAttemptId() string {
 	if x != nil {
 		return x.AttemptId
+	}
+	return ""
+}
+
+func (x *PreDeductQuotaRequest) GetResourceType() string {
+	if x != nil {
+		return x.ResourceType
+	}
+	return ""
+}
+
+func (x *PreDeductQuotaRequest) GetResourceId() string {
+	if x != nil {
+		return x.ResourceId
+	}
+	return ""
+}
+
+func (x *PreDeductQuotaRequest) GetResourceName() string {
+	if x != nil {
+		return x.ResourceName
 	}
 	return ""
 }
@@ -226,6 +250,9 @@ type SettleQuotaRequest struct {
 	IsStreaming       bool                   `protobuf:"varint,25,opt,name=is_streaming,json=isStreaming,proto3" json:"is_streaming,omitempty"`
 	UseSystemProvider bool                   `protobuf:"varint,26,opt,name=use_system_provider,json=useSystemProvider,proto3" json:"use_system_provider,omitempty"`
 	AttemptId         string                 `protobuf:"bytes,27,opt,name=attempt_id,json=attemptId,proto3" json:"attempt_id,omitempty"`
+	ResourceType      string                 `protobuf:"bytes,28,opt,name=resource_type,json=resourceType,proto3" json:"resource_type,omitempty"`
+	ResourceId        string                 `protobuf:"bytes,29,opt,name=resource_id,json=resourceId,proto3" json:"resource_id,omitempty"`
+	ResourceName      string                 `protobuf:"bytes,30,opt,name=resource_name,json=resourceName,proto3" json:"resource_name,omitempty"`
 	unknownFields     protoimpl.UnknownFields
 	sizeCache         protoimpl.SizeCache
 }
@@ -445,6 +472,27 @@ func (x *SettleQuotaRequest) GetUseSystemProvider() bool {
 func (x *SettleQuotaRequest) GetAttemptId() string {
 	if x != nil {
 		return x.AttemptId
+	}
+	return ""
+}
+
+func (x *SettleQuotaRequest) GetResourceType() string {
+	if x != nil {
+		return x.ResourceType
+	}
+	return ""
+}
+
+func (x *SettleQuotaRequest) GetResourceId() string {
+	if x != nil {
+		return x.ResourceId
+	}
+	return ""
+}
+
+func (x *SettleQuotaRequest) GetResourceName() string {
+	if x != nil {
+		return x.ResourceName
 	}
 	return ""
 }
@@ -1226,7 +1274,7 @@ var File_pkg_rpc_v1_billing_proto protoreflect.FileDescriptor
 const file_pkg_rpc_v1_billing_proto_rawDesc = "" +
 	"\n" +
 	"\x18pkg/rpc/v1/billing.proto\x12\n" +
-	"zgi.rpc.v1\"\xab\x02\n" +
+	"zgi.rpc.v1\"\x96\x03\n" +
 	"\x15PreDeductQuotaRequest\x12'\n" +
 	"\x0forganization_id\x18\x01 \x01(\tR\x0eorganizationId\x12+\n" +
 	"\x11estimated_credits\x18\x02 \x01(\x03R\x10estimatedCredits\x12\x19\n" +
@@ -1239,14 +1287,19 @@ const file_pkg_rpc_v1_billing_proto_rawDesc = "" +
 	"\n" +
 	"request_id\x18\a \x01(\tR\trequestId\x12\x1d\n" +
 	"\n" +
-	"attempt_id\x18\b \x01(\tR\tattemptId\"\xc2\x01\n" +
+	"attempt_id\x18\b \x01(\tR\tattemptId\x12#\n" +
+	"\rresource_type\x18\t \x01(\tR\fresourceType\x12\x1f\n" +
+	"\vresource_id\x18\n" +
+	" \x01(\tR\n" +
+	"resourceId\x12#\n" +
+	"\rresource_name\x18\v \x01(\tR\fresourceName\"\xc2\x01\n" +
 	"\x16PreDeductQuotaResponse\x12\x18\n" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x1d\n" +
 	"\n" +
 	"error_code\x18\x02 \x01(\tR\terrorCode\x12#\n" +
 	"\rerror_message\x18\x03 \x01(\tR\ferrorMessage\x12'\n" +
 	"\x0fremaining_quota\x18\x04 \x01(\x03R\x0eremainingQuota\x12!\n" +
-	"\fdeduction_id\x18\x05 \x01(\tR\vdeductionId\"\xa9\a\n" +
+	"\fdeduction_id\x18\x05 \x01(\tR\vdeductionId\"\x94\b\n" +
 	"\x12SettleQuotaRequest\x12'\n" +
 	"\x0forganization_id\x18\x01 \x01(\tR\x0eorganizationId\x12!\n" +
 	"\fdeduction_id\x18\x02 \x01(\tR\vdeductionId\x12+\n" +
@@ -1286,7 +1339,11 @@ const file_pkg_rpc_v1_billing_proto_rawDesc = "" +
 	"\fis_streaming\x18\x19 \x01(\bR\visStreaming\x12.\n" +
 	"\x13use_system_provider\x18\x1a \x01(\bR\x11useSystemProvider\x12\x1d\n" +
 	"\n" +
-	"attempt_id\x18\x1b \x01(\tR\tattemptId\"\xf0\x01\n" +
+	"attempt_id\x18\x1b \x01(\tR\tattemptId\x12#\n" +
+	"\rresource_type\x18\x1c \x01(\tR\fresourceType\x12\x1f\n" +
+	"\vresource_id\x18\x1d \x01(\tR\n" +
+	"resourceId\x12#\n" +
+	"\rresource_name\x18\x1e \x01(\tR\fresourceName\"\xf0\x01\n" +
 	"\x13SettleQuotaResponse\x12\x18\n" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\x12#\n" +
 	"\rerror_message\x18\x02 \x01(\tR\ferrorMessage\x12'\n" +
@@ -1372,7 +1429,7 @@ const file_pkg_rpc_v1_billing_proto_rawDesc = "" +
 	"\x11CalculateDualCost\x12$.zgi.rpc.v1.CalculateDualCostRequest\x1a\x1c.zgi.rpc.v1.DualCostResponse\x12[\n" +
 	"\x18SettleUsageWithDualTrack\x12\x1e.zgi.rpc.v1.SettleUsageRequest\x1a\x1f.zgi.rpc.v1.SettleUsageResponse\x12T\n" +
 	"\x0eGetBillingMode\x12!.zgi.rpc.v1.GetBillingModeRequest\x1a\x1f.zgi.rpc.v1.BillingModeResponse\x12c\n" +
-	"\x12CheckCreditBalance\x12%.zgi.rpc.v1.CheckCreditBalanceRequest\x1a&.zgi.rpc.v1.CheckCreditBalanceResponseB'Z%github.com/zgiai/zgi/api/pkg/rpc/v1;v1b\x06proto3"
+	"\x12CheckCreditBalance\x12%.zgi.rpc.v1.CheckCreditBalanceRequest\x1a&.zgi.rpc.v1.CheckCreditBalanceResponseB(Z&github.com/zgiai/zgi/api/pkg/rpc/v1;v1b\x06proto3"
 
 var (
 	file_pkg_rpc_v1_billing_proto_rawDescOnce sync.Once

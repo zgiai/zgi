@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
+	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/modelprogress"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/repository"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/skillloop"
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
@@ -28,6 +29,21 @@ const directAnswerGroundingMessage = `Runtime instruction for this direct-answer
 - Do not invent tools, page observations, external actions, or successful outcomes.
 - Without explicit successful evidence, say the action was not performed or cannot be verified, then offer non-executing help such as guidance or drafting.
 Do not proactively enumerate unavailable capabilities.`
+
+const (
+	aichatErrorCodeModelServiceTimeout     = "model_service_timeout"
+	aichatErrorCodeModelServiceUnavailable = "model_service_unavailable"
+	aichatErrorCodeModelInvocationFailed   = "model_invocation_failed"
+	aichatErrorCodePlanningOutputTruncated = "planning_output_truncated"
+	aichatErrorCodeAgentOutputTruncated    = "agent_output_truncated"
+	aichatErrorCodeFinalAnswerUnavailable  = "agent_final_answer_unavailable"
+	aichatModelServiceTimeoutMessage       = "The model did not respond before the task timed out."
+	aichatModelServiceUnavailableMessage   = "The model service is temporarily unavailable."
+	aichatModelInvocationFailedMessage     = "The model could not complete the requested response."
+	aichatPlanningOutputTruncatedMessage   = "The agent planning output reached its limit before completing a valid action. Shorten the agent instructions or reduce the task scope, then try again."
+	aichatAgentOutputTruncatedMessage      = "The agent response reached the model output limit before completing this turn. No automatic retry was made."
+	aichatFinalAnswerUnavailableMessage    = "The model could not generate a usable final response after retrying."
+)
 
 func (s *service) RunPreparedStream(ctx context.Context, prepared *PreparedChat, onChunk func(string) error, onEvent ...func(StreamEvent) error) (*ChatResult, error) {
 	if prepared == nil || prepared.Message == nil {
@@ -155,6 +171,8 @@ func (s *service) RunPreparedStream(ctx context.Context, prepared *PreparedChat,
 	appendDirectAnswerGroundingMessage(prepared)
 
 	finalCallStartedAt := time.Now()
+	modelProgress := s.startPreparedModelProgress(runCtx, prepared, 0, prepared.LLMRequest.Messages, eventCallback)
+	defer modelProgress.Stop()
 	stream, err := s.openChatStream(runCtx, prepared)
 	if err != nil {
 		s.persistModelInvocationBestEffort(persistCtx, prepared, skillloop.ModelInvocationTrace{
@@ -174,7 +192,7 @@ func (s *service) RunPreparedStream(ctx context.Context, prepared *PreparedChat,
 		return nil, newFinalizedStreamError(err)
 	}
 	modelChunkCallback := modelStreamChunkCallback(eventCallback, onChunk)
-	answer, callUsage, err := s.collectStreamAnswerWithEvents(runCtx, prepared, stream, eventCallback, modelChunkCallback)
+	answer, callUsage, err := s.collectStreamAnswerWithEventsAndProgress(runCtx, prepared, stream, eventCallback, modelChunkCallback, modelProgress)
 	usage := mergeUsage(preflightUsage, callUsage)
 	if err != nil {
 		s.persistModelInvocationBestEffort(persistCtx, prepared, skillloop.ModelInvocationTrace{
@@ -512,14 +530,7 @@ func preparedModelUseCase(prepared *PreparedChat) string {
 	if mode == "" && prepared != nil && prepared.Message != nil {
 		mode = normalizeExecutionMode(stringMetadataValue(prepared.Message.Metadata["execution_mode"]))
 	}
-	switch mode {
-	case executionModeAgentLoop:
-		return "agent"
-	case executionModeLegacyToolChat, executionModeDirectChat:
-		return "text-chat"
-	default:
-		return ""
-	}
+	return executionModeModelUseCase(mode)
 }
 
 func (s *service) collectStreamAnswer(ctx context.Context, prepared *PreparedChat, stream <-chan adapter.StreamResponse, onChunk func(string) error) (string, *adapter.Usage, error) {
@@ -527,6 +538,10 @@ func (s *service) collectStreamAnswer(ctx context.Context, prepared *PreparedCha
 }
 
 func (s *service) collectStreamAnswerWithEvents(ctx context.Context, prepared *PreparedChat, stream <-chan adapter.StreamResponse, onEvent func(StreamEvent) error, onChunk func(string) error) (string, *adapter.Usage, error) {
+	return s.collectStreamAnswerWithEventsAndProgress(ctx, prepared, stream, onEvent, onChunk, nil)
+}
+
+func (s *service) collectStreamAnswerWithEventsAndProgress(ctx context.Context, prepared *PreparedChat, stream <-chan adapter.StreamResponse, onEvent func(StreamEvent) error, onChunk func(string) error, modelProgress *modelprogress.Tracker) (string, *adapter.Usage, error) {
 	var builder strings.Builder
 	var usage *adapter.Usage
 	serviceChunkIndex := 0
@@ -597,6 +612,7 @@ func (s *service) collectStreamAnswerWithEvents(ctx context.Context, prepared *P
 			}
 			reasoning := streamChunkReasoningContent(chunk)
 			if reasoning != "" {
+				modelProgress.ObserveReasoningDelta()
 				appendPreparedReasoningContent(prepared, reasoning)
 				s.flushStreamMessageEventBuffer(ctx, prepared.Message.ID, eventBuffer, onEvent)
 				event, err := s.appendStreamReasoningEvent(ctx, prepared, reasoning)
@@ -606,9 +622,16 @@ func (s *service) collectStreamAnswerWithEvents(ctx context.Context, prepared *P
 				s.deliverStreamEvent(ctx, prepared.Message.ID, event, onEvent)
 			}
 			text := streamChunkText(chunk)
+			for _, choice := range chunk.Choices {
+				if len(choice.Delta.ToolCalls) > 0 {
+					modelProgress.ObserveToolCallDelta()
+					break
+				}
+			}
 			if text == "" {
 				continue
 			}
+			modelProgress.Stop()
 			builder.WriteString(text)
 			event, err := eventBuffer.add(ctx, text)
 			if err != nil {
@@ -700,7 +723,7 @@ func (s *service) finalizePreparedError(ctx context.Context, prepared *PreparedC
 		return nil
 	}
 	eventCallback := firstStreamEventCallback(onEvent)
-	if err := s.completePreparedError(ctx, prepared, publicAichatErrorMessage(cause)); err != nil {
+	if err := s.completePreparedError(ctx, prepared, cause); err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return err
 		}
@@ -727,7 +750,25 @@ func finalizedRuntimeOwnershipError(err error) error {
 	return newFinalizedStreamError(err)
 }
 
-func (s *service) completePreparedError(ctx context.Context, prepared *PreparedChat, message string) error {
+func (s *service) completePreparedError(ctx context.Context, prepared *PreparedChat, cause error) error {
+	message := publicAichatErrorMessage(cause)
+	if code, params, ok := publicAichatStructuredError(cause); ok {
+		metadata := copyStringAnyMap(prepared.Message.Metadata)
+		if metadata == nil {
+			metadata = map[string]interface{}{}
+		}
+		metadata["error_code"] = code
+		if len(params) > 0 {
+			metadata["error_params"] = params
+		} else {
+			delete(metadata, "error_params")
+		}
+		if err := s.repos.Message.UpdateMetadata(ctx, prepared.Message.ID, metadata); err != nil {
+			logger.WarnContext(ctx, "failed to persist aichat error metadata", "message_id", prepared.Message.ID.String(), err)
+		} else {
+			prepared.Message.Metadata = metadata
+		}
+	}
 	if err := s.repos.Message.UpdateError(ctx, prepared.Message.ID, message); err != nil {
 		return err
 	}
@@ -967,11 +1008,10 @@ func BuildStreamErrorPayload(prepared *PreparedChat, err error) map[string]inter
 		"message_id":      prepared.Message.ID.String(),
 		"message":         message,
 	}
-	if code, publicMessage, ok := publicAichatErrorCodeAndMessage(err); ok {
-		payload["message"] = publicMessage
-		if code > 0 {
-			payload["code"] = code
-			payload["params"] = aichatBillingErrorParams(err)
+	if code, params, ok := publicAichatStructuredError(err); ok {
+		payload["code"] = code
+		if len(params) > 0 {
+			payload["params"] = params
 		}
 	}
 	return payload
@@ -979,6 +1019,9 @@ func BuildStreamErrorPayload(prepared *PreparedChat, err error) map[string]inter
 
 func publicAichatErrorMessage(err error) string {
 	if _, message, ok := publicAichatErrorCodeAndMessage(err); ok {
+		return message
+	}
+	if _, message, ok := publicAichatRuntimeErrorCodeAndMessage(err); ok {
 		return message
 	}
 	return streamFallbackErrorMessage(err)
@@ -992,9 +1035,6 @@ func streamFallbackErrorMessage(err error) string {
 }
 
 func publicAichatErrorCodeAndMessage(err error) (int, string, bool) {
-	if errors.Is(err, ErrModelIdleTimeout) || errors.Is(err, skillloop.ErrModelIdleTimeout) {
-		return 0, "模型长时间未返回，当前任务已停止，请重试", true
-	}
 	if code, message, ok := aichatBillingErrorCodeAndMessage(err); ok {
 		return code, message, true
 	}
@@ -1005,6 +1045,49 @@ func publicAichatErrorCodeAndMessage(err error) (int, string, bool) {
 		return response.ErrWorkflowPrivateChannelUpstreamUnavailable.Code, response.ErrWorkflowPrivateChannelUpstreamUnavailable.Message, true
 	}
 	return 0, "", false
+}
+
+func publicAichatRuntimeErrorCodeAndMessage(err error) (string, string, bool) {
+	if errors.Is(err, skillloop.ErrAgentOutputTruncated) {
+		return aichatErrorCodeAgentOutputTruncated, aichatAgentOutputTruncatedMessage, true
+	}
+	if errors.Is(err, ErrModelIdleTimeout) ||
+		errors.Is(err, skillloop.ErrModelIdleTimeout) ||
+		errors.Is(err, adapter.ErrTimeout) {
+		return aichatErrorCodeModelServiceTimeout, aichatModelServiceTimeoutMessage, true
+	}
+	if errors.Is(err, adapter.ErrUpstreamError) ||
+		errors.Is(err, adapter.ErrStreamClosed) ||
+		errors.Is(err, adapter.ErrProxyError) {
+		return aichatErrorCodeModelServiceUnavailable, aichatModelServiceUnavailableMessage, true
+	}
+	if errors.Is(err, skillloop.ErrFinalAnswerUnavailable) {
+		return aichatErrorCodeFinalAnswerUnavailable, aichatFinalAnswerUnavailableMessage, true
+	}
+	var terminationErr *skillloop.PlanningTerminationError
+	if errors.As(err, &terminationErr) {
+		switch strings.ToLower(strings.TrimSpace(terminationErr.Reason)) {
+		case "length", "max_tokens":
+			return aichatErrorCodePlanningOutputTruncated, aichatPlanningOutputTruncatedMessage, true
+		default:
+			return aichatErrorCodeModelInvocationFailed, aichatModelInvocationFailedMessage, true
+		}
+	}
+	if errors.Is(err, adapter.ErrRateLimited) ||
+		errors.Is(err, adapter.ErrContentPolicyViolation) {
+		return aichatErrorCodeModelInvocationFailed, aichatModelInvocationFailedMessage, true
+	}
+	return "", "", false
+}
+
+func publicAichatStructuredError(err error) (interface{}, map[string]interface{}, bool) {
+	if code, _, ok := publicAichatErrorCodeAndMessage(err); ok {
+		return code, aichatBillingErrorParams(err), true
+	}
+	if code, _, ok := publicAichatRuntimeErrorCodeAndMessage(err); ok {
+		return code, nil, true
+	}
+	return nil, nil, false
 }
 
 func aichatBillingErrorCodeAndMessage(err error) (int, string, bool) {

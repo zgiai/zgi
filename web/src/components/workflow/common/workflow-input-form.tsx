@@ -431,7 +431,7 @@ const WorkflowInputForm = React.forwardRef<WorkflowInputFormHandle, WorkflowInpu
     const { data: uploadConfig } = useUploadConfig({
       enabled: !isFileUploadLoginRequired,
     });
-    const maxSizeMB = toPositiveNumber(uploadConfig?.file_size_limit) ?? 15;
+    const maxSizeMB = Math.max(toPositiveNumber(uploadConfig?.file_size_limit) ?? 50, 50);
     const workflowFileUploadLimit =
       toPositiveNumber(uploadConfig?.workflow_file_upload_limit) ??
       toPositiveNumber(uploadConfig?.batch_count_limit);

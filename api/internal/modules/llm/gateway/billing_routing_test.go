@@ -1660,7 +1660,7 @@ func TestBillingRouting_HandleNativeStreamBilling_InjectsResponsesUsageIntoTermi
 		Provider:          providermodel.LLMProvider{Provider: "openai"},
 	}
 
-	s.handleNativeStreamBilling(context.Background(), in, out, bc, ps, nil, time.Now(), "gpt-5", nativeUsageBodyFormatResponses)
+	s.handleNativeStreamBilling(context.Background(), in, out, bc, ps, nil, time.Now(), "gpt-5", nil, "llm.responses.stream", nativeUsageBodyFormatResponses)
 
 	var got []adapter.RawStreamEvent
 	for event := range out {
@@ -1737,7 +1737,7 @@ func TestBillingRouting_HandleNativeStreamBilling_EmitsAnthropicUsageBeforeStop(
 		Provider:          providermodel.LLMProvider{Provider: "anthropic"},
 	}
 
-	s.handleNativeStreamBilling(context.Background(), in, out, bc, ps, nil, time.Now(), "claude-sonnet-4-5", nativeUsageBodyFormatAnthropic)
+	s.handleNativeStreamBilling(context.Background(), in, out, bc, ps, nil, time.Now(), "claude-sonnet-4-5", nil, "llm.anthropic.messages.stream", nativeUsageBodyFormatAnthropic)
 
 	var got []adapter.RawStreamEvent
 	for event := range out {

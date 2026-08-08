@@ -190,9 +190,15 @@ func (h *failResetVerifiedTokenConsumeOnceHook) DialHook(next redis.DialHook) re
 func (h *failResetVerifiedTokenConsumeOnceHook) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
 	return func(ctx context.Context, cmd redis.Cmder) error {
 		args := cmd.Args()
-		if cmd.Name() == "getdel" && len(args) > 1 &&
-			strings.HasPrefix(fmt.Sprint(args[1]), "token:"+TokenTypeResetVerified+":") &&
-			!h.failed.Swap(true) {
+		keyMatches := false
+		for _, arg := range args[1:] {
+			if strings.HasPrefix(fmt.Sprint(arg), "token:"+TokenTypeResetVerified+":") {
+				keyMatches = true
+				break
+			}
+		}
+		if cmd.Name() == "evalsha" && len(args) > 2 && fmt.Sprint(args[2]) == "1" &&
+			keyMatches && !h.failed.Swap(true) {
 			return errors.New("injected verified reset token consume failure")
 		}
 		return next(ctx, cmd)

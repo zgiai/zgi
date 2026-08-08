@@ -680,6 +680,7 @@ const messages: FilesMessages = {
       '已选择 {count} 个文件，{failedCount} 个无法上传，请移除后继续。',
     selectedFilesResultSummary: '已上传 {successCount} 个文件，{failedCount} 个上传失败。',
     removeInvalidBeforeUpload: '请先移除无法上传的文件，再继续上传。',
+    clearUnsupportedFiles: '清除不支持的文件',
     cannotUpload: '无法上传',
     confirmUpload: '确认上传',
     cancelUpload: '取消上传',

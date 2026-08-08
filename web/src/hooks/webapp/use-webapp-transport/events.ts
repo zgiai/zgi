@@ -20,6 +20,7 @@ import {
   parseApprovalRequestedEvent,
 } from '@/components/workflow/approval/runtime-events';
 import { parseWorkflowPausedEvent } from '@/components/workflow/runtime/pause-events';
+import { resolveWorkflowRunId } from '@/utils/workflow/run-identity.js';
 
 import { normalizeFinalRunStatus, stripQuestionAnswerPromptText } from './mappers';
 import { createWorkflowRunNodeAccumulator } from '@/utils/webapp/workflow-run-node-accumulator';
@@ -169,6 +170,10 @@ export function useWebappWorkflowRunEvents({
             const pausePayload = createWorkflowSnapshotPauseEvent(payload);
             if (pausePayload) {
               const parsed = parseWorkflowPausedEvent(pausePayload);
+              const pausedWorkflowRunId = resolveWorkflowRunId(pausePayload, {
+                fallback: workflowRunId,
+                allowLegacyId: true,
+              });
               if (parsed.hasApproval) {
                 if (isForegroundConversation()) handleApprovalRequested(pausePayload);
               }
@@ -179,8 +184,7 @@ export function useWebappWorkflowRunEvents({
               }
               if (parsed.preferredStatus) {
                 useChatStore.getState().pauseAiMessage(conversationId, tempKey, {
-                  workflowRunId:
-                    parsed.questionAnswer.workflowRunId || workflowRunId,
+                  workflowRunId: pausedWorkflowRunId,
                   status: parsed.preferredStatus,
                 });
               }
@@ -336,9 +340,13 @@ export function useWebappWorkflowRunEvents({
             }
 
             if (!parsed.preferredStatus) return;
+            const pausedWorkflowRunId = resolveWorkflowRunId(payload, {
+              fallback: workflowRunId,
+              allowLegacyId: true,
+            });
             useChatStore.getState().pauseAiMessage(conversationId, tempKey, {
               elapsedTime: typeof data.elapsed_time === 'number' ? data.elapsed_time : undefined,
-              workflowRunId: parsed.questionAnswer.workflowRunId || workflowRunId,
+              workflowRunId: pausedWorkflowRunId,
               status: parsed.preferredStatus,
             });
           },

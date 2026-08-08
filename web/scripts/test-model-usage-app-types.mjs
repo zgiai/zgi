@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 
 import enUS from '../src/i18n/modules/dashboard/en-US.ts';
 import zhHans from '../src/i18n/modules/dashboard/zh-Hans.ts';
@@ -6,6 +7,11 @@ import {
   MODEL_USAGE_APP_TYPES,
   normalizeModelUsageAppType,
 } from '../src/utils/model-usage-app-type.ts';
+
+const usageOverviewPageSource = readFileSync(
+  new URL('../src/app/dashboard/usage/overview/page.tsx', import.meta.url),
+  'utf8'
+);
 
 const expectedAppTypes = [
   'workflow',
@@ -46,6 +52,30 @@ const expectedLabels = {
     unknown: '其他',
   },
 };
+
+assert.match(
+  usageOverviewPageSource,
+  /<SelectItem value="all">/,
+  'the app type filter must keep the all option separate'
+);
+assert.match(
+  usageOverviewPageSource,
+  /MODEL_USAGE_APP_TYPES\.map\(\s*appType\s*=>/,
+  'the app type filter must render every option from the shared app type contract'
+);
+assert.match(
+  usageOverviewPageSource,
+  /<SelectItem key=\{appType\} value=\{appType\}>/,
+  'each shared app type must become a selectable option'
+);
+
+for (const appType of expectedAppTypes) {
+  assert.doesNotMatch(
+    usageOverviewPageSource,
+    new RegExp(`<SelectItem value="${appType}">`),
+    `the app type filter must not hardcode ${appType}`
+  );
+}
 
 assert.deepEqual(
   MODEL_USAGE_APP_TYPES,

@@ -35,7 +35,7 @@ func TestSkillManagementRoutesAllowOrganizationMembers(t *testing.T) {
 		util.SetOrganizationID(c, uuid.NewString())
 		c.Next()
 	})
-	NewHandler(capture).RegisterRoutes(router.Group("/console/api"))
+	NewHandler(capture, nil).RegisterRoutes(router.Group("/console/api"))
 
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(

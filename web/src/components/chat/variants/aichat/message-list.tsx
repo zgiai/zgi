@@ -174,6 +174,7 @@ export function AIChatMessageList({
                 message={message}
                 isSending={isSending}
                 timeline={streamingByMessageId[message.id]?.timeline ?? []}
+                modelProcessing={streamingByMessageId[message.id]?.modelProcessing}
                 presentationItems={
                   streamingByMessageId[message.id]?.presentationItems ??
                   presentationProjectionFromMetadata(message.metadata)?.items

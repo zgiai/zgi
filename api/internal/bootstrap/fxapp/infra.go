@@ -201,10 +201,15 @@ func provideGinEngine(cfg *config.Config, reporter *observability.ZGIReporter, o
 	engine.Use(middleware.Logger())
 	engine.Use(middleware.AuditLogger())
 	engine.Use(cors.New(cors.Config{
-		AllowOrigins:     getCORSAllowOrigins(),
-		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"},
-		AllowHeaders:     corsAllowHeaders,
-		ExposeHeaders:    []string{"Content-Length", "X-Request-ID"},
+		AllowOrigins: getCORSAllowOrigins(),
+		AllowMethods: []string{"GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"},
+		AllowHeaders: corsAllowHeaders,
+		ExposeHeaders: []string{
+			"Content-Length",
+			"X-Request-ID",
+			"X-ZGI-Conversation-ID",
+			"X-ZGI-Message-ID",
+		},
 		AllowCredentials: true,
 	}))
 	engine.Use(middleware.Recovery())

@@ -214,6 +214,7 @@ const messages: DashboardMessages = {
     },
     filters: {
       appType: '应用类型',
+      description: '选择时间范围、应用类型和模型后查看对应数据。',
       appTypePlaceholder: '全部应用类型',
       modelName: '模型名称',
       modelNamePlaceholder: '按模型名称精确筛选',
@@ -224,6 +225,7 @@ const messages: DashboardMessages = {
       sourcePrivate: '私有',
       startDate: '开始日期',
       endDate: '结束日期',
+      dateRangeInvalid: '结束日期不能早于开始日期',
     },
     cards: {
       attemptCount: '调用数',
@@ -259,6 +261,8 @@ const messages: DashboardMessages = {
     modelDetails: {
       title: '模型用量详情',
       subtitle: '按模型查看 Token 用量与费用分布',
+      showAllModels: '查看全部 {count} 个模型',
+      collapse: '收起',
       singleModelHint:
         '当前结果只有 1 个模型，分布图暂时省略，等有更多模型参与时再展示更有比较价值。',
       table: '表格',

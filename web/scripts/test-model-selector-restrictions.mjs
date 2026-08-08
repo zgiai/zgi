@@ -228,6 +228,13 @@ const modelSelectorSource = fs.readFileSync(
 );
 assert.match(modelSelectorSource, /prioritizeModelsByUseCase\(items, preferredUseCase\)/);
 assert.match(modelSelectorSource, /highlightedLabel/);
+assert.match(modelSelectorSource, /const selectValue = useMemo/);
+assert.match(modelSelectorSource, /<Select[\s\S]*?value=\{selectValue\}/);
+assert.doesNotMatch(
+  modelSelectorSource,
+  /<Select[\s\S]*?defaultValue=\{uncontrolledDefaultValue\}/,
+  'the underlying Select must remain controlled while async model data is loading'
+);
 
 const modelRowSource = fs.readFileSync(
   new URL(

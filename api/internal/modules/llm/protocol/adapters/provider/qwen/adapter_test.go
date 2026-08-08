@@ -1,4 +1,4 @@
-package provider
+package qwen
 
 import (
 	"context"
@@ -13,10 +13,14 @@ import (
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 )
 
-func TestAliyunAdapterHandleErrorUsesExactBillingCodes(t *testing.T) {
-	a, err := NewAliyunAdapter(&adapter.AdapterConfig{APIKey: "test-key"})
+func newTestAdapter(config *adapter.AdapterConfig) (*Adapter, error) {
+	return NewAdapter(config, Dependencies{})
+}
+
+func TestAdapterHandleErrorUsesExactBillingCodes(t *testing.T) {
+	a, err := newTestAdapter(&adapter.AdapterConfig{APIKey: "test-key"})
 	if err != nil {
-		t.Fatalf("NewAliyunAdapter() error = %v", err)
+		t.Fatalf("newTestAdapter() error = %v", err)
 	}
 
 	tests := []struct {
@@ -44,10 +48,10 @@ func TestAliyunAdapterHandleErrorUsesExactBillingCodes(t *testing.T) {
 	}
 }
 
-func TestAliyunAdapterHandleErrorDoesNotExposeProviderBillingMessage(t *testing.T) {
-	a, err := NewAliyunAdapter(&adapter.AdapterConfig{APIKey: "test-key"})
+func TestAdapterHandleErrorDoesNotExposeProviderBillingMessage(t *testing.T) {
+	a, err := newTestAdapter(&adapter.AdapterConfig{APIKey: "test-key"})
 	if err != nil {
-		t.Fatalf("NewAliyunAdapter() error = %v", err)
+		t.Fatalf("newTestAdapter() error = %v", err)
 	}
 
 	err = a.handleError(
@@ -62,34 +66,23 @@ func TestAliyunAdapterHandleErrorDoesNotExposeProviderBillingMessage(t *testing.
 	}
 }
 
-func TestAliyunAdapterStreamingPreservesExactBillingCodes(t *testing.T) {
+func TestAdapterStreamingPreservesExactBillingCodes(t *testing.T) {
 	tests := []struct {
 		name       string
 		body       string
-		callStream func(*AliyunAdapter) error
+		callStream func(*Adapter) error
 		wantCode   string
 	}{
 		{
 			name: "native chat",
 			body: `{"code":"PrepaidBillOverdue","message":"prepaid bill overdue"}`,
-			callStream: func(a *AliyunAdapter) error {
-				_, err := a.ChatCompletionStream(context.Background(), &adapter.ChatRequest{
+			callStream: func(a *Adapter) error {
+				_, err := a.chatCompletionStreamNative(context.Background(), &adapter.ChatRequest{
 					Model: "qwen-plus", Messages: []adapter.Message{{Role: "user", Content: "hello"}},
 				})
 				return err
 			},
 			wantCode: "PrepaidBillOverdue",
-		},
-		{
-			name: "openai compatible responses",
-			body: `{"error":{"code":"PostpaidBillOverdue","message":"postpaid bill overdue"}}`,
-			callStream: func(a *AliyunAdapter) error {
-				_, err := a.CreateResponseStream(context.Background(), &adapter.RawResponseRequest{
-					Body: json.RawMessage(`{"model":"qwen-plus","input":"hello"}`),
-				})
-				return err
-			},
-			wantCode: "PostpaidBillOverdue",
 		},
 	}
 
@@ -102,9 +95,9 @@ func TestAliyunAdapterStreamingPreservesExactBillingCodes(t *testing.T) {
 			}))
 			defer server.Close()
 
-			a, err := NewAliyunAdapter(&adapter.AdapterConfig{APIKey: "test-key", BaseURL: server.URL + "/api/v1"})
+			a, err := newTestAdapter(&adapter.AdapterConfig{APIKey: "test-key", BaseURL: server.URL + "/api/v1"})
 			if err != nil {
-				t.Fatalf("NewAliyunAdapter() error = %v", err)
+				t.Fatalf("newTestAdapter() error = %v", err)
 			}
 			err = testCase.callStream(a)
 			if !errors.Is(err, adapter.ErrBillingUnavailable) {
@@ -118,7 +111,7 @@ func TestAliyunAdapterStreamingPreservesExactBillingCodes(t *testing.T) {
 	}
 }
 
-func TestAliyunAdapterChatCompletion_UsesNativeTextGeneration(t *testing.T) {
+func TestAdapterChatCompletion_UsesNativeTextGeneration(t *testing.T) {
 	t.Helper()
 
 	var (
@@ -149,7 +142,7 @@ func TestAliyunAdapterChatCompletion_UsesNativeTextGeneration(t *testing.T) {
 	}))
 	defer server.Close()
 
-	a, err := NewAliyunAdapter(&adapter.AdapterConfig{
+	a, err := newTestAdapter(&adapter.AdapterConfig{
 		APIKey:  "test-key",
 		BaseURL: server.URL + "/api/v1",
 		Headers: map[string]string{
@@ -158,10 +151,10 @@ func TestAliyunAdapterChatCompletion_UsesNativeTextGeneration(t *testing.T) {
 		},
 	})
 	if err != nil {
-		t.Fatalf("NewAliyunAdapter() error = %v", err)
+		t.Fatalf("newTestAdapter() error = %v", err)
 	}
 
-	resp, err := a.ChatCompletion(context.Background(), &adapter.ChatRequest{
+	resp, err := a.chatCompletionNative(context.Background(), &adapter.ChatRequest{
 		Model:    "qwen-plus",
 		Messages: []adapter.Message{{Role: "user", Content: "say hello"}},
 	})
@@ -201,7 +194,7 @@ func TestAliyunAdapterChatCompletion_UsesNativeTextGeneration(t *testing.T) {
 	}
 }
 
-func TestAliyunAdapterChatCompletion_UsesNativeMultimodalGeneration(t *testing.T) {
+func TestAdapterChatCompletion_UsesNativeMultimodalGeneration(t *testing.T) {
 	t.Helper()
 
 	var (
@@ -222,12 +215,12 @@ func TestAliyunAdapterChatCompletion_UsesNativeMultimodalGeneration(t *testing.T
 	}))
 	defer server.Close()
 
-	a, err := NewAliyunAdapter(&adapter.AdapterConfig{APIKey: "test-key", BaseURL: server.URL + "/api/v1"})
+	a, err := newTestAdapter(&adapter.AdapterConfig{APIKey: "test-key", BaseURL: server.URL + "/api/v1"})
 	if err != nil {
-		t.Fatalf("NewAliyunAdapter() error = %v", err)
+		t.Fatalf("newTestAdapter() error = %v", err)
 	}
 
-	_, err = a.ChatCompletion(context.Background(), &adapter.ChatRequest{
+	_, err = a.chatCompletionNative(context.Background(), &adapter.ChatRequest{
 		Model: "qwen-vl-max",
 		Messages: []adapter.Message{{
 			Role: "user",
@@ -255,7 +248,7 @@ func TestAliyunAdapterChatCompletion_UsesNativeMultimodalGeneration(t *testing.T
 	}
 }
 
-func TestAliyunAdapterChatCompletion_Qwen36UsesNativeMultimodalGeneration(t *testing.T) {
+func TestAdapterChatCompletion_Qwen36UsesNativeMultimodalGeneration(t *testing.T) {
 	for _, model := range []string{"qwen3.6-plus", "qwen3.6-plus-2026-04-02", "qwen3.6-flash", "qwen3.6-flash-2026-04-16"} {
 		t.Run(model, func(t *testing.T) {
 			var (
@@ -276,12 +269,12 @@ func TestAliyunAdapterChatCompletion_Qwen36UsesNativeMultimodalGeneration(t *tes
 			}))
 			defer server.Close()
 
-			a, err := NewAliyunAdapter(&adapter.AdapterConfig{APIKey: "test-key", BaseURL: server.URL + "/api/v1"})
+			a, err := newTestAdapter(&adapter.AdapterConfig{APIKey: "test-key", BaseURL: server.URL + "/api/v1"})
 			if err != nil {
-				t.Fatalf("NewAliyunAdapter() error = %v", err)
+				t.Fatalf("newTestAdapter() error = %v", err)
 			}
 
-			_, err = a.ChatCompletion(context.Background(), &adapter.ChatRequest{
+			_, err = a.chatCompletionNative(context.Background(), &adapter.ChatRequest{
 				Model:    model,
 				Messages: []adapter.Message{{Role: "user", Content: "hello"}},
 			})
@@ -302,7 +295,7 @@ func TestAliyunAdapterChatCompletion_Qwen36UsesNativeMultimodalGeneration(t *tes
 	}
 }
 
-func TestAliyunAdapterChatCompletion_AllowsDataURLImage(t *testing.T) {
+func TestAdapterChatCompletion_AllowsDataURLImage(t *testing.T) {
 	t.Helper()
 
 	var gotPayload map[string]any
@@ -316,12 +309,12 @@ func TestAliyunAdapterChatCompletion_AllowsDataURLImage(t *testing.T) {
 	}))
 	defer server.Close()
 
-	a, err := NewAliyunAdapter(&adapter.AdapterConfig{APIKey: "test-key", BaseURL: server.URL + "/api/v1"})
+	a, err := newTestAdapter(&adapter.AdapterConfig{APIKey: "test-key", BaseURL: server.URL + "/api/v1"})
 	if err != nil {
-		t.Fatalf("NewAliyunAdapter() error = %v", err)
+		t.Fatalf("newTestAdapter() error = %v", err)
 	}
 
-	_, err = a.ChatCompletion(context.Background(), &adapter.ChatRequest{
+	_, err = a.chatCompletionNative(context.Background(), &adapter.ChatRequest{
 		Model: "qwen-vl-max",
 		Messages: []adapter.Message{{
 			Role: "user",
@@ -343,15 +336,15 @@ func TestAliyunAdapterChatCompletion_AllowsDataURLImage(t *testing.T) {
 	}
 }
 
-func TestAliyunAdapterChatCompletion_RejectsLocalImageURL(t *testing.T) {
+func TestAdapterChatCompletion_RejectsLocalImageURL(t *testing.T) {
 	t.Helper()
 
-	a, err := NewAliyunAdapter(&adapter.AdapterConfig{APIKey: "test-key", BaseURL: "https://dashscope.aliyuncs.com/api/v1"})
+	a, err := newTestAdapter(&adapter.AdapterConfig{APIKey: "test-key", BaseURL: "https://dashscope.aliyuncs.com/api/v1"})
 	if err != nil {
-		t.Fatalf("NewAliyunAdapter() error = %v", err)
+		t.Fatalf("newTestAdapter() error = %v", err)
 	}
 
-	_, err = a.ChatCompletion(context.Background(), &adapter.ChatRequest{
+	_, err = a.chatCompletionNative(context.Background(), &adapter.ChatRequest{
 		Model: "qwen-vl-max",
 		Messages: []adapter.Message{{
 			Role: "user",
@@ -365,7 +358,7 @@ func TestAliyunAdapterChatCompletion_RejectsLocalImageURL(t *testing.T) {
 	}
 }
 
-func TestAliyunAdapterChatCompletionStream_UsesNativeSSE(t *testing.T) {
+func TestAdapterChatCompletionStream_UsesNativeSSE(t *testing.T) {
 	t.Helper()
 
 	var (
@@ -391,7 +384,7 @@ func TestAliyunAdapterChatCompletionStream_UsesNativeSSE(t *testing.T) {
 	}))
 	defer server.Close()
 
-	a, err := NewAliyunAdapter(&adapter.AdapterConfig{
+	a, err := newTestAdapter(&adapter.AdapterConfig{
 		APIKey:  "test-key",
 		BaseURL: server.URL + "/api/v1",
 		Headers: map[string]string{
@@ -401,10 +394,10 @@ func TestAliyunAdapterChatCompletionStream_UsesNativeSSE(t *testing.T) {
 		},
 	})
 	if err != nil {
-		t.Fatalf("NewAliyunAdapter() error = %v", err)
+		t.Fatalf("newTestAdapter() error = %v", err)
 	}
 
-	stream, err := a.ChatCompletionStream(context.Background(), &adapter.ChatRequest{
+	stream, err := a.chatCompletionStreamNative(context.Background(), &adapter.ChatRequest{
 		Model:    "qwen-plus",
 		Messages: []adapter.Message{{Role: "user", Content: "say hello"}},
 	})
@@ -441,7 +434,7 @@ func TestAliyunAdapterChatCompletionStream_UsesNativeSSE(t *testing.T) {
 		t.Fatalf("final usage = %+v, want total_tokens=3", chunks[2].Usage)
 	}
 }
-func TestAliyunAdapterChatCompletionStream_ParsesNativeOutputText(t *testing.T) {
+func TestAdapterChatCompletionStream_ParsesNativeOutputText(t *testing.T) {
 	t.Helper()
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -451,12 +444,12 @@ func TestAliyunAdapterChatCompletionStream_ParsesNativeOutputText(t *testing.T) 
 	}))
 	defer server.Close()
 
-	a, err := NewAliyunAdapter(&adapter.AdapterConfig{APIKey: "test-key", BaseURL: server.URL + "/api/v1"})
+	a, err := newTestAdapter(&adapter.AdapterConfig{APIKey: "test-key", BaseURL: server.URL + "/api/v1"})
 	if err != nil {
-		t.Fatalf("NewAliyunAdapter() error = %v", err)
+		t.Fatalf("newTestAdapter() error = %v", err)
 	}
 
-	stream, err := a.ChatCompletionStream(context.Background(), &adapter.ChatRequest{
+	stream, err := a.chatCompletionStreamNative(context.Background(), &adapter.ChatRequest{
 		Model:    "qwen-plus",
 		Messages: []adapter.Message{{Role: "user", Content: "say hello"}},
 	})
@@ -488,7 +481,7 @@ func TestAliyunAdapterChatCompletionStream_ParsesNativeOutputText(t *testing.T) 
 	}
 }
 
-func TestAliyunAdapterChatCompletionStream_ParsesNativeDeltaContent(t *testing.T) {
+func TestAdapterChatCompletionStream_ParsesNativeDeltaContent(t *testing.T) {
 	t.Helper()
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -498,12 +491,12 @@ func TestAliyunAdapterChatCompletionStream_ParsesNativeDeltaContent(t *testing.T
 	}))
 	defer server.Close()
 
-	a, err := NewAliyunAdapter(&adapter.AdapterConfig{APIKey: "test-key", BaseURL: server.URL + "/api/v1"})
+	a, err := newTestAdapter(&adapter.AdapterConfig{APIKey: "test-key", BaseURL: server.URL + "/api/v1"})
 	if err != nil {
-		t.Fatalf("NewAliyunAdapter() error = %v", err)
+		t.Fatalf("newTestAdapter() error = %v", err)
 	}
 
-	stream, err := a.ChatCompletionStream(context.Background(), &adapter.ChatRequest{
+	stream, err := a.chatCompletionStreamNative(context.Background(), &adapter.ChatRequest{
 		Model:    "qwen-plus",
 		Messages: []adapter.Message{{Role: "user", Content: "say hello"}},
 	})
@@ -535,15 +528,15 @@ func TestAliyunAdapterChatCompletionStream_ParsesNativeDeltaContent(t *testing.T
 	}
 }
 
-func TestAliyunAdapterChatCompletion_RejectsUnsupportedContentPart(t *testing.T) {
+func TestAdapterChatCompletion_RejectsUnsupportedContentPart(t *testing.T) {
 	t.Helper()
 
-	a, err := NewAliyunAdapter(&adapter.AdapterConfig{APIKey: "test-key", BaseURL: "https://dashscope.aliyuncs.com/api/v1"})
+	a, err := newTestAdapter(&adapter.AdapterConfig{APIKey: "test-key", BaseURL: "https://dashscope.aliyuncs.com/api/v1"})
 	if err != nil {
-		t.Fatalf("NewAliyunAdapter() error = %v", err)
+		t.Fatalf("newTestAdapter() error = %v", err)
 	}
 
-	_, err = a.ChatCompletion(context.Background(), &adapter.ChatRequest{
+	_, err = a.chatCompletionNative(context.Background(), &adapter.ChatRequest{
 		Model: "qwen-vl-max",
 		Messages: []adapter.Message{{
 			Role:    "user",
@@ -554,7 +547,7 @@ func TestAliyunAdapterChatCompletion_RejectsUnsupportedContentPart(t *testing.T)
 		t.Fatal("ChatCompletion() error = nil, want unsupported content type error")
 	}
 }
-func TestAliyunAdapterCreateEmbeddings_UsesNativeTextEmbeddingEndpoint(t *testing.T) {
+func TestAdapterCreateEmbeddings_UsesNativeTextEmbeddingEndpoint(t *testing.T) {
 	t.Helper()
 
 	var (
@@ -581,12 +574,12 @@ func TestAliyunAdapterCreateEmbeddings_UsesNativeTextEmbeddingEndpoint(t *testin
 	}))
 	defer server.Close()
 
-	a, err := NewAliyunAdapter(&adapter.AdapterConfig{
+	a, err := newTestAdapter(&adapter.AdapterConfig{
 		APIKey:  "test-key",
 		BaseURL: server.URL + "/api/v1",
 	})
 	if err != nil {
-		t.Fatalf("NewAliyunAdapter() error = %v", err)
+		t.Fatalf("newTestAdapter() error = %v", err)
 	}
 
 	resp, err := a.CreateEmbeddings(context.Background(), &adapter.EmbeddingsRequest{
@@ -622,7 +615,7 @@ func TestAliyunAdapterCreateEmbeddings_UsesNativeTextEmbeddingEndpoint(t *testin
 	}
 }
 
-func TestAliyunAdapterCreateEmbeddings_QwenVLEmbeddingUsesNativeMultimodalEndpoint(t *testing.T) {
+func TestAdapterCreateEmbeddings_QwenVLEmbeddingUsesNativeMultimodalEndpoint(t *testing.T) {
 	t.Helper()
 
 	var (
@@ -646,12 +639,12 @@ func TestAliyunAdapterCreateEmbeddings_QwenVLEmbeddingUsesNativeMultimodalEndpoi
 	}))
 	defer server.Close()
 
-	a, err := NewAliyunAdapter(&adapter.AdapterConfig{
+	a, err := newTestAdapter(&adapter.AdapterConfig{
 		APIKey:  "test-key",
 		BaseURL: server.URL + "/api/v1",
 	})
 	if err != nil {
-		t.Fatalf("NewAliyunAdapter() error = %v", err)
+		t.Fatalf("newTestAdapter() error = %v", err)
 	}
 
 	resp, err := a.CreateEmbeddings(context.Background(), &adapter.EmbeddingsRequest{
@@ -682,7 +675,7 @@ func TestAliyunAdapterCreateEmbeddings_QwenVLEmbeddingUsesNativeMultimodalEndpoi
 	}
 }
 
-func TestAliyunAdapterRerank_Qwen3Rerank_UsesCompatibleAPI(t *testing.T) {
+func TestAdapterRerank_Qwen3Rerank_UsesCompatibleAPI(t *testing.T) {
 	t.Helper()
 
 	topN := 2
@@ -714,12 +707,12 @@ func TestAliyunAdapterRerank_Qwen3Rerank_UsesCompatibleAPI(t *testing.T) {
 	}))
 	defer server.Close()
 
-	a, err := NewAliyunAdapter(&adapter.AdapterConfig{
+	a, err := newTestAdapter(&adapter.AdapterConfig{
 		APIKey:  "test-key",
 		BaseURL: server.URL + "/api/v1",
 	})
 	if err != nil {
-		t.Fatalf("NewAliyunAdapter() error = %v", err)
+		t.Fatalf("newTestAdapter() error = %v", err)
 	}
 
 	resp, err := a.Rerank(context.Background(), &adapter.RerankRequest{
@@ -764,7 +757,7 @@ func TestAliyunAdapterRerank_Qwen3Rerank_UsesCompatibleAPI(t *testing.T) {
 		t.Fatalf("usage = %+v, want total_tokens=8", resp.Usage)
 	}
 }
-func TestAliyunAdapterRerank_GTERerank_UsesNativeAPI(t *testing.T) {
+func TestAdapterRerank_GTERerank_UsesNativeAPI(t *testing.T) {
 	t.Helper()
 
 	topN := 1
@@ -797,12 +790,12 @@ func TestAliyunAdapterRerank_GTERerank_UsesNativeAPI(t *testing.T) {
 	}))
 	defer server.Close()
 
-	a, err := NewAliyunAdapter(&adapter.AdapterConfig{
+	a, err := newTestAdapter(&adapter.AdapterConfig{
 		APIKey:  "test-key",
 		BaseURL: server.URL + "/api/v1",
 	})
 	if err != nil {
-		t.Fatalf("NewAliyunAdapter() error = %v", err)
+		t.Fatalf("newTestAdapter() error = %v", err)
 	}
 
 	resp, err := a.Rerank(context.Background(), &adapter.RerankRequest{
@@ -860,7 +853,7 @@ func TestAliyunAdapterRerank_GTERerank_UsesNativeAPI(t *testing.T) {
 	}
 }
 
-func TestAliyunAdapterListModels_UsesUpstreamModelsEndpointAndDocumentedCapabilityMapping(t *testing.T) {
+func TestAdapterListModels_UsesUpstreamModelsEndpointWithoutGuessingCapabilities(t *testing.T) {
 	t.Helper()
 
 	var (
@@ -886,12 +879,12 @@ func TestAliyunAdapterListModels_UsesUpstreamModelsEndpointAndDocumentedCapabili
 	}))
 	defer server.Close()
 
-	a, err := NewAliyunAdapter(&adapter.AdapterConfig{
+	a, err := newTestAdapter(&adapter.AdapterConfig{
 		APIKey:  "config-key",
 		BaseURL: server.URL + "/api/v1",
 	})
 	if err != nil {
-		t.Fatalf("NewAliyunAdapter() error = %v", err)
+		t.Fatalf("newTestAdapter() error = %v", err)
 	}
 
 	models, err := a.ListModels(context.Background(), "runtime-key")
@@ -906,45 +899,15 @@ func TestAliyunAdapterListModels_UsesUpstreamModelsEndpointAndDocumentedCapabili
 		t.Fatalf("Authorization = %q, want %q", gotAuth, "Bearer runtime-key")
 	}
 
-	qwenPlus := findAliyunModel(t, models, "qwen-plus")
-	if qwenPlus.Type != "chat" {
-		t.Fatalf("qwen-plus type = %q, want %q", qwenPlus.Type, "chat")
-	}
-	if !containsAliyunValue(qwenPlus.Capabilities, "chat") || !containsAliyunValue(qwenPlus.Capabilities, "stream") {
-		t.Fatalf("qwen-plus capabilities = %#v, want chat+stream", qwenPlus.Capabilities)
-	}
-
-	qwenImage := findAliyunModel(t, models, "qwen-image-max")
-	if qwenImage.Type != "image" {
-		t.Fatalf("qwen-image-max type = %q, want %q", qwenImage.Type, "image")
-	}
-	if !containsAliyunValue(qwenImage.Capabilities, "image") {
-		t.Fatalf("qwen-image-max capabilities = %#v, want image", qwenImage.Capabilities)
-	}
-
-	embedding := findAliyunModel(t, models, "text-embedding-v4")
-	if embedding.Type != "embedding" {
-		t.Fatalf("text-embedding-v4 type = %q, want %q", embedding.Type, "embedding")
-	}
-	if !containsAliyunValue(embedding.Capabilities, "embedding") {
-		t.Fatalf("text-embedding-v4 capabilities = %#v, want embedding", embedding.Capabilities)
-	}
-
-	rerank := findAliyunModel(t, models, "qwen3-rerank")
-	if rerank.Type != "rerank" {
-		t.Fatalf("qwen3-rerank type = %q, want %q", rerank.Type, "rerank")
-	}
-	if !containsAliyunValue(rerank.Capabilities, "rerank") {
-		t.Fatalf("qwen3-rerank capabilities = %#v, want rerank", rerank.Capabilities)
-	}
-
-	unknown := findAliyunModel(t, models, "unknown-model")
-	if len(unknown.Capabilities) != 0 {
-		t.Fatalf("unknown-model capabilities = %#v, want empty for undocumented model", unknown.Capabilities)
+	for _, id := range []string{"qwen-plus", "qwen-image-max", "text-embedding-v4", "qwen3-rerank", "unknown-model"} {
+		model := findAliyunModel(t, models, id)
+		if model.Type != "" || len(model.Capabilities) != 0 {
+			t.Fatalf("%s inferred type/capabilities = %q/%#v, want upstream-only metadata", id, model.Type, model.Capabilities)
+		}
 	}
 }
 
-func TestAliyunAdapterListModels_FallbackDoesNotReturnEmptyOnUnsupportedModelsEndpoint(t *testing.T) {
+func TestAdapterListModels_ReturnsUnsupportedInsteadOfStaleCatalog(t *testing.T) {
 	t.Helper()
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -952,42 +915,32 @@ func TestAliyunAdapterListModels_FallbackDoesNotReturnEmptyOnUnsupportedModelsEn
 	}))
 	defer server.Close()
 
-	a, err := NewAliyunAdapter(&adapter.AdapterConfig{
+	a, err := newTestAdapter(&adapter.AdapterConfig{
 		APIKey:  "config-key",
 		BaseURL: server.URL + "/api/v1",
 	})
 	if err != nil {
-		t.Fatalf("NewAliyunAdapter() error = %v", err)
+		t.Fatalf("newTestAdapter() error = %v", err)
 	}
 
 	models, err := a.ListModels(context.Background(), "runtime-key")
-	if err != nil {
-		t.Fatalf("ListModels() error = %v", err)
+	if !errors.Is(err, adapter.ErrCapabilityUnsupported) {
+		t.Fatalf("ListModels() error = %v, want ErrCapabilityUnsupported", err)
 	}
-	if len(models) == 0 {
-		t.Fatal("ListModels() returned empty catalog, want documented fallback models")
-	}
-
-	if !containsAliyunValue(findAliyunModel(t, models, "qwen-plus").Capabilities, "chat") {
-		t.Fatalf("fallback qwen-plus capabilities = %#v, want chat", findAliyunModel(t, models, "qwen-plus").Capabilities)
-	}
-	if !containsAliyunValue(findAliyunModel(t, models, "text-embedding-v4").Capabilities, "embedding") {
-		t.Fatalf("fallback text-embedding-v4 capabilities = %#v, want embedding", findAliyunModel(t, models, "text-embedding-v4").Capabilities)
-	}
-	if !containsAliyunValue(findAliyunModel(t, models, "qwen3-rerank").Capabilities, "rerank") {
-		t.Fatalf("fallback qwen3-rerank capabilities = %#v, want rerank", findAliyunModel(t, models, "qwen3-rerank").Capabilities)
+	if models != nil {
+		t.Fatalf("ListModels() models = %#v, want nil", models)
 	}
 }
 
-func TestAliyunAdapterGetProviderInfo_DeclaresDocumentedCapabilities(t *testing.T) {
+func TestAdapterGetProviderInfo_DeclaresDocumentedCapabilities(t *testing.T) {
 	t.Helper()
 
-	a, err := NewAliyunAdapter(&adapter.AdapterConfig{
+	a, err := newTestAdapter(&adapter.AdapterConfig{
 		APIKey:  "test-key",
 		BaseURL: "https://dashscope.aliyuncs.com/api/v1",
 	})
 	if err != nil {
-		t.Fatalf("NewAliyunAdapter() error = %v", err)
+		t.Fatalf("newTestAdapter() error = %v", err)
 	}
 
 	info := a.GetProviderInfo()
@@ -1037,7 +990,7 @@ func containsAliyunValue(values []string, target string) bool {
 	return false
 }
 
-func TestAliyunAdapterChatCompletion_PreservesToolCallMessages(t *testing.T) {
+func TestAdapterChatCompletion_PreservesToolCallMessages(t *testing.T) {
 	t.Helper()
 
 	var gotPayload map[string]any
@@ -1051,13 +1004,13 @@ func TestAliyunAdapterChatCompletion_PreservesToolCallMessages(t *testing.T) {
 	}))
 	defer server.Close()
 
-	a, err := NewAliyunAdapter(&adapter.AdapterConfig{APIKey: "test-key", BaseURL: server.URL + "/api/v1"})
+	a, err := newTestAdapter(&adapter.AdapterConfig{APIKey: "test-key", BaseURL: server.URL + "/api/v1"})
 	if err != nil {
-		t.Fatalf("NewAliyunAdapter() error = %v", err)
+		t.Fatalf("newTestAdapter() error = %v", err)
 	}
 
 	idx := 0
-	_, err = a.ChatCompletion(context.Background(), &adapter.ChatRequest{
+	_, err = a.chatCompletionNative(context.Background(), &adapter.ChatRequest{
 		Model: "qwen-plus",
 		Messages: []adapter.Message{
 			{Role: "assistant", Content: "", ToolCalls: []adapter.ToolCall{{Index: &idx, ID: "call_1", Type: "function", Function: adapter.FunctionCall{Name: "lookup", Arguments: `{"city":"hz"}`}}}},
@@ -1085,7 +1038,7 @@ func TestAliyunAdapterChatCompletion_PreservesToolCallMessages(t *testing.T) {
 	}
 }
 
-func TestAliyunAdapterChatCompletion_ParsesToolCalls(t *testing.T) {
+func TestAdapterChatCompletion_ParsesToolCalls(t *testing.T) {
 	t.Helper()
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1098,12 +1051,12 @@ func TestAliyunAdapterChatCompletion_ParsesToolCalls(t *testing.T) {
 	}))
 	defer server.Close()
 
-	a, err := NewAliyunAdapter(&adapter.AdapterConfig{APIKey: "test-key", BaseURL: server.URL + "/api/v1"})
+	a, err := newTestAdapter(&adapter.AdapterConfig{APIKey: "test-key", BaseURL: server.URL + "/api/v1"})
 	if err != nil {
-		t.Fatalf("NewAliyunAdapter() error = %v", err)
+		t.Fatalf("newTestAdapter() error = %v", err)
 	}
 
-	resp, err := a.ChatCompletion(context.Background(), &adapter.ChatRequest{
+	resp, err := a.chatCompletionNative(context.Background(), &adapter.ChatRequest{
 		Model:    "qwen-plus",
 		Messages: []adapter.Message{{Role: "user", Content: "lookup"}},
 	})
@@ -1123,7 +1076,7 @@ func TestAliyunAdapterChatCompletion_ParsesToolCalls(t *testing.T) {
 	}
 }
 
-func TestAliyunAdapterChatCompletionStream_ParsesToolCallDelta(t *testing.T) {
+func TestAdapterChatCompletionStream_ParsesToolCallDelta(t *testing.T) {
 	t.Helper()
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1133,12 +1086,12 @@ func TestAliyunAdapterChatCompletionStream_ParsesToolCallDelta(t *testing.T) {
 	}))
 	defer server.Close()
 
-	a, err := NewAliyunAdapter(&adapter.AdapterConfig{APIKey: "test-key", BaseURL: server.URL + "/api/v1"})
+	a, err := newTestAdapter(&adapter.AdapterConfig{APIKey: "test-key", BaseURL: server.URL + "/api/v1"})
 	if err != nil {
-		t.Fatalf("NewAliyunAdapter() error = %v", err)
+		t.Fatalf("newTestAdapter() error = %v", err)
 	}
 
-	stream, err := a.ChatCompletionStream(context.Background(), &adapter.ChatRequest{
+	stream, err := a.chatCompletionStreamNative(context.Background(), &adapter.ChatRequest{
 		Model:    "qwen-plus",
 		Messages: []adapter.Message{{Role: "user", Content: "lookup"}},
 	})
@@ -1184,7 +1137,7 @@ func TestAliyunAdapterChatCompletionStream_ParsesToolCallDelta(t *testing.T) {
 	}
 }
 
-func TestAliyunAdapterChatCompletion_MapsNativeParameters(t *testing.T) {
+func TestAdapterChatCompletion_MapsNativeParameters(t *testing.T) {
 	t.Helper()
 
 	var gotPayload map[string]any
@@ -1198,15 +1151,15 @@ func TestAliyunAdapterChatCompletion_MapsNativeParameters(t *testing.T) {
 	}))
 	defer server.Close()
 
-	a, err := NewAliyunAdapter(&adapter.AdapterConfig{APIKey: "test-key", BaseURL: server.URL + "/api/v1"})
+	a, err := newTestAdapter(&adapter.AdapterConfig{APIKey: "test-key", BaseURL: server.URL + "/api/v1"})
 	if err != nil {
-		t.Fatalf("NewAliyunAdapter() error = %v", err)
+		t.Fatalf("newTestAdapter() error = %v", err)
 	}
 
 	presencePenalty := 0.3
 	frequencyPenalty := 0.4
 	seed := 123
-	_, err = a.ChatCompletion(context.Background(), &adapter.ChatRequest{
+	_, err = a.chatCompletionNative(context.Background(), &adapter.ChatRequest{
 		Model:            "qwen-plus",
 		Messages:         []adapter.Message{{Role: "user", Content: "say hello"}},
 		PresencePenalty:  &presencePenalty,
@@ -1229,7 +1182,7 @@ func TestAliyunAdapterChatCompletion_MapsNativeParameters(t *testing.T) {
 	}
 }
 
-func TestAliyunAdapterChatCompletion_ParsesReasoningContent(t *testing.T) {
+func TestAdapterChatCompletion_ParsesReasoningContent(t *testing.T) {
 	t.Helper()
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1241,12 +1194,12 @@ func TestAliyunAdapterChatCompletion_ParsesReasoningContent(t *testing.T) {
 	}))
 	defer server.Close()
 
-	a, err := NewAliyunAdapter(&adapter.AdapterConfig{APIKey: "test-key", BaseURL: server.URL + "/api/v1"})
+	a, err := newTestAdapter(&adapter.AdapterConfig{APIKey: "test-key", BaseURL: server.URL + "/api/v1"})
 	if err != nil {
-		t.Fatalf("NewAliyunAdapter() error = %v", err)
+		t.Fatalf("newTestAdapter() error = %v", err)
 	}
 
-	resp, err := a.ChatCompletion(context.Background(), &adapter.ChatRequest{
+	resp, err := a.chatCompletionNative(context.Background(), &adapter.ChatRequest{
 		Model:    "qwen-plus",
 		Messages: []adapter.Message{{Role: "user", Content: "question"}},
 	})
@@ -1262,7 +1215,7 @@ func TestAliyunAdapterChatCompletion_ParsesReasoningContent(t *testing.T) {
 	}
 }
 
-func TestAliyunAdapterChatCompletionStream_ParsesReasoningContentDelta(t *testing.T) {
+func TestAdapterChatCompletionStream_ParsesReasoningContentDelta(t *testing.T) {
 	t.Helper()
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1272,12 +1225,12 @@ func TestAliyunAdapterChatCompletionStream_ParsesReasoningContentDelta(t *testin
 	}))
 	defer server.Close()
 
-	a, err := NewAliyunAdapter(&adapter.AdapterConfig{APIKey: "test-key", BaseURL: server.URL + "/api/v1"})
+	a, err := newTestAdapter(&adapter.AdapterConfig{APIKey: "test-key", BaseURL: server.URL + "/api/v1"})
 	if err != nil {
-		t.Fatalf("NewAliyunAdapter() error = %v", err)
+		t.Fatalf("newTestAdapter() error = %v", err)
 	}
 
-	stream, err := a.ChatCompletionStream(context.Background(), &adapter.ChatRequest{
+	stream, err := a.chatCompletionStreamNative(context.Background(), &adapter.ChatRequest{
 		Model:    "qwen-plus",
 		Messages: []adapter.Message{{Role: "user", Content: "question"}},
 	})

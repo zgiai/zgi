@@ -151,8 +151,24 @@ func (s *llmGatewayServiceImpl) runNativeNonStream(
 	traceName string,
 	bodyFormat nativeUsageBodyFormat,
 	call func(context.Context, adapter.LLMProviderAdapter) (*adapter.RawResponse, error),
-) (*adapter.RawResponse, error) {
+) (response *adapter.RawResponse, retErr error) {
 	startTime := time.Now()
+	traceCtx := ctx
+	var traceBillingCtx *BillingContext
+	defer func() {
+		s.traceNativeLLMOperation(
+			traceCtx,
+			traceName,
+			nativeTraceOperation(traceName),
+			body,
+			nativeRawResponseOutput(response),
+			nativeRawResponseUsage(response),
+			startTime,
+			time.Time{},
+			traceBillingCtx,
+			retErr,
+		)
+	}()
 	if err := s.checkModelAuthorization(apiKey, nil, model); err != nil {
 		return nil, err
 	}
@@ -206,6 +222,8 @@ func (s *llmGatewayServiceImpl) runNativeNonStream(
 		lockTokenPricingQuote(billingCtx, quote)
 		ctx = withLLMLangfuseTraceContext(ctx, billingCtx, traceName)
 		ctx = withPlatformProxyMetadata(ctx, billingCtx)
+		traceCtx = ctx
+		traceBillingCtx = billingCtx
 
 		providerAdapter, err := s.adapterFactory.CreateAdapter(s.createAdapterConfig(providerSelection, organizationID))
 		if err != nil {
@@ -221,7 +239,7 @@ func (s *llmGatewayServiceImpl) runNativeNonStream(
 			lastErr = err
 			continue
 		}
-		response, err := call(ctx, providerAdapter)
+		response, err = call(ctx, providerAdapter)
 		responseTime := time.Since(startTime).Milliseconds()
 		if err != nil {
 			if adapter.IsCapabilityUnsupported(err) {
@@ -296,8 +314,28 @@ func (s *llmGatewayServiceImpl) runNativeStream(
 	traceName string,
 	usageFormat nativeUsageBodyFormat,
 	call func(context.Context, adapter.LLMProviderAdapter) (<-chan adapter.RawStreamEvent, error),
-) (<-chan adapter.RawStreamEvent, error) {
+) (output <-chan adapter.RawStreamEvent, retErr error) {
 	startTime := time.Now()
+	traceCtx := ctx
+	var traceBillingCtx *BillingContext
+	traceHandedOff := false
+	defer func() {
+		if traceHandedOff {
+			return
+		}
+		s.traceNativeLLMOperation(
+			traceCtx,
+			traceName,
+			nativeTraceOperation(traceName),
+			body,
+			nil,
+			nil,
+			startTime,
+			time.Time{},
+			traceBillingCtx,
+			retErr,
+		)
+	}()
 	if err := s.checkModelAuthorization(apiKey, nil, model); err != nil {
 		return nil, err
 	}
@@ -351,6 +389,8 @@ func (s *llmGatewayServiceImpl) runNativeStream(
 		billingCtx.CompletionTokens = completionTokens
 		ctx = withLLMLangfuseTraceContext(ctx, billingCtx, traceName)
 		ctx = withPlatformProxyMetadata(ctx, billingCtx)
+		traceCtx = ctx
+		traceBillingCtx = billingCtx
 
 		providerAdapter, err := s.adapterFactory.CreateAdapter(s.createAdapterConfig(providerSelection, organizationID))
 		if err != nil {
@@ -380,7 +420,8 @@ func (s *llmGatewayServiceImpl) runNativeStream(
 		}
 
 		outputChan := make(chan adapter.RawStreamEvent)
-		go s.handleNativeStreamBilling(context.WithoutCancel(ctx), streamChan, outputChan, billingCtx, providerSelection, channelID, startTime, model, usageFormat)
+		go s.handleNativeStreamBilling(context.WithoutCancel(ctx), streamChan, outputChan, billingCtx, providerSelection, channelID, startTime, model, body, traceName, usageFormat)
+		traceHandedOff = true
 		return outputChan, nil
 	}
 
@@ -414,6 +455,8 @@ func (s *llmGatewayServiceImpl) handleNativeStreamBilling(
 	channelID *uuid.UUID,
 	startTime time.Time,
 	model string,
+	requestBody json.RawMessage,
+	traceName string,
 	usageFormat nativeUsageBodyFormat,
 ) {
 	defer close(outputChan)
@@ -455,11 +498,14 @@ func (s *llmGatewayServiceImpl) handleNativeStreamBilling(
 	}
 
 	responseTime := time.Since(startTime).Milliseconds()
+	traceOutput := collectedText.String()
 	if lastError != nil {
 		if err := s.handleProviderError(ctx, billingCtx, providerSelection, channelID, responseTime, 0, lastError); err != nil {
+			s.traceNativeLLMStreamOperation(ctx, traceName, nativeTraceOperation(traceName), requestBody, traceOutput, lastUsage, startTime, time.Time{}, billingCtx, err)
 			outputChan <- adapter.RawStreamEvent{Error: err, Done: true, Usage: lastUsage}
 			return
 		}
+		s.traceNativeLLMStreamOperation(ctx, traceName, nativeTraceOperation(traceName), requestBody, traceOutput, lastUsage, startTime, time.Time{}, billingCtx, lastError)
 		outputChan <- adapter.RawStreamEvent{Error: lastError, Done: true, Usage: lastUsage}
 		return
 	}
@@ -476,9 +522,11 @@ func (s *llmGatewayServiceImpl) handleNativeStreamBilling(
 	}
 
 	if err := s.settleChatSuccess(ctx, billingCtx, providerSelection, channelID, lastUsage, lastSettlement, responseTime); err != nil {
+		s.traceNativeLLMStreamOperation(ctx, traceName, nativeTraceOperation(traceName), requestBody, traceOutput, lastUsage, startTime, time.Time{}, billingCtx, err)
 		outputChan <- adapter.RawStreamEvent{Error: err, Done: true, Usage: lastUsage}
 		return
 	}
+	s.traceNativeLLMStreamOperation(ctx, traceName, nativeTraceOperation(traceName), requestBody, traceOutput, lastUsage, startTime, time.Time{}, billingCtx, nil)
 	if pendingTerminal != nil {
 		if estimatedUsage {
 			if updated, ok := injectUsageIntoNativeTerminalEvent(*pendingTerminal, model, lastUsage, usageFormat); ok {

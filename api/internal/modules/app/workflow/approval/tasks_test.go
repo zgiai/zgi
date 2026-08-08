@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/hibiken/asynq"
+	workflowpause "github.com/zgiai/zgi/api/internal/modules/app/workflow/pause"
 )
 
 func TestQuestionResumeInputsRestoresWorkflowQueryAndChoice(t *testing.T) {
@@ -14,6 +15,19 @@ func TestQuestionResumeInputsRestoresWorkflowQueryAndChoice(t *testing.T) {
 	})
 	if inputs["query"] != "continue" || inputs["sys.query"] != "continue" || inputs["question_answer_option_id"] != "approve" {
 		t.Fatalf("resume inputs = %#v", inputs)
+	}
+}
+
+func TestQuestionResumeTaskHandlerDropsTerminalWorkflow(t *testing.T) {
+	task, err := NewQuestionResumeTask(QuestionResumeTaskPayload{WorkflowRunID: "run-stopped"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := NewQuestionResumeTaskHandler(func(context.Context, string, map[string]interface{}) error {
+		return workflowpause.ErrPauseNotResumeReady
+	})
+	if err := handler(t.Context(), asynq.NewTask(task.Type(), task.Payload())); err != nil {
+		t.Fatalf("terminal resume task error = %v, want nil", err)
 	}
 }
 

@@ -8,7 +8,7 @@ Use this reference when `format` is `html` or `htm`.
 - `format`: Use `html`.
 - `filename`: Optional display filename without path separators. The `.html` extension is added automatically.
 - `title`: Optional document title used only when the tool wraps an HTML fragment.
-- `lifecycle`: Optional `persistent` or `temporary`. Defaults to `persistent`.
+- `lifecycle`: Optional `persistent` or `temporary`. Defaults to `temporary`.
 
 ## Content Rules
 

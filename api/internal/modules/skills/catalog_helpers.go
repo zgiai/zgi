@@ -1,6 +1,7 @@
 package skills
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -519,9 +520,60 @@ func summarizeArguments(args map[string]interface{}) map[string]interface{} {
 	}
 	out := make(map[string]interface{}, len(args))
 	for key, value := range args {
+		if key == "document" || key == "presentation" {
+			out[key] = summarizeStructuredArtifactArgument(key, value)
+			continue
+		}
 		out[key] = summarizeValue(value)
 	}
 	return out
+}
+
+func summarizeStructuredArtifactArgument(key string, value interface{}) map[string]interface{} {
+	argumentType := fmt.Sprintf("%T", value)
+	var serialized []byte
+	switch typed := value.(type) {
+	case string:
+		argumentType = "string"
+		serialized = []byte(typed)
+	case json.RawMessage:
+		argumentType = "raw_message"
+		serialized = typed
+	case map[string]interface{}:
+		argumentType = "object"
+		serialized, _ = json.Marshal(typed)
+	default:
+		serialized, _ = json.Marshal(value)
+	}
+	if serialized == nil {
+		serialized = []byte(fmt.Sprint(value))
+	}
+	digest := sha256.Sum256(serialized)
+	summary := map[string]interface{}{
+		"argument_type":    argumentType,
+		"serialized_bytes": len(serialized),
+		"digest":           fmt.Sprintf("sha256:%x", digest),
+	}
+
+	var object map[string]interface{}
+	if typed, ok := value.(map[string]interface{}); ok {
+		object = typed
+	} else if len(serialized) > 0 {
+		_ = json.Unmarshal(serialized, &object)
+	}
+	if object == nil {
+		return summary
+	}
+	collectionKey := "blocks"
+	countKey := "block_count"
+	if key == "presentation" {
+		collectionKey = "slides"
+		countKey = "slide_count"
+	}
+	if items, ok := object[collectionKey].([]interface{}); ok {
+		summary[countKey] = len(items)
+	}
+	return summary
 }
 
 func summarizeValue(value interface{}) interface{} {

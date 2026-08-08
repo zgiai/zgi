@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 
 	extractcommon "github.com/zgiai/zgi/api/internal/capabilities/contentparse/engines/hyperparse/pkg/providers/common"
 	extractlocal "github.com/zgiai/zgi/api/internal/capabilities/contentparse/engines/hyperparse/pkg/providers/local"
@@ -15,6 +16,13 @@ import (
 )
 
 const adapterName = "hyperparse_sdk"
+
+const (
+	envChatContextImageSummaryMax     = "CONTENT_PARSE_CHAT_CONTEXT_IMAGE_SUMMARY_MAX"
+	envMineruImageSummaryConcurrency  = "CONTENT_PARSE_MINERU_IMAGE_SUMMARY_CONCURRENCY"
+	defaultChatContextImageSummaryMax = 8
+	defaultMineruImageSummaryWorkers  = 4
+)
 
 type FigureSummaryEnhancer interface {
 	LocalizeReductoFigureSummary(ctx context.Context, organizationID, text string) (string, error)
@@ -244,8 +252,6 @@ func mapDocumentResultWithOptions(req contracts.ParseRequest, engine extractcomm
 		metadata := cloneMap(element.Metadata)
 		if engine == extractcommon.EngineReducto {
 			content, metadata = localizeReductoFigureContent(req, content, metadata, opts.ctx, opts.figureSummaryEnhancer)
-		} else if engine == extractcommon.EngineMineru {
-			content, metadata = summarizeMineruFigureContent(req, content, metadata, opts.ctx, opts.figureSummaryEnhancer)
 		}
 		artifact.Elements = append(artifact.Elements, contracts.ParsedElement{
 			ID:        element.ID,
@@ -261,6 +267,9 @@ func mapDocumentResultWithOptions(req contracts.ParseRequest, engine extractcomm
 			),
 			Metadata: metadata,
 		})
+	}
+	if engine == extractcommon.EngineMineru {
+		enrichMineruFigureSummaries(req, artifact, opts.ctx, opts.figureSummaryEnhancer)
 	}
 	if len(artifact.Elements) > 0 && (engine == extractcommon.EngineMineru || engine == extractcommon.EngineReducto) {
 		artifact.Metadata["structured_elements"] = true
@@ -279,6 +288,105 @@ func mapDocumentResultWithOptions(req contracts.ParseRequest, engine extractcomm
 	}
 
 	return artifact
+}
+
+type mineruFigureSummaryJob struct {
+	elementIndex int
+}
+
+type mineruFigureSummaryResult struct {
+	content  string
+	metadata map[string]any
+}
+
+// enrichMineruFigureSummaries parallelizes visual summaries for every MinerU
+// parse. Chat attachments are additionally bounded because they only need a
+// small amount of visual context; dataset indexing keeps full figure coverage.
+func enrichMineruFigureSummaries(req contracts.ParseRequest, artifact *contracts.ParseArtifact, ctx context.Context, enhancer FigureSummaryEnhancer) {
+	if artifact == nil || enhancer == nil {
+		return
+	}
+	maxSummaries := -1
+	if req.Intent == contracts.ParseIntentChatContext {
+		maxSummaries = envconfig.Int(envChatContextImageSummaryMax, defaultChatContextImageSummaryMax)
+	}
+	if maxSummaries == 0 {
+		artifact.Metadata["mineru_visual_summary"] = map[string]any{
+			"status": "disabled",
+			"max":    maxSummaries,
+		}
+		return
+	}
+
+	jobs := make([]mineruFigureSummaryJob, 0, len(artifact.Elements))
+	for index := range artifact.Elements {
+		element := artifact.Elements[index]
+		if !isMineruFigureElement(element.Metadata) || mineruFigureImageURL(element.Metadata) == "" {
+			continue
+		}
+		jobs = append(jobs, mineruFigureSummaryJob{elementIndex: index})
+	}
+	requested := len(jobs)
+	if requested == 0 {
+		return
+	}
+	if maxSummaries > 0 && len(jobs) > maxSummaries {
+		jobs = jobs[:maxSummaries]
+	}
+
+	workers := envconfig.Int(envMineruImageSummaryConcurrency, defaultMineruImageSummaryWorkers)
+	if workers < 1 {
+		workers = 1
+	}
+	if workers > len(jobs) {
+		workers = len(jobs)
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	results := make([]mineruFigureSummaryResult, len(jobs))
+	semaphore := make(chan struct{}, workers)
+	var wg sync.WaitGroup
+	for jobIndex := range jobs {
+		jobIndex := jobIndex
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			select {
+			case semaphore <- struct{}{}:
+			case <-ctx.Done():
+				return
+			}
+			defer func() { <-semaphore }()
+
+			element := artifact.Elements[jobs[jobIndex].elementIndex]
+			content, metadata := summarizeMineruFigureContent(req, element.Content, element.Metadata, ctx, enhancer)
+			results[jobIndex] = mineruFigureSummaryResult{content: content, metadata: metadata}
+		}()
+	}
+	wg.Wait()
+
+	applied := 0
+	for jobIndex, job := range jobs {
+		result := results[jobIndex]
+		if result.metadata == nil {
+			continue
+		}
+		artifact.Elements[job.elementIndex].Content = result.content
+		artifact.Elements[job.elementIndex].Metadata = result.metadata
+		if payload, ok := result.metadata["payload"].(map[string]any); ok && strings.TrimSpace(fmt.Sprint(payload["mineru_visual_summary"])) != "" {
+			applied++
+		}
+	}
+	artifact.Metadata["mineru_visual_summary"] = map[string]any{
+		"status":      "completed",
+		"requested":   requested,
+		"attempted":   len(jobs),
+		"applied":     applied,
+		"skipped":     requested - len(jobs),
+		"concurrency": workers,
+	}
 }
 
 func localizeReductoFigureContent(req contracts.ParseRequest, content string, metadata map[string]any, ctx context.Context, enhancer FigureSummaryEnhancer) (string, map[string]any) {

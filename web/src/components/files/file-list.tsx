@@ -739,7 +739,7 @@ function FileListBase({
                           <span>{t('fileList.uploadDate')}</span>
                         </div>
                         <div className="mt-1 text-sm font-medium text-foreground">
-                          {formatDate(new Date(file.created_at).getTime() - 8 * 60 * 60 * 1000)}
+                          {formatDate(file.created_at)}
                         </div>
                       </div>
                       <div className="col-span-2 rounded-xl bg-muted/50 px-3 py-2">
@@ -1106,7 +1106,7 @@ function FileListBase({
                     )}
                   </TableCell>
                   <TableCell className="max-w-0 truncate text-[13px] text-muted-foreground">
-                    {formatDate(new Date(file.created_at).getTime() - 8 * 60 * 60 * 1000)}
+                    {formatDate(file.created_at)}
                   </TableCell>
                   {hasAnyAction && (
                     <TableCell className="pr-8 text-right">

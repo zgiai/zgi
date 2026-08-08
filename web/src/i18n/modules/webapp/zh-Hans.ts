@@ -86,16 +86,22 @@ const messages: WebappMessages = {
     workflowRunFailed: '执行失败',
     workflowRunFailedWithReason: '执行失败：{reason}',
     workflowErrors: {
+      agent_output_truncated:
+        '智能体回复达到模型输出长度上限，本轮未能完整结束。系统没有自动重试。',
       model_service_timeout: '模型服务连接超时，请稍后重试。',
       model_service_unavailable: '模型服务暂时不可用，请稍后重试。',
       model_invocation_failed: '模型调用失败，请稍后重试。',
+      planning_output_truncated:
+        '智能体规划输出达到长度上限，未能形成完整操作。请精简智能体指令或缩小单次任务范围后再试。',
       server_unavailable:
         'AI 服务暂时异常，可能是模型渠道或上游服务不可用。请稍后重试；若持续失败，请联系管理员检查模型与渠道状态。',
     },
     workflowErrorTitles: {
+      agent_output_truncated: '智能体回复不完整',
       model_service_timeout: '模型响应超时',
       model_service_unavailable: '当前模型暂时不可用',
       model_invocation_failed: '模型调用失败',
+      planning_output_truncated: '智能体规划输出不完整',
       server_unavailable: '暂时无法生成回复',
     },
     conversationBusy: '当前会话仍在运行，请等待结束或切换到其他会话。',
@@ -287,6 +293,27 @@ const messages: WebappMessages = {
     },
     operationStatus: {
       planning: '正在进行任务规划…',
+      modelProcessing: {
+        initial: '正在分析请求…',
+        extended: '正在处理较复杂的内容…',
+        longRunning: '仍在继续处理，请稍候…',
+        continuing: '正在继续处理…',
+        reasoning: {
+          initial: '正在推理并梳理方案…',
+          extended: '正在深入推理并完善方案…',
+          longRunning: '仍在深入推理，请稍候…',
+        },
+        preparingAction: {
+          initial: '正在准备下一步操作…',
+          extended: '正在组织执行所需信息…',
+          longRunning: '仍在准备下一步操作，请稍候…',
+        },
+        reviewingToolResult: {
+          initial: '正在分析执行结果…',
+          extended: '正在综合执行结果…',
+          longRunning: '仍在核对执行结果，请稍候…',
+        },
+      },
       toolCompleted: '操作已完成，正在整理结果…',
       toolCompletedDetailed: '已完成 {count} 项{asset}操作，正在整理结果…',
       assetCreated: '已完成创建，正在确认页面状态…',
@@ -806,6 +833,7 @@ const messages: WebappMessages = {
       agentic: {
         showProcess: '显示过程',
         hideProcess: '隐藏过程',
+        processTitle: '处理过程',
         loadingSkill: '加载 {skill}',
         loadedSkill: '{skill} 已加载',
         loadFailed: '{skill} 加载失败',
@@ -888,6 +916,14 @@ const messages: WebappMessages = {
       imageVisionRequired: '只有具备视觉能力的模型支持图片上传。',
       imageModelLocked:
         '由于您已经上传了图片，只能切换具备视觉能力的模型。如果您希望切换到不具备视觉能力的模型，请先移除输入区域的已上传图片。',
+      visionReplayWarning: {
+        title: '当前模型无法理解原消息中的图片',
+        description:
+          '这条消息包含 {count} 张图片。继续后，当前模型只能读取文字内容，图片不会参与回答，结果可能不完整或与原问题不符。',
+        recommendation: '如果图片是问题的重要依据，建议返回并切换到具备图像理解能力的模型。',
+        cancel: '返回切换模型',
+        confirm: '忽略图片并继续',
+      },
       uploadDocumentTooltip: '最多可附加 {count} 个文件，每个 {size} MB。支持：{types}。',
       uploadImageTooltip:
         '图片需要搭配具备视觉能力的模型使用。最多可附加 {count} 个文件，每个 {size} MB。支持：{types}。',

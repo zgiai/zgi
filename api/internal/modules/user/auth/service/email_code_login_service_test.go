@@ -176,8 +176,9 @@ func TestEmailCodeLoginReleasesReservationWhenConsumeFails(t *testing.T) {
 	server := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
 	client.AddHook(&failRedisCommandOnceHook{
-		command:   "getdel",
+		command:   "evalsha",
 		keyPrefix: "token:" + EmailCodeLoginTokenType + ":",
+		numKeys:   1,
 	})
 	redisUtil.SetClient(client)
 	t.Cleanup(func() {

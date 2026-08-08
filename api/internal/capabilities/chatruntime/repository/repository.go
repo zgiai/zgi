@@ -12,6 +12,7 @@ import (
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type ConversationRepository interface {
@@ -851,6 +852,24 @@ func (r *messageRepository) GetScoped(ctx context.Context, id, organizationID, a
 	return &message, nil
 }
 
+func (r *messageRepository) GetScopedForUpdate(ctx context.Context, id, organizationID, accountID uuid.UUID) (*runtimemodel.Message, error) {
+	var message runtimemodel.Message
+	err := r.db.WithContext(ctx).Table("chat_runtime_messages AS m").
+		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Select("m.*").
+		Joins("JOIN chat_runtime_conversations AS c ON c.id = m.conversation_id").
+		Where("m.id = ? AND c.organization_id = ? AND c.account_id = ? AND m.deleted_at IS NULL AND c.deleted_at IS NULL", id, organizationID, accountID).
+		Take(&message).Error
+	if err != nil {
+		return nil, wrapNotFound(err, "aichat message")
+	}
+	return &message, nil
+}
+
+func GetMessageScopedForUpdate(ctx context.Context, db *gorm.DB, id, organizationID, accountID uuid.UUID) (*runtimemodel.Message, error) {
+	return (&messageRepository{db: db}).GetScopedForUpdate(ctx, id, organizationID, accountID)
+}
+
 func (r *messageRepository) GetRuntimeLogScoped(ctx context.Context, id, organizationID uuid.UUID, workspaceID *uuid.UUID, accountID uuid.UUID, callerType string, callerID *uuid.UUID, source string) (*runtimemodel.Message, error) {
 	var message runtimemodel.Message
 	query := applyRuntimeLogSourceFilter(applyRuntimeLogCallerFilter(r.db.WithContext(ctx).Table("chat_runtime_messages AS m").
@@ -1324,6 +1343,47 @@ func (r *messageRepository) UpdateStoppedAnswer(ctx context.Context, id uuid.UUI
 		return gorm.ErrRecordNotFound
 	}
 	return nil
+}
+
+// UpdateStoppedPreservingAnswer closes a message without claiming ownership of
+// its answer. Workflow continuations have a separate answer producer that may
+// still be flushing the final visible text after the stop barrier commits.
+func (r *messageRepository) UpdateStoppedPreservingAnswer(ctx context.Context, id uuid.UUID, metadata map[string]interface{}) error {
+	if metadata == nil {
+		metadata = map[string]interface{}{}
+	}
+	metadataJSON, err := json.Marshal(metadata)
+	if err != nil {
+		return fmt.Errorf("failed to marshal stopped aichat metadata: %w", err)
+	}
+	query := r.db.WithContext(ctx).Model(&runtimemodel.Message{}).
+		Where("id = ? AND deleted_at IS NULL AND status IN ?", id, append(mutableMessageStatuses(), runtimemodel.MessageStatusStopped))
+	if runID, ok := RuntimeRunIDFromContext(ctx); ok {
+		query = query.Where(
+			"runtime_run_id = ? OR (status = ? AND runtime_run_id IS NULL)",
+			runID,
+			runtimemodel.MessageStatusStopped,
+		)
+	}
+	result := query.Updates(map[string]interface{}{
+		"status":               runtimemodel.MessageStatusStopped,
+		"error":                nil,
+		"metadata":             datatypes.JSON(metadataJSON),
+		"runtime_run_id":       nil,
+		"runtime_heartbeat_at": nil,
+		"updated_at":           time.Now(),
+	})
+	if result.Error != nil {
+		return fmt.Errorf("failed to stop aichat message while preserving answer: %w", result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
+	}
+	return nil
+}
+
+func UpdateMessageStoppedPreservingAnswer(ctx context.Context, db *gorm.DB, id uuid.UUID, metadata map[string]interface{}) error {
+	return (&messageRepository{db: db}).UpdateStoppedPreservingAnswer(ctx, id, metadata)
 }
 
 func (r *messageRepository) DeleteSubtreeScoped(ctx context.Context, id, organizationID, accountID uuid.UUID) (*MessageDeleteResult, error) {

@@ -1740,7 +1740,7 @@ func defaultOutputReserve(contextWindow int) int {
 	case contextWindow <= 128000:
 		return 4096
 	default:
-		return 8192
+		return 16384
 	}
 }
 

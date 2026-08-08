@@ -24,7 +24,7 @@ func (routeBoundaryImageService) Generate(context.Context, imageservice.Scope, i
 	return nil, nil
 }
 
-func TestRegisterRoutesAppliesWorkspaceMiddlewareOnlyToGenerate(t *testing.T) {
+func TestRegisterRoutesAllowsOrganizationScopedModelsAndGenerate(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	organizationID := uuid.NewString()
@@ -35,12 +35,7 @@ func TestRegisterRoutesAppliesWorkspaceMiddlewareOnlyToGenerate(t *testing.T) {
 		c.Next()
 	})
 
-	workspaceMiddlewareCalls := 0
-	workspaceRequired := func(c *gin.Context) {
-		workspaceMiddlewareCalls++
-		c.AbortWithStatus(http.StatusTeapot)
-	}
-	NewHandler(routeBoundaryImageService{}).RegisterRoutes(router.Group(""), workspaceRequired)
+	NewHandler(routeBoundaryImageService{}).RegisterRoutes(router.Group(""))
 
 	modelsRecorder := httptest.NewRecorder()
 	modelsRequest := httptest.NewRequest(http.MethodGet, "/image-runtime/models", nil)
@@ -48,18 +43,11 @@ func TestRegisterRoutesAppliesWorkspaceMiddlewareOnlyToGenerate(t *testing.T) {
 	if modelsRecorder.Code != http.StatusOK {
 		t.Fatalf("models status = %d, want %d", modelsRecorder.Code, http.StatusOK)
 	}
-	if workspaceMiddlewareCalls != 0 {
-		t.Fatalf("workspace middleware calls after models = %d, want 0", workspaceMiddlewareCalls)
-	}
-
 	generateRecorder := httptest.NewRecorder()
 	generateRequest := httptest.NewRequest(http.MethodPost, "/image-runtime/generate", strings.NewReader(`{}`))
 	generateRequest.Header.Set("Content-Type", "application/json")
 	router.ServeHTTP(generateRecorder, generateRequest)
-	if generateRecorder.Code != http.StatusTeapot {
-		t.Fatalf("generate status = %d, want %d", generateRecorder.Code, http.StatusTeapot)
-	}
-	if workspaceMiddlewareCalls != 1 {
-		t.Fatalf("workspace middleware calls after generate = %d, want 1", workspaceMiddlewareCalls)
+	if generateRecorder.Code != http.StatusOK {
+		t.Fatalf("generate status = %d, want %d", generateRecorder.Code, http.StatusOK)
 	}
 }

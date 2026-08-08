@@ -187,6 +187,7 @@ export interface DraftTestChannelModelRequest {
   api_base_url?: string;
   model: string;
   test_method?: ChannelTestMethod;
+  /** Omit to select the test mode from model metadata. */
   stream?: boolean;
 }
 
@@ -242,6 +243,7 @@ export interface BatchTestChannelModelsRequest {
   models: string[];
   test_message?: string;
   test_method?: ChannelTestMethod;
+  /** Omit to select the test mode independently for each model. */
   stream?: boolean;
 }
 
