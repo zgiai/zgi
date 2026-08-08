@@ -1113,7 +1113,7 @@ func (h *ExternalWorkflowHandler) GetAppParameters(c *gin.Context) {
 			},
 		},
 		"system_parameters": gin.H{
-			"file_size_limit":       15,
+			"file_size_limit":       50,
 			"image_file_size_limit": 10,
 			"audio_file_size_limit": 50,
 			"video_file_size_limit": 100,

@@ -23,6 +23,72 @@ func TestHandleOpenAICompatibleErrorMapsPlatformChannelUnavailable(t *testing.T)
 	}
 }
 
+func TestHandleOpenAICompatibleErrorMapsOpenAICodes(t *testing.T) {
+	tests := []struct {
+		name     string
+		status   int
+		body     string
+		wantCode string
+		wantErr  error
+	}{
+		{
+			name:     "insufficient quota code wins over rate limit status",
+			status:   http.StatusTooManyRequests,
+			body:     `{"error":{"message":"insufficient API quota","type":"insufficient_quota","code":"insufficient_quota"}}`,
+			wantCode: "insufficient_quota",
+			wantErr:  adapter.ErrQuotaExhausted,
+		},
+		{
+			name:     "insufficient quota type works without code",
+			status:   http.StatusOK,
+			body:     `{"error":{"message":"insufficient API quota","type":"insufficient_quota"}}`,
+			wantCode: "insufficient_quota",
+			wantErr:  adapter.ErrQuotaExhausted,
+		},
+		{
+			name:     "rate limit code",
+			status:   http.StatusTooManyRequests,
+			body:     `{"error":{"message":"rate limit reached","type":"rate_limit_error","code":"rate_limit_exceeded"}}`,
+			wantCode: "rate_limit_exceeded",
+			wantErr:  adapter.ErrRateLimited,
+		},
+		{
+			name:     "billing hard limit code",
+			status:   http.StatusBadRequest,
+			body:     `{"error":{"message":"billing hard limit reached","type":"invalid_request_error","code":"billing_hard_limit_reached"}}`,
+			wantCode: "billing_hard_limit_reached",
+			wantErr:  adapter.ErrInsufficientBalance,
+		},
+		{
+			name:     "content policy code",
+			status:   http.StatusBadRequest,
+			body:     `{"error":{"message":"content policy violation","type":"invalid_request_error","code":"content_policy_violation"}}`,
+			wantCode: "content_policy_violation",
+			wantErr:  adapter.ErrContentPolicyViolation,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := handleOpenAICompatibleError(tt.status, []byte(tt.body))
+			if !errors.Is(err, tt.wantErr) {
+				t.Fatalf("handleOpenAICompatibleError() error = %v, want %v", err, tt.wantErr)
+			}
+
+			var adapterErr *adapter.AdapterError
+			if !errors.As(err, &adapterErr) {
+				t.Fatalf("handleOpenAICompatibleError() error = %T %v, want AdapterError", err, err)
+			}
+			if adapterErr.Code != tt.wantCode {
+				t.Fatalf("AdapterError.Code = %q, want %q", adapterErr.Code, tt.wantCode)
+			}
+			if adapterErr.StatusCode != tt.status {
+				t.Fatalf("AdapterError.StatusCode = %d, want %d", adapterErr.StatusCode, tt.status)
+			}
+		})
+	}
+}
+
 func TestOpenAIAdapterChatCompletionStreamParsesPlatformChannelError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -47,6 +113,50 @@ func TestOpenAIAdapterChatCompletionStreamParsesPlatformChannelError(t *testing.
 	})
 	if !errors.Is(err, adapter.ErrPlatformChannelUnavailable) {
 		t.Fatalf("ChatCompletionStream() error = %v, want ErrPlatformChannelUnavailable", err)
+	}
+}
+
+func TestOpenAIAdapterChatCompletionStreamReturnsSSEError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = fmt.Fprint(w, "data: {\"error\":{\"message\":\"insufficient API quota\",\"type\":\"insufficient_quota\",\"code\":\"insufficient_quota\"}}\n\ndata: [DONE]\n\n")
+	}))
+	defer server.Close()
+
+	a, err := NewOpenAIAdapter(&adapter.AdapterConfig{
+		APIKey:  "test-key",
+		BaseURL: server.URL + "/v1",
+	})
+	if err != nil {
+		t.Fatalf("NewOpenAIAdapter() error = %v", err)
+	}
+
+	stream, err := a.ChatCompletionStream(context.Background(), &adapter.ChatRequest{
+		Model: "gpt-5.5",
+		Messages: []adapter.Message{
+			{Role: "user", Content: "hello"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("ChatCompletionStream() error = %v", err)
+	}
+
+	var streamErr error
+	for response := range stream {
+		if response.Error != nil {
+			streamErr = response.Error
+		}
+	}
+	if streamErr == nil {
+		t.Fatal("stream error = nil, want upstream insufficient quota error")
+	}
+
+	var adapterErr *adapter.AdapterError
+	if !errors.As(streamErr, &adapterErr) {
+		t.Fatalf("stream error = %T %v, want AdapterError", streamErr, streamErr)
+	}
+	if adapterErr.Code != "insufficient_quota" || adapterErr.Message != "insufficient API quota" {
+		t.Fatalf("stream error = %+v, want code insufficient_quota and provider message", adapterErr)
 	}
 }
 

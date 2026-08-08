@@ -21,6 +21,7 @@ import { IS_CLOUD } from '@/lib/config';
 import { cn } from '@/lib/utils';
 import type { ModelUsageAppType, ModelUsageSummary } from '@/services/types/statistics';
 import { getBillingDisplaySettings } from '@/utils/billing-display';
+import { MODEL_USAGE_APP_TYPES } from '@/utils/model-usage-app-type';
 import { isCustomDateRangeValid } from '@/utils/usage-date-range';
 
 type DateRangeKey = 'last7Days' | 'last30Days' | 'last90Days' | 'custom';
@@ -144,7 +145,7 @@ export default function UsageOverviewPage() {
               <div>
                 <SectionEyebrow>{tCommon('filter')}</SectionEyebrow>
                 <CardTitle className="text-base">{t('usage.filters.appType')}</CardTitle>
-                <CardDescription>选择时间范围、应用类型和模型后查看对应数据。</CardDescription>
+                <CardDescription>{t('usage.filters.description')}</CardDescription>
               </div>
               <div className="flex items-center gap-2 self-start">
                 {hasActiveFilters ? (
@@ -186,11 +187,11 @@ export default function UsageOverviewPage() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">{t('usage.filters.appTypePlaceholder')}</SelectItem>
-                  <SelectItem value="workflow">{t('usage.appTypes.workflow')}</SelectItem>
-                  <SelectItem value="dataset">{t('usage.appTypes.dataset')}</SelectItem>
-                  <SelectItem value="agent">{t('usage.appTypes.agent')}</SelectItem>
-                  <SelectItem value="aichat">{t('usage.appTypes.aichat')}</SelectItem>
-                  <SelectItem value="unknown">{t('usage.appTypes.unknown')}</SelectItem>
+                  {MODEL_USAGE_APP_TYPES.map(appType => (
+                    <SelectItem key={appType} value={appType}>
+                      {t(`usage.appTypes.${appType}`)}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
 

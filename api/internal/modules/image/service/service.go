@@ -295,9 +295,6 @@ func (s *service) resolveGenerationConversation(ctx context.Context, scope chatr
 	if conversation.LegacyFallback {
 		return nil, ErrConversationNotAccessible
 	}
-	if scope.WorkspaceID == nil || conversation.WorkspaceID == nil || *scope.WorkspaceID != *conversation.WorkspaceID {
-		return nil, ErrConversationNotAccessible
-	}
 	return &generationConversation{
 		ID:       conversation.ID,
 		Title:    conversation.Title,
@@ -401,20 +398,20 @@ func buildAppContext(scope Scope, conversationID uuid.UUID) (*llmclient.AppConte
 	if scope.OrganizationID == uuid.Nil || scope.AccountID == uuid.Nil || conversationID == uuid.Nil {
 		return nil, ErrBillingContextRequired
 	}
-	if scope.WorkspaceID == nil || *scope.WorkspaceID == uuid.Nil {
-		return nil, ErrBillingContextRequired
-	}
 	sessionID := conversationID.String()
-	return &llmclient.AppContext{
+	appCtx := &llmclient.AppContext{
 		OrganizationID:     scope.OrganizationID.String(),
-		WorkspaceID:        scope.WorkspaceID.String(),
-		BillingSubjectType: llmclient.BillingSubjectTypeWorkspace,
+		BillingSubjectType: llmclient.BillingSubjectTypeOrganization,
 		AppID:              sessionID,
 		AppType:            imageRuntimeAppType,
 		AccountID:          scope.AccountID.String(),
 		SessionID:          sessionID,
 		ConversationID:     sessionID,
-	}, nil
+	}
+	if scope.WorkspaceID != nil && *scope.WorkspaceID != uuid.Nil {
+		appCtx.WorkspaceID = scope.WorkspaceID.String()
+	}
+	return appCtx, nil
 }
 
 func imageFileFromMeta(meta map[string]interface{}) ImageFile {

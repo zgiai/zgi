@@ -19,7 +19,8 @@ const (
 // FileUploadConfigResponse file upload configuration response
 type FileUploadConfigResponse struct {
 	FileSizeLimit           int64 `json:"file_size_limit"`            // File size limit (MB)
-	BatchCountLimit         int   `json:"batch_count_limit"`          // Batch upload count limit
+	BatchCountLimit         int   `json:"batch_count_limit"`          // File-management concurrency; count limit for other upload surfaces
+	UploadQueueLimit        int   `json:"upload_queue_limit"`         // File-management upload queue limit
 	ImageFileSizeLimit      int64 `json:"image_file_size_limit"`      // Image file size limit (MB)
 	VideoFileSizeLimit      int64 `json:"video_file_size_limit"`      // Video file size limit (MB)
 	AudioFileSizeLimit      int64 `json:"audio_file_size_limit"`      // Audio file size limit (MB)

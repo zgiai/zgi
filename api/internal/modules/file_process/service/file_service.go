@@ -102,7 +102,8 @@ func (s *fileService) GetUploadConfig() *interfaces.FileUploadConfigResponse {
 	// Use centralized configuration values
 	return &interfaces.FileUploadConfigResponse{
 		FileSizeLimit:           int64(cfg.Upload.FileSizeLimit),  // Already in MB from config
-		BatchCountLimit:         cfg.Upload.FileBatchLimit,        // Batch file count limit
+		BatchCountLimit:         cfg.Upload.FileBatchLimit,        // File-management concurrency; count limit elsewhere
+		UploadQueueLimit:        cfg.Upload.UploadQueueLimit,      // File-management upload queue limit
 		ImageFileSizeLimit:      int64(cfg.Upload.ImageSizeLimit), // Image file size limit
 		VideoFileSizeLimit:      int64(cfg.Upload.VideoSizeLimit), // Video file size limit
 		AudioFileSizeLimit:      int64(cfg.Upload.AudioSizeLimit), // Audio file size limit

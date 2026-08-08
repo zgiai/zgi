@@ -36,6 +36,40 @@ func TestLoadUsesDefaultGRPCServerConfig(t *testing.T) {
 	}
 }
 
+func TestLoadUploadQueueLimit(t *testing.T) {
+	tests := []struct {
+		name       string
+		configured string
+		want       int
+	}{
+		{name: "defaults to minimum", want: 200},
+		{name: "clamps values below minimum", configured: "100", want: 200},
+		{name: "keeps values above minimum", configured: "350", want: 350},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			values := map[string]string{
+				"SERVER_MODE":                  "release",
+				"ENV":                          "local",
+				"SECRET_KEY":                   "test-secret",
+				"EMAIL_MAIL_DEFAULT_SEND_FROM": "noreply@example.com",
+			}
+			if tt.configured != "" {
+				values["UPLOAD_QUEUE_LIMIT"] = tt.configured
+			}
+
+			cfg, err := config.LoadFromFile(writeEnvFile(t, values))
+			if err != nil {
+				t.Fatalf("config.LoadFromFile() error = %v, want nil", err)
+			}
+			if got := cfg.Upload.UploadQueueLimit; got != tt.want {
+				t.Fatalf("cfg.Upload.UploadQueueLimit = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestLoadReadsNamedSSOFrontendCallbacks(t *testing.T) {
 	cfg, err := config.LoadFromFile(writeEnvFile(t, map[string]string{
 		"SERVER_MODE":                              "release",

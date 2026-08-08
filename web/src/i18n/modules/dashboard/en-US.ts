@@ -57,6 +57,7 @@ const messages = {
     },
     filters: {
       appType: 'App Type',
+      description: 'Select a time range, app type, and model to view matching data.',
       appTypePlaceholder: 'All App Types',
       modelName: 'Model Name',
       modelNamePlaceholder: 'Filter by exact model name',
@@ -103,6 +104,8 @@ const messages = {
     modelDetails: {
       title: 'Model Usage Details',
       subtitle: 'Token usage and cost breakdown by model',
+      showAllModels: 'View all {count} models',
+      collapse: 'Collapse',
       singleModelHint:
         'Only one model is included in the current result set, so distribution charts are hidden until there is more comparison value.',
       table: 'Table',
