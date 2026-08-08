@@ -593,6 +593,7 @@ func (s *llmGatewayServiceImpl) handleStreamBilling(
 					"error",
 					err,
 				)
+				s.traceStreamingChatCompletion(ctx, req, collectedChunks.String(), startTime, time.Now(), billingCtx, 0, 0, wrappedErr)
 				outputChan <- adapter.StreamResponse{Error: wrappedErr}
 				return
 			}
@@ -625,7 +626,9 @@ func (s *llmGatewayServiceImpl) handleStreamBilling(
 		if !useSystemProvider {
 			quote, err := s.quoteTokenPricingForSettlement(ctx, billingCtx, pricingModelRefFromBillingContext(billingCtx), billingCtx.PromptTokens, billingCtx.CompletionTokens)
 			if err != nil {
-				outputChan <- adapter.StreamResponse{Error: fmt.Errorf("failed to calculate credits: %w", err)}
+				wrappedErr := fmt.Errorf("failed to calculate credits: %w", err)
+				s.traceStreamingChatCompletion(ctx, req, collectedChunks.String(), startTime, time.Now(), billingCtx, totalPromptTokens, totalCompletionTokens, wrappedErr)
+				outputChan <- adapter.StreamResponse{Error: wrappedErr}
 				return
 			}
 
@@ -658,6 +661,7 @@ func (s *llmGatewayServiceImpl) handleStreamBilling(
 			"error",
 			settleErr,
 		)
+		s.traceStreamingChatCompletion(ctx, req, collectedChunks.String(), startTime, time.Now(), billingCtx, totalPromptTokens, totalCompletionTokens, wrappedErr)
 		if lastError == nil {
 			outputChan <- adapter.StreamResponse{Error: wrappedErr}
 		}

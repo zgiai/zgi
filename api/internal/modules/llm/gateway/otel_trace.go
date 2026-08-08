@@ -24,6 +24,8 @@ const (
 	maxRerankTraceResults        = 5
 
 	otelObservationGeneration = "generation"
+	otelObservationEmbedding  = "embedding"
+	otelObservationRetriever  = "retriever"
 	otelObservationDefault    = "DEFAULT"
 	otelObservationError      = "ERROR"
 
@@ -35,6 +37,7 @@ const (
 type llmTracePayload struct {
 	Name            string
 	Operation       string
+	ObservationType string
 	Input           interface{}
 	Output          interface{}
 	ModelParameters interface{}
@@ -60,20 +63,23 @@ func (s *llmGatewayServiceImpl) traceChatCompletion(
 	billingCtx *BillingContext,
 	err error,
 ) {
-	if !llmTraceRecordingEnabled(ctx) {
+	if billingCtx == nil || !llmTraceRecordingEnabled(ctx) {
 		return
 	}
-	traceLLMOperation(ctx, llmTracePayload{
-		Name:            "llm.chat",
-		Operation:       "chat",
-		Input:           chatInput(req),
-		Output:          chatCompletionOutput(resp),
-		ModelParameters: chatModelParameters(req),
-		StartTime:       startTime,
-		EndTime:         endTime,
-		Billing:         billingCtx,
-		Err:             err,
-	})
+	payload := llmTracePayload{
+		Name:      "llm.chat",
+		Operation: "chat",
+		StartTime: startTime,
+		EndTime:   endTime,
+		Billing:   billingCtx,
+		Err:       err,
+	}
+	if llmTraceContentEnabled() {
+		payload.Input = chatInput(req)
+		payload.Output = chatCompletionOutput(resp)
+		payload.ModelParameters = chatModelParameters(req)
+	}
+	traceLLMOperation(ctx, payload)
 }
 
 func (s *llmGatewayServiceImpl) traceStreamingChatCompletion(
@@ -87,17 +93,12 @@ func (s *llmGatewayServiceImpl) traceStreamingChatCompletion(
 	completionTokens int,
 	err error,
 ) {
-	traceLLMOperation(ctx, llmTracePayload{
+	if billingCtx == nil || !llmTraceRecordingEnabled(ctx) {
+		return
+	}
+	payload := llmTracePayload{
 		Name:      "llm.chat.stream",
 		Operation: "chat",
-		Input:     chatInput(req),
-		Output: map[string]interface{}{
-			"role":    "assistant",
-			"content": fullResponse,
-		},
-		ModelParameters: map[string]interface{}{
-			"stream": true,
-		},
 		StartTime: startTime,
 		EndTime:   endTime,
 		Billing:   billingCtx,
@@ -107,7 +108,16 @@ func (s *llmGatewayServiceImpl) traceStreamingChatCompletion(
 			TotalTokens:      promptTokens + completionTokens,
 		},
 		Err: err,
-	})
+	}
+	if llmTraceContentEnabled() {
+		payload.Input = chatInput(req)
+		payload.Output = map[string]interface{}{
+			"role":    "assistant",
+			"content": fullResponse,
+		}
+		payload.ModelParameters = map[string]interface{}{"stream": true}
+	}
+	traceLLMOperation(ctx, payload)
 }
 
 func (s *llmGatewayServiceImpl) traceCreateResponse(
@@ -119,17 +129,23 @@ func (s *llmGatewayServiceImpl) traceCreateResponse(
 	billingCtx *BillingContext,
 	err error,
 ) {
-	traceLLMOperation(ctx, llmTracePayload{
-		Name:            "llm.responses",
-		Operation:       "responses",
-		Input:           responseInput(req),
-		Output:          responseOutput(resp),
-		ModelParameters: responseModelParameters(req),
-		StartTime:       startTime,
-		EndTime:         endTime,
-		Billing:         billingCtx,
-		Err:             err,
-	})
+	if billingCtx == nil || !llmTraceRecordingEnabled(ctx) {
+		return
+	}
+	payload := llmTracePayload{
+		Name:      "llm.responses",
+		Operation: "responses",
+		StartTime: startTime,
+		EndTime:   endTime,
+		Billing:   billingCtx,
+		Err:       err,
+	}
+	if llmTraceContentEnabled() {
+		payload.Input = responseInput(req)
+		payload.Output = responseOutput(resp)
+		payload.ModelParameters = responseModelParameters(req)
+	}
+	traceLLMOperation(ctx, payload)
 }
 
 func (s *llmGatewayServiceImpl) traceEmbeddings(
@@ -141,17 +157,101 @@ func (s *llmGatewayServiceImpl) traceEmbeddings(
 	billingCtx *BillingContext,
 	err error,
 ) {
-	traceLLMOperation(ctx, llmTracePayload{
+	if billingCtx == nil || !llmTraceRecordingEnabled(ctx) {
+		return
+	}
+	payload := llmTracePayload{
 		Name:            "llm.embeddings",
 		Operation:       "embeddings",
-		Input:           embeddingInputSummary(req),
-		Output:          embeddingOutputSummary(resp),
-		ModelParameters: embeddingModelParameters(req),
+		ObservationType: otelObservationEmbedding,
 		StartTime:       startTime,
 		EndTime:         endTime,
 		Billing:         billingCtx,
 		Err:             err,
+	}
+	if llmTraceContentEnabled() {
+		payload.Input = embeddingInputSummary(req)
+		payload.Output = embeddingOutputSummary(resp)
+		payload.ModelParameters = embeddingModelParameters(req)
+	}
+	traceLLMOperation(ctx, payload)
+}
+
+func (s *llmGatewayServiceImpl) traceNativeLLMOperation(
+	ctx context.Context,
+	traceName string,
+	operation string,
+	requestBody json.RawMessage,
+	responseBody json.RawMessage,
+	usage *adapter.Usage,
+	startTime time.Time,
+	endTime time.Time,
+	billingCtx *BillingContext,
+	err error,
+) {
+	if billingCtx == nil || !llmTraceRecordingEnabled(ctx) {
+		return
+	}
+	var input, output interface{}
+	if llmTraceContentEnabled() {
+		input = nativeTraceJSON(requestBody)
+		output = nativeTraceJSON(responseBody)
+	}
+	traceLLMOperation(ctx, llmTracePayload{
+		Name:      traceName,
+		Operation: operation,
+		Input:     input,
+		Output:    output,
+		StartTime: startTime,
+		EndTime:   endTime,
+		Billing:   billingCtx,
+		Usage:     traceUsageFromAdapter(usage),
+		Err:       err,
 	})
+}
+
+func (s *llmGatewayServiceImpl) traceNativeLLMStreamOperation(
+	ctx context.Context,
+	traceName string,
+	operation string,
+	requestBody json.RawMessage,
+	output string,
+	usage *adapter.Usage,
+	startTime time.Time,
+	endTime time.Time,
+	billingCtx *BillingContext,
+	err error,
+) {
+	if billingCtx == nil || !llmTraceRecordingEnabled(ctx) {
+		return
+	}
+	var input, traceOutput interface{}
+	if llmTraceContentEnabled() {
+		input = nativeTraceJSON(requestBody)
+		traceOutput = output
+	}
+	traceLLMOperation(ctx, llmTracePayload{
+		Name:      traceName,
+		Operation: operation,
+		Input:     input,
+		Output:    traceOutput,
+		StartTime: startTime,
+		EndTime:   endTime,
+		Billing:   billingCtx,
+		Usage:     traceUsageFromAdapter(usage),
+		Err:       err,
+	})
+}
+
+func nativeTraceOperation(traceName string) string {
+	switch traceName {
+	case "llm.responses", "llm.responses.stream":
+		return "responses"
+	case "llm.anthropic.messages", "llm.anthropic.messages.stream":
+		return "messages"
+	default:
+		return strings.TrimPrefix(traceName, "llm.")
+	}
 }
 
 func (s *llmGatewayServiceImpl) traceRerank(
@@ -163,17 +263,24 @@ func (s *llmGatewayServiceImpl) traceRerank(
 	billingCtx *BillingContext,
 	err error,
 ) {
-	traceLLMOperation(ctx, llmTracePayload{
+	if billingCtx == nil || !llmTraceRecordingEnabled(ctx) {
+		return
+	}
+	payload := llmTracePayload{
 		Name:            "llm.rerank",
 		Operation:       "rerank",
-		Input:           rerankInputSummary(req),
-		Output:          rerankOutputSummary(resp),
-		ModelParameters: rerankModelParameters(req),
+		ObservationType: otelObservationRetriever,
 		StartTime:       startTime,
 		EndTime:         endTime,
 		Billing:         billingCtx,
 		Err:             err,
-	})
+	}
+	if llmTraceContentEnabled() {
+		payload.Input = rerankInputSummary(req)
+		payload.Output = rerankOutputSummary(resp)
+		payload.ModelParameters = rerankModelParameters(req)
+	}
+	traceLLMOperation(ctx, payload)
 }
 
 func (s *llmGatewayServiceImpl) traceImageGeneration(
@@ -185,17 +292,23 @@ func (s *llmGatewayServiceImpl) traceImageGeneration(
 	billingCtx *BillingContext,
 	err error,
 ) {
-	traceLLMOperation(ctx, llmTracePayload{
-		Name:            "llm.images",
-		Operation:       "image_generation",
-		Input:           imageInputSummary(req),
-		Output:          imageOutputSummary(resp),
-		ModelParameters: imageModelParameters(req),
-		StartTime:       startTime,
-		EndTime:         endTime,
-		Billing:         billingCtx,
-		Err:             err,
-	})
+	if billingCtx == nil || !llmTraceRecordingEnabled(ctx) {
+		return
+	}
+	payload := llmTracePayload{
+		Name:      "llm.images",
+		Operation: "image_generation",
+		StartTime: startTime,
+		EndTime:   endTime,
+		Billing:   billingCtx,
+		Err:       err,
+	}
+	if llmTraceContentEnabled() {
+		payload.Input = imageInputSummary(req)
+		payload.Output = imageOutputSummary(resp)
+		payload.ModelParameters = imageModelParameters(req)
+	}
+	traceLLMOperation(ctx, payload)
 }
 
 func traceLLMOperation(ctx context.Context, payload llmTracePayload) {
@@ -277,9 +390,13 @@ func baseLLMAttributes(payload llmTracePayload) []attribute.KeyValue {
 	}
 
 	if llmLangfuseAttributesEnabled() {
+		observationType := payload.ObservationType
+		if observationType == "" {
+			observationType = otelObservationGeneration
+		}
 		attrs = append(attrs, llmLangfuseAttributes(bc, payload.Name)...)
 		attrs = append(attrs,
-			attribute.String("langfuse.observation.type", otelObservationGeneration),
+			attribute.String("langfuse.observation.type", observationType),
 			attribute.String("langfuse.observation.model.name", bc.ModelName),
 		)
 	}
@@ -478,6 +595,45 @@ func traceUsage(payload llmTracePayload) llmTraceUsage {
 	}
 }
 
+func traceUsageFromAdapter(usage *adapter.Usage) *llmTraceUsage {
+	if usage == nil {
+		return nil
+	}
+	return &llmTraceUsage{
+		PromptTokens:     usage.PromptTokens,
+		CompletionTokens: usage.CompletionTokens,
+		TotalTokens:      usage.TotalTokens,
+	}
+}
+
+func nativeTraceJSON(raw json.RawMessage) interface{} {
+	if len(raw) == 0 {
+		return nil
+	}
+	var value interface{}
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return map[string]interface{}{
+			"type":       "invalid_json",
+			"json_chars": len(raw),
+		}
+	}
+	return value
+}
+
+func nativeRawResponseOutput(response *adapter.RawResponse) json.RawMessage {
+	if response == nil {
+		return nil
+	}
+	return response.Body
+}
+
+func nativeRawResponseUsage(response *adapter.RawResponse) *adapter.Usage {
+	if response == nil {
+		return nil
+	}
+	return response.Usage
+}
+
 func traceUserID(bc *BillingContext) string {
 	if bc.AccountID != nil {
 		return bc.AccountID.String()
@@ -523,6 +679,10 @@ func costDetails(bc *BillingContext) string {
 func llmLangfuseAttributesEnabled() bool {
 	cfg := otelConfig()
 	return cfg.Enabled && cfg.LLMLangfuseAttributes
+}
+
+func llmTraceContentEnabled() bool {
+	return llmLangfuseAttributesEnabled() && llmCaptureContentMode() != otelLLMCaptureNone
 }
 
 func otelConfig() config.OpenTelemetryConfig {
