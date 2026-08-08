@@ -229,6 +229,7 @@ func NewLLMGatewayServiceWithCrypto(
 		billing = remoteBilling
 		logger.Info("llm gateway remote billing enabled", "grpc_addr", grpcAddr)
 	}
+	startInvocationContentCleanup(db)
 
 	return &llmGatewayServiceImpl{
 		db:                    db,

@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/config"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"gorm.io/driver/sqlite"
@@ -13,7 +14,7 @@ import (
 )
 
 func TestInvocationContentRecorderRedactsTruncatesAndHonorsOrganizationSetting(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{})
+	db, err := gorm.Open(sqlite.Open("file:"+uuid.NewString()+"?mode=memory&cache=shared"), &gorm.Config{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,8 +41,8 @@ func TestInvocationContentRecorderRedactsTruncatesAndHonorsOrganizationSetting(t
 		t.Fatal("expected recorder")
 	}
 	recorder.flush([]invocationContentRecord{
-		{RequestID: "req-on", OrganizationID: "org-on", Input: map[string]any{"api_key": "sk-" + "secretvalue", "image_url": "https://example.com/file?signature=private", "content": strings.Repeat("x", 100)}, Output: map[string]any{"content": "Bearer abcdefghijklmnop"}, InputText: "password=" + "hunter2", OutputText: strings.Repeat("y", 100)},
-		{RequestID: "req-off", OrganizationID: "org-off", Input: "private", Output: "private"},
+		recorder.prepareRecord(&BillingContext{RequestID: "req-on", OrganizationID: "org-on"}, map[string]any{"api_key": "sk-" + "secretvalue", "image_url": "https://example.com/file?signature=private", "content": strings.Repeat("x", 100)}, map[string]any{"content": "Bearer abcdefghijklmnop"}, "password="+"hunter2", strings.Repeat("y", 100)),
+		recorder.prepareRecord(&BillingContext{RequestID: "req-off", OrganizationID: "org-off"}, "private", "private", "", ""),
 	})
 
 	var row invocationContentRow
@@ -71,9 +72,19 @@ func TestInvocationContentRecorderRedactsTruncatesAndHonorsOrganizationSetting(t
 }
 
 func TestInvocationContentRecorderQueuePressureNeverWritesSynchronously(t *testing.T) {
-	recorder := &invocationContentRecorder{queue: make(chan invocationContentRecord, 1)}
+	recorder := &invocationContentRecorder{
+		config: config.LLMInvocationContentConfig{MaxBytes: 1024},
+		queue:  make(chan invocationContentRecord, 1),
+	}
 	billing := &BillingContext{RequestID: "req", OrganizationID: "org"}
-	recorder.RecordChat(billing, "first", "first", "first", "first")
+	input := map[string]any{"api_key": "sk-" + "secretvalue", "content": "first"}
+	recorder.RecordChat(billing, input, "Bearer abcdefghijklmnop", "first", "first")
+	input["content"] = "mutated"
+	queued := <-recorder.queue
+	if strings.Contains(queued.InputJSON, "secretvalue") || strings.Contains(queued.OutputJSON, "abcdefgh") || strings.Contains(queued.InputJSON, "mutated") {
+		t.Fatalf("queue must contain an immutable sanitized snapshot: %#v", queued)
+	}
+	recorder.queue <- queued
 	done := make(chan struct{})
 	go func() {
 		recorder.RecordChat(billing, "second", "second", "second", "second")
@@ -109,5 +120,26 @@ func TestTraceChatRecordsContentWhenOpenTelemetryIsDisabled(t *testing.T) {
 		}
 	default:
 		t.Fatal("content was not recorded independently from OpenTelemetry")
+	}
+}
+
+func TestCleanupExpiredInvocationContentRunsWhenCaptureIsDisabled(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:"+uuid.NewString()+"?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec(`CREATE TABLE llm_invocation_contents (request_id TEXT PRIMARY KEY, expires_at DATETIME NOT NULL)`).Error; err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	if err := db.Exec(`INSERT INTO llm_invocation_contents (request_id, expires_at) VALUES (?, ?), (?, ?)`, "expired", now.Add(-time.Minute), "active", now.Add(time.Minute)).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := cleanupExpiredInvocationContent(context.Background(), db, now); err != nil {
+		t.Fatal(err)
+	}
+	var count int64
+	if err := db.Table("llm_invocation_contents").Count(&count).Error; err != nil || count != 1 {
+		t.Fatalf("remaining content count=%d err=%v", count, err)
 	}
 }

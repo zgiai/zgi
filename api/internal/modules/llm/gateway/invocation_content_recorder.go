@@ -26,12 +26,14 @@ var invocationContentSecretPatterns = []*regexp.Regexp{
 }
 
 type invocationContentRecord struct {
-	RequestID      string
-	OrganizationID string
-	Input          any
-	Output         any
-	InputText      string
-	OutputText     string
+	RequestID       string
+	OrganizationID  string
+	InputText       string
+	OutputText      string
+	InputJSON       string
+	OutputJSON      string
+	InputTruncated  bool
+	OutputTruncated bool
 }
 
 type invocationContentRow struct {
@@ -89,10 +91,13 @@ func (r *invocationContentRecorder) RecordChat(billing *BillingContext, input an
 			return
 		}
 	}
-	record := invocationContentRecord{
-		RequestID: billing.RequestID, OrganizationID: billing.OrganizationID,
-		Input: input, Output: output, InputText: inputText, OutputText: outputText,
+	// Avoid doing redaction work when backpressure is already visible. The
+	// final non-blocking send below still handles races with other producers.
+	if cap(r.queue) > 0 && len(r.queue) >= cap(r.queue) {
+		r.dropped.Add(1)
+		return
 	}
+	record := r.prepareRecord(billing, input, output, inputText, outputText)
 	select {
 	case r.queue <- record:
 	default:
@@ -100,12 +105,27 @@ func (r *invocationContentRecorder) RecordChat(billing *BillingContext, input an
 	}
 }
 
+// prepareRecord creates an immutable, redacted and bounded snapshot before it
+// enters the asynchronous queue. This prevents callers from racing with the
+// worker by reusing request objects and keeps raw secrets out of queue memory.
+func (r *invocationContentRecorder) prepareRecord(billing *BillingContext, input any, output any, inputText, outputText string) invocationContentRecord {
+	inputJSON, inputTruncated := sanitizeInvocationContent(input, r.config.MaxBytes)
+	outputJSON, outputTruncated := sanitizeInvocationContent(output, r.config.MaxBytes)
+	sanitizedInputText, inputTextTruncated := sanitizeInvocationContentText(inputText, r.config.MaxBytes)
+	sanitizedOutputText, outputTextTruncated := sanitizeInvocationContentText(outputText, r.config.MaxBytes)
+	return invocationContentRecord{
+		RequestID: billing.RequestID, OrganizationID: billing.OrganizationID,
+		InputText: sanitizedInputText, OutputText: sanitizedOutputText,
+		InputJSON: inputJSON, OutputJSON: outputJSON,
+		InputTruncated:  inputTruncated || inputTextTruncated,
+		OutputTruncated: outputTruncated || outputTextTruncated,
+	}
+}
+
 func (r *invocationContentRecorder) run() {
 	flushEvery := time.NewTicker(200 * time.Millisecond)
-	cleanupEvery := time.NewTicker(time.Hour)
 	dropReportEvery := time.NewTicker(time.Minute)
 	defer flushEvery.Stop()
-	defer cleanupEvery.Stop()
 	defer dropReportEvery.Stop()
 	batch := make([]invocationContentRecord, 0, r.config.BatchSize)
 	flush := func() {
@@ -124,10 +144,6 @@ func (r *invocationContentRecorder) run() {
 			}
 		case <-flushEvery.C:
 			flush()
-		case <-cleanupEvery.C:
-			if err := r.db.WithContext(context.Background()).Where("expires_at <= ?", time.Now().UTC()).Delete(&invocationContentRow{}).Error; err != nil {
-				logger.Warn("failed to clean expired llm invocation content", zap.Error(err))
-			}
 		case <-dropReportEvery.C:
 			if dropped := r.dropped.Swap(0); dropped > 0 {
 				logger.Warn("llm invocation content dropped", zap.Uint64("count", dropped), zap.String("reason", "queue_full"))
@@ -178,15 +194,11 @@ func (r *invocationContentRecorder) flush(records []invocationContentRecord) {
 		if _, ok := enabled[record.OrganizationID]; !ok {
 			continue
 		}
-		inputJSON, inputTruncated := sanitizeInvocationContent(record.Input, r.config.MaxBytes)
-		outputJSON, outputTruncated := sanitizeInvocationContent(record.Output, r.config.MaxBytes)
-		inputText, inputTextTruncated := sanitizeInvocationContentText(record.InputText, r.config.MaxBytes)
-		outputText, outputTextTruncated := sanitizeInvocationContentText(record.OutputText, r.config.MaxBytes)
 		rows = append(rows, invocationContentRow{
 			RequestID: record.RequestID, OrganizationID: record.OrganizationID,
-			InputText: inputText, OutputText: outputText, InputJSON: inputJSON, OutputJSON: outputJSON,
-			ContentStatus: "available", InputTruncated: inputTruncated || inputTextTruncated,
-			OutputTruncated: outputTruncated || outputTextTruncated, RedactionVersion: invocationContentRedactionVersion,
+			InputText: record.InputText, OutputText: record.OutputText, InputJSON: record.InputJSON, OutputJSON: record.OutputJSON,
+			ContentStatus: "available", InputTruncated: record.InputTruncated,
+			OutputTruncated: record.OutputTruncated, RedactionVersion: invocationContentRedactionVersion,
 			ExpiresAt: now.AddDate(0, 0, r.config.RetentionDays), CreatedAt: now, UpdatedAt: now,
 		})
 	}

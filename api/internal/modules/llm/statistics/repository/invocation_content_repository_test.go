@@ -39,3 +39,23 @@ func TestGetInvocationContentIsTenantScopedAndAudited(t *testing.T) {
 		t.Fatal("cross-tenant content read should fail")
 	}
 }
+
+func TestGetInvocationContentFailsClosedWhenAuditCannotBeWritten(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec(`CREATE TABLE llm_invocation_contents (request_id TEXT PRIMARY KEY, organization_id TEXT NOT NULL, input_text TEXT, output_text TEXT, input_json TEXT, output_json TEXT, content_status TEXT, input_truncated BOOLEAN, output_truncated BOOLEAN, redaction_version TEXT, expires_at DATETIME)`).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec(`INSERT INTO llm_invocation_contents (request_id, organization_id, input_text, output_text, input_json, output_json, content_status, input_truncated, output_truncated, redaction_version, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		"req-1", "org-1", "question", "answer", `[]`, `{}`, "available", false, false, "v1", time.Now().Add(time.Hour)).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	repo := &statisticsRepositoryImpl{db: db}
+	detail, err := repo.GetInvocationContent(context.Background(), "org-1", "account-1", "req-1")
+	if err == nil || detail != nil {
+		t.Fatalf("sensitive read must fail closed when audit storage fails: detail=%#v err=%v", detail, err)
+	}
+}
