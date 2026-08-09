@@ -295,7 +295,7 @@ export default function InvitePage() {
               </Alert>
               <Link href="/console" className="block">
                 <Button variant="outline" className="w-full">
-                  {t('common.backToConsole')}
+                  {t('common.back')}
                 </Button>
               </Link>
             </div>
