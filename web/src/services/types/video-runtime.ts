@@ -25,6 +25,7 @@ export interface VideoRuntimeGenerateRequest {
   callback_url?: string;
   reference_url?: string;
   reference_urls?: string[];
+  reference_types?: string[];
   first_frame_url?: string;
   last_frame_url?: string;
 }

@@ -271,6 +271,7 @@ export function VideoWorkbench() {
             )
           : [];
       const isFrameReferenceMode = settings.referenceMode === VIDEO_FRAME_REFERENCE_MODE;
+      const referenceTypes = referenceFiles.map(referenceFile => referenceFile.kind);
       const response = await generateMutation.mutateAsync({
         provider: selectedModel.provider,
         model: selectedModel.model,
@@ -283,6 +284,7 @@ export function VideoWorkbench() {
           : {
               ...(referenceUrls[0] ? { reference_url: referenceUrls[0] } : {}),
               ...(referenceUrls.length > 0 ? { reference_urls: referenceUrls } : {}),
+              ...(referenceTypes.length > 0 ? { reference_types: referenceTypes } : {}),
             }),
         options: {
           ratio: settings.aspectRatio,
@@ -521,7 +523,7 @@ function VideoTaskCard({
             {t('chat.videoWorkbench.secondsSuffix')}
           </span>
         ) : null}
-        {task.has_input_video ? (
+        {taskHasVideoInput(task) ? (
           <span className="rounded bg-muted px-1.5 py-0.5">
             {t('chat.videoWorkbench.inputVideo')}
           </span>
@@ -771,7 +773,7 @@ function TaskDetailSheet({
                   {task.generate_audio ? (
                     <MetaPill>{task.voice || t('chat.videoWorkbench.outputAudio')}</MetaPill>
                   ) : null}
-                  {task.has_input_video ? (
+                  {taskHasVideoInput(task) ? (
                     <MetaPill>{t('chat.videoWorkbench.inputVideo')}</MetaPill>
                   ) : null}
                 </div>
@@ -835,6 +837,21 @@ function TaskDetailSheet({
       </SheetContent>
     </Sheet>
   );
+}
+
+function taskHasVideoInput(task: VideoRuntimeTask) {
+  if (!task.has_input_video) return false;
+  const payload = task.request_payload;
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return true;
+  if (hasNonEmptyString(payload.video_url)) return true;
+  if (Array.isArray(payload.reference_types)) {
+    return payload.reference_types.some(value => String(value).trim().toLowerCase() === 'video');
+  }
+  return false;
+}
+
+function hasNonEmptyString(value: unknown) {
+  return typeof value === 'string' && value.trim() !== '';
 }
 
 function StatusBadge({ status }: { status: ReturnType<typeof normalizeStatus> }) {

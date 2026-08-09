@@ -127,7 +127,7 @@ func (s *service) Generate(ctx context.Context, scope Scope, req GenerateRequest
 		DurationSeconds:  options.Duration,
 		Resolution:       options.Resolution,
 		Ratio:            options.Ratio,
-		HasInputVideo:    len(referenceURLs) > 0 || strings.TrimSpace(videoReq.FirstFrameURL) != "" || strings.TrimSpace(videoReq.LastFrameURL) != "" || strings.TrimSpace(videoReq.VideoURL) != "",
+		HasInputVideo:    hasVideoInputReference(req, videoReq, referenceURLs),
 		GenerateAudio:    options.GenerateAudio,
 		Voice:            strings.TrimSpace(options.Voice),
 		RequestPayload:   jsonData(videoRequestPayload(videoReq)),
@@ -192,7 +192,7 @@ func (s *service) startUpstreamVideoTask(record videoTaskRecord, appCtx *llmclie
 		upstreamID := upstreamTaskID(resp)
 		videoURL := firstVideoURL(resp)
 		status := normalizeTaskStatus(resp.Status)
-		if upstreamID == "" && videoURL == "" {
+		if upstreamID == "" && videoURL == "" && status != "failed" {
 			record.Status = "failed"
 			record.ErrorMessage = fmt.Errorf("%w: upstream task id is empty", ErrUpstreamFailed).Error()
 			record.ResponsePayload = jsonData(videoResponsePayload(resp))
@@ -212,6 +212,11 @@ func (s *service) startUpstreamVideoTask(record videoTaskRecord, appCtx *llmclie
 		record.UpstreamTaskID = upstreamID
 		record.Status = status
 		record.VideoURL = videoURL
+		if record.Status == "failed" {
+			if message := videoResponseErrorMessage(resp); message != "" {
+				record.ErrorMessage = message
+			}
+		}
 		record.ResponsePayload = jsonData(videoResponsePayload(resp))
 		record.UpdatedAt = now
 		if isTerminalVideoStatus(record.Status) {
@@ -285,6 +290,11 @@ func (s *service) refreshTask(ctx context.Context, scope Scope, record *videoTas
 	record.Status = normalizeTaskStatus(resp.Status)
 	if record.Status == "" {
 		record.Status = "running"
+	}
+	if record.Status == "failed" {
+		if message := videoResponseErrorMessage(resp); message != "" {
+			record.ErrorMessage = message
+		}
 	}
 	if videoURL := firstVideoURL(resp); videoURL != "" {
 		record.VideoURL = videoURL
@@ -407,13 +417,77 @@ func buildVideoRequest(provider, modelName, prompt string, req GenerateRequest, 
 	videoReq.FirstFrameURL = strings.TrimSpace(req.FirstFrameURL)
 	videoReq.LastFrameURL = strings.TrimSpace(req.LastFrameURL)
 	if len(referenceURLs) > 0 {
-		videoReq.ImageURL = referenceURLs[0]
-		videoReq.ImageURLs = append(videoReq.ImageURLs, referenceURLs...)
+		for index, referenceURL := range referenceURLs {
+			switch referenceKindAt(req.ReferenceTypes, index, referenceURL) {
+			case "video":
+				if strings.TrimSpace(videoReq.VideoURL) == "" {
+					videoReq.VideoURL = referenceURL
+				}
+			case "audio":
+				if strings.TrimSpace(videoReq.AudioURL) == "" {
+					videoReq.AudioURL = referenceURL
+				}
+			default:
+				if strings.TrimSpace(videoReq.ImageURL) == "" {
+					videoReq.ImageURL = referenceURL
+				}
+				videoReq.ImageURLs = append(videoReq.ImageURLs, referenceURL)
+			}
+		}
 	}
 	if options.Voice != "" {
 		videoReq.AdditionalParameters = map[string]interface{}{"voice": options.Voice}
 	}
 	return videoReq
+}
+
+func hasVideoInputReference(req GenerateRequest, videoReq *adapter.VideoRequest, referenceURLs []string) bool {
+	if videoReq != nil && strings.TrimSpace(videoReq.VideoURL) != "" {
+		return true
+	}
+	for index, referenceURL := range referenceURLs {
+		if referenceKindAt(req.ReferenceTypes, index, referenceURL) == "video" {
+			return true
+		}
+	}
+	return false
+}
+
+func referenceKindAt(referenceTypes []string, index int, referenceURL string) string {
+	if index >= 0 && index < len(referenceTypes) {
+		switch strings.ToLower(strings.TrimSpace(referenceTypes[index])) {
+		case "image", "video", "audio":
+			return strings.ToLower(strings.TrimSpace(referenceTypes[index]))
+		}
+	}
+	return referenceKindFromURL(referenceURL)
+}
+
+func referenceKindFromURL(referenceURL string) string {
+	value := strings.ToLower(strings.TrimSpace(referenceURL))
+	if value == "" {
+		return "image"
+	}
+	value = strings.Split(value, "?")[0]
+	value = strings.Split(value, "#")[0]
+	switch {
+	case strings.HasSuffix(value, ".mp4"),
+		strings.HasSuffix(value, ".mov"),
+		strings.HasSuffix(value, ".webm"),
+		strings.HasSuffix(value, ".m4v"),
+		strings.HasSuffix(value, ".avi"),
+		strings.HasSuffix(value, ".mkv"):
+		return "video"
+	case strings.HasSuffix(value, ".mp3"),
+		strings.HasSuffix(value, ".wav"),
+		strings.HasSuffix(value, ".m4a"),
+		strings.HasSuffix(value, ".aac"),
+		strings.HasSuffix(value, ".flac"),
+		strings.HasSuffix(value, ".ogg"):
+		return "audio"
+	default:
+		return "image"
+	}
 }
 
 func localVideoTaskID() string {
@@ -511,6 +585,62 @@ func videoResponsePayload(resp *adapter.VideoResponse) map[string]any {
 		data["billing_attempt_id"] = resp.BillingAttemptID
 	}
 	return data
+}
+
+func videoResponseErrorMessage(resp *adapter.VideoResponse) string {
+	if resp == nil {
+		return ""
+	}
+	if message := errorMessageFromAny(resp.Error); message != "" {
+		return message
+	}
+	if resp.Raw != nil {
+		if message := errorMessageFromAny(resp.Raw["error"]); message != "" {
+			return message
+		}
+		if message := errorMessageFromAny(resp.Raw["error_message"]); message != "" {
+			return message
+		}
+	}
+	return ""
+}
+
+func errorMessageFromAny(value any) string {
+	switch typed := value.(type) {
+	case nil:
+		return ""
+	case string:
+		return strings.TrimSpace(typed)
+	case map[string]any:
+		for _, key := range []string{"message", "error_message"} {
+			if message := errorMessageFromAny(typed[key]); message != "" {
+				return message
+			}
+		}
+		if message := errorMessageFromAny(typed["error"]); message != "" {
+			return message
+		}
+		if code := errorMessageFromAny(typed["code"]); code != "" {
+			return code
+		}
+	case []any:
+		for _, item := range typed {
+			if message := errorMessageFromAny(item); message != "" {
+				return message
+			}
+		}
+	default:
+		raw, err := json.Marshal(typed)
+		if err != nil {
+			return ""
+		}
+		var mapped map[string]any
+		if err := json.Unmarshal(raw, &mapped); err != nil {
+			return ""
+		}
+		return errorMessageFromAny(mapped)
+	}
+	return ""
 }
 
 func copyVideoBillingMetadata(dst map[string]interface{}, src map[string]any) {
