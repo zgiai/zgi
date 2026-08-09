@@ -126,6 +126,20 @@ func TestParamsAreCopiedAndDuplicateValuesAreDeterministic(t *testing.T) {
 	}
 }
 
+func TestWithParamsCopiesCallerInputBeforeConstruction(t *testing.T) {
+	t.Parallel()
+
+	params := []apperror.Param{apperror.StringParam("provider", "original")}
+	option := apperror.WithParams(params...)
+	params[0] = apperror.StringParam("provider", "changed")
+
+	err := apperror.New(codeProviderTimeout, option)
+	appErr, _ := apperror.As(err)
+	if got := appErr.Params()["provider"]; got != "original" {
+		t.Fatalf("WithParams retained mutable caller input: got %q", got)
+	}
+}
+
 func TestErrorIsSafeForConcurrentReads(t *testing.T) {
 	t.Parallel()
 

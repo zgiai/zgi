@@ -14,31 +14,34 @@ type Error struct {
 	params    map[string]any
 }
 
-// Option adds diagnostic context to an Error during construction.
-type Option func(*Error)
+// Option adds diagnostic context while an Error is being constructed. Its
+// fields are private so callers cannot reapply an option to a constructed
+// Error and violate its immutability. The zero value is a no-op.
+type Option struct {
+	kind      optionKind
+	operation string
+	params    []Param
+}
+
+type optionKind uint8
+
+const (
+	operationOption optionKind = iota + 1
+	paramsOption
+)
 
 // WithOperation records a stable internal operation name such as
 // "gateway.chat_completion". It is diagnostic context, not user-facing text.
 func WithOperation(operation string) Option {
-	return func(appErr *Error) {
-		appErr.operation = strings.TrimSpace(operation)
-	}
+	return Option{kind: operationOption, operation: strings.TrimSpace(operation)}
 }
 
 // WithParams adds immutable scalar parameters. Empty parameter names are
 // ignored and later values replace earlier values with the same name.
 func WithParams(params ...Param) Option {
-	return func(appErr *Error) {
-		for _, param := range params {
-			if param.name == "" {
-				continue
-			}
-			if appErr.params == nil {
-				appErr.params = make(map[string]any, len(params))
-			}
-			appErr.params[param.name] = param.value
-		}
-	}
+	copied := make([]Param, len(params))
+	copy(copied, params)
+	return Option{kind: paramsOption, params: copied}
 }
 
 // New creates an application error without an underlying cause.
@@ -59,13 +62,30 @@ func build(code Code, cause error, options ...Option) *Error {
 	if code.value == "" {
 		panic("application error code is empty")
 	}
-	appErr := &Error{code: code, cause: cause}
+	operation := ""
+	var params map[string]any
 	for _, option := range options {
-		if option != nil {
-			option(appErr)
+		switch option.kind {
+		case operationOption:
+			operation = option.operation
+		case paramsOption:
+			for _, param := range option.params {
+				if param.name == "" {
+					continue
+				}
+				if params == nil {
+					params = make(map[string]any, len(option.params))
+				}
+				params[param.name] = param.value
+			}
 		}
 	}
-	return appErr
+	return &Error{
+		code:      code,
+		cause:     cause,
+		operation: operation,
+		params:    params,
+	}
 }
 
 // Error returns diagnostic text. It is not a localized or safe public message
