@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"errors"
 	"net/http/httptest"
 	"strings"
@@ -92,6 +93,56 @@ func TestLocalizedChatStreamErrorSanitizesOnlyMigratedTimeout(t *testing.T) {
 	unmigrated := errors.New("legacy stream message")
 	if got := handler.localizedChatStreamError(context, unmigrated); got != unmigrated.Error() {
 		t.Fatalf("unmigrated stream message = %q", got)
+	}
+}
+
+func TestGatewayProviderTimeoutRecognizesTransportRepresentations(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{name: "adapter sentinel", err: adapter.ErrTimeout, want: true},
+		{name: "request deadline", err: context.DeadlineExceeded, want: true},
+		{
+			name: "provider HTTP 504",
+			err:  adapter.NewAdapterError("gateway_timeout", "provider detail", 504, adapter.ErrUpstreamError),
+			want: true,
+		},
+		{name: "raw stream HTTP 504", err: adapter.NewHTTPStatusError(504, []byte("private provider payload")), want: true},
+		{
+			name: "provider HTTP 503",
+			err:  adapter.NewAdapterError("unavailable", "provider detail", 503, adapter.ErrUpstreamError),
+			want: false,
+		},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			if got := isGatewayProviderTimeout(testCase.err); got != testCase.want {
+				t.Fatalf("isGatewayProviderTimeout() = %v, want %v", got, testCase.want)
+			}
+		})
+	}
+}
+
+func TestLocalizedProtocolErrorMapsTransportTimeoutToStableContract(t *testing.T) {
+	handler := &LLMHandler{errorProjector: testApplicationErrorProjector(t)}
+	context := testProtocolContext(t, "/v1/chat/completions", "zh-CN")
+	providerErr := adapter.NewAdapterError(
+		"gateway_timeout",
+		"provider token sk-secret",
+		504,
+		adapter.ErrUpstreamError,
+	)
+
+	got := handler.localizedProtocolError(context, providerErr)
+
+	if got.openAIStatus != 504 || got.openAICode != "upstream_timeout" || got.openAIType != "server_error" {
+		t.Fatalf("protocol contract = %#v", got)
+	}
+	if got.message != "大模型服务响应超时，请重试或选择其他模型。" || strings.Contains(got.message, "sk-secret") {
+		t.Fatalf("public message = %q", got.message)
 	}
 }
 

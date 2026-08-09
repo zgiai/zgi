@@ -1,7 +1,9 @@
 package handler
 
 import (
+	"context"
 	"errors"
+	"net/http"
 
 	"github.com/gin-gonic/gin"
 	llmerrors "github.com/zgiai/zgi/api/internal/modules/llm/errors"
@@ -49,7 +51,7 @@ func gatewayApplicationError(err error) (error, bool) {
 	if apperror.IsCode(err, llmerrors.AppCodeProviderTimeout) {
 		return err, true
 	}
-	if !errors.Is(err, adapter.ErrTimeout) && !errors.Is(err, llmerrors.DomainErrUpstreamTimeout) {
+	if !isGatewayProviderTimeout(err) {
 		return err, false
 	}
 	return apperror.Wrap(
@@ -57,6 +59,21 @@ func gatewayApplicationError(err error) (error, bool) {
 		llmerrors.AppCodeProviderTimeout,
 		apperror.WithOperation("gateway.protocol_error"),
 	), true
+}
+
+func isGatewayProviderTimeout(err error) bool {
+	if errors.Is(err, context.DeadlineExceeded) ||
+		errors.Is(err, adapter.ErrTimeout) ||
+		errors.Is(err, llmerrors.DomainErrUpstreamTimeout) {
+		return true
+	}
+
+	var adapterErr *adapter.AdapterError
+	if errors.As(err, &adapterErr) && adapterErr.StatusCode == http.StatusGatewayTimeout {
+		return true
+	}
+	var statusErr *adapter.HTTPStatusError
+	return errors.As(err, &statusErr) && statusErr.StatusCode == http.StatusGatewayTimeout
 }
 
 func normalizeGatewayApplicationError(err error) error {
