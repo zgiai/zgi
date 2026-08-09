@@ -38,15 +38,115 @@ var (
 	ErrEmptyMessages   = errors.New("messages cannot be empty")
 
 	// Billing errors
-	ErrBillingFailed          = errors.New("billing operation failed")
-	ErrBillingPreDeductFailed = errors.New("billing pre-deduct failed")
-	ErrBillingSettleFailed    = errors.New("billing settle failed")
-	ErrBillingLaneMismatch    = errors.New("billing lane mismatch")
+	ErrBillingFailed            = errors.New("billing operation failed")
+	ErrBillingPreDeductFailed   = errors.New("billing pre-deduct failed")
+	ErrBillingSettleFailed      = errors.New("billing settle failed")
+	ErrBillingLaneMismatch      = errors.New("billing lane mismatch")
+	ErrPricingCalculationFailed = errors.New("pricing calculation failed")
 )
+
+type reportedProviderFailureError struct {
+	cause error
+}
+
+func (e *reportedProviderFailureError) Error() string {
+	return "all providers failed: " + e.cause.Error()
+}
+
+func (e *reportedProviderFailureError) Unwrap() error {
+	return e.cause
+}
+
+// NewReportedProviderFailureError marks an error whose channel-aware provider
+// event has already been emitted before the HTTP layer sees it.
+func NewReportedProviderFailureError(err error) error {
+	if err == nil {
+		return nil
+	}
+	return &reportedProviderFailureError{cause: err}
+}
+
+// IsProviderFailureReported prevents a second owner-ambiguous HTTP event.
+func IsProviderFailureReported(err error) bool {
+	var reportedErr *reportedProviderFailureError
+	return errors.As(err, &reportedErr)
+}
+
+// ProviderSelectionConversionError preserves the concrete failures produced
+// while turning routed channels into provider selections. Callers need the
+// original causes to distinguish a database outage from a bad route without
+// parsing an aggregated error string.
+type ProviderSelectionConversionError struct {
+	causes []error
+}
+
+func (*ProviderSelectionConversionError) providerSelectionPreparationError() {}
+
+// NewProviderSelectionConversionError joins conversion causes without losing
+// their concrete types.
+func NewProviderSelectionConversionError(causes ...error) error {
+	filtered := make([]error, 0, len(causes))
+	for _, cause := range causes {
+		if cause != nil {
+			filtered = append(filtered, cause)
+		}
+	}
+	if len(filtered) == 0 {
+		return nil
+	}
+	return &ProviderSelectionConversionError{causes: filtered}
+}
+
+func (e *ProviderSelectionConversionError) Error() string {
+	return fmt.Sprintf("failed to convert %d channel selection(s)", len(e.causes))
+}
+
+func (e *ProviderSelectionConversionError) Unwrap() error {
+	return errors.Join(e.causes...)
+}
+
+// IsProviderSelectionConversionError reports whether an error originated while
+// converting a routed channel into a provider selection.
+func IsProviderSelectionConversionError(err error) bool {
+	var conversionErr *ProviderSelectionConversionError
+	return errors.As(err, &conversionErr)
+}
+
+type shadowContextError struct {
+	cause error
+}
+
+func (e *shadowContextError) Error() string {
+	return fmt.Sprintf("failed to resolve provider selection context: %v", e.cause)
+}
+
+func (e *shadowContextError) Unwrap() error {
+	return e.cause
+}
+
+func (*shadowContextError) providerSelectionPreparationError() {}
+
+type providerSelectionPreparationFailure interface {
+	providerSelectionPreparationError()
+}
+
+// IsProviderSelectionPreparationError reports errors that occur at a known
+// routing/cache persistence boundary before any provider request is made.
+func IsProviderSelectionPreparationError(err error) bool {
+	var preparationErr providerSelectionPreparationFailure
+	return errors.As(err, &preparationErr)
+}
+
+func wrapPricingCalculationError(err error) error {
+	if err == nil {
+		return nil
+	}
+	return fmt.Errorf("failed to calculate credits: %w: %w", ErrPricingCalculationFailed, err)
+}
 
 // NewNoProviderAvailableError creates a detailed error message for no provider available scenarios
 func NewNoProviderAvailableError(modelName, organizationID string) error {
-	return fmt.Errorf("no provider available for model '%s' (tenant: %s). Please check: 1) Model is enabled in your workspace, 2) Provider credentials are configured and active, 3) System channels exist and are not deleted", modelName, organizationID)
+	return fmt.Errorf("%w: model '%s' (tenant: %s). Please check: 1) Model is enabled in your workspace, 2) Provider credentials are configured and active, 3) System channels exist and are not deleted", ErrNoProviderAvailable, modelName, organizationID)
 }
 
 // ErrorCode represents HTTP error codes for LLM gateway

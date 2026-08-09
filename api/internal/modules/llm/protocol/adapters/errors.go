@@ -70,6 +70,15 @@ func IsCapabilityUnsupported(err error) bool {
 		strings.Contains(msg, "unsupported")
 }
 
+// IsDeterministicRejection reports typed request failures that retries cannot
+// repair. Keep this sentinel-based: provider messages are untrusted and must
+// not suppress operational failures merely because they contain similar text.
+func IsDeterministicRejection(err error) bool {
+	return errors.Is(err, ErrInvalidRequest) ||
+		errors.Is(err, ErrContentPolicyViolation) ||
+		errors.Is(err, ErrCapabilityUnsupported)
+}
+
 // AdapterError adapter error
 type AdapterError struct {
 	Code       string

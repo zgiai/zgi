@@ -504,15 +504,20 @@ func (h *WorkflowHandler) executeWorkflowStream(ctx context.Context, workspaceID
 			failedNodes[currentNodeID] = failedErrMsg
 			logger.CriticalContext(ctx, "node execution failed", "node_id", currentNodeID, "node_type", nodeType, err)
 
-			observability.CaptureError(ctx, "workflow.node.failed", err,
-				observability.Tag("workflow.node_type", nodeType),
-				observability.Attributes(map[string]any{
-					"workflow_id":       workflowID,
-					"workflow_run_id":   workflowRunID,
-					"workflow_node_id":  currentNodeID,
-					"input_field_count": len(nodeInputs),
-				}),
-			)
+			if shouldReportWorkflowNodeFailure(err) {
+				failureClassification, failureLevel := workflowNodeFailureReport(err)
+				observability.CaptureError(ctx, "workflow.node.failed", err,
+					observability.WithLevel(failureLevel),
+					observability.WithErrorClassification(failureClassification),
+					observability.Tag("workflow.node_type", nodeType),
+					observability.Attributes(map[string]any{
+						"workflow_id":       workflowID,
+						"workflow_run_id":   workflowRunID,
+						"workflow_node_id":  currentNodeID,
+						"input_field_count": len(nodeInputs),
+					}),
+				)
+			}
 
 			elapsedTime := ElapsedMillisecondsSince(nodeStartTime)
 			finishedAt := time.Now()

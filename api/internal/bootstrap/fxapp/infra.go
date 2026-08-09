@@ -103,7 +103,7 @@ func provideSentryResource(cfg *config.Config, log *zap.Logger) *SentryResource 
 		Environment:      cfg.Sentry.Environment,
 		Release:          cfg.Sentry.Release,
 		EnableTracing:    true,
-		TracesSampleRate: 0.1,
+		TracesSampleRate: normalizedSentryTraceSampleRate(cfg.Sentry.TraceSampleRate),
 		BeforeSend: func(event *sentry.Event, hint *sentry.EventHint) *sentry.Event {
 			if hint != nil && hint.Context != nil {
 				req, ok := hint.Context.Value(sentry.RequestContextKey).(*http.Request)
@@ -121,6 +121,16 @@ func provideSentryResource(cfg *config.Config, log *zap.Logger) *SentryResource 
 
 	log.Info("Sentry initialized successfully")
 	return &SentryResource{Enabled: true}
+}
+
+func normalizedSentryTraceSampleRate(sampleRate float64) float64 {
+	if sampleRate < 0 {
+		return 0
+	}
+	if sampleRate > 1 {
+		return 1
+	}
+	return sampleRate
 }
 
 func provideZGIReporter(sentryResource *SentryResource, otelResource *OpenTelemetryResource, log *zap.Logger) *observability.ZGIReporter {
@@ -242,7 +252,7 @@ func provideGRPCServer(db *gorm.DB) *grpcinfra.Server {
 
 func registerInfraLifecycle(lc fx.Lifecycle, db *gorm.DB, redisClient *redis.Client) {
 	lc.Append(fx.Hook{
-		OnStop: func(context.Context) error {
+		OnStop: func(ctx context.Context) error {
 			var result error
 
 			if redisClient != nil {

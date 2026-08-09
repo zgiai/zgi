@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -16,6 +17,7 @@ import (
 	llmmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	providermodel "github.com/zgiai/zgi/api/internal/modules/llm/provider/model"
+	"github.com/zgiai/zgi/api/internal/observability"
 )
 
 type fakeBillingProvider struct {
@@ -1467,6 +1469,138 @@ func TestBillingRouting_HandleStreamBilling_SettleFailure_EmitsErrorWithoutDone(
 	}
 }
 
+func TestBillingRouting_HandleStreamBilling_ReportsSettlementFailureAfterProviderStreamError(t *testing.T) {
+	recorder := withGatewayObservabilityRecorder(t)
+	providerErr := errors.New("provider stream disconnected")
+	local := &fakeBillingProvider{
+		checkBalanceResult: true,
+		settleErr:          errors.New("settlement database unavailable"),
+	}
+	s := &llmGatewayServiceImpl{
+		billing:       &fakeBillingProvider{checkBalanceResult: true},
+		localBilling:  local,
+		healthTracker: NewChannelHealthTracker(nil),
+	}
+
+	in := make(chan adapter.StreamResponse, 1)
+	out := make(chan adapter.StreamResponse, 2)
+	in <- adapter.StreamResponse{Error: providerErr}
+	close(in)
+	bc := &BillingContext{
+		UseSystemProvider: false,
+		OrganizationID:    "org-1",
+		RequestID:         "req-stream-provider-and-settlement-failed",
+		AttemptID:         "attempt-1",
+		ModelName:         "qwen-plus",
+		ProviderName:      "dashscope",
+	}
+
+	s.handleStreamBilling(context.Background(), in, out, bc, nil, nil, time.Now(), nil)
+
+	var got []adapter.StreamResponse
+	for response := range out {
+		got = append(got, response)
+	}
+	if len(got) != 1 || !errors.Is(got[0].Error, providerErr) {
+		t.Fatalf("stream responses = %#v, want only original provider failure", got)
+	}
+	if len(recorder.events) != 1 {
+		t.Fatalf("events = %#v, want one settlement failure", recorder.events)
+	}
+	event := recorder.events[0]
+	if event.Name != "llm.billing.settlement_failed" || event.Level != observability.LevelError {
+		t.Fatalf("event = %#v", event)
+	}
+	if event.Tags["error.category"] != "application" || event.Tags["error.source"] != "zgi" || event.Tags["error.code"] != "billing_settlement_failed" || event.Tags["error.retryable"] != "true" {
+		t.Fatalf("classification tags = %#v", event.Tags)
+	}
+	if event.Tags["llm.provider"] != "dashscope" || event.Tags["llm.model"] != "qwen-plus" || event.Tags["billing.mode"] != "local" {
+		t.Fatalf("diagnostic tags = %#v", event.Tags)
+	}
+	if event.Attributes["organization_id"] != "org-1" || event.Attributes["request_id"] != bc.RequestID || event.Attributes["attempt_id"] != "attempt-1" {
+		t.Fatalf("diagnostic attributes = %#v", event.Attributes)
+	}
+}
+
+func TestBillingRouting_HandleStreamBilling_ReportsPersistentProviderFrameError(t *testing.T) {
+	recorder := withGatewayObservabilityRecorder(t)
+	channelID := uuid.New()
+	local := &fakeBillingProvider{checkBalanceResult: true}
+	s := &llmGatewayServiceImpl{
+		billing:       &fakeBillingProvider{checkBalanceResult: true},
+		localBilling:  local,
+		healthTracker: NewChannelHealthTracker(nil),
+	}
+
+	in := make(chan adapter.StreamResponse, 1)
+	out := make(chan adapter.StreamResponse, 2)
+	in <- adapter.StreamResponse{Error: fmt.Errorf("terminal provider frame: %w", adapter.ErrAuthFailed)}
+	close(in)
+	bc := &BillingContext{
+		UseSystemProvider: false,
+		OrganizationID:    "org-1",
+		RequestID:         "req-stream-auth-failed",
+		ModelName:         "qwen-plus",
+		ProviderName:      "dashscope",
+		ChannelID:         &channelID,
+	}
+
+	s.handleStreamBilling(context.Background(), in, out, bc, nil, nil, time.Now(), &channelID)
+	for range out {
+	}
+
+	if len(recorder.events) != 1 {
+		t.Fatalf("events = %#v, want one channel-owned stream failure", recorder.events)
+	}
+	event := recorder.events[0]
+	if event.Name != "llm.provider.stream_failed" || event.Level != observability.LevelWarning {
+		t.Fatalf("event = %#v", event)
+	}
+	if event.Tags["error.source"] != "tenant" || event.Tags["error.code"] != "private_channel_credentials_invalid" {
+		t.Fatalf("classification tags = %#v", event.Tags)
+	}
+	if event.Tags["llm.provider"] != "dashscope" || event.Tags["llm.model"] != "qwen-plus" {
+		t.Fatalf("diagnostic tags = %#v", event.Tags)
+	}
+}
+
+func TestBillingRouting_HandleNativeStreamBilling_PreservesAttemptIndex(t *testing.T) {
+	recorder := withGatewayObservabilityRecorder(t)
+	channelID := uuid.New()
+	s := &llmGatewayServiceImpl{
+		billing:       &fakeBillingProvider{checkBalanceResult: true},
+		localBilling:  &fakeBillingProvider{checkBalanceResult: true},
+		healthTracker: NewChannelHealthTracker(nil),
+	}
+	selection := &ProviderSelection{
+		UseSystemProvider: false,
+		Model:             llmmodel.LLMModel{ID: uuid.New(), Model: "gpt-5"},
+		Provider:          providermodel.LLMProvider{Provider: "openai"},
+	}
+	billingCtx := &BillingContext{
+		UseSystemProvider: false,
+		OrganizationID:    "org-1",
+		ModelName:         "gpt-5",
+		ProviderName:      "openai",
+		ChannelID:         &channelID,
+	}
+	in := make(chan adapter.RawStreamEvent, 1)
+	out := make(chan adapter.RawStreamEvent, 2)
+	in <- adapter.RawStreamEvent{Error: fmt.Errorf("terminal native frame: %w", adapter.ErrAuthFailed)}
+	close(in)
+
+	s.handleNativeStreamBilling(context.Background(), in, out, billingCtx, selection, &channelID, 2, time.Now(), "gpt-5", nil, "llm.responses.stream", nativeUsageBodyFormatResponses)
+	for range out {
+	}
+
+	if len(recorder.events) != 1 {
+		t.Fatalf("events = %#v, want one terminal native failure", recorder.events)
+	}
+	if got := recorder.events[0].Attributes["attempt_index"]; got != 2 {
+		t.Fatalf("attempt_index = %#v, want 2", got)
+	}
+}
+
 func TestBillingRouting_HandleStreamBilling_EstimatesMissingUsageFromContent(t *testing.T) {
 	remote := &fakeBillingProvider{checkBalanceResult: true}
 	local := &fakeBillingProvider{checkBalanceResult: true}
@@ -1660,7 +1794,7 @@ func TestBillingRouting_HandleNativeStreamBilling_InjectsResponsesUsageIntoTermi
 		Provider:          providermodel.LLMProvider{Provider: "openai"},
 	}
 
-	s.handleNativeStreamBilling(context.Background(), in, out, bc, ps, nil, time.Now(), "gpt-5", nil, "llm.responses.stream", nativeUsageBodyFormatResponses)
+	s.handleNativeStreamBilling(context.Background(), in, out, bc, ps, nil, 0, time.Now(), "gpt-5", nil, "llm.responses.stream", nativeUsageBodyFormatResponses)
 
 	var got []adapter.RawStreamEvent
 	for event := range out {
@@ -1737,7 +1871,7 @@ func TestBillingRouting_HandleNativeStreamBilling_EmitsAnthropicUsageBeforeStop(
 		Provider:          providermodel.LLMProvider{Provider: "anthropic"},
 	}
 
-	s.handleNativeStreamBilling(context.Background(), in, out, bc, ps, nil, time.Now(), "claude-sonnet-4-5", nil, "llm.anthropic.messages.stream", nativeUsageBodyFormatAnthropic)
+	s.handleNativeStreamBilling(context.Background(), in, out, bc, ps, nil, 0, time.Now(), "claude-sonnet-4-5", nil, "llm.anthropic.messages.stream", nativeUsageBodyFormatAnthropic)
 
 	var got []adapter.RawStreamEvent
 	for event := range out {

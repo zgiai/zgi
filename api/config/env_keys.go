@@ -474,6 +474,8 @@ const (
 	envSentryDSN = "SENTRY_DSN"
 	// envSentryEnvironment overrides the Sentry environment label. Default: ENV.
 	envSentryEnvironment = "SENTRY_ENVIRONMENT"
+	// envSentryTracesSampleRate controls backend Sentry performance trace sampling. Default: 0.1.
+	envSentryTracesSampleRate = "SENTRY_TRACES_SAMPLE_RATE"
 
 	// Dependency services.
 	// envModelMetaAPIURL sets the ModelMeta-compatible API base URL. Default: https://models.zgi.ai.

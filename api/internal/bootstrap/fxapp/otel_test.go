@@ -50,7 +50,7 @@ func TestProvideOpenTelemetryResourceDisablesRuntimeGateWhenExporterIsUnavailabl
 					Endpoint: test.endpoint,
 				},
 			}
-			resource, err := provideOpenTelemetryResource(cfg, zap.NewNop())
+			resource, err := provideOpenTelemetryResource(cfg, zap.NewNop(), &SentryResource{})
 			if err != nil {
 				t.Fatalf("provideOpenTelemetryResource() error = %v, want nil", err)
 			}

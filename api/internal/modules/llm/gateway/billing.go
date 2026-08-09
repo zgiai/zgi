@@ -592,7 +592,7 @@ func (b *BillingService) deductTenantCredits(ctx context.Context, tx *gorm.DB, b
 		quote, quoteErr := NewPricingEngine(b.db).QuoteTokens(ctx, pricingModelRefFromBillingContext(bc), bc.PromptTokens, bc.CompletionTokens)
 		err = wrapPricingNotConfiguredError(quoteErr)
 		if err != nil {
-			return fmt.Errorf("failed to calculate credits: %w", err)
+			return wrapPricingCalculationError(err)
 		}
 		creditsToDeduct = quote.TotalCredits
 	}

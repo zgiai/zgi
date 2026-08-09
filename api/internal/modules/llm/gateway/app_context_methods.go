@@ -77,10 +77,11 @@ func (s *llmGatewayServiceImpl) createResponseInternal(
 	}
 	providerSelections, err := s.selectProvidersWithChannelRouter(ctx, shadowOrganizationID, "", effectiveReq.Model, 3)
 	if err != nil {
+		reportLLMSelectionFailure(ctx, err, effectiveReq.Model, organizationID.String(), shadowOrganizationID.String())
 		return nil, fmt.Errorf("failed to select provider: %w", err)
 	}
 	if len(providerSelections) == 0 {
-		return nil, NewNoProviderAvailableError(effectiveReq.Model, shadowOrganizationID.String())
+		return nil, reportedNoProviderAvailableError(ctx, effectiveReq.Model, organizationID.String(), shadowOrganizationID.String())
 	}
 
 	// 5. Try each provider selection
@@ -89,7 +90,7 @@ func (s *llmGatewayServiceImpl) createResponseInternal(
 		requestID := uuid.New().String()
 		quote, err := s.quoteTokenPricingForSelection(ctx, providerSelection, pricingModelRefFromSelection(providerSelection), promptTokens, completionTokens)
 		if err != nil {
-			lastErr = fmt.Errorf("failed to calculate credits: %w", err)
+			lastErr = wrapPricingCalculationError(err)
 			continue
 		}
 		estimatedCredits := quote.TotalCredits
@@ -124,6 +125,7 @@ func (s *llmGatewayServiceImpl) createResponseInternal(
 			if rollbackErr := s.rollbackPreDeduction(ctx, billingCtx); rollbackErr != nil {
 				return nil, rollbackErr
 			}
+			reportLLMAdapterFailureForSelection(ctx, err, providerSelection, billingCtx, attemptIdx, attemptIdx == len(providerSelections)-1)
 			lastErr = fmt.Errorf("failed to create adapter: %w", err)
 			s.logProviderError(ctx, attemptIdx, providerSelection, err, "adapter_creation_failed")
 			continue
@@ -137,6 +139,7 @@ func (s *llmGatewayServiceImpl) createResponseInternal(
 		responseTime := time.Since(startTime).Milliseconds()
 
 		if err != nil {
+			reportLLMProviderFailureForSelection(ctx, err, "llm.provider.request_failed", providerSelection, billingCtx, attemptIdx, attemptIdx == len(providerSelections)-1)
 			if settleErr := s.handleProviderError(ctx, billingCtx, providerSelection, channelID, responseTime, attemptIdx, err); settleErr != nil {
 				s.traceCreateResponse(ctx, req, response, startTime, time.Now(), billingCtx, settleErr)
 				return nil, settleErr
@@ -218,10 +221,11 @@ func (s *llmGatewayServiceImpl) createEmbeddingsInternal(
 	}
 	providerSelections, err := s.selectProvidersWithChannelRouter(ctx, shadowOrganizationID, "", req.Model, 3)
 	if err != nil {
+		reportLLMSelectionFailure(ctx, err, req.Model, organizationID.String(), shadowOrganizationID.String())
 		return nil, fmt.Errorf("failed to select provider: %w", err)
 	}
 	if len(providerSelections) == 0 {
-		return nil, NewNoProviderAvailableError(req.Model, shadowOrganizationID.String())
+		return nil, reportedNoProviderAvailableError(ctx, req.Model, organizationID.String(), shadowOrganizationID.String())
 	}
 
 	// 5. Try each provider selection
@@ -232,7 +236,7 @@ func (s *llmGatewayServiceImpl) createEmbeddingsInternal(
 		modelRef.Operation = PricingOperationEmbedding
 		quote, err := s.quoteTokenPricingForSelection(ctx, providerSelection, modelRef, promptTokens, 0)
 		if err != nil {
-			lastErr = fmt.Errorf("failed to calculate credits: %w", err)
+			lastErr = wrapPricingCalculationError(err)
 			continue
 		}
 		estimatedCredits := quote.TotalCredits
@@ -268,6 +272,7 @@ func (s *llmGatewayServiceImpl) createEmbeddingsInternal(
 			if rollbackErr := s.rollbackPreDeduction(ctx, billingCtx); rollbackErr != nil {
 				return nil, rollbackErr
 			}
+			reportLLMAdapterFailureForSelection(ctx, err, providerSelection, billingCtx, attemptIdx, attemptIdx == len(providerSelections)-1)
 			lastErr = fmt.Errorf("failed to create adapter: %w", err)
 			s.logProviderError(ctx, attemptIdx, providerSelection, err, "adapter_creation_failed")
 			continue
@@ -281,6 +286,7 @@ func (s *llmGatewayServiceImpl) createEmbeddingsInternal(
 		responseTime := time.Since(startTime).Milliseconds()
 
 		if err != nil {
+			reportLLMProviderFailureForSelection(ctx, err, "llm.provider.request_failed", providerSelection, billingCtx, attemptIdx, attemptIdx == len(providerSelections)-1)
 			if settleErr := s.handleProviderError(ctx, billingCtx, providerSelection, channelID, responseTime, attemptIdx, err); settleErr != nil {
 				s.traceEmbeddings(ctx, req, response, startTime, time.Now(), billingCtx, settleErr)
 				return nil, settleErr
@@ -347,10 +353,11 @@ func (s *llmGatewayServiceImpl) rerankInternal(
 	}
 	providerSelections, err := s.selectProvidersWithChannelRouter(ctx, shadowOrganizationID, "", req.Model, 3)
 	if err != nil {
+		reportLLMSelectionFailure(ctx, err, req.Model, organizationID.String(), shadowOrganizationID.String())
 		return nil, fmt.Errorf("failed to select provider: %w", err)
 	}
 	if len(providerSelections) == 0 {
-		return nil, NewNoProviderAvailableError(req.Model, shadowOrganizationID.String())
+		return nil, reportedNoProviderAvailableError(ctx, req.Model, organizationID.String(), shadowOrganizationID.String())
 	}
 
 	// 5. Try each provider selection
@@ -361,7 +368,7 @@ func (s *llmGatewayServiceImpl) rerankInternal(
 		modelRef.Operation = PricingOperationRerank
 		quote, err := s.quoteTokenPricingForSelection(ctx, providerSelection, modelRef, promptTokens, 0)
 		if err != nil {
-			lastErr = fmt.Errorf("failed to calculate credits: %w", err)
+			lastErr = wrapPricingCalculationError(err)
 			continue
 		}
 		estimatedCredits := quote.TotalCredits
@@ -397,6 +404,7 @@ func (s *llmGatewayServiceImpl) rerankInternal(
 			if rollbackErr := s.rollbackPreDeduction(ctx, billingCtx); rollbackErr != nil {
 				return nil, rollbackErr
 			}
+			reportLLMAdapterFailureForSelection(ctx, err, providerSelection, billingCtx, attemptIdx, attemptIdx == len(providerSelections)-1)
 			lastErr = fmt.Errorf("failed to create adapter: %w", err)
 			s.logProviderError(ctx, attemptIdx, providerSelection, err, "adapter_creation_failed")
 			continue
@@ -410,6 +418,7 @@ func (s *llmGatewayServiceImpl) rerankInternal(
 		responseTime := time.Since(startTime).Milliseconds()
 
 		if err != nil {
+			reportLLMProviderFailureForSelection(ctx, err, "llm.provider.request_failed", providerSelection, billingCtx, attemptIdx, attemptIdx == len(providerSelections)-1)
 			if settleErr := s.handleProviderError(ctx, billingCtx, providerSelection, channelID, responseTime, attemptIdx, err); settleErr != nil {
 				s.traceRerank(ctx, req, response, startTime, time.Now(), billingCtx, settleErr)
 				return nil, settleErr

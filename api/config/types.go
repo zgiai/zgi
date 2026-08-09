@@ -324,9 +324,10 @@ type Neo4jConfig struct {
 }
 
 type SentryConfig struct {
-	DSN         string `json:"-"`
-	Environment string `json:"environment"`
-	Release     string `json:"release"`
+	DSN             string  `json:"-"`
+	Environment     string  `json:"environment"`
+	Release         string  `json:"release"`
+	TraceSampleRate float64 `json:"trace_sample_rate"`
 }
 
 type CloudBootstrapConfig struct {

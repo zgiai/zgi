@@ -282,7 +282,7 @@ func DefaultReporter() *ZGIReporter {
 // CaptureError reports an error through the process-wide ZGIReporter. Delivery
 // errors are deliberately isolated from business execution.
 func CaptureError(ctx context.Context, name string, err error, options ...EventOption) {
-	if err == nil {
+	if err == nil || IsExpectedCancellation(err) {
 		return
 	}
 	event := Event{Name: name, Kind: EventKindError, Level: LevelError, Err: err}
@@ -291,7 +291,41 @@ func CaptureError(ctx context.Context, name string, err error, options ...EventO
 			option(&event)
 		}
 	}
+	markErrorReported(ctx, err, event.Level)
 	_ = DefaultReporter().Report(ctx, event)
+}
+
+// IsExpectedCancellation identifies normal caller cancellation. Timeouts remain
+// reportable because they usually indicate an actionable dependency failure.
+func IsExpectedCancellation(err error) bool {
+	if err == nil || !errors.Is(err, context.Canceled) {
+		return false
+	}
+	return hasOnlyCancellationCauses(err)
+}
+
+func hasOnlyCancellationCauses(err error) bool {
+	if err == nil {
+		return true
+	}
+	if multi, ok := err.(interface{ Unwrap() []error }); ok {
+		causes := multi.Unwrap()
+		if len(causes) == 0 {
+			return errors.Is(err, context.Canceled)
+		}
+		for _, cause := range causes {
+			if !hasOnlyCancellationCauses(cause) {
+				return false
+			}
+		}
+		return true
+	}
+	if single, ok := err.(interface{ Unwrap() error }); ok {
+		if cause := single.Unwrap(); cause != nil {
+			return hasOnlyCancellationCauses(cause)
+		}
+	}
+	return errors.Is(err, context.Canceled)
 }
 
 // CaptureEvent reports a non-error event through the process-wide ZGIReporter.

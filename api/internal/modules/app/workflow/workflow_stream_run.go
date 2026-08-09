@@ -840,7 +840,7 @@ func (h *WorkflowHandler) runWorkflowStream(c *gin.Context, requestedWorkspaceID
 			select {
 			case durableErr := <-durableEventErr:
 				logger.ErrorContext(runtimeCtx, "workflow execution stopped after durable event persistence failed", "workflow_run_id", workflowRunLogID, durableErr)
-				return sendTerminalFailure(fmt.Errorf("%w: %v", errWorkflowEventPersistenceFailed, durableErr))
+				return sendTerminalFailure(fmt.Errorf("%w: %w", errWorkflowEventPersistenceFailed, durableErr))
 			default:
 			}
 			cause := workflowshared.ResolveContextError(execCtx, execCtx.Err())

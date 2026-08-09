@@ -972,6 +972,7 @@ func executeSuccessfulChatAttemptWithDelay(t testing.TB, requestID string, delay
 		requestID,
 		time.Now().Add(-250*time.Millisecond),
 		0,
+		true,
 	)
 	if err != nil {
 		t.Fatalf("tryChatCompletion() error = %v", err)

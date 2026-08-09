@@ -993,9 +993,10 @@ func loadSentryConfig(cfg *Config, source *envSource) {
 	}
 
 	cfg.Sentry = SentryConfig{
-		DSN:         source.string("", envSentryDSN),
-		Environment: environment,
-		Release:     source.string("1.0.0", envAppVersion),
+		DSN:             source.string("", envSentryDSN),
+		Environment:     environment,
+		Release:         source.string("1.0.0", envAppVersion),
+		TraceSampleRate: mustFloat64(source.float64(0.1, envSentryTracesSampleRate)),
 	}
 }
 

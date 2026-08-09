@@ -4,8 +4,11 @@ import (
 	"context"
 	"errors"
 	"math/rand"
+	"net"
+	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/zgiai/zgi/api/internal/observability"
 	"gorm.io/gorm"
 )
@@ -18,6 +21,36 @@ type ReporterPlugin struct {
 	// SlowQuerySampleRate defines the sample rate for slow query reporting (0.0 to 1.0)
 	// Default is 1.0 (report all slow queries)
 	SlowQuerySampleRate float64
+}
+
+// OperationError marks a failure as originating from an explicit database
+// operation while retaining the concrete driver error for classification.
+type OperationError struct {
+	Operation string
+	Cause     error
+}
+
+func (e *OperationError) Error() string {
+	return e.Operation + ": " + e.Cause.Error()
+}
+
+func (e *OperationError) Unwrap() error {
+	return e.Cause
+}
+
+// WrapOperationError marks an error at the repository/query boundary.
+func WrapOperationError(operation string, err error) error {
+	if err == nil {
+		return nil
+	}
+	return &OperationError{Operation: operation, Cause: err}
+}
+
+// IsOperationError reports whether an error came from an explicit database
+// operation rather than an unrelated network boundary.
+func IsOperationError(err error) bool {
+	var operationErr *OperationError
+	return errors.As(err, &operationErr)
 }
 
 // Name returns the plugin name
@@ -112,6 +145,7 @@ func (p *ReporterPlugin) checkError(db *gorm.DB, operation string) {
 		}
 
 		observability.CaptureError(ctx, "database.operation.failed", db.Error,
+			observability.WithErrorClassification(classifyDatabaseError(db.Error)),
 			observability.Tags(map[string]string{
 				"db.operation": operation,
 				"db.table":     tableName,
@@ -119,6 +153,63 @@ func (p *ReporterPlugin) checkError(db *gorm.DB, operation string) {
 			observability.Attribute("db.rows_affected", db.RowsAffected),
 		)
 	}
+}
+
+func classifyDatabaseError(err error) observability.ErrorClassification {
+	classification := observability.ErrorClassification{
+		Category: observability.ErrorCategoryDatabase,
+		Source:   observability.ErrorSourceZGI,
+		Code:     "database_operation_failed",
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		classification.Category = observability.ErrorCategoryTimeout
+		classification.Source = observability.ErrorSourceInfrastructure
+		classification.Code = "database_timeout"
+		classification.Retryable = true
+		return classification
+	}
+
+	// A connection error may wrap a PostgreSQL rejection such as invalid
+	// credentials. Preserve that SQLSTATE before falling back to a generic
+	// transport classification.
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr != nil && pgErr.Code != "" {
+		classification.Code = "postgres_" + pgErr.Code
+		class := pgErr.Code
+		if len(class) > 2 {
+			class = class[:2]
+		}
+		switch strings.ToUpper(class) {
+		case "08", "40", "53", "57", "58":
+			classification.Source = observability.ErrorSourceInfrastructure
+			classification.Retryable = true
+		}
+		return classification
+	}
+
+	var connectErr *pgconn.ConnectError
+	if errors.As(err, &connectErr) {
+		classification.Source = observability.ErrorSourceInfrastructure
+		classification.Code = "postgres_connection_failed"
+		classification.Retryable = true
+		return classification
+	}
+	var networkErr *net.OpError
+	if errors.As(err, &networkErr) {
+		classification.Source = observability.ErrorSourceInfrastructure
+		classification.Code = "database_transport_failed"
+		classification.Retryable = true
+		return classification
+	}
+	return classification
+}
+
+// ClassifyError exposes the database ownership taxonomy to callers that
+// surface database failures through a higher-level operation. Keeping one
+// classifier prevents the same outage from being assigned to contradictory
+// owners by the database and domain layers.
+func ClassifyError(err error) observability.ErrorClassification {
+	return classifyDatabaseError(err)
 }
 
 // checkSlowQuery checks if the query is slow and reports it
@@ -160,6 +251,12 @@ func (p *ReporterPlugin) checkSlowQuery(db *gorm.DB) {
 			db.Statement.Context,
 			"database.query.slow",
 			errors.New("slow query detected"),
+			observability.WithLevel(observability.LevelWarning),
+			observability.WithErrorClassification(observability.ErrorClassification{
+				Category: observability.ErrorCategoryDatabase,
+				Source:   observability.ErrorSourceZGI,
+				Code:     "slow_query",
+			}),
 			observability.Tags(map[string]string{
 				"db.operation": "SLOW_QUERY",
 				"db.table":     tableName,

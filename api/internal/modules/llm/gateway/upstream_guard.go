@@ -7,6 +7,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/modules/llm/credential/upstreamstate"
 	llmerrors "github.com/zgiai/zgi/api/internal/modules/llm/errors"
+	"github.com/zgiai/zgi/api/pkg/database"
 	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
@@ -32,7 +33,7 @@ func (s *llmGatewayServiceImpl) activateUpstreamProbe(
 	}
 	state, err := s.upstreamState.Get(ctx, selection.OrganizationID, selection.CredentialID)
 	if err != nil {
-		return fmt.Errorf("load upstream probe state: %w", err)
+		return database.WrapOperationError("load upstream probe state", err)
 	}
 	if state.Generation != selection.CredentialGeneration {
 		return fmt.Errorf("%w: credential generation changed", llmerrors.DomainErrPrivateChannelUpstreamUnavailable)
@@ -40,7 +41,7 @@ func (s *llmGatewayServiceImpl) activateUpstreamProbe(
 
 	decision, err := s.upstreamState.EvaluateGuard(ctx, state, true, selection.UpstreamProbeHasBackup)
 	if err != nil {
-		return err
+		return database.WrapOperationError("evaluate upstream probe guard", err)
 	}
 	if decision.Block || !decision.HalfOpen {
 		return fmt.Errorf("%w: half-open lease unavailable", llmerrors.DomainErrPrivateChannelUpstreamUnavailable)

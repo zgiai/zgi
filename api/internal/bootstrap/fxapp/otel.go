@@ -3,6 +3,7 @@ package fxapp
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/url"
 	"path"
 	"strings"
@@ -32,7 +33,7 @@ type OpenTelemetryResource struct {
 	TracerProvider *sdktrace.TracerProvider
 }
 
-func provideOpenTelemetryResource(cfg *config.Config, log *zap.Logger) (*OpenTelemetryResource, error) {
+func provideOpenTelemetryResource(cfg *config.Config, log *zap.Logger, sentryResource *SentryResource) (*OpenTelemetryResource, error) {
 	if cfg == nil || !cfg.Observability.ReporterEnabled("otel", cfg.OpenTelemetry.Enabled) {
 		log.Info("OpenTelemetry tracing disabled")
 		return disabledOpenTelemetryResource(cfg), nil
@@ -53,11 +54,13 @@ func provideOpenTelemetryResource(cfg *config.Config, log *zap.Logger) (*OpenTel
 		return disabledOpenTelemetryResource(cfg), nil
 	}
 
+	runtimeErrorHandler := newOTelRuntimeErrorHandler(log, sentryResource != nil && sentryResource.Enabled)
 	exp, err := otlptracehttp.New(context.Background(), opts...)
 	if err != nil {
-		log.Warn("OpenTelemetry tracing disabled because exporter initialization failed", zap.Error(err))
+		runtimeErrorHandler.Handle(fmt.Errorf("initialize OpenTelemetry exporter: %w", err))
 		return disabledOpenTelemetryResource(cfg), nil
 	}
+	otel.SetErrorHandler(runtimeErrorHandler)
 
 	res, err := resource.Merge(
 		resource.Default(),

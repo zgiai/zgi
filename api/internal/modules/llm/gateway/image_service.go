@@ -143,7 +143,7 @@ func (s *llmGatewayServiceImpl) createImageInternal(
 	if err != nil {
 		return nil, fmt.Errorf("invalid organization id: %w", err)
 	}
-	billingOrganizationID, ownerID, err := s.getShadowTenantInfo(ctx, orgUUID)
+	billingOrganizationID, ownerID, err := s.resolveShadowContext(ctx, orgUUID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get shadow tenant info: %w", err)
 	}
@@ -154,6 +154,7 @@ func (s *llmGatewayServiceImpl) createImageInternal(
 	ctx = context.WithValue(ctx, shared.ContextKeyModelCategory, "image")
 	selections, err := s.selectProvidersWithChannelRouter(ctx, billingOrganizationID, effectiveReq.Provider, effectiveReq.Model, 1)
 	if err != nil {
+		reportLLMSelectionFailure(ctx, err, effectiveReq.Model, orgUUID.String(), billingOrganizationID.String())
 		return nil, err
 	}
 	selection := selections[0] // Use the first selection (highest priority)
@@ -196,6 +197,7 @@ func (s *llmGatewayServiceImpl) createImageInternal(
 	if err != nil {
 		// Release pre-deduction
 		s.rollbackPreDeduction(ctx, billingCtx)
+		reportLLMAdapterFailureForSelection(ctx, err, selection, billingCtx, 0, true)
 		return nil, fmt.Errorf("failed to get adapter for provider %s: %w", config.ProviderName, err)
 	}
 
@@ -207,6 +209,7 @@ func (s *llmGatewayServiceImpl) createImageInternal(
 	resp, err := providerAdapter.CreateImage(ctx, &providerReq)
 	responseTime := time.Since(startTime).Milliseconds()
 	if err != nil {
+		reportLLMProviderFailureForSelection(ctx, err, "llm.provider.request_failed", selection, billingCtx, 0, true)
 		// Log provider error
 		s.logProviderError(ctx, 0, selection, err, "image_generation")
 		s.recordUpstreamProviderError(ctx, selection, billingCtx, err)
