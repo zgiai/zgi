@@ -19,7 +19,7 @@ func ExampleCatalog_Present() {
 	appErr, _ := apperror.As(err)
 	presentation, _ := productCatalog.Present(
 		appErr.Code(),
-		catalog.LocaleChineseSimplified,
+		catalog.LocaleEnglishUS,
 		appErr.Params(),
 	)
 
@@ -27,5 +27,5 @@ func ExampleCatalog_Present() {
 	// diagnostic because it contains the internal operation and cause.
 	fmt.Println(presentation.Code, presentation.HTTPStatus, presentation.Message)
 	// Output:
-	// llm.provider.timeout 504 大模型服务响应超时，请重试或选择其他模型。
+	// llm.provider.timeout 504 The model service took too long to respond. Try again or choose another model.
 }
