@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 import * as React from 'react';
 import {
@@ -1138,24 +1138,41 @@ function pickSupportedOption(value: string, options: string[], preferred: string
 }
 
 function getDurationOptions(videoConfig: Record<string, unknown> | null): string[] {
-  const duration = getNestedRecord(videoConfig, ['duration']);
-  const explicit = getStringOptions(duration, ['values', 'seconds', 'options'], []);
-  if (explicit.length > 0) return explicit;
+  const durationValue = getNestedValue(videoConfig, ['duration']);
+  const durationConfigs = Array.isArray(durationValue) ? durationValue : [durationValue];
 
-  if (duration) {
-    const min = toPositiveNumber(duration.min_seconds);
-    const max = toPositiveNumber(duration.max_seconds);
-    const step = toPositiveNumber(duration.step_seconds) || 1;
-    if (min > 0 && max >= min) {
-      const options: string[] = [];
-      for (let value = min; value <= max; value += step) {
-        options.push(String(value));
-      }
-      if (options.length > 0) return options;
-    }
+  for (const duration of durationConfigs) {
+    const options = getDurationOptionsFromValue(duration);
+    if (options.length > 0) return options;
   }
 
   return [...DEFAULT_VIDEO_GENERATION_OPTIONS.durations];
+}
+
+function getDurationOptionsFromValue(duration: unknown): string[] {
+  if (typeof duration === 'string' || typeof duration === 'number') {
+    const value = String(duration).trim();
+    return value ? [value] : [];
+  }
+
+  const durationConfig = getNestedRecord(duration, []);
+  const explicit = getStringOptions(durationConfig, ['values', 'seconds', 'options'], []);
+  if (explicit.length > 0) return explicit;
+
+  if (!durationConfig) return [];
+
+  const min = toPositiveNumber(durationConfig.min_seconds);
+  const max = toPositiveNumber(durationConfig.max_seconds);
+  const step = toPositiveNumber(durationConfig.step_seconds) || 1;
+  if (min > 0 && max >= min) {
+    const options: string[] = [];
+    for (let value = min; value <= max; value += step) {
+      options.push(String(value));
+    }
+    return options;
+  }
+
+  return [];
 }
 
 function getStringOptions(
