@@ -38,6 +38,13 @@ func (h *LLMHandler) localizedProtocolError(c *gin.Context, err error) protocolE
 	return legacy
 }
 
+func (h *LLMHandler) localizedChatStreamError(c *gin.Context, err error) string {
+	if _, supported := gatewayApplicationError(err); !supported {
+		return err.Error()
+	}
+	return h.localizedProtocolError(c, err).message
+}
+
 func gatewayApplicationError(err error) (error, bool) {
 	if apperror.IsCode(err, llmerrors.AppCodeProviderTimeout) {
 		return err, true

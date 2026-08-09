@@ -79,6 +79,22 @@ func TestRecordServiceErrorAddsStableAppCodeAndPreservesCause(t *testing.T) {
 	}
 }
 
+func TestLocalizedChatStreamErrorSanitizesOnlyMigratedTimeout(t *testing.T) {
+	handler := &LLMHandler{errorProjector: testApplicationErrorProjector(t)}
+	context := testProtocolContext(t, "/v1/chat/completions", "zh-CN")
+	timeout := errors.Join(adapter.ErrTimeout, errors.New("provider token sk-secret"))
+
+	got := handler.localizedChatStreamError(context, timeout)
+	if got != "大模型服务响应超时，请重试或选择其他模型。" || strings.Contains(got, "sk-secret") {
+		t.Fatalf("timeout stream message = %q", got)
+	}
+
+	unmigrated := errors.New("legacy stream message")
+	if got := handler.localizedChatStreamError(context, unmigrated); got != unmigrated.Error() {
+		t.Fatalf("unmigrated stream message = %q", got)
+	}
+}
+
 func BenchmarkLocalizedProtocolErrorProviderTimeout(b *testing.B) {
 	handler := &LLMHandler{errorProjector: testApplicationErrorProjector(b)}
 	context := testProtocolContext(b, "/v1/chat/completions", "zh-CN")

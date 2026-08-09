@@ -183,7 +183,7 @@ func (h *LLMHandler) handleStreamingRequest(c *gin.Context, apiKey *apikeymodel.
 		// Check for errors
 		if resp.Error != nil {
 			recordStreamServiceError(c, resp.Error)
-			streamWriter.WriteError(resp.Error)
+			streamWriter.WriteErrorMessage(h.localizedChatStreamError(c, resp.Error))
 			break
 		}
 

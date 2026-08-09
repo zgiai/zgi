@@ -3,6 +3,7 @@ package handler_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -258,7 +259,24 @@ func TestChatCompletionsTimeoutUsesLocalizedMessageWithoutChangingWireContract(t
 	}
 }
 
+func TestChatCompletionsStreamTimeoutUsesLocalizedSafeMessage(t *testing.T) {
+	body := performStreamRequestWithLanguage(t, []adapter.StreamResponse{{
+		Error: errors.Join(adapter.ErrTimeout, errors.New("provider token sk-secret")),
+	}}, "zh-CN")
+
+	if !strings.Contains(body, "event:error") || !strings.Contains(body, "大模型服务响应超时，请重试或选择其他模型。") {
+		t.Fatalf("localized stream error missing:\n%s", body)
+	}
+	if strings.Contains(body, "sk-secret") {
+		t.Fatalf("stream error leaked diagnostic cause:\n%s", body)
+	}
+}
+
 func performStreamRequest(t *testing.T, responses []adapter.StreamResponse) string {
+	return performStreamRequestWithLanguage(t, responses, "")
+}
+
+func performStreamRequestWithLanguage(t *testing.T, responses []adapter.StreamResponse, language string) string {
 	t.Helper()
 
 	gin.SetMode(gin.TestMode)
@@ -275,6 +293,7 @@ func performStreamRequest(t *testing.T, responses []adapter.StreamResponse) stri
 		"stream": true
 	}`))
 	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Accept-Language", language)
 	recorder := httptest.NewRecorder()
 
 	router.ServeHTTP(recorder, request)
