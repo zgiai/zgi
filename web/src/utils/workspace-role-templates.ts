@@ -12,6 +12,53 @@ function normalizedRoleName(role: Role) {
   return role.name.toLowerCase();
 }
 
+type WorkspaceRoleLocalizedText = NonNullable<Role['name_i18n']>;
+
+function resolveWorkspaceRoleLocalizedText(
+  fallback: string,
+  localized: WorkspaceRoleLocalizedText | undefined,
+  locale: string,
+  immutableBuiltin: boolean
+) {
+  if (!localized) return fallback;
+
+  const localizedMap = localized as Record<string, string | undefined>;
+  const localizedValues = Object.values(localizedMap).filter(
+    (value): value is string => typeof value === 'string' && value.trim().length > 0
+  );
+  const fallbackMatchesLocalizedValue = localizedValues.some(
+    value => value.trim() === fallback.trim()
+  );
+
+  // Editable templates use the base field as an explicit override. Historical
+  // rows may still contain migration-generated localized defaults.
+  if (!immutableBuiltin && !fallbackMatchesLocalizedValue) {
+    return fallback;
+  }
+
+  const localeKey = locale.replace('-', '_');
+  return (
+    localizedMap[localeKey] ||
+    localized.en_US ||
+    localized.zh_Hans ||
+    localizedValues[0] ||
+    fallback
+  );
+}
+
+export function getWorkspaceRoleDisplayName(role: Role, locale: string) {
+  return resolveWorkspaceRoleLocalizedText(role.name, role.name_i18n, locale, role.builtin);
+}
+
+export function getWorkspaceRoleDisplayDescription(role: Role, locale: string) {
+  return resolveWorkspaceRoleLocalizedText(
+    role.description || '',
+    role.description_i18n,
+    locale,
+    role.builtin
+  );
+}
+
 export function isWorkspaceOwnerRole(role: Role) {
   return (
     role.id === WORKSPACE_BUILTIN_ROLE_OWNER_ID ||
@@ -31,7 +78,7 @@ export function isWorkspaceGovernanceRole(role: Role) {
     Boolean(role.fixed_governance) ||
     role.role_kind === 'governance' ||
     FIXED_GOVERNANCE_ROLE_IDS.has(role.id) ||
-    ['owner', 'admin'].includes(normalizedRoleName(role))
+    (role.builtin && ['owner', 'admin'].includes(normalizedRoleName(role)))
   );
 }
 

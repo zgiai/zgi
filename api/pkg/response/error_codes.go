@@ -57,6 +57,14 @@ var (
 	ErrDatasetIdRequired      = ErrorCode{102004, "Dataset ID cannot be empty", true}
 )
 
+// Workspace permission template validation errors (organization module).
+var (
+	ErrWorkspaceRoleTemplateNameRequired       = ErrorCode{105001, "Permission template name is required", true}
+	ErrWorkspaceRoleTemplateNameTooLong        = ErrorCode{105002, "Permission template name cannot exceed 30 characters", true}
+	ErrWorkspaceRoleTemplateDescriptionTooLong = ErrorCode{105003, "Permission template description cannot exceed 200 characters", true}
+	ErrWorkspaceRoleTemplateInvalidRequest     = ErrorCode{105004, "Invalid permission template request", true}
+)
+
 var (
 	ErrDocumentFile       = ErrorCode{103001, "Please select a document file to upload", true}
 	ErrDocumentSize       = ErrorCode{103002, "Document file size cannot exceed 10MB", true}
@@ -176,27 +184,35 @@ var (
 )
 
 var (
-	ErrOrganizationNotFound         = ErrorCode{205001, "Enterprise group not found", true}
-	ErrEnterpriseExists             = ErrorCode{205002, "Enterprise group name already exists", true}
-	ErrOrganizationExists           = ErrorCode{205003, "Enterprise group name already exists, please use a different name", true}
-	ErrWorkspaceNotFound            = ErrorCode{205004, "Workspace not found", true}
-	ErrWorkspaceExists              = ErrorCode{205005, "Workspace name already exists, please use a different name", true}
-	ErrCannotOperateSelf            = ErrorCode{205006, "Cannot perform this operation on yourself", true}
-	ErrMemberNotInWorkspace         = ErrorCode{205007, "Member is not in this tenant", true}
-	ErrMemberNotFound               = ErrorCode{205008, "Member not found", true}
-	ErrEmailExists                  = ErrorCode{205009, "Email already exists", true}
-	ErrInvalidRole                  = ErrorCode{205010, "Invalid role", true}
-	ErrInvalidPermission            = ErrorCode{205011, "Invalid permission value", true}
-	ErrInvalidGender                = ErrorCode{205012, "Invalid gender value", true}
-	ErrMemberAlreadyExists          = ErrorCode{205013, "Member already exists in this tenant", true}
-	ErrRoleAlreadyAssigned          = ErrorCode{205014, "Role already assigned", true}
-	ErrInvalidTenantId              = ErrorCode{205015, "Failed to get tenant ID", true}
-	ErrWorkspaceJoinedNotFound      = ErrorCode{205016, "Workspace not found, please contact administrator to invite you to a workspace", true}
-	ErrWorkspaceNotInOrganization   = ErrorCode{205017, "Tenant is not in this group", true}
-	ErrCannotDeleteShadowWorkspace  = ErrorCode{205018, "Cannot delete shadow tenant", true}
-	ErrCannotDeleteTenantWithAssets = ErrorCode{205019, "Cannot delete tenant with remaining assets", true}
-	ErrMemberAlreadyInOrganization  = ErrorCode{205020, "User is already a member of this organization", true}
-	ErrJoinRequestPending           = ErrorCode{205021, "Join request is pending approval", true}
+	ErrOrganizationNotFound                    = ErrorCode{205001, "Enterprise group not found", true}
+	ErrEnterpriseExists                        = ErrorCode{205002, "Enterprise group name already exists", true}
+	ErrOrganizationExists                      = ErrorCode{205003, "Enterprise group name already exists, please use a different name", true}
+	ErrWorkspaceNotFound                       = ErrorCode{205004, "Workspace not found", true}
+	ErrWorkspaceExists                         = ErrorCode{205005, "Workspace name already exists, please use a different name", true}
+	ErrCannotOperateSelf                       = ErrorCode{205006, "Cannot perform this operation on yourself", true}
+	ErrMemberNotInWorkspace                    = ErrorCode{205007, "Member is not in this tenant", true}
+	ErrMemberNotFound                          = ErrorCode{205008, "Member not found", true}
+	ErrEmailExists                             = ErrorCode{205009, "Email already exists", true}
+	ErrInvalidRole                             = ErrorCode{205010, "Invalid role", true}
+	ErrInvalidPermission                       = ErrorCode{205011, "Invalid permission value", true}
+	ErrInvalidGender                           = ErrorCode{205012, "Invalid gender value", true}
+	ErrMemberAlreadyExists                     = ErrorCode{205013, "Member already exists in this tenant", true}
+	ErrRoleAlreadyAssigned                     = ErrorCode{205014, "Role already assigned", true}
+	ErrInvalidTenantId                         = ErrorCode{205015, "Failed to get tenant ID", true}
+	ErrWorkspaceJoinedNotFound                 = ErrorCode{205016, "Workspace not found, please contact administrator to invite you to a workspace", true}
+	ErrWorkspaceNotInOrganization              = ErrorCode{205017, "Tenant is not in this group", true}
+	ErrCannotDeleteShadowWorkspace             = ErrorCode{205018, "Cannot delete shadow tenant", true}
+	ErrCannotDeleteTenantWithAssets            = ErrorCode{205019, "Cannot delete tenant with remaining assets", true}
+	ErrMemberAlreadyInOrganization             = ErrorCode{205020, "User is already a member of this organization", true}
+	ErrJoinRequestPending                      = ErrorCode{205021, "Join request is pending approval", true}
+	ErrWorkspaceRoleTemplateNameExists         = ErrorCode{205022, "A permission template with this name already exists", true}
+	ErrWorkspaceRoleTemplateReservedName       = ErrorCode{205023, "This name is reserved for a built-in workspace role", true}
+	ErrWorkspaceRoleTemplateInUse              = ErrorCode{205024, "This permission template is still assigned to workspace members", true}
+	ErrWorkspaceRoleTemplateLastRemaining      = ErrorCode{205025, "At least one permission template must remain", true}
+	ErrWorkspaceRoleTemplateBuiltinImmutable   = ErrorCode{205026, "Built-in workspace roles cannot be modified", true}
+	ErrWorkspaceRoleTemplateNotFound           = ErrorCode{205027, "Permission template not found", true}
+	ErrWorkspaceRoleTemplateDeleted            = ErrorCode{205028, "This permission template has already been deleted", true}
+	ErrWorkspaceRoleTemplateOwnerNotApplicable = ErrorCode{205029, "Workspace owner cannot be applied as a permission template", true}
 )
 
 var (

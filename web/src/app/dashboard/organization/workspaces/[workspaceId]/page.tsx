@@ -66,12 +66,9 @@ import { Pagination } from '@/components/ui/pagination';
 import { StickyDataTable } from '@/components/common/sticky-data-table';
 import { WorkspaceMemberPermissionsDialog } from '@/components/member/workspace-member-permissions-dialog';
 import { useLocale } from '@/hooks/use-locale';
-import { pickLocale } from '@/utils/tool-helpers';
-import {
-  normalizeOrganizationRole,
-  normalizeWorkspaceMemberRole,
-} from '@/utils/role-labels';
+import { normalizeOrganizationRole, normalizeWorkspaceMemberRole } from '@/utils/role-labels';
 import { getOrganizationDisplayName } from '@/utils/organization-display';
+import { getWorkspaceRoleDisplayName } from '@/utils/workspace-role-templates';
 
 export default function WorkspaceDetailPage() {
   const params = useParams();
@@ -174,7 +171,7 @@ export default function WorkspaceDetailPage() {
     return t('detail.roleMember');
   };
   const getRoleDisplayName = (role: (typeof roles)[number]) =>
-    role.name_i18n ? pickLocale(role.name_i18n, locale, role.name) : role.name;
+    getWorkspaceRoleDisplayName(role, locale);
   const getOrganizationRoleBadgeLabel = (role?: string) => {
     const normalizedRole = normalizeOrganizationRole(role);
     if (normalizedRole === 'owner') return t('detail.organizationOwner');

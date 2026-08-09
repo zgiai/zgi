@@ -142,6 +142,13 @@ func (s *WorkspaceManagementServiceImpl) defaultWorkspaceRoleTemplateID(ctx cont
 		if roleID != "" {
 			return roleID, nil
 		}
+		roleID, err = s.findFallbackWorkspaceRoleTemplateID(ctx, workspaceID)
+		if err != nil {
+			return "", err
+		}
+		if roleID != "" {
+			return roleID, nil
+		}
 	}
 	return model.DefaultWorkspaceRoleID(role), nil
 }
@@ -167,6 +174,34 @@ func (s *WorkspaceManagementServiceImpl) findDefaultWorkspaceRoleTemplateID(ctx 
 			return "", nil
 		}
 		return "", fmt.Errorf("failed to get default workspace role template: %w", err)
+	}
+	return role.ID, nil
+}
+
+func (s *WorkspaceManagementServiceImpl) findFallbackWorkspaceRoleTemplateID(ctx context.Context, workspaceID string) (string, error) {
+	if s == nil || s.db == nil || s.workspaceRepo == nil {
+		return "", nil
+	}
+
+	organizationID, err := s.workspaceRepo.GetWorkspaceOrganizationID(ctx, workspaceID)
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve workspace organization: %w", err)
+	}
+	if strings.TrimSpace(organizationID) == "" {
+		return "", nil
+	}
+
+	var role model.WorkspaceCustomRole
+	if err := s.db.WithContext(ctx).
+		Where("group_id = ? AND status = ?", organizationID, model.WorkspaceCustomRoleStatusActive).
+		Order("CASE system_key WHEN 'default_basic' THEN 10 WHEN 'default_readonly' THEN 20 WHEN 'default_advanced' THEN 30 ELSE 100 END").
+		Order("created_at ASC").
+		Order("id ASC").
+		First(&role).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return "", nil
+		}
+		return "", fmt.Errorf("failed to get fallback workspace role template: %w", err)
 	}
 	return role.ID, nil
 }

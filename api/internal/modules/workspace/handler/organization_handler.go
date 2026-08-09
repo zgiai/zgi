@@ -341,6 +341,41 @@ func (h *OrganizationHandler) ListWorkspacePermissions(c *gin.Context) {
 	response.Success(c, result)
 }
 
+func failWorkspaceRoleRequest(c *gin.Context, err error) bool {
+	var errorCode response.ErrorCode
+	switch {
+	case errors.Is(err, workspace_service.ErrWorkspaceRoleNameRequired):
+		errorCode = response.ErrWorkspaceRoleTemplateNameRequired
+	case errors.Is(err, workspace_service.ErrWorkspaceRoleNameTooLong):
+		errorCode = response.ErrWorkspaceRoleTemplateNameTooLong
+	case errors.Is(err, workspace_service.ErrWorkspaceRoleDescriptionTooLong):
+		errorCode = response.ErrWorkspaceRoleTemplateDescriptionTooLong
+	case errors.Is(err, workspace_service.ErrInvalidWorkspaceRoleTemplate):
+		errorCode = response.ErrWorkspaceRoleTemplateInvalidRequest
+	case errors.Is(err, workspace_service.ErrRoleNameExists):
+		errorCode = response.ErrWorkspaceRoleTemplateNameExists
+	case errors.Is(err, workspace_service.ErrWorkspaceRoleNameReserved):
+		errorCode = response.ErrWorkspaceRoleTemplateReservedName
+	case errors.Is(err, workspace_service.ErrWorkspaceRoleInUse):
+		errorCode = response.ErrWorkspaceRoleTemplateInUse
+	case errors.Is(err, workspace_service.ErrCannotDeleteLastWorkspaceRoleTemplate):
+		errorCode = response.ErrWorkspaceRoleTemplateLastRemaining
+	case errors.Is(err, workspace_service.ErrCannotUpdateBuiltinRole):
+		errorCode = response.ErrWorkspaceRoleTemplateBuiltinImmutable
+	case errors.Is(err, workspace_service.ErrWorkspaceRoleTemplateNotFound):
+		errorCode = response.ErrWorkspaceRoleTemplateNotFound
+	case errors.Is(err, workspace_service.ErrWorkspaceRoleTemplateDeleted):
+		errorCode = response.ErrWorkspaceRoleTemplateDeleted
+	case errors.Is(err, workspace_service.ErrCannotApplyOwnerRoleTemplate):
+		errorCode = response.ErrWorkspaceRoleTemplateOwnerNotApplicable
+	default:
+		return false
+	}
+
+	response.Fail(c, errorCode)
+	return true
+}
+
 // ListWorkspaceRoles lists roles (builtin + custom) for a organization
 func (h *OrganizationHandler) ListWorkspaceRoles(c *gin.Context) {
 	organizationID := h.getOrganizationID(c)
@@ -398,6 +433,9 @@ func (h *OrganizationHandler) GetWorkspaceRole(c *gin.Context) {
 
 	result, err := h.organizationService.GetWorkspaceRoleDetail(c.Request.Context(), organizationID, roleID, accountID)
 	if err != nil {
+		if failWorkspaceRoleRequest(c, err) {
+			return
+		}
 		response.Fail(c, response.ErrSystemError)
 		return
 	}
@@ -445,7 +483,10 @@ func (h *OrganizationHandler) ListWorkspaceRoleMembers(c *gin.Context) {
 
 	result, err := h.organizationService.ListWorkspaceRoleMembers(c.Request.Context(), organizationID, roleID, accountID, keyword, page, limit)
 	if err != nil {
-		response.FailWithMessage(c, response.ErrSystemError, err.Error())
+		if failWorkspaceRoleRequest(c, err) {
+			return
+		}
+		response.Fail(c, response.ErrSystemError)
 		return
 	}
 
@@ -471,7 +512,7 @@ func (h *OrganizationHandler) CreateWorkspaceRole(c *gin.Context) {
 
 	var req dto.CreateWorkspaceRoleRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.FailWithMessage(c, response.ErrInvalidParam, err.Error())
+		response.Fail(c, response.ErrWorkspaceRoleTemplateInvalidRequest)
 		return
 	}
 	req.OrganizationID = organizationID
@@ -479,15 +520,10 @@ func (h *OrganizationHandler) CreateWorkspaceRole(c *gin.Context) {
 
 	result, err := h.organizationService.CreateCustomWorkspaceRole(c.Request.Context(), &req)
 	if err != nil {
-		if errors.Is(err, workspace_service.ErrRoleNameExists) {
-			response.Fail(c, response.ErrorCode{
-				Code:        response.ErrInvalidParam.Code,
-				Message:     "Role name already exists",
-				UserVisible: true,
-			})
+		if failWorkspaceRoleRequest(c, err) {
 			return
 		}
-		response.FailWithMessage(c, response.ErrSystemError, err.Error())
+		response.Fail(c, response.ErrSystemError)
 		return
 	}
 
@@ -519,7 +555,7 @@ func (h *OrganizationHandler) UpdateWorkspaceRole(c *gin.Context) {
 
 	var req dto.UpdateWorkspaceRoleRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.Fail(c, response.ErrInvalidParam)
+		response.Fail(c, response.ErrWorkspaceRoleTemplateInvalidRequest)
 		return
 	}
 
@@ -528,6 +564,9 @@ func (h *OrganizationHandler) UpdateWorkspaceRole(c *gin.Context) {
 
 	result, err := h.organizationService.UpdateCustomWorkspaceRole(c.Request.Context(), &req)
 	if err != nil {
+		if failWorkspaceRoleRequest(c, err) {
+			return
+		}
 		response.Fail(c, response.ErrSystemError)
 		return
 	}
@@ -562,7 +601,7 @@ func (h *OrganizationHandler) UpdateWorkspaceRolePermissions(c *gin.Context) {
 		Permissions []string `json:"permissions"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		response.Fail(c, response.ErrInvalidParam)
+		response.Fail(c, response.ErrWorkspaceRoleTemplateInvalidRequest)
 		return
 	}
 
@@ -574,12 +613,7 @@ func (h *OrganizationHandler) UpdateWorkspaceRolePermissions(c *gin.Context) {
 	}
 
 	if err := h.organizationService.UpdateWorkspaceRolePermissions(c.Request.Context(), &req); err != nil {
-		if errors.Is(err, workspace_service.ErrCannotUpdateBuiltinRole) {
-			response.Fail(c, response.ErrorCode{
-				Code:        response.ErrInvalidParam.Code,
-				Message:     "Cannot update built-in role",
-				UserVisible: true,
-			})
+		if failWorkspaceRoleRequest(c, err) {
 			return
 		}
 		response.Fail(c, response.ErrSystemError)
@@ -612,7 +646,7 @@ func (h *OrganizationHandler) ApplyWorkspaceRoleTemplate(c *gin.Context) {
 		Members []dto.ApplyWorkspaceRoleTemplateTarget `json:"members" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil || len(body.Members) == 0 {
-		response.Fail(c, response.ErrInvalidParam)
+		response.Fail(c, response.ErrWorkspaceRoleTemplateInvalidRequest)
 		return
 	}
 
@@ -624,9 +658,7 @@ func (h *OrganizationHandler) ApplyWorkspaceRoleTemplate(c *gin.Context) {
 	}
 	result, err := h.organizationService.ApplyWorkspaceRoleTemplate(c.Request.Context(), &req)
 	if err != nil {
-		if errors.Is(err, workspace_service.ErrInvalidWorkspaceRoleTemplate) ||
-			errors.Is(err, workspace_service.ErrCannotApplyOwnerRoleTemplate) {
-			response.FailWithMessage(c, response.ErrInvalidParam, err.Error())
+		if failWorkspaceRoleRequest(c, err) {
 			return
 		}
 		response.Fail(c, response.ErrSystemError)
@@ -662,7 +694,7 @@ func (h *OrganizationHandler) ReplaceAndDeleteWorkspaceRole(c *gin.Context) {
 		ReplacementRoleID string `json:"replacement_role_id" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil || body.ReplacementRoleID == "" {
-		response.Fail(c, response.ErrInvalidParam)
+		response.Fail(c, response.ErrWorkspaceRoleTemplateInvalidRequest)
 		return
 	}
 
@@ -673,11 +705,7 @@ func (h *OrganizationHandler) ReplaceAndDeleteWorkspaceRole(c *gin.Context) {
 		OperatorID:        accountID,
 	})
 	if err != nil {
-		if errors.Is(err, workspace_service.ErrInvalidWorkspaceRoleTemplate) ||
-			errors.Is(err, workspace_service.ErrCannotApplyOwnerRoleTemplate) ||
-			errors.Is(err, workspace_service.ErrWorkspaceRoleInUse) ||
-			errors.Is(err, workspace_service.ErrCannotDeleteLastWorkspaceRoleTemplate) {
-			response.FailWithMessage(c, response.ErrInvalidParam, err.Error())
+		if failWorkspaceRoleRequest(c, err) {
 			return
 		}
 		response.Fail(c, response.ErrSystemError)
@@ -711,9 +739,7 @@ func (h *OrganizationHandler) DeleteWorkspaceRole(c *gin.Context) {
 	}
 
 	if err := h.organizationService.DeleteCustomWorkspaceRole(c.Request.Context(), organizationID, roleID, accountID); err != nil {
-		if errors.Is(err, workspace_service.ErrWorkspaceRoleInUse) ||
-			errors.Is(err, workspace_service.ErrCannotDeleteLastWorkspaceRoleTemplate) {
-			response.FailWithMessage(c, response.ErrInvalidParam, err.Error())
+		if failWorkspaceRoleRequest(c, err) {
 			return
 		}
 		response.Fail(c, response.ErrSystemError)

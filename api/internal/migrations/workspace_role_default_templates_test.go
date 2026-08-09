@@ -94,6 +94,36 @@ func TestWorkspaceRoleDefaultTemplatesMigrationUpPostgres(t *testing.T) {
 	if err := upWorkspaceRoleDefaultTemplates(mschema.New(db)); err != nil {
 		t.Fatalf("run migration up second time: %v", err)
 	}
+	mustExec(t, db, `
+		UPDATE public.roles
+		SET name = 'Renamed Template', description = 'Renamed description'
+		WHERE system_key = 'default_basic'
+	`)
+	mustExec(t, db, `
+		INSERT INTO public.roles (group_id, name, description, status, created_by, permissions)
+		VALUES (
+			'20000000-0000-0000-0000-000000000001',
+			'Reusable',
+			'deleted template',
+			'deleted',
+			'10000000-0000-0000-0000-000000000001',
+			'[]'::jsonb
+		)
+	`)
+	if err := upFixWorkspaceRoleTemplateLifecycle(mschema.New(db)); err != nil {
+		t.Fatalf("run role template lifecycle migration: %v", err)
+	}
+	mustExec(t, db, `
+		INSERT INTO public.roles (group_id, name, description, status, created_by, permissions)
+		VALUES (
+			'20000000-0000-0000-0000-000000000001',
+			'Reusable',
+			'new template',
+			'active',
+			'10000000-0000-0000-0000-000000000001',
+			'[]'::jsonb
+		)
+	`)
 
 	var defaultCount int64
 	if err := db.Table("public.roles").
@@ -107,6 +137,20 @@ func TestWorkspaceRoleDefaultTemplatesMigrationUpPostgres(t *testing.T) {
 	}
 	if defaultCount != 3 {
 		t.Fatalf("default templates count = %d, want 3", defaultCount)
+	}
+
+	var localizedMetadata struct {
+		NameI18n        string
+		DescriptionI18n string
+	}
+	if err := db.Table("public.roles").
+		Select("name_i18n::text AS name_i18n, description_i18n::text AS description_i18n").
+		Where("system_key = ?", workspace_model.WorkspaceDefaultRoleTemplateBasicKey).
+		Scan(&localizedMetadata).Error; err != nil {
+		t.Fatalf("read renamed template localized metadata: %v", err)
+	}
+	if localizedMetadata.NameI18n != "{}" || localizedMetadata.DescriptionI18n != "{}" {
+		t.Fatalf("renamed template retained stale localized metadata: %#v", localizedMetadata)
 	}
 
 	var permissions string
@@ -144,6 +188,35 @@ func TestDefaultWorkspaceRoleTemplateDefinitionsExcludeNonConfigurablePermission
 			if _, ok := assignablePermissions[permission]; !ok {
 				t.Fatalf("default template %s contains non-configurable permission %s", definition.SystemKey, permission)
 			}
+		}
+	}
+}
+
+func TestWorkspaceRoleTemplateLifecycleMigrationUsesActiveOnlyUniqueness(t *testing.T) {
+	t.Parallel()
+
+	for name, statement := range map[string]string{
+		"name":       addActiveWorkspaceRoleNameIndexSQL,
+		"system_key": addActiveWorkspaceRoleSystemKeyIndexSQL,
+	} {
+		if !strings.Contains(statement, "status != 'deleted'") {
+			t.Fatalf("%s unique index must exclude deleted role templates: %s", name, statement)
+		}
+	}
+	if !strings.Contains(addActiveWorkspaceRoleNameIndexSQL, "(group_id, name)") {
+		t.Fatalf("name unique index must remain scoped to an organization: %s", addActiveWorkspaceRoleNameIndexSQL)
+	}
+}
+
+func TestWorkspaceRoleTemplateLifecycleMigrationClearsStaleLocalizedOverrides(t *testing.T) {
+	t.Parallel()
+
+	for name, statement := range map[string]string{
+		"name":        clearStaleWorkspaceRoleNameI18nSQL,
+		"description": clearStaleWorkspaceRoleDescriptionI18nSQL,
+	} {
+		if !strings.Contains(statement, "jsonb_each_text") || !strings.Contains(statement, "NOT EXISTS") {
+			t.Fatalf("%s localized metadata repair must preserve matching defaults and clear stale overrides: %s", name, statement)
 		}
 	}
 }

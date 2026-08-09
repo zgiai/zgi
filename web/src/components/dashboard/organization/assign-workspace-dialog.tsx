@@ -35,8 +35,8 @@ import { useLocale } from '@/hooks/use-locale';
 import type { DepartmentMember } from '@/services/types/organization';
 import type { WorkspaceManagement } from '@/services/types/workspace';
 import { cn } from '@/lib/utils';
-import { pickLocale } from '@/utils/tool-helpers';
 import {
+  getWorkspaceRoleDisplayName,
   isAssignableWorkspaceAdminRole,
   isSelectableWorkspacePermissionTemplate,
 } from '@/utils/workspace-role-templates';
@@ -97,6 +97,7 @@ export function AssignWorkspaceDialog({
   const defaultRoleId = useMemo(
     () =>
       selectableRoles.find(role => role.system_key === 'default_basic')?.id ||
+      selectableRoles.find(role => role.system_key === 'default_readonly')?.id ||
       selectableRoles.find(role => role.name.toLowerCase() === 'member')?.id ||
       selectableRoles[0]?.id ||
       '',
@@ -104,8 +105,7 @@ export function AssignWorkspaceDialog({
   );
 
   const getRoleDisplayName = useCallback(
-    (role: (typeof selectableRoles)[number]) =>
-      role.name_i18n ? pickLocale(role.name_i18n, locale, role.name) : role.name,
+    (role: (typeof selectableRoles)[number]) => getWorkspaceRoleDisplayName(role, locale),
     [locale]
   );
 
@@ -116,7 +116,9 @@ export function AssignWorkspaceDialog({
   const totalPages = Math.max(1, Math.ceil(effectiveTotal / pageSize));
   const isBusy = isBatchAddingWorkspaceMembers;
   const shouldShowLoading = isLoadingWorkspaces || isPlaceholderData;
-  const selectedWorkspace = assignableWorkspaces.find(workspace => workspace.id === selectedWorkspaceId);
+  const selectedWorkspace = assignableWorkspaces.find(
+    workspace => workspace.id === selectedWorkspaceId
+  );
 
   useEffect(() => {
     setCurrentPage(1);
@@ -289,9 +291,7 @@ export function AssignWorkspaceDialog({
           <div className="rounded-md border border-border bg-bg-canvas/40 px-3 py-2">
             <div className="flex items-center justify-between gap-4">
               <div className="min-w-0">
-                <div className="text-sm font-medium text-text-primary">
-                  {t('adminSwitchLabel')}
-                </div>
+                <div className="text-sm font-medium text-text-primary">{t('adminSwitchLabel')}</div>
                 <p className="mt-0.5 text-xs text-muted-foreground">
                   {workspaceAdminRole ? t('adminSwitchDescription') : t('adminRoleMissing')}
                 </p>

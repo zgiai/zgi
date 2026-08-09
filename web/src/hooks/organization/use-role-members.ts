@@ -6,6 +6,7 @@ import { organizationService } from '@/services/organization.service';
 import { toast } from 'sonner';
 import { useT } from '@/i18n';
 import { getErrorMessage } from '@/utils/error-notifications';
+import { getWorkspaceRoleErrorTranslationKey } from '@/utils/workspace-role-errors';
 import { useOrganizations } from './use-organizations';
 import type { RoleMemberList } from '@/services/types/organization';
 
@@ -36,7 +37,7 @@ export function useRoleMembers(roleId: string | null, enabled: boolean = true) {
     initialPageParam: 1,
     queryFn: async ({ pageParam }) => {
       if (!currentOrganization?.id || !roleId) {
-        throw new Error('No organization or role selected');
+        throw new Error(t('organization.permissions.errors.noOrganization'));
       }
       const page = (pageParam as number) ?? 1;
       const response = await organizationService.getRoleMembers(currentOrganization.id, roleId, {
@@ -57,11 +58,18 @@ export function useRoleMembers(roleId: string | null, enabled: boolean = true) {
     retry: false,
   });
 
+  const errorMessage = error
+    ? (() => {
+        const translationKey = getWorkspaceRoleErrorTranslationKey(error);
+        return translationKey ? t(translationKey) : getErrorMessage(error);
+      })()
+    : null;
+
   // Show error toast if query fails
   useEffect(() => {
-    if (!error) return;
-    toast.error(getErrorMessage(error) || t('organization.permissions.loadError'));
-  }, [error, t]);
+    if (!errorMessage) return;
+    toast.error(errorMessage || t('organization.permissions.loadError'));
+  }, [errorMessage, t]);
 
   // Flatten all pages into single array
   const allMembers = useMemo(() => {
@@ -86,7 +94,7 @@ export function useRoleMembers(roleId: string | null, enabled: boolean = true) {
     hasNextPage: !!hasNextPage,
     fetchNextPage: stableFetchNextPage,
     isFetchingNextPage,
-    error: error ? getErrorMessage(error) : null,
+    error: errorMessage,
     refetch,
     searchKeyword,
     setSearchKeyword,

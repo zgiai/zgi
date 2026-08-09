@@ -264,8 +264,6 @@ var ConstraintsSchema = File{
     ADD CONSTRAINT uk_dept_name_parent UNIQUE (group_id, parent_id, name);`,
 		`ALTER TABLE ONLY public.organization_invite_links
     ADD CONSTRAINT uk_enterprise_invite_links_token UNIQUE (token);`,
-		`ALTER TABLE ONLY public.roles
-    ADD CONSTRAINT uk_roles_group_name UNIQUE (group_id, name);`,
 		`ALTER TABLE ONLY public.workspace_members
     ADD CONSTRAINT uk_workspace_members_workspace_account UNIQUE (workspace_id, account_id);`,
 		`ALTER TABLE ONLY public.account_integrates

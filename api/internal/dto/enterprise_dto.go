@@ -451,7 +451,7 @@ type OrganizationRoleMembersResponse struct {
 // CreateWorkspaceRoleRequest represents request to create custom role
 type CreateWorkspaceRoleRequest struct {
 	OrganizationID string   `json:"organization_id"`
-	Name           string   `json:"name" binding:"required"`
+	Name           string   `json:"name"`
 	Description    *string  `json:"description,omitempty"`
 	Permissions    []string `json:"permissions"`
 	CreatedBy      string   `json:"-"`

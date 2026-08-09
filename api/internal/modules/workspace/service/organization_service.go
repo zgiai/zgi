@@ -35,10 +35,17 @@ import (
 	"github.com/zgiai/zgi/api/pkg/logger"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 var ErrCannotUpdateBuiltinRole = errors.New("cannot update built-in role")
 var ErrRoleNameExists = errors.New("role name already exists")
+var ErrWorkspaceRoleNameRequired = errors.New("workspace role name is required")
+var ErrWorkspaceRoleNameTooLong = errors.New("workspace role name is too long")
+var ErrWorkspaceRoleDescriptionTooLong = errors.New("workspace role description is too long")
+var ErrWorkspaceRoleNameReserved = errors.New("workspace role name is reserved")
+var ErrWorkspaceRoleTemplateNotFound = errors.New("workspace role template not found")
+var ErrWorkspaceRoleTemplateDeleted = errors.New("workspace role template is deleted")
 var ErrWorkspaceRoleInUse = errors.New("workspace role is assigned to members")
 var ErrCannotDeleteLastWorkspaceRoleTemplate = errors.New("cannot delete the last workspace role template")
 var ErrMemberNameExists = errors.New("member name already exists")
@@ -678,6 +685,9 @@ func (s *organizationService) ListWorkspaceRoles(ctx context.Context, organizati
 	var customRoles []model.WorkspaceCustomRole
 	if err := db.WithContext(ctx).
 		Where("group_id = ? AND status != ?", organizationID, model.WorkspaceCustomRoleStatusDeleted).
+		Order("CASE system_key WHEN 'default_advanced' THEN 10 WHEN 'default_basic' THEN 20 WHEN 'default_readonly' THEN 30 ELSE 100 END").
+		Order("created_at ASC").
+		Order("id ASC").
 		Find(&customRoles).Error; err != nil {
 		return nil, fmt.Errorf("failed to list custom roles: %w", err)
 	}
@@ -771,13 +781,13 @@ func (s *organizationService) GetWorkspaceRoleDetail(ctx context.Context, organi
 			Where("id = ? AND group_id = ?", roleID, organizationID).
 			First(&role).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return nil, fmt.Errorf("role not found")
+				return nil, ErrWorkspaceRoleTemplateNotFound
 			}
 			return nil, fmt.Errorf("failed to get role: %w", err)
 		}
 
 		if role.Status == model.WorkspaceCustomRoleStatusDeleted {
-			return nil, fmt.Errorf("role is deleted")
+			return nil, ErrWorkspaceRoleTemplateDeleted
 		}
 
 		summary := workspaceRoleSummaryFromCustomRole(role)
@@ -837,6 +847,21 @@ func (s *organizationService) ListWorkspaceRoleMembers(ctx context.Context, orga
 		builtinRole = string(model.WorkspaceRoleAdmin)
 	case model.WorkspaceBuiltinRoleMemberID:
 		builtinRole = string(model.WorkspaceRoleNormal)
+	case model.WorkspaceBuiltinRoleViewerID:
+		builtinRole = string(model.WorkspaceRoleViewer)
+	default:
+		var role model.WorkspaceCustomRole
+		if err := db.WithContext(ctx).
+			Where("id = ? AND group_id = ?", roleID, organizationID).
+			First(&role).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return nil, ErrWorkspaceRoleTemplateNotFound
+			}
+			return nil, fmt.Errorf("failed to get role: %w", err)
+		}
+		if role.Status == model.WorkspaceCustomRoleStatusDeleted {
+			return nil, ErrWorkspaceRoleTemplateDeleted
+		}
 	}
 
 	if builtinRole != "" {
@@ -1012,29 +1037,27 @@ func (s *organizationService) IsValidCustomWorkspaceRole(ctx context.Context, or
 func (s *organizationService) CreateCustomWorkspaceRole(ctx context.Context, req *shared_dto.CreateWorkspaceRoleRequest) (*shared_dto.OrganizationRoleDetailResponse, error) {
 	db := s.organizationRepo.GetDB()
 
-	// Check if role name conflicts with built-in roles
-	builtinNames := []string{"Owner", "Admin", "Member", "Viewer"}
-	for _, name := range builtinNames {
-		if strings.EqualFold(req.Name, name) {
-			return nil, ErrRoleNameExists
-		}
+	name, err := normalizeWorkspaceRoleName(req.Name)
+	if err != nil {
+		return nil, err
+	}
+	description, err := normalizeWorkspaceRoleDescription(req.Description)
+	if err != nil {
+		return nil, err
 	}
 
-	// Check if role name conflicts with existing custom roles
-	var count int64
-	if err := db.WithContext(ctx).Model(&model.WorkspaceCustomRole{}).
-		Where("group_id = ? AND name = ? AND status != ?", req.OrganizationID, req.Name, model.WorkspaceCustomRoleStatusDeleted).
-		Count(&count).Error; err != nil {
-		return nil, fmt.Errorf("failed to check role name existence: %w", err)
+	exists, err := workspaceRoleNameExists(ctx, db, req.OrganizationID, name, "")
+	if err != nil {
+		return nil, err
 	}
-	if count > 0 {
+	if exists {
 		return nil, ErrRoleNameExists
 	}
 
 	role := &model.WorkspaceCustomRole{
 		OrganizationID: req.OrganizationID,
-		Name:           req.Name,
-		Description:    req.Description,
+		Name:           name,
+		Description:    description,
 		Status:         model.WorkspaceCustomRoleStatusActive,
 		CreatedBy:      req.CreatedBy,
 		Permissions:    model.CanonicalAssignableWorkspacePermissionSnapshotStrings(req.Permissions),
@@ -1042,6 +1065,9 @@ func (s *organizationService) CreateCustomWorkspaceRole(ctx context.Context, req
 	}
 
 	if err := db.WithContext(ctx).Create(role).Error; err != nil {
+		if isWorkspaceRoleUniqueConstraintViolation(err) {
+			return nil, ErrRoleNameExists
+		}
 		return nil, fmt.Errorf("failed to create role: %w", err)
 	}
 
@@ -1074,21 +1100,52 @@ func (s *organizationService) UpdateCustomWorkspaceRole(ctx context.Context, req
 	if err := db.WithContext(ctx).
 		Where("id = ? AND group_id = ?", req.RoleID, req.OrganizationID).
 		First(&role).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrWorkspaceRoleTemplateNotFound
+		}
 		return nil, fmt.Errorf("role not found: %w", err)
 	}
 
 	if role.Status == model.WorkspaceCustomRoleStatusDeleted {
-		return nil, fmt.Errorf("role is deleted")
+		return nil, ErrWorkspaceRoleTemplateDeleted
 	}
 
 	if req.Name != nil {
-		role.Name = *req.Name
+		name, err := normalizeWorkspaceRoleName(*req.Name)
+		if err != nil {
+			return nil, err
+		}
+		if name != role.Name {
+			exists, err := workspaceRoleNameExists(ctx, db, req.OrganizationID, name, req.RoleID)
+			if err != nil {
+				return nil, err
+			}
+			if exists {
+				return nil, ErrRoleNameExists
+			}
+			role.Name = name
+			role.NameI18n = map[string]string{}
+		}
 	}
 	if req.Description != nil {
-		role.Description = req.Description
+		description, err := normalizeWorkspaceRoleDescription(req.Description)
+		if err != nil {
+			return nil, err
+		}
+		currentDescription := ""
+		if role.Description != nil {
+			currentDescription = *role.Description
+		}
+		if description != nil && *description != currentDescription {
+			role.Description = description
+			role.DescriptionI18n = map[string]string{}
+		}
 	}
 
 	if err := db.WithContext(ctx).Save(&role).Error; err != nil {
+		if isWorkspaceRoleUniqueConstraintViolation(err) {
+			return nil, ErrRoleNameExists
+		}
 		return nil, fmt.Errorf("failed to update role: %w", err)
 	}
 	s.invalidateOrganizationContext(ctx, req.OrganizationID)
@@ -1126,11 +1183,14 @@ func (s *organizationService) UpdateWorkspaceRolePermissions(ctx context.Context
 	if err := db.WithContext(ctx).
 		Where("id = ? AND group_id = ?", req.RoleID, req.OrganizationID).
 		First(&role).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return ErrWorkspaceRoleTemplateNotFound
+		}
 		return fmt.Errorf("role not found: %w", err)
 	}
 
 	if role.Status == model.WorkspaceCustomRoleStatusDeleted {
-		return fmt.Errorf("role is deleted")
+		return ErrWorkspaceRoleTemplateDeleted
 	}
 
 	role.Permissions = model.CanonicalAssignableWorkspacePermissionSnapshotStrings(req.Permissions)
@@ -1177,7 +1237,7 @@ func (s *organizationService) ApplyWorkspaceRoleTemplate(ctx context.Context, re
 			return nil, fmt.Errorf("failed to validate workspace role template: %w", err)
 		}
 		if !validRole {
-			return nil, ErrInvalidWorkspaceRoleTemplate
+			return nil, ErrWorkspaceRoleTemplateNotFound
 		}
 	}
 
@@ -1392,45 +1452,65 @@ func (s *organizationService) UpdateMemberInfo(ctx context.Context, req *shared_
 // DeleteCustomWorkspaceRole performs soft delete on custom role.
 func (s *organizationService) DeleteCustomWorkspaceRole(ctx context.Context, organizationID, roleID, accountID string) error {
 	db := s.organizationRepo.GetDB()
+	if err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var lockedOrganization struct {
+			ID string
+		}
+		if err := tx.Table("organizations").
+			Clauses(clause.Locking{Strength: "UPDATE"}).
+			Select("id").
+			Where("id = ?", organizationID).
+			Take(&lockedOrganization).Error; err != nil {
+			return fmt.Errorf("failed to lock organization role templates: %w", err)
+		}
 
-	var role model.WorkspaceCustomRole
-	if err := db.WithContext(ctx).
-		Where("id = ? AND group_id = ?", roleID, organizationID).
-		First(&role).Error; err != nil {
-		return fmt.Errorf("role not found: %w", err)
-	}
+		var role model.WorkspaceCustomRole
+		if err := tx.
+			Where("id = ? AND group_id = ?", roleID, organizationID).
+			First(&role).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrWorkspaceRoleTemplateNotFound
+			}
+			return fmt.Errorf("role not found: %w", err)
+		}
 
-	if role.Status == model.WorkspaceCustomRoleStatusDeleted {
+		if role.Status == model.WorkspaceCustomRoleStatusDeleted {
+			return nil
+		}
+
+		tenantSubquery := tx.Table("workspaces").
+			Select("id").
+			Where("organization_id = ?", organizationID)
+
+		var assignedCount int64
+		if err := tx.Table("workspace_members").
+			Where("workspace_id IN (?) AND role_id = ?", tenantSubquery, roleID).
+			Count(&assignedCount).Error; err != nil {
+			return fmt.Errorf("failed to count role assignments: %w", err)
+		}
+		if assignedCount > 0 {
+			return fmt.Errorf("%w: %d member assignments still reference this role", ErrWorkspaceRoleInUse, assignedCount)
+		}
+
+		if role.Status == model.WorkspaceCustomRoleStatusActive {
+			var activeRoleCount int64
+			if err := tx.Model(&model.WorkspaceCustomRole{}).
+				Where("group_id = ? AND status = ?", organizationID, model.WorkspaceCustomRoleStatusActive).
+				Count(&activeRoleCount).Error; err != nil {
+				return fmt.Errorf("failed to count active workspace role templates: %w", err)
+			}
+			if activeRoleCount <= 1 {
+				return ErrCannotDeleteLastWorkspaceRoleTemplate
+			}
+		}
+
+		role.Status = model.WorkspaceCustomRoleStatusDeleted
+		if err := tx.Save(&role).Error; err != nil {
+			return fmt.Errorf("failed to delete role: %w", err)
+		}
 		return nil
-	}
-
-	tenantSubquery := db.WithContext(ctx).Table("workspaces").
-		Select("id").
-		Where("organization_id = ?", organizationID)
-
-	var assignedCount int64
-	if err := db.WithContext(ctx).Table("workspace_members").
-		Where("workspace_id IN (?) AND role_id = ?", tenantSubquery, roleID).
-		Count(&assignedCount).Error; err != nil {
-		return fmt.Errorf("failed to count role assignments: %w", err)
-	}
-	if assignedCount > 0 {
-		return fmt.Errorf("%w: %d member assignments still reference this role", ErrWorkspaceRoleInUse, assignedCount)
-	}
-
-	var activeRoleCount int64
-	if err := db.WithContext(ctx).Model(&model.WorkspaceCustomRole{}).
-		Where("group_id = ? AND status = ?", organizationID, model.WorkspaceCustomRoleStatusActive).
-		Count(&activeRoleCount).Error; err != nil {
-		return fmt.Errorf("failed to count active workspace role templates: %w", err)
-	}
-	if activeRoleCount <= 1 {
-		return ErrCannotDeleteLastWorkspaceRoleTemplate
-	}
-
-	role.Status = model.WorkspaceCustomRoleStatusDeleted
-	if err := db.WithContext(ctx).Save(&role).Error; err != nil {
-		return fmt.Errorf("failed to delete role: %w", err)
+	}); err != nil {
+		return err
 	}
 	s.invalidateOrganizationContext(ctx, organizationID)
 
@@ -1789,6 +1869,13 @@ func (s *organizationService) CreateOrganization(ctx context.Context, req *share
 
 	if err := s.organizationRepo.CreateAccountJoinWithTx(ctx, tx, join); err != nil {
 		return nil, fmt.Errorf("failed to add creator as admin: %w", err)
+	}
+	language := ""
+	if account.InterfaceLanguage != nil {
+		language = *account.InterfaceLanguage
+	}
+	if err := ensureDefaultWorkspaceRoleTemplates(ctx, tx, organization.ID, req.CreatedBy, language); err != nil {
+		return nil, fmt.Errorf("failed to initialize default workspace role templates: %w", err)
 	}
 
 	if err := tx.Commit().Error; err != nil {
@@ -3091,6 +3178,13 @@ func (s *organizationService) CreateOrganizationWithWorkspace(ctx context.Contex
 
 	if err := s.organizationRepo.CreateAccountJoinWithTx(ctx, tx, join); err != nil {
 		return nil, fmt.Errorf("failed to add creator as owner: %w", err)
+	}
+	language := ""
+	if currentAccount.InterfaceLanguage != nil {
+		language = *currentAccount.InterfaceLanguage
+	}
+	if err := ensureDefaultWorkspaceRoleTemplates(ctx, tx, organization.ID, req.CreatedBy, language); err != nil {
+		return nil, fmt.Errorf("failed to initialize default workspace role templates: %w", err)
 	}
 
 	// Commit transaction

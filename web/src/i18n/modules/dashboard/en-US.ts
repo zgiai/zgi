@@ -1076,6 +1076,28 @@ const messages = {
       },
       deleteSuccess: 'Template deleted successfully',
       deleteError: 'Delete failed',
+      errors: {
+        noOrganization: 'No current organization was found. Refresh the page and try again.',
+        nameRequired: 'Enter a template name.',
+        nameTooLong: 'Template name cannot exceed 30 characters.',
+        descriptionTooLong: 'Template description cannot exceed 200 characters.',
+        invalidRequest: 'The request is incomplete or invalid. Check it and try again.',
+        nameExists: 'A permission template with this name already exists. Use a different name.',
+        reservedName:
+          'Owner, Admin, Member, and Viewer are reserved built-in role names. Use a different name.',
+        templateInUse:
+          'This template is still applied to workspace members. Move them to another template before deleting it.',
+        lastRemaining:
+          'At least one active permission template must remain. This template cannot be deleted.',
+        builtinImmutable:
+          'Built-in workspace roles cannot be edited. Create a permission template to customize access.',
+        notFound:
+          'This permission template does not exist or has been removed. Return to the list and refresh.',
+        deleted:
+          'This permission template has already been deleted and can no longer be edited. Return to the template list.',
+        ownerNotApplicable:
+          'The Workspace Lead identity cannot be applied as a permission template.',
+      },
       associatedMembers: 'Applied Members',
       searchMembersPlaceholder: 'Search members using this template...',
       noMembersFound: 'No members found',
