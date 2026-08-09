@@ -23,6 +23,9 @@ const (
 	defaultResolution   = "720p"
 	defaultDuration     = 5
 	videoCreateTimeout  = 2 * time.Minute
+
+	videoPredeductPointsPerSecond int64 = 143
+	internalCreditsPerPoint       int64 = 1000
 )
 
 type LLMVideoClient interface {
@@ -131,7 +134,7 @@ func (s *service) Generate(ctx context.Context, scope Scope, req GenerateRequest
 		ResponsePayload:  jsonData(map[string]any{}),
 		CreatedAt:        now,
 		UpdatedAt:        now,
-		EstimatedCredits: 0,
+		EstimatedCredits: estimateVideoTaskCredits(options),
 		ActualCredits:    0,
 	}
 	if err := s.tasks.create(operationCtx, record); err != nil {
@@ -141,6 +144,18 @@ func (s *service) Generate(ctx context.Context, scope Scope, req GenerateRequest
 	s.startUpstreamVideoTask(*record, appCtx, videoReq)
 	task := taskFromRecord(*record)
 	return &GenerateResult{Task: task}, nil
+}
+
+func estimateVideoTaskCredits(options GenerateOptions) int64 {
+	duration := options.Duration
+	if duration <= 0 {
+		duration = defaultDuration
+	}
+	count := options.Count
+	if count <= 0 {
+		count = 1
+	}
+	return int64(duration) * int64(count) * videoPredeductPointsPerSecond * internalCreditsPerPoint
 }
 
 func (s *service) startUpstreamVideoTask(record videoTaskRecord, appCtx *llmclient.AppContext, videoReq *adapter.VideoRequest) {

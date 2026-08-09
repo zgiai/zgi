@@ -723,15 +723,15 @@ func (s *llmGatewayServiceImpl) quoteVideoPricingForSelection(ctx context.Contex
 	if lane == UsageBillingLanePlatform {
 		return PricingQuote{}, nil
 	}
-	if selection == nil || resp == nil || resp.Usage == nil || resp.Usage.TotalTokens <= 0 {
+	if selection == nil || resp == nil {
 		return PricingQuote{}, nil
 	}
-	rate, resolution, inputVideo, ok, err := videoTokenPricePerMillion(selection, req, resp)
+	rate, resolution, inputVideo, pricingMode, ok, err := videoPriceForSelection(selection, req, resp)
 	if err != nil {
 		return PricingQuote{}, err
 	}
 	if !ok || !rate.IsPositive() {
-		return PricingQuote{}, fmt.Errorf("%w: missing video token pricing", ErrPricingNotConfigured)
+		return PricingQuote{}, nil
 	}
 	priceUSD := rate
 	currency := strings.ToUpper(strings.TrimSpace(selection.Model.Currency))
@@ -739,76 +739,163 @@ func (s *llmGatewayServiceImpl) quoteVideoPricingForSelection(ctx context.Contex
 		rateUSDToCNY := s.organizationUSDToCNYRate(ctx, selection.OrganizationID)
 		priceUSD = rate.Div(rateUSDToCNY)
 	}
-	totalUSD := tokenUSD(priceUSD, resp.Usage.TotalTokens)
+	totalUSD := decimal.Zero
+	usageSource := UsageSourceRequestParameters
+	videoTokens := videoPricingTokenCount(req, resp)
+	durationSeconds := intFromAny(videoTaskAdditionalParam(req, "duration"))
+	if durationSeconds <= 0 {
+		durationSeconds = defaultVideoPredeductDurationSeconds
+	}
+	count := intFromAny(videoTaskAdditionalParam(req, "count"))
+	if count <= 0 {
+		count = 1
+	}
+	switch pricingMode {
+	case "million_video_tokens":
+		if videoTokens <= 0 {
+			return PricingQuote{}, fmt.Errorf("%w: video token usage is required for million_video_tokens video settlement", ErrPricingNotConfigured)
+		}
+		totalUSD = tokenUSD(priceUSD, videoTokens)
+		usageSource = UsageSourceProviderUsage
+	case "second":
+		totalUSD = priceUSD.Mul(decimal.NewFromInt(int64(durationSeconds))).Mul(decimal.NewFromInt(int64(count)))
+	default:
+		return PricingQuote{}, nil
+	}
 	snapshot := buildPricingSnapshot(map[string]interface{}{
-		"pricing_source":                     PricingSourceUpstreamModelPrice,
-		"usage_source":                       UsageSourceProviderUsage,
-		"operation":                          PricingOperationVideo,
-		"model_id":                           selection.Model.ID.String(),
-		"provider":                           strings.TrimSpace(selection.Model.Provider),
-		"model":                              strings.TrimSpace(selection.Model.Model),
-		"request_model":                      strings.TrimSpace(req.Model),
-		"resolution":                         resolution,
-		"input_video":                        inputVideo,
-		"total_tokens":                       resp.Usage.TotalTokens,
-		"source_currency":                    currency,
-		"price_per_million_video_tokens":     rate.String(),
-		"price_usd_per_million_video_tokens": priceUSD.String(),
+		"pricing_source":   PricingSourceUpstreamModelPrice,
+		"usage_source":     usageSource,
+		"operation":        PricingOperationVideo,
+		"model_id":         selection.Model.ID.String(),
+		"provider":         strings.TrimSpace(selection.Model.Provider),
+		"model":            strings.TrimSpace(selection.Model.Model),
+		"request_model":    strings.TrimSpace(req.Model),
+		"resolution":       resolution,
+		"input_video":      inputVideo,
+		"pricing_mode":     pricingMode,
+		"video_tokens":     videoTokens,
+		"duration_seconds": durationSeconds,
+		"count":            count,
+		"source_currency":  currency,
 	})
-	return newOutputOnlyUSDQuote(totalUSD, PricingSourceUpstreamModelPrice, "", UsageSourceProviderUsage, snapshot), nil
+	return newOutputOnlyUSDQuote(totalUSD, PricingSourceUpstreamModelPrice, "", usageSource, snapshot), nil
 }
 
-func videoTokenPricePerMillion(selection *ProviderSelection, req *adapter.VideoTaskRequest, resp *adapter.VideoResponse) (decimal.Decimal, string, bool, bool, error) {
+type videoPricingRate struct {
+	Resolution               string          `json:"resolution"`
+	InputVideo               *bool           `json:"input_video"`
+	PricePerMillionTokens    decimal.Decimal `json:"price_per_million_tokens"`
+	PricePerMillionVideo     decimal.Decimal `json:"price_per_million_video_tokens"`
+	PricePerSecond           decimal.Decimal `json:"price_per_second"`
+	PriceUSDPerSecond        decimal.Decimal `json:"price_usd_per_second"`
+	TokensPerSecond          decimal.Decimal `json:"tokens_per_second"`
+	VideoTokensPerSecond     decimal.Decimal `json:"video_tokens_per_second"`
+	VideoTokens              decimal.Decimal `json:"video_tokens"`
+	MillionVideoTokensPerSec decimal.Decimal `json:"million_video_tokens_per_second"`
+}
+
+func videoPriceForSelection(selection *ProviderSelection, req *adapter.VideoTaskRequest, resp *adapter.VideoResponse) (decimal.Decimal, string, bool, string, bool, error) {
 	if selection == nil || len(selection.Model.Pricing) == 0 || string(selection.Model.Pricing) == "null" {
-		return decimal.Zero, "", false, false, nil
+		return decimal.Zero, "", false, "", false, nil
 	}
 	var pricing struct {
 		VideoGeneration struct {
+			BillingUnit     string             `json:"billing_unit"`
+			Rates           []videoPricingRate `json:"rates"`
 			ResolutionRates []struct {
-				Resolution string `json:"resolution"`
-				Rates      []struct {
-					InputVideo            *bool           `json:"input_video"`
-					PricePerMillionTokens decimal.Decimal `json:"price_per_million_tokens"`
-				} `json:"rates"`
+				Resolution string             `json:"resolution"`
+				Rates      []videoPricingRate `json:"rates"`
 			} `json:"resolution_rates"`
 		} `json:"video_generation"`
 	}
 	if err := json.Unmarshal(selection.Model.Pricing, &pricing); err != nil {
-		return decimal.Zero, "", false, false, fmt.Errorf("invalid video pricing: %w", err)
+		return decimal.Zero, "", false, "", false, fmt.Errorf("invalid video pricing: %w", err)
 	}
 	resolution := videoPricingResolution(req, resp)
 	inputVideo := videoPricingInputVideo(req, resp)
+	if rate, matchedResolution, mode, ok := matchVideoRate(pricing.VideoGeneration.Rates, resolution, inputVideo, pricing.VideoGeneration.BillingUnit); ok {
+		return rate, matchedResolution, inputVideo, mode, true, nil
+	}
 	for _, resolutionRate := range pricing.VideoGeneration.ResolutionRates {
 		if resolution != "" && !strings.EqualFold(strings.TrimSpace(resolutionRate.Resolution), resolution) {
 			continue
 		}
-		for _, rate := range resolutionRate.Rates {
-			if rate.InputVideo != nil && *rate.InputVideo != inputVideo {
-				continue
+		if rate, matchedResolution, mode, ok := matchVideoRate(resolutionRate.Rates, resolution, inputVideo, pricing.VideoGeneration.BillingUnit); ok {
+			if matchedResolution == "" {
+				matchedResolution = strings.TrimSpace(resolutionRate.Resolution)
 			}
-			if rate.PricePerMillionTokens.IsPositive() {
-				matchedResolution := strings.TrimSpace(resolutionRate.Resolution)
-				if matchedResolution == "" {
-					matchedResolution = resolution
-				}
-				return rate.PricePerMillionTokens, matchedResolution, inputVideo, true, nil
-			}
+			return rate, matchedResolution, inputVideo, mode, true, nil
 		}
 	}
 	if resolution != "" {
-		return decimal.Zero, resolution, inputVideo, false, nil
+		return decimal.Zero, resolution, inputVideo, "", false, nil
 	}
 	for _, resolutionRate := range pricing.VideoGeneration.ResolutionRates {
-		for _, rate := range resolutionRate.Rates {
-			if rate.InputVideo != nil && *rate.InputVideo != inputVideo {
-				continue
+		if rate, matchedResolution, mode, ok := matchVideoRate(resolutionRate.Rates, "", inputVideo, pricing.VideoGeneration.BillingUnit); ok {
+			if matchedResolution == "" {
+				matchedResolution = strings.TrimSpace(resolutionRate.Resolution)
 			}
-			if rate.PricePerMillionTokens.IsPositive() {
-				return rate.PricePerMillionTokens, strings.TrimSpace(resolutionRate.Resolution), inputVideo, true, nil
+			return rate, matchedResolution, inputVideo, mode, true, nil
+		}
+	}
+	return decimal.Zero, resolution, inputVideo, "", false, nil
+}
+
+func matchVideoRate(rates []videoPricingRate, resolution string, inputVideo bool, billingUnit string) (decimal.Decimal, string, string, bool) {
+	for _, rate := range rates {
+		if resolution != "" && strings.TrimSpace(rate.Resolution) != "" && !strings.EqualFold(strings.TrimSpace(rate.Resolution), resolution) {
+			continue
+		}
+		if rate.InputVideo != nil && *rate.InputVideo != inputVideo {
+			continue
+		}
+		matchedResolution := strings.TrimSpace(rate.Resolution)
+		if matchedResolution == "" {
+			matchedResolution = resolution
+		}
+		if rate.PricePerMillionTokens.IsPositive() {
+			return rate.PricePerMillionTokens, matchedResolution, "million_video_tokens", true
+		}
+		if rate.PricePerMillionVideo.IsPositive() {
+			return rate.PricePerMillionVideo, matchedResolution, "million_video_tokens", true
+		}
+		if rate.PricePerSecond.IsPositive() {
+			return rate.PricePerSecond, matchedResolution, "second", true
+		}
+		if rate.PriceUSDPerSecond.IsPositive() {
+			return rate.PriceUSDPerSecond, matchedResolution, "second", true
+		}
+	}
+	if strings.EqualFold(strings.TrimSpace(billingUnit), "second") {
+		return decimal.Zero, resolution, "second", false
+	}
+	return decimal.Zero, resolution, "", false
+}
+
+func videoPricingTokenCount(req *adapter.VideoTaskRequest, resp *adapter.VideoResponse) int {
+	if resp != nil && resp.Usage != nil && resp.Usage.TotalTokens > 0 {
+		return resp.Usage.TotalTokens
+	}
+	for _, key := range []string{"video_tokens", "total_video_tokens", "total_tokens"} {
+		if value := intFromAny(videoTaskAdditionalParam(req, key)); value > 0 {
+			return value
+		}
+	}
+	if resp != nil && resp.Raw != nil {
+		for _, key := range []string{"video_tokens", "total_video_tokens", "total_tokens"} {
+			if value := intFromAny(resp.Raw[key]); value > 0 {
+				return value
+			}
+		}
+		if usage, ok := resp.Raw["usage"].(map[string]interface{}); ok {
+			for _, key := range []string{"video_tokens", "total_video_tokens", "total_tokens"} {
+				if value := intFromAny(usage[key]); value > 0 {
+					return value
+				}
 			}
 		}
 	}
-	return decimal.Zero, resolution, inputVideo, false, nil
+	return 0
 }
 
 func videoPricingResolution(req *adapter.VideoTaskRequest, resp *adapter.VideoResponse) string {
