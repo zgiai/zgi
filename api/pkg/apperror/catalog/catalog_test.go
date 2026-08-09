@@ -2,6 +2,7 @@ package catalog_test
 
 import (
 	"errors"
+	"math"
 	"sync"
 	"testing"
 
@@ -77,6 +78,40 @@ func TestPresentUsesTypedPublicParametersAndIgnoresDiagnostics(t *testing.T) {
 	}
 }
 
+func TestPublicStringAndFloatParametersAreBounded(t *testing.T) {
+	t.Parallel()
+
+	fallbackCode := apperror.MustCode("system.fallback")
+	code := apperror.MustCode("request.public_params")
+	definition := catalog.Definition{
+		Code:       code,
+		Category:   catalog.CategoryValidation,
+		HTTPStatus: 400,
+		Messages: map[catalog.Locale]string{
+			catalog.LocaleEnglishUS:         "Field {field}; ratio {ratio}",
+			catalog.LocaleChineseSimplified: "字段 {field}；比例 {ratio}",
+		},
+		Parameters: []catalog.Parameter{
+			{Name: "field", Type: catalog.ParamString},
+			{Name: "ratio", Type: catalog.ParamFloat},
+		},
+	}
+	productCatalog, err := catalog.New(catalog.LocaleEnglishUS, fallbackCode,
+		testDefinition(fallbackCode, "Fallback", "兜底消息"), definition)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, params := range map[string]map[string]any{
+		"oversized string":  {"field": string(make([]byte, 257)), "ratio": float64(1)},
+		"control character": {"field": "bad\nfield", "ratio": float64(1)},
+		"non-finite float":  {"field": "name", "ratio": math.Inf(1)},
+	} {
+		if _, err := productCatalog.Present(code, catalog.LocaleEnglishUS, params); !errors.Is(err, catalog.ErrMessageUnavailable) {
+			t.Fatalf("%s error = %v", name, err)
+		}
+	}
+}
+
 func TestUnknownCodeRequiresExplicitSafeFallback(t *testing.T) {
 	t.Parallel()
 
@@ -144,6 +179,29 @@ func TestCatalogCopiesCallerOwnedDefinitions(t *testing.T) {
 	presentation, err := productCatalog.Present(fallbackCode, catalog.LocaleEnglishUS, nil)
 	if err != nil || presentation.Message != "Original" {
 		t.Fatalf("immutable presentation = %#v, %v", presentation, err)
+	}
+}
+
+func TestDefinitionsAreSortedAndDefensivelyCopied(t *testing.T) {
+	t.Parallel()
+
+	productCatalog, err := catalog.NewDefault()
+	if err != nil {
+		t.Fatal(err)
+	}
+	definitions := productCatalog.Definitions()
+	if len(definitions) != len(catalog.DefaultDefinitions()) {
+		t.Fatalf("Definitions() count = %d", len(definitions))
+	}
+	for index := 1; index < len(definitions); index++ {
+		if definitions[index-1].Code.String() >= definitions[index].Code.String() {
+			t.Fatalf("Definitions() is not sorted at %d", index)
+		}
+	}
+	definitions[0].Messages[catalog.LocaleEnglishUS] = "mutated"
+	again := productCatalog.Definitions()
+	if again[0].Messages[catalog.LocaleEnglishUS] == "mutated" {
+		t.Fatal("Definitions() exposed catalog-owned message map")
 	}
 }
 

@@ -3,6 +3,7 @@ package catalog
 import (
 	"errors"
 	"fmt"
+	"sort"
 
 	"github.com/zgiai/zgi/api/pkg/apperror"
 )
@@ -93,6 +94,20 @@ func (c *Catalog) Definition(code apperror.Code) (Definition, bool) {
 		return Definition{}, false
 	}
 	return cloneDefinition(definition.definition), true
+}
+
+// Definitions returns defensive copies in code order for documentation,
+// startup diagnostics, and completeness tooling. Request handling should use
+// Present instead of scanning this list.
+func (c *Catalog) Definitions() []Definition {
+	definitions := make([]Definition, 0, len(c.definitions))
+	for _, definition := range c.definitions {
+		definitions = append(definitions, cloneDefinition(definition.definition))
+	}
+	sort.Slice(definitions, func(left, right int) bool {
+		return definitions[left].Code.String() < definitions[right].Code.String()
+	})
+	return definitions
 }
 
 // CodeFromLegacy explicitly converts a namespaced old code. Unknown or

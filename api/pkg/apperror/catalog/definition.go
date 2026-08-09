@@ -2,11 +2,16 @@ package catalog
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/zgiai/zgi/api/pkg/apperror"
 )
+
+const maxPublicStringParameterBytes = 256
 
 // Category is a stable semantic classification. Protocol adapters translate
 // it into their own error type while HTTPStatus preserves existing HTTP
@@ -281,6 +286,17 @@ func formatParameter(parameterType ParamType, value any) (string, error) {
 	switch parameterType {
 	case ParamString:
 		if typed, ok := value.(string); ok {
+			if !utf8.ValidString(typed) {
+				return "", fmt.Errorf("must contain valid UTF-8")
+			}
+			if len(typed) > maxPublicStringParameterBytes {
+				return "", fmt.Errorf("exceeds %d bytes", maxPublicStringParameterBytes)
+			}
+			for _, character := range typed {
+				if unicode.IsControl(character) {
+					return "", fmt.Errorf("contains a control character")
+				}
+			}
 			return typed, nil
 		}
 	case ParamInteger:
@@ -293,6 +309,9 @@ func formatParameter(parameterType ParamType, value any) (string, error) {
 		}
 	case ParamFloat:
 		if typed, ok := value.(float64); ok {
+			if math.IsNaN(typed) || math.IsInf(typed, 0) {
+				return "", fmt.Errorf("must be finite")
+			}
 			return strconv.FormatFloat(typed, 'f', -1, 64), nil
 		}
 	case ParamBoolean:
