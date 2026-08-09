@@ -27,7 +27,7 @@ func ExampleProjector_ProjectLegacyMessage() {
 
 	public := projector.ProjectLegacyMessage(
 		apperror.New(code),
-		transport.LocaleFromAcceptLanguage("zh-CN,zh;q=0.9"),
+		transport.LocaleFromAcceptLanguage("en-US,en;q=0.9"),
 		legacyKey,
 	)
 
@@ -37,5 +37,5 @@ func ExampleProjector_ProjectLegacyMessage() {
 	fmt.Println(legacyHTTPStatus, legacyWireCode, public.Message)
 
 	// Output:
-	// 504 40503 大模型服务响应超时，请重试。
+	// 504 40503 The model service timed out. Try again.
 }
