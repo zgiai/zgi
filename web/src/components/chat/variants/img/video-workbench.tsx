@@ -65,6 +65,7 @@ const VIDEO_RESOLUTIONS = ['720p', '1080p'] as const;
 const VIDEO_REFERENCE_MODES = ['auto'] as const;
 const VIDEO_FRAME_REFERENCE_MODE = 'first_last_frame';
 const VIDEO_AUDIO_MODES = ['off', 'on'] as const;
+const REFERENCE_KIND_ORDER: ReferenceKind[] = ['image', 'video', 'audio'];
 const REFERENCE_ACCEPT_BY_KIND: Record<ReferenceKind, string> = {
   image: 'image/*',
   video: 'video/*',
@@ -72,6 +73,21 @@ const REFERENCE_ACCEPT_BY_KIND: Record<ReferenceKind, string> = {
 };
 
 type ReferenceKind = 'image' | 'video' | 'audio';
+type NormalizedVideoStatus = 'pending' | 'running' | 'succeeded' | 'failed' | 'cancelled';
+
+const VIDEO_STATUS_LABEL_KEYS = {
+  pending: 'chat.videoWorkbench.status.pending',
+  running: 'chat.videoWorkbench.status.running',
+  succeeded: 'chat.videoWorkbench.status.succeeded',
+  failed: 'chat.videoWorkbench.status.failed',
+  cancelled: 'chat.videoWorkbench.status.cancelled',
+} as const;
+
+const REFERENCE_KIND_LABEL_KEYS = {
+  image: 'chat.videoWorkbench.referenceKinds.image',
+  video: 'chat.videoWorkbench.referenceKinds.video',
+  audio: 'chat.videoWorkbench.referenceKinds.audio',
+} as const;
 
 interface VideoGenerationSettings {
   aspectRatio: string;
@@ -169,6 +185,11 @@ export function VideoWorkbench() {
       setPollingTaskId(null);
     }
   }, [pollingTaskDetailId, pollingTaskId, pollingTaskStatus]);
+  const supportedReferenceKinds = React.useMemo(
+    () => getVideoReferenceKinds(selectedModelItem),
+    [selectedModelItem]
+  );
+  const hasReferenceMaterials = supportedReferenceKinds.length > 0;
   const allowedReferenceKinds = React.useMemo(
     () => getAllowedReferenceKinds(selectedModelItem, settings.referenceMode),
     [selectedModelItem, settings.referenceMode]
@@ -291,7 +312,17 @@ export function VideoWorkbench() {
     } finally {
       setIsSubmitting(false);
     }
-  }, [generateMutation, generationOptions.audioModes.length, prompt, referenceFiles, refetchTasks, selectedModel.model, selectedModel.provider, settings, t]);
+  }, [
+    generateMutation,
+    generationOptions.audioModes.length,
+    prompt,
+    referenceFiles,
+    refetchTasks,
+    selectedModel.model,
+    selectedModel.provider,
+    settings,
+    t,
+  ]);
 
   return (
     <div className="flex h-full min-h-0 w-full bg-background">
@@ -318,6 +349,7 @@ export function VideoWorkbench() {
                 selectedModel={selectedModel}
                 onModelChange={setSelectedModel}
                 allowedReferenceKinds={allowedReferenceKinds}
+                hasReferenceMaterials={hasReferenceMaterials}
                 maxReferenceFiles={maxReferenceFiles}
                 referenceFiles={referenceFiles}
                 onReferenceFilesChange={setReferenceFiles}
@@ -332,7 +364,10 @@ export function VideoWorkbench() {
         </div>
       </main>
 
-      <TaskDetailSheet task={selectedTask} onOpenChange={open => !open && setSelectedTaskId(null)} />
+      <TaskDetailSheet
+        task={selectedTask}
+        onOpenChange={open => !open && setSelectedTaskId(null)}
+      />
     </div>
   );
 }
@@ -398,16 +433,16 @@ function GenerationRecordsSidebar({
 
       <div className="flex min-h-0 flex-1 flex-col">
         {visibleTasks.length === 0 ? (
-        <div className="grid flex-1 place-items-center px-5">
-          <div className="text-center">
-            <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-full bg-background shadow-sm">
-              <Film className="h-5 w-5 text-muted-foreground" />
+          <div className="grid flex-1 place-items-center px-5">
+            <div className="text-center">
+              <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-full bg-background shadow-sm">
+                <Film className="h-5 w-5 text-muted-foreground" />
+              </div>
+              <h3 className="mt-4 text-sm font-semibold text-foreground">
+                {t('chat.videoWorkbench.emptyRecordsTitle')}
+              </h3>
             </div>
-            <h3 className="mt-4 text-sm font-semibold text-foreground">
-              {t('chat.videoWorkbench.emptyRecordsTitle')}
-            </h3>
           </div>
-        </div>
         ) : (
           <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-3">
             {visibleTasks.map(task => (
@@ -437,7 +472,13 @@ function VideoTaskCard({
   const t = useT('webapp');
   const status = normalizeStatus(task.status);
   const isLoadingStatus = status === 'pending' || status === 'running';
-  const Icon = isLoadingStatus ? Loader2 : status === 'succeeded' ? CheckCircle2 : status === 'failed' ? XCircle : Clock3;
+  const Icon = isLoadingStatus
+    ? Loader2
+    : status === 'succeeded'
+      ? CheckCircle2
+      : status === 'failed'
+        ? XCircle
+        : Clock3;
   const statusClass =
     status === 'succeeded'
       ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700'
@@ -465,12 +506,14 @@ function VideoTaskCard({
         </div>
         <Badge className={cn('rounded-md px-1.5 py-0.5 text-[11px]', statusClass)}>
           <Icon className={cn('mr-1 h-3 w-3', isLoadingStatus && 'animate-spin')} />
-          {t(`chat.videoWorkbench.status.${status}`)}
+          {t(VIDEO_STATUS_LABEL_KEYS[status])}
         </Badge>
       </div>
       <p className="mt-2 line-clamp-2 text-xs leading-5 text-muted-foreground">{task.prompt}</p>
       <div className="mt-2 flex flex-wrap gap-1.5 text-[11px] text-muted-foreground">
-        {task.resolution ? <span className="rounded bg-muted px-1.5 py-0.5">{task.resolution}</span> : null}
+        {task.resolution ? (
+          <span className="rounded bg-muted px-1.5 py-0.5">{task.resolution}</span>
+        ) : null}
         {task.ratio ? <span className="rounded bg-muted px-1.5 py-0.5">{task.ratio}</span> : null}
         {task.duration_seconds ? (
           <span className="rounded bg-muted px-1.5 py-0.5">
@@ -516,6 +559,7 @@ function ComposerPanel({
   selectedModel,
   onModelChange,
   allowedReferenceKinds,
+  hasReferenceMaterials,
   maxReferenceFiles,
   referenceFiles,
   onReferenceFilesChange,
@@ -533,6 +577,7 @@ function ComposerPanel({
   selectedModel: ModelSelectorValue;
   onModelChange: (value: ModelSelectorValue) => void;
   allowedReferenceKinds: ReferenceKind[];
+  hasReferenceMaterials: boolean;
   maxReferenceFiles: number;
   referenceFiles: SelectedReferenceFile[];
   onReferenceFilesChange: React.Dispatch<React.SetStateAction<SelectedReferenceFile[]>>;
@@ -548,23 +593,25 @@ function ComposerPanel({
   return (
     <div className="rounded-lg border border-border bg-background p-4 shadow-sm">
       <div className="flex min-h-[184px] flex-col gap-4">
-        <ReferenceMaterialButton
-          allowedKinds={allowedReferenceKinds}
-          maxFiles={maxReferenceFiles}
-          mode={settings.referenceMode}
-          files={referenceFiles}
-          onFilesSelected={files =>
-            onReferenceFilesChange(prev => {
-              const availableSlots = Math.max(0, maxReferenceFiles - prev.length);
-              const accepted = files.slice(0, availableSlots);
-              files.slice(availableSlots).forEach(file => URL.revokeObjectURL(file.previewUrl));
-              return [...prev, ...accepted];
-            })
-          }
-          onRemoveFile={fileId =>
-            onReferenceFilesChange(prev => prev.filter(file => file.id !== fileId))
-          }
-        />
+        {hasReferenceMaterials ? (
+          <ReferenceMaterialButton
+            allowedKinds={allowedReferenceKinds}
+            maxFiles={maxReferenceFiles}
+            mode={settings.referenceMode}
+            files={referenceFiles}
+            onFilesSelected={files =>
+              onReferenceFilesChange(prev => {
+                const availableSlots = Math.max(0, maxReferenceFiles - prev.length);
+                const accepted = files.slice(0, availableSlots);
+                files.slice(availableSlots).forEach(file => URL.revokeObjectURL(file.previewUrl));
+                return [...prev, ...accepted];
+              })
+            }
+            onRemoveFile={fileId =>
+              onReferenceFilesChange(prev => prev.filter(file => file.id !== fileId))
+            }
+          />
+        ) : null}
         <Textarea
           value={prompt}
           onChange={event => onPromptChange(event.target.value)}
@@ -591,17 +638,19 @@ function ComposerPanel({
               className="h-8 rounded-md border-border bg-background px-2 text-xs font-medium text-foreground hover:bg-muted/40"
             />
           </div>
-          <SpecSelectPill
-            icon={<Sparkles className="h-3.5 w-3.5" />}
-            value={settings.referenceMode}
-            options={generationOptions.referenceModes}
-            labels={{
-              auto: t('chat.videoWorkbench.referenceModeAuto'),
-              [VIDEO_FRAME_REFERENCE_MODE]: t('chat.videoWorkbench.referenceModeFirstLastFrame'),
-            }}
-            menuHint={t('chat.videoWorkbench.referenceModePriceHintShort')}
-            onChange={referenceMode => onSettingsChange({ ...settings, referenceMode })}
-          />
+          {hasReferenceMaterials ? (
+            <SpecSelectPill
+              icon={<Sparkles className="h-3.5 w-3.5" />}
+              value={settings.referenceMode}
+              options={generationOptions.referenceModes}
+              labels={{
+                auto: t('chat.videoWorkbench.referenceModeAuto'),
+                [VIDEO_FRAME_REFERENCE_MODE]: t('chat.videoWorkbench.referenceModeFirstLastFrame'),
+              }}
+              menuHint={t('chat.videoWorkbench.referenceModePriceHintShort')}
+              onChange={referenceMode => onSettingsChange({ ...settings, referenceMode })}
+            />
+          ) : null}
           {generationOptions.audioModes.length > 1 ? (
             <SpecSelectPill
               icon={<Volume2 className="h-3.5 w-3.5" />}
@@ -656,7 +705,11 @@ function ComposerPanel({
             disabled={submitDisabled}
             onClick={onGenerate}
           >
-            {isGenerating ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowUp className="h-4 w-4" />}
+            {isGenerating ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <ArrowUp className="h-4 w-4" />
+            )}
           </Button>
         </div>
       </div>
@@ -724,7 +777,9 @@ function TaskDetailSheet({
                 </div>
 
                 <DetailSection title={t('chat.videoWorkbench.promptLabel')}>
-                  <p className="whitespace-pre-wrap text-sm leading-6 text-foreground">{task.prompt}</p>
+                  <p className="whitespace-pre-wrap text-sm leading-6 text-foreground">
+                    {task.prompt}
+                  </p>
                 </DetailSection>
 
                 <div className="grid grid-cols-2 gap-3">
@@ -785,7 +840,13 @@ function TaskDetailSheet({
 function StatusBadge({ status }: { status: ReturnType<typeof normalizeStatus> }) {
   const t = useT('webapp');
   const isLoadingStatus = status === 'pending' || status === 'running';
-  const Icon = isLoadingStatus ? Loader2 : status === 'succeeded' ? CheckCircle2 : status === 'failed' ? XCircle : Clock3;
+  const Icon = isLoadingStatus
+    ? Loader2
+    : status === 'succeeded'
+      ? CheckCircle2
+      : status === 'failed'
+        ? XCircle
+        : Clock3;
   const statusClass =
     status === 'succeeded'
       ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700'
@@ -796,7 +857,7 @@ function StatusBadge({ status }: { status: ReturnType<typeof normalizeStatus> })
   return (
     <Badge className={cn('rounded-md px-2 py-1 text-xs', statusClass)}>
       <Icon className={cn('mr-1 h-3.5 w-3.5', isLoadingStatus && 'animate-spin')} />
-      {t(`chat.videoWorkbench.status.${status}`)}
+      {t(VIDEO_STATUS_LABEL_KEYS[status])}
     </Badge>
   );
 }
@@ -844,19 +905,29 @@ function formatCredit(value: number | null | undefined) {
   if (value === undefined || value === null) return '-';
   const normalized = normalizeAiCreditValue(value, { precision: 3 });
   if (normalized === undefined || normalized === null) return '-';
-  return `${formatAiCreditValue(normalized, {
-    maximumFractionDigits: 3,
-    minimumFractionDigits: 0,
-  })} 点`;
+  return (
+    formatAiCreditValue(normalized, {
+      maximumFractionDigits: 3,
+      minimumFractionDigits: 0,
+    }) +
+    ' ' +
+    '\u70b9'
+  );
 }
 
-function normalizeStatus(status: string) {
+function normalizeStatus(status: string): NormalizedVideoStatus {
   const normalized = status?.toLowerCase?.() ?? '';
-  if (normalized === 'success' || normalized === 'completed' || normalized === 'done') return 'succeeded';
+  if (normalized === 'success' || normalized === 'completed' || normalized === 'done')
+    return 'succeeded';
   if (normalized === 'processing' || normalized === 'in_progress') return 'running';
   if (normalized === 'error') return 'failed';
   if (normalized === 'cancelled' || normalized === 'canceled') return 'cancelled';
-  if (normalized === 'pending' || normalized === 'running' || normalized === 'succeeded' || normalized === 'failed') {
+  if (
+    normalized === 'pending' ||
+    normalized === 'running' ||
+    normalized === 'succeeded' ||
+    normalized === 'failed'
+  ) {
     return normalized;
   }
   return 'pending';
@@ -891,12 +962,13 @@ function ReferenceMaterialButton({
   const handleFilesChange = React.useCallback(
     (event: React.ChangeEvent<HTMLInputElement>) => {
       const availableSlots = Math.max(0, maxFiles - files.length);
-      const selectedFiles = Array.from(event.target.files ?? []).slice(0, availableSlots)
+      const selectedFiles = Array.from(event.target.files ?? [])
+        .slice(0, availableSlots)
         .map(file => {
           const kind = getReferenceKindFromFile(file, allowedKinds);
           if (!kind) return null;
           return {
-            id: `${file.name}-${file.size}-${file.lastModified}-${crypto.randomUUID()}`,
+            id: [file.name, file.size, file.lastModified, crypto.randomUUID()].join('-'),
             file,
             kind,
             previewUrl: URL.createObjectURL(file),
@@ -935,9 +1007,7 @@ function ReferenceMaterialButton({
         onClick={() => inputRef.current?.click()}
       >
         <ImagePlus className="h-4 w-4" />
-        <span className="text-[11px] font-medium leading-none">
-          {referenceLabel}
-        </span>
+        <span className="text-[11px] font-medium leading-none">{referenceLabel}</span>
       </button>
 
       {files.length > 0 ? (
@@ -1002,13 +1072,17 @@ function getVideoGenerationOptions(model: ModelItem | undefined): VideoGeneratio
   const supportsAudioGeneration = supportsVideoAudioGeneration(videoConfig);
 
   return {
-    aspectRatios: getStringOptions(videoConfig, ['aspect_ratios', 'ratios', 'ratio_options'], [
-      ...DEFAULT_VIDEO_GENERATION_OPTIONS.aspectRatios,
-    ]),
+    aspectRatios: getStringOptions(
+      videoConfig,
+      ['aspect_ratios', 'ratios', 'ratio_options'],
+      [...DEFAULT_VIDEO_GENERATION_OPTIONS.aspectRatios]
+    ),
     durations: getDurationOptions(videoConfig),
-    resolutions: getStringOptions(videoConfig, ['resolutions', 'resolution_options'], [
-      ...DEFAULT_VIDEO_GENERATION_OPTIONS.resolutions,
-    ]),
+    resolutions: getStringOptions(
+      videoConfig,
+      ['resolutions', 'resolution_options'],
+      [...DEFAULT_VIDEO_GENERATION_OPTIONS.resolutions]
+    ),
     referenceModes: getReferenceModeOptions(videoConfig),
     audioModes: supportsAudioGeneration ? [...VIDEO_AUDIO_MODES] : ['off'],
   };
@@ -1022,7 +1096,11 @@ function normalizeVideoSettings(
   const preferredAudioMode = supportsAudioOn ? 'on' : DEFAULT_VIDEO_SETTINGS.audioMode;
   const next: VideoGenerationSettings = {
     aspectRatio: pickSupportedOption(settings.aspectRatio, options.aspectRatios, '1:1'),
-    duration: pickSupportedOption(settings.duration, options.durations, DEFAULT_VIDEO_SETTINGS.duration),
+    duration: pickSupportedOption(
+      settings.duration,
+      options.durations,
+      DEFAULT_VIDEO_SETTINGS.duration
+    ),
     resolution: pickSupportedOption(
       settings.resolution,
       options.resolutions,
@@ -1042,7 +1120,8 @@ function normalizeVideoSettings(
   };
 
   return Object.keys(next).every(
-    key => next[key as keyof VideoGenerationSettings] === settings[key as keyof VideoGenerationSettings]
+    key =>
+      next[key as keyof VideoGenerationSettings] === settings[key as keyof VideoGenerationSettings]
   )
     ? settings
     : next;
@@ -1117,12 +1196,17 @@ function supportsVideoAudioGeneration(videoConfig: Record<string, unknown> | nul
 }
 
 function getReferenceModeOptions(videoConfig: Record<string, unknown> | null): string[] {
-  return getStringOptions(videoConfig, ['reference_modes', 'referenceModes'], [
-    ...VIDEO_REFERENCE_MODES,
-  ]);
+  return getStringOptions(
+    videoConfig,
+    ['reference_modes', 'referenceModes'],
+    [...VIDEO_REFERENCE_MODES]
+  );
 }
 
-function getAllowedReferenceKinds(model: ModelItem | undefined, referenceMode: string): ReferenceKind[] {
+function getAllowedReferenceKinds(
+  model: ModelItem | undefined,
+  referenceMode: string
+): ReferenceKind[] {
   const kinds = getVideoReferenceKinds(model);
   if (referenceMode === VIDEO_FRAME_REFERENCE_MODE) {
     return kinds.includes('image') ? ['image'] : [];
@@ -1139,6 +1223,16 @@ function getMaxReferenceFiles(model: ModelItem | undefined, referenceMode: strin
 
 function getVideoReferenceKinds(model?: ModelItem): ReferenceKind[] {
   const references = getModelVideoReferences(model);
+  const configuredKinds = uniqueReferenceKinds([
+    ...getReferenceKindsFromReferences(references),
+    ...getReferenceKindsFromModalities(model?.input_modalities),
+  ]);
+  return configuredKinds;
+}
+
+function getReferenceKindsFromReferences(
+  references: Record<string, unknown> | null
+): ReferenceKind[] {
   if (!references) return [];
 
   const kinds: ReferenceKind[] = [];
@@ -1146,6 +1240,32 @@ function getVideoReferenceKinds(model?: ModelItem): ReferenceKind[] {
   if (toPositiveNumber(references.video_max_items) > 0) kinds.push('video');
   if (toPositiveNumber(references.audio_max_items) > 0) kinds.push('audio');
   return kinds;
+}
+
+function getReferenceKindsFromModalities(modalities?: unknown[]): ReferenceKind[] {
+  if (!Array.isArray(modalities)) return [];
+  return modalities
+    .map(getReferenceKindFromModality)
+    .filter((kind): kind is ReferenceKind => Boolean(kind));
+}
+
+function getReferenceKindFromModality(modality: unknown): ReferenceKind | null {
+  const normalized = normalizeModality(modality);
+  if (normalized.includes('image')) return 'image';
+  if (normalized.includes('video')) return 'video';
+  if (normalized.includes('audio')) return 'audio';
+  return null;
+}
+
+function normalizeModality(modality: unknown): string {
+  return String(modality ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/_/g, '-');
+}
+
+function uniqueReferenceKinds(kinds: ReferenceKind[]): ReferenceKind[] {
+  return REFERENCE_KIND_ORDER.filter(kind => kinds.includes(kind));
 }
 
 function getModelVideoReferences(model?: ModelItem): Record<string, unknown> | null {
@@ -1210,9 +1330,8 @@ function isTruthy(value: unknown): boolean {
   return value === true || value === 'true' || value === 1 || value === '1';
 }
 
-
 function getReferenceKindFromFile(file: File, allowedKinds: ReferenceKind[]): ReferenceKind | null {
-  const kind = allowedKinds.find(candidate => file.type.startsWith(`${candidate}/`));
+  const kind = allowedKinds.find(candidate => file.type.startsWith(candidate + '/'));
   return kind ?? null;
 }
 
@@ -1232,14 +1351,8 @@ async function uploadVideoReferenceFile(file: File, missingUrlMessage: string): 
 }
 
 function firstUploadURL(uploaded: UploadResponse): string {
-  return (
-    uploaded.source_url?.trim() ||
-    uploaded.url?.trim() ||
-    uploaded.download_url?.trim() ||
-    ''
-  );
+  return uploaded.source_url?.trim() || uploaded.url?.trim() || uploaded.download_url?.trim() || '';
 }
-
 
 function getReferenceUploadLabel(
   kinds: ReferenceKind[],
@@ -1257,7 +1370,7 @@ function formatReferenceKinds(
   kinds: ReferenceKind[],
   t: ReturnType<typeof useT<'webapp'>>
 ): string {
-  return kinds.map(kind => t(`chat.videoWorkbench.referenceKinds.${kind}`)).join('/');
+  return kinds.map(kind => t(REFERENCE_KIND_LABEL_KEYS[kind])).join('/');
 }
 
 function ModePill() {
@@ -1291,7 +1404,7 @@ function SpecSelectPill({
   menuHint?: string;
   onChange: (value: string) => void;
 }) {
-  const display = labels?.[value] ?? (suffix ? `${value}${suffix}` : value);
+  const display = labels?.[value] ?? (suffix ? value + suffix : value);
 
   return (
     <Select value={value} onValueChange={onChange}>
@@ -1306,7 +1419,7 @@ function SpecSelectPill({
           <div className="px-8 py-1.5 text-xs text-muted-foreground">{menuHint}</div>
         ) : null}
         {options.map(option => {
-          const label = labels?.[option] ?? (suffix ? `${option}${suffix}` : option);
+          const label = labels?.[option] ?? (suffix ? option + suffix : option);
 
           return (
             <SelectItem key={option} value={option}>

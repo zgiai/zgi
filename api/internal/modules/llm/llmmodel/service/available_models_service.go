@@ -51,6 +51,10 @@ type AvailableModel struct {
 	ContextWindow   int `json:"context_window,omitempty"`
 	MaxOutputTokens int `json:"max_output_tokens,omitempty"`
 
+	// Modalities
+	InputModalities  []string `json:"input_modalities,omitempty"`
+	OutputModalities []string `json:"output_modalities,omitempty"`
+
 	// ModelHub-aligned capabilities (nested structures)
 	Endpoints  model.ModelEndpoints  `json:"endpoints"`
 	Features   model.ModelFeatures   `json:"features"`
@@ -406,6 +410,7 @@ func (s *availableModelsService) listAvailableUncached(ctx context.Context, orga
 			Provider:        m.Provider,
 			ContextWindow:   m.ContextWindow,
 			MaxOutputTokens: m.MaxOutputTokens,
+			InputModalities: cloneJSONArray(m.InputModalities), OutputModalities: cloneJSONArray(m.OutputModalities),
 
 			// ModelHub-aligned nested structures
 			Endpoints: model.ModelEndpoints{
@@ -517,6 +522,7 @@ func (s *availableModelsService) listAvailableUncached(ctx context.Context, orga
 			Provider:        m.Provider,
 			ContextWindow:   m.ContextWindow,
 			MaxOutputTokens: m.MaxOutputTokens,
+			InputModalities: cloneJSONArray(m.InputModalities), OutputModalities: cloneJSONArray(m.OutputModalities),
 
 			// ModelHub-aligned nested structures (aligned with global models)
 			Endpoints: model.ModelEndpoints{
@@ -653,6 +659,8 @@ func cloneAvailableModels(models []*AvailableModel) []*AvailableModel {
 		}
 		modelCopy := *item
 		modelCopy.UseCases = append([]string(nil), item.UseCases...)
+		modelCopy.InputModalities = append([]string(nil), item.InputModalities...)
+		modelCopy.OutputModalities = append([]string(nil), item.OutputModalities...)
 		modelCopy.SupportedParameters = append([]string(nil), item.SupportedParameters...)
 		modelCopy.ParametersMetadata = cloneParameterDefinitions(item.ParametersMetadata)
 		modelCopy.ConfigParameters = cloneConfigParameters(item.ConfigParameters)
@@ -685,6 +693,13 @@ func parameterDefinitionNames(params model.ParameterDefinitions) []string {
 		names = append(names, param.Name)
 	}
 	return names
+}
+
+func cloneJSONArray(values types.JSONArray) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	return append([]string(nil), []string(values)...)
 }
 
 func cloneParameterDefinitions(params model.ParameterDefinitions) model.ParameterDefinitions {
