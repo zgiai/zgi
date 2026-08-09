@@ -162,9 +162,20 @@ func TestNilReceiverAccessors(t *testing.T) {
 	t.Parallel()
 
 	var appErr *apperror.Error
-	if appErr.Error() != "<nil>" || appErr.Unwrap() != nil || appErr.Code() != "" || appErr.Operation() != "" || appErr.Params() != nil {
+	if appErr.Error() != "<nil>" || appErr.Unwrap() != nil || appErr.Code().String() != "" || appErr.Operation() != "" || appErr.Params() != nil {
 		t.Fatal("nil receiver accessors are not safe")
 	}
+}
+
+func TestConstructorsRejectZeroCode(t *testing.T) {
+	t.Parallel()
+
+	defer func() {
+		if recover() == nil {
+			t.Fatal("New did not reject a zero Code")
+		}
+	}()
+	_ = apperror.New(apperror.Code{})
 }
 
 func BenchmarkNew(b *testing.B) {

@@ -56,6 +56,9 @@ func Wrap(cause error, code Code, options ...Option) error {
 }
 
 func build(code Code, cause error, options ...Option) *Error {
+	if code.value == "" {
+		panic("application error code is empty")
+	}
 	appErr := &Error{code: code, cause: cause}
 	for _, option := range options {
 		if option != nil {
@@ -102,7 +105,7 @@ func (e *Error) Is(target error) bool {
 // Code returns the stable application error identity.
 func (e *Error) Code() Code {
 	if e == nil {
-		return ""
+		return Code{}
 	}
 	return e.code
 }
@@ -136,7 +139,7 @@ func As(err error) (*Error, bool) {
 func CodeOf(err error) (Code, bool) {
 	appErr, ok := As(err)
 	if !ok {
-		return "", false
+		return Code{}, false
 	}
 	return appErr.code, true
 }

@@ -9,14 +9,17 @@ const maxCodeLength = 128
 
 // Code is the stable, language-neutral identity of an application error.
 // Canonical codes use lowercase dot-separated segments, for example
-// "llm.provider.timeout".
-type Code string
+// "llm.provider.timeout". Its representation is private so callers cannot
+// bypass ParseCode or MustCode with an unchecked conversion.
+type Code struct {
+	value string
+}
 
 // ParseCode validates a code supplied by tooling or an extension.
 func ParseCode(value string) (Code, error) {
-	code := Code(value)
+	code := Code{value: value}
 	if err := code.Validate(); err != nil {
-		return "", err
+		return Code{}, err
 	}
 	return code, nil
 }
@@ -33,7 +36,7 @@ func MustCode(value string) Code {
 
 // String returns the canonical string representation.
 func (c Code) String() string {
-	return string(c)
+	return c.value
 }
 
 // Valid reports whether c follows the canonical code grammar.
@@ -43,7 +46,7 @@ func (c Code) Valid() bool {
 
 // Validate checks that a code is stable, lowercase, and dot-separated.
 func (c Code) Validate() error {
-	value := string(c)
+	value := c.value
 	if value == "" {
 		return fmt.Errorf("application error code is empty")
 	}

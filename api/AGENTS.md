@@ -43,6 +43,15 @@ go run cmd/migrate/main.go up
 - Prefer typed request/response structs over unstructured maps.
 - Use context-aware APIs for request-scoped work.
 
+## Application Errors
+
+- Treat `pkg/apperror` as the transport-neutral error contract. Domain and service code may create or wrap an AppError; HTTP, SSE, OpenAI-compatible, persistence, and observability layers must project it at their boundary.
+- Declare each stable code once at package scope with `apperror.MustCode("domain.subject.reason")`. Reuse cataloged codes; do not create numeric ranges, translate meaning from digits, or use a user-facing sentence as an identity.
+- Use `apperror.Wrap` when a cause exists so `errors.Is` and `errors.As` keep working. Add a stable `WithOperation` value for diagnosis, and only scalar, non-sensitive `WithParams` values needed to render or classify the error.
+- Never return `err.Error()` to a client. It is diagnostic text and may contain an upstream cause. Public messages and locale selection belong to the error catalog and protocol adapter.
+- Adding a product error is incomplete until its catalog definition, safe parameter schema, supported locale messages, legacy mapping (when required), and focused tests are present. `pkg/apperror` validates the code grammar but is not itself the complete product code list.
+- Preserve existing response contracts while migrating. Do not replace a legacy handler response until the relevant adapter has explicit HTTP/status/code/message compatibility tests.
+
 ## Database and Storage
 
 - PostgreSQL is the production database target.

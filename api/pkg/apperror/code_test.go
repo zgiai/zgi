@@ -48,7 +48,7 @@ func TestParseCode(t *testing.T) {
 			if err == nil {
 				t.Fatalf("ParseCode(%q) unexpectedly succeeded with %q", test.value, code)
 			}
-			if code != "" {
+			if code.String() != "" {
 				t.Fatalf("invalid ParseCode(%q) returned code %q", test.value, code)
 			}
 		})
@@ -58,7 +58,7 @@ func TestParseCode(t *testing.T) {
 func TestMustCode(t *testing.T) {
 	t.Parallel()
 
-	if got := apperror.MustCode("billing.workspace.quota_exceeded"); got != "billing.workspace.quota_exceeded" {
+	if got := apperror.MustCode("billing.workspace.quota_exceeded"); got.String() != "billing.workspace.quota_exceeded" {
 		t.Fatalf("MustCode returned %q", got)
 	}
 
@@ -84,7 +84,7 @@ func FuzzParseCode(f *testing.F) {
 	f.Fuzz(func(t *testing.T, value string) {
 		code, err := apperror.ParseCode(value)
 		if err != nil {
-			if code != "" {
+			if code.String() != "" {
 				t.Fatalf("invalid input returned non-empty code %q", code)
 			}
 			return
