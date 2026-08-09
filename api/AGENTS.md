@@ -54,6 +54,8 @@ go run cmd/migrate/main.go up
 - Treat every catalog message and declared placeholder as public data. Provide both `en-US` and `zh-Hans`, normalize a request locale once with `catalog.ParseLocale`, and never declare a sensitive value as a public placeholder.
 - Namespace legacy aliases by their owner (for example `llm.gateway:40101`). Leave overloaded legacy values unmapped until the calling domain can choose the meaning explicitly; never guess from the numeric range or error text.
 - Preserve existing response contracts while migrating. Do not replace a legacy handler response until the relevant adapter has explicit HTTP/status/code/message compatibility tests.
+- At HTTP, SSE, or provider-protocol boundaries, use `pkg/apperror/transport.Projector` to obtain a safe public presentation; keep the original error for logs and tracing.
+- During incremental migration, use `ProjectLegacyMessage` only as a message overlay. Preserve the handler's existing HTTP status, numeric/code value, protocol type, headers, and JSON/SSE shape until a separately reviewed contract change is approved.
 
 ## Database and Storage
 
