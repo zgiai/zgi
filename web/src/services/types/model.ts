@@ -164,6 +164,12 @@ export interface ModelItem {
   features: ModelFeatures;
   tools: ModelTools;
   parameters?: ModelParameters; // Optional, might be removed in later cleanup
+  capabilities?: Record<string, unknown>;
+  default_parameters?: Record<string, unknown>;
+  config_parameters?: ModelConfigParameter[] | Record<string, unknown>;
+  parameters_metadata?: ModelConfigParameter[] | Record<string, unknown>;
+  supported_parameters?: string[] | ModelConfigParameter[] | Record<string, unknown>;
+  video?: Record<string, unknown>;
   use_cases: ModelUseCase[] | null;
   input_modalities: string[];
   output_modalities: string[];

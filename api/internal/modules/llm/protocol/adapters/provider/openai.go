@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"strings"
 	"time"
 
@@ -438,6 +439,58 @@ func (a *OpenAIAdapter) CreateImage(ctx context.Context, request *adapter.ImageR
 	}
 
 	return &response, nil
+}
+
+// CreateVideo executes asynchronous video generation request.
+func (a *OpenAIAdapter) CreateVideo(ctx context.Context, request *adapter.VideoRequest) (*adapter.VideoResponse, error) {
+	url := a.requestURL("/videos/generations")
+	headers := a.buildHeaders()
+
+	respBody, statusCode, err := a.httpClient.DoRequest(ctx, "POST", url, headers, buildOpenAICompatibleVideoPayload(request))
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	if statusCode != 200 {
+		return nil, a.handleError(statusCode, respBody)
+	}
+	response, err := decodeOpenAICompatibleVideoResponse(respBody)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return response, nil
+}
+
+// GetVideoTask queries an asynchronous video generation task.
+func (a *OpenAIAdapter) GetVideoTask(ctx context.Context, request *adapter.VideoTaskRequest) (*adapter.VideoResponse, error) {
+	if request == nil || strings.TrimSpace(request.TaskID) == "" {
+		return nil, fmt.Errorf("%w: task_id is required", adapter.ErrInvalidRequest)
+	}
+	path := "/videos/generations/" + url.PathEscape(strings.TrimSpace(request.TaskID))
+	query := url.Values{}
+	if strings.TrimSpace(request.Model) != "" {
+		query.Set("model", strings.TrimSpace(request.Model))
+	}
+	for k, v := range request.AdditionalParameters {
+		if text, ok := v.(string); ok && strings.TrimSpace(text) != "" {
+			query.Set(k, strings.TrimSpace(text))
+		}
+	}
+	fullURL := a.requestURL(path)
+	if encoded := query.Encode(); encoded != "" {
+		fullURL += "?" + encoded
+	}
+	respBody, statusCode, err := a.httpClient.DoRequest(ctx, "GET", fullURL, a.buildHeaders(), nil)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	if statusCode != 200 {
+		return nil, a.handleError(statusCode, respBody)
+	}
+	response, err := decodeOpenAICompatibleVideoResponse(respBody)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return response, nil
 }
 
 // Rerank executes rerank request (not natively supported by OpenAI)

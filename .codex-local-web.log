@@ -1,0 +1,193 @@
+
+> zgi-web@2.0.0 dev E:\workspace\zgi\zgi-pre\web
+> node scripts/customer/prepare.mjs && node scripts/generate-sensitive-word-filter.mjs && next dev "-p" "3001"
+
+[customer:prepare] Using default adapter.
+▲ Next.js 16.2.6 (Turbopack)
+- Local:         http://localhost:3001
+- Network:       http://192.168.1.2:3001
+- Environments: .env.local
+✓ Ready in 440ms
+- Experiments (use with caution):
+  · clientTraceMetadata
+  · cpus: 2
+  · optimizePackageImports
+  ⨯ serverSourceMaps
+  · staticGenerationMaxConcurrency: 2
+  · turbopackMemoryLimit: 2147483648
+  ✓ webpackMemoryOptimizations
+
+○ Compiling /console/work/video ...
+ GET /console/work/video 500 in 14.7s (next.js: 14.5s, proxy.ts: 18ms, application-code: 229ms)
+ GET / 500 in 162ms (next.js: 142ms, proxy.ts: 7ms, application-code: 13ms)
+✓ Compiled in 14s
+ GET /console/work/video 200 in 3.1s (next.js: 326ms, proxy.ts: 182ms, application-code: 2.6s)
+ GET / 200 in 3.3s (next.js: 566ms, proxy.ts: 77ms, application-code: 2.7s)
+ GET /init 200 in 2.2s (next.js: 301ms, proxy.ts: 10ms, application-code: 1929ms)
+ GET /init 200 in 241ms (next.js: 17ms, proxy.ts: 13ms, application-code: 211ms)
+ GET /login 200 in 394ms (next.js: 219ms, proxy.ts: 10ms, application-code: 165ms)
+ GET /login 200 in 98ms (next.js: 20ms, proxy.ts: 14ms, application-code: 65ms)
+○ Compiling /onboarding/organization ...
+ GET /onboarding/organization 200 in 9.6s (next.js: 8.4s, proxy.ts: 13ms, application-code: 1191ms)
+ GET /console 200 in 1338ms (next.js: 768ms, proxy.ts: 12ms, application-code: 558ms)
+○ Compiling /console/work/chat ...
+✓ Finished writing to filesystem cache in 17.1s
+ GET /console/work/chat 200 in 37.4s (next.js: 36.6s, proxy.ts: 19ms, application-code: 795ms)
+ GET /console/work/chat 200 in 17.5s (next.js: 17.1s, proxy.ts: 19ms, application-code: 323ms)
+✓ Finished filesystem cache database compaction in 12.2s
+ GET /dashboard 200 in 664ms (next.js: 439ms, proxy.ts: 74ms, application-code: 151ms)
+ GET /dashboard/provider 200 in 453ms (next.js: 326ms, proxy.ts: 21ms, application-code: 106ms)
+ GET /dashboard/channel 200 in 652ms (next.js: 566ms, proxy.ts: 14ms, application-code: 72ms)
+ GET /console 200 in 106ms (next.js: 21ms, proxy.ts: 11ms, application-code: 75ms)
+ GET /console/work/chat 200 in 136ms (next.js: 14ms, proxy.ts: 11ms, application-code: 111ms)
+ GET /console/work/chat 200 in 69ms (next.js: 12ms, proxy.ts: 10ms, application-code: 47ms)
+ GET /console/work/video 200 in 132ms (next.js: 18ms, proxy.ts: 11ms, application-code: 104ms)
+ GET /dashboard/provider 200 in 110ms (next.js: 11ms, proxy.ts: 10ms, application-code: 89ms)
+ GET /dashboard 200 in 71ms (next.js: 11ms, proxy.ts: 16ms, application-code: 45ms)
+ GET /dashboard/provider 200 in 67ms (next.js: 9ms, proxy.ts: 10ms, application-code: 48ms)
+ GET /dashboard/channel 200 in 79ms (next.js: 12ms, proxy.ts: 12ms, application-code: 54ms)
+ GET /console 200 in 536ms (next.js: 148ms, proxy.ts: 152ms, application-code: 235ms)
+ GET /console/work/chat 200 in 351ms (next.js: 47ms, proxy.ts: 30ms, application-code: 274ms)
+ GET /console/work/chat 200 in 221ms (next.js: 87ms, proxy.ts: 9ms, application-code: 124ms)
+ GET /console/work/video 200 in 69ms (next.js: 19ms, proxy.ts: 6ms, application-code: 44ms)
+ GET /console/work/video 200 in 445ms (next.js: 26ms, proxy.ts: 13ms, application-code: 406ms)
+✓ Compiled in 7.1s
+ GET /console/work/video 200 in 1935ms (next.js: 516ms, proxy.ts: 589ms, application-code: 830ms)
+ GET /console/work/video 200 in 440ms (next.js: 19ms, proxy.ts: 217ms, application-code: 205ms)
+✓ Compiled in 2.2s
+ GET /console/work/video 200 in 1768ms (next.js: 283ms, proxy.ts: 162ms, application-code: 1323ms)
+ GET /console/work/video 200 in 832ms (next.js: 206ms, proxy.ts: 121ms, application-code: 504ms)
+ GET /console/work/video 200 in 1052ms (next.js: 19ms, proxy.ts: 51ms, application-code: 982ms)
+ GET /console/work/video 200 in 886ms (next.js: 46ms, proxy.ts: 121ms, application-code: 719ms)
+ GET /console/work/video 200 in 879ms (next.js: 118ms, proxy.ts: 123ms, application-code: 638ms)
+ GET /console/work/video 200 in 909ms (next.js: 281ms, proxy.ts: 126ms, application-code: 502ms)
+ GET /console/work/video 200 in 1047ms (next.js: 206ms, proxy.ts: 48ms, application-code: 793ms)
+ GET /console/work/video 200 in 1067ms (next.js: 63ms, proxy.ts: 37ms, application-code: 968ms)
+ GET /console/work/video 200 in 1004ms (next.js: 200ms, proxy.ts: 283ms, application-code: 520ms)
+ GET /console/work/video 200 in 1004ms (next.js: 275ms, proxy.ts: 284ms, application-code: 445ms)
+ GET /console/work/video 200 in 1070ms (next.js: 138ms, proxy.ts: 38ms, application-code: 894ms)
+ GET /console/work/video 200 in 993ms (next.js: 269ms, proxy.ts: 414ms, application-code: 310ms)
+✓ Compiled in 2s
+ GET /console/work/video 200 in 1552ms (next.js: 260ms, proxy.ts: 147ms, application-code: 1145ms)
+ GET /console/work/video 200 in 925ms (next.js: 11ms, proxy.ts: 53ms, application-code: 861ms)
+ GET /console/work/video 200 in 763ms (next.js: 113ms, proxy.ts: 76ms, application-code: 574ms)
+ GET /console/work/video 200 in 765ms (next.js: 28ms, proxy.ts: 78ms, application-code: 659ms)
+ GET /console/work/video 200 in 768ms (next.js: 256ms, proxy.ts: 82ms, application-code: 429ms)
+ GET /console/work/video 200 in 782ms (next.js: 177ms, proxy.ts: 82ms, application-code: 523ms)
+ GET /console/work/video 200 in 1131ms (next.js: 40ms, proxy.ts: 17ms, application-code: 1074ms)
+ GET /console/work/video 200 in 1105ms (next.js: 109ms, proxy.ts: 132ms, application-code: 863ms)
+ GET /console/work/video 200 in 1009ms (next.js: 298ms, proxy.ts: 128ms, application-code: 583ms)
+ GET /console/work/video 200 in 1109ms (next.js: 166ms, proxy.ts: 137ms, application-code: 805ms)
+ GET /console/work/video 200 in 990ms (next.js: 459ms, proxy.ts: 107ms, application-code: 423ms)
+ GET /console/work/video 200 in 1102ms (next.js: 202ms, proxy.ts: 183ms, application-code: 717ms)
+ GET /console/work/video 200 in 1429ms (next.js: 21ms, proxy.ts: 12ms, application-code: 1396ms)
+ GET /console/work/video 200 in 447ms (next.js: 24ms, proxy.ts: 15ms, application-code: 408ms)
+✓ Compiled in 1124ms
+ GET /console/work/video 200 in 508ms (next.js: 191ms, proxy.ts: 100ms, application-code: 217ms)
+✓ Compiled in 865ms
+ GET /console/work/video 200 in 498ms (next.js: 173ms, proxy.ts: 102ms, application-code: 223ms)
+✓ Compiled in 2.8s
+ GET /console/work/video 200 in 936ms (next.js: 343ms, proxy.ts: 183ms, application-code: 409ms)
+✓ Compiled in 801ms
+ GET /console/work/video 200 in 432ms (next.js: 159ms, proxy.ts: 95ms, application-code: 178ms)
+✓ Compiled in 1248ms
+ GET /console/work/video 200 in 526ms (next.js: 8ms, proxy.ts: 33ms, application-code: 486ms)
+ GET /console/work/video 200 in 896ms (next.js: 143ms, proxy.ts: 73ms, application-code: 680ms)
+ GET /console/work/video 200 in 434ms (next.js: 136ms, proxy.ts: 42ms, application-code: 256ms)
+ GET /console/work/video 200 in 450ms (next.js: 95ms, proxy.ts: 41ms, application-code: 315ms)
+ GET /console/work/video 200 in 460ms (next.js: 22ms, proxy.ts: 38ms, application-code: 401ms)
+ GET /console/work/video 200 in 464ms (next.js: 58ms, proxy.ts: 39ms, application-code: 367ms)
+ GET /console/work/video 200 in 527ms (next.js: 107ms, proxy.ts: 28ms, application-code: 392ms)
+ GET /console/work/video 200 in 533ms (next.js: 58ms, proxy.ts: 22ms, application-code: 453ms)
+ GET /console/work/video 200 in 538ms (next.js: 28ms, proxy.ts: 23ms, application-code: 487ms)
+ GET /console/work/video 200 in 508ms (next.js: 189ms, proxy.ts: 101ms, application-code: 218ms)
+ GET /console/work/video 200 in 520ms (next.js: 218ms, proxy.ts: 21ms, application-code: 281ms)
+ GET /console/work/video 200 in 507ms (next.js: 148ms, proxy.ts: 218ms, application-code: 141ms)
+✓ Compiled in 1001ms
+ GET /console/work/video 200 in 935ms (next.js: 155ms, proxy.ts: 88ms, application-code: 692ms)
+ GET /console/work/video 200 in 553ms (next.js: 6ms, proxy.ts: 41ms, application-code: 506ms)
+ GET /console/work/video 200 in 458ms (next.js: 72ms, proxy.ts: 36ms, application-code: 350ms)
+ GET /console/work/video 200 in 473ms (next.js: 22ms, proxy.ts: 37ms, application-code: 413ms)
+ GET /console/work/video 200 in 472ms (next.js: 185ms, proxy.ts: 39ms, application-code: 249ms)
+ GET /console/work/video 200 in 480ms (next.js: 147ms, proxy.ts: 38ms, application-code: 295ms)
+ GET /console/work/video 200 in 516ms (next.js: 103ms, proxy.ts: 27ms, application-code: 386ms)
+ GET /console/work/video 200 in 527ms (next.js: 68ms, proxy.ts: 26ms, application-code: 433ms)
+ GET /console/work/video 200 in 546ms (next.js: 143ms, proxy.ts: 28ms, application-code: 376ms)
+ GET /console/work/video 200 in 568ms (next.js: 27ms, proxy.ts: 29ms, application-code: 512ms)
+ GET /console/work/video 200 in 571ms (next.js: 183ms, proxy.ts: 30ms, application-code: 358ms)
+ GET /console/work/video 200 in 566ms (next.js: 299ms, proxy.ts: 28ms, application-code: 239ms)
+ GET /console/work/video 200 in 3.2s (next.js: 19ms, proxy.ts: 11ms, application-code: 3.2s)
+✓ Compiled in 1877ms
+ GET /console/work/video 200 in 858ms (next.js: 322ms, proxy.ts: 173ms, application-code: 364ms)
+ GET /console/work/video 200 in 1080ms (next.js: 7ms, proxy.ts: 5ms, application-code: 1067ms)
+✓ Compiled in 708ms
+ GET /console/work/video 200 in 437ms (next.js: 156ms, proxy.ts: 89ms, application-code: 192ms)
+✓ Compiled in 2s
+ GET /console/work/video 200 in 1032ms (next.js: 356ms, proxy.ts: 210ms, application-code: 466ms)
+✓ Compiled in 1360ms
+ GET /console/work/video 200 in 1714ms (next.js: 420ms, proxy.ts: 17ms, application-code: 1276ms)
+ GET /console/work/video 200 in 989ms (next.js: 215ms, proxy.ts: 75ms, application-code: 699ms)
+ GET /console/work/video 200 in 459ms (next.js: 53ms, proxy.ts: 60ms, application-code: 346ms)
+ GET /console/work/video 200 in 463ms (next.js: 22ms, proxy.ts: 59ms, application-code: 382ms)
+ GET /console/work/video 200 in 460ms (next.js: 89ms, proxy.ts: 60ms, application-code: 311ms)
+ GET /console/work/video 200 in 514ms (next.js: 120ms, proxy.ts: 35ms, application-code: 360ms)
+ GET /console/work/video 200 in 440ms (next.js: 10ms, proxy.ts: 6ms, application-code: 424ms)
+ GET /console/work/video 200 in 439ms (next.js: 12ms, proxy.ts: 8ms, application-code: 419ms)
+ GET /console/work/video 200 in 374ms (next.js: 17ms, proxy.ts: 38ms, application-code: 319ms)
+ GET /console/work/video 200 in 372ms (next.js: 85ms, proxy.ts: 39ms, application-code: 248ms)
+ GET /console/work/video 200 in 380ms (next.js: 57ms, proxy.ts: 37ms, application-code: 287ms)
+ GET /console/work/video 200 in 340ms (next.js: 34ms, proxy.ts: 186ms, application-code: 121ms)
+✓ Compiled in 892ms
+ GET /console/work/video 200 in 704ms (next.js: 116ms, proxy.ts: 64ms, application-code: 525ms)
+ GET /console/work/video 200 in 504ms (next.js: 11ms, proxy.ts: 41ms, application-code: 453ms)
+ GET /console/work/video 200 in 412ms (next.js: 17ms, proxy.ts: 36ms, application-code: 360ms)
+ GET /console/work/video 200 in 410ms (next.js: 76ms, proxy.ts: 36ms, application-code: 298ms)
+ GET /console/work/video 200 in 413ms (next.js: 44ms, proxy.ts: 36ms, application-code: 334ms)
+ GET /console/work/video 200 in 413ms (next.js: 114ms, proxy.ts: 37ms, application-code: 262ms)
+ GET /console/work/video 200 in 440ms (next.js: 9ms, proxy.ts: 7ms, application-code: 425ms)
+ GET /console/work/video 200 in 527ms (next.js: 28ms, proxy.ts: 23ms, application-code: 476ms)
+ GET /console/work/video 200 in 516ms (next.js: 201ms, proxy.ts: 27ms, application-code: 288ms)
+ GET /console/work/video 200 in 525ms (next.js: 64ms, proxy.ts: 25ms, application-code: 436ms)
+ GET /console/work/video 200 in 523ms (next.js: 163ms, proxy.ts: 27ms, application-code: 333ms)
+ GET /console/work/video 200 in 527ms (next.js: 127ms, proxy.ts: 27ms, application-code: 373ms)
+ GET /console/work/video 200 in 3.7s (next.js: 19ms, proxy.ts: 12ms, application-code: 3.7s)
+✓ Compiled in 1168ms
+ GET /console/work/video 200 in 398ms (next.js: 143ms, proxy.ts: 78ms, application-code: 176ms)
+✓ Compiled in 800ms
+ GET /console/work/video 200 in 384ms (next.js: 142ms, proxy.ts: 90ms, application-code: 152ms)
+✓ Compiled in 750ms
+ GET /console/work/video 200 in 373ms (next.js: 134ms, proxy.ts: 70ms, application-code: 169ms)
+ GET /console/work/video 200 in 3.1s (next.js: 16ms, proxy.ts: 14ms, application-code: 3.0s)
+✓ Compiled in 1156ms
+ GET /console/work/video 200 in 693ms (next.js: 258ms, proxy.ts: 148ms, application-code: 286ms)
+✓ Compiled in 571ms
+ GET /console/work/video 200 in 276ms (next.js: 101ms, proxy.ts: 55ms, application-code: 121ms)
+✓ Compiled in 692ms
+ GET /console/work/video 200 in 340ms (next.js: 136ms, proxy.ts: 58ms, application-code: 146ms)
+✓ Compiled in 715ms
+ GET /console/work/video 200 in 336ms (next.js: 126ms, proxy.ts: 62ms, application-code: 149ms)
+✓ Compiled in 718ms
+ GET /console/work/video 200 in 356ms (next.js: 137ms, proxy.ts: 69ms, application-code: 151ms)
+ GET /console/work/video 200 in 2.5s (next.js: 10ms, proxy.ts: 10ms, application-code: 2.5s)
+ GET /console/work/video 200 in 357ms (next.js: 11ms, proxy.ts: 17ms, application-code: 329ms)
+✓ Compiled in 768ms
+ GET /console/work/video 200 in 434ms (next.js: 176ms, proxy.ts: 79ms, application-code: 179ms)
+✓ Compiled in 811ms
+ GET /console/work/video 200 in 513ms (next.js: 170ms, proxy.ts: 95ms, application-code: 249ms)
+ GET /console/work/video 200 in 4.2s (next.js: 21ms, proxy.ts: 29ms, application-code: 4.1s)
+✓ Compiled in 1955ms
+ GET /console/work/video 200 in 424ms (next.js: 149ms, proxy.ts: 76ms, application-code: 199ms)
+ GET /console/work/video 200 in 619ms (next.js: 197ms, proxy.ts: 67ms, application-code: 355ms)
+ GET /console/work/video 200 in 125ms (next.js: 6ms, proxy.ts: 26ms, application-code: 93ms)
+ GET /console/work/video 200 in 257ms (next.js: 8ms, proxy.ts: 78ms, application-code: 171ms)
+✓ Compiled in 4.2s
+✓ Compiled in 2.5s
+ GET /console/work/video 200 in 1522ms (next.js: 366ms, proxy.ts: 204ms, application-code: 951ms)
+ GET /console/work/video 200 in 536ms (next.js: 26ms, proxy.ts: 60ms, application-code: 450ms)
+ GET /console/work/video 200 in 296ms (next.js: 16ms, proxy.ts: 53ms, application-code: 227ms)
+ GET /console/work/video 200 in 7.3s (next.js: 140ms, proxy.ts: 81ms, application-code: 7.1s)
+ GET /console/work/video 200 in 285ms (next.js: 12ms, proxy.ts: 5ms, application-code: 268ms)
+ GET /console/work/video 200 in 12.5s (next.js: 1317ms, proxy.ts: 813ms, application-code: 10.4s)
+ GET /console/work/video 200 in 1616ms (next.js: 372ms, proxy.ts: 227ms, application-code: 1017ms)
+[?25h
+ ELIFECYCLE  Command failed with exit code 4294967295.

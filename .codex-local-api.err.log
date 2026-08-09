@@ -1,0 +1,7 @@
+asynq: pid=10248 2026/08/08 07:56:31.966441 INFO: Scheduler starting
+asynq: pid=10248 2026/08/08 07:56:31.967477 INFO: Scheduler timezone is set to Asia/Shanghai
+asynq: pid=10248 2026/08/08 07:56:31.966441 INFO: Starting processing
+asynq: pid=10248 2026/08/08 07:56:31.966441 INFO: Starting processing
+asynq: pid=10248 2026/08/08 07:56:31.970678 INFO: Send signal TERM or INT to terminate the process
+asynq: pid=10248 2026/08/08 07:56:31.969571 INFO: Send signal TERM or INT to terminate the process
+exit status 0xffffffff

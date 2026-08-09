@@ -5,6 +5,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
+	"gorm.io/datatypes"
 	"gorm.io/gorm"
 )
 
@@ -189,6 +190,19 @@ func (CustomModel) TableName() string {
 	return "llm_custom_models"
 }
 
+// HasUseCase returns true if the custom model's UseCases array contains the given use case.
+func (m *CustomModel) HasUseCase(useCase string) bool {
+	if m == nil {
+		return false
+	}
+	for _, uc := range m.UseCases {
+		if uc == useCase {
+			return true
+		}
+	}
+	return false
+}
+
 func (m *CustomModel) BeforeCreate(tx *gorm.DB) error {
 	if m.ID == uuid.Nil {
 		m.ID = uuid.New()
@@ -331,12 +345,13 @@ type ModelView struct {
 	OpenWeights   bool   `json:"-"`           // Internal use only
 
 	// Pricing (per million tokens)
-	Currency              string  `json:"currency"`
-	InputPrice            float64 `json:"input_price"`  // Price per million input tokens
-	OutputPrice           float64 `json:"output_price"` // Price per million output tokens
-	InputPriceConfigured  bool    `json:"input_price_configured"`
-	OutputPriceConfigured bool    `json:"output_price_configured"`
-	CachedInputPrice      float64 `json:"cached_input_price"`
+	Currency              string         `json:"currency"`
+	InputPrice            float64        `json:"input_price"`  // Price per million input tokens
+	OutputPrice           float64        `json:"output_price"` // Price per million output tokens
+	InputPriceConfigured  bool           `json:"input_price_configured"`
+	OutputPriceConfigured bool           `json:"output_price_configured"`
+	CachedInputPrice      float64        `json:"cached_input_price"`
+	Pricing               datatypes.JSON `json:"pricing,omitempty"`
 
 	// Context
 	ContextWindow   int `json:"context_window"`
@@ -364,4 +379,7 @@ type ModelView struct {
 	UpdatedAt            int64                `json:"updated_at"`   // Unix timestamp
 	SupportedParameters  []string             `json:"supported_parameters,omitempty"`
 	ParametersMetadata   ParameterDefinitions `json:"parameters_metadata,omitempty"`
+	ConfigParameters     ConfigParameters     `json:"config_parameters,omitempty"`
+	DefaultParameters    JSONObject           `json:"default_parameters,omitempty"`
+	Capabilities         JSONObject           `json:"capabilities,omitempty"`
 }

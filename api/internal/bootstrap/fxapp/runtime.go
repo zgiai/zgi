@@ -18,6 +18,7 @@ import (
 	graphflowworker "github.com/zgiai/zgi/api/internal/modules/dataset/graphflow/worker"
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
 	system_service "github.com/zgiai/zgi/api/internal/modules/system/service"
+	videoservice "github.com/zgiai/zgi/api/internal/modules/video/service"
 	"github.com/zgiai/zgi/api/internal/observability"
 	"github.com/zgiai/zgi/api/pkg/queue"
 	pkgscheduler "github.com/zgiai/zgi/api/pkg/scheduler"
@@ -39,6 +40,7 @@ type runtimeParams struct {
 	GraphFlowService    *graphflow.Service
 	WorkflowTestService *workflowtest.Service
 	LLMClient           llmclient.LLMClient
+	VideoTaskPoller     *videoservice.TaskPoller
 	TaskManager         *queue.TaskManager
 	TaskHandlerRegistry *container.TaskHandlerRegistrar
 	Scheduler           *pkgscheduler.Scheduler
@@ -112,6 +114,7 @@ func registerRuntime(lc fx.Lifecycle, params runtimeParams) error {
 	)
 	registerOpenTelemetryLifecycle(lc, params.OpenTelemetry, params.Logger)
 	RegisterWorkflowTestLocalWorkerLifecycle(lc, params.Config, params.WorkflowTestService, params.LLMClient, params.Logger)
+	RegisterVideoRuntimeTaskPollerLifecycle(lc, params.VideoTaskPoller, params.Logger)
 	RegisterTaskManagerLifecycle(lc, params.TaskManager, params.TaskHandlerRegistry, params.Logger)
 	RegisterSchedulerLifecycle(lc, params.Scheduler, params.Logger)
 	RegisterGRPCServerLifecycle(lc, params.GRPCServer, params.GRPCListener, params.Logger)
@@ -296,6 +299,37 @@ func registerZGIReporterLifecycle(lc fx.Lifecycle, reporter *observability.ZGIRe
 			defer cancel()
 			if err := reporter.Flush(flushCtx); err != nil {
 				log.Warn("failed to flush ZGI Reporter", zap.Error(err))
+			}
+			return nil
+		},
+	})
+}
+
+func RegisterVideoRuntimeTaskPollerLifecycle(
+	lc fx.Lifecycle,
+	poller *videoservice.TaskPoller,
+	log *zap.Logger,
+) {
+	var cancel context.CancelFunc
+	lc.Append(fx.Hook{
+		OnStart: func(context.Context) error {
+			if poller == nil {
+				if log != nil {
+					log.Info("Video runtime task poller skipped")
+				}
+				return nil
+			}
+			var pollerCtx context.Context
+			pollerCtx, cancel = context.WithCancel(context.Background())
+			go poller.Start(pollerCtx)
+			if log != nil {
+				log.Info("Video runtime task poller started")
+			}
+			return nil
+		},
+		OnStop: func(context.Context) error {
+			if cancel != nil {
+				cancel()
 			}
 			return nil
 		},

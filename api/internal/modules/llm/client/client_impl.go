@@ -216,6 +216,58 @@ func (c *llmClientImpl) AppCreateImage(ctx context.Context, appCtx *AppContext, 
 	return c.gateway.CreateImageWithAppContext(ctx, apiKey, gwAppCtx, req)
 }
 
+// AppCreateVideo performs an asynchronous video generation request with app context.
+func (c *llmClientImpl) AppCreateVideo(ctx context.Context, appCtx *AppContext, req *adapter.VideoRequest) (*adapter.VideoResponse, error) {
+	if err := appCtx.Validate(); err != nil {
+		return nil, err
+	}
+	organizationID, err := c.resolveOrganizationID(ctx, appCtx)
+	if err != nil {
+		return nil, err
+	}
+	apiKey, err := c.getOrCreateSystemKey(ctx, organizationID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get system API key: %w", err)
+	}
+	gwAppCtx, err := c.buildGatewayAppContext(appCtx)
+	if err != nil {
+		return nil, err
+	}
+	videoGateway, ok := c.gateway.(interface {
+		CreateVideoWithAppContext(context.Context, *apikeymodel.TenantAPIKey, *gateway.AppContext, *adapter.VideoRequest) (*adapter.VideoResponse, error)
+	})
+	if !ok {
+		return nil, fmt.Errorf("%w: video generation is not enabled", adapter.ErrCapabilityUnsupported)
+	}
+	return videoGateway.CreateVideoWithAppContext(ctx, apiKey, gwAppCtx, req)
+}
+
+// AppGetVideoTask queries an asynchronous video generation task with app context.
+func (c *llmClientImpl) AppGetVideoTask(ctx context.Context, appCtx *AppContext, req *adapter.VideoTaskRequest) (*adapter.VideoResponse, error) {
+	if err := appCtx.Validate(); err != nil {
+		return nil, err
+	}
+	organizationID, err := c.resolveOrganizationID(ctx, appCtx)
+	if err != nil {
+		return nil, err
+	}
+	apiKey, err := c.getOrCreateSystemKey(ctx, organizationID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get system API key: %w", err)
+	}
+	gwAppCtx, err := c.buildGatewayAppContext(appCtx)
+	if err != nil {
+		return nil, err
+	}
+	videoGateway, ok := c.gateway.(interface {
+		GetVideoTaskWithAppContext(context.Context, *apikeymodel.TenantAPIKey, *gateway.AppContext, *adapter.VideoTaskRequest) (*adapter.VideoResponse, error)
+	})
+	if !ok {
+		return nil, fmt.Errorf("%w: video task query is not enabled", adapter.ErrCapabilityUnsupported)
+	}
+	return videoGateway.GetVideoTaskWithAppContext(ctx, apiKey, gwAppCtx, req)
+}
+
 // AppRerank performs reranking with app context
 func (c *llmClientImpl) AppRerank(ctx context.Context, appCtx *AppContext, req *adapter.RerankRequest) (*adapter.RerankResponse, error) {
 	if err := appCtx.Validate(); err != nil {

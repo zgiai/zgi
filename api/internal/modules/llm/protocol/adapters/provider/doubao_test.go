@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
@@ -455,6 +456,142 @@ func TestDoubaoAdapterCreateImage_NonSeedreamMultiImageDoesNotAppendPrompt(t *te
 	}
 }
 
+func TestDoubaoAdapterCreateVideo_UsesArkVideoTasks(t *testing.T) {
+	t.Helper()
+
+	var (
+		gotAuth    string
+		gotPath    string
+		gotPayload map[string]any
+	)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer r.Body.Close()
+		gotAuth = r.Header.Get("Authorization")
+		gotPath = r.URL.Path
+		if err := json.NewDecoder(r.Body).Decode(&gotPayload); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{
+			"id":"task_video_123",
+			"status":"running"
+		}`)
+	}))
+	defer server.Close()
+
+	a, err := NewDoubaoAdapter(&adapter.AdapterConfig{
+		APIKey:  "test-key",
+		BaseURL: server.URL + "/api/v3",
+	})
+	if err != nil {
+		t.Fatalf("NewDoubaoAdapter() error = %v", err)
+	}
+
+	duration := 4
+	generateAudio := false
+	resp, err := a.CreateVideo(context.Background(), &adapter.VideoRequest{
+		Model:         "doubao-seedance-2-0-mini-260615",
+		Prompt:        "a bear by the sea",
+		ImageURL:      "https://cdn.example.com/first.png",
+		LastFrameURL:  "https://cdn.example.com/last.png",
+		Ratio:         "1:1",
+		Resolution:    "720p",
+		Duration:      &duration,
+		GenerateAudio: &generateAudio,
+	})
+	if err != nil {
+		t.Fatalf("CreateVideo() error = %v", err)
+	}
+
+	if gotAuth != "Bearer test-key" {
+		t.Fatalf("Authorization = %q, want %q", gotAuth, "Bearer test-key")
+	}
+	if gotPath != "/api/v3/contents/generations/tasks" {
+		t.Fatalf("path = %q, want %q", gotPath, "/api/v3/contents/generations/tasks")
+	}
+	if got := gotPayload["model"]; got != "doubao-seedance-2-0-mini-260615" {
+		t.Fatalf("payload.model = %#v, want model", got)
+	}
+	if got := gotPayload["resolution"]; got != "720p" {
+		t.Fatalf("payload.resolution = %#v, want 720p", got)
+	}
+	if got := gotPayload["duration"]; got != float64(duration) {
+		t.Fatalf("payload.duration = %#v, want %d", got, duration)
+	}
+	if got := gotPayload["generate_audio"]; got != generateAudio {
+		t.Fatalf("payload.generate_audio = %#v, want false", got)
+	}
+	content, ok := gotPayload["content"].([]any)
+	if !ok || len(content) != 3 {
+		t.Fatalf("payload.content = %#v, want text plus two image entries", gotPayload["content"])
+	}
+	if resp.TaskID != "task_video_123" || resp.Status != "running" {
+		t.Fatalf("response = %#v, want task id and running status", resp)
+	}
+}
+
+func TestDoubaoAdapterCreateVideo_ReturnsBodyError(t *testing.T) {
+	t.Helper()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"error":{"code":"invalid_api_key","message":"Please Provide key from the platform!","type":"invalid_request_error"}}`)
+	}))
+	defer server.Close()
+
+	a, err := NewDoubaoAdapter(&adapter.AdapterConfig{
+		APIKey:  "test-key",
+		BaseURL: server.URL + "/api/v3",
+	})
+	if err != nil {
+		t.Fatalf("NewDoubaoAdapter() error = %v", err)
+	}
+
+	_, err = a.CreateVideo(context.Background(), &adapter.VideoRequest{
+		Model:  "doubao-seedance-2-0-mini-260615",
+		Prompt: "a bear by the sea",
+	})
+	if err == nil || !strings.Contains(err.Error(), "Please Provide key from the platform") {
+		t.Fatalf("CreateVideo() error = %v, want upstream body error", err)
+	}
+}
+func TestDoubaoAdapterGetVideoTask_UsesArkVideoTaskDetail(t *testing.T) {
+	t.Helper()
+
+	var gotPath string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.EscapedPath()
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{
+			"task_id":"task_video_123",
+			"status":"succeeded",
+			"data":[{"url":"https://cdn.example.com/video.mp4"}]
+		}`)
+	}))
+	defer server.Close()
+
+	a, err := NewDoubaoAdapter(&adapter.AdapterConfig{
+		APIKey:  "test-key",
+		BaseURL: server.URL + "/api/v3",
+	})
+	if err != nil {
+		t.Fatalf("NewDoubaoAdapter() error = %v", err)
+	}
+
+	resp, err := a.GetVideoTask(context.Background(), &adapter.VideoTaskRequest{TaskID: "task/video 123"})
+	if err != nil {
+		t.Fatalf("GetVideoTask() error = %v", err)
+	}
+
+	if gotPath != "/api/v3/contents/generations/tasks/task%2Fvideo%20123" {
+		t.Fatalf("path = %q, want escaped task path", gotPath)
+	}
+	if resp.TaskID != "task_video_123" || resp.VideoURL != "https://cdn.example.com/video.mp4" {
+		t.Fatalf("response = %#v, want task id and video url", resp)
+	}
+}
 func TestDoubaoAdapterListModels_NormalizesRemoteCatalog(t *testing.T) {
 	t.Helper()
 
@@ -500,6 +637,9 @@ func TestDoubaoAdapterListModels_NormalizesRemoteCatalog(t *testing.T) {
 	}
 	if models[2].Type != "image" {
 		t.Fatalf("models[2].Type = %q, want %q", models[2].Type, "image")
+	}
+	if model := normalizeDoubaoModel("doubao-seedance-2-0-mini-260615"); model.Type != "video" {
+		t.Fatalf("seedance model type = %q, want video", model.Type)
 	}
 }
 

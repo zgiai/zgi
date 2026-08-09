@@ -28,6 +28,7 @@ const (
 	testMethodImageGeneration  = "image-gen"
 	testMethodMetadata         = "metadata"
 	testMethodRerank           = "rerank"
+	testMethodVideoGeneration  = "video-gen"
 	openAICompatibleProvider   = "openai-compatible"
 	defaultImageProbeSize      = "1024x1024"
 )
@@ -118,7 +119,7 @@ func (v *Validator) ValidateModels(ctx context.Context, organizationID uuid.UUID
 		return result, nil
 	}
 
-	capabilities, err := v.resolveModelCapabilities(ctx, organizationID, spec, normalizedModels)
+	capabilities, err := v.resolveModelCapabilities(ctx, organizationID, spec, apiBaseURL, normalizedModels)
 	if err != nil {
 		return result, err
 	}
@@ -172,7 +173,7 @@ func (v *Validator) ValidateModelsForCreation(ctx context.Context, organizationI
 		return result, fmt.Errorf("at least one model is required")
 	}
 
-	capabilities, err := v.resolveModelCapabilities(ctx, organizationID, spec, normalizedModels)
+	capabilities, err := v.resolveModelCapabilities(ctx, organizationID, spec, apiBaseURL, normalizedModels)
 	if err != nil {
 		return result, err
 	}
@@ -246,7 +247,7 @@ func (v *Validator) TestModel(ctx context.Context, organizationID uuid.UUID, cha
 		return nil, fmt.Errorf("model is required")
 	}
 
-	capabilities, err := v.resolveModelCapabilities(ctx, organizationID, spec, []string{normalizedModel})
+	capabilities, err := v.resolveModelCapabilities(ctx, organizationID, spec, apiBaseURL, []string{normalizedModel})
 	if err != nil {
 		return nil, err
 	}
@@ -265,6 +266,9 @@ func (v *Validator) TestModel(ctx context.Context, organizationID uuid.UUID, cha
 
 	if useCase == testMethodImageGeneration && !explicitTestMethod {
 		return v.skipImageModelTest(capabilities[0]), nil
+	}
+	if useCase == testMethodVideoGeneration {
+		return v.skipVideoModelTest(capabilities[0]), nil
 	}
 
 	adapterInstance, err := v.newAdapterForProvider(spec.AdapterKey, apiBaseURL, apiKey)
@@ -469,13 +473,25 @@ func (v *Validator) skipImageModelTest(capability modelCapability) *TestResult {
 	}
 }
 
-func (v *Validator) resolveModelCapabilities(ctx context.Context, organizationID uuid.UUID, spec Spec, models []string) ([]modelCapability, error) {
+func (v *Validator) skipVideoModelTest(capability modelCapability) *TestResult {
+	return &TestResult{
+		Success:        false,
+		Status:         TestStatusSkipped,
+		Message:        "video generation models require an asynchronous video task test in the video workspace",
+		ResponseTimeMs: 0,
+		Model:          capability.Model,
+		UseCase:        capability.UseCase,
+		TestMethod:     testMethodVideoGeneration,
+	}
+}
+
+func (v *Validator) resolveModelCapabilities(ctx context.Context, organizationID uuid.UUID, spec Spec, apiBaseURL string, models []string) ([]modelCapability, error) {
 	if v.modelRepo == nil && v.privateModels == nil {
 		return nil, fmt.Errorf("model repository is required for validation")
 	}
 
 	now := v.now()
-	cacheScope := strings.TrimSpace(spec.Name)
+	cacheScope := capabilityCacheScope(spec, apiBaseURL)
 	capabilityMap := make(map[string]modelCapability, len(models))
 	missing := make([]string, 0)
 
@@ -494,7 +510,7 @@ func (v *Validator) resolveModelCapabilities(ctx context.Context, organizationID
 		found := make(map[string]struct{}, len(missing))
 
 		if v.privateModels != nil && organizationID != uuid.Nil {
-			if isProviderScopedPrivateModelValidation(spec) {
+			if isProviderScopedModelValidation(spec, apiBaseURL) {
 				privateRecords, err := v.privateModels.ResolveActiveModelsForProvider(ctx, organizationID, spec.Name, missing)
 				if err != nil {
 					return nil, fmt.Errorf("failed to load private model metadata: %w", err)
@@ -521,7 +537,7 @@ func (v *Validator) resolveModelCapabilities(ctx context.Context, organizationID
 			}
 
 			lookupProvider := ""
-			if isProviderScopedPrivateModelValidation(spec) {
+			if isProviderScopedModelValidation(spec, apiBaseURL) {
 				lookupProvider = spec.LookupProvider
 			}
 			records, err := v.modelRepo.ListAvailableByNames(ctx, remaining, lookupProvider, "")
@@ -571,8 +587,33 @@ func (v *Validator) resolveModelCapabilities(ctx context.Context, organizationID
 	return resolved, nil
 }
 
-func isProviderScopedPrivateModelValidation(spec Spec) bool {
-	return strings.TrimSpace(spec.Name) != openAICompatibleProvider
+func capabilityCacheScope(spec Spec, apiBaseURL string) string {
+	if !isProviderScopedModelValidation(spec, apiBaseURL) {
+		return openAICompatibleProvider
+	}
+	return strings.TrimSpace(spec.Name)
+}
+
+func isProviderScopedModelValidation(spec Spec, apiBaseURL string) bool {
+	name := strings.TrimSpace(spec.Name)
+	if name == openAICompatibleProvider || name == "agicto" {
+		return false
+	}
+	if isOpenAIProviderWithCustomBaseURL(spec, apiBaseURL) {
+		return false
+	}
+	return true
+}
+
+func isOpenAIProviderWithCustomBaseURL(spec Spec, apiBaseURL string) bool {
+	if strings.TrimSpace(spec.Name) != "openai" {
+		return false
+	}
+	normalized := strings.TrimRight(strings.ToLower(strings.TrimSpace(apiBaseURL)), "/")
+	if normalized == "" {
+		return false
+	}
+	return normalized != "https://api.openai.com" && normalized != "https://api.openai.com/v1"
 }
 
 func (v *Validator) addPrivateCapabilities(
@@ -752,6 +793,8 @@ func inferValidationUseCase(modelRecord *llmmodelmodel.LLMModel) (string, error)
 		return testMethodRerank, nil
 	case modelRecord.IsImageGeneration() || modelRecord.ImageGeneration:
 		return testMethodImageGeneration, nil
+	case modelRecord.Videos || modelRecord.HasUseCase(string(llmmodelmodel.UseCaseVideoGen)):
+		return testMethodVideoGeneration, nil
 	case modelRecord.IsLLM() || modelRecord.ChatCompletions || modelRecord.Responses || modelRecord.HasUseCase(string(llmmodelmodel.UseCaseVision)) || modelRecord.HasUseCase(string(llmmodelmodel.UseCaseReasoning)) || modelRecord.HasUseCase(string(llmmodelmodel.UseCaseFuncCalling)):
 		return testMethodChat, nil
 	default:
@@ -772,6 +815,8 @@ func inferValidationUseCaseFromCustomModel(modelRecord *llmmodelmodel.CustomMode
 		return testMethodRerank, nil
 	case modelRecord.ImageGeneration || containsUseCase(modelRecord.UseCases, string(llmmodelmodel.UseCaseImageGen)):
 		return testMethodImageGeneration, nil
+	case containsUseCase(modelRecord.UseCases, string(llmmodelmodel.UseCaseVideoGen)):
+		return testMethodVideoGeneration, nil
 	case modelRecord.ChatCompletions || modelRecord.Responses || containsUseCase(modelRecord.UseCases, string(llmmodelmodel.UseCaseTextChat)) || containsUseCase(modelRecord.UseCases, "chat") || containsUseCase(modelRecord.UseCases, string(llmmodelmodel.UseCaseVision)) || containsUseCase(modelRecord.UseCases, string(llmmodelmodel.UseCaseReasoning)) || containsUseCase(modelRecord.UseCases, string(llmmodelmodel.UseCaseFuncCalling)):
 		return testMethodChat, nil
 	default:
@@ -803,6 +848,8 @@ func normalizeTestMethod(testMethod string) (string, error) {
 		return testMethodImageGeneration, nil
 	case "rerank":
 		return testMethodRerank, nil
+	case "video", "videos", "video-gen", "video_generation", "video-generation":
+		return testMethodVideoGeneration, nil
 	default:
 		return "", fmt.Errorf("unsupported test method %q", testMethod)
 	}

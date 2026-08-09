@@ -1,0 +1,1937 @@
+[customer:prepare] No customer customization configured
+⨯ ./node_modules/.pnpm/highlight.js@11.11.1/node_modules/highlight.js/styles/github.css
+Error evaluating Node.js code
+Error: Cannot find module '@tailwindcss/container-queries'
+Require stack:
+- E:\workspace\zgi\zgi-pre\web\tailwind.config.ts
+    [at Function._resolveFilename (node:internal/modules/cjs/loader:1383:15)]
+    [at Function.resolve (node:internal/modules/helpers:157:19)]
+    [at _resolve (E:\workspace\zgi\zgi-pre\web\node_modules\.pnpm\jiti@1.21.7\node_modules\jiti\dist\jiti.js:1:246378)]
+    [at jiti (E:\workspace\zgi\zgi-pre\web\node_modules\.pnpm\jiti@1.21.7\node_modules\jiti\dist\jiti.js:1:249092)]
+    [at E:\workspace\zgi\zgi-pre\web\tailwind.config.ts:233:5]
+    [at evalModule (E:\workspace\zgi\zgi-pre\web\node_modules\.pnpm\jiti@1.21.7\node_modules\jiti\dist\jiti.js:1:251913)]
+    [at jiti (E:\workspace\zgi\zgi-pre\web\node_modules\.pnpm\jiti@1.21.7\node_modules\jiti\dist\jiti.js:1:249841)]
+    [at E:\workspace\zgi\zgi-pre\web\node_modules\.pnpm\tailwindcss@3.4.17\node_modules\tailwindcss\lib\lib\load-config.js:52:26]
+    [at loadConfig (E:\workspace\zgi\zgi-pre\web\node_modules\.pnpm\tailwindcss@3.4.17\node_modules\tailwindcss\lib\lib\load-config.js:62:6)]
+    [at getTailwindConfig (E:\workspace\zgi\zgi-pre\web\node_modules\.pnpm\tailwindcss@3.4.17\node_modules\tailwindcss\lib\lib\setupTrackingContext.js:71:116)]
+
+Import trace:
+  Client Component Browser:
+    ./node_modules/.pnpm/highlight.js@11.11.1/node_modules/highlight.js/styles/github.css [Client Component Browser]
+    ./src/components/common/markdown-viewer.tsx [Client Component Browser]
+    ./src/components/chat/ui/message-item/index.tsx [Client Component Browser]
+    ./src/components/chat/ui/conversation-box/index.tsx [Client Component Browser]
+    ./src/components/chat/index.tsx [Client Component Browser]
+    ./src/components/aichat/contextual/contextual-ai-chat-dock.tsx [Client Component Browser]
+    ./src/customer/default.tsx [Client Component Browser]
+    ./src/app/console/layout.tsx [Client Component Browser]
+    ./src/app/console/layout.tsx [Server Component]
+
+
+
+./node_modules/.pnpm/katex@0.16.27/node_modules/katex/dist/katex.min.css
+Error evaluating Node.js code
+Error: Cannot find module '@tailwindcss/container-queries'
+Require stack:
+- E:\workspace\zgi\zgi-pre\web\tailwind.config.ts
+    [at Function._resolveFilename (node:internal/modules/cjs/loader:1383:15)]
+    [at Function.resolve (node:internal/modules/helpers:157:19)]
+    [at _resolve (E:\workspace\zgi\zgi-pre\web\node_modules\.pnpm\jiti@1.21.7\node_modules\jiti\dist\jiti.js:1:246378)]
+    [at jiti (E:\workspace\zgi\zgi-pre\web\node_modules\.pnpm\jiti@1.21.7\node_modules\jiti\dist\jiti.js:1:249092)]
+    [at E:\workspace\zgi\zgi-pre\web\tailwind.config.ts:233:5]
+    [at evalModule (E:\workspace\zgi\zgi-pre\web\node_modules\.pnpm\jiti@1.21.7\node_modules\jiti\dist\jiti.js:1:251913)]
+    [at jiti (E:\workspace\zgi\zgi-pre\web\node_modules\.pnpm\jiti@1.21.7\node_modules\jiti\dist\jiti.js:1:249841)]
+    [at E:\workspace\zgi\zgi-pre\web\node_modules\.pnpm\tailwindcss@3.4.17\node_modules\tailwindcss\lib\lib\load-config.js:52:26]
+    [at loadConfig (E:\workspace\zgi\zgi-pre\web\node_modules\.pnpm\tailwindcss@3.4.17\node_modules\tailwindcss\lib\lib\load-config.js:62:6)]
+    [at getTailwindConfig (E:\workspace\zgi\zgi-pre\web\node_modules\.pnpm\tailwindcss@3.4.17\node_modules\tailwindcss\lib\lib\setupTrackingContext.js:71:116)]
+
+Import trace:
+  Client Component Browser:
+    ./node_modules/.pnpm/katex@0.16.27/node_modules/katex/dist/katex.min.css [Client Component Browser]
+    ./src/components/common/markdown-viewer.tsx [Client Component Browser]
+    ./src/components/chat/ui/message-item/index.tsx [Client Component Browser]
+    ./src/components/chat/ui/conversation-box/index.tsx [Client Component Browser]
+    ./src/components/chat/index.tsx [Client Component Browser]
+    ./src/components/aichat/contextual/contextual-ai-chat-dock.tsx [Client Component Browser]
+    ./src/customer/default.tsx [Client Component Browser]
+    ./src/app/console/layout.tsx [Client Component Browser]
+    ./src/app/console/layout.tsx [Server Component]
+
+
+
+./src/app/globals.css
+Error evaluating Node.js code
+Error: Cannot find module '@tailwindcss/container-queries'
+Require stack:
+- E:\workspace\zgi\zgi-pre\web\tailwind.config.ts
+    [at Function._resolveFilename (node:internal/modules/cjs/loader:1383:15)]
+    [at Function.resolve (node:internal/modules/helpers:157:19)]
+    [at _resolve (E:\workspace\zgi\zgi-pre\web\node_modules\.pnpm\jiti@1.21.7\node_modules\jiti\dist\jiti.js:1:246378)]
+    [at jiti (E:\workspace\zgi\zgi-pre\web\node_modules\.pnpm\jiti@1.21.7\node_modules\jiti\dist\jiti.js:1:249092)]
+    [at E:\workspace\zgi\zgi-pre\web\tailwind.config.ts:233:5]
+    [at evalModule (E:\workspace\zgi\zgi-pre\web\node_modules\.pnpm\jiti@1.21.7\node_modules\jiti\dist\jiti.js:1:251913)]
+    [at jiti (E:\workspace\zgi\zgi-pre\web\node_modules\.pnpm\jiti@1.21.7\node_modules\jiti\dist\jiti.js:1:249841)]
+    [at E:\workspace\zgi\zgi-pre\web\node_modules\.pnpm\tailwindcss@3.4.17\node_modules\tailwindcss\lib\lib\load-config.js:52:26]
+    [at loadConfig (E:\workspace\zgi\zgi-pre\web\node_modules\.pnpm\tailwindcss@3.4.17\node_modules\tailwindcss\lib\lib\load-config.js:62:6)]
+    [at getTailwindConfig (E:\workspace\zgi\zgi-pre\web\node_modules\.pnpm\tailwindcss@3.4.17\node_modules\tailwindcss\lib\lib\setupTrackingContext.js:71:116)]
+
+Import trace:
+  Client Component Browser:
+    ./src/app/globals.css [Client Component Browser]
+    ./src/app/layout.tsx [Server Component]
+
+
+
+./src/styles/index.css
+Error evaluating Node.js code
+Error: Cannot find module '@tailwindcss/container-queries'
+Require stack:
+- E:\workspace\zgi\zgi-pre\web\tailwind.config.ts
+    [at Function._resolveFilename (node:internal/modules/cjs/loader:1383:15)]
+    [at Function.resolve (node:internal/modules/helpers:157:19)]
+    [at _resolve (E:\workspace\zgi\zgi-pre\web\node_modules\.pnpm\jiti@1.21.7\node_modules\jiti\dist\jiti.js:1:246378)]
+    [at jiti (E:\workspace\zgi\zgi-pre\web\node_modules\.pnpm\jiti@1.21.7\node_modules\jiti\dist\jiti.js:1:249092)]
+    [at E:\workspace\zgi\zgi-pre\web\tailwind.config.ts:233:5]
+    [at evalModule (E:\workspace\zgi\zgi-pre\web\node_modules\.pnpm\jiti@1.21.7\node_modules\jiti\dist\jiti.js:1:251913)]
+    [at jiti (E:\workspace\zgi\zgi-pre\web\node_modules\.pnpm\jiti@1.21.7\node_modules\jiti\dist\jiti.js:1:249841)]
+    [at E:\workspace\zgi\zgi-pre\web\node_modules\.pnpm\tailwindcss@3.4.17\node_modules\tailwindcss\lib\lib\load-config.js:52:26]
+    [at loadConfig (E:\workspace\zgi\zgi-pre\web\node_modules\.pnpm\tailwindcss@3.4.17\node_modules\tailwindcss\lib\lib\load-config.js:62:6)]
+    [at getTailwindConfig (E:\workspace\zgi\zgi-pre\web\node_modules\.pnpm\tailwindcss@3.4.17\node_modules\tailwindcss\lib\lib\setupTrackingContext.js:71:116)]
+
+Import trace:
+  Client Component Browser:
+    ./src/styles/index.css [Client Component Browser]
+    ./src/app/layout.tsx [Server Component]
+
+
+⚠ ./tailwind.config.ts:233:5
+Module not found: Can't resolve '@tailwindcss/container-queries'
+  [90m231 |[0m   plugins: [
+  [90m232 |[0m     require([32m'tailwindcss-animate'[0m),
+[31m[1m>[0m [90m233 |[0m     require([32m'@tailwindcss/container-queries'[0m),
+  [90m    |[0m     [31m[1m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+  [90m234 |[0m     [90m// Custom plugin for theme utilities[0m
+  [90m235 |[0m     [36mfunction[0m ({ addUtilities }: { addUtilities: (utilities: [33mRecord[0m<string, unknown>) => [36mv...[0m
+  [90m236 |[0m       [36mconst[0m newUtilities = {
+
+
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+⨯ ./node_modules/.pnpm/highlight.js@11.11.1/node_modules/highlight.js/styles/github.css
+Error evaluating Node.js code
+Error: Cannot find module '@tailwindcss/container-queries'
+Require stack:
+- E:\workspace\zgi\zgi-pre\web\tailwind.config.ts
+    [at Function._resolveFilename (node:internal/modules/cjs/loader:1383:15)]
+    [at Function.resolve (node:internal/modules/helpers:157:19)]
+    [at _resolve (E:\workspace\zgi\zgi-pre\web\node_modules\.pnpm\jiti@1.21.7\node_modules\jiti\dist\jiti.js:1:246378)]
+    [at jiti (E:\workspace\zgi\zgi-pre\web\node_modules\.pnpm\jiti@1.21.7\node_modules\jiti\dist\jiti.js:1:249092)]
+    [at E:\workspace\zgi\zgi-pre\web\tailwind.config.ts:233:5]
+    [at evalModule (E:\workspace\zgi\zgi-pre\web\node_modules\.pnpm\jiti@1.21.7\node_modules\jiti\dist\jiti.js:1:251913)]
+    [at jiti (E:\workspace\zgi\zgi-pre\web\node_modules\.pnpm\jiti@1.21.7\node_modules\jiti\dist\jiti.js:1:249841)]
+    [at E:\workspace\zgi\zgi-pre\web\node_modules\.pnpm\tailwindcss@3.4.17\node_modules\tailwindcss\lib\lib\load-config.js:52:26]
+    [at loadConfig (E:\workspace\zgi\zgi-pre\web\node_modules\.pnpm\tailwindcss@3.4.17\node_modules\tailwindcss\lib\lib\load-config.js:62:6)]
+    [at getTailwindConfig (E:\workspace\zgi\zgi-pre\web\node_modules\.pnpm\tailwindcss@3.4.17\node_modules\tailwindcss\lib\lib\setupTrackingContext.js:71:116)]
+
+Import trace:
+  Client Component Browser:
+    ./node_modules/.pnpm/highlight.js@11.11.1/node_modules/highlight.js/styles/github.css [Client Component Browser]
+    ./src/components/common/markdown-viewer.tsx [Client Component Browser]
+    ./src/components/chat/ui/message-item/index.tsx [Client Component Browser]
+    ./src/components/chat/ui/conversation-box/index.tsx [Client Component Browser]
+    ./src/components/chat/index.tsx [Client Component Browser]
+    ./src/components/aichat/contextual/contextual-ai-chat-dock.tsx [Client Component Browser]
+    ./src/customer/default.tsx [Client Component Browser]
+    ./src/providers/auth-route-providers.tsx [Client Component Browser]
+    ./src/app/page.tsx [Client Component Browser]
+    ./src/app/page.tsx [Server Component]
+
+
+
+./node_modules/.pnpm/katex@0.16.27/node_modules/katex/dist/katex.min.css
+Error evaluating Node.js code
+Error: Cannot find module '@tailwindcss/container-queries'
+Require stack:
+- E:\workspace\zgi\zgi-pre\web\tailwind.config.ts
+    [at Function._resolveFilename (node:internal/modules/cjs/loader:1383:15)]
+    [at Function.resolve (node:internal/modules/helpers:157:19)]
+    [at _resolve (E:\workspace\zgi\zgi-pre\web\node_modules\.pnpm\jiti@1.21.7\node_modules\jiti\dist\jiti.js:1:246378)]
+    [at jiti (E:\workspace\zgi\zgi-pre\web\node_modules\.pnpm\jiti@1.21.7\node_modules\jiti\dist\jiti.js:1:249092)]
+    [at E:\workspace\zgi\zgi-pre\web\tailwind.config.ts:233:5]
+    [at evalModule (E:\workspace\zgi\zgi-pre\web\node_modules\.pnpm\jiti@1.21.7\node_modules\jiti\dist\jiti.js:1:251913)]
+    [at jiti (E:\workspace\zgi\zgi-pre\web\node_modules\.pnpm\jiti@1.21.7\node_modules\jiti\dist\jiti.js:1:249841)]
+    [at E:\workspace\zgi\zgi-pre\web\node_modules\.pnpm\tailwindcss@3.4.17\node_modules\tailwindcss\lib\lib\load-config.js:52:26]
+    [at loadConfig (E:\workspace\zgi\zgi-pre\web\node_modules\.pnpm\tailwindcss@3.4.17\node_modules\tailwindcss\lib\lib\load-config.js:62:6)]
+    [at getTailwindConfig (E:\workspace\zgi\zgi-pre\web\node_modules\.pnpm\tailwindcss@3.4.17\node_modules\tailwindcss\lib\lib\setupTrackingContext.js:71:116)]
+
+Import trace:
+  Client Component Browser:
+    ./node_modules/.pnpm/katex@0.16.27/node_modules/katex/dist/katex.min.css [Client Component Browser]
+    ./src/components/common/markdown-viewer.tsx [Client Component Browser]
+    ./src/components/chat/ui/message-item/index.tsx [Client Component Browser]
+    ./src/components/chat/ui/conversation-box/index.tsx [Client Component Browser]
+    ./src/components/chat/index.tsx [Client Component Browser]
+    ./src/components/aichat/contextual/contextual-ai-chat-dock.tsx [Client Component Browser]
+    ./src/customer/default.tsx [Client Component Browser]
+    ./src/providers/auth-route-providers.tsx [Client Component Browser]
+    ./src/app/page.tsx [Client Component Browser]
+    ./src/app/page.tsx [Server Component]
+
+
+
+./src/app/globals.css
+Error evaluating Node.js code
+Error: Cannot find module '@tailwindcss/container-queries'
+Require stack:
+- E:\workspace\zgi\zgi-pre\web\tailwind.config.ts
+    [at Function._resolveFilename (node:internal/modules/cjs/loader:1383:15)]
+    [at Function.resolve (node:internal/modules/helpers:157:19)]
+    [at _resolve (E:\workspace\zgi\zgi-pre\web\node_modules\.pnpm\jiti@1.21.7\node_modules\jiti\dist\jiti.js:1:246378)]
+    [at jiti (E:\workspace\zgi\zgi-pre\web\node_modules\.pnpm\jiti@1.21.7\node_modules\jiti\dist\jiti.js:1:249092)]
+    [at E:\workspace\zgi\zgi-pre\web\tailwind.config.ts:233:5]
+    [at evalModule (E:\workspace\zgi\zgi-pre\web\node_modules\.pnpm\jiti@1.21.7\node_modules\jiti\dist\jiti.js:1:251913)]
+    [at jiti (E:\workspace\zgi\zgi-pre\web\node_modules\.pnpm\jiti@1.21.7\node_modules\jiti\dist\jiti.js:1:249841)]
+    [at E:\workspace\zgi\zgi-pre\web\node_modules\.pnpm\tailwindcss@3.4.17\node_modules\tailwindcss\lib\lib\load-config.js:52:26]
+    [at loadConfig (E:\workspace\zgi\zgi-pre\web\node_modules\.pnpm\tailwindcss@3.4.17\node_modules\tailwindcss\lib\lib\load-config.js:62:6)]
+    [at getTailwindConfig (E:\workspace\zgi\zgi-pre\web\node_modules\.pnpm\tailwindcss@3.4.17\node_modules\tailwindcss\lib\lib\setupTrackingContext.js:71:116)]
+
+Import trace:
+  Client Component Browser:
+    ./src/app/globals.css [Client Component Browser]
+    ./src/app/layout.tsx [Server Component]
+
+
+
+./src/styles/index.css
+Error evaluating Node.js code
+Error: Cannot find module '@tailwindcss/container-queries'
+Require stack:
+- E:\workspace\zgi\zgi-pre\web\tailwind.config.ts
+    [at Function._resolveFilename (node:internal/modules/cjs/loader:1383:15)]
+    [at Function.resolve (node:internal/modules/helpers:157:19)]
+    [at _resolve (E:\workspace\zgi\zgi-pre\web\node_modules\.pnpm\jiti@1.21.7\node_modules\jiti\dist\jiti.js:1:246378)]
+    [at jiti (E:\workspace\zgi\zgi-pre\web\node_modules\.pnpm\jiti@1.21.7\node_modules\jiti\dist\jiti.js:1:249092)]
+    [at E:\workspace\zgi\zgi-pre\web\tailwind.config.ts:233:5]
+    [at evalModule (E:\workspace\zgi\zgi-pre\web\node_modules\.pnpm\jiti@1.21.7\node_modules\jiti\dist\jiti.js:1:251913)]
+    [at jiti (E:\workspace\zgi\zgi-pre\web\node_modules\.pnpm\jiti@1.21.7\node_modules\jiti\dist\jiti.js:1:249841)]
+    [at E:\workspace\zgi\zgi-pre\web\node_modules\.pnpm\tailwindcss@3.4.17\node_modules\tailwindcss\lib\lib\load-config.js:52:26]
+    [at loadConfig (E:\workspace\zgi\zgi-pre\web\node_modules\.pnpm\tailwindcss@3.4.17\node_modules\tailwindcss\lib\lib\load-config.js:62:6)]
+    [at getTailwindConfig (E:\workspace\zgi\zgi-pre\web\node_modules\.pnpm\tailwindcss@3.4.17\node_modules\tailwindcss\lib\lib\setupTrackingContext.js:71:116)]
+
+Import trace:
+  Client Component Browser:
+    ./src/styles/index.css [Client Component Browser]
+    ./src/app/layout.tsx [Server Component]
+
+
+⚠ ./tailwind.config.ts:233:5
+Module not found: Can't resolve '@tailwindcss/container-queries'
+  [90m231 |[0m   plugins: [
+  [90m232 |[0m     require([32m'tailwindcss-animate'[0m),
+[31m[1m>[0m [90m233 |[0m     require([32m'@tailwindcss/container-queries'[0m),
+  [90m    |[0m     [31m[1m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+  [90m234 |[0m     [90m// Custom plugin for theme utilities[0m
+  [90m235 |[0m     [36mfunction[0m ({ addUtilities }: { addUtilities: (utilities: [33mRecord[0m<string, unknown>) => [36mv...[0m
+  [90m236 |[0m       [36mconst[0m newUtilities = {
+
+
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+⚠ ./tailwind.config.ts:233:5
+Module not found: Can't resolve '@tailwindcss/container-queries'
+  [90m231 |[0m   plugins: [
+  [90m232 |[0m     require([32m'tailwindcss-animate'[0m),
+[31m[1m>[0m [90m233 |[0m     require([32m'@tailwindcss/container-queries'[0m),
+  [90m    |[0m     [31m[1m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+  [90m234 |[0m     [90m// Custom plugin for theme utilities[0m
+  [90m235 |[0m     [36mfunction[0m ({ addUtilities }: { addUtilities: (utilities: [33mRecord[0m<string, unknown>) => [36mv...[0m
+  [90m236 |[0m       [36mconst[0m newUtilities = {
+
+
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+
+[1m[33mwarn[39m[22m - The class `ease-[cubic-bezier(0.22,1,0.36,1)]` is ambiguous and matches multiple utilities.
+[1m[33mwarn[39m[22m - If this is content and not a class, replace it with `ease-&lsqb;cubic-bezier(0.22,1,0.36,1)&rsqb;` to silence this warning.
+(node:38732) Warning: Setting the NODE_TLS_REJECT_UNAUTHORIZED environment variable to '0' makes TLS connections and HTTPS requests insecure by disabling certificate verification.
+(Use `node --trace-warnings ...` to show where the warning was created)
+[browser] ⨯ unhandledRejection: AxiosError: model "doubao-seedance-2-0-fast-260128" is not registered in the local model library; use the full model name exactly as shown in the model list
+    at async HttpClient.put (src/lib/http/client.ts:355:22)
+    at async ChannelService.request (src/lib/http/services.ts:75:16)
+    at async useUpdateChannel.useMutation [as mutationFn] (src/hooks/channel/use-channel.ts:263:24)
+  353 |
+  354 |   async put<T = unknown>(url: string, data?: unknown, config?: ExtendedRequestConfig): Pr...
+> 355 |     const response = await this.instance.put<T>(url, data, config);
+      |                      ^
+  356 |     return response.data;
+  357 |   }
+  358 |
+[browser] ⨯ unhandledRejection: AxiosError: model "doubao-seedance-2-0-fast-260128" is not registered in the local model library; use the full model name exactly as shown in the model list
+    at async HttpClient.put (src/lib/http/client.ts:355:22)
+    at async ChannelService.request (src/lib/http/services.ts:75:16)
+    at async useUpdateChannel.useMutation [as mutationFn] (src/hooks/channel/use-channel.ts:263:24)
+  353 |
+  354 |   async put<T = unknown>(url: string, data?: unknown, config?: ExtendedRequestConfig): Pr...
+> 355 |     const response = await this.instance.put<T>(url, data, config);
+      |                      ^
+  356 |     return response.data;
+  357 |   }
+  358 |
+[browser] [i18n] Missing message for "webapp.chat.videoWorkbench.searchRecords". Check route module coverage. 
+    at reportMissingTranslation (src/i18n/translations.ts:136:11)
+    at scoped (src/i18n/translations.ts:161:7)
+    at GenerationRecordsSidebar (src/components/chat/variants/img/video-workbench.tsx:235:24)
+    at Set.forEach (<anonymous>)
+  134 |
+  135 |   warnedMissingKeys.add(key);
+> 136 |   console.error(`[i18n] Missing message for "${key}". Check route module coverage.`);
+      |           ^
+  137 | }
+  138 |
+  139 | function hasTranslation(translator: RuntimeTranslator, key: string): boolean { (src/i18n/translations.ts:136:11)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.searchRecords` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at GenerationRecordsSidebar (src/components/chat/variants/img/video-workbench.tsx:235:24)
+    at Set.forEach (<anonymous>)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:144:7)
+    at VideoPage (file://E:/workspace/zgi/zgi-pre/web/.next/dev/static/chunks/_0cs74s9._.js:1058:325)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.searchRecords` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at GenerationRecordsSidebar (src/components/chat/variants/img/video-workbench.tsx:235:24)
+    at Set.forEach (<anonymous>)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:144:7)
+    at VideoPage (file://E:/workspace/zgi/zgi-pre/web/.next/dev/static/chunks/_0cs74s9._.js:1058:325)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.searchRecords` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at GenerationRecordsSidebar (src/components/chat/variants/img/video-workbench.tsx:235:24)
+    at Set.forEach (<anonymous>)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:144:7)
+    at VideoPage (file://E:/workspace/zgi/zgi-pre/web/.next/dev/static/chunks/_0cs74s9._.js:1058:325)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.searchRecords` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at GenerationRecordsSidebar (src/components/chat/variants/img/video-workbench.tsx:235:24)
+    at Set.forEach (<anonymous>)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:144:7)
+    at VideoPage (file://E:/workspace/zgi/zgi-pre/web/.next/dev/static/chunks/_0cs74s9._.js:1058:325)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.searchRecords` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at GenerationRecordsSidebar (src/components/chat/variants/img/video-workbench.tsx:235:24)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:144:7)
+    at VideoPage (file://E:/workspace/zgi/zgi-pre/web/.next/dev/static/chunks/_0cs74s9._.js:1058:325)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.searchRecords` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at GenerationRecordsSidebar (src/components/chat/variants/img/video-workbench.tsx:235:24)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:144:7)
+    at VideoPage (file://E:/workspace/zgi/zgi-pre/web/.next/dev/static/chunks/_0cs74s9._.js:1058:325)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.searchRecords` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at GenerationRecordsSidebar (src/components/chat/variants/img/video-workbench.tsx:235:24)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:144:7)
+    at VideoPage (file://E:/workspace/zgi/zgi-pre/web/.next/dev/static/chunks/_0cs74s9._.js:1058:325)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.searchRecords` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at GenerationRecordsSidebar (src/components/chat/variants/img/video-workbench.tsx:235:24)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:144:7)
+    at VideoPage (file://E:/workspace/zgi/zgi-pre/web/.next/dev/static/chunks/_0cs74s9._.js:1058:325)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.searchRecords` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at GenerationRecordsSidebar (src/components/chat/variants/img/video-workbench.tsx:235:24)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:144:7)
+    at VideoPage (file://E:/workspace/zgi/zgi-pre/web/.next/dev/static/chunks/_0cs74s9._.js:1058:325)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.searchRecords` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at GenerationRecordsSidebar (src/components/chat/variants/img/video-workbench.tsx:235:24)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:144:7)
+    at VideoPage (file://E:/workspace/zgi/zgi-pre/web/.next/dev/static/chunks/_0cs74s9._.js:1058:325)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.searchRecords` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at GenerationRecordsSidebar (src/components/chat/variants/img/video-workbench.tsx:235:24)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:144:7)
+    at VideoPage (file://E:/workspace/zgi/zgi-pre/web/.next/dev/static/chunks/_0cs74s9._.js:1058:325)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.searchRecords` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at GenerationRecordsSidebar (src/components/chat/variants/img/video-workbench.tsx:235:24)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:144:7)
+    at VideoPage (file://E:/workspace/zgi/zgi-pre/web/.next/dev/static/chunks/_0cs74s9._.js:1058:325)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.searchRecords` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at GenerationRecordsSidebar (src/components/chat/variants/img/video-workbench.tsx:235:24)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:144:7)
+    at VideoPage (file://E:/workspace/zgi/zgi-pre/web/.next/dev/static/chunks/_0cs74s9._.js:1058:325)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.searchRecords` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at GenerationRecordsSidebar (src/components/chat/variants/img/video-workbench.tsx:235:24)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:144:7)
+    at VideoPage (file://E:/workspace/zgi/zgi-pre/web/.next/dev/static/chunks/_0cs74s9._.js:1058:325)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] [i18n] Missing message for "webapp.chat.videoWorkbench.referenceTextOnly". Check route module coverage. 
+    at reportMissingTranslation (src/i18n/translations.ts:136:11)
+    at scoped (src/i18n/translations.ts:161:7)
+    at ReferenceMaterialButton (src/components/chat/variants/img/video-workbench.tsx:788:15)
+    at Set.forEach (<anonymous>)
+  134 |
+  135 |   warnedMissingKeys.add(key);
+> 136 |   console.error(`[i18n] Missing message for "${key}". Check route module coverage.`);
+      |           ^
+  137 | }
+  138 |
+  139 | function hasTranslation(translator: RuntimeTranslator, key: string): boolean { (src/i18n/translations.ts:136:11)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.referenceTextOnly` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at ReferenceMaterialButton (src/components/chat/variants/img/video-workbench.tsx:788:15)
+    at Set.forEach (<anonymous>)
+    at ComposerPanel (src/components/chat/variants/img/video-workbench.tsx:422:9)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:190:15)
+    at VideoPage (src/components/chat/variants/img/video-workbench.tsx:811:30)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.referenceTextOnly` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at ReferenceMaterialButton (src/components/chat/variants/img/video-workbench.tsx:788:15)
+    at Set.forEach (<anonymous>)
+    at ComposerPanel (src/components/chat/variants/img/video-workbench.tsx:422:9)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:190:15)
+    at VideoPage (src/components/chat/variants/img/video-workbench.tsx:811:30)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.referenceTextOnly` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at ReferenceMaterialButton (src/components/chat/variants/img/video-workbench.tsx:788:15)
+    at Set.forEach (<anonymous>)
+    at ComposerPanel (src/components/chat/variants/img/video-workbench.tsx:422:9)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:190:15)
+    at VideoPage (src/components/chat/variants/img/video-workbench.tsx:811:30)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.referenceTextOnly` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at ReferenceMaterialButton (src/components/chat/variants/img/video-workbench.tsx:788:15)
+    at Set.forEach (<anonymous>)
+    at ComposerPanel (src/components/chat/variants/img/video-workbench.tsx:422:9)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:190:15)
+    at VideoPage (src/components/chat/variants/img/video-workbench.tsx:811:30)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.referenceTextOnly` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at ReferenceMaterialButton (src/components/chat/variants/img/video-workbench.tsx:788:15)
+    at Set.forEach (<anonymous>)
+    at ComposerPanel (src/components/chat/variants/img/video-workbench.tsx:422:9)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:190:15)
+    at VideoPage (src/components/chat/variants/img/video-workbench.tsx:811:30)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.referenceTextOnly` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at ReferenceMaterialButton (src/components/chat/variants/img/video-workbench.tsx:788:15)
+    at Set.forEach (<anonymous>)
+    at ComposerPanel (src/components/chat/variants/img/video-workbench.tsx:422:9)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:190:15)
+    at VideoPage (src/components/chat/variants/img/video-workbench.tsx:811:30)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.referenceTextOnly` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at ReferenceMaterialButton (src/components/chat/variants/img/video-workbench.tsx:788:15)
+    at Set.forEach (<anonymous>)
+    at ComposerPanel (src/components/chat/variants/img/video-workbench.tsx:422:9)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:190:15)
+    at VideoPage (src/components/chat/variants/img/video-workbench.tsx:811:30)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.referenceTextOnly` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at ReferenceMaterialButton (src/components/chat/variants/img/video-workbench.tsx:788:15)
+    at Set.forEach (<anonymous>)
+    at ComposerPanel (src/components/chat/variants/img/video-workbench.tsx:422:9)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:190:15)
+    at VideoPage (src/components/chat/variants/img/video-workbench.tsx:811:30)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.referenceTextOnly` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at ReferenceMaterialButton (src/components/chat/variants/img/video-workbench.tsx:788:15)
+    at Set.forEach (<anonymous>)
+    at ComposerPanel (src/components/chat/variants/img/video-workbench.tsx:422:9)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:190:15)
+    at VideoPage (src/components/chat/variants/img/video-workbench.tsx:811:30)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.referenceTextOnly` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at ReferenceMaterialButton (src/components/chat/variants/img/video-workbench.tsx:788:15)
+    at Set.forEach (<anonymous>)
+    at ComposerPanel (src/components/chat/variants/img/video-workbench.tsx:422:9)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:190:15)
+    at VideoPage (src/components/chat/variants/img/video-workbench.tsx:811:30)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.referenceTextOnly` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at ReferenceMaterialButton (src/components/chat/variants/img/video-workbench.tsx:788:15)
+    at Set.forEach (<anonymous>)
+    at ComposerPanel (src/components/chat/variants/img/video-workbench.tsx:422:9)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:190:15)
+    at VideoPage (src/components/chat/variants/img/video-workbench.tsx:811:30)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.referenceTextOnly` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at ReferenceMaterialButton (src/components/chat/variants/img/video-workbench.tsx:788:15)
+    at Set.forEach (<anonymous>)
+    at ComposerPanel (src/components/chat/variants/img/video-workbench.tsx:422:9)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:190:15)
+    at VideoPage (src/components/chat/variants/img/video-workbench.tsx:811:30)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.referenceTextOnly` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at ReferenceMaterialButton (src/components/chat/variants/img/video-workbench.tsx:788:15)
+    at Set.forEach (<anonymous>)
+    at ComposerPanel (src/components/chat/variants/img/video-workbench.tsx:422:9)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:190:15)
+    at VideoPage (src/components/chat/variants/img/video-workbench.tsx:811:30)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.referenceTextOnly` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at ReferenceMaterialButton (src/components/chat/variants/img/video-workbench.tsx:788:15)
+    at Set.forEach (<anonymous>)
+    at ComposerPanel (src/components/chat/variants/img/video-workbench.tsx:422:9)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:190:15)
+    at VideoPage (src/components/chat/variants/img/video-workbench.tsx:811:30)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.referenceTextOnly` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at ReferenceMaterialButton (src/components/chat/variants/img/video-workbench.tsx:788:15)
+    at Set.forEach (<anonymous>)
+    at ComposerPanel (src/components/chat/variants/img/video-workbench.tsx:422:9)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:190:15)
+    at VideoPage (src/components/chat/variants/img/video-workbench.tsx:811:30)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.referenceTextOnly` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at ReferenceMaterialButton (src/components/chat/variants/img/video-workbench.tsx:788:15)
+    at Set.forEach (<anonymous>)
+    at ComposerPanel (src/components/chat/variants/img/video-workbench.tsx:422:9)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:190:15)
+    at VideoPage (src/components/chat/variants/img/video-workbench.tsx:811:30)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.referenceTextOnly` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at ReferenceMaterialButton (src/components/chat/variants/img/video-workbench.tsx:788:15)
+    at Set.forEach (<anonymous>)
+    at ComposerPanel (src/components/chat/variants/img/video-workbench.tsx:422:9)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:190:15)
+    at VideoPage (src/components/chat/variants/img/video-workbench.tsx:811:30)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.referenceTextOnly` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at ReferenceMaterialButton (src/components/chat/variants/img/video-workbench.tsx:788:15)
+    at Set.forEach (<anonymous>)
+    at ComposerPanel (src/components/chat/variants/img/video-workbench.tsx:422:9)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:190:15)
+    at VideoPage (src/components/chat/variants/img/video-workbench.tsx:811:30)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.referenceTextOnly` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at ReferenceMaterialButton (src/components/chat/variants/img/video-workbench.tsx:788:15)
+    at Set.forEach (<anonymous>)
+    at ComposerPanel (src/components/chat/variants/img/video-workbench.tsx:422:9)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:190:15)
+    at VideoPage (src/components/chat/variants/img/video-workbench.tsx:811:30)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.referenceTextOnly` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at ReferenceMaterialButton (src/components/chat/variants/img/video-workbench.tsx:788:15)
+    at Set.forEach (<anonymous>)
+    at ComposerPanel (src/components/chat/variants/img/video-workbench.tsx:422:9)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:190:15)
+    at VideoPage (src/components/chat/variants/img/video-workbench.tsx:811:30)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.referenceTextOnly` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at ReferenceMaterialButton (src/components/chat/variants/img/video-workbench.tsx:788:15)
+    at Set.forEach (<anonymous>)
+    at ComposerPanel (src/components/chat/variants/img/video-workbench.tsx:422:9)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:190:15)
+    at VideoPage (src/components/chat/variants/img/video-workbench.tsx:811:30)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.referenceTextOnly` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at ReferenceMaterialButton (src/components/chat/variants/img/video-workbench.tsx:788:15)
+    at Set.forEach (<anonymous>)
+    at ComposerPanel (src/components/chat/variants/img/video-workbench.tsx:422:9)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:190:15)
+    at VideoPage (src/components/chat/variants/img/video-workbench.tsx:811:30)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.referenceTextOnly` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at ReferenceMaterialButton (src/components/chat/variants/img/video-workbench.tsx:788:15)
+    at Set.forEach (<anonymous>)
+    at ComposerPanel (src/components/chat/variants/img/video-workbench.tsx:422:9)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:190:15)
+    at VideoPage (src/components/chat/variants/img/video-workbench.tsx:811:30)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.referenceTextOnly` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at ReferenceMaterialButton (src/components/chat/variants/img/video-workbench.tsx:788:15)
+    at Set.forEach (<anonymous>)
+    at ComposerPanel (src/components/chat/variants/img/video-workbench.tsx:422:9)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:190:15)
+    at VideoPage (src/components/chat/variants/img/video-workbench.tsx:811:30)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.referenceTextOnly` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at ReferenceMaterialButton (src/components/chat/variants/img/video-workbench.tsx:788:15)
+    at Set.forEach (<anonymous>)
+    at ComposerPanel (src/components/chat/variants/img/video-workbench.tsx:422:9)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:190:15)
+    at VideoPage (src/components/chat/variants/img/video-workbench.tsx:811:30)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.referenceTextOnly` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at ReferenceMaterialButton (src/components/chat/variants/img/video-workbench.tsx:788:15)
+    at Set.forEach (<anonymous>)
+    at ComposerPanel (src/components/chat/variants/img/video-workbench.tsx:422:9)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:190:15)
+    at VideoPage (src/components/chat/variants/img/video-workbench.tsx:811:30)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.referenceTextOnly` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at ReferenceMaterialButton (src/components/chat/variants/img/video-workbench.tsx:788:15)
+    at Set.forEach (<anonymous>)
+    at ComposerPanel (src/components/chat/variants/img/video-workbench.tsx:422:9)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:190:15)
+    at VideoPage (src/components/chat/variants/img/video-workbench.tsx:811:30)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.referenceTextOnly` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at ReferenceMaterialButton (src/components/chat/variants/img/video-workbench.tsx:788:15)
+    at Set.forEach (<anonymous>)
+    at ComposerPanel (src/components/chat/variants/img/video-workbench.tsx:422:9)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:190:15)
+    at VideoPage (src/components/chat/variants/img/video-workbench.tsx:811:30)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.referenceTextOnly` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at ReferenceMaterialButton (src/components/chat/variants/img/video-workbench.tsx:788:15)
+    at Set.forEach (<anonymous>)
+    at ComposerPanel (src/components/chat/variants/img/video-workbench.tsx:422:9)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:190:15)
+    at VideoPage (src/components/chat/variants/img/video-workbench.tsx:811:30)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.referenceTextOnly` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at ReferenceMaterialButton (src/components/chat/variants/img/video-workbench.tsx:788:15)
+    at Set.forEach (<anonymous>)
+    at ComposerPanel (src/components/chat/variants/img/video-workbench.tsx:422:9)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:190:15)
+    at VideoPage (src/components/chat/variants/img/video-workbench.tsx:811:30)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.referenceTextOnly` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at ReferenceMaterialButton (src/components/chat/variants/img/video-workbench.tsx:788:15)
+    at Set.forEach (<anonymous>)
+    at ComposerPanel (src/components/chat/variants/img/video-workbench.tsx:422:9)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:190:15)
+    at VideoPage (src/components/chat/variants/img/video-workbench.tsx:811:30)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.referenceTextOnly` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at ReferenceMaterialButton (src/components/chat/variants/img/video-workbench.tsx:788:15)
+    at Set.forEach (<anonymous>)
+    at ComposerPanel (src/components/chat/variants/img/video-workbench.tsx:422:9)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:190:15)
+    at VideoPage (src/components/chat/variants/img/video-workbench.tsx:811:30)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.referenceTextOnly` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at ReferenceMaterialButton (src/components/chat/variants/img/video-workbench.tsx:788:15)
+    at Set.forEach (<anonymous>)
+    at ComposerPanel (src/components/chat/variants/img/video-workbench.tsx:422:9)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:190:15)
+    at VideoPage (src/components/chat/variants/img/video-workbench.tsx:811:30)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.referenceTextOnly` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at ReferenceMaterialButton (src/components/chat/variants/img/video-workbench.tsx:788:15)
+    at Set.forEach (<anonymous>)
+    at ComposerPanel (src/components/chat/variants/img/video-workbench.tsx:422:9)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:190:15)
+    at VideoPage (src/components/chat/variants/img/video-workbench.tsx:811:30)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.referenceTextOnly` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at ReferenceMaterialButton (src/components/chat/variants/img/video-workbench.tsx:788:15)
+    at Set.forEach (<anonymous>)
+    at ComposerPanel (src/components/chat/variants/img/video-workbench.tsx:422:9)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:190:15)
+    at VideoPage (src/components/chat/variants/img/video-workbench.tsx:811:30)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.referenceTextOnly` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at ReferenceMaterialButton (src/components/chat/variants/img/video-workbench.tsx:788:15)
+    at Set.forEach (<anonymous>)
+    at ComposerPanel (src/components/chat/variants/img/video-workbench.tsx:422:9)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:190:15)
+    at VideoPage (src/components/chat/variants/img/video-workbench.tsx:811:30)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.referenceTextOnly` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at ReferenceMaterialButton (src/components/chat/variants/img/video-workbench.tsx:788:15)
+    at Set.forEach (<anonymous>)
+    at ComposerPanel (src/components/chat/variants/img/video-workbench.tsx:422:9)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:190:15)
+    at VideoPage (src/components/chat/variants/img/video-workbench.tsx:811:30)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.referenceTextOnly` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at ReferenceMaterialButton (src/components/chat/variants/img/video-workbench.tsx:788:15)
+    at Set.forEach (<anonymous>)
+    at ComposerPanel (src/components/chat/variants/img/video-workbench.tsx:422:9)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:190:15)
+    at VideoPage (src/components/chat/variants/img/video-workbench.tsx:811:30)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.referenceTextOnly` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at ReferenceMaterialButton (src/components/chat/variants/img/video-workbench.tsx:788:15)
+    at Set.forEach (<anonymous>)
+    at ComposerPanel (src/components/chat/variants/img/video-workbench.tsx:422:9)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:190:15)
+    at VideoPage (src/components/chat/variants/img/video-workbench.tsx:811:30)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.referenceTextOnly` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at ReferenceMaterialButton (src/components/chat/variants/img/video-workbench.tsx:788:15)
+    at Set.forEach (<anonymous>)
+    at ComposerPanel (src/components/chat/variants/img/video-workbench.tsx:422:9)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:190:15)
+    at VideoPage (src/components/chat/variants/img/video-workbench.tsx:811:30)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.referenceTextOnly` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at ReferenceMaterialButton (src/components/chat/variants/img/video-workbench.tsx:788:15)
+    at Set.forEach (<anonymous>)
+    at ComposerPanel (src/components/chat/variants/img/video-workbench.tsx:422:9)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:190:15)
+    at VideoPage (src/components/chat/variants/img/video-workbench.tsx:811:30)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.referenceTextOnly` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at ReferenceMaterialButton (src/components/chat/variants/img/video-workbench.tsx:788:15)
+    at Set.forEach (<anonymous>)
+    at ComposerPanel (src/components/chat/variants/img/video-workbench.tsx:422:9)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:190:15)
+    at VideoPage (src/components/chat/variants/img/video-workbench.tsx:811:30)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.referenceTextOnly` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at ReferenceMaterialButton (src/components/chat/variants/img/video-workbench.tsx:788:15)
+    at Set.forEach (<anonymous>)
+    at ComposerPanel (src/components/chat/variants/img/video-workbench.tsx:422:9)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:190:15)
+    at VideoPage (src/components/chat/variants/img/video-workbench.tsx:811:30)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.referenceTextOnly` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at ReferenceMaterialButton (src/components/chat/variants/img/video-workbench.tsx:788:15)
+    at Set.forEach (<anonymous>)
+    at ComposerPanel (src/components/chat/variants/img/video-workbench.tsx:422:9)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:190:15)
+    at VideoPage (src/components/chat/variants/img/video-workbench.tsx:811:30)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.referenceTextOnly` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at ReferenceMaterialButton (src/components/chat/variants/img/video-workbench.tsx:788:15)
+    at Set.forEach (<anonymous>)
+    at ComposerPanel (src/components/chat/variants/img/video-workbench.tsx:422:9)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:190:15)
+    at VideoPage (src/components/chat/variants/img/video-workbench.tsx:811:30)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.referenceTextOnly` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at ReferenceMaterialButton (src/components/chat/variants/img/video-workbench.tsx:788:15)
+    at Set.forEach (<anonymous>)
+    at ComposerPanel (src/components/chat/variants/img/video-workbench.tsx:422:9)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:190:15)
+    at VideoPage (src/components/chat/variants/img/video-workbench.tsx:811:30)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.referenceTextOnly` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at ReferenceMaterialButton (src/components/chat/variants/img/video-workbench.tsx:788:15)
+    at Set.forEach (<anonymous>)
+    at ComposerPanel (src/components/chat/variants/img/video-workbench.tsx:422:9)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:190:15)
+    at VideoPage (src/components/chat/variants/img/video-workbench.tsx:811:30)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.referenceTextOnly` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at ReferenceMaterialButton (src/components/chat/variants/img/video-workbench.tsx:788:15)
+    at Set.forEach (<anonymous>)
+    at ComposerPanel (src/components/chat/variants/img/video-workbench.tsx:422:9)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:190:15)
+    at VideoPage (src/components/chat/variants/img/video-workbench.tsx:811:30)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.referenceTextOnly` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at ReferenceMaterialButton (src/components/chat/variants/img/video-workbench.tsx:788:15)
+    at Set.forEach (<anonymous>)
+    at ComposerPanel (src/components/chat/variants/img/video-workbench.tsx:422:9)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:190:15)
+    at VideoPage (src/components/chat/variants/img/video-workbench.tsx:811:30)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.referenceTextOnly` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at ReferenceMaterialButton (src/components/chat/variants/img/video-workbench.tsx:788:15)
+    at Set.forEach (<anonymous>)
+    at ComposerPanel (src/components/chat/variants/img/video-workbench.tsx:422:9)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:190:15)
+    at VideoPage (src/components/chat/variants/img/video-workbench.tsx:811:30)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.referenceTextOnly` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at ReferenceMaterialButton (src/components/chat/variants/img/video-workbench.tsx:788:15)
+    at Set.forEach (<anonymous>)
+    at ComposerPanel (src/components/chat/variants/img/video-workbench.tsx:422:9)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:190:15)
+    at VideoPage (src/components/chat/variants/img/video-workbench.tsx:811:30)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.referenceTextOnly` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at ReferenceMaterialButton (src/components/chat/variants/img/video-workbench.tsx:788:15)
+    at Set.forEach (<anonymous>)
+    at ComposerPanel (src/components/chat/variants/img/video-workbench.tsx:422:9)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:190:15)
+    at VideoPage (src/components/chat/variants/img/video-workbench.tsx:811:30)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.referenceTextOnly` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at ReferenceMaterialButton (src/components/chat/variants/img/video-workbench.tsx:788:15)
+    at Set.forEach (<anonymous>)
+    at ComposerPanel (src/components/chat/variants/img/video-workbench.tsx:422:9)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:190:15)
+    at VideoPage (src/components/chat/variants/img/video-workbench.tsx:811:30)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.referenceTextOnly` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at ReferenceMaterialButton (src/components/chat/variants/img/video-workbench.tsx:788:15)
+    at Set.forEach (<anonymous>)
+    at ComposerPanel (src/components/chat/variants/img/video-workbench.tsx:422:9)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:190:15)
+    at VideoPage (src/components/chat/variants/img/video-workbench.tsx:811:30)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.referenceTextOnly` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at ReferenceMaterialButton (src/components/chat/variants/img/video-workbench.tsx:788:15)
+    at Set.forEach (<anonymous>)
+    at ComposerPanel (src/components/chat/variants/img/video-workbench.tsx:422:9)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:190:15)
+    at VideoPage (src/components/chat/variants/img/video-workbench.tsx:811:30)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.referenceTextOnly` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at ReferenceMaterialButton (src/components/chat/variants/img/video-workbench.tsx:788:15)
+    at Set.forEach (<anonymous>)
+    at ComposerPanel (src/components/chat/variants/img/video-workbench.tsx:422:9)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:190:15)
+    at VideoPage (src/components/chat/variants/img/video-workbench.tsx:811:30)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.referenceTextOnly` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at ReferenceMaterialButton (src/components/chat/variants/img/video-workbench.tsx:788:15)
+    at Set.forEach (<anonymous>)
+    at ComposerPanel (src/components/chat/variants/img/video-workbench.tsx:422:9)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:190:15)
+    at VideoPage (src/components/chat/variants/img/video-workbench.tsx:811:30)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.referenceTextOnly` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at ReferenceMaterialButton (src/components/chat/variants/img/video-workbench.tsx:788:15)
+    at Set.forEach (<anonymous>)
+    at ComposerPanel (src/components/chat/variants/img/video-workbench.tsx:422:9)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:190:15)
+    at VideoPage (src/components/chat/variants/img/video-workbench.tsx:811:30)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.referenceTextOnly` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at ReferenceMaterialButton (src/components/chat/variants/img/video-workbench.tsx:788:15)
+    at Set.forEach (<anonymous>)
+    at ComposerPanel (src/components/chat/variants/img/video-workbench.tsx:422:9)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:190:15)
+    at VideoPage (src/components/chat/variants/img/video-workbench.tsx:811:30)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.referenceTextOnly` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at ReferenceMaterialButton (src/components/chat/variants/img/video-workbench.tsx:788:15)
+    at Set.forEach (<anonymous>)
+    at ComposerPanel (src/components/chat/variants/img/video-workbench.tsx:422:9)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:190:15)
+    at VideoPage (src/components/chat/variants/img/video-workbench.tsx:811:30)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.referenceTextOnly` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at ReferenceMaterialButton (src/components/chat/variants/img/video-workbench.tsx:788:15)
+    at Set.forEach (<anonymous>)
+    at ComposerPanel (src/components/chat/variants/img/video-workbench.tsx:422:9)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:190:15)
+    at VideoPage (src/components/chat/variants/img/video-workbench.tsx:811:30)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.referenceTextOnly` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at ReferenceMaterialButton (src/components/chat/variants/img/video-workbench.tsx:788:15)
+    at Set.forEach (<anonymous>)
+    at ComposerPanel (src/components/chat/variants/img/video-workbench.tsx:422:9)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:190:15)
+    at VideoPage (src/components/chat/variants/img/video-workbench.tsx:811:30)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.referenceTextOnly` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at ReferenceMaterialButton (src/components/chat/variants/img/video-workbench.tsx:788:15)
+    at Set.forEach (<anonymous>)
+    at ComposerPanel (src/components/chat/variants/img/video-workbench.tsx:422:9)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:190:15)
+    at VideoPage (src/components/chat/variants/img/video-workbench.tsx:811:30)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.referenceTextOnly` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at ReferenceMaterialButton (src/components/chat/variants/img/video-workbench.tsx:788:15)
+    at Set.forEach (<anonymous>)
+    at ComposerPanel (src/components/chat/variants/img/video-workbench.tsx:422:9)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:190:15)
+    at VideoPage (src/components/chat/variants/img/video-workbench.tsx:811:30)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.referenceTextOnly` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at ReferenceMaterialButton (src/components/chat/variants/img/video-workbench.tsx:788:15)
+    at Set.forEach (<anonymous>)
+    at ComposerPanel (src/components/chat/variants/img/video-workbench.tsx:422:9)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:190:15)
+    at VideoPage (src/components/chat/variants/img/video-workbench.tsx:811:30)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.referenceTextOnly` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at ReferenceMaterialButton (src/components/chat/variants/img/video-workbench.tsx:788:15)
+    at Set.forEach (<anonymous>)
+    at ComposerPanel (src/components/chat/variants/img/video-workbench.tsx:422:9)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:190:15)
+    at VideoPage (src/components/chat/variants/img/video-workbench.tsx:811:30)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.referenceTextOnly` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at ReferenceMaterialButton (src/components/chat/variants/img/video-workbench.tsx:788:15)
+    at Set.forEach (<anonymous>)
+    at ComposerPanel (src/components/chat/variants/img/video-workbench.tsx:422:9)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:190:15)
+    at VideoPage (src/components/chat/variants/img/video-workbench.tsx:811:30)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.referenceTextOnly` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at ReferenceMaterialButton (src/components/chat/variants/img/video-workbench.tsx:788:15)
+    at Set.forEach (<anonymous>)
+    at ComposerPanel (src/components/chat/variants/img/video-workbench.tsx:422:9)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:190:15)
+    at VideoPage (src/components/chat/variants/img/video-workbench.tsx:811:30)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.referenceTextOnly` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at ReferenceMaterialButton (src/components/chat/variants/img/video-workbench.tsx:788:15)
+    at Set.forEach (<anonymous>)
+    at ComposerPanel (src/components/chat/variants/img/video-workbench.tsx:422:9)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:190:15)
+    at VideoPage (src/components/chat/variants/img/video-workbench.tsx:811:30)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.referenceTextOnly` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at ReferenceMaterialButton (src/components/chat/variants/img/video-workbench.tsx:788:15)
+    at Set.forEach (<anonymous>)
+    at ComposerPanel (src/components/chat/variants/img/video-workbench.tsx:422:9)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:190:15)
+    at VideoPage (src/components/chat/variants/img/video-workbench.tsx:811:30)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.referenceTextOnly` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at ReferenceMaterialButton (src/components/chat/variants/img/video-workbench.tsx:788:15)
+    at Set.forEach (<anonymous>)
+    at ComposerPanel (src/components/chat/variants/img/video-workbench.tsx:422:9)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:190:15)
+    at VideoPage (src/components/chat/variants/img/video-workbench.tsx:811:30)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.referenceTextOnly` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at ReferenceMaterialButton (src/components/chat/variants/img/video-workbench.tsx:788:15)
+    at Set.forEach (<anonymous>)
+    at ComposerPanel (src/components/chat/variants/img/video-workbench.tsx:422:9)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:190:15)
+    at VideoPage (src/components/chat/variants/img/video-workbench.tsx:811:30)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.referenceTextOnly` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at ReferenceMaterialButton (src/components/chat/variants/img/video-workbench.tsx:788:15)
+    at Set.forEach (<anonymous>)
+    at ComposerPanel (src/components/chat/variants/img/video-workbench.tsx:422:9)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:190:15)
+    at VideoPage (src/components/chat/variants/img/video-workbench.tsx:811:30)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.referenceTextOnly` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at ReferenceMaterialButton (src/components/chat/variants/img/video-workbench.tsx:788:15)
+    at Set.forEach (<anonymous>)
+    at ComposerPanel (src/components/chat/variants/img/video-workbench.tsx:422:9)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:190:15)
+    at VideoPage (src/components/chat/variants/img/video-workbench.tsx:811:30)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.referenceTextOnly` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at ReferenceMaterialButton (src/components/chat/variants/img/video-workbench.tsx:788:15)
+    at Set.forEach (<anonymous>)
+    at ComposerPanel (src/components/chat/variants/img/video-workbench.tsx:422:9)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:190:15)
+    at VideoPage (src/components/chat/variants/img/video-workbench.tsx:811:30)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.referenceTextOnly` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at ReferenceMaterialButton (src/components/chat/variants/img/video-workbench.tsx:788:15)
+    at Set.forEach (<anonymous>)
+    at ComposerPanel (src/components/chat/variants/img/video-workbench.tsx:422:9)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:190:15)
+    at VideoPage (src/components/chat/variants/img/video-workbench.tsx:811:30)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.referenceTextOnly` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at ReferenceMaterialButton (src/components/chat/variants/img/video-workbench.tsx:788:15)
+    at Set.forEach (<anonymous>)
+    at ComposerPanel (src/components/chat/variants/img/video-workbench.tsx:422:9)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:190:15)
+    at VideoPage (src/components/chat/variants/img/video-workbench.tsx:811:30)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.referenceTextOnly` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at ReferenceMaterialButton (src/components/chat/variants/img/video-workbench.tsx:788:15)
+    at Set.forEach (<anonymous>)
+    at ComposerPanel (src/components/chat/variants/img/video-workbench.tsx:422:9)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:190:15)
+    at VideoPage (src/components/chat/variants/img/video-workbench.tsx:811:30)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.referenceTextOnly` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at ReferenceMaterialButton (src/components/chat/variants/img/video-workbench.tsx:788:15)
+    at Set.forEach (<anonymous>)
+    at ComposerPanel (src/components/chat/variants/img/video-workbench.tsx:422:9)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:190:15)
+    at VideoPage (src/components/chat/variants/img/video-workbench.tsx:811:30)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.referenceTextOnly` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at ReferenceMaterialButton (src/components/chat/variants/img/video-workbench.tsx:788:15)
+    at Set.forEach (<anonymous>)
+    at ComposerPanel (src/components/chat/variants/img/video-workbench.tsx:422:9)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:190:15)
+    at VideoPage (src/components/chat/variants/img/video-workbench.tsx:811:30)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.referenceTextOnly` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at ReferenceMaterialButton (src/components/chat/variants/img/video-workbench.tsx:788:15)
+    at Set.forEach (<anonymous>)
+    at ComposerPanel (src/components/chat/variants/img/video-workbench.tsx:422:9)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:190:15)
+    at VideoPage (src/components/chat/variants/img/video-workbench.tsx:811:30)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.referenceTextOnly` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at ReferenceMaterialButton (src/components/chat/variants/img/video-workbench.tsx:788:15)
+    at Set.forEach (<anonymous>)
+    at ComposerPanel (src/components/chat/variants/img/video-workbench.tsx:422:9)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:190:15)
+    at VideoPage (src/components/chat/variants/img/video-workbench.tsx:811:30)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.referenceTextOnly` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at ReferenceMaterialButton (src/components/chat/variants/img/video-workbench.tsx:788:15)
+    at Set.forEach (<anonymous>)
+    at ComposerPanel (src/components/chat/variants/img/video-workbench.tsx:422:9)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:190:15)
+    at VideoPage (src/components/chat/variants/img/video-workbench.tsx:811:30)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.referenceTextOnly` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at ReferenceMaterialButton (src/components/chat/variants/img/video-workbench.tsx:788:15)
+    at Set.forEach (<anonymous>)
+    at ComposerPanel (src/components/chat/variants/img/video-workbench.tsx:422:9)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:190:15)
+    at VideoPage (src/components/chat/variants/img/video-workbench.tsx:811:30)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.referenceTextOnly` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at ReferenceMaterialButton (src/components/chat/variants/img/video-workbench.tsx:788:15)
+    at Set.forEach (<anonymous>)
+    at ComposerPanel (src/components/chat/variants/img/video-workbench.tsx:422:9)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:190:15)
+    at VideoPage (src/components/chat/variants/img/video-workbench.tsx:811:30)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.referenceTextOnly` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at ReferenceMaterialButton (src/components/chat/variants/img/video-workbench.tsx:788:15)
+    at Set.forEach (<anonymous>)
+    at ComposerPanel (src/components/chat/variants/img/video-workbench.tsx:422:9)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:190:15)
+    at VideoPage (src/components/chat/variants/img/video-workbench.tsx:811:30)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.referenceTextOnly` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at ReferenceMaterialButton (src/components/chat/variants/img/video-workbench.tsx:788:15)
+    at Set.forEach (<anonymous>)
+    at ComposerPanel (src/components/chat/variants/img/video-workbench.tsx:422:9)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:190:15)
+    at VideoPage (src/components/chat/variants/img/video-workbench.tsx:811:30)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.referenceTextOnly` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at ReferenceMaterialButton (src/components/chat/variants/img/video-workbench.tsx:788:15)
+    at Set.forEach (<anonymous>)
+    at ComposerPanel (src/components/chat/variants/img/video-workbench.tsx:422:9)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:190:15)
+    at VideoPage (src/components/chat/variants/img/video-workbench.tsx:811:30)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.referenceTextOnly` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at ReferenceMaterialButton (src/components/chat/variants/img/video-workbench.tsx:788:15)
+    at Set.forEach (<anonymous>)
+    at ComposerPanel (src/components/chat/variants/img/video-workbench.tsx:422:9)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:190:15)
+    at VideoPage (src/components/chat/variants/img/video-workbench.tsx:811:30)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.referenceTextOnly` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at ReferenceMaterialButton (src/components/chat/variants/img/video-workbench.tsx:788:15)
+    at Set.forEach (<anonymous>)
+    at ComposerPanel (src/components/chat/variants/img/video-workbench.tsx:422:9)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:190:15)
+    at VideoPage (src/components/chat/variants/img/video-workbench.tsx:811:30)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.referenceTextOnly` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at ReferenceMaterialButton (src/components/chat/variants/img/video-workbench.tsx:788:15)
+    at Set.forEach (<anonymous>)
+    at ComposerPanel (src/components/chat/variants/img/video-workbench.tsx:422:9)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:190:15)
+    at VideoPage (src/components/chat/variants/img/video-workbench.tsx:811:30)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.referenceTextOnly` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at ReferenceMaterialButton (src/components/chat/variants/img/video-workbench.tsx:788:15)
+    at Set.forEach (<anonymous>)
+    at ComposerPanel (src/components/chat/variants/img/video-workbench.tsx:422:9)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:190:15)
+    at VideoPage (src/components/chat/variants/img/video-workbench.tsx:811:30)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.referenceTextOnly` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at ReferenceMaterialButton (src/components/chat/variants/img/video-workbench.tsx:788:15)
+    at Set.forEach (<anonymous>)
+    at ComposerPanel (src/components/chat/variants/img/video-workbench.tsx:422:9)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:190:15)
+    at VideoPage (src/components/chat/variants/img/video-workbench.tsx:811:30)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.referenceTextOnly` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at ReferenceMaterialButton (src/components/chat/variants/img/video-workbench.tsx:788:15)
+    at Set.forEach (<anonymous>)
+    at ComposerPanel (src/components/chat/variants/img/video-workbench.tsx:422:9)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:190:15)
+    at VideoPage (src/components/chat/variants/img/video-workbench.tsx:811:30)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.referenceTextOnly` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at ReferenceMaterialButton (src/components/chat/variants/img/video-workbench.tsx:788:15)
+    at Set.forEach (<anonymous>)
+    at ComposerPanel (src/components/chat/variants/img/video-workbench.tsx:422:9)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:190:15)
+    at VideoPage (src/components/chat/variants/img/video-workbench.tsx:811:30)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.referenceTextOnly` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at ReferenceMaterialButton (src/components/chat/variants/img/video-workbench.tsx:788:15)
+    at Set.forEach (<anonymous>)
+    at ComposerPanel (src/components/chat/variants/img/video-workbench.tsx:422:9)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:190:15)
+    at VideoPage (src/components/chat/variants/img/video-workbench.tsx:811:30)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.referenceTextOnly` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at ReferenceMaterialButton (src/components/chat/variants/img/video-workbench.tsx:788:15)
+    at Set.forEach (<anonymous>)
+    at ComposerPanel (src/components/chat/variants/img/video-workbench.tsx:422:9)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:190:15)
+    at VideoPage (src/components/chat/variants/img/video-workbench.tsx:811:30)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.referenceTextOnly` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at ReferenceMaterialButton (src/components/chat/variants/img/video-workbench.tsx:788:15)
+    at Set.forEach (<anonymous>)
+    at ComposerPanel (src/components/chat/variants/img/video-workbench.tsx:422:9)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:190:15)
+    at VideoPage (src/components/chat/variants/img/video-workbench.tsx:811:30)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.referenceTextOnly` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at ReferenceMaterialButton (src/components/chat/variants/img/video-workbench.tsx:788:15)
+    at Set.forEach (<anonymous>)
+    at ComposerPanel (src/components/chat/variants/img/video-workbench.tsx:422:9)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:190:15)
+    at VideoPage (src/components/chat/variants/img/video-workbench.tsx:811:30)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.referenceTextOnly` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at ReferenceMaterialButton (src/components/chat/variants/img/video-workbench.tsx:788:15)
+    at Set.forEach (<anonymous>)
+    at ComposerPanel (src/components/chat/variants/img/video-workbench.tsx:422:9)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:190:15)
+    at VideoPage (src/components/chat/variants/img/video-workbench.tsx:811:30)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.referenceTextOnly` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at ReferenceMaterialButton (src/components/chat/variants/img/video-workbench.tsx:788:15)
+    at Set.forEach (<anonymous>)
+    at ComposerPanel (src/components/chat/variants/img/video-workbench.tsx:422:9)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:190:15)
+    at VideoPage (src/components/chat/variants/img/video-workbench.tsx:811:30)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.referenceTextOnly` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at ReferenceMaterialButton (src/components/chat/variants/img/video-workbench.tsx:788:15)
+    at Set.forEach (<anonymous>)
+    at ComposerPanel (src/components/chat/variants/img/video-workbench.tsx:422:9)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:190:15)
+    at VideoPage (src/components/chat/variants/img/video-workbench.tsx:811:30)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.referenceTextOnly` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at ReferenceMaterialButton (src/components/chat/variants/img/video-workbench.tsx:788:15)
+    at Set.forEach (<anonymous>)
+    at ComposerPanel (src/components/chat/variants/img/video-workbench.tsx:422:9)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:190:15)
+    at VideoPage (src/components/chat/variants/img/video-workbench.tsx:811:30)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
+[browser] Error: MISSING_MESSAGE: Could not resolve `webapp.chat.videoWorkbench.referenceTextOnly` in messages for locale `zh-Hans`.
+    at scoped (src/i18n/translations.ts:164:12)
+    at ReferenceMaterialButton (src/components/chat/variants/img/video-workbench.tsx:788:15)
+    at Set.forEach (<anonymous>)
+    at ComposerPanel (src/components/chat/variants/img/video-workbench.tsx:422:9)
+    at VideoWorkbench (src/components/chat/variants/img/video-workbench.tsx:190:15)
+    at VideoPage (src/components/chat/variants/img/video-workbench.tsx:811:30)
+  162 |     }
+  163 |
+> 164 |     return translator(key, values);
+      |            ^
+  165 |   }) as RuntimeTranslator;
+  166 |
+  167 |   if (typeof translator.rich === 'function') { (src/i18n/translations.ts:164:12)
