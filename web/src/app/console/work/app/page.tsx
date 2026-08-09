@@ -3,7 +3,6 @@
 import Link from 'next/link';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowRight, AppWindow, SearchX } from 'lucide-react';
-import { IconPreview } from '@/components/common/icon-input/icon-preview';
 import { PermissionDeniedState } from '@/components/common/permission-gate-state';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -17,7 +16,7 @@ import {
 } from '@/hooks/agent/use-runnable-webapps';
 import { useDebouncedValue } from '@/hooks/use-debounced-value';
 import { useT } from '@/i18n/translations';
-import { ICON_BG } from '@/lib/config';
+import { AppAvatar } from './app-avatar';
 
 const RECENT_WEBAPP_STORAGE_KEY = 'zgi:webapp:recent';
 const APP_PAGE_SIZE = 12;
@@ -29,37 +28,18 @@ interface AppCardItem {
   title: string;
   desc: string | null;
   iconType: 'image' | 'text';
-  icon: string;
-  iconBackground: string;
   src: string;
 }
 
 function toAppCard(item: RunnableWebAppResolvedItem): AppCardItem {
   const iconType = item.icon_type;
-  const iconRaw = item.meta_data.icon || '';
-  let icon = item.meta_data.title.slice(0, 2).toUpperCase();
-  let iconBackground = ICON_BG;
-  let src = '';
-
-  if (iconType === 'image') {
-    src = item.meta_data.icon_url || iconRaw;
-  } else {
-    try {
-      const parsed = JSON.parse(iconRaw) as { icon?: string; icon_background?: string };
-      icon = parsed.icon || icon;
-      iconBackground = parsed.icon_background || iconBackground;
-    } catch {
-      // Keep the generated text icon.
-    }
-  }
+  const src = iconType === 'image' ? item.meta_data.icon_url || item.meta_data.icon || '' : '';
 
   return {
     id: item.web_app_id,
     title: item.meta_data.title,
     desc: item.meta_data.desc,
     iconType,
-    icon,
-    iconBackground,
     src,
   };
 }
@@ -227,13 +207,11 @@ export default function ConsoleWorkAppHomePage() {
                         {t('appCenter.recentlyUsed')}
                       </Badge>
                       <div className="flex items-start gap-3">
-                        <IconPreview
+                        <AppAvatar
+                          appId={recentCard.id}
                           iconType={recentCard.iconType}
                           src={recentCard.src}
-                          icon={recentCard.icon}
-                          iconBackground={recentCard.iconBackground}
-                          alt={recentCard.title}
-                          editable={false}
+                          title={recentCard.title}
                           size="sm"
                         />
                         <div className="min-w-0">
@@ -267,13 +245,11 @@ export default function ConsoleWorkAppHomePage() {
                   <Card className="flex h-full min-h-40 flex-col border-border/80 transition-all group-hover:border-primary/40 group-hover:shadow-sm">
                     <CardHeader className="flex-1 p-4 pb-3">
                       <div className="flex w-full items-start gap-3">
-                        <IconPreview
+                        <AppAvatar
+                          appId={card.id}
                           iconType={card.iconType}
                           src={card.src}
-                          icon={card.icon}
-                          iconBackground={card.iconBackground}
-                          alt={card.title}
-                          editable={false}
+                          title={card.title}
                           size="sm"
                         />
                         <div className="w-0 grow pt-0.5">

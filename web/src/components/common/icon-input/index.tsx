@@ -1,7 +1,9 @@
 'use client';
 
+import Image from 'next/image';
 import React, { useEffect, useState } from 'react';
-import { Upload, Type } from 'lucide-react';
+import { Loader2, Sparkles, Type, Upload } from 'lucide-react';
+import { toast } from 'sonner';
 import { IconPreview } from '@/components/common/icon-input/icon-preview';
 import { ImageCropper } from '@/components/common/image-cropper';
 import { Button } from '@/components/ui/button';
@@ -17,6 +19,8 @@ import { Label } from '@/components/ui/label';
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
 import { ICON_BG, ICON_TEXT } from '@/lib/config';
+import { uploadAppAvatarPreset } from './avatar-preset-upload';
+import { APP_AVATAR_PRESETS, type AppAvatarPreset } from './avatar-presets';
 import {
   type IconInputProps,
   DEFAULT_TEXT_ICON,
@@ -29,11 +33,14 @@ export function IconInput({
   value,
   defaultValue = DEFAULT_TEXT_ICON,
   disabled = false,
+  showAvatarPresets = false,
   onChange,
 }: IconInputProps) {
   const t = useT('common');
   const [isTextDialogOpen, setIsTextDialogOpen] = useState(false);
   const [isImageDialogOpen, setIsImageDialogOpen] = useState(false);
+  const [isAvatarDialogOpen, setIsAvatarDialogOpen] = useState(false);
+  const [uploadingPresetId, setUploadingPresetId] = useState<string | null>(null);
 
   // Use controlled value or fallback to defaultValue
   const currentValue = value || defaultValue;
@@ -56,6 +63,26 @@ export function IconInput({
   const handleImageIconClick = () => {
     if (disabled) return;
     setIsImageDialogOpen(true);
+  };
+
+  const handleAvatarPresetClick = () => {
+    if (disabled) return;
+    setIsAvatarDialogOpen(true);
+  };
+
+  const handleAvatarSelect = async (preset: AppAvatarPreset) => {
+    if (disabled || uploadingPresetId) return;
+
+    try {
+      setUploadingPresetId(preset.id);
+      onChange?.(await uploadAppAvatarPreset(preset));
+      setIsAvatarDialogOpen(false);
+    } catch (error) {
+      console.error('Avatar preset upload failed:', error);
+      toast.error(t('iconInput.avatarLibraryDialog.uploadFailed'));
+    } finally {
+      setUploadingPresetId(null);
+    }
   };
 
   const handleIconPreviewClick = () => {
@@ -115,7 +142,20 @@ export function IconInput({
 
         {/* Action buttons */}
         <div className="space-y-2">
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
+            {showAvatarPresets && (
+              <Button
+                variant="outline"
+                type="button"
+                size="sm"
+                className="flex items-center gap-2"
+                disabled={disabled}
+                onClick={handleAvatarPresetClick}
+              >
+                <Sparkles className="h-4 w-4" />
+                {t('iconInput.avatarLibrary')}
+              </Button>
+            )}
             <Button
               variant="outline"
               type="button"
@@ -183,6 +223,59 @@ export function IconInput({
                 {t('iconInput.textIconDialog.cancel')}
               </Button>
               <Button onClick={handleTextDialogSave}>{t('iconInput.textIconDialog.save')}</Button>
+            </div>
+          </DialogBody>
+        </DialogContent>
+      </Dialog>
+
+      {/* Avatar Preset Dialog */}
+      <Dialog open={isAvatarDialogOpen} onOpenChange={setIsAvatarDialogOpen}>
+        <DialogContent className="sm:max-w-xl">
+          <DialogHeader>
+            <DialogTitle>{t('iconInput.avatarLibraryDialog.title')}</DialogTitle>
+          </DialogHeader>
+          <DialogBody className="space-y-5">
+            <p className="text-sm text-muted-foreground">
+              {t('iconInput.avatarLibraryDialog.description')}
+            </p>
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+              {APP_AVATAR_PRESETS.map(preset => {
+                const isUploading = uploadingPresetId === preset.id;
+                return (
+                  <button
+                    key={preset.id}
+                    type="button"
+                    disabled={uploadingPresetId !== null}
+                    onClick={() => handleAvatarSelect(preset)}
+                    className="group rounded-2xl border bg-card p-2 text-left transition-colors hover:border-primary/40 hover:bg-accent/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-wait disabled:opacity-60"
+                  >
+                    <span
+                      className={cn(
+                        'relative flex aspect-square items-center justify-center overflow-hidden rounded-xl bg-gradient-to-br p-3',
+                        preset.background
+                      )}
+                    >
+                      <Image
+                        src={preset.src}
+                        alt=""
+                        aria-hidden="true"
+                        width={160}
+                        height={160}
+                        unoptimized
+                        className="h-full w-full select-none object-contain transition-transform duration-200 group-hover:scale-105"
+                      />
+                      {isUploading && (
+                        <span className="absolute inset-0 flex items-center justify-center bg-background/65 backdrop-blur-sm">
+                          <Loader2 className="h-5 w-5 animate-spin text-primary" />
+                        </span>
+                      )}
+                    </span>
+                    <span className="mt-2 block px-1 pb-1 text-sm font-medium">
+                      {t(`iconInput.avatarLibraryDialog.avatars.${preset.labelKey}`)}
+                    </span>
+                  </button>
+                );
+              })}
             </div>
           </DialogBody>
         </DialogContent>
