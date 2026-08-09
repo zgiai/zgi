@@ -10,8 +10,11 @@ import (
 
 	"github.com/gin-gonic/gin"
 	apikeymodel "github.com/zgiai/zgi/api/internal/modules/llm/apikey/model"
+	llmerrors "github.com/zgiai/zgi/api/internal/modules/llm/errors"
 	gatewayhandler "github.com/zgiai/zgi/api/internal/modules/llm/gateway/handler"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
+	appcatalog "github.com/zgiai/zgi/api/pkg/apperror/catalog"
+	apptransport "github.com/zgiai/zgi/api/pkg/apperror/transport"
 )
 
 func TestChatCompletionsStreamDoneFrameOnlyEmitsDoneSentinel(t *testing.T) {
@@ -214,12 +217,53 @@ func TestAnthropicMessagesStreamEmitsNativeEventsWithoutChatChoices(t *testing.T
 	}
 }
 
+func TestChatCompletionsTimeoutUsesLocalizedMessageWithoutChangingWireContract(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	handler := gatewayhandler.NewLLMHandler(
+		fakeGatewayService{chatError: adapter.ErrTimeout},
+		testErrorProjector(t),
+	)
+	router.POST("/v1/chat/completions", func(c *gin.Context) {
+		c.Set("llm_api_key", &apikeymodel.TenantAPIKey{})
+		handler.ChatCompletions(c)
+	})
+
+	request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{
+		"model": "deepseek-chat",
+		"messages": [{"role": "user", "content": "hello"}]
+	}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Accept-Language", "zh-CN")
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusGatewayTimeout {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	var body struct {
+		Error struct {
+			Message string  `json:"message"`
+			Type    string  `json:"type"`
+			Param   *string `json:"param"`
+			Code    string  `json:"code"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Error.Message != "大模型服务响应超时，请重试或选择其他模型。" ||
+		body.Error.Type != "server_error" || body.Error.Code != "upstream_timeout" || body.Error.Param != nil {
+		t.Fatalf("wire contract = %#v", body.Error)
+	}
+}
+
 func performStreamRequest(t *testing.T, responses []adapter.StreamResponse) string {
 	t.Helper()
 
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	handler := gatewayhandler.NewLLMHandler(fakeGatewayService{responses: responses})
+	handler := gatewayhandler.NewLLMHandler(fakeGatewayService{responses: responses}, testErrorProjector(t))
 	router.POST("/v1/chat/completions", func(c *gin.Context) {
 		c.Set("llm_api_key", &apikeymodel.TenantAPIKey{})
 		handler.ChatCompletions(c)
@@ -246,7 +290,7 @@ func performResponsesStreamRequest(t *testing.T, events []adapter.RawStreamEvent
 
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	handler := gatewayhandler.NewLLMHandler(fakeGatewayService{rawEvents: events})
+	handler := gatewayhandler.NewLLMHandler(fakeGatewayService{rawEvents: events}, testErrorProjector(t))
 	router.POST("/v1/responses", func(c *gin.Context) {
 		c.Set("llm_api_key", &apikeymodel.TenantAPIKey{})
 		handler.CreateResponse(c)
@@ -273,7 +317,7 @@ func performAnthropicStreamRequest(t *testing.T, events []adapter.RawStreamEvent
 
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	handler := gatewayhandler.NewLLMHandler(fakeGatewayService{anthropicEvents: events})
+	handler := gatewayhandler.NewLLMHandler(fakeGatewayService{anthropicEvents: events}, testErrorProjector(t))
 	router.POST("/anthropic/v1/messages", func(c *gin.Context) {
 		c.Set("llm_api_key", &apikeymodel.TenantAPIKey{})
 		handler.CreateAnthropicMessage(c)
@@ -296,6 +340,20 @@ func performAnthropicStreamRequest(t *testing.T, events []adapter.RawStreamEvent
 	return recorder.Body.String()
 }
 
+func testErrorProjector(t *testing.T) *apptransport.Projector {
+	t.Helper()
+	definitions := append(appcatalog.DefaultDefinitions(), llmerrors.CatalogDefinitions()...)
+	productCatalog, err := appcatalog.New(appcatalog.LocaleEnglishUS, appcatalog.CodeInternal, definitions...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	projector, err := apptransport.NewProjector(productCatalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return projector
+}
+
 func parseStreamJSONChunks(t *testing.T, body string) []adapter.StreamResponse {
 	t.Helper()
 
@@ -316,6 +374,7 @@ func parseStreamJSONChunks(t *testing.T, body string) []adapter.StreamResponse {
 
 type fakeGatewayService struct {
 	responses       []adapter.StreamResponse
+	chatError       error
 	rawResponse     *adapter.RawResponse
 	rawEvents       []adapter.RawStreamEvent
 	anthropicResp   *adapter.RawResponse
@@ -323,7 +382,7 @@ type fakeGatewayService struct {
 }
 
 func (s fakeGatewayService) ChatCompletion(context.Context, *apikeymodel.TenantAPIKey, *adapter.ChatRequest) (*adapter.ChatResponse, error) {
-	return nil, nil
+	return nil, s.chatError
 }
 
 func (s fakeGatewayService) ChatCompletionStream(context.Context, *apikeymodel.TenantAPIKey, *adapter.ChatRequest) (<-chan adapter.StreamResponse, error) {

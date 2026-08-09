@@ -18,18 +18,24 @@ import (
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	llmshared "github.com/zgiai/zgi/api/internal/modules/llm/shared"
 	"github.com/zgiai/zgi/api/internal/observability"
+	apptransport "github.com/zgiai/zgi/api/pkg/apperror/transport"
 	"github.com/zgiai/zgi/api/pkg/database"
 )
 
 // LLMHandler handles LLM API requests (OpenAI compatible)
 type LLMHandler struct {
 	gatewayService types.GatewayService
+	errorProjector *apptransport.Projector
 }
 
 // NewLLMHandler creates a new LLM handler
-func NewLLMHandler(gatewayService types.GatewayService) *LLMHandler {
+func NewLLMHandler(gatewayService types.GatewayService, errorProjector *apptransport.Projector) *LLMHandler {
+	if errorProjector == nil {
+		panic("LLM handler requires application error projector")
+	}
 	return &LLMHandler{
 		gatewayService: gatewayService,
+		errorProjector: errorProjector,
 	}
 }
 
@@ -119,7 +125,7 @@ func (h *LLMHandler) CreateResponse(c *gin.Context) {
 	resp, err := h.gatewayService.CreateResponseRaw(c.Request.Context(), apiKey, req)
 	if err != nil {
 		recordServiceError(c, err)
-		writeOpenAIProtocolError(c, classifyProtocolError(err))
+		writeOpenAIProtocolError(c, h.localizedProtocolError(c, err))
 		return
 	}
 
@@ -151,7 +157,7 @@ func (h *LLMHandler) CreateAnthropicMessage(c *gin.Context) {
 	resp, err := h.gatewayService.CreateAnthropicMessage(c.Request.Context(), apiKey, req)
 	if err != nil {
 		recordServiceError(c, err)
-		writeAnthropicProtocolError(c, classifyProtocolError(err))
+		writeAnthropicProtocolError(c, h.localizedProtocolError(c, err))
 		return
 	}
 
@@ -200,7 +206,7 @@ func (h *LLMHandler) handleResponseStream(c *gin.Context, apiKey *apikeymodel.Te
 	streamChan, err := h.gatewayService.CreateResponseStream(c.Request.Context(), apiKey, req)
 	if err != nil {
 		recordServiceError(c, err)
-		writeOpenAIProtocolError(c, classifyProtocolError(err))
+		writeOpenAIProtocolError(c, h.localizedProtocolError(c, err))
 		return
 	}
 
@@ -214,7 +220,7 @@ func (h *LLMHandler) handleResponseStream(c *gin.Context, apiKey *apikeymodel.Te
 	for event := range streamChan {
 		if event.Error != nil {
 			recordStreamServiceError(c, event.Error)
-			_ = streamWriter.WriteRawError(openAIStreamError(event.Error))
+			_ = streamWriter.WriteRawError(h.openAIStreamError(c, event.Error))
 			return
 		}
 		if event.Done {
@@ -230,7 +236,7 @@ func (h *LLMHandler) handleAnthropicMessageStream(c *gin.Context, apiKey *apikey
 	streamChan, err := h.gatewayService.CreateAnthropicMessageStream(c.Request.Context(), apiKey, req)
 	if err != nil {
 		recordServiceError(c, err)
-		writeAnthropicProtocolError(c, classifyProtocolError(err))
+		writeAnthropicProtocolError(c, h.localizedProtocolError(c, err))
 		return
 	}
 
@@ -244,7 +250,7 @@ func (h *LLMHandler) handleAnthropicMessageStream(c *gin.Context, apiKey *apikey
 	for event := range streamChan {
 		if event.Error != nil {
 			recordStreamServiceError(c, event.Error)
-			_ = streamWriter.WriteRawError(anthropicStreamError(event.Error))
+			_ = streamWriter.WriteRawError(h.anthropicStreamError(c, event.Error))
 			return
 		}
 		if event.Done {
@@ -290,7 +296,7 @@ func (h *LLMHandler) ListModels(c *gin.Context) {
 // handleError converts service errors to the public OpenAI-compatible contract.
 func (h *LLMHandler) handleError(c *gin.Context, err error) {
 	recordServiceError(c, err)
-	writeOpenAIProtocolError(c, classifyProtocolError(err))
+	writeOpenAIProtocolError(c, h.localizedProtocolError(c, err))
 }
 
 // recordServiceError preserves the concrete request failure for the outer
@@ -300,6 +306,7 @@ func recordServiceError(c *gin.Context, err error) {
 	if err == nil {
 		return
 	}
+	err = normalizeGatewayApplicationError(err)
 	ginErr := c.Error(err)
 	ginErr.SetMeta(serviceFailureReportHint(err))
 }
@@ -392,6 +399,7 @@ func recordStreamServiceError(c *gin.Context, err error) {
 	if err == nil {
 		return
 	}
+	err = normalizeGatewayApplicationError(err)
 	ginErr := c.Error(err)
 	ginErr.SetMeta(streamFailureReportHint(err))
 }
@@ -491,8 +499,8 @@ func parseAnthropicMessageRequest(c *gin.Context) (*adapter.AnthropicMessageRequ
 	}, nil
 }
 
-func openAIStreamError(err error) []byte {
-	protocolErr := classifyProtocolError(err)
+func (h *LLMHandler) openAIStreamError(c *gin.Context, err error) []byte {
+	protocolErr := h.localizedProtocolError(c, err)
 	data, _ := json.Marshal(gin.H{
 		"type":    "error",
 		"message": protocolErr.message,
@@ -502,8 +510,8 @@ func openAIStreamError(err error) []byte {
 	return data
 }
 
-func anthropicStreamError(err error) []byte {
-	protocolErr := classifyProtocolError(err)
+func (h *LLMHandler) anthropicStreamError(c *gin.Context, err error) []byte {
+	protocolErr := h.localizedProtocolError(c, err)
 	data, _ := json.Marshal(gin.H{
 		"type": "error",
 		"error": gin.H{
