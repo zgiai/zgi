@@ -20,6 +20,8 @@ func TestLocaleFromAcceptLanguage(t *testing.T) {
 		{name: "underscore alias", header: "zh_CN;q=0.7,en;q=0.6", want: catalog.LocaleChineseSimplified},
 		{name: "zero quality skipped", header: "zh-Hans;q=0,en;q=0.5", want: catalog.LocaleEnglishUS},
 		{name: "invalid quality skipped", header: "zh-Hans;q=2,en;q=0.5", want: catalog.LocaleEnglishUS},
+		{name: "NaN quality skipped", header: "en-US;q=1,zh-Hans;q=NaN", want: catalog.LocaleEnglishUS},
+		{name: "infinite quality skipped", header: "en-US;q=0.8,zh-Hans;q=+Inf", want: catalog.LocaleEnglishUS},
 		{name: "unsupported", header: "fr-FR,de;q=0.8", want: ""},
 		{name: "empty", header: "", want: ""},
 	}
