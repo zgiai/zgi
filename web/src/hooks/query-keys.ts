@@ -295,6 +295,7 @@ export const MODEL_META_KEYS = {
 export const STATS_KEYS = {
   all: ['statistics'] as const,
   usage: (params: unknown) => [...STATS_KEYS.all, 'usage', params] as const,
+  invocations: (params: unknown) => [...STATS_KEYS.all, 'invocations', params] as const,
   userStats: (params: unknown) => [...STATS_KEYS.all, 'user', params] as const,
 } as const;
 

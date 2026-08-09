@@ -82,7 +82,9 @@ func loadChatRuntimeConfig(cfg *Config, source *envSource) {
 	if timeout <= 0 {
 		timeout = 300
 	}
-	cfg.ChatRuntime = ChatRuntimeConfig{ModelIdleTimeoutSeconds: timeout}
+	cfg.ChatRuntime = ChatRuntimeConfig{
+		ModelIdleTimeoutSeconds: timeout,
+	}
 }
 
 func loadInfrastructureConfig(cfg *Config, source *envSource) error {
@@ -889,7 +891,7 @@ func loadOpenTelemetryConfig(cfg *Config, source *envSource) {
 		InstrumentRedis:       mustBool(source.bool(false, envOTELInstrumentRedis)),
 		InstrumentGRPC:        mustBool(source.bool(false, envOTELInstrumentGRPC)),
 		LLMLangfuseAttributes: mustBool(source.bool(true, envOTELLLMLangfuseAttributes)),
-		LLMCaptureContent:     source.string("summary", envOTELLLMCaptureContent),
+		LLMCaptureContent:     source.string("none", envOTELLLMCaptureContent),
 		LLMCaptureMaxChars:    mustInt(source.int(65536, envOTELLLMCaptureMaxChars)),
 	}
 }
@@ -991,9 +993,10 @@ func loadSentryConfig(cfg *Config, source *envSource) {
 	}
 
 	cfg.Sentry = SentryConfig{
-		DSN:         source.string("", envSentryDSN),
-		Environment: environment,
-		Release:     source.string("1.0.0", envAppVersion),
+		DSN:             source.string("", envSentryDSN),
+		Environment:     environment,
+		Release:         source.string("1.0.0", envAppVersion),
+		TraceSampleRate: mustFloat64(source.float64(0.1, envSentryTracesSampleRate)),
 	}
 }
 

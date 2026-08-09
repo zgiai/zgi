@@ -206,6 +206,7 @@ func (s *llmGatewayServiceImpl) beginBillingAttempt(
 		requestID,
 		attemptID,
 	)
+	billingCtx.InvocationSource = resolveInvocationSource(ctx, appCtx)
 
 	decision, err := s.resolveBillingDecision(providerSelection, billingCtx)
 	if err != nil {
@@ -536,7 +537,7 @@ func (s *llmGatewayServiceImpl) settleChatSuccess(
 
 	quote, err := s.quoteTokenPricingForSettlement(ctx, billingCtx, pricingModelRefFromSelection(providerSelection), actualPromptTokens, actualCompletionTokens)
 	if err != nil {
-		return fmt.Errorf("failed to calculate credits: %w", err)
+		return wrapPricingCalculationError(err)
 	}
 
 	billingCtx.ActualCredits = quote.TotalCredits
@@ -654,7 +655,7 @@ func (s *llmGatewayServiceImpl) settleEmbeddingsSuccess(
 
 	quote, err := s.quoteTokenPricingForSettlement(ctx, billingCtx, pricingModelRefFromBillingContext(billingCtx), actualTokens, 0)
 	if err != nil {
-		return fmt.Errorf("failed to calculate credits: %w", err)
+		return wrapPricingCalculationError(err)
 	}
 
 	billingCtx.ActualCredits = quote.TotalCredits

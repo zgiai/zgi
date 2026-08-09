@@ -20,6 +20,64 @@ import { useAcceptInvite, useInviteInfo } from '@/hooks/auth/use-invite';
 import { authenticationService } from '@/services/auth.service';
 import { useAuthStore } from '@/store/auth-store';
 import { clearSessionBoundClientState } from '@/lib/auth/client-state';
+import { getErrorMessage } from '@/utils/error-notifications';
+
+const inviteAcceptErrorTranslationKeys = {
+  alreadyMember: 'auth.inviteAcceptErrors.alreadyMember',
+  pendingApproval: 'auth.inviteAcceptErrors.pendingApproval',
+  invalidToken: 'auth.inviteAcceptErrors.invalidToken',
+  inactive: 'auth.inviteAcceptErrors.inactive',
+  expired: 'auth.inviteAcceptErrors.expired',
+  memberNameExists: 'auth.inviteAcceptErrors.memberNameExists',
+  loginRequired: 'auth.inviteAcceptErrors.loginRequired',
+} as const;
+
+type InviteAcceptErrorKey = keyof typeof inviteAcceptErrorTranslationKeys;
+
+const inviteAcceptErrorByCode: Record<string, InviteAcceptErrorKey> = {
+  '205020': 'alreadyMember',
+  '205021': 'pendingApproval',
+  '401001': 'loginRequired',
+};
+
+const inviteAcceptErrorPatterns: Array<{
+  key: InviteAcceptErrorKey;
+  includes: string;
+}> = [
+  { key: 'invalidToken', includes: 'invalid invite token' },
+  { key: 'inactive', includes: 'invite link is not active' },
+  { key: 'expired', includes: 'invite link expired' },
+  { key: 'memberNameExists', includes: 'member name already exists' },
+  { key: 'alreadyMember', includes: 'already a member of this organization' },
+  { key: 'pendingApproval', includes: 'join request is pending approval' },
+  { key: 'loginRequired', includes: 'please login first' },
+];
+
+function getBackendErrorDetails(error: unknown): { code?: string; message?: string } {
+  if (!error || typeof error !== 'object') return {};
+
+  const candidate = error as {
+    businessError?: { code?: string | number; message?: string };
+    response?: {
+      data?: {
+        code?: string | number;
+        errorCode?: string | number;
+        message?: string;
+        errorMessage?: string;
+      };
+    };
+    message?: string;
+  };
+  const data = candidate.response?.data;
+  const code = candidate.businessError?.code ?? data?.code ?? data?.errorCode;
+  const message =
+    candidate.businessError?.message ?? data?.message ?? data?.errorMessage ?? candidate.message;
+
+  return {
+    code: code === undefined ? undefined : String(code),
+    message,
+  };
+}
 
 export default function InvitePage() {
   const params = useParams();
@@ -35,6 +93,7 @@ export default function InvitePage() {
   const [needsAuth, setNeedsAuth] = useState(true);
   const [emailChecked, setEmailChecked] = useState(false);
   const [checkingEmail, setCheckingEmail] = useState(false);
+  const [joinRequestPending, setJoinRequestPending] = useState(false);
 
   // Login form schema
   const loginSchema = z.object({
@@ -78,17 +137,43 @@ export default function InvitePage() {
     }
   };
 
+  const getInviteAcceptErrorMessage = (error: unknown) => {
+    const { code, message } = getBackendErrorDetails(error);
+    const keyFromCode = code ? inviteAcceptErrorByCode[code] : undefined;
+    if (keyFromCode) {
+      return t(inviteAcceptErrorTranslationKeys[keyFromCode]);
+    }
+
+    const normalizedMessage = message?.trim().toLowerCase();
+    const keyFromMessage = normalizedMessage
+      ? inviteAcceptErrorPatterns.find(item => normalizedMessage.includes(item.includes))?.key
+      : undefined;
+
+    if (keyFromMessage) {
+      return t(inviteAcceptErrorTranslationKeys[keyFromMessage]);
+    }
+
+    return getErrorMessage(error) || t('auth.failedToJoin');
+  };
+
   // Handle accepting invite
   const handleAcceptInvite = (memberName?: string) => {
     acceptInvite(
       { token, member_name: memberName },
       {
-        onSuccess: () => {
-          toast.success(t('auth.joinedSuccessfully'));
+        onSuccess: result => {
+          if (result.status === 'pending') {
+            setJoinRequestPending(true);
+            setIsProcessing(false);
+            toast.info(t('auth.joinRequestSubmitted'));
+            return;
+          }
+
+          toast.success(t('auth.joinedOrganization'));
           window.location.href = '/console';
         },
-        onError: () => {
-          toast.error(t('auth.failedToJoin'));
+        onError: error => {
+          toast.error(getInviteAcceptErrorMessage(error));
           setIsProcessing(false);
         },
       }
@@ -201,7 +286,20 @@ export default function InvitePage() {
         </CardHeader>
 
         <CardContent>
-          {!needsAuth && isAuthenticated ? (
+          {joinRequestPending ? (
+            <div className="space-y-4">
+              <Alert>
+                <Info className="h-4 w-4" />
+                <AlertTitle>{t('auth.joinRequestSubmitted')}</AlertTitle>
+                <AlertDescription>{t('auth.joinRequestSubmittedDesc')}</AlertDescription>
+              </Alert>
+              <Link href="/console" className="block">
+                <Button variant="outline" className="w-full">
+                  {t('common.back')}
+                </Button>
+              </Link>
+            </div>
+          ) : !needsAuth && isAuthenticated ? (
             // User is already logged in, show direct accept button
             <div className="space-y-4">
               <Alert>

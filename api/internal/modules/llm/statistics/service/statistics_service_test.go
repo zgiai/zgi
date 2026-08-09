@@ -18,6 +18,10 @@ func (f *fakeStatisticsRepository) GetModelUsage(_ context.Context, _ string, re
 	}, nil
 }
 
+func (f *fakeStatisticsRepository) GetInvocationLog(context.Context, string, *dto.InvocationLogRequest) (*dto.InvocationLogResponse, error) {
+	return &dto.InvocationLogResponse{}, nil
+}
+
 func (f *fakeStatisticsRepository) GetWorkspaceQuota(context.Context, string, *dto.WorkspaceQuotaRequest) (*dto.WorkspaceQuotaResponse, error) {
 	return &dto.WorkspaceQuotaResponse{}, nil
 }
@@ -60,5 +64,33 @@ func TestGetModelUsage_RejectsMillisecondTimestamp(t *testing.T) {
 	}
 	if repo.modelUsageReq != nil {
 		t.Fatalf("expected repository not to be called on invalid timestamp")
+	}
+}
+
+func TestGetInvocationLog_ValidatesCursorAndDefaultsLimit(t *testing.T) {
+	repo := &fakeStatisticsRepository{}
+	svc := NewStatisticsService(repo)
+	req := &dto.InvocationLogRequest{StartTime: 1710000000, EndTime: 1710086400}
+	if _, err := svc.GetInvocationLog(context.Background(), "org-1", req); err != nil {
+		t.Fatalf("GetInvocationLog returned error: %v", err)
+	}
+	if req.Limit != 20 {
+		t.Fatalf("limit = %d, want 20", req.Limit)
+	}
+
+	cursorTime := "2024-03-09T16:00:00.123456789Z"
+	_, err := svc.GetInvocationLog(context.Background(), "org-1", &dto.InvocationLogRequest{
+		StartTime: 1710000000, EndTime: 1710086400, CursorTime: &cursorTime,
+	})
+	if err == nil {
+		t.Fatal("expected incomplete cursor to fail")
+	}
+
+	blankCursorID := "  "
+	_, err = svc.GetInvocationLog(context.Background(), "org-1", &dto.InvocationLogRequest{
+		StartTime: 1710000000, EndTime: 1710086400, CursorTime: &cursorTime, CursorID: &blankCursorID,
+	})
+	if err == nil {
+		t.Fatal("expected blank cursor id to fail")
 	}
 }

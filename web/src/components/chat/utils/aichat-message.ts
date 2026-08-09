@@ -9,6 +9,13 @@ export function isDraftAIChatConversationId(id: string | null | undefined): bool
   return Boolean(id?.startsWith('draft-aichat-'));
 }
 
+const AICHAT_RUNTIME_UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+export function isPersistedAIChatRuntimeId(id: string | null | undefined): id is string {
+  return Boolean(id && AICHAT_RUNTIME_UUID_PATTERN.test(id));
+}
+
 export function normalizeAIChatStatus(status: unknown): AIChatMessageStatus {
   if (typeof status !== 'string') return 'error';
   switch (status.trim().toLowerCase()) {

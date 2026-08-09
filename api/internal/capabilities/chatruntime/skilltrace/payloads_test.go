@@ -65,15 +65,37 @@ func TestSkillCallErrorPayloadPreservesGuardrailBlockedStatus(t *testing.T) {
 	}
 }
 
+func TestSkillCallPayloadsPreserveInvocationID(t *testing.T) {
+	ids := PayloadIDs{ConversationID: "conversation-1", MessageID: "message-1"}
+	const invocationID = "call-1"
+	trace := skills.SkillTrace{
+		Kind:         "tool_call",
+		InvocationID: invocationID,
+		SkillID:      skills.SkillFileGenerator,
+		ToolName:     "generate_docx",
+		Status:       "success",
+	}
+
+	for name, payload := range map[string]map[string]interface{}{
+		"start": SkillCallStartPayload(ids, invocationID, trace.SkillID, trace.ToolName, nil),
+		"end":   SkillCallEndPayload(ids, trace, true),
+		"error": SkillCallErrorPayload(ids, trace, "error", true),
+	} {
+		if got := payload["invocation_id"]; got != invocationID {
+			t.Fatalf("%s invocation_id = %#v, want %q", name, got, invocationID)
+		}
+	}
+}
 func TestSkillArtifactsFromToolMessagesIncludesGovernanceOperation(t *testing.T) {
 	artifacts := SkillArtifactsFromToolMessages(PayloadIDs{
 		ConversationID: "conversation-1",
 		MessageID:      "message-1",
 	}, skills.SkillTrace{
-		Kind:     "tool_call",
-		SkillID:  skills.SkillFileReader,
-		ToolName: "generate_pdf",
-		Status:   "success",
+		Kind:         "tool_call",
+		InvocationID: "call-file-1",
+		SkillID:      skills.SkillFileReader,
+		ToolName:     "generate_pdf",
+		Status:       "success",
 		Governance: &toolgovernance.Decision{
 			CorrelationID: "corr-file-create",
 			AssetOperationAudit: map[string]interface{}{
@@ -107,6 +129,9 @@ func TestSkillArtifactsFromToolMessagesIncludesGovernanceOperation(t *testing.T)
 	if artifacts[0]["correlation_id"] != "corr-file-create" ||
 		artifacts[0]["operation_id"] != "tool_governance:corr-file-create" {
 		t.Fatalf("artifact operation fields = %#v", artifacts[0])
+	}
+	if artifacts[0]["invocation_id"] != "call-file-1" {
+		t.Fatalf("artifact invocation_id = %#v, want call-file-1", artifacts[0]["invocation_id"])
 	}
 	if artifacts[0]["artifact_id"] != "tool_file:file-1" || artifacts[0]["tool_file_id"] != "file-1" ||
 		artifacts[0]["lifecycle"] != "temporary" || artifacts[0]["expires_at"] != int64(1700000000) {

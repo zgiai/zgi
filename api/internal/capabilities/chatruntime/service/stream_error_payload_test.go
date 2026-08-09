@@ -160,6 +160,37 @@ func TestBuildStreamErrorPayloadMapsPlanningTermination(t *testing.T) {
 	}
 }
 
+func TestBuildStreamErrorPayloadMapsPlanningOutputTruncation(t *testing.T) {
+	prepared := streamErrorTestPrepared()
+	err := fmt.Errorf(
+		"planning_output_truncated: %w",
+		&skillloop.PlanningTerminationError{Reason: "length", Recoverable: true},
+	)
+
+	payload := BuildStreamErrorPayload(prepared, err)
+
+	if got := payload["code"]; got != aichatErrorCodePlanningOutputTruncated {
+		t.Fatalf("stream error code = %#v, want %q", got, aichatErrorCodePlanningOutputTruncated)
+	}
+	if got := payload["message"]; got != aichatPlanningOutputTruncatedMessage {
+		t.Fatalf("stream error message = %#v, want %q", got, aichatPlanningOutputTruncatedMessage)
+	}
+}
+
+func TestBuildStreamErrorPayloadMapsNativeAgentOutputTruncation(t *testing.T) {
+	prepared := streamErrorTestPrepared()
+	err := fmt.Errorf("native round failed: %w", skillloop.ErrAgentOutputTruncated)
+
+	payload := BuildStreamErrorPayload(prepared, err)
+
+	if got := payload["code"]; got != aichatErrorCodeAgentOutputTruncated {
+		t.Fatalf("stream error code = %#v, want %q", got, aichatErrorCodeAgentOutputTruncated)
+	}
+	if got := payload["message"]; got != aichatAgentOutputTruncatedMessage {
+		t.Fatalf("stream error message = %#v, want %q", got, aichatAgentOutputTruncatedMessage)
+	}
+}
+
 func TestBuildStreamErrorPayloadPreservesProviderCauseAfterFinalAnswerRetry(t *testing.T) {
 	prepared := streamErrorTestPrepared()
 	err := errors.Join(

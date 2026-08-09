@@ -115,3 +115,58 @@ export interface GetModelUsageParams {
 export interface GetWorkspaceQuotaParams {
   workspace_id?: string;
 }
+
+export type InvocationSource = 'api' | 'product' | 'unknown';
+export type InvocationStatus = 'success' | 'failed' | 'partial';
+
+export interface InvocationLogSummary {
+  invocation_count: number;
+  api_count: number;
+  product_count: number;
+  unknown_count: number;
+  total_tokens: number;
+  total_points: number;
+}
+
+export interface InvocationLogItem {
+  invocation_id: string;
+  invocation_source: InvocationSource;
+  app_id?: string;
+  app_type: string;
+  model_name: string;
+  provider_name: string;
+  status: InvocationStatus;
+  attempt_count: number;
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  total_points: number;
+  duration_ms: number;
+  started_at: number;
+  settled_at: number;
+  error_code?: string;
+  input?: unknown;
+  output?: unknown;
+}
+
+export interface InvocationLogCursor {
+  time: string;
+  id: string;
+}
+
+export interface InvocationLogData {
+  summary: InvocationLogSummary;
+  items: InvocationLogItem[];
+  next_cursor?: InvocationLogCursor;
+}
+
+export interface GetInvocationLogParams {
+  start_time: number;
+  end_time: number;
+  invocation_source?: InvocationSource;
+  app_type?: string;
+  model_name?: string;
+  cursor_time?: string;
+  cursor_id?: string;
+  limit?: number;
+}

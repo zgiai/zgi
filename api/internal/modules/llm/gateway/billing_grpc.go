@@ -521,6 +521,7 @@ func (s *RemoteBilling) reconcileAttempt(ctx context.Context, attemptID string) 
 		DeductionID:       strings.TrimSpace(*fundEntry.IdempotencyKey),
 		AttemptID:         attempt.AttemptID,
 		RequestID:         attempt.RequestID,
+		InvocationSource:  normalizeInvocationSource(attempt.InvocationSource),
 		EstimatedCredits:  fundEntry.ReservedAmount,
 		ActualCredits:     actualCredits,
 		QuotaSubjectType:  attempt.QuotaSubjectType,

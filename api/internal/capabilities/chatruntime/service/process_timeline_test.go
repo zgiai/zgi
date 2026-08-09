@@ -103,27 +103,24 @@ func TestProcessTimelineRecorderKeepsPresentationOrderAcrossActionsAndContinuati
 	if projection.Version != presentationVersionV2 {
 		t.Fatalf("presentation version = %d, want %d", projection.Version, presentationVersionV2)
 	}
-	if projection.LastSequence != 5 || len(projection.Items) != 5 {
-		t.Fatalf("presentation = %#v, want five ordered items through sequence 5", projection)
+	if projection.LastSequence != 5 || len(projection.Items) != 3 {
+		t.Fatalf("presentation = %#v, want durable events and final text through sequence 5", projection)
 	}
 	wantKinds := []string{
-		presentationKindText,
 		presentationKindEvent,
-		presentationKindText,
 		presentationKindEvent,
 		presentationKindText,
 	}
 	wantPhases := []string{
-		presentationPhaseProcess,
 		"",
-		presentationPhaseProcess,
 		"",
 		presentationPhaseFinal,
 	}
+	wantSequences := []int64{2, 4, 5}
 	for index, item := range projection.Items {
 		sequence, ok := int64FromPresentationValue(item["presentation_sequence"])
-		if !ok || sequence != int64(index+1) {
-			t.Fatalf("item %d sequence = %#v, want %d", index, item["presentation_sequence"], index+1)
+		if !ok || sequence != wantSequences[index] {
+			t.Fatalf("item %d sequence = %#v, want %d", index, item["presentation_sequence"], wantSequences[index])
 		}
 		if got := stringFromAny(item["kind"]); got != wantKinds[index] {
 			t.Fatalf("item %d kind = %q, want %q", index, got, wantKinds[index])
@@ -147,8 +144,99 @@ func TestProcessTimelineRecorderKeepsPresentationOrderAcrossActionsAndContinuati
 		t.Fatalf("finalize continuation presentation: %v", err)
 	}
 	continuedProjection := presentationProjectionFromMetadata(message.Metadata)
-	if continuedProjection.LastSequence != 6 || len(continuedProjection.Items) != 6 {
-		t.Fatalf("continued presentation = %#v, want sequence 6 without renumbering", continuedProjection)
+	if continuedProjection.LastSequence != 6 || len(continuedProjection.Items) != 4 {
+		t.Fatalf("continued presentation = %#v, want durable sequence 6 without renumbering", continuedProjection)
+	}
+}
+
+func TestProcessTimelineRecorderDiscardsRetractedControlNarration(t *testing.T) {
+	message := &runtimemodel.Message{ID: uuid.New(), Metadata: map[string]interface{}{}}
+	prepared := &PreparedChat{
+		Conversation: &runtimemodel.Conversation{ID: uuid.New()},
+		Message:      message,
+	}
+	events := make([]StreamEvent, 0)
+	recorder := newProcessTimelineRecorder(
+		t.Context(),
+		t.Context(),
+		&service{},
+		prepared,
+		func(event StreamEvent) error {
+			events = append(events, event)
+			return nil
+		},
+	)
+
+	if err := recorder.RecordEvent(streamEventMessage, map[string]interface{}{"answer": "Internal activation narration."}); err != nil {
+		t.Fatalf("record provisional text: %v", err)
+	}
+	if err := recorder.RecordEvent(streamEventMessageRetract, map[string]interface{}{
+		"content":                  "Internal activation narration.",
+		"presentation_disposition": presentationDispositionDiscard,
+	}); err != nil {
+		t.Fatalf("discard provisional text: %v", err)
+	}
+
+	projection := presentationProjectionFromMetadata(message.Metadata)
+	if len(projection.Items) != 0 {
+		t.Fatalf("presentation = %#v, want discarded segment removed", projection)
+	}
+	if len(events) != 2 {
+		t.Fatalf("events = %#v, want message and retract", events)
+	}
+	retract := events[1].Payload
+	if got := stringFromAny(retract["presentation_disposition"]); got != presentationDispositionDiscard {
+		t.Fatalf("retract disposition = %q, want discard", got)
+	}
+	if strings.TrimSpace(stringFromAny(retract["segment_id"])) == "" {
+		t.Fatalf("retract = %#v, want segment id for client projection cleanup", retract)
+	}
+	if _, exists := retract["presentation_id"]; exists {
+		t.Fatalf("retract = %#v, discard must not look like a process projection to old clients", retract)
+	}
+}
+
+func TestProcessTimelineRecorderKeepsProcessRetractionRuntimeOnly(t *testing.T) {
+	message := &runtimemodel.Message{ID: uuid.New(), Metadata: map[string]interface{}{}}
+	prepared := &PreparedChat{
+		Conversation: &runtimemodel.Conversation{ID: uuid.New()},
+		Message:      message,
+	}
+	events := make([]StreamEvent, 0)
+	recorder := newProcessTimelineRecorder(
+		t.Context(),
+		t.Context(),
+		&service{},
+		prepared,
+		func(event StreamEvent) error {
+			events = append(events, event)
+			return nil
+		},
+	)
+
+	if err := recorder.RecordEvent(streamEventMessage, map[string]interface{}{"answer": "The evidence is ready; the report comes next."}); err != nil {
+		t.Fatalf("record provisional text: %v", err)
+	}
+	if err := recorder.RecordEvent(streamEventMessageRetract, map[string]interface{}{
+		"content":                  "The evidence is ready; the report comes next.",
+		"presentation_disposition": presentationDispositionProcess,
+	}); err != nil {
+		t.Fatalf("convert provisional text to process: %v", err)
+	}
+
+	projection := presentationProjectionFromMetadata(message.Metadata)
+	if projection.LastSequence != 1 || len(projection.Items) != 0 {
+		t.Fatalf("presentation = %#v, want process segment omitted from durable metadata", projection)
+	}
+	if len(events) != 2 {
+		t.Fatalf("events = %#v, want message and retract", events)
+	}
+	retract := events[1].Payload
+	if got := stringFromAny(retract["presentation_disposition"]); got != presentationDispositionProcess {
+		t.Fatalf("retract disposition = %q, want process", got)
+	}
+	if strings.TrimSpace(stringFromAny(retract["presentation_id"])) == "" {
+		t.Fatalf("retract = %#v, want presentation position", retract)
 	}
 }
 
@@ -370,13 +458,14 @@ func TestProcessTimelineRecorderReusesPendingGovernedToolCallRuntimeID(t *testin
 	}
 	recorder := newProcessTimelineRecorder(context.Background(), context.Background(), &service{}, prepared, nil)
 
-	recorder.RecordInvocationStart(skills.SkillAgentManagement, "delete_agent", map[string]interface{}{"agent_id": "agent-1"})
+	recorder.RecordInvocationStart("call-delete-agent-1", skills.SkillAgentManagement, "delete_agent", map[string]interface{}{"agent_id": "agent-1"})
 	recorder.RecordInvocationError(skills.SkillTrace{
-		Kind:     "tool_call",
-		SkillID:  skills.SkillAgentManagement,
-		ToolName: "delete_agent",
-		Status:   "error",
-		Error:    "agent not found",
+		Kind:         "tool_call",
+		InvocationID: "call-delete-agent-1",
+		SkillID:      skills.SkillAgentManagement,
+		ToolName:     "delete_agent",
+		Status:       "error",
+		Error:        "agent not found",
 	})
 
 	invocations := skillInvocationsFromMetadata(message.Metadata["skill_invocations"])
@@ -392,6 +481,9 @@ func TestProcessTimelineRecorderReusesPendingGovernedToolCallRuntimeID(t *testin
 	}
 	if got := stringFromAny(invocation["error"]); got != "agent not found" {
 		t.Fatalf("error = %q, want agent not found; invocation=%#v", got, invocation)
+	}
+	if got := stringFromAny(invocation["invocation_id"]); got != "call-delete-agent-1" {
+		t.Fatalf("invocation_id = %q, want call-delete-agent-1; invocation=%#v", got, invocation)
 	}
 	if governance := governanceMapFromAny(invocation["governance"]); len(governance) == 0 {
 		t.Fatalf("governance metadata was dropped: %#v", invocation)
@@ -671,13 +763,14 @@ func TestProcessTimelineRecorderReusesMatchingGovernedToolCallRuntimeID(t *testi
 	}
 	recorder := newProcessTimelineRecorder(context.Background(), context.Background(), &service{}, prepared, nil)
 
-	recorder.RecordInvocationStart(skills.SkillAgentManagement, "delete_agent", map[string]interface{}{"agent_id": "agent-target"})
+	recorder.RecordInvocationStart("call-delete-agent-target", skills.SkillAgentManagement, "delete_agent", map[string]interface{}{"agent_id": "agent-target"})
 	recorder.RecordInvocationEnd(skills.SkillTrace{
-		Kind:     "tool_call",
-		SkillID:  skills.SkillAgentManagement,
-		ToolName: "delete_agent",
-		Status:   "success",
-		Result:   map[string]interface{}{"deleted_count": 1},
+		Kind:         "tool_call",
+		InvocationID: "call-delete-agent-target",
+		SkillID:      skills.SkillAgentManagement,
+		ToolName:     "delete_agent",
+		Status:       "success",
+		Result:       map[string]interface{}{"deleted_count": 1},
 	})
 
 	invocations := skillInvocationsFromMetadata(message.Metadata["skill_invocations"])
@@ -689,6 +782,9 @@ func TestProcessTimelineRecorderReusesMatchingGovernedToolCallRuntimeID(t *testi
 	}
 	if got := stringFromAny(invocations[0]["status"]); got != "success" {
 		t.Fatalf("target status = %q, want success; invocations=%#v", got, invocations)
+	}
+	if got := stringFromAny(invocations[0]["invocation_id"]); got != "call-delete-agent-target" {
+		t.Fatalf("target invocation_id = %q, want call-delete-agent-target; invocations=%#v", got, invocations)
 	}
 	if got := stringFromAny(invocations[1]["runtime_id"]); got != otherRuntimeID {
 		t.Fatalf("other runtime_id = %q, want %q; invocations=%#v", got, otherRuntimeID, invocations)

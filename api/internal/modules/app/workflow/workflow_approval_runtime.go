@@ -3,6 +3,7 @@ package workflow
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -13,6 +14,7 @@ import (
 	approvalruntime "github.com/zgiai/zgi/api/internal/modules/app/workflow/approval"
 	graph_entities "github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine/entities"
 	workflowpause "github.com/zgiai/zgi/api/internal/modules/app/workflow/pause"
+	workflowshared "github.com/zgiai/zgi/api/internal/modules/app/workflow/shared"
 	"github.com/zgiai/zgi/api/pkg/database"
 	"github.com/zgiai/zgi/api/pkg/logger"
 )
@@ -88,6 +90,8 @@ func (h *WorkflowHandler) resumeApprovalWorkflow(ctx context.Context, form *appr
 	}
 	ctx, cancelResume := context.WithCancelCause(ctx)
 	defer cancelResume(nil)
+	workflowService.RegisterRunningWorkflow(run.ID, func() { cancelResume(context.Canceled) })
+	defer workflowService.UnregisterRunningWorkflow(run.ID)
 
 	req := &dto.DraftWorkflowRunRequest{
 		Inputs:       inputs,
@@ -245,6 +249,8 @@ func (h *WorkflowHandler) resumeQuestionAnswerWorkflow(ctx context.Context, work
 	}
 	ctx, cancelResume := context.WithCancelCause(ctx)
 	defer cancelResume(nil)
+	workflowService.RegisterRunningWorkflow(run.ID, func() { cancelResume(context.Canceled) })
+	defer workflowService.UnregisterRunningWorkflow(run.ID)
 	req := &dto.DraftWorkflowRunRequest{
 		Inputs:       inputs,
 		ResponseMode: responseMode,
@@ -447,6 +453,12 @@ func (h *WorkflowHandler) drainApprovalResumeStream(ctx context.Context, pauseSe
 			if selection.event.EventType == workflowpause.EventWorkflowFinished && run.RuntimeProtocolVersion >= workflowRuntimeProtocolVersionV2 {
 				// The executor terminal signal is transient. The done branch owns the
 				// durable FinalizeRun transaction and only publishes after it commits.
+				// A concurrent stop is different: its terminal transaction already
+				// committed and revoked this execution owner. Treat that as a normal
+				// stop instead of waiting for the stale executor to finalize again.
+				if workflowResumeRunIsDurablyStopped(ctx, workflowService, run) {
+					return persistStoppedWorkflowAnswerAfterResume(ctx, answerSnapshots, conversationAnswer.String())
+				}
 				continue
 			}
 			if selection.event.EventType == workflowpause.EventWorkflowFinished && runType == "CONVERSATION_WORKFLOW" {
@@ -472,11 +484,17 @@ func (h *WorkflowHandler) drainApprovalResumeStream(ctx context.Context, pauseSe
 					}
 				}
 				if err := eventDispatcher.Dispatch(ctx, selection.event.EventType, eventData); err != nil {
+					if workflowResumeRunIsDurablyStopped(ctx, workflowService, run) {
+						return persistStoppedWorkflowAnswerAfterResume(ctx, answerSnapshots, conversationAnswer.String())
+					}
 					return err
 				}
 				return nil
 			}
 			if err := eventDispatcher.Dispatch(ctx, selection.event.EventType, eventData); err != nil {
+				if workflowResumeRunIsDurablyStopped(ctx, workflowService, run) {
+					return persistStoppedWorkflowAnswerAfterResume(ctx, answerSnapshots, conversationAnswer.String())
+				}
 				return err
 			}
 			if selection.event.EventType == workflowpause.EventWorkflowFinished {
@@ -485,6 +503,9 @@ func (h *WorkflowHandler) drainApprovalResumeStream(ctx context.Context, pauseSe
 		case workflowStreamSelectionError:
 			if selection.err == nil {
 				continue
+			}
+			if workflowResumeRunIsDurablyStopped(ctx, workflowService, run) {
+				return persistStoppedWorkflowAnswerAfterResume(ctx, answerSnapshots, conversationAnswer.String())
 			}
 			if runType == "CONVERSATION_WORKFLOW" && answerSnapshots != nil {
 				if run.RuntimeProtocolVersion >= workflowRuntimeProtocolVersionV2 {
@@ -505,22 +526,54 @@ func (h *WorkflowHandler) drainApprovalResumeStream(ctx context.Context, pauseSe
 					}
 				}
 				if err := h.persistApprovalResumeCompletion(ctx, pauseService, workflowService, run, selection.outputs, resumeStartedAt, runType, systemInputs, resumeInputs, messageEventSent, approvalExpired, eventDispatcher, conversationAnswer.String()); err != nil {
+					if workflowResumeRunIsDurablyStopped(ctx, workflowService, run) {
+						return persistStoppedWorkflowAnswerAfterResume(ctx, answerSnapshots, conversationAnswer.String())
+					}
 					return err
 				}
 			}
 			return nil
 		case workflowStreamSelectionContextDone:
-			err := ctx.Err()
+			if workflowResumeRunIsDurablyStopped(ctx, workflowService, run) {
+				return persistStoppedWorkflowAnswerAfterResume(ctx, answerSnapshots, conversationAnswer.String())
+			}
+			err := workflowshared.ResolveContextError(ctx, ctx.Err())
 			if err != nil {
 				h.persistApprovalResumeError(ctx, pauseService, workflowService, run, err, resumeStartedAt, eventDispatcher, conversationAnswer.String())
 			}
-			return ctx.Err()
+			return err
 		case workflowStreamSelectionHeartbeat:
 			continue
 		default:
 			return nil
 		}
 	}
+}
+
+// workflowResumeRunIsDurablyStopped resolves a cancellation race against the
+// V2 stop barrier. The caller context commonly has already been canceled, so
+// the terminal-state lookup must use an uncanceled, bounded persistence
+// context. A positive result means the stop transaction owns the terminal
+// outcome and the stale resume worker must exit without publishing a failure.
+func workflowResumeRunIsDurablyStopped(ctx context.Context, workflowService *WorkflowService, run *WorkflowRunLog) bool {
+	if workflowService == nil || workflowService.workflowRunLogRepo == nil || run == nil || strings.TrimSpace(run.ID) == "" {
+		return false
+	}
+	lookupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+	defer cancel()
+	current, err := workflowService.workflowRunLogRepo.GetByID(lookupCtx, run.ID)
+	return err == nil && current != nil && strings.EqualFold(strings.TrimSpace(string(current.Status)), string(dto.WorkflowRunStatusStopped))
+}
+
+func persistStoppedWorkflowAnswerAfterResume(ctx context.Context, snapshots *answerSnapshotWriter, answer string) error {
+	if snapshots == nil {
+		return nil
+	}
+	err := snapshots.PersistStoppedFinal(ctx, answer)
+	if errors.Is(err, workflowpause.ErrExecutionOwnershipLost) {
+		return nil
+	}
+	return err
 }
 
 func approvalResultFilledEventAlreadyRecorded(ctx context.Context, pauseService *workflowpause.Service, run *WorkflowRunLog, eventData map[string]interface{}) bool {
@@ -1248,6 +1301,9 @@ func (h *WorkflowHandler) persistApprovalResumeFinished(ctx context.Context, pau
 
 func (h *WorkflowHandler) persistApprovalResumeError(ctx context.Context, pauseService *workflowpause.Service, workflowService *WorkflowService, run *WorkflowRunLog, err error, resumeStartedAt time.Time, eventDispatcher *workflowRunEventDispatcher, finalAnswer string) {
 	if pauseService == nil || run == nil || err == nil {
+		return
+	}
+	if workflowResumeRunIsDurablyStopped(ctx, workflowService, run) {
 		return
 	}
 	persistCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)

@@ -22,6 +22,7 @@ import {
   replaceAIChatConversation,
 } from '@/components/chat/utils/aichat-message';
 import { getErrorMessage } from '@/components/chat/runtime/controller/chat-runtime-controller-utils';
+import { terminalizeWorkflowTimeline } from '@/components/chat/controllers/aichat/workflow-terminal-state';
 
 interface UseChatRuntimeConversationActionsArgs {
   stateRef: MutableRefObject<AIChatControllerStore>;
@@ -39,7 +40,6 @@ interface UseChatRuntimeConversationActionsArgs {
   markSelectionTarget: (conversationId: string | null) => number;
   isLatestSelection: (seq: number, conversationId: string | null) => boolean;
   refreshList: (params?: { page?: number; append?: boolean }) => Promise<void>;
-  refreshConversationSilently: (conversationId: string) => void;
   recoverStreamingConversation: (
     conversationId: string,
     options?: { conversation?: AIChatConversation; mode?: AIChatRecoveryMode }
@@ -62,7 +62,6 @@ export function useChatRuntimeConversationActions({
   markSelectionTarget,
   isLatestSelection,
   refreshList,
-  refreshConversationSilently,
   recoverStreamingConversation,
 }: UseChatRuntimeConversationActionsArgs) {
   const select = useCallback(
@@ -397,8 +396,21 @@ export function useChatRuntimeConversationActions({
         const messages = current.messagesByConversation[conversationId] ?? [];
         const stoppedAt = Math.floor(Date.now() / 1000);
         const nextStreamingByMessageId = { ...current.streamingByMessageId };
-        if (targetMessageId) {
-          delete nextStreamingByMessageId[targetMessageId];
+        const liveStreaming = targetMessageId
+          ? current.streamingByMessageId[targetMessageId]
+          : undefined;
+        if (targetMessageId && liveStreaming) {
+          const terminalTimeline = terminalizeWorkflowTimeline(liveStreaming.timeline, 'stopped');
+          if (terminalTimeline.length > 0 || liveStreaming.presentationItems?.length) {
+            nextStreamingByMessageId[targetMessageId] = {
+              ...liveStreaming,
+              timeline: terminalTimeline,
+              modelProcessing: undefined,
+              status: 'stopped',
+            };
+          } else {
+            delete nextStreamingByMessageId[targetMessageId];
+          }
         }
 
         return {
@@ -420,6 +432,7 @@ export function useChatRuntimeConversationActions({
                   message.id === targetMessageId
                     ? {
                         ...message,
+                        answer: liveStreaming?.answer || message.answer,
                         status: 'stopped' as const,
                         updated_at: stoppedAt,
                       }
@@ -485,7 +498,6 @@ export function useChatRuntimeConversationActions({
       }
       streamingMessageRef.current = null;
       markConversationStopped(activeConversationId, response.message_id);
-      refreshConversationSilently(activeConversationId);
     } catch (error) {
       console.warn('Failed to stop AIChat conversation', error);
       setControllerState(current => ({
@@ -501,7 +513,6 @@ export function useChatRuntimeConversationActions({
     closeConversationConnection,
     markConversationStopped,
     pendingStreamAbortRef,
-    refreshConversationSilently,
     setControllerState,
     stateRef,
     streamAbortByConversationRef,

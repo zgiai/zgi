@@ -2,6 +2,7 @@ package indexing
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -9,7 +10,11 @@ import (
 	"github.com/zgiai/zgi/api/config"
 	"github.com/zgiai/zgi/api/internal/modules/dataset/model"
 	dataset_repository "github.com/zgiai/zgi/api/internal/modules/dataset/repository"
+	llmerrors "github.com/zgiai/zgi/api/internal/modules/llm/errors"
+	"github.com/zgiai/zgi/api/internal/modules/llm/gateway"
+	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/internal/observability"
+	"github.com/zgiai/zgi/api/pkg/database"
 	"github.com/zgiai/zgi/api/pkg/embedding"
 	"github.com/zgiai/zgi/api/pkg/logger"
 	"github.com/zgiai/zgi/api/pkg/vectordb"
@@ -343,14 +348,23 @@ func embedIndexingBatch(
 	if err == nil {
 		err = fmt.Errorf("embedding batch returned %d vectors for %d texts", len(vectors), len(items))
 	}
+	vectors = make([][]float64, len(items))
+	errs := make([]error, len(items))
+	if isPersistentIndexingEmbeddingError(err) {
+		// Retrying a route, authorization, quota, or billing configuration
+		// failure once per item cannot succeed and amplifies both latency and
+		// observability traffic. Preserve item results but emit one batch event.
+		captureIndexingEmbeddingBatchError(ctx, err, dataset, name, len(items))
+		for i := range errs {
+			errs[i] = err
+		}
+		return vectors, errs
+	}
 	logger.Warn("Embedding batch failed, falling back to single-item requests", map[string]interface{}{
 		"name":  name,
 		"count": len(items),
 		"error": err.Error(),
 	})
-
-	vectors = make([][]float64, len(items))
-	errs := make([]error, len(items))
 	for i, item := range items {
 		singleVectors, singleErr := embeddingService.EmbedTexts(ctx, []string{item.Text})
 		if singleErr != nil {
@@ -367,6 +381,69 @@ func embedIndexingBatch(
 		vectors[i] = singleVectors[0]
 	}
 	return vectors, errs
+}
+
+func isPersistentIndexingEmbeddingError(err error) bool {
+	if gateway.IsPersistentChannelFailure(err) {
+		return true
+	}
+	if gateway.IsProviderSelectionPreparationError(err) {
+		// Routing/cache persistence failures affect the whole batch. Retrying
+		// identical selection work once per item only amplifies the outage.
+		return true
+	}
+	classification, _ := classifyIndexingEmbeddingError(err)
+	if classification.Source == observability.ErrorSourceZGI {
+		// A transient billing, database, or internal failure can recover on the
+		// existing per-item retry path. Only fail the batch immediately when the
+		// ZGI-owned condition is explicitly non-retryable.
+		return !classification.Retryable
+	}
+	if classification.Source != observability.ErrorSourceTenant {
+		return false
+	}
+	// Unsupported embedding capability is fixed for the selected model and
+	// adapter, so retrying the same route once per item cannot recover.
+	if errors.Is(err, adapter.ErrCapabilityUnsupported) {
+		return true
+	}
+	// Content policy and invalid-request sentinels may be item-specific, so
+	// single-item fallback can still recover unaffected content.
+	return !adapter.IsDeterministicRejection(err) && !errors.Is(err, gateway.ErrInvalidRequest)
+}
+
+func captureIndexingEmbeddingBatchError(ctx context.Context, err error, dataset *model.Dataset, name string, itemCount int) {
+	if err == nil || dataset == nil {
+		return
+	}
+	if gateway.IsPersistentChannelFailure(err) {
+		// Gateway already emitted one channel-aware event. Dataset has no route
+		// ownership context and must not add a contradictory tenant/provider one.
+		return
+	}
+	provider := ""
+	if dataset.EmbeddingModelProvider != nil {
+		provider = *dataset.EmbeddingModelProvider
+	}
+	modelName := ""
+	if dataset.EmbeddingModel != nil {
+		modelName = *dataset.EmbeddingModel
+	}
+	classification, level := classifyIndexingEmbeddingError(err)
+	observability.CaptureError(ctx, "dataset.embedding.batch_failed", err,
+		observability.WithLevel(level),
+		observability.WithErrorClassification(classification),
+		observability.Tags(map[string]string{
+			"llm.provider": provider,
+			"llm.model":    modelName,
+		}),
+		observability.Attributes(map[string]any{
+			"workspace_id": dataset.WorkspaceID,
+			"dataset_id":   dataset.ID,
+			"batch_name":   name,
+			"item_count":   itemCount,
+		}),
+	)
 }
 
 func storeIndexingVectorObjects(ctx context.Context, vectorDB vectordb.VectorDB, objects []vectordb.VectorObject, name string) []error {
@@ -460,7 +537,10 @@ func captureIndexingEmbeddingError(ctx context.Context, err error, dataset *mode
 		modelName = *dataset.EmbeddingModel
 	}
 
+	classification, level := classifyIndexingEmbeddingError(err)
 	observability.CaptureError(ctx, "dataset.embedding.failed", err,
+		observability.WithLevel(level),
+		observability.WithErrorClassification(classification),
 		observability.Tags(map[string]string{
 			"llm.provider": provider,
 			"llm.model":    modelName,
@@ -474,4 +554,81 @@ func captureIndexingEmbeddingError(ctx context.Context, err error, dataset *mode
 			"content_len":   len(item.Text),
 		}),
 	)
+}
+
+func classifyIndexingEmbeddingError(err error) (observability.ErrorClassification, observability.Level) {
+	classification := observability.ErrorClassification{
+		Category:  observability.ErrorCategoryDependency,
+		Source:    observability.ErrorSourceProvider,
+		Code:      "embedding_request_failed",
+		Retryable: true,
+	}
+	var billingUserErr *gateway.BillingUserError
+	if errors.As(err, &billingUserErr) && billingUserErr != nil {
+		return observability.ErrorClassification{
+			Category: observability.ErrorCategoryConfiguration,
+			Source:   observability.ErrorSourceTenant,
+			Code:     "embedding_configuration_failed",
+		}, observability.LevelWarning
+	}
+	if errors.Is(err, gateway.ErrBalanceNotFound) ||
+		errors.Is(err, gateway.ErrBillingFailed) ||
+		errors.Is(err, gateway.ErrBillingPreDeductFailed) ||
+		errors.Is(err, gateway.ErrBillingSettleFailed) ||
+		errors.Is(err, gateway.ErrBillingLaneMismatch) ||
+		errors.Is(err, gateway.ErrPricingCalculationFailed) ||
+		errors.Is(err, llmerrors.DomainErrBillingFailed) {
+		return observability.ErrorClassification{
+			Category:  observability.ErrorCategoryApplication,
+			Source:    observability.ErrorSourceZGI,
+			Code:      "embedding_billing_failed",
+			Retryable: true,
+		}, observability.LevelError
+	}
+	if gateway.IsProviderSelectionPreparationError(err) {
+		if databaseClassification := database.ClassifyError(err); databaseClassification.Source == observability.ErrorSourceInfrastructure {
+			return databaseClassification, observability.LevelError
+		}
+		return observability.ErrorClassification{
+			Category: observability.ErrorCategoryApplication,
+			Source:   observability.ErrorSourceZGI,
+			Code:     "embedding_provider_selection_failed",
+		}, observability.LevelError
+	}
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, adapter.ErrTimeout) || errors.Is(err, llmerrors.DomainErrUpstreamTimeout) {
+		classification.Category = observability.ErrorCategoryTimeout
+		classification.Code = "embedding_upstream_timeout"
+		return classification, observability.LevelError
+	}
+	if adapter.IsDeterministicRejection(err) ||
+		errors.Is(err, gateway.ErrInsufficientQuota) ||
+		errors.Is(err, gateway.ErrInsufficientBalance) ||
+		errors.Is(err, llmerrors.DomainErrInsufficientBalance) ||
+		errors.Is(err, llmerrors.DomainErrRateLimitExceeded) ||
+		errors.Is(err, adapter.ErrModelNotFound) ||
+		errors.Is(err, gateway.ErrInvalidRequest) ||
+		errors.Is(err, gateway.ErrMissingModel) ||
+		errors.Is(err, gateway.ErrModelNotAuthorized) ||
+		errors.Is(err, gateway.ErrModelNotFound) ||
+		errors.Is(err, gateway.ErrModelNotActive) ||
+		errors.Is(err, gateway.ErrNoProviderAvailable) ||
+		errors.Is(err, llmerrors.DomainErrModelNotAuthorized) ||
+		errors.Is(err, llmerrors.DomainErrModelNotFound) ||
+		errors.Is(err, llmerrors.DomainErrRouteNotFound) ||
+		errors.Is(err, llmerrors.DomainErrNoProviderAvailable) {
+		return observability.ErrorClassification{
+			Category: observability.ErrorCategoryConfiguration,
+			Source:   observability.ErrorSourceTenant,
+			Code:     "embedding_configuration_failed",
+		}, observability.LevelWarning
+	}
+	if errors.Is(err, llmerrors.DomainErrDatabaseError) || errors.Is(err, llmerrors.DomainErrInternalError) {
+		return observability.ErrorClassification{
+			Category:  observability.ErrorCategoryApplication,
+			Source:    observability.ErrorSourceZGI,
+			Code:      "embedding_internal_failed",
+			Retryable: true,
+		}, observability.LevelError
+	}
+	return classification, observability.LevelError
 }

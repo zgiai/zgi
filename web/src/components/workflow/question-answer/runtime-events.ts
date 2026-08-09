@@ -3,6 +3,7 @@ import type {
   QuestionAnswerRequestedSseData,
   QuestionAnswerSubmittedSseData,
 } from '@/services/types/workflow';
+import { resolveWorkflowRunId } from '../../../utils/workflow/run-identity.js';
 
 export interface ParsedQuestionAnswerRequested {
   workflowRunId?: string;
@@ -286,10 +287,7 @@ export function parseQuestionAnswerPausedEvent(payload: unknown): ParsedQuestion
 
   return {
     isQuestionAnswer: isQuestionAnswer || data.reason === 'question_answer_required',
-    workflowRunId:
-      (typeof data.id === 'string' ? data.id : '') ||
-      (typeof data.workflow_run_id === 'string' ? data.workflow_run_id : '') ||
-      undefined,
+    workflowRunId: resolveWorkflowRunId(data, { allowLegacyId: true }) || undefined,
     elapsedTime: typeof data.elapsed_time === 'number' ? data.elapsed_time : undefined,
     nodeIds: Array.from(new Set(nodeIds)),
     prompt,

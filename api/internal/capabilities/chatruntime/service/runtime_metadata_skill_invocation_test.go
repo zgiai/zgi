@@ -715,6 +715,51 @@ func TestMergeSkillInvocationMetadataDedupesAgentConfigOperationBySemanticIdenti
 	}
 }
 
+func TestMergeSkillInvocationMetadataKeepsConsecutiveToolInvocationIDsSeparate(t *testing.T) {
+	metadata := mergeSkillInvocationMetadata(nil, []map[string]interface{}{
+		{
+			"kind":          "tool_call",
+			"invocation_id": "call-1",
+			"skill_id":      skills.SkillFileGenerator,
+			"tool_name":     "generate_docx",
+			"status":        "success",
+			"runtime_id":    "tool_call:file-generator:generate_docx::#1",
+		},
+		{
+			"kind":          "tool_call",
+			"invocation_id": "call-2",
+			"skill_id":      skills.SkillFileGenerator,
+			"tool_name":     "generate_docx",
+			"status":        "running",
+			"runtime_id":    "tool_call:file-generator:generate_docx::#2",
+		},
+	})
+	metadata = mergeSkillInvocationMetadata(metadata, []map[string]interface{}{
+		{
+			"kind":          "tool_call",
+			"invocation_id": "call-2",
+			"skill_id":      skills.SkillFileGenerator,
+			"tool_name":     "generate_docx",
+			"status":        "success",
+			"runtime_id":    "trace:000000:tool_call:file-generator:generate_docx::",
+		},
+	})
+
+	invocations := skillInvocationsFromMetadata(metadata["skill_invocations"])
+	if len(invocations) != 2 {
+		t.Fatalf("skill_invocations = %#v, want two separately correlated tool calls", invocations)
+	}
+	if got := stringFromAny(invocations[0]["invocation_id"]); got != "call-1" {
+		t.Fatalf("first invocation_id = %q, want call-1", got)
+	}
+	if got := stringFromAny(invocations[1]["invocation_id"]); got != "call-2" {
+		t.Fatalf("second invocation_id = %q, want call-2", got)
+	}
+	if got := stringFromAny(invocations[1]["status"]); got != "success" {
+		t.Fatalf("second status = %q, want success", got)
+	}
+}
+
 func TestMergeSkillTraceMetadataOmitsInternalPlannerGuardrail(t *testing.T) {
 	metadata := mergeSkillTraceMetadata(nil, []skills.SkillTrace{{
 		Kind:     "guardrail",

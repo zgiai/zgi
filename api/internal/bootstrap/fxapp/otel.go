@@ -3,6 +3,7 @@ package fxapp
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/url"
 	"path"
 	"strings"
@@ -32,10 +33,10 @@ type OpenTelemetryResource struct {
 	TracerProvider *sdktrace.TracerProvider
 }
 
-func provideOpenTelemetryResource(cfg *config.Config, log *zap.Logger) (*OpenTelemetryResource, error) {
+func provideOpenTelemetryResource(cfg *config.Config, log *zap.Logger, sentryResource *SentryResource) (*OpenTelemetryResource, error) {
 	if cfg == nil || !cfg.Observability.ReporterEnabled("otel", cfg.OpenTelemetry.Enabled) {
 		log.Info("OpenTelemetry tracing disabled")
-		return &OpenTelemetryResource{}, nil
+		return disabledOpenTelemetryResource(cfg), nil
 	}
 
 	if strings.TrimSpace(cfg.OpenTelemetry.Protocol) != otelHTTPProtobufProtocol {
@@ -44,20 +45,22 @@ func provideOpenTelemetryResource(cfg *config.Config, log *zap.Logger) (*OpenTel
 			zap.String("protocol", cfg.OpenTelemetry.Protocol),
 			zap.String("supported_protocol", otelHTTPProtobufProtocol),
 		)
-		return &OpenTelemetryResource{}, nil
+		return disabledOpenTelemetryResource(cfg), nil
 	}
 
 	opts, endpoint, insecure, err := buildOTLPHTTPOptions(cfg.OpenTelemetry.Endpoint, cfg.OpenTelemetry.TracesEndpoint, cfg.OpenTelemetry.Headers)
 	if err != nil {
 		log.Warn("OpenTelemetry tracing disabled because endpoint is invalid", zap.Error(err))
-		return &OpenTelemetryResource{}, nil
+		return disabledOpenTelemetryResource(cfg), nil
 	}
 
+	runtimeErrorHandler := newOTelRuntimeErrorHandler(log, sentryResource != nil && sentryResource.Enabled)
 	exp, err := otlptracehttp.New(context.Background(), opts...)
 	if err != nil {
-		log.Warn("OpenTelemetry tracing disabled because exporter initialization failed", zap.Error(err))
-		return &OpenTelemetryResource{}, nil
+		runtimeErrorHandler.Handle(fmt.Errorf("initialize OpenTelemetry exporter: %w", err))
+		return disabledOpenTelemetryResource(cfg), nil
 	}
+	otel.SetErrorHandler(runtimeErrorHandler)
 
 	res, err := resource.Merge(
 		resource.Default(),
@@ -93,6 +96,15 @@ func provideOpenTelemetryResource(cfg *config.Config, log *zap.Logger) (*OpenTel
 		zap.Float64("sample_rate", normalizedOTELSampleRate(cfg.OpenTelemetry.TraceSampleRate)),
 	)
 	return &OpenTelemetryResource{Enabled: true, TracerProvider: tp}, nil
+}
+
+func disabledOpenTelemetryResource(cfg *config.Config) *OpenTelemetryResource {
+	if cfg != nil {
+		// Keep the runtime config aligned with the effective exporter state so
+		// request-path instrumentation can take its zero-work fast path.
+		cfg.OpenTelemetry.Enabled = false
+	}
+	return &OpenTelemetryResource{}
 }
 
 func buildOTELSampler(sampleRate float64) sdktrace.Sampler {

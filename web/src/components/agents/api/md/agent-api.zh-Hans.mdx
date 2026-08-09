@@ -95,8 +95,8 @@ X-API-Key: {API_KEY}
     Agent 在最终回答之前，可能额外输出运行进度事件：
 
     - 文件解析事件：`file_parse_start`、`file_parse_end`、`file_parse_error`。
-    - Skill 和工具事件：`skill_load_start`、`skill_load_end`、`skill_reference_read`、`skill_call_start`、`skill_call_end`、`skill_call_error`、`skill_artifact_created`。
-    - Agent 进度事件：`agent_progress`、`agent_intermediate_answer`、`message_retract`，以及 `memory_create`、`memory_update` 等记忆变更事件。
+    - Skill 和工具事件：`skill_reference_read`、`skill_call_start`、`skill_call_end`、`skill_call_error`、`skill_artifact_created`。旧执行模式仍可能发送 `skill_load_start` 和 `skill_load_end`；原生工具循环的常规 Skill 发现与激活只保留在服务端诊断中。
+    - Agent 进度事件：`agent_progress`、`agent_intermediate_answer`、`message_retract`，以及 `memory_create`、`memory_update` 等记忆变更事件。原生工具循环可能先用 `message` 流式发送候选文本，再用 `message_retract.presentation_disposition` 将其归类：`process` 表示从最终答案撤回并保留为处理过程，`discard` 表示撤回且不保留。单次模型调用耗时较长时，`agent_progress` 可能使用 `phase=model_processing` 发送分阶段的临时等待状态。其 `activity` 会根据运行时上下文和 Provider 流信号标记等待响应、推理、准备操作或分析工具结果，`source` 用于区分运行时判断与 Provider 信号；事件不包含模型推理正文、工具参数或本地化文案，也不写入最终答案或聊天历史。
     - Agent 绑定工作流产生的事件：`workflow_started`、`node_started`、`node_finished`、`iteration_started`、`iteration_next`、`iteration_completed`、`loop_started`、`loop_next`、`loop_completed`、`workflow_paused`、`approval_requested`、`question_answer_requested`、`question_answer_submitted`、`workflow_finished`、`workflow_failed`。
 
     Agent 流里的工作流事件属于进度事件，可用于展示执行轨迹或等待状态；可见的助手回答仍以 `message` / `message_end` 为准。工作流节点、循环和迭代字段的详细含义，请参考 Workflow API 文档。

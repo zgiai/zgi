@@ -32,14 +32,14 @@ func NewGeneratePPTXTool(tenantID string) *GeneratePPTXTool {
 				"en_US":   "Generate an editable PPTX presentation from a structured specification.",
 				"zh_Hans": "根据结构化规格生成可编辑的 PPTX 演示文稿。",
 			},
-			LLM: "Generate an editable static PPTX temporary artifact from a JSON presentation specification. This tool does not write to File Management. When the user asks to save the result into File Management, generate the artifact first and then use file-manager/save_file_to_management. Use this when the user asks for PowerPoint, slides, or a presentation deck. Supports text, title, basic table, and simple shape elements; readable content must use non-overlapping boxes. Animations and speaker notes are not supported.",
+			LLM: "Generate an editable static PPTX temporary artifact from a structured presentation specification. This tool does not write to File Management. When the user asks to save the result into File Management, generate the artifact first and then use file-manager/save_file_to_management. Use this when the user asks for PowerPoint, slides, or a presentation deck. Supports text, title, basic table, and simple shape elements; readable content must use non-overlapping boxes. Animations and speaker notes are not supported.",
 		},
 		Parameters: []tools.ToolParameter{
 			{
 				Name:             "presentation",
 				Label:            tools.I18nText{"en_US": "Presentation", "zh_Hans": "演示文稿规格"},
-				HumanDescription: tools.I18nText{"en_US": "PPTX presentation specification as JSON.", "zh_Hans": "JSON 格式的 PPTX 演示文稿规格。"},
-				LLMDescription:   "JSON string describing the PPTX presentation. Include slides with elements of type title, text, table, or shape. Use non-overlapping boxes for readable content; omitted boxes use simple auto layout.",
+				HumanDescription: tools.I18nText{"en_US": "PPTX presentation specification. Native callers may pass an object; Workflow JSON editors may pass an equivalent JSON object string.", "zh_Hans": "PPTX 演示文稿规格。原生调用可传对象，工作流 JSON 编辑器可传等价的 JSON 对象字符串。"},
+				LLMDescription:   "Structured PPTX presentation object or an equivalent JSON object string. Include slides with elements of type title, text, table, or shape. Use non-overlapping boxes for readable content; omitted boxes use simple auto layout.",
 				Type:             tools.ToolParameterTypeString,
 				Form:             tools.ToolParameterFormLLM,
 				Required:         true,
@@ -115,7 +115,7 @@ func (t *GeneratePPTXTool) Invoke(
 	if err := enforceRuntimeFilePolicy(t.runtime, "pptx"); err != nil {
 		return nil, err
 	}
-	_, normalizedSpec, err := parsePPTXDocumentSpec(rawStringParam(toolParameters, "presentation"))
+	_, normalizedSpec, err := parsePPTXDocumentSpecValue(toolParameters["presentation"])
 	if err != nil {
 		return nil, err
 	}

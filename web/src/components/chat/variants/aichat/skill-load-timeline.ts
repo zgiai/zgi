@@ -27,6 +27,14 @@ function skillLoadAttemptAccessStatus(invocation: AIChatSkillInvocation): string
   ).toLowerCase();
 }
 
+function skillLoadSource(invocation: AIChatSkillInvocation): string {
+  const argumentsRecord = invocationRecord(invocation.arguments);
+  const resultRecord = invocationRecord(invocation.result);
+  return (
+    invocationString(argumentsRecord.source) || invocationString(resultRecord.source)
+  ).toLowerCase();
+}
+
 export function isUserRelevantSkillLoadFailure(invocation: AIChatSkillInvocation): boolean {
   const status = String(invocation.status ?? '')
     .trim()
@@ -56,6 +64,9 @@ export function isUserRelevantSkillLoadFailure(invocation: AIChatSkillInvocation
 }
 
 export function isRoutineSkillLoadInvocation(invocation: AIChatSkillInvocation): boolean {
-  if (invocation.kind !== 'skill_load' && invocation.kind !== 'skill_load_attempt') return false;
-  return !isUserRelevantSkillLoadFailure(invocation);
+  if (isUserRelevantSkillLoadFailure(invocation)) return false;
+  if (invocation.kind === 'skill_load_attempt') return true;
+  if (invocation.kind !== 'skill_load') return false;
+  const source = skillLoadSource(invocation);
+  return source === 'runtime_preload' || source === 'runtime_activation';
 }

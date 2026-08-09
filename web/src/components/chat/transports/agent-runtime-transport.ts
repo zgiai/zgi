@@ -51,6 +51,22 @@ interface AgentRuntimeTransportOptions {
   client?: RuntimeClient;
 }
 
+const AGENT_RUNTIME_CONVERSATION_ID_HEADER = 'X-ZGI-Conversation-ID';
+const AGENT_RUNTIME_MESSAGE_ID_HEADER = 'X-ZGI-Message-ID';
+
+function agentRuntimeStreamOpenMetadata(response: Response) {
+  const conversationId = response.headers.get(AGENT_RUNTIME_CONVERSATION_ID_HEADER)?.trim();
+  const messageId = response.headers.get(AGENT_RUNTIME_MESSAGE_ID_HEADER)?.trim();
+  return {
+    ...(conversationId ? { conversation_id: conversationId } : {}),
+    ...(messageId ? { message_id: messageId } : {}),
+  };
+}
+
+function notifyAgentRuntimeStreamOpen(response: Response, callbacks: AIChatStreamCallbacks) {
+  callbacks.onOpen?.(agentRuntimeStreamOpenMetadata(response));
+}
+
 function runtimeTerminalMessage(message: { event: string | null; data: unknown }): boolean {
   const record =
     message.data && typeof message.data === 'object'
@@ -226,7 +242,7 @@ export class AgentRuntimeTransport implements AIChatRuntimeTransport {
       idleTimeoutMs: SSE_IDLE_TIMEOUT_MS,
       skipErrorHandling: true,
       isTerminalMessage: runtimeTerminalMessage,
-      onOpen: callbacks.onOpen,
+      onOpen: response => notifyAgentRuntimeStreamOpen(response, callbacks),
       onMessage: message =>
         dispatchAIChatStreamEvent(
           String((message.data as AIChatSseEnvelope | undefined)?.event ?? message.event ?? ''),
@@ -254,7 +270,7 @@ export class AgentRuntimeTransport implements AIChatRuntimeTransport {
         idleTimeoutMs: SSE_IDLE_TIMEOUT_MS,
         skipErrorHandling: true,
         isTerminalMessage: runtimeTerminalMessage,
-        onOpen: callbacks.onOpen,
+        onOpen: response => notifyAgentRuntimeStreamOpen(response, callbacks),
         onMessage: message =>
           dispatchAIChatStreamEvent(
             String((message.data as AIChatSseEnvelope | undefined)?.event ?? message.event ?? ''),
@@ -286,7 +302,7 @@ export class AgentRuntimeTransport implements AIChatRuntimeTransport {
         idleTimeoutMs: SSE_IDLE_TIMEOUT_MS,
         skipErrorHandling: true,
         isTerminalMessage: runtimeTerminalMessage,
-        onOpen: callbacks.onOpen,
+        onOpen: response => notifyAgentRuntimeStreamOpen(response, callbacks),
         onMessage: message =>
           dispatchAIChatStreamEvent(
             String((message.data as AIChatSseEnvelope | undefined)?.event ?? message.event ?? ''),
@@ -321,7 +337,7 @@ export class AgentRuntimeTransport implements AIChatRuntimeTransport {
         idleTimeoutMs: SSE_IDLE_TIMEOUT_MS,
         skipErrorHandling: true,
         isTerminalMessage: runtimeTerminalMessage,
-        onOpen: callbacks.onOpen,
+        onOpen: response => notifyAgentRuntimeStreamOpen(response, callbacks),
         onMessage: message =>
           dispatchAIChatStreamEvent(
             String((message.data as AIChatSseEnvelope | undefined)?.event ?? message.event ?? ''),
@@ -367,7 +383,7 @@ export class AgentRuntimeTransport implements AIChatRuntimeTransport {
         idleTimeoutMs: SSE_IDLE_TIMEOUT_MS,
         skipErrorHandling: true,
         isTerminalMessage: runtimeTerminalMessage,
-        onOpen: callbacks.onOpen,
+        onOpen: response => notifyAgentRuntimeStreamOpen(response, callbacks),
         onMessage: message =>
           dispatchAIChatStreamEvent(
             String((message.data as AIChatSseEnvelope | undefined)?.event ?? message.event ?? ''),
@@ -403,7 +419,7 @@ export class AgentRuntimeTransport implements AIChatRuntimeTransport {
         idleTimeoutMs: SSE_IDLE_TIMEOUT_MS,
         skipErrorHandling: true,
         isTerminalMessage: runtimeTerminalMessage,
-        onOpen: callbacks.onOpen,
+        onOpen: response => notifyAgentRuntimeStreamOpen(response, callbacks),
         onMessage: message =>
           dispatchAIChatStreamEvent(
             String((message.data as AIChatSseEnvelope | undefined)?.event ?? message.event ?? ''),

@@ -225,7 +225,7 @@ func (r *ChannelRouter) SelectChannelsForProvider(
 	// The previous cloud.go virtual route injection has been removed.
 
 	if len(routes) == 0 {
-		return nil, fmt.Errorf("no enabled routes found for organizationID %s. Please configure at least one active channel in your workspace", organizationID)
+		return nil, fmt.Errorf("%w: no enabled routes found for organizationID %s. Please configure at least one active channel in your workspace", llmerrors.DomainErrRouteNotFound, organizationID)
 	}
 
 	validRoutes, err := r.prepareCandidateRoutes(ctx, organizationID, routes, modelName, modelProvider, isPrivateCustomModel, llmModel, isPassthroughMode, true)
@@ -249,12 +249,11 @@ func (r *ChannelRouter) SelectChannelsForProvider(
 	}
 
 	var selections []*ChannelSelection
-	var buildErrors []string
+	var buildErrors []error
 	for _, route := range selectedRoutes {
 		selection, err := r.buildChannelSelection(ctx, route, llmModel, privateModel, modelName, modelProvider, isPassthroughMode, modelCategory)
 		if err != nil {
-			errMsg := fmt.Sprintf("route %s (%s): %v", route.ID, route.Name, err)
-			buildErrors = append(buildErrors, errMsg)
+			buildErrors = append(buildErrors, fmt.Errorf("route %s (%s): %w", route.ID, route.Name, err))
 			logger.WarnContext(logCtx, "failed to build LLM channel selection",
 				err,
 				zap.String("route_id", route.ID.String()),
@@ -270,7 +269,7 @@ func (r *ChannelRouter) SelectChannelsForProvider(
 
 	if len(selections) == 0 {
 		if len(buildErrors) > 0 {
-			return nil, fmt.Errorf("failed to build channel selections for model '%s'. Errors: %v", modelName, buildErrors)
+			return nil, NewProviderSelectionConversionError(buildErrors...)
 		}
 		return nil, fmt.Errorf("no valid channel selections could be built for model '%s' (provider: %s)", modelName, modelProvider)
 	}

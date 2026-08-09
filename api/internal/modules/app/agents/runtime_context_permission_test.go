@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -766,6 +767,48 @@ func TestAgentRuntimeStopConversationRequiresCallerScopedConversationBeforeStop(
 	}
 }
 
+func TestAgentRuntimeStopConversationDoesNotStopParentWhenWorkflowBarrierFails(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	ids := webAppRuntimePermissionIDs{
+		organizationID: uuid.New(),
+		workspaceID:    uuid.New(),
+		accountID:      uuid.New(),
+		agentID:        uuid.New(),
+		conversationID: uuid.New(),
+		messageID:      uuid.New(),
+	}
+	runtimeSvc := &webAppRuntimePermissionService{
+		activeMessageID: &ids.messageID,
+		messageMetadata: map[string]interface{}{
+			"agent_workflow_continuation": map[string]interface{}{"workflow_run_id": "workflow-run-1"},
+		},
+	}
+	handler := NewAgentsHandler(newAgentRuntimePermissionAppService(ids), nil, nil, nil, nil, runtimeSvc)
+	continuationRunner := &fakeWorkflowContinuationRunner{stopErr: errors.New("stop barrier failed")}
+	handler.SetWorkflowContinuationRunner(continuationRunner)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/apps/"+ids.agentID.String()+"/runtime/conversations/"+ids.conversationID.String()+"/stop", nil)
+	c.Params = gin.Params{
+		{Key: "agent_id", Value: ids.agentID.String()},
+		{Key: "conversation_id", Value: ids.conversationID.String()},
+	}
+	c.Set("account_id", ids.accountID.String())
+	c.Set("organization_id", ids.organizationID.String())
+
+	handler.StopAgentRuntimeConversation(c)
+
+	requireRuntimeResponseCode(t, w, response.ErrSystemError)
+	if !continuationRunner.stopCalled {
+		t.Fatal("StopWorkflowContinuation was not called")
+	}
+	if runtimeSvc.stopConversationCalled {
+		t.Fatal("StopConversation must not run after the workflow barrier fails")
+	}
+}
+
 func TestAgentRuntimeContinuationRequiresCallerScopedMessage(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -979,6 +1022,8 @@ type webAppRuntimePermissionService struct {
 	lastMessageID               uuid.UUID
 	lastRequestID               string
 	lastUserInputRequest        runtimedto.UserInputContinuationRequest
+	activeMessageID             *uuid.UUID
+	messageMetadata             map[string]interface{}
 }
 
 func (s *webAppRuntimePermissionService) GetConversationByCaller(_ context.Context, scope runtimeservice.Scope, caller runtimeservice.Caller, id uuid.UUID) (*runtimemodel.Conversation, error) {
@@ -989,7 +1034,14 @@ func (s *webAppRuntimePermissionService) GetConversationByCaller(_ context.Conte
 	if s.getConversationErr != nil {
 		return nil, s.getConversationErr
 	}
-	return &runtimemodel.Conversation{ID: id}, nil
+	return &runtimemodel.Conversation{ID: id, ActiveMessageID: s.activeMessageID}, nil
+}
+
+func (s *webAppRuntimePermissionService) GetMessageByCaller(_ context.Context, scope runtimeservice.Scope, caller runtimeservice.Caller, id uuid.UUID) (*runtimemodel.Message, *runtimemodel.Conversation, error) {
+	s.lastScope = scope
+	s.lastCaller = caller
+	s.lastMessageID = id
+	return &runtimemodel.Message{ID: id, Metadata: s.messageMetadata}, &runtimemodel.Conversation{ID: s.lastConversationID}, nil
 }
 
 func (s *webAppRuntimePermissionService) DeleteConversation(_ context.Context, scope runtimeservice.Scope, id uuid.UUID) error {
@@ -1141,6 +1193,7 @@ func (s *webAppRuntimePermissionService) RunConfiguredUserInputContinuationStrea
 type fakeWorkflowContinuationRunner struct {
 	resumeApprovalCalled bool
 	stopCalled           bool
+	stopErr              error
 }
 
 func (r *fakeWorkflowContinuationRunner) ResumeApprovalWorkflow(context.Context, *approvalruntime.Form) error {
@@ -1154,7 +1207,7 @@ func (r *fakeWorkflowContinuationRunner) ResumeQuestionAnswerWorkflow(context.Co
 
 func (r *fakeWorkflowContinuationRunner) StopWorkflowContinuation(context.Context, string, string) error {
 	r.stopCalled = true
-	return nil
+	return r.stopErr
 }
 
 func assertWebAppRuntimeCallerScope(t *testing.T, scope runtimeservice.Scope, caller runtimeservice.Caller, ids webAppRuntimePermissionIDs) {

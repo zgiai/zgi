@@ -48,24 +48,25 @@ const (
 )
 
 type BillingAttempt struct {
-	AttemptID         string     `gorm:"column:attempt_id;primaryKey;size:120"`
-	RequestID         string     `gorm:"column:request_id;size:100;not null;index"`
-	OrganizationID    uuid.UUID  `gorm:"column:organization_id;type:uuid;not null;index"`
-	Lane              string     `gorm:"column:lane;size:20;not null"`
-	RouteID           *uuid.UUID `gorm:"column:route_id;type:uuid"`
-	ProviderID        *uuid.UUID `gorm:"column:provider_id;type:uuid"`
-	ModelID           *uuid.UUID `gorm:"column:model_id;type:uuid"`
-	QuotaSubjectType  string     `gorm:"column:quota_subject_type;size:20;not null"`
-	QuotaSubjectID    string     `gorm:"column:quota_subject_id;size:64;not null"`
-	Status            string     `gorm:"column:status;size:30;not null;index"`
-	InvocationResult  *string    `gorm:"column:invocation_result;size:20"`
-	ErrorCode         *string    `gorm:"column:error_code;size:100"`
-	ErrorMessage      *string    `gorm:"column:error_message;type:text"`
-	ReconcileAttempts int        `gorm:"column:reconcile_attempts;not null;default:0"`
-	NextReconcileAt   *time.Time `gorm:"column:next_reconcile_at"`
-	LastReconcileAt   *time.Time `gorm:"column:last_reconcile_at"`
-	CreatedAt         time.Time  `gorm:"column:created_at;not null"`
-	UpdatedAt         time.Time  `gorm:"column:updated_at;not null"`
+	AttemptID         string           `gorm:"column:attempt_id;primaryKey;size:120"`
+	RequestID         string           `gorm:"column:request_id;size:100;not null;index"`
+	OrganizationID    uuid.UUID        `gorm:"column:organization_id;type:uuid;not null;index"`
+	Lane              string           `gorm:"column:lane;size:20;not null"`
+	RouteID           *uuid.UUID       `gorm:"column:route_id;type:uuid"`
+	ProviderID        *uuid.UUID       `gorm:"column:provider_id;type:uuid"`
+	ModelID           *uuid.UUID       `gorm:"column:model_id;type:uuid"`
+	InvocationSource  InvocationSource `gorm:"column:invocation_source;size:20;not null;default:'unknown'"`
+	QuotaSubjectType  string           `gorm:"column:quota_subject_type;size:20;not null"`
+	QuotaSubjectID    string           `gorm:"column:quota_subject_id;size:64;not null"`
+	Status            string           `gorm:"column:status;size:30;not null;index"`
+	InvocationResult  *string          `gorm:"column:invocation_result;size:20"`
+	ErrorCode         *string          `gorm:"column:error_code;size:100"`
+	ErrorMessage      *string          `gorm:"column:error_message;type:text"`
+	ReconcileAttempts int              `gorm:"column:reconcile_attempts;not null;default:0"`
+	NextReconcileAt   *time.Time       `gorm:"column:next_reconcile_at"`
+	LastReconcileAt   *time.Time       `gorm:"column:last_reconcile_at"`
+	CreatedAt         time.Time        `gorm:"column:created_at;not null"`
+	UpdatedAt         time.Time        `gorm:"column:updated_at;not null"`
 }
 
 func (BillingAttempt) TableName() string {

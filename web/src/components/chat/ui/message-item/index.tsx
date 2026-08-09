@@ -5,10 +5,11 @@ import type { Message, NodeRunStatus } from '@/components/chat/types';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Button } from '@/components/ui/button';
 import WorkflowRunMonitor from '@/components/chat/ui/workflow-run-monitor';
-import { Bot, Copy, Loader } from 'lucide-react';
+import { Bot, CirclePause, CircleStop, Copy, Loader } from 'lucide-react';
 import { ModelIcon } from 'modelicons';
 import { useT } from '@/i18n';
 import { isSensitiveOutputBlockedValue } from '@/utils/model-output-filter';
+import { cn } from '@/lib/utils';
 import {
   normalizeQuestionAnswerTranscript,
   QuestionAnswerTranscript,
@@ -61,6 +62,7 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
   messageAddon,
 }) => {
   const t = useT('common');
+  const tAgents = useT('agents');
   // Defer heavy markdown parsing under streaming to reduce render pressure
   const deferredAnswer = useDeferredValue(message.answer);
 
@@ -115,6 +117,20 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
       wfStatus === 'expired';
     return clientCompleted || wfEnded;
   }, [message.clientState?.phase, message.WorkflowRunInfo?.status]);
+  const workflowPauseStatus =
+    message.WorkflowRunInfo?.status === 'pending_approval' ||
+    message.clientState?.status === 'pending_approval'
+      ? 'pending_approval'
+      : message.WorkflowRunInfo?.status === 'pending_question' ||
+          message.clientState?.status === 'pending_question'
+        ? 'pending_question'
+        : null;
+  const isEmptyStoppedWorkflow =
+    !hasAi &&
+    !hasImages &&
+    !hasAddon &&
+    !hasQuestionAnswerTranscript &&
+    (message.WorkflowRunInfo?.status === 'stopped' || message.clientState?.status === 'stopped');
   const nodeItems = useMemo(() => {
     const nodes = message.WorkflowRunInfo?.runNodeInfo ?? [];
     const mapStatus = (
@@ -217,10 +233,51 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
               <MarkdownViewer
                 className="md-viewer break-words"
                 content={displayAnswer}
-                preserveSoftBreaks
                 isStreaming={isClientLoading}
                 renderIdentity={message.messageId}
               />
+            ) : workflowPauseStatus || isEmptyStoppedWorkflow ? (
+              <div
+                className={cn(
+                  'flex items-start gap-3 rounded-xl border px-4 py-3 not-prose',
+                  workflowPauseStatus
+                    ? 'border-warning/30 bg-warning/5'
+                    : 'border-border/60 bg-muted/35'
+                )}
+                role="status"
+                aria-live="polite"
+              >
+                <div
+                  className={cn(
+                    'flex size-9 shrink-0 items-center justify-center rounded-full',
+                    workflowPauseStatus
+                      ? 'bg-warning/15 text-warning'
+                      : 'bg-muted text-muted-foreground'
+                  )}
+                >
+                  {workflowPauseStatus ? (
+                    <CirclePause className="size-4" aria-hidden="true" />
+                  ) : (
+                    <CircleStop className="size-4" aria-hidden="true" />
+                  )}
+                </div>
+                <div className="min-w-0 space-y-0.5">
+                  <div className="text-sm font-medium text-foreground">
+                    {workflowPauseStatus === 'pending_approval'
+                      ? tAgents('workflowRunMonitor.pendingApprovalTitle')
+                      : workflowPauseStatus === 'pending_question'
+                        ? tAgents('workflowRunMonitor.pendingQuestionTitle')
+                        : tAgents('workflowRunMonitor.stoppedTitle')}
+                  </div>
+                  <div className="text-xs leading-5 text-muted-foreground">
+                    {workflowPauseStatus === 'pending_approval'
+                      ? tAgents('workflowRunMonitor.pendingApprovalDescription')
+                      : workflowPauseStatus === 'pending_question'
+                        ? tAgents('workflowRunMonitor.pendingQuestionDescription')
+                        : tAgents('workflowRunMonitor.stoppedDescription')}
+                  </div>
+                </div>
+              </div>
             ) : isClientLoading ? (
               <div className="space-y-2">
                 <Skeleton className="h-4 w-2/3" />

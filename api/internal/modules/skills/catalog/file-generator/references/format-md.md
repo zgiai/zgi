@@ -8,7 +8,7 @@ Use this reference when `format` is `md` or `markdown`.
 - `format`: Use `md`.
 - `filename`: Optional display filename without path separators. The `.md` extension is added automatically.
 - `title`: Ignored for Markdown.
-- `lifecycle`: Optional `persistent` or `temporary`. Defaults to `persistent`.
+- `lifecycle`: Optional `persistent` or `temporary`. Defaults to `temporary`.
 
 ## Content Rules
 

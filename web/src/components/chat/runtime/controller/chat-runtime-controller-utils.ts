@@ -1,4 +1,4 @@
-import type { AIChatMessage } from '@/services/types/aichat';
+import type { AIChatMessage, AIChatMessageFile } from '@/services/types/aichat';
 import type { AIChatControllerState } from '@/components/chat/controllers/aichat';
 import { generateClientId } from '@/utils/client-id';
 
@@ -80,6 +80,9 @@ export function clearStreamingRuntimeMessageMetadata(message: AIChatMessage): AI
   }
 
   const metadata = { ...message.metadata };
+  delete metadata.answer_before_timeline_length;
+  delete metadata.presentation_version;
+  delete metadata.presentation;
   delete metadata.has_trace;
   delete metadata.skill_invocations;
   delete metadata.selected_skill_ids;
@@ -97,4 +100,15 @@ export function clearStreamingRuntimeMessageMetadata(message: AIChatMessage): AI
     ...message,
     metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
   };
+}
+
+/**
+ * Return the uploaded inputs that belong to a historical user turn so an edit
+ * or branched regeneration can create an equivalent model request. The API
+ * resolves the IDs again and does not trust the cached extraction fields.
+ */
+export function messageFilesForReplay(message: AIChatMessage): AIChatMessageFile[] {
+  return (message.metadata?.files ?? [])
+    .filter(file => typeof file.id === 'string' && file.id.trim().length > 0)
+    .map(file => ({ ...file }));
 }

@@ -45,6 +45,7 @@ var (
 	ErrInvalidInput           = errors.New("invalid input")
 	ErrModelIdleTimeout       = errors.New("model idle timeout")
 	ErrFinalAnswerUnavailable = errors.New("final answer unavailable")
+	ErrAgentOutputTruncated   = errors.New("agent output truncated")
 )
 
 type WorkflowApprovalPendingError struct {
@@ -145,17 +146,18 @@ type Event struct {
 }
 
 type Runner struct {
-	LLMClient         llmclient.LLMClient
-	SkillRuntime      *skills.Runtime
-	AppContext        *llmclient.AppContext
-	OnEvent           func(Event) error
-	OnTrace           func([]skills.SkillTrace, skills.SkillTrace)
-	OnArtifact        func(map[string]interface{})
-	OnModelInvocation func(ModelInvocationTrace)
-	FallbackDelay     time.Duration
-	ModelIdleTimeout  time.Duration
-	diagnostics       modelInvocationDiagnostics
-	requestBudget     planningRequestBudget
+	LLMClient             llmclient.LLMClient
+	SkillRuntime          *skills.Runtime
+	AppContext            *llmclient.AppContext
+	OnEvent               func(Event) error
+	OnTrace               func([]skills.SkillTrace, skills.SkillTrace)
+	OnArtifact            func(map[string]interface{})
+	OnModelInvocation     func(ModelInvocationTrace)
+	FallbackDelay         time.Duration
+	ModelIdleTimeout      time.Duration
+	ModelProgressSchedule ModelProgressSchedule
+	diagnostics           modelInvocationDiagnostics
+	requestBudget         planningRequestBudget
 }
 
 type RunRequest struct {
@@ -163,6 +165,9 @@ type RunRequest struct {
 	Resolved                       *skills.ResolvedSkills
 	ProtocolToolsOnly              bool
 	LegacyToolChat                 bool
+	NativeAgentLoop                bool
+	NativeToolSet                  *skills.NativeToolSet
+	NativeSkillSession             *skills.NativeSkillSession
 	ExecutionContext               skills.ExecutionContext
 	PreferExplicitFinalAnswer      bool
 	SuppressInitialNaturalProgress bool

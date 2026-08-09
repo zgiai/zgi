@@ -12,7 +12,6 @@ import (
 	llmmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/internal/modules/llm/shared"
-	"github.com/zgiai/zgi/api/internal/observability"
 	"github.com/zgiai/zgi/api/pkg/logger"
 	"go.uber.org/zap"
 )
@@ -99,13 +98,14 @@ func (s *llmGatewayServiceImpl) chatCompletionInternal(
 
 	providerSelections, err := s.selectProvidersWithChannelRouter(ctx, shadowOrganizationID, effectiveReq.Provider, effectiveReq.Model, 3)
 	if err != nil {
+		reportLLMSelectionFailure(ctx, err, req.Model, organizationID.String(), shadowOrganizationID.String())
 		return nil, fmt.Errorf("failed to select provider: %w", err)
 	}
 
 	logger.DebugContext(ctx, "llm gateway timing", "step", "select_providers", "latency_ms", time.Since(t4b).Milliseconds(), "provider_count", len(providerSelections))
 
 	if len(providerSelections) == 0 {
-		return nil, NewNoProviderAvailableError(effectiveReq.Model, organizationID.String())
+		return nil, reportedNoProviderAvailableError(ctx, effectiveReq.Model, organizationID.String(), shadowOrganizationID.String())
 	}
 
 	// 5. Try each provider selection with failover
@@ -114,7 +114,7 @@ func (s *llmGatewayServiceImpl) chatCompletionInternal(
 
 	for attemptIdx, providerSelection := range providerSelections {
 		response, err := s.tryChatCompletion(ctx, apiKey, appCtx, effectiveReq, req, providerSelection, promptTokens, completionTokens,
-			organizationID, shadowOrganizationID, shadowOwnerID, requestID, startTime, attemptIdx)
+			organizationID, shadowOrganizationID, shadowOwnerID, requestID, startTime, attemptIdx, attemptIdx == len(providerSelections)-1)
 		if err == nil {
 			logger.DebugContext(ctx, "llm gateway timing", "step", "try_completion", "latency_ms", time.Since(t5).Milliseconds())
 			logger.InfoContext(ctx, "llm gateway request completed", "latency_ms", time.Since(startTime).Milliseconds(), "attempt_count", attemptIdx+1)
@@ -161,6 +161,7 @@ func (s *llmGatewayServiceImpl) tryChatCompletion(
 	requestID string,
 	startTime time.Time,
 	attemptIdx int,
+	finalAttempt bool,
 ) (*adapter.ChatResponse, error) {
 	// Calculate estimated credits
 	tCalc := time.Now()
@@ -168,7 +169,7 @@ func (s *llmGatewayServiceImpl) tryChatCompletion(
 
 	quote, err := s.quoteTokenPricingForSelection(ctx, providerSelection, pricingModelRefFromSelection(providerSelection), promptTokens, completionTokens)
 	if err != nil {
-		return nil, fmt.Errorf("failed to calculate credits: %w", err)
+		return nil, wrapPricingCalculationError(err)
 	}
 	estimatedCredits := quote.TotalCredits
 
@@ -221,6 +222,7 @@ func (s *llmGatewayServiceImpl) tryChatCompletion(
 			return nil, rollbackErr
 		}
 		s.logProviderError(ctx, attemptIdx, providerSelection, adapterErr, "adapter_creation_failed")
+		reportLLMAdapterFailure(ctx, adapterErr, providerSelection.Provider.Provider, providerSelection.Model.Model, organizationID.String(), attemptIdx, channelID, providerSelection.UseSystemProvider, finalAttempt)
 		return nil, fmt.Errorf("failed to create adapter: %w", adapterErr)
 	}
 
@@ -234,6 +236,7 @@ func (s *llmGatewayServiceImpl) tryChatCompletion(
 	responseTime := time.Since(startTime).Milliseconds()
 
 	if callErr != nil {
+		reportLLMProviderFailure(ctx, callErr, "llm.provider.request_failed", providerSelection.Provider.Provider, providerSelection.Model.Model, organizationID.String(), attemptIdx, channelID, providerSelection.UseSystemProvider, finalAttempt)
 		if settleErr := s.handleProviderError(ctx, billingCtx, providerSelection, channelID, responseTime, attemptIdx, callErr); settleErr != nil {
 			s.traceChatCompletion(ctx, traceReq, response, startTime, time.Now(), billingCtx, settleErr)
 			return nil, settleErr
@@ -253,6 +256,7 @@ func (s *llmGatewayServiceImpl) tryChatCompletion(
 	// Success - settle billing
 	tSettle := time.Now()
 	if err := s.settleChatSuccess(ctx, billingCtx, providerSelection, channelID, response.Usage, response.Settlement, responseTime); err != nil {
+		s.traceChatCompletion(ctx, traceReq, response, startTime, time.Now(), billingCtx, err)
 		return nil, err
 	}
 	logger.DebugContext(ctx, "llm gateway timing", "step", "settle_billing", "latency_ms", time.Since(tSettle).Milliseconds(), "attempt", attemptIdx+1)
@@ -337,31 +341,17 @@ func (s *llmGatewayServiceImpl) chatCompletionStreamInternal(
 
 	providerSelections, err := s.selectProvidersWithChannelRouter(ctx, shadowOrganizationID, effectiveReq.Provider, effectiveReq.Model, 3)
 	if err != nil {
-		observability.CaptureError(ctx, "llm.provider.selection_failed", err,
-			observability.Tags(map[string]string{"llm.provider": "unknown", "llm.model": req.Model}),
-			observability.Attributes(map[string]any{
-				"organization_id":  organizationID.String(),
-				"shadow_tenant_id": shadowOrganizationID.String(),
-			}),
-		)
+		reportLLMSelectionFailure(ctx, err, req.Model, organizationID.String(), shadowOrganizationID.String())
 		return nil, fmt.Errorf("failed to select provider: %w", err)
 	}
 	if len(providerSelections) == 0 {
-		err := ErrNoProviderAvailable
-		observability.CaptureError(ctx, "llm.provider.unavailable", err,
-			observability.Tags(map[string]string{"llm.provider": "unknown", "llm.model": req.Model}),
-			observability.Attributes(map[string]any{
-				"organization_id":  organizationID.String(),
-				"shadow_tenant_id": shadowOrganizationID.String(),
-			}),
-		)
-		return nil, err
+		return nil, reportedNoProviderAvailableError(ctx, effectiveReq.Model, organizationID.String(), shadowOrganizationID.String())
 	}
 
 	// 5. Try each provider selection with failover
 	var lastErr error
 	for attemptIdx, providerSelection := range providerSelections {
-		outputChan, err := s.tryChatCompletionStream(ctx, apiKey, appCtx, effectiveReq, req, providerSelection, promptTokens, completionTokens, shadowOrganizationID, shadowOwnerID, organizationID, requestID, startTime, attemptIdx)
+		outputChan, err := s.tryChatCompletionStream(ctx, apiKey, appCtx, effectiveReq, req, providerSelection, promptTokens, completionTokens, shadowOrganizationID, shadowOwnerID, organizationID, requestID, startTime, attemptIdx, attemptIdx == len(providerSelections)-1)
 		if err == nil {
 			return outputChan, nil
 		}
@@ -424,12 +414,13 @@ func (s *llmGatewayServiceImpl) tryChatCompletionStream(
 	requestID string,
 	startTime time.Time,
 	attemptIdx int,
+	finalAttempt bool,
 ) (<-chan adapter.StreamResponse, error) {
 	// Calculate estimated credits
 	attemptID := buildAttemptID(requestID, attemptIdx)
 	quote, err := s.quoteTokenPricingForSelection(ctx, providerSelection, pricingModelRefFromSelection(providerSelection), promptTokens, completionTokens)
 	if err != nil {
-		return nil, fmt.Errorf("failed to calculate credits: %w", err)
+		return nil, wrapPricingCalculationError(err)
 	}
 	estimatedCredits := quote.TotalCredits
 
@@ -468,6 +459,7 @@ func (s *llmGatewayServiceImpl) tryChatCompletionStream(
 			return nil, rollbackErr
 		}
 		s.logProviderError(ctx, attemptIdx, providerSelection, err, "adapter_creation_failed")
+		reportLLMAdapterFailure(ctx, err, providerSelection.Provider.Provider, providerSelection.Model.Model, organizationID.String(), attemptIdx, channelID, providerSelection.UseSystemProvider, finalAttempt)
 		return nil, fmt.Errorf("failed to create adapter: %w", err)
 	}
 
@@ -485,29 +477,20 @@ func (s *llmGatewayServiceImpl) tryChatCompletionStream(
 	streamChan, err := providerAdapter.ChatCompletionStream(ctx, normalizedReq)
 	if err != nil {
 		if rollbackErr := s.rollbackPreDeduction(ctx, billingCtx); rollbackErr != nil {
+			s.traceStreamingChatCompletion(ctx, traceReq, "", startTime, time.Now(), billingCtx, 0, 0, rollbackErr)
 			return nil, rollbackErr
 		}
 		s.logProviderError(ctx, attemptIdx, providerSelection, err, "stream_call_failed")
 		s.recordUpstreamProviderError(ctx, providerSelection, billingCtx, err)
 
-		observability.CaptureError(ctx, "llm.provider.stream_failed", err,
-			observability.Tags(map[string]string{
-				"llm.provider": providerSelection.Provider.Provider,
-				"llm.model":    providerSelection.Model.Model,
-			}),
-			observability.Attributes(map[string]any{
-				"organization_id":     organizationID.String(),
-				"attempt_index":       attemptIdx,
-				"channel_id":          channelID,
-				"use_system_provider": providerSelection.UseSystemProvider,
-			}),
-		)
+		reportLLMProviderFailure(ctx, err, "llm.provider.stream_failed", providerSelection.Provider.Provider, providerSelection.Model.Model, organizationID.String(), attemptIdx, channelID, providerSelection.UseSystemProvider, finalAttempt)
 
 		if channelID != nil {
 			autoBan := providerSelection.HasRoute() && providerSelection.AutoBan
 			s.healthTracker.RecordFailure(ctx, *channelID, autoBan)
 		}
 
+		s.traceStreamingChatCompletion(ctx, traceReq, "", startTime, time.Now(), billingCtx, 0, 0, err)
 		return nil, fmt.Errorf("provider stream call failed: %w", err)
 	}
 

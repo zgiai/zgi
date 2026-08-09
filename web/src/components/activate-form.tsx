@@ -108,6 +108,8 @@ const ActivateForm = () => {
   };
   const statusMessage = statusMessages[effectiveStatus || 'invalid'];
   const canContinue = result?.is_valid && effectiveStatus !== 'email_mismatch';
+  const invitation = result?.data;
+  const hasInvitationDestination = Boolean(invitation?.organization_name || invitation?.workspace_name);
 
   return (
     <div className="flex w-full grow items-center justify-center px-6 md:px-[108px]">
@@ -118,23 +120,51 @@ const ActivateForm = () => {
           {!loading && !canContinue && (
             <Alert variant="destructive"><Icons.AlertCircle className="h-4 w-4" /><AlertDescription>{statusMessage}</AlertDescription></Alert>
           )}
-          {!loading && canContinue && result?.data && (
+          {!loading && canContinue && invitation && (
             <form className="space-y-4" onSubmit={submit}>
-              {result.data.workspace_name && (
-                <Alert><AlertDescription>{t('invitationActivation.destination', { organization: result.data.organization_name ? t('invitationActivation.organizationPrefix', { name: result.data.organization_name }) : '', workspace: result.data.workspace_name })}</AlertDescription></Alert>
-              )}
-              {(result.data.inviter_name || result.data.role) && (
-                <div className="rounded-lg border bg-muted/30 p-3 text-sm text-muted-foreground">
-                  {result.data.inviter_name && <p>{t('invitationActivation.inviter', { name: result.data.inviter_name })}</p>}
-                  {result.data.role && <p>{t('invitationActivation.role', { role: result.data.role })}</p>}
+              {hasInvitationDestination && (
+                <div className="space-y-3 rounded-lg border bg-muted/30 p-4">
+                  <p className="text-sm font-medium">{t('invitationActivation.invitationDetails')}</p>
+                  {invitation.organization_name && (
+                    <div className="flex items-center gap-3">
+                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-background text-muted-foreground">
+                        <Icons.Building className="h-4 w-4" />
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-xs text-muted-foreground">
+                          {t('invitationActivation.organization')}
+                        </p>
+                        <p className="truncate text-sm font-medium">{invitation.organization_name}</p>
+                      </div>
+                    </div>
+                  )}
+                  {invitation.workspace_name && (
+                    <div className="flex items-center gap-3">
+                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-background text-muted-foreground">
+                        <Icons.Users className="h-4 w-4" />
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-xs text-muted-foreground">
+                          {t('invitationActivation.workspace')}
+                        </p>
+                        <p className="truncate text-sm font-medium">{invitation.workspace_name}</p>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
-              <div className="space-y-2"><Label htmlFor="invite-email">{t('invitationActivation.invitedEmail')}</Label><Input id="invite-email" value={result.data.email} disabled /></div>
-              {!result.data.account_exists && <div className="space-y-2"><Label htmlFor="invite-name">{t('invitationActivation.name')}</Label><Input id="invite-name" value={name} onChange={e => setName(e.target.value)} maxLength={30} required /></div>}
-              <div className="space-y-2"><Label htmlFor="invite-password">{t(result.data.account_exists ? 'invitationActivation.loginPassword' : 'invitationActivation.setPassword')}</Label><PasswordInput id="invite-password" value={password} onChange={e => setPassword(e.target.value)} minLength={8} required /></div>
-              {!result.data.account_exists && <div className="space-y-2"><Label htmlFor="invite-password-confirm">{t('invitationActivation.confirmPassword')}</Label><PasswordInput id="invite-password-confirm" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} minLength={8} required /></div>}
+              {(invitation.inviter_name || invitation.role) && (
+                <div className="rounded-lg border bg-muted/30 p-3 text-sm text-muted-foreground">
+                  {invitation.inviter_name && <p>{t('invitationActivation.inviter', { name: invitation.inviter_name })}</p>}
+                  {invitation.role && <p>{t('invitationActivation.role', { role: invitation.role })}</p>}
+                </div>
+              )}
+              <div className="space-y-2"><Label htmlFor="invite-email">{t('invitationActivation.invitedEmail')}</Label><Input id="invite-email" value={invitation.email} disabled /></div>
+              {!invitation.account_exists && <div className="space-y-2"><Label htmlFor="invite-name">{t('invitationActivation.name')}</Label><Input id="invite-name" value={name} onChange={e => setName(e.target.value)} maxLength={30} required /></div>}
+              <div className="space-y-2"><Label htmlFor="invite-password">{t(invitation.account_exists ? 'invitationActivation.loginPassword' : 'invitationActivation.setPassword')}</Label><PasswordInput id="invite-password" value={password} onChange={e => setPassword(e.target.value)} minLength={8} required /></div>
+              {!invitation.account_exists && <div className="space-y-2"><Label htmlFor="invite-password-confirm">{t('invitationActivation.confirmPassword')}</Label><PasswordInput id="invite-password-confirm" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} minLength={8} required /></div>}
               {error && <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>}
-              <Button className="w-full" type="submit" disabled={submitting}>{submitting && <Icons.Spinner className="mr-2 h-4 w-4 animate-spin" />}{t(result.data.account_exists ? 'invitationActivation.loginAndJoin' : 'invitationActivation.createAndJoin')}</Button>
+              <Button className="w-full" type="submit" disabled={submitting}>{submitting && <Icons.Spinner className="mr-2 h-4 w-4 animate-spin" />}{t(invitation.account_exists ? 'invitationActivation.loginAndJoin' : 'invitationActivation.createAndJoin')}</Button>
             </form>
           )}
         </CardContent>

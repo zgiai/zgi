@@ -70,20 +70,38 @@ func TestListAgentWorkflowsRequiresQueryForConversationalWorkflow(t *testing.T) 
 }
 
 func TestRunAgentTaskWorkflowWithNoStartInputsAcceptsEmptyInputs(t *testing.T) {
-	runner := &fakeWorkflowRunner{}
-	runtimeTool := workflowRuntimeTool(t, ToolRunAgentWorkflow, runner)
+	for _, params := range []map[string]interface{}{
+		{"binding_id": "approval-flow"},
+		{"binding_id": "approval-flow", "inputs": nil},
+	} {
+		runner := &fakeWorkflowRunner{}
+		runtimeTool := workflowRuntimeTool(t, ToolRunAgentWorkflow, runner)
+		if _, err := runtimeTool.Invoke(context.Background(), "caller-1", params, nil, nil, nil); err != nil {
+			t.Fatalf("Invoke(%#v) error = %v", params, err)
+		}
+		if _, exists := runner.lastReq.Inputs["query"]; exists {
+			t.Fatalf("task workflow inputs = %#v, want no query", runner.lastReq.Inputs)
+		}
+		if _, exists := runner.lastReq.Inputs["sys.query"]; exists {
+			t.Fatalf("task workflow inputs = %#v, want no sys.query", runner.lastReq.Inputs)
+		}
+	}
+}
 
-	_, err := runtimeTool.Invoke(context.Background(), "caller-1", map[string]interface{}{
-		"binding_id": "approval-flow",
-	}, nil, nil, nil)
+func TestRunAgentWorkflowToolInputsParameterIsOptional(t *testing.T) {
+	tool, err := NewProvider(nil).GetTool(ToolRunAgentWorkflow)
 	if err != nil {
-		t.Fatalf("Invoke() error = %v", err)
+		t.Fatalf("GetTool() error = %v", err)
 	}
-	if _, exists := runner.lastReq.Inputs["query"]; exists {
-		t.Fatalf("task workflow inputs = %#v, want no query", runner.lastReq.Inputs)
+	parameters := tool.GetEntity().Parameters
+	if len(parameters) != 2 {
+		t.Fatalf("parameter count = %d, want 2", len(parameters))
 	}
-	if _, exists := runner.lastReq.Inputs["sys.query"]; exists {
-		t.Fatalf("task workflow inputs = %#v, want no sys.query", runner.lastReq.Inputs)
+	if parameters[0].Name != "binding_id" || !parameters[0].Required {
+		t.Fatalf("binding_id parameter = %+v, want required", parameters[0])
+	}
+	if parameters[1].Name != "inputs" || parameters[1].Required {
+		t.Fatalf("inputs parameter = %+v, want optional", parameters[1])
 	}
 }
 

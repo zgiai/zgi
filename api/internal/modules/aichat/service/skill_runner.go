@@ -1009,13 +1009,14 @@ func (s *service) handleCallSkillTool(
 	toolName := stringArg(args, "tool_name")
 	toolArgs := mapArg(args, "arguments")
 	argumentSummary := summarizeSkillToolArguments(skillID, toolName, toolArgs)
-	s.emitPreparedEvent(ctx, prepared, streamEventSkillCallStart, skillCallStartPayload(prepared, skillID, toolName, argumentSummary), onEvent)
+	s.emitPreparedEvent(ctx, prepared, streamEventSkillCallStart, skillCallStartPayload(prepared, callID, skillID, toolName, argumentSummary), onEvent)
 	invocation, err := s.skillRuntime.CallSkillTool(ctx, resolved, skillID, toolName, toolArgs, execCtx, callID)
 	if invocation == nil {
 		if err == nil {
 			err = fmt.Errorf("%w: skill tool returned no invocation result", ErrInvalidInput)
 		}
 		trace := failedSkillTrace("tool_call", toolName, err)
+		trace.InvocationID = strings.TrimSpace(callID)
 		trace.SkillID = skillID
 		trace.Arguments = argumentSummary
 		return recoverableSkillStep(trace, skills.ToolResultMessage(callID, recoverableSkillToolErrorPayload(err, "fix the tool_name or arguments and retry", skillID, toolName)), true, false)

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
-	"sort"
 	"strings"
 	"time"
 
@@ -20,10 +19,13 @@ import (
 
 const (
 	llmGatewayTracerName         = "zgi.llm.gateway"
+	llmTraceSchemaVersion        = "v1"
 	defaultOTELPayloadCharacters = 65536
 	maxRerankTraceResults        = 5
 
 	otelObservationGeneration = "generation"
+	otelObservationEmbedding  = "embedding"
+	otelObservationRetriever  = "retriever"
 	otelObservationDefault    = "DEFAULT"
 	otelObservationError      = "ERROR"
 
@@ -35,6 +37,7 @@ const (
 type llmTracePayload struct {
 	Name            string
 	Operation       string
+	ObservationType string
 	Input           interface{}
 	Output          interface{}
 	ModelParameters interface{}
@@ -60,17 +63,23 @@ func (s *llmGatewayServiceImpl) traceChatCompletion(
 	billingCtx *BillingContext,
 	err error,
 ) {
-	traceLLMOperation(ctx, llmTracePayload{
-		Name:            "llm.chat",
-		Operation:       "chat",
-		Input:           chatInput(req),
-		Output:          chatCompletionOutput(resp),
-		ModelParameters: chatModelParameters(req),
-		StartTime:       startTime,
-		EndTime:         endTime,
-		Billing:         billingCtx,
-		Err:             err,
-	})
+	if billingCtx == nil || !llmTraceRecordingEnabled(ctx) {
+		return
+	}
+	payload := llmTracePayload{
+		Name:      "llm.chat",
+		Operation: "chat",
+		StartTime: startTime,
+		EndTime:   endTime,
+		Billing:   billingCtx,
+		Err:       err,
+	}
+	if llmTraceContentEnabled() {
+		payload.Input = chatInput(req)
+		payload.Output = chatCompletionOutput(resp)
+		payload.ModelParameters = chatModelParameters(req)
+	}
+	traceLLMOperation(ctx, payload)
 }
 
 func (s *llmGatewayServiceImpl) traceStreamingChatCompletion(
@@ -84,17 +93,12 @@ func (s *llmGatewayServiceImpl) traceStreamingChatCompletion(
 	completionTokens int,
 	err error,
 ) {
-	traceLLMOperation(ctx, llmTracePayload{
+	if billingCtx == nil || !llmTraceRecordingEnabled(ctx) {
+		return
+	}
+	payload := llmTracePayload{
 		Name:      "llm.chat.stream",
 		Operation: "chat",
-		Input:     chatInput(req),
-		Output: map[string]interface{}{
-			"role":    "assistant",
-			"content": fullResponse,
-		},
-		ModelParameters: map[string]interface{}{
-			"stream": true,
-		},
 		StartTime: startTime,
 		EndTime:   endTime,
 		Billing:   billingCtx,
@@ -104,7 +108,16 @@ func (s *llmGatewayServiceImpl) traceStreamingChatCompletion(
 			TotalTokens:      promptTokens + completionTokens,
 		},
 		Err: err,
-	})
+	}
+	if llmTraceContentEnabled() {
+		payload.Input = chatInput(req)
+		payload.Output = map[string]interface{}{
+			"role":    "assistant",
+			"content": fullResponse,
+		}
+		payload.ModelParameters = map[string]interface{}{"stream": true}
+	}
+	traceLLMOperation(ctx, payload)
 }
 
 func (s *llmGatewayServiceImpl) traceCreateResponse(
@@ -116,17 +129,23 @@ func (s *llmGatewayServiceImpl) traceCreateResponse(
 	billingCtx *BillingContext,
 	err error,
 ) {
-	traceLLMOperation(ctx, llmTracePayload{
-		Name:            "llm.responses",
-		Operation:       "responses",
-		Input:           responseInput(req),
-		Output:          responseOutput(resp),
-		ModelParameters: responseModelParameters(req),
-		StartTime:       startTime,
-		EndTime:         endTime,
-		Billing:         billingCtx,
-		Err:             err,
-	})
+	if billingCtx == nil || !llmTraceRecordingEnabled(ctx) {
+		return
+	}
+	payload := llmTracePayload{
+		Name:      "llm.responses",
+		Operation: "responses",
+		StartTime: startTime,
+		EndTime:   endTime,
+		Billing:   billingCtx,
+		Err:       err,
+	}
+	if llmTraceContentEnabled() {
+		payload.Input = responseInput(req)
+		payload.Output = responseOutput(resp)
+		payload.ModelParameters = responseModelParameters(req)
+	}
+	traceLLMOperation(ctx, payload)
 }
 
 func (s *llmGatewayServiceImpl) traceEmbeddings(
@@ -138,17 +157,101 @@ func (s *llmGatewayServiceImpl) traceEmbeddings(
 	billingCtx *BillingContext,
 	err error,
 ) {
-	traceLLMOperation(ctx, llmTracePayload{
+	if billingCtx == nil || !llmTraceRecordingEnabled(ctx) {
+		return
+	}
+	payload := llmTracePayload{
 		Name:            "llm.embeddings",
 		Operation:       "embeddings",
-		Input:           embeddingInputSummary(req),
-		Output:          embeddingOutputSummary(resp),
-		ModelParameters: embeddingModelParameters(req),
+		ObservationType: otelObservationEmbedding,
 		StartTime:       startTime,
 		EndTime:         endTime,
 		Billing:         billingCtx,
 		Err:             err,
+	}
+	if llmTraceContentEnabled() {
+		payload.Input = embeddingInputSummary(req)
+		payload.Output = embeddingOutputSummary(resp)
+		payload.ModelParameters = embeddingModelParameters(req)
+	}
+	traceLLMOperation(ctx, payload)
+}
+
+func (s *llmGatewayServiceImpl) traceNativeLLMOperation(
+	ctx context.Context,
+	traceName string,
+	operation string,
+	requestBody json.RawMessage,
+	responseBody json.RawMessage,
+	usage *adapter.Usage,
+	startTime time.Time,
+	endTime time.Time,
+	billingCtx *BillingContext,
+	err error,
+) {
+	if billingCtx == nil || !llmTraceRecordingEnabled(ctx) {
+		return
+	}
+	var input, output interface{}
+	if llmTraceContentEnabled() {
+		input = nativeTraceJSON(requestBody)
+		output = nativeTraceJSON(responseBody)
+	}
+	traceLLMOperation(ctx, llmTracePayload{
+		Name:      traceName,
+		Operation: operation,
+		Input:     input,
+		Output:    output,
+		StartTime: startTime,
+		EndTime:   endTime,
+		Billing:   billingCtx,
+		Usage:     traceUsageFromAdapter(usage),
+		Err:       err,
 	})
+}
+
+func (s *llmGatewayServiceImpl) traceNativeLLMStreamOperation(
+	ctx context.Context,
+	traceName string,
+	operation string,
+	requestBody json.RawMessage,
+	output string,
+	usage *adapter.Usage,
+	startTime time.Time,
+	endTime time.Time,
+	billingCtx *BillingContext,
+	err error,
+) {
+	if billingCtx == nil || !llmTraceRecordingEnabled(ctx) {
+		return
+	}
+	var input, traceOutput interface{}
+	if llmTraceContentEnabled() {
+		input = nativeTraceJSON(requestBody)
+		traceOutput = output
+	}
+	traceLLMOperation(ctx, llmTracePayload{
+		Name:      traceName,
+		Operation: operation,
+		Input:     input,
+		Output:    traceOutput,
+		StartTime: startTime,
+		EndTime:   endTime,
+		Billing:   billingCtx,
+		Usage:     traceUsageFromAdapter(usage),
+		Err:       err,
+	})
+}
+
+func nativeTraceOperation(traceName string) string {
+	switch traceName {
+	case "llm.responses", "llm.responses.stream":
+		return "responses"
+	case "llm.anthropic.messages", "llm.anthropic.messages.stream":
+		return "messages"
+	default:
+		return strings.TrimPrefix(traceName, "llm.")
+	}
 }
 
 func (s *llmGatewayServiceImpl) traceRerank(
@@ -160,17 +263,24 @@ func (s *llmGatewayServiceImpl) traceRerank(
 	billingCtx *BillingContext,
 	err error,
 ) {
-	traceLLMOperation(ctx, llmTracePayload{
+	if billingCtx == nil || !llmTraceRecordingEnabled(ctx) {
+		return
+	}
+	payload := llmTracePayload{
 		Name:            "llm.rerank",
 		Operation:       "rerank",
-		Input:           rerankInputSummary(req),
-		Output:          rerankOutputSummary(resp),
-		ModelParameters: rerankModelParameters(req),
+		ObservationType: otelObservationRetriever,
 		StartTime:       startTime,
 		EndTime:         endTime,
 		Billing:         billingCtx,
 		Err:             err,
-	})
+	}
+	if llmTraceContentEnabled() {
+		payload.Input = rerankInputSummary(req)
+		payload.Output = rerankOutputSummary(resp)
+		payload.ModelParameters = rerankModelParameters(req)
+	}
+	traceLLMOperation(ctx, payload)
 }
 
 func (s *llmGatewayServiceImpl) traceImageGeneration(
@@ -182,21 +292,27 @@ func (s *llmGatewayServiceImpl) traceImageGeneration(
 	billingCtx *BillingContext,
 	err error,
 ) {
-	traceLLMOperation(ctx, llmTracePayload{
-		Name:            "llm.images",
-		Operation:       "image_generation",
-		Input:           imageInputSummary(req),
-		Output:          imageOutputSummary(resp),
-		ModelParameters: imageModelParameters(req),
-		StartTime:       startTime,
-		EndTime:         endTime,
-		Billing:         billingCtx,
-		Err:             err,
-	})
+	if billingCtx == nil || !llmTraceRecordingEnabled(ctx) {
+		return
+	}
+	payload := llmTracePayload{
+		Name:      "llm.images",
+		Operation: "image_generation",
+		StartTime: startTime,
+		EndTime:   endTime,
+		Billing:   billingCtx,
+		Err:       err,
+	}
+	if llmTraceContentEnabled() {
+		payload.Input = imageInputSummary(req)
+		payload.Output = imageOutputSummary(resp)
+		payload.ModelParameters = imageModelParameters(req)
+	}
+	traceLLMOperation(ctx, payload)
 }
 
 func traceLLMOperation(ctx context.Context, payload llmTracePayload) {
-	if payload.Billing == nil {
+	if payload.Billing == nil || !llmTraceRecordingEnabled(ctx) {
 		return
 	}
 	if payload.StartTime.IsZero() {
@@ -214,6 +330,9 @@ func traceLLMOperation(ctx context.Context, payload llmTracePayload) {
 		oteltrace.WithSpanKind(oteltrace.SpanKindClient),
 	)
 	defer span.End(oteltrace.WithTimestamp(payload.EndTime))
+	if !span.IsRecording() {
+		return
+	}
 
 	span.SetAttributes(observability.SanitizeAttributes(baseLLMAttributes(payload))...)
 	span.SetAttributes(observability.SanitizeAttributes(payloadAttributes(payload))...)
@@ -248,6 +367,8 @@ func traceLLMOperation(ctx context.Context, payload llmTracePayload) {
 func baseLLMAttributes(payload llmTracePayload) []attribute.KeyValue {
 	bc := payload.Billing
 	attrs := []attribute.KeyValue{
+		attribute.String("zgi.llm.schema_version", llmTraceSchemaVersion),
+		attribute.String("zgi.invocation_id", bc.RequestID),
 		attribute.String("gen_ai.operation.name", payload.Operation),
 		attribute.String("gen_ai.system", bc.ProviderName),
 		attribute.String("gen_ai.request.model", bc.ModelName),
@@ -265,12 +386,17 @@ func baseLLMAttributes(payload llmTracePayload) []attribute.KeyValue {
 		attribute.Int64("zgi.response_time_ms", bc.ResponseTime),
 		attribute.Int64("zgi.estimated_credits", bc.EstimatedCredits),
 		attribute.Int64("zgi.actual_credits", bc.ActualCredits),
+		attribute.String("zgi.status", bc.Status),
 	}
 
 	if llmLangfuseAttributesEnabled() {
+		observationType := payload.ObservationType
+		if observationType == "" {
+			observationType = otelObservationGeneration
+		}
 		attrs = append(attrs, llmLangfuseAttributes(bc, payload.Name)...)
 		attrs = append(attrs,
-			attribute.String("langfuse.observation.type", otelObservationGeneration),
+			attribute.String("langfuse.observation.type", observationType),
 			attribute.String("langfuse.observation.model.name", bc.ModelName),
 		)
 	}
@@ -319,10 +445,28 @@ func baseLLMAttributes(payload llmTracePayload) []attribute.KeyValue {
 }
 
 func withLLMLangfuseTraceContext(ctx context.Context, bc *BillingContext, traceName string) context.Context {
-	if bc == nil {
+	if bc == nil || !llmLangfuseAttributesEnabled() || !llmTraceRecordingEnabled(ctx) {
 		return ctx
 	}
 	return observability.WithLangfuseTraceAttributes(ctx, llmLangfuseAttributes(bc, traceName)...)
+}
+
+func llmTraceRecordingEnabled(ctx context.Context) bool {
+	cfg := otelConfig()
+	if !cfg.Enabled || cfg.TraceSampleRate <= 0 {
+		return false
+	}
+	// Fractional production sampling is parent-based. A local non-recording
+	// parent therefore guarantees this child will not record, so avoid building
+	// payload attributes. Remote parents and AlwaysSample remain SDK decisions.
+	if ctx != nil && cfg.TraceSampleRate < 1 {
+		span := oteltrace.SpanFromContext(ctx)
+		spanContext := span.SpanContext()
+		if spanContext.IsValid() && !spanContext.IsRemote() && !span.IsRecording() {
+			return false
+		}
+	}
+	return true
 }
 
 func llmLangfuseAttributes(bc *BillingContext, traceName string) []attribute.KeyValue {
@@ -334,6 +478,8 @@ func llmLangfuseAttributes(bc *BillingContext, traceName string) []attribute.Key
 	attrs = append(attrs,
 		attribute.String("langfuse.trace.name", traceName),
 		attribute.String("langfuse.user.id", traceUserID(bc)),
+		attribute.String("langfuse.trace.metadata.schema_version", llmTraceSchemaVersion),
+		attribute.String("langfuse.trace.metadata.invocation_id", bc.RequestID),
 		attribute.String("langfuse.trace.metadata.request_id", bc.RequestID),
 		attribute.String("langfuse.trace.metadata.attempt_id", bc.AttemptID),
 		attribute.String("langfuse.trace.metadata.api_key_id", bc.APIKeyID),
@@ -423,8 +569,10 @@ func payloadAttributes(payload llmTracePayload) []attribute.KeyValue {
 	if output := traceContentJSONString(payload.Output); output != "" {
 		attrs = append(attrs, attribute.String("langfuse.observation.output", output))
 	}
-	if params := safeJSONString(payload.ModelParameters); params != "" {
-		attrs = append(attrs, attribute.String("langfuse.observation.model.parameters", params))
+	if llmCaptureContentMode() != otelLLMCaptureNone {
+		if params := safeJSONString(payload.ModelParameters); params != "" {
+			attrs = append(attrs, attribute.String("langfuse.observation.model.parameters", params))
+		}
 	}
 	if details := usageDetails(usage); details != "" {
 		attrs = append(attrs, attribute.String("langfuse.observation.usage_details", details))
@@ -445,6 +593,45 @@ func traceUsage(payload llmTracePayload) llmTraceUsage {
 		CompletionTokens: payload.Billing.CompletionTokens,
 		TotalTokens:      payload.Billing.TotalTokens,
 	}
+}
+
+func traceUsageFromAdapter(usage *adapter.Usage) *llmTraceUsage {
+	if usage == nil {
+		return nil
+	}
+	return &llmTraceUsage{
+		PromptTokens:     usage.PromptTokens,
+		CompletionTokens: usage.CompletionTokens,
+		TotalTokens:      usage.TotalTokens,
+	}
+}
+
+func nativeTraceJSON(raw json.RawMessage) interface{} {
+	if len(raw) == 0 {
+		return nil
+	}
+	var value interface{}
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return map[string]interface{}{
+			"type":       "invalid_json",
+			"json_chars": len(raw),
+		}
+	}
+	return value
+}
+
+func nativeRawResponseOutput(response *adapter.RawResponse) json.RawMessage {
+	if response == nil {
+		return nil
+	}
+	return response.Body
+}
+
+func nativeRawResponseUsage(response *adapter.RawResponse) *adapter.Usage {
+	if response == nil {
+		return nil
+	}
+	return response.Usage
 }
 
 func traceUserID(bc *BillingContext) string {
@@ -494,6 +681,10 @@ func llmLangfuseAttributesEnabled() bool {
 	return cfg.Enabled && cfg.LLMLangfuseAttributes
 }
 
+func llmTraceContentEnabled() bool {
+	return llmLangfuseAttributesEnabled() && llmCaptureContentMode() != otelLLMCaptureNone
+}
+
 func otelConfig() config.OpenTelemetryConfig {
 	if config.GlobalConfig == nil {
 		return config.OpenTelemetryConfig{}
@@ -518,7 +709,7 @@ func llmCaptureContentMode() string {
 	case otelLLMCaptureNone, otelLLMCaptureSummary, otelLLMCaptureFull:
 		return mode
 	default:
-		return otelLLMCaptureSummary
+		return otelLLMCaptureNone
 	}
 }
 
@@ -656,15 +847,6 @@ func estimatedJSONLength(value interface{}) int {
 	return len(data)
 }
 
-func sortedMapKeys(values map[string]string) []string {
-	keys := make([]string, 0, len(values))
-	for key := range values {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	return keys
-}
-
 func chatCompletionOutput(resp *adapter.ChatResponse) interface{} {
 	if resp == nil || len(resp.Choices) == 0 {
 		return nil
@@ -705,16 +887,16 @@ func chatModelParameters(req *adapter.ChatRequest) map[string]interface{} {
 		params["function_count"] = len(req.Functions)
 	}
 	if req.FunctionCall != nil {
-		params["function_call"] = req.FunctionCall
+		params["function_call_configured"] = true
 	}
 	if len(req.Tools) > 0 {
 		params["tool_count"] = len(req.Tools)
 	}
 	if req.ToolChoice != nil {
-		params["tool_choice"] = req.ToolChoice
+		params["tool_choice_configured"] = true
 	}
 	if req.ResponseFormat != nil {
-		params["response_format"] = req.ResponseFormat
+		params["response_format_configured"] = true
 	}
 	if req.Seed != nil {
 		params["seed"] = *req.Seed
@@ -726,7 +908,7 @@ func chatModelParameters(req *adapter.ChatRequest) map[string]interface{} {
 		params["logit_bias_count"] = len(req.LogitBias)
 	}
 	if len(req.AdditionalParameters) > 0 {
-		params["additional_parameters"] = req.AdditionalParameters
+		params["additional_parameter_count"] = len(req.AdditionalParameters)
 	}
 	return params
 }
@@ -777,19 +959,19 @@ func responseModelParameters(req *adapter.CreateResponseRequest) map[string]inte
 		params["tool_count"] = len(req.Tools)
 	}
 	if req.ToolChoice != nil {
-		params["tool_choice"] = req.ToolChoice
+		params["tool_choice_configured"] = true
 	}
 	if req.ResponseFormat != nil {
-		params["response_format"] = req.ResponseFormat
+		params["response_format_configured"] = true
 	}
 	if len(req.Metadata) > 0 {
-		params["metadata_keys"] = sortedMapKeys(req.Metadata)
+		params["metadata_key_count"] = len(req.Metadata)
 	}
 	if len(req.Modalities) > 0 {
-		params["modalities"] = req.Modalities
+		params["modality_count"] = len(req.Modalities)
 	}
 	if len(req.AdditionalParameters) > 0 {
-		params["additional_parameters"] = req.AdditionalParameters
+		params["additional_parameter_count"] = len(req.AdditionalParameters)
 	}
 	return params
 }
@@ -894,7 +1076,7 @@ func rerankModelParameters(req *adapter.RerankRequest) map[string]interface{} {
 		params["return_documents"] = *req.ReturnDocuments
 	}
 	if len(req.RankFields) > 0 {
-		params["rank_fields"] = req.RankFields
+		params["rank_field_count"] = len(req.RankFields)
 	}
 	return params
 }

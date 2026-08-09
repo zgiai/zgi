@@ -120,7 +120,7 @@ func (r *ChannelRouter) CandidateRoutesForModels(
 		return nil, fmt.Errorf("failed to get enabled routes: %w", err)
 	}
 	if len(routes) == 0 && len(modelNames) > 0 {
-		return nil, fmt.Errorf("no enabled routes found for organizationID %s", organizationID)
+		return nil, fmt.Errorf("%w: no enabled routes found for organizationID %s", llmerrors.DomainErrRouteNotFound, organizationID)
 	}
 
 	result := make(map[string][]*channelmodel.LLMRoute, len(modelNames))
@@ -171,7 +171,7 @@ func (r *ChannelRouter) candidateRoutesForResolvedModel(
 	}
 
 	if len(routes) == 0 {
-		return nil, fmt.Errorf("no enabled routes found for organizationID %s", organizationID)
+		return nil, fmt.Errorf("%w: no enabled routes found for organizationID %s", llmerrors.DomainErrRouteNotFound, organizationID)
 	}
 
 	validRoutes, err := r.prepareCandidateRoutes(ctx, organizationID, routes, modelName, modelProvider, isPrivateCustomModel, llmModel, isPassthroughMode, false)
@@ -201,7 +201,7 @@ func (r *ChannelRouter) precheckCandidateRoutesForResolvedModel(
 	}
 
 	if len(routes) == 0 {
-		return nil, fmt.Errorf("no enabled routes found")
+		return nil, fmt.Errorf("%w: no enabled routes found", llmerrors.DomainErrRouteNotFound)
 	}
 
 	validRoutes, err := r.filterCandidateRoutes(ctx, routes, modelName, modelProvider, isPrivateCustomModel, llmModel, isPassthroughMode)

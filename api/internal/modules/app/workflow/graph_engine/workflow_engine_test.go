@@ -2,6 +2,7 @@ package graph_engine
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"reflect"
 	"strings"
@@ -16,6 +17,104 @@ import (
 type blockingNodeRunner struct {
 	started chan string
 	release chan struct{}
+}
+
+func TestExecuteReturnsContextCanceledWhenActiveNodeIsCanceled(t *testing.T) {
+	runner := &blockingNodeRunner{
+		started: make(chan string, 1),
+		release: make(chan struct{}),
+	}
+	engine := NewWorkflowEngine(1)
+	engine.SetNodeRunner(runner)
+	engine.SetRuntimeState(entities.NewGraphRuntimeState(entities.NewVariablePool()), &entities.Graph{Config: map[string]any{}})
+	engine.AddNode("llm", shared.LLM, map[string]any{"id": "llm"})
+	finished := make(chan string, 1)
+	detailedFinished := make(chan NodeFinishedEvent, 1)
+	engine.SetNodeEventCallbacks(nil, func(nodeID string, _ string, _ string, _ map[string]any, _ string, _ error) {
+		finished <- nodeID
+	})
+	engine.SetDetailedNodeFinishedCallback(func(event NodeFinishedEvent) {
+		detailedFinished <- event
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- engine.Execute(ctx)
+	}()
+
+	select {
+	case <-runner.started:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for node to start")
+	}
+	cancel()
+
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("Execute() error = %v, want context.Canceled", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for canceled workflow")
+	}
+
+	select {
+	case nodeID := <-finished:
+		t.Fatalf("onNodeFinished called for canceled node %q", nodeID)
+	default:
+	}
+	select {
+	case event := <-detailedFinished:
+		t.Fatalf("onNodeFinishedDetailed called for canceled node %#v", event)
+	default:
+	}
+	state, ok := engine.GetNodeStatus("llm")
+	if !ok {
+		t.Fatal("canceled node state was not found")
+	}
+	state.mu.RLock()
+	defer state.mu.RUnlock()
+	if state.Status != shared.SKIPPED || state.Error != nil {
+		t.Fatalf("canceled node status/error = %q/%v, want skipped/nil", state.Status, state.Error)
+	}
+}
+
+func TestExecutePreservesFailureCancellationCause(t *testing.T) {
+	runner := &blockingNodeRunner{
+		started: make(chan string, 1),
+		release: make(chan struct{}),
+	}
+	engine := NewWorkflowEngine(1)
+	engine.SetNodeRunner(runner)
+	engine.SetRuntimeState(entities.NewGraphRuntimeState(entities.NewVariablePool()), &entities.Graph{Config: map[string]any{}})
+	engine.AddNode("llm", shared.LLM, map[string]any{"id": "llm"})
+
+	leaseErr := errors.New("renew execution lease")
+	ctx, cancel := context.WithCancelCause(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- engine.Execute(ctx)
+	}()
+
+	select {
+	case <-runner.started:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for node to start")
+	}
+	cancel(leaseErr)
+
+	select {
+	case err := <-done:
+		if !errors.Is(err, leaseErr) {
+			t.Fatalf("Execute() error = %v, want lease error", err)
+		}
+		if errors.Is(err, context.Canceled) {
+			t.Fatalf("Execute() error = %v, must not be context.Canceled", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for failed workflow")
+	}
 }
 
 func (r *blockingNodeRunner) RunNode(ctx context.Context, req NodeRunRequest, eventChan chan<- *shared.NodeEventCh) (*shared.NodeRunResult, error) {
@@ -67,7 +166,7 @@ func TestConsumeNodeEventsUsesNestedStreamSourceNode(t *testing.T) {
 
 	var result *shared.NodeRunResult
 	var execErr error
-	if ok := engine.consumeNodeEvents("iteration-container", &NodeState{}, events, &result, &execErr); !ok {
+	if ok := engine.consumeNodeEvents(context.Background(), "iteration-container", &NodeState{}, events, &result, &execErr); !ok {
 		t.Fatal("consumeNodeEvents() = false, want true")
 	}
 	if got, want := callbackNodeID, "child-llm"; got != want {

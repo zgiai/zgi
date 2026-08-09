@@ -34,6 +34,21 @@ func TestFormatAttachmentSectionsIncludesFileID(t *testing.T) {
 	}
 }
 
+func TestAttachmentFileIDsFromMessageMetadataPreservesReplayInputs(t *testing.T) {
+	metadata := map[string]interface{}{
+		"files": []interface{}{
+			map[string]interface{}{"id": " document-1 ", "name": "report.docx"},
+			map[string]interface{}{"id": "image-1", "name": "photo.png"},
+			map[string]interface{}{"id": "", "name": "invalid.txt"},
+		},
+	}
+
+	got := attachmentFileIDsFromMessageMetadata(metadata)
+	if len(got) != 2 || got[0] != "document-1" || got[1] != "image-1" {
+		t.Fatalf("attachment replay ids = %#v, want original document and image ids", got)
+	}
+}
+
 func TestRuntimeContextIsTransientUserContent(t *testing.T) {
 	svc := &service{}
 	parts := &chatRequestParts{

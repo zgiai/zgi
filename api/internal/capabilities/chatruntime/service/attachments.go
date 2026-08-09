@@ -446,6 +446,17 @@ func attachmentBundleFromMessageMetadata(metadata map[string]interface{}) *attac
 	return bundle
 }
 
+func attachmentFileIDsFromMessageMetadata(metadata map[string]interface{}) []string {
+	files := metadataFiles(metadata)
+	ids := make([]string, 0, len(files))
+	for _, item := range files {
+		if id := strings.TrimSpace(stringFromMetadata(item["id"])); id != "" {
+			ids = append(ids, id)
+		}
+	}
+	return ids
+}
+
 func (s *service) historicalUserMessage(ctx context.Context, message *runtimemodel.Message, includeImages bool) (*adapter.Message, error) {
 	if message == nil {
 		return nil, nil

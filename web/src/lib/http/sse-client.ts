@@ -103,7 +103,7 @@ export class SseClient {
       );
     }
 
-    options.onOpen?.();
+    options.onOpen?.(response);
 
     // Start stream reading
     return this.startStreamReading(response, options, urlObj, method, controller, endpointCfg);

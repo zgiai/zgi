@@ -45,7 +45,7 @@ func (s *llmGatewayServiceImpl) PrecheckAppModels(ctx context.Context, organizat
 		return nil, fmt.Errorf("invalid organization_id: %w", err)
 	}
 
-	shadowOrganizationID, _, err := s.getShadowTenantInfo(ctx, orgUUID)
+	shadowOrganizationID, _, err := s.resolveShadowContext(ctx, orgUUID)
 	if err != nil {
 		return nil, err
 	}

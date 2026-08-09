@@ -2,6 +2,8 @@ export type WorkflowRuntimeErrorKind =
   | 'model_service_timeout'
   | 'model_service_unavailable'
   | 'model_invocation_failed'
+  | 'planning_output_truncated'
+  | 'agent_output_truncated'
   | 'server_unavailable';
 
 export function classifyWorkflowRuntimeError(
@@ -9,6 +11,21 @@ export function classifyWorkflowRuntimeError(
 ): WorkflowRuntimeErrorKind | undefined {
   const normalized = message?.trim().toLowerCase();
   if (!normalized) return undefined;
+
+  if (
+    normalized.includes('agent_output_truncated') ||
+    normalized.includes('agent output truncated')
+  ) {
+    return 'agent_output_truncated';
+  }
+
+  if (
+    normalized.includes('planning_output_truncated') ||
+    normalized.includes('finish_reason=length') ||
+    normalized.includes('finish_reason=max_tokens')
+  ) {
+    return 'planning_output_truncated';
+  }
 
   if (
     normalized.includes('internal server error') ||

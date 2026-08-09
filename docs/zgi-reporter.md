@@ -16,6 +16,10 @@ ZGI_REPORTERS=sentry,otel
 
 # Each selected provider still requires its own configuration.
 SENTRY_DSN=https://public-key@sentry.example.com/project-id
+SENTRY_ENVIRONMENT=production
+SENTRY_TRACES_SAMPLE_RATE=0.1
+# Set this to the deployed image tag or commit SHA for useful release grouping.
+APP_VERSION=git-sha-or-image-tag
 OTEL_ENABLED=true
 OTEL_EXPORTER_OTLP_ENDPOINT=https://otel.example.com
 ```
@@ -78,6 +82,44 @@ registerReporter(customReporter);
 ```
 
 With no adapters, ZGI Reporter is a No-op and performs no network requests.
+
+## Operational behavior
+
+Sentry is for errors, performance traces, and alerting. OpenTelemetry exports
+vendor-neutral traces; Langfuse can consume those traces for LLM invocations,
+tokens, and cost analysis. Successful LLM calls are therefore not duplicated
+as Sentry errors.
+
+Expected caller cancellation (`context.Canceled`) is not reported. Dependency
+timeouts remain reportable. When both Sentry and OpenTelemetry are enabled,
+OTel exporter and queue failures are emitted to Sentry as the rate-limited
+`observability.otel.runtime_failed` event. This path reports directly to Sentry
+so an unavailable OTel exporter cannot recursively report through itself.
+
+Sentry events use readable operator-facing issue titles while retaining stable
+ZGI event names in the `zgi.event` tag and fingerprint for filtering and
+grouping. For example, `llm.provider.stream_failed` is displayed as
+`LLM provider stream failed`, not an internal wrapper type. Configure
+`SENTRY_ENVIRONMENT` per deployment and set `APP_VERSION` to an immutable
+release identifier so regressions can be attributed to a deployment. Keep
+`SENTRY_TRACES_SAMPLE_RATE` low in production; values are clamped to the
+supported `0` to `1` range.
+
+Errors also carry a provider-neutral classification:
+
+- `error.category` describes the failure class, such as `configuration`,
+  `dependency`, `database`, or `timeout`.
+- `error.source` identifies who can act: `tenant`, `provider`, `zgi`, or
+  `infrastructure`.
+- `error.code` is a stable, low-cardinality code such as
+  `model_route_not_configured` or `postgres_42601`.
+- `error.retryable` distinguishes transient failures from deterministic ones.
+
+Request-scoped deduplication prevents an error already reported by a module
+from being reported again by the HTTP fallback middleware. Provider failover
+attempts are warnings while another route remains; only the final failed
+attempt is an error. Internal Reporter frames are removed from Sentry error
+stacks so the first useful application call site is shown instead.
 
 ## Privacy boundary
 

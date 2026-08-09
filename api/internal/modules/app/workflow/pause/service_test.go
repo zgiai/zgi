@@ -15,7 +15,7 @@ import (
 )
 
 type pauseTestWorkflowRun struct {
-	ID                      string `gorm:"primaryKey"`
+	ID                      string `gorm:"type:uuid;primaryKey"`
 	TenantID                string
 	AgentID                 string
 	WorkflowID              string
@@ -384,6 +384,58 @@ func TestV2ClaimResumeOwnsOneGenerationAndRejectsOldLease(t *testing.T) {
 	}
 	if _, err := service.RenewExecutionLease(context.Background(), *claim, time.Minute); !errors.Is(err, ErrExecutionOwnershipLost) {
 		t.Fatalf("old claim renewal = %v, want ownership lost", err)
+	}
+}
+
+func TestClaimResumeRejectsStoppedRunAndObsoleteOutbox(t *testing.T) {
+	db := openPauseServiceTestDB(t)
+	service := NewService(db)
+	finishedAt := time.Now()
+	oldExecutionID := "00000000-0000-0000-0000-000000000088"
+	run := pauseTestWorkflowRun{
+		ID: "run-stopped", RuntimeProtocolVersion: 2, ExecutionGeneration: 4,
+		Status: "stopped", FinishedAt: &finishedAt,
+	}
+	if err := db.Create(&run).Error; err != nil {
+		t.Fatalf("create stopped run: %v", err)
+	}
+	leaseExpiredAt := time.Now().Add(-time.Minute)
+	pauseRecord := RunPause{
+		ID: "pause-stopped", TenantID: "tenant-1", AppID: "app-1", WorkflowRunID: run.ID,
+		NodeID: "approval", Reason: ReasonTypeApprovalRequired, StateJSON: `{"version":"2"}`,
+		Generation: 1, Status: RunPauseStatusResuming, ResumeExecutionID: &oldExecutionID, LeaseExpiresAt: &leaseExpiredAt,
+	}
+	if err := db.Create(&pauseRecord).Error; err != nil {
+		t.Fatalf("create stale pause: %v", err)
+	}
+	outbox := RuntimeOutbox{
+		ID: "outbox-stopped", TenantID: "tenant-1", WorkflowRunID: run.ID, PauseID: &pauseRecord.ID,
+		Kind: RuntimeOutboxKindResume, IdempotencyKey: "workflow-resume:pause-stopped:1", PayloadJSON: `{}`,
+		Status: RuntimeOutboxObsolete, NextAttemptAt: time.Now(), CreatedAt: time.Now(), UpdatedAt: time.Now(),
+	}
+	if err := db.Create(&outbox).Error; err != nil {
+		t.Fatalf("create obsolete outbox: %v", err)
+	}
+
+	if _, err := service.ClaimResume(t.Context(), run.ID, pauseRecord.ID, time.Minute); !errors.Is(err, ErrPauseNotResumeReady) {
+		t.Fatalf("ClaimResume() error = %v, want ErrPauseNotResumeReady", err)
+	}
+	if _, err := service.LoadResumePayload(t.Context(), run.ID, pauseRecord.ID, pauseRecord.Generation); !errors.Is(err, ErrPauseNotResumeReady) {
+		t.Fatalf("LoadResumePayload() error = %v, want ErrPauseNotResumeReady", err)
+	}
+	dispatchable, err := service.RuntimeOutboxDispatchable(t.Context(), outbox.ID)
+	if err != nil {
+		t.Fatalf("RuntimeOutboxDispatchable() error = %v", err)
+	}
+	if dispatchable {
+		t.Fatal("obsolete stopped-run outbox is dispatchable")
+	}
+	var persisted pauseTestWorkflowRun
+	if err := db.First(&persisted, "id = ?", run.ID).Error; err != nil {
+		t.Fatalf("reload stopped run: %v", err)
+	}
+	if persisted.Status != "stopped" || persisted.ExecutionGeneration != 4 || persisted.ActiveExecutionID != nil {
+		t.Fatalf("stopped run changed after rejected claim: %+v", persisted)
 	}
 }
 

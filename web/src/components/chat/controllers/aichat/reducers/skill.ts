@@ -27,6 +27,7 @@ import {
   captureAnswerTimelineBoundary,
   presentationPositionFromPayload,
 } from '../presentation-order';
+import { modelProcessingStateFromEvent } from '../model-processing';
 
 function preserveLegacyAnswerBoundary(
   previousStreaming: AIChatControllerState['streamingByMessageId'][string]
@@ -43,10 +44,25 @@ function upsertSkillInvocation(
   invocations: AIChatSkillInvocation[],
   incoming: AIChatSkillInvocation
 ): AIChatSkillInvocation[] {
+  if (incoming.invocation_id) {
+    const index = invocations.findIndex(
+      invocation => invocation.invocation_id === incoming.invocation_id
+    );
+    if (index >= 0) {
+      const next = invocations.slice();
+      next[index] = mergeSkillInvocationByStatus(next[index], incoming);
+      return next;
+    }
+  }
+
   const semanticIdentity = skillInvocationSemanticIdentity(incoming);
   if (semanticIdentity) {
     const index = invocations.findIndex(
-      invocation => skillInvocationSemanticIdentity(invocation) === semanticIdentity
+      invocation =>
+        (!incoming.invocation_id ||
+          !invocation.invocation_id ||
+          invocation.invocation_id === incoming.invocation_id) &&
+        skillInvocationSemanticIdentity(invocation) === semanticIdentity
     );
     if (index >= 0) {
       const next = invocations.slice();
@@ -57,7 +73,11 @@ function upsertSkillInvocation(
 
   if (incoming.runtime_id) {
     const index = invocations.findIndex(
-      invocation => invocation.runtime_id === incoming.runtime_id
+      invocation =>
+        (!incoming.invocation_id ||
+          !invocation.invocation_id ||
+          invocation.invocation_id === incoming.invocation_id) &&
+        invocation.runtime_id === incoming.runtime_id
     );
     if (index >= 0) {
       const next = invocations.slice();
@@ -104,6 +124,13 @@ function upsertSkillInvocation(
   const incomingToolName = incoming.tool_name ?? '';
   const incomingPath = incoming.path ?? '';
   const index = [...next].reverse().findIndex(invocation => {
+    if (
+      incoming.invocation_id &&
+      invocation.invocation_id &&
+      invocation.invocation_id !== incoming.invocation_id
+    ) {
+      return false;
+    }
     const invocationKind = invocation.kind ?? 'tool_call';
     const sameIdentity =
       invocationKind === incomingKind &&
@@ -127,6 +154,9 @@ function upsertSkillInvocation(
 }
 
 function getSkillInvocationIdentity(invocation: AIChatSkillInvocation): string {
+  if (invocation.invocation_id) {
+    return `invocation:${invocation.invocation_id}`;
+  }
   const semanticIdentity = skillInvocationSemanticIdentity(invocation);
   if (semanticIdentity) {
     return semanticIdentity;
@@ -150,6 +180,10 @@ function skillInvocationsMatch(
   existing: AIChatSkillInvocation,
   incoming: AIChatSkillInvocation
 ): boolean {
+  if (existing.invocation_id && incoming.invocation_id) {
+    return existing.invocation_id === incoming.invocation_id;
+  }
+
   const existingRuntimeIdentity = skillInvocationRuntimeIdentity(existing);
   const incomingRuntimeIdentity = skillInvocationRuntimeIdentity(incoming);
   if (
@@ -595,7 +629,8 @@ export function updateSkillInvocationMetadata(
   messageId: string,
   eventId: string | null | undefined,
   invocation: AIChatSkillInvocation,
-  presentationPosition?: AIChatPresentationPosition
+  presentationPosition?: AIChatPresentationPosition,
+  clearModelProcessing = false
 ): AIChatControllerState {
   if (!isVisibleSkillInvocation(invocation)) {
     return current;
@@ -679,6 +714,7 @@ export function updateSkillInvocationMetadata(
               presentationPosition
             ),
             answer_before_timeline_length: preserveLegacyAnswerBoundary(previousStreaming),
+            modelProcessing: clearModelProcessing ? undefined : previousStreaming.modelProcessing,
             last_event_id: eventId ?? previousStreaming.last_event_id,
           },
         }
@@ -720,7 +756,33 @@ export function applyAgentProgressState(
     return current;
   }
 
+  if (payload.phase === 'model_processing') {
+    const modelProcessing = modelProcessingStateFromEvent(
+      previousStreaming.modelProcessing,
+      payload,
+      eventId
+    );
+    if (modelProcessing === previousStreaming.modelProcessing) {
+      return current;
+    }
+    return {
+      ...current,
+      streamingByMessageId: {
+        ...current.streamingByMessageId,
+        [payload.message_id]: {
+          ...previousStreaming,
+          modelProcessing,
+          last_event_id: eventId ?? previousStreaming.last_event_id,
+        },
+      },
+    };
+  }
+
   const timeline = previousStreaming.timeline ?? [];
+  const clearsModelProcessing =
+    payload.phase === 'tool_planning' ||
+    payload.phase === 'client_action' ||
+    payload.phase === 'client_action_result';
   const hasSameEvent = Boolean(
     eventId && timeline.some(item => 'event_id' in item && item.event_id === eventId)
   );
@@ -745,6 +807,7 @@ export function applyAgentProgressState(
         ...current.streamingByMessageId,
         [payload.message_id]: {
           ...previousStreaming,
+          modelProcessing: clearsModelProcessing ? undefined : previousStreaming.modelProcessing,
           last_event_id: eventId ?? previousStreaming.last_event_id,
         },
       },
@@ -789,6 +852,7 @@ export function applyAgentProgressState(
       [payload.message_id]: {
         ...previousStreaming,
         timeline: nextTimeline,
+        modelProcessing: clearsModelProcessing ? undefined : previousStreaming.modelProcessing,
         answer_before_timeline_length:
           transient || previousStreaming.presentationVersion === 2
             ? previousStreaming.answer_before_timeline_length
@@ -910,6 +974,7 @@ export function applyToolGovernanceDecisionState(
           ...current.streamingByMessageId,
           [payload.message_id]: {
             ...previousStreaming,
+            modelProcessing: undefined,
             timeline: upsertToolGovernanceTimelineItem(
               previousStreaming.timeline,
               payload,
@@ -983,6 +1048,7 @@ export function applySkillCallStartState(
     eventId,
     {
       kind: payload.kind ?? 'tool_call',
+      invocation_id: payload.invocation_id,
       runtime_id: payload.runtime_id,
       skill_id: payload.skill_id,
       tool_name: payload.tool_name,
@@ -990,7 +1056,8 @@ export function applySkillCallStartState(
       arguments: payload.arguments_summary ?? payload.arguments,
       created_at: payload.created_at,
     },
-    presentationPositionFromPayload(payload)
+    presentationPositionFromPayload(payload),
+    true
   );
 }
 
@@ -1006,6 +1073,7 @@ export function applySkillCallEndState(
     eventId,
     {
       kind: payload.kind ?? 'tool_call',
+      invocation_id: payload.invocation_id,
       runtime_id: payload.runtime_id,
       action_id: payload.action_id,
       action_type: payload.action_type,
@@ -1024,7 +1092,8 @@ export function applySkillCallEndState(
       asset_operation_audit: payload.asset_operation_audit,
       created_at: payload.created_at,
     },
-    presentationPositionFromPayload(payload)
+    presentationPositionFromPayload(payload),
+    true
   );
   if (!payload.governance) {
     return next;
@@ -1048,6 +1117,7 @@ export function applySkillCallErrorState(
     eventId,
     {
       kind: payload.kind ?? (payload.tool_name ? 'tool_call' : 'skill_load'),
+      invocation_id: payload.invocation_id,
       runtime_id: payload.runtime_id,
       action_id: payload.action_id,
       action_type: payload.action_type,
@@ -1066,7 +1136,8 @@ export function applySkillCallErrorState(
       asset_operation_audit: payload.asset_operation_audit,
       created_at: payload.created_at,
     },
-    presentationPositionFromPayload(payload)
+    presentationPositionFromPayload(payload),
+    true
   );
   if (!payload.governance) {
     return next;

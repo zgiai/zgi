@@ -7,6 +7,10 @@ const source = await readFile(
   new URL('../src/components/chat/variants/aichat/skill-load-timeline.ts', import.meta.url),
   'utf8'
 );
+const timelineSource = await readFile(
+  new URL('../src/components/chat/variants/aichat/agentic-timeline.tsx', import.meta.url),
+  'utf8'
+);
 const moduleSource = ts.transpileModule(source, {
   compilerOptions: {
     module: ts.ModuleKind.ESNext,
@@ -18,7 +22,6 @@ const { isRoutineSkillLoadInvocation, isUserRelevantSkillLoadFailure } = await i
 );
 
 for (const invocation of [
-  { kind: 'skill_load', status: 'success' },
   { kind: 'skill_load_attempt', status: 'auto_restored' },
   {
     kind: 'skill_load_attempt',
@@ -32,6 +35,28 @@ for (const invocation of [
   },
 ]) {
   assert.equal(isRoutineSkillLoadInvocation(invocation), true, JSON.stringify(invocation));
+}
+
+for (const invocation of [
+  {
+    kind: 'skill_load',
+    status: 'success',
+    arguments: { source: 'runtime_preload' },
+  },
+  {
+    kind: 'skill_load',
+    status: 'loaded',
+    result: { source: 'runtime_activation' },
+  },
+]) {
+  assert.equal(isRoutineSkillLoadInvocation(invocation), true, JSON.stringify(invocation));
+}
+
+for (const invocation of [
+  { kind: 'skill_load', status: 'success' },
+  { kind: 'skill_load', status: 'loaded', arguments: { source: 'model_load' } },
+]) {
+  assert.equal(isRoutineSkillLoadInvocation(invocation), false, JSON.stringify(invocation));
 }
 
 for (const invocation of [
@@ -50,5 +75,16 @@ for (const invocation of [
   assert.equal(isUserRelevantSkillLoadFailure(invocation), true, JSON.stringify(invocation));
   assert.equal(isRoutineSkillLoadInvocation(invocation), false, JSON.stringify(invocation));
 }
+
+assert.doesNotMatch(
+  timelineSource,
+  /isInternalReferenceReadSkillEvent/,
+  'successful reference reads must remain visible in the agent timeline'
+);
+assert.match(
+  timelineSource,
+  /consoleChat\.skills\.agentic\.referenceRead/,
+  'reference reads must keep their dedicated user-facing label'
+);
 
 console.log('Skill load timeline filtering regression checks passed.');

@@ -129,7 +129,7 @@
 
 /* Horizontal rules */
 .md-viewer hr {
-  @apply my-8 border-t border-border;
+  @apply my-4 border-t border-border;
 }
 
 /* Images */

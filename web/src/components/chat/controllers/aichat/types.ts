@@ -24,6 +24,7 @@ import type {
   AIChatWorkflowPausedEventData,
   AIChatWorkflowQuestionAnswerInputs,
 } from '@/services/types/aichat';
+import type { AIChatModelProcessingState } from './model-processing';
 import type { ChatBranchNavigation } from '@/components/chat/utils/message-tree';
 import type { ConversationSearchResult } from '@/components/chat/controllers/types';
 import type { NodeInfo, RunStatus } from '@/components/chat/types';
@@ -65,6 +66,7 @@ export interface AIChatStreamingMessageState {
   replay_offset?: number;
   replace?: boolean;
   sensitiveOutputBlocked?: boolean;
+  modelProcessing?: AIChatModelProcessingState;
 }
 
 export type AIChatAgenticTimelineItem =

@@ -510,7 +510,6 @@ const Results: React.FC<ResultsProps> = ({
               historyResult.kind === 'text' ? (
                 <MarkdownViewer
                   content={displayText(historyResult.content)}
-                  preserveSoftBreaks
                 />
               ) : historyResult.kind === 'json' ? (
                 renderJsonResult(historyResult.value)
@@ -526,7 +525,7 @@ const Results: React.FC<ResultsProps> = ({
                 </div>
               )
             ) : streamedText && streamedText.length > 0 ? (
-              <MarkdownViewer content={displayText(streamedText)} preserveSoftBreaks />
+              <MarkdownViewer content={displayText(streamedText)} />
             ) : !hasTranscript ? (
               <div
                 className={cn(
@@ -540,7 +539,7 @@ const Results: React.FC<ResultsProps> = ({
             ) : null}
           </>
         ) : historyResult && historyResult.kind === 'text' ? (
-          <MarkdownViewer content={displayText(historyResult.content)} preserveSoftBreaks />
+          <MarkdownViewer content={displayText(historyResult.content)} />
         ) : historyResult && historyResult.kind === 'json' ? (
           renderJsonResult(historyResult.value)
         ) : (

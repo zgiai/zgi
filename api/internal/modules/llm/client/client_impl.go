@@ -48,7 +48,7 @@ func (c *llmClientImpl) Chat(ctx context.Context, organizationID string, req *ad
 	if err != nil {
 		return nil, fmt.Errorf("failed to get system API key: %w", err)
 	}
-	return c.gateway.ChatCompletion(ctx, apiKey, req)
+	return c.gateway.ChatCompletion(productInvocationContext(ctx), apiKey, req)
 }
 
 // ChatStream performs a streaming chat completion request
@@ -57,7 +57,7 @@ func (c *llmClientImpl) ChatStream(ctx context.Context, organizationID string, r
 	if err != nil {
 		return nil, fmt.Errorf("failed to get system API key: %w", err)
 	}
-	return c.gateway.ChatCompletionStream(ctx, apiKey, req)
+	return c.gateway.ChatCompletionStream(productInvocationContext(ctx), apiKey, req)
 }
 
 // CreateResponse performs a create response request
@@ -66,7 +66,7 @@ func (c *llmClientImpl) CreateResponse(ctx context.Context, organizationID strin
 	if err != nil {
 		return nil, fmt.Errorf("failed to get system API key: %w", err)
 	}
-	return c.gateway.CreateResponse(ctx, apiKey, req)
+	return c.gateway.CreateResponse(productInvocationContext(ctx), apiKey, req)
 }
 
 // Embed creates text embeddings
@@ -75,7 +75,7 @@ func (c *llmClientImpl) Embed(ctx context.Context, organizationID string, req *a
 	if err != nil {
 		return nil, fmt.Errorf("failed to get system API key: %w", err)
 	}
-	return c.gateway.CreateEmbeddings(ctx, apiKey, req)
+	return c.gateway.CreateEmbeddings(productInvocationContext(ctx), apiKey, req)
 }
 
 // CreateImage performs an image generation request
@@ -84,7 +84,7 @@ func (c *llmClientImpl) CreateImage(ctx context.Context, organizationID string, 
 	if err != nil {
 		return nil, fmt.Errorf("failed to get system API key: %w", err)
 	}
-	return c.gateway.CreateImage(ctx, apiKey, req)
+	return c.gateway.CreateImage(productInvocationContext(ctx), apiKey, req)
 }
 
 // Rerank performs document reranking
@@ -93,7 +93,11 @@ func (c *llmClientImpl) Rerank(ctx context.Context, organizationID string, req *
 	if err != nil {
 		return nil, fmt.Errorf("failed to get system API key: %w", err)
 	}
-	return c.gateway.Rerank(ctx, apiKey, req)
+	return c.gateway.Rerank(productInvocationContext(ctx), apiKey, req)
+}
+
+func productInvocationContext(ctx context.Context) context.Context {
+	return gateway.WithInvocationSource(ctx, gateway.InvocationSourceProduct)
 }
 
 // AppChat performs a chat completion request with app context
