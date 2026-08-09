@@ -175,7 +175,6 @@ export function useRoleActions() {
       if (response.failed_count > 0) {
         toast.warning(
           t('organization.permissions.deleteConfirm.migrationPartial', {
-            applied: response.replaced_count,
             failed: response.failed_count,
           })
         );

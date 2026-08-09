@@ -120,4 +120,14 @@ for (const [code, translationKey] of Object.entries(errorCodeTranslationKeys)) {
 assert.equal(getWorkspaceRoleErrorCode({ businessError: { code: 205022 } }), '205022');
 assert.equal(getWorkspaceRoleErrorTranslationKey({ businessError: { code: '999999' } }), undefined);
 
+for (const messages of [zhHansMessages, enUSMessages]) {
+  const rollbackMessage = getMessage(
+    messages,
+    'organization.permissions.deleteConfirm.migrationPartial'
+  );
+  assert.equal(typeof rollbackMessage, 'string');
+  assert.match(rollbackMessage, /\{failed\}/);
+  assert.doesNotMatch(rollbackMessage, /\{applied\}/);
+}
+
 console.log('workspace role template display, classification, and error checks passed');

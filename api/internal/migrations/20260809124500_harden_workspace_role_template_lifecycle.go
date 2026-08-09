@@ -16,32 +16,20 @@ ALTER TABLE public.roles
 const backfillWorkspaceRoleCustomizationStateSQL = `
 UPDATE public.roles
 SET
-	name_customized = template_origin = 'custom' OR name_i18n = '{}'::jsonb,
-	description_customized = template_origin = 'custom' OR description_i18n = '{}'::jsonb;
-
-UPDATE public.roles AS role
-SET
-	name_customized = role.name_customized OR (
-		BTRIM(role.name) != BTRIM(COALESCE(
-			role.name_i18n ->> CASE
-				WHEN LOWER(BTRIM(COALESCE(creator.interface_language, ''))) LIKE 'en%' THEN 'en_US'
-				ELSE 'zh_Hans'
-			END,
-			''
-		))
-	),
-	description_customized = role.description_customized OR (
-		BTRIM(COALESCE(role.description, '')) != BTRIM(COALESCE(
-			role.description_i18n ->> CASE
-				WHEN LOWER(BTRIM(COALESCE(creator.interface_language, ''))) LIKE 'en%' THEN 'en_US'
-				ELSE 'zh_Hans'
-			END,
-			''
-		))
-	)
-FROM public.accounts AS creator
-WHERE creator.id = role.created_by
-  AND role.template_origin = 'system_default';
+	name_customized = template_origin = 'custom'
+		OR name_i18n = '{}'::jsonb
+		OR NOT EXISTS (
+			SELECT 1
+			FROM jsonb_each_text(name_i18n) AS localized(key, value)
+			WHERE BTRIM(localized.value) = BTRIM(name)
+		),
+	description_customized = template_origin = 'custom'
+		OR description_i18n = '{}'::jsonb
+		OR NOT EXISTS (
+			SELECT 1
+			FROM jsonb_each_text(description_i18n) AS localized(key, value)
+			WHERE BTRIM(localized.value) = BTRIM(COALESCE(description, ''))
+		);
 
 UPDATE public.roles
 SET name_i18n = '{}'::jsonb

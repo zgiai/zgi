@@ -628,6 +628,7 @@ type applyTemplateWorkspaceManagementService struct {
 	customUpdates    []applyTemplateCustomUpdate
 	failByTargetKey  map[string]error
 	missingWorkspace bool
+	withTxCalls      int
 }
 
 type applyTemplateBuiltinUpdate struct {
@@ -713,6 +714,11 @@ func (s *applyTemplateWorkspaceManagementService) UpdateMemberCustomRoleWithPerm
 		operatorID:  operator.ID,
 	})
 	return nil
+}
+
+func (s *applyTemplateWorkspaceManagementService) WithTx(*gorm.DB) interfaces.WorkspaceManagementService {
+	s.withTxCalls++
+	return s
 }
 
 func (s *applyTemplateWorkspaceManagementService) failureFor(workspaceID, accountID string) error {

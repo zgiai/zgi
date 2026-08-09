@@ -118,6 +118,11 @@ func TestWorkspaceRoleDefaultTemplatesMigrationUpPostgres(t *testing.T) {
 		t.Fatalf("run migration up second time: %v", err)
 	}
 	mustExec(t, db, `
+		UPDATE public.accounts
+		SET interface_language = 'zh-Hans'
+		WHERE id = '10000000-0000-0000-0000-000000000001'
+	`)
+	mustExec(t, db, `
 		UPDATE public.roles
 		SET name = 'Renamed Template', description = 'Renamed description'
 		WHERE group_id = '20000000-0000-0000-0000-000000000001'
@@ -147,6 +152,22 @@ func TestWorkspaceRoleDefaultTemplatesMigrationUpPostgres(t *testing.T) {
 	}
 	if err := upHardenWorkspaceRoleTemplateLifecycle(mschema.New(db)); err != nil {
 		t.Fatalf("run hardened role template lifecycle migration: %v", err)
+	}
+	mustExec(t, db, `
+		UPDATE public.roles
+		SET
+			name_i18n = '{}'::jsonb,
+			description_i18n = '{}'::jsonb,
+			name_customized = true,
+			description_customized = true
+		WHERE group_id = '20000000-0000-0000-0000-000000000001'
+		  AND system_key = 'default_readonly'
+	`)
+	if err := upRepairWorkspaceRoleTemplateLocalization(mschema.New(db)); err != nil {
+		t.Fatalf("run role template localization repair migration: %v", err)
+	}
+	if err := upRepairWorkspaceRoleTemplateLocalization(mschema.New(db)); err != nil {
+		t.Fatalf("run role template localization repair migration second time: %v", err)
 	}
 	mustExec(t, db, `
 		INSERT INTO public.workspaces (id, organization_id)
@@ -225,8 +246,24 @@ func TestWorkspaceRoleDefaultTemplatesMigrationUpPostgres(t *testing.T) {
 		Scan(&crossLocaleRename).Error; err != nil {
 		t.Fatalf("read cross-locale renamed template metadata: %v", err)
 	}
-	if crossLocaleRename.NameI18n != "{}" || crossLocaleRename.DescriptionI18n != "{}" || !crossLocaleRename.NameCustomized || !crossLocaleRename.DescriptionCustomized {
-		t.Fatalf("cross-locale rename retained default localization: %#v", crossLocaleRename)
+	if crossLocaleRename.NameI18n == "{}" || crossLocaleRename.DescriptionI18n == "{}" || crossLocaleRename.NameCustomized || crossLocaleRename.DescriptionCustomized {
+		t.Fatalf("ambiguous cross-locale value was destructively marked customized: %#v", crossLocaleRename)
+	}
+
+	var languageSwitchedDefault struct {
+		NameI18n              string
+		DescriptionI18n       string
+		NameCustomized        bool
+		DescriptionCustomized bool
+	}
+	if err := db.Table("public.roles").
+		Select("name_i18n::text AS name_i18n, description_i18n::text AS description_i18n, name_customized, description_customized").
+		Where("group_id = ? AND system_key = ?", "20000000-0000-0000-0000-000000000001", workspace_model.WorkspaceDefaultRoleTemplateReadonlyKey).
+		Scan(&languageSwitchedDefault).Error; err != nil {
+		t.Fatalf("read language-switched default template metadata: %v", err)
+	}
+	if languageSwitchedDefault.NameI18n == "{}" || languageSwitchedDefault.DescriptionI18n == "{}" || languageSwitchedDefault.NameCustomized || languageSwitchedDefault.DescriptionCustomized {
+		t.Fatalf("interface language switch destroyed default localization: %#v", languageSwitchedDefault)
 	}
 
 	var permissions string
@@ -291,8 +328,8 @@ func TestWorkspaceRoleTemplateLifecycleMigrationClearsStaleLocalizedOverrides(t 
 		"name":        clearStaleWorkspaceRoleNameI18nSQL,
 		"description": clearStaleWorkspaceRoleDescriptionI18nSQL,
 	} {
-		if !strings.Contains(statement, "creator.interface_language") || !strings.Contains(statement, "->> CASE") {
-			t.Fatalf("%s localized metadata repair must compare against the creator's primary locale: %s", name, statement)
+		if !strings.Contains(statement, "jsonb_each_text") || !strings.Contains(statement, "NOT EXISTS") || strings.Contains(statement, "interface_language") {
+			t.Fatalf("%s localized metadata repair must compare every stored translation without using mutable interface language: %s", name, statement)
 		}
 	}
 }
@@ -309,14 +346,18 @@ func TestHardenWorkspaceRoleTemplateLifecycleMigrationContract(t *testing.T) {
 		}
 	}
 	for _, want := range []string{
-		"creator.interface_language",
-		"role.template_origin = 'system_default'",
+		"jsonb_each_text(name_i18n)",
+		"jsonb_each_text(description_i18n)",
+		"NOT EXISTS",
 		"WHERE name_customized",
 		"WHERE description_customized",
 	} {
 		if !strings.Contains(backfillWorkspaceRoleCustomizationStateSQL, want) {
 			t.Fatalf("workspace role customization backfill missing %q: %s", want, backfillWorkspaceRoleCustomizationStateSQL)
 		}
+	}
+	if strings.Contains(backfillWorkspaceRoleCustomizationStateSQL, "interface_language") {
+		t.Fatalf("workspace role customization backfill must not depend on mutable interface language: %s", backfillWorkspaceRoleCustomizationStateSQL)
 	}
 	for _, want := range []string{
 		"CREATE OR REPLACE FUNCTION public.enforce_active_workspace_role_template_assignment()",
@@ -328,6 +369,29 @@ func TestHardenWorkspaceRoleTemplateLifecycleMigrationContract(t *testing.T) {
 	} {
 		if !strings.Contains(enforceActiveWorkspaceRoleTemplateAssignmentSQL, want) {
 			t.Fatalf("workspace role assignment guard missing %q: %s", want, enforceActiveWorkspaceRoleTemplateAssignmentSQL)
+		}
+	}
+}
+
+func TestRepairWorkspaceRoleTemplateLocalizationMigrationContract(t *testing.T) {
+	t.Parallel()
+
+	for name, statement := range map[string]string{
+		"name":        repairWorkspaceRoleTemplateNameLocalizationSQL,
+		"description": repairWorkspaceRoleTemplateDescriptionLocalizationSQL,
+	} {
+		for _, want := range []string{
+			"template_origin = 'system_default'",
+			"system_key = ?",
+			"IN (BTRIM(?), BTRIM(?))",
+			"customized = false",
+		} {
+			if !strings.Contains(statement, want) {
+				t.Fatalf("%s localization repair missing %q: %s", name, want, statement)
+			}
+		}
+		if strings.Contains(statement, "interface_language") {
+			t.Fatalf("%s localization repair must not depend on mutable interface language: %s", name, statement)
 		}
 	}
 }

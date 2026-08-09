@@ -1071,7 +1071,7 @@ const messages = {
         migrateAndDelete: 'Switch and Delete',
         migrating: 'Processing...',
         migrationPartial:
-          'Switched {applied}; {failed} failed. Resolve the failed items before deleting.',
+          'No changes were applied because {failed} member updates failed. Resolve the failures and try again.',
         migrationError: 'Failed to delete template',
       },
       deleteSuccess: 'Template deleted successfully',

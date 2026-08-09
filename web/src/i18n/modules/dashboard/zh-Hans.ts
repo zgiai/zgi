@@ -1027,7 +1027,7 @@ const messages: DashboardMessages = {
         noOrganization: '未找到当前组织，请刷新后重试',
         migrateAndDelete: '切换并删除',
         migrating: '处理中...',
-        migrationPartial: '已切换 {applied} 个，失败 {failed} 个。请处理失败项后再删除模板。',
+        migrationPartial: '未应用任何更改：有 {failed} 个成员切换失败。请处理失败项后重试。',
         migrationError: '删除模板失败',
       },
       deleteSuccess: '权限模板删除成功',
