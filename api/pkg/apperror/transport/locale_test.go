@@ -22,6 +22,10 @@ func TestLocaleFromAcceptLanguage(t *testing.T) {
 		{name: "invalid quality skipped", header: "zh-Hans;q=2,en;q=0.5", want: catalog.LocaleEnglishUS},
 		{name: "NaN quality skipped", header: "en-US;q=1,zh-Hans;q=NaN", want: catalog.LocaleEnglishUS},
 		{name: "infinite quality skipped", header: "en-US;q=0.8,zh-Hans;q=+Inf", want: catalog.LocaleEnglishUS},
+		{name: "bare quality skipped", header: "en-US;q=0.8,zh-Hans;q", want: catalog.LocaleEnglishUS},
+		{name: "empty parameter skipped", header: "en-US;q=0.8,zh-Hans;", want: catalog.LocaleEnglishUS},
+		{name: "unknown parameter skipped", header: "en-US;q=0.8,zh-Hans;level=1", want: catalog.LocaleEnglishUS},
+		{name: "duplicate quality skipped", header: "en-US;q=0.8,zh-Hans;q=0.9;q=0.7", want: catalog.LocaleEnglishUS},
 		{name: "unsupported", header: "fr-FR,de;q=0.8", want: ""},
 		{name: "empty", header: "", want: ""},
 	}

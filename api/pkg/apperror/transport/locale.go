@@ -34,16 +34,18 @@ func LocaleFromAcceptLanguage(value string) catalog.Locale {
 
 func languageQuality(parameters []string) (float64, bool) {
 	quality := 1.0
+	qualitySeen := false
 	for _, parameter := range parameters {
 		name, raw, found := strings.Cut(strings.TrimSpace(parameter), "=")
-		if !found || !strings.EqualFold(strings.TrimSpace(name), "q") {
-			continue
+		if !found || !strings.EqualFold(strings.TrimSpace(name), "q") || qualitySeen {
+			return 0, false
 		}
 		parsed, err := strconv.ParseFloat(strings.TrimSpace(raw), 64)
 		if err != nil || math.IsNaN(parsed) || math.IsInf(parsed, 0) || parsed < 0 || parsed > 1 {
 			return 0, false
 		}
 		quality = parsed
+		qualitySeen = true
 	}
 	return quality, true
 }
