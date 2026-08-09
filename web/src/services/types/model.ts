@@ -128,6 +128,8 @@ export interface ModelPerformance {
   [key: string]: number | undefined;
 }
 
+export type ModelPricing = Record<string, unknown>;
+
 export interface ModelUsageGuidelines {
   recommended_use_cases?: string[];
   limitations?: string[];
@@ -157,6 +159,7 @@ export interface ModelItem {
   input_price_configured?: boolean;
   output_price_configured?: boolean;
   cached_input_price?: number;
+  pricing?: ModelPricing | null;
   context_window: number;
   max_output_tokens: number;
   max_input_tokens?: number;

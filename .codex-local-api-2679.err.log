@@ -1,6 +1,0 @@
-asynq: pid=3528 2026/08/09 07:42:13.535309 INFO: Scheduler starting
-asynq: pid=3528 2026/08/09 07:42:13.535309 INFO: Starting processing
-asynq: pid=3528 2026/08/09 07:42:13.535817 INFO: Starting processing
-asynq: pid=3528 2026/08/09 07:42:13.553097 INFO: Scheduler timezone is set to Asia/Shanghai
-asynq: pid=3528 2026/08/09 07:42:13.568260 INFO: Send signal TERM or INT to terminate the process
-asynq: pid=3528 2026/08/09 07:42:13.568260 INFO: Send signal TERM or INT to terminate the process

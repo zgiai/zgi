@@ -434,15 +434,28 @@ export default function ModelsGroupTable({
                       </TableCell>
                       <TableCell>
                         <div className="flex items-start justify-between gap-2 text-sm">
-                          <div className="space-y-1">
+                          <div className="space-y-1.5">
                             {getModelPriceDisplay({
                               inputPrice: m.input_price,
                               outputPrice: m.output_price,
                               inputPriceConfigured: m.input_price_configured,
                               outputPriceConfigured: m.output_price_configured,
+                              pricing: m.pricing,
+                              currency: m.currency,
                               useCases: m.use_cases,
+                              labels: {
+                                unspecifiedResolution: t(
+                                  `aiProviders.models.pricing.videoUnspecifiedResolution` as AiProvidersKey
+                                ),
+                                withVideoInput: t(
+                                  `aiProviders.models.pricing.videoWithInput` as AiProvidersKey
+                                ),
+                                withoutVideoInput: t(
+                                  `aiProviders.models.pricing.videoWithoutInput` as AiProvidersKey
+                                ),
+                              },
                               billingDisplay,
-                            }).map(item => {
+                            }).map((item, index) => {
                               const unitKey =
                                 `aiProviders.models.pricing.${item.unit}` as AiProvidersKey;
                               const labelKey =
@@ -454,12 +467,15 @@ export default function ModelsGroupTable({
                                   : `${item.formattedValue}${t(unitKey)}`;
 
                               return (
-                                <div key={item.label} className="flex items-center gap-1.5">
-                                  <span className="text-xs text-muted-foreground">
-                                    {t(labelKey)}
+                                <div
+                                  key={`${item.label}-${item.detail ?? index}`}
+                                  className="flex items-baseline gap-x-4 leading-5"
+                                >
+                                  <span className="w-36 shrink-0 text-xs text-muted-foreground">
+                                    {item.detail || t(labelKey)}
                                   </span>
                                   <span
-                                    className={`font-medium text-xs ${
+                                    className={`whitespace-nowrap text-xs font-medium tabular-nums ${
                                       item.isConfigured
                                         ? 'text-foreground'
                                         : 'text-amber-600 dark:text-amber-400'
