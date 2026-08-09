@@ -169,10 +169,14 @@ func TestWorkspaceRoleDefaultTemplatesMigrationUpPostgres(t *testing.T) {
 	if err := upRepairWorkspaceRoleTemplateLocalization(mschema.New(db)); err != nil {
 		t.Fatalf("run role template localization repair migration second time: %v", err)
 	}
+	if err := upFilterUnchangedWorkspaceRoleAssignmentUpdates(mschema.New(db)); err != nil {
+		t.Fatalf("run unchanged workspace role assignment update filter migration: %v", err)
+	}
 	mustExec(t, db, `
 		INSERT INTO public.workspaces (id, organization_id)
 		VALUES ('30000000-0000-0000-0000-000000000001', '20000000-0000-0000-0000-000000000001')
 	`)
+	assertUnchangedWorkspaceRoleAssignmentUpdateDoesNotWaitForRoleLock(t, db)
 	var deletedRoleID string
 	if err := db.Table("public.roles").
 		Select("id::text").
@@ -361,6 +365,10 @@ func TestHardenWorkspaceRoleTemplateLifecycleMigrationContract(t *testing.T) {
 	}
 	for _, want := range []string{
 		"CREATE OR REPLACE FUNCTION public.enforce_active_workspace_role_template_assignment()",
+		"IF TG_OP = 'UPDATE' THEN",
+		"NEW.workspace_id IS NOT DISTINCT FROM OLD.workspace_id",
+		"NEW.role_id IS NOT DISTINCT FROM OLD.role_id",
+		"NEW.permission_template_role_id IS NOT DISTINCT FROM OLD.permission_template_role_id",
 		"role_template.status = 'active'",
 		"workspace.organization_id = role_template.group_id",
 		"FOR SHARE OF role_template",
@@ -370,6 +378,76 @@ func TestHardenWorkspaceRoleTemplateLifecycleMigrationContract(t *testing.T) {
 		if !strings.Contains(enforceActiveWorkspaceRoleTemplateAssignmentSQL, want) {
 			t.Fatalf("workspace role assignment guard missing %q: %s", want, enforceActiveWorkspaceRoleTemplateAssignmentSQL)
 		}
+	}
+}
+
+func assertUnchangedWorkspaceRoleAssignmentUpdateDoesNotWaitForRoleLock(t *testing.T, db *gorm.DB) {
+	t.Helper()
+
+	var roleID string
+	if err := db.Table("public.roles").
+		Select("id::text").
+		Where(
+			"group_id = ? AND system_key = ?",
+			"20000000-0000-0000-0000-000000000001",
+			workspace_model.WorkspaceDefaultRoleTemplateReadonlyKey,
+		).
+		Scan(&roleID).Error; err != nil {
+		t.Fatalf("read active role template for lock test: %v", err)
+	}
+	if roleID == "" {
+		t.Fatal("active role template id for lock test is empty")
+	}
+
+	var workspaceMemberID string
+	if err := db.Raw(`
+		INSERT INTO public.workspace_members (
+			workspace_id,
+			account_id,
+			role_id,
+			permission_template_role_id
+		)
+		VALUES (?::uuid, ?::uuid, ?::uuid, ?::uuid)
+		RETURNING id::text
+	`,
+		"30000000-0000-0000-0000-000000000001",
+		"10000000-0000-0000-0000-000000000001",
+		roleID,
+		roleID,
+	).Scan(&workspaceMemberID).Error; err != nil {
+		t.Fatalf("insert workspace member for unchanged role lock test: %v", err)
+	}
+
+	lockingTx := db.Begin()
+	if lockingTx.Error != nil {
+		t.Fatalf("begin role lock transaction: %v", lockingTx.Error)
+	}
+	defer lockingTx.Rollback()
+
+	var lockedRoleID string
+	if err := lockingTx.Raw(`
+		SELECT id::text
+		FROM public.roles
+		WHERE id = ?::uuid
+		FOR UPDATE
+	`, roleID).Scan(&lockedRoleID).Error; err != nil {
+		t.Fatalf("lock role template for unchanged assignment update test: %v", err)
+	}
+
+	if err := db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Exec(`SET LOCAL lock_timeout = '250ms'`).Error; err != nil {
+			return err
+		}
+		return tx.Exec(`
+			UPDATE public.workspace_members
+			SET
+				workspace_id = workspace_id,
+				role_id = role_id,
+				permission_template_role_id = permission_template_role_id
+			WHERE id = ?::uuid
+		`, workspaceMemberID).Error
+	}); err != nil {
+		t.Fatalf("unchanged workspace role assignment update waited for role lock: %v", err)
 	}
 }
 

@@ -40,7 +40,7 @@ SET description_i18n = '{}'::jsonb
 WHERE description_customized
 `
 
-const enforceActiveWorkspaceRoleTemplateAssignmentSQL = `
+const enforceActiveWorkspaceRoleTemplateAssignmentFunctionSQL = `
 CREATE OR REPLACE FUNCTION public.enforce_active_workspace_role_template_assignment()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -48,6 +48,14 @@ AS $$
 DECLARE
 	referenced_role_id uuid;
 BEGIN
+	IF TG_OP = 'UPDATE' THEN
+		IF NEW.workspace_id IS NOT DISTINCT FROM OLD.workspace_id
+		   AND NEW.role_id IS NOT DISTINCT FROM OLD.role_id
+		   AND NEW.permission_template_role_id IS NOT DISTINCT FROM OLD.permission_template_role_id THEN
+			RETURN NEW;
+		END IF;
+	END IF;
+
 	FOREACH referenced_role_id IN ARRAY ARRAY[NEW.role_id, NEW.permission_template_role_id]
 	LOOP
 		IF referenced_role_id IS NULL OR referenced_role_id = ANY(ARRAY[
@@ -76,8 +84,10 @@ BEGIN
 
 	RETURN NEW;
 END
-$$;
+$$
+`
 
+const enforceActiveWorkspaceRoleTemplateAssignmentTriggerSQL = `
 DROP TRIGGER IF EXISTS workspace_members_active_role_template_guard
 	ON public.workspace_members;
 CREATE TRIGGER workspace_members_active_role_template_guard
@@ -86,6 +96,8 @@ CREATE TRIGGER workspace_members_active_role_template_guard
 	FOR EACH ROW
 	EXECUTE FUNCTION public.enforce_active_workspace_role_template_assignment()
 `
+
+const enforceActiveWorkspaceRoleTemplateAssignmentSQL = enforceActiveWorkspaceRoleTemplateAssignmentFunctionSQL + ";\n" + enforceActiveWorkspaceRoleTemplateAssignmentTriggerSQL
 
 func init() {
 	registerSchemaMigration(
