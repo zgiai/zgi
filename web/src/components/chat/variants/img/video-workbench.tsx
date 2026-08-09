@@ -18,6 +18,7 @@ import {
   Sparkles,
   SlidersHorizontal,
   Timer,
+  Trash2,
   Video,
   Volume2,
   X,
@@ -46,6 +47,7 @@ import {
 import { Textarea } from '@/components/ui/textarea';
 import { useAvailableModels } from '@/hooks/model/use-model';
 import {
+  useDeleteVideoTask,
   useGenerateVideoTask,
   useVideoRuntimeTask,
   useVideoRuntimeTasks,
@@ -137,6 +139,7 @@ export function VideoWorkbench() {
   });
   const { tasks, refetch: refetchTasks } = useVideoRuntimeTasks();
   const generateMutation = useGenerateVideoTask();
+  const deleteTaskMutation = useDeleteVideoTask();
   const [selectedModel, setSelectedModel] = React.useState<ModelSelectorValue>({
     provider: '',
     model: '',
@@ -326,12 +329,30 @@ export function VideoWorkbench() {
     t,
   ]);
 
+  const handleDeleteTask = React.useCallback(
+    async (taskId: string) => {
+      try {
+        await deleteTaskMutation.mutateAsync(taskId);
+        completedPollingTaskIdsRef.current.delete(taskId);
+        if (selectedTaskId === taskId) setSelectedTaskId(null);
+        if (pollingTaskId === taskId) setPollingTaskId(null);
+        toast.success(t('chat.videoWorkbench.deleteRecordSuccess'));
+      } catch (err) {
+        const message = err instanceof Error ? err.message : t('chat.videoWorkbench.deleteRecordFailed');
+        toast.error(message);
+      }
+    },
+    [deleteTaskMutation, pollingTaskId, selectedTaskId, t]
+  );
+
   return (
     <div className="flex h-full min-h-0 w-full bg-background">
       <GenerationRecordsSidebar
         tasks={tasks}
         selectedTaskId={selectedTaskId}
         onSelectTask={setSelectedTaskId}
+        onDeleteTask={handleDeleteTask}
+        deletingTaskId={deleteTaskMutation.variables ?? null}
         onRefresh={() => void refetchTasks()}
       />
 
@@ -378,11 +399,15 @@ function GenerationRecordsSidebar({
   tasks,
   selectedTaskId,
   onSelectTask,
+  onDeleteTask,
+  deletingTaskId,
   onRefresh,
 }: {
   tasks: VideoRuntimeTask[];
   selectedTaskId: string | null;
   onSelectTask: (taskId: string) => void;
+  onDeleteTask: (taskId: string) => void;
+  deletingTaskId: string | null;
   onRefresh: () => void;
 }) {
   const t = useT('webapp');
@@ -452,7 +477,9 @@ function GenerationRecordsSidebar({
                 key={task.task_id}
                 task={task}
                 isSelected={task.task_id === selectedTaskId}
+                isDeleting={task.task_id === deletingTaskId}
                 onSelect={() => onSelectTask(task.task_id)}
+                onDelete={() => onDeleteTask(task.task_id)}
               />
             ))}
           </div>
@@ -465,15 +492,20 @@ function GenerationRecordsSidebar({
 function VideoTaskCard({
   task,
   isSelected,
+  isDeleting,
   onSelect,
+  onDelete,
 }: {
   task: VideoRuntimeTask;
   isSelected: boolean;
+  isDeleting: boolean;
   onSelect: () => void;
+  onDelete: () => void;
 }) {
   const t = useT('webapp');
   const status = normalizeStatus(task.status);
   const isLoadingStatus = status === 'pending' || status === 'running';
+  const deleteDisabled = isDeleting || isActiveVideoTaskStatus(task.status);
   const Icon = isLoadingStatus
     ? Loader2
     : status === 'succeeded'
@@ -489,11 +521,18 @@ function VideoTaskCard({
         : 'border-amber-500/30 bg-amber-500/10 text-amber-700';
 
   return (
-    <button
-      type="button"
+    <div
+      role="button"
+      tabIndex={0}
       onClick={onSelect}
+      onKeyDown={event => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          onSelect();
+        }
+      }}
       className={cn(
-        'w-full rounded-lg border border-border bg-background p-3 text-left shadow-sm transition hover:border-border-strong hover:bg-muted/20',
+        'w-full cursor-pointer rounded-lg border border-border bg-background p-3 text-left shadow-sm transition hover:border-border-strong hover:bg-muted/20',
         isSelected && 'border-primary/50 bg-primary/5 ring-1 ring-primary/20'
       )}
     >
@@ -506,10 +545,30 @@ function VideoTaskCard({
             {task.task_id}
           </div>
         </div>
-        <Badge className={cn('rounded-md px-1.5 py-0.5 text-[11px]', statusClass)}>
-          <Icon className={cn('mr-1 h-3 w-3', isLoadingStatus && 'animate-spin')} />
-          {t(VIDEO_STATUS_LABEL_KEYS[status])}
-        </Badge>
+        <div className="flex shrink-0 items-center gap-1">
+          <Badge className={cn('rounded-md px-1.5 py-0.5 text-[11px]', statusClass)}>
+            <Icon className={cn('mr-1 h-3 w-3', isLoadingStatus && 'animate-spin')} />
+            {t(VIDEO_STATUS_LABEL_KEYS[status])}
+          </Badge>
+          <Button
+            type="button"
+            variant="ghost"
+            isIcon
+            className="h-7 w-7 text-muted-foreground hover:text-red-600"
+            disabled={deleteDisabled}
+            title={
+              isActiveVideoTaskStatus(task.status)
+                ? t('chat.videoWorkbench.deleteActiveRecordDisabled')
+                : t('chat.videoWorkbench.deleteRecord')
+            }
+            onClick={event => {
+              event.stopPropagation();
+              if (!deleteDisabled) onDelete();
+            }}
+          >
+            {isDeleting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+          </Button>
+        </div>
       </div>
       <p className="mt-2 line-clamp-2 text-xs leading-5 text-muted-foreground">{task.prompt}</p>
       <div className="mt-2 flex flex-wrap gap-1.5 text-[11px] text-muted-foreground">
@@ -539,6 +598,7 @@ function VideoTaskCard({
           href={task.video_url}
           target="_blank"
           rel="noreferrer"
+          onClick={event => event.stopPropagation()}
           className="mt-3 inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline"
         >
           {t('chat.videoWorkbench.openVideo')}
@@ -548,7 +608,7 @@ function VideoTaskCard({
       {task.error_message ? (
         <div className="mt-2 line-clamp-2 text-xs text-red-600">{task.error_message}</div>
       ) : null}
-    </button>
+    </div>
   );
 }
 
@@ -788,7 +848,7 @@ function TaskDetailSheet({
                   <DetailMetric
                     icon={<Coins className="h-4 w-4" />}
                     label={t('chat.videoWorkbench.deductedCredits')}
-                    value={formatCredit(task.actual_credits || task.estimated_credits)}
+                    value={formatCredit(videoTaskDeductedCredits(task))}
                   />
                   <DetailMetric
                     icon={<CalendarClock className="h-4 w-4" />}
@@ -840,18 +900,25 @@ function TaskDetailSheet({
 }
 
 function taskHasVideoInput(task: VideoRuntimeTask) {
-  if (!task.has_input_video) return false;
-  const payload = task.request_payload;
-  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return true;
-  if (hasNonEmptyString(payload.video_url)) return true;
+	if (!task.has_input_video) return false;
+	const payload = task.request_payload;
+	if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return true;
+	if (hasNonEmptyString(payload.video_url)) return true;
   if (Array.isArray(payload.reference_types)) {
     return payload.reference_types.some(value => String(value).trim().toLowerCase() === 'video');
   }
-  return false;
+	return false;
+}
+
+function videoTaskDeductedCredits(task: VideoRuntimeTask) {
+	const status = normalizeStatus(task.status);
+	if (status === 'failed' || status === 'cancelled') return task.actual_credits ?? 0;
+	if (status === 'pending' || status === 'running') return task.estimated_credits;
+	return task.actual_credits > 0 ? task.actual_credits : task.estimated_credits;
 }
 
 function hasNonEmptyString(value: unknown) {
-  return typeof value === 'string' && value.trim() !== '';
+	return typeof value === 'string' && value.trim() !== '';
 }
 
 function StatusBadge({ status }: { status: ReturnType<typeof normalizeStatus> }) {

@@ -77,6 +77,19 @@ func (h *Handler) GetTask(c *gin.Context) {
 	response.Success(c, task)
 }
 
+func (h *Handler) DeleteTask(c *gin.Context) {
+	scope, ok := h.scope(c)
+	if !ok {
+		return
+	}
+	taskID := strings.TrimSpace(c.Param("task_id"))
+	if err := h.service.DeleteTask(c.Request.Context(), scope, taskID); err != nil {
+		fail(c, err)
+		return
+	}
+	response.Success(c, gin.H{"deleted": true})
+}
+
 func (h *Handler) scope(c *gin.Context) (videoservice.Scope, bool) {
 	accountID, err := uuid.Parse(strings.TrimSpace(util.GetAccountID(c)))
 	if err != nil {

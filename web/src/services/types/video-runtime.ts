@@ -66,3 +66,4 @@ export type VideoRuntimeModelsResponse = ApiResponseData<VideoRuntimeModel[]>;
 export type VideoRuntimeTasksResponse = ApiResponseData<VideoRuntimeTask[]>;
 export type VideoRuntimeTaskResponse = ApiResponseData<VideoRuntimeTask>;
 export type VideoRuntimeGenerateResponse = ApiResponseData<VideoRuntimeGenerateResult>;
+export type VideoRuntimeDeleteTaskResponse = ApiResponseData<{ deleted: boolean }>;

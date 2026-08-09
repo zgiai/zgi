@@ -110,10 +110,5 @@ func (s *service) pollVideoRuntimeTask(ctx context.Context, record *videoTaskRec
 }
 
 func (s *service) markVideoRuntimeTaskPollError(ctx context.Context, record *videoTaskRecord, err error) error {
-	if s == nil || s.tasks == nil || record == nil || err == nil {
-		return nil
-	}
-	record.ErrorMessage = fmt.Errorf("%w: %v", ErrUpstreamFailed, err).Error()
-	record.UpdatedAt = time.Now()
-	return s.tasks.save(ctx, record)
+	return s.markVideoRuntimeTaskFailedFromError(ctx, record, err)
 }

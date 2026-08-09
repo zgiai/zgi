@@ -88,6 +88,22 @@ func (r *taskRepository) findByTaskID(ctx context.Context, scope Scope, taskID s
 	return &record, nil
 }
 
+func (r *taskRepository) deleteByTaskID(ctx context.Context, scope Scope, taskID string) error {
+	query := r.db.WithContext(ctx).
+		Where("organization_id = ? AND account_id = ? AND task_id = ?", scope.OrganizationID, scope.AccountID, taskID)
+	if scope.WorkspaceID != nil && *scope.WorkspaceID != uuid.Nil {
+		query = query.Where("workspace_id = ?", *scope.WorkspaceID)
+	}
+	result := query.Delete(&videoTaskRecord{})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return ErrTaskNotFound
+	}
+	return nil
+}
+
 func (r *taskRepository) listActiveForPolling(ctx context.Context, staleBefore time.Time, submitExpiredBefore time.Time, limit int) ([]videoTaskRecord, error) {
 	if limit <= 0 || limit > 100 {
 		limit = 50

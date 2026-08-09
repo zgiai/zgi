@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -38,6 +39,7 @@ type Service interface {
 	Generate(ctx context.Context, scope Scope, req GenerateRequest) (*GenerateResult, error)
 	ListTasks(ctx context.Context, scope Scope) ([]VideoTask, error)
 	GetTask(ctx context.Context, scope Scope, taskID string) (*VideoTask, error)
+	DeleteTask(ctx context.Context, scope Scope, taskID string) error
 }
 
 type service struct {
@@ -244,11 +246,36 @@ func (s *service) GetTask(ctx context.Context, scope Scope, taskID string) (*Vid
 	}
 	if shouldRefreshVideoTask(record) && s.llmClient != nil {
 		if err := s.refreshTask(ctx, scope, record); err != nil {
-			record.ErrorMessage = err.Error()
+			_ = s.markVideoRuntimeTaskFailedFromError(ctx, record, err)
 		}
 	}
 	task := taskFromRecord(*record)
 	return &task, nil
+}
+
+func (s *service) DeleteTask(ctx context.Context, scope Scope, taskID string) error {
+	taskID = strings.TrimSpace(taskID)
+	if taskID == "" {
+		return ErrTaskNotFound
+	}
+	return s.tasks.deleteByTaskID(ctx, scope, taskID)
+}
+
+func (s *service) markVideoRuntimeTaskFailedFromError(ctx context.Context, record *videoTaskRecord, err error) error {
+	if s == nil || s.tasks == nil || record == nil || err == nil {
+		return nil
+	}
+	message := err.Error()
+	if !errors.Is(err, ErrUpstreamFailed) {
+		message = fmt.Errorf("%w: %v", ErrUpstreamFailed, err).Error()
+	}
+	now := time.Now()
+	record.Status = "failed"
+	record.ErrorMessage = message
+	record.ActualCredits = 0
+	record.UpdatedAt = now
+	record.CompletedAt = &now
+	return s.tasks.save(ctx, record)
 }
 
 func shouldRefreshVideoTask(record *videoTaskRecord) bool {

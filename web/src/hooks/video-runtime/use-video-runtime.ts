@@ -80,6 +80,17 @@ export function useGenerateVideoTask() {
   });
 }
 
+export function useDeleteVideoTask() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (taskId: string) => VideoRuntimeService.deleteTask(taskId),
+    onSuccess: (_data, taskId) => {
+      void queryClient.invalidateQueries({ queryKey: VIDEO_RUNTIME_KEYS.tasks });
+      queryClient.removeQueries({ queryKey: VIDEO_RUNTIME_KEYS.task(taskId) });
+    },
+  });
+}
+
 function isVideoRuntimeTaskActive(task: Pick<VideoRuntimeTask, 'status'>) {
   const status = task.status?.toLowerCase?.() ?? '';
   return status === 'pending' || status === 'running' || status === 'processing' || status === 'in_progress';

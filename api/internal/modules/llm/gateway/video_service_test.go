@@ -71,7 +71,10 @@ func TestVideoPriceForSelectionMatchesPerSecondRates(t *testing.T) {
 
 func TestVideoPricingTokenCountReadsVideoTokenFields(t *testing.T) {
 	resp := &adapter.VideoResponse{Raw: map[string]interface{}{
-		"usage": map[string]interface{}{"video_tokens": float64(12345)},
+		"usage": map[string]interface{}{
+			"completion_tokens": float64(12345),
+			"total_tokens":      float64(12345),
+		},
 	}}
 	if got := videoPricingTokenCount(nil, resp); got != 12345 {
 		t.Fatalf("videoPricingTokenCount() = %d, want 12345", got)

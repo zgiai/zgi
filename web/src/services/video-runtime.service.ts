@@ -2,6 +2,7 @@ import { http } from '@/lib/http';
 import type {
   VideoRuntimeGenerateRequest,
   VideoRuntimeGenerateResponse,
+  VideoRuntimeDeleteTaskResponse,
   VideoRuntimeModelsResponse,
   VideoRuntimeTaskResponse,
   VideoRuntimeTasksResponse,
@@ -21,6 +22,12 @@ export const VideoRuntimeService = {
 
   getTask(taskId: string) {
     return http.get<VideoRuntimeTaskResponse>(
+      `${VIDEO_RUNTIME_BASE_PATH}/tasks/${encodeURIComponent(taskId)}`
+    );
+  },
+
+  deleteTask(taskId: string) {
+    return http.delete<VideoRuntimeDeleteTaskResponse>(
       `${VIDEO_RUNTIME_BASE_PATH}/tasks/${encodeURIComponent(taskId)}`
     );
   },

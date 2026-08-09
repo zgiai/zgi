@@ -873,22 +873,27 @@ func matchVideoRate(rates []videoPricingRate, resolution string, inputVideo bool
 }
 
 func videoPricingTokenCount(req *adapter.VideoTaskRequest, resp *adapter.VideoResponse) int {
-	if resp != nil && resp.Usage != nil && resp.Usage.TotalTokens > 0 {
-		return resp.Usage.TotalTokens
+	if resp != nil && resp.Usage != nil {
+		if resp.Usage.CompletionTokens > 0 {
+			return resp.Usage.CompletionTokens
+		}
+		if resp.Usage.TotalTokens > 0 {
+			return resp.Usage.TotalTokens
+		}
 	}
-	for _, key := range []string{"video_tokens", "total_video_tokens", "total_tokens"} {
+	for _, key := range []string{"video_tokens", "total_video_tokens", "output_video_tokens", "completion_tokens", "total_tokens"} {
 		if value := intFromAny(videoTaskAdditionalParam(req, key)); value > 0 {
 			return value
 		}
 	}
 	if resp != nil && resp.Raw != nil {
-		for _, key := range []string{"video_tokens", "total_video_tokens", "total_tokens"} {
+		for _, key := range []string{"video_tokens", "total_video_tokens", "output_video_tokens", "completion_tokens", "total_tokens"} {
 			if value := intFromAny(resp.Raw[key]); value > 0 {
 				return value
 			}
 		}
 		if usage, ok := resp.Raw["usage"].(map[string]interface{}); ok {
-			for _, key := range []string{"video_tokens", "total_video_tokens", "total_tokens"} {
+			for _, key := range []string{"video_tokens", "total_video_tokens", "output_video_tokens", "completion_tokens", "total_tokens"} {
 				if value := intFromAny(usage[key]); value > 0 {
 					return value
 				}
