@@ -180,7 +180,7 @@ type SyncResult struct {
 }
 
 // DiffResult represents the comparison result between local and remote models
-// Note: deprecated/deleted models are NOT included here — use ComputeDeprecated instead.
+// Note: deprecated/deleted models are NOT included here - use ComputeDeprecated instead.
 type DiffResult struct {
 	Provider  string      `json:"provider"`
 	CheckedAt time.Time   `json:"checked_at"`
@@ -358,7 +358,7 @@ func (s *Service) SyncAllProviders(ctx context.Context) (map[string]*SyncResult,
 }
 
 // ComputeDiff compares local models with remote models and returns new/updated differences.
-// Deprecated/deleted models are excluded — use ComputeDeprecated for those.
+// Deprecated/deleted models are excluded - use ComputeDeprecated for those.
 func (s *Service) ComputeDiff(ctx context.Context, provider string) (*DiffResult, error) {
 	result := &DiffResult{
 		Provider:  provider,
@@ -1009,7 +1009,29 @@ func useCasesDiffer(local llmmodel.StringArray, remote []string) bool {
 }
 
 func structuredPricingDiffer(local datatypes.JSON, remote json.RawMessage) bool {
-	return !reflect.DeepEqual(normalizedStructuredPricing(local), normalizedStructuredPricing(remote))
+	return jsonPayloadDiffer(local, remote)
+}
+
+func jsonPayloadDiffer(local interface{}, remote interface{}) bool {
+	return !reflect.DeepEqual(normalizedJSONPayload(local), normalizedJSONPayload(remote))
+}
+
+func normalizedJSONPayload(value interface{}) interface{} {
+	switch typed := value.(type) {
+	case nil:
+		return map[string]interface{}{}
+	case []byte:
+		return normalizedStructuredPricing(typed)
+	case json.RawMessage:
+		return normalizedStructuredPricing(typed)
+	case datatypes.JSON:
+		return normalizedStructuredPricing(typed)
+	}
+	data, err := json.Marshal(value)
+	if err != nil {
+		return value
+	}
+	return normalizedStructuredPricing(data)
 }
 
 func normalizedStructuredPricing(raw []byte) interface{} {
@@ -1099,6 +1121,16 @@ func (s *Service) hasChanges(local *llmmodel.LLMModel, remote *ModelMetaData) bo
 		return true
 	}
 	if !equalStringSlices(normalizeStringValues([]string(local.OutputModalities)), normalizeStringValues(remote.OutputModalities)) {
+		return true
+	}
+	if jsonPayloadDiffer(local.SupportedParameters, marshalJSONRaw(remote.Parameters)) {
+		return true
+	}
+	if len(remote.ConfigParameters) > 0 && jsonPayloadDiffer(local.ConfigParameters, normalizeConfigParameters(remote.ConfigParameters)) {
+		return true
+	}
+	remoteDefaultParameters := publishedModelDefaultParameters(remote)
+	if len(remoteDefaultParameters) > 0 && jsonPayloadDiffer(local.DefaultParameters, remoteDefaultParameters) {
 		return true
 	}
 	return false
@@ -1221,6 +1253,32 @@ func (s *Service) computeDiffFields(local *llmmodel.LLMModel, remote *ModelMetaD
 			Field:    "output_modalities",
 			OldValue: normalizeStringValues([]string(local.OutputModalities)),
 			NewValue: normalizeStringValues(remote.OutputModalities),
+		})
+	}
+	remoteSupportedParameters := marshalJSONRaw(remote.Parameters)
+	if jsonPayloadDiffer(local.SupportedParameters, remoteSupportedParameters) {
+		diffs = append(diffs, DiffField{
+			Field:    "supported_parameters",
+			OldValue: normalizedJSONPayload(local.SupportedParameters),
+			NewValue: normalizedJSONPayload(remoteSupportedParameters),
+		})
+	}
+	if len(remote.ConfigParameters) > 0 {
+		remoteConfigParameters := normalizeConfigParameters(remote.ConfigParameters)
+		if jsonPayloadDiffer(local.ConfigParameters, remoteConfigParameters) {
+			diffs = append(diffs, DiffField{
+				Field:    "config_parameters",
+				OldValue: normalizedJSONPayload(local.ConfigParameters),
+				NewValue: normalizedJSONPayload(remoteConfigParameters),
+			})
+		}
+	}
+	remoteDefaultParameters := publishedModelDefaultParameters(remote)
+	if len(remoteDefaultParameters) > 0 && jsonPayloadDiffer(local.DefaultParameters, remoteDefaultParameters) {
+		diffs = append(diffs, DiffField{
+			Field:    "default_parameters",
+			OldValue: normalizedJSONPayload(local.DefaultParameters),
+			NewValue: normalizedJSONPayload(remoteDefaultParameters),
 		})
 	}
 
