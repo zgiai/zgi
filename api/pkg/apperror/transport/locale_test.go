@@ -37,6 +37,7 @@ func TestLocaleFromAcceptLanguage(t *testing.T) {
 		{name: "specific exclusion overrides broad range", header: "en-US;q=0,en;q=1,zh;q=0.5", want: catalog.LocaleChineseSimplified},
 		{name: "specific preference overrides broad exclusion", header: "en;q=0,en-US;q=0.7,zh;q=0.5", want: catalog.LocaleEnglishUS},
 		{name: "wildcard supplies unmatched locale", header: "*;q=1,en-US;q=0", want: catalog.LocaleChineseSimplified},
+		{name: "wildcard tie uses stable supported order", header: "*;q=1", want: catalog.LocaleEnglishUS},
 		{name: "specific ranges override wildcard", header: "*;q=1,zh-Hans;q=0,en;q=0.5", want: catalog.LocaleEnglishUS},
 		{name: "higher quality wins between equal aliases", header: "zh-CN;q=0.1,zh-Hans;q=0.9,en;q=0.5", want: catalog.LocaleChineseSimplified},
 		{name: "header order breaks equal quality tie", header: "zh;q=0.8,en;q=0.8", want: catalog.LocaleChineseSimplified},

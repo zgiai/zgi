@@ -57,7 +57,11 @@ func LocaleFromAcceptLanguage(value string) catalog.Locale {
 	bestQuality := 0
 	bestOrder := len(candidates)
 	var best catalog.Locale
-	for locale, preference := range effective {
+	for _, locale := range supportedLocales {
+		preference, exists := effective[locale]
+		if !exists {
+			continue
+		}
 		if preference.quality > bestQuality ||
 			(preference.quality == bestQuality && preference.quality > 0 && preference.order < bestOrder) {
 			best = locale
