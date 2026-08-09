@@ -147,10 +147,6 @@ func (h *StatisticsHandler) GetWorkspaceQuota(c *gin.Context) {
 }
 
 func handleStatisticsError(c *gin.Context, err error) {
-	if errors.Is(err, service.ErrInvocationContentUnavailable) {
-		response.FailWithMessage(c, response.ErrActionNotAllowed, err.Error())
-		return
-	}
 	if service.IsValidationError(err) {
 		response.FailWithMessage(c, response.ErrInvalidParam, err.Error())
 		return

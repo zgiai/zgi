@@ -71,7 +71,7 @@ type invocationContentSettingCache struct {
 }
 
 func newInvocationContentRecorder(db *gorm.DB, cfg config.LLMInvocationContentConfig) *invocationContentRecorder {
-	if db == nil || !cfg.Available {
+	if db == nil {
 		return nil
 	}
 	recorder := &invocationContentRecorder{

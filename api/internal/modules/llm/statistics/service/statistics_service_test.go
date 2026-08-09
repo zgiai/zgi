@@ -28,24 +28,25 @@ func (f *fakeStatisticsRepository) GetInvocationContentSettings(context.Context,
 	return f.contentEnabled, nil
 }
 
-func (f *fakeStatisticsRepository) UpdateInvocationContentSettings(context.Context, string, bool) error {
-	f.contentEnabled = true
+func (f *fakeStatisticsRepository) UpdateInvocationContentSettings(_ context.Context, _ string, enabled bool) error {
+	f.contentEnabled = enabled
 	return nil
 }
 
-func TestInvocationContentSettingsRequireDeploymentGate(t *testing.T) {
+func TestInvocationContentSettingsUseOrganizationAdminSwitch(t *testing.T) {
 	previous := appconfig.GlobalConfig
 	t.Cleanup(func() { appconfig.GlobalConfig = previous })
 	appconfig.GlobalConfig = &appconfig.Config{LLMInvocationContent: appconfig.LLMInvocationContentConfig{
-		Available: false, MaxBytes: 65536, RetentionDays: 14,
+		MaxBytes: 65536, RetentionDays: 14,
 	}}
 	repo := &fakeStatisticsRepository{}
 	svc := NewStatisticsService(repo)
-	if _, err := svc.UpdateInvocationContentSettings(context.Background(), "org-1", &dto.UpdateInvocationContentSettingsRequest{Enabled: true}); err != ErrInvocationContentUnavailable {
-		t.Fatalf("enable error=%v, want %v", err, ErrInvocationContentUnavailable)
+	updated, err := svc.UpdateInvocationContentSettings(context.Background(), "org-1", &dto.UpdateInvocationContentSettingsRequest{Enabled: true})
+	if err != nil || !updated.Enabled {
+		t.Fatalf("enable settings=%#v err=%v", updated, err)
 	}
 	settings, err := svc.GetInvocationContentSettings(context.Background(), "org-1")
-	if err != nil || settings.Available || settings.Enabled {
+	if err != nil || !settings.Available || !settings.Enabled {
 		t.Fatalf("unexpected settings=%#v err=%v", settings, err)
 	}
 }

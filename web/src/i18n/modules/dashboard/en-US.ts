@@ -150,7 +150,6 @@ const messages = {
       contentSettings: {
         title: 'Input/output content audit',
         description: 'When enabled, new calls are redacted and stored asynchronously, up to {size} KB per field for {days} days.',
-        deploymentDisabled: 'Content capture is disabled for this deployment. Set LLM_INVOCATION_CONTENT_AVAILABLE=true first.',
         enabled: 'Input/output content audit enabled',
         disabled: 'Input/output content audit disabled',
         updateFailed: 'Failed to update content audit settings',

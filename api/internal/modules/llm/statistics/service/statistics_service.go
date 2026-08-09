@@ -25,24 +25,18 @@ func (s *statisticsServiceImpl) GetInvocationContentSettings(ctx context.Context
 	if err != nil {
 		return nil, fmt.Errorf("failed to get invocation content settings: %w", err)
 	}
-	return &dto.InvocationContentSettings{Available: cfg.Available, Enabled: cfg.Available && enabled, MaxBytes: cfg.MaxBytes, RetentionDays: cfg.RetentionDays}, nil
+	return &dto.InvocationContentSettings{Available: true, Enabled: enabled, MaxBytes: cfg.MaxBytes, RetentionDays: cfg.RetentionDays}, nil
 }
 
 func (s *statisticsServiceImpl) UpdateInvocationContentSettings(ctx context.Context, organizationID string, req *dto.UpdateInvocationContentSettingsRequest) (*dto.InvocationContentSettings, error) {
 	cfg := appconfig.Current().LLMInvocationContent
-	if req.Enabled && !cfg.Available {
-		return nil, ErrInvocationContentUnavailable
-	}
 	if err := s.statisticsRepo.UpdateInvocationContentSettings(ctx, organizationID, req.Enabled); err != nil {
 		return nil, fmt.Errorf("failed to update invocation content settings: %w", err)
 	}
-	return &dto.InvocationContentSettings{Available: cfg.Available, Enabled: req.Enabled, MaxBytes: cfg.MaxBytes, RetentionDays: cfg.RetentionDays}, nil
+	return &dto.InvocationContentSettings{Available: true, Enabled: req.Enabled, MaxBytes: cfg.MaxBytes, RetentionDays: cfg.RetentionDays}, nil
 }
 
 func (s *statisticsServiceImpl) GetInvocationContent(ctx context.Context, organizationID, accountID, invocationID string) (*dto.InvocationContentDetail, error) {
-	if !appconfig.Current().LLMInvocationContent.Available {
-		return nil, ErrInvocationContentUnavailable
-	}
 	invocationID = strings.TrimSpace(invocationID)
 	if invocationID == "" || len(invocationID) > 100 {
 		return nil, ErrInvocationContentNotFound

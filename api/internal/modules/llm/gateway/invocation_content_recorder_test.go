@@ -35,7 +35,7 @@ func TestInvocationContentRecorderRedactsTruncatesAndHonorsOrganizationSetting(t
 		t.Fatal(err)
 	}
 	recorder := newInvocationContentRecorder(db, config.LLMInvocationContentConfig{
-		Available: true, MaxBytes: 80, RetentionDays: 7, QueueSize: 2, BatchSize: 2,
+		MaxBytes: 80, RetentionDays: 7, QueueSize: 2, BatchSize: 2,
 	})
 	if recorder == nil {
 		t.Fatal("expected recorder")
@@ -141,5 +141,18 @@ func TestCleanupExpiredInvocationContentRunsWhenCaptureIsDisabled(t *testing.T) 
 	var count int64
 	if err := db.Table("llm_invocation_contents").Count(&count).Error; err != nil || count != 1 {
 		t.Fatalf("remaining content count=%d err=%v", count, err)
+	}
+}
+
+func BenchmarkInvocationContentRecorderDisabledFastPath(b *testing.B) {
+	recorder := &invocationContentRecorder{queue: make(chan invocationContentRecord, 1)}
+	recorder.settings.Store("org-off", invocationContentSettingCache{
+		enabled: false, expiresAt: time.Now().Add(time.Hour),
+	})
+	billing := &BillingContext{RequestID: "req", OrganizationID: "org-off"}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		recorder.RecordChat(billing, "input", "output", "input", "output")
 	}
 }

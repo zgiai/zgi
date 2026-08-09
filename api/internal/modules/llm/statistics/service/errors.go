@@ -3,11 +3,10 @@ package service
 import "errors"
 
 var (
-	ErrInvalidTimestamp             = errors.New("invalid timestamp, expected unix seconds")
-	ErrInvalidTimestampRange        = errors.New("end_timestamp must be greater than or equal to start_timestamp")
-	ErrInvalidCursor                = errors.New("invalid invocation cursor")
-	ErrInvocationContentUnavailable = errors.New("invocation content capture is not available on this deployment")
-	ErrInvocationContentNotFound    = errors.New("invocation content is unavailable or has expired")
+	ErrInvalidTimestamp          = errors.New("invalid timestamp, expected unix seconds")
+	ErrInvalidTimestampRange     = errors.New("end_timestamp must be greater than or equal to start_timestamp")
+	ErrInvalidCursor             = errors.New("invalid invocation cursor")
+	ErrInvocationContentNotFound = errors.New("invocation content is unavailable or has expired")
 )
 
 func IsValidationError(err error) bool {

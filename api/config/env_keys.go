@@ -455,10 +455,7 @@ const (
 	// envOTELLLMCaptureContent controls LLM content/model-parameter capture: none, summary, or full. Default: none.
 	envOTELLLMCaptureContent = "OTEL_LLM_CAPTURE_CONTENT"
 	// envOTELLLMCaptureMaxChars caps serialized LLM input/output attributes. Default: 65536.
-	envOTELLLMCaptureMaxChars = "OTEL_LLM_CAPTURE_MAX_CHARS"
-	// envLLMInvocationContentAvailable allows organizations to enable the
-	// independent invocation content audit store. Default: false.
-	envLLMInvocationContentAvailable     = "LLM_INVOCATION_CONTENT_AVAILABLE"
+	envOTELLLMCaptureMaxChars            = "OTEL_LLM_CAPTURE_MAX_CHARS"
 	envLLMInvocationContentMaxBytes      = "LLM_INVOCATION_CONTENT_MAX_BYTES"
 	envLLMInvocationContentRetentionDays = "LLM_INVOCATION_CONTENT_RETENTION_DAYS"
 	envLLMInvocationContentQueueSize     = "LLM_INVOCATION_CONTENT_QUEUE_SIZE"

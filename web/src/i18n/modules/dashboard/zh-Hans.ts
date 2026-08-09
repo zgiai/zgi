@@ -306,7 +306,6 @@ const messages: DashboardMessages = {
       contentSettings: {
         title: '输入输出内容审计',
         description: '开启后，新调用会脱敏并异步保存输入输出，每项最多 {size} KB，默认保留 {days} 天。',
-        deploymentDisabled: '当前部署未允许内容采集。请先设置 LLM_INVOCATION_CONTENT_AVAILABLE=true。',
         enabled: '已开启输入输出内容审计',
         disabled: '已关闭输入输出内容审计',
         updateFailed: '更新内容审计设置失败',

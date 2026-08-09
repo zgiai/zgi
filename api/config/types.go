@@ -316,11 +316,10 @@ type OpenTelemetryConfig struct {
 // LLMInvocationContentConfig controls the optional business audit copy of LLM
 // inputs and outputs. It is independent from OpenTelemetry/Langfuse tracing.
 type LLMInvocationContentConfig struct {
-	Available     bool `json:"available"`
-	MaxBytes      int  `json:"max_bytes"`
-	RetentionDays int  `json:"retention_days"`
-	QueueSize     int  `json:"queue_size"`
-	BatchSize     int  `json:"batch_size"`
+	MaxBytes      int `json:"max_bytes"`
+	RetentionDays int `json:"retention_days"`
+	QueueSize     int `json:"queue_size"`
+	BatchSize     int `json:"batch_size"`
 }
 
 type ModelMetaConfig struct {

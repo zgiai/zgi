@@ -172,6 +172,7 @@ export interface GetInvocationLogParams {
 }
 
 export interface InvocationContentSettings {
+  /** @deprecated Always true; retained for rolling-deploy compatibility. */
   available: boolean;
   enabled: boolean;
   max_bytes: number;

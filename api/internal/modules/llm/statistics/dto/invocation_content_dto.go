@@ -1,6 +1,8 @@
 package dto
 
 type InvocationContentSettings struct {
+	// Available is retained as true for compatibility with older web clients
+	// during rolling upgrades. Organization Enabled is the only feature switch.
 	Available     bool `json:"available"`
 	Enabled       bool `json:"enabled"`
 	MaxBytes      int  `json:"max_bytes"`

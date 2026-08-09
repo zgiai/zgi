@@ -92,18 +92,16 @@ export default function InvocationLogPage() {
                 <div>
                   <div className="font-medium">{t('usage.invocations.contentSettings.title')}</div>
                   <p className="mt-1 text-sm text-muted-foreground">
-                    {contentSettings.available
-                      ? t('usage.invocations.contentSettings.description', {
-                          days: contentSettings.retention_days,
-                          size: Math.round(contentSettings.max_bytes / 1024),
-                        })
-                      : t('usage.invocations.contentSettings.deploymentDisabled')}
+                    {t('usage.invocations.contentSettings.description', {
+                      days: contentSettings.retention_days,
+                      size: Math.round(contentSettings.max_bytes / 1024),
+                    })}
                   </p>
                 </div>
               </div>
               <Switch
                 checked={contentSettings.enabled}
-                disabled={!contentSettings.available || updateContentSettings.isPending}
+                disabled={updateContentSettings.isPending}
                 aria-label={t('usage.invocations.contentSettings.title')}
                 onCheckedChange={enabled => {
                   updateContentSettings.mutate(enabled, {
@@ -183,7 +181,7 @@ export default function InvocationLogPage() {
           enabled
           billingDisplay={billingDisplay}
           refreshToken={refreshKey}
-          canViewContent={canManageContent && Boolean(contentSettings?.available)}
+          canViewContent={canManageContent}
         />
       </div>
     </div>

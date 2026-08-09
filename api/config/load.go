@@ -138,7 +138,6 @@ func loadLLMInvocationContentConfig(cfg *Config, source *envSource) {
 		batchSize = min(50, queueSize)
 	}
 	cfg.LLMInvocationContent = LLMInvocationContentConfig{
-		Available:     mustBool(source.bool(false, envLLMInvocationContentAvailable)),
 		MaxBytes:      maxBytes,
 		RetentionDays: retentionDays,
 		QueueSize:     queueSize,
