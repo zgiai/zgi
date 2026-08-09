@@ -27,6 +27,26 @@ func TestParseLocale(t *testing.T) {
 	}
 }
 
+func TestUnsupportedLocaleFallsBackLanguageWithoutReplacingError(t *testing.T) {
+	t.Parallel()
+
+	productCatalog, err := catalog.NewDefault()
+	if err != nil {
+		t.Fatal(err)
+	}
+	locale, supported := catalog.ParseLocale("fr-FR")
+	if supported {
+		t.Fatal("unsupported locale unexpectedly matched")
+	}
+	presentation, err := productCatalog.Present(catalog.CodeRateLimitExceeded, locale, nil)
+	if err != nil {
+		t.Fatalf("Present() error = %v", err)
+	}
+	if presentation.Code != catalog.CodeRateLimitExceeded || presentation.HTTPStatus != 429 || presentation.Locale != catalog.LocaleEnglishUS {
+		t.Fatalf("Present() replaced original error: %#v", presentation)
+	}
+}
+
 func TestParseLegacyKey(t *testing.T) {
 	t.Parallel()
 

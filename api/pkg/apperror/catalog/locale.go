@@ -16,7 +16,10 @@ func SupportedLocales() []Locale {
 }
 
 // ParseLocale normalizes common language tags. The boolean is false when the
-// requested locale is unsupported; callers can then use Catalog.Fallback.
+// requested locale is unsupported. Protocol adapters should pass the zero
+// Locale to Present in that case; Present selects the catalog's fallback
+// language while preserving the original error code and metadata. Fallback is
+// reserved for unknown codes or messages that cannot be rendered safely.
 func ParseLocale(value string) (Locale, bool) {
 	normalized := strings.ToLower(strings.ReplaceAll(strings.TrimSpace(value), "_", "-"))
 	switch normalized {

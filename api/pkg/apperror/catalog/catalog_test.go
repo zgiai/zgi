@@ -18,7 +18,7 @@ func TestDefaultCatalogIsCompleteAndFriendly(t *testing.T) {
 		t.Fatalf("NewDefault() error = %v", err)
 	}
 	definitions := catalog.DefaultDefinitions()
-	if len(definitions) < 15 {
+	if len(definitions) < 7 {
 		t.Fatalf("default definition count = %d, want baseline product coverage", len(definitions))
 	}
 	for _, definition := range definitions {
@@ -129,35 +129,17 @@ func TestUnknownCodeRequiresExplicitSafeFallback(t *testing.T) {
 	}
 }
 
-func TestLegacyMappingsAreNamespacedAndNeverGuessed(t *testing.T) {
+func TestSharedCatalogDoesNotOwnDomainLegacyMappings(t *testing.T) {
 	t.Parallel()
 
 	productCatalog, err := catalog.NewDefault()
 	if err != nil {
 		t.Fatal(err)
 	}
-	tests := map[string]apperror.Code{
-		"llm.gateway:40001": catalog.CodeRequestInvalid,
-		"llm.gateway:40101": catalog.CodeAPIKeyInvalid,
-		"llm.gateway:40102": catalog.CodeAPIKeyExpired,
-		"llm.gateway:40103": catalog.CodeAPIKeyInactive,
-		"llm.gateway:40303": catalog.CodeLLMModelForbidden,
-		"llm.gateway:40401": catalog.CodeLLMModelNotFound,
-		"llm.gateway:50301": catalog.CodeLLMProviderUnavailable,
-	}
-	for legacy, want := range tests {
-		got, ok := productCatalog.CodeFromLegacy(catalog.MustLegacyKey(legacy))
-		if !ok || got != want {
-			t.Fatalf("CodeFromLegacy(%q) = %s, %v; want %s", legacy, got, ok, want)
+	for _, legacy := range []string{"llm.gateway:40001", "llm.gateway:40101", "llm.gateway:50301"} {
+		if _, ok := productCatalog.CodeFromLegacy(catalog.MustLegacyKey(legacy)); ok {
+			t.Fatalf("shared catalog unexpectedly owns domain alias %q", legacy)
 		}
-	}
-	// 114009 currently means quota, balance, and other conditions in legacy
-	// code. Mapping it without business context would preserve the ambiguity.
-	if _, ok := productCatalog.CodeFromLegacy(catalog.MustLegacyKey("llm.gateway:114009")); ok {
-		t.Fatal("ambiguous legacy code 114009 must not be guessed")
-	}
-	if _, ok := productCatalog.CodeFromLegacy(catalog.MustLegacyKey("other.system:40101")); ok {
-		t.Fatal("same numeric value from another namespace must not match")
 	}
 }
 
@@ -298,8 +280,8 @@ func TestCatalogSupportsConcurrentReads(t *testing.T) {
 		go func() {
 			defer waitGroup.Done()
 			for range 1_000 {
-				presentation, presentErr := productCatalog.Present(catalog.CodeLLMProviderTimeout, catalog.LocaleChineseSimplified, nil)
-				if presentErr != nil || presentation.HTTPStatus != 504 {
+				presentation, presentErr := productCatalog.Present(catalog.CodeRateLimitExceeded, catalog.LocaleChineseSimplified, nil)
+				if presentErr != nil || presentation.HTTPStatus != 429 {
 					t.Errorf("concurrent Present() = %#v, %v", presentation, presentErr)
 					return
 				}
@@ -316,7 +298,7 @@ func BenchmarkPresentStaticMessage(b *testing.B) {
 	}
 	b.ReportAllocs()
 	for b.Loop() {
-		_, _ = productCatalog.Present(catalog.CodeLLMProviderTimeout, catalog.LocaleChineseSimplified, nil)
+		_, _ = productCatalog.Present(catalog.CodeRateLimitExceeded, catalog.LocaleChineseSimplified, nil)
 	}
 }
 
