@@ -8,23 +8,25 @@ import (
 // LLM-owned application error identities. Keeping these beside the domain
 // prevents shared infrastructure from becoming the owner of model semantics.
 var (
-	AppCodeRequestInvalid      = apperror.MustCode("llm.request.invalid")
-	AppCodeAPIKeyInvalid       = apperror.MustCode("llm.api_key.invalid")
-	AppCodeAPIKeyExpired       = apperror.MustCode("llm.api_key.expired")
-	AppCodeAPIKeyInactive      = apperror.MustCode("llm.api_key.inactive")
-	AppCodeQuotaExceeded       = apperror.MustCode("llm.quota.exceeded")
-	AppCodeBalanceInsufficient = apperror.MustCode("llm.balance.insufficient")
-	AppCodeModelNotFound       = apperror.MustCode("llm.model.not_found")
-	AppCodeModelForbidden      = apperror.MustCode("llm.model.forbidden")
-	AppCodeProviderNotFound    = apperror.MustCode("llm.provider.not_found")
-	AppCodeChannelNotFound     = apperror.MustCode("llm.channel.not_found")
-	AppCodeRouteNotFound       = apperror.MustCode("llm.route.not_found")
-	AppCodeProviderAuthFailed  = apperror.MustCode("llm.provider.auth_failed")
-	AppCodeProviderRateLimited = apperror.MustCode("llm.provider.rate_limited")
-	AppCodeProviderTimeout     = apperror.MustCode("llm.provider.timeout")
-	AppCodeProviderUnavailable = apperror.MustCode("llm.provider.unavailable")
-	AppCodeNoProviderAvailable = apperror.MustCode("llm.provider.none_available")
-	AppCodeInvocationFailed    = apperror.MustCode("llm.invocation.failed")
+	AppCodeRequestInvalid            = apperror.MustCode("llm.request.invalid")
+	AppCodeAPIKeyInvalid             = apperror.MustCode("llm.api_key.invalid")
+	AppCodeAPIKeyExpired             = apperror.MustCode("llm.api_key.expired")
+	AppCodeAPIKeyInactive            = apperror.MustCode("llm.api_key.inactive")
+	AppCodeQuotaExceeded             = apperror.MustCode("llm.quota.exceeded")
+	AppCodeBalanceInsufficient       = apperror.MustCode("llm.balance.insufficient")
+	AppCodeModelNotFound             = apperror.MustCode("llm.model.not_found")
+	AppCodeModelForbidden            = apperror.MustCode("llm.model.forbidden")
+	AppCodeProviderNotFound          = apperror.MustCode("llm.provider.not_found")
+	AppCodeChannelNotFound           = apperror.MustCode("llm.channel.not_found")
+	AppCodeRouteNotFound             = apperror.MustCode("llm.route.not_found")
+	AppCodeRateLimitExceeded         = apperror.MustCode("llm.rate_limit.exceeded")
+	AppCodeProviderAuthFailed        = apperror.MustCode("llm.provider.auth_failed")
+	AppCodeProviderRateLimited       = apperror.MustCode("llm.provider.rate_limited")
+	AppCodeProviderTimeout           = apperror.MustCode("llm.provider.timeout")
+	AppCodeProviderUnavailable       = apperror.MustCode("llm.provider.unavailable")
+	AppCodeNoProviderAvailable       = apperror.MustCode("llm.provider.none_available")
+	AppCodePrivateChannelUnavailable = apperror.MustCode("llm.channel.private_unavailable")
+	AppCodeInvocationFailed          = apperror.MustCode("llm.invocation.failed")
 )
 
 // CatalogDefinitions returns fresh LLM-owned definitions for composition into
@@ -74,6 +76,10 @@ func CatalogDefinitions() []appcatalog.Definition {
 			"No route is available for the selected model. Choose another model or contact an administrator.",
 			"所选大模型暂无可用路由，请更换模型或联系管理员。",
 			"llm.domain:40404"),
+		llmDefinition(AppCodeRateLimitExceeded, appcatalog.CategoryRateLimit, 429, true,
+			"Too many model requests were sent. Wait a moment and try again.",
+			"大模型请求过于频繁，请稍后重试。",
+			"llm.domain:40901"),
 		llmDefinition(AppCodeProviderAuthFailed, appcatalog.CategoryUpstream, 502, false,
 			"The model provider rejected its credentials. Contact an administrator.",
 			"大模型服务商凭据校验失败，请联系管理员。",
@@ -81,7 +87,7 @@ func CatalogDefinitions() []appcatalog.Definition {
 		llmDefinition(AppCodeProviderRateLimited, appcatalog.CategoryRateLimit, 429, true,
 			"The model service is busy. Wait a moment and try again.",
 			"大模型服务当前繁忙，请稍后重试。",
-			"llm.domain:40502", "llm.domain:40901"),
+			"llm.domain:40502"),
 		llmDefinition(AppCodeProviderTimeout, appcatalog.CategoryUpstream, 504, true,
 			"The model service took too long to respond. Try again or choose another model.",
 			"大模型服务响应超时，请重试或选择其他模型。",
@@ -94,6 +100,13 @@ func CatalogDefinitions() []appcatalog.Definition {
 			"No model provider is currently available. Try another model or contact an administrator.",
 			"当前没有可用的大模型服务商，请更换模型或联系管理员。",
 			"llm.domain:40506"),
+		// The OpenAI-compatible boundary currently projects this condition as
+		// 503. This 502 preserves the legacy llm.domain response; its protocol
+		// override belongs to the transport adapter.
+		llmDefinition(AppCodePrivateChannelUnavailable, appcatalog.CategoryUpstream, 502, true,
+			"The configured private model channel is unavailable. Try another model or contact an administrator.",
+			"已配置的私有大模型渠道暂不可用，请更换模型或联系管理员。",
+			"llm.domain:40507"),
 		llmDefinition(AppCodeInvocationFailed, appcatalog.CategoryUpstream, 502, true,
 			"The model request could not be completed. Try again or choose another model.",
 			"大模型调用未完成，请重试或选择其他模型。",

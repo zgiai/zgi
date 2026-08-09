@@ -49,6 +49,9 @@ func TestCatalogLegacyNamespacesPreserveConflictingMeanings(t *testing.T) {
 		"llm.gateway:40303": {wantCode: AppCodeModelForbidden.String(), wantStatus: 403},
 		"llm.gateway:40401": {wantCode: AppCodeModelNotFound.String(), wantStatus: 404},
 		"llm.gateway:50301": {wantCode: AppCodeProviderUnavailable.String(), wantStatus: 503},
+		"llm.domain:40502":  {wantCode: AppCodeProviderRateLimited.String(), wantStatus: 429},
+		"llm.domain:40507":  {wantCode: AppCodePrivateChannelUnavailable.String(), wantStatus: 502},
+		"llm.domain:40901":  {wantCode: AppCodeRateLimitExceeded.String(), wantStatus: 429},
 	}
 	for legacy, test := range tests {
 		got, ok := productCatalog.CodeFromLegacy(appcatalog.MustLegacyKey(legacy))
