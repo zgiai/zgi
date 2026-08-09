@@ -9,6 +9,7 @@ func RegisterStatisticsRoutes(rg *gin.RouterGroup, h *StatisticsHandler) {
 	statistics := rg.Group("/statistics")
 	{
 		statistics.GET("/model-usage", h.GetModelUsage)
+		statistics.GET("/invocations", h.GetInvocationLog)
 		statistics.GET("/workspace-quota", h.GetWorkspaceQuota)
 	}
 }

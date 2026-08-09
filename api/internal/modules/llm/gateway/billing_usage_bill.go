@@ -120,6 +120,7 @@ func (b *BillingService) buildUsageBill(
 		OrganizationID:    strings.TrimSpace(bc.OrganizationID),
 		AppID:             appID,
 		AppType:           appType,
+		InvocationSource:  normalizeInvocationSource(bc.InvocationSource),
 		WorkspaceID:       workspaceID,
 		APIKeyID:          strings.TrimSpace(bc.APIKeyID),
 		QuotaSubjectType:  quotaSubjectType,

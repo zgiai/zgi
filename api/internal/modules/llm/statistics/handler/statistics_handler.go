@@ -1,8 +1,6 @@
 package handler
 
 import (
-	"errors"
-
 	"github.com/gin-gonic/gin"
 	"github.com/zgiai/zgi/api/internal/modules/llm/statistics/dto"
 	"github.com/zgiai/zgi/api/internal/modules/llm/statistics/service"
@@ -44,6 +42,29 @@ func (h *StatisticsHandler) GetModelUsage(c *gin.Context) {
 	response.Success(c, result)
 }
 
+// GetInvocationLog returns business-safe logical Gateway calls. Prompt and
+// response content are intentionally not part of this contract.
+func (h *StatisticsHandler) GetInvocationLog(c *gin.Context) {
+	organizationID, exists := c.Get("organization_id")
+	if !exists {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+
+	var req dto.InvocationLogRequest
+	if err := c.ShouldBindQuery(&req); err != nil {
+		response.FailWithMessage(c, response.ErrInvalidParam, err.Error())
+		return
+	}
+
+	result, err := h.statisticsService.GetInvocationLog(c.Request.Context(), organizationID.(string), &req)
+	if err != nil {
+		handleStatisticsError(c, err)
+		return
+	}
+	response.Success(c, result)
+}
+
 // GetWorkspaceQuota gets current workspace quota snapshot.
 func (h *StatisticsHandler) GetWorkspaceQuota(c *gin.Context) {
 	organizationID, exists := c.Get("organization_id")
@@ -68,7 +89,7 @@ func (h *StatisticsHandler) GetWorkspaceQuota(c *gin.Context) {
 }
 
 func handleStatisticsError(c *gin.Context, err error) {
-	if errors.Is(err, service.ErrInvalidTimestamp) || errors.Is(err, service.ErrInvalidTimestampRange) {
+	if service.IsValidationError(err) {
 		response.FailWithMessage(c, response.ErrInvalidParam, err.Error())
 		return
 	}

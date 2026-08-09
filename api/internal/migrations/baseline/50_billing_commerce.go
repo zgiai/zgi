@@ -55,6 +55,7 @@ var BillingCommerceSchema = File{
     route_id uuid,
     provider_id uuid,
     model_id uuid,
+    invocation_source character varying(20) DEFAULT 'unknown'::character varying NOT NULL,
     quota_subject_type character varying(20) NOT NULL,
     quota_subject_id character varying(64) NOT NULL,
     status character varying(30) NOT NULL,

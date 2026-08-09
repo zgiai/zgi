@@ -12,7 +12,13 @@ import { TokenTrendChart } from '@/components/usage/token-trend-chart';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input, SearchInput } from '@/components/ui/input';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useDebouncedValue } from '@/hooks/use-debounced-value';
 import { useOrganizations } from '@/hooks/organization/use-organizations';
@@ -24,11 +30,12 @@ import { getBillingDisplaySettings } from '@/utils/billing-display';
 import { MODEL_USAGE_APP_TYPES } from '@/utils/model-usage-app-type';
 import { isCustomDateRangeValid } from '@/utils/usage-date-range';
 
-type DateRangeKey = 'last7Days' | 'last30Days' | 'last90Days' | 'custom';
+type DateRangeKey = 'today' | 'last7Days' | 'last30Days' | 'last90Days' | 'custom';
 type AppTypeFilter = 'all' | ModelUsageAppType;
 type SourceFilter = 'all' | 'official' | 'private';
 
 const DATE_RANGE_DAYS: Record<Exclude<DateRangeKey, 'custom'>, number> = {
+  today: 0,
   last7Days: 7,
   last30Days: 30,
   last90Days: 90,
@@ -108,7 +115,15 @@ export default function UsageOverviewPage() {
       use_system_provider:
         IS_CLOUD && sourceFilter !== 'all' ? sourceFilter === 'official' : undefined,
     };
-  }, [appType, customEndDate, customStartDate, dateRange, debouncedModelName, isCustomRange, sourceFilter]);
+  }, [
+    appType,
+    customEndDate,
+    customStartDate,
+    dateRange,
+    debouncedModelName,
+    isCustomRange,
+    sourceFilter,
+  ]);
 
   const { data, isLoading, isFetching, refetch } = useModelUsage(params, {
     enabled: isCustomRangeValid,
@@ -128,6 +143,8 @@ export default function UsageOverviewPage() {
     setSourceFilter('all');
     setModelNameInput('');
   };
+
+  const refreshAllUsage = () => refetch();
 
   return (
     <div className="flex h-full flex-col overflow-auto">
@@ -157,7 +174,7 @@ export default function UsageOverviewPage() {
                   type="button"
                   variant="outline"
                   size="sm"
-                  onClick={() => refetch()}
+                  onClick={refreshAllUsage}
                   disabled={isFetching || !isCustomRangeValid}
                   className="gap-2"
                 >
@@ -169,11 +186,15 @@ export default function UsageOverviewPage() {
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="flex flex-wrap items-center gap-3">
-              <Select value={dateRange} onValueChange={value => setDateRange(value as DateRangeKey)}>
+              <Select
+                value={dateRange}
+                onValueChange={value => setDateRange(value as DateRangeKey)}
+              >
                 <SelectTrigger className="w-[150px]">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
+                  <SelectItem value="today">{t('usage.dateRange.today')}</SelectItem>
                   <SelectItem value="last7Days">{t('usage.dateRange.last7Days')}</SelectItem>
                   <SelectItem value="last30Days">{t('usage.dateRange.last30Days')}</SelectItem>
                   <SelectItem value="last90Days">{t('usage.dateRange.last90Days')}</SelectItem>
@@ -196,7 +217,10 @@ export default function UsageOverviewPage() {
               </Select>
 
               {IS_CLOUD ? (
-                <Select value={sourceFilter} onValueChange={value => setSourceFilter(value as SourceFilter)}>
+                <Select
+                  value={sourceFilter}
+                  onValueChange={value => setSourceFilter(value as SourceFilter)}
+                >
                   <SelectTrigger className="w-[170px]">
                     <SelectValue placeholder={t('usage.filters.sourcePlaceholder')} />
                   </SelectTrigger>

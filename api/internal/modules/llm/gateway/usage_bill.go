@@ -23,6 +23,7 @@ type UsageBill struct {
 	OrganizationID    string           `gorm:"column:organization_id;type:uuid;not null;index:idx_usage_bills_org_created,priority:1;index:idx_usage_bills_org_model_created,priority:1;index:idx_usage_bills_org_app_type_created,priority:1;index:idx_usage_bills_org_app_created,priority:1;index:idx_usage_bills_org_source_created,priority:1;index:idx_usage_bills_org_lane_created,priority:1"`
 	AppID             *uuid.UUID       `gorm:"column:app_id;type:uuid;index:idx_usage_bills_org_app_created,priority:2"`
 	AppType           *string          `gorm:"column:app_type;type:varchar(50);index:idx_usage_bills_org_app_type_created,priority:2"`
+	InvocationSource  InvocationSource `gorm:"column:invocation_source;type:varchar(20);not null;default:'unknown'"`
 	WorkspaceID       *string          `gorm:"column:workspace_id;type:varchar(255)"`
 	APIKeyID          string           `gorm:"column:api_key_id;type:uuid"`
 	QuotaSubjectType  *string          `gorm:"column:quota_subject_type;type:varchar(20)"`
@@ -67,5 +68,6 @@ func (b *UsageBill) BeforeCreate(tx *gorm.DB) error {
 	}
 	b.BillingLane = lane
 	b.UseSystemProvider = usageBillingLaneUsesSystemProvider(lane)
+	b.InvocationSource = normalizeInvocationSource(b.InvocationSource)
 	return nil
 }

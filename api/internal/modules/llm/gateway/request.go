@@ -206,6 +206,7 @@ func (s *llmGatewayServiceImpl) beginBillingAttempt(
 		requestID,
 		attemptID,
 	)
+	billingCtx.InvocationSource = resolveInvocationSource(ctx, appCtx)
 
 	decision, err := s.resolveBillingDecision(providerSelection, billingCtx)
 	if err != nil {

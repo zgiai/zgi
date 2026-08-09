@@ -70,7 +70,8 @@ func (h *AgentsHandler) ChatAPIKeyAgent(c *gin.Context) {
 		return
 	}
 
-	ctx := c.Request.Context()
+	ctx := externalAgentInvocationContext(c.Request.Context())
+	c.Request = c.Request.WithContext(ctx)
 	externalUser := strings.TrimSpace(req.User)
 
 	published, err := h.appService.GetPublishedAgentRuntimeConfig(ctx, agentID.String())
@@ -173,6 +174,10 @@ func (h *AgentsHandler) ChatAPIKeyAgent(c *gin.Context) {
 	})
 }
 
+func externalAgentInvocationContext(ctx context.Context) context.Context {
+	return context.WithValue(ctx, "invoke_from", runtimemodel.ConversationSourceExternalAPI)
+}
+
 // StreamAPIKeyAgentRuntimeEvents resumes a recoverable external Agent stream.
 func (h *AgentsHandler) StreamAPIKeyAgentRuntimeEvents(c *gin.Context) {
 	if h.chatRuntimeService == nil {
@@ -226,6 +231,7 @@ func (h *AgentsHandler) ContinueAPIKeyAgentRuntimeWorkflowContinuation(c *gin.Co
 }
 
 func (h *AgentsHandler) apiKeyAgentRuntimeContext(c *gin.Context) (agentRuntimeContext, bool) {
+	c.Request = c.Request.WithContext(externalAgentInvocationContext(c.Request.Context()))
 	agentID, err := uuid.Parse(strings.TrimSpace(c.GetString("agent_id")))
 	if err != nil {
 		response.Fail(c, response.ErrInvalidParam)

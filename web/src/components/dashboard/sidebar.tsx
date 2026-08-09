@@ -20,6 +20,7 @@ import {
   FileSearch,
   KeyRound,
   ReceiptText,
+  ScrollText,
   Settings,
   ShieldCheck,
   Users,
@@ -82,6 +83,19 @@ function buildDashboardGroups(t: ReturnType<typeof useT<'dashboard'>>) {
           title: t('groups.usage'),
           href: '/dashboard/usage/overview',
           icon: Activity,
+        },
+      ],
+    },
+    {
+      key: 'llm-invocations',
+      title: t('items.invocationLogs'),
+      icon: ScrollText,
+      items: [
+        {
+          key: 'llm-invocations',
+          title: t('items.invocationLogs'),
+          href: '/dashboard/usage/invocations',
+          icon: ScrollText,
         },
       ],
     },

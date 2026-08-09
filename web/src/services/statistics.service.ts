@@ -5,6 +5,8 @@ import type {
   ModelUsageData,
   GetWorkspaceQuotaParams,
   WorkspaceQuotaData,
+  GetInvocationLogParams,
+  InvocationLogData,
 } from './types/statistics';
 
 /**
@@ -24,6 +26,10 @@ class StatisticsService extends BaseService {
     return this.request('get', '/model-usage', undefined, {
       params,
     });
+  }
+
+  getInvocationLog(params: GetInvocationLogParams): Promise<ApiResponseData<InvocationLogData>> {
+    return this.request('get', '/invocations', undefined, { params });
   }
 
   /**

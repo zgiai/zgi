@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { toast } from 'sonner';
 
 import { useT } from '@/i18n';
@@ -15,9 +15,11 @@ import type {
   ModelUsageDailyItem,
   ModelUsageData,
   ModelUsageSummary,
+  GetInvocationLogParams,
+  InvocationLogData,
 } from '@/services/types/statistics';
 import { getErrorMessage } from '@/utils/error-notifications';
-import { normalizeModelUsageData } from '@/utils/ai-credits';
+import { normalizeAiCreditValue, normalizeModelUsageData } from '@/utils/ai-credits';
 
 export interface UseModelUsageOptions {
   enabled?: boolean;
@@ -161,4 +163,63 @@ export function useModelUsage(
     error: error ? error.message : null,
     refetch,
   };
+}
+
+export function useInvocationLog(params: GetInvocationLogParams, enabled = true) {
+  const t = useT('dashboard');
+  const query = useInfiniteQuery<ApiResponseData<InvocationLogData>, Error>({
+    queryKey: STATS_KEYS.invocations(params),
+    queryFn: ({ pageParam }) => {
+      const cursor = pageParam as { time: string; id: string } | undefined;
+      return statisticsService.getInvocationLog({
+        ...params,
+        cursor_time: cursor?.time,
+        cursor_id: cursor?.id,
+      });
+    },
+    initialPageParam: undefined,
+    getNextPageParam: lastPage => lastPage.data?.next_cursor,
+    enabled,
+    staleTime: 60_000,
+    retry: false,
+  });
+
+  useEffect(() => {
+    if (!query.error) return;
+    const message = getErrorMessage(query.error);
+    toast.error(message || t('usage.invocations.loadFailed'));
+  }, [query.error, t]);
+
+  const data = useMemo(() => {
+    const pages = query.data?.pages ?? [];
+    const first = pages[0]?.data;
+    if (!first) return null;
+    return {
+      summary: {
+        ...first.summary,
+        invocation_count: toNumber(first.summary.invocation_count),
+        api_count: toNumber(first.summary.api_count),
+        product_count: toNumber(first.summary.product_count),
+        unknown_count: toNumber(first.summary.unknown_count),
+        total_tokens: toNumber(first.summary.total_tokens),
+        total_points:
+          normalizeAiCreditValue(toNumber(first.summary.total_points), { precision: 3 }) ?? 0,
+      },
+      items: pages.flatMap(page =>
+        (page.data?.items ?? []).map(item => ({
+          ...item,
+          attempt_count: toNumber(item.attempt_count),
+          prompt_tokens: toNumber(item.prompt_tokens),
+          completion_tokens: toNumber(item.completion_tokens),
+          total_tokens: toNumber(item.total_tokens),
+          total_points: normalizeAiCreditValue(toNumber(item.total_points), { precision: 3 }) ?? 0,
+          duration_ms: toNumber(item.duration_ms),
+          started_at: toNumber(item.started_at),
+          settled_at: toNumber(item.settled_at),
+        }))
+      ),
+    };
+  }, [query.data]);
+
+  return { ...query, data };
 }

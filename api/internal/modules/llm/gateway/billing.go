@@ -54,6 +54,7 @@ type BillingContext struct {
 	WorkspaceID          string
 	AppID                *uuid.UUID // App ID (agent or dataset)
 	AppType              *string    // App type: 'agent' or 'dataset'
+	InvocationSource     InvocationSource
 	SessionID            string
 	ConversationID       string
 	WorkflowID           string
