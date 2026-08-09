@@ -96,7 +96,8 @@ func TestUpdateCustomWorkspaceRoleClearsLocalizedMetadata(t *testing.T) {
 	now := time.Now().UTC()
 	description := "Updated description"
 
-	mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM "roles" WHERE id = $1 AND group_id = $2 ORDER BY "roles"."id" LIMIT $3`)).
+	mock.ExpectBegin()
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM "roles" WHERE id = $1 AND group_id = $2 ORDER BY "roles"."id" LIMIT $3 FOR UPDATE`)).
 		WithArgs("role-1", "org-1", 1).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"id", "group_id", "name", "name_i18n", "description", "description_i18n", "status",
@@ -112,6 +113,7 @@ func TestUpdateCustomWorkspaceRoleClearsLocalizedMetadata(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
 	mock.ExpectExec(`UPDATE "roles" SET .*"name_i18n"=\$[0-9]+.*"description_i18n"=\$[0-9]+.*WHERE "id" = \$[0-9]+`).
 		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
 
 	name := " Editors "
 	result, err := svc.UpdateCustomWorkspaceRole(context.Background(), &shared_dto.UpdateWorkspaceRoleRequest{
@@ -123,8 +125,10 @@ func TestUpdateCustomWorkspaceRoleClearsLocalizedMetadata(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Equal(t, "Editors", result.Name)
+	require.True(t, result.NameCustomized)
 	require.Nil(t, result.NameI18n)
 	require.Equal(t, "Updated description", *result.Description)
+	require.True(t, result.DescriptionCustomized)
 	require.Nil(t, result.DescriptionI18n)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
@@ -137,7 +141,8 @@ func TestUpdateCustomWorkspaceRolePreservesLocalizationForUnchangedField(t *test
 	now := time.Now().UTC()
 	description := "Updated description"
 
-	mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM "roles" WHERE id = $1 AND group_id = $2 ORDER BY "roles"."id" LIMIT $3`)).
+	mock.ExpectBegin()
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM "roles" WHERE id = $1 AND group_id = $2 ORDER BY "roles"."id" LIMIT $3 FOR UPDATE`)).
 		WithArgs("role-1", "org-1", 1).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"id", "group_id", "name", "name_i18n", "description", "description_i18n", "status",
@@ -150,6 +155,7 @@ func TestUpdateCustomWorkspaceRolePreservesLocalizationForUnchangedField(t *test
 		))
 	mock.ExpectExec(`UPDATE "roles" SET .*"name_i18n"=\$[0-9]+.*"description_i18n"=\$[0-9]+.*WHERE "id" = \$[0-9]+`).
 		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
 
 	name := "Basic Member"
 	result, err := svc.UpdateCustomWorkspaceRole(context.Background(), &shared_dto.UpdateWorkspaceRoleRequest{
@@ -161,9 +167,69 @@ func TestUpdateCustomWorkspaceRolePreservesLocalizationForUnchangedField(t *test
 
 	require.NoError(t, err)
 	require.NotNil(t, result.NameI18n)
+	require.False(t, result.NameCustomized)
 	require.Equal(t, "Basic Member", result.NameI18n.EnUS)
 	require.Equal(t, "基础成员", result.NameI18n.ZhHans)
 	require.Nil(t, result.DescriptionI18n)
+	require.True(t, result.DescriptionCustomized)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestUpdateCustomWorkspaceRoleDoesNotReviveDeletedTemplate(t *testing.T) {
+	t.Parallel()
+
+	db, mock := newOrganizationPermissionRegressionMockDB(t)
+	svc := newOrganizationPermissionRegressionService(db)
+	now := time.Now().UTC()
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM "roles" WHERE id = $1 AND group_id = $2 ORDER BY "roles"."id" LIMIT $3 FOR UPDATE`)).
+		WithArgs("role-1", "org-1", 1).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "group_id", "name", "status", "permissions", "created_by", "created_at", "updated_at",
+		}).AddRow(
+			"role-1", "org-1", "Deleted", model.WorkspaceCustomRoleStatusDeleted, []byte(`[]`), "owner-1", now, now,
+		))
+	mock.ExpectRollback()
+
+	name := "Revived"
+	result, err := svc.UpdateCustomWorkspaceRole(context.Background(), &shared_dto.UpdateWorkspaceRoleRequest{
+		OrganizationID: "org-1",
+		RoleID:         "role-1",
+		Name:           &name,
+	})
+
+	require.Nil(t, result)
+	require.ErrorIs(t, err, ErrWorkspaceRoleTemplateDeleted)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestUpdateWorkspaceRolePermissionsLocksTemplateLifecycle(t *testing.T) {
+	t.Parallel()
+
+	db, mock := newOrganizationPermissionRegressionMockDB(t)
+	svc := newOrganizationPermissionRegressionService(db)
+	now := time.Now().UTC()
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM "roles" WHERE id = $1 AND group_id = $2 ORDER BY "roles"."id" LIMIT $3 FOR UPDATE`)).
+		WithArgs("role-1", "org-1", 1).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "group_id", "name", "status", "permissions", "created_by", "created_at", "updated_at",
+		}).AddRow(
+			"role-1", "org-1", "Editors", model.WorkspaceCustomRoleStatusActive, []byte(`[]`), "owner-1", now, now,
+		))
+	mock.ExpectExec(`UPDATE "roles" SET .*"permissions"=\$[0-9]+.*WHERE "id" = \$[0-9]+`).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	err := svc.UpdateWorkspaceRolePermissions(context.Background(), &shared_dto.UpdateWorkspaceRolePermissionsRequest{
+		OrganizationID: "org-1",
+		RoleID:         "role-1",
+		Permissions:    []string{string(model.WorkspacePermissionAgentCreate)},
+	})
+
+	require.NoError(t, err)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 

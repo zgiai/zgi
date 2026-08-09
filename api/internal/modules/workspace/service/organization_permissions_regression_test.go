@@ -75,12 +75,12 @@ func TestDeleteCustomWorkspaceRoleRejectsAssignedRole(t *testing.T) {
 	mock.ExpectQuery(regexp.QuoteMeta(`SELECT "id" FROM "organizations" WHERE id = $1 LIMIT $2 FOR UPDATE`)).
 		WithArgs("org-1", 1).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow("org-1"))
-	mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM "roles" WHERE id = $1 AND group_id = $2 ORDER BY "roles"."id" LIMIT $3`)).
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM "roles" WHERE id = $1 AND group_id = $2 ORDER BY "roles"."id" LIMIT $3 FOR UPDATE`)).
 		WithArgs(roleID, "org-1", 1).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "group_id", "name", "description", "status", "permissions", "created_by", "created_at", "updated_at"}).
 			AddRow(roleID, "org-1", "Custom", nil, model.WorkspaceCustomRoleStatusActive, "[]", "owner-1", now, now))
-	mock.ExpectQuery(regexp.QuoteMeta(`SELECT count(*) FROM "workspace_members" WHERE workspace_id IN (SELECT id FROM "workspaces" WHERE organization_id = $1) AND role_id = $2`)).
-		WithArgs("org-1", roleID).
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT count(*) FROM "workspace_members" WHERE workspace_id IN (SELECT id FROM "workspaces" WHERE organization_id = $1) AND (role_id = $2 OR permission_template_role_id = $3)`)).
+		WithArgs("org-1", roleID, roleID).
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
 	mock.ExpectRollback()
 

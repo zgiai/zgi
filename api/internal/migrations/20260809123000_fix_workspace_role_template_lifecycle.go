@@ -31,23 +31,31 @@ WHERE system_key IS NOT NULL AND status != 'deleted'
 const clearStaleWorkspaceRoleNameI18nSQL = `
 UPDATE public.roles AS role
 SET name_i18n = '{}'::jsonb
-WHERE role.name_i18n != '{}'::jsonb
-  AND NOT EXISTS (
-	SELECT 1
-	FROM jsonb_each_text(role.name_i18n) AS localized(key, value)
-	WHERE BTRIM(localized.value) = BTRIM(role.name)
-  )
+FROM public.accounts AS creator
+WHERE creator.id = role.created_by
+  AND role.name_i18n != '{}'::jsonb
+  AND BTRIM(role.name) != BTRIM(COALESCE(
+	role.name_i18n ->> CASE
+		WHEN LOWER(BTRIM(COALESCE(creator.interface_language, ''))) LIKE 'en%' THEN 'en_US'
+		ELSE 'zh_Hans'
+	END,
+	''
+  ))
 `
 
 const clearStaleWorkspaceRoleDescriptionI18nSQL = `
 UPDATE public.roles AS role
 SET description_i18n = '{}'::jsonb
-WHERE role.description_i18n != '{}'::jsonb
-  AND NOT EXISTS (
-	SELECT 1
-	FROM jsonb_each_text(role.description_i18n) AS localized(key, value)
-	WHERE BTRIM(localized.value) = BTRIM(COALESCE(role.description, ''))
-  )
+FROM public.accounts AS creator
+WHERE creator.id = role.created_by
+  AND role.description_i18n != '{}'::jsonb
+  AND BTRIM(COALESCE(role.description, '')) != BTRIM(COALESCE(
+	role.description_i18n ->> CASE
+		WHEN LOWER(BTRIM(COALESCE(creator.interface_language, ''))) LIKE 'en%' THEN 'en_US'
+		ELSE 'zh_Hans'
+	END,
+	''
+  ))
 `
 
 func init() {

@@ -18,23 +18,14 @@ function resolveWorkspaceRoleLocalizedText(
   fallback: string,
   localized: WorkspaceRoleLocalizedText | undefined,
   locale: string,
-  immutableBuiltin: boolean
+  customized: boolean
 ) {
-  if (!localized) return fallback;
+  if (customized || !localized) return fallback;
 
   const localizedMap = localized as Record<string, string | undefined>;
   const localizedValues = Object.values(localizedMap).filter(
     (value): value is string => typeof value === 'string' && value.trim().length > 0
   );
-  const fallbackMatchesLocalizedValue = localizedValues.some(
-    value => value.trim() === fallback.trim()
-  );
-
-  // Editable templates use the base field as an explicit override. Historical
-  // rows may still contain migration-generated localized defaults.
-  if (!immutableBuiltin && !fallbackMatchesLocalizedValue) {
-    return fallback;
-  }
 
   const localeKey = locale.replace('-', '_');
   return (
@@ -47,7 +38,12 @@ function resolveWorkspaceRoleLocalizedText(
 }
 
 export function getWorkspaceRoleDisplayName(role: Role, locale: string) {
-  return resolveWorkspaceRoleLocalizedText(role.name, role.name_i18n, locale, role.builtin);
+  return resolveWorkspaceRoleLocalizedText(
+    role.name,
+    role.name_i18n,
+    locale,
+    role.name_customized === true
+  );
 }
 
 export function getWorkspaceRoleDisplayDescription(role: Role, locale: string) {
@@ -55,7 +51,7 @@ export function getWorkspaceRoleDisplayDescription(role: Role, locale: string) {
     role.description || '',
     role.description_i18n,
     locale,
-    role.builtin
+    role.description_customized === true
   );
 }
 

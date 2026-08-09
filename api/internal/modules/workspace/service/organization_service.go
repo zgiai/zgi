@@ -626,23 +626,33 @@ func firstWorkspaceRoleLocalizedValue(values ...string) string {
 }
 
 func workspaceRoleSummaryFromCustomRole(role model.WorkspaceCustomRole) shared_dto.WorkspaceRoleSummary {
+	nameI18n := localizedStringFromMap(role.NameI18n)
+	if role.NameCustomized {
+		nameI18n = nil
+	}
+	descriptionI18n := localizedStringFromMap(role.DescriptionI18n)
+	if role.DescriptionCustomized {
+		descriptionI18n = nil
+	}
 	return shared_dto.WorkspaceRoleSummary{
-		ID:              role.ID,
-		Name:            role.Name,
-		NameI18n:        localizedStringFromMap(role.NameI18n),
-		Description:     role.Description,
-		DescriptionI18n: localizedStringFromMap(role.DescriptionI18n),
-		Builtin:         false,
-		Editable:        true,
-		Deletable:       true,
-		Applicable:      true,
-		FixedGovernance: false,
-		RoleKind:        workspaceRoleKindPermissionTemplate,
-		SystemKey:       role.SystemKey,
-		TemplateOrigin:  string(role.TemplateOrigin),
-		Status:          role.Status,
-		Permissions:     model.CanonicalAssignableWorkspacePermissionSnapshotStrings(role.Permissions),
-		MemberCount:     0,
+		ID:                    role.ID,
+		Name:                  role.Name,
+		NameI18n:              nameI18n,
+		NameCustomized:        role.NameCustomized,
+		Description:           role.Description,
+		DescriptionI18n:       descriptionI18n,
+		DescriptionCustomized: role.DescriptionCustomized,
+		Builtin:               false,
+		Editable:              true,
+		Deletable:             true,
+		Applicable:            true,
+		FixedGovernance:       false,
+		RoleKind:              workspaceRoleKindPermissionTemplate,
+		SystemKey:             role.SystemKey,
+		TemplateOrigin:        string(role.TemplateOrigin),
+		Status:                role.Status,
+		Permissions:           model.CanonicalAssignableWorkspacePermissionSnapshotStrings(role.Permissions),
+		MemberCount:           0,
 	}
 }
 
@@ -758,22 +768,24 @@ func (s *organizationService) GetWorkspaceRoleDetail(ctx context.Context, organi
 		model.WorkspaceBuiltinRoleViewerID:
 		summary := builtinWorkspaceRoleSummary(roleID)
 		return &shared_dto.OrganizationRoleDetailResponse{
-			ID:              summary.ID,
-			OrganizationID:  organizationID,
-			Name:            summary.Name,
-			NameI18n:        summary.NameI18n,
-			Description:     summary.Description,
-			DescriptionI18n: summary.DescriptionI18n,
-			Builtin:         summary.Builtin,
-			Editable:        summary.Editable,
-			Deletable:       summary.Deletable,
-			Applicable:      summary.Applicable,
-			FixedGovernance: summary.FixedGovernance,
-			RoleKind:        summary.RoleKind,
-			SystemKey:       summary.SystemKey,
-			TemplateOrigin:  summary.TemplateOrigin,
-			Status:          summary.Status,
-			Permissions:     summary.Permissions,
+			ID:                    summary.ID,
+			OrganizationID:        organizationID,
+			Name:                  summary.Name,
+			NameI18n:              summary.NameI18n,
+			NameCustomized:        summary.NameCustomized,
+			Description:           summary.Description,
+			DescriptionI18n:       summary.DescriptionI18n,
+			DescriptionCustomized: summary.DescriptionCustomized,
+			Builtin:               summary.Builtin,
+			Editable:              summary.Editable,
+			Deletable:             summary.Deletable,
+			Applicable:            summary.Applicable,
+			FixedGovernance:       summary.FixedGovernance,
+			RoleKind:              summary.RoleKind,
+			SystemKey:             summary.SystemKey,
+			TemplateOrigin:        summary.TemplateOrigin,
+			Status:                summary.Status,
+			Permissions:           summary.Permissions,
 		}, nil
 	default:
 		var role model.WorkspaceCustomRole
@@ -792,22 +804,24 @@ func (s *organizationService) GetWorkspaceRoleDetail(ctx context.Context, organi
 
 		summary := workspaceRoleSummaryFromCustomRole(role)
 		return &shared_dto.OrganizationRoleDetailResponse{
-			ID:              summary.ID,
-			OrganizationID:  role.OrganizationID,
-			Name:            summary.Name,
-			NameI18n:        summary.NameI18n,
-			Description:     summary.Description,
-			DescriptionI18n: summary.DescriptionI18n,
-			Builtin:         summary.Builtin,
-			Editable:        summary.Editable,
-			Deletable:       summary.Deletable,
-			Applicable:      summary.Applicable,
-			FixedGovernance: summary.FixedGovernance,
-			RoleKind:        summary.RoleKind,
-			SystemKey:       summary.SystemKey,
-			TemplateOrigin:  summary.TemplateOrigin,
-			Status:          summary.Status,
-			Permissions:     summary.Permissions,
+			ID:                    summary.ID,
+			OrganizationID:        role.OrganizationID,
+			Name:                  summary.Name,
+			NameI18n:              summary.NameI18n,
+			NameCustomized:        summary.NameCustomized,
+			Description:           summary.Description,
+			DescriptionI18n:       summary.DescriptionI18n,
+			DescriptionCustomized: summary.DescriptionCustomized,
+			Builtin:               summary.Builtin,
+			Editable:              summary.Editable,
+			Deletable:             summary.Deletable,
+			Applicable:            summary.Applicable,
+			FixedGovernance:       summary.FixedGovernance,
+			RoleKind:              summary.RoleKind,
+			SystemKey:             summary.SystemKey,
+			TemplateOrigin:        summary.TemplateOrigin,
+			Status:                summary.Status,
+			Permissions:           summary.Permissions,
 		}, nil
 	}
 }
@@ -1055,13 +1069,15 @@ func (s *organizationService) CreateCustomWorkspaceRole(ctx context.Context, req
 	}
 
 	role := &model.WorkspaceCustomRole{
-		OrganizationID: req.OrganizationID,
-		Name:           name,
-		Description:    description,
-		Status:         model.WorkspaceCustomRoleStatusActive,
-		CreatedBy:      req.CreatedBy,
-		Permissions:    model.CanonicalAssignableWorkspacePermissionSnapshotStrings(req.Permissions),
-		TemplateOrigin: model.WorkspaceRoleTemplateOriginCustom,
+		OrganizationID:        req.OrganizationID,
+		Name:                  name,
+		NameCustomized:        true,
+		Description:           description,
+		DescriptionCustomized: true,
+		Status:                model.WorkspaceCustomRoleStatusActive,
+		CreatedBy:             req.CreatedBy,
+		Permissions:           model.CanonicalAssignableWorkspacePermissionSnapshotStrings(req.Permissions),
+		TemplateOrigin:        model.WorkspaceRoleTemplateOriginCustom,
 	}
 
 	if err := db.WithContext(ctx).Create(role).Error; err != nil {
@@ -1073,22 +1089,24 @@ func (s *organizationService) CreateCustomWorkspaceRole(ctx context.Context, req
 
 	summary := workspaceRoleSummaryFromCustomRole(*role)
 	return &shared_dto.OrganizationRoleDetailResponse{
-		ID:              summary.ID,
-		OrganizationID:  role.OrganizationID,
-		Name:            summary.Name,
-		NameI18n:        summary.NameI18n,
-		Description:     summary.Description,
-		DescriptionI18n: summary.DescriptionI18n,
-		Builtin:         summary.Builtin,
-		Editable:        summary.Editable,
-		Deletable:       summary.Deletable,
-		Applicable:      summary.Applicable,
-		FixedGovernance: summary.FixedGovernance,
-		RoleKind:        summary.RoleKind,
-		SystemKey:       summary.SystemKey,
-		TemplateOrigin:  summary.TemplateOrigin,
-		Status:          summary.Status,
-		Permissions:     summary.Permissions,
+		ID:                    summary.ID,
+		OrganizationID:        role.OrganizationID,
+		Name:                  summary.Name,
+		NameI18n:              summary.NameI18n,
+		NameCustomized:        summary.NameCustomized,
+		Description:           summary.Description,
+		DescriptionI18n:       summary.DescriptionI18n,
+		DescriptionCustomized: summary.DescriptionCustomized,
+		Builtin:               summary.Builtin,
+		Editable:              summary.Editable,
+		Deletable:             summary.Deletable,
+		Applicable:            summary.Applicable,
+		FixedGovernance:       summary.FixedGovernance,
+		RoleKind:              summary.RoleKind,
+		SystemKey:             summary.SystemKey,
+		TemplateOrigin:        summary.TemplateOrigin,
+		Status:                summary.Status,
+		Permissions:           summary.Permissions,
 	}, nil
 }
 
@@ -1096,78 +1114,80 @@ func (s *organizationService) CreateCustomWorkspaceRole(ctx context.Context, req
 func (s *organizationService) UpdateCustomWorkspaceRole(ctx context.Context, req *shared_dto.UpdateWorkspaceRoleRequest) (*shared_dto.OrganizationRoleDetailResponse, error) {
 	db := s.organizationRepo.GetDB()
 
-	var role model.WorkspaceCustomRole
-	if err := db.WithContext(ctx).
-		Where("id = ? AND group_id = ?", req.RoleID, req.OrganizationID).
-		First(&role).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, ErrWorkspaceRoleTemplateNotFound
-		}
-		return nil, fmt.Errorf("role not found: %w", err)
-	}
-
-	if role.Status == model.WorkspaceCustomRoleStatusDeleted {
-		return nil, ErrWorkspaceRoleTemplateDeleted
-	}
-
-	if req.Name != nil {
-		name, err := normalizeWorkspaceRoleName(*req.Name)
+	var role *model.WorkspaceCustomRole
+	if err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		lockedRole, err := lockWorkspaceRoleTemplate(ctx, tx, req.OrganizationID, req.RoleID, workspaceRoleLockUpdate)
 		if err != nil {
-			return nil, err
+			return err
 		}
-		if name != role.Name {
-			exists, err := workspaceRoleNameExists(ctx, db, req.OrganizationID, name, req.RoleID)
+
+		if req.Name != nil {
+			name, err := normalizeWorkspaceRoleName(*req.Name)
 			if err != nil {
-				return nil, err
+				return err
 			}
-			if exists {
-				return nil, ErrRoleNameExists
+			if name != lockedRole.Name {
+				exists, err := workspaceRoleNameExists(ctx, tx, req.OrganizationID, name, req.RoleID)
+				if err != nil {
+					return err
+				}
+				if exists {
+					return ErrRoleNameExists
+				}
+				lockedRole.Name = name
+				lockedRole.NameI18n = map[string]string{}
+				lockedRole.NameCustomized = true
 			}
-			role.Name = name
-			role.NameI18n = map[string]string{}
 		}
-	}
-	if req.Description != nil {
-		description, err := normalizeWorkspaceRoleDescription(req.Description)
-		if err != nil {
-			return nil, err
+		if req.Description != nil {
+			description, err := normalizeWorkspaceRoleDescription(req.Description)
+			if err != nil {
+				return err
+			}
+			currentDescription := ""
+			if lockedRole.Description != nil {
+				currentDescription = *lockedRole.Description
+			}
+			if description != nil && *description != currentDescription {
+				lockedRole.Description = description
+				lockedRole.DescriptionI18n = map[string]string{}
+				lockedRole.DescriptionCustomized = true
+			}
 		}
-		currentDescription := ""
-		if role.Description != nil {
-			currentDescription = *role.Description
-		}
-		if description != nil && *description != currentDescription {
-			role.Description = description
-			role.DescriptionI18n = map[string]string{}
-		}
-	}
 
-	if err := db.WithContext(ctx).Save(&role).Error; err != nil {
-		if isWorkspaceRoleUniqueConstraintViolation(err) {
-			return nil, ErrRoleNameExists
+		if err := tx.Save(lockedRole).Error; err != nil {
+			if isWorkspaceRoleUniqueConstraintViolation(err) {
+				return ErrRoleNameExists
+			}
+			return fmt.Errorf("failed to update role: %w", err)
 		}
-		return nil, fmt.Errorf("failed to update role: %w", err)
+		role = lockedRole
+		return nil
+	}); err != nil {
+		return nil, err
 	}
 	s.invalidateOrganizationContext(ctx, req.OrganizationID)
 
-	summary := workspaceRoleSummaryFromCustomRole(role)
+	summary := workspaceRoleSummaryFromCustomRole(*role)
 	return &shared_dto.OrganizationRoleDetailResponse{
-		ID:              summary.ID,
-		OrganizationID:  role.OrganizationID,
-		Name:            summary.Name,
-		NameI18n:        summary.NameI18n,
-		Description:     summary.Description,
-		DescriptionI18n: summary.DescriptionI18n,
-		Builtin:         summary.Builtin,
-		Editable:        summary.Editable,
-		Deletable:       summary.Deletable,
-		Applicable:      summary.Applicable,
-		FixedGovernance: summary.FixedGovernance,
-		RoleKind:        summary.RoleKind,
-		SystemKey:       summary.SystemKey,
-		TemplateOrigin:  summary.TemplateOrigin,
-		Status:          summary.Status,
-		Permissions:     summary.Permissions,
+		ID:                    summary.ID,
+		OrganizationID:        role.OrganizationID,
+		Name:                  summary.Name,
+		NameI18n:              summary.NameI18n,
+		NameCustomized:        summary.NameCustomized,
+		Description:           summary.Description,
+		DescriptionI18n:       summary.DescriptionI18n,
+		DescriptionCustomized: summary.DescriptionCustomized,
+		Builtin:               summary.Builtin,
+		Editable:              summary.Editable,
+		Deletable:             summary.Deletable,
+		Applicable:            summary.Applicable,
+		FixedGovernance:       summary.FixedGovernance,
+		RoleKind:              summary.RoleKind,
+		SystemKey:             summary.SystemKey,
+		TemplateOrigin:        summary.TemplateOrigin,
+		Status:                summary.Status,
+		Permissions:           summary.Permissions,
 	}, nil
 }
 
@@ -1179,23 +1199,19 @@ func (s *organizationService) UpdateWorkspaceRolePermissions(ctx context.Context
 
 	db := s.organizationRepo.GetDB()
 
-	var role model.WorkspaceCustomRole
-	if err := db.WithContext(ctx).
-		Where("id = ? AND group_id = ?", req.RoleID, req.OrganizationID).
-		First(&role).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return ErrWorkspaceRoleTemplateNotFound
+	if err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		role, err := lockWorkspaceRoleTemplate(ctx, tx, req.OrganizationID, req.RoleID, workspaceRoleLockUpdate)
+		if err != nil {
+			return err
 		}
-		return fmt.Errorf("role not found: %w", err)
-	}
 
-	if role.Status == model.WorkspaceCustomRoleStatusDeleted {
-		return ErrWorkspaceRoleTemplateDeleted
-	}
-
-	role.Permissions = model.CanonicalAssignableWorkspacePermissionSnapshotStrings(req.Permissions)
-	if err := db.WithContext(ctx).Save(&role).Error; err != nil {
-		return fmt.Errorf("failed to update role permissions: %w", err)
+		role.Permissions = model.CanonicalAssignableWorkspacePermissionSnapshotStrings(req.Permissions)
+		if err := tx.Save(role).Error; err != nil {
+			return fmt.Errorf("failed to update role permissions: %w", err)
+		}
+		return nil
+	}); err != nil {
+		return err
 	}
 	s.invalidateOrganizationContext(ctx, req.OrganizationID)
 
@@ -1370,7 +1386,7 @@ func (s *organizationService) ReplaceAndDeleteCustomWorkspaceRole(ctx context.Co
 	var targets []shared_dto.ApplyWorkspaceRoleTemplateTarget
 	if err := db.WithContext(ctx).Table("workspace_members").
 		Select("workspace_id, account_id").
-		Where("workspace_id IN (?) AND role_id = ?", tenantSubquery, roleID).
+		Where("workspace_id IN (?) AND (role_id = ? OR permission_template_role_id = ?)", tenantSubquery, roleID, roleID).
 		Find(&targets).Error; err != nil {
 		return nil, fmt.Errorf("failed to list workspace role template assignments: %w", err)
 	}
@@ -1464,18 +1480,12 @@ func (s *organizationService) DeleteCustomWorkspaceRole(ctx context.Context, org
 			return fmt.Errorf("failed to lock organization role templates: %w", err)
 		}
 
-		var role model.WorkspaceCustomRole
-		if err := tx.
-			Where("id = ? AND group_id = ?", roleID, organizationID).
-			First(&role).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return ErrWorkspaceRoleTemplateNotFound
-			}
-			return fmt.Errorf("role not found: %w", err)
-		}
-
-		if role.Status == model.WorkspaceCustomRoleStatusDeleted {
+		role, err := lockWorkspaceRoleTemplate(ctx, tx, organizationID, roleID, workspaceRoleLockUpdate)
+		if errors.Is(err, ErrWorkspaceRoleTemplateDeleted) {
 			return nil
+		}
+		if err != nil {
+			return err
 		}
 
 		tenantSubquery := tx.Table("workspaces").
@@ -1484,7 +1494,7 @@ func (s *organizationService) DeleteCustomWorkspaceRole(ctx context.Context, org
 
 		var assignedCount int64
 		if err := tx.Table("workspace_members").
-			Where("workspace_id IN (?) AND role_id = ?", tenantSubquery, roleID).
+			Where("workspace_id IN (?) AND (role_id = ? OR permission_template_role_id = ?)", tenantSubquery, roleID, roleID).
 			Count(&assignedCount).Error; err != nil {
 			return fmt.Errorf("failed to count role assignments: %w", err)
 		}
@@ -1505,7 +1515,7 @@ func (s *organizationService) DeleteCustomWorkspaceRole(ctx context.Context, org
 		}
 
 		role.Status = model.WorkspaceCustomRoleStatusDeleted
-		if err := tx.Save(&role).Error; err != nil {
+		if err := tx.Save(role).Error; err != nil {
 			return fmt.Errorf("failed to delete role: %w", err)
 		}
 		return nil

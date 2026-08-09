@@ -45,6 +45,8 @@ const renamedTemplateWithHistoricalMetadata = {
   ...defaultTemplate,
   name: 'Project Editors',
   description: 'Project-specific publishing access.',
+  name_customized: true,
+  description_customized: true,
 };
 assert.equal(
   getWorkspaceRoleDisplayName(renamedTemplateWithHistoricalMetadata, 'zh-Hans'),
@@ -53,6 +55,22 @@ assert.equal(
 assert.equal(
   getWorkspaceRoleDisplayDescription(renamedTemplateWithHistoricalMetadata, 'zh-Hans'),
   'Project-specific publishing access.'
+);
+
+const renamedToAnotherLocaleDefault = {
+  ...defaultTemplate,
+  name: 'Advanced Member',
+  description: 'Can create, edit, publish, and manage most workspace assets.',
+  name_customized: true,
+  description_customized: true,
+};
+assert.equal(
+  getWorkspaceRoleDisplayName(renamedToAnotherLocaleDefault, 'zh-Hans'),
+  'Advanced Member'
+);
+assert.equal(
+  getWorkspaceRoleDisplayDescription(renamedToAnotherLocaleDefault, 'zh-Hans'),
+  'Can create, edit, publish, and manage most workspace assets.'
 );
 
 const customRoleNamedAdmin = {

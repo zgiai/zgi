@@ -23,6 +23,8 @@ func TestWorkspaceRoleDefaultTemplatesMigrationUpPostgres(t *testing.T) {
 	}
 
 	mustExec(t, db, `CREATE EXTENSION IF NOT EXISTS "uuid-ossp"`)
+	mustExec(t, db, `DROP TABLE IF EXISTS public.workspace_members`)
+	mustExec(t, db, `DROP TABLE IF EXISTS public.workspaces`)
 	mustExec(t, db, `DROP TABLE IF EXISTS public.roles`)
 	mustExec(t, db, `DROP TABLE IF EXISTS public.members`)
 	mustExec(t, db, `DROP TABLE IF EXISTS public.organizations`)
@@ -40,6 +42,21 @@ func TestWorkspaceRoleDefaultTemplatesMigrationUpPostgres(t *testing.T) {
 			id uuid PRIMARY KEY,
 			name text NOT NULL,
 			status text NOT NULL
+		)
+	`)
+	mustExec(t, db, `
+		CREATE TABLE public.workspaces (
+			id uuid PRIMARY KEY,
+			organization_id uuid
+		)
+	`)
+	mustExec(t, db, `
+		CREATE TABLE public.workspace_members (
+			id uuid DEFAULT public.uuid_generate_v4() PRIMARY KEY,
+			workspace_id uuid NOT NULL,
+			account_id uuid NOT NULL,
+			role_id uuid,
+			permission_template_role_id uuid
 		)
 	`)
 	mustExec(t, db, `
@@ -66,15 +83,21 @@ func TestWorkspaceRoleDefaultTemplatesMigrationUpPostgres(t *testing.T) {
 	`)
 	mustExec(t, db, `
 		INSERT INTO public.accounts (id, name, email, interface_language)
-		VALUES ('10000000-0000-0000-0000-000000000001', 'Owner', 'owner@example.com', 'en-US')
+		VALUES
+			('10000000-0000-0000-0000-000000000001', 'Owner', 'owner@example.com', 'en-US'),
+			('10000000-0000-0000-0000-000000000002', 'Chinese Owner', 'zh-owner@example.com', 'zh-Hans')
 	`)
 	mustExec(t, db, `
 		INSERT INTO public.organizations (id, name, status)
-		VALUES ('20000000-0000-0000-0000-000000000001', 'Org', 'active')
+		VALUES
+			('20000000-0000-0000-0000-000000000001', 'Org', 'active'),
+			('20000000-0000-0000-0000-000000000002', 'Chinese Org', 'active')
 	`)
 	mustExec(t, db, `
 		INSERT INTO public.members (organization_id, account_id, role, status, created_at)
-		VALUES ('20000000-0000-0000-0000-000000000001', '10000000-0000-0000-0000-000000000001', 'owner', 'active', NOW())
+		VALUES
+			('20000000-0000-0000-0000-000000000001', '10000000-0000-0000-0000-000000000001', 'owner', 'active', NOW()),
+			('20000000-0000-0000-0000-000000000002', '10000000-0000-0000-0000-000000000002', 'owner', 'active', NOW())
 	`)
 	mustExec(t, db, `
 		INSERT INTO public.roles (group_id, name, description, status, created_by, permissions)
@@ -97,7 +120,16 @@ func TestWorkspaceRoleDefaultTemplatesMigrationUpPostgres(t *testing.T) {
 	mustExec(t, db, `
 		UPDATE public.roles
 		SET name = 'Renamed Template', description = 'Renamed description'
-		WHERE system_key = 'default_basic'
+		WHERE group_id = '20000000-0000-0000-0000-000000000001'
+		  AND system_key = 'default_basic'
+	`)
+	mustExec(t, db, `
+		UPDATE public.roles
+		SET
+			name = 'Advanced Member',
+			description = 'Can create, edit, publish, and manage most workspace assets without workspace governance permissions.'
+		WHERE group_id = '20000000-0000-0000-0000-000000000002'
+		  AND system_key = 'default_advanced'
 	`)
 	mustExec(t, db, `
 		INSERT INTO public.roles (group_id, name, description, status, created_by, permissions)
@@ -112,6 +144,34 @@ func TestWorkspaceRoleDefaultTemplatesMigrationUpPostgres(t *testing.T) {
 	`)
 	if err := upFixWorkspaceRoleTemplateLifecycle(mschema.New(db)); err != nil {
 		t.Fatalf("run role template lifecycle migration: %v", err)
+	}
+	if err := upHardenWorkspaceRoleTemplateLifecycle(mschema.New(db)); err != nil {
+		t.Fatalf("run hardened role template lifecycle migration: %v", err)
+	}
+	mustExec(t, db, `
+		INSERT INTO public.workspaces (id, organization_id)
+		VALUES ('30000000-0000-0000-0000-000000000001', '20000000-0000-0000-0000-000000000001')
+	`)
+	var deletedRoleID string
+	if err := db.Table("public.roles").
+		Select("id::text").
+		Where("group_id = ? AND name = ? AND status = ?", "20000000-0000-0000-0000-000000000001", "Reusable", workspace_model.WorkspaceCustomRoleStatusDeleted).
+		Scan(&deletedRoleID).Error; err != nil {
+		t.Fatalf("read deleted role template id: %v", err)
+	}
+	if deletedRoleID == "" {
+		t.Fatal("deleted role template id is empty")
+	}
+	if err := db.Exec(`
+		INSERT INTO public.workspace_members (workspace_id, account_id, role_id, permission_template_role_id)
+		VALUES (?::uuid, ?::uuid, ?::uuid, ?::uuid)
+	`,
+		"30000000-0000-0000-0000-000000000001",
+		"10000000-0000-0000-0000-000000000001",
+		deletedRoleID,
+		deletedRoleID,
+	).Error; err == nil {
+		t.Fatal("workspace member assignment unexpectedly accepted a deleted role template")
 	}
 	mustExec(t, db, `
 		INSERT INTO public.roles (group_id, name, description, status, created_by, permissions)
@@ -145,7 +205,7 @@ func TestWorkspaceRoleDefaultTemplatesMigrationUpPostgres(t *testing.T) {
 	}
 	if err := db.Table("public.roles").
 		Select("name_i18n::text AS name_i18n, description_i18n::text AS description_i18n").
-		Where("system_key = ?", workspace_model.WorkspaceDefaultRoleTemplateBasicKey).
+		Where("group_id = ? AND system_key = ?", "20000000-0000-0000-0000-000000000001", workspace_model.WorkspaceDefaultRoleTemplateBasicKey).
 		Scan(&localizedMetadata).Error; err != nil {
 		t.Fatalf("read renamed template localized metadata: %v", err)
 	}
@@ -153,10 +213,26 @@ func TestWorkspaceRoleDefaultTemplatesMigrationUpPostgres(t *testing.T) {
 		t.Fatalf("renamed template retained stale localized metadata: %#v", localizedMetadata)
 	}
 
+	var crossLocaleRename struct {
+		NameI18n              string
+		DescriptionI18n       string
+		NameCustomized        bool
+		DescriptionCustomized bool
+	}
+	if err := db.Table("public.roles").
+		Select("name_i18n::text AS name_i18n, description_i18n::text AS description_i18n, name_customized, description_customized").
+		Where("group_id = ? AND system_key = ?", "20000000-0000-0000-0000-000000000002", workspace_model.WorkspaceDefaultRoleTemplateAdvancedKey).
+		Scan(&crossLocaleRename).Error; err != nil {
+		t.Fatalf("read cross-locale renamed template metadata: %v", err)
+	}
+	if crossLocaleRename.NameI18n != "{}" || crossLocaleRename.DescriptionI18n != "{}" || !crossLocaleRename.NameCustomized || !crossLocaleRename.DescriptionCustomized {
+		t.Fatalf("cross-locale rename retained default localization: %#v", crossLocaleRename)
+	}
+
 	var permissions string
 	if err := db.Table("public.roles").
 		Select("permissions::text").
-		Where("name = ?", "Advanced Member").
+		Where("group_id = ? AND name = ? AND template_origin = ?", "20000000-0000-0000-0000-000000000001", "Advanced Member", workspace_model.WorkspaceRoleTemplateOriginCustom).
 		Scan(&permissions).Error; err != nil {
 		t.Fatalf("read sanitized custom role permissions: %v", err)
 	}
@@ -215,8 +291,43 @@ func TestWorkspaceRoleTemplateLifecycleMigrationClearsStaleLocalizedOverrides(t 
 		"name":        clearStaleWorkspaceRoleNameI18nSQL,
 		"description": clearStaleWorkspaceRoleDescriptionI18nSQL,
 	} {
-		if !strings.Contains(statement, "jsonb_each_text") || !strings.Contains(statement, "NOT EXISTS") {
-			t.Fatalf("%s localized metadata repair must preserve matching defaults and clear stale overrides: %s", name, statement)
+		if !strings.Contains(statement, "creator.interface_language") || !strings.Contains(statement, "->> CASE") {
+			t.Fatalf("%s localized metadata repair must compare against the creator's primary locale: %s", name, statement)
+		}
+	}
+}
+
+func TestHardenWorkspaceRoleTemplateLifecycleMigrationContract(t *testing.T) {
+	t.Parallel()
+
+	for _, want := range []string{
+		"name_customized boolean DEFAULT false NOT NULL",
+		"description_customized boolean DEFAULT false NOT NULL",
+	} {
+		if !strings.Contains(addWorkspaceRoleCustomizationStateSQL, want) {
+			t.Fatalf("workspace role customization migration missing %q: %s", want, addWorkspaceRoleCustomizationStateSQL)
+		}
+	}
+	for _, want := range []string{
+		"creator.interface_language",
+		"role.template_origin = 'system_default'",
+		"WHERE name_customized",
+		"WHERE description_customized",
+	} {
+		if !strings.Contains(backfillWorkspaceRoleCustomizationStateSQL, want) {
+			t.Fatalf("workspace role customization backfill missing %q: %s", want, backfillWorkspaceRoleCustomizationStateSQL)
+		}
+	}
+	for _, want := range []string{
+		"CREATE OR REPLACE FUNCTION public.enforce_active_workspace_role_template_assignment()",
+		"role_template.status = 'active'",
+		"workspace.organization_id = role_template.group_id",
+		"FOR SHARE OF role_template",
+		"CREATE TRIGGER workspace_members_active_role_template_guard",
+		"UPDATE OF workspace_id, role_id, permission_template_role_id",
+	} {
+		if !strings.Contains(enforceActiveWorkspaceRoleTemplateAssignmentSQL, want) {
+			t.Fatalf("workspace role assignment guard missing %q: %s", want, enforceActiveWorkspaceRoleTemplateAssignmentSQL)
 		}
 	}
 }

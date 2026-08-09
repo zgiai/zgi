@@ -10,11 +10,14 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 const (
 	workspaceRoleNameMaxRunes        = 30
 	workspaceRoleDescriptionMaxRunes = 200
+	workspaceRoleLockShare           = "SHARE"
+	workspaceRoleLockUpdate          = "UPDATE"
 )
 
 var reservedWorkspaceRoleNames = map[string]struct{}{
@@ -63,6 +66,23 @@ func workspaceRoleNameExists(ctx context.Context, db *gorm.DB, organizationID, n
 		return false, fmt.Errorf("failed to check role name existence: %w", err)
 	}
 	return count > 0, nil
+}
+
+func lockWorkspaceRoleTemplate(ctx context.Context, db *gorm.DB, organizationID, roleID, strength string) (*model.WorkspaceCustomRole, error) {
+	var role model.WorkspaceCustomRole
+	if err := db.WithContext(ctx).
+		Clauses(clause.Locking{Strength: strength}).
+		Where("id = ? AND group_id = ?", roleID, organizationID).
+		First(&role).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrWorkspaceRoleTemplateNotFound
+		}
+		return nil, fmt.Errorf("failed to lock workspace role template: %w", err)
+	}
+	if role.Status == model.WorkspaceCustomRoleStatusDeleted {
+		return nil, ErrWorkspaceRoleTemplateDeleted
+	}
+	return &role, nil
 }
 
 func isWorkspaceRoleUniqueConstraintViolation(err error) bool {
@@ -133,11 +153,13 @@ func ensureDefaultWorkspaceRoleTemplates(ctx context.Context, db *gorm.DB, organ
 				"zh_Hans": definition.DescZhHans,
 				"en_US":   definition.DescEnUS,
 			},
-			Status:         model.WorkspaceCustomRoleStatusActive,
-			Permissions:    model.CanonicalAssignableWorkspacePermissionSnapshotStrings(definition.Permissions),
-			SystemKey:      &systemKey,
-			TemplateOrigin: model.WorkspaceRoleTemplateOriginSystemDefault,
-			CreatedBy:      createdBy,
+			NameCustomized:        false,
+			DescriptionCustomized: false,
+			Status:                model.WorkspaceCustomRoleStatusActive,
+			Permissions:           model.CanonicalAssignableWorkspacePermissionSnapshotStrings(definition.Permissions),
+			SystemKey:             &systemKey,
+			TemplateOrigin:        model.WorkspaceRoleTemplateOriginSystemDefault,
+			CreatedBy:             createdBy,
 		}
 		if err := db.WithContext(ctx).Create(role).Error; err != nil {
 			if isWorkspaceRoleUniqueConstraintViolation(err) {
