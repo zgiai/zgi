@@ -68,6 +68,19 @@ type VideoTask struct {
 	CompletedAt      *time.Time     `json:"completed_at,omitempty"`
 }
 
+type ListTasksQuery struct {
+	Limit  int
+	Cursor string
+	Search string
+}
+
+type ListTasksResult struct {
+	Data       []VideoTask `json:"data"`
+	Total      int64       `json:"total"`
+	HasMore    bool        `json:"has_more"`
+	NextCursor string      `json:"next_cursor,omitempty"`
+}
+
 type GenerateResult struct {
 	Task VideoTask `json:"task"`
 }

@@ -6,6 +6,7 @@ import type {
   VideoRuntimeModelsResponse,
   VideoRuntimeTaskResponse,
   VideoRuntimeTasksResponse,
+  VideoRuntimeTasksQuery,
 } from './types/video-runtime';
 
 const VIDEO_RUNTIME_BASE_PATH = '/console/api/video-runtime';
@@ -16,8 +17,8 @@ export const VideoRuntimeService = {
     return http.get<VideoRuntimeModelsResponse>(`${VIDEO_RUNTIME_BASE_PATH}/models`);
   },
 
-  listTasks() {
-    return http.get<VideoRuntimeTasksResponse>(`${VIDEO_RUNTIME_BASE_PATH}/tasks`);
+  listTasks(params: VideoRuntimeTasksQuery = {}) {
+    return http.get<VideoRuntimeTasksResponse>(`${VIDEO_RUNTIME_BASE_PATH}/tasks`, { params });
   },
 
   getTask(taskId: string) {

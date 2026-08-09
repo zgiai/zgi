@@ -62,8 +62,21 @@ export interface VideoRuntimeGenerateResult {
   task: VideoRuntimeTask;
 }
 
+export interface VideoRuntimeTasksPage {
+  data: VideoRuntimeTask[];
+  total: number;
+  has_more: boolean;
+  next_cursor?: string;
+}
+
+export interface VideoRuntimeTasksQuery {
+  limit?: number;
+  cursor?: string;
+  search?: string;
+}
+
 export type VideoRuntimeModelsResponse = ApiResponseData<VideoRuntimeModel[]>;
-export type VideoRuntimeTasksResponse = ApiResponseData<VideoRuntimeTask[]>;
+export type VideoRuntimeTasksResponse = ApiResponseData<VideoRuntimeTasksPage>;
 export type VideoRuntimeTaskResponse = ApiResponseData<VideoRuntimeTask>;
 export type VideoRuntimeGenerateResponse = ApiResponseData<VideoRuntimeGenerateResult>;
 export type VideoRuntimeDeleteTaskResponse = ApiResponseData<{ deleted: boolean }>;

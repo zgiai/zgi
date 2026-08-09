@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -19,6 +20,7 @@ import (
 
 const (
 	maxVideoPromptRunes = 4000
+	maxVideoSearchRunes = 200
 	videoRuntimeAppType = "video-runtime"
 	defaultRatio        = "16:9"
 	defaultResolution   = "720p"
@@ -37,7 +39,7 @@ type LLMVideoClient interface {
 type Service interface {
 	ListModels(ctx context.Context, scope Scope) ([]VideoModel, error)
 	Generate(ctx context.Context, scope Scope, req GenerateRequest) (*GenerateResult, error)
-	ListTasks(ctx context.Context, scope Scope) ([]VideoTask, error)
+	ListTasks(ctx context.Context, scope Scope, query ListTasksQuery) (*ListTasksResult, error)
 	GetTask(ctx context.Context, scope Scope, taskID string) (*VideoTask, error)
 	DeleteTask(ctx context.Context, scope Scope, taskID string) error
 }
@@ -227,16 +229,69 @@ func (s *service) startUpstreamVideoTask(record videoTaskRecord, appCtx *llmclie
 		_ = s.tasks.save(context.Background(), &record)
 	}()
 }
-func (s *service) ListTasks(ctx context.Context, scope Scope) ([]VideoTask, error) {
-	records, err := s.tasks.list(ctx, scope, 50)
+
+type videoTaskCursor struct {
+	CreatedAt time.Time `json:"created_at"`
+	ID        uuid.UUID `json:"id"`
+}
+
+func (s *service) ListTasks(ctx context.Context, scope Scope, query ListTasksQuery) (*ListTasksResult, error) {
+	search := strings.TrimSpace(query.Search)
+	if len([]rune(search)) > maxVideoSearchRunes {
+		return nil, ErrSearchTooLong
+	}
+	limit := query.Limit
+	if limit <= 0 || limit > 50 {
+		limit = 20
+	}
+	params := taskListParams{Limit: limit, Search: search}
+	if cursor := strings.TrimSpace(query.Cursor); cursor != "" {
+		decoded, err := decodeVideoTaskCursor(cursor)
+		if err != nil {
+			return nil, ErrInvalidCursor
+		}
+		params.BeforeCreatedAt = &decoded.CreatedAt
+		params.BeforeID = &decoded.ID
+	}
+	page, err := s.tasks.list(ctx, scope, params)
 	if err != nil {
 		return nil, err
 	}
-	result := make([]VideoTask, 0, len(records))
-	for _, record := range records {
+	result := make([]VideoTask, 0, len(page.Records))
+	for _, record := range page.Records {
 		result = append(result, taskFromRecord(record))
 	}
-	return result, nil
+	nextCursor := ""
+	if page.HasMore && len(page.Records) > 0 {
+		last := page.Records[len(page.Records)-1]
+		nextCursor = encodeVideoTaskCursor(videoTaskCursor{CreatedAt: last.CreatedAt, ID: last.ID})
+	}
+	return &ListTasksResult{
+		Data:       result,
+		Total:      page.Total,
+		HasMore:    page.HasMore,
+		NextCursor: nextCursor,
+	}, nil
+}
+
+func encodeVideoTaskCursor(cursor videoTaskCursor) string {
+	payload, _ := json.Marshal(cursor)
+	return base64.RawURLEncoding.EncodeToString(payload)
+}
+
+func decodeVideoTaskCursor(value string) (videoTaskCursor, error) {
+	payload, err := base64.RawURLEncoding.DecodeString(value)
+	if err != nil {
+		return videoTaskCursor{}, err
+	}
+	var cursor videoTaskCursor
+	if err := json.Unmarshal(payload, &cursor); err != nil {
+		return videoTaskCursor{}, err
+	}
+	if cursor.CreatedAt.IsZero() || cursor.ID == uuid.Nil {
+		return videoTaskCursor{}, errors.New("cursor is incomplete")
+	}
+	return cursor, nil
 }
 
 func (s *service) GetTask(ctx context.Context, scope Scope, taskID string) (*VideoTask, error) {

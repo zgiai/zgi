@@ -1,18 +1,18 @@
 ﻿'use client';
 
 import * as React from 'react';
+import Image from 'next/image';
 import {
-  ArrowUp,
   CalendarClock,
   CheckCircle2,
   Clock3,
   Coins,
   Copy,
   Download,
-  ExternalLink,
   Film,
   ImagePlus,
   Loader2,
+  Play,
   RefreshCw,
   Search,
   Sparkles,
@@ -29,6 +29,7 @@ import { toast } from 'sonner';
 import { ModelSelector, type ModelSelectorValue } from '@/components/common/model-selector';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { Input } from '@/components/ui/input';
 import {
   Select,
@@ -46,6 +47,8 @@ import {
 } from '@/components/ui/sheet';
 import { Textarea } from '@/components/ui/textarea';
 import { useAvailableModels } from '@/hooks/model/use-model';
+import { useDebouncedValue } from '@/hooks/use-debounced-value';
+import { useInfiniteObserver } from '@/hooks/use-infinite-observer';
 import {
   useDeleteVideoTask,
   useGenerateVideoTask,
@@ -137,7 +140,19 @@ export function VideoWorkbench() {
   const { models, isLoading, error } = useAvailableModels({
     use_case: 'video-gen',
   });
-  const { tasks, refetch: refetchTasks } = useVideoRuntimeTasks();
+  const [historyQuery, setHistoryQuery] = React.useState('');
+  const debouncedHistoryQuery = useDebouncedValue(historyQuery.trim(), 300);
+  const {
+    tasks,
+    total: totalTasks,
+    reload: reloadTasks,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+    isLoading: isLoadingTasks,
+    isFetching: isFetchingTasks,
+    isError: isTasksError,
+  } = useVideoRuntimeTasks(debouncedHistoryQuery);
   const generateMutation = useGenerateVideoTask();
   const deleteTaskMutation = useDeleteVideoTask();
   const [selectedModel, setSelectedModel] = React.useState<ModelSelectorValue>({
@@ -303,7 +318,7 @@ export function VideoWorkbench() {
       if (taskID) {
         completedPollingTaskIdsRef.current.delete(taskID);
         setPollingTaskId(taskID);
-        void refetchTasks();
+        void reloadTasks();
       }
       setPrompt('');
       setReferenceFiles(files => {
@@ -322,7 +337,7 @@ export function VideoWorkbench() {
     generationOptions.audioModes.length,
     prompt,
     referenceFiles,
-    refetchTasks,
+    reloadTasks,
     selectedModel.model,
     selectedModel.provider,
     settings,
@@ -338,7 +353,8 @@ export function VideoWorkbench() {
         if (pollingTaskId === taskId) setPollingTaskId(null);
         toast.success(t('chat.videoWorkbench.deleteRecordSuccess'));
       } catch (err) {
-        const message = err instanceof Error ? err.message : t('chat.videoWorkbench.deleteRecordFailed');
+        const message =
+          err instanceof Error ? err.message : t('chat.videoWorkbench.deleteRecordFailed');
         toast.error(message);
       }
     },
@@ -349,11 +365,23 @@ export function VideoWorkbench() {
     <div className="flex h-full min-h-0 w-full bg-background">
       <GenerationRecordsSidebar
         tasks={tasks}
+        total={totalTasks}
+        query={historyQuery}
+        onQueryChange={setHistoryQuery}
+        isSearchPending={
+          historyQuery.trim() !== debouncedHistoryQuery ||
+          (isFetchingTasks && !isFetchingNextPage)
+        }
+        isLoading={isLoadingTasks}
+        isError={isTasksError}
+        hasNextPage={hasNextPage}
+        isFetchingNextPage={isFetchingNextPage}
+        onLoadMore={fetchNextPage}
         selectedTaskId={selectedTaskId}
         onSelectTask={setSelectedTaskId}
         onDeleteTask={handleDeleteTask}
         deletingTaskId={deleteTaskMutation.variables ?? null}
-        onRefresh={() => void refetchTasks()}
+        onRefresh={() => void reloadTasks()}
       />
 
       <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
@@ -397,6 +425,15 @@ export function VideoWorkbench() {
 
 function GenerationRecordsSidebar({
   tasks,
+  total,
+  query,
+  onQueryChange,
+  isSearchPending,
+  isLoading,
+  isError,
+  hasNextPage,
+  isFetchingNextPage,
+  onLoadMore,
   selectedTaskId,
   onSelectTask,
   onDeleteTask,
@@ -404,6 +441,15 @@ function GenerationRecordsSidebar({
   onRefresh,
 }: {
   tasks: VideoRuntimeTask[];
+  total: number;
+  query: string;
+  onQueryChange: (query: string) => void;
+  isSearchPending: boolean;
+  isLoading: boolean;
+  isError: boolean;
+  hasNextPage: boolean;
+  isFetchingNextPage: boolean;
+  onLoadMore: () => Promise<unknown>;
   selectedTaskId: string | null;
   onSelectTask: (taskId: string) => void;
   onDeleteTask: (taskId: string) => void;
@@ -411,68 +457,123 @@ function GenerationRecordsSidebar({
   onRefresh: () => void;
 }) {
   const t = useT('webapp');
-  const [query, setQuery] = React.useState('');
-  const normalizedQuery = query.trim().toLowerCase();
-  const visibleTasks = React.useMemo(() => {
-    if (!normalizedQuery) return tasks;
-    return tasks.filter(task => {
-      const haystack = [
-        task.model,
-        task.model_label,
-        task.task_id,
-        task.prompt,
-        task.status,
-        task.resolution,
-        task.ratio,
-      ]
-        .filter(Boolean)
-        .join(' ')
-        .toLowerCase();
-      return haystack.includes(normalizedQuery);
-    });
-  }, [normalizedQuery, tasks]);
+  const [searchOpen, setSearchOpen] = React.useState(false);
+  const searchInputRef = React.useRef<HTMLInputElement>(null);
+  const listRef = React.useRef<HTMLDivElement>(null);
+  const loadMoreRef = useInfiniteObserver({
+    hasNextPage,
+    isFetchingNextPage,
+    fetchNextPage: onLoadMore,
+    rootRef: listRef,
+    rootMargin: '160px',
+    enabled: !isSearchPending && tasks.length > 0,
+  });
+
+  React.useEffect(() => {
+    listRef.current?.scrollTo({ top: 0 });
+  }, [query]);
 
   return (
-    <aside className="hidden h-full w-[292px] shrink-0 flex-col border-r border-border bg-muted/20 md:flex">
-      <div className="flex h-14 items-center justify-between border-b border-border px-4">
+    <aside className="hidden h-full w-[328px] shrink-0 flex-col border-r border-border bg-background md:flex">
+      <div className="flex h-16 items-center justify-between border-b border-border px-4">
         <div className="min-w-0">
-          <h2 className="text-sm font-semibold text-foreground">
+          <h2 className="text-[15px] font-semibold tracking-tight text-foreground">
             {t('chat.videoWorkbench.recordsTitle')}
           </h2>
-          <p className="text-xs text-muted-foreground">
-            {t('chat.videoWorkbench.recordsCount', { count: tasks.length })}
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            {t('chat.videoWorkbench.recordsCount', { count: total })}
           </p>
         </div>
-        <Button type="button" variant="ghost" isIcon className="h-8 w-8" onClick={onRefresh}>
-          <RefreshCw className="h-4 w-4" />
-        </Button>
+        <div className="flex items-center gap-1">
+          <Button
+            type="button"
+            variant="ghost"
+            isIcon
+            className="h-8 w-8 rounded-full text-muted-foreground"
+            title={t('chat.videoWorkbench.searchRecords')}
+            onClick={() => {
+              const next = !searchOpen;
+              setSearchOpen(next);
+              if (next) window.requestAnimationFrame(() => searchInputRef.current?.focus());
+              else onQueryChange('');
+            }}
+          >
+            <Search className="h-4 w-4" />
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            isIcon
+            className="h-8 w-8 rounded-full text-muted-foreground"
+            onClick={onRefresh}
+          >
+            <RefreshCw className="h-4 w-4" />
+          </Button>
+        </div>
       </div>
 
-      <div className="border-b border-border p-3">
-        <Input
-          value={query}
-          onChange={event => setQuery(event.target.value)}
-          leftIcon={<Search className="h-4 w-4" />}
-          placeholder={t('chat.videoWorkbench.searchRecords')}
-          className="h-9 rounded-md bg-background text-xs"
-        />
-      </div>
+      {searchOpen ? (
+        <div className="border-b border-border p-3">
+          <Input
+            ref={searchInputRef}
+            value={query}
+            onChange={event => onQueryChange(event.target.value)}
+            onKeyDown={event => {
+              if (event.key === 'Escape') {
+                onQueryChange('');
+                setSearchOpen(false);
+              }
+            }}
+            leftIcon={<Search className="h-4 w-4" />}
+            rightIcon={isSearchPending ? <Loader2 className="h-4 w-4 animate-spin" /> : undefined}
+            placeholder={t('chat.videoWorkbench.searchRecords')}
+            maxLength={200}
+            className="h-9 rounded-lg bg-muted/30 text-xs shadow-none"
+          />
+        </div>
+      ) : null}
 
       <div className="flex min-h-0 flex-1 flex-col">
-        {visibleTasks.length === 0 ? (
+        {isLoading ? (
+          <div className="space-y-2 p-2" aria-label={t('chat.videoWorkbench.loadingRecords')}>
+            {Array.from({ length: 5 }, (_, index) => (
+              <div key={index} className="flex gap-3 rounded-xl p-2.5">
+                <div className="h-[72px] w-[92px] shrink-0 animate-pulse rounded-lg bg-muted" />
+                <div className="min-w-0 flex-1 space-y-2 py-1">
+                  <div className="h-4 w-4/5 animate-pulse rounded bg-muted" />
+                  <div className="h-3 w-3/5 animate-pulse rounded bg-muted" />
+                  <div className="h-5 w-2/3 animate-pulse rounded bg-muted" />
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : isError ? (
+          <div className="grid flex-1 place-items-center px-5 text-center">
+            <div>
+              <p className="text-sm font-medium text-foreground">
+                {t('chat.videoWorkbench.recordsLoadFailed')}
+              </p>
+              <Button type="button" variant="outline" className="mt-3 h-8" onClick={onRefresh}>
+                {t('chat.videoWorkbench.retry')}
+              </Button>
+            </div>
+          </div>
+        ) : tasks.length === 0 ? (
           <div className="grid flex-1 place-items-center px-5">
             <div className="text-center">
               <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-full bg-background shadow-sm">
                 <Film className="h-5 w-5 text-muted-foreground" />
               </div>
               <h3 className="mt-4 text-sm font-semibold text-foreground">
-                {t('chat.videoWorkbench.emptyRecordsTitle')}
+                {query.trim()
+                  ? t('chat.videoWorkbench.searchEmptyTitle')
+                  : t('chat.videoWorkbench.emptyRecordsTitle')}
               </h3>
             </div>
           </div>
         ) : (
-          <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-3">
-            {visibleTasks.map(task => (
+          <div ref={listRef} className="min-h-0 flex-1 space-y-1 overflow-y-auto p-2">
+            {tasks.map(task => (
               <VideoTaskCard
                 key={task.task_id}
                 task={task}
@@ -482,6 +583,27 @@ function GenerationRecordsSidebar({
                 onDelete={() => onDeleteTask(task.task_id)}
               />
             ))}
+            <div ref={loadMoreRef} className="flex min-h-9 items-center justify-center py-2">
+              {isFetchingNextPage ? (
+                <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  {t('chat.videoWorkbench.loadingMoreRecords')}
+                </div>
+              ) : hasNextPage ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  className="h-8 text-xs text-muted-foreground"
+                  onClick={() => void onLoadMore()}
+                >
+                  {t('chat.videoWorkbench.loadMoreRecords')}
+                </Button>
+              ) : total > 20 ? (
+                <span className="text-[11px] text-muted-foreground">
+                  {t('chat.videoWorkbench.allRecordsLoaded')}
+                </span>
+              ) : null}
+            </div>
           </div>
         )}
       </div>
@@ -503,7 +625,7 @@ function VideoTaskCard({
   onDelete: () => void;
 }) {
   const t = useT('webapp');
-  const status = normalizeStatus(task.status);
+  const status = getTaskDisplayStatus(task);
   const isLoadingStatus = status === 'pending' || status === 'running';
   const deleteDisabled = isDeleting || isActiveVideoTaskStatus(task.status);
   const Icon = isLoadingStatus
@@ -513,13 +635,6 @@ function VideoTaskCard({
       : status === 'failed'
         ? XCircle
         : Clock3;
-  const statusClass =
-    status === 'succeeded'
-      ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700'
-      : status === 'failed'
-        ? 'border-red-500/30 bg-red-500/10 text-red-700'
-        : 'border-amber-500/30 bg-amber-500/10 text-amber-700';
-
   return (
     <div
       role="button"
@@ -532,29 +647,69 @@ function VideoTaskCard({
         }
       }}
       className={cn(
-        'w-full cursor-pointer rounded-lg border border-border bg-background p-3 text-left shadow-sm transition hover:border-border-strong hover:bg-muted/20',
-        isSelected && 'border-primary/50 bg-primary/5 ring-1 ring-primary/20'
+        'group relative flex w-full cursor-pointer gap-3 rounded-xl border border-transparent p-2.5 text-left',
+        'transition-[background-color,border-color,transform] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] active:scale-[0.985]',
+        'hover:border-border hover:bg-muted/40',
+        isSelected && 'border-border-strong bg-muted/60'
       )}
     >
-      <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0">
-          <div className="truncate text-sm font-semibold text-foreground">
-            {task.model_label || task.model}
-          </div>
-          <div className="mt-0.5 truncate font-mono text-[11px] text-muted-foreground">
-            {task.task_id}
-          </div>
+      <div className="relative h-[72px] w-[92px] shrink-0 overflow-hidden rounded-lg border border-white/10 bg-gradient-to-br from-slate-800 via-slate-900 to-black shadow-sm">
+        {task.video_url && status === 'succeeded' ? (
+          <video
+            src={task.video_url}
+            muted
+            playsInline
+            preload="metadata"
+            className="h-full w-full object-cover opacity-90"
+          />
+        ) : (
+          <Image
+            src="/assets/video/default-video-cover.webp"
+            alt=""
+            fill
+            sizes="92px"
+            className="object-cover"
+          />
+        )}
+        <div className="absolute inset-0 bg-gradient-to-t from-black/35 via-transparent to-white/5" />
+        <div className="absolute inset-0 grid place-items-center text-white">
+          {isLoadingStatus ? (
+            <Loader2 className="h-5 w-5 animate-spin" />
+          ) : status === 'failed' ? (
+            <span className="grid h-8 w-8 place-items-center rounded-full bg-black/55 backdrop-blur-sm">
+              <XCircle className="h-5 w-5 text-red-300" />
+            </span>
+          ) : task.video_url ? (
+            <span className="grid h-8 w-8 place-items-center rounded-full bg-black/45 backdrop-blur-sm">
+              <Play className="h-4 w-4 fill-white" />
+            </span>
+          ) : null}
         </div>
-        <div className="flex shrink-0 items-center gap-1">
-          <Badge className={cn('rounded-md px-1.5 py-0.5 text-[11px]', statusClass)}>
-            <Icon className={cn('mr-1 h-3 w-3', isLoadingStatus && 'animate-spin')} />
-            {t(VIDEO_STATUS_LABEL_KEYS[status])}
-          </Badge>
+        <Badge
+          className={cn(
+            'absolute left-1.5 top-1.5 rounded-full border-white/10 bg-black/50 px-1.5 py-0.5 text-[10px] text-white backdrop-blur-sm',
+            status === 'failed' && 'bg-red-600/85',
+            isLoadingStatus && 'bg-amber-500/85'
+          )}
+        >
+          <Icon className={cn('mr-1 h-2.5 w-2.5', isLoadingStatus && 'animate-spin')} />
+          {t(VIDEO_STATUS_LABEL_KEYS[status])}
+        </Badge>
+      </div>
+
+      <div className="min-w-0 flex-1 py-0.5">
+        <div className="flex items-start justify-between gap-2">
+          <p className="line-clamp-2 text-sm font-medium leading-5 text-foreground">
+            {task.prompt || task.model_label || task.model}
+          </p>
           <Button
             type="button"
             variant="ghost"
             isIcon
-            className="h-7 w-7 text-muted-foreground hover:text-red-600"
+            className={cn(
+              'h-7 w-7 shrink-0 rounded-full text-muted-foreground opacity-0 transition-opacity duration-150',
+              'group-hover:opacity-100 group-focus-within:opacity-100 hover:!text-red-600'
+            )}
             disabled={deleteDisabled}
             title={
               isActiveVideoTaskStatus(task.status)
@@ -566,48 +721,40 @@ function VideoTaskCard({
               if (!deleteDisabled) onDelete();
             }}
           >
-            {isDeleting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+            {isDeleting ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Trash2 className="h-3.5 w-3.5" />
+            )}
           </Button>
         </div>
+        <div className="mt-1 truncate text-[11px] text-muted-foreground">
+          {task.model_label || task.model}
+          <span className="px-1.5 text-border-strong">·</span>
+          {formatDate(task.created_at, 'MM-DD HH:mm')}
+        </div>
+        <div className="mt-2 flex min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground">
+          {[
+            task.resolution,
+            task.ratio,
+            task.duration_seconds
+              ? `${task.duration_seconds}${t('chat.videoWorkbench.secondsSuffix')}`
+              : '',
+          ]
+            .filter(Boolean)
+            .map(value => (
+              <span key={String(value)} className="rounded-md bg-muted px-1.5 py-0.5">
+                {value}
+              </span>
+            ))}
+          {task.generate_audio ? <Volume2 className="ml-auto h-3.5 w-3.5 shrink-0" /> : null}
+        </div>
+        {status === 'failed' ? (
+          <div className="mt-1.5 truncate text-[11px] font-medium text-red-600">
+            {t('chat.videoWorkbench.recordFailedHint')}
+          </div>
+        ) : null}
       </div>
-      <p className="mt-2 line-clamp-2 text-xs leading-5 text-muted-foreground">{task.prompt}</p>
-      <div className="mt-2 flex flex-wrap gap-1.5 text-[11px] text-muted-foreground">
-        {task.resolution ? (
-          <span className="rounded bg-muted px-1.5 py-0.5">{task.resolution}</span>
-        ) : null}
-        {task.ratio ? <span className="rounded bg-muted px-1.5 py-0.5">{task.ratio}</span> : null}
-        {task.duration_seconds ? (
-          <span className="rounded bg-muted px-1.5 py-0.5">
-            {task.duration_seconds}
-            {t('chat.videoWorkbench.secondsSuffix')}
-          </span>
-        ) : null}
-        {taskHasVideoInput(task) ? (
-          <span className="rounded bg-muted px-1.5 py-0.5">
-            {t('chat.videoWorkbench.inputVideo')}
-          </span>
-        ) : null}
-        {task.generate_audio ? (
-          <span className="rounded bg-muted px-1.5 py-0.5">
-            {task.voice || t('chat.videoWorkbench.outputAudio')}
-          </span>
-        ) : null}
-      </div>
-      {task.video_url ? (
-        <a
-          href={task.video_url}
-          target="_blank"
-          rel="noreferrer"
-          onClick={event => event.stopPropagation()}
-          className="mt-3 inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline"
-        >
-          {t('chat.videoWorkbench.openVideo')}
-          <ExternalLink className="h-3 w-3" />
-        </a>
-      ) : null}
-      {task.error_message ? (
-        <div className="mt-2 line-clamp-2 text-xs text-red-600">{task.error_message}</div>
-      ) : null}
     </div>
   );
 }
@@ -651,6 +798,7 @@ function ComposerPanel({
 }) {
   const t = useT('webapp');
   const submitDisabled = !prompt.trim() || !selectedModel.model || isGenerating;
+  const [confirmOpen, setConfirmOpen] = React.useState(false);
 
   return (
     <div className="rounded-lg border border-border bg-background p-4 shadow-sm">
@@ -762,19 +910,79 @@ function ComposerPanel({
           ) : null}
           <Button
             type="button"
-            isIcon
-            className="h-8 w-8 rounded-md border-0 bg-primary/20 text-primary hover:bg-primary/30 disabled:!bg-primary/10 disabled:!text-primary/40"
+            className="h-9 rounded-full px-4 transition-transform duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] active:scale-[0.97]"
             disabled={submitDisabled}
-            onClick={onGenerate}
+            onClick={() => setConfirmOpen(true)}
           >
             {isGenerating ? (
               <Loader2 className="h-4 w-4 animate-spin" />
             ) : (
-              <ArrowUp className="h-4 w-4" />
+              <Video className="h-4 w-4" />
             )}
+            {isGenerating ? t('chat.videoWorkbench.submitting') : t('chat.videoWorkbench.generate')}
           </Button>
         </div>
       </div>
+
+      <ConfirmDialog
+        open={confirmOpen}
+        onOpenChange={setConfirmOpen}
+        title={t('chat.videoWorkbench.confirmTitle')}
+        description={
+          <div className="space-y-4">
+            <p className="font-normal leading-6 text-muted-foreground">
+              {t('chat.videoWorkbench.confirmDescription')}
+            </p>
+            <div className="grid grid-cols-2 gap-2 rounded-xl border border-border bg-muted/25 p-3 text-xs">
+              <ConfirmationSpec
+                label={t('chat.videoWorkbench.modelLabel')}
+                value={selectedModel.model}
+              />
+              <ConfirmationSpec
+                label={t('chat.videoWorkbench.duration')}
+                value={`${settings.duration}${t('chat.videoWorkbench.secondsSuffix')}`}
+              />
+              <ConfirmationSpec
+                label={t('chat.videoWorkbench.resolution')}
+                value={settings.resolution}
+              />
+              <ConfirmationSpec
+                label={t('chat.videoWorkbench.aspectRatio')}
+                value={settings.aspectRatio}
+              />
+              <ConfirmationSpec
+                label={t('chat.videoWorkbench.outputAudio')}
+                value={
+                  settings.audioMode === 'on'
+                    ? t('chat.videoWorkbench.audioOn')
+                    : t('chat.videoWorkbench.audioOff')
+                }
+              />
+              <ConfirmationSpec
+                label={t('chat.videoWorkbench.referenceMaterial')}
+                value={t('chat.videoWorkbench.referenceCount', {
+                  count: referenceFiles.length,
+                })}
+              />
+            </div>
+            <div className="flex items-start gap-2 rounded-lg bg-amber-500/10 px-3 py-2.5 text-xs font-normal leading-5 text-amber-800 dark:text-amber-200">
+              <Coins className="mt-0.5 h-4 w-4 shrink-0" />
+              {t('chat.videoWorkbench.confirmCostNotice')}
+            </div>
+          </div>
+        }
+        confirmText={t('chat.videoWorkbench.confirmAction')}
+        cancelText={t('chat.videoWorkbench.cancelAction')}
+        onConfirm={onGenerate}
+        loading={isGenerating}
+        confirmDisabled={submitDisabled}
+        contentClassName="max-w-md rounded-2xl"
+        titleClassName="text-lg font-semibold"
+        descriptionClassName="font-normal"
+        footerClassName="bg-background"
+        cancelClassName="h-9 rounded-full px-5 text-sm"
+        confirmClassName="h-9 rounded-full px-5 text-sm"
+      />
     </div>
   );
 }
@@ -787,7 +995,7 @@ function TaskDetailSheet({
   onOpenChange: (open: boolean) => void;
 }) {
   const t = useT('webapp');
-  const status = normalizeStatus(task?.status ?? '');
+  const status = task ? getTaskDisplayStatus(task) : normalizeStatus('');
 
   return (
     <Sheet open={!!task} onOpenChange={onOpenChange}>
@@ -815,8 +1023,14 @@ function TaskDetailSheet({
                     src={task.video_url}
                   />
                 ) : (
-                  <div className="flex aspect-video w-full items-center justify-center rounded-lg border border-dashed border-border bg-muted/20">
-                    <Film className="h-8 w-8 text-muted-foreground" />
+                  <div className="relative aspect-video w-full overflow-hidden rounded-lg border border-border bg-[#030711]">
+                    <Image
+                      src="/assets/video/default-video-cover.webp"
+                      alt=""
+                      fill
+                      sizes="380px"
+                      className="object-cover"
+                    />
                   </div>
                 )}
 
@@ -862,7 +1076,7 @@ function TaskDetailSheet({
                   />
                 </div>
 
-                {task.error_message ? (
+                {task.error_message && status === 'failed' ? (
                   <DetailSection title={t('chat.videoWorkbench.errorMessage')}>
                     <p className="text-sm leading-6 text-red-600">{task.error_message}</p>
                   </DetailSection>
@@ -900,25 +1114,40 @@ function TaskDetailSheet({
 }
 
 function taskHasVideoInput(task: VideoRuntimeTask) {
-	if (!task.has_input_video) return false;
-	const payload = task.request_payload;
-	if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return true;
-	if (hasNonEmptyString(payload.video_url)) return true;
+  if (!task.has_input_video) return false;
+  const payload = task.request_payload;
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return true;
+  if (hasNonEmptyString(payload.video_url)) return true;
   if (Array.isArray(payload.reference_types)) {
     return payload.reference_types.some(value => String(value).trim().toLowerCase() === 'video');
   }
-	return false;
+  return false;
+}
+
+function getTaskDisplayStatus(task: VideoRuntimeTask): NormalizedVideoStatus {
+  const status = normalizeStatus(task.status);
+  if (status === 'succeeded' && task.error_message && !task.video_url) return 'failed';
+  return status;
+}
+
+function ConfirmationSpec({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="min-w-0 rounded-lg bg-background px-3 py-2 shadow-sm ring-1 ring-border/70">
+      <div className="text-[11px] font-normal text-muted-foreground">{label}</div>
+      <div className="mt-0.5 truncate font-medium text-foreground">{value}</div>
+    </div>
+  );
 }
 
 function videoTaskDeductedCredits(task: VideoRuntimeTask) {
-	const status = normalizeStatus(task.status);
-	if (status === 'failed' || status === 'cancelled') return task.actual_credits ?? 0;
-	if (status === 'pending' || status === 'running') return task.estimated_credits;
-	return task.actual_credits > 0 ? task.actual_credits : task.estimated_credits;
+  const status = normalizeStatus(task.status);
+  if (status === 'failed' || status === 'cancelled') return task.actual_credits ?? 0;
+  if (status === 'pending' || status === 'running') return task.estimated_credits;
+  return task.actual_credits > 0 ? task.actual_credits : task.estimated_credits;
 }
 
 function hasNonEmptyString(value: unknown) {
-	return typeof value === 'string' && value.trim() !== '';
+  return typeof value === 'string' && value.trim() !== '';
 }
 
 function StatusBadge({ status }: { status: ReturnType<typeof normalizeStatus> }) {
@@ -1001,8 +1230,9 @@ function formatCredit(value: number | null | undefined) {
 
 function normalizeStatus(status: string): NormalizedVideoStatus {
   const normalized = status?.toLowerCase?.() ?? '';
-  if (normalized === 'success' || normalized === 'completed' || normalized === 'done')
+  if (normalized === 'success' || normalized === 'completed' || normalized === 'done') {
     return 'succeeded';
+  }
   if (normalized === 'processing' || normalized === 'in_progress') return 'running';
   if (normalized === 'error') return 'failed';
   if (normalized === 'cancelled' || normalized === 'canceled') return 'cancelled';

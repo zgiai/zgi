@@ -2,6 +2,7 @@ package handler
 
 import (
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -55,12 +56,21 @@ func (h *Handler) ListTasks(c *gin.Context) {
 	if !ok {
 		return
 	}
-	tasks, err := h.service.ListTasks(c.Request.Context(), scope)
+	limit, err := strconv.Atoi(strings.TrimSpace(c.DefaultQuery("limit", "20")))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"code": "INVALID_REQUEST", "message": "limit must be an integer"})
+		return
+	}
+	result, err := h.service.ListTasks(c.Request.Context(), scope, videoservice.ListTasksQuery{
+		Limit:  limit,
+		Cursor: strings.TrimSpace(c.Query("cursor")),
+		Search: strings.TrimSpace(c.Query("search")),
+	})
 	if err != nil {
 		fail(c, err)
 		return
 	}
-	response.Success(c, tasks)
+	response.Success(c, result)
 }
 
 func (h *Handler) GetTask(c *gin.Context) {

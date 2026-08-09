@@ -1,5 +1,5 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useEffect } from 'react';
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useCallback, useEffect, useMemo } from 'react';
 
 import { VideoRuntimeService } from '@/services/video-runtime.service';
 import type { VideoRuntimeGenerateRequest, VideoRuntimeTask } from '@/services/types/video-runtime';
@@ -7,6 +7,8 @@ import type { VideoRuntimeGenerateRequest, VideoRuntimeTask } from '@/services/t
 export const VIDEO_RUNTIME_KEYS = {
   models: ['video-runtime', 'models'] as const,
   tasks: ['video-runtime', 'tasks'] as const,
+  taskLists: ['video-runtime', 'tasks', 'list'] as const,
+  taskList: (search: string) => ['video-runtime', 'tasks', 'list', { search }] as const,
   task: (taskId: string) => ['video-runtime', 'tasks', taskId] as const,
 };
 
@@ -24,20 +26,48 @@ export function useVideoRuntimeModels() {
   };
 }
 
-export function useVideoRuntimeTasks() {
-  const query = useQuery({
-    queryKey: VIDEO_RUNTIME_KEYS.tasks,
-    queryFn: () => VideoRuntimeService.listTasks(),
-    refetchInterval: query => {
-      const tasks = query.state.data?.data ?? [];
-      return tasks.some(isVideoRuntimeTaskActive) ? 8000 : false;
-    },
+export function useVideoRuntimeTasks(search = '') {
+  const queryClient = useQueryClient();
+  const normalizedSearch = search.trim();
+  const queryKey = useMemo(
+    () => VIDEO_RUNTIME_KEYS.taskList(normalizedSearch),
+    [normalizedSearch]
+  );
+  const query = useInfiniteQuery({
+    queryKey,
+    queryFn: ({ pageParam }) =>
+      VideoRuntimeService.listTasks({
+        limit: 20,
+        search: normalizedSearch || undefined,
+        cursor: typeof pageParam === 'string' && pageParam ? pageParam : undefined,
+      }),
+    initialPageParam: '',
+    getNextPageParam: lastPage =>
+      lastPage.data?.has_more ? lastPage.data.next_cursor : undefined,
     retry: false,
   });
 
+  const tasks = useMemo(() => {
+    const seen = new Set<string>();
+    return (query.data?.pages ?? [])
+      .flatMap(page => page.data?.data ?? [])
+      .filter(task => {
+        if (seen.has(task.task_id)) return false;
+        seen.add(task.task_id);
+        return true;
+      });
+  }, [query.data?.pages]);
+
+  const reload = useCallback(async () => {
+    await queryClient.resetQueries({ queryKey, exact: true });
+  }, [queryClient, queryKey]);
+
   return {
     ...query,
-    tasks: query.data?.data ?? [],
+    tasks,
+    total: query.data?.pages[0]?.data?.total ?? 0,
+    hasNextPage: Boolean(query.hasNextPage),
+    reload,
   };
 }
 
@@ -61,7 +91,7 @@ export function useVideoRuntimeTask(taskId?: string | null) {
 
   useEffect(() => {
     if (!taskIdValue || taskActive) return;
-    void queryClient.invalidateQueries({ queryKey: VIDEO_RUNTIME_KEYS.tasks });
+    void queryClient.resetQueries({ queryKey: VIDEO_RUNTIME_KEYS.taskLists });
   }, [queryClient, taskActive, taskIdValue, taskStatus]);
 
   return {
@@ -75,7 +105,7 @@ export function useGenerateVideoTask() {
   return useMutation({
     mutationFn: (payload: VideoRuntimeGenerateRequest) => VideoRuntimeService.generate(payload),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: VIDEO_RUNTIME_KEYS.tasks });
+      void queryClient.resetQueries({ queryKey: VIDEO_RUNTIME_KEYS.taskLists });
     },
   });
 }
@@ -85,7 +115,7 @@ export function useDeleteVideoTask() {
   return useMutation({
     mutationFn: (taskId: string) => VideoRuntimeService.deleteTask(taskId),
     onSuccess: (_data, taskId) => {
-      void queryClient.invalidateQueries({ queryKey: VIDEO_RUNTIME_KEYS.tasks });
+      void queryClient.resetQueries({ queryKey: VIDEO_RUNTIME_KEYS.taskLists });
       queryClient.removeQueries({ queryKey: VIDEO_RUNTIME_KEYS.task(taskId) });
     },
   });

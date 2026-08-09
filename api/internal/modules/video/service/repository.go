@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -46,6 +47,19 @@ type taskRepository struct {
 	db *gorm.DB
 }
 
+type taskListParams struct {
+	Limit           int
+	Search          string
+	BeforeCreatedAt *time.Time
+	BeforeID        *uuid.UUID
+}
+
+type taskListPage struct {
+	Records []videoTaskRecord
+	Total   int64
+	HasMore bool
+}
+
 func newTaskRepository(db *gorm.DB) *taskRepository {
 	return &taskRepository{db: db}
 }
@@ -54,22 +68,54 @@ func (r *taskRepository) create(ctx context.Context, record *videoTaskRecord) er
 	return r.db.WithContext(ctx).Create(record).Error
 }
 
-func (r *taskRepository) list(ctx context.Context, scope Scope, limit int) ([]videoTaskRecord, error) {
-	if limit <= 0 || limit > 100 {
-		limit = 50
-	}
+func (r *taskRepository) list(ctx context.Context, scope Scope, params taskListParams) (taskListPage, error) {
 	query := r.db.WithContext(ctx).
-		Where("organization_id = ? AND account_id = ?", scope.OrganizationID, scope.AccountID).
-		Order("created_at DESC").
-		Limit(limit)
+		Model(&videoTaskRecord{}).
+		Where("organization_id = ? AND account_id = ?", scope.OrganizationID, scope.AccountID)
 	if scope.WorkspaceID != nil && *scope.WorkspaceID != uuid.Nil {
 		query = query.Where("workspace_id = ?", *scope.WorkspaceID)
 	}
-	var records []videoTaskRecord
-	if err := query.Find(&records).Error; err != nil {
-		return nil, err
+	if search := strings.TrimSpace(params.Search); search != "" {
+		pattern := "%" + escapeLikePattern(strings.ToLower(search)) + "%"
+		query = query.Where(`(
+			LOWER(task_id) LIKE ? ESCAPE '\' OR
+			LOWER(provider) LIKE ? ESCAPE '\' OR
+			LOWER(model) LIKE ? ESCAPE '\' OR
+			LOWER(model_label) LIKE ? ESCAPE '\' OR
+			LOWER(prompt) LIKE ? ESCAPE '\'
+		)`, pattern, pattern, pattern, pattern, pattern)
 	}
-	return records, nil
+
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		return taskListPage{}, err
+	}
+	if params.BeforeCreatedAt != nil && params.BeforeID != nil {
+		query = query.Where(
+			"created_at < ? OR (created_at = ? AND id < ?)",
+			*params.BeforeCreatedAt,
+			*params.BeforeCreatedAt,
+			*params.BeforeID,
+		)
+	}
+
+	limit := params.Limit
+	if limit <= 0 || limit > 50 {
+		limit = 20
+	}
+	var records []videoTaskRecord
+	if err := query.Order("created_at DESC").Order("id DESC").Limit(limit + 1).Find(&records).Error; err != nil {
+		return taskListPage{}, err
+	}
+	hasMore := len(records) > limit
+	if hasMore {
+		records = records[:limit]
+	}
+	return taskListPage{Records: records, Total: total, HasMore: hasMore}, nil
+}
+
+func escapeLikePattern(value string) string {
+	return strings.NewReplacer("\\", "\\\\", "%", "\\%", "_", "\\_").Replace(value)
 }
 
 func (r *taskRepository) findByTaskID(ctx context.Context, scope Scope, taskID string) (*videoTaskRecord, error) {
