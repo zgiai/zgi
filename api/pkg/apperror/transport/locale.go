@@ -16,25 +16,36 @@ func LocaleFromAcceptLanguage(value string) catalog.Locale {
 		order       int
 	}
 
-	effective := make(map[catalog.Locale]effectivePreference, len(catalog.SupportedLocales()))
+	supportedLocales := catalog.SupportedLocales()
+	effective := make(map[catalog.Locale]effectivePreference, len(supportedLocales))
 	candidates := strings.Split(value, ",")
 
 	for order, candidate := range candidates {
 		parts := strings.Split(candidate, ";")
 		rangeValue := strings.TrimSpace(parts[0])
-		locale, supported := catalog.ParseLocale(rangeValue)
-		if !supported {
-			continue
-		}
-
 		quality, valid := languageQuality(parts[1:])
 		if !valid {
 			continue
 		}
 
-		specificity := strings.Count(strings.ReplaceAll(rangeValue, "_", "-"), "-") + 1
-		current, exists := effective[locale]
-		if !exists || specificity > current.specificity {
+		locales := supportedLocales
+		specificity := 0
+		if rangeValue != "*" {
+			locale, supported := catalog.ParseLocale(rangeValue)
+			if !supported {
+				continue
+			}
+			locales = []catalog.Locale{locale}
+			specificity = strings.Count(strings.ReplaceAll(rangeValue, "_", "-"), "-") + 1
+		}
+
+		for _, locale := range locales {
+			current, exists := effective[locale]
+			if exists && (specificity < current.specificity ||
+				(specificity == current.specificity && quality < current.quality) ||
+				(specificity == current.specificity && quality == current.quality && order > current.order)) {
+				continue
+			}
 			effective[locale] = effectivePreference{
 				quality:     quality,
 				specificity: specificity,
