@@ -50,7 +50,7 @@ func CatalogDefinitions() []appcatalog.Definition {
 		llmDefinition(AppCodeQuotaExceeded, appcatalog.CategoryQuota, 429, false,
 			"The API key quota has been reached. Review the quota or use another key.",
 			"API 密钥额度已用完，请检查额度或更换密钥。"),
-		llmDefinition(AppCodeBalanceInsufficient, appcatalog.CategoryQuota, 402, false,
+		llmDefinition(AppCodeBalanceInsufficient, appcatalog.CategoryQuota, 403, false,
 			"The account balance is insufficient. Add funds or contact an administrator.",
 			"账户余额不足，请充值或联系管理员。",
 			"llm.domain:40301"),

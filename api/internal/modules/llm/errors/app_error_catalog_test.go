@@ -36,22 +36,28 @@ func TestCatalogLegacyNamespacesPreserveConflictingMeanings(t *testing.T) {
 		t.Fatal(err)
 	}
 	tests := map[string]struct {
-		want string
+		wantCode   string
+		wantStatus int
 	}{
-		"llm.gateway:40001": {want: AppCodeRequestInvalid.String()},
-		"llm.gateway:40101": {want: AppCodeAPIKeyInvalid.String()},
-		"llm.gateway:40102": {want: AppCodeAPIKeyExpired.String()},
-		"llm.gateway:40103": {want: AppCodeAPIKeyInactive.String()},
-		"llm.domain:40102":  {want: AppCodeAPIKeyInactive.String()},
-		"llm.domain:40103":  {want: AppCodeAPIKeyExpired.String()},
-		"llm.gateway:40303": {want: AppCodeModelForbidden.String()},
-		"llm.gateway:40401": {want: AppCodeModelNotFound.String()},
-		"llm.gateway:50301": {want: AppCodeProviderUnavailable.String()},
+		"llm.gateway:40001": {wantCode: AppCodeRequestInvalid.String(), wantStatus: 400},
+		"llm.gateway:40101": {wantCode: AppCodeAPIKeyInvalid.String(), wantStatus: 401},
+		"llm.gateway:40102": {wantCode: AppCodeAPIKeyExpired.String(), wantStatus: 401},
+		"llm.gateway:40103": {wantCode: AppCodeAPIKeyInactive.String(), wantStatus: 401},
+		"llm.domain:40102":  {wantCode: AppCodeAPIKeyInactive.String(), wantStatus: 401},
+		"llm.domain:40103":  {wantCode: AppCodeAPIKeyExpired.String(), wantStatus: 401},
+		"llm.domain:40301":  {wantCode: AppCodeBalanceInsufficient.String(), wantStatus: 403},
+		"llm.gateway:40303": {wantCode: AppCodeModelForbidden.String(), wantStatus: 403},
+		"llm.gateway:40401": {wantCode: AppCodeModelNotFound.String(), wantStatus: 404},
+		"llm.gateway:50301": {wantCode: AppCodeProviderUnavailable.String(), wantStatus: 503},
 	}
 	for legacy, test := range tests {
 		got, ok := productCatalog.CodeFromLegacy(appcatalog.MustLegacyKey(legacy))
-		if !ok || got.String() != test.want {
-			t.Fatalf("CodeFromLegacy(%q) = %s, %v; want %s", legacy, got, ok, test.want)
+		if !ok || got.String() != test.wantCode {
+			t.Fatalf("CodeFromLegacy(%q) = %s, %v; want %s", legacy, got, ok, test.wantCode)
+		}
+		presentation, presentErr := productCatalog.Present(got, appcatalog.LocaleEnglishUS, nil)
+		if presentErr != nil || presentation.HTTPStatus != test.wantStatus {
+			t.Fatalf("Present(CodeFromLegacy(%q)) = %#v, %v; want HTTP %d", legacy, presentation, presentErr, test.wantStatus)
 		}
 	}
 	// 114009 has multiple incompatible meanings in the existing Gateway and
