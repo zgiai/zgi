@@ -496,6 +496,9 @@ func (s *llmGatewayServiceImpl) handleStreamBilling(
 
 		// Check for errors
 		if response.Error != nil {
+			// This channel is owned by the selected provider adapter, so a raw
+			// deadline here is known to be a post-connect provider timeout.
+			response.Error = adapter.NormalizeTransportError(response.Error)
 			lastError = response.Error
 			outputChan <- response
 			break

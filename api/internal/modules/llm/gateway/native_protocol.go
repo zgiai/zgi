@@ -492,6 +492,9 @@ func (s *llmGatewayServiceImpl) handleNativeStreamBilling(
 			lastSettlement = event.Settlement
 		}
 		if event.Error != nil {
+			// Adapter events arrive before Gateway billing/finalization errors are
+			// introduced, making this the safe boundary for timeout classification.
+			event.Error = adapter.NormalizeTransportError(event.Error)
 			lastError = event.Error
 			break
 		}
