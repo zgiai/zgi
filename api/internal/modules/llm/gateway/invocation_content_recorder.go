@@ -63,8 +63,14 @@ type invocationContentRecorder struct {
 	queue    chan invocationContentRecord
 	done     chan struct{}
 	dropped  atomic.Uint64
-	settings sync.Map
+	settings *sync.Map
 }
+
+// All gateway services backed by the same database share organization content
+// settings. The API process creates multiple gateway services for public and
+// internal routes, so per-service caches can otherwise disagree after an admin
+// changes the setting.
+var invocationContentSettingsByDatabase sync.Map
 
 type invocationContentSettingCache struct {
 	enabled       bool
@@ -84,6 +90,7 @@ func newInvocationContentRecorder(db *gorm.DB, cfg config.LLMInvocationContentCo
 	}
 	recorder := &invocationContentRecorder{
 		db: db, config: cfg, queue: make(chan invocationContentRecord, cfg.QueueSize), done: make(chan struct{}),
+		settings: invocationContentSettingsCache(db),
 	}
 	go recorder.run()
 	return recorder
@@ -93,25 +100,27 @@ func (r *invocationContentRecorder) RecordChat(billing *BillingContext, input an
 	if r == nil || billing == nil || strings.TrimSpace(billing.RequestID) == "" || strings.TrimSpace(billing.OrganizationID) == "" {
 		return
 	}
-	if cached, ok := r.settings.Load(billing.OrganizationID); ok {
-		setting := cached.(invocationContentSettingCache)
-		now := time.Now()
-		if !setting.enabled && now.Before(setting.expiresAt) {
-			return
-		}
-		if !setting.enabled {
-			// Refresh an expired disabled setting without serializing any user
-			// content. CompareAndSwap limits a busy organization to one probe.
-			probePending := setting
-			probePending.expiresAt = now.Add(250 * time.Millisecond)
-			if r.settings.CompareAndSwap(billing.OrganizationID, cached, probePending) {
-				select {
-				case r.queue <- invocationContentRecord{OrganizationID: billing.OrganizationID, SettingsProbe: true}:
-				default:
-					r.dropped.Add(1)
-				}
+	if r.settings != nil {
+		if cached, ok := r.settings.Load(billing.OrganizationID); ok {
+			setting := cached.(invocationContentSettingCache)
+			now := time.Now()
+			if !setting.enabled && now.Before(setting.expiresAt) {
+				return
 			}
-			return
+			if !setting.enabled {
+				// Refresh an expired disabled setting without serializing any user
+				// content. CompareAndSwap limits a busy organization to one probe.
+				probePending := setting
+				probePending.expiresAt = now.Add(250 * time.Millisecond)
+				if r.settings.CompareAndSwap(billing.OrganizationID, cached, probePending) {
+					select {
+					case r.queue <- invocationContentRecord{OrganizationID: billing.OrganizationID, SettingsProbe: true}:
+					default:
+						r.dropped.Add(1)
+					}
+				}
+				return
+			}
 		}
 	}
 	// Avoid doing redaction work when backpressure is already visible. The
@@ -220,7 +229,9 @@ func (r *invocationContentRecorder) flush(records []invocationContentRecord) {
 		}
 		setting.expiresAt = settingExpiresAt
 		settings[id] = setting
-		r.settings.Store(id, setting)
+		if r.settings != nil {
+			r.settings.Store(id, setting)
+		}
 	}
 
 	now := time.Now().UTC()
@@ -247,6 +258,37 @@ func (r *invocationContentRecorder) flush(records []invocationContentRecord) {
 	}).Create(&rows).Error; err != nil {
 		logger.Warn("failed to write llm invocation content batch", zap.Error(err), zap.Int("count", len(rows)))
 	}
+}
+
+func invocationContentSettingsCache(db *gorm.DB) *sync.Map {
+	if db == nil {
+		return nil
+	}
+	sqlDB, err := db.DB()
+	if err != nil {
+		return &sync.Map{}
+	}
+	cache, _ := invocationContentSettingsByDatabase.LoadOrStore(sqlDB, &sync.Map{})
+	return cache.(*sync.Map)
+}
+
+// UpdateInvocationContentSettingsCache makes a saved organization setting
+// visible to every gateway service in this API process without adding database
+// or Redis work to the model request path.
+func UpdateInvocationContentSettingsCache(db *gorm.DB, organizationID string, enabled bool, retentionDays int) {
+	organizationID = strings.TrimSpace(organizationID)
+	if organizationID == "" {
+		return
+	}
+	settings := invocationContentSettingsCache(db)
+	if settings == nil {
+		return
+	}
+	settings.Store(organizationID, invocationContentSettingCache{
+		enabled:       enabled,
+		retentionDays: retentionDays,
+		expiresAt:     time.Now().Add(5 * time.Second),
+	})
 }
 
 func sanitizeInvocationContent(value any, maxBytes int) (string, bool) {

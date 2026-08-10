@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	appconfig "github.com/zgiai/zgi/api/config"
@@ -14,6 +15,7 @@ type fakeStatisticsRepository struct {
 	contentEnabled       bool
 	contentRetentionDays int
 	contentStoredCount   int64
+	contentUpdateErr     error
 }
 
 func (f *fakeStatisticsRepository) GetModelUsage(_ context.Context, _ string, req *dto.ModelUsageRequest) (*dto.ModelUsageResponse, error) {
@@ -35,9 +37,25 @@ func (f *fakeStatisticsRepository) GetInvocationContentSettings(context.Context,
 }
 
 func (f *fakeStatisticsRepository) UpdateInvocationContentSettings(_ context.Context, _ string, enabled bool, retentionDays int) error {
+	if f.contentUpdateErr != nil {
+		return f.contentUpdateErr
+	}
 	f.contentEnabled = enabled
 	f.contentRetentionDays = retentionDays
 	return nil
+}
+
+func TestInvocationContentSettingsDoNotUpdateCacheWhenPersistenceFails(t *testing.T) {
+	repo := &fakeStatisticsRepository{contentRetentionDays: 14, contentUpdateErr: errors.New("database unavailable")}
+	callbackCalled := false
+	svc := NewStatisticsService(repo, func(string, bool, int) { callbackCalled = true })
+	enabled := true
+	if _, err := svc.UpdateInvocationContentSettings(context.Background(), "org-1", &dto.UpdateInvocationContentSettingsRequest{Enabled: &enabled}); err == nil {
+		t.Fatal("expected update failure")
+	}
+	if callbackCalled {
+		t.Fatal("cache callback must run only after persistence succeeds")
+	}
 }
 
 func (f *fakeStatisticsRepository) PurgeInvocationContent(context.Context, string, string) (int64, bool, error) {
@@ -53,11 +71,21 @@ func TestInvocationContentSettingsUseOrganizationAdminSwitch(t *testing.T) {
 		MaxBytes: 65536, RetentionDays: 14,
 	}}
 	repo := &fakeStatisticsRepository{contentRetentionDays: 14, contentStoredCount: 3}
-	svc := NewStatisticsService(repo)
+	var savedOrganizationID string
+	var savedEnabled bool
+	var savedRetentionDays int
+	svc := NewStatisticsService(repo, func(organizationID string, enabled bool, retentionDays int) {
+		savedOrganizationID = organizationID
+		savedEnabled = enabled
+		savedRetentionDays = retentionDays
+	})
 	enabled, retentionDays := true, 7
 	updated, err := svc.UpdateInvocationContentSettings(context.Background(), "org-1", &dto.UpdateInvocationContentSettingsRequest{Enabled: &enabled, RetentionDays: &retentionDays})
 	if err != nil || !updated.Enabled || updated.RetentionDays != 7 || updated.StoredCount != 3 {
 		t.Fatalf("enable settings=%#v err=%v", updated, err)
+	}
+	if savedOrganizationID != "org-1" || !savedEnabled || savedRetentionDays != 7 {
+		t.Fatalf("saved callback = %q, %t, %d", savedOrganizationID, savedEnabled, savedRetentionDays)
 	}
 	settings, err := svc.GetInvocationContentSettings(context.Background(), "org-1")
 	if err != nil || !settings.Available || !settings.Enabled {
@@ -67,7 +95,7 @@ func TestInvocationContentSettingsUseOrganizationAdminSwitch(t *testing.T) {
 
 func TestInvocationContentSettingsRejectInvalidRetention(t *testing.T) {
 	repo := &fakeStatisticsRepository{contentRetentionDays: 14}
-	svc := NewStatisticsService(repo)
+	svc := NewStatisticsService(repo, nil)
 	enabled, invalidDays := true, 31
 	if _, err := svc.UpdateInvocationContentSettings(context.Background(), "org-1", &dto.UpdateInvocationContentSettingsRequest{Enabled: &enabled, RetentionDays: &invalidDays}); err == nil {
 		t.Fatal("expected retention outside 1-30 days to fail")
@@ -76,7 +104,7 @@ func TestInvocationContentSettingsRejectInvalidRetention(t *testing.T) {
 
 func TestInvocationContentSettingsKeepRetentionForOlderClients(t *testing.T) {
 	repo := &fakeStatisticsRepository{contentRetentionDays: 14}
-	svc := NewStatisticsService(repo)
+	svc := NewStatisticsService(repo, nil)
 	enabled := true
 	settings, err := svc.UpdateInvocationContentSettings(context.Background(), "org-1", &dto.UpdateInvocationContentSettingsRequest{Enabled: &enabled})
 	if err != nil || !settings.Enabled || settings.RetentionDays != 14 {
@@ -94,7 +122,7 @@ func (f *fakeStatisticsRepository) GetWorkspaceQuota(context.Context, string, *d
 
 func TestGetModelUsage_PassesUnixSecondsToRepository(t *testing.T) {
 	repo := &fakeStatisticsRepository{}
-	svc := NewStatisticsService(repo)
+	svc := NewStatisticsService(repo, nil)
 
 	resp, err := svc.GetModelUsage(context.Background(), "org-1", &dto.ModelUsageRequest{
 		StartTime: 1710000000,
@@ -119,7 +147,7 @@ func TestGetModelUsage_PassesUnixSecondsToRepository(t *testing.T) {
 
 func TestGetModelUsage_RejectsMillisecondTimestamp(t *testing.T) {
 	repo := &fakeStatisticsRepository{}
-	svc := NewStatisticsService(repo)
+	svc := NewStatisticsService(repo, nil)
 
 	_, err := svc.GetModelUsage(context.Background(), "org-1", &dto.ModelUsageRequest{
 		StartTime: 1710000000000,
@@ -135,7 +163,7 @@ func TestGetModelUsage_RejectsMillisecondTimestamp(t *testing.T) {
 
 func TestGetInvocationLog_ValidatesCursorAndDefaultsLimit(t *testing.T) {
 	repo := &fakeStatisticsRepository{}
-	svc := NewStatisticsService(repo)
+	svc := NewStatisticsService(repo, nil)
 	req := &dto.InvocationLogRequest{StartTime: 1710000000, EndTime: 1710086400}
 	if _, err := svc.GetInvocationLog(context.Background(), "org-1", req); err != nil {
 		t.Fatalf("GetInvocationLog returned error: %v", err)
