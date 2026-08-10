@@ -377,7 +377,7 @@ const messages: DashboardMessages = {
         rawOutput: '原始输出 JSON',
         contentUnavailableTitle: '本条调用没有内容快照',
         contentUnavailableDescription:
-          '当前列表来自轻量计费流水，早期版本默认不保存输入输出。后续开启内容采集后，新调用才会在这里显示；历史内容无法补录。',
+          '本次调用发生时可能未开启内容采集，或内容已经到期、被管理员清理，或在队列背压时未保存。开启采集后只记录新的调用。',
       },
       sources: {
         all: '全部调用',
@@ -396,12 +396,25 @@ const messages: DashboardMessages = {
         failed: '失败',
         partial: '部分完成',
       },
+      contentStatus: {
+        available: '有内容快照',
+        unavailable: '未采集',
+      },
+      pagination: {
+        summary: '显示第 {start}–{end} 条，共 {total} 条',
+        pageSizeLabel: '每页调用数',
+        pageSize: '每页 {size} 条',
+        pageSummary: '第 {page} / {total} 页',
+        previous: '上一页',
+        next: '下一页',
+      },
       table: {
         time: '时间 / 调用 ID',
         source: '调用来源',
         model: '模型 / 厂商',
         business: '业务场景',
         status: '状态',
+        content: '内容',
         tokens: 'Tokens',
         duration: '耗时',
         cost: '费用',

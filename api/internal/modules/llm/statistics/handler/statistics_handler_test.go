@@ -62,7 +62,7 @@ func TestGetInvocationLog_BindsBusinessFilters(t *testing.T) {
 	c.Set("organization_id", organizationID)
 	c.Request = httptest.NewRequest(
 		http.MethodGet,
-		"/console/api/llm/statistics/invocations?start_time=1710000000&end_time=1710086400&invocation_source=product&app_type=workflow&model_name=gpt-test&limit=50",
+		"/console/api/llm/statistics/invocations?start_time=1710000000&end_time=1710086400&invocation_source=product&app_type=workflow&model_name=gpt-test&limit=50&include_summary=false",
 		nil,
 	)
 
@@ -77,6 +77,9 @@ func TestGetInvocationLog_BindsBusinessFilters(t *testing.T) {
 	req := fakeSvc.invocationLogReq
 	if req.InvocationSource == nil || *req.InvocationSource != "product" || req.AppType == nil || *req.AppType != "workflow" || req.ModelName == nil || *req.ModelName != "gpt-test" || req.Limit != 50 {
 		t.Fatalf("unexpected filters: %#v", req)
+	}
+	if req.IncludeSummary == nil || *req.IncludeSummary {
+		t.Fatalf("include_summary = %#v, want false", req.IncludeSummary)
 	}
 }
 

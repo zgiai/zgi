@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/zgiai/zgi/api/internal/modules/llm/statistics/dto"
+	"github.com/zgiai/zgi/api/pkg/logger"
+	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
 
@@ -82,6 +84,11 @@ type invocationBillRow struct {
 	SettledAt        time.Time `gorm:"column:settled_at"`
 }
 
+type invocationContentAvailabilityRow struct {
+	RequestID string    `gorm:"column:request_id"`
+	ExpiresAt time.Time `gorm:"column:expires_at"`
+}
+
 func (r *statisticsRepositoryImpl) GetInvocationLog(ctx context.Context, organizationID string, req *dto.InvocationLogRequest) (*dto.InvocationLogResponse, error) {
 	filters := invocationLogFilters{
 		OrganizationID:   organizationID,
@@ -92,9 +99,13 @@ func (r *statisticsRepositoryImpl) GetInvocationLog(ctx context.Context, organiz
 		ModelName:        req.ModelName,
 	}
 
-	summary, err := r.queryInvocationLogSummary(ctx, filters)
-	if err != nil {
-		return nil, err
+	var summary dto.InvocationLogSummary
+	if req.IncludeSummary == nil || *req.IncludeSummary {
+		var err error
+		summary, err = r.queryInvocationLogSummary(ctx, filters)
+		if err != nil {
+			return nil, err
+		}
 	}
 	page, hasMore, err := r.queryInvocationPage(ctx, filters, req)
 	if err != nil {
@@ -113,6 +124,26 @@ func (r *statisticsRepositoryImpl) GetInvocationLog(ctx context.Context, organiz
 		return nil, err
 	}
 	items := aggregateInvocationBills(page, bills)
+	contentAvailability, err := r.queryInvocationContentAvailability(ctx, organizationID, requestIDs)
+	if err != nil {
+		// Content snapshots are optional and must never make the lightweight
+		// billing log unavailable during a rolling deploy or storage incident.
+		logger.WarnContext(ctx, "failed to load llm invocation content availability",
+			zap.Error(err),
+			zap.String("organization_id", organizationID),
+			zap.Int("request_count", len(requestIDs)),
+		)
+		contentAvailability = nil
+	}
+	for index := range items {
+		expiresAt, available := contentAvailability[items[index].InvocationID]
+		if !available {
+			continue
+		}
+		expiresAtMillis := expiresAt.UnixMilli()
+		items[index].ContentAvailable = true
+		items[index].ContentExpiresAt = &expiresAtMillis
+	}
 
 	response := &dto.InvocationLogResponse{Summary: summary, Items: items}
 	if hasMore {
@@ -120,6 +151,24 @@ func (r *statisticsRepositoryImpl) GetInvocationLog(ctx context.Context, organiz
 		response.NextCursor = &dto.InvocationLogCursor{Time: time.Time(last.LatestAt).UTC().Format(time.RFC3339Nano), ID: last.RequestID}
 	}
 	return response, nil
+}
+
+// queryInvocationContentAvailability intentionally runs after the bounded page
+// query. It never joins content payloads into the billing query and only checks
+// the at-most 100 request IDs returned for the current page.
+func (r *statisticsRepositoryImpl) queryInvocationContentAvailability(ctx context.Context, organizationID string, requestIDs []string) (map[string]time.Time, error) {
+	rows := make([]invocationContentAvailabilityRow, 0, len(requestIDs))
+	if err := r.db.WithContext(ctx).Table("llm_invocation_contents").
+		Select("request_id", "expires_at").
+		Where("organization_id = ? AND request_id IN ? AND expires_at > ?", organizationID, requestIDs, time.Now().UTC()).
+		Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	availability := make(map[string]time.Time, len(rows))
+	for _, row := range rows {
+		availability[row.RequestID] = row.ExpiresAt
+	}
+	return availability, nil
 }
 
 func (r *statisticsRepositoryImpl) queryInvocationLogSummary(ctx context.Context, filters invocationLogFilters) (dto.InvocationLogSummary, error) {
