@@ -2,12 +2,13 @@
 
 import { useMemo, useState } from 'react';
 import { endOfDay, getUnixTime, startOfDay, subDays } from 'date-fns';
-import { RefreshCw, ShieldCheck } from 'lucide-react';
+import { RefreshCw, ShieldCheck, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { InvocationLogSection } from '@/components/usage/invocation-log-section';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { SearchInput } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import {
@@ -21,12 +22,15 @@ import { useDebouncedValue } from '@/hooks/use-debounced-value';
 import { useOrganizations } from '@/hooks/organization/use-organizations';
 import {
   useInvocationContentSettings,
+  usePurgeInvocationContent,
   useUpdateInvocationContentSettings,
 } from '@/hooks/statistics';
 import { useT } from '@/i18n';
 import type { ModelUsageAppType } from '@/services/types/statistics';
 import { getBillingDisplaySettings } from '@/utils/billing-display';
 import { MODEL_USAGE_APP_TYPES } from '@/utils/model-usage-app-type';
+import { formatNumber } from '@/utils/format';
+import { useAuthStore } from '@/store/auth-store';
 
 type DateRangeKey = 'today' | 'last7Days' | 'last30Days';
 type AppTypeFilter = 'all' | ModelUsageAppType;
@@ -42,11 +46,14 @@ export default function InvocationLogPage() {
   const t = useT('dashboard');
   const tCommon = useT('common');
   const { currentOrganization } = useOrganizations(true);
+  const user = useAuthStore.use.user();
   const canManageContent = ['owner', 'admin'].includes(
-    currentOrganization?.organization_role ?? ''
+    currentOrganization?.organization_role || user?.organization_role || ''
   );
-  const contentSettingsQuery = useInvocationContentSettings(canManageContent);
-  const updateContentSettings = useUpdateInvocationContentSettings();
+  const organizationId = currentOrganization?.id;
+  const contentSettingsQuery = useInvocationContentSettings(organizationId, canManageContent);
+  const updateContentSettings = useUpdateInvocationContentSettings(organizationId);
+  const purgeContent = usePurgeInvocationContent(organizationId);
   const contentSettings = contentSettingsQuery.data?.data;
   const [dateRange, setDateRange] = useState<DateRangeKey>('today');
   const [appType, setAppType] = useState<AppTypeFilter>('all');
@@ -84,39 +91,130 @@ export default function InvocationLogPage() {
 
         {canManageContent && contentSettings ? (
           <Card className="border-border/80 shadow-sm">
-            <CardContent className="flex flex-col gap-4 p-4 sm:flex-row sm:items-center sm:justify-between">
-              <div className="flex min-w-0 gap-3">
-                <div className="mt-0.5 rounded-lg bg-muted p-2">
-                  <ShieldCheck className="h-4 w-4" />
+            <CardContent className="space-y-4 p-4">
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex min-w-0 gap-3">
+                  <div className="mt-0.5 rounded-lg bg-muted p-2">
+                    <ShieldCheck className="h-4 w-4" />
+                  </div>
+                  <div>
+                    <div className="font-medium">
+                      {t('usage.invocations.contentSettings.title')}
+                    </div>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      {t('usage.invocations.contentSettings.description', {
+                        days: contentSettings.retention_days,
+                        size: Math.round(contentSettings.max_bytes / 1024),
+                      })}
+                    </p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {t('usage.invocations.contentSettings.metadataUnaffected')}
+                    </p>
+                  </div>
                 </div>
-                <div>
-                  <div className="font-medium">{t('usage.invocations.contentSettings.title')}</div>
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    {t('usage.invocations.contentSettings.description', {
-                      days: contentSettings.retention_days,
-                      size: Math.round(contentSettings.max_bytes / 1024),
-                    })}
-                  </p>
-                </div>
+                <Switch
+                  checked={contentSettings.enabled}
+                  disabled={updateContentSettings.isPending}
+                  aria-label={t('usage.invocations.contentSettings.title')}
+                  onCheckedChange={enabled => {
+                    updateContentSettings.mutate(
+                      { enabled, retention_days: contentSettings.retention_days },
+                      {
+                        onSuccess: () =>
+                          toast.success(
+                            t(
+                              enabled
+                                ? 'usage.invocations.contentSettings.enabled'
+                                : 'usage.invocations.contentSettings.disabled'
+                            )
+                          ),
+                        onError: () =>
+                          toast.error(t('usage.invocations.contentSettings.updateFailed')),
+                      }
+                    );
+                  }}
+                />
               </div>
-              <Switch
-                checked={contentSettings.enabled}
-                disabled={updateContentSettings.isPending}
-                aria-label={t('usage.invocations.contentSettings.title')}
-                onCheckedChange={enabled => {
-                  updateContentSettings.mutate(enabled, {
-                    onSuccess: () =>
-                      toast.success(
-                        t(
-                          enabled
-                            ? 'usage.invocations.contentSettings.enabled'
-                            : 'usage.invocations.contentSettings.disabled'
-                        )
-                      ),
-                    onError: () => toast.error(t('usage.invocations.contentSettings.updateFailed')),
-                  });
-                }}
-              />
+
+              <div className="flex flex-col gap-3 border-t pt-4 sm:flex-row sm:items-end">
+                <div className="space-y-1.5">
+                  <div className="text-sm font-medium">
+                    {t('usage.invocations.contentSettings.retentionLabel')}
+                  </div>
+                  <Select
+                    value={String(contentSettings.retention_days)}
+                    disabled={updateContentSettings.isPending}
+                    onValueChange={value => {
+                      updateContentSettings.mutate(
+                        { enabled: contentSettings.enabled, retention_days: Number(value) },
+                        {
+                          onSuccess: () =>
+                            toast.success(t('usage.invocations.contentSettings.retentionUpdated')),
+                          onError: () =>
+                            toast.error(t('usage.invocations.contentSettings.updateFailed')),
+                        }
+                      );
+                    }}
+                  >
+                    <SelectTrigger className="w-full sm:w-[160px]">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {Array.from(new Set([1, 7, 14, 30, contentSettings.retention_days]))
+                        .sort((left, right) => left - right)
+                        .map(days => (
+                          <SelectItem key={days} value={String(days)}>
+                            {t('usage.invocations.contentSettings.retentionDays', { days })}
+                          </SelectItem>
+                        ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="text-sm text-muted-foreground sm:ml-auto sm:self-center">
+                  {t('usage.invocations.contentSettings.storedCount', {
+                    count: `${formatNumber(contentSettings.stored_count, 0)}${
+                      contentSettings.stored_count_capped ? '+' : ''
+                    }`,
+                  })}
+                </div>
+                <ConfirmDialog
+                  variant="danger"
+                  title={t('usage.invocations.contentSettings.purgeTitle')}
+                  description={t('usage.invocations.contentSettings.purgeDescription')}
+                  confirmText={t('usage.invocations.contentSettings.purgeConfirm')}
+                  cancelText={tCommon('cancel')}
+                  loading={purgeContent.isPending}
+                  onConfirm={() => {
+                    purgeContent.mutate(undefined, {
+                      onSuccess: result => {
+                        toast.success(
+                          t(
+                            result.data.has_more
+                              ? 'usage.invocations.contentSettings.purgedPartial'
+                              : 'usage.invocations.contentSettings.purged',
+                            {
+                              count: formatNumber(result.data.deleted_count, 0),
+                            }
+                          )
+                        );
+                      },
+                      onError: () =>
+                        toast.error(t('usage.invocations.contentSettings.purgeFailed')),
+                    });
+                  }}
+                  trigger={
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="gap-2 text-destructive hover:text-destructive"
+                      disabled={purgeContent.isPending || contentSettings.stored_count === 0}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                      {t('usage.invocations.contentSettings.purgeAction')}
+                    </Button>
+                  }
+                />
+              </div>
             </CardContent>
           </Card>
         ) : null}
@@ -161,11 +259,7 @@ export default function InvocationLogPage() {
                   {tCommon('resetFilters')}
                 </Button>
               ) : null}
-              <Button
-                variant="outline"
-                className="gap-2"
-                onClick={() => setRefreshKey(Date.now())}
-              >
+              <Button variant="outline" className="gap-2" onClick={() => setRefreshKey(Date.now())}>
                 <RefreshCw className="h-4 w-4" />
                 {tCommon('refresh')}
               </Button>

@@ -8,6 +8,16 @@ Content capture is disabled for every organization by default. An organization
 owner or administrator can enable it directly from the LLM invocation log page;
 no deployment-level feature flag or application restart is required.
 
+The same page lets an administrator choose a 1–30 day retention period, see
+the number of stored snapshots, and clear snapshots for that organization.
+Each manual action deletes at most 10,000 rows in 500-row batches; the UI tells
+the administrator when more remain so large tenants can repeat the operation
+without one unbounded database request.
+Disabling capture only stops new snapshots. Existing snapshots retain their
+current expiry unless an administrator explicitly clears them. Calls, token
+usage, cost, and safe error metadata remain in `llm_usage_bills` and are never
+deleted by these content controls.
+
 Deployments may optionally tune the storage limits:
 
 ```env
@@ -17,7 +27,9 @@ LLM_INVOCATION_CONTENT_QUEUE_SIZE=1000
 LLM_INVOCATION_CONTENT_BATCH_SIZE=50
 ```
 
-Changing the organization switch takes effect without an application restart.
+`LLM_INVOCATION_CONTENT_RETENTION_DAYS` is the default for organizations that
+have not selected a retention period. Changing organization settings takes
+effect without an application restart.
 
 ## Safety and performance
 
@@ -30,12 +42,13 @@ Changing the organization switch takes effect without an application restart.
 - Known credential fields and common bearer/API-key patterns are redacted
   before content enters the asynchronous queue.
 - Input and output are bounded independently. The default maximum is 64 KiB.
-- Content expires after 14 days by default. The deployment retention value is
-  constrained to 1–30 days. Expired rows continue to be cleaned if capture is
-  later disabled.
+- Content expires after 14 days by default. Deployment and organization
+  retention values are constrained to 1–30 days. Expired rows are deleted in
+  bounded batches and continue to be cleaned if capture is later disabled.
 - Only organization owners and administrators can request content. Every
   successful sensitive read is written to `llm_invocation_content_views` in
   the same transaction; if the audit write fails, content is not returned.
+  Administrator purge requests are also audited before bounded deletion starts.
 
 The initial implementation captures Chat Completions, including streaming and
 non-streaming calls. Invocation metadata remains available for all Gateway

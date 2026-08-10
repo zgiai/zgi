@@ -34,6 +34,7 @@ type invocationContentRecord struct {
 	OutputJSON      string
 	InputTruncated  bool
 	OutputTruncated bool
+	SettingsProbe   bool
 }
 
 type invocationContentRow struct {
@@ -66,8 +67,15 @@ type invocationContentRecorder struct {
 }
 
 type invocationContentSettingCache struct {
-	enabled   bool
-	expiresAt time.Time
+	enabled       bool
+	retentionDays int
+	expiresAt     time.Time
+}
+
+type invocationContentOrganizationSetting struct {
+	ID            string `gorm:"column:id"`
+	Enabled       bool   `gorm:"column:enabled"`
+	RetentionDays *int   `gorm:"column:retention_days"`
 }
 
 func newInvocationContentRecorder(db *gorm.DB, cfg config.LLMInvocationContentConfig) *invocationContentRecorder {
@@ -87,7 +95,22 @@ func (r *invocationContentRecorder) RecordChat(billing *BillingContext, input an
 	}
 	if cached, ok := r.settings.Load(billing.OrganizationID); ok {
 		setting := cached.(invocationContentSettingCache)
-		if time.Now().Before(setting.expiresAt) && !setting.enabled {
+		now := time.Now()
+		if !setting.enabled && now.Before(setting.expiresAt) {
+			return
+		}
+		if !setting.enabled {
+			// Refresh an expired disabled setting without serializing any user
+			// content. CompareAndSwap limits a busy organization to one probe.
+			probePending := setting
+			probePending.expiresAt = now.Add(250 * time.Millisecond)
+			if r.settings.CompareAndSwap(billing.OrganizationID, cached, probePending) {
+				select {
+				case r.queue <- invocationContentRecord{OrganizationID: billing.OrganizationID, SettingsProbe: true}:
+				default:
+					r.dropped.Add(1)
+				}
+			}
 			return
 		}
 	}
@@ -171,27 +194,40 @@ func (r *invocationContentRecorder) flush(records []invocationContentRecord) {
 			organizationIDs = append(organizationIDs, record.OrganizationID)
 		}
 	}
-	var enabledOrganizationIDs []string
+	var organizationSettings []invocationContentOrganizationSetting
 	if err := r.db.WithContext(context.Background()).Table("organizations").
-		Where("id IN ? AND llm_content_capture_enabled = ?", organizationIDs, true).
-		Pluck("id", &enabledOrganizationIDs).Error; err != nil {
+		Where("id IN ?", organizationIDs).
+		Select("id", "llm_content_capture_enabled AS enabled", "llm_content_retention_days AS retention_days").
+		Find(&organizationSettings).Error; err != nil {
 		logger.Warn("failed to resolve llm invocation content settings", zap.Error(err))
 		return
 	}
-	enabled := make(map[string]struct{}, len(enabledOrganizationIDs))
-	for _, id := range enabledOrganizationIDs {
-		enabled[id] = struct{}{}
+	settings := make(map[string]invocationContentSettingCache, len(organizationSettings))
+	for _, setting := range organizationSettings {
+		retentionDays := r.config.RetentionDays
+		if setting.RetentionDays != nil && *setting.RetentionDays >= 1 && *setting.RetentionDays <= 30 {
+			retentionDays = *setting.RetentionDays
+		}
+		settings[setting.ID] = invocationContentSettingCache{
+			enabled: setting.Enabled, retentionDays: retentionDays,
+		}
 	}
 	settingExpiresAt := time.Now().Add(5 * time.Second)
 	for _, id := range organizationIDs {
-		_, isEnabled := enabled[id]
-		r.settings.Store(id, invocationContentSettingCache{enabled: isEnabled, expiresAt: settingExpiresAt})
+		setting, found := settings[id]
+		if !found {
+			setting = invocationContentSettingCache{retentionDays: r.config.RetentionDays}
+		}
+		setting.expiresAt = settingExpiresAt
+		settings[id] = setting
+		r.settings.Store(id, setting)
 	}
 
 	now := time.Now().UTC()
 	rows := make([]invocationContentRow, 0, len(records))
 	for _, record := range records {
-		if _, ok := enabled[record.OrganizationID]; !ok {
+		setting := settings[record.OrganizationID]
+		if !setting.enabled || record.SettingsProbe {
 			continue
 		}
 		rows = append(rows, invocationContentRow{
@@ -199,7 +235,7 @@ func (r *invocationContentRecorder) flush(records []invocationContentRecord) {
 			InputText: record.InputText, OutputText: record.OutputText, InputJSON: record.InputJSON, OutputJSON: record.OutputJSON,
 			ContentStatus: "available", InputTruncated: record.InputTruncated,
 			OutputTruncated: record.OutputTruncated, RedactionVersion: invocationContentRedactionVersion,
-			ExpiresAt: now.AddDate(0, 0, r.config.RetentionDays), CreatedAt: now, UpdatedAt: now,
+			ExpiresAt: now.AddDate(0, 0, setting.retentionDays), CreatedAt: now, UpdatedAt: now,
 		})
 	}
 	if len(rows) == 0 {

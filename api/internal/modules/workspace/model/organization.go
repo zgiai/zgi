@@ -45,6 +45,7 @@ type Organization struct {
 	BillingDisplayCurrency   BillingDisplayCurrency `gorm:"type:varchar(3);not null;default:'USD'" json:"billing_display_currency"`
 	USDToCNYRate             decimal.Decimal        `gorm:"type:numeric(18,6);not null;default:7" json:"usd_to_cny_rate"`
 	LLMContentCaptureEnabled bool                   `gorm:"not null;default:false" json:"llm_content_capture_enabled"`
+	LLMContentRetentionDays  *int                   `json:"llm_content_retention_days"`
 	CreatedAt                time.Time              `json:"created_at"`
 	UpdatedAt                time.Time              `json:"updated_at"`
 

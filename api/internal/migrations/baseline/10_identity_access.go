@@ -126,7 +126,9 @@ var IdentityAccessSchema = File{
     created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
     updated_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
     short_name character varying(100),
-    llm_content_capture_enabled boolean DEFAULT false NOT NULL
+    llm_content_capture_enabled boolean DEFAULT false NOT NULL,
+    llm_content_retention_days integer,
+    CONSTRAINT ck_organizations_llm_content_retention_days CHECK (((llm_content_retention_days IS NULL) OR ((llm_content_retention_days >= 1) AND (llm_content_retention_days <= 30))))
 );`,
 		`CREATE TABLE public.organization_invite_links (
     id uuid DEFAULT public.uuid_generate_v4() NOT NULL,

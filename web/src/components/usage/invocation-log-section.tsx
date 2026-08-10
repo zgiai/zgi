@@ -362,9 +362,14 @@ function InvocationDetailSheet({
 
           {item.error_code ? (
             <DetailSection title={t('usage.invocations.details.error')}>
-              <pre className="whitespace-pre-wrap break-words rounded-lg bg-muted/50 p-3 text-xs">
-                {item.error_code}
-              </pre>
+              <div className="rounded-lg bg-muted/50 p-3">
+                <div className="text-sm font-medium">
+                  {t(`usage.invocations.errorCodes.${knownInvocationError(item.error_code)}`)}
+                </div>
+                <code className="mt-1 block break-all text-xs text-muted-foreground">
+                  {item.error_code}
+                </code>
+              </div>
             </DetailSection>
           ) : null}
 
@@ -379,6 +384,33 @@ function InvocationDetailSheet({
       </SheetContent>
     </Sheet>
   );
+}
+
+type InvocationErrorKey =
+  | 'requestInvalid'
+  | 'modelNotFound'
+  | 'providerAuthFailed'
+  | 'providerRateLimited'
+  | 'providerTimeout'
+  | 'providerUnavailable'
+  | 'noProviderAvailable'
+  | 'invocationFailed'
+  | 'billingFailed';
+
+function knownInvocationError(code: string): InvocationErrorKey {
+  const known: Record<string, InvocationErrorKey> = {
+    'llm.request.invalid': 'requestInvalid',
+    'llm.model.not_found': 'modelNotFound',
+    'llm.provider.auth_failed': 'providerAuthFailed',
+    'llm.provider.rate_limited': 'providerRateLimited',
+    'llm.provider.timeout': 'providerTimeout',
+    'llm.provider.unavailable': 'providerUnavailable',
+    'llm.provider.none_available': 'noProviderAvailable',
+    'llm.invocation.failed': 'invocationFailed',
+    SETTLE_FAILED: 'billingFailed',
+    BILLING_PREDEDUCT_FAILED: 'billingFailed',
+  };
+  return known[code] ?? 'invocationFailed';
 }
 
 function InvocationContentPanel({
@@ -397,7 +429,9 @@ function InvocationContentPanel({
   if (!canViewContent) {
     return (
       <div className="rounded-lg border border-dashed p-4">
-        <div className="text-sm font-medium">{t('usage.invocations.details.contentRestricted')}</div>
+        <div className="text-sm font-medium">
+          {t('usage.invocations.details.contentRestricted')}
+        </div>
         <p className="mt-1 text-sm text-muted-foreground">
           {t('usage.invocations.details.contentRestrictedDescription')}
         </p>
@@ -435,8 +469,14 @@ function InvocationContentPanel({
 
   return (
     <div className="space-y-4">
-      <ContentSnapshot label={t('usage.invocations.details.userQuestion')} value={content.input_text} />
-      <ContentSnapshot label={t('usage.invocations.details.aiAnswer')} value={content.output_text} />
+      <ContentSnapshot
+        label={t('usage.invocations.details.userQuestion')}
+        value={content.input_text}
+      />
+      <ContentSnapshot
+        label={t('usage.invocations.details.aiAnswer')}
+        value={content.output_text}
+      />
       {(content.input_truncated || content.output_truncated) && (
         <p className="text-xs text-warning">{t('usage.invocations.details.contentTruncated')}</p>
       )}
@@ -450,8 +490,14 @@ function InvocationContentPanel({
           {t('usage.invocations.details.advancedContent')}
         </summary>
         <div className="mt-3 grid gap-3">
-          <ContentSnapshot label={t('usage.invocations.details.rawInput')} value={content.input_json} />
-          <ContentSnapshot label={t('usage.invocations.details.rawOutput')} value={content.output_json} />
+          <ContentSnapshot
+            label={t('usage.invocations.details.rawInput')}
+            value={content.input_json}
+          />
+          <ContentSnapshot
+            label={t('usage.invocations.details.rawOutput')}
+            value={content.output_json}
+          />
         </div>
       </details>
     </div>

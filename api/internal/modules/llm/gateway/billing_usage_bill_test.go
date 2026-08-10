@@ -1,10 +1,12 @@
 package gateway
 
 import (
+	"errors"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"gorm.io/datatypes"
 )
 
@@ -122,6 +124,37 @@ func TestBuildUsageBill_FailedZeroesUsageAndPoints(t *testing.T) {
 	}
 	if bill.TotalPoints != 0 {
 		t.Fatalf("total points = %d, want 0", bill.TotalPoints)
+	}
+}
+
+func TestBuildUsageBill_UsesStableSafeFailureCode(t *testing.T) {
+	service := &BillingService{}
+	bc := testUsageBillContext(time.Time{}, time.Time{})
+	bc.Status = billingContextStatusError
+	setBillingFailure(bc, errors.Join(adapter.ErrTimeout, errors.New("provider secret sk-sensitive")))
+
+	bill, err := service.buildUsageBill(bc, usageBillStatusFailed, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bill.ErrorCode == nil || *bill.ErrorCode != "llm.provider.timeout" {
+		t.Fatalf("error code=%v, want stable provider timeout", bill.ErrorCode)
+	}
+	if bill.ErrorMessage == nil || *bill.ErrorMessage == "" {
+		t.Fatal("raw internal error should remain available only in the protected billing record")
+	}
+}
+
+func TestBuildUsageBill_FailedDefaultsToGenericSafeCode(t *testing.T) {
+	service := &BillingService{}
+	bc := testUsageBillContext(time.Time{}, time.Time{})
+	bc.Status = billingContextStatusError
+	bill, err := service.buildUsageBill(bc, usageBillStatusFailed, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bill.ErrorCode == nil || *bill.ErrorCode != "llm.invocation.failed" {
+		t.Fatalf("error code=%v, want generic stable failure", bill.ErrorCode)
 	}
 }
 

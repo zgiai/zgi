@@ -209,6 +209,7 @@ func (s *llmGatewayServiceImpl) createImageInternal(
 	resp, err := providerAdapter.CreateImage(ctx, &providerReq)
 	responseTime := time.Since(startTime).Milliseconds()
 	if err != nil {
+		setBillingFailure(billingCtx, err)
 		reportLLMProviderFailureForSelection(ctx, err, "llm.provider.request_failed", selection, billingCtx, 0, true)
 		// Log provider error
 		s.logProviderError(ctx, 0, selection, err, "image_generation")

@@ -6,11 +6,14 @@ import (
 
 	appconfig "github.com/zgiai/zgi/api/config"
 	"github.com/zgiai/zgi/api/internal/modules/llm/statistics/dto"
+	"github.com/zgiai/zgi/api/internal/modules/llm/statistics/repository"
 )
 
 type fakeStatisticsRepository struct {
-	modelUsageReq  *dto.ModelUsageRequest
-	contentEnabled bool
+	modelUsageReq        *dto.ModelUsageRequest
+	contentEnabled       bool
+	contentRetentionDays int
+	contentStoredCount   int64
 }
 
 func (f *fakeStatisticsRepository) GetModelUsage(_ context.Context, _ string, req *dto.ModelUsageRequest) (*dto.ModelUsageResponse, error) {
@@ -24,13 +27,23 @@ func (f *fakeStatisticsRepository) GetInvocationLog(context.Context, string, *dt
 	return &dto.InvocationLogResponse{}, nil
 }
 
-func (f *fakeStatisticsRepository) GetInvocationContentSettings(context.Context, string) (bool, error) {
-	return f.contentEnabled, nil
+func (f *fakeStatisticsRepository) GetInvocationContentSettings(context.Context, string) (*repository.InvocationContentSettingsState, error) {
+	retentionDays := f.contentRetentionDays
+	return &repository.InvocationContentSettingsState{
+		Enabled: f.contentEnabled, RetentionDays: &retentionDays, StoredCount: f.contentStoredCount,
+	}, nil
 }
 
-func (f *fakeStatisticsRepository) UpdateInvocationContentSettings(_ context.Context, _ string, enabled bool) error {
+func (f *fakeStatisticsRepository) UpdateInvocationContentSettings(_ context.Context, _ string, enabled bool, retentionDays int) error {
 	f.contentEnabled = enabled
+	f.contentRetentionDays = retentionDays
 	return nil
+}
+
+func (f *fakeStatisticsRepository) PurgeInvocationContent(context.Context, string, string) (int64, bool, error) {
+	deleted := f.contentStoredCount
+	f.contentStoredCount = 0
+	return deleted, false, nil
 }
 
 func TestInvocationContentSettingsUseOrganizationAdminSwitch(t *testing.T) {
@@ -39,15 +52,35 @@ func TestInvocationContentSettingsUseOrganizationAdminSwitch(t *testing.T) {
 	appconfig.GlobalConfig = &appconfig.Config{LLMInvocationContent: appconfig.LLMInvocationContentConfig{
 		MaxBytes: 65536, RetentionDays: 14,
 	}}
-	repo := &fakeStatisticsRepository{}
+	repo := &fakeStatisticsRepository{contentRetentionDays: 14, contentStoredCount: 3}
 	svc := NewStatisticsService(repo)
-	updated, err := svc.UpdateInvocationContentSettings(context.Background(), "org-1", &dto.UpdateInvocationContentSettingsRequest{Enabled: true})
-	if err != nil || !updated.Enabled {
+	enabled, retentionDays := true, 7
+	updated, err := svc.UpdateInvocationContentSettings(context.Background(), "org-1", &dto.UpdateInvocationContentSettingsRequest{Enabled: &enabled, RetentionDays: &retentionDays})
+	if err != nil || !updated.Enabled || updated.RetentionDays != 7 || updated.StoredCount != 3 {
 		t.Fatalf("enable settings=%#v err=%v", updated, err)
 	}
 	settings, err := svc.GetInvocationContentSettings(context.Background(), "org-1")
 	if err != nil || !settings.Available || !settings.Enabled {
 		t.Fatalf("unexpected settings=%#v err=%v", settings, err)
+	}
+}
+
+func TestInvocationContentSettingsRejectInvalidRetention(t *testing.T) {
+	repo := &fakeStatisticsRepository{contentRetentionDays: 14}
+	svc := NewStatisticsService(repo)
+	enabled, invalidDays := true, 31
+	if _, err := svc.UpdateInvocationContentSettings(context.Background(), "org-1", &dto.UpdateInvocationContentSettingsRequest{Enabled: &enabled, RetentionDays: &invalidDays}); err == nil {
+		t.Fatal("expected retention outside 1-30 days to fail")
+	}
+}
+
+func TestInvocationContentSettingsKeepRetentionForOlderClients(t *testing.T) {
+	repo := &fakeStatisticsRepository{contentRetentionDays: 14}
+	svc := NewStatisticsService(repo)
+	enabled := true
+	settings, err := svc.UpdateInvocationContentSettings(context.Background(), "org-1", &dto.UpdateInvocationContentSettingsRequest{Enabled: &enabled})
+	if err != nil || !settings.Enabled || settings.RetentionDays != 14 {
+		t.Fatalf("settings=%#v err=%v", settings, err)
 	}
 }
 

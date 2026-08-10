@@ -476,6 +476,7 @@ func (s *llmGatewayServiceImpl) tryChatCompletionStream(
 	}
 	streamChan, err := providerAdapter.ChatCompletionStream(ctx, normalizedReq)
 	if err != nil {
+		setBillingFailure(billingCtx, err)
 		if rollbackErr := s.rollbackPreDeduction(ctx, billingCtx); rollbackErr != nil {
 			s.traceStreamingChatCompletion(ctx, traceReq, "", startTime, time.Now(), billingCtx, 0, 0, rollbackErr)
 			return nil, rollbackErr

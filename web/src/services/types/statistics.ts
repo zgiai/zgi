@@ -177,6 +177,18 @@ export interface InvocationContentSettings {
   enabled: boolean;
   max_bytes: number;
   retention_days: number;
+  stored_count: number;
+  stored_count_capped: boolean;
+}
+
+export interface UpdateInvocationContentSettingsInput {
+  enabled: boolean;
+  retention_days: number;
+}
+
+export interface InvocationContentPurgeResult {
+  deleted_count: number;
+  has_more: boolean;
 }
 
 export interface InvocationContentDetail {

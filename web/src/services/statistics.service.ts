@@ -8,6 +8,8 @@ import type {
   GetInvocationLogParams,
   InvocationLogData,
   InvocationContentSettings,
+  UpdateInvocationContentSettingsInput,
+  InvocationContentPurgeResult,
   InvocationContentDetail,
 } from './types/statistics';
 
@@ -39,14 +41,16 @@ class StatisticsService extends BaseService {
   }
 
   updateInvocationContentSettings(
-    enabled: boolean
+    input: UpdateInvocationContentSettingsInput
   ): Promise<ApiResponseData<InvocationContentSettings>> {
-    return this.request('put', '/invocation-content/settings', { enabled });
+    return this.request('put', '/invocation-content/settings', input);
   }
 
-  getInvocationContent(
-    invocationId: string
-  ): Promise<ApiResponseData<InvocationContentDetail>> {
+  purgeInvocationContent(): Promise<ApiResponseData<InvocationContentPurgeResult>> {
+    return this.request('delete', '/invocation-content');
+  }
+
+  getInvocationContent(invocationId: string): Promise<ApiResponseData<InvocationContentDetail>> {
     return this.request('get', `/invocations/${encodeURIComponent(invocationId)}/content`);
   }
 

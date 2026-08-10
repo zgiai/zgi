@@ -19,6 +19,7 @@ func RegisterStatisticsRoutes(rg *gin.RouterGroup, h *StatisticsHandler) {
 	{
 		sensitive.GET("/invocation-content/settings", h.GetInvocationContentSettings)
 		sensitive.PUT("/invocation-content/settings", h.UpdateInvocationContentSettings)
+		sensitive.DELETE("/invocation-content", h.PurgeInvocationContent)
 		sensitive.GET("/invocations/:invocation_id/content", h.GetInvocationContent)
 	}
 }

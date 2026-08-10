@@ -19,7 +19,7 @@ func TestInvocationContentRecorderRedactsTruncatesAndHonorsOrganizationSetting(t
 		t.Fatal(err)
 	}
 	for _, statement := range []string{
-		`CREATE TABLE organizations (id TEXT PRIMARY KEY, llm_content_capture_enabled BOOLEAN NOT NULL DEFAULT FALSE)`,
+		`CREATE TABLE organizations (id TEXT PRIMARY KEY, llm_content_capture_enabled BOOLEAN NOT NULL DEFAULT FALSE, llm_content_retention_days INTEGER)`,
 		`CREATE TABLE llm_invocation_contents (
 			request_id TEXT PRIMARY KEY, organization_id TEXT NOT NULL, input_text TEXT NOT NULL,
 			output_text TEXT NOT NULL, input_json TEXT NOT NULL, output_json TEXT NOT NULL,
@@ -31,7 +31,7 @@ func TestInvocationContentRecorderRedactsTruncatesAndHonorsOrganizationSetting(t
 			t.Fatal(err)
 		}
 	}
-	if err := db.Exec(`INSERT INTO organizations (id, llm_content_capture_enabled) VALUES ('org-on', TRUE), ('org-off', FALSE)`).Error; err != nil {
+	if err := db.Exec(`INSERT INTO organizations (id, llm_content_capture_enabled, llm_content_retention_days) VALUES ('org-on', TRUE, 3), ('org-off', FALSE, NULL)`).Error; err != nil {
 		t.Fatal(err)
 	}
 	recorder := newInvocationContentRecorder(db, config.LLMInvocationContentConfig{
@@ -58,6 +58,9 @@ func TestInvocationContentRecorderRedactsTruncatesAndHonorsOrganizationSetting(t
 	}
 	if !row.InputTruncated || !row.OutputTruncated {
 		t.Fatalf("expected bounded content: %#v", row)
+	}
+	if remaining := time.Until(row.ExpiresAt); remaining < 71*time.Hour || remaining > 73*time.Hour {
+		t.Fatalf("organization retention not applied, expires in %s", remaining)
 	}
 	var disabledCount int64
 	if err := db.Table("llm_invocation_contents").Where("request_id = ?", "req-off").Count(&disabledCount).Error; err != nil || disabledCount != 0 {
@@ -100,6 +103,24 @@ func TestInvocationContentRecorderQueuePressureNeverWritesSynchronously(t *testi
 	}
 }
 
+func TestInvocationContentRecorderExpiredDisabledSettingQueuesOnlyProbe(t *testing.T) {
+	recorder := &invocationContentRecorder{
+		config: config.LLMInvocationContentConfig{MaxBytes: 1024},
+		queue:  make(chan invocationContentRecord, 1),
+	}
+	recorder.settings.Store("org-off", invocationContentSettingCache{
+		enabled: false, expiresAt: time.Now().Add(-time.Second),
+	})
+	recorder.RecordChat(
+		&BillingContext{RequestID: "req", OrganizationID: "org-off"},
+		map[string]any{"content": strings.Repeat("sensitive", 100)}, "output", "input", "output",
+	)
+	probe := <-recorder.queue
+	if !probe.SettingsProbe || probe.OrganizationID != "org-off" || probe.RequestID != "" || probe.InputJSON != "" {
+		t.Fatalf("disabled refresh must contain no invocation content: %#v", probe)
+	}
+}
+
 func TestTraceChatRecordsContentWhenOpenTelemetryIsDisabled(t *testing.T) {
 	previous := config.GlobalConfig
 	t.Cleanup(func() { config.GlobalConfig = previous })
@@ -135,12 +156,39 @@ func TestCleanupExpiredInvocationContentRunsWhenCaptureIsDisabled(t *testing.T) 
 	if err := db.Exec(`INSERT INTO llm_invocation_contents (request_id, expires_at) VALUES (?, ?), (?, ?)`, "expired", now.Add(-time.Minute), "active", now.Add(time.Minute)).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := cleanupExpiredInvocationContent(context.Background(), db, now); err != nil {
+	deleted, err := cleanupExpiredInvocationContent(context.Background(), db, now)
+	if err != nil || deleted != 1 {
 		t.Fatal(err)
 	}
 	var count int64
 	if err := db.Table("llm_invocation_contents").Count(&count).Error; err != nil || count != 1 {
 		t.Fatalf("remaining content count=%d err=%v", count, err)
+	}
+}
+
+func TestCleanupExpiredInvocationContentBoundsWorkPerRun(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:"+uuid.NewString()+"?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec(`CREATE TABLE llm_invocation_contents (request_id TEXT PRIMARY KEY, expires_at DATETIME NOT NULL)`).Error; err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	if err := db.Transaction(func(tx *gorm.DB) error {
+		for i := 0; i < invocationContentCleanupBatchSize+1; i++ {
+			if err := tx.Exec(`INSERT INTO llm_invocation_contents (request_id, expires_at) VALUES (?, ?)`, uuid.NewString(), now.Add(-time.Minute)).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	deleted, err := cleanupExpiredInvocationContent(context.Background(), db, now)
+	want := int64(invocationContentCleanupBatchSize + 1)
+	if err != nil || deleted != want {
+		t.Fatalf("deleted=%d want=%d err=%v", deleted, want, err)
 	}
 }
 

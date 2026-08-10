@@ -669,6 +669,7 @@ var ModelGatewaySchema = File{
     organization_id uuid NOT NULL,
     request_id character varying(100) NOT NULL,
     account_id uuid NOT NULL,
+    action character varying(24) DEFAULT 'view'::character varying NOT NULL,
     viewed_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL
 );`,
 		`CREATE TABLE public.llm_workspace_quotas (
