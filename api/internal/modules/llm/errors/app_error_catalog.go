@@ -91,7 +91,7 @@ func CatalogDefinitions() []appcatalog.Definition {
 		llmDefinition(AppCodeProviderTimeout, appcatalog.CategoryUpstream, 504, true,
 			"The model service took too long to respond. Try again or choose another model.",
 			"大模型服务响应超时，请重试或选择其他模型。",
-			"llm.domain:40503"),
+			"llm.domain:40503", "llm.openai:upstream_timeout", "llm.anthropic:timeout_error"),
 		llmDefinition(AppCodeProviderUnavailable, appcatalog.CategoryUpstream, 503, true,
 			"The model service is temporarily unavailable. Try again later or choose another model.",
 			"大模型服务暂时不可用，请稍后重试或选择其他模型。",

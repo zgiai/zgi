@@ -48,7 +48,7 @@ func classifyProtocolError(err error) protocolError {
 		return newProtocolError(http.StatusBadGateway, "server_error", adapter.ErrorCodePlatformChannelUnavailable, "api_error", "Platform model service is temporarily unavailable")
 	case errors.Is(err, gateway.ErrNoProviderAvailable), errors.Is(err, gateway.ErrProviderNotFound), errors.Is(err, gateway.ErrProviderUnavailable), errors.Is(err, llmerrors.DomainErrNoProviderAvailable), errors.Is(err, llmerrors.DomainErrProviderNotFound), errors.Is(err, llmerrors.DomainErrChannelNotFound), errors.Is(err, llmerrors.DomainErrUpstreamUnavailable), strings.Contains(err.Error(), "no provider available"):
 		return newProtocolError(http.StatusServiceUnavailable, "server_error", "provider_unavailable", "api_error", "No provider is currently available for this model")
-	case errors.Is(err, adapter.ErrTimeout), errors.Is(err, llmerrors.DomainErrUpstreamTimeout):
+	case isGatewayProviderTimeout(err):
 		return newProtocolError(http.StatusGatewayTimeout, "server_error", "upstream_timeout", "timeout_error", "Upstream provider timed out")
 	case errors.Is(err, gateway.ErrBalanceNotFound), errors.Is(err, gateway.ErrBillingFailed), errors.Is(err, gateway.ErrBillingPreDeductFailed), errors.Is(err, gateway.ErrBillingSettleFailed), errors.Is(err, gateway.ErrBillingLaneMismatch), errors.Is(err, gateway.ErrPricingCalculationFailed), errors.Is(err, llmerrors.DomainErrBillingFailed), errors.Is(err, llmerrors.DomainErrDatabaseError), errors.Is(err, llmerrors.DomainErrInternalError):
 		return newProtocolError(http.StatusInternalServerError, "server_error", "internal_error", "api_error", "Internal server error")

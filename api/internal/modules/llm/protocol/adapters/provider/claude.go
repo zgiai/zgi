@@ -3,8 +3,10 @@ package provider
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"net/url"
 	"strings"
 	"time"
@@ -396,7 +398,7 @@ func (a *ClaudeAdapter) CreateAnthropicMessage(ctx context.Context, request *ada
 
 	var raw json.RawMessage
 	if _, err := client.Messages.New(ctx, params, anthropicoption.WithResponseBodyInto(&raw)); err != nil {
-		return nil, fmt.Errorf("anthropic messages request failed: %w", err)
+		return nil, fmt.Errorf("anthropic messages request failed: %w", normalizeAnthropicSDKTransportError(err))
 	}
 
 	return &adapter.RawResponse{
@@ -439,13 +441,22 @@ func (a *ClaudeAdapter) CreateAnthropicMessageStream(ctx context.Context, reques
 			}
 		}
 		if err := stream.Err(); err != nil {
-			out <- adapter.RawStreamEvent{Error: err, Done: true, Usage: lastUsage}
+			out <- adapter.RawStreamEvent{Error: normalizeAnthropicSDKTransportError(err), Done: true, Usage: lastUsage}
 			return
 		}
 		out <- adapter.RawStreamEvent{Done: true, Usage: lastUsage}
 	}()
 
 	return out, nil
+}
+
+func normalizeAnthropicSDKTransportError(err error) error {
+	err = adapter.NormalizeTransportError(err)
+	var apiErr *anthropic.Error
+	if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusGatewayTimeout && !errors.Is(err, adapter.ErrTimeout) {
+		return errors.Join(adapter.ErrTimeout, err)
+	}
+	return err
 }
 
 // CreateEmbeddings executes embeddings creation request (not supported by Claude)
