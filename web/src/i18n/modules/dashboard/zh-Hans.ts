@@ -305,6 +305,9 @@ const messages: DashboardMessages = {
         '“历史数据”是日志来源分类上线前已产生的调用。它仍保留模型、Token、费用和耗时，但当时没有记录 API 或产品内来源，因此无法准确补齐。',
       contentSettings: {
         title: '输入输出内容审计',
+        compactLabel: '内容审计',
+        statusEnabled: '已开启',
+        statusDisabled: '已关闭',
         description:
           '开启后，新调用会脱敏并异步保存输入输出，每项最多 {size} KB，默认保留 {days} 天。',
         metadataUnaffected:

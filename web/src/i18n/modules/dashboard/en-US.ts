@@ -149,6 +149,9 @@ const messages = {
         'Historical calls were created before source attribution was introduced. Model, token, cost, and duration data remain available, but API versus in-product origin cannot be reconstructed reliably.',
       contentSettings: {
         title: 'Input/output content audit',
+        compactLabel: 'Content audit',
+        statusEnabled: 'On',
+        statusDisabled: 'Off',
         description:
           'When enabled, new calls are redacted and stored asynchronously, up to {size} KB per field for {days} days.',
         metadataUnaffected:
