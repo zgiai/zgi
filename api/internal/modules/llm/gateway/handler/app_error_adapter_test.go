@@ -63,6 +63,21 @@ func TestLocalizedProtocolErrorFallsBackToEnglishAndLeavesOtherErrorsAlone(t *te
 	}
 }
 
+func TestLocalizedProtocolErrorWithoutProjectorFallsBackToSafeLegacyContract(t *testing.T) {
+	handler := &LLMHandler{}
+	context := testProtocolContext(t, "/v1/chat/completions", "zh-CN")
+	timeout := errors.Join(adapter.ErrTimeout, errors.New("provider token sk-secret"))
+
+	got := handler.localizedProtocolError(context, timeout)
+
+	if got.openAIStatus != 504 || got.openAICode != "upstream_timeout" || got.message != "Upstream provider timed out" {
+		t.Fatalf("fallback protocol contract = %#v", got)
+	}
+	if strings.Contains(got.message, "sk-secret") {
+		t.Fatalf("fallback message leaked cause: %q", got.message)
+	}
+}
+
 func TestRecordServiceErrorAddsStableAppCodeAndPreservesCause(t *testing.T) {
 	context := testProtocolContext(t, "/v1/chat/completions", "en-US")
 

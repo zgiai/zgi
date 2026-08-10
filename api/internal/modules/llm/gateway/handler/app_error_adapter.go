@@ -22,6 +22,9 @@ var (
 // application catalog may replace only the safe public message.
 func (h *LLMHandler) localizedProtocolError(c *gin.Context, err error) protocolError {
 	legacy := classifyProtocolError(err)
+	if h == nil || h.errorProjector == nil {
+		return legacy
+	}
 	appErr, supported := gatewayApplicationError(err)
 	if !supported {
 		return legacy
