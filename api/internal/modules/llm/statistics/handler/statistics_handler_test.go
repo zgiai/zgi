@@ -31,6 +31,18 @@ func (f *fakeStatisticsService) GetInvocationLog(_ context.Context, organization
 	return &dto.InvocationLogResponse{}, f.invocationLogErr
 }
 
+func (f *fakeStatisticsService) GetInvocationContentSettings(context.Context, string) (*dto.InvocationContentSettings, error) {
+	return &dto.InvocationContentSettings{}, nil
+}
+
+func (f *fakeStatisticsService) UpdateInvocationContentSettings(context.Context, string, *dto.UpdateInvocationContentSettingsRequest) (*dto.InvocationContentSettings, error) {
+	return &dto.InvocationContentSettings{}, nil
+}
+
+func (f *fakeStatisticsService) GetInvocationContent(context.Context, string, string, string) (*dto.InvocationContentDetail, error) {
+	return &dto.InvocationContentDetail{}, nil
+}
+
 func TestGetInvocationLog_BindsBusinessFilters(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

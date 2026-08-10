@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo } from 'react';
-import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 
 import { useT } from '@/i18n';
@@ -222,4 +222,35 @@ export function useInvocationLog(params: GetInvocationLogParams, enabled = true)
   }, [query.data]);
 
   return { ...query, data };
+}
+
+export function useInvocationContentSettings(enabled = true) {
+  return useQuery({
+    queryKey: STATS_KEYS.invocationContentSettings(),
+    queryFn: () => statisticsService.getInvocationContentSettings(),
+    enabled,
+    staleTime: 60_000,
+    retry: false,
+  });
+}
+
+export function useUpdateInvocationContentSettings() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (enabled: boolean) => statisticsService.updateInvocationContentSettings(enabled),
+    onSuccess: data => {
+      queryClient.setQueryData(STATS_KEYS.invocationContentSettings(), data);
+    },
+  });
+}
+
+export function useInvocationContent(invocationId: string | undefined, enabled: boolean) {
+  return useQuery({
+    queryKey: STATS_KEYS.invocationContent(invocationId ?? ''),
+    queryFn: () => statisticsService.getInvocationContent(invocationId ?? ''),
+    enabled: enabled && Boolean(invocationId),
+    staleTime: 0,
+    gcTime: 0,
+    retry: false,
+  });
 }

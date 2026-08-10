@@ -125,7 +125,8 @@ var IdentityAccessSchema = File{
     status character varying(16) DEFAULT 'active'::character varying NOT NULL,
     created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
     updated_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    short_name character varying(100)
+    short_name character varying(100),
+    llm_content_capture_enabled boolean DEFAULT false NOT NULL
 );`,
 		`CREATE TABLE public.organization_invite_links (
     id uuid DEFAULT public.uuid_generate_v4() NOT NULL,

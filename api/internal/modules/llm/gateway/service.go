@@ -132,6 +132,7 @@ type llmGatewayServiceImpl struct {
 	officialCreditChecker paymentservice.OfficialCreditChecker
 	policyPrompt          llmPolicyPromptInjector
 	upstreamState         *upstreamstate.Service
+	invocationContent     *invocationContentRecorder
 }
 
 func (s *llmGatewayServiceImpl) isModelRoutable(ctx context.Context, organizationID uuid.UUID, modelName string) (bool, error) {
@@ -228,6 +229,7 @@ func NewLLMGatewayServiceWithCrypto(
 		billing = remoteBilling
 		logger.Info("llm gateway remote billing enabled", "grpc_addr", grpcAddr)
 	}
+	startInvocationContentCleanup(db)
 
 	return &llmGatewayServiceImpl{
 		db:                    db,
@@ -244,6 +246,7 @@ func NewLLMGatewayServiceWithCrypto(
 		officialCreditChecker: paymentservice.NewConsoleOfficialCreditChecker(),
 		policyPrompt:          newLLMPolicyPromptInjector(cfg.LLMPolicyPrompt),
 		upstreamState:         upstreamStateService,
+		invocationContent:     newInvocationContentRecorder(db, cfg.LLMInvocationContent),
 	}, nil
 }
 

@@ -170,3 +170,24 @@ export interface GetInvocationLogParams {
   cursor_id?: string;
   limit?: number;
 }
+
+export interface InvocationContentSettings {
+  /** @deprecated Always true; retained for rolling-deploy compatibility. */
+  available: boolean;
+  enabled: boolean;
+  max_bytes: number;
+  retention_days: number;
+}
+
+export interface InvocationContentDetail {
+  invocation_id: string;
+  input_text: string;
+  output_text: string;
+  input_json: string;
+  output_json: string;
+  content_status: 'available' | string;
+  input_truncated: boolean;
+  output_truncated: boolean;
+  redaction_version: string;
+  expires_at: number;
+}

@@ -38,14 +38,15 @@ const (
 
 // Organization enterprise group model
 type Organization struct {
-	ID                     string                 `gorm:"type:varchar(255);primaryKey" json:"id"`
-	Name                   string                 `gorm:"type:varchar(255);not null" json:"name"`
-	ShortName              *string                `gorm:"type:varchar(255)" json:"short_name"`
-	Status                 OrganizationStatus     `gorm:"type:varchar(16);not null;default:'active'" json:"status"`
-	BillingDisplayCurrency BillingDisplayCurrency `gorm:"type:varchar(3);not null;default:'USD'" json:"billing_display_currency"`
-	USDToCNYRate           decimal.Decimal        `gorm:"type:numeric(18,6);not null;default:7" json:"usd_to_cny_rate"`
-	CreatedAt              time.Time              `json:"created_at"`
-	UpdatedAt              time.Time              `json:"updated_at"`
+	ID                       string                 `gorm:"type:varchar(255);primaryKey" json:"id"`
+	Name                     string                 `gorm:"type:varchar(255);not null" json:"name"`
+	ShortName                *string                `gorm:"type:varchar(255)" json:"short_name"`
+	Status                   OrganizationStatus     `gorm:"type:varchar(16);not null;default:'active'" json:"status"`
+	BillingDisplayCurrency   BillingDisplayCurrency `gorm:"type:varchar(3);not null;default:'USD'" json:"billing_display_currency"`
+	USDToCNYRate             decimal.Decimal        `gorm:"type:numeric(18,6);not null;default:7" json:"usd_to_cny_rate"`
+	LLMContentCaptureEnabled bool                   `gorm:"not null;default:false" json:"llm_content_capture_enabled"`
+	CreatedAt                time.Time              `json:"created_at"`
+	UpdatedAt                time.Time              `json:"updated_at"`
 
 	// Relationships - commented out for modular architecture
 	// TenantJoins  []EnterpriseGroupTenantJoin  `gorm:"foreignKey:GroupID" json:"-"`

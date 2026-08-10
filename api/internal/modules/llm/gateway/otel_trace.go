@@ -63,7 +63,19 @@ func (s *llmGatewayServiceImpl) traceChatCompletion(
 	billingCtx *BillingContext,
 	err error,
 ) {
-	if billingCtx == nil || !llmTraceRecordingEnabled(ctx) {
+	if billingCtx == nil {
+		return
+	}
+	if s != nil && s.invocationContent != nil {
+		s.invocationContent.RecordChat(
+			billingCtx,
+			chatInput(req),
+			chatCompletionOutput(resp),
+			lastUserMessageText(req),
+			invocationChatResponseText(resp),
+		)
+	}
+	if !llmTraceRecordingEnabled(ctx) {
 		return
 	}
 	payload := llmTracePayload{
@@ -93,7 +105,19 @@ func (s *llmGatewayServiceImpl) traceStreamingChatCompletion(
 	completionTokens int,
 	err error,
 ) {
-	if billingCtx == nil || !llmTraceRecordingEnabled(ctx) {
+	if billingCtx == nil {
+		return
+	}
+	if s != nil && s.invocationContent != nil {
+		s.invocationContent.RecordChat(
+			billingCtx,
+			chatInput(req),
+			map[string]interface{}{"role": "assistant", "content": fullResponse},
+			lastUserMessageText(req),
+			fullResponse,
+		)
+	}
+	if !llmTraceRecordingEnabled(ctx) {
 		return
 	}
 	payload := llmTracePayload{

@@ -2,12 +2,14 @@
 
 import { useMemo, useState } from 'react';
 import { endOfDay, getUnixTime, startOfDay, subDays } from 'date-fns';
-import { RefreshCw } from 'lucide-react';
+import { RefreshCw, ShieldCheck } from 'lucide-react';
+import { toast } from 'sonner';
 
 import { InvocationLogSection } from '@/components/usage/invocation-log-section';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { SearchInput } from '@/components/ui/input';
+import { Switch } from '@/components/ui/switch';
 import {
   Select,
   SelectContent,
@@ -17,6 +19,10 @@ import {
 } from '@/components/ui/select';
 import { useDebouncedValue } from '@/hooks/use-debounced-value';
 import { useOrganizations } from '@/hooks/organization/use-organizations';
+import {
+  useInvocationContentSettings,
+  useUpdateInvocationContentSettings,
+} from '@/hooks/statistics';
 import { useT } from '@/i18n';
 import type { ModelUsageAppType } from '@/services/types/statistics';
 import { getBillingDisplaySettings } from '@/utils/billing-display';
@@ -36,6 +42,12 @@ export default function InvocationLogPage() {
   const t = useT('dashboard');
   const tCommon = useT('common');
   const { currentOrganization } = useOrganizations(true);
+  const canManageContent = ['owner', 'admin'].includes(
+    currentOrganization?.organization_role ?? ''
+  );
+  const contentSettingsQuery = useInvocationContentSettings(canManageContent);
+  const updateContentSettings = useUpdateInvocationContentSettings();
+  const contentSettings = contentSettingsQuery.data?.data;
   const [dateRange, setDateRange] = useState<DateRangeKey>('today');
   const [appType, setAppType] = useState<AppTypeFilter>('all');
   const [modelNameInput, setModelNameInput] = useState('');
@@ -69,6 +81,45 @@ export default function InvocationLogPage() {
           <h1 className="text-2xl font-semibold">{t('usage.invocations.title')}</h1>
           <p className="mt-1 text-sm text-muted-foreground">{t('usage.invocations.subtitle')}</p>
         </div>
+
+        {canManageContent && contentSettings ? (
+          <Card className="border-border/80 shadow-sm">
+            <CardContent className="flex flex-col gap-4 p-4 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex min-w-0 gap-3">
+                <div className="mt-0.5 rounded-lg bg-muted p-2">
+                  <ShieldCheck className="h-4 w-4" />
+                </div>
+                <div>
+                  <div className="font-medium">{t('usage.invocations.contentSettings.title')}</div>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    {t('usage.invocations.contentSettings.description', {
+                      days: contentSettings.retention_days,
+                      size: Math.round(contentSettings.max_bytes / 1024),
+                    })}
+                  </p>
+                </div>
+              </div>
+              <Switch
+                checked={contentSettings.enabled}
+                disabled={updateContentSettings.isPending}
+                aria-label={t('usage.invocations.contentSettings.title')}
+                onCheckedChange={enabled => {
+                  updateContentSettings.mutate(enabled, {
+                    onSuccess: () =>
+                      toast.success(
+                        t(
+                          enabled
+                            ? 'usage.invocations.contentSettings.enabled'
+                            : 'usage.invocations.contentSettings.disabled'
+                        )
+                      ),
+                    onError: () => toast.error(t('usage.invocations.contentSettings.updateFailed')),
+                  });
+                }}
+              />
+            </CardContent>
+          </Card>
+        ) : null}
 
         <Card className="border-border/80 shadow-sm">
           <CardContent className="flex flex-col gap-3 p-4 lg:flex-row lg:items-center">
@@ -130,6 +181,7 @@ export default function InvocationLogPage() {
           enabled
           billingDisplay={billingDisplay}
           refreshToken={refreshKey}
+          canViewContent={canManageContent}
         />
       </div>
     </div>
