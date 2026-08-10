@@ -1,6 +1,7 @@
 package statistics
 
 import (
+	"github.com/zgiai/zgi/api/internal/modules/llm/gateway"
 	"github.com/zgiai/zgi/api/internal/modules/llm/statistics/handler"
 	"github.com/zgiai/zgi/api/internal/modules/llm/statistics/repository"
 	"github.com/zgiai/zgi/api/internal/modules/llm/statistics/service"
@@ -17,7 +18,9 @@ type Module struct {
 // NewModule creates a new statistics module
 func NewModule(db *gorm.DB) *Module {
 	repo := repository.NewStatisticsRepository(db)
-	svc := service.NewStatisticsService(repo)
+	svc := service.NewStatisticsService(repo, func(organizationID string, enabled bool, retentionDays int) {
+		gateway.UpdateInvocationContentSettingsCache(db, organizationID, enabled, retentionDays)
+	})
 	h := handler.NewStatisticsHandler(svc)
 
 	return &Module{

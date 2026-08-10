@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -103,10 +104,59 @@ func TestInvocationContentRecorderQueuePressureNeverWritesSynchronously(t *testi
 	}
 }
 
+func TestInvocationContentSettingsUpdateIsSharedAcrossGatewayServices(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:"+uuid.NewString()+"?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := &invocationContentRecorder{
+		config: config.LLMInvocationContentConfig{MaxBytes: 1024},
+		queue:  make(chan invocationContentRecord, 1), settings: invocationContentSettingsCache(db),
+	}
+	second := &invocationContentRecorder{
+		config: config.LLMInvocationContentConfig{MaxBytes: 1024},
+		queue:  make(chan invocationContentRecord, 1), settings: invocationContentSettingsCache(db),
+	}
+	first.settings.Store("org-1", invocationContentSettingCache{enabled: false, expiresAt: time.Now().Add(time.Hour)})
+	second.RecordChat(&BillingContext{RequestID: "before", OrganizationID: "org-1"}, "input", "output", "input", "output")
+	if len(second.queue) != 0 {
+		t.Fatal("disabled setting should keep content off the queue")
+	}
+
+	UpdateInvocationContentSettingsCache(db, "org-1", true, 7)
+
+	for index, recorder := range []*invocationContentRecorder{first, second} {
+		cached, ok := recorder.settings.Load("org-1")
+		if !ok {
+			t.Fatalf("recorder %d did not receive updated setting", index)
+		}
+		setting := cached.(invocationContentSettingCache)
+		if !setting.enabled || setting.retentionDays != 7 {
+			t.Fatalf("recorder %d setting = %#v", index, setting)
+		}
+	}
+	second.RecordChat(&BillingContext{RequestID: "after-enable", OrganizationID: "org-1"}, "input", "output", "input", "output")
+	select {
+	case record := <-second.queue:
+		if record.RequestID != "after-enable" {
+			t.Fatalf("first call after enable = %#v", record)
+		}
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("first call after enable was not queued")
+	}
+
+	UpdateInvocationContentSettingsCache(db, "org-1", false, 7)
+	first.RecordChat(&BillingContext{RequestID: "after-disable", OrganizationID: "org-1"}, "input", "output", "input", "output")
+	if len(first.queue) != 0 {
+		t.Fatal("first call after disable should stay off the queue")
+	}
+}
+
 func TestInvocationContentRecorderExpiredDisabledSettingQueuesOnlyProbe(t *testing.T) {
 	recorder := &invocationContentRecorder{
-		config: config.LLMInvocationContentConfig{MaxBytes: 1024},
-		queue:  make(chan invocationContentRecord, 1),
+		config:   config.LLMInvocationContentConfig{MaxBytes: 1024},
+		queue:    make(chan invocationContentRecord, 1),
+		settings: &sync.Map{},
 	}
 	recorder.settings.Store("org-off", invocationContentSettingCache{
 		enabled: false, expiresAt: time.Now().Add(-time.Second),
@@ -193,7 +243,7 @@ func TestCleanupExpiredInvocationContentBoundsWorkPerRun(t *testing.T) {
 }
 
 func BenchmarkInvocationContentRecorderDisabledFastPath(b *testing.B) {
-	recorder := &invocationContentRecorder{queue: make(chan invocationContentRecord, 1)}
+	recorder := &invocationContentRecorder{queue: make(chan invocationContentRecord, 1), settings: &sync.Map{}}
 	recorder.settings.Store("org-off", invocationContentSettingCache{
 		enabled: false, expiresAt: time.Now().Add(time.Hour),
 	})

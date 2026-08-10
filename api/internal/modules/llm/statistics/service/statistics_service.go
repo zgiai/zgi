@@ -21,8 +21,14 @@ const (
 )
 
 type statisticsServiceImpl struct {
-	statisticsRepo repository.StatisticsRepository
+	statisticsRepo                   repository.StatisticsRepository
+	onInvocationContentSettingsSaved InvocationContentSettingsSaved
 }
+
+// InvocationContentSettingsSaved is called after the organization setting is
+// committed so request-path caches can be updated without coupling the service
+// to a particular gateway implementation.
+type InvocationContentSettingsSaved func(organizationID string, enabled bool, retentionDays int)
 
 func (s *statisticsServiceImpl) GetInvocationContentSettings(ctx context.Context, organizationID string) (*dto.InvocationContentSettings, error) {
 	cfg := appconfig.Current().LLMInvocationContent
@@ -61,6 +67,9 @@ func (s *statisticsServiceImpl) UpdateInvocationContentSettings(ctx context.Cont
 	if err := s.statisticsRepo.UpdateInvocationContentSettings(ctx, organizationID, enabled, retentionDays); err != nil {
 		return nil, fmt.Errorf("failed to update invocation content settings: %w", err)
 	}
+	if s.onInvocationContentSettingsSaved != nil {
+		s.onInvocationContentSettingsSaved(organizationID, enabled, retentionDays)
+	}
 	return s.GetInvocationContentSettings(ctx, organizationID)
 }
 
@@ -87,9 +96,10 @@ func (s *statisticsServiceImpl) GetInvocationContent(ctx context.Context, organi
 	return result, nil
 }
 
-func NewStatisticsService(statisticsRepo repository.StatisticsRepository) StatisticsService {
+func NewStatisticsService(statisticsRepo repository.StatisticsRepository, onInvocationContentSettingsSaved InvocationContentSettingsSaved) StatisticsService {
 	return &statisticsServiceImpl{
-		statisticsRepo: statisticsRepo,
+		statisticsRepo:                   statisticsRepo,
+		onInvocationContentSettingsSaved: onInvocationContentSettingsSaved,
 	}
 }
 
