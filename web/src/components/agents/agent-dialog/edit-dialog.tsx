@@ -262,6 +262,7 @@ export function EditAgentDialog({ open, onOpenChange, agentId }: EditAgentDialog
                     <FormLabel>{t('form.icon')}</FormLabel>
                     <FormControl>
                       <IconInput
+                        showAvatarPresets
                         value={
                           iconValue ||
                           createTextIconValue(

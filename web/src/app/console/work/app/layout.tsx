@@ -4,7 +4,6 @@ import Link from 'next/link';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { usePathname } from 'next/navigation';
 import { AppWindow, ArrowRightToLine, PanelLeft, X } from 'lucide-react';
-import { IconPreview } from '@/components/common/icon-input/icon-preview';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Button } from '@/components/ui/button';
 import { SearchInput } from '@/components/ui/input';
@@ -18,8 +17,8 @@ import { useT } from '@/i18n/translations';
 import { getSidebarCollapsed, saveSidebarCollapsed } from '@/utils/ui-local';
 import type { RunnableWebAppResolvedItem } from '@/hooks/agent/use-runnable-webapps';
 import { Logo } from '@/components/logo';
-import { ICON_BG } from '@/lib/config';
 import { mergeCurrentWebApp } from './sidebar-items';
+import { AppAvatar } from './app-avatar';
 
 const SIDEBAR_PAGE_SIZE = 20;
 const COLLAPSED_APP_LIMIT = 6;
@@ -31,31 +30,12 @@ interface SidebarNavItem {
 }
 
 function toPreviewData(item: RunnableWebAppResolvedItem) {
-  let iconType: 'image' | 'text' = item.icon_type === 'image' ? 'image' : 'text';
-  let src = '';
-  let textIcon = (item.meta_data.title || 'A').slice(0, 2).toUpperCase();
-  let iconBackground = ICON_BG;
-  const icon = item.meta_data.icon;
-
-  if (item.icon_type === 'image') {
-    src = item.meta_data.icon_url || icon;
-  } else if (item.icon_type === 'text') {
-    try {
-      const parsed = JSON.parse(icon || '{}') as { icon?: string; icon_background?: string };
-      textIcon = parsed.icon || textIcon;
-      iconBackground = parsed.icon_background || iconBackground;
-    } catch {
-      iconType = 'text';
-    }
-  }
-
-  textIcon = Array.from(textIcon.trim()).slice(0, 2).join('') || 'A';
+  const iconType: 'image' | 'text' = item.icon_type === 'image' ? 'image' : 'text';
+  const src = iconType === 'image' ? item.meta_data.icon_url || item.meta_data.icon || '' : '';
 
   return {
     iconType,
     src,
-    textIcon,
-    iconBackground,
   };
 }
 
@@ -201,13 +181,11 @@ export default function ConsoleWorkAppLayout({ children }: { children: React.Rea
             className="absolute inset-y-2 left-0 w-0.5 rounded-r-full bg-primary"
           />
         ) : null}
-        <IconPreview
+        <AppAvatar
+          appId={item.id}
           iconType={item.preview.iconType}
           src={item.preview.src}
-          icon={item.preview.textIcon}
-          iconBackground={item.preview.iconBackground}
-          alt={item.title}
-          editable={false}
+          title={item.title}
           size="xs"
         />
         {!isCollapsed ? (
@@ -422,13 +400,11 @@ export default function ConsoleWorkAppLayout({ children }: { children: React.Rea
           </div>
           {currentApp && currentAppPreview ? (
             <div className="min-w-0 max-w-[58%] flex items-center gap-2">
-              <IconPreview
+              <AppAvatar
+                appId={currentApp.web_app_id}
                 iconType={currentAppPreview.iconType}
                 src={currentAppPreview.src}
-                icon={currentAppPreview.textIcon}
-                iconBackground={currentAppPreview.iconBackground}
-                alt={currentApp.meta_data.title}
-                editable={false}
+                title={currentApp.meta_data.title}
                 size="xs"
               />
             </div>
@@ -509,13 +485,11 @@ export default function ConsoleWorkAppLayout({ children }: { children: React.Rea
                         )}
                         title={item.title}
                       >
-                        <IconPreview
+                        <AppAvatar
+                          appId={item.id}
                           iconType={item.preview.iconType}
                           src={item.preview.src}
-                          icon={item.preview.textIcon}
-                          iconBackground={item.preview.iconBackground}
-                          alt={item.title}
-                          editable={false}
+                          title={item.title}
                           size="xs"
                         />
                         <span className="ml-2 truncate">{item.title}</span>

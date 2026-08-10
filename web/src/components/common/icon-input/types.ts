@@ -27,6 +27,7 @@ export interface IconInputProps {
   value?: IconValue;
   defaultValue?: IconValue;
   disabled?: boolean;
+  showAvatarPresets?: boolean;
   onChange?: (value: IconValue) => void;
 }
 
