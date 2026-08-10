@@ -39,6 +39,27 @@ func TestHTTPClientClassifiesOnlyTransportDeadline(t *testing.T) {
 	}
 }
 
+func TestNormalizeTransportErrorClassifiesStructuredNetworkTimeout(t *testing.T) {
+	transportTimeout := &net.DNSError{
+		Err:       "TLS handshake timeout",
+		Name:      "provider.example.test",
+		IsTimeout: true,
+	}
+
+	normalized := NormalizeTransportError(transportTimeout)
+	if !errors.Is(normalized, ErrTimeout) {
+		t.Fatalf("NormalizeTransportError() = %v, want ErrTimeout", normalized)
+	}
+	if !errors.Is(normalized, transportTimeout) {
+		t.Fatalf("NormalizeTransportError() = %v, want original network cause", normalized)
+	}
+
+	nonTimeout := &net.DNSError{Err: "no such host", Name: "provider.example.test"}
+	if normalized := NormalizeTransportError(nonTimeout); errors.Is(normalized, ErrTimeout) {
+		t.Fatalf("non-timeout error = %v, must not match ErrTimeout", normalized)
+	}
+}
+
 func TestHTTPClientClassifiesUpstreamGatewayTimeout(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusGatewayTimeout)

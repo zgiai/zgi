@@ -85,10 +85,17 @@ func IsDeterministicRejection(err error) bool {
 // arbitrary context deadline as a provider timeout: database, billing, and
 // request-processing deadlines use the same context sentinel.
 func NormalizeTransportError(err error) error {
-	if err == nil || errors.Is(err, ErrTimeout) || !errors.Is(err, context.DeadlineExceeded) {
+	if err == nil || errors.Is(err, ErrTimeout) {
 		return err
 	}
-	return fmt.Errorf("%w: %w", ErrTimeout, err)
+	if errors.Is(err, context.DeadlineExceeded) {
+		return fmt.Errorf("%w: %w", ErrTimeout, err)
+	}
+	var timeoutErr interface{ Timeout() bool }
+	if errors.As(err, &timeoutErr) && timeoutErr.Timeout() {
+		return fmt.Errorf("%w: %w", ErrTimeout, err)
+	}
+	return err
 }
 
 // AdapterError adapter error
