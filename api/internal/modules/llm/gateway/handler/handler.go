@@ -2,7 +2,6 @@
 package handler
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -370,7 +369,7 @@ func serviceFailureReportHint(err error) observability.FailureReportHint {
 			Source:   observability.ErrorSourceZGI,
 			Code:     "request_processing_failed",
 		}
-	} else if protocolErr.openAIStatus == http.StatusGatewayTimeout || errors.Is(err, context.DeadlineExceeded) {
+	} else if protocolErr.openAIStatus == http.StatusGatewayTimeout {
 		hint.Classification.Category = observability.ErrorCategoryTimeout
 		hint.Classification.Code = "upstream_timeout"
 	}
@@ -432,7 +431,7 @@ func streamFailureReportHint(err error) observability.FailureReportHint {
 			Code:      "stream_finalization_failed",
 			Retryable: true,
 		}
-	} else if protocolErr.openAIStatus == http.StatusGatewayTimeout || errors.Is(err, context.DeadlineExceeded) {
+	} else if protocolErr.openAIStatus == http.StatusGatewayTimeout {
 		hint.Classification.Category = observability.ErrorCategoryTimeout
 		hint.Classification.Code = "upstream_stream_timeout"
 	}

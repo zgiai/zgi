@@ -142,7 +142,7 @@ func TestServiceFailureReportHintSuppressesNoProviderFallback(t *testing.T) {
 }
 
 func TestStreamFailureReportHintClassifiesProviderAndGatewayFailures(t *testing.T) {
-	providerHint := streamFailureReportHint(context.DeadlineExceeded)
+	providerHint := streamFailureReportHint(adapter.NormalizeTransportError(context.DeadlineExceeded))
 	if providerHint.Suppress || providerHint.Classification.Source != observability.ErrorSourceProvider || providerHint.Classification.Category != observability.ErrorCategoryTimeout {
 		t.Fatalf("provider hint = %#v", providerHint)
 	}

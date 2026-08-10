@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"context"
 	"errors"
 	"net/http"
 
@@ -62,8 +61,7 @@ func gatewayApplicationError(err error) (error, bool) {
 }
 
 func isGatewayProviderTimeout(err error) bool {
-	if errors.Is(err, context.DeadlineExceeded) ||
-		errors.Is(err, adapter.ErrTimeout) ||
+	if errors.Is(err, adapter.ErrTimeout) ||
 		errors.Is(err, llmerrors.DomainErrUpstreamTimeout) {
 		return true
 	}

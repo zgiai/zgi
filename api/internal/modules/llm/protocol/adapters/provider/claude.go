@@ -396,7 +396,7 @@ func (a *ClaudeAdapter) CreateAnthropicMessage(ctx context.Context, request *ada
 
 	var raw json.RawMessage
 	if _, err := client.Messages.New(ctx, params, anthropicoption.WithResponseBodyInto(&raw)); err != nil {
-		return nil, fmt.Errorf("anthropic messages request failed: %w", err)
+		return nil, fmt.Errorf("anthropic messages request failed: %w", adapter.NormalizeTransportError(err))
 	}
 
 	return &adapter.RawResponse{
@@ -439,7 +439,7 @@ func (a *ClaudeAdapter) CreateAnthropicMessageStream(ctx context.Context, reques
 			}
 		}
 		if err := stream.Err(); err != nil {
-			out <- adapter.RawStreamEvent{Error: err, Done: true, Usage: lastUsage}
+			out <- adapter.RawStreamEvent{Error: adapter.NormalizeTransportError(err), Done: true, Usage: lastUsage}
 			return
 		}
 		out <- adapter.RawStreamEvent{Done: true, Usage: lastUsage}

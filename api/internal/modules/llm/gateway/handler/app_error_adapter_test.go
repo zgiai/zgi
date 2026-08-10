@@ -103,7 +103,8 @@ func TestGatewayProviderTimeoutRecognizesTransportRepresentations(t *testing.T) 
 		want bool
 	}{
 		{name: "adapter sentinel", err: adapter.ErrTimeout, want: true},
-		{name: "request deadline", err: context.DeadlineExceeded, want: true},
+		{name: "typed transport deadline", err: adapter.NormalizeTransportError(context.DeadlineExceeded), want: true},
+		{name: "unclassified internal deadline", err: context.DeadlineExceeded, want: false},
 		{
 			name: "provider HTTP 504",
 			err:  adapter.NewAdapterError("gateway_timeout", "provider detail", 504, adapter.ErrUpstreamError),
@@ -123,6 +124,18 @@ func TestGatewayProviderTimeoutRecognizesTransportRepresentations(t *testing.T) 
 				t.Fatalf("isGatewayProviderTimeout() = %v, want %v", got, testCase.want)
 			}
 		})
+	}
+}
+
+func TestLocalizedProtocolErrorDoesNotMisclassifyInternalDeadline(t *testing.T) {
+	handler := &LLMHandler{errorProjector: testApplicationErrorProjector(t)}
+	requestContext := testProtocolContext(t, "/v1/chat/completions", "zh-CN")
+	internalErr := errors.Join(llmerrors.DomainErrDatabaseError, context.DeadlineExceeded)
+
+	got := handler.localizedProtocolError(requestContext, internalErr)
+
+	if got.openAIStatus != 500 || got.openAICode != "internal_error" || got.message != "Internal server error" {
+		t.Fatalf("internal deadline was misclassified: %#v", got)
 	}
 }
 

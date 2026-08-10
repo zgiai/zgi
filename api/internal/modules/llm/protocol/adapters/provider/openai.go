@@ -281,7 +281,7 @@ func (a *OpenAIAdapter) CreateResponseRaw(ctx context.Context, request *adapter.
 
 	var raw json.RawMessage
 	if _, err := client.Responses.New(ctx, params, openaioption.WithResponseBodyInto(&raw)); err != nil {
-		return nil, fmt.Errorf("responses request failed: %w", err)
+		return nil, fmt.Errorf("responses request failed: %w", adapter.NormalizeTransportError(err))
 	}
 
 	return &adapter.RawResponse{
@@ -329,7 +329,7 @@ func (a *OpenAIAdapter) CreateResponseStream(ctx context.Context, request *adapt
 			}
 		}
 		if err := stream.Err(); err != nil {
-			out <- adapter.RawStreamEvent{Error: err, Done: true, Usage: lastUsage}
+			out <- adapter.RawStreamEvent{Error: adapter.NormalizeTransportError(err), Done: true, Usage: lastUsage}
 			return
 		}
 		out <- adapter.RawStreamEvent{Done: true, Usage: lastUsage}
