@@ -228,7 +228,7 @@ const messages = {
         rawOutput: 'Raw output JSON',
         contentUnavailableTitle: 'No content snapshot is available for this call',
         contentUnavailableDescription:
-          'This list currently comes from lightweight billing records, and earlier versions did not store input or output by default. New calls will appear here after content capture is enabled; historical content cannot be backfilled.',
+          'Content capture may have been disabled when this call ran, or the snapshot may have expired, been cleared, or been dropped under queue pressure. Enabling capture only applies to new calls.',
       },
       sources: {
         all: 'All calls',
@@ -247,12 +247,25 @@ const messages = {
         failed: 'Failed',
         partial: 'Partial',
       },
+      contentStatus: {
+        available: 'Snapshot available',
+        unavailable: 'Not captured',
+      },
+      pagination: {
+        summary: 'Showing {start}–{end} of {total}',
+        pageSizeLabel: 'Calls per page',
+        pageSize: '{size} / page',
+        pageSummary: 'Page {page} of {total}',
+        previous: 'Previous',
+        next: 'Next',
+      },
       table: {
         time: 'Time / Invocation ID',
         source: 'Source',
         model: 'Model / Provider',
         business: 'Business area',
         status: 'Status',
+        content: 'Content',
         tokens: 'Tokens',
         duration: 'Duration',
         cost: 'Cost',

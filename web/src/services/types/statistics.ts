@@ -145,6 +145,8 @@ export interface InvocationLogItem {
   started_at: number;
   settled_at: number;
   error_code?: string;
+  content_available: boolean;
+  content_expires_at?: number;
   input?: unknown;
   output?: unknown;
 }
@@ -169,6 +171,7 @@ export interface GetInvocationLogParams {
   cursor_time?: string;
   cursor_id?: string;
   limit?: number;
+  include_summary?: boolean;
 }
 
 export interface InvocationContentSettings {
