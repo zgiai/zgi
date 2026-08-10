@@ -24,6 +24,7 @@
     <a href="#为什么选择-zgi">为什么选择 ZGI</a> &middot;
     <a href="#从构建到运行">工作方式</a> &middot;
     <a href="#核心能力">核心能力</a> &middot;
+    <a href="#产品一览">产品一览</a> &middot;
     <a href="#快速开始">快速开始</a> &middot;
     <a href="#开发">开发</a> &middot;
     <a href="#文档">文档</a> &middot;
@@ -65,6 +66,40 @@ ZGI 是一个源码可用的 Agent Runtime 平台，面向希望 AI 应用真正
 | **模型网关** | 在一个位置管理模型提供商、渠道、凭据、默认模型、路由策略、配额和定价元数据。 |
 | **发布与治理** | 通过 WebApp、应用中心、API Key 或内部调用交付 Agent，并使用工作空间权限、运行日志和可复用批量测试进行治理。 |
 | **自托管运行时** | 在本地或自己的基础设施中运行控制台、API、沙箱、Runner、PostgreSQL 和 Redis。 |
+
+## 产品一览
+
+下面这些产品界面展示了 ZGI 如何从配置 Agent 到产出可治理、可追溯业务结果。
+
+### 为 Agent 配置所需上下文
+
+在一个工作空间中组合系统指令、模型、技能、已授权的知识库和数据库。
+
+![ZGI Agent Studio 配置合同审查 Agent](docs/assets/product-tour/zgi-agent-studio-zh.webp)
+
+### 用自然语言分析业务数据
+
+选择受控的数据表，用自然语言提问，并获得可追溯的指标、风险与行动建议。
+
+![ZGI 使用自然语言分析客户续约风险](docs/assets/product-tour/zgi-data-analysis-zh.webp)
+
+### 检查运行结果
+
+查看运行状态、耗时、步骤与结构化输出，确认工作流执行了什么、返回了什么。
+
+![ZGI 工作流运行结果与结构化风险发现](docs/assets/product-tour/zgi-run-results-zh.webp)
+
+### 治理模型与渠道
+
+统一管理模型提供商、渠道、路由策略和可用性。
+
+![ZGI 模型网关与模型渠道管理](docs/assets/product-tour/zgi-model-gateway-zh.webp)
+
+### 让 Agent 基于企业文件工作
+
+上传并处理文件，再将它们关联到已授权的知识库，供 Agent 和工作流使用。
+
+![ZGI 文件管理与知识库关联](docs/assets/product-tour/zgi-files-knowledge-zh.webp)
 
 ## 快速开始
 

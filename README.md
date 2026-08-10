@@ -24,6 +24,7 @@
     <a href="#why-zgi">Why ZGI</a> &middot;
     <a href="#from-build-to-runtime">How it works</a> &middot;
     <a href="#core-capabilities">Capabilities</a> &middot;
+    <a href="#product-tour">Product Tour</a> &middot;
     <a href="#quick-start">Quick Start</a> &middot;
     <a href="#development">Development</a> &middot;
     <a href="#documentation">Docs</a> &middot;
@@ -72,6 +73,45 @@ Operate with permissions, logs, and batch testing
 | **Model gateway** | Manage providers, channels, credentials, defaults, routing policies, quotas, and pricing metadata in one place. |
 | **Publishing and governance** | Expose agents through WebApp, App Center, API keys, or internal calls, with workspace permissions, runtime logs, and reusable batch tests. |
 | **Self-hosted runtime** | Run the console, API, sandbox, runner, PostgreSQL, and Redis locally or in your own infrastructure. |
+
+## Product Tour
+
+These product views show the path from configuring an agent to producing
+governed, traceable business results.
+
+### Build agents with the right context
+
+Combine system instructions, models, skills, approved knowledge bases, and
+databases in one workspace.
+
+![ZGI Agent Studio configuring a contract review agent](docs/assets/product-tour/zgi-agent-studio-en.webp)
+
+### Analyze business data in natural language
+
+Select approved data tables and turn a plain-language question into traceable
+KPIs, risks, and recommended actions.
+
+![ZGI natural-language database analysis for renewal risk](docs/assets/product-tour/zgi-data-analysis-en.webp)
+
+### Inspect execution results
+
+Review run status, duration, steps, and structured output to understand what the
+workflow ran and what it returned.
+
+![ZGI workflow execution result with structured risk findings](docs/assets/product-tour/zgi-run-results-en.webp)
+
+### Govern models and channels
+
+Manage providers, channels, routing policies, and availability from one place.
+
+![ZGI Model Gateway provider and channel management](docs/assets/product-tour/zgi-model-gateway-en.webp)
+
+### Ground agents in company files
+
+Upload and process files, then link them to approved knowledge bases that agents
+and workflows can use.
+
+![ZGI file management and knowledge base linking](docs/assets/product-tour/zgi-files-knowledge-en.webp)
 
 ## Quick Start
 
