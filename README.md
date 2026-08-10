@@ -33,7 +33,7 @@
   </sub>
 </p>
 
-![ZGI visual workflow editor](docs/assets/zgi-workflow-editor-api-enrichment.png)
+![ZGI Agent Studio configuring a contract review agent](docs/assets/product-tour/zgi-agent-studio-en.webp)
 
 ## Why ZGI
 
@@ -76,15 +76,15 @@ Operate with permissions, logs, and batch testing
 
 ## Product Tour
 
-These product views show the path from configuring an agent to producing
-governed, traceable business results.
+The views below continue from Agent Studio into orchestration, business data,
+execution, model governance, and grounded enterprise knowledge.
 
-### Build agents with the right context
+### Orchestrate executable workflows
 
-Combine system instructions, models, skills, approved knowledge bases, and
-databases in one workspace.
+Connect document extraction, retrieval, models, tools, approvals, and outputs on
+a visual canvas.
 
-![ZGI Agent Studio configuring a contract review agent](docs/assets/product-tour/zgi-agent-studio-en.webp)
+![ZGI visual workflow editor](docs/assets/zgi-workflow-editor-api-enrichment.png)
 
 ### Analyze business data in natural language
 

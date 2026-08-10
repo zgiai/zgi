@@ -33,7 +33,7 @@
   </sub>
 </p>
 
-![ZGI 비주얼 워크플로 편집기](docs/assets/zgi-workflow-editor-api-enrichment.png)
+![ZGI Agent Studio에서 계약 검토 에이전트 설정](docs/assets/product-tour/zgi-agent-studio-en.webp)
 
 ## ZGI를 선택하는 이유
 
@@ -69,13 +69,13 @@ WebApp, 앱 센터, API 또는 내부 호출로 배포
 
 ## 제품 둘러보기
 
-다음 제품 화면은 에이전트 설정부터 거버넌스가 적용되고 추적 가능한 업무 성과까지 이어지는 흐름을 보여 줍니다.
+다음 화면에서는 Agent Studio에 이어 워크플로 구성, 비즈니스 데이터 활용, 실행, 모델 거버넌스, 기업 지식으로 확장되는 흐름을 보여 줍니다.
 
-### 에이전트에 필요한 컨텍스트 구성
+### 실행 가능한 워크플로 구성
 
-시스템 지침, 모델, 스킬, 승인된 지식 베이스와 데이터베이스를 하나의 워크스페이스에서 결합합니다.
+비주얼 캔버스에서 문서 추출, 지식 검색, 모델, 도구, 승인, 출력을 연결합니다.
 
-![ZGI Agent Studio에서 계약 검토 에이전트 설정](docs/assets/product-tour/zgi-agent-studio-en.webp)
+![ZGI 비주얼 워크플로 편집기](docs/assets/zgi-workflow-editor-api-enrichment.png)
 
 ### 자연어로 비즈니스 데이터 분석
 

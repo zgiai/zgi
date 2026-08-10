@@ -33,7 +33,7 @@
   </sub>
 </p>
 
-![ZGIビジュアルワークフローエディター](docs/assets/zgi-workflow-editor-api-enrichment.png)
+![ZGI Agent Studioで契約レビューエージェントを設定](docs/assets/product-tour/zgi-agent-studio-en.webp)
 
 ## ZGIを選ぶ理由
 
@@ -69,13 +69,13 @@ WebApp、アプリセンター、API、内部呼び出しで公開
 
 ## プロダクトツアー
 
-以下の画面では、エージェントの設定から、統制され、追跡可能な業務成果を得るまでの流れを紹介します。
+以下では、Agent Studioに続き、ワークフローの編成、業務データの活用、実行、モデルガバナンス、企業ナレッジへと広がる流れを紹介します。
 
-### エージェントに必要なコンテキストを設定
+### 実行可能なワークフローを構築
 
-システム指示、モデル、スキル、承認済みのナレッジベースとデータベースを1つのワークスペースで組み合わせます。
+ビジュアルキャンバス上で、ドキュメント抽出、知識検索、モデル、ツール、承認、出力を接続します。
 
-![ZGI Agent Studioで契約レビューエージェントを設定](docs/assets/product-tour/zgi-agent-studio-en.webp)
+![ZGIビジュアルワークフローエディター](docs/assets/zgi-workflow-editor-api-enrichment.png)
 
 ### 自然言語で業務データを分析
 

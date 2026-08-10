@@ -33,7 +33,7 @@
   </sub>
 </p>
 
-![ZGI 可视化工作流编辑器](docs/assets/zgi-workflow-editor-api-enrichment.png)
+![ZGI Agent Studio 配置合同审查 Agent](docs/assets/product-tour/zgi-agent-studio-zh.webp)
 
 ## 为什么选择 ZGI
 
@@ -69,13 +69,13 @@ ZGI 是一个源码可用的 Agent Runtime 平台，面向希望 AI 应用真正
 
 ## 产品一览
 
-下面这些产品界面展示了 ZGI 如何从配置 Agent 到产出可治理、可追溯业务结果。
+下面继续展示 Agent 如何通过工作流编排连接业务数据、执行任务，并完成模型治理与企业知识应用。
 
-### 为 Agent 配置所需上下文
+### 编排可执行工作流
 
-在一个工作空间中组合系统指令、模型、技能、已授权的知识库和数据库。
+在可视化画布上连接文档提取、知识检索、模型、工具、审批与输出。
 
-![ZGI Agent Studio 配置合同审查 Agent](docs/assets/product-tour/zgi-agent-studio-zh.webp)
+![ZGI 可视化工作流编辑器](docs/assets/zgi-workflow-editor-api-enrichment.png)
 
 ### 用自然语言分析业务数据
 
