@@ -281,7 +281,7 @@ func (a *OpenAIAdapter) CreateResponseRaw(ctx context.Context, request *adapter.
 
 	var raw json.RawMessage
 	if _, err := client.Responses.New(ctx, params, openaioption.WithResponseBodyInto(&raw)); err != nil {
-		return nil, fmt.Errorf("responses request failed: %w", adapter.NormalizeTransportError(err))
+		return nil, fmt.Errorf("responses request failed: %w", normalizeOpenAISDKTransportError(err))
 	}
 
 	return &adapter.RawResponse{
@@ -329,13 +329,22 @@ func (a *OpenAIAdapter) CreateResponseStream(ctx context.Context, request *adapt
 			}
 		}
 		if err := stream.Err(); err != nil {
-			out <- adapter.RawStreamEvent{Error: adapter.NormalizeTransportError(err), Done: true, Usage: lastUsage}
+			out <- adapter.RawStreamEvent{Error: normalizeOpenAISDKTransportError(err), Done: true, Usage: lastUsage}
 			return
 		}
 		out <- adapter.RawStreamEvent{Done: true, Usage: lastUsage}
 	}()
 
 	return out, nil
+}
+
+func normalizeOpenAISDKTransportError(err error) error {
+	err = adapter.NormalizeTransportError(err)
+	var apiErr *openai.Error
+	if errors.As(err, &apiErr) && apiErr.StatusCode == 504 && !errors.Is(err, adapter.ErrTimeout) {
+		return errors.Join(adapter.ErrTimeout, err)
+	}
+	return err
 }
 
 // CreateEmbeddings executes embeddings creation request
